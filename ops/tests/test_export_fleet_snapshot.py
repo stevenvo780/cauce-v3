@@ -77,13 +77,57 @@ def source(
 
 
 class FleetSnapshotDocumentTest(unittest.TestCase):
-    def test_maps_enabled_retired_and_system_rows_without_membership_filtering(self) -> None:
+    def test_prunes_only_proven_purged_runtime_overlays_without_exporting_tombstones(self) -> None:
+        payload = {**source(agents=[], memberships=[]), "purgedRuntimeKeys": ["purged-runtime"]}
+        overlay = {"purged-runtime": {"dockerHost": "server2"}}
+        document = MODULE.snapshot_document(payload, overlay)
+        self.assertEqual(document, MODULE.snapshot_document(source(agents=[], memberships=[])))
+        self.assertEqual(overlay, {"purged-runtime": {"dockerHost": "server2"}})
+        with self.assertRaisesRegex(MODULE.SnapshotError, "non-fleet"):
+            MODULE.snapshot_document(payload, {**overlay, "never-seen": {"dockerHost": "server2"}})
+
+    def test_empty_purged_metadata_preserves_legacy_snapshot_bytes(self) -> None:
+        self.assertEqual(MODULE.canonical_bytes(MODULE.snapshot_document(source())),
+                         MODULE.canonical_bytes(MODULE.snapshot_document({**source(), "purgedRuntimeKeys": []})))
+
+    def test_rejects_unbounded_malformed_duplicate_or_current_purged_runtime_keys(self) -> None:
+        invalid = (None, False, {}, "purged-runtime", [None], [False], ["bad/key"], ["bad_key"],
+                   ["Bad"], ["a" * 65], ["gone", "gone"], ["kant"], [f"gone-{index}" for index in range(1001)])
+        for value in invalid:
+            with self.subTest(value=value), self.assertRaises(MODULE.SnapshotError):
+                MODULE.snapshot_document({**source(), "purgedRuntimeKeys": value})
+        retired = source(agents=[agent("kant", enabled=False)], memberships=[])
+        with self.assertRaises(MODULE.SnapshotError):
+            MODULE.snapshot_document({**retired, "purgedRuntimeKeys": ["kant"]})
+
+    def test_durable_placement_overrides_overlay_fields_and_preserves_native_manager(self) -> None:
+        row = {**agent("kant"), "host_id": "new-host", "runtime_mode": "container", "systemd_user": "server"}
+        document = MODULE.snapshot_document(source(agents=[row]),
+            {"kant": {"dockerHost": "old-host", "systemdUser": "ubuntu", "registryContainer": "proxy"}})
+        self.assertEqual(document["placement"]["kant"],
+                         {"dockerHost": "new-host", "systemdUser": "server", "registryContainer": "proxy"})
+        self.assertEqual(document["fleet"]["kant"]["hostId"], "new-host")
+        self.assertEqual(document["fleet"]["kant"]["runtimeMode"], "container")
+        row.update(host_id="fedora", runtime_mode="native", container_name="host:fedora", systemd_user="stev",
+                   state_directory="/var/lib/cauce-v3/aliases/kant")
+        document = MODULE.snapshot_document(source(agents=[row]))
+        self.assertEqual(document["placement"], {"kant": {"dockerHost": "fedora"}})
+        self.assertEqual(document["fleet"]["kant"]["systemdUser"], "stev")
+
+    def test_durable_placement_rejects_invalid_identifiers_modes_and_native_container_mismatch(self) -> None:
+        for field, value in (("host_id", "../host"), ("runtime_mode", "shell"), ("systemd_user", "root;cmd"),
+                             ("runtime_mode", "native")):
+            with self.subTest(field=field, value=value), self.assertRaises(MODULE.SnapshotError):
+                MODULE.snapshot_document(source(agents=[{**agent("kant"), field: value}]))
+
+    def test_maps_enabled_retired_and_filters_disabled_memberships(self) -> None:
         payload = source(
             agents=[agent("kant"), agent("dedalo", enabled=False, harness=None)],
             memberships=[
-                membership("kant", role="operator", enabled=False),
+                membership("kant", role="operator"),
                 membership("dedalo", enabled=True),
-                membership("quota-collector", role="operador-ñ", enabled=False),
+                membership("quota-collector", role="operador-ñ"),
+                membership("disabled-collector", enabled=False),
             ],
             roles=("agent", "operator", "operador-ñ"),
         )
@@ -144,14 +188,10 @@ class FleetSnapshotDocumentTest(unittest.TestCase):
         )
         self.assertLess(body.index(b'"fleet"'), body.index(b'"schemaVersion"'))
 
-    def test_rejects_tenant_outside_real_schema_enum(self) -> None:
-        self.assertEqual(
-            MODULE.tenant_enum(),
-            frozenset({"Steven", "Miguel", "Isa", "Jhon", "Hospital"}),
-        )
+    def test_accepts_tenants_provisioned_outside_the_historical_list(self) -> None:
         hospital = MODULE.snapshot_document(
             source(
-                agents=[agent("operador", tenant="Hospital", harness="openclaw")],
+                agents=[agent("operador", tenant="Hospital")],
                 memberships=[
                     membership(
                         "operador", tenant="Hospital", room="grp.hospital", role="operator"
@@ -160,13 +200,148 @@ class FleetSnapshotDocumentTest(unittest.TestCase):
             )
         )
         self.assertEqual(hospital["fleet"]["operador"]["tenant"], "Hospital")
-        with self.assertRaisesRegex(MODULE.SnapshotError, "tenant enum"):
-            MODULE.snapshot_document(
-                source(
-                    agents=[agent("dedalo", tenant="Pablo", enabled=False)],
-                    memberships=[membership("dedalo", tenant="Pablo", room="grp.pablo")],
-                )
-            )
+        document = MODULE.snapshot_document(source(
+            agents=[agent("kant", tenant="Equipo_42")],
+            memberships=[membership("kant", tenant="Equipo_42", room="grp.equipo")],
+        ))
+        self.assertEqual(document["fleet"]["kant"]["tenant"], "Equipo_42")
+
+    def test_rejects_malformed_tenant_and_alias_even_when_disabled(self) -> None:
+        for tenant in ("42Equipo", "Equipo/42", "A" * 65):
+            with self.subTest(tenant=tenant), self.assertRaises(MODULE.SnapshotError):
+                MODULE.snapshot_document(source(
+                    agents=[agent("kant", tenant=tenant, enabled=False)],
+                    memberships=[],
+                ))
+        for alias in ("bad/alias", "Bad", "a" * 65):
+            with self.subTest(alias=alias), self.assertRaises(MODULE.SnapshotError):
+                MODULE.snapshot_document(source(
+                    agents=[agent(alias, enabled=False)], memberships=[],
+                ))
+
+    def test_selects_explicit_primary_and_keeps_sorted_enabled_memberships(self) -> None:
+        row = {**agent("kant"), "runtime_key": "kant", "primary_room_id": "grp.other"}
+        document = MODULE.snapshot_document(source(
+            agents=[row],
+            memberships=[
+                membership("kant", room="grp.other", role="operator"),
+                membership("kant", enabled=False, room="grp.disabled"),
+                membership("kant"),
+            ],
+        ))
+        projected = document["fleet"]["kant"]
+        self.assertEqual((projected["room"], projected["role"]), ("grp.other", "operator"))
+        self.assertEqual(projected["memberships"], [
+            {"room": "grp.other", "role": "operator"},
+            {"room": "grp.steven", "role": "agent"},
+        ])
+
+    def test_requires_an_enabled_primary_instead_of_choosing_a_sorted_room(self) -> None:
+        for primary in (None, "grp.missing", "grp.disabled"):
+            row = {**agent("kant"), "runtime_key": "kant", "primary_room_id": primary}
+            with self.subTest(primary=primary), self.assertRaisesRegex(MODULE.SnapshotError, "primary"):
+                MODULE.snapshot_document(source(agents=[row], memberships=[
+                    membership("kant"), membership("kant", room="grp.other"),
+                    membership("kant", room="grp.disabled", enabled=False),
+                ]))
+
+    def test_legacy_single_membership_and_nullable_new_columns_keep_fixture_bytes(self) -> None:
+        fixture = SCRIPT.parents[1] / "tests/fixtures/fleet_snapshot/minimal/flota.json"
+        expected = json.loads(fixture.read_bytes())
+        agents = [{
+            "tenant_id": row["tenant"], "alias": alias, "harness_id": row["harness"],
+            "enabled": row["enabled"], "container_name": row["container"],
+            "runtime_user": row["user"], "home_directory": row["home"],
+            "state_directory": row["runtimeStateDirectory"],
+        } for alias, row in expected["fleet"].items()]
+        agents.append(agent("fixture-retired", enabled=False))
+        memberships = [membership(alias, tenant=row["tenant"], room=row["room"], role=row["role"])
+                       for section in ("fleet", "systemPrincipals")
+                       for alias, row in expected[section].items()]
+        roles = tuple(sorted({str(row["role"]) for row in memberships}))
+        for columns in ({}, {"runtime_key": None, "primary_room_id": None}):
+            with self.subTest(columns=columns):
+                document = MODULE.snapshot_document(source(
+                    agents=[{**row, **columns} for row in agents],
+                    memberships=memberships, roles=roles,
+                ), expected["placement"])
+                self.assertEqual(MODULE.canonical_bytes(document), fixture.read_bytes())
+
+    def test_runtime_keys_separate_repeated_wire_aliases_across_tenants(self) -> None:
+        first = {**agent("kant"), "runtime_key": "kant", "primary_room_id": "grp.steven"}
+        second = {**agent("kant", tenant="Pablo"), "runtime_key": "pablo-kant",
+                  "primary_room_id": "grp.pablo"}
+        second["state_directory"] = "/home/dev/.local/state/cauce-v3/pablo-kant"
+        document = MODULE.snapshot_document(source(
+            agents=[second, first],
+            memberships=[membership("kant"), membership("kant", tenant="Pablo", room="grp.pablo")],
+        ), {"pablo-kant": {"dockerHost": "server2"}})
+        self.assertEqual(set(document["fleet"]), {"kant", "pablo-kant"})
+        self.assertNotIn("alias", document["fleet"]["kant"])
+        self.assertEqual(document["fleet"]["pablo-kant"]["alias"], "kant")
+        self.assertEqual(document["placement"], {"pablo-kant": {"dockerHost": "server2"}})
+
+    def test_rejects_colliding_or_unsafe_runtime_keys(self) -> None:
+        for runtime_key in ("bad/key", "bad_key", "a" * 65, "", False, 0):
+            with self.subTest(key=runtime_key), self.assertRaisesRegex(MODULE.SnapshotError, "runtime key"):
+                MODULE.snapshot_document(source(agents=[{**agent("kant"), "runtime_key": runtime_key,
+                                                        "primary_room_id": None}]))
+        with self.assertRaisesRegex(MODULE.SnapshotError, "runtime key"):
+            MODULE.snapshot_document(source(
+                agents=[{**agent("kant"), "runtime_key": "same", "primary_room_id": None,
+                         "state_directory": "/home/dev/.local/state/cauce-v3/same"},
+                        {**agent("bacon"), "runtime_key": "same", "primary_room_id": None,
+                         "state_directory": "/home/dev/.local/state/cauce-v3/same"}],
+                memberships=[membership("kant"), membership("bacon")],
+            ))
+
+    def test_disabled_membership_cannot_start_runtime(self) -> None:
+        with self.assertRaisesRegex(MODULE.SnapshotError, "enabled membership"):
+            MODULE.snapshot_document(source(memberships=[membership("kant", enabled=False)]))
+
+    def test_retired_overlay_is_omitted_without_accepting_never_seen_aliases(self) -> None:
+        document = MODULE.snapshot_document(source(
+            agents=[agent("kant"), agent("dedalo", enabled=False)],
+            memberships=[membership("kant"), membership("dedalo", enabled=False)],
+        ), {"dedalo": {"dockerHost": "server2"}})
+        self.assertEqual(document["placement"], {})
+        self.assertEqual(document["retired"], {"dedalo": {}})
+
+    def test_wire_alias_with_underscore_requires_a_separate_physical_key(self) -> None:
+        row = {**agent("logical_alias"), "runtime_key": "physical-alias", "primary_room_id": None}
+        row["state_directory"] = "/home/dev/.local/state/cauce-v3/physical-alias"
+        document = MODULE.snapshot_document(source(agents=[row], memberships=[membership("logical_alias")]))
+        self.assertEqual(document["fleet"]["physical-alias"]["alias"], "logical_alias")
+
+    def test_rejects_duplicate_membership(self) -> None:
+        with self.assertRaises(MODULE.SnapshotError):
+            MODULE.snapshot_document(source(agents=[], memberships=[membership("kant"), membership("kant")]))
+
+    def test_system_principals_keep_tenant_identity_and_all_memberships(self) -> None:
+        import hashlib
+
+        rows = [membership("collector", room="grp.other", role="operator"), membership("collector"),
+                membership("collector", tenant="Pablo", room="grp.pablo")]
+        document = MODULE.snapshot_document(source(agents=[], memberships=rows))
+        def key(tenant):
+            return "principal-" + hashlib.sha256(f"{tenant}\0collector".encode()).hexdigest()[:40]
+        self.assertEqual(document["systemPrincipals"], {
+            key("Steven"): {"tenant": "Steven", "alias": "collector", "memberships": [
+                {"room": "grp.other", "role": "operator"}, {"room": "grp.steven", "role": "agent"}]},
+            key("Pablo"): {"tenant": "Pablo", "alias": "collector", "room": "grp.pablo", "role": "agent"},
+        })
+
+    def test_system_principal_key_avoids_a_fleet_physical_key_collision(self) -> None:
+        import hashlib
+
+        row = {**agent("runtime_agent"), "runtime_key": "collector"}
+        row["state_directory"] = "/home/dev/.local/state/cauce-v3/collector"
+        document = MODULE.snapshot_document(source(agents=[row], memberships=[
+            membership("runtime_agent"), membership("collector"), membership("logical_principal")]))
+        for alias in ("collector", "logical_principal"):
+            key = "principal-" + hashlib.sha256(f"Steven\0{alias}".encode()).hexdigest()[:40]
+            self.assertEqual(document["systemPrincipals"][key]["alias"], alias)
+        self.assertEqual(set(document["fleet"]), {"collector"})
 
     def test_fails_loud_on_every_unrepresentable_database_row(self) -> None:
         cases = {
@@ -179,13 +354,6 @@ class FleetSnapshotDocumentTest(unittest.TestCase):
             ),
             "unknown role": source(memberships=[membership("kant", role="missing")]),
             "duplicate policy": source(roles=("agent", "agent")),
-            "cross-tenant alias": source(
-                agents=[agent("kant")],
-                memberships=[
-                    membership("kant"),
-                    membership("kant", tenant="Miguel", room="grp.miguel"),
-                ],
-            ),
         }
         for label, payload in cases.items():
             with self.subTest(label=label), self.assertRaises(MODULE.SnapshotError):
@@ -406,7 +574,7 @@ class FleetQueryTest(unittest.TestCase):
         self.assertRegex(query.lstrip(), r"^SELECT\b")
         for table in ("agents", "memberships", "role_policies"):
             self.assertRegex(query, rf"\bFROM\s+{table}\b")
-        self.assertNotRegex(query, r"\bWHERE\b")
+        self.assertNotRegex(query, r"\b(?:WHERE|AND)\s+(?:agent\.|membership\.)?enabled\b")
         self.assertNotRegex(query, r"\b(?:INSERT|UPDATE|DELETE|MERGE|COPY|CALL)\b")
 
     def test_database_url_query_uses_versioned_sql_and_read_only_session(self) -> None:

@@ -1,3 +1,4 @@
+import { readFile } from 'node:fs/promises';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ConfigurationRepository, FleetOperationsRepository, withTransaction, type DatabasePool } from '../src/index.js';
 import { purgeFleetTarget } from '../src/repository/fleet-operation-lifecycle.js';
@@ -18,6 +19,17 @@ afterEach(async () => { await current?.close(); current = undefined; });
 afterAll(async () => { if (database) { await database.pool.end(); await database.container.stop(); } });
 
 describe('fleet purge with preserved historical identities', () => {
+  it('exports system principal memberships without an agent row while excluding purged agents', async () => {
+    await pool.query(`INSERT INTO memberships(tenant_id,alias,room_id,role,enabled)
+      VALUES('Steven','quota-collector','purge-owned','agent',true)`);
+    const query = await readFile(new URL('../../../ops/scripts/fleet-query.sql', import.meta.url), 'utf8');
+    const snapshot = (await pool.query<{ jsonb_build_object: { memberships: { tenant_id: string; alias: string }[] } }>(query)).rows[0];
+    expect(snapshot?.jsonb_build_object.memberships).toContainEqual(expect.objectContaining({ tenant_id: 'Steven', alias: 'quota-collector' }));
+    const { repo, claim } = await preparePurge(pool); await finishPurge(repo, claim);
+    const after = (await pool.query<{ jsonb_build_object: { memberships: { tenant_id: string; alias: string }[] } }>(query)).rows[0];
+    expect(after?.jsonb_build_object.memberships).toContainEqual(expect.objectContaining({ tenant_id: 'Steven', alias: 'quota-collector' }));
+    expect(after?.jsonb_build_object.memberships.some(member => member.tenant_id === 'Steven' && member.alias === 'purge_agent')).toBe(false);
+  });
   it('previews owned configuration removal and historical preservation without blocking a retired agent', async () => {
     await messageFixture(pool);
     const preview = await new FleetOperationsRepository(pool).preview('Steven', 'purge_operator', purgeRequest());
@@ -31,9 +43,17 @@ describe('fleet purge with preserved historical identities', () => {
     expect((await pool.query("SELECT 1 FROM agent_profiles WHERE tenant_id='Steven' AND alias='purge_agent'")).rowCount).toBe(1);
   });
   it('purges owned configuration atomically and hides its tombstone while retaining messages and audit', async () => {
+    const query = await readFile(new URL('../../../ops/scripts/fleet-query.sql', import.meta.url), 'utf8');
+    const before = (await pool.query<{ jsonb_build_object: { agents: { tenant_id: string; alias: string; enabled: boolean }[]; purgedRuntimeKeys: string[] } }>(query)).rows[0];
+    expect(before?.jsonb_build_object.agents).toContainEqual(expect.objectContaining({ tenant_id: 'Steven', alias: 'purge_agent', enabled: false }));
+    expect(before?.jsonb_build_object.purgedRuntimeKeys).toEqual([]);
     const message = await messageFixture(pool);
     await profileAdoptionFixture(pool, message);
     const { repo, claim } = await preparePurge(pool); await finishPurge(repo, claim);
+    const after = (await pool.query<{ jsonb_build_object: { agents: { tenant_id: string; alias: string }[]; purgedRuntimeKeys: string[] } }>(query)).rows[0];
+    expect(after?.jsonb_build_object.purgedRuntimeKeys).toEqual(['purge-steven']);
+    expect(after?.jsonb_build_object.agents.some(agent => agent.tenant_id === 'Steven' && agent.alias === 'purge_agent')).toBe(false);
+    expect(after?.jsonb_build_object.agents).toContainEqual(expect.objectContaining({ tenant_id: 'Isa', alias: 'purge_agent' }));
     expect((await pool.query(`SELECT enabled,lifecycle_state,purged_at IS NOT NULL AS purged,runtime_key,
       primary_room_id,harness_id,primary_account_id FROM agents WHERE tenant_id='Steven' AND alias='purge_agent'`)).rows[0])
       .toEqual({ enabled: false, lifecycle_state: 'retired', purged: true, runtime_key: 'purge-steven', primary_room_id: null, harness_id: null, primary_account_id: null });

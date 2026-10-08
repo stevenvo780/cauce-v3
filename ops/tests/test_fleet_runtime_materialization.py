@@ -152,6 +152,37 @@ class RuntimeFleetMaterializationTests(unittest.TestCase):
         self.assertEqual(completed.returncode, 1)
         self.assertEqual((self.state / "desired-fleet.json").read_bytes(), original)
 
+    def test_purged_runtime_prunes_its_overlay_and_preserves_prior_generation_without_tombstones(self) -> None:
+        self.assertEqual(self.run_cli().returncode, 0)
+        previous = self.receipt()
+        payload = {**source(agents=[], memberships=[]), "purgedRuntimeKeys": ["physical-one"]}
+        self.input.write_text(json.dumps(payload), encoding="utf-8")
+        overlay = {"schemaVersion": 1, "placement": {"physical-one": {"dockerHost": "server2"}}}
+        self.overlay.write_text(json.dumps(overlay), encoding="utf-8")
+        completed = self.run_cli()
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        receipt = self.receipt()
+        generation = self.state / "generations" / str(receipt["generation"])
+        snapshot = json.loads((generation / "flota.json").read_bytes())
+        for field in ("fleet", "retired", "placement"):
+            self.assertEqual(snapshot[field], {})
+        self.assertNotIn("purgedRuntimeKeys", snapshot)
+        self.assertEqual(json.loads(self.overlay.read_bytes()), overlay)
+        self.assertTrue((self.state / "generations" / str(previous["generation"]) /
+                         "manifests/physical-one.yaml").exists())
+
+    def test_purged_metadata_cannot_authorize_an_unknown_overlay_or_replace_the_published_receipt(self) -> None:
+        self.assertEqual(self.run_cli().returncode, 0)
+        previous = (self.state / "desired-fleet.json").read_bytes()
+        self.input.write_text(json.dumps({**source(agents=[], memberships=[]),
+                                         "purgedRuntimeKeys": ["physical-one"]}), encoding="utf-8")
+        self.overlay.write_text(json.dumps({"schemaVersion": 1, "placement": {
+            "physical-one": {"dockerHost": "server2"}, "never-seen": {"dockerHost": "server2"}}}))
+        completed = self.run_cli()
+        self.assertEqual(completed.returncode, 1)
+        self.assertIn("never-seen", completed.stderr)
+        self.assertEqual((self.state / "desired-fleet.json").read_bytes(), previous)
+
     def test_runtime_state_cannot_be_written_inside_a_repository_or_through_its_symlink(self) -> None:
         repository = self.root / "repo"
         repository.mkdir()

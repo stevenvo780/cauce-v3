@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { RuntimeKeySchema } from '@cauce/protocol';
 import { FleetOperationsRepository, lockFleetClaim, lockFleetRevision, preparedState, publicFleetOperation, withTransaction,
   type DatabasePool, type FleetOperationClaim, type FleetExecutionState } from '@cauce/store';
 import { readFleetProviderAccounts, scopedFleetProviderAgents, type FleetProviderAccounts } from './accounts.js';
@@ -8,7 +9,9 @@ const SnapshotSchema = z.object({
   agents: z.array(z.record(z.string(), z.unknown())),
   memberships: z.array(z.record(z.string(), z.unknown())),
   rolePolicies: z.array(z.record(z.string(), z.unknown())),
-}).strict();
+  purgedRuntimeKeys: z.array(RuntimeKeySchema).max(1000).refine(keys => new Set(keys).size === keys.length).optional(),
+}).strict().refine(snapshot => !snapshot.agents.some(agent => typeof agent.runtime_key === 'string'
+  && snapshot.purgedRuntimeKeys?.includes(agent.runtime_key)), { message: 'Purged runtime keys overlap current agents' });
 export interface FleetHostExecution extends FleetExecutionState {
   snapshot: z.infer<typeof SnapshotSchema>;
   snapshot_revision: number;

@@ -44,7 +44,7 @@ AGENT_FIELDS = frozenset(
     }
 )
 AGENT_OPTIONAL_FIELDS = frozenset({"runtime_key", "primary_room_id", "lifecycle_state", "host_id",
-                                   "runtime_mode", "systemd_user"})
+                                   "runtime_mode", "systemd_user", "primary_account_id", "model_id", "reasoning_effort"})
 BOOTSTRAP_LIFECYCLES = frozenset({"draft", "provisioning", "auth_pending", "verifying"})
 LIFECYCLES = BOOTSTRAP_LIFECYCLES | {"ready", "failed", "retiring", "retired"}
 MEMBERSHIP_FIELDS = frozenset(
@@ -243,6 +243,15 @@ def _agents(
         host_id = _optional_text(agent.get("host_id"), f"{label}.host_id")
         runtime_mode = _optional_text(agent.get("runtime_mode"), f"{label}.runtime_mode")
         systemd_user = _optional_text(agent.get("systemd_user"), f"{label}.systemd_user")
+        account = _optional_text(agent.get("primary_account_id"), f"{label}.primary_account_id")
+        model = _optional_text(agent.get("model_id"), f"{label}.model_id")
+        effort = _optional_text(agent.get("reasoning_effort"), f"{label}.reasoning_effort")
+        if effort is not None and effort not in {"minimal", "low", "medium", "high", "xhigh", "max"}:
+            raise SnapshotError(f"{label}.reasoning_effort is invalid")
+        if account is not None and ALIAS_PATTERN.fullmatch(account) is None:
+            raise SnapshotError(f"{label}.primary_account_id is invalid")
+        if model is not None and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_./:-]{0,127}", model) is None:
+            raise SnapshotError(f"{label}.model_id is invalid")
         if host_id is not None and ALIAS_PATTERN.fullmatch(host_id) is None:
             raise SnapshotError(f"{label}.host_id is invalid")
         if runtime_mode is not None and runtime_mode not in {"container", "native"}:
@@ -268,6 +277,9 @@ def _agents(
             "hostId": host_id,
             "runtimeMode": runtime_mode,
             "systemdUser": systemd_user,
+            "primaryAccountId": account,
+            "modelId": model,
+            "reasoningEffort": effort,
             "tenant": tenant,
             "harness": harness,
             "enabled": enabled,
@@ -291,13 +303,25 @@ def _agents(
     return agents_by_identity
 
 
+def _purged_runtime_keys(value: Any, agents: dict[tuple[str, str], dict[str, Any]]) -> set[str]:
+    if not isinstance(value, list) or len(value) > 1000:
+        raise SnapshotError("purgedRuntimeKeys must be an array of at most 1000 runtime keys")
+    keys = [_identifier(key, RUNTIME_KEY_PATTERN, "purgedRuntimeKeys runtime key") for key in value]
+    if len(keys) != len(set(keys)):
+        raise SnapshotError("purgedRuntimeKeys contains duplicate runtime keys")
+    current = {agent["runtimeKey"] for agent in agents.values() if agent["runtimeKey"] is not None}
+    if current.intersection(keys):
+        raise SnapshotError("purgedRuntimeKeys overlaps current runtime keys")
+    return set(keys)
+
+
 def _runtime_row(agent: dict[str, Any], membership: dict[str, Any]) -> dict[str, Any]:
     row = {field: agent[field] for field in ("tenant", "harness", "enabled", "container", "user", "home",
                                           "runtimeStateDirectory")}
     row.update(room=membership["room"], role=membership["role"])
     if agent["alias"] != agent["runtimeKey"]:
         row["alias"] = agent["alias"]
-    for field in ("hostId", "runtimeMode", "systemdUser"):
+    for field in ("hostId", "runtimeMode", "systemdUser", "primaryAccountId", "modelId", "reasoningEffort"):
         if agent[field] is not None:
             row[field] = agent[field]
     return row
@@ -334,13 +358,14 @@ def snapshot_document(
     allowed_tenants: frozenset[str] | None = None,
 ) -> dict[str, Any]:
     root = _object(source, "fleet query result")
-    if set(root) != {"agents", "memberships", "rolePolicies"}:
+    if set(root) - {"purgedRuntimeKeys"} != {"agents", "memberships", "rolePolicies"}:
         raise SnapshotError("fleet query result must contain agents, memberships and rolePolicies")
     roles = _roles(_rows(root["rolePolicies"], "rolePolicies"))
     member_rows = _rows(root["memberships"], "memberships")
     memberships_by_identity = _memberships(member_rows, roles, allowed_tenants)
     all_memberships = _memberships(member_rows, roles, allowed_tenants, include_disabled=True)
     agents_by_identity = _agents(_rows(root["agents"], "agents"), allowed_tenants)
+    purged_keys = _purged_runtime_keys(root.get("purgedRuntimeKeys", []), agents_by_identity)
 
     fleet: dict[str, dict[str, Any]] = {}
     retired: dict[str, dict[str, Any]] = {}
@@ -367,7 +392,7 @@ def snapshot_document(
         alias = identity[1]
         key = alias if RUNTIME_KEY_PATTERN.fullmatch(alias) and aliases.count(alias) == 1 \
             and alias not in fleet and alias not in retired and alias not in bootstrap else \
-            "principal-" + hashlib.sha256(f"{identity[0]}\0{alias}".encode("utf-8")).hexdigest()[:40]
+            "principal-" + hashlib.sha256(f"{identity[0]}\0{alias}".encode()).hexdigest()[:40]
         if key in system_principals or key in fleet or key in retired or key in bootstrap:
             raise SnapshotError(f"system principal catalog key collision: {identity[0]}/{alias}")
         principal = {"tenant": identity[0]}
@@ -392,7 +417,7 @@ def snapshot_document(
         else:
             physical.pop(key, None)
     known_keys = {agent["runtimeKey"] for agent in agents_by_identity.values() if agent["runtimeKey"] is not None}
-    unknown_placement = sorted(set(physical) - known_keys)
+    unknown_placement = sorted(set(physical) - known_keys - purged_keys)
     if unknown_placement:
         raise SnapshotError(f"physical fleet overlay names non-fleet aliases: {unknown_placement}")
     physical = {key: row for key, row in physical.items() if key in fleet or key in bootstrap}
