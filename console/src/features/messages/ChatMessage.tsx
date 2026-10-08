@@ -162,7 +162,7 @@ function AgentRow({ seed, name, state, time, startsGroup, children, ...rest }: {
   );
 }
 
-export function ChatMessage({ item, ownSubject, startsGroup, selected, fullBody, agentState, canonicalReply, canonicalReplyStale, onSelect, onExpand, onReplyRetry, onCompose }: {
+export function ChatMessage({ item, ownSubject, startsGroup, selected, fullBody, agentState, canonicalReply, canonicalReplyStale, onSelect, onExpand, onReplyRetry, onCompose, quiet }: {
   item: TranscriptItem;
   /** The signed-in human: their own messages need no author line. */
   ownSubject?: string | null;
@@ -176,6 +176,8 @@ export function ChatMessage({ item, ownSubject, startsGroup, selected, fullBody,
   onExpand: (messageId: string) => void;
   onReplyRetry?: () => void;
   onCompose?: ComposeFn;
+  /** History loaded after the first paint: it enters without the slide-in. */
+  quiet?: boolean;
 }) {
   const { message, direction, delivery } = item;
   const optimistic = optimisticMessageOf(item);
@@ -195,6 +197,7 @@ export function ChatMessage({ item, ownSubject, startsGroup, selected, fullBody,
     'data-direction': direction,
     'data-message-id': id,
     'data-selected': selected || undefined,
+    'data-quiet': quiet === true ? '' : undefined,
     onContextMenu: (event: MouseEvent) => {
       event.preventDefault();
       if (id) onSelect(item);
@@ -295,13 +298,13 @@ export function ChatMessage({ item, ownSubject, startsGroup, selected, fullBody,
   );
 }
 
-export function ChatReply({ reply, startsGroup, agentState, onCompose }: {
-  reply: CanonicalReply; startsGroup: boolean; agentState?: LiveState; onCompose?: ComposeFn;
+export function ChatReply({ reply, startsGroup, agentState, onCompose, quiet }: {
+  reply: CanonicalReply; startsGroup: boolean; agentState?: LiveState; onCompose?: ComposeFn; quiet?: boolean;
 }) {
   const text = reply.reply?.trim() ?? '';
   return (
     <AgentRow seed={`${reply.tenantId}/${reply.alias}`} name={reply.alias} state={agentState} startsGroup={startsGroup}
-      data-direction="output" data-reply-to={reply.messageId} aria-label={`Mensaje de ${reply.alias}`}>
+      data-direction="output" data-quiet={quiet === true ? '' : undefined} data-reply-to={reply.messageId} aria-label={`Mensaje de ${reply.alias}`}>
       <section aria-label={`Respuesta canónica de ${reply.tenantId}:${reply.alias}`} data-delivery-id={reply.deliveryId} className="grid gap-2">
         {reply.reply?.trim() ? <RichText text={reply.reply} /> : null}
         {reply.replyAttachmentDeliveryId !== undefined && reply.replyAttachmentAttempt !== undefined

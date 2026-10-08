@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { DeliveryView, MessageAuthor, MessageView } from '../../api/types';
 import { settledSince } from '../../shell/reply-alerts';
 import { ChatMessage } from './ChatMessage';
+import { ChatThread } from './ChatThread';
 
 const me = `human:${'a'.repeat(64)}`;
 const author: MessageAuthor = { kind: 'human', subject_id: me, display_name: 'Steven' };
@@ -36,5 +37,20 @@ describe('chat polish', () => {
     expect(first.settled).toEqual([]);
     expect(settledSince(first.statuses, page('done'), me).settled).toEqual([{ alias: 'argos', ok: true }]);
     expect(settledSince(first.statuses, page('done'), 'human:other').settled).toEqual([]);
+  });
+
+  it('history that loads after the first paint enters quiet; a reply to an open root does not', () => {
+    const now = new Date().toISOString();
+    const root = (id: string, status: DeliveryView['status']) => ({
+      message: { ...message, message_id: id, author, actor_alias: 'steven', created_at: now, deliveries: [{ ...delivery, delivery_id: `d-${id}`, status }] },
+      direction: 'input' as const, delivery: { ...delivery, delivery_id: `d-${id}`, status },
+    });
+    const items = [root('old', 'done'), root('open', 'started')];
+    const props = { items, ownSubject: me, alias: 'argos', seed: 'Steven/argos', fullBodies: {}, onSelectItem: vi.fn(), onExpand: vi.fn() };
+    const { rerender, container } = render(<ChatThread {...props} />);
+    const reply = (id: string) => ({ messageId: id, deliveryId: `d-${id}`, tenantId: 'Steven', alias: 'argos', status: 'done' as const, chainOpen: false, reply: `respuesta ${id}` });
+    rerender(<ChatThread {...props} canonicalReplies={[reply('old'), reply('open')]} />);
+    expect(container.querySelector('[data-reply-to="old"]')).toHaveAttribute('data-quiet');
+    expect(container.querySelector('[data-reply-to="open"]')).not.toHaveAttribute('data-quiet');
   });
 });

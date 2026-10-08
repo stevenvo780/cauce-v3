@@ -9,7 +9,7 @@ const GROUP_WINDOW_MS = 5 * 60_000;
 
 type TypingState = 'thinking' | 'receiving';
 
-type ThreadRow =
+export type ThreadRow =
   | { kind: 'day'; key: string; label: string }
   | { kind: 'message'; key: string; item: TranscriptItem; side: 'operator' | 'agent'; startsGroup: boolean }
   | { kind: 'reply'; key: string; item: TranscriptItem; reply: CanonicalReply; startsGroup: boolean };

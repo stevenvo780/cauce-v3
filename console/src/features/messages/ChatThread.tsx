@@ -1,10 +1,12 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AgentOrb } from '../../components/AgentOrb';
 import { bloomOrb } from '../../components/orb-bloom';
 import type { LiveState } from '../live/agent-state';
 import type { TranscriptItem } from '../terminal/session';
 import { ChatMessage, ChatReply, type ComposeFn, type FullBody } from './ChatMessage';
-import { replyFor, threadRows, typingState } from './thread-model';
+import { replyFor, threadRows, typingState, type ThreadRow } from './thread-model';
+
+const SETTLED = new Set(['done', 'failed', 'dead']);
 import type { CanonicalReply } from './use-canonical-reply';
 
 const SUGGESTIONS = ['¿En qué estás trabajando?', 'Resumime tu último turno', '¿Qué te bloquea?'];
@@ -71,16 +73,24 @@ export function ChatThread({ items, ownSubject, alias, seed, agentState, selecte
   const typing = typingState({ items, reply: replies, live: agentState });
   const seen = useRef<Set<string> | null>(null);
   seen.current ??= new Set(rows.map((row) => row.key));
+  // History that loads after the first paint (replies to roots already settled, older pages) is
+  // not news: it enters still and makes no orb bloom, so switching chats does not replay a burst.
+  const mountedAt = useRef(Date.now());
+  const settledRoots = useRef<Set<string> | null>(null);
+  settledRoots.current ??= new Set(rows.filter((row) => row.kind === 'message' && SETTLED.has(row.item.delivery?.status ?? '')).map((row) => row.key));
+  const quiet = useCallback((row: ThreadRow) => (row.kind === 'reply' ? settledRoots.current?.has(row.key.replace(/-reply$/u, '')) === true
+    : row.kind === 'message' && Date.parse(row.item.message.created_at ?? '') < mountedAt.current - 60_000), []);
   const [settled, setSettled] = useState(false);
   useEffect(() => { setSettled(true); }, []);
   useEffect(() => {
     const known = seen.current;
     if (!known) return;
-    const fresh = rows.filter((row) => row.kind !== 'day' && !known.has(row.key));
-    for (const row of fresh) known.add(row.key);
+    const added = rows.filter((row) => row.kind !== 'day' && !known.has(row.key));
+    for (const row of added) known.add(row.key);
+    const fresh = added.filter((row) => !quiet(row));
     if (fresh.some((row) => row.kind === 'reply')) bloomOrb(seed, 'sparkle');
     else if (fresh.some((row) => row.kind === 'message' && row.side === 'agent')) bloomOrb(seed);
-  }, [rows, seed]);
+  }, [rows, seed, quiet]);
   if (items.length === 0) return <EmptyThread seed={seed} alias={alias} state={agentState} onSuggestion={onSuggestion} />;
 
   const last = [...rows].reverse().find((row) => row.kind !== 'day');
@@ -100,7 +110,7 @@ export function ChatThread({ items, ownSubject, alias, seed, agentState, selecte
               </div>
             );
           }
-          if (row.kind === 'reply') return <ChatReply key={row.key} reply={row.reply} startsGroup={row.startsGroup} agentState={agentState} onCompose={onCompose} />;
+          if (row.kind === 'reply') return <ChatReply key={row.key} reply={row.reply} startsGroup={row.startsGroup} agentState={agentState} onCompose={onCompose} quiet={quiet(row)} />;
           const id = row.item.message.message_id ?? undefined;
           return (
             <ChatMessage
@@ -116,6 +126,7 @@ export function ChatThread({ items, ownSubject, alias, seed, agentState, selecte
               onSelect={onSelectItem}
               onExpand={onExpand}
               onCompose={onCompose}
+              quiet={quiet(row)}
               onReplyRetry={onCanonicalReplyRetry}
             />
           );
