@@ -13,7 +13,7 @@ import { type z } from 'zod';
 import { OpenClawDriver } from './host-provider-openclaw.js';
 import { boundedProviderReceipt } from './provider-login.js';
 
-type LoginFixture = { method: string; command: string[]; sha256: string; env?: Record<string, string>; files?: Record<string, string> };
+interface LoginFixture { method: string; command: string[]; sha256: string; env?: Record<string, string>; files?: Record<string, string> }
 const projectRoot = fileURLToPath(new URL('../../../../', import.meta.url));
 let database: TestDatabase | undefined;
 let current: EmptyTestDatabase | undefined;
