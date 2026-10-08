@@ -313,6 +313,46 @@ class RolloutPtyTest(unittest.TestCase):
         release = worker.release_path(self.bundle.release_sha)
         self.assertTrue(release.is_dir())
         self.assertEqual((release / "manifest.json").stat().st_mode & 0o777, 0o400)
+        imported = subprocess.run([sys.executable, "-I", "-B", "-c",
+            "import sys; sys.path.insert(0,sys.argv[1]); from cauce_pty_agent.agent import PtyAgent; "
+            "from cauce_pty_agent.native_admin_dispatch import native_admin_feature; print('package-ready')",
+            str(release / "pty-agent")], capture_output=True, text=True, cwd=temporary.name, check=False)
+        self.assertEqual(imported.returncode, 0, imported.stderr)
+        self.assertEqual(imported.stdout.strip(), "package-ready")
+        environment = {key: value for key, value in rollout.os.environ.items() if key != "CAUCE_FLEET_RUNTIME_STATE"}
+        query = subprocess.run([sys.executable, "-I", "-B", "-c",
+            "import runpy,sys; sys.path.insert(0,sys.argv[1]); sys.argv=sys.argv[2:]; "
+            "runpy.run_path(sys.argv[0],run_name='__main__')", str(release / "scripts"),
+            str(release / "scripts/container-alias-query.py"), "iza", "--runtime-key"],
+            capture_output=True, text=True, cwd=temporary.name, env=environment, check=False)
+        self.assertEqual(query.returncode, 0, query.stderr)
+        self.assertEqual(query.stdout.strip(), "iza")
+        dynamic_state = tempfile.TemporaryDirectory(prefix="cauce-pty-applied-", dir="/var/tmp")
+        self.addCleanup(dynamic_state.cleanup)
+        payload = {"agents": [{"tenant_id": "Equipo_42", "alias": "shared_alias", "runtime_key": "physical-one",
+            "primary_room_id": "grp.primary", "harness_id": "codex", "enabled": True,
+            "container_name": "fixture-dynamic", "runtime_user": "dev", "home_directory": "/home/dev",
+            "state_directory": "/home/dev/.local/state/cauce-v3/physical-one"}],
+            "memberships": [{"tenant_id": "Equipo_42", "alias": "shared_alias", "room_id": "grp.primary",
+                             "role": "agent", "enabled": True}], "rolePolicies": [{"role": "agent"}]}
+        materialized = subprocess.run([sys.executable, "-I", "-B", "-c",
+            "import json,pathlib,sys; sys.path.insert(0,sys.argv[1]); "
+            "from fleet_runtime_materialization import materialize; state=pathlib.Path(sys.argv[2]); "
+            "receipt=materialize(json.load(sys.stdin),{},state); "
+            "(state/'applied-fleet.json').write_text(json.dumps(receipt))",
+            str(OPS_ROOT / "scripts"), dynamic_state.name], input=json.dumps(payload), capture_output=True,
+            text=True, cwd=temporary.name, check=False)
+        self.assertEqual(materialized.returncode, 0, materialized.stderr)
+        environment = {**rollout.os.environ, "CAUCE_FLEET_RUNTIME_STATE": dynamic_state.name}
+        for scripts in (OPS_ROOT / "scripts", release / "scripts"):
+            with self.subTest(scripts=scripts):
+                applied_query = subprocess.run([sys.executable, "-I", "-B", "-c",
+                    "import runpy,sys; sys.path.insert(0,sys.argv[1]); sys.argv=sys.argv[2:]; "
+                    "runpy.run_path(sys.argv[0],run_name='__main__')", str(scripts),
+                    str(scripts / "container-alias-query.py"), "Equipo_42/shared_alias", "--runtime-key"],
+                    capture_output=True, text=True, cwd=temporary.name, env=environment, check=False)
+                self.assertEqual(applied_query.returncode, 0, applied_query.stderr)
+                self.assertEqual(applied_query.stdout.strip(), "physical-one")
         old = worker.release_root / ("f" * 64)
         old.mkdir(mode=0o500)
         worker.publish(self.bundle)

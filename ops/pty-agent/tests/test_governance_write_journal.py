@@ -139,9 +139,18 @@ class GovernanceWriteJournalTests(unittest.TestCase):
 
     def test_quiescence_feature_is_only_advertised_with_validated_journal(self) -> None:
         instance = pty_agent.PtyAgent.__new__(pty_agent.PtyAgent)
+        config = self.root / ".claude"
+        config.mkdir(mode=0o700)
+        instance.bundle = {"home": str(self.root), "harness": "claude", "runtime_uid": os.geteuid(),
+                           "runtime_facts": {"claude_config_dir": str(config)}}
         instance.governance_write_journal = None
         self.assertNotIn("write_quiescence_v1", instance._features())
+        self.assertNotIn("native_admin_v1", instance._features())
         instance.governance_write_journal = self.journal
+        self.assertIn("write_quiescence_v1", instance._features())
+        self.assertIn("native_admin_v1", instance._features())
+        instance.bundle["runtime_uid"] = os.geteuid() + 1
+        self.assertNotIn("native_admin_v1", instance._features())
         self.assertIn("write_quiescence_v1", instance._features())
 
     def test_incomplete_descriptor_or_invalid_entry_is_rejected_before_record(self) -> None:

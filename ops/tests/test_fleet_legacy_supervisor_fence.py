@@ -3,6 +3,7 @@ from __future__ import annotations
 import fcntl
 import hashlib
 import importlib
+import importlib.util
 import json
 import os
 import pathlib
