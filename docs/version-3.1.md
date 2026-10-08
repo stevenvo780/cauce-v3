@@ -120,13 +120,12 @@ sobre él, y sólo eso:
 si el humo sale rojo parcial, la columna «Resultado» se corrige a mano en el mismo commit que
 registra la fila, y ese commit es también el que actualiza estos documentos.
 
-La última fila de [HISTORIAL](../deploy/HISTORIAL.md) registra `dc348521`, el 8 de octubre a las
-15:53, hora de Colombia: una actualización sólo de consola con paleta de comandos, cabecera de
-frescura común, contador de atención en la Oficina y un chat sin ráfagas de animación al cambiar
-de conversación. El `deploy.sh` completo sigue detenido antes de cambiar nada porque la copia
-externa de backups al NAS no tiene espacio. La consola usa la imagen
-`sha256:d0c71af5cafedbd48f1b7442a38e68d4f2c5eed6a88f2e2049435f22f2885304` y el runtime sigue en
-la imagen desplegada desde `58f6b0af`.
+La última fila de [HISTORIAL](../deploy/HISTORIAL.md) registra `5f585323`, el 8 de octubre a las
+16:33, hora de Colombia: `deploy.sh` completo que lleva al gateway el buzón de los clientes MCP
+declarados, sin migración sobre el esquema 047. Los nueve servicios quedaron sanos y el smoke
+cerró VERDE. La copia externa de backups pasó a la torre, que la sube a Google Drive. El runtime
+usa la imagen `sha256:ab4deb693bb553d6996bc74a190bff3d3efe7de4db0e99280146ea5c24021bad` y la
+consola `sha256:668cc0493e783ff0ebad3b9d8d85fd92e878b724886d288d4541c2236d66ad67`.
 
 La sesión Steven recargada mostró el grafo primero y la lista cerrada al final. Se comprobó un
 ping canónico de Zeus y su shell; el control se devolvió y la shell se cerró. El journal de Main
