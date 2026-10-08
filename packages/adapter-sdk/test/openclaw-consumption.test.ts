@@ -64,6 +64,18 @@ test("OpenClaw atestigua también el primer turno de una sesión que todavía no
   } finally { await context.clean(); }
 });
 
+test("OpenClaw con backend claude-cli: el pedido repetido justo antes de la respuesta sigue siendo un solo turno", async () => {
+  const context = await home();
+  try {
+    const snapshot = await prepareOpenClawConsumption(context.request, { HOME: context.root });
+    const first = randomUUID();
+    await appendFile(context.file, line({ type: "message", id: first, message: { role: "user", content: context.request.stdin.trim() } })
+      + line({ type: "message", id: randomUUID(), parentId: first, message: { role: "user", content: context.request.stdin.trim() } })
+      + message("assistant", [{ type: "text", text: ANSWER }]));
+    assert.equal((await verifyOpenClawConsumption(snapshot, context.request, context.result()))?.native_turn_id, first);
+  } finally { await context.clean(); }
+});
+
 const NEGATIVE: Readonly<Record<string, (context: Awaited<ReturnType<typeof home>>) => Promise<CommandRunResult | undefined>>> = {
   "la respuesta entregada no es la última del transcript": async (context) => {
     await appendFile(context.file, message("user", context.request.stdin.trim()) + message("assistant", [{ type: "text", text: ANSWER }]));
@@ -81,6 +93,16 @@ const NEGATIVE: Readonly<Record<string, (context: Awaited<ReturnType<typeof home
   "el historial previo fue reescrito": async (context) => {
     await writeFile(context.file, line({ type: "session", id: TRANSCRIPT }) + message("user", "historia cambiada")
       + message("user", context.request.stdin.trim()) + message("assistant", [{ type: "text", text: ANSWER }]), { mode: 0o600 });
+    return undefined;
+  },
+  "otra persona habló entre las dos copias del pedido": async (context) => {
+    await appendFile(context.file, message("user", context.request.stdin.trim()) + message("user", "escrito desde la web")
+      + message("user", context.request.stdin.trim()) + message("assistant", [{ type: "text", text: ANSWER }]));
+    return undefined;
+  },
+  "la segunda copia del pedido no cuelga de la primera": async (context) => {
+    await appendFile(context.file, message("user", context.request.stdin.trim()) + message("user", context.request.stdin.trim())
+      + message("assistant", [{ type: "text", text: ANSWER }]));
     return undefined;
   },
   "el sobre nombra otra sesión": async (context) => {
