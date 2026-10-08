@@ -147,8 +147,15 @@ describe('fleet hosts on PostgreSQL', () => {
     await pool.query("UPDATE agents SET host_id='alpha',runtime_key='placed-key' WHERE alias='placed'");
     await expect(repo.apply('Steven', 'admin', { ...base, action: 'update', value: { host_id: 'beta' } }, false, cleared.revision))
       .rejects.toThrow(/fleet operation/u);
-    await expect(repo.apply('Steven', 'admin', { ...base, action: 'update', value: { host_id: 'alpha', display_name: 'Same' } }, false, cleared.revision))
-      .resolves.toMatchObject({ applied: true });
+    const same = await repo.apply('Steven', 'admin', { ...base, action: 'update', value: { host_id: 'alpha', display_name: 'Same' } }, false, cleared.revision);
+    expect(same).toMatchObject({ applied: true });
+    await pool.query("UPDATE agents SET host_id=NULL WHERE alias='placed'");
+    const recorded = await repo.apply('Steven', 'admin', { ...base, action: 'update', value: { host_id: 'beta' } }, false, same.revision);
+    expect((await pool.query("SELECT host_id FROM agents WHERE alias='placed'")).rows[0]).toEqual({ host_id: 'beta' });
+    await expect(repo.apply('Steven', 'admin', { ...base, action: 'update', value: { host_id: 'alpha' } }, false, recorded.revision))
+      .rejects.toThrow(/fleet operation/u);
+    await expect(repo.apply('Steven', 'admin', { ...base, action: 'update', value: { host_id: null } }, false, recorded.revision))
+      .rejects.toThrow(/fleet operation/u);
   });
 
   it('rolls back only while no host is registered', async () => {
