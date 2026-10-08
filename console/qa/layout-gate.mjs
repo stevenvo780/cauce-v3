@@ -39,6 +39,7 @@ const LISTO = {
   [HILO]: 'main [data-objeto-principal="hilo"] [data-thread-scroll]',
   [`${HILO}?view=context`]: 'main section[aria-label^="Perfil y contexto"] textarea',
   '/messages/Steven/fantasma': 'main [data-state="missing"]',
+  '/observability': 'main #view-panel-senales tbody tr',
   '/terminal': 'main [data-objeto-principal="escenario"] h2',
   [TERMINAL_AGENTE]: 'main [data-objeto-principal="escenario"] h2',
 };
@@ -91,6 +92,7 @@ function medirEnLaPagina() {
   const caja = (nodo) => (nodo ? nodo.getBoundingClientRect() : null);
   const cajaMain = caja(main);
   const cajaBarra = caja(barra);
+  if (!cajaMain || cajaMain.width === 0) throw new Error('Layout measurement requires visible main content');
 
   // A link whose label is display:none contributes no innerText, which is exactly what a screen
   // reader gets: the icon is aria-hidden and title is undefined for every enabled entry. Links of a
@@ -215,13 +217,14 @@ async function medirHojaDeLive(pagina, viewport, medidas, sinMedir, origin) {
  */
 async function medirRuta(pagina, ruta, origin) {
   await pagina.goto(origin + ruta, { waitUntil: 'domcontentloaded', timeout: 30000 });
-  await pagina.locator('main').waitFor({ state: 'visible', timeout: 15000 });
+  const listo = pagina.locator(LISTO[ruta] ?? LISTO_POR_DEFECTO).first();
   await pagina.addStyleTag({ content: SIN_MOVIMIENTO });
-  await pagina.locator(LISTO[ruta] ?? LISTO_POR_DEFECTO).first().waitFor({ state: 'visible', timeout: 30000 });
+  await listo.waitFor({ state: 'visible', timeout: 30000 });
   if (ruta === '/live' && await pagina.locator('main [role="alert"]').first().isVisible()) {
     throw new Error(`Live activity failed before layout measurement: ${(await pagina.locator('main [role="alert"]').first().innerText()).trim()}`);
   }
   await pagina.waitForTimeout(700);
+  await listo.waitFor({ state: 'visible', timeout: 30000 });
   return pagina.evaluate(medirEnLaPagina);
 }
 
@@ -380,20 +383,24 @@ function filtrarRegresiones(resumen, base) {
       const id = `${viewport}.${clave}`;
       if (PERMITE_REGRESION.has(id)) continue;
       resumen[viewport][clave] = tope;
-      rechazos.push(`${id}: kept ${String(tope)} instead of ${String(valor)}; pass --allow-regression=${id} to raise it`);
+      if (valor > tope + TOLERANCIA[clave]) {
+        rechazos.push(`${id}: kept ${String(tope)} instead of ${String(valor)}; pass --allow-regression=${id} to raise it`);
+      }
     }
-    // Per route the tolerance applies here too: refusing raises inside the noise band would print a
-    // wall of refusals with nothing to act on, and the compare pass waves those through anyway.
+    // Noise cannot become a higher floor. The same route tolerance decides whether keeping
+    // the recorded value also rejects the update.
     for (const [ruta, medida] of Object.entries(resumen[viewport].rutas)) {
       const grabada = anterior.rutas?.[ruta];
       for (const clave of CLAVES_RUTA) {
         const valor = medida[clave];
         const tope = grabada?.[clave];
-        if (typeof tope !== 'number' || typeof valor !== 'number' || valor <= tope + TOLERANCIA_RUTA[clave]) continue;
+        if (typeof tope !== 'number' || typeof valor !== 'number' || valor <= tope) continue;
         const id = `${viewport}.${ruta}.${clave}`;
         if (PERMITE_REGRESION.has(id)) continue;
         medida[clave] = tope;
-        rechazos.push(`${id}: kept ${String(tope)} instead of ${String(valor)}; pass --allow-regression=${id} to raise it`);
+        if (valor > tope + TOLERANCIA_RUTA[clave]) {
+          rechazos.push(`${id}: kept ${String(tope)} instead of ${String(valor)}; pass --allow-regression=${id} to raise it`);
+        }
       }
     }
   }

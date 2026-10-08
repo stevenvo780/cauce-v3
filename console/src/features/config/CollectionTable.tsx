@@ -105,7 +105,7 @@ export function CollectionTable({
                 key={columna.clave}
                 data-numero={numericas.has(columna.clave) ? 'true' : undefined}
                 data-inerte={inerte === undefined ? undefined : 'true'}
-                className={cn(numericas.has(columna.clave) && 'text-right', inerte !== undefined && 'opacity-70')}
+                className={cn('whitespace-normal', numericas.has(columna.clave) && 'text-right', inerte !== undefined && 'opacity-70')}
               >
                 <CabeceraConAyuda
                   etiqueta={columna.etiqueta}

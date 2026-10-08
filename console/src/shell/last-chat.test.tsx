@@ -43,6 +43,8 @@ afterEach(() => {
 });
 
 it('keeps the last chat in memory and tells its subscribers once per change', () => {
+  const write = vi.spyOn(Storage.prototype, 'setItem');
+  const remove = vi.spyOn(Storage.prototype, 'removeItem');
   const listener = vi.fn();
   const unsubscribe = subscribeLastChat(listener);
   expect(lastChatPath()).toBeUndefined();
@@ -53,7 +55,8 @@ it('keeps the last chat in memory and tells its subscribers once per change', ()
   unsubscribe();
   rememberChat('/messages/Miguel/kratos');
   expect(listener).toHaveBeenCalledTimes(1);
-  expect(window.localStorage.length + window.sessionStorage.length).toBe(0);
+  expect(write).not.toHaveBeenCalled();
+  expect(remove).not.toHaveBeenCalled();
 });
 
 it('the Chat entry resumes the last chat, and from inside it goes to the launcher', () => {

@@ -3,7 +3,7 @@ import type { AgentRef } from '../../components/agent-actions/agent-actions';
 import type { Vec } from './camera';
 import type { Clipping } from './gesture';
 
-const HINT_KEY = 'cauce.oficina.ayuda-vista';
+let hintRemembered = false;
 
 /** Office ids are `tenant/alias`; tenants never contain a slash. */
 export function agentRefOf(id: string): AgentRef | null {
@@ -29,19 +29,11 @@ export const makeCanvas = (width: number, height: number) => {
 };
 
 export function hintSeen(): boolean {
-  try {
-    return window.localStorage.getItem(HINT_KEY) === '1';
-  } catch {
-    return false;
-  }
+  return hintRemembered;
 }
 
 export function rememberHint(): void {
-  try {
-    window.localStorage.setItem(HINT_KEY, '1');
-  } catch {
-    return;
-  }
+  hintRemembered = true;
 }
 
 /** Short landscape screens keep a strip of page above and below the canvas to scroll with. */

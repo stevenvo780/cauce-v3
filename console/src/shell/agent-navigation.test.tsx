@@ -39,6 +39,8 @@ afterEach(() => {
 });
 
 it.each([1440, 360, 390])('keeps the selected agent across Chat, Terminal and Office at %ipx', async (width) => {
+  const write = vi.spyOn(Storage.prototype, 'setItem');
+  const remove = vi.spyOn(Storage.prototype, 'removeItem');
   viewport(width);
   window.history.pushState({}, '', '/messages/Steven/zeus');
   const user = userEvent.setup();
@@ -62,7 +64,8 @@ it.each([1440, 360, 390])('keeps the selected agent across Chat, Terminal and Of
   await screen.findByRole('heading', { level: 2, name: 'kratos' });
   await user.click(nav('Chat'));
   expect(window.location.pathname).toBe('/messages');
-  expect(window.localStorage.length + window.sessionStorage.length).toBe(0);
+  expect(write).not.toHaveBeenCalled();
+  expect(remove).not.toHaveBeenCalled();
 });
 
 it.each([1440, 390])('explicit terminal identity overrides older chat memory and survives Office at %ipx', async (width) => {
