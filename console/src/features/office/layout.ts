@@ -1,4 +1,5 @@
 import { GARDEN_CORE_H, buildGarden } from './garden-layout';
+import { receptionSpots } from './reception';
 
 /** Tile edge, in art pixels. */
 export { TILE } from './tile';
@@ -92,6 +93,8 @@ export interface OfficeLayout {
   beds: Spot[];
   play: Spot[];
   door: Spot;
+  /** Where visitors wait, just inside the door. */
+  waiting: Spot[];
   /** Standing places in front of the coffee machine. */
   coffee: Spot[];
   /** Where people without work spend their time, by activity. */
@@ -426,9 +429,16 @@ export function buildLayout(params: LayoutParams): OfficeLayout {
   }
   const door: Spot = { tile: { x: doorX, y: top }, px: { x: doorX * TILE + TILE / 2 + (gap > 1 ? TILE / 2 : 0), y: top * TILE + TILE - 3 }, dir: 'down' };
 
+  // Visitors wait in the open garden: inside the work room their tags covered the first desk row.
+  const waiting = receptionSpots(walkable, cols, garden, { x: gardenDoors[0] ?? garden.x, y: garden.y }, desks.map((desk) => desk.visit.tile));
+  if (waiting.length > 1 && waiting.every((spot) => spot.tile.y === waiting[0].tile.y)) {
+    const xs = waiting.map((spot) => spot.tile.x);
+    zones.push({ kind: 'rug', x: Math.min(...xs), y: waiting[0].tile.y, w: Math.max(...xs) - Math.min(...xs) + 1, h: 1 });
+  }
+
   return {
     cols, rows, walkable, rooms: [rooms.programadores, rooms.cocina, rooms.patio, garden, rooms.dormitorio],
-    desks, furniture, wall, zones, beds, play, door, coffee, pet: outside.pet,
+    desks, furniture, wall, zones, beds, play, door, waiting, coffee, pet: outside.pet,
     routine: { ...fixed, coffee, play, water, sweep, stroll },
   };
 }

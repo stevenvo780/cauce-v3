@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent, type PointerEvent, type ReactNode } from 'react';
 import { ContextMenu } from '@base-ui/react/context-menu';
-import { pixelIconName } from '@cauce/protocol/agent-preferences';
+import { pixelIconName, type AgentAppearanceStyle } from '@cauce/protocol/agent-preferences';
 import { FloatingTooltip } from '../../components/ui';
 import { isContextMenuKey, openContextMenuAt } from '../../components/agent-actions/agent-actions';
 import { AgentActionItems } from '../../components/agent-actions/AgentActionsMenu';
@@ -26,7 +26,11 @@ import { agentRefOf, clientPointOf, clippingOf, hintSeen, makeCanvas, rememberHi
 import { DirectionPad, OfficeControls, OfficeHint } from './OfficeControls';
 import type { TapMarker } from './people';
 import { createScene, drawFrame, lookOf, screenBox } from './scene';
-import { createWorld, stepWorld, syncWorld, type ActorInput } from './simulation';
+import { actorInputs } from './actor-inputs';
+import { useNight } from './daylight';
+import { useOfficeLooks } from './use-office-looks';
+import { useCapacity, useSlots } from './use-office-slots';
+import { createWorld, stepWorld, syncWorld } from './simulation';
 import { readingOrder, spatialNext } from './spatial';
 
 export interface OfficeAgent {
@@ -38,6 +42,8 @@ export interface OfficeAgent {
   /** The fleet's chosen look: the hue dresses the character and the glyph rides on its name tag. */
   glyph?: string | null;
   hue?: number | null;
+  /** The chosen style decides the accessory: scarf, headphones or cap; the orb wears none. */
+  style?: AgentAppearanceStyle | null;
   awake?: boolean;
   /** A declared MCP client: no desk work, no agent actions, talking leaves a mailbox note. */
   visitor?: boolean;
@@ -121,7 +127,11 @@ export function OfficeCanvas({ agents, selectedId, highlight, onSelect, label, o
   const [counts, setCounts] = useState<RoomCounts>({});
 
   const ordered = useMemo(() => [...agents].sort((a, b) => a.id.localeCompare(b.id)), [agents]);
-  const choice = useMemo(() => chooseLayout(ordered.length, box), [ordered.length, box]);
+  const fleet = useMemo(() => ordered.filter((agent) => !agent.visitor), [ordered]);
+  const visitors = useMemo(() => ordered.filter((agent) => agent.visitor), [ordered]);
+  const capacity = useCapacity(fleet.length);
+  const deskOf = useSlots(useMemo(() => fleet.map((agent) => agent.id), [fleet]), capacity);
+  const choice = useMemo(() => chooseLayout(capacity, box), [capacity, box]);
   const layout = useMemo(() => buildLayout(choice.params), [choice.params]);
   const artW = layout.cols * TILE;
   const artH = layout.rows * TILE;
@@ -141,19 +151,10 @@ export function OfficeCanvas({ agents, selectedId, highlight, onSelect, label, o
     inset: NO_INSET, pendingWalk: 0, marker: null, flying: false, mapAt: 0,
   }), [layout]);
 
+  const waitOf = useSlots(useMemo(() => visitors.map((agent) => agent.id), [visitors]));
   useEffect(() => {
-    const desks = new Map(ordered.map((agent, index) => [agent.id, index]));
-    const inputs: ActorInput[] = ordered.map((agent, index) => ({
-      id: agent.id,
-      state: agent.state,
-      sleepy: agent.state === 'idle' && agent.awake !== true,
-      desk: index,
-      delegateDesk: agent.state === 'delegating'
-        ? agent.delegatesTo.map((target) => desks.get(target)).find((desk) => desk !== undefined) ?? null
-        : null,
-    }));
-    syncWorld(world, inputs);
-  }, [world, ordered]);
+    syncWorld(world, actorInputs(ordered, deskOf, waitOf));
+  }, [world, ordered, deskOf, waitOf]);
 
   const live = useRef({ selectedId, hoverId: hoverId ?? cursorId, highlight, names: new Map<string, string>(), paseo, view, limits, onSelect, speech, talkId: null as string | null, states: new Map<string, LiveState>() });
   live.current = {
@@ -162,13 +163,11 @@ export function OfficeCanvas({ agents, selectedId, highlight, onSelect, label, o
     names: new Map(ordered.map((agent) => [agent.id, agent.glyph && pixelIconName(agent.glyph) === undefined ? `${agent.glyph} ${agent.name}` : agent.name])),
   };
 
-  const scene = useMemo(() => (typeof document === 'undefined' ? null : createScene(layout, world, makeCanvas)), [layout, world]);
+  const night = useNight();
+  const scene = useMemo(() => (typeof document === 'undefined' ? null : createScene(layout, world, makeCanvas, night)), [layout, world, night]);
   const kickRef = useRef<() => void>(() => undefined);
-  useEffect(() => {
-    scene?.sprites.setHues(new Map(ordered.flatMap((agent) => (agent.hue === undefined || agent.hue === null ? [] : [[agent.id, agent.hue]]))));
-    kickRef.current();
-  }, [scene, ordered]);
   const kick = useCallback(() => { kickRef.current(); }, []);
+  useOfficeLooks(scene, ordered, kick);
 
   const clamp = useCallback((cam: Camera) => clampCamera(cam, live.current.view, worldSize, live.current.limits, engine.inset), [worldSize, engine]);
 
@@ -442,8 +441,8 @@ export function OfficeCanvas({ agents, selectedId, highlight, onSelect, label, o
     const point = screenToWorld(engine.cam, size, screen);
     const desk = layout.desks.findIndex((slot) => point.x >= slot.x * TILE && point.x < slot.x * TILE + 32
       && point.y >= Math.min(slot.deskY, slot.chairY) * TILE && point.y < (Math.max(slot.deskY, slot.chairY) + 1) * TILE);
-    return desk >= 0 && desk < ordered.length ? ordered[desk].id : null;
-  }, [world, engine, layout, ordered]);
+    return desk >= 0 ? fleet.find((agent) => deskOf.get(agent.id) === desk)?.id ?? null : null;
+  }, [world, engine, layout, fleet, deskOf]);
 
   const boxOf = useCallback((id: string): DOMRect | null => {
     const canvas = canvasRef.current;

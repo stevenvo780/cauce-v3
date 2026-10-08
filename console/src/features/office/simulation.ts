@@ -1,6 +1,6 @@
 import type { LiveState } from '../live/agent-state';
 import { behaviourFor, type Behaviour, type BubbleKind, type Pose } from './behaviour';
-import { TILE, type Activity, type Dir, type OfficeLayout, type Point, type Spot } from './layout';
+import { TILE, type Activity, type DeskSlot, type Dir, type OfficeLayout, type Point, type Spot } from './layout';
 import { findPath } from './pathfinding';
 import { seedOf, seededRandom } from './random';
 import { scheduleRoutine } from './routine';
@@ -15,7 +15,12 @@ export interface ActorInput {
   state: LiveState;
   /** Idle long enough that a nap in the dormitory is on the cards. */
   sleepy?: boolean;
+  /** Fleet desk index; visitors have none (-1). */
   desk: number;
+  /** A declared MCP client: waits at reception instead of taking a desk or a bed. */
+  visitor?: boolean;
+  /** Which reception spot a visitor waits at. */
+  wait?: number;
   /** Desk index of the agent this one is handing work to, when delegating. */
   delegateDesk?: number | null;
 }
@@ -25,11 +30,15 @@ export type Carry = 'paper' | 'box' | null;
 type Step =
   | { kind: 'goto'; spot: Spot; carry: Carry }
   | { kind: 'act'; pose: Pose; seconds: number; bubble: BubbleKind; dir?: Dir }
-  | { kind: 'repeat'; from: number };
+  | { kind: 'repeat'; from: number }
+  | { kind: 'exit' };
 
 export interface Actor {
   id: string;
   desk: number;
+  visitor: boolean;
+  /** Walking to the door; removed on arrival. */
+  leaving: boolean;
   state: LiveState;
   behaviour: Behaviour;
   activity: Activity | null;
@@ -60,10 +69,12 @@ export interface World {
   time: number;
   inputs: readonly ActorInput[];
   nextRoutine: number;
+  /** After the first populated sync, arrivals walk in from the door instead of appearing in place. */
+  populated: boolean;
 }
 
 export function createWorld(layout: OfficeLayout, reducedMotion = false, now = Date.now() / 1000): World {
-  return { layout, actors: new Map(), reducedMotion, time: now, inputs: [], nextRoutine: now + 1 };
+  return { layout, actors: new Map(), reducedMotion, time: now, inputs: [], nextRoutine: now + 1, populated: false };
 }
 
 const tileOf = (x: number, y: number): Point => ({ x: Math.floor(x / TILE), y: Math.floor((y - 1) / TILE) });
@@ -79,12 +90,12 @@ const POSE: Readonly<Record<Activity, Pose>> = {
 
 /** The script a person follows for their current state, ending in an endless act or a loop. */
 export function planFor(actor: Actor, layout: OfficeLayout): Step[] {
-  const desk = layout.desks[actor.desk];
+  const desk = layout.desks[actor.desk] as DeskSlot | undefined;
   const behaviour = actor.behaviour;
   const goto = (spot: Spot, carry: Carry = null): Step => ({ kind: 'goto', spot, carry });
   const act = (pose: Pose, seconds: number, dir?: Dir, bubble: BubbleKind = null): Step => ({ kind: 'act', pose, seconds, bubble, dir });
 
-  if (behaviour.errand === 'deliver' && actor.delegateDesk !== null && layout.desks[actor.delegateDesk]) {
+  if (desk && behaviour.errand === 'deliver' && actor.delegateDesk !== null && layout.desks[actor.delegateDesk]) {
     const target = layout.desks[actor.delegateDesk].visit;
     return [
       goto(desk.seat),
@@ -148,6 +159,10 @@ function enter(world: World, actor: Actor): void {
     enter(world, actor);
     return;
   }
+  if (step.kind === 'exit') {
+    world.actors.delete(actor.id);
+    return;
+  }
   if (step.kind === 'act') {
     actor.pose = step.pose;
     actor.bubble = step.bubble;
@@ -181,39 +196,66 @@ function advance(world: World, actor: Actor): void {
   enter(world, actor);
 }
 
+const waitingSpot = (layout: OfficeLayout, slot: number): Spot | undefined => layout.waiting[slot % Math.max(1, layout.waiting.length)];
+
+function restOf(layout: OfficeLayout, input: ActorInput, errand?: { spot: Spot }): Spot {
+  if (input.visitor) return waitingSpot(layout, input.wait ?? 0) ?? layout.door;
+  return errand?.spot ?? (layout.desks[input.desk] as DeskSlot | undefined)?.seat ?? layout.door;
+}
+
+function leave(world: World, actor: Actor): void {
+  if (world.reducedMotion || actor.state === 'down') {
+    world.actors.delete(actor.id);
+    return;
+  }
+  Object.assign(actor, { leaving: true, desk: -1, delegateDesk: null, activity: null });
+  actor.steps = [{ kind: 'goto', spot: world.layout.door, carry: null }, { kind: 'exit' }];
+  actor.stepIndex = 0;
+  actor.carry = null;
+  enter(world, actor);
+}
+
 /** Adds, updates and removes people so the office matches the fleet. Unchanged people keep walking. */
 export function syncWorld(world: World, inputs: readonly ActorInput[]): void {
   world.inputs = inputs;
   const seen = new Set<string>();
   const ordered = [...inputs].sort((a, b) => a.id.localeCompare(b.id));
-  const idlers = ordered.filter((input) => behaviourFor(input.state).rest === 'routine')
+  const idlers = ordered.filter((input) => !input.visitor && behaviourFor(input.state).rest === 'routine')
     .map((input) => ({ id: input.id, desk: input.desk, sleepy: input.sleepy === true }));
   const routine = scheduleRoutine(world.layout, idlers, world.time);
+  const arriving = world.populated;
   for (const input of ordered) {
     seen.add(input.id);
-    const behaviour = behaviourFor(input.state);
-    const errand = routine.get(input.id);
-    const rest = errand?.spot ?? world.layout.desks[input.desk].seat;
+    const visitor = input.visitor === true;
+    const behaviour = behaviourFor(visitor && input.state !== 'down' ? 'idle' : input.state);
+    const errand = visitor ? undefined : routine.get(input.id);
+    const rest = restOf(world.layout, input, errand);
     const activity = errand?.activity ?? null;
-    const delegateDesk = input.delegateDesk ?? null;
+    const delegateDesk = visitor ? null : input.delegateDesk ?? null;
     const existing = world.actors.get(input.id);
-    if (existing?.state === input.state && existing.behaviour === behaviour && existing.desk === input.desk
+    if (existing && !existing.leaving && existing.state === input.state && existing.behaviour === behaviour && existing.desk === input.desk
       && existing.delegateDesk === delegateDesk && existing.activity === activity && sameSpot(existing.rest, rest)) continue;
     if (existing) {
-      Object.assign(existing, { state: input.state, behaviour, desk: input.desk, delegateDesk, rest, activity });
+      Object.assign(existing, { state: input.state, behaviour, desk: input.desk, visitor, leaving: false, delegateDesk, rest, activity });
       begin(world, existing, false);
       continue;
     }
     const actor: Actor = {
-      id: input.id, desk: input.desk, state: input.state, behaviour, delegateDesk, activity,
+      id: input.id, desk: input.desk, visitor, leaving: false, state: input.state, behaviour, delegateDesk, activity,
       x: 0, y: 0, dir: 'down', pose: 'stand', bubble: null, carry: null,
       clock: 0, walked: 0, waypoints: [], steps: [], stepIndex: 0, timer: 0, rest,
       random: seededRandom(seedOf(input.id)),
     };
+    if (arriving) {
+      actor.x = world.layout.door.px.x;
+      actor.y = world.layout.door.px.y;
+      actor.dir = 'down';
+    }
     world.actors.set(input.id, actor);
-    begin(world, actor, true);
+    begin(world, actor, !arriving);
   }
-  for (const id of [...world.actors.keys()]) if (!seen.has(id)) world.actors.delete(id);
+  for (const actor of [...world.actors.values()]) if (!seen.has(actor.id) && !actor.leaving) leave(world, actor);
+  if (inputs.length > 0) world.populated = true;
 }
 
 export function stepWorld(world: World, dt: number): void {
