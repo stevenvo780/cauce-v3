@@ -3,8 +3,13 @@ set -euo pipefail
 umask 077
 
 alias_name=${1:?usage: alias-runner.sh ALIAS}
-[[ $alias_name =~ ^[a-z][a-z0-9-]*$ ]] || { printf 'invalid alias\n' >&2; exit 2; }
-[[ ${CAUCE_ALIAS:-} == "$alias_name" ]] || { printf 'unit alias mismatch\n' >&2; exit 2; }
+[[ $alias_name =~ ^[a-z][a-z0-9-]{0,63}$ ]] || { printf 'invalid alias\n' >&2; exit 2; }
+[[ ${CAUCE_RUNTIME_KEY:-${CAUCE_ALIAS:-}} == "$alias_name" ]] || { printf 'unit alias mismatch\n' >&2; exit 2; }
+if [[ -v CAUCE_RUNTIME_KEY || -v CAUCE_TENANT_ID ]]; then
+  [[ ${CAUCE_RUNTIME_KEY:-} == "$alias_name" && ${CAUCE_ALIAS:-} =~ ^[a-z][a-z0-9_-]{0,63}$ \
+     && ${CAUCE_TENANT_ID:-} =~ ^[A-Za-z][A-Za-z0-9_-]{0,63}$ ]] \
+    || { printf 'unit wire identity is invalid or incomplete\n' >&2; exit 2; }
+fi
 [[ ${CAUCE_ORIGIN_TRANSPORT:-} == telegram ]] || { printf 'origin transport must be telegram\n' >&2; exit 2; }
 [[ ${CAUCE_ENVIRONMENT:-} == production ]] || { printf 'alias runtime must use production transport policy\n' >&2; exit 2; }
 [[ ${CAUCE_INSTANCE_ID:-} == "systemd-$alias_name" ]] || { printf 'alias instance id is not stable\n' >&2; exit 2; }

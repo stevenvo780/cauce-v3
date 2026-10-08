@@ -12,7 +12,8 @@ from jsonschema import Draft202012Validator
 from schema_diagnostics import safe_schema_diagnostic, schema_error_sort_key
 
 ENV_RE = re.compile(r"^CAUCE_[A-Z0-9_]+_(?:PATH|URL)$")
-ALIAS_RE = re.compile(r"^[a-z][a-z0-9-]*$")
+ALIAS_RE = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
+RUNTIME_KEY_RE = re.compile(r"^[a-z][a-z0-9-]{0,63}$")
 TOP_KEYS = {"apiVersion", "kind", "metadata", "spec"}
 SPEC_KEYS = {
     "tenant", "room", "alias", "harness", "profile", "origin", "relay",
@@ -58,11 +59,15 @@ def validate_manifest(
     alias = spec["alias"]
     if not isinstance(alias, str) or not ALIAS_RE.fullmatch(alias):
         raise ManifestError(f"{source}: invalid alias")
-    if metadata["name"] != alias or source.stem != alias:
-        raise ManifestError(f"{source}: filename, metadata.name and spec.alias must match")
-    if alias not in assignments:
+    runtime_key = metadata["name"]
+    if not isinstance(runtime_key, str) or RUNTIME_KEY_RE.fullmatch(runtime_key) is None \
+            or source.stem != runtime_key:
+        raise ManifestError(f"{source}: filename and metadata.name must match a valid runtime key")
+    if runtime_key not in assignments:
         raise ManifestError(f"{source}: alias is not in the declarative fleet inventory")
-    assignment = assignments[alias]
+    assignment = assignments[runtime_key]
+    if alias != assignment.get("alias", runtime_key):
+        raise ManifestError(f"{source}: spec.alias differs from the fleet wire identity")
     tenant, room, harness = assignment["tenant"], assignment["room"], assignment["harness"]
     if (spec["tenant"], spec["room"], spec["harness"]) != (tenant, room, harness):
         raise ManifestError(f"{source}: tenant/room/harness differs from the fleet assignment")
@@ -83,7 +88,7 @@ def validate_manifest(
     exact_keys(relay, {"urlPathEnv", "requiredScheme"}, f"{source}.spec.relay")
     if relay["requiredScheme"] != "wss":
         raise ManifestError(f"{source}: adapters must require wss")
-    prefix = f"CAUCE_{alias.upper().replace('-', '_')}"
+    prefix = f"CAUCE_{runtime_key.upper().replace('-', '_')}"
     env_name(relay["urlPathEnv"], f"{prefix}_RELAY_URL", f"{source}.spec.relay.urlPathEnv")
     secrets = require_mapping(spec["secretPathEnv"], f"{source}.spec.secretPathEnv")
     exact_keys(secrets, SECRET_KEYS, f"{source}.spec.secretPathEnv")
@@ -97,13 +102,16 @@ def validate_manifest(
     env_name(process["executablePathEnv"], f"{prefix}_EXEC_PATH", f"{source}.executablePathEnv")
     if harness == "hermes" and process["operationalModelEnv"] != "HERMES_INFERENCE_MODEL":
         raise ManifestError(f"{source}: Hermes operationalModelEnv must be HERMES_INFERENCE_MODEL")
-    if spec["stateDirectory"] != f"/var/lib/cauce-v3/aliases/{alias}":
+    if spec["stateDirectory"] != f"/var/lib/cauce-v3/aliases/{runtime_key}":
         raise ManifestError(f"{source}: stateDirectory must be alias-scoped")
     return root
 
 
 def load_manifests(root: pathlib.Path) -> list[dict[str, Any]]:
-    assignments = load_fleet_assignments(root)
+    from fleet_runtime_inventory import inventory_root
+
+    root = inventory_root(root)
+    assignments = load_fleet_assignments(root, resolve_runtime=False, allow_empty=True)
     schema = root / "schemas" / "alias-manifest.schema.json"
     with schema.open(encoding="utf-8") as stream:
         schema_document = json.load(stream)

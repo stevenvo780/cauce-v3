@@ -8,16 +8,21 @@ import re
 import stat
 from typing import Any
 
+from fleet_derive import ROOM_PATTERN, RUNTIME_KEY_PATTERN
+from fleet_runtime_inventory import inventory_root
+
 FIELDS = ("tenant", "room", "container", "user", "home", "stateDirectory", "harness")
 ALIAS_REQUIRED_FIELDS = (*FIELDS, "membershipRole", "systemdUser")
-ALIAS_OPTIONAL_FIELDS = ("registryContainer", "workspace", "dockerHost")
+ALIAS_OPTIONAL_FIELDS = ("registryContainer", "workspace", "dockerHost", "alias", "bootstrap", "admission", "enabled")
 PRINCIPAL_FIELDS = ("tenant", "room", "membershipRole")
 NAME_RE = re.compile(r"^[a-z][a-z0-9.-]*$")
+HOST_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,63}$")
+USER_RE = re.compile(r"^[a-z_][a-z0-9_.-]{0,63}$")
+WIRE_ALIAS_RE = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 PLACEMENT_RE = re.compile(r"^(?:[a-z][a-z0-9.-]*|host:[a-z][a-z0-9.-]*)$")
 TENANT_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{0,63}$")
-ROOM_RE = re.compile(r"^grp\.[a-z][a-z0-9_-]{0,63}$")
+ROOM_RE = ROOM_PATTERN
 HARNESS = {"openclaw", "opencode", "claude", "hermes", "codex", "grok", "muse"}
-MEMBERSHIP_ROLES = {"agent", "agent_notify", "operator"}
 MAX_INVENTORY_BYTES = 1024 * 1024
 READ_CHUNK_BYTES = 65536
 
@@ -50,6 +55,13 @@ def _absolute_path(value: Any, label: str) -> str:
     path = pathlib.PurePosixPath(value)
     if str(path) != value or ".." in path.parts or "." in path.parts:
         raise ContainerAliasError(f"{label} must be a canonical absolute path")
+    return value
+
+
+def _role(value: Any, label: str) -> str:
+    if not isinstance(value, str) or not 1 <= len(value) <= 64 or value != value.strip() \
+            or any(ord(character) < 0x20 or ord(character) == 0x7F for character in value):
+        raise ContainerAliasError(f"{label} is invalid")
     return value
 
 
@@ -102,7 +114,9 @@ def read_alias_entry(
     return aliases, entry
 
 
-def _document(root: pathlib.Path, *, hardened: bool = False) -> dict[str, Any]:
+def _document(root: pathlib.Path, *, hardened: bool = False, resolve_runtime: bool = True) -> dict[str, Any]:
+    if resolve_runtime:
+        root = inventory_root(root)
     source = root / "container-aliases.json"
     document = _mapping(json.loads(_read_source(source, hardened)), str(source))
     if (
@@ -117,17 +131,22 @@ def _document(root: pathlib.Path, *, hardened: bool = False) -> dict[str, Any]:
 
 
 def load_container_aliases(
-    root: pathlib.Path, *, hardened: bool = False
-) -> dict[str, dict[str, str]]:
-    document = _document(root, hardened=hardened)
+    root: pathlib.Path, *, hardened: bool = False, resolve_runtime: bool = True, allow_empty: bool = False,
+    allow_bootstrap: bool = False,
+) -> dict[str, dict[str, Any]]:
+    document = _document(root, hardened=hardened, resolve_runtime=resolve_runtime)
     aliases = _mapping(document["aliases"], "aliases")
-    if not aliases:
+    if not aliases and not allow_empty:
         raise ContainerAliasError("container alias mapping must not be empty")
     validated: dict[str, dict[str, str]] = {}
     for alias in sorted(aliases):
-        if not NAME_RE.fullmatch(alias):
+        if not RUNTIME_KEY_PATTERN.fullmatch(alias):
             raise ContainerAliasError(f"invalid alias: {alias}")
         entry = _mapping(aliases[alias], alias)
+        if {"bootstrap", "admission", "enabled"} & set(entry):
+            if entry.get("bootstrap") is not True or entry.get("admission") is not False \
+                    or entry.get("enabled") is not False or not allow_bootstrap:
+                raise ContainerAliasError(f"{alias}: bootstrap aliases do not admit runtime launch")
         if set(entry) - set(ALIAS_REQUIRED_FIELDS) - set(ALIAS_OPTIONAL_FIELDS) or set(
             ALIAS_REQUIRED_FIELDS
         ) - set(entry):
@@ -141,67 +160,77 @@ def load_container_aliases(
             raise ContainerAliasError(f"{alias}.tenant is invalid")
         if not isinstance(entry["room"], str) or not ROOM_RE.fullmatch(entry["room"]):
             raise ContainerAliasError(f"{alias}.room is invalid")
-        for field in ("container", "user", "systemdUser"):
-            if not isinstance(entry[field], str) or not NAME_RE.fullmatch(entry[field]):
+        logical_alias = entry.get("alias", alias)
+        if not isinstance(logical_alias, str) or WIRE_ALIAS_RE.fullmatch(logical_alias) is None:
+            raise ContainerAliasError(f"{alias}.alias is invalid")
+        for field, pattern in (("container", NAME_RE), ("user", USER_RE), ("systemdUser", USER_RE)):
+            if not isinstance(entry[field], str) or not pattern.fullmatch(entry[field]):
                 raise ContainerAliasError(f"{alias}.{field} is invalid")
         for field in ("home", "stateDirectory"):
             _absolute_path(entry[field], f"{alias}.{field}")
         if entry["harness"] not in HARNESS:
             raise ContainerAliasError(f"{alias}.harness is invalid")
-        if entry["membershipRole"] not in MEMBERSHIP_ROLES:
-            raise ContainerAliasError(f"{alias}.membershipRole is invalid")
+        _role(entry["membershipRole"], f"{alias}.membershipRole")
         registry_container = entry.get("registryContainer", entry["container"])
         if not isinstance(registry_container, str) or not PLACEMENT_RE.fullmatch(
             registry_container
         ):
             raise ContainerAliasError(f"{alias}.registryContainer is invalid")
         docker_host = entry.get("dockerHost", "local")
-        if not isinstance(docker_host, str) or not NAME_RE.fullmatch(docker_host):
+        if not isinstance(docker_host, str) or not HOST_RE.fullmatch(docker_host):
             raise ContainerAliasError(f"{alias}.dockerHost is invalid")
         workspace = entry.get("workspace")
         if entry["harness"] == "openclaw" or (entry["harness"] == "muse" and workspace is not None):
             _absolute_path(workspace, f"{alias}.workspace")
         elif workspace is not None:
             raise ContainerAliasError(f"{alias}.workspace is only valid for openclaw or muse")
-        # The persistent mount that backs the state directory is no longer pinned here:
-        # every real container keeps the alias state inside a broad persistent bind, so the
-        # supervisor discovers the containing bind/volume from `docker inspect` at runtime.
         validated[alias] = {
             **{field: str(entry[field]) for field in ALIAS_REQUIRED_FIELDS},
             "registryContainer": registry_container,
             "dockerHost": docker_host,
             **({"workspace": str(workspace)} if workspace is not None else {}),
+            **({"alias": logical_alias} if logical_alias != alias else {}),
+            **({"bootstrap": True, "admission": False, "enabled": False} if "bootstrap" in entry else {}),
         }
     return validated
 
 
-def load_system_principals(root: pathlib.Path) -> dict[str, dict[str, str]]:
+def validate_principal_entry(key: str, raw_entry: Any) -> dict[str, Any]:
+    if not isinstance(key, str) or not RUNTIME_KEY_PATTERN.fullmatch(key):
+        raise ContainerAliasError(f"invalid system principal: {key}")
+    label = f"systemPrincipals.{key}"
+    entry = _mapping(raw_entry, label)
+    required = {"tenant", "memberships"} if "memberships" in entry else set(PRINCIPAL_FIELDS)
+    if set(entry) - required - {"alias"} or required - set(entry):
+        raise ContainerAliasError(f"{label} has invalid identity or membership fields")
+    if not isinstance(entry["tenant"], str) or not TENANT_RE.fullmatch(entry["tenant"]):
+        raise ContainerAliasError(f"{label}.tenant is invalid")
+    logical = entry.get("alias", key)
+    if not isinstance(logical, str) or WIRE_ALIAS_RE.fullmatch(logical) is None:
+        raise ContainerAliasError(f"{label}.alias is invalid")
+    rows = entry.get("memberships", [{"room": entry.get("room"), "membershipRole": entry.get("membershipRole")}])
+    if not isinstance(rows, list) or not rows:
+        raise ContainerAliasError(f"{label}.memberships must be non-empty")
+    rooms = set()
+    for row in rows:
+        member = _mapping(row, f"{label}.membership")
+        if set(member) != {"room", "membershipRole"}:
+            raise ContainerAliasError(f"{label}.membership has invalid fields")
+        if not isinstance(member["room"], str) or not ROOM_RE.fullmatch(member["room"]) \
+                or member["room"] in rooms:
+            raise ContainerAliasError(f"{label}.membership.room is invalid or duplicated")
+        rooms.add(member["room"])
+        _role(member["membershipRole"], f"{label}.membershipRole")
+    return dict(entry)
+
+
+def load_system_principals(root: pathlib.Path) -> dict[str, dict[str, Any]]:
     document = _document(root)
     principals = _mapping(document["systemPrincipals"], "systemPrincipals")
-    validated: dict[str, dict[str, str]] = {}
-    for alias in sorted(principals):
-        if not NAME_RE.fullmatch(alias):
-            raise ContainerAliasError(f"invalid system principal: {alias}")
-        entry = _mapping(principals[alias], f"systemPrincipals.{alias}")
-        if set(entry) != set(PRINCIPAL_FIELDS):
-            raise ContainerAliasError(
-                f"system principal {alias} must have exact fields {PRINCIPAL_FIELDS}"
-            )
-        if not isinstance(entry["tenant"], str) or not TENANT_RE.fullmatch(
-            entry["tenant"]
-        ):
-            raise ContainerAliasError(f"system principal {alias}.tenant is invalid")
-        if not isinstance(entry["room"], str) or not ROOM_RE.fullmatch(entry["room"]):
-            raise ContainerAliasError(f"system principal {alias}.room is invalid")
-        if entry["membershipRole"] not in MEMBERSHIP_ROLES:
-            raise ContainerAliasError(
-                f"system principal {alias}.membershipRole is invalid"
-            )
-        validated[alias] = {field: str(entry[field]) for field in PRINCIPAL_FIELDS}
+    validated = {key: validate_principal_entry(key, principals[key]) for key in sorted(principals)}
     overlap = set(validated) & set(load_container_aliases(root))
     if overlap:
         raise ContainerAliasError(
             f"system principals overlap fleet aliases: {sorted(overlap)}"
         )
     return validated
-

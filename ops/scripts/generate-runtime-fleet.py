@@ -35,11 +35,11 @@ def load_source(path: pathlib.Path) -> tuple[dict[str, dict[str, Any]], dict[str
         raise GeneratorError("fleet snapshot must use schemaVersion 1")
     fleet = document.get("fleet")
     placement = document.get("placement")
-    if not isinstance(fleet, dict) or not fleet:
-        raise GeneratorError("fleet snapshot must contain a non-empty fleet object")
+    if not isinstance(fleet, dict):
+        raise GeneratorError("fleet snapshot must contain a fleet object")
     if not isinstance(placement, dict):
         raise GeneratorError("fleet snapshot must contain a placement object")
-    unknown_placement = set(placement) - set(fleet)
+    unknown_placement = set(placement) - set(fleet) - set(document.get("bootstrap", {}))
     if unknown_placement:
         raise GeneratorError(f"placement references unknown aliases: {sorted(unknown_placement)}")
     for alias, row in fleet.items():
@@ -56,6 +56,8 @@ def render(fleet: dict[str, dict[str, Any]], placement: dict[str, dict[str, Any]
             **{field: entry[field] for field in ENTRY_FIELDS},
             "enabled": True,
         }
+        if "alias" in entry:
+            aliases[alias]["alias"] = entry["alias"]
     document = {"schemaVersion": 1, "aliases": aliases}
     return (json.dumps(document, sort_keys=True, indent=2, ensure_ascii=False) + "\n").encode()
 

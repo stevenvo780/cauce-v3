@@ -13,11 +13,30 @@ from __future__ import annotations
 
 import json
 import pathlib
+import re
 from collections.abc import Mapping
 from typing import Any
 
 SYSTEMD_USER = "stev"
 HOST_STATE_DIRECTORY = "/var/lib/cauce-v3/aliases/{alias}"
+WIRE_ALIAS_PATTERN = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
+RUNTIME_KEY_PATTERN = re.compile(r"^[a-z][a-z0-9-]{0,63}$")
+ROOM_PATTERN = re.compile(r"^[^\x00-\x1f\x7f]{1,128}$")
+
+
+def wire_alias(runtime_key: str, row: Mapping[str, Any]) -> str:
+    if not isinstance(runtime_key, str) or RUNTIME_KEY_PATTERN.fullmatch(runtime_key) is None:
+        raise ValueError("invalid physical runtime key")
+    value = row.get("alias", runtime_key)
+    if not isinstance(value, str) or WIRE_ALIAS_PATTERN.fullmatch(value) is None:
+        raise ValueError(f"invalid wire alias for runtime key: {runtime_key}")
+    return value
+
+
+def room_id(value: Any) -> str:
+    if not isinstance(value, str) or ROOM_PATTERN.fullmatch(value) is None or value != value.strip():
+        raise ValueError("invalid durable room identifier")
+    return value
 
 _LOCAL_RUNTIME_STATE_DIRECTORY = "{home}/.local/state/cauce-v3/{alias}"
 _OPENCLAW_RUNTIME_STATE_DIRECTORY = "{home}/.openclaw/cauce-v3/{alias}"
@@ -134,7 +153,7 @@ def alias_entry(
     """Project one snapshot row and its physical overlay into schema v2."""
     entry: dict[str, Any] = {
         "tenant": row["tenant"],
-        "room": row["room"],
+        "room": room_id(row["room"]),
         "container": row["container"] if row["container"].startswith(("host:", "vm:"))
         else placement.get("healthContainer", row["container"]),
     }
@@ -154,11 +173,17 @@ def alias_entry(
         "harness": row["harness"],
         "membershipRole": row["role"],
     })
+    logical_alias = wire_alias(alias, row)
+    if logical_alias != alias:
+        entry["alias"] = logical_alias
+    if row.get("admission") is False:
+        entry.update(bootstrap=True, admission=False, enabled=False)
     return entry
 
 
 def manifest_doc(alias: str, row: Mapping[str, Any]) -> dict[str, Any]:
     """Derive one AliasRuntime manifest document from a snapshot row."""
+    logical_alias = wire_alias(alias, row)
     rule = _harness_rule(row)
     profile: dict[str, Any] = {
         "seedOnConnect": True,
@@ -178,9 +203,10 @@ def manifest_doc(alias: str, row: Mapping[str, Any]) -> dict[str, Any]:
         "kind": "AliasRuntime",
         "metadata": {"name": alias},
         "spec": {
+            **({"bootstrap": True, "admission": False} if row.get("admission") is False else {}),
             "tenant": row["tenant"],
-            "room": row["room"],
-            "alias": alias,
+            "room": room_id(row["room"]),
+            "alias": logical_alias,
             "harness": row["harness"],
             "profile": profile,
             "origin": {"transport": "telegram"},
@@ -200,24 +226,31 @@ def manifest_doc(alias: str, row: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-def load_fleet_assignments(root: pathlib.Path) -> dict[str, dict[str, Any]]:
+def load_fleet_assignments(
+    root: pathlib.Path, *, resolve_runtime: bool = True, allow_empty: bool = False,
+) -> dict[str, dict[str, Any]]:
     """Read all declared agents, including native hosts, from the canonical snapshot."""
-    from container_alias_lib import HARNESS, NAME_RE, ROOM_RE, TENANT_RE
+    from container_alias_lib import HARNESS, ROOM_RE, TENANT_RE
+    from fleet_runtime_inventory import inventory_root
+
+    if resolve_runtime:
+        root = inventory_root(root)
 
     document = json.loads((root / "flota.json").read_text(encoding="utf-8"))
     if not isinstance(document, dict) or document.get("schemaVersion") != 1:
         raise ValueError("fleet snapshot must use schemaVersion 1")
     fleet = document.get("fleet")
-    if not isinstance(fleet, dict) or not fleet:
+    if not isinstance(fleet, dict) or (not fleet and not allow_empty):
         raise ValueError("fleet snapshot must contain enabled agents")
     placement = document.get("placement", {})
     if not isinstance(placement, dict):
         raise ValueError("fleet placement must be an object")
     assignments = {}
     for alias, row in sorted(fleet.items()):
-        if not isinstance(alias, str) or NAME_RE.fullmatch(alias) is None:
+        if not isinstance(alias, str) or RUNTIME_KEY_PATTERN.fullmatch(alias) is None:
             raise ValueError("fleet snapshot contains an invalid alias")
-        if not isinstance(row, dict) or row.get("enabled") is not True:
+        if not isinstance(row, dict) or row.get("enabled") is not True \
+                or row.get("admission") is False or row.get("bootstrap") is True:
             raise ValueError(f"fleet.{alias} is not an enabled agent")
         for field, pattern in (("tenant", TENANT_RE), ("room", ROOM_RE)):
             if not isinstance(row.get(field), str) or pattern.fullmatch(row[field]) is None:

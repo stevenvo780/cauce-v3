@@ -8,7 +8,7 @@ import sys
 from typing import Any
 
 from atomic_file import atomic_write
-from container_alias_lib import NAME_RE
+from container_alias_lib import HOST_RE, USER_RE, validate_principal_entry
 from fleet_derive import alias_entry
 
 OPS_ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -32,6 +32,25 @@ def mapping(value: Any, label: str) -> dict[str, Any]:
     return value
 
 
+def principal_entry(key: str, value: Any) -> dict[str, Any]:
+    row = mapping(value, f"systemPrincipals.{key}")
+    fields = {"tenant", "memberships"} if "memberships" in row else {"tenant", "room", "role"}
+    if set(row) - fields - {"alias"} or fields - set(row):
+        raise GeneratorError(f"systemPrincipals.{key} has invalid identity or membership fields")
+    identity = {"tenant": row["tenant"], **({"alias": row["alias"]} if "alias" in row else {})}
+    if "memberships" not in row:
+        return validate_principal_entry(key, {**identity, "room": row["room"], "membershipRole": row["role"]})
+    if not isinstance(row["memberships"], list):
+        raise GeneratorError(f"systemPrincipals.{key}.memberships must be an array")
+    members = []
+    for value in row["memberships"]:
+        member = mapping(value, f"systemPrincipals.{key}.membership")
+        if set(member) != {"room", "role"}:
+            raise GeneratorError(f"systemPrincipals.{key}.membership has invalid fields")
+        members.append({"room": member["room"], "membershipRole": member["role"]})
+    return validate_principal_entry(key, {**identity, "memberships": members})
+
+
 def validate_placement_defaults(
     placement: dict[str, Any],
     fleet: dict[str, Any],
@@ -46,8 +65,8 @@ def validate_placement_defaults(
         for key, value in entry.items():
             if not isinstance(value, str) or not value or value != value.strip():
                 raise GeneratorError(f"placement.{alias}.{key} must be a non-empty trimmed string")
-        for key in ("dockerHost", "systemdUser"):
-            if key in entry and NAME_RE.fullmatch(entry[key]) is None:
+        for key, pattern in (("dockerHost", HOST_RE), ("systemdUser", USER_RE)):
+            if key in entry and pattern.fullmatch(entry[key]) is None:
                 raise GeneratorError(f"placement.{alias}.{key} must be a safe name")
         container = fleet[alias].get("container")
         health_container = entry.get("healthContainer", container)
@@ -64,30 +83,28 @@ def load_snapshot(path: pathlib.Path) -> dict[str, Any]:
         document = mapping(json.loads(path.read_text(encoding="utf-8")), str(path))
     except (OSError, json.JSONDecodeError) as error:
         raise GeneratorError(f"cannot read fleet snapshot {path}: {error}") from error
-    if set(document) != SNAPSHOT_KEYS or document.get("schemaVersion") != 1:
+    if set(document) - {"bootstrap"} != SNAPSHOT_KEYS or document.get("schemaVersion") != 1:
         raise GeneratorError("fleet snapshot must use exact schemaVersion 1 fields")
     fleet = mapping(document["fleet"], "fleet")
-    if not fleet:
-        raise GeneratorError("fleet must not be empty")
     retired = mapping(document["retired"], "retired")
     principals = mapping(document["systemPrincipals"], "systemPrincipals")
     placement = mapping(document["placement"], "placement")
     overlap = (set(fleet) & set(retired)) | (set(fleet) & set(principals))
     if overlap:
         raise GeneratorError(f"fleet aliases overlap non-fleet principals: {sorted(overlap)}")
-    unknown_placement = set(placement) - set(fleet)
+    bootstrap = mapping(document.get("bootstrap", {}), "bootstrap")
+    unknown_placement = set(placement) - set(fleet) - set(bootstrap)
     if unknown_placement:
         raise GeneratorError(f"placement references unknown aliases: {sorted(unknown_placement)}")
     for alias, row in fleet.items():
         if not isinstance(row, dict) or row.get("enabled") is not True:
             raise GeneratorError(f"fleet.{alias} must be an enabled agent object")
-    validate_placement_defaults(placement, fleet)
+    validate_placement_defaults(placement, {**fleet, **bootstrap})
     for alias, row in retired.items():
         if not isinstance(row, dict):
             raise GeneratorError(f"retired.{alias} must be an object")
     for alias, row in principals.items():
-        if not isinstance(row, dict) or set(row) != {"tenant", "room", "role"}:
-            raise GeneratorError(f"systemPrincipals.{alias} must contain tenant, room and role")
+        principal_entry(alias, row)
     return document
 
 
@@ -98,14 +115,7 @@ def render(document: dict[str, Any]) -> str:
     retired = document["retired"]
     generated = {
         "schemaVersion": 2,
-        "systemPrincipals": {
-            alias: {
-                "tenant": principals[alias]["tenant"],
-                "room": principals[alias]["room"],
-                "membershipRole": principals[alias]["role"],
-            }
-            for alias in sorted(principals)
-        },
+        "systemPrincipals": {key: principal_entry(key, principals[key]) for key in sorted(principals)},
         "historicalAliases": {alias: {"expectedEnabled": False} for alias in sorted(retired)},
         "aliases": {alias: alias_entry(alias, fleet[alias], placement.get(alias, {})) for alias in sorted(fleet)
                     if not fleet[alias]["container"].startswith(("host:", "vm:"))},

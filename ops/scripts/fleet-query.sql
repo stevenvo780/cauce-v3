@@ -8,7 +8,13 @@ SELECT jsonb_build_object(
       'container_name', agent.container_name,
       'runtime_user', agent.runtime_user,
       'home_directory', agent.home_directory,
-      'state_directory', agent.state_directory
+      'state_directory', agent.state_directory,
+      'runtime_key', to_jsonb(agent)->>'runtime_key',
+      'primary_room_id', to_jsonb(agent)->>'primary_room_id',
+      'lifecycle_state', to_jsonb(agent)->>'lifecycle_state',
+      'host_id', to_jsonb(agent)->>'host_id',
+      'runtime_mode', to_jsonb(agent)->>'runtime_mode',
+      'systemd_user', to_jsonb(agent)->>'systemd_user'
     ) ORDER BY agent.tenant_id, agent.alias)
     FROM agents AS agent
   ), '[]'::jsonb),

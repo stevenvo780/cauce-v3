@@ -63,7 +63,7 @@ fi
 command -v timeout >/dev/null 2>&1 || die 'timeout is unavailable' 127
 
 valid_alias() {
-  [[ $1 =~ ^[a-z][a-z0-9-]*$ ]]
+  [[ $1 =~ ^[a-z][a-z0-9-]{0,63}$ ]]
 }
 
 valid_absolute_path() {
@@ -119,7 +119,10 @@ assert_secure_directory() {
 
 alias_name=${2:-}
 valid_alias "$alias_name" || die 'invalid container adapter alias'
-mapping_line=$(PYTHONDONTWRITEBYTECODE=1 python3 "$ROOT/scripts/container-alias-query.py" "$alias_name") || exit $?
+inventory_output=$(PYTHONDONTWRITEBYTECODE=1 python3 "$ROOT/scripts/container-alias-query.py" "$alias_name" --supervisor) || exit $?
+mapfile -t inventory_policy <<<"$inventory_output"
+[[ ${#inventory_policy[@]} == 4 && ${inventory_policy[1]} =~ ^[1-9][0-9]*$ ]] || die 'alias isolation policy is invalid'
+mapping_line=${inventory_policy[0]}
 IFS=$'\t' read -r tenant room container_name container_user container_home state_directory harness extra <<<"$mapping_line"
 [[ -n $tenant && -n $room && -n $container_name && -n $container_user && -n $container_home \
   && -n $state_directory && -n $harness && -z ${extra:-} ]] \
@@ -127,26 +130,9 @@ IFS=$'\t' read -r tenant room container_name container_user container_home state
 valid_absolute_path "$container_home" || die 'mapped container home is invalid'
 valid_absolute_path "$state_directory" || die 'mapped state directory is invalid'
 
-# Policy facts that cannot fit in the seven-field legacy stdout above, from the same validated
-# inventory (not the alias .env): cardinality decides isolation, workspace is compared byte-for-byte.
-mapfile -t inventory_policy < <(PYTHONDONTWRITEBYTECODE=1 python3 - "$ROOT" "$alias_name" <<'PY'
-import pathlib
-import sys
-
-root = pathlib.Path(sys.argv[1])
-sys.path.insert(0, str(root / "scripts"))
-from container_alias_lib import load_container_aliases  # noqa: E402
-
-aliases = load_container_aliases(root)
-entry = aliases[sys.argv[2]]
-print(sum(candidate["container"] == entry["container"] for candidate in aliases.values()))
-print(entry.get("workspace", ""))
-PY
-) || die 'cannot load alias isolation policy'
-[[ ${#inventory_policy[@]} == 2 && ${inventory_policy[0]} =~ ^[1-9][0-9]*$ ]] \
-  || die 'alias isolation policy is invalid'
-physical_alias_count=${inventory_policy[0]}
-inventory_workspace=${inventory_policy[1]}
+physical_alias_count=${inventory_policy[1]}
+inventory_workspace=${inventory_policy[2]}
+wire_alias=${inventory_policy[3]}
 
 config_file="$CONFIG_ROOT/$alias_name.env"
 declare -A CONFIG=()
@@ -672,7 +658,8 @@ start_adapter() {
     "HOME=$container_home" "USER=$container_user" "LOGNAME=$container_user" "PATH=$runtime_path"
     'LANG=C.UTF-8' 'LC_ALL=C.UTF-8' 'NODE_ENV=production' 'CAUCE_ENVIRONMENT=production'
     "CAUCE_TENANT=$tenant" "CAUCE_ROOM=$room" 'CAUCE_ORIGIN_TRANSPORT=telegram'
-    "CAUCE_ALIAS=$alias_name" "CAUCE_INSTANCE_ID=systemd-container-$alias_name" "CAUCE_STATE_DIR=$state_directory"
+    "CAUCE_ALIAS=$wire_alias" "CAUCE_RUNTIME_KEY=$alias_name" "CAUCE_TENANT_ID=$tenant"
+    "CAUCE_INSTANCE_ID=systemd-container-$alias_name" "CAUCE_STATE_DIR=$state_directory"
     "CAUCE_CONTROL_DIR=$control_dir"
     "CAUCE_CONTAINER_ID=$container_id" "CAUCE_CONTAINER_GENERATION=$container_generation"
     "CAUCE_CONTAINER_PRESENCE_GENERATION=$container_presence_generation"
@@ -739,7 +726,7 @@ start_adapter() {
   # adapter child to the mapped non-root UID/GID. This exec is intentionally unbounded.
   exec docker exec -i --user 0 "$container_id" /usr/bin/python3 "$control_helper" guard-exec \
     --init-starttime "$container_init_starttime" /usr/bin/env -i "${environment[@]}" \
-    /usr/bin/python3 "$control_helper" run --alias "$alias_name" --state "$state_directory" \
+    /usr/bin/python3 "$control_helper" run --alias "$alias_name" --wire-alias "$wire_alias" --tenant "$tenant" --state "$state_directory" \
     --control-dir "$control_dir" --runtime-uid "$container_uid" --runtime-gid "$container_gid" \
     --container-id "$container_id" --generation "$container_generation" --bundle "$active_bundle_in_container" \
     --bundle-digest "$bundle_digest" "$adapter_in_container"

@@ -97,12 +97,20 @@ def build_and_merge(
     """The whole existing-`--output` story for main(): resolve, build, check, merge, validate."""
     existing_by_alias = existing_rows_for(output)
     if selected is not None and reuse:
-        seed_from_existing(allowlist, existing_by_alias, selected)
+        physical_existing = {key: existing_by_alias[row.get("alias", key)] for key, row in fleet.items()
+                             if row.get("alias", key) in existing_by_alias
+                             and existing_by_alias[row.get("alias", key)].get("tenant_id") == row["tenant"]}
+        seed_from_existing(allowlist, physical_existing, selected)
     config = build_config(fleet, selected, options)
+    for row in config["aliases"]:
+        existing = existing_by_alias.get(row["alias"])
+        if existing is not None and existing.get("tenant_id") != row["tenant_id"]:
+            raise MergeError("wire alias belongs to another tenant; the bridge requires globally unique aliases")
     if existing_by_alias:
         check_no_sentinel_regression(existing_by_alias, config["aliases"], output, allow_placeholders)
         if selected is not None:
-            config = merge_into_existing(existing_by_alias, config["aliases"], set(selected))
+            wire_selected = {fleet[key].get("alias", key) for key in selected}
+            config = merge_into_existing(existing_by_alias, config["aliases"], wire_selected)
     return validate_config(config)
 
 

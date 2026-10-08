@@ -3,7 +3,10 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
+import os
 import pathlib
+import re
 
 from atomic_file import atomic_write
 from fleet_derive import HOST_STATE_DIRECTORY, load_fleet_assignments
@@ -18,13 +21,23 @@ args = parser.parse_args()
 
 manifests = load_manifests(root)
 if args.alias:
-    manifests = [item for item in manifests if item["spec"]["alias"] == args.alias]
+    manifests = [item for item in manifests if item["metadata"]["name"] == args.alias]
 args.output.mkdir(parents=True, exist_ok=True)
+
+
+def systemd_environment(name: str, value: str) -> str:
+    assignment = f"{name}={value.replace('%', '%%')}"
+    return assignment if re.fullmatch(r"[A-Za-z0-9_=/.:@-]+", assignment) else json.dumps(assignment)
 
 
 def unit_for(manifest: dict) -> str:
     spec = manifest["spec"]
-    alias = spec["alias"]
+    alias = manifest["metadata"]["name"]
+    wire_alias = spec["alias"]
+    dynamic_runtime = "CAUCE_FLEET_RUNTIME_STATE" in os.environ or wire_alias != alias
+    physical_identity_line = f"Environment=CAUCE_RUNTIME_KEY={alias}\nEnvironment=CAUCE_TENANT_ID={spec['tenant']}\n" \
+        if dynamic_runtime else ""
+    execution_user = f"User={aliases[alias]['user']}\n" if dynamic_runtime else "User=cauce-v3\nGroup=cauce-v3\n"
     host_state_directory = HOST_STATE_DIRECTORY.format(alias=alias)
     systemd_state_directory = host_state_directory.removeprefix("/var/lib/")
     secrets = spec["secretPathEnv"]
@@ -46,12 +59,10 @@ StartLimitBurst=5
 
 [Service]
 Type=simple
-User=cauce-v3
-Group=cauce-v3
-UMask=0077
-Environment=CAUCE_ALIAS={alias}
-Environment=CAUCE_TENANT={spec['tenant']}
-Environment=CAUCE_ROOM={spec['room']}
+{execution_user}UMask=0077
+Environment=CAUCE_ALIAS={wire_alias}
+{physical_identity_line}Environment=CAUCE_TENANT={spec['tenant']}
+Environment={systemd_environment('CAUCE_ROOM', spec['room'])}
 Environment=CAUCE_HARNESS={spec['harness']}
 Environment=CAUCE_SEMBRAR_PERFIL=1
 {openclaw_workspace_line}Environment=CAUCE_ORIGIN_TRANSPORT=telegram
@@ -98,7 +109,7 @@ WantedBy=multi-user.target
 """
 
 for manifest in manifests:
-    alias = manifest["spec"]["alias"]
+    alias = manifest["metadata"]["name"]
     destination = args.output / f"cauce-v3-alias-{alias}.service"
     body = unit_for(manifest)
     atomic_write(destination, body)

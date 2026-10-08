@@ -159,7 +159,8 @@ def load_fleet(ops_dir: pathlib.Path, cross_check: bool = True) -> dict[str, dic
     """
     aliases = load_fleet_assignments(ops_dir)  # validates the fleet mapping
     fleet = {
-        alias: {"tenant": entry["tenant"], "room": entry["room"], "harness": entry["harness"]}
+        alias: {"tenant": entry["tenant"], "room": entry["room"], "harness": entry["harness"],
+                **({"alias": entry["alias"]} if "alias" in entry else {})}
         for alias, entry in aliases.items()
     }
     if cross_check:
@@ -177,10 +178,12 @@ def _cross_check_manifests(ops_dir: pathlib.Path, fleet: dict[str, dict[str, str
     manifest_fleet: dict[str, dict[str, str]] = {}
     for document in manifest_lib.load_manifests(ops_dir):  # validates the fleet mapping
         spec = document["spec"]
-        manifest_fleet[spec["alias"]] = {
+        key = document["metadata"]["name"]
+        manifest_fleet[key] = {
             "tenant": spec["tenant"],
             "room": spec["room"],
             "harness": spec["harness"],
+            **({"alias": spec["alias"]} if spec["alias"] != key else {}),
         }
     if manifest_fleet != fleet:
         raise GeneratorError("flota.json and ops/manifests/*.yaml disagree on the fleet")
@@ -318,7 +321,7 @@ def _check_group_chat(entry: Any, owner: str, label: str) -> dict[str, Any]:
     return _ordered(chat, CHAT_FIELD_ORDER)
 
 
-def load_groups_file(path: pathlib.Path) -> dict[str, Any]:
+def load_groups_file(path: pathlib.Path, fleet: dict[str, dict[str, str]] | None = None) -> dict[str, Any]:
     """Parse the group-routing file: {"bot_usernames": {...}, "aliases": {alias: {"chats": [...]}}}.
 
     Carries no secrets (handles and Telegram ids only). An alias absent from `aliases`
@@ -355,7 +358,8 @@ def load_groups_file(path: pathlib.Path) -> dict[str, Any]:
             raise GeneratorError(f"groups.aliases.{alias}.chats must be an array of at most {MAX_CHATS}")
         by_alias[str(alias)] = {
             "chats": [
-                _check_group_chat(chat, str(alias), f"groups.aliases.{alias}.chats[{index}]")
+                _check_group_chat(chat, (fleet or {}).get(str(alias), {}).get("alias", str(alias)),
+                                  f"groups.aliases.{alias}.chats[{index}]")
                 for index, chat in enumerate(chats)
             ]
         }
@@ -383,7 +387,7 @@ def _recipients_for(alias: str, fleet: dict[str, dict[str, str]], policy: str) -
     tenant = fleet[alias]["tenant"]
     if policy != "self":
         raise GeneratorError(f"unknown recipients policy: {policy!r}")
-    return [{"tenant_id": tenant, "alias": alias}]
+    return [{"tenant_id": tenant, "alias": fleet[alias].get("alias", alias)}]
 
 
 def build_alias_config(alias: str, fleet: dict[str, dict[str, str]], options: dict[str, Any]) -> dict[str, Any]:
@@ -393,7 +397,7 @@ def build_alias_config(alias: str, fleet: dict[str, dict[str, str]], options: di
     allowed_user_ids, allowed_chat_ids = _resolve_allowlist(alias, meta["tenant"], options)
     groups = options.get("groups") or {}
     row = {
-        "alias": alias,
+        "alias": meta.get("alias", alias),
         "tenant_id": meta["tenant"],
         "room_id": meta["room"],
         "token_file": f"{token_dir}/{alias}.token",
@@ -520,7 +524,7 @@ def main(argv: list[str] | None = None) -> int:
             allowlist = load_allowlist_file(args.allowlist_file)
         groups = {"bot_usernames": {}, "aliases": {}}
         if args.groups_file is not None:
-            groups = load_groups_file(args.groups_file)
+            groups = load_groups_file(args.groups_file, fleet)
         options = {
             "runtime_dir": args.runtime_dir,
             "token_dir": args.token_dir or args.runtime_dir,
