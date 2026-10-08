@@ -212,6 +212,7 @@ it('🔴 ofrece «Ir al último» cuando el operador se fue hacia arriba, y no a
   // The operator scrolls up to read: the box is no longer at the end.
   act(() => {
     Object.defineProperty(caja, 'scrollTop', { configurable: true, value: 0, writable: true });
+    caja.dispatchEvent(new WheelEvent('wheel', { bubbles: true, deltaY: -400 }));
     caja.dispatchEvent(new Event('scroll', { bubbles: false }));
   });
 
