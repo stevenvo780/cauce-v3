@@ -1,3 +1,4 @@
+import { NativeAdminPanel } from './native-admin/NativeAdminPanel';
 import { Save } from 'lucide-react';
 import { useEffect, useId, useRef, useState } from 'react';
 import { ApiError } from '../../api/client';
@@ -14,7 +15,7 @@ import { ProfileFields } from './ProfileFields';
 import { AvisoDeContaminacion, RecargaDeContexto } from './RecargaDeContexto';
 import { ContextReconciliation } from './ContextReconciliation';
 import { ProfileStatus } from './ProfileStatus';
-import { pendingProfileReceipt, profileIsAdopted } from './profile-save-receipt';
+import { pendingProfileReceipt, preparedProfileReceipt, profileIsAdopted } from './profile-save-receipt';
 import { draftFields, draftRevisionConflict, editProfileDraft, profileMatchesDraft, type ProfileDraft, type ProfileOutcome, type ProfileSettlement } from './profile-draft';
 import {
   CAMPOS_DE_LISTA, CAMPOS_DE_TEXTO, CONTAMINACION_ILEGIBLE, MENSAJES_DE_APLICACION,
@@ -24,12 +25,11 @@ import {
   perfilParaGuardar, unidadesDelPerfil, veredictoVigente,
   type ContaminacionDeContexto,
 } from './perfil';
-
 /**
  * Editor and preview of the agent profile and directive fields.
  */
-
 interface PerfilTabProps {
+  onNativeReload?: () => Promise<void>;
   tenantId: string;
   alias: string;
   /**
@@ -49,9 +49,8 @@ interface PerfilTabProps {
   outcome?: ProfileOutcome;
   onSettlement?: (settlement: ProfileSettlement) => void;
 }
-
 export function PerfilTab({
-  tenantId, alias, borrador, onBorrador, onMutationSettled, onWriteInFlightChange,
+  tenantId, alias, borrador, onBorrador, onMutationSettled, onWriteInFlightChange, onNativeReload,
   writeInFlight = false, blockedByManualDraft = false, runtimeRefreshRevision = 0,
   restauracion = 0, configWritePermission,
   outcome, onSettlement,
@@ -81,6 +80,11 @@ export function PerfilTab({
   const total = unidadesDelPerfil(campos);
   const presenciaConocida = typeof perfil.data?.exists === 'boolean';
   const agenteHabilitado = perfil.data?.agent_enabled === true;
+  const preparable = perfil.data?.agent_enabled === false && perfil.data.can_prepare_draft === true
+    && perfil.data.runtime_state === 'disabled' && perfil.data.tenant_id === tenantId && perfil.data.alias === alias
+    && (perfil.data.applied_revision === null
+      || (Number.isSafeInteger(perfil.data.applied_revision) && Number(perfil.data.applied_revision) > 0));
+  const editable = agenteHabilitado || preparable;
   const revisionCoherente = perfil.data?.exists === false
     ? perfil.data.revision === null
     : perfil.data?.exists === true
@@ -199,7 +203,7 @@ export function PerfilTab({
       });
       return;
     }
-    if (!agenteHabilitado) {
+    if (!editable) {
       setAviso({
         tone: 'error',
         text: 'El alias está apagado o su estado no fue acreditado. No se cambia el desired sin '
@@ -207,7 +211,7 @@ export function PerfilTab({
       });
       return;
     }
-    if (!aplicable) {
+    if (!preparable && !aplicable) {
       setAviso({
         tone: 'error',
         text: 'No hay ficheros gobernados acreditables para este arnés. No guardé un desired que '
@@ -240,6 +244,21 @@ export function PerfilTab({
       const result = await api.putAgentPerfil(
         tenantId, alias, perfilParaGuardar(campos), expectedRevision, motivo.trim(),
       );
+      if (preparable) {
+        const receipt = preparedProfileReceipt(result, perfil.data, campos, tenantId, alias);
+        const refreshed = await readAfterMutation();
+        if (receipt === undefined || refreshed.data?.tenant_id !== tenantId || refreshed.data.alias !== alias
+          || refreshed.data.agent_enabled !== false || refreshed.data.runtime_state !== 'disabled'
+          || refreshed.data.exists !== true || refreshed.data.revision !== receipt.revision
+          || refreshed.data.applied_revision !== receipt.appliedRevision || !profileMatchesDraft(refreshed.data, campos)) {
+          settle({ tone: 'error', text: 'El servidor no acreditó la misma revisión, contenido y estado apagado del perfil preparado. El borrador se conserva.' });
+          return;
+        }
+        setMotivo('');
+        settle({ tone: 'parcial', text: 'Perfil deseado preparado; se aplicará al iniciar. '
+          + `Desired revisión ${String(receipt.revision)}; aplicado ${String(receipt.appliedRevision ?? 'ninguno')}.` }, { draft: undefined });
+        return;
+      }
       if (result && typeof result === 'object' && 'state' in result
         && result.state === 'pending_session_refresh') {
         const receipt = pendingProfileReceipt(result, tenantId, alias, ficheros.map((file) => file.nombre));
@@ -344,6 +363,7 @@ export function PerfilTab({
   return (
     <div className="perfil-tab">
       <ProfileStatus profile={perfil.data} />
+      <NativeAdminPanel tenantId={tenantId} alias={alias} permission={configWritePermission} blocked={busy || blockedByManualDraft} {...(onNativeReload ? { onReload: onNativeReload } : {})} />
       <section className="perfil-editor">
         <header className="perfil-cabecera">
           <div>
@@ -373,8 +393,8 @@ export function PerfilTab({
 
         <ProfileFields
           fields={campos} destinations={destinos} limits={perfil.data?.limites}
-          disabled={soloLectura || busy || !agenteHabilitado
-            || !arnesConPerfil || runtimeNoVerificado || !runtimeActual}
+          disabled={soloLectura || busy || !editable
+            || (!preparable && (!arnesConPerfil || runtimeNoVerificado || !runtimeActual))}
           onTextChange={editarTexto} onListChange={editarLista}
         />
 
@@ -399,7 +419,13 @@ export function PerfilTab({
             </details>
           </div>
         ) : null}
-        {perfil.data?.publicado && !agenteHabilitado ? (
+        {preparable ? (
+          <p className="perfil-aviso perfil-aviso-parcial" role="status">
+            Agente apagado: podés preparar el perfil deseado. Los archivos y la sesión recibirán
+            esta revisión al iniciar, cuando se verifique la aplicación.
+          </p>
+        ) : null}
+        {perfil.data?.publicado && !editable ? (
           <p className="perfil-aviso perfil-aviso-error" role="alert">
             Alias apagado o estado de habilitación no acreditado: edición y aplicación bloqueadas.
           </p>
@@ -490,7 +516,7 @@ export function PerfilTab({
             spellCheck={false}
             placeholder="Motivo del cambio, escrito a mano…"
             aria-describedby={`${idMotivo}-pista`}
-            disabled={soloLectura || busy || enCuarentena || !agenteHabilitado}
+            disabled={soloLectura || busy || enCuarentena || !editable}
             onChange={(event) => { setMotivo(event.target.value); }}
           />
         </label>
@@ -506,14 +532,15 @@ export function PerfilTab({
           type="button"
           className="button primary"
           disabled={soloLectura || busy || revisionConflict || !presenciaConocida || !revisionCoherente
-            || !estadoConocido || !runtimeActual || runtimeNoVerificado
-            || !agenteHabilitado || !aplicable || enCuarentena || problemaMotivo !== undefined
+            || !estadoConocido || !runtimeActual || (!preparable && runtimeNoVerificado)
+            || !editable || (!preparable && !aplicable) || enCuarentena || problemaMotivo !== undefined
             || blockedByManualDraft || (!sucio && !pendiente) || fuera.length > 0}
           onClick={() => { void guardar(); }}
         >
           <Save size={16} aria-hidden />
           {busy
-            ? 'Aplicando…'
+            ? preparable ? 'Preparando…' : 'Aplicando…'
+            : preparable ? 'Preparar perfil para el inicio'
             : pendiente && !sucio
               ? 'Reintentar aplicación'
               : perfil.data?.runtime_state === 'pending_session_refresh' && !sucio

@@ -10,6 +10,7 @@ import { DirectivaTab } from './DirectivaTab';
 import { FicherosTab, type BorradorDeFichero } from './FicherosTab';
 import { PerfilTab } from './PerfilTab';
 import type { ProfileOutcome, ProfileSettlement } from './profile-draft';
+import { useNativeReload } from './use-native-reload';
 
 interface ContextoTabProps {
   tenantId: string;
@@ -46,6 +47,7 @@ function ContextoTabContent({
 }: ContextoTabProps) {
   const access = useConsoleAccess();
   const configWritePermission = permissionState(access.error ? undefined : access.data, 'config.write');
+  const nativeReload = useNativeReload(tenantId, alias, configuracion, configWritePermission);
   const campos = useRef<HTMLElement>(null);
   const manual = useRef<HTMLElement>(null);
   const [manualAppliedNotice, setManualAppliedNotice] = useState<string>();
@@ -148,6 +150,7 @@ function ContextoTabContent({
           configWritePermission={configWritePermission}
           outcome={profileOutcome}
           onSettlement={onProfileSettlement}
+          {...(nativeReload ? { onNativeReload: nativeReload } : {})}
         />
       </section>
 

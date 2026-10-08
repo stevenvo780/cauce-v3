@@ -196,6 +196,7 @@ export interface AgentPerfil {
   alias?: string;
   /** Durable state of the alias. Absent is treated as off, never as implicitly enabled. */
   agent_enabled?: boolean;
+  can_prepare_draft?: boolean;
   /** ACTUAL presence of `agent_profiles`; a persisted empty profile is still `true`. */
   exists?: boolean;
   /** Profile's own desired revision; `null` when there is still no row. */
