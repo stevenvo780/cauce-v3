@@ -209,6 +209,7 @@ según `CAUCE_MCP_OAUTH_PROVIDER` en `deploy/deploy.sh`.
 |---|---|---|
 | `CAUCE_DEV_AUTH=1`, `CAUCE_ACK_DEADLINE_MS=50`, `DISPATCHER_POLL_MS=20`, `ACK_TIMEOUT_MS=50` | overrides de timing | e2e |
 | `CAUCE_RETRY_TIMEOUT_MS=45000`, `CAUCE_PRESENCE_LEASE_MS=500`, `CAUCE_FAULT_MODE=none` | overrides de arnés | e2e |
+| `CAUCE_TEST_DATABASE_URL` | URL opcional de una base externa cuyo nombre empieza por `cauce_test`; nunca productiva. Las fixtures OAuth la rechazan y aprovisionan sus propios contenedores desechables | preflight `test:core`, fixtures de PostgreSQL |
 | Puerto `127.0.0.1:18080`, postgres tmpfs, red interna | aislamiento | — |
 
 ## Decisiones del dueño (FR-011..FR-015, cerradas 2026-09-27)
