@@ -34,10 +34,12 @@ export function useRouteSearch(): string {
     by hand so the router —which subscribes to `popstate`— notices the change. */
 export function navigate(path: string): void {
   if (`${window.location.pathname}${window.location.search}` === path) return;
+  // Inside one section (chat to chat) a full-page cross-fade only adds latency; the launcher opts in.
+  const sameSection = path.split(/[/?]/u)[1] === window.location.pathname.split('/')[1] && !('chatLaunch' in document.documentElement.dataset);
   window.history.pushState({}, '', path);
   const announce = () => { window.dispatchEvent(new PopStateEvent('popstate')); };
   const transitions = document as Document & { startViewTransition?: (update: () => void) => unknown };
-  if (typeof transitions.startViewTransition !== 'function' || window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+  if (sameSection || typeof transitions.startViewTransition !== 'function' || window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
     announce();
     return;
   }

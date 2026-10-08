@@ -1,16 +1,18 @@
-import { Switch } from '@base-ui/react/switch';
 import { useCallback, useMemo, useState } from 'react';
 import { ConsoleAccessBoundary, useConsoleAccess } from '../../api/console-access';
 import { useApi } from '../../api/context';
 import { usePolling } from '../../api/use-polling';
 import { useResource } from '../../api/use-resource';
-import { ErrorState, LoadingState, PageHeader, PermissionBadge, RefreshButton, ViewTabPanel, ViewTabs } from '../../components/ui';
+import { PageFreshness } from '../../components/PageFreshness';
+import { ErrorState, LoadingState, PageHeader, PermissionBadge, ViewTabPanel, ViewTabs } from '../../components/ui';
 import { ConsumptionSection } from './ConsumptionSection';
 import { AccountsInventory } from './AccountsInventory';
 import { AssignmentMatrix } from './AssignmentMatrix';
 import { readRegistry } from './registry';
 
-const REFRESH_MS = 60_000;
+const REFRESH_OPTIONS = [
+  { ms: 30_000, label: '30 s' }, { ms: 60_000, label: '60 s' }, { ms: 300_000, label: '5 min' }, { ms: 0, label: 'En pausa' },
+] as const;
 
 type Tab = 'consumo' | 'inventario' | 'asignaciones';
 
@@ -34,7 +36,7 @@ function AccountsPageContent() {
   const access = useConsoleAccess();
   const registry = useMemo(() => readRegistry(config.data), [config.data]);
   const [tab, setTab] = useState<Tab>('consumo');
-  const [autoRefresh, setAutoRefresh] = useState(true);
+  const [refreshMs, setRefreshMs] = useState(60_000);
 
   const reloadQuotas = quotas.reload;
   const reloadConfig = config.reload;
@@ -44,7 +46,7 @@ function AccountsPageContent() {
     void reloadConfig();
   }, [reloadQuotas, reloadConfig]);
 
-  usePolling(reloadAll, REFRESH_MS, { pausedWhile: !autoRefresh });
+  usePolling(reloadAll, refreshMs);
 
   if (quotas.loading && !quotas.data && config.loading && !config.data) {
     return <LoadingState label="Leyendo cuentas, cuotas y asignaciones…" />;
@@ -70,19 +72,8 @@ function AccountsPageContent() {
           <PermissionBadge access={access.error ? undefined : access.data} permission="config.write" />
         </>
       }
-      actions={<>
-        <label className="inline-flex items-center gap-2 text-xs font-normal text-muted">
-          <Switch.Root
-            checked={autoRefresh}
-            onCheckedChange={setAutoRefresh}
-            className="relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border-0 bg-line-strong p-0.5 transition-colors data-[checked]:bg-brand"
-          >
-            <Switch.Thumb className="block size-4 rounded-full bg-surface shadow-card transition-transform data-[checked]:translate-x-4" />
-          </Switch.Root>
-          Auto-refrescar cada {REFRESH_MS / 1000}s
-        </label>
-        <RefreshButton onClick={reloadAll} loading={quotas.loading || config.loading} compact />
-      </>}
+      actions={<PageFreshness loading={quotas.loading || config.loading} onRefresh={reloadAll} what="las cuotas"
+        interval={{ value: refreshMs, onChange: setRefreshMs, options: REFRESH_OPTIONS }} />}
     />
 
     <ViewTabs tabs={TABS} active={tab} onSelect={setTab} label="Cuentas y cuotas" />

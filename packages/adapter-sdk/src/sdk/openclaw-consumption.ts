@@ -119,8 +119,10 @@ export async function verifyOpenClawConsumption(
     const prompt = request.stdin.trim();
     const own = users.filter((index) => text(object(entries[index]?.message)?.content)?.trim() === prompt);
     const injected = own[0];
-    // Exactly one copy of the prompt, and nobody (the web TUI included) spoke after it.
-    if (own.length !== 1 || injected === undefined || users.at(-1) !== injected) return undefined;
+    // The claude-cli backend records the prompt again right before its answer, chained to the first copy.
+    // Every user entry from the first copy on must be one of those copies: nobody (the web TUI included) spoke.
+    if (injected === undefined || own.length > 2 || users.slice(users.indexOf(injected)).some((index) => !own.includes(index))
+      || own.some((index, at) => at > 0 && entries[index]?.parentId !== entries[own[at - 1] ?? -1]?.id)) return undefined;
     const turnId = entries[injected]?.id;
     if (typeof turnId !== "string") return undefined;
     const answer = entries.slice(injected + 1).filter((entry) => role(entry) === "assistant")

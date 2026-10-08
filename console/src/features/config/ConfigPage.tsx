@@ -1,11 +1,12 @@
 import './admin-ui.css';
+import { PageFreshness } from '../../components/PageFreshness';
 import { Tabs } from '@base-ui/react/tabs';
 import { ShieldOff } from 'lucide-react';
 import { useState, type ReactNode } from 'react';
 import { ConsoleAccessBoundary } from '../../api/console-access';
 import type { ConsoleAccess } from '../../api/types';
 import { LinkButton, Notice } from '../../components/kit';
-import { ErrorState, LoadingState, PageHeader, RefreshButton } from '../../components/ui';
+import { ErrorState, LoadingState, PageHeader } from '../../components/ui';
 import { cn } from '../../cn';
 import type { permissionState } from '../../lib';
 import {
@@ -76,7 +77,7 @@ function ConfigPageContent() {
       eyebrow="Configuración"
       title="Ajustes"
       description="Topología, agentes, permisos y cambios versionados. El contexto de cada agente se edita en su propia página."
-      actions={<RefreshButton onClick={config.reload} loading={config.loading} compact />}
+      actions={<PageFreshness loading={config.loading} onRefresh={config.reload} what="la configuración" />}
     />
 
     {/* Without permission, NOTHING is hidden: the tables look the same and the buttons stay inert with the

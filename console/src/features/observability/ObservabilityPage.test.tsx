@@ -108,7 +108,7 @@ it('mantiene las señales del gateway medidas en un mismo instante', async () =>
 
   expect(await screen.findByText('En línea')).toBeInTheDocument();
   expect(screen.getByText('16')).toBeInTheDocument();
-  expect(screen.getByText(/observado:/i)).toBeInTheDocument();
+  expect(screen.getByText(/leído/i)).toBeInTheDocument();
 });
 
 it('si fallan los relays, las señales siguen en pantalla y la falla se declara', async () => {

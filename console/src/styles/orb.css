@@ -224,9 +224,9 @@
 
 /* A row that arrives after the thread was drawn slides into place; rows of the first paint never do,
    because `data-settled` only appears after it and @starting-style only applies to new elements. */
-.thread-log[data-settled] > * { transition: opacity 0.32s cubic-bezier(0.2, 0.7, 0.2, 1), translate 0.32s cubic-bezier(0.2, 0.7, 0.2, 1); }
+.thread-log[data-settled] > :not([data-quiet]) { transition: opacity 0.32s cubic-bezier(0.2, 0.7, 0.2, 1), translate 0.32s cubic-bezier(0.2, 0.7, 0.2, 1); }
 @starting-style {
-  .thread-log[data-settled] > * { opacity: 0; translate: 0 8px; }
+  .thread-log[data-settled] > :not([data-quiet]) { opacity: 0; translate: 0 8px; }
 }
 @keyframes msg-in {
   from { opacity: 0; transform: translateY(8px); }

@@ -9,7 +9,7 @@ import { compactId } from '../../lib';
 import { useRouteSearch } from '../../router';
 import type { LiveAgentView } from '../live/agent-state';
 import { liveStateOf } from '../terminal/fleet';
-import { textoDelCuerpo } from '../terminal/cuerpo-del-mensaje';
+import { previsualizacionRecortada, textoDelCuerpo } from '../terminal/cuerpo-del-mensaje';
 import { transcriptForSession, type OperatorRoute, type OperatorSession, type TranscriptItem } from '../terminal/session';
 import { AgentSettingsView } from './AgentSettingsView';
 import { snapshotAttachments } from './chat-attachments';
@@ -241,6 +241,22 @@ function ConversationPaneContent({
     }
   }, [api]);
 
+  // The newest agent answers arrive whole (agents often split one answer in several messages).
+  const salidasRecientes = useMemo(() => hilo.filter((item) => item.direction === 'output').slice(-3).map((item) => item.message), [hilo]);
+  useEffect(() => {
+    for (const salida of salidasRecientes) {
+      const id = salida.message_id;
+      if (id && !(id in cuerpos) && previsualizacionRecortada(salida.body_preview)) void pedirCuerpo(id);
+    }
+  }, [salidasRecientes, cuerpos, pedirCuerpo]);
+
+  const componer = (text: string, mode: 'quote' | 'resend') => {
+    const quoted = text.split('\n').map((line) => `> ${line}`).join('\n');
+    const before = draft.trim() ? `${draft.trimEnd()}\n\n` : '';
+    setDraft(mode === 'resend' ? `${before}${text}` : `${before}${quoted}\n\n`);
+    composerInput.current?.focus();
+  };
+
   async function enviar(event: SyntheticEvent<HTMLFormElement>) {
     event.preventDefault();
     const snapshotText = draft;
@@ -389,6 +405,7 @@ function ConversationPaneContent({
                   canonicalReplyStale={canonical.stale}
                   onCanonicalReplyRetry={canonical.retry}
                   onSuggestion={puedeEnviar ? (text) => { setDraft(text); composerInput.current?.focus(); } : undefined}
+                  onCompose={puedeEnviar ? componer : undefined}
                 />
               )}
               {canonical.error ? (

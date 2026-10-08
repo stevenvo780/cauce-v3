@@ -1,19 +1,38 @@
 import { Dialog } from '@base-ui/react/dialog';
-import { ChevronDown, Ellipsis, PanelLeftClose, PanelLeftOpen, X } from 'lucide-react';
-import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { ChevronDown, Ellipsis, PanelLeftClose, PanelLeftOpen, Search, X } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { BOTTOM_BAR_VIEWPORT, RAIL_VIEWPORT } from '../breakpoints';
 import { Logo, LogoMark } from '../components/brand/Logo';
 import { cn } from '../cn';
 import { NAV_ENTRIES, PRIMARY_NAV_IDS, useNavAvailability } from '../nav';
 import { onNavClick } from '../router';
 import { AgentList } from './AgentList';
+import { CommandPalette } from './CommandPalette';
+import { useFleet } from './fleet-context';
 import { useChatNavTarget, useTerminalNavTarget } from './last-chat';
+import { useReplyAlerts } from './reply-alerts';
 import { useMediaQuery } from './use-media-query';
 
 const SIDEBAR_SHORTCUT = 'Alt+Shift+B';
+const attentionText = (count: number) => (count === 0 ? undefined : `${String(count)} ${count === 1 ? 'agente necesita' : 'agentes necesitan'} atención`);
+
+/** Agents down or stuck in the last fleet reading, visible from every section; a paused reading keeps its figure. */
+function useOfficeAttention(): number {
+  const { live } = useFleet();
+  return useMemo(() => [...live.values()].filter((view) => view.state === 'down' || view.state === 'blocked').length, [live]);
+}
+
+function AttentionBadge({ count, corner }: { count: number; corner: boolean }) {
+  if (count === 0) return null;
+  return (
+    // The figure is painted from the attribute, so it never joins the link's text or accessible name.
+    <span aria-hidden="true" data-count={count} className={cn('grid h-4 min-w-4 place-items-center rounded-full bg-danger px-1 text-[10px] leading-none font-bold text-white tabular-nums after:content-[attr(data-count)]',
+      corner ? 'absolute -top-1 -right-1.5' : 'ml-auto')} />
+  );
+}
 const PRIMARY = new Set(PRIMARY_NAV_IDS);
 
-function NavLink({ id, routeId, rail, onNavigate }: { id: string; routeId: string; rail: boolean; onNavigate?: () => void }) {
+function NavLink({ id, routeId, rail, onNavigate, badge = 0 }: { id: string; routeId: string; rail: boolean; onNavigate?: () => void; badge?: number }) {
   const availability = useNavAvailability()(id);
   const chatTarget = useChatNavTarget();
   const terminalTarget = useTerminalNavTarget();
@@ -28,10 +47,11 @@ function NavLink({ id, routeId, rail, onNavigate }: { id: string; routeId: strin
       aria-current={current ? 'page' : undefined}
       aria-disabled={availability.disabled || undefined}
       aria-label={rail ? entry.label : undefined}
-      title={availability.reason ?? (rail ? entry.label : undefined)}
+      aria-description={attentionText(badge)}
+      title={availability.reason ?? (rail ? entry.label : attentionText(badge))}
       onClick={(event) => { onNavClick(event, target, availability.reason); if (!availability.reason) onNavigate?.(); }}
       className={cn(
-        'flex items-center gap-2.5 rounded-lg text-[13px] font-medium no-underline transition-colors',
+        'relative flex items-center gap-2.5 rounded-lg text-[13px] font-medium no-underline transition-colors',
         rail ? 'size-10 justify-center' : 'px-2.5 py-1.5',
         current ? 'bg-muted-bg text-fg' : 'text-fg-2 hover:bg-subtle hover:text-fg',
         availability.disabled && 'cursor-not-allowed opacity-50',
@@ -39,18 +59,21 @@ function NavLink({ id, routeId, rail, onNavigate }: { id: string; routeId: strin
     >
       <Icon size={17} aria-hidden={true} />
       {rail ? null : <span>{entry.label}</span>}
+      <AttentionBadge count={badge} corner={rail} />
     </a>
   );
 }
 
-function Sidebar({ routeId, activeAgentId, rail, collapsible, onToggle, footer }: {
+function Sidebar({ routeId, activeAgentId, rail, collapsible, onToggle, onSearch, footer }: {
   routeId: string;
   activeAgentId?: string;
   rail: boolean;
   collapsible: boolean;
   onToggle: () => void;
+  onSearch: () => void;
   footer: ReactNode;
 }) {
+  const attention = useOfficeAttention();
   const secondaryActive = !PRIMARY.has(routeId);
   const [toolsOpen, setToolsOpen] = useState(secondaryActive);
   useEffect(() => { if (secondaryActive) setToolsOpen(true); }, [secondaryActive]);
@@ -91,8 +114,16 @@ function Sidebar({ routeId, activeAgentId, rail, collapsible, onToggle, footer }
           <PanelLeftOpen size={17} aria-hidden="true" />
         </button>
       ) : null}
+      <div className={cn('shrink-0', rail ? 'grid justify-items-center' : 'grid px-2')}>
+          <button type="button" onClick={onSearch} aria-keyshortcuts="Control+K Meta+K" title="Buscar agente o sección (Ctrl+K)"
+            className={cn('mb-1 flex cursor-pointer items-center gap-2.5 rounded-lg border border-line bg-subtle text-[13px] text-muted hover:text-fg',
+              rail ? 'size-10 justify-center' : 'h-8 px-2.5')}>
+            <Search size={15} aria-hidden="true" />
+            {rail ? <span className="sr-only">Buscar</span> : <><span className="flex-1 text-left">Buscar o saltar…</span><kbd className="font-sans text-[11px]">Ctrl K</kbd></>}
+          </button>
+      </div>
       <nav aria-label="Navegación principal" className={cn('shrink-0', rail ? 'grid justify-items-center gap-1' : 'grid gap-0.5 px-2')}>
-        {PRIMARY_NAV_IDS.map((id) => <NavLink key={id} id={id} routeId={routeId} rail={rail} />)}
+        {PRIMARY_NAV_IDS.map((id) => <NavLink key={id} id={id} routeId={routeId} rail={rail} badge={id === 'live' ? attention : 0} />)}
         {rail ? (
           <>
             <span className="my-1 h-px w-8 bg-line" aria-hidden="true" />
@@ -137,6 +168,7 @@ function BottomBar({ routeId, account }: { routeId: string; account: ReactNode }
   const secondaryActive = !PRIMARY.has(routeId);
   const chatTarget = useChatNavTarget();
   const terminalTarget = useTerminalNavTarget();
+  const attention = useOfficeAttention();
   return (
     <nav
       aria-label="Navegación principal"
@@ -153,10 +185,11 @@ function BottomBar({ routeId, account }: { routeId: string; account: ReactNode }
             key={id}
             href={target}
             aria-current={current ? 'page' : undefined}
+            aria-description={attentionText(id === 'live' ? attention : 0)}
             onClick={(event) => { onNavClick(event, target); }}
             className={cn('flex h-14 flex-col items-center justify-center gap-0.5 text-[11px] font-medium no-underline', current ? 'text-brand-ink' : 'text-muted')}
           >
-            <Icon size={20} aria-hidden={true} />
+            <span className="relative"><Icon size={20} aria-hidden={true} /><AttentionBadge count={id === 'live' ? attention : 0} corner /></span>
             {entry.label}
           </a>
         );
@@ -202,11 +235,13 @@ export function AppShell({ routeId, activeAgentId, bounded = false, account, not
   notices?: ReactNode;
   children: ReactNode;
 }) {
+  useReplyAlerts();
   const phone = useMediaQuery(BOTTOM_BAR_VIEWPORT);
   const tablet = useMediaQuery(RAIL_VIEWPORT);
   const [collapsed, setCollapsed] = useState(false);
   const rail = tablet || collapsed;
   const toggle = useCallback(() => { setCollapsed((value) => !value); }, []);
+  const [searching, setSearching] = useState(false);
 
   useEffect(() => {
     if (tablet) return;
@@ -238,6 +273,7 @@ export function AppShell({ routeId, activeAgentId, bounded = false, account, not
           rail={rail}
           collapsible={!tablet}
           onToggle={toggle}
+          onSearch={() => { setSearching(true); }}
           footer={account}
         />
       )}
@@ -246,6 +282,7 @@ export function AppShell({ routeId, activeAgentId, bounded = false, account, not
         {children}
       </div>
       {phone ? <BottomBar routeId={routeId} account={account} /> : null}
+      <CommandPalette open={searching} onOpenChange={setSearching} />
     </div>
   );
 }

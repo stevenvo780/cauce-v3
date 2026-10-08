@@ -120,12 +120,13 @@ sobre él, y sólo eso:
 si el humo sale rojo parcial, la columna «Resultado» se corrige a mano en el mismo commit que
 registra la fila, y ese commit es también el que actualiza estos documentos.
 
-La última fila de [HISTORIAL](../deploy/HISTORIAL.md) registra `9ff619c7`, el 7 de octubre a las
-00:01, hora de Colombia: `deploy.sh` completo con iconos pixel art para la apariencia de agentes y
-el mapa de la oficina más alto, sin migración sobre el esquema 047. Los nueve servicios quedaron
-sanos y el smoke cerró VERDE, con el bus acreditando un ACK reciente. El runtime usa la imagen
-`sha256:4249d0dbaf4335b9a7ba02320c6bcb2c13cb5e35acc3534d6e1c7a1cf45787af` y la consola
-`sha256:9a7f3db954cf0bf98fe0e2993bbe8066f5a4ab1c98d20afc800a4e30c85e35ad`.
+La última fila de [HISTORIAL](../deploy/HISTORIAL.md) registra `dc348521`, el 8 de octubre a las
+15:53, hora de Colombia: una actualización sólo de consola con paleta de comandos, cabecera de
+frescura común, contador de atención en la Oficina y un chat sin ráfagas de animación al cambiar
+de conversación. El `deploy.sh` completo sigue detenido antes de cambiar nada porque la copia
+externa de backups al NAS no tiene espacio. La consola usa la imagen
+`sha256:d0c71af5cafedbd48f1b7442a38e68d4f2c5eed6a88f2e2049435f22f2885304` y el runtime sigue en
+la imagen desplegada desde `58f6b0af`.
 
 La sesión Steven recargada mostró el grafo primero y la lista cerrada al final. Se comprobó un
 ping canónico de Zeus y su shell; el control se devolvió y la shell se cerró. El journal de Main
