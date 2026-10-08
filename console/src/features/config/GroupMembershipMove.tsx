@@ -1,18 +1,22 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { ConfigurationSnapshot } from '../../api/types';
 import { AgentLifecyclePanel } from './AgentLifecyclePanel';
 import { membershipMoveIntent } from './GroupMembershipModel';
 import type { ConfigMutationRunner } from './use-config-mutation';
 
-export function GroupMembershipMove({ tenantId, roomId, snapshot, runner, busy }: {
+export function GroupMembershipMove({ tenantId, roomId, snapshot, runner, busy, initialAlias = '', onDirtyChange }: {
   tenantId: string; roomId: string; snapshot: ConfigurationSnapshot; runner: ConfigMutationRunner; busy: boolean;
+  initialAlias?: string; onDirtyChange?: (dirty: boolean) => void;
 }) {
-  const [alias, setAlias] = useState('');
+  const [alias, setAlias] = useState(initialAlias);
   const [destination, setDestination] = useState('');
   const [error, setError] = useState<string>();
   const [runtimeOpen, setRuntimeOpen] = useState(false);
   const members = (snapshot.memberships ?? []).filter((row) => row.tenant_id === tenantId && row.room_id === roomId && typeof row.alias === 'string');
   const rooms = (snapshot.rooms ?? []).filter((row) => row.tenant_id === tenantId && row.id !== roomId && row.enabled === true && typeof row.id === 'string');
+  const pending = destination !== '' || alias !== initialAlias;
+  useEffect(() => { onDirtyChange?.(pending); }, [pending, onDirtyChange]);
+  useEffect(() => () => { onDirtyChange?.(false); }, [onDirtyChange]);
   const intent = alias && destination ? membershipMoveIntent(snapshot, tenantId, roomId, alias, destination) : undefined;
   async function preview() {
     if (!intent || intent.error) { setError(intent?.error ?? 'Elige miembro y grupo de destino.'); return; }

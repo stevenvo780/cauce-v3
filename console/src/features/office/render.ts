@@ -3,8 +3,12 @@ import { TILE, WALL_ROWS, type DeskSlot, type GameKind, type OfficeLayout } from
 import { rect, type Ctx } from './paint';
 import { OFFICE } from './palette';
 import { gardenDrawable, paintGround } from './render-garden';
+import { paintTeamRug, paintTeamSign } from './render-teams';
 import { arcade, foosball, nightstand, paintNightWindow, paintPillar, pingpong } from './render-rooms';
 import { seededRandom } from './random';
+
+/** Pixel icon on a desk screen: a six px square in the top right corner. */
+const SCREEN_MARK = 6;
 
 function paintFloor(ctx: Ctx, layout: OfficeLayout): void {
   const wallish = (kind: string) => Number(kind === 'partition' || kind === 'pillar');
@@ -53,6 +57,10 @@ function paintFloor(ctx: Ctx, layout: OfficeLayout): void {
       for (let y = 0; y < h; y += 8) {
         for (let x = 0; x < w; x += 8) rect(ctx, x0 + x, y0 + y, 8, 8, ((x + y) / 8) % 2 === 0 ? OFFICE.tile : OFFICE.tileAlt);
       }
+    } else if (zone.kind === 'teamrug') {
+      paintTeamRug(ctx, zone);
+    } else if (zone.kind === 'sign') {
+      paintTeamSign(ctx, zone);
     } else if (zone.kind === 'partition') {
       rect(ctx, x0, y0 - 2, w, 14, OFFICE.wall);
       rect(ctx, x0, y0 - 4, w, 3, OFFICE.wallTop);
@@ -71,26 +79,38 @@ function paintFloor(ctx: Ctx, layout: OfficeLayout): void {
   }
 }
 
-function paintWindow(ctx: Ctx, x: number, w: number): void {
+function paintNightSky(ctx: Ctx, x: number, w: number, top: number, bottom: number): void {
+  const random = seededRandom(x * 613);
+  for (let i = 0; i < Math.max(2, Math.floor(w / 4)); i += 1) {
+    rect(ctx, x + 1 + Math.floor(random() * (w - 2)), top + 2 + Math.floor(random() * (bottom - top - 5)), 1, 1, OFFICE.star);
+  }
+  const mx = x + w - 8;
+  rect(ctx, mx, top + 3, 4, 3, OFFICE.moon);
+  rect(ctx, mx + 1, top + 2, 2, 5, OFFICE.moon);
+  rect(ctx, mx + 2, top + 2, 2, 3, OFFICE.nightSky);
+}
+
+function paintWindow(ctx: Ctx, x: number, w: number, night: boolean): void {
   const top = 8;
   const bottom = 31;
   rect(ctx, x - 1, top - 1, w + 2, bottom - top + 2, OFFICE.frame);
-  rect(ctx, x + 1, top + 1, w - 2, 10, OFFICE.glassTop);
-  rect(ctx, x + 1, top + 11, w - 2, bottom - top - 12, OFFICE.glassBottom);
+  rect(ctx, x + 1, top + 1, w - 2, 10, night ? OFFICE.nightSky : OFFICE.glassTop);
+  rect(ctx, x + 1, top + 11, w - 2, bottom - top - 12, night ? OFFICE.nightSkyLow : OFFICE.glassBottom);
+  if (night) paintNightSky(ctx, x, w, top, bottom);
   const random = seededRandom(x * 977);
-  for (let bx = x + 1; bx < x + w - 1;) {
+  for (let bx = x + 1; !night && bx < x + w - 1;) {
     const bw = 3 + Math.floor(random() * 5);
     const bh = 4 + Math.floor(random() * 7);
     rect(ctx, bx, bottom - 1 - bh, Math.min(bw, x + w - 1 - bx), bh, OFFICE.skylineFar);
     bx += bw;
   }
-  for (let bx = x + 2; bx < x + w - 2;) {
+  for (let bx = x + 2; !night && bx < x + w - 2;) {
     const bw = 4 + Math.floor(random() * 4);
     const bh = 3 + Math.floor(random() * 5);
     rect(ctx, bx, bottom - 1 - bh, Math.min(bw, x + w - 1 - bx), bh, OFFICE.skyline);
     bx += bw + 2;
   }
-  for (let i = 0; i < 5; i += 1) rect(ctx, x + 4 + i, top + 6 - i, 1, 1, OFFICE.glassShine);
+  if (!night) for (let i = 0; i < 5; i += 1) rect(ctx, x + 4 + i, top + 6 - i, 1, 1, OFFICE.glassShine);
   rect(ctx, x + Math.floor(w / 2), top, 1, bottom - top, OFFICE.frame);
   rect(ctx, x, top + 10, w, 1, OFFICE.frame);
   rect(ctx, x - 2, bottom + 1, w + 4, 2, OFFICE.trim);
@@ -144,7 +164,7 @@ function paintDoor(ctx: Ctx, x: number, w: number): void {
   rect(ctx, x, bottom + 1, w, 1, OFFICE.rug);
 }
 
-export function paintRoom(ctx: Ctx, layout: OfficeLayout): void {
+export function paintRoom(ctx: Ctx, layout: OfficeLayout, night = false): void {
   const width = layout.cols * TILE;
   const height = layout.rows * TILE;
   rect(ctx, 0, 0, width, height, OFFICE.carpet);
@@ -162,7 +182,7 @@ export function paintRoom(ctx: Ctx, layout: OfficeLayout): void {
     if (item.kind === 'night') {
       const top = item.y === 0 ? 8 : item.y * TILE - 1;
       paintNightWindow(ctx, x + 3, item.w * TILE - 6, top, item.y === 0 ? 31 : top + 10);
-    } else if (item.kind === 'window') paintWindow(ctx, x + 2, item.w * TILE - 4);
+    } else if (item.kind === 'window') paintWindow(ctx, x + 2, item.w * TILE - 4, night);
     else if (item.kind === 'board') paintBoard(ctx, x + 2, item.w * TILE - 4);
     else if (item.kind === 'door') paintDoor(ctx, x + 2, item.w * TILE - 4);
     else paintClock(ctx, x);
@@ -177,6 +197,10 @@ export interface DeskState {
   typing: boolean;
   hands?: string;
   offline: boolean;
+  /** The owner's pixel icon for the screen; drawn while the screen shows code or rests. */
+  mark?: HTMLCanvasElement | null;
+  /** Night: the lamp on the desk is lit. */
+  lit?: boolean;
 }
 
 export interface Drawable { sortY: number; draw: (ctx: Ctx, time: number) => void }
@@ -185,7 +209,7 @@ function shadow(ctx: Ctx, x: number, y: number, w: number): void {
   rect(ctx, x + 1, y, w - 2, 2, OFFICE.shadow);
 }
 
-function screen(ctx: Ctx, x: number, y: number, mode: MonitorMode, time: number, seed: number): void {
+function screen(ctx: Ctx, x: number, y: number, mode: MonitorMode, time: number, seed: number, mark: HTMLCanvasElement | null): void {
   const w = 12;
   const h = 8;
   if (mode === 'off') {
@@ -194,48 +218,79 @@ function screen(ctx: Ctx, x: number, y: number, mode: MonitorMode, time: number,
     return;
   }
   if (mode === 'error') {
-    const on = Math.floor(time * 2.5) % 2 === 0;
-    rect(ctx, x, y, w, h, on ? OFFICE.screenError : '#c94a4a');
-    rect(ctx, x + 5, y + 1, 2, 4, OFFICE.paper);
-    rect(ctx, x + 5, y + 6, 2, 1, OFFICE.paper);
+    rect(ctx, x, y, w, h, OFFICE.screenError);
+    for (let i = 0; i < 4; i += 1) {
+      rect(ctx, x + 4 + i, y + 2 + i, 1, 1, OFFICE.paper);
+      rect(ctx, x + 7 - i, y + 2 + i, 1, 1, OFFICE.paper);
+    }
     return;
   }
-  if (mode === 'idle') {
-    rect(ctx, x, y, w, h, OFFICE.screenSleep);
-    const t = time * 0.6 + seed;
-    rect(ctx, x + 1 + Math.floor((Math.sin(t) + 1) * 4.5), y + 1 + Math.floor((Math.cos(t * 1.3) + 1) * 2.5), 1, 1, OFFICE.screenOn);
+  if (mode === 'alert') {
+    const blink = Math.floor(time * 2) % 2 === 0;
+    rect(ctx, x, y, w, h, blink ? OFFICE.screenAlert : OFFICE.screenAlertDark);
+    rect(ctx, x + 5, y + 1, 2, 4, OFFICE.outline);
+    rect(ctx, x + 5, y + 6, 2, 1, OFFICE.outline);
+    return;
+  }
+  if (mode === 'dim') {
+    rect(ctx, x, y, w, h, OFFICE.screenDim);
+    rect(ctx, x + 1, y + 1, w - 2, 1, OFFICE.screenDimLine);
+    if (mark) {
+      ctx.globalAlpha = 0.45;
+      ctx.drawImage(mark, x + w - SCREEN_MARK, y + 1);
+      ctx.globalAlpha = 1;
+    }
     return;
   }
   rect(ctx, x, y, w, h, '#1f2a3d');
   const scroll = Math.floor(time * 3 + seed);
+  const limit = mark ? w - SCREEN_MARK - 3 : w - 2;
   for (let line = 0; line < 4; line += 1) {
     const random = seededRandom(seed * 31 + scroll + line);
     const indent = Math.floor(random() * 3);
     const len = 3 + Math.floor(random() * 6);
-    rect(ctx, x + 1 + indent, y + 1 + line * 2, Math.min(len, w - 2 - indent), 1, OFFICE.code[Math.floor(random() * 4)]);
+    rect(ctx, x + 1 + indent, y + 1 + line * 2, Math.min(len, limit - indent), 1, OFFICE.code[Math.floor(random() * 4)]);
   }
   if (Math.floor(time * 2) % 2 === 0) rect(ctx, x + 2, y + 7, 2, 1, OFFICE.code[4]);
+  if (mark) ctx.drawImage(mark, x + w - SCREEN_MARK, y + 1);
 }
 
-function monitorFront(ctx: Ctx, cx: number, base: number, mode: MonitorMode, time: number, seed: number): void {
-  if (mode === 'code' || mode === 'error') {
-    ctx.fillStyle = mode === 'error' ? 'rgba(255, 110, 110, 0.22)' : OFFICE.screenGlow;
+const GLOW: Partial<Record<MonitorMode, string>> = {
+  code: OFFICE.screenGlow,
+  error: 'rgba(255, 110, 110, 0.22)',
+  alert: 'rgba(255, 190, 80, 0.24)',
+};
+
+function monitorFront(ctx: Ctx, cx: number, base: number, mode: MonitorMode, time: number, seed: number, mark: HTMLCanvasElement | null): void {
+  const glow = GLOW[mode];
+  if (glow) {
+    ctx.fillStyle = glow;
     ctx.fillRect(cx - 10, base - 13, 20, 16);
   }
   rect(ctx, cx - 8, base - 12, 16, 11, OFFICE.outline);
   rect(ctx, cx - 7, base - 11, 14, 9, OFFICE.monitor);
-  screen(ctx, cx - 6, base - 11, mode, time, seed);
+  screen(ctx, cx - 6, base - 11, mode, time, seed, mark);
   rect(ctx, cx - 1, base - 1, 2, 2, OFFICE.monitor);
   rect(ctx, cx - 3, base + 1, 6, 1, OFFICE.outline);
 }
 
-function monitorBack(ctx: Ctx, cx: number, base: number, mode: MonitorMode): void {
+/** The back of a monitor faces the viewer when its owner sits on the near side; the icon is stuck on there. */
+function monitorBack(ctx: Ctx, cx: number, base: number, mode: MonitorMode, mark: HTMLCanvasElement | null): void {
   rect(ctx, cx - 8, base - 12, 16, 11, OFFICE.outline);
   rect(ctx, cx - 7, base - 11, 14, 9, OFFICE.monitorLight);
   rect(ctx, cx - 7, base - 3, 14, 1, OFFICE.monitor);
   rect(ctx, cx - 1, base - 8, 2, 2, mode === 'off' ? OFFICE.monitor : OFFICE.ledOk);
+  if (mark && (mode === 'code' || mode === 'dim')) ctx.drawImage(mark, cx - 3, base - 10);
   rect(ctx, cx - 1, base - 1, 2, 2, OFFICE.monitor);
   rect(ctx, cx - 3, base + 1, 6, 1, OFFICE.outline);
+}
+
+/** A desk lamp on a bent arm; lit at night, its glow is painted over the room by the scene. */
+function deskLamp(ctx: Ctx, x: number, y: number, lit: boolean): void {
+  rect(ctx, x + 1, y - 8, 4, 3, OFFICE.outline);
+  rect(ctx, x + 2, y - 7, 2, 1, lit ? OFFICE.lampShade : OFFICE.paper);
+  rect(ctx, x + 3, y - 5, 1, 5, OFFICE.outline);
+  rect(ctx, x + 2, y, 3, 1, OFFICE.outline);
 }
 
 function deskDrawables(desk: DeskSlot, state: () => DeskState): Drawable[] {
@@ -262,7 +317,8 @@ function deskDrawables(desk: DeskSlot, state: () => DeskState): Drawable[] {
           rect(ctx, x + 2, y + 2, 5, 4, OFFICE.paper);
           rect(ctx, x + 3, y + 3, 3, 2, OFFICE.offSign);
         }
-        monitorBack(ctx, x + 10, y + 14, s.monitor);
+        monitorBack(ctx, x + 10, y + 14, s.monitor, s.mark ?? null);
+        deskLamp(ctx, x + 3, y, s.lit === true);
       },
     }];
   }
@@ -283,7 +339,8 @@ function deskDrawables(desk: DeskSlot, state: () => DeskState): Drawable[] {
         rect(ctx, x + 3, y + 5, 5, 4, OFFICE.paper);
         rect(ctx, x + 4, y + 6, 3, 2, OFFICE.offSign);
       }
-      monitorFront(ctx, x + 20, y + 3, s.monitor, time, seed);
+      monitorFront(ctx, x + 20, y + 3, s.monitor, time, seed, s.mark ?? null);
+      deskLamp(ctx, x + 3, y, s.lit === true);
     },
   }];
 }

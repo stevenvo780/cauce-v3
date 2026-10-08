@@ -79,10 +79,10 @@ describe('behaviour', () => {
     expect(behaviourFor('thinking')).toMatchObject({ rest: 'desk', pose: 'type', monitor: 'code' });
     expect(behaviourFor('receiving')).toMatchObject({ rest: 'desk', bubble: 'mail' });
     expect(behaviourFor('delegating')).toMatchObject({ rest: 'desk', errand: 'deliver' });
-    expect(behaviourFor('blocked')).toMatchObject({ bubble: 'alert', shake: true, monitor: 'error' });
+    expect(behaviourFor('blocked')).toMatchObject({ bubble: 'alert', shake: true, monitor: 'alert' });
     expect(behaviourFor('settled')).toMatchObject({ rest: 'routine', errand: null });
     expect(behaviourFor('idle')).toMatchObject({ rest: 'routine', bubble: null, errand: null });
-    expect(behaviourFor('down')).toMatchObject({ pose: 'ghost', monitor: 'off', errand: null });
+    expect(behaviourFor('down')).toMatchObject({ pose: 'ghost', monitor: 'error', errand: null });
   });
 });
 

@@ -74,3 +74,33 @@ it('anota cada host de la capacidad con su registro y deja deshabilitado el que 
   expect(screen.getByRole('option', { name: /Nombre de apagada/ })).toBeDisabled();
   expect(hosts).toHaveValue('test-host');
 });
+
+it('re-derives the state directory and container from the template when the physical key changes', async () => {
+  const user = userEvent.setup();
+  renderWithApi(<Form accountId="codex-account" />);
+  const key = screen.getByLabelText('Clave física de ejecución');
+  await user.clear(key);
+  await user.type(key, 'nuevo');
+  expect(screen.getByLabelText('Directorio de estado operativo')).toHaveValue('/state/nuevo');
+  expect(screen.getByRole('combobox', { name: 'Plantilla de ejecución' })).toHaveValue('0');
+});
+
+it('shows the state directory read-only while a template is selected and editable otherwise', async () => {
+  const user = userEvent.setup();
+  renderWithApi(<Form accountId="codex-account" />);
+  const state = screen.getByLabelText('Directorio de estado operativo');
+  expect(state).toHaveAttribute('readonly');
+  await user.selectOptions(screen.getByRole('combobox', { name: 'Plantilla de ejecución' }), '-1');
+  expect(state).toHaveAttribute('readonly');
+});
+
+it('offers a membership role select from role_policies with agent preselected', async () => {
+  const user = userEvent.setup();
+  const withRooms = { ...snapshot, rooms: [{ id: 'r1', tenant_id: 'A' }],
+    role_policies: [{ role: 'observer' }, { role: 'agent' }] };
+  renderWithApi(<Form accountId="codex-account" current={withRooms} />);
+  await user.click(screen.getByRole('checkbox', { name: /Incluir/ }));
+  const role = screen.getByRole('combobox', { name: /Rol en/ });
+  expect(role).toHaveValue('agent');
+  expect(screen.getAllByRole('option').map(o => o.textContent)).toEqual(expect.arrayContaining(['observer', 'agent']));
+});

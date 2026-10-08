@@ -6,6 +6,7 @@ import type { ConfigurationSnapshot } from '../../api/types';
 import { server } from '../../mocks/server';
 import { renderWithApi } from '../../test/render';
 import { AgentesSection } from './AgentesSection';
+import { nextStep } from './agent-menu.test-helpers';
 
 beforeEach(() => {
   server.use(http.get('http://localhost/v3/console/fleet/hosts', () => HttpResponse.json({ hosts: [] })));
@@ -51,6 +52,12 @@ async function openAndFill() {
   return user;
 }
 
+async function toReview() {
+  const user = await openAndFill();
+  await nextStep(user, 3);
+  return user;
+}
+
 it('is read-only when config.write is absent or unknown', async () => {
   server.use(access(['config.read']));
   renderSettings();
@@ -58,8 +65,8 @@ it('is read-only when config.write is absent or unknown', async () => {
   const user = userEvent.setup();
   await user.click(screen.getByRole('button', { name: 'Añadir agente' }));
   expect(await screen.findByText(/Tu cuenta no tiene permiso para modificar este registro/)).toBeInTheDocument();
-  expect(screen.getByRole('button', { name: 'Previsualizar alta' })).toBeDisabled();
-  expect(screen.getByRole('button', { name: 'Crear registro' })).toBeDisabled();
+  expect(screen.getByRole('textbox', { name: 'Alias' })).toBeDisabled();
+  expect(screen.queryByRole('button', { name: 'Crear registro' })).not.toBeInTheDocument();
 });
 
 it('fails closed when the permission snapshot cannot be read', async () => {
@@ -69,7 +76,7 @@ it('fails closed when the permission snapshot cannot be read', async () => {
   const user = userEvent.setup();
   await user.click(await screen.findByRole('button', { name: 'Añadir agente' }));
   expect(await screen.findByText(/Tu cuenta no tiene permiso para modificar este registro, o no pudimos verificarlo/)).toBeInTheDocument();
-  expect(screen.getByRole('button', { name: 'Previsualizar alta' })).toBeDisabled();
+  expect(screen.getByRole('textbox', { name: 'Alias' })).toBeDisabled();
 });
 
 it('sends a record create after an exact dry-run and closes with focus returned', async () => {
@@ -85,7 +92,9 @@ it('sends a record create after an exact dry-run and closes with focus returned'
   );
   const user = await openAndFill();
   expect(screen.getByText(/El servidor lo verifica al previsualizar/)).toBeInTheDocument();
+  await nextStep(user);
   expect(screen.getByRole('spinbutton', { name: 'Máximo de entregas concurrentes' })).toHaveValue(2);
+  await nextStep(user, 2);
   await user.click(screen.getByRole('button', { name: 'Previsualizar alta' }));
   expect(await screen.findByLabelText('Preview del alta de agente')).toHaveTextContent('"action": "create"');
   expect(screen.getByRole('button', { name: 'Crear registro' })).toBeEnabled();
@@ -108,10 +117,12 @@ it('invalidates the exact preview after a draft edit', async () => {
     const body = await request.json() as ChangeBody;
     return HttpResponse.json(receipt(body, false));
   }));
-  const user = await openAndFill();
+  const user = await toReview();
   await user.click(screen.getByRole('button', { name: 'Previsualizar alta' }));
   await screen.findByLabelText('Preview del alta de agente');
+  for (let index = 0; index < 3; index += 1) await user.click(screen.getByRole('button', { name: 'Atrás' }));
   await user.type(screen.getByRole('textbox', { name: 'Nombre visible' }), ' revisado');
+  await nextStep(user, 3);
   expect(screen.queryByLabelText('Preview del alta de agente')).not.toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Crear registro' })).toBeDisabled();
 });
@@ -119,7 +130,7 @@ it('invalidates the exact preview after a draft edit', async () => {
 it('reports a hub-only 403 from the server and never enables apply', async () => {
   server.use(access(), http.post('http://localhost/v3/console/config/changes', () =>
     HttpResponse.json({ error: 'forbidden', message: 'operator must be hub' }, { status: 403 })));
-  const user = await openAndFill();
+  const user = await toReview();
   await user.click(screen.getByRole('button', { name: 'Previsualizar alta' }));
   expect(await screen.findByRole('alert')).toHaveTextContent(/operator must be hub/);
   expect(screen.getByRole('button', { name: 'Crear registro' })).toBeDisabled();
@@ -136,7 +147,7 @@ it('reports a 409 conflict and invalidates the preview', async () => {
     }),
     http.get('http://localhost/v3/console/config', () => HttpResponse.json({ ...initial, revision: 5 })),
   );
-  const user = await openAndFill();
+  const user = await toReview();
   await user.click(screen.getByRole('button', { name: 'Previsualizar alta' }));
   await screen.findByLabelText('Preview del alta de agente');
   await user.click(screen.getByRole('button', { name: 'Crear registro' }));
@@ -153,7 +164,7 @@ it('reports an accepted registration as partial when snapshot reload fails', asy
     }),
     http.get('http://localhost/v3/console/config', () => HttpResponse.json({ error: 'unavailable' }, { status: 503 })),
   );
-  const user = await openAndFill();
+  const user = await toReview();
   await user.click(screen.getByRole('button', { name: 'Previsualizar alta' }));
   await screen.findByLabelText('Preview del alta de agente');
   await user.click(screen.getByRole('button', { name: 'Crear registro' }));
@@ -179,6 +190,10 @@ it('opens on the alias field and keeps the advanced inputs folded until asked', 
   const user = userEvent.setup();
   await user.click(await screen.findByRole('button', { name: 'Añadir agente' }));
   await waitFor(() => { expect(screen.getByRole('textbox', { name: 'Alias' })).toHaveFocus(); });
+  await user.selectOptions(screen.getByRole('combobox', { name: 'Espacio de trabajo' }), 'A');
+  await user.type(screen.getByRole('textbox', { name: 'Alias' }), 'worker');
+  await user.type(screen.getByRole('textbox', { name: 'Nombre visible' }), 'Worker');
+  await nextStep(user);
   const details = screen.getByText('Entorno de ejecución (opcional)').closest('details');
   expect(details).not.toHaveAttribute('open');
   await user.click(screen.getByText('Entorno de ejecución (opcional)'));
@@ -193,8 +208,7 @@ it('keeps every field of the dialog disabled in read-only mode', async () => {
   expect(screen.getByRole('dialog')).toBeInTheDocument();
   expect(screen.getByRole('textbox', { name: 'Alias' })).toBeDisabled();
   expect(screen.getByRole('textbox', { name: 'Nombre visible' })).toBeDisabled();
-  expect(screen.getByRole('button', { name: 'Previsualizar alta' })).toBeDisabled();
-  expect(screen.getByRole('button', { name: 'Crear registro' })).toBeDisabled();
+  expect(screen.queryByRole('button', { name: 'Crear registro' })).not.toBeInTheDocument();
 });
 
 it('reopens with an empty draft and uses the newer prop snapshot over an older reread', async () => {
@@ -215,6 +229,7 @@ it('reopens with an empty draft and uses the newer prop snapshot over an older r
   await user.selectOptions(screen.getByRole('combobox', { name: 'Espacio de trabajo' }), 'A');
   await user.type(screen.getByRole('textbox', { name: 'Alias' }), 'worker');
   await user.type(screen.getByRole('textbox', { name: 'Nombre visible' }), 'Worker');
+  await nextStep(user, 3);
   await user.click(screen.getByRole('button', { name: 'Previsualizar alta' }));
   await screen.findByLabelText('Preview del alta de agente');
   await user.click(screen.getByRole('button', { name: 'Crear registro' }));
@@ -229,9 +244,13 @@ it('reopens with an empty draft and uses the newer prop snapshot over an older r
   await user.click(await screen.findByRole('button', { name: 'Añadir agente' }));
   expect(screen.getByRole('textbox', { name: 'Alias' })).toHaveValue('');
   expect(screen.getByRole('textbox', { name: 'Nombre visible' })).toHaveValue('');
-  expect(screen.getByRole('spinbutton', { name: 'Máximo de entregas concurrentes' })).toHaveValue(2);
   expect(screen.getByRole('combobox', { name: 'Espacio de trabajo' })).toHaveDisplayValue('Elige un espacio de trabajo');
   expect(screen.getByRole('combobox', { name: 'Espacio de trabajo' })).toHaveTextContent('New tenant');
+  await user.selectOptions(screen.getByRole('combobox', { name: 'Espacio de trabajo' }), 'B');
+  await user.type(screen.getByRole('textbox', { name: 'Alias' }), 'other');
+  await user.type(screen.getByRole('textbox', { name: 'Nombre visible' }), 'Other');
+  await nextStep(user);
+  expect(screen.getByRole('spinbutton', { name: 'Máximo de entregas concurrentes' })).toHaveValue(2);
   expect(screen.getByRole('combobox', { name: 'Tipo de agente (opcional)' })).toHaveTextContent('gemini');
 });
 

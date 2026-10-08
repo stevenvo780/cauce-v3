@@ -1,13 +1,16 @@
 import { faceTowards, type Avatar } from './avatar';
 import { originOf, type Camera, type Size } from './camera';
-import { TILE, type GameKind, type OfficeLayout } from './layout';
+import { TILE, type GameKind, type OfficeLayout, type Point } from './layout';
 import { SpriteCache, type MakeCanvas } from './paint';
 import { CHAR_H } from './sprites';
+import { deskMonitor } from './monitor';
+import { OFFICE } from './palette';
 import {
   actorLook, drawActor, drawActorOverlay, drawAvatar, drawLabel, drawSleepTrail, drawTapMarker, labelRect,
   type ActorLook, type LabelTone, type ScreenRect, type TapMarker,
 } from './people';
 import { furnitureDrawables, paintRoom, type DeskState, type Drawable } from './render';
+import { drawGroupDots, type GroupDots } from './group-dots';
 import { drawPet, petAt } from './render-garden';
 import type { Actor, World } from './simulation';
 import { drawSpeech, type Speech } from './speech';
@@ -17,9 +20,29 @@ export interface Scene {
   room: HTMLCanvasElement;
   art: HTMLCanvasElement;
   furniture: Drawable[];
+  /** Night darkens the art and lights the desk lamps. */
+  night: boolean;
+  lamps: readonly Point[];
+  glow: HTMLCanvasElement | null;
 }
 
-export function createScene(layout: OfficeLayout, world: World, make: MakeCanvas): Scene | null {
+const GLOW_PX = 24;
+
+/** A soft warm disc, drawn once and added over each lit lamp. */
+function lampGlow(make: MakeCanvas): HTMLCanvasElement | null {
+  const glow = make(GLOW_PX, GLOW_PX);
+  const ctx = glow.getContext('2d');
+  if (!ctx || typeof ctx.createRadialGradient !== 'function') return null;
+  const mid = GLOW_PX / 2;
+  const gradient = ctx.createRadialGradient(mid, mid, 0, mid, mid, mid);
+  gradient.addColorStop(0, 'rgba(255, 214, 120, 0.7)');
+  gradient.addColorStop(1, 'rgba(255, 214, 120, 0)');
+  ctx.fillStyle = gradient;
+  ctx.fillRect(0, 0, GLOW_PX, GLOW_PX);
+  return glow;
+}
+
+export function createScene(layout: OfficeLayout, world: World, make: MakeCanvas, night = false): Scene | null {
   const sprites = new SpriteCache(make);
   const width = layout.cols * TILE;
   const height = layout.rows * TILE;
@@ -27,24 +50,30 @@ export function createScene(layout: OfficeLayout, world: World, make: MakeCanvas
   const art = make(width, height);
   const roomCtx = room.getContext('2d');
   if (!roomCtx || typeof roomCtx.drawImage !== 'function') return null;
-  paintRoom(roomCtx, layout);
+  paintRoom(roomCtx, layout, night);
   const deskState = (slot: number): DeskState => {
     const owner = [...world.actors.values()].find((actor) => actor.desk === slot);
-    if (!owner) return { monitor: 'off', typing: false, offline: false };
+    if (!owner) return { monitor: 'off', typing: false, offline: false, lit: night };
     const desk = layout.desks[slot];
     const atDesk = Math.abs(owner.x - desk.seat.px.x) < 1 && Math.abs(owner.y - desk.seat.px.y) < 1;
     return {
-      monitor: owner.behaviour.monitor,
+      monitor: deskMonitor(owner.state, owner.pose === 'lie'),
       typing: atDesk && owner.pose === 'type',
       hands: sprites.palette(owner.id, false).s,
       offline: owner.state === 'down',
+      mark: sprites.screenMark(owner.id),
+      lit: night,
     };
   };
   const playing = (game: GameKind, station: number) => [...world.actors.values()].some((actor) => actor.pose === 'play'
     && actor.rest.game === game && actor.rest.station === station);
   const cooking = (x: number, y: number) => [...world.actors.values()].some((actor) => actor.pose === 'cook'
     && actor.rest.tile.x === x && actor.rest.tile.y === y + 1);
-  return { sprites, room, art, furniture: furnitureDrawables(layout, deskState, playing, cooking) };
+  const lamps = layout.desks.map((desk) => ({ x: desk.x * TILE + 4, y: desk.deskY * TILE - 4 }));
+  return {
+    sprites, room, art, furniture: furnitureDrawables(layout, deskState, playing, cooking), night, lamps,
+    glow: night ? lampGlow(make) : null,
+  };
 }
 
 /** The look of an agent, turned towards the operator when the operator is the one standing next to them. */
@@ -69,6 +98,7 @@ export interface FrameInput {
   names: ReadonlyMap<string, string>;
   marker?: TapMarker | null;
   speech?: ReadonlyMap<string, Speech>;
+  groups?: ReadonlyMap<string, GroupDots>;
 }
 
 interface Tag { id?: string; text: string; x: number; y: number; above: boolean; tone: LabelTone; rank: number; box?: ScreenRect }
@@ -90,8 +120,20 @@ function placeTags(ctx: CanvasRenderingContext2D, tags: Tag[], fontPx: number, g
   return tags.filter((tag) => kept.has(tag));
 }
 
+/** Dusk over the whole office; the desk lamps are added back on top as warm pools of light. */
+function paintNight(ctx: CanvasRenderingContext2D, scene: Scene): void {
+  ctx.fillStyle = OFFICE.nightVeil;
+  ctx.fillRect(0, 0, scene.art.width, scene.art.height);
+  if (!scene.glow) return;
+  ctx.globalCompositeOperation = 'lighter';
+  for (const lamp of scene.lamps) ctx.drawImage(scene.glow, Math.round(lamp.x) - GLOW_PX / 2, Math.round(lamp.y) - GLOW_PX / 2);
+  ctx.globalCompositeOperation = 'source-over';
+}
+
 export function drawFrame(ctx: CanvasRenderingContext2D, input: FrameInput): void {
-  const { world, scene, avatar, cam, view, dpr, time, selected, hovered, highlight: only } = input;
+  const { world, scene, avatar, cam, view, dpr, selected, hovered, highlight: only } = input;
+  /** Reduced motion freezes the ambient animation on the frame it was asked for. */
+  const time = input.still ? 0 : input.time;
   const artCtx = scene.art.getContext('2d');
   if (!artCtx) return;
   artCtx.imageSmoothingEnabled = false;
@@ -117,6 +159,7 @@ export function drawFrame(ctx: CanvasRenderingContext2D, input: FrameInput): voi
     item.draw(artCtx, time);
   }
   artCtx.globalAlpha = 1;
+  if (scene.night) paintNight(artCtx, scene);
   for (const { actor, look } of actors) {
     if (only && !only.has(actor.id)) continue;
     drawActorOverlay(artCtx, actor, look, time, actor.id === selected, actor.id === hovered);
@@ -153,7 +196,12 @@ export function drawFrame(ctx: CanvasRenderingContext2D, input: FrameInput): voi
     if (only && !only.has(actor.id)) continue;
     drawSleepTrail(ctx, { x: sx(look.head.x), y: origin.y + look.head.y * cam.zoom }, time, cam.zoom, boxes, input.still);
   }
-  for (const tag of shown) if (tag.box) drawLabel(ctx, tag.text, tag.box, fontPx, tag.tone);
+  for (const tag of shown) {
+    if (!tag.box) continue;
+    drawLabel(ctx, tag.text, tag.box, fontPx, tag.tone);
+    const dots = tag.id ? input.groups?.get(tag.id) : undefined;
+    if (dots) drawGroupDots(ctx, tag.box, dots, fontPx, tag.tone === 'dim');
+  }
   for (const { actor, look } of actors) {
     const speech = input.speech?.get(actor.id);
     if (!speech) continue;

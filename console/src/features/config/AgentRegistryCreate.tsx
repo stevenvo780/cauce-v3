@@ -1,21 +1,24 @@
 import { useEffect, useMemo, useRef, useState, type RefObject } from 'react';
-import { fleetHostUsable } from '@cauce/protocol/fleet-hosts';
+import { Dialog } from '@base-ui/react/dialog';
 import type { ConfigMutation, ConfigurationSnapshot } from '../../api/types';
 import { useApi } from '../../api/context';
 import { useConsoleAccess } from '../../api/console-access';
 import type { Resource } from '../../api/use-resource';
 import {
-  agentRegistryCreateError, agentWriteBlock, createAgentRegistryMutation, createAgentRoomMembershipMutation,
+  agentCreateStepError, agentRegistryCreateError, agentWriteBlock, CREATE_STEPS, STEP_LABEL, type CreateStep, createAgentRegistryMutation, createAgentRoomMembershipMutation,
   EMPTY_AGENT_REGISTRY_DRAFT, registryHarnessOptions, registryRoomOptions, registryTenantOptions,
   type AgentRegistryCreateDraft,
 } from './agent-registry-create';
-import { FormDialog } from '../../components/dialogs';
 import { Button, Notice, PREVIEW } from '../../components/kit';
 import { useConfigMutation, useRevisionEncadenada } from './use-config-mutation';
 import { hostById, hostUnavailableReason, useFleetHosts } from './use-fleet-hosts';
 import { useAgentLifecycle } from './use-agent-lifecycle';
 import { agentLifecycleDraft } from './agent-lifecycle-model';
 import { AgentLifecyclePanel } from './AgentLifecyclePanel';
+import { DIALOG_BODY, DIALOG_FOOTER, WIZARD_POPUP, WizardHeader } from './config-dialog';
+import {
+  GroupsStep, IdentityStep, ModeChoice, PlacementStep, ReviewSummary, Stepper, type CreateMode,
+} from './AgentCreateSteps';
 
 interface CreatedAgent {
   tenantId: string; alias: string; displayName: string; harnessId: string; hostId: string; roomLabel?: string;
@@ -31,12 +34,13 @@ const FLEET_REASON: Record<string, string> = {
   unsupported_schema: 'El ejecutor de flota publicado usa un esquema que esta consola no admite.',
 };
 
-export function AgentRegistryCreate({ snapshot, open, onOpenChange, onReloaded, focusReturnRef }: {
+export function AgentRegistryCreate({ snapshot, open, onOpenChange, onReloaded, focusReturnRef, onOpenAgent }: {
   snapshot: ConfigurationSnapshot;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onReloaded: (snapshot: ConfigurationSnapshot) => void;
   focusReturnRef: RefObject<HTMLButtonElement | null>;
+  onOpenAgent?: (ref: string) => void;
 }) {
   const api = useApi();
   const access = useConsoleAccess();
@@ -45,6 +49,8 @@ export function AgentRegistryCreate({ snapshot, open, onOpenChange, onReloaded, 
   const [freshSnapshot, setFreshSnapshot] = useState<ConfigurationSnapshot>();
   const [draft, setDraft] = useState<AgentRegistryCreateDraft>(EMPTY_AGENT_REGISTRY_DRAFT);
   const [formError, setFormError] = useState<string>();
+  const [step, setStep] = useState<CreateStep>('identidad');
+  const [mode, setMode] = useState<CreateMode>('register');
   const [created, setCreated] = useState<CreatedAgent>();
   const [roomStep, setRoomStep] = useState<RoomStep>();
   const aliasInput = useRef<HTMLInputElement>(null);
@@ -143,116 +149,103 @@ export function AgentRegistryCreate({ snapshot, open, onOpenChange, onReloaded, 
       harnessId: draft.harnessId.trim(), hostId: draft.hostId, ...(roomLabel === undefined ? {} : { roomLabel }),
     });
     setDraft(EMPTY_AGENT_REGISTRY_DRAFT);
+    setStep('identidad');
     if (draft.roomId) setRoomStep({ mutation: createAgentRoomMembershipMutation(draft), stage: 'queued' });
+  }
+
+  const stepIndex = CREATE_STEPS.indexOf(step);
+  const stepFields = { draft, edit, disabled };
+
+  function next() {
+    const problem = agentCreateStepError(step, draft, activeSnapshot) ?? (step === 'computadora' ? hostReason : undefined);
+    if (problem) { setFormError(problem); return; }
+    setFormError(undefined);
+    runner.clear();
+    setStep(CREATE_STEPS[Math.min(stepIndex + 1, CREATE_STEPS.length - 1)] ?? 'revision');
+  }
+
+  function back() {
+    setFormError(undefined);
+    runner.clear();
+    setStep(CREATE_STEPS[Math.max(stepIndex - 1, 0)] ?? 'identidad');
   }
 
   const preparedDraft = created ? {
     ...agentLifecycleDraft(activeSnapshot), tenantId: created.tenantId, alias: created.alias,
     displayName: created.displayName, harnessId: created.harnessId, hostId: created.hostId,
   } : undefined;
+  const tenantLabel = tenants.find((tenant) => tenant.id === draft.tenantId)?.label ?? draft.tenantId;
+  const hostLabel = hostById(fleet.hosts, draft.hostId)?.display_name ?? (draft.hostId || 'Sin computadora por ahora');
+  const roomLabel = rooms.find((room) => room.id === draft.roomId)?.label;
+  const preparing = !created && mode === 'prepare';
 
-  return <FormDialog open={open} wide busy={busy} title="Añadir agente" initialFocus={aliasInput} finalFocus={focusReturnRef}
-    description="Este cambio requiere permiso para administrar el registro. El servidor lo verifica al previsualizar."
-    onClose={() => { onOpenChange(false); }}>
-    {created ? <div className="grid gap-3" aria-label="Resultado del alta de agente">
-      <Notice tone="ok" role="status">Registro creado: {created.tenantId}/{created.alias}.</Notice>
-      <ul className="m-0 grid list-none gap-1 p-0 text-sm">
-        <li>Computadora: {hostById(fleet.hosts, created.hostId)?.display_name ?? (created.hostId || 'sin asignar')}</li>
-        {created.roomLabel ? <li>Sala inicial: {created.roomLabel}, {ROOM_STATUS[roomStep?.stage ?? 'done']}.</li> : null}
-      </ul>
-      {runner.notice ? <Notice tone={runner.notice.tone === 'error' ? 'danger' : 'info'}
-        role={runner.notice.tone === 'error' ? 'alert' : 'status'}>{runner.notice.text}</Notice> : null}
-      {created.hostId ? <div className="grid gap-2">
-        <p className="m-0 text-xs text-muted">Siguiente paso: preparar el agente en su computadora. Así queda su entorno de ejecución listo para admitir entregas.</p>
-        {fleetReason ? <Notice role="note">{fleetReason}</Notice> : null}
-        {preparedDraft && !fleetReason ? <AgentLifecyclePanel snapshot={activeSnapshot} onReloaded={onReloaded}
-          initialDraft={preparedDraft} triggerLabel="Preparar en la computadora" /> : null}
-      </div> : <Notice role="note">Asigna una computadora en Editar registro para prepararlo.</Notice>}
-      <div className="flex flex-wrap justify-end gap-2">
-        <Button variant="primary" onClick={() => { onOpenChange(false); }}>Terminar</Button>
-      </div>
-    </div> : <>
-      {writeBlock ? <Notice role="note">{writeBlock}</Notice>
-        : !runner.canWrite ? <Notice role="note">
-          Tu cuenta no tiene permiso para modificar este registro, o no pudimos verificarlo.
-        </Notice> : null}
-      {!tenants.length ? <Notice role="note">No hay espacios de trabajo publicados en esta lectura; no se puede elegir destino.</Notice> : null}
-      <div className="grid gap-3 sm:grid-cols-2">
-        <label>Espacio de trabajo
-          <select value={draft.tenantId} onChange={(event) => { edit({ tenantId: event.target.value, roomId: '' }); }} disabled={disabled}>
-            <option value="">Elige un espacio de trabajo</option>
-            {tenants.map((tenant) => <option key={tenant.id} value={tenant.id}>{tenant.label}</option>)}
-          </select>
-        </label>
-        <label>Alias
-          <input ref={aliasInput} value={draft.alias} maxLength={64} pattern="[a-z][a-z0-9_-]{0,63}"
-            onChange={(event) => { edit({ alias: event.target.value }); }} disabled={disabled} />
-        </label>
-        <label>Nombre visible
-          <input value={draft.displayName} maxLength={128}
-            onChange={(event) => { edit({ displayName: event.target.value }); }} disabled={disabled} />
-        </label>
-        <label>Tipo de agente (opcional)
-          {harnesses.length ? <select value={draft.harnessId} onChange={(event) => { edit({ harnessId: event.target.value }); }} disabled={disabled}>
-            <option value="">Sin declarar</option>
-            {harnesses.map((harness) => <option key={harness} value={harness}>{harness}</option>)}
-          </select> : <input value={draft.harnessId} maxLength={64} placeholder="p. ej. codex"
-            onChange={(event) => { edit({ harnessId: event.target.value }); }} disabled={disabled} />}
-        </label>
-        <label>Máximo de entregas concurrentes
-          <input type="number" min={1} max={100} step={1} value={draft.capacity}
-            onChange={(event) => { edit({ capacity: event.target.value }); }} disabled={disabled} />
-        </label>
-        <label>Computadora (opcional)
-          <select value={draft.hostId} onChange={(event) => { edit({ hostId: event.target.value }); }} disabled={disabled}>
-            <option value="">Sin computadora por ahora</option>
-            {hosts.map((host) => <option key={host.host_id} value={host.host_id} disabled={!fleetHostUsable(host)}>
-              {host.display_name}{fleetHostUsable(host) ? '' : host.enabled ? ' · sin conexión' : ' · deshabilitada'}
-            </option>)}
-          </select>
-        </label>
-        {hostReason ? <Notice role="alert" className="sm:col-span-2">{hostReason}</Notice> : null}
-        <label>Sala inicial (opcional)
-          <select value={draft.roomId} onChange={(event) => { edit({ roomId: event.target.value }); }} disabled={disabled || !rooms.length}>
-            <option value="">Sin sala inicial</option>
-            {rooms.map((room) => <option key={room.id} value={room.id}>{room.label}</option>)}
-          </select>
-        </label>
-        {draft.roomId ? <label>Rol en la sala
-          <input value={draft.roomRole} maxLength={64} onChange={(event) => { edit({ roomRole: event.target.value }); }} disabled={disabled} />
-        </label> : null}
-        <details className="grid gap-2 sm:col-span-2">
-          <summary className="cursor-pointer text-[13px] font-medium">Entorno de ejecución (opcional)</summary>
-          <p className="m-0 my-2 text-xs text-muted">Indica el contenedor, el usuario y sus dos directorios. Completa los cuatro campos o déjalos vacíos; no se generan valores.</p>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <label>Nombre del contenedor
-              <input value={draft.containerName} onChange={(event) => { edit({ containerName: event.target.value }); }} disabled={disabled} />
-            </label>
-            <label>Usuario de ejecución
-              <input value={draft.runtimeUser} onChange={(event) => { edit({ runtimeUser: event.target.value }); }} disabled={disabled} />
-            </label>
-            <label>Directorio personal
-              <input value={draft.homeDirectory} onChange={(event) => { edit({ homeDirectory: event.target.value }); }} disabled={disabled} />
-            </label>
-            <label>Directorio de estado
-              <input value={draft.stateDirectory} onChange={(event) => { edit({ stateDirectory: event.target.value }); }} disabled={disabled} />
-            </label>
+  const permissionNotice = writeBlock ? <Notice role="note">{writeBlock}</Notice>
+    : !runner.canWrite ? <Notice role="note">
+      Tu cuenta no tiene permiso para modificar este registro, o no pudimos verificarlo.
+    </Notice> : null;
+  const notices = <>
+    {formError ? <Notice tone="danger" role="alert">{formError}</Notice> : null}
+    {runner.notice ? <Notice tone={runner.notice.tone === 'error' ? 'danger' : 'info'}
+      role={runner.notice.tone === 'error' ? 'alert' : 'status'}>{runner.notice.text}</Notice> : null}
+  </>;
+
+  return <Dialog.Root open={open} onOpenChange={(next) => { if (!next && !busy) onOpenChange(false); }}>
+    <Dialog.Portal>
+      <Dialog.Backdrop className="fixed inset-0 z-50 bg-scrim" />
+      <Dialog.Popup initialFocus={aliasInput} finalFocus={focusReturnRef} className={WIZARD_POPUP}>
+        <WizardHeader busy={busy} title="Añadir agente"
+          description="Este cambio requiere permiso para administrar el registro. El servidor lo verifica al previsualizar." />
+        {created ? <>
+          <div className={`${DIALOG_BODY} grid content-start gap-3`} aria-label="Resultado del alta de agente">
+            <Notice tone="ok" role="status">Registro creado: {created.tenantId}/{created.alias}.</Notice>
+            <ul className="m-0 grid list-none gap-1 p-0 text-sm">
+              <li>Computadora: {hostById(fleet.hosts, created.hostId)?.display_name ?? (created.hostId || 'sin asignar')}</li>
+              {created.roomLabel ? <li>Grupo inicial: {created.roomLabel}, {ROOM_STATUS[roomStep?.stage ?? 'done']}.</li> : null}
+            </ul>
+            {runner.notice ? <Notice tone={runner.notice.tone === 'error' ? 'danger' : 'info'}
+              role={runner.notice.tone === 'error' ? 'alert' : 'status'}>{runner.notice.text}</Notice> : null}
+            {created.hostId ? <div className="grid gap-2">
+              <p className="m-0 text-xs text-muted">Siguiente paso: preparar el agente en su computadora. Así queda su entorno de ejecución listo para admitir entregas.</p>
+              {fleetReason ? <Notice role="note">{fleetReason}</Notice> : null}
+              {preparedDraft && !fleetReason ? <AgentLifecyclePanel snapshot={activeSnapshot} onReloaded={onReloaded}
+                initialDraft={preparedDraft} triggerLabel="Preparar en la computadora" /> : null}
+            </div> : <Notice role="note">Asigna una computadora en Editar registro para prepararlo.</Notice>}
           </div>
-        </details>
-      </div>
-      <p className="m-0 text-xs text-muted">La sala inicial se añade después de crear el registro, con su propia validación del servidor.</p>
-      {formError ? <Notice tone="danger" role="alert">{formError}</Notice> : null}
-      {runner.notice ? <Notice tone={runner.notice.tone === 'error' ? 'danger' : 'info'}
-        role={runner.notice.tone === 'error' ? 'alert' : 'status'}>{runner.notice.text}</Notice> : null}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <span className="text-xs text-muted">Revisión esperada: {String(runner.expectedRevision ?? 'desconocida')}</span>
-        <div className="flex flex-wrap gap-2">
-          <Button onClick={() => { void preview(); }} disabled={disabled || !tenants.length}>Previsualizar alta</Button>
-          <Button variant="primary" onClick={() => { void apply(); }}
-            disabled={disabled || !mutation || !runner.isValidated(mutation) || Boolean(hostReason)}>Crear registro</Button>
-        </div>
-      </div>
-      {runner.preview ? <pre className={PREVIEW} aria-label="Preview del alta de agente">{runner.preview}</pre> : null}
-    </>}
-  </FormDialog>;
+          <div className={DIALOG_FOOTER}>
+            {onOpenAgent ? <Button onClick={() => { onOpenAgent(`${created.tenantId}/${created.alias}`); onOpenChange(false); }}>Abrir ficha</Button> : null}
+            <Button variant="primary" onClick={() => { onOpenChange(false); }}>Terminar</Button>
+          </div>
+        </> : <>
+          <div className={`${DIALOG_BODY} grid content-start gap-4`}>
+            {permissionNotice}
+            {step === 'identidad' ? <ModeChoice mode={mode} onChange={(value) => { setMode(value); setFormError(undefined); }} disabled={disabled} /> : null}
+            {preparing ? <AgentLifecyclePanel snapshot={activeSnapshot} onReloaded={onReloaded} initialOpen hideTrigger embedded
+              onClose={() => { onOpenChange(false); }} /> : <>
+              <Stepper step={step} />
+              <h3 className="m-0 text-sm font-semibold">{STEP_LABEL[step]}</h3>
+              {step === 'identidad' ? <IdentityStep {...stepFields} tenants={tenants} aliasInput={aliasInput} /> : null}
+              {step === 'computadora' ? <PlacementStep {...stepFields} harnesses={harnesses} hosts={hosts} hostReason={hostReason} /> : null}
+              {step === 'grupos' ? <GroupsStep {...stepFields} rooms={rooms} /> : null}
+              {step === 'revision' ? <>
+                <ReviewSummary draft={draft} tenantLabel={tenantLabel} hostLabel={hostLabel} roomLabel={roomLabel} />
+                <p className="m-0 text-xs text-muted">Revisión esperada: {String(runner.expectedRevision ?? 'desconocida')}. Previsualiza el alta para que el servidor la valide antes de crearla.</p>
+                {runner.preview ? <pre className={PREVIEW} aria-label="Preview del alta de agente">{runner.preview}</pre> : null}
+              </> : null}
+              {notices}
+            </>}
+          </div>
+          <div className={DIALOG_FOOTER}>
+            {preparing ? <Button onClick={() => { onOpenChange(false); }}>Cerrar</Button> : <>
+              {stepIndex > 0 ? <Button className="mr-auto" onClick={back} disabled={busy}>Atrás</Button> : null}
+              {step === 'revision' ? <>
+                <Button onClick={() => { void preview(); }} disabled={disabled || !tenants.length}>Previsualizar alta</Button>
+                <Button variant="primary" onClick={() => { void apply(); }}
+                  disabled={disabled || !mutation || !runner.isValidated(mutation) || Boolean(hostReason)}>Crear registro</Button>
+              </> : <Button variant="primary" onClick={next} disabled={busy}>Siguiente</Button>}
+            </>}
+          </div>
+        </>}
+      </Dialog.Popup>
+    </Dialog.Portal>
+  </Dialog.Root>;
 }

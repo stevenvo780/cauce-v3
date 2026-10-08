@@ -31,9 +31,14 @@ const PLACEMENT_FIELDS = [
   ['stateDirectory', 'state_directory', 'directorio de estado'],
 ] as const;
 
-export function agentRegistryCreateError(
-  draft: AgentRegistryCreateDraft, snapshot?: ConfigurationSnapshot,
-): string | undefined {
+export const CREATE_STEPS = ['identidad', 'computadora', 'grupos', 'revision'] as const;
+export type CreateStep = typeof CREATE_STEPS[number];
+
+export const STEP_LABEL: Record<CreateStep, string> = {
+  identidad: 'Identidad', computadora: 'Arnés y computadora', grupos: 'Grupos', revision: 'Revisar y crear',
+};
+
+function identityError(draft: AgentRegistryCreateDraft, snapshot?: ConfigurationSnapshot): string | undefined {
   if (!draft.tenantId) return 'Elige un espacio de trabajo del registro actual.';
   if (snapshot && !registryTenantExists(snapshot, draft.tenantId)) {
     return 'El espacio de trabajo elegido ya no está disponible. Elige uno del inventario actual para continuar.';
@@ -41,6 +46,10 @@ export function agentRegistryCreateError(
   if (!SLUG.test(draft.alias.trim())) return 'El alias debe empezar con una letra minúscula y usar sólo letras minúsculas, números, guiones o guiones bajos, hasta 64 caracteres.';
   const name = draft.displayName.trim();
   if (!name || name.length > 128) return 'Indica un nombre visible de hasta 128 caracteres.';
+  return undefined;
+}
+
+function placementError(draft: AgentRegistryCreateDraft): string | undefined {
   if (draft.harnessId.trim() && !SLUG.test(draft.harnessId.trim())) {
     return 'El tipo de agente debe empezar con una letra minúscula y usar sólo letras minúsculas, números, guiones o guiones bajos, hasta 64 caracteres.';
   }
@@ -53,11 +62,31 @@ export function agentRegistryCreateError(
   if (placement.some(Boolean) && placement.some((value) => !value)) {
     return 'Completa los cuatro campos del entorno de ejecución o déjalos vacíos.';
   }
-  if (draft.roomId && !draft.roomRole.trim()) return 'Indica el rol del agente en la sala inicial.';
+  return undefined;
+}
+
+function groupError(draft: AgentRegistryCreateDraft, snapshot?: ConfigurationSnapshot): string | undefined {
+  if (draft.roomId && !draft.roomRole.trim()) return 'Indica el rol del agente en el grupo inicial.';
   if (draft.roomId && snapshot && !registryRoomOptions(snapshot, draft.tenantId).some((room) => room.id === draft.roomId)) {
-    return 'La sala elegida ya no está disponible en este espacio. Elige una del inventario actual.';
+    return 'El grupo elegido ya no está disponible en este espacio. Elige uno del inventario actual.';
   }
   return undefined;
+}
+
+/** The first problem that blocks leaving `step`; the later steps are not looked at yet. */
+export function agentCreateStepError(
+  step: CreateStep, draft: AgentRegistryCreateDraft, snapshot?: ConfigurationSnapshot,
+): string | undefined {
+  if (step === 'identidad') return identityError(draft, snapshot);
+  if (step === 'computadora') return placementError(draft);
+  if (step === 'grupos') return groupError(draft, snapshot);
+  return undefined;
+}
+
+export function agentRegistryCreateError(
+  draft: AgentRegistryCreateDraft, snapshot?: ConfigurationSnapshot,
+): string | undefined {
+  return identityError(draft, snapshot) ?? placementError(draft) ?? groupError(draft, snapshot);
 }
 
 export function createAgentRegistryMutation(draft: AgentRegistryCreateDraft): ConfigMutation {

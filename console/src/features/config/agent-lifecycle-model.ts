@@ -93,7 +93,26 @@ export function agentLifecycleRequest(
   if (draft.harnessId === 'openclaw' && provider === 'codex' && !/^openai\/[A-Za-z0-9][A-Za-z0-9_.:-]{0,111}$/u.test(draft.modelId)) {
     return { error: 'Esta plantilla OpenClaw requiere un modelo explícito con formato openai/<modelo>.' };
   }
-  return result.success ? { request: result.data } : { error: 'Revisa identidad, clave física, membresías, grupo primario y datos de ejecución. No se enviaron cambios.' };
+  if (result.success) return { request: result.data };
+  return { error: missingFieldMessage(draft) ?? 'Revisa identidad, clave física, membresías, grupo primario y datos de ejecución. No se enviaron cambios.' };
+}
+function missingFieldMessage(draft: AgentLifecycleDraft): string | undefined {
+  if (!draft.alias.trim()) return 'Falta el alias operativo del agente. No se enviaron cambios.';
+  if (!draft.runtimeKey.trim()) return 'Falta la clave física de ejecución. No se enviaron cambios.';
+  const roleless = draft.memberships.find((member) => !member.role.trim());
+  if (roleless) return `Falta el rol en la membresía del grupo ${JSON.stringify(roleless.room_id)}. Elige un rol. No se enviaron cambios.`;
+  if (!draft.primaryRoomId) return 'Falta el grupo primario: elígelo entre las membresías incluidas. No se enviaron cambios.';
+  if (!draft.memberships.some((member) => member.room_id === draft.primaryRoomId)) return 'El grupo primario debe ser una de las membresías incluidas. No se enviaron cambios.';
+  return undefined;
+}
+export const DEFAULT_MEMBERSHIP_ROLE = 'agent';
+export function membershipRoleOptions(snapshot: ConfigurationSnapshot): string[] {
+  const roles = (snapshot.role_policies ?? []).flatMap((row) => { const role = text(row, 'role'); return role ? [role] : []; });
+  return [...new Set(roles.length ? roles : [DEFAULT_MEMBERSHIP_ROLE])];
+}
+export function defaultMembershipRole(snapshot: ConfigurationSnapshot): string {
+  const roles = membershipRoleOptions(snapshot);
+  return roles.includes(DEFAULT_MEMBERSHIP_ROLE) ? DEFAULT_MEMBERSHIP_ROLE : roles[0] ?? DEFAULT_MEMBERSHIP_ROLE;
 }
 export const FLEET_ACTION_LABELS = { create: 'Preparar agente', update: 'Actualizar ejecución', start: 'Iniciar', stop: 'Detener',
   retire: 'Retirar', restore: 'Restaurar', purge: 'Purgar' };

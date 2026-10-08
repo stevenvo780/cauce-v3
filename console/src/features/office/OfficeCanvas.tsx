@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent, type PointerEvent, type ReactNode } from 'react';
 import { ContextMenu } from '@base-ui/react/context-menu';
-import { pixelIconName } from '@cauce/protocol/agent-preferences';
+import { pixelIconName, type AgentAppearanceStyle } from '@cauce/protocol/agent-preferences';
 import { FloatingTooltip } from '../../components/ui';
 import { isContextMenuKey, openContextMenuAt } from '../../components/agent-actions/agent-actions';
 import { AgentActionItems } from '../../components/agent-actions/AgentActionsMenu';
 import { MENU_POPUP } from '../../components/kit';
 import { cn } from '../../cn';
+import { AgentTip } from './AgentTip';
+import { TalkPrompt } from './TalkPrompt';
+import { DIR_OF, PAD_VECTOR, VECTORS } from './canvas-input';
 import { useMediaQuery } from '../../shell/use-media-query';
-import { STATE_TONE, TONE_CLASS } from '../../status-tone';
 import { LIVE_STATE_META, type LiveState } from '../live/agent-state';
 import { arrive, createAvatar, nearbyAgent, stepAvatar, stepTile, tileAt, walkTo, type Avatar } from './avatar';
 import {
@@ -17,7 +19,8 @@ import {
 import {
   DOUBLE_MS, isDoubleTap, isTap, movedPast, pinchOf, pinchZoom, wheelPassesThrough, wheelZoom, type Pinch, type TapMark,
 } from './gesture';
-import { TILE, WALL_ROWS, buildLayout, chooseLayout, type Dir, type RoomId } from './layout';
+import { TILE, WALL_ROWS, buildLayout, chooseLayout, type Dir, type Room, type RoomId } from './layout';
+import { teamArea } from './team-layout';
 import { drawMinimap, minimapSize, minimapToWorld } from './minimap';
 import { Minimap, RoomBar } from './OfficeNav';
 import { roomAt, roomCamera, roomCounts, sameCounts, type RoomCounts } from './rooms';
@@ -26,7 +29,15 @@ import { agentRefOf, clientPointOf, clippingOf, hintSeen, makeCanvas, rememberHi
 import { DirectionPad, OfficeControls, OfficeHint } from './OfficeControls';
 import type { TapMarker } from './people';
 import { createScene, drawFrame, lookOf, screenBox } from './scene';
-import { createWorld, stepWorld, syncWorld, type ActorInput } from './simulation';
+import { actorInputs } from './actor-inputs';
+import { useNight } from './daylight';
+import { useOfficeLooks } from './use-office-looks';
+import { useSlots } from './use-office-slots';
+import { useTeamPlan } from './use-team-plan';
+import { TeamLegend } from './TeamLegend';
+import { dotsByAgent, type GroupDots } from './group-dots';
+import type { OfficeTeam } from './teams';
+import { createWorld, stepWorld, syncWorld } from './simulation';
 import { readingOrder, spatialNext } from './spatial';
 
 export interface OfficeAgent {
@@ -38,9 +49,13 @@ export interface OfficeAgent {
   /** The fleet's chosen look: the hue dresses the character and the glyph rides on its name tag. */
   glyph?: string | null;
   hue?: number | null;
+  /** The chosen style decides the accessory: scarf, headphones or cap; the orb wears none. */
+  style?: AgentAppearanceStyle | null;
   awake?: boolean;
   /** A declared MCP client: no desk work, no agent actions, talking leaves a mailbox note. */
   visitor?: boolean;
+  team?: OfficeTeam;
+  groups?: readonly string[];
 }
 
 interface OfficeCanvasProps {
@@ -54,6 +69,7 @@ interface OfficeCanvasProps {
   onTalk?: (id: string) => void;
   talk?: { id: string; panel: ReactNode } | null;
   speech?: ReadonlyMap<string, Speech>;
+  hues?: ReadonlyMap<string, number>;
 }
 
 const HINT_MS = 12_000;
@@ -63,15 +79,6 @@ const SHEET_BREAKPOINT = 761;
 const SHEET_SHARE = 0.55;
 const MIN_BAND = 180;
 const PAN_SPEED = 620;
-const VECTORS: Readonly<Record<string, Vec>> = {
-  ArrowUp: { x: 0, y: -1 }, ArrowDown: { x: 0, y: 1 }, ArrowLeft: { x: -1, y: 0 }, ArrowRight: { x: 1, y: 0 },
-  w: { x: 0, y: -1 }, s: { x: 0, y: 1 }, a: { x: -1, y: 0 }, d: { x: 1, y: 0 },
-};
-const DIR_OF: Readonly<Record<string, Dir>> = {
-  ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right', w: 'up', s: 'down', a: 'left', d: 'right',
-};
-const PAD_VECTOR: Readonly<Record<Dir, Vec>> = { up: VECTORS.w, down: VECTORS.s, left: VECTORS.a, right: VECTORS.d };
-
 interface Press { start: Vec; at: number; type: string; dragging: boolean; last: Vec }
 
 interface Engine {
@@ -94,7 +101,7 @@ interface Engine {
   mapAt: number;
 }
 
-export function OfficeCanvas({ agents, selectedId, highlight, onSelect, label, onTalk, talk = null, speech }: OfficeCanvasProps) {
+export function OfficeCanvas({ agents, selectedId, highlight, onSelect, label, onTalk, talk = null, speech, hues }: OfficeCanvasProps) {
   const frameRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
@@ -104,6 +111,7 @@ export function OfficeCanvas({ agents, selectedId, highlight, onSelect, label, o
   const talkRef = useRef<HTMLDivElement>(null);
   const reducedMotion = useMediaQuery('(prefers-reduced-motion: reduce)');
   const coarse = useMediaQuery('(pointer: coarse)');
+  const wide = useMediaQuery('(min-width: 640px)');
   const escapeBlocked = useRef(false);
   const [maximized, toggleMaximized] = useMaximized(frameRef, escapeBlocked);
   const box = useBox(frameRef, maximized);
@@ -121,7 +129,10 @@ export function OfficeCanvas({ agents, selectedId, highlight, onSelect, label, o
   const [counts, setCounts] = useState<RoomCounts>({});
 
   const ordered = useMemo(() => [...agents].sort((a, b) => a.id.localeCompare(b.id)), [agents]);
-  const choice = useMemo(() => chooseLayout(ordered.length, box), [ordered.length, box]);
+  const fleet = useMemo(() => ordered.filter((agent) => !agent.visitor), [ordered]);
+  const visitors = useMemo(() => ordered.filter((agent) => agent.visitor), [ordered]);
+  const { teams, zoned, specs, seats, deskOf } = useTeamPlan(fleet);
+  const choice = useMemo(() => chooseLayout(seats, box, zoned ? specs : undefined), [seats, box, zoned, specs]);
   const layout = useMemo(() => buildLayout(choice.params), [choice.params]);
   const artW = layout.cols * TILE;
   const artH = layout.rows * TILE;
@@ -141,34 +152,24 @@ export function OfficeCanvas({ agents, selectedId, highlight, onSelect, label, o
     inset: NO_INSET, pendingWalk: 0, marker: null, flying: false, mapAt: 0,
   }), [layout]);
 
+  const waitOf = useSlots(useMemo(() => visitors.map((agent) => agent.id), [visitors]));
   useEffect(() => {
-    const desks = new Map(ordered.map((agent, index) => [agent.id, index]));
-    const inputs: ActorInput[] = ordered.map((agent, index) => ({
-      id: agent.id,
-      state: agent.state,
-      sleepy: agent.state === 'idle' && agent.awake !== true,
-      desk: index,
-      delegateDesk: agent.state === 'delegating'
-        ? agent.delegatesTo.map((target) => desks.get(target)).find((desk) => desk !== undefined) ?? null
-        : null,
-    }));
-    syncWorld(world, inputs);
-  }, [world, ordered]);
+    syncWorld(world, actorInputs(ordered, deskOf, waitOf));
+  }, [world, ordered, deskOf, waitOf]);
 
-  const live = useRef({ selectedId, hoverId: hoverId ?? cursorId, highlight, names: new Map<string, string>(), paseo, view, limits, onSelect, speech, talkId: null as string | null, states: new Map<string, LiveState>() });
+  const live = useRef({ selectedId, hoverId: hoverId ?? cursorId, highlight, names: new Map<string, string>(), paseo, view, limits, onSelect, speech, talkId: null as string | null, states: new Map<string, LiveState>(), groups: new Map<string, GroupDots>() });
   live.current = {
     selectedId, hoverId: hoverId ?? cursorId, highlight, paseo, view, limits, onSelect, speech, talkId: talk?.id ?? null,
     states: new Map(ordered.map((agent) => [agent.id, agent.state])),
+    groups: dotsByAgent(ordered, hues),
     names: new Map(ordered.map((agent) => [agent.id, agent.glyph && pixelIconName(agent.glyph) === undefined ? `${agent.glyph} ${agent.name}` : agent.name])),
   };
 
-  const scene = useMemo(() => (typeof document === 'undefined' ? null : createScene(layout, world, makeCanvas)), [layout, world]);
+  const night = useNight();
+  const scene = useMemo(() => (typeof document === 'undefined' ? null : createScene(layout, world, makeCanvas, night)), [layout, world, night]);
   const kickRef = useRef<() => void>(() => undefined);
-  useEffect(() => {
-    scene?.sprites.setHues(new Map(ordered.flatMap((agent) => (agent.hue === undefined || agent.hue === null ? [] : [[agent.id, agent.hue]]))));
-    kickRef.current();
-  }, [scene, ordered]);
   const kick = useCallback(() => { kickRef.current(); }, []);
+  useOfficeLooks(scene, ordered, kick);
 
   const clamp = useCallback((cam: Camera) => clampCamera(cam, live.current.view, worldSize, live.current.limits, engine.inset), [worldSize, engine]);
 
@@ -194,7 +195,7 @@ export function OfficeCanvas({ agents, selectedId, highlight, onSelect, label, o
     drawFrame(ctx, {
       world, scene, avatar: engine.avatar, cam: engine.cam, view: now.view, dpr: box.dpr, time, still: reducedMotion,
       selected: now.selectedId, hovered: now.hoverId, highlight: now.highlight, nearby: engine.nearby, names: now.names,
-      marker: engine.marker ? { ...engine.marker, age: Math.max(0, time - engine.marker.at) } : null, speech: now.speech,
+      marker: engine.marker ? { ...engine.marker, age: Math.max(0, time - engine.marker.at) } : null, speech: now.speech, groups: now.groups,
     });
     const map = mapRef.current;
     const mapCtx = map?.getContext('2d');
@@ -382,15 +383,23 @@ export function OfficeCanvas({ agents, selectedId, highlight, onSelect, label, o
     kick();
   }, [talkId, selectedId, focusAgent, sheetInset, talkInset, engine, clamp, kick, view]);
 
-  const flyTo = useCallback((id: RoomId) => {
-    const target = layout.rooms.find((candidate) => candidate.id === id);
-    if (!target) return;
+  const flyToArea = useCallback((target: Room) => {
     engine.following = false;
     engine.flying = true;
     engine.target = clamp(roomCamera(target, live.current.view, live.current.limits, engine.inset));
     dismissHint();
     kick();
-  }, [layout, engine, clamp, dismissHint, kick]);
+  }, [engine, clamp, dismissHint, kick]);
+
+  const flyTo = useCallback((id: RoomId) => {
+    const target = layout.rooms.find((candidate) => candidate.id === id);
+    if (target) flyToArea(target);
+  }, [layout, flyToArea]);
+
+  const flyToTeam = useCallback((id: string) => {
+    const team = layout.teams.find((candidate) => candidate.id === id);
+    if (team) flyToArea(teamArea(team));
+  }, [layout, flyToArea]);
 
   const zoomTo = useCallback((zoom: number, at?: Vec) => {
     const size = live.current.view;
@@ -442,8 +451,8 @@ export function OfficeCanvas({ agents, selectedId, highlight, onSelect, label, o
     const point = screenToWorld(engine.cam, size, screen);
     const desk = layout.desks.findIndex((slot) => point.x >= slot.x * TILE && point.x < slot.x * TILE + 32
       && point.y >= Math.min(slot.deskY, slot.chairY) * TILE && point.y < (Math.max(slot.deskY, slot.chairY) + 1) * TILE);
-    return desk >= 0 && desk < ordered.length ? ordered[desk].id : null;
-  }, [world, engine, layout, ordered]);
+    return desk >= 0 ? fleet.find((agent) => deskOf.get(agent.id) === desk)?.id ?? null : null;
+  }, [world, engine, layout, fleet, deskOf]);
 
   const boxOf = useCallback((id: string): DOMRect | null => {
     const canvas = canvasRef.current;
@@ -723,7 +732,7 @@ export function OfficeCanvas({ agents, selectedId, highlight, onSelect, label, o
             className="sr-only"
             onClick={() => { onSelect(agent.id); }}
           >
-            {agent.name}: {LIVE_STATE_META[agent.state].label}. {agent.reason}
+            {agent.name}: {LIVE_STATE_META[agent.state].label}. {agent.reason}{agent.visitor || !agent.team ? '' : ` Grupo: ${agent.team.label}.`}
           </div>
         ))}
       </ContextMenu.Trigger>
@@ -735,21 +744,20 @@ export function OfficeCanvas({ agents, selectedId, highlight, onSelect, label, o
         </ContextMenu.Positioner>
       </ContextMenu.Portal>
       </ContextMenu.Root>
-      <button
-        ref={promptRef}
-        type="button"
-        onClick={() => { if (talkTo) (onTalk ?? onSelect)(talkTo.id); }}
-        tabIndex={talkTo ? 0 : -1}
-        aria-hidden={talkTo ? undefined : true}
-        className={cn(
-          'absolute top-0 left-0 z-10 inline-flex cursor-pointer items-center gap-1.5 rounded-full border border-line bg-surface py-1 pr-1.5 pl-2.5 text-xs font-medium whitespace-nowrap text-fg shadow-pop transition-opacity duration-150 hover:bg-subtle pointer-coarse:min-h-11 pointer-coarse:px-4 pointer-coarse:text-sm',
-          talkTo ? 'opacity-100' : 'pointer-events-none opacity-0',
-        )}
-      >
-        {talkTo ? `Hablar con ${talkTo.name}` : ''}
-        {coarse ? null : <kbd className="rounded border border-line bg-subtle px-1 font-sans text-[10px] text-muted">E</kbd>}
-      </button>
+      <TalkPrompt
+        buttonRef={promptRef}
+        name={talkTo?.name ?? null}
+        coarse={coarse}
+        onTalk={() => { if (talkTo) (onTalk ?? onSelect)(talkTo.id); }}
+      />
       <RoomBar rooms={layout.rooms} current={room} counts={counts} onGo={flyTo} />
+      {zoned && !(hint && short && !talk) ? (
+        <TeamLegend
+          teams={teams.map((team) => ({ id: team.id, label: team.label, hue: team.hue, count: team.ids.length }))}
+          defaultOpen={!coarse && wide}
+          onGo={flyToTeam}
+        />
+      ) : null}
       <Minimap canvasRef={mapRef} open={showMap} size={mapSize} onToggle={() => { setMapOpen(!showMap); }} onJump={jump} />
       {hint && !talk ? <OfficeHint touch={coarse} top={short} onClose={dismissHint} /> : null}
       {talk ? <div ref={talkRef} className="contents">{talk.panel}</div> : null}
@@ -779,16 +787,7 @@ export function OfficeCanvas({ agents, selectedId, highlight, onSelect, label, o
         />
       ) : null}
       <FloatingTooltip anchor={anchor} open={Boolean(tip && anchor)}>
-        {tip ? (
-          <>
-            <strong>{tip.name}</strong>
-            <span className={cn('mt-1 inline-flex items-center gap-1.5 text-xs font-medium', TONE_CLASS[STATE_TONE[tip.state]].ink)}>
-              <span className={cn('size-1.5 rounded-full', TONE_CLASS[STATE_TONE[tip.state]].dot)} aria-hidden="true" />
-              {LIVE_STATE_META[tip.state].label}
-            </span>
-            <p>{tip.reason}</p>
-          </>
-        ) : null}
+        {tip ? <AgentTip agent={tip} /> : null}
       </FloatingTooltip>
     </div>
   );

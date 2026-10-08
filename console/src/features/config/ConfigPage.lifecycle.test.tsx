@@ -5,9 +5,10 @@ import type { FleetOperationRequest } from '@cauce/protocol/fleet-operation';
 import { fleetRequestHash } from '../../api/client/fleet-operations-client';
 import { server } from '../../mocks/server';
 import { renderWithApi } from '../../test/render';
+import { agentAction, openPrepareAgent } from './agent-menu.test-helpers';
 import { ConfigPage } from './ConfigPage';
 
-const snapshot = { revision: 4, tenants: [{ id: 'A' }], rooms: [{ tenant_id: 'A', id: 'grp.a' }],
+const snapshot = { revision: 4, role_policies: [{ role: 'agent' }], tenants: [{ id: 'A' }], rooms: [{ tenant_id: 'A', id: 'grp.a' }],
   agents: [{ tenant_id: 'A', alias: 'active', runtime_key: 'active', enabled: true }], memberships: [],
   harness_definitions: [{ id: 'codex' }], retired: { tenants: [], rooms: [], memberships: [],
     agents: [{ tenant_id: 'A', alias: 'retired', runtime_key: 'retired', enabled: false }] } };
@@ -46,7 +47,7 @@ it('prepara un contenedor desde la sección visible y acredita sólo el encolado
   serve(previews, accepted);
   const user = userEvent.setup();
   renderWithApi(<ConfigPage />);
-  await user.click(await screen.findByRole('button', { name: 'Preparar agente' }));
+  await openPrepareAgent(user);
   const form = within(screen.getByRole('region', { name: 'Alta operativa de agente' }));
   await waitFor(() => { expect(form.getByRole('combobox', { name: 'Host operativo' })).toHaveTextContent('test-host'); });
   await user.selectOptions(form.getByRole('combobox', { name: 'Espacio de trabajo operativo' }), 'A');
@@ -54,7 +55,7 @@ it('prepara un contenedor desde la sección visible y acredita sólo el encolado
   await user.type(form.getByRole('textbox', { name: 'Clave física de ejecución' }), 'new-worker');
   await user.selectOptions(form.getByRole('combobox', { name: 'Arnés operativo' }), 'codex');
   await user.click(form.getByRole('checkbox', { name: 'Incluir grp.a · "grp.a"' }));
-  await user.type(form.getByRole('textbox', { name: 'Rol en "grp.a"' }), 'agent');
+  expect(form.getByRole('combobox', { name: 'Rol en "grp.a"' })).toHaveValue('agent');
   await user.selectOptions(form.getByRole('combobox', { name: 'Grupo primario' }), 'grp.a');
   await user.selectOptions(form.getByRole('combobox', { name: 'Host operativo' }), 'test-host');
   await user.selectOptions(form.getByRole('combobox', { name: 'Modo de ejecución' }), 'container');
@@ -77,7 +78,8 @@ it.each([['active', 'stop'], ['retired', 'purge']])('ofrece %s por su identidad 
   serve(previews, []);
   const user = userEvent.setup();
   renderWithApi(<ConfigPage />);
-  await user.click(await screen.findByRole('button', { name: `Operar agente A/${alias}` }));
+  if (alias === 'active') await agentAction(user, `A/${alias}`, 'Operar agente');
+  else await user.click(await screen.findByRole('button', { name: `Operar agente A/${alias}` }));
   const form = within(screen.getByRole('region', { name: `Operación de A/${alias}` }));
   await user.selectOptions(form.getByRole('combobox', { name: 'Acción operativa' }), kind);
   await waitFor(() => { expect(form.getByRole('button', { name: 'Previsualizar operación' })).toBeEnabled(); });

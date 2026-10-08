@@ -1,6 +1,6 @@
 import type { FleetCapability, FleetTarget } from '@cauce/protocol/fleet-operation';
 import type { ConfigurationSnapshot } from '../../api/types';
-import { lifecycleAccountForProvider, lifecycleAccountProvider, lifecycleOptions, type AgentLifecycleDraft } from './agent-lifecycle-model';
+import { defaultMembershipRole, lifecycleAccountForProvider, lifecycleAccountProvider, lifecycleOptions, membershipRoleOptions, type AgentLifecycleDraft } from './agent-lifecycle-model';
 import { fleetHostUsable } from '@cauce/protocol/fleet-hosts';
 import { estadoDeComputadora } from './fleet-host-model';
 import { hostById, hostUnavailableReason, useFleetHosts } from './use-fleet-hosts';
@@ -18,6 +18,17 @@ export function AgentLifecycleFields({ draft, snapshot, capability, target, disa
   const registro = hostById(fleet.hosts, draft.hostId);
   const motivoDeHost = hostUnavailableReason(registro);
   const provider = lifecycleAccountProvider(snapshot, draft.primaryAccountId);
+  const templateIndex = host?.runtimes?.findIndex(runtime =>
+    runtime.provider === provider && runtime.harness_id === draft.harnessId && runtime.mode === draft.mode && runtime.runtime_user === draft.runtimeUser
+    && (runtime.systemd_user ?? '') === draft.systemdUser
+    && runtime.home_directory === draft.homeDirectory && `${runtime.state_root.replace(/\/$/u, '')}/${draft.runtimeKey}` === draft.stateDirectory
+    && (runtime.mode !== 'container' || draft.containerName === (runtime.container_name ?? `${runtime.container_prefix ?? ''}${draft.runtimeKey}`))) ?? -1;
+  const derivedFrom = (runtimeKey: string) => {
+    const runtime = templateIndex >= 0 ? host?.runtimes?.[templateIndex] : undefined;
+    return runtime ? { stateDirectory: `${runtime.state_root.replace(/\/$/u, '')}/${runtimeKey}`,
+      containerName: runtime.container_name ?? `${runtime.container_prefix ?? ''}${runtimeKey}` } : {};
+  };
+  const roles = membershipRoleOptions(snapshot);
   const options = (key: Parameters<typeof lifecycleOptions>[1]) => lifecycleOptions(snapshot, key, draft.tenantId)
     .map((option) => <option key={option.id} value={option.id}>{option.label} · {JSON.stringify(option.id)}</option>);
   return <div className="agent-lifecycle-fields">
@@ -31,8 +42,9 @@ export function AgentLifecycleFields({ draft, snapshot, capability, target, disa
       <label>Nombre visible operativo<input maxLength={128} value={draft.displayName}
         onChange={(event) => { edit({ displayName: event.target.value }); }} /></label>
       <label>Clave física de ejecución<input value={draft.runtimeKey} disabled={immutableRuntime}
-        onChange={(event) => { edit({ runtimeKey: event.target.value }); }} /></label>
-      <p>La clave física runtime_key queda fija. El alias visible conserva su identidad dentro del espacio de trabajo.</p>
+        onChange={(event) => { edit({ runtimeKey: event.target.value, ...derivedFrom(event.target.value) }); }} /></label>
+      <p>La clave física runtime_key queda fija. El alias visible conserva su identidad dentro del espacio de trabajo.
+        {templateIndex >= 0 ? ' Si la cambiás, el directorio de estado y el contenedor de la plantilla se recalculan.' : ''}</p>
       <label>Arnés operativo<select value={draft.harnessId} onChange={(event) => { edit({ harnessId: event.target.value }); }}>
         <option value="">Elige un arnés registrado</option>{options('harness_definitions')}
       </select></label>
@@ -47,11 +59,14 @@ export function AgentLifecycleFields({ draft, snapshot, capability, target, disa
             .map((entry) => entry.room_id === room.id ? { ...entry, ...patch } : entry) }); };
           return <div className="agent-lifecycle-membership" key={room.id}>
             <label><input type="checkbox" checked={!!member} onChange={(event) => {
-              edit({ memberships: event.target.checked ? [...draft.memberships, { room_id: room.id, role: '', enabled: true }]
+              edit({ memberships: event.target.checked ? [...draft.memberships, { room_id: room.id, role: defaultMembershipRole(snapshot), enabled: true }]
                 : draft.memberships.filter((entry) => entry.room_id !== room.id) });
             }} />Incluir {room.label} · {JSON.stringify(room.id)}</label>
-            {member ? <><label>Rol en {JSON.stringify(room.id)}<input value={member.role} maxLength={64}
-              onChange={(event) => { replace({ role: event.target.value }); }} /></label>
+            {member ? <><label>Rol en {JSON.stringify(room.id)}<select value={member.role}
+              onChange={(event) => { replace({ role: event.target.value }); }}>
+              <option value="">Elige un rol</option>
+              {(roles.includes(member.role) || !member.role ? roles : [member.role, ...roles]).map((role) => <option key={role} value={role}>{role}</option>)}
+            </select></label>
               <label><input type="checkbox" checked={member.enabled} onChange={(event) => { replace({ enabled: event.target.checked }); }} />
                 Habilitar membresía {JSON.stringify(room.id)}</label></> : null}
           </div>;
@@ -69,11 +84,7 @@ export function AgentLifecycleFields({ draft, snapshot, capability, target, disa
         })}
       </select></label>
       {motivoDeHost ? <p role="note">{motivoDeHost} Sus agentes no pueden ejecutarse hasta que vuelva a estar disponible.</p> : null}
-      {host?.runtimes ? <label>Plantilla de ejecución<select value={host.runtimes.findIndex(runtime =>
-        runtime.provider === provider && runtime.harness_id === draft.harnessId && runtime.mode === draft.mode && runtime.runtime_user === draft.runtimeUser
-        && (runtime.systemd_user ?? '') === draft.systemdUser
-        && runtime.home_directory === draft.homeDirectory && `${runtime.state_root.replace(/\/$/u, '')}/${draft.runtimeKey}` === draft.stateDirectory
-        && (runtime.mode !== 'container' || draft.containerName === (runtime.container_name ?? `${runtime.container_prefix ?? ''}${draft.runtimeKey}`)))}
+      {host?.runtimes ? <label>Plantilla de ejecución<select value={templateIndex}
         onChange={event => {
           const runtime = host.runtimes?.[Number(event.target.value)]; if (!runtime) return;
           edit({ harnessId: runtime.harness_id, mode: runtime.mode, runtimeUser: runtime.runtime_user,
@@ -100,7 +111,9 @@ export function AgentLifecycleFields({ draft, snapshot, capability, target, disa
         <option value="">Sin supervisión systemd declarada</option>{host?.systemd_users.map((user) => <option key={user}>{user}</option>)}
       </select></label>
       <label>Directorio personal operativo<input value={draft.homeDirectory} onChange={(event) => { edit({ homeDirectory: event.target.value }); }} /></label>
-      <label>Directorio de estado operativo<input value={draft.stateDirectory} onChange={(event) => { edit({ stateDirectory: event.target.value }); }} /></label>
+      <label>Directorio de estado operativo<input value={draft.stateDirectory} readOnly={templateIndex >= 0}
+        onChange={(event) => { edit({ stateDirectory: event.target.value }); }} /></label>
+      {templateIndex >= 0 ? <p>Se deriva de la plantilla: raíz de estado más la clave física. No se edita a mano.</p> : null}
       {host ? <p>Raíces personales permitidas: {host.home_roots.join(', ')}. Raíces de estado: {host.state_roots.join(', ')}.</p> : null}
     </fieldset>
     <fieldset disabled={disabled}><legend>Cuenta y modelo principales</legend>

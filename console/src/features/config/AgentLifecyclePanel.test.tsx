@@ -7,11 +7,12 @@ import { ConsoleAccessBoundary } from '../../api/console-access';
 import { fleetRequestHash } from '../../api/client/fleet-operations-client';
 import type { ConfigurationSnapshot } from '../../api/types';
 import { server } from '../../mocks/server';
-import { renderWithApi } from '../../test/render';
+import { ApiProvider } from '../../api/context';
+import { renderWithApi, testApi } from '../../test/render';
 import { AgentLifecyclePanel } from './AgentLifecyclePanel';
 
 Object.defineProperty(globalThis, 'crypto', { configurable: true, value: webcrypto });
-const snapshot: ConfigurationSnapshot = { revision: 4, tenants: [{ id: 'A' }], agents: [],
+const snapshot: ConfigurationSnapshot = { revision: 4, role_policies: [{ role: 'agent' }, { role: 'rol con espacios' }], tenants: [{ id: 'A' }], agents: [],
   rooms: [{ tenant_id: 'A', id: ' Sala ', display_name: 'Sala' }, { tenant_id: 'A', id: 'Sala', display_name: 'Sala' }],
   memberships: [], harness_definitions: [{ id: 'codex' }], provider_accounts: [{ id: 'main' }] };
 const capability = { available: true, actions: ['create', 'update', 'start', 'stop', 'retire', 'restore', 'purge'],
@@ -40,7 +41,7 @@ async function fill() {
   await user.type(screen.getByRole('textbox', { name: 'Clave física de ejecución' }), 'new-worker');
   await user.selectOptions(screen.getByRole('combobox', { name: 'Arnés operativo' }), 'codex');
   await user.click(screen.getByRole('checkbox', { name: 'Incluir Sala · " Sala "' }));
-  await user.type(screen.getByRole('textbox', { name: 'Rol en " Sala "' }), 'rol con espacios');
+  await user.selectOptions(screen.getByRole('combobox', { name: 'Rol en " Sala "' }), 'rol con espacios');
   await user.selectOptions(screen.getByRole('combobox', { name: 'Grupo primario' }), ' Sala ');
   await user.selectOptions(screen.getByRole('combobox', { name: 'Host operativo' }), 'test-host');
   await user.selectOptions(screen.getByRole('combobox', { name: 'Usuario operativo' }), 'runner');
@@ -211,4 +212,21 @@ it('retains the receipt after CAS conflict and rereads before retrying controls'
   await user.click(screen.getByRole('button', { name: 'Cancelar operación' }));
   await screen.findByText(/Cancelada/);
   expect(versions).toEqual([3, 6]);
+});
+it('keeps an edited operational draft when the inventory re-polls', async () => {
+  const target = { resource: 'agent' as const, tenant_id: 'A', alias: 'one' };
+  const withAgent = { ...snapshot, agents: [{ tenant_id: 'A', alias: 'one', harness_id: 'codex', display_name: 'Uno' }] };
+  server.use(http.get('http://localhost/v3/console/access', () => HttpResponse.json({
+    subject: 'A:operator', roles: ['operator'], permissions: ['config.read', 'config.write'] })),
+  http.get('http://localhost/v3/console/fleet/capability', () => HttpResponse.json(capability)),
+  http.get('http://localhost/v3/console/fleet/operations', () => HttpResponse.json({ operations: [] })));
+  const view = (value: ConfigurationSnapshot) => <ConsoleAccessBoundary><AgentLifecyclePanel snapshot={value} target={target} initialOpen /></ConsoleAccessBoundary>;
+  const { rerender } = renderWithApi(view(withAgent));
+  const user = userEvent.setup();
+  const name = await screen.findByRole('textbox', { name: 'Nombre visible operativo' });
+  await user.clear(name);
+  await user.type(name, 'Cambio pendiente');
+  rerender(<ApiProvider api={testApi}>{view({ ...withAgent, revision: 5 })}</ApiProvider>);
+  expect(await screen.findByText(/El borrador se conserva/)).toBeInTheDocument();
+  expect(screen.getByRole('textbox', { name: 'Nombre visible operativo' })).toHaveValue('Cambio pendiente');
 });

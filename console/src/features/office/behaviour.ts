@@ -4,7 +4,8 @@ export type Pose =
   | 'stand' | 'walk' | 'sit' | 'type' | 'lie' | 'play' | 'stretch' | 'coffee' | 'handover' | 'ghost'
   | 'cook' | 'eat' | 'tidy' | 'sweep' | 'water' | 'read' | 'chat';
 export type BubbleKind = 'mail' | 'alert' | 'paper' | 'zzz' | 'chat' | null;
-export type MonitorMode = 'code' | 'error' | 'idle' | 'off';
+/** code: scrolling lines; error: red screen when down; alert: amber when blocked; dim: resting; off: asleep or unplugged. */
+export type MonitorMode = 'code' | 'error' | 'alert' | 'dim' | 'off';
 
 export interface Behaviour {
   /** Where the person spends the state: their own desk, or the daily routine of the free. */
@@ -22,10 +23,10 @@ export const BEHAVIOUR: Record<LiveState, Behaviour> = {
   thinking: { rest: 'desk', pose: 'type', bubble: null, errand: null, shake: false, monitor: 'code' },
   receiving: { rest: 'desk', pose: 'sit', bubble: 'mail', errand: null, shake: false, monitor: 'code' },
   delegating: { rest: 'desk', pose: 'type', bubble: null, errand: 'deliver', shake: false, monitor: 'code' },
-  blocked: { rest: 'desk', pose: 'sit', bubble: 'alert', errand: null, shake: true, monitor: 'error' },
-  settled: { rest: 'routine', pose: 'stand', bubble: null, errand: null, shake: false, monitor: 'idle' },
-  idle: { rest: 'routine', pose: 'stand', bubble: null, errand: null, shake: false, monitor: 'idle' },
-  down: { rest: 'desk', pose: 'ghost', bubble: null, errand: null, shake: false, monitor: 'off' },
+  blocked: { rest: 'desk', pose: 'sit', bubble: 'alert', errand: null, shake: true, monitor: 'alert' },
+  settled: { rest: 'routine', pose: 'stand', bubble: null, errand: null, shake: false, monitor: 'dim' },
+  idle: { rest: 'routine', pose: 'stand', bubble: null, errand: null, shake: false, monitor: 'dim' },
+  down: { rest: 'desk', pose: 'ghost', bubble: null, errand: null, shake: false, monitor: 'error' },
 };
 
 export function behaviourFor(state: LiveState): Behaviour {
