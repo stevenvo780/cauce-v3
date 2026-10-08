@@ -5,6 +5,10 @@ import { aggregateHostEvidence } from '../src/repository/fleet-operation-hosts.j
 import { preparePostgresSuite } from './postgres-suite.js';
 import { startTestCaseDatabase, startTestDatabase, type EmptyTestDatabase, type TestDatabase } from '../../../tests/helpers/postgres.js';
 
+function required<T>(value: T | undefined): T {
+  if (value === undefined) throw new Error('Missing host barrier fixture value');
+  return value;
+}
 let database: TestDatabase | undefined;
 let caseDatabase: EmptyTestDatabase | undefined;
 let pool: DatabasePool;
@@ -87,18 +91,18 @@ describe('durable exact fleet host barriers', () => {
     expect(slices.map(slice => [slice.host_id, slice.targets.map(target => target.alias)]))
       .toEqual([['host-a', ['host_a']], ['host-b', ['host_b']]]);
     expect(slices[0]?.agents[0]).toMatchObject({ host_id: 'host-a', enabled: true, systemd_user: 'stev' });
-    await expect(repo.completeHostStep(claim, 'stop', 'host-a', slices[0]!.target_sha256, { stopped_verified: true }))
+    await expect(repo.completeHostStep(claim, 'stop', 'host-a', required(slices[0]).target_sha256, { stopped_verified: true }))
       .rejects.toMatchObject({ code: 'conflict' });
     await repo.startStep(claim, 'stop');
-    for (const [host, digest] of [['host-c', slices[0]!.target_sha256], ['host-a', 'f'.repeat(64)]]) {
-      await expect(repo.completeHostStep(claim, 'stop', host!, digest!, { stopped_verified: true })).rejects.toMatchObject({ code: 'conflict' });
+    for (const [host, digest] of [['host-c', required(slices[0]).target_sha256], ['host-a', 'f'.repeat(64)]]) {
+      await expect(repo.completeHostStep(claim, 'stop', required(host), required(digest), { stopped_verified: true })).rejects.toMatchObject({ code: 'conflict' });
     }
     await pool.query("UPDATE agents SET state_directory='/unrelated-new-state' WHERE tenant_id='Isa' AND alias='host_a'");
     expect(await repo.hostSlices(claim)).toEqual(slices);
   });
   it('does not complete with a global boolean, a missing host or changed duplicate evidence', async () => {
     const repo = repository(); const claim = await claimed(repo); await repo.prepare(claim); await repo.startStep(claim, 'stop');
-    const slice = (await repo.hostSlices(claim))[0]!;
+    const slice = required((await repo.hostSlices(claim))[0]);
     await expect(repo.completeStep(claim, 'stop', { stopped_verified: true })).rejects.toMatchObject({ code: 'conflict' });
     const first = await repo.completeHostStep(claim, 'stop', slice.host_id, slice.target_sha256, { stopped_verified: true });
     expect((await repo.completeHostStep(claim, 'stop', slice.host_id, slice.target_sha256, { stopped_verified: true })).version).toBe(first.version);
@@ -121,8 +125,8 @@ describe('durable exact fleet host barriers', () => {
     await completed(repo, claim, 'stop', { stopped_verified: true });
     await completed(repo, claim, 'revoke', { revocation_verified: true }); await repo.startStep(claim, 'purge');
     const [first, second] = await repo.hostSlices(claim);
-    await repo.completeHostStep(claim, 'purge', first!.host_id, first!.target_sha256, { stopped_verified: true, revocation_verified: true });
-    await expect(repo.completeHostStep(claim, 'purge', second!.host_id, second!.target_sha256, {})).rejects.toMatchObject({ code: 'conflict' });
+    await repo.completeHostStep(claim, 'purge', required(first).host_id, required(first).target_sha256, { stopped_verified: true, revocation_verified: true });
+    await expect(repo.completeHostStep(claim, 'purge', required(second).host_id, required(second).target_sha256, {})).rejects.toMatchObject({ code: 'conflict' });
     await expect(repo.completeStep(claim, 'purge', { stopped_verified: true, revocation_verified: true })).rejects.toMatchObject({ code: 'conflict' });
     expect((await pool.query("SELECT 1 FROM rooms WHERE id='host-group' AND purged_at IS NULL")).rowCount).toBe(1);
     expect((await pool.query("SELECT 1 FROM agents WHERE tenant_id='Isa' AND purged_at IS NULL")).rowCount).toBe(2);
@@ -133,13 +137,13 @@ describe('durable exact fleet host barriers', () => {
   });
   it('discards unsealed receipts from an old epoch after a worker crash', async () => {
     const repo = repository(); const claim = await claimed(repo); await repo.prepare(claim); await repo.startStep(claim, 'stop');
-    const slice = (await repo.hostSlices(claim))[0]!;
+    const slice = required((await repo.hostSlices(claim))[0]);
     await repo.completeHostStep(claim, 'stop', slice.host_id, slice.target_sha256, { stopped_verified: true });
     await pool.query("UPDATE fleet_operations SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE id=$1", [claim.operation.id]);
     const retry = await repo.claim('host-retry', 'host-a'); if (!retry) throw new Error('retry absent');
     expect(retry.epoch).toBe(claim.epoch + 1); expect(await repo.hostReceipts(retry, 'stop')).toEqual([]);
     await expect(repo.completeHostStep(claim, 'stop', slice.host_id, slice.target_sha256, { stopped_verified: true })).rejects.toMatchObject({ code: 'conflict' });
-    const second = (await repo.hostSlices(retry))[1]!;
+    const second = required((await repo.hostSlices(retry))[1]);
     await repo.completeHostStep(retry, 'stop', second.host_id, second.target_sha256, { stopped_verified: true });
     await expect(repo.completeStep(retry, 'stop', { stopped_verified: true })).rejects.toMatchObject({ code: 'conflict' });
     await receipts(repo, retry, 'stop', { stopped_verified: true });
@@ -151,7 +155,7 @@ describe('durable exact fleet host barriers', () => {
     await pool.query("UPDATE fleet_operations SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE id=$1", [claim.operation.id]);
     const retry = await repo.claim('host-retry', 'host-a'); if (!retry) throw new Error('retry absent');
     expect(retry.epoch).toBe(claim.epoch + 1); expect(await repo.hostReceipts(retry, 'stop')).toEqual([]);
-    await expect(repo.completeHostStep(claim, 'stop', 'host-a', (await repo.hostSlices(retry))[0]!.target_sha256, { stopped_verified: true }))
+    await expect(repo.completeHostStep(claim, 'stop', 'host-a', required((await repo.hostSlices(retry))[0]).target_sha256, { stopped_verified: true }))
       .rejects.toMatchObject({ code: 'conflict' });
     const before = (await repo.get('Steven', 'host_operator', retry.operation.id)).version;
     expect((await repo.completeStep(retry, 'stop', { stopped_verified: true })).version).toBe(before);

@@ -110,7 +110,10 @@ export async function validateFleetTarget(
   }
   if (!host) throw new FleetOperationError('conflict', 'fleet controller placement is not configured');
   await assertFleetHostAccess(client, request, controllerHost, coordinatorEnabled, coordinatorHosts);
-  if (coordinatorEnabled) host = controllerHost!;
+  if (coordinatorEnabled) {
+    if (!controllerHost) throw new FleetOperationError('conflict', 'fleet controller placement is not configured');
+    host = controllerHost;
+  }
   const dependencies = request.kind === 'purge' ? await fleetPurgeDependencies(client, request) : [];
   return { host, preview: { request_sha256: sha256Hex(request), expected_revision: request.expected_revision, target, kind: request.kind,
     steps: fleetSteps(request), dependencies, can_apply: !dependencies.some((dependency) => dependency.blocking) } };
