@@ -99,7 +99,7 @@ export function LiveFleetPage() {
   const appearances = useAgentPreferences()?.appearances;
   const officeAgents = useMemo<OfficeAgent[]>(() => views.map((view): OfficeAgent => ({
     id: view.key, name: view.alias, state: view.state, reason: view.reason, delegatesTo: view.delegatesTo,
-    glyph: appearances?.get(view.key)?.glyph, hue: appearances?.get(view.key)?.hue,
+    glyph: appearances?.get(view.key)?.glyph, hue: appearances?.get(view.key)?.hue, style: appearances?.get(view.key)?.style,
     awake: view.state === 'idle' && typeof view.secondsSinceLastAck === 'number' && view.secondsSinceLastAck < AWAKE_SECONDS,
   })).concat(visitors.map((visitor): OfficeAgent => {
     const last = visitor.lastPublicationAt ? Date.parse(visitor.lastPublicationAt) : NaN;

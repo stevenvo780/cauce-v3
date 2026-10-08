@@ -38,6 +38,10 @@ export const OFFICE = {
   screenOn: '#7fd8ff',
   screenGlow: 'rgba(127, 216, 255, 0.28)',
   screenError: '#ff7b7b',
+  screenAlert: '#f6b93b',
+  screenAlertDark: '#d9891e',
+  screenDim: '#252f42',
+  screenDimLine: '#303c55',
   screenSleep: '#3f5b8c',
   code: ['#ffd166', '#ef6f8f', '#3fe0b0', '#2c7fb8', '#ffffff'] as const,
   keyboard: '#e7e2da',
@@ -93,6 +97,7 @@ export const OFFICE = {
   blanketLight: ['#91acec', '#f0a88d', '#9dd2a9', '#f3cf7a'] as const,
   lampShade: '#f3d48b',
   lampGlow: 'rgba(255, 214, 120, 0.22)',
+  nightVeil: 'rgba(22, 27, 66, 0.38)',
   door: '#b07a4e',
   doorDark: '#8a5a35',
   doorLight: '#c99167',
@@ -223,4 +228,12 @@ export function characterPalette(seed: string, ghost = false, hue?: number | nul
     b: '#3a2a26',
     e: '#2a1e1c',
   };
+}
+
+/** Accessory keys: a accent, A accent shade, D dark trim (headphone cups). The accent takes the third identity hue, which contrasts with the shirt. */
+export type AccessoryKey = 'a' | 'A' | 'D';
+
+export function accessoryPalette(seed: string, hue?: number | null): Record<AccessoryKey, string> {
+  const accent = orbHues(seed, hue)[2];
+  return { a: hslHex(accent, 72, 58), A: hslHex(accent, 66, 40), D: '#2b2522' };
 }

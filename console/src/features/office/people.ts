@@ -128,6 +128,10 @@ export function drawActor(ctx: Ctx, sprites: SpriteCache, actor: Actor, look: Ac
   if (look.ghost) ctx.globalAlpha /= 0.55;
   if (actor.pose === 'play') drawToy(ctx, actor, look, time);
   drawProp(ctx, actor, look, time);
+  if (!look.seated && actor.pose !== 'ghost') {
+    const badge = sprites.badge(actor.id);
+    if (badge) ctx.drawImage(badge, look.x + CHAR_W - 4, look.y - 3);
+  }
   const cx = look.x + CHAR_W / 2;
   const handY = look.y + 16;
   if ((actor.carry === 'paper' || actor.pose === 'handover') && look.facing !== 'up') {
