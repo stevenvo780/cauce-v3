@@ -20,6 +20,8 @@ interface Session {
   connected: boolean;
   initializing: boolean;
 }
+const aborted = (session: Session) => session.abort.signal.aborted;
+const verifying = (session: Session) => session.snapshot.status === 'verifying';
 const ACTIVE = new Set<ProviderAuthStatus>(['opening', 'awaiting_login', 'verifying']);
 
 export class ProviderAuthManager {
@@ -68,13 +70,13 @@ export class ProviderAuthManager {
     session.timer.unref();
     try {
       session.reservation = await this.dependencies.reserve(actor, request, id, session.snapshot.expires_at);
-      if (session.abort.signal.aborted) throw new ProviderAuthError('SESSION_EXPIRED');
+      if (aborted(session)) throw new ProviderAuthError('SESSION_EXPIRED');
       const stopped = await session.reservation.stopAdapter(session.abort.signal);
-      if (stopped.stopped !== true) throw new ProviderAuthError('STOP_UNCONFIRMED');
+      if (!stopped.stopped) throw new ProviderAuthError('STOP_UNCONFIRMED');
       await this.access(actor, session);
-      if (session.abort.signal.aborted) throw new ProviderAuthError('SESSION_EXPIRED');
+      if (aborted(session)) throw new ProviderAuthError('SESSION_EXPIRED');
       session.login = await session.reservation.openLogin(session.abort.signal);
-      if (session.abort.signal.aborted) throw new ProviderAuthError('SESSION_EXPIRED');
+      if (aborted(session)) throw new ProviderAuthError('SESSION_EXPIRED');
       session.snapshot.method = session.login.method;
       session.snapshot.status = 'awaiting_login';
       await this.audit(session);
@@ -82,7 +84,7 @@ export class ProviderAuthManager {
       if (ACTIVE.has(session.snapshot.status)) await this.finish(session, 'failed', error instanceof ProviderAuthError ? error.code : 'HOST_UNAVAILABLE');
     } finally {
       session.initializing = false;
-      if (session.abort.signal.aborted) await this.finish(session, session.snapshot.status, session.snapshot.error);
+      if (aborted(session)) await this.finish(session, session.snapshot.status, session.snapshot.error);
     }
     return this.snapshot(session);
   }
@@ -135,11 +137,11 @@ export class ProviderAuthManager {
     session.snapshot.status = 'verifying';
     try {
       const evidence = await session.reservation?.verify(session.abort.signal);
-      if (session.snapshot.status !== 'verifying') return this.snapshot(session);
+      if (!verifying(session)) return this.snapshot(session);
       if (evidence?.identity_matches !== true) throw new ProviderAuthError('IDENTITY_MISMATCH');
-      if (evidence.functional_call_verified !== true) throw new ProviderAuthError('FUNCTIONAL_CHECK_FAILED');
+      if (!evidence.functional_call_verified) throw new ProviderAuthError('FUNCTIONAL_CHECK_FAILED');
       await this.access(actor, session);
-      if (session.snapshot.status !== 'verifying') return this.snapshot(session);
+      if (!verifying(session)) return this.snapshot(session);
       await this.finish(session, 'authenticated', null);
     } catch (error) {
       await this.finish(session, 'failed', error instanceof ProviderAuthError ? error.code : 'LOGIN_FAILED');
@@ -176,7 +178,7 @@ export class ProviderAuthManager {
     const key = createHash('sha256').update(value).digest('hex');
     const ticket = this.tickets.get(key);
     this.tickets.delete(key);
-    if (!ticket || ticket.sessionId !== id || ticket.expires <= Date.now() || !this.sameActor(ticket.actor, actor)) {
+    if (ticket?.sessionId !== id || ticket.expires <= Date.now() || !this.sameActor(ticket.actor, actor)) {
       throw new ProviderAuthError('AUTHORITY_REVOKED');
     }
     await this.access(actor, this.lookup(actor, id));
@@ -236,7 +238,7 @@ export class ProviderAuthManager {
     }
     try {
       const stopped = session.login ? await session.login.close() : { stopped: true };
-      if (stopped.stopped !== true) throw new ProviderAuthError('STOP_UNCONFIRMED');
+      if (!stopped.stopped) throw new ProviderAuthError('STOP_UNCONFIRMED');
       await session.reservation?.release();
       this.cohorts.delete(session.cohort);
       session.snapshot.cleanup_pending = false;

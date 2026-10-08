@@ -2,12 +2,13 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { AuthError, AuthorizationError, requireOperatorPermission, type AuthProvider } from '../auth.js';
 import { principal } from '../routes/shared.js';
-import { ProviderAuthError, ProviderAuthSessionIdSchema } from './provider-auth.contracts.js';
-import type { ProviderAuthManager } from './provider-auth.sessions.js';
-import type { ProviderAuthActor } from './provider-auth.types.js';
+import { PasswordAuthProvider } from '../password-auth.js';
+import { ProviderAuthError, ProviderAuthRequestSchema, ProviderAuthSessionIdSchema } from './provider-auth.contracts.js';
+import type { ProviderAuthActor, ProviderAuthService } from './provider-auth.types.js';
 
-export async function providerAuthActor(request: FastifyRequest, provider: AuthProvider): Promise<ProviderAuthActor> {
-  const actor = await principal(request, provider);
+export async function providerAuthActor(request: FastifyRequest, provider: AuthProvider, fresh = false): Promise<ProviderAuthActor> {
+  const actor = fresh && provider instanceof PasswordAuthProvider
+    ? await provider.authenticateConsoleFresh(request) : await principal(request, provider);
   requireOperatorPermission(actor, 'control');
   if (actor.channel !== 'console' || !actor.operator_profile?.id) throw new AuthorizationError();
   return { tenant_id: actor.tenant_id, alias: actor.alias, subject: actor.operator_profile.id };
@@ -22,8 +23,16 @@ function authError(reply: FastifyReply, error: unknown): void {
   void reply.code(status).send({ error: code, message: 'No se pudo verificar la autenticación del proveedor.' });
 }
 
-export function registerProviderAuthRoutes(app: FastifyInstance, auth: AuthProvider, manager: ProviderAuthManager): void {
+export function registerProviderAuthRoutes(app: FastifyInstance, auth: AuthProvider, manager: ProviderAuthService): void {
   const path = '/v3/console/provider-auth/sessions';
+  app.get<{ Params: { id: string } }>('/v3/console/provider-auth/operations/:id/scope', async (request, reply) => {
+    reply.header('cache-control', 'no-store');
+    try {
+      if (!manager.resolve) throw new ProviderAuthError('HOST_UNAVAILABLE');
+      return ProviderAuthRequestSchema.parse(await manager.resolve(await providerAuthActor(request, auth, true),
+        ProviderAuthSessionIdSchema.parse(request.params.id)));
+    } catch (error) { authError(reply, error); }
+  });
   app.post(path, async (request, reply) => {
     reply.header('cache-control', 'no-store');
     try { return await reply.code(202).send(await manager.start(await providerAuthActor(request, auth), request.body)); }

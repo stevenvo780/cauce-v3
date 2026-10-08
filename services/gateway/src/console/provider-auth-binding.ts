@@ -1,5 +1,7 @@
 import { withTransaction, type DatabaseClient, type DatabasePool } from '@cauce/store';
-import { ProviderAuthError } from './provider-auth.contracts.js';
+import { randomUUID } from 'node:crypto';
+import { isLiteralTrue } from '@cauce/protocol';
+import { ProviderAuthError, ProviderAuthRequestSchema } from './provider-auth.contracts.js';
 import type { ProviderAuthActor, ProviderAuthDependencies, ProviderAuthLogin, ProviderAuthRequest } from './provider-auth.types.js';
 
 export type ProviderAuthPolicyScope = Pick<ProviderAuthRequest, 'provider_id' | 'account_id' | 'harness_id' | 'host_id' | 'runtime_user' | 'profile_id'>;
@@ -32,13 +34,14 @@ async function human(client: DatabaseClient, actor: ProviderAuthActor): Promise<
   const membership = (await client.query<{ enabled: boolean; revoked_at: Date | null; role: string; actor_alias: string; permissions: string[] }>(
     `SELECT enabled,revoked_at,role,actor_alias,permissions FROM human_tenant_memberships
       WHERE human_id=$1::uuid AND tenant_id=$2 FOR SHARE`, [match[1], actor.tenant_id])).rows[0];
-  if (membership && (!membership.enabled || membership.revoked_at !== null || membership.role !== 'operator'
-      || membership.actor_alias !== actor.alias || !membership.permissions.includes('control'))) throw denied();
+  if (!membership || !membership.enabled || membership.revoked_at !== null || membership.role !== 'operator'
+      || membership.actor_alias !== actor.alias || !membership.permissions.includes('control')) throw denied();
   const authority = (await client.query<{ allowed: boolean }>(`SELECT bool_or(policy.allow_control AND tenant.is_hub) AS allowed
     FROM memberships member JOIN tenants tenant ON tenant.id=member.tenant_id
     JOIN rooms room ON room.id=member.room_id AND room.tenant_id=member.tenant_id
     JOIN role_policies policy ON policy.role=member.role
-    WHERE member.tenant_id=$1 AND member.alias=$2 AND member.enabled AND tenant.enabled AND room.enabled`,
+    WHERE member.tenant_id=$1 AND member.alias=$2 AND member.enabled AND tenant.enabled AND room.enabled
+      AND member.retired_at IS NULL AND tenant.retired_at IS NULL AND room.retired_at IS NULL`,
   [actor.tenant_id, actor.alias])).rows[0];
   if (authority?.allowed !== true) throw denied();
 }
@@ -46,14 +49,14 @@ async function context(client: DatabaseClient, actor: ProviderAuthActor, request
   await human(client, actor);
   const operation = (await client.query<Operation>(`SELECT id,actor_tenant,actor_alias,target,executor_host,status,version,cancel_requested,kind,request
     FROM fleet_operations WHERE id=$1 ${lock ? 'FOR UPDATE' : 'FOR SHARE'}`, [request.operation_id])).rows[0];
-  if (!operation || operation.status !== 'awaiting_auth' || operation.cancel_requested || operation.target.resource !== 'agent'
+  if (operation?.status !== 'awaiting_auth' || operation.cancel_requested || operation.target.resource !== 'agent'
       || operation.actor_tenant !== actor.tenant_id || operation.actor_alias !== actor.alias) throw denied();
   const initiator = (await client.query<{ subject: string | null }>(`SELECT metadata->>'actor_subject' AS subject
     FROM fleet_operation_events WHERE operation_id=$1 AND event='queued' ORDER BY id LIMIT 1`, [operation.id])).rows[0];
   if (initiator?.subject !== actor.subject) throw denied();
   const agent = (await client.query<Agent>(`SELECT tenant_id,alias,harness_id,host_id,runtime_user,primary_account_id,retired_at
     FROM agents WHERE tenant_id=$1 AND alias=$2 FOR SHARE`, [operation.target.tenant_id, operation.target.alias])).rows[0];
-  if (!agent || agent.retired_at !== null) throw denied();
+  if (agent?.retired_at !== null) throw denied();
   const account = (await client.query<Account>(`SELECT id,provider,external_account_id,payer_tenant_id,shared_with_pool,enabled
     FROM provider_accounts WHERE id=$1 FOR SHARE`, [agent.primary_account_id])).rows[0];
   if (!account?.enabled || (account.payer_tenant_id !== agent.tenant_id && !account.shared_with_pool)) throw denied();
@@ -88,6 +91,18 @@ async function latest(client: DatabaseClient, operationId: string): Promise<Rese
     WHERE operation_id=$1 AND metadata ? 'provider_auth' ORDER BY id DESC LIMIT 1`, [operationId])).rows[0]?.reservation;
 }
 
+export async function resolveProviderAuthRequest(pool: DatabasePool, actor: ProviderAuthActor, operationId: string,
+  resolve: ProviderAuthPolicyResolver): Promise<ProviderAuthRequest> {
+  return withTransaction(pool, async client => {
+    const value = await context(client, actor, { operation_id: operationId } as ProviderAuthRequest);
+    const policy = await resolve(client, value);
+    const request = ProviderAuthRequestSchema.parse({ ...policy, operation_id: operationId,
+      expected_operation_version: Number(value.operation.version), request_id: randomUUID() });
+    await scope(client, value, request, resolve);
+    return request;
+  });
+}
+
 export function createProviderAuthDependencies(
   pool: DatabasePool, resolve: ProviderAuthPolicyResolver, hooks: ProviderAuthPhysicalHooks,
 ): ProviderAuthDependencies {
@@ -113,7 +128,7 @@ export function createProviderAuthDependencies(
           if (Date.parse(prior.reservation.expires_at) > Date.now()) throw new ProviderAuthError('SESSION_CONFLICT');
           await client.query('SELECT id FROM fleet_operations WHERE id=$1 FOR UPDATE', [prior.operation_id]);
           const stopped = await hooks.cleanup({ ...trusted, operation_id: prior.operation_id }, prior.reservation.session_id, new AbortController().signal);
-          if (stopped.stopped !== true) throw new ProviderAuthError('STOP_UNCONFIRMED');
+          if (!isLiteralTrue(stopped.stopped)) throw new ProviderAuthError('STOP_UNCONFIRMED');
           await event(client, prior.operation_id, 'step_completed', { ...prior.reservation, state: 'released' });
         }
         await event(client, request.operation_id, 'step_started', { session_id: sessionId, actor_subject: actor.subject,
@@ -143,7 +158,7 @@ export function createProviderAuthDependencies(
             const current = await latest(client, request.operation_id);
             if (current?.session_id !== sessionId) throw new ProviderAuthError('SESSION_CONFLICT');
             if (current.state === 'released') return;
-            if ((await hooks.cleanup(physical, sessionId, new AbortController().signal)).stopped !== true) throw new ProviderAuthError('STOP_UNCONFIRMED');
+            if (!isLiteralTrue((await hooks.cleanup(physical, sessionId, new AbortController().signal)).stopped)) throw new ProviderAuthError('STOP_UNCONFIRMED');
             await event(client, request.operation_id, 'step_completed', { ...current, state: 'released' });
           });
         },

@@ -2,7 +2,7 @@ import { z } from 'zod';
 import type { DatabaseClient } from '@cauce/store';
 import { MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH } from '../password.js';
 
-const Email = z.string().trim().toLowerCase().email().max(254);
+const Email = z.string().trim().toLowerCase().max(254).pipe(z.email());
 const Alias = z.string().regex(/^[a-z][a-z0-9_-]{1,63}$/u);
 const Tenant = z.string().regex(/^[A-Za-z][A-Za-z0-9_-]{0,63}$/u);
 const Name = z.string().trim().min(1).max(120).refine(value => Array.from(value).every(char => char.charCodeAt(0) >= 32 && char.charCodeAt(0) !== 127));

@@ -52,3 +52,7 @@ export interface ProviderAuthChannel {
   resize(cols: number, rows: number): Promise<void>;
   close(): Promise<void>;
 }
+export type ProviderAuthService = Pick<import('./provider-auth.sessions.js').ProviderAuthManager,
+  'start' | 'get' | 'verify' | 'cancel' | 'issueSocketTicket' | 'consumeSocketTicket' | 'attach' | 'revokeOperation' | 'shutdown'> & {
+    resolve?(actor: ProviderAuthActor, operationId: string): Promise<ProviderAuthRequest>;
+  };

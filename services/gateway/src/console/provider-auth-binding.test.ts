@@ -14,7 +14,7 @@ let request: ProviderAuthRequest;
 let cleaned: string[];
 let cleanupConfirmed: boolean;
 preparePostgresSuite(import.meta.url, async () => { database = await startTestDatabase(); }, 120_000);
-beforeEach(async () => {
+beforeEach(async ({ task }) => {
   if (!database) throw new Error('test database absent');
   current = await startTestCaseDatabase(database); pool = current.pool;
   await pool.query("INSERT INTO rooms(id,tenant_id) VALUES('auth-hub','Steven')");
@@ -23,6 +23,8 @@ beforeEach(async () => {
     VALUES('auth@example.test','auth@example.test',$1,'Fixture','operator','Steven','auth-human') RETURNING id`, ['$scrypt$' + 'x'.repeat(48)])).rows[0];
   if (!human) throw new Error('test human absent');
   actor = { tenant_id: 'Steven', alias: 'auth-human', subject: `console:${human.id}` };
+  await pool.query("INSERT INTO agents(tenant_id,alias) VALUES('Steven','auth-human')");
+  if (!task.name.includes('absent human membership')) await pool.query("INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,role,permissions) VALUES($1,'Steven','auth-human','operator',ARRAY['read','control'])", [human.id]);
   await pool.query(`INSERT INTO provider_accounts(id,provider,external_account_id,payer_tenant_id,credential_ref_kind,credential_ref,enabled)
     VALUES('auth-main','codex','fixture-external','Steven','env_path','CAUCE_TEST_TOKEN_PATH',true)`);
   await pool.query(`INSERT INTO agents(tenant_id,alias,harness_id,container_name,runtime_user,home_directory,state_directory,host_id,primary_account_id,lifecycle_state)
@@ -62,10 +64,16 @@ describe('durable provider authentication reservations', () => {
     await expect(deps.authorize(actor, request)).rejects.toMatchObject({ code: 'AUTHORITY_REVOKED' });
   });
   it('rejects a revoked human membership even while its alias and console user remain active', async () => {
-    await pool.query("INSERT INTO agents(tenant_id,alias) VALUES('Steven','auth-human')");
-    await pool.query("INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,role,permissions) VALUES($1,'Steven','auth-human','operator',ARRAY['read','control'])", [actor.subject.slice(8)]);
     const deps = dependencies(); await deps.authorize(actor, request);
     await pool.query("UPDATE human_tenant_memberships SET enabled=false,revoked_at=clock_timestamp() WHERE human_id=$1", [actor.subject.slice(8)]);
+    await expect(deps.authorize(actor, request)).rejects.toMatchObject({ code: 'AUTHORITY_REVOKED' });
+  });
+  it('requires an absent human membership to be granted before physical authentication', async () => {
+    await expect(dependencies().authorize(actor, request)).rejects.toMatchObject({ code: 'AUTHORITY_REVOKED' });
+  });
+  it('requires current room authority', async () => {
+    const deps = dependencies();
+    await pool.query("UPDATE rooms SET enabled=false,retired_at=clock_timestamp(),retired_enabled=true WHERE id='auth-hub'");
     await expect(deps.authorize(actor, request)).rejects.toMatchObject({ code: 'AUTHORITY_REVOKED' });
   });
   it('serializes reservations across instances and rejects stale operation versions', async () => {
