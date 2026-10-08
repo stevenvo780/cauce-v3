@@ -20,6 +20,8 @@ const ALLOWLIST = new Map<string, string>([
   ['CAUCE_BOOTSTRAP_', 'prefijo fijo del nonce de prueba, no variable de configuración'],
   ['CAUCE_OPENCLAW_LOCAL', 'selección fija del transporte aislado de OpenClaw administrado'],
   ['CAUCE_OPENCLAW_AGENT_ID', 'identidad nativa sellada del agente OpenClaw'],
+  ['CAUCE_OPENCLAW_DIST_DIR', 'ruta fijada del bundle OpenClaw aprobado por la política del host'],
+  ['CAUCE_OPENCLAW_WORKSPACE', 'directorio de trabajo aislado del runtime OpenClaw sellado'],
   ['MAX_AGENT_APPEARANCE_AUTHOR_LENGTH', 'tope del identificador humano en preferencias de presentación'],
   ['MAX_AGENT_FAVORITES_PER_HUMAN', 'tope de favoritos de presentación por persona'],
   ['MAX_AGENT_GLYPH_COMBINING_MARKS', 'validación Unicode del avatar de presentación'],

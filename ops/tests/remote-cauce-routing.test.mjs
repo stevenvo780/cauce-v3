@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { test } from "node:test";
 import os from "node:os";
 import path from "node:path";
@@ -58,6 +58,11 @@ test("cauce routes exact argv to validated SSH destinations", async () => {
     await mkdir(bin);
     await mkdir(path.dirname(map), { recursive: true });
     await mkdir(path.join(remoteHome, ".local/bin"), { recursive: true });
+    const installedOps = path.join(localHome, '.local/share/cauce-v3/ops');
+    await mkdir(path.join(installedOps, 'scripts'), { recursive: true });
+    await copyFile(path.join(ops, 'flota.json'), path.join(installedOps, 'flota.json'));
+    await Promise.all(['container-alias-query.py', 'container_alias_lib.py', 'fleet_derive.py', 'fleet_runtime_inventory.py']
+      .map(name => copyFile(path.join(ops, 'scripts', name), path.join(installedOps, 'scripts', name))));
     await Promise.all([writeFile(sshLog, ""), writeFile(remoteLog, "")]);
 
     await executable(path.join(bin, "getent"), `#!/bin/sh
