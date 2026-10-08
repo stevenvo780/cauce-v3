@@ -1,146 +1,24 @@
-import { createHash, generateKeyPairSync, randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
+import { describe, expect, it } from 'vitest';
+import { secretHash, type OAuthAuthorizationRequest } from './oauth-authorization-types.js';
 import { readFile } from 'node:fs/promises';
-import { GenericContainer, Wait, type StartedTestContainer } from 'testcontainers';
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { applyMigrations, applyMigrationsThrough, createPool, lockHumanIdentity, resolveHumanIdentity, CauceRepository, withAbortableTransaction,
-  type DatabaseClient, type DatabasePool } from '@cauce/store';
+import { applyMigrationsThrough, lockHumanIdentity, resolveHumanIdentity, CauceRepository, withAbortableTransaction,
+  type DatabaseClient } from '@cauce/store';
 import { waitForBlocked } from '../../../tests/integration/human-identity-resolver-postgres.fixtures.js';
 import { OAUTH_GRANT_TTL_SECONDS, PostgresOAuthStore } from './oauth-authorization-store.js';
 import { lockOAuthAccess } from './oauth-grant-authority.js';
-import { hashPassword } from './password.js';
-import { PostgresConsoleUserStore } from './console-users.js';
-import { createConsoleCredentialStamp, verifyConsoleCredentialStamp } from './console-credential-stamp.js';
 import Fastify from 'fastify';
 import { PasswordAuthProvider } from './password-auth.js';
 import { createOAuthPasswordSession } from './oauth-password-session.js';
 import { createHumanMcpOperationsFactory } from './mcp-operations.js';
 import { createHumanPublishAuthority, resolveHumanMcpAuthority } from './human-mcp-authority.js';
-import { secretHash, type OAuthAuthorizationRequest, type OAuthPasswordSession } from './oauth-authorization-types.js';
-import { OAuthTokens } from './oauth-tokens.js';
+import { PostgresConsoleUserStore } from './console-users.js';
 
-const issuer = 'https://cauce.example';
+import { issuer, tokens, verify, key, context, database, intercept, seed, counts, consent, exchangeInput, authorized, revoked, shortGrace } from './oauth-postgres.fixtures.js';
+
 const version = '045_mcp_oauth_authorization.sql';
 const previousVersion = '044_human_mcp_identity.sql';
-const key = Buffer.alloc(32, 19);
-const verify = (stamp: string, current: Parameters<typeof verifyConsoleCredentialStamp>[2]) => verifyConsoleCredentialStamp(key, stamp, current);
-const { privateKey } = generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
-const tokens = new OAuthTokens({ issuer, resource: `${issuer}/mcp`, kid: 'postgres-fixture', signingKey: privateKey });
-const pools: DatabasePool[] = [];
-let container: StartedTestContainer | undefined;
-let admin: DatabasePool | undefined;
-let serverUrl: string;
-const context = () => ({ signal: new AbortController().signal, deadlineMs: Date.now() + 10_000 });
-const upPath = new URL('../../../packages/store/migrations/045_mcp_oauth_authorization.sql', import.meta.url);
 const downPath = new URL('../../../packages/store/migrations/down/045_mcp_oauth_authorization.sql', import.meta.url);
-
-beforeAll(async () => {
-  if (process.env.CAUCE_TEST_DATABASE_URL) throw new Error('OAuth fixtures require their own disposable PostgreSQL container');
-  const password = randomUUID();
-  container = await new GenericContainer('postgres:16-alpine')
-    .withEnvironment({ POSTGRES_DB: 'cauce_test_oauth_template', POSTGRES_USER: 'cauce_test', POSTGRES_PASSWORD: password })
-    .withExposedPorts(5432).withWaitStrategy(Wait.forLogMessage('database system is ready to accept connections', 2))
-    .withStartupTimeout(60_000).start();
-  const url = new URL(`postgresql://cauce_test:${password}@${container.getHost()}:${String(container.getMappedPort(5432))}/cauce_test_oauth_template`);
-  serverUrl = url.href;
-  admin = createPool(serverUrl);
-  await applyMigrationsThrough(admin, previousVersion);
-  const pg = (await admin.query<{ version: string }>('SELECT version() AS version')).rows[0]?.version;
-  console.info('OAuth disposable PostgreSQL', pg, 'container', container.getId());
-  console.info('OAuth migration SHA256', createHash('sha256').update(await readFile(upPath)).digest('hex'));
-}, 90_000);
-
-afterEach(async () => { await Promise.all(pools.splice(0).map(pool => pool.end())); });
-afterAll(async () => { if (admin) await admin.end(); if (container) await container.stop(); });
-
-async function database(apply: boolean | string = true): Promise<DatabasePool> {
-  if (!admin) throw new Error('OAuth disposable database is not initialized');
-  const name = `cauce_test_oauth_${randomUUID().replaceAll('-', '')}`;
-  await admin.query(`CREATE DATABASE ${name} TEMPLATE cauce_test_oauth_template`);
-  const url = new URL(serverUrl); url.pathname = `/${name}`;
-  const pool = createPool(url.href, { max: 12 }); pools.push(pool);
-  if (typeof apply === 'string') await applyMigrationsThrough(pool, apply);
-  else if (apply) await applyMigrations(pool);
-  return pool;
-}
-
-function intercept(pool: DatabasePool, before?: (sql: string, client: DatabaseClient) => Promise<unknown>,
-  after?: (sql: string, client: DatabaseClient) => Promise<void>): DatabasePool {
-  return new Proxy(pool, { get(target, field) {
-    if (field === 'connect') return async () => {
-      const client = await target.connect();
-      return new Proxy(client, { get(connection, property) {
-        if (property === 'query') return async (sql: string, values?: unknown[]) => {
-          const replacement = await before?.(sql, client);
-          const result = await connection.query(typeof replacement === 'string' ? replacement : sql, values);
-          await after?.(sql, client);
-          return result;
-        };
-        const member: unknown = Reflect.get(connection, property);
-        return typeof member === 'function' ? (member.bind(connection) as unknown) : member;
-      } });
-    };
-    const member: unknown = Reflect.get(target, field);
-    return typeof member === 'function' ? (member.bind(target) as unknown) : member;
-  } });
-}
-
-async function seed(pool: DatabasePool, binding = true) {
-  const userId = randomUUID(); const bindingId = randomUUID(); const alias = `fixture_${userId.slice(0, 8)}`;
-  await pool.query('INSERT INTO agents(tenant_id,alias) VALUES ($1,$2)', ['Steven', alias]);
-  await pool.query(`INSERT INTO console_users(id,email,email_normalized,password_hash,display_name,role,tenant_id,alias,active,password_changed_at)
-    VALUES ($1,$2,$2,$4,'Fixture','operator','Steven',$3,true,clock_timestamp())`, [userId, `${userId}@example.invalid`, alias, await hashPassword('fixture-only-passphrase', { cost: 1024, blockSize: 8, parallelism: 1 })]);
-  if (binding) {
-    await pool.query(`INSERT INTO human_external_identities(id,human_id,provider,namespace,subject)
-      VALUES ($1,$2::uuid,'oauth',$3,$2::text)`, [bindingId, userId, issuer]);
-    await pool.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,role,permissions)
-      VALUES ($1,'Steven',$2,'operator',ARRAY['read','route'])`, [userId, alias]);
-  } else {
-    // Igual que el relleno de 044: membresía desde console_users y ningún vínculo externo.
-    await pool.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,role,permissions,enabled,revoked_at)
-      SELECT id,tenant_id,alias,role,CASE WHEN role='operator' THEN ARRAY['route','read','control','notify']::text[]
-        ELSE ARRAY['read']::text[] END,active,CASE WHEN active THEN NULL ELSE now() END FROM console_users WHERE id=$1`, [userId]);
-  }
-  const user = await new PostgresConsoleUserStore(pool).findById(userId);
-  if (!user?.password_changed_at_us) throw new Error('missing fixture credential snapshot');
-  const credentialStamp = createConsoleCredentialStamp(key, { userId, passwordHash: user.password_hash, passwordChangedAtUs: user.password_changed_at_us });
-  const session: OAuthPasswordSession = { userId, credentialStamp, csrf: 'c'.repeat(43), issuedAt: Math.floor(Date.now() / 1000), expiresAt: Math.floor(Date.now() / 1000) + 3600 };
-  const request: OAuthAuthorizationRequest = { idHash: secretHash(randomUUID()), browserHash: secretHash(randomUUID()), clientId: 'https://client.example/doc',
-    clientName: 'Fixture', redirectUri: 'https://client.example/callback', resource: tokens.resource, scopes: ['cauce.read', 'cauce.publish'], challenge: 'x'.repeat(43), state: 'fixture-state' };
-  const store = new PostgresOAuthStore(pool, issuer, verify);
-  await store.createRequest(request, context());
-  return { userId, bindingId, alias, session, request, store, passwordChangedAtUs: user.password_changed_at_us };
-}
-
-async function counts(pool: DatabasePool) {
-  const result = await pool.query<{ requests: string; grants: string; codes: string; tokens: string }>(`SELECT
-    (SELECT count(*) FROM cauce_oauth_requests)::text AS requests,
-    (SELECT count(*) FROM cauce_oauth_grants)::text AS grants,
-    (SELECT count(*) FROM cauce_oauth_codes)::text AS codes,
-    (SELECT count(*) FROM cauce_oauth_tokens)::text AS tokens`);
-  return result.rows[0];
-}
-
-async function consent(f: Awaited<ReturnType<typeof seed>>) {
-  return f.store.consent(f.request.idHash, f.request.browserHash, f.session, ['cauce.read', 'cauce.publish'], context());
-}
-function exchangeInput(f: Awaited<ReturnType<typeof seed>>, code: string) {
-  return { codeHash: secretHash(code), clientId: f.request.clientId, redirectUri: f.request.redirectUri, resource: tokens.resource, challenge: f.request.challenge };
-}
-async function authorized(pool: DatabasePool) {
-  const f = await seed(pool); const result = await consent(f);
-  if (!result.code) throw new Error('fixture consent did not issue a code');
-  const input = exchangeInput(f, result.code);
-  const issued = await f.store.exchange(input, value => tokens.issue(value), context());
-  return { ...f, input, issued };
-}
-
-async function revoked(pool: DatabasePool, grantId: string) {
-  return (await pool.query('SELECT 1 FROM cauce_oauth_grant_revocations WHERE grant_id=$1', [grantId])).rowCount === 1;
-}
-// Acorta sólo la gracia de reutilización del refresh; el resto del SQL del store queda intacto.
-function shortGrace(pool: DatabasePool) {
-  return intercept(pool, async sql => sql.replaceAll("clock_timestamp()-interval '60 seconds'", "clock_timestamp()-interval '200 milliseconds'"));
-}
 
 async function transaction(client: DatabaseClient, work: () => Promise<void>) {
   await client.query('BEGIN');
@@ -592,23 +470,24 @@ function barrier() {
     await expect(pool.query('DELETE FROM cauce_oauth_refresh_tokens')).rejects.toThrow('retention');
   });
 
-  it('rejects a concurrent or retried refresh within the grace window without revoking the grant', async () => {
+  it('recovers a lost refresh response and converges concurrent retries on one successor', async () => {
     const pool = await database(); const f = await authorized(pool);
     const refresh = (token: string) => f.store.refresh({ tokenHash: secretHash(token), clientId: f.request.clientId,
       resource: tokens.resource, scopes: undefined }, value => tokens.issue(value), context());
     const next = await refresh(f.issued.refreshToken);
-    await expect(refresh(f.issued.refreshToken)).rejects.toThrow('invalid_grant');
+    const recovered = await refresh(f.issued.refreshToken);
+    expect(recovered.refreshToken).toBe(next.refreshToken);
+    expect(await f.store.validate(recovered.identity)).toBe(true);
     expect(await revoked(pool, f.issued.identity.grantId)).toBe(false);
     expect(await f.store.validate(next.identity)).toBe(true);
     expect(await f.store.validate((await refresh(next.refreshToken)).identity)).toBe(true);
-    // Dos refresh en paralelo con el mismo token, como el SDK MCP 1.29 tras un 401 simultáneo: uno gana y el otro
-    // espera el FOR UPDATE, relee la fila ya rotada y responde invalid_grant sin matar lo que obtuvo el ganador.
     const other = await authorized(pool);
     const raced = await Promise.allSettled([1, 2].map(() => other.store.refresh({ tokenHash: secretHash(other.issued.refreshToken),
       clientId: other.request.clientId, resource: tokens.resource, scopes: undefined }, value => tokens.issue(value), context())));
     const winner = raced.find(value => value.status === 'fulfilled');
     if (winner?.status !== 'fulfilled') throw new Error('missing winning refresh');
-    expect(raced.filter(value => value.status === 'rejected')).toHaveLength(1);
+    expect(raced.filter(value => value.status === 'rejected')).toHaveLength(0);
+    expect(raced.every(value => value.status === 'fulfilled' && value.value.refreshToken === winner.value.refreshToken)).toBe(true);
     expect(await revoked(pool, other.issued.identity.grantId)).toBe(false);
     expect(await other.store.validate(winner.value.identity)).toBe(true);
     await expect(other.store.refresh({ tokenHash: secretHash(winner.value.refreshToken), clientId: other.request.clientId,
