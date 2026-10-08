@@ -7,15 +7,13 @@ import type { DatabaseClient, DatabasePool } from './db.js';
 import { withTransaction } from './db.js';
 import { agentContextReconcileLockKey } from './repository/agent-context-lock.js';
 import { assertAgentContextAdmissionAllowed } from './repository/agent-context-quarantine.js';
+import { canPrepareAgentProfileDraft, prepareAgentProfileDraft, type AgentProfileDraftActor } from './repository/agent-profile-draft.js';
+export type { AgentProfileDraftActor } from './repository/agent-profile-draft.js';
 import {
   readProfileSourceReceipt, validProfileSourceGuard,
   type AgentProfileSourceGuard, type AgentProfileSourceReceipt,
 } from './agent-profile-source.js';
 export type { AgentProfileSourceGuard, AgentProfileSourceReceipt } from './agent-profile-source.js';
-
-/**
- * Repository for reading, persistence, and context of agent profiles (agent_profiles).
- */
 
 /** The columns, in table order. A single copy for the SELECT and for the RETURNING. */
 const profileColumns =
@@ -35,9 +33,6 @@ interface ProfileRow {
   applied_revision: string | null;
 }
 
-/**
- * Represents the stored profile of an agent together with presence and version metadata.
- */
 export interface StoredAgentProfile {
   readonly perfil: AgentProfile;
   readonly exists: boolean;
@@ -100,9 +95,6 @@ function stored(row: ProfileRow): PersistedAgentProfile {
   };
 }
 
-/**
- * Converts a database row to the `AgentProfile` type.
- */
 function toProfile(row: ProfileRow): AgentProfile {
   return {
     tenant_id: row.tenant_id,
@@ -135,16 +127,13 @@ function validatedProfileMutation(
 export class AgentProfileRepository {
   constructor(private readonly pool: DatabasePool) {}
 
-  /**
-   * Gets an alias's profile; returns an empty profile if no row exists.
-   */
   async read(tenantId: string, alias: string): Promise<AgentProfile> {
     return (await this.readWithPresence(tenantId, alias)).perfil;
   }
 
   /** The exact read that preserves whether Postgres returned a row, even if it was empty. */
-  async readWithPresence(tenantId: string, alias: string): Promise<StoredAgentProfile> {
-    const result = await this.pool.query<ProfileRow>(
+  async readWithPresence(tenantId: string, alias: string, executor: Pick<DatabasePool, 'query'> = this.pool): Promise<StoredAgentProfile> {
+    const result = await executor.query<ProfileRow>(
       `SELECT ${profileColumns} FROM agent_profiles WHERE tenant_id=$1 AND alias=$2`,
       [tenantId, alias]
     );
@@ -157,9 +146,6 @@ export class AgentProfileRepository {
       : stored(row);
   }
 
-  /**
-   * Optimistic profile replacement validating the expected revision.
-   */
   async replace(
     input: AgentProfile | Record<string, unknown>,
     expectedRevision: number | null,
@@ -183,6 +169,19 @@ export class AgentProfileRepository {
       [agentContextReconcileLockKey(profile.tenant_id, profile.alias)]);
     await assertAgentContextAdmissionAllowed(client, profile.tenant_id, profile.alias);
     await this.assertEnabled(client, profile.tenant_id, profile.alias);
+    return this.persistReplacement(client, profile, expectedRevision, actor, source);
+  }
+
+  async prepareDraft(input: AgentProfile | Record<string, unknown>, expectedRevision: number | null, actor: AgentProfileDraftActor): Promise<PersistedAgentProfile> {
+    const profile = validatedProfileMutation(input, expectedRevision, undefined);
+    return prepareAgentProfileDraft(this.pool, profile, actor, client => this.persistReplacement(client, profile, expectedRevision, actor));
+  }
+  canPrepareDraft(actor: AgentProfileDraftActor, tenantId: string, alias: string): Promise<boolean> {
+    return canPrepareAgentProfileDraft(this.pool, actor, tenantId, alias);
+  }
+
+  private async persistReplacement(client: DatabaseClient, profile: AgentProfile, expectedRevision: number | null,
+    actor: AgentProfileAuditActor, source?: AgentProfileSourceGuard): Promise<PersistedAgentProfile> {
     if (source !== undefined) {
       const locked = await client.query<ProfileRow>(
         `SELECT ${profileColumns} FROM agent_profiles WHERE tenant_id=$1 AND alias=$2 FOR UPDATE`,
@@ -340,25 +339,22 @@ export class AgentProfileRepository {
     );
   }
 
-  /**
-   * Gets the consolidated context of an alias: authored profile and derived facts.
-   */
   async readContext(tenantId: string, alias: string): Promise<ContextoDeAlias> {
     return (await this.readContextWithPresence(tenantId, alias)).contexto;
   }
 
   /** The compilable context plus the REAL presence of the authored row. */
-  async readContextWithPresence(tenantId: string, alias: string): Promise<StoredAgentContext> {
-    const [perfilGuardado, permisos, cuotas, arnes, destinos] = await Promise.all([
-      this.readWithPresence(tenantId, alias),
-      this.pool.query<{ ruta: boolean; lectura: boolean; control: boolean; notify_rol: boolean }>(
+  async readContextWithPresence(tenantId: string, alias: string, executor: Pick<DatabasePool, 'query'> = this.pool): Promise<StoredAgentContext> {
+    const [perfilGuardado, permisos, cuotas, arnes, destinos] = [
+      await this.readWithPresence(tenantId, alias, executor),
+      await executor.query<{ ruta: boolean; lectura: boolean; control: boolean; notify_rol: boolean }>(
         PERMISOS_SQL, [tenantId, alias]
       ),
-      this.pool.query<{
+      await executor.query<{
         provider: string; account_id: string; label: string | null;
         remaining_percent: string | null; window_key: string | null;
       }>(CUOTAS_SQL, [tenantId, alias]),
-      this.pool.query<{
+      await executor.query<{
         harness_id: string | null; home_directory: string | null;
         container_name: string | null; capabilities: unknown; enabled: boolean;
       }>(
@@ -368,13 +364,13 @@ export class AgentProfileRepository {
            LEFT JOIN harness_definitions harness ON harness.id=agent.harness_id
           WHERE agent.tenant_id=$1 AND agent.alias=$2`, [tenantId, alias]
       ),
-      this.pool.query<{ alias: string }>(DESTINOS_SQL, [tenantId, alias])
-    ]);
+      await executor.query<{ alias: string }>(DESTINOS_SQL, [tenantId, alias])
+    ] as const;
 
     const fila = arnes.rows[0];
     const agentEnabled = fila?.enabled === true;
     const permiso = permisos.rows[0];
-    const destinosDeAviso = await this.pool.query<{ total: string }>(
+    const destinosDeAviso = await executor.query<{ total: string }>(
       `SELECT count(*)::text AS total FROM egress_destinations
         WHERE tenant_id=$1 AND alias=$2 AND enabled`, [tenantId, alias]
     );
