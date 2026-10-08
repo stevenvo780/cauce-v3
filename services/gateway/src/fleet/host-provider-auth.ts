@@ -12,7 +12,7 @@ import { createProviderAuthDependencies, resolveProviderAuthRequest,
 import { ProviderAuthManager } from '../console/provider-auth.sessions.js';
 import type { ProviderAuthActor, ProviderAuthLogin, ProviderAuthRequest, ProviderAuthService } from '../console/provider-auth.types.js';
 import type { FleetExecution } from './executor.js';
-import { readFleetProviderAccounts } from './accounts.js';
+import { readFleetProviderAccounts, scopedFleetProviderAgents } from './accounts.js';
 import { performHostCommand, performHostLoginStop, type HostCommandConfig } from './host-command.js';
 import { assertLoginPins, cleanupProviderLogin, ContainerLoginBindingSchema, createProviderLogin, LoginCommandSchema,
   LoginPathSchema, LoginPinsSchema, queryProviderLoginBinding, readPrivateJson, type ProviderLoginConfig } from './provider-login.js';
@@ -118,7 +118,8 @@ async function activeExecution(client: DatabaseClient, scope: ProviderAuthPhysic
   const account = (await client.query<{ provider: string; external_account_id: string; enabled: boolean; consent: boolean }>(`SELECT provider,external_account_id,enabled,
     (payer_tenant_id=$2 OR shared_with_pool) AS consent FROM provider_accounts WHERE id=$1 FOR SHARE`, [scope.account_id, scope.tenant_id])).rows[0];
   if (!account?.enabled || !account.consent || account.provider !== scope.provider_id || account.external_account_id !== scope.expected_external_account_id) throw denied();
-  const trusted_accounts = await readFleetProviderAccounts(client, [...snapshot.agents, ...prepared.previous_agents]);
+  const trusted_accounts = await readFleetProviderAccounts(client, scopedFleetProviderAgents(
+    row.request, prepared.fenced_targets, prepared.previous_agents, snapshot.agents));
   return { operation: publicFleetOperation(row), request: FleetOperationRequestSchema.parse(row.request), ...prepared, snapshot, trusted_accounts };
 }
 async function loginConfiguration(options: HostProviderAuthOptions, execution: FleetExecution, scope: ProviderAuthPhysicalScope,
