@@ -24,7 +24,7 @@ import subprocess
 import sys
 
 GUARDIA = "cauce-conversaciones-paralelas"
-MARCA = f"[GUARDIA AUTOMATICO - {GUARDIA}]"
+MARCA = f"[GUARDIA AUTOMATICO - {GUARDIA} - NO es kant]"
 ESTADO = os.environ.get("CAUCE_PARALELAS_ESTADO", "/var/lib/cauce-conversaciones-paralelas.json")
 SILENCIO_H = 6
 PG = ["docker", "exec", "-i", "cauce-v3-prod-postgres-1", "psql", "-U", "cauce", "-d", "cauce", "-X", "-At", "-F", "\t"]
