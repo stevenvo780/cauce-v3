@@ -25,7 +25,7 @@ export function fleetHostsClient(request: RequestFn): FleetHostsClient {
     })),
     deleteFleetHost: async (hostId, expectedVersion) => {
       const version = FleetHostUpdateSchema.shape.expected_version.parse(expectedVersion);
-      await request(`${hostPath(hostId)}?expected_version=${version}`, { method: 'DELETE' });
+      await request(`${hostPath(hostId)}?expected_version=${String(version)}`, { method: 'DELETE' });
     },
   };
 }

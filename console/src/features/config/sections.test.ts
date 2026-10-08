@@ -23,7 +23,7 @@ it('una colección desconocida cae en «Avanzado» en vez de desaparecer', () =>
 });
 
 it('las secciones salen en el orden en que se monta una flota y abren en General', () => {
-  expect(CONFIG_SECTIONS.map((s) => s.id)).toEqual(['general', 'espacios', 'agentes', 'arneses', 'acceso', 'avanzado']);
+  expect(CONFIG_SECTIONS.map((s) => s.id)).toEqual(['general', 'espacios', 'agentes', 'computadoras', 'arneses', 'acceso', 'avanzado']);
   expect(CONFIG_SECTIONS[0].id).toBe(SECCION_POR_DEFECTO);
 });
 

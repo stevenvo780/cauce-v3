@@ -1,6 +1,9 @@
 import type { FleetCapability, FleetTarget } from '@cauce/protocol/fleet-operation';
 import type { ConfigurationSnapshot } from '../../api/types';
 import { lifecycleAccountForProvider, lifecycleAccountProvider, lifecycleOptions, type AgentLifecycleDraft } from './agent-lifecycle-model';
+import { fleetHostUsable } from '@cauce/protocol/fleet-hosts';
+import { estadoDeComputadora } from './fleet-host-model';
+import { hostById, hostUnavailableReason, useFleetHosts } from './use-fleet-hosts';
 
 export function AgentLifecycleFields({ draft, snapshot, capability, target, disabled, edit }: {
   draft: AgentLifecycleDraft; snapshot: ConfigurationSnapshot; capability?: FleetCapability; target?: FleetTarget;
@@ -10,6 +13,10 @@ export function AgentLifecycleFields({ draft, snapshot, capability, target, disa
     .find((row) => row.tenant_id === target.tenant_id && row.alias === target.alias) : undefined;
   const immutableRuntime = !!target && existing?.runtime_key !== null;
   const host = capability?.placements.find((entry) => entry.host_id === draft.hostId);
+  // The registry only annotates placements: without a capability there is nothing to read it for.
+  const fleet = useFleetHosts(!!capability?.placements.length, snapshot.revision);
+  const registro = hostById(fleet.hosts, draft.hostId);
+  const motivoDeHost = hostUnavailableReason(registro);
   const provider = lifecycleAccountProvider(snapshot, draft.primaryAccountId);
   const options = (key: Parameters<typeof lifecycleOptions>[1]) => lifecycleOptions(snapshot, key, draft.tenantId)
     .map((option) => <option key={option.id} value={option.id}>{option.label} · {JSON.stringify(option.id)}</option>);
@@ -55,9 +62,13 @@ export function AgentLifecycleFields({ draft, snapshot, capability, target, disa
     <fieldset disabled={disabled}><legend>Ubicación de ejecución</legend>
       <label>Host operativo<select value={draft.hostId} onChange={(event) => { edit({ hostId: event.target.value,
         runtimeUser: '', systemdUser: '', homeDirectory: '', stateDirectory: '' }); }}>
-        <option value="">Elige un host permitido</option>{capability?.placements.map((entry) =>
-          <option key={entry.host_id} value={entry.host_id}>{entry.host_id}</option>)}
+        <option value="">Elige un host permitido</option>{capability?.placements.map((entry) => {
+          const registrado = hostById(fleet.hosts, entry.host_id);
+          const etiqueta = registrado ? `${entry.host_id} · ${registrado.display_name} · ${estadoDeComputadora(registrado).etiqueta}` : entry.host_id;
+          return <option key={entry.host_id} value={entry.host_id} disabled={registrado !== undefined && !fleetHostUsable(registrado)}>{etiqueta}</option>;
+        })}
       </select></label>
+      {motivoDeHost ? <p role="note">{motivoDeHost} Sus agentes no pueden ejecutarse hasta que vuelva a estar disponible.</p> : null}
       {host?.runtimes ? <label>Plantilla de ejecución<select value={host.runtimes.findIndex(runtime =>
         runtime.provider === provider && runtime.harness_id === draft.harnessId && runtime.mode === draft.mode && runtime.runtime_user === draft.runtimeUser
         && (runtime.systemd_user ?? '') === draft.systemdUser

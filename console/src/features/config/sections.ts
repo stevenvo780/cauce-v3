@@ -6,7 +6,7 @@ import type { ConfigCollection } from './collections';
  * "Avanzado", shown raw, instead of staying invisible behind an allowlist.
  */
 
-export type ConfigSectionId = 'general' | 'espacios' | 'agentes' | 'arneses' | 'acceso' | 'avanzado';
+export type ConfigSectionId = 'general' | 'espacios' | 'agentes' | 'computadoras' | 'arneses' | 'acceso' | 'avanzado';
 
 interface ConfigSection {
   id: ConfigSectionId;
@@ -42,6 +42,14 @@ export const CONFIG_SECTIONS: readonly ConfigSection[] = [
     detalle: 'Es un registro declarado, no un mando: el programa que corre cada agente sale del binario en '
       + 'ejecución y no de la columna «Arnés». Y esto no decide a quién se le entrega: eso son las membresías, '
       + 'en «Espacios y salas».',
+  },
+  {
+    id: 'computadoras',
+    label: 'Computadoras',
+    proposito: 'Las máquinas donde corren los agentes: cuáles están conectadas, habilitadas y aprobadas para crear agentes.',
+    detalle: 'El estado combina el controlador de flota con los latidos de los agentes. Deshabilitar una computadora '
+      + 'corta solo a sus agentes; el resto de la flota sigue igual. Instalar el ejecutor no se hace desde acá: es un '
+      + 'paso del operador en cada máquina.',
   },
   {
     id: 'arneses',

@@ -92,8 +92,8 @@ mismo dato para dar contexto, pero sólo enlazan a su autoridad:
 - `/accounts`: cuentas de proveedor, techos por alias y bindings de fallback;
 - `/messages/:tenant/:alias`: redacción y publicación durable;
 - `/queues?delivery=:id`: replay, cancelación y resolución de DLQ;
-- `/config`: topología, registro de agentes, políticas y revisiones; no acepta contextos ni recursos
-  del pool de cuentas;
+- `/config`: topología, registro de agentes, computadoras, políticas y revisiones; no acepta
+  contextos ni recursos del pool de cuentas;
 - `/terminal/:tenant/:alias`: PTY, transcript y ACK en lectura. La ruta histórica
   `/fleet/:tenant/:alias` redirige a este detalle canónico.
 
@@ -197,6 +197,28 @@ El shell mantiene una sola lectura compartida de `/v3/console/access` mediante
 permisos por separado. Del mismo modo, `features/terminal/relay-status.ts` es la única autoridad de
 la capacidad del relay para la navegación y la Terminal. Los `Boundary` de ambos módulos existen
 únicamente para montar componentes de forma aislada en tests.
+
+## Computadoras y agentes
+
+`/config?seccion=computadoras` es el registro de las computadoras donde viven los agentes
+(`fleet_hosts`, migración 050). Reúne en una lista las filas registradas, los hosts aprobados por la
+capability de flota y los `host_id` que ya usan los agentes. El hub puede registrar, renombrar,
+habilitar o deshabilitar una computadora y eliminarla mientras no tenga agentes
+(`/v3/console/fleet/hosts`, con CAS por `expected_version`). Instalar el ejecutor, las claves SSH y la
+aprobación de plantillas sigue siendo un paso del operador, fuera de la consola.
+
+El estado de cada computadora es el del controlador de flota cuando reportó hace menos de 90 s. El
+controlador lo reescribe cada 30 s. Sin ese reporte, el estado se deriva de los arriendos de sus agentes.
+Solo una computadora deshabilitada o reportada caída por el controlador bloquea operaciones de flota
+sobre ella (`409 host_unavailable` en `create`, `update` y `start`). La caída derivada de arriendos es
+informativa: marca sus agentes como «Deshabilitado: computadora sin conexión» sin bloquear su
+arranque, porque un agente detenido tampoco tiene arriendo. Una computadora caída no detiene al
+resto: el controlador aísla cada canal SSH y reintenta solo el suyo, el bus aparca las entregas de
+sus agentes y el smoke la informa como AVISO.
+
+`Añadir agente` crea el registro con su computadora y, opcionalmente, su sala inicial. La computadora
+se elige al crear: trasladar un agente con runtime no está soportado. Un agente operativo se borra en
+dos pasos: «Retirar agente» y después «Eliminar definitivamente» en «Agentes retirados».
 
 ## Favoritos y apariencia de agentes
 

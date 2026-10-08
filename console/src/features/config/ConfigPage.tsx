@@ -17,6 +17,7 @@ import { useMediaQuery } from '../../shell/use-media-query';
 import { AccesoSection } from './AccesoSection';
 import { AgentesSection } from './AgentesSection';
 import { ArnesesSection } from './ArnesesSection';
+import { ComputadorasSection } from './ComputadorasSection';
 import { AvanzadoSection } from './AvanzadoSection';
 import { esNegativaDePermiso } from './config-change';
 import { RemovalDialog } from './RemovalDialog';
@@ -64,6 +65,7 @@ function ConfigPageContent() {
     espacios: <EspaciosSection ctx={ctx} />,
     agentes: config.data ? <AgentesSection snapshot={config.data} onReload={() => { void config.reload(); }}
       tablaCompleta={<TablasDeSeccion ctx={ctx} seccion="agentes" />} /> : null,
+    computadoras: <ComputadorasSection snapshot={config.data} soloLectura={ctx.soloLectura} />,
     arneses: <ArnesesSection ctx={ctx} />,
     acceso: <AccesoSection ctx={ctx} />,
     avanzado: <AvanzadoSection ctx={ctx} />,

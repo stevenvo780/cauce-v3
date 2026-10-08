@@ -51,7 +51,7 @@ it('no confunde una clave que el gateway no publica con una colección vacía', 
   expect(chain).toHaveTextContent(/no publica esta colección/i);
 });
 
-it('FAMILIA 5: /config son SEIS secciones reales, en el orden en que se monta una flota', async () => {
+it('FAMILIA 5: /config son SIETE secciones reales, en el orden en que se monta una flota', async () => {
   window.history.replaceState({}, '', '/config');
   renderWithApi(<ConfigPage />);
   await screen.findByRole('heading', { level: 1, name: /ajustes/i });
@@ -59,7 +59,7 @@ it('FAMILIA 5: /config son SEIS secciones reales, en el orden en que se monta un
   const pestanas = within(screen.getByRole('tablist', { name: /secciones de ajustes/i }))
     .getAllByRole('tab');
   expect(pestanas.map((boton) => boton.textContent)).toEqual([
-    'General', 'Espacios y salas', 'Agentes', 'Arneses', 'Acceso y roles', 'Avanzado',
+    'General', 'Espacios y salas', 'Agentes', 'Computadoras', 'Arneses', 'Acceso y roles', 'Avanzado',
   ]);
   expect(pestanas[0]).toHaveAttribute('aria-selected', 'true');
   expect(pestanas.filter((boton) => boton.getAttribute('aria-selected') === 'true')).toHaveLength(1);

@@ -49,6 +49,8 @@ export const handlers = [
   http.get('*/v3/console/topology', () => HttpResponse.json(topology)),
   http.get('*/v3/console/activity', () => HttpResponse.json(mockActivity())),
   http.get('*/v3/console/quotas', () => HttpResponse.json(mockQuotas())),
+  http.get('*/v3/console/fleet/capability', () => HttpResponse.json({ available: false, actions: [], placements: [], reason: 'executor_unconfigured' })),
+  http.get('*/v3/console/fleet/hosts', () => HttpResponse.json({ hosts: [] })),
   // The per-trace chain endpoint existed in the gateway and did not have a single consumer.
   http.get('*/v3/console/chains/:traceId', ({ params }) => HttpResponse.json(mockChain(String(params.traceId)))),
   http.get('*/v3/console/messages', () => HttpResponse.json(mockMessages())),
