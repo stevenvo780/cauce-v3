@@ -29,7 +29,7 @@ PKI_ROOT=${CAUCE_CONTAINER_PKI_ROOT:-$default_pki_root}
 LOCK_ROOT=${CAUCE_CONTAINER_LOCK_ROOT:-$default_lock_root}
 RUNTIME_HELPER_SOURCE="$ROOT/container-runtime/cauce-container-runtime.py"
 # The helper imports these siblings from its own directory: the container copy must carry all of them.
-RUNTIME_HELPER_MODULES=(cauce_container_base.py cauce_container_proc.py cauce_container_tree.py)
+RUNTIME_HELPER_MODULES=(cauce_container_base.py cauce_container_proc.py cauce_container_tree.py cauce_container_adoption.py)
 MOUNT_VALIDATOR="$ROOT/scripts/validate-container-mount.py"
 ALIAS_LOCK_EXEC="$ROOT/scripts/alias-lock-exec.py"
 HERMES_RUNTIME_VERIFIER="$ROOT/scripts/verify-hermes-runtime.py"
@@ -663,6 +663,7 @@ start_adapter() {
     "CAUCE_ALIAS=$wire_alias" "CAUCE_RUNTIME_KEY=$alias_name" "CAUCE_TENANT_ID=$tenant"
     "CAUCE_INSTANCE_ID=systemd-container-$alias_name" "CAUCE_STATE_DIR=$state_directory"
     "CAUCE_CONTROL_DIR=$control_dir"
+    "CAUCE_ADOPTION_LIFECYCLE_FENCE=${CAUCE_ADOPTION_LIFECYCLE_FENCE:-0}"
     "CAUCE_CONTAINER_ID=$container_id" "CAUCE_CONTAINER_GENERATION=$container_generation"
     "CAUCE_CONTAINER_PRESENCE_GENERATION=$container_presence_generation"
     "CAUCE_RELAY_URL=${CONFIG[RELAY_URL]}"
@@ -736,6 +737,16 @@ start_adapter() {
 }
 
 stop_adapter() {
+  if [[ -n ${CAUCE_ADOPTION_PROBE_POLICY_FILE:-} ]]; then
+    if [[ -n ${CAUCE_ADOPTION_CONTROL_FD:-} ]]; then
+      PYTHONDONTWRITEBYTECODE=1 python3 "$ROOT/cli/fleet-adoption-probe.py" verify-control \
+        --policy "$CAUCE_ADOPTION_PROBE_POLICY_FILE" --runtime-key "$alias_name" \
+        || die 'adoption control lease is unavailable' 73
+    else
+      exec env PYTHONDONTWRITEBYTECODE=1 python3 "$ROOT/cli/fleet-adoption-probe.py" control \
+        --policy "$CAUCE_ADOPTION_PROBE_POLICY_FILE" --runtime-key "$alias_name" -- "$0" stop "$alias_name"
+    fi
+  fi
   command -v docker >/dev/null 2>&1 || die 'docker is unavailable' 127
   inspect_id_by_name || return 0
   container_state_signature=$(read_state_signature) || return 0

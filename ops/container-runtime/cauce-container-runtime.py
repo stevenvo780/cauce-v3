@@ -9,6 +9,7 @@ import time
 from collections.abc import Callable
 from typing import Any
 
+from cauce_container_adoption import LifecycleAdoptionServer, mutation_guard
 from cauce_container_base import (
     ADAPTER_RESTART_EXIT,
     ALIAS_RE,
@@ -18,6 +19,8 @@ from cauce_container_base import (
     PERMANENT_EXIT,
     RESERVED_SUPERVISOR_EXITS,
     SCHEMA_VERSION,
+    TENANT_RE,
+    WIRE_ALIAS_RE,
     AdapterExitedBeforeIdentity,
     DirectoryAccessError,
     PermanentError,
@@ -152,13 +155,18 @@ def run_adapter(args: argparse.Namespace) -> int:
     launch_credentials = child_credentials(args.runtime_uid, args.runtime_gid)
     set_dumpable()
     control_fd = open_control_directory(args.control_dir)
-    lock_fd = lock_control(control_fd)
+    guard_fd = mutation_guard(control_fd)
+    try:
+        lock_fd = lock_control(control_fd)
+    finally:
+        os.close(guard_fd)
     state_fd = open_directory(args.state)
     process: subprocess.Popen[bytes] | None = None
     process_tree: PinnedLeaderTree | None = None
     running_document: dict[str, Any] | None = None
     published_starting = False
     termination_requested = False
+    adoption_server = None
 
     def should_stop() -> bool:
         return termination_requested
@@ -166,7 +174,7 @@ def run_adapter(args: argparse.Namespace) -> int:
     def forward(_signum: int, _frame: Any) -> None:
         nonlocal termination_requested
         termination_requested = True
-        if process_tree is not None:
+        if process_tree is not None and (adoption_server is None or not adoption_server.fenced):
             process_tree.signal(signal.SIGTERM)
 
     signal.signal(signal.SIGTERM, forward)
@@ -185,6 +193,7 @@ def run_adapter(args: argparse.Namespace) -> int:
             "schemaVersion": SCHEMA_VERSION,
             "phase": "starting",
             "alias": args.alias,
+            **({"wireAlias": args.wire_alias, "tenantId": args.tenant} if args.wire_alias is not None else {}),
             "stateDirectory": args.state,
             "controlDirectory": args.control_dir,
             "runtimeUid": args.runtime_uid,
@@ -264,6 +273,9 @@ def run_adapter(args: argparse.Namespace) -> int:
                     raise AdapterExitedBeforeIdentity from error
                 raise
             atomic_metadata(control_fd, running_document)
+            if os.environ.get('CAUCE_ADOPTION_LIFECYCLE_FENCE') == '1':
+                adoption_server = LifecycleAdoptionServer(control_fd, args.control_dir, lock_fd,
+                    {key: running_document[key] for key in ('alias', 'containerId', 'containerGeneration', 'controllerPid', 'controllerStarttime')})
         except AdapterExitedBeforeIdentity:
             # Preserve the child status and clean up only descendants pinned while it lived.
             status = wait_process_tracking(process, process_tree, timeout=max(1.0, args.kill_seconds))
@@ -279,7 +291,20 @@ def run_adapter(args: argparse.Namespace) -> int:
             remove_metadata(control_fd)
             raise
 
-        status = wait_process_tracking(process, process_tree)
+        if adoption_server is None:
+            status = wait_process_tracking(process, process_tree)
+        else:
+            while True:
+                adoption_server.poll(0.02)
+                if termination_requested and not adoption_server.fenced:
+                    process_tree.signal(signal.SIGTERM)
+                try:
+                    status = wait_process_tracking(process, process_tree, timeout=0.02)
+                    adoption_server.close()
+                    adoption_server = None
+                    break
+                except subprocess.TimeoutExpired:
+                    pass
         signal_known_tree(process_tree, args.term_seconds, args.kill_seconds, can_reap=True)
         current, _ = read_metadata(control_fd)
         if current is not None and current != running_document:
@@ -291,6 +316,8 @@ def run_adapter(args: argparse.Namespace) -> int:
             remove_metadata(control_fd)
         raise
     finally:
+        if adoption_server is not None:
+            adoption_server.close()
         if process_tree is not None:
             process_tree.close()
         os.close(lock_fd)
@@ -299,6 +326,23 @@ def run_adapter(args: argparse.Namespace) -> int:
 
 
 def stop_adapter(args: argparse.Namespace) -> None:
+    try:
+        guarded_control = open_control_directory(args.control_dir)
+    except DirectoryAccessError:
+        raise
+    except PermanentError:
+        return _stop_adapter(args)
+    try:
+        guard_fd = mutation_guard(guarded_control)
+        try:
+            _stop_adapter(args)
+        finally:
+            os.close(guard_fd)
+    finally:
+        os.close(guarded_control)
+
+
+def _stop_adapter(args: argparse.Namespace) -> None:
     try:
         control_fd = open_control_directory(args.control_dir)
     except DirectoryAccessError:
@@ -436,6 +480,8 @@ guard_parser.add_argument("--init-starttime", type=int, required=True)
 guard_parser.add_argument("command", nargs=argparse.REMAINDER)
 run_parser = subparsers.add_parser("run")
 common_lifecycle(run_parser, require_bundle=True)
+run_parser.add_argument("--wire-alias")
+run_parser.add_argument("--tenant")
 run_parser.add_argument("--runtime-uid", type=int, required=True)
 run_parser.add_argument("--runtime-gid", type=int, required=True)
 run_parser.add_argument("command", nargs=argparse.REMAINDER)
@@ -452,6 +498,10 @@ def _validate_identity(namespace: argparse.Namespace, *, require_bundle: bool) -
     if not ALIAS_RE.fullmatch(namespace.alias) or not CONTAINER_ID_RE.fullmatch(namespace.container_id) \
             or not GENERATION_RE.fullmatch(namespace.generation):
         raise PermanentError("lifecycle identity arguments are invalid")
+    wire_alias, tenant = getattr(namespace, "wire_alias", None), getattr(namespace, "tenant", None)
+    if (wire_alias is None) != (tenant is None) or (wire_alias is not None
+            and (not WIRE_ALIAS_RE.fullmatch(wire_alias) or not TENANT_RE.fullmatch(tenant))):
+        raise PermanentError("lifecycle wire identity arguments are invalid")
     canonical_absolute(namespace.control_dir, "control directory")
     canonical_absolute(namespace.state, "state directory")
     if require_bundle and not DIGEST_RE.fullmatch(namespace.bundle_digest):

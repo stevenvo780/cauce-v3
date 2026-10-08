@@ -295,6 +295,16 @@ def main() -> int:
         environment[FD_ENV] = str(fd)
         environment[LEGACY_FD_ENV] = str(legacy_fd)
         environment[ALIAS_ENV] = alias
+        policy_file = environment.get('CAUCE_ADOPTION_PROBE_POLICY_FILE')
+        if policy_file:
+            environment['CAUCE_ADOPTION_LIFECYCLE_FENCE'] = '1'
+            sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / 'cli'))
+            from fleet_adoption_probe_supervisor import run_supervised
+            try:
+                return run_supervised((fd, legacy_fd), command, environment, policy_file, alias)
+            finally:
+                os.close(fd)
+                os.close(legacy_fd)
         os.execvpe(command[0], command, environment)
         raise AssertionError("exec returned")
     except LockError as error:
