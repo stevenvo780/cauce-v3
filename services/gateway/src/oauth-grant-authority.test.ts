@@ -61,7 +61,9 @@ describe('OAuth live authority contracts without PostgreSQL', () => {
   });
   it('revalidates grant and token inside the existing business-operation fence', async () => {
     const authorize = createHumanReadAuthority(identity, { humanId: userId, tenantId: 'Steven', actorAlias: 'kant' }, new AbortController().signal, { lock: async (db, key, id) => (await import('@cauce/store')).lockHumanIdentity(db, key, id), verifyCredentialStamp });
-    await expect(authorize(client().client)).resolves.toEqual({ humanId: userId, tenantId: 'Steven', actorAlias: 'kant' });
+    await expect(authorize(client().client)).resolves.toEqual({ humanId: userId, tenantId: 'Steven', actorAlias: 'kant',
+      clientProvenance: { kind: 'oauth_client', clientId: 'https://client.example/metadata', grantId,
+        issuer, instance: 'unknown', verification: 'local_grant' } });
     await expect(authorize(client({}, true).client)).rejects.toThrow('invalid_grant');
     await expect(authorize(client({ membership_revision: '99' }).client)).rejects.toThrow('invalid_grant');
   });

@@ -5,8 +5,7 @@ import {
   isAmbiguousAckErrorCode, MAX_MESSAGE_TIMEOUT_MS, messageTimeoutMs,
   SYSTEM_GATE_PROBE_MESSAGE_TYPE,
 } from "@cauce/protocol";
-import type { InboxRecord } from "./durable-store.js";
-import { DurableStore } from "./durable-store.js";
+import { DurableStore, type InboxRecord } from "./durable-store.js";
 import { AdapterError, StaleEpochError, asAdapterError } from "./errors.js";
 import type {
   HarnessAdapter, HarnessRequestContext, HarnessSessionReservation, RuntimeProfileMeasurement,
@@ -305,7 +304,7 @@ export class AdapterEngine {
     delivery: Delivery,
     invocation: DeliveryHarnessInvocation,
   ): Promise<void> {
-    const { harness, session, reservation, humanInitiator, selectionError } = invocation;
+    const { harness, session, reservation, humanInitiator, clientIdentity, selectionError } = invocation;
     const occurredAt = this.clock.now().toISOString();
     const accepted = await this.store.acceptAndEnqueue(delivery, occurredAt);
     if (accepted.acceptance === "stale" || accepted.acceptance === "blocked") return;
@@ -326,7 +325,7 @@ export class AdapterEngine {
       return;
     }
 
-    if (selectionError !== undefined || (humanInitiator !== undefined && this.emission !== undefined && !harness.supportsEmissionEndpoint && delivery.body.type !== "agent.fanin")) {
+    if (selectionError !== undefined || (humanInitiator !== undefined && invocation.ownerShared !== true && this.emission !== undefined && !harness.supportsEmissionEndpoint && delivery.body.type !== "agent.fanin")) {
       await this.finishError(accepted.record, this.adapterError(selectionError === undefined ? new AdapterError("UNSUPPORTED_HUMAN_EMISSION_SCOPE", "Human emission isolation is unavailable", false) : selectionError, accepted.record));
       return;
     }
@@ -461,6 +460,7 @@ export class AdapterEngine {
           ...(onOpenClawPhase === undefined ? {} : { onOpenClawPhase }),
           ...(emissionSocketPath === undefined ? {} : { emissionSocketPath }),
           ...(noticeHistory === undefined ? {} : { noticeHistory }),
+          ...clientIdentity,
           prompt,
           ...(attachments === undefined ? {} : { attachments: attachments.attachments }),
           context: requestContext,

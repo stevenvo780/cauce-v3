@@ -20,6 +20,10 @@
     "./harness-consumption": {
       "types": "./src/harness-consumption.ts",
       "import": "./dist/harness-consumption.js"
+    },
+    "./client-provenance": {
+      "types": "./src/schemas/client-provenance.ts",
+      "import": "./dist/schemas/client-provenance.js"
     }
   },
   "files": ["dist"],

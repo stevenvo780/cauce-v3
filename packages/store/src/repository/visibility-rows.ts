@@ -34,6 +34,7 @@ export type MessageDetailDeliveryRow = {
   status: string;
   attempt: number;
   terminal_at: string | null;
+  client_mailbox?: { label: string; state: 'stored' } | null;
   reply?: string | null;
 };
 

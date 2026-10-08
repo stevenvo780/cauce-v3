@@ -1,3 +1,4 @@
+import { clientMailboxStoredSql } from '../../client-mailbox.js';
 import type { DeliveryState, Tenant } from '@cauce/protocol'; /* eslint @typescript-eslint/prefer-optional-chain: "error" */
 import { StoreError } from '../errors.js';
 import { terminal } from '../messages.js';
@@ -115,6 +116,7 @@ export abstract class AgentFaninRepository extends AgentFaninMaterializationRepo
         created_at: Date;
         source_status: DeliveryState;
         target_status: DeliveryState | null;
+        client_mailbox: { label: string; state: 'stored' } | null;
         target_attempt: number | null;
         target_terminal_at: Date | null;
         source_visible: boolean;
@@ -132,6 +134,7 @@ export abstract class AgentFaninRepository extends AgentFaninMaterializationRepo
                 source_delivery.status AS source_status,
                 child.status AS target_status,child.attempt AS target_attempt,
                 child.terminal_at AS target_terminal_at,
+                CASE WHEN ${clientMailboxStoredSql('child')} THEN jsonb_build_object('label',child.result->>'label','state','stored') ELSE NULL END AS client_mailbox,
                 ${visible('source_message')} AS source_visible,
                 CASE WHEN produced_message.id IS NULL THEN false
                      ELSE ${visible('produced_message')} END AS target_visible
@@ -247,7 +250,8 @@ export abstract class AgentFaninRepository extends AgentFaninMaterializationRepo
               delivery_id: edge.produced_delivery_id,
               attempt: edge.target_attempt,
               status: edge.target_status,
-              terminal_at: edge.target_terminal_at
+              terminal_at: edge.target_terminal_at,
+              ...(edge.client_mailbox === null ? {} : { client_mailbox: edge.client_mailbox })
             }
             : { redacted: true, node_id: opaqueNodeId(edge.produced_delivery_id) },
         output_index: edge.output_index,

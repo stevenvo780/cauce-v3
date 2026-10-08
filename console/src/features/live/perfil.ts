@@ -158,10 +158,8 @@ export function motivoSinDestino(
 }
 
 /**
- * The count that RULES: the stricter of the two units. Same arithmetic as `measureStrictestUnits` in
- * `@cauce/protocol`, reimplemented because the console is a browser bundle and `@cauce/protocol` drags the
- * whole `zod` along; `perfil.test.ts` checks that the two yield the SAME number on the cases that separate one
- * unit from the other (BMP accents and emojis).
+ * Match `measureStrictestUnits` using the larger UTF-16/code-point count without importing
+ * the protocol's Node barrel into the browser bundle.
  */
 export function contarUnidades(texto: string): number {
   return Math.max(Array.from(texto).length, texto.length);

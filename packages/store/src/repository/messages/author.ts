@@ -1,4 +1,5 @@
 import { StoreError } from '../errors.js';
+import { messageClientOrigin } from './client-origin.js';
 
 export interface ConsoleMessageAuthor {
   readonly kind: 'human';
@@ -35,6 +36,8 @@ export const MESSAGE_AUTHOR_SQL = `(SELECT CASE WHEN count(*)=1
     AND author_audit.action='message.publish' AND author_audit.decision='allow') AS author`;
 
 export function withMessageAuthor<T extends object>(row: T): T & { author: ConsoleMessageAuthor | null } {
-  const projected = row as T & { author?: unknown };
-  return { ...row, author: messageAuthor(projected.author) ?? null };
+  const projected = row as T & { author?: unknown; client_origin?: unknown };
+  return { ...row, author: messageAuthor(projected.author) ?? null,
+    ...(Object.hasOwn(projected, 'client_origin')
+      ? { client_origin: messageClientOrigin(projected.client_origin) } : {}) };
 }

@@ -1,3 +1,4 @@
+import { clientMailboxRoutingTargets } from '../../client-mailbox.js';
 import type { ProfileRuntimeContract, Tenant } from '@cauce/protocol'; /* eslint @typescript-eslint/no-unnecessary-boolean-literal-compare: "error" */
 import {
   HUMAN_MESSAGE_INITIATOR_CAPABILITY,
@@ -393,6 +394,7 @@ export abstract class DeliveryClaimsRepository extends MessagesRepository {
       );
 
       // A control hold gates new leases; durable terminal evidence survives a corrupted row.
+      // NO KEY UPDATE: a receipt's KEY SHARE on a fresh delivery must not make SKIP LOCKED hide it.
       const claimOne = async (humanOriginated: boolean): Promise<AuthoredDeliveryRow | undefined> => {
         const claimed = await client.query<AuthoredDeliveryRow>(
           `WITH picked AS (
@@ -418,7 +420,7 @@ export abstract class DeliveryClaimsRepository extends MessagesRepository {
                ))` : ''}
                AND (m.priority >= $5)=$7::boolean
              ORDER BY (m.lane='interactive') DESC,m.priority DESC,d.available_at,d.created_at
-             FOR UPDATE OF d SKIP LOCKED LIMIT 1
+             FOR NO KEY UPDATE OF d SKIP LOCKED LIMIT 1
            ), updated AS (
              UPDATE deliveries d SET status='leased',attempt=d.attempt+1,claimed_at=now(),
                claim_token=gen_random_uuid(),ack_deadline_at=now()+$6*interval '1 millisecond',
@@ -487,9 +489,10 @@ export abstract class DeliveryClaimsRepository extends MessagesRepository {
         `UPDATE delivery_lane_fairness SET interactive_streak=$3,updated_at=now()
          WHERE tenant_id=$1 AND alias=$2`, [tenantId, alias, humanStreak]
       );
-      const routingTargets = includeRoutingTargets
-        ? await this.routingTargets(client, tenantId, alias)
-        : undefined;
+      const agentTargets = includeRoutingTargets ? await this.routingTargets(client, tenantId, alias) : undefined;
+      const routingTargets = agentTargets === undefined ? undefined : [...agentTargets,
+        ...(Array.isArray(capabilities) && capabilities.includes('client_mailbox_v1')
+          ? (await clientMailboxRoutingTargets(client, tenantId)).slice(0, Math.max(0, 100 - agentTargets.length)) : [])];
 // The role belongs to the alias that claims it: a transactional read serves the whole batch
 // and prevents attaching another alias's role.
       const selfRole = includeSelfRole && claimedRows.length > 0

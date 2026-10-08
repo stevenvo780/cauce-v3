@@ -363,7 +363,7 @@ export abstract class DeliveryAcksRepository extends DeliveryClaimsRepository {
     if (input.nextStatus === 'done' && row.body.type !== 'agent.fanin') {
       outputOutcome = await this.materializeAgentOutputs(client, row, ack, input.outputs, policy);
     }
-    const responseDisposition: AgentResponseDisposition = outputOutcome.materialized > 0
+    const responseDisposition: AgentResponseDisposition = outputOutcome.materialized > (outputOutcome.mailboxStored ?? 0)
       || outputOutcome.suspended
       ? 'deferred'
       : await this.materializeAgentResponse(

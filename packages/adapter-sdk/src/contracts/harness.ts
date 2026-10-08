@@ -14,6 +14,10 @@ import type {
 } from "../sdk/types.js";
 import type { MotivoDeReenvio, SelloDeContextoFijo } from "../harnesses/contexto-fijo.js";
 import type { SharedSessionHarness } from "../shared-session/types.js";
+import type {
+  ValidatedClientDelegation,
+  ValidatedClientProvenance,
+} from "../sdk/engine/client-identity.js";
 
 export type { HarnessAdapter } from "../harnesses/shared/adapter.js";
 
@@ -65,6 +69,7 @@ interface HarnessRoutingTarget {
   readonly tenant_id: string;
   readonly alias: string;
   readonly online: boolean;
+  readonly client_mailbox?: { readonly label: string; readonly available: true };
 }
 
 export interface HarnessAdapterOptions {
@@ -134,6 +139,8 @@ export interface HarnessExecuteRequest {
    * match this measurement against the delivery's trusted runtime contract before emitting it.
    */
   readonly onRuntimeProfileConsumed?: (profile: RuntimeProfileMeasurement) => void;
+  readonly clientProvenance?: ValidatedClientProvenance;
+  readonly clientDelegation?: ValidatedClientDelegation;
 }
 
 export interface HarnessSessionReservation {

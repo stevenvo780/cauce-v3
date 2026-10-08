@@ -153,6 +153,8 @@ load_config() {
       BUNDLE_RELEASE|BUNDLE_SHA256|PKI_DIR|RELAY_URL|EXPECTED_IMAGE_ID|EXPECTED_LABEL_KEY|EXPECTED_LABEL_VALUE|MOUNT_TYPE|MOUNT_SOURCE|MOUNT_NAME|MOUNT_DESTINATION|MOUNT_RW|DEFAULT_TIMEOUT_MS|CAUCE_SEMBRAR_PERFIL) ;;
       DECISIONES_URL) [[ $value =~ ^https://([A-Za-z0-9.-]+|\[[0-9A-Fa-f:]+\])(:[0-9]{1,5})?$ ]] || die 'DECISIONES_URL must be a bare https origin' ;;
       CAUCE_NATIVE_PROFILE_CONTEXT) [[ $value =~ ^[01]$ ]] || die "CAUCE_NATIVE_PROFILE_CONTEXT must be exactly 0 or 1" ;;
+      # The owner's human UUID: with SHARED_SESSION, the owner's console turns land in the ONE live session.
+      OWNER_HUMAN_ID) [[ $value =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] || die 'OWNER_HUMAN_ID must be a lowercase UUID' ;;
       EXPECTED_CLI_VERSION) [[ $harness == claude ]] || die "config key is not allowed for $harness: $key" ;;
       HERMES_HOME|HERMES_INFERENCE_MODEL|HERMES_PYTHON|HERMES_SOURCE_COMMIT) [[ $harness == hermes ]] || die "config key is not allowed for $harness: $key" ;;
       # Shared session: the SAME conversation in owner's terminal and Telegram, only for claude/codex/grok/muse
@@ -673,6 +675,7 @@ start_adapter() {
   environment+=("CAUCE_SEMBRAR_PERFIL=${CONFIG[CAUCE_SEMBRAR_PERFIL]}")
   [[ ! -v CONFIG[DECISIONES_URL] ]] || environment+=("CAUCE_DECISIONES_URL=${CONFIG[DECISIONES_URL]}")
   [[ ! -v CONFIG[CAUCE_NATIVE_PROFILE_CONTEXT] ]] || environment+=("CAUCE_NATIVE_PROFILE_CONTEXT=${CONFIG[CAUCE_NATIVE_PROFILE_CONTEXT]}")
+  [[ ! -v CONFIG[OWNER_HUMAN_ID] ]] || environment+=("CAUCE_OWNER_HUMAN_ID=${CONFIG[OWNER_HUMAN_ID]}")
   if [[ -v CONFIG[CREDENTIAL_HOME] ]]; then
     valid_absolute_path "${CONFIG[CREDENTIAL_HOME]}" || die "CREDENTIAL_HOME must be a canonical absolute path"
     case "$harness" in

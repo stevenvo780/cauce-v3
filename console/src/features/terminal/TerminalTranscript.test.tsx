@@ -151,3 +151,62 @@ it.each(['__proto__', 'constructor', 'toString'])('trata el tipo %s como texto',
   render(<TerminalTranscript items={[{ message: { ...message, body_preview: JSON.stringify({ type }) }, delivery, direction: 'input' }]} onSelectItem={vi.fn()} />);
   expect(screen.getByText(`Tipo: ${type}`)).toBeVisible();
 });
+
+it('muestra el nombre Cronos (label) y estado «Guardado en buzón» sin afirmar ejecución ni usar alias kant ni Steve', () => {
+  const { message } = fixture(false);
+  const mailboxAddress = 'mbx-0123456789abcdef0123456789abcdef';
+  const mailboxDelivery: typeof message.deliveries extends (infer T)[] | null | undefined ? NonNullable<T> : never = {
+    delivery_id: '10000000-0000-4000-8000-000000000001',
+    recipient_tenant: 'Steven',
+    recipient_alias: mailboxAddress,
+    status: 'done',
+    attempt: 0,
+    timeline: [{ status: 'published' }, { status: 'done', attempt: 0 }],
+    client_mailbox: { label: 'Buzón Cronos', state: 'stored' },
+  };
+
+  render(<TerminalTranscript items={[{
+    message: { ...message, deliveries: [mailboxDelivery] },
+    delivery: mailboxDelivery,
+    direction: 'input',
+  }]} onSelectItem={vi.fn()} />);
+
+  expect(screen.getByText('Buzón Cronos')).toBeVisible();
+  expect(screen.getByText(`(${mailboxAddress})`)).toBeVisible();
+
+  expect(screen.getByText('Guardado en buzón')).toBeVisible();
+  const check = screen.getByRole('status', { name: 'Entrega: Guardado en buzón' });
+  expect(check).toBeInTheDocument();
+  expect(check).toHaveAttribute('title', expect.stringMatching(/no acredita lectura ni ejecución/i));
+
+  const destinationEl = document.querySelector('.transcript-mailbox-dest');
+  expect(destinationEl).toBeInTheDocument();
+  expect(within(destinationEl as HTMLElement).queryByText('kant')).toBeNull();
+  expect(within(destinationEl as HTMLElement).queryByText('Steve')).toBeNull();
+  expect(within(destinationEl as HTMLElement).queryByText('Steven')).toBeNull();
+
+  expect(screen.queryByText(/ejecutad/i)).toBeNull();
+  expect(screen.queryByText(/ejecución terminada/i)).toBeNull();
+});
+
+it('no infiere buzón por prefijo de dirección sin marcador del API en la transcripción', () => {
+  const { message } = fixture(false);
+  const mailboxAddress = 'mbx-0123456789abcdef0123456789abcdef';
+  const plainDelivery: typeof message.deliveries extends (infer T)[] | null | undefined ? NonNullable<T> : never = {
+    delivery_id: '10000000-0000-4000-8000-000000000002',
+    recipient_tenant: 'Steven',
+    recipient_alias: mailboxAddress,
+    status: 'done',
+    attempt: 1,
+    timeline: [{ status: 'published' }, { status: 'done', attempt: 1 }],
+  };
+
+  render(<TerminalTranscript items={[{
+    message: { ...message, deliveries: [plainDelivery] },
+    delivery: plainDelivery,
+    direction: 'input',
+  }]} onSelectItem={vi.fn()} />);
+
+  expect(screen.queryByText('Guardado en buzón')).toBeNull();
+  expect(screen.getByText(mailboxAddress)).toBeVisible();
+});

@@ -11,6 +11,8 @@ export {
 } from "./shared/errors.js";
 export {
   capabilities,
+  CLIENT_IDENTITY_BEGIN,
+  CLIENT_IDENTITY_END,
   DELEGATION_MECHANICS_HEADER,
   IDENTITY_BEGIN,
   IDENTITY_END,
@@ -19,6 +21,7 @@ export {
   textoFijoDelSobre,
   textoNativoDelSobre,
 } from "./shared/prompt.js";
+export { helloCapabilityStrings } from "../sdk/capabilities.js";
 export type {
   HarnessAdapterOptions,
   HarnessExecuteRequest,

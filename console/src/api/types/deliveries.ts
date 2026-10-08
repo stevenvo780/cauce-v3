@@ -25,6 +25,11 @@ export interface TimelineEvent {
   harness_consumption?: HarnessConsumptionEvidence | null;
 }
 
+export interface ClientMailboxDeliveryReceipt {
+  label: string;
+  state: 'stored';
+}
+
 export interface DeliveryView {
   delivery_id?: string | null;
   recipient_tenant?: string | null;
@@ -32,6 +37,7 @@ export interface DeliveryView {
   status?: DeliveryState | null;
   attempt?: number | null;
   timeline?: TimelineEvent[] | null;
+  client_mailbox?: ClientMailboxDeliveryReceipt | null;
 }
 
 export interface MessageAuthor {
@@ -40,9 +46,25 @@ export interface MessageAuthor {
   display_name: string | null;
 }
 
+export type MessageClientProvenance =
+  | { kind: 'unknown' }
+  | {
+      kind: 'oauth_client';
+      verification: 'local_grant';
+      issuer: string;
+      client_id: string;
+      instance: 'unknown';
+    };
+
+export interface MessageClientOrigin {
+  client: MessageClientProvenance;
+  delegation_label: string | null;
+}
+
 export interface MessageView {
   attachments?: MessageAttachment[] | null;
   author?: MessageAuthor | null;
+  client_origin?: MessageClientOrigin | null;
   message_id?: string | null;
   request_id?: string | null;
   trace_id?: string | null;
@@ -63,6 +85,7 @@ export interface MessageView {
 export interface MessageDetail {
   attachments?: MessageAttachment[] | null;
   author?: MessageAuthor | null;
+  client_origin?: MessageClientOrigin | null;
   id?: string | null;
   message_id?: string | null;
   trace_id?: string | null;
@@ -87,6 +110,7 @@ export interface MessageDetailDelivery {
   reply_attachments?: MessageAttachment[] | null;
   reply_attachment_delivery_id?: string | null;
   reply_attachment_attempt?: number | null;
+  client_mailbox?: ClientMailboxDeliveryReceipt | null;
 }
 
 export interface MessagePage {

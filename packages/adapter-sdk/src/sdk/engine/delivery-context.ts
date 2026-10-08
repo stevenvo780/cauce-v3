@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import {
   HumanMessageInitiatorSchema,
+  RoutingTargetSchema,
   clampToRoleBriefLimit,
   isAgentToAgentBody,
   isAlias,
@@ -12,6 +13,7 @@ import type { MaterializedSecret } from "../secrets.js";
 import type { SessionOrigin } from "../durable-store.js";
 import { DurableStore, sanitizeSessionOrigin } from "../durable-store.js";
 import { AdapterError } from "../errors.js";
+import { clientIdentitySidecarFields, type ClientIdentityExecuteFields } from './client-identity.js';
 import type { Delivery } from "../types.js";
 import type { HarnessTimeoutKind } from "../message-timeout.js";
 
@@ -250,9 +252,7 @@ export function promptForDelivery(delivery: Delivery, store: DurableStore): stri
  */
 const CONVERSATION_SESSION_NAMESPACE = "cauce-conversation-session-v3";
 
-/**
- * Ephemeral session identifiers discarded to avoid fragmenting native sessions.
- */
+/** Ephemeral session identifiers discarded to avoid fragmenting native sessions. */
 const EPHEMERAL_SESSION_ID = /^(?:delivery|fanin):/u;
 
 interface ConversationScope {
@@ -292,7 +292,18 @@ export interface DeliveryHarnessInvocation {
   readonly session: HarnessSessionRequestScope;
   readonly reservation?: HarnessSessionReservation;
   readonly humanInitiator?: NonNullable<HarnessRequestContext["human_initiator"]>;
+  readonly clientIdentity?: ClientIdentityExecuteFields;
   readonly selectionError?: unknown;
+  readonly ownerShared?: true;
+}
+
+/** Exact owner match only: shared TTY mode, the configured owner UUID and the agent's own tenant. */
+function ownerInSharedSession(humanInitiator: HarnessRequestContext["human_initiator"],
+  ownTenantId: string | undefined): boolean {
+  const owner = process.env.CAUCE_OWNER_HUMAN_ID?.trim().toLowerCase();
+  return process.env.CAUCE_SHARED_SESSION === "1" && owner !== undefined && owner.length > 0
+    && humanInitiator !== undefined && ownTenantId !== undefined
+    && humanInitiator.human_id.toLowerCase() === owner && humanInitiator.tenant_id === ownTenantId;
 }
 
 export function prepareDeliveryInvocation(delivery: Delivery, harness: HarnessAdapter,
@@ -300,7 +311,16 @@ export function prepareDeliveryInvocation(delivery: Delivery, harness: HarnessAd
   ownTenantId: string | undefined): DeliveryHarnessInvocation {
   try {
     const humanInitiator = humanInitiatorFromDelivery(delivery);
+    const clientIdentity = clientIdentitySidecarFields(delivery, humanInitiator, ownTenantId);
     const consoleHuman = authenticatedConsoleDelivery(delivery);
+    // The owner is ONE person talking to ONE agent (the live shared session); other humans stay isolated.
+    if (ownerInSharedSession(humanInitiator, ownTenantId)) {
+      const lane = "human";
+      const session: HarnessSessionRequestScope = { sessionKey: `shared:${delivery.recipient_alias}`, sessionLane: lane };
+      const reservation = harness.reserveSession(session.sessionKey, lane);
+      return { harness, session, clientIdentity, ...(reservation === undefined ? {} : { reservation }),
+        ...(humanInitiator === undefined ? {} : { humanInitiator }), ownerShared: true };
+    }
     const isolatedHuman = humanInitiator !== undefined || consoleHuman;
     if (isolatedHuman && selector === undefined) {
       throw new AdapterError("UNSUPPORTED_HUMAN_ISOLATION", "Human session isolation is unavailable", false);
@@ -316,7 +336,7 @@ export function prepareDeliveryInvocation(delivery: Delivery, harness: HarnessAd
       ? { sessionKey: `shared:${delivery.recipient_alias}`, sessionLane: lane }
       : { ...sessionFromDelivery(delivery, ownTenantId), sessionLane: lane };
     const reservation = fanin ? undefined : selected.reserveSession(session.sessionKey, lane);
-    return { harness: selected, session, ...(reservation === undefined ? {} : { reservation }),
+    return { harness: selected, session, clientIdentity, ...(reservation === undefined ? {} : { reservation }),
       ...(humanInitiator === undefined ? {} : { humanInitiator }) };
   } catch (selectionError) {
     return { harness, session: {}, selectionError };
@@ -493,6 +513,7 @@ export function routingTargetsFromDelivery(delivery: Delivery): readonly {
   readonly tenant_id: string;
   readonly alias: string;
   readonly online: boolean;
+  readonly client_mailbox?: { readonly label: string; readonly available: true };
 }[] {
   const forwardCompatible = delivery as Delivery & {
     readonly routing_targets?: unknown;
@@ -501,17 +522,23 @@ export function routingTargetsFromDelivery(delivery: Delivery): readonly {
   const candidate = forwardCompatible.routing_targets ?? forwardCompatible.available_recipients;
   if (!Array.isArray(candidate)) return [];
 
-  const unique = new Map<string, { tenant_id: string; alias: string; online: boolean }>();
+  const unique = new Map<string, {
+    tenant_id: string; alias: string; online: boolean; client_mailbox?: { label: string; available: true };
+  }>();
   for (const value of candidate) {
     if (typeof value !== "object" || value === null || Array.isArray(value)) continue;
     const target = value as Record<string, unknown>;
     if (typeof target.tenant_id !== "string" || target.tenant_id.trim().length === 0) continue;
     if (typeof target.alias !== "string" || target.alias.trim().length === 0) continue;
     if (typeof target.online !== "boolean") continue;
+    const parsedMailbox = RoutingTargetSchema.shape.client_mailbox.unwrap().safeParse(target.client_mailbox);
+    if (target.client_mailbox !== undefined && target.online) continue;
+    const mailbox = parsedMailbox.success ? parsedMailbox.data : undefined;
     const normalized = {
       tenant_id: target.tenant_id,
       alias: target.alias,
       online: target.online,
+      ...(mailbox === undefined ? {} : { client_mailbox: mailbox }),
     };
     unique.set(`${normalized.tenant_id}\u0000${normalized.alias}`, normalized);
   }

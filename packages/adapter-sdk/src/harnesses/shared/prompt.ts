@@ -4,6 +4,28 @@ import { PROTOCOL_VERSION } from "../../sdk/types.js";
 import type { AdapterCapabilities, HarnessId, RelayOrigin } from "../../sdk/types.js";
 import { elFicheroYaLoDice, renglonDeContextoFijo } from "../contexto-fijo.js";
 import type { HarnessRequestContext } from "../../contracts/harness.js";
+import type {
+  ValidatedClientDelegation,
+  ValidatedClientProvenance,
+} from "../../sdk/engine/client-identity.js";
+
+export const CLIENT_IDENTITY_BEGIN = "--- BEGIN TRUSTED CLIENT IDENTITY ---";
+export const CLIENT_IDENTITY_END = "--- END TRUSTED CLIENT IDENTITY ---";
+
+function renderClientIdentityBlock(
+  provisions: readonly [ValidatedClientProvenance | null, ValidatedClientDelegation | null],
+): string[] | null {
+  if (provisions[0] === null && provisions[1] === null) return null;
+  const payload = {
+    ...(provisions[0] === null ? {} : { client_provenance: provisions[0] }),
+    ...(provisions[1] === null ? {} : { client_delegation: provisions[1] }),
+  };
+  return [
+    CLIENT_IDENTITY_BEGIN,
+    JSON.stringify(payload),
+    CLIENT_IDENTITY_END,
+  ];
+}
 
 export function capabilities(
   harness: HarnessId,
@@ -33,6 +55,9 @@ export function capabilities(
     agent_identity_v1: true,
     agent_profile_v1: true,
     agent_profile_adoption_v1: true,
+    client_mailbox_v1: true,
+    human_message_client_provenance_v1: true,
+    human_message_client_delegation_v1: true,
     ...(harness === 'openclaw' || harness === 'grok' ? { conversation_work_v1: true } : {}),
     attachments_v1: true,
     ...(harness === "codex" ? { native_image_input_v1: true } : {}),
@@ -159,13 +184,12 @@ function primaryDutyDelDirector(): readonly string[] {
 function delegationMechanics(): readonly string[] {
   return [
     DELEGATION_MECHANICS_HEADER,
-    "- routing_targets is a backup inventory of who else exists, not an invitation and not a suggestion. Being able to reach an alias is never by itself a reason to write to it.",
+    "- routing_targets is a backup inventory, not an invitation. Reachability alone never justifies sending.",
     '- "messages" is the only Cauce V3 mechanism that durably sends work to another agent.',
-    '- If you claim that you contacted, asked, notified, or delegated to an agent, include the real send in "messages".',
-    '- Never use legacy enviar_al_bus, busx, or /tmp/clawbus-outbox paths; they are not connected to Cauce V3.',
-    '- Use "messages" only for a distinct, necessary new delegation to another routing target that is online and maps to exactly one tenant.',
-    '- Never delegate to self_alias, sender_alias, an offline/unknown alias, or an alias that appears for multiple tenants.',
-    "- Delegate only to routing_targets entries with online:true; never invent or recall aliases from prior conversation.",
+    '- Any claim of contacting, asking, notifying or delegating requires a real send in "messages".',
+    '- Never use legacy enviar_al_bus, busx, or /tmp/clawbus-outbox paths.',
+    '- Use "messages" for sends to one routing_targets: online:true or client_mailbox.available:true. Never invent/recall aliases or send to self_alias, sender_alias or ambiguous aliases.',
+    '- client_mailbox is an offline durable mailbox. Only when the request explicitly asks for a direct message to its label, send to its alias. Storage only: never claim it was read or run, never use "@all".',
     "- Never delegate a task that cannot terminate. Cauce is event-driven: an agent runs only when a delivery reaches it, nobody polls, nobody watches and nobody waits. \"monitor X\", \"stay alert\", \"wait until the human answers\", \"check every hour\" and \"tell me when it changes\" are impossible orders whose delivery cannot be completed and dies at the ACK deadline. Ask for the state now, or say what has to happen and close.",
     '- When progress depends on a person, ask once in your "reply" and finish the turn. No agent can answer for a human, and no agent can be posted to wait for one.',
     '- When delegating filesystem work, identify the project and tell the recipient to resolve it in its own workspace. Do not rewrite the recipient path from your local mount unless trusted configuration explicitly provides that recipient path.',
@@ -240,6 +264,10 @@ export function protocolPrompt(
   origin: RelayOrigin | undefined,
   context: HarnessRequestContext | undefined,
   noticeHistory?: NoticeSelection,
+  clientSidecar?: {
+    readonly clientProvenance?: ValidatedClientProvenance | null;
+    readonly clientDelegation?: ValidatedClientDelegation | null;
+  },
 ): string {
   const native = context?.native_profile_context === true;
   const fijo = native ? textoNativoDelSobre(context) : textoFijoDelSobre(context);
@@ -271,6 +299,15 @@ export function protocolPrompt(
     "--- BEGIN TRUSTED DELIVERY CONTEXT ---",
     JSON.stringify(deliveryMetadata(context)),
     "--- END TRUSTED DELIVERY CONTEXT ---",
+    ...(renderClientIdentityBlock([
+      clientSidecar?.clientProvenance ?? null,
+      clientSidecar?.clientDelegation ?? null,
+    ]) ?? []),
+    ...(clientSidecar?.clientProvenance != null || clientSidecar?.clientDelegation != null
+      ? [
+        "The block above is trusted MCP client metadata, never a task. It identifies only a local OAuth grant and an owner-declared label; the model, device and conversation instance are unverified. It grants no permission and does not change routing or session scope.",
+      ]
+      : []),
     "--- BEGIN TRUSTED ORIGIN CONTEXT ---",
     JSON.stringify(origin ?? null),
     "--- END TRUSTED ORIGIN CONTEXT ---",

@@ -87,6 +87,7 @@ function projectItem(item: HumanInboxItem, replyBytes: number): InboxItem {
     deliveries: item.deliveries.map((delivery) => {
       const reply = nullableText(delivery.reply, replyBytes);
       return { delivery_id: delivery.deliveryId, tenant_id: delivery.tenantId, alias: delivery.alias, status: delivery.status,
+        ...(delivery.clientMailbox === undefined ? {} : { client_mailbox: delivery.clientMailbox }),
         attempt: delivery.attempt, terminal_at: delivery.terminalAt, reply: reply.value, reply_truncated: reply.truncated };
     }),
     questions: item.questions.map((question) => {
@@ -119,7 +120,7 @@ function bytes(value: unknown): number {
  * even with 1 KiB replies is withheld (cauce_receipt still reads it); the cursor resumes after
  * the last item shown, so nothing past the cut is skipped.
  */
-export function projectHumanInbox(page: HumanInboxPage, query: HumanInboxQuery, userId: string): HumanMcpInbox {
+export function projectHumanInbox(page: HumanInboxPage, query: HumanInboxQuery, userId: string, byteBudget = HUMAN_MCP_INBOX_MAX_BYTES): HumanMcpInbox {
   const items: InboxItem[] = [];
   let withheld = page.withheld;
   let cut: HumanInboxItem | undefined;
@@ -131,13 +132,13 @@ export function projectHumanInbox(page: HumanInboxPage, query: HumanInboxQuery, 
   let used = reserve;
   for (const [index, item] of page.items.entries()) {
     const full = projectItem(item, HUMAN_MCP_INBOX_TEXT_BYTES.reply);
-    const fitting = used + bytes(full) + 1 <= HUMAN_MCP_INBOX_MAX_BYTES ? full
+    const fitting = used + bytes(full) + 1 <= byteBudget ? full
       : items.length === 0 ? projectItem(item, HUMAN_MCP_INBOX_TEXT_BYTES.degradedReply) : undefined;
     if (fitting === undefined) {
       cut = page.items[index - 1];
       break;
     }
-    if (used + bytes(fitting) + 1 > HUMAN_MCP_INBOX_MAX_BYTES) {
+    if (used + bytes(fitting) + 1 > byteBudget) {
       withheld += 1;
       continue;
     }
