@@ -155,6 +155,8 @@ load_config() {
       CAUCE_NATIVE_PROFILE_CONTEXT) [[ $value =~ ^[01]$ ]] || die "CAUCE_NATIVE_PROFILE_CONTEXT must be exactly 0 or 1" ;;
       # The owner's human UUID: with SHARED_SESSION, the owner's console turns land in the ONE live session.
       OWNER_HUMAN_ID) [[ $value =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] || die 'OWNER_HUMAN_ID must be a lowercase UUID' ;;
+      # Other humans who already see and drive this TUI (tenant:uuid,...): their turns join the ONE session too.
+      SHARED_HUMANS) [[ $value =~ ^[A-Za-z][A-Za-z0-9_-]{0,63}:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(,[A-Za-z][A-Za-z0-9_-]{0,63}:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})*$ ]] || die 'SHARED_HUMANS must be tenant:lowercase-uuid[,tenant:lowercase-uuid...]' ;;
       EXPECTED_CLI_VERSION) [[ $harness == claude ]] || die "config key is not allowed for $harness: $key" ;;
       HERMES_HOME|HERMES_INFERENCE_MODEL|HERMES_PYTHON|HERMES_SOURCE_COMMIT) [[ $harness == hermes ]] || die "config key is not allowed for $harness: $key" ;;
       # Shared session: the SAME conversation in owner's terminal and Telegram, only for claude/codex/grok/muse
@@ -677,6 +679,7 @@ start_adapter() {
   [[ ! -v CONFIG[DECISIONES_URL] ]] || environment+=("CAUCE_DECISIONES_URL=${CONFIG[DECISIONES_URL]}")
   [[ ! -v CONFIG[CAUCE_NATIVE_PROFILE_CONTEXT] ]] || environment+=("CAUCE_NATIVE_PROFILE_CONTEXT=${CONFIG[CAUCE_NATIVE_PROFILE_CONTEXT]}")
   [[ ! -v CONFIG[OWNER_HUMAN_ID] ]] || environment+=("CAUCE_OWNER_HUMAN_ID=${CONFIG[OWNER_HUMAN_ID]}")
+  [[ ! -v CONFIG[SHARED_HUMANS] ]] || environment+=("CAUCE_SHARED_HUMAN_IDS=${CONFIG[SHARED_HUMANS]}")
   if [[ -v CONFIG[CREDENTIAL_HOME] ]]; then
     valid_absolute_path "${CONFIG[CREDENTIAL_HOME]}" || die "CREDENTIAL_HOME must be a canonical absolute path"
     case "$harness" in

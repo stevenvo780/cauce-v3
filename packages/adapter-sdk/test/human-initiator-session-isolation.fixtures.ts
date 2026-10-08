@@ -65,7 +65,7 @@ export class RecordedEmission extends EmissionRuntime {
   }
 }
 
-export async function isolatedEngine(t: TestContext) {
+export async function isolatedEngine(t: TestContext, ownTenantId = "Steven") {
   const directory = await mkdtemp(join(tmpdir(), "cauce-human-sdk-"));
   t.diagnostic(`Owned fixture directory: ${directory}`);
   const store = await DurableStore.open(directory);
@@ -76,7 +76,7 @@ export async function isolatedEngine(t: TestContext) {
   const emission = new RecordedEmission(directory, "human-sdk-fixture", async () => { throw new Error("No external emission request expected"); });
   const events: DeliveryEvent[] = [];
   let selections = 0;
-  const engine = new AdapterEngine({ store, emission, harness: adapters.harness, ownTenantId: "Steven",
+  const engine = new AdapterEngine({ store, emission, harness: adapters.harness, ownTenantId,
     harnessForDelivery: (input) => {
       selections += 1;
       const human = humanInitiatorFromDelivery(input);
