@@ -219,9 +219,15 @@ describe('el techo de entregas en vuelo de un agente se puede editar', () => {
 
   it('el snapshot lo trae, o la consola pintaría una caja vacía y el primer guardado lo borraría', async () => {
     const fuente = await configurationSource();
-    const desde = fuente.indexOf('FROM agents WHERE $1::text IS NULL OR tenant_id=$1');
-    expect(desde).toBeGreaterThan(0);
-    expect(fuente.slice(desde - 400, desde)).toContain('max_concurrent_deliveries');
+    const consultas = [...fuente.matchAll(/`([^`]+)`/gu)].map((match) => match[1] ?? '');
+    const snapshots = consultas.filter((consulta) => /^\s*SELECT\s+[\s\S]+?\s+FROM\s+([a-z_]+)\b/iu.exec(consulta)?.[1] === 'agents'
+      && /ORDER\s+BY\s+tenant_id\s*,\s*alias\s*$/iu.test(consulta));
+    expect(snapshots).toHaveLength(1);
+    const snapshot = snapshots[0];
+    const seleccion = snapshot?.match(/^\s*SELECT\s+([\s\S]+?)\s+FROM\s+agents\s+WHERE/iu)?.[1];
+    expect(seleccion).toMatch(/\bmax_concurrent_deliveries\b/u);
+    expect(snapshot).toMatch(/WHERE\s+\(\s*\$1::text\s+IS\s+NULL\s+OR\s+tenant_id\s*=\s*\$1\s*\)\s+AND\s+to_jsonb\(agents\)->>'purged_at'\s+IS\s+NULL/iu);
+    expect(snapshot).toMatch(/AND\s+NOT\s+EXISTS\(SELECT\s+1\s+FROM\s+tenants\s+WHERE\s+tenants\.id\s*=\s*agents\.tenant_id\s+AND\s+to_jsonb\(tenants\)->>'purged_at'\s+IS\s+NOT\s+NULL\)/iu);
   });
 
   it('el SELECT bajo lock lo trae, o el DESHACER le pondría techo a un agente destechado', async () => {
