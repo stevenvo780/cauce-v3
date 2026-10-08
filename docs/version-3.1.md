@@ -120,28 +120,24 @@ sobre él, y sólo eso:
 si el humo sale rojo parcial, la columna «Resultado» se corrige a mano en el mismo commit que
 registra la fila, y ese commit es también el que actualiza estos documentos.
 
-La última fila de [HISTORIAL](../deploy/HISTORIAL.md) registra `2729f23b`, el 5 de octubre a las
-20:09, hora de Colombia. La promoción actualizó seis aplicaciones centrales y conservó tres
-contenedores de infraestructura; los nueve quedaron sanos. El runtime usa la imagen
-`sha256:7452d8e6d6b61d9bec5702bebd09efcd04d8e2397e34d2dab6907605801062c5` y la consola
-`sha256:434a1d18c093e689eebdcff87c4574964ca52317b9f8945dfcc1bfa180794aa6`. El esquema 045
-se conservó sin DDL ni migraciones. La consola deriva del paquete original: mantiene los bytes
-con nueve permisos públicos corregidos de 0640 a 0644; no acredita nuevos gates del parche
-durable de Dockerfile pendiente. La verificación posterior acreditó 93 recursos por HTTPS con
-HTTP 200, SHA, tamaño y MIME correctos.
+La última fila de [HISTORIAL](../deploy/HISTORIAL.md) registra `df2544a0`, el 6 de octubre a las
+20:20, hora de Colombia (7 de octubre, 01:20 UTC). Actualizó cinco servicios runtime y preservó
+la consola de PR133 y tres contenedores de infraestructura. Los nueve servicios quedaron sanos;
+el esquema 046 se conservó sin DDL ni migraciones. Once gates de fuente exacta quedaron verdes.
+Los 109 recursos HTTPS comprobados coinciden con la consola preservada, cuya UI no incluye el
+marcador de buzón del candidato. El detalle está en [cronos-buzon-despliegue.md](cronos-buzon-despliegue.md).
 
-La sesión Steven recargada mostró el grafo primero y la lista cerrada al final. Se comprobó un
-ping canónico de Zeus y su shell; el control se devolvió y la shell se cerró. El journal de Main
-`f3e5bf6e` cambia sólo documentación y no supone otra promoción. El candidato posterior sigue
-sin desplegar; sus gates deben corresponder a su fuente exacta.
+La activación SDK de Jarvis no obtuvo canario verde: un wake global pendiente de Astra,
+preexistente al cambio de pin, bloqueó el canario y el watchdog de reversión. El pin anterior y
+las dos unidades activas de Jarvis están observados; el estado `ROLLBACK_PENDING` del intento se
+conserva. Zeus no se actualizó. OAuth de este chat caducó: no se envió el ping como Cronos ni se
+acreditó la recepción viva del buzón o una respuesta conversacional del remitente.
 
-La promoción anterior `71df5bc9` registró OAuth local en `https://consola.humanizar.tech/mcp`
-y el SDK con `human_message_initiator_v1` activado sólo en Zeus. La conexión y el consentimiento
-de cada cliente externo y la adopción del SDK requieren evidencia propia. La aceptación global
-de flota sigue pendiente, con Astra excluida por instrucción del dueño.
-
-La promoción actual no acredita la lectura nativa de mensajes, la corrección de latencia de
-Jarvis, el teclado físico móvil ni la TUI real de Hegel. Incluir fuentes no las despliega.
+La promoción `71df5bc9` registró OAuth local en `https://consola.humanizar.tech/mcp` y el SDK
+con `human_message_initiator_v1` solo en Zeus. La conexión y el consentimiento de cada cliente
+externo, la adopción global del SDK y la aceptación de flota requieren evidencia propia.
+Astra sigue excluida por instrucción del dueño. Esta promoción tampoco acredita lectura nativa,
+corrección de latencia de Jarvis, teclado físico móvil ni la TUI real de Hegel.
 
 Como evidencia histórica, en una verificación anterior los quince alias completaron una entrega
 real al primer intento y se reiniciaron sus adaptadores y sesiones nativas. La shell y el visor web se probaron en los quince;
