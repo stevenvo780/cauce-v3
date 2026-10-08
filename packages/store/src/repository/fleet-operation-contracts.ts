@@ -11,7 +11,7 @@ export class FleetOperationError extends Error {
 export interface FleetOperationRow {
   id: string; actor_tenant: string; actor_alias: string; actor_subject?: string;
   target: FleetOperation['target']; kind: FleetOperation['kind']; request: FleetOperationRequest;
-  request_hash: string; cohort_key: string; status: FleetOperation['status']; version: string;
+  request_hash: string; cohort_key: string; executor_host: string; status: FleetOperation['status']; version: string;
   expected_revision: string; desired_revision: string | null; applied_revision: string | null;
   steps: FleetOperation['steps']; error: FleetOperation['error'];
   created_at: Date; updated_at: Date; worker_id: string | null; claim_token: string | null;

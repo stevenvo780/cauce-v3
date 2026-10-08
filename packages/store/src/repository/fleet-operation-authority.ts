@@ -2,6 +2,7 @@ import { FleetOperationRequestSchema, sha256Hex, type FleetOperationPreview, typ
 import type { DatabaseClient } from '../db.js';
 import { fleetPurgeDependencies } from './fleet-operation-lifecycle.js';
 import { FleetOperationError } from './fleet-operation-contracts.js';
+import { assertFleetHostAccess } from './fleet-operation-hosts.js';
 
 export function fleetRequest(value: unknown): FleetOperationRequest {
   const parsed = FleetOperationRequestSchema.safeParse(value);
@@ -45,7 +46,8 @@ export function fleetSteps(request: FleetOperationRequest): FleetOperationPrevie
   }
 }
 export async function validateFleetTarget(
-  client: DatabaseClient, request: FleetOperationRequest, controllerHost?: string, prepared = false,
+  client: DatabaseClient, request: FleetOperationRequest, controllerHost?: string, prepared = false, coordinatorEnabled = false,
+  coordinatorHosts?: readonly string[],
 ): Promise<{ host: string; preview: FleetOperationPreview }> {
   const { target } = request;
   const tenant = (await client.query<{ enabled: boolean; retired_at: Date | null; purged_at: Date | null }>(
@@ -71,6 +73,9 @@ export async function validateFleetTarget(
       const harness = await client.query('SELECT 1 FROM harness_definitions WHERE id=$1 AND enabled FOR SHARE', [parameters.harness_id]);
       if (!harness.rowCount) throw new FleetOperationError('conflict', 'target harness is not enabled');
       if (agent?.runtime_key && agent.runtime_key !== parameters.runtime_key) throw new FleetOperationError('conflict', 'physical runtime identity is immutable');
+      if (request.kind === 'update' && agent?.host_id !== parameters.placement.host_id) {
+        throw new FleetOperationError('conflict', 'host relocation requires an explicit multi-host migration operation');
+      }
       if (request.kind === 'create' && !prepared && (await client.query('SELECT 1 FROM fleet_runtime_identities WHERE runtime_key=$1 OR (tenant_id=$2 AND alias=$3)',
         [parameters.runtime_key, target.tenant_id, target.alias])).rowCount) throw new FleetOperationError('conflict', 'physical runtime identity is reserved');
       for (const membership of parameters.memberships) {
@@ -104,6 +109,8 @@ export async function validateFleetTarget(
     }
   }
   if (!host) throw new FleetOperationError('conflict', 'fleet controller placement is not configured');
+  await assertFleetHostAccess(client, request, controllerHost, coordinatorEnabled, coordinatorHosts);
+  if (coordinatorEnabled) host = controllerHost!;
   const dependencies = request.kind === 'purge' ? await fleetPurgeDependencies(client, request) : [];
   return { host, preview: { request_sha256: sha256Hex(request), expected_revision: request.expected_revision, target, kind: request.kind,
     steps: fleetSteps(request), dependencies, can_apply: !dependencies.some((dependency) => dependency.blocking) } };

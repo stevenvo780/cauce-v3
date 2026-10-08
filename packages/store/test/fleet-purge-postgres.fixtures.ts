@@ -1,5 +1,6 @@
 import type { FleetEvidence, FleetOperationRequest, FleetStepName, FleetTarget } from '@cauce/protocol';
 import { FleetOperationsRepository, type DatabasePool, type FleetOperationClaim } from '../src/index.js';
+import { aggregateHostEvidence } from '../src/repository/fleet-operation-hosts.js';
 
 export async function purgeFixture(pool: DatabasePool): Promise<void> {
   await pool.query("INSERT INTO rooms(id,tenant_id) VALUES('purge-admin','Steven'),('purge-owned','Steven'),('purge-unused','Steven'),('purge-foreign','Isa')");
@@ -10,8 +11,8 @@ export async function purgeFixture(pool: DatabasePool): Promise<void> {
     await pool.query(`INSERT INTO memberships(tenant_id,room_id,alias,role)
       VALUES($1,$2,'purge_agent','agent')`, [tenant, room]);
     await pool.query(`INSERT INTO agents(tenant_id,alias,harness_id,enabled,runtime_key,primary_room_id,host_id,runtime_mode,
-      container_name,runtime_user,home_directory,state_directory,primary_account_id,lifecycle_state,retired_at)
-      VALUES($1,'purge_agent','codex',false,$2,$3,'purge-host','container',$2,'dev','/home/dev','/home/dev/.cauce',$4,'retired',now())`,
+      container_name,runtime_user,home_directory,state_directory,systemd_user,primary_account_id,lifecycle_state,retired_at)
+      VALUES($1,'purge_agent','codex',false,$2,$3,'purge-host','container',$2,'dev','/home/dev','/home/dev/.cauce','stev',$4,'retired',now())`,
     [tenant, `purge-${tenant.toLowerCase()}`, room, tenant === 'Steven' ? 'purge-account' : null]);
     await pool.query("INSERT INTO agent_profiles(tenant_id,alias,purpose,role_summary) VALUES($1,'purge_agent','Preserve authored history','Owned role')", [tenant]);
     await pool.query(`INSERT INTO egress_destinations(tenant_id,alias,handle,conversation_id,conversation_kind,allow_kinds)
@@ -62,7 +63,12 @@ export async function preparePurge(pool: DatabasePool, target?: FleetTarget): Pr
 
 export async function finishPurge(repo: FleetOperationsRepository, claim: FleetOperationClaim): Promise<void> {
   const evidence: [FleetStepName, FleetEvidence][] = [['stop', { stopped_verified: true }], ['revoke', { revocation_verified: true }],
-    ['purge', {}], ['artifacts', { artifact_sha256: 'a'.repeat(64) }]];
-  for (const [step, proof] of evidence) { await repo.startStep(claim, step); await repo.completeStep(claim, step, proof); }
+    ['purge', { stopped_verified: true, revocation_verified: true }], ['artifacts', { artifact_sha256: 'a'.repeat(64) }]];
+  for (const [step, proof] of evidence) {
+    await repo.startStep(claim, step);
+    if (claim.request.target.resource === 'agent') { await repo.completeStep(claim, step, proof); continue; }
+    for (const slice of await repo.hostSlices(claim)) await repo.completeHostStep(claim, step, slice.host_id, slice.target_sha256, proof);
+    await repo.completeStep(claim, step, aggregateHostEvidence(step, await repo.hostReceipts(claim, step)));
+  }
   await repo.settle(claim);
 }

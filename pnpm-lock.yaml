@@ -229,6 +229,9 @@ importers:
       pg:
         specifier: ^8.16.3
         version: 8.22.0
+      zod:
+        specifier: ^4.0.10
+        version: 4.4.3
 
   services/decisiones:
     dependencies:

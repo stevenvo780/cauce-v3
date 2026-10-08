@@ -17,6 +17,9 @@ export type { ContextWritePlan, ContextWriteAuditAttribution } from './repositor
 export { persistAgentContextReconcileInTransaction, type AgentContextFenceInput, type AgentContextReconcileEffect } from './repository/agent-context-reconcile.js';
 export * from './human-client-provenance.js';
 export * from './repository/fleet-operation-contracts.js';
+export * from './repository/fleet-operation-hosts.js';
+export * from './fleet-adoption-contracts.js';
+export * from './fleet-adoption.js';
 export * from './repository/fleet-operations.js';
 export { lockFleetRevision } from './repository/fleet-operation-authority.js';
 export { assertFleetOperationAuthority } from './repository/fleet-operation-human.js';

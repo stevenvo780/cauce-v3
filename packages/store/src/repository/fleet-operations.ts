@@ -4,17 +4,23 @@ import { assertFleetAuthority, fleetRequest, lockFleetRevision, recordFleetEvent
 import { FleetOperationError, publicFleetOperation, type FleetOperationRow } from './fleet-operation-contracts.js';
 import { FleetOperationExecution } from './fleet-operation-execution.js';
 import { assertFleetHumanAuthority, assertFleetOperationAuthority, loadFleetOrigin } from './fleet-operation-human.js';
+import { assertFleetSealedHostBarrier, loadFleetHostSlices } from './fleet-operation-hosts.js';
 
 export class FleetOperationsRepository extends FleetOperationExecution {
   protected readonly controllerHost: string | undefined;
-  constructor(pool: DatabasePool, private readonly options: { controllerHost?: string } = {}) { super(pool); this.controllerHost = options.controllerHost; }
+  protected readonly coordinatorEnabled: boolean;
+  protected readonly coordinatorHosts: readonly string[] | undefined;
+  constructor(pool: DatabasePool, private readonly options: { controllerHost?: string; coordinatorEnabled?: boolean; coordinatorHosts?: readonly string[] } = {}) {
+    super(pool); this.controllerHost = options.controllerHost; this.coordinatorEnabled = options.coordinatorEnabled === true;
+    this.coordinatorHosts = options.coordinatorHosts === undefined ? undefined : Object.freeze([...options.coordinatorHosts]);
+  }
   async preview(tenant: string, alias: string, input: FleetOperationRequest, actorSubject?: string): Promise<FleetOperationPreview> {
     const request = fleetRequest(input);
     return withTransaction(this.pool, async (client) => {
       await assertFleetHumanAuthority(client, tenant, alias, actorSubject);
       await assertFleetAuthority(client, tenant, alias, request.target);
       await lockFleetRevision(client, request.expected_revision);
-      return (await validateFleetTarget(client, request, this.options.controllerHost)).preview;
+      return (await validateFleetTarget(client, request, this.options.controllerHost, false, this.coordinatorEnabled, this.coordinatorHosts)).preview;
     });
   }
   async enqueue(tenant: string, alias: string, input: FleetOperationRequest, actorSubject?: string): Promise<FleetOperation> {
@@ -35,7 +41,7 @@ export class FleetOperationsRepository extends FleetOperationExecution {
           return publicFleetOperation(prior);
         }
         await lockFleetRevision(client, request.expected_revision);
-        const { host, preview } = await validateFleetTarget(client, request, this.options.controllerHost);
+        const { host, preview } = await validateFleetTarget(client, request, this.options.controllerHost, false, this.coordinatorEnabled, this.coordinatorHosts);
         if (!preview.can_apply) throw new FleetOperationError('conflict', 'target has durable dependencies; retire it instead');
         const inserted = (await client.query<FleetOperationRow>(
           `INSERT INTO fleet_operations(actor_tenant,actor_alias,target,target_key,cohort_key,executor_host,kind,request,
@@ -95,7 +101,12 @@ export class FleetOperationsRepository extends FleetOperationExecution {
       let status: FleetOperation['status'];
       if (action === 'resume') {
         if (!['failed', 'awaiting_auth'].includes(row.status) || row.cancel_requested) throw new FleetOperationError('conflict', 'operation cannot be resumed');
-        await validateFleetTarget(client, row.request, this.options.controllerHost, row.desired_revision !== null);
+        if (row.kind === 'purge' && row.desired_revision !== null && row.steps.some(step => step.name === 'purge' && step.status === 'succeeded')) {
+          await loadFleetHostSlices(client, row);
+          for (const step of row.steps.filter(step => step.status === 'succeeded' && !['prepare', 'fence'].includes(step.name))) {
+            await assertFleetSealedHostBarrier(client, row, step.name, step.evidence ?? {});
+          }
+        } else await validateFleetTarget(client, row.request, this.options.controllerHost, row.desired_revision !== null, this.coordinatorEnabled, this.coordinatorHosts);
         await lockFleetRevision(client, Number(row.desired_revision ?? row.expected_revision));
         status = 'queued';
       } else status = row.status === 'queued' && row.steps.every((step) => step.status === 'pending') ? 'cancelled' : 'cancelling';

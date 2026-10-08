@@ -119,8 +119,8 @@ describe('fleet purge with preserved historical identities', () => {
     await pool.query("INSERT INTO rooms(id,tenant_id) VALUES('purge-tenant-room','PurgeTenant')");
     await pool.query("INSERT INTO memberships(tenant_id,room_id,alias,role) VALUES('PurgeTenant','purge-tenant-room','client_agent','agent')");
     await pool.query(`INSERT INTO agents(tenant_id,alias,harness_id,enabled,runtime_key,primary_room_id,host_id,runtime_mode,
-      container_name,runtime_user,home_directory,state_directory)
-      VALUES('PurgeTenant','client_agent','codex',false,'purge-client','purge-tenant-room','purge-host','container','purge-client','dev','/home/dev','/home/dev/.cauce')`);
+      container_name,runtime_user,home_directory,state_directory,systemd_user)
+      VALUES('PurgeTenant','client_agent','codex',false,'purge-client','purge-tenant-room','purge-host','container','purge-client','dev','/home/dev','/home/dev/.cauce','stev')`);
     await pool.query("INSERT INTO agent_profiles(tenant_id,alias,purpose) VALUES('PurgeTenant','client_agent','Client history')");
     const message = (await pool.query<{ id: string }>(`INSERT INTO messages(request_id,trace_id,tenant_id,room_id,actor_alias,body,lane)
       VALUES(gen_random_uuid(),'client-history','PurgeTenant','purge-tenant-room','client_agent','{}','interactive') RETURNING id`)).rows[0];

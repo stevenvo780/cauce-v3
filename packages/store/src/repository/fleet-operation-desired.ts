@@ -62,7 +62,7 @@ export async function prepareAgentDesired(client: DatabaseClient, row: FleetOper
   const placement = parameters.placement;
   const parametersList = [target.tenant_id, target.alias, parameters.harness_id, parameters.display_name ?? null, parameters.runtime_key,
     parameters.primary_room_id, placement.host_id, placement.mode, placement.container_name ?? `host:${placement.host_id}`,
-    placement.runtime_user, placement.home_directory, placement.state_directory, placement.systemd_user ?? null,
+    placement.runtime_user, placement.home_directory, placement.state_directory, placement.systemd_user ?? 'stev',
     parameters.primary_account_id ?? null, parameters.model_id ?? null, parameters.reasoning_effort ?? null];
   const sql = request.kind === 'create' ? `INSERT INTO agents(tenant_id,alias,harness_id,display_name,enabled,runtime_key,primary_room_id,
       host_id,runtime_mode,container_name,runtime_user,home_directory,state_directory,systemd_user,primary_account_id,model_id,reasoning_effort,lifecycle_state)
@@ -79,9 +79,10 @@ export async function prepareAgentDesired(client: DatabaseClient, row: FleetOper
 }
 
 export async function prepareFleetDesired(
-  client: DatabaseClient, row: FleetOperationRow, controllerHost?: string,
+  client: DatabaseClient, row: FleetOperationRow, controllerHost?: string, coordinatorEnabled = false,
+  coordinatorHosts?: readonly string[],
 ): Promise<FencedFleetTarget[]> {
-  const validated = await validateFleetTarget(client, row.request, controllerHost);
+  const validated = await validateFleetTarget(client, row.request, controllerHost, false, coordinatorEnabled, coordinatorHosts);
   if (!validated.preview.can_apply) throw new FleetOperationError('conflict', 'target still has durable dependencies');
   const targets = await fleetAgentTargets(client, row);
   await fenceFleetAgents(client, targets);
