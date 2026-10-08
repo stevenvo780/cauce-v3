@@ -24,7 +24,6 @@ export const context = () => ({ signal: new AbortController().signal, deadlineMs
 const upPath = new URL('../../../packages/store/migrations/045_mcp_oauth_authorization.sql', import.meta.url);
 
 beforeAll(async () => {
-  if (process.env.CAUCE_TEST_DATABASE_URL) throw new Error('OAuth fixtures require their own disposable PostgreSQL container');
   const password = randomUUID();
   container = await new GenericContainer('postgres:16-alpine')
     .withEnvironment({ POSTGRES_DB: 'cauce_test_oauth_template', POSTGRES_USER: 'cauce_test', POSTGRES_PASSWORD: password })
