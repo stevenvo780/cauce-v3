@@ -7,7 +7,8 @@ import { ConsoleAccessBoundary } from '../../api/console-access';
 import { fleetRequestHash } from '../../api/client/fleet-operations-client';
 import type { ConfigurationSnapshot } from '../../api/types';
 import { server } from '../../mocks/server';
-import { renderWithApi } from '../../test/render';
+import { ApiProvider } from '../../api/context';
+import { renderWithApi, testApi } from '../../test/render';
 import { AgentLifecyclePanel } from './AgentLifecyclePanel';
 
 Object.defineProperty(globalThis, 'crypto', { configurable: true, value: webcrypto });
@@ -211,4 +212,21 @@ it('retains the receipt after CAS conflict and rereads before retrying controls'
   await user.click(screen.getByRole('button', { name: 'Cancelar operación' }));
   await screen.findByText(/Cancelada/);
   expect(versions).toEqual([3, 6]);
+});
+it('keeps an edited operational draft when the inventory re-polls', async () => {
+  const target = { resource: 'agent' as const, tenant_id: 'A', alias: 'one' };
+  const withAgent = { ...snapshot, agents: [{ tenant_id: 'A', alias: 'one', harness_id: 'codex', display_name: 'Uno' }] };
+  server.use(http.get('http://localhost/v3/console/access', () => HttpResponse.json({
+    subject: 'A:operator', roles: ['operator'], permissions: ['config.read', 'config.write'] })),
+  http.get('http://localhost/v3/console/fleet/capability', () => HttpResponse.json(capability)),
+  http.get('http://localhost/v3/console/fleet/operations', () => HttpResponse.json({ operations: [] })));
+  const view = (value: ConfigurationSnapshot) => <ConsoleAccessBoundary><AgentLifecyclePanel snapshot={value} target={target} initialOpen /></ConsoleAccessBoundary>;
+  const { rerender } = renderWithApi(view(withAgent));
+  const user = userEvent.setup();
+  const name = await screen.findByRole('textbox', { name: 'Nombre visible operativo' });
+  await user.clear(name);
+  await user.type(name, 'Cambio pendiente');
+  rerender(<ApiProvider api={testApi}>{view({ ...withAgent, revision: 5 })}</ApiProvider>);
+  expect(await screen.findByText(/El borrador se conserva/)).toBeInTheDocument();
+  expect(screen.getByRole('textbox', { name: 'Nombre visible operativo' })).toHaveValue('Cambio pendiente');
 });

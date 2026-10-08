@@ -6,6 +6,7 @@ import type { ConfigurationSnapshot } from '../../api/types';
 import { server } from '../../mocks/server';
 import { renderWithApi } from '../../test/render';
 import { AgentesSection } from './AgentesSection';
+import { agentAction, openAgentMenu } from './agent-menu.test-helpers';
 
 function host(hostId: string, overrides: Record<string, unknown> = {}) {
   return {
@@ -62,24 +63,23 @@ it('badges an agent on a disabled computer as deshabilitada', async () => {
 it('una lectura 403 de computadoras degrada en silencio: sin error ni insignias', async () => {
   server.use(http.get('http://localhost/v3/console/fleet/hosts', () => HttpResponse.json({ error: 'forbidden' }, { status: 403 })));
   renderWithApi(<ConsoleAccessBoundary><AgentesSection snapshot={withRuntime} /></ConsoleAccessBoundary>);
-  expect(await within(row('Agente uno')).findByRole('button', { name: 'Retirar agente' })).toBeInTheDocument();
+  expect(await within(row('Agente uno')).findByText('Computadora: edge-2')).toBeInTheDocument();
   expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   expect(within(row('Agente uno')).queryByText(/Deshabilitado: computadora/)).not.toBeInTheDocument();
-  expect(within(row('Agente uno')).getByText('Computadora: edge-2')).toBeInTheDocument();
 });
 
-it('offers retire and delete only for agents with a runtime and preselects retire in the lifecycle panel', async () => {
+it('offers retire only for agents with a runtime and preselects retire in the lifecycle panel', async () => {
   server.use(http.get('http://localhost/v3/console/fleet/hosts', () => HttpResponse.json({ hosts: [] })));
   const user = userEvent.setup();
   renderWithApi(<ConsoleAccessBoundary><AgentesSection snapshot={withRuntime} /></ConsoleAccessBoundary>);
-  expect(await screen.findByRole('button', { name: 'Retirar agente' })).toBeEnabled();
-  expect(screen.getByText(/Retirar detiene la ejecución y conserva el historial/)).toBeInTheDocument();
-  await user.click(screen.getByRole('button', { name: 'Retirar agente' }));
+  await openAgentMenu(user, 'A/two');
+  expect(screen.queryByRole('menuitem', { name: 'Retirar agente' })).not.toBeInTheDocument();
+  await user.keyboard('{Escape}');
+  await agentAction(user, 'A/one', 'Retirar agente');
   expect(screen.getByRole('combobox', { name: 'Acción operativa' })).toHaveValue('retire');
-  expect(screen.getAllByRole('button', { name: 'Retirar agente' })).toHaveLength(1);
-  await user.click(within(row('Agente dos')).getByRole('button', { name: 'Editar registro de A/two' }));
+  await user.click(within(row('Agente dos')).getByRole('button', { name: 'Acciones de A/two' }));
+  await user.click(await screen.findByRole('menuitem', { name: 'Editar registro' }));
   expect(within(row('Agente dos')).getByRole('button', { name: 'Eliminar registro' })).toBeEnabled();
-  expect(within(row('Agente dos')).queryByRole('button', { name: 'Retirar agente' })).not.toBeInTheDocument();
 });
 
 it('labels the purge of a retired agent as Eliminar definitivamente', async () => {

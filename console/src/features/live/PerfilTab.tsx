@@ -346,7 +346,7 @@ export function PerfilTab({
   }
 
   return (
-    <div className="grid grid-cols-[minmax(0,1fr)] gap-5">
+    <div className="grid grid-cols-[minmax(0,1fr)] gap-5 [&_input]:scroll-mb-56 [&_textarea]:scroll-mb-56">
       <ProfileStatus profile={perfil.data} />
       <NativeAdminPanel tenantId={tenantId} alias={alias} permission={configWritePermission}
         blocked={busy || blockedByManualDraft} {...(onNativeReload ? { onReload: onNativeReload } : {})} />
@@ -418,7 +418,7 @@ export function PerfilTab({
         ) : null}
       </SectionCard>
 
-      <div className="z-10 grid gap-3 md:sticky md:bottom-3 rounded-xl border border-line bg-surface p-4 shadow-pop">
+      <div className="grid gap-2">
         {aviso ? <Notice tone={OUTCOME_TONE[aviso.tone]} role="status">{aviso.text}</Notice> : null}
         {revisionConflict ? (
           <Notice tone="danger" role="alert">
@@ -436,11 +436,19 @@ export function PerfilTab({
               : 'Tu sesión no tiene permiso de escritura en configuración.'}
           </p>
         ) : null}
+      </div>
+
+      {/* Compact and sticky: it only gets a warning frame while the draft has unsaved changes. */}
+      <div className={cn(
+        'sticky bottom-2 z-10 grid gap-2 rounded-xl border bg-surface/95 p-3 shadow-pop backdrop-blur-sm md:grid-cols-[minmax(0,1fr)_auto] md:items-end',
+        sucio ? 'border-warn ring-1 ring-warn/40' : 'border-line',
+      )}>
         <ReasonField label="Motivo de este cambio de perfil" value={motivo} onChange={setMotivo}
+          className="min-w-0"
           disabled={soloLectura || busy || enCuarentena || !editable}
           placeholder="Motivo del cambio, escrito a mano…" />
-        <div className="flex flex-wrap justify-end gap-2">
-          <Button
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <Button size="sm"
             disabled={busy || blockedByManualDraft || (!borrador && !perfil.error)}
             onClick={() => {
               onBorrador(undefined);
@@ -449,8 +457,8 @@ export function PerfilTab({
               void perfil.reload();
             }}
           >Descartar borrador de perfil y releer</Button>
-          <Button variant="primary" disabled={!puedeGuardar} onClick={() => { void guardar(); }}>
-            <Save size={16} aria-hidden />
+          <Button size="sm" variant="primary" disabled={!puedeGuardar} onClick={() => { void guardar(); }}>
+            <Save size={14} aria-hidden />
             {busy
               ? 'Aplicando…'
               : preparable

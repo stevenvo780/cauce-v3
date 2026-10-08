@@ -36,6 +36,10 @@ function hasRuntime(agent: AgentRow): boolean {
   return agent.runtime_key !== undefined && agent.runtime_key !== null;
 }
 
+function hostEditable(agent: AgentRow): boolean {
+  return !hasRuntime(agent) || agentHostIdOf(agent) === undefined;
+}
+
 function buildMutation(agent: AgentRow, draft: Draft): { mutation?: ConfigMutation; error?: string } {
   const value: Record<string, unknown> = {};
   const originalName = typeof agent.display_name === 'string' ? agent.display_name : '';
@@ -45,7 +49,7 @@ function buildMutation(agent: AgentRow, draft: Draft): { mutation?: ConfigMutati
     value.display_name = normalized || null;
   }
 
-  if (!hasRuntime(agent) && draft.hostId !== (agentHostIdOf(agent) ?? '')) {
+  if (hostEditable(agent) && draft.hostId !== (agentHostIdOf(agent) ?? '')) {
     value.host_id = draft.hostId || null;
   }
 
@@ -76,14 +80,15 @@ function buildMutation(agent: AgentRow, draft: Draft): { mutation?: ConfigMutati
   };
 }
 
-export function AgentRegistryEditor({ tenantId, alias, snapshot, hosts, onReloaded, onDeleted }: {
+export function AgentRegistryEditor({ tenantId, alias, snapshot, hosts, onReloaded, onDeleted, initialOpen = false, hideTrigger = false, onClose }: {
   tenantId: string; alias: string; snapshot: ConfigurationSnapshot; hosts?: FleetHost[] | undefined;
   onReloaded: (snapshot: ConfigurationSnapshot) => void;
   onDeleted?: (notice: ConfigMutationNotice) => void;
+  initialOpen?: boolean; hideTrigger?: boolean; onClose?: () => void;
 }) {
   const api = useApi();
   const access = useConsoleAccess();
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(initialOpen);
   const [freshSnapshot, setFreshSnapshot] = useState<ConfigurationSnapshot>();
   const chained = useRevisionEncadenada();
   useEffect(() => { setFreshSnapshot(undefined); }, [snapshot]);
@@ -111,12 +116,12 @@ export function AgentRegistryEditor({ tenantId, alias, snapshot, hosts, onReload
   const agent = current.agents?.find((row) => row.tenant_id === tenantId && row.alias === alias);
   if (!agent) return null;
   return <div className="min-w-0" data-open={String(open)}>
-    <Button
+    {hideTrigger ? null : <Button
       aria-label={`${open ? 'Cerrar' : 'Editar'} registro de ${tenantId}/${alias}`}
       onClick={() => { setOpen((value) => !value); runner.clear(); }}
-    >{open ? 'Cerrar registro' : 'Editar registro'}</Button>
+    >{open ? 'Cerrar registro' : 'Editar registro'}</Button>}
     {open ? <AgentRegistryForm agent={agent as AgentRow} runner={runner} onDeleted={onDeleted} hosts={hosts}
-      deleteBlock={deleteBlock} onClose={() => { setOpen(false); runner.clear(); }} /> : null}
+      deleteBlock={deleteBlock} onClose={() => { setOpen(false); runner.clear(); onClose?.(); }} /> : null}
   </div>;
 }
 
@@ -140,6 +145,9 @@ function AgentRegistryForm({
     agentHostIdOf(agent),
   ]);
   const previousAgentVersion = useRef(agentVersion);
+  const baseline = useRef(initialDraft(agent));
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
   const built = useMemo(() => buildMutation(agent, draft), [agent, draft]);
   const mutation = built.mutation;
   const disabled = !runner.canWrite || runner.busy;
@@ -153,10 +161,14 @@ function AgentRegistryForm({
   useEffect(() => {
     if (previousAgentVersion.current === agentVersion) return;
     previousAgentVersion.current = agentVersion;
-    setDraft(initialDraft(agent));
+    const edited = JSON.stringify(draftRef.current) !== JSON.stringify(baseline.current);
+    baseline.current = initialDraft(agent);
+    setDraft(baseline.current);
     setFormError(undefined);
     setDeleting(false);
-    setServerRefreshNotice('El registro cambió en el servidor. Se descartó el borrador y se cargaron los valores actuales; revísalos antes de previsualizar.');
+    setServerRefreshNotice(edited
+      ? 'El registro cambió en el servidor. Se descartó el borrador y se cargaron los valores actuales; revísalos antes de previsualizar.'
+      : undefined);
   }, [agent, agentVersion]);
 
   function update(patch: Partial<Draft>) {
@@ -215,19 +227,21 @@ function AgentRegistryForm({
         <input maxLength={128} value={draft.displayName}
           onChange={(event) => { update({ displayName: event.target.value }); }} disabled={editDisabled} />
       </label>
-      {hasRuntime(agent)
-        ? <p className={HINT}>Computadora: {hostOptions.find((host) => host.host_id === currentHost)?.display_name ?? 'sin asignar'}.
-          La computadora se elige al crear; trasladar un agente no está soportado.</p>
-        : <label>Computadora
+      {hostEditable(agent)
+        ? <label>Computadora
           <select value={draft.hostId} onChange={(event) => { update({ hostId: event.target.value }); }} disabled={editDisabled}>
-            <option value="">Sin computadora</option>
+            {hasRuntime(agent) ? <option value="" disabled>Elige una computadora</option> : <option value="">Sin computadora</option>}
             {hostOptions.map((host) => <option key={host.host_id} value={host.host_id} disabled={!fleetHostUsable(host)}>
               {host.display_name}{fleetHostUsable(host) ? '' : host.enabled ? ' · sin conexión' : ' · deshabilitada'}
             </option>)}
           </select>
+          {hasRuntime(agent) ? <span className={HINT}>
+            Asigna la computadora donde ya corre este agente; después solo se cambia con una operación de flota.</span> : null}
           {hostUnavailableReason(hostOptions.find((host) => host.host_id === draft.hostId)) ? <span className={HINT}>
             {hostUnavailableReason(hostOptions.find((host) => host.host_id === draft.hostId))}</span> : null}
-        </label>}
+        </label>
+        : <p className={HINT}>Computadora: {hostOptions.find((host) => host.host_id === currentHost)?.display_name ?? currentHost}.
+          {hasRuntime(agent) ? ' La computadora se elige al crear; trasladar un agente no está soportado.' : ''}</p>}
       <label>Estado del registro
         <select value={draft.enabled} onChange={(event) => { update({ enabled: event.target.value }); }} disabled={editDisabled}>
           <option value="">Sin cambios</option>

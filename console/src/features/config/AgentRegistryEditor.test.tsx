@@ -1,11 +1,13 @@
-import { screen, waitFor } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { server } from '../../mocks/server';
 import { ConsoleAccessBoundary } from '../../api/console-access';
 import type { ConfigurationSnapshot } from '../../api/types';
-import { renderWithApi } from '../../test/render';
+import { ApiProvider } from '../../api/context';
+import { renderWithApi, testApi } from '../../test/render';
 import { AgentesSection } from './AgentesSection';
+import { agentAction } from './agent-menu.test-helpers';
 
 beforeEach(() => {
   server.use(http.get('http://localhost/v3/console/fleet/hosts', () => HttpResponse.json({ hosts: [] })));
@@ -58,7 +60,7 @@ it('previews the fixed row identity, invalidates a stale preview, applies its ex
   );
   const user = userEvent.setup();
   renderSettings();
-  await user.click(await screen.findByRole('button', { name: 'Editar registro de A/one' }));
+  await agentAction(user, 'A/one', 'Editar registro');
   const capacity = screen.getByRole('spinbutton', { name: 'Máximo de entregas concurrentes' });
   await user.clear(capacity);
   await user.type(capacity, '2');
@@ -91,7 +93,7 @@ it('routes runtime placement and harness changes through the operational assista
   server.use(registryAccess());
   const user = userEvent.setup();
   renderSettings();
-  await user.click(await screen.findByRole('button', { name: 'Editar registro de A/one' }));
+  await agentAction(user, 'A/one', 'Editar registro');
   expect(screen.queryByRole('textbox', { name: 'Nombre del contenedor' })).not.toBeInTheDocument();
   expect(screen.queryByRole('textbox', { name: 'ID del arnés' })).not.toBeInTheDocument();
   expect(screen.getByText(/La ubicación, el arnés y la cuenta principal se cambian en «Operar agente»/)).toBeInTheDocument();
@@ -110,7 +112,7 @@ it('sends an explicit null cap without operational fields', async () => {
   );
   const user = userEvent.setup();
   renderSettings();
-  await user.click(await screen.findByRole('button', { name: 'Editar registro de A/one' }));
+  await agentAction(user, 'A/one', 'Editar registro');
   await user.click(screen.getByRole('checkbox', { name: /Sin límite/ }));
   await user.click(screen.getByRole('button', { name: 'Previsualizar cambio' }));
   await screen.findByLabelText('Preview del registro de agente');
@@ -131,9 +133,9 @@ it('does not offer registry editing for a membership-only identity', async () =>
     })),
   );
   renderSettings({ revision: 2, agents: [], memberships: [{ tenant_id: 'A', alias: 'member', room_id: 'grp.a' }], rooms: [] });
-  expect(await screen.findByText(/Contexto no disponible: solo aparece como miembro/)).toBeInTheDocument();
+  expect(await screen.findByText('Solo miembro')).toBeInTheDocument();
   expect(screen.queryByRole('link', { name: 'Perfil y contexto de A/member' })).not.toBeInTheDocument();
-  expect(screen.queryByRole('button', { name: 'Editar registro de A/member' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Acciones de A/member' })).not.toBeInTheDocument();
 });
 
 it('shows a hub-only 403 from preview and never enables apply', async () => {
@@ -146,7 +148,7 @@ it('shows a hub-only 403 from preview and never enables apply', async () => {
   );
   const user = userEvent.setup();
   renderSettings();
-  await user.click(await screen.findByRole('button', { name: 'Editar registro de A/one' }));
+  await agentAction(user, 'A/one', 'Editar registro');
   await user.selectOptions(screen.getByRole('combobox', { name: 'Estado del registro' }), 'false');
   await user.click(screen.getByRole('button', { name: 'Previsualizar cambio' }));
   expect(await screen.findByRole('alert')).toHaveTextContent(/403|forbidden|hub control/i);
@@ -169,7 +171,7 @@ it('reconciles a stale-revision conflict and does not retain its preview', async
   );
   const user = userEvent.setup();
   renderSettings();
-  await user.click(await screen.findByRole('button', { name: 'Editar registro de A/one' }));
+  await agentAction(user, 'A/one', 'Editar registro');
   await user.selectOptions(screen.getByRole('combobox', { name: 'Estado del registro' }), 'false');
   await user.click(screen.getByRole('button', { name: 'Previsualizar cambio' }));
   await screen.findByLabelText('Preview del registro de agente');
@@ -210,7 +212,7 @@ it('does not enable apply when the server preview omits the exact receipt', asyn
   );
   const user = userEvent.setup();
   renderSettings();
-  await user.click(await screen.findByRole('button', { name: 'Editar registro de A/one' }));
+  await agentAction(user, 'A/one', 'Editar registro');
   await user.selectOptions(screen.getByRole('combobox', { name: 'Estado del registro' }), 'false');
   await user.click(screen.getByRole('button', { name: 'Previsualizar cambio' }));
   expect(await screen.findByRole('alert')).toHaveTextContent(/recibo exacto/);
@@ -228,13 +230,13 @@ it('deletes an unmanaged registry row only after its exact preview and keeps the
         inverse_mutation: { resource: 'agent', action: 'create', tenant_id: 'A', alias: 'one', value: { display_name: 'Agente uno', enabled: false } },
       }, { status: body.dry_run ? 200 : 201 });
     }));
-  const user = userEvent.setup(); renderSettings(); await user.click(await screen.findByRole('button', { name: 'Editar registro de A/one' }));
+  const user = userEvent.setup(); renderSettings(); await agentAction(user, 'A/one', 'Editar registro');
   await user.click(screen.getByRole('button', { name: 'Eliminar registro' }));
   const apply = screen.getByRole('button', { name: 'Confirmar eliminación del registro' }); expect(apply).toBeDisabled();
   await user.click(screen.getByRole('button', { name: 'Previsualizar eliminación' }));
   await waitFor(() => { expect(apply).toBeEnabled(); }); await user.click(apply);
   expect(await screen.findByRole('status')).toHaveTextContent('Registro de A/one eliminado en revisión 5');
-  expect(screen.queryByRole('button', { name: 'Editar registro de A/one' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Acciones de A/one' })).not.toBeInTheDocument();
   expect(changes).toEqual([
     { expected_revision: 4, dry_run: true, mutation: { resource: 'agent', action: 'delete', tenant_id: 'A', alias: 'one' } },
     { expected_revision: 4, dry_run: false, mutation: { resource: 'agent', action: 'delete', tenant_id: 'A', alias: 'one' } },
@@ -243,7 +245,7 @@ it('deletes an unmanaged registry row only after its exact preview and keeps the
 
 it('leaves operational registry removal with the lifecycle assistant', async () => {
   server.use(registryAccess()); const user = userEvent.setup(); renderSettings({ ...snapshot, agents: [{ ...fullAgent, runtime_key: 'runtime-one' }] });
-  await user.click(await screen.findByRole('button', { name: 'Editar registro de A/one' }));
+  await agentAction(user, 'A/one', 'Editar registro');
   expect(screen.queryByRole('button', { name: 'Eliminar registro' })).not.toBeInTheDocument();
   expect(screen.getByText(/Un agente con ejecución se retira con «Retirar agente»/)).toBeInTheDocument();
 });
@@ -253,8 +255,69 @@ it.each([403, 409])('does not confirm registry deletion when preview is rejected
     http.post('http://localhost/v3/console/config/changes', async ({ request }) => {
       changes.push(await request.json() as ChangeBody); return HttpResponse.json({ error: status === 403 ? 'forbidden' : 'conflict', message: 'registry removal denied by authority or dependencies' }, { status });
     }));
-  const user = userEvent.setup(); renderSettings(); await user.click(await screen.findByRole('button', { name: 'Editar registro de A/one' }));
+  const user = userEvent.setup(); renderSettings(); await agentAction(user, 'A/one', 'Editar registro');
   await user.click(screen.getByRole('button', { name: 'Eliminar registro' })); await user.click(screen.getByRole('button', { name: 'Previsualizar eliminación' }));
   await screen.findByRole('alert'); expect(screen.getByRole('button', { name: 'Confirmar eliminación del registro' })).toBeDisabled();
   expect(changes).toHaveLength(1); expect(changes[0]?.dry_run).toBe(true);
+});
+
+it('does not claim a server-side change when the refreshed registry arrives over an untouched draft', async () => {
+  server.use(registryAccess());
+  const view = (value: ConfigurationSnapshot) => <ConsoleAccessBoundary><AgentesSection snapshot={value} /></ConsoleAccessBoundary>;
+  const { rerender } = renderWithApi(view(snapshot));
+  const user = userEvent.setup();
+  await agentAction(user, 'A/one', 'Editar registro');
+  rerender(<ApiProvider api={testApi}>{view({ ...snapshot, revision: 5, agents: [{ ...fullAgent, display_name: 'Renombrado' }] })}</ApiProvider>);
+  await waitFor(() => { expect(screen.getByRole('textbox', { name: 'Nombre visible' })).toHaveValue('Renombrado'); });
+  expect(screen.queryByText(/El registro cambió en el servidor/)).not.toBeInTheDocument();
+  await user.type(screen.getByRole('textbox', { name: 'Nombre visible' }), '!');
+  rerender(<ApiProvider api={testApi}>{view({ ...snapshot, revision: 6, agents: [{ ...fullAgent, display_name: 'Otro' }] })}</ApiProvider>);
+  expect(await screen.findByText(/El registro cambió en el servidor/)).toBeInTheDocument();
+});
+
+const host = { host_id: 'torre', display_name: 'Torre', notes: '', enabled: true, status: 'reachable',
+  status_source: 'controller', last_seen_at: null, registered: true, approved: true, version: 1, agents: [] };
+
+it('lets a runtime agent without a host receive one and sends host_id', async () => {
+  const changes: ChangeBody[] = [];
+  server.use(
+    registryAccess(),
+    http.get('http://localhost/v3/console/fleet/hosts', () => HttpResponse.json({
+      hosts: [host, { ...host, host_id: 'apagada', display_name: 'Apagada', status: 'unreachable' }],
+    })),
+    http.get('http://localhost/v3/console/config', () => HttpResponse.json(snapshot)),
+    http.post('http://localhost/v3/console/config/changes', async ({ request }) => {
+      const body = await request.json() as ChangeBody;
+      changes.push(body);
+      return HttpResponse.json(receipt(body, false, 4), { status: 200 });
+    }),
+  );
+  const user = userEvent.setup();
+  renderSettings({ ...snapshot, agents: [{ ...fullAgent, runtime_key: 'runtime-one', host_id: null }] });
+  await agentAction(user, 'A/one', 'Editar registro');
+  const select = await screen.findByRole('combobox', { name: /Computadora/ });
+  expect(screen.queryByRole('option', { name: 'Sin computadora' })).not.toBeInTheDocument();
+  expect(screen.getByText(/Asigna la computadora donde ya corre este agente/)).toBeInTheDocument();
+  await waitFor(() => { expect(screen.getByRole('option', { name: 'Torre' })).toBeInTheDocument(); });
+  expect(screen.getByRole('option', { name: /Apagada/ })).toBeDisabled();
+  await user.selectOptions(select, 'torre');
+  await user.click(screen.getByRole('button', { name: 'Previsualizar cambio' }));
+  await screen.findByLabelText('Preview del registro de agente');
+  expect(changes[0]?.mutation).toMatchObject({
+    resource: 'agent', action: 'update', tenant_id: 'A', alias: 'one', value: { host_id: 'torre' },
+  });
+});
+
+it('shows the computer of a runtime agent with a host as read-only', async () => {
+  server.use(
+    registryAccess(),
+    http.get('http://localhost/v3/console/fleet/hosts', () => HttpResponse.json({ hosts: [host] })),
+  );
+  const user = userEvent.setup();
+  renderSettings({ ...snapshot, agents: [{ ...fullAgent, runtime_key: 'runtime-one', host_id: 'torre' }] });
+  await agentAction(user, 'A/one', 'Editar registro');
+  expect(screen.queryByRole('combobox', { name: /Computadora/ })).not.toBeInTheDocument();
+  const form = screen.getByRole('region', { name: 'Registro de A/one' });
+  await waitFor(() => { expect(within(form).getByText(/Computadora: Torre/)).toBeInTheDocument(); });
+  expect(within(form).getByText(/la computadora se elige al crear; trasladar un agente no está soportado/i)).toBeInTheDocument();
 });
