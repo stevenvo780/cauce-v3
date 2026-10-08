@@ -83,28 +83,17 @@ it('previews the fixed row identity, invalidates a stale preview, applies its ex
   expect(changes[2]?.mutation).toMatchObject({ resource: 'agent', tenant_id: 'A', alias: 'one', value: { max_concurrent_deliveries: 2, display_name: 'Agente renovado' } });
 });
 
-it('keeps placement atomic and rejects a partial edit locally', async () => {
-  const changes: ChangeBody[] = [];
-  server.use(
-    registryAccess(),
-    http.get('http://localhost/v3/console/config', () => HttpResponse.json({
-      ...snapshot, agents: [{ tenant_id: 'A', alias: 'one', enabled: true }],
-    })),
-    http.post('http://localhost/v3/console/config/changes', async ({ request }) => {
-      changes.push(await request.json() as ChangeBody);
-      return HttpResponse.json({ error: 'unexpected' }, { status: 500 });
-    }),
-  );
+it('routes runtime placement and harness changes through the operational assistant', async () => {
+  server.use(registryAccess());
   const user = userEvent.setup();
-  renderSettings({ ...snapshot, agents: [{ tenant_id: 'A', alias: 'one', enabled: true }] });
+  renderSettings();
   await user.click(await screen.findByRole('button', { name: 'Editar registro de A/one' }));
-  await user.type(screen.getByRole('textbox', { name: 'Nombre del contenedor' }), 'container-new');
-  await user.click(screen.getByRole('button', { name: 'Previsualizar cambio' }));
-  expect(await screen.findByRole('alert')).toHaveTextContent(/Placement es atómico/);
-  expect(changes).toHaveLength(0);
+  expect(screen.queryByRole('textbox', { name: 'Nombre del contenedor' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('textbox', { name: 'ID del arnés' })).not.toBeInTheDocument();
+  expect(screen.getByText(/La ubicación, el arnés y la cuenta principal se cambian en «Operar agente»/)).toBeInTheDocument();
 });
 
-it('sends an explicit null cap and a complete placement tuple when those choices change', async () => {
+it('sends an explicit null cap without operational fields', async () => {
   const changes: ChangeBody[] = [];
   server.use(
     registryAccess(),
@@ -119,16 +108,13 @@ it('sends an explicit null cap and a complete placement tuple when those choices
   renderSettings();
   await user.click(await screen.findByRole('button', { name: 'Editar registro de A/one' }));
   await user.click(screen.getByRole('checkbox', { name: /Sin límite/ }));
-  await user.clear(screen.getByRole('textbox', { name: 'Nombre del contenedor' }));
-  await user.type(screen.getByRole('textbox', { name: 'Nombre del contenedor' }), 'agent-replaced');
   await user.click(screen.getByRole('button', { name: 'Previsualizar cambio' }));
   await screen.findByLabelText('Preview del registro de agente');
   expect(changes).toHaveLength(1);
   expect(changes[0]?.mutation).toMatchObject({
     resource: 'agent', action: 'update', tenant_id: 'A', alias: 'one',
     value: {
-      max_concurrent_deliveries: null, container_name: 'agent-replaced', runtime_user: 'runner',
-      home_directory: '/home/runner', state_directory: '/var/lib/runner',
+      max_concurrent_deliveries: null,
     },
   });
 });
@@ -195,7 +181,7 @@ it('reconciles a stale-revision conflict and does not retain its preview', async
   expect(await screen.findByRole('note')).toHaveTextContent(/Se descartó el borrador y se cargaron los valores actuales/);
   expect(screen.getByRole('textbox', { name: 'Nombre visible' })).toHaveValue('Cambio concurrente');
   expect(screen.getByRole('spinbutton', { name: 'Máximo de entregas concurrentes' })).toHaveValue(2);
-  expect(screen.getByRole('textbox', { name: 'Nombre del contenedor' })).toHaveValue('container-concurrente');
+  expect(screen.queryByRole('textbox', { name: 'Nombre del contenedor' })).not.toBeInTheDocument();
   await user.selectOptions(screen.getByRole('combobox', { name: 'Estado del registro' }), 'false');
   await user.click(screen.getByRole('button', { name: 'Previsualizar cambio' }));
   await screen.findByLabelText('Preview del registro de agente');

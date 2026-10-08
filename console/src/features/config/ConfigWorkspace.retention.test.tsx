@@ -13,7 +13,7 @@ async function openAdministration(user: ReturnType<typeof userEvent.setup>) {
 async function roundtrip(user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getByRole('button', { name: 'Volver a agentes y contexto' }));
   expect(screen.queryByRole('tablist', { name: 'Áreas de configuración' })).not.toBeInTheDocument();
-  const hidden = document.querySelector('[hidden][inert]');
+  const hidden = document.querySelector('[tabindex="-1"][hidden][inert]');
   expect(hidden).not.toBeNull();
   expect(hidden).not.toContainElement(document.activeElement as HTMLElement);
   await openAdministration(user);
@@ -74,7 +74,7 @@ it('mantiene el bloqueo del POST pendiente y presenta su recibo al volver, sin r
   await user.click(screen.getByRole('button', { name: 'Volver a agentes y contexto' }));
   await act(async () => { release?.(); await pending; });
   await waitFor(() => {
-    expect(document.querySelector('[hidden][inert]')).toHaveTextContent(/creado en la revisión 2/);
+    expect(document.querySelector('[tabindex="-1"][hidden][inert]')).toHaveTextContent(/creado en la revisión 2/);
   });
   await openAdministration(user);
   expect(await screen.findByText(/creado en la revisión 2/)).toHaveTextContent('alta confirmada');

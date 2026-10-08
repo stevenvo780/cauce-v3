@@ -1,6 +1,11 @@
 .settings-search { display: grid; gap: var(--space-2); margin-bottom: var(--space-4); max-width: var(--measure-prose); }
+.settings-toolbar, .settings-pagination { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin-block: var(--space-3); }
+.settings-toolbar > .agent-lifecycle-panel[data-open="true"] { flex-basis: 100%; }
+.settings-toolbar > .agent-lifecycle-panel[data-open="false"] { width: auto; }
+.settings-pagination p { flex: 1 1 180px; margin: 0; }
 .settings-agents { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); gap: var(--space-3); margin: 0; padding: 0; list-style: none; }
 .settings-agent { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-content: start; gap: var(--space-2); padding: var(--space-2); border: 1px solid var(--border); border-radius: var(--radius-sm); }
+.settings-agent[hidden] { display: none; }
 .settings-agent-identity { display: grid; grid-column: 1 / -1; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-1); min-width: 0; overflow-wrap: anywhere; }
 .settings-agent-identity > span:not(:first-of-type) { grid-column: 1 / -1; }
 .settings-agent > button { justify-self: start; }

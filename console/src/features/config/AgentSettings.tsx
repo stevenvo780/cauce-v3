@@ -4,9 +4,12 @@ import { EmptyState, Panel } from '../../components/ui';
 import { AgentContextPanel } from '../live/AgentContextPanel';
 import { AgentRegistryEditor } from './AgentRegistryEditor';
 import { AgentRegistryCreate } from './AgentRegistryCreate';
+import { AgentLifecyclePanel } from './AgentLifecyclePanel';
 import { filterSettingsAgents, settingsAgents } from './settings-model';
+const PAGE_SIZE = 6;
 export function AgentSettings({ snapshot }: { snapshot: ConfigurationSnapshot }) {
   const [query, setQuery] = useState('');
+  const [page, setPage] = useState(0);
   const [selected, setSelected] = useState<string>();
   const [dirty, setDirty] = useState(false);
   const [reloadedSnapshot, setReloadedSnapshot] = useState<ConfigurationSnapshot>();
@@ -21,6 +24,9 @@ export function AgentSettings({ snapshot }: { snapshot: ConfigurationSnapshot })
     && (typeof snapshot.revision !== 'number' || reloadedSnapshot.revision > snapshot.revision) ? reloadedSnapshot : snapshot;
   const agents = useMemo(() => settingsAgents(activeSnapshot), [activeSnapshot]);
   const visible = filterSettingsAgents(agents, query);
+  const lastPage = Math.max(0, Math.ceil(visible.length / PAGE_SIZE) - 1);
+  const currentPage = Math.min(page, lastPage);
+  const first = currentPage * PAGE_SIZE;
   const current = agents.find((agent) => agent.key === selected);
   useEffect(() => {
     if (selected && current?.registered) heading.current?.focus({ preventScroll: true });
@@ -50,13 +56,14 @@ export function AgentSettings({ snapshot }: { snapshot: ConfigurationSnapshot })
       </button>
     </div> : null}
     <Panel title="Agentes y contexto" subtitle="Identidad, grupos y responsabilidad en un solo lugar.">
-      <button ref={createTrigger} type="button" className="button secondary" onClick={() => { setCreateOpen(true); }}>
-        Añadir agente
-      </button>
+      <div className="settings-toolbar">
+        <button ref={createTrigger} type="button" className="button secondary" onClick={() => { setCreateOpen(true); }}>Añadir agente</button>
+        <AgentLifecyclePanel snapshot={activeSnapshot} onReloaded={setReloadedSnapshot} />
+      </div>
       <AgentRegistryCreate snapshot={activeSnapshot} open={createOpen} onOpenChange={setCreateOpen}
         onReloaded={setReloadedSnapshot} focusReturnRef={createTrigger} />
       <label className="settings-search">Buscar agente o grupo
-        <input ref={searchInput} type="search" value={query} onChange={(event) => { setQuery(event.target.value); }} />
+        <input ref={searchInput} type="search" value={query} onChange={(event) => { setQuery(event.target.value); setPage(0); }} />
       </label>
       {!Array.isArray(activeSnapshot.agents) ? <p className="notice" role="note">
         Registro de agentes desconocido: el servidor no lo publica. Las membresías no acreditan un perfil editable.
@@ -66,7 +73,8 @@ export function AgentSettings({ snapshot }: { snapshot: ConfigurationSnapshot })
         : 'No hay un inventario completo de agentes en esta lectura.'}</EmptyState>
         : !visible.length ? <EmptyState>No hay agentes que coincidan con la búsqueda.</EmptyState>
           : <ul className="settings-agents" aria-label="Agentes configurados">
-          {visible.map((agent) => <li key={agent.key} className="settings-agent">
+          {visible.map((agent, index) => <li key={agent.key} className="settings-agent"
+            hidden={index < first || index >= first + PAGE_SIZE} inert={index < first || index >= first + PAGE_SIZE}>
               <div className="settings-agent-identity">
                 <strong>{agent.name}</strong>
                 <span>{agent.tenantId} / {agent.alias}</span>
@@ -92,10 +100,25 @@ export function AgentSettings({ snapshot }: { snapshot: ConfigurationSnapshot })
                 aria-describedby={!agent.registered ? `context-unavailable-${encodeURIComponent(agent.key)}` : undefined}
                 onClick={() => { setSelected(agent.key); setDirty(false); }}
               >Abrir contexto</button>
+              {agent.registered ? <AgentLifecyclePanel snapshot={activeSnapshot} onReloaded={setReloadedSnapshot}
+                target={{ resource: 'agent', tenant_id: agent.tenantId, alias: agent.alias }} /> : null}
               {agent.registered ? <AgentRegistryEditor key={agent.key} snapshot={activeSnapshot} onReloaded={setReloadedSnapshot}
                 tenantId={agent.tenantId} alias={agent.alias} /> : null}
             </li>)}
           </ul>}
+      {visible.length > PAGE_SIZE ? <nav className="settings-pagination" aria-label="Páginas de agentes">
+        <p role="status">Agentes {first + 1}–{Math.min(first + PAGE_SIZE, visible.length)} de {visible.length}</p>
+        <button type="button" className="button secondary" disabled={currentPage === 0}
+          onClick={() => { setPage(currentPage - 1); }}>Anterior</button>
+        <button type="button" className="button secondary" disabled={currentPage === lastPage}
+          onClick={() => { setPage(currentPage + 1); }}>Siguiente</button>
+      </nav> : null}
+      {activeSnapshot.retired?.agents.length ? <section aria-label="Agentes retirados"><h3>Agentes retirados</h3>
+        <ul>{activeSnapshot.retired.agents.flatMap((agent) => typeof agent.tenant_id === 'string' && typeof agent.alias === 'string'
+          ? [<li key={JSON.stringify([agent.tenant_id, agent.alias])}>{agent.tenant_id} / {agent.alias}
+            <AgentLifecyclePanel snapshot={activeSnapshot} onReloaded={setReloadedSnapshot}
+              target={{ resource: 'agent', tenant_id: agent.tenant_id, alias: agent.alias }} /></li>] : [])}</ul>
+      </section> : null}
       <p className="settings-source">El registro describe la configuración guardada. El arnés en ejecución,
         los permisos y la aplicación del contexto se comprueban en el panel; si falta evidencia, se indica como desconocida.</p>
     </Panel>

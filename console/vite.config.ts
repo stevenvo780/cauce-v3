@@ -27,6 +27,15 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
   return {
     plugins: [react(), xtermAnsiCss()],
+    resolve: {
+      alias: [{
+        find: /^@cauce\/protocol\/fleet-operation$/,
+        replacement: fileURLToPath(new URL('../packages/protocol/src/fleet-operation.ts', import.meta.url)),
+      }, {
+        find: /^@cauce\/protocol\/configuration$/,
+        replacement: fileURLToPath(new URL('../packages/protocol/src/configuration.ts', import.meta.url)),
+      }],
+    },
     server: {
       port: 4173,
       proxy: {

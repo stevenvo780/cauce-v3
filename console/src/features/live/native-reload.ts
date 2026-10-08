@@ -16,7 +16,7 @@ export function nativeReloadBinding(snapshot: ConfigurationSnapshot, capability:
     || Number(snapshot.revision) < 0 || !capability.available || !capability.actions.includes('stop') || !capability.actions.includes('start')) return undefined;
   const rows = snapshot.agents?.filter(row => row.tenant_id === target.tenant_id && row.alias === target.alias);
   const row = rows?.length === 1 ? rows[0] : undefined;
-  if (!row || row.enabled !== running || row.retired_at != null || typeof row.harness_id !== 'string'
+  if (row?.enabled !== running || row.retired_at != null || typeof row.harness_id !== 'string'
     || typeof row.primary_account_id !== 'string' || !row.primary_account_id) return undefined;
   const key = RuntimeKeySchema.safeParse(row.runtime_key);
   const source = row.placement && typeof row.placement === 'object' && !Array.isArray(row.placement)
@@ -40,7 +40,7 @@ export function nativeReloadBinding(snapshot: ConfigurationSnapshot, capability:
     && (row.reasoning_effort == null || value.reasoning_efforts?.includes(row.reasoning_effort as never) === true));
   if (!runtime) return undefined;
   return { runtime_key: key.data, harness_id: row.harness_id, placement,
-    primary_account_id: row.primary_account_id ?? null, model_id: row.model_id ?? null, reasoning_effort: row.reasoning_effort ?? null };
+    primary_account_id: row.primary_account_id, model_id: row.model_id ?? null, reasoning_effort: row.reasoning_effort ?? null };
 }
 
 function bounded<T>(load: () => Promise<T>, signal: AbortSignal, deadline: number): Promise<T> {
@@ -120,7 +120,7 @@ export async function reloadNativeAgent(api: ReloadClient, configuration: Resour
   const deadline = Date.now() + (options.timeoutMilliseconds ?? 120_000);
   const fresh = async () => {
     const result = await bounded(() => configuration.reload(), signal, deadline);
-    if (!result.data || result.error) throw new Error('No se acreditó una lectura fresca de configuración para el CAS.');
+    if (!result.data) throw new Error('No se acreditó una lectura fresca de configuración para el CAS.');
     return result.data;
   };
   const snapshot = await fresh();

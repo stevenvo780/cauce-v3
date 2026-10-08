@@ -70,9 +70,9 @@ describe('native restart authority and physical identity', () => {
   it.each([
     { ...capability, available: false, actions: [], placements: [] },
     { ...capability, actions: ['stop'] },
-    { ...capability, placements: [{ ...capability.placements[0]!, runtimes: undefined }] },
-    { ...capability, placements: [{ ...capability.placements[0]!, host_id: 'other-host' }] },
-    { ...capability, placements: [{ ...capability.placements[0]!, runtime_users: ['other'] }] },
+    { ...capability, placements: [{ ...capability.placements[0], runtimes: undefined }] },
+    { ...capability, placements: [{ ...capability.placements[0], host_id: 'other-host' }] },
+    { ...capability, placements: [{ ...capability.placements[0], runtime_users: ['other'] }] },
   ] satisfies FleetCapability[])('fails closed for unsupported capability %#', value => {
     expect(nativeReloadBinding(snapshot(), value, target, true)).toBeUndefined();
   });
@@ -128,7 +128,7 @@ describe('durable stop then fresh CAS start', () => {
   it('polls the receipt until success before sending start', async () => {
     const { api, configuration, signal } = fixture();
     api.enqueueFleetOperation.mockImplementation(request => receipt(request, request.kind === 'stop' ? 'queued' : 'succeeded', 1));
-    api.getFleetOperation.mockImplementation(async () => receipt(api.enqueueFleetOperation.mock.calls[0]![0], 'succeeded', 2));
+    api.getFleetOperation.mockImplementation(async () => receipt(api.enqueueFleetOperation.mock.calls[0][0], 'succeeded', 2));
     await reloadNativeAgent(api, configuration, target, signal, { pollMilliseconds: 1 });
     expect(api.getFleetOperation).toHaveBeenCalledTimes(1); expect(api.enqueueFleetOperation).toHaveBeenCalledTimes(2);
   });
@@ -136,7 +136,7 @@ describe('durable stop then fresh CAS start', () => {
     const { api, configuration, signal } = fixture();
     api.enqueueFleetOperation.mockImplementation(request => receipt(request, 'queued', 2));
     api.getFleetOperation.mockImplementation(async () => {
-      const value = await receipt(api.enqueueFleetOperation.mock.calls[0]![0], 'succeeded', attack === 'same-version-change' ? 2 : 3);
+      const value = await receipt(api.enqueueFleetOperation.mock.calls[0][0], 'succeeded', attack === 'same-version-change' ? 2 : 3);
       if (attack === 'version') value.version = 1;
       if (attack === 'target') value.target = { ...target, alias: 'other' };
       if (attack === 'hash') value.request_sha256 = 'f'.repeat(64);
@@ -150,7 +150,11 @@ describe('durable stop then fresh CAS start', () => {
   it('does not credit start without roundtrip proof', async () => {
     const { api, configuration, signal } = fixture(); api.enqueueFleetOperation.mockImplementation(async request => {
       const value = await receipt(request);
-      if (request.kind === 'start') value.steps.find(step => step.name === 'verify')!.evidence!.roundtrip_verified = false;
+      if (request.kind === 'start') {
+        const proof = value.steps.find(step => step.name === 'verify')?.evidence;
+        if (!proof) throw new Error('Fixture is missing verification evidence');
+        proof.roundtrip_verified = false;
+      }
       return value;
     });
     await expect(reloadNativeAgent(api, configuration, target, signal)).rejects.toThrow(/arranque verificado/);
@@ -193,7 +197,9 @@ describe('native reload hook', () => {
     capabilities.mockResolvedValue(capability);
     rerender({ config: { ...configuration, data: snapshot() } });
     await waitFor(() => { expect(result.current).toBeTypeOf('function'); });
-    const reload = result.current!; unmount();
+    const reload = result.current;
+    if (!reload) throw new Error('Fixture is missing the measured reload callback');
+    unmount();
     await expect(reload()).rejects.toThrow(/capacidad/);
   });
   it('removes the callback when the authenticated session changes', async () => {
@@ -219,7 +225,9 @@ describe('native reload hook', () => {
       initialProps: { alias: 'one' }, wrapper: ({ children }) => <ApiProvider api={client}>{children}</ApiProvider>,
     });
     await waitFor(() => { expect(result.current).toBeTypeOf('function'); });
-    const stale = result.current!; rerender({ alias: 'two' });
+    const stale = result.current;
+    if (!stale) throw new Error('Fixture is missing the measured reload callback');
+    rerender({ alias: 'two' });
     await act(async () => { await expect(stale()).rejects.toThrow(/capacidad/); });
     expect(enqueue).not.toHaveBeenCalled(); expect(configuration.reload).not.toHaveBeenCalled();
   });
