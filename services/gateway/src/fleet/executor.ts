@@ -7,8 +7,13 @@ export interface FleetExecution {
   operation: FleetOperation; request: FleetOperationRequest; fenced_targets: FencedTarget[];
   previous_agents?: Record<string, unknown>[];
   desired_memberships?: { tenant_id: string; alias: string; room_id: string; role: string; enabled: boolean }[];
+  global_desired_memberships?: { tenant_id: string; alias: string; room_id: string; role: string; enabled: boolean }[];
   snapshot?: Record<string, unknown>;
   trusted_accounts?: FleetProviderAccounts;
+  fleet_scope?: {
+    operation_id: string; host_id: string; scope_sha256: string; prepared_revision: number;
+    worker_id: string; claim_token: string; claim_epoch: number;
+  };
 }
 export interface FleetExecutionRepository {
   claim(worker: string, host: string, leaseMs?: number): Promise<FleetOperationClaim | null>;
@@ -26,8 +31,8 @@ export interface FleetEffectResult { evidence: FleetEvidence; awaiting_auth?: bo
 export interface FleetExecutorOptions {
   worker: string; host: string; leaseMs?: number;
   signal?: AbortSignal;
-  perform(step: FleetStepName, execution: FleetExecution, signal: AbortSignal): Promise<FleetEffectResult>;
-  compensate?(execution: FleetExecution, signal: AbortSignal): Promise<FleetEvidence>;
+  perform(step: FleetStepName, execution: FleetExecution, signal: AbortSignal, claim: FleetOperationClaim): Promise<FleetEffectResult>;
+  compensate?(execution: FleetExecution, signal: AbortSignal, claim: FleetOperationClaim): Promise<FleetEvidence>;
 }
 
 export class FleetExecutor {
@@ -63,7 +68,7 @@ export class FleetExecutor {
         if (isAborted()) return true;
         execution = await this.repository.execution(claim);
         if (execution.operation.status === 'cancelling') {
-          const evidence = this.options.compensate === undefined ? {} : await this.options.compensate(execution, abort.signal);
+          const evidence = this.options.compensate === undefined ? {} : await this.options.compensate(execution, abort.signal, claim);
           if (isAborted()) return true;
           await this.repository.compensate(claim, FleetEvidenceSchema.parse(evidence));
           return true;
@@ -74,7 +79,7 @@ export class FleetExecutor {
         await this.repository.startStep(claim, step);
         execution = await this.repository.execution(claim);
         if (execution.operation.status === 'cancelling') continue;
-        const result = await this.options.perform(step, execution, abort.signal);
+        const result = await this.options.perform(step, execution, abort.signal, claim);
         if (isAborted()) return true;
         const current = await this.repository.execution(claim);
         if (isAborted()) return true;

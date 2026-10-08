@@ -2,8 +2,9 @@ import { spawn } from 'node:child_process';
 import { z } from 'zod';
 import { FleetEvidenceSchema, FleetOperationRequestSchema, FleetStepNameSchema, type FleetStepName } from '@cauce/protocol';
 import type { FleetExecution, FleetEffectResult } from './executor.js';
+import { fleetHostSpawn, type FleetSshTransport } from './host-transport.js';
 
-export interface HostCommandConfig { python: string; executable: string; policyFile: string; timeoutMs?: number }
+export interface HostCommandConfig { python: string; executable: string; policyFile: string; timeoutMs?: number; transport?: FleetSshTransport }
 const ReceiptSchema = z.object({ evidence: FleetEvidenceSchema, awaiting_auth: z.boolean().optional() }).strict();
 const MAX_RECEIPT_BYTES = 8192;
 function unverified(): Error { return new Error('Host effect could not be verified'); }
@@ -31,15 +32,21 @@ async function runHostCommand(
   config: HostCommandConfig, step: FleetStepName | 'compensate' | 'login-stop', execution: FleetExecution, signal: AbortSignal,
 ): Promise<FleetEffectResult> {
   const timeoutMs = config.timeoutMs ?? 60_000;
+  const isAborted = () => signal.aborted;
   if (![config.python, config.executable, config.policyFile].every(absolute)
       || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 300_000 || signal.aborted) throw unverified();
   const request = FleetOperationRequestSchema.parse(execution.request);
   const encoded = JSON.stringify({ operation_id: execution.operation.id, request, fenced_targets: execution.fenced_targets,
     previous_agents: execution.previous_agents ?? [], desired_memberships: execution.desired_memberships ?? [],
+    ...(execution.global_desired_memberships === undefined ? {} : { global_desired_memberships: execution.global_desired_memberships }),
     ...(execution.trusted_accounts === undefined ? {} : { trusted_accounts: execution.trusted_accounts }),
+    ...(execution.fleet_scope === undefined ? {} : { fleet_scope: execution.fleet_scope }),
     ...(execution.snapshot === undefined ? {} : { snapshot: execution.snapshot }) });
+  if (Buffer.byteLength(encoded) > 1_048_576) throw unverified();
+  const specification = await fleetHostSpawn(config, step);
+  if (isAborted()) throw unverified();
   return new Promise((resolve, reject) => {
-    const child = spawn(config.python, [config.executable, '--policy', config.policyFile, '--step', step], {
+    const child = spawn(specification.executable, specification.arguments, {
       detached: true, stdio: ['pipe', 'pipe', 'ignore'],
       env: { PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: process.env.HOME ?? '', TMPDIR: '/var/tmp' },
     });

@@ -1,0 +1,45 @@
+import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { afterAll, afterEach, describe, expect, it } from 'vitest';
+import type { FleetCapability } from '@cauce/protocol';
+import { createPool } from '@cauce/store';
+import { configuredFleetGateway } from './gateway-config.js';
+
+const pool = createPool('postgresql://localhost/cauce_test_config_unused', { max: 1 });
+const capability: FleetCapability = { available: true, actions: ['create', 'update', 'retire'],
+  placements: [{ host_id: 'server', modes: ['native'], runtime_users: ['stev'], systemd_users: ['stev'],
+    home_roots: ['/home/stev'], state_roots: ['/home/stev/state'] }] };
+const directories: string[] = [];
+afterEach(async () => { for (const directory of directories.splice(0)) await rm(directory, { recursive: true, force: true }); });
+afterAll(async () => { await pool.end(); });
+async function config(hosts = [{ host_id: 'server', socket_path: '/run/fleet/server.sock' }]) {
+  const directory = await mkdtemp('/var/tmp/cauce-fleet-api-'); directories.push(directory);
+  const filename = join(directory, 'config.json');
+  await writeFile(filename, JSON.stringify({ version: 1, controller_host: 'server', hosts }), { mode: 0o600 });
+  return { filename, environment: { CAUCE_FLEET_API_CONFIG_FILE: filename, CAUCE_FLEET_CONTROLLER_HOST: 'server' } };
+}
+describe('fleet gateway deployment configuration', () => {
+  it('keeps unconfigured fleet actions unavailable', async () => {
+    expect(await configuredFleetGateway(pool, { available: false, actions: [], placements: [] }, {})).toEqual({});
+  });
+  it('binds one durable coordinator and router only from a private matching host catalog', async () => {
+    const { filename, environment } = await config();
+    const result = await configuredFleetGateway(pool, capability, environment);
+    expect(result.fleetCapability).toBe(capability); expect(result.fleetOperationsRepository).toBeDefined();
+    expect(result.providerAuthService).toBeDefined();
+    await expect(configuredFleetGateway(pool, capability, { ...environment, CAUCE_FLEET_CONTROLLER_HOST: 'other' })).rejects.toThrow('catalogs differ');
+    await chmod(filename, 0o644); await expect(configuredFleetGateway(pool, capability, environment)).rejects.toThrow();
+  });
+  it('rejects missing and repeated host routes before binding operations', async () => {
+    const missing = await config([{ host_id: 'other', socket_path: '/run/fleet/other.sock' }]);
+    await expect(configuredFleetGateway(pool, capability, missing.environment)).rejects.toThrow();
+    const repeated = await config([{ host_id: 'server', socket_path: '/run/fleet/one.sock' }, { host_id: 'server', socket_path: '/run/fleet/two.sock' }]);
+    await expect(configuredFleetGateway(pool, capability, repeated.environment)).rejects.toThrow();
+    const valid = await config();
+    const template = capability.placements[0]; if (!template) throw new Error('Missing test placement');
+    await expect(configuredFleetGateway(pool, { ...capability, placements: [...capability.placements,
+      { ...template, host_id: 'unregistered' }] }, valid.environment)).rejects.toThrow('catalogs differ');
+    const duplicate = await config([{ host_id: 'server', socket_path: '/run/fleet/one.sock' }, { host_id: 'other', socket_path: '/run/fleet/one.sock' }]);
+    await expect(configuredFleetGateway(pool, capability, duplicate.environment)).rejects.toThrow();
+  });
+});

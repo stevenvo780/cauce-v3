@@ -8,11 +8,20 @@ import { FleetHostSource } from './source.js';
 import { FleetHostWorker } from './worker.js';
 import { startAuthBridge } from './auth-bridge-server.js';
 import { createHostProviderAuthService } from './host-provider-auth.js';
+import { readFleetControllerConfig, createFleetControllerTransport } from './controller-config.js';
+import { FleetCoordinator } from './coordinator.js';
+import { createFleetAuthorityService } from './authority/service.js';
+import { startFleetAuthoritySocket } from './authority/socket.js';
+import { startFleetHostChannels } from './host-channels.js';
+import { createLegacyAdoptionProbe } from './legacy-adoption-probe.js';
+import { startLegacyAdoptionBridge } from './adoption-bridge-server.js';
+import { drainLegacyFleetTransaction } from './adoption-drain.js';
 
 export interface FleetHostConfig {
   projectRoot: string; databaseFile: string; host: string; worker: string; command: HostCommandConfig;
   pollMs: number; leaseMs: number;
   auth?: { socket: string; policyFile: string; groupGid?: number };
+  controllerFile?: string;
 }
 function invalid(): Error { return new Error('Fleet host configuration is invalid'); }
 function path(value: string | undefined): string {
@@ -38,7 +47,8 @@ export function readFleetHostConfig(environment: NodeJS.ProcessEnv): FleetHostCo
     command: { python: path(environment.CAUCE_FLEET_PYTHON), executable: path(environment.CAUCE_FLEET_EXECUTABLE),
       policyFile: path(environment.CAUCE_FLEET_POLICY_FILE), timeoutMs: integer(environment.CAUCE_FLEET_COMMAND_TIMEOUT_MS, 60_000, 1, 300_000) },
     pollMs: integer(environment.CAUCE_FLEET_POLL_MS, 1000, 25, 60_000), leaseMs: integer(environment.CAUCE_FLEET_LEASE_MS, 30_000, 1000, 300_000),
-    ...(auth === undefined ? {} : { auth }) };
+    ...(auth === undefined ? {} : { auth }),
+    ...(environment.CAUCE_FLEET_CONTROLLER_FILE === undefined ? {} : { controllerFile: path(environment.CAUCE_FLEET_CONTROLLER_FILE) }) };
 }
 export async function readFleetHostDatabaseUrl(filename: string): Promise<string> {
   try {
@@ -59,32 +69,77 @@ export async function readFleetHostDatabaseUrl(filename: string): Promise<string
 export async function runFleetHost(environment: NodeJS.ProcessEnv = process.env): Promise<void> {
   const config = readFleetHostConfig(environment);
   const databaseUrl = await readFleetHostDatabaseUrl(config.databaseFile);
+  const controller = config.controllerFile === undefined ? undefined : await readFleetControllerConfig(config.controllerFile, config.host);
   let snapshotQuery: string;
   try { snapshotQuery = await readFile(join(config.projectRoot, 'ops/scripts/fleet-query.sql'), 'utf8'); }
   catch { throw new Error('Fleet host snapshot query is unavailable'); }
   const pool = createPool(databaseUrl, { applicationName: 'cauce-fleet-host', max: 4 });
   let bridge: Awaited<ReturnType<typeof startAuthBridge>> | undefined;
+  let channels: Awaited<ReturnType<typeof startFleetHostChannels>> | undefined;
+  let adoptionBridge: Awaited<ReturnType<typeof startLegacyAdoptionBridge>> | undefined;
+  const adoptionDrainPool = controller?.adoption_socket === undefined ? undefined
+    : createPool(databaseUrl, { applicationName: 'cauce-fleet-adoption-drain', max: 1 });
+  const channelState = { lost: false };
+  let stopWorker = () => { channelState.lost = true; };
+  const authorities: Awaited<ReturnType<typeof startFleetAuthoritySocket>>[] = [];
+  try {
+    if (controller?.authority_command) {
+      for (const host of controller.hosts) {
+        if (host.authority_socket === undefined) throw invalid();
+        const service = createFleetAuthorityService(pool, { host_id: host.host_id, command: controller.authority_command });
+        authorities.push(await startFleetAuthoritySocket(host.authority_socket, service, { ownerUid: process.geteuid?.() ?? 0, host_id: host.host_id }));
+      }
+    }
+  } catch (error) { await Promise.all(authorities.map(authority => authority.close())); await adoptionDrainPool?.end(); await pool.end(); throw error; }
   if (config.auth) {
     try {
       const service = await createHostProviderAuthService(pool, { hostConfig: config, authPolicyFile: config.auth.policyFile,
         projectRoot: config.projectRoot });
       bridge = await startAuthBridge(config.auth.socket, service, { ownerUid: process.geteuid?.() ?? 0,
         ...(config.auth.groupGid === undefined ? {} : { groupGid: config.auth.groupGid }) });
-    } catch (error) { await pool.end(); throw error; }
+    } catch (error) { await Promise.all(authorities.map(authority => authority.close())); await adoptionDrainPool?.end(); await pool.end(); throw error; }
   }
-  const source = new FleetHostSource(pool, { snapshotQuery, controllerHost: config.host });
+  try {
+    if (controller) channels = await startFleetHostChannels(controller, { onLost: () => { channelState.lost = true; stopWorker(); },
+      ...(config.auth?.groupGid === undefined ? {} : { authGroupGid: config.auth.groupGid }) });
+    if (controller?.adoption_socket !== undefined && adoptionDrainPool !== undefined) {
+      const probe = createLegacyAdoptionProbe(controller.hosts.flatMap(host => host.adoption === undefined ? [] : [{
+        hostId: host.host_id, python: host.command.python, executable: host.adoption.executable,
+        policyFile: host.adoption.policyFile, targets: host.adoption.targets,
+        ...(host.command.timeoutMs === undefined ? {} : { timeoutMs: host.command.timeoutMs }),
+        ...(host.command.transport === undefined ? {} : { transport: host.command.transport }),
+      }]));
+      adoptionBridge = await startLegacyAdoptionBridge(controller.adoption_socket, probe, { ownerUid: process.geteuid?.() ?? 0,
+        ...(controller.adoption_group_gid === undefined ? {} : { groupGid: controller.adoption_group_gid }) },
+      { drain: () => drainLegacyFleetTransaction(adoptionDrainPool) });
+    }
+  } catch (error) {
+    await channels?.close(); await bridge?.close(); await Promise.all(authorities.map(authority => authority.close()));
+    await adoptionDrainPool?.end(); await pool.end(); throw error;
+  }
+  const source = new FleetHostSource(pool, { snapshotQuery, controllerHost: config.host, coordinatorEnabled: controller !== undefined,
+    ...(controller === undefined ? {} : { coordinatorHosts: controller.hosts.map(host => host.host_id) }) });
+  const coordinator = controller === undefined ? undefined : new FleetCoordinator(source, createFleetControllerTransport(controller));
   const worker = new FleetHostWorker(source, { worker: config.worker, host: config.host, leaseMs: config.leaseMs, pollMs: config.pollMs,
-    perform: (step, execution, signal) => performHostCommand(config.command, step, execution, signal),
-    compensate: (execution, signal) => performHostCompensation(config.command, execution, signal),
+    perform: (step, execution, signal, claim) => coordinator === undefined ? performHostCommand(config.command, step, execution, signal)
+      : coordinator.perform(step, execution, signal, claim),
+    compensate: (execution, signal, claim) => coordinator === undefined ? performHostCompensation(config.command, execution, signal)
+      : coordinator.compensate(execution, signal, claim),
     onError: () => { process.stderr.write('Fleet host could not claim work\n'); } });
   let closing: Promise<void> | undefined;
   const shutdown = (): Promise<void> => {
-    closing ??= worker.shutdown().finally(async () => { try { await bridge?.close(); } finally { await pool.end(); } });
+    closing ??= worker.shutdown().finally(async () => {
+      try {
+        await adoptionBridge?.close(); await channels?.close(); await bridge?.close();
+        await Promise.all(authorities.map(authority => authority.close()));
+      } finally { await adoptionDrainPool?.end(); await pool.end(); }
+    });
     return closing;
   };
   const stop = () => { void shutdown().catch(() => { process.stderr.write('Fleet host shutdown failed\n'); process.exitCode = 1; }); };
+  stopWorker = stop;
   process.once('SIGINT', stop); process.once('SIGTERM', stop);
-  try { await worker.start(); }
+  try { if (channelState.lost) throw new Error('Fleet host private channel was lost'); await worker.start(); }
   finally { process.removeListener('SIGINT', stop); process.removeListener('SIGTERM', stop); await shutdown(); }
 }
 if (process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

@@ -6,9 +6,9 @@ import { createOAuthPasswordSession } from './oauth-password-session.js';
 import type { OAuthAuthorizationServerOptions } from './oauth-authorization-server.js';
 import { configuredContextRepository } from './console/context-repository/binding.js';
 import { readFile } from 'node:fs/promises';
-import { createPool, FleetOperationsRepository, type DatabasePool } from '@cauce/store';
-import { configuredFleetCapability, assertFleetPlacement, assertFleetProviderAccount } from './console/fleet-capability.js';
-import { HostProviderAuthService } from './fleet/auth-bridge-client.js';
+import { createPool, type DatabasePool } from '@cauce/store';
+import { configuredFleetCapability } from './console/fleet-capability.js';
+import { configuredFleetGateway } from './fleet/gateway-config.js';
 import { FleetMtlsIdentityProvider, FleetTokenProbeAuthProvider } from './fleet/mtls-identities.js';
 import { buildGateway } from './app.js';
 import {
@@ -256,21 +256,7 @@ const consolePublishTelemetry = new ConsolePublishTelemetry();
 const blobs = configuredBlobApi(process.env);
 const contextRepository = configuredContextRepository();
 const fleetCapability = configuredFleetCapability();
-const fleetOperations = fleetCapability.available ? new FleetOperationsRepository(pool, {
-  ...(process.env.CAUCE_FLEET_CONTROLLER_HOST === undefined ? {} : { controllerHost: process.env.CAUCE_FLEET_CONTROLLER_HOST }),
-}) : undefined;
-const fleetOperationsRepository = fleetOperations === undefined ? undefined : {
-  list: fleetOperations.list.bind(fleetOperations), get: fleetOperations.get.bind(fleetOperations),
-  cancel: fleetOperations.cancel.bind(fleetOperations), resume: fleetOperations.resume.bind(fleetOperations),
-  preview: async (tenant: string, alias: string, input: import('@cauce/protocol').FleetOperationRequest, subject?: string) => {
-    assertFleetPlacement(fleetCapability, input); await assertFleetProviderAccount(pool, fleetCapability, input);
-    return fleetOperations.preview(tenant, alias, input, subject);
-  },
-  enqueue: async (tenant: string, alias: string, input: import('@cauce/protocol').FleetOperationRequest, subject?: string) => {
-    assertFleetPlacement(fleetCapability, input); await assertFleetProviderAccount(pool, fleetCapability, input);
-    return fleetOperations.enqueue(tenant, alias, input, subject);
-  },
-};
+const fleet = await configuredFleetGateway(pool, fleetCapability);
 const app = await buildGateway({
   ...(process.env.CAUCE_FLEET_MTLS_IDENTITY_FILE === undefined ? {} : {
     bootstrapProviders: { bootstrap: configuredMtls('bootstrap'), normal: configuredMtls('normal'),
@@ -278,10 +264,7 @@ const app = await buildGateway({
         token: configuredFleetToken(),
       }) },
   }),
-  ...(process.env.CAUCE_FLEET_API_SOCKET === undefined ? {} : {
-    providerAuthService: new HostProviderAuthService(process.env.CAUCE_FLEET_API_SOCKET),
-  }),
-  ...(fleetOperationsRepository === undefined ? {} : { fleetOperationsRepository, fleetCapability }),
+  ...fleet,
   ...(humanMcp === undefined ? {} : { humanMcp }),
   ...(contextRepository === undefined ? {} : { contextRepository }),
   pool,

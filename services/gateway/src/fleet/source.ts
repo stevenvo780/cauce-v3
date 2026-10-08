@@ -16,7 +16,7 @@ export interface FleetHostExecution extends FleetExecutionState {
 }
 
 export class FleetHostSource extends FleetOperationsRepository {
-  constructor(pool: DatabasePool, private readonly hostOptions: { snapshotQuery: string; controllerHost?: string }) {
+  constructor(pool: DatabasePool, private readonly hostOptions: { snapshotQuery: string; controllerHost?: string; coordinatorEnabled?: boolean; coordinatorHosts?: readonly string[] }) {
     super(pool, hostOptions);
   }
   override async execution(claim: FleetOperationClaim): Promise<FleetHostExecution> {

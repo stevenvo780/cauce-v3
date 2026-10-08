@@ -37,7 +37,17 @@ import { registerChainGateRoutes } from './routes/chain-gates.js';
 import { registerAgentEmissionRoutes } from './routes/agent-emission.js';
 import { prepareBlobDirectory, registerBlobRoutes, type BlobStoreOptions } from './routes/blobs.js';
 import { humanMcpListenerOptions, registerHumanMcp, type HumanMcpConfiguration } from './mcp-mounting.js';
-import { registerFleetOperationRoutes, type FleetOperationsRepositoryBinding } from './console/fleet-operations.routes.js';
+import { registerFleetOperationRoutes, registerFleetCapabilityRoute, type FleetOperationsRepositoryBinding } from './console/fleet-operations.routes.js';
+import { registerPeopleAdminRoutes } from './console/people-admin-routes.js';
+import { PeopleAdminRepository } from './console/people-admin-store.js';
+import { registerProviderAuthRoutes } from './console/provider-auth.routes.js';
+import { registerProviderAuthSocket } from './console/provider-auth-socket.js';
+import type { ProviderAuthService } from './console/provider-auth.types.js';
+import { registerBootstrapRoutes } from './fleet/bootstrap-routes.js';
+import { BootstrapRepository } from './fleet/bootstrap-repository.js';
+import { registerFleetCredentialRoutes, type FleetCredentialProviders } from './fleet/credential-routes.js';
+import { registerLegacyFleetAdoptionRoutes } from './fleet/adoption-routes.js';
+import type { LegacyFleetAdoptionService } from './fleet/adoption.js';
 
 export { WakePumpTelemetry } from './wake-pump-telemetry.js';
 export type {
@@ -154,6 +164,9 @@ export type GatewayRepository = StoreDerivedRepository & GatewayNarrowedReposito
   & Partial<Pick<CauceRepository, 'listHumanMailbox'>>;
 
 export interface GatewayOptions {
+  legacyFleetAdoptionService?: LegacyFleetAdoptionService;
+  bootstrapProviders?: FleetCredentialProviders;
+  providerAuthService?: ProviderAuthService;
   contextRepository?: ContextRepositoryBinding;
   agentPreferences?: import('@cauce/store').AgentPreferencesRepository;
   fleetOperationsRepository?: FleetOperationsRepositoryBinding;
@@ -297,7 +310,23 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
     ...(options.consoleOrigins === undefined ? {} : { allowedOrigins: options.consoleOrigins })
   }));
   if (options.authProvider instanceof OidcBffAuthProvider) registerOidcBff(app, options.authProvider);
-  if (options.authProvider instanceof PasswordAuthProvider) registerPasswordAuth(app, options.authProvider);
+  if (options.authProvider instanceof PasswordAuthProvider) {
+    registerPasswordAuth(app, options.authProvider);
+    registerPeopleAdminRoutes(app, options.authProvider, new PeopleAdminRepository(options.pool));
+  }
+  if (options.providerAuthService !== undefined) {
+    if (!(options.authProvider instanceof PasswordAuthProvider)) throw new Error('provider authentication requires password authority');
+    registerProviderAuthRoutes(app, options.authProvider, options.providerAuthService);
+    registerProviderAuthSocket(app, options.authProvider, options.providerAuthService, options.consoleOrigins ?? []);
+  }
+  if (options.legacyFleetAdoptionService !== undefined) {
+    if (!(options.authProvider instanceof PasswordAuthProvider)) throw new Error('legacy fleet adoption requires password authority');
+    registerLegacyFleetAdoptionRoutes(app, options.authProvider, options.legacyFleetAdoptionService);
+  }
+  if (options.bootstrapProviders !== undefined) {
+    registerBootstrapRoutes(app, options.bootstrapProviders.bootstrap, options.bootstrapProviders.normal, new BootstrapRepository(options.pool));
+    registerFleetCredentialRoutes(app, options.bootstrapProviders);
+  }
   registerGatewayHealthRoutes(app, options, repository);
 
   const publishHandler = coreRoutes.registerPublishRoutes();
@@ -306,6 +335,8 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
 
   if (options.fleetOperationsRepository !== undefined) {
     registerFleetOperationRoutes(app, options.authProvider, options.fleetOperationsRepository, options.fleetCapability);
+  } else {
+    registerFleetCapabilityRoute(app, options.authProvider, { available: false, actions: [], placements: [], reason: 'executor_unconfigured' });
   }
 
   registerConsolePublishIntentRoutes(
