@@ -117,6 +117,7 @@ export const AgentConfigMutationSchema = z.object({
   tenant_id: TenantSchema, alias: AliasSchema,
   value: z.object({
     harness_id: z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/).nullable().optional(),
+    primary_room_id: z.string().min(1).max(128).nullable().optional(),
     display_name: OptionalLabelSchema,
     enabled: z.boolean().optional(),
     container_name: z.string().trim().min(1).max(256).nullable().optional(),

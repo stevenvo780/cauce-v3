@@ -1,8 +1,8 @@
-import type { ConfigMutation, Permission, Tenant } from '@cauce/protocol';
+import type { ConfigLeafMutation, ConfigMutation, Permission, Tenant } from '@cauce/protocol';
 import { selectAccountForAlias, type AccountSelection } from '../accounts.js';
 import type { DatabaseClient } from '../db.js';
 import {
-  ConfigurationError, ConfigurationRepository, type ConfigurationChangeResult
+  ConfigurationRepository, type ConfigurationChangeResult, type ConfigurationDependencyPreview,
 } from '../configuration.js';
 import { StoreError } from './errors.js';
 import { OutboxOperatorRepository } from './outbox.js';
@@ -13,7 +13,7 @@ const PERMISSION_COLUMNS: Record<Permission, string> = {
 
 export * from './config/publish-policy.js';
 
-export type AgentTargetPermission = 'read' | 'control';
+export type AgentTargetPermission = 'read' | 'control' | 'configure';
 
 /** Minimal record of the alias authorized by its canonical identity. */
 export interface AuthorizedAgentTarget {
@@ -93,7 +93,8 @@ export abstract class ConfigRepository extends OutboxOperatorRepository {
          FROM agents agent
          JOIN tenants target_tenant ON target_tenant.id=agent.tenant_id
         WHERE agent.tenant_id=$3 AND agent.alias=$4 AND target_tenant.enabled
-          AND ($5::text='read' OR agent.enabled)
+          AND ($5::text IN ('read','configure') OR agent.enabled)
+          AND ($5::text<>'configure' OR to_jsonb(agent)->>'retired_at' IS NULL)
           AND EXISTS (
             SELECT 1
               FROM memberships actor_membership
@@ -154,11 +155,7 @@ export abstract class ConfigRepository extends OutboxOperatorRepository {
   }
 
   async getConfiguration(actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>> {
-    try {
-      return await new ConfigurationRepository(this.pool).get(actorTenant, actorAlias);
-    } catch (error) {
-      this.rethrowConfigurationError(error);
-    }
+    return new ConfigurationRepository(this.pool).get(actorTenant, actorAlias);
   }
 
   async applyConfigurationChange(
@@ -168,13 +165,18 @@ export abstract class ConfigRepository extends OutboxOperatorRepository {
     dryRun: boolean,
     expectedRevision?: number
   ): Promise<ConfigurationChangeResult> {
-    try {
-      return await new ConfigurationRepository(this.pool).apply(
-        actorTenant, actorAlias, mutation, dryRun, expectedRevision
-      );
-    } catch (error) {
-      this.rethrowConfigurationError(error);
-    }
+    return new ConfigurationRepository(this.pool).apply(
+      actorTenant, actorAlias, mutation, dryRun, expectedRevision
+    );
+  }
+
+  async getConfigurationDependencies(
+    actorTenant: Tenant, actorAlias: string, mutation: ConfigLeafMutation,
+    expectedRevision?: number,
+  ): Promise<ConfigurationDependencyPreview> {
+    return new ConfigurationRepository(this.pool).getDependencies(
+      actorTenant, actorAlias, mutation, expectedRevision,
+    );
   }
 
   async rollbackConfiguration(
@@ -184,20 +186,9 @@ export abstract class ConfigRepository extends OutboxOperatorRepository {
     dryRun: boolean,
     expectedRevision?: number
   ): Promise<ConfigurationChangeResult> {
-    try {
-      return await new ConfigurationRepository(this.pool).rollback(
-        actorTenant, actorAlias, revisionId, dryRun, expectedRevision
-      );
-    } catch (error) {
-      this.rethrowConfigurationError(error);
-    }
-  }
-
-  private rethrowConfigurationError(error: unknown): never {
-    if (error instanceof ConfigurationError) {
-      throw new StoreError(error.code, error.message);
-    }
-    throw error;
+    return new ConfigurationRepository(this.pool).rollback(
+      actorTenant, actorAlias, revisionId, dryRun, expectedRevision
+    );
   }
 
   async topology(actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>> {

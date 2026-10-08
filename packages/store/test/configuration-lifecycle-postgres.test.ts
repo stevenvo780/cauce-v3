@@ -33,6 +33,41 @@ describe('configuration lifecycle authority on PostgreSQL', () => {
     expect((await pool.query<{ enabled: boolean; retired_at: unknown }>("SELECT enabled,retired_at FROM memberships WHERE alias='current_web'" )).rows[0])
       .toEqual({ enabled: true, retired_at: null });
   });
+  it('requires a fleet operation for physical edits and enabling a prepared agent', async () => {
+    await pool.query("UPDATE agents SET runtime_key='current-web',enabled=false WHERE alias='current_web'");
+    const repo = new ConfigurationRepository(pool);
+    for (const value of [{ harness_id: 'claude' }, { enabled: true }, { state_directory: '/home/dev/other' }]) {
+      await expect(repo.apply('Steven', 'bot_hub', { resource: 'agent', action: 'update', tenant_id: 'Steven',
+        alias: 'current_web', value }, false, 0)).rejects.toMatchObject({ code: 'conflict' });
+    }
+    const safe = await repo.apply('Steven', 'bot_hub', { resource: 'agent', action: 'update', tenant_id: 'Steven',
+      alias: 'current_web', value: { display_name: 'Current', max_concurrent_deliveries: 4 } }, false, 0);
+    expect(safe.applied).toBe(true);
+    expect((await pool.query<{ enabled: boolean }>("SELECT enabled FROM agents WHERE alias='current_web'")).rows[0]?.enabled).toBe(false);
+  });
+  it('moves a draft primary membership atomically and fences physical primary edits', async () => {
+    await pool.query("INSERT INTO rooms(id,tenant_id) VALUES('draft-destination','Steven')");
+    await pool.query("INSERT INTO agents(tenant_id,alias,enabled) VALUES('Steven','move_draft',false)");
+    await pool.query("INSERT INTO memberships(tenant_id,room_id,alias,role) VALUES('Steven','lifecycle-admin','move_draft','agent')");
+    await pool.query("UPDATE agents SET primary_room_id='lifecycle-admin' WHERE alias='move_draft'");
+    const repo = new ConfigurationRepository(pool);
+    const move = await repo.apply('Steven', 'bot_hub', { resource: 'batch', action: 'apply', mutations: [
+      { resource: 'membership', action: 'create', tenant_id: 'Steven', room_id: 'draft-destination', alias: 'move_draft', value: { role: 'agent' } },
+      { resource: 'agent', action: 'update', tenant_id: 'Steven', alias: 'move_draft', value: { primary_room_id: 'draft-destination' } },
+      { resource: 'membership', action: 'delete', tenant_id: 'Steven', room_id: 'lifecycle-admin', alias: 'move_draft' },
+    ] }, false, 0);
+    expect((await pool.query<{ primary_room_id: string }>("SELECT primary_room_id FROM agents WHERE alias='move_draft'")).rows[0]?.primary_room_id).toBe('draft-destination');
+    await repo.rollback('Steven', 'bot_hub', move.revision, false, move.revision);
+    expect((await pool.query<{ primary_room_id: string }>("SELECT primary_room_id FROM agents WHERE alias='move_draft'")).rows[0]?.primary_room_id).toBe('lifecycle-admin');
+    await pool.query("UPDATE agents SET runtime_key='physical-draft' WHERE alias='move_draft'");
+    await expect(repo.apply('Steven', 'bot_hub', { resource: 'agent', action: 'update', tenant_id: 'Steven', alias: 'move_draft',
+      value: { primary_room_id: 'draft-destination' } }, false, move.revision + 1)).rejects.toMatchObject({ code: 'conflict' });
+  });
+  it('rejects generic creation with live routing admission', async () => {
+    await expect(new ConfigurationRepository(pool).apply('Steven', 'bot_hub', { resource: 'agent', action: 'create',
+      tenant_id: 'Steven', alias: 'unsafe', value: { enabled: true, harness_id: 'codex' } }, false, 0)).rejects.toMatchObject({ code: 'conflict' });
+    expect((await pool.query("SELECT 1 FROM agents WHERE alias='unsafe'")).rowCount).toBe(0);
+  });
   it('rejects generic edits of a retired agent before changing its saved runtime state', async () => {
     await pool.query("UPDATE agents SET enabled=false,lifecycle_state='retired',retired_at=now() WHERE alias='current_web'");
     await expect(new ConfigurationRepository(pool).apply('Steven', 'bot_hub', {

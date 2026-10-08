@@ -71,7 +71,7 @@ export const FleetOperationSchema = z.object({
   request_sha256: Sha256HexSchema,
   id: z.uuid(), status: FleetOperationStatusSchema, version: z.number().int().nonnegative(),
   target: FleetTargetSchema, kind: FleetOperationPreviewSchema.shape.kind,
-  actor: z.object({ tenant_id: TenantSchema, alias: AliasSchema }).strict(),
+  actor: z.object({ tenant_id: TenantSchema, alias: AliasSchema, actor_subject: z.string().min(1).max(256).optional() }).strict(),
   expected_revision: z.number().int().nonnegative(),
   desired_revision: z.number().int().nonnegative().nullable(),
   applied_revision: z.number().int().nonnegative().nullable(),

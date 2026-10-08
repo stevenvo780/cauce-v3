@@ -134,7 +134,11 @@ export class ConfigurationRepository extends ConfigurationMutations {
            */
           `SELECT tenant_id,alias,harness_id,display_name,enabled,
                   container_name,runtime_user,home_directory,state_directory,role_brief,
-                  max_concurrent_deliveries,created_at,updated_at,to_jsonb(agents)->>'retired_at' AS retired_at
+                  max_concurrent_deliveries,created_at,updated_at,to_jsonb(agents)->>'retired_at' AS retired_at,
+                  to_jsonb(agents)->>'runtime_key' AS runtime_key,to_jsonb(agents)->>'lifecycle_state' AS lifecycle_state,
+                  to_jsonb(agents)->>'primary_room_id' AS primary_room_id,to_jsonb(agents)->>'host_id' AS host_id,
+                  to_jsonb(agents)->>'runtime_mode' AS runtime_mode,to_jsonb(agents)->>'systemd_user' AS systemd_user,
+                  to_jsonb(agents)->>'primary_account_id' AS primary_account_id,to_jsonb(agents)->>'model_id' AS model_id
            FROM agents WHERE $1::text IS NULL OR tenant_id=$1 ORDER BY tenant_id,alias`, [scope]
         ),
         // credential_ref never leaves the database, not even for its payer: it is a locator, not a
