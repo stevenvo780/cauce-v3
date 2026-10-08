@@ -131,4 +131,3 @@ export function parseMutation(text: string): ConfigMutation {
   }
   return mutation as ConfigMutation;
 }
-

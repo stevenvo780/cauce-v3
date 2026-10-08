@@ -231,4 +231,3 @@ it('model: arrows follow the layout and fall back to reading order without geome
   expect(nextCardIndex(flat, 0, 'ArrowDown')).toBe(1);
   expect(nextCardIndex(flat, 0, 'ArrowUp')).toBe(0);
 });
-

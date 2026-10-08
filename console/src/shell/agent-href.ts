@@ -6,4 +6,3 @@ export function agentHref(routeId: string, agent: { tenantId: string; alias: str
   if (routeId === 'live') return `/live?agente=${encodeURIComponent(`${agent.tenantId}/${agent.alias}`)}`;
   return `/messages/${tenant}/${alias}`;
 }
-

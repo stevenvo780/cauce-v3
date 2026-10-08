@@ -258,4 +258,3 @@ export function extractClientCalls(source: string): ApiCall[] {
   }
   return calls;
 }
-

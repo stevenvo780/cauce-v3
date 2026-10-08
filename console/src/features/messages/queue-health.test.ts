@@ -190,4 +190,3 @@ describe('textoDeCifra', () => {
     expect(textoDeCifra(41)).toBe('41');
   });
 });
-
