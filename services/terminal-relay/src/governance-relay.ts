@@ -1,3 +1,4 @@
+import { handleNativeAdmin } from './native-admin-relay.js';
 import type { GovernanceWriteTarget } from './governance-write.js';
 import { createHash, timingSafeEqual } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
@@ -12,7 +13,6 @@ import {
 } from './gateway-client.js';
 import { hasControlCharacter } from './validation.js';
 import { parseGovernanceOperation, requestWriteStatus, type GovernanceOperationDescriptor } from './governance-operation.js';
-
 /**
  * `POST /v3/terminal/relay/read|write` — mTLS gates from the gateway to the governed disk.
  *
@@ -35,7 +35,6 @@ import { parseGovernanceOperation, requestWriteStatus, type GovernanceOperationD
  * brings up with `requestCert`/`rejectUnauthorized` — so the peer has already presented a client
  * certificate signed by the console CA. The token is the SECOND barrier, not the only one.
  */
-
 /** Read path. Lives outside `/v3/console/` for the same reason as the gateway's: it is not a browser. */
 export const GOVERNANCE_READ_PATH = '/v3/terminal/relay/read';
 export const GOVERNANCE_LIST_PATH = '/v3/terminal/relay/list';
@@ -384,6 +383,7 @@ async function handle(
   request: IncomingMessage,
   response: ServerResponse
 ): Promise<void> {
+  if (await handleNativeAdmin(options, request, response)) return;
   const path = (request.url ?? '/').split('?', 1)[0];
   const operation = path === GOVERNANCE_READ_PATH
     ? 'read'

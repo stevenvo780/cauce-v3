@@ -1,3 +1,4 @@
+import { NativeAdminChannel } from './native-admin-wire.js';
 import type { TLSSocket } from 'node:tls';
 import { errorLabel, logEvent } from '@cauce/protocol';
 import {
@@ -28,19 +29,18 @@ import {
 } from './agent-hello.js';
 import { integerField, stringField } from './validation.js';
 import type { GovernanceOperationDescriptor } from './governance-operation.js';
-
 export interface AgentWriteStatusHandlers {
   onStatusOk(body: Record<string, unknown>): void;
   onStatusErr(failure: { readonly code: string; readonly reason: string }): void;
   onAgentGone(reason: string): void;
 }
-
 /** One live agent socket. Frame routing to sessions lives here so the leg stays a registry. */
 export class AgentConnection {
   readonly hello: AgentHello;
   readonly fingerprint: string;
   readonly connectedAt: Date;
   private readonly socket: TLSSocket;
+  readonly nativeAdmin = new NativeAdminChannel(body => this.write(encodeJsonFrame(FRAME_TAGS.NATIVE_ADMIN, body)));
   private readonly sessions = new Map<string, AgentSessionHandlers>();
   /** Governance reads in flight, by `request_id`. Almost always empty. */
   private readonly reads = new Map<string, AgentReadHandlers>();
@@ -55,7 +55,6 @@ export class AgentConnection {
   private queuedWriteBytes = 0;
   private waitingDrain = false;
   private closed = false;
-
   constructor(socket: TLSSocket, hello: AgentHello, fingerprint: string, now: () => number) {
     this.socket = socket;
     this.hello = hello;
@@ -71,7 +70,6 @@ export class AgentConnection {
     }, AGENT_PING_INTERVAL_MS);
     this.ping.unref();
   }
-
   get key(): string {
     return agentKey(this.hello.tenant_id, this.hello.alias);
   }
@@ -368,6 +366,7 @@ export class AgentConnection {
   destroy(reason: string): void {
     if (this.closed) return;
     this.closed = true;
+    this.nativeAdmin.close();
     clearInterval(this.ping);
     // In-flight reads are notified the same way as sessions: otherwise they keep waiting until
     // their timer expires and the requester sees "it was slow" where what happened was "it fell".
@@ -393,6 +392,7 @@ export class AgentConnection {
 
   /** Called by the leg for every decoded frame after HELLO_ACK. */
   handleFrame(frame: Frame, now: () => number): void {
+    if (frame.tag === FRAME_TAGS.NATIVE_ADMIN_RESULT) { this.nativeAdmin.receive(decodeJsonFrame(frame.payload)); return; }
     if (frame.tag === FRAME_TAGS.PONG) {
       this.lastPongAt = now();
       return;

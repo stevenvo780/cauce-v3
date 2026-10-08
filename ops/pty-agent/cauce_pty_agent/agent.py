@@ -51,6 +51,7 @@ from .governance_read import GovernanceReadMixin
 from .governance_write import GovernanceWrite, GovernanceWriteBatch, GovernanceWriteMixin
 from .governance_write_journal import GovernanceWriteJournal
 from .input_barrier import InputBarrier
+from .native_admin_dispatch import dispatch_native_admin, native_admin_feature
 from .runtime_facts import load_bundle
 from .session import (
     DYNAMIC_CAPABILITY_CHECK_INTERVAL,
@@ -114,7 +115,7 @@ class PtyAgent(SessionMixin, GovernanceReadMixin, GovernanceWriteMixin, Governan
         return modes
 
     def _features(self) -> list[str]:
-        features = list(FEATURES)
+        features = list(FEATURES) + native_admin_feature(self)
         if self.governance_write_journal is not None:
             features.append("write_quiescence_v1")
         return features
@@ -348,6 +349,8 @@ class PtyAgent(SessionMixin, GovernanceReadMixin, GovernanceWriteMixin, Governan
             return
         if not self.acknowledged:
             raise ProtocolError("relay sent traffic before the hello was acknowledged")
+        if dispatch_native_admin(self, tag, document):
+            return
         if tag == TAG_OPEN:
             self._on_open(document)
         elif tag == TAG_READ:

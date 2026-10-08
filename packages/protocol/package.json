@@ -17,6 +17,10 @@
       "types": "./src/configuration.ts",
       "import": "./dist/configuration.js"
     },
+    "./native-admin": {
+      "types": "./src/native-admin.ts",
+      "import": "./dist/native-admin.js"
+    },
     "./harness-consumption": {
       "types": "./src/harness-consumption.ts",
       "import": "./dist/harness-consumption.js"

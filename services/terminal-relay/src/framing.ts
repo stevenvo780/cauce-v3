@@ -5,7 +5,6 @@
  * TypeScript half of a cross-language contract: no field order, padding or encoding may
  * change without changing the agent and the interop golden vectors together.
  */
-
 export const FRAME_TAGS = {
   AGENT_HELLO: 0x01,
   HELLO_ACK: 0x02,
@@ -51,7 +50,8 @@ export const FRAME_TAGS = {
   READ_DONE: 0x5e,
   WRITE_STATUS: 0x5f,
   WRITE_STATUS_OK: 0x60,
-  WRITE_STATUS_ERR: 0x61
+  WRITE_STATUS_ERR: 0x61,
+  NATIVE_ADMIN: 0x62, NATIVE_ADMIN_RESULT: 0x63
 } as const;
 
 export type FrameTag = (typeof FRAME_TAGS)[keyof typeof FRAME_TAGS];
