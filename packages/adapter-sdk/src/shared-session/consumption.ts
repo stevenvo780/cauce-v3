@@ -11,7 +11,7 @@ export function consumptionWitness(
   turnId: string,
   input: string,
 ): HarnessConsumptionWitness | undefined {
-  if (!["claude", "codex", "muse"].includes(harness) || sessionId === undefined
+  if (!["claude", "codex", "muse", "openclaw"].includes(harness) || sessionId === undefined
     || !validIdentifier(sessionId) || !validIdentifier(turnId)) return undefined;
   return { version: 1, harness_id: harness as HarnessConsumptionWitness["harness_id"],
     native_session_id: sessionId, native_turn_id: turnId, input_sha256: inputDigest(input),

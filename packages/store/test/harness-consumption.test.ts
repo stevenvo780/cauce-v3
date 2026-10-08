@@ -12,6 +12,13 @@ describe('harness consumption authority', () => {
     expect(withValidatedHarnessConsumption(result, 'codex', 'done')).toEqual(result);
   });
 
+  it('keeps an OpenClaw witness only for an OpenClaw recipient', () => {
+    const openclaw = { ...evidence, harness_id: 'openclaw' };
+    expect(withValidatedHarnessConsumption({ harness_consumption_v1: openclaw }, 'openclaw', 'done'))
+      .toEqual({ harness_consumption_v1: openclaw });
+    expect(withValidatedHarnessConsumption({ harness_consumption_v1: openclaw }, 'codex', 'done')).toBeUndefined();
+  });
+
   it.each(['accepted', 'started', 'failed'])('does not treat %s as canonical final response', (status) => {
     expect(withValidatedHarnessConsumption({ harness_consumption_v1: evidence }, 'codex', status)).toBeUndefined();
   });

@@ -14,6 +14,7 @@ de `sha256(refreshToken)`— que identifica una cuenta sin permitir reconstruirl
 |---|---|---|---|
 | `cauce-ai-live` | cuenta de suscripción | Cuota REAL por cuenta vía CDP, no estimada | timer 10 min |
 | `cauce-alertas-al-bus.py` | alertas de Prometheus | Publica en el bus UNA entrega con las alertas `firing`: sin Alertmanager nadie las lee | timer 5 min |
+| `cauce-conversaciones-paralelas.py` | turnos humanos de la base (vpstn) | Avisa a zeus si un alias atendió a personas desde más de una conversación nativa en 24 h | timer de sistema 1 h en vpstn |
 | `cauce-attach` | sesión viva del alias | Entra a LA sesión real del agente (`claude --resume` / `codex resume` / `grok --resume`) con guardas; `--bifurcar` abre una rama (claude/grok) sin parar el adaptador. Única fuente: no hay otra copia en `ops/cli/` | manual |
 | `cauce-attach-guard` | unidad del adaptador | Repone los adaptadores que quedaron parados por un attach mal cerrado | timer 2 min |
 | `cauce-codex-sync` | `auth.json` de codex | Propaga la credencial compartida a los homes que no la montan; idempotente | path unit |
