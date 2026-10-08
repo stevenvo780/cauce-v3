@@ -63,7 +63,9 @@ describe('production terminal relay operability contract', () => {
     expect(dockerfile).toContain('LABEL io.cauce.terminal-relay.instance-id=${CAUCE_TERMINAL_RELAY_INSTANCE_ID}');
     const ultimaMigracion = (await readdir(new URL('../../packages/store/migrations/', import.meta.url)))
       .filter((name) => /^\d{3}_.*\.sql$/u.test(name)).sort().at(-1);
+    expect(ultimaMigracion).toBeDefined();
     expect(dockerfile).toContain(`ARG CAUCE_SCHEMA_COMPATIBLE_THROUGH=${String(ultimaMigracion)}`);
+    expect(dockerfile).toContain('LABEL io.cauce.schema.compatible-through=${CAUCE_SCHEMA_COMPATIBLE_THROUGH}');
 
     const instanceId = 'a'.repeat(64);
     const rendered = nginx.replaceAll('${CAUCE_TERMINAL_RELAY_INSTANCE_ID}', instanceId);

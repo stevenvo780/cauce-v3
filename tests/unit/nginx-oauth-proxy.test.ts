@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { chmod, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
-import { createServer, request, type Server } from 'node:https';
+import { Agent, createServer, request, type Server } from 'node:https';
 import { createServer as tcpServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -9,6 +9,7 @@ import type { TLSSocket } from 'node:tls';
 import { setTimeout as delay } from 'node:timers/promises';
 import { promisify } from 'node:util';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { WebSocket, WebSocketServer } from 'ws';
 
 const runFile = promisify(execFile);
 const source = await readFile(new URL('../../deploy/console/nginx-console-tls.conf', import.meta.url), 'utf8');
@@ -20,6 +21,7 @@ interface Container { name: string; id?: string }
 const containers: Container[] = [];
 let root: string | undefined;
 let upstream: Server | undefined;
+const authStreams = new WebSocketServer({ noServer: true });
 let origin = '';
 let wrongOrigin = '';
 let ca: Buffer;
@@ -261,6 +263,14 @@ describe.sequential('OAuth through real pinned Nginx with fixture mTLS', () => {
         response.end(JSON.stringify({ upstream: true, path, method }));
       });
     });
+    upstream.on('upgrade', (incoming, socket, head) => {
+      const peer = (incoming.socket as TLSSocket).getPeerCertificate().subject.CN;
+      if (typeof peer !== 'string') { socket.destroy(); return; }
+      seen.push({ path: incoming.url ?? '', method: incoming.method ?? '', headers: incoming.headers, body: '', peer });
+      authStreams.handleUpgrade(incoming, socket, head, stream => {
+        stream.on('message', (bytes, binary) => { stream.send(bytes, { binary }); });
+      });
+    });
     await new Promise<void>((resolve, reject) => { upstream?.once('error', reject); upstream?.listen(0, '127.0.0.1', resolve); });
     const address = upstream.address(); if (!address || typeof address === 'string') throw new Error('No fixture gateway port');
     const dockerfile = await readFile(new URL('../../deploy/Dockerfile', import.meta.url), 'utf8');
@@ -273,6 +283,8 @@ describe.sequential('OAuth through real pinned Nginx with fixture mTLS', () => {
 
   afterAll(async () => {
     const failures: unknown[] = [];
+    for (const stream of authStreams.clients) stream.terminate();
+    await new Promise<void>(resolve => { authStreams.close(() => { resolve(); }); });
     if (upstream) try { await new Promise<void>((resolve, reject) => upstream?.close(error => { if (error) reject(error); else resolve(); })); } catch (error) { failures.push(error); }
     try { await cleanupContainers(); } catch (error) { failures.push(error); }
     if (root) try { await rm(root, { recursive: true }); } catch (error) { failures.push(error); }
@@ -379,5 +391,40 @@ describe.sequential('OAuth through real pinned Nginx with fixture mTLS', () => {
     expect(result.status).toBe(200); expect(seen.at(-1)?.headers.cookie).toBeUndefined();
     expect(seen.at(-1)?.headers.authorization).toBe('Bearer fixture');
     const spa = await send(origin, '/operator-route'); expect(spa.body).toBe('SPA_FIXTURE_SENTINEL');
+  });
+
+  it('upgrades the sensitive provider stream through verified mTLS with its exact browser scope', async () => {
+    const path = `/v3/console/provider-auth/sessions/${randomUUID()}/stream`;
+    const marker = `sensitive-fixture-${randomUUID()}`;
+    const agent = new Agent({ ca, servername: 'localhost', rejectUnauthorized: true });
+    const stream = new WebSocket(origin.replace('https:', 'wss:') + path, { agent,
+      origin, headers: { cookie: '__Host-fixture=session', authorization: 'Bearer spoofed',
+        'x-cauce-operator': 'spoofed' }, handshakeTimeout: 3000 });
+    try {
+      await new Promise<void>((resolve, reject) => { stream.once('open', resolve); stream.once('error', reject); });
+      const echoed = new Promise<Buffer>((resolve, reject) => {
+        stream.once('message', bytes => { if (Buffer.isBuffer(bytes)) resolve(bytes); else reject(new Error('Unexpected fixture frame')); });
+        stream.once('error', reject);
+      });
+      stream.send(marker); expect((await echoed).toString()).toBe(marker);
+      expect(seen.at(-1)).toMatchObject({ path, method: 'GET', peer: 'oauth-proxy-fixture',
+        headers: { origin, cookie: '__Host-fixture=session', upgrade: 'websocket' } });
+      expect(seen.at(-1)?.headers.authorization).toBeUndefined();
+      expect(seen.at(-1)?.headers['x-cauce-operator']).toBeUndefined();
+      for (const container of containers) {
+        const id = await ownedContainer(container.name);
+        for (const log of ['access.log', 'error.log', 'fixture-stdout.log', 'fixture-stderr.log']) {
+          expect(await docker(['exec', id, 'cat', `/var/log/nginx/${log}`])).not.toContain(marker);
+        }
+      }
+    } finally { stream.terminate(); agent.destroy(); }
+  });
+
+  it('rejects a foreign provider-stream Origin before opening an upstream', async () => {
+    const before = seen.length;
+    const result = await send(origin, `/v3/console/provider-auth/sessions/${randomUUID()}/stream`, 'GET', {
+      origin: 'https://foreign.example.invalid', upgrade: 'websocket', connection: 'Upgrade',
+    });
+    expect(result.status).toBe(403); expect(seen).toHaveLength(before);
   });
 });
