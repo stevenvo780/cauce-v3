@@ -79,6 +79,7 @@ describe('OAuth HTTP protocol with injected store, without PostgreSQL', () => {
         expect(response.body).not.toContain(' checked');
         const nonce = /<style nonce="([A-Za-z0-9_-]+)">/u.exec(response.body)?.[1];
         expect(nonce).toBeTruthy();
+        if (!nonce) throw new Error('missing CSP style nonce');
         expect(response.headers['content-security-policy']).toContain(`style-src 'nonce-${nonce}'`);
         expect(response.headers['content-security-policy']).toContain(`script-src 'nonce-${nonce}'`);
         expect(response.headers['content-security-policy']).not.toContain('unsafe-inline');

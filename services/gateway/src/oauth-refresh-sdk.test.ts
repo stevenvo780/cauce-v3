@@ -50,15 +50,16 @@ describe.sequential('MCP SDK refresh against durable OAuth authority', () => {
       expect(recovered.refresh_token).toBe(lost?.refresh_token);
       const identity = tokens.verify(recovered.access_token);
       expect(identity).toBeDefined();
-      expect(await restarted.validate(identity!)).toBe(true);
+      if (!identity) throw new Error('SDK received an invalid access token');
+      expect(await restarted.validate(identity)).toBe(true);
       const raced = await Promise.all([1, 2].map(() => refreshAuthorization(issuer, {
         ...options, refreshToken: recovered.refresh_token, fetchFn: e.fetchFn,
       })));
       expect(raced[0]?.refresh_token).toBe(raced[1]?.refresh_token);
       expect(await revoked(pool, f.issued.identity.grantId)).toBe(false);
-      expect((await pool.query('SELECT 1 FROM cauce_oauth_refresh_tokens WHERE grant_id=$1 AND consumed_at IS NULL', [identity!.grantId])).rowCount).toBe(1);
+      expect((await pool.query('SELECT 1 FROM cauce_oauth_refresh_tokens WHERE grant_id=$1 AND consumed_at IS NULL', [identity.grantId])).rowCount).toBe(1);
       await expect(refreshAuthorization(issuer, { ...options, refreshToken: f.issued.refreshToken, fetchFn: e.fetchFn })).rejects.toThrow();
-      expect(await revoked(pool, identity!.grantId)).toBe(false);
+      expect(await revoked(pool, identity.grantId)).toBe(false);
     } finally { await e.app.close(); }
   });
 
@@ -104,7 +105,8 @@ describe.sequential('MCP SDK refresh against durable OAuth authority', () => {
     const expiring = intercept(pool, async sql => sql.replace("date_trunc('second',at)+make_interval(secs=>$14)", "at+make_interval(secs=>$14*0)+interval '2 seconds'"));
     const store = new PostgresOAuthStore(expiring, issuer, verify, { refreshSuccessor: (hash, id) => tokens.refreshSuccessor(hash, id) });
     const approved = await store.consent(f.request.idHash, f.request.browserHash, f.session, ['cauce.read'], context());
-    const issued = await store.exchange(exchangeInput(f, approved.code!), value => tokens.issue(value), context());
+    if (!approved.code) throw new Error('fixture consent did not issue a code');
+    const issued = await store.exchange(exchangeInput(f, approved.code), value => tokens.issue(value), context());
     const e = await endpoint(store);
     const options = { clientInformation: { client_id: f.request.clientId }, resource: new URL(tokens.resource), refreshToken: issued.refreshToken, fetchFn: e.fetchFn };
     try {
