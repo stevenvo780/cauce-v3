@@ -84,6 +84,9 @@ export class OpenClawApiRunner implements CommandRunner {
     if (request.timeoutMs <= 0 || !Number.isFinite(request.timeoutMs)) {
       throw new ProcessExecutionError("INVALID_TIMEOUT", "Timeout must be positive", false);
     }
+    if (request.executionSelection?.modelId !== undefined || request.executionSelection?.reasoningEffort !== undefined) {
+      throw new ProcessExecutionError("OPENCLAW_API_SELECTION_UNSUPPORTED", "Explicit model selection requires the OpenClaw CLI transport", false);
+    }
     if (request.signal.aborted) throw this.cancelledBeforeDispatch();
 
     const phase = phaseEmitter(request.onOpenClawPhase, "api");

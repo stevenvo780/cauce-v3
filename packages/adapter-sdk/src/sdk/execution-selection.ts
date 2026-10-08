@@ -9,12 +9,14 @@ export interface InvocationWitness {
 const MODEL = /^[a-zA-Z0-9][a-zA-Z0-9_./:-]{0,127}$/u;
 const CODEX_EFFORT = new Set(['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra']);
 const CLAUDE_EFFORT = new Set(['low', 'medium', 'high', 'xhigh', 'max']);
+const OPENCLAW_EFFORT = new Set(['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'adaptive', 'max']);
 
 export function executionSelection(harness: HarnessId, value: ExecutionSelection): ExecutionSelection {
   if (value.modelId !== undefined && !MODEL.test(value.modelId)) throw new Error('invalid selected model');
   if (value.modelId === undefined && value.reasoningEffort === undefined) return {};
-  if (harness !== 'codex' && harness !== 'claude') throw new Error('harness has no verified model selection projection');
-  if (value.reasoningEffort !== undefined && !(harness === 'codex' ? CODEX_EFFORT : CLAUDE_EFFORT).has(value.reasoningEffort)) {
+  if (harness !== 'codex' && harness !== 'claude' && harness !== 'openclaw') throw new Error('harness has no verified model selection projection');
+  const efforts = harness === 'codex' ? CODEX_EFFORT : harness === 'openclaw' ? OPENCLAW_EFFORT : CLAUDE_EFFORT;
+  if (value.reasoningEffort !== undefined && !efforts.has(value.reasoningEffort)) {
     throw new Error('unsupported selected reasoning effort');
   }
   return { ...(value.modelId === undefined ? {} : { modelId: value.modelId }),
@@ -28,14 +30,15 @@ export function selectionArguments(harness: HarnessId, value: ExecutionSelection
   const selected = executionSelection(harness, value);
   return [...(selected.modelId === undefined ? [] : ['--model', selected.modelId]),
     ...(selected.reasoningEffort === undefined ? [] : harness === 'codex'
-      ? ['-c', `model_reasoning_effort=${selected.reasoningEffort}`] : ['--effort', selected.reasoningEffort])];
+      ? ['-c', `model_reasoning_effort=${selected.reasoningEffort}`]
+      : [harness === 'openclaw' ? '--thinking' : '--effort', selected.reasoningEffort])];
 }
 export function projectSelectionArguments(harness: HarnessId, args: readonly string[], selected: ExecutionSelection): string[] {
   const flags = selectionArguments(harness, selected);
   if (selected.modelId !== undefined && args.some(arg => /^(?:--model(?:=|$)|-m$|model=)/u.test(arg))) {
     throw new Error('selected model conflicts with existing command arguments');
   }
-  if (selected.reasoningEffort !== undefined && args.some(arg => /^(?:--effort(?:=|$)|model_reasoning_effort=)/u.test(arg))) {
+  if (selected.reasoningEffort !== undefined && args.some(arg => /^(?:--effort(?:=|$)|--thinking(?:=|$)|model_reasoning_effort=)/u.test(arg))) {
     throw new Error('selected reasoning effort conflicts with existing command arguments');
   }
   return [...args, ...flags];
@@ -55,7 +58,7 @@ export function witnessForInvocation(request: CommandRunRequest, commandSha256?:
   if (selected.modelId !== undefined && request.args.filter(arg => /^(?:--model(?:=|$)|-m$|model=)/u.test(arg)).length !== 1) {
     throw new Error('spawned command has an ambiguous model selection');
   }
-  if (selected.reasoningEffort !== undefined && request.args.filter(arg => /^(?:--effort(?:=|$)|model_reasoning_effort=)/u.test(arg)).length !== 1) {
+  if (selected.reasoningEffort !== undefined && request.args.filter(arg => /^(?:--effort(?:=|$)|--thinking(?:=|$)|model_reasoning_effort=)/u.test(arg)).length !== 1) {
     throw new Error('spawned command has an ambiguous reasoning effort');
   }
   if (flags.length !== 0 && !request.args.some((_arg, index) => flags.every((flag, offset) => request.args[index + offset] === flag))) {

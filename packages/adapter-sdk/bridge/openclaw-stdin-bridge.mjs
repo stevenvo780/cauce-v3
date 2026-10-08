@@ -61,7 +61,7 @@ async function claudeTranscripts(home, claudeSessionId) {
 async function runFiles(home, sessionKey, cache) {
   if (sessionKey === undefined) return [];
   const files = [];
-  const agents = join(home, ".openclaw", "agents");
+  const agents = join(process.env.OPENCLAW_STATE_DIR ?? join(home, ".openclaw"), "agents");
   for (const agent of await listNames(agents)) {
     let store;
     try { store = JSON.parse(readFileSync(join(agents, agent, "sessions", "sessions.json"), "utf8")); } catch { continue; }
@@ -193,6 +193,32 @@ function sessionKey(args) {
   return value && value.length > 0 ? value : undefined;
 }
 
+function executionOptions(args) {
+  const options = {};
+  for (let index = 0; index < args.length; index += 1) {
+    const argument = args[index];
+    const flag = ['--model', '--thinking'].find(value => argument === value || argument.startsWith(`${value}=`));
+    if (flag === undefined) continue;
+    const key = flag === '--model' ? 'model' : 'thinking';
+    const value = argument === flag ? args[++index] : argument.slice(flag.length + 1);
+    if (Object.hasOwn(options, key) || typeof value !== 'string'
+      || !(key === 'model' ? /^[A-Za-z0-9][A-Za-z0-9_./:-]{0,127}$/u.test(value)
+        : ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'adaptive', 'max'].includes(value))) {
+      throw new Error('OpenClaw execution selection is invalid or ambiguous');
+    }
+    options[key] = value;
+  }
+  const agent = process.env.CAUCE_OPENCLAW_AGENT_ID;
+  if (agent !== undefined) {
+    if (!/^[a-z][a-z0-9_-]{0,63}$/u.test(agent)) throw new Error('OpenClaw agent identity is invalid');
+    options.agent = agent;
+  }
+  const local = process.env.CAUCE_OPENCLAW_LOCAL;
+  if (local !== undefined && local !== '0' && local !== '1') throw new Error('OpenClaw local execution setting is invalid');
+  if (local === '1') options.local = true;
+  return options;
+}
+
 function possibleDistDirectories(resolvedEntry) {
   const directories = [];
   let current = dirname(resolvedEntry);
@@ -292,6 +318,7 @@ async function main() {
   phase("bridge_enter");
   const message = await readPrompt();
   const nativeSessionKey = sessionKey(process.argv.slice(2));
+  const selected = executionOptions(process.argv.slice(2));
   const chunks = [];
   const originalWrite = process.stdout.write.bind(process.stdout);
   process.stdout.write = ((chunk, encoding, callback) => {
@@ -335,7 +362,7 @@ async function main() {
     try {
       const hardMs = process.env.CAUCE_HARNESS_TIMEOUT_KIND === "hard" ? Number(process.env.CAUCE_HARNESS_TIMEOUT_MS) : Number.NaN;
       const timeout = Number.isSafeInteger(hardMs) && hardMs > 0 ? String(Math.ceil(hardMs / 1000)) : "0";
-      const request = { message, sessionKey: nativeSessionKey, json: true, deliver: false, timeout };
+      const request = { message, sessionKey: nativeSessionKey, json: true, deliver: false, timeout, ...selected };
       try {
         phase("agent_cli_started");
         returned = await agentCliCommand(request, interceptingRuntime(defaultRuntime));
