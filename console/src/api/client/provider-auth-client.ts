@@ -12,6 +12,7 @@ export interface ProviderAuthSnapshot {
   status: ProviderAuthStatus; expires_at: string; cleanup_pending: boolean; error: string | null;
 }
 export interface ProviderAuthClient {
+  resolveProviderAuthOperation(id: string): Promise<ProviderAuthRequest>;
   start(request: ProviderAuthRequest): Promise<ProviderAuthSnapshot>;
   get(id: string): Promise<ProviderAuthSnapshot>;
   verify(id: string): Promise<ProviderAuthSnapshot>;
@@ -66,6 +67,19 @@ export function providerAuthClient(request: RequestFn): ProviderAuthClient {
   const post = <T,>(url: string, body: unknown) => request<T>(url,
     { method: 'POST', body: JSON.stringify(body), cache: 'no-store', keepalive: true }, { requireCsrf: true });
   return {
+    resolveProviderAuthOperation: async operationId => {
+      const result = record(await request(`/v3/console/provider-auth/operations/${id(operationId)}/scope`, { cache: 'no-store' }));
+      const keys = ['operation_id', 'expected_operation_version', 'request_id', 'provider_id', 'account_id', 'harness_id', 'host_id', 'runtime_user', 'profile_id'];
+      if (Object.keys(result).length !== keys.length || Object.keys(result).some(key => !keys.includes(key))
+          || result.operation_id !== operationId || !Number.isSafeInteger(result.expected_operation_version)
+          || Number(result.expected_operation_version) < 0 || typeof result.request_id !== 'string'
+          || !/^[a-zA-Z0-9_-]{8,128}$/u.test(result.request_id) || !PROVIDERS.includes(String(result.provider_id))) invalid();
+      for (const key of ['account_id', 'harness_id', 'host_id', 'profile_id']) {
+        if (typeof result[key] !== 'string' || !IDENTIFIER.test(result[key])) invalid();
+      }
+      if (typeof result.runtime_user !== 'string' || !/^[a-z_][a-z0-9_-]{0,31}$/u.test(result.runtime_user)) invalid();
+      return result as unknown as ProviderAuthRequest;
+    },
     start: async input => {
       id(input.operation_id);
       if (!Number.isSafeInteger(input.expected_operation_version) || input.expected_operation_version < 0) invalid();

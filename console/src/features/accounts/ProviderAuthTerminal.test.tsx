@@ -8,14 +8,14 @@ const terminal = vi.hoisted(() => ({ writes: [] as Uint8Array[], input: undefine
 vi.mock('@xterm/xterm', () => ({ Terminal: class {
   cols = 80; rows = 24; options = terminal.options;
   constructor(options: { scrollback: number }) { terminal.options.scrollback = options.scrollback; }
-  loadAddon() {} open() {} focus() {}
+  loadAddon() { return undefined; } open() { return undefined; } focus() { return undefined; }
   write(value: Uint8Array) { terminal.writes.push(value); }
   clear() { terminal.writes = []; }
   reset() { terminal.resetCount += 1; terminal.writes = []; }
   dispose() { terminal.disposed = true; }
   onData(listener: (value: string) => void) { terminal.input = listener; return { dispose: () => { terminal.input = undefined; } }; }
 } }));
-vi.mock('@xterm/addon-fit', () => ({ FitAddon: class { fit() {} } }));
+vi.mock('@xterm/addon-fit', () => ({ FitAddon: class { fit() { return undefined; } } }));
 class Socket {
   static OPEN = 1; static sockets: Socket[] = [];
   readyState = 1; bufferedAmount = 0; binaryType = ''; sent: unknown[] = [];
@@ -28,12 +28,13 @@ class Socket {
 const snapshot: ProviderAuthSnapshot = { session_id: '00000000-0000-4000-8000-000000000051', operation_id: '00000000-0000-4000-8000-000000000050',
   provider_id: 'codex', account_id: 'main', harness_id: 'codex', host_id: 'isolated', runtime_user: 'dev', profile_id: 'main', method: 'device',
   status: 'awaiting_login', expires_at: new Date(Date.now() + 60_000).toISOString(), cleanup_pending: false, error: null };
-function client(): ProviderAuthClient { return { start: async () => snapshot, get: async () => snapshot, verify: async () => snapshot, cancel: async () => snapshot,
+function client(): ProviderAuthClient { return { resolveProviderAuthOperation: async () => { throw new Error('unused scope resolver'); },
+  start: async () => snapshot, get: async () => snapshot, verify: async () => snapshot, cancel: async () => snapshot,
   ticket: async () => ({ ticket: '00000000-0000-4000-8000-000000000052', expires_at: new Date(Date.now() + 5000).toISOString() }) }; }
 beforeEach(() => {
   terminal.writes = []; terminal.input = undefined; terminal.resetCount = 0; terminal.disposed = false; Socket.sockets = [];
   vi.stubGlobal('WebSocket', Socket);
-  vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} });
+  vi.stubGlobal('ResizeObserver', class { observe() { return undefined; } disconnect() { return undefined; } });
 });
 afterEach(() => { vi.unstubAllGlobals(); });
 describe('sensitive provider terminal lifecycle', () => {

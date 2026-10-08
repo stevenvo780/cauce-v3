@@ -67,7 +67,7 @@ export function ProviderAuthPanel({ request, client, onAuthenticated }: Props) {
   return <section aria-label="Conexión de proveedor">
     <h3>Conectar la cuenta del agente</h3>
     <p>{request.provider_id} · {request.account_id} · {request.harness_id}</p>
-    <p>{request.host_id} · {request.runtime_user} · perfil {request.profile_id}</p>
+    <p>{request.host_id} · {request.runtime_user}</p>
     {error && <p role="alert">{error}</p>}
     {!session && <button disabled={busy} onClick={() => { void run('start'); }}>Conectar cuenta</button>}
     {session?.status === 'awaiting_login' && <>

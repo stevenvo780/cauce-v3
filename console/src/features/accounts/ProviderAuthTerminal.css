@@ -2,7 +2,7 @@
   height: 20rem;
   min-width: 0;
   overflow: hidden;
-  background: #101419;
+  background: var(--surface-2);
 }
 
 .provider-auth-terminal .xterm {

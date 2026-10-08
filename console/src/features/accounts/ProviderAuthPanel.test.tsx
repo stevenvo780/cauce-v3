@@ -14,7 +14,7 @@ const { request_id: unusedRequestId, expected_operation_version: unusedVersion, 
 void unusedRequestId; void unusedVersion;
 
 describe('provider auth panel', () => {
-  it('shows the exact provider/account/host/user/profile and credits only a verified server result', async () => {
+  it('shows provider/account/host/user without a private profile and credits only a verified server result', async () => {
     const paths: string[] = [];
     const fetcher: RequestFn = async <T,>(path: string) => { paths.push(path); return (path.endsWith('/verify')
       ? { ...session, status: 'authenticated' } : session) as T; };
@@ -22,6 +22,7 @@ describe('provider auth panel', () => {
     render(<ProviderAuthPanel request={request} client={providerAuthClient(fetcher)} onAuthenticated={onAuthenticated} />);
     expect(screen.getByText('codex · codex-main · codex')).toBeInTheDocument();
     expect(screen.getByText(/kratos/)).toBeInTheDocument();
+    expect(screen.queryByText(/perfil codex-main/i)).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Conectar cuenta' }));
     await screen.findByRole('button', { name: 'Verificar conexión' });
     expect(onAuthenticated).not.toHaveBeenCalled();
