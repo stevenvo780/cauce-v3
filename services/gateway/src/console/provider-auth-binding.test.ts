@@ -61,6 +61,13 @@ describe('durable provider authentication reservations', () => {
     await pool.query("UPDATE console_users SET alias='changed' WHERE id=$1", [actor.subject.slice(8)]);
     await expect(deps.authorize(actor, request)).rejects.toMatchObject({ code: 'AUTHORITY_REVOKED' });
   });
+  it('rejects a revoked human membership even while its alias and console user remain active', async () => {
+    await pool.query("INSERT INTO agents(tenant_id,alias) VALUES('Steven','auth-human')");
+    await pool.query("INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,role,permissions) VALUES($1,'Steven','auth-human','operator',ARRAY['read','control'])", [actor.subject.slice(8)]);
+    const deps = dependencies(); await deps.authorize(actor, request);
+    await pool.query("UPDATE human_tenant_memberships SET enabled=false,revoked_at=clock_timestamp() WHERE human_id=$1", [actor.subject.slice(8)]);
+    await expect(deps.authorize(actor, request)).rejects.toMatchObject({ code: 'AUTHORITY_REVOKED' });
+  });
   it('serializes reservations across instances and rejects stale operation versions', async () => {
     const first = await dependencies().reserve(actor, request, randomUUID(), new Date(Date.now() + 10_000).toISOString());
     await expect(dependencies().reserve(actor, request, randomUUID(), new Date(Date.now() + 10_000).toISOString())).rejects.toMatchObject({ code: 'SESSION_CONFLICT' });

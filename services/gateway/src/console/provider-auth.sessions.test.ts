@@ -110,6 +110,16 @@ describe('sensitive provider bootstrap', () => {
     expect(f.state().released).toBe(false);
     await expect(f.manager.start(actor, { ...input, request_id: 'auth-request-two' })).rejects.toMatchObject({ code: 'SESSION_CONFLICT' });
   });
+  it.each(['shutdown', 'revokeOperation'] as const)('retries pending termination during %s', async action => {
+    const options = { loginStopped: false };
+    const f = fixture(options); const session = await f.manager.start(actor, input);
+    await f.manager.attach(actor, session.session_id, () => undefined);
+    await f.manager.cancel(actor, session.session_id);
+    options.loginStopped = true;
+    if (action === 'shutdown') await f.manager.shutdown(); else await f.manager.revokeOperation(input.operation_id);
+    expect(f.state().released).toBe(true);
+    expect(f.state().closeCount).toBe(2);
+  });
   it('rejects arbitrary commands and profile paths before reserving a host', async () => {
     const f = fixture();
     await expect(f.manager.start(actor, { ...input, command: 'sudo sh' })).rejects.toMatchObject({ code: 'INVALID_REQUEST' });

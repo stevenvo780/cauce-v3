@@ -155,7 +155,8 @@ export class ProviderAuthManager {
   }
 
   async revokeOperation(operationId: string): Promise<void> {
-    await Promise.all([...this.sessions.values()].filter((session) => session.request.operation_id === operationId && ACTIVE.has(session.snapshot.status))
+    await Promise.all([...this.sessions.values()].filter((session) => session.request.operation_id === operationId
+      && (ACTIVE.has(session.snapshot.status) || session.snapshot.cleanup_pending))
       .map((session) => this.finish(session, 'failed', 'AUTHORITY_REVOKED')));
   }
 
@@ -183,7 +184,7 @@ export class ProviderAuthManager {
 
   async shutdown(): Promise<void> {
     this.tickets.clear();
-    await Promise.all([...this.sessions.values()].filter((session) => ACTIVE.has(session.snapshot.status))
+    await Promise.all([...this.sessions.values()].filter((session) => ACTIVE.has(session.snapshot.status) || session.snapshot.cleanup_pending)
       .map((session) => this.finish(session, 'cancelled', null)));
   }
 

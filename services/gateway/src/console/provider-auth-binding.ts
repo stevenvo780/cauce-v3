@@ -29,6 +29,11 @@ async function human(client: DatabaseClient, actor: ProviderAuthActor): Promise<
   const account = (await client.query<{ active: boolean; role: string; tenant_id: string; alias: string }>(
     'SELECT active,role,tenant_id,alias FROM console_users WHERE id=$1::uuid FOR SHARE', [match[1]])).rows[0];
   if (!account?.active || account.role !== 'operator' || account.tenant_id !== actor.tenant_id || account.alias !== actor.alias) throw denied();
+  const membership = (await client.query<{ enabled: boolean; revoked_at: Date | null; role: string; actor_alias: string; permissions: string[] }>(
+    `SELECT enabled,revoked_at,role,actor_alias,permissions FROM human_tenant_memberships
+      WHERE human_id=$1::uuid AND tenant_id=$2 FOR SHARE`, [match[1], actor.tenant_id])).rows[0];
+  if (membership && (!membership.enabled || membership.revoked_at !== null || membership.role !== 'operator'
+      || membership.actor_alias !== actor.alias || !membership.permissions.includes('control'))) throw denied();
   const authority = (await client.query<{ allowed: boolean }>(`SELECT bool_or(policy.allow_control AND tenant.is_hub) AS allowed
     FROM memberships member JOIN tenants tenant ON tenant.id=member.tenant_id
     JOIN rooms room ON room.id=member.room_id AND room.tenant_id=member.tenant_id

@@ -310,6 +310,12 @@ export class PasswordAuthProvider implements AuthProvider {
     return (await this.load(request)).principal;
   }
 
+  async authenticateConsoleFresh(request: FastifyRequest): Promise<Principal> {
+    if (!this.handles(request)) throw new AuthError(SESSION_REQUIRED_MESSAGE);
+    this.requestCache.delete(request);
+    return (await this.load(request)).principal;
+  }
+
   async authenticateHello(request: FastifyRequest, hello: Parameters<AuthProvider['authenticateHello']>[1]): Promise<Principal> {
     if (!this.handles(request)) {
       return this.viaFallback(request, (provider) => provider.authenticateHello(request, hello));
