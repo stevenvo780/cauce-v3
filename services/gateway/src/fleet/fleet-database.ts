@@ -5,7 +5,7 @@ import pg from 'pg';
 import { createPool, type DatabasePool } from '@cauce/store';
 
 const invalid = () => new Error('Fleet authentication database TLS configuration is invalid');
-const dnsLabel = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/iu;
+const dnsLabel = /^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$/u;
 export function createFleetAuthDatabasePool(connectionString: string, environment: NodeJS.ProcessEnv = process.env): DatabasePool {
   const servername = environment.CAUCE_FLEET_DATABASE_TLS_SERVERNAME;
   if (servername === undefined) return createPool(connectionString, { applicationName: 'cauce-fleet-auth', max: 4 });

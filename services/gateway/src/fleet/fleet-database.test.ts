@@ -53,6 +53,7 @@ describe('fleet authentication database TLS over an isolated loopback transport'
   it.each([
     { NODE_ENV: 'test' }, { PGSSLMODE: 'require' }, { CAUCE_FLEET_DATABASE_TLS_SERVERNAME: '127.0.0.1' },
     { CAUCE_FLEET_DATABASE_TLS_SERVERNAME: 'postgres:5432' }, { CAUCE_FLEET_DATABASE_TLS_SERVERNAME: '-postgres' },
+    { CAUCE_FLEET_DATABASE_TLS_SERVERNAME: 'K' }, { CAUCE_FLEET_DATABASE_TLS_SERVERNAME: 'ſ' },
   ])('rejects a TLS identity configuration outside the production verified DNS policy: %j', override => {
     expect(() => createFleetAuthDatabasePool(connectionString, { ...environment, ...override })).toThrow('Fleet authentication database TLS configuration is invalid');
   });
