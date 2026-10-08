@@ -1,8 +1,8 @@
 import type { ConfigMutation, Tenant } from '@cauce/protocol';
 import type { DatabaseClient } from '../db.js';
 import { egressDestinationColumns, type EgressDestinationRow } from '../repository/egress-destinations.js';
-import { ConfigurationError } from './contracts.js';
-import { has, valueRequired } from './shared.js';
+import { ConfigurationError, type ConfigurationLeafMutation } from './contracts.js';
+import { assertConfigurationDeleteAllowed, has, valueRequired } from './shared.js';
 import {
   activeDeliveryStates, aclEdgeMutation, membershipMutation, roomMutation, tenantMutation
 } from './mutations/tenants.js';
@@ -25,6 +25,16 @@ export abstract class ConfigurationMutations {
     client: DatabaseClient,
     mutation: ConfigMutation
   ): Promise<{ inverse: ConfigMutation; summary: string }> {
+    if (mutation.resource === 'batch') {
+      const inverse: ConfigurationLeafMutation[] = [];
+      const summaries: string[] = [];
+      for (const leaf of mutation.mutations) {
+        const result = await this.execute(client, leaf);
+        inverse.unshift(...(result.inverse.resource === 'batch' ? result.inverse.mutations : [result.inverse]));
+        summaries.push(result.summary);
+      }
+      return { inverse: { resource: 'batch', action: 'apply', mutations: inverse }, summary: summaries.join('; ') };
+    }
     if (mutation.resource === 'tenant') return tenantMutation(client, mutation);
     if (mutation.resource === 'room') return roomMutation(client, mutation);
     if (mutation.resource === 'membership') return membershipMutation(client, mutation);
@@ -40,7 +50,7 @@ export abstract class ConfigurationMutations {
   }
 
   private async chainPolicy(
-    client: DatabaseClient, mutation: Extract<ConfigMutation, { resource: 'chain_policy' }>
+    client: DatabaseClient, mutation: Extract<ConfigurationLeafMutation, { resource: 'chain_policy' }>
   ): Promise<{ inverse: ConfigMutation; summary: string }> {
     const selected = await client.query<{
       progress_relay_enabled: boolean; progress_relay_max_events: number; cycle_cut_enabled: boolean;
@@ -118,7 +128,7 @@ export abstract class ConfigurationMutations {
 
 
   private async harness(
-    client: DatabaseClient, mutation: Extract<ConfigMutation, { resource: 'harness' }>
+    client: DatabaseClient, mutation: Extract<ConfigurationLeafMutation, { resource: 'harness' }>
   ): Promise<{ inverse: ConfigMutation; summary: string }> {
     const selected = await client.query<{
       display_name: string; command: string | null; capabilities: string[]; enabled: boolean;
@@ -138,6 +148,7 @@ export abstract class ConfigurationMutations {
     if (!old) throw new ConfigurationError('not_found', 'harness definition was not found');
     const oldValue = { display_name: old.display_name, command: old.command, capabilities: old.capabilities, enabled: old.enabled };
     if (mutation.action === 'delete') {
+      await assertConfigurationDeleteAllowed(client, mutation);
       await client.query('DELETE FROM harness_definitions WHERE id=$1', [mutation.id]);
       return { inverse: { resource: 'harness', action: 'create', id: mutation.id, value: oldValue }, summary: `delete harness ${mutation.id}` };
     }
@@ -154,7 +165,7 @@ export abstract class ConfigurationMutations {
   }
 
   private async policy(
-    client: DatabaseClient, mutation: Extract<ConfigMutation, { resource: 'role_policy' }>
+    client: DatabaseClient, mutation: Extract<ConfigurationLeafMutation, { resource: 'role_policy' }>
   ): Promise<{ inverse: ConfigMutation; summary: string }> {
     const selected = await client.query<{
       allow_route: boolean; allow_read: boolean; allow_control: boolean; allow_notify: boolean;
@@ -176,6 +187,7 @@ export abstract class ConfigurationMutations {
       allow_control: old.allow_control, allow_notify: old.allow_notify
     };
     if (mutation.action === 'delete') {
+      await assertConfigurationDeleteAllowed(client, mutation);
       await client.query('DELETE FROM role_policies WHERE role=$1', [mutation.role]);
       return { inverse: { resource: 'role_policy', action: 'create', role: mutation.role, value: oldValue }, summary: `delete role policy ${mutation.role}` };
     }
@@ -197,7 +209,7 @@ export abstract class ConfigurationMutations {
    * an audit event and an exact inverse operation for rollback.
    */
   private async destination(
-    client: DatabaseClient, mutation: Extract<ConfigMutation, { resource: 'egress_destination' }>
+    client: DatabaseClient, mutation: Extract<ConfigurationLeafMutation, { resource: 'egress_destination' }>
   ): Promise<{ inverse: ConfigMutation; summary: string }> {
     const key = `${mutation.tenant_id}/${mutation.alias}/${mutation.handle}`;
     const selected = await client.query<EgressDestinationRow>(
@@ -245,6 +257,7 @@ export abstract class ConfigurationMutations {
     if (!old) throw new ConfigurationError('not_found', 'egress destination was not found');
     const oldValue = destinationValue(old);
     if (mutation.action === 'delete') {
+      await assertConfigurationDeleteAllowed(client, mutation);
       await client.query(
         'DELETE FROM egress_destinations WHERE tenant_id=$1 AND alias=$2 AND handle=$3',
         [mutation.tenant_id, mutation.alias, mutation.handle]
@@ -276,7 +289,7 @@ export abstract class ConfigurationMutations {
   }
 
   private async agent(
-    client: DatabaseClient, mutation: Extract<ConfigMutation, { resource: 'agent' }>
+    client: DatabaseClient, mutation: Extract<ConfigurationLeafMutation, { resource: 'agent' }>
   ): Promise<{ inverse: ConfigMutation; summary: string }> {
     const key = `${mutation.tenant_id}/${mutation.alias}`;
     const selected = await client.query<{
@@ -284,13 +297,14 @@ export abstract class ConfigurationMutations {
       container_name: string | null; runtime_user: string | null;
       home_directory: string | null; state_directory: string | null; role_brief: string | null;
       max_concurrent_deliveries: number | null;
+      retired_at?: string | null;
     }>(
       // Goes in this SELECT or ROLLBACK drops it: `oldValue` is the body of the inverse, and an
       // absent column comes back as undeclared. `NULL` here MEANS something — "no ceiling", the
       // emergency exit of migration 015 — so losing it on rollback does not leave the default
       // value: it puts a ceiling on an agent someone had deliberately uncapped.
       `SELECT harness_id,display_name,enabled,container_name,runtime_user,home_directory,
-              state_directory,role_brief,max_concurrent_deliveries
+              state_directory,role_brief,max_concurrent_deliveries,to_jsonb(agents)->>'retired_at' AS retired_at
        FROM agents WHERE tenant_id=$1 AND alias=$2 FOR UPDATE`, [mutation.tenant_id, mutation.alias]
     );
     const old = selected.rows[0];
@@ -319,6 +333,9 @@ export abstract class ConfigurationMutations {
       };
     }
     if (!old) throw new ConfigurationError('not_found', 'agent was not found');
+    if (mutation.action === 'update' && old.retired_at) {
+      throw new ConfigurationError('conflict', 'restore the retired agent before editing its configuration');
+    }
     const oldValue = {
       harness_id: old.harness_id,
       display_name: old.display_name,
@@ -330,6 +347,7 @@ export abstract class ConfigurationMutations {
       max_concurrent_deliveries: old.max_concurrent_deliveries,
     };
     if (mutation.action === 'delete') {
+      await assertConfigurationDeleteAllowed(client, mutation);
       const active = await client.query(
         `SELECT 1 FROM deliveries d JOIN messages m ON m.id=d.message_id
          WHERE d.status IN ${activeDeliveryStates} AND (
@@ -391,7 +409,7 @@ export abstract class ConfigurationMutations {
    * publication and the enabled flag can move.
    */
   private async providerAccount(
-    client: DatabaseClient, mutation: Extract<ConfigMutation, { resource: 'provider_account' }>
+    client: DatabaseClient, mutation: Extract<ConfigurationLeafMutation, { resource: 'provider_account' }>
   ): Promise<{ inverse: ConfigMutation; summary: string }> {
     const selected = await client.query<{
       provider: string; external_account_id: string; payer_tenant_id: Tenant; label: string | null;
@@ -430,6 +448,7 @@ export abstract class ConfigurationMutations {
     if (!old) throw new ConfigurationError('not_found', 'provider account was not found');
     const oldValue = { ...old };
     if (mutation.action === 'delete') {
+      await assertConfigurationDeleteAllowed(client, mutation);
       // No explicit guard: alias_routing_ceiling holds a plain foreign key into this table, so
       // Postgres already refuses (23503) to delete an account any alias may still be routed to.
       await client.query('DELETE FROM provider_accounts WHERE id=$1', [mutation.id]);
@@ -471,7 +490,7 @@ export abstract class ConfigurationMutations {
    *  provider_accounts here rather than accepted from the caller, so the row Postgres validates
    *  against the borrow guard is always the real payer. */
   private async routingCeiling(
-    client: DatabaseClient, mutation: Extract<ConfigMutation, { resource: 'alias_routing_ceiling' }>
+    client: DatabaseClient, mutation: Extract<ConfigurationLeafMutation, { resource: 'alias_routing_ceiling' }>
   ): Promise<{ inverse: ConfigMutation; summary: string }> {
     const identity = {
       resource: 'alias_routing_ceiling', tenant_id: mutation.tenant_id,
@@ -497,16 +516,27 @@ export abstract class ConfigurationMutations {
       return { inverse: { ...identity, action: 'delete' }, summary: `grant routing ceiling ${key}` };
     }
     if (!selected.rowCount) throw new ConfigurationError('not_found', 'routing ceiling entry was not found');
-    // agent_account_bindings cascades: revoking the ceiling withdraws the routing in one step.
+    await assertConfigurationDeleteAllowed(client, mutation);
+    const bindings = await client.query<{ priority: number; enabled: boolean }>(
+      `SELECT priority,enabled FROM agent_account_bindings
+       WHERE tenant_id=$1 AND agent_alias=$2 AND account_id=$3 FOR UPDATE`,
+      [mutation.tenant_id, mutation.alias, mutation.account_id],
+    );
     await client.query(
       'DELETE FROM alias_routing_ceiling WHERE tenant_id=$1 AND alias=$2 AND account_id=$3',
       [mutation.tenant_id, mutation.alias, mutation.account_id]
     );
-    return { inverse: { ...identity, action: 'create' }, summary: `revoke routing ceiling ${key}` };
+    const binding = bindings.rows[0];
+    const inverse: ConfigMutation = binding ? { resource: 'batch', action: 'apply', mutations: [
+      { ...identity, action: 'create' },
+      { resource: 'agent_account_binding', action: 'create', tenant_id: mutation.tenant_id,
+        agent_alias: mutation.alias, account_id: mutation.account_id, value: { priority: binding.priority, enabled: binding.enabled } },
+    ] } : { ...identity, action: 'create' };
+    return { inverse, summary: `revoke routing ceiling ${key}` };
   }
 
   private async agentAccountBinding(
-    client: DatabaseClient, mutation: Extract<ConfigMutation, { resource: 'agent_account_binding' }>
+    client: DatabaseClient, mutation: Extract<ConfigurationLeafMutation, { resource: 'agent_account_binding' }>
   ): Promise<{ inverse: ConfigMutation; summary: string }> {
     const identity = {
       resource: 'agent_account_binding', tenant_id: mutation.tenant_id,
@@ -533,6 +563,7 @@ export abstract class ConfigurationMutations {
     if (!old) throw new ConfigurationError('not_found', 'agent account binding was not found');
     const oldValue = { priority: old.priority, enabled: old.enabled };
     if (mutation.action === 'delete') {
+      await assertConfigurationDeleteAllowed(client, mutation);
       await client.query(
         'DELETE FROM agent_account_bindings WHERE tenant_id=$1 AND agent_alias=$2 AND account_id=$3',
         [mutation.tenant_id, mutation.agent_alias, mutation.account_id]

@@ -5,12 +5,15 @@ import {
   ConfigurationError,
   type ConfigurationChangeResult,
   type ConfigurationErrorCode,
+  type ConfigurationDependencyPreview,
+  type ConfigurationLeafMutation,
 } from './configuration/contracts.js';
 import { ConfigurationMutations } from './configuration/mutations.js';
-import { assertRuntimeSynchronizedMutation, databaseError } from './configuration/shared.js';
+import { assertRuntimeSynchronizedMutation, configurationCapabilities, configurationDependencies, configurationIdentity, databaseError } from './configuration/shared.js';
 
 export { ConfigurationError };
-export type { ConfigurationChangeResult, ConfigurationErrorCode };
+export type { ConfigurationChangeResult, ConfigurationErrorCode, ConfigurationDependencyPreview, ConfigurationLeafMutation };
+export type { ConfigurationCapabilities, ConfigurationDependency, ConfigurationResourceCapability } from './configuration/contracts.js';
 
 interface RevisionRow {
   id: string;
@@ -23,16 +26,22 @@ interface RevisionRow {
   created_at: Date;
 }
 
-function revisionForSnapshot(row: Record<string, unknown>): Record<string, unknown> {
-  const operation = row.operation;
-  if (!isRecord(operation) || operation.resource !== 'provider_account' || !isRecord(operation.value)) {
-    return row;
+function operationForRead(operation: unknown): unknown {
+  if (!isRecord(operation)) return operation;
+  if (operation.resource === 'batch' && Array.isArray(operation.mutations)) {
+    return { ...operation, mutations: operation.mutations.map(operationForRead) };
   }
-  if (!Object.hasOwn(operation.value, 'credential_ref')) return row;
-  const value = Object.fromEntries(
-    Object.entries(operation.value).filter(([key]) => key !== 'credential_ref'),
-  );
-  return { ...row, operation: { ...operation, value } };
+  if (operation.resource !== 'provider_account' || !isRecord(operation.value)) return operation;
+  const value = Object.fromEntries(Object.entries(operation.value).filter(([key]) => key !== 'credential_ref'));
+  return { ...operation, value };
+}
+
+function mutationForRead(mutation: ConfigMutation): ConfigMutation {
+  return operationForRead(mutation) as ConfigMutation;
+}
+
+function revisionForSnapshot(row: Record<string, unknown>): Record<string, unknown> {
+  return { ...row, operation: operationForRead(row.operation) };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -49,7 +58,22 @@ export class ConfigurationRepository extends ConfigurationMutations {
   constructor(private readonly pool: DatabasePool) { super(); }
 
   async get(actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>> {
-    const hub = await withTransaction(this.pool, (client) => this.assertRead(client, actorTenant, actorAlias));
+    const authority = await withTransaction(this.pool, async (client) => {
+      const hub = await this.assertRead(client, actorTenant, actorAlias);
+      const control = await client.query<{ can_control: boolean }>(
+        `SELECT EXISTS(SELECT 1 FROM memberships membership
+         JOIN role_policies role ON role.role=membership.role
+         JOIN tenants tenant ON tenant.id=membership.tenant_id
+         JOIN rooms room ON room.id=membership.room_id AND room.tenant_id=membership.tenant_id
+         WHERE membership.tenant_id=$1 AND membership.alias=$2 AND membership.enabled
+           AND tenant.enabled AND room.enabled AND role.allow_control
+           AND to_jsonb(membership)->>'retired_at' IS NULL
+           AND to_jsonb(tenant)->>'retired_at' IS NULL AND to_jsonb(room)->>'retired_at' IS NULL) AS can_control`,
+        [actorTenant, actorAlias],
+      );
+      return { hub, control: control.rows[0]?.can_control === true };
+    });
+    const hub = authority.hub;
     const scope = hub ? null : actorTenant;
     const [
       revision, tenants, rooms, memberships, edges, harnesses, policies, destinations, chainPolicies,
@@ -57,15 +81,15 @@ export class ConfigurationRepository extends ConfigurationMutations {
     ] = await Promise.all([
         this.pool.query<{ revision: string }>('SELECT COALESCE(max(id),0)::text AS revision FROM config_revisions'),
         this.pool.query<Record<string, unknown>>(
-          `SELECT id,display_name,is_hub,enabled,created_at FROM tenants
+          `SELECT id,display_name,is_hub,enabled,created_at,to_jsonb(tenants)->>'retired_at' AS retired_at FROM tenants
            WHERE $1::text IS NULL OR id=$1 ORDER BY id`, [scope]
         ),
         this.pool.query<Record<string, unknown>>(
-          `SELECT id,tenant_id,display_name,enabled,created_at FROM rooms
+          `SELECT id,tenant_id,display_name,enabled,created_at,to_jsonb(rooms)->>'retired_at' AS retired_at FROM rooms
            WHERE $1::text IS NULL OR tenant_id=$1 ORDER BY tenant_id,id`, [scope]
         ),
         this.pool.query<Record<string, unknown>>(
-          `SELECT tenant_id,room_id,alias,role,enabled,created_at FROM memberships
+          `SELECT tenant_id,room_id,alias,role,enabled,created_at,to_jsonb(memberships)->>'retired_at' AS retired_at FROM memberships
            WHERE $1::text IS NULL OR tenant_id=$1 ORDER BY tenant_id,room_id,alias`, [scope]
         ),
         this.pool.query<Record<string, unknown>>(
@@ -110,7 +134,7 @@ export class ConfigurationRepository extends ConfigurationMutations {
            */
           `SELECT tenant_id,alias,harness_id,display_name,enabled,
                   container_name,runtime_user,home_directory,state_directory,role_brief,
-                  max_concurrent_deliveries,created_at,updated_at
+                  max_concurrent_deliveries,created_at,updated_at,to_jsonb(agents)->>'retired_at' AS retired_at
            FROM agents WHERE $1::text IS NULL OR tenant_id=$1 ORDER BY tenant_id,alias`, [scope]
         ),
         // credential_ref never leaves the database, not even for its payer: it is a locator, not a
@@ -155,15 +179,32 @@ export class ConfigurationRepository extends ConfigurationMutations {
     ]);
     return {
       revision: Number(revision.rows[0]?.revision ?? 0), observed_at: new Date().toISOString(),
-      tenants: tenants.rows, rooms: rooms.rows, memberships: memberships.rows,
+      capabilities: configurationCapabilities(actorTenant, actorAlias, hub, authority.control),
+      tenants: tenants.rows.filter((row) => !row.retired_at), rooms: rooms.rows.filter((row) => !row.retired_at),
+      memberships: memberships.rows.filter((row) => !row.retired_at),
+      retired: { tenants: tenants.rows.filter((row) => row.retired_at), rooms: rooms.rows.filter((row) => row.retired_at),
+        memberships: memberships.rows.filter((row) => row.retired_at), agents: agents.rows.filter((row) => row.retired_at) },
       acl_edges: edges.rows, harness_definitions: harnesses.rows, role_policies: policies.rows,
       chain_policies: chainPolicies.rows,
       egress_destinations: destinations.rows,
-      agents: agents.rows, provider_accounts: providerAccounts.rows,
+      agents: agents.rows.filter((row) => !row.retired_at), provider_accounts: providerAccounts.rows,
       alias_routing_ceiling: routingCeiling.rows, agent_account_bindings: agentAccountBindings.rows,
       agent_profiles: agentProfiles.rows,
       revisions: revisions.rows.map(revisionForSnapshot)
     };
+  }
+
+  async getDependencies(
+    actorTenant: Tenant, actorAlias: string, mutation: ConfigurationLeafMutation, expectedRevision?: number,
+  ): Promise<ConfigurationDependencyPreview> {
+    return withTransaction(this.pool, async (client) => {
+      const hub = await this.assertControl(client, actorTenant, actorAlias);
+      this.authorizeMutation(mutation, actorTenant, hub);
+      const revision = await this.lockRevision(client, expectedRevision);
+      const dependencies = await configurationDependencies(client, mutation);
+      return { revision, resource: mutation.resource, identity: configurationIdentity(mutation),
+        dependencies, can_delete: dependencies.every((dependency) => !dependency.blocking) };
+    });
   }
 
   async apply(
@@ -178,12 +219,14 @@ export class ConfigurationRepository extends ConfigurationMutations {
       const hub = await this.assertControl(client, actorTenant, actorAlias);
       this.authorizeMutation(mutation, actorTenant, hub);
       const revision = await this.lockRevision(client, expectedRevision);
+      const controlBefore = await this.controlState(client);
       const { inverse, summary } = await this.execute(client, mutation);
+      await this.assertRecoverableControl(client, controlBefore);
       await this.assertControl(client, actorTenant, actorAlias);
       if (dryRun) {
         return { result: {
           applied: false, dry_run: true, revision, rolled_back_revision_id: null,
-          summary, mutation, inverse_mutation: inverse
+          summary, mutation: mutationForRead(mutation), inverse_mutation: mutationForRead(inverse)
         }, rollback: true };
       }
       const inserted = await client.query<{ id: string }>(
@@ -201,7 +244,7 @@ export class ConfigurationRepository extends ConfigurationMutations {
       });
       return { result: {
         applied: true, dry_run: false, revision: nextRevision, rolled_back_revision_id: null,
-        summary, mutation, inverse_mutation: inverse
+        summary, mutation: mutationForRead(mutation), inverse_mutation: mutationForRead(inverse)
       }, rollback: false };
     });
   }
@@ -231,14 +274,16 @@ export class ConfigurationRepository extends ConfigurationMutations {
       }
       assertRuntimeSynchronizedMutation(original.inverse_operation);
       this.authorizeMutation(original.inverse_operation, actorTenant, hub);
+      const controlBefore = await this.controlState(client);
       const { inverse: redo, summary } = await this.execute(client, original.inverse_operation);
+      await this.assertRecoverableControl(client, controlBefore);
       await this.assertControl(client, actorTenant, actorAlias);
       const rollbackSummary = `rollback ${String(revisionId)}: ${summary}`;
       if (dryRun) {
         return { result: {
           applied: false, dry_run: true, revision: currentRevision,
           rolled_back_revision_id: Number(original.id), summary: rollbackSummary,
-          mutation: original.inverse_operation, inverse_mutation: redo
+          mutation: mutationForRead(original.inverse_operation), inverse_mutation: mutationForRead(redo)
         }, rollback: true };
       }
       const inserted = await client.query<{ id: string; rolled_back_revision_id: string }>(
@@ -261,7 +306,7 @@ export class ConfigurationRepository extends ConfigurationMutations {
       return { result: {
         applied: true, dry_run: false, revision: nextRevision,
         rolled_back_revision_id: rolledBackRevisionId, summary: rollbackSummary,
-        mutation: original.inverse_operation, inverse_mutation: redo
+        mutation: mutationForRead(original.inverse_operation), inverse_mutation: mutationForRead(redo)
       }, rollback: false };
     });
   }
@@ -286,8 +331,11 @@ export class ConfigurationRepository extends ConfigurationMutations {
       `SELECT tenant.is_hub FROM memberships membership
        JOIN role_policies role ON role.role=membership.role
        JOIN tenants tenant ON tenant.id=membership.tenant_id
+       JOIN rooms room ON room.id=membership.room_id AND room.tenant_id=membership.tenant_id
        WHERE membership.tenant_id=$1 AND membership.alias=$2 AND membership.enabled
-         AND tenant.enabled AND role.allow_control LIMIT 1`, [tenant, alias]
+         AND tenant.enabled AND room.enabled AND role.allow_control
+         AND to_jsonb(membership)->>'retired_at' IS NULL
+         AND to_jsonb(tenant)->>'retired_at' IS NULL AND to_jsonb(room)->>'retired_at' IS NULL LIMIT 1`, [tenant, alias]
     );
     const row = result.rows[0];
     if (!row) throw new ConfigurationError('forbidden', 'control permission is required for configuration');
@@ -299,8 +347,11 @@ export class ConfigurationRepository extends ConfigurationMutations {
       `SELECT tenant.is_hub FROM memberships membership
        JOIN role_policies role ON role.role=membership.role
        JOIN tenants tenant ON tenant.id=membership.tenant_id
+       JOIN rooms room ON room.id=membership.room_id AND room.tenant_id=membership.tenant_id
        WHERE membership.tenant_id=$1 AND membership.alias=$2 AND membership.enabled
-         AND tenant.enabled AND role.allow_read LIMIT 1`, [tenant, alias]
+         AND tenant.enabled AND room.enabled AND role.allow_read
+         AND to_jsonb(membership)->>'retired_at' IS NULL
+         AND to_jsonb(tenant)->>'retired_at' IS NULL AND to_jsonb(room)->>'retired_at' IS NULL LIMIT 1`, [tenant, alias]
     );
     const row = result.rows[0];
     if (!row) throw new ConfigurationError('forbidden', 'read permission is required for configuration');
@@ -310,6 +361,10 @@ export class ConfigurationRepository extends ConfigurationMutations {
   private authorizeMutation(mutation: ConfigMutation, actorTenant: Tenant, hub: boolean): void {
     // Waiving prior contact means writing to a group nobody in it ever addressed.
     // That is a hub-only decision even for a destination inside the actor tenant.
+    if (mutation.resource === 'batch') {
+      for (const leaf of mutation.mutations) this.authorizeMutation(leaf, actorTenant, hub);
+      return;
+    }
     if (mutation.resource === 'egress_destination' && !hub && mutation.value?.require_prior_contact === false) {
       throw new ConfigurationError('forbidden', 'waiving prior contact on an egress destination requires the hub');
     }
@@ -326,6 +381,40 @@ export class ConfigurationRepository extends ConfigurationMutations {
       if (mutation.from_tenant === actorTenant) return;
     }
     throw new ConfigurationError('forbidden', 'configuration resource is outside the actor tenant');
+  }
+
+  private async controlState(client: DatabaseClient): Promise<{ hub_control_count: number; human_control_count: number }> {
+    const selected = await client.query<{ hub_control_count: string | number; human_control_count: string | number }>(
+      `SELECT (SELECT count(*) FROM tenants tenant WHERE tenant.is_hub AND tenant.enabled
+         AND to_jsonb(tenant)->>'retired_at' IS NULL AND EXISTS(
+           SELECT 1 FROM memberships membership
+           JOIN role_policies role ON role.role=membership.role
+           JOIN rooms room ON room.id=membership.room_id AND room.tenant_id=membership.tenant_id
+           WHERE membership.tenant_id=tenant.id AND membership.enabled AND room.enabled AND role.allow_control
+             AND to_jsonb(membership)->>'retired_at' IS NULL AND to_jsonb(room)->>'retired_at' IS NULL)) AS hub_control_count,
+       (SELECT count(DISTINCT human_user.id) FROM console_users human_user
+         JOIN tenants tenant ON tenant.id=human_user.tenant_id
+         WHERE human_user.active AND human_user.role='operator' AND tenant.is_hub AND tenant.enabled
+           AND to_jsonb(tenant)->>'retired_at' IS NULL
+           AND EXISTS(SELECT 1 FROM memberships membership
+             JOIN role_policies role ON role.role=membership.role
+             JOIN rooms room ON room.id=membership.room_id AND room.tenant_id=membership.tenant_id
+             WHERE membership.tenant_id=human_user.tenant_id AND membership.alias=human_user.alias
+               AND membership.enabled AND room.enabled AND role.allow_control
+               AND to_jsonb(membership)->>'retired_at' IS NULL AND to_jsonb(room)->>'retired_at' IS NULL)) AS human_control_count`,
+    );
+    const row = selected.rows[0];
+    return { hub_control_count: Number(row?.hub_control_count ?? 0), human_control_count: Number(row?.human_control_count ?? 0) };
+  }
+
+  private async assertRecoverableControl(
+    client: DatabaseClient, before: { hub_control_count: number; human_control_count: number },
+  ): Promise<void> {
+    const after = await this.controlState(client);
+    if ((before.hub_control_count > 0 && after.hub_control_count === 0)
+      || (before.human_control_count > 0 && after.human_control_count === 0)) {
+      throw new ConfigurationError('conflict', 'configuration cannot remove the last HUB or human control authority');
+    }
   }
 
   private async lockRevision(client: DatabaseClient, expected?: number): Promise<number> {
@@ -350,9 +439,12 @@ export class ConfigurationRepository extends ConfigurationMutations {
     action: string,
     metadata: Record<string, unknown>
   ): Promise<void> {
+    const publicMetadata = { ...metadata,
+      ...('mutation' in metadata ? { mutation: operationForRead(metadata.mutation) } : {}),
+    };
     await client.query(
       `INSERT INTO audit_events(tenant_id,actor_alias,action,decision,metadata)
-       VALUES($1,$2,$3,'allow',$4::jsonb)`, [tenant, alias, action, JSON.stringify(metadata)]
+       VALUES($1,$2,$3,'allow',$4::jsonb)`, [tenant, alias, action, JSON.stringify(publicMetadata)]
     );
   }
 }
