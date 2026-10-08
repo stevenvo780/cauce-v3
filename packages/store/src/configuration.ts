@@ -83,19 +83,27 @@ export class ConfigurationRepository extends ConfigurationMutations {
         this.pool.query<{ revision: string }>('SELECT COALESCE(max(id),0)::text AS revision FROM config_revisions'),
         this.pool.query<Record<string, unknown>>(
           `SELECT id,display_name,is_hub,enabled,created_at,to_jsonb(tenants)->>'retired_at' AS retired_at FROM tenants
-           WHERE $1::text IS NULL OR id=$1 ORDER BY id`, [scope]
+           WHERE ($1::text IS NULL OR id=$1) AND to_jsonb(tenants)->>'purged_at' IS NULL ORDER BY id`, [scope]
         ),
         this.pool.query<Record<string, unknown>>(
           `SELECT id,tenant_id,display_name,enabled,created_at,to_jsonb(rooms)->>'retired_at' AS retired_at FROM rooms
-           WHERE $1::text IS NULL OR tenant_id=$1 ORDER BY tenant_id,id`, [scope]
+           WHERE ($1::text IS NULL OR tenant_id=$1) AND to_jsonb(rooms)->>'purged_at' IS NULL
+             AND NOT EXISTS(SELECT 1 FROM tenants WHERE tenants.id=rooms.tenant_id AND to_jsonb(tenants)->>'purged_at' IS NOT NULL)
+           ORDER BY tenant_id,id`, [scope]
         ),
         this.pool.query<Record<string, unknown>>(
           `SELECT tenant_id,room_id,alias,role,enabled,created_at,to_jsonb(memberships)->>'retired_at' AS retired_at FROM memberships
-           WHERE $1::text IS NULL OR tenant_id=$1 ORDER BY tenant_id,room_id,alias`, [scope]
+           WHERE ($1::text IS NULL OR tenant_id=$1)
+             AND NOT EXISTS(SELECT 1 FROM agents WHERE agents.tenant_id=memberships.tenant_id AND agents.alias=memberships.alias AND to_jsonb(agents)->>'purged_at' IS NOT NULL)
+             AND NOT EXISTS(SELECT 1 FROM rooms WHERE rooms.id=memberships.room_id AND to_jsonb(rooms)->>'purged_at' IS NOT NULL)
+             AND NOT EXISTS(SELECT 1 FROM tenants WHERE tenants.id=memberships.tenant_id AND to_jsonb(tenants)->>'purged_at' IS NOT NULL)
+           ORDER BY tenant_id,room_id,alias`, [scope]
         ),
         this.pool.query<Record<string, unknown>>(
           `SELECT from_tenant,to_tenant,enabled,allow_route,allow_read,allow_control,created_at FROM acl_edges
-           WHERE $1::text IS NULL OR from_tenant=$1 OR to_tenant=$1 ORDER BY from_tenant,to_tenant`, [scope]
+           WHERE ($1::text IS NULL OR from_tenant=$1 OR to_tenant=$1)
+             AND NOT EXISTS(SELECT 1 FROM tenants WHERE tenants.id IN (acl_edges.from_tenant,acl_edges.to_tenant) AND to_jsonb(tenants)->>'purged_at' IS NOT NULL)
+           ORDER BY from_tenant,to_tenant`, [scope]
         ),
         this.pool.query<Record<string, unknown>>(
           `SELECT id,display_name,command,capabilities,enabled,created_at,updated_at
@@ -109,7 +117,9 @@ export class ConfigurationRepository extends ConfigurationMutations {
                   allow_kinds,require_prior_contact,contact_ttl_days,min_interval_seconds,max_per_hour,
                   max_per_day,max_per_root,quiet_hours_start,quiet_hours_end,quiet_hours_tz,enabled,
                   created_at,updated_at
-           FROM egress_destinations WHERE $1::text IS NULL OR tenant_id=$1
+           FROM egress_destinations WHERE ($1::text IS NULL OR tenant_id=$1)
+             AND NOT EXISTS(SELECT 1 FROM tenants WHERE tenants.id=egress_destinations.tenant_id AND to_jsonb(tenants)->>'purged_at' IS NOT NULL)
+             AND NOT EXISTS(SELECT 1 FROM agents WHERE agents.tenant_id=egress_destinations.tenant_id AND agents.alias=egress_destinations.alias AND to_jsonb(agents)->>'purged_at' IS NOT NULL)
            ORDER BY tenant_id,alias,handle`, [scope]
         ),
         this.pool.query<Record<string, unknown>>(
@@ -139,8 +149,11 @@ export class ConfigurationRepository extends ConfigurationMutations {
                   to_jsonb(agents)->>'runtime_key' AS runtime_key,to_jsonb(agents)->>'lifecycle_state' AS lifecycle_state,
                   to_jsonb(agents)->>'primary_room_id' AS primary_room_id,to_jsonb(agents)->>'host_id' AS host_id,
                   to_jsonb(agents)->>'runtime_mode' AS runtime_mode,to_jsonb(agents)->>'systemd_user' AS systemd_user,
-                  to_jsonb(agents)->>'primary_account_id' AS primary_account_id,to_jsonb(agents)->>'model_id' AS model_id
-           FROM agents WHERE $1::text IS NULL OR tenant_id=$1 ORDER BY tenant_id,alias`, [scope]
+                  to_jsonb(agents)->>'primary_account_id' AS primary_account_id,to_jsonb(agents)->>'model_id' AS model_id,
+                  to_jsonb(agents)->>'reasoning_effort' AS reasoning_effort
+           FROM agents WHERE ($1::text IS NULL OR tenant_id=$1) AND to_jsonb(agents)->>'purged_at' IS NULL
+             AND NOT EXISTS(SELECT 1 FROM tenants WHERE tenants.id=agents.tenant_id AND to_jsonb(tenants)->>'purged_at' IS NOT NULL)
+           ORDER BY tenant_id,alias`, [scope]
         ),
         // credential_ref never leaves the database, not even for its payer: it is a locator, not a
         // secret, but rendering a listing has never needed it. A borrowing tenant additionally
@@ -152,18 +165,25 @@ export class ConfigurationRepository extends ConfigurationMutations {
                   CASE WHEN $1::text IS NULL OR payer_tenant_id=$1 THEN external_account_id END AS external_account_id,
                   CASE WHEN $1::text IS NULL OR payer_tenant_id=$1 THEN credential_ref_kind END AS credential_ref_kind
            FROM provider_accounts
-           WHERE $1::text IS NULL OR payer_tenant_id=$1 OR shared_with_pool
+           WHERE ($1::text IS NULL OR payer_tenant_id=$1 OR shared_with_pool)
+             AND NOT EXISTS(SELECT 1 FROM tenants WHERE tenants.id=provider_accounts.payer_tenant_id AND to_jsonb(tenants)->>'purged_at' IS NOT NULL)
            ORDER BY id`, [scope]
         ),
         this.pool.query<Record<string, unknown>>(
           `SELECT tenant_id,alias,account_id,account_payer_tenant,created_by_tenant,created_at
            FROM alias_routing_ceiling
-           WHERE $1::text IS NULL OR tenant_id=$1 OR account_payer_tenant=$1
+           WHERE ($1::text IS NULL OR tenant_id=$1 OR account_payer_tenant=$1)
+             AND NOT EXISTS(SELECT 1 FROM tenants WHERE tenants.id IN (alias_routing_ceiling.tenant_id,alias_routing_ceiling.account_payer_tenant) AND to_jsonb(tenants)->>'purged_at' IS NOT NULL)
+             AND NOT EXISTS(SELECT 1 FROM agents WHERE agents.tenant_id=alias_routing_ceiling.tenant_id AND agents.alias=alias_routing_ceiling.alias AND to_jsonb(agents)->>'purged_at' IS NOT NULL)
            ORDER BY tenant_id,alias,account_id`, [scope]
         ),
         this.pool.query<Record<string, unknown>>(
           `SELECT tenant_id,agent_alias,account_id,priority,enabled,created_at,updated_at
-           FROM agent_account_bindings WHERE $1::text IS NULL OR tenant_id=$1
+           FROM agent_account_bindings WHERE ($1::text IS NULL OR tenant_id=$1)
+             AND NOT EXISTS(SELECT 1 FROM tenants WHERE tenants.id=agent_account_bindings.tenant_id AND to_jsonb(tenants)->>'purged_at' IS NOT NULL)
+             AND NOT EXISTS(SELECT 1 FROM agents WHERE agents.tenant_id=agent_account_bindings.tenant_id AND agents.alias=agent_account_bindings.agent_alias AND to_jsonb(agents)->>'purged_at' IS NOT NULL)
+             AND NOT EXISTS(SELECT 1 FROM provider_accounts account JOIN tenants tenant ON tenant.id=account.payer_tenant_id
+               WHERE account.id=agent_account_bindings.account_id AND to_jsonb(tenant)->>'purged_at' IS NOT NULL)
            ORDER BY tenant_id,agent_alias,priority,account_id`, [scope]
         ),
         this.pool.query<Record<string, unknown>>(
@@ -178,7 +198,9 @@ export class ConfigurationRepository extends ConfigurationMutations {
           // which validates the full document, syncs the runtime, and records its ACK.
           `SELECT tenant_id,alias,purpose,role_summary,human_brief,responsibilities,restrictions,
                   tools,operating_rules,created_at,updated_at
-           FROM agent_profiles WHERE $1::text IS NULL OR tenant_id=$1
+           FROM agent_profiles WHERE ($1::text IS NULL OR tenant_id=$1)
+             AND NOT EXISTS(SELECT 1 FROM tenants WHERE tenants.id=agent_profiles.tenant_id AND to_jsonb(tenants)->>'purged_at' IS NOT NULL)
+             AND NOT EXISTS(SELECT 1 FROM agents WHERE agents.tenant_id=agent_profiles.tenant_id AND agents.alias=agent_profiles.alias AND to_jsonb(agents)->>'purged_at' IS NOT NULL)
            ORDER BY tenant_id,alias`, [scope]
         )
     ]);

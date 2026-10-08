@@ -8,7 +8,7 @@ test('physical runtime keys isolate shared sessions without changing the caller 
   const env = { HOME: '/home/dev', CODEX_HOME: '/home/dev/.codex-one', CAUCE_SHARED_SESSION: '1', CAUCE_RUNTIME_KEY: 'tenant-one-agent' };
   const loaded = loadSharedSessionConfig('codex', wireAlias, '/state/tenant-one-agent', env);
   assert.equal(loaded?.alias, 'tenant-one-agent');
-  assert.equal(loaded?.configDirectory, '/home/dev/.codex-one');
+  assert.equal(loaded.configDirectory, '/home/dev/.codex-one');
   assert.equal(cliSharedSessionSpec('codex', wireAlias, '/workspace', '/home/dev', env).alias, 'tenant-one-agent');
   assert.equal(loadSharedSessionConfig('codex', wireAlias, '/state/two', { ...env, CAUCE_RUNTIME_KEY: 'tenant-two-agent' })?.alias, 'tenant-two-agent');
   assert.equal(wireAlias, 'same_alias');

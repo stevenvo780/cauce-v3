@@ -103,6 +103,8 @@ const proyectos = [
 export default defineConfig({
   resolve: {
     alias: [
+      { find: /^@cauce\/protocol\/configuration$/,
+        replacement: resolve(RAIZ, 'packages/protocol/src/configuration.ts') },
       { find: /^@cauce\/protocol$/, replacement: paquete('protocol') },
       { find: /^@cauce\/store$/, replacement: paquete('store') },
       { find: /^@cauce\/adapter-sdk$/, replacement: paquete('adapter-sdk') },
