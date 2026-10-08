@@ -9,6 +9,14 @@
       "types": "./src/index.ts",
       "import": "./dist/index.js"
     },
+    "./fleet-operation": {
+      "types": "./src/fleet-operation.ts",
+      "import": "./dist/fleet-operation.js"
+    },
+    "./configuration": {
+      "types": "./src/configuration.ts",
+      "import": "./dist/configuration.js"
+    },
     "./harness-consumption": {
       "types": "./src/harness-consumption.ts",
       "import": "./dist/harness-consumption.js"

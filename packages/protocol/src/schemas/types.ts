@@ -13,7 +13,7 @@ import type {
   NotifyRequestSchema,
   PublishMessageSchema,
 } from './messages.js';
-import type { ConfigMutationSchema } from './configuration.js';
+import type { ConfigLeafMutationSchema, ConfigMutationSchema } from './configuration.js';
 import type {
   ConsolePublishIntentConfirmResultSchema,
   ConsolePublishIntentConfirmSchema,
@@ -64,6 +64,7 @@ export type DelegationRejectionNotice = z.infer<typeof DelegationRejectionSchema
 export type DelegationMaterializationNotice = z.infer<typeof DelegationMaterializationSchema>;
 export type ChainGateNotice = z.infer<typeof ChainGateSchema>;
 export type ConfigMutation = z.infer<typeof ConfigMutationSchema>;
+export type ConfigLeafMutation = z.infer<typeof ConfigLeafMutationSchema>;
 export type NotifyKind = z.infer<typeof NotifyKindSchema>;
 export type NotifyRequest = z.infer<typeof NotifyRequestSchema>;
 export type WsInbound = z.infer<typeof WsInboundSchema>;

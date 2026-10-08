@@ -3,20 +3,21 @@ import { AliasSchema, TenantSchema } from './core.js';
 import { EgressHandleSchema, NotifyKindSchema } from './messages.js';
 
 const ConfigActionSchema = z.enum(['create', 'update', 'delete']);
+const RetirableConfigActionSchema = z.enum(['create', 'update', 'delete', 'retire', 'restore']);
 const ConfigRevisionSchema = z.number().int().nonnegative();
 const OptionalLabelSchema = z.string().trim().min(1).max(128).nullable().optional();
 
 const TenantConfigMutationSchema = z.object({
-  resource: z.literal('tenant'), action: ConfigActionSchema, id: TenantSchema,
+  resource: z.literal('tenant'), action: RetirableConfigActionSchema, id: TenantSchema,
   value: z.object({ display_name: OptionalLabelSchema, is_hub: z.boolean().optional(), enabled: z.boolean().optional() }).strict().optional()
 }).strict();
 const RoomConfigMutationSchema = z.object({
-  resource: z.literal('room'), action: ConfigActionSchema, tenant_id: TenantSchema,
+  resource: z.literal('room'), action: RetirableConfigActionSchema, tenant_id: TenantSchema,
   id: z.string().min(1).max(128),
   value: z.object({ display_name: OptionalLabelSchema, enabled: z.boolean().optional() }).strict().optional()
 }).strict();
 const MembershipConfigMutationSchema = z.object({
-  resource: z.literal('membership'), action: ConfigActionSchema, tenant_id: TenantSchema,
+  resource: z.literal('membership'), action: RetirableConfigActionSchema, tenant_id: TenantSchema,
   room_id: z.string().min(1).max(128), alias: AliasSchema,
   value: z.object({ role: z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/).optional(), enabled: z.boolean().optional() }).strict().optional()
 }).strict();
@@ -180,16 +181,22 @@ export const AgentAccountBindingConfigMutationSchema = z.object({
   }).strict().optional()
 }).strict();
 
-export const ConfigMutationSchema = z.discriminatedUnion('resource', [
+export const ConfigLeafMutationSchema = z.discriminatedUnion('resource', [
   TenantConfigMutationSchema, RoomConfigMutationSchema, MembershipConfigMutationSchema,
   AclEdgeConfigMutationSchema, HarnessConfigMutationSchema, RolePolicyConfigMutationSchema,
   ChainPolicyConfigMutationSchema, EgressDestinationConfigMutationSchema,
   AgentConfigMutationSchema, ProviderAccountConfigMutationSchema,
   AliasRoutingCeilingConfigMutationSchema, AgentAccountBindingConfigMutationSchema
 ]);
+export const ConfigBatchMutationSchema = z.object({
+  resource: z.literal('batch'), action: z.literal('apply'),
+  mutations: z.array(ConfigLeafMutationSchema).min(1).max(200),
+}).strict();
+export const ConfigMutationSchema = z.union([ConfigLeafMutationSchema, ConfigBatchMutationSchema]);
 export const ConfigChangeRequestSchema = z.object({
   dry_run: z.boolean().default(true), expected_revision: ConfigRevisionSchema.optional(), mutation: ConfigMutationSchema
-}).strict();
+}).strict().refine((change) => change.mutation.resource !== 'batch' || change.mutation.mutations.length <= 100,
+  { message: 'configuration change accepts at most 100 mutations', path: ['mutation', 'mutations'] });
 export const ConfigRollbackRequestSchema = z.object({
   dry_run: z.boolean().default(true), expected_revision: ConfigRevisionSchema.optional()
 }).strict();
