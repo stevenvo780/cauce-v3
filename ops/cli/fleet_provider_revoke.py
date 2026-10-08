@@ -74,8 +74,12 @@ def revoke(packet: dict) -> dict:
         raise ValueError("baseline Cauce credentials have no exact approved inventory")
     if not references["credentials"] and legacy is None and references.get("fleet_baseline") is not False:
         raise ValueError("empty Cauce credentials have no durable absence authority")
-    from fleet_executor_legacy_credentials import verify_absence
-    verify_absence(references, target, checked_reference)
+    if 'central' in references:
+        from fleet_executor_authority import verify_absence
+        verify_absence(references['central'], target, packet['operation_id'])
+    else:
+        from fleet_executor_legacy_credentials import verify_absence
+        verify_absence(references, target, checked_reference)
     origin = packet["transport"]["gateway_url"]
     credentials = list(references["credentials"].items())
     if legacy is not None:

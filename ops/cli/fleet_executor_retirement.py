@@ -62,7 +62,7 @@ def credential_references(policy: dict, agent: dict) -> dict:
             checked_file(private, True)
             row.update(certificate_path=str(certificate), key_path=str(private),
                        certificate_fingerprint=hashlib.sha256(ssl.PEM_cert_to_DER_cert(pem.decode('ascii'))).hexdigest())
-        elif private.exists() or private.is_symlink():
+        elif (private.exists() or private.is_symlink()) and 'authority' not in policy:
             raise SafeFailure('credential pair is incomplete before revocation')
         if token.exists() or token.is_symlink():
             raw = checked_file(token, True).strip()

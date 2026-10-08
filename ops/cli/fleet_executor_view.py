@@ -96,14 +96,25 @@ def payload_for(policy: dict, agent: dict, bootstrap: bool) -> dict:
     key, kind = agent['runtime_key'], 'bootstrap' if bootstrap else 'normal'
     pair = pathlib.Path(policy['roots']['pki']) / kind / key
     signer = policy.get('signer')
-    if not isinstance(signer, dict):
-        raise SafeFailure('runtime has no approved Cauce credential signer')
-    pair_proof(pair, key, pathlib.Path(signer['certificate']))
+    if 'authority' in policy:
+        from fleet_executor_authority import proof_for
+        proof_for(policy, agent, bootstrap=bootstrap)
+        ca = policy['authority']['ca_certificate']
+    else:
+        if not isinstance(signer, dict):
+            raise SafeFailure('runtime has no approved Cauce credential signer')
+        pair_proof(pair, key, pathlib.Path(signer['certificate']))
+        ca = signer['certificate']
     source = {'agent.crt': pair / ('agent-' + key + '.crt'), 'agent.key': pair / ('agent-' + key + '.key'),
               'agent.token': pathlib.Path(policy['roots']['tokens']) / kind / (key + '.token'),
-              'ca.crt': pathlib.Path(policy.get('transport', {}).get('ca_certificate', signer['certificate']))}
+              'ca.crt': pathlib.Path(ca if 'authority' in policy else policy.get('transport', {}).get('ca_certificate', ca))}
     files = {name: base64.b64encode(checked_file(filename, name in {'agent.key', 'agent.token'})).decode('ascii')
-             for name, filename in source.items()}
+             for name, filename in source.items() if name != 'ca.crt'}
+    if 'authority' in policy:
+        from fleet_executor_authority import public_ca
+        files['ca.crt'] = base64.b64encode(public_ca(policy['authority'])).decode('ascii')
+    else:
+        files['ca.crt'] = base64.b64encode(checked_file(source['ca.crt'])).decode('ascii')
     state = pathlib.Path(policy['roots']['state'])
     receipt = load_desired_fleet(state)
     files['inventory/desired-fleet.json'] = base64.b64encode(json.dumps(receipt).encode()).decode('ascii')

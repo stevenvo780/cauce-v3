@@ -57,6 +57,8 @@ class Executor:
         if self.journal.get('request_sha256') != self.request_hash:
             raise SafeFailure('operation replay changed its declarative request')
         inputs = {name: context[name] for name in ('fenced_targets', 'previous_agents', 'desired_memberships')}
+        if 'global_desired_memberships' in context:
+            inputs['global_desired_memberships'] = context['global_desired_memberships']
         inputs_hash = hashlib.sha256(json.dumps(inputs, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
         if self.journal.setdefault('inputs_sha256', inputs_hash) != inputs_hash:
             raise SafeFailure('operation replay changed its fenced placements or membership intent')
@@ -140,6 +142,13 @@ class Executor:
         return self.prepare_credentials(agent, self.generation(), bootstrap=True)
 
     def prepare_credentials(self, agent: dict, generation: pathlib.Path, *, bootstrap: bool):
+        if 'authority' in self.policy:
+            from fleet_executor_authority import prepare
+            proof = prepare(self.policy, self.context, agent, generation / 'flota.json',
+                generation / ('bootstrap/manifests' if bootstrap else 'manifests') / (agent['runtime_key'] + '.yaml'), bootstrap=bootstrap)
+            self.journal[('bootstrap' if bootstrap else 'normal') + '_credentials'] = proof['certificate_fingerprint']
+            self.save()
+            return {'certificate_fingerprint': proof['certificate_fingerprint']}
         key = agent['runtime_key']
         kind = 'bootstrap' if bootstrap else 'normal'
         snapshot = generation / 'flota.json'
@@ -213,14 +222,18 @@ class Executor:
             references = credential_references(self.policy, row)
             key = row['runtime_key']
             if key in revoked and (references.get('legacy') != revoked[key].get('legacy')
-                    or references['credentials'] and references != revoked[key]):
+                    or references['credentials'] and references != {name: value for name, value in revoked[key].items() if name != 'central'}):
                 raise SafeFailure('credential identity changed after observed revocation')
-            remove_registry_principals(self.policy, row, script)
+            if 'authority' in self.policy:
+                from fleet_executor_authority import revoke
+                references['central'] = revoke(self.policy, self.context, row, self.journal, self.save)
+            else:
+                remove_registry_principals(self.policy, row, script)
             if key not in revoked or references.get('legacy') is not None:
                 observed = invoke_revoke(self.policy, self.context, row, references)
                 if observed.get('revocation_verified') is not True:
                     raise SafeFailure('old Cauce credentials were not observed rejected')
-                if references.get('legacy') is not None:
+                if references.get('legacy') is not None and 'authority' not in self.policy:
                     from fleet_executor_legacy_credentials import capture_absence
                     self.journal.setdefault('legacy_authority_absence', {})[key] = capture_absence(references, row)
                 stop(self.policy, row)
@@ -238,6 +251,9 @@ class Executor:
             raise SafeFailure('purge requires observed stop and credential revocation')
         rows = scoped_agents(self.policy, self.context)
         for row in rows:
+            if 'authority' in self.policy:
+                from fleet_executor_authority import revoke
+                revoke(self.policy, self.context, row, self.journal, self.save)
             if credential_references(self.policy, row)['credentials']:
                 raise SafeFailure('new credential material appeared after revocation')
             purge_runtime(self.policy, row)
@@ -337,7 +353,7 @@ class Executor:
         self.generation()
         target = self.context['request']['target']
         source = copy.deepcopy(self.context['snapshot'])
-        for member in self.context['desired_memberships']:
+        for member in self.context.get('global_desired_memberships', self.context['desired_memberships']):
             if member.get('tenant_id') != target['tenant_id'] \
                     or (target['resource'] == 'room' and member.get('room_id') != target['room_id']) \
                     or type(member.get('enabled')) is not bool:
@@ -380,16 +396,23 @@ class Executor:
             references = credential_references(self.policy, row)
             key = row['runtime_key']
             if key in revoked and references.get('legacy') is None:
+                if 'authority' in self.policy:
+                    from fleet_executor_authority import revoke
+                    revoke(self.policy, self.context, row, self.journal, self.save)
                 if references['credentials']:
                     raise SafeFailure('new credentials appeared after compensation')
                 remove_runtime_credentials(self.policy, row)
                 continue
-            remove_registry_principals(self.policy, row, script)
-            if references['credentials'] or references.get('legacy') is not None:
+            if 'authority' in self.policy:
+                from fleet_executor_authority import revoke
+                references['central'] = revoke(self.policy, self.context, row, self.journal, self.save)
+            else:
+                remove_registry_principals(self.policy, row, script)
+            if references['credentials'] or references.get('legacy') is not None or 'central' in references:
                 observed = invoke_revoke(self.policy, self.context, row, references)
                 if observed.get('revocation_verified') is not True:
                     raise SafeFailure('compensation credential rejection was not observed')
-                if references.get('legacy') is not None:
+                if references.get('legacy') is not None and 'authority' not in self.policy:
                     from fleet_executor_legacy_credentials import capture_absence
                     self.journal.setdefault('legacy_authority_absence', {})[key] = capture_absence(references, row)
             remove_credentials(self.policy, row)
@@ -409,6 +432,8 @@ class Executor:
 
 
 def perform(policy: dict, context: dict, step: str) -> dict:
+    if context.get('fleet_scope', {}).get('host_id', policy['host_id']) != policy['host_id']:
+        raise SafeFailure('coordinated effect belongs to another host')
     target = context['request']['target']
     if target['resource'] == 'agent':
         approve_agent(policy, target_agent(context))

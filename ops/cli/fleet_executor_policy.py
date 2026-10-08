@@ -75,7 +75,7 @@ def load_policy(filename: pathlib.Path) -> dict:
     finally:
         os.close(parent)
     required = {'schemaVersion', 'host_id', 'executor_user', 'roots', 'native', 'containers', 'bundles', 'profiles', 'hooks'}
-    if not isinstance(policy, dict) or set(policy) - {'signer', 'transport', 'container_templates', 'profile_templates', 'shared_containers', 'legacy_credentials'} != required or type(policy['schemaVersion']) is not int or policy['schemaVersion'] != 1:
+    if not isinstance(policy, dict) or set(policy) - {'signer', 'authority', 'transport', 'container_templates', 'profile_templates', 'shared_containers', 'legacy_credentials'} != required or type(policy['schemaVersion']) is not int or policy['schemaVersion'] != 1:
         raise SafeFailure('invalid executor policy schema')
     if policy['executor_user'] != pwd.getpwuid(os.geteuid()).pw_name or re.fullmatch(r'[a-z][a-z0-9_-]{0,63}', policy['host_id']) is None:
         raise SafeFailure('executor host or execution user differs')
@@ -103,6 +103,13 @@ def load_policy(filename: pathlib.Path) -> dict:
         digest(path(transport['ca_certificate']))
         if 'registry_directory' in transport:
             path(transport['registry_directory'])
+    if 'authority' in policy:
+        if details.st_mode & 0o077:
+            raise SafeFailure('central authority policy must remain private')
+        if 'signer' in policy:
+            raise SafeFailure('central authority cannot carry a local signer')
+        from fleet_executor_authority import validate_authority
+        validate_authority(policy['authority'], policy['host_id'])
     from fleet_executor_templates import validate_templates
     validate_templates(policy)
     from fleet_executor_legacy import validate_shared_containers
@@ -114,10 +121,21 @@ def load_policy(filename: pathlib.Path) -> dict:
 
 def validate_payload(document) -> dict:
     required = {'operation_id', 'request', 'fenced_targets', 'previous_agents', 'desired_memberships'}
-    if not isinstance(document, dict) or set(document) - {'snapshot', 'trusted_accounts'} != required:
+    if not isinstance(document, dict) or set(document) - {'snapshot', 'trusted_accounts', 'fleet_scope', 'global_desired_memberships'} != required:
         raise SafeFailure('invalid execution payload')
     if str(uuid.UUID(document['operation_id'])) != document['operation_id']:
         raise SafeFailure('invalid operation identity')
+    if 'fleet_scope' in document:
+        scope = document['fleet_scope']
+        fields = {'operation_id', 'host_id', 'scope_sha256', 'prepared_revision', 'worker_id', 'claim_token', 'claim_epoch'}
+        if not isinstance(scope, dict) or set(scope) != fields or scope['operation_id'] != document['operation_id'] \
+                or re.fullmatch(r'[a-z][a-z0-9_-]{0,63}', scope.get('host_id', '')) is None \
+                or re.fullmatch(r'[a-f0-9]{64}', scope.get('scope_sha256', '')) is None \
+                or re.fullmatch(r'[A-Za-z0-9_-]{1,128}', scope.get('worker_id', '')) is None \
+                or type(scope['prepared_revision']) is not int or scope['prepared_revision'] < 1 \
+                or type(scope['claim_epoch']) is not int or scope['claim_epoch'] < 0 \
+                or str(uuid.UUID(scope['claim_token'])) != scope['claim_token']:
+            raise SafeFailure('invalid coordinated host scope')
     request = document['request']
     if not isinstance(request, dict) or set(request) != {'kind', 'target', 'parameters', 'expected_revision', 'idempotency_key'}:
         raise SafeFailure('invalid declarative request')
@@ -145,6 +163,26 @@ def validate_payload(document) -> dict:
         raise SafeFailure('invalid request revision or idempotency key')
     if request['kind'] in {'create', 'update', 'start', 'stop'} and target['resource'] != 'agent':
         raise SafeFailure('requested lifecycle requires an agent')
+    if 'global_desired_memberships' in document:
+        rows = document['global_desired_memberships']
+        if request['kind'] != 'restore' or target['resource'] not in {'room', 'tenant'} \
+                or not isinstance(rows, list) or len(rows) > 1000:
+            raise SafeFailure('global membership intent requires a bounded group restore')
+        identities = set()
+        for row in rows:
+            if not isinstance(row, dict) or set(row) != {'tenant_id', 'alias', 'room_id', 'role', 'enabled'} \
+                    or row['tenant_id'] != target['tenant_id'] \
+                    or not isinstance(row['alias'], str) or re.fullmatch(r'[a-z][a-z0-9_-]{0,63}', row['alias']) is None \
+                    or not bounded_text(row['room_id'], 128) or not bounded_text(row['role'], 64) \
+                    or type(row['enabled']) is not bool \
+                    or (target['resource'] == 'room' and row['room_id'] != target['room_id']):
+                raise SafeFailure('global membership intent is outside the group target')
+            identity = (row['tenant_id'], row['alias'], row['room_id'])
+            if identity in identities:
+                raise SafeFailure('global membership intent is ambiguous')
+            identities.add(identity)
+        if any(row not in rows for row in document['desired_memberships']):
+            raise SafeFailure('local membership intent differs from global intent')
     parameters = request['parameters']
     if not isinstance(parameters, dict):
         raise SafeFailure('invalid request parameters')
