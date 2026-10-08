@@ -1,7 +1,7 @@
 import type { DatabaseClient } from '../db.js';
 import { validateFleetTarget } from './fleet-operation-authority.js';
 import { assertFleetOperationAuthority } from './fleet-operation-human.js';
-import { FleetOperationError, type FleetOperationRow, type FencedFleetTarget } from './fleet-operation-contracts.js';
+import { FleetOperationError, isRegistryDraft, type FleetOperationRow, type FencedFleetTarget } from './fleet-operation-contracts.js';
 import { prepareFleetTransition, settleFleetTransition } from './fleet-operation-lifecycle.js';
 import { admitFleetAgent } from './fleet-operation-admission.js';
 export { admitFleetAgent } from './fleet-operation-admission.js';
@@ -49,8 +49,9 @@ export async function prepareAgentDesired(client: DatabaseClient, row: FleetOper
     throw new FleetOperationError('invalid_input', 'agent preparation requires declarative parameters');
   }
   const { target, parameters } = request;
-  const prior = (await client.query<{ retired_at: Date | null; purged_at: Date | null }>(
-    'SELECT retired_at,purged_at FROM agents WHERE tenant_id=$1 AND alias=$2 FOR UPDATE', [target.tenant_id, target.alias])).rows[0];
+  const prior = (await client.query<{ retired_at: Date | null; purged_at: Date | null; runtime_key: string | null; enabled: boolean; lifecycle_state: string }>(
+    'SELECT retired_at,purged_at,runtime_key,enabled,lifecycle_state FROM agents WHERE tenant_id=$1 AND alias=$2 FOR UPDATE',
+    [target.tenant_id, target.alias])).rows[0];
   if (prior?.purged_at) throw new FleetOperationError('conflict', 'purged identity cannot be reused');
   if (prior?.retired_at) throw new FleetOperationError('conflict', 'restore the retired agent before updating it');
   await client.query('UPDATE memberships SET enabled=false WHERE tenant_id=$1 AND alias=$2', [target.tenant_id, target.alias]);
@@ -64,7 +65,8 @@ export async function prepareAgentDesired(client: DatabaseClient, row: FleetOper
     parameters.primary_room_id, placement.host_id, placement.mode, placement.container_name ?? `host:${placement.host_id}`,
     placement.runtime_user, placement.home_directory, placement.state_directory, placement.systemd_user ?? 'stev',
     parameters.primary_account_id ?? null, parameters.model_id ?? null, parameters.reasoning_effort ?? null];
-  const sql = request.kind === 'create' ? `INSERT INTO agents(tenant_id,alias,harness_id,display_name,enabled,runtime_key,primary_room_id,
+  const inserting = request.kind === 'create' && !(prior && isRegistryDraft(prior));
+  const sql = inserting ? `INSERT INTO agents(tenant_id,alias,harness_id,display_name,enabled,runtime_key,primary_room_id,
       host_id,runtime_mode,container_name,runtime_user,home_directory,state_directory,systemd_user,primary_account_id,model_id,reasoning_effort,lifecycle_state)
     VALUES($1,$2,$3,$4,false,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,'provisioning')`
     : `UPDATE agents SET harness_id=$3,display_name=$4,enabled=false,runtime_key=$5,primary_room_id=$6,host_id=$7,
@@ -73,7 +75,7 @@ export async function prepareAgentDesired(client: DatabaseClient, row: FleetOper
       WHERE tenant_id=$1 AND alias=$2 AND purged_at IS NULL`;
   await client.query(sql, parametersList);
   if (request.kind === 'create') {
-    await client.query(`INSERT INTO agent_profiles(tenant_id,alias,purpose) VALUES($1,$2,$3)`,
+    await client.query(`INSERT INTO agent_profiles(tenant_id,alias,purpose) VALUES($1,$2,$3) ON CONFLICT DO NOTHING`,
       [target.tenant_id, target.alias, `Agente ${parameters.display_name ?? target.alias}`]);
   }
 }

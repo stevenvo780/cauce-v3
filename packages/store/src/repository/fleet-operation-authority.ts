@@ -1,7 +1,7 @@
 import { FleetOperationRequestSchema, sha256Hex, type FleetOperationPreview, type FleetOperationRequest, type FleetTarget } from '@cauce/protocol';
 import type { DatabaseClient } from '../db.js';
 import { fleetPurgeDependencies } from './fleet-operation-lifecycle.js';
-import { FleetOperationError } from './fleet-operation-contracts.js';
+import { FleetOperationError, isRegistryDraft } from './fleet-operation-contracts.js';
 import { assertFleetHostAccess } from './fleet-operation-hosts.js';
 
 export function fleetRequest(value: unknown): FleetOperationRequest {
@@ -60,10 +60,12 @@ export async function validateFleetTarget(
   }
   let host: string | undefined;
   if (target.resource === 'agent') {
-    const agent = (await client.query<{ host_id: string | null; runtime_key: string | null; primary_room_id: string | null; harness_id: string; purged_at: Date | null }>(
-      'SELECT host_id,runtime_key,primary_room_id,harness_id,purged_at FROM agents WHERE tenant_id=$1 AND alias=$2', [target.tenant_id, target.alias])).rows[0];
+    const agent = (await client.query<{ host_id: string | null; runtime_key: string | null; primary_room_id: string | null; harness_id: string;
+      purged_at: Date | null; retired_at: Date | null; enabled: boolean; lifecycle_state: string }>(
+      `SELECT host_id,runtime_key,primary_room_id,harness_id,purged_at,retired_at,enabled,lifecycle_state
+         FROM agents WHERE tenant_id=$1 AND alias=$2`, [target.tenant_id, target.alias])).rows[0];
     if (agent?.purged_at) throw new FleetOperationError('conflict', 'purged agent identity is permanent');
-    if (request.kind === 'create' && agent && !prepared) throw new FleetOperationError('conflict', 'agent identity already exists');
+    if (request.kind === 'create' && agent && !prepared && !isRegistryDraft(agent)) throw new FleetOperationError('conflict', 'agent identity already exists');
     if (request.kind !== 'create' && !agent) throw new FleetOperationError('not_found', 'target agent was not found');
     if (request.kind === 'create' || request.kind === 'update') {
       const parameters = request.parameters;
