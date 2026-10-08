@@ -5,7 +5,7 @@ import { preparePostgresSuite } from './postgres-suite.js';
 import { startTestCaseDatabase, startTestDatabaseThrough, type EmptyTestDatabase, type TestDatabase } from '../../../tests/helpers/postgres.js';
 import { sha256Hex } from '@cauce/protocol';
 
-const version = '047_ui_fleet_lifecycle.sql';
+const version = '048_ui_fleet_lifecycle.sql';
 let database: TestDatabase | undefined;
 let current: EmptyTestDatabase | undefined;
 let pool: DatabasePool;

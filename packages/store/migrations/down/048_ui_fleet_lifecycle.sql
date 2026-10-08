@@ -1,10 +1,10 @@
 SELECT pg_advisory_xact_lock(783_003_003);
-SELECT pg_advisory_xact_lock(783_003_047);
+SELECT pg_advisory_xact_lock(783_003_048);
 LOCK TABLE fleet_operation_events,fleet_operations,fleet_runtime_identities,agents,tenants,rooms,memberships IN ACCESS EXCLUSIVE MODE;
 DO $$
 BEGIN
-  IF EXISTS (SELECT 1 FROM schema_migrations WHERE version>'047_ui_fleet_lifecycle.sql') THEN
-    RAISE EXCEPTION 'cannot downgrade schema 047 while a later migration is present';
+  IF EXISTS (SELECT 1 FROM schema_migrations WHERE version>'048_ui_fleet_lifecycle.sql') THEN
+    RAISE EXCEPTION 'cannot downgrade schema 048 while a later migration is present';
   END IF;
   IF EXISTS (SELECT 1 FROM fleet_operations) OR EXISTS (SELECT 1 FROM fleet_operation_events)
      OR EXISTS (SELECT 1 FROM fleet_runtime_identities WHERE NOT baseline)
@@ -36,5 +36,5 @@ ALTER TABLE agents DROP CONSTRAINT agents_primary_room_membership, DROP CONSTRAI
 ALTER TABLE tenants DROP CONSTRAINT tenants_retirement_admission, DROP COLUMN retired_at, DROP COLUMN retired_enabled;
 ALTER TABLE rooms DROP CONSTRAINT rooms_retirement_admission, DROP COLUMN retired_at, DROP COLUMN retired_enabled;
 ALTER TABLE memberships DROP CONSTRAINT memberships_retirement_admission, DROP COLUMN retired_at, DROP COLUMN retired_enabled;
-DELETE FROM schema_migration_ledger WHERE version='047_ui_fleet_lifecycle.sql';
-DELETE FROM schema_migrations WHERE version='047_ui_fleet_lifecycle.sql';
+DELETE FROM schema_migration_ledger WHERE version='048_ui_fleet_lifecycle.sql';
+DELETE FROM schema_migrations WHERE version='048_ui_fleet_lifecycle.sql';

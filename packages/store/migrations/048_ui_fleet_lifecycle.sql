@@ -1,4 +1,4 @@
-SELECT pg_advisory_xact_lock(783_003_047);
+SELECT pg_advisory_xact_lock(783_003_048);
 
 ALTER TABLE tenants ADD COLUMN retired_at timestamptz, ADD COLUMN retired_enabled boolean;
 ALTER TABLE rooms ADD COLUMN retired_at timestamptz, ADD COLUMN retired_enabled boolean;
