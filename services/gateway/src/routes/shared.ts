@@ -1,13 +1,14 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { FastifyReply, FastifyRequest } from 'fastify';
+import { z } from 'zod';
 import {
-  AuthenticatedPublishSchema, PROTOCOL_VERSION,
+  AuthenticatedPublishSchema, ConfigurationDependencySchema, PROTOCOL_VERSION,
   publishReceiptCausalHash, publishRequestHash, PublishResultSchema,
   type ConsolePublishIntentCommand, type ConsolePublishIntentPrepare,
   type PublishMessage,
 } from '@cauce/protocol';
 import {
-  AgentRootLimitError, StoreError, type PublishResult, type StoreErrorCode,
+  AgentRootLimitError, ConfigurationError, StoreError, type PublishResult, type StoreErrorCode,
 } from '@cauce/store';
 import {
   AuthError, AuthorizationError, validatePrincipal,
@@ -57,6 +58,14 @@ export function replyError(reply: FastifyReply, error: unknown): void {
   if (error instanceof AgentRootLimitError) {
     void reply.code(409).send({
       error: error.reason, message: error.message, limit: error.limit, open_roots: error.openRoots,
+    });
+    return;
+  }
+  if (error instanceof ConfigurationError) {
+    const dependencies = z.array(ConfigurationDependencySchema).safeParse(error.dependencies);
+    void reply.code(STORE_ERROR_STATUS[error.code] ?? 500).send({
+      error: error.code, message: error.message,
+      ...(!dependencies.success || dependencies.data.length === 0 ? {} : { dependencies: dependencies.data }),
     });
     return;
   }

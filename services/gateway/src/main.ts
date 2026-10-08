@@ -6,7 +6,8 @@ import { createOAuthPasswordSession } from './oauth-password-session.js';
 import type { OAuthAuthorizationServerOptions } from './oauth-authorization-server.js';
 import { configuredContextRepository } from './console/context-repository/binding.js';
 import { readFile } from 'node:fs/promises';
-import { createPool, type DatabasePool } from '@cauce/store';
+import { createPool, FleetOperationsRepository, type DatabasePool } from '@cauce/store';
+import { configuredFleetCapability, assertFleetPlacement } from './console/fleet-capability.js';
 import { buildGateway } from './app.js';
 import {
   configuredAckDeadlineMs, configuredDeliveryAdmission, configuredDeliveryLeaseCap, configuredBlobApi } from './config.js';
@@ -239,7 +240,22 @@ const wakePumpTelemetry = new WakePumpTelemetry();
 const consolePublishTelemetry = new ConsolePublishTelemetry();
 const blobs = configuredBlobApi(process.env);
 const contextRepository = configuredContextRepository();
+const fleetCapability = configuredFleetCapability();
+const fleetOperations = fleetCapability.available ? new FleetOperationsRepository(pool, {
+  ...(process.env.CAUCE_FLEET_CONTROLLER_HOST === undefined ? {} : { controllerHost: process.env.CAUCE_FLEET_CONTROLLER_HOST }),
+}) : undefined;
+const fleetOperationsRepository = fleetOperations === undefined ? undefined : {
+  list: fleetOperations.list.bind(fleetOperations), get: fleetOperations.get.bind(fleetOperations),
+  cancel: fleetOperations.cancel.bind(fleetOperations), resume: fleetOperations.resume.bind(fleetOperations),
+  preview: (tenant: string, alias: string, input: import('@cauce/protocol').FleetOperationRequest, subject?: string) => {
+    assertFleetPlacement(fleetCapability, input); return fleetOperations.preview(tenant, alias, input, subject);
+  },
+  enqueue: (tenant: string, alias: string, input: import('@cauce/protocol').FleetOperationRequest, subject?: string) => {
+    assertFleetPlacement(fleetCapability, input); return fleetOperations.enqueue(tenant, alias, input, subject);
+  },
+};
 const app = await buildGateway({
+  ...(fleetOperationsRepository === undefined ? {} : { fleetOperationsRepository, fleetCapability }),
   ...(humanMcp === undefined ? {} : { humanMcp }),
   ...(contextRepository === undefined ? {} : { contextRepository }),
   pool,

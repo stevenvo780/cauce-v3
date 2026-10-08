@@ -5,7 +5,7 @@ import type { ServerOptions as HttpsServerOptions } from 'node:https';
 import websocket from '@fastify/websocket';
 import Fastify, { type FastifyInstance, type FastifyServerOptions } from 'fastify';
 import {
-  type ClaimedAck, type ConfigMutation, type ConsolePublishIntentPrepareResult,
+  type ClaimedAck, type ConfigLeafMutation, type ConfigMutation, type ConsolePublishIntentPrepareResult,
   type DeliveryEnvelope, type OutboxAckWithConnection, type Tenant,
 } from '@cauce/protocol';
 import {
@@ -37,6 +37,7 @@ import { registerChainGateRoutes } from './routes/chain-gates.js';
 import { registerAgentEmissionRoutes } from './routes/agent-emission.js';
 import { prepareBlobDirectory, registerBlobRoutes, type BlobStoreOptions } from './routes/blobs.js';
 import { humanMcpListenerOptions, registerHumanMcp, type HumanMcpConfiguration } from './mcp-mounting.js';
+import { registerFleetOperationRoutes, type FleetOperationsRepositoryBinding } from './console/fleet-operations.routes.js';
 
 export { WakePumpTelemetry } from './wake-pump-telemetry.js';
 export type {
@@ -138,6 +139,10 @@ interface GatewayNarrowedRepository {
     actorTenant: Tenant, actorAlias: string, mutation: ConfigMutation, dryRun: boolean,
     expectedRevision?: number,
   ): Promise<unknown>;
+  getConfigurationDependencies?(
+    actorTenant: Tenant, actorAlias: string, mutation: ConfigLeafMutation,
+    expectedRevision?: number,
+  ): Promise<unknown>;
   rollbackConfiguration(
     actorTenant: Tenant, actorAlias: string, revisionId: number, dryRun: boolean,
     expectedRevision?: number,
@@ -149,6 +154,9 @@ export type GatewayRepository = StoreDerivedRepository & GatewayNarrowedReposito
 
 export interface GatewayOptions {
   contextRepository?: ContextRepositoryBinding;
+  agentPreferences?: import('@cauce/store').AgentPreferencesRepository;
+  fleetOperationsRepository?: FleetOperationsRepositoryBinding;
+  fleetCapability?: import('@cauce/protocol').FleetCapability;
   pool: DatabasePool;
   authProvider: AuthProvider;
   repository?: GatewayRepository;
@@ -287,6 +295,10 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
   const publishHandler = coreRoutes.registerPublishRoutes();
 
   const agentProfiles = registerConsoleRoutes(app, consoleRoutes, publishHandler);
+
+  if (options.fleetOperationsRepository !== undefined) {
+    registerFleetOperationRoutes(app, options.authProvider, options.fleetOperationsRepository, options.fleetCapability);
+  }
 
   registerConsolePublishIntentRoutes(
     app, options, repository, consolePublishTelemetry,
