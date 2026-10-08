@@ -99,7 +99,12 @@ describe('administración real de cuentas y asignaciones', () => {
 
     const accountActions = await preview(page, 'alta de cuenta');
     const previewText = await page.getByLabel('Dry-run de alta de cuenta').innerText();
-    expect(previewText).toContain('‹locator no reimpreso por la consola›');
+    const accountPreview = JSON.parse(previewText) as {
+      mutation: { value: Record<string, unknown> }; inverse_mutation: Record<string, unknown>;
+    };
+    expect(accountPreview.mutation.value).not.toHaveProperty('credential_ref');
+    expect(accountPreview.inverse_mutation).not.toHaveProperty('value.credential_ref');
+    expect(previewText).not.toMatch(/"credential_ref"\s*:/u);
     expect(previewText).not.toContain(credentialLocator);
     await apply(page, accountActions);
 

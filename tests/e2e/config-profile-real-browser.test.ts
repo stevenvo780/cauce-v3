@@ -307,6 +307,7 @@ describe('perfil canónico desde configuración móvil y runtime Python medido',
     await menu.waitFor({ state: 'visible', timeout: 10_000 });
     await menu.getByRole('link', { name: 'Ajustes y altas' }).click();
     await page.getByRole('heading', { name: 'Ajustes y altas' }).waitFor({ timeout: 20_000 });
+    await page.getByRole('searchbox', { name: 'Buscar agente o grupo' }).fill(active.targetAlias);
     const artifactDirectory = process.env.CAUCE_E2E_ARTIFACT_DIR;
     const openContext = page.getByRole('button', { name: `Abrir contexto de ${active.tenant}/${active.targetAlias}` });
     try {
