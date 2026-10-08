@@ -1,5 +1,7 @@
 import type { OpenClawPhaseObserver } from "../sdk/openclaw-phases.js";
 import type { NoticeSelection } from "../sdk/notify-history.js";
+import type { CommandPins } from '../sdk/command-pins.js';
+import type { ExecutionSelection } from '../sdk/execution-selection.js';
 import type { HarnessTimeoutKind } from "../sdk/message-timeout.js";
 import type { DeliveryEnvelope, ProfileRuntimeContract } from "@cauce/protocol";
 import type { DurableStore, SessionOrigin } from "../sdk/durable-store.js";
@@ -73,6 +75,8 @@ interface HarnessRoutingTarget {
 }
 
 export interface HarnessAdapterOptions {
+  readonly commandPins?: CommandPins;
+  readonly executionSelection?: ExecutionSelection;
   readonly definition: HarnessDefinition;
   readonly runner: CommandRunner;
   readonly store: DurableStore;

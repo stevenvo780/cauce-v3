@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { signalAborted } from "../runtime-state.js";
+import { assertCommandPins } from '../sdk/command-pins.js';
 import {
   CREATION_NONCE_OPTION,
   capturePane,
@@ -107,6 +108,7 @@ export async function ensureSharedSession(
   spec: SharedSessionSpec,
   options: EnsureOptions,
 ): Promise<EnsureResult> {
+  await assertCommandPins(spec.command ?? spec.harness, spec.commandPins);
   const session = sessionName(spec.alias);
   if (signalAborted(options.signal)) return cancelledEnsure(false);
   const existingId = await exactSessionTarget(tmux, session);
@@ -473,7 +475,6 @@ async function startTui(
       },
     };
   }
-  // Without a PID or if it didn't become ready, report as not ready.
   if (waited !== "ready") {
     return {
       ready: false, created: created.created, paneGone: false,
@@ -521,15 +522,12 @@ function shellQuote(value: string): string {
   return `'${value.replace(/'/gu, "'\\''")}'`;
 }
 
-/**
- * Resume arguments, ready to be appended after the binary.
- */
 export function resumeArgumentSuffix(
   args: readonly string[] | undefined,
 ): { ok: true; suffix: string } | { ok: false; detail: string } {
   if (args === undefined || args.length === 0) return { ok: true, suffix: "" };
   for (const argument of args) {
-    if (!/^[A-Za-z0-9-][A-Za-z0-9_.:@=+-]*$/u.test(argument)) {
+    if (!/^[A-Za-z0-9-][A-Za-z0-9_./:@=+-]*$/u.test(argument)) {
       return { ok: false, detail: `argumento del panel inválido: ${argument}` };
     }
   }
@@ -566,7 +564,9 @@ async function createSession(
   }
 > {
   const session = sessionName(spec.alias);
-  const command = spec.command ?? spec.harness;
+  await assertCommandPins(spec.command ?? spec.harness, spec.commandPins);
+  const executable = spec.command ?? spec.harness;
+  const command = /^[A-Za-z0-9_./+-]+$/u.test(executable) ? executable : shellQuote(executable);
   const width = String(options.width ?? 200);
   const height = String(options.height ?? 50);
   if (signalAborted(options.signal)) {

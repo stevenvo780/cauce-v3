@@ -1,6 +1,8 @@
 import type { OpenClawPhaseObserver, OpenClawPhase, OpenClawPhaseObservation } from "./openclaw-phases.js";
 import type { NotifyKind } from '@cauce/protocol';
 import type { HarnessTimeoutKind } from './message-timeout.js';
+import type { CommandPins } from './command-pins.js';
+import type { ExecutionSelection, InvocationWitness } from './execution-selection.js';
 import type {
   Ack,
   ChainGateNotice,
@@ -263,6 +265,8 @@ type HarnessStartWitness =
 export type HarnessStdinSource = 'pipe' | 'file'; // what backs fd 0; 'file' for CLIs that reopen /dev/stdin (prompt-stdin.ts)
 
 export interface CommandRunRequest extends CommandInvocation {
+  readonly commandPins?: CommandPins;
+  readonly executionSelection?: ExecutionSelection;
   readonly onOpenClawPhase?: OpenClawPhaseObserver;
   readonly openClawPhaseFrames?: true;
   readonly emissionSocketPath?: string;
@@ -288,6 +292,7 @@ export interface CommandRunRequest extends CommandInvocation {
 export type HarnessConsumptionWitness = Readonly<HarnessConsumptionEvidence>;
 
 export interface CommandRunResult {
+  readonly invocationWitness?: InvocationWitness;
   readonly consumptionWitness?: HarnessConsumptionWitness;
   readonly stdout: string;
   readonly stderr: string;

@@ -342,6 +342,12 @@ function bridgeEnvironment(harnessId: HarnessId): Pick<CliRuntimeConfig, "harnes
   };
 }
 
+function credentialEnvironment(primary: string, fleet: string): string | undefined {
+  const first = process.env[primary]; const second = process.env[fleet];
+  if (first !== undefined && second !== undefined && resolve(first) !== resolve(second)) throw new Error("credential paths conflict");
+  return first ?? second;
+}
+
 function fromEnvironment(aliasOverride: string | undefined, harnessId: HarnessId): CliRuntimeConfig {
   for (const forbidden of ["CAUCE_TOKEN", "CAUCE_BEARER_TOKEN", "CAUCE_TLS_KEY", "CAUCE_OPENCLAW_TOKEN"]) {
     if (forbidden in process.env) {
@@ -353,7 +359,7 @@ function fromEnvironment(aliasOverride: string | undefined, harnessId: HarnessId
   if (runtimeEnvironment === "production" && developmentIdentity) {
     throw new Error("CAUCE_DEV_AUTH is forbidden in production");
   }
-  const tlsValues = [process.env.CAUCE_TLS_CERT_FILE, process.env.CAUCE_TLS_KEY_FILE, process.env.CAUCE_TLS_CA_FILE];
+  const tlsValues = [credentialEnvironment("CAUCE_TLS_CERT_FILE", "CAUCE_CERT_PATH"), credentialEnvironment("CAUCE_TLS_KEY_FILE", "CAUCE_KEY_PATH"), credentialEnvironment("CAUCE_TLS_CA_FILE", "CAUCE_CA_PATH")];
   let mutualTls: NonNullable<CliRuntimeConfig["mutualTls"]> | undefined;
   if (tlsValues.some((value) => value !== undefined)) {
     const [certFile, keyFile, caFile] = tlsValues;
@@ -384,6 +390,7 @@ function fromEnvironment(aliasOverride: string | undefined, harnessId: HarnessId
   }
   const decisionesUrl = decisionesOrigin(process.env.CAUCE_DECISIONES_URL, "CAUCE_DECISIONES_URL");
   const museConfig = museFromEnvironment(harnessId);
+  const bearerTokenFile = credentialEnvironment("CAUCE_TOKEN_FILE", "CAUCE_TOKEN_PATH");
   return {
     tenant: requiredEnvironment("CAUCE_TENANT"),
     room: requiredEnvironment("CAUCE_ROOM"),
@@ -395,7 +402,7 @@ function fromEnvironment(aliasOverride: string | undefined, harnessId: HarnessId
     heartbeatMs: environmentInteger("CAUCE_HEARTBEAT_MS", 15_000),
     // CAUCE_DEFAULT_TIMEOUT_MS (a 24 h duration cap) no longer applies: turns have no duration cap.
     defaultTimeoutMs: environmentMessageTimeoutMs("CAUCE_NO_PROGRESS_TIMEOUT_MS", DEFAULT_NO_PROGRESS_TIMEOUT_MS),
-    ...(process.env.CAUCE_TOKEN_FILE === undefined ? {} : { bearerTokenFile: resolve(process.env.CAUCE_TOKEN_FILE) }),
+    ...(bearerTokenFile === undefined ? {} : { bearerTokenFile: resolve(bearerTokenFile) }),
     ...(mutualTls === undefined ? {} : { mutualTls }),
     developmentIdentity,
     ...(decisionesUrl === undefined ? {} : { decisionesUrl }),
@@ -425,6 +432,7 @@ export async function loadCliRuntimeConfig(
 ): Promise<CliRuntimeConfig> {
   const options = cliOptions(argv);
   const configFile = options.configFile ?? process.env.CAUCE_CONFIG_FILE;
+  if (configFile !== undefined && process.env.CAUCE_FLEET_OPERATION_ID !== undefined) throw new Error('fleet runtime cannot inherit a configuration file');
   if (configFile !== undefined) {
     const alias = options.alias ?? process.env.CAUCE_ALIAS;
     if (alias === undefined || alias.length === 0) throw new Error("--alias or CAUCE_ALIAS selects a configured alias");

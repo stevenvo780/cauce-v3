@@ -1,4 +1,5 @@
 import type { CommandRunResult } from "../../sdk/types.js";
+import type { CommandPins } from '../../sdk/command-pins.js';
 import type { PaneIdentity, TmuxController } from "../tmux.js";
 import type { NativePointerAttestor } from "../native-witness.js";
 import type {
@@ -9,6 +10,8 @@ import type {
 } from "../types.js";
 
 export interface PasteSessionOptions<E> {
+  readonly commandPins?: CommandPins;
+  readonly requiredArguments?: readonly string[];
   readonly nativePointer?: NativePointerAttestor;
   readonly alias: string;
   /** Which TUI runs in the pane. It determines the shared session binary. */

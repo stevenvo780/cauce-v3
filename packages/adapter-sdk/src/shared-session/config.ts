@@ -4,9 +4,14 @@ import type { HarnessId } from "../sdk/types.js";
 import type { SharedSessionSpec } from "./session.js";
 import { sharedSessionResume } from "./resume.js";
 import { isSharedSessionHarness, type SharedSessionHarness } from "./types.js";
+import { commandPinsFromEnvironment, type CommandPins } from '../sdk/command-pins.js';
+import { projectSelectionArguments, selectionArguments, selectionFromEnvironment } from '../sdk/execution-selection.js';
 
 /** Shared session configuration from environment variables. */
 export interface SharedSessionConfig {
+  readonly command?: string;
+  readonly commandPins?: CommandPins;
+  readonly requiredArguments?: readonly string[];
   readonly harness: SharedSessionHarness;
   readonly alias: string;
   readonly workspace: string;
@@ -132,12 +137,15 @@ export function cliSharedSessionSpec(
 ): SharedSessionSpec {
   alias = physicalAlias(alias, environment);
   const configDirectory = harnessConfigDirectory(harness, home, environment, alias);
+  const selection = selectionFromEnvironment(harness, environment); const pins = commandPinsFromEnvironment(environment);
   return {
     alias,
     harness,
     workspace,
     environment: sharedSessionPaneEnvironment(harness, home, environment, alias),
-    harnessArguments: claudePermissionArguments(harness, environment),
+    harnessArguments: projectSelectionArguments(harness, claudePermissionArguments(harness, environment), selection),
+    requiredArguments: selectionArguments(harness, selection),
+    ...(pins === undefined ? {} : { command: pins.command, commandPins: pins }),
     resume: sharedSessionResume(
       harness,
       configDirectory,
@@ -172,6 +180,7 @@ export function loadSharedSessionConfig(
   const home = environment.HOME ?? homedir();
   if (!isAbsolute(home)) throw new Error("HOME debe ser una ruta absoluta para la sesión compartida");
   const nativeId = environment[SHARED_SESSION_NATIVE_ID_ENV];
+  const selection = selectionFromEnvironment(harnessId, environment); const pins = commandPinsFromEnvironment(environment);
   if (nativeId !== undefined && nativeId !== "") {
     if (harnessId === "codex") {
       throw new Error(`${SHARED_SESSION_NATIVE_ID_ENV} no existe para codex: reanuda con resume --last`);
@@ -187,6 +196,8 @@ export function loadSharedSessionConfig(
     stateDirectory,
     configDirectory: harnessConfigDirectory(harnessId, home, environment, alias),
     paneEnvironment: sharedSessionPaneEnvironment(harnessId, home, environment, alias),
-    harnessArguments: claudePermissionArguments(harnessId, environment),
+    harnessArguments: projectSelectionArguments(harnessId, claudePermissionArguments(harnessId, environment), selection),
+    requiredArguments: selectionArguments(harnessId, selection),
+    ...(pins === undefined ? {} : { command: pins.command, commandPins: pins }),
   };
 }

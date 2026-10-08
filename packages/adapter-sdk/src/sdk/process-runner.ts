@@ -6,6 +6,8 @@ import { closeSync } from "node:fs";
 import type { Readable, Writable } from "node:stream";
 import { ProcessExecutionError } from "./errors.js";
 import { promptFileDescriptor } from "./prompt-stdin.js";
+import { assertCommandPins } from './command-pins.js';
+import { witnessForInvocation } from './execution-selection.js';
 import { HARNESS_PROGRESS_MARKER, type CommandRunRequest, type CommandRunResult, type SafeRunnerLogger } from "./types.js";
 
 type HarnessChild = ChildProcessByStdio<Writable | null, Readable, Readable>; // stdin is null when a file backs fd 0
@@ -154,10 +156,14 @@ export class SpawnCommandRunner {
     const attestor = request.harness === "claude" || request.harness === "codex"
       ? await import("./headless-consumption.js") : undefined;
     const snapshot = await attestor?.prepareHeadlessConsumption(request, environment);
+    const commandSha256 = await assertCommandPins(request.command, request.commandPins);
+    const invocationWitness = witnessForInvocation(request, commandSha256);
     if (signalAborted(request.signal)) throw new ProcessExecutionError("CANCELLED", "Harness process was cancelled before spawn", false);
     const result = await this.runProcess(request, environment);
+    await assertCommandPins(request.command, request.commandPins);
     const witness = await attestor?.verifyHeadlessConsumption(snapshot, request, result);
-    return witness === undefined ? result : { ...result, consumptionWitness: witness };
+    return { ...result, ...(witness === undefined ? {} : { consumptionWitness: witness }),
+      ...(invocationWitness === undefined ? {} : { invocationWitness }) };
   }
 
   private runProcess(request: CommandRunRequest, environment: NodeJS.ProcessEnv): Promise<CommandRunResult> {

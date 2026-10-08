@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { mkdir, realpath } from "node:fs/promises";
 import { join } from "node:path";
 import { AdapterClient } from "../sdk/client.js";
+import { bootstrapOnStartup } from "../sdk/bootstrap-runner.js";
 import { BlobClient, configureDefaultBlobClient } from "../sdk/blob-client.js";
 import { DurableStore } from "../sdk/durable-store.js";
 import { ProcessExecutionError } from "../sdk/errors.js";
@@ -37,6 +38,8 @@ import type { CommandRunner } from "../sdk/types.js";
 import { EmissionRuntime } from "../sdk/mcp-emission/runtime.js";
 import { emissionGateway } from "../sdk/mcp-emission/gateway.js";
 import { decisionesForwarder } from "../sdk/mcp-emission/decisiones.js";
+import { commandPinsFromEnvironment } from '../sdk/command-pins.js';
+import { selectionFromEnvironment } from '../sdk/execution-selection.js';
 
 function commandOverride(
   harnessId: HarnessId,
@@ -201,6 +204,9 @@ export async function sharedSessionRunner(
     workspace: shared.workspace,
     environment: shared.paneEnvironment,
     harnessArguments: shared.harnessArguments,
+    ...(shared.command === undefined ? {} : { command: shared.command }),
+    ...(shared.commandPins === undefined ? {} : { commandPins: shared.commandPins }),
+    ...(shared.requiredArguments === undefined ? {} : { requiredArguments: shared.requiredArguments }),
     resume: sharedSessionResume(shared.harness, shared.configDirectory, shared.workspace, {
       alias: shared.alias, stateDirectory: shared.stateDirectory,
     }),
@@ -273,6 +279,8 @@ function pointedRunner(
 
 export async function runCli(harnessId: HarnessId): Promise<void> {
   const runtime = await loadCliRuntimeConfig(harnessId);
+  const commandPins = commandPinsFromEnvironment(); let selected = selectionFromEnvironment(harnessId);
+  if (commandPins !== undefined && runtime.harnessCommand !== undefined && runtime.harnessCommand !== commandPins.command) throw new Error('configured harness command differs from its pinned binding');
   const tenantId = TenantSchema.parse(runtime.tenant);
   if (harnessId === "muse" && tenantId === "Hospital"
     && runtime.muse?.workspace !== "/home/node/clawd") {
@@ -314,7 +322,17 @@ export async function runCli(harnessId: HarnessId): Promise<void> {
     baseRunner = new SpawnCommandRunner();
   }
   const logger = operationalLogger(runtime.alias);
-  const shared = loadSharedSessionConfig(harnessId, runtime.alias, runtime.stateDirectory);
+  const override = commandOverride(harnessId, definition, commandPins === undefined ? runtime : { ...runtime, harnessCommand: commandPins.command });
+  if (!await bootstrapOnStartup({ tenant_id: runtime.tenant, alias: runtime.alias,
+    definition: definitionWithVerifiedBridge(definition, override, logger), runner: baseRunner, executionSelection: selected,
+    onSelection: value => { selected = value; },
+    ...(commandPins === undefined ? {} : { commandPins }),
+    ...(runtime.mutualTls === undefined ? {} : { tls: runtime.mutualTls }),
+    ...(override === undefined ? {} : { commandOverride: override }),
+  })) return;
+  const shared = loadSharedSessionConfig(harnessId, runtime.alias, runtime.stateDirectory, { ...process.env,
+    ...(selected.modelId === undefined ? {} : { CAUCE_MODEL_ID: selected.modelId }),
+    ...(selected.reasoningEffort === undefined ? {} : { CAUCE_REASONING_EFFORT: selected.reasoningEffort }) });
   if (museMsp && shared !== undefined) {
     // The shared TUI replaces the runner: MSP would be configured and silently never used.
     throw new Error("Muse MSP (CAUCE_MUSE_EXECUTABLE) and SHARED_SESSION=1 are mutually exclusive");
@@ -322,11 +340,12 @@ export async function runCli(harnessId: HarnessId): Promise<void> {
   const runner = shared === undefined
     ? baseRunner
     : await sharedSessionRunner(shared, logger);
-  const override = commandOverride(harnessId, definition, runtime);
   const { harness, humanHarness } = deliveryHarnesses({
     definition: definitionWithVerifiedBridge(definition, override, logger),
     runner,
     store,
+    executionSelection: selected,
+    ...(commandPins === undefined ? {} : { commandPins }),
     sessionNamespace: runtime.alias,
     ...(harnessId === "openclaw" || museMsp ? { fallbackSessionKey: "alias-default" } : {}),
     ...(override === undefined ? {} : { commandOverride: override }),

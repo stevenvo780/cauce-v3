@@ -15,8 +15,12 @@ import {
   type SharedSessionHarness,
 } from "../types.js";
 import { signalAborted } from "../../runtime-state.js";
+import type { CommandPins } from '../../sdk/command-pins.js';
+import { selectedPaneArgumentsMatch } from './selection.js';
 
 export interface SharedSessionSpec {
+  readonly commandPins?: CommandPins;
+  readonly requiredArguments?: readonly string[];
   readonly alias: string;
   readonly harness: SharedSessionHarness;
   /** Working directory of the TUI. It is also what determines the transcripts directory. */
@@ -191,6 +195,7 @@ async function existingHarnessPane(
  * observed command is never included in errors: it may contain private arguments.
  */
 export function paneCommandMatches(spec: SharedSessionSpec, command: string): boolean {
+  if (!selectedPaneArgumentsMatch(command, spec.commandPins?.command, spec.requiredArguments)) return false;
   const expected = executableName(spec.command ?? spec.harness);
   const others = SHARED_SESSION_HARNESSES.filter((harness) => harness !== spec.harness);
   if (others.some((other) => mentionsExecutable(command, other))) return false;

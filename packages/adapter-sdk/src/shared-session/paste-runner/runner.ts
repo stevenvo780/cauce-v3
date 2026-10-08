@@ -28,6 +28,7 @@ import {
 import type { PasteSessionOptions, PendingQuarantine } from "./contracts.js";
 import { PasteSessionHarvestRunner, type WakeCommit } from "./harvest.js";
 import { beforeDeadline, replacedBeforeSubmission, result, SETTLE_MS, turnBudgetMs } from "./runtime.js";
+import { assertCommandPins } from '../../sdk/command-pins.js';
 
 
 type PromptCommitOutcome =
@@ -54,6 +55,7 @@ export class PasteSessionRunner<E> extends PasteSessionHarvestRunner<E> implemen
   }
 
   async run(request: CommandRunRequest): Promise<CommandRunResult> {
+    await assertCommandPins(this.options.command ?? this.options.harness, this.options.commandPins);
     this.pending = undefined;
     this.exactSessionId = undefined;
     if (request.signal.aborted) return result({ cancelled: true, harnessStarted: false });
@@ -481,6 +483,8 @@ export class PasteSessionRunner<E> extends PasteSessionHarvestRunner<E> implemen
         harness: this.options.harness,
         workspace: this.options.workspace,
         ...(this.options.command === undefined ? {} : { command: this.options.command }),
+        ...(this.options.commandPins === undefined ? {} : { commandPins: this.options.commandPins }),
+        ...(this.options.requiredArguments === undefined ? {} : { requiredArguments: this.options.requiredArguments }),
         ...(this.options.resume === undefined ? {} : { resume: this.options.resume }),
         ...(this.options.environment === undefined ? {} : { environment: this.options.environment }),
         ...(this.options.harnessArguments === undefined ? {} : { harnessArguments: this.options.harnessArguments }),

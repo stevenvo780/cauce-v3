@@ -54,6 +54,7 @@ import {
 } from "./errors.js";
 import { protocolPrompt, textoFijoDelSobre, textoNativoDelSobre } from "./prompt.js";
 import { SessionReservation } from "./session-reservation.js";
+import { projectSelectionArguments } from '../../sdk/execution-selection.js';
 
 /** Suffix distinguishing the agent lane's session key. */
 const AGENT_LANE_SUFFIX = ".agent-lane";
@@ -74,6 +75,8 @@ export class HarnessAdapter {
   private readonly store: DurableStore;
   private readonly sessionLocks = new Map<string, Promise<void>>();
   private readonly commandOverride: HarnessCommandOverride | undefined;
+  private readonly commandPins: HarnessAdapterOptions['commandPins'];
+  private readonly executionSelection: HarnessAdapterOptions['executionSelection'];
   private readonly sessionNamespace: string | undefined;
   private readonly canonicalTerminalSession: boolean;
   private readonly fallbackSessionKey: string | undefined;
@@ -87,6 +90,8 @@ export class HarnessAdapter {
     this.runner = options.runner;
     this.store = options.store;
     this.commandOverride = options.commandOverride;
+    this.commandPins = options.commandPins;
+    this.executionSelection = options.executionSelection;
     this.sessionNamespace = options.sessionNamespace;
     this.canonicalTerminalSession = options.canonicalTerminalSession ?? true;
     this.fallbackSessionKey = options.fallbackSessionKey;
@@ -390,6 +395,8 @@ export class HarnessAdapter {
       ...(request.onOpenClawPhase === undefined ? {} : { onOpenClawPhase: request.onOpenClawPhase }),
       ...(this.sharedSession !== undefined || isSharedSessionRunner(this.runner) || request.emissionSocketPath === undefined ? {} : { emissionSocketPath: request.emissionSocketPath }),
       ...invocation,
+      ...(this.commandPins === undefined ? {} : { commandPins: this.commandPins }),
+      ...(this.executionSelection === undefined ? {} : { executionSelection: this.executionSelection }),
       ...(phaseFrames ? { args: [...invocation.args, "--cauce-phase-observer-v1"], openClawPhaseFrames: true as const } : {}),
       ...workspaceCwd(),
       ...(() => {
@@ -611,7 +618,7 @@ export class HarnessAdapter {
     harness: HarnessId;
   } {
     const prefix = this.commandOverride?.prefixArgs ?? [];
-    const baseArgs = this.commandOverride?.baseArgs ?? this.definition.baseArgs;
+    const baseArgs = projectSelectionArguments(this.definition.id, this.commandOverride?.baseArgs ?? this.definition.baseArgs, this.executionSelection ?? {});
     const sessionArgs = this.definition.sessionArgs(context);
     const args = this.definition.id === "codex"
       ? [...prefix, ...baseArgs, ...attachmentArgs, ...sessionArgs]
