@@ -1,3 +1,4 @@
+import { nativeAdminClient, type NativeAdminClient } from '../features/live/native-admin/client';
 import { nativeContextRepositoryClient, type NativeContextRepositoryClient } from './client/native-context-repository-client';
 import { contextRepositoryClient, type ContextRepositoryClient } from './client/context-repository-client';
 import type { ConsoleAuthState } from './types';
@@ -15,8 +16,10 @@ import {
 import { systemClient, type RequestFn, type SystemClient } from './client/system-client';
 import { messagingClient, type MessagingClient } from './client/messaging-client';
 import { agentClient, type AgentClient } from './client/agent-client';
+import { providerAuthClient, type ProviderAuthClient } from './client/provider-auth-client';
+import { peopleAdminClient, type PeopleAdminClient } from './client/people-admin-client';
+import { fleetOperationsClient, type FleetOperationsClient } from './client/fleet-operations-client';
 import { clientDelegationsClient, type ClientDelegationsClient } from './client/client-delegations-client';
-
 /**
  * A 401 on ANY data call is the session dying, and until it is noticed the console keeps painting
  * error cards inside a shell that no longer has a session behind it. The gate polls every 60 s, so
@@ -25,7 +28,6 @@ import { clientDelegationsClient, type ClientDelegationsClient } from './client/
  * gate revalidates against `/v3/auth/session` right away.
  */
 type UnauthorizedListener = () => void;
-
 /**
  * The auth endpoints are excluded from the announcement: `/v3/auth/session` answering 401 would
  * make the listener ask it again in a loop, and a 401 from `/v3/auth/login` is a wrong password,
@@ -34,7 +36,7 @@ type UnauthorizedListener = () => void;
 const AUTH_PATH = '/v3/auth/';
 
 /* eslint-disable @typescript-eslint/no-unsafe-declaration-merging -- the merge IS the surface; client.test.ts asserts every merged method at runtime. */
-export interface CauceApi extends SystemClient, MessagingClient, AgentClient, ContextRepositoryClient, NativeContextRepositoryClient, ClientDelegationsClient {}
+export interface CauceApi extends SystemClient, MessagingClient, AgentClient, ContextRepositoryClient, NativeContextRepositoryClient, ClientDelegationsClient, FleetOperationsClient, ProviderAuthClient, PeopleAdminClient, NativeAdminClient {}
 
 export class CauceApi {
   private readonly baseUrl: string;
@@ -68,7 +70,8 @@ export class CauceApi {
     const request: RequestFn = <T>(path: string, init?: RequestInit, options?: RequestOptions): Promise<T> =>
       this.request<T>(path, init, options);
     Object.assign(this, systemClient(request), messagingClient(request), agentClient(request), contextRepositoryClient(request), nativeContextRepositoryClient(request));
-    Object.assign(this, clientDelegationsClient(request));
+    Object.assign(this, nativeAdminClient(request, () => this.authGeneration));
+    Object.assign(this, clientDelegationsClient(request), fleetOperationsClient(request), providerAuthClient(request), peopleAdminClient(request));
   }
 
   private async request<T>(

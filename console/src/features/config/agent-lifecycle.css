@@ -1,0 +1,15 @@
+.settings-agents > .settings-agent:has(> .agent-lifecycle-panel[data-open="true"]) { grid-column: 1 / -1; }
+.agent-lifecycle-panel { grid-column: 1 / -1; min-width: 0; width: 100%; }
+.agent-lifecycle-panel > section { margin-block: 1rem; padding: 1rem; border: 1px solid var(--border); border-radius: 12px; }
+.agent-lifecycle-fields { display: grid; gap: 1rem; }
+.agent-lifecycle-fields fieldset { display: grid; gap: .8rem; margin: 0; padding: 1rem; min-width: 0; border: 1px solid var(--border); border-radius: 8px; }
+.agent-lifecycle-fields legend { font-weight: 600; padding-inline: .4rem; }
+.agent-lifecycle-fields label { display: grid; gap: .35rem; }
+.agent-lifecycle-fields input, .agent-lifecycle-fields select { width: 100%; min-width: 0; }
+.agent-lifecycle-fields input[type="checkbox"] { width: auto; }
+.agent-lifecycle-membership { padding-block: .6rem; border-bottom: 1px solid var(--border); }
+.agent-lifecycle-membership label:has(input[type="checkbox"]) { display: flex; align-items: center; gap: .5rem; }
+.agent-fleet-receipt { margin-block: 1rem; padding: 1rem; border: 1px solid var(--border); border-radius: 8px; }
+.agent-fleet-receipt code { overflow-wrap: anywhere; }
+.agent-lifecycle-panel pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: var(--tipo-apunte); }
+@media (min-width: 761px) { .agent-lifecycle-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); } }

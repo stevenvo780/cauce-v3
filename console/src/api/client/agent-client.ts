@@ -159,7 +159,7 @@ export async function getAgentPerfil(
 ): Promise<AgentPerfil> {
   const ruta = `/v3/console/tenants/${encodeURIComponent(tenantId)}/agents/${encodeURIComponent(alias)}/perfil`;
   return getPublishedResource<Omit<AgentPerfil, 'publicado' | 'motivo'>>(
-    () => request<Omit<AgentPerfil, 'publicado' | 'motivo'>>(ruta),
+    () => request<Omit<AgentPerfil, 'publicado' | 'motivo'>>(ruta, { cache: 'no-store' }),
     ruta,
     {
       perfil: {
