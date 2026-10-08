@@ -1,6 +1,4 @@
-/**
- * Utilities for automatic scroll control and anchoring to the end of the message thread.
- */
+/** Utilities for automatic scroll control and anchoring to the end of the message thread. */
 
 /**
  * How far from the end still counts as "watching the end".
@@ -40,14 +38,9 @@ export function irAlFinal(caja: HTMLElement, suave = false): void {
   caja.scrollTop = destino;
 }
 
-/** After the reader's own wheel, touch, key or pointer, their scrolling (inertia included) lasts this long. */
 export const GESTO_DEL_LECTOR_MS = 1000;
 
-/**
- * What a scroll event means. Only the reader leaves the end: a scroll the layout caused (late
- * history, a reply that grows, the browser anchoring content) while they were following goes back
- * to the end. Otherwise reopening a chat could land above the newest messages and stay there.
- */
+/** Only the reader leaves the end: a layout-caused scroll while following goes back to it. */
 export function leerDesplazamiento(input: { abajo: boolean; pegado: boolean; delLector: boolean }): 'volver' | 'pegado' | 'suelto' {
   if (input.abajo) return 'pegado';
   return input.pegado && !input.delLector ? 'volver' : 'suelto';
