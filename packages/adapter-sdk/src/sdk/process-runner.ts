@@ -161,13 +161,16 @@ export class SpawnCommandRunner {
     const environment = childEnvironment(request.env, request.emissionSocketPath);
     const attestor = request.harness === "claude" || request.harness === "codex"
       ? await import("./headless-consumption.js") : undefined;
+    const openClaw = request.harness === "openclaw" ? await import("./openclaw-consumption.js") : undefined;
     const snapshot = await attestor?.prepareHeadlessConsumption(request, environment);
     const commandSha256 = await assertCommandPins(request.command, request.commandPins);
     const invocationWitness = witnessForInvocation(request, commandSha256);
+    const openClawSnapshot = await openClaw?.prepareOpenClawConsumption(request, environment);
     if (signalAborted(request.signal)) throw new ProcessExecutionError("CANCELLED", "Harness process was cancelled before spawn", false);
     const result = await this.runProcess(request, environment);
     await assertCommandPins(request.command, request.commandPins);
-    const witness = await attestor?.verifyHeadlessConsumption(snapshot, request, result);
+    const witness = await attestor?.verifyHeadlessConsumption(snapshot, request, result)
+      ?? await openClaw?.verifyOpenClawConsumption(openClawSnapshot, request, result);
     return { ...result, ...(witness === undefined ? {} : { consumptionWitness: witness }),
       ...(invocationWitness === undefined ? {} : { invocationWitness }) };
   }

@@ -1,0 +1,13 @@
+[Unit]
+Description=Corre la guardia de conversaciones paralelas cada hora
+
+[Timer]
+# Sin modelo y una consulta: cada hora basta, porque el aviso se silencia 6 h por alias y juego
+# de conversaciones. Minuto 17 para no coincidir con el medico ni con la guardia nocturna.
+OnCalendar=*-*-* *:17:00 UTC
+Persistent=true
+RandomizedDelaySec=60s
+Unit=cauce-conversaciones-paralelas.service
+
+[Install]
+WantedBy=timers.target

@@ -115,6 +115,20 @@ por alias» (más de una en un alias con TUI) es la señal de que falta alguien 
 Para claude, `sessions.json` no guarda la clave `shared:<alias>`: la TUI reanuda sólo lo que dice su
 puntero y el runner TTY no lee ni escribe ids de sesión en el almacén.
 
+OpenClaw no tiene TUI propia: su TUI es la conversación que abre la terminal web, la del puntero
+`openclaw:<alias>:shared:<alias>` de `sessions.json`. En cuanto el alias declara `OWNER_HUMAN_ID` o
+`SHARED_HUMANS`, esos humanos (por consola, human-mcp o una continuación de su cadena) y los DM al bot de
+Telegram del propio alias corren en esa conversación, en el arnés principal. Un humano ajeno sigue en su
+sesión aislada; un grupo de Telegram, una publicación sin humano y el carril de agente conservan su
+sesión, y sólo la conversación canónica mueve el puntero: la web deja de saltar a quien habló último. Sin
+dueño ni lista declarados, el alias se comporta como antes. Cada turno OpenClaw por CLI deja
+`harness_consumption_v1` con la clave de esa conversación cuando su propio transcript prueba que leyó
+el pedido exacto y que su última respuesta es la entregada; si responde por el MCP de emisión o por el
+transporte API, no hay testigo.
+
+La guardia `ops/guardias/cauce-conversaciones-paralelas.py` (timer de sistema en el host de la base)
+avisa a zeus cuando un alias atendió turnos humanos desde más de una conversación en 24 h.
+
 ## Reanudación exacta de la TUI Claude
 
 `shared-tui-session.json` pertenece al directorio de estado del alias, no al directorio de
