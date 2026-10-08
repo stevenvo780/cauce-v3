@@ -1,9 +1,10 @@
-import { Activity, Gauge, RadioTower, Search } from 'lucide-react';
+import { ArrowRight, RadioTower, Search } from 'lucide-react';
 import { useState } from 'react';
 import { useApi } from '../../api/context';
 import { useResource } from '../../api/use-resource';
+import { Button, CARD_TABLE, Kpi, KpiGrid, Notice, SCROLL, SectionCard } from '../../components/kit';
 import {
-  Badge, Desplazable, EmptyState, ErrorState, LoadingState, Metric, PageHeader, Panel, RefreshButton, Time,
+  Badge, Desplazable, EmptyState, ErrorState, LoadingState, PageHeader, RefreshButton, Time,
   Unknown, ViewTabPanel, ViewTabs,
 } from '../../components/ui';
 import { compactId, safeOriginRelayState } from '../../lib';
@@ -49,36 +50,39 @@ export function ObservabilityPage({ initialTab = 'senales' }: { initialTab?: Tab
 
   const data = resource.data;
   const status = data?.status ?? {};
-  const queues = data?.queues;
   const relayItems = relays.data?.items ?? [];
 
-  return <>
+  return <div>
     <PageHeader
       eyebrow="Señales del gateway"
       title="Señales y auditoría"
-      description="Snapshot real del gateway/store, el estado durable del egress al origen y el registro inmutable de decisiones, en una sola vista: qué pasó y quién lo autorizó. Una métrica que no llegó se dice «sin dato»; no se sintetizan señales en el browser. SENT exige sent_at; FAILED nunca se presenta como entregado."
-      actions={<RefreshButton onClick={reloadAll} loading={resource.loading || relays.loading} />}
+      description="Snapshot real del gateway, el estado durable del egress al origen y el registro inmutable de decisiones: qué pasó y quién lo autorizó. Una métrica que no llegó se dice «sin dato»; no se sintetizan señales en el browser."
+      notes={<p>ENVIADO exige <code>sent_at</code>; un relay fallido nunca se presenta como entregado.</p>}
+      actions={<>
+        <span className="text-xs text-muted">Observado: <Time value={data?.observed_at} relativo /></span>
+        <RefreshButton onClick={reloadAll} loading={resource.loading || relays.loading} compact />
+      </>}
     />
-    <div className="observation-line"><Activity size={16} />Observado: <Time value={data?.observed_at} /></div>
     <ViewTabs tabs={TABS} active={tab} onSelect={setTab} label="Señales y auditoría" />
 
     {tab === 'senales' ? <ViewTabPanel id="senales">
-      <div className="metrics-grid">
-        <Metric label="En línea" value={status.online} tone="positive" detail="leases vigentes" />
-        <Metric label="En cola" value={status.queued} tone="warning" detail="entregas no terminales" />
-        <Metric label="DLQ" value={status.dead_letters} tone="danger" detail="entregas muertas abiertas" />
-        <Metric label="Salida pendiente" value={status.outbox_pending} detail="despertar + relay al origen" />
-      </div>
-      <div className="trust-grid">
-        <article><Gauge /><div><strong>Colas</strong><p>{queues?.pending ?? 'sin dato de'} pendientes, {queues?.retrying ?? 'sin dato de'} en reintento, {queues?.dead ?? 'sin dato de'} muertas. El detalle por entrega, con reinyectar y cancelar, está en <a href="/queues" onClick={(event) => { onNavClick(event, '/queues'); }}>Queues &amp; DLQ</a>.</p></div></article>
-      </div>
-      <Panel title="Relays al canal de origen" subtitle="La consola observa; no ejecuta egress ni reintenta relays. Sólo los relays en los que este actor participa: GET /v3/console/origin-relays aplica la fachada de visibilidad que el snapshot de observabilidad no aplica.">
+      <KpiGrid label="Indicadores">
+        <Kpi label="En línea" value={status.online} tone="positive" detail="leases vigentes" />
+        <Kpi label="En cola" value={status.queued} tone="warning" detail="entregas no terminales" />
+        <Kpi label="DLQ" value={status.dead_letters} tone="danger" detail="entregas muertas abiertas" />
+        <Kpi label="Salida pendiente" value={status.outbox_pending} detail="despertar + relay al origen" />
+      </KpiGrid>
+      <a href="/queues" onClick={(event) => { onNavClick(event, '/queues'); }}
+        className="mb-4 inline-flex items-center gap-1 text-[13px] text-brand-ink no-underline hover:underline">
+        Ver el detalle en Colas y DLQ <ArrowRight size={14} aria-hidden="true" />
+      </a>
+      <SectionCard title="Relays al canal de origen" description="La consola observa; no ejecuta egress ni reintenta relays. Sólo se ven los relays en los que este actor participa.">
         {relays.error && !relays.data
-          ? <p className="notice error" role="alert">No se pudieron leer los origin relays: {relays.error.message}. Las señales de arriba sí llegaron.</p>
+          ? <Notice tone="danger" role="alert">No se pudieron leer los origin relays: {relays.error.message}. Las señales de arriba sí llegaron.</Notice>
           : relayItems.length === 0
             ? <EmptyState>El servidor no devolvió ningún relay visible para tu cuenta. No es «no hay relays»: es que no se ve ninguno desde acá.</EmptyState>
-            : <Desplazable etiqueta="Estado real de origin relays">
-              <table>
+            : <Desplazable etiqueta="Estado real de origin relays" className={SCROLL}>
+              <table className={CARD_TABLE}>
                 <caption className="sr-only">Estado real de origin relays</caption>
                 <thead><tr><th>Relay</th><th>Adapter</th><th>Tenant</th><th>Delivery</th><th>Estado</th><th>Intentos</th><th>Creado</th><th>Enviado</th><th>Auditoría</th></tr></thead>
                 <tbody>{relayItems.map((item, index) => {
@@ -88,8 +92,8 @@ export function ObservabilityPage({ initialTab = 'senales' }: { initialTab?: Tab
                   const traceId = item.trace_id;
                   return (
                     <tr key={item.id ?? index}>
-                      <td>
-                        <span className="inline-icon"><RadioTower size={15} aria-hidden="true" /><span className="mono">{compactId(item.id)}</span></span>
+                      <td data-label="Relay">
+                        <span className="inline-flex items-center gap-1.5"><RadioTower size={14} aria-hidden="true" className="text-muted" /><span className="mono">{compactId(item.id)}</span></span>
                         {item.request_id || item.trace_id ? (
                           <small className="subline">
                             {item.request_id ? <>petición <span className="mono">{compactId(item.request_id)}</span></> : null}
@@ -97,12 +101,12 @@ export function ObservabilityPage({ initialTab = 'senales' }: { initialTab?: Tab
                             {item.trace_id ? <>traza <span className="mono">{compactId(item.trace_id)}</span></> : null}
                           </small>
                         ) : (
-                          <small className="subline muted">sin petición registrada</small>
+                          <small className="subline">sin petición registrada</small>
                         )}
                       </td>
-                      <td><Unknown value={item.adapter} /></td>
-                      <td><Unknown value={item.tenant_id} /></td>
-                      <td>
+                      <td data-label="Adapter"><Unknown value={item.adapter} /></td>
+                      <td data-label="Tenant"><Unknown value={item.tenant_id} /></td>
+                      <td data-label="Delivery">
                         <span className="mono">{compactId(item.delivery_id)}</span>
                         {item.message_id
                           ? <small className="subline">mensaje <span className="mono">{compactId(item.message_id)}</span></small>
@@ -110,20 +114,20 @@ export function ObservabilityPage({ initialTab = 'senales' }: { initialTab?: Tab
                       </td>
                       {/* `sent` without `sent_at` is NOT a missing data point: it is a server contradiction,
                           and saying "no data" would hide it. What happens is named. */}
-                      <td>
+                      <td data-label="Estado">
                         <Badge tone={tone}>{actuallySent ? 'ENVIADO' : state === 'sent' ? 'DICE ENVIADO, SIN HORA' : <Unknown value={ESTADO_RELAY[state ?? ''] ?? state} />}</Badge>
                       </td>
-                      <td><Unknown value={item.attempts} /></td>
-                      <td><Time value={item.created_at} relativo /></td>
+                      <td data-label="Intentos" className="tabular-nums"><Unknown value={item.attempts} /></td>
+                      <td data-label="Creado"><Time value={item.created_at} relativo /></td>
                       {/* The dash is decorative for the listener: `Unknown` is what announces the phrase. */}
-                      <td>{actuallySent
+                      <td data-label="Enviado">{actuallySent
                         ? <Time value={item.sent_at} relativo />
                         : <Unknown value={null} ausente="no-aplica" motivo="El servidor no informó hora de envío para este relay." />}</td>
-                      <td>
+                      <td data-label="Auditoría" data-wide>
                         {typeof traceId === 'string' && traceId.length > 0
-                          ? <button className="button small" type="button" onClick={() => { investigate(traceId); }} aria-label={`Ver la auditoría del trace ${traceId}`}>
+                          ? <Button size="sm" onClick={() => { investigate(traceId); }} aria-label={`Ver la auditoría del trace ${traceId}`}>
                             <Search size={14} aria-hidden="true" />Ver auditoría
-                          </button>
+                          </Button>
                           : <span className="muted">no hay traza que abrir</span>}
                       </td>
                     </tr>
@@ -131,11 +135,11 @@ export function ObservabilityPage({ initialTab = 'senales' }: { initialTab?: Tab
                 })}</tbody>
               </table>
             </Desplazable>}
-      </Panel>
+      </SectionCard>
     </ViewTabPanel> : null}
 
     {tab === 'auditoria' ? <ViewTabPanel id="auditoria">
       <AuditPanel query={auditQuery} onQuery={setAuditQuery} />
     </ViewTabPanel> : null}
-  </>;
+  </div>;
 }

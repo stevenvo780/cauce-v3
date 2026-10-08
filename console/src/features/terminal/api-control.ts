@@ -35,13 +35,13 @@ export interface ControlDeTuiTomado {
   dudoso: string[];
 }
 
-export interface ControlDeTuiDevuelto {
+interface ControlDeTuiDevuelto {
   session_id: string;
   /** `null` when there was nothing left to give back, which is a success, not a failure. */
   hold_id: string | null;
 }
 
-export interface SesionProrrogada {
+interface SesionProrrogada {
   session_id: string;
   request_id: string;
   expires_at: string;

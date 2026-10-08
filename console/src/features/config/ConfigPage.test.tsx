@@ -1,9 +1,10 @@
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
-import { ConfigAdministration as ConfigPage } from './ConfigPage';
+import { ConfigPage } from './ConfigPage';
 import { server } from '../../mocks/server';
 import { renderWithApi } from '../../test/render';
+import { must } from '../../test/must';
 import {
   CONFIG_SIN_CONTROL_REASON, CONFIG_SIN_LECTURA_REASON, CONFIG_WRITE_NO_ACREDITADO_REASON,
 } from '../../router';
@@ -12,10 +13,10 @@ import {
   type ChangeRequest,
 } from './ConfigPage.test-helpers';
 
-const ESPACIOS = /espacios y miembros/i;
-const PERMISOS = /^permisos$/i;
-const AVISOS = /avisos y cadena/i;
-const HISTORIAL = /historial y json/i;
+const ESPACIOS = /espacios y salas/i;
+const PERMISOS = /acceso y roles/i;
+const AVISOS = /^general$/i;
+const HISTORIAL = /^avanzado$/i;
 
 function panelDe(nombre: RegExp): HTMLElement {
   const seccion = screen.getByRole('heading', { name: nombre }).closest('section');
@@ -23,17 +24,19 @@ function panelDe(nombre: RegExp): HTMLElement {
   return seccion;
 }
 
+beforeEach(() => { window.history.replaceState({}, '', '/config?seccion=espacios'); });
+
 it('muestra las colecciones que el servidor publica más allá de las seis históricas', async () => {
   const user = userEvent.setup();
   renderWithApi(<ConfigPage />);
   await irA(user, AVISOS);
 
-  expect(await screen.findByRole('heading', { name: /chain visibility policy/i })).toBeInTheDocument();
-  expect(screen.getByRole('heading', { name: /proactive egress allowlist/i })).toBeInTheDocument();
+  expect(await screen.findByRole('heading', { name: /política de cadena/i })).toBeInTheDocument();
   expect(screen.getByText(/"cycle_cut_enabled":true/)).toBeInTheDocument();
+  await irA(user, PERMISOS);
+  expect(await screen.findByRole('heading', { name: /destinos de aviso proactivo/i })).toBeInTheDocument();
   expect(screen.getByText('steven_dm')).toBeInTheDocument();
 });
-
 it('no confunde una clave que el gateway no publica con una colección vacía', async () => {
   server.use(http.get('*/v3/console/config', () => HttpResponse.json({
     revision: 1, observed_at: new Date().toISOString(), tenants: [], revisions: [],
@@ -41,69 +44,77 @@ it('no confunde una clave que el gateway no publica con una colección vacía', 
   const user = userEvent.setup();
   renderWithApi(<ConfigPage />);
 
-  const tenants = (await screen.findByRole('heading', { name: 'Tenants' })).closest('section');
+  const tenants = (await screen.findByRole('heading', { name: 'Clientes' })).closest('section');
   expect(tenants).toHaveTextContent(/sin registros/i);
   await irA(user, AVISOS);
-  const chain = screen.getByRole('heading', { name: /chain visibility policy/i }).closest('section');
+  const chain = screen.getByRole('heading', { name: /política de cadena/i }).closest('section');
   expect(chain).toHaveTextContent(/no publica esta colección/i);
 });
 
-it('FAMILIA 5: /config son CINCO pestañas reales, en el orden en que se monta una flota', async () => {
+it('FAMILIA 5: /config son SEIS secciones reales, en el orden en que se monta una flota', async () => {
+  window.history.replaceState({}, '', '/config');
   renderWithApi(<ConfigPage />);
   await screen.findByRole('heading', { level: 1, name: /ajustes/i });
 
-  const pestanas = within(screen.getByRole('tablist', { name: /áreas de configuración/i }))
+  const pestanas = within(screen.getByRole('tablist', { name: /secciones de ajustes/i }))
     .getAllByRole('tab');
   expect(pestanas.map((boton) => boton.textContent)).toEqual([
-    'Espacios y miembros', 'Permisos', 'Agentes',
-    'Avisos y cadena', 'Historial y JSON',
+    'General', 'Espacios y salas', 'Agentes', 'Arneses', 'Acceso y roles', 'Avanzado',
   ]);
   expect(pestanas[0]).toHaveAttribute('aria-selected', 'true');
   expect(pestanas.filter((boton) => boton.getAttribute('aria-selected') === 'true')).toHaveLength(1);
 });
 
-it('FAMILIA 5: la tira de /config gobierna su panel y se recorre con las flechas', async () => {
+it('FAMILIA 5: la sección pedida por la URL abre primero, y una desconocida cae en General', async () => {
+  window.history.replaceState({}, '', '/config?seccion=agentes');
+  const primera = renderWithApi(<ConfigPage />);
+  expect(await screen.findByRole('tab', { name: 'Agentes' })).toHaveAttribute('aria-selected', 'true');
+  primera.unmount();
+
+  window.history.replaceState({}, '', '/config?seccion=inventada');
+  renderWithApi(<ConfigPage />);
+  expect(await screen.findByRole('tab', { name: 'General' })).toHaveAttribute('aria-selected', 'true');
+});
+it('FAMILIA 5: la tira de /config se recorre con las flechas y gobierna su panel', async () => {
+  window.history.replaceState({}, '', '/config');
   const user = userEvent.setup();
   renderWithApi(<ConfigPage />);
   await screen.findByRole('heading', { level: 1, name: /ajustes/i });
 
-  const pestanas = within(screen.getByRole('tablist', { name: /áreas de configuración/i }))
+  const pestanas = within(screen.getByRole('tablist', { name: /secciones de ajustes/i }))
     .getAllByRole('tab');
-  const panel = screen.getByRole('tabpanel');
-  expect(panel.id).not.toBe('');
-  expect(pestanas[0]).toHaveAttribute('aria-controls', panel.id);
   expect(pestanas[0]).toHaveAttribute('tabindex', '0');
   expect(pestanas[1]).toHaveAttribute('tabindex', '-1');
+  expect(screen.getByRole('tabpanel')).toHaveAccessibleName('General');
 
   pestanas[0].focus();
   await user.keyboard('{ArrowRight}');
-  expect(screen.getByRole('heading', { name: /directed acl/i })).toBeInTheDocument();
+  expect(await screen.findByRole('heading', { name: /^clientes$/i })).toBeInTheDocument();
   expect(document.activeElement).toBe(pestanas[1]);
 });
-
-it('FAMILIA 5: el render es CONDICIONAL, no un scroll con todo pintado y un ancla', async () => {
+it('FAMILIA 5: sólo la sección elegida es visible y navegable', async () => {
   const user = userEvent.setup();
   renderWithApi(<ConfigPage />);
   await screen.findByRole('heading', { level: 1, name: /ajustes/i });
 
-  expect(screen.getByRole('heading', { name: /memberships/i })).toBeInTheDocument();
-  expect(screen.queryByRole('heading', { name: /directed acl/i })).not.toBeInTheDocument();
-  expect(screen.queryByRole('heading', { name: /agent registry/i })).not.toBeInTheDocument();
-  expect(screen.queryByLabelText('Mutación JSON')).not.toBeInTheDocument();
+  expect(screen.getByRole('heading', { name: /membresías/i })).toBeInTheDocument();
+  expect(screen.queryByRole('heading', { name: /permisos entre clientes/i })).not.toBeInTheDocument();
+  expect(screen.queryByRole('heading', { name: /agentes y grupos/i })).not.toBeInTheDocument();
+  expect(screen.getByLabelText('Mutación JSON')).not.toBeVisible();
 
   await irA(user, PERMISOS);
-  expect(screen.getByRole('heading', { name: /directed acl/i })).toBeInTheDocument();
-  expect(screen.queryByRole('heading', { name: /memberships/i })).not.toBeInTheDocument();
+  expect(screen.getByRole('heading', { name: /permisos entre clientes/i })).toBeInTheDocument();
+  expect(screen.queryByRole('heading', { name: /membresías/i })).not.toBeInTheDocument();
 });
 
-it('FAMILIA 5: «Alta rápida» NO se perdió: vive en «Espacios y miembros» y sigue dando de alta', async () => {
+it('FAMILIA 5: «Alta rápida» NO se perdió: vive en «Espacios y salas» y sigue dando de alta', async () => {
   const changes: ChangeRequest[] = [];
   recordChanges(changes);
   const user = userEvent.setup();
   renderWithApi(<ConfigPage />);
   await screen.findByRole('heading', { level: 1, name: /ajustes/i });
 
-  const alta = panelDe(/alta rápida/i);
+  const alta = panelDe(/alta de espacios/i);
   expect(alta).toBeInTheDocument();
   expect(within(alta).getByLabelText('Recurso a crear')).toBeInTheDocument();
 
@@ -117,19 +128,19 @@ it('FAMILIA 5: «Alta rápida» NO se perdió: vive en «Espacios y miembros» y
   });
 
   await irA(user, HISTORIAL);
-  expect(screen.queryByLabelText('Recurso a crear')).not.toBeInTheDocument();
+  expect(screen.getByLabelText('Recurso a crear')).not.toBeVisible();
   await irA(user, ESPACIOS);
   expect(screen.getByLabelText('Recurso a crear')).toBeInTheDocument();
 });
 
-it('FAMILIA 5: el cambio de rol por columna y el JSON crudo por fila siguen en «Espacios y miembros»', async () => {
+it('FAMILIA 5: el cambio de rol por columna y el JSON crudo por fila siguen en «Espacios y salas»', async () => {
   const changes: ChangeRequest[] = [];
   recordChanges(changes);
   const user = userEvent.setup();
   renderWithApi(<ConfigPage />);
   await screen.findByRole('heading', { level: 1, name: /ajustes/i });
 
-  const memberships = panelDe(/memberships/i);
+  const memberships = panelDe(/membresías/i);
   expect(within(memberships).getByText(/ver crudo/i)).toBeInTheDocument();
 
   await user.selectOptions(
@@ -151,22 +162,22 @@ it('FAMILIA 5: cambiar de pestaña con una confirmación pendiente la ANULA, no 
   await user.selectOptions(await screen.findByLabelText('Rol de permisos de Miguel/grp.miguel/janus'), 'operator');
   expect(screen.getByRole('button', { name: 'Confirmar' })).toBeInTheDocument();
 
-  await irA(user, PERMISOS);
-  await irA(user, ESPACIOS);
+  // The modal hides the strip from assistive tech; a programmatic section change must still cancel it.
+  await user.click(screen.getByRole('tab', { name: PERMISOS, hidden: true }));
+  await user.click(screen.getByRole('tab', { name: ESPACIOS, hidden: true }));
   expect(screen.queryByRole('button', { name: 'Confirmar' })).not.toBeInTheDocument();
   expect(changes).toEqual([]);
 });
 
-it('FAMILIA 5: una colección que la consola no sabe clasificar aparece en «Otros», no desaparece', async () => {
+it('FAMILIA 5: una colección que la consola no sabe clasificar aparece en «Avanzado», no desaparece', async () => {
   servirConfig(() => ({ ...snapshotDeConfig(1), gizmos: [{ id: 'g1', enabled: true }] }));
   const user = userEvent.setup();
   renderWithApi(<ConfigPage />);
   await screen.findByRole('heading', { level: 1, name: /ajustes/i });
 
-  await irA(user, /^otros$/i);
+  await irA(user, HISTORIAL);
   expect(screen.getByRole('heading', { name: 'gizmos' })).toBeInTheDocument();
 });
-
 describe('llegar a /config por URL directa sin permiso de lectura', () => {
   function servir403() {
     server.use(
@@ -181,8 +192,7 @@ describe('llegar a /config por URL directa sin permiso de lectura', () => {
   }
 
   it('nombra el permiso que el servidor exige —LECTURA—, y no que no se pudo leer Cauce', async () => {
-    // El GET exige `read` (gateway: requirePermission(actor,'read')). Mandar a pedir «control»
-    // devolvía al operador con el permiso equivocado y sin la vista.
+    // The GET requires `read`; asking for «control» sent the operator back with the wrong permission.
     servir403();
     renderWithApi(<ConfigPage />);
 
@@ -218,67 +228,57 @@ it('FAMILIA 8: la página se llama IGUAL que su entrada de menú, y no hay antet
   renderWithApi(<ConfigPage />);
   const titulo = await screen.findByRole('heading', { level: 1 });
 
-  expect(titulo).toHaveTextContent(/^Ajustes y altas$/);
-  expect(document.querySelector('.eyebrow')).toHaveTextContent('Topología y permisos');
+  expect(titulo).toHaveTextContent(/^Ajustes$/);
+  expect(titulo.closest('header')).toHaveTextContent(/^Configuración/);
   expect(document.body.textContent).not.toMatch(/atomic control plane/i);
 });
 
-it('FAMILIA 8: hay UNA sola tira de pestañas, y el modo de alta es un segmentado DENTRO del panel', async () => {
+it('FAMILIA 8: hay UNA sola tira de secciones, y el modo de alta es un segmentado DENTRO de su tarjeta', async () => {
   renderWithApi(<ConfigPage />);
-  await screen.findByRole('heading', { name: /alta rápida/i });
+  await screen.findByRole('group', { name: 'Modo de alta' });
 
   const tiras = screen.getAllByRole('tablist');
   expect(tiras).toHaveLength(1);
-  expect(tiras[0]).toHaveAccessibleName(/áreas de configuración/i);
+  expect(tiras[0]).toHaveAccessibleName(/secciones de ajustes/i);
 
   const segmentado = screen.getByRole('group', { name: 'Modo de alta' });
-  const panel = segmentado.closest('.panel');
-  expect(panel, 'el segmentado del alta quedó fuera de todo panel').not.toBeNull();
-  expect(within(panel as HTMLElement).getByRole('heading', { name: /alta rápida/i })).toBeInTheDocument();
+  const tarjeta = segmentado.closest('section');
+  expect(tarjeta, 'el segmentado del alta quedó fuera de toda tarjeta').not.toBeNull();
+  expect(within(must(tarjeta, 'the enrolment card')).getByRole('heading', { name: /alta de espacios/i })).toBeInTheDocument();
 
   expect(screen.getByRole('button', { name: 'Un solo recurso' })).toHaveAttribute('aria-pressed', 'true');
   expect(screen.getByRole('button', { name: /espacio completo/i })).toHaveAttribute('aria-pressed', 'false');
 });
 
-it('FAMILIA 8: la orientación de cada pestaña es UNA frase, y lo que sobra queda plegado y cerrado', async () => {
+it('FAMILIA 8: el propósito de cada sección es UNA frase, y lo que sobra queda plegado y cerrado', async () => {
   const user = userEvent.setup();
   renderWithApi(<ConfigPage />);
-  await screen.findByRole('heading', { name: /alta rápida/i });
+  const panel = await screen.findByRole('tabpanel', { name: 'Espacios y salas' });
 
-  const frase = document.querySelector('.config-area-descripcion');
-  expect(frase).toHaveTextContent('Los clientes, sus salas y quién está dentro de cada sala.');
-  expect(frase?.textContent.length ?? 999).toBeLessThanOrEqual(90);
+  const frase = within(panel).getByText('Los clientes, sus salas y quién está dentro de cada una.');
+  expect(frase.textContent.length).toBeLessThanOrEqual(120);
 
-  const area = document.querySelector('.config-area');
-  expect(frase?.compareDocumentPosition(area as Node) ?? 0).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
-  const plegado = [...document.querySelectorAll('.config-detalle')].find((node) => (
-    node.querySelector('summary')?.textContent.includes('Qué es exactamente «Espacios y miembros»')
-  ));
-  expect(area?.compareDocumentPosition(plegado as Node) ?? 0).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+  const plegado = within(panel).getByText('¿Qué es esto?').closest('details');
   expect(plegado).not.toBeNull();
   expect(plegado).not.toHaveAttribute('open');
-  expect(plegado).toHaveClass('config-detalle');
+  expect(plegado).toHaveTextContent(/un alias sin membresía habilitada no recibe entregas/i);
 
-  expect(plegado).toHaveTextContent(/un alias sin membership habilitada no recibe entregas/i);
-
-  await user.click(screen.getByText(/qué es exactamente «espacios y miembros»/i));
+  await user.click(within(panel).getByText('¿Qué es esto?'));
   expect(plegado).toHaveAttribute('open');
 
   await irA(user, PERMISOS);
-  expect([...document.querySelectorAll('.config-detalle')].find((node) => (
-    node.querySelector('summary')?.textContent.includes('Qué es exactamente «Permisos»')
-  ))).toHaveTextContent(/todo empieza denegado/i);
+  expect(within(screen.getByRole('tabpanel', { name: 'Acceso y roles' })).getByText('¿Qué es esto?').closest('details'))
+    .toHaveTextContent(/todo empieza denegado/i);
 });
 
 it('FAMILIA 8: el permiso se dice en castellano, sin perder el identificador que hay que citar', async () => {
   renderWithApi(<ConfigPage />);
   await screen.findByRole('heading', { level: 1 });
-  const linea = document.querySelector('.config-permiso');
-  expect(linea, 'la línea del permiso no se pinta').not.toBeNull();
+  await waitFor(() => { expect(document.querySelector('[data-estado]')).toHaveAttribute('data-estado', 'allowed'); });
+  const linea = document.querySelector('[data-estado]');
 
   expect(linea).toHaveTextContent(/podés cambiar la configuración/i);
   expect(linea).toHaveTextContent(/config\.write/);
-  expect(linea).toHaveAttribute('data-estado', 'allowed');
 });
 
 it.each([
@@ -292,38 +292,27 @@ it.each([
   await screen.findByRole('heading', { level: 1 });
 
   await waitFor(() => {
-    const linea = document.querySelector('.config-permiso');
+    const linea = document.querySelector('[data-estado]');
     expect(linea).toHaveAttribute('data-estado', estado);
     expect(linea).toHaveTextContent(texto);
     expect(linea).toHaveTextContent(/config\.write/);
   });
 });
 
-it('FAMILIA 8: las columnas de números se marcan para alinearse a la derecha, y sólo ellas', async () => {
+it('la política de cadena muestra etiquetas en español y pliega los topes bajo su interruptor', async () => {
   const user = userEvent.setup();
   renderWithApi(<ConfigPage />);
   await screen.findByRole('heading', { level: 1 });
   await irA(user, AVISOS);
 
-  const heading = await screen.findByRole('heading', { name: /chain visibility policy/i });
-  const panel = heading.closest('.panel');
-  expect(panel).not.toBeNull();
-  const tabla = panel?.querySelector('table');
+  const heading = await screen.findByRole('heading', { name: /política de cadena/i });
+  const tabla = heading.closest('section')?.querySelector('table');
   expect(tabla).not.toBeNull();
-  if (tabla) {
-    const cabeceras = Array.from(tabla.querySelectorAll('th'));
-    const numerica = cabeceras.find((th) => /progress_relay_max_events/i.test(th.textContent));
-    const texto = cabeceras.find((th) => /^\s*id\s*$/i.test(th.textContent));
+  const cabeceras = Array.from(tabla?.querySelectorAll('th') ?? []).map((th) => th.textContent);
 
-    expect(numerica, 'no está la columna numérica del fixture').toBeDefined();
-    expect(numerica).toHaveAttribute('data-numero', 'true');
-    if (numerica) {
-      const celda = tabla.querySelectorAll('tbody tr td')[cabeceras.indexOf(numerica)];
-      expect(celda).toHaveAttribute('data-numero', 'true');
-      expect(celda).toHaveTextContent('8');
-    }
-
-    expect(texto, 'no está la columna de texto del fixture').toBeDefined();
-    expect(texto).not.toHaveAttribute('data-numero');
-  }
+  expect(cabeceras.join(' ')).not.toMatch(/_/);
+  expect(cabeceras.some((texto) => /relé de progreso/i.test(texto))).toBe(true);
+  expect(cabeceras.some((texto) => /eventos por relé/i.test(texto))).toBe(false);
+  expect(tabla).toHaveTextContent('hasta 8 eventos');
+  expect(tabla).toHaveTextContent('6 por turno · 3 por arista · 64 por raíz');
 });

@@ -3,8 +3,9 @@ import { ApiError } from '../../api/client';
 import { useApi } from '../../api/context';
 import { usePolling } from '../../api/use-polling';
 import { useResource } from '../../api/use-resource';
-import type { DeliveryState, MessageDetail } from '../../api/types';
-import { canonicalReplyMedia, type CanonicalReplyMedia } from './canonical-reply-media';
+import type { DeliveryState } from '../../api/types';
+import { type CanonicalReplyMedia } from './canonical-reply-media';
+import { canonicalReplyScope, projectReply, useCanonicalReplyHistory } from './canonical-reply-history';
 
 export interface CanonicalReplyRoot {
   messageId: string;
@@ -29,57 +30,40 @@ function terminal(status: DeliveryState | null | undefined): boolean {
   return status === 'done' || status === 'failed' || status === 'dead';
 }
 
-function project(detail: MessageDetail, root: CanonicalReplyRoot, tenantId: string, alias: string): CanonicalReply {
-  if (detail.message_id !== root.messageId && detail.id !== root.messageId) {
-    throw new Error('El detalle no corresponde a la publicación seleccionada.');
-  }
-  if (detail.chain_open !== undefined && typeof detail.chain_open !== 'boolean') {
-    throw new Error('El servidor devolvió un estado de cadena inválido.');
-  }
-  if (detail.deliveries !== undefined && detail.deliveries !== null && !Array.isArray(detail.deliveries)) {
-    throw new Error('El servidor devolvió entregas inválidas.');
-  }
-  const delivery = detail.deliveries?.find((candidate) => candidate.delivery_id === root.deliveryId);
-  if (delivery?.tenant_id !== tenantId || delivery.alias !== alias) {
-    throw new Error('La entrega del detalle no coincide con este destinatario.');
-  }
-  if (delivery.reply !== undefined && delivery.reply !== null && typeof delivery.reply !== 'string') {
-    throw new Error('El servidor devolvió una respuesta canónica inválida.');
-  }
-  const status = delivery.status === undefined ? root.status : delivery.status;
-  return {
-    messageId: root.messageId, deliveryId: root.deliveryId, tenantId, alias,
-    ...(detail.chain_open === undefined ? {} : { chainOpen: detail.chain_open }),
-    ...(status === undefined ? {} : { status }),
-    ...(delivery.reply === undefined ? {} : { reply: delivery.reply }),
-    ...canonicalReplyMedia(delivery),
-  };
-}
 
 export function useCanonicalReply(input: {
   publisherSubject?: string | null;
   tenantId: string;
   alias: string;
   root?: CanonicalReplyRoot;
+  roots?: readonly CanonicalReplyRoot[];
 }) {
   const api = useApi();
   const { publisherSubject, tenantId, alias, root } = input;
+  const identity = canonicalReplyScope(api, publisherSubject, tenantId, alias);
+  const session = useRef({ identity, generation: 0 });
+  if (session.current.identity !== identity) session.current = { identity, generation: session.current.generation + 1 };
+  const scope = `${identity}:${String(session.current.generation)}`;
+  const history = useCanonicalReplyHistory(api, scope, input);
   const active = Boolean(publisherSubject && root?.messageId && root.deliveryId);
   const key = active
-    ? JSON.stringify([publisherSubject, tenantId, alias, root?.messageId, root?.deliveryId])
-    : 'canonical-reply:inactive';
+    ? JSON.stringify([scope, root?.messageId, root?.deliveryId])
+    : `${scope}:inactive`;
   const [automaticFailures, setAutomaticFailures] = useState({ key, count: 0 });
   const currentKey = useRef(key);
   useEffect(() => { currentKey.current = key; }, [key]);
   const resource = useResource<CanonicalReply | undefined>(key, async () => {
     if (!active || !root) return undefined;
+    const sequence = history.begin(scope, root).next;
     try {
-      const reply = project(await api.getMessage(root.messageId), root, tenantId, alias);
+      const reply = projectReply(await api.getMessage(root.messageId), root, tenantId, alias);
+      history.remember(scope, reply, sequence);
       if (currentKey.current === key) setAutomaticFailures((current) => (
         current.key === key && current.count === 0 ? current : { key, count: 0 }
       ));
       return reply;
     } catch (error) {
+      history.reject(scope, root, error, sequence);
       if (currentKey.current === key) setAutomaticFailures((current) => ({
         key, count: Math.min(3, (current.key === key ? current.count : 0) + 1),
       }));
@@ -151,6 +135,6 @@ export function useCanonicalReply(input: {
   const error = resource.error;
   const stale = Boolean(error && data && !(error instanceof ApiError && [401, 403, 404].includes(error.status)));
   return useMemo(() => ({
-    reply: data, loading: resource.loading, error, stale, accessDenied, retry,
-  }), [accessDenied, data, error, resource.loading, retry, stale]);
+    reply: data, replies: history.replies, loading: resource.loading, error, stale, accessDenied, retry,
+  }), [accessDenied, data, error, history.replies, resource.loading, retry, stale]);
 }

@@ -1,7 +1,7 @@
 import type { ConfigurationSnapshot } from '../../api/types';
 
 type Row = Record<string, unknown>;
-export interface SettingsGroup {
+interface SettingsGroup {
   id: string;
   label: string;
   enabled: boolean | undefined;

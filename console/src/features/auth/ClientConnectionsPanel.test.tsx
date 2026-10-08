@@ -1,8 +1,6 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { expect, it, vi } from 'vitest';
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { CauceApi } from '../../api/client';
 import { ApiError } from '../../api/client/core';
 import { ApiProvider } from '../../api/context';
@@ -75,7 +73,7 @@ it('escapes hostile stored labels and rejects hostile input before writing', asy
   const f = fixture({ items: [{ ...row(), display_label: '<img src=x onerror=alert(1)>' }], truncated: false });
   const user = await open();
   expect(screen.getByText('<img src=x onerror=alert(1)>')).toBeVisible();
-  expect(document.querySelector('.client-connections img')).toBeNull();
+  expect(document.querySelector('[data-client-connections] img')).toBeNull();
   await select(user);
   await user.clear(screen.getByRole('textbox', { name: 'Etiqueta declarada' }));
   await user.type(screen.getByRole('textbox', { name: 'Etiqueta declarada' }), '<script>');
@@ -204,11 +202,15 @@ it('discards a late mutation result from the old account without reloading it', 
 it('bounds mobile scrolling, wraps complete refs and returns focus with Escape', async () => {
   fixture(); const user = await open();
   expect(screen.getByRole('heading', { name: 'Declaraciones de cliente' })).toHaveFocus();
+  // The panel scrolls on its own and never lets a long reference widen the popover.
+  const body = screen.getByRole('region');
+  expect(body.className).toContain('max-[760px]:max-h-[45dvh]');
+  expect(body.className).toContain('overflow-y-auto');
+  expect(body.className).toContain('[overflow-wrap:anywhere]');
   await user.keyboard('{Escape}'); expect(screen.queryByRole('region')).toBeNull();
   expect(screen.getByRole('button', { name: 'Conexiones MCP' })).toHaveFocus();
-  const css = readFileSync(resolve('src/features/auth/client-connections.css'), 'utf8');
-  expect(css).toContain('max-height: 45dvh'); expect(css).toContain('overflow-y: auto'); expect(css).toContain('overflow-wrap: anywhere');
 });
+
 
 it('pastes one verified reference among 100 grants sharing the same client without a fallback', async () => {
   const items = Array.from({ length: 100 }, (_, i) => row(i.toString(16).padStart(64, '0')));

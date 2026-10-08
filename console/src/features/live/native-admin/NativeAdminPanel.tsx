@@ -5,7 +5,7 @@ import type { PermissionState } from '../../../lib';
 import { ApiError } from '../../../api/client/core';
 import type { NativeRead, NativeSaved } from './client';
 import { clearNativeDrafts, readNativeDraft, storeNativeDraft, type NativeDraft } from './drafts';
-import '../native-context-repository.css';
+import '../../config/admin-ui.css';
 
 interface Props { tenantId: string; alias: string; permission: PermissionState; blocked?: boolean; onReload?: () => Promise<void> }
 const labels: Record<NativePieceKind, string> = { skill: 'Skills', mcp: 'Servidores MCP', subagent: 'Subagentes', prompt: 'Prompts' };

@@ -2,7 +2,7 @@ import type { DeliveryState, JobLane } from './deliveries';
 
 // ---------------------------------------------------------------------------------------------
 // GET /v3/console/activity — in-flight fleet activity, aggregated by alias. See
-// features/activity for the pure derivation of badges and thresholds, and the reference SQL in
+// features/live/activity for the pure derivation of badges and thresholds, and the reference SQL in
 // the contract (fleetActivity()): this view NEVER carries message bodies, `result` or
 // `last_error`; that is left to Messages/Chains, which already redact.
 

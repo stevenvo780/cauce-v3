@@ -4,7 +4,10 @@ import type { ClientConnectionsPage } from '../../api/types/client-delegations';
 import { ClientDeclarationResponseError, clientConnectionsResponse } from '../../api/client/client-delegations-client';
 import { confirmDeclarationResult, verifiedConnection, declarationError, grantActive, prepareDeclaration, selectedConnection, sendDeclaration,
   uncertainDeclaration, type ClientDeclarationCommand } from './client-declaration-state';
-import './client-connections.css';
+import { Button } from '../../components/kit';
+
+/** The panel scrolls inside the account popover instead of growing it past the viewport. */
+const BODY = 'grid min-w-0 grid-cols-[minmax(0,1fr)] gap-2 overflow-y-auto overscroll-contain pt-2 max-h-[min(55dvh,480px)] max-[760px]:max-h-[45dvh] [overflow-wrap:anywhere] [&_p]:m-0 [&_p]:text-xs';
 
 export function ClientConnectionsPanel({ active, disabled }: { active: boolean; disabled: boolean }) {
   const api = useApi();
@@ -101,28 +104,28 @@ export function ClientConnectionsPanel({ active, disabled }: { active: boolean; 
   }
 
   const selected = selectedConnection(page, reference);
-  return <section className="client-connections" onKeyDown={event => {
+  return <section className="grid min-w-0 gap-2 border-t border-line pt-3" data-client-connections onKeyDown={event => {
     if (event.key === 'Escape' && open) {
       event.preventDefault(); event.stopPropagation(); setOpen(false); trigger.current?.focus({ preventScroll: true });
     }
   }}>
-    <button ref={trigger} className="button secondary" type="button" aria-expanded={open} aria-controls={id}
-      disabled={disabled} onClick={() => { setOpen(!open); if (!open && !busy) void load(); }}>Conexiones MCP</button>
-    {open && active ? <div id={id} role="region" aria-labelledby={`${id}-title`} className="client-connections-body" aria-busy={busy}>
-      <h3 id={`${id}-title`} tabIndex={-1} ref={heading}>Declaraciones de cliente</h3>
+    <Button ref={trigger} className="justify-self-start" aria-expanded={open} aria-controls={id}
+      disabled={disabled} onClick={() => { setOpen(!open); if (!open && !busy) void load(); }}>Conexiones MCP</Button>
+    {open && active ? <div id={id} role="region" aria-labelledby={`${id}-title`} className={BODY} aria-busy={busy}>
+      <h3 id={`${id}-title`} tabIndex={-1} ref={heading} className="text-[13px] font-semibold">Declaraciones de cliente</h3>
       <p>Una etiqueta es tu declaración sobre un grant exacto. No prueba que Dots u otro cliente esté conectado ahora. Instancia desconocida; último uso no observado.</p>
-      <button type="button" className="button secondary" disabled={busy || disabled}
-        onClick={() => { void load(); }}>Recargar conexiones</button>
+      <Button size="sm" className="justify-self-start" disabled={busy || disabled}
+        onClick={() => { void load(); }}>Recargar conexiones</Button>
       {notice ? <p role="status">{notice}</p> : null}
-      {error ? <p role="alert">{error}</p> : null}
+      {error ? <p role="alert" className="rounded-md bg-danger-soft px-2 py-1.5 text-danger-ink">{error}</p> : null}
       {busy ? <p role="status">Consultando al servidor…</p> : null}
-      {pending ? <div className="client-pending"><p>Hay una acción pendiente sobre la declaración. No inicies otra hasta confirmar el resultado.</p>
-        <button type="button" className="button" disabled={busy || disabled || needsReload}
-          onClick={() => { void mutate(pending.operation, true); }}>Reintentar mismo intento</button></div> : null}
+      {pending ? <div className="grid gap-2 rounded-md bg-warn-soft p-2 text-warn-ink"><p>Hay una acción pendiente sobre la declaración. No inicies otra hasta confirmar el resultado.</p>
+        <Button variant="primary" className="whitespace-normal" disabled={busy || disabled || needsReload}
+          onClick={() => { void mutate(pending.operation, true); }}>Reintentar mismo intento</Button></div> : null}
       {page?.truncated ? <p role="status">Lista limitada a 100 conexiones, sin paginación. Si tu referencia no aparece, no se puede seleccionar desde este panel.</p> : null}
-      {page ? <fieldset disabled={busy || disabled || Boolean(pending)}><legend>Elegí la referencia exacta; no seleccionamos una automáticamente</legend>
-        <label className="client-reference" htmlFor={`${id}-reference`}>connection_ref verificada
-          <input id={`${id}-reference`} value={referenceInput} autoComplete="off" spellCheck={false}
+      {page ? <fieldset className="m-0 grid min-w-0 gap-2 rounded-lg border border-line p-2" disabled={busy || disabled || Boolean(pending)}><legend className="max-w-full px-1 text-xs">Elegí la referencia exacta; no seleccionamos una automáticamente</legend>
+        <label className="min-w-0" htmlFor={`${id}-reference`}>connection_ref verificada
+          <input id={`${id}-reference`} className="font-mono" value={referenceInput} autoComplete="off" spellCheck={false}
             aria-describedby={`${id}-reference-help`} onChange={event => {
               const value = event.target.value;
               setReferenceInput(value); setReference(''); setError(''); setNotice('');
@@ -135,13 +138,13 @@ export function ClientConnectionsPanel({ active, disabled }: { active: boolean; 
         </label>
         <p id={`${id}-reference-help`}>Pegá la connection_ref verificada por cauce_connection_identity. Debe coincidir exactamente con una sola conexión de la lista actual.</p>
         {page.items.length === 0 ? <p>No hay conexiones visibles para esta cuenta.</p> : null}
-        <div className="client-connections-list">{page.items.map((item, position) => <label className="client-connection" key={`${item.connection_ref}:${String(position)}`}>
+        <div className="grid max-h-[min(25dvh,240px)] gap-2 overflow-y-auto overscroll-contain">{page.items.map((item, position) => <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-line p-2 has-[:checked]:border-brand has-[:checked]:bg-brand-soft" key={`${item.connection_ref}:${String(position)}`}>
           <input type="radio" name={id} value={item.connection_ref} checked={reference === item.connection_ref}
             onChange={() => { setReferenceInput(item.connection_ref); setReference(''); setError(''); setNotice('');
               try { const match = verifiedConnection(page, item.connection_ref); setReference(match.connection_ref); setLabel(match.label ?? 'Dots'); }
               catch (cause) { setError(declarationError(cause)); }
             }} />
-          <span><code>{item.connection_ref}</code><span>Cliente: <code>{item.client_id}</code></span>
+          <span className="grid min-w-0 gap-0.5 text-xs [overflow-wrap:anywhere]"><code className="font-mono">{item.connection_ref}</code><span>Cliente: <code>{item.client_id}</code></span>
             <span>Creado: <time dateTime={item.created_at}>{item.created_at}</time></span>
             <span>Vence: <time dateTime={item.expires_at}>{item.expires_at}</time></span>
             <span>{item.revoked ? 'Grant OAuth revocado' : grantActive(item) ? 'Grant vigente según expiración' : 'Grant vencido'}</span>
@@ -150,14 +153,16 @@ export function ClientConnectionsPanel({ active, disabled }: { active: boolean; 
           </span>
         </label>)}</div>
       </fieldset> : null}
-      {selected && !pending && !needsReload ? <form onSubmit={event => { event.preventDefault(); void mutate(selected.binding_id ? 'rename' : 'create'); }}>
+      {selected && !pending && !needsReload ? <form className="grid min-w-0 gap-2" onSubmit={event => { event.preventDefault(); void mutate(selected.binding_id ? 'rename' : 'create'); }}>
         <label htmlFor={`${id}-label`}>Etiqueta declarada</label>
         <input id={`${id}-label`} value={label} maxLength={128} disabled={busy || disabled} autoComplete="off"
           onChange={event => { setLabel(event.target.value); }} aria-describedby={`${id}-label-help`} />
         <p id={`${id}-label-help`}>ASCII, 1–128 caracteres; letras, números, espacios, punto, guion y guion bajo. Extremos alfanuméricos.</p>
-        <button type="submit" className="button" disabled={busy || disabled || !grantActive(selected)}>{selected.binding_id ? 'Renombrar declaración' : 'Guardar declaración'}</button>
-        {selected.binding_id ? <button type="button" className="button secondary" disabled={busy || disabled}
-          onClick={() => { void mutate('revoke'); }}>Quitar declaración</button> : null}
+        <div className="flex flex-wrap gap-2">
+          <Button type="submit" variant="primary" className="whitespace-normal" disabled={busy || disabled || !grantActive(selected)}>{selected.binding_id ? 'Renombrar declaración' : 'Guardar declaración'}</Button>
+          {selected.binding_id ? <Button variant="danger" disabled={busy || disabled}
+            onClick={() => { void mutate('revoke'); }}>Quitar declaración</Button> : null}
+        </div>
         <p>Quitar la declaración no revoca el grant OAuth. Los mensajes anteriores conservan su evidencia.</p>
       </form> : null}
     </div> : null}

@@ -58,7 +58,7 @@ const borrowedAccount = {
 it.each([
   ['explicitly denied', false],
   ['unknown after access failure', true],
-] as const)('keeps account and routing data inspectable when config.write is %s without sending a mutation', async (_label, unknown) => {
+] as const)('keeps account data inspectable when config.write is %s without sending a mutation', async (_label, unknown) => {
   let posts = 0;
   accessWithoutWrite(unknown);
   configuration({
@@ -79,25 +79,22 @@ it.each([
   expect(row).not.toBeNull();
   if (!row) return;
 
-  expect(within(row).getByRole('button', { name: /detalle de ruteo/i })).toBeEnabled();
+  expect(within(row).getByRole('button', { name: /detalle de/i })).toBeEnabled();
   expect(within(row).getByRole('button', { name: /editar/i })).toBeDisabled();
   expect(within(row).getByRole('button', { name: /habilitar|deshabilitar/i })).toBeDisabled();
-  await user.click(within(row).getByRole('button', { name: /detalle de ruteo/i }));
-  expect(await inventory.findByRole('heading', { name: /fallback para/i })).toBeInTheDocument();
-  expect(inventory.getByLabelText(/id externo de la suscripción/i)).toBeDisabled();
+  await user.click(within(row).getByRole('button', { name: /detalle de/i }));
+  expect(await inventory.findByRole('heading', { name: /identidad/i })).toBeInTheDocument();
+  expect(inventory.getByText('org-9f21')).toBeInTheDocument();
+  expect(inventory.getByRole('button', { name: /nueva cuenta/i })).toBeDisabled();
 
   await user.click(screen.getByRole('tab', { name: 'Asignaciones' }));
   const cell = await screen.findByRole('button', { name: /Steven\/kant × codex-steven/i });
   expect(cell).toBeDisabled();
-  expect(screen.getByLabelText('Agente')).toBeDisabled();
-  expect(screen.getByLabelText('Cuenta')).toBeDisabled();
+  expect(screen.getByRole('button', { name: /nueva asignación/i })).toBeDisabled();
   expect(posts).toBe(0);
 });
 
-/**
- * Account creation and assignment have write bars with buttons of the same text since the two
- * halves share screen. This helper scopes to the account form.
- */
+/** Scopes to the account form: creation and assignment bars share button texts. */
 function accountActions() {
   return within(screen.getByRole('group', { name: /acciones de (alta|edición) de cuenta/i }));
 }
@@ -106,9 +103,6 @@ function deleteActions() {
   return within(screen.getByRole('group', { name: /acciones de retiro o rotación de cuenta/i }));
 }
 
-/**
- * Explicitly opens the Inventory tab in Cuentas y cuotas.
- */
 async function openInventory(user: ReturnType<typeof userEvent.setup>) {
   await screen.findByRole('heading', { level: 1, name: /cuentas y cuotas/i });
   await user.click(screen.getByRole('tab', { name: 'Inventario' }));
@@ -151,9 +145,11 @@ it('lista el inventario con pagador, publicación al pool y estado', async () =>
     expect(within(row).getByText('Steven')).toBeInTheDocument();
     expect(within(row).getByText('PUBLICADA')).toBeInTheDocument();
     expect(within(row).getByText('HABILITADA')).toBeInTheDocument();
-    expect(within(row).getByText('org-9f21')).toBeInTheDocument();
-    expect(within(row).getByText('env_path')).toBeInTheDocument();
   }
+  // The identifiers only the payer sees live in the row detail.
+  await user.click(within(row ?? document.body).getByRole('button', { name: /detalle de/i }));
+  expect(inventario.getByText('org-9f21')).toBeInTheDocument();
+  expect(inventario.getByText('env_path')).toBeInTheDocument();
 });
 
 it('dice que los campos del pagador no son visibles en vez de mostrarlos vacíos', async () => {
@@ -166,8 +162,9 @@ it('dice que los campos del pagador no son visibles en vez de mostrarlos vacíos
   const row = cell.closest('tr');
   expect(row).not.toBeNull();
   if (row) {
-    expect(within(row).getAllByText(/no visible: la paga pablo/i)).toHaveLength(2);
-    expect(within(row).queryByText('UNKNOWN')).not.toBeInTheDocument();
+    await user.click(within(row).getByRole('button', { name: /detalle de/i }));
+    expect(inventario.getAllByText(/no visible: la paga pablo/i)).toHaveLength(2);
+    expect(inventario.queryByText('UNKNOWN')).not.toBeInTheDocument();
   }
 });
 
@@ -180,7 +177,7 @@ it('declara no disponible el inventario cuando el gateway no publica provider_ac
   // listed, the matrix cannot be formed. Merging the views did not merge the warnings, because
   // they are not the same fact — and now that they are tabs of the same page, it still isn't.
   const inventario = await openInventory(user);
-  expect(await inventario.findByText(/no se muestra inventario porque no hay dato que mostrar/i)).toBeInTheDocument();
+  expect(await inventario.findByText(/no se muestra nada porque no hay dato/i)).toBeInTheDocument();
   expect(inventario.queryByRole('table')).not.toBeInTheDocument();
 
   await user.click(screen.getByRole('tab', { name: 'Asignaciones' }));
@@ -195,6 +192,7 @@ it('exige dry-run antes de aplicar el alta y manda la mutación de provider_acco
   renderWithApi(<AccountsPage />);
 
   await openInventory(user);
+  await user.click(await screen.findByRole('button', { name: /nueva cuenta/i }));
   await user.type(await screen.findByLabelText(/id externo de la suscripción/i), 'org-9f21');
   await user.type(screen.getByLabelText(/tenant pagador/i), 'Steven');
 
@@ -233,6 +231,7 @@ it('no habilita ni acredita escrituras del registro con recibos 2xx truncados', 
   renderWithApi(<AccountsPage />);
 
   await openInventory(user);
+  await user.click(await screen.findByRole('button', { name: /nueva cuenta/i }));
   await user.type(await screen.findByLabelText(/id externo de la suscripción/i), 'org-9f21');
   await user.type(screen.getByLabelText(/tenant pagador/i), 'Steven');
   await user.click(accountActions().getByRole('button', { name: /previsualizar \(dry-run\)/i }));
@@ -251,6 +250,7 @@ it('no reimprime el locator en el dry-run que el servidor devuelve', async () =>
   renderWithApi(<AccountsPage />);
 
   await openInventory(user);
+  await user.click(await screen.findByRole('button', { name: /nueva cuenta/i }));
   await user.type(await screen.findByLabelText(/id externo de la suscripción/i), 'org-9f21');
   await user.type(screen.getByLabelText(/tenant pagador/i), 'Steven');
   await user.click(accountActions().getByRole('button', { name: /previsualizar \(dry-run\)/i }));
@@ -272,6 +272,7 @@ it('bloquea aplicar si el recibo confirma otro locator aunque la proyección vis
   const user = userEvent.setup();
   renderWithApi(<AccountsPage />);
   await openInventory(user);
+  await user.click(await screen.findByRole('button', { name: /nueva cuenta/i }));
   await user.type(await screen.findByLabelText(/id externo de la suscripción/i), 'org-9f21');
   await user.type(screen.getByLabelText(/tenant pagador/i), 'Steven');
   await user.click(accountActions().getByRole('button', { name: /previsualizar \(dry-run\)/i }));
@@ -288,6 +289,8 @@ it('deshabilita sin borrar: la acción abre el update con enabled en false', asy
   renderWithApi(<AccountsPage />);
 
   await openInventory(user);
+  // Retiring is a separate affordance from disabling: disabling never offers the delete.
+  expect(await screen.findByRole('button', { name: /retirar o rotar/i })).toBeInTheDocument();
   await user.click(await screen.findByRole('button', { name: /deshabilitar/i }));
   await user.click(accountActions().getByRole('button', { name: /previsualizar \(dry-run\)/i }));
 
@@ -295,7 +298,6 @@ it('deshabilita sin borrar: la acción abre el update con enabled en false', asy
     resource: 'provider_account', action: 'update', id: 'codex-steven',
     value: { label: 'Codex del hub', shared_with_pool: true, enabled: false },
   });
-  expect(screen.getByRole('button', { name: /retirar o rotar/i })).toBeInTheDocument();
 });
 
 it('invalida el dry-run si Actualizar cambia la revisión y exige previsualizar otra vez', async () => {
@@ -318,7 +320,8 @@ it('invalida el dry-run si Actualizar cambia la revisión y exige previsualizar 
   expect(changes[0]?.expected_revision).toBe(4);
 
   revision = 5;
-  await user.click(screen.getByRole('button', { name: /^Actualizar$/i }));
+  // The modal keeps the page behind it inert, but a poll or another operator still moves the revision.
+  await user.click(screen.getByRole('button', { name: /^Actualizar$/i, hidden: true }));
   await waitFor(() => { expect(apply).toBeDisabled(); });
   await user.click(apply);
   expect(changes).toHaveLength(1);
@@ -443,6 +446,7 @@ it('con el recolector CAÍDO el registro se sigue escribiendo: alta con dry-run 
 
   // The view does NOT collapse entirely: a dead source does not turn off the other.
   await openInventory(user);
+  await user.click(await screen.findByRole('button', { name: /nueva cuenta/i }));
   await user.type(await screen.findByLabelText(/id externo de la suscripción/i), 'org-9f21');
   await user.type(screen.getByLabelText(/tenant pagador/i), 'Steven');
   await user.click(accountActions().getByRole('button', { name: /previsualizar \(dry-run\)/i }));

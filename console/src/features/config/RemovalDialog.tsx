@@ -1,9 +1,8 @@
-import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
-import { createPortal } from 'react-dom';
+import { useEffect, useRef, useState } from 'react';
 import { FleetOperationRequestSchema, type FleetOperationPreview, type FleetOperationRequest, type FleetTarget } from '@cauce/protocol/fleet-operation';
 import { useApi } from '../../api/context';
 import { useConsoleAccess } from '../../api/console-access';
-import { useFocusTrap } from '../../hooks/useFocusTrap';
+import { FormDialog } from '../../components/dialogs';
 import { AgentFleetOperation, AgentFleetPreview } from './AgentFleetOperation';
 import { useAgentLifecycle } from './use-agent-lifecycle';
 import './agent-lifecycle.css';
@@ -22,8 +21,6 @@ export function RemovalDialog({ target, kind: initialKind, revision, onClose, re
   const [sending, setSending] = useState(false);
   const [sessionInvalid, setSessionInvalid] = useState(false);
   const flow = useAgentLifecycle(true, target);
-  const dialog = useRef<HTMLDivElement>(null);
-  const heading = useRef<HTMLHeadingElement>(null);
   const sequence = useRef(0);
   const revisionSeen = useRef(revision);
   const canWrite = !sessionInvalid && !access.error && !access.loading && access.data?.permissions?.includes('config.write') === true;
@@ -36,15 +33,7 @@ export function RemovalDialog({ target, kind: initialKind, revision, onClose, re
   const current = useRef(fingerprint);
   current.current = fingerprint;
   const valid = !!request && !!validated && fingerprint === JSON.stringify(validated.request);
-  const trap = useFocusTrap(dialog);
-  useEffect(() => {
-    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : undefined;
-    const shell = document.querySelector('.app-shell');
-    const ownedInert = !!shell && !shell.hasAttribute('inert');
-    if (ownedInert) shell.setAttribute('inert', '');
-    heading.current?.focus();
-    return () => { sequence.current += 1; if (ownedInert) shell.removeAttribute('inert'); opener?.focus(); };
-  }, []);
+  useEffect(() => () => { sequence.current += 1; }, []);
   useEffect(() => api.onAuthGenerationChange(() => {
     sequence.current += 1; setSessionInvalid(true); setValidated(undefined); setError('La sesión cambió. Cierra y relee los permisos antes de operar.');
   }), [api]);
@@ -74,14 +63,9 @@ export function RemovalDialog({ target, kind: initialKind, revision, onClose, re
     } catch (cause) { if (read === sequence.current) setError(cause instanceof Error ? cause.message : 'No se confirmó el encolado. El reintento conserva su clave.'); }
     finally { setSending(false); }
   }
-  function keyboard(event: KeyboardEvent<HTMLDivElement>) {
-    if (event.key === 'Escape' && !sending) { event.stopPropagation(); onClose(); return; }
-    trap(event);
-  }
-  return createPortal(<div className="config-modal-fondo"><div ref={dialog} className="config-modal" role="dialog" aria-modal="true"
-    aria-labelledby="group-removal-title" onKeyDown={keyboard}>
+  return <FormDialog open wide busy={sending} onClose={onClose}
+    title={`Retiro y recuperación de ${target.resource === 'tenant' ? 'espacio' : 'grupo'}`}>
     <div className="config-modal-cuerpo agent-lifecycle-panel">
-      <h2 ref={heading} id="group-removal-title" tabIndex={-1}>Retiro y recuperación de {target.resource === 'tenant' ? 'espacio' : 'grupo'}</h2>
       <p>Identidad exacta: <code>{JSON.stringify(target)}</code></p>
       <p>Pausar admisión cambia la configuración de entrega. El retiro coordina el cierre de entregas y la detención de runtimes. La purga exige resolver las dependencias.</p>
       <label>Tipo de operación<select value={kind} disabled={busy || inProgress} onChange={(event) => {
@@ -113,5 +97,5 @@ export function RemovalDialog({ target, kind: initialKind, revision, onClose, re
       {reload ? <button type="button" className="button secondary" onClick={() => { void reload(); }}>Releer inventario</button> : null}
       <button type="button" className="button secondary" disabled={sending} onClick={onClose}>Cerrar retiro y recuperación</button>
     </div>
-  </div></div>, document.body);
+  </FormDialog>;
 }

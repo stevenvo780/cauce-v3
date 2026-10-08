@@ -157,9 +157,8 @@ function escenario(overrides: Partial<TerminalTarget> = {}) {
   return { sesiones, controles, prorrogas };
 }
 
-async function abrirZeus(user: ReturnType<typeof userEvent.setup>, expectSocket = true) {
-  const vista = renderWithApi(<TerminalPage />);
-  await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }), await screen.findByRole('option', { name: /^zeus ·/ }));
+async function abrirZeus(expectSocket = true) {
+  const vista = renderWithApi(<TerminalPage params={['Steven', 'zeus']} />);
   if (expectSocket) await waitFor(() => { expect(StubWebSocket.instances.length).toBeGreaterThan(0); }, { timeout: 5000 });
   return vista;
 }
@@ -209,7 +208,7 @@ describe('el botón sólo existe si el gateway publica un modo con escritura', (
       return HttpResponse.json({ session_id: sid, hold_id: 'hold-busy', held_by: 'operador:steven',
         expires_at: new Date(Date.now() + 600_000).toISOString() });
     }));
-    await abrirZeus(user);
+    await abrirZeus();
     expect(controles).toHaveLength(0);
     await tomarElControl(user, controles);
     expect(controles[0]?.body).toMatchObject({ action: 'take', allow_busy: true });
@@ -220,18 +219,16 @@ describe('el botón sólo existe si el gateway publica un modo con escritura', (
   });
 
   it('CONTROL NEGATIVO: con harness_rw entre los modos pero sin modo escribible publicado, no hay botón', async () => {
-    const user = userEvent.setup();
     const { controles } = escenario({ writable_modes: [] });
-    await abrirZeus(user);
+    await abrirZeus();
 
     expect(screen.queryByRole('button', { name: /tomar el control/i })).not.toBeInTheDocument();
     expect(controles).toHaveLength(0);
   }, 20_000);
 
   it('con harness_rw en writable_modes el control se ofrece, y dice qué le pasa al bus antes de escribir', async () => {
-    const user = userEvent.setup();
     escenario();
-    await abrirZeus(user);
+    await abrirZeus();
 
     expect(await screen.findByRole('button', { name: /tomar el control/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /tomar el control/i })).toHaveAttribute('title', expect.stringContaining('mensajes del bus quedan en cola'));
@@ -242,7 +239,7 @@ describe('control directo con atribución y fencing', () => {
   it('seleccionar la TUI abre escritura sin justificación y toma después de ready con el owner exacto', async () => {
     const user = userEvent.setup();
     const { sesiones, controles } = escenario();
-    await abrirZeus(user);
+    await abrirZeus();
     expect(screen.queryByRole('textbox', { name: /motivo/i })).not.toBeInTheDocument();
     expect(sesiones).toEqual([{ mode: WRITABLE_TUI_MODE, hasReason: false }]);
     expect(controles).toHaveLength(0);
@@ -259,7 +256,7 @@ describe('control directo con atribución y fencing', () => {
   it('devolver el teclado no dispara otra toma automática', async () => {
     const user = userEvent.setup();
     const { controles } = escenario();
-    await abrirZeus(user);
+    await abrirZeus();
     await tomarElControl(user, controles);
     await user.click(await screen.findByRole('button', { name: /devolver el control/i }));
     await waitFor(() => { expect(controles.filter((item) => item.body.action === 'release')).toHaveLength(1); });
@@ -273,13 +270,13 @@ describe('con el control tomado', () => {
   it('las teclas SÍ llegan al socket, y la pantalla dice que el bus está en cola', async () => {
     const user = userEvent.setup();
     const { controles } = escenario();
-    await abrirZeus(user);
+    await abrirZeus();
     const socket = await tomarElControl(user, controles);
 
     await screen.findByRole('button', { name: /devolver el control/i });
     expect(screen.getByText(/Tenés el teclado/).closest('[role="status"]')).toHaveAttribute('title', expect.stringContaining('cola'));
     await waitFor(() => {
-      expect(document.querySelector('.pty-shell[data-read-only]')).toBeNull();
+      expect(document.querySelector('[data-pty-shell][data-read-only]')).toBeNull();
     }, { timeout: 5000 });
 
     act(() => { ptySessionType(SESION_ESCRIBIBLE, 'ls -la\r'); });
@@ -291,7 +288,7 @@ describe('con el control tomado', () => {
   it('INPUT_REFUSED avisa y NO cierra el canal', async () => {
     const user = userEvent.setup();
     const { controles } = escenario();
-    await abrirZeus(user);
+    await abrirZeus();
     const socket = await tomarElControl(user, controles);
 
     act(() => {
@@ -308,7 +305,7 @@ describe('con el control tomado', () => {
   it('devolver el control se dispara al desmontar el panel', async () => {
     const user = userEvent.setup();
     const { controles } = escenario();
-    const vista = await abrirZeus(user);
+    const vista = await abrirZeus();
     await tomarElControl(user, controles);
 
     vista.unmount();
@@ -322,7 +319,7 @@ describe('con el control tomado', () => {
   it('cerrar la pestaña suelta el teclado SIN esperar a la red por el token CSRF', async () => {
     const user = userEvent.setup();
     const { controles } = escenario();
-    await abrirZeus(user);
+    await abrirZeus();
     engancharLaTui();
     await tomarElControl(user, controles);
     await screen.findByRole('button', { name: /devolver el control/i });
@@ -349,7 +346,7 @@ describe('con el control tomado', () => {
   it('un cierre 4410 dice en castellano que el control se fue, y no inventa una devolución', async () => {
     const user = userEvent.setup();
     const { controles } = escenario();
-    await abrirZeus(user);
+    await abrirZeus();
     const socket = await tomarElControl(user, controles);
 
     act(() => { socket.emitClose(4410, 'control_released'); });
@@ -362,20 +359,26 @@ describe('con el control tomado', () => {
   }, 20_000);
 });
 
+/** The extension lives in the session menu: open it if it is not already open. */
+async function itemProrrogar(user: ReturnType<typeof userEvent.setup>) {
+  if (!screen.queryByRole('menuitem', { name: /prorrogar/i })) await user.click(screen.getByRole('button', { name: 'Más acciones' }));
+  return screen.findByRole('menuitem', { name: /prorrogar/i });
+}
+
 describe('la prórroga es un acto humano, no un latido', () => {
   it('no se ofrece hasta que el relay consume el ticket, que es cuando el gateway la aceptaría', async () => {
     const user = userEvent.setup();
     const { prorrogas } = escenario();
-    await abrirZeus(user);
+    await abrirZeus();
 
-    const boton = await screen.findByRole('button', { name: /prorrogar/i });
-    expect(boton).toBeDisabled();
-    expect(boton.getAttribute('title')).toMatch(/el relay ya enganchó/i);
+    const item = await itemProrrogar(user);
+    expect(item).toHaveAttribute('aria-disabled', 'true');
+    expect(item.getAttribute('title')).toMatch(/el relay ya enganchó/i);
 
     engancharLaTui();
 
-    await waitFor(() => { expect(screen.getByRole('button', { name: /prorrogar/i })).toBeEnabled(); });
-    await user.click(screen.getByRole('button', { name: /prorrogar/i }));
+    await waitFor(() => { expect(screen.getByRole('menuitem', { name: /prorrogar/i })).not.toHaveAttribute('aria-disabled', 'true'); });
+    await user.click(screen.getByRole('menuitem', { name: /prorrogar/i }));
     await waitFor(() => { expect(prorrogas).toHaveLength(1); });
   }, 20_000);
 
@@ -383,10 +386,11 @@ describe('la prórroga es un acto humano, no un latido', () => {
     const user = userEvent.setup();
     escenario();
     servirProrroga([], { status: 409, reason: 'extension_exhausted' });
-    await abrirZeus(user);
+    await abrirZeus();
     engancharLaTui();
 
-    await user.click(await screen.findByRole('button', { name: /prorrogar/i }));
+    await waitFor(() => { expect(screen.getByRole('button', { name: 'Más acciones' })).toBeInTheDocument(); });
+    await user.click(await itemProrrogar(user));
 
     expect(await screen.findByText(new RegExp(TERMINAL_DENY_MESSAGES.extension_exhausted.titulo, 'i')))
       .toBeInTheDocument();
@@ -397,10 +401,11 @@ describe('la prórroga es un acto humano, no un latido', () => {
     const user = userEvent.setup();
     escenario();
     servirProrroga([], { status: 409, reason: 'stale_terminal_owner' });
-    await abrirZeus(user);
+    await abrirZeus();
     engancharLaTui();
 
-    await user.click(await screen.findByRole('button', { name: /prorrogar/i }));
+    await waitFor(() => { expect(screen.getByRole('button', { name: 'Más acciones' })).toBeInTheDocument(); });
+    await user.click(await itemProrrogar(user));
 
     const aviso = await screen.findByRole('alert');
     expect(aviso).toHaveAttribute('data-codigo', 'stale_terminal_owner');
@@ -412,10 +417,11 @@ describe('la prórroga es un acto humano, no un latido', () => {
   it('la prórroga que el gateway concede empuja la ventana y no se pide sola', async () => {
     const user = userEvent.setup();
     const { prorrogas } = escenario();
-    await abrirZeus(user);
+    await abrirZeus();
     engancharLaTui();
 
-    await user.click(await screen.findByRole('button', { name: /prorrogar/i }));
+    await waitFor(() => { expect(screen.getByRole('button', { name: 'Más acciones' })).toBeInTheDocument(); });
+    await user.click(await itemProrrogar(user));
     await waitFor(() => { expect(prorrogas).toHaveLength(1); });
     expect(Object.keys(prorrogas[0]).sort()).toEqual([...CAMPOS_DE_PRORROGA].sort());
 
@@ -432,10 +438,10 @@ describe('la toma espera al enganche del relay', () => {
         const { controles } = escenario();
         if (phase === 'admission') {
           server.use(http.post('*/v3/console/terminal/sessions', () => HttpResponse.json({ reason }, { status: 403 })));
-          await abrirZeus(user, false);
+          await abrirZeus(false);
         } else {
           servirControl(controles, { status: 403, reason });
-          await abrirZeus(user);
+          await abrirZeus();
           await tomarElControl(user, controles);
         }
         expect(await screen.findByText(TERMINAL_DENY_MESSAGES[reason].titulo)).toBeInTheDocument();
@@ -455,7 +461,7 @@ describe('la toma espera al enganche del relay', () => {
   it.each([408, 429, 503])('keeps an HTTP %i failure retryable without automatically taking control', async (status) => {
     const user = userEvent.setup({ delay: null });
     const { controles } = escenario();
-    await abrirZeus(user);
+    await abrirZeus();
     engancharLaTui();
     servirControl(controles, { status, reason: 'temporary_failure' });
     await tomarElControl(user, controles);
@@ -470,9 +476,8 @@ describe('la toma espera al enganche del relay', () => {
   }, 20_000);
 
   it('no manda /control antes de que el ticket se consuma', async () => {
-    const user = userEvent.setup();
     const { controles } = escenario();
-    await abrirZeus(user);
+    await abrirZeus();
     expect(controles).toHaveLength(0);
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 100)); });
     expect(controles).toHaveLength(0);
@@ -483,12 +488,11 @@ describe('la toma espera al enganche del relay', () => {
   }, 20_000);
 
   it('la negativa al abrir automáticamente se muestra sin intentar tomar el teclado', async () => {
-    const user = userEvent.setup();
     const { controles } = escenario();
     server.use(http.post('*/v3/console/terminal/sessions', () => HttpResponse.json(
       { error: 'conflict', reason: 'container_busy' }, { status: 409 },
     )));
-    await abrirZeus(user, false);
+    await abrirZeus(false);
     expect(await screen.findByText(TERMINAL_DENY_MESSAGES.container_busy.titulo)).toBeInTheDocument();
     expect(controles).toHaveLength(0);
     expect(StubWebSocket.instances).toHaveLength(0);
@@ -498,7 +502,7 @@ describe('la toma espera al enganche del relay', () => {
   it('si el enganche no llega lo dice, no toca /control y el reintento SÍ toma el teclado', async () => {
     const user = userEvent.setup();
     const { controles, sesiones } = escenario();
-    await abrirZeus(user);
+    await abrirZeus();
     const abiertos = StubWebSocket.instances.length;
     await user.click(botonDeToma());
     act(() => { StubWebSocket.last().emitClose(4404, 'agent_offline'); });
@@ -518,8 +522,8 @@ describe('la toma espera al enganche del relay', () => {
   it('CONTROL NEGATIVO de montaje doble: con StrictMode la toma sigue viva y llega a /control', async () => {
     const user = userEvent.setup();
     const { controles } = escenario();
-    const vista = renderWithApi(<StrictMode><TerminalPage /></StrictMode>);
-    await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }), await screen.findByRole('option', { name: /^zeus ·/ }));
+    const vista = renderWithApi(<StrictMode><TerminalPage params={['Steven', 'zeus']} /></StrictMode>);
+
     await waitFor(() => { expect(StubWebSocket.instances.length).toBeGreaterThan(0); }, { timeout: 5000 });
     engancharLaTui();
 
@@ -530,10 +534,9 @@ describe('la toma espera al enganche del relay', () => {
   }, 20_000);
 
   it('un 409 stale_terminal_owner en la toma se traduce en vez de citarle el código al operador', async () => {
-    const user = userEvent.setup();
     const { controles } = escenario();
     servirControl(controles, { status: 409, reason: 'stale_terminal_owner' });
-    await abrirZeus(user);
+    await abrirZeus();
     engancharLaTui();
 
     await waitFor(() => { expect(controles).toHaveLength(1); });
@@ -556,14 +559,13 @@ describe('la toma espera al enganche del relay', () => {
       if (faltaElEnganche(sid)) return HttpResponse.json(NEGATIVA_RANCIA, { status: 409 });
       return HttpResponse.json({ session_id: sid, hold_id: 'hold-1' });
     }));
-    const vista = await abrirZeus(user);
+    const vista = await abrirZeus();
     engancharLaTui();
     await tomarElControl(user, controles);
 
     await screen.findByRole('button', { name: /devolver el control/i });
     const recibo = screen.getByText(/recibo incompleto/i);
     expect(recibo).toHaveTextContent(/held_by/);
-    expect(recibo).toHaveClass('pty-control-perdido');
 
     vista.unmount();
     await waitFor(() => {
@@ -574,9 +576,8 @@ describe('la toma espera al enganche del relay', () => {
 
 describe('la toma no se dispara dos veces y la devolución tolera un CSRF rotado', () => {
   it('dos clics en el MISMO frame abren UNA sola sesión con teclado', async () => {
-    const user = userEvent.setup();
     const { controles, sesiones } = escenario();
-    await abrirZeus(user);
+    await abrirZeus();
     const abiertos = StubWebSocket.instances.length;
     const boton = botonDeToma();
     act(() => { boton.click(); boton.click(); });
@@ -592,7 +593,7 @@ describe('la toma no se dispara dos veces y la devolución tolera un CSRF rotado
   it('un 403 en la devolución de `beforeunload` se reintenta resolviendo el CSRF vigente', async () => {
     const user = userEvent.setup();
     const { controles } = escenario();
-    await abrirZeus(user);
+    await abrirZeus();
     engancharLaTui();
     await tomarElControl(user, controles);
 
@@ -629,7 +630,7 @@ describe('la toma no se dispara dos veces y la devolución tolera un CSRF rotado
     'un 409 %s al devolver informa que esta sesión perdió el control sin afirmar que el bus se reanudó', async (reason) => {
     const user = userEvent.setup();
     const { controles } = escenario();
-    await abrirZeus(user);
+    await abrirZeus();
     engancharLaTui();
     await tomarElControl(user, controles);
     await screen.findByText(/Tenés el teclado de esta TUI/i);
@@ -641,7 +642,7 @@ describe('la toma no se dispara dos veces y la devolución tolera un CSRF rotado
 
     await user.click(await screen.findByRole('button', { name: /devolver el control/i }));
 
-    await waitFor(() => { expect(document.querySelector(`.pty-negativa[data-codigo="${reason}"]`)).toBeInTheDocument(); });
+    await waitFor(() => { expect(document.querySelector(`[data-negativa][data-codigo="${reason}"]`)).toBeInTheDocument(); });
     expect(screen.queryByText(/El bus volvió a entregarle/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/Tenés el teclado de esta TUI/i)).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /devolver el control/i })).not.toBeInTheDocument();
@@ -652,7 +653,7 @@ describe('la toma no se dispara dos veces y la devolución tolera un CSRF rotado
   it('un 409 sin evidencia de pérdida conserva el control local para poder reintentar la devolución', async () => {
     const user = userEvent.setup();
     const { controles } = escenario();
-    await abrirZeus(user);
+    await abrirZeus();
     engancharLaTui();
     await tomarElControl(user, controles);
 

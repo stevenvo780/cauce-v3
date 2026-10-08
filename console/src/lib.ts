@@ -56,18 +56,28 @@ function fecha(value: unknown): Date | undefined {
   return Number.isNaN(date.getTime()) ? undefined : date;
 }
 
+const RELATIVO_CORTO = new Intl.RelativeTimeFormat('es', { numeric: 'auto', style: 'narrow' });
+const RELATIVO_LARGO = new Intl.RelativeTimeFormat('es', { numeric: 'auto' });
+const MINUTO_MS = 60_000;
+const HORA_MS = 60 * MINUTO_MS;
+const DIA_MS = 24 * HORA_MS;
+
 /**
- * "3 min ago" / "in 2 h". Where the question is *how long ago*, a wall clock forces a mental
- * subtraction. Returns `undefined` — not a lie — when there is no readable date.
+ * "hace 3 min" / "dentro de 2 h". Returns `undefined` — not a lie — when there is no readable date.
+ * Long unit names from two months up: in Spanish the narrow *month* and *minute* are both "m".
  */
 export function haceCuanto(value: unknown, now = Date.now()): string | undefined {
   const date = fecha(value);
   if (!date) return undefined;
-  const segundos = (date.getTime() - now) / 1000;
-  const magnitud = Math.abs(segundos);
-  if (magnitud < 45) return segundos <= 0 ? 'hace instantes' : 'en instantes';
-  const texto = formatDurationSeconds(magnitud);
-  return segundos <= 0 ? `hace ${texto}` : `en ${texto}`;
+  const delta = date.getTime() - now;
+  const magnitud = Math.abs(delta);
+  const signo = delta < 0 ? -1 : 1;
+  if (magnitud < 45_000) return delta <= 0 ? 'hace instantes' : 'en instantes';
+  if (magnitud < HORA_MS) return RELATIVO_CORTO.format(signo * Math.round(magnitud / MINUTO_MS), 'minute');
+  if (magnitud < DIA_MS) return RELATIVO_CORTO.format(signo * Math.round(magnitud / HORA_MS), 'hour');
+  if (magnitud < 60 * DIA_MS) return RELATIVO_CORTO.format(signo * Math.round(magnitud / DIA_MS), 'day');
+  if (magnitud < 365 * DIA_MS) return RELATIVO_LARGO.format(signo * Math.round(magnitud / (30 * DIA_MS)), 'month');
+  return RELATIVO_LARGO.format(signo * Math.round(magnitud / (365 * DIA_MS)), 'year');
 }
 
 export type LeaseState = 'online' | 'expired' | 'unknown';

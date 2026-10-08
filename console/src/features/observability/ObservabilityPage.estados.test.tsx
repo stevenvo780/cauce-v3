@@ -57,7 +57,7 @@ it('un relay en cola o fallido se nombra por lo que es, y nunca como entregado',
   expect(within(await relayRow('relay-curso')).getByText('EN CURSO')).toBeInTheDocument();
   const fallido = await relayRow('relay-fallo');
   expect(within(fallido).getByText('FALLÓ')).toBeInTheDocument();
-  expect(fallido.querySelector('.badge')?.className).toContain('badge-danger');
+  expect(fallido.querySelector('[data-tone]')).toHaveAttribute('data-tone', 'danger');
   // None of the three has an arrival time, and none pretends to: the "Enviado" column says it does not apply.
   for (const id of ['relay-espera', 'relay-curso', 'relay-fallo']) {
     const row = await relayRow(id);
@@ -110,8 +110,8 @@ it('una señal que no llegó se declara sin dato, nunca como un cero medido', as
   if (!enCola) throw new Error('métrica no encontrada');
   expect(enCola).toHaveTextContent('sin dato');
   expect(enCola.textContent).not.toMatch(/\b0\b/);
-  // And the queues line says the same, field by field, instead of writing three zeros.
-  expect(screen.getByText(/sin dato de pendientes/i)).toBeInTheDocument();
+  // The queue breakdown is /queues's job: this view only links to it.
+  expect(screen.getByRole('link', { name: /colas y dlq/i })).toHaveAttribute('href', '/queues');
 });
 
 it('si la lectura de señales falla entera, la pantalla lo dice y el reintento vuelve a pedir las dos', async () => {

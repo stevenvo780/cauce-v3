@@ -28,10 +28,7 @@ it('ata el globo al disparador con aria-describedby', async () => {
 
   await user.tab();
   const globo = await screen.findByRole('tooltip');
-  const disparador = screen.getByText('Cifra').closest('.tooltip-anchor');
-  expect(disparador).toHaveAttribute('aria-describedby', globo.id);
-  // UUID v4 emitido por crypto.randomUUID (vía createId('tooltip')).
-  expect(globo.id).toMatch(/^tooltip-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+  expect(screen.getByText('Cifra').closest('[aria-describedby]')).toHaveAttribute('aria-describedby', globo.id);
 });
 
 it('cierra con Esc sin tener que mover el ratón', async () => {
@@ -54,8 +51,7 @@ it('no toma foco propio cuando envuelve un control que ya es enfocable', async (
     </Tooltip>,
   );
 
-  const ancla = screen.getByRole('button').closest('.tooltip-anchor');
-  expect(ancla).not.toHaveAttribute('tabindex');
+  expect(screen.getByRole('button').parentElement).not.toHaveAttribute('tabindex');
 
   await user.tab();
   expect(screen.getByRole('button')).toHaveFocus();

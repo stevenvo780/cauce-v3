@@ -5,7 +5,7 @@ import { useLayoutEffect, useRef, useState, type ReactNode } from 'react';
  * with `overflow:auto` takes no focus, so arrows cannot reach the clipped content. A box that fits
  * pays no tab stop; `etiqueta` names the one that does.
  */
-export function Desplazable({ etiqueta, className = 'table-wrap', children }: {
+export function Desplazable({ etiqueta, className = 'max-w-full overflow-x-auto rounded-lg border border-line', children }: {
   etiqueta: string;
   className?: string;
   children: ReactNode;

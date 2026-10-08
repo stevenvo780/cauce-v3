@@ -1,14 +1,14 @@
 import { Braces, Plus, SearchCheck } from 'lucide-react';
-import { useMemo, useState, type ReactNode } from 'react';
+import { useMemo, useState } from 'react';
 import type { ConfigMutation } from '../../api/types';
 import { CONFIG_SIN_CONTROL_REASON } from '../../router';
-import { Panel } from '../../components/ui';
+import { Button, Outcome, PREVIEW } from '../../components/kit';
 import {
   BORRADOR_VACIO, errorDeAlta, mutacionDeAlta, RECURSOS_ALTA, TITULOS_ALTA,
   type BorradorAlta, type RecursoAlta,
 } from './alta-rapida';
 import { textoRecarga, type ConfigChangeOutcome } from './config-change';
-import './toggles.css';
+import { CHECK_LABEL, FORM_GRID, HINT } from './config-ui';
 
 /**
  * Onboarding for a resource via form. Replaces "type the mutation by hand in JSON" for the four
@@ -18,16 +18,10 @@ import './toggles.css';
  * `api.changeConfiguration` with `expected_revision` — so there is no second write path that
  * could fall behind the first one.
  */
-export function AltaRapida({ soloLectura, busy, onChange, encabezado }: {
+export function AltaRapida({ soloLectura, busy, onChange }: {
   soloLectura: boolean;
   busy: boolean;
   onChange: (mutation: ConfigMutation, dryRun: boolean) => Promise<ConfigChangeOutcome>;
-  /**
-   * The control that picks between this onboarding and the wizard. It is rendered INSIDE the
-   * panel, above the form it governs: hanging it outside was a second strip of tabs identical to
-   * the areas' one, and read as page navigation. See `AltaDeEspacios`.
-   */
-  encabezado?: ReactNode;
 }) {
   const [recurso, setRecurso] = useState<RecursoAlta>('membership');
   const [borrador, setBorrador] = useState<BorradorAlta>(BORRADOR_VACIO);
@@ -98,9 +92,8 @@ export function AltaRapida({ soloLectura, busy, onChange, encabezado }: {
   // live, on a screen whose header says "Read-only", is promising a write that will never go out.
   const inerte = { disabled: soloLectura, ...(soloLectura ? { title: CONFIG_SIN_CONTROL_REASON } : {}) };
 
-  return <Panel title="Alta rápida" subtitle="Arma la mutación y la manda por el mismo change endpoint versionado que el editor crudo.">
-    {encabezado}
-    <div className="config-form">
+  return <div className="grid gap-3" role="group" aria-label="Alta rápida">
+    <div className={FORM_GRID}>
       <label>Recurso<select
         {...inerte}
         aria-label="Recurso a crear"
@@ -118,7 +111,7 @@ export function AltaRapida({ soloLectura, busy, onChange, encabezado }: {
         ? <label>Alias<input {...inerte} aria-label="Alias" value={borrador.alias} onChange={(event) => { editar({ alias: event.target.value }); }} /></label>
         : null}
       {recurso === 'tenant' || recurso === 'room'
-        ? <label>Nombre <span className="label-hint">opcional, null si queda vacío</span>
+        ? <label>Nombre <span className={HINT}>opcional, null si queda vacío</span>
           <input {...inerte} aria-label="Nombre" value={borrador.nombre} onChange={(event) => { editar({ nombre: event.target.value }); }} /></label>
         : null}
       {recurso === 'acl_edge' ? <>
@@ -126,26 +119,26 @@ export function AltaRapida({ soloLectura, busy, onChange, encabezado }: {
         <label>Hacia el tenant<input {...inerte} aria-label="Hacia el tenant" value={borrador.hacia} onChange={(event) => { editar({ hacia: event.target.value }); }} /></label>
         {/* The three permissions default to NO: the backend default is deny, and the form must
             not open a cross-tenant link by default. */}
-        <label className="casilla"><input {...inerte} type="checkbox" aria-label="Ruta" checked={borrador.allowRoute} onChange={(event) => { editar({ allowRoute: event.target.checked }); }} /> Ruta <span className="label-hint">allow_route: dejar que le mande mensajes</span></label>
-        <label className="casilla"><input {...inerte} type="checkbox" aria-label="Lectura" checked={borrador.allowRead} onChange={(event) => { editar({ allowRead: event.target.checked }); }} /> Lectura <span className="label-hint">allow_read: dejar que lea su actividad</span></label>
-        <label className="casilla"><input {...inerte} type="checkbox" aria-label="Control" checked={borrador.allowControl} onChange={(event) => { editar({ allowControl: event.target.checked }); }} /> Control <span className="label-hint">allow_control: dejar que le escriba la configuración</span></label>
+        <label className={CHECK_LABEL}><input {...inerte} type="checkbox" aria-label="Ruta" checked={borrador.allowRoute} onChange={(event) => { editar({ allowRoute: event.target.checked }); }} /> Ruta <span className={HINT}>allow_route: dejar que le mande mensajes</span></label>
+        <label className={CHECK_LABEL}><input {...inerte} type="checkbox" aria-label="Lectura" checked={borrador.allowRead} onChange={(event) => { editar({ allowRead: event.target.checked }); }} /> Lectura <span className={HINT}>allow_read: dejar que lea su actividad</span></label>
+        <label className={CHECK_LABEL}><input {...inerte} type="checkbox" aria-label="Control" checked={borrador.allowControl} onChange={(event) => { editar({ allowControl: event.target.checked }); }} /> Control <span className={HINT}>allow_control: dejar que le escriba la configuración</span></label>
       </> : null}
     </div>
 
-    <details className="config-detalle">
-      <summary>Opciones de alta: {borrador.habilitado ? 'habilitado' : 'deshabilitado'}
+    <details className="text-[13px]">
+      <summary className="cursor-pointer font-medium">Opciones de alta: {borrador.habilitado ? 'habilitado' : 'deshabilitado'}
         {recurso === 'membership' ? ` · rol ${borrador.role.trim() || 'sin definir'}` : ''}
         {recurso === 'tenant' ? ` · ${borrador.esHub ? 'es hub' : 'no es hub'}` : ''}
       </summary>
-      <div className="config-form">
+      <div className={`${FORM_GRID} mt-2`}>
         {recurso === 'membership'
-          ? <label>Rol de permisos <span className="label-hint">route/read/control salen de role_policies; no cambia el contexto</span>
+          ? <label>Rol de permisos <span className={HINT}>route/read/control salen de role_policies; no cambia el contexto</span>
             <input {...inerte} aria-label="Rol de permisos" value={borrador.role} onChange={(event) => { editar({ role: event.target.value }); }} /></label>
           : null}
         {recurso === 'tenant'
-          ? <label className="casilla"><input {...inerte} type="checkbox" aria-label="Es hub" checked={borrador.esHub} onChange={(event) => { editar({ esHub: event.target.checked }); }} /> Es hub</label>
+          ? <label className={CHECK_LABEL}><input {...inerte} type="checkbox" aria-label="Es hub" checked={borrador.esHub} onChange={(event) => { editar({ esHub: event.target.checked }); }} /> Es hub</label>
           : null}
-        <label className="casilla"><input {...inerte} type="checkbox" aria-label="Habilitado" checked={borrador.habilitado} onChange={(event) => { editar({ habilitado: event.target.checked }); }} /> Habilitado</label>
+        <label className={CHECK_LABEL}><input {...inerte} type="checkbox" aria-label="Habilitado" checked={borrador.habilitado} onChange={(event) => { editar({ habilitado: event.target.checked }); }} /> Habilitado</label>
       </div>
     </details>
 
@@ -154,35 +147,28 @@ export function AltaRapida({ soloLectura, busy, onChange, encabezado }: {
         buttons: to reach "Create" one had to walk past `{"resource":"membership"…}`, which is not
         what is being done but how it is encoded. It is not hidden — it is still all there, and
         is what must be read before signing anything odd — it just stops being the first thing. */}
-    <details className="config-crudo">
-      <summary><Braces size={13} aria-hidden="true" /> Ver la mutación que se va a enviar</summary>
-      <pre className="config-preview" aria-label="Mutación del alta">{JSON.stringify(mutation, null, 2)}</pre>
+    <details className="text-[13px]">
+      <summary className="flex cursor-pointer items-center gap-1.5 text-muted"><Braces size={13} aria-hidden="true" /> Ver la mutación que se va a enviar</summary>
+      <pre className={`${PREVIEW} mt-2`} aria-label="Mutación del alta">{JSON.stringify(mutation, null, 2)}</pre>
     </details>
 
-    <div className="config-actions">
-      <button
-        className="button secondary" type="button"
-        disabled={soloLectura || busy || Boolean(invalido)}
+    <div className="flex flex-wrap gap-2">
+      <Button disabled={soloLectura || busy || Boolean(invalido)}
         title={soloLectura ? CONFIG_SIN_CONTROL_REASON : undefined}
         onClick={() => void enviar(true)}
-      ><SearchCheck size={16} aria-hidden="true" />Previsualizar el alta</button>
-      <button
-        className="button primary" type="button"
-        disabled={soloLectura || busy || Boolean(invalido)}
+      ><SearchCheck size={16} aria-hidden="true" />Previsualizar el alta</Button>
+      <Button variant="primary" disabled={soloLectura || busy || Boolean(invalido)}
         title={soloLectura ? CONFIG_SIN_CONTROL_REASON : undefined}
         onClick={() => void enviar(false)}
-      ><Plus size={16} aria-hidden="true" />Crear</button>
+      ><Plus size={16} aria-hidden="true" />Crear</Button>
     </div>
 
     {invalido
       ? tocado
-        ? <p className="notice error" role="alert">{invalido}</p>
-        : <p className="muted">Completá el formulario para habilitar el alta: {invalido}</p>
+        ? <Outcome tone="error">{invalido}</Outcome>
+        : <p className="m-0 text-xs text-muted">Completá el formulario para habilitar el alta: {invalido}</p>
       : null}
-    {preview ? <pre className="config-preview" aria-label="Dry-run del alta">{preview}</pre> : null}
-    {aviso ? <p
-      className={aviso.tone === 'error' ? 'notice error' : aviso.tone === 'parcial' ? 'notice parcial' : 'notice success'}
-      role={aviso.tone === 'success' ? 'status' : 'alert'}
-    >{aviso.text}</p> : null}
-  </Panel>;
+    {preview ? <pre className={PREVIEW} aria-label="Dry-run del alta">{preview}</pre> : null}
+    {aviso ? <Outcome tone={aviso.tone}>{aviso.text}</Outcome> : null}
+  </div>;
 }

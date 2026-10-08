@@ -1,5 +1,6 @@
-import type { AdapterView, PresenceLease, SystemStatus, TopologySnapshot } from '../../api/types';
+import type { PresenceLease, SystemStatus, TopologySnapshot } from '../../api/types';
 import { leaseExpiry, leaseState, type LeaseState } from '../../lib';
+import type { LiveAgentView, LiveState } from '../live/agent-state';
 import type { TerminalTarget } from './api';
 
 export interface FleetAgent {
@@ -13,12 +14,6 @@ export interface FleetAgent {
   leaseState: LeaseState;
 }
 
-interface FleetFilters {
-  tenantId: string;
-  roomId: string;
-  query: string;
-}
-
 interface MutableFleetAgent {
   tenantId: string;
   alias: string;
@@ -26,10 +21,6 @@ interface MutableFleetAgent {
   roomMembership: Map<string, boolean | undefined>;
   membershipStates: boolean[];
   presence?: PresenceLease;
-}
-
-function normalized(value: string): string {
-  return value.trim().toLocaleLowerCase();
 }
 
 export function fleetAgentId(tenantId: string, alias: string): string {
@@ -108,45 +99,13 @@ export function buildFleetAgents(status?: SystemStatus, topology?: TopologySnaps
     });
 }
 
-export function filterFleetAgents<T extends FleetAgent>(agents: readonly T[], filters: FleetFilters): T[] {
-  const query = normalized(filters.query);
-  return agents.filter((agent) => {
-    if (filters.tenantId !== 'all' && agent.tenantId !== filters.tenantId) return false;
-    if (filters.roomId !== 'all' && !agent.roomIds.includes(filters.roomId)) return false;
-    if (!query) return true;
-    return [agent.alias, agent.tenantId, ...agent.roomIds, ...(agent.presence?.capabilities ?? [])]
-      .some((value) => normalized(value).includes(query));
-  });
+/** Live state of the agent; without an activity row it falls back to the lease alone. */
+export function liveStateOf(agent: Pick<FleetAgent, 'leaseState'>, view: Pick<LiveAgentView, 'state'> | undefined): LiveState {
+  return view?.state ?? (agent.leaseState === 'online' ? 'idle' : 'down');
 }
 
-/**
- * Breakdown of adapters available, failing, or unreported,
- * avoiding interpreting unreported states as confirmed failures.
- */
-interface AdapterBreakdown {
-  disponibles: number;
-  /** `degraded` + `unavailable`: the server DID report, and reported a problem. */
-  conFallo: number;
-  /** `unknown`, absent or malformed: no data, which is not the same as a failure. */
-  sinReportar: number;
-  total: number;
-}
-
-export function adapterBreakdown(adapters: AdapterView[]): AdapterBreakdown {
-  const disponibles = adapters.filter((adapter) => adapter.state === 'available').length;
-  const conFallo = adapters.filter((adapter) => adapter.state === 'degraded' || adapter.state === 'unavailable').length;
-  return { disponibles, conFallo, sinReportar: adapters.length - disponibles - conFallo, total: adapters.length };
-}
-
-/** Counter text: counts each group by name and doesn't invent a fraction. */
-export function adapterBreakdownText(adapters: AdapterView[]): string {
-  const { disponibles, conFallo, sinReportar, total } = adapterBreakdown(adapters);
-  if (total === 0) return 'UNKNOWN';
-  return [
-    `${String(disponibles)} disponibles`,
-    conFallo ? `${String(conFallo)} con fallo` : undefined,
-    sinReportar ? `${String(sinReportar)} sin reportar` : undefined,
-  ].filter(Boolean).join(' · ');
+export function agentLiveState(agent: FleetAgent, live: ReadonlyMap<string, LiveAgentView> | undefined): LiveState {
+  return liveStateOf(agent, live?.get(agent.id));
 }
 
 /** Explicit PTY states. There is no implicit "available": absent data is UNKNOWN. */
@@ -231,7 +190,7 @@ export function countOnlinePtyTargets(targets: TerminalTarget[] | null | undefin
  */
 export const LIVE_TUI_MODE = 'harness';
 
-/** New shell mode. Writes: still requires a hand-written reason. */
+/** Fresh shell inside the agent's container. */
 export const SHELL_MODE = 'shell';
 
 /** Writable TUI: the SAME tmux the agent is drawing, with the keyboard attached to it. */
@@ -303,37 +262,4 @@ export function countLiveTuiTargets(targets: TerminalTarget[] | null | undefined
   return targets
     ? targets.filter((target) => target.authorized && target.pty_state === 'online' && target.modes.includes(LIVE_TUI_MODE)).length
     : undefined;
-}
-
-/* -------------------------------------------------------------------------- */
-/* The fleet list chip                                                        */
-/* -------------------------------------------------------------------------- */
-
-/**
- * State and visual reason of the terminal chip: indicates whether the destination has live TUI
- * available or degrades to shell/offline mode with its corresponding reason.
- */
-interface FleetTerminalChip {
-  status: TerminalAccessStatus | 'no_tui';
-  label: string;
-  /** Always populated: a chip without a reason is exactly the bug this fixes. */
-  reason: string;
-}
-
-export function fleetTerminalChip(
-  targets: TerminalTarget[] | null | undefined,
-  agent: FleetAgent,
-): FleetTerminalChip {
-  const base = resolveTerminalTarget(targets, agent);
-  if (base.status !== 'allowed') {
-    return { status: base.status, label: TERMINAL_ACCESS_LABELS[base.status], reason: base.reason };
-  }
-  const live = resolveLiveTui(targets, agent);
-  if (live.status === 'available') {
-    return { status: 'allowed', label: LIVE_TUI_LABELS.available, reason: live.reason };
-  }
-  if (live.status === 'no_tui') {
-    return { status: 'no_tui', label: LIVE_TUI_LABELS.no_tui, reason: live.reason };
-  }
-  return { status: 'unknown', label: TERMINAL_ACCESS_LABELS.unknown, reason: live.reason };
 }

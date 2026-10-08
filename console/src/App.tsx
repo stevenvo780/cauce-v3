@@ -1,24 +1,21 @@
 import {
-  Activity,
-  PanelLeftClose,
-  PanelLeftOpen,
-  ArrowLeft,
-} from 'lucide-react';
-import {
-  lazy, Suspense, useCallback, useEffect, useRef, useState, useSyncExternalStore,
+  lazy, Suspense, useEffect, useRef, useState,
   type ComponentType,
 } from 'react';
 import { ConsoleAccessProvider } from './api/console-access';
-import { BOTTOM_BAR_VIEWPORT, RAIL_VIEWPORT } from './breakpoints';
+import { AgentPreferencesProvider } from './components/agent-actions/AgentPreferencesProvider';
+import { CSPProvider } from '@base-ui/react/csp-provider';
 import { ErrorBoundary } from './components/ErrorBoundary';
-import { ConsoleNavigation } from './components/ConsoleNavigation';
-import { useNavigationHint } from './components/use-navigation-hint';
+import { StateCard } from './components/kit';
 import { ConversationDrafts, ConversationDraftStore } from './features/messages/conversation-drafts';
 import { AuthGate, UnmanagedAuthBanner } from './features/auth/AuthGate';
 import { AccountMenu } from './features/auth/AccountMenu';
 import type { AuthGateState } from './features/auth/auth-session';
 import { NAV_ENTRIES } from './nav';
-import { onNavClick, redirect, useRouteSegments } from './router';
+import { onNavClick, redirect, useRouteSearch, useRouteSegments } from './router';
+import { AppShell } from './shell/AppShell';
+import { FleetProvider } from './shell/fleet';
+import { fleetAgentId } from './features/terminal/fleet';
 
 function deferredPage<P extends object>(
   load: () => Promise<{ default: ComponentType<P> }>,
@@ -39,9 +36,6 @@ interface RoutePageProps {
   params?: readonly string[];
 }
 
-const LandingPage = deferredPage(async () => ({
-  default: (await import('./features/landing/LandingPage')).LandingPage,
-}));
 const LiveFleetPage = deferredPage(async () => ({
   default: (await import('./features/live/LiveFleetPage')).LiveFleetPage,
 }));
@@ -79,7 +73,6 @@ interface Route {
 const DEEP_ROUTE_ARITY: Partial<Record<string, number>> = { messages: 2, terminal: 2 };
 
 const PAGES: Record<string, ComponentType<RoutePageProps>> = {
-  overview: LandingPage,
   live: LiveFleetPage,
   accounts: AccountsPage,
   messages: MessagesPage,
@@ -101,6 +94,7 @@ const routes: Route[] = NAV_ENTRIES.map((entry) => ({
 /** Redirects of obsolete or consolidated routes to their canonical views. */
 const ROUTE_ALIASES: Partial<Record<string, string>> = {
   '': 'messages',
+  overview: 'live',
   licenses: 'accounts',
   quotas: 'accounts',
   assignments: 'accounts',
@@ -109,7 +103,6 @@ const ROUTE_ALIASES: Partial<Record<string, string>> = {
   activity: 'live',
   fleet: 'live',
   topology: 'live',
-  help: 'ayuda',
 };
 
 /** Retired DETAIL routes: only their deep form redirects, at the arity of the heir that absorbed it. */
@@ -125,9 +118,9 @@ export const ROUTE_ALIAS_TABLE: Readonly<Record<string, string>> = ROUTE_ALIASES
  */
 function RouteNotFound({ path }: { path: string }) {
   return (
-    <div className="state-card" role="alert">
-      <div className="state-card-texto">
-        <h1>{NOT_FOUND_TITLE}</h1>
+    <StateCard role="alert">
+      <div className="grid gap-1">
+        <h1 className="m-0 text-base font-semibold">{NOT_FOUND_TITLE}</h1>
         <p>
           La consola no declara <code>{path}</code>. No se mostró otra vista en su lugar porque eso
           ocultaría un enlace roto.
@@ -138,7 +131,7 @@ function RouteNotFound({ path }: { path: string }) {
           <a href="/live" onClick={(event) => { onNavClick(event, '/live'); }}>Abrir la flota</a>
         </p>
       </div>
-    </div>
+    </StateCard>
   );
 }
 
@@ -168,27 +161,18 @@ function matchRoute(segments: readonly string[]): RouteMatch {
 }
 
 /** Rail (78px, icons only) or full bar (212px, with labels). */
-type SidebarState = 'rail' | 'expanded';
-
-const SIDEBAR_SHORTCUT = 'Alt+Shift+B';
-const NAV_ID = 'nav-principal';
-const CONSOLE_TITLE = 'Cauce V3 Console';
+const CONSOLE_TITLE = 'Cauce';
 const NOT_FOUND_TITLE = 'Ruta no encontrada';
-
-function useMediaQuery(query: string): boolean {
-  const subscribeToQuery = useCallback((onChange: () => void) => {
-    const list = window.matchMedia(query);
-    list.addEventListener('change', onChange);
-    return () => { list.removeEventListener('change', onChange); };
-  }, [query]);
-  return useSyncExternalStore(subscribeToQuery, () => window.matchMedia(query).matches, () => false);
-}
 
 export function App() {
   return (
     <AuthGate>{(gate) => (
       <ConsoleAccessProvider>
-        <TerminalRelayProvider><ConsoleShell gate={gate} /></TerminalRelayProvider>
+        <TerminalRelayProvider>
+          <CSPProvider disableStyleElements>
+            <FleetProvider><AgentPreferencesProvider><ConsoleShell gate={gate} /></AgentPreferencesProvider></FleetProvider>
+          </CSPProvider>
+        </TerminalRelayProvider>
       </ConsoleAccessProvider>
     )}</AuthGate>
   );
@@ -199,38 +183,10 @@ function ConsoleShell({ gate }: { gate: AuthGateState }) {
   const path = segments.join('/');
   const { id: routeId, params, aliasedFrom, notFoundPath } = matchRoute(segments);
   const route = routes.find((candidate) => candidate.id === routeId);
-  const bottomBar = useMediaQuery(BOTTOM_BAR_VIEWPORT);
-  const navigationHint = useNavigationHint(bottomBar, path);
-  const narrowViewport = useMediaQuery(RAIL_VIEWPORT);
+  const search = useRouteSearch();
   const [drafts] = useState(() => new ConversationDraftStore());
-  const lastConversation = useRef('/messages');
-  if (routeId === 'messages' && !notFoundPath) lastConversation.current = window.location.pathname;
-  const [preference, setPreference] = useState<SidebarState>('expanded');
   const mainRef = useRef<HTMLElement>(null);
   const focusedRoute = useRef<string | null>(null);
-  // With the bottom bar there is no rail; between 761 and 1100 the viewport decides and the choice has no say.
-  const rail = !bottomBar && (narrowViewport || preference === 'rail');
-  const collapsible = !narrowViewport;
-
-  const toggleSidebar = useCallback(() => {
-    setPreference((prev) => (prev === 'rail' ? 'expanded' : 'rail'));
-  }, []);
-
-  useEffect(() => {
-    if (!collapsible) return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.code !== 'KeyB' || !event.altKey || !event.shiftKey) return;
-      if (event.ctrlKey || event.metaKey) return;
-      // Whoever is typing —or the terminal, which passes Alt+… to the shell— keeps its keys.
-      const target = event.target;
-      if (target instanceof Element
-        && target.closest('input, textarea, select, [contenteditable="true"], .xterm')) return;
-      event.preventDefault();
-      toggleSidebar();
-    };
-    window.addEventListener('keydown', onKeyDown);
-    return () => { window.removeEventListener('keydown', onKeyDown); };
-  }, [collapsible, toggleSidebar]);
 
   useEffect(() => {
     if (aliasedFrom === undefined) return;
@@ -262,43 +218,36 @@ function ConsoleShell({ gate }: { gate: AuthGateState }) {
     mainRef.current?.focus({ preventScroll: true });
   }, [routeId, notFoundPath, terminalTargetAlias]);
 
+  const liveAgent = routeId === 'live' ? new URLSearchParams(search).get('agente') ?? undefined : undefined;
+  const activeAgentId = !notFoundPath && params.length === 2
+    ? fleetAgentId(params[0], params[1])
+    : liveAgent?.includes('/') ? fleetAgentId(liveAgent.slice(0, liveAgent.indexOf('/')), liveAgent.slice(liveAgent.indexOf('/') + 1)) : undefined;
+  const fullBleed = routeId === 'messages' || routeId === 'terminal' || routeId === 'live';
+  const mocks = import.meta.env.VITE_USE_MOCKS === 'true';
+
   return (
     <ConversationDrafts.Provider value={drafts}>
-    <div className="app-shell" data-sidebar={rail ? 'rail' : 'expanded'} data-view={routeId === 'messages' ? 'chat' : 'tools'}>
-      <a className="skip-link" href="#main-content">Saltar al contenido</a>
-      <aside className="sidebar" {...navigationHint.bindings}>
-        <div className="brand">
-          <span className="brand-mark" aria-hidden="true"><Activity size={22} /></span>
-          <div><strong>Cauce</strong><small>Tu equipo de agentes</small></div>
-        </div>
-        <ConsoleNavigation key={path} id={NAV_ID} rail={rail} routeId={notFoundPath ? '' : routeId} />
-        <AccountMenu routeKey={`${routeId}/${params.join('/')}`} gate={gate} />
-        {navigationHint.hint}
-        {collapsible ? (
-          <button
-            type="button"
-            className="sidebar-toggle"
-            onClick={toggleSidebar}
-            aria-expanded={!rail}
-            aria-controls={NAV_ID}
-            aria-keyshortcuts={SIDEBAR_SHORTCUT}
-            aria-label={rail ? 'Desplegar barra lateral' : 'Plegar barra lateral'}
-            title={`${rail ? 'Desplegar' : 'Plegar'} barra lateral (${SIDEBAR_SHORTCUT})`}
-          >
-            {rail ? <PanelLeftOpen size={18} aria-hidden={true} /> : <PanelLeftClose size={18} aria-hidden={true} />}
-          </button>
-        ) : null}
-      </aside>
-      <div className="workspace">
-        {routeId !== 'messages' ? <header className="topbar" data-route={routeId}>
-          <a className="back-to-chat" aria-label="Volver a la conversación" href={lastConversation.current} onClick={(event) => { onNavClick(event, lastConversation.current); }}><ArrowLeft size={16} aria-hidden="true" /><span>Volver a la conversación</span></a>
-          {routeId === 'terminal' ? <div id="terminal-topbar-tools" className="terminal-topbar-tools" /> : null}
-        </header> : null}
-        <main id="main-content" data-route={routeId} ref={mainRef} tabIndex={-1}>
-          {import.meta.env.VITE_USE_MOCKS === 'true' || gate.status === 'unmanaged' ? <div className="shell-notices">
-            {import.meta.env.VITE_USE_MOCKS === 'true' ? <span className="mock-flag" role="status">MOCK API</span> : null}
-            {gate.status === 'unmanaged' ? <UnmanagedAuthBanner /> : null}
-          </div> : null}
+      <AppShell
+        routeId={notFoundPath ? '' : routeId}
+        activeAgentId={activeAgentId}
+        bounded={!notFoundPath && (routeId === 'messages' || routeId === 'terminal')}
+        account={(
+          <div className="grid w-full gap-1">
+            {mocks ? <span className="mock-flag mx-auto rounded-full bg-warn-soft px-2 py-0.5 text-[10px] font-semibold tracking-wide text-warn-ink" role="status">MOCK API</span> : null}
+            <AccountMenu routeKey={`${routeId}/${params.join('/')}`} gate={gate} />
+          </div>
+        )}
+        notices={gate.status === 'unmanaged' ? <UnmanagedAuthBanner /> : null}
+      >
+        <main
+          id="main-content"
+          data-route={routeId}
+          ref={mainRef}
+          tabIndex={-1}
+          className={fullBleed
+            ? 'flex min-h-0 w-full flex-1 flex-col max-[760px]:pb-[calc(56px+env(safe-area-inset-bottom))] max-[760px]:has-[[data-keyboard-open]]:pb-0'
+            : 'mx-auto w-full max-w-[1680px] flex-1 px-4 pt-4 pb-[calc(72px+env(safe-area-inset-bottom))] min-[761px]:px-8 min-[761px]:pt-6 min-[761px]:pb-10'}
+        >
           {notFoundPath
             ? <RouteNotFound path={notFoundPath} />
             : Page
@@ -309,8 +258,7 @@ function ConsoleShell({ gate }: { gate: AuthGateState }) {
             )
             : null}
         </main>
-      </div>
-    </div>
+      </AppShell>
     </ConversationDrafts.Provider>
   );
 }

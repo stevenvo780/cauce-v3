@@ -1,0 +1,49 @@
+:where(.agent-lifecycle-panel, .config-collection-form, .people-admin, .native-context-repository, .config-modal-fondo) {
+  --border: var(--c-line);
+  --border-strong: var(--c-line-strong);
+  --surface-2: var(--c-subtle);
+  --muted: var(--c-muted);
+  --space-1: .25rem;
+  --space-2: .5rem;
+  --space-3: .75rem;
+  --tipo-apunte: .75rem;
+  min-width: 0;
+  font-size: .8125rem;
+}
+:where(.agent-lifecycle-panel, .config-collection-form, .people-admin, .native-context-repository, .config-modal-fondo) .button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: .375rem;
+  min-height: 2.25rem;
+  padding: .375rem .75rem;
+  border: 1px solid var(--c-line-strong);
+  border-radius: .5rem;
+  background: var(--c-surface);
+  color: var(--c-fg);
+  font-size: .8125rem;
+  font-weight: 500;
+  cursor: pointer;
+}
+:where(.agent-lifecycle-panel, .config-collection-form, .people-admin, .native-context-repository, .config-modal-fondo) .button:disabled { opacity: .5; cursor: not-allowed; }
+:where(.agent-lifecycle-panel, .config-collection-form, .people-admin, .native-context-repository, .config-modal-fondo) .button:focus-visible { outline: 2px solid var(--c-brand); outline-offset: 2px; }
+:where(.agent-lifecycle-panel, .config-collection-form, .people-admin, .native-context-repository, .config-modal-fondo) .button.primary { background: var(--c-brand); border-color: var(--c-brand); color: var(--c-on-brand); }
+:where(.agent-lifecycle-panel, .config-collection-form, .people-admin, .native-context-repository, .config-modal-fondo) .notice {
+  padding: .625rem .75rem;
+  border: 1px solid var(--c-line);
+  border-radius: .5rem;
+  background: var(--c-subtle);
+  color: var(--c-fg-2);
+  overflow-wrap: anywhere;
+}
+:where(.agent-lifecycle-panel, .config-collection-form, .people-admin, .native-context-repository, .config-modal-fondo) .notice[role="alert"] { color: var(--c-danger-ink); background: var(--c-danger-soft); }
+:where(.agent-lifecycle-panel, .config-collection-form, .people-admin, .native-context-repository, .config-modal-fondo) :is(.acciones, .config-actions, .settings-context-heading, .drawer-delivery-actions) { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; }
+:where(.agent-lifecycle-panel, .config-collection-form, .people-admin, .native-context-repository, .config-modal-fondo) pre { max-width: 100%; max-height: 25rem; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; background: var(--c-subtle); border-radius: .5rem; padding: .75rem; font-size: .75rem; }
+.native-context-repository { border: 1px solid var(--c-line); border-radius: .75rem; padding: .75rem 1rem; }
+.native-context-repository > summary { cursor: pointer; font-weight: 600; }
+.native-context-repository .perfil-editor { display: grid; gap: .75rem; padding-top: .75rem; }
+.config-modal-fondo { position: fixed; inset: 0; z-index: 80; display: flex; align-items: center; justify-content: center; padding: 1rem; background: var(--c-scrim); }
+.config-modal { width: min(48rem, 100%); max-height: calc(100dvh - 2rem); overflow: auto; background: var(--c-surface); color: var(--c-fg); border: 1px solid var(--c-line); border-radius: .75rem; box-shadow: var(--c-shadow-pop); }
+.config-modal-cuerpo, .config-modal-pie { padding: 1rem; }
+.config-modal-pie { border-top: 1px solid var(--c-line); }
+@media (max-width: 640px) { .config-modal-fondo { padding: .5rem; } .config-modal { max-height: calc(100dvh - 1rem); } }

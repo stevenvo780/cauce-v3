@@ -37,24 +37,14 @@ it('organizes all seven editable fields into three named groups without hiding i
   expect(screen.getByText(/Declarar herramientas no concede acceso/)).toBeInTheDocument();
 });
 
-it('keeps optional examples closed and never inserts them or changes a draft when toggled', async () => {
-  const { container, onTextChange, onListChange } = setup();
-  const user = userEvent.setup();
-  const details = [...container.querySelectorAll('details')];
-  expect(details).toHaveLength(3);
-  for (const disclosure of details) {
-    expect(disclosure).not.toHaveAttribute('open');
-    const summary = within(disclosure).getByText(/^Ver ejemplos:/);
-    await user.click(summary);
-    expect(disclosure).toHaveAttribute('open');
-    expect(within(disclosure).getByText('Ejemplos orientativos; no se añaden al perfil.')).toBeVisible();
-    expect(within(disclosure).queryByRole('button')).not.toBeInTheDocument();
-    await user.click(summary);
-    expect(disclosure).not.toHaveAttribute('open');
+it('offers examples only as placeholders: they are never inserted into a draft', () => {
+  const { onTextChange, onListChange } = setup();
+  for (const input of screen.getAllByRole('textbox')) {
+    expect(input).toHaveValue('');
+    expect(input).toHaveAttribute('placeholder', expect.stringMatching(/\S/u));
   }
   expect(onTextChange).not.toHaveBeenCalled();
   expect(onListChange).not.toHaveBeenCalled();
-  for (const input of screen.getAllByRole('textbox')) expect(input).toHaveValue('');
 });
 
 it.each([
@@ -80,7 +70,7 @@ it('keeps OpenClaw destinations separate and never promises an unpublished file'
   }
   const tools = screen.getByRole('textbox', { name: ETIQUETAS.tools.titulo });
   expect(tools.closest('label')).toHaveTextContent('sin dato');
-  expect(tools.closest('label')?.querySelector('.perfil-destino')).not.toHaveTextContent('→ TOOLS.md');
+  expect(tools.closest('label')).not.toHaveTextContent('→ TOOLS.md');
 });
 
 it.each([
@@ -93,7 +83,7 @@ it.each([
   }
 });
 
-it('preserves raw list whitespace, text and edits while opening or closing guidance', async () => {
+it('preserves raw list whitespace, text and edits', async () => {
   const user = userEvent.setup();
   function Draft() {
     const [fields, setFields] = useState<AgentPerfilCampos>(camposVigentes(undefined, undefined));
@@ -107,15 +97,12 @@ it('preserves raw list whitespace, text and edits while opening or closing guida
   const responsibilities = screen.getByRole('textbox', { name: ETIQUETAS.responsibilities.titulo });
   await user.type(purpose, 'Mi propósito');
   await user.type(responsibilities, 'Primera tarea {enter}{enter} Segunda tarea ');
-  const summary = screen.getByText('Ver ejemplos: responsabilidades y herramientas');
-  await user.click(summary);
-  await user.click(summary);
   expect(purpose).toHaveValue('Mi propósito');
   expect(responsibilities).toHaveValue('Primera tarea \n\n Segunda tarea ');
   expect(responsibilities).toHaveAccessibleDescription(expect.stringContaining('2 entradas / 64'));
 });
 
-it('retains input counts, limits, callbacks and disabled state without coupling guidance to edits', async () => {
+it('retains input counts, limits, callbacks and disabled state', async () => {
   const { props, rerender, onTextChange, onListChange } = setup();
   for (const field of CAMPOS_DEL_PERFIL) {
     const input = screen.getByRole('textbox', { name: ETIQUETAS[field].titulo });
@@ -131,12 +118,9 @@ it('retains input counts, limits, callbacks and disabled state without coupling 
   const fields = { ...props.fields, purpose: '😀😀', responsibilities: ['one', '', ' two '] };
   const limits: AgentPerfil['limites'] = { purpose: 3, role_summary: 4, items: 1, item: 10, total: 20 };
   rerender(<ProfileFields {...props} fields={fields} limits={limits} disabled />);
-  expect(screen.getByText('4 / 3')).toHaveClass('perfil-cuenta-fuera');
-  expect(screen.getByText('2 entradas / 1')).toHaveClass('perfil-cuenta-fuera');
+  expect(screen.getByText('4 / 3')).toHaveAttribute('data-over', 'true');
+  expect(screen.getByText('2 entradas / 1')).toHaveAttribute('data-over', 'true');
   for (const input of screen.getAllByRole('textbox')) expect(input).toBeDisabled();
-  const callsBeforeGuidance = onTextChange.mock.calls.length + onListChange.mock.calls.length;
-  await userEvent.click(screen.getByText('Ver ejemplos: identidad y relación'));
-  expect(onTextChange.mock.calls.length + onListChange.mock.calls.length).toBe(callsBeforeGuidance);
 });
 
 it('keeps unknown limits distinct from zero and provides unique labels for simultaneous editors', () => {

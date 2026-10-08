@@ -1,15 +1,16 @@
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
-import { mockActivity } from '../../mocks/data';
 import { server } from '../../mocks/server';
-import { renderWithApi } from '../../test/render';
-import { LiveFleetPage } from './LiveFleetPage';
+import { ApiProvider } from '../../api/context';
+import { testApi } from '../../test/render';
+import { AgentContextPanel } from './AgentContextPanel';
+import { abrirContexto as abrirPagina, selectSection } from './context-test-utils';
 
 /**
  * WHAT WAS WRITTEN AND NOT YET SAVED DOES NOT DISAPPEAR ON ITS OWN.
  *
- * The draft used to live inside the editor, which the drawer unmounts on every tab change and the
+ * The draft used to live inside the editor, which the page unmounts on some section changes and the
  * accordion unmounts on every fold: half a manual rewritten by hand vanished with no warning and
  * with nothing to blame. It now lives on the page, indexed by alias and document kind, exactly
  * like the profile one.
@@ -29,7 +30,7 @@ const CLAUDE_MD = {
 const IDENTIDAD = {
   kind: 'identity', category: 'profile', label: 'Identidad (IDENTITY.md)',
   path: '/home/stev/workspace/IDENTITY.md', format: 'markdown', readable: true, editable: false,
-  reason: 'Es parte de los campos canónicos: se cambia desde Contexto.',
+  reason: 'Es parte de los campos canónicos: se cambia desde Perfil.',
 };
 
 function contenido(alias: string, texto: string) {
@@ -50,18 +51,10 @@ function mapaDe(alias: string, items: unknown[]) {
 
 beforeEach(() => {
   window.history.replaceState({}, '', '/live');
-  server.use(http.get('http://localhost/v3/console/activity', () => HttpResponse.json(mockActivity())));
 });
 
 async function abrirContextoDe(alias: string) {
-  const user = userEvent.setup();
-  renderWithApi(<LiveFleetPage />);
-  await screen.findByLabelText('Veredicto de la flota');
-  await user.click(await screen.findByText(/^Agentes ·/u));
-  await user.click(await screen.findByRole('row', { name: new RegExp(alias, 'i') }));
-  const cajon = await screen.findByRole('dialog', { name: new RegExp(`detalle de ${alias}`, 'i') });
-  await user.click(within(cajon).getByRole('tab', { name: 'Contexto' }));
-  return { user, cajon };
+  return abrirPagina('ficheros', alias);
 }
 
 async function escribirBorrador(user: ReturnType<typeof userEvent.setup>, cajon: HTMLElement) {
@@ -72,15 +65,14 @@ async function escribirBorrador(user: ReturnType<typeof userEvent.setup>, cajon:
   return caja;
 }
 
-it('el borrador sobrevive a cambiar de pestaña y volver', async () => {
+it('el borrador sobrevive a cambiar de sección y volver', async () => {
   mapaDe('kant', [CLAUDE_MD]);
   server.use(http.get(rutaContenido('kant', 'directive'), () => HttpResponse.json(contenido('kant', '# viejo\n'))));
   const { user, cajon } = await abrirContextoDe('kant');
   await escribirBorrador(user, cajon);
 
-  await user.click(within(cajon).getByRole('tab', { name: 'Entregas' }));
-  await user.click(within(cajon).getByRole('tab', { name: 'Contexto' }));
-  await user.click(await within(cajon).findByText('CLAUDE.md (manual del sitio)'));
+  await selectSection(user, 'perfil');
+  await selectSection(user, 'ficheros');
 
   expect(await within(cajon).findByLabelText(/Contenido de CLAUDE\.md/i))
     .toHaveValue('lo que estaba escribiendo');
@@ -101,7 +93,7 @@ it('plegar el acordeón no borra lo escrito, y la fila cerrada lo avisa', async 
     .toHaveValue('lo que estaba escribiendo');
 });
 
-it('inspeccionar otro fichero no se lleva por delante el borrador del manual en Contexto', async () => {
+it('inspeccionar otro fichero no se lleva por delante el borrador del manual', async () => {
   mapaDe('kant', [CLAUDE_MD, IDENTIDAD]);
   server.use(
     http.get(rutaContenido('kant', 'directive'), () => HttpResponse.json(contenido('kant', '# viejo\n'))),
@@ -115,12 +107,10 @@ it('inspeccionar otro fichero no se lleva por delante el borrador del manual en 
   const { user, cajon } = await abrirContextoDe('kant');
   await escribirBorrador(user, cajon);
 
-  await user.click(within(cajon).getByRole('tab', { name: 'Ficheros' }));
   await user.click(within(cajon).getByText('Identidad (IDENTITY.md)'));
   expect(await within(cajon).findByLabelText(/Contenido de Identidad/i)).toHaveValue('# identidad\n');
 
-  await user.click(within(cajon).getByRole('tab', { name: 'Contexto' }));
-  await user.click(await within(cajon).findByText('CLAUDE.md (manual del sitio)'));
+  await user.click(within(cajon).getByText('CLAUDE.md (manual del sitio)'));
   expect(await within(cajon).findByLabelText(/Contenido de CLAUDE\.md/i))
     .toHaveValue('lo que estaba escribiendo');
 });
@@ -132,21 +122,17 @@ it('cada alias tiene su propio borrador: cambiar de agente no lo mezcla ni lo pi
     http.get(rutaContenido('kant', 'directive'), () => HttpResponse.json(contenido('kant', '# viejo\n'))),
     http.get(rutaContenido('zeus', 'directive'), () => HttpResponse.json(contenido('zeus', '# el de zeus\n'))),
   );
-  const { user, cajon } = await abrirContextoDe('kant');
+  const { user, cajon, rerender } = await abrirContextoDe('kant');
   await escribirBorrador(user, cajon);
 
-  await user.click(screen.getByRole('row', { name: /zeus/i }));
-  const cajonZeus = await screen.findByRole('dialog', { name: /detalle de zeus/i });
-  await user.click(within(cajonZeus).getByRole('tab', { name: 'Contexto' }));
-  await user.click(await within(cajonZeus).findByText('CLAUDE.md (manual del sitio)'));
-  expect(await within(cajonZeus).findByLabelText(/Contenido de CLAUDE\.md/i)).toHaveValue('# el de zeus\n');
+  const alias = (nombre: string) => <ApiProvider api={testApi}><AgentContextPanel tenantId="Steven" alias={nombre} /></ApiProvider>;
+  rerender(alias('zeus'));
+  await user.click(await screen.findByText('CLAUDE.md (manual del sitio)'));
+  expect(await screen.findByLabelText(/Contenido de CLAUDE\.md/i)).toHaveValue('# el de zeus\n');
 
-  await user.click(screen.getByRole('row', { name: /kant/i }));
-  const cajonKant = await screen.findByRole('dialog', { name: /detalle de kant/i });
-  await user.click(within(cajonKant).getByRole('tab', { name: 'Contexto' }));
-  await user.click(await within(cajonKant).findByText('CLAUDE.md (manual del sitio)'));
-  expect(await within(cajonKant).findByLabelText(/Contenido de CLAUDE\.md/i))
-    .toHaveValue('lo que estaba escribiendo');
+  rerender(alias('kant'));
+  await user.click(await screen.findByText('CLAUDE.md (manual del sitio)'));
+  expect(await screen.findByLabelText(/Contenido de CLAUDE\.md/i)).toHaveValue('lo que estaba escribiendo');
 });
 
 it('«Descartar y releer» sí tira el borrador, que es lo que el operador pidió', async () => {
@@ -187,8 +173,8 @@ it('guardar cierra el borrador: al volver se ve lo aplicado y ningún aviso pend
 
   expect(await within(cajon).findByText(/Escrito en/)).toBeInTheDocument();
   expect(within(cajon).queryByText(/Aplicado en/)).not.toBeInTheDocument();
-  await user.click(within(cajon).getByRole('tab', { name: 'Entregas' }));
-  await user.click(within(cajon).getByRole('tab', { name: 'Contexto' }));
+  await selectSection(user, 'perfil');
+  await selectSection(user, 'ficheros');
 
   expect(await within(cajon).findByText('CLAUDE.md (manual del sitio)')).toBeInTheDocument();
   expect(within(cajon).queryByText('borrador sin guardar')).not.toBeInTheDocument();
@@ -234,11 +220,10 @@ it('el borrador guarda con la huella del texto del que nació, no con la de la �
   const { user, cajon } = await abrirContextoDe('kant');
   await escribirBorrador(user, cajon);
 
-  // Someone else writes the file while the operator was on another tab.
-  await user.click(within(cajon).getByRole('tab', { name: 'Entregas' }));
+  // Someone else writes the file while the operator was on another section.
+  await selectSection(user, 'perfil');
   shaServido = 'd'.repeat(64);
-  await user.click(within(cajon).getByRole('tab', { name: 'Contexto' }));
-  await user.click(await within(cajon).findByText('CLAUDE.md (manual del sitio)'));
+  await selectSection(user, 'ficheros');
   await user.type(within(cajon).getByLabelText(/Motivo del guardado/i), 'reescribo el manual');
   await user.click(await within(cajon).findByRole('button', { name: /^Guardar$/i }));
 

@@ -1,10 +1,11 @@
 import { ArrowLeft, ArrowRight, Braces, CircleCheck, RotateCcw, Save, SearchCheck } from 'lucide-react';
-import { useMemo, useState, type ReactNode } from 'react';
+import { useMemo, useState } from 'react';
 import type { ConfigMutation } from '../../api/types';
-import { Badge, EmptyState, Panel } from '../../components/ui';
+import { Button, Outcome, PREVIEW } from '../../components/kit';
+import { Badge, EmptyState } from '../../components/ui';
 import { CONFIG_SIN_CONTROL_REASON } from '../../router';
 import { textoRecarga, type ConfigChangeOutcome } from './config-change';
-import './toggles.css';
+import { CHECK_LABEL, FORM_GRID, HINT } from './config-ui';
 
 type SpaceStep = 'tenant' | 'room' | 'membership' | 'harness';
 type WizardStep = SpaceStep | 'review';
@@ -137,12 +138,10 @@ function stepError(step: WizardStep, draft: SpaceDraft): string | undefined {
  * depends on the rows the previous one created, so the plan is previewed and applied one step
  * at a time: there is no possible dry-run of the room before the tenant exists.
  */
-export function SpaceWizard({ canWrite, busy, onChange, encabezado }: {
+export function SpaceWizard({ canWrite, busy, onChange }: {
   canWrite: boolean;
   busy: boolean;
   onChange: (mutation: ConfigMutation, dryRun: boolean) => Promise<ConfigChangeOutcome>;
-  /** The control that picks between this wizard and a single-resource create. See `AltaDeEspacios`. */
-  encabezado?: ReactNode;
 }) {
   const [draft, setDraft] = useState<SpaceDraft>(emptyDraft);
   const [step, setStep] = useState<WizardStep>('tenant');
@@ -221,78 +220,75 @@ export function SpaceWizard({ canWrite, busy, onChange, encabezado }: {
     });
   }
 
-  return <Panel title="Wizard de espacios" subtitle="Cada paso pasa por dry-run y se aplica por separado, sobre el mismo change endpoint.">
-    {encabezado}
-    <div className="config-actions" role="group" aria-label="Pasos del wizard">
-      {wizardSteps.map((item, position) => <button key={item} type="button" className={`button small${item === step ? ' primary' : ''}`} onClick={() => { setStep(item); }}>
+  return <div className="grid gap-3" role="group" aria-label="Wizard de espacios">
+    <p className={HINT}>Cada paso pasa por dry-run y se aplica por separado.</p>
+    <div className="flex flex-wrap gap-1.5" role="group" aria-label="Pasos del wizard">
+      {wizardSteps.map((item, position) => <Button key={item} size="sm" variant={item === step ? 'primary' : 'secondary'} onClick={() => { setStep(item); }}>
         {doneSteps.has(item) ? <CircleCheck size={14} aria-hidden="true" /> : null}{position + 1}. {stepTitles[item]}
-      </button>)}
+      </Button>)}
     </div>
 
-    {step === 'tenant' ? <div className="config-form">
-      <label className="config-json casilla"><input {...writeControls} type="checkbox" checked={draft.withTenant} onChange={(event) => { edit({ withTenant: event.target.checked }); }} /> Crear el tenant <span className="label-hint">destildá si ya existe; el id se sigue usando en los pasos siguientes</span></label>
+    {step === 'tenant' ? <div className={FORM_GRID}>
+      <label className={`${CHECK_LABEL} md:col-span-2`}><input {...writeControls} type="checkbox" checked={draft.withTenant} onChange={(event) => { edit({ withTenant: event.target.checked }); }} /> Crear el tenant <span className={HINT}>destildá si ya existe; el id se sigue usando en los pasos siguientes</span></label>
       <label>Tenant id<input {...writeControls} value={draft.tenantId} onChange={(event) => { edit({ tenantId: event.target.value }); }} /></label>
-      <label>Display name <span className="label-hint">opcional</span><input {...writeControls} value={draft.tenantLabel} onChange={(event) => { edit({ tenantLabel: event.target.value }); }} /></label>
-      <label className="casilla"><input {...writeControls} type="checkbox" checked={draft.tenantIsHub} onChange={(event) => { edit({ tenantIsHub: event.target.checked }); }} /> Es hub</label>
+      <label>Display name <span className={HINT}>opcional</span><input {...writeControls} value={draft.tenantLabel} onChange={(event) => { edit({ tenantLabel: event.target.value }); }} /></label>
+      <label className={CHECK_LABEL}><input {...writeControls} type="checkbox" checked={draft.tenantIsHub} onChange={(event) => { edit({ tenantIsHub: event.target.checked }); }} /> Es hub</label>
     </div> : null}
 
-    {step === 'room' ? <div className="config-form">
-      <label className="config-json casilla"><input {...writeControls} type="checkbox" checked={draft.withRoom} onChange={(event) => { edit({ withRoom: event.target.checked }); }} /> Crear el room</label>
+    {step === 'room' ? <div className={FORM_GRID}>
+      <label className={`${CHECK_LABEL} md:col-span-2`}><input {...writeControls} type="checkbox" checked={draft.withRoom} onChange={(event) => { edit({ withRoom: event.target.checked }); }} /> Crear el room</label>
       <label>Room id<input {...writeControls} value={draft.roomId} onChange={(event) => { edit({ roomId: event.target.value }); }} /></label>
-      <label>Display name <span className="label-hint">opcional</span><input {...writeControls} value={draft.roomLabel} onChange={(event) => { edit({ roomLabel: event.target.value }); }} /></label>
+      <label>Display name <span className={HINT}>opcional</span><input {...writeControls} value={draft.roomLabel} onChange={(event) => { edit({ roomLabel: event.target.value }); }} /></label>
     </div> : null}
 
-    {step === 'membership' ? <div className="config-form">
-      <label className="config-json casilla"><input {...writeControls} type="checkbox" checked={draft.withMembership} onChange={(event) => { edit({ withMembership: event.target.checked }); }} /> Crear la membership</label>
+    {step === 'membership' ? <div className={FORM_GRID}>
+      <label className={`${CHECK_LABEL} md:col-span-2`}><input {...writeControls} type="checkbox" checked={draft.withMembership} onChange={(event) => { edit({ withMembership: event.target.checked }); }} /> Crear la membership</label>
       <label>Alias<input {...writeControls} value={draft.alias} onChange={(event) => { edit({ alias: event.target.value }); }} /></label>
-      <label>Rol de permisos <span className="label-hint">route/read/control salen de role_policies; no cambia el contexto</span><input {...writeControls} value={draft.role} onChange={(event) => { edit({ role: event.target.value }); }} /></label>
+      <label>Rol de permisos <span className={HINT}>route/read/control salen de role_policies; no cambia el contexto</span><input {...writeControls} value={draft.role} onChange={(event) => { edit({ role: event.target.value }); }} /></label>
     </div> : null}
 
-    {step === 'harness' ? <div className="config-form">
-      <label className="config-json casilla"><input {...writeControls} type="checkbox" checked={draft.withHarness} onChange={(event) => { edit({ withHarness: event.target.checked }); }} /> Registrar el harness</label>
+    {step === 'harness' ? <div className={FORM_GRID}>
+      <label className={`${CHECK_LABEL} md:col-span-2`}><input {...writeControls} type="checkbox" checked={draft.withHarness} onChange={(event) => { edit({ withHarness: event.target.checked }); }} /> Registrar el harness</label>
       <label>Harness id<input {...writeControls} value={draft.harnessId} onChange={(event) => { edit({ harnessId: event.target.value }); }} /></label>
       <label>Display name<input {...writeControls} value={draft.harnessLabel} onChange={(event) => { edit({ harnessLabel: event.target.value }); }} /></label>
-      <label>Capabilities <span className="label-hint">separadas por coma</span><input {...writeControls} value={draft.harnessCapabilities} onChange={(event) => { edit({ harnessCapabilities: event.target.value }); }} /></label>
+      <label>Capabilities <span className={HINT}>separadas por coma</span><input {...writeControls} value={draft.harnessCapabilities} onChange={(event) => { edit({ harnessCapabilities: event.target.value }); }} /></label>
       {/* Where did "Command" go. Removing a field without saying so leaves the operator hunting for
           it and thinking the screen broke; saying nobody reads it answers the question at once. */}
-      <p className="muted">
+      <p className={`${HINT} md:col-span-2`}>
         «Command» ya no se pide: esa columna se guarda pero no la lee ningún camino de ejecución —el
         adaptador toma su orden de su propio paquete o de su fichero local—. Sigue admitida por el
-        editor de mutaciones JSON de «Historial y JSON» para quien la necesite.
+        editor de mutaciones JSON de «Avanzado» para quien la necesite.
       </p>
     </div> : null}
 
     {step === 'review' ? <>
-      {!plan.length ? <EmptyState>El plan quedó vacío: volvé a los pasos e incluí al menos un recurso.</EmptyState> : <ul className="config-records" aria-label="Plan del espacio">
-        {progress.map((entry) => <li key={entry.step}>
+      {!plan.length ? <EmptyState>El plan quedó vacío: volvé a los pasos e incluí al menos un recurso.</EmptyState> : <ul className="m-0 grid list-none gap-2 p-0" aria-label="Plan del espacio">
+        {progress.map((entry) => <li key={entry.step} className="rounded-lg border border-line p-2.5">
           <Badge tone={entry.done ? 'done' : entry === pending ? 'info' : 'unknown'}>{entry.done ? 'aplicado' : entry === pending ? 'en curso' : 'en cola'}</Badge>{' '}
-          <code>{JSON.stringify(entry.mutation)}</code>
+          <code className="text-xs break-all">{JSON.stringify(entry.mutation)}</code>
         </li>)}
       </ul>}
       {/* The pending step's JSON is not lost: it stops being open. What matters for the decision is
           the list above —which step goes and in what state—, not how it is encoded. */}
-      {pendingText !== undefined ? <details className="config-crudo">
-        <summary><Braces size={13} aria-hidden="true" /> Ver la mutación del paso pendiente</summary>
-        <pre className="config-preview" aria-label="Mutación pendiente del wizard">{pendingText}</pre>
+      {pendingText !== undefined ? <details className="text-[13px]">
+        <summary className="flex cursor-pointer items-center gap-1.5 text-muted"><Braces size={13} aria-hidden="true" /> Ver la mutación del paso pendiente</summary>
+        <pre className={`${PREVIEW} mt-2`} aria-label="Mutación pendiente del wizard">{pendingText}</pre>
       </details> : null}
-      {plan.length > 0 && !pending ? <p className="notice success" role="status">Espacio completo: los {plan.length} pasos quedaron aplicados.</p> : null}
-      <div className="config-actions">
-        <button className="button secondary" type="button" disabled={!canWrite || busy || !pending || Boolean(invalid)} onClick={() => void run(true)}><SearchCheck size={16} aria-hidden="true" />Previsualizar paso</button>
-        <button className="button primary" type="button" disabled={!canWrite || busy || !applicable} onClick={() => void run(false)}><Save size={16} aria-hidden="true" />Aplicar paso</button>
-        <button className="button small" type="button" onClick={reset}><RotateCcw size={14} aria-hidden="true" />Reiniciar wizard</button>
+      {plan.length > 0 && !pending ? <Outcome tone="success">Espacio completo: los {plan.length} pasos quedaron aplicados.</Outcome> : null}
+      <div className="flex flex-wrap gap-2">
+        <Button disabled={!canWrite || busy || !pending || Boolean(invalid)} onClick={() => void run(true)}><SearchCheck size={16} aria-hidden="true" />Previsualizar paso</Button>
+        <Button variant="primary" disabled={!canWrite || busy || !applicable} onClick={() => void run(false)}><Save size={16} aria-hidden="true" />Aplicar paso</Button>
+        <Button size="sm" onClick={reset}><RotateCcw size={14} aria-hidden="true" />Reiniciar wizard</Button>
       </div>
-      {preview ? <pre className="config-preview" aria-label="Dry-run del wizard">{preview}</pre> : null}
+      {preview ? <pre className={PREVIEW} aria-label="Dry-run del wizard">{preview}</pre> : null}
     </> : null}
 
-    {invalid ? <p className="notice error" role="alert">{invalid}</p> : null}
-    {notice ? <p
-      className={notice.tone === 'error' ? 'notice error' : notice.tone === 'parcial' ? 'notice parcial' : 'notice success'}
-      role={notice.tone === 'success' ? 'status' : 'alert'}
-    >{notice.text}</p> : null}
+    {invalid ? <Outcome tone="error">{invalid}</Outcome> : null}
+    {notice ? <Outcome tone={notice.tone}>{notice.text}</Outcome> : null}
 
-    {step === 'review' ? null : <div className="config-actions">
-      <button className="button small" type="button" disabled={index === 0} onClick={() => { setStep(wizardSteps[index - 1]); }}><ArrowLeft size={14} aria-hidden="true" />Atrás</button>
-      <button className="button small" type="button" disabled={Boolean(invalid)} onClick={() => { setStep(wizardSteps[index + 1]); }}>Siguiente<ArrowRight size={14} aria-hidden="true" /></button>
+    {step === 'review' ? null : <div className="flex flex-wrap gap-2">
+      <Button size="sm" disabled={index === 0} onClick={() => { setStep(wizardSteps[index - 1]); }}><ArrowLeft size={14} aria-hidden="true" />Atrás</Button>
+      <Button size="sm" disabled={Boolean(invalid)} onClick={() => { setStep(wizardSteps[index + 1]); }}>Siguiente<ArrowRight size={14} aria-hidden="true" /></Button>
     </div>}
-  </Panel>;
+  </div>;
 }

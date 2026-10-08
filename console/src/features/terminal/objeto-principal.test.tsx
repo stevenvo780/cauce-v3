@@ -1,4 +1,4 @@
-import { screen, waitFor } from '@testing-library/react';
+import { screen } from '@testing-library/react';
 import { expect, it } from 'vitest';
 import { renderWithApi } from '../../test/render';
 import { TerminalPage } from './TerminalPage';
@@ -6,17 +6,13 @@ import { TerminalPage } from './TerminalPage';
 /* /terminal is the one route that meets the fold objective today, and the vertical gate
    (console/qa/layout-gate.mjs) would keep saying so with `[data-objeto-principal]` deleted. */
 
-it('el escenario de la terminal se declara como objeto principal de /terminal', async () => {
-  const { container } = renderWithApi(<TerminalPage />);
-
+it('el escenario de la terminal se declara como único objeto principal, con o sin agente', async () => {
+  const { container, unmount } = renderWithApi(<TerminalPage />);
   await screen.findByRole('heading', { level: 1, name: 'Terminal de agentes' });
-  const escenario = await waitFor(() => {
-    const nodo = container.querySelector('.ultimate-terminal-shell');
-    if (!nodo) throw new Error('Missing .ultimate-terminal-shell');
-    return nodo;
-  });
-  expect(container.querySelector('.terminal-overview')).toBeNull();
-  expect(screen.getByRole('link', { name: 'Docs' })).toHaveAttribute('href', '/ayuda#terminal');
-  expect(escenario).toHaveAttribute('data-objeto-principal', 'escenario');
-  expect(container.querySelectorAll('[data-objeto-principal]')).toHaveLength(1);
+  expect(container.querySelectorAll('[data-objeto-principal="escenario"]')).toHaveLength(1);
+  unmount();
+
+  const abierto = renderWithApi(<TerminalPage params={['Steven', 'kant']} />);
+  await screen.findByRole('heading', { level: 2, name: /kant/ });
+  expect(abierto.container.querySelectorAll('[data-objeto-principal="escenario"]')).toHaveLength(1);
 }, 25_000);

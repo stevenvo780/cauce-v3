@@ -67,13 +67,21 @@ async function login(page: BrowserPage, email: string, password: string): Promis
   await page.getByLabel('Correo').fill(email);
   await page.getByLabel('Contraseña').fill(password);
   await page.getByRole('button', { name: 'Iniciar sesión' }).click();
-  await page.getByRole('link', { name: /Conversaciones/u }).waitFor({ state: 'visible', timeout: 20_000 });
+  await page.getByRole('navigation', { name: 'Navegación principal', exact: true }).locator('a[href="/messages"], a[href^="/messages/"]').waitFor({ state: 'visible', timeout: 20_000 });
   await page.goto(`${fixture?.baseUrl ?? ''}/config`, { waitUntil: 'domcontentloaded' });
+  await page.getByRole('tab', { name: 'Agentes', exact: true }).click();
 }
 async function openEditor(page: BrowserPage, tenant: string, alias: string): Promise<void> {
   await page.getByLabel('Buscar agente o grupo').fill(tenant === 'Steven' ? 'QA' : alias);
   await page.getByRole('button', { name: `Editar registro de ${tenant}/${alias}` }).click();
   await page.getByRole('heading', { name: `Registro · ${tenant}/${alias}` }).waitFor({ state: 'visible', timeout: 20_000 });
+}
+async function openMutationEditor(page: BrowserPage) {
+  await page.getByRole('tab', { name: 'Avanzado', exact: true }).click();
+  const editor = page.locator('details').filter({ hasText: 'Editor de mutaciones JSON' });
+  await editor.locator('summary').click();
+  await editor.getByRole('textbox', { name: 'Mutación JSON', exact: true }).waitFor({ state: 'visible', timeout: 20_000 });
+  return editor;
 }
 async function readAgent(page: BrowserPage, tenant: string, alias: string): Promise<{
   status: number; revision: number; agent: AgentRow | undefined;
@@ -251,16 +259,15 @@ describe('V1 tipada de edición del registro de agentes', () => {
     const revisionBefore = await revisionCounts(identity.tenant, identity.alias);
     if (!before) throw new Error('hub target row was not seeded');
     await openEditor(hubPage, identity.tenant, identity.alias);
-    expect(await hubPage.getByLabel('Tenant').count()).toBe(0);
-    expect(await hubPage.getByLabel('Alias').count()).toBe(0);
+    const registryEditor = hubPage.getByRole('region', { name: `Registro de ${identity.tenant}/${identity.alias}`, exact: true });
     const displayName = `QA registry updated ${identity.alias}`;
-    for (const label of ['Nombre del contenedor', 'Usuario de runtime', 'Directorio home', 'Directorio de estado', 'ID del arnés', 'Cuenta principal']) {
-      expect(await hubPage.getByLabel(label, { exact: true }).count()).toBe(0);
+    for (const label of ['Tenant', 'Alias', 'Nombre del contenedor', 'Usuario de runtime', 'Directorio home', 'Directorio de estado', 'ID del arnés', 'Cuenta principal']) {
+      for (const role of ['textbox', 'combobox', 'spinbutton']) expect(await registryEditor.getByRole(role, { name: label, exact: true }).count()).toBe(0);
     }
-    await hubPage.getByLabel('Nombre visible').fill(displayName);
-    await hubPage.getByLabel('Estado del registro').selectOption('false');
-    await hubPage.getByLabel('Máximo de entregas concurrentes').fill('');
-    await hubPage.getByRole('checkbox', { name: /Sin límite/ }).click();
+    await registryEditor.getByRole('textbox', { name: 'Nombre visible', exact: true }).fill(displayName);
+    await registryEditor.getByRole('combobox', { name: 'Estado del registro', exact: true }).selectOption('false');
+    await registryEditor.getByRole('spinbutton', { name: 'Máximo de entregas concurrentes', exact: true }).fill('');
+    await registryEditor.getByRole('checkbox', { name: /Sin límite/ }).click();
     await assertAgentRegistryGeometry(hubPage, evidenceDirectory, 'desktop', `${identity.tenant}/${identity.alias}`);
     const mutation: ConfigMutation = {
       resource: 'agent', action: 'update', tenant_id: identity.tenant, alias: identity.alias,
@@ -339,12 +346,9 @@ describe('V1 tipada de edición del registro de agentes', () => {
     expect(await hubPage.getByRole('heading', { name: `Registro · ${identity.tenant}/${identity.alias}` }).count()).toBe(1);
     expect(browserErrors).toEqual([]);
     await hubPage.setViewportSize({ width: 1440, height: 900 });
-    await hubPage.getByRole('button', { name: `Cerrar registro de ${identity.tenant}/${identity.alias}` }).click();
+    await hubPage.getByRole('region', { name: `Registro de ${identity.tenant}/${identity.alias}`, exact: true }).getByRole('button', { name: 'Cerrar editor', exact: true }).click();
     await assertAgentRegistryGeometry(hubPage, evidenceDirectory, 'desktop-closed', `${identity.tenant}/${identity.alias}`);
-    await hubPage.getByRole('button', { name: 'Administración avanzada', exact: true }).click();
-    await hubPage.getByRole('tab', { name: 'Historial y JSON', exact: true }).click();
-    await hubPage.getByText('Editor de mutaciones JSON', { exact: false }).click();
-    const jsonEditor = hubPage.locator('.config-editor');
+    const jsonEditor = await openMutationEditor(hubPage);
     let diagnosticPosts = 0;
     hubPage.on('request', (value) => {
       const request = value as { url(): string; method(): string };
@@ -373,7 +377,8 @@ describe('V1 tipada de edición del registro de agentes', () => {
     const ownRevisions = await revisionCounts(ownTarget.tenant, ownTarget.alias);
     if (!ownBefore) throw new Error('negative case lacks registered own-tenant target');
     await openEditor(nonHubPage, ownTarget.tenant, ownTarget.alias);
-    await nonHubPage.getByLabel('Nombre visible').fill(`forbidden-${ownTarget.alias}`);
+    await nonHubPage.getByRole('region', { name: `Registro de ${ownTarget.tenant}/${ownTarget.alias}`, exact: true })
+      .getByRole('textbox', { name: 'Nombre visible', exact: true }).fill(`forbidden-${ownTarget.alias}`);
     const deniedResponse = responseForChange(nonHubPage);
     const deniedRequest = requestForChange(nonHubPage);
     await nonHubPage.getByRole('button', { name: 'Previsualizar cambio' }).click();
@@ -399,9 +404,7 @@ describe('V1 tipada de edición del registro de agentes', () => {
     expect(visibleSnapshot.status).toBe(200);
     expect(visibleSnapshot.agent).toBeUndefined();
     expect(await nonHubPage.getByRole('button', { name: `Editar registro de ${foreign.tenant}/${foreign.alias}` }).count()).toBe(0);
-    await nonHubPage.getByRole('button', { name: 'Administración avanzada', exact: true }).click();
-    await nonHubPage.getByRole('tab', { name: 'Historial y JSON', exact: true }).click();
-    await nonHubPage.getByText('Editor de mutaciones JSON', { exact: false }).click();
+    await openMutationEditor(nonHubPage);
     const foreignMutation = { resource: 'agent', action: 'update', tenant_id: foreign.tenant, alias: foreign.alias, value: { enabled: false } };
     await nonHubPage.getByLabel('Mutación JSON', { exact: true }).fill(JSON.stringify(foreignMutation));
     const foreignResponse = responseForChange(nonHubPage);

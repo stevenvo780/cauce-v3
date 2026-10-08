@@ -1,7 +1,7 @@
 import { screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
-import { ConfigAdministration as ConfigPage } from './ConfigPage';
+import { ConfigPage } from './ConfigPage';
 import { server } from '../../mocks/server';
 import { renderWithApi } from '../../test/render';
 import { MARCA_INERTE } from './campos-inertes';
@@ -9,7 +9,8 @@ import { MARCA_INERTE } from './campos-inertes';
 /**
  * **That the screen does not lie about what it does.**
  *
- * The catalog only flags columns with no runtime reader, such as `harness_definitions.command`.
+ * The catalog only flags columns with no runtime reader: `harness_id`, `home_directory`,
+ * `state_directory`, and `harness_definitions.command`.
  *
  * They are not hidden: the server publishes them — hiding a value that exists is another lie. They
  * are FLAGGED, with the reason visible and a citation of where the value that actually rules comes from.
@@ -19,13 +20,16 @@ import { MARCA_INERTE } from './campos-inertes';
  */
 
 const AGENTES = /^agentes$/i;
-const PERMISOS = /^permisos$/i;
-const ESPACIOS = /espacios y miembros/i;
+const ARNESES = /^arneses$/i;
+const PERMISOS = /acceso y roles/i;
+const ESPACIOS = /espacios y salas/i;
 
 type Usuario = ReturnType<typeof userEvent.setup>;
 
 async function irA(user: Usuario, pestana: RegExp) {
   await user.click(await screen.findByRole('tab', { name: pestana }));
+  const registry = screen.queryByText('Registro completo en tabla');
+  if (registry && !registry.closest('details')?.open) await user.click(registry);
 }
 
 /** The panel of a collection, by its title. */
@@ -72,6 +76,8 @@ function conHarnessReal() {
   })));
 }
 
+beforeEach(() => { window.history.replaceState({}, '', '/config?seccion=espacios'); });
+
 describe('las columnas sin efecto quedan marcadas, no escondidas', () => {
   it('no marca las columnas de emplazamiento administradas por flota', async () => {
     conHarnessReal();
@@ -82,7 +88,7 @@ describe('las columnas sin efecto quedan marcadas, no escondidas', () => {
     // The column's accessible name starts with the label and continues with the entire reason (it
     // goes in `sr-only` on purpose). It is anchored to the start: without `^`, "Contenedor" also
     // matches the "Carpeta personal" column, whose reason says "measured inside the container".
-    const registro = panelDe(/agent registry/i);
+    const registro = panelDe(/registro de agentes/i);
     for (const rotulo of ['Harness', 'Carpeta personal', 'state_directory']) {
       const cabecera = within(registro).getByRole('columnheader', { name: new RegExp(`^${rotulo}`, 'i') });
       expect(cabecera, `${rotulo} tiene lector de flota`).not.toHaveTextContent(MARCA_INERTE);
@@ -100,7 +106,7 @@ describe('las columnas sin efecto quedan marcadas, no escondidas', () => {
     renderWithApi(<ConfigPage />);
     await irA(user, AGENTES);
 
-    const registro = panelDe(/agent registry/i);
+    const registro = panelDe(/registro de agentes/i);
     for (const rotulo of ['Alias', 'Rol declarado (diagnóstico)', 'Habilitado', 'Contenedor', 'Usuario']) {
       const cabecera = within(registro).getByRole('columnheader', { name: rotulo });
       expect(cabecera, `${rotulo} NO debería estar marcada`).not.toHaveTextContent(MARCA_INERTE);
@@ -111,9 +117,9 @@ describe('las columnas sin efecto quedan marcadas, no escondidas', () => {
     conHarnessReal();
     const user = userEvent.setup();
     renderWithApi(<ConfigPage />);
-    await irA(user, AGENTES);
+    await irA(user, ARNESES);
 
-    const harneses = panelDe(/harness definitions/i);
+    const harneses = panelDe(/definiciones de arnés/i);
     const cabecera = within(harneses).getByRole('columnheader', { name: /comando/i });
     expect(cabecera).toHaveTextContent(MARCA_INERTE);
     // The reason travels in the accessibility tree, not only in a tooltip that needs the mouse to bring it up.
@@ -161,11 +167,11 @@ describe('las columnas sin efecto quedan marcadas, no escondidas', () => {
 });
 
 describe('la tabla de cómo funciona cada arnés de verdad', () => {
-  it('sale en «Agentes», con los cuatro arneses y dónde lee cada uno', async () => {
+  it('sale en «Arneses», con los cuatro arneses y dónde lee cada uno', async () => {
     conHarnessReal();
     const user = userEvent.setup();
     renderWithApi(<ConfigPage />);
-    await irA(user, AGENTES);
+    await irA(user, ARNESES);
 
     const panel = panelDe(/qué lee cada arnés/i);
     expect(within(panel).getByText(/CLAUDE\.md/)).toBeInTheDocument();
@@ -175,18 +181,18 @@ describe('la tabla de cómo funciona cada arnés de verdad', () => {
       .toBeInTheDocument();
   });
 
-  it('dice que role_brief es diagnóstico y manda a la única pestaña «Contexto»', async () => {
+  it('dice que role_brief es diagnóstico y manda a «Perfil y contexto»', async () => {
     conHarnessReal();
     const user = userEvent.setup();
     renderWithApi(<ConfigPage />);
-    await irA(user, AGENTES);
+    await irA(user, ARNESES);
 
     const notas = within(panelDe(/qué lee cada arnés/i)).getAllByRole('note');
     const cierre = notas.find((nota) => nota.textContent.includes('role_brief'));
     expect(cierre).toBeDefined();
     expect(cierre).toHaveTextContent(/role_brief/);
     expect(cierre).toHaveTextContent(/proyección diagnóstica de sólo lectura/);
-    expect(cierre).toHaveTextContent(/«Contexto»/);
+    expect(cierre).toHaveTextContent(/«Perfil y contexto»/);
   });
 
   /** NEGATIVE CONTROL: the panel belongs to that tab, not a banner glued to the whole page. */
@@ -211,14 +217,13 @@ describe('la tabla de cómo funciona cada arnés de verdad', () => {
 describe('el aviso de columnas sin efecto', () => {
   const AVISO = /no configuran por sí solas el runtime/i;
 
-  it('sale sólo sobre la tabla con columnas sin lector y no sobre el registro administrado por flota', async () => {
+  it('no anuncia columnas sin lector sobre el registro administrado por flota', async () => {
     conHarnessReal();
     const user = userEvent.setup();
     renderWithApi(<ConfigPage />);
     await irA(user, AGENTES);
 
-    expect(within(panelDe(/agent registry/i)).queryByText(AVISO)).not.toBeInTheDocument();
-    expect(within(panelDe(/harness definitions/i)).getByText(AVISO)).toBeInTheDocument();
+    expect(within(panelDe(/registro de agentes/i)).queryByText(AVISO)).not.toBeInTheDocument();
   });
 
   /**
@@ -238,9 +243,9 @@ describe('el aviso de columnas sin efecto', () => {
     })));
     const user = userEvent.setup();
     renderWithApi(<ConfigPage />);
-    await irA(user, AGENTES);
+    await irA(user, ARNESES);
 
-    const harneses = panelDe(/harness definitions/i);
+    const harneses = panelDe(/definiciones de arnés/i);
     // The table is populated —if it were empty this would pass without checking anything—…
     expect(within(harneses).getAllByRole('columnheader').length).toBeGreaterThanOrEqual(3);
     // …and yet there is neither a flag nor a notice.

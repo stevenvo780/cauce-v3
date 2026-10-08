@@ -5,14 +5,30 @@ import {
   mockStatus, originRelays, providerAccounts, registryAgents, routingCeiling,
   topology,
 } from './data';
+import { agentPreferencesHandlers } from './agent-preferences-demo';
 
 const preparedIntentByMeaning = new Map<string, string>();
+
+/** Deterministic 64-hex digest: the console only checks the shape, and the mock needs no real hashing. */
+function mockSha(text: string): string {
+  let state = 0x811c9dc5;
+  let digest = '';
+  for (let round = 0; round < 8; round += 1) {
+    for (let index = 0; index < text.length; index += 1) {
+      state = Math.imul(state ^ text.charCodeAt(index), 0x01000193) >>> 0;
+    }
+    state = Math.imul(state ^ (round + 1), 0x01000193) >>> 0;
+    digest += state.toString(16).padStart(8, '0');
+  }
+  return digest;
+}
 
 function mockMeaning(input: unknown): string {
   return JSON.stringify(input);
 }
 
 export const handlers = [
+  ...agentPreferencesHandlers(),
   http.get('*/v3/auth/session', () => HttpResponse.json({
     authenticated: true,
     subject: 'Steven:kant',
@@ -179,10 +195,32 @@ export const handlers = [
       : [
         { nombre: 'CLAUDE.md', politica: 'bloque-gestionado', texto: bloque('Identidad y propósito', perfil.purpose) },
       ];
+    const revision = 4;
+    const generation = `gen-${alias}-${String(revision)}`;
+    const documentos = ficheros.map((fichero) => ({
+      name: fichero.nombre, path: `/home/dev/${fichero.nombre}`, sha: mockSha(fichero.texto),
+      bytes: new TextEncoder().encode(fichero.texto).byteLength,
+    }));
     return HttpResponse.json({
+      publicado: true,
       tenant_id: tenantId,
       alias,
+      agent_enabled: true,
       exists: true,
+      revision,
+      applied_revision: revision,
+      runtime_state: 'applied',
+      runtime_verification: {
+        state: 'current', generation, container_id: `ws-${alias}`, observed_at: new Date().toISOString(),
+        documents: documentos.map((documento) => ({
+          name: documento.name, path: documento.path, expected_sha: documento.sha, observed_sha: documento.sha,
+          expected_bytes: documento.bytes, observed_bytes: documento.bytes, current: true,
+        })),
+      },
+      runtime_adoption: {
+        evidence: 'adapter_delivery', revision, generation, adopted_at: new Date(Date.now() - 600_000).toISOString(),
+        documents: documentos.map(({ name, path, sha }) => ({ name, path, sha })),
+      },
       harness: esOpenclaw ? 'openclaw' : 'claude',
       perfil,
       hechos: {
@@ -193,7 +231,7 @@ export const handlers = [
       },
       limites: { purpose: 2000, role_summary: 4000, item: 1000, items: 64, total: 24000 },
       medida: { unidades: 640, tope: 24000 },
-      base: 'fichero-vacio',
+      base: 'runtime-medido',
       ficheros: ficheros.map((f) => ({ ...f, unidades: f.texto.length })),
     });
   }),
@@ -330,11 +368,7 @@ export const handlers = [
     observed_at: new Date().toISOString(),
     items: [],
   })),
-  /*
-   * The operator's terminal sessions. The console reads them so it can CLOSE the ones left
-   * hanging: without this handler, every test of the view spat out "intercepted a request
-   * without a matching request handler" and the trap this listing unblocked went uncovered.
-   */
+  /* The operator's terminal sessions: the console reads them to close stale ones. */
   http.get('*/v3/console/terminal/sessions', () => HttpResponse.json({ items: [] })),
   http.delete('*/v3/console/terminal/sessions/:sid', () => new HttpResponse(null, { status: 204 })),
 ];

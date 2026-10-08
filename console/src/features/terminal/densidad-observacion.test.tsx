@@ -4,21 +4,19 @@ import { renderWithApi } from '../../test/render';
 import { HelpPage } from '../help/HelpPage';
 import { TerminalPage } from './TerminalPage';
 
-it('la referencia del control está en Docs y la selección usa identidad tenant más alias', async () => {
-  const { container } = renderWithApi(<TerminalPage />);
-  const select = await screen.findByRole('combobox', { name: 'Agente' });
-  expect(select).toBeEnabled();
-  expect(await screen.findByRole('option', { name: /^kant · Steven/ })).toHaveValue('Steven:kant');
+it('el agente abierto se identifica por tenant más alias y no repite cabeceras ni KPIs', async () => {
+  const { container } = renderWithApi(<TerminalPage params={['Steven', 'kant']} />);
+  const cabecera = await screen.findByRole('heading', { level: 2, name: /kant/ });
+  expect(cabecera).toHaveTextContent('Steven');
   expect(container.querySelector('.terminal-overview')).toBeNull();
   expect(container.querySelector('.terminal-fleet')).toBeNull();
-  expect(screen.getByRole('link', { name: 'Docs' })).toHaveAttribute('href', '/ayuda#terminal');
 });
 
 it('Docs explica la cola y la devolución del teclado sin exigir una justificación escrita', () => {
   renderWithApi(<HelpPage />);
   expect(screen.getByRole('heading', { name: 'Ayuda y documentación' })).toBeInTheDocument();
-  expect(document.getElementById('terminal')).toHaveTextContent('no hace falta escribir una justificación');
+  expect(document.getElementById('terminal')).toHaveTextContent('sin justificación');
   expect(document.getElementById('terminal')).toHaveTextContent('cambiar de agente');
   expect(document.getElementById('terminal')).toHaveTextContent('mensajes nuevos del bus quedan en cola');
-  expect(document.getElementById('terminal')).toHaveTextContent('un turno que ya estaba en marcha puede terminar');
+  expect(document.getElementById('terminal')).toHaveTextContent('un turno ya en marcha puede terminar');
 });

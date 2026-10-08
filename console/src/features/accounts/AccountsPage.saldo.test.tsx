@@ -75,10 +75,8 @@ function mock(quotas: Partial<QuotaSnapshot>, config: Record<string, unknown> = 
 
 /** The metrics strip of the tab that is open: both are mounted at once, the hidden one included. */
 function metrics(): HTMLElement {
-  const visible = Array.from(document.querySelectorAll('.view-tab-panel')).find((panel) => !panel.hasAttribute('hidden'));
-  const grid = (visible ?? document).querySelector('.metrics-grid');
-  if (!grid) throw new Error('metrics-grid not found');
-  return grid as HTMLElement;
+  const visible = Array.from(document.querySelectorAll('[role="tabpanel"]')).find((panel) => !panel.hasAttribute('hidden'));
+  return within((visible ?? document.body) as HTMLElement).getByRole('group', { name: 'Indicadores' });
 }
 
 function metric(label: string): HTMLElement {
@@ -94,7 +92,7 @@ async function openTab(user: ReturnType<typeof userEvent.setup>, label: string) 
 /** The balance badge of an account's row in the Inventory. */
 function balanceBadge(accountId: string): HTMLElement {
   const row = screen.getByRole('row', { name: new RegExp(`^${accountId} `) });
-  const balance = Array.from(row.querySelectorAll<HTMLElement>('.badge')).find((node) => node.textContent.includes('libre'));
+  const balance = Array.from(row.querySelectorAll<HTMLElement>('[data-tone]')).find((node) => node.textContent.includes('libre'));
   if (!balance) throw new Error(`${accountId} sin badge de saldo: ${row.textContent}`);
   return balance;
 }
@@ -125,7 +123,7 @@ it('«Peor remanente» mide la peor VENTANA, no el porcentaje efectivo que la pr
   // NEGATIVE CONTROL: the effective percentage must not be what is read here. Without this line, a card that
   // kept using `effective_remaining_percent` would still pass the assertion above the day both numbers agree.
   expect(peor.textContent).not.toContain('100%');
-  expect(peor.className).toContain('metric-danger');
+  expect(peor).toHaveAttribute('data-tone', 'danger');
 });
 
 it('en el borde exacto del umbral el Inventario dice lo mismo que Consumo', async () => {
@@ -139,16 +137,15 @@ it('en el borde exacto del umbral el Inventario dice lo mismo que Consumo', asyn
   renderWithApi(<AccountsPage />);
 
   await screen.findByRole('heading', { level: 1, name: /cuentas y cuotas/i });
-  const providers = screen.getByRole('heading', { level: 2, name: 'Proveedores' }).closest('section');
-  if (!providers) throw new Error('section not found');
+  const providers = screen.getByRole('region', { name: 'Proveedores' });
   expect(within(within(providers).getByRole('row', { name: /Grupo borde/ })).getByText('OK')).toBeInTheDocument();
   expect(within(within(providers).getByRole('row', { name: /Grupo critico/ })).getByText('ATENCIÓN')).toBeInTheDocument();
 
   await openTab(user, 'Inventario');
-  expect(balanceBadge('borde').className).toContain('badge-done');
-  expect(balanceBadge('borde').className).not.toContain('badge-warning');
-  expect(balanceBadge('critico').className).toContain('badge-warning');
-  expect(balanceBadge('critico').className).not.toContain('badge-danger');
+  expect(balanceBadge('borde')).toHaveAttribute('data-tone', 'done');
+  expect(balanceBadge('borde')).not.toHaveAttribute('data-tone', 'warning');
+  expect(balanceBadge('critico')).toHaveAttribute('data-tone', 'warning');
+  expect(balanceBadge('critico')).not.toHaveAttribute('data-tone', 'danger');
 });
 
 it('sin severidad del servidor el Inventario compara con `<`, como la migración', async () => {
@@ -163,8 +160,8 @@ it('sin severidad del servidor el Inventario compara con `<`, como la migración
 
   await screen.findByRole('heading', { level: 1, name: /cuentas y cuotas/i });
   await openTab(user, 'Inventario');
-  expect(balanceBadge('borde').className).toContain('badge-done');
-  expect(balanceBadge('critico').className).toContain('badge-warning');
+  expect(balanceBadge('borde')).toHaveAttribute('data-tone', 'done');
+  expect(balanceBadge('critico')).toHaveAttribute('data-tone', 'warning');
 });
 
 it('respeta la severidad que informa el servidor aunque el porcentaje sugiera otra cosa', async () => {
@@ -188,7 +185,7 @@ it('respeta la severidad que informa el servidor aunque el porcentaje sugiera ot
 
   await screen.findByRole('heading', { level: 1, name: /cuentas y cuotas/i });
   await openTab(user, 'Inventario');
-  expect(balanceBadge('bloqueada').className).toContain('badge-danger');
+  expect(balanceBadge('bloqueada')).toHaveAttribute('data-tone', 'danger');
   expect(balanceBadge('bloqueada').textContent).toContain('100% libre');
 });
 
@@ -201,8 +198,7 @@ it('no imprime el 33.333333333333336 crudo del recolector: un decimal como mucho
   renderWithApi(<AccountsPage />);
 
   await screen.findByRole('heading', { level: 1, name: /cuentas y cuotas/i });
-  const providers = screen.getByRole('heading', { level: 2, name: 'Proveedores' }).closest('section');
-  if (!providers) throw new Error('section not found');
+  const providers = screen.getByRole('region', { name: 'Proveedores' });
   expect(within(providers).getByText('33.3% libre')).toBeInTheDocument();
   expect(within(metrics()).getByText('33.3%')).toBeInTheDocument();
 
@@ -229,31 +225,24 @@ const HOMONIMOS = {
   ],
 };
 
-it('el detalle de fallback nombra al agente del cliente que TIENE el binding, no a su homónimo', async () => {
+it('la matriz marca el binding en la fila del cliente que lo TIENE, no en la de su homónimo', async () => {
   mock({ providers: [provider('claude-max', 60, 'ok')] }, HOMONIMOS);
   const user = userEvent.setup();
   renderWithApi(<AccountsPage />);
 
   await screen.findByRole('heading', { level: 1, name: /cuentas y cuotas/i });
-  await openTab(user, 'Inventario');
-  await user.click(screen.getByRole('button', { name: /Detalle de ruteo de claude-max/ }));
-
-  const detail = document.querySelector('.account-detail-row');
-  if (!(detail instanceof HTMLElement)) throw new Error('detalle no abierto');
-  expect(detail).toHaveTextContent('Steven/claude');
-  expect(detail).toHaveTextContent('Claude de Steven');
-  expect(detail).toHaveTextContent('claw-steven-claude');
+  await openTab(user, 'Asignaciones');
+  expect(screen.getByRole('button', { name: /Steven\/claude × claude-max: #1 · prio 0/ })).toHaveAttribute('title', 'Techo otorgado por Steven');
+  expect(document.body.textContent).not.toMatch(/PRIMARIA/i);
   // The homonym of the other client has nothing to do with this account.
-  expect(detail.textContent).not.toContain('claw-miguel-claude');
-  expect(detail.textContent).not.toContain('Claude de Miguel');
+  expect(screen.getByRole('button', { name: /Miguel\/claude × claude-max: sin techo/ })).toBeInTheDocument();
 });
 
 it('el binding de un cliente no tapa al homónimo del otro en «Agentes sin bindings»', async () => {
   mock({ providers: [provider('claude-max', 60, 'ok')] }, HOMONIMOS);
   renderWithApi(<AccountsPage />);
 
-  const findings = (await screen.findByRole('heading', { level: 2, name: 'Hallazgos' })).closest('section');
-  if (!findings) throw new Error('section not found');
+  const findings = await screen.findByRole('region', { name: 'Hallazgos' });
   const orphans = within(findings).getByRole('heading', { name: /agentes sin bindings/i }).closest('div');
   if (!orphans) throw new Error('finding-section not found');
   // Qualified by client, because the bare alias does not identify anyone: Steven's is the orphan one.

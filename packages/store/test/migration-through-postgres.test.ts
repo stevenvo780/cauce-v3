@@ -13,6 +13,7 @@ const version044 = '044_human_mcp_identity.sql';
 const version045 = '045_mcp_oauth_authorization.sql';
 const version046 = '046_human_client_provenance.sql';
 const laterVersions = ['047_agent_preferences.sql', '048_ui_fleet_lifecycle.sql', '049_ui_execution_preferences.sql'];
+const preferenceTables = ['console_agent_favorites', 'agent_appearances'];
 const provenanceTables = [
   'human_oauth_client_delegations',
   'human_message_client_provenance',
@@ -68,6 +69,9 @@ describe('bounded migration runner', () => {
     await expect(applyMigrationsThrough(pool, version045)).rejects.toThrow(
       /later migration is already applied: 046_human_client_provenance[.]sql/u,
     );
+    await expect(applyMigrationsThrough(pool, version046)).rejects.toThrow(
+      /later migration is already applied: 047_agent_preferences[.]sql/u,
+    );
 
     const after = await pool.query<{ version: string; source_sha256: string; source_origin: string }>(
       `SELECT migration.version,ledger.source_sha256,ledger.source_origin
@@ -101,6 +105,7 @@ describe('bounded migration runner', () => {
       expect(await relationExists(historical.pool, 'human_tenant_memberships')).toBe(false);
       for (const table of oauthTables) expect(await relationExists(historical.pool, table)).toBe(false);
       for (const table of provenanceTables) expect(await relationExists(historical.pool, table)).toBe(false);
+      for (const table of preferenceTables) expect(await relationExists(historical.pool, table)).toBe(false);
       await expectExactLedger(historical.pool, prefix);
 
       const humanId = randomUUID();
@@ -126,6 +131,7 @@ describe('bounded migration runner', () => {
       ]);
       for (const table of oauthTables) expect(await relationExists(historical.pool, table)).toBe(true);
       for (const table of provenanceTables) expect(await relationExists(historical.pool, table)).toBe(true);
+      for (const table of preferenceTables) expect(await relationExists(historical.pool, table)).toBe(true);
       const membership = await historical.pool.query<{
         human_id: string; tenant_id: string; actor_alias: string; role: string; permissions: string[];
       }>(

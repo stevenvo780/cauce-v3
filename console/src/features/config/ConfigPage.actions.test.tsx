@@ -1,7 +1,7 @@
 import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
-import { ConfigAdministration as ConfigPage } from './ConfigPage';
+import { ConfigPage } from './ConfigPage';
 import { server } from '../../mocks/server';
 import { renderWithApi } from '../../test/render';
 import {
@@ -9,8 +9,8 @@ import {
   MEMBERSHIP_JANUS, type ChangeRequest,
 } from './ConfigPage.test-helpers';
 
-const HISTORIAL = /historial y json/i;
-const ESPACIOS = /espacios y miembros/i;
+const HISTORIAL = /^avanzado$/i;
+const ESPACIOS = /espacios y salas/i;
 const JANUS_APAGADA = /Quitar Habilitado en la membresía Miguel\/grp\.miguel\/janus: aplicado/i;
 
 function panelDe(nombre: RegExp): HTMLElement {
@@ -19,11 +19,13 @@ function panelDe(nombre: RegExp): HTMLElement {
   return seccion;
 }
 
+beforeEach(() => { window.history.replaceState({}, '', '/config?seccion=espacios'); });
+
 it('previews and applies a default-deny ACL mutation through the protected API', async () => {
   const user = userEvent.setup();
   renderWithApi(<ConfigPage />);
   expect(await screen.findByRole('heading', { level: 1, name: /ajustes/i })).toBeInTheDocument();
-  expect(await screen.findByText(/RBAC/i)).toBeInTheDocument();
+  expect(await screen.findByText(/^RBAC config.write/i)).toBeInTheDocument();
 
   await irA(user, HISTORIAL);
   await user.click(screen.getByRole('button', { name: /preview \/ dry-run/i }));
@@ -153,7 +155,7 @@ it('rechaza agents.role_brief localmente y no emite ni preview ni apply', async 
 
   await user.click(screen.getByRole('button', { name: /preview \/ dry-run/i }));
   expect(await screen.findByRole('alert')).toHaveTextContent(/proyección diagnóstica de sólo lectura/i);
-  expect(screen.getByRole('alert')).toHaveTextContent(/«Contexto»/);
+  expect(screen.getByRole('alert')).toHaveTextContent(/«Perfil y contexto»/);
   await user.click(screen.getByRole('button', { name: /aplicar atómico/i }));
   expect(changes).toEqual([]);
 });
@@ -227,7 +229,7 @@ it('bloquea fail-closed el rollback de cuentas y sólo ejecuta una revisión no-
   renderWithApi(<ConfigPage />);
   await irA(user, HISTORIAL);
 
-  const audit = within(panelDe(/audit trail/i));
+  const audit = within(panelDe(/historial de revisiones/i));
   for (const summary of ['retiro de cuenta', 'retiro de techo', 'retiro de binding', 'operación ausente']) {
     const row = audit.getByText(summary).closest('tr');
     expect(row).not.toBeNull();
@@ -312,7 +314,7 @@ it('FAMILIA 1: el desenlace de un rollback aplicado se lee SIN abrir ningún des
 
   const aviso = await screen.findByText(/rollback atómico de la revisión 1 aplicado/i);
   expect(aviso.closest('details')).toBeNull();
-  expect(panelDe(/audit trail/i)).toContainElement(aviso);
+  expect(panelDe(/historial de revisiones/i)).toContainElement(aviso);
 });
 
 it('FAMILIA 1: no acredita un receipt válido que corresponde a otra revisión', async () => {
@@ -350,7 +352,7 @@ it('FAMILIA 1: un rollback que FALLA no se ve igual que uno que funciona', async
 
   const aviso = await screen.findByText(/rollback store caído/i);
   expect(aviso.closest('details')).toBeNull();
-  expect(aviso).toHaveClass('notice', 'error');
+  expect(aviso).toHaveClass('bg-danger-soft');
   expect(screen.queryByText(/rollback atómico de la revisión 1 aplicado/i)).not.toBeInTheDocument();
 });
 
@@ -367,7 +369,7 @@ it('FAMILIA 1: el preview de un rollback también se pinta junto al botón que l
   expect(aviso).toHaveTextContent(/no se escribió nada todavía/i);
   const crudo = screen.getByLabelText('Preview del rollback');
   expect(crudo.closest('details')).toBeNull();
-  expect(panelDe(/audit trail/i)).toContainElement(crudo);
+  expect(panelDe(/historial de revisiones/i)).toContainElement(crudo);
 });
 
 it('FAMILIA 2: el aviso de una acción de tabla NO sobrevive a otra escritura que movió las tablas', async () => {
@@ -432,7 +434,7 @@ it('FAMILIA 2: tras un alta exitosa el formulario queda VACÍO y «Crear» no se
   expect(screen.getByLabelText('Room')).toHaveValue('');
   expect(screen.getByLabelText('Alias')).toHaveValue('');
   expect(screen.getByRole('button', { name: /^Crear$/ })).toBeDisabled();
-  expect(within(panelDe(/alta rápida/i)).queryByRole('alert')).not.toBeInTheDocument();
+  expect(within(panelDe(/alta de espacios/i)).queryByRole('alert')).not.toBeInTheDocument();
   expect(changes).toHaveLength(1);
 });
 
@@ -441,10 +443,10 @@ it('FAMILIA 2: cambiar de recurso en el alta no grita un error sobre un formular
   renderWithApi(<ConfigPage />);
 
   await user.type(await screen.findByLabelText('Tenant'), 'Miguel');
-  expect(within(panelDe(/alta rápida/i)).getByRole('alert')).toBeInTheDocument();
+  expect(within(panelDe(/alta de espacios/i)).getByRole('alert')).toBeInTheDocument();
 
   await user.selectOptions(screen.getByLabelText('Recurso a crear'), 'acl_edge');
-  expect(within(panelDe(/alta rápida/i)).queryByRole('alert')).not.toBeInTheDocument();
+  expect(within(panelDe(/alta de espacios/i)).queryByRole('alert')).not.toBeInTheDocument();
   expect(screen.getByText(/completá el formulario para habilitar el alta/i)).toBeInTheDocument();
 });
 
@@ -455,7 +457,7 @@ it('FAMILIA 3: la interfaz dice que deshacer revierte la FILA entera, no el camp
   await screen.findByRole('heading', { level: 1, name: /ajustes/i });
   await irA(user, HISTORIAL);
 
-  const nota = within(panelDe(/audit trail/i))
+  const nota = within(panelDe(/historial de revisiones/i))
     .getByText(/restituye la FILA COMPLETA que había antes de esa revisión/i);
   expect(nota).toHaveTextContent(/no sólo el campo que se tocó/i);
   expect(nota).toHaveTextContent(/ese cambio también se revierte/i);
@@ -476,14 +478,14 @@ it('FAMILIA 4: el 409 no manda a «volver a previsualizar» a los caminos que no
   renderWithApi(<ConfigPage />);
 
   await user.click(await screen.findByRole('switch', { name: MEMBERSHIP_JANUS }));
-  const deLaTabla = await within(panelDe(/memberships/i)).findByRole('alert');
+  const deLaTabla = await within(panelDe(/membresías/i)).findByRole('alert');
   expect(deLaTabla).toHaveTextContent(/pediste el cambio sobre la revisión 1/i);
   expect(deLaTabla).toHaveTextContent(/volvé a pedir el cambio sobre la revisión nueva/i);
   expect(deLaTabla).not.toHaveTextContent(/volvé a previsualizar/i);
 
   await irA(user, HISTORIAL);
   await user.click(screen.getByRole('button', { name: /^Rollback$/ }));
-  const delAudit = await within(panelDe(/audit trail/i)).findByRole('alert');
+  const delAudit = await within(panelDe(/historial de revisiones/i)).findByRole('alert');
   expect(delAudit).toHaveTextContent(/pediste el rollback sobre la revisión 1/i);
   expect(delAudit).toHaveTextContent(/volvé a elegir en el audit trail la revisión a deshacer/i);
   expect(delAudit).not.toHaveTextContent(/volvé a previsualizar/i);
@@ -523,17 +525,17 @@ it('FAMILIA 1: el desenlace de una acción de tabla no pisa el del editor crudo'
 
   await irA(user, HISTORIAL);
   await user.click(screen.getByRole('button', { name: /aplicar atómico/i }));
-  const delEditor = await within(panelDe(/mutation editor/i)).findByRole('status');
+  const delEditor = await within(panelDe(/editor de mutaciones/i)).findByRole('status');
   const dichoPorElEditor = delEditor.textContent;
 
   await irA(user, ESPACIOS);
   await user.selectOptions(screen.getByLabelText('Rol de permisos de Miguel/grp.miguel/janus'), 'operator');
   await user.click(screen.getByRole('button', { name: 'Confirmar' }));
-  const deLaTabla = await within(panelDe(/memberships/i)).findByRole('status');
+  const deLaTabla = await within(panelDe(/membresías/i)).findByRole('status');
   expect(deLaTabla.closest('details')).toBeNull();
   expect(deLaTabla.textContent).not.toBe(dichoPorElEditor);
   expect(changes).toHaveLength(2);
 
   await irA(user, HISTORIAL);
-  expect(within(panelDe(/mutation editor/i)).getByRole('status').textContent).toBe(dichoPorElEditor);
+  expect(within(panelDe(/editor de mutaciones/i)).getByRole('status').textContent).toBe(dichoPorElEditor);
 });

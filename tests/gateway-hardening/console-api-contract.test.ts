@@ -1,15 +1,18 @@
-import { readdir, readFile } from 'node:fs/promises';
+import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { buildGateway } from '../../services/gateway/src/index.js';
+import { registerTerminalControlPlane } from '../../services/gateway/src/terminal/plugin.js';
 import { PasswordAuthProvider } from '../../services/gateway/src/password-auth.js';
 import { configuredHumanMcp } from '../../services/gateway/src/mcp-configuration.js';
 import { OAuthClients } from '../../services/gateway/src/oauth-client-metadata.js';
+import { concreteSegments } from './console-route-helper.js';
 import type { OAuthAuthorizationServerOptions } from '../../services/gateway/src/oauth-authorization-server.js';
 import { extractClientCalls, type ApiCall } from './console-api-contract-extractor.js';
-import { registerTerminalControlPlane } from '../../services/gateway/src/terminal/plugin.js';
 import type { ProviderAuthService } from '../../services/gateway/src/console/provider-auth.types.js';
-import { FixedAuthProvider, fakePool, fakeRepository, noDeliveryWakes, testPrincipal } from './helpers.js';
+import { FixedAuthProvider, fakePool, fakeRepository, grants, noDeliveryWakes, roles, testPrincipal } from './helpers.js';
 
 /**
  * Contract guard for the console -> gateway API surface.
@@ -45,8 +48,6 @@ function isHttpMethod(value: string): value is HttpMethod {
   return (HTTP_METHODS as readonly string[]).includes(value);
 }
 
-function concreteSegments(path: string): string { return path.replace(/:[A-Za-z][A-Za-z0-9_]*/gu, '1'); }
-
 /** Extracts every gateway route the MSW development mock pretends to serve. */
 function extractMockCalls(source: string): ApiCall[] {
   const calls: ApiCall[] = [];
@@ -62,28 +63,37 @@ function extractMockCalls(source: string): ApiCall[] {
 }
 
 const apps: Awaited<ReturnType<typeof buildGateway>>[] = [];
+const fixtureDirectories: string[] = [];
 
 afterEach(async () => {
   await Promise.all(apps.splice(0).map(async (app) => app.close()));
+  await Promise.all(fixtureDirectories.splice(0).map(directory => rm(directory, { recursive: true, force: true })));
 });
 
-async function operatorGateway() {
-  const provider = clientDeclarationConfiguration().provider;
+async function operatorGateway(denyBeforeRouting = false, authority: 'password' | 'fixed' = 'password') {
+  const provider = authority === 'password' ? clientDeclarationConfiguration().provider
+    : new FixedAuthProvider(testPrincipal({ roles: roles('operator'), permissions: grants('route', 'read', 'control') }));
   const unexpected = async (): Promise<never> => { throw new Error('Routing fixture must not invoke application handlers'); };
   const pool = fakePool();
-  const app = await buildGateway({ pool, repository: fakeRepository(), authProvider: provider,
+  const repository = fakeRepository();
+  const app = await buildGateway({ pool, repository, authProvider: provider,
     consoleOrigins: ['http://localhost'],
     fleetOperationsRepository: { list: unexpected, preview: unexpected, enqueue: unexpected, get: unexpected, cancel: unexpected, resume: unexpected },
-    providerAuthService: { start: unexpected, get: unexpected, verify: unexpected, cancel: unexpected, issueSocketTicket: unexpected,
-      consumeSocketTicket: unexpected, attach: unexpected, revokeOperation: unexpected, shutdown: async () => undefined, resolve: unexpected } satisfies ProviderAuthService,
+    ...(provider instanceof PasswordAuthProvider ? { providerAuthService: { start: unexpected, get: unexpected, verify: unexpected, cancel: unexpected, issueSocketTicket: unexpected,
+      consumeSocketTicket: unexpected, attach: unexpected, revokeOperation: unexpected, shutdown: async () => undefined, resolve: unexpected } satisfies ProviderAuthService } : {}),
     deliveryWakeSubscriber: noDeliveryWakes, outboxPollMs: 60_000 });
   apps.push(app);
-  await app.register(registerTerminalControlPlane, { pool, authProvider: provider, config: {
+  if (denyBeforeRouting) app.addHook('onRequest', async (_request, reply) => reply.code(403).send({ error: 'forbidden' }));
+  const directory = await mkdtemp(join(tmpdir(), 'cauce-route-contract-'));
+  fixtureDirectories.push(directory);
+  const grantsFile = join(directory, 'grants.json');
+  await writeFile(grantsFile, JSON.stringify({ version: 1, grants: [] }));
+  await registerTerminalControlPlane(app, { pool, repository, authProvider: provider, config: {
     wsPath: '/v3/console/terminal/ws', ticketKey: Buffer.alloc(32), relayToken: 'routing-fixture-token',
-    relayInstanceIds: new Set(['a'.repeat(64)]), grantsFile: '/nonexistent-routing-fixture-grants.json',
+    relayInstanceIds: new Set(['a'.repeat(64)]), grantsFile,
     ticketTtlSeconds: 30, sessionTtlSeconds: 900, claimLeaseSeconds: 150, maxSessionsPerOperator: 2,
     operatorHeader: 'x-cauce-operator', operators: new Set<string>(),
-  } });
+  }, governanceRelay: { readFile: async () => { throw new Error('Route fixture must not contact a relay'); } } });
   return app;
 }
 
@@ -123,14 +133,17 @@ async function clientDeclarationGateway(mode: 'off' | 'external' | 'local') {
   return { app, pool };
 }
 
-async function unroutedPaths(calls: readonly ApiCall[]): Promise<string[]> {
-  const app = await operatorGateway();
-  await app.ready();
+async function unroutedPaths(calls: readonly ApiCall[], denyBeforeRouting = false): Promise<string[]> {
+  const app = await operatorGateway(denyBeforeRouting);
+  const password = await clientDeclarationGateway('off');
+  await Promise.all([app.ready(), password.app.ready()]);
   const missing: string[] = [];
-  const lookup = (options: Parameters<typeof app.findRoute>[0]): ReturnType<typeof app.findRoute> | null => app.findRoute(options);
   for (const call of calls) {
     if (LOCAL_OAUTH_ONLY.has(`${call.method} ${call.path}`)) continue;
-    if (lookup({ method: call.method, url: call.path }) === null) missing.push(`${call.method} ${call.path}`);
+    const routeApp = call.path.startsWith('/v3/auth/') ? password.app : app;
+    const pathname = new URL(call.path, 'https://routing.example.test').pathname;
+    const registered = routeApp.findRoute({ method: call.method, url: pathname });
+    if (registered === null || registered === undefined) missing.push(`${call.method} ${call.path}`);
   }
   return missing;
 }
@@ -163,6 +176,15 @@ describe('console API surface matches the gateway routing table', () => {
       { method: 'POST', path: '/v3/console/people/1/restore' }, { method: 'DELETE', path: '/v3/console/people/1/purge' },
       { method: 'GET', path: '/v3/console/tenants/1/agents/1/perfil/revisions' },
       { method: 'GET', path: '/v3/console/tenants/1/agents/1/documents/1/revisions' }]) expect(calls).toContainEqual(call);
+    expect(calls).toContainEqual({ method: 'GET', path: '/v3/console/agent-preferences' });
+    expect(calls).toContainEqual({ method: 'POST', path: '/v3/console/tenants/1/agents/1/context/reconcile/preview' });
+    expect(calls).toContainEqual({ method: 'POST', path: '/v3/console/tenants/1/agents/1/context/reconcile/apply' });
+    expect(calls).toContainEqual({ method: 'GET', path: '/v3/console/tenants/1/agents/1/perfil/revisions?1' });
+    expect(calls).toContainEqual({ method: 'GET', path: '/v3/console/tenants/1/agents/1/documents/1/revisions?1' });
+    expect(calls).toContainEqual({ method: 'PUT', path: '/v3/console/favorites/1/1' });
+    expect(calls).toContainEqual({ method: 'DELETE', path: '/v3/console/favorites/1/1' });
+    expect(calls).toContainEqual({ method: 'PUT', path: '/v3/console/agents/1/1/appearance' });
+    expect(calls).toContainEqual({ method: 'DELETE', path: '/v3/console/agents/1/1/appearance?expected_revision=1' });
     expect(calls.map((call) => call.path)).not.toContain('/v3/console/topology/access');
 
     expect(await unroutedPaths(calls)).toEqual([]);
@@ -195,7 +217,7 @@ describe('console API surface matches the gateway routing table', () => {
   });
 
   it('checks password session and logout routes and proves their absence under fixed authentication', async () => {
-    const password = await operatorGateway(); await password.ready();
+    const { app: password } = await clientDeclarationGateway('off'); await password.ready();
     const fixed = await buildGateway({ pool: fakePool(), repository: fakeRepository(), authProvider: new FixedAuthProvider(testPrincipal()),
       deliveryWakeSubscriber: noDeliveryWakes, outboxPollMs: 60_000 });
     apps.push(fixed); await fixed.ready();
@@ -232,5 +254,45 @@ describe('console API surface matches the gateway routing table', () => {
     await expect(buildGateway({ pool: fakePool(), repository: fakeRepository(),
       authProvider: new FixedAuthProvider(testPrincipal()), humanMcp: local,
       deliveryWakeSubscriber: noDeliveryWakes })).rejects.toThrow('Local OAuth requires the configured password provider');
+  });
+});
+
+
+
+describe('console route absence discrimination', () => {
+  it('checks real registration even when an onRequest hook denies before routing', async () => {
+    const calls = [
+      { method: 'PUT', path: '/v3/console/agents/Steven/argos/appearance?expected_revision=1' },
+      { method: 'PUT', path: '/v3/console/agents/Steven/argos/not-registered?expected_revision=1' },
+    ] as const;
+    const app = await operatorGateway(true);
+    for (const call of calls) {
+      const response = await app.inject({ method: call.method, url: call.path, payload: {} });
+      expect(response.statusCode).toBe(403);
+    }
+    expect(await unroutedPaths(calls, true)).toEqual(['PUT /v3/console/agents/Steven/argos/not-registered?expected_revision=1']);
+  });
+
+  it('keeps explicit handler not_found responses out of the missing-route list', async () => {
+    const call = { method: 'GET', path: '/v3/console/tenants/Steven/agents/absent/documents' } as const;
+    const app = await operatorGateway(false, 'fixed');
+    const response = await app.inject({ method: call.method, url: call.path });
+    expect(response.statusCode).toBe(404);
+    expect(response.json<{ error: string }>().error).toBe('not_found');
+    expect(await unroutedPaths([call])).toEqual([]);
+  });
+
+  it('detects an unregistered mutated helper suffix through the real gateway router', async () => {
+    const source = "function route(prefix: string, suffix: string) { return `${prefix}/${suffix}`; }"
+      + "request(route('/v3/console/agents/1/1', 'not-registered'));";
+    const calls = extractClientCalls(source);
+    expect(calls).toEqual([{ method: 'GET', path: '/v3/console/agents/1/1/not-registered' }]);
+    const app = await operatorGateway();
+    const path = '/v3/console/agents/1/1/not-registered';
+    expect(app.hasRoute({ method: 'GET', url: path })).toBe(false);
+    const response = await app.inject({ method: 'GET', url: path });
+    expect(response.statusCode).toBe(404);
+    expect(response.json()).toEqual({ error: 'Not Found', statusCode: 404, message: `Route GET:${path} not found` });
+    expect(await unroutedPaths(calls)).toEqual(['GET /v3/console/agents/1/1/not-registered']);
   });
 });

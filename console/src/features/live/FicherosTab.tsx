@@ -1,16 +1,19 @@
 import { AlertTriangle, FileText, Lock, Save } from 'lucide-react';
-import { useCallback, useEffect, useId, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { ApiError, type CauceApi } from '../../api/client';
 import { useApi } from '../../api/context';
 import type { AgentDocumentContent, AgentDocumentItem, AgentDocumentKind } from '../../api/types';
 import { useResource } from '../../api/use-resource';
+import { cn } from '../../cn';
+import { Button, Notice } from '../../components/kit';
 import { EmptyState } from '../../components/ui';
 import type { PermissionState } from '../../lib';
 import {
   avisoAntesDeGuardar, avisoDeFuente, esAckAplicado, explicarFallo, hayCambios, mensajeDeGuardado,
-  modoDeDocumento, preserveSourceLineEndings,
+  preserveSourceLineEndings,
 } from './ficheros';
-import { DOCUMENT_REASON_MAX, explicarFalloDeMotivo, problemaDeMotivo } from './ficheros-motivo';
+import { ReasonField } from './context-ui';
+import { explicarFalloDeMotivo, problemaDeMotivo } from './ficheros-motivo';
 import { MENSAJES_DE_APLICACION } from './perfil';
 import { useDocumentWrite } from './document-write-state';
 
@@ -26,19 +29,18 @@ export interface BorradorDeFichero {
 interface FicherosTabProps {
   tenantId: string;
   alias: string;
-  mode: 'inventory' | 'manual-editor';
   /** Outside the component and indexed by kind: tab, file and fold all unmount the editor. */
   borradores?: Partial<Record<AgentDocumentKind, BorradorDeFichero>>;
   onBorrador: (kind: AgentDocumentKind, borrador: BorradorDeFichero | undefined) => void;
   onApplied?: (message: string) => void;
-  onOpenContext?: () => void;
   mutationBlocked?: boolean;
   configWritePermission?: PermissionState;
 }
 
+/** Every governed file of the alias; only `directive` is editable, with an accredited `config.write`. */
 export function FicherosTab({
-  tenantId, alias, mode, borradores, onBorrador, onApplied, onOpenContext,
-  mutationBlocked = false, configWritePermission,
+  tenantId, alias, borradores, onBorrador, onApplied,
+  mutationBlocked = false, configWritePermission = 'unknown',
 }: FicherosTabProps) {
   const api = useApi();
   const mapa = useResource(
@@ -47,14 +49,10 @@ export function FicherosTab({
   const [abierto, setAbierto] = useState<AgentDocumentKind | undefined>(undefined);
 
   const aviso = mapa.data ? avisoDeFuente(mapa.data) : undefined;
-  const items = (mapa.data?.items ?? []).filter(
-    (item) => mode === 'inventory' || item.kind === 'directive',
-  );
-  const estadoPermiso = mode === 'manual-editor' ? (configWritePermission ?? 'unknown') : 'denied';
-  const canWrite = estadoPermiso === 'allowed';
-  const canEdit = mode === 'manual-editor' && canWrite;
+  const items = mapa.data?.items ?? [];
+  const canWrite = configWritePermission === 'allowed';
 
-  if (mapa.loading) return <p className="muted">Leyendo el mapa de ficheros…</p>;
+  if (mapa.loading) return <p className="m-0 text-muted">Leyendo el mapa de ficheros…</p>;
 
   if (mapa.error) {
     const status = mapa.error instanceof ApiError ? mapa.error.status : undefined;
@@ -81,44 +79,31 @@ export function FicherosTab({
   }
 
   return (
-    <div className="ficheros">
-      {mode === 'inventory' ? (
-        <p className="ficheros-nota" role="note">
-          <span>
-            Este tab es inventario y visor de sólo lectura. El manual se modifica únicamente en
-            {' '}<button type="button" className="button small secondary" onClick={onOpenContext}>Contexto</button>.
-          </span>
-        </p>
-      ) : null}
-
+    <div className="grid gap-3">
       {aviso ? (
-        <p className="ficheros-caveat" role="status">
-          <AlertTriangle size={14} aria-hidden="true" /> {aviso}
-        </p>
+        <Notice tone="warn" role="status" className="flex items-start gap-2">
+          <AlertTriangle size={14} aria-hidden="true" className="mt-0.5 shrink-0" /> {aviso}
+        </Notice>
       ) : null}
 
       {items.length === 0 ? (
         <EmptyState>
-          <strong>
-            {mode === 'manual-editor'
-              ? 'No se pudo resolver un manual editable para este alias.'
-              : 'No se pudo resolver ningún fichero para este alias.'}
-          </strong>{' '}
+          <strong>No se pudo resolver ningún fichero para este alias.</strong>{' '}
           Para saber qué ficheros gobiernan a un agente hay que saber qué arnés corre de verdad y
           con qué HOME, y eso sólo se puede medir dentro de su contenedor.
         </EmptyState>
       ) : (
-        <ul className="ficheros-lista">
+        <ul className="m-0 grid list-none gap-2 p-0">
           {items.map((item) => (
             <FilaDeFichero
               key={`${item.kind}-${item.path}`}
               item={item}
               tenantId={tenantId}
               alias={alias}
-              canEdit={canEdit}
+              canEdit={canWrite && item.kind === 'directive' && item.editable}
               mutationBlocked={mutationBlocked}
               abierto={abierto === item.kind}
-              borrador={mode === 'manual-editor' ? borradores?.[item.kind] : undefined}
+              borrador={borradores?.[item.kind]}
               onBorrador={(nuevo) => { onBorrador(item.kind, nuevo); }}
               onAbrir={() => { setAbierto(abierto === item.kind ? undefined : item.kind); }}
               onApplied={onApplied}
@@ -127,23 +112,23 @@ export function FicherosTab({
         </ul>
       )}
 
-      {mode === 'manual-editor' && !canWrite ? (
-        <p className="ficheros-caveat" role="status">
-          <Lock size={14} aria-hidden="true" />
-          {estadoPermiso === 'unknown'
+      {!canWrite ? (
+        <Notice role="status" className="flex items-start gap-2">
+          <Lock size={14} aria-hidden="true" className="mt-0.5 shrink-0" />
+          {configWritePermission === 'unknown'
             ? 'No se pudo acreditar config.write; todo guardado queda bloqueado.'
             : 'Tu sesión puede inspeccionar, pero no escribir configuración.'}
-        </p>
+        </Notice>
       ) : null}
 
-      {mode === 'manual-editor' && mutationBlocked ? (
-        <p className="ficheros-caveat" role="status">
-          <Lock size={14} aria-hidden="true" />
+      {mutationBlocked ? (
+        <Notice tone="warn" role="status" className="flex items-start gap-2">
+          <Lock size={14} aria-hidden="true" className="mt-0.5 shrink-0" />
           Aplicación de campos canónicos en curso. El manual queda bloqueado hasta recibir su ACK.
-        </p>
+        </Notice>
       ) : null}
 
-      {mode === 'inventory' ? <HuecoDeclarado /> : null}
+      <HuecoDeclarado />
     </div>
   );
 }
@@ -166,58 +151,54 @@ function FilaDeFichero(
     onApplied?: (message: string) => void;
   },
 ) {
-  const modo = modoDeDocumento(item);
   const readable = item.readable === true;
+  const editable = canEdit && !mutationBlocked;
   const reason = item.reason ?? (!readable
     ? 'El gateway no acreditó que este contenido sea servible; no se envió ninguna lectura.'
     : undefined);
-  const cabecera = (
+  const modeLabel = !readable
+    ? 'no se sirve'
+    : canEdit && mutationBlocked
+      ? 'bloqueado · aplicación en curso'
+      : canEdit ? 'editable' : 'visor · sólo lectura';
+  const header = (
     <>
-      {canEdit && item.editable && !mutationBlocked
-        ? <FileText size={14} aria-hidden="true" />
-        : <Lock size={14} aria-hidden="true" />}
-      <span className="ficheros-rotulo">{item.label}</span>
-      <code className="ficheros-ruta">{item.path}</code>
-      <span className={`ficheros-modo ficheros-modo-${readable && canEdit && item.editable && !mutationBlocked ? modo : 'solo-lectura'}`}>
-        {!readable
-          ? 'no se sirve'
-          : canEdit && item.editable && mutationBlocked
-            ? 'bloqueado · aplicación en curso'
-          : canEdit && item.editable
-            ? 'editable'
-            : 'visor · sólo lectura'}
-      </span>
+      {editable ? <FileText size={14} aria-hidden="true" className="shrink-0 text-brand-ink" />
+        : <Lock size={14} aria-hidden="true" className="shrink-0 text-muted" />}
+      <span className="font-medium text-fg">{item.label}</span>
+      <code className="min-w-0 text-xs break-all text-muted">{item.path}</code>
+      <span className={cn('ml-auto rounded-full px-2 py-0.5 text-[11px] font-medium',
+        editable ? 'bg-brand-soft text-brand-ink' : 'bg-muted-bg text-muted')}>{modeLabel}</span>
       {borrador === undefined ? null : (
-        <span className="ficheros-borrador">borrador sin guardar</span>
+        <span className="rounded-full bg-warn-soft px-2 py-0.5 text-[11px] font-medium text-warn-ink">borrador sin guardar</span>
       )}
     </>
   );
+  const headerClass = 'flex w-full flex-wrap items-center gap-x-2 gap-y-1 px-3 py-2.5 text-left text-[13px]';
   return (
-    <li className="ficheros-fila">
+    <li className="overflow-hidden rounded-lg border border-line bg-surface">
       {readable ? (
-        <button
-          type="button"
-          className="ficheros-cabecera"
-          onClick={onAbrir}
-          aria-expanded={abierto}
-        >
-          {cabecera}
+        <button type="button" className={cn(headerClass, 'cursor-pointer border-0 bg-transparent hover:bg-subtle')}
+          onClick={onAbrir} aria-expanded={abierto}>
+          {header}
         </button>
-      ) : <div className="ficheros-cabecera">{cabecera}</div>}
+      ) : <div className={headerClass}>{header}</div>}
 
-      {reason ? <p className="ficheros-razon">{reason}</p> : null}
+      {reason ? <p className="m-0 px-3 pb-2.5 text-xs text-muted">{reason}</p> : null}
 
-      {abierto && readable
-        ? canEdit && item.editable
-          ? (
-            <Editor
-              item={item} tenantId={tenantId} alias={alias}
-              canWrite={!mutationBlocked} mutationBlocked={mutationBlocked}
-              borrador={borrador} onBorrador={onBorrador} onApplied={onApplied}
-            />
-            )
-          : <Visor item={item} tenantId={tenantId} alias={alias} />
-        : null}
+      {abierto && readable ? (
+        <div className="border-t border-line p-3">
+          {canEdit
+            ? (
+              <Editor
+                item={item} tenantId={tenantId} alias={alias}
+                canWrite={!mutationBlocked} mutationBlocked={mutationBlocked}
+                borrador={borrador} onBorrador={onBorrador} onApplied={onApplied}
+              />
+              )
+            : <Visor item={item} tenantId={tenantId} alias={alias} />}
+        </div>
+      ) : null}
     </li>
   );
 }
@@ -254,6 +235,17 @@ function useDocumentContent(
   return { content, failure, loading, reload, setContent, setFailure };
 }
 
+const TEXT_AREA = 'min-h-64 font-mono text-xs leading-relaxed';
+
+function FalloDeLectura({ fallo }: { fallo: DocumentLoadFailure }) {
+  return (
+    <Notice tone="warn" role="status">
+      <strong>{fallo.titulo}</strong>
+      <p>{fallo.detalle}</p>
+    </Notice>
+  );
+}
+
 /** An explicit GET with no mutation surface. Never renders Save and never calls PUT. */
 function Visor({ item, tenantId, alias }: {
   item: AgentDocumentItem; tenantId: string; alias: string;
@@ -263,40 +255,31 @@ function Visor({ item, tenantId, alias }: {
     content: servido, failure: fallo, loading: cargando, reload: cargar,
   } = useDocumentContent(api, tenantId, alias, item.kind);
 
-  if (cargando) return <p className="muted">Leyendo el fichero dentro del contenedor…</p>;
-  if (fallo) {
-    return (
-      <div className="ficheros-fallo" role="status">
-        <strong>{fallo.titulo}</strong>
-        <p>{fallo.detalle}</p>
-      </div>
-    );
-  }
+  if (cargando) return <p className="m-0 text-muted">Leyendo el fichero dentro del contenedor…</p>;
+  if (fallo) return <FalloDeLectura fallo={fallo} />;
   if (!servido) return null;
   if (!servido.exists) {
     return (
-      <div className="ficheros-editor">
-        <p className="ficheros-nota">
+      <div className="grid justify-items-start gap-2">
+        <p className="m-0 text-xs text-muted">
           La sonda comprobó que este fichero todavía no existe. No se muestra como texto vacío y
           este visor no lo puede crear.
         </p>
-        <button type="button" className="button small secondary" onClick={() => void cargar()}>
-          Volver a comprobar
-        </button>
+        <Button size="sm" onClick={() => void cargar()}>Volver a comprobar</Button>
       </div>
     );
   }
 
   return (
-    <div className="ficheros-editor">
+    <div className="grid gap-2">
       {servido.truncated ? (
-        <p className="ficheros-aviso" role="alert">
-          <AlertTriangle size={14} aria-hidden="true" /> Esta lectura está recortada. El visor
+        <Notice tone="warn" role="alert" className="flex items-start gap-2">
+          <AlertTriangle size={14} aria-hidden="true" className="mt-0.5 shrink-0" /> Esta lectura está recortada. El visor
           muestra sólo el prefijo recibido y no permite modificarlo.
-        </p>
+        </Notice>
       ) : null}
       <textarea
-        className="ficheros-texto"
+        className={TEXT_AREA}
         aria-label={`Contenido de ${item.label}`}
         value={servido.content}
         spellCheck={false}
@@ -304,13 +287,11 @@ function Visor({ item, tenantId, alias }: {
         readOnly
         aria-readonly="true"
       />
-      <div className="ficheros-pie">
-        <span className="muted">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className="text-xs text-muted">
           {servido.bytes} bytes · visor de sólo lectura{servido.truncated ? ' · prefijo recortado' : ''}
         </span>
-        <button type="button" className="button small secondary" onClick={() => void cargar()}>
-          Releer
-        </button>
+        <Button size="sm" onClick={() => void cargar()}>Releer</Button>
       </div>
     </div>
   );
@@ -333,7 +314,6 @@ function Editor({
   const [guardando, setGuardando] = useDocumentWrite(api, JSON.stringify([tenantId, alias, item.kind]));
   const [guardado, setGuardado] = useState<string | undefined>(undefined);
   const [motivo, setMotivo] = useState('');
-  const idMotivo = useId();
   const problemaMotivo = problemaDeMotivo(motivo);
 
   useEffect(() => { setGuardado(undefined); }, [api, tenantId, alias, item.kind]);
@@ -423,7 +403,7 @@ function Editor({
       const explicado = error instanceof ApiError && status === 409
         && error.code === 'managed_context_conflict'
         ? {
-          titulo: 'El bloque canónico se edita en Contexto / campos canónicos',
+          titulo: 'El bloque canónico se edita en Perfil / campos canónicos',
           detalle: `${error.message}. El manual conserva el borrador; revisá los campos canónicos sin perder este texto.`,
         }
         : status === 409
@@ -441,53 +421,45 @@ function Editor({
     motivo, problemaMotivo, onBorrador, onApplied, setFallo, setServido, guardando, setGuardando, changedTarget,
   ]);
 
-  if (cargando) return <p className="muted">Leyendo el fichero dentro del contenedor…</p>;
-
-  if (fallo && !servido) {
-    return (
-      <div className="ficheros-fallo" role="status">
-        <strong>{fallo.titulo}</strong>
-        <p>{fallo.detalle}</p>
-      </div>
-    );
-  }
-
+  if (cargando) return <p className="m-0 text-muted">Leyendo el fichero dentro del contenedor…</p>;
+  if (fallo && !servido) return <FalloDeLectura fallo={fallo} />;
   if (!servido) return null;
 
   const avisoGuardar = avisoAntesDeGuardar(item);
   const sucio = hayCambios(servido.content, texto);
+  const bloqueado = guardando || !canWrite || !servido.editable || servido.truncated;
 
   return (
-    <div className="ficheros-editor">
-      {changedTarget ? <p className="ficheros-aviso" role="alert">El destino del manual cambió desde que empezaste el borrador. No se guardará ese texto en otro archivo. Conservá tu texto antes de descartarlo y releer.</p> : null}
+    <div className="grid gap-3">
+      {changedTarget ? <Notice tone="danger" role="alert">El destino del manual cambió desde que empezaste el borrador. No se guardará ese texto en otro archivo. Conservá tu texto antes de descartarlo y releer.</Notice> : null}
       {!servido.exists ? (
-        <p className="ficheros-nota">
+        <Notice>
           Este fichero todavía no existe. Si guardas, se crea. Está vacío porque no está, no
           porque se haya perdido.
-        </p>
+        </Notice>
       ) : null}
 
       {avisoGuardar ? (
-        <p className="ficheros-aviso" role="status">
-          <AlertTriangle size={14} aria-hidden="true" /> {avisoGuardar}
-        </p>
+        <Notice tone="warn" role="status" className="flex items-start gap-2">
+          <AlertTriangle size={14} aria-hidden="true" className="mt-0.5 shrink-0" /> {avisoGuardar}
+        </Notice>
       ) : null}
 
       {servido.truncated ? (
-        <p className="ficheros-aviso" role="alert">
-          <AlertTriangle size={14} aria-hidden="true" /> Esta lectura está recortada. Se muestra para
+        <Notice tone="warn" role="alert" className="flex items-start gap-2">
+          <AlertTriangle size={14} aria-hidden="true" className="mt-0.5 shrink-0" /> Esta lectura está recortada. Se muestra para
           diagnóstico, pero no se puede editar ni reemplazar: guardar este prefijo borraría el resto.
-        </p>
+        </Notice>
       ) : null}
 
       <textarea
-        className="ficheros-texto"
+        className={TEXT_AREA}
         aria-label={`Contenido de ${item.label}`}
         value={texto}
         spellCheck={false}
         rows={18}
-        readOnly={!canWrite || guardando || !servido.editable || servido.truncated}
-        aria-readonly={!canWrite || guardando || !servido.editable || servido.truncated}
+        readOnly={bloqueado}
+        aria-readonly={bloqueado}
         onChange={(event) => {
           if (!canWrite || guardando || mutationBlocked) return;
           const escrito = preserveSourceLineEndings(servido.content, event.target.value);
@@ -499,83 +471,58 @@ function Editor({
         }}
       />
 
-      <label htmlFor={idMotivo}>
-        Motivo del guardado (lo escribe una persona y queda en la auditoría)
-        <input
-          id={idMotivo}
-          type="text"
-          value={motivo}
-          maxLength={DOCUMENT_REASON_MAX}
-          autoComplete="off"
-          spellCheck={false}
-          placeholder="Escribí por qué cambiás este fichero…"
-          aria-describedby={`${idMotivo}-pista`}
-          disabled={guardando || !canWrite || !servido.editable || servido.truncated}
-          onChange={(event) => { setMotivo(event.target.value); setGuardado(undefined); }}
-        />
-      </label>
-      <p className="ficheros-razon" id={`${idMotivo}-pista`}>
-        {problemaMotivo
-          ?? `Motivo válido · ${String(motivo.trim().length)}/${String(DOCUMENT_REASON_MAX)}`}
-      </p>
+      <ReasonField label="Motivo del guardado" value={motivo} disabled={bloqueado}
+        placeholder="Escribí por qué cambiás este fichero…"
+        onChange={(value) => { setMotivo(value); setGuardado(undefined); }} />
 
-      <div className="ficheros-pie">
-        <span className="muted">
+      {fallo ? <Notice tone="danger" role="alert"><strong>{fallo.titulo}</strong>: {fallo.detalle}</Notice> : null}
+      {guardado ? <Notice tone="ok" role="status">{guardado}</Notice> : null}
+
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className="text-xs text-muted">
           {servido.bytes} bytes · {servido.projected ? 'proyección de campos' : 'fichero completo'}
         </span>
-        {fallo ? <span className="ficheros-fallo-linea">{fallo.titulo}: {fallo.detalle}</span> : null}
-        {guardado ? <span className="ficheros-ok">{guardado}</span> : null}
-        <button
-          type="button"
-          className="button small secondary"
-          disabled={guardando || mutationBlocked}
-          onClick={() => {
-            if (mutationBlocked) return;
-            onBorrador(undefined);
-            void releer();
-          }}
-        >
-          Descartar y releer
-        </button>
-        <button
-          type="button"
-          className="button small"
-          onClick={() => void guardar()}
-          disabled={!canWrite || !sucio || guardando || changedTarget || !servido.editable
-            || servido.truncated || problemaMotivo !== undefined}
-        >
-          <Save size={14} aria-hidden="true" /> {guardando ? 'Guardando…' : 'Guardar'}
-        </button>
+        <div className="flex gap-2">
+          <Button size="sm" disabled={guardando || mutationBlocked}
+            onClick={() => {
+              if (mutationBlocked) return;
+              onBorrador(undefined);
+              void releer();
+            }}>
+            Descartar y releer
+          </Button>
+          <Button size="sm" variant="primary" onClick={() => void guardar()}
+            disabled={!canWrite || !sucio || guardando || changedTarget || !servido.editable
+              || servido.truncated || problemaMotivo !== undefined}>
+            <Save size={14} aria-hidden="true" /> {guardando ? 'Guardando…' : 'Guardar'}
+          </Button>
+        </div>
       </div>
     </div>
   );
 }
 
-/**
- * The gap, stated in plain language and right in this view. Without this paragraph a locked `mcp`
- * reads as "the console does not reach there yet" when it is a measured decision, and what is
- * truly missing —the channel to the disk— is visible nowhere at all.
- */
+/** The gap stated in this view: a locked `mcp` is a measured decision, not a missing console feature. */
 function HuecoDeclarado() {
   return (
-    <section className="ficheros-hueco" aria-label="Lo que esta vista todavía no hace">
-      <h4>Lo que esto todavía no hace</h4>
-      <ul>
+    <details className="rounded-lg border border-line px-3 py-2 text-[13px]">
+      <summary className="cursor-pointer font-medium">Lo que esto todavía no hace</summary>
+      <ul className="mt-2 mb-0 grid gap-2 pl-5 text-xs text-muted">
         <li>
-          <strong>Los MCP y las skills no se editan desde aquí.</strong> En claude viven en
+          <strong className="text-fg-2">Los MCP y las skills no se editan desde aquí.</strong> En claude viven en
           `~/.claude.json`, junto al OAuth de la cuenta; en openclaw, dentro del mismo fichero que
           `auth` y `secrets`, y ahí hay claves de API de verdad. Servir esos ficheros sería una
           fuga, no una funcionalidad. Se editan a mano dentro del contenedor.
         </li>
         <li>
-          <strong>Los subagentes y los prompts guardados se listan, no se editan.</strong> Son
+          <strong className="text-fg-2">Los subagentes y los prompts guardados se listan, no se editan.</strong> Son
           directorios con un fichero por pieza, y esta vista edita ficheros sueltos.
         </li>
         <li>
-          <strong>Esto no ve lo que se edite por la terminal.</strong> El diario de cambios cubre
+          <strong className="text-fg-2">Esto no ve lo que se edite por la terminal.</strong> El diario de cambios cubre
           lo que pasa por esta pantalla; un `docker exec` y un editor a mano no dejan rastro aquí.
         </li>
       </ul>
-    </section>
+    </details>
   );
 }

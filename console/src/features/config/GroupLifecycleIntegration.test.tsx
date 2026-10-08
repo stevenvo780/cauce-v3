@@ -6,7 +6,7 @@ import type { FleetOperationRequest } from '@cauce/protocol/fleet-operation';
 import { fleetRequestHash } from '../../api/client/fleet-operations-client';
 import { server } from '../../mocks/server';
 import { renderWithApi } from '../../test/render';
-import { ConfigAdministration } from './ConfigPage';
+import { ConfigPage } from './ConfigPage';
 import { servirConfig, snapshotDeConfig, type ChangeRequest } from './ConfigPage.test-helpers';
 
 Object.defineProperty(globalThis, 'crypto', { configurable: true, value: webcrypto });
@@ -23,7 +23,7 @@ it('opens a physical group retirement from the existing table and never sends ge
         expected_revision: input.expected_revision, steps: ['fence', 'stop'], dependencies: [], can_apply: true });
     }));
   const user = userEvent.setup();
-  renderWithApi(<ConfigAdministration />);
+  renderWithApi(<ConfigPage />);
   expect(await screen.findByRole('button', { name: 'Eliminar sala/grupo Miguel/grp.miguel' })).toBeDisabled();
   await user.click(screen.getByRole('button', { name: 'Retirar sala/grupo Miguel/grp.miguel' }));
   const dialog = within(await screen.findByRole('dialog'));
@@ -40,7 +40,7 @@ it('offers durable history and purge for a retired group even without active gro
   server.use(http.get('http://localhost/v3/console/fleet/capability', () => HttpResponse.json({ available: true, actions: ['restore', 'purge'], placements: [] })),
     http.get('http://localhost/v3/console/fleet/operations', () => HttpResponse.json({ operations: [] })));
   const user = userEvent.setup();
-  renderWithApi(<ConfigAdministration />);
+  renderWithApi(<ConfigPage />);
   await user.click(await screen.findByRole('button', { name: /Historial y purga de sala\/grupo Miguel\/ Sala/u }));
   expect(await screen.findByRole('dialog')).toHaveTextContent('"room_id":" Sala "');
   expect(screen.getByRole('button', { name: 'Previsualizar purga' })).toBeEnabled();
@@ -61,7 +61,7 @@ function movementSnapshot(runtimeKey: string | null) {
 }
 async function openMovement() {
   const user = userEvent.setup();
-  renderWithApi(<ConfigAdministration />);
+  renderWithApi(<ConfigPage />);
   await user.click(await screen.findByRole('button', { name: /Editar sala\/grupo Miguel\/ Sala/u }));
   await user.selectOptions(screen.getByRole('combobox', { name: 'Miembro a mover' }), 'janus');
   await user.selectOptions(screen.getByRole('combobox', { name: 'Grupo de destino' }), 'Sala');
@@ -111,3 +111,5 @@ it('prepares physical membership movement as a fleet update without any generic 
   expect(submitted[0]).toMatchObject({ kind: 'update', target: { resource: 'agent', tenant_id: 'Miguel', alias: 'janus' },
     parameters: { runtime_key: 'physical-janus', primary_room_id: 'Sala', memberships: [{ room_id: 'Sala', role: 'agent', enabled: true }] } });
 });
+
+beforeEach(() => { window.history.replaceState({}, '', '/config?seccion=espacios'); });

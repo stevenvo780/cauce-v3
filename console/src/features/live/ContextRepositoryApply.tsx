@@ -1,8 +1,10 @@
-import { useEffect, useId, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useApi } from '../../api/context';
 import type { ContextSourcePreview } from '../../api/client/context-repository-client';
 import { CAMPOS_DEL_PERFIL, ETIQUETAS, esPerfilAplicado } from './perfil';
-import { DOCUMENT_REASON_MAX, problemaDeMotivo } from './ficheros-motivo';
+import { Button, Notice } from '../../components/kit';
+import { ReasonField } from './context-ui';
+import { problemaDeMotivo } from './ficheros-motivo';
 import { pendingProfileReceipt, profileIsAdopted } from './profile-save-receipt';
 
 interface Props {
@@ -20,7 +22,6 @@ function matchesIdentity(value: unknown, tenantId: string, alias: string): boole
 
 export function ContextRepositoryApply(props: Props) {
   const api = useApi();
-  const id = useId();
   const [reason, setReason] = useState('');
   const [preview, setPreview] = useState<ContextSourcePreview>();
   const [confirmed, setConfirmed] = useState(false);
@@ -92,41 +93,44 @@ export function ContextRepositoryApply(props: Props) {
     }
   }
 
-  return <section className="perfil-recarga" aria-label="Aplicar versión Git">
-    <p>Restaurar exige una versión coincidente con el diario. El contenido nuevo de Git debe declarar
+  const MONO = 'm-0 break-words whitespace-pre-wrap font-mono text-xs text-fg-2';
+  return <section aria-label="Aplicar versión Git" className="grid gap-3 rounded-lg border border-line bg-subtle p-3">
+    <p className="m-0 text-xs text-muted">Restaurar exige una versión coincidente con el diario. El contenido nuevo de Git debe declarar
       explícitamente que no procede del diario. Ambos requieren un perfil existente y esta confirmación.</p>
-    <label htmlFor={`${id}-reason`}>Motivo de la aplicación
-      <input id={`${id}-reason`} value={reason} maxLength={DOCUMENT_REASON_MAX} disabled={disabled}
-        onChange={(event) => { sequence.current += 1; setReason(event.target.value); setPreview(undefined); setConfirmed(false); setMessage(undefined); }} />
-    </label>
-    <button className="button small secondary" type="button" disabled={disabled || invalidReason !== undefined}
-      onClick={() => { void run('preview'); }}>{phase === 'preview' ? 'Preparando…' : 'Preparar aplicación'}</button>
-    {preview ? <section aria-label="Confirmación de versión Git">
-      <p>{preview.context_source.source_kind === 'git_authored'
+    <ReasonField label="Motivo de la aplicación" value={reason} disabled={disabled}
+      onChange={(value) => { sequence.current += 1; setReason(value); setPreview(undefined); setConfirmed(false); setMessage(undefined); }} />
+    <div>
+      <Button size="sm" disabled={disabled || invalidReason !== undefined} onClick={() => { void run('preview'); }}>
+        {phase === 'preview' ? 'Preparando…' : 'Preparar aplicación'}
+      </Button>
+    </div>
+    {preview ? <section aria-label="Confirmación de versión Git" className="grid gap-3 rounded-lg border border-line bg-surface p-3 text-[13px]">
+      <p className="m-0">{preview.context_source.source_kind === 'git_authored'
         ? 'Aplicar contenido nuevo de Git. Su autor Git no acredita identidad ni permisos; esta operación se atribuye al operador autenticado.'
         : `Restaurar contenido del diario ${String(preview.context_source.source_journal_id)}, revisión ${String(preview.context_source.source_revision)}.`}</p>
-      <p>Commit {preview.context_source.commit}; instancia {props.instanceId}; {props.tenantId}/{props.alias}.
+      <p className="m-0 break-all text-xs text-muted">Commit {preview.context_source.commit}; instancia {props.instanceId}; {props.tenantId}/{props.alias}.
         Revisión vigente {preview.expected_revision}; diario {preview.context_source.expected_journal_id}.</p>
-      {CAMPOS_DEL_PERFIL.map((field) => <div key={field}>
-        <h4>{ETIQUETAS[field].titulo}</h4>
-        <p className="historial-diff-texto">Vigente: {JSON.stringify(preview.before[field])}</p>
-        <p className="historial-diff-texto">Propuesto: {JSON.stringify(preview.profile[field])}</p>
+      {CAMPOS_DEL_PERFIL.map((field) => <div key={field} className="grid gap-1 border-t border-line pt-2">
+        <h4 className="m-0 text-[13px] font-semibold">{ETIQUETAS[field].titulo}</h4>
+        <p className={MONO}>Vigente: {JSON.stringify(preview.before[field])}</p>
+        <p className={MONO}>Propuesto: {JSON.stringify(preview.profile[field])}</p>
       </div>)}
-      {preview.ficheros.map((file) => <details key={file.nombre}><summary>Proyección: {file.nombre}</summary>
+      {preview.ficheros.map((file) => <details key={file.nombre}><summary className="cursor-pointer text-xs font-medium">Proyección: {file.nombre}</summary>
         {['MEMORY.md', 'HEARTBEAT.md'].includes(file.nombre)
-          ? <p>Archivo propio del agente: se conserva sin cambios.</p>
-          : <pre className="historial-diff-texto">{file.texto}</pre>}</details>)}
-      <label><input type="checkbox" checked={confirmed} disabled={disabled}
+          ? <p className="m-0 mt-1 text-xs text-muted">Archivo propio del agente: se conserva sin cambios.</p>
+          : <pre className={`${MONO} mt-1 max-h-72 overflow-auto rounded-md bg-subtle p-2`}>{file.texto}</pre>}</details>)}
+      <label className="flex items-start gap-2 font-normal"><input type="checkbox" checked={confirmed} disabled={disabled} className="mt-0.5"
         onChange={(event) => { setConfirmed(event.target.checked); }} />
         Confirmo estos campos y su proyección para este agente y esta revisión.
       </label>
-      <button type="button" className="button small secondary" disabled={disabled || !confirmed}
-        onClick={() => { void run('apply'); }}>Aplicar versión confirmada</button>
-      <button type="button" className="button small secondary" disabled={phase === 'apply'}
-        onClick={() => { sequence.current += 1; setPreview(undefined); setConfirmed(false); }}>Cancelar</button>
+      <div className="flex flex-wrap gap-2">
+        <Button variant="primary" size="sm" disabled={disabled || !confirmed} onClick={() => { void run('apply'); }}>Aplicar versión confirmada</Button>
+        <Button size="sm" disabled={phase === 'apply'}
+          onClick={() => { sequence.current += 1; setPreview(undefined); setConfirmed(false); }}>Cancelar</Button>
+      </div>
     </section> : null}
-    {phase === 'apply' ? <p role="status">Aplicando la versión confirmada…</p> : null}
-    {error ? <p role="alert">{error}</p> : null}
-    {message ? <p role="status">{message}</p> : null}
+    {phase === 'apply' ? <p role="status" className="m-0 text-xs text-muted">Aplicando la versión confirmada…</p> : null}
+    {error ? <Notice tone="danger" role="alert">{error}</Notice> : null}
+    {message ? <Notice tone="ok" role="status">{message}</Notice> : null}
   </section>;
 }

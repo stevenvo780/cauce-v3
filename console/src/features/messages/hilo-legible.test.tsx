@@ -4,9 +4,8 @@ import { http, HttpResponse } from 'msw';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { mockMessages } from '../../mocks/data';
 import { server } from '../../mocks/server';
-import { renderRouted } from '../../test/render';
 import { CARACTERES_DE_PREVISUALIZACION } from '../terminal/cuerpo-del-mensaje';
-import { MessagesPage } from './MessagesPage';
+import { messageRows, openConversation, openMessageDetail, renderChat } from './chat-test-utils';
 
 /**
  * **THE THREE THINGS THAT MADE THE THREAD NOT READ LIKE A CONVERSATION.**
@@ -78,49 +77,30 @@ function feedDeArgos({ recorte = false, newestPreview }: { recorte?: boolean; ne
   server.use(http.get('*/v3/console/messages', () => HttpResponse.json({ ...mockMessages(), items })));
 }
 
-async function abrirArgos(user: ReturnType<typeof userEvent.setup>) {
-  const fila = await screen.findByRole('button', { name: /conversación con argos,/i });
-  await user.click(fila);
-  return screen.findByRole('region', { name: /conversación con argos/i });
-}
-
-function burbujas(hilo: HTMLElement): HTMLElement[] {
-  return [...hilo.querySelectorAll<HTMLElement>('.transcript-entry')];
-}
-
-async function abrirDetalleDe(user: ReturnType<typeof userEvent.setup>, hilo: HTMLElement, contenido: string) {
-  const burbuja = burbujas(hilo).find((element) => element.textContent.includes(contenido));
-  if (!burbuja) throw new Error(`No se encontró la burbuja: ${contenido}`);
-  await user.click(within(burbuja).getByRole('button', { name: 'Opciones del mensaje' }));
-  await user.click(screen.getByRole('menuitem', { name: 'Ver detalle' }));
-  return within(hilo).findByRole('group', { name: /detalle del mensaje seleccionado/i });
-}
-
 // ---------------------------------------------------------------------------------------------
 // 1. THE GHOST SELECTION
 // ---------------------------------------------------------------------------------------------
 
 it('🔴 sin un solo clic NINGUNA burbuja queda marcada como seleccionada', async () => {
-  const user = userEvent.setup();
   feedDeArgos();
-  renderRouted(MessagesPage);
+  renderChat();
 
-  const hilo = await abrirArgos(user);
-  await waitFor(() => { expect(burbujas(hilo)).toHaveLength(3); });
+  const hilo = await openConversation('argos');
+  await waitFor(() => { expect(messageRows(hilo)).toHaveLength(3); });
 
   // The measured bug: two of the three bubbles — those without delivery — came out with
   // `data-selected="true"` because `undefined === undefined`.
-  const marcadas = burbujas(hilo).filter((burbuja) => burbuja.getAttribute('data-selected') === 'true');
+  const marcadas = messageRows(hilo).filter((burbuja) => burbuja.getAttribute('data-selected') === 'true');
   expect(marcadas).toHaveLength(0);
 }, 25_000);
 
 it('🔴 el detalle abre en el ÚLTIMO mensaje del hilo, no en el primero sin entrega', async () => {
   const user = userEvent.setup();
   feedDeArgos();
-  renderRouted(MessagesPage);
+  renderChat();
 
-  const hilo = await abrirArgos(user);
-  const detalle = await abrirDetalleDe(user, hilo, 'la mas nueva: censo terminado');
+  const hilo = await openConversation('argos');
+  const detalle = await openMessageDetail(user, hilo, 'la mas nueva: censo terminado');
 
   // The bug: it opened on `aaaaaaaa…`, the OLDEST, because that was the first item without delivery.
   expect(within(detalle).getByText('cccccccc-3333-4333-8333-333333333333')).toBeInTheDocument();
@@ -137,25 +117,25 @@ it('🔴 el detalle abre en el ÚLTIMO mensaje del hilo, no en el primero sin en
 it('🔴 el detalle arranca CERRADO y lo abre el clic del operador', async () => {
   const user = userEvent.setup();
   feedDeArgos();
-  renderRouted(MessagesPage);
+  renderChat();
 
-  const hilo = await abrirArgos(user);
-  expect(within(hilo).queryByRole('group', { name: /detalle del mensaje seleccionado/i })).toBeNull();
+  const hilo = await openConversation('argos');
+  expect(screen.queryByRole('group', { name: /detalle del mensaje seleccionado/i })).toBeNull();
   expect(within(hilo).queryByRole('button', { name: 'Ver detalle del último mensaje' })).toBeNull();
-  const vieja = burbujas(hilo).at(0);
+  const vieja = messageRows(hilo).at(0);
   if (vieja === undefined) throw new Error('Falta la burbuja antigua');
   await user.click(within(vieja).getByRole('button', { name: 'Opciones del mensaje' }));
-  await user.click(screen.getByRole('menuitem', { name: 'Ver detalle' }));
-  expect(within(hilo).getByRole('group', { name: /detalle del mensaje seleccionado/i })).toBeVisible();
+  await user.click(await screen.findByRole('menuitem', { name: 'Ver detalle' }));
+  expect(screen.getByRole('group', { name: /detalle del mensaje seleccionado/i })).toBeVisible();
 }, 25_000);
 
 it('muestra un texto explícito en el inspector si el preview del mensaje solo tiene espacios', async () => {
   const user = userEvent.setup();
   feedDeArgos({ newestPreview: '   ' });
-  renderRouted(MessagesPage);
+  renderChat();
 
-  const hilo = await abrirArgos(user);
-  const detalle = await abrirDetalleDe(user, hilo, 'Mensaje sin contenido textual.');
+  const hilo = await openConversation('argos');
+  const detalle = await openMessageDetail(user, hilo, 'Mensaje sin contenido textual.');
   expect(within(detalle).getByLabelText('Cuerpo del mensaje').querySelector('pre'))
     .toHaveTextContent('Mensaje sin contenido textual.');
 }, 25_000);
@@ -163,21 +143,21 @@ it('muestra un texto explícito en el inspector si el preview del mensaje solo t
 it('🔴 clicar una burbuja SIN entrega también selecciona: antes no hacía nada', async () => {
   const user = userEvent.setup();
   feedDeArgos();
-  renderRouted(MessagesPage);
+  renderChat();
 
-  const hilo = await abrirArgos(user);
-  await abrirDetalleDe(user, hilo, 'la mas nueva: censo terminado');
-  const vieja = burbujas(hilo).at(0);
+  const hilo = await openConversation('argos');
+  await openMessageDetail(user, hilo, 'la mas nueva: censo terminado');
+  const vieja = messageRows(hilo).at(0);
   if (vieja === undefined) throw new Error('Falta la burbuja antigua');
   expect(within(vieja).getByText(/la mas vieja/)).toBeInTheDocument();
   await user.click(within(vieja).getByRole('button', { name: 'Opciones del mensaje' }));
-  await user.click(screen.getByRole('menuitem', { name: 'Ver detalle' }));
+  await user.click(await screen.findByRole('menuitem', { name: 'Ver detalle' }));
 
-  const detalle = within(hilo).getByRole('group', { name: /detalle del mensaje seleccionado/i });
+  const detalle = screen.getByRole('group', { name: /detalle del mensaje seleccionado/i });
   expect(within(detalle).getByText('aaaaaaaa-1111-4111-8111-111111111111')).toBeInTheDocument();
   expect(within(detalle).getByText(/Mensaje que elegiste/i)).toBeInTheDocument();
   // And now there is exactly ONE marked bubble: the one clicked.
-  const marcadas = burbujas(hilo).filter((burbuja) => burbuja.getAttribute('data-selected') === 'true');
+  const marcadas = messageRows(hilo).filter((burbuja) => burbuja.getAttribute('data-selected') === 'true');
   expect(marcadas).toHaveLength(1);
   expect(marcadas[0]).toBe(vieja);
 }, 25_000);
@@ -205,12 +185,11 @@ function espiarDesplazamiento(alto = 10_976) {
 
 it('🔴 abre la conversación por el FINAL, no por el mensaje más viejo', async () => {
   const llamadas = espiarDesplazamiento();
-  const user = userEvent.setup();
   feedDeArgos();
-  renderRouted(MessagesPage);
+  renderChat();
 
-  const hilo = await abrirArgos(user);
-  const caja = hilo.querySelector('.messenger-thread-scroll');
+  const hilo = await openConversation('argos');
+  const caja = hilo.querySelector('[data-thread-scroll]');
   expect(caja).not.toBeNull();
 
   await waitFor(() => { expect(llamadas.some((llamada) => llamada.caja === caja)).toBe(true); });
@@ -220,13 +199,12 @@ it('🔴 abre la conversación por el FINAL, no por el mensaje más viejo', asyn
 
 it('🔴 ofrece «Ir al último» cuando el operador se fue hacia arriba, y no antes', async () => {
   espiarDesplazamiento();
-  const user = userEvent.setup();
   feedDeArgos();
-  renderRouted(MessagesPage);
+  renderChat();
 
-  const hilo = await abrirArgos(user);
-  const caja = hilo.querySelector<HTMLElement>('.messenger-thread-scroll');
-  if (!caja) throw new Error('Missing .messenger-thread-scroll');
+  const hilo = await openConversation('argos');
+  const caja = hilo.querySelector<HTMLElement>('[data-thread-scroll]');
+  if (!caja) throw new Error('Missing thread scroll box');
 
   // At the bottom there is no button: it would be a control that leads nowhere.
   expect(within(hilo).queryByRole('button', { name: /ir al último/i })).toBeNull();
@@ -245,13 +223,12 @@ it('🔴 ofrece «Ir al último» cuando el operador se fue hacia arriba, y no a
 // ---------------------------------------------------------------------------------------------
 
 it('🔴 la burbuja recortada lo DICE en vez de parecer un mensaje entero', async () => {
-  const user = userEvent.setup();
   feedDeArgos({ recorte: true });
-  renderRouted(MessagesPage);
+  renderChat();
 
-  const hilo = await abrirArgos(user);
+  const hilo = await openConversation('argos');
   const recortada = await waitFor(() => {
-    const encontrada = burbujas(hilo).find((burbuja) => burbuja.textContent.includes(RECORTADO));
+    const encontrada = messageRows(hilo).find((burbuja) => burbuja.textContent.includes(RECORTADO));
     if (!encontrada) throw new Error('todavía no está la burbuja');
     return encontrada;
   });
@@ -269,10 +246,10 @@ it('🔴 «Ver el mensaje completo» pide el cuerpo al servidor y lo pinta enter
   }));
   const user = userEvent.setup();
   feedDeArgos({ recorte: true });
-  renderRouted(MessagesPage);
+  renderChat();
 
-  const hilo = await abrirArgos(user);
-  const detalle = await abrirDetalleDe(user, hilo, RECORTADO);
+  const hilo = await openConversation('argos');
+  const detalle = await openMessageDetail(user, hilo, RECORTADO);
   await user.click(await within(detalle).findByRole('button', { name: /ver el mensaje completo/i }));
 
   await waitFor(() => { expect(pedido).toBe('cccccccc-3333-4333-8333-333333333333'); });
@@ -286,10 +263,10 @@ it('🔴 informa el 404 del cuerpo sin inventar su causa y conserva la vista pre
   )));
   const user = userEvent.setup();
   feedDeArgos({ recorte: true });
-  renderRouted(MessagesPage);
+  renderChat();
 
-  const hilo = await abrirArgos(user);
-  const detalle = await abrirDetalleDe(user, hilo, RECORTADO);
+  const hilo = await openConversation('argos');
+  const detalle = await openMessageDetail(user, hilo, RECORTADO);
   await user.click(await within(detalle).findByRole('button', { name: /ver el mensaje completo/i }));
 
   const aviso = await within(detalle).findByRole('alert');

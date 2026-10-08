@@ -56,7 +56,6 @@ describe('destinos que el servidor publica a medias', () => {
    * where the shell is refused — not leave a grey button with an empty tooltip.
    */
   it('sólo con modo harness: la TUI se abre y la shell queda cerrada sin conceder modo no publicado', async () => {
-    const user = userEvent.setup();
     let posts = 0;
     enableCapability();
     serveTargets([target({ tenant_id: 'Steven', alias: 'zeus', modes: ['harness'] })]);
@@ -64,9 +63,7 @@ describe('destinos que el servidor publica a medias', () => {
       posts += 1;
       return HttpResponse.json({ error: 'conflict', reason: 'agent_offline' }, { status: 409 });
     }));
-    renderWithApi(<TerminalPage />);
-
-    await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }), await screen.findByRole('option', { name: /^zeus ·/ }));
+    renderWithApi(<TerminalPage params={['Steven', 'zeus']} />);
 
     // The TUI is offered —the server publishes `harness`— and it is what got asked for.
     await waitFor(() => { expect(posts).toBe(1); });
@@ -82,7 +79,6 @@ describe('destinos que el servidor publica a medias', () => {
    * had not measured. That placeholder must never reach the operator as the explanation.
    */
   it('un estado PTY sin medir no se pinta como disponible ni se explica con el «ok» del servidor', async () => {
-    const user = userEvent.setup();
     let posts = 0;
     enableCapability();
     serveTargets([target({ tenant_id: 'Steven', alias: 'zeus', pty_state: 'unknown', reason: 'ok' })]);
@@ -90,9 +86,7 @@ describe('destinos que el servidor publica a medias', () => {
       posts += 1;
       return new HttpResponse(null, { status: 500 });
     }));
-    renderWithApi(<TerminalPage />);
-
-    await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }), await screen.findByRole('option', { name: /^zeus ·/ }));
+    renderWithApi(<TerminalPage params={['Steven', 'zeus']} />);
     await screen.findByRole('button', { name: /^TUI$/i });
 
     await waitFor(() => { expect(screen.getByRole('button', { name: /^Terminal$/i })).toBeDisabled(); });
@@ -111,14 +105,14 @@ describe('el plano de control que contesta a medias y luego se recupera', () => 
     server.use(http.get('*/v3/status', () => (caido
       ? HttpResponse.json({ error: 'unavailable' }, { status: 503 })
       : HttpResponse.json({ presence: [], queues: [], rooms: [] }))));
-    renderWithApi(<TerminalPage />);
+    renderWithApi(<TerminalPage params={['Steven', 'kant']} />);
 
     const aviso = await screen.findByRole('alert');
     expect(aviso).toHaveTextContent('El plano de control contestó a medias');
     // The failing read is named: "Presencia", not a bare technical error with no owner.
     expect(aviso).toHaveTextContent(/Presencia:/);
     // The fleet still came from topology, so the view is degraded and not empty.
-    expect(await screen.findByRole('option', { name: /^kant ·/i })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { level: 2, name: /kant/i })).toBeInTheDocument();
 
     caido = false;
     await user.click(within(aviso).getByRole('button', { name: /reintentar/i }));

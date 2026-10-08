@@ -84,8 +84,7 @@ async function requestTake() {
 
 async function openPageAndTake(controls: ControlCall[]) {
   const user = userEvent.setup({ delay: null });
-  renderWithApi(<TerminalPage />);
-  await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }), await screen.findByRole('option', { name: /^zeus ·/ }));
+  renderWithApi(<TerminalPage params={['Steven', 'zeus']} />);
   await waitFor(() => { expect(StubWebSocket.instances).toHaveLength(1); });
   const socket = attach(StubWebSocket.last());
   await waitFor(() => { expect(controls.filter(call => call.body.action === 'take')).toHaveLength(1); });
@@ -95,7 +94,8 @@ async function openPageAndTake(controls: ControlCall[]) {
 it('releases a late successful take after leaving the terminal tab', async () => {
   const { controls, completeTake } = arrange();
   const { user } = await openPageAndTake(controls);
-  await user.click(screen.getByRole('button', { name: /Cerrar sesión zeus/i }));
+  await user.click(screen.getByRole('button', { name: 'Más acciones' }));
+  await user.click(await screen.findByRole('menuitem', { name: /cerrar sesión pty/i }));
   expect(screen.queryByLabelText('Control de la TUI')).not.toBeInTheDocument();
   await completeTake();
   const releases = controls.filter(call => call.body.action === 'release');
@@ -114,7 +114,7 @@ it('does not restore ownership or send another release after relay close 4410 du
   await completeTake();
   expect(screen.queryByText(/Tenés el teclado de esta TUI/)).not.toBeInTheDocument();
   expect(screen.queryByRole('button', { name: /Devolver el control/i })).not.toBeInTheDocument();
-  expect(document.querySelector('.pty-shell')).toHaveAttribute('data-read-only', 'true');
+  expect(document.querySelector('[data-pty-shell]')).toHaveAttribute('data-read-only', 'true');
   expect(controls.filter(call => call.body.action === 'release')).toHaveLength(0);
 });
 

@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { CanonicalUuidV4Schema, ClientDelegationLabelSchema, Sha256HexSchema } from '@cauce/protocol';
-import { clientConnectionReference, StoreError, type DatabaseClient, type HumanPublishProvenance,
+import { clientConnectionReference, clientMailboxAddress, clientMailboxRoutingTargets, StoreError, type DatabaseClient, type HumanPublishProvenance,
   type ConsoleCredentialStampVerifier } from '@cauce/store';
 import { z } from 'zod';
 import { lockOAuthGrant } from './oauth-grant-authority.js';
@@ -38,6 +38,12 @@ export async function listClientDelegations(client: DatabaseClient, owner: Human
       ON d.local_oauth_grant_id=g.id AND d.revoked_at IS NULL
     WHERE g.human_id=$1 AND g.tenant_id=$2 AND g.issuer=$3 AND g.resource=$4
     ORDER BY g.created_at DESC,g.id LIMIT 101`, [owner.humanId, owner.tenantId, options.issuer, options.resource]);
+  const routable = new Set((await clientMailboxRoutingTargets(client, owner.tenantId))
+    .filter((target) => target.tenant_id === owner.tenantId).map((target) => target.alias));
+  const mailboxOf = (grantId: string) => {
+    const alias = clientMailboxAddress(grantId, owner.tenantId);
+    return routable.has(alias) ? { tenant_id: owner.tenantId, alias } : null;
+  };
   return { items: grants.rows.slice(0, 100).map((grant) => ({
     connection_ref: reference(options, owner, grant.id), client_id: grant.client_id,
     created_at: grant.created_at.toISOString(), expires_at: grant.expires_at.toISOString(), revoked: grant.revoked,
@@ -45,6 +51,7 @@ export async function listClientDelegations(client: DatabaseClient, owner: Human
     display_label: grant.label === null ? null : `${grant.label} por cuenta de ${ownerName}`, basis: 'owner_declared_grant', instance: 'unknown',
     last_publication_at: grant.last_publication_at?.toISOString() ?? null,
     last_use_at: null, last_use_observed: false,
+    mailbox: mailboxOf(grant.id),
   })), truncated: grants.rows.length > 100 };
 }
 async function clientOwnerName(client: DatabaseClient, humanId: string): Promise<string> {

@@ -28,6 +28,10 @@
     "./client-provenance": {
       "types": "./src/schemas/client-provenance.ts",
       "import": "./dist/schemas/client-provenance.js"
+    },
+    "./agent-preferences": {
+      "types": "./src/schemas/agent-preferences.ts",
+      "import": "./dist/schemas/agent-preferences.js"
     }
   },
   "files": ["dist"],

@@ -54,6 +54,13 @@ export function clientDeclarationResponse(value: unknown): ClientDeclarationResu
   return result as unknown as ClientDeclarationResult;
 }
 
+function validMailbox(value: unknown): boolean {
+  if (value === undefined || value === null) return true;
+  const mailbox = responseObject(value);
+  return typeof mailbox.tenant_id === 'string' && /^[A-Za-z][A-Za-z0-9_-]{0,63}$/u.test(mailbox.tenant_id)
+    && typeof mailbox.alias === 'string' && /^mbx-[a-f0-9]{48}$/u.test(mailbox.alias);
+}
+
 export function clientConnectionsResponse(value: unknown): ClientConnectionsPage {
   const page = responseObject(value);
   if (!Array.isArray(page.items) || page.items.length > 100 || typeof page.truncated !== 'boolean') throw new ClientDeclarationResponseError();
@@ -65,7 +72,8 @@ export function clientConnectionsResponse(value: unknown): ClientConnectionsPage
       || typeof row.revoked !== 'boolean' || (row.binding_id !== null && typeof row.binding_id !== 'string')
       || (row.label !== null && typeof row.label !== 'string') || (row.display_label !== null && typeof row.display_label !== 'string')
       || (row.last_publication_at !== null && (typeof row.last_publication_at !== 'string' || !Number.isFinite(Date.parse(row.last_publication_at))))
-      || row.basis !== 'owner_declared_grant' || row.instance !== 'unknown' || row.last_use_at !== null || row.last_use_observed !== false) {
+      || row.basis !== 'owner_declared_grant' || row.instance !== 'unknown' || row.last_use_at !== null || row.last_use_observed !== false
+      || !validMailbox(row.mailbox)) {
       throw new ClientDeclarationResponseError();
     }
     try {

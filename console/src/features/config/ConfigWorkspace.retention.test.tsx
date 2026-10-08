@@ -6,36 +6,35 @@ import { server } from '../../mocks/server';
 import { renderWithApi } from '../../test/render';
 import type { ChangeRequest } from './ConfigPage.test-helpers';
 
-async function openAdministration(user: ReturnType<typeof userEvent.setup>) {
-  await user.click(await screen.findByRole('button', { name: 'Administración avanzada' }));
-  await screen.findByRole('tablist', { name: 'Áreas de configuración' });
+beforeEach(() => { window.history.replaceState({}, '', '/config?seccion=espacios'); });
+
+async function openAdministration() {
+  await screen.findByRole('tablist', { name: 'Secciones de ajustes' });
 }
 async function roundtrip(user: ReturnType<typeof userEvent.setup>) {
-  await user.click(screen.getByRole('button', { name: 'Volver a agentes y contexto' }));
-  expect(screen.queryByRole('tablist', { name: 'Áreas de configuración' })).not.toBeInTheDocument();
-  const hidden = document.querySelector('[tabindex="-1"][hidden][inert]');
-  expect(hidden).not.toBeNull();
-  expect(hidden).not.toContainElement(document.activeElement as HTMLElement);
-  await openAdministration(user);
+  const active = screen.getByRole('tablist', { name: 'Secciones de ajustes' }).querySelector('[aria-selected="true"]');
+  const name = active?.textContent ?? 'Espacios y salas';
+  await user.click(screen.getByRole('tab', { name: 'Agentes' }));
+  await user.click(screen.getByRole('tab', { name }));
 }
 
 it('conserva el JSON editado y su pestaña al salir de administración y volver', async () => {
   const user = userEvent.setup();
   renderWithApi(<ConfigPage />);
-  await openAdministration(user);
-  await user.click(screen.getByRole('tab', { name: 'Historial y JSON' }));
+  await openAdministration();
+  await user.click(screen.getByRole('tab', { name: 'Avanzado' }));
   const draft = '{"resource":"tenant","action":"update","id":"Steven","value":{"enabled":false}}';
   await user.clear(screen.getByLabelText('Mutación JSON'));
   await user.type(screen.getByLabelText('Mutación JSON'), draft.replaceAll('{', '{{'));
   await roundtrip(user);
-  expect(screen.getByRole('tab', { name: 'Historial y JSON' })).toHaveAttribute('aria-selected', 'true');
+  expect(screen.getByRole('tab', { name: 'Avanzado' })).toHaveAttribute('aria-selected', 'true');
   expect(screen.getByLabelText('Mutación JSON')).toHaveValue(draft);
 });
 
 it('conserva borradores del alta rápida y del wizard durante sus propias idas y vueltas', async () => {
   const user = userEvent.setup();
   renderWithApi(<ConfigPage />);
-  await openAdministration(user);
+  await openAdministration();
   await user.type(screen.getByLabelText('Alias'), 'pendiente');
   await roundtrip(user);
   expect(screen.getByLabelText('Alias')).toHaveValue('pendiente');
@@ -61,7 +60,7 @@ it('mantiene el bloqueo del POST pendiente y presenta su recibo al volver, sin r
     }, { status: 201 });
   }));
   renderWithApi(<ConfigPage />);
-  await openAdministration(user);
+  await openAdministration();
   await user.type(screen.getByLabelText('Tenant'), 'Miguel');
   await user.type(screen.getByLabelText('Room'), 'grp.miguel');
   await user.type(screen.getByLabelText('Alias'), 'new_alias');
@@ -71,26 +70,27 @@ it('mantiene el bloqueo del POST pendiente y presenta su recibo al volver, sin r
   expect(screen.getByRole('button', { name: 'Crear' })).toBeDisabled();
   await user.click(screen.getByRole('button', { name: 'Crear' }));
   expect(requests).toHaveLength(1);
-  await user.click(screen.getByRole('button', { name: 'Volver a agentes y contexto' }));
+  await user.click(screen.getByRole('tab', { name: 'Agentes' }));
   await act(async () => { release?.(); await pending; });
   await waitFor(() => {
-    expect(document.querySelector('[tabindex="-1"][hidden][inert]')).toHaveTextContent(/creado en la revisión 2/);
+    expect(screen.getByLabelText('Alias', { selector: 'input' })).toHaveValue('');
   });
-  await openAdministration(user);
+  await user.click(screen.getByRole('tab', { name: 'Espacios y salas' }));
   expect(await screen.findByText(/creado en la revisión 2/)).toHaveTextContent('alta confirmada');
   expect(screen.getByLabelText('Alias')).toHaveValue('');
   expect(requests).toHaveLength(1);
 });
 
-it('no deja el diálogo de confirmación portaleado sobre la vista compacta', async () => {
+it('cancela la confirmación al cambiar de sección y permite revisar otra intención', async () => {
   const user = userEvent.setup();
   renderWithApi(<ConfigPage />);
-  await openAdministration(user);
+  await openAdministration();
   await user.selectOptions(screen.getByLabelText('Rol de permisos de Miguel/grp.miguel/janus'), 'operator');
   expect(screen.getByRole('dialog')).toBeInTheDocument();
-  await user.click(screen.getByRole('button', { name: 'Volver a agentes y contexto' }));
+  await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Cancelar' }));
+  await roundtrip(user);
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-  await openAdministration(user);
+  await user.selectOptions(screen.getByLabelText('Rol de permisos de Miguel/grp.miguel/janus'), 'operator');
   expect(within(screen.getByRole('dialog')).getByRole('button', { name: 'Confirmar' })).toHaveFocus();
   await user.click(screen.getByRole('button', { name: 'Cancelar' }));
 });

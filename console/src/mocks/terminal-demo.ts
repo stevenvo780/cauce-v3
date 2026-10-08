@@ -1,27 +1,8 @@
-/**
- * TERMINAL TEST HARNESS: what's needed for `/terminal` to actually PAINT a PTY without a
- * backend behind it.
- *
- * Why it exists. The costly defects of this view are about GEOMETRY —how many rows and columns
- * the PTY ends up with, whether the gap grows with the window, how much screen width is wasted—,
- * and none of them are visible in jsdom, which has no layout. Measuring them requires a real
- * Chrome with the REAL view. But `npm run dev:mock` got to the door and didn't cross it:
- * `capability` answered `available:false`, there was no handler for `targets` or `POST sessions`,
- * and without a ticket `PtyTerminal` never mounts. So the only thing you couldn't look at was
- * exactly what needed to be measured.
- *
- * These handlers live APART from `handlers.ts` on purpose: `handlers.ts` is shared by
- * `mocks/server.ts`, which is what vitest uses with `onUnhandledRequest: 'error'`. Putting a
- * `capability.available = true` here would change what view tests see, which today assert the
- * opposite. This plugs in ONLY into `mocks/browser.ts`, i.e., only under `VITE_USE_MOCKS=true`.
- *
- * It is not a relay simulator: it doesn't validate the ticket, doesn't sign anything, and
- * doesn't authorize anything. It's a stage set that responds just enough so geometry can be measured.
- */
+/** Handlers that let `/terminal` paint a PTY without a backend; kept apart from `handlers.ts` (shared with vitest) and plugged only into `mocks/browser.ts`. Not a relay: it validates and authorizes nothing. */
 import { http, HttpResponse } from 'msw';
-/* The constant, not a copy of the literal: that copy is exactly what was wrong (see below). */
+/* The constant, not a copy of the literal. */
 import { LIVE_TUI_MODE, WRITABLE_TUI_MODE } from '../features/terminal/fleet';
-import { mockTerminalGrant } from './terminal-ticket';
+import { mockAuthorityResumeToken, mockTerminalGrant } from './terminal-ticket';
 
 const RUTA_WS = '/v3/console/terminal/stream';
 const TENANT = 'Steven';
@@ -49,14 +30,7 @@ export const terminalDemoHandlers = [
       runtime_user: 'dev',
       harness: 'claude-code',
       shares_container_with: [],
-      /*
-       * This used to say `'live-tui'`, and the client looks for `'harness'` (`LIVE_TUI_MODE`, in
-       * `fleet.ts`). That is, the test harness published a mode the console doesn't recognize:
-       * the "TUI" button was DISABLED, the counter said "EMIT THEIR TUI 0 / 1", and the only
-       * mode you could open was a new shell. Exactly the mode this view exists to give —read-only
-       * viewing of the TUI the agent already has painted— was never tested, neither by hand nor
-       * with the harness. It was discovered by measuring: the probe asked for TUI and mounted nothing.
-       */
+      // The client looks for 'harness' (`LIVE_TUI_MODE` in `fleet.ts`); another mode leaves the TUI button disabled.
       modes: ['shell', LIVE_TUI_MODE, WRITABLE_TUI_MODE],
       writable_modes: ['shell', WRITABLE_TUI_MODE],
       pty_state: 'online',
@@ -87,6 +61,26 @@ export const terminalDemoHandlers = [
   }),
 
   http.delete('*/v3/console/terminal/sessions/:id', () => new HttpResponse(null, { status: 204 })),
+
+  /* The keyboard hold of the writable TUI: taking it mutes the alias, releasing gives it back. */
+  http.post('*/v3/console/terminal/sessions/:id/control', async ({ params, request }) => {
+    const cuerpo = await request.json().catch(() => ({})) as Record<string, unknown>;
+    const holdId = '55555555-5555-4555-8555-555555555555';
+    if (cuerpo.action === 'release') {
+      return HttpResponse.json({ session_id: params.id, released: true, hold_id: holdId });
+    }
+    return HttpResponse.json({
+      session_id: params.id, hold_id: holdId, held_by: `${TENANT}:${ALIAS}`,
+      expires_at: new Date(Date.now() + 120_000).toISOString(),
+    });
+  }),
+
+  http.post('*/v3/console/terminal/sessions/:id/extend', async ({ params, request }) => {
+    const cuerpo = await request.json().catch(() => ({})) as Record<string, unknown>;
+    return HttpResponse.json({
+      session_id: params.id, request_id: cuerpo.request_id, expires_at: new Date(Date.now() + 300_000).toISOString(),
+    });
+  }),
 ];
 
 /**
@@ -116,14 +110,19 @@ export function instalarPtyDeMentira(): void {
       setTimeout(() => {
         this.readyState = 1;
         this.onopen?.(new Event('open'));
-        setTimeout(() => this.onmessage?.(new MessageEvent('message', { data: JSON.stringify({
-          type: 'ready',
-          claim_token: DEMO_CLAIM_TOKEN,
-          claim_epoch: DEMO_CLAIM_EPOCH,
-          claim_lease_ms: DEMO_CLAIM_LEASE_MS,
-        }) })), 10);
-        setTimeout(() => { this.escupir(); }, 40);
       }, 10);
+    }
+
+    /** The relay answers the client's attach or resume: `ready` carries a token bound to its authority proof. */
+    private aceptar(trama: Record<string, unknown>): void {
+      setTimeout(() => this.onmessage?.(new MessageEvent('message', { data: JSON.stringify({
+        type: 'ready',
+        claim_token: DEMO_CLAIM_TOKEN,
+        claim_epoch: DEMO_CLAIM_EPOCH,
+        claim_lease_ms: DEMO_CLAIM_LEASE_MS,
+        resume_token: mockAuthorityResumeToken(trama.session_id, trama.authority_proof),
+      }) })), 10);
+      setTimeout(() => { this.escupir(); }, 40);
     }
 
     private escupir(): void {
@@ -140,7 +139,8 @@ export function instalarPtyDeMentira(): void {
     send(raw: string): void {
       let trama: Record<string, unknown>;
       try { trama = JSON.parse(raw) as Record<string, unknown>; } catch { return; }
-      if (trama.type === 'attach' || trama.type === 'resize') {
+      if (trama.type === 'attach' || trama.type === 'resume') this.aceptar(trama);
+      if (trama.type === 'attach' || trama.type === 'resume' || trama.type === 'resize') {
         if (typeof trama.cols === 'number' && typeof trama.rows === 'number') {
           PtyFalsa.ultimaGeometria = { cols: trama.cols, rows: trama.rows };
         }
@@ -156,11 +156,7 @@ export function instalarPtyDeMentira(): void {
       this.onclose?.(new CloseEvent('close', { code, reason }));
     }
   }
-  /*
-   * Only the PTY channel is hijacked. Vite opens its own WebSocket for HMR and the console
-   * opens its own; replacing the entire class left the dev server without reload and —worse—
-   * without a single signal that it had happened.
-   */
+  /* Only the PTY channel is hijacked: Vite and the console open their own WebSockets. */
   const Fachada = new Proxy(Original, {
     construct(objetivo, argumentos: [string, ...unknown[]]): WebSocket {
       const url = argumentos[0];

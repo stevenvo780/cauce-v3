@@ -212,7 +212,7 @@ it('keeps a manual write locked across accordion unmounts and cannot lose newer 
   );
   function ManualHarness() {
     const [draft, setDraft] = useState<BorradorDeFichero>();
-    return <FicherosTab tenantId="Steven" alias="kant" mode="manual-editor" configWritePermission="allowed" borradores={{ directive: draft }} onBorrador={(_, next) => { setDraft(next); }} />;
+    return <FicherosTab tenantId="Steven" alias="kant" configWritePermission="allowed" borradores={{ directive: draft }} onBorrador={(_, next) => { setDraft(next); }} />;
   }
   const user = userEvent.setup();
   renderWithApi(<ManualHarness />);

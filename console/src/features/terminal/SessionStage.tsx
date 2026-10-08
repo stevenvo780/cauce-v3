@@ -1,24 +1,17 @@
-import {
-  lazy,
-  Suspense,
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-  useSyncExternalStore,
-} from 'react';
-import { CircleOff, MonitorPlay, TerminalSquare } from 'lucide-react';
+import { lazy, Suspense, useCallback, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
+import { AlertTriangle, CircleOff, Loader2, MonitorPlay, TerminalSquare, X } from 'lucide-react';
 import { useApi } from '../../api/context';
 import type { ConsoleAccess, TerminalCapability } from '../../api/types';
-import { LoadingState } from '../../components/ui';
-import {
-  TerminalApiError,
-  type TerminalSessionGrant,
-  type TerminalTargetsSnapshot,
-} from './api';
-import {
-  prorrogarSesion,
-} from './api-control';
+import { cn } from '../../cn';
+import { AgentOrb } from '../../components/AgentOrb';
+import { AgentContextMenu } from '../../components/agent-actions/AgentActionsMenu';
+import { Button, StatePill } from '../../components/kit';
+import { redirect } from '../../router';
+import { LIVE_STATE_META, type LiveState } from '../live/agent-state';
+import { TerminalApiError, type TerminalSessionGrant, type TerminalTargetsSnapshot } from './api';
+import { prorrogarSesion } from './api-control';
+import { ControlDeTui } from './ControlDeTui';
+import { explicarDenegacionPty, traducirCodigosEnTexto, type DenegacionExplicada } from './denegaciones';
 import {
   LIVE_TUI_LABELS,
   LIVE_TUI_MODE,
@@ -30,19 +23,15 @@ import {
   WRITABLE_TUI_MODE,
   type FleetAgent,
 } from './fleet';
-import {
-  explicarDenegacionPty,
-  traducirCodigosEnTexto,
-  type DenegacionExplicada,
-} from './denegaciones';
-import { readPtySession, subscribePtySession } from './pty-session';
-import { liveTuiGate, terminalChannelGate } from './plugin';
-import { ptySecondsLeft, type OperatorSession } from './session';
-import { ControlDeTui } from './ControlDeTui';
-import { NegativaPty, PtySessionDialog } from './PtySessionDialog';
-import { PtySessionBar } from './PtySessionBar';
+import { ModeSwitch, type ModeOption } from './ModeSwitch';
+import { NegativaPty } from './NegativaPty';
 import type { MotivoReconciliacionPlaza } from './PlazasColgadas';
-import type { RequestTerminalGrant } from './types';
+import { liveTuiGate, terminalChannelGate } from './plugin';
+import { readPtySession, subscribePtySession } from './pty-session';
+import { PtySessionBar } from './PtySessionBar';
+import { ptySecondsLeft } from './session';
+import { StageMenu } from './StageMenu';
+import type { RequestTerminalGrant, StageMemory } from './types';
 
 const PtyTerminal = lazy(() => import('./PtyTerminal'));
 
@@ -50,33 +39,85 @@ const PtyTerminal = lazy(() => import('./PtyTerminal'));
 const DEFAULT_COLS = 80;
 const DEFAULT_ROWS = 24;
 
-export function SessionStage({ session, sessionToken, agents, access, capability, targets, grants, closedChannels, onUpdate, onRequestGrant, onChannelClosed, onReleaseChannel, onReconciliarPlazas }: {
-  session: OperatorSession;
-  /** Incarnation of this tab. Closing and reopening the same alias produces a different token. */
+type StageView = 'tui' | 'terminal';
+
+function isTuiMode(mode: string | undefined): boolean {
+  return mode === LIVE_TUI_MODE || mode === WRITABLE_TUI_MODE;
+}
+
+function explicar(error: unknown): DenegacionExplicada {
+  return explicarDenegacionPty({
+    texto: error instanceof Error ? error.message : undefined,
+    estado: error instanceof TerminalApiError ? error.status : undefined,
+    codigo: error instanceof TerminalApiError ? error.code : undefined,
+  });
+}
+
+function Notice({ tone, icon, children, onDismiss }: {
+  tone: 'warn' | 'neutral';
+  icon: ReactNode;
+  children: ReactNode;
+  onDismiss?: () => void;
+}) {
+  return (
+    <p
+      role={tone === 'warn' ? 'alert' : 'status'}
+      className={cn(
+        'm-0 flex items-start gap-2 border-b px-3 py-1.5 text-[13px]',
+        tone === 'warn' ? 'border-warn/30 bg-warn-soft text-warn-ink' : 'border-line bg-subtle text-muted',
+      )}
+    >
+      <span className="mt-0.5 shrink-0">{icon}</span>
+      <span className="min-w-0 flex-1">{children}</span>
+      {onDismiss ? (
+        <button type="button" onClick={onDismiss} aria-label="Descartar" className="cursor-pointer rounded border-0 bg-transparent p-0.5 text-current hover:bg-black/5">
+          <X size={14} aria-hidden="true" />
+        </button>
+      ) : null}
+    </p>
+  );
+}
+
+interface StageProps {
+  agent: FleetAgent;
+  sessionId: string;
+  /** Incarnation of this opening. Leaving the agent and coming back produces a different token. */
   sessionToken: number;
-  agents: FleetAgent[];
+  state: LiveState;
+  memory: StageMemory;
   access?: ConsoleAccess;
   capability?: TerminalCapability;
   targets?: TerminalTargetsSnapshot;
+  summary: string;
   grants: Record<string, TerminalSessionGrant>;
   closedChannels: Record<string, true | undefined>;
-  onUpdate: (session: OperatorSession) => void;
-  /** Workspace-owned fence: survives stage unmounts caused by switching tabs. */
+  /** Workspace-owned fence: survives stage unmounts. */
   onRequestGrant: RequestTerminalGrant;
+  onMemory: (patch: StageMemory) => void;
   onChannelClosed: (sessionId: string) => void;
   onReleaseChannel: (sessionId: string) => Promise<void>;
   /** A rejection left the seat state uncertain: the inventory is reread before acting. */
   onReconciliarPlazas: (motivo: MotivoReconciliacionPlaza) => void;
-}) {
+  onRefresh: () => void;
+  requestedView?: 'tui' | 'terminal';
+}
+
+export function SessionStage({
+  agent, sessionId, sessionToken, state, memory, access, capability, targets, summary,
+  grants, closedChannels, onRequestGrant, onMemory, onChannelClosed, onReleaseChannel, onReconciliarPlazas, onRefresh, requestedView,
+}: StageProps) {
   const api = useApi();
-  const [showPtyDialog, setShowPtyDialog] = useState(false);
+  const grant = grants[sessionId] as TerminalSessionGrant | undefined;
+  const [view, setView] = useState<StageView>(() => (grant ? (isTuiMode(grant.target.mode) ? 'tui' : 'terminal') : requestedView ?? 'tui'));
+  /** A view the address asked for, kept until its channel can be requested: the gates load after the stage. */
+  const pendingViewRef = useRef(requestedView);
   const [requesting, setRequesting] = useState(false);
   const [requestError, setRequestError] = useState<DenegacionExplicada>();
   const [now, setNow] = useState(() => Date.now());
   const [controlSostenido, setControlSostenido] = useState(false);
   const [prorrogando, setProrrogando] = useState(false);
   const [ventanaHasta, setVentanaHasta] = useState<string>();
-  /** Panel that already tried to open its TUI on its own. It is per panel and is not retried. */
+  /** Opening that already tried its TUI on its own. It is not retried. */
   const autoOpenedRef = useRef<string>(undefined);
   /** Synchronous POST fence: auto-open and a click both enter before `setRequesting` renders. */
   const requestAttemptRef = useRef<{ sequence: number } | undefined>(undefined);
@@ -88,10 +129,7 @@ export function SessionStage({ session, sessionToken, agents, access, capability
     return () => { mountedRef.current = false; };
   }, []);
 
-  const currentAgent = agents.find((agent) => agent.id === session.agent.id) ?? session.agent;
-  const liveSession = { ...session, agent: currentAgent };
-  const grant = grants[liveSession.id] as TerminalSessionGrant | undefined;
-  const ptyChannelLive = liveSession.mode === 'pty' && grant !== undefined && !closedChannels[liveSession.id];
+  const channelLive = grant !== undefined && !closedChannels[sessionId];
 
   const channelSessionId = grant ? grant.session_id : undefined;
   const subscribeChannel = useCallback(
@@ -102,49 +140,68 @@ export function SessionStage({ session, sessionToken, agents, access, capability
   const channelView = useSyncExternalStore(subscribeChannel, readChannel);
 
   useEffect(() => {
-    if (!ptyChannelLive || channelView?.state === 'open') return;
+    if (!channelLive || channelView?.state === 'open') return;
     const interval = window.setInterval(() => { setNow(Date.now()); }, 1_000);
     return () => { window.clearInterval(interval); };
-  }, [channelView?.state, ptyChannelLive]);
+  }, [channelView?.state, channelLive]);
 
-  const channel = terminalChannelGate(capability, access, targets, liveSession.agent);
+  const channel = terminalChannelGate(capability, access, targets, agent);
   const channelLabel = channel.status !== 'blocked' ? TERMINAL_ACCESS_LABELS[channel.status] : 'PTY no habilitado';
-  const channelTarget = terminalTargetForAgent(targets?.items, liveSession.agent);
-  const liveTui = liveTuiGate(capability, access, targets, liveSession.agent);
+  const channelTarget = terminalTargetForAgent(targets?.items, agent);
+  const liveTui = liveTuiGate(capability, access, targets, agent);
   const liveTuiLabel = liveTui.status === 'blocked' ? 'TUI no habilitada' : LIVE_TUI_LABELS[liveTui.status];
-
   const channelReason = channel.reason
     ? traducirCodigosEnTexto(channel.reason)
     : 'Todavía no se pudo leer si hay canal PTY para este alias.';
+  const tuiReason = traducirCodigosEnTexto(liveTui.reason);
 
-  const targetMode = grant ? grant.target.mode : liveSession.channelMode;
-  const channelIsLiveTui = targetMode === LIVE_TUI_MODE || targetMode === WRITABLE_TUI_MODE;
+  const targetMode = grant ? grant.target.mode : memory.channelMode;
+  const channelIsLiveTui = isTuiMode(targetMode);
   const escrituraDisponible = (liveTui.status === 'available' || liveTui.status === 'no_tui')
     && ofreceTuiEscribible(channelTarget);
+  const tuiEnabled = liveTui.enabled || escrituraDisponible;
   const soloLectura = terminalEsSoloLectura(targetMode, controlSostenido);
+  // The inventory is what the operator saw before clicking; the grant's own target is the fallback.
+  const sharingTarget = channelTarget?.shares_container_with.length ? channelTarget : grant?.target ?? channelTarget;
+  const shared = sharingTarget?.shares_container_with ?? [];
+  const sharedLabels = shared.map((identity) => (
+    identity.tenant_id === sharingTarget?.tenant_id ? identity.alias : `${identity.tenant_id}:${identity.alias}`));
 
   const requestChannelRef = useRef(requestChannel);
   requestChannelRef.current = requestChannel;
 
-  /** Automatic opening of the live TUI when the panel is selected and it is available. */
   useEffect(() => {
-    if (!liveTui.enabled && !escrituraDisponible) return;
-    if (autoOpenedRef.current === liveSession.id) return;
-    // Durable guard: survives the panel remount on a tab switch, which `autoOpenedRef` does not.
-    if (liveSession.liveTuiAttempted) return;
-    if (liveSession.id in grants || liveSession.id in closedChannels) return;
-    autoOpenedRef.current = liveSession.id;
-    const mode = escrituraDisponible ? WRITABLE_TUI_MODE : LIVE_TUI_MODE;
-    void requestChannelRef.current(mode).catch(mostrarError);
-  }, [closedChannels, grants, liveSession.agent.alias, liveSession.id, liveSession.liveTuiAttempted, liveTui.enabled, escrituraDisponible]);
+    if (!requestedView) return;
+    pendingViewRef.current = requestedView;
+    setView(requestedView);
+  }, [requestedView]);
+
+  const chooseRef = useRef<(next: StageView) => void>(() => undefined);
+  useEffect(() => {
+    const wanted = pendingViewRef.current;
+    if (wanted === 'terminal' && channel.enabled) {
+      pendingViewRef.current = undefined;
+      chooseRef.current('terminal');
+    } else if (wanted === 'tui' && tuiEnabled) {
+      pendingViewRef.current = undefined;
+      chooseRef.current('tui');
+    }
+  }, [requestedView, channel.enabled, tuiEnabled]);
+
+  /** Automatic opening of the live TUI when the agent is selected and it is available. */
+  useEffect(() => {
+    if (!tuiEnabled) return;
+    if (pendingViewRef.current === 'terminal' || requestedView === 'terminal') return;
+    if (autoOpenedRef.current === sessionId) return;
+    if (memory.liveTuiAttempted) return;
+    if (sessionId in grants || sessionId in closedChannels) return;
+    autoOpenedRef.current = sessionId;
+    setView('tui');
+    void requestChannelRef.current(escrituraDisponible ? WRITABLE_TUI_MODE : LIVE_TUI_MODE).catch(mostrarError);
+  }, [closedChannels, grants, sessionId, memory.liveTuiAttempted, tuiEnabled, escrituraDisponible, requestedView]);
 
   function mostrarError(error: unknown) {
-    if (!mountedRef.current) return;
-    setRequestError(explicarDenegacionPty({
-      texto: error instanceof Error ? error.message : undefined,
-      estado: error instanceof TerminalApiError ? error.status : undefined,
-      codigo: error instanceof TerminalApiError ? error.code : undefined,
-    }));
+    if (mountedRef.current) setRequestError(explicar(error));
   }
 
   async function requestChannel(mode: string): Promise<TerminalSessionGrant | undefined> {
@@ -159,29 +216,24 @@ export function SessionStage({ session, sessionToken, agents, access, capability
     setRequesting(true);
     setRequestError(undefined);
     try {
-      const current = grants[liveSession.id] as TerminalSessionGrant | undefined;
-      if (current !== undefined && (current.target.mode !== mode || closedChannels[liveSession.id])) {
-        await onReleaseChannel(liveSession.id);
+      const current = grants[sessionId] as TerminalSessionGrant | undefined;
+      if (current !== undefined && (current.target.mode !== mode || closedChannels[sessionId])) {
+        await onReleaseChannel(sessionId);
       }
       if (!ownsAttempt()) return undefined;
-      const outcome = await onRequestGrant(liveSession.id, sessionToken, {
-        tenant_id: liveSession.agent.tenantId,
-        alias: liveSession.agent.alias,
+      const outcome = await onRequestGrant(sessionId, sessionToken, {
+        tenant_id: agent.tenantId,
+        alias: agent.alias,
         mode,
         cols: DEFAULT_COLS,
         rows: DEFAULT_ROWS,
       });
       if (!ownsAttempt() || !outcome.adopted) return undefined;
-      setShowPtyDialog(false);
       setVentanaHasta(undefined);
       return outcome.grant;
     } catch (error) {
       if (!ownsAttempt()) return undefined;
-      const explicada = explicarDenegacionPty({
-        texto: error instanceof Error ? error.message : undefined,
-        estado: error instanceof TerminalApiError ? error.status : undefined,
-        codigo: error instanceof TerminalApiError ? error.code : undefined,
-      });
+      const explicada = explicar(error);
       if (explicada.codigo === 'session_limit') {
         onReconciliarPlazas('session_limit');
       } else if (error instanceof TerminalApiError && error.code === 'invalid_grant_receipt') {
@@ -189,7 +241,7 @@ export function SessionStage({ session, sessionToken, agents, access, capability
       }
       if (mode === WRITABLE_TUI_MODE) throw error;
       setRequestError(explicada);
-      if (mode === LIVE_TUI_MODE) onUpdate({ ...liveSession, liveTuiAttempted: true });
+      if (mode === LIVE_TUI_MODE) onMemory({ liveTuiAttempted: true });
       return undefined;
     } finally {
       if (requestAttemptRef.current === attempt) requestAttemptRef.current = undefined;
@@ -205,135 +257,180 @@ export function SessionStage({ session, sessionToken, agents, access, capability
       const prorroga = await prorrogarSesion(grant.session_id, grant, api);
       setVentanaHasta(prorroga.expires_at);
     } catch (error) {
-      setRequestError(explicarDenegacionPty({
-        texto: error instanceof Error ? error.message : undefined,
-        estado: error instanceof TerminalApiError ? error.status : undefined,
-        codigo: error instanceof TerminalApiError ? error.code : undefined,
-      }));
+      mostrarError(error);
     } finally {
       if (mountedRef.current) setProrrogando(false);
     }
   }
 
-  function openLiveTui() {
-    if (!liveTui.enabled && !escrituraDisponible) return;
-    if (grant !== undefined && !closedChannels[liveSession.id] && grant.target.mode === LIVE_TUI_MODE) {
-      onUpdate({ ...liveSession, mode: 'pty' });
-      return;
-    }
+  function chooseTui() {
+    setView('tui');
+    if (!tuiEnabled) return;
+    if (grant !== undefined && channelLive && isTuiMode(grant.target.mode)) return;
     setRequestError(undefined);
     void requestChannel(escrituraDisponible ? WRITABLE_TUI_MODE : LIVE_TUI_MODE).catch(mostrarError);
   }
 
-  /** Reopens the SAME channel that died: a read-only observation never becomes a writable shell. */
+  function chooseTerminal() {
+    setView('terminal');
+    if (!channel.enabled) return;
+    if (grant !== undefined && channelLive && grant.target.mode === SHELL_MODE) return;
+    setRequestError(undefined);
+    void requestChannel(SHELL_MODE);
+  }
+
+  /** Reopens the SAME kind of channel that died: a read-only observation never becomes a writable shell. */
   async function pedirCanalNuevo() {
     const eraTui = channelIsLiveTui;
-    await onReleaseChannel(liveSession.id);
+    await onReleaseChannel(sessionId);
     setRequestError(undefined);
-    if (eraTui) {
-      await requestChannelRef.current(escrituraDisponible ? WRITABLE_TUI_MODE : LIVE_TUI_MODE).catch(mostrarError);
-      return;
-    }
-    setShowPtyDialog(true);
+    if (eraTui) await requestChannelRef.current(escrituraDisponible ? WRITABLE_TUI_MODE : LIVE_TUI_MODE).catch(mostrarError);
+    else await requestChannelRef.current(SHELL_MODE);
   }
 
-  function selectPtyMode() {
-    if (!channel.enabled) return;
-    const current = grants[liveSession.id] as TerminalSessionGrant | undefined;
-    if (current !== undefined && !closedChannels[liveSession.id] && current.target.mode === SHELL_MODE) {
-      onUpdate({ ...liveSession, mode: 'pty' });
-    } else {
-      setRequestError(undefined);
-      setShowPtyDialog(true);
-    }
+  function choose(next: StageView) {
+    if (next === 'tui') chooseTui();
+    else chooseTerminal();
   }
+  chooseRef.current = choose;
+
+  function chooseByHand(next: StageView) {
+    pendingViewRef.current = undefined;
+    if (new URLSearchParams(window.location.search).has('modo')) redirect(window.location.pathname);
+    choose(next);
+  }
+
+  const options: ModeOption<StageView>[] = [
+    {
+      id: 'tui', label: 'TUI', icon: MonitorPlay, disabled: !tuiEnabled || requesting,
+      title: `${liveTuiLabel}: ${tuiReason}`,
+    },
+    {
+      id: 'terminal', label: 'Terminal', icon: TerminalSquare, disabled: !channel.enabled || requesting,
+      title: `Shell nueva en el espacio del agente. ${channelReason}${sharedLabels.length ? ` Contenedor compartido con ${sharedLabels.join(', ')}.` : ''}`,
+    },
+  ];
+
+  const wantsTui = view === 'tui';
+  const paneMatchesView = grant !== undefined && wantsTui === channelIsLiveTui;
+  const paneEnabled = channelIsLiveTui ? tuiEnabled : channel.enabled;
+  const paneSocketPath = grant ? [grant.websocket_path, channel.websocketPath, liveTui.websocketPath].find((path) => path !== undefined && path !== '') : undefined;
+  const viewEnabled = wantsTui ? tuiEnabled : channel.enabled;
+  const ptyClosedAll = !tuiEnabled && !channel.enabled;
 
   return (
-    <div className="terminal-active-grid" id={`terminal-session-${liveSession.id}`} role="tabpanel">
-      <section className="terminal-console">
-        <header className="terminal-session-head">
-          <div className="terminal-mode-switch" aria-label="Canal de sesión">
-            <button type="button" aria-pressed={ptyChannelLive && channelIsLiveTui}
-              data-active={(ptyChannelLive && channelIsLiveTui) || undefined}
-              disabled={(!liveTui.enabled && !escrituraDisponible) || requesting}
-              onClick={openLiveTui} title={`${liveTuiLabel}: ${traducirCodigosEnTexto(liveTui.reason)}`}>
-              <MonitorPlay size={15} aria-hidden="true" /> TUI
-            </button>
-            <button type="button" aria-pressed={ptyChannelLive && !channelIsLiveTui}
-              data-active={(ptyChannelLive && !channelIsLiveTui) || undefined}
-              disabled={!channel.enabled || requesting} onClick={selectPtyMode}
-              title={`Shell nueva en el espacio del agente. ${channelReason}`}>
-              <TerminalSquare size={15} aria-hidden="true" /> Terminal
-            </button>
-          </div>
-          {grant ? <PtySessionBar agent={liveSession.agent} grant={grant}
-            secondsLeft={ptySecondsLeft(grant.expires_at, now)} readOnly={soloLectura}
-            ticketConsumed={channelView?.ticketConsumido === true} ventanaHasta={ventanaHasta}
-            prorrogando={prorrogando} onProrrogar={() => void prorrogar()} /> : null}
-        </header>
-
-        {requestError ? (
-          <div className="terminal-channel-refusal">
-            <NegativaPty negativa={requestError} />
-            <button type="button" className="button small secondary" onClick={() => { setRequestError(undefined); }}>Descartar</button>
-          </div>
-        ) : null}
-
-        {liveSession.mode === 'pty' ? (
-          <>
-            {channel.enabled && grant && channel.websocketPath ? (
-             <div className="terminal-pty-pane">
-               <Suspense fallback={<LoadingState label="Cargando Xterm…" />}>
-                 <PtyTerminal
-                   websocketPath={grant.websocket_path || channel.websocketPath}
-                   sessionId={grant.session_id}
-                   ticket={grant.ticket}
-                   authorityProof={grant.authority_proof}
-                   readOnly={soloLectura}
-                   onClosed={() => { onChannelClosed(liveSession.id); }}
-                   onRequestNewSession={() => { void pedirCanalNuevo(); }}
-                 />
-               </Suspense>
-            </div>
-          ) : (
-            <div className="terminal-channel-unavailable">
-              <CircleOff aria-hidden="true" />
-              {/* With the gate open and no grant the channel is simply not open: painting the
-                  destination state here said "PTY online" over an empty stage. */}
-              <h3>{channel.enabled ? 'No hay canal PTY abierto' : channelLabel}</h3>
-              <p>{channel.enabled
-                ? 'Elegí TUI para la sesión viva o Terminal para abrir una shell en el espacio del agente.'
-                : channelReason}</p>
-            </div>
-            )}
-            {/* OUTSIDE the grant branch: taking the control swaps the read-only session for a
-                writable one, and a control that unmounted in that gap would lose the hold it
-                just took — and with it the only thing that can give the alias its queue back. */}
-            <ControlDeTui
-              alias={liveSession.agent.alias}
-              grant={grant}
-              puedeEscribir={escrituraDisponible && targetMode !== SHELL_MODE}
-              codigoDeCierre={channelView?.closeCode}
-              pidiendoSesion={requesting}
-              sesionEnganchada={channelView?.ticketConsumido === true}
-              estadoDelCanal={channelView?.state}
-              onAbrirEscritura={() => requestChannelRef.current(WRITABLE_TUI_MODE)}
-              onControlCambia={setControlSostenido}
-            />
-          </>
-        ) : null}
-      </section>
-
-      {showPtyDialog ? (
-        <PtySessionDialog
-          agent={liveSession.agent}
-          resolution={{ status: channel.status === 'blocked' ? 'unknown' : channel.status, reason: channel.reason, target: channelTarget }}
-          pending={requesting}
-          {...(requestError ? { error: requestError } : {})}
-          onCancel={() => { setShowPtyDialog(false); }}
-          onConfirm={() => void requestChannel(SHELL_MODE)}
+    <div className="flex min-h-0 flex-1 flex-col" id={`terminal-session-${sessionId}`}>
+      <header className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2 border-b border-line bg-surface px-3 py-2 min-[761px]:flex-nowrap">
+        <AgentContextMenu agent={agent} omit={['tui', 'terminal']} className="order-1 flex min-w-0 flex-1 items-center gap-2.5 min-[761px]:flex-none">
+          <AgentOrb seed={`${agent.tenantId}/${agent.alias}`} state={state} size={28} />
+          <h2 className="m-0 flex min-w-0 items-baseline gap-1.5 text-sm font-semibold">
+            <span className="truncate">{agent.alias}</span>
+            <span className="truncate text-xs font-normal text-muted">{agent.tenantId}</span>
+          </h2>
+          <StatePill state={state} title={LIVE_STATE_META[state].hint} />
+        </AgentContextMenu>
+        <ModeSwitch
+          label="Vista de la sesión"
+          value={view}
+          options={options}
+          onChange={chooseByHand}
+          className="order-3 w-full min-[761px]:order-2 min-[761px]:w-auto"
         />
+        <div className="order-2 ml-auto flex items-center gap-1 min-[761px]:order-3">
+          {grant ? (
+            <PtySessionBar
+              agent={agent}
+              grant={grant}
+              secondsLeft={ptySecondsLeft(grant.expires_at, now)}
+              readOnly={soloLectura}
+              ticketConsumed={channelView?.ticketConsumido === true}
+              ventanaHasta={ventanaHasta}
+            />
+          ) : null}
+          <StageMenu
+            agent={agent}
+            hasGrant={grant !== undefined}
+            canExtend={channelView?.ticketConsumido === true}
+            extending={prorrogando}
+            onExtend={() => void prorrogar()}
+            onClose={() => { void onReleaseChannel(sessionId); }}
+            onRefresh={onRefresh}
+            summary={summary}
+          />
+        </div>
+      </header>
+
+      {requestError ? (
+        <div className="shrink-0 border-b border-line p-2">
+          <NegativaPty negativa={requestError} />
+          <button type="button" className="mt-1.5 cursor-pointer border-0 bg-transparent p-0 text-xs text-muted underline hover:text-fg" onClick={() => { setRequestError(undefined); }}>
+            Descartar
+          </button>
+        </div>
       ) : null}
+
+      {ptyClosedAll ? (
+        <Notice tone="neutral" icon={<CircleOff size={14} aria-hidden="true" />}>
+          <strong className="font-medium text-fg-2">{channelLabel}.</strong> {channelReason}
+        </Notice>
+      ) : null}
+
+      {view === 'terminal' && shared.length ? (
+        <Notice tone="warn" icon={<AlertTriangle size={14} aria-hidden="true" />}>
+          Este contenedor lo comparten <strong>{sharedLabels.join(', ')}</strong>. Una shell acá no es “la terminal de {agent.alias}”:
+          es acceso al home donde conviven {[agent.alias, ...sharedLabels].join(', ')}.
+        </Notice>
+      ) : null}
+
+      {/* OUTSIDE the grant branch: taking the control swaps the read-only session for a writable
+          one, and a control that unmounted in that gap would lose the hold it just took — and with
+          it the only thing that can give the alias its queue back. Hidden, never unmounted. */}
+      <div hidden={view !== 'tui'}>
+        <ControlDeTui
+          alias={agent.alias}
+          grant={grant}
+          puedeEscribir={grant !== undefined && escrituraDisponible && targetMode !== SHELL_MODE}
+          codigoDeCierre={channelView?.closeCode}
+          pidiendoSesion={requesting}
+          sesionEnganchada={channelView?.ticketConsumido === true}
+          estadoDelCanal={channelView?.state}
+          onAbrirEscritura={() => requestChannelRef.current(WRITABLE_TUI_MODE)}
+          onControlCambia={setControlSostenido}
+        />
+      </div>
+
+      <div className="flex min-h-0 flex-1 flex-col">
+        {paneMatchesView && paneEnabled && paneSocketPath ? (
+          <Suspense fallback={<p className="m-0 p-4 text-[13px] text-muted" role="status">Cargando Xterm…</p>}>
+            <PtyTerminal
+              websocketPath={paneSocketPath}
+              sessionId={grant.session_id}
+              ticket={grant.ticket}
+              authorityProof={grant.authority_proof}
+              readOnly={soloLectura}
+              onClosed={() => { onChannelClosed(sessionId); }}
+              onRequestNewSession={() => { void pedirCanalNuevo(); }}
+            />
+          </Suspense>
+        ) : (
+          <div className="grid flex-1 place-content-center justify-items-center gap-1.5 p-6 text-center" data-canal-no-disponible="">
+            {requesting
+              ? <Loader2 size={20} aria-hidden="true" className="animate-spin text-muted" />
+              : <CircleOff size={20} aria-hidden="true" className="text-muted" />}
+            <h3 className="m-0 text-sm font-semibold">
+              {requesting ? 'Abriendo el canal…' : viewEnabled ? 'No hay canal PTY abierto' : wantsTui ? liveTuiLabel : channelLabel}
+            </h3>
+            {requesting || viewEnabled || ptyClosedAll ? null : (
+              <p className="m-0 max-w-md text-[13px] text-muted">{wantsTui ? tuiReason : channelReason}</p>
+            )}
+            {!requesting && viewEnabled ? (
+              <Button size="sm" variant="primary" className="mt-1" onClick={() => { choose(view); }}>
+                {wantsTui ? 'Abrir TUI en vivo' : 'Abrir terminal'}
+              </Button>
+            ) : null}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

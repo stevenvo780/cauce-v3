@@ -1,7 +1,7 @@
 import { screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
-import { ConfigAdministration } from './ConfigPage';
+import { ConfigPage } from './ConfigPage';
 import { renderWithApi } from '../../test/render';
 import { server } from '../../mocks/server';
 import { irA, servirConfig, snapshotDeConfig } from './ConfigPage.test-helpers';
@@ -16,8 +16,8 @@ it.each([retired, { resource: 'batch', action: 'apply', mutations: [retired] }])
     mutation: restored, inverse_mutation: retired,
   })));
   const user = userEvent.setup();
-  renderWithApi(<ConfigAdministration />);
-  await irA(user, /historial y json/i);
+  renderWithApi(<ConfigPage />);
+  await irA(user, /avanzado/i);
   await user.click(screen.getByRole('button', { name: /^Preview$/ }));
   expect(await screen.findByText(/preview del rollback de la revisión 1 aceptado/i)).toBeInTheDocument();
 });
@@ -28,9 +28,9 @@ it('bloquea rollback de batch con autoridad de cuentas y de batches anidados', a
     { id: '2', operation: { resource: 'batch', action: 'apply', mutations: [{ resource: 'batch', action: 'apply', mutations: [retired] }] } },
   ] }));
   const user = userEvent.setup();
-  renderWithApi(<ConfigAdministration />);
-  await irA(user, /historial y json/i);
-  const audit = screen.getByRole('heading', { name: 'Audit trail de configuración' }).closest('section');
+  renderWithApi(<ConfigPage />);
+  await irA(user, /avanzado/i);
+  const audit = screen.getByRole('heading', { name: 'Historial de revisiones' }).closest('section');
   if (!audit) throw new Error('Audit panel missing');
   expect(within(audit).queryByRole('button', { name: /^Rollback$/ })).not.toBeInTheDocument();
   expect(within(audit).getByRole('link', { name: /abrir cuentas y cuotas/i })).toBeInTheDocument();
@@ -46,8 +46,8 @@ it('previsualiza un rollback de 200 cambios del historial con recibo completo', 
     mutation: inverse, inverse_mutation: operation,
   })));
   const user = userEvent.setup();
-  renderWithApi(<ConfigAdministration />);
-  await irA(user, /historial y json/i);
+  renderWithApi(<ConfigPage />);
+  await irA(user, /avanzado/i);
   await user.click(screen.getByRole('button', { name: /^Preview$/ }));
   expect(await screen.findByText(/preview del rollback de la revisión 1 aceptado/i)).toBeInTheDocument();
 });
@@ -59,10 +59,12 @@ it('conserva el bloqueo de cuentas dentro de una revisión de 200 cambios', asyn
   ] };
   servirConfig(() => ({ ...snapshotDeConfig(1), revisions: [{ id: '1', operation }] }));
   const user = userEvent.setup();
-  renderWithApi(<ConfigAdministration />);
-  await irA(user, /historial y json/i);
-  const audit = screen.getByRole('heading', { name: 'Audit trail de configuración' }).closest('section');
+  renderWithApi(<ConfigPage />);
+  await irA(user, /avanzado/i);
+  const audit = screen.getByRole('heading', { name: 'Historial de revisiones' }).closest('section');
   if (!audit) throw new Error('Audit panel missing');
   expect(within(audit).queryByRole('button', { name: /^Rollback$/ })).not.toBeInTheDocument();
   expect(within(audit).getByRole('link', { name: /abrir cuentas y cuotas/i })).toBeInTheDocument();
 });
+
+beforeEach(() => { window.history.replaceState({}, '', '/config?seccion=espacios'); });

@@ -78,11 +78,11 @@ it('la matriz vive DENTRO de «Cuentas y cuotas», sin segunda ruta y sin segund
 
   // The three halves, on the same screen and one click away: consumption, inventory, and ceiling per alias.
   await user.click(screen.getByRole('tab', { name: 'Inventario' }));
-  expect(screen.getByRole('heading', { name: /inventario de cuentas/i })).toBeInTheDocument();
+  expect(screen.getByRole('heading', { name: /^inventario$/i })).toBeInTheDocument();
 
   await user.click(screen.getByRole('tab', { name: 'Asignaciones' }));
   expect(screen.getByRole('heading', { name: /techo por alias/i })).toBeInTheDocument();
-  expect(screen.getByRole('heading', { name: /ruteo: qué cuenta puede usar cada agente/i })).toBeInTheDocument();
+  expect(screen.getByRole('heading', { name: /orden de respaldo declarado/i })).toBeInTheDocument();
 });
 
 it('muestra el techo por alias y el orden de fallback derivado de los bindings habilitados', async () => {
@@ -105,6 +105,7 @@ it('declara la cuenta principal explícita y conserva esa cuenta durante los rei
   renderWithApi(<AccountsPage />);
 
   await openMatrix(user);
+  await user.click(await screen.findByRole('button', { name: /cómo se rutea/i }));
   expect(await screen.findByText(/usan la cuenta principal elegida en «Operar agente»/i)).toBeInTheDocument();
   expect(screen.getByText(/los reintentos conservan la cuenta seleccionada/i)).toBeInTheDocument();
 });
@@ -159,13 +160,13 @@ it('el dry-run de una mitad no habilita el apply de la otra: cada formulario tie
   const user = userEvent.setup();
   renderWithApi(<AccountsPage />);
 
-  // Account onboarding is left ready to send, but the ASSIGNMENT is previewed. And along the way
-  // it is pinned that switching tabs does NOT discard what was written in the other form: panels
-  // are always mounted and the inactive one comes with `hidden`. Re-mounting them conditionally
-  // would let the final `expect` see an empty onboarding dry-run.
+  // Account onboarding is left ready to send, but the ASSIGNMENT is previewed. Closing a form
+  // hides it without discarding what was typed, so coming back to it finds the same draft.
   await user.click(await screen.findByRole('tab', { name: 'Inventario' }));
+  await user.click(await screen.findByRole('button', { name: /nueva cuenta/i }));
   await user.type(await screen.findByLabelText(/id externo de la suscripción/i), 'org-9f21');
   await user.type(screen.getByLabelText(/tenant pagador/i), 'Steven');
+  await user.click(screen.getByRole('button', { name: /^cerrar$/i }));
   await user.click(screen.getByRole('tab', { name: 'Asignaciones' }));
   await user.click(screen.getByRole('button', { name: /Steven\/kant × minimax-pablo: sin techo/i }));
   await user.click(assignmentActions().getByRole('button', { name: /previsualizar \(dry-run\)/i }));
@@ -173,10 +174,12 @@ it('el dry-run de una mitad no habilita el apply de la otra: cada formulario tie
   expect(changes).toHaveLength(1);
   expect(changes[0]?.mutation).toMatchObject({ resource: 'alias_routing_ceiling' });
 
+  await user.click(screen.getByRole('button', { name: /^cerrar$/i }));
   await user.click(screen.getByRole('tab', { name: 'Inventario' }));
+  await user.click(screen.getByRole('button', { name: /nueva cuenta/i }));
   const accountActions = within(screen.getByRole('group', { name: /acciones de alta de cuenta/i }));
   expect(accountActions.getByRole('button', { name: /^aplicar$/i })).toBeDisabled();
-  // And what was written before going to the other tab is still there: the panel hid, did not unmount.
+  // And what was written before is still there: the form hid, it was not discarded.
   expect(screen.getByLabelText(/id externo de la suscripción/i)).toHaveValue('org-9f21');
 });
 
@@ -257,6 +260,8 @@ it('avisa que revocar el techo cascadea el binding', async () => {
   const user = userEvent.setup();
   renderWithApi(<AccountsPage />);
 
+  await openMatrix(user);
+  await user.click(await screen.findByRole('button', { name: /nueva asignación/i }));
   await user.selectOptions(await screen.findByLabelText(/operación/i), 'revoke-ceiling');
   expect(screen.getByText(/borra en cascada el binding/i)).toBeInTheDocument();
 });

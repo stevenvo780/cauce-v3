@@ -3,10 +3,9 @@ import type { QueueItem } from '../../api/types';
 /**
  * **The deep link `/queues?delivery=<uuid>` — where it came from and what was wrong with it.**
  *
- * The "Live fleet" panel renders, for every delivery in flight, a "View in Queues" link pointing
- * to `/queues?delivery=<uuid>` (commit `d3411de`). `QueuesPage` did not read `location.search`
- * — the ONLY console code that touched it was `LiveFleetPage`, with its own `agente`, `pestana`
- * and `trace` — so the landing rendered the generic list of 200 rows, the requested id appeared
+ * The agent sheet renders, for every delivery in flight, a "View in Queues" link pointing
+ * to `/queues?delivery=<uuid>` (commit `d3411de`). `QueuesPage` did not read `location.search`,
+ * so the landing rendered the generic list of 200 rows, the requested id appeared
  * ZERO times in `<main>`, and no row was marked. The link went nowhere: it led to a page that
  * looked like the answer.
  *

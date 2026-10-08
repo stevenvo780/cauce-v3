@@ -5,7 +5,7 @@ import { ConsoleAccessBoundary } from '../../api/console-access';
 import type { ConfigurationSnapshot } from '../../api/types';
 import { server } from '../../mocks/server';
 import { renderWithApi } from '../../test/render';
-import { AgentSettings } from './AgentSettings';
+import { AgentesSection } from './AgentesSection';
 
 interface ChangeBody {
   dry_run: boolean;
@@ -34,7 +34,7 @@ function receipt(body: ChangeBody, applied: boolean, revision = 4) {
 }
 
 function renderSettings(snapshot = initial) {
-  return renderWithApi(<ConsoleAccessBoundary><AgentSettings snapshot={snapshot} /></ConsoleAccessBoundary>);
+  return renderWithApi(<ConsoleAccessBoundary><AgentesSection snapshot={snapshot} /></ConsoleAccessBoundary>);
 }
 
 async function openAndFill() {
@@ -167,41 +167,28 @@ it('closes with Escape and restores focus to the opener', async () => {
   expect(trigger).toHaveFocus();
 });
 
-it('traps Tab in the dialog and skips advanced inputs while details are closed', async () => {
+it('opens on the alias field and keeps the advanced inputs folded until asked', async () => {
   server.use(access());
   renderSettings();
   const user = userEvent.setup();
   await user.click(await screen.findByRole('button', { name: 'Añadir agente' }));
-  const alias = screen.getByRole('textbox', { name: 'Alias' });
-  expect(alias).toHaveFocus();
-  await user.tab({ shift: true });
-  expect(screen.getByRole('combobox', { name: 'Espacio de trabajo' })).toHaveFocus();
-  await user.tab({ shift: true });
-  expect(screen.getByRole('button', { name: 'Cerrar' })).toHaveFocus();
-  await user.tab();
-  expect(screen.getByRole('combobox', { name: 'Espacio de trabajo' })).toHaveFocus();
-
-  const summary = screen.getByText('Entorno de ejecución (opcional)');
-  summary.focus();
-  expect(summary).toHaveFocus();
-  await user.tab();
-  expect(screen.getByRole('button', { name: 'Previsualizar alta' })).toHaveFocus();
-  expect(screen.getByRole('textbox', { name: 'Nombre del contenedor' })).not.toHaveFocus();
+  await waitFor(() => { expect(screen.getByRole('textbox', { name: 'Alias' })).toHaveFocus(); });
+  const details = screen.getByText('Entorno de ejecución (opcional)').closest('details');
+  expect(details).not.toHaveAttribute('open');
+  await user.click(screen.getByText('Entorno de ejecución (opcional)'));
+  expect(details).toHaveAttribute('open');
 });
 
-it('focuses the dialog heading in read-only mode and keeps only enabled controls in the tab loop', async () => {
+it('keeps every field of the dialog disabled in read-only mode', async () => {
   server.use(access(['config.read']));
   renderSettings();
   const user = userEvent.setup();
   await user.click(await screen.findByRole('button', { name: 'Añadir agente' }));
-  const dialog = screen.getByRole('dialog');
-  expect(screen.getByRole('heading', { name: 'Añadir agente' })).toHaveFocus();
+  expect(screen.getByRole('dialog')).toBeInTheDocument();
   expect(screen.getByRole('textbox', { name: 'Alias' })).toBeDisabled();
-  await user.tab();
-  expect(screen.getByRole('button', { name: 'Cerrar' })).toHaveFocus();
-  await user.tab();
-  expect(screen.getByText('Entorno de ejecución (opcional)')).toHaveFocus();
-  expect(dialog).toContainElement(document.activeElement as HTMLElement | null);
+  expect(screen.getByRole('textbox', { name: 'Nombre visible' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Previsualizar alta' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Crear registro' })).toBeDisabled();
 });
 
 it('reopens with an empty draft and uses the newer prop snapshot over an older reread', async () => {
@@ -227,7 +214,7 @@ it('reopens with an empty draft and uses the newer prop snapshot over an older r
   await user.click(screen.getByRole('button', { name: 'Crear registro' }));
   await waitFor(() => { expect(screen.queryByRole('dialog')).not.toBeInTheDocument(); });
 
-  view.rerender(<ConsoleAccessBoundary><AgentSettings snapshot={{
+  view.rerender(<ConsoleAccessBoundary><AgentesSection snapshot={{
     ...initial, revision: 6, tenants: [{ id: 'B', display_name: 'New tenant' }],
     harness_definitions: [{ id: 'gemini' }],
   }} /></ConsoleAccessBoundary>);

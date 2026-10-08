@@ -7,8 +7,8 @@
   "start_url": "/messages",
   "scope": "/",
   "display": "standalone",
-  "theme_color": "#f3f6fa",
-  "background_color": "#f3f6fa",
+  "theme_color": "#4338ca",
+  "background_color": "#0e0f14",
   "icons": [
     {
       "src": "/icons/cauce-192.png",

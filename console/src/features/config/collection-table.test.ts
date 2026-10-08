@@ -1,5 +1,5 @@
 import {
-  accionDeRol, claveDeFila, columnaNumerica, columnasDe, identidadFundida, rolesDisponibles,
+  accionDeRol, claveDeFila, columnaNumerica, columnasDe, detalleDeColumna, identidadFundida, rolesDisponibles,
 } from './collection-table';
 
 const membership = {
@@ -99,4 +99,30 @@ it('reconoce una columna de números y no se deja engañar por lo que sólo se l
   // everything right and a column of all `null` would read as if it had figures.
   expect(columnaNumerica([], 'n')).toBe(false);
   expect(columnaNumerica([{ n: null }, {}], 'n')).toBe(false);
+});
+
+describe('campos plegados de la política de cadena', () => {
+  const fila = {
+    id: 'default', progress_relay_enabled: true, progress_relay_max_events: 8,
+    failure_coalesce_enabled: true, failure_coalesce_window_seconds: 900,
+    delegation_caps_enabled: true, max_fanout_per_turn: 6, max_edge_repeats_per_root: 3, max_delegations_per_root: 64,
+  };
+
+  it('oculta los topes que se pliegan y deja el resto con etiqueta humana', () => {
+    const columnas = columnasDe('chain_policies', [fila]);
+    expect(columnas.map((columna) => columna.etiqueta)).toEqual(['Id', 'Relé de progreso', 'Agrupar fallos', 'Topes de delegación']);
+  });
+
+  it('no oculta un tope cuyo interruptor no se publica', () => {
+    const columnas = columnasDe('chain_policies', [{ id: 'default', progress_relay_max_events: 8 }]);
+    expect(columnas.map((columna) => columna.clave)).toContain('progress_relay_max_events');
+  });
+
+  it('escribe los topes bajo el interruptor, y nada si está apagado', () => {
+    expect(detalleDeColumna('chain_policies', 'progress_relay_enabled', fila)).toEqual(['hasta 8 eventos']);
+    expect(detalleDeColumna('chain_policies', 'failure_coalesce_enabled', fila)).toEqual(['ventana de 15 min']);
+    expect(detalleDeColumna('chain_policies', 'delegation_caps_enabled', fila)).toEqual(['6 por turno', '3 por arista', '64 por raíz']);
+    expect(detalleDeColumna('chain_policies', 'delegation_caps_enabled', { ...fila, delegation_caps_enabled: false })).toEqual([]);
+    expect(detalleDeColumna('tenants', 'enabled', fila)).toEqual([]);
+  });
 });

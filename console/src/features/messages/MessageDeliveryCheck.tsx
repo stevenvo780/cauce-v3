@@ -20,23 +20,26 @@ export function MessageDeliveryCheck({ delivery }: { delivery: DeliveryView }) {
     && events.some((event) => event.applied === true && event.status === 'done'
     && event.attempt === delivery.attempt
     && HarnessConsumptionEvidenceSchema.safeParse(event.harness_consumption).success);
-  const checks = isMailbox ? 1 : read ? 2 : received ? 1 : 0;
+  const checks = isMailbox ? 1 : received ? 2 : published ? 1 : 0;
   const labels = new Map([
     ['accepted', 'Recibido por el agente · entrega aceptada'],
     ['started', 'Recibido por el agente · ejecución iniciada'],
     ['done', 'Recibido por el agente · ejecución terminada'],
     ['failed', 'La ejecución falló'], ['dead', 'La entrega quedó detenida'], ['retry', 'Cauce reintentará la entrega'],
   ]);
-  const label = (!failed && read ? 'Leído por el agente · respuesta nativa comprobada' : undefined)
-    ?? (isMailbox ? MAILBOX_STATE_LABEL : undefined)
+  const label = (isMailbox ? MAILBOX_STATE_LABEL : undefined)
     ?? (status ? labels.get(status) : undefined)
-    ?? (published ? 'Publicado · esperando aceptación del agente' : 'Estado de entrega no disponible');
+    ?? (published ? 'Enviado · esperando aceptación del agente' : 'Estado de entrega no disponible');
+  const retrying = !failed && !isMailbox && status === 'retry';
   const title = isMailbox
     ? `${delivery.client_mailbox.label}: ${MAILBOX_STATE_LABEL}. ${MAILBOX_EXPLANATION}.`
     : `${label}. ${read ? 'Lectura comprobada.' : 'Lectura sin comprobar.'}`;
-  return <span className={failed ? 'chat-delivery-check chat-delivery-check-danger' : 'chat-delivery-check'}
-    role="status" aria-label={`Entrega: ${label}`} title={title}>
-    <span aria-hidden="true" data-checks={checks || undefined}>{checks === 2 ? '✓✓' : checks === 1 ? '✓' : '◷'}</span>
-    {failed || isMailbox ? <span>{label}</span> : null}
+  return <span className={failed ? 'inline-flex items-center gap-1 text-danger-ink' : retrying ? 'inline-flex items-center gap-1 text-warn-ink' : 'inline-flex items-center gap-1'}
+    role="status" aria-label={`Entrega: ${label}`} title={title}
+    data-failed={failed || undefined} data-mailbox={isMailbox || undefined}>
+    <span aria-hidden="true" data-checks={checks || undefined} className={checks ? 'font-semibold tracking-[-0.15em] text-brand-ink' : undefined}>
+      {checks === 2 ? '✓✓' : checks === 1 ? '✓' : '◷'}
+    </span>
+    {failed || isMailbox ? <span>{label}</span> : retrying ? <span>En reintento</span> : null}
   </span>;
 }

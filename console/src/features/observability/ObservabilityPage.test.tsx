@@ -151,8 +151,7 @@ it('la auditoría es una pestaña de esta vista y conserva todo lo que mostraba 
   await user.click(screen.getByRole('tab', { name: 'Auditoría' }));
   expect(screen.queryByText('En línea')).not.toBeInTheDocument();
 
-  const eventos = screen.getByRole('heading', { level: 2, name: 'Eventos' }).closest('section');
-  if (!eventos) throw new Error('section not found');
+  const eventos = screen.getByRole('list', { name: 'Eventos de auditoría' });
   const texto = eventos.textContent;
   // Every field the old view showed, one by one: action, decision, summary, actor, tenant,
   // request, trace and date. If any dropped in the merge, this fails.
@@ -164,9 +163,6 @@ it('la auditoría es una pestaña de esta vista y conserva todo lo que mostraba 
   expect(texto).toContain('Steven');
   expect(texto).toContain('req-7f3c');
   expect(texto).toContain('trace-4c8f');
-  // The "N visible of M" counter of the search box.
-  const contenido = eventos.querySelector('.panel-subtitle, p')?.textContent ?? texto;
-  expect(contenido.trim().length).toBeGreaterThan(0);
   expect(screen.getByText('2 visibles de 2')).toBeInTheDocument();
   // And the search box keeps filtering over the six fields.
   await user.type(screen.getByRole('searchbox'), 'kant');
@@ -196,8 +192,7 @@ it('cruzar un relay contra su auditoría es UN clic: el trace viaja al filtro', 
   // NEGATIVE CONTROL: the event from the OTHER trace must stay out. Without it, a filter that did
   // not filter anything would pass this test the same, because the correct event would also be on
   // screen.
-  const eventos = screen.getByRole('heading', { level: 2, name: 'Eventos' }).closest('section');
-  if (!eventos) throw new Error('section not found');
+  const eventos = screen.getByRole('list', { name: 'Eventos de auditoría' });
   expect(eventos.textContent).toContain('delivery.replay');
   expect(eventos.textContent).not.toContain('config.write');
 
@@ -221,7 +216,7 @@ it('no pide el audit log hasta que se abre su pestaña', async () => {
   expect(pedidos).toBe(0);
 
   await user.click(screen.getByRole('tab', { name: 'Auditoría' }));
-  await screen.findByRole('heading', { level: 2, name: 'Eventos' });
+  await screen.findByRole('list', { name: 'Eventos de auditoría' });
   expect(pedidos).toBe(1);
 });
 

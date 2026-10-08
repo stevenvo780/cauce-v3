@@ -20,8 +20,8 @@ import { fileURLToPath } from 'node:url';
 import { http, HttpResponse } from 'msw';
 import { describe, expect, it } from 'vitest';
 import { screen, waitFor, within } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
 import { renderWithApi } from '../../test/render';
+import { must } from '../../test/must';
 import { server } from '../../mocks/server';
 import { TerminalPage } from './TerminalPage';
 import {
@@ -186,8 +186,8 @@ describe('la negativa que ve el operador', () => {
         { status: estado },
       )));
 
-      renderWithApi(<TerminalPage />);
-      await userEvent.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }), await screen.findByRole('option', { name: /^zeus ·/ }));
+      renderWithApi(<TerminalPage params={['Steven', 'zeus']} />);
+
 
       // The auto-open of the TUI already hits the gateway and gets the rejection.
       const aviso = await waitFor(() => {
@@ -234,10 +234,10 @@ describe('la negativa que ve el operador', () => {
       })),
     );
 
-    renderWithApi(<TerminalPage />);
-    await userEvent.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }), await screen.findByRole('option', { name: /^zeus ·/ }));
+    renderWithApi(<TerminalPage params={['Steven', 'zeus']} />);
 
-    const panel = await screen.findByRole('tabpanel', {}, { timeout: 5000 });
+
+    const panel = await screen.findByRole('heading', { level: 2, name: /zeus/ }, { timeout: 5000 }).then((h) => must(h.closest<HTMLElement>('[id^="terminal-session-"]'), 'the session panel'));
     await waitFor(() => {
       expect(within(panel).getByText(new RegExp(TERMINAL_DENY_MESSAGES.attribution_required.titulo, 'i'))).toBeInTheDocument();
     }, { timeout: 5000 });

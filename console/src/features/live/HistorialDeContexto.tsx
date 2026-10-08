@@ -1,9 +1,13 @@
+import { Tabs } from '@base-ui/react/tabs';
 import { History, RotateCcw } from 'lucide-react';
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { useApi } from '../../api/context';
 import type { AgentDocumentKind, AgentDocumentsMap, AgentPerfilCampos } from '../../api/types';
 import { useResource, type Resource } from '../../api/use-resource';
-import { EmptyState, Time, ViewTabs } from '../../components/ui';
+import { cn } from '../../cn';
+import { Button, Notice } from '../../components/kit';
+import { EmptyState, Time } from '../../components/ui';
+import { TabStrip } from './context-ui';
 import {
   AVISO_DE_PROFUNDIDAD, CLASES_DE_OPERACION, PALABRAS_DE_OPERACION, PASO_DE_PAGINA, SIN_CUERPO,
   TOPE_DE_PAGINA, actorDeRevision, camposCambiados, camposDeRevision, clavePedido,
@@ -13,14 +17,7 @@ import {
 } from './historial-de-contexto';
 import type { PerfilRevision, TramoDeRevisiones } from './perfil';
 
-/**
- * The read side of the context journal: what each version of the profile said, which governance
- * file was rewritten for it, and the way back to a past version.
- *
- * This panel does not write. A restore only loads the SEVEN authored fields of a revision into
- * the canonical draft; from there the only save available is the profile PUT with its CAS, its
- * governed batch, its hand-typed reason and the runtime ACK.
- */
+/** Read side of the context journal; a restore only loads the authored fields into the canonical draft and never writes. */
 
 type Diario = 'perfil' | AgentDocumentKind;
 
@@ -30,6 +27,9 @@ interface HistorialDeContextoProps {
   /** Absent without `config.write`: the journal is still read; only the restore disappears. */
   onRestaurar?: (campos: AgentPerfilCampos) => void;
 }
+
+const NOTE = 'm-0 text-xs text-muted';
+const ENTRY = 'grid gap-2 rounded-lg border border-line bg-surface p-3';
 
 interface RevisionEntry {
   readonly id: string;
@@ -67,46 +67,49 @@ export function HistorialDeContexto({ tenantId, alias, onRestaurar }: HistorialD
   const diario = pestanas.some((pestana) => pestana.id === elegido) ? elegido : 'perfil';
 
   return (
-    <div className="historial-contexto">
-      <p className="historial-nota-actor">{AVISO_DE_PROFUNDIDAD}</p>
-      {/* Said ONCE and not on every row: repeating «no consta quién» fourteen times turns an
-          important datum into noise that stops being read. */}
-      <p className="historial-nota-actor">
-        El diario dice qué cambió y cuándo. Las revisiones antiguas pueden no decir quién: si las
-        columnas de autor llegan vacías se muestra <strong>«no consta quién»</strong>, sin
-        atribuir el cambio al operador que está mirando.
-      </p>
-
-      <ViewTabs
-        tabs={pestanas}
-        active={diario}
-        onSelect={setElegido}
-        label="Diarios del contexto"
-        variant="chip"
-        panelId="historial-contexto-panel"
-      />
-
-      <div
-        className="historial-contexto-panel"
-        id="historial-contexto-panel"
-        role="tabpanel"
-        aria-labelledby={`view-tab-${diario}`}
-      >
-        {diario === 'perfil' ? (
-          <DiarioDePerfil tenantId={tenantId} alias={alias} onRestaurar={onRestaurar} />
-        ) : (
-          <DiarioDeFichero key={diario} tenantId={tenantId} alias={alias} kind={diario} />
-        )}
+    <div className="grid gap-3">
+      <div className="grid gap-1">
+        <p className={NOTE}>{AVISO_DE_PROFUNDIDAD}</p>
+        {/* Said ONCE and not on every row: repeating «no consta quién» fourteen times turns an
+            important datum into noise that stops being read. */}
+        <p className={NOTE}>
+          El diario dice qué cambió y cuándo. Las revisiones antiguas pueden no decir quién: si las
+          columnas de autor llegan vacías se muestra <strong>«no consta quién»</strong>, sin
+          atribuir el cambio al operador que está mirando.
+        </p>
       </div>
+
+      <Tabs.Root value={diario} onValueChange={(value) => { setElegido(value as Diario); }}>
+        <TabStrip tabs={pestanas} variant="chip" label="Diarios del contexto" />
+        <Tabs.Panel value={diario} className="mt-3 outline-none">
+          {diario === 'perfil' ? (
+            <DiarioDePerfil tenantId={tenantId} alias={alias} onRestaurar={onRestaurar} />
+          ) : (
+            <DiarioDeFichero key={diario} tenantId={tenantId} alias={alias} kind={diario} />
+          )}
+        </Tabs.Panel>
+      </Tabs.Root>
 
       <AvisoDeInventario recurso={documentos} alias={alias} ficheros={ficheros.length} />
 
       {onRestaurar === undefined ? (
-        <p className="muted">
+        <p className={NOTE}>
           Tu sesión puede leer el diario, pero no puede cargar una revisión en los campos
           canónicos.
         </p>
       ) : null}
+    </div>
+  );
+}
+
+function EntryHead({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <div className="flex items-start gap-2">
+      <span aria-hidden="true" className="mt-0.5 text-muted"><History size={14} /></span>
+      <div className="min-w-0">
+        <strong className="text-[13px]">{title}</strong>
+        <p className={NOTE}>{children}</p>
+      </div>
     </div>
   );
 }
@@ -124,7 +127,7 @@ function DiarioDePerfil({ tenantId, alias, onRestaurar }: HistorialDeContextoPro
 
   if (entradas.length === 0) {
     if (pagina.error) return <FalloDeLectura diario="del perfil" alias={alias} error={pagina.error} />;
-    if (pagina.loading) return <p className="muted">Leyendo el diario del perfil…</p>;
+    if (pagina.loading) return <p className="m-0 text-muted">Leyendo el diario del perfil…</p>;
     return (
       <EmptyState>
         El servidor miró y no hay ninguna revisión anotada para {alias}.
@@ -133,66 +136,47 @@ function DiarioDePerfil({ tenantId, alias, onRestaurar }: HistorialDeContextoPro
   }
 
   return (
-    <div className="historial-diario">
-      <ol className="historial-lista">
+    <div className="grid gap-3">
+      <ol className="m-0 grid list-none gap-2 p-0">
         {entradas.map((entrada, indice) => {
           const anterior = entradas.at(indice + 1);
           const actor = actorDeRevision(entrada);
           const vacia = entrada.operation === 'delete';
           return (
-            <li
-              key={entrada.id}
-              className="historial-entrada"
-              data-clase={CLASES_DE_OPERACION[entrada.operation]}
-            >
-              <div className="historial-entrada-head">
-                <span className="historial-entrada-icono" aria-hidden="true"><History size={14} /></span>
-                <div>
-                  <strong>
-                    {PALABRAS_DE_OPERACION[entrada.operation]} · revisión {entrada.revision}
-                  </strong>
-                  <p className="historial-entrada-cuando">
-                    <Time value={entrada.changed_at} />
-                    {actor === undefined ? <> · no consta quién</> : <> · por <code>{actor}</code></>}
-                  </p>
-                </div>
-              </div>
+            <li key={entrada.id} className={ENTRY} data-clase={CLASES_DE_OPERACION[entrada.operation]}>
+              <EntryHead title={`${PALABRAS_DE_OPERACION[entrada.operation]} · revisión ${String(entrada.revision)}`}>
+                <Time value={entrada.changed_at} />
+                {actor === undefined ? <> · no consta quién</> : <> · por <code>{actor}</code></>}
+              </EntryHead>
 
-              <div className="historial-entrada-acciones">
+              <div className="flex flex-wrap gap-2">
                 {anterior === undefined ? null : (
-                  <button
-                    type="button"
-                    className="button small secondary"
-                    onClick={() => { setAbierta(abierta === entrada.id ? undefined : entrada.id); }}
-                  >
+                  <Button size="sm" onClick={() => { setAbierta(abierta === entrada.id ? undefined : entrada.id); }}>
                     {abierta === entrada.id ? 'Ocultar qué cambió' : 'Ver qué cambió'}
-                  </button>
+                  </Button>
                 )}
                 {onRestaurar === undefined ? null : (
-                  <button
-                    type="button"
-                    className={vacia ? 'button small historial-restaurar-vacia' : 'button small secondary'}
-                    onClick={() => { onRestaurar(camposDeRevision(entrada)); }}
-                  >
-                    <RotateCcw size={14} aria-hidden="true" />{' '}
-                    {/* The only row whose «restore» destroys instead of going back: it says so in
-                        the button and wears its row's warning skin, not only in the help line. */}
+                  // The only row whose «restore» destroys instead of going back: it says so in the
+                  // button and wears the destructive skin, not only in the help line.
+                  <Button size="sm" variant={vacia ? 'danger' : 'secondary'} data-destructive={vacia || undefined}
+                    onClick={() => { onRestaurar(camposDeRevision(entrada)); }}>
+                    <RotateCcw size={14} aria-hidden="true" />
                     {vacia ? 'Restaurar este borrado: vacía los siete campos' : 'Restaurar esta revisión'}
-                  </button>
+                  </Button>
                 )}
               </div>
 
               {anterior === undefined ? (
-                <span className="historial-entrada-ayuda">
+                <span className={NOTE}>
                   Es la revisión más vieja de las leídas: para compararla hace falta traer la
                   anterior.
                 </span>
               ) : null}
               {onRestaurar === undefined ? null : (
-                <span className="historial-entrada-ayuda">
+                <span className={NOTE}>
                   {vacia
                     ? 'Esta revisión borró el perfil: cargarla deja los siete campos vacíos en el borrador. No guarda nada.'
-                    : 'No guarda nada: carga los siete campos canónicos en el borrador de Contexto para revisarlos y aplicarlos con CAS, motivo y ACK.'}
+                    : 'No guarda nada: carga los siete campos canónicos en el borrador de Perfil para revisarlos y aplicarlos con CAS, motivo y ACK.'}
                 </span>
               )}
 
@@ -219,6 +203,9 @@ function DiarioDePerfil({ tenantId, alias, onRestaurar }: HistorialDeContextoPro
 }
 
 const SIGNOS: Readonly<Record<string, string>> = { igual: ' ', quitada: '−', agregada: '+' };
+const LINE_TONE: Readonly<Record<string, string>> = {
+  quitada: 'bg-danger-soft text-danger-ink', agregada: 'bg-ok-soft text-ok-ink', igual: 'text-muted',
+};
 
 function DiffDePerfil({ anterior, posterior }: {
   anterior: PerfilRevision;
@@ -227,26 +214,26 @@ function DiffDePerfil({ anterior, posterior }: {
   const cambiados = camposCambiados(compararRevisiones(anterior, posterior));
   return (
     <div
-      className="historial-diff"
+      className="grid gap-3 border-t border-line pt-3"
       role="group"
       aria-label={`Diferencias con la revisión ${String(anterior.revision)}`}
     >
-      <p className="historial-entrada-ayuda">
+      <p className={NOTE}>
         Se comparan los siete campos con la revisión {anterior.revision}; sólo se pintan los que
         cambiaron. El signo − es lo que había y + lo que quedó.
       </p>
       {cambiados.length === 0 ? (
-        <p className="historial-entrada-detalle">
+        <p className="m-0 text-[13px]">
           Ningún campo cambió entre estas dos revisiones: el diario anota la escritura igual.
         </p>
       ) : cambiados.map((campo) => (
-        <section key={campo.campo} className="historial-diff-campo">
-          <p className="historial-diff-titulo">{campo.titulo}</p>
-          <ol className="historial-diff-lineas">
+        <section key={campo.campo} className="grid gap-1">
+          <p className="m-0 text-[13px] font-semibold">{campo.titulo}</p>
+          <ol className="m-0 grid list-none gap-px p-0 font-mono text-xs">
             {campo.lineas.map((linea, indice) => (
-              <li key={`${String(indice)}-${linea.texto}`} className="historial-diff-linea">
-                <span className="historial-diff-signo" aria-hidden="true">{SIGNOS[linea.clase]}</span>
-                <span className="historial-diff-texto" data-clase={linea.clase}>{linea.texto}</span>
+              <li key={`${String(indice)}-${linea.texto}`} className={cn('flex gap-2 rounded px-1.5 py-0.5', LINE_TONE[linea.clase])}>
+                <span aria-hidden="true" className="w-3 shrink-0 select-none">{SIGNOS[linea.clase]}</span>
+                <span data-clase={linea.clase} className="min-w-0 break-words whitespace-pre-wrap">{linea.texto}</span>
               </li>
             ))}
           </ol>
@@ -272,7 +259,7 @@ function DiarioDeFichero({ tenantId, alias, kind }: {
 
   if (entradas.length === 0) {
     if (pagina.error) return <FalloDeLectura diario="del fichero" alias={alias} error={pagina.error} />;
-    if (pagina.loading) return <p className="muted">Leyendo el diario del fichero…</p>;
+    if (pagina.loading) return <p className="m-0 text-muted">Leyendo el diario del fichero…</p>;
     return (
       <EmptyState>
         El servidor miró y no hay ninguna escritura anotada de este fichero para {alias}. {SIN_CUERPO}
@@ -281,35 +268,29 @@ function DiarioDeFichero({ tenantId, alias, kind }: {
   }
 
   return (
-    <div className="historial-diario">
-      <p className="historial-nota-actor">{SIN_CUERPO}</p>
-      <ol className="historial-lista">
+    <div className="grid gap-3">
+      <p className={NOTE}>{SIN_CUERPO}</p>
+      <ol className="m-0 grid list-none gap-2 p-0">
         {entradas.map((entrada, indice) => {
           const anterior = entradas.at(indice + 1);
           const actor = actorDeRevision(entrada);
           return (
-            <li key={entrada.id} className="historial-entrada" data-clase="reescritura">
-              <div className="historial-entrada-head">
-                <span className="historial-entrada-icono" aria-hidden="true"><History size={14} /></span>
-                <div>
-                  <strong>Escritura del fichero</strong>
-                  <p className="historial-entrada-cuando">
-                    <Time value={entrada.written_at} />
-                    {actor === undefined ? <> · no consta quién</> : <> · por <code>{actor}</code></>}
-                  </p>
-                </div>
-              </div>
-              <p className="historial-entrada-detalle">
+            <li key={entrada.id} className={ENTRY} data-clase="reescritura">
+              <EntryHead title="Escritura del fichero">
+                <Time value={entrada.written_at} />
+                {actor === undefined ? <> · no consta quién</> : <> · por <code>{actor}</code></>}
+              </EntryHead>
+              <p className="m-0 text-xs break-words text-fg-2">
                 <code>{entrada.path}</code> · {entrada.bytes.toLocaleString('es')} bytes · huella{' '}
-                <code className="historial-huella">{huellaCorta(entrada.sha256)}</code>
+                <code>{huellaCorta(entrada.sha256)}</code>
               </p>
               {anterior === undefined ? (
-                <span className="historial-entrada-ayuda">
+                <span className={NOTE}>
                   Es la escritura más vieja de las leídas: para compararla hace falta traer la
                   anterior.
                 </span>
               ) : (
-                <p className="historial-entrada-detalle">
+                <p className="m-0 text-xs text-fg-2">
                   {fraseDeCambio(compararDocumentos(anterior, entrada))}
                 </p>
               )}
@@ -380,26 +361,19 @@ function PieDeDiario({ diario, alias, leidas, paso, cargando, error, onMas, onRe
 }) {
   if (error !== undefined) {
     return (
-      <div className="historial-paginacion">
-        <p className="notice error" role="alert">
+      <Notice tone="danger" role="alert" className="flex flex-wrap items-center justify-between gap-2">
+        <p>
           No se pudo leer el resto del diario {diario} de {alias}: {error.message}. Siguen a la
           vista las {leidas} entradas ya leídas; que no aparezcan más NO significa que no las haya.
         </p>
-        <button
-          type="button"
-          className="button small secondary"
-          disabled={cargando}
-          onClick={onReintentar}
-        >
-          Reintentar
-        </button>
-      </div>
+        <Button size="sm" disabled={cargando} onClick={onReintentar}>Reintentar</Button>
+      </Notice>
     );
   }
   if (paso === 'fin') return null;
   if (paso === 'ventana-agotada') {
     return (
-      <p className="historial-nota-actor">
+      <p className={NOTE}>
         Se ven las {leidas} entradas más nuevas. Este gateway no devuelve más de {TOPE_DE_PAGINA}{' '}
         entradas por lectura y esa ventana ya se pidió entera: si el diario es más largo, lo
         anterior queda sin leer —no es que no exista—.
@@ -407,18 +381,11 @@ function PieDeDiario({ diario, alias, leidas, paso, cargando, error, onMas, onRe
     );
   }
   return (
-    <div className="historial-paginacion">
-      <p className="historial-nota-actor">
+    <div className="flex flex-wrap items-center justify-between gap-2">
+      <p className={NOTE}>
         Se ven las {leidas} entradas más nuevas que se pudieron leer.
       </p>
-      <button
-        type="button"
-        className="button small secondary"
-        disabled={cargando}
-        onClick={onMas}
-      >
-        Ver más
-      </button>
+      <Button size="sm" disabled={cargando} onClick={onMas}>Ver más</Button>
     </div>
   );
 }
@@ -435,21 +402,21 @@ function AvisoDeInventario({ recurso, alias, ficheros }: {
 }) {
   if (recurso.error !== undefined) {
     return (
-      <p className="notice error" role="alert">
+      <Notice tone="danger" role="alert">
         No se pudo leer el inventario de ficheros de {alias}: {recurso.error.message}. Eso no dice
         que este gateway no lo publique ni que {alias} no tenga ficheros gobernados: dice que la
         consola no lo pudo mirar, así que sólo se ofrece el diario de los campos canónicos.
-      </p>
+      </Notice>
     );
   }
   if (recurso.data === undefined) {
     return recurso.loading
-      ? <p className="muted">Leyendo el inventario de ficheros de {alias}…</p>
+      ? <p className="m-0 text-muted">Leyendo el inventario de ficheros de {alias}…</p>
       : null;
   }
   if (!recurso.data.publicado) {
     return (
-      <p className="historial-nota-actor">
+      <p className={NOTE}>
         {recurso.data.motivo ?? `Este gateway no publica el inventario de ficheros de ${alias}.`}
         {' '}Sólo se puede ofrecer el diario de los campos canónicos.
       </p>
@@ -457,7 +424,7 @@ function AvisoDeInventario({ recurso, alias, ficheros }: {
   }
   if (ficheros === 0) {
     return (
-      <p className="historial-nota-actor">
+      <p className={NOTE}>
         El servidor miró y {alias} no tiene ningún fichero gobernado en el inventario, así que el
         único diario que hay es el de los campos canónicos.
       </p>

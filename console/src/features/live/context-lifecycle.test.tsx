@@ -1,12 +1,11 @@
 import { useState } from 'react';
-import { act, render, screen, waitFor, within } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { ApiProvider } from '../../api/context';
 import { CauceApi } from '../../api/client';
 import { server } from '../../mocks/server';
 import { AgentContextPanel } from './AgentContextPanel';
-import { LiveFleetPage } from './LiveFleetPage';
 import { RUTA_PERFIL, ackAplicado, perfilAplicado } from './perfil-fixtures';
 import { profileIsAdopted } from './profile-save-receipt';
 import { ConsoleAccessBoundary } from '../../api/console-access';
@@ -15,13 +14,11 @@ import { ProfileStatus } from './ProfileStatus';
 import type { AgentPerfil } from '../../api/types';
 
 function NavigationHarness({ api }: { api: CauceApi }) {
-  const [view, setView] = useState<'panel' | 'hidden' | 'live'>('panel');
+  const [view, setView] = useState<'panel' | 'hidden'>('panel');
   return <ApiProvider api={api}>
     <button onClick={() => { setView('hidden'); }}>Cerrar configuración</button>
     <button onClick={() => { setView('panel'); }}>Volver a configuración</button>
-    <button onClick={() => { setView('live'); }}>Abrir desde el grafo</button>
     {view === 'panel' ? <AgentContextPanel tenantId="Steven" alias="kant" /> : null}
-    {view === 'live' ? <LiveFleetPage /> : null}
   </ApiProvider>;
 }
 
@@ -74,8 +71,7 @@ it.each(['applied', 'pending', 'error'] as const)('settles %s after closing the 
   }
 });
 
-it('shares the in-flight lock and draft when moving from chat configuration to the fleet graph', async () => {
-  window.history.replaceState({}, '', '/live?agente=Steven%2Fkant&pestana=rol');
+it('keeps the in-flight lock and draft when the page is left and opened again', async () => {
   let actual = perfilAplicado();
   let release!: () => void;
   let writes = 0;
@@ -100,19 +96,18 @@ it('shares the in-flight lock and draft when moving from chat configuration to t
   await user.type(screen.getByLabelText(/Motivo de este cambio/i), 'una sola escritura en curso');
   await user.click(screen.getByRole('button', { name: /Guardar y aplicar perfil/i }));
   await waitFor(() => { expect(writes).toBe(1); });
-  await user.click(screen.getByRole('button', { name: 'Abrir desde el grafo' }));
-  const drawer = await screen.findByRole('dialog', { name: /detalle de kant/i });
-  expect(await within(drawer).findByLabelText(/^Identidad y propósito/i)).toHaveValue('borrador común');
-  expect(within(drawer).getByLabelText(/^Identidad y propósito/i)).toBeDisabled();
-  expect(within(drawer).getByRole('button', { name: 'Aplicando…' })).toBeDisabled();
-  await user.click(within(drawer).getByRole('button', { name: /abrir directiva completa/i }));
-  await user.click(screen.getByRole('button', { name: /Historial y diff del contexto/i }));
+  await user.click(screen.getByRole('button', { name: 'Cerrar configuración' }));
+  await user.click(screen.getByRole('button', { name: 'Volver a configuración' }));
+  expect(await screen.findByLabelText(/^Identidad y propósito/i)).toHaveValue('borrador común');
+  expect(screen.getByLabelText(/^Identidad y propósito/i)).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Aplicando…' })).toBeDisabled();
+  await user.click(screen.getByRole('tab', { name: /^Historial/ }));
   await screen.findByText(/Alta del perfil · revisión 1/);
   expect(screen.queryByRole('button', { name: /Restaurar esta revisión/i })).not.toBeInTheDocument();
-  await user.click(screen.getByRole('button', { name: /Cerrar la directiva/i }));
+  await user.click(screen.getByRole('tab', { name: /^Perfil/ }));
   await act(async () => { release(); await pending; });
-  expect(await within(drawer).findByText(/Aplicado: desired y runtime/)).toBeInTheDocument();
-  expect(within(drawer).queryByText('El perfil cambió mientras editabas.')).not.toBeInTheDocument();
+  expect(await screen.findByText(/Aplicado: desired y runtime/)).toBeInTheDocument();
+  expect(screen.queryByText('El perfil cambió mientras editabas.')).not.toBeInTheDocument();
   expect(writes).toBe(1);
 });
 

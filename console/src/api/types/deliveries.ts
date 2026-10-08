@@ -46,7 +46,7 @@ export interface MessageAuthor {
   display_name: string | null;
 }
 
-export type MessageClientProvenance =
+type MessageClientProvenance =
   | { kind: 'unknown' }
   | {
       kind: 'oauth_client';
@@ -214,6 +214,7 @@ export interface QueueItem {
   max_attempts?: number | null;
   available_at?: string | null;
   last_error?: string | null;
+  dlq_resolved?: boolean | null;
 }
 
 /** `COUNT` over EVERY visible delivery, no `LIMIT`; absent on a gateway older than the field. */

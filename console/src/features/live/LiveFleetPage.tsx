@@ -1,98 +1,48 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useApi } from '../../api/context';
-import { usePolling } from '../../api/use-polling';
-import { useResource } from '../../api/use-resource';
-import type {
-  FleetActivitySnapshot, TenantNode, TopologySnapshot,
-} from '../../api/types';
+import { Menu } from '@base-ui/react/menu';
+import { Check, ChevronDown, Pause, RefreshCw, Timer } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { ErrorState, LoadingState } from '../../components/ui';
+import { OrbView } from '../../components/AgentOrb';
+import { PageHelp } from '../../components/PageHelp';
+import { cn } from '../../cn';
+import { redirect, useRouteSearch } from '../../router';
+import { useFleet } from '../../shell/fleet-context';
+import { STATE_TONE, TONE_CLASS } from '../../status-tone';
+import { MENU_ITEM, MENU_POPUP } from '../../components/kit';
+import { useAgentPreferences } from '../../components/agent-actions/preferences-context';
+import { OfficeCanvas, type OfficeAgent } from '../office/OfficeCanvas';
+import { OfficeDialog } from '../office/OfficeDialog';
+import { useOfficeChat } from '../office/use-office-chat';
+import { RECENT_VISITOR_MS, useMcpVisitors } from '../office/visitors';
+import { ORDEN_VIVO } from './activity';
+import { AgentSheet } from './AgentSheet';
 import {
-  ErrorState, FloatingTooltip, LoadingState, PageHeader,
-} from '../../components/ui';
-import { FleetActivityTable } from './FleetActivityTable';
-import { AgentDrawer, type ContextFocusTarget, type DrawerTab } from './AgentDrawer';
-import { AgentTooltipCard } from './AgentTooltipCard';
-import { FleetVerdict } from './FleetVerdict';
-import {
-  BURST_MS,
-  LIVE_STATE_META,
-  buildLiveViews,
-  detectPulses,
-  fleetVerdict,
-  humanOrigins,
-  rememberFleet,
-  stateTally,
-  type FleetMemory,
-  type LiveAgentView,
-  type LiveState,
-  type PulseMap,
+  BURST_MS, LIVE_STATE_META, buildLiveViews, detectPulses, fleetVerdict, humanSeconds, rememberFleet, stateTally,
+  type FleetMemory, type LiveState, type PulseMap,
 } from './agent-state';
-import { derivaDelRegistro } from './deriva';
 import { projectLiveFleet } from './live-projection';
-import { LiveHypergraph, type HypergraphLayer } from './LiveHypergraph';
-import { LiveFleetToolbar } from './LiveFleetToolbar';
-import { LiveFleetTally } from './LiveFleetTally';
-import { LiveFleetLegend } from './LiveFleetLegend';
-import './live.css';
-import './live-hypergraph.css';
+import { NecesitanAtencion } from './NecesitanAtencion';
 
-/**
- * How many refresh intervals may pass before the data stops attesting anything.
- */
-const STALE_FACTOR = 3;
+/** Three missed reads and the picture stops proving anything; never less than this window. */
+const STALE_AFTER_MS = 15_000;
+const AWAKE_SECONDS = 15 * 60;
+const PROBLEMS: ReadonlySet<LiveState> = new Set(['down', 'blocked']);
+/** Poll periods the operator can pick; 0 pauses the shared activity poll. */
+const REFRESH_OPTIONS = [
+  { ms: 2_000, label: '2 s' },
+  { ms: 5_000, label: '5 s' },
+  { ms: 15_000, label: '15 s' },
+  { ms: 0, label: 'En pausa' },
+] as const;
 
-/**
- * Identifier of the synthetic room where record aliases without any membership go.
- */
-const SIN_SALA = '__sin_sala__';
-
-interface TooltipTarget {
-  anchor: DOMRect;
-  view: LiveAgentView | null;
-  alias: string;
-}
-
-export function LiveFleetPage() {
-  const api = useApi();
-  const activity = useResource('live-fleet-activity', () => api.getFleetActivity());
-  const topology = useResource('live-topology', () => api.getTopology());
-  const configuracion = useResource('live-configuracion', () => api.getConfiguration());
-  const [intervalMs, setIntervalMs] = useState(4000);
-  const [selected, setSelected] = useState<string>();
-  const [hovered, setHovered] = useState<string>();
-  const [stateFilter, setStateFilter] = useState<LiveState>();
-  const [query, setQuery] = useState('');
-  const [requestedTenantFilter, setTenantFilter] = useState('todos');
-  const [layer, setLayer] = useState<HypergraphLayer>('ahora');
-  const [tip, setTip] = useState<TooltipTarget | null>(null);
-  const [now, setNow] = useState(() => Date.now());
-
-  const { snapshot, topology: liveTopology } = useMemo(
-    () => projectLiveFleet(activity.data, topology.data), [activity.data, topology.data],
-  );
-
-  const [drawer, setDrawer] = useState<{
-    key: string; tab: DrawerTab; contextFocusTarget?: ContextFocusTarget;
-  } | null>(
-    () => leerQuery(),
-  );
-
-  useEffect(() => {
-    if (!drawer || typeof window === 'undefined') return;
-    const params = new URLSearchParams(window.location.search);
-    if (params.get('agente') === drawer.key && params.get('pestana') === 'perfil') {
-      escribirQuery(drawer.key, 'rol');
-    }
-  }, [drawer]);
-
-  const memoryRef = useRef<FleetMemory>({});
+function usePulses(snapshot: ReturnType<typeof projectLiveFleet>['snapshot']): PulseMap {
+  const memory = useRef<FleetMemory>({});
   const [pulses, setPulses] = useState<PulseMap>({});
-
-  const observedAt = snapshot?.observed_at ?? undefined;
   useEffect(() => {
     if (!snapshot) return;
     const at = Date.now();
-    const fresh = detectPulses(memoryRef.current, snapshot, at);
-    memoryRef.current = rememberFleet(snapshot, at);
+    const fresh = detectPulses(memory.current, snapshot, at);
+    memory.current = rememberFleet(snapshot, at);
     setPulses((current) => {
       const merged: PulseMap = {};
       for (const [key, list] of Object.entries(current)) {
@@ -103,405 +53,279 @@ export function LiveFleetPage() {
       return merged;
     });
   }, [snapshot]);
+  return pulses;
+}
 
+function RefreshInterval({ value, onChange }: { value: number; onChange: (ms: number) => void }) {
+  const current = REFRESH_OPTIONS.find((option) => option.ms === value);
+  const text = current ? (current.ms === 0 ? current.label : `Cada ${current.label}`) : `Cada ${String(value / 1000)} s`;
+  return (
+    <Menu.Root>
+      <Menu.Trigger
+        aria-label={`Frecuencia de lectura: ${text.toLowerCase()}`}
+        title="Cada cuánto se lee la flota"
+        className={cn(
+          'inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-md border bg-surface px-2 text-xs hover:bg-subtle data-[popup-open]:bg-subtle',
+          value === 0 ? 'border-warn/40 text-warn-ink' : 'border-line text-fg-2',
+        )}
+      >
+        {value === 0 ? <Pause size={13} aria-hidden="true" /> : <Timer size={13} aria-hidden="true" />}
+        {text}
+        <ChevronDown size={12} aria-hidden="true" />
+      </Menu.Trigger>
+      <Menu.Portal>
+        <Menu.Positioner align="end" sideOffset={6} className="z-50">
+          <Menu.Popup className={cn(MENU_POPUP, 'w-44')}>
+            <Menu.Group>
+              <Menu.GroupLabel className="px-2.5 py-1 text-[11px] font-medium text-muted">Leer la flota</Menu.GroupLabel>
+              <Menu.RadioGroup value={String(value)} onValueChange={(next: string) => { onChange(Number(next)); }}>
+                {REFRESH_OPTIONS.map((option) => (
+                  <Menu.RadioItem key={option.ms} value={String(option.ms)} closeOnClick className={MENU_ITEM}>
+                    <span className="grid size-[15px] place-items-center">
+                      <Menu.RadioItemIndicator><Check size={14} aria-hidden="true" /></Menu.RadioItemIndicator>
+                    </span>
+                    {option.ms === 0 ? option.label : `Cada ${option.label}`}
+                  </Menu.RadioItem>
+                ))}
+              </Menu.RadioGroup>
+            </Menu.Group>
+          </Menu.Popup>
+        </Menu.Positioner>
+      </Menu.Portal>
+    </Menu.Root>
+  );
+}
+
+function useNow(): number {
+  const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const timer = window.setInterval(() => { setNow(Date.now()); }, 1000);
     return () => { window.clearInterval(timer); };
   }, []);
+  return now;
+}
 
-  const { reload } = activity;
-  usePolling(reload, intervalMs);
+export function LiveFleetPage() {
+  const fleet = useFleet();
+  const { activity, topology, activityIntervalMs } = fleet;
+  const staleAfterMs = activityIntervalMs === 0 ? STALE_AFTER_MS : Math.max(STALE_AFTER_MS, activityIntervalMs * 3);
+  const now = useNow();
+  const search = useRouteSearch();
+  const selectedKey = new URLSearchParams(search).get('agente');
+  const [filter, setFilter] = useState<ReadonlySet<LiveState>>(new Set());
+  const [talkKey, setTalkKey] = useState<string | null>(null);
+  const visitors = useMcpVisitors();
+  const chat = useOfficeChat(talkKey, visitors);
 
-  const { views, edges } = useMemo(
-    () => {
-      const original = buildLiveViews(activity.data, pulses, now);
-      const visible = new Set((snapshot?.agents ?? []).map((agent) => `${agent.tenant_id}/${agent.alias}`));
-      return {
-        views: original.views.filter((view) => visible.has(view.key)),
-        edges: original.edges.filter((edge) => visible.has(edge.from) && visible.has(edge.to)),
-      };
-    },
-    [activity.data, snapshot, pulses, now],
-  );
-  const origins = useMemo(() => {
-    const visible = new Set(views.map((view) => view.key));
-    return humanOrigins(activity.data).filter((origin) => visible.has(origin.agentKey));
-  }, [activity.data, views]);
+  const { snapshot } = useMemo(() => projectLiveFleet(activity.data, topology.data), [activity.data, topology.data]);
+  const pulses = usePulses(snapshot);
 
-  const tenants = useMemo(() => {
-    const vistos = new Set<string>();
-    for (const view of views) vistos.add(view.tenantId);
-    for (const tenant of topology.data?.tenants ?? []) if (tenant.id) vistos.add(tenant.id);
-    return [...vistos].sort();
-  }, [views, topology.data]);
+  const views = useMemo(() => {
+    const visible = new Set((snapshot?.agents ?? []).map((agent) => `${agent.tenant_id}/${agent.alias}`));
+    return buildLiveViews(activity.data, pulses, now).views.filter((view) => visible.has(view.key));
+  }, [activity.data, snapshot, pulses, now]);
 
-  const tenantFilter = tenants.includes(requestedTenantFilter) ? requestedTenantFilter : 'todos';
-
-  const alcance = useMemo(
-    () => (tenantFilter === 'todos' ? views : views.filter((view) => view.tenantId === tenantFilter)),
-    [views, tenantFilter],
-  );
-
-  const topologiaEnAlcance = useMemo(() => {
-    const completa = liveTopology;
-    if (!completa || tenantFilter === 'todos') return completa;
-    return {
-      ...completa,
-      tenants: (completa.tenants ?? []).filter((tenant) => tenant.id === tenantFilter),
-      acl_edges: (completa.acl_edges ?? []).filter(
-        (edge) => edge.from_tenant === tenantFilter || edge.to_tenant === tenantFilter,
-      ),
-    };
-  }, [liveTopology, tenantFilter]);
-
-  const topologiaDelMapa = useMemo<TopologySnapshot | undefined>(() => {
-    const base = topologiaEnAlcance;
-    if (!base) return base;
-
-    const salaDeclarada = new Map<string, string>();
-    for (const tenant of base.tenants ?? []) {
-      for (const room of tenant.rooms ?? []) {
-        for (const member of room.members ?? []) {
-          if (!member.alias || !room.id || !tenant.id) continue;
-          const key = `${tenant.id}/${member.alias}`;
-          if (!salaDeclarada.has(key)) salaDeclarada.set(key, room.id);
-        }
-      }
-    }
-
-    const salasPorTenant = new Map<string, Map<string, string[]>>();
-    const etiquetaSala = new Map<string, string | null>();
-    for (const tenant of base.tenants ?? []) {
-      if (!tenant.id) continue;
-      for (const room of tenant.rooms ?? []) {
-        if (room.id) etiquetaSala.set(`${tenant.id}/${room.id}`, room.label ?? room.id);
-      }
-    }
-
-    for (const view of alcance) {
-      const declaradas = view.rooms;
-      const primeraDeclarada = declaradas.length > 0 ? declaradas[0] : undefined;
-      const sala = primeraDeclarada ?? salaDeclarada.get(view.key) ?? SIN_SALA;
-      const porSala = salasPorTenant.get(view.tenantId) ?? new Map<string, string[]>();
-      const miembros = porSala.get(sala) ?? [];
-      miembros.push(view.alias);
-      porSala.set(sala, miembros);
-      salasPorTenant.set(view.tenantId, porSala);
-    }
-
-    const etiquetaTenant = new Map<string, string | null>(
-      (base.tenants ?? []).map((tenant) => [tenant.id ?? '', tenant.label ?? tenant.id ?? null]),
-    );
-
-    const tenantsNodes: TenantNode[] = [...salasPorTenant.entries()]
-      .sort(([left], [right]) => left.localeCompare(right))
-      .map(([tenantId, porSala]) => ({
-        id: tenantId,
-        label: etiquetaTenant.get(tenantId) ?? tenantId,
-        rooms: [...porSala.entries()]
-          .sort(([left], [right]) => Number(left === SIN_SALA) - Number(right === SIN_SALA)
-            || left.localeCompare(right))
-          .map(([roomId, miembros]) => ({
-            id: roomId,
-            label: roomId === SIN_SALA
-              ? 'sin sala'
-              : etiquetaSala.get(`${tenantId}/${roomId}`) ?? roomId,
-            members: [...miembros].sort().map((alias) => ({ alias, enabled: true })),
-          })),
-      }));
-
-    return { ...base, tenants: tenantsNodes };
-  }, [topologiaEnAlcance, alcance]);
-
-  const edgesEnAlcance = useMemo(() => {
-    if (tenantFilter === 'todos') return edges;
-    const dentro = new Set(alcance.map((view) => view.key));
-    return edges.filter((edge) => dentro.has(edge.from) && dentro.has(edge.to));
-  }, [edges, alcance, tenantFilter]);
-
-  const fueraDeAlcance = views.length - alcance.length;
-  const tally = useMemo(() => stateTally(alcance), [alcance]);
-
-  const estadosVivos = useMemo(
-    () => new Map(views.map((view) => [view.key, view.state])),
-    [views],
-  );
-
-  const spotlight = useMemo<Set<string> | null>(() => {
-    const aguja = query.trim().toLowerCase();
-    const acotado = tenantFilter !== 'todos';
-    if (stateFilter === undefined && !aguja && !acotado) return null;
-    return new Set(
-      views
-        .filter((view) => stateFilter === undefined || view.state === stateFilter)
-        .filter((view) => !acotado || view.tenantId === tenantFilter)
-        .filter((view) => !aguja
-          || `${view.tenantId} ${view.alias} ${view.displayName ?? ''} ${view.harnessId ?? ''}`
-            .toLowerCase().includes(aguja))
-        .map((view) => view.key),
-    );
-  }, [views, stateFilter, query, tenantFilter]);
-
-  const deriva = useMemo(
-    () => derivaDelRegistro(alcance, topologiaEnAlcance),
-    [alcance, topologiaEnAlcance],
-  );
-
-  const resumenDePermisos = useMemo(() => {
-    if (topology.error && !topology.data) return 'no se pudo leer';
-    const tenantsList = topologiaEnAlcance?.tenants ?? [];
-    if (tenantsList.length === 0) return 'sin datos';
-    const salas = tenantsList.reduce((total, tenant) => total + (tenant.rooms ?? []).length, 0);
-    const permisos = (topologiaEnAlcance?.acl_edges ?? []).length;
-    return `${String(tenantsList.length)} ${tenantsList.length === 1 ? 'cliente' : 'clientes'}, `
-      + `${String(salas)} ${salas === 1 ? 'sala' : 'salas'}, ${String(permisos)} ${permisos === 1 ? 'permiso' : 'permisos'}`;
-  }, [topologiaEnAlcance, topology.data, topology.error]);
-
-  const staleAfterMs = (intervalMs > 0 ? intervalMs : 30000) * STALE_FACTOR;
+  const tally = useMemo(() => stateTally(views), [views]);
+  const estados = useMemo(() => new Map(views.map((view) => [view.key, view.state])), [views]);
+  const observedAt = snapshot?.observed_at ?? undefined;
   const verdict = useMemo(
-    () => fleetVerdict(alcance, { error: activity.error, observedAt, nowMs: now, staleAfterMs }),
-    [alcance, activity.error, observedAt, now, staleAfterMs],
+    () => fleetVerdict(views, { error: activity.error, observedAt, nowMs: now, staleAfterMs }),
+    [views, activity.error, observedAt, now, staleAfterMs],
   );
 
-  const detail = views.find((view) => view.key === drawer?.key);
-  const feedState = activity.error ? 'error' : intervalMs <= 0 ? 'paused' : verdict.tone === 'desconocido' ? 'stale' : 'live';
-  const edadSegundos = observedAt ? Math.max(0, (now - Date.parse(observedAt)) / 1000) : null;
+  const highlight = useMemo(
+    () => (filter.size === 0 ? null : new Set(views.filter((view) => filter.has(view.state)).map((view) => view.key))),
+    [views, filter],
+  );
 
-  const abrirCajon = useCallback((
-    key: string, tab: DrawerTab = 'ahora', contextFocusTarget?: ContextFocusTarget,
-  ) => {
-    setDrawer({ key, tab, ...(contextFocusTarget === undefined ? {} : { contextFocusTarget }) });
-    setSelected(key);
-    escribirQuery(key, tab);
-  }, []);
+  const appearances = useAgentPreferences()?.appearances;
+  const officeAgents = useMemo<OfficeAgent[]>(() => views.map((view): OfficeAgent => ({
+    id: view.key, name: view.alias, state: view.state, reason: view.reason, delegatesTo: view.delegatesTo,
+    glyph: appearances?.get(view.key)?.glyph, hue: appearances?.get(view.key)?.hue,
+    awake: view.state === 'idle' && typeof view.secondsSinceLastAck === 'number' && view.secondsSinceLastAck < AWAKE_SECONDS,
+  })).concat(visitors.map((visitor): OfficeAgent => {
+    const last = visitor.lastPublicationAt ? Date.parse(visitor.lastPublicationAt) : NaN;
+    return {
+      id: visitor.id, name: `${visitor.label} · MCP`, state: 'idle', delegatesTo: [], visitor: true,
+      awake: now - last < RECENT_VISITOR_MS,
+      reason: `Cliente MCP: ${Number.isNaN(last) ? 'no publicó nada todavía' : `publicó hace ${humanSeconds((now - last) / 1000)}`}; presencia no verificable.`,
+    };
+  })), [views, appearances, visitors, now]);
 
-  const cerrarCajon = useCallback(() => {
-    setDrawer(null);
-    setSelected(undefined);
-    escribirQuery(undefined);
-  }, []);
+  const select = (key: string) => {
+    if (visitors.some((visitor) => visitor.id === key)) { setTalkKey(key); return; }
+    redirect(`/live?agente=${encodeURIComponent(key)}`);
+  };
+  const close = () => { redirect('/live'); };
+  const talkTo = (key: string) => {
+    if (selectedKey) close();
+    setTalkKey(key);
+  };
+  const toggle = (state: LiveState) => {
+    setFilter((current) => {
+      const next = new Set(current);
+      if (next.has(state)) next.delete(state); else next.add(state);
+      return next;
+    });
+  };
 
-  const { reload: recargarTopologia } = topology;
-  const refrescarTodo = useCallback(() => {
-    void reload();
-    void recargarTopologia();
-  }, [reload, recargarTopologia]);
-
-  const [culpablePendiente, setCulpablePendiente] = useState<string | null>(null);
-  const activityListRef = useRef<HTMLDetailsElement>(null);
-
-  const enfocarCulpable = useCallback((key: string) => {
-    setStateFilter(undefined);
-    setQuery('');
-    setSelected(key);
-    setCulpablePendiente(key);
-  }, []);
-
-  useEffect(() => {
-    if (culpablePendiente === null) return;
-    setCulpablePendiente(null);
-    if (activityListRef.current) activityListRef.current.open = true;
-    document.querySelector(`tr[data-agent-key="${cssEscape(culpablePendiente)}"]`)
-      ?.scrollIntoView({ block: 'center', behavior: 'smooth' });
-  }, [culpablePendiente]);
-
-  if (activity.error && !snapshot) {
-    return <ErrorState error={activity.error} onRetry={activity.reload} reintentando={activity.loading} />;
+  if (activity.error && !activity.data) {
+    return (
+      <div className="flex-1 overflow-y-auto p-4 sm:p-6">
+        <ErrorState error={activity.error} onRetry={() => { void activity.reload(); }} reintentando={activity.loading} />
+      </div>
+    );
   }
-  if (activity.loading && !snapshot) return <LoadingState label="Leyendo la actividad de la flota…" />;
+  if (!snapshot) {
+    return <div className="flex-1 overflow-y-auto p-4 sm:p-6"><LoadingState label="Leyendo la actividad de la flota…" /></div>;
+  }
 
-  const capas = (
-    <div className="live-layer-switch" role="group" aria-label="Capa del mapa">
-      {(['ahora', 'permisos'] as const).map((option) => (
-        <button
-          key={option}
-          type="button"
-          className="live-layer-button"
-          aria-pressed={layer === option}
-          onClick={() => { setLayer(option); }}
-        >
-          {option === 'ahora' ? 'Ahora' : 'Permisos'}
-        </button>
-      ))}
-    </div>
-  );
-  const veredictoFlota = (
-    <FleetVerdict
-      verdict={verdict}
-      totals={snapshot?.totals}
-      onCulprit={(culprit) => { enfocarCulpable(culprit.key); }}
-    />
-  );
-  const resumenTriage = (
-    <LiveFleetTally
-      tally={tally}
-      stateFilter={stateFilter}
-      setStateFilter={setStateFilter}
-      deriva={deriva}
-    />
-  );
-  const mapa = (
-    <section className="panel live-mapa" aria-label="Mapa de la flota" data-objeto-principal="mapa-de-flota">
-      <header className="live-mapa-header">
-        <h2 className="live-mapa-titulo">Actividad</h2>
-        {capas}
-      </header>
-
-      {fueraDeAlcance > 0 ? (
-        <p className="notice" data-testid="aviso-recorte">
-          Mapa acotado a <strong>{tenantFilter}</strong>: {fueraDeAlcance} alias de otros
-          clientes, sus salas y las flechas que los tocan no se dibujan.
-          {layer === 'permisos' ? ' Tampoco se ven las aristas ACL hacia ellos.' : ''}
-          {' '}Elegí «todos» en Cliente para verlos.
-        </p>
-      ) : null}
-
-      {layer === 'ahora' && edgesEnAlcance.length === 0 && alcance.length > 0 ? (
-        <p className="live-empty-calm">No hay delegaciones entre agentes en este momento.</p>
-      ) : null}
-
-      <LiveHypergraph
-        topology={topologiaDelMapa}
-        views={alcance}
-        edges={edgesEnAlcance}
-        serverEdges={snapshot?.edges}
-        thresholds={snapshot?.thresholds}
-        origins={origins}
-        layer={layer}
-        focusKey={hovered ?? selected ?? null}
-        spotlight={spotlight}
-        loadingTopology={topology.loading && !topology.data}
-        topologyError={topology.error ?? null}
-        onRetryTopology={recargarTopologia}
-        onFocus={(key) => { setHovered(key ?? undefined); }}
-        onOpen={(view) => { abrirCajon(view.key); }}
-        onHover={(key, anchor, view, alias) => {
-          setTip(key && anchor ? { anchor, view, alias } : null);
-        }}
-      />
-    </section>
-  );
-  const tablaActividad = (
-    <FleetActivityTable
-      snapshot={snapshot}
-      selectedKey={selected ?? null}
-      onlyKeys={spotlight}
-      filterLabel={stateFilter ? LIVE_STATE_META[stateFilter].label : undefined}
-      estados={estadosVivos}
-      onSelect={(key) => { setHovered(key ?? undefined); }}
-      onOpen={(key) => { abrirCajon(key); }}
-    />
-  );
+  const problems = tally.down + tally.blocked;
+  const connected = views.length - tally.down;
+  const unknown = verdict.tone === 'desconocido';
+  const age = observedAt ? Math.max(0, (now - Date.parse(observedAt)) / 1000) : null;
+  const selected = views.find((view) => view.key === selectedKey) ?? null;
+  const talking = officeAgents.find((agent) => agent.id === talkKey);
+  const summary = `Oficina con ${String(views.length)} agentes: ${ORDEN_VIVO
+    .filter((state) => tally[state] > 0)
+    .map((state) => `${String(tally[state])} ${LIVE_STATE_META[state].label.toLowerCase()}`)
+    .join(', ')}. Flechas para recorrerlos y Enter para abrir uno; WASD mueve la vista, + y − acercan, 0 muestra todo, 1 a 5 vuelan a cada habitación y P activa el modo paseo.`;
 
   return (
-    <div className={`live-page${drawer && detail ? ' has-drawer' : ''}`
-      + (drawer && detail && (drawer.tab === 'rol' || drawer.tab === 'ficheros') ? ' cajon-ancho' : '')}>
-      <div className="live-main">
-        <div className="live-heading">
-          <PageHeader eyebrow="" title="La flota ahora" description={tenantFilter === 'todos'
-            ? `Los ${String(alcance.length)} alias que podés ver, su actividad y permisos.`
-            : `Los ${String(alcance.length)} alias de ${tenantFilter}, su actividad y permisos.`} />
-          {veredictoFlota}
-        </div>
-        <LiveFleetToolbar
-          feedState={feedState}
-          intervalMs={intervalMs}
-          setIntervalMs={setIntervalMs}
-          refrescarTodo={refrescarTodo}
-          observedAt={observedAt}
-          edadSegundos={edadSegundos}
-          query={query}
-          setQuery={setQuery}
-          tenants={tenants}
-          tenantFilter={tenantFilter}
-          setTenantFilter={setTenantFilter}
-          activityError={activity.error}
-          topologyError={topology.error}
-          recargarTopologia={recargarTopologia}
-        />
-        {mapa}
-        <div className="live-filter-controls">
-          <details className="live-state-filters">
-            <summary>Filtrar por estado</summary>
-            {resumenTriage}
-          </details>
-          {stateFilter ? (
-            <button type="button" className="button small secondary" onClick={() => { setStateFilter(undefined); }}>
-              {LIVE_STATE_META[stateFilter].label} · Quitar filtro
+    <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+      <div className="mx-auto flex w-full max-w-[1680px] flex-col gap-4 px-4 py-4 sm:px-6 lg:px-8 lg:py-6">
+        <header className="flex flex-wrap items-center gap-x-4 gap-y-2">
+          <div className="flex items-center gap-1.5">
+            <h1 className="m-0 text-[22px] font-semibold tracking-tight text-fg">Oficina</h1>
+            <PageHelp
+              title="Oficina"
+              description="Cada persona es un agente de la flota. Trabaja en su escritorio con los Programadores, cuando no tiene nada cocina, toma un café, juega en el Patio de juegos, ordena, riega las plantas, lee o charla en el Jardín, y sólo se va a dormir al Dormitorio si lleva mucho rato sin trabajo; los clientes MCP que declaraste (Dots, GPT…) pasean como visitantes «· MCP», y hablarles les deja una nota en su buzón que leen cuando consultan Cauce; lleva papeles al escritorio de otro cuando le delega y levanta un «!» cuando se traba. El estado sale del trabajo que avanza (o no), no del latido. Vos también estás: arrastrá para mirar, acercá con la rueda o pellizcando y tocá el piso para caminar hasta alguien y hablarle sin salir de la oficina."
+            >
+              <dl className="m-0 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5">
+                {ORDEN_VIVO.map((state) => (
+                  <div key={state} className="contents">
+                    <dt className={cn('font-medium', TONE_CLASS[STATE_TONE[state]].ink)}>{LIVE_STATE_META[state].label}</dt>
+                    <dd className="m-0">{LIVE_STATE_META[state].hint}</dd>
+                  </div>
+                ))}
+              </dl>
+            </PageHelp>
+          </div>
+          <p
+            className="m-0 flex min-w-0 items-center gap-2 text-[13px]"
+            role="status"
+            aria-label="Veredicto de la flota"
+            data-tone={verdict.tone}
+          >
+            <span
+              aria-hidden="true"
+              className={cn('size-2 shrink-0 rounded-full', unknown ? 'bg-warn' : problems > 0 ? 'bg-danger' : 'bg-ok')}
+            />
+            {unknown ? (
+              <span className="text-warn-ink" title={verdict.apoyo}>{verdict.frase}</span>
+            ) : problems > 0 ? (
+              <span className="text-fg-2">
+                <button
+                  type="button"
+                  className="cursor-pointer border-0 bg-transparent p-0 font-medium text-danger-ink underline-offset-2 hover:underline"
+                  title={verdict.culpables.map((culprit) => `${culprit.alias}: ${culprit.motivo}`).join('\n')}
+                  onClick={() => { setFilter(new Set(PROBLEMS)); }}
+                >
+                  {problems} {problems === 1 ? 'necesita' : 'necesitan'} atención
+                </button>
+                {' · '}{connected} {connected === 1 ? 'conectado' : 'conectados'}
+              </span>
+            ) : (
+              <span className="text-fg-2">Todo en orden · {connected} {connected === 1 ? 'conectado' : 'conectados'}</span>
+            )}
+          </p>
+          <div className="ml-auto flex items-center gap-2 text-xs text-muted">
+            <span className="hidden tabular-nums sm:inline">
+              {age === null ? 'sin lectura' : `hace ${humanSeconds(age)}`}
+            </span>
+            <RefreshInterval value={activityIntervalMs} onChange={fleet.setActivityIntervalMs} />
+            <button
+              type="button"
+              onClick={fleet.reload}
+              aria-label="Actualizar ahora"
+              title="Actualizar ahora"
+              className="grid size-8 cursor-pointer place-items-center rounded-md border border-line bg-surface text-fg-2 hover:bg-subtle"
+            >
+              <RefreshCw size={14} aria-hidden="true" className={activity.loading ? 'animate-spin' : undefined} />
+            </button>
+          </div>
+        </header>
+
+        <div className="-mx-4 flex gap-1.5 overflow-x-auto px-4 pb-0.5 sm:mx-0 sm:flex-wrap sm:px-0" role="group" aria-label="Filtrar por estado">
+          {ORDEN_VIVO.filter((state) => tally[state] > 0).map((state) => {
+            const on = filter.has(state);
+            const tone = TONE_CLASS[STATE_TONE[state]];
+            return (
+              <button
+                key={state}
+                type="button"
+                aria-pressed={on}
+                title={LIVE_STATE_META[state].hint}
+                onClick={() => { toggle(state); }}
+                className={cn(
+                  'inline-flex h-7 shrink-0 cursor-pointer items-center gap-1.5 rounded-full border px-2.5 text-xs font-medium transition-colors',
+                  on ? cn('border-transparent', tone.pill) : 'border-line bg-surface text-fg-2 hover:bg-subtle',
+                )}
+              >
+                <span aria-hidden="true" className={cn('size-1.5 rounded-full', tone.dot)} />
+                {LIVE_STATE_META[state].label}
+                <span className="tabular-nums opacity-70">{tally[state]}</span>
+              </button>
+            );
+          })}
+          {filter.size > 0 ? (
+            <button
+              type="button"
+              onClick={() => { setFilter(new Set()); }}
+              className="h-7 shrink-0 cursor-pointer rounded-full border-0 bg-transparent px-2 text-xs text-muted hover:text-fg"
+            >
+              Quitar filtro
             </button>
           ) : null}
         </div>
-        <LiveFleetLegend
-          snapshot={snapshot}
-          topologiaEnAlcance={topologiaEnAlcance}
-          resumenDePermisos={resumenDePermisos}
-          configuracion={configuracion}
-          onAbrirPerfil={(key) => { abrirCajon(key, 'rol', 'campos'); }}
+
+        <NecesitanAtencion
+          agents={snapshot.agents ?? []}
+          estados={estados}
+          lookback={snapshot.thresholds?.ack_lookback_seconds}
+          selectedKey={selected?.key ?? null}
+          onOpen={select}
         />
-        <details className="live-fold live-agent-list" ref={activityListRef}>
-          <summary>Agentes · {String(alcance.length)}</summary>
-          {tablaActividad}
-        </details>
+
+        <section
+          aria-label="Oficina"
+          data-objeto-principal="oficina"
+          className="-mx-4 overflow-hidden border-y border-line bg-subtle sm:mx-0 sm:rounded-xl sm:border sm:shadow-card"
+        >
+          {views.length === 0 ? (
+            <div className="grid justify-items-center gap-3 p-8 text-center text-[13px] text-muted">
+              <OrbView seed="cauce/oficina" state="idle" size={44} sleeping look={{ hue: 250 }} />
+              <p className="m-0">No hay ningún agente en la oficina: ni configurado, ni con entregas abiertas, ni con lease reciente.</p>
+            </div>
+          ) : (
+            <OfficeCanvas
+              agents={officeAgents}
+              selectedId={selected?.key ?? null}
+              highlight={highlight}
+              onSelect={select}
+              label={summary}
+              onTalk={talkTo}
+              speech={chat.speech}
+              talk={talkKey && chat.dialog && talking ? {
+                id: talkKey,
+                panel: <OfficeDialog model={chat.dialog} state={talking.state} onClose={() => { setTalkKey(null); }} />,
+              } : null}
+            />
+          )}
+        </section>
       </div>
 
-      {drawer && detail ? (
-        <AgentDrawer
-          view={detail}
-          tab={drawer.tab}
-          configuracion={configuracion}
-          contextFocusTarget={drawer.contextFocusTarget}
-          onTab={(tab, contextFocusTarget) => {
-            setDrawer((current) => (current
-              ? { key: current.key, tab, ...(contextFocusTarget === undefined ? {} : { contextFocusTarget }) }
-              : current));
-            escribirQuery(drawer.key, tab);
-          }}
-          onClose={cerrarCajon}
-        />
-      ) : null}
-
-      <FloatingTooltip anchor={tip?.anchor ?? null} open={tip !== null}>
-        {tip ? <AgentTooltipCard view={tip.view} alias={tip.alias} /> : null}
-      </FloatingTooltip>
+      <AgentSheet view={selected} status={fleet.status} onClose={close} onTalk={selected ? () => { talkTo(selected.key); } : undefined} />
     </div>
   );
 }
-
-function escribirQuery(key?: string, tab?: DrawerTab): void {
-  if (typeof window === 'undefined') return;
-  const url = new URL(window.location.href);
-  if (!key) {
-    url.searchParams.delete('agente');
-    url.searchParams.delete('pestana');
-    url.searchParams.delete('trace');
-  } else {
-    url.searchParams.set('agente', key);
-    url.searchParams.set('pestana', tab ?? 'ahora');
-    url.searchParams.delete('trace');
-  }
-  window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}`);
-}
-
-function leerQuery(): {
-  key: string; tab: DrawerTab; contextFocusTarget?: ContextFocusTarget;
-} | null {
-  if (typeof window === 'undefined') return null;
-  const params = new URLSearchParams(window.location.search);
-  const key = params.get('agente');
-  if (!key) return null;
-  const tab = params.get('pestana');
-  if (tab === 'perfil') return { key, tab: 'rol', contextFocusTarget: 'campos' };
-  const valida: DrawerTab[] = ['ahora', 'conexion', 'entregas', 'rol', 'ficheros'];
-  return {
-    key,
-    tab: valida.includes(tab as DrawerTab) ? tab as DrawerTab : 'ahora',
-  };
-}
-
-function cssEscape(value: string): string {
-  return typeof CSS !== 'undefined' && typeof CSS.escape === 'function'
-    ? CSS.escape(value)
-    : value.replace(/["\\]/g, '\\$&');
-}
-
-export type { FleetActivitySnapshot };

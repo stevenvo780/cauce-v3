@@ -1,17 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { mockActivity, topology } from '../../mocks/data';
-import { layoutHypergraph } from './hypergraph/hypergraph-layout';
 import {
   agentKey,
   buildLiveViews,
   delegationEdges,
-  AVATAR_MAX,
-  AVATAR_MIN,
-  AVATAR_UNIFORME,
-  aggregateEdges,
-  grosorDe,
-  radioDe,
-  humanOrigins,
   origenDeItem,
 } from './agent-state';
 import { agent, snapshot } from './agent-state-fixtures';
@@ -91,10 +83,8 @@ describe('buildLiveViews', () => {
 describe('la topología y la actividad de demostración se corresponden', () => {
   const actividad = mockActivity();
   const agentes = actividad.agents ?? [];
-  const nodos = new Set(
-    layoutHypergraph(topology, { width: 1040, height: 660, padding: 46, nodeSpacing: 96 })
-      .nodes.map((node) => `${node.tenants[0]}/${node.alias}`),
-  );
+  const nodos = new Set((topology.tenants ?? []).flatMap((tenant) => (tenant.rooms ?? [])
+    .flatMap((room) => (room.members ?? []).map((member) => `${tenant.id ?? ''}/${member.alias ?? ''}`))));
 
   it('coloca a cada agente de la actividad dentro de una sala declarada', () => {
     const sinSala = agentes.map(agentKey).filter((key) => !nodos.has(key));
@@ -123,54 +113,7 @@ describe('la topología y la actividad de demostración se corresponden', () => 
   });
 });
 
-describe('aggregateEdges', () => {
-  it('junta en UNA arista las N entregas del mismo par y se queda con la más vieja', () => {
-    const agregadas = aggregateEdges([
-      { from: 'Steven/zeus', to: 'Steven/kant', secondsInFlight: 40 },
-      { from: 'Steven/zeus', to: 'Steven/kant', secondsInFlight: 610 },
-      { from: 'Steven/argos', to: 'Steven/kant', secondsInFlight: 10 },
-    ]);
-    expect(agregadas.size).toBe(2);
-    const par = agregadas.get('Steven/zeus→Steven/kant');
-    expect(par?.inFlight).toBe(2);
-    expect(par?.oldestSeconds).toBe(610);
-    expect(par?.totalFromServer).toBe(false);
-  });
-
-  it('la ida y la vuelta son DOS aristas: contarlas juntas duplicaría cada conversación', () => {
-    const agregadas = aggregateEdges([
-      { from: 'Miguel/kratos', to: 'Miguel/janus', secondsInFlight: 10 },
-      { from: 'Miguel/janus', to: 'Miguel/kratos', secondsInFlight: 10 },
-    ]);
-    expect([...agregadas.keys()].sort()).toEqual([
-      'Miguel/janus→Miguel/kratos', 'Miguel/kratos→Miguel/janus',
-    ]);
-  });
-
-  it('el volumen de la ventana lo manda el servidor, y el "en vuelo" sigue siendo el del snapshot', () => {
-    const agregadas = aggregateEdges(
-      [{ from: 'Steven/zeus', to: 'Steven/kant', secondsInFlight: 40 }],
-      [{ from_tenant: 'Steven', from_alias: 'zeus', to_tenant: 'Steven', to_alias: 'kant', in_flight: 99, total_window: 47 }],
-    );
-    const par = agregadas.get('Steven/zeus→Steven/kant');
-    expect(par?.total).toBe(47);
-    expect(par?.totalFromServer).toBe(true);
-    // The server's 99 does NOT overwrite the 1 from the snapshot: the bots being drawn in this
-    // pass come from the snapshot, and an arrow that does not match them is an arrow that lies.
-    expect(par?.inFlight).toBe(1);
-  });
-
-  it('una arista que sólo conoce el servidor existe igual, con cero en vuelo', () => {
-    const agregadas = aggregateEdges([], [
-      { from_tenant: 'Pablo', from_alias: 'midas', to_tenant: 'Pablo', to_alias: 'seneca', in_flight: 0, total_window: 12 },
-    ]);
-    const par = agregadas.get('Pablo/midas→Pablo/seneca');
-    expect(par?.inFlight).toBe(0);
-    expect(par?.total).toBe(12);
-  });
-});
-
-describe('humanOrigins', () => {
+describe('origen de un encargo que entró por un puente', () => {
   it('rescata el encargo que entró por un puente, que delegationEdges tira por from === to', () => {
     // The Telegram bridge publishes the owner's message USING THE AGENT'S OWN ALIAS. As a
     // delegation it is false — and that is why it is discarded — but discarding it entirely loses
@@ -184,10 +127,10 @@ describe('humanOrigins', () => {
     })]);
 
     expect(delegationEdges(nieve)).toEqual([]);
-    expect(humanOrigins(nieve)).toEqual([{ agentKey: 'Jhon/hegel', adapter: 'telegram', count: 1 }]);
+    expect(buildLiveViews(nieve, {}, NOW).views[0].origenes).toEqual([{ tipo: 'puente', adapter: 'telegram' }]);
   });
 
-  it('el tráfico entre agentes ("bus") NO produce un nodo persona: ya lo cuenta la delegación', () => {
+  it('el tráfico entre agentes ("bus") NO se atribuye a una persona', () => {
     const nieve = snapshot([agent({
       tenant_id: 'Steven', alias: 'kant', in_flight: 1,
       in_flight_items: [{
@@ -195,7 +138,7 @@ describe('humanOrigins', () => {
         origin_adapter: 'bus', status: 'started',
       }],
     })]);
-    expect(humanOrigins(nieve)).toEqual([]);
+    expect(buildLiveViews(nieve, {}, NOW).views[0].origenes.some((origen) => origen.tipo === 'puente')).toBe(false);
   });
 });
 
@@ -209,50 +152,6 @@ describe('buildLiveViews y el campo que el servidor puede no traer', () => {
 
     const conDato = buildLiveViews(snapshot([agent({ alias: 'zeus', closed_24h: 0 })]), {}, NOW);
     expect(conDato.views[0].closed24h).toBe(0);
-  });
-});
-
-describe('radioDe', () => {
-  it('sin el campo en NINGÚN agente, todos miden lo mismo: no se inventa una escala', () => {
-    // `maxClosed === null` means "the server does not report 24h closure". Drawing the whole
-    // fleet at the minimum radius would make "I don't know" look identical to "it closed
-    // nothing", which on a screen where size means how much each one worked is a false
-    // accusation.
-    expect(radioDe(undefined, null)).toBe(AVATAR_UNIFORME);
-    expect(radioDe(41, null)).toBe(AVATAR_UNIFORME);
-  });
-
-  it('cerrar CERO es un dato y se dibuja en el mínimo; no traer el campo, no', () => {
-    expect(radioDe(0, 41)).toBe(AVATAR_MIN);
-    // The alias the server does not report inside a fleet that does report: minimum too, but
-    // for a different reason — and the balloon removes its foot, which is where the difference
-    // shows.
-    expect(radioDe(undefined, 41)).toBe(AVATAR_MIN);
-  });
-
-  it('el máximo de la flota llega al tope y ninguno se pasa', () => {
-    expect(radioDe(41, 41)).toBe(AVATAR_MAX);
-    expect(radioDe(99, 41)).toBe(AVATAR_MAX);
-  });
-
-  it('escala por ÁREA, no por radio: el doble de trabajo no puede parecer el cuádruple', () => {
-    const mitad = radioDe(50, 100);
-    // With linear scaling on the radius, 50/100 would give exactly the midpoint between 22 and
-    // 34 (28). With a square root, it sits above — which is what makes the areas compare well.
-    expect(mitad).toBeGreaterThan((AVATAR_MIN + AVATAR_MAX) / 2);
-    expect(mitad).toBeLessThan(AVATAR_MAX);
-  });
-});
-
-describe('grosorDe', () => {
-  it('una sola entrega es la línea más fina, y el máximo de la flota la más gruesa', () => {
-    expect(grosorDe(1, 1)).toBe(1.5);
-    expect(grosorDe(1, 8)).toBe(1.5);
-    expect(grosorDe(8, 8)).toBe(5);
-  });
-
-  it('tiene techo: una relación muy cargada no puede tapar el mapa', () => {
-    expect(grosorDe(500, 8)).toBe(5);
   });
 });
 
@@ -277,7 +176,8 @@ describe('D1 · atribución de quién pidió el trabajo', () => {
     expect(delegationEdges(cadenaHeredada)).toEqual([
       expect.objectContaining({ from: 'Steven/zeus', to: 'Steven/kant' }),
     ]);
-    expect(humanOrigins(cadenaHeredada)).toEqual([]);
+    expect(buildLiveViews(cadenaHeredada, {}, NOW).views.flatMap((view) => view.origenes)
+      .some((origen) => origen.tipo === 'puente')).toBe(false);
   });
 
   it('la vista de kant dice que se lo pidió zeus, no "una persona por telegram"', () => {
@@ -294,7 +194,6 @@ describe('D1 · atribución de quién pidió el trabajo', () => {
         origin_adapter: 'telegram', status: 'leased',
       }],
     })]);
-    expect(humanOrigins(porTelegram)).toEqual([{ agentKey: 'Jhon/hegel', adapter: 'telegram', count: 1 }]);
     expect(buildLiveViews(porTelegram, {}, NOW).views[0].origenes)
       .toEqual([{ tipo: 'puente', adapter: 'telegram' }]);
   });
@@ -319,6 +218,7 @@ describe('D1 · atribución de quién pidió el trabajo', () => {
     const kant = (actividad.agents ?? []).find((a) => a.alias === 'kant');
     const heredada = (kant?.in_flight_items ?? []).find((item) => item.origin_adapter === 'telegram');
     expect(heredada?.from_alias).toBe('argos');
-    expect(humanOrigins(actividad).some((origen) => origen.agentKey === 'Steven/kant')).toBe(false);
+    const vista = buildLiveViews(actividad, {}, NOW).views.find((view) => view.key === 'Steven/kant');
+    expect(vista?.origenes.some((origen) => origen.tipo === 'puente')).toBe(false);
   });
 });

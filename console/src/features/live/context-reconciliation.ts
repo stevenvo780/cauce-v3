@@ -1,6 +1,6 @@
 import { esRecargaHecha, type RespuestaDeRecarga } from './perfil';
 
-export interface ReconciliationDocument {
+interface ReconciliationDocument {
   readonly name: string;
   readonly observed_sha: string;
   readonly exterior_sha: string;

@@ -9,7 +9,7 @@ import {
 export const ULTIMATE_TERMINAL_PLUGIN_ID = 'ultimate-terminal.client';
 export const ULTIMATE_TERMINAL_CAPABILITY = 'terminal.pty.client';
 
-export interface PluginGate {
+interface PluginGate {
   enabled: boolean;
   reason: string;
   websocketPath?: string;

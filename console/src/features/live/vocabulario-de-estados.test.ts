@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { FleetWorkState } from '../../api/types';
 import { FLAG_LABEL, WORK_STATE_LABEL } from './activity';
-import { resumenPortada } from '../landing/landing';
 import { LIVE_STATES, LIVE_STATE_META } from './agent-state';
 import { CAPABILITY_LABEL, DLQ_DISPOSITION_LABEL, LEASE_LABEL } from '../../vocabulario';
 
@@ -89,22 +88,7 @@ describe('el vocabulario de estados de la consola', () => {
     expect(constantes).toEqual([]);
   });
 
-  it('"detenido" stopped being a homonym between the landing and the table signals', () => {
-    /*
-     * `ack_stalled` was called "ACK detenido" and the landing alert "N agentes detenidos". Two
-     * different facts — a delivery without ACK and a stalled agent — with the same word, on two
-     * screens the operator goes through in a row.
-     */
-    const resumen = resumenPortada({
-      activity: {
-        observed_at: '2026-08-23T10:00:00.000Z',
-        totals: { by_state: { idle: 0, queued: 0, working: 0, saturated: 0, stalled: 1 } },
-        agents: [],
-      },
-    });
-    const aviso = resumen.alertas.find((alerta) => alerta.id === 'agentes-detenidos');
-    expect(aviso?.titulo).toBe('1 agente trabado');
-    expect(aviso?.titulo).toContain(LIVE_STATE_META.blocked.label.toLowerCase());
+  it('the signals never call a stalled agent "detenido"', () => {
     expect(Object.values(FLAG_LABEL).join(' ')).not.toMatch(/detenid/i);
   });
 

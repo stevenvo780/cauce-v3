@@ -4,7 +4,8 @@ import { useConsoleAccess } from '../../api/console-access';
 import type { ConfigMutation, ConfigurationSnapshot } from '../../api/types';
 import type { Resource } from '../../api/use-resource';
 import { useConfigMutation, useRevisionEncadenada, type ConfigMutationNotice, type ConfigMutationRunner } from './use-config-mutation';
-import './AgentRegistryEditor.css';
+import { Button, Notice, PREVIEW } from '../../components/kit';
+import { CHECK_LABEL, HINT } from './config-ui';
 
 type AgentRow = Record<string, unknown> & { tenant_id: string; alias: string };
 
@@ -91,11 +92,11 @@ export function AgentRegistryEditor({ tenantId, alias, snapshot, onReloaded, onD
     ? freshSnapshot.agents?.find((row) => row.tenant_id === tenantId && row.alias === alias)
     : snapshot.agents?.find((row) => row.tenant_id === tenantId && row.alias === alias);
   if (!agent) return null;
-  return <div className="agent-registry-editor" data-open={String(open)}>
-    <button type="button" className="button secondary"
+  return <div className="min-w-0" data-open={String(open)}>
+    <Button
       aria-label={`${open ? 'Cerrar' : 'Editar'} registro de ${tenantId}/${alias}`}
       onClick={() => { setOpen((value) => !value); runner.clear(); }}
-    >{open ? 'Cerrar registro' : 'Editar registro'}</button>
+    >{open ? 'Cerrar registro' : 'Editar registro'}</Button>
     {open ? <AgentRegistryForm agent={agent as AgentRow} runner={runner} onDeleted={onDeleted}
       onClose={() => { setOpen(false); runner.clear(); }} /> : null}
   </div>;
@@ -177,15 +178,15 @@ function AgentRegistryForm({
   }
 
   const originalName = typeof agent.display_name === 'string' ? agent.display_name : '';
-  return <section className="settings-context" aria-label={`Registro de ${agent.tenant_id}/${agent.alias}`}>
-    <div className="settings-context-heading">
+  return <section className="mt-3 grid grid-cols-1 gap-3 rounded-lg border border-line bg-subtle p-4" aria-label={`Registro de ${agent.tenant_id}/${agent.alias}`}>
+    <div className="flex flex-wrap items-center justify-between gap-3">
       <h3>Registro · {agent.tenant_id}/{agent.alias}</h3>
-      <button type="button" className="button secondary" onClick={onClose}>Cerrar editor</button>
+      <Button onClick={onClose}>Cerrar editor</Button>
     </div>
-    <p className="settings-source">Identidad fija desde la fila seleccionada. Los permisos se vuelven a decidir en el servidor.</p>
-    {!runner.canWrite ? <p className="notice" role="note">Edición de registro en solo lectura: falta permiso acreditado de configuración.</p> : null}
-    {serverRefreshNotice ? <p className="notice" role="note">{serverRefreshNotice}</p> : null}
-    <div className="config-form agent-registry-form">
+    <p className={HINT}>Identidad fija desde la fila seleccionada. Los permisos se vuelven a decidir en el servidor.</p>
+    {!runner.canWrite ? <Notice role="note">Edición de registro en solo lectura: falta permiso acreditado de configuración.</Notice> : null}
+    {serverRefreshNotice ? <Notice role="note">{serverRefreshNotice}</Notice> : null}
+    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
       <label>Nombre visible
         <input maxLength={128} value={draft.displayName}
           onChange={(event) => { update({ displayName: event.target.value }); }} disabled={editDisabled} />
@@ -201,43 +202,43 @@ function AgentRegistryForm({
         <input type="number" min={1} max={100} step={1} value={draft.capacity}
           onChange={(event) => { update({ capacity: event.target.value, noCapacityLimit: false }); }} disabled={editDisabled} />
       </label>
-      <label className="casilla agent-registry-checkbox"><input type="checkbox" checked={draft.noCapacityLimit}
+      <label className={CHECK_LABEL}><input type="checkbox" checked={draft.noCapacityLimit}
         onChange={(event) => { update({ noCapacityLimit: event.target.checked, ...(event.target.checked ? { capacity: '' } : {}) }); }} disabled={editDisabled} />
         Sin límite (enviar null)
       </label>
-      <p className="settings-source">La ubicación, el arnés y la cuenta principal se cambian en «Operar agente».
+      <p className={HINT}>La ubicación, el arnés y la cuenta principal se cambian en «Operar agente».
         Habilitar la admisión requiere verificar el runtime; pausar este registro no detiene su proceso.</p>
     </div>
-    {formError ? <p className="notice error" role="alert">{formError}</p> : null}
-    {runner.notice ? <p className={`notice ${runner.notice.tone === 'error' ? 'error' : ''}`}
-      role={runner.notice.tone === 'error' ? 'alert' : 'status'}>{runner.notice.text}</p> : null}
-    <div className="settings-context-heading">
+    {formError ? <Notice tone="danger" role="alert">{formError}</Notice> : null}
+    {runner.notice ? <Notice tone={runner.notice.tone === 'error' ? 'danger' : 'info'}
+      role={runner.notice.tone === 'error' ? 'alert' : 'status'}>{runner.notice.text}</Notice> : null}
+    <div className="flex flex-wrap items-center justify-between gap-3">
       <span>Revisión esperada: {String(runner.expectedRevision ?? 'desconocida')}</span>
       <div>
-        <button type="button" className="button secondary" onClick={() => { void preview(); }} disabled={disabled || deleting}>
+        <Button onClick={() => { void preview(); }} disabled={disabled || deleting}>
           Previsualizar cambio
-        </button>{' '}
-        <button type="button" className="button primary" onClick={() => { void apply(); }}
+        </Button>{' '}
+        <Button variant="primary" onClick={() => { void apply(); }}
           disabled={disabled || deleting || !mutation || !runner.isValidated(mutation)}>
           Aplicar cambio
-        </button>
+        </Button>
       </div>
     </div>
-    {canDelete ? <button type="button" className="button secondary" disabled={disabled || deleting}
-      onClick={() => { setDeleting(true); runner.clear(); setFormError(undefined); }}>Eliminar registro</button>
-      : <p className="settings-source">La retirada de un agente operativo se realiza en «Operar agente».</p>}
-    {deleting && canDelete ? <form className="config-form" aria-label={`Eliminar registro de ${agent.tenant_id}/${agent.alias}`}
+    {canDelete ? <Button disabled={disabled || deleting}
+      onClick={() => { setDeleting(true); runner.clear(); setFormError(undefined); }}>Eliminar registro</Button>
+      : <p className={HINT}>La retirada de un agente operativo se realiza en «Operar agente».</p>}
+    {deleting && canDelete ? <form className="grid gap-3" aria-label={`Eliminar registro de ${agent.tenant_id}/${agent.alias}`}
       onSubmit={(event) => { event.preventDefault(); void remove(true); }}>
       <p>Eliminar este registro requiere comprobar sus dependencias. Previsualiza antes de confirmar.</p>
-      <div className="config-actions">
-        <button type="submit" className="button secondary" disabled={disabled}>Previsualizar eliminación</button>
-        <button type="button" className="button primary" disabled={disabled || !runner.isValidated(deletion)}
-          onClick={() => { void remove(false); }}>Confirmar eliminación del registro</button>
-        <button type="button" className="button secondary" disabled={runner.busy}
-          onClick={() => { setDeleting(false); runner.clear(); }}>Cancelar eliminación</button>
+      <div className="flex flex-wrap gap-2">
+        <Button type="submit" disabled={disabled}>Previsualizar eliminación</Button>
+        <Button variant="primary" disabled={disabled || !runner.isValidated(deletion)}
+          onClick={() => { void remove(false); }}>Confirmar eliminación del registro</Button>
+        <Button disabled={runner.busy}
+          onClick={() => { setDeleting(false); runner.clear(); }}>Cancelar eliminación</Button>
       </div>
     </form> : null}
-    {runner.preview ? <pre className="config-preview" aria-label="Preview del registro de agente">{runner.preview}</pre> : null}
-    {originalName && draft.displayName.trim() === '' ? <p className="settings-source">Nombre actual «{originalName}»; vacío lo quita del registro.</p> : null}
+    {runner.preview ? <pre className={PREVIEW} aria-label="Preview del registro de agente">{runner.preview}</pre> : null}
+    {originalName && draft.displayName.trim() === '' ? <p className={HINT}>Nombre actual «{originalName}»; vacío lo quita del registro.</p> : null}
   </section>;
 }

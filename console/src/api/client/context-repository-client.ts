@@ -5,7 +5,7 @@ import { ApiError } from './core';
 import type { RequestFn } from './system-client';
 
 export type JournalVerification = 'journal_match' | 'journal_mismatch' | 'journal_unavailable' | 'git_authored';
-export interface ContextRepositoryCapability {
+interface ContextRepositoryCapability {
   readonly state: 'configured' | 'not_configured' | 'not_published';
   readonly instance_id: string | null;
 }

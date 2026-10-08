@@ -53,7 +53,6 @@ const PERMISOS_PLENOS: readonly ConsolePermission[] = [
  * al menú sin registrarla acá, el primer test lo dice.
  */
 const GOBIERNO_NAV: Record<string, 'config.write' | 'relay' | null> = {
-  overview: null,
   live: null,
   accounts: null,
   messages: null,
@@ -77,8 +76,8 @@ function servirRelayDisponible() {
 }
 
 async function esperarLaFlota() {
-  await screen.findByRole('heading', { level: 1, name: /la flota ahora/i }, { timeout: 10_000 });
-  await userEvent.click(screen.getByRole('button', { name: 'Herramientas' }));
+  await screen.findByRole('heading', { level: 1, name: 'Oficina' }, { timeout: 10_000 });
+  await userEvent.click(screen.getByRole('button', { name: 'Gestión' }));
 }
 
 function barra(): HTMLElement {
@@ -97,7 +96,7 @@ it('terminalNavAvailability: checking y available navegan; unavailable inhabilit
     .toEqual({ hidden: false, disabled: true, reason: 'Sin relay.' });
 });
 
-it('operador pleno: las nueve entradas habilitadas y «Ajustes y altas» navega', async () => {
+it('operador pleno: las nueve entradas habilitadas y «Ajustes» navega', async () => {
   servirAcceso(PERMISOS_PLENOS);
   servirRelayDisponible();
   window.history.pushState({}, '', '/live');
@@ -108,11 +107,11 @@ it('operador pleno: las nueve entradas habilitadas y «Ajustes y altas» navega'
   for (const entrada of NAV_ENTRIES) {
     expect(within(nav).getByRole('link', { name: entrada.label })).not.toHaveAttribute('aria-disabled');
   }
-  await userEvent.click(within(nav).getByRole('link', { name: 'Ajustes y altas' }));
+  await userEvent.click(within(nav).getByRole('link', { name: 'Ajustes' }));
   expect(window.location.pathname).toBe('/config');
 });
 
-it('sin config.write: «Ajustes y altas» sigue navegable y la vista decide el acceso de lectura', async () => {
+it('sin config.write: «Ajustes» sigue navegable y la vista decide el acceso de lectura', async () => {
   servirAcceso(['message.publish'], ['agent']);
   servirRelayDisponible();
   window.history.pushState({}, '', '/live');
@@ -120,7 +119,7 @@ it('sin config.write: «Ajustes y altas» sigue navegable y la vista decide el a
 
   await esperarLaFlota();
   const nav = barra();
-  const config = within(nav).getByRole('link', { name: 'Ajustes y altas' });
+  const config = within(nav).getByRole('link', { name: 'Ajustes' });
   await waitFor(() => { expect(config).not.toHaveAttribute('aria-disabled'); });
   for (const entrada of NAV_ENTRIES.filter((candidate) => candidate.id !== 'config')) {
     expect(within(nav).getByRole('link', { name: entrada.label })).not.toHaveAttribute('aria-disabled');
@@ -137,23 +136,23 @@ it('sin permisos de acción: el menú deja abrir la vista y la escritura falla c
 
   await esperarLaFlota();
   const nav = barra();
-  expect(within(nav).getAllByRole('link').map((enlace) => enlace.getAttribute('aria-label')))
-    .toEqual(NAV_ENTRIES.map((entrada) => entrada.label));
-  const config = within(nav).getByRole('link', { name: 'Ajustes y altas' });
+  expect(within(nav).getAllByRole('link').map((enlace) => enlace.textContent).sort())
+    .toEqual(NAV_ENTRIES.map((entrada) => entrada.label).sort());
+  const config = within(nav).getByRole('link', { name: 'Ajustes' });
   await waitFor(() => { expect(config).not.toHaveAttribute('aria-disabled'); });
   for (const entrada of NAV_ENTRIES.filter((candidate) => candidate.id !== 'config')) {
     expect(within(nav).getByRole('link', { name: entrada.label })).not.toHaveAttribute('aria-disabled');
   }
 });
 
-it('permiso no acreditado (null): «Ajustes y altas» sigue navegable en el menú', async () => {
+it('permiso no acreditado (null): «Ajustes» sigue navegable en el menú', async () => {
   servirAcceso(null, null);
   servirRelayDisponible();
   window.history.pushState({}, '', '/live');
   renderWithApi(<App />);
 
   await esperarLaFlota();
-  const config = within(barra()).getByRole('link', { name: 'Ajustes y altas' });
+  const config = within(barra()).getByRole('link', { name: 'Ajustes' });
   await waitFor(() => { expect(config).not.toHaveAttribute('aria-disabled'); });
   await userEvent.click(config);
   expect(window.location.pathname).toBe('/config');
@@ -166,7 +165,7 @@ it('los roles y los permisos de escritura no gobiernan la navegación a Configur
   const primera = renderWithApi(<App />);
 
   await esperarLaFlota();
-  expect(within(barra()).getByRole('link', { name: 'Ajustes y altas' })).not.toHaveAttribute('aria-disabled');
+  expect(within(barra()).getByRole('link', { name: 'Ajustes' })).not.toHaveAttribute('aria-disabled');
   primera.unmount();
 
   servirAcceso([], ['operator']);
@@ -174,17 +173,17 @@ it('los roles y los permisos de escritura no gobiernan la navegación a Configur
   renderWithApi(<App />);
 
   await esperarLaFlota();
-  const config = within(barra()).getByRole('link', { name: 'Ajustes y altas' });
+  const config = within(barra()).getByRole('link', { name: 'Ajustes' });
   await waitFor(() => { expect(config).not.toHaveAttribute('aria-disabled'); });
 });
 
-it('«Terminal de agentes» en el menú lo gobierna el relay, no ultimate-terminal.connect', async () => {
+it('«Terminal» en el menú lo gobierna el relay, no ultimate-terminal.connect', async () => {
   servirAcceso(PERMISOS_PLENOS, ['operator']);
   window.history.pushState({}, '', '/live');
   const primera = renderWithApi(<App />);
 
   await esperarLaFlota();
-  const sinRelay = within(barra()).getByRole('link', { name: 'Terminal de agentes' });
+  const sinRelay = within(barra()).getByRole('link', { name: 'Terminal' });
   await waitFor(() => { expect(sinRelay).toHaveAttribute('aria-disabled', 'true'); });
   expect(sinRelay).toHaveAttribute('title', expect.stringContaining('PTY'));
   primera.unmount();
@@ -195,7 +194,7 @@ it('«Terminal de agentes» en el menú lo gobierna el relay, no ultimate-termin
   renderWithApi(<App />);
 
   await esperarLaFlota();
-  const conRelay = within(barra()).getByRole('link', { name: 'Terminal de agentes' });
+  const conRelay = within(barra()).getByRole('link', { name: 'Terminal' });
   await waitFor(() => { expect(conRelay).not.toHaveAttribute('aria-disabled'); });
 });
 
@@ -205,21 +204,23 @@ it('ruta /config sin config.write: abre en solo lectura, no 404 ni redirección'
   window.history.pushState({}, '', '/config');
   renderWithApi(<App />);
 
-  expect(await screen.findByRole('heading', { level: 1, name: /ajustes y altas/i }, { timeout: 10_000 }))
+  expect(await screen.findByRole('heading', { level: 1, name: 'Ajustes' }, { timeout: 10_000 }))
     .toBeInTheDocument();
-  expect(screen.getByRole('list', { name: 'Agentes configurados' })).toBeInTheDocument();
-  expect(screen.queryByRole('switch')).not.toBeInTheDocument();
-  await userEvent.click(screen.getByRole('button', { name: 'Administración avanzada' }));
   expect(await screen.findByText(/Solo lectura:/, {}, { timeout: 10_000 })).toBeInTheDocument();
-  expect(screen.getByRole('button', { name: /^Crear$/ })).toBeDisabled();
-  for (const control of screen.getAllByRole('switch')) expect(control).toBeDisabled();
+  await userEvent.click(screen.getByRole('tab', { name: 'Agentes' }));
+  expect(await screen.findByRole('list', { name: 'Agentes configurados' })).toBeInTheDocument();
+  for (const control of screen.queryAllByRole('switch')) expect(control).toBeDisabled();
+  await userEvent.click(screen.getByRole('tab', { name: 'Espacios y salas' }));
+  for (const crear of await screen.findAllByRole('button', { name: /^Crear$/ })) expect(crear).toBeDisabled();
+  await userEvent.click(screen.getByRole('tab', { name: 'Avanzado' }));
+  expect(await screen.findByRole('button', { name: /Aplicar atómico/ }, { timeout: 10_000 })).toBeDisabled();
   expect(window.location.pathname).toBe('/config');
   expect(screen.queryByRole('heading', { level: 1, name: /ruta no encontrada/i })).not.toBeInTheDocument();
 });
 
 it.each([
-  ['/queues', /colas y dlq operativo/i],
-  ['/messages', /^mensajes$/i],
+  ['/queues', /^colas y dlq/i],
+  ['/messages', /con quién trabajamos hoy/i],
 ] as const)('ruta %s sin permisos de acción: la vista abre igual (lo inerte es la acción)', async (ruta, titulo) => {
   servirAcceso([], []);
   servirRelayDisponible();

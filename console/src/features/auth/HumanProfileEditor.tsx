@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { useApi } from '../../api/context';
-import './human-profile.css';
+import { Button } from '../../components/kit';
 
 export function HumanProfileEditor({ name, disabled }: { name: string; disabled: boolean }) {
   const api = useApi();
@@ -53,23 +53,36 @@ export function HumanProfileEditor({ name, disabled }: { name: string; disabled:
     }
   }
 
-  return <div className="human-profile-editor">
-    <button ref={trigger} type="button" className="button secondary" disabled={disabled} aria-disabled={disabled || busy} hidden={editing}
-      onClick={() => { if (busy || disabled) return; setDraft(name); setError(''); setSaved(false); setEditing(true); }}>Editar nombre</button>
-    {editing ? <form onSubmit={(event) => { event.preventDefault(); void save(); }} onKeyDown={(event) => {
-      if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); cancel(); }
-    }}>
-      <label htmlFor={id}>Tu nombre</label>
-      <input id={id} ref={input} value={draft} disabled={busy || disabled} autoComplete="name"
-        aria-describedby={`${id}-help${error ? ` ${id}-error` : ''}`} aria-invalid={Boolean(error)}
-        onChange={(event) => { setDraft(event.target.value); }} />
-      <p id={`${id}-help`}>Entre 1 y 120 caracteres. Los mensajes anteriores conservan su autoría.</p>
-      {error ? <p id={`${id}-error`} role="alert">{error}</p> : null}
-      <div className="human-profile-actions">
-        <button type="submit" className="button" disabled={busy || disabled}>{busy ? 'Guardando…' : 'Guardar nombre'}</button>
-        <button type="button" className="button secondary" onClick={cancel}>Cancelar edición</button>
-      </div>
-    </form> : null}
-    {saved ? <p role="status">Nombre guardado</p> : null}
-  </div>;
+  return (
+    <div className="grid min-w-0 gap-2 [&_p]:m-0 [&_p]:break-words [&_p]:text-xs">
+      <Button
+        ref={trigger} size="sm" hidden={editing} className="justify-self-start [&[hidden]]:hidden"
+        disabled={disabled} aria-disabled={disabled || busy}
+        onClick={() => { if (busy || disabled) return; setDraft(name); setError(''); setSaved(false); setEditing(true); }}
+      >Editar nombre</Button>
+      {editing ? (
+        <form
+          className="grid gap-2"
+          onSubmit={(event) => { event.preventDefault(); void save(); }}
+          onKeyDown={(event) => {
+            if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); cancel(); }
+          }}
+        >
+          <label htmlFor={id}>Tu nombre</label>
+          <input
+            id={id} ref={input} value={draft} disabled={busy || disabled} autoComplete="name"
+            aria-describedby={`${id}-help${error ? ` ${id}-error` : ''}`} aria-invalid={Boolean(error)}
+            onChange={(event) => { setDraft(event.target.value); }}
+          />
+          <p id={`${id}-help`} className="text-muted">Entre 1 y 120 caracteres. Los mensajes anteriores conservan su autoría.</p>
+          {error ? <p id={`${id}-error`} role="alert" className="text-danger-ink">{error}</p> : null}
+          <div className="flex flex-wrap gap-2">
+            <Button type="submit" variant="primary" disabled={busy || disabled}>{busy ? 'Guardando…' : 'Guardar nombre'}</Button>
+            <Button onClick={cancel}>Cancelar edición</Button>
+          </div>
+        </form>
+      ) : null}
+      {saved ? <p role="status" className="text-ok-ink">Nombre guardado</p> : null}
+    </div>
+  );
 }

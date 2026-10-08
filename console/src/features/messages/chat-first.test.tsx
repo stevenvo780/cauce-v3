@@ -6,9 +6,11 @@ import { ConversationDrafts, ConversationDraftStore } from './conversation-draft
 import { ApiProvider } from '../../api/context';
 import type { ComponentProps } from 'react';
 import { mockMessages, mockStatus, topology } from '../../mocks/data';
-import { renderRouted, renderWithApi, testApi } from '../../test/render';
+import { server } from '../../mocks/server';
+import { declaredPtyTargets } from '../../test/pty-targets';
+import { renderWithApi, testApi } from '../../test/render';
+import { renderChat } from './chat-test-utils';
 import { ConversationPane } from './ConversationPane';
-import { MessagesPage } from './MessagesPage';
 import { construirRosterDeMensajeria } from './roster';
 
 beforeEach(() => { window.history.replaceState({}, '', '/messages'); });
@@ -24,32 +26,27 @@ function props(): ComponentProps<typeof ConversationPane> {
   };
 }
 
-it('la bienvenida tiene un único selector de agentes', async () => {
-  renderRouted(MessagesPage);
-  const roster = await screen.findByRole('complementary', { name: 'Agentes' });
-  const agents = await within(roster).findAllByRole('button', { name: /Conversación con/ });
-  expect(agents.length).toBeGreaterThan(0);
-  expect(screen.getAllByRole('button', { name: /Conversación con/ })).toHaveLength(agents.length);
+it('la bienvenida no repite el selector de agentes de la barra lateral', async () => {
+  renderChat();
+  const welcome = await screen.findByRole('region', { name: 'Sin conversación abierta' });
+  expect(within(welcome).queryAllByRole('button')).toHaveLength(0);
   expect(screen.queryByLabelText('Empezar una conversación')).toBeNull();
-  expect(within(screen.getByRole('region', { name: 'Sin conversación abierta' })).queryAllByRole('button')).toHaveLength(0);
 });
 
-it('Más contiene los controles técnicos y se cierra con Escape o al salir con Tab', async () => {
+it('el menú de la conversación lleva a perfil y terminal y devuelve el foco con Escape', async () => {
   const user = userEvent.setup();
+  server.use(declaredPtyTargets(['Steven', 'argos']));
   renderWithApi(<ConversationPane {...props()} />);
-  const more = screen.getByRole('button', { name: 'Más' });
-  expect(screen.queryByRole('link', { name: 'Configurar agente' })).toBeNull();
-  expect(screen.queryByLabelText('Carril')).toBeNull();
+  const more = screen.getByRole('button', { name: 'Opciones de la conversación' });
+  expect(screen.queryByRole('menuitem', { name: 'Perfil y contexto' })).toBeNull();
   await user.click(more);
-  expect(more).toHaveAttribute('aria-expanded', 'true');
-  await user.tab();
-  expect(screen.getByRole('link', { name: 'Configurar agente' })).toHaveFocus();
+  const menu = await screen.findByRole('menu');
+  expect(within(menu).getByRole('menuitem', { name: 'Perfil y contexto' })).toHaveAttribute('href', '/messages/Steven/argos?view=context');
+  expect(within(menu).getByRole('menuitem', { name: 'Abrir terminal' })).toHaveAttribute('href', '/terminal/Steven/argos?modo=terminal');
+  expect(within(menu).getByRole('menuitemradio', { name: /Interactivo/ })).toHaveAttribute('aria-checked', 'true');
   await user.keyboard('{Escape}');
+  await waitFor(() => { expect(screen.queryByRole('menu')).toBeNull(); });
   expect(more).toHaveFocus();
-  expect(screen.queryByLabelText('Carril')).toBeNull();
-  await user.click(more);
-  for (let steps = 0; steps < 15 && more.getAttribute('aria-expanded') === 'true'; steps += 1) await user.tab();
-  expect(more).toHaveAttribute('aria-expanded', 'false');
 });
 
 it('reintentos, muertas y fallos de lectura permanecen visibles sin roster ni Más', async () => {
@@ -93,17 +90,17 @@ it('el inspector devuelve el foco al mensaje y usa Más si el mensaje salió de 
   const { rerender } = renderWithApi(<ConversationPane {...input} />);
   const trigger = screen.getByRole('button', { name: 'Opciones del mensaje' });
   await user.click(trigger);
-  await user.click(screen.getByRole('menuitem', { name: 'Ver detalle' }));
+  await user.click(await screen.findByRole('menuitem', { name: 'Ver detalle' }));
   expect(screen.getByRole('heading', { name: 'Mensaje que elegiste' })).toHaveFocus();
   await user.keyboard('{Escape}');
   expect(trigger).toHaveFocus();
   await user.click(trigger);
-  await user.click(screen.getByRole('menuitem', { name: 'Ver detalle' }));
+  await user.click(await screen.findByRole('menuitem', { name: 'Ver detalle' }));
   rerender(<ApiProvider api={testApi}><ConversationPane {...input} page={{ ...input.page, items: [] }} /></ApiProvider>);
   expect(trigger.isConnected).toBe(false);
   expect(screen.getByRole('note')).toHaveTextContent('Mensaje fuera de la ventana actual');
   await user.click(screen.getByRole('button', { name: 'Cerrar detalle' }));
-  expect(screen.getByRole('button', { name: 'Más' })).toHaveFocus();
+  expect(screen.getByRole('button', { name: 'Opciones de la conversación' })).toHaveFocus();
 });
 
 it.each([
@@ -127,7 +124,7 @@ it.each([
   }] };
   const { rerender } = renderWithApi(<ConversationPane {...input} page={{ items: [initial] }} />);
   await user.click(screen.getByRole('button', { name: 'Opciones del mensaje' }));
-  await user.click(screen.getByRole('menuitem', { name: 'Ver detalle' }));
+  await user.click(await screen.findByRole('menuitem', { name: 'Ver detalle' }));
   const detail = screen.getByRole('group', { name: 'Detalle del mensaje seleccionado' });
   expect(within(detail).getByText('HECHA / FALLÓ · UNKNOWN')).toBeVisible();
   const composer = screen.getByRole('textbox');
@@ -165,10 +162,10 @@ it('la respuesta tardía de un cuerpo no reemplaza el mensaje que se está leyen
   renderWithApi(<ConversationPane {...input} page={{ items: [{ ...first, body_preview: 'a'.repeat(240) }, second] }} />);
   const triggers = screen.getAllByRole('button', { name: 'Opciones del mensaje' });
   await user.click(triggers[0]);
-  await user.click(screen.getByRole('menuitem', { name: 'Ver detalle' }));
+  await user.click(await screen.findByRole('menuitem', { name: 'Ver detalle' }));
   await user.click(screen.getByRole('button', { name: 'Ver el mensaje completo' }));
   await user.click(triggers[1]);
-  await user.click(screen.getByRole('menuitem', { name: 'Ver detalle' }));
+  await user.click(await screen.findByRole('menuitem', { name: 'Ver detalle' }));
   await act(async () => { resolveBody({ message_id: first.message_id, body: { text: 'Cuerpo tardío del primero' } }); });
   const detail = screen.getByRole('group', { name: 'Detalle del mensaje seleccionado' });
   await waitFor(() => { expect(within(detail).getByText('Segundo mensaje')).toBeVisible(); });
@@ -311,10 +308,10 @@ it('muestra la respuesta preconfirm en otra burbuja con el agente correcto', asy
   view.rerender(<ApiProvider api={testApi}><ConversationPane {...f.input} page={f.page} /></ApiProvider>);
   const human = screen.getByText('Ping').closest('article');
   const response = await screen.findByRole('article', { name: `Mensaje de ${f.input.agent.alias}` });
-  expect(human).toHaveClass('input');
+  expect(human).toHaveAttribute('data-direction', 'input');
   expect(human).toHaveTextContent('Steven');
   expect(human).not.toHaveTextContent('Pong antes de confirm');
-  expect(response).toHaveClass('output');
+  expect(response).toHaveAttribute('data-direction', 'output');
   expect(response).toHaveTextContent('Pong antes de confirm');
   expect(response).not.toHaveTextContent('Ping');
   expect(response.parentElement).toBe(human?.parentElement);
@@ -464,9 +461,9 @@ it('cierra la selección y descarta el cuerpo completo retenido al cambiar de AP
   const view = renderWithApi(<ConversationPane {...f.input} page={f.page} />);
   await screen.findByText('Respuesta anterior');
   await user.click(screen.getByRole('button', { name: 'Opciones del mensaje' }));
-  await user.click(screen.getByRole('menuitem', { name: 'Ver detalle' }));
+  await user.click(await screen.findByRole('menuitem', { name: 'Ver detalle' }));
   await user.click(screen.getByRole('button', { name: 'Ver el mensaje completo' }));
-  expect(await screen.findByText('Cuerpo completo de la API anterior')).toBeVisible();
+  expect(await within(screen.getByRole('group', { name: 'Detalle del mensaje seleccionado' })).findByText('Cuerpo completo de la API anterior')).toBeVisible();
   const nextApi = new CauceApi('http://another-api.invalid');
   const nextRead = vi.spyOn(nextApi, 'getMessage').mockResolvedValue({
     message_id: f.receipt.message_id, chain_open: false,
@@ -540,10 +537,10 @@ it('muestra el recibo de buzón Cronos con su etiqueta y estado en el detalle de
 
   const menuTrigger = screen.getByRole('button', { name: 'Opciones del mensaje' });
   await user.click(menuTrigger);
-  const detailButton = screen.getByRole('menuitem', { name: 'Ver detalle' });
+  const detailButton = await screen.findByRole('menuitem', { name: 'Ver detalle' });
   await user.click(detailButton);
 
-  const detailSection = screen.getByRole('group', { name: 'Detalle del mensaje seleccionado' });
+  const detailSection = await screen.findByRole('group', { name: 'Detalle del mensaje seleccionado' });
   expect(detailSection).toBeVisible();
 
   const fanoutSection = within(detailSection).getByRole('region', { name: 'Entregas hermanas del mismo publish' });

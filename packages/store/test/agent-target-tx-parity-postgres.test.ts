@@ -70,6 +70,26 @@ const SCENARIOS: readonly Scenario[] = [
     name: 'agente destino deshabilitado, control',
     actorTenant: 'Steven', actorAlias: 'kant', targetTenant: 'Steven', targetAlias: 'socrates',
     permission: 'control', authorized: false
+  },
+  {
+    name: 'agente destino deshabilitado, configure',
+    actorTenant: 'Steven', actorAlias: 'kant', targetTenant: 'Steven', targetAlias: 'socrates',
+    permission: 'configure', authorized: true
+  },
+  {
+    name: 'cross-tenant con arista de control anclada al hub, configure',
+    actorTenant: 'Steven', actorAlias: 'kant', targetTenant: 'Miguel', targetAlias: 'kratos',
+    permission: 'configure', authorized: true
+  },
+  {
+    name: 'cross-tenant sin arista entre los dos tenants, configure',
+    actorTenant: 'Miguel', actorAlias: 'kratos', targetTenant: 'Pablo', targetAlias: 'seneca',
+    permission: 'configure', authorized: false
+  },
+  {
+    name: 'actor sin rol de control, configure',
+    actorTenant: 'Pablo', actorAlias: 'midas', targetTenant: 'Pablo', targetAlias: 'seneca',
+    permission: 'configure', authorized: false
   }
 ];
 
@@ -121,6 +141,16 @@ describe('authorizeAgentTarget da el mismo veredicto en el pool y dentro de una 
 
     expect(transactional).toEqual(pooled);
     expect(pooled !== undefined).toBe(scenario.authorized);
+  }, 120_000);
+
+  it('configure exige allow_control en la arista aunque allow_read la deje ver', async () => {
+    await pool.query(
+      `UPDATE acl_edges SET allow_control=false WHERE from_tenant='Steven' AND to_tenant='Miguel'`
+    );
+    await expect(repository.authorizeAgentTarget('Steven', 'kant', 'Miguel', 'kratos', 'read'))
+      .resolves.toMatchObject({ alias: 'kratos' });
+    await expect(repository.authorizeAgentTarget('Steven', 'kant', 'Miguel', 'kratos', 'configure'))
+      .resolves.toBeUndefined();
   }, 120_000);
 
   it('la llamada transaccional ve el estado no confirmado del llamante', async () => {

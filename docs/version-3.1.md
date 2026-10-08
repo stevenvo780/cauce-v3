@@ -120,15 +120,12 @@ sobre él, y sólo eso:
 si el humo sale rojo parcial, la columna «Resultado» se corrige a mano en el mismo commit que
 registra la fila, y ese commit es también el que actualiza estos documentos.
 
-La última fila de [HISTORIAL](../deploy/HISTORIAL.md) registra `2729f23b`, el 5 de octubre a las
-20:09, hora de Colombia. La promoción actualizó seis aplicaciones centrales y conservó tres
-contenedores de infraestructura; los nueve quedaron sanos. El runtime usa la imagen
-`sha256:7452d8e6d6b61d9bec5702bebd09efcd04d8e2397e34d2dab6907605801062c5` y la consola
-`sha256:434a1d18c093e689eebdcff87c4574964ca52317b9f8945dfcc1bfa180794aa6`. El esquema 045
-se conservó sin DDL ni migraciones. La consola deriva del paquete original: mantiene los bytes
-con nueve permisos públicos corregidos de 0640 a 0644; no acredita nuevos gates del parche
-durable de Dockerfile pendiente. La verificación posterior acreditó 93 recursos por HTTPS con
-HTTP 200, SHA, tamaño y MIME correctos.
+La última fila de [HISTORIAL](../deploy/HISTORIAL.md) registra `9ff619c7`, el 7 de octubre a las
+00:01, hora de Colombia: `deploy.sh` completo con iconos pixel art para la apariencia de agentes y
+el mapa de la oficina más alto, sin migración sobre el esquema 047. Los nueve servicios quedaron
+sanos y el smoke cerró VERDE, con el bus acreditando un ACK reciente. El runtime usa la imagen
+`sha256:4249d0dbaf4335b9a7ba02320c6bcb2c13cb5e35acc3534d6e1c7a1cf45787af` y la consola
+`sha256:9a7f3db954cf0bf98fe0e2993bbe8066f5a4ab1c98d20afc800a4e30c85e35ad`.
 
 La sesión Steven recargada mostró el grafo primero y la lista cerrada al final. Se comprobó un
 ping canónico de Zeus y su shell; el control se devolvió y la shell se cerró. El journal de Main

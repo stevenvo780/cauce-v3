@@ -205,23 +205,6 @@ export function avisosDeCapas(roleBrief: string | null | undefined, directiva: A
 }
 
 /**
- * The first content lines of a text, for the slot's summary.
- *
- * Empty lines are skipped rather than counted: fleet briefs open with a blank line or with a
- * title `#` more than once, and a "two lines" summary that spends both on the gap summarizes
- * nothing. Each line is trimmed because the summary is rendered on a single line: indentation
- * spaces from the original `.md` would shift the text without saying anything.
- */
-export function primerasLineas(texto: string | null | undefined, cuantas: number): string[] {
-  if (!texto) return [];
-  return texto
-    .split('\n')
-    .map((linea) => linea.trim())
-    .filter((linea) => linea.length > 0)
-    .slice(0, cuantas);
-}
-
-/**
  * Measurement status of a layer:
  * - `no-se-miro`: not read or container not measured
  * - `miro-y-no-hay`: read confirmed with an empty result

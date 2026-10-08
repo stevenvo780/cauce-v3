@@ -7,6 +7,7 @@ import { server } from '../../mocks/server';
 import { renderWithApi } from '../../test/render';
 import { muestraRecortada, totalDelGrupo } from './filtro-de-colas';
 import { QueuesPage } from './QueuesPage';
+import { FleetProvider } from '../../shell/fleet';
 
 /**
  * **The three cards used to count the PAGE, and the page has a ceiling of 200 rows.**
@@ -53,7 +54,7 @@ afterEach(() => { window.history.pushState({}, '', '/'); });
 describe('las tarjetas de /queues cuentan la cola, no la página', () => {
   it('🔴 «Dead letters» dice las 1847 del servidor, no las 3 que caben en el snapshot', async () => {
     servidorConLaPagina(PAGINA_RECORTADA);
-    renderWithApi(<QueuesPage />);
+    renderWithApi(<FleetProvider><QueuesPage /></FleetProvider>);
     await screen.findByRole('table', { name: /colas, retries y dead letters/i });
 
     const muertas = tarjeta(/dead letters/i);
@@ -67,7 +68,7 @@ describe('las tarjetas de /queues cuentan la cola, no la página', () => {
 
   it('🔴 el conteo de la página queda como el detalle que delata el recorte', async () => {
     servidorConLaPagina(PAGINA_RECORTADA);
-    renderWithApi(<QueuesPage />);
+    renderWithApi(<FleetProvider><QueuesPage /></FleetProvider>);
     await screen.findByRole('table', { name: /colas, retries y dead letters/i });
 
     expect(tarjeta(/dead letters/i)).toHaveTextContent('3 en esta página · total 1847');
@@ -84,7 +85,7 @@ describe('las tarjetas de /queues cuentan la cola, no la página', () => {
       muestra_recortada: false,
       items: filas(2, 'dead', 'muerta'),
     });
-    renderWithApi(<QueuesPage />);
+    renderWithApi(<FleetProvider><QueuesPage /></FleetProvider>);
     await screen.findByRole('table', { name: /colas, retries y dead letters/i });
 
     expect(within(tarjeta(/dead letters/i)).getByText('2')).toBeInTheDocument();
@@ -99,7 +100,7 @@ describe('las tarjetas de /queues cuentan la cola, no la página', () => {
       observed_at: '2026-08-28T16:00:00.000Z', pending: 4, retrying: 1, dead: 3,
       items: PAGINA_RECORTADA.items,
     });
-    renderWithApi(<QueuesPage />);
+    renderWithApi(<FleetProvider><QueuesPage /></FleetProvider>);
     await screen.findByRole('table', { name: /colas, retries y dead letters/i });
 
     expect(within(tarjeta(/dead letters/i)).getByText('3')).toBeInTheDocument();
@@ -111,7 +112,7 @@ describe('las tarjetas de /queues cuentan la cola, no la página', () => {
     // still take the operator to the rows that are there, saying how many of how many.
     const user = userEvent.setup();
     servidorConLaPagina(PAGINA_RECORTADA);
-    renderWithApi(<QueuesPage />);
+    renderWithApi(<FleetProvider><QueuesPage /></FleetProvider>);
     await screen.findByRole('table', { name: /colas, retries y dead letters/i });
 
     await user.click(tarjeta(/dead letters/i));

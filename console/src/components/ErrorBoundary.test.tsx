@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, expect, it, vi } from 'vitest';
 import { ErrorBoundary } from './ErrorBoundary';
@@ -10,11 +10,11 @@ import { renderWithApi } from '../test/render';
 const MENSAJE_CRUDO = 'texto del servidor que el panel no debe mostrar';
 
 /*
- * The grid is replaced by a subtree that throws while rendering: that is the unexpected PTY frame
- * or the resize race this boundary exists for, without having to provoke one from a real socket.
+ * The session stage is replaced by a subtree that throws while rendering: that is the unexpected
+ * PTY frame or the resize race this boundary exists for, without provoking one from a real socket.
  */
-vi.mock('../features/terminal/GridContainer', () => ({
-  GridContainer: () => { throw new TypeError('marco PTY con forma inesperada'); },
+vi.mock('../features/terminal/SessionStage', () => ({
+  SessionStage: () => { throw new TypeError('marco PTY con forma inesperada'); },
 }));
 
 /* The route-level boundary needs a routed view that throws, and the notice has to name it. */
@@ -88,7 +88,7 @@ it('cambiar `resetKey` limpia un límite atascado: navegar no deja la vista muer
 
 function agenteDePrueba(): FleetAgent {
   return {
-    id: 'Steven/zeus',
+    id: 'Steven:zeus',
     tenantId: 'Steven',
     alias: 'zeus',
     roomIds: [],
@@ -97,16 +97,44 @@ function agenteDePrueba(): FleetAgent {
   };
 }
 
-it('en la terminal del operador, un fallo del grid deja operativo el selector', async () => {
+it('en la terminal del operador, un fallo de la sesión queda contenido en su panel', async () => {
   const agente = agenteDePrueba();
   renderWithApi(
-    <OperatorWorkspace agents={[agente]} initialAgentId={agente.id} fleetLoading={false} />,
+    <div>
+      <p>flota de agentes</p>
+      <OperatorWorkspace
+        agents={[agente]}
+        agentId={agente.id}
+        live={new Map()}
+        summary="1 agente"
+        fleetLoading={false}
+        onRefresh={() => undefined}
+      />
+    </div>,
   );
 
-  await waitFor(() => { expect(screen.getByRole('alert')).toBeInTheDocument(); });
-  expect(screen.getByRole('alert')).toHaveTextContent('La terminal del agente');
-  expect(screen.getByRole('combobox', { name: 'Agente' })).toBeEnabled();
-  expect(screen.getByRole('option', { name: /^zeus ·/ })).toHaveValue(agente.id);
+  const aviso = await screen.findByRole('alert');
+  expect(aviso).toHaveTextContent('La terminal del agente no se pudo dibujar');
+  expect(aviso).toHaveTextContent('TypeError');
+  expect(aviso).not.toHaveTextContent('marco PTY con forma inesperada');
+  expect(screen.getByText('flota de agentes')).toBeInTheDocument();
+});
+
+it('en el armazón, un fallo de la terminal deja operativa la navegación y la lista de agentes', async () => {
+  window.history.pushState({}, '', '/terminal/Steven/kant');
+  renderWithApi(<App />);
+
+  const aviso = await screen.findByRole('alert', {}, { timeout: 10_000 });
+  expect(aviso).toHaveTextContent('La terminal del agente no se pudo dibujar');
+  const nav = screen.getByRole('navigation', { name: /navegación principal/i });
+  expect(within(nav).getByRole('link', { name: 'Chat' })).toBeEnabled();
+  const roster = await screen.findByRole('list', { name: 'Agentes' });
+  const kant = await within(roster).findByRole('link', { name: /^kant/ });
+  expect(kant).toHaveAttribute('href', '/terminal/Steven/kant');
+
+  const otro = await within(roster).findByRole('link', { name: /^argos/ });
+  await userEvent.click(otro);
+  expect(window.location.pathname).toBe('/terminal/Steven/argos');
 });
 
 it('en el armazón, una vista que revienta no se lleva la navegación y el aviso la nombra', async () => {

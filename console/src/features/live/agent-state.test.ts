@@ -7,10 +7,11 @@ import {
   detectPulses,
   fleetVerdict,
   liveState,
-  ownerBucket,
   rememberFleet,
   stateTally,
+  type Verdict,
 } from './agent-state';
+import { STATE_TONE } from '../../status-tone';
 import { agent, snapshot } from './agent-state-fixtures';
 
 const NOW = 1_700_000_000_000;
@@ -190,20 +191,10 @@ describe('stateTally', () => {
   });
 });
 
-describe('ownerBucket', () => {
-  it('reparte los siete estados en las tres respuestas que le importan al dueño', () => {
-    expect(ownerBucket('down')).toBe('problema');
-    expect(ownerBucket('blocked')).toBe('problema');
-    expect(ownerBucket('idle')).toBe('libre');
-    // The bucket is called `ocupado` and NOT `trabajando`: "Trabajando" is the label of the
-    // `thinking` chip, and using the same word for the bucket that groups four states is what
-    // made the verdict say "4 trabajando" above a chip "Trabajando 2".
-    expect(ownerBucket('thinking')).toBe('ocupado');
-    expect(ownerBucket('delegating')).toBe('ocupado');
-    expect(ownerBucket('receiving')).toBe('ocupado');
-    expect(ownerBucket('settled')).toBe('ocupado');
-  });
-});
+function enTonoDesconocido(veredicto: Verdict): Extract<Verdict, { tone: 'desconocido' }> {
+  if (veredicto.tone !== 'desconocido') throw new Error(`expected an unknown verdict, got ${veredicto.tone}`);
+  return veredicto;
+}
 
 describe('fleetVerdict', () => {
   const RECIEN = '2026-08-22T10:00:00.000Z';
@@ -213,15 +204,12 @@ describe('fleetVerdict', () => {
     return buildLiveViews(snapshot(snapshotAgents), {}, AHORA).views;
   }
 
-  it('con la flota sana dice "Todo en orden" y cuenta libres sin llamarlos avería', () => {
+  it('con la flota sana el veredicto es ok y no nombra a nadie', () => {
     const veredicto = fleetVerdict(
       vistas([agent({ alias: 'zeus' }), agent({ alias: 'kant' })]),
       { observedAt: RECIEN, nowMs: AHORA, staleAfterMs: 12_000 },
     );
     expect(veredicto.tone).toBe('ok');
-    expect(veredicto.frase).toBe('Todo en orden.');
-    expect(veredicto.apoyo).toContain('2 libres');
-    expect(veredicto.apoyo).toContain('ninguno trabado');
     expect(veredicto.culpables).toEqual([]);
   });
 
@@ -234,10 +222,9 @@ describe('fleetVerdict', () => {
       vistas([agent({ alias: 'zeus' }), agent({ alias: 'kant' })]),
       { error: new Error('actividad caída'), observedAt: RECIEN, nowMs: AHORA, staleAfterMs: 12_000 },
     );
-    expect(veredicto.tone).toBe('desconocido');
-    expect(veredicto.tone).not.toBe('ok');
-    expect(veredicto.frase).toMatch(/no lo sé/i);
-    expect(veredicto.apoyo).toMatch(/última lectura buena/i);
+    const desconocido = enTonoDesconocido(veredicto);
+    expect(desconocido.frase).toMatch(/no lo sé/i);
+    expect(desconocido.apoyo).toMatch(/última lectura buena/i);
   });
 
   it('NUNCA sale verde con el snapshot rancio, aunque no haya habido ningún error', () => {
@@ -247,8 +234,7 @@ describe('fleetVerdict', () => {
       vistas([agent({ alias: 'zeus' })]),
       { observedAt: RECIEN, nowMs: Date.parse(RECIEN) + 180_000, staleAfterMs: 12_000 },
     );
-    expect(veredicto.tone).toBe('desconocido');
-    expect(veredicto.apoyo).toMatch(/Datos de hace/);
+    expect(enTonoDesconocido(veredicto).apoyo).toMatch(/Datos de hace/);
   });
 
   it('sin hora del servidor tampoco acredita nada: un snapshot sin fecha no es un snapshot fresco', () => {
@@ -267,7 +253,6 @@ describe('fleetVerdict', () => {
       { observedAt: RECIEN, nowMs: AHORA, staleAfterMs: 12_000 },
     );
     expect(veredicto.tone).toBe('alerta');
-    expect(veredicto.frase).toBe('1 agente necesita atención.');
     expect(veredicto.culpables).toHaveLength(1);
     expect(veredicto.culpables[0].alias).toBe('kratos');
     expect(veredicto.culpables[0].motivo).toBe(
@@ -326,8 +311,6 @@ describe('fleetVerdict', () => {
       'trabado: último ACK hace 14 min; entrega en vuelo hace 25 min',
     );
     expect(veredicto.culpables[0].motivo).not.toContain('trabado hace 25 min');
-    expect(veredicto.apoyo).toContain('2 conectados');
-    expect(veredicto.apoyo).toContain('1 con trabajo entre manos');
   });
 });
 
@@ -341,9 +324,9 @@ describe('D2 · el veredicto sobre cero mediciones', () => {
     const veredicto = fleetVerdict([], { observedAt: RECIEN, nowMs: AHORA, staleAfterMs: 12_000 });
     expect(veredicto.tone).toBe('desconocido');
     expect(veredicto.tone).not.toBe('ok');
-    expect(veredicto.frase).not.toBe('Todo en orden.');
-    expect(veredicto.frase).toMatch(/no lo sé/i);
-    expect(veredicto.apoyo).not.toMatch(/0 conectados/);
+    const desconocido = enTonoDesconocido(veredicto);
+    expect(desconocido.frase).toMatch(/no lo sé/i);
+    expect(desconocido.apoyo).not.toMatch(/0 conectados/);
   });
 
   it('y el snapshot vacío del servidor da lo mismo que la lista vacía', () => {
@@ -381,7 +364,7 @@ describe('D3 · una entrega que desaparece no es una entrega cerrada', () => {
   it('el estado que produce ese pulso NO es de tono positivo ni dice "respondiendo"', () => {
     // This was the expensive failure: the worst event in the fleet was announced with the same
     // green and the same text as the best.
-    expect(LIVE_STATE_META.settled.tone).not.toBe('positive');
+    expect(STATE_TONE.settled).not.toBe(STATE_TONE.thinking);
     expect(LIVE_STATE_META.settled.label).not.toMatch(/respond/i);
     expect(LIVE_STATE_META.settled.hint).toMatch(/no se puede saber/i);
   });

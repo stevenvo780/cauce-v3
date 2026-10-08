@@ -77,7 +77,7 @@ export function registryTenantOptions(snapshot: ConfigurationSnapshot): { id: st
   });
 }
 
-export function registryTenantExists(snapshot: ConfigurationSnapshot, tenantId: string): boolean {
+function registryTenantExists(snapshot: ConfigurationSnapshot, tenantId: string): boolean {
   return registryTenantOptions(snapshot).some((tenant) => tenant.id === tenantId);
 }
 

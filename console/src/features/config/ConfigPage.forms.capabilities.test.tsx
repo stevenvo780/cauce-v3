@@ -4,7 +4,7 @@ import { http, HttpResponse } from 'msw';
 import { webcrypto } from 'node:crypto';
 import type { FleetOperationRequest } from '@cauce/protocol/fleet-operation';
 import { fleetRequestHash } from '../../api/client/fleet-operations-client';
-import { ConfigAdministration } from './ConfigPage';
+import { ConfigPage } from './ConfigPage';
 import { renderWithApi } from '../../test/render';
 import { server } from '../../mocks/server';
 import { servirConfig, snapshotDeConfig } from './ConfigPage.test-helpers';
@@ -15,7 +15,7 @@ const roomCapability = { resource: 'room', actions: ['create', 'update'], scope:
 
 it('bloquea eliminar cuando capabilities sólo acredita creación y edición', async () => {
   servirConfig(() => ({ ...snapshotDeConfig(1), capabilities: { actor, resources: [roomCapability] } }));
-  renderWithApi(<ConfigAdministration />);
+  renderWithApi(<ConfigPage />);
   expect(await screen.findByRole('button', { name: 'Editar sala/grupo Miguel/grp.miguel' })).toBeEnabled();
   expect(screen.getByRole('button', { name: 'Eliminar sala/grupo Miguel/grp.miguel' })).toBeDisabled();
   expect(screen.getByRole('button', { name: 'Crear espacio' })).toBeDisabled();
@@ -28,7 +28,7 @@ it('mantiene el espacio propio fijo al crear una sala y bloquea edición fuera d
     capabilities: { actor, resources: [roomCapability] },
   }));
   const user = userEvent.setup();
-  renderWithApi(<ConfigAdministration />);
+  renderWithApi(<ConfigPage />);
   expect(await screen.findByRole('button', { name: 'Editar sala/grupo Steven/grp.steven' })).toBeDisabled();
   await user.click(screen.getByRole('button', { name: 'Crear sala/grupo' }));
   const form = within(screen.getByRole('form', { name: 'Crear sala/grupo' }));
@@ -38,7 +38,7 @@ it('mantiene el espacio propio fijo al crear una sala y bloquea edición fuera d
 
 it('no acredita alcance ante capabilities malformadas', async () => {
   servirConfig(() => ({ ...snapshotDeConfig(1), capabilities: { actor, resources: 'invalid' } }));
-  renderWithApi(<ConfigAdministration />);
+  renderWithApi(<ConfigPage />);
   expect(await screen.findByRole('button', { name: 'Crear espacio' })).toBeDisabled();
   expect(screen.getByRole('button', { name: 'Editar sala/grupo Miguel/grp.miguel' })).toBeDisabled();
 });
@@ -49,7 +49,7 @@ it('ofrece restaurar incluso cuando no quedan salas activas', async () => {
     retired: { rooms: [{ tenant_id: 'Miguel', id: 'grp.retired', enabled: false }] },
     capabilities: { actor, resources: [{ ...roomCapability, actions: ['restore'] }] },
   }));
-  renderWithApi(<ConfigAdministration />);
+  renderWithApi(<ConfigPage />);
   expect(await screen.findByRole('button', { name: 'Restaurar sala/grupo Miguel/grp.retired' })).toBeEnabled();
 });
 
@@ -69,7 +69,7 @@ it('previsualiza retiro y restauración por el contrato durable de flota', async
         expected_revision: input.expected_revision, steps: ['prepare'], dependencies: [], can_apply: true });
     }));
   const user = userEvent.setup();
-  renderWithApi(<ConfigAdministration />);
+  renderWithApi(<ConfigPage />);
   await user.click(await screen.findByRole('button', { name: 'Retirar sala/grupo Miguel/grp.miguel' }));
   let dialog = within(await screen.findByRole('dialog'));
   await waitFor(() => { expect(dialog.getByRole('button', { name: 'Previsualizar retiro' })).toBeEnabled(); });
@@ -85,3 +85,5 @@ it('previsualiza retiro y restauración por el contrato durable de flota', async
   expect(changes[1]).toMatchObject({ kind: 'restore', target: { resource: 'room', tenant_id: 'Miguel', room_id: 'grp.retired' } });
   expect(screen.queryByRole('button', { name: 'Editar sala/grupo Miguel/grp.retired' })).not.toBeInTheDocument();
 });
+
+beforeEach(() => { window.history.replaceState({}, '', '/config?seccion=espacios'); });

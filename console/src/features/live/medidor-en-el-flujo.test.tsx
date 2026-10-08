@@ -8,15 +8,12 @@
  * runtime is verified and current, so it is possible to render the warning in a test and still
  * have nobody able to trip it on the real screen.
  */
-import { screen, waitFor, within } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
+import { waitFor, within } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
 import type { AgentPerfil } from '../../api/types';
 import { beforeEach, expect, it } from 'vitest';
-import { mockActivity } from '../../mocks/data';
 import { server } from '../../mocks/server';
-import { renderWithApi } from '../../test/render';
-import { LiveFleetPage } from './LiveFleetPage';
+import { abrirContexto } from './context-test-utils';
 
 const SHA = 'a'.repeat(64);
 
@@ -50,18 +47,15 @@ function perfilEditable(overrides: Partial<AgentPerfil> = {}) {
 }
 
 beforeEach(() => {
-  window.history.replaceState({}, '', '/live?agente=Steven%2Fkant&pestana=perfil');
+  window.history.replaceState({}, '', '/messages/Steven/kant?view=context');
   server.use(
-    http.get('*/v3/console/activity', () => HttpResponse.json(mockActivity())),
     http.get('*/v3/console/tenants/:tenantId/agents/:alias/perfil', () => HttpResponse.json(perfilEditable())),
   );
 });
 
-/** The tab reached by the deep link the console already supports, not by mounting the component. */
+/** The Perfil section of the canonical page, not the bare component. */
 async function abrirPerfilDeKant() {
-  const user = userEvent.setup();
-  renderWithApi(<div className="app-shell"><LiveFleetPage /></div>);
-  const cajon = await screen.findByRole('dialog', { name: /detalle de kant/i });
+  const { user, cajon } = await abrirContexto('perfil');
   await within(cajon).findByText(/Le llega al agente/i);
   return { user, cajon };
 }
@@ -74,7 +68,7 @@ it('el campo de rol se puede escribir de verdad en el flujo real, no sólo en el
   expect(rol).toBeEnabled();
 });
 
-it('pasado de 1200 el aviso SE VE en el cajón, escrito en el campo real', async () => {
+it('pasado de 1200 el aviso SE VE en la página, escrito en el campo real', async () => {
   const { user, cajon } = await abrirPerfilDeKant();
   const rol = within(cajon).getAllByRole('textbox')
     .find((campo) => campo.parentElement?.textContent.includes('Le llega al agente'));

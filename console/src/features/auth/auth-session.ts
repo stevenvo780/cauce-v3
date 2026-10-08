@@ -10,7 +10,7 @@ import type { ConsoleAuthState } from '../../api/types';
  *  - `unmanaged` the gateway does not expose the BFF (today: `CAUCE_AUTH_PROVIDER=mtls`).
  *  - `error`     could not ask. NOT the same as "not authorized": it fails closed.
  */
-export type GateStatus = 'checking' | 'in' | 'out' | 'unmanaged' | 'error';
+type GateStatus = 'checking' | 'in' | 'out' | 'unmanaged' | 'error';
 
 export function statusOf(state: ConsoleAuthState | undefined, error: Error | undefined): GateStatus {
   // Fail-closed solo en la comprobación INICIAL: una sesión establecida no se cae por un error

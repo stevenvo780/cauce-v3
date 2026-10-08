@@ -3,11 +3,10 @@ import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { useState } from 'react';
 import type { AgentDocumentKind } from '../../api/types';
-import { mockActivity } from '../../mocks/data';
 import { server } from '../../mocks/server';
 import { renderWithApi } from '../../test/render';
 import { FicherosTab, type BorradorDeFichero } from './FicherosTab';
-import { LiveFleetPage } from './LiveFleetPage';
+import { abrirContexto as abrirPagina } from './context-test-utils';
 
 /**
  * EVERY SAVE OF A GOVERNANCE FILE CARRIES A REASON A PERSON TYPED FOR IT. The gateway refuses a
@@ -36,18 +35,10 @@ function mapaDeKant(items: unknown[]) {
 
 beforeEach(() => {
   window.history.replaceState({}, '', '/live');
-  server.use(http.get('http://localhost/v3/console/activity', () => HttpResponse.json(mockActivity())));
 });
 
 async function abrirContexto() {
-  const user = userEvent.setup();
-  renderWithApi(<LiveFleetPage />);
-  await screen.findByLabelText('Veredicto de la flota');
-  await user.click(await screen.findByText(/^Agentes ·/u));
-  await user.click(await screen.findByRole('row', { name: /kant/i }));
-  const cajon = await screen.findByRole('dialog', { name: /detalle de kant/i });
-  await user.click(within(cajon).getByRole('tab', { name: 'Contexto' }));
-  return { user, cajon };
+  return abrirPagina('ficheros');
 }
 
 async function escribirBorrador(user: ReturnType<typeof userEvent.setup>, cajon: HTMLElement) {
@@ -217,7 +208,7 @@ it('un 400 de la admisión dice el rango del motivo y qué hacer', async () => {
 });
 
 /**
- * The live page remounts this tab after a save, which would hide a reason kept in state. Mounted by
+ * The context page remounts this section after a save, which would hide a reason kept in state. Mounted by
  * a parent that only holds the draft, the reason still has to be gone: reusing it would file the
  * sentence typed for the previous change as the explanation of the next one.
  */
@@ -229,7 +220,6 @@ function PadreQueNoRemonta() {
     <FicherosTab
       tenantId="Steven"
       alias="kant"
-      mode="manual-editor"
       borradores={borradores}
       onBorrador={(kind, borrador) => {
         setBorradores((previo) => ({ ...previo, [kind]: borrador }));

@@ -295,21 +295,22 @@ describe('perfil canónico desde configuración móvil y runtime Python medido',
     await page.getByLabel('Correo').fill(active.operatorEmail);
     await page.getByLabel('Contraseña').fill(active.operatorPassword);
     await page.getByRole('button', { name: 'Iniciar sesión' }).click();
-    await page.getByRole('link', { name: /Conversaciones/u }).waitFor({ state: 'visible', timeout: 20_000 });
+    await page.getByRole('navigation', { name: 'Navegación principal', exact: true }).locator('a[href="/messages"], a[href^="/messages/"]').waitFor({ state: 'visible', timeout: 20_000 });
     const cookies = await page.context().cookies(active.baseUrl);
     const browserCookie = cookies.find((item) => item.name === '__Host-cauce_session');
     expect(browserCookie?.httpOnly).toBe(true);
     expect(browserCookie?.secure).toBe(true);
     if (!browserCookie) throw new Error('authenticated browser omitted its secure operator session');
 
-    await page.getByRole('button', { name: 'Herramientas' }).click();
-    const menu = page.getByRole('region', { name: 'Herramientas de Cauce' });
+    await page.getByRole('button', { name: 'Más', exact: true }).click();
+    const menu = page.getByRole('dialog', { name: 'Gestión', exact: true });
     await menu.waitFor({ state: 'visible', timeout: 10_000 });
-    await menu.getByRole('link', { name: 'Ajustes y altas' }).click();
-    await page.getByRole('heading', { name: 'Ajustes y altas' }).waitFor({ timeout: 20_000 });
-    await page.getByRole('searchbox', { name: 'Buscar agente o grupo' }).fill(active.targetAlias);
+    await menu.getByRole('link', { name: 'Ajustes' }).click();
+    await page.getByRole('heading', { name: 'Ajustes' }).waitFor({ timeout: 20_000 });
     const artifactDirectory = process.env.CAUCE_E2E_ARTIFACT_DIR;
-    const openContext = page.getByRole('button', { name: `Abrir contexto de ${active.tenant}/${active.targetAlias}` });
+    await page.getByRole('tab', { name: 'Agentes', exact: true }).click();
+    await page.getByRole('searchbox', { name: 'Buscar agente o grupo' }).fill(active.targetAlias);
+    const openContext = page.getByRole('link', { name: `Perfil y contexto de ${active.tenant}/${active.targetAlias}` });
     try {
       await openContext.waitFor({ state: 'visible', timeout: 20_000 });
     } catch (error) {
@@ -335,7 +336,7 @@ describe('perfil canónico desde configuración móvil y runtime Python medido',
       }
     });
     await page.getByLabel('Responsabilidades', { exact: true }).fill(marker);
-    await page.getByLabel('Motivo de este cambio de perfil (lo escribe una persona y queda en la auditoría)')
+    await page.getByLabel('Motivo de este cambio de perfil', { exact: true })
       .fill('Verificar persistencia real del perfil canónico en una sesión local aislada.');
     await page.getByRole('button', { name: 'Guardar y aplicar perfil' }).click();
     try {

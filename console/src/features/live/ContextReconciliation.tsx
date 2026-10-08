@@ -1,7 +1,9 @@
-import { useEffect, useId, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useApi } from '../../api/context';
 import { ContextoContaminadoError } from '../../api/client/agent-client';
-import { DOCUMENT_REASON_MAX, problemaDeMotivo } from './ficheros-motivo';
+import { Button, Notice, SectionCard } from '../../components/kit';
+import { ReasonField } from './context-ui';
+import { problemaDeMotivo } from './ficheros-motivo';
 import { CONTAMINACION_ILEGIBLE, contaminacionDe, type ContaminacionDeContexto } from './perfil';
 import {
   isReconciliationPreview, isReconciliationReceipt, reconciliationApply,
@@ -22,7 +24,6 @@ interface ContextReconciliationProps {
 
 export function ContextReconciliation(props: ContextReconciliationProps) {
   const api = useApi();
-  const id = useId();
   const [reason, setReason] = useState('');
   const [preview, setPreview] = useState<ReconciliationPreview>();
   const [confirmed, setConfirmed] = useState(false);
@@ -94,44 +95,40 @@ export function ContextReconciliation(props: ContextReconciliationProps) {
   }
 
   return (
-    <section className="perfil-recarga" aria-label="Reconciliar huellas del contexto">
-      <p>
-        Las huellas difieren de la expectativa registrada. Esta operación comprueba el propietario
-        del bloque y reconstruye sólo el perfil gestionado desde la revisión guardada, conservando
-        el contenido exterior que autorices. No reinicia la TUI ni acredita adopción por el modelo.
-      </p>
-      <label className="perfil-motivo" htmlFor={id}>
-        Motivo de la reconciliación
-        <input id={id} value={reason} disabled={disabled} maxLength={DOCUMENT_REASON_MAX}
-          autoComplete="off" onChange={(event) => {
-            setReason(event.target.value); setPreview(undefined); setConfirmed(false); setWritten(false);
-          }} />
-      </label>
-      {invalidReason ? <p className="perfil-razon">{invalidReason}</p> : null}
-      <button type="button" className="button small secondary"
-        disabled={disabled || invalidReason !== undefined} onClick={() => { void run('preview'); }}>
-        {phase === 'preview' ? 'Midiendo contexto…' : 'Medir antes de reconciliar'}
-      </button>
-      {preview ? <>
-        <p>Vista previa de revisión {preview.expected_revision}. Esta vista identifica las huellas;
+    <SectionCard
+      title="Reconciliar huellas del contexto"
+      description="Las huellas difieren de la expectativa registrada. Se comprueba el propietario del bloque y se reconstruye sólo el perfil gestionado desde la revisión guardada, conservando el contenido exterior que autorices. No reinicia la TUI ni acredita adopción por el modelo."
+    >
+      <ReasonField label="Motivo de la reconciliación" value={reason} disabled={disabled}
+        onChange={(value) => { setReason(value); setPreview(undefined); setConfirmed(false); setWritten(false); }} />
+      <div>
+        <Button size="sm" disabled={disabled || invalidReason !== undefined} onClick={() => { void run('preview'); }}>
+          {phase === 'preview' ? 'Midiendo contexto…' : 'Medir antes de reconciliar'}
+        </Button>
+      </div>
+      {preview ? <div className="grid gap-3 rounded-lg border border-line bg-subtle p-3 text-[13px]">
+        <p className="m-0">Vista previa de revisión {preview.expected_revision}. Esta vista identifica las huellas;
           no muestra ni acredita una revisión del contenido exterior.</p>
-        <ul>{preview.documents.map((document) => <li key={document.name}>
+        <ul className="m-0 grid gap-1 pl-5 text-xs">{preview.documents.map((document) => <li key={document.name} className="break-all">
           <code>{document.name}</code>: huella completa <code>{document.observed_sha}</code>;{' '}
           exterior conservado <code>{document.exterior_sha}</code>.
         </li>)}</ul>
-        <label>
-          <input type="checkbox" checked={confirmed} disabled={disabled}
+        <label className="flex items-start gap-2 font-normal">
+          <input type="checkbox" checked={confirmed} disabled={disabled} className="mt-0.5"
             onChange={(event) => { setConfirmed(event.target.checked); }} />
           Autorizo conservar sin cambios el contenido exterior identificado por estas huellas.
         </label>
-        <button type="button" className="button small secondary" disabled={disabled || !confirmed}
-          onClick={() => { void run('apply'); }}>Reconciliar el bloque gestionado</button>
-      </> : null}
-      {error ? <p role="alert" className="perfil-aviso perfil-aviso-error">{error}</p> : null}
-      {written ? <p role="status" className="perfil-aviso perfil-aviso-parcial">
+        <div>
+          <Button size="sm" disabled={disabled || !confirmed} onClick={() => { void run('apply'); }}>
+            Reconciliar el bloque gestionado
+          </Button>
+        </div>
+      </div> : null}
+      {error ? <Notice tone="danger" role="alert">{error}</Notice> : null}
+      {written ? <Notice tone="warn" role="status">
         Escritura y huellas verificadas; estado pending_session_refresh. Falta el ACK de adopción
         del modelo: no se presenta como contexto ya adoptado.
-      </p> : null}
-    </section>
+      </Notice> : null}
+    </SectionCard>
   );
 }

@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { FleetActivityAgent, FleetActivitySnapshot, QueueItem, QueueSnapshot } from '../../api/types';
 import type { FleetAgent } from '../terminal/fleet';
-import { cifrasVivas, formaDeLaCola } from './fila-de-agente';
 import {
   colaNecesitaAtencion,
   LIMITE_COLA,
@@ -69,6 +68,16 @@ describe('saludDeColaPorAgente', () => {
     expect(salud['Steven:argos'].muertas).toBe(1);
     // And the other-side control: zeus DID come in activity, so its zeros are real.
     expect(salud['Steven:zeus'].pendientes).toBe(0);
+  });
+
+  it('una incidencia DLQ resuelta sigue terminal pero ya no cuenta como muerta', () => {
+    const salud = saludDeColaPorAgente(undefined, cola([
+      filaDeCola({ delivery_id: 'd-1', state: 'dead', dlq_resolved: true }),
+      filaDeCola({ delivery_id: 'd-2', state: 'failed', dlq_resolved: true }),
+      filaDeCola({ delivery_id: 'd-3', state: 'failed', dlq_resolved: false }),
+      filaDeCola({ delivery_id: 'd-4', state: 'dead' }),
+    ]));
+    expect(salud['Steven:argos'].muertas).toBe(2);
   });
 
   it('sin snapshot de /queues las muertas quedan UNKNOWN en vez de cero', () => {
@@ -182,32 +191,3 @@ describe('textoDeCifra', () => {
   });
 });
 
-describe('formaDeLaCola', () => {
-  const leida = { pendientes: 0, enCurso: 0, reintentos: 0, muertas: 0, muertasTruncadas: false };
-
-  it('abrevia la fila leída entera y sin sangre', () => {
-    expect(formaDeLaCola(leida)).toBe('breve');
-    expect(formaDeLaCola({ ...leida, pendientes: 8, enCurso: 2 })).toBe('breve');
-  });
-
-  it('NO abrevia lo que sangra: muertas o reintentos mandan la fila entera', () => {
-    expect(formaDeLaCola({ ...leida, muertas: 1 })).toBe('detallada');
-    expect(formaDeLaCola({ ...leida, reintentos: 3 })).toBe('detallada');
-  });
-
-  it('NO abrevia un UNKNOWN: una cifra que el servidor no informó no se esconde', () => {
-    expect(formaDeLaCola(undefined)).toBe('detallada');
-    expect(formaDeLaCola({ ...leida, pendientes: undefined })).toBe('detallada');
-    expect(formaDeLaCola({ ...leida, enCurso: undefined })).toBe('detallada');
-    expect(formaDeLaCola({ ...leida, reintentos: undefined })).toBe('detallada');
-    expect(formaDeLaCola({ ...leida, muertas: undefined })).toBe('detallada');
-  });
-
-  it('la línea breve sólo escribe lo que no es cero', () => {
-    expect(cifrasVivas(leida)).toEqual([]);
-    expect(cifrasVivas({ ...leida, pendientes: 3, enCurso: 0 }))
-      .toEqual([{ kind: 'pending', texto: '3 en cola' }]);
-    expect(cifrasVivas({ ...leida, pendientes: 1, enCurso: 2 }).map((cifra) => cifra.texto))
-      .toEqual(['1 en cola', '2 en curso']);
-  });
-});

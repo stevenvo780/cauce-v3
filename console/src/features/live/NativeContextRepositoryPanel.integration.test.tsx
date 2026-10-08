@@ -25,7 +25,6 @@ it('integrates the native GET client behind the secondary disclosure without dis
         sourceAgent: { tenant_id: 'Steven', alias: 'helper', source_journal: null, native_manual: { harness: 'codex' } } } });
   }));
   const user = userEvent.setup(); renderWithApi(<ContextRepositoryPanel tenantId="Steven" alias="helper" canApply />);
-  await user.click(screen.getByText('Versiones Git del contexto'));
   await user.type(await screen.findByLabelText('Commit completo'), commit);
   await user.click(screen.getByText('Manual nativo de Git · sólo inspección'));
   await user.click(screen.getByRole('button', { name: 'Inspeccionar manual' }));

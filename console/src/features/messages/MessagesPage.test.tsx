@@ -5,7 +5,12 @@ import { http, HttpResponse } from 'msw';
 import { afterEach, beforeEach, expect, it } from 'vitest';
 import { mockActivity, mockMessages, mockStatus, topology } from '../../mocks/data';
 import { server } from '../../mocks/server';
-import { renderRouted, renderWithApi } from '../../test/render';
+import { declaredPtyTargets } from '../../test/pty-targets';
+import { FleetProvider } from '../../shell/fleet';
+import { renderWithApi } from '../../test/render';
+import {
+  openConversation, openConversationInfo, openConversationMenu, openMessageDetail, renderChat, thread,
+} from './chat-test-utils';
 import { MessagesPage } from './MessagesPage';
 
 beforeEach(() => {
@@ -42,68 +47,20 @@ function capturarPublish() {
   return enviados;
 }
 
-async function abrirConversacion(user: ReturnType<typeof userEvent.setup>, alias: string) {
-  const fila = await screen.findByRole('button', { name: new RegExp(`conversación con ${alias},`, 'i') });
-  await user.click(fila);
-  return screen.findByRole('region', { name: new RegExp(`conversación con ${alias}`, 'i') });
-}
-
+/** The receipt of the last accepted publish lives in the conversation details, never in the composer. */
 async function abrirRecibo(user: ReturnType<typeof userEvent.setup>, hilo: HTMLElement) {
   expect(within(hilo).queryByText('Mensaje aceptado para entrega. La aceptación no confirma la ejecución.'))
     .not.toBeInTheDocument();
-  expect(hilo.querySelector('.messenger-composer .notice.success')).toBeNull();
-  const more = within(hilo).getByRole('button', { name: 'Más' });
-  if (more.getAttribute('aria-expanded') !== 'true') await user.click(more);
-  const summary = within(hilo).getByText('Recibo del último envío');
-  expect(summary.closest('details')).not.toHaveAttribute('open');
-  await user.click(summary);
-  const receipt = summary.closest('details');
-  if (!receipt) throw new Error('Falta el detalle del recibo');
+  const dialog = await openConversationInfo(user);
+  const heading = within(dialog).getByRole('heading', { name: 'Recibo del último envío' });
+  const receipt = heading.closest('section');
+  if (!receipt) throw new Error('Falta el recibo');
   return receipt;
-}
-
-/**
- * The BUBBLES, without the detail panel.
- *
- * Needed since the detail shows the message body: before it did not — six metadata fields and
- * not a single line of text — so a `getByText` over the whole thread found only one match.
- * That there are now two is the fix, not a bug, but a test that wants to assert "this message
- * is NOT in this thread" must look at the bubbles.
- */
-function historial(hilo: HTMLElement): HTMLElement {
-  const caja = hilo.querySelector<HTMLElement>('.terminal-transcript');
-  if (!caja) throw new Error('el hilo no tiene transcripción');
-  return caja;
-}
-
-async function abrirDetalleDe(user: ReturnType<typeof userEvent.setup>, hilo: HTMLElement, contenido: string) {
-  const bubble = within(historial(hilo)).getByText(contenido, { exact: true }).closest('article');
-  if (!bubble) throw new Error(`No se encontró la burbuja: ${contenido}`);
-  await user.click(within(bubble).getByRole('button', { name: 'Opciones del mensaje' }));
-  await user.click(screen.getByRole('menuitem', { name: 'Ver detalle' }));
-  return within(hilo).findByRole('group', { name: /detalle del mensaje seleccionado/i });
 }
 
 function notaQueDice(hilo: HTMLElement, texto: RegExp): boolean {
   return within(hilo).getAllByRole('note').some((nota) => texto.test(nota.textContent));
 }
-
-it('lista a los agentes con el estado de su cola al lado del nombre', async () => {
-  renderRouted(MessagesPage);
-
-  const argos = await screen.findByRole('button', { name: /conversación con argos,/i });
-  // From the /v3/console/activity fixture: argos has 1 queued and 1 in flight.
-  expect(within(argos).getByText('1 en cola')).toBeInTheDocument();
-  expect(within(argos).getByText('1 en curso')).toBeInTheDocument();
-  // From /v3/console/queues: the only dead delivery is Miguel:kratos'. A known zero is no longer written down —the healthy row shrinks— so the attribution is checked by who gets flagged.
-  expect(argos).toHaveAttribute('data-cola', 'breve');
-  expect(argos).not.toHaveAttribute('data-attention');
-  expect(within(argos).queryByText('0 muertas')).not.toBeInTheDocument();
-
-  const kratos = await screen.findByRole('button', { name: /conversación con kratos,/i });
-  expect(within(kratos).getByText('1 muertas')).toBeInTheDocument();
-  expect(kratos).toHaveAttribute('data-attention', 'true');
-}, 20_000);
 
 /**
  * NEGATIVE CONTROL of the queue column. If the view filled with zeros what the server does
@@ -117,23 +74,23 @@ it('un agente que /activity no informa sale UNKNOWN en su cola, nunca en cero', 
     ...sinArgos,
     agents: (sinArgos.agents ?? []).filter((agent) => agent.alias !== 'argos'),
   })));
-  renderRouted(MessagesPage);
+  const user = userEvent.setup();
+  renderChat();
 
-  const argos = await screen.findByRole('button', { name: /conversación con argos,/i });
-  await waitFor(() => { expect(within(argos).getByText('UNKNOWN en cola')).toBeInTheDocument(); });
-  expect(within(argos).getByText('UNKNOWN en curso')).toBeInTheDocument();
-  expect(within(argos).queryByText('0 en cola')).not.toBeInTheDocument();
-  expect(within(argos).queryByText('0 en curso')).not.toBeInTheDocument();
+  await openConversation('argos');
+  const cola = (await openConversationInfo(user)).querySelector('[data-queue-strip]');
+  await waitFor(() => { expect(cola).toHaveTextContent(/En cola\s*UNKNOWN/); });
+  expect(cola).toHaveTextContent(/En curso\s*UNKNOWN/);
+  expect(cola).not.toHaveTextContent(/En cola\s*0/);
 }, 20_000);
 
 it('abre el hilo del agente elegido y NO mezcla los mensajes de los demás', async () => {
-  const user = userEvent.setup();
-  renderRouted(MessagesPage);
+  renderChat();
 
-  const hilo = await abrirConversacion(user, 'argos');
+  const hilo = await openConversation('argos');
 
   // The message whose delivery is for argos.
-  expect(await within(historial(hilo)).findByText('Verificar estado del adapter Hermes')).toBeInTheDocument();
+  expect(await within(thread(hilo)).findByText('Verificar estado del adapter Hermes')).toBeInTheDocument();
   // NEGATIVE CONTROL: the other message in the feed goes to Miguel:kratos. If the thread were
   // the old flat list — or if the filter did not filter — it would show up here as well.
   expect(within(hilo).queryByText('Indexar reporte operativo')).not.toBeInTheDocument();
@@ -166,7 +123,7 @@ it('conserva el foco del opener de diálogo expandido al hidratar el agente sele
   renderWithApi(<>
     <button type="button" aria-controls="external-panel" aria-haspopup="dialog" aria-expanded="true">Abrir panel</button>
     <section id="external-panel" role="dialog" aria-label="Panel externo">Contenido del panel</section>
-    <MessagesPage params={['Steven', 'argos']} />
+    <FleetProvider><MessagesPage params={['Steven', 'argos']} /></FleetProvider>
   </>);
   const opener = screen.getByRole('button', { name: 'Abrir panel' });
   try {
@@ -187,7 +144,7 @@ it('permite que la selección y navegación enfoquen el hilo con el opener de di
       <button type="button" onClick={() => { setParams(['Miguel', 'kratos']); }}>Elegir kratos</button>
       <button type="button" aria-controls="external-panel" aria-haspopup="dialog" aria-expanded="false">Abrir panel</button>
       <section id="external-panel" role="dialog" aria-label="Panel externo">Contenido del panel</section>
-      <MessagesPage params={params} />
+      <FleetProvider><MessagesPage params={params} /></FleetProvider>
     </>;
   }
   const user = userEvent.setup();
@@ -206,14 +163,14 @@ it('permite que la selección y navegación enfoquen el hilo con el opener de di
 it('emite el mensaje al agente elegido derivando el room, sin pedirlo escrito a mano', async () => {
   const user = userEvent.setup();
   const enviados = capturarPublish();
-  renderRouted(MessagesPage);
+  renderChat();
 
-  const hilo = await abrirConversacion(user, 'argos');
+  const hilo = await openConversation('argos');
   // There is no field where to write the recipient or the room: that is part of the fix.
   expect(within(hilo).queryByLabelText(/^room$/i)).not.toBeInTheDocument();
   expect(within(hilo).queryByLabelText(/destinatario/i)).not.toBeInTheDocument();
-  await user.click(within(hilo).getByRole('button', { name: 'Más' }));
-  expect(within(hilo).getByText(/derivado de tu topología/i)).toBeVisible();
+  expect((await openConversationInfo(user)).querySelector('[data-room-origin]')).toHaveTextContent(/derivado de tu topología/i);
+  await user.keyboard('{Escape}');
 
   await user.type(within(hilo).getByRole('textbox', { name: /mensaje para argos/i }), 'revisá la cola');
   await user.click(within(hilo).getByRole('button', { name: /^enviar$/i }));
@@ -233,8 +190,8 @@ it('emite el mensaje al agente elegido derivando el room, sin pedirlo escrito a 
   expect(receipt).toHaveTextContent('Intención confirmada.');
   expect(receipt).toHaveTextContent('no demuestra lectura ni ejecución');
   await user.keyboard('{Escape}');
-  expect(within(hilo).queryByText(/Aceptado por el control plane/i)).not.toBeInTheDocument();
-  expect(within(hilo).getByRole('button', { name: 'Más' })).toHaveFocus();
+  await waitFor(() => { expect(screen.queryByText(/Aceptado por el control plane/i)).not.toBeInTheDocument(); });
+  expect(screen.getByRole('button', { name: 'Opciones de la conversación' })).toHaveFocus();
   expect(within(hilo).getByRole('textbox', { name: /mensaje para argos/i })).toHaveValue('');
 }, 25_000);
 
@@ -246,9 +203,9 @@ it('no inventa éxito ni borra el borrador ante un 202 sin recibo durable exacto
     keys.push(input.idempotency_key);
     return HttpResponse.json({ message_id: '10000000-0000-4000-8000-000000000001' }, { status: 202 });
   }));
-  renderRouted(MessagesPage);
+  renderChat();
 
-  const hilo = await abrirConversacion(user, 'argos');
+  const hilo = await openConversation('argos');
   const campo = within(hilo).getByRole('textbox', { name: /mensaje para argos/i });
   await user.type(campo, 'no perder este texto');
   await user.click(within(hilo).getByRole('button', { name: /^enviar$/i }));
@@ -283,9 +240,9 @@ it('conserva el borrador y no reintenta cuando el servidor prueba que la reserva
       return HttpResponse.json({});
     }),
   );
-  renderRouted(MessagesPage);
+  renderChat();
 
-  const hilo = await abrirConversacion(user, 'argos');
+  const hilo = await openConversation('argos');
   const campo = within(hilo).getByRole('textbox', { name: /mensaje para argos/i });
   await user.type(campo, 'reserva vencida sin efecto');
   await user.click(within(hilo).getByRole('button', { name: /^enviar$/i }));
@@ -306,9 +263,9 @@ it('reconcilia un lost-202 reintentando una sola vez con la misma clave y sin du
     if (enviados.length === 1) return HttpResponse.error();
     return HttpResponse.json(publishReceipt(input, true), { status: 202 });
   }));
-  renderRouted(MessagesPage);
+  renderChat();
 
-  const hilo = await abrirConversacion(user, 'argos');
+  const hilo = await openConversation('argos');
   const campo = within(hilo).getByRole('textbox', { name: /mensaje para argos/i });
   await user.type(campo, 'confirmó pero se perdió el 202');
   await user.click(within(hilo).getByRole('button', { name: /^enviar$/i }));
@@ -345,15 +302,15 @@ it('recupera el journal sin body al cerrar y reabrir la conversación tras dos r
       );
     }),
   );
-  renderRouted(MessagesPage);
+  renderChat();
 
-  let hilo = await abrirConversacion(user, 'argos');
+  let hilo = await openConversation('argos');
   await user.type(within(hilo).getByRole('textbox', { name: /mensaje para argos/i }), 'retry exacto al reabrir');
   await user.click(within(hilo).getByRole('button', { name: /^enviar$/i }));
   expect(await within(hilo).findByText(/Resultado incierto/i)).toBeInTheDocument();
 
-  await abrirConversacion(user, 'kratos');
-  hilo = await abrirConversacion(user, 'argos');
+  await openConversation('kratos');
+  hilo = await openConversation('argos');
   const campoReabierto = within(hilo).getByRole('textbox', { name: /mensaje para argos/i });
   // The body is not persisted on the client. The operator types it again and the server proves
   // it is exactly the same semantics before recovering the uncertain key.
@@ -393,8 +350,8 @@ it('recupera del servidor un publish confirmado tras recargar sin repetir el POS
     }),
   );
 
-  const firstView = renderRouted(MessagesPage);
-  let hilo = await abrirConversacion(user, 'argos');
+  const firstView = renderChat();
+  let hilo = await openConversation('argos');
   await user.type(
     within(hilo).getByRole('textbox', { name: /mensaje para argos/i }),
     'efecto durable tras recarga',
@@ -404,8 +361,8 @@ it('recupera del servidor un publish confirmado tras recargar sin repetir el POS
   expect(publishes).toBe(2);
 
   firstView.unmount();
-  renderRouted(MessagesPage);
-  hilo = await abrirConversacion(user, 'argos');
+  renderChat();
+  hilo = await openConversation('argos');
   await user.type(
     within(hilo).getByRole('textbox', { name: /mensaje para argos/i }),
     'efecto durable tras recarga',
@@ -413,7 +370,8 @@ it('recupera del servidor un publish confirmado tras recargar sin repetir el POS
   await user.click(within(hilo).getByRole('button', { name: /^enviar$/i }));
 
   expect(within(await abrirRecibo(user, hilo)).getByText(/reconciliada desde el journal durable/i)).toBeVisible();
-  expect(within(hilo).getByRole('textbox', { name: /mensaje para argos/i })).toHaveValue('');
+  await user.keyboard('{Escape}');
+  await waitFor(() => { expect(within(hilo).getByRole('textbox', { name: /mensaje para argos/i })).toHaveValue(''); });
   expect(publishes).toBe(2);
 }, 35_000);
 
@@ -424,11 +382,10 @@ it('recupera del servidor un publish confirmado tras recargar sin repetir el POS
  * a server error — which is exactly what the old form with its text field used to do.
  */
 it('bloquea el envío a un destino sin ruta y dice el motivo, en vez de dejar publicar', async () => {
-  const user = userEvent.setup();
   const enviados = capturarPublish();
-  renderRouted(MessagesPage);
+  renderChat();
 
-  const hilo = await abrirConversacion(user, 'salva');
+  const hilo = await openConversation('salva');
 
   const campo = within(hilo).getByRole('textbox', { name: /mensaje para salva/i });
   await waitFor(() => { expect(campo).toBeDisabled(); });
@@ -439,16 +396,19 @@ it('bloquea el envío a un destino sin ruta y dice el motivo, en vez de dejar pu
 
 it('ofrece el salto a la terminal del agente, apuntando a su detalle real', async () => {
   const user = userEvent.setup();
-  renderRouted(MessagesPage);
+  server.use(declaredPtyTargets(['Steven', 'argos']));
+  renderChat();
 
-  const hilo = await abrirConversacion(user, 'argos');
-  await user.click(within(hilo).getByRole('button', { name: 'Más' }));
-  expect(within(hilo).getByRole('link', { name: /abrir tui/i })).toHaveAttribute('href', '/terminal/Steven/argos');
+  const hilo = await openConversation('argos');
+  expect(hilo).toBeInTheDocument();
+  const menu = await openConversationMenu(user);
+  expect(within(menu).getByRole('menuitem', { name: /abrir terminal/i })).toHaveAttribute('href', '/terminal/Steven/argos?modo=terminal');
+  expect(within(menu).getByRole('menuitem', { name: /abrir tui/i })).toHaveAttribute('href', '/terminal/Steven/argos?modo=tui');
+  expect(within(menu).getByRole('menuitem', { name: /perfil y contexto/i })).toHaveAttribute('href', '/messages/Steven/argos?view=context');
 }, 20_000);
 
 it('un enlace profundo a un alias que el servidor no observa lo dice, en vez de inventar el agente', async () => {
-  window.history.pushState({}, '', '/messages/Steven/fantasma');
-  renderRouted(MessagesPage);
+  renderChat('/messages/Steven/fantasma');
 
   expect(await screen.findByText(/no observa a/i)).toBeInTheDocument();
   expect(screen.getByText('Steven:fantasma')).toBeInTheDocument();
@@ -456,21 +416,20 @@ it('un enlace profundo a un alias que el servidor no observa lo dice, en vez de 
 
 it('declara el techo de 100 mensajes del servidor en vez de presentar el hilo como completo', async () => {
   const user = userEvent.setup();
-  renderRouted(MessagesPage);
+  renderChat();
 
-  const hilo = await abrirConversacion(user, 'argos');
-  await user.click(within(hilo).getByRole('button', { name: 'Más' }));
-  await user.click(within(hilo).getByText(/Estado y detalles del agente/));
-  expect(within(hilo).getByText(/sin filtro por par/i)).toBeVisible();
+  const hilo = await openConversation('argos');
+  expect(await openConversationInfo(user)).toHaveTextContent(/sin filtro por par/i);
+  await user.keyboard('{Escape}');
   const page = mockMessages();
   server.use(http.get('*/v3/console/messages', () => HttpResponse.json({ ...page,
     items: Array.from({ length: 100 }, (_, index) => ({ ...page.items?.[0], message_id: `window-${String(index)}` })),
   })));
-  await user.click(within(hilo).getByRole('button', { name: 'Sincronizar' }));
-  await user.keyboard('{Escape}');
+  await openConversationMenu(user);
+  await user.click(screen.getByRole('menuitem', { name: 'Sincronizar' }));
   const warning = await within(hilo).findByText(/Ventana llena/);
   expect(warning).toBeVisible();
-  expect(warning.closest('.chat-more-panel')).toBeNull();
+  expect(warning.closest('[data-thread-scroll]')).not.toBeNull();
 }, 20_000);
 
 // ---------------------------------------------------------------------------------------------
@@ -515,16 +474,11 @@ function servidorConGaia({ enElRegistro }: { enElRegistro: boolean }) {
 it('un mensaje a un alias SIN membresía ni lease sigue teniendo hilo: el caso gaia', async () => {
   const user = userEvent.setup();
   servidorConGaia({ enElRegistro: true });
-  renderRouted(MessagesPage);
+  renderChat();
 
-  // 1) It has a row in the roster, labelled as what it is: registered and without a room.
-  const fila = await screen.findByRole('button', { name: /conversación con gaia,.*sin sala declarada/i });
-  expect(within(fila).getByText('sin sala')).toBeInTheDocument();
-
-  // 2) And the thread opens with its message inside. This is what did NOT exist before anywhere.
-  await user.click(fila);
-  const hilo = await screen.findByRole('region', { name: /conversación con gaia/i });
-  expect(await within(historial(hilo)).findByText('gaia, tomá el encargo del censo')).toBeInTheDocument();
+  // The thread opens with its message inside although no room or lease declares the alias.
+  const hilo = await openConversation('gaia');
+  expect(await within(thread(hilo)).findByText('gaia, tomá el encargo del censo')).toBeInTheDocument();
   expect(within(hilo).getByText('Fuera de la topología')).toBeVisible();
   expect(within(hilo).getByText('Lease sin dato · envío en cola')).toBeVisible();
   await user.click(within(hilo).getByRole('button', { name: /^Ver detalles:/ }));
@@ -535,12 +489,10 @@ it('un mensaje a un alias SIN membresía ni lease sigue teniendo hilo: el caso g
 it('con el registro caído, el hilo sigue existiendo porque el propio feed lo sostiene', async () => {
   const user = userEvent.setup();
   servidorConGaia({ enElRegistro: false });
-  renderRouted(MessagesPage);
+  renderChat();
 
-  const fila = await screen.findByRole('button', { name: /conversación con gaia,/i });
-  await user.click(fila);
-  const hilo = await screen.findByRole('region', { name: /conversación con gaia/i });
-  expect(await within(historial(hilo)).findByText('gaia, tomá el encargo del censo')).toBeInTheDocument();
+  const hilo = await openConversation('gaia');
+  expect(await within(thread(hilo)).findByText('gaia, tomá el encargo del censo')).toBeInTheDocument();
   expect(within(hilo).getByText('Fuera de la topología')).toBeVisible();
   expect(within(hilo).getByText('Lease sin dato · envío en cola')).toBeVisible();
   await user.click(within(hilo).getByRole('button', { name: /^Ver detalles:/ }));
@@ -554,14 +506,13 @@ it('con el registro caído, el hilo sigue existiendo porque el propio feed lo so
  */
 it('un alias que ninguna fuente menciona sigue sin existir, y se dice por qué', async () => {
   servidorConGaia({ enElRegistro: true });
-  window.history.pushState({}, '', '/messages/Steven/fantasma');
-  renderRouted(MessagesPage);
+  renderChat('/messages/Steven/fantasma');
 
   expect(await screen.findByText(/ni en el registro de agentes/i)).toBeInTheDocument();
   expect(screen.getByText('Steven:fantasma')).toBeInTheDocument();
-  expect(screen.queryByRole('button', { name: /conversación con fantasma,/i })).not.toBeInTheDocument();
-  // And gaia, which is there, appears: the negative is about the non-existent alias, not the whole fix.
-  expect(await screen.findByRole('button', { name: /conversación con gaia,/i })).toBeInTheDocument();
+  expect(screen.queryByRole('region', { name: /conversación con fantasma/i })).not.toBeInTheDocument();
+  // And gaia, which is there, opens: the negative is about the non-existent alias, not the whole fix.
+  expect(await openConversation('gaia')).toBeInTheDocument();
 }, 25_000);
 
 /** The same message from argos' thread, but with a SIBLING delivery for Steven:jarvis. */
@@ -591,10 +542,10 @@ function feedConFanOut() {
 it('el detalle repone room, lane, actor, tenant, trace ENTERO y el fan-out del publish', async () => {
   const user = userEvent.setup();
   feedConFanOut();
-  renderRouted(MessagesPage);
+  renderChat();
 
-  const hilo = await abrirConversacion(user, 'argos');
-  const detalle = await abrirDetalleDe(user, hilo, 'Verificar estado del adapter Hermes');
+  const hilo = await openConversation('argos');
+  const detalle = await openMessageDetail(user, hilo, 'Verificar estado del adapter Hermes');
 
   const campo = (etiqueta: string) => {
     const el = within(detalle).getByText(etiqueta).closest('div');
@@ -615,7 +566,7 @@ it('el detalle repone room, lane, actor, tenant, trace ENTERO y el fan-out del p
   expect(within(fanout).getByText('Steven:jarvis')).toBeInTheDocument();
   expect(within(fanout).getByText('FALLÓ')).toBeInTheDocument();
   expect(within(fanout).getByText('Steven:socrates')).toBeInTheDocument();
-  expect(within(fanout).getByText('EN REINTENTO').closest('.badge')).toHaveClass('badge-warning');
+  expect(within(fanout).getByText('EN REINTENTO').closest('[data-tone]')).toHaveAttribute('data-tone', 'warning');
 
   const gestionarPrincipal = within(detalle).getByRole('link', {
     name: /gestionar delivery 4b981ddd-f311-494e-887c-83fd5e11be90 en colas/i,
@@ -642,11 +593,11 @@ it('el detalle repone room, lane, actor, tenant, trace ENTERO y el fan-out del p
 it('la entrega hermana se lista en el detalle pero NO se convierte en una burbuja del hilo', async () => {
   const user = userEvent.setup();
   feedConFanOut();
-  renderRouted(MessagesPage);
+  renderChat();
 
-  const hilo = await abrirConversacion(user, 'argos');
-  await abrirDetalleDe(user, hilo, 'Verificar estado del adapter Hermes');
-  const burbujas = within(historial(hilo)).getAllByText('Verificar estado del adapter Hermes');
+  const hilo = await openConversation('argos');
+  await openMessageDetail(user, hilo, 'Verificar estado del adapter Hermes');
+  const burbujas = within(thread(hilo)).getAllByText('Verificar estado del adapter Hermes');
   expect(burbujas).toHaveLength(1);
   // El otro mensaje del feed, que va a Miguel:kratos, sigue fuera de este hilo.
   expect(within(hilo).queryByText('Indexar reporte operativo')).not.toBeInTheDocument();
@@ -655,11 +606,11 @@ it('la entrega hermana se lista en el detalle pero NO se convierte en una burbuj
 it('vuelve a poder publicar en el lane batch, con la prioridad de ese carril', async () => {
   const user = userEvent.setup();
   const enviados = capturarPublish();
-  renderRouted(MessagesPage);
+  renderChat();
 
-  const hilo = await abrirConversacion(user, 'argos');
-  await user.click(within(hilo).getByRole('button', { name: 'Más' }));
-  await user.selectOptions(within(hilo).getByLabelText(/^carril$/i), 'batch');
+  const hilo = await openConversation('argos');
+  await openConversationMenu(user);
+  await user.click(screen.getByRole('menuitemradio', { name: /batch · prioridad 0/i }));
   await user.type(within(hilo).getByRole('textbox', { name: /mensaje para argos/i }), 'indexá el informe');
   await user.click(within(hilo).getByRole('button', { name: /^enviar$/i }));
 
@@ -675,9 +626,9 @@ it('vuelve a poder publicar en el lane batch, con la prioridad de ese carril', a
 it('sin tocar el selector sigue publicando interactive con prioridad 10', async () => {
   const user = userEvent.setup();
   const enviados = capturarPublish();
-  renderRouted(MessagesPage);
+  renderChat();
 
-  const hilo = await abrirConversacion(user, 'argos');
+  const hilo = await openConversation('argos');
   await user.type(within(hilo).getByRole('textbox', { name: /mensaje para argos/i }), 'revisá la cola');
   await user.click(within(hilo).getByRole('button', { name: /^enviar$/i }));
 
@@ -685,27 +636,16 @@ it('sin tocar el selector sigue publicando interactive con prioridad 10', async 
   expect(enviados[0]).toMatchObject({ lane: 'interactive', priority: 10 });
 }, 25_000);
 
-/**
- * THE HOOK OF THE NARROW-SCREEN FIX, checked on the DOM.
- *
- * The rule that shrinks the roster to a switcher lives in `messages.css` and is only activated
- * by this attribute. The sheet is checked separately (`composer-anclado.test.ts`); what is
- * checked here is the only thing jsdom CAN see: that the attribute is set when there is an
- * open conversation and NOT before — if it were always set, the roster would be born trimmed
- * to two rows being the main content of the screen, which is the opposite bug.
- */
 it('marca la envoltura con data-conversacion sólo cuando hay un hilo abierto', async () => {
-  const user = userEvent.setup();
-  const { container } = renderRouted(MessagesPage);
+  const { container } = renderChat();
 
-  const envoltura = container.querySelector('.messenger-shell');
-  await screen.findByRole('button', { name: /conversación con argos,/i });
+  const envoltura = container.firstElementChild;
+  await screen.findByRole('heading', { name: '¿Con quién trabajamos hoy?' });
   expect(envoltura).not.toHaveAttribute('data-conversacion');
 
-  await abrirConversacion(user, 'argos');
+  await openConversation('argos');
   expect(envoltura).toHaveAttribute('data-conversacion', 'abierta');
 }, 20_000);
-
 
 it.each(['pending', 'rejected'])('mantiene visible la confirmación %s sin esconderla en el recibo', async (status) => {
   const user = userEvent.setup();
@@ -713,14 +653,13 @@ it.each(['pending', 'rejected'])('mantiene visible la confirmación %s sin escon
   server.use(http.post('*/v3/console/publish-intents/confirm', () => status === 'pending'
     ? HttpResponse.error()
     : HttpResponse.json({ error: 'confirmation_rejected' }, { status: 400 })));
-  renderRouted(MessagesPage);
-  const hilo = await abrirConversacion(user, 'argos');
+  renderChat();
+  const hilo = await openConversation('argos');
   await user.type(within(hilo).getByRole('textbox', { name: /mensaje para argos/i }), 'Confirmar estado');
   await user.click(within(hilo).getByRole('button', { name: /^enviar$/i }));
   const warning = await within(hilo).findByText(status === 'pending' ? /Confirmación incierta/ : /Confirmación rechazada/);
   expect(warning).toBeVisible();
   expect(warning).toHaveAttribute('role', 'status');
-  expect(warning.closest('.messenger-composer')).not.toBeNull();
-  await user.click(within(hilo).getByRole('button', { name: 'Más' }));
-  expect(within(hilo).queryByText('Recibo del último envío')).not.toBeInTheDocument();
+  expect(warning.closest('[data-chat-composer]')).not.toBeNull();
+  expect(await openConversationInfo(user)).not.toHaveTextContent('Recibo del último envío');
 }, 25_000);

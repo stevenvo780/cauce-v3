@@ -17,14 +17,13 @@ interface Destino {
 }
 
 const DESTINOS: Record<string, Destino> = {
-  overview: { encabezado: /cauce en una pantalla/i },
-  live: { encabezado: /^la flota ahora$/i },
+  live: { encabezado: /^oficina$/i },
   accounts: { encabezado: /^cuentas y cuotas$/i },
-  messages: { encabezado: /^mensajes$/i },
-  queues: { encabezado: /colas y dlq operativo/i },
+  messages: { encabezado: /con quién trabajamos hoy/i },
+  queues: { encabezado: /^colas y dlq/i },
   observability: { encabezado: /^señales y auditoría$/i },
   /* The `h1` matches the menu entry name exactly. The `^…$` anchor ensures title consistency. */
-  config: { encabezado: /^ajustes y altas$/i },
+  config: { encabezado: /^ajustes$/i },
   terminal: { encabezado: /^terminal de agentes$/i },
   ayuda: { encabezado: /^ayuda y documentación$/i },
 };
@@ -136,18 +135,13 @@ beforeEach(() => {
 });
 
 describe('every MENU entry resolves to a real view', () => {
-  it.each(NAV_ENTRIES.map((entry) => [entry.id || '(cover)', entry.id, entry.label] as const))(
+  it.each(NAV_ENTRIES.map((entry) => [entry.id, entry.id, entry.label] as const))(
     '/%s → "%s" draws "%s"',
     async (_nombre, id) => {
       window.history.pushState({}, '', `/${id}`);
       renderWithApi(<App />);
 
       expect(await verDestino(id)).toBeInTheDocument();
-      // And it did NOT fall back to the cover: the cover has its own header, and no other view
-      // can show it. Without this line, a retired id would pass the test by drawing the cover.
-      if (id !== 'overview') {
-        expect(screen.queryByRole('heading', { level: 1, name: /cauce en una pantalla/i })).toBeNull();
-      }
       // The address bar does not move: a canonical route is not an alias.
       expect(window.location.pathname).toBe(`/${id}`);
     },

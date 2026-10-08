@@ -129,7 +129,7 @@ describe('PTY real Python agent through gateway and relay', () => {
     await page.getByLabel('Correo').fill(active.operatorEmail);
     await page.getByLabel('Contraseña').fill(active.operatorPassword);
     await page.getByRole('button', { name: 'Iniciar sesión' }).click();
-    await page.getByRole('link', { name: /Conversaciones/u }).waitFor({ state: 'visible', timeout: 20_000 }).catch(async (cause: unknown) => {
+    await page.getByRole('navigation', { name: 'Navegación principal', exact: true }).locator('a[href="/messages"], a[href^="/messages/"]').waitFor({ state: 'visible', timeout: 20_000 }).catch(async (cause: unknown) => {
       const access = await page.evaluate(async () => {
         const response = await fetch('/v3/console/access', { credentials: 'include' });
         return { status: response.status, body: await response.text() };
@@ -141,16 +141,13 @@ describe('PTY real Python agent through gateway and relay', () => {
     expect(cookie && cookie.httpOnly && cookie.secure).toBe(true);
     if (!cookie) throw new Error('authenticated browser omitted its secure session cookie');
     await active.waitForTarget(`${cookie.name}=${cookie.value}`);
-    await page.getByRole('button', { name: 'Herramientas' }).click();
-    const toolsMenu = page.getByRole('region', { name: 'Herramientas de Cauce' });
-    await toolsMenu.waitFor({ state: 'visible', timeout: 10_000 });
+    const terminalLink = page.getByRole('navigation', { name: 'Navegación principal', exact: true }).locator('a[href="/terminal"]');
+    await terminalLink.waitFor({ state: 'visible', timeout: 10_000 });
     const artifactDirectory = process.env.CAUCE_E2E_ARTIFACT_DIR;
     if (artifactDirectory) {
       await mkdir(artifactDirectory, { recursive: true });
       await page.screenshot({ path: join(artifactDirectory, 'terminal-360-menu.png'), fullPage: true });
     }
-    const terminalLink = toolsMenu.getByRole('link', { name: 'Terminal de agentes' });
-    await terminalLink.waitFor({ state: 'visible', timeout: 10_000 });
     const relayDeadline = Date.now() + 30_000;
     let relayEnabled = false;
     while (Date.now() < relayDeadline) {
@@ -164,14 +161,15 @@ describe('PTY real Python agent through gateway and relay', () => {
     expect(relayEnabled, 'the real relay must enable the visible Terminal menu entry').toBe(true);
     await terminalLink.click();
     await page.getByRole('heading', { name: 'Terminal de agentes', exact: true }).waitFor({ timeout: 20_000 });
-    const selector = page.getByRole('combobox', { name: 'Agente' });
-    await selector.waitFor({ state: 'visible', timeout: 25_000 });
-    await selector.selectOption(`${active.tenant}:${active.targetAlias}`);
-    await page.getByRole('button', { name: 'Terminal', exact: true }).click();
-    await page.getByRole('dialog', { name: new RegExp(`Abrir Terminal en ${active.targetAlias}`, 'u') }).waitFor({ timeout: 10_000 });
+    await page.getByRole('navigation', { name: 'Navegación principal', exact: true }).locator('a[href="/messages"], a[href^="/messages/"]').click();
+    const agent = page.locator(`main a[data-launcher-card][href="/messages/${encodeURIComponent(active.tenant)}/${encodeURIComponent(active.targetAlias)}"]`);
+    await agent.waitFor({ state: 'visible', timeout: 25_000 });
+    await agent.press('Shift+F10');
+    const openTerminal = page.getByRole('menuitem', { name: 'Abrir terminal', exact: true });
+    await openTerminal.waitFor({ state: 'visible', timeout: 10_000 });
     expect(await page.getByLabel('Motivo de la sesión (queda en la auditoría)').count()).toBe(0);
-    await page.getByRole('button', { name: 'Abrir sesión PTY' }).click();
-    await page.locator('.pty-shell[data-state="open"]').waitFor({ state: 'visible', timeout: 30_000 });
+    await openTerminal.click();
+    await page.locator('[data-pty-shell][data-state="open"]').waitFor({ state: 'visible', timeout: 30_000 });
     await page.locator('.xterm-helper-textarea').waitFor({ state: 'visible', timeout: 15_000 });
 
     const input = page.locator('.xterm-helper-textarea');
@@ -238,8 +236,8 @@ describe('PTY real Python agent through gateway and relay', () => {
         uiDeleteStatus = response.status();
       }
     });
-    await page.getByRole('link', { name: 'Conversaciones', exact: true }).click();
-    await page.locator('.pty-shell').waitFor({ state: 'hidden', timeout: 20_000 });
+    await page.getByRole('navigation', { name: 'Navegación principal', exact: true }).locator('a[href="/messages"], a[href^="/messages/"]').click();
+    await page.locator('[data-pty-shell]').waitFor({ state: 'hidden', timeout: 20_000 });
     const deleteDeadline = Date.now() + 10_000;
     while (uiDeleteStatus === undefined && Date.now() < deleteDeadline) await new Promise((resolve) => setTimeout(resolve, 50));
     expect(uiDeleteStatus).toBe(204);

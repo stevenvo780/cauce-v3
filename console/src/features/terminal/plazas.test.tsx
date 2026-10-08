@@ -17,16 +17,14 @@
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
-import { StrictMode } from 'react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { server } from '../../mocks/server';
 import { mockTerminalGrant } from '../../mocks/terminal-ticket';
-import { renderWithApi } from '../../test/render';
 import type { TerminalSessionListItem, TerminalTarget } from './api';
 import { minutosParaLiberar, ocupaPlaza, plazasColgadas, plazasOcupadas } from './plazas';
 import { closePtySession } from './pty-session';
 import { installStubWebSocket, StubWebSocket } from './pty-socket-stub';
-import { TerminalPage } from './TerminalPage';
+import { go, renderAt } from './ruta-de-prueba';
 
 const WS_PATH = '/v3/console/terminal/ws';
 
@@ -156,13 +154,10 @@ type Deferred<T> = ReturnType<typeof deferred<T>>;
 
 describe('la sesión no sobrevive a la vista que la abrió', () => {
   it('al desmontar la vista suelta CONTRA EL SERVIDOR las sesiones que tenía abiertas', async () => {
-    const user = userEvent.setup();
     const borrados: string[] = [];
     servirEntorno([target({ tenant_id: 'Steven', alias: 'zeus' })]);
     servirAperturas(() => 'sid-zeus', borrados);
-    const vista = renderWithApi(<TerminalPage />);
-
-    await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }), await screen.findByRole('option', { name: /^zeus ·/ }));
+    const vista = renderAt('/terminal/Steven/zeus');
     await waitFor(() => { expect(StubWebSocket.instances).toHaveLength(1); });
     act(() => { StubWebSocket.last().acceptOpen(); });
 
@@ -175,7 +170,6 @@ describe('la sesión no sobrevive a la vista que la abrió', () => {
   });
 
   it('si la vista se desmonta antes del 201 compensa sólo el grant exacto que llega tarde', async () => {
-    const user = userEvent.setup();
     const gate = deferred();
     const borrados: string[] = [];
     let posts = 0;
@@ -200,9 +194,7 @@ describe('la sesión no sobrevive a la vista que la abrió', () => {
         return new HttpResponse(null, { status: 204 });
       }),
     );
-    const vista = renderWithApi(<TerminalPage />);
-
-    await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }), await screen.findByRole('option', { name: /^zeus ·/ }));
+    const vista = renderAt('/terminal/Steven/zeus');
     await waitFor(() => { expect(posts).toBe(1); });
     // Auto-open owns the sole attempt. A click while it is pending is visibly fenced and cannot
     // create a second reservation.
@@ -220,7 +212,6 @@ describe('la sesión no sobrevive a la vista que la abrió', () => {
   });
 
   it('el replay de efectos de StrictMode adopta el mismo intento y no duplica el POST automático', async () => {
-    const user = userEvent.setup();
     let posts = 0;
     const borrados: string[] = [];
     servirEntorno([target({ tenant_id: 'Steven', alias: 'zeus' })]);
@@ -243,9 +234,7 @@ describe('la sesión no sobrevive a la vista que la abrió', () => {
         return new HttpResponse(null, { status: 204 });
       }),
     );
-    const vista = renderWithApi(<StrictMode><TerminalPage /></StrictMode>);
-
-    await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }), await screen.findByRole('option', { name: /^zeus ·/ }));
+    const vista = renderAt('/terminal/Steven/zeus', { strict: true });
     await waitFor(() => { expect(StubWebSocket.instances).toHaveLength(1); });
     expect(posts).toBe(1);
 
@@ -254,7 +243,6 @@ describe('la sesión no sobrevive a la vista que la abrió', () => {
   });
 
   it('cambiar A→B→A compensa respuestas antiguas sin adoptar ni revocar la nueva intención', async () => {
-    const user = userEvent.setup();
     const pending: { alias: string; body: Record<string, unknown>; gate: Deferred<void>; sid: string }[] = [];
     const borrados: { sid: string; body: Record<string, unknown> }[] = [];
     servirEntorno([
@@ -279,12 +267,10 @@ describe('la sesión no sobrevive a la vista que la abrió', () => {
         return new HttpResponse(null, { status: 204 });
       }),
     );
-    const vista = renderWithApi(<TerminalPage />);
-    const select = async (alias: string) => user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }),
-      await screen.findByRole('option', { name: new RegExp(`^${alias} ·`) }));
-    await select('zeus'); await waitFor(() => { expect(pending).toHaveLength(1); });
-    await select('salva'); await waitFor(() => { expect(pending).toHaveLength(2); });
-    await select('zeus'); await waitFor(() => { expect(pending).toHaveLength(3); });
+    const vista = renderAt('/terminal/Steven/zeus');
+    await waitFor(() => { expect(pending).toHaveLength(1); });
+    go('/terminal/Isa/salva'); await waitFor(() => { expect(pending).toHaveLength(2); });
+    go('/terminal/Steven/zeus'); await waitFor(() => { expect(pending).toHaveLength(3); });
     expect(pending[2].body.request_id).not.toBe(pending[0].body.request_id);
     pending[2].gate.resolve(undefined);
     await waitFor(() => { expect(StubWebSocket.instances).toHaveLength(1); });
@@ -301,8 +287,7 @@ describe('la sesión no sobrevive a la vista que la abrió', () => {
     await waitFor(() => { expect(borrados.map(item => item.sid)).toContain('sid-pending-2'); });
   });
 
-  it('cerrar y reabrir crea otra intención y la respuesta vieja sólo compensa su propio owner', async () => {
-    const user = userEvent.setup();
+  it('salir y volver crea otra intención y la respuesta vieja sólo compensa su propio owner', async () => {
     const pending: {
       gate: Deferred<void>;
       body: Record<string, unknown>;
@@ -338,14 +323,12 @@ describe('la sesión no sobrevive a la vista que la abrió', () => {
         return new HttpResponse(null, { status: 204 });
       }),
     );
-    const vista = renderWithApi(<TerminalPage />);
-
-    await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }), await screen.findByRole('option', { name: /^zeus ·/ }));
+    const vista = renderAt('/terminal/Steven/zeus');
     await waitFor(() => { expect(pending).toHaveLength(1); });
-    await user.click(screen.getByRole('button', { name: /cerrar sesión zeus/i }));
-    await waitFor(() => { expect(screen.queryByRole('tab', { name: /zeus/i })).not.toBeInTheDocument(); });
+    go('/terminal');
+    await screen.findByText('Elegí un agente en la barra lateral');
 
-    await user.selectOptions(screen.getByRole('combobox', { name: 'Agente' }), screen.getByRole('option', { name: /^zeus ·/ }));
+    go('/terminal/Steven/zeus');
     await waitFor(() => { expect(pending).toHaveLength(2); });
     expect(pending[1].body.request_id).not.toBe(pending[0].body.request_id);
     expect(pending[1].body.owner_token).not.toBe(pending[0].body.owner_token);
@@ -362,7 +345,7 @@ describe('la sesión no sobrevive a la vista que la abrió', () => {
       owner_token: pending[0].body.owner_token,
     });
     expect(StubWebSocket.instances).toHaveLength(1);
-    expect(screen.getByRole('tab', { name: /zeus/i })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('heading', { level: 2, name: /zeus/i })).toBeInTheDocument();
 
     vista.unmount();
     await waitFor(() => { expect(borrados.map((item) => item.sid)).toEqual([
@@ -400,9 +383,7 @@ describe('la salida de la trampa cuando el tope ya está gastado', () => {
         return new HttpResponse(null, { status: 204 });
       }),
     );
-    renderWithApi(<TerminalPage />);
-
-    await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }), await screen.findByRole('option', { name: /^zeus ·/ }));
+    renderAt('/terminal/Steven/zeus');
 
     const tira = await screen.findByLabelText('Sesiones de terminal que siguen ocupando plaza');
     expect(tira).toHaveTextContent('tales');
@@ -421,15 +402,12 @@ describe('la salida de la trampa cuando el tope ya está gastado', () => {
     ['sin items', () => HttpResponse.json({})],
     ['con error del store', () => HttpResponse.json({ error: 'unavailable', message: 'inventario temporalmente inaccesible' }, { status: 503 })],
   ])('no convierte un inventario %s en «cero sesiones» ni afirma que todas estén a la vista', async (_case, sessionsResponse) => {
-    const user = userEvent.setup();
     servirEntorno([target({ tenant_id: 'Steven', alias: 'zeus' })]);
     server.use(
       http.post('*/v3/console/terminal/sessions', () => HttpResponse.json({ error: 'conflict', reason: 'session_limit' }, { status: 409 })),
       http.get('*/v3/console/terminal/sessions', sessionsResponse),
     );
-    renderWithApi(<TerminalPage />);
-
-    await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }), await screen.findByRole('option', { name: /^zeus ·/ }));
+    renderAt('/terminal/Steven/zeus');
 
     const tira = await screen.findByLabelText('Sesiones de terminal que siguen ocupando plaza');
     expect(tira).toHaveTextContent('No se pudo leer qué sesiones están ocupando el tope');
@@ -439,7 +417,6 @@ describe('la salida de la trampa cuando el tope ya está gastado', () => {
   });
 
   it('explica la carrera 409 seguida de inventario exacto vacío sin inventar cero ocupantes', async () => {
-    const user = userEvent.setup();
     let lecturas = 0;
     servirEntorno([target({ tenant_id: 'Steven', alias: 'zeus' })]);
     server.use(
@@ -449,9 +426,7 @@ describe('la salida de la trampa cuando el tope ya está gastado', () => {
         return HttpResponse.json({ items: [] });
       }),
     );
-    renderWithApi(<TerminalPage />);
-
-    await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }), await screen.findByRole('option', { name: /^zeus ·/ }));
+    renderAt('/terminal/Steven/zeus');
 
     const tira = await screen.findByLabelText('Sesiones de terminal que siguen ocupando plaza');
     expect(tira).toHaveTextContent('El tope se liberó antes de terminar la verificación');
@@ -486,12 +461,11 @@ describe('la salida de la trampa cuando el tope ya está gastado', () => {
         return new HttpResponse(null, { status: 204 });
       }),
     );
-    renderWithApi(<TerminalPage />);
-
-    await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }), await screen.findByRole('option', { name: /^zeus ·/ }));
+    renderAt('/terminal/Steven/zeus');
 
     const tira = await screen.findByLabelText('Sesiones de terminal que siguen ocupando plaza');
-    expect(tira).toHaveTextContent('El grant fue inválido; estas son las reservas visibles');
+    // The first inventory read may paint the strip before the 201 rejection names its cause.
+    await waitFor(() => { expect(tira).toHaveTextContent('El grant fue inválido; estas son las reservas visibles'); });
     expect(tira).toHaveTextContent(/No se usó el session_id del recibo roto para borrar nada/i);
     expect(tira).toHaveTextContent('argos');
     expect(lecturas).toBeGreaterThanOrEqual(2);
@@ -503,35 +477,29 @@ describe('la salida de la trampa cuando el tope ya está gastado', () => {
 });
 
 describe('la geometría de la vista', () => {
-  it('cambiar de agente conserva un único escenario y una única sesión visible', async () => {
-    const user = userEvent.setup();
+  it('cambiar de agente conserva un único escenario y una única cabecera', async () => {
     servirEntorno([
       target({ tenant_id: 'Steven', alias: 'zeus' }),
       target({ tenant_id: 'Isa', alias: 'salva', container: 'ws-isa' }),
     ]);
     servirAperturas((alias) => `sid-${alias}`, []);
-    renderWithApi(<TerminalPage />);
+    renderAt('/terminal/Steven/zeus');
+    await screen.findByRole('heading', { level: 2, name: /zeus/ });
+    go('/terminal/Isa/salva');
 
-    await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }), await screen.findByRole('option', { name: /^zeus ·/ }));
-    await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }), await screen.findByRole('option', { name: /^salva ·/ }));
-
-    await waitFor(() => { expect(screen.getAllByRole('tab')).toHaveLength(1); });
+    expect(await screen.findByRole('heading', { level: 2, name: /salva/ })).toBeInTheDocument();
     /*
      * THIS is the assertion that previously returned 2 and made the page measure 3,537 px: a
      * 600 px panel per session, stacked, and the terminal off-screen. Now only the active stage
      * is mounted; the other stays alive outside React, with its socket and its scrollback.
      */
-    expect(document.querySelectorAll('.terminal-session-head')).toHaveLength(1);
-    expect(screen.getByRole('tab', { selected: true })).toHaveTextContent('salva');
-
-    // And the page declares it is in observation mode, which is what folds the counters.
-    expect(document.querySelector('.ultimate-terminal-page')).toHaveAttribute('data-tui', 'abierta');
+    expect(document.querySelectorAll('header')).toHaveLength(1);
+    expect(document.querySelectorAll('[data-objeto-principal]')).toHaveLength(1);
   }, 20_000);
 });
 
-describe('el selector libera plaza antes de cambiar', () => {
+describe('salir de un agente libera su plaza antes de abrir el siguiente', () => {
   it('recorre tres agentes con un tope de una sesión sin recibir session_limit', async () => {
-    const user = userEvent.setup();
     const vivas = new Set<string>();
     const borrados: string[] = [];
     let refusals = 0;
@@ -558,10 +526,9 @@ describe('el selector libera plaza antes de cambiar', () => {
         return new HttpResponse(null, { status: 204 });
       }),
     );
-    renderWithApi(<TerminalPage />);
-    for (const alias of ['zeus', 'salva', 'kant']) {
-      await user.selectOptions(await screen.findByRole('combobox', { name: 'Agente' }),
-        await screen.findByRole('option', { name: new RegExp(`^${alias} ·`) }));
+    renderAt('/terminal/Steven/zeus');
+    for (const [tenant, alias] of [['Steven', 'zeus'], ['Isa', 'salva'], ['Steven', 'kant']]) {
+      go(`/terminal/${tenant}/${alias}`);
       await waitFor(() => { expect([...vivas]).toEqual([`sid-${alias}`]); });
     }
     expect(refusals).toBe(0);

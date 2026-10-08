@@ -70,8 +70,9 @@ async function login(page: BrowserPage, user: User): Promise<void> {
   await page.getByLabel('Correo').waitFor({ timeout: 20_000 });
   await page.getByLabel('Correo').fill(user.email); await page.getByLabel('Contraseña').fill(user.password);
   await page.getByRole('button', { name: 'Iniciar sesión' }).click();
-  await page.getByRole('link', { name: /Conversaciones/u }).waitFor({ timeout: 20_000 });
+  await page.getByRole('navigation', { name: 'Navegación principal', exact: true }).locator('a[href="/messages"], a[href^="/messages/"]').waitFor({ timeout: 20_000 });
   await page.goto(`${active().baseUrl}/config`, { waitUntil: 'domcontentloaded' });
+  await page.getByRole('tab', { name: 'Agentes', exact: true }).click();
 }
 function observe(page: BrowserPage) {
   let pending: ((value: NetworkChange) => void) | undefined;
@@ -134,11 +135,19 @@ async function apply(page: BrowserPage, observer: ReturnType<typeof observe>, sc
   await noticeScope.getByRole('status').filter({ hasText: message }).waitFor({ timeout: 20_000 });
   expect(await revision()).toBe(next); ledger.push(applied);
 }
-async function advanced(page: BrowserPage): Promise<void> {
-  await page.getByRole('button', { name: 'Administración avanzada', exact: true }).click();
-  await page.getByRole('tab', { name: 'Espacios y miembros', exact: true }).waitFor({ timeout: 20_000 });
+async function openSpaces(page: BrowserPage): Promise<void> {
+  await page.getByRole('tab', { name: 'Espacios y salas', exact: true }).click();
   await page.getByRole('button', { name: 'Actualizar', exact: true }).click();
   await page.getByRole('button', { name: 'Actualizando…', exact: true }).waitFor({ state: 'hidden', timeout: 20_000 });
+}
+async function openRegistry(page: BrowserPage): Promise<Form> {
+  await page.getByRole('tab', { name: 'Agentes', exact: true }).click();
+  await page.getByRole('searchbox', { name: 'Buscar agente o grupo' }).fill(alias);
+  const trigger = page.getByRole('button', { name: `Editar registro de ${tenant}/${alias}`, exact: true });
+  if (await trigger.count()) await trigger.click();
+  const editor = page.getByRole('region', { name: `Registro de ${tenant}/${alias}`, exact: true }) as Form;
+  await editor.waitFor({ state: 'visible', timeout: 20_000 });
+  return editor;
 }
 async function openForm(page: BrowserPage, button: string, title: string): Promise<Form> {
   await page.getByRole('button', { name: button, exact: true }).click();
@@ -186,7 +195,7 @@ describe('CRUD UI durable con Chromium, PasswordAuth y PostgreSQL', () => {
   it('crea, relee, edita y elimina espacio, grupo, membresía y registro sin runtime; rechaza dependencias', async () => {
     if (!operator) throw new Error('hub identity unavailable'); const page = await newTrustedPage(active(), { width: 1440, height: 1000 });
     const errors: string[] = []; page.on('pageerror', error => { errors.push(String(error)); }); const observer = observe(page);
-    await login(page, operator); await advanced(page);
+    await login(page, operator); await openSpaces(page);
     let form = await openForm(page, 'Crear espacio', 'Crear espacio'); await form.getByLabel('Id del espacio').fill(tenant); await form.getByLabel('Nombre visible').fill('CRUD equipo');
     await apply(page, observer, form, { resource: 'tenant', action: 'create', id: tenant, value: { display_name: 'CRUD equipo', is_hub: false, enabled: true } });
     await assertRecord(page, 'tenants', { id: tenant, display_name: 'CRUD equipo' }); await form.getByRole('button', { name: 'Cancelar', exact: true }).click();
@@ -200,16 +209,16 @@ describe('CRUD UI durable con Chromium, PasswordAuth y PostgreSQL', () => {
     await apply(page, observer, form, { resource: 'room', action: 'update', tenant_id: tenant, id: room, value: { display_name: 'CRUD grupo editado' } }, undefined, 'Confirmar edición');
     await assertRecord(page, 'rooms', { display_name: 'CRUD grupo editado' }); await form.getByRole('button', { name: 'Cancelar', exact: true }).click();
     await rejectDependency(page, observer, 'tenant'); await assertRecord(page, 'tenants', { display_name: 'CRUD equipo editado' });
-    await page.getByRole('button', { name: 'Volver a agentes y contexto', exact: true }).click();
+    await page.getByRole('tab', { name: 'Agentes', exact: true }).click();
     await page.getByRole('button', { name: 'Añadir agente', exact: true }).click(); const dialog = page.getByRole('dialog', { name: 'Añadir agente', exact: true }) as Form;
     await dialog.getByLabel('Espacio de trabajo').selectOption(tenant); await dialog.getByLabel('Alias', { exact: true }).fill(alias); await dialog.getByLabel('Nombre visible').fill('CRUD agente');
     await apply(page, observer, dialog, { resource: 'agent', action: 'create', tenant_id: tenant, alias, value: { display_name: 'CRUD agente', enabled: false, max_concurrent_deliveries: 2 } }, 'Previsualizar alta', 'Crear registro');
     const emptyRuntime = { enabled: false, container_name: null, runtime_user: null, home_directory: null, state_directory: null, harness_id: null };
     await assertRecord(page, 'agents', { display_name: 'CRUD agente', ...emptyRuntime });
-    await page.getByLabel('Buscar agente o grupo').fill(alias); await page.getByRole('button', { name: `Editar registro de ${tenant}/${alias}`, exact: true }).click();
-    await page.getByLabel('Nombre visible', { exact: true }).fill('CRUD agente editado');
-    await apply(page, observer, page.locator('.agent-registry-editor'), { resource: 'agent', action: 'update', tenant_id: tenant, alias, value: { display_name: 'CRUD agente editado' } }, 'Previsualizar cambio', 'Aplicar cambio');
-    await assertRecord(page, 'agents', { display_name: 'CRUD agente editado', ...emptyRuntime }); await advanced(page);
+    const registryEditor = await openRegistry(page);
+    await registryEditor.getByLabel('Nombre visible', { exact: true }).fill('CRUD agente editado');
+    await apply(page, observer, registryEditor, { resource: 'agent', action: 'update', tenant_id: tenant, alias, value: { display_name: 'CRUD agente editado' } }, 'Previsualizar cambio', 'Aplicar cambio');
+    await assertRecord(page, 'agents', { display_name: 'CRUD agente editado', ...emptyRuntime }); await openSpaces(page);
     form = await openForm(page, 'Crear membresía', 'Crear membresía'); await form.getByLabel('Espacio', { exact: true }).fill(tenant); await form.getByLabel('Sala/grupo', { exact: true }).fill(room); await form.getByLabel('Alias del agente').fill(alias);
     await apply(page, observer, form, { resource: 'membership', action: 'create', tenant_id: tenant, room_id: room, alias, value: { role: 'agent', enabled: true } });
     await assertRecord(page, 'memberships', { role: 'agent', enabled: true }); await form.getByRole('button', { name: 'Cancelar', exact: true }).click();
@@ -217,9 +226,7 @@ describe('CRUD UI durable con Chromium, PasswordAuth y PostgreSQL', () => {
     await apply(page, observer, form, { resource: 'membership', action: 'update', tenant_id: tenant, room_id: room, alias, value: { enabled: false } }, undefined, 'Confirmar edición');
     await assertRecord(page, 'memberships', { role: 'agent', enabled: false }); await form.getByRole('button', { name: 'Cancelar', exact: true }).click();
     await rejectDependency(page, observer, 'room'); await assertRecord(page, 'rooms', { display_name: 'CRUD grupo editado' });
-    await page.getByRole('button', { name: 'Volver a agentes y contexto', exact: true }).click();
-    await page.getByLabel('Buscar agente o grupo').fill(alias);
-    await page.getByRole('button', { name: `Editar registro de ${tenant}/${alias}`, exact: true }).click();
+    await openRegistry(page);
     await page.getByRole('button', { name: 'Eliminar registro', exact: true }).click();
     const deleteBefore = await revision();
     const dependencyDenial = await observer.click(page.getByRole('button', { name: 'Previsualizar eliminación', exact: true }));
@@ -228,17 +235,15 @@ describe('CRUD UI durable con Chromium, PasswordAuth y PostgreSQL', () => {
     expect(await page.evaluate(() => Array.from(document.querySelectorAll<HTMLButtonElement>('button')).find(button => button.textContent === 'Confirmar eliminación del registro')?.disabled)).toBe(true);
     await assertRecord(page, 'agents', { display_name: 'CRUD agente editado', ...emptyRuntime }); await assertRecord(page, 'memberships', { role: 'agent', enabled: false });
     await writeFile(join(evidence, 'agent-delete-dependency-409.json'), JSON.stringify({ ...dependencyDenial, revisionBefore: deleteBefore, revisionAfter: await revision(), writes: 0 }, null, 2) + '\n', { mode: 0o600 });
-    await page.getByRole('button', { name: 'Cancelar eliminación', exact: true }).click(); await advanced(page);
+    await page.getByRole('button', { name: 'Cancelar eliminación', exact: true }).click(); await openSpaces(page);
     form = await openForm(page, `Eliminar membresía ${tenant}/${room}/${alias}`, 'Eliminar membresía');
     await apply(page, observer, form, { resource: 'membership', action: 'delete', tenant_id: tenant, room_id: room, alias }, undefined, 'Confirmar eliminación');
     await assertRecord(page, 'memberships', undefined); await form.getByRole('button', { name: 'Cancelar', exact: true }).click();
-    await page.getByRole('button', { name: 'Volver a agentes y contexto', exact: true }).click();
-    await page.getByLabel('Buscar agente o grupo').fill(alias);
-    await page.getByRole('button', { name: `Editar registro de ${tenant}/${alias}`, exact: true }).click();
+    await openRegistry(page);
     await page.getByRole('button', { name: 'Eliminar registro', exact: true }).click();
     form = page.getByRole('form', { name: `Eliminar registro de ${tenant}/${alias}`, exact: true }) as Form;
     await apply(page, observer, form, { resource: 'agent', action: 'delete', tenant_id: tenant, alias }, 'Previsualizar eliminación', 'Confirmar eliminación del registro');
-    await assertRecord(page, 'agents', undefined); await advanced(page);
+    await assertRecord(page, 'agents', undefined); await openSpaces(page);
     form = await openForm(page, `Eliminar sala/grupo ${tenant}/${room}`, 'Eliminar sala/grupo');
     await apply(page, observer, form, { resource: 'room', action: 'delete', tenant_id: tenant, id: room }, undefined, 'Confirmar eliminación'); await assertRecord(page, 'rooms', undefined); await form.getByRole('button', { name: 'Cancelar', exact: true }).click();
     form = await openForm(page, `Eliminar espacio ${tenant}`, 'Eliminar espacio'); await apply(page, observer, form, { resource: 'tenant', action: 'delete', id: tenant }, undefined, 'Confirmar eliminación'); await assertRecord(page, 'tenants', undefined);
@@ -255,12 +260,12 @@ describe('CRUD UI durable con Chromium, PasswordAuth y PostgreSQL', () => {
     const before = await revision(); const denied = await observer.click(dialog.getByRole('button', { name: 'Previsualizar alta', exact: true })); expect(denied.status).toBe(403);
     await dialog.getByRole('alert').waitFor({ timeout: 20_000 }); expect(await revision()).toBe(before);
     expect((await active().database.pool.query('SELECT alias FROM agents WHERE tenant_id=$1 AND alias=$2', [isaTenant.tenant, forbidden])).rows).toEqual([]);
-    await dialog.getByRole('button', { name: 'Cerrar', exact: true }).click(); await advanced(page);
+    await dialog.getByRole('button', { name: 'Cerrar', exact: true }).click(); await openSpaces(page);
     expect(await page.evaluate(() => Array.from(document.querySelectorAll<HTMLButtonElement>('button')).find(button => button.textContent === 'Crear espacio')?.disabled)).toBe(true);
     await page.screenshot({ path: join(evidence, 'non-hub-denial-360.png'), fullPage: true });
   });
   it('mantiene controles visibles bloqueados para reader y ninguna escritura UI', async () => {
-    if (!reader) throw new Error('reader identity unavailable'); const page = await newTrustedPage(active(), { width: 360, height: 900 }); const observer = observe(page); await login(page, reader); const before = await revision(); await advanced(page);
+    if (!reader) throw new Error('reader identity unavailable'); const page = await newTrustedPage(active(), { width: 360, height: 900 }); const observer = observe(page); await login(page, reader); const before = await revision(); await openSpaces(page);
     await page.getByRole('button', { name: 'Crear espacio', exact: true }).waitFor({ timeout: 20_000 });
     const states = await page.evaluate(() => Array.from(document.querySelectorAll<HTMLButtonElement>('button')).filter(button => /^Crear (?:espacio|sala\/grupo|membresía)$/u.test(button.textContent)).map(button => ({ label: button.textContent, disabled: button.disabled })));
     expect(states).toHaveLength(3); expect(states.every(button => button.disabled)).toBe(true);

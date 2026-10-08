@@ -19,12 +19,12 @@ function measure() {
     if (!node) throw new Error(`Missing ${selector}`);
     return node.getBoundingClientRect().toJSON();
   };
-  const shell = box('.messenger-shell');
-  const header = box('.messenger-thread-head');
-  const messages = box('.messenger-thread-scroll');
-  const composer = box('.messenger-composer');
+  const shell = box('[data-conversacion]');
+  const header = box('[data-objeto-principal="hilo"] > header');
+  const messages = box('[data-thread-scroll]');
+  const composer = box('form[data-chat-composer]');
   const bottom = window.visualViewport.height + window.visualViewport.offsetTop;
-  const visibleMessages = [...document.querySelectorAll('.transcript-entry')].filter((node) => {
+  const visibleMessages = [...document.querySelectorAll('article[data-message-id]')].filter((node) => {
     const rect = node.getBoundingClientRect();
     return rect.bottom > messages.top && rect.top < Math.min(messages.bottom, bottom);
   }).length;
@@ -32,8 +32,8 @@ function measure() {
     shell, header, messages, composer, visibleMessages, viewportBottom: bottom,
     messageRatio: messages.height / shell.height,
     overflow: Math.max(0, document.documentElement.scrollWidth - window.innerWidth),
-    openTechnicalPanels: document.querySelectorAll('.chat-more-panel, .messenger-delivery-detail, .chat-agent-details[open], .account-popover:not([hidden]), .chat-notice-panel').length,
-    keyboardOpen: document.querySelector('.messenger-shell').hasAttribute('data-keyboard-open'),
+    openTechnicalPanels: [...document.querySelectorAll('[role="dialog"], [role="menu"]')].filter((node) => node.checkVisibility()).length,
+    keyboardOpen: document.querySelector('[data-conversacion]').hasAttribute('data-keyboard-open'),
   };
 }
 
@@ -85,29 +85,31 @@ try {
         await route.fulfill({ status: payload ? 200 : 404, contentType: 'application/json', body: JSON.stringify(payload ?? { error: 'fixture_not_declared', path }) });
       });
       await page.goto(`${ORIGIN}/messages/Steven/${encodeURIComponent(alias)}`);
-      await page.locator(`.messenger-composer textarea:${state === 'combined' ? 'disabled' : 'enabled'}`).waitFor();
-      if (state !== 'empty') await page.locator('.transcript-entry').first().waitFor();
+      await page.locator(`form[data-chat-composer] textarea:${state === 'combined' ? 'disabled' : 'enabled'}`).waitFor();
+      if (state !== 'empty') await page.locator('article[data-message-id]').first().waitFor();
       if (combined) {
         await page.getByText('Cola sin verificar', { exact: true }).waitFor();
         await page.getByText('Lease vencido · envío en cola', { exact: true }).waitFor();
       }
       if (keyboard) {
-        await page.getByRole('textbox', { name: `Mensaje para ${alias}` }).fill('Borrador conservado con el teclado abierto');
+        await page.getByRole('textbox', { name: `Mensaje para ${alias}` }).fill('Borrador conservado');
         await page.evaluate(() => {
           Object.defineProperty(window.visualViewport, 'height', { configurable: true, value: 440 });
           window.visualViewport.dispatchEvent(new Event('resize'));
         });
-        await page.locator('.messenger-shell[data-keyboard-open]').waitFor();
+        await page.locator('[data-conversacion][data-keyboard-open]').waitFor();
       }
       await page.evaluate(async () => {
         await document.fonts.ready;
         await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
       });
-      if (state !== 'empty' && await page.locator('.transcript-entry').count() !== 8) throw new Error('The complete seeded conversation did not render');
+      if (state !== 'empty' && await page.locator('article[data-message-id]').count() !== 8) throw new Error('The complete seeded conversation did not render');
       const metrics = await page.evaluate(measure);
       const failures = [];
       if (metrics.header.height > 64) failures.push('header exceeds 64px');
-      if (metrics.composer.height > 96) failures.push('collapsed composer exceeds 96px');
+      // Two rows (input and toolbar) is 110px; a blocking warning above it adds one more line.
+      const composerBudget = combined ? 140 : 112;
+      if (metrics.composer.height > composerBudget) failures.push(`collapsed composer exceeds ${String(composerBudget)}px`);
       if (metrics.messageRatio < 0.6) failures.push('messages occupy less than 60% of app content');
       if (metrics.overflow > 0) failures.push('horizontal document overflow');
       if (state !== 'empty' && metrics.visibleMessages === 0) failures.push('no seeded message in the first viewport');
@@ -117,7 +119,7 @@ try {
       if (combined && !(await page.getByRole('alert').filter({ hasText: 'Cola sin verificar' }).isVisible())) failures.push('unknown queue state not visible');
       if (combined && !(await page.getByRole('note').filter({ hasText: 'Lease vencido · envío en cola' }).isVisible())) failures.push('expired lease/enqueue state not visible');
       if (state === 'combined' && !(await page.getByText('Requiere el permiso message.publish.', { exact: false }).isVisible())) failures.push('publish permission warning not visible');
-      if (state === 'empty' && !(await page.getByText(/No hay mensajes de este agente en la ventana recibida/).isVisible())) failures.push('empty conversation guidance not visible');
+      if (state === 'empty' && !(await page.getByText(/No hay mensajes con este agente en la ventana recibida/).isVisible())) failures.push('empty conversation guidance not visible');
       failures.push(...errors, ...mutations.map((mutation) => `Unexpected mutation: ${mutation}`));
       const name = `${String(viewport.width)}x${String(viewport.height)}-${state}`;
       await page.screenshot({ path: resolve(OUTPUT, `${name}.png`), clip: { x: 0, y: 0, width: viewport.width, height: Math.min(viewport.height, metrics.viewportBottom) } });
@@ -141,27 +143,28 @@ try {
           await page.screenshot({ path: resolve(OUTPUT, `${name}-queue-recovered.png`) });
         }
         await page.keyboard.press('Escape');
-        if (await page.locator('.chat-notice-panel').count()) failures.push('notice details did not close with Escape');
+        if (await page.getByRole('region', { name: 'Detalles de los avisos' }).count()) failures.push('notice details did not close with Escape');
       }
       if (state === 'seeded') {
-        await page.getByRole('button', { name: 'Más', exact: true }).click();
-        await page.getByRole('link', { name: 'Configurar agente' }).waitFor();
+        const menu = page.getByRole('button', { name: 'Opciones de la conversación', exact: true });
+        await menu.click();
+        await page.getByRole('menuitem', { name: 'Perfil y contexto', exact: true }).waitFor();
         await page.screenshot({ path: resolve(OUTPUT, `${name}-menu.png`) });
         await page.keyboard.press('Escape');
+        // The account lives behind «Más» on a phone: the bottom bar has no room for it.
+        await page.getByRole('button', { name: 'Más', exact: true }).click();
         await page.getByRole('button', { name: 'Cuenta de Steven', exact: true }).click();
         await page.getByRole('dialog', { name: 'Cuenta y apariencia' }).waitFor();
         await page.screenshot({ path: resolve(OUTPUT, `${name}-account.png`) });
         await page.keyboard.press('Escape');
+        await page.keyboard.press('Escape');
         messageReadFails = true;
         for (let attempt = 0; attempt < 2; attempt += 1) {
-          const more = page.getByRole('button', { name: 'Más', exact: true });
-          await more.click();
-          await page.getByRole('button', { name: 'Sincronizar', exact: true }).click();
-          await page.keyboard.press('Escape');
+          await menu.click();
+          await page.getByRole('menuitem', { name: 'Sincronizar', exact: true }).click();
           await page.getByText('Historial anterior: sin actualizar', { exact: true }).waitFor();
-          await page.keyboard.press('Escape');
-          if (await more.getAttribute('aria-expanded') !== 'false' || await page.locator('.chat-more-panel').count()) failures.push('Escape did not dismiss More after failed synchronization');
-          if (!(await more.evaluate((node) => node === document.activeElement))) failures.push('Escape did not return focus after failed synchronization');
+          if (await menu.getAttribute('aria-expanded') !== 'false' || await page.getByRole('menu').count()) failures.push('the options menu stayed open after a failed synchronization');
+          if (!(await menu.evaluate((node) => node === document.activeElement))) failures.push('focus did not return to the options menu after a failed synchronization');
         }
         await page.screenshot({ path: resolve(OUTPUT, `${name}-failed-sync.png`) });
       }

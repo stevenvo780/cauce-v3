@@ -3,12 +3,16 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { TIEMPO_MAXIMO_MS } from '../api/client';
 import type { ConsoleAccess, ConsolePermission } from '../api/types';
 import { display, haceCuanto, permissionState, timestamp, timestampExacto, NO_APLICA, TODAVIA_NO, UNKNOWN } from '../lib';
+import { cn } from '../cn';
+import { TONE_CLASS, type Tone } from '../status-tone';
+import { Button, Spinner, StateCard } from './kit';
 import { PageHelp } from './PageHelp';
 import { useRovingTabs } from './use-roving-tabs';
 
 // Re-export so the rest of the console keeps importing its visual vocabulary from a single place.
 export { FloatingTooltip, Tooltip } from './Tooltip';
-export { Desplazable } from './Desplazable';export type { FloatingTooltipProps, TooltipPlacement, TooltipProps } from './Tooltip';
+export { Desplazable } from './Desplazable';
+export type { FloatingTooltipProps, TooltipPlacement, TooltipProps } from './Tooltip';
 
 export function PageHeader({ eyebrow, title, description, notes, actions }: {
   eyebrow: string;
@@ -18,66 +22,30 @@ export function PageHeader({ eyebrow, title, description, notes, actions }: {
   actions?: ReactNode;
 }) {
   return (
-    <header className="page-header">
-      <div className="page-title">
-        <p className="eyebrow">{eyebrow}</p>
-        <div className="page-title-fila">
-          <h1>{title}</h1>
+    <header className="mb-5 flex items-end justify-between gap-x-6 gap-y-3 sm:flex-wrap">
+      <div className="min-w-0 max-sm:flex-1">
+        <p className="m-0 text-xs font-semibold tracking-wide text-brand-ink">{eyebrow}</p>
+        <div className="mt-0.5 flex items-center gap-2">
+          <h1 className="m-0 text-[22px] font-semibold tracking-tight text-fg">{title}</h1>
           <PageHelp title={title} description={description}>{notes}</PageHelp>
         </div>
       </div>
-      {actions ? <div className="page-actions">{actions}</div> : null}
+      {actions ? <div className="flex flex-wrap items-center justify-end gap-2 max-sm:shrink-0">{actions}</div> : null}
     </header>
   );
 }
 
-export function PageShell({ kind, className = '', children }: {
-  kind: 'documento' | 'aplicacion';
-  className?: string;
-  children: ReactNode;
-}) {
-  return <div className={`page-shell-${kind} ${className}`.trim()}>{children}</div>;
-}
+export const BADGE_TONE = {
+  online: 'ok', done: 'ok', running: 'info', info: 'info', warning: 'warn', danger: 'danger', offline: 'neutral', unknown: 'neutral',
+} as const satisfies Record<string, Tone>;
 
-export function Panel({ title, subtitle, children, className = '' }: {
-  title?: string;
-  subtitle?: string;
-  children: ReactNode;
-  className?: string;
-}) {
+export function Badge({ children, tone = 'unknown' }: { children: ReactNode; tone?: keyof typeof BADGE_TONE }) {
   return (
-    <section className={`panel ${className}`.trim()}>
-      {title || subtitle ? (
-        <header className="panel-header">
-          {title ? <h2>{title}</h2> : null}
-          {subtitle ? <p>{subtitle}</p> : null}
-        </header>
-      ) : null}
+    <span data-tone={tone}
+      className={cn('inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11.5px] font-medium whitespace-nowrap', TONE_CLASS[BADGE_TONE[tone]].pill)}>
       {children}
-    </section>
+    </span>
   );
-}
-
-export function Metric({ label, value, tone = 'neutral', detail }: {
-  label: string;
-  value: unknown;
-  tone?: 'neutral' | 'positive' | 'warning' | 'danger';
-  detail?: string;
-}) {
-  return (
-    <article className={`metric metric-${tone}`}>
-      <p>{label}</p>
-      <strong>{display(value)}</strong>
-      {detail ? <span>{detail}</span> : null}
-    </article>
-  );
-}
-
-export function Badge({ children, tone = 'unknown' }: {
-  children: ReactNode;
-  tone?: 'online' | 'done' | 'running' | 'warning' | 'danger' | 'offline' | 'unknown' | 'info';
-}) {
-  return <span className={`badge badge-${tone}`}>{children}</span>;
 }
 
 /**
@@ -165,18 +133,18 @@ export function LoadingState({ label = 'Cargando datos del servidor…', pacienc
   }, [paciencia]);
 
   return (
-    <div className="state-card" role="status" aria-live="polite">
-      <span className="spinner" aria-hidden="true" />
-      <div className="state-card-texto">
+    <StateCard role="status" aria-live="polite">
+      <Spinner />
+      <div className="grid gap-1">
         <p>{label}</p>
         {tardando ? (
-          <p className="state-card-lento">
+          <p className="text-xs text-muted">
             Está tardando más de lo normal: el gateway va lento. La espera se corta sola a los{' '}
             {Math.round(TIEMPO_MAXIMO_MS / 1000)} s y vas a poder reintentar.
           </p>
         ) : null}
       </div>
-    </div>
+    </StateCard>
   );
 }
 
@@ -187,27 +155,27 @@ export function ErrorState({ error, onRetry, reintentando = false }: {
   reintentando?: boolean;
 }) {
   return (
-    <div className="state-card state-error" role="alert">
+    <StateCard tone="danger" role="alert">
       <AlertTriangle aria-hidden="true" />
       <div>
         <strong>No se pudo leer Cauce V3</strong>
         <p>{error.message || UNKNOWN}</p>
         {reintentando ? (
-          <p className="state-card-lento">
+          <p className="text-xs text-muted">
             Hay una lectura en curso. Si el servidor tampoco contesta a ésta, se corta a los{' '}
             {Math.round(TIEMPO_MAXIMO_MS / 1000)} s y este mensaje se queda.
           </p>
         ) : null}
       </div>
-      <button type="button" className="button secondary" onClick={onRetry}>
+      <Button onClick={onRetry}>
         <RefreshCw size={16} aria-hidden="true" /> Reintentar
-      </button>
-    </div>
+      </Button>
+    </StateCard>
   );
 }
 
 export function EmptyState({ children }: { children: ReactNode }) {
-  return <p className="empty-state">{children}</p>;
+  return <p className="m-0 rounded-lg border border-dashed border-line-strong p-6 text-center text-[13px] text-muted">{children}</p>;
 }
 
 export function RefreshButton({ onClick, loading = false, compact = false }: {
@@ -217,15 +185,13 @@ export function RefreshButton({ onClick, loading = false, compact = false }: {
 }) {
   const label = loading ? 'Actualizando…' : 'Actualizar';
   return (
-    <button
-      type="button"
-      className="button secondary"
+    <Button
       onClick={onClick}
       disabled={loading}
       {...(compact ? { 'aria-label': label, title: label } : {})}
     >
-      <RefreshCw size={16} aria-hidden="true" />{compact ? <span className="sr-only">{label}</span> : ` ${label}`}
-    </button>
+      <RefreshCw size={16} aria-hidden="true" />{compact ? <span className="sr-only">{label}</span> : label}
+    </Button>
   );
 }
 
@@ -233,7 +199,7 @@ export function PermissionBadge({ access, permission }: { access?: ConsoleAccess
   const state = permissionState(access, permission);
   const label = state === 'allowed' ? 'ALLOW' : state === 'denied' ? 'DENY' : 'UNKNOWN';
   return (
-    <span className="permission-line">
+    <span className="flex flex-wrap items-center gap-2 text-xs">
       <span>RBAC <span className="mono">{permission}</span></span>
       <Badge tone={state === 'allowed' ? 'online' : state === 'denied' ? 'danger' : 'unknown'}>{label}</Badge>
       <span className="muted">Roles: {access?.roles?.length ? access.roles.join(', ') : UNKNOWN}</span>
@@ -244,7 +210,7 @@ export function PermissionBadge({ access, permission }: { access?: ConsoleAccess
 /**
  * Accessible tabs component to switch views within a page.
  */
-export interface ViewTab<T extends string> {
+interface ViewTab<T extends string> {
   id: T;
   label: ReactNode;
   badge?: ReactNode;
@@ -262,7 +228,17 @@ export function ViewTabs<T extends string>({
 }) {
   const roving = useRovingTabs(tabs.length, (index) => { onSelect(tabs[index].id); });
   return (
-    <div className="view-tabs" role="tablist" aria-label={label} data-variant={variant}>
+    <div
+      className={cn(
+        'flex max-w-full items-center overflow-x-auto',
+        variant === 'page' && 'mb-4 gap-1 border-b border-line',
+        variant === 'panel' && 'mb-3 inline-flex gap-0.5 rounded-lg bg-muted-bg p-0.5',
+        variant === 'chip' && 'mb-3 flex-wrap gap-1.5',
+      )}
+      role="tablist"
+      aria-label={label}
+      data-variant={variant}
+    >
       {tabs.map((tab, index) => (
         <button
           key={tab.id}
@@ -272,13 +248,18 @@ export function ViewTabs<T extends string>({
           aria-selected={active === tab.id}
           aria-controls={panelId ?? `view-panel-${tab.id}`}
           tabIndex={active === tab.id ? 0 : -1}
-          className="view-tab"
+          className={cn(
+            'inline-flex shrink-0 cursor-pointer items-center gap-1.5 border-0 bg-transparent text-[13px] font-medium whitespace-nowrap text-muted transition-colors hover:text-fg',
+            variant === 'page' && '-mb-px border-b-2 border-transparent px-3 py-2 aria-selected:border-brand aria-selected:text-fg',
+            variant === 'panel' && 'rounded-md px-3 py-1 aria-selected:bg-surface aria-selected:text-fg aria-selected:shadow-card',
+            variant === 'chip' && 'rounded-full border border-line px-3 py-1 aria-selected:border-transparent aria-selected:bg-brand-soft aria-selected:text-brand-ink',
+          )}
           ref={roving.tabRef(index)}
           onClick={() => { onSelect(tab.id); }}
           onKeyDown={(event) => { roving.onKeyDown(event, index); }}
         >
           {tab.label}
-          {tab.badge == null ? null : <span className="view-tab-badge">{tab.badge}</span>}
+          {tab.badge == null ? null : <span className="rounded-full bg-muted-bg px-1.5 text-[11px] tabular-nums text-fg-2">{tab.badge}</span>}
         </button>
       ))}
     </div>
@@ -308,7 +289,7 @@ export function ViewTabPanel({ id, labelledBy, hidden = false, children }: {
   children: ReactNode;
 }) {
   return (
-    <div id={`view-panel-${id}`} role="tabpanel" tabIndex={hidden ? -1 : 0} hidden={hidden} aria-labelledby={labelledBy ?? `view-tab-${id}`} className="view-tab-panel">
+    <div id={`view-panel-${id}`} role="tabpanel" tabIndex={hidden ? -1 : 0} hidden={hidden} aria-labelledby={labelledBy ?? `view-tab-${id}`} className="outline-none">
       {children}
     </div>
   );

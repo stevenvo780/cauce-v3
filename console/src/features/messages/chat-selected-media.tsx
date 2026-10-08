@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { formatFileSize } from './chat-attachments';
-import './chat-selected-media.css';
+import { X } from 'lucide-react';
 
 interface ChatSelectedMediaProps {
   file: File;
@@ -27,13 +27,17 @@ export function ChatSelectedMedia({ file, disabled, onRemove }: ChatSelectedMedi
     return () => { URL.revokeObjectURL(objectUrl); };
   }, [file, kind]);
 
-  return <li className="chat-selected-media">
-    {url && kind === 'image' ? <img className="chat-selected-thumbnail" src={url} alt="" /> : null}
-    {url && kind === 'video' ? <video className="chat-selected-player" src={url} controls playsInline preload="metadata" aria-label={`Vista previa de ${file.name}`} /> : null}
-    {url && kind === 'audio' ? <audio className="chat-selected-player" src={url} controls preload="metadata" aria-label={`Vista previa de ${file.name}`} /> : null}
-    <span className="chat-selected-name" title={file.name}>{file.name}</span>
-    <small>{formatFileSize(file.size)}</small>
-    <button className="button secondary composer-attachment-remove" type="button" aria-label={`Quitar ${file.name}`}
-      disabled={disabled} onClick={onRemove}>×</button>
+  return <li className="flex max-w-full min-w-0 items-center gap-2 rounded-xl border border-line bg-subtle py-1 pr-1 pl-2 text-xs">
+    {url && kind === 'image' ? <img className="size-9 shrink-0 rounded-md object-cover" src={url} alt="" /> : null}
+    {url && kind === 'video' ? <video className="h-9 w-[min(160px,42vw)] shrink-0" src={url} controls playsInline preload="metadata" aria-label={`Vista previa de ${file.name}`} /> : null}
+    {url && kind === 'audio' ? <audio className="h-9 w-[min(160px,42vw)] shrink-0" src={url} controls preload="metadata" aria-label={`Vista previa de ${file.name}`} /> : null}
+    <span className="grid min-w-0">
+      <span className="max-w-48 truncate font-medium text-fg" title={file.name}>{file.name}</span>
+      <small className="text-[11px] text-muted">{formatFileSize(file.size)}</small>
+    </span>
+    <button type="button" aria-label={`Quitar ${file.name}`} disabled={disabled} onClick={onRemove}
+      className="grid size-7 shrink-0 cursor-pointer place-items-center rounded-full border-0 bg-transparent text-muted hover:bg-muted-bg hover:text-fg disabled:cursor-not-allowed disabled:opacity-40">
+      <X size={14} aria-hidden="true" />
+    </button>
   </li>;
 }

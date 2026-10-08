@@ -12,7 +12,7 @@ it('moves a focused overflowing table with horizontal keys and returns with Home
   render(<Desplazable etiqueta="Matriz de cuentas"><table><tbody><tr><td>fixture</td></tr></tbody></table></Desplazable>);
   const scroll = screen.getByRole('group', { name: 'Matriz de cuentas' });
   expect(scroll).toHaveAttribute('tabindex', '0');
-  expect(scroll).toHaveClass('table-wrap');
+  expect(scroll).toHaveClass('overflow-x-auto');
 
   await user.click(scroll);
   await user.keyboard('{End}');
@@ -82,7 +82,7 @@ it.each([1070, 1071])('does not add a tab stop for content width %i with a 1070p
   render(<Desplazable etiqueta="Actividad en vuelo por agente"><p>fixture</p></Desplazable>);
 
   expect(screen.queryByRole('group')).not.toBeInTheDocument();
-  expect(document.querySelector('.table-wrap')).not.toHaveAttribute('tabindex');
+  expect(document.querySelector('.overflow-x-auto')).not.toHaveAttribute('tabindex');
 });
 
 it.each([256, 257])('does not add a tab stop for content height %i with a 256px viewport', (height) => {
@@ -93,7 +93,7 @@ it.each([256, 257])('does not add a tab stop for content height %i with a 256px 
   render(<Desplazable etiqueta="Lista vertical"><p>fixture</p></Desplazable>);
 
   expect(screen.queryByRole('group')).not.toBeInTheDocument();
-  expect(document.querySelector('.table-wrap')).not.toHaveAttribute('tabindex');
+  expect(document.querySelector('.overflow-x-auto')).not.toHaveAttribute('tabindex');
 });
 
 it('preserves the custom class for overflowing content outside a table', () => {
@@ -103,5 +103,5 @@ it('preserves the custom class for overflowing content outside a table', () => {
 
   const scroll = screen.getByRole('group', { name: 'Mapa de la flota' });
   expect(scroll).toHaveClass('lhg-scroll');
-  expect(scroll).not.toHaveClass('table-wrap');
+  expect(scroll).not.toHaveClass('overflow-x-auto');
 });

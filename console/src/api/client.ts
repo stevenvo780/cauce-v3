@@ -20,6 +20,7 @@ import { providerAuthClient, type ProviderAuthClient } from './client/provider-a
 import { peopleAdminClient, type PeopleAdminClient } from './client/people-admin-client';
 import { fleetOperationsClient, type FleetOperationsClient } from './client/fleet-operations-client';
 import { clientDelegationsClient, type ClientDelegationsClient } from './client/client-delegations-client';
+import { agentPreferencesClient, type AgentPreferencesClient } from './client/agent-preferences-client';
 /**
  * A 401 on ANY data call is the session dying, and until it is noticed the console keeps painting
  * error cards inside a shell that no longer has a session behind it. The gate polls every 60 s, so
@@ -36,7 +37,7 @@ type UnauthorizedListener = () => void;
 const AUTH_PATH = '/v3/auth/';
 
 /* eslint-disable @typescript-eslint/no-unsafe-declaration-merging -- the merge IS the surface; client.test.ts asserts every merged method at runtime. */
-export interface CauceApi extends SystemClient, MessagingClient, AgentClient, ContextRepositoryClient, NativeContextRepositoryClient, ClientDelegationsClient, FleetOperationsClient, ProviderAuthClient, PeopleAdminClient, NativeAdminClient {}
+export interface CauceApi extends SystemClient, MessagingClient, AgentClient, ContextRepositoryClient, NativeContextRepositoryClient, ClientDelegationsClient, FleetOperationsClient, ProviderAuthClient, PeopleAdminClient, NativeAdminClient, AgentPreferencesClient {}
 
 export class CauceApi {
   private readonly baseUrl: string;
@@ -71,7 +72,7 @@ export class CauceApi {
       this.request<T>(path, init, options);
     Object.assign(this, systemClient(request), messagingClient(request), agentClient(request), contextRepositoryClient(request), nativeContextRepositoryClient(request));
     Object.assign(this, nativeAdminClient(request, () => this.authGeneration));
-    Object.assign(this, clientDelegationsClient(request), fleetOperationsClient(request), providerAuthClient(request), peopleAdminClient(request));
+    Object.assign(this, clientDelegationsClient(request), fleetOperationsClient(request), providerAuthClient(request), peopleAdminClient(request), agentPreferencesClient(request));
   }
 
   private async request<T>(

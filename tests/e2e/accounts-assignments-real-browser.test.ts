@@ -35,14 +35,15 @@ async function loginThroughBrowser(page: BrowserPage, active: AccountsAssignment
   await page.getByLabel('Correo').fill(email);
   await page.getByLabel('Contraseña').fill(password);
   await page.getByRole('button', { name: 'Iniciar sesión' }).click();
-  await page.getByRole('link', { name: 'Conversaciones' }).waitFor({ state: 'visible', timeout: 20_000 });
+  await page.getByRole('navigation', { name: 'Navegación principal', exact: true }).locator('a[href="/messages"], a[href^="/messages/"]').waitFor({ state: 'visible', timeout: 20_000 });
   const cookies = await page.context().cookies(active.baseUrl);
   expect(cookies.some((cookie) => cookie.name === '__Host-cauce_session' && cookie.httpOnly && cookie.secure)).toBe(true);
 }
 
 async function openAccountsFromTools(page: BrowserPage) {
-  await page.getByRole('button', { name: 'Herramientas' }).click();
-  const menu = page.getByRole('region', { name: 'Herramientas de Cauce' });
+  const mobile = await page.evaluate(() => window.innerWidth <= 760);
+  await page.getByRole('button', { name: mobile ? 'Más' : 'Gestión', exact: true }).click();
+  const menu = mobile ? page.getByRole('dialog', { name: 'Gestión', exact: true }) : page.getByRole('navigation', { name: 'Navegación principal', exact: true });
   await menu.waitFor({ state: 'visible', timeout: 10_000 });
   await menu.getByRole('link', { name: 'Cuentas y cuotas' }).click();
   await page.getByRole('heading', { name: 'Cuentas y cuotas', exact: true }).waitFor({ timeout: 20_000 });
@@ -58,6 +59,7 @@ async function preview(page: BrowserPage, label: string) {
 async function apply(page: BrowserPage, actions: ReturnType<BrowserPage['getByRole']>) {
   await actions.getByRole('button', { name: 'Aplicar' }).click();
   await page.getByRole('status').filter({ hasText: 'Aplicado en revisión' }).waitFor({ timeout: 20_000 });
+  await page.getByRole('dialog').getByRole('button', { name: 'Cerrar', exact: true }).click();
 }
 
 async function saveScreenshot(page: BrowserPage, name: string) {
@@ -88,6 +90,7 @@ describe('administración real de cuentas y asignaciones', () => {
     await loginThroughBrowser(page, active, active.operatorEmail, active.operatorPassword);
     await openAccountsFromTools(page);
     await page.getByRole('tab', { name: 'Inventario' }).click();
+    await page.getByRole('button', { name: 'Nueva cuenta', exact: true }).click();
     await page.getByLabel('Id de cuenta').fill(accountId);
     await page.getByRole('textbox', { name: /^Proveedor codex, gemini/u }).fill('codex');
     await page.getByLabel('Id externo de la suscripción').fill(externalId);
@@ -207,6 +210,7 @@ describe('administración real de cuentas y asignaciones', () => {
 
     await page.setViewportSize({ width: 360, height: 800 });
     await page.getByRole('tab', { name: 'Asignaciones' }).click();
+    await page.getByRole('button', { name: 'Nueva asignación', exact: true }).click();
     await page.getByRole('combobox', { name: /^Agente/u }).selectOption(`${active.tenant}/${active.targetAlias}`);
     await page.getByRole('combobox', { name: /^Cuenta/u }).selectOption(accountId);
     const ceilingActions = await preview(page, 'asignación');
@@ -220,6 +224,9 @@ describe('administración real de cuentas y asignaciones', () => {
       tenant_id: active.tenant, alias: active.targetAlias, account_id: accountId, account_payer_tenant: active.tenant,
     }]);
 
+    await page.getByRole('button', { name: 'Nueva asignación', exact: true }).click();
+    await page.getByRole('combobox', { name: /^Agente/u }).selectOption(`${active.tenant}/${active.targetAlias}`);
+    await page.getByRole('combobox', { name: /^Cuenta/u }).selectOption(accountId);
     await page.getByLabel('Operación').selectOption('create-binding');
     await page.getByLabel('Prioridad').fill('7');
     const bindingActions = await preview(page, 'asignación');
@@ -269,6 +276,7 @@ describe('administración real de cuentas y asignaciones', () => {
     await openAccountsFromTools(page);
     await page.getByRole('tab', { name: 'Inventario' }).click();
     await page.getByRole('row', { name: new RegExp(active.foreignPoolAccountId, 'u') }).waitFor({ state: 'visible', timeout: 20_000 });
+    await page.getByRole('button', { name: `Detalle de ${active.foreignPoolAccountId}`, exact: true }).click();
     const body = await page.locator('body').innerText();
     expect(body).toContain('No visible: la paga Jhon');
     expect(body).not.toContain(active.foreignExternalMarker);
@@ -311,9 +319,11 @@ describe('administración real de cuentas y asignaciones', () => {
       'SELECT count(*)::text AS count FROM provider_accounts WHERE id=$1', [active.foreignPrivateAccountId],
     );
     expect(afterDeniedWrite.rows).toEqual([{ count: '1' }]);
-    const blockedButtons = await page.evaluate(() => Array.from(
-      document.querySelectorAll('[aria-label="Acciones de alta de cuenta"] button'),
-    ).map((button) => (button as HTMLButtonElement).disabled));
+    const blockedButtons = await page.evaluate((accountId) => Array.from(
+      document.querySelectorAll('button'),
+    ).filter((button) => button.textContent.trim() === 'Nueva cuenta'
+      || button.getAttribute('aria-label') === `Editar «${accountId}»`)
+      .map((button) => button.disabled), active.foreignPoolAccountId);
     expect(blockedButtons).toEqual([true, true]);
   }, 2 * 60_000);
 });

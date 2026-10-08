@@ -41,6 +41,18 @@ function actorIdentity(access: ConsoleAccess | undefined): { tenantId: string; a
   return { tenantId: parts[0].trim(), alias: parts[1].trim() };
 }
 
+/** A mailbox has no room membership: any enabled room of the operator can be the source. */
+export function operatorRouteForMailbox(topology: TopologySnapshot | undefined, access: ConsoleAccess | undefined): OperatorRoute {
+  const actor = actorIdentity(access);
+  const tenant = actor ? (topology?.tenants ?? []).find((candidate) => same(candidate.id, actor.tenantId)) : undefined;
+  if (!actor || !tenant) return { allowed: false, sourceRoomIds: [], membership: undefined, reason: 'No se pudo leer tu identidad de operador ni tus salas.' };
+  const sourceRoomIds = (tenant.rooms ?? []).flatMap((room) => (room.id && (room.members ?? [])
+    .some((member) => same(member.alias, actor.alias) && member.enabled === true) ? [room.id] : [])).sort();
+  return sourceRoomIds.length
+    ? { allowed: true, sourceRoomIds, membership: true, reason: 'Sala propia habilitada.' }
+    : { allowed: false, sourceRoomIds, membership: false, reason: 'No tenés una sala habilitada desde la cual escribir.' };
+}
+
 function membershipSummary(states: (boolean | null | undefined)[]): boolean | undefined {
   if (states.length === 0) return undefined;
   if (states.some((state) => state === true)) return true;
@@ -128,7 +140,7 @@ export function operatorRouteForAgent(
 }
 
 /** Projects authoritative server messages into a recipient-scoped, non-durable UI session. */
-export function transcriptForSession(page: MessagePage | undefined, session: OperatorSession): TranscriptItem[] {
+export function transcriptForSession(page: MessagePage | undefined, session: Pick<OperatorSession, 'agent'>): TranscriptItem[] {
   return (page?.items ?? []).flatMap((message): TranscriptItem[] => {
     const output = humanAuthor(message) === undefined && same(message.tenant_id, session.agent.tenantId)
       && same(message.actor_alias, session.agent.alias);

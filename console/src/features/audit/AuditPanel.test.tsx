@@ -50,11 +50,11 @@ describe('AuditPanel keyset pagination', () => {
     const user = userEvent.setup();
     renderWithApi(<AuditPanel query="" onQuery={() => undefined} />);
 
-    const info = (await screen.findByText('fleet.reconcile')).closest('article');
+    const info = (await screen.findByText('fleet.reconcile')).closest('li');
     expect(info).not.toBeNull();
     if (info) {
       expect(within(info).getByText('info')).toBeInTheDocument();
-      expect(info.querySelector('.audit-icon.info')).not.toBeNull();
+      expect(info.querySelector('[data-decision="info"]')).not.toBeNull();
     }
     expect(screen.getByText('2 visibles de 2')).toBeInTheDocument();
 

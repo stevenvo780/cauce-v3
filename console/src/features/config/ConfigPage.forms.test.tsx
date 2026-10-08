@@ -1,7 +1,7 @@
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
-import { ConfigAdministration } from './ConfigPage';
+import { ConfigPage } from './ConfigPage';
 import { server } from '../../mocks/server';
 import { renderWithApi } from '../../test/render';
 import { irA, snapshotDeConfig, servirConfig, type ChangeRequest } from './ConfigPage.test-helpers';
@@ -39,7 +39,7 @@ it('crea un tenant con campos visibles y exige otro dry-run al editar el nombre'
   const changes: ChangeRequest[] = [];
   serveChanges(changes);
   const user = userEvent.setup();
-  renderWithApi(<ConfigAdministration />);
+  renderWithApi(<ConfigPage />);
   await user.click(await screen.findByRole('button', { name: 'Crear espacio' }));
   const form = within(screen.getByRole('form', { name: 'Crear espacio' }));
   await user.type(form.getByLabelText('Id del espacio'), 'Nuevo');
@@ -61,7 +61,7 @@ it('edita el nombre visible del grupo sin cambiar su identidad ni otros campos',
   const changes: ChangeRequest[] = [];
   serveChanges(changes);
   const user = userEvent.setup();
-  renderWithApi(<ConfigAdministration />);
+  renderWithApi(<ConfigPage />);
   await user.click(await screen.findByRole('button', { name: 'Editar sala/grupo Miguel/grp.miguel' }));
   const form = within(screen.getByRole('form', { name: 'Editar sala/grupo' }));
   expect(form.getByLabelText('Id de la sala/grupo')).toBeDisabled();
@@ -75,18 +75,18 @@ it('edita el nombre visible del grupo sin cambiar su identidad ni otros campos',
 });
 
 const editableRows = [
-  ['espacio', 'Miguel', /espacios y miembros/i],
-  ['membresía', 'Miguel/grp.miguel/janus', /espacios y miembros/i],
-  ['ACL', 'Miguel/Steven', /permisos/i],
-  ['política de rol', 'agent', /permisos/i],
-  ['harness', 'codex', /^agentes$/i],
-  ['destino de avisos', 'Miguel/janus/owner_dm', /avisos y cadena/i],
+  ['espacio', 'Miguel', /espacios y salas/i],
+  ['membresía', 'Miguel/grp.miguel/janus', /espacios y salas/i],
+  ['ACL', 'Miguel/Steven', /acceso y roles/i],
+  ['política de rol', 'agent', /acceso y roles/i],
+  ['harness', 'codex', /^arneses$/i],
+  ['destino de avisos', 'Miguel/janus/owner_dm', /acceso y roles/i],
 ] as const;
 
 it.each(editableRows)('presenta edición y eliminación visibles para %s', async (label, id, tab) => {
   servirConfig(() => configSnapshot());
   const user = userEvent.setup();
-  renderWithApi(<ConfigAdministration />);
+  renderWithApi(<ConfigPage />);
   await irA(user, tab);
   expect(await screen.findByRole('button', { name: `Editar ${label} ${id}` })).toBeEnabled();
   await user.click(screen.getByRole('button', { name: `Eliminar ${label} ${id}` }));
@@ -99,8 +99,8 @@ it('ofrece sólo edición del singleton de cadena con sus límites numéricos', 
   const changes: ChangeRequest[] = [];
   serveChanges(changes);
   const user = userEvent.setup();
-  renderWithApi(<ConfigAdministration />);
-  await irA(user, /avisos y cadena/i);
+  renderWithApi(<ConfigPage />);
+  await irA(user, /general/i);
   expect(screen.queryByRole('button', { name: 'Crear política de cadena' })).not.toBeInTheDocument();
   expect(screen.queryByRole('button', { name: 'Eliminar política de cadena default' })).not.toBeInTheDocument();
   await user.click(screen.getByRole('button', { name: 'Editar política de cadena default' }));
@@ -116,7 +116,7 @@ it.each([403, 409])('no acredita eliminación cuando apply devuelve %s', async (
   const changes: ChangeRequest[] = [];
   serveChanges(changes, { status });
   const user = userEvent.setup();
-  renderWithApi(<ConfigAdministration />);
+  renderWithApi(<ConfigPage />);
   await user.click(await screen.findByRole('button', { name: 'Eliminar sala/grupo Miguel/grp.miguel' }));
   const form = within(screen.getByRole('form', { name: 'Eliminar sala/grupo' }));
   await user.click(form.getByRole('button', { name: 'Previsualizar cambio' }));
@@ -131,7 +131,7 @@ it('señala relectura incierta tras eliminar y no afirma retirada física', asyn
   const changes: ChangeRequest[] = [];
   serveChanges(changes, { reloadFails: true });
   const user = userEvent.setup();
-  renderWithApi(<ConfigAdministration />);
+  renderWithApi(<ConfigPage />);
   await user.click(await screen.findByRole('button', { name: 'Eliminar sala/grupo Miguel/grp.miguel' }));
   const form = within(screen.getByRole('form', { name: 'Eliminar sala/grupo' }));
   await user.click(form.getByRole('button', { name: 'Previsualizar cambio' }));
@@ -144,7 +144,7 @@ it('señala relectura incierta tras eliminar y no afirma retirada física', asyn
 it('mantiene controles visibles y bloqueados si console-access no acredita config.write', async () => {
   server.use(http.get('*/v3/console/access', () => HttpResponse.json({ subject: 'Miguel:janus', roles: ['reader'], permissions: [] })));
   servirConfig(() => configSnapshot());
-  renderWithApi(<ConfigAdministration />);
+  renderWithApi(<ConfigPage />);
   await waitFor(() => { expect(screen.getByRole('button', { name: 'Crear espacio' })).toBeDisabled(); });
   expect(screen.getByRole('button', { name: 'Editar sala/grupo Miguel/grp.miguel' })).toBeDisabled();
   expect(screen.getByRole('button', { name: 'Eliminar sala/grupo Miguel/grp.miguel' })).toBeDisabled();
@@ -154,8 +154,9 @@ it('no envía alta de harness sin su nombre obligatorio', async () => {
   const changes: ChangeRequest[] = [];
   serveChanges(changes);
   const user = userEvent.setup();
-  renderWithApi(<ConfigAdministration />);
+  renderWithApi(<ConfigPage />);
   await irA(user, /^agentes$/i);
+  await irA(user, /^arneses$/i);
   await user.click(screen.getByRole('button', { name: 'Crear harness' }));
   const form = within(screen.getByRole('form', { name: 'Crear harness' }));
   await user.type(form.getByLabelText('Id del harness'), 'custom');
@@ -168,7 +169,7 @@ it('añade un miembro desde su sala sin pedir identidades en JSON', async () => 
   const changes: ChangeRequest[] = [];
   serveChanges(changes);
   const user = userEvent.setup();
-  renderWithApi(<ConfigAdministration />);
+  renderWithApi(<ConfigPage />);
   await user.click(await screen.findByRole('button', { name: 'Editar sala/grupo Miguel/grp.miguel' }));
   await user.click(screen.getByRole('button', { name: 'Añadir miembro a esta sala/grupo' }));
   const form = within(screen.getByRole('form', { name: 'Crear membresía' }));
@@ -184,7 +185,7 @@ it('rechaza un recibo incompleto de eliminación y no lo acredita como aplicado'
   const changes: ChangeRequest[] = [];
   serveChanges(changes, { receiptMissing: true });
   const user = userEvent.setup();
-  renderWithApi(<ConfigAdministration />);
+  renderWithApi(<ConfigPage />);
   await user.click(await screen.findByRole('button', { name: 'Eliminar sala/grupo Miguel/grp.miguel' }));
   const form = within(screen.getByRole('form', { name: 'Eliminar sala/grupo' }));
   await user.click(form.getByRole('button', { name: 'Previsualizar cambio' }));
@@ -194,3 +195,5 @@ it('rechaza un recibo incompleto de eliminación y no lo acredita como aplicado'
   expect(form.queryByText(/aplicado en revisión/i)).not.toBeInTheDocument();
   expect(form.getByRole('button', { name: 'Confirmar eliminación' })).toBeDisabled();
 });
+
+beforeEach(() => { window.history.replaceState({}, '', '/config?seccion=espacios'); });

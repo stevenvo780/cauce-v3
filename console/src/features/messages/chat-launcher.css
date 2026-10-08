@@ -1,0 +1,146 @@
+@property --cl-turn {
+  syntax: '<angle>';
+  inherits: false;
+  initial-value: 0deg;
+}
+
+@layer components {
+  .cl-aurora {
+    position: absolute;
+    inset: 0 0 auto;
+    height: 420px;
+    overflow: hidden;
+    pointer-events: none;
+    mask-image: linear-gradient(to bottom, #000 35%, transparent);
+  }
+  .cl-aurora > span {
+    position: absolute;
+    border-radius: 50%;
+    filter: blur(64px);
+    opacity: 0.5;
+    will-change: transform;
+  }
+  .cl-blob-a {
+    width: 46%; height: 300px; left: 6%; top: -60px;
+    background: color-mix(in oklch, var(--c-brand) 55%, transparent);
+    animation: cl-drift-a 19s ease-in-out infinite alternate;
+  }
+  .cl-blob-b {
+    width: 38%; height: 260px; right: 4%; top: -30px;
+    background: color-mix(in oklch, var(--c-violet) 50%, transparent);
+    animation: cl-drift-b 23s ease-in-out infinite alternate;
+  }
+  .cl-blob-c {
+    width: 34%; height: 220px; left: 38%; top: 60px;
+    background: color-mix(in oklch, var(--c-flow) 50%, transparent);
+    animation: cl-drift-c 27s ease-in-out infinite alternate;
+  }
+  [data-theme='dark'] .cl-aurora > span { opacity: 0.42; }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme='light']) .cl-aurora > span { opacity: 0.42; }
+  }
+
+  .cl-accent {
+    background: linear-gradient(100deg, var(--c-brand), var(--c-violet), var(--c-flow), var(--c-brand)) 0 0 / 300% 100%;
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    animation: cl-sheen 9s linear infinite;
+  }
+
+  .cl-fade { animation: cl-rise 0.6s cubic-bezier(0.2, 0.8, 0.2, 1) backwards; animation-delay: calc(var(--i, 0) * 70ms); }
+
+  .cl-search { position: relative; border-radius: 16px; }
+  .cl-search::before {
+    content: '';
+    position: absolute;
+    inset: -1.5px;
+    border-radius: inherit;
+    padding: 1.5px;
+    background: conic-gradient(from var(--cl-turn), var(--c-brand), var(--c-flow), var(--c-violet), var(--c-brand));
+    mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
+    opacity: 0;
+    transition: opacity 0.3s;
+    animation: cl-turn 4s linear infinite;
+    pointer-events: none;
+  }
+  .cl-search:focus-within::before { opacity: 1; }
+  .cl-search:focus-within { box-shadow: 0 12px 40px -16px color-mix(in oklch, var(--c-brand) 60%, transparent); }
+  .cl-search input:focus-visible { outline: none; }
+
+  .cl-card {
+    position: relative;
+    isolation: isolate;
+    transition: transform 0.28s cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 0.28s, border-color 0.28s, background-color 0.28s;
+    animation: cl-rise 0.55s cubic-bezier(0.2, 0.8, 0.2, 1) backwards;
+    animation-delay: calc(min(var(--i, 0), 18) * 38ms + 120ms);
+  }
+  .cl-card::before {
+    content: '';
+    position: absolute;
+    z-index: -1;
+    left: var(--glow-x, 6px);
+    top: var(--glow-y, 2px);
+    width: 96px;
+    height: 96px;
+    border-radius: 50%;
+    background: radial-gradient(circle, oklch(0.72 0.16 var(--h1) / 0.4), transparent 68%);
+    filter: blur(10px);
+    opacity: 0;
+    transform: scale(0.6);
+    transition: opacity 0.35s, transform 0.45s cubic-bezier(0.2, 0.8, 0.2, 1);
+    pointer-events: none;
+  }
+  .cl-card .agent-orb { transition: transform 0.4s cubic-bezier(0.3, 1.6, 0.5, 1); }
+  .cl-card:hover, .cl-card[data-highlighted] {
+    transform: translateY(-3px);
+    border-color: oklch(0.7 0.13 var(--h1) / 0.55);
+    box-shadow: 0 14px 34px -18px oklch(0.45 0.16 var(--h1) / 0.55), var(--c-shadow-card);
+  }
+  .cl-card:hover::before, .cl-card[data-highlighted]::before { opacity: 1; transform: scale(1.15); }
+  .cl-card:hover .agent-orb, .cl-card[data-highlighted] .agent-orb { transform: scale(1.1); }
+  .cl-go { opacity: 0; translate: -6px 0; transition: opacity 0.25s, translate 0.3s cubic-bezier(0.2, 0.8, 0.2, 1); }
+  .cl-card:hover .cl-go, .cl-card[data-highlighted] .cl-go { opacity: 1; translate: 0 0; }
+  .cl-card[data-highlighted] { outline: 2px solid var(--c-brand); outline-offset: 2px; }
+  .cl-card:active { transform: translateY(-1px) scale(0.97); transition-duration: 0.09s; }
+  .cl-card[data-launching] { animation: cl-launch 0.32s cubic-bezier(0.2, 0.8, 0.2, 1) forwards; }
+
+  .cl-bob { animation: cl-bob 2.8s ease-in-out infinite; animation-delay: calc(var(--i, 0) * -0.45s); }
+
+  .cl-strip { scroll-snap-type: x proximity; scrollbar-width: none; }
+  .cl-strip::-webkit-scrollbar { display: none; }
+  .cl-strip > li { scroll-snap-align: start; }
+
+  :root[data-chat-launch] [data-objeto-principal='hilo'] header .agent-orb { view-transition-name: chat-orb; }
+  :root[data-chat-launch] [data-objeto-principal='hilo'] header h2 { view-transition-name: chat-alias; }
+  ::view-transition-group(chat-orb),
+  ::view-transition-group(chat-alias) { animation-duration: 0.48s; animation-timing-function: cubic-bezier(0.2, 0.8, 0.2, 1); }
+  :root[data-chat-launch]::view-transition-old(main-content) { animation: cl-vt-out 0.2s ease-in both; }
+  :root[data-chat-launch]::view-transition-new(main-content) { animation: cl-vt-in 0.38s cubic-bezier(0.2, 0.8, 0.2, 1) 0.06s both; }
+  ::view-transition-old(chat-alias), ::view-transition-new(chat-alias) { height: 100%; object-fit: none; object-position: left center; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .cl-aurora > span, .cl-accent, .cl-fade, .cl-card, .cl-card[data-launching], .cl-bob, .cl-search::before { animation: none; }
+    .cl-card, .cl-card::before, .cl-card .agent-orb, .cl-go { transition: none; }
+    .cl-card:hover, .cl-card[data-highlighted], .cl-card:active { transform: none; }
+  }
+}
+
+@keyframes cl-drift-a { to { transform: translate(18%, 30px) scale(1.15); } }
+@keyframes cl-drift-b { to { transform: translate(-22%, 40px) scale(0.9); } }
+@keyframes cl-drift-c { to { transform: translate(-30%, -20px) scale(1.2); } }
+@keyframes cl-sheen { to { background-position: -300% 0; } }
+@keyframes cl-turn { to { --cl-turn: 360deg; } }
+@keyframes cl-rise {
+  from { opacity: 0; translate: 0 16px; scale: 0.96; }
+}
+@keyframes cl-launch {
+  40% { scale: 0.96; }
+  to { scale: 1.03; box-shadow: 0 20px 50px -18px oklch(0.45 0.16 var(--h1) / 0.7); }
+}
+@keyframes cl-vt-out { to { opacity: 0; transform: scale(0.975); filter: blur(3px); } }
+@keyframes cl-vt-in { from { opacity: 0; transform: translateY(10px) scale(1.01); } }
+@keyframes cl-bob {
+  0%, 100% { translate: 0 0; }
+  50% { translate: 0 -3px; }
+}

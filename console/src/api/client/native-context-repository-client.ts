@@ -4,14 +4,14 @@ import { ApiError } from './core';
 import type { RequestFn } from './system-client';
 
 export interface NativeSourceFile { readonly path: string; readonly bytes: number; readonly sha256: string; readonly content: string }
-export interface NativeSourceSnapshot {
+interface NativeSourceSnapshot {
   readonly commit: string; readonly tree: string;
   readonly scope: { instance_id: string; tenant_id: string; alias: string };
   readonly profile: AgentPerfilValor;
   readonly profileSource: NativeSourceFile; readonly manualSource: NativeSourceFile;
   readonly sourceAgent: { tenant_id: string; alias: string; source_journal: null; native_manual: { harness: 'claude' | 'codex' | 'openclaw' } };
 }
-export interface NativeSourceChange { readonly path: string; readonly kind: 'modified' | 'added' | 'removed'; readonly before: NativeSourceFile | null; readonly after: NativeSourceFile | null }
+interface NativeSourceChange { readonly path: string; readonly kind: 'modified' | 'added' | 'removed'; readonly before: NativeSourceFile | null; readonly after: NativeSourceFile | null }
 export interface NativeContextRepositoryInspection {
   readonly desired: NativeSourceSnapshot; readonly previous: NativeSourceSnapshot | null;
   readonly changes: readonly NativeSourceChange[] | null;

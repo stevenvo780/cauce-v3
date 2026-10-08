@@ -188,7 +188,7 @@ it('FAMILIA 4: no dice «aplicado» a secas cuando la relectura del snapshot NO 
   expect(aviso).toHaveTextContent(/la relectura del snapshot NO llegó \(config store caído\)/i);
   expect(aviso).toHaveTextContent(/pueden estar vencidas/i);
   // Neither green nor red: it was applied, but what shows below may be stale.
-  expect(aviso).toHaveClass('notice', 'parcial');
+  expect(aviso).toHaveClass('bg-warn-soft');
 });
 
 /**

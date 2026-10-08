@@ -3,110 +3,97 @@
     "huecoMaximo": 0,
     "huecoMaximoEn": "/",
     "desbordeMaximo": 0,
-    "recorteMaximo": 621,
-    "recorteMaximoEn": "/accounts",
-    "recorteMaximoQue": "div.table-wrap",
+    "recorteMaximo": 390,
+    "recorteMaximoEn": "/live",
+    "recorteMaximoQue": "section.-mx-4.flex.items-center",
     "recorteSinTeclado": 0,
     "recorteSinTecladoEn": "/",
     "recorteSinTecladoQue": "",
     "enlacesSinNombre": 0,
     "solapesDeRotulo": 0,
-    "portadoresBajos": 0,
-    "pantallasMaximas": 5.9,
+    "pantallasMaximas": 5.04,
     "pantallasMaximasEn": "/accounts",
     "rutas": {
       "/": {
-        "pantallas": 0.94,
-        "foldDesaprovechado": 0,
-        "objetoPrincipalTop": null,
-        "objetoPrincipalBajoElPliegue": 0
-      },
-      "/overview": {
-        "pantallas": 2.5,
+        "pantallas": 1,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/live": {
-        "pantallas": 1.29,
+        "pantallas": 1,
         "foldDesaprovechado": 0,
-        "objetoPrincipalTop": 229,
+        "objetoPrincipalTop": 223,
         "objetoPrincipalBajoElPliegue": 0
       },
-      "/live#cajon": {
-        "pantallas": 1.29,
+      "/live#hoja": {
+        "pantallas": 1,
         "foldDesaprovechado": 0,
-        "objetoPrincipalTop": 229,
-        "objetoPrincipalBajoElPliegue": 0
-      },
-      "/live#perfil": {
-        "pantallas": 1.29,
-        "foldDesaprovechado": 0,
-        "objetoPrincipalTop": 229,
+        "objetoPrincipalTop": 223,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/accounts": {
-        "pantallas": 5.9,
+        "pantallas": 5.12,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/messages": {
-        "pantallas": 0.94,
-        "foldDesaprovechado": 0,
-        "objetoPrincipalTop": null,
-        "objetoPrincipalBajoElPliegue": 0
-      },
-      "/messages#herramientas": {
-        "pantallas": 0.94,
+        "pantallas": 1,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/messages/Steven/jarvis": {
-        "pantallas": 0.94,
+        "pantallas": 1,
         "foldDesaprovechado": 0,
-        "objetoPrincipalTop": 52,
+        "objetoPrincipalTop": 0,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/messages/Steven/jarvis?view=context": {
-        "pantallas": 0.94,
+        "pantallas": 1,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/messages/Steven/fantasma": {
-        "pantallas": 0.94,
+        "pantallas": 1,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/queues": {
-        "pantallas": 1.82,
+        "pantallas": 1.3,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/observability": {
-        "pantallas": 1.6,
+        "pantallas": 1.26,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/config": {
-        "pantallas": 2.55,
+        "pantallas": 1.09,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/terminal": {
-        "pantallas": 0.94,
+        "pantallas": 1,
         "foldDesaprovechado": 0,
-        "objetoPrincipalTop": 121,
+        "objetoPrincipalTop": 0,
+        "objetoPrincipalBajoElPliegue": 0
+      },
+      "/terminal/Steven/jarvis": {
+        "pantallas": 1,
+        "foldDesaprovechado": 0,
+        "objetoPrincipalTop": 0,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/ayuda": {
-        "pantallas": 2.51,
+        "pantallas": 3.3,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
@@ -117,110 +104,97 @@
     "huecoMaximo": 0,
     "huecoMaximoEn": "/",
     "desbordeMaximo": 0,
-    "recorteMaximo": 221,
-    "recorteMaximoEn": "/accounts",
-    "recorteMaximoQue": "div.table-wrap",
+    "recorteMaximo": 0,
+    "recorteMaximoEn": "/",
+    "recorteMaximoQue": "",
     "recorteSinTeclado": 0,
     "recorteSinTecladoEn": "/",
     "recorteSinTecladoQue": "",
     "enlacesSinNombre": 0,
     "solapesDeRotulo": 0,
-    "portadoresBajos": 0,
-    "pantallasMaximas": 4.66,
+    "pantallasMaximas": 4.34,
     "pantallasMaximasEn": "/accounts",
     "rutas": {
       "/": {
-        "pantallas": 0.94,
-        "foldDesaprovechado": 0,
-        "objetoPrincipalTop": null,
-        "objetoPrincipalBajoElPliegue": 0
-      },
-      "/overview": {
-        "pantallas": 1.89,
+        "pantallas": 1,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/live": {
-        "pantallas": 1.04,
+        "pantallas": 1,
         "foldDesaprovechado": 0,
-        "objetoPrincipalTop": 229,
+        "objetoPrincipalTop": 179,
         "objetoPrincipalBajoElPliegue": 0
       },
-      "/live#cajon": {
-        "pantallas": 1.04,
+      "/live#hoja": {
+        "pantallas": 1,
         "foldDesaprovechado": 0,
-        "objetoPrincipalTop": 229,
-        "objetoPrincipalBajoElPliegue": 0
-      },
-      "/live#perfil": {
-        "pantallas": 1.04,
-        "foldDesaprovechado": 0,
-        "objetoPrincipalTop": 229,
+        "objetoPrincipalTop": 179,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/accounts": {
-        "pantallas": 4.66,
+        "pantallas": 4.35,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/messages": {
-        "pantallas": 0.94,
-        "foldDesaprovechado": 0,
-        "objetoPrincipalTop": null,
-        "objetoPrincipalBajoElPliegue": 0
-      },
-      "/messages#herramientas": {
-        "pantallas": 0.94,
+        "pantallas": 1,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/messages/Steven/jarvis": {
-        "pantallas": 0.94,
+        "pantallas": 1,
         "foldDesaprovechado": 0,
-        "objetoPrincipalTop": 52,
+        "objetoPrincipalTop": 0,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/messages/Steven/jarvis?view=context": {
-        "pantallas": 0.94,
+        "pantallas": 1,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/messages/Steven/fantasma": {
-        "pantallas": 0.94,
+        "pantallas": 1,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/queues": {
-        "pantallas": 1.74,
+        "pantallas": 1.34,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/observability": {
-        "pantallas": 1.45,
+        "pantallas": 1.03,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/config": {
-        "pantallas": 1.55,
-        "foldDesaprovechado": 0,
+        "pantallas": 1,
+        "foldDesaprovechado": 149,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/terminal": {
-        "pantallas": 0.94,
+        "pantallas": 1,
         "foldDesaprovechado": 0,
-        "objetoPrincipalTop": 121,
+        "objetoPrincipalTop": 0,
+        "objetoPrincipalBajoElPliegue": 0
+      },
+      "/terminal/Steven/jarvis": {
+        "pantallas": 1,
+        "foldDesaprovechado": 0,
+        "objetoPrincipalTop": 0,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/ayuda": {
-        "pantallas": 1.93,
+        "pantallas": 2.23,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
@@ -231,16 +205,15 @@
     "huecoMaximo": 0,
     "huecoMaximoEn": "/",
     "desbordeMaximo": 0,
-    "recorteMaximo": 5,
-    "recorteMaximoEn": "/accounts",
-    "recorteMaximoQue": "div.table-wrap",
+    "recorteMaximo": 74,
+    "recorteMaximoEn": "/config",
+    "recorteMaximoQue": "div.max-h-[min(70vh,720px)].overflow-auto.rounded-lg",
     "recorteSinTeclado": 0,
     "recorteSinTecladoEn": "/",
     "recorteSinTecladoQue": "",
     "enlacesSinNombre": 0,
     "solapesDeRotulo": 0,
-    "portadoresBajos": 0,
-    "pantallasMaximas": 3.71,
+    "pantallasMaximas": 2.55,
     "pantallasMaximasEn": "/accounts",
     "rutas": {
       "/": {
@@ -249,32 +222,20 @@
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
-      "/overview": {
-        "pantallas": 1.31,
-        "foldDesaprovechado": 0,
-        "objetoPrincipalTop": null,
-        "objetoPrincipalBajoElPliegue": 0
-      },
       "/live": {
-        "pantallas": 1.13,
+        "pantallas": 1,
         "foldDesaprovechado": 0,
-        "objetoPrincipalTop": 257,
+        "objetoPrincipalTop": 163,
         "objetoPrincipalBajoElPliegue": 0
       },
-      "/live#cajon": {
-        "pantallas": 1.13,
+      "/live#hoja": {
+        "pantallas": 1,
         "foldDesaprovechado": 0,
-        "objetoPrincipalTop": 257,
-        "objetoPrincipalBajoElPliegue": 0
-      },
-      "/live#perfil": {
-        "pantallas": 1.13,
-        "foldDesaprovechado": 0,
-        "objetoPrincipalTop": 257,
+        "objetoPrincipalTop": 163,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/accounts": {
-        "pantallas": 3.71,
+        "pantallas": 2.56,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
@@ -285,16 +246,10 @@
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
-      "/messages#herramientas": {
-        "pantallas": 1,
-        "foldDesaprovechado": 0,
-        "objetoPrincipalTop": null,
-        "objetoPrincipalBajoElPliegue": 0
-      },
       "/messages/Steven/jarvis": {
         "pantallas": 1,
         "foldDesaprovechado": 0,
-        "objetoPrincipalTop": 52,
+        "objetoPrincipalTop": 0,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/messages/Steven/jarvis?view=context": {
@@ -310,31 +265,37 @@
         "objetoPrincipalBajoElPliegue": 0
       },
       "/queues": {
-        "pantallas": 1.04,
-        "foldDesaprovechado": 0,
+        "pantallas": 1,
+        "foldDesaprovechado": 466,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/observability": {
-        "pantallas": 1.04,
-        "foldDesaprovechado": 0,
+        "pantallas": 1,
+        "foldDesaprovechado": 430,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/config": {
-        "pantallas": 1.51,
-        "foldDesaprovechado": 0,
+        "pantallas": 1,
+        "foldDesaprovechado": 406,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/terminal": {
-        "pantallas": 0.94,
+        "pantallas": 1,
         "foldDesaprovechado": 0,
-        "objetoPrincipalTop": 149,
+        "objetoPrincipalTop": 0,
+        "objetoPrincipalBajoElPliegue": 0
+      },
+      "/terminal/Steven/jarvis": {
+        "pantallas": 1,
+        "foldDesaprovechado": 0,
+        "objetoPrincipalTop": 0,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/ayuda": {
-        "pantallas": 1.92,
+        "pantallas": 2.14,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
@@ -353,8 +314,7 @@
     "recorteSinTecladoQue": "",
     "enlacesSinNombre": 0,
     "solapesDeRotulo": 0,
-    "portadoresBajos": 0,
-    "pantallasMaximas": 3.5,
+    "pantallasMaximas": 2.53,
     "pantallasMaximasEn": "/accounts",
     "rutas": {
       "/": {
@@ -363,32 +323,20 @@
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
-      "/overview": {
-        "pantallas": 1.09,
-        "foldDesaprovechado": 0,
-        "objetoPrincipalTop": null,
-        "objetoPrincipalBajoElPliegue": 0
-      },
       "/live": {
-        "pantallas": 1.13,
+        "pantallas": 1,
         "foldDesaprovechado": 0,
-        "objetoPrincipalTop": 255,
+        "objetoPrincipalTop": 163,
         "objetoPrincipalBajoElPliegue": 0
       },
-      "/live#cajon": {
-        "pantallas": 1.13,
+      "/live#hoja": {
+        "pantallas": 1,
         "foldDesaprovechado": 0,
-        "objetoPrincipalTop": 255,
-        "objetoPrincipalBajoElPliegue": 0
-      },
-      "/live#perfil": {
-        "pantallas": 1.13,
-        "foldDesaprovechado": 0,
-        "objetoPrincipalTop": 255,
+        "objetoPrincipalTop": 163,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/accounts": {
-        "pantallas": 3.53,
+        "pantallas": 2.54,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
@@ -399,16 +347,10 @@
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
-      "/messages#herramientas": {
-        "pantallas": 1,
-        "foldDesaprovechado": 0,
-        "objetoPrincipalTop": null,
-        "objetoPrincipalBajoElPliegue": 0
-      },
       "/messages/Steven/jarvis": {
         "pantallas": 1,
         "foldDesaprovechado": 0,
-        "objetoPrincipalTop": 52,
+        "objetoPrincipalTop": 0,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/messages/Steven/jarvis?view=context": {
@@ -424,31 +366,37 @@
         "objetoPrincipalBajoElPliegue": 0
       },
       "/queues": {
-        "pantallas": 0.88,
-        "foldDesaprovechado": 110,
+        "pantallas": 1,
+        "foldDesaprovechado": 466,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/observability": {
-        "pantallas": 0.85,
-        "foldDesaprovechado": 142,
+        "pantallas": 1,
+        "foldDesaprovechado": 462,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/config": {
-        "pantallas": 1.3,
-        "foldDesaprovechado": 0,
+        "pantallas": 1,
+        "foldDesaprovechado": 422,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/terminal": {
-        "pantallas": 0.94,
+        "pantallas": 1,
         "foldDesaprovechado": 0,
-        "objetoPrincipalTop": 149,
+        "objetoPrincipalTop": 0,
+        "objetoPrincipalBajoElPliegue": 0
+      },
+      "/terminal/Steven/jarvis": {
+        "pantallas": 1,
+        "foldDesaprovechado": 0,
+        "objetoPrincipalTop": 0,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/ayuda": {
-        "pantallas": 1.92,
+        "pantallas": 2.08,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
@@ -467,8 +415,7 @@
     "recorteSinTecladoQue": "",
     "enlacesSinNombre": 0,
     "solapesDeRotulo": 0,
-    "portadoresBajos": 0,
-    "pantallasMaximas": 3.24,
+    "pantallasMaximas": 2.51,
     "pantallasMaximasEn": "/accounts",
     "rutas": {
       "/": {
@@ -477,32 +424,20 @@
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
-      "/overview": {
-        "pantallas": 1.01,
-        "foldDesaprovechado": 0,
-        "objetoPrincipalTop": null,
-        "objetoPrincipalBajoElPliegue": 0
-      },
       "/live": {
-        "pantallas": 1.13,
+        "pantallas": 1,
         "foldDesaprovechado": 0,
-        "objetoPrincipalTop": 255,
+        "objetoPrincipalTop": 163,
         "objetoPrincipalBajoElPliegue": 0
       },
-      "/live#cajon": {
-        "pantallas": 1.13,
+      "/live#hoja": {
+        "pantallas": 1,
         "foldDesaprovechado": 0,
-        "objetoPrincipalTop": 255,
-        "objetoPrincipalBajoElPliegue": 0
-      },
-      "/live#perfil": {
-        "pantallas": 1.13,
-        "foldDesaprovechado": 0,
-        "objetoPrincipalTop": 255,
+        "objetoPrincipalTop": 163,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/accounts": {
-        "pantallas": 3.27,
+        "pantallas": 2.52,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
@@ -513,16 +448,10 @@
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
-      "/messages#herramientas": {
-        "pantallas": 1,
-        "foldDesaprovechado": 0,
-        "objetoPrincipalTop": null,
-        "objetoPrincipalBajoElPliegue": 0
-      },
       "/messages/Steven/jarvis": {
         "pantallas": 1,
         "foldDesaprovechado": 0,
-        "objetoPrincipalTop": 52,
+        "objetoPrincipalTop": 0,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/messages/Steven/jarvis?view=context": {
@@ -538,31 +467,37 @@
         "objetoPrincipalBajoElPliegue": 0
       },
       "/queues": {
-        "pantallas": 0.88,
-        "foldDesaprovechado": 110,
+        "pantallas": 1,
+        "foldDesaprovechado": 466,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/observability": {
-        "pantallas": 0.85,
-        "foldDesaprovechado": 142,
+        "pantallas": 1,
+        "foldDesaprovechado": 462,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/config": {
-        "pantallas": 1.3,
-        "foldDesaprovechado": 0,
+        "pantallas": 1,
+        "foldDesaprovechado": 456,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/terminal": {
-        "pantallas": 0.94,
+        "pantallas": 1,
         "foldDesaprovechado": 0,
-        "objetoPrincipalTop": 149,
+        "objetoPrincipalTop": 0,
+        "objetoPrincipalBajoElPliegue": 0
+      },
+      "/terminal/Steven/jarvis": {
+        "pantallas": 1,
+        "foldDesaprovechado": 0,
+        "objetoPrincipalTop": 0,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/ayuda": {
-        "pantallas": 1.92,
+        "pantallas": 2.08,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
@@ -570,8 +505,8 @@
     }
   },
   "2560": {
-    "huecoMaximo": 272,
-    "huecoMaximoEn": "/overview",
+    "huecoMaximo": 608,
+    "huecoMaximoEn": "/accounts",
     "desbordeMaximo": 0,
     "recorteMaximo": 0,
     "recorteMaximoEn": "/",
@@ -581,8 +516,7 @@
     "recorteSinTecladoQue": "",
     "enlacesSinNombre": 0,
     "solapesDeRotulo": 0,
-    "portadoresBajos": 0,
-    "pantallasMaximas": 3.22,
+    "pantallasMaximas": 2.51,
     "pantallasMaximasEn": "/accounts",
     "rutas": {
       "/": {
@@ -591,32 +525,20 @@
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
-      "/overview": {
+      "/live": {
         "pantallas": 1,
         "foldDesaprovechado": 0,
-        "objetoPrincipalTop": null,
+        "objetoPrincipalTop": 163,
         "objetoPrincipalBajoElPliegue": 0
       },
-      "/live": {
-        "pantallas": 1.13,
+      "/live#hoja": {
+        "pantallas": 1,
         "foldDesaprovechado": 0,
-        "objetoPrincipalTop": 255,
-        "objetoPrincipalBajoElPliegue": 0
-      },
-      "/live#cajon": {
-        "pantallas": 1.13,
-        "foldDesaprovechado": 0,
-        "objetoPrincipalTop": 255,
-        "objetoPrincipalBajoElPliegue": 0
-      },
-      "/live#perfil": {
-        "pantallas": 1.13,
-        "foldDesaprovechado": 0,
-        "objetoPrincipalTop": 255,
+        "objetoPrincipalTop": 163,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/accounts": {
-        "pantallas": 3.25,
+        "pantallas": 2.52,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
@@ -627,16 +549,10 @@
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
-      "/messages#herramientas": {
-        "pantallas": 1,
-        "foldDesaprovechado": 0,
-        "objetoPrincipalTop": null,
-        "objetoPrincipalBajoElPliegue": 0
-      },
       "/messages/Steven/jarvis": {
         "pantallas": 1,
         "foldDesaprovechado": 0,
-        "objetoPrincipalTop": 52,
+        "objetoPrincipalTop": 0,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/messages/Steven/jarvis?view=context": {
@@ -652,31 +568,37 @@
         "objetoPrincipalBajoElPliegue": 0
       },
       "/queues": {
-        "pantallas": 0.88,
-        "foldDesaprovechado": 110,
+        "pantallas": 1,
+        "foldDesaprovechado": 466,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/observability": {
-        "pantallas": 0.85,
-        "foldDesaprovechado": 142,
+        "pantallas": 1,
+        "foldDesaprovechado": 462,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/config": {
-        "pantallas": 1.17,
-        "foldDesaprovechado": 0,
+        "pantallas": 1,
+        "foldDesaprovechado": 456,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/terminal": {
-        "pantallas": 0.94,
+        "pantallas": 1,
         "foldDesaprovechado": 0,
-        "objetoPrincipalTop": 149,
+        "objetoPrincipalTop": 0,
+        "objetoPrincipalBajoElPliegue": 0
+      },
+      "/terminal/Steven/jarvis": {
+        "pantallas": 1,
+        "foldDesaprovechado": 0,
+        "objetoPrincipalTop": 0,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/ayuda": {
-        "pantallas": 1.92,
+        "pantallas": 2.08,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0

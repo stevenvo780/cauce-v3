@@ -1,5 +1,6 @@
 import '@testing-library/jest-dom/vitest';
 import { webcrypto } from 'node:crypto';
+import './foreign-abort-signal';
 import { transferableAbortController } from 'node:util';
 
 const nativeAbortController = transferableAbortController();

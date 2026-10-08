@@ -1,39 +1,35 @@
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, beforeEach, expect, it } from 'vitest';
-import { renderRouted } from '../../test/render';
+import { afterEach, expect, it } from 'vitest';
 import { LEASE_LABEL } from '../../vocabulario';
+import { LIVE_STATE_META } from '../live/agent-state';
+import { AgentList } from '../../shell/AgentList';
+import { FleetProvider } from '../../shell/fleet';
+import { renderWithApi } from '../../test/render';
 import { MessagesPage } from './MessagesPage';
+import { openConversationInfo } from './chat-test-utils';
 
-/**
- * The messenger is the surface where the lease word changed the most, and nothing rendered it in a
- * test: a hardcoded «vencido» coming back here would have been green everywhere.
- */
+/** Header and sidebar read the same live state; the lease stays as secondary detail. */
 
-const PALABRAS: string[] = Object.values(LEASE_LABEL);
-
-function rotuloDeLease(elemento: Element): string | undefined {
-  return /lease ([^,]+)/.exec(elemento.getAttribute('aria-label') ?? '')?.[1];
-}
-
-beforeEach(() => { window.history.pushState({}, '', '/messages'); });
 afterEach(() => { window.history.pushState({}, '', '/'); });
 
-it('el roster y la cabecera del hilo nombran el lease con el vocabulario compartido', async () => {
+it('la cabecera del hilo y la barra lateral nombran el mismo estado vivo', async () => {
   const user = userEvent.setup();
-  renderRouted(MessagesPage);
-  const filas = await screen.findAllByRole('button', { name: /conversación con /i });
-  const alias = /conversación con ([^,]+),/i.exec(filas[0].getAttribute('aria-label') ?? '')?.[1] ?? '';
-  await user.click(filas[0]);
+  window.history.pushState({}, '', '/messages/Miguel/kratos');
+  renderWithApi(<FleetProvider><AgentList routeId="messages" /><MessagesPage params={['Miguel', 'kratos']} /></FleetProvider>);
 
-  const hilo = await screen.findByRole('region', { name: new RegExp(`^conversación con ${alias}$`, 'i') });
-  const insignia = within(hilo).getByText((texto, elemento) =>
-    elemento?.classList.contains('badge') === true && PALABRAS.includes(texto));
+  const hilo = await screen.findByRole('region', { name: 'Conversación con kratos' });
+  const etiquetas = Object.values(LIVE_STATE_META).map((meta) => meta.label);
+  const fila = await screen.findByRole('link', { name: /kratos/ });
   await waitFor(() => {
-    const boton = screen.getByRole('button', { name: new RegExp(`conversación con ${alias},`, 'i') });
-    expect(rotuloDeLease(boton)).toBe(insignia.textContent);
+    const pill = hilo.querySelector('header [data-live-state]');
+    const estado = pill?.textContent ?? '';
+    expect(etiquetas).toContain(estado);
+    expect(fila).toHaveTextContent(estado);
   });
-  expect(screen.getAllByRole('button', { name: /conversación con /i })
-    .map(rotuloDeLease)
-    .filter((rotulo) => rotulo === undefined || !PALABRAS.includes(rotulo))).toEqual([]);
-});
+
+  const detalles = await openConversationInfo(user);
+  const leaseWords = Object.values(LEASE_LABEL);
+  const lease = within(detalles).getByText(/^Lease /);
+  expect(leaseWords.some((word) => lease.textContent.startsWith(`Lease ${word}`))).toBe(true);
+}, 25_000);

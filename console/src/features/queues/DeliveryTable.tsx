@@ -1,7 +1,10 @@
-import { ArchiveX, Ban, Clock, RotateCcw, Rows3, TriangleAlert } from 'lucide-react';
+import { Ban, RotateCcw } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { useApi } from '../../api/context';
 import type { QueueItem } from '../../api/types';
+import { AgentOrb } from '../../components/AgentOrb';
+import { Button, CARD_TABLE, Notice, SCROLL } from '../../components/kit';
+import { ConfirmDialog } from '../../components/dialogs';
 import { Badge, Desplazable, EmptyState, Time, Unknown } from '../../components/ui';
 import { compactId, safeJobLane } from '../../lib';
 import {
@@ -167,42 +170,29 @@ export function DeliveryTable({
 
   return (
     <>
-      {/* One line per delivery acted on, and each one names its own: the phone stacks the table and
-          the action column is not where an operator looks for the outcome of what they just did. */}
-      {[...notices].map(([deliveryId, texto]) => (
-        <p className="notice" role="status" key={deliveryId}>{texto}</p>
-      ))}
+      {/* One line per delivery acted on, and each one names its own: the outcome of what an
+          operator just did is not in the action column, which on a phone is a card away. */}
+      {notices.size > 0 ? <div className="mb-3 grid gap-2">
+        {[...notices].map(([deliveryId, texto]) => (
+          <Notice role="status" key={deliveryId}>{texto}</Notice>
+        ))}
+      </div> : null}
 
-      {/*
-        The confirmation lives ABOVE the table, not inside the cell: on the phone the action column
-        is off-screen —you have to drag the table horizontally to reach it—, and a question appearing
-        where it cannot be seen is a question nobody answers.
-      */}
-      {pendiente ? (
-        <div className="confirmacion-de-entrega" role="alertdialog" aria-label={`Confirmar ${pendiente.accion}`}>
-          <p className="confirmacion-titulo">
-            <TriangleAlert size={15} aria-hidden="true" />
-            {pendiente.accion === 'replay'
-              ? <>Reinyectar la entrega <span className="mono">{compactId(pendiente.deliveryId)}</span> a <strong>{pendiente.alias}</strong></>
-              : <>Cancelar la entrega <span className="mono">{compactId(pendiente.deliveryId)}</span> de <strong>{pendiente.alias}</strong></>}
-          </p>
-          <p className="confirmacion-detalle">
-            {pendiente.accion === 'replay' ? EXPLICACION_REPLAY : EXPLICACION_CANCEL}
-          </p>
-          <div className="confirmacion-acciones">
-            <button className="button primary" type="button" onClick={confirmar}>
-              {pendiente.accion === 'replay' ? 'Sí, reinyectar' : 'Sí, cancelar la entrega'}
-            </button>
-            <button className="button small secondary" type="button" onClick={() => { setPendiente(undefined); }}>
-              No hacer nada
-            </button>
-          </div>
-        </div>
-      ) : null}
+      <ConfirmDialog
+        open={pendiente !== undefined}
+        title={pendiente?.accion === 'replay'
+          ? <>Reinyectar la entrega <span className="mono">{compactId(pendiente.deliveryId)}</span> a <strong>{pendiente.alias}</strong></>
+          : pendiente ? <>Cancelar la entrega <span className="mono">{compactId(pendiente.deliveryId)}</span> de <strong>{pendiente.alias}</strong></> : null}
+        confirmLabel={pendiente?.accion === 'replay' ? 'Sí, reinyectar' : 'Sí, cancelar la entrega'}
+        onConfirm={confirmar}
+        onCancel={() => { setPendiente(undefined); }}
+      >
+        <p>{pendiente?.accion === 'replay' ? EXPLICACION_REPLAY : EXPLICACION_CANCEL}</p>
+      </ConfirmDialog>
 
       {rows.length === 0 ? <EmptyState>{empty ?? 'No hay deliveries informadas.'}</EmptyState> : (
-        <Desplazable etiqueta={caption ?? 'Colas, retries y dead letters'}>
-          <table className="tabla-entregas">
+        <Desplazable etiqueta={caption ?? 'Colas, retries y dead letters'} className={SCROLL}>
+          <table className={CARD_TABLE}>
             <caption className="sr-only">{caption ?? 'Colas, retries y dead letters'}</caption>
             <thead><tr><th>Delivery</th><th>Destino</th><th>Carril</th><th>Estado</th><th>Intentos</th><th>Disponible</th><th>Último error</th><th>Acción</th></tr></thead>
             <tbody>
@@ -224,25 +214,31 @@ export function DeliveryTable({
                   aria-current={enfocada ? true : undefined}
                 >
                   <td data-label="Delivery"><span className="mono">{compactId(deliveryId)}</span><small className="subline">msg {compactId(item.message_id)}</small></td>
-                  <td data-label="Destino"><strong><Unknown value={item.recipient_alias} /></strong><small className="subline"><Unknown value={item.tenant_id} /></small></td>
-                  <td data-label="Carril"><span className="inline-icon"><Rows3 size={15} aria-hidden="true" /><Unknown value={safeJobLane(item.lane)} /></span></td>
-                  {/* The status label is shown in Spanish, like the rest of the
-                      screen. A value this console does not know is NOT invented: UNKNOWN is shown
-                      and the `title=` says what the server sent. */}
+                  <td data-label="Destino">
+                    <div className="flex items-center gap-2">
+                      {item.recipient_alias && item.tenant_id ? <AgentOrb seed={`${item.tenant_id}/${item.recipient_alias}`} size={20} /> : null}
+                      <div className="min-w-0">
+                        <strong><Unknown value={item.recipient_alias} /></strong>
+                        <small className="subline"><Unknown value={item.tenant_id} /></small>
+                      </div>
+                    </div>
+                  </td>
+                  <td data-label="Carril"><Unknown value={safeJobLane(item.lane)} /></td>
+                  {/* The status label is shown in Spanish, like the rest of the screen. A value this
+                      console does not know is NOT invented: UNKNOWN is shown and the `title=` says
+                      what the server sent. */}
                   <td data-label="Estado"><Badge tone={policy.tone}><Unknown
                     value={policy.known ? policy.label : undefined}
                     motivo={item.state && !policy.known ? `El servidor mandó un estado que esta consola no conoce: ${item.state}` : undefined}
                   /></Badge></td>
-                  <td data-label="Intentos">
-                    <span className="intentos-ratio">
-                      <Unknown value={item.attempts} /> / <Unknown value={item.max_attempts} />
-                    </span>
+                  <td data-label="Intentos" className="whitespace-nowrap tabular-nums">
+                    <Unknown value={item.attempts} /> / <Unknown value={item.max_attempts} />
                   </td>
-                  <td data-label="Disponible"><span className="inline-icon"><Clock size={15} aria-hidden="true" /><Time value={item.available_at} relativo /></span></td>
+                  <td data-label="Disponible"><span className="whitespace-nowrap"><Time value={item.available_at} relativo /></span></td>
                   {/* "No error" is not UNKNOWN when the lifecycle policy says no failure is expected. */}
-                  <td data-label="Último error" className="error-copy">
-                    {error.clase === 'texto' ? error.texto
-                      : error.clase === 'sin-error' ? <span className="sin-error">sin error</span>
+                  <td data-label="Último error" data-wide className="error-copy">
+                    {error.clase === 'texto' ? <span className="line-clamp-2 break-words" title={error.texto}>{error.texto}</span>
+                      : error.clase === 'sin-error' ? <span className="text-muted">sin error</span>
                         : <Unknown
                           value={null}
                           ausente={policy.errorExpectation === 'absent' ? 'todavia-no' : 'sin-dato'}
@@ -251,16 +247,16 @@ export function DeliveryTable({
                             : 'El servidor no informó ningún error para esta entrega.'}
                         />}
                   </td>
-                  <td data-label="Acción">
+                  <td data-label="Acción" data-wide>
                     {replayable ? (
-                      <button className="button small" type="button" onClick={() => { setPendiente({ accion: 'replay', deliveryId, alias }); }} disabled={!canReplay || replayInFlight || outcomeUncertain} aria-label={`Replay delivery ${deliveryId}`}>
-                        <RotateCcw size={15} aria-hidden="true" />{outcomeUncertain ? 'Revisión pendiente' : replayInFlight ? 'Enviando…' : 'Replay'}
-                      </button>
+                      <Button size="sm" onClick={() => { setPendiente({ accion: 'replay', deliveryId, alias }); }} disabled={!canReplay || replayInFlight || outcomeUncertain} aria-label={`Replay delivery ${deliveryId}`}>
+                        <RotateCcw size={14} aria-hidden="true" />{outcomeUncertain ? 'Revisión pendiente' : replayInFlight ? 'Enviando…' : 'Replay'}
+                      </Button>
                     ) : cancellable ? (
-                      <button className="button small" type="button" onClick={() => { setPendiente({ accion: 'cancel', deliveryId, alias }); }} disabled={!canCancel || cancelInFlight || outcomeUncertain} aria-label={`Cancelar delivery ${deliveryId}`}>
-                        <Ban size={15} aria-hidden="true" />{outcomeUncertain ? 'Revisión pendiente' : cancelInFlight ? 'Cancelando…' : 'Cancelar'}
-                      </button>
-                    ) : <span className="muted"><ArchiveX size={15} aria-hidden="true" /> No aplica</span>}
+                      <Button size="sm" onClick={() => { setPendiente({ accion: 'cancel', deliveryId, alias }); }} disabled={!canCancel || cancelInFlight || outcomeUncertain} aria-label={`Cancelar delivery ${deliveryId}`}>
+                        <Ban size={14} aria-hidden="true" />{outcomeUncertain ? 'Revisión pendiente' : cancelInFlight ? 'Cancelando…' : 'Cancelar'}
+                      </Button>
+                    ) : <span className="muted">No aplica</span>}
                   </td>
                 </tr>;
               })}

@@ -1,9 +1,11 @@
-import { KeyRound, LogIn, ShieldAlert } from 'lucide-react';
+import { LogIn, ShieldAlert } from 'lucide-react';
 import { Fragment, useState, type SyntheticEvent, type ReactNode } from 'react';
 import { useApi } from '../../api/context';
+import { cn } from '../../cn';
+import { Logo } from '../../components/brand/Logo';
+import { Button, LinkButton, Notice, Spinner } from '../../components/kit';
 import { useAuthGate, type AuthGateState } from './auth-session';
 import { authSessionKey } from './account-identity';
-import './auth.css';
 
 /**
  * Console session gate.
@@ -36,11 +38,32 @@ const LEDE = 'Esta consola opera la flota entera: publica mensajes, cancela entr
   + 'terminales dentro de los contenedores. Requiere una sesión con identidad.';
 
 const FINEPRINT = (
-  <p className="auth-fineprint">
-    El servidor decide. La sesión vive en una cookie <code>__Host-</code> HttpOnly que este
+  <p className="m-0 text-xs text-muted">
+    El servidor decide. La sesión vive en una cookie <code className="font-mono">__Host-</code> HttpOnly que este
     navegador no puede leer, y toda escritura viaja además con un token CSRF de un solo origen.
   </p>
 );
+
+/** Centered card on the bare canvas: nothing of the console renders behind it. */
+function AuthScreen({ tone, role, children }: { tone?: 'danger'; role?: 'alert' | 'status'; children: ReactNode }) {
+  return (
+    <main id="main-content" className="grid min-h-dvh place-items-center bg-canvas p-4 text-fg">
+      <section
+        role={role}
+        className={cn(
+          'grid w-full max-w-sm gap-4 rounded-2xl border bg-surface p-6 shadow-pop [&_h1]:m-0 [&_h1]:text-xl [&_h1]:font-semibold [&_h1]:tracking-tight',
+          tone === 'danger' ? 'border-danger/40' : 'border-line',
+        )}
+      >
+        {children}
+      </section>
+    </main>
+  );
+}
+
+function Lede({ children }: { children: ReactNode }) {
+  return <p className="m-0 text-[13px] leading-relaxed text-fg-2">{children}</p>;
+}
 
 /** Password form. Credential errors are shown here, not in the failure screen. */
 function PasswordLoginForm({ login, busy, reason }: {
@@ -66,77 +89,75 @@ function PasswordLoginForm({ login, busy, reason }: {
   };
 
   return (
-    <main className="auth-screen" id="main-content">
-      <section className="auth-card">
-        <span className="auth-mark" aria-hidden="true"><KeyRound size={26} /></span>
-        <h1>Consola de Cauce V3</h1>
-        <p className="auth-lede">{LEDE}</p>
-        {reason ? <p className="auth-reason">{reason}</p> : null}
-        <form className="auth-form" onSubmit={(event) => { void submit(event); }}>
-          <label htmlFor="auth-email">Correo</label>
+    <AuthScreen>
+      <Logo />
+      <h1>Consola de Cauce V3</h1>
+      <Lede>{LEDE}</Lede>
+      {reason ? <Notice tone="warn">{reason}</Notice> : null}
+      <form className="grid gap-3" onSubmit={(event) => { void submit(event); }}>
+        <label htmlFor="auth-email">
+          Correo
           <input
             id="auth-email" name="email" type="email" autoComplete="username" required
             value={email} onChange={(event) => { setEmail(event.target.value); }} disabled={busy}
           />
-          <label htmlFor="auth-password">Contraseña</label>
+        </label>
+        <label htmlFor="auth-password">
+          Contraseña
           <input
             id="auth-password" name="password" type="password" autoComplete="current-password" required
             value={password} onChange={(event) => { setPassword(event.target.value); }} disabled={busy}
           />
-          {failure ? <p className="auth-failure" role="alert">{failure}</p> : null}
-          <button className="button auth-primary" type="submit" disabled={busy}>
-            <LogIn size={17} aria-hidden="true" /> {busy ? 'Entrando…' : 'Iniciar sesión'}
-          </button>
-        </form>
-        {FINEPRINT}
-      </section>
-    </main>
+        </label>
+        {failure ? <Notice tone="danger" role="alert">{failure}</Notice> : null}
+        <Button type="submit" variant="primary" className="mt-1 min-h-10" disabled={busy}>
+          <LogIn size={16} aria-hidden="true" /> {busy ? 'Entrando…' : 'Iniciar sesión'}
+        </Button>
+      </form>
+      {FINEPRINT}
+    </AuthScreen>
   );
 }
 
 /** Redirect login: the OIDC BFF. Kept because the gateway may run in that mode. */
 function RedirectLoginScreen({ loginUrl, reason }: { loginUrl: string; reason?: string | null }) {
   return (
-    <main className="auth-screen" id="main-content">
-      <section className="auth-card">
-        <span className="auth-mark" aria-hidden="true"><KeyRound size={26} /></span>
-        <h1>Consola de Cauce V3</h1>
-        <p className="auth-lede">{LEDE}</p>
-        {reason ? <p className="auth-reason">{reason}</p> : null}
-        <a className="button auth-primary" href={loginUrl}>
-          <LogIn size={17} aria-hidden="true" /> Iniciar sesión
-        </a>
-        {FINEPRINT}
-      </section>
-    </main>
+    <AuthScreen>
+      <Logo />
+      <h1>Consola de Cauce V3</h1>
+      <Lede>{LEDE}</Lede>
+      {reason ? <Notice tone="warn">{reason}</Notice> : null}
+      <LinkButton variant="primary" className="min-h-10" href={loginUrl}>
+        <LogIn size={16} aria-hidden="true" /> Iniciar sesión
+      </LinkButton>
+      {FINEPRINT}
+    </AuthScreen>
   );
 }
 
 function CheckingScreen() {
   return (
-    <main className="auth-screen" id="main-content">
-      <div className="auth-card auth-card-quiet" role="status" aria-live="polite">
-        <span className="spinner" aria-hidden="true" />
-        <p>Verificando la sesión con el gateway…</p>
+    <AuthScreen role="status">
+      <div className="flex items-center gap-3 text-[13px] text-fg-2" aria-live="polite">
+        <Spinner />
+        <p className="m-0">Verificando la sesión con el gateway…</p>
       </div>
-    </main>
+    </AuthScreen>
   );
 }
 
 function ErrorScreen({ error, onRetry }: { error: Error; onRetry: () => void }) {
   return (
-    <main className="auth-screen" id="main-content">
-      <section className="auth-card auth-card-error" role="alert">
-        <span className="auth-mark auth-mark-danger" aria-hidden="true"><ShieldAlert size={26} /></span>
-        <h1>No se pudo verificar la sesión</h1>
-        <p className="auth-lede">{error.message}</p>
-        <p className="auth-fineprint">
-          Un gateway que no contesta <strong>no es una autorización</strong>: la consola se queda
-          cerrada hasta poder comprobar quién sos.
-        </p>
-        <button type="button" className="button auth-primary" onClick={onRetry}>Reintentar</button>
-      </section>
-    </main>
+    <AuthScreen tone="danger" role="alert">
+      <span className="grid size-10 place-items-center rounded-full bg-danger-soft text-danger-ink" aria-hidden="true"><ShieldAlert size={20} /></span>
+      <h1>No se pudo verificar la sesión</h1>
+      <Lede>{error.message}</Lede>
+      <p className="m-0 text-xs text-muted">
+        Un gateway que no contesta <strong className="text-fg">no es una autorización</strong>: la consola se queda
+        cerrada hasta poder comprobar quién sos.
+      </p>
+      <Button variant="primary" className="min-h-10" onClick={onRetry}>Reintentar</Button>
+    </AuthScreen>
   );
 }
 
@@ -146,14 +167,12 @@ function ErrorScreen({ error, onRetry }: { error: Error; onRetry: () => void }) 
  */
 export function UnmanagedAuthBanner() {
   return (
-    <div className="auth-banner" role="status">
-      <ShieldAlert size={16} aria-hidden="true" />
-      <p>
+    <div className="flex items-start gap-2.5 border-b border-warn/40 bg-warn-soft px-4 py-2 text-warn-ink" role="status">
+      <ShieldAlert size={16} aria-hidden="true" className="mt-0.5 shrink-0" />
+      <p className="m-0 text-xs leading-snug">
         <strong>Esta consola no tiene login de usuario.</strong> El gateway corre con
-        <code> CAUCE_AUTH_PROVIDER=mtls</code> y no hay proveedor de identidad configurado: el único
-        control es la contraseña compartida de Caddy delante del origen, que no da identidad, ni
-        cierre de sesión, ni vencimiento. El BFF OIDC ya está implementado en el gateway y esperando
-        configuración — ver <code>ops/console-login/README.md</code>.
+        <code className="font-mono"> CAUCE_AUTH_PROVIDER=mtls</code>: el único control es la contraseña compartida
+        de Caddy, sin identidad, cierre de sesión ni vencimiento. Ver <code className="font-mono">ops/console-login/README.md</code>.
       </p>
     </div>
   );

@@ -3,11 +3,9 @@ import {
   buildFleetAgents,
   countLiveTuiTargets,
   countOnlinePtyTargets,
-  fleetTerminalChip,
   resolveLiveTui,
   resolveTerminalTarget,
   terminalTargetForAgent,
-  filterFleetAgents,
 } from './fleet';
 
 function target(overrides: Partial<TerminalTarget> & Pick<TerminalTarget, 'tenant_id' | 'alias'>): TerminalTarget {
@@ -37,7 +35,6 @@ it('builds the fleet from server topology and merges authoritative lease observa
     tenantId: 'Steven', roomIds: ['grp.steven'], leaseState: 'online', membershipEnabled: true,
   });
   expect(agents.find((agent) => agent.alias === 'argos')?.leaseState).toBe('unknown');
-  expect(filterFleetAgents(agents, { tenantId: 'Steven', roomId: 'grp.steven', query: 'messages' }).map((agent) => agent.alias)).toEqual(['kant']);
 });
 
 it('does not resurrect an explicitly unregistered membership from a stale presence lease', () => {
@@ -94,23 +91,21 @@ it('resolves PTY authority per destination from the server inventory', () => {
 });
 
 it.each([
-  ['not_installed', 'unknown', 'ok', /presencia no observada.*sin comprobar/iu, 'Conexión sin comprobar'],
-  ['agent_offline', 'offline', ' OK ', /fuera de línea/iu, 'Agente PTY offline'],
-  ['unknown', 'unknown', 'Ok', /no se observó presencia.*sin comprobar/iu, 'Conexión sin comprobar'],
+  ['not_installed', 'unknown', 'ok', /presencia no observada.*sin comprobar/iu],
+  ['agent_offline', 'offline', ' OK ', /fuera de línea/iu],
+  ['unknown', 'unknown', 'Ok', /no se observó presencia.*sin comprobar/iu],
 ] as const)(
   'replaces a legacy ok placeholder for authorized %s with a state-specific UI reason',
-  (ptyState, status, reportedReason, expectedReason, label) => {
+  (ptyState, status, reportedReason, expectedReason) => {
     const [agent] = buildFleetAgents({ presence: [{ tenant_id: 'Steven', alias: 'jarvis' }] });
     const targets = [target({
       tenant_id: 'Steven', alias: 'jarvis', pty_state: ptyState, reason: reportedReason,
     })];
     const resolution = resolveTerminalTarget(targets, agent);
-    const chip = fleetTerminalChip(targets, agent);
 
     expect(resolution.status).toBe(status);
     expect(resolution.reason).toMatch(expectedReason);
     expect(resolution.reason).not.toMatch(/\bok\b/iu);
-    expect(chip).toMatchObject({ status, label, reason: resolution.reason });
   },
 );
 

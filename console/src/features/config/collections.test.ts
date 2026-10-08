@@ -18,10 +18,10 @@ it('publica las colecciones que el snapshot trae, no una lista fija de seis', ()
     'chain_policies', 'egress_destinations', 'agents',
   ]);
   expect(collections.find((collection) => collection.key === 'chain_policies')).toMatchObject({
-    title: 'Chain visibility policy', rows: [{ id: 'default', cycle_cut_enabled: true }],
+    title: 'Política de cadena', rows: [{ id: 'default', cycle_cut_enabled: true }],
   });
   expect(collections.find((collection) => collection.key === 'egress_destinations')?.title)
-    .toBe('Proactive egress allowlist');
+    .toBe('Destinos de aviso proactivo');
 });
 
 it('deja provider_accounts, techos y bindings exclusivamente en Cuentas y cuotas', () => {

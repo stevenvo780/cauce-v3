@@ -1,6 +1,0 @@
-.chat-selected-media { display: flex; flex: 1 1 240px; align-items: center; gap: var(--space-2); min-width: 0; max-width: 360px; min-height: 48px; padding: var(--space-1) var(--space-1) var(--space-1) var(--space-2); border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-2); }
-.chat-selected-thumbnail { width: 40px; height: 40px; flex: none; border-radius: var(--radius-sm); object-fit: cover; }
-.chat-selected-player { width: min(160px, 42vw); height: 38px; flex: none; }
-.chat-selected-name { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.chat-selected-media > small { flex: none; color: var(--faint); }
-.chat-selected-media .composer-attachment-remove { width: 44px; height: 44px; min-width: 44px; }

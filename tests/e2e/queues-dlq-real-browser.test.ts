@@ -26,14 +26,14 @@ async function login(tenant: FunctionalTenant, viewport: { width: number; height
   await page.getByLabel('Correo').fill(tenant.email);
   await page.getByLabel('Contraseña').fill(tenant.password);
   await page.getByRole('button', { name: 'Iniciar sesión' }).click();
-  await page.getByRole('link', { name: /Conversaciones/u }).waitFor({ state: 'visible', timeout: 20_000 });
+  await page.getByRole('navigation', { name: 'Navegación principal', exact: true }).locator('a[href="/messages"], a[href^="/messages/"]').waitFor({ state: 'visible', timeout: 20_000 });
   return page;
 }
 
 async function ensureRecipientMembership(page: Awaited<ReturnType<typeof newTrustedPage>>) {
   if (!fixture) throw new Error('functional browser fixture is not initialized');
   await page.goto(`${fixture.baseUrl}/config`, { waitUntil: 'domcontentloaded' });
-  await page.getByRole('button', { name: 'Administración avanzada' }).click();
+  await page.getByRole('tab', { name: 'Espacios y salas', exact: true }).click();
   await page.getByRole('button', { name: 'Un solo recurso' }).click();
   await page.getByLabel('Recurso a crear').selectOption('membership');
   await page.getByLabel('Tenant', { exact: true }).fill(isaTenant.tenant);
@@ -58,7 +58,8 @@ async function publishPending(page: Awaited<ReturnType<typeof newTrustedPage>>, 
   await page.getByRole('heading', { name: isaTenant.target, exact: true }).waitFor({ timeout: 20_000 });
   await page.getByLabel(`Mensaje para ${isaTenant.target}`).fill(marker);
   await page.getByRole('button', { name: 'Enviar', exact: true }).click();
-  await page.getByText(marker, { exact: true }).waitFor({ state: 'visible', timeout: 20_000 });
+  await page.getByLabel('Historial de la conversación', { exact: true }).getByText(marker, { exact: true })
+    .waitFor({ state: 'visible', timeout: 20_000 });
   let persisted = await fixture.database.pool.query<{ message_id: string; delivery_id: string; status: string }>(
     `SELECT message.id AS message_id,delivery.id AS delivery_id,delivery.status
        FROM messages message JOIN deliveries delivery ON delivery.message_id=message.id
@@ -273,7 +274,8 @@ describe('colas y DLQ operativo con consola HTTPS y PostgreSQL reales', () => {
     );
     expect(priorWakeCount.rows).toHaveLength(1);
     await resolveDlq.getByRole('button', { name: /Cerrar sin replay/u }).click();
-    const resolution = operator.getByRole('alertdialog', { name: 'Cerrar incidente DLQ sin replay' });
+    const compactIncidentId = `${resolveIncidentId.slice(0, 8)}…${resolveIncidentId.slice(-6)}`;
+    const resolution = operator.getByRole('alertdialog', { name: `Cerrar ${compactIncidentId} sin replay`, exact: true });
     await resolution.locator('textarea[aria-label="Motivo operativo"]').fill('Prueba E2E: cierre manual sin reinyección.');
     await resolution.locator('input[type="checkbox"]').click();
     await resolution.getByRole('button', { name: 'Cerrar sin replay', exact: true }).click();

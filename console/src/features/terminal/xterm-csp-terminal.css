@@ -57,3 +57,9 @@
 .pty-host .xterm-fg-257 { color: var(--pty-fondo, #0a0e16); }
 .pty-host .xterm-fg-257.xterm-dim { color: color-mix(in srgb, var(--pty-fondo, #0a0e16) 50%, transparent); }
 .pty-host .xterm-bg-257 { background-color: var(--pty-tinta, #d8e4f7); }
+
+/* El lienzo del terminal es oscuro en los dos temas; el marco de la consola lo respeta. */
+.pty-surface { background-color: var(--pty-fondo, #0a0e16); }
+
+/* Donde vive el nodo de una sesión mientras ninguna vista lo muestra: medible, pero fuera de pantalla. */
+.pty-detached-holder { position: absolute; top: 0; left: -10000px; width: 900px; height: 480px; overflow: hidden; visibility: hidden; pointer-events: none; }

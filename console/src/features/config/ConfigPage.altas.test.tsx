@@ -2,7 +2,7 @@ import { screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { expect, it } from 'vitest';
-import { ConfigAdministration as ConfigPage } from './ConfigPage';
+import { ConfigPage } from './ConfigPage';
 import { server } from '../../mocks/server';
 import { renderWithApi } from '../../test/render';
 import { irA, recordChanges, type ChangeRequest } from './ConfigPage.test-helpers';
@@ -12,8 +12,10 @@ import { irA, recordChanges, type ChangeRequest } from './ConfigPage.test-helper
  * does on an empty bus) and the raw editor's refusal to send text that is not a mutation.
  */
 
-const ESPACIOS = /espacios y miembros/i;
-const HISTORIAL = /historial y json/i;
+const ESPACIOS = /espacios y salas/i;
+const HISTORIAL = /^avanzado$/i;
+
+beforeEach(() => { window.history.replaceState({}, '', '/config?seccion=espacios'); });
 
 it('da de alta un TENANT desde el formulario y deja el alta vacía para no repetirla', async () => {
   const changes: ChangeRequest[] = [];
@@ -219,7 +221,7 @@ it('el editor crudo rechaza lo que no es una mutación sin gastar un viaje al se
   renderWithApi(<ConfigPage />);
   await irA(user, HISTORIAL);
 
-  const editor = await screen.findByLabelText(/mutación/i);
+  const editor = await screen.findByLabelText('Mutación JSON');
   await user.clear(editor);
   await user.type(editor, '{{ esto no es json');
   await user.click(screen.getByRole('button', { name: /preview \/ dry-run/i }));

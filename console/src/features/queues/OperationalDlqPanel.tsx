@@ -1,4 +1,4 @@
-import { CheckCircle2, ShieldAlert, TriangleAlert } from 'lucide-react';
+import { ShieldAlert } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useApi } from '../../api/context';
 import type {
@@ -6,7 +6,9 @@ import type {
 } from '../../api/types';
 import { isLowercaseSha256, isUuidV1ToV8 } from '../../api/contract-guards';
 import { useResource } from '../../api/use-resource';
-import { Badge, Desplazable, EmptyState, ErrorState, LoadingState, Panel, RefreshButton, Time, Unknown } from '../../components/ui';
+import { Button, CARD_TABLE, Notice, SCROLL, SectionCard, Toolbar } from '../../components/kit';
+import { ConfirmDialog } from '../../components/dialogs';
+import { Badge, Desplazable, EmptyState, ErrorState, LoadingState, RefreshButton, Time, Unknown } from '../../components/ui';
 import { compactId } from '../../lib';
 import { DLQ_DISPOSITION_LABEL, DLQ_DISPOSITION_TONE } from '../../vocabulario';
 
@@ -273,11 +275,12 @@ export function OperationalDlqPanel() {
     }
   }
 
+  const title = 'DLQ operativo';
   if (resource.loading && !resource.data) {
-    return <Panel title="DLQ operativo"><LoadingState label="Leyendo la reconciliación causal…" /></Panel>;
+    return <SectionCard title={title}><LoadingState label="Leyendo la reconciliación causal…" /></SectionCard>;
   }
   if (resource.error && !resource.data) {
-    return <Panel title="DLQ operativo"><ErrorState error={resource.error} onRetry={reloadFirstPage} /></Panel>;
+    return <SectionCard title={title}><ErrorState error={resource.error} onRetry={reloadFirstPage} /></SectionCard>;
   }
 
   const duplicateRequired = draft ? DUPLICATE_RISK.has(disposition(draft.item.disposition) ?? 'unclassified') : false;
@@ -286,38 +289,47 @@ export function OperationalDlqPanel() {
     && !hasControlCharacter(draft.reason.trim());
   const confirmationReady = draft !== undefined && validReason && draft.possibleNoDelivery
     && (!duplicateRequired || draft.possibleDuplicate);
+  const ACK = 'flex items-start gap-2 font-normal text-fg-2';
 
   return (
-    <Panel
-      title="DLQ operativo"
-      subtitle="Incidentes causales separados de las entregas. Cerrar aquí registra una decisión sin replay; nunca reenvía Telegram ni vuelve a ejecutar un agente."
+    <SectionCard
+      title={title}
+      description="Incidentes causales separados de las entregas. Cerrar acá registra una decisión sin replay; nunca reenvía Telegram ni vuelve a ejecutar un agente."
     >
-      <div className="dlq-toolbar">
-        <label><input type="checkbox" checked={onlyOpen} onChange={(event) => { setOnlyOpen(event.target.checked); }} /> Sólo abiertos</label>
-        <label>
+      <Toolbar className="mb-0">
+        <label className="flex items-center gap-2 font-normal text-fg-2"><input type="checkbox" checked={onlyOpen} onChange={(event) => { setOnlyOpen(event.target.checked); }} /> Sólo abiertos</label>
+        <label className="flex items-center gap-2 font-normal text-fg-2">
           Disposición
-          <select value={selectedDisposition} onChange={(event) => { setSelectedDisposition(event.target.value as 'all' | DlqDisposition); }}>
+          <select className="w-auto" value={selectedDisposition} onChange={(event) => { setSelectedDisposition(event.target.value as 'all' | DlqDisposition); }}>
             <option value="all">Todas</option>
             {Object.entries(DLQ_DISPOSITION_LABEL).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
           </select>
         </label>
-        <span className="dlq-total">{rows.length} visible{rows.length === 1 ? '' : 's'} · {allItems.length} cargado{allItems.length === 1 ? '' : 's'} de <Unknown value={resource.data?.total} />{nextCursor ? ' · quedan páginas' : ''}</span>
-        <div className="dlq-toolbar-actions">
+        <span className="text-xs text-muted">{rows.length} visible{rows.length === 1 ? '' : 's'} · {allItems.length} cargado{allItems.length === 1 ? '' : 's'} de <Unknown value={resource.data?.total} />{nextCursor ? ' · quedan páginas' : ''}</span>
+        <div className="ml-auto flex items-center gap-2">
           {nextCursor ? (
-            <button type="button" className="button small secondary" disabled={loadingMore} onClick={() => void loadMore()}>
+            <Button size="sm" disabled={loadingMore} onClick={() => void loadMore()}>
               {loadingMore ? 'Cargando…' : 'Cargar más'}
-            </button>
+            </Button>
           ) : null}
-          <RefreshButton onClick={reloadFirstPage} loading={resource.loading} />
+          <RefreshButton onClick={reloadFirstPage} loading={resource.loading} compact />
         </div>
-      </div>
+      </Toolbar>
 
-      {notice ? <p className="notice" role="status">{notice}</p> : null}
-      {paginationError ? <p className="notice danger" role="alert">{paginationError}</p> : null}
+      {notice && !draft ? <Notice role="status">{notice}</Notice> : null}
+      {paginationError ? <Notice tone="danger" role="alert">{paginationError}</Notice> : null}
 
-      {draft ? (
-        <div className="dlq-confirmation" role="alertdialog" aria-label="Cerrar incidente DLQ sin replay">
-          <p className="confirmacion-titulo"><TriangleAlert size={16} aria-hidden="true" /> Cerrar {compactId(draft.item.id)} sin replay</p>
+      <ConfirmDialog
+        open={draft !== undefined}
+        title={draft ? <>Cerrar <span className="mono">{compactId(draft.item.id)}</span> sin replay</> : null}
+        confirmLabel={submitting ? 'Cerrando…' : 'Cerrar sin replay'}
+        busy={submitting}
+        confirmDisabled={!confirmationReady}
+        onConfirm={() => void resolveWithoutReplay()}
+        onCancel={() => { setDraft(undefined); }}
+      >
+        {draft ? <>
+          {notice ? <Notice tone="danger" role="status">{notice}</Notice> : null}
           <p>Esta acción conserva la carta muerta y su evidencia, registra quién tomó la decisión y no vuelve a enviar ni ejecutar nada.</p>
           <label>
             Motivo operativo
@@ -329,7 +341,7 @@ export function OperationalDlqPanel() {
               onChange={(event) => { setDraft({ ...draft, reason: event.target.value }); }}
             />
           </label>
-          <label className="dlq-ack">
+          <label className={ACK}>
             <input
               type="checkbox"
               checked={draft.possibleNoDelivery}
@@ -338,7 +350,7 @@ export function OperationalDlqPanel() {
             Entiendo que cerrar sin replay puede dejar el efecto sin entregar.
           </label>
           {duplicateRequired ? (
-            <label className="dlq-ack">
+            <label className={ACK}>
               <input
                 type="checkbox"
                 checked={draft.possibleDuplicate}
@@ -347,18 +359,12 @@ export function OperationalDlqPanel() {
               La evidencia es incierta: entiendo que el efecto pudo haberse entregado y existir duplicado fuera de Cauce.
             </label>
           ) : null}
-          <div className="confirmacion-acciones">
-            <button type="button" className="button primary" disabled={!confirmationReady || submitting} onClick={() => void resolveWithoutReplay()}>
-              <CheckCircle2 size={15} aria-hidden="true" /> {submitting ? 'Cerrando…' : 'Cerrar sin replay'}
-            </button>
-            <button type="button" className="button small secondary" disabled={submitting} onClick={() => { setDraft(undefined); }}>No hacer nada</button>
-          </div>
-        </div>
-      ) : null}
+        </> : null}
+      </ConfirmDialog>
 
       {rows.length === 0 ? <EmptyState>No hay incidentes que coincidan con el filtro.</EmptyState> : (
-        <Desplazable etiqueta="Incidentes de DLQ con clasificación causal">
-          <table className="tabla-dlq">
+        <Desplazable etiqueta="Incidentes de DLQ con clasificación causal" className={SCROLL}>
+          <table className={CARD_TABLE}>
             <caption className="sr-only">Incidentes de DLQ con clasificación causal</caption>
             <thead><tr><th>Incidente</th><th>Tenant</th><th>Origen</th><th>Disposición</th><th>Intentos</th><th>Evidencia</th><th>Creado</th><th>Resolución</th><th>Acción</th></tr></thead>
             <tbody>{rows.map((item, index) => {
@@ -370,15 +376,15 @@ export function OperationalDlqPanel() {
                   <td data-label="Tenant"><Unknown value={item.tenantId} /></td>
                   <td data-label="Origen"><Unknown value={item.kind} /><small className="subline"><Unknown value={item.adapter} ausente="no-aplica" /></small></td>
                   <td data-label="Disposición"><Badge tone={itemDisposition ? DLQ_DISPOSITION_TONE[itemDisposition] : 'unknown'}><Unknown value={itemDisposition ? DLQ_DISPOSITION_LABEL[itemDisposition] : undefined} /></Badge></td>
-                  <td data-label="Intentos"><Unknown value={item.attempts} /></td>
+                  <td data-label="Intentos" className="tabular-nums"><Unknown value={item.attempts} /></td>
                   <td data-label="Evidencia"><span className="mono" title={item.evidenceSha256 ?? undefined}>{item.evidenceSha256?.slice(0, 12) ?? 'UNKNOWN'}</span></td>
                   <td data-label="Creado"><Time value={item.createdAt} relativo /></td>
                   <td data-label="Resolución"><Unknown value={item.resolutionRule} ausente={item.open ? 'todavia-no' : 'sin-dato'} /><small className="subline"><Time value={item.resolvedAt} relativo /></small></td>
-                  <td data-label="Acción">
+                  <td data-label="Acción" data-wide>
                     {resolvable ? (
-                      <button type="button" className="button small" onClick={() => { setDraft({ item, reason: '', possibleDuplicate: false, possibleNoDelivery: false }); }}>
-                        <ShieldAlert size={15} aria-hidden="true" /> Cerrar sin replay
-                      </button>
+                      <Button size="sm" onClick={() => { setDraft({ item, reason: '', possibleDuplicate: false, possibleNoDelivery: false }); }}>
+                        <ShieldAlert size={14} aria-hidden="true" /> Cerrar sin replay
+                      </Button>
                     ) : <span className="muted">{item.open ? 'Requiere evidencia causal' : 'Cerrado'}</span>}
                   </td>
                 </tr>
@@ -387,6 +393,6 @@ export function OperationalDlqPanel() {
           </table>
         </Desplazable>
       )}
-    </Panel>
+    </SectionCard>
   );
 }
