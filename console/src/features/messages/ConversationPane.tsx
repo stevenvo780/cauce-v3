@@ -19,7 +19,7 @@ import type { FullBody } from './ChatMessage';
 import { ChatThread } from './ChatThread';
 import { useConversationDraft } from './conversation-drafts';
 import { ConversationNotices } from './ConversationNotices';
-import { estaPegadoAlFinal, irAlFinal } from './desplazamiento';
+import { GESTO_DEL_LECTOR_MS, estaPegadoAlFinal, irAlFinal, leerDesplazamiento } from './desplazamiento';
 import { publishDurably } from './durable-publish';
 import { MessageDetail } from './MessageDetail';
 import { mergeOptimisticMessages, optimisticMessageOf, publishedMessage, retainOptimisticMessages, type OptimisticMessage } from './optimistic-message';
@@ -211,11 +211,17 @@ function ConversationPaneContent({
     return () => { observer.disconnect(); };
   }, [contextOpen]);
 
+  const gestoHasta = useRef(0);
+  const gestoDelLector = () => { gestoHasta.current = Date.now() + GESTO_DEL_LECTOR_MS; };
   function alDesplazar() {
     const caja = cajaRef.current;
     if (!caja) return;
+    const delLector = Date.now() < gestoHasta.current;
+    if (delLector) gestoDelLector();
+    const lectura = leerDesplazamiento({ abajo: estaPegadoAlFinal(caja), pegado: pegadoRef.current, delLector });
+    if (lectura === 'volver') { irAlFinal(caja, false); return; }
     scrollPosition.current = caja.scrollTop;
-    const abajo = estaPegadoAlFinal(caja);
+    const abajo = lectura === 'pegado';
     pegadoRef.current = abajo;
     setPegado(abajo);
     if (abajo) setVistosHastaAqui(hilo.length);
@@ -377,7 +383,8 @@ function ConversationPaneContent({
 
       <div className="relative flex min-h-0 flex-1">
         <div className="relative flex min-w-0 flex-1 flex-col">
-          <div ref={cajaRef} onScroll={alDesplazar} data-thread-scroll className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+          <div ref={cajaRef} onScroll={alDesplazar} onWheel={gestoDelLector} onTouchMove={gestoDelLector} onPointerDown={gestoDelLector}
+            onKeyDown={gestoDelLector} data-thread-scroll className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
             <div ref={contenidoRef} className="mx-auto w-full max-w-3xl px-4 pt-6 pb-6 min-[761px]:px-6">
               {totalVisible >= LIMITE_MENSAJES ? (
                 <p role="note" data-truncated className="m-0 mb-4 rounded-lg bg-subtle px-3 py-2 text-center text-xs text-muted">
