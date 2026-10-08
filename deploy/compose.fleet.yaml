@@ -1,0 +1,37 @@
+# Controlador de flota V3.5 en server: entorno de flota y montajes de solo lectura del gateway.
+# deploy.sh lo añade sólo con CAUCE_DEPLOY_FLEET_OVERLAY=1 en el env de la instancia; sin el controlador
+# instalado (/etc/cauce-v3/fleet-v35, /run/cauce-fleet-v35) el gateway no arranca: create_host_path es false.
+services:
+  gateway:
+    environment:
+      CAUCE_FLEET_OPERATIONS_ENABLED: "1"
+      CAUCE_FLEET_CAPABILITY_FILE: /run/cauce-fleet/config/capability.v1.json
+      CAUCE_FLEET_API_CONFIG_FILE: /run/cauce-fleet/config/api.v1.json
+      CAUCE_FLEET_CONTROLLER_HOST: server
+      CAUCE_FLEET_MTLS_IDENTITY_FILE: /run/cauce-fleet-identities/mtls_identities.json
+      CAUCE_FLEET_TOKEN_HASH_FILE: /run/cauce-fleet-identities/token_hashes.json
+      CAUCE_MTLS_IDENTITY_FILE: /run/cauce-identities/mtls_identities.json
+      CAUCE_TOKEN_HASH_FILE: /run/cauce-identities/token_hashes.json
+    volumes:
+      - type: bind
+        source: /etc/cauce-v3/fleet-v35/gateway
+        target: /run/cauce-fleet/config
+        read_only: true
+        bind: {create_host_path: false}
+      # El proveedor de flota exige registros con propietario uid 0: copia root:1000 0640 del registro vivo,
+      # refrescada por sync-registry-base.py. Reemplaza el montaje vivo del mismo destino de compose.yaml.
+      - type: bind
+        source: /etc/cauce-v3/fleet-v35/registry-base
+        target: /run/cauce-identities
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: /etc/cauce-v3/fleet-v35/registry-fleet
+        target: /run/cauce-fleet-identities
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: /run/cauce-fleet-v35/auth
+        target: /run/cauce-fleet-v35/auth
+        read_only: true
+        bind: {create_host_path: false}

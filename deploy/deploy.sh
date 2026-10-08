@@ -225,6 +225,15 @@ if [ "$MCP_HUMAN_ENABLED" = 1 ]; then
   COMPOSE+=(-f "$REPO/deploy/$MCP_OVERLAY_NAME")
   "${COMPOSE[@]}" config >/dev/null || die "el compose MCP no renderiza con $ENV_FILE"
 fi
+FLEET_OVERLAY="$(env_value CAUCE_DEPLOY_FLEET_OVERLAY)"
+[ -z "$FLEET_OVERLAY" ] || [ "$FLEET_OVERLAY" = 0 ] || [ "$FLEET_OVERLAY" = 1 ] \
+  || die "CAUCE_DEPLOY_FLEET_OVERLAY debe ser 0 o 1 en $ENV_FILE"
+if [ "$FLEET_OVERLAY" = 1 ]; then
+  systemctl is-active --quiet cauce-fleet-v35-controller.service \
+    || die "CAUCE_DEPLOY_FLEET_OVERLAY=1 exige cauce-fleet-v35-controller activo antes de recrear el gateway"
+  COMPOSE+=(-f "$REPO/deploy/compose.fleet.yaml")
+  "${COMPOSE[@]}" config >/dev/null || die "el compose de flota no renderiza con $ENV_FILE"
+fi
 REGISTRY="${REGISTRY%/}"
 [[ "$REGISTRY" =~ ^[a-zA-Z0-9][a-zA-Z0-9._:/-]*$ ]] || die "CAUCE_DEPLOY_REGISTRY invalido"
 [[ "$EXPECTED_GIT_REF" =~ ^[a-zA-Z0-9][a-zA-Z0-9._/-]*$ ]] || die "CAUCE_DEPLOY_EXPECTED_GIT_REF invalido"
