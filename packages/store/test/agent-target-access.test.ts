@@ -54,7 +54,7 @@ describe('CauceRepository.authorizeAgentTarget', () => {
       .toContain('edge.allow_control');
   });
 
-  it('el control de un agente disabled falla cerrado, aunque la lectura siga siendo explícita', async () => {
+  it('el control de un agente disabled falla cerrado, aunque admita lectura y configuración explícitas', async () => {
     const { repo, calls } = fixture([]);
 
     await expect(repo.authorizeAgentTarget('Steven', 'zeus', 'Steven', 'apagado', 'control'))
@@ -62,6 +62,7 @@ describe('CauceRepository.authorizeAgentTarget', () => {
 
     const lookup = calls.find((call) => call.sql.includes('FROM agents agent'));
     expect(lookup?.params).toEqual(['Steven', 'zeus', 'Steven', 'apagado', 'control']);
-    expect(lookup?.sql).toContain("($5::text='read' OR agent.enabled)");
+    expect(lookup?.sql).toContain("($5::text IN ('read','configure') OR agent.enabled)");
+    expect(lookup?.sql).toContain("($5::text<>'configure' OR to_jsonb(agent)->>'retired_at' IS NULL)");
   });
 });

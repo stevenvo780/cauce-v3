@@ -76,6 +76,15 @@ async function applyAll(mutations: readonly ConfigMutation[], from = 0): Promise
   return revision;
 }
 
+async function admitSalvaFixture(): Promise<void> {
+  const admitted = await pool.query(`
+    UPDATE agents SET enabled=true,container_name='ws-isa',runtime_user='dev',
+      home_directory='/home/dev',state_directory='/state/salva'
+    WHERE tenant_id='Isa' AND alias='salva'
+  `);
+  expect(admitted.rowCount).toBe(1);
+}
+
 describe('agent registry CRUD, invariants, and rollback', () => {
   it('previews without side effects and CRUDs every new configuration family', async () => {
     const preview = await repository.applyConfigurationChange('Steven', 'kant', {
@@ -88,7 +97,7 @@ describe('agent registry CRUD, invariants, and rollback', () => {
       {
         resource: 'agent', action: 'create', tenant_id: 'Acme', alias: 'acmebot',
         value: {
-          harness_id: 'codex', display_name: 'Acme Bot', enabled: true, container_name: 'ws-acme',
+          harness_id: 'codex', display_name: 'Acme Bot', enabled: false, container_name: 'ws-acme',
           runtime_user: 'dev', home_directory: '/home/dev', state_directory: '/var/state/acmebot'
         }
       },
@@ -113,7 +122,7 @@ describe('agent registry CRUD, invariants, and rollback', () => {
     const snapshot = await repository.getConfiguration('Steven', 'kant');
     expect(snapshot.revision).toBe(revision);
     expect(snapshot.agents).toEqual(expect.arrayContaining([
-      expect.objectContaining({ tenant_id: 'Acme', alias: 'acmebot', enabled: true, container_name: 'ws-acme' })
+      expect.objectContaining({ tenant_id: 'Acme', alias: 'acmebot', enabled: false, container_name: 'ws-acme' })
     ]));
     expect(snapshot.provider_accounts).toEqual(expect.arrayContaining([
       expect.objectContaining({
@@ -133,6 +142,21 @@ describe('agent registry CRUD, invariants, and rollback', () => {
         tenant_id: 'Acme', agent_alias: 'acmebot', account_id: 'codex-acme', priority: 10, enabled: true
       })
     ]));
+  });
+
+  it.each([true, false])('rejects generic agent admission without consuming a revision (dry-run %s)', async (dryRun) => {
+    await expect(repository.applyConfigurationChange('Steven', 'kant', {
+      resource: 'agent', action: 'create', tenant_id: 'Isa', alias: 'salva',
+      value: { enabled: true },
+    }, dryRun, 0)).rejects.toMatchObject({ code: 'conflict', message: 'create an inactive draft and verify a fleet operation before admission' });
+    expect((await pool.query("SELECT enabled FROM agents WHERE tenant_id='Isa' AND alias='salva'")).rows).toEqual([]);
+    expect((await pool.query('SELECT count(*)::int AS count FROM config_revisions')).rows).toEqual([{ count: 0 }]);
+    await applyAll([salvaAgent]);
+    await expect(repository.applyConfigurationChange('Steven', 'kant', {
+      resource: 'agent', action: 'update', tenant_id: 'Isa', alias: 'salva', value: { enabled: true },
+    }, dryRun, 1)).rejects.toMatchObject({ code: 'conflict', message: 'agent admission requires a verified fleet operation' });
+    expect((await pool.query("SELECT enabled FROM agents WHERE tenant_id='Isa' AND alias='salva'")).rows).toEqual([{ enabled: false }]);
+    expect((await pool.query('SELECT count(*)::int AS count FROM config_revisions')).rows).toEqual([{ count: 1 }]);
   });
 
   it('rejects a binding for an account the alias has no ceiling entry for', async () => {
@@ -186,6 +210,7 @@ describe('agent registry CRUD, invariants, and rollback', () => {
 
   it('blocks agent delete while a delivery is active or a lease is live', async () => {
     await applyAll([salvaAgent]);
+    await admitSalvaFixture();
     const published = await repository.publish({
       version: '3.0', request_id: randomUUID(), trace_id: `trace-${randomUUID()}`,
       tenant_id: 'Steven', room_id: 'grp.steven', actor_alias: 'kant',
@@ -489,13 +514,7 @@ describe('agent fleet read endpoints', () => {
     expect(await repository.getAgentByIdentity('Isa', 'salva', 'Steven', 'kant'))
       .toMatchObject({ deployment_status: 'disabled' });
 
-    await applyAll([{
-      resource: 'agent', action: 'update', tenant_id: 'Isa', alias: 'salva',
-      value: {
-        enabled: true, container_name: 'ws-isa', runtime_user: 'dev',
-        home_directory: '/home/dev', state_directory: '/state/salva'
-      }
-    }], 1);
+    await admitSalvaFixture();
     // Enabled, but no connection_leases row has ever existed for this alias: presence is unknown,
     // not "offline" — those are deliberately different states (never connected vs. connected then lost).
     expect(await repository.getAgentByIdentity('Isa', 'salva', 'Steven', 'kant'))

@@ -7,7 +7,7 @@ import {
   type ConfigMutation,
 } from '@cauce/protocol';
 import {
-  AgentProfileRepository, CauceRepository, StoreError, type DatabasePool,
+  AgentProfileRepository, CauceRepository, ConfigurationError, type DatabasePool,
 } from '@cauce/store';
 import { resetTestDatabase, startTestDatabase, type TestDatabase } from '../helpers/postgres.js';
 
@@ -40,7 +40,7 @@ beforeEach(async () => {
   await repository.applyConfigurationChange('Steven', 'kant', {
     resource: 'agent', action: 'create', tenant_id: 'Isa', alias: 'salva',
     value: {
-      harness_id: 'codex', display_name: 'Salva', enabled: true,
+      harness_id: 'codex', display_name: 'Salva', enabled: false,
       container_name: 'ws-salva', runtime_user: 'dev',
       home_directory: '/home/dev', state_directory: '/var/lib/salva',
     },
@@ -52,6 +52,11 @@ afterAll(async () => {
   await pool.end();
   await database.container.stop();
 });
+
+async function admitSalvaFixture(): Promise<void> {
+  const admitted = await pool.query("UPDATE agents SET enabled=true WHERE tenant_id='Isa' AND alias='salva'");
+  expect(admitted.rowCount).toBe(1);
+}
 
 async function deliveryEnvelope(): Promise<Record<string, unknown>> {
   await repository.publish({
@@ -108,6 +113,7 @@ describe('role_brief es una proyección, no una segunda fuente de verdad', () =>
   it('la escritura canónica proyecta el rol y el mismo valor llega al sobre', async () => {
     expect(countCodePoints(edgeRole)).toBe(ROLE_BRIEF_MAX_CODE_POINTS);
     expect(edgeRole.length).toBe(1_300);
+    await admitSalvaFixture();
     const desired = await profiles.replace({
       tenant_id: 'Isa', alias: 'salva', role_summary: edgeRole,
     }, null, actor);
@@ -139,6 +145,7 @@ describe('role_brief es una proyección, no una segunda fuente de verdad', () =>
   });
 
   it('el snapshot muestra la proyección, pero borrar el agente no puede hacer cascade del perfil', async () => {
+    await admitSalvaFixture();
     const desired = await profiles.replace({
       tenant_id: 'Isa', alias: 'salva', role_summary: 'Operación de Isa.',
     }, null, actor);
@@ -174,7 +181,7 @@ describe('role_brief es una proyección, no una segunda fuente de verdad', () =>
     expect(() => Buffer.from(clamped, 'utf8').toString('utf8')).not.toThrow();
   });
 
-  it('los rechazos genéricos se traducen a StoreError estable', async () => {
+  it('los rechazos genéricos conservan ConfigurationError estable sin consumir revisión', async () => {
     const mutation = {
       resource: 'agent_profile', action: 'update', tenant_id: 'Isa', alias: 'salva',
       value: { purpose: 'duplicado' },
@@ -182,7 +189,8 @@ describe('role_brief es una proyección, no una segunda fuente de verdad', () =>
     const error = await repository.applyConfigurationChange(
       'Steven', 'kant', mutation, true, 1,
     ).catch((caught: unknown) => caught);
-    expect(error).toBeInstanceOf(StoreError);
-    expect(error).toMatchObject({ code: 'invalid_input' });
+    expect(error).toBeInstanceOf(ConfigurationError);
+    expect(error).toMatchObject({ code: 'invalid_input', message: 'agent_profile is only writable through the canonical profile endpoint with runtime ACK' });
+    expect((await pool.query('SELECT count(*)::int AS count FROM config_revisions')).rows).toEqual([{ count: 1 }]);
   });
 });
