@@ -13,6 +13,10 @@
 set -uo pipefail
 A=${1:?uso: cauce-panel <alias>}
 OPS=$HOME/.local/share/cauce-v3/ops
+if [[ -v CAUCE_FLEET_RUNTIME_STATE ]]; then
+  exec "$HOME/.local/bin/cauce-sesiones" "$A" --panel
+fi
+A=$(PYTHONDONTWRITEBYTECODE=1 python3 "$OPS/scripts/container-alias-query.py" "$A" --runtime-key) || exit $?
 SOCK=cauce
 
 if systemctl --user cat "cauce-v3-host-$A.service" >/dev/null 2>&1; then

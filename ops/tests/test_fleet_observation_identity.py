@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import ast
 import pathlib
-import types
 import sys
+import types
 import unittest
 
 OPS = pathlib.Path(__file__).resolve().parents[1]

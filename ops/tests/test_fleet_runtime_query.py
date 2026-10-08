@@ -12,7 +12,7 @@ from test_fleet_runtime_materialization import dynamic_source
 
 SCRIPTS = pathlib.Path(__file__).resolve().parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPTS))
-from fleet_runtime_materialization import materialize
+from fleet_runtime_materialization import materialize  # noqa: E402
 
 
 class RuntimeFleetQueryTests(unittest.TestCase):

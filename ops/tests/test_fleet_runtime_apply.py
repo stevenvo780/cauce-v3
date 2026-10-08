@@ -1,13 +1,17 @@
 import importlib.util
 import json
 import pathlib
+import sys
 import tempfile
 import unittest
 from unittest import mock
-from test_fleet_runtime_materialization import dynamic_source
-from fleet_runtime_materialization import materialize
 
 SCRIPTS = pathlib.Path(__file__).resolve().parents[1] / 'scripts'
+sys.path.insert(0, str(SCRIPTS))
+
+from fleet_runtime_materialization import materialize  # noqa: E402
+from test_fleet_runtime_materialization import dynamic_source  # noqa: E402
+
 spec = importlib.util.spec_from_file_location('fleet_runtime_apply', SCRIPTS / 'fleet_runtime_apply.py')
 assert spec and spec.loader
 module = importlib.util.module_from_spec(spec)
@@ -55,10 +59,12 @@ class FleetRuntimeApplyTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(dir="/var/tmp") as directory, tempfile.TemporaryDirectory(dir="/var/tmp") as victim:
             state = pathlib.Path(directory)
             receipt = {'generation': 'a' * 64}
-            target = pathlib.Path(victim) / 'private'; target.write_bytes(b'untouched')
+            target = pathlib.Path(victim) / 'private'
+            target.write_bytes(b'untouched')
             with mock.patch.object(module, 'load_desired_fleet', return_value=receipt):
                 for name in ['applied-fleet.json', '.fleet-apply.lock']:
-                    link = state / name; link.symlink_to(target)
+                    link = state / name
+                    link.symlink_to(target)
                     with self.assertRaises((OSError, ValueError)):
                         module.publish_applied(state, 'a' * 64, None)
                     link.unlink()

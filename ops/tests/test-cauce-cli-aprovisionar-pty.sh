@@ -25,9 +25,10 @@ trap cleanup EXIT
 
 H="$WORK/home"
 OPSDIR="$H/.local/share/cauce-v3/ops"
-mkdir -p "$OPSDIR"
+mkdir -p "$OPSDIR/scripts"
+cp "$HERE/../scripts/"{container-alias-query.py,container_alias_lib.py,fleet_derive.py,fleet_runtime_inventory.py} "$OPSDIR/scripts/"
 cat > "$OPSDIR/flota.json" <<'JSON'
-{"fleet": {"probe": {"enabled": true, "tenant": "Test", "role": "agent"}}, "retired": {}}
+{"schemaVersion":1,"fleet":{"probe":{"enabled":true,"tenant":"Test","role":"agent","room":"grp.test","harness":"codex","container":"fixture-probe","user":"dev","home":"/home/dev","runtimeStateDirectory":"/home/dev/.local/state/cauce-v3/probe"}},"retired":{}}
 JSON
 openssl req -x509 -newkey rsa:2048 -nodes -subj "/CN=test-ca" -days 2 \
   -keyout "$WORK/ca.key" -out "$WORK/ca.crt" 2>/dev/null || { echo "FAIL: cannot mint test CA" >&2; exit 1; }

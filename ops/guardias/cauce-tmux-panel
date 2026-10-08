@@ -5,6 +5,10 @@
 # falls into a conversation the owner cannot see.
 # Idempotent: `ensure` leaves the session alone when it already exists.
 set -uo pipefail
+if [[ -v CAUCE_FLEET_RUNTIME_STATE ]]; then
+  printf 'La creación de paneles de flota dinámica requiere la consola y el coordinator durable.\n' >&2
+  exit 2
+fi
 A=${1:?uso: cauce-tmux-panel <alias>}
 panel_home=$(getent passwd "$(id -u)" 2>/dev/null | cut -d: -f6)
 [[ -n "$panel_home" && -d "$panel_home" ]] || panel_home=$HOME

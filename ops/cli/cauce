@@ -9,10 +9,24 @@ BIN=$cli_home/.local/bin
 CONFIG=$cli_home/.config/cauce-v3/container-aliases
 TMUX_SOCKET=cauce
 
+if [[ -v CAUCE_FLEET_RUNTIME_STATE ]]; then
+  case "${1:-}" in
+    ""|flota|estado|ver|-h|--help|help|ayuda) ;;
+    pila-test) printf 'La pila de pruebas de flota dinámica requiere la consola y el coordinator durable.\n' >&2; exit 2 ;;
+    *) case "${2:-}" in
+      estado|sesiones|ver|panel) ;;
+      *) printf 'La flota dinámica se modifica desde la consola mediante el coordinator durable. Este CLI admite estado, sesiones y panel; no inicia, detiene, autentica ni repara runtimes.\n' >&2; exit 2 ;;
+    esac ;;
+  esac
+fi
+
 c_reset=$'\033[0m'; c_b=$'\033[1m'; c_dim=$'\033[90m'
 c_ok=$'\033[32m'; c_warn=$'\033[33m'; c_err=$'\033[31m'
 alias_info() {  # $1=alias -> "tenant\troom\tcontenedor\tusuario\thome\tstate\tharness"
   PYTHONDONTWRITEBYTECODE=1 python3 "$OPS/scripts/container-alias-query.py" "$1" 2>/dev/null
+}
+runtime_key_de() {
+  PYTHONDONTWRITEBYTECODE=1 python3 "$OPS/scripts/container-alias-query.py" "$1" --runtime-key
 }
 todos_los_alias() {
   for f in "$CONFIG"/*.env; do
@@ -139,6 +153,7 @@ EOF
 
 # ---------- estado de la flota ----------
 cmd_flota() {
+  [[ ! -v CAUCE_FLEET_RUNTIME_STATE ]] || exec "$BIN/cauce-estado"
   printf "\n  %s%-9s %-22s %-9s %-9s %-9s %s%s\n" "$c_b" ALIAS CONTENEDOR HARNESS ADAPTADOR TUI MODO "$c_reset"
   printf "  %s\n" "$(printf '─%.0s' $(seq 1 76))"
   local a line ctr cuser state harness ad modo color term
@@ -453,8 +468,18 @@ for line in sys.stdin:
 }
 
 # ---------- resto ----------
-cmd_ver()      { exec "$BIN/ia-ver" "$@"; }
-cmd_estado()   { if [ -n "${1:-}" ]; then exec "$BIN/cauce-estado" "$1"; fi; exec "$BIN/cauce-estado"; }
+cmd_ver() {
+  local selector key; local -a keys=()
+  for selector in "$@"; do key=$(runtime_key_de "$selector") || return $?; keys+=("$key"); done
+  if [[ -v CAUCE_FLEET_RUNTIME_STATE ]]; then
+    if ((${#keys[@]} == 1)); then exec "$BIN/cauce-panel" "${keys[0]}"; fi
+    if ((${#keys[@]} == 0)); then exec "$BIN/cauce-estado"; fi
+    for key in "${keys[@]}"; do printf '\n%s\n' "$key"; "$BIN/cauce-panel" "$key" || return $?; done
+    return 0
+  fi
+  exec "$BIN/ia-ver" "${keys[@]}"
+}
+cmd_estado()   { if [ -n "${1:-}" ]; then local key; key=$(runtime_key_de "$1") || return $?; exec "$BIN/cauce-estado" "$key"; fi; exec "$BIN/cauce-estado"; }
 cmd_sesiones() { exec "$BIN/cauce-sesiones" "$1"; }
 unit_del_alias() {
   es_host_native "$1" && printf 'cauce-v3-host-%s.service\n' "$1" || printf 'cauce-v3-container-%s.service\n' "$1"
@@ -464,7 +489,7 @@ systemctl_user_o_avisa() {  # $1=verbo(start|stop) $2=unit
 }
 
 # shellcheck disable=SC2016  # corre en otro shell (eval / docker exec): sus $ se expanden alla
-BARRIDO='for p in /proc/[0-9]*; do case "$(sed -n "s/^.*) \(.\).*/\1/p" "$p/stat" 2>/dev/null)" in Z|X) continue;; esac; c=$(tr "\0" " " < "$p/cmdline" 2>/dev/null); set -- $c; case "${1:-}" in *node*|*python*) ;; *) continue;; esac; h=""; e=$(tr "\0" "\n" < "$p/environ" 2>/dev/null | sed -n "s/^CAUCE_ALIAS=//p" | head -1); [ "$e" = "@@A@@" ] && h=1; case "$c" in *cauce-v3-adapter/@@A@@/*-mcp.js*) ;; *cauce-v3-adapter/@@A@@/*) h=1;; esac; [ -n "$h" ] && echo "${p#/proc/}"; done'  # Unowned MCP bridges belong to the panel or gateway; headless bridges inherit CAUCE_ALIAS.
+BARRIDO='for p in /proc/[0-9]*; do case "$(sed -n "s/^.*) \(.\).*/\1/p" "$p/stat" 2>/dev/null)" in Z|X) continue;; esac; c=$(tr "\0" " " < "$p/cmdline" 2>/dev/null); set -- $c; case "${1:-}" in *node*|*python*) ;; *) continue;; esac; h=""; v=$(tr "\0" "\n" < "$p/environ" 2>/dev/null); e=$(printf "%s\n" "$v" | sed -n "s/^CAUCE_RUNTIME_KEY=//p" | head -1); [ -n "$e" ] || e=$(printf "%s\n" "$v" | sed -n "s/^CAUCE_ALIAS=//p" | head -1); [ "$e" = "@@A@@" ] && h=1; case "$c" in *cauce-v3-adapter/@@A@@/*-mcp.js*) ;; *cauce-v3-adapter/@@A@@/*) h=1;; esac; [ -n "$h" ] && echo "${p#/proc/}"; done'
 
 pids_del_alias() {  # $1=alias -> un PID por linea (vacio = de verdad no hay nada)
   local a=$1 line ctr cuser
@@ -617,6 +642,10 @@ cmd_off() {
 MAPA_HOST=$cli_home/.config/cauce-v3/alias-host.tsv
 sitio() {
   local alias_name=$1 route_record route match_count invalid_fields
+  if [[ -v CAUCE_FLEET_RUNTIME_STATE ]]; then
+    PYTHONDONTWRITEBYTECODE=1 python3 "$OPS/scripts/container-alias-query.py" "$alias_name" --route
+    return $?
+  fi
   [ -e "$MAPA_HOST" ] || { echo local; return; }
   if [ ! -f "$MAPA_HOST" ] || [ ! -r "$MAPA_HOST" ] || ! route_record=$(awk -v a="$alias_name" '$1==a {n++; if(NF!=2) bad=1; r=$2} END{if(n) printf "%d\t%d\t%s",n,bad+0,r}' "$MAPA_HOST" 2>/dev/null); then
     printf 'no se pudo leer el mapa de rutas\n' >&2
@@ -735,7 +764,15 @@ case "${1:-}" in
   ver) shift; cmd_ver "$@" ;;
   pila-test) shift; d=$(dirname "${BASH_SOURCE[0]}")/../tests/cauce-pila-test.cli.mjs; [ -f "$d" ] || { echo "pila-test solo existe en el repo (falta $d)"; exit 3; }; exec node "$d" "$@" ;;
   *)
-    a=$1; shift || true
+    a=$(runtime_key_de "$1") || exit $?
+    shift || true
+    if [[ -v CAUCE_FLEET_RUNTIME_STATE ]]; then
+      case "${1:-}" in
+        estado) cmd_estado "$a" ;;
+        sesiones) cmd_sesiones "$a" ;;
+        ver|panel) exec "$BIN/cauce-panel" "$a" ;;
+      esac
+    fi
     route=$(sitio "$a") || exit $?
     case "$route" in
       vps)

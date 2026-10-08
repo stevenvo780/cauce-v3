@@ -50,6 +50,11 @@ import subprocess
 import sys
 import time
 
+if 'CAUCE_FLEET_RUNTIME_STATE' in os.environ:
+    print('El acceso interactivo de flota dinámica requiere la consola y el coordinator durable. '
+          'Para consultar sesiones use cauce-sesiones.', file=sys.stderr)
+    raise SystemExit(2)
+
 OPS = os.path.expanduser('~/.local/share/cauce-v3/ops')
 MAP = os.path.join(OPS, 'container-aliases.json')
 MARKERS = os.path.expanduser('~/.local/state/cauce-attach')

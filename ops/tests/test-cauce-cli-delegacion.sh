@@ -20,6 +20,7 @@ cleanup() { rm -rf "$WORK"; }
 trap cleanup EXIT
 
 BIN="$WORK/bin"; mkdir -p "$BIN"
+runtime_key_de() { printf '%s\n' "$1"; }
 for n in cauce-estado cauce-sesiones; do
   cat > "$BIN/$n" <<EOF
 #!/usr/bin/env bash

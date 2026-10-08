@@ -22,13 +22,26 @@ import sys
 import time
 from pathlib import Path
 
-OWNER_HOME = Path('/home/stev')
+OWNER_HOME = Path(os.path.expanduser('~'))
 OPS = OWNER_HOME / '.local/share/cauce-v3/ops'
 MARKERS = str(OWNER_HOME / '.local/state/cauce-attach')
 sys.path.insert(0, str(OPS / 'scripts'))
 from fleet_derive import load_fleet_assignments  # noqa: E402  (tras el shim de sys.path)
+from fleet_runtime_inventory import inventory_root, resolve_runtime_key  # noqa: E402
 
-FLEET = load_fleet_assignments(OPS)
+try:
+    INVENTORY_ROOT = inventory_root(OPS)
+    FLEET = load_fleet_assignments(INVENTORY_ROOT, resolve_runtime=False, allow_empty=True)
+except (OSError, ValueError) as error:
+    print(f'cauce-estado: inventario no disponible: {error}', file=sys.stderr)
+    raise SystemExit(2) from None
+if 'CAUCE_FLEET_RUNTIME_STATE' in os.environ:
+    rows = json.loads((INVENTORY_ROOT / 'flota.json').read_bytes())['fleet']
+    for key, entry in FLEET.items():
+        row = rows[key]
+        for field in ('runtimeMode', 'hostId', 'systemdUser'):
+            if field in row:
+                entry[field] = row[field]
 ERRORS = {}
 HOST_ADDRESSES = {'server': '100.64.0.11', 'server2': '100.64.0.13'}
 
@@ -40,34 +53,40 @@ def info_of(alias):
 
 
 def is_native(alias):
-    return info_of(alias)['container'].startswith(('host:', 'vm:'))
+    info = info_of(alias)
+    return info.get('runtimeMode') == 'native' or info['container'].startswith(('host:', 'vm:'))
 
 
 def location(alias):
     entry = info_of(alias)
     container = entry['container']
-    host = container.split(':', 1)[1] if is_native(alias) else entry.get('dockerHost', 'local')
+    host = entry.get('hostId') or (container.split(':', 1)[1] if is_native(alias) else entry.get('dockerHost', 'local'))
+    if 'CAUCE_FLEET_RUNTIME_STATE' in os.environ:
+        return host, entry['systemdUser'], host
     host = 'server' if host == 'local' else host
     destination = alias if container.startswith('vm:') else HOST_ADDRESSES.get(host, host)
     return host, entry['systemdUser'], destination
 
 
-def at_host(alias, arguments, timeout=30, body=None):
-    host, manager, destination = location(alias)
+def at_host(alias, arguments, timeout=30, body=None, as_manager=True):
+    host, manager_user, destination = location(alias)
+    execution_user = manager_user if as_manager else info_of(alias)['user']
     try:
-        if host == socket.gethostname().split('.')[0]:
-            account = pwd.getpwnam(manager)
-            command = ['env', 'XDG_RUNTIME_DIR=/run/user/' + str(account.pw_uid), *arguments]
-            if os.getuid() != account.pw_uid:
+        if host == 'local' or host == socket.gethostname().split('.')[0]:
+            account = pwd.getpwnam(execution_user)
+            home = account.pw_dir if as_manager else info_of(alias)['home']
+            command = ['env', 'HOME=' + home, 'XDG_RUNTIME_DIR=/run/user/' + str(account.pw_uid), *arguments]
+            if os.geteuid() != account.pw_uid:
                 if os.geteuid() != 0:
-                    raise PermissionError('manager account is not available to this user')
-                command = ['runuser', '-u', manager, '--', *command]
+                    raise PermissionError('published execution account is not available to this user')
+                command = ['runuser', '-u', execution_user, '--', *command]
             result = subprocess.run(command, input=body if body is not None else '', capture_output=True, text=True,
                                     cwd=account.pw_dir, timeout=timeout)
         else:
-            script = 'export XDG_RUNTIME_DIR=/run/user/$(id -u); exec ' + shlex.join(arguments)
-            command = ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=6', '-l', manager,
-                       destination, 'bash -lc ' + shlex.quote(script)]
+            home = '$(getent passwd "$(id -u)" | cut -d: -f6)' if as_manager else shlex.quote(info_of(alias)['home'])
+            script = 'export HOME=' + home + '; export XDG_RUNTIME_DIR=/run/user/$(id -u); exec ' + shlex.join(arguments)
+            command = ['ssh', '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes', '-o', 'ConnectTimeout=6',
+                       '-l', execution_user, destination, 'sh -c ' + shlex.quote(script)]
             result = subprocess.run(command, input=body if body is not None else '', capture_output=True, text=True, timeout=timeout)
         if result.returncode == 0:
             return result.stdout.strip()
@@ -116,7 +135,7 @@ def sesiones_mod():
         arguments = ['python3', '-', info['stateDirectory'], info['home'], info['harness'], '']
         if not is_native(alias):
             arguments = ['docker', 'exec', '-i', '--user', info['user'], info['container'], *arguments]
-        raw = at_host(alias, arguments, timeout=60, body=modulo.SONDA)
+        raw = at_host(alias, arguments, timeout=60, body=modulo.SONDA, as_manager=not is_native(alias))
         try:
             value = json.loads(raw.splitlines()[-1])
             if isinstance(value, dict):
@@ -131,13 +150,19 @@ def sesiones_mod():
 
 
 def unit_of(alias):
+    if 'CAUCE_FLEET_RUNTIME_STATE' in os.environ:
+        return f'cauce-v3-alias-{alias}.service'
     kind = 'host' if is_native(alias) else 'container'
     return f'cauce-v3-{kind}-{alias}.service'
 
 
 def propiedades(alias, claves):
-    raw = at_host(alias, ['systemctl', '--user', 'show', unit_of(alias), *('-p' + key for key in claves)])
-    return dict(line.split('=', 1) for line in raw.splitlines() if '=' in line)
+    raw = at_host(alias, ['systemctl', '--user', 'show', unit_of(alias), '-pLoadState', *('-p' + key for key in claves)])
+    values = dict(line.split('=', 1) for line in raw.splitlines() if '=' in line)
+    if values.get('LoadState') == 'not-found':
+        ERRORS.setdefault(alias, set()).add('unidad publicada no disponible para medición')
+        return {}
+    return values
 
 
 def segundos_cpu(texto):
@@ -232,8 +257,14 @@ def presencia(mod, alias):
     codigo, datos = mod.gateway(alias, '/v3/status')
     if codigo != 200 or not isinstance(datos, dict):
         return None, None
-    mia = next((p for p in (datos.get('presence') or []) if p.get('alias') == alias), None)
+    mia = presence_record(datos, alias)
     return mia, datos
+
+
+def presence_record(datos, alias):
+    info = info_of(alias)
+    return next((row for row in (datos.get('presence') or []) if row.get('alias') == info.get('alias', alias)
+                 and row.get('tenant_id') == info['tenant']), None)
 
 
 def epoca(texto):
@@ -253,9 +284,11 @@ def actividad(mod, alias):
         return None
     ultimo_ack = ultima_hecha = None
     ack_estado = None
+    info = info_of(alias)
     for mensaje in (datos.get('items') or []):
         for entrega in (mensaje.get('deliveries') or []):
-            if entrega.get('recipient_alias') != alias:
+            if entrega.get('recipient_alias') != info.get('alias', alias) \
+                    or entrega.get('recipient_tenant') != info['tenant']:
                 continue
             for evento in (entrega.get('timeline') or []):
                 if evento.get('status') == 'published':
@@ -332,12 +365,13 @@ def reunir(mod, alias, con_sesiones=True, ligero=False, bus=None):
         presente, estado_bus = presencia(mod, alias)
     else:
         estado_bus = bus
-        presente = next((p for p in (bus.get('presence') or []) if p.get('alias') == alias), None)
+        presente = presence_record(bus, alias)
     datos = {
         'alias': alias, 'unit': unit, 'info': info,
         'unidad': propiedades(alias, ['ActiveState', 'SubState', 'ActiveEnterTimestamp',
                                      'NRestarts', 'MainPID', 'CPUUsageNSec']),
-        'marcador': marcador(alias) if location(alias)[0] == socket.gethostname().split('.')[0] else None,
+        'marcador': marcador(alias) if 'CAUCE_FLEET_RUNTIME_STATE' not in os.environ
+        and location(alias)[0] == socket.gethostname().split('.')[0] else None,
         'presencia': presente,
         'bus': estado_bus,
         'cola': mod.cola(alias),
@@ -461,7 +495,11 @@ def main():
     if not args:
         resumen_flota(mod)
         return 0
-    datos = reunir(mod, args[0])
+    try:
+        key = resolve_runtime_key(args[0], FLEET)
+    except ValueError as error:
+        die(str(error))
+    datos = reunir(mod, key)
     if como_json:
         print(json.dumps(datos, ensure_ascii=False, default=str))
     else:

@@ -10,9 +10,9 @@ from test_fleet_runtime_materialization import dynamic_source
 SCRIPTS = pathlib.Path(__file__).resolve().parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
-from container_alias_lib import load_container_aliases
-from fleet_runtime_materialization import materialize
-from manifest_lib import ManifestError, load_manifests
+from container_alias_lib import load_container_aliases  # noqa: E402
+from fleet_runtime_materialization import materialize  # noqa: E402
+from manifest_lib import ManifestError, load_manifests  # noqa: E402
 
 
 class RuntimeFleetCanonicalManifestsTests(unittest.TestCase):

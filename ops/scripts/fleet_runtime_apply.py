@@ -9,7 +9,12 @@ from typing import Any
 
 from atomic_file import atomic_write
 from fleet_runtime_materialization import (
-    DIGEST_PATTERN, EXPORTER, _destination, external_directory, load_applied_fleet, load_desired_fleet,
+    DIGEST_PATTERN,
+    EXPORTER,
+    _destination,
+    external_directory,
+    load_applied_fleet,
+    load_desired_fleet,
 )
 
 

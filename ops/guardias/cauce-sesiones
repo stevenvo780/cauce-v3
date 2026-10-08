@@ -25,9 +25,13 @@ Also importable: `inventario(alias)` returns the raw dict.
 import datetime
 import json
 import os
+import pwd
+import shlex
+import socket
 import subprocess
 import sys
 import time
+from pathlib import Path
 
 OPS = os.path.expanduser('~/.local/share/cauce-v3/ops')
 MAP = os.path.join(OPS, 'container-aliases.json')
@@ -35,8 +39,13 @@ PKI = os.path.expanduser('~/.config/cauce-v3/container-pki')
 GATEWAY = os.environ.get('CAUCE_GATEWAY_URL', 'https://100.64.0.6:8443')
 # kant does not live in a container: its adapter runs on the host, under a different unit name.
 HOST_NATIVE = {'kant': 'cauce-v3-host-kant'}
+sys.path.insert(0, os.path.join(OPS, 'scripts'))
+from fleet_derive import load_fleet_assignments  # noqa: E402
+from fleet_runtime_inventory import inventory_root, resolve_runtime_key  # noqa: E402
+
 # Only claude and codex leave a transcript per resumable session; the rest list keys only.
 CON_TRANSCRIPT = {'claude', 'codex'}
+READER_FLEET = None
 
 # --------------------------------------------------------------------------------------------
 # Probe that runs INSIDE the alias's container (or on the host for kant). A single call
@@ -266,15 +275,61 @@ def sh(args, timeout=90):
         return ''
 
 
+def reader_fleet():
+    global READER_FLEET
+    if READER_FLEET is not None:
+        return READER_FLEET
+    root = inventory_root(Path(OPS))
+    aliases = load_fleet_assignments(root, resolve_runtime=False, allow_empty=True)
+    if 'CAUCE_FLEET_RUNTIME_STATE' in os.environ:
+        rows = json.loads((root / 'flota.json').read_bytes())['fleet']
+        for key, info in aliases.items():
+            row = rows[key]
+            for field in ('runtimeMode', 'hostId', 'systemdUser'):
+                if field in row:
+                    info[field] = row[field]
+    READER_FLEET = aliases
+    return aliases
+
+
+def native_runtime(info):
+    return info.get('runtimeMode') == 'native' or info['container'].startswith(('host:', 'vm:'))
+
+
+def reader_location(alias, info):
+    container = info['container']
+    host = info.get('hostId') or (container.split(':', 1)[1] if native_runtime(info) else info.get('dockerHost', 'local'))
+    return host, alias if container.startswith('vm:') and 'CAUCE_FLEET_RUNTIME_STATE' not in os.environ else host
+
+
+def runtime_read(alias, info, arguments, *, manager=False, body=None, timeout=60):
+    host, destination = reader_location(alias, info)
+    user = info['systemdUser'] if manager else info['user']
+    if host == 'local' or host == socket.gethostname().split('.')[0]:
+        account = pwd.getpwnam(user)
+        home = account.pw_dir if manager else info['home']
+        command = ['env', 'HOME=' + home, 'XDG_RUNTIME_DIR=/run/user/' + str(account.pw_uid), *arguments]
+        if os.geteuid() != account.pw_uid:
+            if os.geteuid() != 0:
+                raise PermissionError('el usuario de lectura no coincide con el runtime publicado')
+            command = ['runuser', '-u', user, '--', *command]
+    else:
+        home = '$(getent passwd "$(id -u)" | cut -d: -f6)' if manager else shlex.quote(info['home'])
+        script = 'export HOME=' + home + '; export XDG_RUNTIME_DIR=/run/user/$(id -u); exec ' + shlex.join(arguments)
+        command = ['ssh', '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes', '-o', 'ConnectTimeout=6',
+                   '-l', user, destination, 'sh -c ' + shlex.quote(script)]
+    return subprocess.run(command, input=body or '', capture_output=True, text=True, timeout=timeout)
+
+
 def alias_info(alias):
     try:
-        data = json.load(open(MAP))['aliases']
-    except OSError:
+        data = reader_fleet()
+    except (OSError, ValueError):
         die(f'no puedo leer {MAP}')
     if alias not in data:
         die(f'alias desconocido: {alias}\nconocidos: {", ".join(sorted(data))}')
     info = dict(data[alias])
-    if alias in HOST_NATIVE:
+    if alias in HOST_NATIVE and 'CAUCE_FLEET_RUNTIME_STATE' not in os.environ:
         raw = sh(['systemctl', '--user', 'show', HOST_NATIVE[alias], '-p', 'Environment'])
         env = {}
         for token in raw.replace('Environment=', ' ').split():
@@ -287,14 +342,19 @@ def alias_info(alias):
 
 
 def _sonda(alias, info):
-    extra = os.path.expanduser('~') if alias in HOST_NATIVE else ''
+    extra = os.path.expanduser('~') if alias in HOST_NATIVE and 'CAUCE_FLEET_RUNTIME_STATE' not in os.environ else ''
     args = [info['stateDirectory'], info['home'], info.get('harness', ''), extra]
-    if alias in HOST_NATIVE:
+    if 'CAUCE_FLEET_RUNTIME_STATE' in os.environ:
+        cmd = ['python3', '-', *args]
+        if not native_runtime(info):
+            cmd = ['docker', 'exec', '-i', '--user', info['user'], info['container'], *cmd]
+    elif alias in HOST_NATIVE:
         cmd = ['python3', '-'] + args
     else:
         cmd = ['docker', 'exec', '-i', info['container'], 'python3', '-'] + args
     try:
-        salida = subprocess.run(cmd, input=SONDA, capture_output=True, text=True, timeout=180)
+        salida = runtime_read(alias, info, cmd, manager=not native_runtime(info), body=SONDA, timeout=180) \
+            if 'CAUCE_FLEET_RUNTIME_STATE' in os.environ else subprocess.run(cmd, input=SONDA, capture_output=True, text=True, timeout=180)
     except (OSError, subprocess.SubprocessError) as error:
         return {'error': str(error), 'sesiones': [], 'otros': {}}
     for linea in reversed(salida.stdout.strip().splitlines()):
@@ -304,6 +364,23 @@ def _sonda(alias, info):
             continue
     return {'error': (salida.stderr or 'la sonda no devolvió JSON').strip()[:400],
             'sesiones': [], 'otros': {}}
+
+
+def panel(alias):
+    info = alias_info(alias)
+    if info['harness'] == 'openclaw':
+        return 3
+    command = ['tmux', '-L', 'cauce', 'capture-pane', '-p', '-t', f'cauce-{alias}:agente']
+    if not native_runtime(info):
+        command = ['docker', 'exec', '--user', info['user'], info['container'], *command]
+    try:
+        result = runtime_read(alias, info, command, manager=not native_runtime(info))
+    except (OSError, KeyError, subprocess.SubprocessError) as error:
+        die(f'panel no medido: {type(error).__name__}')
+    if result.returncode != 0:
+        die('no se pudo medir un panel existente en el runtime publicado')
+    print(result.stdout, end='')
+    return 0
 
 
 # --------------------------------------------------------------------------------------------
@@ -316,7 +393,7 @@ def _meta(origen, clave):
     return valor if isinstance(valor, str) else None
 
 
-def clasificar(alias, fila):
+def clasificar(alias, fila, tenant=None):
     origen = fila.get('origen')
     if not isinstance(origen, dict):
         contexto = fila.get('contexto') or {}
@@ -344,7 +421,8 @@ def clasificar(alias, fila):
         if fila.get('origen_fuente') == 'sessions.json' and puente is None:
             fila['clase'] = 'dm_sin_puente'
         else:
-            fila['clase'] = 'dm_propio' if puente in (None, alias) else 'dm_ajeno'
+            own = puente in (None, alias) and (tenant is None or fila['puente_tenant'] in (None, tenant))
+            fila['clase'] = 'dm_propio' if own else 'dm_ajeno'
         fila['donde'] = f'DM Telegram {conversacion}'
     elif canal == 'telegram':
         fila['clase'] = 'grupo'
@@ -372,7 +450,7 @@ def inventario(alias):
     datos['info'] = info
     datos['harness'] = info.get('harness')
     for fila in datos['sesiones']:
-        clasificar(alias, fila)
+        clasificar(info.get('alias', alias), fila, info.get('tenant'))
     abreviar(datos['sesiones'])
     datos['dm'] = dm_del_dueno(datos['sesiones'])
     datos['reciente'] = datos['sesiones'][0] if datos['sesiones'] else None
@@ -475,7 +553,9 @@ def cola(alias):
     codigo, datos = gateway(alias, '/v3/console/queues')
     if codigo != 200 or not isinstance(datos, dict):
         return None
-    mias = [i for i in (datos.get('items') or []) if i.get('recipient_alias') == alias]
+    info = alias_info(alias)
+    mias = [i for i in (datos.get('items') or []) if i.get('recipient_alias') == info.get('alias', alias)
+            and i.get('recipient_tenant') == info['tenant']]
     por_estado = {}
     for item in mias:
         clave = estado_entrega(item)
@@ -635,10 +715,15 @@ def tabla(datos, destino=sys.stdout):
 
 
 def main():
-    args = [a for a in sys.argv[1:] if a != '--json']
+    args = [a for a in sys.argv[1:] if a not in {'--json', '--panel'}]
     if not args:
         die('uso: cauce-sesiones <alias> [--json]')
-    alias = args[0]
+    try:
+        alias = resolve_runtime_key(args[0], reader_fleet())
+    except (OSError, ValueError) as error:
+        die(str(error))
+    if '--panel' in sys.argv[1:]:
+        return panel(alias)
     datos = inventario(alias)
     if '--json' in sys.argv[1:]:
         print(json.dumps(datos, ensure_ascii=False))

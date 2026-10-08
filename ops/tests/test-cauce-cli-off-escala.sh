@@ -89,4 +89,15 @@ else
   bad "el barrido cuenta puentes MCP del gateway como adaptador: $(pids_del_alias "$A3" | tr '\n' ' ')"
 fi
 
+A4="zzphysical$$"
+CAUCE_ALIAS=shared_alias CAUCE_RUNTIME_KEY=$A4 python3 -c 'import time; time.sleep(120)' & p4=$!; PIDS+=("$p4")
+CAUCE_ALIAS=$A4 CAUCE_RUNTIME_KEY="other-$A4" python3 -c 'import time; time.sleep(120)' & p5=$!; PIDS+=("$p5")
+sleep 0.5
+found=$(pids_del_alias "$A4")
+if [ "$found" = "$p4" ]; then
+  ok "el barrido prioriza runtime key y conserva el proceso de otro runtime con wire alias coincidente"
+else
+  bad "el barrido confundio wire alias y runtime key: $found"
+fi
+
 exit $fail

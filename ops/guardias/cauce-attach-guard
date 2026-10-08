@@ -19,6 +19,10 @@ import subprocess
 import sys
 import time
 
+if 'CAUCE_FLEET_RUNTIME_STATE' in os.environ:
+    print('La recuperación de flota dinámica requiere la consola y el coordinator durable.', file=sys.stderr)
+    raise SystemExit(2)
+
 MARKERS = os.path.expanduser('~/.local/state/cauce-attach')
 LOG = os.path.join(MARKERS, 'guard.log')
 MAP = os.path.expanduser('~/.local/share/cauce-v3/ops/container-aliases.json')
