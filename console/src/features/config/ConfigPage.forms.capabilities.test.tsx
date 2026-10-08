@@ -46,7 +46,7 @@ it('no acredita alcance ante capabilities malformadas', async () => {
 it('ofrece restaurar incluso cuando no quedan salas activas', async () => {
   servirConfig(() => ({
     ...snapshotDeConfig(1), rooms: [],
-    retired: { rooms: [{ tenant_id: 'Miguel', id: 'grp.retired', enabled: false }] },
+    retired: { rooms: [{ tenant_id: 'Miguel', id: 'grp.retired', enabled: false }], tenants: [], memberships: [], agents: [] },
     capabilities: { actor, resources: [{ ...roomCapability, actions: ['restore'] }] },
   }));
   renderWithApi(<ConfigPage />);
