@@ -22,6 +22,14 @@ export interface SharedSessionConfig {
 
 const SHARED_SESSION_ENV = "CAUCE_SHARED_SESSION";
 
+function physicalAlias(alias: string, environment: NodeJS.ProcessEnv): string {
+  const key = environment.CAUCE_RUNTIME_KEY;
+  if (key === undefined || key === "") return alias;
+  if (!/^[a-z][a-z0-9-]{0,63}$/u.test(key)) throw new Error("CAUCE_RUNTIME_KEY must be a stable physical identifier");
+  return key;
+}
+
+
 export function claudePermissionArguments(
   harness: SharedSessionHarness,
   environment: NodeJS.ProcessEnv,
@@ -122,6 +130,7 @@ export function cliSharedSessionSpec(
   environment: NodeJS.ProcessEnv = process.env,
   stateDirectory?: string,
 ): SharedSessionSpec {
+  alias = physicalAlias(alias, environment);
   const configDirectory = harnessConfigDirectory(harness, home, environment, alias);
   return {
     alias,
@@ -155,6 +164,7 @@ export function loadSharedSessionConfig(
       `${SHARED_SESSION_ENV} sólo existe para claude, codex, grok y muse; '${harnessId}' no tiene sesión compartida`,
     );
   }
+  alias = physicalAlias(alias, environment);
   const workspace = environment[SHARED_SESSION_WORKSPACE_ENV] ?? DEFAULT_WORKSPACE;
   if (!isAbsolute(workspace)) {
     throw new Error(`${SHARED_SESSION_WORKSPACE_ENV} debe ser una ruta absoluta`);

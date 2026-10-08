@@ -29,6 +29,7 @@ export interface TmuxController {
 export function withoutLifecycleIdentity(environment: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const copy = { ...environment };
   delete copy.CAUCE_ALIAS;
+  delete copy.CAUCE_RUNTIME_KEY;
   delete copy.CAUCE_STATE_DIR;
   delete copy.CAUCE_CONTROL_DIR;
   delete copy.CAUCE_CONTAINER_ID;
