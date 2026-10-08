@@ -20,21 +20,27 @@ export interface FleetCoordinatorTransport {
   compensate(host: string, execution: FleetExecution, signal: AbortSignal): Promise<FleetEvidence>;
 }
 function unavailable(): Error { return new Error('Fleet host scope or effect is unavailable'); }
+export function fleetHostInputs(targets: { tenant_id: string; alias: string }[],
+  execution: Pick<FleetExecution, 'previous_agents' | 'desired_memberships'>): Pick<FleetExecution, 'fenced_targets' | 'previous_agents' | 'desired_memberships'> {
+  const identities = new Set(targets.map(target => JSON.stringify([target.tenant_id, target.alias])));
+  return {
+    fenced_targets: targets.map(target => ({ resource: 'agent', tenant_id: target.tenant_id, alias: target.alias })),
+    previous_agents: (execution.previous_agents ?? []).filter(agent => identities.has(JSON.stringify([agent.tenant_id, agent.alias]))),
+    ...(execution.desired_memberships === undefined ? {} : {
+      desired_memberships: execution.desired_memberships.filter(member => identities.has(JSON.stringify([member.tenant_id, member.alias]))),
+    }),
+  };
+}
 export function fleetHostPacket(execution: FleetExecution, slice: CoordinatedHostSlice, claim: FleetOperationClaim): FleetExecution {
   const revision = execution.operation.desired_revision;
   if (revision === null || execution.operation.id !== claim.operation.id) throw unavailable();
-  const identities = new Set(slice.targets.map(target => JSON.stringify([target.tenant_id, target.alias])));
   const snapshotAgents = execution.snapshot?.agents;
   const agentRows = Array.isArray(snapshotAgents) ? snapshotAgents.filter((row): row is Record<string, unknown> =>
     row !== null && typeof row === 'object' && !Array.isArray(row)) : [];
   const accountIds = new Set(scopedFleetProviderAgents(execution.request, slice.targets,
     execution.previous_agents ?? [], agentRows).map(agent => agent.primary_account_id));
   return { ...execution,
-    fenced_targets: slice.targets.map(target => ({ resource: 'agent', tenant_id: target.tenant_id, alias: target.alias })),
-    previous_agents: (execution.previous_agents ?? []).filter(agent => identities.has(JSON.stringify([agent.tenant_id, agent.alias]))),
-    ...(execution.desired_memberships === undefined ? {} : {
-      desired_memberships: execution.desired_memberships.filter(member => identities.has(JSON.stringify([member.tenant_id, member.alias]))),
-    }),
+    ...fleetHostInputs(slice.targets, execution),
     ...(execution.request.kind !== 'restore' || execution.request.target.resource === 'agent' ? {} : {
       global_desired_memberships: (execution.desired_memberships ?? []).filter(member =>
         agentRows.some(agent => agent.tenant_id === member.tenant_id && agent.alias === member.alias)),

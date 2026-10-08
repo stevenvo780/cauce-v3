@@ -4,7 +4,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { createPool, planFleetHostSlices, type DatabasePool, type FleetOperationRow } from '@cauce/store';
+import { createPool, planFleetHostSlices, publicFleetOperation, type DatabasePool, type FleetOperationRow } from '@cauce/store';
+import { FleetOperationRequestSchema } from '@cauce/protocol';
 import { preparePostgresSuite } from '../../../../packages/store/test/postgres-suite.js';
 import { startTestCaseDatabase, startTestDatabase, type EmptyTestDatabase, type TestDatabase } from '../../../../tests/helpers/postgres.js';
 import type { ProviderAuthActor } from '../console/provider-auth.types.js';
@@ -12,6 +13,7 @@ import { createHostProviderAuthService } from './host-provider-auth.js';
 import { type z } from 'zod';
 import { OpenClawDriver } from './host-provider-openclaw.js';
 import { boundedProviderReceipt } from './provider-login.js';
+import { fleetHostPacket } from './coordinator.js';
 
 interface LoginFixture { method: string; command: string[]; sha256: string; env?: Record<string, string>; files?: Record<string, string> }
 const projectRoot = fileURLToPath(new URL('../../../../', import.meta.url));
@@ -28,6 +30,8 @@ let policy: { schemaVersion: number; host_id: string; state_root: string; helper
     command_files?: Record<string, string>; openclaw?: z.infer<typeof OpenClawDriver>; runtime_mode?: string; container_name?: string; container_prefix?: string; login?: LoginFixture }[];
   logins: Record<string, LoginFixture> };
 let config: { hostConfig: { host: string; command: { python: string; executable: string; policyFile: string } }; authPolicyFile: string; projectRoot: string };
+const createMemberships = [{ tenant_id: 'Steven', alias: 'physical-new', room_id: 'physical-hub', role: 'agent', enabled: true },
+  { tenant_id: 'Steven', alias: 'other-agent', room_id: 'physical-hub', role: 'agent', enabled: true }];
 let services: Awaited<ReturnType<typeof createHostProviderAuthService>>[];
 preparePostgresSuite(import.meta.url, async () => { database = await startTestDatabase(); }, 120_000);
 async function fingerprint(filename: string): Promise<string> { return createHash('sha256').update(await readFile(filename)).digest('hex'); }
@@ -58,18 +62,25 @@ beforeEach(async ({ task }) => {
   [...(placementContainer ? [placementContainer, 'container'] : task.name.includes('immutable container binding') ? ['physical-container', 'container'] : ['host:isolated', 'native']),
     task.name.includes('OpenClaw') ? 'openclaw' : 'codex']);
   operationId = randomUUID();
-  const request = { kind: 'start', target: { resource: 'agent', tenant_id: 'Steven', alias: 'physical-new' }, parameters: {}, expected_revision: 0, idempotency_key: 'physical-operation' };
+  const creation = task.name.includes('create host inputs');
+  const target = { resource: 'agent', tenant_id: 'Steven', alias: 'physical-new' };
+  const request = creation ? { kind: 'create', target, expected_revision: 0, idempotency_key: 'physical-operation',
+    parameters: { runtime_key: 'physical-new', harness_id: 'codex', primary_room_id: 'physical-hub', memberships: [{ room_id: 'physical-hub', role: 'agent' }],
+      primary_account_id: 'physical-account', placement: { host_id: 'isolated', mode: 'native', runtime_user: 'dev', home_directory: '/home/dev',
+        state_directory: '/home/dev/.cauce/physical-new', systemd_user: 'stev' } } }
+    : { kind: 'start', target, parameters: {}, expected_revision: 0, idempotency_key: 'physical-operation' };
   await pool.query(`INSERT INTO fleet_operations(id,actor_tenant,actor_alias,target,target_key,cohort_key,executor_host,kind,request,request_hash,idempotency_key,expected_revision,status)
-    VALUES($1,'Steven','physical-human',$2::jsonb,'agent:Steven:physical-new','isolated:dev',$5,'start',$3::jsonb,$4,'physical-operation',0,'awaiting_auth')`,
-  [operationId, JSON.stringify(request.target), JSON.stringify(request), 'a'.repeat(64), task.name.includes('different controller') ? 'controller' : 'isolated']);
+    VALUES($1,'Steven','physical-human',$2::jsonb,'agent:Steven:physical-new','isolated:dev',$5,$6,$3::jsonb,$4,'physical-operation',0,'awaiting_auth')`,
+  [operationId, JSON.stringify(request.target), JSON.stringify(request), 'a'.repeat(64), task.name.includes('different controller') ? 'controller' : 'isolated', request.kind]);
   await pool.query("INSERT INTO fleet_operation_events(operation_id,version,event,metadata) VALUES($1,0,'queued',$2::jsonb)", [operationId, JSON.stringify({ actor_subject: actor.subject })]);
   const previous = (await pool.query<{ agent: Record<string, unknown> }>("SELECT to_jsonb(agent) AS agent FROM agents agent WHERE alias='physical-new'")).rows[0]?.agent;
   await pool.query('UPDATE fleet_operations SET desired_revision=0 WHERE id=$1', [operationId]);
   const row = (await pool.query<FleetOperationRow>('SELECT * FROM fleet_operations WHERE id=$1', [operationId])).rows[0];
   if (!previous || !row) throw new Error('test sealed placement absent');
   await pool.query("INSERT INTO fleet_operation_events(operation_id,version,event,metadata) VALUES($1,0,'step_completed',$2::jsonb)",
-    [operationId, JSON.stringify({ step: 'prepare', prepared_revision: 0, fenced_targets: [request.target], previous_agents: [previous], desired_memberships: [],
-      ...(task.name.includes('absent host seal') ? {} : { host_slices: planFleetHostSlices(row, [previous], [previous]) }) })]);
+    [operationId, JSON.stringify({ step: 'prepare', prepared_revision: 0, fenced_targets: creation ? [] : [request.target], previous_agents: creation ? [] : [previous],
+      desired_memberships: creation ? createMemberships : [],
+      ...(task.name.includes('absent host seal') ? {} : { host_slices: planFleetHostSlices(row, [previous], creation ? [] : [previous]) }) })]);
   const executable = join(directory, 'executor.py'); const helper = join(directory, 'login.py');
   const log = JSON.stringify(join(directory, 'effects.log'));
   await writeFile(executable, `import json,sys,pathlib,hashlib\np=json.loads(sys.stdin.read())\nif 'trusted_accounts' in p.get('snapshot',{}): sys.exit(2)\nif any('credential_ref' in a or 'credential_ref_kind' in a for a in p.get('trusted_accounts',[])): sys.exit(2)\npolicy=json.loads(pathlib.Path(sys.argv[sys.argv.index('--policy')+1]).read_text())\nif '--binding' in sys.argv:\n agent=next(a for a in p['snapshot']['agents'] if a['alias']==p['request']['target']['alias'])\n profile=policy['profiles'].get(agent['primary_account_id'])\n if profile is None:\n  account=next(a for a in p['trusted_accounts'] if a['id']==agent['primary_account_id'])\n  sys.path.insert(0,${JSON.stringify(join(projectRoot, 'ops/cli'))})\n  from fleet_executor_templates import resolved_template\n  template=resolved_template(policy,agent,account['provider'])\n  profile={'provider':template['provider'],'runtime_user':template['runtime_user'],'path':str(pathlib.Path(template['path_root'])/agent['runtime_key']/hashlib.sha256(account['id'].encode()).hexdigest()),'identity':account['external_account_id'],'command':template['command'],'command_sha256':template['command_sha256']}\n  if 'command_files' in template: profile['command_files']=template['command_files']\n  if 'openclaw' in template: profile['openclaw']=template['openclaw']\n  if agent['runtime_mode']=='container': profile['container_name']=agent['container_name']\n receipt={'agent':agent,'profile_binding':profile}\n marker=pathlib.Path(${JSON.stringify(directory)})/'container-binding.json'\n if marker.exists(): receipt['runtime_binding']=json.loads(marker.read_text())\n print(json.dumps(receipt))\nelse:\n step=sys.argv[sys.argv.index('--step')+1]\n with open(${log},'a') as f: f.write(step+'\\n')\n marker=pathlib.Path(${JSON.stringify(directory)})\n receipt={'evidence':{'stopped_verified':not (marker/'unverified-stop').exists()}} if step=='login-stop' else {'evidence':{'provider_verified':not (marker/'unverified-auth').exists()}}\n if step=='authenticate' and (marker/'awaiting-auth').exists(): receipt={'evidence':{},'awaiting_auth':True}\n print(json.dumps(receipt))\n`, { mode: 0o700 });
@@ -221,6 +232,26 @@ describe('host provider authentication factory', () => {
     expect(opened.status).toBe('awaiting_login');
     const cancelled = await value.cancel(actor, opened.session_id);
     expect(cancelled.status).toBe('cancelled'); expect(cancelled.cleanup_pending).toBe(false); expect(pool.totalCount).toBe(1);
+  });
+  it('sends the executor the same create host inputs as the coordinator for login stop and cleanup', async () => {
+    const row = (await pool.query<FleetOperationRow>('SELECT * FROM fleet_operations WHERE id=$1', [operationId])).rows[0];
+    const agent = (await pool.query<{ agent: Record<string, unknown> }>("SELECT to_jsonb(agent) AS agent FROM agents agent WHERE alias='physical-new'")).rows[0]?.agent;
+    if (!row || !agent) throw new Error('test create operation absent');
+    const slices = planFleetHostSlices(row, [agent], []);
+    const source = await readFile(config.hostConfig.command.executable, 'utf8');
+    await writeFile(config.hostConfig.command.executable, source.replace('p=json.loads(sys.stdin.read())\n',
+      `p=json.loads(sys.stdin.read())\nif '--step' in sys.argv:\n open(${JSON.stringify(join(directory, 'inputs.log'))},'a').write(json.dumps({'step':sys.argv[sys.argv.index('--step')+1],'inputs':{k:p[k] for k in ('fenced_targets','previous_agents','desired_memberships')}})+'\\n')\n`));
+    const [slice] = slices; if (!slice) throw new Error('test host slice absent');
+    const claim = { operation: publicFleetOperation(row), request: FleetOperationRequestSchema.parse(row.request), worker_id: 'worker', claim_token: 'token', epoch: 1 };
+    const packet = fleetHostPacket({ operation: claim.operation, request: claim.request, fenced_targets: [], previous_agents: [], desired_memberships: createMemberships }, slice, claim);
+    const expected = { fenced_targets: packet.fenced_targets, previous_agents: packet.previous_agents, desired_memberships: packet.desired_memberships };
+    expect(expected).toEqual({ fenced_targets: [{ resource: 'agent', tenant_id: 'Steven', alias: 'physical-new' }], previous_agents: [], desired_memberships: [createMemberships[0]] });
+    const value = await service(); const opened = await value.start(actor, await value.resolve(actor, operationId));
+    expect(opened.status).toBe('awaiting_login');
+    expect((await value.cancel(actor, opened.session_id)).cleanup_pending).toBe(false);
+    const sent = (await readFile(join(directory, 'inputs.log'), 'utf8')).trim().split('\n').map(line => JSON.parse(line) as { step: string; inputs: unknown });
+    expect(sent.map(entry => entry.step)).toEqual(['login-stop', 'login-stop']);
+    for (const entry of sent) expect(entry.inputs).toEqual(expected);
   });
   it('refuses an absent host seal before stopping or opening a provider process', async () => {
     const value = await service(); await expect(value.resolve(actor, operationId)).rejects.toMatchObject({ code: 'AUTHORITY_REVOKED' });
