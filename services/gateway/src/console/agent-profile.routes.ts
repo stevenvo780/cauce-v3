@@ -21,6 +21,7 @@ import {
   runtimeErrorCode, runtimeErrorMessage, runtimeErrorStatus,
 } from './agent-profile/runtime-errors.js';
 import { appliedRuntimeVerification } from './agent-profile/runtime-verification.js';
+import { respondDisabledProfileDraft, type AgentProfileDraftBinding } from './agent-profile-draft.js';
 import {
   contextContamination,
   type ContextContaminationTelemetry, type ContextContaminationVerdict,
@@ -29,8 +30,7 @@ import type { TerminalAuditEntry } from '../terminal/audit.js';
 
 export type { TopeSuperado } from './agent-profile/write-gates.js';
 
-
-export interface AgentProfileDeps {
+export interface AgentProfileDeps extends Partial<AgentProfileDraftBinding> {
     authorize(
     request: unknown, permission: 'read' | 'control'
   ): Promise<{ tenant_id: string; alias: string }>;
@@ -38,7 +38,7 @@ export interface AgentProfileDeps {
     actor: { tenant_id: string; alias: string },
     targetTenantId: string,
     targetAlias: string,
-    permission: 'read' | 'control',
+    permission: 'read' | 'control' | 'configure',
     legacySameTenant: boolean,
   ): Promise<{ tenant_id: string; alias: string; enabled?: boolean } | undefined>;
     resolveOperator?: (request: unknown) => DocumentOperator | Promise<DocumentOperator>;
@@ -199,11 +199,11 @@ export interface FicheroDeLaVistaPrevia {
 export interface RespuestaDelPerfil {
   readonly tenant_id: string;
   readonly alias: string;
-  /** Durable state of the agent record; editing/controlling a disabled one fails closed. */
+  /** Runtime writes still require enabled admission; disabled drafts carry their own authority. */
   readonly agent_enabled: boolean;
+  readonly can_prepare_draft: boolean;
   /** Derives from the presence of the row, never from whether the fields have content. */
   readonly exists: boolean;
-  /** The profile's own revision; NULL if the row does not exist. */
   readonly revision: number | null;
   /** Latest revision attested by the runtime. */
   readonly applied_revision: number | null;
@@ -228,11 +228,6 @@ export interface RespuestaDelPerfil {
   /** Always present: an empty verdict is a measurement that found nothing, and it says so. */
   readonly contaminacion: ContextContaminationVerdict;
   readonly ficheros: readonly FicheroDeLaVistaPrevia[];
-  /**
-   * Why there are no files, when there aren't any. An empty array without explanation reads as
-   * "this alias has no context", when what really happens is that its harness is not one
-   * Cauce knows how to write — which is a very different thing and is fixed elsewhere.
-   */
   readonly aviso?: string;
 }
 
@@ -436,6 +431,7 @@ export function registerAgentProfileRoutes(app: FastifyInstance, deps: AgentProf
         tenant_id: tenantId,
         alias,
         agent_enabled: target.enabled === true,
+        can_prepare_draft: target.enabled === false && (await deps.canPrepareDraft?.(request, reply, tenantId, alias)) === true,
         exists: lectura.exists,
         revision: lectura.revision,
         applied_revision: lectura.applied_revision,
@@ -502,7 +498,11 @@ export function registerAgentProfileRoutes(app: FastifyInstance, deps: AgentProf
       return reply.code(status).send(cuerpo);
     };
 
-    const target = await deps.authorizeTarget(actor, tenantId, alias, 'control', false);
+    let target = await deps.authorizeTarget(actor, tenantId, alias, 'control', false);
+    if (target === undefined && deps.prepareDraft !== undefined) {
+      const configured = await deps.authorizeTarget(actor, tenantId, alias, 'configure', false);
+      if (configured?.enabled === false) target = configured;
+    }
     if (target?.tenant_id !== tenantId || target.alias !== alias) {
       const visible = await deps.authorizeTarget(actor, tenantId, alias, 'read', false);
       if (visible?.tenant_id === tenantId && visible.alias === alias) {
@@ -513,9 +513,9 @@ export function registerAgentProfileRoutes(app: FastifyInstance, deps: AgentProf
       }
       return denegar(404, { error: 'not_found', message: 'agent not found or not visible' });
     }
-    // Same act of authority as writing into the alias' HOME, so the same gate: no person, no write.
     if (!escritura.operador.attributed) return denegar(403, PERFIL_SIN_PERSONA);
     if (target.enabled !== true) {
+      if (target.enabled === false && deps.prepareDraft !== undefined) return respondDisabledProfileDraft(deps, request, reply, tenantId, alias, denegar);
       return denegar(409, {
         error: 'agent_disabled',
         message: 'el alias está apagado; su perfil desired no se cambia sin un runtime habilitado',

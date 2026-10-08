@@ -409,7 +409,7 @@ export abstract class AgentsRepository extends DeliveryAcksRepository {
            AND ceiling.alias=b.agent_alias AND ceiling.account_id=b.account_id
          WHERE b.tenant_id=a.tenant_id AND b.agent_alias=a.alias AND b.enabled
        ) routing ON true
-       WHERE a.tenant_id=$1${foreign}
+       WHERE a.purged_at IS NULL AND (a.tenant_id=$1${foreign})
        ORDER BY a.tenant_id,a.alias`, [actorTenant]
     );
     return { items: result.rows.map((row) => ({
@@ -454,7 +454,7 @@ export abstract class AgentsRepository extends DeliveryAcksRepository {
          SELECT (l.lease_until>now()) AS online, l.last_heartbeat_at, l.instance_id
          FROM connection_leases l WHERE l.tenant_id=a.tenant_id AND l.alias=a.alias
        ) lease ON true
-       WHERE a.tenant_id=$1 AND a.alias=$2 AND (a.tenant_id=$3 OR EXISTS (
+       WHERE a.purged_at IS NULL AND a.tenant_id=$1 AND a.alias=$2 AND (a.tenant_id=$3 OR EXISTS (
          SELECT 1 FROM acl_edges edge WHERE edge.from_tenant=$3 AND edge.to_tenant=a.tenant_id
            AND edge.enabled AND edge.allow_read
        ))

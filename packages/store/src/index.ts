@@ -18,6 +18,9 @@ export { persistAgentContextReconcileInTransaction, type AgentContextFenceInput,
 export * from './human-client-provenance.js';
 export * from './repository/fleet-operation-contracts.js';
 export * from './repository/fleet-operations.js';
+export { lockFleetRevision } from './repository/fleet-operation-authority.js';
+export { assertFleetOperationAuthority } from './repository/fleet-operation-human.js';
+export { lockFleetClaim, preparedState } from './repository/fleet-operation-state.js';
 export * from './agent-preferences.js';
 export * from './client-mailbox.js';
 export * from './client-mailbox-read.js';

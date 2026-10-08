@@ -93,6 +93,7 @@ export abstract class ConfigRepository extends OutboxOperatorRepository {
          FROM agents agent
          JOIN tenants target_tenant ON target_tenant.id=agent.tenant_id
         WHERE agent.tenant_id=$3 AND agent.alias=$4 AND target_tenant.enabled
+          AND agent.purged_at IS NULL AND target_tenant.purged_at IS NULL
           AND ($5::text IN ('read','configure') OR agent.enabled)
           AND ($5::text<>'configure' OR to_jsonb(agent)->>'retired_at' IS NULL)
           AND EXISTS (
