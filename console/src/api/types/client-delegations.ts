@@ -12,6 +12,8 @@ export interface ClientConnection {
   last_publication_at: string | null;
   last_use_at: null;
   last_use_observed: false;
+  /** Address of the client's mailbox while the declaration is active; older gateways omit it. */
+  mailbox?: { tenant_id: string; alias: string } | null;
 }
 
 export interface ClientConnectionsPage { items: ClientConnection[]; truncated: boolean }

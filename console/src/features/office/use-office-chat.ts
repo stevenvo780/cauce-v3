@@ -5,10 +5,10 @@ import type { MessagePage, PublishIntentSemantics } from '../../api/types';
 import { compactId, permissionState } from '../../lib';
 import { useFleet } from '../../shell/fleet-context';
 import { publishDurably } from '../messages/durable-publish';
-import type { AgenteDeMensajeria } from '../messages/roster';
-import { fleetAgentId } from '../terminal/fleet';
-import { operatorRouteForAgent, transcriptForSession } from '../terminal/session';
+import { fleetAgentId, type FleetAgent } from '../terminal/fleet';
+import { operatorRouteForAgent, operatorRouteForMailbox, transcriptForSession } from '../terminal/session';
 import type { Speech } from './speech';
+import { mailboxAgent, type McpVisitor } from './visitors';
 
 /** A reply stays over the head this long. */
 export const SAY_MS = 8_000;
@@ -23,6 +23,10 @@ export interface OfficeDialogModel {
   id: string;
   tenantId: string;
   alias: string;
+  /** What the box calls the other side: the alias, or the label the owner gave an MCP client. */
+  name: string;
+  /** Standing caveat under the lines, e.g. that a mailbox note is not a read receipt. */
+  hint?: string;
   lines: DialogLine[];
   /** Why the operator cannot write from here; the chat link stays as the way out. */
   blocked?: string;
@@ -46,12 +50,12 @@ function preview(text: string | null | undefined, fallback: string): string {
   return trimmed.length > 0 ? trimmed : fallback;
 }
 
-function outputsOf(page: MessagePage | undefined, agent: AgenteDeMensajeria) {
+function outputsOf(page: MessagePage | undefined, agent: FleetAgent) {
   return transcriptForSession(page, { agent }).filter((item) => item.direction === 'output' && item.message.message_id);
 }
 
 /** Last lines of a thread as the dialog box shows them. */
-export function dialogLines(page: MessagePage | undefined, agent: AgenteDeMensajeria, me: string | null | undefined, count = 3): DialogLine[] {
+export function dialogLines(page: MessagePage | undefined, agent: FleetAgent, me: string | null | undefined, count = 3): DialogLine[] {
   return transcriptForSession(page, { agent }).slice(-count).map((item, index) => {
     const author = item.message.author;
     const mine = Boolean(me && author?.kind === 'human' && author.subject_id === me);
@@ -64,7 +68,7 @@ export function dialogLines(page: MessagePage | undefined, agent: AgenteDeMensaj
  * The office's way of talking to an agent. Publishing is the chat's own durable path
  * (`publishDurably`, same room resolution and permission), never a copy of it.
  */
-export function useOfficeChat(talkId: string | null): { dialog: OfficeDialogModel | null; speech: ReadonlyMap<string, Speech> } {
+export function useOfficeChat(talkId: string | null, visitors: readonly McpVisitor[] = []): { dialog: OfficeDialogModel | null; speech: ReadonlyMap<string, Speech> } {
   const fleet = useFleet();
   const api = useApi();
   const access = useOptionalConsoleAccess();
@@ -122,20 +126,22 @@ export function useOfficeChat(talkId: string | null): { dialog: OfficeDialogMode
     return map;
   }, [said, pending, now]);
 
-  const agent = talkId ? agentOf(talkId) : undefined;
-  const route = useMemo(() => (agent ? operatorRouteForAgent(topology, verified, agent) : undefined), [agent, topology, verified]);
+  const visitor = talkId ? visitors.find((candidate) => candidate.id === talkId) : undefined;
+  const agent = useMemo(() => (visitor ? mailboxAgent(visitor.tenantId, visitor.alias) : talkId ? agentOf(talkId) : undefined), [visitor, talkId, agentOf]);
+  const route = useMemo(() => (visitor ? operatorRouteForMailbox(topology, verified)
+    : agent ? operatorRouteForAgent(topology, verified, agent) : undefined), [visitor, agent, topology, verified]);
 
   const send = useCallback(() => {
     if (!talkId || !agent || !route) return;
     const snapshot = drafts.get(talkId) ?? '';
     const text = snapshot.trim();
-    const roomId = route.sourceRoomIds.length === 1 ? route.sourceRoomIds[0] : '';
+    const roomId = visitor ? route.sourceRoomIds[0] ?? '' : route.sourceRoomIds.length === 1 ? route.sourceRoomIds[0] : '';
     if (!text || !roomId || busy.current.has(talkId)) return;
     busy.current.add(talkId);
     const id = talkId;
     const seen = new Set(outputsOf(page, agent).map((item) => item.message.message_id ?? ''));
     setStatus({ id, value: { tone: 'sending', text: 'Enviando…' } });
-    setPending((current) => new Map(current).set(id, { since: Date.now(), seen }));
+    if (!visitor) setPending((current) => new Map(current).set(id, { since: Date.now(), seen }));
     const input: PublishIntentSemantics = {
       room_id: roomId,
       recipients: [{ tenant_id: agent.tenantId, alias: agent.alias }],
@@ -155,12 +161,13 @@ export function useOfficeChat(talkId: string | null): { dialog: OfficeDialogMode
         void reloadMessages();
       },
     }).then(({ receipt, journalStatus }) => {
-      setStatus({ id, value: { tone: 'sent', text: `Enviado · ${compactId(receipt.message_id)}${journalStatus === 'confirmed' ? '' : ' · confirmación pendiente'}` } });
+      const sent = visitor ? `Guardado en el buzón de ${visitor.label} · no acredita lectura` : `Enviado · ${compactId(receipt.message_id)}`;
+      setStatus({ id, value: { tone: 'sent', text: `${sent}${journalStatus === 'confirmed' ? '' : ' · confirmación pendiente'}` } });
     }, (cause: unknown) => {
       setPending((current) => new Map([...current].filter(([key]) => key !== id)));
       setStatus({ id, value: { tone: 'failed', text: cause instanceof Error ? cause.message : 'No se pudo enviar el mensaje.' } });
     }).finally(() => { busy.current.delete(id); });
-  }, [talkId, agent, route, drafts, page, api, verified?.subject, reloadMessages]);
+  }, [talkId, visitor, agent, route, drafts, page, api, verified?.subject, reloadMessages]);
 
   const dialog = useMemo<OfficeDialogModel | null>(() => {
     if (!talkId) return null;
@@ -169,12 +176,14 @@ export function useOfficeChat(talkId: string | null): { dialog: OfficeDialogMode
     const blocked = !agent ? 'El chat todavía no conoce a este agente; probá desde Mensajes.'
       : !canPublish ? 'Requiere el permiso message.publish.'
         : route && !route.allowed ? route.reason
-          : route && route.sourceRoomIds.length !== 1 ? 'Compartís varias salas con este agente: elegí desde cuál escribir en el chat.'
+          : route && route.sourceRoomIds.length !== 1 && !visitor ? 'Compartís varias salas con este agente: elegí desde cuál escribir en el chat.'
             : undefined;
     return {
       id: talkId,
       tenantId,
       alias,
+      name: visitor?.label ?? alias,
+      ...(visitor ? { hint: `Le dejás una nota en su buzón${route?.sourceRoomIds[0] ? ` desde ${route.sourceRoomIds[0]}` : ''}: ${visitor.label} la lee cuando consulta Cauce, y Cauce no sabe si está conectado ahora.` } : {}),
       lines: agent ? dialogLines(page, agent, verified?.human_subject ?? verified?.subject) : [],
       blocked,
       chatHref: `/messages/${encodeURIComponent(tenantId)}/${encodeURIComponent(alias)}`,
@@ -184,7 +193,7 @@ export function useOfficeChat(talkId: string | null): { dialog: OfficeDialogMode
       setDraft: (text) => { setDrafts((current) => new Map(current).set(talkId, text)); },
       send,
     };
-  }, [talkId, agent, route, verified, page, drafts, status, pending, send]);
+  }, [talkId, visitor, agent, route, verified, page, drafts, status, pending, send]);
 
   return { dialog, speech };
 }

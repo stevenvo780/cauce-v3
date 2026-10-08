@@ -39,6 +39,8 @@ export interface OfficeAgent {
   glyph?: string | null;
   hue?: number | null;
   awake?: boolean;
+  /** A declared MCP client: no desk work, no agent actions, talking leaves a mailbox note. */
+  visitor?: boolean;
 }
 
 interface OfficeCanvasProps {
@@ -658,7 +660,7 @@ export function OfficeCanvas({ agents, selectedId, highlight, onSelect, label, o
     if (event.key === 'Shift') for (const key of Object.keys(DIR_OF)) if (key.startsWith('Arrow') && !paseo) engine.keys.delete(key);
   };
 
-  const menuAgent = menuFor ? agentRefOf(menuFor) : null;
+  const menuAgent = menuFor && !ordered.find((agent) => agent.id === menuFor)?.visitor ? agentRefOf(menuFor) : null;
   const tipId = hoverId ?? cursorId;
   const tip = tipId ? ordered.find((agent) => agent.id === tipId) : undefined;
   const talkTo = nearby && nearby !== selectedId && nearby !== talkId ? ordered.find((agent) => agent.id === nearby) : undefined;
@@ -681,7 +683,7 @@ export function OfficeCanvas({ agents, selectedId, highlight, onSelect, label, o
       className={maximized ? 'fixed inset-0 z-[70] w-full overflow-hidden bg-canvas' : 'relative w-full overflow-hidden'}
       style={{ height: maximized ? '100dvh' : frameHeight }}
     >
-      <ContextMenu.Root open={menuFor !== null} onOpenChange={(open, details) => {
+      <ContextMenu.Root open={menuAgent !== null} onOpenChange={(open, details) => {
         if (!open) { setMenuFor(null); return; }
         const point = clientPointOf(details.event);
         const id = point ? pick(toScreen(point)) : null;

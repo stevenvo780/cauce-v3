@@ -58,7 +58,7 @@ export function OfficeDialog({ model, state, onClose }: { model: OfficeDialogMod
       <div className={cn(BOX, 'mx-auto max-w-3xl px-3 pt-4 pb-3')}>
         <div className="absolute -top-3.5 left-3 flex items-center gap-1.5 border-2 border-fg bg-fg py-0.5 pr-2.5 pl-1 text-surface">
           <AgentOrb seed={model.id} state={state} size={20} />
-          <h2 id={titleId} className="m-0 text-xs font-bold tracking-wide uppercase">{model.alias}</h2>
+          <h2 id={titleId} className="m-0 text-xs font-bold tracking-wide uppercase">{model.name}</h2>
         </div>
         <button
           type="button"
@@ -79,10 +79,11 @@ export function OfficeDialog({ model, state, onClose }: { model: OfficeDialogMod
           ))}
           {model.thinking ? (
             <li className="text-muted">
-              <strong className="text-fg">{model.alias}</strong> está pensando<span className="inline-block w-4 animate-pulse">…</span>
+              <strong className="text-fg">{model.name}</strong> está pensando<span className="inline-block w-4 animate-pulse">…</span>
             </li>
           ) : null}
         </ol>
+        {model.hint ? <p className="m-0 mt-2 text-xs text-muted">{model.hint}</p> : null}
 
         {model.blocked ? (
           <p role="note" className="m-0 mt-3 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-fg-2">
@@ -100,8 +101,8 @@ export function OfficeDialog({ model, state, onClose }: { model: OfficeDialogMod
               type="text"
               value={model.draft}
               onChange={(event) => { model.setDraft(event.target.value); }}
-              aria-label={`Mensaje para ${model.alias}`}
-              placeholder={`Escribile a ${model.alias}…`}
+              aria-label={`Mensaje para ${model.name}`}
+              placeholder={`Escribile a ${model.name}…`}
               enterKeyHint="send"
               autoComplete="off"
               className="h-9 min-w-0 flex-1 border-2 border-line bg-subtle px-2.5 text-[13px] text-fg outline-none placeholder:text-muted focus:border-brand pointer-coarse:h-11 pointer-coarse:text-base"

@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { describe, expect, it } from 'vitest';
 import { ClientDelegationLabelSchema, HUMAN_MESSAGE_INITIATOR_CAPABILITY, HUMAN_CLIENT_PROVENANCE_CAPABILITY,
   HUMAN_CLIENT_DELEGATION_CAPABILITY, DeliveryEnvelopeSchema } from '@cauce/protocol';
-import { CauceRepository, type DatabasePool, loadHumanClientProvenance, putHumanClientProvenance, clientConnectionReference } from '@cauce/store';
+import { CauceRepository, type DatabasePool, loadHumanClientProvenance, putHumanClientProvenance, clientConnectionReference, clientMailboxAddress } from '@cauce/store';
 import { database, seed, connection, consoleApp, ownedTransaction, controlOptions, issuer, verify } from '../../../packages/store/test/human-client-provenance-postgres.fixtures.js';
 import { mutateClientDelegation } from './client-delegation-control.js';
 import { lockOAuthAccess } from './oauth-grant-authority.js';
@@ -58,6 +58,8 @@ describe('durable human client provenance', () => {
     const list = await web.app.inject({ url: path, headers: web.headers });
     expect(list.statusCode).toBe(200); expect(JSON.stringify(list.json())).not.toContain(otherConnection.identity.grantId);
     expect(list.json<{ items: { connection_ref: string }[] }>().items.map(x => x.connection_ref)).toEqual([payload.connection_ref]);
+    expect(list.json<{ items: { mailbox: unknown }[] }>().items.map(x => x.mailbox))
+      .toEqual([{ tenant_id: 'Steven', alias: clientMailboxAddress(c.identity.grantId, 'Steven') }]);
     const root = await c.operations.submit(command());
     const binding = created.json<{ binding_id: string }>().binding_id;
     const renamePayload = { request_id: randomUUID(), label: 'Dots v2' };
@@ -69,6 +71,8 @@ describe('durable human client provenance', () => {
     const newBinding = renamed.json<{ binding_id: string }>().binding_id;
     expect((await web.app.inject({ method: 'POST', url: `${path}/${newBinding}/revoke`, headers: web.headers,
       payload: { request_id: randomUUID() } })).statusCode).toBe(200);
+    expect((await web.app.inject({ url: path, headers: web.headers })).json<{ items: { mailbox: unknown }[] }>()
+      .items.map(x => x.mailbox)).toEqual([null]);
     const client = await pool.connect();
     try { expect((await loadHumanClientProvenance(client, root.message_id)).declaration?.label).toBe('Dots'); }
     finally { client.release(); }

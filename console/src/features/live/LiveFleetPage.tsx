@@ -13,6 +13,7 @@ import { useAgentPreferences } from '../../components/agent-actions/preferences-
 import { OfficeCanvas, type OfficeAgent } from '../office/OfficeCanvas';
 import { OfficeDialog } from '../office/OfficeDialog';
 import { useOfficeChat } from '../office/use-office-chat';
+import { RECENT_VISITOR_MS, useMcpVisitors } from '../office/visitors';
 import { ORDEN_VIVO } from './activity';
 import { AgentSheet } from './AgentSheet';
 import {
@@ -113,7 +114,8 @@ export function LiveFleetPage() {
   const selectedKey = new URLSearchParams(search).get('agente');
   const [filter, setFilter] = useState<ReadonlySet<LiveState>>(new Set());
   const [talkKey, setTalkKey] = useState<string | null>(null);
-  const chat = useOfficeChat(talkKey);
+  const visitors = useMcpVisitors();
+  const chat = useOfficeChat(talkKey, visitors);
 
   const { snapshot } = useMemo(() => projectLiveFleet(activity.data, topology.data), [activity.data, topology.data]);
   const pulses = usePulses(snapshot);
@@ -137,13 +139,23 @@ export function LiveFleetPage() {
   );
 
   const appearances = useAgentPreferences()?.appearances;
-  const officeAgents = useMemo<OfficeAgent[]>(() => views.map((view) => ({
+  const officeAgents = useMemo<OfficeAgent[]>(() => views.map((view): OfficeAgent => ({
     id: view.key, name: view.alias, state: view.state, reason: view.reason, delegatesTo: view.delegatesTo,
     glyph: appearances?.get(view.key)?.glyph, hue: appearances?.get(view.key)?.hue,
     awake: view.state === 'idle' && typeof view.secondsSinceLastAck === 'number' && view.secondsSinceLastAck < AWAKE_SECONDS,
-  })), [views, appearances]);
+  })).concat(visitors.map((visitor): OfficeAgent => {
+    const last = visitor.lastPublicationAt ? Date.parse(visitor.lastPublicationAt) : NaN;
+    return {
+      id: visitor.id, name: `${visitor.label} · MCP`, state: 'idle', delegatesTo: [], visitor: true,
+      awake: now - last < RECENT_VISITOR_MS,
+      reason: `Cliente MCP: ${Number.isNaN(last) ? 'no publicó nada todavía' : `publicó hace ${humanSeconds((now - last) / 1000)}`}; presencia no verificable.`,
+    };
+  })), [views, appearances, visitors, now]);
 
-  const select = (key: string) => { redirect(`/live?agente=${encodeURIComponent(key)}`); };
+  const select = (key: string) => {
+    if (visitors.some((visitor) => visitor.id === key)) { setTalkKey(key); return; }
+    redirect(`/live?agente=${encodeURIComponent(key)}`);
+  };
   const close = () => { redirect('/live'); };
   const talkTo = (key: string) => {
     if (selectedKey) close();
@@ -173,7 +185,7 @@ export function LiveFleetPage() {
   const unknown = verdict.tone === 'desconocido';
   const age = observedAt ? Math.max(0, (now - Date.parse(observedAt)) / 1000) : null;
   const selected = views.find((view) => view.key === selectedKey) ?? null;
-  const talking = views.find((view) => view.key === talkKey);
+  const talking = officeAgents.find((agent) => agent.id === talkKey);
   const summary = `Oficina con ${String(views.length)} agentes: ${ORDEN_VIVO
     .filter((state) => tally[state] > 0)
     .map((state) => `${String(tally[state])} ${LIVE_STATE_META[state].label.toLowerCase()}`)
@@ -187,7 +199,7 @@ export function LiveFleetPage() {
             <h1 className="m-0 text-[22px] font-semibold tracking-tight text-fg">Oficina</h1>
             <PageHelp
               title="Oficina"
-              description="Cada persona es un agente de la flota. Trabaja en su escritorio con los Programadores, cuando no tiene nada cocina, toma un café, juega en el Patio de juegos, ordena, riega las plantas, lee o charla en el Jardín, y sólo se va a dormir al Dormitorio si lleva mucho rato sin trabajo; lleva papeles al escritorio de otro cuando le delega y levanta un «!» cuando se traba. El estado sale del trabajo que avanza (o no), no del latido. Vos también estás: arrastrá para mirar, acercá con la rueda o pellizcando y tocá el piso para caminar hasta alguien y hablarle sin salir de la oficina."
+              description="Cada persona es un agente de la flota. Trabaja en su escritorio con los Programadores, cuando no tiene nada cocina, toma un café, juega en el Patio de juegos, ordena, riega las plantas, lee o charla en el Jardín, y sólo se va a dormir al Dormitorio si lleva mucho rato sin trabajo; los clientes MCP que declaraste (Dots, GPT…) pasean como visitantes «· MCP», y hablarles les deja una nota en su buzón que leen cuando consultan Cauce; lleva papeles al escritorio de otro cuando le delega y levanta un «!» cuando se traba. El estado sale del trabajo que avanza (o no), no del latido. Vos también estás: arrastrá para mirar, acercá con la rueda o pellizcando y tocá el piso para caminar hasta alguien y hablarle sin salir de la oficina."
             >
               <dl className="m-0 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5">
                 {ORDEN_VIVO.map((state) => (
