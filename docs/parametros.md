@@ -167,6 +167,7 @@ según `CAUCE_MCP_OAUTH_PROVIDER` en `deploy/deploy.sh`.
 | `CAUCE_FLEET_COMMAND_TIMEOUT_MS` (`gateway/fleet/main.ts`) | ms | 60_000 por defecto, entero 1–300_000; vence cada comando del executor físico | env del worker | unit host config + command |
 | `CAUCE_FLEET_POLL_MS` (`gateway/fleet/main.ts`) | ms | 1_000 por defecto, entero 25–60_000; intervalo de reclamo del worker | env del worker | unit host config + worker |
 | `CAUCE_FLEET_LEASE_MS` (`gateway/fleet/main.ts`) | ms | 30_000 por defecto, entero 1_000–300_000; lease del worker durable de flota | env del worker | unit host config + worker |
+| `CAUCE_FLEET_DATABASE_TLS_SERVERNAME` (`gateway/fleet/fleet-database.ts`) | DNS | ausente conserva la conexión ordinaria; presente exige producción, loopback IPv4, `verify-full` y CA pública `PGSSLROOTCERT`; valida el nombre certificado tras el túnel SSH | env privado del host de autenticación | PostgreSQL TLS real, CA y SAN negativos |
 | `MAX_RECEIPT_BYTES` (`gateway/fleet/host-command.ts`) | bytes | 8_192; un recibo mayor detiene el comando y rechaza el efecto | fijo | unit host command |
 | `saturation_in_flight` / `stall_after` / `start_after` (`fleet-activity.ts:18`, `DEFAULT_FLEET_ACTIVITY_THRESHOLDS`) | n/s/s | 8 / 300 / 60 | fijo | — |
 | `ROLE_BRIEF_MAX_CODE_POINTS` | code points | 1_200 | fijo | — |
