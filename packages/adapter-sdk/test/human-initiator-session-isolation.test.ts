@@ -380,12 +380,12 @@ function withSharedHumans(t: TestContext, values: Record<string, string | undefi
   const previous = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
   t.after(() => {
     for (const key of keys) {
-      if (previous[key] === undefined) delete process.env[key]; else process.env[key] = previous[key];
+      if (previous[key] === undefined) Reflect.deleteProperty(process.env, key); else process.env[key] = previous[key];
     }
   });
   for (const key of keys) {
     const value = values[key];
-    if (value === undefined) delete process.env[key]; else process.env[key] = value;
+    if (value === undefined) Reflect.deleteProperty(process.env, key); else process.env[key] = value;
   }
 }
 
