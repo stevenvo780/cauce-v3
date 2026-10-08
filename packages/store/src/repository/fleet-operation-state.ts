@@ -60,9 +60,9 @@ export async function recordFleetRevision(client: DatabaseClient, row: FleetOper
 }
 
 export async function preparedState(client: DatabaseClient, id: string): Promise<{
-  fenced_targets: FencedFleetTarget[]; previous_agents: Array<Record<string, unknown>>; desired_memberships: FleetMembershipIntent[];
+  fenced_targets: FencedFleetTarget[]; previous_agents: Record<string, unknown>[]; desired_memberships: FleetMembershipIntent[];
 }> {
-  const event = (await client.query<{ metadata: { fenced_targets: FencedFleetTarget[]; previous_agents: Array<Record<string, unknown>>; desired_memberships: FleetMembershipIntent[] } }>(
+  const event = (await client.query<{ metadata: { fenced_targets: FencedFleetTarget[]; previous_agents: Record<string, unknown>[]; desired_memberships: FleetMembershipIntent[] } }>(
     `SELECT metadata FROM fleet_operation_events WHERE operation_id=$1 AND event='step_completed'
       AND metadata->>'step' IN ('prepare','fence') ORDER BY id LIMIT 1`, [id])).rows[0];
   return { fenced_targets: event?.metadata.fenced_targets ?? [], previous_agents: event?.metadata.previous_agents ?? [], desired_memberships: event?.metadata.desired_memberships ?? [] };

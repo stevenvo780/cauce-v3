@@ -5,15 +5,25 @@ import { assertConfigurationDeleteAllowed, has, valueRequired } from '../shared.
 
 export const activeDeliveryStates = "('pending','retry','leased','accepted','started')";
 
+export async function assertUnpurgedConfigurationScope(client: DatabaseClient, tenant: string, room?: string, alias?: string): Promise<void> {
+  const state = (await client.query<{ purged: boolean }>(`SELECT EXISTS(SELECT 1 FROM tenants
+    WHERE id=$1 AND to_jsonb(tenants)->>'purged_at' IS NOT NULL) OR EXISTS(SELECT 1 FROM rooms
+    WHERE tenant_id=$1 AND id=$2 AND to_jsonb(rooms)->>'purged_at' IS NOT NULL) OR EXISTS(SELECT 1 FROM agents
+    WHERE tenant_id=$1 AND alias=$3 AND to_jsonb(agents)->>'purged_at' IS NOT NULL) AS purged`,
+  [tenant, room ?? null, alias ?? null])).rows[0];
+  if (state?.purged) throw new ConfigurationError('conflict', 'purged configuration identity is permanent');
+}
+
 export async function tenantMutation(
   client: DatabaseClient, mutation: Extract<ConfigurationLeafMutation, { resource: 'tenant' }>
 ): Promise<{ inverse: ConfigMutation; summary: string }> {
   const selected = await client.query<{
     id: string; display_name: string | null; is_hub: boolean; enabled: boolean;
-    retired_at: string | null; retired_enabled: boolean | null;
+    retired_at: string | null; retired_enabled: boolean | null; purged_at: string | null;
   }>(`SELECT id,display_name,is_hub,enabled,to_jsonb(tenants)->>'retired_at' AS retired_at,
-    (to_jsonb(tenants)->>'retired_enabled')::boolean AS retired_enabled FROM tenants WHERE id=$1 FOR UPDATE`, [mutation.id]);
+    (to_jsonb(tenants)->>'retired_enabled')::boolean AS retired_enabled,to_jsonb(tenants)->>'purged_at' AS purged_at FROM tenants WHERE id=$1 FOR UPDATE`, [mutation.id]);
   const old = selected.rows[0];
+  if (old?.purged_at) throw new ConfigurationError('conflict', 'purged tenant identity is permanent');
   if (mutation.action === 'create') {
     if (old) throw new ConfigurationError('conflict', 'tenant already exists');
     const value = valueRequired(mutation);
@@ -51,12 +61,14 @@ export async function tenantMutation(
 export async function roomMutation(
   client: DatabaseClient, mutation: Extract<ConfigurationLeafMutation, { resource: 'room' }>
 ): Promise<{ inverse: ConfigMutation; summary: string }> {
+  await assertUnpurgedConfigurationScope(client, mutation.tenant_id);
   const selected = await client.query<{
     id: string; tenant_id: string; display_name: string | null; enabled: boolean;
-    retired_at: string | null; retired_enabled: boolean | null;
+    retired_at: string | null; retired_enabled: boolean | null; purged_at: string | null;
   }>(`SELECT id,tenant_id,display_name,enabled,to_jsonb(rooms)->>'retired_at' AS retired_at,
-    (to_jsonb(rooms)->>'retired_enabled')::boolean AS retired_enabled FROM rooms WHERE id=$1 AND tenant_id=$2 FOR UPDATE`, [mutation.id, mutation.tenant_id]);
+    (to_jsonb(rooms)->>'retired_enabled')::boolean AS retired_enabled,to_jsonb(rooms)->>'purged_at' AS purged_at FROM rooms WHERE id=$1 AND tenant_id=$2 FOR UPDATE`, [mutation.id, mutation.tenant_id]);
   const old = selected.rows[0];
+  if (old?.purged_at) throw new ConfigurationError('conflict', 'purged room identity is permanent');
   if (mutation.action === 'create') {
     if (old) throw new ConfigurationError('conflict', 'room already exists');
     const value = valueRequired(mutation);
@@ -91,6 +103,7 @@ export async function roomMutation(
 export async function membershipMutation(
   client: DatabaseClient, mutation: Extract<ConfigurationLeafMutation, { resource: 'membership' }>
 ): Promise<{ inverse: ConfigMutation; summary: string }> {
+  await assertUnpurgedConfigurationScope(client, mutation.tenant_id, mutation.room_id, mutation.alias);
   const selected = await client.query<{ role: string; enabled: boolean; retired_at: string | null; retired_enabled: boolean | null }>(
     `SELECT role,enabled,to_jsonb(memberships)->>'retired_at' AS retired_at,
       (to_jsonb(memberships)->>'retired_enabled')::boolean AS retired_enabled FROM memberships WHERE tenant_id=$1 AND room_id=$2 AND alias=$3 FOR UPDATE`,

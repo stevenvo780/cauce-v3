@@ -1,7 +1,8 @@
 import type { FleetOperationRequest, FleetTarget } from '@cauce/protocol';
 import type { DatabaseClient } from '../db.js';
-import { configurationDependencies } from '../configuration/shared.js';
 import { FleetOperationError, type FleetOperationRow, type FencedFleetTarget } from './fleet-operation-contracts.js';
+import { purgeDependencies } from './fleet-operation-purge-plan.js';
+import { purgeRetiredTarget } from './fleet-operation-purge.js';
 
 export interface FleetMembershipIntent {
   tenant_id: string; room_id: string; alias: string; role: string; enabled: boolean;
@@ -18,7 +19,7 @@ async function prepareGroupAgents(client: DatabaseClient, row: FleetOperationRow
   if (target.resource === 'agent') return;
   await client.query(`UPDATE agents agent SET enabled=false,
     lifecycle_state=CASE WHEN agent.retired_at IS NULL THEN $3 ELSE agent.lifecycle_state END,updated_at=clock_timestamp()
-    WHERE agent.tenant_id=$1 AND ($2::text IS NULL OR agent.primary_room_id=$2 OR EXISTS (
+    WHERE agent.tenant_id=$1 AND agent.purged_at IS NULL AND ($2::text IS NULL OR agent.primary_room_id=$2 OR EXISTS (
       SELECT 1 FROM memberships member WHERE member.tenant_id=agent.tenant_id AND member.alias=agent.alias AND member.room_id=$2))`,
   [target.tenant_id, target.resource === 'room' ? target.room_id : null, state]);
 }
@@ -54,6 +55,7 @@ export async function fleetMembershipIntent(client: DatabaseClient, row: FleetOp
   const stamp = row.kind === 'restore' ? await retirementStamp(client, row.target) : undefined;
   return (await client.query<FleetMembershipIntent>(`SELECT tenant_id,room_id,alias,role,
     COALESCE(retired_enabled,enabled) AS enabled FROM memberships WHERE ${scope.predicate}
+      AND NOT EXISTS(SELECT 1 FROM agents WHERE agents.tenant_id=memberships.tenant_id AND agents.alias=memberships.alias AND agents.purged_at IS NOT NULL)
       ${stamp === undefined ? '' : `AND (retired_at IS NULL OR retired_at=$${String(scope.params.length + 1)}::timestamptz)`}
     ORDER BY room_id,alias FOR UPDATE`, stamp === undefined ? scope.params : [...scope.params, stamp])).rows;
 }
@@ -98,22 +100,11 @@ export async function prepareFleetTransition(client: DatabaseClient, row: FleetO
 }
 
 export async function purgeFleetTarget(client: DatabaseClient, row: FleetOperationRow): Promise<void> {
-  const dependencies = await fleetPurgeDependencies(client, row.request);
-  if (dependencies.some((dependency) => dependency.blocking)) throw new FleetOperationError('conflict', 'purge target has durable references');
-  const target = row.target;
-  if (target.resource === 'agent') await client.query('DELETE FROM agents WHERE tenant_id=$1 AND alias=$2', [target.tenant_id, target.alias]);
-  else if (target.resource === 'room') await client.query('DELETE FROM rooms WHERE tenant_id=$1 AND id=$2', [target.tenant_id, target.room_id]);
-  else await client.query('DELETE FROM tenants WHERE id=$1', [target.tenant_id]);
+  await purgeRetiredTarget(client, row);
 }
 
 export async function fleetPurgeDependencies(client: DatabaseClient, request: FleetOperationRequest) {
-  const target = request.target;
-  const mutation = target.resource === 'tenant' ? { resource: 'tenant', action: 'delete', id: target.tenant_id } as const
-    : target.resource === 'room' ? { resource: 'room', action: 'delete', tenant_id: target.tenant_id, id: target.room_id } as const
-      : { ...target, action: 'delete' } as const;
-  const dependencies = await configurationDependencies(client, mutation);
-  return dependencies.map((dependency) => target.resource === 'agent' && dependency.type === 'fleet_runtime_identities'
-    ? { ...dependency, blocking: false } : dependency);
+  return purgeDependencies(client, request.target);
 }
 
 export async function settleFleetTransition(client: DatabaseClient, row: FleetOperationRow): Promise<void> {
@@ -129,11 +120,13 @@ export async function settleFleetTransition(client: DatabaseClient, row: FleetOp
     const stamp = await retirementStamp(client, target);
     if (target.resource === 'tenant') {
       await client.query(`UPDATE tenants SET enabled=retired_enabled,retired_at=NULL,retired_enabled=NULL WHERE id=$1 AND retired_at IS NOT NULL`, [target.tenant_id]);
-      await client.query(`UPDATE rooms SET enabled=retired_enabled,retired_at=NULL,retired_enabled=NULL WHERE tenant_id=$1 AND retired_at=$2::timestamptz`, [target.tenant_id, stamp]);
+      await client.query(`UPDATE rooms SET enabled=retired_enabled,retired_at=NULL,retired_enabled=NULL WHERE tenant_id=$1 AND retired_at=$2::timestamptz AND purged_at IS NULL`, [target.tenant_id, stamp]);
     } else await client.query(`UPDATE rooms SET enabled=retired_enabled,retired_at=NULL,retired_enabled=NULL WHERE tenant_id=$1 AND id=$2 AND retired_at IS NOT NULL`,
       [target.tenant_id, target.room_id]);
     const scope = targetPredicate(target);
     await client.query(`UPDATE memberships SET enabled=retired_enabled,retired_at=NULL,retired_enabled=NULL WHERE ${scope.predicate}
+      AND NOT EXISTS(SELECT 1 FROM agents WHERE agents.tenant_id=memberships.tenant_id AND agents.alias=memberships.alias AND agents.purged_at IS NOT NULL)
+      AND NOT EXISTS(SELECT 1 FROM rooms WHERE rooms.id=memberships.room_id AND rooms.purged_at IS NOT NULL)
       AND retired_at=$${String(scope.params.length + 1)}::timestamptz`, [...scope.params, stamp]);
     await settleGroupAgents(client, row);
   }

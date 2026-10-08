@@ -20,7 +20,7 @@ interface Repository {
   awaitAuth(claim: FleetOperationClaim): Promise<FleetOperation>;
   settle(claim: FleetOperationClaim): Promise<FleetOperation>;
   compensate(claim: FleetOperationClaim, evidence?: FleetEvidence): Promise<FleetOperation>;
-  execution(claim: FleetOperationClaim): Promise<{ previous_agents: Array<Record<string, unknown>> }>;
+  execution(claim: FleetOperationClaim): Promise<{ previous_agents: Record<string, unknown>[] }>;
 }
 let database: TestDatabase | undefined;
 let caseDatabase: EmptyTestDatabase | undefined;
@@ -62,7 +62,7 @@ async function verifyCreation(repo: Repository, claim: FleetOperationClaim): Pro
     ['runtime', { runtime_digest: 'c'.repeat(64) }],
     ['authenticate', { provider_verified: true }],
     ['profile', { profile_verified: true }],
-    ['verify', { hello_verified: true, roundtrip_verified: true }],
+    ['verify', { bootstrap_verified: true, roundtrip_verified: true }],
     ['admission', { authority_verified: true, artifact_sha256: 'd'.repeat(64) }],
   ];
   for (const [name, proof] of evidence) {
@@ -71,7 +71,7 @@ async function verifyCreation(repo: Repository, claim: FleetOperationClaim): Pro
   }
 }
 async function transition(repo: Repository, kind: 'start' | 'stop' | 'retire' | 'restore' | 'purge', target: FleetTarget, revision: number, host: string): Promise<FleetOperationClaim> {
-  const base = { expected_revision: revision, idempotency_key: `${kind}-${revision}-operation`, parameters: {} };
+  const base = { expected_revision: revision, idempotency_key: `${kind}-${String(revision)}-operation`, parameters: {} };
   let request: FleetOperationRequest;
   if (kind === 'start' || kind === 'stop') {
     if (target.resource !== 'agent') throw new Error('runtime fixture requires an agent');
@@ -151,6 +151,8 @@ describe('durable fleet operations', () => {
       .toEqual([{ enabled: false, lifecycle_state: 'provisioning', runtime_key: 'prepared', primary_room_id: 'fleet-test' }]);
     expect((await pool.query('SELECT enabled,role FROM memberships WHERE alias=$1', ['prepared'])).rows)
       .toEqual([{ enabled: false, role: 'agent' }]);
+    expect((await pool.query('SELECT purpose,revision,applied_revision FROM agent_profiles WHERE alias=$1', ['prepared'])).rows)
+      .toEqual([{ purpose: 'Agente prepared', revision: '1', applied_revision: null }]);
     expect((await pool.query('SELECT 1 FROM config_revisions')).rowCount).toBe(1);
   });
   it('rejects prepare under a changed revision without creating partial desired state', async () => {
@@ -309,14 +311,23 @@ describe('durable fleet operations', () => {
     expect((await pool.query("SELECT enabled,(retired_at IS NULL) AS active FROM rooms WHERE id='lifecycle-room'")).rows[0]).toEqual({ enabled: true, active: true });
     expect((await pool.query("SELECT enabled,lifecycle_state FROM agents WHERE alias='room_member'")).rows[0]).toEqual({ enabled: false, lifecycle_state: 'draft' });
   });
-  it('purges an unused room but refuses a room with historical memberships', async () => {
+  it('purges an unused room and preserves message anchors when purging a used room', async () => {
     const repo = new FleetOperationsRepository(pool, { controllerHost: 'purge-host' }) as Repository;
     await pool.query("INSERT INTO rooms(id,tenant_id) VALUES('unused-room','Steven')");
     const purge = await transition(repo, 'purge', { resource: 'room', tenant_id: 'Steven', room_id: 'unused-room' }, 0, 'purge-host');
     await repo.prepare(purge); await finishRemoval(repo, purge);
     expect((await pool.query("SELECT 1 FROM rooms WHERE id='unused-room'")).rowCount).toBe(0);
-    await expect(repo.enqueue('Steven', 'fleet_operator', { kind: 'purge', target: { resource: 'room', tenant_id: 'Steven', room_id: 'fleet-test' },
-      expected_revision: 2, idempotency_key: 'purge-used-room', parameters: {} })).rejects.toMatchObject({ code: 'conflict' });
+    await pool.query("INSERT INTO rooms(id,tenant_id) VALUES('purge-control','Steven')");
+    await pool.query("INSERT INTO memberships(tenant_id,room_id,alias,role) VALUES('Steven','purge-control','fleet_operator','operator')");
+    const message = (await pool.query<{ id: string }>(`INSERT INTO messages(request_id,trace_id,tenant_id,room_id,actor_alias,body,lane)
+      VALUES(gen_random_uuid(),'purge-used-room','Steven','fleet-test','fleet_operator','{}','interactive') RETURNING id`)).rows[0];
+    const used = await transition(repo, 'purge', { resource: 'room', tenant_id: 'Steven', room_id: 'fleet-test' }, 2, 'purge-host');
+    await repo.prepare(used); await finishRemoval(repo, used);
+    expect((await pool.query("SELECT enabled,purged_at IS NOT NULL AS purged FROM rooms WHERE id='fleet-test'")).rows[0])
+      .toEqual({ enabled: false, purged: true });
+    expect((await pool.query('SELECT 1 FROM messages WHERE id=$1', [message?.id])).rowCount).toBe(1);
+    expect((await pool.query("SELECT enabled FROM memberships WHERE room_id='fleet-test' AND alias='fleet_operator'")).rows[0])
+      .toEqual({ enabled: false });
   });
   it('fails a prepared operation safely and resumes without repeating completed evidence', async () => {
     const repo = repository(); const claim = await claimFor(repo, 'resume_failed'); await repo.prepare(claim);
@@ -340,7 +351,8 @@ describe('durable fleet operations', () => {
     await pool.query("INSERT INTO agents(tenant_id,alias,runtime_key,host_id) VALUES('Steven','empty_agent','permanent-key','empty-host')");
     const purge = await transition(repo, 'purge', { resource: 'agent', tenant_id: 'Steven', alias: 'empty_agent' }, 0, 'empty-host');
     await repo.prepare(purge); await finishRemoval(repo, purge);
-    expect((await pool.query("SELECT 1 FROM agents WHERE alias='empty_agent'")).rowCount).toBe(0);
+    expect((await pool.query("SELECT enabled,purged_at IS NOT NULL AS purged FROM agents WHERE alias='empty_agent'")).rows[0])
+      .toEqual({ enabled: false, purged: true });
     expect((await pool.query("SELECT 1 FROM fleet_runtime_identities WHERE alias='empty_agent' AND runtime_key='permanent-key'")).rowCount).toBe(1);
     await expect(repo.enqueue('Steven', 'fleet_operator', { ...create('empty_agent', 'empty-host'), expected_revision: 2 })).rejects.toMatchObject({ code: 'conflict' });
   });
@@ -370,7 +382,7 @@ describe('durable fleet operations', () => {
     const proofs: [FleetStepName, FleetEvidence][] = [['artifacts', { artifact_sha256: 'a'.repeat(64) }],
       ['credentials', { certificate_fingerprint: 'b'.repeat(64) }], ['runtime', { runtime_digest: 'c'.repeat(64) }],
       ['authenticate', { provider_verified: true }], ['profile', { profile_verified: true }],
-      ['verify', { hello_verified: true, roundtrip_verified: true }], ['admission', { authority_verified: true, artifact_sha256: 'd'.repeat(64) }]];
+      ['verify', { bootstrap_verified: true, roundtrip_verified: true }], ['admission', { authority_verified: true, artifact_sha256: 'd'.repeat(64) }]];
     for (const [name, evidence] of proofs) {
       await repo.startStep(claim, name); await repo.completeStep(claim, name, evidence);
       await pool.query("UPDATE fleet_operations SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE id=$1", [claim.operation.id]);

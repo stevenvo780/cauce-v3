@@ -48,17 +48,19 @@ export async function validateFleetTarget(
   client: DatabaseClient, request: FleetOperationRequest, controllerHost?: string, prepared = false,
 ): Promise<{ host: string; preview: FleetOperationPreview }> {
   const { target } = request;
-  const tenant = (await client.query<{ enabled: boolean; retired_at: Date | null }>(
-    'SELECT enabled,retired_at FROM tenants WHERE id=$1 FOR SHARE', [target.tenant_id])).rows[0];
+  const tenant = (await client.query<{ enabled: boolean; retired_at: Date | null; purged_at: Date | null }>(
+    'SELECT enabled,retired_at,purged_at FROM tenants WHERE id=$1 FOR SHARE', [target.tenant_id])).rows[0];
   if (!tenant) throw new FleetOperationError('not_found', 'target tenant was not found');
+  if (tenant.purged_at) throw new FleetOperationError('conflict', 'purged tenant identity is permanent');
   const activating = ['create', 'update', 'start', 'restore'].includes(request.kind);
   if (activating && !(request.kind === 'restore' && target.resource === 'tenant') && (!tenant.enabled || tenant.retired_at !== null)) {
     throw new FleetOperationError('conflict', 'target tenant is not active');
   }
   let host: string | undefined;
   if (target.resource === 'agent') {
-    const agent = (await client.query<{ host_id: string | null; runtime_key: string | null; primary_room_id: string | null; harness_id: string }>(
-      'SELECT host_id,runtime_key,primary_room_id,harness_id FROM agents WHERE tenant_id=$1 AND alias=$2', [target.tenant_id, target.alias])).rows[0];
+    const agent = (await client.query<{ host_id: string | null; runtime_key: string | null; primary_room_id: string | null; harness_id: string; purged_at: Date | null }>(
+      'SELECT host_id,runtime_key,primary_room_id,harness_id,purged_at FROM agents WHERE tenant_id=$1 AND alias=$2', [target.tenant_id, target.alias])).rows[0];
+    if (agent?.purged_at) throw new FleetOperationError('conflict', 'purged agent identity is permanent');
     if (request.kind === 'create' && agent && !prepared) throw new FleetOperationError('conflict', 'agent identity already exists');
     if (request.kind !== 'create' && !agent) throw new FleetOperationError('not_found', 'target agent was not found');
     if (request.kind === 'create' || request.kind === 'update') {
@@ -73,7 +75,7 @@ export async function validateFleetTarget(
         [parameters.runtime_key, target.tenant_id, target.alias])).rowCount) throw new FleetOperationError('conflict', 'physical runtime identity is reserved');
       for (const membership of parameters.memberships) {
         const room = (await client.query<{ allow_route: boolean }>(`SELECT policy.allow_route FROM rooms room JOIN role_policies policy ON policy.role=$3
-          WHERE room.id=$1 AND room.tenant_id=$2 AND room.enabled AND room.retired_at IS NULL FOR SHARE OF room,policy`,
+          WHERE room.id=$1 AND room.tenant_id=$2 AND room.enabled AND room.retired_at IS NULL AND room.purged_at IS NULL FOR SHARE OF room,policy`,
         [membership.room_id, target.tenant_id, membership.role])).rows[0];
         if (!room || (membership.room_id === parameters.primary_room_id && !room.allow_route)) {
           throw new FleetOperationError('conflict', 'membership room or routing role is unavailable');
@@ -86,7 +88,7 @@ export async function validateFleetTarget(
     } else {
       host = agent?.host_id ?? controllerHost;
       if (activating && !(await client.query(`SELECT 1 FROM rooms room CROSS JOIN harness_definitions harness
-        WHERE room.tenant_id=$1 AND room.id=$2 AND room.enabled AND room.retired_at IS NULL
+        WHERE room.tenant_id=$1 AND room.id=$2 AND room.enabled AND room.retired_at IS NULL AND room.purged_at IS NULL
           AND harness.id=$3 AND harness.enabled FOR SHARE OF room,harness`,
       [target.tenant_id, agent?.primary_room_id, agent?.harness_id])).rowCount) {
         throw new FleetOperationError('conflict', 'primary room or harness is unavailable');
@@ -94,8 +96,12 @@ export async function validateFleetTarget(
     }
   } else {
     host = controllerHost;
-    if (target.resource === 'room' && !(await client.query('SELECT 1 FROM rooms WHERE tenant_id=$1 AND id=$2',
-      [target.tenant_id, target.room_id])).rowCount) throw new FleetOperationError('not_found', 'target room was not found');
+    if (target.resource === 'room') {
+      const room = (await client.query<{ purged_at: Date | null }>('SELECT purged_at FROM rooms WHERE tenant_id=$1 AND id=$2',
+        [target.tenant_id, target.room_id])).rows[0];
+      if (!room) throw new FleetOperationError('not_found', 'target room was not found');
+      if (room.purged_at) throw new FleetOperationError('conflict', 'purged room identity is permanent');
+    }
   }
   if (!host) throw new FleetOperationError('conflict', 'fleet controller placement is not configured');
   const dependencies = request.kind === 'purge' ? await fleetPurgeDependencies(client, request) : [];

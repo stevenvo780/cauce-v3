@@ -45,6 +45,6 @@ export interface FleetExecutionState {
   operation: FleetOperation;
   request: FleetOperationRequest;
   fenced_targets: FencedFleetTarget[];
-  previous_agents: Array<Record<string, unknown>>;
+  previous_agents: Record<string, unknown>[];
   desired_memberships: FleetMembershipIntent[];
 }

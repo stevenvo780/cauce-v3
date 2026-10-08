@@ -4,7 +4,7 @@ import { egressDestinationColumns, type EgressDestinationRow } from '../reposito
 import { ConfigurationError, type ConfigurationLeafMutation } from './contracts.js';
 import { assertConfigurationDeleteAllowed, has, valueRequired } from './shared.js';
 import {
-  activeDeliveryStates, aclEdgeMutation, membershipMutation, roomMutation, tenantMutation
+  activeDeliveryStates, aclEdgeMutation, assertUnpurgedConfigurationScope, membershipMutation, roomMutation, tenantMutation
 } from './mutations/tenants.js';
 
 /** The exact prior state, so a rollback restores every limit rather than a default. */
@@ -18,6 +18,13 @@ function destinationValue(row: EgressDestinationRow): Record<string, unknown> {
     quiet_hours_start: row.quiet_hours_start, quiet_hours_end: row.quiet_hours_end,
     quiet_hours_tz: row.quiet_hours_tz, enabled: row.enabled
   };
+}
+
+async function assertUnpurgedAccountScope(client: DatabaseClient, account: string): Promise<void> {
+  const state = (await client.query<{ purged: boolean }>(`SELECT EXISTS(SELECT 1 FROM provider_accounts account
+    JOIN tenants tenant ON tenant.id=account.payer_tenant_id
+    WHERE account.id=$1 AND to_jsonb(tenant)->>'purged_at' IS NOT NULL) AS purged`, [account])).rows[0];
+  if (state?.purged) throw new ConfigurationError('conflict', 'purged account payer identity is permanent');
 }
 
 export abstract class ConfigurationMutations {
@@ -34,6 +41,19 @@ export abstract class ConfigurationMutations {
         summaries.push(result.summary);
       }
       return { inverse: { resource: 'batch', action: 'apply', mutations: inverse }, summary: summaries.join('; ') };
+    }
+    if (mutation.action === 'create' || mutation.action === 'update') {
+      if (mutation.resource === 'acl_edge') {
+        await assertUnpurgedConfigurationScope(client, mutation.from_tenant);
+        await assertUnpurgedConfigurationScope(client, mutation.to_tenant);
+      } else if (mutation.resource === 'egress_destination' || mutation.resource === 'alias_routing_ceiling') {
+        await assertUnpurgedConfigurationScope(client, mutation.tenant_id, undefined, mutation.alias);
+      } else if (mutation.resource === 'agent_account_binding') {
+        await assertUnpurgedConfigurationScope(client, mutation.tenant_id, undefined, mutation.agent_alias);
+      }
+      if (mutation.resource === 'alias_routing_ceiling' || mutation.resource === 'agent_account_binding') {
+        await assertUnpurgedAccountScope(client, mutation.account_id);
+      }
     }
     if (mutation.resource === 'tenant') return tenantMutation(client, mutation);
     if (mutation.resource === 'room') return roomMutation(client, mutation);
@@ -292,6 +312,7 @@ export abstract class ConfigurationMutations {
     client: DatabaseClient, mutation: Extract<ConfigurationLeafMutation, { resource: 'agent' }>
   ): Promise<{ inverse: ConfigMutation; summary: string }> {
     const key = `${mutation.tenant_id}/${mutation.alias}`;
+    await assertUnpurgedConfigurationScope(client, mutation.tenant_id, undefined, mutation.alias);
     const selected = await client.query<{
       harness_id: string | null; display_name: string | null; enabled: boolean;
       container_name: string | null; runtime_user: string | null;
@@ -382,9 +403,11 @@ export abstract class ConfigurationMutations {
       };
     }
     const value = valueRequired(mutation);
-    if (old.runtime_key && (value.enabled === true && !old.enabled
-      || ['harness_id', 'container_name', 'runtime_user', 'home_directory', 'state_directory', 'primary_room_id'].some((field) =>
-        has(value, field) && value[field] !== oldValue[field as keyof typeof oldValue]))) {
+    if (value.enabled === true && !old.enabled) {
+      throw new ConfigurationError('conflict', 'agent admission requires a verified fleet operation');
+    }
+    if (old.runtime_key && ['harness_id', 'container_name', 'runtime_user', 'home_directory', 'state_directory', 'primary_room_id'].some((field) =>
+      has(value, field) && value[field] !== oldValue[field as keyof typeof oldValue])) {
       throw new ConfigurationError('conflict', 'physical agent changes require a verified fleet operation');
     }
     const next = {
@@ -449,6 +472,7 @@ export abstract class ConfigurationMutations {
           'provider_account create requires provider, external_account_id, payer_tenant_id, credential_ref_kind and credential_ref'
         );
       }
+      await assertUnpurgedConfigurationScope(client, value.payer_tenant_id);
       await client.query(
         `INSERT INTO provider_accounts(id,provider,external_account_id,payer_tenant_id,label,
            credential_ref_kind,credential_ref,shared_with_pool,enabled)
@@ -474,6 +498,7 @@ export abstract class ConfigurationMutations {
         summary: `delete provider account ${mutation.id}`
       };
     }
+    await assertUnpurgedConfigurationScope(client, old.payer_tenant_id);
     const value = valueRequired(mutation);
     if (has(value, 'provider') || has(value, 'external_account_id') || has(value, 'payer_tenant_id') ||
         has(value, 'credential_ref_kind') || has(value, 'credential_ref')) {

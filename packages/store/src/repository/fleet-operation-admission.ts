@@ -27,7 +27,7 @@ export async function admitFleetAgent(client: DatabaseClient, row: FleetOperatio
   const prepared = await preparedState(client, row.id);
   const expected = row.request.kind === 'create' || row.request.kind === 'update' ? row.request.parameters
     : prepared.previous_agents.find((previous) => previous.tenant_id === target.tenant_id && previous.alias === target.alias);
-  if (!expected || expected.primary_room_id !== agent.primary_room_id || expected.harness_id !== agent.harness_id
+  if (expected?.primary_room_id !== agent.primary_room_id || expected.harness_id !== agent.harness_id
       || (expected.primary_account_id ?? null) !== agent.primary_account_id) {
     throw new FleetOperationError('conflict', 'agent admission identity changed after preparation');
   }
@@ -44,7 +44,7 @@ export async function admitFleetAgent(client: DatabaseClient, row: FleetOperatio
     FOR UPDATE OF member FOR SHARE OF room,policy`, [target.tenant_id, target.alias])).rows;
   for (const member of intent) {
     const current = memberships.find((membership) => membership.room_id === member.room_id);
-    if (member.tenant_id !== target.tenant_id || member.alias !== target.alias || !current || current.role !== member.role
+    if (member.tenant_id !== target.tenant_id || member.alias !== target.alias || current?.role !== member.role
         || (member.enabled && (current.retired_at !== null || !current.room_enabled || current.room_retired_at !== null))) {
       throw new FleetOperationError('conflict', 'membership no longer matches the prepared admission intent');
     }
