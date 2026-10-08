@@ -7,7 +7,9 @@ import type { OAuthAuthorizationServerOptions } from './oauth-authorization-serv
 import { configuredContextRepository } from './console/context-repository/binding.js';
 import { readFile } from 'node:fs/promises';
 import { createPool, FleetOperationsRepository, type DatabasePool } from '@cauce/store';
-import { configuredFleetCapability, assertFleetPlacement } from './console/fleet-capability.js';
+import { configuredFleetCapability, assertFleetPlacement, assertFleetProviderAccount } from './console/fleet-capability.js';
+import { HostProviderAuthService } from './fleet/auth-bridge-client.js';
+import { FleetMtlsIdentityProvider, FleetTokenProbeAuthProvider } from './fleet/mtls-identities.js';
 import { buildGateway } from './app.js';
 import {
   configuredAckDeadlineMs, configuredDeliveryAdmission, configuredDeliveryLeaseCap, configuredBlobApi } from './config.js';
@@ -79,13 +81,19 @@ async function readSigningKey(path: string): Promise<Buffer> {
 /**
  * Configures the fallback auth provider for requests without a session cookie.
  */
+function configuredMtls(namespace: 'normal' | 'bootstrap' = 'normal'): MtlsAuthProvider {
+  const path = process.env.CAUCE_MTLS_IDENTITY_FILE;
+  if (!path) throw new Error('CAUCE_MTLS_IDENTITY_FILE is required for mTLS auth');
+  const fleetPath = process.env.CAUCE_FLEET_MTLS_IDENTITY_FILE;
+  if (fleetPath !== undefined) return new MtlsAuthProvider(new FleetMtlsIdentityProvider(path, fleetPath, namespace));
+  if (namespace === 'bootstrap') throw new Error('Bootstrap requires the additional fleet identity registry');
+  return new MtlsAuthProvider(new HashedMtlsIdentityFileProvider(path));
+}
 async function configuredPasswordFallback(): Promise<AuthProvider | undefined> {
   const selected = process.env.CAUCE_CONSOLE_PASSWORD_FALLBACK ?? 'mtls';
   if (selected === 'none') return undefined;
   if (selected === 'mtls') {
-    const path = process.env.CAUCE_MTLS_IDENTITY_FILE;
-    if (!path) throw new Error('CAUCE_MTLS_IDENTITY_FILE is required for mTLS auth');
-    return new MtlsAuthProvider(new HashedMtlsIdentityFileProvider(path));
+    return configuredMtls();
   }
   if (selected === 'token-file') {
     const path = process.env.CAUCE_TOKEN_HASH_FILE;
@@ -125,9 +133,7 @@ async function configuredAuthProvider(pool: DatabasePool): Promise<AuthProvider>
     return new HashedTokenFileAuthProvider({ path });
   }
   if (selected === 'mtls') {
-    const path = process.env.CAUCE_MTLS_IDENTITY_FILE;
-    if (!path) throw new Error('CAUCE_MTLS_IDENTITY_FILE is required for mTLS auth');
-    return new MtlsAuthProvider(new HashedMtlsIdentityFileProvider(path));
+    return configuredMtls();
   }
   if (selected === 'oidc' || (!selected && issuer && audience && jwksUrl)) {
     if (!issuer || !audience || !jwksUrl) throw new Error('complete OIDC configuration is required');
@@ -175,10 +181,13 @@ async function configuredAuthProvider(pool: DatabasePool): Promise<AuthProvider>
 async function configuredHttps(authProvider: AuthProvider): Promise<{
   key: Buffer; cert: Buffer; ca?: Buffer; requestCert?: boolean; rejectUnauthorized?: boolean;
 } | undefined> {
+  if (process.env.CAUCE_FLEET_MTLS_IDENTITY_FILE !== undefined && !usesMtls(authProvider)) {
+    throw new Error('Fleet bootstrap requires a normal mTLS authentication provider');
+  }
   const certPath = process.env.CAUCE_TLS_CERT_FILE;
   const keyPath = process.env.CAUCE_TLS_KEY_FILE;
   if (!certPath || !keyPath) {
-    if (process.env.NODE_ENV === 'production') throw new Error('production gateway TLS cert/key paths are required');
+    if (process.env.NODE_ENV === 'production' || process.env.CAUCE_FLEET_MTLS_IDENTITY_FILE !== undefined) throw new Error('gateway TLS cert/key paths are required');
     return undefined;
   }
   const [cert, key] = await Promise.all([readFile(certPath), readFile(keyPath)]);
@@ -247,14 +256,25 @@ const fleetOperations = fleetCapability.available ? new FleetOperationsRepositor
 const fleetOperationsRepository = fleetOperations === undefined ? undefined : {
   list: fleetOperations.list.bind(fleetOperations), get: fleetOperations.get.bind(fleetOperations),
   cancel: fleetOperations.cancel.bind(fleetOperations), resume: fleetOperations.resume.bind(fleetOperations),
-  preview: (tenant: string, alias: string, input: import('@cauce/protocol').FleetOperationRequest, subject?: string) => {
-    assertFleetPlacement(fleetCapability, input); return fleetOperations.preview(tenant, alias, input, subject);
+  preview: async (tenant: string, alias: string, input: import('@cauce/protocol').FleetOperationRequest, subject?: string) => {
+    assertFleetPlacement(fleetCapability, input); await assertFleetProviderAccount(pool, fleetCapability, input);
+    return fleetOperations.preview(tenant, alias, input, subject);
   },
-  enqueue: (tenant: string, alias: string, input: import('@cauce/protocol').FleetOperationRequest, subject?: string) => {
-    assertFleetPlacement(fleetCapability, input); return fleetOperations.enqueue(tenant, alias, input, subject);
+  enqueue: async (tenant: string, alias: string, input: import('@cauce/protocol').FleetOperationRequest, subject?: string) => {
+    assertFleetPlacement(fleetCapability, input); await assertFleetProviderAccount(pool, fleetCapability, input);
+    return fleetOperations.enqueue(tenant, alias, input, subject);
   },
 };
 const app = await buildGateway({
+  ...(process.env.CAUCE_FLEET_MTLS_IDENTITY_FILE === undefined ? {} : {
+    bootstrapProviders: { bootstrap: configuredMtls('bootstrap'), normal: configuredMtls('normal'),
+      ...(process.env.CAUCE_FLEET_TOKEN_HASH_FILE === undefined ? {} : {
+        token: new FleetTokenProbeAuthProvider(process.env.CAUCE_FLEET_TOKEN_HASH_FILE),
+      }) },
+  }),
+  ...(process.env.CAUCE_FLEET_API_SOCKET === undefined ? {} : {
+    providerAuthService: new HostProviderAuthService(process.env.CAUCE_FLEET_API_SOCKET),
+  }),
   ...(fleetOperationsRepository === undefined ? {} : { fleetOperationsRepository, fleetCapability }),
   ...(humanMcp === undefined ? {} : { humanMcp }),
   ...(contextRepository === undefined ? {} : { contextRepository }),

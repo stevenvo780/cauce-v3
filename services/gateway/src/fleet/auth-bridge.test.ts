@@ -12,7 +12,7 @@ const actor = { subject: 'console:11111111-1111-4111-8111-111111111111', tenant_
 const input: ProviderAuthRequest = { operation_id: '22222222-2222-4222-8222-222222222222', expected_operation_version: 0,
   request_id: 'bridge-test', provider_id: 'codex', account_id: 'account', harness_id: 'codex', host_id: 'fixture',
   runtime_user: 'dev', profile_id: 'profile' };
-const cleanup: Array<() => Promise<unknown>> = [];
+const cleanup: (() => Promise<unknown>)[] = [];
 afterEach(async () => { for (const action of cleanup.reverse()) await action(); cleanup.length = 0; });
 async function fixture() {
   const directory = await mkdtemp(join(tmpdir(), 'fleet-bridge-'));
@@ -36,7 +36,7 @@ async function fixture() {
   const manager = new ProviderAuthManager(dependencies);
   const socketPath = join(directory, 'api.sock');
   const app = await startAuthBridge(socketPath, manager); cleanup.push(() => app.close());
-  const client = new HostProviderAuthService(socketPath, { ownerUid: process.geteuid!() }); cleanup.push(() => client.shutdown());
+  const client = new HostProviderAuthService(socketPath, { ownerUid: (process.geteuid?.() ?? -1) }); cleanup.push(() => client.shutdown());
   return { client, emit: (value: string) => { output?.(Buffer.from(value)); }, revoke: () => { allowed = false; },
     state: () => ({ stopped, inputBytes }) };
 }
@@ -51,7 +51,7 @@ describe('private host authentication transport', () => {
     await new Promise<void>(resolve => { server.listen(socketPath, resolve); });
     cleanup.push(() => new Promise<void>((resolve, reject) => { server.close(error => { if (error) reject(error); else resolve(); }); }));
     await chmod(socketPath, 0o666);
-    const client = new HostProviderAuthService(socketPath, { ownerUid: process.geteuid!() });
+    const client = new HostProviderAuthService(socketPath, { ownerUid: (process.geteuid?.() ?? -1) });
     await expect(client.start(actor, input)).rejects.toMatchObject({ code: 'HOST_UNAVAILABLE' });
     expect(received).toBe(false);
     await expect(startAuthBridge(join(directory, 'other.sock'), new ProviderAuthManager({} as ProviderAuthDependencies)))
@@ -62,7 +62,7 @@ describe('private host authentication transport', () => {
     const directory = await mkdtemp(join(tmpdir(), 'fleet-bridge-link-'));
     cleanup.push(() => rm(directory, { recursive: true, force: true }));
     await symlink('/var/tmp', join(directory, 'alias'));
-    const client = new HostProviderAuthService(join(directory, 'alias', 'api.sock'), { ownerUid: process.geteuid!() });
+    const client = new HostProviderAuthService(join(directory, 'alias', 'api.sock'), { ownerUid: (process.geteuid?.() ?? -1) });
     await expect(client.start(actor, input)).rejects.toMatchObject({ code: 'HOST_UNAVAILABLE' });
     await f.client.shutdown();
   });

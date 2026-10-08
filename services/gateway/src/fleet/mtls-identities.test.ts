@@ -13,7 +13,7 @@ async function fixture() {
   const write = async (path: string, identities: unknown[]) => writeFile(path, JSON.stringify({ version: 1, identities }), { mode: 0o600 });
   await write(base, [entry('a'.repeat(64), normal)]);
   await write(fleet, [entry('b'.repeat(64), restricted), entry('c'.repeat(64), normal)]);
-  return { base, fleet, write, provider: (namespace: 'normal' | 'bootstrap') => new FleetMtlsIdentityProvider(base, fleet, namespace, process.geteuid!()) };
+  return { base, fleet, write, provider: (namespace: 'normal' | 'bootstrap') => new FleetMtlsIdentityProvider(base, fleet, namespace, (process.geteuid?.() ?? -1)) };
 }
 describe('additional fleet mTLS identities', () => {
   it('preserves the existing registry and separates bootstrap certificates from normal admission', async () => {
