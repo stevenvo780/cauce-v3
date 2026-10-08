@@ -5,6 +5,7 @@ import { useResource } from '../../api/use-resource';
 import { ErrorState, LoadingState, PageHeader, RefreshButton } from '../../components/ui';
 import { onNavClick } from '../../router';
 import { AgentSettings } from './AgentSettings';
+import { PeopleAdminEntry } from '../auth/PeopleAdminEntry';
 import { esNegativaDePermiso } from './config-change';
 import './settings.css';
 
@@ -48,7 +49,7 @@ function ConfigOverview({ onAdvanced }: { onAdvanced: () => void }) {
     {configuration.error ? <p className="notice error" role="alert">
       No se pudo actualizar: se muestra la última lectura válida ({configuration.error.message}).
     </p> : null}
-    {configuration.data ? <AgentSettings snapshot={configuration.data} /> : null}
+    {configuration.data ? <><AgentSettings snapshot={configuration.data} /><PeopleAdminEntry /></> : null}
     <details className="settings-policy">
       <summary>Comunicación y permisos</summary>
       <p>Los grupos organizan identidad y responsabilidad. Los miembros habilitados de un mismo tenant

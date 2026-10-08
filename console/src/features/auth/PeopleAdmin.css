@@ -1,0 +1,13 @@
+.people-admin { display: grid; gap: 1rem; }
+.people-admin-heading { display: flex; align-items: start; justify-content: space-between; gap: 1rem; }
+.people-admin-heading h2 { margin: 0; }
+.people-admin-table { overflow-x: auto; }
+.people-admin-table table { width: 100%; }
+.people-admin-table th, .people-admin-table td { text-align: left; padding: .65rem; vertical-align: top; }
+.people-admin-form, .people-admin-confirm { border: 1px solid var(--border); border-radius: .75rem; padding: 1rem; }
+.people-admin-form { display: grid; gap: .75rem; }
+.people-admin-form label { display: grid; gap: .35rem; }
+.people-admin-form input, .people-admin-form select { width: 100%; max-width: 40rem; }
+.people-admin-form .people-admin-checkbox { display: flex; align-items: center; gap: .5rem; }
+.people-admin-form .people-admin-checkbox input { width: auto; }
+@media (max-width: 760px) { .people-admin-heading { flex-direction: column; } }
