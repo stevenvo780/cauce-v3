@@ -131,4 +131,3 @@ export async function revoked(pool: DatabasePool, grantId: string) {
 export function shortGrace(pool: DatabasePool) {
   return intercept(pool, async sql => sql.replaceAll("clock_timestamp()-interval '60 seconds'", "clock_timestamp()-interval '200 milliseconds'"));
 }
-
