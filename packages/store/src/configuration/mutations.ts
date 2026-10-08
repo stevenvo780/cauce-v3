@@ -413,7 +413,7 @@ export abstract class ConfigurationMutations {
       throw new ConfigurationError('conflict', 'agent admission requires a verified fleet operation');
     }
     if (old.runtime_key && ['harness_id', 'container_name', 'runtime_user', 'home_directory', 'state_directory', 'primary_room_id', 'host_id'].some((field) =>
-      has(value, field) && value[field] !== oldValue[field as keyof typeof oldValue])) {
+      has(value, field) && value[field] !== oldValue[field as keyof typeof oldValue] && !firstHostPlacement(field, oldValue, value))) {
       throw new ConfigurationError('conflict', 'physical agent changes require a verified fleet operation');
     }
     const next = {
@@ -639,4 +639,9 @@ export abstract class ConfigurationMutations {
       summary: `update agent account binding ${key}`
     };
   }
+}
+
+/** A runtime agent adopted before computers were tracked may record its computer once; moving it needs a fleet operation. */
+function firstHostPlacement(field: string, oldValue: Record<string, unknown>, value: Record<string, unknown>): boolean {
+  return field === 'host_id' && (oldValue.host_id ?? null) === null && typeof value.host_id === 'string';
 }
