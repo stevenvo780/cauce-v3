@@ -124,10 +124,16 @@ it('acepta en el editor los recursos que el servidor acepta y la lista fija rech
   await user.selectOptions(screen.getByLabelText('Resource'), 'egress_destination');
   expect(Array.from(screen.getByLabelText('Action').querySelectorAll('option')).map((o) => o.value))
     .toEqual(['create', 'update', 'delete']);
+  const editor = screen.getByLabelText<HTMLTextAreaElement>('Mutación JSON');
+  const draft = JSON.parse(editor.value) as { value: { conversation_id: string } };
+  expect(draft.value.conversation_id).toBe('');
+  draft.value.conversation_id = '123456789';
+  fireEvent.change(editor, { target: { value: JSON.stringify(draft) } });
   await user.click(screen.getByRole('button', { name: /preview \/ dry-run/i }));
   await screen.findByLabelText(/resultado de preview/i);
   expect(changes.at(-1)?.mutation).toMatchObject({
     resource: 'egress_destination', action: 'update', tenant_id: 'Acme', alias: 'agent', handle: 'owner_dm',
+    value: { conversation_id: '123456789' },
   });
   expect(screen.queryByText(/resource no reconocido/i)).not.toBeInTheDocument();
 });

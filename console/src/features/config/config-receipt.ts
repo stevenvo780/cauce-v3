@@ -1,17 +1,8 @@
+import { ConfigMutationSchema } from '@cauce/protocol/configuration';
 import type { ConfigMutation, ConfigurationChangeResult } from '../../api/types';
 
-const RESOURCES = new Set([
-  'tenant', 'room', 'membership', 'acl_edge', 'harness', 'role_policy',
-  'chain_policy', 'egress_destination', 'agent', 'provider_account',
-  'alias_routing_ceiling', 'agent_account_binding',
-]);
-const ACTIONS = new Set(['create', 'update', 'delete']);
-
 function mutation(value: unknown): value is ConfigMutation {
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
-  const row = value as Record<string, unknown>;
-  return typeof row.resource === 'string' && RESOURCES.has(row.resource)
-    && typeof row.action === 'string' && ACTIONS.has(row.action);
+  return ConfigMutationSchema.safeParse(value).success;
 }
 
 function canonical(value: unknown): string | undefined {

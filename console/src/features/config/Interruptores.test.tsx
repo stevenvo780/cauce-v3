@@ -72,7 +72,7 @@ function appliedReadReceipt(body: ChangeRequest, revision: number) {
 
 // --- What Steven asked for: switches, not buttons --------------------------------------------
 
-it('los permisos son INTERRUPTORES y la columna de botones ya no existe', async () => {
+it('los permisos siguen en interruptores junto con las acciones de edición', async () => {
   servirConfig(() => snapshot(1));
   const user = userEvent.setup();
   renderWithApi(<ConfigPage />);
@@ -84,12 +84,12 @@ it('los permisos son INTERRUPTORES y la columna de botones ya no existe', async 
   if (acl) {
     // Four switches per edge: the master and the three permissions.
     expect(within(acl).getAllByRole('switch')).toHaveLength(4);
-    // And ZERO text buttons: they were "Disable", "Remove allow_route", "Remove allow_read"
-    // and "Remove allow_control", stacked in an "Actions" column that stretched the row to 147 px.
     expect(within(acl).queryByRole('button', { name: /^deshabilitar/i })).not.toBeInTheDocument();
     expect(within(acl).queryByRole('button', { name: /quitar allow_/i })).not.toBeInTheDocument();
     expect(within(acl).queryByRole('button', { name: /conceder allow_/i })).not.toBeInTheDocument();
-    expect(within(acl).queryByRole('columnheader', { name: /acciones/i })).not.toBeInTheDocument();
+    expect(within(acl).getByRole('columnheader', { name: /acciones/i })).toBeInTheDocument();
+    expect(within(acl).getByRole('button', { name: /^Editar ACL / })).toBeEnabled();
+    expect(within(acl).getByRole('button', { name: /^Eliminar ACL / })).toBeEnabled();
 
     // And the switch STATES the state: no need for a pill next to it repeating it.
     expect(within(acl).getByRole('switch', { name: RUTA })).toBeChecked();
@@ -108,7 +108,7 @@ it('las cabeceras dejan de ser nombres de columna de Postgres y explican qué co
   expect(acl).not.toBeNull();
   if (acl) {
     expect(within(acl).getAllByRole('columnheader').map((celda) => celda.textContent.replace(/[?:].*/s, '').trim()))
-      .toEqual(['Arista', 'Habilitado', 'Ruta', 'Lectura', 'Control', 'Alta']);
+      .toEqual(['Arista', 'Habilitado', 'Ruta', 'Lectura', 'Control', 'Alta', 'Acciones']);
     // The explanation lives in the DOM itself — not only in a `title` the keyboard cannot reach
     // — so it can be read without a mouse.
     expect(within(acl).getByText(/ESCRIBA sobre el de la derecha/)).toBeInTheDocument();

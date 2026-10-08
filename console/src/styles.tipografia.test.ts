@@ -26,6 +26,7 @@ const HOJAS = [
   'features/auth/client-connections.css',
   'features/auth/human-profile.css',
   'features/config/config.css',
+  'features/config/config-form.css',
   'features/config/settings.css',
   'features/config/AgentRegistryEditor.css',
   'features/config/AgentRegistryCreate.css',

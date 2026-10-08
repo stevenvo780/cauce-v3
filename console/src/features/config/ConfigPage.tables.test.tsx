@@ -32,12 +32,12 @@ it('pinta cada colección como TABLA con columnas de verdad y deja el JSON crudo
 
   const memberships = panelDe(/memberships/i);
   expect(within(memberships).getAllByRole('columnheader').map((celda) => rotulo(celda)))
-    .toEqual(['Tenant', 'Room', 'Alias', 'Rol de permisos', 'Habilitado', 'Alta']);
+    .toEqual(['Tenant', 'Room', 'Alias', 'Rol de permisos', 'Habilitado', 'Alta', 'Acciones']);
   expect(within(memberships).getByText('janus')).toBeInTheDocument();
 
   const tenants = panelDe(/^Tenants$/);
   expect(within(tenants).getAllByRole('columnheader').map((celda) => rotulo(celda)))
-    .toEqual(['Id', 'Nombre', 'Hub', 'Habilitado', 'Alta']);
+    .toEqual(['Id', 'Nombre', 'Hub', 'Habilitado', 'Alta', 'Acciones']);
   expect(within(tenants).getByText(/ver crudo/i)).toBeInTheDocument();
 });
 

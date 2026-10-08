@@ -12,11 +12,22 @@ export type ConfigResource =
 type RegistryConfigResource =
   | 'agent' | 'provider_account' | 'alias_routing_ceiling' | 'agent_account_binding';
 export type AnyConfigResource = ConfigResource | RegistryConfigResource;
-export type ConfigAction = 'create' | 'update' | 'delete';
-export type ConfigMutation = Record<string, unknown> & {
+export type ConfigAction = 'create' | 'update' | 'delete' | 'retire' | 'restore';
+export type ConfigLeafMutation = Record<string, unknown> & {
   resource: AnyConfigResource;
   action: ConfigAction;
 };
+export type ConfigMutation = ConfigLeafMutation | (Record<string, unknown> & {
+  resource: 'batch'; action: 'apply'; mutations: ConfigLeafMutation[];
+});
+
+export interface ConfigurationCapabilities {
+  actor: { tenant_id: string; alias: string; is_hub: boolean; can_control: boolean };
+  resources: {
+    resource: AnyConfigResource | 'agent_profile'; actions: ConfigAction[];
+    scope: 'hub' | 'tenant' | 'outgoing_acl' | 'none'; tenant_id?: string;
+  }[];
+}
 
 interface ConfigRevision {
   id?: string | null;
@@ -29,6 +40,11 @@ interface ConfigRevision {
 }
 
 export interface ConfigurationSnapshot {
+  capabilities?: ConfigurationCapabilities | null;
+  retired?: {
+    tenants: Record<string, unknown>[]; rooms: Record<string, unknown>[];
+    memberships: Record<string, unknown>[]; agents: Record<string, unknown>[];
+  } | null;
   revision?: number | null;
   observed_at?: string | null;
   tenants?: Record<string, unknown>[] | null;

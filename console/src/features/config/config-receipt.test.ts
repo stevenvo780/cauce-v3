@@ -10,6 +10,15 @@ const inverse: ConfigMutation = {
 };
 
 describe('exact configuration receipt', () => {
+  it('credits logical retirement receipts and rejects nested batch inverses', () => {
+    const retired: ConfigMutation = { resource: 'room', action: 'retire', tenant_id: 'Miguel', id: 'grp.miguel' };
+    const restored: ConfigMutation = { ...retired, action: 'restore' };
+    const receipt = { applied: false, dry_run: true, revision: 1, summary: 'retire room', rolled_back_revision_id: null, mutation: retired, inverse_mutation: restored };
+    expect(exactConfigurationReceipt(receipt, true, retired)).toBe(true);
+    const batch: ConfigMutation = { resource: 'batch', action: 'apply', mutations: [retired, restored] };
+    expect(exactConfigurationReceipt({ ...receipt, mutation: batch, inverse_mutation: batch }, true, batch)).toBe(true);
+    expect(exactConfigurationReceipt({ ...receipt, mutation: batch, inverse_mutation: { ...batch, mutations: [batch] } } as unknown as Parameters<typeof exactConfigurationReceipt>[0], true, batch)).toBe(false);
+  });
   it('requires exact apply/dry-run semantics, revision, mutation and inverse', () => {
     const receipt = {
       applied: true, dry_run: false, revision: 2, summary: 'update tenant Steven',

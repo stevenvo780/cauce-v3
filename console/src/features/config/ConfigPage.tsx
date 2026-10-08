@@ -19,6 +19,9 @@ import { AltaDeEspacios } from './AltaDeEspacios';
 import { AREA_POR_DEFECTO, agruparPorArea, type ConfigAreaId } from './areas';
 import { ArnesesPanel } from './ArnesesPanel';
 import { ConfigWorkspace } from './ConfigWorkspace';
+import { ConfigCollectionForm } from './ConfigCollectionForm';
+import { configFormDefinition, type ConfigFormTarget } from './config-form-model';
+import { canUseConfigForm, retiredConfigRows } from './config-form-access';
 import { CollectionTable, type AccionPendiente, type AvisoDeColeccion } from './CollectionTable';
 import { configCollections } from './collections';
 import { describeConfigError, esNegativaDePermiso, textoRecarga, type EstadoRecarga } from './config-change';
@@ -42,7 +45,7 @@ const templates: Record<ConfigResource, ConfigMutation> = {
   egress_destination: {
     resource: 'egress_destination', action: 'create', tenant_id: 'Acme', alias: 'agent', handle: 'owner_dm',
     value: {
-    adapter: 'telegram', channel: 'telegram', conversation_id: 'synthetic-dm', conversation_kind: 'dm',
+    adapter: 'telegram', channel: 'telegram', conversation_id: '', conversation_kind: 'dm',
       display_label: 'DM del dueño', allow_kinds: ['task_complete'], require_prior_contact: true,
       contact_ttl_days: 30, min_interval_seconds: 300, max_per_hour: 2, max_per_day: 8, max_per_root: 1,
       enabled: true
@@ -82,7 +85,7 @@ type RollbackPolicy =
   | { allowed: true }
   | { allowed: false; accountResource: boolean; message: string };
 
-function rollbackPolicy(operation: unknown): RollbackPolicy {
+function rollbackLeafPolicy(operation: unknown): RollbackPolicy {
   if (!operation || typeof operation !== 'object' || Array.isArray(operation)) {
     return {
       allowed: false,
@@ -101,7 +104,8 @@ function rollbackPolicy(operation: unknown): RollbackPolicy {
   }
   if (!resource || !RESOURCES.includes(resource as AnyConfigResource)
     || typeof candidate.action !== 'string'
-    || !allActions.includes(candidate.action as ConfigAction)) {
+    || (!allActions.includes(candidate.action as ConfigAction)
+      && !(['tenant', 'room', 'membership'].includes(resource) && ['retire', 'restore'].includes(candidate.action)))) {
     return {
       allowed: false,
       accountResource: false,
@@ -109,6 +113,21 @@ function rollbackPolicy(operation: unknown): RollbackPolicy {
     };
   }
   return { allowed: true };
+}
+
+function rollbackPolicy(operation: unknown): RollbackPolicy {
+  if (operation && typeof operation === 'object' && !Array.isArray(operation)) {
+    const candidate = operation as Record<string, unknown>;
+    if (candidate.resource === 'batch' && candidate.action === 'apply'
+      && Array.isArray(candidate.mutations) && candidate.mutations.length >= 1 && candidate.mutations.length <= 200) {
+      for (const mutation of candidate.mutations) {
+        const policy = rollbackLeafPolicy(mutation);
+        if (!policy.allowed) return policy;
+      }
+      return { allowed: true };
+    }
+  }
+  return rollbackLeafPolicy(operation);
 }
 
 function mutationText(resource: ConfigResource, action: ConfigAction): string {
@@ -213,6 +232,7 @@ function ConfigPageContent({ active, onReturn }: { active: boolean; onReturn?: (
   const [action, setAction] = useState<ConfigAction>('create');
   const [editor, setEditor] = useState(() => mutationText('acl_edge', 'create'));
   const [pendiente, setPendiente] = useState<AccionPendienteVigente>();
+  const [formTarget, setFormTarget] = useState<ConfigFormTarget>();
   // The open tab. `/config` used to be one scroll with onboarding, wizard, raw editor, every table, and audit trail.
   // General configuration stays grouped here; the account registry is intentionally absent because `/accounts` is
   // its typed authority. Unknown collections still fall under "Others".
@@ -246,7 +266,8 @@ function ConfigPageContent({ active, onReturn }: { active: boolean; onReturn?: (
   const canalEditor = useConfigMutation({ ...escritura, canal: 'editor' });
   const canalRollback = useConfigMutation({ ...escritura, canal: 'rollback' });
   const canalAccion = useConfigMutation({ ...escritura, canal: 'row-action' });
-  const busy = canalEditor.busy || canalRollback.busy || canalAccion.busy;
+  const canalFormulario = useConfigMutation({ ...escritura, canal: 'formulario' });
+  const busy = canalEditor.busy || canalRollback.busy || canalAccion.busy || canalFormulario.busy;
   const snapshotRevision = typeof config.data?.revision === 'number' ? config.data.revision : undefined;
   const groups = useMemo(() => configCollections(config.data), [config.data]);
   const areas = useMemo(() => agruparPorArea(groups), [groups]);
@@ -277,8 +298,19 @@ function ConfigPageContent({ active, onReturn }: { active: boolean; onReturn?: (
   function irAArea(siguiente: ConfigAreaId) {
     setArea(siguiente);
     setPendiente(undefined);
+    setFormTarget(undefined);
+    canalFormulario.clear();
     canalAccion.informar(undefined);
     interruptores.limpiar();
+  }
+
+  function openForm(target: ConfigFormTarget) {
+    const definition = configFormDefinition(target.collection);
+    if (!definition || !config.data || !canUseConfigForm(config.data, definition, target.action, target.row)) return;
+    setPendiente(undefined);
+    canalAccion.clear();
+    canalFormulario.clear();
+    setFormTarget(target);
   }
 
   function selectTemplate(nextResource: ConfigResource, nextAction: ConfigAction) {
@@ -537,6 +569,12 @@ function ConfigPageContent({ active, onReturn }: { active: boolean; onReturn?: (
               + 'sobre el dato de ahora.',
           }
           : propio;
+        const definition = configFormDefinition(coleccion.key);
+        const form = formTarget?.collection === coleccion.key && definition && config.data
+          ? <ConfigCollectionForm key={`${coleccion.key}:${formTarget.action}:${JSON.stringify(formTarget.row ?? {})}`}
+            definition={definition} target={formTarget} snapshot={config.data} runner={canalFormulario} busy={busy}
+            onCancel={() => { setFormTarget(undefined); canalFormulario.clear(); }} onRelated={openForm} />
+          : undefined;
         return <CollectionTable
           key={coleccion.key}
           coleccion={coleccion}
@@ -544,6 +582,10 @@ function ConfigPageContent({ active, onReturn }: { active: boolean; onReturn?: (
           soloLectura={soloLectura}
           busy={busy}
           control={interruptores}
+          editor={form}
+          onFormAction={openForm}
+          onFormAllowed={(target) => Boolean(definition && config.data && canUseConfigForm(config.data, definition, target.action, target.row))}
+          retiredRows={retiredConfigRows(config.data, coleccion.key)}
           {...(active && vigente ? { pendiente: pedido } : {})}
           {...(aviso ? { aviso } : {})}
           onPedir={(siguiente) => {

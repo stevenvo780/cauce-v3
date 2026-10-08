@@ -1,5 +1,5 @@
 import { Braces } from 'lucide-react';
-import { Fragment, useEffect, useRef, type KeyboardEvent } from 'react';
+import { Fragment, useEffect, useRef, type KeyboardEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { CONFIG_SIN_CONTROL_REASON } from '../../router';
 import { useFocusTrap } from '../../hooks/useFocusTrap';
@@ -16,6 +16,8 @@ import {
 } from './Interruptor';
 import { esCampoConmutable, explicacionDeCampo, interruptorDeFila } from './interruptores';
 import type { ControlDeInterruptores } from './use-interruptores';
+import type { ConfigFormTarget } from './config-form-model';
+import { configFormDefinition } from './config-form-model';
 import './toggles.css';
 
 /** Which ROLE change of which row is awaiting the "Confirm". Only one at a time. */
@@ -35,7 +37,7 @@ export interface AvisoDeColeccion {
  */
 export function CollectionTable({
   coleccion, politicasDeRol, soloLectura, busy, control, pendiente, aviso,
-  onPedir, onConfirmar, onCancelar,
+  onPedir, onConfirmar, onCancelar, editor, onFormAction, onFormAllowed, retiredRows,
 }: {
   coleccion: ConfigCollection;
   /** `role_policies` from the snapshot: feeds the role selector of memberships. */
@@ -48,6 +50,10 @@ export function CollectionTable({
   onPedir: (pendiente: AccionPendiente) => void;
   onConfirmar: () => void;
   onCancelar: () => void;
+  editor?: ReactNode;
+  onFormAction?: (target: ConfigFormTarget) => void;
+  onFormAllowed?: (target: ConfigFormTarget) => boolean;
+  retiredRows?: Record<string, unknown>[];
 }) {
   const { key, title, rows } = coleccion;
   const filas = rows ?? [];
@@ -61,8 +67,14 @@ export function CollectionTable({
   const inertesPresentes = columnasInertesDe(key, columnas.map((columna) => columna.clave));
   const avisoDeInterruptor = control.avisoDe(key);
   const confirmandoAqui = control.confirmacion?.interruptor.coleccion === key;
+  const formDefinition = configFormDefinition(key);
 
   return <Panel title={title} subtitle="Configuración guardada en la última lectura">
+    {formDefinition && onFormAction && !formDefinition.singleton ? <div className="config-collection-toolbar">
+      <button type="button" className="button secondary" disabled={soloLectura || busy || !rows || onFormAllowed?.({ collection: key, action: 'create' }) === false}
+        onClick={() => { onFormAction({ collection: key, action: 'create' }); }}>Crear {formDefinition.label}</button>
+    </div> : null}
+    {editor}
     {/* Clave ausente y lista vacía NO son lo mismo: un gateway anterior a una migración no publica
         su tabla, y decir «sin registros» ahí sería mentir. */}
     {!rows ? <EmptyState>UNKNOWN: este gateway no publica esta colección ({key}).</EmptyState>
@@ -105,6 +117,7 @@ export function CollectionTable({
                 />
               </th>;
             })}
+            {formDefinition && onFormAction ? <th>Acciones</th> : null}
           </tr></thead><tbody>
             {filas.map((fila, indice) => {
               const filaId = claveDeFila(key, fila, indice);
@@ -129,9 +142,21 @@ export function CollectionTable({
                       control={control} onPedir={onPedir}
                     />
                   </td>)}
+                  {formDefinition && onFormAction ? <td><div className="config-row-actions">
+                    <button type="button" className="button small" disabled={soloLectura || busy || onFormAllowed?.({ collection: key, action: 'update', row: fila }) === false}
+                      aria-label={`Editar ${formDefinition.label} ${filaId}`}
+                      onClick={() => { onFormAction({ collection: key, action: 'update', row: fila }); }}>Editar</button>
+                    {!formDefinition.singleton ? <button type="button" className="button small" disabled={soloLectura || busy || onFormAllowed?.({ collection: key, action: 'delete', row: fila }) === false}
+                      aria-label={`Eliminar ${formDefinition.label} ${filaId}`}
+                      onClick={() => { onFormAction({ collection: key, action: 'delete', row: fila }); }}>Eliminar</button> : null}
+                    {['tenant', 'room', 'membership'].includes(formDefinition.resource) && onFormAllowed?.({ collection: key, action: 'retire', row: fila }) ? <button
+                      type="button" className="button small" disabled={soloLectura || busy}
+                      aria-label={`Retirar ${formDefinition.label} ${filaId}`}
+                      onClick={() => { onFormAction({ collection: key, action: 'retire', row: fila }); }}>Retirar</button> : null}
+                  </div></td> : null}
                 </tr>
                 {fallo ? <FilaDeFallo
-                  fallo={fallo} columnas={columnas.length} control={control} busy={busy}
+                  fallo={fallo} columnas={columnas.length + (formDefinition && onFormAction ? 1 : 0)} control={control} busy={busy}
                 /> : null}
               </Fragment>;
             })}
@@ -155,6 +180,17 @@ export function CollectionTable({
             </ul>
           </details>
         </>}
+    {retiredRows?.length && formDefinition && onFormAction ? <div className="config-room-members">
+      <h3>Registros retirados</h3>
+      <ul>{retiredRows.map((row, index) => {
+        const rowId = claveDeFila(key, row, index);
+        return <li key={rowId}><span>{rowId} · {typeof row.display_name === 'string' ? row.display_name : typeof row.alias === 'string' ? row.alias : ''}</span>
+          <button type="button" className="button small" disabled={soloLectura || busy || onFormAllowed?.({ collection: key, action: 'restore', row }) !== true}
+            aria-label={`Restaurar ${formDefinition.label} ${rowId}`}
+            onClick={() => { onFormAction({ collection: key, action: 'restore', row }); }}>Restaurar</button>
+        </li>;
+      })}</ul>
+    </div> : null}
   </Panel>;
 }
 
