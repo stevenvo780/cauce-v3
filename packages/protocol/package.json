@@ -13,6 +13,10 @@
       "types": "./src/fleet-operation.ts",
       "import": "./dist/fleet-operation.js"
     },
+    "./fleet-hosts": {
+      "types": "./src/fleet-hosts.ts",
+      "import": "./dist/fleet-hosts.js"
+    },
     "./configuration": {
       "types": "./src/configuration.ts",
       "import": "./dist/configuration.js"
