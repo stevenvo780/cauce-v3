@@ -3,7 +3,9 @@ import userEvent from '@testing-library/user-event';
 import { ConsoleAccessBoundary } from '../../api/console-access';
 import { renderWithApi } from '../../test/render';
 import { AgentesSection } from './AgentesSection';
-import { openAgentMenu } from './agent-menu.test-helpers';
+import { openAgentMenu, openAgentSheet } from './agent-menu.test-helpers';
+
+beforeEach(() => { window.history.replaceState({}, '', '/config?seccion=agentes'); });
 
 const snapshot = {
   revision: 3,
@@ -21,9 +23,14 @@ it('manda cada agente registrado a su página de perfil y contexto desde su men�
   expect(screen.queryByLabelText(/Identidad y propósito/)).not.toBeInTheDocument();
 });
 
-it('un miembro sin fila en el registro no ofrece acciones: lo dice una sola vez', () => {
+it('un miembro sin fila en el registro abre una ficha de solo lectura que explica por qué', async () => {
+  const user = userEvent.setup();
   renderWithApi(<ConsoleAccessBoundary><AgentesSection snapshot={snapshot} /></ConsoleAccessBoundary>);
   expect(screen.queryByRole('button', { name: 'Acciones de Steven/solo' })).not.toBeInTheDocument();
   expect(screen.getAllByText('Solo miembro')).toHaveLength(1);
-  expect(screen.getAllByText(/no tienen registro editable de agente/)).toHaveLength(1);
+  const sheet = await openAgentSheet(user, 'Steven/solo');
+  expect(sheet.getByText(/solo aparece como miembro de un grupo/)).toBeInTheDocument();
+  expect(sheet.queryByRole('tab', { name: 'Registro' })).not.toBeInTheDocument();
+  expect(sheet.queryByRole('tab', { name: 'Operación' })).not.toBeInTheDocument();
+  expect(sheet.queryByRole('link', { name: /Perfil y contexto/ })).not.toBeInTheDocument();
 });

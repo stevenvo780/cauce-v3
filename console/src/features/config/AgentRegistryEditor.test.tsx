@@ -9,6 +9,8 @@ import { renderWithApi, testApi } from '../../test/render';
 import { AgentesSection } from './AgentesSection';
 import { agentAction } from './agent-menu.test-helpers';
 
+beforeEach(() => { window.history.replaceState({}, '', '/config?seccion=agentes'); });
+
 beforeEach(() => {
   server.use(http.get('http://localhost/v3/console/fleet/hosts', () => HttpResponse.json({ hosts: [] })));
 });
@@ -80,7 +82,7 @@ it('previews the fixed row identity, invalidates a stale preview, applies its ex
   await screen.findByLabelText('Preview del registro de agente');
   await user.click(apply);
   await screen.findByText(/Aplicado en revisión 5/);
-  await waitFor(() => { expect(screen.getByText('Agente renovado')).toBeInTheDocument(); });
+  await waitFor(() => { expect(screen.getByRole('heading', { name: 'Agente renovado' })).toBeInTheDocument(); });
   expect(changes).toHaveLength(3);
   expect(changes.map(({ dry_run, expected_revision }) => [dry_run, expected_revision])).toEqual([
     [true, 4], [true, 4], [false, 4],

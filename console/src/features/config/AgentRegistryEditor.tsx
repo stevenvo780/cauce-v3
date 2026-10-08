@@ -80,11 +80,11 @@ function buildMutation(agent: AgentRow, draft: Draft): { mutation?: ConfigMutati
   };
 }
 
-export function AgentRegistryEditor({ tenantId, alias, snapshot, hosts, onReloaded, onDeleted, initialOpen = false, hideTrigger = false, onClose }: {
+export function AgentRegistryEditor({ tenantId, alias, snapshot, hosts, onReloaded, onDeleted, initialOpen = false, hideTrigger = false, embedded = false, onDirtyChange, onClose }: {
   tenantId: string; alias: string; snapshot: ConfigurationSnapshot; hosts?: FleetHost[] | undefined;
   onReloaded: (snapshot: ConfigurationSnapshot) => void;
   onDeleted?: (notice: ConfigMutationNotice) => void;
-  initialOpen?: boolean; hideTrigger?: boolean; onClose?: () => void;
+  initialOpen?: boolean; hideTrigger?: boolean; embedded?: boolean; onDirtyChange?: (dirty: boolean) => void; onClose?: () => void;
 }) {
   const api = useApi();
   const access = useConsoleAccess();
@@ -120,14 +120,16 @@ export function AgentRegistryEditor({ tenantId, alias, snapshot, hosts, onReload
       aria-label={`${open ? 'Cerrar' : 'Editar'} registro de ${tenantId}/${alias}`}
       onClick={() => { setOpen((value) => !value); runner.clear(); }}
     >{open ? 'Cerrar registro' : 'Editar registro'}</Button>}
-    {open ? <AgentRegistryForm agent={agent as AgentRow} runner={runner} onDeleted={onDeleted} hosts={hosts}
+    {open ? <AgentRegistryForm agent={agent as AgentRow} runner={runner} onDeleted={onDeleted} hosts={hosts} embedded={embedded} onDirtyChange={onDirtyChange}
       deleteBlock={deleteBlock} onClose={() => { setOpen(false); runner.clear(); onClose?.(); }} /> : null}
   </div>;
 }
 
 function AgentRegistryForm({
-  agent, runner, onClose, onDeleted, hosts, deleteBlock,
+  agent, runner, onClose, onDeleted, hosts, deleteBlock, embedded, onDirtyChange,
 }: {
+  embedded: boolean;
+  onDirtyChange: ((dirty: boolean) => void) | undefined;
   agent: AgentRow;
   runner: ConfigMutationRunner;
   onClose: () => void;
@@ -148,6 +150,11 @@ function AgentRegistryForm({
   const baseline = useRef(initialDraft(agent));
   const draftRef = useRef(draft);
   draftRef.current = draft;
+  const dirty = JSON.stringify(draft) !== JSON.stringify(baseline.current);
+  const reportDirty = useRef(onDirtyChange);
+  reportDirty.current = onDirtyChange;
+  useEffect(() => { reportDirty.current?.(dirty); }, [dirty]);
+  useEffect(() => () => { reportDirty.current?.(false); }, []);
   const built = useMemo(() => buildMutation(agent, draft), [agent, draft]);
   const mutation = built.mutation;
   const disabled = !runner.canWrite || runner.busy;
@@ -214,11 +221,12 @@ function AgentRegistryForm({
   }
 
   const originalName = typeof agent.display_name === 'string' ? agent.display_name : '';
-  return <section className="mt-3 grid grid-cols-1 gap-3 rounded-lg border border-line bg-subtle p-4" aria-label={`Registro de ${agent.tenant_id}/${agent.alias}`}>
-    <div className="flex flex-wrap items-center justify-between gap-3">
+  return <section className={embedded ? 'grid min-w-0 grid-cols-1 gap-4' : 'mt-3 grid grid-cols-1 gap-3 rounded-lg border border-line bg-subtle p-4'}
+    aria-label={`Registro de ${agent.tenant_id}/${agent.alias}`}>
+    {embedded ? null : <div className="flex flex-wrap items-center justify-between gap-3">
       <h3>Registro · {agent.tenant_id}/{agent.alias}</h3>
       <Button onClick={onClose}>Cerrar editor</Button>
-    </div>
+    </div>}
     <p className={HINT}>Identidad fija desde la fila seleccionada. Los permisos se vuelven a decidir en el servidor.</p>
     {runner.canWrite ? null : <Notice role="note">Edición de registro en solo lectura: falta permiso acreditado de configuración.</Notice>}
     {serverRefreshNotice ? <Notice role="note">{serverRefreshNotice}</Notice> : null}
@@ -275,7 +283,7 @@ function AgentRegistryForm({
         </Button>
       </div>
     </div>
-    {canDelete ? <Button disabled={disabled || deleting || Boolean(deleteBlock)} title={deleteBlock}
+    {canDelete ? <Button className="justify-self-start" disabled={disabled || deleting || Boolean(deleteBlock)} title={deleteBlock}
       onClick={() => { setDeleting(true); runner.clear(); setFormError(undefined); }}>Eliminar registro</Button>
       : <p className={HINT}>Un agente con ejecución se retira con «Retirar agente» en la fila del agente.</p>}
     {deleting && canDelete ? <form className="grid gap-3" aria-label={`Eliminar registro de ${agent.tenant_id}/${agent.alias}`}

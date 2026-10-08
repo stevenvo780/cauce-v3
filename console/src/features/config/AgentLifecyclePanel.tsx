@@ -12,10 +12,10 @@ import './agent-lifecycle.css';
 type Kind = FleetOperationRequest['kind'];
 const newKey = () => `fleet_${crypto.randomUUID()}`;
 const ACTION_LABELS: Record<Kind, string> = { ...FLEET_ACTION_LABELS, purge: 'Eliminar definitivamente' };
-export function AgentLifecyclePanel({ snapshot, target, onReloaded, initialDraft, initialOpen = false, initialKind, triggerLabel, hideTrigger = false, onClose }: {
+export function AgentLifecyclePanel({ snapshot, target, onReloaded, initialDraft, initialOpen = false, initialKind, triggerLabel, hideTrigger = false, embedded = false, onClose, onDirtyChange }: {
   snapshot: ConfigurationSnapshot; target?: FleetTarget; onReloaded?: (value: ConfigurationSnapshot) => void;
   initialDraft?: AgentLifecycleDraft; initialOpen?: boolean; initialKind?: Kind | undefined; triggerLabel?: string | undefined;
-  hideTrigger?: boolean; onClose?: () => void;
+  hideTrigger?: boolean; embedded?: boolean; onClose?: () => void; onDirtyChange?: (dirty: boolean) => void;
 }) {
   const api = useApi();
   const access = useConsoleAccess();
@@ -64,7 +64,7 @@ export function AgentLifecyclePanel({ snapshot, target, onReloaded, initialDraft
     return result.success ? { request: result.data } : { error: 'Falta una identidad o revisión durable válida.' };
   }
   function edit(patch: Partial<AgentLifecycleDraft>) {
-    generation.current += 1; dirty.current = true; setDraft((previous) => ({ ...previous, ...patch }));
+    generation.current += 1; dirty.current = true; onDirtyChange?.(true); setDraft((previous) => ({ ...previous, ...patch }));
     setKey(newKey()); setValidated(undefined); setError(undefined);
   }
   async function preview() {
@@ -85,14 +85,14 @@ export function AgentLifecyclePanel({ snapshot, target, onReloaded, initialDraft
     setSending(true); setError(undefined);
     try {
       const operation = await api.enqueueFleetOperation(validated.input);
-      if (sequence === generation.current) { flow.accept(operation); setValidated(undefined); setKey(newKey()); }
+      if (sequence === generation.current) { flow.accept(operation); setValidated(undefined); setKey(newKey()); onDirtyChange?.(false); }
     } catch (cause) {
       if (sequence === generation.current) setError(cause instanceof Error ? cause.message : 'No se pudo confirmar el encolado. Reintenta con la misma solicitud.');
     } finally { setSending(false); }
   }
   async function revalidate() {
     const result = await access.reload();
-    if (result.data) { setSessionInvalid(false); setOpen(false); onClose?.(); }
+    if (result.data) { setSessionInvalid(false); setError(undefined); if (!embedded) setOpen(false); onClose?.(); }
     else setError('No se pudo acreditar la sesión actual. Reintenta la lectura de permisos.');
   }
   async function reloadSnapshot() {
@@ -109,7 +109,7 @@ export function AgentLifecyclePanel({ snapshot, target, onReloaded, initialDraft
     </button>}
     {open ? <section className="settings-context" aria-label={target?.resource === 'agent' ? `Operación de ${target.tenant_id}/${target.alias}` : 'Alta operativa de agente'}>
       <div className="settings-context-heading"><h3 ref={heading} tabIndex={-1}>{target ? 'Ejecución y ciclo de vida' : 'Preparar nuevo agente'}</h3>
-        <button type="button" className="button secondary" onClick={() => { setOpen(false); trigger.current?.focus(); onClose?.(); }}>Cerrar operaciones</button>
+        {embedded ? null : <button type="button" className="button secondary" onClick={() => { setOpen(false); trigger.current?.focus(); onClose?.(); }}>Cerrar operaciones</button>}
       </div>
       <p>Preparar no exige una ejecución activa. La operación guarda su intención y acredita cada paso antes de admitir entregas.</p>
       {agent ? <p>Estado durable del agente: {typeof agent.lifecycle_state === 'string' ? agent.lifecycle_state : 'Sin publicar en esta lectura'}.</p> : null}

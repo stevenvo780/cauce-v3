@@ -1,4 +1,4 @@
-import { screen, within } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { ConsoleAccessBoundary } from '../../api/console-access';
@@ -7,6 +7,8 @@ import { server } from '../../mocks/server';
 import { renderWithApi } from '../../test/render';
 import { AgentesSection } from './AgentesSection';
 import { agentAction, openAgentMenu } from './agent-menu.test-helpers';
+
+beforeEach(() => { window.history.replaceState({}, '', '/config?seccion=agentes'); });
 
 function host(hostId: string, overrides: Record<string, unknown> = {}) {
   return {
@@ -47,8 +49,8 @@ it('shows the computer of each agent and a disabled badge only for unusable comp
   })));
   renderWithApi(<ConsoleAccessBoundary><AgentesSection snapshot={withRuntime} /></ConsoleAccessBoundary>);
   expect(await within(row('Agente uno')).findByText('Deshabilitado: computadora sin conexión')).toBeInTheDocument();
-  expect(within(row('Agente uno')).getByText('Computadora: Laptop')).toBeInTheDocument();
-  expect(within(row('Agente dos')).getByText('Computadora: Servidor')).toBeInTheDocument();
+  expect(within(row('Agente uno')).getByText('Laptop')).toBeInTheDocument();
+  expect(within(row('Agente dos')).getByText('Servidor')).toBeInTheDocument();
   expect(within(row('Agente dos')).queryByText(/Deshabilitado: computadora/)).not.toBeInTheDocument();
 });
 
@@ -63,7 +65,7 @@ it('badges an agent on a disabled computer as deshabilitada', async () => {
 it('una lectura 403 de computadoras degrada en silencio: sin error ni insignias', async () => {
   server.use(http.get('http://localhost/v3/console/fleet/hosts', () => HttpResponse.json({ error: 'forbidden' }, { status: 403 })));
   renderWithApi(<ConsoleAccessBoundary><AgentesSection snapshot={withRuntime} /></ConsoleAccessBoundary>);
-  expect(await within(row('Agente uno')).findByText('Computadora: edge-2')).toBeInTheDocument();
+  expect(await within(row('Agente uno')).findByText('edge-2')).toBeInTheDocument();
   expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   expect(within(row('Agente uno')).queryByText(/Deshabilitado: computadora/)).not.toBeInTheDocument();
 });
@@ -77,9 +79,10 @@ it('offers retire only for agents with a runtime and preselects retire in the li
   await user.keyboard('{Escape}');
   await agentAction(user, 'A/one', 'Retirar agente');
   expect(screen.getByRole('combobox', { name: 'Acción operativa' })).toHaveValue('retire');
-  await user.click(within(row('Agente dos')).getByRole('button', { name: 'Acciones de A/two' }));
-  await user.click(await screen.findByRole('menuitem', { name: 'Editar registro' }));
-  expect(within(row('Agente dos')).getByRole('button', { name: 'Eliminar registro' })).toBeEnabled();
+  await user.keyboard('{Escape}');
+  await waitFor(() => { expect(screen.queryByRole('dialog')).not.toBeInTheDocument(); });
+  await agentAction(user, 'A/two', 'Editar registro');
+  expect(within(screen.getByRole('dialog')).getByRole('button', { name: 'Eliminar registro' })).toBeEnabled();
 });
 
 it('labels the purge of a retired agent as Eliminar definitivamente', async () => {

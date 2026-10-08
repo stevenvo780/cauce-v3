@@ -12,7 +12,7 @@ import { renderWithApi, testApi } from '../../test/render';
 import { AgentLifecyclePanel } from './AgentLifecyclePanel';
 
 Object.defineProperty(globalThis, 'crypto', { configurable: true, value: webcrypto });
-const snapshot: ConfigurationSnapshot = { revision: 4, tenants: [{ id: 'A' }], agents: [],
+const snapshot: ConfigurationSnapshot = { revision: 4, role_policies: [{ role: 'agent' }, { role: 'rol con espacios' }], tenants: [{ id: 'A' }], agents: [],
   rooms: [{ tenant_id: 'A', id: ' Sala ', display_name: 'Sala' }, { tenant_id: 'A', id: 'Sala', display_name: 'Sala' }],
   memberships: [], harness_definitions: [{ id: 'codex' }], provider_accounts: [{ id: 'main' }] };
 const capability = { available: true, actions: ['create', 'update', 'start', 'stop', 'retire', 'restore', 'purge'],
@@ -41,7 +41,7 @@ async function fill() {
   await user.type(screen.getByRole('textbox', { name: 'Clave física de ejecución' }), 'new-worker');
   await user.selectOptions(screen.getByRole('combobox', { name: 'Arnés operativo' }), 'codex');
   await user.click(screen.getByRole('checkbox', { name: 'Incluir Sala · " Sala "' }));
-  await user.type(screen.getByRole('textbox', { name: 'Rol en " Sala "' }), 'rol con espacios');
+  await user.selectOptions(screen.getByRole('combobox', { name: 'Rol en " Sala "' }), 'rol con espacios');
   await user.selectOptions(screen.getByRole('combobox', { name: 'Grupo primario' }), ' Sala ');
   await user.selectOptions(screen.getByRole('combobox', { name: 'Host operativo' }), 'test-host');
   await user.selectOptions(screen.getByRole('combobox', { name: 'Usuario operativo' }), 'runner');
