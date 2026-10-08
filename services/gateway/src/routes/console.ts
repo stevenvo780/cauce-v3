@@ -38,6 +38,7 @@ import { consoleHumanAccess } from '../console-human-authority.js';
 import { registerConsoleReplyAttachmentRoutes } from './console/reply-attachments.js';
 import { registerConsoleAccessRoutes } from './console/access.js';
 import { registerConsoleMessageAttachmentRoutes } from './console/message-attachments.js';
+import { registerConsoleAgentPreferenceRoutes } from './console/agent-preferences.js';
 import { registerConsoleOperationsRoutes } from './console/operations.js';
 import { publishRouteOptions } from './core/publish.js';
 
@@ -113,6 +114,7 @@ export function registerConsoleRoutes(
   registerConsoleMessageAttachmentRoutes(app, context.options);
   registerConsoleReplyAttachmentRoutes(app, context.options);
   registerConsoleOperationsRoutes(app, context);
+  registerConsoleAgentPreferenceRoutes(app, context);
   return registerConsoleAgentRoutes(app, context, publishHandler);
 }
 

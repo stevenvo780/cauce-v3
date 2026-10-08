@@ -7,6 +7,7 @@ import type { OperatorResolution } from '../../terminal/authority.js';
 
 export interface ConsoleRouteOptions {
   readonly contextRepository?: ContextRepositoryBinding;
+  readonly agentPreferences?: import('@cauce/store').AgentPreferencesRepository;
   readonly pool: DatabasePool;
   readonly authProvider: AuthProvider;
   readonly allowedJobKinds?: readonly string[];
@@ -18,7 +19,7 @@ export interface ConsoleRouteOptions {
 export type ConsoleRouteRepository = Pick<GatewayRepository,
   'agentChain' | 'applyConfigurationChange' | 'assertPermission' | 'authorizeAgentTarget'
   | 'cancelDelivery' | 'enqueueJob' | 'fleetActivity' | 'getAgent' | 'getAgentByIdentity'
-  | 'getConfiguration' | 'getMessage' | 'listAdapters' | 'listAgents' | 'listAudit' | 'listJobs'
+  | 'getConfiguration' | 'getConfigurationDependencies' | 'getMessage' | 'listAdapters' | 'listAgents' | 'listAudit' | 'listJobs'
   | 'listMessages' | 'listNotifications' | 'listOperationalDlq' | 'listOriginRelays'
   | 'principalAccess' | 'queueSnapshot' | 'quotaSnapshot' | 'readProfileRuntimeAdoption'
   | 'reconcileAgentContextRuntime' | 'recordProfileRuntimeExpectation' | 'replayDelivery'

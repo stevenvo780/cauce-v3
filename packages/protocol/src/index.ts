@@ -26,3 +26,5 @@ export * from './harness-consumption.js';
 export * from './schemas/client-provenance.js';
 export * from './fleet-operation.js';
 export * from './configuration-identity.js';
+
+export * from './schemas/agent-preferences.js';
