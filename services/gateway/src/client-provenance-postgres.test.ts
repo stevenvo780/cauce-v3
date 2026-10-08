@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { ClientDelegationLabelSchema, HUMAN_MESSAGE_INITIATOR_CAPABILITY, HUMAN_CLIENT_PROVENANCE_CAPABILITY,
   HUMAN_CLIENT_DELEGATION_CAPABILITY, DeliveryEnvelopeSchema } from '@cauce/protocol';
 import { CauceRepository, type DatabasePool, loadHumanClientProvenance, putHumanClientProvenance, clientConnectionReference } from '@cauce/store';
-import { database, seed, connection, consoleApp, ownedTransaction, controlOptions, issuer, verify } from '../../../packages/store/test/human-client-provenance-postgres.fixtures.js';
+import { database, databaseThrough, seed, connection, consoleApp, ownedTransaction, controlOptions, issuer, verify } from '../../../packages/store/test/human-client-provenance-postgres.fixtures.js';
 import { mutateClientDelegation } from './client-delegation-control.js';
 import { lockOAuthAccess } from './oauth-grant-authority.js';
 import { lineageMessage } from '../../../packages/store/test/human-message-lineage-postgres.fixtures.js';
@@ -249,7 +249,7 @@ describe('durable human client provenance', () => {
   });
 
   it('allows an empty down migration and refuses any destructive rollback once history exists', async () => {
-    const pool = await database();
+    const pool = await databaseThrough('046_human_client_provenance.sql');
     const down = await readFile(new URL('../../../packages/store/migrations/down/046_human_client_provenance.sql', import.meta.url), 'utf8');
     const up = await readFile(new URL('../../../packages/store/migrations/046_human_client_provenance.sql', import.meta.url), 'utf8');
     await pool.query(down); await pool.query(up);

@@ -2,7 +2,7 @@ import { lockClientDeclarationOwner } from '../../../services/gateway/src/client
 import { generateKeyPairSync, randomUUID } from 'node:crypto';
 import { GenericContainer, Wait, type StartedTestContainer } from 'testcontainers';
 import { afterAll, afterEach, beforeAll } from 'vitest';
-import { applyMigrations, createPool, CauceRepository, lockHumanIdentity, resolveHumanIdentity,
+import { applyMigrations, applyMigrationsThrough, createPool, CauceRepository, lockHumanIdentity, resolveHumanIdentity,
   type DatabasePool, type DatabaseClient } from '@cauce/store';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { hashPassword } from '../../../services/gateway/src/password.js';
@@ -44,10 +44,7 @@ beforeAll(async () => {
   serverUrl = `postgresql://cauce_test:${password}@${container.getHost()}:${String(container.getMappedPort(5432))}/cauce_test_client_template`;
   admin = createPool(serverUrl);
   await applyMigrations(admin);
-  await admin.query("INSERT INTO agents(tenant_id,alias) VALUES('Steven','kant'),('Steven','argos') ON CONFLICT DO NOTHING");
-  await admin.query(`INSERT INTO memberships(tenant_id,room_id,alias,role) VALUES
-    ('Steven','grp.steven','kant','operator'),('Steven','grp.steven','argos','agent')
-    ON CONFLICT(tenant_id,room_id,alias) DO UPDATE SET enabled=true,role=EXCLUDED.role`);
+  await seedCatalog(admin);
   console.info('Client provenance disposable PostgreSQL', container.getId(), (await admin.query('SELECT version()')).rows[0]);
 }, 90000);
 afterEach(async () => {
@@ -55,12 +52,25 @@ afterEach(async () => {
   await Promise.all(pools.splice(0).map(pool => pool.end()));
 });
 afterAll(async () => { await admin?.end(); await container?.stop(); });
-export async function database(): Promise<DatabasePool> {
+async function seedCatalog(pool: DatabasePool): Promise<void> {
+  await pool.query("INSERT INTO agents(tenant_id,alias) VALUES('Steven','kant'),('Steven','argos') ON CONFLICT DO NOTHING");
+  await pool.query(`INSERT INTO memberships(tenant_id,room_id,alias,role) VALUES
+    ('Steven','grp.steven','kant','operator'),('Steven','grp.steven','argos','agent')
+    ON CONFLICT(tenant_id,room_id,alias) DO UPDATE SET enabled=true,role=EXCLUDED.role`);
+}
+async function createDatabase(template: 'template0' | 'cauce_test_client_template'): Promise<DatabasePool> {
   if (!admin) throw new Error('fixture database unavailable');
   const name = `cauce_test_client_${randomUUID().replaceAll('-', '')}`;
-  await admin.query(`CREATE DATABASE ${name} TEMPLATE cauce_test_client_template`);
+  await admin.query(`CREATE DATABASE ${name} TEMPLATE ${template}`);
   const url = new URL(serverUrl); url.pathname = `/${name}`;
   const pool = createPool(url.href, { max: 12 }); pools.push(pool); return pool;
+}
+export async function database(): Promise<DatabasePool> { return createDatabase('cauce_test_client_template'); }
+export async function databaseThrough(version: '046_human_client_provenance.sql'): Promise<DatabasePool> {
+  const pool = await createDatabase('template0');
+  await applyMigrationsThrough(pool, version);
+  await seedCatalog(pool);
+  return pool;
 }
 export async function seed(pool: DatabasePool) {
   const humanId = randomUUID(); const alias = 'kant'; const email = `${humanId}@example.invalid`;

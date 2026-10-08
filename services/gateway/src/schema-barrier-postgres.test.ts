@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { applyMigrations, withAbortableTransaction, withTransaction, type DatabasePool } from '@cauce/store';
-import { database, seed, connection, controlOptions, verify } from '../../../packages/store/test/human-client-provenance-postgres.fixtures.js';
+import { database, databaseThrough, seed, connection, controlOptions, verify } from '../../../packages/store/test/human-client-provenance-postgres.fixtures.js';
 import { lockOAuthAccess } from './oauth-grant-authority.js';
 
 const version = '046_human_client_provenance.sql';
@@ -59,7 +59,7 @@ describe('schema barriers before durable authority table locks on PostgreSQL', (
   });
 
   it('serializes the real grant-first publisher before down046 and preserves its receipt and retry', async () => {
-    const pool = await database(); const owner = await seed(pool); const c = await connection(pool, owner);
+    const pool = await databaseThrough(version); const owner = await seed(pool); const c = await connection(pool, owner);
     const before = await schemaLedger(pool); const entered = gate<number>(); const release = gate<null>();
     const publish = c.repository.publish.bind(c.repository);
     c.repository.publish = (input, options) => {
@@ -108,7 +108,7 @@ describe('schema barriers before durable authority table locks on PostgreSQL', (
   });
 
   it('blocks the prepared real publisher before table locks when empty down046 wins, with no partial root', async () => {
-    const pool = await database(); const owner = await seed(pool); const c = await connection(pool, owner);
+    const pool = await databaseThrough(version); const owner = await seed(pool); const c = await connection(pool, owner);
     const entered = gate<null>(); const start = gate<null>(); const publish = c.repository.publish.bind(c.repository);
     c.repository.publish = async (input, options) => { entered.resolve(null); await start.promise; return publish(input, options); };
     const publication = c.operations.submit(command()); void publication.catch(() => undefined);

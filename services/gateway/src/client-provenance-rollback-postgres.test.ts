@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { describe, expect, it } from 'vitest';
 import { applyMigrations } from '@cauce/store';
-import { database, seed, connection } from '../../../packages/store/test/human-client-provenance-postgres.fixtures.js';
+import { database, databaseThrough, seed, connection } from '../../../packages/store/test/human-client-provenance-postgres.fixtures.js';
 import { lineageRoot } from '../../../packages/store/test/human-message-lineage-postgres.fixtures.js';
 
 const version = '046_human_client_provenance.sql';
@@ -10,8 +10,18 @@ const down = await readFile(new URL(`../../../packages/store/migrations/down/${v
 const tables = ['human_message_client_provenance', 'human_client_delegation_operations', 'human_oauth_client_delegations'] as const;
 
 describe('human client rollback serialization on disposable PostgreSQL', () => {
+  it('builds the historical prefix on a fresh database while latest fixtures keep later migrations', async () => {
+    const historical = await databaseThrough(version); const latest = await database();
+    for (const ledger of ['schema_migrations', 'schema_migration_ledger']) {
+      expect((await historical.query(`SELECT version FROM ${ledger} WHERE version > $1`, [version])).rowCount).toBe(0);
+      expect((await historical.query(`SELECT version FROM ${ledger} WHERE version=$1`, [version])).rowCount).toBe(1);
+      expect((await latest.query(`SELECT version FROM ${ledger} WHERE version > $1`, [version])).rowCount).toBeGreaterThan(0);
+    }
+    expect((await historical.query<{ name: string | null }>("SELECT to_regclass('fleet_operations') AS name")).rows[0]?.name).toBeNull();
+    expect((await latest.query<{ name: string | null }>("SELECT to_regclass('fleet_operations') AS name")).rows[0]?.name).toBe('fleet_operations');
+  });
   it('removes the empty schema and both migration records atomically and can migrate up again', async () => {
-    const pool = await database();
+    const pool = await databaseThrough(version);
     await pool.query(down);
     for (const table of tables) {
       expect((await pool.query<{ name: string | null }>('SELECT to_regclass($1) AS name', [table])).rows[0]?.name).toBeNull();
@@ -27,7 +37,7 @@ describe('human client rollback serialization on disposable PostgreSQL', () => {
   });
 
   it('refuses an empty downgrade when a later migration is recorded', async () => {
-    const pool = await database();
+    const pool = await databaseThrough(version);
     await pool.query("INSERT INTO schema_migrations(version) VALUES('047_fixture_later.sql')");
     await expect(pool.query(down)).rejects.toThrow('cannot downgrade schema 046 while a later migration is present');
     for (const table of tables) {
@@ -38,7 +48,7 @@ describe('human client rollback serialization on disposable PostgreSQL', () => {
 
   for (const key of ['783003003', '783003046']) {
     it(`honors advisory migration lock ${key}`, async () => {
-      const pool = await database(); const holder = await pool.connect(); const rollback = await pool.connect();
+      const pool = await databaseThrough(version); const holder = await pool.connect(); const rollback = await pool.connect();
       try {
         await holder.query('BEGIN'); await holder.query('SELECT pg_advisory_xact_lock($1::bigint)', [key]);
         await rollback.query("SET lock_timeout='100ms'");
@@ -54,7 +64,7 @@ describe('human client rollback serialization on disposable PostgreSQL', () => {
 
   for (const table of tables) {
     it(`waits for a concurrent committed insert into ${table} and preserves it`, async () => {
-      const pool = await database(); const owner = await seed(pool); const c = await connection(pool, owner);
+      const pool = await databaseThrough(version); const owner = await seed(pool); const c = await connection(pool, owner);
       const root = await lineageRoot(pool, owner.humanId);
       const holder = await pool.connect(); const rollback = await pool.connect();
       let attempt: Promise<unknown> | undefined;
