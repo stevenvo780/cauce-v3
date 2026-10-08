@@ -28,6 +28,7 @@ const AgentParametersSchema = z.object({
   placement: FleetPlacementSchema,
   primary_account_id: IdentifierSchema.nullable().optional(),
   model_id: z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_./:-]{0,127}$/).nullable().optional(),
+  reasoning_effort: z.enum(['minimal', 'low', 'medium', 'high', 'xhigh', 'max']).nullable().optional(),
 }).strict().refine((value) => {
   const rooms = value.memberships.map((membership) => membership.room_id);
   return new Set(rooms).size === rooms.length && rooms.includes(value.primary_room_id);
@@ -49,6 +50,7 @@ export const FleetEvidenceSchema = z.object({
   artifact_sha256: Sha256HexSchema.optional(), runtime_digest: Sha256HexSchema.optional(),
   certificate_fingerprint: Sha256HexSchema.optional(), authority_verified: z.boolean().optional(),
   provider_verified: z.boolean().optional(), hello_verified: z.boolean().optional(),
+  bootstrap_verified: z.boolean().optional(),
   profile_verified: z.boolean().optional(), roundtrip_verified: z.boolean().optional(),
   stopped_verified: z.boolean().optional(), revocation_verified: z.boolean().optional(),
 }).strict();
@@ -86,6 +88,17 @@ export type FleetStepName = z.infer<typeof FleetStepNameSchema>;
 export type FleetEvidence = z.infer<typeof FleetEvidenceSchema>;
 export type FleetError = z.infer<typeof FleetErrorSchema>;
 
+export const FleetRuntimeCapabilitySchema = z.object({
+  mode: z.enum(['container', 'native']), harness_id: IdentifierSchema, provider: IdentifierSchema,
+  runtime_user: z.string().regex(/^[a-z_][a-z0-9_-]{0,31}$/),
+  systemd_user: z.string().regex(/^[a-z_][a-z0-9_-]{0,31}$/).nullable().optional(),
+  home_directory: DirectorySchema, state_root: DirectorySchema,
+  container_name: z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/).optional(),
+  container_prefix: z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$/).optional(),
+  reasoning_efforts: z.array(z.enum(['minimal', 'low', 'medium', 'high', 'xhigh', 'max'])).optional(),
+}).strict().refine(value => value.mode === 'container'
+  ? (value.container_name !== undefined) !== (value.container_prefix !== undefined)
+  : value.container_name === undefined && value.container_prefix === undefined);
 export const FleetCapabilitySchema = z.object({
   available: z.boolean(),
   actions: z.array(FleetOperationPreviewSchema.shape.kind),
@@ -94,7 +107,21 @@ export const FleetCapabilitySchema = z.object({
     runtime_users: z.array(z.string().regex(/^[a-z_][a-z0-9_-]{0,31}$/)).min(1),
     systemd_users: z.array(z.string().regex(/^[a-z_][a-z0-9_-]{0,31}$/)),
     home_roots: z.array(DirectorySchema).min(1), state_roots: z.array(DirectorySchema).min(1),
+    runtimes: z.array(FleetRuntimeCapabilitySchema).max(1000).optional(),
   }).strict()),
   reason: z.enum(['executor_unconfigured', 'unsupported_schema']).optional(),
 }).strict().refine((value) => value.available || (value.actions.length === 0 && value.placements.length === 0));
 export type FleetCapability = z.infer<typeof FleetCapabilitySchema>;
+
+export function matchingFleetRuntime(capability: FleetCapability, request: FleetOperationRequest) {
+  if (request.kind !== 'create' && request.kind !== 'update') return undefined;
+  const { parameters } = request;
+  const { placement, runtime_key } = parameters;
+  const host = capability.placements.find(candidate => candidate.host_id === placement.host_id);
+  return host?.runtimes?.find(runtime => runtime.mode === placement.mode && runtime.harness_id === parameters.harness_id
+    && runtime.runtime_user === placement.runtime_user && (runtime.systemd_user ?? null) === (placement.systemd_user ?? null)
+    && runtime.home_directory === placement.home_directory
+    && placement.state_directory === `${runtime.state_root.replace(/\/$/u, '')}/${runtime_key}`
+    && (runtime.mode !== 'container' || placement.container_name === (runtime.container_name ?? `${runtime.container_prefix ?? ''}${runtime_key}`))
+    && (parameters.reasoning_effort == null || runtime.reasoning_efforts?.includes(parameters.reasoning_effort) === true));
+}

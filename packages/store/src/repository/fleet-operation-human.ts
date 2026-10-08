@@ -16,8 +16,8 @@ export async function assertFleetHumanAuthority(
   const membership = (await client.query<{ enabled: boolean; revoked_at: Date | null; role: string; actor_alias: string; permissions: string[] }>(
     `SELECT enabled,revoked_at,role,actor_alias,permissions FROM human_tenant_memberships
       WHERE human_id=$1::uuid AND tenant_id=$2 FOR SHARE`, [match[1], tenant])).rows[0];
-  if (membership && (!membership.enabled || membership.revoked_at !== null || membership.actor_alias !== alias
-      || (control && membership.role !== 'operator') || !membership.permissions.includes(control ? 'control' : 'read'))) {
+  if (!membership || !membership.enabled || membership.revoked_at !== null || membership.actor_alias !== alias
+      || (control && membership.role !== 'operator') || !membership.permissions.includes(control ? 'control' : 'read')) {
     throw new FleetOperationError('forbidden', 'fleet human membership authority is unavailable');
   }
 }

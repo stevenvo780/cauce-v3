@@ -11,7 +11,7 @@ let database: TestDatabase | undefined;
 let caseDatabase: EmptyTestDatabase | undefined;
 let pool: DatabasePool;
 preparePostgresSuite(import.meta.url, async () => { database = await startTestDatabase(); }, 120_000);
-beforeEach(async () => {
+beforeEach(async ({ task }) => {
   if (!database) throw new Error('test server absent');
   caseDatabase = await startTestCaseDatabase(database); pool = caseDatabase.pool;
   await pool.query("INSERT INTO agents(tenant_id,alias) VALUES('Steven','human_fleet_operator')");
@@ -20,6 +20,7 @@ beforeEach(async () => {
   await pool.query(`INSERT INTO console_users(id,email,email_normalized,password_hash,display_name,role,tenant_id,alias)
     VALUES($1,'fleet@isolated.test','fleet@isolated.test',$2,'Fleet human','operator','Steven','human_fleet_operator')`,
   [humanId, '$scrypt$' + 'x'.repeat(40)]);
+  if (!task.name.includes('absent human membership')) await membership();
 });
 afterEach(async () => { await caseDatabase?.close(); caseDatabase = undefined; });
 afterAll(async () => { if (database) { await database.pool.end(); await database.container.stop(); } });
@@ -33,9 +34,12 @@ function create(): FleetOperationRequest {
 }
 async function membership(): Promise<void> {
   await pool.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,role,permissions)
-    VALUES($1,'Steven','human_fleet_operator','operator',ARRAY['read','control'])`, [humanId]);
+    VALUES($1,'Steven','human_fleet_operator','operator',ARRAY['read','control']) ON CONFLICT DO NOTHING`, [humanId]);
 }
 describe('durable human fleet provenance', () => {
+  it('rejects an absent human membership even when the bus alias retains control', async () => {
+    await expect(repository().enqueue('Steven', 'human_fleet_operator', create(), subject)).rejects.toMatchObject({ code: 'forbidden' });
+  });
   it('preserves the trusted human in queued metadata and every public receipt without a new column', async () => {
     const repo = repository(); await membership();
     expect((await repo.preview('Steven', 'human_fleet_operator', create(), subject)).can_apply).toBe(true);
@@ -96,6 +100,8 @@ describe('durable human fleet provenance', () => {
     await pool.query(`INSERT INTO console_users(id,email,email_normalized,password_hash,display_name,role,tenant_id,alias)
       VALUES($1,'other@isolated.test','other@isolated.test',$2,'Other human','operator','Steven','human_fleet_operator')`,
     [otherId, '$scrypt$' + 'x'.repeat(40)]);
+    await pool.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,role,permissions)
+      VALUES($1,'Steven','human_fleet_operator','operator',ARRAY['read','control'])`, [otherId]);
     const queued = await repo.enqueue('Steven', 'human_fleet_operator', create(), subject);
     expect((await repo.enqueue('Steven', 'human_fleet_operator', create(), subject)).id).toBe(queued.id);
     await expect(repo.enqueue('Steven', 'human_fleet_operator', create(), `console:${otherId}`)).rejects.toMatchObject({ code: 'conflict' });

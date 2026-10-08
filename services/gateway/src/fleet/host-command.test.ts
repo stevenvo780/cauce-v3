@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
-import { performHostCommand } from './host-command.js';
+import { performHostCommand, performHostCompensation, performHostLoginStop } from './host-command.js';
 import type { FleetExecution } from './executor.js';
 const directories: string[] = [];
 afterEach(async () => { await Promise.all(directories.splice(0).map((path) => rm(path, { recursive: true, force: true }))); });
@@ -13,6 +13,21 @@ async function helper(body: string) {
   return { python: '/usr/bin/python3', executable, policyFile: join(directory, 'policy.json'), timeoutMs: 1000 };
 }
 describe('host effect transport', () => {
+  it('requires demonstrated stop from login-stop without revoking the credentials', async () => {
+    const config = await helper(`import json,sys\nx=json.load(sys.stdin)\nassert sys.argv[-1]=='login-stop'\nassert x['previous_agents'][0]['runtime_key']=='physical-one'\nprint(json.dumps({'evidence':{'stopped_verified':True}}))`);
+    expect(await performHostLoginStop(config, execution, new AbortController().signal)).toEqual({ stopped: true });
+    const unverified = await helper(`print('{"evidence":{}}')`);
+    await expect(performHostLoginStop(unverified, execution, new AbortController().signal)).rejects.toThrow();
+  });
+  it('requires checked stop and revocation from a separate compensation command without changing fenced inputs', async () => {
+    const config = await helper(`import json,sys\nx=json.load(sys.stdin)\nassert sys.argv[-1]=='compensate'\nassert x['previous_agents'][0]['runtime_key']=='physical-one'\nprint(json.dumps({'evidence':{'stopped_verified':True,'revocation_verified':True}}))`);
+    expect(await performHostCompensation(config, execution, new AbortController().signal))
+      .toEqual({ stopped_verified: true, revocation_verified: true });
+    for (const evidence of [{}, { stopped_verified: true }, { stopped_verified: true, revocation_verified: false }]) {
+      const unchecked = await helper(`print(${JSON.stringify(JSON.stringify({ evidence }))})`);
+      await expect(performHostCompensation(unchecked, execution, new AbortController().signal)).rejects.toThrow();
+    }
+  });
   it('passes structured identity through stdin and accepts only typed evidence', async () => {
     const config = await helper(`import json,sys\nx=json.load(sys.stdin)\nassert x['request']['target']['alias']=='one'\nassert x['previous_agents'][0]['runtime_key']=='physical-one'\nassert x['desired_memberships'][0]['enabled'] is True\nassert '--step' in sys.argv\nprint(json.dumps({'evidence':{'stopped_verified':True}}))`);
     expect(await performHostCommand(config, 'stop', execution, new AbortController().signal)).toEqual({ evidence: { stopped_verified: true } });

@@ -10,6 +10,7 @@ export async function fleetAgentTargets(client: DatabaseClient, row: FleetOperat
   const target = row.target;
   const result = await client.query<{ tenant_id: string; alias: string }>(
     `SELECT agent.tenant_id,agent.alias FROM agents agent WHERE agent.tenant_id=$1
+      AND agent.purged_at IS NULL
       AND ($2::text IS NULL OR agent.alias=$2)
       AND ($3::text IS NULL OR agent.primary_room_id=$3 OR EXISTS (
         SELECT 1 FROM memberships member WHERE member.tenant_id=agent.tenant_id AND member.alias=agent.alias AND member.room_id=$3))
@@ -44,12 +45,13 @@ export async function fenceFleetAgents(client: DatabaseClient, targets: FencedFl
 
 export async function prepareAgentDesired(client: DatabaseClient, row: FleetOperationRow): Promise<void> {
   const request = row.request;
-  if ((request.kind !== 'create' && request.kind !== 'update') || request.target.resource !== 'agent') {
+  if (request.kind !== 'create' && request.kind !== 'update') {
     throw new FleetOperationError('invalid_input', 'agent preparation requires declarative parameters');
   }
   const { target, parameters } = request;
-  const prior = (await client.query<{ retired_at: Date | null }>(
-    'SELECT retired_at FROM agents WHERE tenant_id=$1 AND alias=$2 FOR UPDATE', [target.tenant_id, target.alias])).rows[0];
+  const prior = (await client.query<{ retired_at: Date | null; purged_at: Date | null }>(
+    'SELECT retired_at,purged_at FROM agents WHERE tenant_id=$1 AND alias=$2 FOR UPDATE', [target.tenant_id, target.alias])).rows[0];
+  if (prior?.purged_at) throw new FleetOperationError('conflict', 'purged identity cannot be reused');
   if (prior?.retired_at) throw new FleetOperationError('conflict', 'restore the retired agent before updating it');
   await client.query('UPDATE memberships SET enabled=false WHERE tenant_id=$1 AND alias=$2', [target.tenant_id, target.alias]);
   for (const membership of parameters.memberships) {
@@ -61,14 +63,19 @@ export async function prepareAgentDesired(client: DatabaseClient, row: FleetOper
   const parametersList = [target.tenant_id, target.alias, parameters.harness_id, parameters.display_name ?? null, parameters.runtime_key,
     parameters.primary_room_id, placement.host_id, placement.mode, placement.container_name ?? `host:${placement.host_id}`,
     placement.runtime_user, placement.home_directory, placement.state_directory, placement.systemd_user ?? null,
-    parameters.primary_account_id ?? null, parameters.model_id ?? null];
+    parameters.primary_account_id ?? null, parameters.model_id ?? null, parameters.reasoning_effort ?? null];
   const sql = request.kind === 'create' ? `INSERT INTO agents(tenant_id,alias,harness_id,display_name,enabled,runtime_key,primary_room_id,
-      host_id,runtime_mode,container_name,runtime_user,home_directory,state_directory,systemd_user,primary_account_id,model_id,lifecycle_state)
-    VALUES($1,$2,$3,$4,false,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,'provisioning')`
+      host_id,runtime_mode,container_name,runtime_user,home_directory,state_directory,systemd_user,primary_account_id,model_id,reasoning_effort,lifecycle_state)
+    VALUES($1,$2,$3,$4,false,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,'provisioning')`
     : `UPDATE agents SET harness_id=$3,display_name=$4,enabled=false,runtime_key=$5,primary_room_id=$6,host_id=$7,
       runtime_mode=$8,container_name=$9,runtime_user=$10,home_directory=$11,state_directory=$12,systemd_user=$13,
-      primary_account_id=$14,model_id=$15,lifecycle_state='provisioning',updated_at=clock_timestamp() WHERE tenant_id=$1 AND alias=$2`;
+      primary_account_id=$14,model_id=$15,reasoning_effort=$16,lifecycle_state='provisioning',updated_at=clock_timestamp()
+      WHERE tenant_id=$1 AND alias=$2 AND purged_at IS NULL`;
   await client.query(sql, parametersList);
+  if (request.kind === 'create') {
+    await client.query(`INSERT INTO agent_profiles(tenant_id,alias,purpose) VALUES($1,$2,$3)`,
+      [target.tenant_id, target.alias, `Agente ${parameters.display_name ?? target.alias}`]);
+  }
 }
 
 export async function prepareFleetDesired(
@@ -84,13 +91,13 @@ export async function prepareFleetDesired(
   return targets;
 }
 
-export async function previousFleetAgents(client: DatabaseClient, row: FleetOperationRow): Promise<Array<Record<string, unknown>>> {
+export async function previousFleetAgents(client: DatabaseClient, row: FleetOperationRow): Promise<Record<string, unknown>[]> {
   const targets = await fleetAgentTargets(client, row);
-  const previous: Array<Record<string, unknown>> = [];
+  const previous: Record<string, unknown>[] = [];
   for (const target of targets) {
     const agent = (await client.query<Record<string, unknown>>(`SELECT tenant_id,alias,runtime_key,harness_id,
       host_id,runtime_mode,container_name,runtime_user,home_directory,state_directory,systemd_user,
-      primary_room_id,primary_account_id,model_id,enabled,lifecycle_state FROM agents WHERE tenant_id=$1 AND alias=$2`,
+      primary_room_id,primary_account_id,model_id,reasoning_effort,enabled,lifecycle_state FROM agents WHERE tenant_id=$1 AND alias=$2`,
     [target.tenant_id, target.alias])).rows[0];
     if (agent) previous.push(agent);
   }

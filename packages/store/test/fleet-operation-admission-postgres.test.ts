@@ -37,7 +37,7 @@ async function verify(repo: FleetOperationsRepository, value: FleetOperationClai
   for (const [name, evidence] of [['artifacts', { artifact_sha256: 'a'.repeat(64) }],
     ['credentials', { certificate_fingerprint: 'b'.repeat(64) }], ['runtime', { runtime_digest: 'c'.repeat(64) }],
     ['authenticate', { provider_verified: true }], ['profile', { profile_verified: true }],
-    ['verify', { hello_verified: true, roundtrip_verified: true }],
+    ['verify', { bootstrap_verified: true, roundtrip_verified: true }],
     ['admission', { authority_verified: true, artifact_sha256: 'd'.repeat(64) }]] as [FleetStepName, FleetEvidence][]) {
     await repo.startStep(value, name); await repo.completeStep(value, name, evidence);
   }

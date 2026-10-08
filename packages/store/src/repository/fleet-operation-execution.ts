@@ -16,7 +16,7 @@ function stepEvidence(name: FleetStepName, input: FleetEvidence): FleetEvidence 
       : name === 'runtime' ? !!proof.runtime_digest
         : name === 'authenticate' ? proof.provider_verified === true
           : name === 'profile' ? proof.profile_verified === true
-            : name === 'verify' ? proof.hello_verified === true && proof.roundtrip_verified === true
+            : name === 'verify' ? proof.bootstrap_verified === true && proof.roundtrip_verified === true
               : name === 'stop' ? proof.stopped_verified === true
                 : name === 'revoke' ? proof.revocation_verified === true
                   : name === 'admission' ? proof.authority_verified === true && !!proof.artifact_sha256 : true;

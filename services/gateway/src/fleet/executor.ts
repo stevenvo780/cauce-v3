@@ -1,12 +1,14 @@
 import { FleetEvidenceSchema, type FleetError, type FleetEvidence, type FleetOperation, type FleetOperationRequest, type FleetStepName } from '@cauce/protocol';
 import type { FleetOperationClaim } from '@cauce/store';
+import type { FleetProviderAccounts } from './accounts.js';
 
-type FencedTarget = { resource: 'agent'; tenant_id: string; alias: string };
+interface FencedTarget { resource: 'agent'; tenant_id: string; alias: string }
 export interface FleetExecution {
   operation: FleetOperation; request: FleetOperationRequest; fenced_targets: FencedTarget[];
-  previous_agents?: Array<Record<string, unknown>>;
-  desired_memberships?: Array<{ tenant_id: string; alias: string; room_id: string; role: string; enabled: boolean }>;
+  previous_agents?: Record<string, unknown>[];
+  desired_memberships?: { tenant_id: string; alias: string; room_id: string; role: string; enabled: boolean }[];
   snapshot?: Record<string, unknown>;
+  trusted_accounts?: FleetProviderAccounts;
 }
 export interface FleetExecutionRepository {
   claim(worker: string, host: string, leaseMs?: number): Promise<FleetOperationClaim | null>;
@@ -20,7 +22,7 @@ export interface FleetExecutionRepository {
   compensate(claim: FleetOperationClaim, evidence?: FleetEvidence): Promise<FleetOperation>;
   settle(claim: FleetOperationClaim): Promise<FleetOperation>;
 }
-export type FleetEffectResult = { evidence: FleetEvidence; awaiting_auth?: boolean };
+export interface FleetEffectResult { evidence: FleetEvidence; awaiting_auth?: boolean }
 export interface FleetExecutorOptions {
   worker: string; host: string; leaseMs?: number;
   signal?: AbortSignal;
@@ -36,6 +38,7 @@ export class FleetExecutor {
     const claim = await this.repository.claim(this.options.worker, this.options.host, leaseMs);
     if (!claim) return false;
     const abort = new AbortController();
+    const isAborted = () => abort.signal.aborted;
     const shutdown = () => { abort.abort(); };
     this.options.signal?.addEventListener('abort', shutdown, { once: true });
     if (this.options.signal?.aborted) abort.abort();
@@ -50,18 +53,18 @@ export class FleetExecutor {
     heartbeat.unref();
     let step: FleetStepName | undefined;
     try {
-      if (abort.signal.aborted) return true;
+      if (isAborted()) return true;
       let execution = await this.repository.execution(claim);
       if (execution.operation.status !== 'cancelling') {
         await this.repository.prepare(claim);
         execution = await this.repository.execution(claim);
       }
       for (;;) {
-        if (abort.signal.aborted) return true;
+        if (isAborted()) return true;
         execution = await this.repository.execution(claim);
         if (execution.operation.status === 'cancelling') {
           const evidence = this.options.compensate === undefined ? {} : await this.options.compensate(execution, abort.signal);
-          if (abort.signal.aborted) return true;
+          if (isAborted()) return true;
           await this.repository.compensate(claim, FleetEvidenceSchema.parse(evidence));
           return true;
         }
@@ -72,7 +75,12 @@ export class FleetExecutor {
         execution = await this.repository.execution(claim);
         if (execution.operation.status === 'cancelling') continue;
         const result = await this.options.perform(step, execution, abort.signal);
-        if (abort.signal.aborted) return true;
+        if (isAborted()) return true;
+        const current = await this.repository.execution(claim);
+        if (isAborted()) return true;
+        if (current.operation.id !== execution.operation.id) throw new Error('fleet operation identity changed');
+        if (current.operation.status === 'cancelling') continue;
+        if (step === 'admission') result.evidence = { ...result.evidence, authority_verified: true };
         if (result.awaiting_auth === true) {
           await this.repository.awaitAuth(claim);
           return true;
