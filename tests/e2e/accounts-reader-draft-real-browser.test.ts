@@ -171,7 +171,7 @@ describe('lectura de cuentas y borradores para lectores', () => {
       expect(await page.locator('body').innerText()).not.toContain(active.foreignCredentialLocator);
 
       await page.getByRole('tab', { name: 'Asignaciones' }).click();
-      await page.getByRole('heading', { name: 'Orden de fallback efectivo', exact: true }).waitFor({ state: 'visible' });
+      await page.getByRole('heading', { name: 'Orden de respaldo declarado', exact: true }).waitFor({ state: 'visible' });
       const assignment = await page.evaluate(() => Array.from(document.querySelectorAll<HTMLButtonElement>('button'))
         .filter((button) => button.textContent.trim() === 'Nueva asignación')
         .map((control) => ({ disabled: control.disabled, label: control.textContent.trim() })));
@@ -184,7 +184,9 @@ describe('lectura de cuentas y borradores para lectores', () => {
       expect(matrixCell.length).toBeGreaterThan(0);
       expect(matrixCell.every((cell) => cell.disabled)).toBe(true);
       await page.getByRole('button', { name: `Isa/${active.readerAlias} × ${active.foreignPoolAccountId}: sin techo`, exact: true }).waitFor({ state: 'visible' });
-      await page.getByRole('list', { name: 'Orden de fallback por agente', exact: true }).locator('li').filter({ hasText: `Isa/${active.readerAlias}` }).getByText('sin fallback: los reintentos corren igual que el intento 1', { exact: true }).waitFor({ state: 'visible' });
+      await page.getByRole('list', { name: 'Orden de fallback por agente', exact: true }).locator('li').filter({ hasText: `Isa/${active.readerAlias}` }).getByText('sin cuentas de respaldo registradas', { exact: true }).waitFor({ state: 'visible' });
+      await page.getByRole('button', { name: '¿Cómo se rutea?', exact: true }).click();
+      await page.getByText(/Los reintentos conservan la cuenta seleccionada\./u).waitFor({ state: 'visible' });
       const accountRouting = await page.evaluate((accountId) => Array.from(document.querySelectorAll<HTMLButtonElement>('button[aria-label]'))
         .map((button) => button.getAttribute('aria-label') ?? '')
         .filter((label) => label.includes(` × ${accountId}: `)), active.foreignPoolAccountId);
