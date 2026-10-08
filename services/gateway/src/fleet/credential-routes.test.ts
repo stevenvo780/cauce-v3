@@ -36,10 +36,12 @@ beforeAll(async () => {
   app = Fastify({ https: { key: await readFile(join(directory, 'server.key')), cert: await readFile(join(directory, 'server.crt')),
     ca: await readFile(join(directory, 'ca.crt')), requestCert: true, rejectUnauthorized: true } });
   registerFleetCredentialRoutes(app, { bootstrap: provider('bootstrap'), normal: provider('normal'),
-    token: new FleetTokenProbeAuthProvider(join(directory, 'token.json'), ownerUid) });
+    token: new FleetTokenProbeAuthProvider(join(directory, 'token.json'), ownerUid, join(directory, 'base-token.json')) });
   origin = await app.listen({ host: '127.0.0.1', port: 0 });
 });
 beforeEach(async () => {
+  await registry('base.json', []);
+  await registry('base-token.json', []);
   await registry('fleet.json', [{ certificate_sha256: fingerprint, principal, expires_at: expires() }]);
   await registry('token.json', [{ token_sha256: createHash('sha256').update(token).digest('hex'), principal, expires_at: expires() }]);
 });
@@ -57,6 +59,37 @@ async function call(kind: 'mtls' | 'token', phase = 'bootstrap') {
   });
 }
 describe('credential rejection with actual TLS and live registries', () => {
+  it('preserves valid credentials beside unrelated legacy expiry debt and denies debt on the presented credential', async () => {
+    const entries = [{ principal, certificate_sha256: 'f'.repeat(64), token_sha256: 'f'.repeat(64) },
+      { principal, certificate_sha256: 'e'.repeat(64), token_sha256: 'e'.repeat(64), expires_at: 'invalid' }];
+    await registry('base.json', entries);
+    await registry('base-token.json', entries);
+    expect((await call('mtls')).status).toBe(200);
+    expect((await call('token')).status).toBe(200);
+    await registry('fleet.json', [{ principal, certificate_sha256: fingerprint }]);
+    await registry('token.json', [{ principal, token_sha256: createHash('sha256').update(token).digest('hex') }]);
+    expect((await call('mtls')).status).toBe(503);
+    expect((await call('token')).status).toBe(503);
+  });
+  it('keeps legacy base credentials accepted until their measured removal from both authorities', async () => {
+    const legacy = { ...principal, channel: 'adapter', session_id: 'legacy-session', roles: ['adapter'], permissions: ['read', 'route'] };
+    await registry('fleet.json', []);
+    await registry('token.json', []);
+    await registry('base.json', [{ certificate_sha256: fingerprint, principal: legacy, expires_at: expires() }]);
+    await registry('base-token.json', [{ token_sha256: createHash('sha256').update(token).digest('hex'), principal: legacy, expires_at: expires() }]);
+    expect((await call('mtls', 'normal')).status).toBe(200);
+    expect((await call('token', 'normal')).status).toBe(200);
+    await registry('base.json', []);
+    await registry('base-token.json', []);
+    for (const kind of ['mtls', 'token'] as const) expect(await call(kind, 'normal'))
+      .toEqual({ status: 401, body: { error: 'CREDENTIAL_REJECTED' } });
+  });
+  it('refuses bearer revocation evidence when either authority is unreadable or ambiguous', async () => {
+    await registry('base-token.json', [{ token_sha256: createHash('sha256').update(token).digest('hex'), principal, expires_at: expires() }]);
+    expect((await call('token')).status).toBe(503);
+    await rm(join(directory, 'base-token.json'));
+    expect((await call('token')).status).toBe(503);
+  });
   it('accepts restricted credentials without route permissions and reports their exact removal', async () => {
     expect(await call('mtls')).toEqual({ status: 200, body: { credential_accepted: true, phase: 'bootstrap',
       tenant_id: principal.tenant_id, alias: principal.alias, session_id: principal.session_id } });

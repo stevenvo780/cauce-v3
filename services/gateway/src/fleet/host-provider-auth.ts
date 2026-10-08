@@ -13,6 +13,7 @@ import { ProviderAuthManager } from '../console/provider-auth.sessions.js';
 import type { ProviderAuthActor, ProviderAuthLogin, ProviderAuthRequest, ProviderAuthService } from '../console/provider-auth.types.js';
 import type { FleetExecution } from './executor.js';
 import { readFleetProviderAccounts, scopedFleetProviderAgents } from './accounts.js';
+import { trustedFleetBaseline } from './baseline.js';
 import { performHostCommand, performHostLoginStop, type HostCommandConfig } from './host-command.js';
 import { assertLoginPins, cleanupProviderLogin, ContainerLoginBindingSchema, createProviderLogin, LoginCommandSchema,
   LoginPathSchema, LoginPinsSchema, queryProviderLoginBinding, readPrivateJson, type ProviderLoginConfig } from './provider-login.js';
@@ -111,6 +112,8 @@ async function activeExecution(client: DatabaseClient, scope: ProviderAuthPhysic
   const raw = (await client.query<{ jsonb_build_object: unknown }>(snapshotQuery)).rows;
   if (raw.length !== 1) throw unavailable();
   const snapshot = Snapshot.parse(raw[0]?.jsonb_build_object);
+  snapshot.agents = await trustedFleetBaseline(client, snapshot.agents);
+  prepared.previous_agents = await trustedFleetBaseline(client, prepared.previous_agents);
   const matches = snapshot.agents.filter(value => value.tenant_id === scope.tenant_id && value.alias === scope.alias);
   const agent = Agent.parse(matches.length === 1 ? matches[0] : undefined);
   if (agent.harness_id !== scope.harness_id || agent.host_id !== scope.host_id || agent.runtime_user !== scope.runtime_user
@@ -197,6 +200,7 @@ export async function createHostProviderAuthService(pool: DatabasePool, options:
         const client = await pool.connect(); let execution: FleetExecution;
         try {
           const row = await operation(client, scope, false); const prepared = await preparedState(client, row.id);
+          prepared.previous_agents = await trustedFleetBaseline(client, prepared.previous_agents);
           execution = { operation: publicFleetOperation(row), request: FleetOperationRequestSchema.parse(row.request), ...prepared,
             snapshot: { agents: prepared.previous_agents, memberships: [], rolePolicies: [] } };
           const cached = executions.get(scope.operation_id);

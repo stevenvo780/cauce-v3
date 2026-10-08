@@ -81,6 +81,12 @@ async function readSigningKey(path: string): Promise<Buffer> {
 /**
  * Configures the fallback auth provider for requests without a session cookie.
  */
+function configuredFleetToken(): FleetTokenProbeAuthProvider {
+  const fleet = process.env.CAUCE_FLEET_TOKEN_HASH_FILE;
+  const base = process.env.CAUCE_TOKEN_HASH_FILE;
+  if (!fleet || !base) throw new Error('Fleet credential probes require the base and fleet token registries');
+  return new FleetTokenProbeAuthProvider(fleet, 0, base);
+}
 function configuredMtls(namespace: 'normal' | 'bootstrap' = 'normal'): MtlsAuthProvider {
   const path = process.env.CAUCE_MTLS_IDENTITY_FILE;
   if (!path) throw new Error('CAUCE_MTLS_IDENTITY_FILE is required for mTLS auth');
@@ -269,7 +275,7 @@ const app = await buildGateway({
   ...(process.env.CAUCE_FLEET_MTLS_IDENTITY_FILE === undefined ? {} : {
     bootstrapProviders: { bootstrap: configuredMtls('bootstrap'), normal: configuredMtls('normal'),
       ...(process.env.CAUCE_FLEET_TOKEN_HASH_FILE === undefined ? {} : {
-        token: new FleetTokenProbeAuthProvider(process.env.CAUCE_FLEET_TOKEN_HASH_FILE),
+        token: configuredFleetToken(),
       }) },
   }),
   ...(process.env.CAUCE_FLEET_API_SOCKET === undefined ? {} : {

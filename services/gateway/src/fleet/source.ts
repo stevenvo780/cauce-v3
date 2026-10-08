@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { FleetOperationsRepository, lockFleetClaim, lockFleetRevision, preparedState, publicFleetOperation, withTransaction,
   type DatabasePool, type FleetOperationClaim, type FleetExecutionState } from '@cauce/store';
 import { readFleetProviderAccounts, scopedFleetProviderAgents, type FleetProviderAccounts } from './accounts.js';
+import { trustedFleetBaseline } from './baseline.js';
 
 const SnapshotSchema = z.object({
   agents: z.array(z.record(z.string(), z.unknown())),
@@ -26,6 +27,8 @@ export class FleetHostSource extends FleetOperationsRepository {
       const result = await client.query<{ jsonb_build_object: unknown }>(this.hostOptions.snapshotQuery);
       if (result.rows.length !== 1) throw new Error('Fleet host snapshot is unavailable');
       const snapshot = SnapshotSchema.parse(result.rows[0]?.jsonb_build_object);
+      snapshot.agents = await trustedFleetBaseline(client, snapshot.agents);
+      prepared.previous_agents = await trustedFleetBaseline(client, prepared.previous_agents);
       const trusted_accounts = await readFleetProviderAccounts(client, scopedFleetProviderAgents(
         row.request, prepared.fenced_targets, prepared.previous_agents, snapshot.agents));
       await lockFleetClaim(client, claim, true);
