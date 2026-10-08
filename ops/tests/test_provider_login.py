@@ -20,7 +20,8 @@ HELPER = pathlib.Path(__file__).resolve().parents[1] / 'cli/provider-login.py'
 
 class ProviderLoginPtyTest(unittest.TestCase):
     def setUp(self):
-        self.temporary = tempfile.TemporaryDirectory(prefix='provider-login-fixture-', dir='/var/tmp')
+        user = pwd.getpwuid(os.getuid())
+        self.temporary = tempfile.TemporaryDirectory(prefix='provider-login-fixture-', dir=user.pw_dir)
         self.root = pathlib.Path(self.temporary.name)
         self.state = self.root / 'state'
         self.state.mkdir(mode=0o700)
@@ -29,14 +30,14 @@ class ProviderLoginPtyTest(unittest.TestCase):
         self.worker.write_text('import sys,termios,os,time,signal\n'
             'a=termios.tcgetattr(0);a[3]&=~termios.ECHO;termios.tcsetattr(0,termios.TCSANOW,a)\n'
             'print("TTY_READY",os.getuid(),sys.stdin.isatty(),sys.stdout.isatty(),flush=True)\n'
+            'print("DIRECTORIES",os.environ["HOME"],os.getcwd(),flush=True)\n'
             'signal.signal(signal.SIGWINCH,lambda *_: print("RESIZED",termios.tcgetwinsize(0)[1],flush=True))\n'
             'line=sys.stdin.readline();print("INPUT_ACCEPTED",len(line.strip()),flush=True)\n'
             'time.sleep(60)\n')
         executable = pathlib.Path(sys.executable).resolve()
-        user = pwd.getpwuid(os.getuid())
         self.plan = {'operation_id': self.operation, 'command': [str(executable), str(self.worker)],
             'command_sha256': hashlib.sha256(executable.read_bytes()).hexdigest(), 'runtime_user': user.pw_name,
-            'home': user.pw_dir, 'cwd': str(self.root), 'env': {'PATH': '/usr/bin:/bin'},
+            'home': str(self.root), 'cwd': str(self.root), 'env': {'PATH': '/usr/bin:/bin'},
             'backend': 'native', 'state_root': str(self.state), 'account_scope': 'fixture-account'}
         self.process = None
         self.child = None
@@ -121,6 +122,8 @@ class ProviderLoginPtyTest(unittest.TestCase):
         started = self.start()
         self.output_until(b'TTY_READY')
         self.assertIn(b'True True', self.output)
+        self.output_until(b'DIRECTORIES')
+        self.assertIn(('DIRECTORIES ' + str(self.root) + ' ' + str(self.root)).encode(), self.output)
         secret = b'TYPED_PRIVATE_FIXTURE'
         self.send({'type': 'input', 'data': base64.b64encode(secret + b'\n').decode()})
         self.output_until(b'INPUT_ACCEPTED')

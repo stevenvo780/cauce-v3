@@ -31,14 +31,14 @@ async function fixture(mode = 'verified'): Promise<ProviderLoginConfig> {
 }
 describe('private provider login transport', () => {
   it.each(['normal', 'crash'])('runs actual native PTY and %s cleanup with exact runtime user', async mode => {
-    const root = await mkdtemp(join(tmpdir(), 'provider-login-native-')); temporary.push(root);
-    const user = userInfo(); const helper = fileURLToPath(new URL('../../../../ops/cli/provider-login.py', import.meta.url)); const python = await realpath('/usr/bin/python3');
+    const user = userInfo(); const root = await mkdtemp(join(user.homedir, 'provider-login-native-')); temporary.push(root);
+    const helper = fileURLToPath(new URL('../../../../ops/cli/provider-login.py', import.meta.url)); const python = await realpath('/usr/bin/python3');
     const worker = join(root, 'worker.py');
-    await writeFile(worker, `import os,sys,termios,time\na=termios.tcgetattr(0);a[3]&=~termios.ECHO;termios.tcsetattr(0,termios.TCSANOW,a)\nprint('NATIVE_READY',os.getuid(),sys.stdin.isatty(),flush=True)\nline=sys.stdin.readline();print('INPUT_BYTES',len(line.strip()),flush=True)\ntime.sleep(60)\n`, { mode: 0o700 });
+    await writeFile(worker, `import os,sys,termios,time\na=termios.tcgetattr(0);a[3]&=~termios.ECHO;termios.tcsetattr(0,termios.TCSANOW,a)\nprint('NATIVE_READY',os.getuid(),sys.stdin.isatty(),flush=True)\nprint('DIRECTORIES',os.environ['HOME'],os.getcwd(),flush=True)\nline=sys.stdin.readline();print('INPUT_BYTES',len(line.strip()),flush=True)\ntime.sleep(60)\n`, { mode: 0o700 });
     const hash = async (filename: string) => createHash('sha256').update(await readFile(filename)).digest('hex');
     const config: ProviderLoginConfig = { python, helper: { executable: helper, sha256: await hash(helper) }, stateRoot: root, method: 'terminal',
       stopTimeoutMs: 10_000, packet: { operation_id: operationId, command: [python, worker], command_sha256: await hash(python),
-        command_files: { [worker]: await hash(worker) }, runtime_user: user.username, home: user.homedir, cwd: root,
+        command_files: { [worker]: await hash(worker) }, runtime_user: user.username, home: root, cwd: root,
         env: { PATH: '/usr/bin:/bin' }, backend: 'native', state_root: root, account_scope: 'fixture-account' } };
     const login = await createProviderLogin(config, new AbortController().signal); let output = '';
     login.subscribeOutput(bytes => { output += Buffer.from(bytes).toString(); });
@@ -51,6 +51,7 @@ describe('private provider login transport', () => {
     };
     try {
       await login.start(); await until('NATIVE_READY'); expect(output).toContain(`NATIVE_READY ${user.uid.toString()} True`);
+      await until('DIRECTORIES'); expect(output).toContain(`DIRECTORIES ${root} ${root}`);
       await login.write(Buffer.from('TRANSIENT_PRIVATE_FIXTURE\n')); await until('INPUT_BYTES'); await login.resize(99, 33);
       const filename = join(root, operationId + '.json'); const saved = await readFile(filename, 'utf8');
       expect(saved).not.toContain('TRANSIENT_PRIVATE_FIXTURE'); expect(saved).not.toContain(worker);

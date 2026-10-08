@@ -19,6 +19,7 @@ from fleet_executor_view import open_directory
 from provider_login_state import (
     LoginFailure,
     acquire,
+    canonical_path,
     pinned_digest,
     private_state,
     read_metadata,
@@ -175,12 +176,38 @@ class Frames:
         return True
 
 
-def native_user(plan: dict):
+def validate_native_home(plan: dict, user):
+    passwd_home = pathlib.Path(canonical_path(user.pw_dir))
+    home = pathlib.Path(canonical_path(plan['home']))
+    cwd = pathlib.Path(canonical_path(plan['cwd']))
+    if not home.is_relative_to(passwd_home) or not cwd.is_relative_to(home):
+        raise LoginFailure('native login home or cwd escapes its owner boundary')
+    directory = open_directory(passwd_home)
+    try:
+        for component in (None, *cwd.relative_to(passwd_home).parts):
+            if component is not None:
+                following = os.open(component, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                    dir_fd=directory)
+                os.close(directory)
+                directory = following
+            details = os.fstat(directory)
+            if details.st_uid != user.pw_uid or details.st_mode & 0o022:
+                raise LoginFailure('native login directory has an unsafe owner or mode')
+    finally:
+        os.close(directory)
+
+
+def native_user(plan: dict, *, child: bool = False):
     user = pwd.getpwnam(plan['runtime_user'])
-    if user.pw_dir != plan['home'] or os.geteuid() not in {0, user.pw_uid}:
-        raise LoginFailure('exact login user or home differs')
-    directory = open_directory(pathlib.Path(plan['cwd']))
-    os.close(directory)
+    if os.geteuid() not in {0, user.pw_uid}:
+        raise LoginFailure('exact login user differs')
+    if child:
+        if user.pw_dir != plan['home']:
+            raise LoginFailure('exact container login home differs')
+        directory = open_directory(pathlib.Path(plan['cwd']))
+        os.close(directory)
+    else:
+        validate_native_home(plan, user)
     if plan.get('command_sha256') is not None and pinned_digest(plan['command'][0]) != plan['command_sha256']:
         raise LoginFailure('pinned login executable changed')
     for filename, fingerprint in plan.get('command_files', {}).items():
@@ -338,7 +365,7 @@ def run_guardian(plan: dict, user, root: int, lock: int, controller: dict) -> in
 
 
 def run_native(plan: dict, *, child: bool = False) -> int:
-    user = native_user(plan)
+    user = native_user(plan, child=child)
     root = private_state(plan['state_root'], create=child)
     lock = acquire(root, plan['operation_id'])
     if read_metadata(root, plan['operation_id']) is not None:
