@@ -21,6 +21,7 @@ export * from './repository/fleet-operation-hosts.js';
 export * from './fleet-adoption-contracts.js';
 export * from './fleet-adoption.js';
 export * from './repository/fleet-operations.js';
+export * from './repository/fleet-hosts.js';
 export { lockFleetRevision } from './repository/fleet-operation-authority.js';
 export { assertFleetOperationAuthority } from './repository/fleet-operation-human.js';
 export { lockFleetClaim, preparedState } from './repository/fleet-operation-state.js';

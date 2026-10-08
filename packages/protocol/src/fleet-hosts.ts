@@ -17,8 +17,9 @@ export const FleetHostAgentSchema = z.object({
 /**
  * One computer that runs agents. `status` is the effective reachability: the fleet controller probe when it
  * reported within the freshness window (`status_source: 'controller'`), otherwise derived from the leases of the
- * agents placed on it (`'agents'`), otherwise `'none'`. An agent is usable only when its host is `enabled` and not
- * `unreachable`; a dead host disables only its own agents.
+ * agents placed on it (`'agents'`), otherwise `'none'`. Only a disabled computer or a fresh controller report of
+ * `unreachable` blocks fleet operations on it; lease-derived reachability is informational, because stopped agents
+ * hold no lease on a healthy computer.
  */
 export const FleetHostSchema = z.object({
   host_id: FleetHostIdSchema,
@@ -27,7 +28,7 @@ export const FleetHostSchema = z.object({
   enabled: z.boolean(),
   status: FleetHostStatusSchema,
   status_source: z.enum(['controller', 'agents', 'none']),
-  last_seen_at: z.string().datetime({ offset: true }).nullable(),
+  last_seen_at: z.iso.datetime({ offset: true }).nullable(),
   registered: z.boolean(),
   approved: z.boolean(),
   version: z.number().int().nonnegative(),
@@ -53,6 +54,10 @@ export const FleetHostUpdateSchema = z.object({
 }).strict().refine(value => value.display_name !== undefined || value.notes !== undefined || value.enabled !== undefined);
 export type FleetHostUpdate = z.infer<typeof FleetHostUpdateSchema>;
 
-export function fleetHostUsable(host: Pick<FleetHost, 'enabled' | 'status'>): boolean {
-  return host.enabled && host.status !== 'unreachable';
+export function fleetHostUsable(host: Pick<FleetHost, 'enabled' | 'status' | 'status_source'>): boolean {
+  return host.enabled && !(host.status === 'unreachable' && host.status_source === 'controller');
+}
+
+export function fleetHostOffline(host: Pick<FleetHost, 'status'>): boolean {
+  return host.status === 'unreachable';
 }

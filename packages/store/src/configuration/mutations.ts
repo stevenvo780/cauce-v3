@@ -318,7 +318,8 @@ export abstract class ConfigurationMutations {
       container_name: string | null; runtime_user: string | null;
       home_directory: string | null; state_directory: string | null; role_brief: string | null;
       max_concurrent_deliveries: number | null;
-      retired_at?: string | null; runtime_key?: string | null; primary_room_id?: string | null; has_lifecycle?: boolean;
+      retired_at?: string | null; runtime_key?: string | null; primary_room_id?: string | null; host_id?: string | null;
+      has_lifecycle?: boolean;
     }>(
       // Goes in this SELECT or ROLLBACK drops it: `oldValue` is the body of the inverse, and an
       // absent column comes back as undeclared. `NULL` here MEANS something — "no ceiling", the
@@ -327,6 +328,7 @@ export abstract class ConfigurationMutations {
       `SELECT harness_id,display_name,enabled,container_name,runtime_user,home_directory,
               state_directory,role_brief,max_concurrent_deliveries,to_jsonb(agents)->>'retired_at' AS retired_at,
               to_jsonb(agents)->>'runtime_key' AS runtime_key,to_jsonb(agents)->>'primary_room_id' AS primary_room_id,
+              to_jsonb(agents)->>'host_id' AS host_id,
               to_jsonb(agents) ? 'primary_room_id' AS has_lifecycle
        FROM agents WHERE tenant_id=$1 AND alias=$2 FOR UPDATE`, [mutation.tenant_id, mutation.alias]
     );
@@ -352,6 +354,10 @@ export abstract class ConfigurationMutations {
             ? value.max_concurrent_deliveries as number | null
             : 2]
       );
+      if (has(value, 'host_id')) {
+        await client.query('UPDATE agents SET host_id=$3 WHERE tenant_id=$1 AND alias=$2',
+          [mutation.tenant_id, mutation.alias, value.host_id ?? null]);
+      }
       return {
         inverse: { resource: 'agent', action: 'delete', tenant_id: mutation.tenant_id, alias: mutation.alias },
         summary: `create agent ${key}`
@@ -370,7 +376,7 @@ export abstract class ConfigurationMutations {
       home_directory: old.home_directory,
       state_directory: old.state_directory,
       max_concurrent_deliveries: old.max_concurrent_deliveries,
-      ...(old.has_lifecycle === true ? { primary_room_id: old.primary_room_id ?? null } : {}),
+      ...(old.has_lifecycle === true ? { primary_room_id: old.primary_room_id ?? null, host_id: old.host_id ?? null } : {}),
     };
     if (mutation.action === 'delete') {
       await assertConfigurationDeleteAllowed(client, mutation);
@@ -406,7 +412,7 @@ export abstract class ConfigurationMutations {
     if (value.enabled === true && !old.enabled) {
       throw new ConfigurationError('conflict', 'agent admission requires a verified fleet operation');
     }
-    if (old.runtime_key && ['harness_id', 'container_name', 'runtime_user', 'home_directory', 'state_directory', 'primary_room_id'].some((field) =>
+    if (old.runtime_key && ['harness_id', 'container_name', 'runtime_user', 'home_directory', 'state_directory', 'primary_room_id', 'host_id'].some((field) =>
       has(value, field) && value[field] !== oldValue[field as keyof typeof oldValue])) {
       throw new ConfigurationError('conflict', 'physical agent changes require a verified fleet operation');
     }
@@ -435,6 +441,11 @@ export abstract class ConfigurationMutations {
       if (!old.has_lifecycle) throw new ConfigurationError('conflict', 'primary room administration requires the lifecycle schema');
       await client.query('UPDATE agents SET primary_room_id=$3 WHERE tenant_id=$1 AND alias=$2',
         [mutation.tenant_id, mutation.alias, value.primary_room_id]);
+    }
+    if (has(value, 'host_id')) {
+      if (!old.has_lifecycle) throw new ConfigurationError('conflict', 'host placement requires the lifecycle schema');
+      await client.query('UPDATE agents SET host_id=$3 WHERE tenant_id=$1 AND alias=$2',
+        [mutation.tenant_id, mutation.alias, value.host_id ?? null]);
     }
     return {
       inverse: { resource: 'agent', action: 'update', tenant_id: mutation.tenant_id, alias: mutation.alias, value: oldValue },
