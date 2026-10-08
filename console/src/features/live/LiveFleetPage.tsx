@@ -10,6 +10,7 @@ import { PageFreshness } from '../../components/PageFreshness';
 import { useAgentPreferences } from '../../components/agent-actions/preferences-context';
 import { OfficeCanvas, type OfficeAgent } from '../office/OfficeCanvas';
 import { OfficeDialog } from '../office/OfficeDialog';
+import { groupDirectory, membershipsOf } from '../office/teams';
 import { useOfficeChat } from '../office/use-office-chat';
 import { RECENT_VISITOR_MS, useMcpVisitors } from '../office/visitors';
 import { ORDEN_VIVO } from './activity';
@@ -97,10 +98,13 @@ export function LiveFleetPage() {
   );
 
   const appearances = useAgentPreferences()?.appearances;
+  const directory = useMemo(() => groupDirectory(topology.data), [topology.data]);
+  const memberships = useMemo(() => membershipsOf(fleet.agents, directory), [fleet.agents, directory]);
   const officeAgents = useMemo<OfficeAgent[]>(() => views.map((view): OfficeAgent => ({
     id: view.key, name: view.alias, state: view.state, reason: view.reason, delegatesTo: view.delegatesTo,
     glyph: appearances?.get(view.key)?.glyph, hue: appearances?.get(view.key)?.hue, style: appearances?.get(view.key)?.style,
     awake: view.state === 'idle' && typeof view.secondsSinceLastAck === 'number' && view.secondsSinceLastAck < AWAKE_SECONDS,
+    team: memberships.get(view.key)?.team, groups: memberships.get(view.key)?.groups,
   })).concat(visitors.map((visitor): OfficeAgent => {
     const last = visitor.lastPublicationAt ? Date.parse(visitor.lastPublicationAt) : NaN;
     return {
@@ -108,7 +112,7 @@ export function LiveFleetPage() {
       awake: now - last < RECENT_VISITOR_MS,
       reason: `Cliente MCP: ${Number.isNaN(last) ? 'no publicó nada todavía' : `publicó hace ${humanSeconds((now - last) / 1000)}`}; presencia no verificable.`,
     };
-  })), [views, appearances, visitors, now]);
+  })), [views, appearances, memberships, visitors, now]);
 
   const select = (key: string) => {
     if (visitors.some((visitor) => visitor.id === key)) { setTalkKey(key); return; }
@@ -156,7 +160,7 @@ export function LiveFleetPage() {
             <h1 className="m-0 text-[22px] font-semibold tracking-tight text-fg">Oficina</h1>
             <PageHelp
               title="Oficina"
-              description="Cada persona es un agente de la flota. Trabaja en su escritorio con los Programadores, cuando no tiene nada cocina, toma un café, juega en el Patio de juegos, ordena, riega las plantas, lee o charla en el Jardín, y sólo se va a dormir al Dormitorio si lleva mucho rato sin trabajo; los clientes MCP que declaraste (Dots, GPT…) pasean como visitantes «· MCP», y hablarles les deja una nota en su buzón que leen cuando consultan Cauce; lleva papeles al escritorio de otro cuando le delega y levanta un «!» cuando se traba. El estado sale del trabajo que avanza (o no), no del latido. Vos también estás: arrastrá para mirar, acercá con la rueda o pellizcando y tocá el piso para caminar hasta alguien y hablarle sin salir de la oficina."
+              description="Cada persona es un agente de la flota. Trabaja en su escritorio con los Programadores, agrupado en la alfombra de su grupo (el primero que tiene activo; los otros grupos van como puntos junto al nombre), cuando no tiene nada cocina, toma un café, juega en el Patio de juegos, ordena, riega las plantas, lee o charla en el Jardín, y sólo se va a dormir al Dormitorio si lleva mucho rato sin trabajo; los clientes MCP que declaraste (Dots, GPT…) pasean como visitantes «· MCP», y hablarles les deja una nota en su buzón que leen cuando consultan Cauce; lleva papeles al escritorio de otro cuando le delega y levanta un «!» cuando se traba. El estado sale del trabajo que avanza (o no), no del latido. Vos también estás: arrastrá para mirar, acercá con la rueda o pellizcando y tocá el piso para caminar hasta alguien y hablarle sin salir de la oficina."
             >
               <dl className="m-0 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5">
                 {ORDEN_VIVO.map((state) => (
@@ -262,6 +266,7 @@ export function LiveFleetPage() {
               label={summary}
               onTalk={talkTo}
               speech={chat.speech}
+              hues={directory.hues}
               talk={talkKey && chat.dialog && talking ? {
                 id: talkKey,
                 panel: <OfficeDialog model={chat.dialog} state={talking.state} onClose={() => { setTalkKey(null); }} />,

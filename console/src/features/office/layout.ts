@@ -1,5 +1,6 @@
 import { GARDEN_CORE_H, buildGarden } from './garden-layout';
 import { receptionSpots } from './reception';
+import { POD_W, planWork, teamCols, teamWaste, type TeamSpec, type TeamZone } from './team-layout';
 
 /** Tile edge, in art pixels. */
 export { TILE } from './tile';
@@ -7,8 +8,6 @@ import { TILE } from './tile';
 /** The back wall takes the first rows; the floor starts below it. */
 export const WALL_ROWS = 3;
 const SEATS_PER_POD = 4;
-const POD_W = 4;
-const POD_H = 4;
 /** The kitchen and the playground share a column this wide; their fixtures are drawn for it. */
 const MID_W = 10;
 const KITCHEN_H = 4;
@@ -76,8 +75,10 @@ export type Furniture =
 /** `y` is the wall row the item hangs on: 0 for the back wall, or an inner partition's row. */
 export interface WallItem { kind: 'window' | 'board' | 'clock' | 'door' | 'night'; x: number; w: number; y: number }
 export interface Zone {
-  kind: 'carpet' | 'wood' | 'tile' | 'rug' | 'rest' | 'play' | 'grass' | 'path' | 'partition' | 'pillar';
+  kind: 'carpet' | 'wood' | 'tile' | 'rug' | 'rest' | 'play' | 'grass' | 'path' | 'partition' | 'pillar' | 'teamrug' | 'sign';
   x: number; y: number; w: number; h: number;
+  hue?: number;
+  label?: string;
 }
 
 export interface OfficeLayout {
@@ -89,6 +90,7 @@ export interface OfficeLayout {
   furniture: Furniture[];
   wall: WallItem[];
   zones: Zone[];
+  teams: TeamZone[];
   /** One bed per agent; bed `i` belongs to the agent at desk `i`. */
   beds: Spot[];
   play: Spot[];
@@ -114,19 +116,12 @@ export interface LayoutParams {
   slots?: number;
   /** Garden rows in the wide arrangement, where the garden is a band under the whole building. */
   yard?: number;
+  teams?: readonly TeamSpec[];
 }
 
 interface Plan { cols: number; rows: number; rooms: Record<RoomId, Room>; slots: number }
 
-function workSize(params: LayoutParams): { w: number; h: number } {
-  const podRows = Math.ceil(params.pods / params.podCols);
-  const margin = params.compact ? 1 : 2;
-  const gap = params.compact ? 1 : 2;
-  return {
-    w: margin * 2 + params.podCols * POD_W + (params.podCols - 1) * gap,
-    h: margin * 2 + podRows * POD_H + (podRows - 1) * gap,
-  };
-}
+const workSize = (params: LayoutParams) => planWork(params);
 
 function plan(params: LayoutParams): Plan {
   const work = workSize(params);
@@ -208,9 +203,18 @@ export function buildLayout(params: LayoutParams): OfficeLayout {
   ];
   const wall: WallItem[] = [];
 
-  for (let pod = 0; pod < params.pods; pod += 1) {
-    const px = workX + margin + (pod % params.podCols) * (POD_W + gap);
-    const py = top + margin + Math.floor(pod / params.podCols) * (POD_H + gap);
+  const teams = work.teams.map((team): TeamZone => ({
+    ...team,
+    rug: { ...team.rug, x: workX + team.rug.x, y: top + team.rug.y },
+    sign: { ...team.sign, x: workX + team.sign.x, y: top + team.sign.y },
+  }));
+  for (const team of teams) {
+    zones.push({ kind: 'teamrug', ...team.rug, hue: team.hue }, { kind: 'sign', ...team.sign, hue: team.hue, label: team.label });
+  }
+
+  for (const pod of work.pods) {
+    const px = workX + pod.x;
+    const py = top + pod.y;
     for (let seat = 0; seat < SEATS_PER_POD; seat += 1) {
       const x = px + (seat % 2) * 2;
       const facing = seat < 2 ? 'down' : 'up';
@@ -438,7 +442,7 @@ export function buildLayout(params: LayoutParams): OfficeLayout {
 
   return {
     cols, rows, walkable, rooms: [rooms.programadores, rooms.cocina, rooms.patio, garden, rooms.dormitorio],
-    desks, furniture, wall, zones, beds, play, door, waiting, coffee, pet: outside.pet,
+    desks, furniture, wall, zones, teams, beds, play, door, waiting, coffee, pet: outside.pet,
     routine: { ...fixed, coffee, play, water, sweep, stroll },
   };
 }
@@ -454,23 +458,24 @@ const TARGET_ASPECT = 1.2;
 const YARDS = [GARDEN_H, 8, 9, 10, 12];
 
 /** Largest crisp integer `scale` (device px per art px); on phones the height is let go and the page scrolls. */
-export function chooseLayout(count: number, box: { width: number; height: number; dpr: number }): LayoutChoice {
-  const pods = podsFor(count);
-  const beds = Math.max(1, count);
+export function chooseLayout(count: number, box: { width: number; height: number; dpr: number }, teams?: readonly TeamSpec[]): LayoutChoice {
+  const pods = teams ? teams.reduce((sum, team) => sum + team.pods, 0) : podsFor(count);
+  const beds = teams ? pods * SEATS_PER_POD : Math.max(1, count);
+  const columns = teams ? teams.reduce((sum, team) => sum + teamCols(team.pods, 8), 0) : pods;
   const minScale = Math.ceil(1.6 * box.dpr);
   const maxScale = Math.floor(5 * box.dpr);
   const candidates: { params: LayoutParams; kw: number; kh: number; empty: number }[] = [];
   const slotChoices = [undefined, ...new Set([3, 4, 5, 6, 8, 10, 13].map((slots) => Math.min(slots, Math.max(3, beds))))];
   for (const compact of box.width < 700 ? [true] : [false, true]) for (const side of ['right', 'bottom'] as const) {
-    for (let podCols = 1; podCols <= Math.min(pods, 8); podCols += 1) for (const slots of side === 'right' ? slotChoices : [undefined]) {
+    for (let podCols = 1; podCols <= Math.min(columns, 8); podCols += 1) for (const slots of side === 'right' ? slotChoices : [undefined]) {
       for (const yard of side === 'right' ? YARDS : [undefined]) {
-        const params = { pods, podCols, side, compact, beds, slots, yard };
+        const params = { pods, podCols, side, compact, beds, slots, yard, teams };
         const { cols, rows } = layoutSize(params);
         candidates.push({
           params,
           kw: Math.floor((box.width * box.dpr) / (cols * TILE)),
           kh: Math.floor((box.height * box.dpr) / (rows * TILE)),
-          empty: Math.ceil(pods / podCols) * podCols - pods,
+          empty: teams ? teamWaste(teams, podCols) : Math.ceil(pods / podCols) * podCols - pods,
         });
       }
     }

@@ -10,6 +10,7 @@ import {
   type ActorLook, type LabelTone, type ScreenRect, type TapMarker,
 } from './people';
 import { furnitureDrawables, paintRoom, type DeskState, type Drawable } from './render';
+import { drawGroupDots, type GroupDots } from './group-dots';
 import { drawPet, petAt } from './render-garden';
 import type { Actor, World } from './simulation';
 import { drawSpeech, type Speech } from './speech';
@@ -97,6 +98,7 @@ export interface FrameInput {
   names: ReadonlyMap<string, string>;
   marker?: TapMarker | null;
   speech?: ReadonlyMap<string, Speech>;
+  groups?: ReadonlyMap<string, GroupDots>;
 }
 
 interface Tag { id?: string; text: string; x: number; y: number; above: boolean; tone: LabelTone; rank: number; box?: ScreenRect }
@@ -194,7 +196,12 @@ export function drawFrame(ctx: CanvasRenderingContext2D, input: FrameInput): voi
     if (only && !only.has(actor.id)) continue;
     drawSleepTrail(ctx, { x: sx(look.head.x), y: origin.y + look.head.y * cam.zoom }, time, cam.zoom, boxes, input.still);
   }
-  for (const tag of shown) if (tag.box) drawLabel(ctx, tag.text, tag.box, fontPx, tag.tone);
+  for (const tag of shown) {
+    if (!tag.box) continue;
+    drawLabel(ctx, tag.text, tag.box, fontPx, tag.tone);
+    const dots = tag.id ? input.groups?.get(tag.id) : undefined;
+    if (dots) drawGroupDots(ctx, tag.box, dots, fontPx, tag.tone === 'dim');
+  }
   for (const { actor, look } of actors) {
     const speech = input.speech?.get(actor.id);
     if (!speech) continue;

@@ -2,6 +2,7 @@ import type { LiveState } from '../live/agent-state';
 import type { Vec } from './camera';
 import { TILE, type OfficeLayout, type RoomId } from './layout';
 import { OFFICE } from './palette';
+import { teamTone } from './teams';
 
 const ROOM_FILL: Readonly<Record<RoomId, string>> = {
   programadores: OFFICE.carpet,
@@ -53,6 +54,10 @@ export function drawMinimap(ctx: CanvasRenderingContext2D, input: MinimapInput, 
   for (const room of layout.rooms) {
     ctx.fillStyle = ROOM_FILL[room.id];
     ctx.fillRect(room.x * TILE * k, room.y * TILE * k, room.w * TILE * k, room.h * TILE * k);
+  }
+  for (const team of layout.teams) {
+    ctx.fillStyle = teamTone(team.hue, 50, 58);
+    ctx.fillRect(team.rug.x * TILE * k, team.sign.y * TILE * k, team.rug.w * TILE * k, (team.rug.h + 1) * TILE * k);
   }
   const dot = Math.max(2, Math.round(width / 60));
   for (const person of input.people) {

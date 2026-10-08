@@ -3,6 +3,7 @@ import { TILE, WALL_ROWS, type DeskSlot, type GameKind, type OfficeLayout } from
 import { rect, type Ctx } from './paint';
 import { OFFICE } from './palette';
 import { gardenDrawable, paintGround } from './render-garden';
+import { paintTeamRug, paintTeamSign } from './render-teams';
 import { arcade, foosball, nightstand, paintNightWindow, paintPillar, pingpong } from './render-rooms';
 import { seededRandom } from './random';
 
@@ -56,6 +57,10 @@ function paintFloor(ctx: Ctx, layout: OfficeLayout): void {
       for (let y = 0; y < h; y += 8) {
         for (let x = 0; x < w; x += 8) rect(ctx, x0 + x, y0 + y, 8, 8, ((x + y) / 8) % 2 === 0 ? OFFICE.tile : OFFICE.tileAlt);
       }
+    } else if (zone.kind === 'teamrug') {
+      paintTeamRug(ctx, zone);
+    } else if (zone.kind === 'sign') {
+      paintTeamSign(ctx, zone);
     } else if (zone.kind === 'partition') {
       rect(ctx, x0, y0 - 2, w, 14, OFFICE.wall);
       rect(ctx, x0, y0 - 4, w, 3, OFFICE.wallTop);
