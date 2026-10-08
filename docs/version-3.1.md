@@ -120,12 +120,13 @@ sobre él, y sólo eso:
 si el humo sale rojo parcial, la columna «Resultado» se corrige a mano en el mismo commit que
 registra la fila, y ese commit es también el que actualiza estos documentos.
 
-La última fila de [HISTORIAL](../deploy/HISTORIAL.md) registra `d965a09a`, el 8 de octubre a las
-14:47, hora de Colombia: una actualización sólo de consola que pule el chat, tras la de `9c63bdd8`
-con visitantes MCP en la oficina. El `deploy.sh` completo del mismo SHA se detuvo
-antes de cambiar nada porque la copia externa de backups al NAS no tiene espacio. La consola usa la
-imagen `sha256:b1ce998dc4720c89cdcb359a86fc5187b89ea02cc506ab5df2fb3b3fc1394c1b` y el runtime sigue
-en la imagen desplegada desde `58f6b0af`.
+La última fila de [HISTORIAL](../deploy/HISTORIAL.md) registra `dc348521`, el 8 de octubre a las
+15:53, hora de Colombia: una actualización sólo de consola con paleta de comandos, cabecera de
+frescura común, contador de atención en la Oficina y un chat sin ráfagas de animación al cambiar
+de conversación. El `deploy.sh` completo sigue detenido antes de cambiar nada porque la copia
+externa de backups al NAS no tiene espacio. La consola usa la imagen
+`sha256:d0c71af5cafedbd48f1b7442a38e68d4f2c5eed6a88f2e2049435f22f2885304` y el runtime sigue en
+la imagen desplegada desde `58f6b0af`.
 
 La sesión Steven recargada mostró el grafo primero y la lista cerrada al final. Se comprobó un
 ping canónico de Zeus y su shell; el control se devolvió y la shell se cerró. El journal de Main
