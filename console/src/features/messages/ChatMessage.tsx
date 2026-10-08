@@ -8,7 +8,7 @@ import { clientMailboxRecipientLabel, isClientMailboxDelivery } from '../deliver
 import { previsualizacionRecortada } from '../terminal/cuerpo-del-mensaje';
 import { humanAuthor, messageAuthorPresentation } from '../terminal/message-author';
 import type { TranscriptItem } from '../terminal/session';
-import { MessageActions } from './MessageActions';
+import { MessageActions, MessageQuickActions } from './MessageActions';
 import { MessageAttachments } from './MessageAttachments';
 import { MessageDeliveryCheck } from './MessageDeliveryCheck';
 import { messageAttachmentList, messageMediaKind } from './message-attachment-list';
@@ -16,6 +16,11 @@ import { optimisticMessageOf } from './optimistic-message';
 import { RichText } from './RichText';
 import { replyConsolidated, replyFor } from './thread-model';
 import type { CanonicalReply } from './use-canonical-reply';
+
+/** Puts text in the composer: as a quote, or as the draft of a message to send again. */
+export type ComposeFn = (text: string, mode: 'quote' | 'resend') => void;
+
+const HOVER_REVEAL = 'opacity-100 transition-opacity [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover/msg:opacity-100 [@media(hover:hover)]:focus-within:opacity-100';
 
 /** What the console holds of a message's full body: requested, read, or failed. */
 export type FullBody = { estado: 'pidiendo' } | { estado: 'listo'; texto: string } | { estado: 'fallo'; motivo: string };
@@ -157,7 +162,7 @@ function AgentRow({ seed, name, state, time, startsGroup, children, ...rest }: {
   );
 }
 
-export function ChatMessage({ item, ownSubject, startsGroup, selected, fullBody, agentState, canonicalReply, canonicalReplyStale, onSelect, onExpand, onReplyRetry }: {
+export function ChatMessage({ item, ownSubject, startsGroup, selected, fullBody, agentState, canonicalReply, canonicalReplyStale, onSelect, onExpand, onReplyRetry, onCompose }: {
   item: TranscriptItem;
   /** The signed-in human: their own messages need no author line. */
   ownSubject?: string | null;
@@ -170,6 +175,7 @@ export function ChatMessage({ item, ownSubject, startsGroup, selected, fullBody,
   onSelect: (item: TranscriptItem, opener?: HTMLElement | null) => void;
   onExpand: (messageId: string) => void;
   onReplyRetry?: () => void;
+  onCompose?: ComposeFn;
 }) {
   const { message, direction, delivery } = item;
   const optimistic = optimisticMessageOf(item);
@@ -194,6 +200,8 @@ export function ChatMessage({ item, ownSubject, startsGroup, selected, fullBody,
       if (id) onSelect(item);
     },
   };
+  const quickText = structured ? '' : full ?? (hasText ? text : '');
+  const onQuote = onCompose && quickText ? () => { onCompose(quickText, 'quote'); } : undefined;
   const truncation = truncated ? <TruncatedNote body={fullBody} onExpand={id ? () => { onExpand(id); } : undefined} /> : null;
 
   if (direction === 'output') {
@@ -204,7 +212,8 @@ export function ChatMessage({ item, ownSubject, startsGroup, selected, fullBody,
         {structured ? <StructuredMessage body={structured} /> : showText ? <RichText text={text} /> : null}
         <MessageAttachments messageId={message.message_id} files={message.attachments} />
         {truncation}
-        <div className="-ml-1 flex h-7 items-center gap-1 opacity-100 transition-opacity [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover/msg:opacity-100 [@media(hover:hover)]:focus-within:opacity-100">
+        <div className={cn('-ml-1 flex h-7 items-center gap-0.5', HOVER_REVEAL)}>
+          <MessageQuickActions text={quickText} onQuote={onQuote} />
           {actions}
         </div>
       </AgentRow>
@@ -222,13 +231,36 @@ export function ChatMessage({ item, ownSubject, startsGroup, selected, fullBody,
       {delivery.recipient_alias ? <small className="font-mono"> ({delivery.recipient_alias})</small> : null}
     </span>
   ) : delivery?.recipient_alias ?? 'Destino sin dato';
+  if (!author && !optimistic) {
+    const sender = message.actor_alias ?? 'Emisor sin dato';
+    return (
+      <AgentRow {...common} seed={`${message.tenant_id ?? ''}/${sender}`} startsGroup={startsGroup} time={message.created_at}
+        aria-label={`${sender} le escribió a ${delivery?.recipient_alias ?? 'otro agente'}`}
+        name={<><span title={authorTitle}>{authorLabel}</span><span className="font-normal text-muted"> le escribió a {destination}</span></>}>
+        {structured ? <StructuredMessage body={structured} /> : showText ? (
+          <div className="w-fit max-w-full rounded-xl border border-line px-3.5 py-2 text-[14px] leading-relaxed text-fg-2 [overflow-wrap:anywhere]">
+            <p className="m-0 whitespace-pre-wrap">{text}</p>
+          </div>
+        ) : null}
+        <MessageAttachments messageId={message.message_id} files={message.attachments} />
+        {truncation}
+        <div className="-ml-1 flex h-7 items-center gap-0.5 text-[11px] text-muted">
+          {deliveryState ? <span className="pl-1"><MessageDeliveryCheck delivery={deliveryState} /></span> : null}
+          <span className={cn('flex items-center gap-0.5', HOVER_REVEAL)}><MessageQuickActions text={quickText} onQuote={onQuote} />{actions}</span>
+        </div>
+      </AgentRow>
+    );
+  }
+  const resendText = full ?? message.body_preview ?? '';
+  const onResend = failed && own && onCompose && !truncated && resendText.trim() && messageAttachmentList(message.attachments).length === 0
+    ? () => { onCompose(resendText, 'resend'); } : undefined;
   return (
     <article {...common} className={cn('group/msg flex flex-col items-end', startsGroup ? 'mt-5' : 'mt-1.5')}>
       {own ? <span className="sr-only">{authorLabel}</span> : startsGroup ? (
         <div className="mb-1 px-1 text-xs text-muted">
           <span title={authorTitle}>{authorLabel}</span>
           {clientDeclarationNotice ? <span className="sr-only">{clientDeclarationNotice}</span> : null}
-          {author ? <span className="sr-only">Persona autenticada</span> : <><span aria-hidden="true"> → </span><span className="sr-only">hacia</span>{destination}</>}
+          <span className="sr-only">Persona autenticada</span>
         </div>
       ) : null}
       {structured ? <div className="w-full max-w-[min(85%,36rem)]"><StructuredMessage body={structured} /></div> : showText ? (
@@ -244,7 +276,7 @@ export function ChatMessage({ item, ownSubject, startsGroup, selected, fullBody,
       ) : null}
       {truncation ? <div className="mt-1 px-1">{truncation}</div> : null}
       <div className="mt-1 flex items-center gap-2 px-1 text-[11px] text-muted">
-        <span className="opacity-100 transition-opacity [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover/msg:opacity-100 [@media(hover:hover)]:focus-within:opacity-100">{actions}</span>
+        <span className={cn('flex items-center gap-0.5', HOVER_REVEAL)}><MessageQuickActions text={quickText} onQuote={onQuote} onResend={onResend} />{actions}</span>
         <MessageTime value={message.created_at} />
         {optimistic && optimistic.state !== 'published' ? (
           <span role="status" aria-label={`Publicación: ${optimistic.state === 'sending' ? 'Enviando' : 'Sin confirmar'}`}>
@@ -263,7 +295,10 @@ export function ChatMessage({ item, ownSubject, startsGroup, selected, fullBody,
   );
 }
 
-export function ChatReply({ reply, startsGroup, agentState }: { reply: CanonicalReply; startsGroup: boolean; agentState?: LiveState }) {
+export function ChatReply({ reply, startsGroup, agentState, onCompose }: {
+  reply: CanonicalReply; startsGroup: boolean; agentState?: LiveState; onCompose?: ComposeFn;
+}) {
+  const text = reply.reply?.trim() ?? '';
   return (
     <AgentRow seed={`${reply.tenantId}/${reply.alias}`} name={reply.alias} state={agentState} startsGroup={startsGroup}
       data-direction="output" data-reply-to={reply.messageId} aria-label={`Mensaje de ${reply.alias}`}>
@@ -273,6 +308,11 @@ export function ChatReply({ reply, startsGroup, agentState }: { reply: Canonical
           ? <MessageAttachments messageId={reply.messageId} files={reply.replyAttachments}
             replySource={{ deliveryId: reply.replyAttachmentDeliveryId, attempt: reply.replyAttachmentAttempt }} /> : null}
       </section>
+      {text ? (
+        <div className={cn('-ml-1 flex h-7 items-center gap-0.5', HOVER_REVEAL)}>
+          <MessageQuickActions text={text} onQuote={onCompose ? () => { onCompose(text, 'quote'); } : undefined} />
+        </div>
+      ) : null}
     </AgentRow>
   );
 }

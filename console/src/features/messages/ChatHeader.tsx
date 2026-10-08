@@ -4,6 +4,7 @@ import { ArrowLeft, Check, Info, MoreHorizontal, RefreshCw, X } from 'lucide-rea
 import { useState, type ReactNode, type RefObject } from 'react';
 import type { JobLane } from '../../api/types';
 import { AgentOrb } from '../../components/AgentOrb';
+import { DesktopAlertsItem } from '../../shell/DesktopAlertsItem';
 import { AgentActionItems, AgentContextMenu } from '../../components/agent-actions/AgentActionsMenu';
 import { cn } from '../../cn';
 import { Time } from '../../components/ui';
@@ -78,6 +79,7 @@ export function ChatHeader({ agent, state, reason, salud, lane, sending, loading
               <Menu.Item className={MENU_ITEM} disabled={loading} onClick={onReload}>
                 <RefreshCw size={15} aria-hidden="true" className="text-muted" />Sincronizar
               </Menu.Item>
+              <DesktopAlertsItem />
               <Menu.Separator className="my-1 h-px bg-line" />
               <Menu.Group>
                 <Menu.GroupLabel className="px-2.5 py-1 text-[11px] font-medium text-muted">Carril de envío</Menu.GroupLabel>

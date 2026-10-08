@@ -238,23 +238,19 @@ it('🔴 la burbuja recortada lo DICE en vez de parecer un mensaje entero', asyn
   expect(recortada.querySelector('p')?.textContent).toBe(`${RECORTADO}…`);
 }, 25_000);
 
-it('🔴 «Ver el mensaje completo» pide el cuerpo al servidor y lo pinta entero', async () => {
+it('🔴 la respuesta más reciente recortada pide sola su cuerpo al servidor y se pinta entera', async () => {
   let pedido = '';
   server.use(http.get('*/v3/console/messages/:messageId', ({ params }) => {
     pedido = String(params.messageId);
     return HttpResponse.json({ message_id: pedido, body: { text: CUERPO_LARGO } });
   }));
-  const user = userEvent.setup();
   feedDeArgos({ recorte: true });
   renderChat();
 
   const hilo = await openConversation('argos');
-  const detalle = await openMessageDetail(user, hilo, RECORTADO);
-  await user.click(await within(detalle).findByRole('button', { name: /ver el mensaje completo/i }));
-
   await waitFor(() => { expect(pedido).toBe('cccccccc-3333-4333-8333-333333333333'); });
-  const cuerpo = within(detalle).getByLabelText('Cuerpo del mensaje');
-  await waitFor(() => { expect(cuerpo.querySelector('pre')?.textContent).toBe(CUERPO_LARGO); });
+  await waitFor(() => { expect(hilo.textContent).toContain(CUERPO_LARGO); });
+  expect(within(hilo).queryByText('Vista previa recortada')).not.toBeInTheDocument();
 }, 25_000);
 
 it('🔴 informa el 404 del cuerpo sin inventar su causa y conserva la vista previa', async () => {

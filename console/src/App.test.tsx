@@ -530,7 +530,7 @@ it('las identidades del hilo y el indicador de trabajo proceden de datos reales'
     if (!message) throw new Error('el hilo todavía no tiene mensajes enviados');
     return message;
   });
-  expect(sent).toHaveTextContent(/kant.*hacia.*argos/);
+  expect(sent).toHaveTextContent(/kant le escribió a argos/);
 });
 
 it.each([1280, 390])('el chat a %i conserva una sola cabecera y el borrador al usar cuenta y tema', async (width) => {

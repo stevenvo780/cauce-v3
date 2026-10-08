@@ -3,7 +3,7 @@ import { AgentOrb } from '../../components/AgentOrb';
 import { bloomOrb } from '../../components/orb-bloom';
 import type { LiveState } from '../live/agent-state';
 import type { TranscriptItem } from '../terminal/session';
-import { ChatMessage, ChatReply, type FullBody } from './ChatMessage';
+import { ChatMessage, ChatReply, type ComposeFn, type FullBody } from './ChatMessage';
 import { replyFor, threadRows, typingState } from './thread-model';
 import type { CanonicalReply } from './use-canonical-reply';
 
@@ -48,7 +48,7 @@ function TypingBubble({ seed, alias, state }: { seed: string; alias: string; sta
   );
 }
 
-export function ChatThread({ items, ownSubject, alias, seed, agentState, selectedMessageId, fullBodies, canonicalReply, canonicalReplies, canonicalReplyStale, onSelectItem, onExpand, onCanonicalReplyRetry, onSuggestion }: {
+export function ChatThread({ items, ownSubject, alias, seed, agentState, selectedMessageId, fullBodies, canonicalReply, canonicalReplies, canonicalReplyStale, onSelectItem, onExpand, onCanonicalReplyRetry, onSuggestion, onCompose }: {
   items: TranscriptItem[];
   ownSubject?: string | null;
   alias: string;
@@ -64,6 +64,7 @@ export function ChatThread({ items, ownSubject, alias, seed, agentState, selecte
   onExpand: (messageId: string) => void;
   onCanonicalReplyRetry?: () => void;
   onSuggestion?: (text: string) => void;
+  onCompose?: ComposeFn;
 }) {
   const replies = useMemo(() => canonicalReply ? [canonicalReply, ...(canonicalReplies ?? [])] : canonicalReplies, [canonicalReply, canonicalReplies]);
   const rows = useMemo(() => threadRows(items, replies), [items, replies]);
@@ -99,7 +100,7 @@ export function ChatThread({ items, ownSubject, alias, seed, agentState, selecte
               </div>
             );
           }
-          if (row.kind === 'reply') return <ChatReply key={row.key} reply={row.reply} startsGroup={row.startsGroup} agentState={agentState} />;
+          if (row.kind === 'reply') return <ChatReply key={row.key} reply={row.reply} startsGroup={row.startsGroup} agentState={agentState} onCompose={onCompose} />;
           const id = row.item.message.message_id ?? undefined;
           return (
             <ChatMessage
@@ -114,6 +115,7 @@ export function ChatThread({ items, ownSubject, alias, seed, agentState, selecte
               canonicalReplyStale={Boolean(replyFor(row.item, canonicalReply)) && canonicalReplyStale}
               onSelect={onSelectItem}
               onExpand={onExpand}
+              onCompose={onCompose}
               onReplyRetry={onCanonicalReplyRetry}
             />
           );

@@ -8,6 +8,7 @@ import { NAV_ENTRIES, PRIMARY_NAV_IDS, useNavAvailability } from '../nav';
 import { onNavClick } from '../router';
 import { AgentList } from './AgentList';
 import { useChatNavTarget, useTerminalNavTarget } from './last-chat';
+import { useReplyAlerts } from './reply-alerts';
 import { useMediaQuery } from './use-media-query';
 
 const SIDEBAR_SHORTCUT = 'Alt+Shift+B';
@@ -202,6 +203,7 @@ export function AppShell({ routeId, activeAgentId, bounded = false, account, not
   notices?: ReactNode;
   children: ReactNode;
 }) {
+  useReplyAlerts();
   const phone = useMediaQuery(BOTTOM_BAR_VIEWPORT);
   const tablet = useMediaQuery(RAIL_VIEWPORT);
   const [collapsed, setCollapsed] = useState(false);
