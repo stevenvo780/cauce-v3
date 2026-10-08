@@ -1,6 +1,6 @@
-import { isDeepStrictEqual } from 'node:util';
 import {
   ConfigMutationSchema, esFicheroDelAgente, isRfcUuid,
+  configurationMutationHashInput, configurationReceiptMatches, sha256Hex,
   type ConfigMutation, type ProfileRuntimeContract,
 } from '@cauce/protocol';
 import {
@@ -190,7 +190,9 @@ export function validatedConfigurationReceipt(
     && summary.length <= 2_000
     && mutation.success
     && inverse.success
-    && (expectedMutation === undefined || isDeepStrictEqual(mutation.data, expectedMutation));
+    && configurationReceiptMatches(inverse.data, undefined, undefined)
+    && configurationReceiptMatches(mutation.data, expectedMutation, result.mutation_sha256,
+      expectedMutation === undefined ? undefined : sha256Hex(configurationMutationHashInput(expectedMutation)));
   if (!exact) {
     // The write may have committed before an incompatible layer truncated its receipt. The
     // response reflects no raw fields from the store and forces the client to re-read the revision.
@@ -204,6 +206,7 @@ export function validatedConfigurationReceipt(
     summary,
     mutation: mutation.data,
     inverse_mutation: inverse.data,
+    ...(result.mutation_sha256 === undefined ? {} : { mutation_sha256: result.mutation_sha256 }),
   };
 }
 

@@ -28,3 +28,4 @@ export * from './fleet-operation.js';
 export * from './configuration-identity.js';
 
 export * from './schemas/agent-preferences.js';
+export * from './configuration-receipt.js';

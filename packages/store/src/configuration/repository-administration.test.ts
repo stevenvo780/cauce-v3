@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { ConfigMutation } from '@cauce/protocol';
+import { configurationMutationHashInput, sha256Hex, type ConfigMutation } from '@cauce/protocol';
 import { ConfigurationRepository } from '../configuration.js';
 import type { DatabasePool } from '../db.js';
 import { schemaBarrierReply } from '../../../../tests/helpers/schema-barrier.js';
@@ -118,6 +118,8 @@ describe('configuration nested receipts and dependency revisions', () => {
     expect(JSON.stringify(snapshot)).not.toContain('PRIVATE_LOCATOR');
     expect(JSON.stringify(fake.audits)).not.toContain('PRIVATE_LOCATOR');
     expect(JSON.stringify(fake.revisions)).toContain('PRIVATE_LOCATOR');
+    expect(receipt.mutation_sha256).toBe(sha256Hex(configurationMutationHashInput(original)));
+    expect(receipt.mutation_sha256).not.toBe(sha256Hex(configurationMutationHashInput(receipt.mutation)));
     expect(mutation).toEqual(original);
   });
 

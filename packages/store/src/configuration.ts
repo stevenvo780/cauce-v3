@@ -1,4 +1,5 @@
 import type { ConfigMutation, Tenant } from '@cauce/protocol';
+import { configurationMutationHashInput, publicConfigurationMutation, sha256Hex } from '@cauce/protocol';
 import type { DatabaseClient, DatabasePool } from './db.js';
 import { withTransaction } from './db.js';
 import {
@@ -37,7 +38,7 @@ function operationForRead(operation: unknown): unknown {
 }
 
 function mutationForRead(mutation: ConfigMutation): ConfigMutation {
-  return operationForRead(mutation) as ConfigMutation;
+  return publicConfigurationMutation(mutation);
 }
 
 function revisionForSnapshot(row: Record<string, unknown>): Record<string, unknown> {
@@ -230,7 +231,8 @@ export class ConfigurationRepository extends ConfigurationMutations {
       if (dryRun) {
         return { result: {
           applied: false, dry_run: true, revision, rolled_back_revision_id: null,
-          summary, mutation: mutationForRead(mutation), inverse_mutation: mutationForRead(inverse)
+          summary, mutation: mutationForRead(mutation), inverse_mutation: mutationForRead(inverse),
+          mutation_sha256: sha256Hex(configurationMutationHashInput(mutation)),
         }, rollback: true };
       }
       const inserted = await client.query<{ id: string }>(
@@ -248,7 +250,8 @@ export class ConfigurationRepository extends ConfigurationMutations {
       });
       return { result: {
         applied: true, dry_run: false, revision: nextRevision, rolled_back_revision_id: null,
-        summary, mutation: mutationForRead(mutation), inverse_mutation: mutationForRead(inverse)
+        summary, mutation: mutationForRead(mutation), inverse_mutation: mutationForRead(inverse),
+        mutation_sha256: sha256Hex(configurationMutationHashInput(mutation)),
       }, rollback: false };
     });
   }
@@ -287,7 +290,8 @@ export class ConfigurationRepository extends ConfigurationMutations {
         return { result: {
           applied: false, dry_run: true, revision: currentRevision,
           rolled_back_revision_id: Number(original.id), summary: rollbackSummary,
-          mutation: mutationForRead(original.inverse_operation), inverse_mutation: mutationForRead(redo)
+          mutation: mutationForRead(original.inverse_operation), inverse_mutation: mutationForRead(redo),
+          mutation_sha256: sha256Hex(configurationMutationHashInput(original.inverse_operation)),
         }, rollback: true };
       }
       const inserted = await client.query<{ id: string; rolled_back_revision_id: string }>(
@@ -310,7 +314,8 @@ export class ConfigurationRepository extends ConfigurationMutations {
       return { result: {
         applied: true, dry_run: false, revision: nextRevision,
         rolled_back_revision_id: rolledBackRevisionId, summary: rollbackSummary,
-        mutation: mutationForRead(original.inverse_operation), inverse_mutation: mutationForRead(redo)
+        mutation: mutationForRead(original.inverse_operation), inverse_mutation: mutationForRead(redo),
+        mutation_sha256: sha256Hex(configurationMutationHashInput(original.inverse_operation)),
       }, rollback: false };
     });
   }

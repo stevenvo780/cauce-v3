@@ -22,6 +22,7 @@ export interface ConfigurationChangeResult {
   summary: string;
   mutation: ConfigMutation;
   inverse_mutation: ConfigMutation;
+  mutation_sha256?: string;
 }
 
 export type ConfigurationLeafMutation = Exclude<ConfigMutation, { resource: 'batch' }>;
