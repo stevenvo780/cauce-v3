@@ -23,6 +23,7 @@ export interface FleetExecutionRepository {
 export type FleetEffectResult = { evidence: FleetEvidence; awaiting_auth?: boolean };
 export interface FleetExecutorOptions {
   worker: string; host: string; leaseMs?: number;
+  signal?: AbortSignal;
   perform(step: FleetStepName, execution: FleetExecution, signal: AbortSignal): Promise<FleetEffectResult>;
   compensate?(execution: FleetExecution, signal: AbortSignal): Promise<FleetEvidence>;
 }
@@ -30,10 +31,14 @@ export interface FleetExecutorOptions {
 export class FleetExecutor {
   constructor(private readonly repository: FleetExecutionRepository, private readonly options: FleetExecutorOptions) {}
   async runOnce(): Promise<boolean> {
+    if (this.options.signal?.aborted) return false;
     const leaseMs = this.options.leaseMs ?? 30_000;
     const claim = await this.repository.claim(this.options.worker, this.options.host, leaseMs);
     if (!claim) return false;
     const abort = new AbortController();
+    const shutdown = () => { abort.abort(); };
+    this.options.signal?.addEventListener('abort', shutdown, { once: true });
+    if (this.options.signal?.aborted) abort.abort();
     let renewing = false;
     const heartbeat = setInterval(() => {
       if (renewing) return;
@@ -45,6 +50,7 @@ export class FleetExecutor {
     heartbeat.unref();
     let step: FleetStepName | undefined;
     try {
+      if (abort.signal.aborted) return true;
       let execution = await this.repository.execution(claim);
       if (execution.operation.status !== 'cancelling') {
         await this.repository.prepare(claim);
@@ -81,6 +87,7 @@ export class FleetExecutor {
       }
     } finally {
       abort.abort(); clearInterval(heartbeat);
+      this.options.signal?.removeEventListener('abort', shutdown);
     }
     return true;
   }

@@ -28,6 +28,29 @@ function fixture() {
   return { repository, calls, cancel: () => { operation = { ...operation, status: 'cancelling' }; } };
 }
 describe('fleet step execution', () => {
+  it('does not claim work after host shutdown', async () => {
+    const { repository } = fixture();
+    const abort = new AbortController(); abort.abort();
+    let claimed = false;
+    repository.claim = async () => { claimed = true; return null as never; };
+    const executor = new FleetExecutor(repository, { worker: 'worker', host: 'isolated', signal: abort.signal,
+      perform: async () => ({ evidence: {} }) });
+    expect(await executor.runOnce()).toBe(false);
+    expect(claimed).toBe(false);
+  });
+  it('aborts an ongoing effect without completing or settling when the host stops', async () => {
+    const { repository, calls } = fixture();
+    const abort = new AbortController();
+    let interrupted = false;
+    const executor = new FleetExecutor(repository, { worker: 'worker', host: 'isolated', signal: abort.signal,
+      perform: async (_step, _execution, signal) => {
+        abort.abort(); interrupted = signal.aborted;
+        return { evidence: { stopped_verified: true } };
+      } });
+    await executor.runOnce();
+    expect(interrupted).toBe(true);
+    expect(calls).toEqual(['start:stop']);
+  });
   it('rechecks durable state and completes a checked stop before settling', async () => {
     const { repository, calls } = fixture();
     const executor = new FleetExecutor(repository, { worker: 'worker', host: 'isolated',
