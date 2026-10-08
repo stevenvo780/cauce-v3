@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
-import type { DatabasePool } from '@cauce/store';
+import { createPool, planFleetHostSlices, type DatabasePool, type FleetOperationRow } from '@cauce/store';
 import { preparePostgresSuite } from '../../../../packages/store/test/postgres-suite.js';
 import { startTestCaseDatabase, startTestDatabase, type EmptyTestDatabase, type TestDatabase } from '../../../../tests/helpers/postgres.js';
 import type { ProviderAuthActor } from '../console/provider-auth.types.js';
@@ -33,9 +33,9 @@ async function saveExecutorPolicy(): Promise<void> {
 }
 async function service() { const value = await createHostProviderAuthService(pool, config); services.push(value); return value; }
 async function trace(): Promise<string[]> { try { return (await readFile(join(directory, 'effects.log'), 'utf8')).trim().split('\n'); } catch { return []; } }
-beforeEach(async () => {
+beforeEach(async ({ task }) => {
   if (!database) throw new Error('test database absent');
-  current = await startTestCaseDatabase(database); pool = current.pool;
+  current = await startTestCaseDatabase(database); pool = createPool(current.url, { max: 1 });
   directory = await mkdtemp(join(tmpdir(), 'host-provider-auth-')); services = [];
   await pool.query("INSERT INTO rooms(id,tenant_id) VALUES('physical-hub','Steven')");
   await pool.query("INSERT INTO agents(tenant_id,alias) VALUES('Steven','physical-human')");
@@ -47,17 +47,22 @@ beforeEach(async () => {
   await pool.query("INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,role,permissions) VALUES($1,'Steven','physical-human','operator',ARRAY['read','control'])", [human.id]);
   await pool.query(`INSERT INTO provider_accounts(id,provider,external_account_id,payer_tenant_id,credential_ref_kind,credential_ref,enabled)
     VALUES('physical-account','codex','physical-identity','Steven','env_path','CAUCE_SYNTHETIC_TOKEN_PATH',true)`);
-  await pool.query(`INSERT INTO agents(tenant_id,alias,runtime_key,harness_id,container_name,runtime_user,home_directory,state_directory,host_id,runtime_mode,primary_account_id,lifecycle_state,enabled)
-    VALUES('Steven','physical-new','physical-new','codex','host:isolated','dev','/home/dev','/home/dev/.cauce/physical-new','isolated','native','physical-account','auth_pending',false)`);
+  await pool.query(`INSERT INTO agents(tenant_id,alias,runtime_key,harness_id,container_name,runtime_user,home_directory,state_directory,host_id,runtime_mode,systemd_user,primary_account_id,lifecycle_state,enabled)
+    VALUES('Steven','physical-new','physical-new','codex',$1,'dev','/home/dev','/home/dev/.cauce/physical-new','isolated',$2,'stev','physical-account','auth_pending',false)`,
+  task.name.includes('immutable container binding') ? ['physical-container', 'container'] : ['host:isolated', 'native']);
   operationId = randomUUID();
   const request = { kind: 'start', target: { resource: 'agent', tenant_id: 'Steven', alias: 'physical-new' }, parameters: {}, expected_revision: 0, idempotency_key: 'physical-operation' };
   await pool.query(`INSERT INTO fleet_operations(id,actor_tenant,actor_alias,target,target_key,cohort_key,executor_host,kind,request,request_hash,idempotency_key,expected_revision,status)
-    VALUES($1,'Steven','physical-human',$2::jsonb,'agent:Steven:physical-new','isolated:dev','isolated','start',$3::jsonb,$4,'physical-operation',0,'awaiting_auth')`,
-  [operationId, JSON.stringify(request.target), JSON.stringify(request), 'a'.repeat(64)]);
+    VALUES($1,'Steven','physical-human',$2::jsonb,'agent:Steven:physical-new','isolated:dev',$5,'start',$3::jsonb,$4,'physical-operation',0,'awaiting_auth')`,
+  [operationId, JSON.stringify(request.target), JSON.stringify(request), 'a'.repeat(64), task.name.includes('different controller') ? 'controller' : 'isolated']);
   await pool.query("INSERT INTO fleet_operation_events(operation_id,version,event,metadata) VALUES($1,0,'queued',$2::jsonb)", [operationId, JSON.stringify({ actor_subject: actor.subject })]);
-  const previous = (await pool.query<Record<string, unknown>>("SELECT * FROM agents WHERE alias='physical-new'")).rows[0];
+  const previous = (await pool.query<{ agent: Record<string, unknown> }>("SELECT to_jsonb(agent) AS agent FROM agents agent WHERE alias='physical-new'")).rows[0]?.agent;
+  await pool.query('UPDATE fleet_operations SET desired_revision=0 WHERE id=$1', [operationId]);
+  const row = (await pool.query<FleetOperationRow>('SELECT * FROM fleet_operations WHERE id=$1', [operationId])).rows[0];
+  if (!previous || !row) throw new Error('test sealed placement absent');
   await pool.query("INSERT INTO fleet_operation_events(operation_id,version,event,metadata) VALUES($1,0,'step_completed',$2::jsonb)",
-    [operationId, JSON.stringify({ step: 'prepare', fenced_targets: [request.target], previous_agents: [previous], desired_memberships: [] })]);
+    [operationId, JSON.stringify({ step: 'prepare', prepared_revision: 0, fenced_targets: [request.target], previous_agents: [previous], desired_memberships: [],
+      ...(task.name.includes('absent host seal') ? {} : { host_slices: planFleetHostSlices(row, [previous], [previous]) }) })]);
   const executable = join(directory, 'executor.py'); const helper = join(directory, 'login.py');
   const log = JSON.stringify(join(directory, 'effects.log'));
   await writeFile(executable, `import json,sys,pathlib,hashlib\np=json.loads(sys.stdin.read())\nif 'trusted_accounts' in p.get('snapshot',{}): sys.exit(2)\nif any('credential_ref' in a or 'credential_ref_kind' in a for a in p.get('trusted_accounts',[])): sys.exit(2)\npolicy=json.loads(pathlib.Path(sys.argv[sys.argv.index('--policy')+1]).read_text())\nif '--binding' in sys.argv:\n agent=next(a for a in p['snapshot']['agents'] if a['alias']==p['request']['target']['alias'])\n profile=policy['profiles'].get(agent['primary_account_id'])\n if profile is None:\n  account=next(a for a in p['trusted_accounts'] if a['id']==agent['primary_account_id'])\n  template=next(t for t in policy['profile_templates'] if t['provider']==account['provider'] and t['runtime_user']==agent['runtime_user'])\n  profile={'provider':template['provider'],'runtime_user':template['runtime_user'],'path':str(pathlib.Path(template['path_root'])/agent['runtime_key']/hashlib.sha256(account['id'].encode()).hexdigest()),'identity':account['external_account_id'],'command':template['command'],'command_sha256':template['command_sha256']}\n  if 'command_files' in template: profile['command_files']=template['command_files']\n  if agent['runtime_mode']=='container': profile['container_name']=agent['container_name']\n receipt={'agent':agent,'profile_binding':profile}\n marker=pathlib.Path(${JSON.stringify(directory)})/'container-binding.json'\n if marker.exists(): receipt['runtime_binding']=json.loads(marker.read_text())\n print(json.dumps(receipt))\nelse:\n step=sys.argv[sys.argv.index('--step')+1]\n with open(${log},'a') as f: f.write(step+'\\n')\n marker=pathlib.Path(${JSON.stringify(directory)})\n receipt={'evidence':{'stopped_verified':not (marker/'unverified-stop').exists()}} if step=='login-stop' else {'evidence':{'provider_verified':not (marker/'unverified-auth').exists()}}\n if step=='authenticate' and (marker/'awaiting-auth').exists(): receipt={'evidence':{},'awaiting_auth':True}\n print(json.dumps(receipt))\n`, { mode: 0o700 });
@@ -70,9 +75,19 @@ beforeEach(async () => {
   await writeFile(config.hostConfig.command.policyFile, JSON.stringify({ schemaVersion: 1, host_id: 'isolated', profiles: policy.profiles }), { mode: 0o600 });
   await savePolicy();
 });
-afterEach(async () => { for (const value of services) await value.shutdown(); await current?.close(); current = undefined; await rm(directory, { recursive: true, force: true }); });
+afterEach(async () => { for (const value of services) await value.shutdown(); await pool.end(); await current?.close(); current = undefined; await rm(directory, { recursive: true, force: true }); });
 afterAll(async () => { if (database) { await database.pool.end(); await database.container.stop(); } });
 describe('host provider authentication factory', () => {
+  it('accepts a physical host sealed by a different controller and cleans up with a max1 pool', async () => {
+    const value = await service(); const opened = await value.start(actor, await value.resolve(actor, operationId));
+    expect(opened.status).toBe('awaiting_login');
+    const cancelled = await value.cancel(actor, opened.session_id);
+    expect(cancelled.status).toBe('cancelled'); expect(cancelled.cleanup_pending).toBe(false); expect(pool.totalCount).toBe(1);
+  });
+  it('refuses an absent host seal before stopping or opening a provider process', async () => {
+    const value = await service(); await expect(value.resolve(actor, operationId)).rejects.toMatchObject({ code: 'AUTHORITY_REVOKED' });
+    expect(await trace()).toEqual([]);
+  });
   it('resolves public account scope and proves login stopped before the functional provider call', async () => {
     const value = await service(); const request = await value.resolve(actor, operationId);
     expect(request.profile_id).toBe('physical-account'); expect(JSON.stringify(request)).not.toContain(directory);

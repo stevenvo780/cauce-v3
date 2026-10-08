@@ -4,10 +4,10 @@ import { join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { z } from 'zod';
 import { FleetOperationRequestSchema } from '@cauce/protocol';
-import { assertFleetOperationAuthority, lockFleetRevision, preparedState, publicFleetOperation, withTransaction,
+import { assertFleetOperationAuthority, loadFleetHostScope, lockFleetRevision, preparedState, publicFleetOperation, withTransaction,
   type DatabaseClient, type DatabasePool, type FleetOperationRow } from '@cauce/store';
 import { ProviderAuthError } from '../console/provider-auth.contracts.js';
-import { createProviderAuthDependencies, resolveProviderAuthRequest,
+import { assertProviderAuthSealedScope, createProviderAuthDependencies, resolveProviderAuthRequest,
   type ProviderAuthPhysicalScope, type ProviderAuthPolicyResolver } from '../console/provider-auth-binding.js';
 import { ProviderAuthManager } from '../console/provider-auth.sessions.js';
 import type { ProviderAuthActor, ProviderAuthLogin, ProviderAuthRequest, ProviderAuthService } from '../console/provider-auth.types.js';
@@ -87,13 +87,14 @@ function resolver(options: HostProviderAuthOptions): ProviderAuthPolicyResolver 
       'SELECT runtime_key,runtime_mode,container_name FROM agents WHERE tenant_id=$1 AND alias=$2 FOR SHARE', [agent.tenant_id, agent.alias])).rows[0];
     if (!placement) throw denied();
     const { profile } = selected(policy, account.id, account.provider, account.external_account_id, agent.runtime_user, placement);
-    if (agent.host_id !== policy.host_id || operation.executor_host !== policy.host_id || account.id !== agent.primary_account_id) throw denied();
+    if (agent.host_id !== policy.host_id || account.id !== agent.primary_account_id) throw denied();
+    await assertProviderAuthSealedScope(client, operation, agent);
     return { provider_id: profile.provider, account_id: account.id, harness_id: agent.harness_id, host_id: policy.host_id,
       runtime_user: profile.runtime_user, profile_id: account.id };
   };
 }
-async function operation(client: DatabaseClient, scope: ProviderAuthPhysicalScope, active: boolean): Promise<FleetOperationRow & { executor_host: string }> {
-  const row = (await client.query<FleetOperationRow & { executor_host: string }>(`SELECT * FROM fleet_operations WHERE id=$1 ${active ? 'FOR SHARE' : ''}`, [scope.operation_id])).rows[0];
+async function operation(client: DatabaseClient, scope: ProviderAuthPhysicalScope, active: boolean): Promise<FleetOperationRow> {
+  const row = (await client.query<FleetOperationRow>(`SELECT * FROM fleet_operations WHERE id=$1 ${active ? 'FOR SHARE' : ''}`, [scope.operation_id])).rows[0];
   if (row?.target.resource !== 'agent' || !['create', 'update', 'start', 'restore'].includes(row.kind)) throw denied();
   if (active && (row.status !== 'awaiting_auth' || row.cancel_requested || row.target.tenant_id !== scope.tenant_id || row.target.alias !== scope.alias)) throw denied();
   return row;
@@ -117,7 +118,9 @@ async function activeExecution(client: DatabaseClient, scope: ProviderAuthPhysic
   const matches = snapshot.agents.filter(value => value.tenant_id === scope.tenant_id && value.alias === scope.alias);
   const agent = Agent.parse(matches.length === 1 ? matches[0] : undefined);
   if (agent.harness_id !== scope.harness_id || agent.host_id !== scope.host_id || agent.runtime_user !== scope.runtime_user
-      || agent.primary_account_id !== scope.account_id || scope.profile_id !== scope.account_id || row.executor_host !== scope.host_id) throw denied();
+      || agent.primary_account_id !== scope.account_id || scope.profile_id !== scope.account_id || agent.runtime_key !== scope.runtime_key) throw denied();
+  const sealed = await assertProviderAuthSealedScope(client, row, agent);
+  if (sealed.target_sha256 !== scope.host_scope_sha256) throw denied();
   const account = (await client.query<{ provider: string; external_account_id: string; enabled: boolean; consent: boolean }>(`SELECT provider,external_account_id,enabled,
     (payer_tenant_id=$2 OR shared_with_pool) AS consent FROM provider_accounts WHERE id=$1 FOR SHARE`, [scope.account_id, scope.tenant_id])).rows[0];
   if (!account?.enabled || !account.consent || account.provider !== scope.provider_id || account.external_account_id !== scope.expected_external_account_id) throw denied();
@@ -159,14 +162,14 @@ export async function createHostProviderAuthService(pool: DatabasePool, options:
   LoginPathSchema.parse(options.projectRoot); Identifier.parse(options.hostConfig.host);
   await policies(options);
   const snapshotQuery = await readFile(join(options.projectRoot, 'ops/scripts/fleet-query.sql'), 'utf8');
-  const resolve = resolver(options); const executions = new Map<string, FleetExecution>();
+  const resolve = resolver(options);
   const logins = new Map<string, ProviderAuthLogin>();
   const run = async <T>(scope: ProviderAuthPhysicalScope, signal: AbortSignal, effect: (execution: FleetExecution) => Promise<T>): Promise<T> => {
     signal.throwIfAborted();
     return withTransaction(pool, async client => {
       const execution = await activeExecution(client, scope, snapshotQuery); signal.throwIfAborted();
       const result = await effect(execution); signal.throwIfAborted();
-      await activeExecution(client, scope, snapshotQuery); executions.set(scope.operation_id, execution); return result;
+      await activeExecution(client, scope, snapshotQuery); return result;
     });
   };
   const dependencies = createProviderAuthDependencies(pool, resolve, {
@@ -191,24 +194,29 @@ export async function createHostProviderAuthService(pool: DatabasePool, options:
           functional_call_verified: !result.awaiting_auth && result.evidence.provider_verified === true };
       });
     },
-    cleanup: async (scope, _sessionId, signal) => {
+    cleanup: async (scope, _sessionId, signal, borrowedClient) => {
       try {
         const policy = await policies(options);
+        const client = borrowedClient ?? await pool.connect(); let execution: FleetExecution;
+        try {
+          const row = await operation(client, scope, false); const prepared = await preparedState(client, row.id);
+          const sealed = await loadFleetHostScope(client, row, options.hostConfig.host);
+          const selected = sealed.agents.find(agent => agent.tenant_id === row.target.tenant_id
+            && row.target.resource === 'agent' && agent.alias === row.target.alias);
+          if (!selected || scope.host_id !== options.hostConfig.host || selected.runtime_user !== scope.runtime_user
+              || selected.primary_account_id !== scope.account_id || scope.profile_id !== scope.account_id) throw denied();
+          await assertProviderAuthSealedScope(client, row, selected);
+          const agents = await trustedFleetBaseline(client, sealed.agents);
+          execution = { operation: publicFleetOperation(row), request: FleetOperationRequestSchema.parse(row.request),
+            fenced_targets: sealed.targets, previous_agents: prepared.previous_agents.filter(agent => agent.host_id === options.hostConfig.host),
+            desired_memberships: prepared.desired_memberships,
+            snapshot: { agents, memberships: [], rolePolicies: [] }, trusted_accounts: await readFleetProviderAccounts(client, agents) };
+        } finally { if (!borrowedClient) client.release(); }
         const stopped = await cleanupProviderLogin({ python: options.hostConfig.command.python, helper: policy.helper,
           stateRoot: policy.state_root }, scope.operation_id, signal);
         if (!stopped.stopped) return stopped;
-        const client = await pool.connect(); let execution: FleetExecution;
-        try {
-          const row = await operation(client, scope, false); const prepared = await preparedState(client, row.id);
-          prepared.previous_agents = await trustedFleetBaseline(client, prepared.previous_agents);
-          execution = { operation: publicFleetOperation(row), request: FleetOperationRequestSchema.parse(row.request), ...prepared,
-            snapshot: { agents: prepared.previous_agents, memberships: [], rolePolicies: [] } };
-          const cached = executions.get(scope.operation_id);
-          if (cached && isDeepStrictEqual(cached.request, execution.request)) execution = cached;
-          else execution.trusted_accounts = await readFleetProviderAccounts(client, prepared.previous_agents);
-        } finally { client.release(); }
         await performHostLoginStop(options.hostConfig.command, execution, signal);
-        executions.delete(scope.operation_id); logins.delete(scope.operation_id); return { stopped: true };
+        logins.delete(scope.operation_id); return { stopped: true };
       } catch { return { stopped: false }; }
     },
   });

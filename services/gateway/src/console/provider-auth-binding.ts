@@ -1,24 +1,24 @@
-import { withTransaction, type DatabaseClient, type DatabasePool } from '@cauce/store';
+import { loadFleetHostScope, planFleetHostSlices, preparedState, withTransaction,
+  type DatabaseClient, type DatabasePool, type FleetOperationRow } from '@cauce/store';
 import { randomUUID } from 'node:crypto';
 import { isLiteralTrue } from '@cauce/protocol';
 import { ProviderAuthError, ProviderAuthRequestSchema } from './provider-auth.contracts.js';
 import type { ProviderAuthActor, ProviderAuthDependencies, ProviderAuthLogin, ProviderAuthRequest } from './provider-auth.types.js';
 
 export type ProviderAuthPolicyScope = Pick<ProviderAuthRequest, 'provider_id' | 'account_id' | 'harness_id' | 'host_id' | 'runtime_user' | 'profile_id'>;
-interface Agent { tenant_id: string; alias: string; harness_id: string; host_id: string; runtime_user: string; primary_account_id: string; retired_at: Date | null }
+interface Agent extends Record<string, unknown> { tenant_id: string; alias: string; runtime_key: string; harness_id: string; host_id: string;
+  runtime_user: string; primary_account_id: string; retired_at: Date | null; purged_at: Date | null }
 interface Account { id: string; provider: string; external_account_id: string; payer_tenant_id: string; shared_with_pool: boolean; enabled: boolean }
-interface Operation { id: string; actor_tenant: string; actor_alias: string; target: { resource: string; tenant_id: string; alias?: string };
-  executor_host: string; status: string; version: string; cancel_requested: boolean; kind: string; request: unknown }
-export interface ProviderAuthPolicyContext { actor: ProviderAuthActor; operation: Operation; agent: Agent; account: Account }
+export interface ProviderAuthPolicyContext { actor: ProviderAuthActor; operation: FleetOperationRow; agent: Agent; account: Account }
 export type ProviderAuthPolicyResolver = (client: DatabaseClient, context: ProviderAuthPolicyContext) => Promise<ProviderAuthPolicyScope>;
 export interface ProviderAuthPhysicalScope extends ProviderAuthPolicyScope {
-  operation_id: string; tenant_id: string; alias: string; expected_external_account_id: string;
+  operation_id: string; tenant_id: string; alias: string; runtime_key: string; host_scope_sha256: string; expected_external_account_id: string;
 }
 export interface ProviderAuthPhysicalHooks {
   stopAdapter(scope: ProviderAuthPhysicalScope, signal: AbortSignal): Promise<{ stopped: boolean }>;
   openLogin(scope: ProviderAuthPhysicalScope, signal: AbortSignal): Promise<ProviderAuthLogin>;
   verify(scope: ProviderAuthPhysicalScope, signal: AbortSignal): Promise<{ identity_matches: boolean; functional_call_verified: boolean }>;
-  cleanup(scope: ProviderAuthPhysicalScope, sessionId: string, signal: AbortSignal): Promise<{ stopped: boolean }>;
+  cleanup(scope: ProviderAuthPhysicalScope, sessionId: string, signal: AbortSignal, client?: DatabaseClient): Promise<{ stopped: boolean }>;
 }
 interface Reservation {
   session_id: string; actor_subject: string; cohort: string; expires_at: string; state: 'reserved' | 'released';
@@ -47,20 +47,46 @@ async function human(client: DatabaseClient, actor: ProviderAuthActor): Promise<
 }
 async function context(client: DatabaseClient, actor: ProviderAuthActor, request: ProviderAuthRequest, lock = false): Promise<ProviderAuthPolicyContext> {
   await human(client, actor);
-  const operation = (await client.query<Operation>(`SELECT id,actor_tenant,actor_alias,target,executor_host,status,version,cancel_requested,kind,request
+  const operation = (await client.query<FleetOperationRow>(`SELECT *
     FROM fleet_operations WHERE id=$1 ${lock ? 'FOR UPDATE' : 'FOR SHARE'}`, [request.operation_id])).rows[0];
   if (operation?.status !== 'awaiting_auth' || operation.cancel_requested || operation.target.resource !== 'agent'
+      || !['create', 'update', 'start', 'restore'].includes(operation.kind)
       || operation.actor_tenant !== actor.tenant_id || operation.actor_alias !== actor.alias) throw denied();
   const initiator = (await client.query<{ subject: string | null }>(`SELECT metadata->>'actor_subject' AS subject
     FROM fleet_operation_events WHERE operation_id=$1 AND event='queued' ORDER BY id LIMIT 1`, [operation.id])).rows[0];
   if (initiator?.subject !== actor.subject) throw denied();
-  const agent = (await client.query<Agent>(`SELECT tenant_id,alias,harness_id,host_id,runtime_user,primary_account_id,retired_at
+  const agent = (await client.query<Agent>(`SELECT *
     FROM agents WHERE tenant_id=$1 AND alias=$2 FOR SHARE`, [operation.target.tenant_id, operation.target.alias])).rows[0];
-  if (agent?.retired_at !== null) throw denied();
+  if (agent?.retired_at !== null || agent.purged_at !== null) throw denied();
   const account = (await client.query<Account>(`SELECT id,provider,external_account_id,payer_tenant_id,shared_with_pool,enabled
     FROM provider_accounts WHERE id=$1 FOR SHARE`, [agent.primary_account_id])).rows[0];
   if (!account?.enabled || (account.payer_tenant_id !== agent.tenant_id && !account.shared_with_pool)) throw denied();
   return { actor, operation, agent, account };
+}
+export async function assertProviderAuthSealedScope(client: DatabaseClient, operation: FleetOperationRow,
+  agent: Record<string, unknown>) {
+  try {
+    if (operation.target.resource !== 'agent' || operation.target.tenant_id !== agent.tenant_id || operation.target.alias !== agent.alias
+        || typeof agent.host_id !== 'string' || typeof agent.runtime_key !== 'string' || operation.desired_revision === null) throw denied();
+    const sealed = await loadFleetHostScope(client, operation, agent.host_id);
+    const prepared = await preparedState(client, operation.id);
+    const exact = planFleetHostSlices(operation, sealed.agents, prepared.previous_agents);
+    if (exact.length !== 1 || exact[0]?.target_sha256 !== sealed.target_sha256 || sealed.targets.length !== 1
+        || sealed.targets[0]?.runtime_key !== agent.runtime_key) throw denied();
+    const selected = sealed.agents.find(value => value.tenant_id === agent.tenant_id && value.alias === agent.alias);
+    if (!selected) throw denied();
+    for (const field of ['runtime_key', 'harness_id', 'host_id', 'runtime_mode', 'container_name', 'runtime_user',
+      'home_directory', 'state_directory', 'systemd_user', 'primary_account_id'] as const) if (selected[field] !== agent[field]) throw denied();
+    const identity = await client.query(`SELECT 1 FROM fleet_runtime_identities
+      WHERE tenant_id=$1 AND alias=$2 AND runtime_key=$3 FOR SHARE`, [agent.tenant_id, agent.alias, agent.runtime_key]);
+    if (identity.rowCount !== 1) throw denied();
+    return sealed;
+  } catch { throw denied(); }
+}
+export async function loadProviderAuthRoutingScope(client: DatabaseClient, actor: ProviderAuthActor, operationId: string) {
+  const value = await context(client, actor, { operation_id: operationId } as ProviderAuthRequest);
+  const sealed = await assertProviderAuthSealedScope(client, value.operation, value.agent);
+  return { ...value, sealed };
 }
 async function scope(client: DatabaseClient, value: ProviderAuthPolicyContext, request: ProviderAuthRequest,
   resolve: ProviderAuthPolicyResolver): Promise<ProviderAuthPhysicalScope> {
@@ -69,7 +95,8 @@ async function scope(client: DatabaseClient, value: ProviderAuthPolicyContext, r
     if (policy[key] !== request[key]) throw denied();
   }
   if (policy.account_id !== value.account.id || policy.harness_id !== value.agent.harness_id || policy.host_id !== value.agent.host_id
-      || policy.host_id !== value.operation.executor_host || policy.runtime_user !== value.agent.runtime_user) throw denied();
+      || policy.runtime_user !== value.agent.runtime_user) throw denied();
+  const sealed = await assertProviderAuthSealedScope(client, value.operation, value.agent);
   if (value.operation.kind === 'create' || value.operation.kind === 'update') {
     const operation = value.operation.request as { parameters?: { primary_account_id?: string; harness_id?: string; placement?: { host_id?: string; runtime_user?: string } } } | null;
     const desired = operation?.parameters;
@@ -77,7 +104,7 @@ async function scope(client: DatabaseClient, value: ProviderAuthPolicyContext, r
         || desired.placement?.host_id !== policy.host_id || desired.placement.runtime_user !== policy.runtime_user) throw denied();
   }
   return { ...policy, operation_id: value.operation.id, tenant_id: value.agent.tenant_id, alias: value.agent.alias,
-    expected_external_account_id: value.account.external_account_id };
+    runtime_key: value.agent.runtime_key, host_scope_sha256: sealed.target_sha256, expected_external_account_id: value.account.external_account_id };
 }
 async function event(client: DatabaseClient, operationId: string, name: 'step_started' | 'step_completed', reservation: Reservation): Promise<void> {
   const next = (await client.query<{ version: string }>(`UPDATE fleet_operations SET version=version+1,updated_at=clock_timestamp()
@@ -127,7 +154,7 @@ export function createProviderAuthDependencies(
           if (prior.reservation.state !== 'reserved') continue;
           if (Date.parse(prior.reservation.expires_at) > Date.now()) throw new ProviderAuthError('SESSION_CONFLICT');
           await client.query('SELECT id FROM fleet_operations WHERE id=$1 FOR UPDATE', [prior.operation_id]);
-          const stopped = await hooks.cleanup({ ...trusted, operation_id: prior.operation_id }, prior.reservation.session_id, new AbortController().signal);
+          const stopped = await hooks.cleanup({ ...trusted, operation_id: prior.operation_id }, prior.reservation.session_id, new AbortController().signal, client);
           if (!isLiteralTrue(stopped.stopped)) throw new ProviderAuthError('STOP_UNCONFIRMED');
           await event(client, prior.operation_id, 'step_completed', { ...prior.reservation, state: 'released' });
         }
@@ -158,7 +185,7 @@ export function createProviderAuthDependencies(
             const current = await latest(client, request.operation_id);
             if (current?.session_id !== sessionId) throw new ProviderAuthError('SESSION_CONFLICT');
             if (current.state === 'released') return;
-            if (!isLiteralTrue((await hooks.cleanup(physical, sessionId, new AbortController().signal)).stopped)) throw new ProviderAuthError('STOP_UNCONFIRMED');
+            if (!isLiteralTrue((await hooks.cleanup(physical, sessionId, new AbortController().signal, client)).stopped)) throw new ProviderAuthError('STOP_UNCONFIRMED');
             await event(client, request.operation_id, 'step_completed', { ...current, state: 'released' });
           });
         },
