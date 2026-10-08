@@ -1,0 +1,13 @@
+[Unit]
+Description=Avisa a zeus si un alias atendio a personas desde mas de una conversacion en 24 h
+Documentation=file:///datos/workspaces/zeus/cauce-v3/ops/guardias/README.md
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Unidad de SISTEMA en vpstn (el host de la base): lee Postgres con `docker exec` y publica con
+# el certificado de cliente de la consola de /etc/cauce-v3/pki, que no sale de ese host.
+ExecStart=/usr/local/sbin/cauce-conversaciones-paralelas.py
+TimeoutStartSec=3min
+Nice=10
