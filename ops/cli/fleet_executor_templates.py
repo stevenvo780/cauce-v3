@@ -3,12 +3,81 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import unicodedata
 
 from fleet_executor_policy import SafeFailure, bounded_text, path
 
 USER = re.compile(r'[A-Za-z_][A-Za-z0-9_-]{0,63}')
 HASH = re.compile(r'[0-9a-f]{64}')
 PROVIDERS = {'codex', 'claude', 'gemini'}
+CONTAINER = re.compile(r'[a-z][a-z0-9-]{0,127}')
+PREFIX = re.compile(r'[a-z][a-z0-9-]{0,47}-')
+
+
+def validate_login(row: dict):
+    login = row['login']
+    if not isinstance(login, dict) or set(login) - {'files', 'env'} != {'method', 'command', 'sha256'} \
+            or login['method'] not in ('device', 'terminal') or not isinstance(login['sha256'], str) \
+            or HASH.fullmatch(login['sha256']) is None:
+        raise SafeFailure('invalid approved provider login')
+    command = login['command']
+    if not isinstance(command, list) or not 1 <= len(command) <= 32 or any(not isinstance(value, str)
+            or len(value) > 4096 or any(unicodedata.category(char) == 'Cc' for char in value) for value in command):
+        raise SafeFailure('invalid approved provider login command')
+    path(command[0])
+    pins = login.get('files', {})
+    if not isinstance(pins, dict) or len(pins) > 32:
+        raise SafeFailure('invalid approved provider login pins')
+    for filename, fingerprint in pins.items():
+        path(filename)
+        if not isinstance(fingerprint, str) or HASH.fullmatch(fingerprint) is None:
+            raise SafeFailure('invalid approved provider login pin')
+    if any(value.startswith('/') and value not in pins for value in command[1:]):
+        raise SafeFailure('provider login argument has no exact file pin')
+    env = login.get('env', {})
+    if not isinstance(env, dict) or len(env) > 32 or any(not isinstance(key, str)
+            or re.fullmatch(r'[A-Z_][A-Z0-9_]{0,63}', key) is None or not isinstance(value, str)
+            or not 1 <= len(value) <= 4096 or any(unicodedata.category(char) == 'Cc' for char in value)
+            for key, value in env.items()):
+        raise SafeFailure('invalid approved provider login environment')
+    driver = row.get('openclaw')
+    if driver is None:
+        arguments = ['login', '--device-auth'] if row['provider'] == 'codex' and login['method'] == 'device' else \
+            ['login'] if row['provider'] == 'codex' else ['auth', 'login'] if row['provider'] == 'claude' and login['method'] == 'terminal' else None
+        valid = command[0] == row['command'] and login['sha256'] == row['command_sha256'] and command[1:] == arguments
+    else:
+        valid = command[0] == driver['node_command'] and login['sha256'] == driver['node_command_sha256'] \
+            and command[1:] == [row['command'], 'models', 'auth', 'login'] and login['method'] == 'device' \
+            and pins.get(row['command']) == row['command_sha256']
+    if not valid:
+        raise SafeFailure('provider login differs from the approved functional command')
+
+
+def template_matches(row: dict, provider: str, user: str, harness: str, mode: str, name: str | None,
+                     prefix: str | None = None) -> bool:
+    if row['provider'] != provider or row['runtime_user'] != user or ('openclaw' in row) != (harness == 'openclaw') \
+            or row.get('runtime_mode', mode) != mode:
+        return False
+    if 'container_name' in row:
+        return name == row['container_name'] if prefix is None else row['container_name'].startswith(prefix)
+    if 'container_prefix' in row:
+        return isinstance(name, str) and name.startswith(row['container_prefix']) if prefix is None else \
+            prefix.startswith(row['container_prefix']) or row['container_prefix'].startswith(prefix)
+    return True
+
+
+def matching_templates(policy: dict, provider: str, user: str, harness: str, mode: str, name: str | None,
+                       prefix: str | None = None) -> list:
+    return [row for row in policy.get('profile_templates', [])
+            if template_matches(row, provider, user, harness, mode, name, prefix)]
+
+
+def resolved_template(policy: dict, agent: dict, provider: str) -> dict:
+    rows = matching_templates(policy, provider, agent['runtime_user'], agent['harness_id'],
+                             agent['runtime_mode'], agent.get('container_name'))
+    if len(rows) != 1:
+        raise SafeFailure('provider account has no unique approved profile template')
+    return rows[0]
 
 
 def validate_accounts(rows):
@@ -54,7 +123,7 @@ def validate_templates(policy: dict):
         raise SafeFailure('invalid bounded provider profile templates')
     identities = set()
     for row in profiles:
-        if not isinstance(row, dict) or set(row) - {'command_files', 'openclaw'} != fields or row['provider'] not in PROVIDERS \
+        if not isinstance(row, dict) or set(row) - {'command_files', 'openclaw', 'runtime_mode', 'container_name', 'container_prefix', 'login'} != fields or row['provider'] not in PROVIDERS \
                 or not isinstance(row['runtime_user'], str) or USER.fullmatch(row['runtime_user']) is None \
                 or not isinstance(row['command_sha256'], str) or HASH.fullmatch(row['command_sha256']) is None:
             raise SafeFailure('invalid approved provider profile template')
@@ -70,7 +139,18 @@ def validate_templates(policy: dict):
         if 'openclaw' in row:
             from fleet_provider_openclaw import validate_definition
             validate_definition(row['openclaw'], row['provider'])
-        identity = (row['provider'], row['runtime_user'], 'openclaw' in row)
+        selectors = [key for key in ('container_name', 'container_prefix') if key in row]
+        if 'runtime_mode' in row and row['runtime_mode'] not in ('native', 'container') \
+                or selectors and row.get('runtime_mode') != 'container' \
+                or row.get('runtime_mode') == 'container' and len(selectors) != 1:
+            raise SafeFailure('invalid approved provider placement selector')
+        if 'container_name' in row and (not isinstance(row['container_name'], str) or CONTAINER.fullmatch(row['container_name']) is None) \
+                or 'container_prefix' in row and (not isinstance(row['container_prefix'], str) or PREFIX.fullmatch(row['container_prefix']) is None):
+            raise SafeFailure('invalid approved provider container selector')
+        if 'login' in row:
+            validate_login(row)
+        identity = (row['provider'], row['runtime_user'], 'openclaw' in row,
+                    row.get('runtime_mode'), row.get('container_name'), row.get('container_prefix'))
         if identity in identities:
             raise SafeFailure('ambiguous approved provider profile template')
         identities.add(identity)
@@ -96,11 +176,7 @@ def resolve_profile(policy: dict, agent: dict) -> dict | None:
         return binding
     if agent['harness_id'] != 'openclaw' and trusted['provider'] != agent['harness_id']:
         raise SafeFailure('provider account differs from the requested harness')
-    templates = [row for row in policy.get('profile_templates', []) if row['provider'] == trusted['provider']
-                 and row['runtime_user'] == agent['runtime_user'] and (agent['harness_id'] == 'openclaw') == ('openclaw' in row)]
-    if len(templates) != 1:
-        raise SafeFailure('provider account has no unique approved profile template')
-    template = templates[0]
+    template = resolved_template(policy, agent, trusted['provider'])
     profile_root = path(template['path_root'])
     if agent['runtime_mode'] == 'container' and str(profile_root) != agent['_placement'].get('profile_root'):
         raise SafeFailure('provider profile template differs from the dedicated mount')
@@ -129,10 +205,15 @@ def capabilities(policy: dict) -> dict:
             if harness not in {'codex', 'claude', 'openclaw'} or candidate.get('harness_id', harness) != harness:
                 continue
             provider = 'codex' if harness == 'openclaw' else harness
-            templates = [row for row in policy.get('profile_templates', []) if row['provider'] == provider
-                and ('openclaw' in row) == (harness == 'openclaw')
-                and row['runtime_user'] == candidate['runtime_user'] and (mode == 'native' or row['path_root'] == candidate.get('profile_root'))]
+            prefix = candidate.get('prefix') if mode == 'container' and name is None else None
+            templates = matching_templates(policy, provider, candidate['runtime_user'], harness, mode, name, prefix)
+            if len(templates) > 1:
+                continue
+            templates = [row for row in templates if (not path(row['path_root']).is_relative_to(path(candidate['state_root']))
+                if mode == 'native' else row['path_root'] == candidate.get('profile_root'))
+                and (prefix is None or 'container_name' not in row and prefix.startswith(row.get('container_prefix', prefix)))]
             profiles = [row for row in policy['profiles'].values() if row.get('provider') == provider
+                and prefix is None
                 and ('openclaw' in row) == (harness == 'openclaw')
                 and row.get('runtime_user') == candidate['runtime_user'] and row.get('command') and row.get('command_sha256')
                 and (row.get('container_name') == name if mode == 'container' else 'container_name' not in row)]

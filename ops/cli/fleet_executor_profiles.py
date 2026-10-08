@@ -64,7 +64,7 @@ def prepare_empty_profile(root: str, profile: str, uid: int, gid: int, *, initia
 
 def prepare_profile(policy: dict, raw_agent: dict):
     from fleet_executor_policy import approve_agent
-    from fleet_executor_templates import resolve_profile
+    from fleet_executor_templates import resolve_profile, resolved_template
     agent = approve_agent(policy, raw_agent)
     account = agent.get('primary_account_id')
     if account is None:
@@ -73,10 +73,7 @@ def prepare_profile(policy: dict, raw_agent: dict):
     dynamic = account not in policy['profiles']
     if not dynamic and 'openclaw' not in binding:
         return
-    template = next((row for row in policy.get('profile_templates', []) if row['provider'] == binding['provider']
-                    and row['runtime_user'] == agent['runtime_user'] and ('openclaw' in row) == ('openclaw' in binding)), None)
-    if dynamic and template is None:
-        raise ValueError('provider profile template is unavailable')
+    template = resolved_template(policy, agent, binding['provider']) if dynamic else None
     if agent['runtime_mode'] == 'native':
         from fleet_runtime_materialization import external_directory
         if dynamic:

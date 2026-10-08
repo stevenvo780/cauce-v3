@@ -1,7 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createPool, planFleetHostSlices, type DatabasePool, type FleetOperationRow } from '@cauce/store';
 import { preparePostgresSuite } from '../../../../packages/store/test/postgres-suite.js';
@@ -12,6 +13,8 @@ import { type z } from 'zod';
 import { OpenClawDriver } from './host-provider-openclaw.js';
 import { boundedProviderReceipt } from './provider-login.js';
 
+type LoginFixture = { method: string; command: string[]; sha256: string; env?: Record<string, string>; files?: Record<string, string> };
+const projectRoot = fileURLToPath(new URL('../../../../', import.meta.url));
 let database: TestDatabase | undefined;
 let current: EmptyTestDatabase | undefined;
 let pool: DatabasePool;
@@ -22,8 +25,8 @@ let policy: { schemaVersion: number; host_id: string; state_root: string; helper
   profiles: Record<string, { provider: string; path: string; identity: string; runtime_user: string; container_name?: string;
     command?: string; command_sha256?: string; command_files?: Record<string, string>; openclaw?: z.infer<typeof OpenClawDriver> }>;
   profile_templates?: { provider: string; runtime_user: string; path_root: string; command: string; command_sha256: string;
-    command_files?: Record<string, string>; openclaw?: z.infer<typeof OpenClawDriver> }[];
-  logins: Record<string, { method: string; command: string[]; sha256: string; env?: Record<string, string>; files?: Record<string, string> }> };
+    command_files?: Record<string, string>; openclaw?: z.infer<typeof OpenClawDriver>; runtime_mode?: string; container_name?: string; container_prefix?: string; login?: LoginFixture }[];
+  logins: Record<string, LoginFixture> };
 let config: { hostConfig: { host: string; command: { python: string; executable: string; policyFile: string } }; authPolicyFile: string; projectRoot: string };
 let services: Awaited<ReturnType<typeof createHostProviderAuthService>>[];
 preparePostgresSuite(import.meta.url, async () => { database = await startTestDatabase(); }, 120_000);
@@ -49,9 +52,10 @@ beforeEach(async ({ task }) => {
   await pool.query("INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,role,permissions) VALUES($1,'Steven','physical-human','operator',ARRAY['read','control'])", [human.id]);
   await pool.query(`INSERT INTO provider_accounts(id,provider,external_account_id,payer_tenant_id,credential_ref_kind,credential_ref,enabled)
     VALUES('physical-account','codex','physical-identity','Steven','env_path','CAUCE_SYNTHETIC_TOKEN_PATH',true)`);
+  const placementContainer = /placement container ([a-z-]+)/u.exec(task.name)?.[1];
   await pool.query(`INSERT INTO agents(tenant_id,alias,runtime_key,harness_id,container_name,runtime_user,home_directory,state_directory,host_id,runtime_mode,systemd_user,primary_account_id,lifecycle_state,enabled)
     VALUES('Steven','physical-new','physical-new',$3,$1,'dev','/home/dev','/home/dev/.cauce/physical-new','isolated',$2,'stev','physical-account','auth_pending',false)`,
-  [...(task.name.includes('immutable container binding') ? ['physical-container', 'container'] : ['host:isolated', 'native']),
+  [...(placementContainer ? [placementContainer, 'container'] : task.name.includes('immutable container binding') ? ['physical-container', 'container'] : ['host:isolated', 'native']),
     task.name.includes('OpenClaw') ? 'openclaw' : 'codex']);
   operationId = randomUUID();
   const request = { kind: 'start', target: { resource: 'agent', tenant_id: 'Steven', alias: 'physical-new' }, parameters: {}, expected_revision: 0, idempotency_key: 'physical-operation' };
@@ -68,13 +72,13 @@ beforeEach(async ({ task }) => {
       ...(task.name.includes('absent host seal') ? {} : { host_slices: planFleetHostSlices(row, [previous], [previous]) }) })]);
   const executable = join(directory, 'executor.py'); const helper = join(directory, 'login.py');
   const log = JSON.stringify(join(directory, 'effects.log'));
-  await writeFile(executable, `import json,sys,pathlib,hashlib\np=json.loads(sys.stdin.read())\nif 'trusted_accounts' in p.get('snapshot',{}): sys.exit(2)\nif any('credential_ref' in a or 'credential_ref_kind' in a for a in p.get('trusted_accounts',[])): sys.exit(2)\npolicy=json.loads(pathlib.Path(sys.argv[sys.argv.index('--policy')+1]).read_text())\nif '--binding' in sys.argv:\n agent=next(a for a in p['snapshot']['agents'] if a['alias']==p['request']['target']['alias'])\n profile=policy['profiles'].get(agent['primary_account_id'])\n if profile is None:\n  account=next(a for a in p['trusted_accounts'] if a['id']==agent['primary_account_id'])\n  template=next(t for t in policy['profile_templates'] if t['provider']==account['provider'] and t['runtime_user']==agent['runtime_user'] and ('openclaw' in t)==(agent['harness_id']=='openclaw'))\n  profile={'provider':template['provider'],'runtime_user':template['runtime_user'],'path':str(pathlib.Path(template['path_root'])/agent['runtime_key']/hashlib.sha256(account['id'].encode()).hexdigest()),'identity':account['external_account_id'],'command':template['command'],'command_sha256':template['command_sha256']}\n  if 'command_files' in template: profile['command_files']=template['command_files']\n  if 'openclaw' in template: profile['openclaw']=template['openclaw']\n  if agent['runtime_mode']=='container': profile['container_name']=agent['container_name']\n receipt={'agent':agent,'profile_binding':profile}\n marker=pathlib.Path(${JSON.stringify(directory)})/'container-binding.json'\n if marker.exists(): receipt['runtime_binding']=json.loads(marker.read_text())\n print(json.dumps(receipt))\nelse:\n step=sys.argv[sys.argv.index('--step')+1]\n with open(${log},'a') as f: f.write(step+'\\n')\n marker=pathlib.Path(${JSON.stringify(directory)})\n receipt={'evidence':{'stopped_verified':not (marker/'unverified-stop').exists()}} if step=='login-stop' else {'evidence':{'provider_verified':not (marker/'unverified-auth').exists()}}\n if step=='authenticate' and (marker/'awaiting-auth').exists(): receipt={'evidence':{},'awaiting_auth':True}\n print(json.dumps(receipt))\n`, { mode: 0o700 });
-  await writeFile(helper, `import sys,json,os\nlog=${log}\nif '--cleanup' in sys.argv:\n with open(log,'a') as f: f.write('cleanup\\n')\n print(json.dumps({'stopped_verified':True}))\n sys.exit(0)\np=json.loads(sys.stdin.readline())\nexpected=${JSON.stringify(join(directory, 'profile'))}\nmarker=${JSON.stringify(join(directory, 'profile-path.expected'))}\nif os.path.exists(marker):\n with open(marker) as f: expected=f.read()\nif p['env'].get('CODEX_HOME')!=expected: sys.exit(2)\nwith open(log,'a') as f: f.write('login\\n')\nprint(json.dumps({'type':'started','operation_id':p['operation_id'],'pid':os.getpid(),'start_ticks':'100','runtime_uid':1000,'backend':'native'}),flush=True)\nfor line in sys.stdin:\n if json.loads(line)['type']=='close':\n  with open(log,'a') as f: f.write('login-close\\n')\n  print(json.dumps({'type':'exited','operation_id':p['operation_id'],'exit_code':0,'stopped_verified':True}),flush=True)\n  break\n`, { mode: 0o700 });
+  await writeFile(executable, `import json,sys,pathlib,hashlib\np=json.loads(sys.stdin.read())\nif 'trusted_accounts' in p.get('snapshot',{}): sys.exit(2)\nif any('credential_ref' in a or 'credential_ref_kind' in a for a in p.get('trusted_accounts',[])): sys.exit(2)\npolicy=json.loads(pathlib.Path(sys.argv[sys.argv.index('--policy')+1]).read_text())\nif '--binding' in sys.argv:\n agent=next(a for a in p['snapshot']['agents'] if a['alias']==p['request']['target']['alias'])\n profile=policy['profiles'].get(agent['primary_account_id'])\n if profile is None:\n  account=next(a for a in p['trusted_accounts'] if a['id']==agent['primary_account_id'])\n  sys.path.insert(0,${JSON.stringify(join(projectRoot, 'ops/cli'))})\n  from fleet_executor_templates import resolved_template\n  template=resolved_template(policy,agent,account['provider'])\n  profile={'provider':template['provider'],'runtime_user':template['runtime_user'],'path':str(pathlib.Path(template['path_root'])/agent['runtime_key']/hashlib.sha256(account['id'].encode()).hexdigest()),'identity':account['external_account_id'],'command':template['command'],'command_sha256':template['command_sha256']}\n  if 'command_files' in template: profile['command_files']=template['command_files']\n  if 'openclaw' in template: profile['openclaw']=template['openclaw']\n  if agent['runtime_mode']=='container': profile['container_name']=agent['container_name']\n receipt={'agent':agent,'profile_binding':profile}\n marker=pathlib.Path(${JSON.stringify(directory)})/'container-binding.json'\n if marker.exists(): receipt['runtime_binding']=json.loads(marker.read_text())\n print(json.dumps(receipt))\nelse:\n step=sys.argv[sys.argv.index('--step')+1]\n with open(${log},'a') as f: f.write(step+'\\n')\n marker=pathlib.Path(${JSON.stringify(directory)})\n receipt={'evidence':{'stopped_verified':not (marker/'unverified-stop').exists()}} if step=='login-stop' else {'evidence':{'provider_verified':not (marker/'unverified-auth').exists()}}\n if step=='authenticate' and (marker/'awaiting-auth').exists(): receipt={'evidence':{},'awaiting_auth':True}\n print(json.dumps(receipt))\n`, { mode: 0o700 });
+  await writeFile(helper, `import sys,json,os\nlog=${log}\nif '--cleanup' in sys.argv:\n with open(log,'a') as f: f.write('cleanup\\n')\n print(json.dumps({'stopped_verified':True}))\n sys.exit(0)\np=json.loads(sys.stdin.readline())\nexpected=${JSON.stringify(join(directory, 'profile'))}\nmarker=${JSON.stringify(join(directory, 'profile-path.expected'))}\nif os.path.exists(marker):\n with open(marker) as f: expected=f.read()\nif p['env'].get('CODEX_HOME')!=expected: sys.exit(2)\ncommand_marker=${JSON.stringify(join(directory, 'login-command.expected'))}\nif os.path.exists(command_marker):\n with open(command_marker) as f: command_expected=json.load(f)\n if [p['command'],p['command_sha256']]!=command_expected: sys.exit(2)\nwith open(log,'a') as f: f.write('login\\n')\nprint(json.dumps({'type':'started','operation_id':p['operation_id'],'pid':os.getpid(),'start_ticks':'100','runtime_uid':1000,'backend':p['backend'],**({'container_id':p['container_binding']['container_id']} if p['backend']=='container' else {})}),flush=True)\nfor line in sys.stdin:\n if json.loads(line)['type']=='close':\n  with open(log,'a') as f: f.write('login-close\\n')\n  print(json.dumps({'type':'exited','operation_id':p['operation_id'],'exit_code':0,'stopped_verified':True}),flush=True)\n  break\n`, { mode: 0o700 });
   policy = { schemaVersion: 1, host_id: 'isolated', state_root: directory, helper: { executable: helper, sha256: await fingerprint(helper) },
     profiles: { 'physical-account': { provider: 'codex', path: join(directory, 'profile'), identity: 'physical-identity', runtime_user: 'dev' } },
     logins: { codex: { method: 'device', command: ['/usr/bin/true'], sha256: await fingerprint('/usr/bin/true') } } };
   config = { hostConfig: { host: 'isolated', command: { python: '/usr/bin/python3', executable, policyFile: join(directory, 'executor-policy.json') } },
-    authPolicyFile: join(directory, 'auth-policy.json'), projectRoot: resolve('.') };
+    authPolicyFile: join(directory, 'auth-policy.json'), projectRoot };
   await writeFile(config.hostConfig.command.policyFile, JSON.stringify({ schemaVersion: 1, host_id: 'isolated', profiles: policy.profiles }), { mode: 0o600 });
   await savePolicy();
 });
@@ -95,6 +99,94 @@ async function configureOpenClaw(): Promise<void> {
   await savePolicy(); await saveExecutorPolicy();
 }
 describe('host provider authentication factory', () => {
+  it.each(['container-one', 'container-two', 'approved-new'])('uses sealed placement container %s login and functional pins without public configuration', async name => {
+    const one = '/usr/bin/true'; const two = '/usr/bin/false';
+    policy.profiles = {}; policy.logins = {};
+    policy.profile_templates = [
+      { provider: 'codex', runtime_user: 'dev', runtime_mode: 'container', container_name: 'container-one',
+        path_root: join(directory, 'one-accounts'), command: one, command_sha256: await fingerprint(one),
+        login: { method: 'device', command: [one, 'login', '--device-auth'], sha256: await fingerprint(one) } },
+      { provider: 'codex', runtime_user: 'dev', runtime_mode: 'container', container_name: 'container-two',
+        path_root: join(directory, 'two-accounts'), command: two, command_sha256: await fingerprint(two),
+        login: { method: 'terminal', command: [two, 'login'], sha256: await fingerprint(two) } },
+      { provider: 'codex', runtime_user: 'dev', runtime_mode: 'container', container_prefix: 'approved-',
+        path_root: join(directory, 'prefix-accounts'), command: one, command_sha256: await fingerprint(one),
+        login: { method: 'device', command: [one, 'login', '--device-auth'], sha256: await fingerprint(one) } },
+    ];
+    const template = policy.profile_templates.find(row => row.container_name === name || row.container_prefix && name.startsWith(row.container_prefix));
+    if (!template?.login) throw new Error('placement login absent');
+    await savePolicy(); await saveExecutorPolicy();
+    const expected = join(template.path_root, 'physical-new', createHash('sha256').update('physical-account').digest('hex'));
+    await writeFile(join(directory, 'profile-path.expected'), expected);
+    await writeFile(join(directory, 'login-command.expected'), JSON.stringify([template.login.command, template.login.sha256]));
+    await writeFile(join(directory, 'container-binding.json'), JSON.stringify({ container_id: 'a'.repeat(64), generation: 'b'.repeat(64),
+      image_digest: 'sha256:' + 'c'.repeat(64), python: '/usr/bin/python3', helper: '/cauce/executor/provider-login.py' }));
+    const value = await service(); const request = await value.resolve(actor, operationId);
+    expect(JSON.stringify(request)).not.toContain(directory); expect(JSON.stringify(request)).not.toContain('login');
+    const opened = await value.start(actor, request); expect(opened.status).toBe('awaiting_login');
+    await value.attach(actor, opened.session_id, () => undefined);
+    expect((await value.verify(actor, opened.session_id)).status).toBe('authenticated');
+    expect(await trace()).toContain('login');
+    const events = JSON.stringify((await pool.query('SELECT metadata FROM fleet_operation_events')).rows);
+    expect(events).not.toContain(directory); expect(events).not.toContain('--device-auth');
+    expect(events).not.toContain(template.login.sha256);
+  });
+  it('denies sealed placement container unapproved-new login and overlapping templates before effects', async () => {
+    policy.profiles = {}; const command = '/usr/bin/true';
+    const template = { provider: 'codex', runtime_user: 'dev', runtime_mode: 'container', container_prefix: 'approved-',
+      path_root: join(directory, 'accounts'), command, command_sha256: await fingerprint(command),
+      login: { method: 'device', command: [command, 'login', '--device-auth'], sha256: await fingerprint(command) } };
+    policy.profile_templates = [template]; await savePolicy(); await saveExecutorPolicy();
+    const value = await service(); await expect(value.resolve(actor, operationId)).rejects.toMatchObject({ code: 'AUTHORITY_REVOKED' });
+    const legacy: NonNullable<typeof policy.profile_templates>[number] = { ...template };
+    delete legacy.runtime_mode; delete legacy.container_prefix;
+    policy.profile_templates = [template, { ...template, container_prefix: 'unapproved-' }, legacy];
+    await savePolicy(); await saveExecutorPolicy();
+    await expect(value.resolve(actor, operationId)).rejects.toMatchObject({ code: 'AUTHORITY_REVOKED' });
+    const exact: NonNullable<typeof policy.profile_templates>[number] = { ...template, container_name: 'unapproved-new' };
+    delete exact.container_prefix;
+    policy.profile_templates = [{ ...template, container_prefix: 'unapproved-' }, exact];
+    await savePolicy(); await saveExecutorPolicy();
+    await expect(value.resolve(actor, operationId)).rejects.toMatchObject({ code: 'AUTHORITY_REVOKED' });
+    expect(await trace()).toEqual([]);
+  });
+  it('selects native placement login and rejects its policy replacement before launch', async () => {
+    const command = '/usr/bin/true'; const sha = await fingerprint(command);
+    policy.profiles = {}; policy.logins = {};
+    const template = { provider: 'codex', runtime_user: 'dev', runtime_mode: 'native', path_root: join(directory, 'accounts'),
+      command, command_sha256: sha, login: { method: 'device', command: [command, 'login', '--device-auth'], sha256: sha } };
+    policy.profile_templates = [{ ...template, runtime_mode: 'container', container_name: 'container-one', command: '/usr/bin/false',
+      command_sha256: await fingerprint('/usr/bin/false'), login: { method: 'terminal', command: ['/usr/bin/false', 'login'], sha256: await fingerprint('/usr/bin/false') } }, template];
+    await savePolicy(); await saveExecutorPolicy();
+    const expected = join(directory, 'accounts', 'physical-new', createHash('sha256').update('physical-account').digest('hex'));
+    await writeFile(join(directory, 'profile-path.expected'), expected);
+    const value = await service(); const opened = await value.start(actor, await value.resolve(actor, operationId));
+    expect(opened.status).toBe('awaiting_login');
+    template.login = { method: 'terminal', command: [command, 'login'], sha256: sha };
+    await savePolicy(); await saveExecutorPolicy();
+    await expect(value.attach(actor, opened.session_id, () => undefined)).rejects.toMatchObject({ code: 'LOGIN_FAILED' });
+    expect(await trace()).not.toContain('login');
+  });
+  it('denies sealed placement container container-one static profile owned by another container before effects', async () => {
+    const profile = policy.profiles['physical-account']; if (!profile) throw new Error('profile absent');
+    profile.container_name = 'container-two'; await savePolicy(); await saveExecutorPolicy();
+    const value = await service(); await expect(value.resolve(actor, operationId)).rejects.toMatchObject({ code: 'AUTHORITY_REVOKED' });
+    expect(await trace()).toEqual([]);
+  });
+  it.each(['command', 'sha', 'argument', 'extra', 'selector'])('rejects invalid placement template login %s before effects', async mutation => {
+    policy.profiles = {}; const command = '/usr/bin/true';
+    const template = { provider: 'codex', runtime_user: 'dev', runtime_mode: 'native', path_root: join(directory, 'accounts'),
+      command, command_sha256: await fingerprint(command), login: { method: 'device', command: [command, 'login', '--device-auth'], sha256: await fingerprint(command) } };
+    const invalid: Record<string, unknown> = structuredClone(template);
+    const login = invalid.login as Record<string, unknown>;
+    if (mutation === 'command') login.command = ['/usr/bin/false', 'login', '--device-auth'];
+    if (mutation === 'sha') login.sha256 = '0'.repeat(64);
+    if (mutation === 'argument') login.command = [command, 'login', '--force'];
+    if (mutation === 'extra') login.extra = 'unapproved';
+    if (mutation === 'selector') invalid.container_name = 'container-one';
+    policy.profile_templates = [invalid as typeof template]; await savePolicy(); await saveExecutorPolicy();
+    await expect(service()).rejects.toMatchObject({ code: 'HOST_UNAVAILABLE' }); expect(await trace()).toEqual([]);
+  });
   it('uses a sealed OpenClaw harness with a separate Codex economic provider and exact login projection', async () => {
     await configureOpenClaw();
     const helper = policy.helper.executable; let source = await readFile(helper, 'utf8');

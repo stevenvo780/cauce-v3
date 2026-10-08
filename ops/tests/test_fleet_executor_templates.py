@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import os
@@ -13,6 +14,117 @@ from unittest import mock
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import test_fleet_executor as fixtures
 import test_fleet_executor_container as containers
+
+
+class PlacementTemplateSelectionTest(unittest.TestCase):
+    def setUp(self):
+        sys.path.insert(0, str(fixtures.OPS / 'cli'))
+        import fleet_executor_templates
+        self.subject = fleet_executor_templates
+        self.template = {'provider': 'codex', 'runtime_user': 'dev', 'path_root': '/profiles',
+            'command': '/usr/bin/codex', 'command_sha256': 'a' * 64}
+        self.policy = {'bundles': {'codex': {}}, 'profiles': {}, 'profile_templates': []}
+        self.agent = {'primary_account_id': 'account', 'tenant_id': 'Team', 'harness_id': 'codex',
+            'runtime_user': 'dev', 'runtime_key': 'physical-one', 'runtime_mode': 'container',
+            'container_name': 'container-one', '_placement': {'profile_root': '/profiles', 'state_root': '/state'},
+            '_trusted_accounts': [{'id': 'account', 'provider': 'codex', 'enabled': True,
+                'payer_tenant_id': 'Team', 'shared_with_pool': False, 'external_account_id': 'identity'}]}
+
+    def templates(self):
+        one = dict(self.template, runtime_mode='container', container_name='container-one',
+            login={'method': 'device', 'command': ['/usr/bin/codex', 'login', '--device-auth'], 'sha256': 'a' * 64})
+        two = dict(self.template, runtime_mode='container', container_name='container-two',
+            command='/opt/codex', command_sha256='b' * 64,
+            login={'method': 'terminal', 'command': ['/opt/codex', 'login'], 'sha256': 'b' * 64})
+        self.policy['profile_templates'] = [one, two]
+        return one, two
+
+    def test_same_provider_user_selects_exact_container_and_never_exports_login(self):
+        self.templates()
+        self.subject.validate_templates(self.policy)
+        for name, command, sha in [('container-one', '/usr/bin/codex', 'a'), ('container-two', '/opt/codex', 'b')]:
+            self.agent['container_name'] = name
+            profile = self.subject.resolve_profile(self.policy, self.agent)
+            self.assertEqual((profile['command'], profile['command_sha256']), (command, sha * 64))
+            self.assertNotIn('login', profile)
+        self.agent['container_name'] = 'container-three'
+        with self.assertRaisesRegex(ValueError, 'unique'):
+            self.subject.resolve_profile(self.policy, self.agent)
+
+    def test_native_legacy_prefix_and_ambiguous_matching(self):
+        self.policy['profile_templates'] = [self.template]
+        self.agent.update(runtime_mode='native', container_name='host:isolated')
+        self.assertEqual(self.subject.resolve_profile(self.policy, self.agent)['command'], '/usr/bin/codex')
+        scoped = dict(self.template, runtime_mode='container', container_prefix='approved-')
+        self.policy['profile_templates'] = [scoped]
+        self.subject.validate_templates(self.policy)
+        with self.assertRaises(ValueError):
+            self.subject.resolve_profile(self.policy, self.agent)
+        self.agent.update(runtime_mode='container', container_name='approved-new')
+        self.assertEqual(self.subject.resolve_profile(self.policy, self.agent)['command'], '/usr/bin/codex')
+        self.policy['profile_templates'].append(dict(self.template, runtime_mode='container', container_name='approved-new'))
+        with self.assertRaisesRegex(ValueError, 'unique'):
+            self.subject.resolve_profile(self.policy, self.agent)
+        self.policy['profile_templates'] = [self.template, scoped]
+        with self.assertRaisesRegex(ValueError, 'unique'):
+            self.subject.resolve_profile(self.policy, self.agent)
+
+    def test_strict_selectors_login_command_and_pins(self):
+        one, _ = self.templates()
+        variants = [dict(one, unexpected=True), dict(one, runtime_mode='native'),
+            dict(one, container_prefix='approved-'), dict(one, container_name='../escape'),
+            dict(self.template, runtime_mode='container'),
+            dict(one, login={**one['login'], 'unexpected': True}),
+            dict(one, login={**one['login'], 'command': ['/opt/codex', 'login']}),
+            dict(one, login={**one['login'], 'sha256': 'b' * 64}),
+            dict(one, login={**one['login'], 'command': ['/usr/bin/codex', '/un-pinned']}),
+            dict(one, login={**one['login'], 'command': ['/usr/bin/codex', 'bad\narg']})]
+        for row in variants:
+            with self.subTest(row=row):
+                self.policy['profile_templates'] = [row]
+                with self.assertRaises(ValueError):
+                    self.subject.validate_templates(self.policy)
+
+    def test_profile_preparation_uses_same_selected_root(self):
+        import fleet_executor_profiles
+        self.agent.update(runtime_mode='native', container_name='host:isolated')
+        self.policy['profile_templates'] = [dict(self.template, runtime_mode='container', container_name='container-one', path_root='/foreign'),
+            dict(self.template, runtime_mode='native')]
+        with mock.patch('fleet_executor_policy.approve_agent', return_value=self.agent), \
+                mock.patch('fleet_runtime_materialization.external_directory') as external, \
+                mock.patch.object(fleet_executor_profiles.pwd, 'getpwnam', return_value=mock.Mock(pw_uid=1000, pw_gid=1000)), \
+                mock.patch.object(fleet_executor_profiles, 'prepare_empty_profile') as prepare, \
+                mock.patch.object(fleet_executor_profiles, 'prepare_openclaw'):
+            fleet_executor_profiles.prepare_profile(self.policy, self.agent)
+        external.assert_called_once_with(pathlib.Path('/profiles'))
+        prepare.assert_called_once_with('/profiles', '/profiles/physical-one/' + hashlib.sha256(b'account').hexdigest(), 1000, 1000)
+
+    def test_capabilities_do_not_project_native_static_profile_to_create_prefix(self):
+        self.policy.update(host_id='isolated', native=[], containers={},
+            container_templates=[{'harness_id': 'codex', 'prefix': 'approved-', 'runtime_user': 'dev',
+                'systemd_user': 'stev', 'home_directory': '/home/dev', 'state_root': '/state', 'profile_root': '/profiles'}],
+            transport={}, hooks={key: {} for key in ('authenticate', 'profile', 'verify', 'revoke')})
+        self.policy['profiles'] = {'account': {**self.template, 'path': '/profiles/account'}}
+        self.assertFalse(self.subject.capabilities(self.policy)['available'])
+
+    def test_capabilities_match_existing_and_whole_create_prefix_fail_closed(self):
+        self.templates()
+        candidate = {'runtime_user': 'dev', 'systemd_user': 'stev', 'home_directory': '/home/dev',
+            'state_root': '/state', 'profile_root': '/profiles'}
+        self.policy.update(host_id='isolated', native=[], containers={'container-one': candidate, 'container-three': candidate},
+            container_templates=[dict(candidate, harness_id='codex', prefix='approved-')],
+            transport={}, hooks={key: {} for key in ('authenticate', 'profile', 'verify', 'revoke')})
+        runtimes = self.subject.capabilities(self.policy)['placements'][0]['runtimes']
+        self.assertEqual([row.get('container_name') for row in runtimes], ['container-one'])
+        self.policy['profile_templates'].append(dict(self.template, runtime_mode='container', container_prefix='approved-'))
+        runtimes = self.subject.capabilities(self.policy)['placements'][0]['runtimes']
+        self.assertEqual([row.get('container_prefix') for row in runtimes if 'container_prefix' in row], ['approved-'])
+        self.policy['profile_templates'].append(dict(self.template, runtime_mode='container', container_name='approved-special'))
+        runtimes = self.subject.capabilities(self.policy)['placements'][0]['runtimes']
+        self.assertFalse(any('container_prefix' in row for row in runtimes))
+        self.policy['profile_templates'].append(copy.deepcopy(self.template))
+        runtimes = self.subject.capabilities(self.policy)['placements'][0]['runtimes']
+        self.assertEqual([row.get('container_name') for row in runtimes], ['container-three'])
 
 
 class NativeTemplateProfileTest(unittest.TestCase):
@@ -168,6 +280,9 @@ class ContainerTemplateProfileTest(unittest.TestCase):
             'import hashlib,pathlib;print(hashlib.sha256(pathlib.Path("/usr/local/bin/python3.12").read_bytes()).hexdigest())'],
             capture_output=True, text=True, check=True, timeout=10).stdout.strip()
         self.policy['profile_templates'] = [{'provider': 'codex', 'runtime_user': 'nobody',
+            'path_root': '/wrong-profiles', 'command': '/wrong-command', 'command_sha256': '0' * 64,
+            'runtime_mode': 'container', 'container_name': 'different-container'},
+            {'provider': 'codex', 'runtime_user': 'nobody', 'runtime_mode': 'container', 'container_prefix': 'cauce-fleet-fixture-',
             'path_root': '/tmp/provider-profiles', 'command': '/usr/local/bin/python3.12', 'command_sha256': fingerprint}]
         self.context['trusted_accounts'] = [{'id': 'new-account', 'provider': 'codex', 'external_account_id': 'expected@fixture.invalid',
             'payer_tenant_id': self.agent['tenant_id'], 'shared_with_pool': False, 'enabled': True}]
