@@ -6,6 +6,7 @@ import type { ConfigurationSnapshot } from '../../api/types';
 import { server } from '../../mocks/server';
 import { renderWithApi } from '../../test/render';
 import { AgentesSection } from './AgentesSection';
+import { nextStep } from './agent-menu.test-helpers';
 
 const CHANGES = 'http://localhost/v3/console/config/changes';
 const CONFIG = 'http://localhost/v3/console/config';
@@ -60,6 +61,7 @@ async function openDialog(user: ReturnType<typeof userEvent.setup>) {
   await user.selectOptions(screen.getByRole('combobox', { name: 'Espacio de trabajo' }), 'A');
   await user.type(screen.getByRole('textbox', { name: 'Alias' }), 'worker');
   await user.type(screen.getByRole('textbox', { name: 'Nombre visible' }), 'Worker');
+  await nextStep(user);
 }
 
 it('creates the registry row on its computer, then the initial room membership, in that order', async () => {
@@ -79,11 +81,13 @@ it('creates the registry row on its computer, then the initial room membership, 
   const user = userEvent.setup();
   await openDialog(user);
   await user.selectOptions(await screen.findByRole('combobox', { name: 'Computadora (opcional)' }), 'edge-1');
-  await user.selectOptions(screen.getByRole('combobox', { name: 'Sala inicial (opcional)' }), 'grp.a');
+  await nextStep(user);
+  await user.selectOptions(screen.getByRole('combobox', { name: 'Grupo inicial (opcional)' }), 'grp.a');
+  await nextStep(user);
   await user.click(screen.getByRole('button', { name: 'Previsualizar alta' }));
   await screen.findByLabelText('Preview del alta de agente');
   await user.click(screen.getByRole('button', { name: 'Crear registro' }));
-  expect(await screen.findByText('Sala inicial: Grupo A, creada.')).toBeInTheDocument();
+  expect(await screen.findByText('Grupo inicial: Grupo A, creada.')).toBeInTheDocument();
   expect(screen.getByText('Computadora: EDGE-1')).toBeInTheDocument();
   expect(changes.map(({ dry_run, mutation, expected_revision }) => [mutation.resource, dry_run, expected_revision])).toEqual([
     ['agent', true, 4], ['agent', false, 4], ['membership', true, 5], ['membership', false, 5],
@@ -122,8 +126,8 @@ it('replaces the create and edit actions with the hub reason when the capability
   const user = userEvent.setup();
   await user.click(await screen.findByRole('button', { name: 'Añadir agente' }));
   expect(screen.getByText('Solo el hub administra agentes')).toBeInTheDocument();
-  expect(screen.getByRole('button', { name: 'Previsualizar alta' })).toBeDisabled();
-  expect(screen.getByRole('button', { name: 'Crear registro' })).toBeDisabled();
+  expect(screen.getByRole('textbox', { name: 'Alias' })).toBeDisabled();
+  expect(screen.queryByRole('button', { name: 'Crear registro' })).not.toBeInTheDocument();
 });
 
 it('explains in Spanish why preparing on the computer is unavailable after the registry row is created', async () => {
@@ -142,6 +146,7 @@ it('explains in Spanish why preparing on the computer is unavailable after the r
   await openDialog(user);
   await screen.findByRole('option', { name: 'EDGE-1' });
   await user.selectOptions(screen.getByRole('combobox', { name: 'Computadora (opcional)' }), 'edge-1');
+  await nextStep(user, 2);
   await user.click(screen.getByRole('button', { name: 'Previsualizar alta' }));
   await screen.findByLabelText('Preview del alta de agente');
   await user.click(screen.getByRole('button', { name: 'Crear registro' }));
@@ -163,6 +168,7 @@ it('sin computadora elegida, el resultado pide asignarla en Editar registro ante
   renderSection(base);
   const user = userEvent.setup();
   await openDialog(user);
+  await nextStep(user, 2);
   await user.click(screen.getByRole('button', { name: 'Previsualizar alta' }));
   await screen.findByLabelText('Preview del alta de agente');
   await user.click(screen.getByRole('button', { name: 'Crear registro' }));

@@ -78,3 +78,15 @@ it('assigns the first runtime key only for an explicit durable null', () => {
   const unknown = { ...snapshot, agents: [{ ...snapshot.agents?.[0], runtime_key: undefined }] };
   expect(agentLifecycleRequest(draft, unknown, capability, 'update', 'request_key', target).error).toMatch(/no está publicada/);
 });
+
+describe('missing role message', () => {
+  it('names the membership role as the missing field', () => {
+    const snapshot = { revision: 1, tenants: [{ id: 'A' }], rooms: [{ id: 'r1', tenant_id: 'A' }], harness_definitions: [{ id: 'openclaw' }] };
+    const capability = { available: true, actions: ['create'], placements: [{ host_id: 'h', modes: ['native'], runtime_users: ['u'],
+      systemd_users: [], home_roots: ['/home/u'], state_roots: ['/state'] }] } as never;
+    const draft = { ...agentLifecycleDraft(snapshot), tenantId: 'A', alias: 'a', runtimeKey: 'a', harnessId: 'openclaw', hostId: 'h',
+      runtimeUser: 'u', homeDirectory: '/home/u', stateDirectory: '/state/a', primaryRoomId: 'r1',
+      memberships: [{ room_id: 'r1', role: '', enabled: true }] };
+    expect(agentLifecycleRequest(draft, snapshot, capability, 'create', 'k').error).toMatch(/Falta el rol en la membresía del grupo "r1"/);
+  });
+});
