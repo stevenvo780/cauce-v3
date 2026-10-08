@@ -12,6 +12,7 @@ import {
 import { AdapterError, ProcessExecutionError } from "../../sdk/errors.js";
 import { signalAborted } from "../../runtime-state.js";
 import type { DurableStore, SessionOrigin } from "../../sdk/durable-store.js";
+import { canonicalOpenClawTerminalKey } from "../../sdk/durable-store/session-file.js";
 import type {
   CommandRunner,
   HarnessCommandOverride,
@@ -80,6 +81,7 @@ export class HarnessAdapter {
   private readonly resolveCredentialEnv: (() => Promise<Readonly<Record<string, string>>>) | undefined;
   private readonly sharedSession: HarnessAdapterOptions["sharedSession"];
   private readonly nativeProfileContext: NativeProfileContext | undefined;
+  private readonly environment: NodeJS.ProcessEnv;
 
   constructor(options: HarnessAdapterOptions) {
     this.sharedSession = options.sharedSession;
@@ -92,6 +94,7 @@ export class HarnessAdapter {
     this.fallbackSessionKey = options.fallbackSessionKey;
     this.resolveCredentialEnv = options.resolveCredentialEnv;
     const environment = options.environment ?? process.env;
+    this.environment = environment;
     let nativeEnabled = nativeProfileContextEnabled(environment.CAUCE_NATIVE_PROFILE_CONTEXT);
     if (nativeEnabled && this.sharedSession !== undefined) {
       process.stderr.write(`${JSON.stringify({
@@ -135,6 +138,12 @@ export class HarnessAdapter {
 
   get supportsEmissionEndpoint(): boolean {
     return this.sharedSession === undefined && !isSharedSessionRunner(this.runner);
+  }
+
+  get routesHumansToCanonicalOpenClaw(): boolean {
+    return this.definition.id === "openclaw" && this.canonicalTerminalSession && this.sessionNamespace !== undefined
+      && [this.environment.CAUCE_OWNER_HUMAN_ID, this.environment.CAUCE_SHARED_HUMAN_IDS]
+        .some((value) => (value?.trim().length ?? 0) > 0);
   }
 
   async execute(request: HarnessExecuteRequest): Promise<StructuredOutput> {
@@ -553,7 +562,9 @@ export class HarnessAdapter {
         if (this.definition.id === "openclaw"
           && this.canonicalTerminalSession
           && this.sessionNamespace !== undefined
-          && request.sessionLane !== "agent") {
+          && request.sessionLane !== "agent"
+          && (!this.routesHumansToCanonicalOpenClaw
+            || this.sessionStoreKey(effectiveSessionKey) === canonicalOpenClawTerminalKey(this.sessionNamespace))) {
           await this.store.setCanonicalOpenClawTerminalSession(
             this.sessionNamespace,
             this.sessionStoreKey(effectiveSessionKey),

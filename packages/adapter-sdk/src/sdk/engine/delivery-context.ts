@@ -301,8 +301,8 @@ const SHARED_HUMAN_ENTRY = /^([A-Za-z][A-Za-z0-9_-]{0,63}):([0-9a-f]{8}-[0-9a-f]
 
 /** Humans who already see and drive this TUI: the owner (own tenant) or an exact `tenant:uuid` of CAUCE_SHARED_HUMAN_IDS. */
 function humanInSharedSession(humanInitiator: HarnessRequestContext["human_initiator"],
-  ownTenantId: string | undefined): boolean {
-  if (process.env.CAUCE_SHARED_SESSION !== "1" || humanInitiator === undefined || ownTenantId === undefined) return false;
+  ownTenantId: string | undefined, sharedSession: boolean): boolean {
+  if (!sharedSession || humanInitiator === undefined || ownTenantId === undefined) return false;
   const human = humanInitiator.human_id.toLowerCase();
   const owner = process.env.CAUCE_OWNER_HUMAN_ID?.trim().toLowerCase();
   if (owner !== undefined && owner.length > 0 && human === owner && humanInitiator.tenant_id === ownTenantId) return true;
@@ -312,6 +312,13 @@ function humanInSharedSession(humanInitiator: HarnessRequestContext["human_initi
   });
 }
 
+function ownTelegramDirectMessage(delivery: Delivery, ownTenantId: string | undefined): boolean {
+  const context = delivery.authenticated_context;
+  return context?.channel === "telegram" && context.origin?.adapter === "telegram"
+    && /^[1-9][0-9]*$/u.test(context.origin.conversation_id) && delivery.tenant_id === ownTenantId
+    && !isAgentToAgentBody(delivery.body);
+}
+
 export function prepareDeliveryInvocation(delivery: Delivery, harness: HarnessAdapter,
   selector: ((delivery: Delivery) => HarnessAdapter) | undefined,
   ownTenantId: string | undefined): DeliveryHarnessInvocation {
@@ -319,8 +326,10 @@ export function prepareDeliveryInvocation(delivery: Delivery, harness: HarnessAd
     const humanInitiator = humanInitiatorFromDelivery(delivery);
     const clientIdentity = clientIdentitySidecarFields(delivery, humanInitiator, ownTenantId);
     const consoleHuman = authenticatedConsoleDelivery(delivery);
-    // A human who already drives the TUI talks to ONE agent (the live shared session); other humans stay isolated.
-    if (humanInSharedSession(humanInitiator, ownTenantId)) {
+    // Who already drives the TUI (or DMs the alias's own allowlisted bot) talks to ONE agent; other humans stay isolated.
+    const canonicalOpenClaw = harness.routesHumansToCanonicalOpenClaw;
+    if (humanInSharedSession(humanInitiator, ownTenantId, process.env.CAUCE_SHARED_SESSION === "1" || canonicalOpenClaw)
+      || (canonicalOpenClaw && humanInitiator === undefined && ownTelegramDirectMessage(delivery, ownTenantId))) {
       const lane = "human";
       const session: HarnessSessionRequestScope = { sessionKey: `shared:${delivery.recipient_alias}`, sessionLane: lane };
       const reservation = harness.reserveSession(session.sessionKey, lane);
