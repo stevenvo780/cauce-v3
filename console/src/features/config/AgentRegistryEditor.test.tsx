@@ -212,3 +212,44 @@ it('does not enable apply when the server preview omits the exact receipt', asyn
   expect(screen.queryByLabelText('Preview del registro de agente')).not.toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Aplicar cambio' })).toBeDisabled();
 });
+
+it('deletes an unmanaged registry row only after its exact preview and keeps the durable reread notice', async () => {
+  let current = snapshot; const changes: ChangeBody[] = [];
+  server.use(registryAccess(), http.get('http://localhost/v3/console/config', () => HttpResponse.json(current)),
+    http.post('http://localhost/v3/console/config/changes', async ({ request }) => {
+      const body = await request.json() as ChangeBody; changes.push(body);
+      if (!body.dry_run) current = { ...snapshot, revision: 5, agents: [] };
+      return HttpResponse.json({ ...receipt(body, !body.dry_run, body.dry_run ? 4 : 5),
+        inverse_mutation: { resource: 'agent', action: 'create', tenant_id: 'A', alias: 'one', value: { display_name: 'Agente uno', enabled: false } },
+      }, { status: body.dry_run ? 200 : 201 });
+    }));
+  const user = userEvent.setup(); renderSettings(); await user.click(await screen.findByRole('button', { name: 'Editar registro de A/one' }));
+  await user.click(screen.getByRole('button', { name: 'Eliminar registro' }));
+  const apply = screen.getByRole('button', { name: 'Confirmar eliminación del registro' }); expect(apply).toBeDisabled();
+  await user.click(screen.getByRole('button', { name: 'Previsualizar eliminación' }));
+  await waitFor(() => { expect(apply).toBeEnabled(); }); await user.click(apply);
+  expect(await screen.findByRole('status')).toHaveTextContent('Registro de A/one eliminado en revisión 5');
+  expect(screen.queryByRole('button', { name: 'Editar registro de A/one' })).not.toBeInTheDocument();
+  expect(changes).toEqual([
+    { expected_revision: 4, dry_run: true, mutation: { resource: 'agent', action: 'delete', tenant_id: 'A', alias: 'one' } },
+    { expected_revision: 4, dry_run: false, mutation: { resource: 'agent', action: 'delete', tenant_id: 'A', alias: 'one' } },
+  ]);
+});
+
+it('leaves operational registry removal with the lifecycle assistant', async () => {
+  server.use(registryAccess()); const user = userEvent.setup(); renderSettings({ ...snapshot, agents: [{ ...fullAgent, runtime_key: 'runtime-one' }] });
+  await user.click(await screen.findByRole('button', { name: 'Editar registro de A/one' }));
+  expect(screen.queryByRole('button', { name: 'Eliminar registro' })).not.toBeInTheDocument();
+  expect(screen.getByText(/La retirada de un agente operativo se realiza en «Operar agente»/)).toBeInTheDocument();
+});
+
+it.each([403, 409])('does not confirm registry deletion when preview is rejected with %i', async status => {
+  const changes: ChangeBody[] = []; server.use(registryAccess(),
+    http.post('http://localhost/v3/console/config/changes', async ({ request }) => {
+      changes.push(await request.json() as ChangeBody); return HttpResponse.json({ error: status === 403 ? 'forbidden' : 'conflict', message: 'registry removal denied by authority or dependencies' }, { status });
+    }));
+  const user = userEvent.setup(); renderSettings(); await user.click(await screen.findByRole('button', { name: 'Editar registro de A/one' }));
+  await user.click(screen.getByRole('button', { name: 'Eliminar registro' })); await user.click(screen.getByRole('button', { name: 'Previsualizar eliminación' }));
+  await screen.findByRole('alert'); expect(screen.getByRole('button', { name: 'Confirmar eliminación del registro' })).toBeDisabled();
+  expect(changes).toHaveLength(1); expect(changes[0]?.dry_run).toBe(true);
+});

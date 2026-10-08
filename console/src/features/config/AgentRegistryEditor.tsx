@@ -3,7 +3,7 @@ import { useApi } from '../../api/context';
 import { useConsoleAccess } from '../../api/console-access';
 import type { ConfigMutation, ConfigurationSnapshot } from '../../api/types';
 import type { Resource } from '../../api/use-resource';
-import { useConfigMutation, useRevisionEncadenada, type ConfigMutationRunner } from './use-config-mutation';
+import { useConfigMutation, useRevisionEncadenada, type ConfigMutationNotice, type ConfigMutationRunner } from './use-config-mutation';
 import './AgentRegistryEditor.css';
 
 type AgentRow = Record<string, unknown> & { tenant_id: string; alias: string };
@@ -61,9 +61,10 @@ function buildMutation(agent: AgentRow, draft: Draft): { mutation?: ConfigMutati
   };
 }
 
-export function AgentRegistryEditor({ tenantId, alias, snapshot, onReloaded }: {
+export function AgentRegistryEditor({ tenantId, alias, snapshot, onReloaded, onDeleted }: {
   tenantId: string; alias: string; snapshot: ConfigurationSnapshot;
   onReloaded: (snapshot: ConfigurationSnapshot) => void;
+  onDeleted?: (notice: ConfigMutationNotice) => void;
 }) {
   const api = useApi();
   const access = useConsoleAccess();
@@ -95,34 +96,41 @@ export function AgentRegistryEditor({ tenantId, alias, snapshot, onReloaded }: {
       aria-label={`${open ? 'Cerrar' : 'Editar'} registro de ${tenantId}/${alias}`}
       onClick={() => { setOpen((value) => !value); runner.clear(); }}
     >{open ? 'Cerrar registro' : 'Editar registro'}</button>
-    {open ? <AgentRegistryForm agent={agent as AgentRow} runner={runner} onClose={() => { setOpen(false); runner.clear(); }} /> : null}
+    {open ? <AgentRegistryForm agent={agent as AgentRow} runner={runner} onDeleted={onDeleted}
+      onClose={() => { setOpen(false); runner.clear(); }} /> : null}
   </div>;
 }
 
 function AgentRegistryForm({
-  agent, runner, onClose,
+  agent, runner, onClose, onDeleted,
 }: {
   agent: AgentRow;
   runner: ConfigMutationRunner;
   onClose: () => void;
+  onDeleted?: ((notice: ConfigMutationNotice) => void) | undefined;
 }) {
   const [draft, setDraft] = useState(() => initialDraft(agent));
   const [formError, setFormError] = useState<string>();
   const [serverRefreshNotice, setServerRefreshNotice] = useState<string>();
+  const [deleting, setDeleting] = useState(false);
   const agentVersion = JSON.stringify([
     agent.harness_id, agent.display_name, agent.enabled, agent.max_concurrent_deliveries,
-    agent.container_name, agent.runtime_user, agent.home_directory, agent.state_directory,
+    agent.container_name, agent.runtime_user, agent.home_directory, agent.state_directory, agent.runtime_key,
   ]);
   const previousAgentVersion = useRef(agentVersion);
   const built = useMemo(() => buildMutation(agent, draft), [agent, draft]);
   const mutation = built.mutation;
   const disabled = !runner.canWrite || runner.busy;
+  const editDisabled = disabled || deleting;
+  const canDelete = agent.runtime_key === undefined || agent.runtime_key === null;
+  const deletion: ConfigMutation = { resource: 'agent', action: 'delete', tenant_id: agent.tenant_id, alias: agent.alias };
 
   useEffect(() => {
     if (previousAgentVersion.current === agentVersion) return;
     previousAgentVersion.current = agentVersion;
     setDraft(initialDraft(agent));
     setFormError(undefined);
+    setDeleting(false);
     setServerRefreshNotice('El registro cambió en el servidor. Se descartó el borrador y se cargaron los valores actuales; revísalos antes de previsualizar.');
   }, [agent, agentVersion]);
 
@@ -152,6 +160,22 @@ function AgentRegistryForm({
     await runner.run(mutation, false);
   }
 
+  async function remove(dryRun: boolean) {
+    if (!canDelete || disabled || (!dryRun && !runner.isValidated(deletion))) return;
+    setFormError(undefined);
+    if (dryRun) { await runner.run(deletion, true); return; }
+    const outcome = await runner.change(deletion, false);
+    runner.clear();
+    if (!outcome.ok) { runner.informar({ text: outcome.message, tone: 'error' }); return; }
+    const reread = outcome.recarga?.releido === true ? outcome.recarga : undefined;
+    const notice: ConfigMutationNotice = {
+      text: `Registro de ${agent.tenant_id}/${agent.alias} eliminado en revisión ${String(outcome.result.revision)}.`
+        + (reread ? ` Inventario releído en revisión ${String(reread.revision)}.` : ' La relectura no quedó acreditada; actualiza el inventario antes de seguir.'),
+      tone: reread ? 'success' : 'parcial',
+    };
+    runner.informar(notice); onDeleted?.(notice);
+  }
+
   const originalName = typeof agent.display_name === 'string' ? agent.display_name : '';
   return <section className="settings-context" aria-label={`Registro de ${agent.tenant_id}/${agent.alias}`}>
     <div className="settings-context-heading">
@@ -164,10 +188,10 @@ function AgentRegistryForm({
     <div className="config-form agent-registry-form">
       <label>Nombre visible
         <input maxLength={128} value={draft.displayName}
-          onChange={(event) => { update({ displayName: event.target.value }); }} disabled={disabled} />
+          onChange={(event) => { update({ displayName: event.target.value }); }} disabled={editDisabled} />
       </label>
       <label>Estado del registro
-        <select value={draft.enabled} onChange={(event) => { update({ enabled: event.target.value }); }} disabled={disabled}>
+        <select value={draft.enabled} onChange={(event) => { update({ enabled: event.target.value }); }} disabled={editDisabled}>
           <option value="">Sin cambios</option>
           <option value="true" disabled>Habilitado (requiere operación verificada)</option>
           <option value="false">Pausar admisión de entregas</option>
@@ -175,10 +199,10 @@ function AgentRegistryForm({
       </label>
       <label>Máximo de entregas concurrentes
         <input type="number" min={1} max={100} step={1} value={draft.capacity}
-          onChange={(event) => { update({ capacity: event.target.value, noCapacityLimit: false }); }} disabled={disabled} />
+          onChange={(event) => { update({ capacity: event.target.value, noCapacityLimit: false }); }} disabled={editDisabled} />
       </label>
       <label className="casilla agent-registry-checkbox"><input type="checkbox" checked={draft.noCapacityLimit}
-        onChange={(event) => { update({ noCapacityLimit: event.target.checked, ...(event.target.checked ? { capacity: '' } : {}) }); }} disabled={disabled} />
+        onChange={(event) => { update({ noCapacityLimit: event.target.checked, ...(event.target.checked ? { capacity: '' } : {}) }); }} disabled={editDisabled} />
         Sin límite (enviar null)
       </label>
       <p className="settings-source">La ubicación, el arnés y la cuenta principal se cambian en «Operar agente».
@@ -190,15 +214,29 @@ function AgentRegistryForm({
     <div className="settings-context-heading">
       <span>Revisión esperada: {String(runner.expectedRevision ?? 'desconocida')}</span>
       <div>
-        <button type="button" className="button secondary" onClick={() => { void preview(); }} disabled={disabled}>
+        <button type="button" className="button secondary" onClick={() => { void preview(); }} disabled={disabled || deleting}>
           Previsualizar cambio
         </button>{' '}
         <button type="button" className="button primary" onClick={() => { void apply(); }}
-          disabled={disabled || !mutation || !runner.isValidated(mutation)}>
+          disabled={disabled || deleting || !mutation || !runner.isValidated(mutation)}>
           Aplicar cambio
         </button>
       </div>
     </div>
+    {canDelete ? <button type="button" className="button secondary" disabled={disabled || deleting}
+      onClick={() => { setDeleting(true); runner.clear(); setFormError(undefined); }}>Eliminar registro</button>
+      : <p className="settings-source">La retirada de un agente operativo se realiza en «Operar agente».</p>}
+    {deleting && canDelete ? <form className="config-form" aria-label={`Eliminar registro de ${agent.tenant_id}/${agent.alias}`}
+      onSubmit={(event) => { event.preventDefault(); void remove(true); }}>
+      <p>Eliminar este registro requiere comprobar sus dependencias. Previsualiza antes de confirmar.</p>
+      <div className="config-actions">
+        <button type="submit" className="button secondary" disabled={disabled}>Previsualizar eliminación</button>
+        <button type="button" className="button primary" disabled={disabled || !runner.isValidated(deletion)}
+          onClick={() => { void remove(false); }}>Confirmar eliminación del registro</button>
+        <button type="button" className="button secondary" disabled={runner.busy}
+          onClick={() => { setDeleting(false); runner.clear(); }}>Cancelar eliminación</button>
+      </div>
+    </form> : null}
     {runner.preview ? <pre className="config-preview" aria-label="Preview del registro de agente">{runner.preview}</pre> : null}
     {originalName && draft.displayName.trim() === '' ? <p className="settings-source">Nombre actual «{originalName}»; vacío lo quita del registro.</p> : null}
   </section>;

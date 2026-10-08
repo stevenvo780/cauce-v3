@@ -66,7 +66,7 @@ export async function assertAgentRegistryGeometry(page: BrowserPage, evidenceDir
       expect(item.control.left).toBeGreaterThanOrEqual(item.label.left - 0.5);
       expect(item.control.right).toBeLessThanOrEqual(item.label.right + 0.5);
     }
-    expect(geometry.checkboxes).toHaveLength(3);
+    expect(geometry.checkboxes).toHaveLength(1);
     for (const item of geometry.checkboxes) {
       expect(item.label).not.toBeNull();
       if (item.label === null) throw new Error('Una casilla no tiene etiqueta contenedora.');

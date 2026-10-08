@@ -6,6 +6,7 @@ import { AgentRegistryEditor } from './AgentRegistryEditor';
 import { AgentRegistryCreate } from './AgentRegistryCreate';
 import { AgentLifecyclePanel } from './AgentLifecyclePanel';
 import { filterSettingsAgents, settingsAgents } from './settings-model';
+import type { ConfigMutationNotice } from './use-config-mutation';
 const PAGE_SIZE = 6;
 export function AgentSettings({ snapshot }: { snapshot: ConfigurationSnapshot }) {
   const [query, setQuery] = useState('');
@@ -14,6 +15,7 @@ export function AgentSettings({ snapshot }: { snapshot: ConfigurationSnapshot })
   const [dirty, setDirty] = useState(false);
   const [reloadedSnapshot, setReloadedSnapshot] = useState<ConfigurationSnapshot>();
   const [createOpen, setCreateOpen] = useState(false);
+  const [registryNotice, setRegistryNotice] = useState<ConfigMutationNotice>();
   const heading = useRef<HTMLHeadingElement>(null);
   const createTrigger = useRef<HTMLButtonElement>(null);
   const searchInput = useRef<HTMLInputElement>(null);
@@ -56,6 +58,10 @@ export function AgentSettings({ snapshot }: { snapshot: ConfigurationSnapshot })
       </button>
     </div> : null}
     <Panel title="Agentes y contexto" subtitle="Identidad, grupos y responsabilidad en un solo lugar.">
+      {registryNotice ? <p className={`notice ${registryNotice.tone}`} role={registryNotice.tone === 'success' ? 'status' : 'alert'}>
+        {registryNotice.text}
+        <button type="button" className="button small" onClick={() => { setRegistryNotice(undefined); }}>Cerrar aviso del registro</button>
+      </p> : null}
       <div className="settings-toolbar">
         <button ref={createTrigger} type="button" className="button secondary" onClick={() => { setCreateOpen(true); }}>Añadir agente</button>
         <AgentLifecyclePanel snapshot={activeSnapshot} onReloaded={setReloadedSnapshot} />
@@ -103,7 +109,7 @@ export function AgentSettings({ snapshot }: { snapshot: ConfigurationSnapshot })
               {agent.registered ? <AgentLifecyclePanel snapshot={activeSnapshot} onReloaded={setReloadedSnapshot}
                 target={{ resource: 'agent', tenant_id: agent.tenantId, alias: agent.alias }} /> : null}
               {agent.registered ? <AgentRegistryEditor key={agent.key} snapshot={activeSnapshot} onReloaded={setReloadedSnapshot}
-                tenantId={agent.tenantId} alias={agent.alias} /> : null}
+                tenantId={agent.tenantId} alias={agent.alias} onDeleted={setRegistryNotice} /> : null}
             </li>)}
           </ul>}
       {visible.length > PAGE_SIZE ? <nav className="settings-pagination" aria-label="Páginas de agentes">
