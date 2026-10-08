@@ -77,18 +77,19 @@ function signedAccess(grant: OAuthGrantRow, issuer: string, resource: string,
   return issued;
 }
 
-async function recordAccess(client: DatabaseClient, grant: OAuthGrantRow, issued: OAuthIssuedToken): Promise<OAuthTokenGrant> {
+async function recordAccess(client: DatabaseClient, grant: OAuthGrantRow, issued: OAuthIssuedToken,
+  refreshToken = randomBytes(32).toString('base64url'), createRefresh = true): Promise<OAuthTokenGrant> {
   await client.query(
     'INSERT INTO cauce_oauth_tokens (id,grant_id,expires_at) VALUES ($1,$2,$3)',
     [issued.identity.tokenId, grant.id, new Date(issued.identity.expiresAt * 1000)],
   );
-  // El refresh token vive lo mismo que el grant y sólo se guarda su hash; rota en cada uso.
-  const refreshToken = randomBytes(32).toString('base64url');
-  const stored = await client.query(
+  if (createRefresh) {
+    const stored = await client.query(
     `INSERT INTO cauce_oauth_refresh_tokens (token_hash,grant_id,expires_at)
      SELECT $1,$2,$3 WHERE $3::timestamptz>clock_timestamp()`, [secretHash(refreshToken), grant.id, grant.expires_at],
   );
-  if (stored.rowCount !== 1) throw new OAuthError('invalid_grant');
+    if (stored.rowCount !== 1) throw new OAuthError('invalid_grant');
+  }
   await client.query(PURGE_EXPIRED.tokens);
   await client.query(PURGE_EXPIRED.refresh);
   await requireOAuthExpiry(client, new Date(Math.min(grant.expires_at.getTime(), issued.identity.expiresAt * 1000)));
@@ -100,12 +101,11 @@ async function revokeGrant(client: DatabaseClient, grantId: string): Promise<voi
   await client.query('INSERT INTO cauce_oauth_grant_revocations (grant_id) VALUES ($1) ON CONFLICT (grant_id) DO NOTHING', [grantId]);
 }
 
-// Un refresh recién rotado que vuelve dentro de esta ventana es el SDK MCP refrescando en paralelo o reintentando
-// una respuesta perdida: se rechaza sin revocar. Pasada la ventana, la reutilización revoca el grant entero.
+// Recovery is bounded to the existing grace window and an unconsumed durable successor.
 const REFRESH_REUSE_GRACE = "interval '60 seconds'";
 
 /** Vida del grant desde el consentimiento; el refresh nunca la alarga. */
-export const OAUTH_GRANT_TTL_SECONDS = Object.freeze({ default: 28_800, min: 300, max: 2_592_000 });
+export const OAUTH_GRANT_TTL_SECONDS = Object.freeze({ default: 2_592_000, min: 300, max: 2_592_000 });
 
 export class PostgresOAuthStore implements OAuthStore {
   readonly issuer: string;
@@ -113,7 +113,7 @@ export class PostgresOAuthStore implements OAuthStore {
   private readonly grantTtlSeconds: number;
 
   constructor(private readonly pool: DatabasePool, issuer: string, private readonly verifyCredentialStamp: ConsoleCredentialStampVerifier,
-    options: { grantTtlSeconds?: number } = {}) {
+    private readonly options: { grantTtlSeconds?: number; refreshSuccessor?: (tokenHash: string, grantId: string) => string } = {}) {
     this.issuer = oauthOrigin(issuer);
     this.resource = `${this.issuer}/mcp`;
     this.grantTtlSeconds = options.grantTtlSeconds ?? OAUTH_GRANT_TTL_SECONDS.default;
@@ -247,31 +247,42 @@ export class PostgresOAuthStore implements OAuthStore {
          WHERE r.token_hash=$1 AND g.issuer=$2 AND g.resource=$3`, [input.tokenHash, this.issuer, this.resource],
       )).rows[0];
       if (!lookup || input.resource !== this.resource || lookup.client_id !== input.clientId) throw new OAuthError('invalid_grant');
-      if (lookup.consumed) {
-        if (lookup.recent) throw new OAuthError('invalid_grant');
+      if (lookup.consumed && !lookup.recent) {
         await revokeGrant(client, lookup.grant_id); return undefined;
       }
       const grant = await lockOAuthGrant(client, lookup.grant_id, this.issuer, this.resource, lookup.human_id, this.verifyCredentialStamp);
-      const token = (await client.query<{ consumed: boolean; recent: boolean; live: boolean }>(
+      const token = (await client.query<{ consumed: boolean; recent: boolean; live: boolean; recovery_expires_at: Date | null }>(
         `SELECT consumed_at IS NOT NULL AS consumed,COALESCE(consumed_at>clock_timestamp()-${REFRESH_REUSE_GRACE},false) AS recent,
-           expires_at>clock_timestamp() AS live
+           expires_at>clock_timestamp() AS live,consumed_at+${REFRESH_REUSE_GRACE} AS recovery_expires_at
          FROM cauce_oauth_refresh_tokens WHERE token_hash=$1 AND grant_id=$2 FOR UPDATE`, [input.tokenHash, grant.id],
       )).rows[0];
-      // Quien esperaba este FOR UPDATE tras el COMMIT del ganador es el refresh concurrente: dentro de la gracia.
-      if (token?.consumed) {
-        if (token.recent) throw new OAuthError('invalid_grant');
+      if (token?.consumed && !token.recent) {
         await revokeGrant(client, grant.id); return undefined;
       }
       if (!token?.live) throw new OAuthError('invalid_grant');
       if (input.scopes !== undefined && (input.scopes.length !== grant.scopes.length
           || input.scopes.some((scope) => !grant.scopes.includes(scope)))) throw new OAuthError('invalid_scope');
+      const successor = this.options.refreshSuccessor?.(input.tokenHash, grant.id);
+      if (successor !== undefined && !/^[A-Za-z0-9_-]{43}$/u.test(successor)) throw new OAuthError('invalid_grant');
+      if (token.consumed) {
+        if (!successor || !token.recovery_expires_at) throw new OAuthError('invalid_grant');
+        const reusable = await client.query(
+          `SELECT token_hash FROM cauce_oauth_refresh_tokens WHERE token_hash=$1 AND grant_id=$2
+           AND consumed_at IS NULL AND expires_at>clock_timestamp() FOR SHARE`, [secretHash(successor), grant.id],
+        );
+        if (reusable.rowCount !== 1) throw new OAuthError('invalid_grant');
+        await requireOAuthExpiry(client, token.recovery_expires_at);
+        const recovered = await recordAccess(client, grant, signedAccess(grant, this.issuer, this.resource, issue), successor, false);
+        await requireOAuthExpiry(client, token.recovery_expires_at);
+        return recovered;
+      }
       const issued = signedAccess(grant, this.issuer, this.resource, issue);
       const consumed = await client.query(
         `UPDATE cauce_oauth_refresh_tokens SET consumed_at=clock_timestamp() WHERE token_hash=$1
          AND consumed_at IS NULL AND expires_at>clock_timestamp() RETURNING token_hash`, [input.tokenHash],
       );
       if (consumed.rowCount !== 1) throw new OAuthError('invalid_grant');
-      return recordAccess(client, grant, issued);
+      return recordAccess(client, grant, issued, successor);
     });
     if (!result) throw new OAuthError('invalid_grant');
     return result;
