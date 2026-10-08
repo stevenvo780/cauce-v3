@@ -61,15 +61,22 @@ interface HistoryRead {
   unresolved: number;
   complete: boolean;
   missingSince?: number;
+  openReads?: number;
+  nextAt?: number;
 }
+
+/** Older roots back off instead of polling forever: open chains after four reads, failures from the first. */
+const backoff = (step: number) => Date.now() + Math.min(60_000, 2_500 * 2 ** step);
 
 function afterRead(previous: HistoryRead, reply: CanonicalReply): HistoryRead {
   const terminal = ['done', 'failed', 'dead'].includes(reply.status ?? '');
   const missing = reply.status === 'done' && reply.chainOpen !== true && !reply.reply?.trim() && !reply.replyAttachments?.length;
   const unresolved = reply.chainOpen === false && !terminal ? previous.unresolved + 1 : 0;
   const ongoing = reply.chainOpen === true || (reply.chainOpen !== false && ['pending', 'leased', 'accepted', 'started', 'retry'].includes(reply.status ?? ''));
-  return { failures: 0, unresolved, complete: !ongoing && !missing && !(reply.chainOpen === false && !terminal && unresolved < 3),
-    ...(missing ? { missingSince: previous.missingSince ?? Date.now() } : {}) };
+  const openReads = ongoing ? (previous.openReads ?? 0) + 1 : 0;
+  return { failures: 0, unresolved, openReads, complete: !ongoing && !missing && !(reply.chainOpen === false && !terminal && unresolved < 3),
+    ...(missing ? { missingSince: previous.missingSince ?? Date.now() } : {}),
+    ...(openReads > 4 ? { nextAt: backoff(openReads - 4) } : {}) };
 }
 
 export function useCanonicalReplyHistory(api: CauceApi, scope: string, input: {
@@ -141,7 +148,7 @@ export function useCanonicalReplyHistory(api: CauceApi, scope: string, input: {
           if (root.messageId === input.root?.messageId && root.deliveryId === input.root.deliveryId) continue;
           const identity = JSON.stringify([scope, root.messageId, root.deliveryId, root.status]);
           const previous = attempts.current.get(identity) ?? { failures: 0, unresolved: 0, complete: false };
-          if (previous.failures >= 3 || previous.complete || (previous.missingSince !== undefined && Date.now() - previous.missingSince >= 120_000)
+          if ((previous.nextAt !== undefined && Date.now() < previous.nextAt) || previous.complete || (previous.missingSince !== undefined && Date.now() - previous.missingSince >= 120_000)
             || replies.some((reply) => reply.messageId === root.messageId && reply.deliveryId === root.deliveryId)) continue;
           const sequence = begin(scope, root).next;
           try {
@@ -154,7 +161,7 @@ export function useCanonicalReplyHistory(api: CauceApi, scope: string, input: {
             remember(scope, reply, sequence);
           } catch (error) {
             const revoked = reject(scope, root, error, sequence);
-            attempts.current.set(identity, { ...previous, failures: previous.failures + 1, complete: revoked });
+            attempts.current.set(identity, { ...previous, failures: previous.failures + 1, complete: revoked, nextAt: backoff(previous.failures) });
           }
         }
       } finally { busy.current = false; }

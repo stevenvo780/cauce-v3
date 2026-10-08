@@ -244,3 +244,32 @@ it.each([0, { kind: 'agent', subject_id: 'human' }, { kind: 'human', subject_id:
     expect(result.current.replies).toEqual([]);
   },
 );
+
+it('espacia las lecturas de una raíz anterior que sigue abierta en vez de sondearla cada 2,5 s', async () => {
+  vi.useFakeTimers();
+  let reads = 0;
+  vi.spyOn(testApi, 'getMessage').mockImplementation(async (id) => {
+    if (id !== 'a') return detail(b);
+    reads += 1;
+    return { ...detail(a, 'parcial'), chain_open: true };
+  });
+  const { unmount } = renderHook(() => useCanonicalReply({ ...input, root: b, roots: [a, b] }), { wrapper });
+  await act(async () => { await vi.advanceTimersByTimeAsync(120_000); });
+  expect(reads).toBeGreaterThan(4);
+  expect(reads).toBeLessThan(15);
+  unmount();
+});
+
+it('reintenta una raíz anterior tras tres fallos transitorios seguidos', async () => {
+  vi.useFakeTimers();
+  let reads = 0;
+  vi.spyOn(testApi, 'getMessage').mockImplementation(async (id) => {
+    if (id !== 'a') return detail(b);
+    if (++reads <= 3) throw new ApiError('gateway caído', 503);
+    return detail(a, 'final tras el corte');
+  });
+  const { result, unmount } = renderHook(() => useCanonicalReply({ ...input, root: b, roots: [a, b] }), { wrapper });
+  await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+  expect(result.current.replies.map((reply) => reply.reply)).toContain('final tras el corte');
+  unmount();
+});
