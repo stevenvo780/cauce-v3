@@ -35,6 +35,18 @@ function barrier() {
 }
 
  describe.sequential('OAuth durable PostgreSQL authority', () => {
+  it('uses separate container-owned databases when external database configuration is inherited', async () => {
+    const first = await database(false);
+    const second = await database(false);
+    const firstName = (await first.query<{ name: string }>('SELECT current_database() AS name')).rows[0]?.name;
+    const secondName = (await second.query<{ name: string }>('SELECT current_database() AS name')).rows[0]?.name;
+    expect(firstName).toMatch(/^cauce_test_oauth_[0-9a-f]{32}$/u);
+    expect(secondName).toMatch(/^cauce_test_oauth_[0-9a-f]{32}$/u);
+    expect(firstName).not.toBe(secondName);
+    await first.query('CREATE TABLE oauth_fixture_isolation_probe (value integer)');
+    expect((await second.query("SELECT to_regclass('oauth_fixture_isolation_probe') AS name")).rows[0]).toEqual({ name: null });
+  });
+
   it('applies four empty tables and its checksum atomically, leaving 044 unchanged', async () => {
     const pool = await database(false);
     const broken = intercept(pool, async sql => sql.includes('CREATE DOMAIN cauce_oauth_scopes') ? `${sql}\nSELECT 1/0;` : undefined);
