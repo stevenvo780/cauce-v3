@@ -3,121 +3,63 @@ import { readFile } from 'node:fs/promises';
 import { requireValue } from './helpers.js';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
-  applyMigrationsThrough, inspectMigrationIntegrity, type DatabasePool,
+  applyMigrationsThrough, inspectMigrationIntegrity, migrationSourcesForApply, type DatabasePool,
 } from '../src/index.js';
 import {
-  resetTestDatabase,
-  startTestDatabaseThrough,
-  type TestDatabase,
+  startTestCaseDatabase, startTestDatabaseThrough,
+  type EmptyTestDatabase, type TestDatabase,
 } from '../../../tests/helpers/postgres.js';
 
-const upPath = new URL('../migrations/031_connection_session_fencing.sql', import.meta.url);
 const downPath = new URL('../migrations/down/031_connection_session_fencing.sql', import.meta.url);
 const version031 = '031_connection_session_fencing.sql';
-const laterVersions = [
-  '032_terminal_session_claim_fencing.sql',
-  '033_terminal_browser_owner_fencing.sql',
-  '034_terminal_relay_instance_fencing.sql',
-  '035_agent_profile_runtime_adoption.sql',
-  '037_console_publish_intent_indexes.sql',
-  '038_cauce_text_items_ok_search_path.sql',
-  '039_secret_handoff.sql',
-  '040_terminal_control_holds.sql',
-  '041_agent_context_revisions.sql',
-  '042_blobs.sql',
-  '043_blob_tenant_entitlements.sql',
-] as const;
-
+const version032 = '032_terminal_session_claim_fencing.sql';
+let appliedThrough: string;
 let database: TestDatabase;
 let databaseStarted = false;
 let pool: DatabasePool;
-let up: string;
+let current: EmptyTestDatabase | undefined;
 let down: string;
-let laterDown: string[];
 
 preparePostgresSuite(import.meta.url, async () => {
-  [up, down, laterDown] = await Promise.all([
-    readFile(upPath, 'utf8'),
-    readFile(downPath, 'utf8'),
-    Promise.all(laterVersions.map((version) => readFile(
-      new URL(`../migrations/down/${version}`, import.meta.url), 'utf8',
-    ))),
-  ]);
-  database = await startTestDatabaseThrough('043_blob_tenant_entitlements.sql');
+  down = await readFile(downPath, 'utf8');
+  database = await startTestDatabaseThrough(version031);
   databaseStarted = true;
-  pool = database.pool;
-  console.info(`[testcontainers] owned schema45-fencing container id=${database.container.getId()}`);
+  console.info(`[testcontainers] owned schema031-fencing container id=${database.container.getId()}`);
 }, 120_000);
 
 afterAll(async () => {
   if (!databaseStarted) return;
-  await pool.end();
+  await database.pool.end();
   await database.container.stop();
 });
 
 beforeEach(async () => {
-  await resetTestDatabase(pool);
-  // Migration 031 can only be rolled back before any later schema. Exercise that real state.
-  await pool.query('TRUNCATE TABLE terminal_sessions CASCADE');
-  for (let index = laterVersions.length - 1; index >= 0; index -= 1) {
-    const version = requireValue(laterVersions[index], 'laterVersions');
-    const recorded = await pool.query(
-      'SELECT 1 FROM schema_migrations WHERE version=$1', [version],
-    );
-    if (recorded.rowCount === 1) {
-      await pool.query(requireValue(laterDown[index], 'laterDown'));
-      await pool.query('DELETE FROM schema_migrations WHERE version=$1', [version]);
-    }
-  }
+  current = await startTestCaseDatabase(database);
+  pool = current.pool;
+  appliedThrough = version031;
 });
 
 afterEach(async () => {
-  if (!databaseStarted) return;
-  await pool.query(`DELETE FROM schema_migrations WHERE version='999_future.sql'`);
-  const tokenColumn = await pool.query<{ exists: boolean }>(
-    `SELECT EXISTS(
-       SELECT 1 FROM information_schema.columns
-        WHERE table_schema='public' AND table_name='connection_leases'
-          AND column_name='connection_token'
-     ) AS exists`,
-  );
-  // Rebuild through the canonical migrator so the DDL, schema_migrations and atomic source
-  // ledger are restored as one contract. Manual up+INSERT here used to leave later migrations
-  // without their source hashes, contaminating a reusable cauce_test database after a green run.
-  if (tokenColumn.rows[0]?.exists === true) {
-    await pool.query(down);
-  } else {
-    await pool.query('DELETE FROM schema_migrations WHERE version=$1', [version031]);
-  }
-  await applyMigrationsThrough(pool, '043_blob_tenant_entitlements.sql');
-  const client = await pool.connect();
+  if (!current) return;
   try {
-    const integrity = await inspectMigrationIntegrity(client);
-    const latest = integrity.entries.filter((entry) => (
-      entry.version >= version031
-    ));
-    const expectedVersions = [version031, ...laterVersions];
-    const pendingVersions = [
-      '044_human_mcp_identity.sql',
-      '045_mcp_oauth_authorization.sql',
-      '046_human_client_provenance.sql',
-    ];
-    expect(latest.map((entry) => entry.version)).toEqual([...expectedVersions, ...pendingVersions]);
-    for (const version of expectedVersions) {
-      expect(latest.find((entry) => entry.version === version)).toMatchObject({
-        version,
-        applied: true,
-        sourceOrigin: 'applied-atomically',
-        verificationMethod: 'atomic-ledger-v1',
-      });
-    }
-    for (const version of pendingVersions) {
-      expect(integrity.entries.find((entry) => entry.version === version)).toMatchObject({
-        version, applied: false, sourceOrigin: 'pending', verificationMethod: 'not-applied',
-      });
+    const client = await pool.connect();
+    try {
+      const integrity = await inspectMigrationIntegrity(client);
+      const sources = await migrationSourcesForApply();
+      for (const source of sources) {
+        const applied = source.version <= appliedThrough;
+        expect(integrity.entries.find((entry) => entry.version === source.version)).toMatchObject({
+          version: source.version, applied,
+          sourceOrigin: applied ? 'applied-atomically' : 'pending',
+          verificationMethod: applied ? 'atomic-ledger-v1' : 'not-applied',
+        });
+      }
+    } finally {
+      client.release();
     }
   } finally {
-    client.release();
+    await current.close();
+    current = undefined;
   }
 });
 
@@ -174,10 +116,7 @@ describe('migration 031 connection session fencing', () => {
     expect(absent.rows[0]?.exists).toBe(false);
 
     await seedLegacyLease('pre-031');
-    await pool.query(up);
-    await pool.query(
-      `INSERT INTO schema_migrations(version) VALUES($1) ON CONFLICT DO NOTHING`, [version031],
-    );
+    await applyMigrationsThrough(pool, version031);
     const restored = await pool.query<{ token_present: boolean }>(
       `SELECT connection_token IS NOT NULL AS token_present
          FROM connection_leases WHERE tenant_id='Steven' AND alias='pre-031'`,
@@ -186,9 +125,9 @@ describe('migration 031 connection session fencing', () => {
   });
 
   it('refuses downgrade while a later migration is recorded and leaves schema intact', async () => {
-    await pool.query(
-      `INSERT INTO schema_migrations(version) VALUES('999_future.sql') ON CONFLICT DO NOTHING`,
-    );
+    await applyMigrationsThrough(pool, version032);
+    appliedThrough = version032;
+    const before = await pool.query('SELECT version FROM schema_migrations ORDER BY version');
     await expect(pool.query(down)).rejects.toThrow(/later migration/u);
     const stillPresent = await pool.query<{ exists: boolean }>(
       `SELECT EXISTS(
@@ -198,5 +137,6 @@ describe('migration 031 connection session fencing', () => {
        ) AS exists`,
     );
     expect(stillPresent.rows[0]?.exists).toBe(true);
+    expect((await pool.query('SELECT version FROM schema_migrations ORDER BY version')).rows).toEqual(before.rows);
   });
 });

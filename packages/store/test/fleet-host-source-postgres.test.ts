@@ -46,7 +46,8 @@ describe('host execution snapshot transaction', () => {
     const execution = await source.execution(claim);
     expect(execution.snapshot_revision).toBe(1);
     expect(execution.operation.desired_revision).toBe(1);
-    expect(Object.keys(execution.snapshot).sort()).toEqual(['agents', 'memberships', 'rolePolicies']);
+    expect(Object.keys(execution.snapshot).sort()).toEqual(['agents', 'memberships', 'purgedRuntimeKeys', 'rolePolicies']);
+    expect(execution.snapshot.purgedRuntimeKeys).toEqual([]);
     expect(execution.snapshot.agents).toContainEqual(expect.objectContaining({ tenant_id: 'Isa', alias: 'source_agent', enabled: false,
       runtime_key: 'source-agent', lifecycle_state: 'provisioning' }));
     expect(execution.snapshot.memberships).toContainEqual({ tenant_id: 'Isa', alias: 'source_agent', room_id: 'source-room', role: 'agent', enabled: false });

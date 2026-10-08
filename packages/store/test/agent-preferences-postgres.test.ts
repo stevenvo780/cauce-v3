@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import {
-  AgentAppearanceRevisionError, AgentFavoriteLimitError, AgentPreferencesStore, applyMigrations, CauceRepository,
+  AgentAppearanceRevisionError, AgentFavoriteLimitError, AgentPreferencesStore, applyMigrations, applyMigrationsThrough, CauceRepository,
   StoreError, type AgentAppearanceActor, type DatabasePool,
 } from '../src/index.js';
 import { MAX_AGENT_FAVORITES_PER_HUMAN } from '@cauce/protocol';
@@ -378,7 +378,7 @@ describe('migration 047 rollback on PostgreSQL', () => {
     if (!database) throw new Error('agent preferences PostgreSQL fixture is not running');
     const fresh = await startEmptyTestDatabase(database.url);
     try {
-      await applyMigrations(fresh.pool);
+      await applyMigrationsThrough(fresh.pool, version);
       return await run(fresh.pool);
     } finally {
       await fresh.close();
@@ -406,7 +406,7 @@ describe('migration 047 rollback on PostgreSQL', () => {
       await expect(target.query(down)).rejects.toThrow('populated preference schema cannot be removed');
       for (const table of tables) expect(await relation(target, table)).toBe(table);
       await target.query('DELETE FROM agent_appearances');
-      await target.query("INSERT INTO schema_migrations(version) VALUES('048_fixture_later.sql')");
+      await applyMigrations(target);
       await expect(target.query(down)).rejects.toThrow('cannot downgrade schema 047 while a later migration is present');
       for (const table of tables) expect(await relation(target, table)).toBe(table);
       expect(await recorded(target)).toBe(2);

@@ -12,6 +12,7 @@ const version043 = '043_blob_tenant_entitlements.sql';
 const version044 = '044_human_mcp_identity.sql';
 const version045 = '045_mcp_oauth_authorization.sql';
 const version046 = '046_human_client_provenance.sql';
+const laterVersions = ['047_agent_preferences.sql', '048_ui_fleet_lifecycle.sql', '049_ui_execution_preferences.sql'];
 const provenanceTables = [
   'human_oauth_client_delegations',
   'human_message_client_provenance',
@@ -47,7 +48,9 @@ describe('bounded migration runner', () => {
          JOIN schema_migration_ledger ledger USING(version)
         ORDER BY migration.version`,
     );
-    expect(before.rows.slice(-3).map((row) => row.version)).toEqual([version044, version045, version046]);
+    const sources = await migrationSourcesForApply();
+    expect(before.rows.map((row) => row.version)).toEqual(sources.map((source) => source.version));
+    expect(before.rows.at(-1)?.version).toBe(laterVersions.at(-1));
     const tablesBefore = await pool.query<{ name: string }>(
       `SELECT tablename AS name FROM pg_tables WHERE schemaname='public' ORDER BY tablename`,
     );
@@ -79,7 +82,7 @@ describe('bounded migration runner', () => {
     expect(tablesAfter.rows).toEqual(tablesBefore.rows);
   });
 
-  it('creates only the requested prefix, then default apply adds 044 identity, 045 OAuth, and 046 provenance', async () => {
+  it('creates only the requested prefix, then default apply reaches the latest bundled schema', async () => {
     const historical: EmptyTestDatabase = await startEmptyTestDatabase(database.url);
     try {
       await applyMigrationsThrough(historical.pool, version043);
@@ -87,16 +90,14 @@ describe('bounded migration runner', () => {
       const cutoffIndex = sources.findIndex((migration) => migration.version === version043);
       expect(cutoffIndex).toBeGreaterThanOrEqual(0);
       const prefix = sources.slice(0, cutoffIndex + 1);
-      expect(prefix).toHaveLength(39);
-      expect(sources).toHaveLength(42);
       expect(sources.slice(cutoffIndex + 1).map((migration) => migration.version)).toEqual([
-        version044, version045, version046,
+        version044, version045, version046, ...laterVersions,
       ]);
       const versions = await historical.pool.query<{ version: string }>(
         'SELECT version FROM schema_migrations ORDER BY version',
       );
       expect(versions.rows.at(-1)?.version).toBe(version043);
-      expect(versions.rows.some((row) => row.version === version044)).toBe(false);
+      expect(versions.rows.map((row) => row.version)).toEqual(prefix.map((source) => source.version));
       expect(await relationExists(historical.pool, 'human_tenant_memberships')).toBe(false);
       for (const table of oauthTables) expect(await relationExists(historical.pool, table)).toBe(false);
       for (const table of provenanceTables) expect(await relationExists(historical.pool, table)).toBe(false);
@@ -117,10 +118,11 @@ describe('bounded migration runner', () => {
 
       const finalVersion = await historical.pool.query<{ version: string }>(
         `SELECT version FROM schema_migrations WHERE version=ANY($1::text[]) ORDER BY version`,
-        [[version044, version045, version046]],
+        [[version044, version045, version046, ...laterVersions]],
       );
       expect(finalVersion.rows).toEqual([
         { version: version044 }, { version: version045 }, { version: version046 },
+        ...laterVersions.map((version) => ({ version })),
       ]);
       for (const table of oauthTables) expect(await relationExists(historical.pool, table)).toBe(true);
       for (const table of provenanceTables) expect(await relationExists(historical.pool, table)).toBe(true);
