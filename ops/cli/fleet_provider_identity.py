@@ -82,10 +82,17 @@ def command_output(command: list[str], packet: dict, timeout: int = 30) -> bytes
         "HOME": packet["agent"]["home_directory"],
     }
     binding = packet["profile_binding"]
-    variable = {"codex": "CODEX_HOME", "claude": "CLAUDE_CONFIG_DIR"}.get(binding["provider"])
-    if variable is None:
+    if packet['agent']['harness_id'] == 'openclaw':
+        from fleet_provider_openclaw import environment as openclaw_environment
+        environment.update(openclaw_environment(binding, packet['agent']))
+        environment['OPENCLAW_AUTH_STORE_READONLY'] = '1'
+        variable = None
+    else:
+        variable = {"codex": "CODEX_HOME", "claude": "CLAUDE_CONFIG_DIR"}.get(binding["provider"])
+    if variable is None and packet['agent']['harness_id'] != 'openclaw':
         raise ProviderProofError("provider identity inspection is unavailable")
-    environment[variable] = binding["path"]
+    if variable is not None:
+        environment[variable] = binding["path"]
     process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=environment,
         cwd=packet["agent"]["state_directory"], start_new_session=True)
     selector = selectors.DefaultSelector()
@@ -183,6 +190,9 @@ def codex_identity(packet: dict) -> str:
 
 
 def authenticated_provider(packet: dict) -> bool:
+    if packet['agent']['harness_id'] == 'openclaw':
+        from fleet_provider_openclaw import authenticated_openclaw
+        return authenticated_openclaw(packet)
     provider = packet["profile_binding"]["provider"]
     try:
         command = provider_command(packet)

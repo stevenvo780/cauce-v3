@@ -69,6 +69,18 @@ def provider_environment(policy: dict, agent: dict) -> dict:
     if not isinstance(binding, dict) or binding.get('runtime_user') != agent['runtime_user'] \
             or (agent['runtime_mode'] == 'container' and binding.get('container_name', agent['container_name']) != agent['container_name']):
         raise SafeFailure('runtime provider binding differs from its execution identity')
+    if agent['harness_id'] == 'openclaw':
+        from fleet_provider_openclaw import environment
+        values = environment(binding, agent)
+        driver = binding['openclaw']
+        files = {**binding.get('command_files', {}), binding['command']: binding['command_sha256'],
+            driver['auth_list_source']: driver['auth_list_sha256'], driver['bridge']: driver['bridge_sha256']}
+        if agent['runtime_mode'] == 'native' and (digest(path(driver['node_command'])) != driver['node_command_sha256']
+                or any(digest(path(filename)) != value for filename, value in files.items())):
+            raise SafeFailure('OpenClaw runtime command or bridge pin changed')
+        values.update(CAUCE_HARNESS_COMMAND=driver['node_command'], CAUCE_HARNESS_COMMAND_SHA256=driver['node_command_sha256'],
+            CAUCE_HARNESS_BRIDGE=driver['bridge'], CAUCE_HARNESS_COMMAND_FILES=json.dumps(files, sort_keys=True, separators=(',', ':')))
+        return values
     variable = {'codex': 'CODEX_HOME', 'claude': 'CLAUDE_CONFIG_DIR', 'gemini': 'GEMINI_CLI_HOME'}.get(binding.get('provider'))
     if variable is None:
         raise SafeFailure('runtime provider environment is not approved')
@@ -131,7 +143,7 @@ def sdk_environment(policy: dict, agent: dict, bootstrap: bool, operation_id: st
         values['CAUCE_MODEL_ID'] = model
     effort = agent.get('reasoning_effort')
     if effort is not None:
-        compatible = {'minimal', 'low', 'medium', 'high', 'xhigh', 'max'} if agent['harness_id'] == 'codex' else \
+        compatible = {'minimal', 'low', 'medium', 'high', 'xhigh', 'max'} if agent['harness_id'] in {'codex', 'openclaw'} else \
             {'low', 'medium', 'high', 'xhigh', 'max'} if agent['harness_id'] == 'claude' else set()
         if effort not in compatible or row.get('reasoningEffort') != effort:
             raise SafeFailure('reasoning effort is not approved')
@@ -260,6 +272,8 @@ def stop_native(policy: dict, raw_agent: dict) -> dict:
 
 
 def start(policy: dict, agent: dict, *, bootstrap: bool = True, operation_id: str | None = None) -> dict:
+    from fleet_provider_openclaw import validate_execution_selection
+    validate_execution_selection(agent)
     if agent['runtime_mode'] == 'native':
         return start_native(policy, agent, bootstrap=bootstrap, operation_id=operation_id)
     from fleet_executor_container import start_container

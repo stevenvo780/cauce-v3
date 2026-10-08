@@ -190,6 +190,8 @@ def validate_payload(document) -> dict:
         fields = {'runtime_key', 'harness_id', 'primary_room_id', 'memberships', 'placement'}
         if fields - set(parameters) or set(parameters) - fields - {'display_name', 'primary_account_id', 'model_id', 'reasoning_effort'}:
             raise SafeFailure('request may only contain declarative agent fields')
+        from fleet_provider_openclaw import validate_execution_selection
+        validate_execution_selection(parameters)
         if parameters.get('reasoning_effort') is not None and parameters['reasoning_effort'] not in {'minimal', 'low', 'medium', 'high', 'xhigh', 'max'}:
             raise SafeFailure('unsupported declarative reasoning effort')
         placement = parameters['placement']
@@ -205,6 +207,13 @@ def validate_payload(document) -> dict:
             raise SafeFailure('membership intent must include an unambiguous primary room')
     elif parameters:
         raise SafeFailure('request parameters must be empty')
+    if request['kind'] in {'start', 'restore'}:
+        from fleet_provider_openclaw import validate_execution_selection
+        scoped = document['fenced_targets'] + [target]
+        for agent in document.get('snapshot', {}).get('agents', []):
+            if any(row.get('resource') == 'agent' and row.get('tenant_id') == agent.get('tenant_id')
+                    and row.get('alias') == agent.get('alias') for row in scoped):
+                validate_execution_selection(agent)
     return document
 
 

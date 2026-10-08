@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import pathlib
 import pwd
 import re
 import stat
+import subprocess
+import sys
 
 from fleet_executor_view import open_directory
 
@@ -64,19 +67,28 @@ def prepare_profile(policy: dict, raw_agent: dict):
     from fleet_executor_templates import resolve_profile
     agent = approve_agent(policy, raw_agent)
     account = agent.get('primary_account_id')
-    if account is None or account in policy['profiles']:
+    if account is None:
         return
     binding = resolve_profile(policy, agent)
-    template = next(row for row in policy['profile_templates'] if row['provider'] == binding['provider']
-                    and row['runtime_user'] == agent['runtime_user'])
+    dynamic = account not in policy['profiles']
+    if not dynamic and 'openclaw' not in binding:
+        return
+    template = next((row for row in policy.get('profile_templates', []) if row['provider'] == binding['provider']
+                    and row['runtime_user'] == agent['runtime_user'] and ('openclaw' in row) == ('openclaw' in binding)), None)
+    if dynamic and template is None:
+        raise ValueError('provider profile template is unavailable')
     if agent['runtime_mode'] == 'native':
         from fleet_runtime_materialization import external_directory
-        external_directory(pathlib.Path(template['path_root']))
-        user = pwd.getpwnam(agent['runtime_user'])
-        prepare_empty_profile(template['path_root'], binding['path'], user.pw_uid, user.pw_gid)
+        if dynamic:
+            external_directory(pathlib.Path(template['path_root']))
+            user = pwd.getpwnam(agent['runtime_user'])
+            prepare_empty_profile(template['path_root'], binding['path'], user.pw_uid, user.pw_gid)
+        prepare_openclaw(binding, agent)
         return
     from fleet_executor_container import (
+        DOCKER,
         EXECUTOR_DESTINATION,
+        checked_command,
         docker,
         identity_for,
         inspect_container,
@@ -87,9 +99,30 @@ def prepare_profile(policy: dict, raw_agent: dict):
     validate_container(policy, agent, observed)
     identity = identity_for(agent, observed)
     uid, gid = user_identity(agent, identity)
-    docker('exec', '--user', '0', '--env', 'PYTHONDONTWRITEBYTECODE=1', identity['container_id'], agent['_placement']['python'],
-        f'{EXECUTOR_DESTINATION}/fleet_executor_profiles.py', '--root', template['path_root'], '--profile', binding['path'],
-        '--uid', uid, '--gid', gid, '--initialize-empty')
+    if dynamic:
+        docker('exec', '--user', '0', '--env', 'PYTHONDONTWRITEBYTECODE=1', identity['container_id'], agent['_placement']['python'],
+            f'{EXECUTOR_DESTINATION}/fleet_executor_profiles.py', '--root', template['path_root'], '--profile', binding['path'],
+            '--uid', uid, '--gid', gid, '--initialize-empty')
+    if 'openclaw' in binding:
+        checked_command([DOCKER, 'exec', '-i', '--user', agent['runtime_user'], '--env', 'PYTHONDONTWRITEBYTECODE=1', identity['container_id'],
+            agent['_placement']['python'], f'{EXECUTOR_DESTINATION}/fleet_provider_openclaw.py', '--prepare'],
+            input_data=json.dumps({'profile_binding': binding, 'agent': {key: value for key, value in agent.items() if not key.startswith('_')}}).encode())
+
+
+def prepare_openclaw(binding: dict, agent: dict):
+    if 'openclaw' not in binding:
+        return
+    user = pwd.getpwnam(agent['runtime_user'])
+    command = [str(pathlib.Path(sys.executable).resolve()), str(pathlib.Path(__file__).with_name('fleet_provider_openclaw.py')), '--prepare']
+    if user.pw_uid != os.geteuid():
+        if os.geteuid() != 0:
+            raise ValueError('OpenClaw profile executor differs from the exact runtime owner')
+        command = ['/usr/sbin/runuser', '-u', agent['runtime_user'], '--', *command]
+    packet = {'profile_binding': binding, 'agent': {key: value for key, value in agent.items() if not key.startswith('_')}}
+    result = subprocess.run(command, input=json.dumps(packet).encode(), capture_output=True, timeout=10,
+                            env={'PATH': '/usr/bin:/bin', 'HOME': agent['home_directory'], 'PYTHONDONTWRITEBYTECODE': '1'}, check=False)
+    if result.returncode:
+        raise ValueError('OpenClaw exact private configuration preparation failed')
 
 
 if __name__ == '__main__':

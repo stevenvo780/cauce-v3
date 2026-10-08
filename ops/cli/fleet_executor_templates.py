@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 
 from fleet_executor_policy import SafeFailure, bounded_text, path
@@ -53,7 +54,7 @@ def validate_templates(policy: dict):
         raise SafeFailure('invalid bounded provider profile templates')
     identities = set()
     for row in profiles:
-        if not isinstance(row, dict) or set(row) - {'command_files'} != fields or row['provider'] not in PROVIDERS \
+        if not isinstance(row, dict) or set(row) - {'command_files', 'openclaw'} != fields or row['provider'] not in PROVIDERS \
                 or not isinstance(row['runtime_user'], str) or USER.fullmatch(row['runtime_user']) is None \
                 or not isinstance(row['command_sha256'], str) or HASH.fullmatch(row['command_sha256']) is None:
             raise SafeFailure('invalid approved provider profile template')
@@ -66,7 +67,10 @@ def validate_templates(policy: dict):
             path(filename)
             if not isinstance(fingerprint, str) or HASH.fullmatch(fingerprint) is None:
                 raise SafeFailure('invalid approved provider argument pin')
-        identity = (row['provider'], row['runtime_user'])
+        if 'openclaw' in row:
+            from fleet_provider_openclaw import validate_definition
+            validate_definition(row['openclaw'], row['provider'])
+        identity = (row['provider'], row['runtime_user'], 'openclaw' in row)
         if identity in identities:
             raise SafeFailure('ambiguous approved provider profile template')
         identities.add(identity)
@@ -87,11 +91,13 @@ def resolve_profile(policy: dict, agent: dict) -> dict | None:
         binding = policy['profiles'][account]
         if binding.get('provider') != trusted['provider'] or binding.get('identity') != trusted['external_account_id']:
             raise SafeFailure('static provider binding differs from the current durable account')
+        if (agent['harness_id'] == 'openclaw') != ('openclaw' in binding):
+            raise SafeFailure('static provider driver differs from the requested harness')
         return binding
-    if trusted['provider'] != agent['harness_id']:
+    if agent['harness_id'] != 'openclaw' and trusted['provider'] != agent['harness_id']:
         raise SafeFailure('provider account differs from the requested harness')
     templates = [row for row in policy.get('profile_templates', []) if row['provider'] == trusted['provider']
-                 and row['runtime_user'] == agent['runtime_user']]
+                 and row['runtime_user'] == agent['runtime_user'] and (agent['harness_id'] == 'openclaw') == ('openclaw' in row)]
     if len(templates) != 1:
         raise SafeFailure('provider account has no unique approved profile template')
     template = templates[0]
@@ -105,6 +111,8 @@ def resolve_profile(policy: dict, agent: dict) -> dict | None:
         'command': template['command'], 'command_sha256': template['command_sha256']}
     if 'command_files' in template:
         result['command_files'] = template['command_files']
+    if 'openclaw' in template:
+        result['openclaw'] = dict(template['openclaw'])
     if agent['runtime_mode'] == 'container':
         result['container_name'] = agent['container_name']
     return result
@@ -112,23 +120,38 @@ def resolve_profile(policy: dict, agent: dict) -> dict | None:
 
 def capabilities(policy: dict) -> dict:
     runtimes = []
+    measured = {}
     fields = ('runtime_user', 'systemd_user', 'home_directory', 'state_root')
     for mode, name, candidate in ([('native', None, row) for row in policy['native']] +
             [('container', name, row) for name, row in sorted(policy['containers'].items())] +
             [('container', None, row) for row in policy.get('container_templates', [])]):
         for harness in sorted(policy['bundles']):
-            if harness not in {'codex', 'claude'} or candidate.get('harness_id', harness) != harness:
+            if harness not in {'codex', 'claude', 'openclaw'} or candidate.get('harness_id', harness) != harness:
                 continue
-            templates = [row for row in policy.get('profile_templates', []) if row['provider'] == harness
+            provider = 'codex' if harness == 'openclaw' else harness
+            templates = [row for row in policy.get('profile_templates', []) if row['provider'] == provider
+                and ('openclaw' in row) == (harness == 'openclaw')
                 and row['runtime_user'] == candidate['runtime_user'] and (mode == 'native' or row['path_root'] == candidate.get('profile_root'))]
-            profiles = [row for row in policy['profiles'].values() if row.get('provider') == harness
+            profiles = [row for row in policy['profiles'].values() if row.get('provider') == provider
+                and ('openclaw' in row) == (harness == 'openclaw')
                 and row.get('runtime_user') == candidate['runtime_user'] and row.get('command') and row.get('command_sha256')
                 and (row.get('container_name') == name if mode == 'container' else 'container_name' not in row)]
             if not templates and not profiles:
                 continue
+            if harness == 'openclaw':
+                from fleet_provider_openclaw import measured_definition
+                approved = False
+                for row in templates + profiles:
+                    key = json.dumps(row, sort_keys=True)
+                    if key not in measured:
+                        measured[key] = measured_definition(row)
+                    approved = approved or measured[key]
+                if not approved:
+                    continue
             runtime = {key: candidate.get(key) for key in fields}
-            runtime.update(mode=mode, harness_id=harness, provider=harness,
-                reasoning_efforts=['minimal', 'low', 'medium', 'high', 'xhigh'] if harness == 'codex' else ['low', 'medium', 'high', 'xhigh', 'max'])
+            runtime.update(mode=mode, harness_id=harness, provider=provider,
+                reasoning_efforts=(['minimal', 'low', 'medium', 'high', 'xhigh', 'max'] if harness == 'openclaw' else
+                    ['minimal', 'low', 'medium', 'high', 'xhigh'] if harness == 'codex' else ['low', 'medium', 'high', 'xhigh', 'max']))
             if mode == 'container':
                 runtime['container_name' if name else 'container_prefix'] = name or candidate['prefix']
             runtimes.append(runtime)

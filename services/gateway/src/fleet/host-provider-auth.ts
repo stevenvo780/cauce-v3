@@ -1,3 +1,4 @@
+import { OpenClawDriver, openClawCompatible, openClawLogin } from './host-provider-openclaw.js';
 import { readFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
@@ -24,25 +25,29 @@ const Hash = z.string().regex(/^[0-9a-f]{64}$/u);
 const Text = z.string().min(1).max(4096).refine(value => !/[\p{Cc}]/u.test(value));
 const Provider = z.enum(['codex', 'claude', 'gemini', 'minimax', 'grok', 'feihoa']);
 const Profile = z.object({ provider: Provider, path: LoginPathSchema, identity: Text, runtime_user: User,
-  container_name: Text.optional(), command: LoginPathSchema.optional(), command_sha256: Hash.optional(), command_files: LoginPinsSchema.optional(),
-}).strict().refine(value => (value.command === undefined) === (value.command_sha256 === undefined));
+  container_name: Text.optional(), command: LoginPathSchema.optional(), command_sha256: Hash.optional(), command_files: LoginPinsSchema.optional(), openclaw: OpenClawDriver.optional(),
+}).strict().refine(openClawCompatible).refine(value => (value.command === undefined) === (value.command_sha256 === undefined));
 const Profiles = z.record(Identifier, Profile).refine(value => Object.keys(value).length <= 1000);
 const Template = z.object({ provider: Provider, runtime_user: User, path_root: LoginPathSchema,
-  command: LoginPathSchema, command_sha256: Hash, command_files: LoginPinsSchema.optional() }).strict();
-const Templates = z.array(Template).max(1000).refine(value => new Set(value.map(row => JSON.stringify([row.provider, row.runtime_user]))).size === value.length);
+  command: LoginPathSchema, command_sha256: Hash, command_files: LoginPinsSchema.optional(), openclaw: OpenClawDriver.optional() }).strict().refine(openClawCompatible);
+const Templates = z.array(Template).max(1000).refine(value => new Set(value.map(row => JSON.stringify([row.provider, row.runtime_user, row.openclaw !== undefined]))).size === value.length);
 const Login = z.object({ method: z.enum(['device', 'terminal']), command: LoginCommandSchema, sha256: Hash,
   files: LoginPinsSchema.optional(), env: z.record(z.string().regex(/^[A-Z_][A-Z0-9_]{0,63}$/u), Text).optional() }).strict();
 const Policy = z.object({ schemaVersion: z.literal(1), host_id: Identifier, state_root: LoginPathSchema,
   helper: z.object({ executable: LoginPathSchema, sha256: Hash, files: LoginPinsSchema.optional() }).strict(), profiles: Profiles,
   profile_templates: Templates.optional(),
-  logins: z.partialRecord(z.enum(['codex', 'claude']), Login) }).strict();
+  logins: z.partialRecord(z.enum(['codex', 'claude', 'openclaw']), Login) }).strict();
 const ExecutorPolicy = z.object({ schemaVersion: z.literal(1), host_id: Identifier, profiles: Profiles, profile_templates: Templates.optional() }).loose();
 const Agent = z.object({ tenant_id: Text, alias: Identifier, harness_id: Identifier, host_id: Identifier, runtime_user: User,
   primary_account_id: Identifier, runtime_key: Text, runtime_mode: z.enum(['native', 'container']), container_name: Text,
   home_directory: LoginPathSchema, state_directory: LoginPathSchema }).loose();
 const Binding = z.object({ agent: Agent, profile_binding: Profile, runtime_binding: ContainerLoginBindingSchema.optional() }).strict();
 const Snapshot = z.object({ agents: z.array(z.record(z.string(), z.unknown())), memberships: z.array(z.record(z.string(), z.unknown())),
-  rolePolicies: z.array(z.record(z.string(), z.unknown())) }).strict();
+  rolePolicies: z.array(z.record(z.string(), z.unknown())),
+  purgedRuntimeKeys: z.array(z.string().regex(/^[a-z][a-z0-9-]{0,63}$/u)).max(1000).optional() }).strict().refine(value => {
+  const keys = value.purgedRuntimeKeys ?? [];
+  return new Set(keys).size === keys.length && !value.agents.some(agent => keys.includes(String(agent.runtime_key)));
+});
 const unavailable = () => new ProviderAuthError('HOST_UNAVAILABLE');
 const denied = () => new ProviderAuthError('AUTHORITY_REVOKED');
 export interface HostProviderAuthOptions {
@@ -61,22 +66,24 @@ async function policies(options: HostProviderAuthOptions): Promise<z.infer<typeo
   } catch { throw unavailable(); }
 }
 function selected(policy: z.infer<typeof Policy>, accountId: string, provider: string, identity: string, runtimeUser: string,
-  placement: { runtime_key: unknown; runtime_mode: unknown; container_name: unknown }) {
+  placement: { runtime_key: unknown; runtime_mode: unknown; container_name: unknown }, harness: string) {
   let profile = policy.profiles[accountId];
   if (!profile) {
-    const template = policy.profile_templates?.find(value => value.provider === provider && value.runtime_user === runtimeUser);
+    const template = policy.profile_templates?.find(value => value.provider === provider && value.runtime_user === runtimeUser && (harness === 'openclaw') === (value.openclaw !== undefined));
     const runtime = z.string().regex(/^[a-z][a-z0-9-]{0,63}$/u).safeParse(placement.runtime_key);
     if (!template || !runtime.success || !z.enum(['native', 'container']).safeParse(placement.runtime_mode).success) throw denied();
     profile = Profile.parse({ provider, runtime_user: runtimeUser, identity,
       path: join(template.path_root, runtime.data, createHash('sha256').update(accountId).digest('hex')),
       command: template.command, command_sha256: template.command_sha256,
       ...(template.command_files === undefined ? {} : { command_files: template.command_files }),
+      ...(template.openclaw === undefined ? {} : { openclaw: template.openclaw }),
       ...(placement.runtime_mode === 'container' ? { container_name: Text.parse(placement.container_name) } : {}) });
   }
   if (profile.provider !== provider || profile.identity !== identity || profile.runtime_user !== runtimeUser
-      || (provider !== 'codex' && provider !== 'claude')) throw denied();
-  if (!Object.hasOwn(policy.logins, provider)) throw denied();
-  const login = Login.safeParse(policy.logins[provider]); if (!login.success) throw denied();
+      || (provider !== 'codex' && provider !== 'claude') || (harness === 'openclaw') !== (profile.openclaw !== undefined)) throw denied();
+  const loginKey = harness === 'openclaw' ? 'openclaw' : provider;
+  if (!Object.hasOwn(policy.logins, loginKey)) throw denied();
+  const login = Login.safeParse(policy.logins[loginKey]); if (!login.success) throw denied();
   return { profile, login: login.data };
 }
 function resolver(options: HostProviderAuthOptions): ProviderAuthPolicyResolver {
@@ -86,7 +93,7 @@ function resolver(options: HostProviderAuthOptions): ProviderAuthPolicyResolver 
     const placement = (await client.query<{ runtime_key: string | null; runtime_mode: string | null; container_name: string }>(
       'SELECT runtime_key,runtime_mode,container_name FROM agents WHERE tenant_id=$1 AND alias=$2 FOR SHARE', [agent.tenant_id, agent.alias])).rows[0];
     if (!placement) throw denied();
-    const { profile } = selected(policy, account.id, account.provider, account.external_account_id, agent.runtime_user, placement);
+    const { profile } = selected(policy, account.id, account.provider, account.external_account_id, agent.runtime_user, placement, agent.harness_id);
     if (agent.host_id !== policy.host_id || account.id !== agent.primary_account_id) throw denied();
     await assertProviderAuthSealedScope(client, operation, agent);
     return { provider_id: profile.provider, account_id: account.id, harness_id: agent.harness_id, host_id: policy.host_id,
@@ -134,21 +141,22 @@ async function loginConfiguration(options: HostProviderAuthOptions, execution: F
   const target = Snapshot.parse(execution.snapshot).agents;
   const expected = target.find(value => value.tenant_id === scope.tenant_id && value.alias === scope.alias);
   const agent = Agent.parse(expected);
-  const { profile, login } = selected(policy, scope.account_id, scope.provider_id, scope.expected_external_account_id, scope.runtime_user, agent);
+  const { profile, login } = selected(policy, scope.account_id, scope.provider_id, scope.expected_external_account_id, scope.runtime_user, agent, agent.harness_id);
   const binding = Binding.parse(await queryProviderLoginBinding(options.hostConfig.command, execution, signal));
   for (const key of ['tenant_id', 'alias', 'runtime_key', 'harness_id', 'host_id', 'runtime_mode', 'container_name', 'runtime_user',
     'home_directory', 'state_directory', 'primary_account_id'] as const) if (binding.agent[key] !== agent[key]) throw denied();
   if (!isDeepStrictEqual(binding.profile_binding, profile) || (agent.runtime_mode === 'container') !== (binding.runtime_binding !== undefined)
       || (profile.container_name !== undefined && profile.container_name !== agent.container_name)) throw denied();
-  const profileVariable = profile.provider === 'codex' ? 'CODEX_HOME' : 'CLAUDE_CONFIG_DIR';
+  const projected = agent.harness_id === 'openclaw' ? openClawLogin(profile, agent, login) : { command: login.command, files: login.files,
+    env: { [profile.provider === 'codex' ? 'CODEX_HOME' : 'CLAUDE_CONFIG_DIR']: profile.path } };
   const env = { ...login.env };
-  for (const [key, value] of [['HOME', agent.home_directory], ['PATH', '/usr/bin:/bin'], [profileVariable, profile.path]] as const) {
+  for (const [key, value] of Object.entries({ HOME: agent.home_directory, PATH: '/usr/bin:/bin', ...projected.env })) {
     if (env[key] !== undefined && env[key] !== value) throw denied(); env[key] = value;
   }
-  for (const value of login.command.slice(1)) if (value.startsWith('/') && login.files?.[value] === undefined) throw unavailable();
+  for (const value of projected.command.slice(1)) if (value.startsWith('/') && projected.files?.[value] === undefined) throw unavailable();
   return { python: options.hostConfig.command.python, helper: policy.helper, stateRoot: policy.state_root, method: login.method,
-    packet: { operation_id: scope.operation_id, command: login.command, command_sha256: login.sha256,
-      ...(login.files === undefined ? {} : { command_files: login.files }), runtime_user: agent.runtime_user,
+    packet: { operation_id: scope.operation_id, command: projected.command, command_sha256: login.sha256,
+      ...(projected.files === undefined ? {} : { command_files: projected.files }), runtime_user: agent.runtime_user,
       home: agent.home_directory, cwd: agent.home_directory, env, backend: agent.runtime_mode, state_root: policy.state_root,
       account_scope: scope.account_id, ttl_seconds: 600,
       ...(binding.runtime_binding === undefined ? {} : { container_binding: binding.runtime_binding }) } };
