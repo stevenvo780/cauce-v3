@@ -25,6 +25,8 @@ const runtimeModules = [
   ['adapter CLI runtime', '../packages/adapter-sdk/dist/src/bin/shared.js'],
   ['emission MCP server', '../packages/adapter-sdk/dist/src/sdk/mcp-emission/server.js', 'createEmissionMcpServer'],
   ['gateway', '../services/gateway/dist/app.js'],
+  ['fleet host', '../services/gateway/dist/fleet/main.js', 'runFleetHost'],
+  ['native administration', '../services/gateway/dist/console/native-admin/service.js', 'createNativeAdminService'],
   ['dispatcher', '../services/dispatcher/dist/index.js'],
   ['telegram-bridge', '../services/telegram-bridge/dist/index.js'],
   ['outbox metrics', './outbox-metrics.mjs', 'startOutboxMetrics'],
