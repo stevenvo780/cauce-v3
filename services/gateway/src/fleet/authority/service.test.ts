@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process';
 import { createHash, X509Certificate } from 'node:crypto';
 import { chmod, lstat, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { FleetOperationsRepository, createPool, type DatabasePool, type FleetOperationClaim } from '@cauce/store';
@@ -68,7 +69,7 @@ beforeEach(async () => {
   const policy_file = join(directory, 'policy.json');
   await writeFile(policy_file, JSON.stringify({ version: 1, state_root: state, registries,
     signer: { certificate, key, certificate_sha256: hash(await readFile(certificate)), key_sha256: hash(await readFile(key)) } }), { mode: 0o600 });
-  const executable = join(process.cwd(), 'ops/cli/fleet-authority-issuer.py');
+  const executable = fileURLToPath(new URL('../../../../../ops/cli/fleet-authority-issuer.py', import.meta.url));
   command = { python: '/usr/bin/python3', executable, sha256: hash(await readFile(executable)), policy_file, policy_sha256: hash(await readFile(policy_file)) };
   const service = createFleetAuthorityService(pool, { host_id: 'host-a', command });
   const socket = join(directory, 'host-a.sock'), socketPolicy = { host_id: 'host-a', ownerUid: process.geteuid?.() ?? 0 };

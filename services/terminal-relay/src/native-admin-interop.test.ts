@@ -4,8 +4,9 @@ import { chmodSync, cpSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rm
 import { request } from 'node:https';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
 import type { TLSSocket } from 'node:tls';
+import { fileURLToPath } from 'node:url';
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from 'vitest';
 import { NativeAdminCommandSchema, NativeAdminOutcomeSchema, type NativeAdminCommand, type NativeAdminOutcome, type NativePieceMutation } from '@cauce/protocol';
 import { AgentConnection } from './agent-connection.js';
@@ -33,9 +34,9 @@ for tag, payload in FrameDecoder().feed(sys.stdin.buffer.read()):
 `;
 let material: { directory: string; cert: Buffer; key: Buffer };
 let directory: string; let profile: string; let home: string; let packaged: string;
-let connection: AgentConnection; let port: number; let writes: number; let blocked: boolean; let features: string[];
+let connection: AgentConnection | undefined; let port: number; let writes: number; let blocked: boolean; let features: string[];
 let bundle: Record<string, unknown>;
-let server: ReturnType<typeof createBrowserHttpsServer>;
+let server: ReturnType<typeof createBrowserHttpsServer> | undefined;
 const token = 'native-interop-fixture-token';
 const identity = { generation: 'fixture-generation', container_id: 'fixture-container', writer_instance_id: '00000000-0000-4000-8000-000000000062' };
 const content = '---\nname: native-proof\ndescription: Native interop fixture\n---\nRead carefully.\n';
@@ -64,7 +65,7 @@ beforeEach(async () => {
   directory = mkdtempSync(join(tmpdir(), 'cauce-native-interop-')); home = join(directory, 'home'); profile = join(home, 'account'); packaged = join(directory, 'package');
   mkdirSync(profile, { recursive: true, mode: 0o700 });
   const journal = join(directory, 'journal'); mkdirSync(journal, { mode: 0o700 });
-  cpSync(resolve('ops/pty-agent/cauce_pty_agent'), join(packaged, 'cauce_pty_agent'), { recursive: true, filter: path => !path.includes('__pycache__') });
+  cpSync(fileURLToPath(new URL('../../../ops/pty-agent/cauce_pty_agent', import.meta.url)), join(packaged, 'cauce_pty_agent'), { recursive: true, filter: path => !path.includes('__pycache__') });
   writes = 0; blocked = false;
   const uid = process.geteuid?.(); if (uid === undefined) throw new Error('fixture requires POSIX uid');
   bundle = { tenant_id: 'Steven', alias: 'zeus', alias_key_hex: '00'.repeat(32), harness: 'codex', home,
@@ -75,6 +76,7 @@ beforeEach(async () => {
     writes += 1;
     const output = runAgent(blocked ? 'blocked' : 'ready', frame);
     for (const decoded of new FrameDecoder().push(output)) {
+      if (!connection) throw new Error('fixture connection absent');
       expect(decoded.tag).toBe(FRAME_TAGS.NATIVE_ADMIN_RESULT); connection.handleFrame(decoded, () => Date.now());
     }
     return true;
@@ -83,11 +85,14 @@ beforeEach(async () => {
     features, ...identity }), 'fixture', () => Date.now());
   server = createBrowserHttpsServer({ cert: material.cert, key: material.key, clientCa: material.cert });
   setupGovernanceRelay({ server, agents: { lookup: (tenant, alias) => tenant === 'Steven' && alias === 'zeus' ? connection : undefined }, token: async () => token });
-  await new Promise<void>(resolve => { server.listen(0, '127.0.0.1', resolve); }); port = (server.address() as AddressInfo).port;
+  const listener = server;
+  await new Promise<void>(resolve => { listener.listen(0, '127.0.0.1', resolve); }); port = (listener.address() as AddressInfo).port;
 });
 afterEach(async () => {
-  connection.destroy('fixture_cleanup');
-  await new Promise<void>(resolve => { server.close(() => { resolve(); }); }); rmSync(directory, { recursive: true, force: true });
+  connection?.destroy('fixture_cleanup'); connection = undefined;
+  const listener = server; server = undefined;
+  if (listener?.listening) await new Promise<void>(resolve => { listener.close(() => { resolve(); }); });
+  rmSync(directory, { recursive: true, force: true });
 });
 afterAll(() => { rmSync(material.directory, { recursive: true, force: true }); });
 function call(native: NativeAdminCommand, options: { peer?: boolean; bearer?: string } = {}): Promise<{ status: number; outcome: NativeAdminOutcome }> {
