@@ -226,12 +226,16 @@ SELECT p.tenant_id,
         SELECT d.id                 AS delivery_id,
                d.message_id,
                m.trace_id,
-               m.tenant_id          AS from_tenant,
-               m.actor_alias        AS from_alias,
+               -- La raíz humana lleva el alias LIGADO a la cuenta de consola (Steven→kant), no quien
+               -- delega: atribuirla pintaba a ese alias «Delegando» sin estar haciendo nada.
+               CASE WHEN raiz.humana THEN NULL ELSE m.tenant_id END   AS from_tenant,
+               CASE WHEN raiz.humana THEN NULL ELSE m.actor_alias END AS from_alias,
+               raiz.humana          AS from_human,
                m.lane,
-               -- Sólo el ADAPTADOR (identificador acotado a 64 chars: 'telegram', 'bus').
-               -- conversation_id identifica una conversación ajena y no sale de acá.
-               m.origin->>'adapter' AS origin_adapter,
+               -- Sólo el ADAPTADOR (identificador acotado a 64 chars: 'telegram', 'bus'); en la raíz
+               -- humana sin adaptador, el canal ('console', 'human-mcp'). Nunca conversation_id.
+               CASE WHEN raiz.humana THEN COALESCE(m.origin->>'adapter', m.auth_channel)
+                    ELSE m.origin->>'adapter' END AS origin_adapter,
                m.created_at         AS published_at,
                d.status,
                d.attempt,
@@ -242,6 +246,10 @@ SELECT p.tenant_id,
                last_ack.status      AS last_ack_status
           FROM deliveries d
           JOIN messages m ON m.id = d.message_id
+          CROSS JOIN LATERAL (
+            SELECT EXISTS (SELECT 1 FROM human_message_initiators h
+                            WHERE h.message_id = m.id AND h.root_message_id = m.id) AS humana
+          ) raiz
           LEFT JOIN LATERAL (
             SELECT k.created_at, k.status
               FROM delivery_acks k
