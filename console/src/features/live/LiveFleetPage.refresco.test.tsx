@@ -58,7 +58,7 @@ it('«En pausa» deja de leer la actividad sola, y «Actualizar ahora» sigue le
     await vi.advanceTimersByTimeAsync(30_000);
     expect(lecturas).toBe(antes);
 
-    await user.click(screen.getByRole('button', { name: /actualizar ahora/i }));
+    await user.click(screen.getByRole('button', { name: /^actualizar$/i }));
     await waitFor(() => { expect(lecturas).toBeGreaterThan(antes); });
   } finally { vi.useRealTimers(); }
 });

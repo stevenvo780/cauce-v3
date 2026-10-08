@@ -1,5 +1,3 @@
-import { Menu } from '@base-ui/react/menu';
-import { Check, ChevronDown, Pause, RefreshCw, Timer } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ErrorState, LoadingState } from '../../components/ui';
 import { OrbView } from '../../components/AgentOrb';
@@ -8,7 +6,7 @@ import { cn } from '../../cn';
 import { redirect, useRouteSearch } from '../../router';
 import { useFleet } from '../../shell/fleet-context';
 import { STATE_TONE, TONE_CLASS } from '../../status-tone';
-import { MENU_ITEM, MENU_POPUP } from '../../components/kit';
+import { PageFreshness } from '../../components/PageFreshness';
 import { useAgentPreferences } from '../../components/agent-actions/preferences-context';
 import { OfficeCanvas, type OfficeAgent } from '../office/OfficeCanvas';
 import { OfficeDialog } from '../office/OfficeDialog';
@@ -54,46 +52,6 @@ function usePulses(snapshot: ReturnType<typeof projectLiveFleet>['snapshot']): P
     });
   }, [snapshot]);
   return pulses;
-}
-
-function RefreshInterval({ value, onChange }: { value: number; onChange: (ms: number) => void }) {
-  const current = REFRESH_OPTIONS.find((option) => option.ms === value);
-  const text = current ? (current.ms === 0 ? current.label : `Cada ${current.label}`) : `Cada ${String(value / 1000)} s`;
-  return (
-    <Menu.Root>
-      <Menu.Trigger
-        aria-label={`Frecuencia de lectura: ${text.toLowerCase()}`}
-        title="Cada cuánto se lee la flota"
-        className={cn(
-          'inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-md border bg-surface px-2 text-xs hover:bg-subtle data-[popup-open]:bg-subtle',
-          value === 0 ? 'border-warn/40 text-warn-ink' : 'border-line text-fg-2',
-        )}
-      >
-        {value === 0 ? <Pause size={13} aria-hidden="true" /> : <Timer size={13} aria-hidden="true" />}
-        {text}
-        <ChevronDown size={12} aria-hidden="true" />
-      </Menu.Trigger>
-      <Menu.Portal>
-        <Menu.Positioner align="end" sideOffset={6} className="z-50">
-          <Menu.Popup className={cn(MENU_POPUP, 'w-44')}>
-            <Menu.Group>
-              <Menu.GroupLabel className="px-2.5 py-1 text-[11px] font-medium text-muted">Leer la flota</Menu.GroupLabel>
-              <Menu.RadioGroup value={String(value)} onValueChange={(next: string) => { onChange(Number(next)); }}>
-                {REFRESH_OPTIONS.map((option) => (
-                  <Menu.RadioItem key={option.ms} value={String(option.ms)} closeOnClick className={MENU_ITEM}>
-                    <span className="grid size-[15px] place-items-center">
-                      <Menu.RadioItemIndicator><Check size={14} aria-hidden="true" /></Menu.RadioItemIndicator>
-                    </span>
-                    {option.ms === 0 ? option.label : `Cada ${option.label}`}
-                  </Menu.RadioItem>
-                ))}
-              </Menu.RadioGroup>
-            </Menu.Group>
-          </Menu.Popup>
-        </Menu.Positioner>
-      </Menu.Portal>
-    </Menu.Root>
-  );
 }
 
 function useNow(): number {
@@ -183,7 +141,6 @@ export function LiveFleetPage() {
   const problems = tally.down + tally.blocked;
   const connected = views.length - tally.down;
   const unknown = verdict.tone === 'desconocido';
-  const age = observedAt ? Math.max(0, (now - Date.parse(observedAt)) / 1000) : null;
   const selected = views.find((view) => view.key === selectedKey) ?? null;
   const talking = officeAgents.find((agent) => agent.id === talkKey);
   const summary = `Oficina con ${String(views.length)} agentes: ${ORDEN_VIVO
@@ -239,20 +196,9 @@ export function LiveFleetPage() {
               <span className="text-fg-2">Todo en orden · {connected} {connected === 1 ? 'conectado' : 'conectados'}</span>
             )}
           </p>
-          <div className="ml-auto flex items-center gap-2 text-xs text-muted">
-            <span className="hidden tabular-nums sm:inline">
-              {age === null ? 'sin lectura' : `hace ${humanSeconds(age)}`}
-            </span>
-            <RefreshInterval value={activityIntervalMs} onChange={fleet.setActivityIntervalMs} />
-            <button
-              type="button"
-              onClick={fleet.reload}
-              aria-label="Actualizar ahora"
-              title="Actualizar ahora"
-              className="grid size-8 cursor-pointer place-items-center rounded-md border border-line bg-surface text-fg-2 hover:bg-subtle"
-            >
-              <RefreshCw size={14} aria-hidden="true" className={activity.loading ? 'animate-spin' : undefined} />
-            </button>
+          <div className="ml-auto">
+            <PageFreshness at={observedAt ?? null} loading={activity.loading} onRefresh={fleet.reload} what="la flota"
+              interval={{ value: activityIntervalMs, onChange: fleet.setActivityIntervalMs, options: REFRESH_OPTIONS }} />
           </div>
         </header>
 

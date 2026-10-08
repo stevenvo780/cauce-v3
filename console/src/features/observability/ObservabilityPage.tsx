@@ -1,10 +1,11 @@
+import { PageFreshness } from '../../components/PageFreshness';
 import { ArrowRight, RadioTower, Search } from 'lucide-react';
 import { useState } from 'react';
 import { useApi } from '../../api/context';
 import { useResource } from '../../api/use-resource';
 import { Button, CARD_TABLE, Kpi, KpiGrid, Notice, SCROLL, SectionCard } from '../../components/kit';
 import {
-  Badge, Desplazable, EmptyState, ErrorState, LoadingState, PageHeader, RefreshButton, Time,
+  Badge, Desplazable, EmptyState, ErrorState, LoadingState, PageHeader, Time,
   Unknown, ViewTabPanel, ViewTabs,
 } from '../../components/ui';
 import { compactId, safeOriginRelayState } from '../../lib';
@@ -58,10 +59,7 @@ export function ObservabilityPage({ initialTab = 'senales' }: { initialTab?: Tab
       title="Señales y auditoría"
       description="Snapshot real del gateway, el estado durable del egress al origen y el registro inmutable de decisiones: qué pasó y quién lo autorizó. Una métrica que no llegó se dice «sin dato»; no se sintetizan señales en el browser."
       notes={<p>ENVIADO exige <code>sent_at</code>; un relay fallido nunca se presenta como entregado.</p>}
-      actions={<>
-        <span className="text-xs text-muted">Observado: <Time value={data?.observed_at} relativo /></span>
-        <RefreshButton onClick={reloadAll} loading={resource.loading || relays.loading} compact />
-      </>}
+      actions={<PageFreshness at={data?.observed_at ?? null} loading={resource.loading || relays.loading} onRefresh={reloadAll} />}
     />
     <ViewTabs tabs={TABS} active={tab} onSelect={setTab} label="Señales y auditoría" />
 

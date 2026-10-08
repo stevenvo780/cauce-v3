@@ -30,7 +30,7 @@ describe('el veredicto', () => {
     await waitFor(() => { expect(veredicto).toHaveAttribute('data-tone', 'ok'); });
     expect(veredicto).toHaveTextContent(/todo en orden/i);
 
-    await user.click(screen.getByRole('button', { name: /actualizar ahora/i }));
+    await user.click(screen.getByRole('button', { name: /^actualizar$/i }));
 
     await waitFor(() => { expect(veredicto).toHaveAttribute('data-tone', 'desconocido'); });
     expect(veredicto).toHaveTextContent(/no lo sé/i);

@@ -1,9 +1,10 @@
+import { PageFreshness } from '../../components/PageFreshness';
 import { useMemo, useState, useSyncExternalStore } from 'react';
 import { cn } from '../../cn';
 import { ConsoleAccessBoundary, useConsoleAccess } from '../../api/console-access';
 import { Button, Notice, SearchField, SectionCard, Toolbar } from '../../components/kit';
 import {
-  ErrorState, LoadingState, PageHeader, PermissionBadge, RefreshButton, Time, ViewTabPanel, ViewTabs,
+  ErrorState, LoadingState, PageHeader, PermissionBadge, ViewTabPanel, ViewTabs,
 } from '../../components/ui';
 import { compactId, display, permissionState } from '../../lib';
 import { useFleet } from '../../shell/fleet-context';
@@ -84,7 +85,7 @@ function QueuesPageContent() {
             </div>
           </>
         }
-        actions={<RefreshButton onClick={resource.reload} loading={resource.loading} compact />}
+        actions={<PageFreshness at={snapshot?.observed_at ?? null} loading={resource.loading} onRefresh={resource.reload} />}
       />
 
       {/* The tiles are BUTTONS, and the figure is the server's TOTAL (`snapshot.totals`, a `COUNT`
@@ -144,9 +145,6 @@ function QueuesPageContent() {
             <Button size="sm" onClick={quitarElFoco}>Ver todas las entregas</Button>
           </Notice>
         ) : null}
-        <p className={cn('m-0 mb-3 text-xs text-muted', conFoco ? '' : 'max-sm:hidden')}>
-          Leído <Time value={snapshot?.observed_at} relativo />
-        </p>
         {conFoco ? null : (
           <Toolbar>
             <SearchField label="Buscar entrega" value={filtro.texto} placeholder="Alias, tenant, delivery id, message id o error"
@@ -160,7 +158,6 @@ function QueuesPageContent() {
               {filtro.grupo !== 'todas' || filtro.texto.trim() ? (
                 <Button size="sm" onClick={() => { setFiltro(FILTRO_VACIO); }}>Quitar el filtro</Button>
               ) : null}
-              <span className="sm:hidden">Leído <Time value={snapshot?.observed_at} relativo /></span>
             </p>
           </Toolbar>
         )}
