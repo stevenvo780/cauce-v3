@@ -90,6 +90,9 @@ export function agentLifecycleRequest(
   if (result.success && host.runtimes !== undefined && !matchingFleetRuntime(capability, result.data, provider)) {
     return { error: 'Selecciona una plantilla autorizada para este proveedor, arnés, usuario y contenedor.' };
   }
+  if (draft.harnessId === 'openclaw' && provider === 'codex' && !/^openai\/[A-Za-z0-9][A-Za-z0-9_.:-]{0,111}$/u.test(draft.modelId)) {
+    return { error: 'Esta plantilla OpenClaw requiere un modelo explícito con formato openai/<modelo>.' };
+  }
   return result.success ? { request: result.data } : { error: 'Revisa identidad, clave física, membresías, grupo primario y datos de ejecución. No se enviaron cambios.' };
 }
 export const FLEET_ACTION_LABELS = { create: 'Preparar agente', update: 'Actualizar ejecución', start: 'Iniciar', stop: 'Detener',

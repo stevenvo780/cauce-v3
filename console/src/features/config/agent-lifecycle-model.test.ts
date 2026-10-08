@@ -13,6 +13,16 @@ const capability: FleetCapability = { available: true, actions: ['create', 'upda
   modes: ['native'], runtime_users: ['runner'], systemd_users: ['runner'], home_roots: ['/home/runner'], state_roots: ['/state'] }] };
 
 describe('agent lifecycle intent', () => {
+  it('requires an explicit OpenAI model for the approved OpenClaw Codex driver before preparing', () => {
+    const current = { ...snapshot, harness_definitions: [{ id: 'openclaw' }], provider_accounts: [{ id: 'account', provider: 'codex' }] };
+    const draft = { ...agentLifecycleDraft(snapshot, { resource: 'agent', tenant_id: 'A', alias: 'one' }),
+      harnessId: 'openclaw', primaryAccountId: 'account' };
+    for (const modelId of ['', 'gpt-6', 'anthropic/claude', 'openai/', 'openai/model extra', 'openai/model?', `openai/${'m'.repeat(113)}`]) {
+      expect(agentLifecycleRequest({ ...draft, modelId }, current, capability, 'update', 'request_key').error).toMatch(/modelo explícito/);
+    }
+    expect(agentLifecycleRequest({ ...draft, modelId: 'openai/gpt-6', reasoningEffort: 'max' }, current, capability, 'update', 'request_key').request)
+      .toMatchObject({ parameters: { model_id: 'openai/gpt-6', reasoning_effort: 'max' } });
+  });
   it('matches the selected account provider even when several providers share one harness and placement', () => {
     const current = { ...snapshot, harness_definitions: [{ id: 'openclaw' }], provider_accounts: [{ id: 'gemini-account', provider: 'gemini' }] };
     const runtime = { mode: 'native' as const, harness_id: 'openclaw', provider: 'codex', runtime_user: 'runner',

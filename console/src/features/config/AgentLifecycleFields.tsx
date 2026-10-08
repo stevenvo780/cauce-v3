@@ -97,6 +97,8 @@ export function AgentLifecycleFields({ draft, snapshot, capability, target, disa
         <option value="">Sin cuenta principal declarada</option>{options('provider_accounts')}
       </select></label>
       <label>Modelo operativo<input value={draft.modelId} onChange={(event) => { edit({ modelId: event.target.value }); }} /></label>
+      {draft.harnessId === 'openclaw' && provider === 'codex'
+        ? <p>Esta plantilla requiere un modelo explícito con formato openai/&lt;modelo&gt;. El proveedor debe admitir el modelo elegido.</p> : null}
       <label>Esfuerzo de razonamiento<select value={draft.reasoningEffort ?? ''}
         onChange={(event) => { edit({ reasoningEffort: event.target.value }); }}>
         <option value="">Conservar configuración del perfil</option>
