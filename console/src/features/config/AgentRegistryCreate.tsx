@@ -1,15 +1,35 @@
 import { useEffect, useMemo, useRef, useState, type RefObject } from 'react';
-import type { ConfigurationSnapshot } from '../../api/types';
+import { fleetHostUsable } from '@cauce/protocol/fleet-hosts';
+import type { ConfigMutation, ConfigurationSnapshot } from '../../api/types';
 import { useApi } from '../../api/context';
 import { useConsoleAccess } from '../../api/console-access';
 import type { Resource } from '../../api/use-resource';
 import {
-  agentRegistryCreateError, createAgentRegistryMutation, EMPTY_AGENT_REGISTRY_DRAFT,
-  registryHarnessOptions, registryTenantOptions, type AgentRegistryCreateDraft,
+  agentRegistryCreateError, agentWriteBlock, createAgentRegistryMutation, createAgentRoomMembershipMutation,
+  EMPTY_AGENT_REGISTRY_DRAFT, registryHarnessOptions, registryRoomOptions, registryTenantOptions,
+  type AgentRegistryCreateDraft,
 } from './agent-registry-create';
 import { FormDialog } from '../../components/dialogs';
 import { Button, Notice, PREVIEW } from '../../components/kit';
 import { useConfigMutation, useRevisionEncadenada } from './use-config-mutation';
+import { hostById, hostUnavailableReason, useFleetHosts } from './use-fleet-hosts';
+import { useAgentLifecycle } from './use-agent-lifecycle';
+import { agentLifecycleDraft } from './agent-lifecycle-model';
+import { AgentLifecyclePanel } from './AgentLifecyclePanel';
+
+interface CreatedAgent {
+  tenantId: string; alias: string; displayName: string; harnessId: string; hostId: string; roomLabel?: string;
+}
+
+interface RoomStep { mutation: ConfigMutation; stage: 'queued' | 'checking' | 'ready' | 'applying' | 'done' | 'failed' }
+
+const ROOM_STATUS: Record<RoomStep['stage'], string> = {
+  queued: 'pendiente', checking: 'pendiente', ready: 'pendiente', applying: 'pendiente', done: 'creada', failed: 'no creada',
+};
+const FLEET_REASON: Record<string, string> = {
+  executor_unconfigured: 'El ejecutor de flota no está configurado en el servidor.',
+  unsupported_schema: 'El ejecutor de flota publicado usa un esquema que esta consola no admite.',
+};
 
 export function AgentRegistryCreate({ snapshot, open, onOpenChange, onReloaded, focusReturnRef }: {
   snapshot: ConfigurationSnapshot;
@@ -20,11 +40,13 @@ export function AgentRegistryCreate({ snapshot, open, onOpenChange, onReloaded, 
 }) {
   const api = useApi();
   const access = useConsoleAccess();
+  const fleet = useFleetHosts(open, snapshot.revision);
+  const lifecycle = useAgentLifecycle(open);
   const [freshSnapshot, setFreshSnapshot] = useState<ConfigurationSnapshot>();
   const [draft, setDraft] = useState<AgentRegistryCreateDraft>(EMPTY_AGENT_REGISTRY_DRAFT);
   const [formError, setFormError] = useState<string>();
-  const [created, setCreated] = useState(false);
-  const [resultNotice, setResultNotice] = useState<string>();
+  const [created, setCreated] = useState<CreatedAgent>();
+  const [roomStep, setRoomStep] = useState<RoomStep>();
   const aliasInput = useRef<HTMLInputElement>(null);
   const chained = useRevisionEncadenada();
   const activeSnapshot = typeof freshSnapshot?.revision === 'number'
@@ -43,34 +65,51 @@ export function AgentRegistryCreate({ snapshot, open, onOpenChange, onReloaded, 
       }
     },
   };
-  const runner = useConfigMutation({ config, access, encadenado: chained, canal: 'agent-registry:create' });
+  const writeBlock = agentWriteBlock(activeSnapshot, 'create');
+  const runner = useConfigMutation({
+    config, access, encadenado: chained, canal: 'agent-registry:create',
+    ...(writeBlock === undefined ? {} : { bloqueo: writeBlock }),
+  });
   const clearRunner = useRef(runner.clear);
   clearRunner.current = runner.clear;
   const tenants = useMemo(() => registryTenantOptions(activeSnapshot), [activeSnapshot]);
   const harnesses = useMemo(() => registryHarnessOptions(activeSnapshot), [activeSnapshot]);
+  const rooms = useMemo(() => registryRoomOptions(activeSnapshot, draft.tenantId), [activeSnapshot, draft.tenantId]);
+  const hosts = fleet.hosts ?? [];
+  const hostReason = hostUnavailableReason(hostById(fleet.hosts, draft.hostId));
   const error = agentRegistryCreateError(draft, activeSnapshot);
   const mutation = error ? undefined : createAgentRegistryMutation(draft);
-  const busy = runner.busy;
+  const busy = runner.busy || (roomStep !== undefined && roomStep.stage !== 'done' && roomStep.stage !== 'failed');
   const disabled = busy || !runner.canWrite;
   const clearNoticeOnNextOpen = useRef(false);
+  const fleetReason = lifecycle.capabilityError
+    ?? (lifecycle.capability === undefined ? 'Leyendo capacidades de flota…'
+      : lifecycle.capability.available ? undefined
+        : FLEET_REASON[lifecycle.capability.reason ?? ''] ?? 'La preparación en computadora no está disponible en este servidor.');
 
   useEffect(() => {
     if (open && clearNoticeOnNextOpen.current) {
       clearRunner.current();
       clearNoticeOnNextOpen.current = false;
+      setCreated(undefined);
+      setRoomStep(undefined);
     }
   }, [open]);
 
   useEffect(() => {
-    if (!created || !runner.notice) return;
-    setResultNotice(`Registro creado. ${runner.notice.text}`);
-    setCreated(false);
-  }, [created, runner.notice]);
+    if (!roomStep) return;
+    if (roomStep.stage === 'queued') {
+      setRoomStep({ ...roomStep, stage: 'checking' });
+      void runner.run(roomStep.mutation, true).then((ok) => { setRoomStep({ ...roomStep, stage: ok ? 'ready' : 'failed' }); });
+    } else if (roomStep.stage === 'ready') {
+      setRoomStep({ ...roomStep, stage: 'applying' });
+      void runner.run(roomStep.mutation, false).then((ok) => { setRoomStep({ ...roomStep, stage: ok ? 'done' : 'failed' }); });
+    }
+  }, [roomStep, runner]);
 
   function edit(patch: Partial<AgentRegistryCreateDraft>) {
     setDraft((current) => ({ ...current, ...patch }));
     setFormError(undefined);
-    setResultNotice(undefined);
     runner.clear();
   }
 
@@ -90,29 +129,57 @@ export function AgentRegistryCreate({ snapshot, open, onOpenChange, onReloaded, 
       runner.clear();
       return;
     }
+    if (hostReason) {
+      setFormError(hostReason);
+      return;
+    }
     if (!runner.isValidated(mutation)) return;
     setFormError(undefined);
-    if (await runner.run(mutation, false)) {
-      setCreated(true);
-      setDraft(EMPTY_AGENT_REGISTRY_DRAFT);
-      setFormError(undefined);
-      clearNoticeOnNextOpen.current = true;
-      onOpenChange(false);
-    }
+    if (!(await runner.run(mutation, false))) return;
+    const roomLabel = rooms.find((room) => room.id === draft.roomId)?.label;
+    clearNoticeOnNextOpen.current = true;
+    setCreated({
+      tenantId: draft.tenantId, alias: draft.alias.trim(), displayName: draft.displayName.trim(),
+      harnessId: draft.harnessId.trim(), hostId: draft.hostId, ...(roomLabel === undefined ? {} : { roomLabel }),
+    });
+    setDraft(EMPTY_AGENT_REGISTRY_DRAFT);
+    if (draft.roomId) setRoomStep({ mutation: createAgentRoomMembershipMutation(draft), stage: 'queued' });
   }
 
-  return <>
-    {resultNotice ? <Notice tone="ok" role="status">{resultNotice}</Notice> : null}
-    <FormDialog open={open} wide busy={busy} title="Añadir agente" initialFocus={aliasInput} finalFocus={focusReturnRef}
-      description="Este cambio requiere permiso para administrar el registro. El servidor lo verifica al previsualizar."
-      onClose={() => { onOpenChange(false); }}>
-      {!runner.canWrite ? <Notice role="note">
-        Tu cuenta no tiene permiso para modificar este registro, o no pudimos verificarlo.
-      </Notice> : null}
+  const preparedDraft = created ? {
+    ...agentLifecycleDraft(activeSnapshot), tenantId: created.tenantId, alias: created.alias,
+    displayName: created.displayName, harnessId: created.harnessId, hostId: created.hostId,
+  } : undefined;
+
+  return <FormDialog open={open} wide busy={busy} title="Añadir agente" initialFocus={aliasInput} finalFocus={focusReturnRef}
+    description="Este cambio requiere permiso para administrar el registro. El servidor lo verifica al previsualizar."
+    onClose={() => { onOpenChange(false); }}>
+    {created ? <div className="grid gap-3" aria-label="Resultado del alta de agente">
+      <Notice tone="ok" role="status">Registro creado: {created.tenantId}/{created.alias}.</Notice>
+      <ul className="m-0 grid list-none gap-1 p-0 text-sm">
+        <li>Computadora: {hostById(fleet.hosts, created.hostId)?.display_name ?? (created.hostId || 'sin asignar')}</li>
+        {created.roomLabel ? <li>Sala inicial: {created.roomLabel}, {ROOM_STATUS[roomStep?.stage ?? 'done']}.</li> : null}
+      </ul>
+      {runner.notice ? <Notice tone={runner.notice.tone === 'error' ? 'danger' : 'info'}
+        role={runner.notice.tone === 'error' ? 'alert' : 'status'}>{runner.notice.text}</Notice> : null}
+      {created.hostId ? <div className="grid gap-2">
+        <p className="m-0 text-xs text-muted">Siguiente paso: preparar el agente en su computadora. Así queda su entorno de ejecución listo para admitir entregas.</p>
+        {fleetReason ? <Notice role="note">{fleetReason}</Notice> : null}
+        {preparedDraft && !fleetReason ? <AgentLifecyclePanel snapshot={activeSnapshot} onReloaded={onReloaded}
+          initialDraft={preparedDraft} triggerLabel="Preparar en la computadora" /> : null}
+      </div> : <Notice role="note">Asigna una computadora en Editar registro para prepararlo.</Notice>}
+      <div className="flex flex-wrap justify-end gap-2">
+        <Button variant="primary" onClick={() => { onOpenChange(false); }}>Terminar</Button>
+      </div>
+    </div> : <>
+      {writeBlock ? <Notice role="note">{writeBlock}</Notice>
+        : !runner.canWrite ? <Notice role="note">
+          Tu cuenta no tiene permiso para modificar este registro, o no pudimos verificarlo.
+        </Notice> : null}
       {!tenants.length ? <Notice role="note">No hay espacios de trabajo publicados en esta lectura; no se puede elegir destino.</Notice> : null}
       <div className="grid gap-3 sm:grid-cols-2">
         <label>Espacio de trabajo
-          <select value={draft.tenantId} onChange={(event) => { edit({ tenantId: event.target.value }); }} disabled={disabled}>
+          <select value={draft.tenantId} onChange={(event) => { edit({ tenantId: event.target.value, roomId: '' }); }} disabled={disabled}>
             <option value="">Elige un espacio de trabajo</option>
             {tenants.map((tenant) => <option key={tenant.id} value={tenant.id}>{tenant.label}</option>)}
           </select>
@@ -136,6 +203,24 @@ export function AgentRegistryCreate({ snapshot, open, onOpenChange, onReloaded, 
           <input type="number" min={1} max={100} step={1} value={draft.capacity}
             onChange={(event) => { edit({ capacity: event.target.value }); }} disabled={disabled} />
         </label>
+        <label>Computadora (opcional)
+          <select value={draft.hostId} onChange={(event) => { edit({ hostId: event.target.value }); }} disabled={disabled}>
+            <option value="">Sin computadora por ahora</option>
+            {hosts.map((host) => <option key={host.host_id} value={host.host_id} disabled={!fleetHostUsable(host)}>
+              {host.display_name}{fleetHostUsable(host) ? '' : host.enabled ? ' · sin conexión' : ' · deshabilitada'}
+            </option>)}
+          </select>
+        </label>
+        {hostReason ? <Notice role="alert" className="sm:col-span-2">{hostReason}</Notice> : null}
+        <label>Sala inicial (opcional)
+          <select value={draft.roomId} onChange={(event) => { edit({ roomId: event.target.value }); }} disabled={disabled || !rooms.length}>
+            <option value="">Sin sala inicial</option>
+            {rooms.map((room) => <option key={room.id} value={room.id}>{room.label}</option>)}
+          </select>
+        </label>
+        {draft.roomId ? <label>Rol en la sala
+          <input value={draft.roomRole} maxLength={64} onChange={(event) => { edit({ roomRole: event.target.value }); }} disabled={disabled} />
+        </label> : null}
         <details className="grid gap-2 sm:col-span-2">
           <summary className="cursor-pointer text-[13px] font-medium">Entorno de ejecución (opcional)</summary>
           <p className="m-0 my-2 text-xs text-muted">Indica el contenedor, el usuario y sus dos directorios. Completa los cuatro campos o déjalos vacíos; no se generan valores.</p>
@@ -155,6 +240,7 @@ export function AgentRegistryCreate({ snapshot, open, onOpenChange, onReloaded, 
           </div>
         </details>
       </div>
+      <p className="m-0 text-xs text-muted">La sala inicial se añade después de crear el registro, con su propia validación del servidor.</p>
       {formError ? <Notice tone="danger" role="alert">{formError}</Notice> : null}
       {runner.notice ? <Notice tone={runner.notice.tone === 'error' ? 'danger' : 'info'}
         role={runner.notice.tone === 'error' ? 'alert' : 'status'}>{runner.notice.text}</Notice> : null}
@@ -163,10 +249,10 @@ export function AgentRegistryCreate({ snapshot, open, onOpenChange, onReloaded, 
         <div className="flex flex-wrap gap-2">
           <Button onClick={() => { void preview(); }} disabled={disabled || !tenants.length}>Previsualizar alta</Button>
           <Button variant="primary" onClick={() => { void apply(); }}
-            disabled={disabled || !mutation || !runner.isValidated(mutation)}>Crear registro</Button>
+            disabled={disabled || !mutation || !runner.isValidated(mutation) || Boolean(hostReason)}>Crear registro</Button>
         </div>
       </div>
       {runner.preview ? <pre className={PREVIEW} aria-label="Preview del alta de agente">{runner.preview}</pre> : null}
-    </FormDialog>
-  </>;
+    </>}
+  </FormDialog>;
 }

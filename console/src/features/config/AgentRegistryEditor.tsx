@@ -6,6 +6,10 @@ import type { Resource } from '../../api/use-resource';
 import { useConfigMutation, useRevisionEncadenada, type ConfigMutationNotice, type ConfigMutationRunner } from './use-config-mutation';
 import { Button, Notice, PREVIEW } from '../../components/kit';
 import { CHECK_LABEL, HINT } from './config-ui';
+import type { FleetHost } from '@cauce/protocol/fleet-hosts';
+import { fleetHostUsable } from '@cauce/protocol/fleet-hosts';
+import { agentHostIdOf, agentWriteBlock } from './agent-registry-create';
+import { hostUnavailableReason } from './use-fleet-hosts';
 
 type AgentRow = Record<string, unknown> & { tenant_id: string; alias: string };
 
@@ -14,16 +18,22 @@ interface Draft {
   enabled: string;
   capacity: string;
   noCapacityLimit: boolean;
+  hostId: string;
 }
 
 function initialDraft(agent: AgentRow): Draft {
   return {
+    hostId: agentHostIdOf(agent) ?? '',
     displayName: typeof agent.display_name === 'string' ? agent.display_name : '',
     enabled: typeof agent.enabled === 'boolean' ? String(agent.enabled) : '',
     capacity: typeof agent.max_concurrent_deliveries === 'number'
       ? String(agent.max_concurrent_deliveries) : '',
     noCapacityLimit: agent.max_concurrent_deliveries === null,
   };
+}
+
+function hasRuntime(agent: AgentRow): boolean {
+  return agent.runtime_key !== undefined && agent.runtime_key !== null;
 }
 
 function buildMutation(agent: AgentRow, draft: Draft): { mutation?: ConfigMutation; error?: string } {
@@ -33,6 +43,10 @@ function buildMutation(agent: AgentRow, draft: Draft): { mutation?: ConfigMutati
     const normalized = draft.displayName.trim();
     if (normalized.length > 128) return { error: 'El nombre visible admite hasta 128 caracteres.' };
     value.display_name = normalized || null;
+  }
+
+  if (!hasRuntime(agent) && draft.hostId !== (agentHostIdOf(agent) ?? '')) {
+    value.host_id = draft.hostId || null;
   }
 
   if (draft.enabled !== '' && draft.enabled !== String(agent.enabled)) {
@@ -62,8 +76,8 @@ function buildMutation(agent: AgentRow, draft: Draft): { mutation?: ConfigMutati
   };
 }
 
-export function AgentRegistryEditor({ tenantId, alias, snapshot, onReloaded, onDeleted }: {
-  tenantId: string; alias: string; snapshot: ConfigurationSnapshot;
+export function AgentRegistryEditor({ tenantId, alias, snapshot, hosts, onReloaded, onDeleted }: {
+  tenantId: string; alias: string; snapshot: ConfigurationSnapshot; hosts?: FleetHost[] | undefined;
   onReloaded: (snapshot: ConfigurationSnapshot) => void;
   onDeleted?: (notice: ConfigMutationNotice) => void;
 }) {
@@ -87,28 +101,34 @@ export function AgentRegistryEditor({ tenantId, alias, snapshot, onReloaded, onD
       }
     },
   };
-  const runner = useConfigMutation({ config: resource, access, encadenado: chained, canal: `agent-registry:${tenantId}/${alias}` });
-  const agent = freshSnapshot
-    ? freshSnapshot.agents?.find((row) => row.tenant_id === tenantId && row.alias === alias)
-    : snapshot.agents?.find((row) => row.tenant_id === tenantId && row.alias === alias);
+  const current = freshSnapshot ?? snapshot;
+  const writeBlock = agentWriteBlock(current, 'update');
+  const deleteBlock = agentWriteBlock(current, 'delete');
+  const runner = useConfigMutation({
+    config: resource, access, encadenado: chained, canal: `agent-registry:${tenantId}/${alias}`,
+    ...(writeBlock === undefined ? {} : { bloqueo: writeBlock }),
+  });
+  const agent = current.agents?.find((row) => row.tenant_id === tenantId && row.alias === alias);
   if (!agent) return null;
   return <div className="min-w-0" data-open={String(open)}>
     <Button
       aria-label={`${open ? 'Cerrar' : 'Editar'} registro de ${tenantId}/${alias}`}
       onClick={() => { setOpen((value) => !value); runner.clear(); }}
     >{open ? 'Cerrar registro' : 'Editar registro'}</Button>
-    {open ? <AgentRegistryForm agent={agent as AgentRow} runner={runner} onDeleted={onDeleted}
-      onClose={() => { setOpen(false); runner.clear(); }} /> : null}
+    {open ? <AgentRegistryForm agent={agent as AgentRow} runner={runner} onDeleted={onDeleted} hosts={hosts}
+      deleteBlock={deleteBlock} onClose={() => { setOpen(false); runner.clear(); }} /> : null}
   </div>;
 }
 
 function AgentRegistryForm({
-  agent, runner, onClose, onDeleted,
+  agent, runner, onClose, onDeleted, hosts, deleteBlock,
 }: {
   agent: AgentRow;
   runner: ConfigMutationRunner;
   onClose: () => void;
   onDeleted?: ((notice: ConfigMutationNotice) => void) | undefined;
+  hosts?: FleetHost[] | undefined;
+  deleteBlock?: string | undefined;
 }) {
   const [draft, setDraft] = useState(() => initialDraft(agent));
   const [formError, setFormError] = useState<string>();
@@ -117,13 +137,17 @@ function AgentRegistryForm({
   const agentVersion = JSON.stringify([
     agent.harness_id, agent.display_name, agent.enabled, agent.max_concurrent_deliveries,
     agent.container_name, agent.runtime_user, agent.home_directory, agent.state_directory, agent.runtime_key,
+    agentHostIdOf(agent),
   ]);
   const previousAgentVersion = useRef(agentVersion);
   const built = useMemo(() => buildMutation(agent, draft), [agent, draft]);
   const mutation = built.mutation;
   const disabled = !runner.canWrite || runner.busy;
   const editDisabled = disabled || deleting;
-  const canDelete = agent.runtime_key === undefined || agent.runtime_key === null;
+  const canDelete = !hasRuntime(agent);
+  const currentHost = agentHostIdOf(agent);
+  const hostOptions = [...(hosts ?? []), ...(currentHost && !hosts?.some((host) => host.host_id === currentHost)
+    ? [{ host_id: currentHost, display_name: currentHost, enabled: true, status: 'unknown' } as FleetHost] : [])];
   const deletion: ConfigMutation = { resource: 'agent', action: 'delete', tenant_id: agent.tenant_id, alias: agent.alias };
 
   useEffect(() => {
@@ -162,7 +186,7 @@ function AgentRegistryForm({
   }
 
   async function remove(dryRun: boolean) {
-    if (!canDelete || disabled || (!dryRun && !runner.isValidated(deletion))) return;
+    if (!canDelete || disabled || deleteBlock || (!dryRun && !runner.isValidated(deletion))) return;
     setFormError(undefined);
     if (dryRun) { await runner.run(deletion, true); return; }
     const outcome = await runner.change(deletion, false);
@@ -184,13 +208,26 @@ function AgentRegistryForm({
       <Button onClick={onClose}>Cerrar editor</Button>
     </div>
     <p className={HINT}>Identidad fija desde la fila seleccionada. Los permisos se vuelven a decidir en el servidor.</p>
-    {!runner.canWrite ? <Notice role="note">Edición de registro en solo lectura: falta permiso acreditado de configuración.</Notice> : null}
+    {runner.canWrite ? null : <Notice role="note">Edición de registro en solo lectura: falta permiso acreditado de configuración.</Notice>}
     {serverRefreshNotice ? <Notice role="note">{serverRefreshNotice}</Notice> : null}
     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
       <label>Nombre visible
         <input maxLength={128} value={draft.displayName}
           onChange={(event) => { update({ displayName: event.target.value }); }} disabled={editDisabled} />
       </label>
+      {hasRuntime(agent)
+        ? <p className={HINT}>Computadora: {hostOptions.find((host) => host.host_id === currentHost)?.display_name ?? 'sin asignar'}.
+          La computadora se elige al crear; trasladar un agente no está soportado.</p>
+        : <label>Computadora
+          <select value={draft.hostId} onChange={(event) => { update({ hostId: event.target.value }); }} disabled={editDisabled}>
+            <option value="">Sin computadora</option>
+            {hostOptions.map((host) => <option key={host.host_id} value={host.host_id} disabled={!fleetHostUsable(host)}>
+              {host.display_name}{fleetHostUsable(host) ? '' : host.enabled ? ' · sin conexión' : ' · deshabilitada'}
+            </option>)}
+          </select>
+          {hostUnavailableReason(hostOptions.find((host) => host.host_id === draft.hostId)) ? <span className={HINT}>
+            {hostUnavailableReason(hostOptions.find((host) => host.host_id === draft.hostId))}</span> : null}
+        </label>}
       <label>Estado del registro
         <select value={draft.enabled} onChange={(event) => { update({ enabled: event.target.value }); }} disabled={editDisabled}>
           <option value="">Sin cambios</option>
@@ -224,9 +261,9 @@ function AgentRegistryForm({
         </Button>
       </div>
     </div>
-    {canDelete ? <Button disabled={disabled || deleting}
+    {canDelete ? <Button disabled={disabled || deleting || Boolean(deleteBlock)} title={deleteBlock}
       onClick={() => { setDeleting(true); runner.clear(); setFormError(undefined); }}>Eliminar registro</Button>
-      : <p className={HINT}>La retirada de un agente operativo se realiza en «Operar agente».</p>}
+      : <p className={HINT}>Un agente con ejecución se retira con «Retirar agente» en la fila del agente.</p>}
     {deleting && canDelete ? <form className="grid gap-3" aria-label={`Eliminar registro de ${agent.tenant_id}/${agent.alias}`}
       onSubmit={(event) => { event.preventDefault(); void remove(true); }}>
       <p>Eliminar este registro requiere comprobar sus dependencias. Previsualiza antes de confirmar.</p>

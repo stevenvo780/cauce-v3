@@ -11,14 +11,15 @@ import './agent-lifecycle.css';
 
 type Kind = FleetOperationRequest['kind'];
 const newKey = () => `fleet_${crypto.randomUUID()}`;
-export function AgentLifecyclePanel({ snapshot, target, onReloaded, initialDraft, initialOpen = false }: {
+const ACTION_LABELS: Record<Kind, string> = { ...FLEET_ACTION_LABELS, purge: 'Eliminar definitivamente' };
+export function AgentLifecyclePanel({ snapshot, target, onReloaded, initialDraft, initialOpen = false, initialKind, triggerLabel }: {
   snapshot: ConfigurationSnapshot; target?: FleetTarget; onReloaded?: (value: ConfigurationSnapshot) => void;
-  initialDraft?: AgentLifecycleDraft; initialOpen?: boolean;
+  initialDraft?: AgentLifecycleDraft; initialOpen?: boolean; initialKind?: Kind | undefined; triggerLabel?: string | undefined;
 }) {
   const api = useApi();
   const access = useConsoleAccess();
   const [open, setOpen] = useState(initialOpen);
-  const [kind, setKind] = useState<Kind>(target ? 'update' : 'create');
+  const [kind, setKind] = useState<Kind>(initialKind ?? (target ? 'update' : 'create'));
   const [draft, setDraft] = useState(() => initialDraft ?? agentLifecycleDraft(snapshot, target));
   const [key, setKey] = useState(newKey);
   const [validated, setValidated] = useState<{ input: FleetOperationRequest; receipt: FleetOperationPreview }>();
@@ -100,8 +101,8 @@ export function AgentLifecyclePanel({ snapshot, target, onReloaded, initialDraft
   return <div className="agent-lifecycle-panel" data-open={String(open)}>
     <button ref={trigger} type="button" className="button secondary"
       onClick={() => { setOpen((value) => !value); }} aria-expanded={open}
-      aria-label={target?.resource === 'agent' ? `Operar agente ${target.tenant_id}/${target.alias}` : 'Preparar agente'}>
-      {target ? 'Operar agente' : 'Preparar agente'}
+      aria-label={triggerLabel ?? (target?.resource === 'agent' ? `Operar agente ${target.tenant_id}/${target.alias}` : 'Preparar agente')}>
+      {triggerLabel ?? (target ? 'Operar agente' : 'Preparar agente')}
     </button>
     {open ? <section className="settings-context" aria-label={target?.resource === 'agent' ? `Operación de ${target.tenant_id}/${target.alias}` : 'Alta operativa de agente'}>
       <div className="settings-context-heading"><h3 ref={heading} tabIndex={-1}>{target ? 'Ejecución y ciclo de vida' : 'Preparar nuevo agente'}</h3>
@@ -118,7 +119,7 @@ export function AgentLifecyclePanel({ snapshot, target, onReloaded, initialDraft
       {flow.capability && !available ? <p className="notice">Esta acción no está disponible en el ejecutor publicado{flow.capability.reason ? ` (${flow.capability.reason})` : ''}.</p> : null}
       {target ? <label>Acción operativa<select value={kind} disabled={busy || inProgress} onChange={(event) => {
         setKind(event.target.value as Kind); setKey(newKey()); setValidated(undefined); setError(undefined); generation.current += 1;
-      }}>{Object.entries(FLEET_ACTION_LABELS).filter(([action]) => action !== 'create').map(([action, label]) =>
+      }}>{Object.entries(ACTION_LABELS).filter(([action]) => action !== 'create').map(([action, label]) =>
         <option key={action} value={action}>{label}</option>)}</select></label> : null}
       {draftKind ? <AgentLifecycleFields draft={draft} snapshot={snapshot} capability={flow.capability} target={target}
         disabled={busy || inProgress || !canWrite || !available} edit={edit} /> : null}
@@ -139,7 +140,7 @@ export function AgentLifecyclePanel({ snapshot, target, onReloaded, initialDraft
       <details><summary>Historial operativo durable</summary>
         {flow.historyError ? <p className="notice">{flow.historyError}</p> : null}
         {flow.history?.length ? <ul>{flow.history.map((operation) => <li key={operation.id}>
-          {FLEET_ACTION_LABELS[operation.kind]} · {operation.status} · {operation.created_at}
+          {ACTION_LABELS[operation.kind]} · {operation.status} · {operation.created_at}
           <button type="button" className="button secondary" aria-label={`Abrir operación ${operation.id}`}
             disabled={busy} onClick={() => { flow.accept(operation); }}>{operation.id}</button></li>)}</ul>
           : <p>{target ? 'No hay operaciones acreditadas en esta lectura.' : 'El historial de este agente se podrá releer desde su registro guardado.'}</p>}

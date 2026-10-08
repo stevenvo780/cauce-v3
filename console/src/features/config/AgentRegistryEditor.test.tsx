@@ -7,6 +7,10 @@ import type { ConfigurationSnapshot } from '../../api/types';
 import { renderWithApi } from '../../test/render';
 import { AgentesSection } from './AgentesSection';
 
+beforeEach(() => {
+  server.use(http.get('http://localhost/v3/console/fleet/hosts', () => HttpResponse.json({ hosts: [] })));
+});
+
 const fullAgent = {
   tenant_id: 'A', alias: 'one', display_name: 'Agente uno', harness_id: 'codex', enabled: true,
   max_concurrent_deliveries: 1, container_name: 'agent-one', runtime_user: 'runner',
@@ -241,7 +245,7 @@ it('leaves operational registry removal with the lifecycle assistant', async () 
   server.use(registryAccess()); const user = userEvent.setup(); renderSettings({ ...snapshot, agents: [{ ...fullAgent, runtime_key: 'runtime-one' }] });
   await user.click(await screen.findByRole('button', { name: 'Editar registro de A/one' }));
   expect(screen.queryByRole('button', { name: 'Eliminar registro' })).not.toBeInTheDocument();
-  expect(screen.getByText(/La retirada de un agente operativo se realiza en «Operar agente»/)).toBeInTheDocument();
+  expect(screen.getByText(/Un agente con ejecución se retira con «Retirar agente»/)).toBeInTheDocument();
 });
 
 it.each([403, 409])('does not confirm registry deletion when preview is rejected with %i', async status => {

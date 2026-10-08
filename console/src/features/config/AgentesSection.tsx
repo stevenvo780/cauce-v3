@@ -1,5 +1,6 @@
 import { Plus } from 'lucide-react';
 import { useMemo, useRef, useState, type ReactNode } from 'react';
+import type { FleetHost } from '@cauce/protocol/fleet-hosts';
 import { AgentOrb } from '../../components/AgentOrb';
 import { Button, LinkButton, Notice, SectionCard } from '../../components/kit';
 import { EmptyState } from '../../components/ui';
@@ -11,20 +12,31 @@ import { AgentRegistryEditor } from './AgentRegistryEditor';
 import { ConfigSectionHeader } from './ConfigSectionHeader';
 import { filterSettingsAgents, settingsAgents, type SettingsAgent } from './settings-model';
 import type { ConfigurationSnapshot } from '../../api/types';
+import { agentHostIdOf, agentHostRow, agentWriteBlock } from './agent-registry-create';
+import { insigniaDeComputadora } from './fleet-host-model';
+import { hostById, useFleetHosts } from './use-fleet-hosts';
 
 const PAGE_SIZE = 6;
 const CHIP = 'rounded-full bg-muted-bg px-2 py-0.5 text-xs text-fg-2';
 
 /** One registered agent: who it is, where it sits and the way into its profile and context. */
-function AgenteFila({ agent, snapshot, onReloaded, onDeleted, hidden }: {
+function AgenteFila({ agent, snapshot, hosts, onReloaded, onDeleted, hidden }: {
   agent: SettingsAgent;
   hidden: boolean;
   snapshot: ConfigurationSnapshot;
+  hosts: FleetHost[] | undefined;
   onReloaded: (snapshot: ConfigurationSnapshot) => void;
   onDeleted: (notice: ConfigMutationNotice) => void;
 }) {
+  const [lifecycle, setLifecycle] = useState<{ nonce: number; kind?: 'retire' }>({ nonce: 0 });
   const id = `context-unavailable-${encodeURIComponent(agent.key)}`;
   const href = `/messages/${encodeURIComponent(agent.tenantId)}/${encodeURIComponent(agent.alias)}?view=context`;
+  const row = agentHostRow(snapshot, agent.tenantId, agent.alias);
+  const hostId = agentHostIdOf(row);
+  const host = hostById(hosts, hostId);
+  const badge = insigniaDeComputadora(host);
+  const hasRuntime = row?.runtime_key !== undefined && row.runtime_key !== null;
+  const deleteBlock = agentWriteBlock(snapshot, 'delete');
   return <li hidden={hidden} inert={hidden} className="grid min-w-0 grid-cols-1 gap-3 rounded-xl border border-line bg-surface p-3.5 shadow-card">
     <div className="flex items-start gap-3">
       <AgentOrb seed={`${agent.tenantId}/${agent.alias}`} size={32} />
@@ -36,6 +48,8 @@ function AgenteFila({ agent, snapshot, onReloaded, onDeleted, hidden }: {
         <p className="m-0 mt-0.5 flex flex-wrap items-center gap-1.5 text-xs text-muted">
           <span>Arnés declarado: {agent.harness ?? 'desconocido'}</span>
           {agent.enabled === false ? <span className="rounded-full bg-warn-soft px-2 py-0.5 font-medium text-warn-ink">Registro deshabilitado</span> : null}
+          {agent.registered ? <span>Computadora: {host?.display_name ?? hostId ?? 'sin asignar'}</span> : null}
+          {badge ? <span className="rounded-full bg-warn-soft px-2 py-0.5 font-medium text-warn-ink">{badge}</span> : null}
         </p>
       </div>
       {agent.registered
@@ -58,9 +72,15 @@ function AgenteFila({ agent, snapshot, onReloaded, onDeleted, hidden }: {
               : group.enabled === undefined ? ' · estado desconocido' : ''}
           </span>)}
     </div>
-    {agent.registered ? <AgentLifecyclePanel snapshot={snapshot} onReloaded={onReloaded}
+    {agent.registered && hasRuntime ? <div className="grid gap-2 rounded-lg border border-line p-3">
+      <p className="m-0 text-xs text-muted">Retirar detiene la ejecución y conserva el historial. La eliminación definitiva (purga) es el segundo paso, en «Agentes retirados».</p>
+      <div><Button size="sm" disabled={Boolean(deleteBlock)} title={deleteBlock}
+        onClick={() => { setLifecycle((current) => ({ nonce: current.nonce + 1, kind: 'retire' })); }}>Retirar agente</Button></div>
+    </div> : null}
+    {agent.registered ? <AgentLifecyclePanel key={lifecycle.nonce} snapshot={snapshot} onReloaded={onReloaded}
+      initialOpen={lifecycle.nonce > 0} initialKind={lifecycle.kind}
       target={{ resource: 'agent', tenant_id: agent.tenantId, alias: agent.alias }} /> : null}
-    {agent.registered ? <AgentRegistryEditor snapshot={snapshot} onReloaded={onReloaded}
+    {agent.registered ? <AgentRegistryEditor snapshot={snapshot} hosts={hosts} onReloaded={onReloaded}
       tenantId={agent.tenantId} alias={agent.alias} onDeleted={onDeleted} /> : null}
   </li>;
 }
@@ -84,6 +104,7 @@ export function AgentesSection({ snapshot: leido, onReload, tablaCompleta }: {
   // A write rereads the configuration on its own: whichever read is newer is the one painted.
   const snapshot = typeof releido?.revision === 'number'
     && (typeof leido.revision !== 'number' || releido.revision > leido.revision) ? releido : leido;
+  const fleet = useFleetHosts(true, snapshot.revision);
   const agents = useMemo(() => settingsAgents(snapshot), [snapshot]);
   const visible = filterSettingsAgents(agents, query);
   const lastPage = Math.max(0, Math.ceil(visible.length / PAGE_SIZE) - 1);
@@ -112,7 +133,7 @@ export function AgentesSection({ snapshot: leido, onReload, tablaCompleta }: {
         : 'No hay un inventario completo de agentes en esta lectura.'}</EmptyState>
         : !visible.length ? <EmptyState>No hay agentes que coincidan con la búsqueda.</EmptyState>
           : <ul className="m-0 grid grid-cols-1 list-none gap-3 p-0 lg:grid-cols-2" aria-label="Agentes configurados">
-            {visible.map((agent, index) => <AgenteFila key={agent.key} agent={agent} snapshot={snapshot} onReloaded={reloaded} onDeleted={setRegistryNotice} hidden={index < first || index >= first + PAGE_SIZE} />)}
+            {visible.map((agent, index) => <AgenteFila key={agent.key} agent={agent} snapshot={snapshot} hosts={fleet.hosts} onReloaded={reloaded} onDeleted={setRegistryNotice} hidden={index < first || index >= first + PAGE_SIZE} />)}
           </ul>}
       {visible.length > PAGE_SIZE ? <nav aria-label="Páginas de agentes" className="flex flex-wrap items-center justify-between gap-2">
         <p role="status" className="m-0 text-xs text-muted">Agentes {first + 1}–{Math.min(first + PAGE_SIZE, visible.length)} de {visible.length}</p>
@@ -125,6 +146,7 @@ export function AgentesSection({ snapshot: leido, onReload, tablaCompleta }: {
         los permisos y la aplicación del contexto se comprueban en la página de cada agente; si falta evidencia, se indica como desconocida.</p>
     </SectionCard>
     {snapshot.retired?.agents.length ? <SectionCard level={3} title="Agentes retirados" description="El historial y los datos se conservan hasta una purga acreditada.">
+      <p className="m-0 text-xs text-muted">«Eliminar definitivamente» purga el registro retirado. Exige que no queden dependencias y no se puede deshacer.</p>
       <ul className="m-0 grid list-none gap-3 p-0" aria-label="Agentes retirados">
         {snapshot.retired.agents.filter((agent): agent is Record<string, unknown> & { tenant_id: string; alias: string } =>
           typeof agent.tenant_id === 'string' && typeof agent.alias === 'string').map((agent) => <li key={`${agent.tenant_id}/${agent.alias}`} className="rounded-lg border border-line p-3">

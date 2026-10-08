@@ -7,6 +7,10 @@ import { server } from '../../mocks/server';
 import { renderWithApi } from '../../test/render';
 import { AgentesSection } from './AgentesSection';
 
+beforeEach(() => {
+  server.use(http.get('http://localhost/v3/console/fleet/hosts', () => HttpResponse.json({ hosts: [] })));
+});
+
 interface ChangeBody {
   dry_run: boolean;
   expected_revision: number;
@@ -86,7 +90,9 @@ it('sends a record create after an exact dry-run and closes with focus returned'
   expect(await screen.findByLabelText('Preview del alta de agente')).toHaveTextContent('"action": "create"');
   expect(screen.getByRole('button', { name: 'Crear registro' })).toBeEnabled();
   await user.click(screen.getByRole('button', { name: 'Crear registro' }));
-  expect(await screen.findByRole('status')).toHaveTextContent('Registro creado.');
+  expect(await screen.findByText('Registro creado: A/worker.')).toBeInTheDocument();
+  expect(screen.getByRole('dialog')).toBeInTheDocument();
+  await user.click(screen.getByRole('button', { name: 'Terminar' }));
   await waitFor(() => { expect(screen.queryByRole('dialog')).not.toBeInTheDocument(); });
   expect(screen.getByRole('button', { name: 'Añadir agente' })).toHaveFocus();
   expect(changes.map(({ dry_run, expected_revision }) => [dry_run, expected_revision])).toEqual([[true, 4], [false, 4]]);
@@ -151,8 +157,8 @@ it('reports an accepted registration as partial when snapshot reload fails', asy
   await user.click(screen.getByRole('button', { name: 'Previsualizar alta' }));
   await screen.findByLabelText('Preview del alta de agente');
   await user.click(screen.getByRole('button', { name: 'Crear registro' }));
-  expect(await screen.findByRole('status')).toHaveTextContent(/Registro creado\..*relectura del inventario no llegó/i);
-  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  expect(await screen.findByText(/relectura del inventario no llegó/i)).toBeInTheDocument();
+  expect(screen.getByText('Registro creado: A/worker.')).toBeInTheDocument();
 });
 
 it('closes with Escape and restores focus to the opener', async () => {
@@ -212,6 +218,8 @@ it('reopens with an empty draft and uses the newer prop snapshot over an older r
   await user.click(screen.getByRole('button', { name: 'Previsualizar alta' }));
   await screen.findByLabelText('Preview del alta de agente');
   await user.click(screen.getByRole('button', { name: 'Crear registro' }));
+  await screen.findByText('Registro creado: A/worker.');
+  await user.click(screen.getByRole('button', { name: 'Terminar' }));
   await waitFor(() => { expect(screen.queryByRole('dialog')).not.toBeInTheDocument(); });
 
   view.rerender(<ConsoleAccessBoundary><AgentesSection snapshot={{
