@@ -50,6 +50,7 @@ export function AgentSheet({ agent, retired = false, snapshot, hosts, intent, fi
   const dirty = dirtySources.size > 0;
   const [confirming, setConfirming] = useState(false);
   const keepEditing = useRef<HTMLButtonElement>(null);
+  const popup = useRef<HTMLDivElement>(null);
   const target = { resource: 'agent' as const, tenant_id: agent.tenantId, alias: agent.alias };
 
   useEffect(() => { if (confirming) keepEditing.current?.focus(); }, [confirming]);
@@ -71,10 +72,22 @@ export function AgentSheet({ agent, retired = false, snapshot, hosts, intent, fi
     setVisited((previous) => new Set(previous).add(next));
   }
 
-  return <Dialog.Root open onOpenChange={(open) => { if (!open) requestClose(); }}>
+  // Only a deliberate gesture closes the sheet: Escape, its close button, or a press that really lands on the backdrop.
+  // A press whose target is gone from the DOM (a re-render replaced the pressed button) or sits inside the sheet,
+  // and focus moving around, are not requests to close it.
+  function onOpenChange(open: boolean, details: Dialog.Root.ChangeEventDetails) {
+    if (open) return;
+    const target = details.event.target;
+    const stray = details.reason === 'focus-out'
+      || (details.reason === 'outside-press' && target instanceof Node && (!target.isConnected || Boolean(popup.current?.contains(target))));
+    if (stray) { details.cancel(); return; }
+    requestClose();
+  }
+
+  return <Dialog.Root open onOpenChange={onOpenChange}>
     <Dialog.Portal>
       <Dialog.Backdrop className="fixed inset-0 z-50 bg-scrim transition-opacity duration-200 data-[ending-style]:opacity-0 data-[starting-style]:opacity-0 motion-reduce:transition-none" />
-      <Dialog.Popup className={DRAWER_POPUP} finalFocus={finalFocus}>
+      <Dialog.Popup ref={popup} className={DRAWER_POPUP} finalFocus={finalFocus}>
         <header className="flex shrink-0 items-start gap-3 border-b border-line px-5 py-4">
           <AgentOrb seed={view.ref} size={40} />
           <div className="min-w-0 flex-1">

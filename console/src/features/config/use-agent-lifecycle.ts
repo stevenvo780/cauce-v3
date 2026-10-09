@@ -46,7 +46,9 @@ export function useAgentLifecycle(open: boolean, target?: FleetTarget) {
     accepted.current = value;
     setReadError(undefined);
     setOperation(value);
-    setHistory((rows) => [value, ...(rows ?? []).filter((entry) => entry.id !== value.id)].slice(0, 100));
+    // Updated in place: moving the row the operator just pressed would re-insert its button in the DOM and drop its focus.
+    setHistory((rows) => rows?.some((entry) => entry.id === value.id)
+      ? rows.map((entry) => entry.id === value.id ? value : entry) : [value, ...(rows ?? [])].slice(0, 100));
   }
   const refresh = useCallback(async () => {
     if (!operation || busy) return;
