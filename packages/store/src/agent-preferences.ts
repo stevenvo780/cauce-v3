@@ -4,6 +4,7 @@ import {
   type AgentAppearance, type AgentAppearanceStyle, type AgentFavorite,
 } from '@cauce/protocol';
 import { withTransaction, type DatabaseClient, type DatabasePool } from './db.js';
+import { hubStarRouteSql } from './repository/acl-edges.js';
 import { StoreError } from './repository/errors.js';
 
 /** Two-key advisory namespace: (this constant, hashtext(human_id)) serializes one human's favorite cap. */
@@ -81,8 +82,8 @@ const APPEARANCE_COLUMNS = 'tenant_id,alias,glyph,hue,style,revision::text AS re
 
 /**
  * Target side of `authorizeAgentTarget(..., 'read')`: enabled target tenant, and for another tenant an
- * enabled read edge between enabled tenants with a hub endpoint. The caller asserts the viewer's own
- * read permission. `$1` is the viewer tenant.
+ * enabled read edge between enabled tenants that the company star (or a live link) admits. The caller
+ * asserts the viewer's own read permission. `$1` is the viewer tenant.
  */
 function readableBy(table: string): string {
   return `EXISTS (SELECT 1 FROM tenants target_tenant
@@ -92,7 +93,7 @@ function readableBy(table: string): string {
            JOIN tenants source_tenant ON source_tenant.id=edge.from_tenant
           WHERE edge.from_tenant=$1 AND edge.to_tenant=${table}.tenant_id
             AND edge.enabled AND edge.allow_read AND source_tenant.enabled
-            AND (source_tenant.is_hub OR target_tenant.is_hub))))`;
+            AND ${hubStarRouteSql('source_tenant', 'target_tenant')})))`;
 }
 
 function appearance(row: AppearanceRow): AgentAppearance {
@@ -150,6 +151,7 @@ export class AgentPreferencesStore implements AgentPreferencesRepository {
       `SELECT favorite.tenant_id,favorite.alias,favorite.created_at
          FROM console_agent_favorites favorite
         WHERE favorite.human_id=$2 AND ${readableBy('favorite')}
+          AND favorite.company_id=(SELECT viewer.company_id FROM tenants viewer WHERE viewer.id=$1)
         ORDER BY favorite.created_at,favorite.tenant_id,favorite.alias`,
       [viewerTenant, humanId],
     );

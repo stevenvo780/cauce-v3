@@ -13,7 +13,7 @@ async function fixture() {
     { operation: 'create', requestId: randomUUID(), label: 'Cronos', target: clientConnectionReference(issuer,
       controlOptions.resource, owner.humanId, 'Steven', first.identity.grantId) }));
   const repository = new CauceRepository(pool);
-  const alias = clientMailboxAddress(first.identity.grantId);
+  const alias = clientMailboxAddress(first.identity.grantId, 'Steven');
   return { pool, owner, first, declaration, repository, alias };
 }
 function command(alias: string, text = 'ping from agent') {
@@ -214,7 +214,7 @@ describe('durable client mailbox', () => {
     const { repository, alias, pool } = await fixture();
     await expect(repository.publish(command(alias, 'x'.repeat(17000)))).rejects.toMatchObject({ code: 'invalid_input' });
     await expect(repository.publish({ ...command(alias), body: { text: 'attachment', attachments_v1: [] } })).rejects.toMatchObject({ code: 'invalid_input' });
-    await expect(repository.publish(command(clientMailboxAddress(randomUUID())))).rejects.toMatchObject({ code: 'no_route' });
+    await expect(repository.publish(command(clientMailboxAddress(randomUUID(), 'Steven')))).rejects.toMatchObject({ code: 'no_route' });
     expect((await pool.query('SELECT * FROM messages')).rowCount).toBe(0);
     expect((await pool.query('SELECT * FROM idempotency_keys')).rowCount).toBe(0);
   });

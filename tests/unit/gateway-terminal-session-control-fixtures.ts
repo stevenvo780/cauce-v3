@@ -20,7 +20,8 @@ import {
 import { AgentRegistry } from '../../services/gateway/src/terminal/registry.js';
 import { TerminalSessionAuthority } from '../../services/gateway/src/terminal/session-authority.js';
 import { encodeTerminalSubject, issueAuthorityContinuity, type HumanAuthorityOrigin } from '../../services/gateway/src/terminal/authority-continuity.js';
-import type { FleetPlacement, TerminalSessionRow } from '../../services/gateway/src/terminal/types.js';
+import type { CompanyFleetPlacement } from '../../services/gateway/src/terminal/authority.js';
+import type { TerminalSessionRow } from '../../services/gateway/src/terminal/types.js';
 
 /**
  * Hermetic tests for the terminal-plane orchestrator.
@@ -170,7 +171,7 @@ export interface ContextOptions {
   readonly replyError?: (reply: FastifyReply, error: unknown) => void;
   readonly recordTransactionalTerminalAudit?: ReturnType<typeof vi.fn>;
   readonly config?: Partial<TerminalConfig>;
-  readonly cohort?: FleetPlacement[];
+  readonly cohort?: CompanyFleetPlacement[];
 }
 
 export interface Context {
@@ -201,7 +202,7 @@ export function buildContext(options: ContextOptions = {}): Context {
   };
   const recordTransactionalTerminalAudit = options.recordTransactionalTerminalAudit ?? vi.fn(async () => undefined);
   const cohort = options.cohort ?? [
-    { tenant_id: 'Steven', alias: 'jarvis', container: 'claw', runtime_user: 'claw' },
+    { tenant_id: 'Steven', alias: 'jarvis', container: 'claw', runtime_user: 'claw', company_id: 'humanizar', host_id: 'server' },
   ];
   const app = Fastify({ logger: false });
 

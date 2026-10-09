@@ -347,8 +347,8 @@ describe('POST /v3/console/terminal/sessions/:sid/control', () => {
       pool,
       grants: grants as unknown as never,
       cohort: [
-        { tenant_id: 'Steven', alias: 'jarvis', container: 'claw', runtime_user: 'claw' },
-        { tenant_id: 'Steven', alias: 'socrates', container: 'claw', runtime_user: 'claw' },
+        { tenant_id: 'Steven', alias: 'jarvis', container: 'claw', runtime_user: 'claw', company_id: 'humanizar', host_id: 'server' },
+        { tenant_id: 'Steven', alias: 'socrates', container: 'claw', runtime_user: 'claw', company_id: 'humanizar', host_id: 'server' },
       ],
     });
     const response = await control(validControlRequest());

@@ -283,7 +283,7 @@ describe('Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice', () => {
     const epoch = await first.connect(wsUrl);
     await expect(second.connect(wsUrl)).rejects.toThrow('takeover_rejected:instance-a');
     await expect(repository.heartbeat('Isa', 'salva', 'instance-a', epoch + 1, 1_000)).rejects.toMatchObject({ code: 'fenced' });
-    const presence = await repository.listPresence();
+    const presence = await repository.listPresence('Isa', 'salva');
     expect(presence).toContainEqual(expect.objectContaining({ alias: 'salva', instance_id: 'instance-a', online: true }));
   });
 
@@ -504,9 +504,9 @@ describe('Cauce V3 PostgreSQL + HTTP + WebSocket vertical slice', () => {
   it('derives presence from lease heartbeat expiry', async () => {
     const acquired = await repository.acquireLease('Pablo', 'midas', 'short-lived', ['jobs'], 50);
     expect(acquired.acquired).toBe(true);
-    expect(await repository.listPresence()).toContainEqual(expect.objectContaining({ alias: 'midas', online: true }));
+    expect(await repository.listPresence('Pablo', 'midas')).toContainEqual(expect.objectContaining({ alias: 'midas', online: true }));
     await new Promise((resolve) => setTimeout(resolve, 90));
-    expect(await repository.listPresence()).toContainEqual(expect.objectContaining({ alias: 'midas', online: false }));
+    expect(await repository.listPresence('Pablo', 'midas')).toContainEqual(expect.objectContaining({ alias: 'midas', online: false }));
   });
 
   it('pushes an asynchronous wake and delivery over WebSocket', async () => {

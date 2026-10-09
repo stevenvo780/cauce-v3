@@ -1,7 +1,7 @@
 import { isRfcUuid, type Tenant } from '@cauce/protocol'; /* eslint @typescript-eslint/no-unnecessary-type-conversion: "error", @typescript-eslint/no-unnecessary-condition: "error", @typescript-eslint/consistent-type-definitions: "off" */
 import {
   agentWorkState, DEFAULT_FLEET_ACTIVITY_THRESHOLDS, FLEET_ACTIVITY_QUERY, FLEET_ACTIVITY_FLAGS,
-  FLEET_WORK_STATES, type FleetActivityFlag, type FleetWorkState
+  FLEET_WORK_STATES, fleetReadableSql, type FleetActivityFlag, type FleetWorkState
 } from '../fleet-activity.js';
 import { safeAuditSummary } from '../audit-summary.js';
 import { postgresBigintString } from '../runtime-values.js';
@@ -312,10 +312,7 @@ export abstract class ObservabilityRepository extends ObservabilityChainSweepRep
                        WHERE source_member.tenant_id=$1 AND source_member.room_id=m.room_id
                          AND source_member.alias=$2 AND source_member.enabled AND m.tenant_id=$1)
             OR (d.recipient_tenant=$1 AND d.recipient_alias=$2
-                AND (m.tenant_id=$1 OR EXISTS (
-                  SELECT 1 FROM acl_edges edge WHERE edge.from_tenant=$1 AND edge.to_tenant=m.tenant_id
-                    AND edge.enabled AND edge.allow_read
-                )))
+                AND ${fleetReadableSql('$1::text', 'm.tenant_id')})
        ), sample AS MATERIALIZED (
          SELECT * FROM visible_deliveries ORDER BY created_at DESC LIMIT $3
        ), totals AS (

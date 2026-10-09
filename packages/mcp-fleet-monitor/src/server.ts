@@ -35,14 +35,10 @@ async function main() {
     }
 
     // Every tool filters on CAUCE_TENANT_ID against `connection_leases.tenant_id` and
-    // `deliveries.recipient_tenant`. Validate that the configured tenant exists in the database.
-    const known = await pool.query<{ id: string }>('SELECT id FROM tenants ORDER BY id');
-    if (!known.rows.some((row) => row.id === ensuredTenantId)) {
-      throw new Error(
-        `CAUCE_TENANT_ID '${ensuredTenantId}' is not a known tenant. `
-        + `Expected one of: ${known.rows.map((row) => row.id).join(', ')}. `
-        + 'This must be a tenant id, not a room id.'
-      );
+    // `deliveries.recipient_tenant`. Only that tenant is looked up: other companies stay unnamed.
+    const known = await pool.query('SELECT 1 FROM tenants WHERE id=$1', [ensuredTenantId]);
+    if (known.rowCount !== 1) {
+      throw new Error(`CAUCE_TENANT_ID '${ensuredTenantId}' is not a known tenant id (a room id is not one).`);
     }
 
     console.error('[mcp-fleet-monitor] Connected to database');

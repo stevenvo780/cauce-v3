@@ -8,7 +8,7 @@ export const CLIENT_MAILBOX_CAPACITY = 1000;
 export const CLIENT_MAILBOX_MESSAGE_BYTES = 16 * 1024;
 const ADDRESS = /^mbx-[a-f0-9]{48}$/u;
 const MAILBOX_ALIAS_SQL = `'mbx-'||left(encode(digest('cauce-v3:client-mailbox:v1:'||grant_row.tenant_id||':'||grant_row.id::text,'sha256'),'hex'),48)`;
-export function clientMailboxAddress(grantId: string, tenant: Tenant = 'Steven'): string {
+export function clientMailboxAddress(grantId: string, tenant: Tenant): string {
   if (!isAnyUuid(grantId)) throw new StoreError('invalid_input', 'invalid mailbox grant');
   return `mbx-${createHash('sha256').update(`cauce-v3:client-mailbox:v1:${tenant}:${grantId.toLowerCase()}`).digest('hex').slice(0, 48)}`;
 }

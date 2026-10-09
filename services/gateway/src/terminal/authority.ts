@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import type { FastifyRequest } from 'fastify';
-import type { DatabaseClient, DatabasePool } from '@cauce/store';
+import { hubStarRouteSql, type DatabaseClient, type DatabasePool } from '@cauce/store';
 import type { Principal } from '../auth.js';
 import { scalarHeaderValue } from '../http-auth-primitives.js';
 import type { TerminalConfig } from './config.js';
@@ -24,6 +24,13 @@ interface FleetPlacementRow {
   readonly alias: string;
   readonly container_name: string | null;
   readonly runtime_user: string | null;
+  readonly company_id: string;
+  readonly host_id: string | null;
+}
+
+export interface CompanyFleetPlacement extends FleetPlacement {
+  readonly company_id: string;
+  readonly host_id: string | null;
 }
 
 /**
@@ -34,9 +41,9 @@ interface FleetPlacementRow {
  */
 export async function loadFleetPlacements(
   database: DatabasePool | DatabaseClient,
-): Promise<readonly FleetPlacement[]> {
+): Promise<readonly CompanyFleetPlacement[]> {
   const result = await database.query<FleetPlacementRow>(
-    `SELECT tenant_id,alias,container_name,runtime_user
+    `SELECT tenant_id,alias,container_name,runtime_user,company_id,host_id
        FROM agents
       WHERE enabled
       ORDER BY tenant_id,alias`
@@ -49,31 +56,33 @@ export async function loadFleetPlacements(
       tenant_id: row.tenant_id,
       alias: row.alias,
       container: row.container_name,
-      runtime_user: row.runtime_user
+      runtime_user: row.runtime_user,
+      company_id: row.company_id,
+      host_id: row.host_id
     };
   });
 }
 
-export function fleetPlacement(
-  placements: readonly FleetPlacement[], tenantId: string, alias: string
-): FleetPlacement | undefined {
+export function fleetPlacement<Placement extends FleetPlacement>(
+  placements: readonly Placement[], tenantId: string, alias: string
+): Placement | undefined {
   return placements.find((entry) => entry.tenant_id === tenantId && entry.alias === alias);
 }
 
 /**
- * Every alias sharing the requested alias' container, including the alias itself.
- *
- * SET RULE: authorizing target X requires routing authority AND a grant over EVERY member of
- * X's cohort. A shell in a shared container sees all co-located agent directories, so authority
- * over one member must not open others by the back door.
+ * Every alias of the company sharing the requested alias' container and host, itself included; a
+ * hostless agent may run on any host of its company, so it widens a cohort and never splits one.
+ * SET RULE: authorizing target X requires routing authority AND a grant over EVERY member of X's
+ * cohort: a shell in a shared container sees every co-located agent directory.
  */
 export function containerCohort(
-  placements: readonly FleetPlacement[], tenantId: string, alias: string
-): FleetPlacement[] {
+  placements: readonly CompanyFleetPlacement[], tenantId: string, alias: string
+): CompanyFleetPlacement[] {
   const placement = fleetPlacement(placements, tenantId, alias);
   if (!placement) return [];
   return placements
-    .filter((entry) => entry.container === placement.container)
+    .filter((entry) => entry.company_id === placement.company_id && entry.container === placement.container
+      && (entry.host_id === null || placement.host_id === null || entry.host_id === placement.host_id))
     .sort((left, right) => `${left.tenant_id}\0${left.alias}`.localeCompare(`${right.tenant_id}\0${right.alias}`));
 }
 
@@ -208,7 +217,7 @@ interface EdgeRow {
  * Read-only replica of the rule that already authorizes publishing to an agent. Same-tenant
  * needs a shared enabled room with both memberships enabled and tenant/room enabled;
  * cross-tenant additionally needs acl_edges(from->to) with enabled AND allow_route AND
- * allow_control. Nothing here writes: it is safe against production.
+ * allow_control that the company star (across companies, a live link) admits. Nothing here writes.
  */
 export async function routingAuthority(
   pool: DatabasePool | DatabaseClient,
@@ -249,8 +258,11 @@ export async function routingAuthority(
     return { allowed: true, reason: 'same_tenant_room', source_room_ids: shared };
   }
   const edge = await pool.query<EdgeRow>(
-    `SELECT true AS ok FROM acl_edges
-      WHERE from_tenant=$1 AND to_tenant=$2 AND enabled AND allow_route AND allow_control LIMIT 1`,
+    `SELECT true AS ok FROM acl_edges edge
+       JOIN tenants source ON source.id=edge.from_tenant
+       JOIN tenants target ON target.id=edge.to_tenant
+      WHERE edge.from_tenant=$1 AND edge.to_tenant=$2 AND edge.enabled AND edge.allow_route AND edge.allow_control
+        AND ${hubStarRouteSql('source', 'target')} LIMIT 1`,
     [actorTenant, targetTenant]
   );
   if (edge.rows.length === 0) {

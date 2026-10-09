@@ -84,7 +84,7 @@ describe('company-aware runtime routes', () => {
       child_tenant,child_alias,failure_signature,window_expires_at) VALUES($1,'DeletedTenant','kant','Isa','salva','fixture',now()+interval '1 hour')
       RETURNING id::text`, [randomUUID()])).rows[0];
     if (!orphan) throw new Error('orphan notice absent');
-    expect(await repository.failureNoticeDetail(orphan.id, 'Steven', 'company_admin')).toHaveProperty('notice');
+    await expect(repository.failureNoticeDetail(orphan.id, 'Steven', 'company_admin')).rejects.toMatchObject({ code: 'not_found' });
     await expect(repository.failureNoticeDetail(orphan.id, 'PraxisHub', 'company_admin')).rejects.toMatchObject({ code: 'not_found' });
   });
   it('withdraws topology and agent and mailbox inventories when a company link is removed', async () => {

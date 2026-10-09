@@ -29,7 +29,7 @@ async function fixture(grants = 1) {
   const [first] = connections;
   if (!first) throw new Error('missing first grant');
   return { pool, owner, first, connections, repository: new CauceRepository(pool),
-    aliases: connections.map(current => clientMailboxAddress(current.identity.grantId)) };
+    aliases: connections.map(current => clientMailboxAddress(current.identity.grantId, 'Steven')) };
 }
 type State = Awaited<ReturnType<typeof fixture>>;
 
