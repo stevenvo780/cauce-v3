@@ -2,6 +2,7 @@ import type { QuotaSampleRequest, Tenant } from '@cauce/protocol';
 import { SUPPORTED_QUOTA_SCHEMA_VERSIONS } from '@cauce/protocol';
 import { AUTOMATIC_PAUSE_PREFIX } from '../accounts.js';
 import { withTransaction } from '../db.js';
+import { tenantReadableSql } from './acl-edges.js';
 import { DeliveryControlRepository } from './deliveries/control.js';
 import { StoreError } from './errors.js';
 
@@ -219,10 +220,10 @@ export abstract class QuotasRepository extends DeliveryControlRepository {
    *
    * Cross-tenant scope: the quota tables do not have a tenant_id of their own -- what exists is
    * `quota_collections.collector_tenant` (the mTLS identity that published, e.g. 'Steven:quota-collector').
-   * It is resolved the same way as topology()/fleetActivity() (own tenant + acl_edges allow_read) to decide
-   * which TENANTS the actor can see, and from there which HOSTS are visible (every host whose latest run
-   * was published by a visible tenant); `quota_provider_reports`/`quota_window_samples`/`quota_window_state`
-   * do not have their own collector_tenant, so they are filtered by host, which is the shared natural key.
+   * The actor sees the collectors of every tenant readable to it (tenantReadableSql: own tenant, or read
+   * and route edges the company star admits). Every table is filtered by that collector tenant, never by
+   * `host`: a host is a name the collector declares, and two companies may declare the same one. An
+   * account joins only inside the company of the quota state that references it.
    *
    * NEVER selects external_account_id/credential_ref/credential_ref_kind from provider_accounts: they are
    * not in the output shape anywhere in this method.
@@ -232,24 +233,10 @@ export abstract class QuotasRepository extends DeliveryControlRepository {
     const observedAt = new Date();
 
     const visibleTenants = await this.pool.query<{ id: Tenant }>(
-      `SELECT t.id FROM tenants t WHERE t.id=$1 OR EXISTS (
-         SELECT 1 FROM acl_edges a WHERE a.from_tenant=$1 AND a.to_tenant=t.id
-           AND a.enabled AND a.allow_read
-       ) ORDER BY t.id`,
+      `SELECT t.id FROM tenants t WHERE ${tenantReadableSql('$1::text', 't.id')} ORDER BY t.id`,
       [actorTenant]
     );
-    // Isolation is by TENANT, never by host name: `host` is a string declared by the
-    // collector itself, so two tenants using the same name would share the panel. `visibleHosts`
-    // is kept for reads of tables that do not yet carry the tenant (history is also bounded
-    // by its collection), but the filter that COUNTS is the tenant one.
     const visibleTenantIds = visibleTenants.rows.map((row) => row.id);
-    const visibleHostsResult = await this.pool.query<{ host: string }>(
-      `SELECT DISTINCT host FROM quota_collections
-       WHERE collector_tenant = ANY($1::text[])
-       ORDER BY host`,
-      [visibleTenantIds]
-    );
-    const visibleHosts = visibleHostsResult.rows.map((row) => row.host);
 
     const [collectorRows, providerRows, stateRows, historyRows, pausedRows] = await Promise.all([
       // The latest quota_collections of each visible host: it is what answers "is the
@@ -260,9 +247,9 @@ export abstract class QuotasRepository extends DeliveryControlRepository {
            host,collector_tenant,collector_alias,captured_at,received_at,
            schema_version,app_version,provider_count,window_count
          FROM quota_collections
-         WHERE host = ANY($1::text[])
+         WHERE collector_tenant = ANY($1::text[])
          ORDER BY host,received_at DESC`,
-        [visibleHosts]
+        [visibleTenantIds]
       ),
       // The latest provider report per (host,provider), among the visible collections of
       // that host -- ok=false with zero windows is information and must survive here.
@@ -273,9 +260,9 @@ export abstract class QuotasRepository extends DeliveryControlRepository {
            qc.received_at,pr.available_groups,pr.limiting_groups
          FROM quota_provider_reports pr
          JOIN quota_collections qc ON qc.id=pr.collection_id
-         WHERE qc.host = ANY($1::text[])
+         WHERE qc.collector_tenant = ANY($1::text[])
          ORDER BY qc.host,pr.provider,qc.received_at DESC`,
-        [visibleHosts]
+        [visibleTenantIds]
       ),
       // The CURRENT materialized state of each window -- the table that exists precisely so
       // this endpoint does not have to scan history on every read.
@@ -287,7 +274,7 @@ export abstract class QuotasRepository extends DeliveryControlRepository {
                 p.label AS account_label,p.provider AS account_provider,
                 p.payer_tenant_id,p.paused_until,p.paused_reason
          FROM quota_window_state s
-         LEFT JOIN provider_accounts p ON p.id=s.account_id
+         LEFT JOIN provider_accounts p ON p.id=s.account_id AND p.company_id=s.company_id
          WHERE s.collector_tenant = ANY($1::text[])
          ORDER BY s.host,s.provider,s.group_key,s.window_key`,
         [visibleTenantIds]
@@ -323,7 +310,8 @@ export abstract class QuotasRepository extends DeliveryControlRepository {
            FROM provider_accounts p
           WHERE p.paused_until > $2::timestamptz
             AND EXISTS (SELECT 1 FROM quota_window_state s
-                          WHERE s.account_id=p.id AND s.collector_tenant = ANY($1::text[]))
+                          WHERE s.account_id=p.id AND s.company_id=p.company_id
+                            AND s.collector_tenant = ANY($1::text[]))
           ORDER BY p.provider,p.id`,
         [visibleTenantIds, observedAt]
       )
@@ -630,38 +618,47 @@ export abstract class QuotasRepository extends DeliveryControlRepository {
         window_key: row.window_key, paused_until: row.paused_until.toISOString()
       }));
 
-      // GLOBAL auto-resume (not bounded to this collection_id) on purpose: if another provider of the same run,
-      // or a previous run, already left an account healthy, it must be lifted as soon as it is detected, not
-      // only when THAT specific account shows up again in a POST. The automatic pause prefix
-      // clause is what prevents overwriting a manual pause.
+      // Company-wide auto-resume (not bounded to this collection_id) on purpose: if another provider of the
+      // same run, or a previous run, already left an account healthy, it is lifted as soon as it is detected,
+      // not only when THAT account shows up again in a POST. Only accounts of the collector's company move and
+      // are reported back to it; the automatic pause prefix clause prevents overwriting a manual pause.
       const resumedAccountRows = await client.query<{ account_id: string; provider: string }>(
         `UPDATE provider_accounts p
             SET paused_until = NULL, paused_reason = NULL, updated_at = now()
           WHERE starts_with(p.paused_reason, $1)
+            AND p.company_id = (SELECT collector.company_id FROM tenants collector WHERE collector.id = $2)
             AND NOT EXISTS (
               SELECT 1 FROM quota_window_state s
                WHERE s.account_id = p.id AND (s.remaining_percent <= 0 OR s.status = 'rate-limited')
             )
          RETURNING p.id AS account_id, p.provider`,
-        [AUTOMATIC_PAUSE_PREFIX]
+        [AUTOMATIC_PAUSE_PREFIX, actorTenant]
       );
       const resumedAccounts: QuotaSampleResumedAccount[] = resumedAccountRows.rows.map((row) => ({
         account_id: row.account_id, provider: row.provider
       }));
 
-      // Bounded retention (LIMIT 500) so a single POST never triggers an unbounded DELETE.
-      const prunedCollections = await client.query(
-        `DELETE FROM quota_collections WHERE ctid IN (
-           SELECT ctid FROM quota_collections
-            WHERE received_at < now() - interval '30 days' ORDER BY received_at LIMIT 500
-         )`
+      // Bounded retention (LIMIT 500) so a single POST never triggers an unbounded DELETE. The policy is
+      // installation-wide, so a company whose collectors went silent still ages out; the collector is
+      // told only how much of its own company's history went.
+      const prunedCollections = await client.query<{ pruned: number }>(
+        `WITH pruned AS (
+           DELETE FROM quota_collections WHERE ctid IN (
+             SELECT ctid FROM quota_collections
+              WHERE received_at < now() - interval '30 days' ORDER BY received_at LIMIT 500
+           ) RETURNING collector_tenant
+         )
+         SELECT count(*)::int AS pruned FROM pruned
+           JOIN tenants collector ON collector.id = pruned.collector_tenant
+          WHERE collector.company_id = (SELECT actor.company_id FROM tenants actor WHERE actor.id = $1)`,
+        [actorTenant]
       );
 
       return {
         collection_id: collectionId, host: sample.host, captured_at: sample.captured_at, duplicate: false,
         accepted_providers: providerCount, accepted_windows: windowCount,
         unbound_groups: [...unboundGroups.values()], paused_accounts: pausedAccounts, resumed_accounts: resumedAccounts,
-        pruned_collections: prunedCollections.rowCount ?? 0
+        pruned_collections: prunedCollections.rows[0]?.pruned ?? 0
       };
     });
   }

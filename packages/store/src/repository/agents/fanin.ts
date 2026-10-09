@@ -2,7 +2,6 @@ import { clientMailboxStoredSql } from '../../client-mailbox.js';
 import type { DeliveryState, Tenant } from '@cauce/protocol'; /* eslint @typescript-eslint/prefer-optional-chain: "error" */
 import { StoreError } from '../errors.js';
 import { hubStarRouteSql } from '../acl-edges.js';
-import { LEGACY_COMPANY } from '../../configuration/company-scope.js';
 import { terminal } from '../messages.js';
 import {
   chainNode, opaqueNodeId
@@ -21,8 +20,8 @@ export abstract class AgentFaninRepository extends AgentFaninMaterializationRepo
    * with X it lands here —the raw cause of each of the N, with its delivery and its attempt.
    *
    * Default-deny as the rest of the read-models: only the parent the notice was addressed to,
-   * the child that failed, or an operator of a hub tenant. A failure bucket names two tenants
-   * (parent and child), so leaving it open would leak cross-tenant topology.
+   * the child that failed, or an operator of the hub of the company both endpoints still belong to.
+   * A failure bucket names two tenants, so an endpoint without a company keeps the hub out.
    */
   async failureNoticeDetail(
     noticeId: string,
@@ -46,8 +45,7 @@ export abstract class AgentFaninRepository extends AgentFaninMaterializationRepo
                 OR EXISTS (SELECT 1 FROM tenants hub WHERE hub.id=$2 AND hub.is_hub AND hub.enabled
                   AND NOT EXISTS (SELECT 1 FROM unnest(ARRAY[notice.parent_tenant,notice.child_tenant]) endpoint(id)
                     LEFT JOIN tenants owner ON owner.id=endpoint.id
-                    -- Notices have no tenant foreign key; a deleted endpoint stays with the legacy company.
-                    WHERE COALESCE(owner.company_id,'${LEGACY_COMPANY}')<>hub.company_id))
+                    WHERE owner.company_id IS DISTINCT FROM hub.company_id))
               ) AS visible
        FROM agent_failure_notices notice WHERE notice.id=$1::bigint`,
       [noticeId, actorTenant, actorAlias]
@@ -75,9 +73,9 @@ export abstract class AgentFaninRepository extends AgentFaninMaterializationRepo
    * intrinsically cross-tenant, so a same-tenant row filter would silently erase exactly the
    * edges this read-model exists to show, and a caller-side filter over a graph payload is
    * how cross-tenant leaks happen. A node is visible under the same default-deny rule as
-   * getMessage (room membership inside the actor tenant, or participation plus an
-   * allow_read ACL edge). An edge survives when at least one of its endpoints is visible;
-   * the other endpoint is then reduced to an opaque, stable node id so the shape of the
+   * getMessage (room membership inside the actor tenant, or participation plus an allow_read
+   * ACL edge). An edge of the viewer's company or a linked one survives when at least one of its
+   * endpoints is visible; the other is reduced to an opaque, stable node id so the shape of the
    * chain stays readable without disclosing a foreign tenant, alias or delivery id.
    */
   async agentChain(
@@ -152,6 +150,10 @@ export abstract class AgentFaninRepository extends AgentFaninMaterializationRepo
          LEFT JOIN deliveries child ON child.id=materialization.produced_delivery_id
          LEFT JOIN messages produced_message ON produced_message.id=materialization.produced_message_id
          WHERE materialization.trace_id=$1
+           AND EXISTS (SELECT 1 FROM tenants viewer JOIN tenants endpoint ON endpoint.id IN
+               (materialization.source_tenant,materialization.target_tenant,source_message.tenant_id)
+             WHERE viewer.id=$2 AND (endpoint.company_id=viewer.company_id OR EXISTS (SELECT 1 FROM company_links link
+               WHERE ARRAY[link.company_a,link.company_b] @> ARRAY[viewer.company_id,endpoint.company_id])))
          ORDER BY materialization.hop_count,materialization.created_at,materialization.output_index
          LIMIT $4`,
         [traceId, actorTenant, actorAlias, bounded]

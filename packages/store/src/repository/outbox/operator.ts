@@ -2,6 +2,7 @@ import type { Tenant } from '@cauce/protocol';
 import type { DatabaseClient } from '../../db.js';
 import { withTransaction } from '../../db.js';
 import { hubEdgeExistsSql } from '../acl-edges.js';
+import { fleetReadableSql } from '../../fleet-activity.js';
 import { StoreError } from '../errors.js';
 import { loadDeliveryHumanLineage, preserveHumanMessageLineage } from '../human-message-lineage.js';
 import { insertDelivery, MESSAGE_INSERT_COLUMNS } from '../messages/_insert.js';
@@ -298,10 +299,7 @@ export abstract class OutboxOperatorRepository extends OutboxSettlementRepositor
          OR (EXISTS (SELECT 1 FROM deliveries participant
                      WHERE participant.id=outbox.delivery_id AND participant.recipient_tenant=$1
                        AND participant.recipient_alias=$2)
-             AND (message.tenant_id=$1 OR EXISTS (
-               SELECT 1 FROM acl_edges edge WHERE edge.from_tenant=$1
-                 AND edge.to_tenant=message.tenant_id AND edge.enabled AND edge.allow_read
-             )))
+             AND ${fleetReadableSql('$1::text', 'message.tenant_id')})
        ) ORDER BY outbox.created_at DESC LIMIT $3`, [actorTenant, actorAlias, limit]
     );
     return { items: result.rows };

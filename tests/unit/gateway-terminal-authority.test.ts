@@ -10,7 +10,7 @@ import type { Principal } from '../../services/gateway/src/auth.js';
 import {
   GrantStore, attributionAllows, cohortRoutingAuthority, containerCohort,
   fleetIdentity, fleetIdentityLabel, fleetPlacement, loadFleetPlacements,
-  resolveOperator, routingAuthority, writableModeRequiresAttribution,
+  resolveOperator, routingAuthority, writableModeRequiresAttribution, type CompanyFleetPlacement,
 } from '../../services/gateway/src/terminal/authority.js';
 import type { TerminalConfig } from '../../services/gateway/src/terminal/config.js';
 import {
@@ -46,15 +46,15 @@ function exigir<T>(valor: T | undefined, que: string): T {
  * containers compartidos, etc.
  */
 
-const PLACEMENTS: readonly FleetPlacement[] = [
-  { tenant_id: 'Isa', alias: 'salva', container: 'ws-isa', runtime_user: 'dev' },
-  { tenant_id: 'Miguel', alias: 'atlas', container: 'ws-humanizar', runtime_user: 'dev' },
-  { tenant_id: 'Miguel', alias: 'iza', container: 'ws-humanizar', runtime_user: 'dev' },
-  { tenant_id: 'Miguel', alias: 'kratos', container: 'ws-humanizar', runtime_user: 'dev' },
-  { tenant_id: 'Steven', alias: 'argos', container: 'ctrl-infra', runtime_user: 'dev' },
-  { tenant_id: 'Steven', alias: 'jarvis', container: 'claw', runtime_user: 'claw' },
-  { tenant_id: 'Steven', alias: 'kant', container: 'ctrl-infra', runtime_user: 'dev' },
-  { tenant_id: 'Steven', alias: 'zeus', container: 'ws-zeus', runtime_user: 'dev' },
+const PLACEMENTS: readonly CompanyFleetPlacement[] = [
+  { tenant_id: 'Isa', alias: 'salva', container: 'ws-isa', runtime_user: 'dev', company_id: 'humanizar', host_id: 'server' },
+  { tenant_id: 'Miguel', alias: 'atlas', container: 'ws-humanizar', runtime_user: 'dev', company_id: 'humanizar', host_id: 'server' },
+  { tenant_id: 'Miguel', alias: 'iza', container: 'ws-humanizar', runtime_user: 'dev', company_id: 'humanizar', host_id: 'server' },
+  { tenant_id: 'Miguel', alias: 'kratos', container: 'ws-humanizar', runtime_user: 'dev', company_id: 'humanizar', host_id: 'server' },
+  { tenant_id: 'Steven', alias: 'argos', container: 'ctrl-infra', runtime_user: 'dev', company_id: 'humanizar', host_id: 'server' },
+  { tenant_id: 'Steven', alias: 'jarvis', container: 'claw', runtime_user: 'claw', company_id: 'humanizar', host_id: 'server' },
+  { tenant_id: 'Steven', alias: 'kant', container: 'ctrl-infra', runtime_user: 'dev', company_id: 'humanizar', host_id: 'server' },
+  { tenant_id: 'Steven', alias: 'zeus', container: 'ws-zeus', runtime_user: 'dev', company_id: 'humanizar', host_id: 'server' },
 ];
 
 function consolePrincipal(overrides: Partial<Principal> = {}): Principal {
@@ -203,7 +203,7 @@ describe('fleetPlacement / fleetIdentity / fleetIdentityLabel / containerCohort'
 
   it('containerCohort devuelve un array vacío si el alias no está colocado', () => {
     expect(containerCohort(PLACEMENTS, 'Steven', 'no-existe')).toEqual([]);
-    expect(containerCohort([] as readonly FleetPlacement[], 'Miguel', 'iza')).toEqual([]);
+    expect(containerCohort([] as readonly CompanyFleetPlacement[], 'Miguel', 'iza')).toEqual([]);
   });
 });
 

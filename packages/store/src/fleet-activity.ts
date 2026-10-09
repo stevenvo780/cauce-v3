@@ -1,6 +1,16 @@
 /**
  * Fleet activity heuristics and queries for GET /v3/console/activity.
  */
+import { hubStarRouteSql } from './repository/acl-edges.js';
+
+/** Own tenant, or an enabled allow_read edge the company star (or a live link) admits; tenant and company state aside. */
+export function fleetReadableSql(reader: string, owner: string): string {
+  return `(${owner}=${reader} OR EXISTS (SELECT 1 FROM acl_edges read_edge
+    JOIN tenants read_source ON read_source.id=read_edge.from_tenant
+    JOIN tenants read_target ON read_target.id=read_edge.to_tenant
+    WHERE read_edge.from_tenant=${reader} AND read_edge.to_tenant=${owner}
+      AND read_edge.enabled AND read_edge.allow_read AND ${hubStarRouteSql('read_source', 'read_target')}))`;
+}
 
 export interface FleetActivityThresholds {
   /** How many in-flight deliveries make an agent be considered saturated. */
@@ -100,14 +110,11 @@ export function agentWorkState(
  */
 export const FLEET_ACTIVITY_QUERY = `
 WITH visible_tenants AS (
-  -- Misma regla default-deny que topology() y listAgents(): el propio tenant, más cualquier
-  -- tenant al que el actor tenga una arista ACL allow_read habilitada.
+  -- Same default-deny rule as listAgents(): the actor's own tenant plus every tenant behind an
+  -- enabled allow_read ACL edge that the company star admits.
   SELECT t.id AS tenant_id
     FROM tenants t
-   WHERE t.id = $1
-      OR EXISTS (SELECT 1 FROM acl_edges e
-                  WHERE e.from_tenant = $1 AND e.to_tenant = t.id
-                    AND e.enabled AND e.allow_read)
+   WHERE ${fleetReadableSql('$1::text', 't.id')}
 ),
 open_deliveries AS (
   -- Sólo estados abiertos. Las terminadas (done/failed/dead) no dicen nada sobre qué está

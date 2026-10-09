@@ -6,7 +6,7 @@ import type { DatabasePool } from '@cauce/store';
 import type { Principal } from './auth.js';
 import {
   GrantStore, attributionAllows, cohortRoutingAuthority, containerCohort, fleetPlacement,
-  loadFleetPlacements, resolveOperator, routingAuthority
+  loadFleetPlacements, resolveOperator, routingAuthority, type CompanyFleetPlacement
 } from './terminal/authority.js';
 import {
   loadTerminalConfig, terminalCapabilityAnnouncement, type TerminalConfig
@@ -14,22 +14,22 @@ import {
 import type { AgentTargetRepository } from './terminal/helpers.js';
 import { AgentRegistry } from './terminal/registry.js';
 import { registerTerminalTargetRoute } from './terminal/session-control/targets.js';
-import { UNATTRIBUTED_OPERATOR, type AgentPresence, type FleetPlacement } from './terminal/types.js';
+import { UNATTRIBUTED_OPERATOR, type AgentPresence } from './terminal/types.js';
 
 function exigir<T>(valor: T | undefined, que: string): T {
   if (valor === undefined) throw new Error(`se esperaba ${que} y no lo hubo`);
   return valor;
 }
 
-const PLACEMENTS: readonly FleetPlacement[] = [
-  { tenant_id: 'Isa', alias: 'salva', container: 'ws-isa', runtime_user: 'dev' },
-  { tenant_id: 'Miguel', alias: 'atlas', container: 'ws-humanizar', runtime_user: 'dev' },
-  { tenant_id: 'Miguel', alias: 'iza', container: 'ws-humanizar', runtime_user: 'dev' },
-  { tenant_id: 'Miguel', alias: 'kratos', container: 'ws-humanizar', runtime_user: 'dev' },
-  { tenant_id: 'Steven', alias: 'argos', container: 'ctrl-infra', runtime_user: 'dev' },
-  { tenant_id: 'Steven', alias: 'jarvis', container: 'claw', runtime_user: 'claw' },
-  { tenant_id: 'Steven', alias: 'kant', container: 'ctrl-infra', runtime_user: 'dev' },
-  { tenant_id: 'Steven', alias: 'zeus', container: 'ws-zeus', runtime_user: 'dev' },
+const PLACEMENTS: readonly CompanyFleetPlacement[] = [
+  { tenant_id: 'Isa', alias: 'salva', container: 'ws-isa', runtime_user: 'dev', company_id: 'humanizar', host_id: 'server' },
+  { tenant_id: 'Miguel', alias: 'atlas', container: 'ws-humanizar', runtime_user: 'dev', company_id: 'humanizar', host_id: 'server' },
+  { tenant_id: 'Miguel', alias: 'iza', container: 'ws-humanizar', runtime_user: 'dev', company_id: 'humanizar', host_id: 'server' },
+  { tenant_id: 'Miguel', alias: 'kratos', container: 'ws-humanizar', runtime_user: 'dev', company_id: 'humanizar', host_id: 'server' },
+  { tenant_id: 'Steven', alias: 'argos', container: 'ctrl-infra', runtime_user: 'dev', company_id: 'humanizar', host_id: 'server' },
+  { tenant_id: 'Steven', alias: 'jarvis', container: 'claw', runtime_user: 'claw', company_id: 'humanizar', host_id: 'server' },
+  { tenant_id: 'Steven', alias: 'kant', container: 'ctrl-infra', runtime_user: 'dev', company_id: 'humanizar', host_id: 'server' },
+  { tenant_id: 'Steven', alias: 'zeus', container: 'ws-zeus', runtime_user: 'dev', company_id: 'humanizar', host_id: 'server' },
 ];
 
 interface RoomRow { side: 'actor' | 'target'; room_id: string }
