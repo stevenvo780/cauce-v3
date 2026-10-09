@@ -156,6 +156,8 @@ class Api:
             raise ApiError("pass_timeout")
         if self.context is None:
             self.context = ssl.create_default_context(cafile=self.config["ca_cert"])
+            # The Cauce CA has no keyUsage, which VERIFY_X509_STRICT rejects; chain and hostname stay verified.
+            self.context.verify_flags &= ~getattr(ssl, "VERIFY_X509_STRICT", 0)
             self.context.load_cert_chain(self.config["client_cert"], self.config["client_key"])
         request = urllib.request.Request(
             self.config.get("api_url", "https://172.17.0.1:18443") + route,

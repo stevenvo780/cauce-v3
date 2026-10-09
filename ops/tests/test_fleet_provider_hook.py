@@ -8,7 +8,7 @@ import ssl
 import sys
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 CLI = pathlib.Path(__file__).resolve().parents[1] / "cli"
 sys.path.insert(0, str(CLI))
@@ -168,6 +168,21 @@ class ProviderHookTests(unittest.TestCase):
             connection.return_value.getresponse.side_effect = ssl.SSLError("certificate required")
             with self.assertRaises(ssl.SSLError):
                 revoke.rejected("https://fixture.invalid", ssl.create_default_context(), "bootstrap")
+
+    def test_pinned_ca_contexts_drop_only_the_strict_x509_flag(self):
+        strict = getattr(ssl, "VERIFY_X509_STRICT", 0)
+        for build in (
+            lambda: revoke.pinned_context("/ca.crt"),
+            lambda: probe.credential_context(
+                {"agent": {"state_directory": "/state", "runtime_mode": "native"}}, "normal"
+            ),
+        ):
+            context = Mock(verify_flags=ssl.VERIFY_DEFAULT | ssl.VERIFY_X509_TRUSTED_FIRST | strict)
+            with patch.object(ssl, "create_default_context", return_value=context) as factory:
+                self.assertIs(build(), context)
+            self.assertEqual(factory.call_args.kwargs["cafile"].endswith("ca.crt"), True)
+            self.assertEqual(context.verify_flags & strict, 0)
+            self.assertEqual(context.verify_flags & ssl.VERIFY_X509_TRUSTED_FIRST, ssl.VERIFY_X509_TRUSTED_FIRST)
 
     def test_registry_view_contains_only_digests_and_tracks_atomic_replacement(self):
         source, target = self.root / "private", self.root / "gateway"
