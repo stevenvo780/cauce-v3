@@ -1,11 +1,17 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
-import { lockConsoleHuman, StoreError, type ConsoleCredentialSnapshot, type ConsoleCredentialStampCheck, type DatabaseClient, type HumanMessageOptions } from '@cauce/store';
+import {
+  lockCompanyAuthority, lockConsoleHuman, StoreError,
+  type CompanyAuthority, type ConsoleCredentialSnapshot, type ConsoleCredentialStampCheck, type ConsoleHumanSnapshot,
+  type DatabaseClient, type HumanMessageOptions,
+} from '@cauce/store';
 import { AuthorizationError, type AuthProvider } from './auth.js';
 import { consoleRoleAuthority } from './console-user-authority.js';
 import { PasswordAuthProvider } from './password-auth.js';
 
 export interface ConsoleHumanAccess {
   readonly options: HumanMessageOptions;
+  /** The only source of company authority, resolved in the writer transaction; messaging keeps the home identity. */
+  companyAuthority(client: DatabaseClient): Promise<CompanyAuthority>;
   close(): void;
 }
 
@@ -30,7 +36,7 @@ export async function consoleHumanAccess(
   if (reply.raw.destroyed || (request.raw.destroyed && !request.raw.complete)
       || session.expiresAtMs <= Date.now()) abort();
   const signal = controller.signal;
-  const options: HumanMessageOptions = Object.freeze({ signal, humanAuthority: async (client: DatabaseClient) => {
+  const verified = async (client: DatabaseClient): Promise<ConsoleHumanSnapshot> => {
     signal.throwIfAborted();
     if (session.expiresAtMs <= Date.now()) throw new AuthorizationError();
     const timeout = String(Math.max(1, Math.min(5000, session.expiresAtMs - Date.now())));
@@ -50,6 +56,10 @@ export async function consoleHumanAccess(
         || snapshot.membership.actorAlias !== session.actorAlias) {
       throw new StoreError('conflict', 'console human identity changed');
     }
+    return snapshot;
+  };
+  const options: HumanMessageOptions = Object.freeze({ signal, humanAuthority: async (client: DatabaseClient) => {
+    const snapshot = await verified(client);
     const account = consoleRoleAuthority(snapshot.account.role);
     const member = consoleRoleAuthority(snapshot.membership.role);
     if ((permission === 'route' && (!account.roles.includes('operator') || !member.roles.includes('operator')))
@@ -57,7 +67,11 @@ export async function consoleHumanAccess(
         || !snapshot.membership.permissions.includes(permission)) throw new AuthorizationError();
     return Object.freeze({ humanId: session.humanId, tenantId: session.tenantId, actorAlias: session.actorAlias });
   } });
-  return { options, close: () => {
+  return { options, companyAuthority: async (client: DatabaseClient) => {
+    await verified(client);
+    return lockCompanyAuthority(client, { tenant: session.tenantId, alias: session.actorAlias, humanId: session.humanId,
+      ...(session.requestedCompany === undefined ? {} : { requestedCompany: session.requestedCompany }) });
+  }, close: () => {
     clearTimeout(timer);
     request.raw.removeListener('aborted', abort);
     reply.raw.removeListener('close', responseClosed);

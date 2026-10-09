@@ -24,6 +24,8 @@ import {
 } from './config.js';
 import { OidcBffAuthProvider, registerOidcBff } from './oidc-bff.js';
 import { PasswordAuthProvider, registerPasswordAuth } from './password-auth.js';
+import { PostgresConsoleCompanyAuthority } from './console-user-authority.js';
+import { registerCompanyRoutes } from './routes/console/companies.js';
 import { WakePumpTelemetry } from './wake-pump-telemetry.js';
 import {
   type TrustedPublishCommand, type TrustedPublishIntentCommand,
@@ -307,8 +309,10 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
   }));
   if (options.authProvider instanceof OidcBffAuthProvider) registerOidcBff(app, options.authProvider);
   if (options.authProvider instanceof PasswordAuthProvider) {
+    options.authProvider.useCompanyAuthority(new PostgresConsoleCompanyAuthority(options.pool));
     registerPasswordAuth(app, options.authProvider);
     registerPeopleAdminRoutes(app, options.authProvider, new PeopleAdminRepository(options.pool));
+    registerCompanyRoutes(app, options.authProvider, options.pool);
   }
   if (options.providerAuthService !== undefined) {
     if (!(options.authProvider instanceof PasswordAuthProvider)) throw new Error('provider authentication requires password authority');

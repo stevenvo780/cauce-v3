@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useApi } from '../../api/context';
-import type { ConsoleAuthState } from '../../api/types';
+import type { ConsoleAuthState, ConsoleAuthority, ConsoleAuthorityRole, ConsoleAuthorityScope } from '../../api/types';
 
 /**
  * Gate state, ALWAYS derived from what the server said:
@@ -19,6 +19,29 @@ export function statusOf(state: ConsoleAuthState | undefined, error: Error | und
   if (!state) return error ? 'error' : 'checking';
   if (state.authenticated === null) return 'unmanaged';
   return state.authenticated ? 'in' : 'out';
+}
+
+const AUTHORITY_ROLES: ReadonlySet<ConsoleAuthorityRole> = new Set<ConsoleAuthorityRole>([
+  'platform_admin', 'company_owner', 'company_admin', 'tenant_operator', 'reader', 'none',
+]);
+const AUTHORITY_SCOPES: ReadonlySet<ConsoleAuthorityScope> = new Set<ConsoleAuthorityScope>([
+  'platform', 'company', 'tenant', 'outgoing_acl', 'none',
+]);
+
+/** The company authority the server decided; absent or not understood means none is assumed. */
+export function sessionAuthority(state: ConsoleAuthState | undefined): ConsoleAuthority | undefined {
+  const authority = state?.authenticated === true ? state.authority : undefined;
+  if (!authority || !AUTHORITY_ROLES.has(authority.role) || !AUTHORITY_SCOPES.has(authority.scope)
+    || typeof authority.home_company !== 'string' || typeof authority.acting_company !== 'string'
+    || typeof authority.platform_override !== 'boolean') return undefined;
+  return authority;
+}
+
+/** A revalidation that could not resolve the authority keeps the one decided for the same session instead of remounting. */
+export function revalidatedState(previous: ConsoleAuthState | undefined, next: ConsoleAuthState): ConsoleAuthState {
+  const known = sessionAuthority(previous);
+  const sameSession = next.authenticated === true && next.subject === previous?.subject && next.csrf_token === previous?.csrf_token;
+  return known !== undefined && next.authority == null && sameSession ? { ...next, authority: known } : next;
 }
 
 /** How often the session is revalidated against the server, so an expiration is noticed. */
@@ -54,7 +77,7 @@ export function useAuthGate(): AuthGateState {
           : 'El servidor no confirmó el cierre de sesión.');
       }
       if (mounted.current && current === generation.current) {
-        setState(next);
+        setState((previous) => revalidatedState(previous, next));
         setError(undefined);
       }
     } catch (cause) {
@@ -71,7 +94,7 @@ export function useAuthGate(): AuthGateState {
   useEffect(() => api.onAuthSession((next) => {
     if (!mounted.current || mutating.current) return;
     generation.current += 1;
-    setState(next);
+    setState((previous) => revalidatedState(previous, next));
     setError(undefined);
   }), [api]);
 

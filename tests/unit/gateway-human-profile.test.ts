@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { afterEach, describe, expect, it } from 'vitest';
-import { humanAccounts, loginAs, publishAs } from './gateway-human-accounts-fixtures.js';
+import { fixtureAuthority, humanAccounts, loginAs, publishAs } from './gateway-human-accounts-fixtures.js';
 
 const apps: FastifyInstance[] = [];
 afterEach(async () => { await Promise.all(apps.splice(0).map((app) => app.close())); });
@@ -18,7 +18,7 @@ describe('own human profile persistence', () => {
     expect(await test.users.findById(test.first.id)).toEqual({ ...test.first, display_name: 'Alba nueva 🌱' });
     expect(await test.users.findById(test.other.id)).toEqual(test.other);
     const state = await test.app.inject({ method: 'GET', url: '/v3/auth/session', headers: session.headers });
-    expect(state.json()).toEqual({ ...session.state, name: 'Alba nueva 🌱' });
+    expect(state.json()).toEqual({ ...session.state, name: 'Alba nueva 🌱', authority: fixtureAuthority });
     await publishAs(test.app, session.headers);
     const authors = test.publish.mock.calls.map(([, options]) => options?.consoleAuthor);
     expect(authors.map((author) => author?.display_name)).toEqual(['Alba', 'Alba nueva 🌱']);
@@ -33,7 +33,7 @@ describe('own human profile persistence', () => {
     const response = await test.app.inject({ method: 'PATCH', url: '/v3/auth/profile', headers: session.headers, payload: { name: 'Lector' } });
     expect(response.statusCode).toBe(200);
     const state = await test.app.inject({ method: 'GET', url: '/v3/auth/session', headers: session.headers });
-    expect(state.json()).toEqual({ ...session.state, name: 'Lector' });
+    expect(state.json()).toEqual({ ...session.state, name: 'Lector', authority: fixtureAuthority });
     expect(await test.users.findById(test.other.id)).toEqual({ ...test.other, display_name: 'Lector' });
   });
 

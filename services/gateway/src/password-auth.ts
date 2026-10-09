@@ -1,14 +1,17 @@
 import { createHmac, randomBytes, randomUUID } from 'node:crypto';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import { errorLabel } from '@cauce/protocol';
 import {
   AuthError, AuthorizationError,
   type AuthProvider, type Principal
 } from './auth.js';
 import type { ConsoleUser, ConsoleUserStore } from './console-users.js';
 import { createConsoleCredentialStamp, verifyConsoleCredentialStamp } from './console-credential-stamp.js';
-import type { ConsoleCredentialSnapshot } from '@cauce/store';
+import { COMPANY_ID_PATTERN, StoreError, type ConsoleCredentialSnapshot } from '@cauce/store';
 import { clearHostSessionCookie, constantTimeText, hostSessionCookie, isHostCookieName, routedPath, scalarHeaderValue, uniqueCookieValue } from './http-auth-primitives.js';
-import { consoleRoleAuthority, consoleUserPrincipal } from './console-user-authority.js';
+import {
+  consoleRoleAuthority, consoleUserPrincipal, type ConsoleCompanyAuthority, type ConsoleSessionAuthority,
+} from './console-user-authority.js';
 import { DECOY_PASSWORD_HASH_PROMISE, MAX_PASSWORD_LENGTH, verifyPassword } from './password.js';
 
 /**
@@ -35,6 +38,8 @@ export interface ConsoleSessionClaims {
   iat: number;
   exp: number;
   credential_stamp?: string;
+  /** Company a platform administrator switched to; every authority decision revalidates it against the database. */
+  cmp?: string;
 }
 
 export type LoginMode = 'password' | 'redirect';
@@ -49,6 +54,7 @@ export interface ConsolePasswordAuthState {
   expires_at?: string;
   csrf_token?: string;
   reason?: string;
+  authority?: ConsoleSessionAuthority;
 }
 
 /** Distinguished from the rest of `AuthError` only so the user can be told what happened. */
@@ -101,6 +107,9 @@ export function verifyConsoleSession(key: Buffer, token: string, nowMs: number):
   if (claims.credential_stamp !== undefined
       && (typeof claims.credential_stamp !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(claims.credential_stamp))) {
     throw new AuthError('sello de credenciales inválido');
+  }
+  if (claims.cmp !== undefined && (typeof claims.cmp !== 'string' || !COMPANY_ID_PATTERN.test(claims.cmp))) {
+    throw new AuthError('empresa de la sesión inválida');
   }
   // No clock-skew tolerance for the future: issuer and verifier are THE SAME process.
   if (claims.exp * 1_000 <= nowMs) throw new SessionExpiredError();
@@ -175,6 +184,7 @@ export interface PasswordAuthProviderOptions {
    * transport certificate from authorizing anonymous web access.
    */
   machineChannelRequiringSession?: string;
+  companyAuthority?: ConsoleCompanyAuthority;
 }
 
 /** Single message at the session gate: it does not distinguish "no cookie" from "cookie does not apply here". */
@@ -203,6 +213,8 @@ export interface VerifiedConsoleSession {
   readonly issuedAtMs: number;
   readonly expiresAtMs: number;
   readonly credentialStamp?: string;
+  /** The raw `cmp` claim; the store resolver decides inside the caller transaction whether it holds. */
+  readonly requestedCompany?: string;
 }
 
 export class PasswordAuthProvider implements AuthProvider {
@@ -216,6 +228,7 @@ export class PasswordAuthProvider implements AuthProvider {
   private readonly now: () => number;
   private readonly throttle: LoginThrottle;
   private readonly machineChannelRequiringSession: string;
+  private companyAuthority: ConsoleCompanyAuthority | undefined;
   private readonly requestCache = new WeakMap<FastifyRequest, LoadedSession>();
 
   constructor(options: PasswordAuthProviderOptions) {
@@ -236,6 +249,12 @@ export class PasswordAuthProvider implements AuthProvider {
     this.now = options.now ?? Date.now;
     this.throttle = options.throttle ?? new LoginThrottle();
     this.machineChannelRequiringSession = options.machineChannelRequiringSession ?? 'console';
+    this.companyAuthority = options.companyAuthority;
+  }
+
+  /** The gateway supplies its database resolver unless the caller injected one; without any, `cmp` is ignored. */
+  useCompanyAuthority(authority: ConsoleCompanyAuthority): void {
+    this.companyAuthority ??= authority;
   }
 
   /**
@@ -300,7 +319,8 @@ export class PasswordAuthProvider implements AuthProvider {
     const { claims, user, principal } = await this.load(request);
     return Object.freeze({ humanId: user.id, loginSid: claims.sid, tenantId: principal.tenant_id, actorAlias: principal.alias,
       issuedAtMs: claims.iat * 1000, expiresAtMs: claims.exp * 1000,
-      ...(claims.credential_stamp === undefined ? {} : { credentialStamp: claims.credential_stamp }) });
+      ...(claims.credential_stamp === undefined ? {} : { credentialStamp: claims.credential_stamp }),
+      ...(claims.cmp === undefined ? {} : { requestedCompany: claims.cmp }) });
   }
 
   async authenticateHttp(request: FastifyRequest): Promise<Principal> {
@@ -331,28 +351,79 @@ export class PasswordAuthProvider implements AuthProvider {
     }
   }
 
+  private sessionState(claims: ConsoleSessionClaims, user: ConsoleUser, authority?: ConsoleSessionAuthority): ConsolePasswordAuthState {
+    const ceiling = consoleRoleAuthority(user.role);
+    return {
+      authenticated: true,
+      login_mode: 'password',
+      subject: user.email,
+      name: user.display_name,
+      roles: ceiling.roles,
+      permissions: ceiling.permissions,
+      expires_at: new Date(claims.exp * 1_000).toISOString(),
+      csrf_token: claims.csrf,
+      ...(authority === undefined ? {} : { authority })
+    };
+  }
+
   async authState(request: FastifyRequest): Promise<ConsolePasswordAuthState> {
     if (!this.handles(request)) return { authenticated: false, login_mode: 'password' };
     try {
       const { claims, user } = await this.load(request);
-      const authority = consoleRoleAuthority(user.role);
-      return {
-        authenticated: true,
-        login_mode: 'password',
-        subject: user.email,
-        name: user.display_name,
-        roles: authority.roles,
-        permissions: authority.permissions,
-        expires_at: new Date(claims.exp * 1_000).toISOString(),
-        csrf_token: claims.csrf
-      };
+      return this.sessionState(claims, user, await this.sessionAuthority(request, user, claims.cmp));
     } catch (error) {
       if (error instanceof SessionExpiredError) {
         return { authenticated: false, login_mode: 'password', reason: error.message };
       }
-      if (error instanceof AuthError) return { authenticated: false, login_mode: 'password' };
+      if (error instanceof AuthError || (error instanceof StoreError && error.code === 'forbidden')) {
+        return { authenticated: false, login_mode: 'password' };
+      }
       throw error;
     }
+  }
+
+  /** Advisory: a database failure omits the block, and the console assumes none or keeps the one it already holds. */
+  private async sessionAuthority(
+    request: FastifyRequest, user: ConsoleUser, requested: string | undefined,
+  ): Promise<ConsoleSessionAuthority | undefined> {
+    try {
+      return await this.companyAuthority?.resolve(user, requested);
+    } catch (error) {
+      if (error instanceof AuthError || (error instanceof StoreError && error.code === 'forbidden')) throw error;
+      request.log.warn({ event: 'console_session_authority_unavailable', tenant_id: user.tenant_id, alias: user.alias,
+        reason: errorLabel(error) }, 'session authority omitted');
+      return undefined;
+    }
+  }
+
+  /** Reissues the same session with the new `cmp` claim: same sid, CSRF token, issue time and expiry. */
+  async switchCompany(request: FastifyRequest, reply: FastifyReply): Promise<void> {
+    await this.requireCsrf(request);
+    const { claims, user } = await this.load(request);
+    if (claims.credential_stamp === undefined) throw new AuthorizationError('La sesión debe renovarse para cambiar de empresa.');
+    const body: unknown = request.body;
+    const fields = body !== null && typeof body === 'object' && !Array.isArray(body) ? body as Record<string, unknown> : {};
+    const company = fields.company_id;
+    if (Object.keys(fields).length !== 1 || (company !== null && (typeof company !== 'string' || !COMPANY_ID_PATTERN.test(company)))) {
+      await reply.code(400).send({ error: 'invalid_request', message: 'Hace falta company_id: un id de empresa o null.' });
+      return;
+    }
+    if (this.companyAuthority === undefined) throw new AuthorizationError('el cambio de empresa no está disponible');
+    let authority: ConsoleSessionAuthority;
+    try {
+      authority = await this.companyAuthority.switchCompany(user, company, claims.cmp);
+    } catch (error) {
+      if (error instanceof StoreError && error.code === 'forbidden') throw new AuthorizationError('solo un administrador de plataforma cambia de empresa');
+      throw error;
+    }
+    const { cmp: _previous, ...base } = claims;
+    const next: ConsoleSessionClaims = authority.platform_override ? { ...base, cmp: authority.acting_company } : base;
+    this.requestCache.delete(request);
+    await reply
+      .header('Cache-Control', 'no-store')
+      .header('Set-Cookie', hostSessionCookie(this.cookieName, signConsoleSession(this.signingKey, next),
+        claims.exp - this.now() / 1_000, 'Strict'))
+      .send(this.sessionState(next, user, authority));
   }
 
   async updateProfile(request: FastifyRequest, reply: FastifyReply): Promise<void> {
@@ -430,21 +501,11 @@ export class PasswordAuthProvider implements AuthProvider {
     } catch {
       // The last-login marker is informational: losing it must never cost the login itself.
     }
-    const authority = consoleRoleAuthority(user.role);
     await reply
       .header('Cache-Control', 'no-store')
       .header('Set-Cookie', hostSessionCookie(this.cookieName, token, this.sessionTtlMs / 1_000, 'Strict'))
       .code(200)
-      .send({
-        authenticated: true,
-        login_mode: 'password',
-        subject: user.email,
-        name: user.display_name,
-        roles: authority.roles,
-        permissions: authority.permissions,
-        expires_at: new Date(claims.exp * 1_000).toISOString(),
-        csrf_token: claims.csrf
-      } satisfies ConsolePasswordAuthState);
+      .send(this.sessionState(claims, user));
   }
 
   /**
@@ -498,6 +559,9 @@ export function registerPasswordAuth(app: FastifyInstance, provider: PasswordAut
   });
   app.patch('/v3/auth/profile', async (request, reply) => {
     await provider.updateProfile(request, reply);
+  });
+  app.post('/v3/auth/session/company', async (request, reply) => {
+    await provider.switchCompany(request, reply);
   });
   app.post('/v3/auth/logout', async (request, reply) => {
     await provider.logout(request, reply);

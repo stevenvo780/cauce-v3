@@ -216,7 +216,7 @@ DATABASE_URL="postgresql://cauce@127.0.0.1:5432/cauce_dev" npx tsx packages/stor
 
 ```bash
 NODE_ENV=development DATABASE_URL="postgresql://cauce@127.0.0.1:5432/cauce_dev" \
-  CAUCE_DEV_AUTH=1 pnpm dev:gateway
+  CAUCE_DEV_AUTH=1 CAUCE_DEV_OPERATOR=Steven/kant pnpm dev:gateway
 ```
 
 Levanta en `127.0.0.1:8080`. Desde ahí la consola puede correr **sin `VITE_USE_MOCKS`**, contra

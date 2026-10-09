@@ -17,7 +17,7 @@ function gateway() {
   const app = Fastify(); apps.push(app);
   registerConsoleReplyAttachmentRoutes(app, { pool: {} as DatabasePool, authProvider: new FixedAuthProvider(testPrincipal()) });
   const close = vi.fn();
-  vi.mocked(consoleHumanAccess).mockResolvedValue({ close, options: { signal: new AbortController().signal,
+  vi.mocked(consoleHumanAccess).mockResolvedValue({ close, companyAuthority: vi.fn(), options: { signal: new AbortController().signal,
     humanAuthority: async () => ({ humanId: root, tenantId: 'Pablo', actorAlias: 'midas' }) } });
   return { app, close };
 }
