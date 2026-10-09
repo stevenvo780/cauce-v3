@@ -137,6 +137,7 @@ describe('gateway readiness stops lying about the listener the agents actually u
       terminalRelayInstanceProbe: async () => undefined,
       profileRuntimeProbe: async () => undefined,
       consolePublishIntentProbe: async () => undefined,
+      companyIsolationProbe: async () => undefined,
     });
 
     const response = await app.inject({ method: 'GET', url: '/health/ready' });
@@ -369,6 +370,7 @@ describe('gateway readiness stops lying about the listener the agents actually u
       terminalRelayInstanceProbe: async () => undefined,
       profileRuntimeProbe: async () => undefined,
       consolePublishIntentProbe: async () => undefined,
+      companyIsolationProbe: async () => undefined,
       wakePumpMaxStaleMs: 1_000,
     });
     expect((await app.inject({ method: 'GET', url: '/health/ready' })).json())

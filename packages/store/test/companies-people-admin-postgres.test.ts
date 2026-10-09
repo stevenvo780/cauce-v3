@@ -12,11 +12,12 @@ let pool: DatabasePool;
 let repository: PeopleAdminRepository;
 let humanizar: PeopleAdminPerson;
 let praxis: PeopleAdminPerson;
+let owner: string;
 preparePostgresSuite(import.meta.url, async () => { database = await startTestDatabase(); }, 120_000);
 beforeEach(async () => {
   if (!database) throw new Error('test database absent');
   current = await startTestCaseDatabase(database); pool = current.pool;
-  await seedCompanyActors(pool);
+  owner = await seedCompanyActors(pool);
   humanizar = await human(await seedCompanyHuman(pool, 'Steven'));
   praxis = await human(await seedCompanyHuman(pool, 'PraxisHub'));
   repository = new PeopleAdminRepository(pool);
@@ -37,7 +38,7 @@ function actor(person: PeopleAdminPerson): PeopleAdminActor {
 describe('people administration within each company', () => {
   it('lists only the actor company and hides foreign mutations as not found', async () => {
     expect((await repository.list(actor(humanizar))).items.map(row => row.id)).toEqual([humanizar.id]);
-    expect((await repository.list(actor(praxis))).items.map(row => row.id)).toEqual([praxis.id]);
+    expect((await repository.list(actor(praxis))).items.map(row => row.id).sort()).toEqual([praxis.id, owner].sort());
     await expect(repository.update(actor(praxis), humanizar.id, { expected_revision: humanizar.revision,
       display_name: 'Foreign edit' })).rejects.toMatchObject({ code: 'not_found' });
     await expect(repository.retire(actor(praxis), humanizar.id, { expected_revision: humanizar.revision })).rejects.toMatchObject({ code: 'not_found' });
@@ -54,14 +55,13 @@ describe('people administration within each company', () => {
   it('protects each last company administrator even when another company has its own', async () => {
     await expect(repository.retire(actor(humanizar), humanizar.id, { expected_revision: humanizar.revision })).rejects.toMatchObject({ code: 'conflict' });
     await expect(repository.retire(actor(praxis), praxis.id, { expected_revision: praxis.revision })).rejects.toMatchObject({ code: 'conflict' });
-    expect((await pool.query('SELECT active FROM console_users ORDER BY id')).rows).toEqual([{ active: true }, { active: true }]);
+    expect((await pool.query('SELECT active FROM console_users WHERE id=ANY($1::uuid[])', [[humanizar.id, praxis.id]])).rows)
+      .toEqual([{ active: true }, { active: true }]);
   });
-  it('blocks global credential revocation when a human has live membership in a foreign company', async () => {
-    await pool.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,role,permissions)
-      VALUES($1,'PraxisHub','company_admin','operator',ARRAY['read','control'])`, [humanizar.id]);
-    await expect(repository.update(actor(humanizar), humanizar.id, { expected_revision: humanizar.revision,
-      display_name: 'Ambiguous company' })).rejects.toMatchObject({ code: 'conflict' });
-    expect((await pool.query('SELECT enabled FROM human_tenant_memberships WHERE human_id=$1', [humanizar.id])).rows)
-      .toEqual([{ enabled: true }, { enabled: true }]);
+  it('never lets a human hold a membership in a foreign company whose credentials it would share', async () => {
+    await expect(pool.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,role,permissions)
+      VALUES($1,'PraxisHub','company_admin','operator',ARRAY['read','control'])`, [humanizar.id])).rejects.toMatchObject({ code: '23503' });
+    expect((await pool.query('SELECT tenant_id FROM human_tenant_memberships WHERE human_id=$1', [humanizar.id])).rows)
+      .toEqual([{ tenant_id: 'Steven' }]);
   });
 });

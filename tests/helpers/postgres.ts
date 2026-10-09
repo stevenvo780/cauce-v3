@@ -131,6 +131,7 @@ export const SUITES_SIN_PLANTILLA: ReadonlySet<string> = new Set([
   'agent-context-revisions-migration-postgres.test.ts',
   'fleet-lifecycle-migration-postgres.test.ts',
   'companies-migration-postgres.test.ts',
+  'companies-isolation-migration-postgres.test.ts',
 ]);
 
 const conteoPorFichero = new Map<string, { ejecutados: number; razon: string; saltados: number }>();
