@@ -586,6 +586,9 @@ export function registerOidcBff(app: FastifyInstance, provider: OidcBffAuthProvi
     reply.header('Cache-Control', 'no-store');
     return provider.authState(request);
   });
+  app.post('/v3/auth/session/company', async (_request, reply) => {
+    await reply.code(403).send({ error: 'forbidden', message: 'an OIDC session acts only in the company of its tenant' });
+  });
   app.post('/v3/auth/logout', async (request, reply) => {
     try {
       await provider.logout(request, reply);

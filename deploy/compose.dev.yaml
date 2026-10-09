@@ -53,6 +53,8 @@ services:
       DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL in the private dev env}
       NODE_ENV: development
       CAUCE_DEV_AUTH: "1"
+      # The dev console sends these same identity headers, so the person at the keyboard is the operator.
+      CAUCE_DEV_OPERATOR: ${CAUCE_CONSOLE_TENANT:-Steven}/${CAUCE_CONSOLE_ALIAS:-kant}
       CAUCE_ACK_DEADLINE_MS: ${CAUCE_ACK_DEADLINE_MS:-600000}
       CAUCE_TERMINAL_ENABLED: ${CAUCE_TERMINAL_ENABLED:-1}
       CAUCE_TERMINAL_WS_PATH: ${CAUCE_TERMINAL_WS_PATH:-/v3/console/terminal/ws}

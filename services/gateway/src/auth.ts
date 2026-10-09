@@ -6,7 +6,7 @@ import { readFile } from 'node:fs/promises';
 import type { FastifyRequest } from 'fastify';
 import type { Hello, Origin, Permission, Tenant } from '@cauce/protocol';
 import {
-  AliasSchema, OriginSchema, PERMISSIONS, TenantSchema, isLiteralTrue, logEvent,
+  AliasSchema, OriginSchema, PERMISSIONS, TenantSchema, isAnyUuid, isLiteralTrue, logEvent,
 } from '@cauce/protocol';
 import {
   isHostCookieName,
@@ -31,6 +31,7 @@ export interface Principal {
   /** Authenticated person authority, when established; it outranks delegated headers. */
   readonly operator_id?: string;
   readonly operator_profile?: { readonly id: string; readonly display_name: string };
+  readonly human_id?: string; // A verified console person; company authority comes only from consoleHumanAccess.
 }
 
 export class AuthError extends Error {
@@ -77,6 +78,19 @@ function stringSet<T extends string>(value: unknown, allowed: ReadonlySet<T>, na
   return [...new Set(value as T[])];
 }
 
+const humanPrincipals = new WeakSet<Principal>();
+
+function humanClaim(value: Principal): Pick<Principal, 'human_id'> {
+  if (value.human_id === undefined) return {};
+  if (!humanPrincipals.has(value)) throw new AuthError('authenticated human claim is not trusted');
+  return { human_id: value.human_id };
+}
+
+function trusted(principal: Principal): Principal {
+  humanPrincipals.add(Object.freeze(principal));
+  return principal;
+}
+
 export function validatePrincipal(value: Principal): Principal {
   const tenant = TenantSchema.safeParse(value.tenant_id);
   const alias = AliasSchema.safeParse(value.alias);
@@ -90,7 +104,8 @@ export function validatePrincipal(value: Principal): Principal {
   const operatorId = value.operator_id === undefined
     ? undefined
     : nonEmptyString(value.operator_id, 'operator_id', 254);
-  return {
+  const human = humanClaim(value);
+  const validated: Principal = {
     tenant_id: tenant.data,
     alias: alias.data,
     session_id: sessionId,
@@ -104,8 +119,17 @@ export function validatePrincipal(value: Principal): Principal {
         id: nonEmptyString(value.operator_profile.id, 'operator profile id', 256),
         display_name: nonEmptyString(value.operator_profile.display_name, 'operator display name', 240),
       },
-    })
+    }),
+    ...human,
   };
+  return human.human_id === undefined ? validated : trusted(validated);
+}
+
+/** Token, certificate and file data can never carry the claim: validatePrincipal rejects any unbound or copied one. */
+export function bindHumanPrincipal(principal: Principal, humanId: string): Principal {
+  if (!isAnyUuid(humanId)) throw new AuthError('authenticated human claim is invalid');
+  const { human_id: _human, ...base } = validatePrincipal(principal);
+  return trusted({ ...base, human_id: humanId });
 }
 
 export function requirePermission(principal: Principal, permission: PrincipalPermission): void {
@@ -133,17 +157,30 @@ export function requireOperatorPermission(principal: Principal, permission: Prin
   requirePermission(principal, permission);
 }
 
+function devOperator(value: string | undefined): { readonly tenant: Tenant; readonly alias: string } | undefined {
+  if (value === undefined || value === '') return undefined;
+  const [tenant, alias, ...rest] = value.split('/');
+  const parsedTenant = TenantSchema.safeParse(tenant);
+  const parsedAlias = AliasSchema.safeParse(alias);
+  if (!parsedTenant.success || !parsedAlias.success || rest.length > 0) {
+    throw new Error('CAUCE_DEV_OPERATOR must be <tenant>/<alias>');
+  }
+  return Object.freeze({ tenant: parsedTenant.data, alias: parsedAlias.data });
+}
+
 export class DevOnlyAuthProvider implements AuthProvider {
   readonly name = 'dev-only-headers';
   readonly mode: 'development' | 'test';
   private readonly configuredRoles: readonly PrincipalRole[] | undefined;
   private readonly configuredPermissions: readonly PrincipalPermission[] | undefined;
+  private readonly operator: { readonly tenant: Tenant; readonly alias: string } | undefined;
 
   constructor(options: {
     enabled: true;
     environment: 'development' | 'test';
     roles?: readonly PrincipalRole[];
     permissions?: readonly PrincipalPermission[];
+    operator?: string;
   }) {
     if (!isLiteralTrue(options.enabled)) {
       throw new Error('development authentication must be explicitly enabled');
@@ -151,11 +188,13 @@ export class DevOnlyAuthProvider implements AuthProvider {
     this.mode = options.environment;
     this.configuredRoles = options.roles;
     this.configuredPermissions = options.permissions;
+    this.operator = devOperator(options.operator ?? process.env.CAUCE_DEV_OPERATOR);
   }
 
   static forTests(options: {
     roles?: readonly PrincipalRole[];
     permissions?: readonly PrincipalPermission[];
+    operator?: string;
   } = {}): DevOnlyAuthProvider {
     return new DevOnlyAuthProvider({ enabled: true, environment: 'test', ...options });
   }
@@ -168,7 +207,7 @@ export class DevOnlyAuthProvider implements AuthProvider {
       throw new AuthError('dev auth requires x-cauce-tenant and x-cauce-alias');
     }
     const sessionId = `dev:${tenant.data}:${alias.data}`;
-    const localOperator = tenant.data === 'Steven' && alias.data === 'kant';
+    const localOperator = this.operator?.tenant === tenant.data && this.operator.alias === alias.data;
     return validatePrincipal({
       tenant_id: tenant.data,
       alias: alias.data,
@@ -176,8 +215,7 @@ export class DevOnlyAuthProvider implements AuthProvider {
       channel: 'dev',
       roles: this.configuredRoles ?? (localOperator ? ['operator'] : ['agent']),
       permissions: this.configuredPermissions ?? (localOperator ? ['route', 'read', 'control'] : ['route', 'read']),
-      // Development headers never run in production; the one built-in interactive identity is
-      // still modelled faithfully so policy tests keep operator authority and attribution apart.
+      // The configured interactive identity keeps operator authority and attribution apart in policy tests.
       ...(localOperator ? { operator_id: sessionId } : {}),
       origin: {
         adapter: 'dev-auth',

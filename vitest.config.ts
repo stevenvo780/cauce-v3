@@ -118,6 +118,7 @@ export default defineConfig({
     fileParallelism: EN_PARALELO,
     hookTimeout: 120_000,
     testTimeout: 120_000,
+    env: { CAUCE_DEV_OPERATOR: 'Steven/kant' },
     // Agent worktrees live under .claude/ INSIDE the checkout: a naive collection ran the suite
     // once per worktree, against stale code and with the ports and containers of the real run.
     exclude: EXCLUSIONES,

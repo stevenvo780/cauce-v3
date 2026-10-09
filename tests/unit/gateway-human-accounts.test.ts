@@ -3,7 +3,7 @@ import { CauceRepository, StoreError, type DatabaseClient, type HumanPublishProv
 import type { ConsoleUser } from '../../services/gateway/src/console-users.js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { FixedAuthProvider, ids } from '../../services/gateway/src/test-support/gateway-doubles.js';
-import { humanAccounts, loginAs, message, publishAs } from './gateway-human-accounts-fixtures.js';
+import { fixtureAuthority, humanAccounts, loginAs, message, publishAs } from './gateway-human-accounts-fixtures.js';
 
 const apps: FastifyInstance[] = [];
 afterEach(async () => {
@@ -47,7 +47,7 @@ describe('authenticated human accounts through the existing console gateway', ()
     expect(second.cookie).not.toBe(first.cookie);
     expect(second.state.csrf_token).not.toBe(first.state.csrf_token);
     const state = await test.app.inject({ method: 'GET', url: '/v3/auth/session', headers: second.headers });
-    expect(state.json()).toEqual(second.state);
+    expect(state.json()).toEqual({ ...second.state, authority: fixtureAuthority });
     await publishAs(test.app, second.headers);
 
     const authors = test.publish.mock.calls.map(([command, options]) => {

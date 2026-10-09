@@ -2,7 +2,9 @@ import type { FastifyRequest } from 'fastify';
 import { describe, expect, it, vi } from 'vitest';
 import { buildPublishReceipt, type Permission } from '@cauce/protocol';
 import { buildGateway, type GatewayRepository } from './app.js';
+import { StoreError } from '@cauce/store';
 import { AuthError, validatePrincipal, type AuthProvider, type Principal } from './auth.js';
+import type { ConsoleCompanyAuthority } from './console-user-authority.js';
 import type { ConsoleUser } from './console-users.js';
 import { MemoryConsoleUserStore } from './test-support/console-users.js';
 import { hashPassword } from './password.js';
@@ -149,6 +151,7 @@ async function fixture(options: {
   user?: ConsoleUser;
   fallback?: AuthProvider;
   throttle?: LoginThrottle;
+  companyAuthority?: ConsoleCompanyAuthority;
 } = {}) {
   let now = Date.UTC(2026, 7, 6, 12, 0, 0);
   const user = options.user ?? await makeUser();
@@ -157,6 +160,11 @@ async function fixture(options: {
     users,
     signingKey: Buffer.alloc(32, 7),
     sessionTtlMs: 60 * 60 * 1_000,
+    companyAuthority: options.companyAuthority ?? {
+      resolve: async () => ({ role: 'tenant_operator', scope: 'tenant', home_company: 'humanizar',
+        acting_company: 'humanizar', platform_override: false }),
+      switchCompany: async () => { throw new Error('company switching is outside these fixtures'); },
+    },
     now: () => now,
     ...(options.fallback === undefined ? {} : { fallback: options.fallback }),
     ...(options.throttle === undefined ? {} : { throttle: options.throttle })
@@ -503,6 +511,26 @@ describe('login por contraseña de la consola', () => {
       // And the other half: active account, but password changed AFTER issuing the token.
       test.users.put(await makeUser({ password_changed_at: Date.UTC(2026, 7, 6, 13, 0, 0) }));
       expect((await test.app.inject({ method: 'GET', url: '/v3/status', headers: { cookie } })).statusCode).toBe(401);
+    } finally {
+      await test.app.close();
+    }
+  });
+
+  it('una autoridad de empresa irresoluble no tumba la sesión, pero una identidad cambiada sí', async () => {
+    const resolve = vi.fn<ConsoleCompanyAuthority['resolve']>()
+      .mockRejectedValueOnce(Object.assign(new Error('permission denied for function cauce_company_authority'), { code: '42501' }))
+      .mockRejectedValueOnce(new StoreError('forbidden', 'company authority is unavailable'));
+    const test = await fixture({ companyAuthority: { resolve, switchCompany: vi.fn() } });
+    try {
+      const cookie = cookieFrom((await test.login('steven@elenxos.com', PASSWORD)).headers);
+      const state = async () => (await test.app.inject({ method: 'GET', url: '/v3/auth/session', headers: { cookie } }))
+        .json<Record<string, unknown>>();
+      const degraded = await state();
+      expect(degraded).toMatchObject({ authenticated: true, subject: 'steven@elenxos.com' });
+      expect(degraded).not.toHaveProperty('authority');
+      expect(await state()).toEqual({ authenticated: false, login_mode: 'password' });
+      expect((await test.app.inject({ method: 'GET', url: '/v3/status', headers: { cookie } })).statusCode).toBe(200);
+      expect(resolve).toHaveBeenCalledTimes(2);
     } finally {
       await test.app.close();
     }

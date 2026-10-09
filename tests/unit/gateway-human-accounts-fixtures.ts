@@ -6,6 +6,7 @@ import type { PublishOptions } from '@cauce/store';
 import type { AuthProvider } from '../../services/gateway/src/auth.js';
 import type { ConsoleUser } from '../../services/gateway/src/console-users.js';
 import { hashPassword } from '../../services/gateway/src/password.js';
+import type { ConsoleCompanyAuthority, ConsoleSessionAuthority } from '../../services/gateway/src/console-user-authority.js';
 import { PasswordAuthProvider, type ConsolePasswordAuthState } from '../../services/gateway/src/password-auth.js';
 import { MemoryConsoleUserStore } from '../../services/gateway/src/test-support/console-users.js';
 import { buildTestGateway, fakePool, fakeRepository } from '../../services/gateway/src/test-support/gateway-doubles.js';
@@ -14,6 +15,13 @@ const PASSWORD = 'synthetic-account-contract-password';
 export const message = {
   room_id: 'grp.steven', recipients: [{ tenant_id: 'Steven', alias: 'jarvis' }],
   body: { text: 'Synthetic human message' }, lane: 'interactive', priority: 10,
+};
+
+export const fixtureAuthority: ConsoleSessionAuthority = Object.freeze({ role: 'tenant_operator', scope: 'tenant',
+  home_company: 'humanizar', acting_company: 'humanizar', platform_override: false });
+const fixedCompanyAuthority: ConsoleCompanyAuthority = {
+  resolve: async () => fixtureAuthority,
+  switchCompany: async () => { throw new Error('company switching is outside these fixtures'); },
 };
 
 export async function humanAccounts(second: Partial<ConsoleUser> = {}, fallback?: AuthProvider) {
@@ -27,7 +35,7 @@ export async function humanAccounts(second: Partial<ConsoleUser> = {}, fallback?
   };
   const users = new MemoryConsoleUserStore([first, other]);
   const provider = new PasswordAuthProvider({
-    users, signingKey: Buffer.alloc(32, 19), ...(fallback === undefined ? {} : { fallback }),
+    users, signingKey: Buffer.alloc(32, 19), companyAuthority: fixedCompanyAuthority, ...(fallback === undefined ? {} : { fallback }),
   });
   const prepare = vi.fn(async (_input: ConsolePublishIntentCommand, _scope: string) => ({
     version: 1 as const, state: 'prepared' as const, idempotency_key: `console:${randomUUID()}`, receipt: null,

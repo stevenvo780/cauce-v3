@@ -112,6 +112,7 @@ dice 60K/150K. Manda el árbol; el roadmap se re-verifica en T063.
 | scrypt (`DEFAULT_SCRYPT_COST`, `DEFAULT_SCRYPT_BLOCK_SIZE`, `DEFAULT_SCRYPT_PARALLELISM`, `MAX_MEMORY`=96 MiB) | N/r/p | 32_768 / 8 / 1; clave 32 B, salt 16 B | fijo | — |
 | Contraseña (`MIN_PASSWORD_LENGTH`, `MAX_PASSWORD_LENGTH`) | chars | 12–1_024 | fijo | — |
 | `CAUCE_AUTH_PROVIDER`, `CAUCE_CONSOLE_PASSWORD_FALLBACK` | enum | `mtls` (fallback token-file/none) | env | — |
+| `CAUCE_DEV_OPERATOR` (`gateway/auth.ts:DevOnlyAuthProvider`) | `<tenant>/<alias>` | sin default; única identidad de las cabeceras de desarrollo que actúa como operador; ausente, todas son agentes. Solo cuenta con `CAUCE_DEV_AUTH=1` fuera de producción; las pruebas fijan `Steven/kant` en `vitest.config.ts`, `ops/compose.test.yaml` también y `deploy/compose.dev.yaml` la deriva de `CAUCE_CONSOLE_TENANT`/`CAUCE_CONSOLE_ALIAS` | env de desarrollo y pruebas | unit auth |
 | `CAUCE_MCP_PUBLIC_ORIGIN` | origen | sin default; origen HTTPS exacto, sin ruta, query, fragmento ni credenciales; la audiencia MCP deriva `{origen}/mcp` | env público, no secreto | arranque MCP |
 | `CAUCE_MCP_OAUTH_ISSUER` | URL | sin default; emisor HTTPS exacto esperado en el token | env público, no secreto | arranque MCP |
 | `CAUCE_MCP_OAUTH_JWKS_URI` | URL | sin default; endpoint HTTPS fijo de claves públicas, sin query, fragmento ni credenciales | env público, no secreto | arranque MCP |

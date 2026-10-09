@@ -16,6 +16,7 @@ describe('console user authority', () => {
       channel: 'console', roles: ['operator'], permissions: ['route', 'read', 'control', 'notify'],
       operator_id: 'person@example.test',
       operator_profile: { id: 'console:00000000-0000-4000-8000-000000000071', display_name: 'Fixture Person' },
+      human_id: '00000000-0000-4000-8000-000000000071',
     });
   });
 

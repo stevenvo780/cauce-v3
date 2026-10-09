@@ -10,6 +10,18 @@ export type ConsolePermission =
  */
 type LoginMode = 'password' | 'redirect';
 
+export type ConsoleAuthorityRole =
+  | 'platform_admin' | 'company_owner' | 'company_admin' | 'tenant_operator' | 'reader' | 'none';
+export type ConsoleAuthorityScope = 'platform' | 'company' | 'tenant' | 'outgoing_acl' | 'none';
+
+export interface ConsoleAuthority {
+  role: ConsoleAuthorityRole;
+  scope: ConsoleAuthorityScope;
+  home_company: string;
+  acting_company: string;
+  platform_override: boolean;
+}
+
 export interface ConsoleAuthState {
   /** null means the selected legacy auth mode has no BFF session facade. */
   authenticated: boolean | null;
@@ -21,6 +33,7 @@ export interface ConsoleAuthState {
   expires_at?: string | null;
   csrf_token?: string | null;
   reason?: string | null;
+  authority?: ConsoleAuthority | null;
 }
 
 /** Server-derived RBAC snapshot. Missing permissions are UNKNOWN, never implicitly allowed. */

@@ -37,6 +37,20 @@ interface MembershipRow {
 
 const BINDING_KEY = 'provider=$1 AND namespace=$2 COLLATE "C" AND subject=$3 COLLATE "C"';
 
+async function lockHomeMembership(
+  client: DatabaseClient, humanId: string, tenantId: string,
+): Promise<HumanIdentitySnapshot['membership'] | undefined> {
+  const membership = (await client.query<MembershipRow>(
+    `SELECT tenant_id, actor_alias, role, permissions, enabled, revision::text, revoked_at
+     FROM human_tenant_memberships WHERE human_id=$1 AND tenant_id=$2 FOR SHARE`,
+    [humanId, tenantId],
+  )).rows[0];
+  if (!membership?.enabled || membership.revoked_at !== null) return undefined;
+  return Object.freeze({ tenantId: membership.tenant_id, actorAlias: membership.actor_alias,
+    role: membership.role, permissions: Object.freeze([...membership.permissions]),
+    enabled: membership.enabled, revision: membership.revision });
+}
+
 function validKey(key: { provider: unknown; namespace: unknown; subject: unknown }): boolean {
   return key.provider === 'oauth' && typeof key.namespace === 'string' && typeof key.subject === 'string'
     && Buffer.byteLength(key.namespace) > 0 && Buffer.byteLength(key.namespace) <= 1024
@@ -65,20 +79,14 @@ async function readLockedIdentity(
   )).rows[0];
   if (!account?.active || !binding?.enabled || binding.revoked_at !== null || binding.human_id !== account.id
       || account.id !== humanId) return undefined;
-  const membership = (await client.query<MembershipRow>(
-    `SELECT tenant_id, actor_alias, role, permissions, enabled, revision::text, revoked_at
-     FROM human_tenant_memberships WHERE human_id=$1 AND tenant_id=$2 FOR SHARE`,
-    [humanId, account.tenant_id],
-  )).rows[0];
-  if (!membership?.enabled || membership.revoked_at !== null) return undefined;
+  const membership = await lockHomeMembership(client, humanId, account.tenant_id);
+  if (!membership) return undefined;
   return Object.freeze({
     humanId, bindingId: binding.id, provider, namespace, subject,
     bindingRevision: binding.revision,
     account: Object.freeze({ active: account.active, role: account.role,
       defaultTenant: account.tenant_id, displayName: account.display_name }),
-    membership: Object.freeze({ tenantId: membership.tenant_id, actorAlias: membership.actor_alias,
-      role: membership.role, permissions: Object.freeze([...membership.permissions]),
-      enabled: membership.enabled, revision: membership.revision }),
+    membership,
   });
 }
 
@@ -169,19 +177,32 @@ export async function lockConsoleHuman(
     }
     if (!verified) throw new StoreError('forbidden', 'console human authority is unavailable');
   }
-  const membership = (await client.query<MembershipRow>(
-    `SELECT tenant_id, actor_alias, role, permissions, enabled, revision::text, revoked_at
-     FROM human_tenant_memberships WHERE human_id=$1 AND tenant_id=$2 FOR SHARE`,
-    [humanId, account.tenant_id],
-  )).rows[0];
-  if (!membership?.enabled || membership.revoked_at !== null) {
-    throw new StoreError('forbidden', 'console human authority is unavailable');
-  }
+  const membership = await lockHomeMembership(client, humanId, account.tenant_id);
+  if (!membership) throw new StoreError('forbidden', 'console human authority is unavailable');
   return Object.freeze({ humanId: account.id,
     account: Object.freeze({ active: account.active, role: account.role, defaultTenant: account.tenant_id,
       actorAlias: account.alias, passwordChangedAt: account.password_changed_at.getTime() }),
-    membership: Object.freeze({ tenantId: membership.tenant_id, actorAlias: membership.actor_alias,
-      role: membership.role, permissions: Object.freeze([...membership.permissions]),
-      enabled: membership.enabled, revision: membership.revision }),
+    membership,
   });
+}
+
+export interface ConsolePersonSnapshot {
+  readonly humanId: string;
+  readonly account: Readonly<{ active: boolean; role: string; defaultTenant: string; actorAlias: string; company: string }>;
+  /** Absent while the home membership is missing, disabled or revoked. */
+  readonly membership?: HumanIdentitySnapshot['membership'];
+}
+
+/** Locks a console person and its home membership without judging either; the caller decides. */
+export async function lockConsolePerson(client: DatabaseClient, humanId: string): Promise<ConsolePersonSnapshot | undefined> {
+  if (!isAnyUuid(humanId)) return undefined;
+  const account = (await client.query<AccountRow & { alias: string; company_id: string }>(
+    'SELECT id, active, role, tenant_id, alias, company_id FROM console_users WHERE id=$1 FOR SHARE', [humanId],
+  )).rows[0];
+  if (!account) return undefined;
+  const membership = await lockHomeMembership(client, humanId, account.tenant_id);
+  return Object.freeze({ humanId: account.id,
+    account: Object.freeze({ active: account.active, role: account.role, defaultTenant: account.tenant_id,
+      actorAlias: account.alias, company: account.company_id }),
+    ...(membership === undefined ? {} : { membership }) });
 }

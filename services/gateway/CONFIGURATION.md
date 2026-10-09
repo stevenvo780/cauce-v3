@@ -45,6 +45,13 @@ por lo que una revocación runtime corta la autorización sin confiar solo en el
 `production`. Never expose this mode on a shared network. Production always requires
 delivery/outbox ACK claims; attempting to disable them fails startup.
 
+`CAUCE_DEV_OPERATOR=<tenant>/<alias>` nombra la única identidad de cabeceras de desarrollo
+que actúa como operador (`route`, `read`, `control`); sin ella, toda cabecera es un agente.
+No tiene default en el código: `ops/compose.test.yaml` fija `Steven/kant`,
+`deploy/compose.dev.yaml` la deriva de `CAUCE_CONSOLE_TENANT`/`CAUCE_CONSOLE_ALIAS` y las
+pruebas la fijan en `vitest.config.ts`. Un valor mal formado aborta el arranque. Nunca da
+autoridad de empresa ni de plataforma: esa sale solo de una sesión humana verificada.
+
 `CAUCE_ACK_DEADLINE_MS` is the positive deadline assigned when either HTTP or
 WebSocket claims a delivery. The source fallback is 30000 ms for compatibility,
 while the production compose declares 600000 ms explicitly for slow LLM work.

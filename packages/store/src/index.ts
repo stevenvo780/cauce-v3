@@ -12,6 +12,7 @@ export * from './terminal-control-holds.js';
 export * from './pending-delivery-sweep.js';
 export * from './agent-context-revisions.js';
 export * from './human-identity.js';
+export * from './company-authority.js';
 export * from './repository/agent-context-quarantine.js';
 export type { ContextWritePlan, ContextWriteAuditAttribution } from './repository/agent-context-write-plan.js';
 export { persistAgentContextReconcileInTransaction, type AgentContextFenceInput, type AgentContextReconcileEffect } from './repository/agent-context-reconcile.js';
