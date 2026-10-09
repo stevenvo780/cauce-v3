@@ -27,7 +27,7 @@ el orden operativo anterior es obligatorio.
     "alias": "<alias>",
     "tenant_id": "<tenant>",
     "room_id": "<sala>",
-    "token_file": "/run/cauce-telegram/<alias>.token",
+    "token_file": "/run/cauce-telegram/<tenant>/<alias>.token",
     "v2_shutdown_marker_file": "/run/cauce-telegram/<alias>.disabled",
     "allowed_user_ids": ["123"],
     "allowed_chat_ids": ["123"],
@@ -47,6 +47,14 @@ contener exactamente al propio alias. Delegaciones y fan-out se realizan despué
 ingress porque no puede representar un único estado terminal de Telegram.
 `ops/scripts/generate-telegram-config.py` produce estos paths y esta política;
 `ops/scripts/telegram-cutover-preflight.py` los verifica sin leer el token.
+
+El token vive en un directorio por tenant (`<tenant>/<alias>.token`) y dos filas no
+pueden compartir `token_file`; el marcador sigue plano (`<alias>.disabled`), porque no es
+secreto y los alias ya son únicos por configuración. Token y fila se escriben con
+`ops/scripts/publish-telegram-token.py`, que toma la ruta de la fila generada y solo
+reemplaza `config.json` cuando el token ya existe. La migración desde la disposición
+plana (enlaces duros primero, `config.json` después) está en
+`ops/runbooks/telegram-cutover.md`.
 
 ### Comandos de operador (`operator_commands`)
 

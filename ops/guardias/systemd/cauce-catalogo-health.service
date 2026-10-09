@@ -5,5 +5,9 @@ Description=Vigia del catalogo Mouseion: 20 URLs, avisa al dueno si alguna deja 
 Type=oneshot
 ExecStart=/datos/workspaces/zeus/cauce-v3/ops/guardias/catalogo-mouseion-health.sh
 Environment=CATALOGO_INFORME=%h/.local/state/cauce-catalogo-health.log
-# Sale 1 cuando hay caidas: es informacion, no un fallo de la unidad.
+# El guion no trae destino por defecto: sin estas tres el aviso no tiene a quien llegar.
+Environment=CAUCE_DESTINO_AVISO=steven_dm
+Environment=CAUCE_TENANT_AVISO=Steven
+Environment=CAUCE_SALA_AVISO=grp.steven
+# Sale 1 cuando hay caidas: es informacion, no un fallo de la unidad. 2 = mal configurado: falla.
 SuccessExitStatus=0 1

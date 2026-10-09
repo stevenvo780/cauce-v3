@@ -61,7 +61,7 @@ PG = ("docker exec -i cauce-v3-prod-postgres-1 psql -U cauce -d cauce "
 csv.field_size_limit(16 * 1024 * 1024)
 PUENTE_TELEGRAM = "cauce-v3-prod-telegram-bridge-1"
 TOKEN_DIR = "/etc/cauce-v3/telegram-runtime"
-TOKEN_AVISO = TOKEN_DIR + "/zeus.token"
+ALIAS_AVISO = "zeus"
 CHAT_STEVEN = "6979524541"
 MIN_TURNO_COLGADO = 30
 MIN_ENTREGA_TRABADA = 20
@@ -124,8 +124,8 @@ import json, glob, os, urllib.request
 from concurrent.futures import ThreadPoolExecutor
 # In parallel: 16 serial calls exceeded the 180 s budget and the probe timed out, which
 # is the same as having no probe.
-def una(f):
-    alias = os.path.basename(f)[:-6]
+def una(entrada):
+    alias, f = entrada
     try:
         tok = open(f).read().strip()
         # ONLY getWebhookInfo. getUpdates would confirm AND DESTROY the accumulated messages.
@@ -137,9 +137,13 @@ def una(f):
                        "ultimo_error": d.get("last_error_message")}
     except Exception as e:
         return alias, {"error": type(e).__name__}
-ficheros = sorted(glob.glob("/etc/cauce-v3/telegram-runtime/*.token"))
+# <tenant>/<alias>.token wins over the flat <alias>.token hard link kept during the migration.
+ficheros = {}
+for f in (sorted(glob.glob("/etc/cauce-v3/telegram-runtime/*/*.token"))
+          + sorted(glob.glob("/etc/cauce-v3/telegram-runtime/*.token"))):
+    ficheros.setdefault(os.path.basename(f)[:-6], f)
 with ThreadPoolExecutor(max_workers=8) as ex:
-    salida = dict(ex.map(una, ficheros))
+    salida = dict(ex.map(una, sorted(ficheros.items())))
 print(json.dumps(salida))
 '''
 
@@ -244,9 +248,12 @@ RE_ERROR_DE_TRANSPORTE = re.compile(
 # ---------------------------------------------------------------------------- reportar
 
 PLANTILLA_AVISO = rf'''
-import json, sys, urllib.parse, urllib.request
+import glob, json, sys, urllib.parse, urllib.request
 texto = json.load(sys.stdin)["texto"]
-tok = open("{TOKEN_AVISO}").read().strip()
+rutas = sorted(glob.glob("{TOKEN_DIR}/*/{ALIAS_AVISO}.token"))
+if len(rutas) > 1:
+    raise SystemExit("token de aviso ambiguo: {ALIAS_AVISO} existe en varios tenants")
+tok = open(rutas[0] if rutas else "{TOKEN_DIR}/{ALIAS_AVISO}.token").read().strip()
 d = urllib.parse.urlencode({{"chat_id": "{CHAT_STEVEN}", "text": texto}}).encode()
 with urllib.request.urlopen("https://api.telegram.org/bot%s/sendMessage" % tok, d, timeout=25) as r:
     r.read()

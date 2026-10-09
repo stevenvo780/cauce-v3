@@ -12,7 +12,7 @@ Mapping (per alias):
   alias                   <- fleet alias key
   tenant_id               <- fleet tenant   (container-aliases.json / manifest spec.tenant)
   room_id                 <- fleet room     (container-aliases.json / manifest spec.room)
-  token_file              <- PLACEHOLDER  {runtime-dir}/{alias}.token   (container-internal path)
+  token_file              <- PLACEHOLDER  {runtime-dir}/{tenant}/{alias}.token (container-internal path)
   v2_shutdown_marker_file <- PLACEHOLDER  {runtime-dir}/{alias}.disabled (container-internal path)
   bot_username            <- --groups-file (omitted when unknown)
   allowed_user_ids        <- --allowlist-file / --allow-user-id, else a sentinel placeholder
@@ -38,7 +38,7 @@ RUNTIME PATHS (gap G1): deploy/compose.yaml bind-mounts CAUCE_TELEGRAM_RUNTIME_D
 (host) onto /run/cauce-telegram (container, read-only) and reads config.json from
 /run/cauce-telegram/config.json. token_file and v2_shutdown_marker_file MUST live
 under that same mount or the container cannot read them, so token_file/marker default
-to /run/cauce-telegram/<alias>.{token,disabled}. Override with --runtime-dir (or the
+to /run/cauce-telegram/<tenant>/<alias>.token and /run/cauce-telegram/<alias>.disabled. Override with --runtime-dir (or the
 finer --token-dir/--marker-dir) only if you also mount those directories.
 
 RECIPIENTS (gap G2): a human DMs the <alias> bot expecting <alias> to answer, so the
@@ -400,7 +400,7 @@ def build_alias_config(alias: str, fleet: dict[str, dict[str, str]], options: di
         "alias": meta.get("alias", alias),
         "tenant_id": meta["tenant"],
         "room_id": meta["room"],
-        "token_file": f"{token_dir}/{alias}.token",
+        "token_file": f"{token_dir}/{meta['tenant']}/{alias}.token",
         "v2_shutdown_marker_file": f"{marker_dir}/{alias}.disabled",
         "allowed_user_ids": allowed_user_ids,
         "allowed_chat_ids": allowed_chat_ids,

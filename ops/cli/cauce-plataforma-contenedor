@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# Runs ops/cli/cauce-plataforma inside the release runtime image, attached to the stack's backend
+# network: production has no tsx, no host port for PostgreSQL and a verify-full URL whose host only
+# resolves there. `--mostrar` renders the service without running it.
+set -euo pipefail
+
+AQUI=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)
+ENV_FILE=${CAUCE_ENV_FILE:-/etc/cauce-v3/prod.env}
+fallar() { printf 'cauce-plataforma-contenedor: %s\n' "$1" >&2; exit 2; }
+
+[ -f "$ENV_FILE" ] && [ -r "$ENV_FILE" ] || fallar "no puedo leer $ENV_FILE (CAUCE_ENV_FILE)"
+valor() {  # $1=key: last assignment in the env file, read as data and never sourced
+  local linea
+  linea=$(grep -E "^$1=" "$ENV_FILE" | tail -n 1) || true
+  linea=${linea#*=}; linea=${linea%$'\r'}
+  linea=${linea#\"}; linea=${linea%\"}
+  printf '%s' "$linea"
+}
+proyecto=$(valor COMPOSE_PROJECT_NAME)
+proyecto=${proyecto:-cauce-v3-prod}
+[[ $proyecto =~ ^[a-z0-9][a-z0-9_-]{0,62}$ ]] || fallar "COMPOSE_PROJECT_NAME no es un nombre de proyecto válido"
+[ -f "$AQUI/cauce-plataforma" ] || fallar "falta $AQUI/cauce-plataforma"
+
+export CAUCE_PLATAFORMA_PROYECTO="$proyecto-plataforma"
+export CAUCE_PLATAFORMA_RED="${proyecto}_backend"
+export CAUCE_PLATAFORMA_CLI="$AQUI/cauce-plataforma"
+compose=(docker compose --env-file "$ENV_FILE" -p "$CAUCE_PLATAFORMA_PROYECTO" -f "$AQUI/cauce-plataforma.compose.yaml")
+
+if [ "${1:-}" = --mostrar ]; then
+  exec "${compose[@]}" config
+fi
+docker network inspect "$CAUCE_PLATAFORMA_RED" >/dev/null 2>&1 \
+  || fallar "no existe la red $CAUCE_PLATAFORMA_RED: la pila $proyecto no está levantada"
+exec "${compose[@]}" run --rm --no-deps cauce-plataforma "$@"

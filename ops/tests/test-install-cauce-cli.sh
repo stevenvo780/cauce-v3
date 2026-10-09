@@ -117,5 +117,21 @@ case "$err" in
 esac
 if [ ! -e "$WORK/bin2/cauce" ]; then ok "no instala nada de la fuente rechazada"; else bad "no instala nada de la fuente rechazada"; fi
 
+HOGAR2="$WORK/hogar2"; mkdir -p "$HOGAR2"; AVISO="$HOGAR2/.config/cauce-v3/attach-aviso.json"
+HOME="$HOGAR2" CAUCE_DESTINO_AVISO_INICIAL=steven_dm "$INSTALADOR" "$WORK/bin3" >/dev/null 2>&1
+if [ "$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["destino"])' "$AVISO" 2>/dev/null)" = steven_dm ] \
+   && [ "$(stat -c '%a' "$AVISO")" = 600 ]; then
+  ok "con CAUCE_DESTINO_AVISO_INICIAL siembra attach-aviso.json privado"
+else
+  bad "con CAUCE_DESTINO_AVISO_INICIAL siembra attach-aviso.json privado"
+fi
+HOME="$HOGAR2" CAUCE_DESTINO_AVISO_INICIAL=otro_destino "$INSTALADOR" "$WORK/bin3" >/dev/null 2>&1
+if grep -q steven_dm "$AVISO"; then ok "no pisa un attach-aviso.json existente"; else bad "no pisa un attach-aviso.json existente"; fi
+if HOME="$HOGAR" "$INSTALADOR" "$DEST" 2>&1 | grep -q 'aviso de attach sin destino'; then
+  ok "sin destino lo dice en vez de inventar uno"
+else
+  bad "sin destino lo dice en vez de inventar uno"
+fi
+
 [ "$fail" = 0 ] && echo "ALL OK"
 exit "$fail"

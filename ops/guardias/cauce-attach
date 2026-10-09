@@ -59,7 +59,7 @@ OPS = os.path.expanduser('~/.local/share/cauce-v3/ops')
 MAP = os.path.join(OPS, 'container-aliases.json')
 MARKERS = os.path.expanduser('~/.local/state/cauce-attach')
 PKI = os.path.expanduser('~/.config/cauce-v3/container-pki')
-AVISO_CONF = os.path.expanduser('~/.config/cauce-v3/attach-aviso.json')
+AVISO_CONF = os.environ.get('CAUCE_AVISO_CONF') or os.path.expanduser('~/.config/cauce-v3/attach-aviso.json')
 CONFIG = os.path.expanduser('~/.config/cauce-v3/container-aliases')
 GATEWAY = os.environ.get('CAUCE_GATEWAY_URL', 'https://100.64.0.6:8443')
 HOST_NATIVE = {'kant': 'cauce-v3-host-kant'}
@@ -168,20 +168,42 @@ def write_marker(alias, unit, native):
 # egress_destinations. If either is missing, the gateway responds 403 and we degrade to
 # an on-screen notice (never block attach for this).
 def destino_de(alias):
-    conf = {}
+    env_destino = os.environ.get('CAUCE_DESTINO_AVISO')
+    if env_destino:
+        return env_destino.strip() or None
+    aviso_conf = os.environ.get('CAUCE_AVISO_CONF') or AVISO_CONF
     try:
-        with open(AVISO_CONF) as handle:
+        with open(aviso_conf) as handle:
             conf = json.load(handle)
     except (OSError, ValueError):
-        pass
-    por_alias = (conf.get('aliases') or {}).get(alias) or {}
-    return por_alias.get('destino') or conf.get('destino') or 'steven_dm'
+        return None
+    if not isinstance(conf, dict):
+        return None
+    empresa = os.environ.get('CAUCE_EMPRESA') or conf.get('empresa')
+    if empresa:
+        empresas = conf.get('empresas')
+        if not isinstance(empresa, str) or not isinstance(empresas, dict):
+            return None
+        entry = empresas.get(empresa)
+        candidate = entry.get('destino') if isinstance(entry, dict) else None
+    else:
+        aliases = conf.get('aliases', {})
+        if not isinstance(aliases, dict):
+            return None
+        entry = aliases.get(alias, {})
+        if not isinstance(entry, dict):
+            return None
+        candidate = entry.get('destino') or conf.get('destino')
+    return candidate.strip() or None if isinstance(candidate, str) else None
 
 
 def avisar(mod, alias, texto, sufijo, prueba=False):
     """Aviso proactivo al chat del dueño. Devuelve una línea para imprimir, nunca lanza.
     Con prueba=True usa el dry_run del gateway: valida destino y permiso sin escribirle a nadie."""
     destino = destino_de(alias)
+    if not destino:
+        return ('sin destino configurado para egreso proactivo (aviso omitido). '
+                'Configurá CAUCE_DESTINO_AVISO o destino en attach-aviso.json.')
     cuerpo = {'destination': destino, 'kind': 'alert', 'body': texto,
               'idempotency_key': f'attach:{alias}:{os.getpid()}:{int(time.time())}:{sufijo}',
               'dry_run': bool(prueba)}

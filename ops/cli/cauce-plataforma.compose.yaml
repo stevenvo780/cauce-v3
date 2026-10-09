@@ -1,0 +1,45 @@
+# One-off service for ops/cli/cauce-plataforma-contenedor: the platform CLI inside the release
+# runtime image, on the stack's backend network, with the migrator's owner URL and the
+# PostgreSQL CA as file secrets. It never publishes ports and never joins the stack project.
+name: ${CAUCE_PLATAFORMA_PROYECTO:?run through ops/cli/cauce-plataforma-contenedor}
+
+services:
+  cauce-plataforma:
+    image: ${CAUCE_RUNTIME_IMAGE:?set an immutable CAUCE_RUNTIME_IMAGE digest}
+    user: "1000:1000"
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    entrypoint: ["/app/deploy/runtime-entrypoint.sh", "node", "ops/cli/cauce-plataforma.mjs"]
+    command: ["--help"]
+    environment:
+      DATABASE_URL_FILE: /run/secrets/database_url
+      NODE_ENV: production
+      PGSSLMODE: verify-full
+      PGSSLROOTCERT: /run/secrets/postgres_ca
+      CAUCE_PLATFORM_ADMIN_ID: ${CAUCE_PLATFORM_ADMIN_ID:-}
+    volumes:
+      - type: bind
+        source: ${CAUCE_PLATAFORMA_CLI:?run through ops/cli/cauce-plataforma-contenedor}
+        target: /app/ops/cli/cauce-plataforma.mjs
+        read_only: true
+    secrets:
+      - database_url
+      - postgres_ca
+    networks: [backend]
+
+secrets:
+  database_url:
+    file: ${CAUCE_DATABASE_URL_SECRET_PATH:?set CAUCE_DATABASE_URL_SECRET_PATH}
+  postgres_ca:
+    file: ${CAUCE_POSTGRES_CA_PATH:?set CAUCE_POSTGRES_CA_PATH}
+
+networks:
+  backend:
+    external: true
+    name: ${CAUCE_PLATAFORMA_RED:?run through ops/cli/cauce-plataforma-contenedor}
