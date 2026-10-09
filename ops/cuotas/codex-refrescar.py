@@ -11,7 +11,13 @@ Sin esto el token muere a los 10 dias del login y la lectura cae (paso el 2026-0
 Uso: docker exec -i <espacio> python3 - /home/node/.codex < codex-refrescar.py
 Refresca solo si al access token le quedan menos de 3 dias. No imprime secretos.
 """
-import base64, json, os, sys, tempfile, time, urllib.request
+import base64
+import json
+import os
+import sys
+import tempfile
+import time
+import urllib.request
 from datetime import datetime, timezone
 
 home = sys.argv[1] if len(sys.argv) > 1 else os.path.expanduser('~/.codex')
@@ -37,7 +43,7 @@ req = urllib.request.Request('https://auth.openai.com/oauth/token', data=cuerpo,
 try:
     r = json.load(urllib.request.urlopen(req, timeout=30))
 except urllib.error.HTTPError as e:
-    print(json.dumps({'refrescado': False, 'error': 'HTTP %s' % e.code}))
+    print(json.dumps({'refrescado': False, 'error': f'HTTP {e.code}'}))
     sys.exit(1)
 for k in ('id_token', 'access_token', 'refresh_token'):
     if r.get(k):

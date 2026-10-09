@@ -10,10 +10,8 @@
 #
 # <espacio> puede ser el nombre completo (cuota-claude-2), el sufijo (claude-2) o el numero (2).
 #
-# Cada espacio es un contenedor con su propio volumen: las sesiones de uno no se ven desde otro.
-# El login es interactivo y lo hace la persona; este guion solo abre la puerta correcta.
+# Cada espacio es un contenedor con su volumen (sesiones no compartidas); el login lo hace la persona.
 set -u
-DIR=/home/server/cuotas-cli
 IMAGEN=cuota-cli:latest
 
 rojo()  { printf '\033[31m%s\033[0m\n' "$*"; }
@@ -32,8 +30,7 @@ resuelve() {
 estado_cliente() {   # $1 contenedor  $2 cliente -> imprime autenticado/sin sesion
   case "$2" in
     claude) docker exec "$1" test -s /home/node/.claude/.credentials.json 2>/dev/null ;;
-    # 2026-09-23 (kant): google_accounts.json existe tambien tras cerrar sesion ("active": null),
-    # asi que daba falso "autenticado". Solo cuenta la credencial OAuth real.
+    # google_accounts.json existe tambien tras cerrar sesion ("active": null): solo cuenta la credencial OAuth real.
     gemini) docker exec "$1" test -s /home/node/.gemini/oauth_creds.json 2>/dev/null ;;
     codex)  docker exec "$1" test -s /home/node/.codex/auth.json 2>/dev/null ;;
     grok)   docker exec "$1" sh -c 'ls /home/node/.grok/*.json /home/node/.config/grok/* 2>/dev/null | grep -q .' 2>/dev/null ;;
@@ -101,11 +98,8 @@ c=$(resuelve "$1") || { rojo "no existe el espacio '$1'"; listar; exit 1; }
 
 cliente="${2:-claude}"
 case "$cliente" in
-  # Los tres logins van en modo SIN navegador local: dentro del contenedor no hay ninguno, y
-  # el flujo con callback a localhost falla siempre (2026-09-17, Steven lo vio con codex).
-  #   claude: ya imprime URL + codigo por si solo cuando no encuentra navegador.
-  #   codex:  --device-auth -> URL + codigo de un solo uso, nada de localhost:1455.
-  #   gemini: NO_BROWSER=true -> URL para pegar en cualquier navegador + codigo de vuelta.
+  # Los tres logins van SIN navegador local (el callback a localhost falla siempre en el contenedor):
+  # claude imprime URL+codigo solo, codex usa --device-auth, gemini usa NO_BROWSER=true.
   claude) echo "  → $c · Claude. Abre la URL donde quieras y pega el codigo. Verifica con: cuota-auth"
           exec docker exec -it "$c" claude auth login ;;
   gemini) echo "  → $c · Gemini. Elige 'Login with Google': te dara una URL y te pedira el codigo."

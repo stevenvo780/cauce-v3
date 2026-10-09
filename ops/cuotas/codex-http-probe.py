@@ -47,7 +47,7 @@ HOMES_POR_DEFECTO = [
 ]
 
 # wham/usage es el que usa el cliente de asiento; codex/usage devuelve HOY el MISMO
-# esquema (verificado 2026-09-05, byte a byte salvo los `reset_after_seconds`). Se
+# esquema (verificado, byte a byte salvo los `reset_after_seconds`). Se
 # mantiene como segundo intento por si OpenAI jubila uno de los dos: nos quedamos con
 # el primero que conteste con ventanas utiles.
 ENDPOINTS = [
@@ -70,7 +70,7 @@ CLAVE_POR_ACCOUNT = {
 }
 
 # Nombres humanos de ventana a partir de su duracion. OJO: NO se puede asumir que la
-# ventana "primary" sea la de 5h. Verificado 2026-09-05 en la cuenta pro b2b: viene
+# ventana "primary" sea la de 5h. Verificado en la cuenta pro b2b: viene
 # primary_window con limit_window_seconds=604800 (semanal) y secondary_window=null.
 # Etiquetar primary como "5h" a ciegas produciria un panel que miente.
 NOMBRE_VENTANA = {
@@ -118,7 +118,7 @@ def nombre_ventana(segundos, respaldo):
         return NOMBRE_VENTANA[segundos]
     if isinstance(segundos, (int, float)) and segundos > 0:
         s = int(segundos)
-        return "%dh" % (s // 3600) if s % 3600 == 0 else "%ds" % s
+        return f"{s // 3600}h" if s % 3600 == 0 else f"{s}s"
     return respaldo
 
 
@@ -177,14 +177,14 @@ def sonda(codex_home):
     # --- 1. Leer credencial (SOLO LECTURA, sin bloquear el fichero) --------------
     ruta = os.path.join(codex_home, "auth.json")
     try:
-        with open(ruta, "r") as f:
+        with open(ruta) as f:
             auth = json.load(f)
     except FileNotFoundError:
-        out["error"] = "no existe %s" % ruta
+        out["error"] = f"no existe {ruta}"
         out["extra"]["estado"] = "sin_credencial"
         return out
     except Exception as e:
-        out["error"] = "auth.json ilegible (%s: %s)" % (type(e).__name__, e)
+        out["error"] = f"auth.json ilegible ({type(e).__name__}: {e})"
         out["extra"]["estado"] = "sin_credencial"
         return out
 
@@ -224,10 +224,10 @@ def sonda(codex_home):
 
     # Vencimiento local: se comprueba ANTES de salir a red para no gastar una
     # peticion condenada. Pero NO es suficiente para detectar revocacion: el token de
-    # codex200 esta *vigente* (exp 2026-09-11) y aun asi el servidor lo rechaza con
+    # codex200 esta *vigente* y aun asi el servidor lo rechaza con
     # 401 token_revoked. Vencido y revocado son dos estados distintos.
     if isinstance(exp, (int, float)) and exp <= time.time():
-        out["error"] = "access token vencido el %s (no se refresca a proposito)" % iso(exp)
+        out["error"] = f"access token vencido el {iso(exp)} (no se refresca a proposito)"
         out["extra"]["estado"] = "token_invalidado"
         return out
 
@@ -238,7 +238,7 @@ def sonda(codex_home):
     for url in ENDPOINTS:
         restante = limite - time.time()
         if restante <= 1.0:
-            fallos.append("sin presupuesto de tiempo para %s" % url)
+            fallos.append(f"sin presupuesto de tiempo para {url}")
             break
         try:
             datos = pedir(url, token, account_id, min(restante, PRESUPUESTO_RED_S))
@@ -257,8 +257,8 @@ def sonda(codex_home):
                 # (Tampoco se refresca: eso reescribiria el auth.json de la flota.)
                 motivo = "revocado/invalidado" if ("invalidated" in cuerpo or "token_revoked" in cuerpo) \
                     else "rechazado"
-                out["error"] = ("token %s por el servidor (HTTP %d). Reautenticar ese CODEX_HOME "
-                                "a mano; la sonda no refresca." % (motivo, e.code))
+                out["error"] = (f"token {motivo} por el servidor (HTTP {e.code}). Reautenticar ese CODEX_HOME "
+                                f"a mano; la sonda no refresca.")
                 out["extra"]["estado"] = "token_invalidado"
                 out["extra"]["http_status"] = e.code
                 out["extra"]["respuesta_servidor"] = cuerpo
@@ -268,11 +268,11 @@ def sonda(codex_home):
                 out["extra"]["estado"] = "fallo_de_red"
                 out["extra"]["http_status"] = e.code
                 return out
-            fallos.append("HTTP %d en %s: %s" % (e.code, url, cuerpo))
-        except (urllib.error.URLError, socket.timeout, TimeoutError, OSError) as e:
-            fallos.append("%s en %s: %s" % (type(e).__name__, url, e))
+            fallos.append(f"HTTP {e.code} en {url}: {cuerpo}")
+        except (urllib.error.URLError, TimeoutError, OSError) as e:
+            fallos.append(f"{type(e).__name__} en {url}: {e}")
         except Exception as e:
-            fallos.append("%s en %s: %s" % (type(e).__name__, url, e))
+            fallos.append(f"{type(e).__name__} en {url}: {e}")
 
     if datos is None:
         out["error"] = "fallo de red/endpoint: " + " | ".join(fallos)[:300]
@@ -300,7 +300,7 @@ def sonda(codex_home):
     # marca en extra y se deja error=null para que el colector no descarte el dato.
     #
     # La senal autoritativa es `allowed`/`limit_reached`, NUNCA el porcentaje.
-    # Verificado 2026-09-05 contra el asiento de stevenvallejo780: used_percent=100
+    # Verificado contra el asiento de stevenvallejo780: used_percent=100
     # con allowed=true y limit_reached=false, o sea al tope de la ventana pero AUN
     # SIRVIENDO. Dar por muerta esa cuenta por el 100% dejaria al panel enrutando el
     # trabajo fuera de un asiento que funciona. Ese caso se etiqueta "al_limite".
@@ -348,7 +348,7 @@ def main():
             # Red de seguridad: pase lo que pase, sale JSON valido. El colector no
             # debe tener que distinguir una traza de un resultado.
             r = base(h)
-            r["error"] = "fallo interno de la sonda (%s: %s)" % (type(e).__name__, e)
+            r["error"] = f"fallo interno de la sonda ({type(e).__name__}: {e})"
             r["extra"]["estado"] = "fallo_de_red"
             res.append(r)
     json.dump(res if len(res) > 1 else res[0], sys.stdout, ensure_ascii=False)
