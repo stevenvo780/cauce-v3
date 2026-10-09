@@ -62,7 +62,7 @@ export async function configuredFleetGateway(pool: DatabasePool, capability: Fle
     ...(config === undefined ? {} : { coordinatorEnabled: true, coordinatorHosts: config.hosts.map(host => host.host_id) }),
   });
   const binding = repository === undefined ? undefined : {
-    list: repository.list.bind(repository), get: repository.get.bind(repository),
+    list: repository.list.bind(repository), listRecent: repository.listRecent.bind(repository), get: repository.get.bind(repository),
     cancel: repository.cancel.bind(repository), resume: repository.resume.bind(repository),
     preview: async (tenant: string, alias: string, input: FleetOperationRequest, subject?: string) => {
       assertFleetPlacement(capability, input); await assertFleetProviderAccount(pool, capability, input);

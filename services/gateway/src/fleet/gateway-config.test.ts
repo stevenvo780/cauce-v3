@@ -31,6 +31,8 @@ describe('fleet gateway deployment configuration', () => {
     const { filename, environment } = await config();
     const result = await configuredFleetGateway(pool, capability, environment);
     expect(result.fleetCapability).toBe(capability); expect(result.fleetOperationsRepository).toBeDefined();
+    // Every route the console calls needs its method on the binding; a missing one answers 409 "fleet history is unavailable".
+    expect(typeof result.fleetOperationsRepository?.listRecent).toBe('function');
     expect(result.providerAuthService).toBeDefined();
     await expect(configuredFleetGateway(pool, capability, { ...environment, CAUCE_FLEET_CONTROLLER_HOST: 'other' })).rejects.toThrow('catalogs differ');
     await chmod(filename, 0o644); await expect(configuredFleetGateway(pool, capability, environment)).rejects.toThrow();
