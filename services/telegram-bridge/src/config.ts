@@ -1,5 +1,5 @@
 import { lstat, readFile } from 'node:fs/promises';
-import { isAbsolute } from 'node:path';
+import { isAbsolute, normalize } from 'node:path';
 import { TenantSchema } from '@cauce/protocol';
 import type { FleetDirectory, GroupRouting } from './addressing.js';
 import type {
@@ -319,9 +319,11 @@ export function parseTelegramBridgeConfig(value: unknown): TelegramBridgeConfig 
     throw new Error('aliases must be a non-empty array');
   }
   const aliases = root.aliases.map(aliasConfig);
-  if (new Set(aliases.map((entry) => entry.alias)).size !== aliases.length) throw new Error('alias names must be unique');
-  if (new Set(aliases.map((entry) => `${entry.tenant_id}:${entry.alias}`)).size !== aliases.length) {
-    throw new Error('tenant/alias pairs must be unique');
+  if (new Set(aliases.map((entry) => entry.alias)).size !== aliases.length) {
+    throw new Error('alias names must be unique');
+  }
+  if (new Set(aliases.map((entry) => normalize(entry.token_file))).size !== aliases.length) {
+    throw new Error('token_file values must be unique across aliases');
   }
   assertFleetUsernames(aliases);
   assertSingleAmbientHost(aliases);

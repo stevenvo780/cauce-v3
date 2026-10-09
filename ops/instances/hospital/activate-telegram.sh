@@ -10,7 +10,6 @@ fi
 REPO=$(cd "$(dirname "$0")/../../.." && pwd)
 ENV_FILE=/etc/cauce-v3-hospital/prod.env
 RUNTIME=/etc/cauce-v3-hospital/telegram-runtime
-TOKEN_FILE=$RUNTIME/operador.token
 ALLOWLIST=/etc/cauce-v3-hospital/telegram-allowlist.json
 EXPECTED_BOT=hospitales_builder_developer_bot
 TEMP_TOKEN=$RUNTIME/.operador.token.tmp
@@ -225,26 +224,18 @@ finally:
     Path(temporary).unlink(missing_ok=True)
 PY
 
-mv "$TEMP_TOKEN" "$TOKEN_FILE"
-chown 1000:1000 "$TOKEN_FILE"
-chmod 0600 "$TOKEN_FILE"
 printf 'v2-poller-disabled:operador\n' >"$RUNTIME/operador.disabled"
 chown 1000:1000 "$RUNTIME/operador.disabled"
 chmod 0644 "$RUNTIME/operador.disabled"
 
-python3 "$REPO/ops/scripts/generate-telegram-config.py" \
-  --ops-dir "$REPO/ops" \
-  --aliases operador \
-  --allowlist-file "$ALLOWLIST" \
-  --output "$RUNTIME/config.json"
-chown 1000:1000 "$RUNTIME/config.json"
-chmod 0600 "$RUNTIME/config.json"
-
-python3 "$REPO/ops/scripts/telegram-cutover-preflight.py" \
-  --config "$RUNTIME/config.json" \
-  --aliases operador \
+python3 "$REPO/ops/scripts/publish-telegram-token.py" \
   --runtime-dir "$RUNTIME" \
-  --expected-uid 1000 >/dev/null
+  --ops-dir "$REPO/ops" \
+  --alias operador \
+  --allowlist-file "$ALLOWLIST" \
+  --token-file "$TEMP_TOKEN" \
+  --owner 1000:1000 \
+  --preflight >/dev/null
 
 python3 - "$ENV_FILE" <<'PY'
 from pathlib import Path

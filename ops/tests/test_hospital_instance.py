@@ -300,8 +300,12 @@ class HospitalInstanceTests(unittest.TestCase):
     def test_only_the_leader_is_enrolled_in_telegram(self) -> None:
         script = (INSTANCE / "activate-telegram.sh").read_text(encoding="utf-8")
 
-        self.assertIn("--aliases operador", script)
-        self.assertNotIn("--aliases operador teseo", script)
+        self.assertIn("--alias operador", script)
+        self.assertNotRegex(script, r"--alias(es)? (operador,)?(teseo|perseo)")
+        self.assertIn("publish-telegram-token.py", script)
+        self.assertIn('--token-file "$TEMP_TOKEN"', script)
+        self.assertIn("--preflight", script)
+        self.assertNotIn('--output "$RUNTIME/config.json"', script)
         self.assertIn('"operador": {"user_ids": [candidate]', script)
 
     def test_bootstrap_declares_exactly_three_hospital_agents(self) -> None:

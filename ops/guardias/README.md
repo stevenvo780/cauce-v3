@@ -74,6 +74,33 @@ copia de `credential_health.py` junto al ejecutable que la importa.
 según su shebang y guardando copia del anterior—. Tienen que caer en el **mismo** directorio:
 `cauce-estado` y `cauce-attach` resuelven `cauce-sesiones` **al lado del propio ejecutable**.
 
+## Los avisos ya no tienen destino por defecto
+
+`cauce-attach` y `catalogo-mouseion-health.sh` dejaron de asumir `steven_dm`: un destino de egreso
+es de una empresa, y un valor fijo en el código mandaría los avisos de otra empresa al chat de
+Steven. Sin destino configurado no inventan uno: `cauce-attach` sigue entrando a la sesión y dice
+en pantalla que omitió el aviso; el vigía del catálogo sale con 2 para que su unidad quede fallida.
+
+Para conservar el comportamiento de hoy, **cada host que usa `cauce-attach`** necesita
+`~/.config/cauce-v3/attach-aviso.json` (o `CAUCE_DESTINO_AVISO` en el entorno):
+
+```json
+{"destino": "steven_dm"}
+```
+
+El fichero admite también `aliases.<alias>.destino` y, por empresa, `empresas.<empresa>.destino`
+con `empresa` (o `CAUCE_EMPRESA`); si se nombra una empresa que no figura, no hay aviso.
+`ops/scripts/install-cauce-cli.sh` lo crea con modo `0600` cuando falta y se le pasa el destino:
+`CAUCE_DESTINO_AVISO_INICIAL=steven_dm ./ops/scripts/install-cauce-cli.sh`. Si ya existe, no lo
+toca; si falta y no se le pasa nada, avisa en vez de escribir uno.
+
+El vigía del catálogo lee el mismo fichero como respaldo, pero su unidad
+(`systemd/cauce-catalogo-health.service`) fija las tres variables: `CAUCE_DESTINO_AVISO=steven_dm`
+para el egreso directo y `CAUCE_TENANT_AVISO=Steven` + `CAUCE_SALA_AVISO=grp.steven` para el
+respaldo por el bus. Con tenant y sala pero sin destino, salta el egreso directo y usa el bus. Sin
+destino ni el par tenant+sala sale con 2 (la unidad solo acepta 0 y 1). Tras copiar la unidad
+nueva, `daemon-reload` en el gestor de systemd donde esté instalada.
+
 ## El guardia de alertas lee Prometheus por `docker exec`, no por HTTP
 
 `deploy/compose.yaml` deja `prometheus` en la red `backend` **sin `ports:`** y detrás de

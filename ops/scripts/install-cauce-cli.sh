@@ -46,3 +46,13 @@ instalar cli cauce-reponer
 instalar guardias cauce-estado
 instalar guardias cauce-sesiones
 instalar guardias cauce-attach
+
+AVISO_ATTACH=$HOME/.config/cauce-v3/attach-aviso.json
+if [ ! -e "$AVISO_ATTACH" ] && [ -n "${CAUCE_DESTINO_AVISO_INICIAL:-}" ]; then
+  install -d -m 0700 -- "${AVISO_ATTACH%/*}"
+  ( umask 077; python3 -c 'import json, sys; print(json.dumps({"destino": sys.argv[1]}))' \
+      "$CAUCE_DESTINO_AVISO_INICIAL" > "$AVISO_ATTACH" )
+  printf 'aviso de attach: %s -> %s\n' "$AVISO_ATTACH" "$CAUCE_DESTINO_AVISO_INICIAL"
+elif [ ! -e "$AVISO_ATTACH" ]; then
+  printf 'aviso de attach sin destino: cauce-attach omitirá el aviso hasta que exista %s (reinstalá con CAUCE_DESTINO_AVISO_INICIAL=<destino>)\n' "$AVISO_ATTACH" >&2
+fi

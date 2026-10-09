@@ -4,7 +4,7 @@
       "alias": "argos",
       "tenant_id": "Steven",
       "room_id": "grp.steven",
-      "token_file": "/run/cauce-telegram/argos.token",
+      "token_file": "/run/cauce-telegram/Steven/argos.token",
       "v2_shutdown_marker_file": "/run/cauce-telegram/argos.disabled",
       "allowed_user_ids": [
         "999999999999999999"
@@ -25,7 +25,7 @@
       "alias": "astra",
       "tenant_id": "Steven",
       "room_id": "grp.steven",
-      "token_file": "/run/cauce-telegram/astra.token",
+      "token_file": "/run/cauce-telegram/Steven/astra.token",
       "v2_shutdown_marker_file": "/run/cauce-telegram/astra.disabled",
       "allowed_user_ids": [
         "999999999999999999"
@@ -46,7 +46,7 @@
       "alias": "atlas",
       "tenant_id": "Miguel",
       "room_id": "grp.miguel",
-      "token_file": "/run/cauce-telegram/atlas.token",
+      "token_file": "/run/cauce-telegram/Miguel/atlas.token",
       "v2_shutdown_marker_file": "/run/cauce-telegram/atlas.disabled",
       "allowed_user_ids": [
         "999999999999999999"
@@ -67,7 +67,7 @@
       "alias": "gaia",
       "tenant_id": "Miguel",
       "room_id": "grp.miguel",
-      "token_file": "/run/cauce-telegram/gaia.token",
+      "token_file": "/run/cauce-telegram/Miguel/gaia.token",
       "v2_shutdown_marker_file": "/run/cauce-telegram/gaia.disabled",
       "allowed_user_ids": [
         "999999999999999999"
@@ -88,7 +88,7 @@
       "alias": "hades",
       "tenant_id": "Steven",
       "room_id": "grp.steven",
-      "token_file": "/run/cauce-telegram/hades.token",
+      "token_file": "/run/cauce-telegram/Steven/hades.token",
       "v2_shutdown_marker_file": "/run/cauce-telegram/hades.disabled",
       "allowed_user_ids": [
         "999999999999999999"
@@ -109,7 +109,7 @@
       "alias": "hegel",
       "tenant_id": "Miguel",
       "room_id": "grp.miguel",
-      "token_file": "/run/cauce-telegram/hegel.token",
+      "token_file": "/run/cauce-telegram/Miguel/hegel.token",
       "v2_shutdown_marker_file": "/run/cauce-telegram/hegel.disabled",
       "allowed_user_ids": [
         "999999999999999999"
@@ -130,7 +130,7 @@
       "alias": "iza",
       "tenant_id": "Miguel",
       "room_id": "grp.miguel",
-      "token_file": "/run/cauce-telegram/iza.token",
+      "token_file": "/run/cauce-telegram/Miguel/iza.token",
       "v2_shutdown_marker_file": "/run/cauce-telegram/iza.disabled",
       "allowed_user_ids": [
         "999999999999999999"
@@ -151,7 +151,7 @@
       "alias": "janus",
       "tenant_id": "Miguel",
       "room_id": "grp.miguel",
-      "token_file": "/run/cauce-telegram/janus.token",
+      "token_file": "/run/cauce-telegram/Miguel/janus.token",
       "v2_shutdown_marker_file": "/run/cauce-telegram/janus.disabled",
       "allowed_user_ids": [
         "999999999999999999"
@@ -172,7 +172,7 @@
       "alias": "jarvis",
       "tenant_id": "Steven",
       "room_id": "grp.steven",
-      "token_file": "/run/cauce-telegram/jarvis.token",
+      "token_file": "/run/cauce-telegram/Steven/jarvis.token",
       "v2_shutdown_marker_file": "/run/cauce-telegram/jarvis.disabled",
       "allowed_user_ids": [
         "999999999999999999"
@@ -193,7 +193,7 @@
       "alias": "kant",
       "tenant_id": "Steven",
       "room_id": "grp.steven",
-      "token_file": "/run/cauce-telegram/kant.token",
+      "token_file": "/run/cauce-telegram/Steven/kant.token",
       "v2_shutdown_marker_file": "/run/cauce-telegram/kant.disabled",
       "allowed_user_ids": [
         "999999999999999999"
@@ -214,7 +214,7 @@
       "alias": "kratos",
       "tenant_id": "Miguel",
       "room_id": "grp.miguel",
-      "token_file": "/run/cauce-telegram/kratos.token",
+      "token_file": "/run/cauce-telegram/Miguel/kratos.token",
       "v2_shutdown_marker_file": "/run/cauce-telegram/kratos.disabled",
       "allowed_user_ids": [
         "999999999999999999"
@@ -235,7 +235,7 @@
       "alias": "salva",
       "tenant_id": "Isa",
       "room_id": "grp.isa",
-      "token_file": "/run/cauce-telegram/salva.token",
+      "token_file": "/run/cauce-telegram/Isa/salva.token",
       "v2_shutdown_marker_file": "/run/cauce-telegram/salva.disabled",
       "allowed_user_ids": [
         "999999999999999999"
@@ -256,7 +256,7 @@
       "alias": "socrates",
       "tenant_id": "Steven",
       "room_id": "grp.steven",
-      "token_file": "/run/cauce-telegram/socrates.token",
+      "token_file": "/run/cauce-telegram/Steven/socrates.token",
       "v2_shutdown_marker_file": "/run/cauce-telegram/socrates.disabled",
       "allowed_user_ids": [
         "999999999999999999"
@@ -277,7 +277,7 @@
       "alias": "zeus",
       "tenant_id": "Steven",
       "room_id": "grp.steven",
-      "token_file": "/run/cauce-telegram/zeus.token",
+      "token_file": "/run/cauce-telegram/Steven/zeus.token",
       "v2_shutdown_marker_file": "/run/cauce-telegram/zeus.disabled",
       "allowed_user_ids": [
         "999999999999999999"

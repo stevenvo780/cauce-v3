@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
   chatParticipants, effectiveChatPolicy, fleetDirectory, fleetParticipationGaps, groupRouting,
@@ -17,15 +18,16 @@ const TENANT = 'Steven';
 const CHAT_ID = '-5001';
 
 function rawAlias(alias: string, overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  const tenant = (overrides.tenant_id as string | undefined) ?? TENANT;
   return {
     alias,
-    tenant_id: TENANT,
+    tenant_id: tenant,
     room_id: 'grp.steven',
-    token_file: `/synthetic/${alias}.token`,
+    token_file: `/synthetic/${tenant}/${alias}.token`,
     v2_shutdown_marker_file: `/synthetic/${alias}.marker`,
     allowed_user_ids: ['101'],
     allowed_chat_ids: [CHAT_ID],
-    recipients: [{ tenant_id: TENANT, alias }],
+    recipients: [{ tenant_id: tenant, alias }],
     poll_timeout_seconds: 25,
     poll_lease_ms: 60_000,
     ...overrides
@@ -217,4 +219,75 @@ describe('fleetDirectory', () => {
     expect(directory.byBotId.get('900001')).toBe('kant');
     expect(directory.byBotId.size).toBe(1);
   });
+});
+
+describe('parseTelegramBridgeConfig: multi-tenant token isolation', () => {
+  it('rejects duplicate alias names within the same bridge configuration', () => {
+    expect(() => build([
+      rawAlias('zeus', {
+        tenant_id: 'Steven',
+        token_file: '/synthetic/Steven/zeus.token',
+        recipients: [{ tenant_id: 'Steven', alias: 'zeus' }]
+      }),
+      rawAlias('zeus', {
+        tenant_id: 'Hospital',
+        room_id: 'grp.hospital',
+        token_file: '/synthetic/Hospital/zeus.token',
+        recipients: [{ tenant_id: 'Hospital', alias: 'zeus' }]
+      })
+    ])).toThrow('alias names must be unique');
+  });
+
+  it('rejects sharing token_file across aliases (insecure token sharing)', () => {
+    expect(() => build([
+      rawAlias('zeus', {
+        tenant_id: 'Steven',
+        token_file: '/synthetic/Steven/zeus.token',
+        recipients: [{ tenant_id: 'Steven', alias: 'zeus' }]
+      }),
+      rawAlias('argos', {
+        tenant_id: 'Steven',
+        token_file: '/synthetic/Steven/zeus.token',
+        recipients: [{ tenant_id: 'Steven', alias: 'argos' }]
+      })
+    ])).toThrow('token_file values must be unique across aliases');
+  });
+
+  it('supports separate bridge configurations for different tenants with identical alias names', () => {
+    const configSteven = build([
+      rawAlias('zeus', {
+        tenant_id: 'Steven',
+        token_file: '/run/cauce-telegram/Steven/zeus.token',
+        recipients: [{ tenant_id: 'Steven', alias: 'zeus' }]
+      })
+    ]);
+    const configHospital = build([
+      rawAlias('zeus', {
+        tenant_id: 'Hospital',
+        room_id: 'grp.hospital',
+        token_file: '/run/cauce-telegram/Hospital/zeus.token',
+        recipients: [{ tenant_id: 'Hospital', alias: 'zeus' }]
+      })
+    ]);
+    expect(configSteven.aliases[0]?.tenant_id).toBe('Steven');
+    expect(configHospital.aliases[0]?.tenant_id).toBe('Hospital');
+    expect(configSteven.aliases[0]?.alias).toBe(configHospital.aliases[0]?.alias);
+    expect(configSteven.aliases[0]?.token_file).not.toBe(configHospital.aliases[0]?.token_file);
+  });
+  it('keeps every checked-in fleet token under its tenant directory and every marker flat', () => {
+    const checkedIn = new URL('../../../ops/telegram-runtime/config.json', import.meta.url);
+    const config = parseTelegramBridgeConfig(JSON.parse(readFileSync(checkedIn, 'utf8')) as unknown);
+    expect(config.aliases.length).toBeGreaterThan(0);
+    for (const entry of config.aliases) {
+      expect(entry.token_file).toMatch(new RegExp(`^/run/cauce-telegram/${entry.tenant_id}/[a-z][a-z0-9_-]*\\.token$`));
+      expect(entry.v2_shutdown_marker_file).toMatch(/^\/run\/cauce-telegram\/[a-z][a-z0-9_-]*\.disabled$/);
+    }
+  });
+  it('rejects equivalent token paths across aliases', () => {
+    expect(() => build([
+      rawAlias('zeus', { token_file: '/synthetic/Steven/zeus.token' }),
+      rawAlias('argos', { token_file: '/synthetic/Steven/../Steven/zeus.token' })
+    ])).toThrow('token_file values must be unique across aliases');
+  });
+
 });

@@ -23,7 +23,7 @@ chmod +x "$WORK/bin/curl"
 printf 'https://uno.example/\tmarca-ok\nhttps://dos.example/\tmarca-ok\n' > "$WORK/urls.txt"
 printf 'https://uno.example/\n' > "$WORK/informe.avisadas"
 PATH="$WORK/bin:$PATH" CATALOGO_URLS="$WORK/urls.txt" CATALOGO_INFORME="$WORK/informe.log" \
-  CATALOGO_REINTENTO=0 bash "$VIGIA" >/dev/null 2>&1
+  CATALOGO_REINTENTO=0 CAUCE_DESTINO_AVISO=destino_de_prueba bash "$VIGIA" >/dev/null 2>&1
 rc=$?
 if [ "$rc" = 0 ] && [ ! -s "$WORK/informe.avisadas" ]; then
   echo "ok: con todo en 200 el estado de avisadas queda vacio"

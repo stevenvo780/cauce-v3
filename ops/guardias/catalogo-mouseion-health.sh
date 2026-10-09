@@ -1,19 +1,40 @@
 #!/usr/bin/env bash
 # Vigila cada 24 h las URLs del catalogo Mouseion y avisa al dueno cuando alguna deja de dar 200.
 #   --dry-run valida destino y permiso contra el gateway SIN escribirle a nadie; --list imprime lo que vigilaria y sale
-# Sale 1 si hay alguna caida (para que systemd la marque), 0 si todas responden.
+# Sale 0 si todas responden, 1 si hay alguna caida y 2 si falta la lista o una ruta de aviso.
 set -uo pipefail
 
 AQUI="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LISTA="${CATALOGO_URLS:-$AQUI/catalogo-mouseion-urls.txt}"
 ALIAS="${CAUCE_ALIAS_AVISO:-zeus}"
-DESTINO="${CAUCE_DESTINO_AVISO:-steven_dm}"
+AVISO_CONF="${CAUCE_AVISO_CONF:-${HOME:-/home/stev}/.config/cauce-v3/attach-aviso.json}"
+DESTINO="${CAUCE_DESTINO_AVISO:-}"
+
+if [ -z "$DESTINO" ] && [ -r "$AVISO_CONF" ]; then
+  DESTINO="$(ALIAS="$ALIAS" python3 -c '
+import json, sys, os
+try:
+    with open(sys.argv[1]) as f:
+        c = json.load(f)
+    empresa = os.environ.get("CAUCE_EMPRESA") or c.get("empresa")
+    if empresa:
+        entry = c.get("empresas", {}).get(empresa)
+        d = entry.get("destino") if isinstance(entry, dict) else None
+    else:
+        entry = c.get("aliases", {}).get(os.environ.get("ALIAS", ""), {})
+        d = entry.get("destino") or c.get("destino")
+    if isinstance(d, str) and d.strip():
+        print(d.strip())
+except Exception:
+    pass
+' "$AVISO_CONF" 2>/dev/null || true)"
+fi
 GATEWAY="${CAUCE_GATEWAY_URL:-https://100.64.0.6:8443}"
 PKI="${CAUCE_PKI:-/home/stev/.config/cauce-v3/container-pki}"
 INFORME="${CATALOGO_INFORME:-/var/log/cauce-catalogo-health.log}"
 ESTADO="${CATALOGO_ESTADO:-${INFORME%.log}.avisadas}"
-SALA_AVISO="${CAUCE_SALA_AVISO:-grp.steven}"
-TENANT_AVISO="${CAUCE_TENANT_AVISO:-Steven}"
+SALA_AVISO="${CAUCE_SALA_AVISO:-}"
+TENANT_AVISO="${CAUCE_TENANT_AVISO:-}"
 ESPERA="${CATALOGO_TIMEOUT:-20}"
 # Cuerpo mas chico que esto = dominio aparcado o error generico. El sano mas chico pesa 1777 B.
 MINIMO="${CATALOGO_MINIMO:-1024}"
@@ -29,6 +50,10 @@ case "${1:-}" in
 esac
 
 [ -r "$LISTA" ] || { echo "no puedo leer la lista de URLs: $LISTA" >&2; exit 2; }
+if [ -z "$DESTINO" ] && { [ -z "$TENANT_AVISO" ] || [ -z "$SALA_AVISO" ]; }; then
+  echo "catalogo-mouseion-health: sin ruta de aviso; configurá CAUCE_DESTINO_AVISO o CAUCE_TENANT_AVISO y CAUCE_SALA_AVISO" >&2
+  exit 2
+fi
 
 SELLO="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 ROTAS=()
@@ -72,6 +97,10 @@ for r in "${ROTAS[@]:-}"; do [ -n "$r" ] && echo "  ROTA $r"; done
 
 avisar() {
   local cuerpo="$1" clave="$2"
+  if [ -z "$DESTINO" ]; then
+    echo "sin destino de aviso configurado: no intento egreso" >&2
+    return 1
+  fi
   local cert="$PKI/$ALIAS/client.crt" key="$PKI/$ALIAS/client.key" ca="$PKI/$ALIAS/ca.crt"
   for f in "$cert" "$key" "$ca"; do
     [ -r "$f" ] || { echo "sin certificado mTLS de $ALIAS ($f): no puedo avisar" >&2; return 1; }
@@ -98,6 +127,10 @@ print(json.dumps({"destination": os.environ["DEST"], "kind": "alert",
 # tiene (el gateway responde 403). El bus si deja publicar una entrega para un agente si esta
 # permitido: un guion no le habla a una persona, pero despierta a quien si puede avisarle.
 por_el_bus() {
+  if [ -z "$TENANT_AVISO" ] || [ -z "$SALA_AVISO" ]; then
+    echo "sin tenant y sala de aviso configurados: no intento respaldo por bus" >&2
+    return 1
+  fi
   local texto="$1" clave="$2"
   local cert="$PKI/$ALIAS/client.crt" key="$PKI/$ALIAS/client.key" ca="$PKI/$ALIAS/ca.crt"
   local payload codigo

@@ -107,8 +107,11 @@ def _publish_generation(state: pathlib.Path, receipt: dict[str, Any], files: dic
             shutil.rmtree(temporary)
 
 
-def render_artifacts(source: Any, placement: dict[str, dict[str, str]]) -> dict[str, bytes]:
-    snapshot = EXPORTER.snapshot_document(source, placement)
+def render_artifacts(
+    source: Any, placement: dict[str, dict[str, str]], *,
+    allowed_tenants: frozenset[str] | None = None, company: str | None = None,
+) -> dict[str, bytes]:
+    snapshot = EXPORTER.snapshot_document(source, placement, allowed_tenants=allowed_tenants, company=company)
     fleet = MANIFESTS.validate_fleet(snapshot["fleet"])
     files = {
         "flota.json": EXPORTER.canonical_bytes(snapshot),
@@ -140,6 +143,7 @@ def _receipt(files: dict[str, bytes]) -> dict[str, Any]:
 def materialize(
     source: Any, placement: dict[str, dict[str, str]], state_directory: pathlib.Path,
 ) -> dict[str, Any]:
+    """Publish the whole fleet: desired-fleet.json is shared by every company, so it is never scoped."""
     state = external_directory(state_directory)
     files = render_artifacts(source, placement)
     receipt = _receipt(files)

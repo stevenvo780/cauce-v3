@@ -94,7 +94,7 @@ python3 ops/scripts/export-fleet-snapshot.py --out ops/flota.json   # git diff: 
 ops/cli/cauce <alias> aprovisionar                                   # cert mTLS + token + clave PTY + PKI de contenedor + token de Telegram
 systemctl --user daemon-reload && systemctl --user enable --now cauce-v3-container-<alias>.service
 ```
-**La única pieza que pide un humano**: el token del bot de Telegram, generado en BotFather — `aprovisionar` lo solicita interactivamente y lo registra en `/etc/cauce-v3/telegram-runtime/config.json` (0600).
+**La única pieza que pide un humano**: el token del bot de Telegram, generado en BotFather — `aprovisionar` lo solicita interactivamente, lo deja en `/etc/cauce-v3/telegram-runtime/<tenant>/<alias>.token` (0600) y recién entonces reemplaza la fila del alias en `config.json` (`ops/scripts/publish-telegram-token.py`).
 
 **Baja**: `ops/cli/cauce <alias> retirar` (para la unit y revoca token e identidad mTLS) → `UPDATE agents SET enabled=false` → re-exportar snapshot (el alias pasa a `retired`) → `regenerate-fleet.sh` (purga manifest y units huérfanas: `ops/scripts/generate-container-units.py:289-294` y `ops/scripts/generate-units.py:109-113`) → `validate.sh`.
 

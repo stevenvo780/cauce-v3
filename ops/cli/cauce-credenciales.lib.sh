@@ -382,7 +382,8 @@ FLOTA_JSON=$OPS/flota.json
 PKI_ROOT_AGENTE=/etc/cauce-v3/pki
 TOKENS_DIR_ALIAS=/etc/cauce-v3/aliases
 IDENTIDADES_DIR=/etc/cauce-v3/secrets/identities
-TELEGRAM_RUNTIME_DIR=/etc/cauce-v3/telegram-runtime
+TELEGRAM_RUNTIME_DIR=${CAUCE_TELEGRAM_RUNTIME_DIR:-/etc/cauce-v3/telegram-runtime}
+TELEGRAM_OWNER=${CAUCE_TELEGRAM_OWNER:-1000:1000}
 
 # Owner:mode:size only, never content: the one shape a credential is allowed to take on screen.
 estampa_modo() {  # $1=path
@@ -661,54 +662,24 @@ PY
     return 1
   fi
 
-  # 5: token de Telegram, entra por stdin. --aliases toca SOLO esta entrada (demas alias intactos).
-  local tg_token="$TELEGRAM_RUNTIME_DIR/$a.token"
-  local tg_config="$TELEGRAM_RUNTIME_DIR/config.json"
-  if [ "$dry" = 1 ]; then
-    printf "  [5] haria: generate-telegram-config.py --output %s --aliases %s --reuse-existing-allowlist\n" "$tg_config" "$a"
-    if [ -s "$tg_token" ] && [ "$(stat -c '%a' "$tg_token" 2>/dev/null)" = 600 ]; then
-      printf "      %s ya esta (no se preguntaria de nuevo): %s\n" "$tg_token" "$(estampa_modo "$tg_token")"
-    else
-      printf "      pediria por stdin el token de BotFather y lo publicaria en %s (0600)\n" "$tg_token"
-    fi
+  # 5: fila de config.json y token de Telegram por el mismo escritor (publish-telegram-token.py):
+  # la ruta del token sale de la fila que emite el generador, y config.json solo se reemplaza
+  # cuando el token ya esta en <tenant>/<alias>.token. --aliases toca SOLO esta entrada.
+  local tg_pub="$OPS/scripts/publish-telegram-token.py"
+  local -a tg_args=(--runtime-dir "$TELEGRAM_RUNTIME_DIR" --alias "$a" --reuse-existing-allowlist
+                    --owner "$TELEGRAM_OWNER")
+  [ "$dry" = 1 ] && tg_args+=(--dry-run)
+  local tg_salida
+  if [ ! -f "$tg_pub" ]; then
+    printf "  [5] %sno encuentro %s%s\n" "$c_err" "$tg_pub" "$c_reset"
+    [ "$dry" = 1 ] || return 1
   else
-    if python3 "$OPS/scripts/generate-telegram-config.py" --output "$tg_config" --aliases "$a" --reuse-existing-allowlist; then
-      printf "  [5] config.json -> %s\n" "$(estampa_modo "$tg_config")"
+    [ "$dry" = 1 ] || printf "      el token de BotFather es la unica pieza que no se puede generar (se pide si falta).\n"
+    if tg_salida=$(python3 "$tg_pub" "${tg_args[@]}"); then
+      printf "  [5] %s\n" "${tg_salida//$'\n'/$'\n'      }"
     else
-      printf "  [5] %sgenerate-telegram-config.py fallo%s\n" "$c_err" "$c_reset"
-      return 1
-    fi
-    if [ -s "$tg_token" ] && [ "$(stat -c '%a' "$tg_token")" = 600 ]; then
-      printf "      %s ya esta (se salta la pregunta): %s\n" "$tg_token" "$(estampa_modo "$tg_token")"
-    else
-      printf "      el token de BotFather es la unica pieza que no se puede generar.\n"
-      printf "      pega el token de %s y ENTER %s(no se muestra)%s: " "$a" "$c_dim" "$c_reset"
-      local bt
-      read -r -s bt </dev/tty; printf '\n'
-      if [ -z "$bt" ]; then
-        printf "  [5] %stoken vacio: no escribo nada%s\n" "$c_err" "$c_reset"
-        return 1
-      fi
-      case "$bt" in
-        *[[:space:]]*)
-          printf "  [5] %seso lleva espacios: no es el token%s\n" "$c_err" "$c_reset"
-          unset bt; return 1 ;;
-      esac
-      install -d -m 0750 -- "$TELEGRAM_RUNTIME_DIR"
-      local tmp_tok="$tg_token.tmp.$$"
-      if ( umask 177; printf '%s' "$bt" > "$tmp_tok" ) && mv -f -- "$tmp_tok" "$tg_token" && chmod 600 -- "$tg_token"; then
-        unset bt
-      else
-        rm -f -- "$tmp_tok"; unset bt
-        printf "  [5] %sno pude escribir %s%s\n" "$c_err" "$tg_token" "$c_reset"
-        return 1
-      fi
-    fi
-    if [ -s "$tg_token" ] && [ "$(stat -c '%a' "$tg_token")" = 600 ]; then
-      printf "      verificado: %s\n" "$(estampa_modo "$tg_token")"
-    else
-      printf "  [5] %s%s no quedo como se esperaba%s\n" "$c_err" "$tg_token" "$c_reset"
-      return 1
+      printf "  [5] %spublish-telegram-token.py fallo: config.json queda como estaba%s\n" "$c_err" "$c_reset"
+      [ "$dry" = 1 ] || return 1
     fi
   fi
 

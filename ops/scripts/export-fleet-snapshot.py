@@ -30,6 +30,14 @@ SYSTEMD_USER_NAME = re.compile(r"^[a-z_][a-z0-9_.-]{0,63}$")
 READ_ONLY_OPTIONS = "-c default_transaction_read_only=on"
 TENANT_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{0,63}$")
 ALIAS_PATTERN = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
+COMPANY_PATTERN = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
+COMPANY_TENANTS_QUERY = (
+    "SELECT t.id FROM tenants t "
+    "JOIN companies c ON c.id = t.company_id "
+    "WHERE c.id = :'company_id' AND c.enabled AND c.retired_at IS NULL "
+    "AND t.purged_at IS NULL "
+    "ORDER BY t.id;\n"
+)
 
 AGENT_FIELDS = frozenset(
     {
@@ -352,19 +360,47 @@ def _primary_membership(
     raise SnapshotError(f"agent requires an enabled primary membership: {identity[0]}/{identity[1]}")
 
 
+def _company_rows(
+    rows: list[dict[str, Any]], tenants: frozenset[str], label: str,
+) -> tuple[list[dict[str, Any]], set[str]]:
+    """Rows of the selected tenants, unvalidated; foreign rows only lend their runtime keys."""
+    selected: list[dict[str, Any]] = []
+    foreign_keys: set[str] = set()
+    for row in rows:
+        tenant = row.get("tenant_id")
+        if not isinstance(tenant, str):
+            raise SnapshotError(f"{label} contains a row without a tenant")
+        if tenant in tenants:
+            selected.append(row)
+            continue
+        key = row.get("runtime_key") if row.get("runtime_key") is not None else row.get("alias")
+        if isinstance(key, str):
+            foreign_keys.add(key)
+    return selected, foreign_keys
+
+
 def snapshot_document(
     source: Any,
     placement: dict[str, dict[str, str]] | None = None,
-    allowed_tenants: frozenset[str] | None = None,
+    allowed_tenants: frozenset[str] | None = None, *, company: str | None = None,
 ) -> dict[str, Any]:
+    if company is not None and (COMPANY_PATTERN.fullmatch(company) is None or not allowed_tenants):
+        raise SnapshotError("company selection requires a valid company and non-empty tenants")
     root = _object(source, "fleet query result")
     if set(root) - {"purgedRuntimeKeys"} != {"agents", "memberships", "rolePolicies"}:
         raise SnapshotError("fleet query result must contain agents, memberships and rolePolicies")
     roles = _roles(_rows(root["rolePolicies"], "rolePolicies"))
     member_rows = _rows(root["memberships"], "memberships")
-    memberships_by_identity = _memberships(member_rows, roles, allowed_tenants)
-    all_memberships = _memberships(member_rows, roles, allowed_tenants, include_disabled=True)
-    agents_by_identity = _agents(_rows(root["agents"], "agents"), allowed_tenants)
+    agent_rows = _rows(root["agents"], "agents")
+    foreign_keys: set[str] = set()
+    guard = allowed_tenants
+    if company is not None:
+        member_rows, _ = _company_rows(member_rows, allowed_tenants, "memberships")
+        agent_rows, foreign_keys = _company_rows(agent_rows, allowed_tenants, "agents")
+        guard = None
+    memberships_by_identity = _memberships(member_rows, roles, guard)
+    all_memberships = _memberships(member_rows, roles, guard, include_disabled=True)
+    agents_by_identity = _agents(agent_rows, guard)
     purged_keys = _purged_runtime_keys(root.get("purgedRuntimeKeys", []), agents_by_identity)
 
     fleet: dict[str, dict[str, Any]] = {}
@@ -416,8 +452,9 @@ def snapshot_document(
             physical[key] = overlay
         else:
             physical.pop(key, None)
-    known_keys = {agent["runtimeKey"] for agent in agents_by_identity.values() if agent["runtimeKey"] is not None}
-    unknown_placement = sorted(set(physical) - known_keys - purged_keys)
+    known_keys = {agent["runtimeKey"] for agent in agents_by_identity.values()
+                  if agent["runtimeKey"] is not None} | foreign_keys | purged_keys
+    unknown_placement = sorted(set(physical) - known_keys)
     if unknown_placement:
         raise SnapshotError(f"physical fleet overlay names non-fleet aliases: {unknown_placement}")
     physical = {key: row for key, row in physical.items() if key in fleet or key in bootstrap}
@@ -461,20 +498,17 @@ def _completed_payload(completed: subprocess.CompletedProcess[str]) -> Any:
     return payload
 
 
-def query_database(
-    *,
-    database_url_file: pathlib.Path | None = None,
-    postgres_container: str | None = None,
-    query_path: pathlib.Path = QUERY_PATH,
-    private_postgres: pathlib.Path = PRIVATE_POSTGRES,
-) -> Any:
+def _psql_command(
+    database_url_file: pathlib.Path | None,
+    postgres_container: str | None,
+    private_postgres: pathlib.Path,
+) -> list[str]:
     if (database_url_file is None) == (postgres_container is None):
         raise SnapshotError("select exactly one PostgreSQL connection method")
-    query = _query_text(query_path)
     if database_url_file is not None:
         if not database_url_file.is_absolute():
             raise SnapshotError("database URL file must be absolute")
-        command = [
+        return [
             sys.executable,
             os.fspath(private_postgres),
             os.fspath(database_url_file),
@@ -486,24 +520,55 @@ def query_database(
             "--no-password",
             "--set=ON_ERROR_STOP=1",
         ]
-    else:
-        assert postgres_container is not None
-        if not CONTAINER_NAME.fullmatch(postgres_container):
-            raise SnapshotError("PostgreSQL container name is invalid")
-        command = [
-            "docker",
-            "exec",
-            "-i",
-            "--env",
-            f"PGOPTIONS={READ_ONLY_OPTIONS}",
-            postgres_container,
-            "sh",
-            "-eu",
-            "-c",
-            'exec psql -XAtq --no-password -U "$POSTGRES_USER" -d "$POSTGRES_DB" "$@"',
-            "cauce-fleet-export",
-            "--set=ON_ERROR_STOP=1",
-        ]
+    assert postgres_container is not None
+    if not CONTAINER_NAME.fullmatch(postgres_container):
+        raise SnapshotError("PostgreSQL container name is invalid")
+    return [
+        "docker",
+        "exec",
+        "-i",
+        "--env",
+        f"PGOPTIONS={READ_ONLY_OPTIONS}",
+        postgres_container,
+        "sh",
+        "-eu",
+        "-c",
+        'exec psql -XAtq --no-password -U "$POSTGRES_USER" -d "$POSTGRES_DB" "$@"',
+        "cauce-fleet-export",
+        "--set=ON_ERROR_STOP=1",
+    ]
+
+
+def _query_company_tenants(
+    company: str, *,
+    database_url_file: pathlib.Path | None = None,
+    postgres_container: str | None = None,
+    private_postgres: pathlib.Path = PRIVATE_POSTGRES,
+) -> frozenset[str]:
+    if COMPANY_PATTERN.fullmatch(company) is None:
+        raise SnapshotError(f"company id is invalid: {company!r}")
+    command = _psql_command(database_url_file, postgres_container, private_postgres)
+    command.append(f"--variable=company_id={company}")
+    try:
+        completed = subprocess.run(
+            command, check=False, capture_output=True, text=True, input=COMPANY_TENANTS_QUERY,
+        )
+    except OSError as exc:
+        raise SnapshotError("cannot query company tenants") from exc
+    if completed.returncode != 0:
+        raise SnapshotError("company tenants query failed")
+    return frozenset(line for line in completed.stdout.splitlines() if line)
+
+
+def query_database(
+    *,
+    database_url_file: pathlib.Path | None = None,
+    postgres_container: str | None = None,
+    query_path: pathlib.Path = QUERY_PATH,
+    private_postgres: pathlib.Path = PRIVATE_POSTGRES,
+) -> Any:
+    query = _query_text(query_path)
+    command = _psql_command(database_url_file, postgres_container, private_postgres)
     try:
         completed = subprocess.run(
             command,
@@ -523,14 +588,18 @@ def _parser() -> argparse.ArgumentParser:
     database.add_argument("--database-url-file", type=pathlib.Path)
     database.add_argument("--postgres-container")
     parser.add_argument("--placement", type=pathlib.Path, default=DEFAULT_PLACEMENT)
-    parser.add_argument("--out", type=pathlib.Path, default=DEFAULT_OUT)
+    parser.add_argument("--out", type=pathlib.Path)
     parser.add_argument("--check", action="store_true")
+    parser.add_argument("--company", default=None)
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = _parser()
     args = parser.parse_args(argv)
+    if args.company is not None and (args.out is None or args.out.resolve() == DEFAULT_OUT.resolve()):
+        parser.error("--company requires --out outside the global fleet snapshot")
+    args.out = args.out or DEFAULT_OUT
     database_url_file = args.database_url_file
     if database_url_file is None and args.postgres_container is None:
         configured_file = os.environ.get("DATABASE_URL_FILE")
@@ -542,8 +611,19 @@ def main(argv: list[str] | None = None) -> int:
             database_url_file=database_url_file,
             postgres_container=args.postgres_container,
         )
+        allowed_tenants: frozenset[str] | None = None
+        if args.company is not None:
+            allowed_tenants = _query_company_tenants(
+                args.company,
+                database_url_file=database_url_file,
+                postgres_container=args.postgres_container,
+            )
+            if not allowed_tenants:
+                raise SnapshotError(
+                    f"company is unknown or has no tenants: {args.company!r}"
+                )
         placement = load_placement(args.placement)
-        body = canonical_bytes(snapshot_document(source, placement))
+        body = canonical_bytes(snapshot_document(source, placement, allowed_tenants, company=args.company))
         if args.check:
             try:
                 current = args.out.read_bytes()
