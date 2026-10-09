@@ -136,7 +136,10 @@ def environment(directory: pathlib.Path, policy: dict, bootstrap: bool) -> dict:
 
 
 def remove(directory: pathlib.Path):
-    parent = open_directory(directory.parent)
+    try:
+        parent = open_directory(directory.parent)
+    except FileNotFoundError:
+        return
     try:
         try:
             descriptor = os.open(directory.name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=parent)

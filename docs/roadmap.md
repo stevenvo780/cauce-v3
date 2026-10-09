@@ -6,7 +6,7 @@ Este documento no describe cómo funciona el sistema (eso es [arquitectura.md](a
 
 Una sola instalación con varias empresas aisladas, todo administrable desde la consola, y la migración de la empresa de otra instancia Cauce. Plan, fases (V4.0 cimiento → V4.4 migración real) y decisiones del dueño: [v4-plan-multiempresa.md](v4-plan-multiempresa.md).
 
-Deuda del controlador de flota que precede a V4: los contenedores creados por una versión montan rutas de herramientas por SHA (`/usr/local/lib/cauce-v35/<sha>`), así que actualizar el controlador rompe start, stop, purga y compensación de los agentes ya creados. Debe montarse una ruta estable (`current`) o migrar los contenedores en cada actualización.
+Deuda del controlador de flota que precede a V4: los contenedores montan las herramientas de su versión (`/usr/local/lib/cauce-v35/<sha>`). La migración entre versiones ya está en el árbol (`ops/cli/fleet-runtime-rebind.py`, invocada por `ops/scripts/fleet-controller-upgrade.py` y, de forma perezosa, por el executor en cada start o stop; ver [controlador](v3.5-controlador-despliegue.md)). Falta demostrarla en la primera actualización real de `server`. Siguen fuera los contenedores compartidos (`shared_containers`) que montan la versión actual: bloquean el kit hasta que su dueño los remonte.
 
 ## 1. Inmediato post-deploy
 
