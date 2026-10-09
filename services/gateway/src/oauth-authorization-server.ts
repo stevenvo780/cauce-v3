@@ -8,6 +8,8 @@ import { clientRegistration, isRegisteredClientId, OAuthRegistrationLimiter, reg
 import { OAuthError, OAUTH_SCOPES, loopbackRedirect, redirectMatches, scopes, secretHash, type OAuthAuthorizationRequest,
   type OAuthPasswordSession, type OAuthScope, type OAuthStore, type OAuthTokenGrant } from './oauth-authorization-types.js';
 import type { OAuthTokens } from './oauth-tokens.js';
+import { oauthPage as page, oauthLifetime } from './oauth-page.js';
+import { OAUTH_GRANT_TTL_SECONDS } from './oauth-authorization-store.js';
 
 const FLOW_COOKIE = '__Host-cauce_oauth';
 const NONCE = /^[A-Za-z0-9_-]{43}$/u;
@@ -57,12 +59,6 @@ function clientFacts(flow: Pick<OAuthAuthorizationRequest, 'clientId' | 'clientN
   return `<p><strong>Cliente no verificado:</strong> Cauce no ha comprobado quién lo publica.</p><dl><dt>El acceso se entregará en</dt><dd><strong><code>${escape(destination)}</code></strong></dd><dt>Identidad del cliente</dt><dd><strong><code>${escape(identity)}</code></strong></dd><dt>Nombre declarado por el cliente (no verificado)</dt><dd>${escape(flow.clientName)}</dd></dl>`;
 }
 
-function page(reply: FastifyReply, body: string, script = '') {
-  const nonce = randomBytes(24).toString('base64url');
-  reply.header('Content-Security-Policy', `default-src 'none'; style-src 'none'; script-src 'nonce-${nonce}'; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'`);
-  return reply.type('text/html; charset=utf-8').send(`<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Autorizar Cauce</title></head><body><main>${body}</main>${script ? `<script nonce="${nonce}">${script}</script>` : ''}</body></html>`);
-}
-
 // fetch: Origin exacto. continuation: navegación GET desde una página de Cauce. form: POST de un <form> nativo,
 // al que el navegador pone `Origin: null` por Referrer-Policy: no-referrer (Fetch, «serializing a request
 // origin»); sólo vale con Sec-Fetch-Site: same-origin, y el token CSRF de la sesión sigue siendo obligatorio.
@@ -106,6 +102,7 @@ export interface OAuthAuthorizationServerOptions {
   readonly session: (request: FastifyRequest) => Promise<OAuthPasswordSession>;
   readonly passwordAuth: Pick<PasswordAuthProvider, 'login' | 'verifyCredentialStamp'>;
   readonly registrationLimiter?: OAuthRegistrationLimiter;
+  readonly grantTtlSeconds?: number;
 }
 
 export async function registerOAuthAuthorizationServer(app: FastifyInstance, options: OAuthAuthorizationServerOptions): Promise<void> {
@@ -182,8 +179,9 @@ export async function registerOAuthAuthorizationServer(app: FastifyInstance, opt
 
     app.get('/oauth/authorize', async (request, reply) => {
       const query = fields(form((request.raw.url ?? '').split('?')[1] ?? ''), [
-        'response_type', 'client_id', 'redirect_uri', 'resource', 'scope', 'state', 'code_challenge', 'code_challenge_method',
+        'response_type', 'client_id', 'redirect_uri', 'resource', 'scope', 'state', 'code_challenge', 'code_challenge_method', 'ui_locales',
       ]);
+      if (query.ui_locales !== undefined) text(query.ui_locales, 128);
       if (query.response_type !== 'code' || query.code_challenge_method !== 'S256'
           || query.resource !== tokens.resource || !NONCE.test(text(query.code_challenge, 43))) {
         throw new OAuthError('invalid_request');
@@ -198,7 +196,7 @@ export async function registerOAuthAuthorizationServer(app: FastifyInstance, opt
         scopes: scopes(query.scope), challenge: text(query.code_challenge),
         state: query.state === undefined ? null : text(query.state, 512) }, context(request));
       reply.header('Set-Cookie', hostSessionCookie(FLOW_COOKIE, browser, 300, 'Strict'));
-      return page(reply, `<h1>Conectar un cliente MCP con Cauce</h1>${clientFacts({ ...resolved, redirectUri })}<a href="/oauth/continue?request_id=${id}">Continuar en Cauce</a>`);
+      return page(reply, `<h1>Conecta tu cliente con Cauce</h1><p>Revisa quién recibirá el acceso. En el siguiente paso podrás elegir los permisos.</p>${clientFacts({ ...resolved, redirectUri })}<div class="actions"><a class="button" href="/oauth/continue?request_id=${id}">Continuar en Cauce</a></div>`);
     });
 
     async function pending(request: FastifyRequest, id: unknown) {
@@ -215,11 +213,12 @@ export async function registerOAuthAuthorizationServer(app: FastifyInstance, opt
       let authenticated: OAuthPasswordSession;
       try { authenticated = await session(request); } catch (error) {
         if (!(error instanceof OAuthError) || error.error !== 'access_denied') throw error;
-        return page(reply, `<h1>Iniciar sesión en Cauce</h1><form id="login"><label>Correo <input name="email" type="email" autocomplete="username" required></label><label>Contraseña <input name="password" type="password" autocomplete="current-password" required></label><input name="request_id" type="hidden" value="${flow.id}"><button>Iniciar sesión</button></form><p id="result" role="status"></p>`,
-          `document.getElementById('login').addEventListener('submit',async(e)=>{e.preventDefault();const f=new FormData(e.currentTarget);const r=await fetch('/oauth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(Object.fromEntries(f))});if(r.ok){location.assign('/oauth/continue?request_id='+encodeURIComponent(f.get('request_id')))}else{document.getElementById('result').textContent='No se pudo iniciar sesión. Comprueba tus datos y vuelve a intentarlo.'}});`);
+        return page(reply, `<h1>Iniciar sesión en Cauce</h1><p>Usa tu cuenta de Cauce para revisar esta conexión.</p><form id="login"><label>Correo <input name="email" type="email" autocomplete="username" required></label><label>Contraseña <input name="password" type="password" autocomplete="current-password" required></label><input name="request_id" type="hidden" value="${flow.id}"><div class="actions"><button>Iniciar sesión</button></div></form><p id="result" role="status"></p><p class="note">Iniciar sesión te permite revisar los permisos antes de autorizar el acceso.</p>`,
+          `document.getElementById('login').addEventListener('submit',async(e)=>{e.preventDefault();const button=e.currentTarget.querySelector('button');button.disabled=true;const f=new FormData(e.currentTarget);try{const r=await fetch('/oauth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(Object.fromEntries(f))});if(!r.ok){throw new Error()}location.assign('/oauth/continue?request_id='+encodeURIComponent(f.get('request_id')))}catch{document.getElementById('result').textContent='No se pudo iniciar sesión. Comprueba tus datos y vuelve a intentarlo.'}finally{button.disabled=false}});`);
       }
-      const choices = flow.flow.scopes.map((scope) => `<label><input type="checkbox" name="${scope === 'cauce.read' ? 'read' : 'publish'}" value="yes">${scope === 'cauce.read' ? 'Leer tus mensajes y respuestas' : 'Publicar mensajes como tú'}</label>`).join('');
-      return page(reply, `<h1>Permisos para un cliente MCP no verificado</h1>${clientFacts(flow.flow)}<p>Estos permisos siguen sujetos a tu cuenta, membresía y ACL de Cauce.</p><form id="consent" method="post" action="/oauth/consent"><input type="hidden" name="request_id" value="${flow.id}"><input type="hidden" name="csrf" value="${escape(authenticated.csrf)}">${choices}<button name="decision" value="approve">Autorizar los permisos seleccionados</button><button name="decision" value="deny">Cancelar</button></form><p id="result" role="status"></p><a href="/oauth/grants">Ver y revocar autorizaciones</a>`,
+      const choices = flow.flow.scopes.map((scope) => `<label class="choice"><input type="checkbox" name="${scope === 'cauce.read' ? 'read' : 'publish'}" value="yes"><span><strong>${scope === 'cauce.read' ? 'Leer tus mensajes y respuestas' : 'Publicar mensajes como tú'}</strong><small>${scope === 'cauce.read' ? 'Consultar lo que tu cuenta puede ver.' : 'Enviar mensajes con los permisos de tu cuenta.'} <code>${scope}</code></small></span></label>`).join('');
+      const lifetime = oauthLifetime(options.grantTtlSeconds ?? OAUTH_GRANT_TTL_SECONDS.default);
+      return page(reply, `<h1>Elige qué puede hacer el cliente</h1>${clientFacts(flow.flow)}<p class="note">Autorización por ${lifetime} desde que aceptes. El cliente podrá renovar el acceso automáticamente durante ese plazo; después tendrás que autorizar de nuevo. Puedes revocarlo antes.</p><p>Estos permisos siguen sujetos a tu cuenta, membresía y ACL de Cauce.</p><form id="consent" method="post" action="/oauth/consent"><input type="hidden" name="request_id" value="${flow.id}"><input type="hidden" name="csrf" value="${escape(authenticated.csrf)}"><h2>Permisos solicitados</h2>${choices}<div class="actions"><button name="decision" value="approve">Autorizar los permisos seleccionados</button><button class="secondary" name="decision" value="deny">Cancelar</button></div></form><p id="result" role="status"></p><a href="/oauth/grants">Ver y revocar autorizaciones</a>`,
         `document.getElementById('consent').addEventListener('submit',async(e)=>{e.preventDefault();const f=new FormData(e.currentTarget);if(e.submitter){f.set('decision',e.submitter.value)}try{const r=await fetch('/oauth/consent',{method:'POST',redirect:'error',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams(f)});if(!r.ok){throw new Error()}const result=await r.json();location.assign(result.redirect_uri)}catch{document.getElementById('result').textContent='No se pudo completar la autorización. Vuelve a iniciarla desde el cliente.'}});`);
     });
 
@@ -288,7 +287,7 @@ export async function registerOAuthAuthorizationServer(app: FastifyInstance, opt
       const authenticated = await session(request);
       const grants = await store.grants(authenticated, context(request, authenticated));
       const items = grants.map((grant) => `<li><p>${escape(grant.clientId)} — ${escape(grant.scopes.join(', '))} — ${escape(grant.expiresAt)}${grant.revoked ? ' — revocada' : ''}</p><form method="post" action="/oauth/grants/${escape(grant.id)}/revoke"><input type="hidden" name="csrf" value="${escape(authenticated.csrf)}"><button>Revocar autorización</button></form></li>`).join('');
-      return page(reply, `<h1>Tus autorizaciones de Cauce</h1><ul>${items}</ul>`);
+      return page(reply, `<h1>Tus autorizaciones de Cauce</h1><p>Revisa los clientes conectados y retira el acceso cuando quieras.</p>${items ? `<ul>${items}</ul>` : '<p class="note">Todavía no tienes autorizaciones.</p>'}`);
     });
     app.post('/oauth/grants/:id/revoke', { bodyLimit: 8192 }, async (request, reply) => {
       const body = fields(request.body, ['csrf']);
