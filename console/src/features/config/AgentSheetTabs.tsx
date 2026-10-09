@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from 'react';
-import { ExternalLink } from 'lucide-react';
+import { ExternalLink, Pencil } from 'lucide-react';
 import type { ConfigurationSnapshot } from '../../api/types';
-import { LinkButton, Notice, Pill } from '../../components/kit';
+import { Button, LinkButton, Notice, Pill } from '../../components/kit';
 import { onNavClick } from '../../router';
 import type { AgentView } from './agent-view';
 import { GroupMembershipMove } from './GroupMembershipMove';
@@ -58,12 +58,17 @@ export function SummaryTab({ agent, view, snapshot }: { agent: SettingsAgent; vi
   </div>;
 }
 
-export function GroupsTab({ agent, view, snapshot, onReloaded, onDirtyChange }: {
+export function GroupsTab({ agent, view, snapshot, onReloaded, onDirtyChange, onEditTeam, editBlock }: {
   agent: SettingsAgent; view: AgentView; snapshot: ConfigurationSnapshot; onReloaded: (snapshot: ConfigurationSnapshot) => void;
   onDirtyChange?: (dirty: boolean) => void;
+  /** Opens the team's own editor (name, state, members). */
+  onEditTeam?: ((room: Record<string, unknown>) => void) | undefined;
+  editBlock?: ((room: Record<string, unknown>) => string | undefined) | undefined;
 }) {
   const { runner, current } = useSnapshotRunner(snapshot, onReloaded, `agent-groups:${view.ref}`);
   const [source, setSource] = useState('');
+  const room = (id: string) => snapshot.rooms?.find((row) => row.tenant_id === agent.tenantId && row.id === id);
+  const blockOf = (id: string) => { const row = room(id); return row ? editBlock?.(row) : 'El servidor no publica este equipo en esta lectura.'; };
   const origin = agent.groups.length === 1 ? agent.groups[0]?.id ?? '' : source;
   return <div className="grid gap-4">
     <p className="m-0 text-[13px] text-fg-2">Los grupos reúnen a los agentes que trabajan juntos. Aquí ves en cuáles participa {agent.name}.</p>
@@ -73,8 +78,13 @@ export function GroupsTab({ agent, view, snapshot, onReloaded, onDirtyChange }: 
           {agent.groups.map((group) => <li key={group.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-line bg-surface px-3 py-2">
             <span className="min-w-0"><strong className="block truncate text-[13px]">{group.label}</strong>
               <span className="block truncate font-mono text-xs text-muted">{group.id}</span></span>
-            <Pill tone={group.enabled === false ? 'warn' : group.enabled ? 'ok' : 'neutral'}>
-              {group.enabled === false ? 'Membresía deshabilitada' : group.enabled ? 'Activa' : 'Estado desconocido'}</Pill>
+            <span className="flex flex-wrap items-center gap-2">
+              <Pill tone={group.enabled === false ? 'warn' : group.enabled ? 'ok' : 'neutral'}>
+                {group.enabled === false ? 'Membresía deshabilitada' : group.enabled ? 'Activa' : 'Estado desconocido'}</Pill>
+              {onEditTeam ? <Button size="sm" disabled={Boolean(blockOf(group.id)) || !room(group.id)} title={blockOf(group.id)}
+                aria-label={`Editar equipo ${group.id}`} onClick={() => { const row = room(group.id); if (row) onEditTeam(row); }}>
+                <Pencil size={12} aria-hidden="true" />Editar equipo</Button> : null}
+            </span>
           </li>)}
         </ul>}
     {agent.registered && agent.groups.length ? <section className="grid gap-3 rounded-lg border border-line bg-subtle p-3" aria-label="Mover a otro grupo">

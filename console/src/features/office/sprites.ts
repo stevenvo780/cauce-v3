@@ -258,6 +258,41 @@ export const ICONS = {
     'kkk.kkk',
     'kkk.kkk',
   ],
+  wave: [
+    'k.k.k..',
+    'kykykk.',
+    'kyyyyk.',
+    '.kyyyk.',
+    '..kkk..',
+  ],
+  star: [
+    '...y...',
+    '.yyyyy.',
+    '..yyy..',
+    '.yy.yy.',
+    '.y...y.',
+  ],
+  wrench: [
+    'kk...kk',
+    '.kk.kk.',
+    '..kkk..',
+    '...g...',
+    '...g...',
+  ],
+  question: [
+    '.ggg...',
+    'g...g..',
+    '...g...',
+    '.......',
+    '...g...',
+  ],
+  sleep: [
+    'gggg...',
+    '..g....',
+    '.g..ggg',
+    'gggg.g.',
+    '....ggg',
+  ],
 } as const satisfies Record<string, Rows>;
 
 export type IconName = keyof typeof ICONS;

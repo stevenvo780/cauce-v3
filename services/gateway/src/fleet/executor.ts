@@ -1,6 +1,7 @@
 import { FleetEvidenceSchema, type FleetError, type FleetEvidence, type FleetOperation, type FleetOperationRequest, type FleetStepName } from '@cauce/protocol';
 import type { FleetOperationClaim } from '@cauce/store';
 import type { FleetProviderAccounts } from './accounts.js';
+import { redactExecutorStderr } from './host-stderr.js';
 
 interface FencedTarget { resource: 'agent'; tenant_id: string; alias: string }
 export interface FleetExecution {
@@ -93,8 +94,10 @@ export class FleetExecutor {
         await this.repository.completeStep(claim, step, FleetEvidenceSchema.parse(result.evidence));
       }
       await this.repository.settle(claim);
-    } catch {
+    } catch (caught) {
       if (!abort.signal.aborted) {
+        const failure = caught instanceof Error ? caught : new Error(String(caught));
+        console.error(`fleet step failed step=${step ?? 'prepare'} error=${failure.name}: ${redactExecutorStderr(failure.message)}`);
         const error: FleetError = { code: 'STEP_FAILED', retryable: true, ...(step === undefined ? {} : { step }) };
         try { await this.repository.fail(claim, error); } catch { /* A replaced claim cannot settle the operation. */ }
       }

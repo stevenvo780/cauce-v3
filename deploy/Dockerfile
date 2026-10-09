@@ -26,11 +26,9 @@ COPY console ./console
 COPY vitest.config.ts ./
 COPY tests/terminal-pty/certs.mjs tests/terminal-pty/certs.d.mts ./tests/terminal-pty/
 ARG VITE_CAUCE_API_BASE=""
-ARG VITE_CAUCE_DEV_AUTH="false"
 ARG VITE_CAUCE_DEV_TENANT=""
 ARG VITE_CAUCE_DEV_ALIAS=""
 ENV VITE_CAUCE_API_BASE=${VITE_CAUCE_API_BASE} \
-    VITE_CAUCE_DEV_AUTH=${VITE_CAUCE_DEV_AUTH} \
     VITE_CAUCE_DEV_TENANT=${VITE_CAUCE_DEV_TENANT} \
     VITE_CAUCE_DEV_ALIAS=${VITE_CAUCE_DEV_ALIAS}
 RUN pnpm build:core && pnpm build:adapter && pnpm build:mcp && pnpm build:console

@@ -230,7 +230,7 @@ function ConsoleShell({ gate }: { gate: AuthGateState }) {
       <AppShell
         routeId={notFoundPath ? '' : routeId}
         activeAgentId={activeAgentId}
-        bounded={!notFoundPath && (routeId === 'messages' || routeId === 'terminal')}
+        bounded={!notFoundPath && (routeId === 'messages' || routeId === 'terminal' || routeId === 'live')}
         account={(
           <div className="grid w-full gap-1">
             {mocks ? <span className="mock-flag mx-auto rounded-full bg-warn-soft px-2 py-0.5 text-[10px] font-semibold tracking-wide text-warn-ink" role="status">MOCK API</span> : null}

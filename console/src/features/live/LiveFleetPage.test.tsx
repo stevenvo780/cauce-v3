@@ -111,7 +111,7 @@ describe('la oficina', () => {
     renderLive();
 
     const camara = await screen.findByRole('toolbar', { name: 'Cámara de la oficina' });
-    for (const nombre of ['Acercar', 'Alejar', 'Ver toda la oficina', 'Centrar en mí']) {
+    for (const nombre of ['Acercar', 'Alejar', /^Ver todo el (campus|edificio)$/, 'Centrar en mí', /el mapa$/, /pantalla completa/i]) {
       expect(within(camara).getByRole('button', { name: nombre })).toBeInTheDocument();
     }
     const paseo = within(camara).getByRole('button', { name: 'Modo paseo' });
@@ -159,9 +159,26 @@ describe('la ficha del agente', () => {
     expect(within(ficha).getByText('Trabado')).toBeInTheDocument();
   });
 
-  it('la pestaña Conexión trae epoch, instancia y lease sin otra ruta', async () => {
+  it('la tarjeta abre la ficha completa, que se puede volver a cerrar hasta la tarjeta', async () => {
     const user = userEvent.setup();
     window.history.replaceState({}, '', '/live?agente=Steven%2Fkant');
+    conActividad(mockActivity());
+    renderLive();
+
+    const tarjeta = await screen.findByRole('dialog', { name: 'kant' });
+    expect(within(tarjeta).getByRole('group', { name: 'Gestos' })).toBeInTheDocument();
+    await user.click(within(tarjeta).getByRole('button', { name: /ficha/i }));
+    expect(new URLSearchParams(window.location.search).get('ficha')).toBe('1');
+    const ficha = await screen.findByRole('dialog', { name: 'kant' });
+    expect(within(ficha).getByRole('tab', { name: 'Conexión' })).toBeInTheDocument();
+    await user.click(within(ficha).getByRole('button', { name: 'Cerrar el detalle' }));
+    await waitFor(() => { expect(window.location.search).toBe('?agente=Steven%2Fkant'); });
+    expect(await screen.findByRole('group', { name: 'Gestos' })).toBeInTheDocument();
+  });
+
+  it('la pestaña Conexión trae epoch, instancia y lease sin otra ruta', async () => {
+    const user = userEvent.setup();
+    window.history.replaceState({}, '', '/live?agente=Steven%2Fkant&ficha=1');
     conActividad(mockActivity());
     renderLive();
 
@@ -174,7 +191,7 @@ describe('la ficha del agente', () => {
 
   it('NO ofrece acciones destructivas ni el texto de un encargo: la entrega se enlaza a Colas', async () => {
     const user = userEvent.setup();
-    window.history.replaceState({}, '', '/live?agente=Steven%2Fkant');
+    window.history.replaceState({}, '', '/live?agente=Steven%2Fkant&ficha=1');
     conActividad(mockActivity());
     renderLive();
 

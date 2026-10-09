@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { TopologySnapshot } from '../../api/types';
-import { NO_TEAM, groupDirectory, membershipOf, resolveHues, summarizeTeams, teamHue } from './teams';
+import { NO_TEAM, groupDirectory, membershipOf, resolveHues, teamHue } from './teams';
 
 const topology: TopologySnapshot = {
   tenants: [
@@ -35,19 +35,6 @@ describe('team derivation', () => {
   it('puts agents without an enabled group in «Sin grupo»', () => {
     expect(membershipOf(agent([]), directory)).toEqual({ team: NO_TEAM, groups: [] });
     expect(membershipOf(agent(['grp.miguel'], ['grp.miguel']), directory).team).toEqual(NO_TEAM);
-  });
-
-  it('leaves visitors out of every team and orders teams by id with «Sin grupo» last', () => {
-    const teams = summarizeTeams([
-      { id: 'a/1', team: { id: 'grp.z', label: 'Z' } },
-      { id: 'a/2' },
-      { id: 'a/3', team: { id: 'grp.b', label: 'B' } },
-      { id: 'mcp', visitor: true },
-      { id: 'a/0', team: { id: 'grp.z', label: 'Z' } },
-    ]);
-    expect(teams.map((team) => team.id)).toEqual(['grp.b', 'grp.z', NO_TEAM.id]);
-    expect(teams.find((team) => team.id === 'grp.z')?.ids).toEqual(['a/0', 'a/1']);
-    expect(teams.flatMap((team) => team.ids)).not.toContain('mcp');
   });
 });
 

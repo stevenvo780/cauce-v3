@@ -199,7 +199,6 @@ export interface GatewayOptions {
   /** Aggregated results, identity-free, from the durable console-publish journal. */
   consolePublishTelemetry?: ConsolePublishTelemetry;
   deliveryClaimLimit?: number;
-  requireAckClaims?: boolean;
   consoleOrigins?: readonly string[];
   allowedJobKinds?: readonly string[];
   terminalCapability?: Readonly<Record<string, unknown>>;
@@ -281,10 +280,6 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
   const deliveryClaimLimit = options.deliveryClaimLimit ?? DEFAULT_DELIVERY_CLAIM_LIMIT;
   if (!Number.isInteger(deliveryClaimLimit) || deliveryClaimLimit < 1 || deliveryClaimLimit > 100) {
     throw new Error('deliveryClaimLimit must be an integer between 1 and 100');
-  }
-  // Kept as an explicit startup invariant for migration diagnostics; ACK claims are mandatory below.
-  if (options.requireAckClaims === false && process.env.NODE_ENV === 'production') {
-    throw new Error('delivery ACK claims cannot be disabled in production');
   }
   const workerId = `gateway:${randomUUID()}`;
   const consoleRoutes = createConsoleRoutes(options, repository);

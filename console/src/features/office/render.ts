@@ -1,195 +1,14 @@
 import type { MonitorMode } from './behaviour';
-import { TILE, WALL_ROWS, type DeskSlot, type GameKind, type OfficeLayout } from './layout';
+import { TILE, type DeskSlot, type Furniture, type GameKind, type Level } from './level';
 import { rect, type Ctx } from './paint';
 import { OFFICE } from './palette';
-import { gardenDrawable, paintGround } from './render-garden';
-import { paintTeamRug, paintTeamSign } from './render-teams';
-import { arcade, foosball, nightstand, paintNightWindow, paintPillar, pingpong } from './render-rooms';
+import { gardenDrawable } from './render-garden';
+import { fixtureDrawable, type FixtureState } from './render-fixtures';
+import { arcade, foosball, nightstand, pingpong } from './render-rooms';
 import { seededRandom } from './random';
 
 /** Pixel icon on a desk screen: a six px square in the top right corner. */
 const SCREEN_MARK = 6;
-
-function paintFloor(ctx: Ctx, layout: OfficeLayout): void {
-  const wallish = (kind: string) => Number(kind === 'partition' || kind === 'pillar');
-  for (const zone of [...layout.zones].sort((a, b) => wallish(a.kind) - wallish(b.kind))) {
-    const x0 = zone.x * TILE;
-    const y0 = zone.y * TILE;
-    const w = zone.w * TILE;
-    const h = zone.h * TILE;
-    if (zone.kind === 'carpet') {
-      for (let ty = 0; ty < zone.h; ty += 1) {
-        for (let tx = 0; tx < zone.w; tx += 1) {
-          const x = x0 + tx * TILE;
-          const y = y0 + ty * TILE;
-          rect(ctx, x, y, TILE, TILE, (tx + ty) % 2 === 0 ? OFFICE.carpet : OFFICE.carpetAlt);
-          rect(ctx, x, y + TILE - 1, TILE, 1, OFFICE.carpetLine);
-        }
-      }
-    } else if (zone.kind === 'wood') {
-      rect(ctx, x0, y0, w, h, OFFICE.wood);
-      for (let y = 0; y < h; y += 6) {
-        const row = Math.floor((y0 + y) / 6);
-        if (row % 2 === 1) rect(ctx, x0, y0 + y, w, 6, OFFICE.woodAlt);
-        rect(ctx, x0, y0 + y + 5, w, 1, OFFICE.woodLine);
-        for (let x = (row * 13) % 40; x < w; x += 40) rect(ctx, x0 + x, y0 + y, 1, 5, OFFICE.woodLine);
-      }
-    } else if (zone.kind === 'rest') {
-      for (let ty = 0; ty < zone.h; ty += 1) {
-        for (let tx = 0; tx < zone.w; tx += 1) {
-          rect(ctx, x0 + tx * TILE, y0 + ty * TILE, TILE, TILE, (tx + ty) % 2 === 0 ? OFFICE.rest : OFFICE.restAlt);
-        }
-      }
-      rect(ctx, x0, y0, w, 1, OFFICE.restLine);
-      rect(ctx, x0 + w - 1, y0, 1, h, OFFICE.restLine);
-    } else if (zone.kind === 'play') {
-      for (let ty = 0; ty < zone.h; ty += 1) {
-        for (let tx = 0; tx < zone.w; tx += 1) {
-          rect(ctx, x0 + tx * TILE, y0 + ty * TILE, TILE, TILE, (tx + ty) % 2 === 0 ? OFFICE.playFloor : OFFICE.playFloorAlt);
-          rect(ctx, x0 + tx * TILE, y0 + ty * TILE + TILE - 1, TILE, 1, OFFICE.playLine);
-        }
-      }
-    } else if (zone.kind === 'grass' || zone.kind === 'path') {
-      paintGround(ctx, zone);
-    } else if (zone.kind === 'pillar') {
-      paintPillar(ctx, x0, y0, h);
-    } else if (zone.kind === 'tile') {
-      for (let y = 0; y < h; y += 8) {
-        for (let x = 0; x < w; x += 8) rect(ctx, x0 + x, y0 + y, 8, 8, ((x + y) / 8) % 2 === 0 ? OFFICE.tile : OFFICE.tileAlt);
-      }
-    } else if (zone.kind === 'teamrug') {
-      paintTeamRug(ctx, zone);
-    } else if (zone.kind === 'sign') {
-      paintTeamSign(ctx, zone);
-    } else if (zone.kind === 'partition') {
-      rect(ctx, x0, y0 - 2, w, 14, OFFICE.wall);
-      rect(ctx, x0, y0 - 4, w, 3, OFFICE.wallTop);
-      rect(ctx, x0, y0 + 6, w, 4, OFFICE.wallShade);
-      rect(ctx, x0, y0 + 10, w, 3, OFFICE.trim);
-      rect(ctx, x0, y0 + 13, w, 1, OFFICE.trimDark);
-      rect(ctx, x0, y0 + 14, w, 2, OFFICE.shadow);
-    } else {
-      rect(ctx, x0 + 2, y0 + 3, w - 4, h - 6, OFFICE.rugBorder);
-      rect(ctx, x0 + 4, y0 + 5, w - 8, h - 10, OFFICE.rug);
-      for (let x = x0 + 8; x < x0 + w - 8; x += 6) {
-        rect(ctx, x, y0 + 8, 3, 1, OFFICE.rugInner);
-        rect(ctx, x + 3, y0 + h - 9, 3, 1, OFFICE.rugInner);
-      }
-    }
-  }
-}
-
-function paintNightSky(ctx: Ctx, x: number, w: number, top: number, bottom: number): void {
-  const random = seededRandom(x * 613);
-  for (let i = 0; i < Math.max(2, Math.floor(w / 4)); i += 1) {
-    rect(ctx, x + 1 + Math.floor(random() * (w - 2)), top + 2 + Math.floor(random() * (bottom - top - 5)), 1, 1, OFFICE.star);
-  }
-  const mx = x + w - 8;
-  rect(ctx, mx, top + 3, 4, 3, OFFICE.moon);
-  rect(ctx, mx + 1, top + 2, 2, 5, OFFICE.moon);
-  rect(ctx, mx + 2, top + 2, 2, 3, OFFICE.nightSky);
-}
-
-function paintWindow(ctx: Ctx, x: number, w: number, night: boolean): void {
-  const top = 8;
-  const bottom = 31;
-  rect(ctx, x - 1, top - 1, w + 2, bottom - top + 2, OFFICE.frame);
-  rect(ctx, x + 1, top + 1, w - 2, 10, night ? OFFICE.nightSky : OFFICE.glassTop);
-  rect(ctx, x + 1, top + 11, w - 2, bottom - top - 12, night ? OFFICE.nightSkyLow : OFFICE.glassBottom);
-  if (night) paintNightSky(ctx, x, w, top, bottom);
-  const random = seededRandom(x * 977);
-  for (let bx = x + 1; !night && bx < x + w - 1;) {
-    const bw = 3 + Math.floor(random() * 5);
-    const bh = 4 + Math.floor(random() * 7);
-    rect(ctx, bx, bottom - 1 - bh, Math.min(bw, x + w - 1 - bx), bh, OFFICE.skylineFar);
-    bx += bw;
-  }
-  for (let bx = x + 2; !night && bx < x + w - 2;) {
-    const bw = 4 + Math.floor(random() * 4);
-    const bh = 3 + Math.floor(random() * 5);
-    rect(ctx, bx, bottom - 1 - bh, Math.min(bw, x + w - 1 - bx), bh, OFFICE.skyline);
-    bx += bw + 2;
-  }
-  if (!night) for (let i = 0; i < 5; i += 1) rect(ctx, x + 4 + i, top + 6 - i, 1, 1, OFFICE.glassShine);
-  rect(ctx, x + Math.floor(w / 2), top, 1, bottom - top, OFFICE.frame);
-  rect(ctx, x, top + 10, w, 1, OFFICE.frame);
-  rect(ctx, x - 2, bottom + 1, w + 4, 2, OFFICE.trim);
-}
-
-function paintBoard(ctx: Ctx, x: number, w: number): void {
-  rect(ctx, x - 1, 7, w + 2, 23, OFFICE.boardFrame);
-  rect(ctx, x, 8, w, 21, OFFICE.board);
-  const bars = [6, 10, 7, 13, 9];
-  bars.forEach((height, index) => { rect(ctx, x + 4 + index * 4, 25 - height, 3, height, OFFICE.ink[index % 2]); });
-  rect(ctx, x + 3, 25, 20, 1, OFFICE.outline);
-  for (let i = 0; i < 14; i += 1) rect(ctx, x + 27 + i, 12 + Math.round(Math.sin(i / 2) * 2), 1, 1, OFFICE.ink[2]);
-  rect(ctx, x + 27, 18, 12, 1, OFFICE.ink[1]);
-  rect(ctx, x + 27, 21, 8, 1, OFFICE.ink[0]);
-  rect(ctx, x + 2, 29, w - 4, 2, OFFICE.boardFrame);
-  rect(ctx, x + 6, 28, 4, 1, OFFICE.ink[0]);
-  rect(ctx, x + 11, 28, 4, 1, OFFICE.ink[1]);
-}
-
-function paintClock(ctx: Ctx, x: number): void {
-  const cx = x + 8;
-  rect(ctx, cx - 4, 10, 8, 10, OFFICE.outline);
-  rect(ctx, cx - 5, 11, 10, 8, OFFICE.outline);
-  rect(ctx, cx - 3, 11, 6, 8, OFFICE.board);
-  rect(ctx, cx - 4, 12, 8, 6, OFFICE.board);
-  rect(ctx, cx, 12, 1, 3, OFFICE.outline);
-  rect(ctx, cx, 15, 3, 1, OFFICE.alert);
-}
-
-function paintDoor(ctx: Ctx, x: number, w: number): void {
-  const top = 13;
-  const bottom = WALL_ROWS * TILE;
-  rect(ctx, x - 2, top - 2, w + 4, bottom - top + 2, OFFICE.trimDark);
-  rect(ctx, x, top, w, bottom - top, OFFICE.door);
-  rect(ctx, x, top, w, 1, OFFICE.doorLight);
-  const leaf = Math.floor(w / 2);
-  rect(ctx, x + leaf, top, 1, bottom - top, OFFICE.doorDark);
-  for (const left of [x + 3, x + leaf + 3]) {
-    rect(ctx, left - 1, top + 4, leaf - 4, 10, OFFICE.doorDark);
-    rect(ctx, left, top + 5, leaf - 6, 8, OFFICE.doorGlass);
-    rect(ctx, left, top + 5, 2, 2, OFFICE.glassShine);
-    rect(ctx, left - 1, top + 18, leaf - 4, 12, OFFICE.doorDark);
-    rect(ctx, left, top + 19, leaf - 6, 10, OFFICE.doorLight);
-  }
-  rect(ctx, x + leaf - 3, top + 17, 2, 2, OFFICE.mail);
-  rect(ctx, x + leaf + 2, top + 17, 2, 2, OFFICE.mail);
-  rect(ctx, x + leaf - 5, top - 9, 10, 5, OFFICE.outline);
-  rect(ctx, x + leaf - 4, top - 8, 8, 3, OFFICE.exit);
-  rect(ctx, x + leaf - 2, top - 7, 4, 1, OFFICE.paper);
-  rect(ctx, x - 2, bottom, w + 4, 3, OFFICE.rugBorder);
-  rect(ctx, x, bottom + 1, w, 1, OFFICE.rug);
-}
-
-export function paintRoom(ctx: Ctx, layout: OfficeLayout, night = false): void {
-  const width = layout.cols * TILE;
-  const height = layout.rows * TILE;
-  rect(ctx, 0, 0, width, height, OFFICE.carpet);
-  paintFloor(ctx, layout);
-  const wallH = WALL_ROWS * TILE;
-  rect(ctx, 0, 0, width, wallH, OFFICE.wall);
-  rect(ctx, 0, 0, width, 4, OFFICE.wallTop);
-  rect(ctx, 0, 4, width, 1, OFFICE.wallShade);
-  rect(ctx, 0, 35, width, wallH - 35, OFFICE.wallShade);
-  rect(ctx, 0, 35, width, 1, OFFICE.trim);
-  rect(ctx, 0, wallH - 5, width, 3, OFFICE.trim);
-  rect(ctx, 0, wallH - 2, width, 2, OFFICE.trimDark);
-  for (const item of layout.wall) {
-    const x = item.x * TILE;
-    if (item.kind === 'night') {
-      const top = item.y === 0 ? 8 : item.y * TILE - 1;
-      paintNightWindow(ctx, x + 3, item.w * TILE - 6, top, item.y === 0 ? 31 : top + 10);
-    } else if (item.kind === 'window') paintWindow(ctx, x + 2, item.w * TILE - 4, night);
-    else if (item.kind === 'board') paintBoard(ctx, x + 2, item.w * TILE - 4);
-    else if (item.kind === 'door') paintDoor(ctx, x + 2, item.w * TILE - 4);
-    else paintClock(ctx, x);
-  }
-  rect(ctx, 0, wallH, width, 2, OFFICE.shadow);
-  rect(ctx, 0, wallH, width, 1, OFFICE.shadow);
-}
 
 export interface DeskState {
   monitor: MonitorMode;
@@ -543,19 +362,25 @@ function table(ctx: Ctx, x: number, y: number): void {
   rect(ctx, left + 9, top + 5, 4, 3, OFFICE.ink[1]);
 }
 
-/** `playing` tells whether someone is at a given game right now, so idle machines rest. */
-export function furnitureDrawables(
-  layout: OfficeLayout, deskState: (slot: number) => DeskState, playing: (game: GameKind, station: number) => boolean,
-  cooking: (x: number, y: number) => boolean = () => false,
-): Drawable[] {
+export interface FurnitureState {
+  desk: (slot: number) => DeskState;
+  /** Whether someone is at a given game right now, so idle machines rest. */
+  playing: (game: GameKind, station: number) => boolean;
+  cooking: (x: number, y: number) => boolean;
+  fixtures: FixtureState;
+}
+
+/** One drawable per piece of furniture, sorted by the row its base sits on. */
+export function furnitureDrawables(level: Level, state: FurnitureState): Drawable[] {
+  const { desk: deskState, playing, cooking } = state;
   const list: Drawable[] = [];
   const at = (sortY: number, draw: (ctx: Ctx, time: number) => void) => {
     list.push({ sortY, draw });
   };
-  for (const piece of layout.furniture) {
+  for (const piece of level.furniture) {
     switch (piece.kind) {
       case 'desk':
-        list.push(...deskDrawables(layout.desks[piece.slot], () => deskState(piece.slot)));
+        list.push(...deskDrawables(level.desks[piece.slot], () => deskState(piece.slot)));
         break;
       case 'chair':
         list.push(...chairDrawables(piece.x, piece.y, piece.facing));
@@ -581,6 +406,18 @@ export function furnitureDrawables(
       case 'bed':
         at(piece.y * TILE + 1, (ctx) => { bed(ctx, piece.x, piece.y, piece.variant); });
         break;
+      case 'station':
+      case 'pod':
+      case 'reception':
+      case 'helpdesk':
+      case 'workbench':
+      case 'sofa':
+      case 'bookcase':
+      case 'vending':
+      case 'drum':
+      case 'lamp':
+        list.push(...fixtureDrawable(piece, level, state.fixtures));
+        break;
       case 'nightstand':
         at(piece.y * TILE + 14, (ctx) => { nightstand(ctx, piece.x, piece.y); });
         break;
@@ -600,5 +437,7 @@ export function furnitureDrawables(
         list.push(gardenDrawable(piece, () => cooking(piece.x, piece.y)));
     }
   }
-  return list;
+  return list.sort((a, b) => a.sortY - b.sortY);
 }
+
+export type { Furniture };

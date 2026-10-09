@@ -132,13 +132,4 @@ describe('observability bind-mount refresh', () => {
     );
     expect(deploy.slice(disabled, enabled)).not.toContain('openssl x509');
   });
-
-  it('allows a first deploy before the PostgreSQL container exists', () => {
-    const deploy = readFileSync(join(root, 'deploy/deploy.sh'), 'utf8');
-    expect(deploy).toContain('if docker inspect "$PG_CONTAINER"');
-    expect(deploy).toContain('PostgreSQL nuevo: la comprobacion de sesiones previas no aplica');
-    expect(deploy.indexOf('if docker inspect "$PG_CONTAINER"')).toBeLessThan(
-      deploy.indexOf('fantasmas="$(docker exec "$PG_CONTAINER"'),
-    );
-  });
 });

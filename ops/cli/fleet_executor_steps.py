@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import copy
 import datetime
 import fcntl
@@ -86,7 +87,7 @@ class Executor:
     def artifacts(self):
         kind = self.context['request']['kind']
         if kind in {'stop', 'retire', 'purge'}:
-            if self.journal.get('stopped') is not True or (kind != 'stop' and not self.journal.get('revoked')):
+            if self.journal.get('stopped') is not True or (kind != 'stop' and self.journal.get('revocation_complete') is not True):
                 raise SafeFailure('fenced artifacts require observed stop and revocation')
             rows = scoped_agents(self.policy, self.context)
             for row in rows:
@@ -431,12 +432,8 @@ class Executor:
         return rows
 
 
-def perform(policy: dict, context: dict, step: str) -> dict:
-    if context.get('fleet_scope', {}).get('host_id', policy['host_id']) != policy['host_id']:
-        raise SafeFailure('coordinated effect belongs to another host')
-    target = context['request']['target']
-    if target['resource'] == 'agent':
-        approve_agent(policy, target_agent(context))
+@contextlib.contextmanager
+def executor_lock(policy: dict):
     state = pathlib.Path(policy['roots']['state'])
     lock = os.open(_destination(state, '.executor.lock'), os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
     try:
@@ -444,6 +441,16 @@ def perform(policy: dict, context: dict, step: str) -> dict:
         if not stat.S_ISREG(details.st_mode) or details.st_nlink != 1 or details.st_uid != os.geteuid() or stat.S_IMODE(details.st_mode) != 0o600:
             raise SafeFailure('executor lock has unsafe owner, link or mode')
         fcntl.flock(lock, fcntl.LOCK_EX)
-        return Executor(policy, context).perform(step)
+        yield
     finally:
         os.close(lock)
+
+
+def perform(policy: dict, context: dict, step: str) -> dict:
+    if context.get('fleet_scope', {}).get('host_id', policy['host_id']) != policy['host_id']:
+        raise SafeFailure('coordinated effect belongs to another host')
+    target = context['request']['target']
+    if target['resource'] == 'agent':
+        approve_agent(policy, target_agent(context))
+    with executor_lock(policy):
+        return Executor(policy, context).perform(step)

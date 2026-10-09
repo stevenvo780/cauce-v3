@@ -1,7 +1,7 @@
 import { cn } from '../../cn';
 import { STATE_TONE, TONE_CLASS } from '../../status-tone';
 import { LIVE_STATE_META } from '../live/agent-state';
-import type { OfficeAgent } from './OfficeCanvas';
+import type { OfficeAgent } from './office-agent';
 
 /** Hover card of an agent: name, state, why, and the group it sits with. */
 export function AgentTip({ agent }: { agent: OfficeAgent }) {

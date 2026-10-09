@@ -1,5 +1,5 @@
 import { FleetEvidenceSchema, type FleetEvidence, type FleetOperation, type FleetStepName } from '@cauce/protocol';
-import { aggregateHostEvidence, type FleetOperationClaim } from '@cauce/store';
+import { aggregateHostEvidence, isRegistryDraft, type FleetOperationClaim } from '@cauce/store';
 import type { FleetEffectResult, FleetExecution } from './executor.js';
 import { scopedFleetProviderAgents } from './accounts.js';
 
@@ -25,7 +25,9 @@ export function fleetHostInputs(targets: { tenant_id: string; alias: string }[],
   const identities = new Set(targets.map(target => JSON.stringify([target.tenant_id, target.alias])));
   return {
     fenced_targets: targets.map(target => ({ resource: 'agent', tenant_id: target.tenant_id, alias: target.alias })),
-    previous_agents: (execution.previous_agents ?? []).filter(agent => identities.has(JSON.stringify([agent.tenant_id, agent.alias]))),
+    previous_agents: (execution.previous_agents ?? []).filter(agent => identities.has(JSON.stringify([agent.tenant_id, agent.alias]))
+      && !isRegistryDraft({ runtime_key: agent.runtime_key as string | null, retired_at: null,
+        enabled: agent.enabled === true, lifecycle_state: String(agent.lifecycle_state) })),
     ...(execution.desired_memberships === undefined ? {} : {
       desired_memberships: execution.desired_memberships.filter(member => identities.has(JSON.stringify([member.tenant_id, member.alias]))),
     }),

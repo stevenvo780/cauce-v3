@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { FleetExecutor } from './executor.js';
 import type { FleetOperation, FleetOperationRequest, FleetStepName, FleetEvidence } from '@cauce/protocol';
 import type { FleetOperationClaim } from '@cauce/store';
@@ -64,6 +64,17 @@ describe('fleet step execution', () => {
       perform: async () => { throw new Error('sensitive process output'); } });
     await executor.runOnce();
     expect(calls).toEqual(['start:stop', 'fail']);
+  });
+  it('logs one redacted line when a step fails', async () => {
+    const { repository } = fixture();
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      const executor = new FleetExecutor(repository, { worker: 'worker', host: 'isolated',
+        perform: async () => { throw new TypeError('denied password=hunter2 Bearer abc.def'); } });
+      await executor.runOnce();
+      expect(log).toHaveBeenCalledTimes(1);
+      expect(log).toHaveBeenCalledWith('fleet step failed step=stop error=TypeError: denied password=[redacted] Bearer [redacted]');
+    } finally { log.mockRestore(); }
   });
   it('observes cancellation before starting another effect', async () => {
     const { repository, calls, cancel } = fixture(); cancel();

@@ -26,6 +26,7 @@ DOCKER = '/usr/bin/docker'
 HELPER_DESTINATION = '/cauce/lifecycle'
 EXECUTOR_SOURCE = pathlib.Path(__file__).resolve().parent
 EXECUTOR_DESTINATION = '/cauce/executor'
+RELEASE_ROOT = EXECUTOR_SOURCE.parents[1]
 
 
 def docker(*arguments: str) -> bytes:
@@ -47,7 +48,27 @@ def inspect_container(name: str) -> dict | None:
     return items[0]
 
 
-def validate_container(policy: dict, agent: dict, observed: dict) -> None:
+def rebased(value: str, release: pathlib.Path, root: pathlib.Path) -> str:
+    candidate = pathlib.PurePosixPath(value)
+    return str(root / candidate.relative_to(release)) if candidate.is_relative_to(release) else value
+
+
+def runtime_mounts(policy: dict, agent: dict, root: pathlib.Path | None = None, release: pathlib.Path | None = None) -> dict:
+    root, release = root or RELEASE_ROOT, release or RELEASE_ROOT
+    bundle = rebased(policy['bundles'][agent['harness_id']]['directory'], release, root)
+    return {HELPER_DESTINATION: str(root / 'ops/container-runtime'), EXECUTOR_DESTINATION: str(root / 'ops/cli'), bundle: bundle}
+
+
+def observe_container(policy: dict, agent: dict) -> dict | None:
+    observed = inspect_container(agent['container_name'])
+    if observed is None or agent['_placement'].get('ownership') == 'shared':
+        return observed
+    from fleet_executor_rebind import bound_release, rebind
+    previous = bound_release(observed, RELEASE_ROOT)
+    return observed if previous is None else rebind(policy, agent, observed, previous, RELEASE_ROOT)
+
+
+def validate_container(policy: dict, agent: dict, observed: dict, binds: dict | None = None) -> None:
     placement = agent['_placement']
     if placement.get('ownership') == 'shared':
         from fleet_executor_legacy import validate_shared_observation
@@ -60,69 +81,73 @@ def validate_container(policy: dict, agent: dict, observed: dict) -> None:
             or observed['HostConfig'].get('PidMode') == 'host' \
             or observed['HostConfig'].get('NetworkMode') != policy.get('transport', {}).get('network', 'none'):
         raise SafeFailure('container isolation differs from the approved shape')
+    binds = runtime_mounts(policy, agent) if binds is None else binds
     mounts = {row['Destination']: row for row in observed['Mounts']}
     state = mounts.get(placement['state_root'])
-    helper = mounts.get(HELPER_DESTINATION)
-    bundle = mounts.get(policy['bundles'][agent['harness_id']]['directory'])
-    executor = mounts.get(EXECUTOR_DESTINATION)
     profile_root = placement.get('profile_root')
     profiles = mounts.get(profile_root) if profile_root else None
     if not state or state.get('Type') != 'volume' or state.get('Name') != agent['container_name'] + '-state' \
-            or not helper or helper.get('Source') != str(HELPER.parent) or helper.get('RW') is not False \
-            or not bundle or bundle.get('Source') != policy['bundles'][agent['harness_id']]['directory'] or bundle.get('RW') is not False \
-            or not executor or executor.get('Source') != str(EXECUTOR_SOURCE) or executor.get('RW') is not False \
-            or len(mounts) != (5 if profile_root else 4) or profile_root and (not profiles or profiles.get('Type') != 'volume' \
+            or any(not mounts.get(destination) or mounts[destination].get('Source') != source or mounts[destination].get('RW') is not False
+                   for destination, source in binds.items()) \
+            or len(mounts) != len(binds) + (2 if profile_root else 1) or profile_root and (not profiles or profiles.get('Type') != 'volume' \
                 or profiles.get('Name') != agent['container_name'] + '-provider-profiles' or profiles.get('RW') is not True):
         raise SafeFailure('container runtime mounts differ')
+
+
+def owned_volumes(policy: dict, agent: dict) -> tuple[dict, list]:
+    labels = expected_labels(policy, agent)
+    volumes = {agent['container_name'] + '-state': labels}
+    if agent['_placement'].get('profile_root'):
+        volumes[agent['container_name'] + '-provider-profiles'] = {**labels, 'cauce.fleet.volume': 'provider-profiles'}
+    existing = docker('volume', 'ls', '--format', '{{.Name}}').decode().splitlines()
+    for name, expected in volumes.items():
+        if name in existing:
+            info = json.loads(docker('volume', 'inspect', name))[0]
+            if not all((info.get('Labels') or {}).get(key) == value for key, value in expected.items()):
+                raise SafeFailure('existing runtime volume has another owner')
+    return volumes, existing
+
+
+def create_container(policy: dict, agent: dict, binds: dict | None = None) -> dict:
+    placement = agent['_placement']
+    image = json.loads(docker('image', 'inspect', placement['image']))[0]
+    if image['Id'] != placement['image']:
+        raise SafeFailure('approved image digest is unavailable')
+    volumes, existing = owned_volumes(policy, agent)
+    for name, labels in volumes.items():
+        if name not in existing:
+            docker('volume', 'create', *[value for key, value in labels.items() for value in ('--label', f'{key}={value}')], name)
+    volume = agent['container_name'] + '-state'
+    label_arguments = [value for key, value in expected_labels(policy, agent).items() for value in ('--label', f'{key}={value}')]
+    profile_arguments = ['--mount', f'type=volume,source={agent["container_name"]}-provider-profiles,destination={placement["profile_root"]}'] \
+        if placement.get('profile_root') else []
+    bind_arguments = [value for destination, source in (runtime_mounts(policy, agent) if binds is None else binds).items()
+                      for value in ('--mount', f'type=bind,source={source},destination={destination},readonly')]
+    docker('create', '--name', agent['container_name'], *label_arguments, '--network', policy.get('transport', {}).get('network', 'none'), '--read-only',
+           '--cap-drop', 'ALL', '--cap-add', 'SETUID', '--cap-add', 'SETGID', '--cap-add', 'CHOWN', '--cap-add', 'SYS_PTRACE', '--cap-add', 'DAC_OVERRIDE', '--cap-add', 'FOWNER',
+           '--security-opt', 'no-new-privileges', '--pids-limit', '128', '--tmpfs', '/run:rw,nosuid,noexec,size=16m',
+           '--mount', f'type=volume,source={volume},destination={placement["state_root"]}',
+           *bind_arguments, *profile_arguments,
+           '--user', '0', '--entrypoint', '/bin/sleep', placement['image'], 'infinity')
+    created = inspect_container(agent['container_name'])
+    if created is None:
+        raise SafeFailure('container creation was not observed')
+    return created
 
 
 def ensure_container(policy: dict, agent: dict) -> dict:
     placement = agent['_placement']
     if not isinstance(placement.get('image'), str) or re.fullmatch(r'sha256:[0-9a-f]{64}', placement['image']) is None:
         raise SafeFailure('container image must be approved by its exact digest')
-    observed = inspect_container(agent['container_name'])
     if placement.get('ownership') == 'shared':
+        observed = inspect_container(agent['container_name'])
         validate_container(policy, agent, observed)
         if not observed['State']['Running'] or observed['State']['Pid'] <= 0:
             raise SafeFailure('shared container must already be observed running')
         return observed
+    observed = observe_container(policy, agent)
     if observed is None:
-        image = json.loads(docker('image', 'inspect', placement['image']))[0]
-        if image['Id'] != placement['image']:
-            raise SafeFailure('approved image digest is unavailable')
-        volume = agent['container_name'] + '-state'
-        volumes = docker('volume', 'ls', '--format', '{{.Name}}').decode().splitlines()
-        labels = expected_labels(policy, agent)
-        label_arguments = [value for key, value in labels.items() for value in ('--label', f'{key}={value}')]
-        if volume in volumes:
-            info = json.loads(docker('volume', 'inspect', volume))[0]
-            if not all((info.get('Labels') or {}).get(key) == value for key, value in labels.items()):
-                raise SafeFailure('existing runtime volume has another owner')
-        else:
-            docker('volume', 'create', *label_arguments, volume)
-        bundle = policy['bundles'][agent['harness_id']]['directory']
-        profile_arguments = []
-        if placement.get('profile_root'):
-            provider_volume = agent['container_name'] + '-provider-profiles'
-            provider_labels = {**labels, 'cauce.fleet.volume': 'provider-profiles'}
-            if provider_volume in volumes:
-                info = json.loads(docker('volume', 'inspect', provider_volume))[0]
-                if not all((info.get('Labels') or {}).get(key) == value for key, value in provider_labels.items()):
-                    raise SafeFailure('existing provider profile volume has another owner')
-            else:
-                provider_arguments = [value for key, value in provider_labels.items() for value in ('--label', f'{key}={value}')]
-                docker('volume', 'create', *provider_arguments, provider_volume)
-            profile_arguments = ['--mount', f'type=volume,source={provider_volume},destination={placement["profile_root"]}']
-        docker('create', '--name', agent['container_name'], *label_arguments, '--network', policy.get('transport', {}).get('network', 'none'), '--read-only',
-               '--cap-drop', 'ALL', '--cap-add', 'SETUID', '--cap-add', 'SETGID', '--cap-add', 'CHOWN', '--cap-add', 'SYS_PTRACE', '--cap-add', 'DAC_OVERRIDE', '--cap-add', 'FOWNER',
-               '--security-opt', 'no-new-privileges', '--pids-limit', '128', '--tmpfs', '/run:rw,nosuid,noexec,size=16m',
-               '--mount', f'type=volume,source={volume},destination={placement["state_root"]}',
-               '--mount', f'type=bind,source={HELPER.parent},destination={HELPER_DESTINATION},readonly',
-               '--mount', f'type=bind,source={EXECUTOR_SOURCE},destination={EXECUTOR_DESTINATION},readonly',
-               '--mount', f'type=bind,source={bundle},destination={bundle},readonly',
-               *profile_arguments,
-               '--user', '0', '--entrypoint', '/bin/sleep', placement['image'], 'infinity')
-        observed = inspect_container(agent['container_name'])
+        observed = create_container(policy, agent)
     validate_container(policy, agent, observed)
     if not observed['State']['Running']:
         docker('start', observed['Id'])
@@ -228,7 +253,7 @@ def start_container(policy: dict, raw_agent: dict, *, bootstrap: bool = True, op
 
 def stop_container(policy: dict, raw_agent: dict) -> dict:
     agent = approve_agent(policy, raw_agent)
-    observed = inspect_container(agent['container_name'])
+    observed = observe_container(policy, agent)
     if agent['_placement'].get('ownership') == 'shared' and observed is None:
         raise SafeFailure('approved shared container is not observed')
     if observed is None:

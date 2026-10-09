@@ -1,16 +1,35 @@
-import type { Activity, OfficeLayout, Spot } from './layout';
+import type { Activity, Level, RoutineActivity, Spot } from './level';
 import { seedOf, seededRandom } from './random';
 
-export interface Idler { id: string; desk: number; sleepy: boolean }
-export interface Errand { activity: Activity; spot: Spot }
+/** A spot inside a given building: where somebody goes, and on which map. */
+export interface Place { level: string; spot: Spot }
+export interface Idler { id: string; sleepy: boolean }
+export interface Errand { activity: Activity; place: Place }
 
+export interface RoutinePools {
+  spots: Readonly<Record<RoutineActivity, readonly Place[]>>;
+  beds: readonly Place[];
+}
+
+const ACTIVITIES: readonly RoutineActivity[] = ['cook', 'eat', 'coffee', 'play', 'tidy', 'sweep', 'water', 'read', 'chat', 'stroll'];
 const WEIGHTS: Readonly<Record<Activity, number>> = {
   cook: 2, eat: 2, coffee: 2, play: 3, tidy: 1, sweep: 1, water: 2, read: 2, chat: 3, stroll: 2, sleep: 1,
 };
 /** At most this share of the people without work may be asleep at once. */
 export const SLEEP_SHARE = 0.25;
 
-/** Each person's day is cut in turns of their own length and phase, so the office never switches in unison. */
+/** Every routine spot of the shared buildings, grouped by what is done there. */
+export function routinePools(levels: Iterable<Level>): RoutinePools {
+  const spots = Object.fromEntries(ACTIVITIES.map((activity) => [activity, [] as Place[]])) as Record<RoutineActivity, Place[]>;
+  const beds: Place[] = [];
+  for (const level of levels) {
+    for (const activity of ACTIVITIES) for (const spot of level.routine[activity] ?? []) spots[activity].push({ level: level.id, spot });
+    for (const spot of level.beds) beds.push({ level: level.id, spot });
+  }
+  return { spots, beds };
+}
+
+/** Each person's day is cut in turns of their own length and phase, so the campus never switches in unison. */
 export function turnOf(id: string, now: number): { index: number; start: number; length: number } {
   const seed = seedOf(id);
   const length = 60 + (seed % 61);
@@ -33,33 +52,36 @@ export function preferences(id: string, turn: number, sleepy: boolean): Activity
  * Who does what right now. Whoever started their turn earlier keeps priority, so a person is only
  * moved when their own turn ends. Single-seat spots go to one person; chat spots only to pairs.
  */
-export function scheduleRoutine(layout: OfficeLayout, idlers: readonly Idler[], now: number): Map<string, Errand> {
+export function scheduleRoutine(pools: RoutinePools, idlers: readonly Idler[], now: number): Map<string, Errand> {
   const plan = new Map<string, Errand>();
-  const taken = new Set<Spot>();
-  const beds = new Set<number>();
+  const taken = new Set<Place>();
   const sleepCap = Math.max(1, Math.floor(idlers.length * SLEEP_SHARE));
+  let sleeping = 0;
   const ordered = idlers
     .map((idler) => ({ idler, turn: turnOf(idler.id, now) }))
     .sort((a, b) => a.turn.start - b.turn.start || a.idler.id.localeCompare(b.idler.id));
 
   const take = (idler: Idler, activity: Activity, offset: number): Errand | null => {
     if (activity === 'sleep') {
-      if (beds.size >= sleepCap) return null;
-      const bed = layout.beds[idler.desk] && !beds.has(idler.desk) ? idler.desk : layout.beds.findIndex((_, index) => !beds.has(index));
-      if (bed < 0) return null;
-      beds.add(bed);
-      return { activity, spot: layout.beds[bed] };
+      if (sleeping >= sleepCap || pools.beds.length === 0) return null;
+      const start = seedOf(idler.id) % pools.beds.length;
+      const bed = Array.from(pools.beds, (_, index) => pools.beds[(start + index) % pools.beds.length]).find((place) => !taken.has(place));
+      if (!bed) return null;
+      taken.add(bed);
+      sleeping += 1;
+      return { activity, place: bed };
     }
-    const pool = layout.routine[activity];
+    const pool = pools.spots[activity];
     if (pool.length === 0) return null;
-    if (activity === 'stroll') return { activity, spot: pool[offset % pool.length] };
-    const partnered = (spot: Spot) => pool.some((other) => other !== spot && other.pair === spot.pair && taken.has(other));
+    if (activity === 'stroll') return { activity, place: pool[offset % pool.length] };
+    const partnered = (place: Place) => pool.some((other) => other !== place && other.level === place.level
+      && other.spot.pair === place.spot.pair && taken.has(other));
     const free = activity === 'chat'
-      ? pool.find((spot) => !taken.has(spot) && partnered(spot)) ?? pool.find((spot) => !taken.has(spot) && !partnered(spot))
-      : Array.from(pool, (_, index) => pool[(offset + index) % pool.length]).find((spot) => !taken.has(spot));
+      ? pool.find((place) => !taken.has(place) && partnered(place)) ?? pool.find((place) => !taken.has(place) && !partnered(place))
+      : Array.from(pool, (_, index) => pool[(offset + index) % pool.length]).find((place) => !taken.has(place));
     if (!free) return null;
     taken.add(free);
-    return { activity, spot: free };
+    return { activity, place: free };
   };
 
   const settle = (idler: Idler, wishes: readonly Activity[], offset: number) => {
@@ -83,9 +105,9 @@ export function scheduleRoutine(layout: OfficeLayout, idlers: readonly Idler[], 
     const errand = plan.get(idler.id);
     const wish = wishes.get(idler.id);
     if (errand?.activity !== 'chat' || !wish) continue;
-    const pool = layout.routine.chat;
-    if (pool.some((other) => other !== errand.spot && other.pair === errand.spot.pair && taken.has(other))) continue;
-    taken.delete(errand.spot);
+    const pool = pools.spots.chat;
+    if (pool.some((other) => other !== errand.place && other.level === errand.place.level && other.spot.pair === errand.place.spot.pair && taken.has(other))) continue;
+    taken.delete(errand.place);
     settle(idler, wish.list.filter((activity) => activity !== 'chat'), wish.offset);
   }
   return plan;

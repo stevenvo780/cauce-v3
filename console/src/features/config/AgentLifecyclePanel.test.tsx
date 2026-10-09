@@ -65,7 +65,7 @@ it('prepares an agent without an active runtime and binds exact memberships to a
   }));
   const user = await fill();
   await user.click(screen.getByRole('button', { name: 'Previsualizar operación' }));
-  expect(await screen.findByLabelText('Previsualización operativa')).toHaveTextContent('Huella exacta:');
+  expect(await screen.findByLabelText('Previsualización operativa')).toHaveTextContent('Huella exacta');
   await user.click(screen.getByRole('button', { name: 'Encolar operación' }));
   expect(await screen.findByLabelText('Operación de flota')).toHaveTextContent(/En cola/);
   expect(screen.queryByText('Listo')).not.toBeInTheDocument();
@@ -123,11 +123,11 @@ it('reads durable history and performs cancel/resume using the latest operation 
   await user.click(screen.getByRole('button', { name: 'Operar agente A/one' }));
   await user.click(await screen.findByRole('button', { name: `Abrir operación ${id}` }));
   await user.click(within(screen.getByLabelText('Operación de flota')).getByRole('button', { name: 'Cancelar operación' }));
-  await screen.findByText(/Cancelación en curso/);
+  await within(screen.getByLabelText('Operación de flota')).findByText(/Cancelación en curso/);
   await user.click(screen.getByRole('button', { name: 'Releer operación' }));
-  await screen.findByText(/Esperando autenticación/);
+  await within(screen.getByLabelText('Operación de flota')).findByText(/Esperando autenticación/);
   await user.click(screen.getByRole('button', { name: 'Reanudar operación' }));
-  await screen.findByText(/En ejecución/);
+  await within(screen.getByLabelText('Operación de flota')).findByText(/En ejecución/);
   expect(controls).toEqual([{ expected_version: 3 }, { expected_version: 4 }]);
 });
 it('authenticates within the operation and resumes manually only with its reread version', async () => {
@@ -155,7 +155,7 @@ it('authenticates within the operation and resumes manually only with its reread
   expect(resumed).toEqual([]);
   expect(document.body.textContent).not.toContain('private-test-profile');
   await user.click(screen.getByRole('button', { name: 'Reanudar operación' }));
-  await screen.findByText(/En ejecución/);
+  await within(screen.getByLabelText('Operación de flota')).findByText(/En ejecución/);
   expect(resumed).toEqual([{ expected_version: 4 }]);
 });
 it('rejects a mismatched preview receipt without enabling enqueue', async () => {
@@ -210,8 +210,21 @@ it('retains the receipt after CAS conflict and rereads before retrying controls'
   await user.click(screen.getByRole('button', { name: 'Releer operación' }));
   await waitFor(() => { expect(screen.getByRole('button', { name: 'Cancelar operación' })).toBeEnabled(); });
   await user.click(screen.getByRole('button', { name: 'Cancelar operación' }));
-  await screen.findByText(/Cancelada/);
+  await within(screen.getByLabelText('Operación de flota')).findByText(/Cancelada/);
   expect(versions).toEqual([3, 6]);
+});
+it('shows the newest pending operation on open and still refuses an older version of it', async () => {
+  const target = { resource: 'agent' as const, tenant_id: 'A', alias: 'one' };
+  const queued = await receipt({ kind: 'stop', target, parameters: {}, expected_revision: 4, idempotency_key: 'request_key' }, 'queued', 3);
+  renderPanel(target);
+  server.use(http.get('http://localhost/v3/console/fleet/operations', () => HttpResponse.json({ operations: [queued] })),
+    http.get(`http://localhost/v3/console/fleet/operations/${id}`, () => HttpResponse.json({ ...queued, version: 1 })));
+  const user = userEvent.setup();
+  await user.click(screen.getByRole('button', { name: 'Operar agente A/one' }));
+  const card = await screen.findByLabelText('Operación de flota');
+  expect(card).toHaveTextContent(/En cola/);
+  await user.click(screen.getByRole('button', { name: 'Releer operación' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent(/estado distinto del recibo o una versión anterior/);
 });
 it('keeps an edited operational draft when the inventory re-polls', async () => {
   const target = { resource: 'agent' as const, tenant_id: 'A', alias: 'one' };

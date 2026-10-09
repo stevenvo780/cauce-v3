@@ -3,8 +3,8 @@ export interface Camera { x: number; y: number; zoom: number }
 export interface Size { width: number; height: number }
 export interface Vec { x: number; y: number }
 export interface ZoomLimits { min: number; max: number }
-/** Device px of the viewport covered by a panel on the right or at the bottom. */
-export interface Inset { right: number; bottom: number }
+/** Device px of the viewport covered by panels on each side: the HUD on top, the hotbar below, a sheet on the right. */
+export interface Inset { right: number; bottom: number; top?: number; left?: number }
 export const NO_INSET: Inset = { right: 0, bottom: 0 };
 
 /** Room the camera may show past each edge, in art px, so the walls never feel glued to the frame. */
@@ -21,24 +21,37 @@ export function zoomLimits(view: Size, world: Size, dpr: number): ZoomLimits {
 
 export const clampZoom = (zoom: number, limits: ZoomLimits) => Math.min(limits.max, Math.max(limits.min, zoom));
 
-function clampAxis(center: number, span: number, extent: number, covered: number): number {
-  const visible = Math.max(1, span - covered);
+function clampAxis(center: number, span: number, extent: number, before: number, after: number): number {
+  const visible = Math.max(1, span - before - after);
   const half = visible / 2;
-  const mid = center - covered / 2;
+  const shift = (before - after) / 2;
+  const mid = center + shift;
   const clamped = extent <= visible ? extent / 2 : Math.min(extent - half + EDGE_SLACK, Math.max(half - EDGE_SLACK, mid));
-  return clamped + covered / 2;
+  return clamped - shift;
 }
 
 /**
- * Keeps the room in the uncovered part of the view: centred when it fits, otherwise no further
+ * Keeps the map in the uncovered part of the view: centred when it fits, otherwise no further
  * than `EDGE_SLACK` past an edge.
  */
 export function clampCamera(cam: Camera, view: Size, world: Size, limits: ZoomLimits, inset: Inset = NO_INSET): Camera {
   const zoom = clampZoom(cam.zoom, limits);
   return {
     zoom,
-    x: clampAxis(cam.x, view.width / zoom, world.width, inset.right / zoom),
-    y: clampAxis(cam.y, view.height / zoom, world.height, inset.bottom / zoom),
+    x: clampAxis(cam.x, view.width / zoom, world.width, (inset.left ?? 0) / zoom, inset.right / zoom),
+    y: clampAxis(cam.y, view.height / zoom, world.height, (inset.top ?? 0) / zoom, inset.bottom / zoom),
+  };
+}
+
+/** The largest whole zoom at which `area` (art px) fits the uncovered view, centred in it. */
+export function fitCamera(area: { x: number; y: number; w: number; h: number }, view: Size, limits: ZoomLimits, inset: Inset = NO_INSET): Camera {
+  const width = view.width - (inset.left ?? 0) - inset.right;
+  const height = view.height - (inset.top ?? 0) - inset.bottom;
+  const zoom = clampZoom(Math.max(1, Math.floor(Math.min(width / area.w, height / area.h))), limits);
+  return {
+    zoom,
+    x: area.x + area.w / 2 + (inset.right - (inset.left ?? 0)) / (2 * zoom),
+    y: area.y + area.h / 2 + (inset.bottom - (inset.top ?? 0)) / (2 * zoom),
   };
 }
 
@@ -84,7 +97,11 @@ export function doubleTapZoom(zoom: number, limits: ZoomLimits): number {
 
 /** Centres `point` in the part of the viewport the inset leaves uncovered. */
 export function centerOn(cam: Camera, point: Vec, inset: Inset = NO_INSET): Camera {
-  return { ...cam, x: point.x + inset.right / (2 * cam.zoom), y: point.y + inset.bottom / (2 * cam.zoom) };
+  return {
+    ...cam,
+    x: point.x + (inset.right - (inset.left ?? 0)) / (2 * cam.zoom),
+    y: point.y + (inset.bottom - (inset.top ?? 0)) / (2 * cam.zoom),
+  };
 }
 
 /**
@@ -92,19 +109,19 @@ export function centerOn(cam: Camera, point: Vec, inset: Inset = NO_INSET): Came
  * moving each axis only when it is not already there.
  */
 export function reveal(cam: Camera, view: Size, box: { x: number; y: number; w: number; h: number }, inset: Inset, margin: number): Camera {
-  const axis = (center: number, start: number, size: number, span: number, covered: number) => {
+  const axis = (center: number, start: number, size: number, span: number, before: number, after: number) => {
     const left = center - span / (2 * cam.zoom);
-    const lo = left + margin / cam.zoom;
-    const hi = left + (span - covered - margin) / cam.zoom;
-    if (hi - lo < size) return start + size / 2 - (span - covered) / (2 * cam.zoom) + span / (2 * cam.zoom);
+    const lo = left + (before + margin) / cam.zoom;
+    const hi = left + (span - after - margin) / cam.zoom;
+    if (hi - lo < size) return start + size / 2 + (after - before) / (2 * cam.zoom);
     if (start < lo) return center - (lo - start);
     if (start + size > hi) return center + (start + size - hi);
     return center;
   };
   return {
     ...cam,
-    x: axis(cam.x, box.x, box.w, view.width, inset.right),
-    y: axis(cam.y, box.y, box.h, view.height, inset.bottom),
+    x: axis(cam.x, box.x, box.w, view.width, inset.left ?? 0, inset.right),
+    y: axis(cam.y, box.y, box.h, view.height, inset.top ?? 0, inset.bottom),
   };
 }
 

@@ -43,7 +43,7 @@ it('offers durable history and purge for a retired group even without active gro
   renderWithApi(<ConfigPage />);
   await user.click(await screen.findByRole('button', { name: /Historial y purga de sala\/grupo Miguel\/ Sala/u }));
   expect(await screen.findByRole('dialog')).toHaveTextContent('"room_id":" Sala "');
-  expect(screen.getByRole('button', { name: 'Previsualizar purga' })).toBeEnabled();
+  expect(screen.getByRole('button', { name: 'Previsualizar eliminación definitiva' })).toBeEnabled();
 });
 
 function movementSnapshot(runtimeKey: string | null) {

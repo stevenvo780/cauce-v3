@@ -128,6 +128,62 @@ class PhysicalLifecycleTest(unittest.TestCase):
         self.context['request']['target'] = {'resource': 'agent', 'tenant_id': 'Equipo_42', 'alias': 'shared_alias'}
         self.context['operation_id'] = str(uuid.uuid4())
 
+    def empty_room_purge(self):
+        self.prepare()
+        self.lifecycle('purge')
+        self.context['request']['target'] = {'resource': 'room', 'tenant_id': 'Pablo', 'room_id': 'grp.pablo'}
+        self.context['previous_agents'] = []
+        self.context['fenced_targets'] = []
+        self.revoke_hook()
+
+    def journal_files(self):
+        return [path for path in self.root.rglob('effects.json') if self.context['operation_id'] in str(path)]
+
+    def test_room_purge_without_scoped_agents_passes_artifacts_and_publishes_applied(self):
+        self.empty_room_purge()
+        for step in ('stop', 'revoke', 'purge', 'artifacts'):
+            result = self.run_step(step)
+            self.assertEqual(result.returncode, 0, f'{step}: {result.stderr}')
+        journal = json.loads(self.journal_files()[0].read_bytes())
+        self.assertEqual((journal['revoked'], journal['revocation_complete']), ({}, True))
+        receipt = json.loads((self.roots['state'] / 'applied-fleet.json').read_bytes())
+        self.assertEqual(receipt['generation'], journal['generation'])
+        self.assertEqual(self.run_step('artifacts').returncode, 0)
+
+    def assert_artifacts_need_completed_revocation(self, kind):
+        self.prepare()
+        self.lifecycle(kind)
+        self.revoke_hook()
+        self.assertEqual(self.run_step('stop').returncode, 0)
+        self.assertNotEqual(self.run_step('artifacts').returncode, 0)
+        path = self.journal_files()[0]
+        journal = json.loads(path.read_bytes())
+        journal['revoked'] = {'physical-one': {'legacy': None, 'credentials': {}}}
+        path.write_text(json.dumps(journal))
+        result = self.run_step('artifacts')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('fenced artifacts require observed stop and revocation', result.stderr)
+        self.assertFalse((self.roots['state'] / 'applied-fleet.json').exists())
+
+    def test_retire_artifacts_require_completed_revocation_not_revoked_truthiness(self):
+        self.assert_artifacts_need_completed_revocation('retire')
+
+    def test_purge_artifacts_require_completed_revocation_not_revoked_truthiness(self):
+        self.assert_artifacts_need_completed_revocation('purge')
+
+    def test_agent_purge_with_agents_still_reaches_artifacts(self):
+        self.prepare()
+        self.lifecycle('purge')
+        self.revoke_hook()
+        for step in ('stop', 'revoke', 'purge', 'artifacts'):
+            result = self.run_step(step)
+            self.assertEqual(result.returncode, 0, f'{step}: {result.stderr}')
+        journal = json.loads(self.journal_files()[0].read_bytes())
+        self.assertEqual(list(journal['revoked']), ['physical-one'])
+        receipt = json.loads((self.roots['state'] / 'applied-fleet.json').read_bytes())
+        snapshot = json.loads((self.roots['state'] / 'generations' / receipt['generation'] / 'flota.json').read_bytes())
+        self.assertNotIn('physical-one', snapshot['fleet'])
+
     def prepared_update(self):
         self.prepare()
         original = copy.deepcopy(self.agent)

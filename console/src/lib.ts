@@ -10,7 +10,6 @@ export const TODAVIA_NO = 'todavía no';
 export const NO_APLICA = '—';
 
 import type {
-  CapabilityState,
   ConsoleAccess,
   ConsolePermission,
   JobLane,
@@ -129,10 +128,6 @@ export function permissionState(access: ConsoleAccess | null | undefined, permis
 
 export function safeJobLane(value: unknown): JobLane | undefined {
   return oneOf(value, ['interactive', 'batch'] as const);
-}
-
-export function safeCapabilityState(value: unknown): CapabilityState | undefined {
-  return oneOf(value, ['available', 'degraded', 'unavailable', 'unknown'] as const);
 }
 
 export function safeOriginRelayState(value: unknown): OriginRelayState | undefined {

@@ -71,9 +71,9 @@ it('blocks purge when dependencies are present', async () => {
   renderDialog('purge');
   server.use(preview(false));
   const user = userEvent.setup();
-  await user.click(await screen.findByRole('button', { name: 'Previsualizar purga' }));
+  await user.click(await screen.findByRole('button', { name: 'Previsualizar eliminación definitiva' }));
   expect(await screen.findByLabelText('Previsualización operativa')).toHaveTextContent('Bloquea esta operación');
-  expect(screen.getByRole('button', { name: 'Encolar purga' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Encolar eliminación definitiva' })).toBeDisabled();
 });
 it('fails closed when capability is missing even with config.write', async () => {
   renderDialog('retire', [], false);

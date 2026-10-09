@@ -1,4 +1,4 @@
-import { TILE, type Furniture, type Point, type Zone } from './layout';
+import { TILE, type Furniture, type Point, type Zone } from './level';
 import { rect, type Ctx } from './paint';
 import { OFFICE } from './palette';
 import { seededRandom } from './random';

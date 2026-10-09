@@ -33,7 +33,6 @@ const requiredComposeValues: Record<string, string> = {
   CAUCE_GATEWAY_TLS_CA_PATH: '/fixture/gateway-ca.crt',
   CAUCE_GATEWAY_TLS_CERT_PATH: '/fixture/gateway.crt',
   CAUCE_GATEWAY_TLS_KEY_PATH: '/fixture/gateway.key',
-  CAUCE_MEDIA_RUNTIME_DIR: '/fixture/media',
   CAUCE_OTEL_IMAGE: 'example.test/otel@sha256:' + '2'.repeat(64),
   CAUCE_POSTGRES_CA_PATH: '/fixture/postgres-ca.crt',
   CAUCE_PROMETHEUS_IMAGE: 'example.test/prometheus@sha256:' + '3'.repeat(64),

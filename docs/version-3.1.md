@@ -120,12 +120,13 @@ sobre él, y sólo eso:
 si el humo sale rojo parcial, la columna «Resultado» se corrige a mano en el mismo commit que
 registra la fila, y ese commit es también el que actualiza estos documentos.
 
-La última fila de [HISTORIAL](../deploy/HISTORIAL.md) registra `5311c165`, el 8 de octubre a las
-18:50, hora de Colombia: `deploy.sh` completo con el controlador de flota activo en server y su
-overlay versionado. Los nueve servicios quedaron sanos y el bus quedó acreditado con una entrega
-real después del arranque. El runtime usa la imagen
-`sha256:8dc86a120441efe1d946101af741566710aeeda7b760469a4a1ceeece163af9f` y la consola
-`sha256:96535429b5ba89757e9bf4abeb166865aa1b07a7f87a46cb5e1761080967a991`.
+La última fila de [HISTORIAL](../deploy/HISTORIAL.md) registra `e0271597`, el 8 de octubre a las
+22:41, hora de Colombia: el controlador de flota actualizado con el kit versionado y el corte al
+registro de identidades vivo, después del `deploy.sh` completo del mismo árbol con el overlay de
+flota. Los nueve servicios quedaron sanos y los 14 agentes con arriendo fresco; el smoke cerró ROJO
+parcial sólo por falta de tráfico en el bus. El runtime usa la imagen
+`sha256:44a9e43a74f4cc2a12e7e951866585021063e92685b1c81853e2a2d0612b8d8c` y la consola
+`sha256:9be6c2da2b42133539aa205e3fc35981b1287e2a1a4bdd0427793ed6030f7379`.
 
 La sesión Steven recargada mostró el grafo primero y la lista cerrada al final. Se comprobó un
 ping canónico de Zeus y su shell; el control se devolvió y la shell se cerró. El journal de Main

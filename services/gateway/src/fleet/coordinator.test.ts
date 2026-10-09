@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { FleetOperation, FleetOperationRequest, FleetEvidence } from '@cauce/protocol';
 import type { FleetOperationClaim } from '@cauce/store';
-import { FleetCoordinator, fleetHostPacket, type CoordinatedHostReceipt, type CoordinatedHostSlice } from './coordinator.js';
+import { FleetCoordinator, fleetHostInputs, fleetHostPacket, type CoordinatedHostReceipt, type CoordinatedHostSlice } from './coordinator.js';
 import type { FleetExecution } from './executor.js';
 
 function fixture() {
@@ -30,6 +30,14 @@ function fixture() {
 }
 
 describe('fleet host coordination', () => {
+  it('drops adopted registry drafts from previous agents but keeps the fenced target', () => {
+    const draft = { tenant_id: 'Steven', alias: 'drafted', runtime_key: null, enabled: false, lifecycle_state: 'draft', host_id: null };
+    const live = { tenant_id: 'Steven', alias: 'live', runtime_key: 'live', enabled: true, lifecycle_state: 'ready', host_id: 'host-a' };
+    const inputs = fleetHostInputs([{ tenant_id: 'Steven', alias: 'drafted' }, { tenant_id: 'Steven', alias: 'live' }],
+      { previous_agents: [draft, live] });
+    expect(inputs.previous_agents).toEqual([live]);
+    expect(inputs.fenced_targets.map(target => target.alias)).toEqual(['drafted', 'live']);
+  });
   it('requires the effect and receipt on every sealed host', async () => {
     const f = fixture(); const coordinator = new FleetCoordinator(f.repository, f.transport);
     expect(await coordinator.perform('stop', f.execution, new AbortController().signal, f.claim)).toEqual({ evidence: { stopped_verified: true } });

@@ -143,7 +143,7 @@ test("CLI configuration rejects inline secrets and production dev headers", asyn
   );
 });
 
-test("bridge and Hermes Python paths are configurable through non-secret environment", async () => {
+test("Hermes Python path is configurable through non-secret environment", async () => {
   const names = [
     "CAUCE_TENANT",
     "CAUCE_ROOM",
@@ -152,9 +152,7 @@ test("bridge and Hermes Python paths are configurable through non-secret environ
     "CAUCE_STATE_DIR",
     "CAUCE_RELAY_URL",
     "CAUCE_ENVIRONMENT",
-    "CAUCE_HERMES_BRIDGE",
     "CAUCE_HERMES_PYTHON",
-    "CAUCE_OPENCLAW_BRIDGE",
   ] as const;
   const previous = new Map(names.map((name) => [name, process.env[name]]));
   try {
@@ -166,11 +164,9 @@ test("bridge and Hermes Python paths are configurable through non-secret environ
       CAUCE_STATE_DIR: resolve(root, "state"),
       CAUCE_RELAY_URL: "ws://127.0.0.1:8080/v3/ws",
       CAUCE_ENVIRONMENT: "test",
-      CAUCE_HERMES_BRIDGE: resolve(root, "hermes.py"),
       CAUCE_HERMES_PYTHON: resolve(root, "venv/bin/python"),
     });
     const hermes = await loadCliRuntimeConfig("hermes", []);
-    assert.equal(hermes.harnessBridge, resolve(root, "hermes.py"));
     assert.equal(hermes.hermesPython, resolve(root, "venv/bin/python"));
 
     const configPath = resolve(root, "bridge-config.json");
@@ -182,14 +178,7 @@ test("bridge and Hermes Python paths are configurable through non-secret environ
       environment: "test",
     } } }));
     const configuredHermes = await loadCliRuntimeConfig("hermes", ["--config", configPath, "--alias", "kant"]);
-    assert.equal(configuredHermes.harnessBridge, resolve(root, "hermes.py"));
     assert.equal(configuredHermes.hermesPython, resolve(root, "venv/bin/python"));
-
-    delete process.env.CAUCE_HERMES_BRIDGE;
-    delete process.env.CAUCE_HERMES_PYTHON;
-    process.env.CAUCE_OPENCLAW_BRIDGE = resolve(root, "openclaw.mjs");
-    const openclaw = await loadCliRuntimeConfig("openclaw", []);
-    assert.equal(openclaw.harnessBridge, resolve(root, "openclaw.mjs"));
   } finally {
     for (const [name, value] of previous) {
       if (value === undefined) {
