@@ -42,6 +42,14 @@ def checked_reference(filename: str, private: bool = False) -> bytes:
         os.close(descriptor)
 
 
+def pinned_context(ca_certificate: str) -> ssl.SSLContext:
+    # The Cauce CA carries basicConstraints but no keyUsage, which Python 3.13+ rejects under VERIFY_X509_STRICT;
+    # chain, hostname and the pinned CA are still verified.
+    context = ssl.create_default_context(cafile=ca_certificate)
+    context.verify_flags &= ~getattr(ssl, "VERIFY_X509_STRICT", 0)
+    return context
+
+
 def rejected(origin: str, context: ssl.SSLContext, phase: str, token: str | None = None) -> bool:
     url = urlsplit(origin)
     if url.scheme != "https" or not url.hostname or url.username or url.password or url.query or url.fragment:
@@ -90,7 +98,7 @@ def revoke(packet: dict) -> dict:
     for phase, credential in credentials:
         if phase not in {"bootstrap", "normal"}:
             raise ValueError("unknown credential namespace")
-        context = ssl.create_default_context(cafile=packet["transport"]["ca_certificate"])
+        context = pinned_context(packet["transport"]["ca_certificate"])
         if "certificate_path" in credential:
             pem = checked_reference(credential["certificate_path"])
             checked_reference(credential["key_path"], True)

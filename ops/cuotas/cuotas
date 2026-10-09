@@ -36,7 +36,7 @@ for c in $(docker ps --filter name='^cuota-' --format '{{.Names}}' | sort); do
   if docker exec "$c" test -s /home/node/.claude/.credentials.json 2>/dev/null; then
     emite "$c" claude "$(timeout 45 docker exec "$c" node /usr/local/bin/leer-cuota.mjs 2>/dev/null || echo '{"ok":false,"nota":"el lector no respondio"}')"
   fi
-  # 2026-10-05 (kant): un espacio de Claude sin sesion sale como fila con el motivo, no desaparece.
+  # Un espacio de Claude sin sesion sale como fila con el motivo, no desaparece.
   case "$c" in cuota-claude-*)
     docker exec "$c" test -s /home/node/.claude/.credentials.json 2>/dev/null \
       || emite "$c" claude "{\"ok\":false,\"nota\":\"sin sesion de Claude: falta cuota-auth ${c#cuota-}\"}" ;;
@@ -45,11 +45,9 @@ for c in $(docker ps --filter name='^cuota-' --format '{{.Names}}' | sort); do
     emite "$c" grok "$(timeout 60 docker exec "$c" node /usr/local/bin/leer-cuota-grok.mjs 2>/dev/null || echo '{"ok":false,"nota":"el lector de grok no respondio"}')"
   fi
   if docker exec "$c" test -s /home/node/.codex/auth.json 2>/dev/null; then
-    # 2026-09-27 (kant): la sesion de cada espacio es propia (no la comparte la flota), asi que se
-    # refresca aqui antes de que venza; sin esto la lectura moria a los 10 dias del login.
+    # La sesion de cada espacio es propia: se refresca aqui antes de que venza (si no, muere a los 10 dias).
     timeout 45 docker exec -i "$c" python3 - /home/node/.codex < /home/server/cuotas-cli/codex-refrescar.py >/dev/null 2>&1
-    # Sin '|| echo': la sonda sale con rc!=0 cuando informa un error, y el respaldo se pegaba
-    # detras de su JSON -> JSON invalido -> la fila desaparecia en vez de mostrar el motivo.
+    # Sin '|| echo': la sonda sale con rc!=0 si informa un error y el respaldo rompia su JSON.
     r=$(timeout 60 docker exec "$c" python3 /usr/local/bin/codex-http-probe.py /home/node/.codex 2>/dev/null)
     [ -n "$r" ] || r='{"error":"la sonda no respondio","ventanas":[]}'
     emite "$c" codex "$r"

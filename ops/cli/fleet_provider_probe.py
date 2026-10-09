@@ -38,7 +38,10 @@ def credential_context(packet: dict, phase: str) -> ssl.SSLContext:
     view = pathlib.Path(agent["state_directory"]) / ".cauce-credentials" / phase
     if agent.get("runtime_mode") == "container":
         view = pathlib.Path("/run/cauce-credentials") / agent["runtime_key"] / phase
+    # The Cauce CA carries basicConstraints but no keyUsage, which Python 3.13+ rejects under VERIFY_X509_STRICT;
+    # chain, hostname and the pinned CA are still verified.
     context = ssl.create_default_context(cafile=str(view / "ca.crt"))
+    context.verify_flags &= ~getattr(ssl, "VERIFY_X509_STRICT", 0)
     context.load_cert_chain(str(view / "agent.crt"), str(view / "agent.key"))
     return context
 

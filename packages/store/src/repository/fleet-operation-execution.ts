@@ -160,7 +160,11 @@ export abstract class FleetOperationExecution extends FleetOperationClaims {
       if (row.target.resource === 'agent') await client.query(`UPDATE agents SET enabled=false,lifecycle_state=CASE
         WHEN retired_at IS NULL THEN 'failed' ELSE 'retiring' END,updated_at=clock_timestamp() WHERE tenant_id=$1 AND alias=$2 AND purged_at IS NULL`,
       [row.target.tenant_id, row.target.alias]);
-      return publicFleetOperation(await saveFleetState(client, row, claim, 'failed', { code: parsed.data.code }, true));
+      const compensation = row.cancel_requested && (await client.query<{ cancelling: boolean }>(
+        `SELECT COALESCE((metadata->>'cancelling')::boolean,false) AS cancelling FROM fleet_operation_events
+          WHERE operation_id=$1 AND event='claimed' ORDER BY id DESC LIMIT 1`, [row.id])).rows[0]?.cancelling === true;
+      return publicFleetOperation(await saveFleetState(client, row, claim, 'failed',
+        { code: parsed.data.code, ...(compensation ? { compensation: true } : {}) }, true));
     });
   }
 

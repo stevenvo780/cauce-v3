@@ -10,6 +10,10 @@ function leaseParameters(worker: string, host: string, leaseMs: number): void {
     throw new FleetOperationError('invalid_input', 'fleet worker lease parameters are invalid');
   }
 }
+// Backoff applies only to failed compensation attempts (the one path that releases an operation back into the
+// claimable set); cancel, resume and any completed step are markers that make the operation claimable at once.
+export const FLEET_COMPENSATION_BACKOFF_BASE_MS = 5_000;
+export const FLEET_COMPENSATION_BACKOFF_CAP_MS = 300_000;
 export abstract class FleetOperationClaims {
   constructor(protected readonly pool: DatabasePool) {}
   async claim(worker: string, host: string, leaseMs = 30_000): Promise<FleetOperationClaim | null> {
@@ -24,7 +28,15 @@ export abstract class FleetOperationClaims {
             AND (operation.lease_expires_at IS NULL OR operation.lease_expires_at<=now())
             AND NOT EXISTS (SELECT 1 FROM fleet_operations other WHERE other.id<>operation.id
               AND other.cohort_key=operation.cohort_key AND other.worker_id IS NOT NULL)
-          ORDER BY operation.created_at,operation.id LIMIT 1 FOR UPDATE OF operation SKIP LOCKED`, [host])).rows[0];
+            AND NOT EXISTS (SELECT 1 FROM (
+              SELECT count(*) AS failures, max(failure.created_at) AS last_failure FROM fleet_operation_events failure
+               WHERE failure.operation_id=operation.id AND failure.event='failed' AND failure.metadata->>'compensation'='true'
+                 AND failure.id>COALESCE((SELECT max(marker.id) FROM fleet_operation_events marker WHERE marker.operation_id=operation.id
+                   AND marker.event IN ('cancel_requested','resumed','step_completed','succeeded')),0)) backoff
+              WHERE backoff.failures>0 AND backoff.last_failure
+                +LEAST($2::double precision*power(2,backoff.failures-1),$3::double precision)*interval '1 millisecond'>clock_timestamp())
+          ORDER BY operation.created_at,operation.id LIMIT 1 FOR UPDATE OF operation SKIP LOCKED`,
+        [host, FLEET_COMPENSATION_BACKOFF_BASE_MS, FLEET_COMPENSATION_BACKOFF_CAP_MS])).rows[0];
       if (!row) return null;
       try { await assertFleetOperationAuthority(client, row); }
       catch (error) {
@@ -42,7 +54,8 @@ export abstract class FleetOperationClaims {
            worker_id=$2,claim_token=$3,epoch=epoch+1,lease_expires_at=now()+$4::integer*interval '1 millisecond',
            version=version+1,updated_at=now() WHERE id=$1 RETURNING *`, [row.id, worker, token, leaseMs])).rows[0];
       if (!next) throw new Error('fleet operation claim returned no row');
-      await recordFleetEvent(client, row.id, Number(next.version), 'claimed', { worker_id: worker, epoch: Number(next.epoch) });
+      await recordFleetEvent(client, row.id, Number(next.version), 'claimed', { worker_id: worker, epoch: Number(next.epoch),
+        ...(next.status === 'cancelling' ? { cancelling: true } : {}) });
       return { operation: publicFleetOperation(await loadFleetOrigin(client, next)), request: next.request, worker_id: worker, claim_token: token, epoch: Number(next.epoch) };
     });
   }

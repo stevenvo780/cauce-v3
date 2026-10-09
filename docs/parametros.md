@@ -59,6 +59,8 @@ dice 60K/150K. Manda el árbol; el roadmap se re-verifica en T063.
 | `CAUCE_RETRY_TIMEOUT_MS` (arnés) | ms | 45_000 (test) | `ops/compose.test.yaml` (cubre el backoff de 30 s) | `compose-test-stack` (contrato) |
 | `retryStaleDeliveries` batch (`maintenance.ts:57`) | filas | 100 | fijo | e2e (DLQ) |
 | `retryStartedDeliveries` / `parkWithoutConsumer` (`:62`, `CAUCE_RETRY_STARTED_DELIVERIES`) | bool | false / true | runtime | — |
+| `FLEET_COMPENSATION_BACKOFF_BASE_MS` / `FLEET_COMPENSATION_BACKOFF_CAP_MS` (`fleet-operation-claims.ts:15-16`, contados en `fleet_operation_events`) | ms | 5_000 ×2, cap 300_000 | fijo | `fleet-operation-backoff-postgres` |
+| `MAX_STDERR_BYTES` (`fleet/host-stderr.ts:1`) | bytes | 4_096 (cola de stderr del ejecutor, redactada, una línea de log) | fijo | `host-stderr.test.ts` |
 
 ## 4. Admisión gateway y drenaje
 

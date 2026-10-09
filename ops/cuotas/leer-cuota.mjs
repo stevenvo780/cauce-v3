@@ -7,8 +7,7 @@
 //                         mirando que sesion tenia abierta un navegador.
 //   /api/oauth/usage   -> utilizacion de la ventana de 5 horas y la de 7 dias.
 //
-// Va en Node y no en Python a proposito: la imagen ya trae Node, y anadir Python solo para
-// esto engordaria el contenedor sin necesidad.
+// Va en Node y no en Python a proposito: la imagen ya trae Node y anadir Python solo engordaria.
 //
 // El token NUNCA sale de este proceso: no se imprime, no pasa por la linea de comandos y no
 // se escribe en ningun sitio. Por la salida estandar solo salen los porcentajes.
@@ -18,11 +17,9 @@ import { join } from "node:path";
 
 const CRED = join(homedir(), ".claude", ".credentials.json");
 const BASE = "https://api.anthropic.com";
-// Renovacion del token: mismo mecanismo que el lector de Grok. El access token de `claude auth
-// login` dura 8 h y solo se renueva cuando alguien corre el CLI; en un contenedor donde nadie lo
-// corre, caduca y el lector queda muerto (visto 2026-09-18: las dos cuentas a la vez). Aqui se
-// renueva con el refresh token, contra el endpoint y client_id publico del propio CLI, y se
-// reescribe el fichero de forma atomica para que el CLI y el lector sigan compartiendo credencial.
+// Renovacion del token: mismo mecanismo que el lector de Grok. El access token de `claude auth login`
+// dura 8 h y solo se renueva si corre el CLI; sin nadie que lo corra caduca y el lector muere.
+// Aqui se renueva con el refresh token (endpoint y client_id publicos del CLI) y se reescribe de forma atomica para que CLI y lector compartan credencial.
 const TOKEN_URL = "https://platform.claude.com/v1/oauth/token"; // el que trae el propio CLI 2.1.274
 const CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
 const MARGEN_MS = 5 * 60 * 1000;
@@ -65,8 +62,7 @@ const refresca = async () => {
     expiresAt: Date.now() + (j.expires_in ?? 3600) * 1000,
     scopes: j.scope ? j.scope.split(" ") : oauth.scopes,
   };
-  // Escritura atomica: el refresh token rota; si el proceso muriera a medias no puede quedar
-  // un fichero truncado, porque entonces se pierde tambien la cadena de renovacion.
+  // Escritura atomica: el refresh token rota; un fichero truncado perderia tambien la cadena de renovacion.
   const tmp = CRED + ".tmp";
   writeFileSync(tmp, JSON.stringify({ ...cred, claudeAiOauth: oauth }, null, 2), { mode: 0o600 });
   renameSync(tmp, CRED);
@@ -93,8 +89,7 @@ const pide = async (ruta) => {
   return r.json();
 };
 
-// Un 401 con token en fecha: se renueva una vez y se reintenta. Un 429 NO es credencial muerta,
-// es limite de Anthropic: se reporta como tal, con el retry-after, para que nadie lo confunda.
+// Un 401 con token en fecha: se renueva una vez y se reintenta. Un 429 es limite de Anthropic, no credencial muerta: se reporta con retry-after.
 const pideRenovando = async (ruta) => {
   try { return await pide(ruta); }
   catch (e) {
