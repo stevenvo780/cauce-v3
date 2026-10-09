@@ -21,14 +21,6 @@ export const CAPABILITY_LABEL: Readonly<Record<CapabilityState, string>> = {
   unknown: 'Sin reportar',
 };
 
-/** `unavailable` is a fault, not an idle state: it takes the same tone on every surface. */
-export const CAPABILITY_TONE: Readonly<Record<CapabilityState, BadgeTone>> = {
-  available: 'online',
-  degraded: 'warning',
-  unavailable: 'danger',
-  unknown: 'unknown',
-};
-
 export const DLQ_DISPOSITION_LABEL: Readonly<Record<DlqDisposition, string>> = {
   ambiguous: 'EFECTO INCIERTO',
   safe_retry: 'REINTENTO SEGURO',
