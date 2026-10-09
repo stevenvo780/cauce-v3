@@ -1,7 +1,7 @@
 import { FleetEvidenceSchema, sha256Hex, type FleetEvidence, type FleetOperationRequest, type FleetStepName } from '@cauce/protocol';
 import { z } from 'zod';
 import type { DatabaseClient } from '../db.js';
-import { FleetOperationError, type FleetOperationClaim, type FleetOperationRow, type FencedFleetTarget } from './fleet-operation-contracts.js';
+import { FleetOperationError, isRegistryDraft, type FleetOperationClaim, type FleetOperationRow, type FencedFleetTarget } from './fleet-operation-contracts.js';
 
 export type FleetHostStep = FleetStepName | 'compensate';
 export interface FleetHostSlice {
@@ -70,6 +70,8 @@ export async function assertFleetHostAccess(
   const agents = await readFleetGroupAgents(client, request);
   if (agents.length > 1000) conflict('fleet host scope exceeds its bound');
   for (const agent of agents) {
+    if (request.kind === 'create' && isRegistryDraft({ runtime_key: agent.runtime_key as string | null, retired_at: null,
+      enabled: agent.enabled === true, lifecycle_state: String(agent.lifecycle_state) })) continue;
     assertPlacement(agent, request);
     if (coordinatorEnabled && !registered.has(String(agent.host_id))) conflict('fleet host scope has no registered host transport');
     if (grouped && !coordinatorEnabled && agent.host_id !== controllerHost) conflict('group lifecycle requires its configured host coordinator');

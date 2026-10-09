@@ -15,6 +15,7 @@ import type { ProviderAuthActor, ProviderAuthLogin, ProviderAuthRequest, Provide
 import type { FleetExecution } from './executor.js';
 import { readFleetProviderAccounts, scopedFleetProviderAgents } from './accounts.js';
 import { trustedFleetBaseline } from './baseline.js';
+import { fleetHostInputs } from './coordinator.js';
 import { performHostCommand, performHostLoginStop, type HostCommandConfig } from './host-command.js';
 import { assertLoginPins, cleanupProviderLogin, ContainerLoginBindingSchema, createProviderLogin, LoginCommandSchema,
   LoginPathSchema, LoginPinsSchema, queryProviderLoginBinding, readPrivateJson, type ProviderLoginConfig } from './provider-login.js';
@@ -154,7 +155,9 @@ async function activeExecution(client: DatabaseClient, scope: ProviderAuthPhysic
   if (!account?.enabled || !account.consent || account.provider !== scope.provider_id || account.external_account_id !== scope.expected_external_account_id) throw denied();
   const trusted_accounts = await readFleetProviderAccounts(client, scopedFleetProviderAgents(
     row.request, prepared.fenced_targets, prepared.previous_agents, snapshot.agents));
-  return { operation: publicFleetOperation(row), request: FleetOperationRequestSchema.parse(row.request), ...prepared, snapshot, trusted_accounts };
+  const hostScope = await loadFleetHostScope(client, row, scope.host_id);
+  return { operation: publicFleetOperation(row), request: FleetOperationRequestSchema.parse(row.request), ...prepared,
+    ...fleetHostInputs(hostScope.targets, prepared), snapshot, trusted_accounts };
 }
 async function loginConfiguration(options: HostProviderAuthOptions, execution: FleetExecution, scope: ProviderAuthPhysicalScope,
   signal: AbortSignal): Promise<ProviderLoginConfig> {
@@ -237,8 +240,7 @@ export async function createHostProviderAuthService(pool: DatabasePool, options:
           await assertProviderAuthSealedScope(client, row, selected);
           const agents = await trustedFleetBaseline(client, sealed.agents);
           execution = { operation: publicFleetOperation(row), request: FleetOperationRequestSchema.parse(row.request),
-            fenced_targets: sealed.targets, previous_agents: prepared.previous_agents.filter(agent => agent.host_id === options.hostConfig.host),
-            desired_memberships: prepared.desired_memberships,
+            ...fleetHostInputs(sealed.targets, prepared),
             snapshot: { agents, memberships: [], rolePolicies: [] }, trusted_accounts: await readFleetProviderAccounts(client, agents) };
         } finally { if (!borrowedClient) client.release(); }
         const stopped = await cleanupProviderLogin({ python: options.hostConfig.command.python, helper: policy.helper,

@@ -117,6 +117,18 @@ describe('durable fleet operations', () => {
     expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
     expect(results.filter((result) => result.status === 'rejected')).toHaveLength(1);
   });
+  it('adopts a console registry draft on create but refuses an agent that already has a runtime', async () => {
+    const repo = repository();
+    await pool.query(`INSERT INTO agents(tenant_id,alias,harness_id,display_name,enabled,lifecycle_state) VALUES('Steven','drafted','codex','Borrador',false,'draft')`);
+    const prepared = await repo.prepare(await claimFor(repo, 'drafted'));
+    expect(prepared.operation.desired_revision).toBe(1);
+    expect((await pool.query('SELECT enabled,lifecycle_state,runtime_key FROM agents WHERE alias=$1', ['drafted'])).rows)
+      .toEqual([{ enabled: false, lifecycle_state: 'provisioning', runtime_key: 'drafted' }]);
+    await pool.query(`INSERT INTO agents(tenant_id,alias,harness_id,enabled,lifecycle_state,runtime_key) VALUES('Steven','installed','codex',false,'draft','installed')`);
+    await expect(repo.enqueue('Steven', 'fleet_operator', { ...create('installed', 'installed-host'), expected_revision: 1 }))
+      .rejects.toThrow(/already exists/u);
+  });
+
   it('rejects stale desired revision and unauthorized control before any enqueue', async () => {
     const repo = repository();
     await expect(repo.enqueue('Steven', 'fleet_operator', { ...create('stale'), expected_revision: 999 })).rejects.toMatchObject({ code: 'conflict' });

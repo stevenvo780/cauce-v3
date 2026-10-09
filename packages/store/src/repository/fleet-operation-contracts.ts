@@ -48,3 +48,8 @@ export interface FleetExecutionState {
   previous_agents: Record<string, unknown>[];
   desired_memberships: FleetMembershipIntent[];
 }
+
+/** A registry row created from the console before any runtime exists; a fleet `create` adopts it instead of refusing. */
+export function isRegistryDraft(agent: { runtime_key: string | null; retired_at: Date | null; enabled: boolean; lifecycle_state: string }): boolean {
+  return agent.runtime_key === null && agent.retired_at === null && !agent.enabled && agent.lifecycle_state === 'draft';
+}

@@ -2,6 +2,12 @@
 
 Este documento no describe cómo funciona el sistema (eso es [arquitectura.md](arquitectura.md)) sino lo que le falta al **producto**, priorizado. Aquí no se afirma el estado de ninguna instalación: eso se acredita con las sondas y los censos de [operacion.md](operacion.md), nunca leyéndolo de un `.md`.
 
+## 0. Siguiente versión: V4 multiempresa
+
+Una sola instalación con varias empresas aisladas, todo administrable desde la consola, y la migración de la empresa de otra instancia Cauce. Plan, fases (V4.0 cimiento → V4.4 migración real) y decisiones del dueño: [v4-plan-multiempresa.md](v4-plan-multiempresa.md).
+
+Deuda del controlador de flota que precede a V4: los contenedores creados por una versión montan rutas de herramientas por SHA (`/usr/local/lib/cauce-v35/<sha>`), así que actualizar el controlador rompe start, stop, purga y compensación de los agentes ya creados. Debe montarse una ruta estable (`current`) o migrar los contenedores en cada actualización.
+
 ## 1. Inmediato post-deploy
 
 Lo que sigue sin cerrar de la propia ventana de despliegue, antes de dar la fase por terminada. Incluye el defecto que hay que matar en contextos por harness: Cauce reinyecta el contexto completo en cada entrega en vez de dejar que cada arnés lea su fichero nativo una vez. El camino nativo existe detrás de `CAUCE_NATIVE_PROFILE_CONTEXT` y **el flag sigue apagado por defecto**.
