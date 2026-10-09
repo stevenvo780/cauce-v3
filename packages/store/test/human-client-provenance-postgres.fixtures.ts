@@ -32,7 +32,7 @@ let serverUrl: string;
 const pools: DatabasePool[] = [];
 const apps: FastifyInstance[] = [];
 beforeAll(async () => {
-  if (process.env.CAUCE_TEST_DATABASE_URL || (process.env.DOCKER_HOST && !process.env.DOCKER_HOST.startsWith('unix://'))) {
+  if (process.env.DOCKER_HOST && !process.env.DOCKER_HOST.startsWith('unix://')) {
     throw new Error('client provenance tests require their own local disposable PostgreSQL');
   }
   const password = randomUUID();
