@@ -23,7 +23,6 @@ interface CliRuntimeConfig {
   /** Origin of the decisions service; reached with this alias's mTLS identity. */
   readonly decisionesUrl?: string;
   readonly harnessCommand?: string;
-  readonly harnessBridge?: string;
   readonly hermesPython?: string;
   readonly openClaw?: {
     readonly transport: "cli" | "api";
@@ -325,19 +324,12 @@ function environmentMessageTimeoutMs(name: string, fallback = DEFAULT_MESSAGE_TI
   );
 }
 
-function bridgeEnvironment(harnessId: HarnessId): Pick<CliRuntimeConfig, "harnessBridge" | "hermesPython"> {
-  const bridge = harnessId === "hermes"
-    ? process.env.CAUCE_HERMES_BRIDGE
-    : harnessId === "openclaw"
-      ? process.env.CAUCE_OPENCLAW_BRIDGE
-      : undefined;
-  if (bridge?.length === 0) throw new Error("Harness bridge path must be non-empty");
+function bridgeEnvironment(harnessId: HarnessId): Pick<CliRuntimeConfig, "hermesPython"> {
   const hermesPython = harnessId === "hermes" ? process.env.CAUCE_HERMES_PYTHON : undefined;
   if (hermesPython?.length === 0) {
     throw new Error("CAUCE_HERMES_PYTHON must be non-empty");
   }
   return {
-    ...(bridge === undefined ? {} : { harnessBridge: resolve(bridge) }),
     ...(hermesPython === undefined ? {} : { hermesPython }),
   };
 }

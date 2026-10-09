@@ -440,16 +440,6 @@ check_blob_migration_window
 [ "$BLOB_MIGRATION_PENDING" = 0 ] || [ "$REQUIRE_BLOB_BACKUP" = 1 ] \
   || die "043 paso a pendiente despues del backup; repite el deploy con evidencia de tabla y volumen"
 
-# B1 re-checked at the last instant, only while schema 034 is still pending: once applied, open TUIs are normal.
-if docker inspect "$PG_CONTAINER" >/dev/null 2>&1; then
-  aplicada_034="$(docker exec "$PG_CONTAINER" psql -U "$PG_USER" -d "$PG_DB" -tAc "SELECT count(*) FROM schema_migrations WHERE version LIKE '034_%'" 2>/dev/null || echo 0)"
-  if [ "$aplicada_034" = "0" ]; then
-    fantasmas="$(docker exec "$PG_CONTAINER" psql -U "$PG_USER" -d "$PG_DB" -tAc "SELECT count(*) FROM terminal_sessions WHERE closed_at IS NULL AND revoked_at IS NULL")"
-    [ "$fantasmas" = "0" ] || die "hay $fantasmas sesiones de terminal sin anclar: la 034 abortaria (dossier B1: repite el UPDATE y reintenta)"
-  fi
-else
-  echo "PostgreSQL nuevo: la comprobacion de sesiones previas no aplica antes del primer migrator."
-fi
 if [ "$MCP_HUMAN_ENABLED" = 1 ]; then trap - ERR; fi
 "${COMPOSE[@]}" run --rm -T migrator || deployment_failed "migracion fallida; $ENV_FILE apunta a los digests nuevos (runtime=$RUNTIME_DIGEST console=$CONSOLE_DIGEST). Comprueba el esquema antes de restaurar pins anteriores: con 043 aplicada, el gateway viejo con API de blobs=1 es incompatible. Snapshot previo: $ENV_FILE.pre-deploy-$STAMP"
 "${COMPOSE[@]}" up -d --wait --wait-timeout 300 --remove-orphans || deployment_failed "up fallo; no levantes el gateway anterior con API de blobs=1 si 043 esta aplicada. Para revertir, restaura juntos BD y volumen del snapshot previo a 043, verifica esquema anterior y despues los pins de $ENV_FILE.pre-deploy-$STAMP"

@@ -34,7 +34,6 @@ dice 60K/150K. Manda el árbol; el roadmap se re-verifica en T063.
 |---|---|---|---|---|
 | `DEFAULT_ACK_DEADLINE_MS` (`store/delivery-timing.ts:5`) | ms | 30_000 | fijo, override `CAUCE_ACK_DEADLINE_MS` (test: 50) | e2e 14/14 |
 | `leaseTtlMs` (`gateway/config.ts:7`, `DEFAULT_LEASE_TTL_MS`, `MIN_LEASE_TTL_MS`) | ms | 180_000, mín 30_000 | `CAUCE_LEASE_TTL_MS` | e2e |
-| `CAUCE_REQUIRE_ACK_CLAIMS` (`gateway/main.ts:222`) | bool | true (prod `false` aborta boot) | env | — |
 | `CAUCE_DELIVERY_LEASE_CAP_GRACE_MS` (`store/delivery-timing.ts:37`) | ms | = gracia 30 min | env | — |
 | `resumeWindowMs` (`gateway/routes/core.ts:363`) | ms | = ackDeadline | fijo (derivado) | e2e |
 | `DEFAULT_DELIVERY_LEASE_CAP_MS` (`store/.../policy.ts:5`) | ms | 43_200_000 (12 h) | fijo + `CAUCE_DELIVERY_LEASE_CAP_MS` | — |
@@ -90,7 +89,6 @@ dice 60K/150K. Manda el árbol; el roadmap se re-verifica en T063.
 | `CAUCE_TERMINAL_MAX_SESSIONS_PER_OPERATOR` (`DEFAULT_MAX_SESSIONS_PER_OPERATOR`) | sesiones | 2, máx 64 | env | — |
 | `CAUCE_TERMINAL_RW_ENABLED` + `CAUCE_TERMINAL_OPERATORS` + `CAUCE_TERMINAL_ENABLED` | flag/lista | off / vacío / requerido `=1` | env + FR (kill switch) | — |
 | `CAUCE_TERMINAL_WS_PATH` (`DEFAULT_TERMINAL_WS_PATH`), `CAUCE_TERMINAL_OPERATOR_HEADER` (`DEFAULT_OPERATOR_HEADER`), `CAUCE_TERMINAL_GRANTS_FILE` (`DEFAULT_TERMINAL_GRANTS_FILE`), `CAUCE_TERMINAL_RELAY_URL`, `CAUCE_TERMINAL_RELAY_INSTANCE_ID`, `CAUCE_TERMINAL_RELAY_INSTANCE_IDS` | ruta/header | ws `/v3/console/terminal/ws`, header `x-cauce-operator`, grants `/run/cauce-terminal/grants.json`, relay HTTPS, IDs 64 hex | env | — |
-| `DEFAULT_RELEASE_REASON` (`session-control/control.ts:30`) | — | `'operator_released'` | fijo | — |
 | `MAX_FRAME_PAYLOAD_BYTES` (`terminal-relay/.../framing.ts:57`) | bytes | 65_536 | fijo (tag inválido corta TODO) | e2e |
 | `AGENT_STALE_AFTER_MS` (`gateway/terminal/registry.ts:11`) | ms | 45_000 | fijo | — |
 | `MAX_TERMINAL_CLOCK_SKEW_MS` (`session-control.ts:34`) | ms | 5_000 | fijo | — |

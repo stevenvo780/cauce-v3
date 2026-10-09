@@ -50,12 +50,8 @@ function commandOverride(
     ?? (harnessId === "muse" ? runtime.muse?.executable : undefined)
     ?? (harnessId === "hermes" ? runtime.hermesPython : undefined)
     ?? definition.command;
-  if (runtime.harnessCommand === undefined && runtime.muse === undefined && runtime.hermesPython === undefined
-    && runtime.harnessBridge === undefined) return undefined;
-  return {
-    command,
-    ...(runtime.harnessBridge === undefined ? {} : { baseArgs: [runtime.harnessBridge] }),
-  };
+  if (runtime.harnessCommand === undefined && runtime.muse === undefined && runtime.hermesPython === undefined) return undefined;
+  return { command };
 }
 
 /** Verifies the bridge has the start marker before enabling `stderr-marker`; disables the start witness if it lacks the marker or cannot be read. */

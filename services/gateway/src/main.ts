@@ -275,7 +275,6 @@ const app = await buildGateway({
   admission,
   wakePumpTelemetry,
   consolePublishTelemetry,
-  requireAckClaims: process.env.CAUCE_REQUIRE_ACK_CLAIMS !== '0',
   exposeHealthRoutes: !isolatedHealth,
   ...(consoleOrigins === undefined ? {} : { consoleOrigins }),
   // Announcing the capability is what makes /v3/console/access emit `ultimate-terminal.connect`

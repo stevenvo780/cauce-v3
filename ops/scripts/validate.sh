@@ -209,9 +209,6 @@ if docker compose version >/dev/null 2>&1; then
   export POSTGRES_DB=cauce POSTGRES_USER=cauce POSTGRES_PASSWORD=x DATABASE_URL=postgresql://validation.invalid/cauce
   export CAUCE_RUNTIME_IMAGE="registry.invalid/cauce-runtime@sha256:$zeros" CAUCE_CONSOLE_IMAGE="registry.invalid/cauce-console@sha256:$zeros"
   validation_writer_snapshot="$tmp_release_state/writer-snapshot.json"
-  validation_media_dir="$tmp_release_state/media"
-  mkdir -p -- "$validation_media_dir"
-  chmod 0700 "$validation_media_dir"
   python3 - "$ROOT/container-aliases.json" "$validation_writer_snapshot" <<'PY'
 import hashlib, json, pathlib, sys
 manifest_bytes = pathlib.Path(sys.argv[1]).read_bytes()
@@ -252,14 +249,12 @@ PY
   export CAUCE_ROLLBACK_WRITER_SNAPSHOT_SHA256="$validation_writer_sha"
   export CAUCE_OTEL_IMAGE="registry.invalid/otel@sha256:$zeros" CAUCE_PROMETHEUS_IMAGE="registry.invalid/prometheus@sha256:$zeros" CAUCE_POSTGRES_IMAGE="registry.invalid/postgres@sha256:$zeros"
   export CAUCE_AUTH_PROVIDER=oidc CAUCE_CONSOLE_ORIGINS=https://console.invalid
-  export CAUCE_MEDIA_RUNTIME_DIR="$validation_media_dir"
   export CAUCE_DATABASE_URL_SECRET_PATH=/dev/null CAUCE_POSTGRES_CA_PATH=/dev/null
   export CAUCE_GATEWAY_TLS_CERT_PATH=/dev/null CAUCE_GATEWAY_TLS_KEY_PATH=/dev/null CAUCE_GATEWAY_TLS_CA_PATH=/dev/null CAUCE_GATEWAY_CLIENT_CA_PATH=/dev/null
   export CAUCE_GATEWAY_IDENTITY_DIR=/tmp/cauce-validation-identities
   export CAUCE_GATEWAY_OIDC_SESSION_KEY_PATH=/dev/null CAUCE_GATEWAY_OIDC_CLIENT_SECRET_PATH=/dev/null
   export CAUCE_CONSOLE_TLS_CERT_PATH=/dev/null CAUCE_CONSOLE_TLS_KEY_PATH=/dev/null CAUCE_CONSOLE_TLS_CA_PATH=/dev/null
   export CAUCE_CONSOLE_GATEWAY_CLIENT_CERT_PATH=/dev/null CAUCE_CONSOLE_GATEWAY_CLIENT_KEY_PATH=/dev/null
-  export CAUCE_RELAY_ALLOWED_ORIGINS=https://relay.invalid CAUCE_RELAY_ADAPTERS=telegram CAUCE_TELEGRAM_ALLOWED_ORIGINS=https://api.telegram.org
   export CAUCE_POSTGRES_PASSWORD_PATH=/dev/null CAUCE_POSTGRES_SERVER_CERT_PATH=/dev/null CAUCE_POSTGRES_SERVER_KEY_PATH=/dev/null
   export CAUCE_TERMINAL_RELAY_INSTANCE_ID="$zeros"
   docker compose -f "$PROJECT/deploy/compose.yaml" config --quiet
