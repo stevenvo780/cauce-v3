@@ -86,32 +86,3 @@ export function membershipOf(agent: RosterAgent, directory: GroupDirectory): Mem
 export function membershipsOf(roster: readonly RosterAgent[], directory: GroupDirectory): Map<string, Membership> {
   return new Map(roster.map((agent) => [`${agent.tenantId}/${agent.alias}`, membershipOf(agent, directory)]));
 }
-
-export interface TeamSummary extends OfficeTeam { hue: number; ids: string[] }
-
-/** Teams of the fleet agents (visitors belong to none), in a stable order with «Sin grupo» last. */
-export function summarizeTeams(agents: readonly { id: string; team?: OfficeTeam; visitor?: boolean }[]): TeamSummary[] {
-  const teams = new Map<string, TeamSummary>();
-  for (const agent of agents) {
-    if (agent.visitor) continue;
-    const team = agent.team ?? NO_TEAM;
-    const entry = teams.get(team.id) ?? { id: team.id, label: team.label, hue: team.hue ?? teamHue(team.id), ids: [] };
-    entry.ids.push(agent.id);
-    teams.set(team.id, entry);
-  }
-  const rank = (team: TeamSummary) => (team.id === NO_TEAM.id ? 1 : 0);
-  return [...teams.values()]
-    .map((team) => ({ ...team, ids: team.ids.sort() }))
-    .sort((a, b) => rank(a) - rank(b) || a.id.localeCompare(b.id));
-}
-
-export function sameTeams(a: readonly TeamSummary[], b: readonly TeamSummary[]): boolean {
-  return a.length === b.length && a.every((team, index) => {
-    const other = b[index];
-    return team.id === other.id && team.label === other.label && team.ids.length === other.ids.length
-      && team.ids.every((id, at) => id === other.ids[at]);
-  });
-}
-
-/** Only real groups get zones; a fleet with nobody in a group keeps the plain office. */
-export const hasGroups = (teams: readonly TeamSummary[]): boolean => teams.some((team) => team.id !== NO_TEAM.id);

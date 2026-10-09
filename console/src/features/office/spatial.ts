@@ -1,4 +1,4 @@
-import type { Dir } from './layout';
+import type { Dir } from './level';
 
 export interface Placed { id: string; x: number; y: number }
 
