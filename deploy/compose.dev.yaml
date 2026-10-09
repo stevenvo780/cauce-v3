@@ -157,7 +157,6 @@ services:
       target: console-dev
       args:
         VITE_CAUCE_API_BASE: ""
-        VITE_CAUCE_DEV_AUTH: "1"
         VITE_CAUCE_DEV_TENANT: ${CAUCE_CONSOLE_TENANT:-Steven}
         VITE_CAUCE_DEV_ALIAS: ${CAUCE_CONSOLE_ALIAS:-kant}
     user: "101:101"

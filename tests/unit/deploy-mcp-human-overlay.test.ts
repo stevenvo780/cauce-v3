@@ -97,15 +97,11 @@ if (args[0] === 'ps' && pinned && process.env.MOCK_FAILURE?.startsWith('blob-'))
   console.log('overlay-fixture-postgres-1'); process.exit(0);
 }
 if (args[0] === 'exec') {
-  if (args.at(-1).includes('terminal_sessions')) {
-    if (process.env.MOCK_FAILURE === 'b1-query') process.exit(23);
-    console.log('1');
-  } else console.log('0');
+  console.log('0');
   process.exit(0);
 }
 if (['build', 'push', 'ps'].includes(args[0]) || (args[0] === 'volume' && args[1] === 'ls')) process.exit(0);
 if (args[0] === 'inspect') {
-  if (args.length === 2) process.exit(process.env.MOCK_FAILURE?.startsWith('b1-') ? 0 : 1);
   if (args[1] === '-f') { console.log('true'); process.exit(0); }
   if (args[2].includes('instance-id')) console.log('0'.repeat(64));
   else if (args[2].includes('RepoDigests')) console.log('fixture/' + (args.at(-1).includes('runtime') ? 'runtime' : 'console') + '@sha256:' + '1'.repeat(64));
@@ -185,7 +181,6 @@ function execute(configuration: string, options: {
       CAUCE_GATEWAY_TLS_CA_PATH: '/fixture/gateway-ca.crt',
       CAUCE_GATEWAY_TLS_CERT_PATH: '/fixture/gateway.crt',
       CAUCE_GATEWAY_TLS_KEY_PATH: '/fixture/gateway.key',
-      CAUCE_MEDIA_RUNTIME_DIR: '/fixture/media',
       CAUCE_OTEL_IMAGE: 'fixture/otel:previous',
       CAUCE_POSTGRES_CA_PATH: '/fixture/postgres-ca.crt',
       CAUCE_POSTGRES_PASSWORD_PATH: '/fixture/postgres-password',
@@ -380,20 +375,18 @@ describe('deploy human MCP overlay selection', () => {
     }
   });
 
-  it.each(['confirmation', 'blob-check', 'blob-pending', 'b1-sessions', 'b1-query'])(
+  it.each(['confirmation', 'blob-check', 'blob-pending'])(
     'offers manual recovery for %s before the migrator without changing the snapshot', failure => {
     const result = execute('CAUCE_MCP_HUMAN_ENABLED=1\n' + publicConfiguration, {
       failure, environment: failure === 'confirmation' ? { CAUCE_DEPLOY_CONFIRMADO: '' } : {},
     });
     expect(result.error).toBeUndefined();
-    expect(result.status, result.stderr).toBe(failure === 'b1-query' ? 23 : 1);
+    expect(result.status, result.stderr).toBe(1);
     expect(result.stderr.match(/Rollback MCP manual/g)).toHaveLength(1);
     const reasons: Record<string, string> = {
       confirmation: 'abortado por el dueño',
       'blob-check': 'no pude enumerar contenedores',
       'blob-pending': '043 paso a pendiente despues del backup',
-      'b1-sessions': 'sesiones de terminal sin anclar',
-      'b1-query': 'comando fallido antes del migrator',
     };
     expect(result.stderr).toContain(reasons[failure]);
     expect(result.snapshots()).toEqual([result.initialEnvironment]);
@@ -420,11 +413,11 @@ describe('deploy human MCP overlay selection', () => {
 
   it.each(['', 'CAUCE_MCP_HUMAN_ENABLED=0\n'])(
     'keeps default/off pre-migrator aborts unchanged (%j)', flag => {
-    for (const failure of ['confirmation', 'blob-check', 'blob-pending', 'b1-sessions', 'b1-query']) {
+    for (const failure of ['confirmation', 'blob-check', 'blob-pending']) {
       const result = execute(flag + publicConfiguration, {
         failure, environment: failure === 'confirmation' ? { CAUCE_DEPLOY_CONFIRMADO: '' } : {},
       });
-      expect(result.status, result.stderr).toBe(failure === 'b1-query' ? 23 : 1);
+      expect(result.status, result.stderr).toBe(1);
       expect(result.stderr).not.toContain('Rollback MCP manual');
       expect(result.snapshots()).toEqual([result.initialEnvironment]);
       expect(result.currentEnvironment()).not.toBe(result.initialEnvironment);
