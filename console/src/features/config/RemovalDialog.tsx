@@ -4,7 +4,7 @@ import { useApi } from '../../api/context';
 import { useConsoleAccess } from '../../api/console-access';
 import { FormDialog } from '../../components/dialogs';
 import { AgentFleetOperation, AgentFleetPreview } from './AgentFleetOperation';
-import { operationSummary } from './fleet-operation-text';
+import { blockingOperation, fleetErrorText, operationSummary } from './fleet-operation-text';
 import { useAgentLifecycle } from './use-agent-lifecycle';
 import './agent-lifecycle.css';
 
@@ -20,14 +20,16 @@ export function RemovalDialog({ target, kind: initialKind, revision, onClose, re
   const [validated, setValidated] = useState<{ request: FleetOperationRequest; preview: FleetOperationPreview }>();
   const [error, setError] = useState<string>();
   const [sending, setSending] = useState(false);
+  const [previewing, setPreviewing] = useState(false);
   const [sessionInvalid, setSessionInvalid] = useState(false);
-  const flow = useAgentLifecycle(true, target);
+  const flow = useAgentLifecycle(true, target, () => { void reload?.(); });
   const sequence = useRef(0);
   const revisionSeen = useRef(revision);
   const canWrite = !sessionInvalid && !access.error && !access.loading && access.data?.permissions?.includes('config.write') === true;
   const available = flow.capability?.available === true && flow.capability.actions.includes(kind);
   const busy = sending || flow.busy;
   const inProgress = !!flow.operation && ['queued', 'running', 'awaiting_auth', 'cancelling'].includes(flow.operation.status);
+  const blocked = !!blockingOperation(flow.operation, kind);
   const parsed = FleetOperationRequestSchema.safeParse({ kind, target, parameters: {}, expected_revision: revision, idempotency_key: key });
   const request = parsed.success ? parsed.data : undefined;
   const fingerprint = JSON.stringify(request);
@@ -44,27 +46,27 @@ export function RemovalDialog({ target, kind: initialKind, revision, onClose, re
     setError('La configuración cambió. Previsualiza de nuevo sobre la revisión actual.');
   }, [revision]);
   async function preview() {
-    if (!request || !canWrite || !available || busy || inProgress) return;
+    if (!request || !canWrite || !available || busy || inProgress || blocked) return;
     const read = ++sequence.current;
     const expected = fingerprint;
-    setSending(true); setError(undefined); setValidated(undefined);
+    setSending(true); setPreviewing(true); setError(undefined); setValidated(undefined);
     try {
       const receipt = await api.previewFleetOperation(request);
       if (read === sequence.current && expected === current.current) setValidated({ request, preview: receipt });
-    } catch (cause) { if (read === sequence.current) setError(cause instanceof Error ? cause.message : 'No se pudo previsualizar.'); }
-    finally { setSending(false); }
+    } catch (cause) { if (read === sequence.current) setError(cause instanceof Error ? fleetErrorText(cause.message, flow.operation, kind) : 'No se pudo previsualizar.'); }
+    finally { setSending(false); setPreviewing(false); }
   }
   async function enqueue() {
-    if (!valid || !validated.preview.can_apply || !canWrite || !available || busy || inProgress) return;
+    if (!valid || !validated.preview.can_apply || !canWrite || !available || busy || inProgress || blocked) return;
     const read = ++sequence.current;
     setSending(true); setError(undefined);
     try {
       const operation = await api.enqueueFleetOperation(validated.request);
       if (read === sequence.current) { flow.accept(operation); setValidated(undefined); setKey(`fleet_${crypto.randomUUID()}`); }
-    } catch (cause) { if (read === sequence.current) setError(cause instanceof Error ? cause.message : 'No se confirmó el encolado. El reintento conserva su clave.'); }
+    } catch (cause) { if (read === sequence.current) setError(cause instanceof Error ? fleetErrorText(cause.message, flow.operation, kind) : 'No se confirmó el encolado. El reintento conserva su clave.'); }
     finally { setSending(false); }
   }
-  return <FormDialog open wide busy={sending} onClose={onClose}
+  return <FormDialog open wide anchorTop busy={sending} onClose={onClose}
     title={`Retirar o eliminar ${target.resource === 'tenant' ? 'espacio' : 'grupo'}`}>
     <div className="config-modal-cuerpo agent-lifecycle-panel">
       <p>Identidad exacta: <code>{JSON.stringify(target)}</code></p>
@@ -80,13 +82,15 @@ export function RemovalDialog({ target, kind: initialKind, revision, onClose, re
       {flow.capabilityError ? <p className="notice">{flow.capabilityError}</p> : !flow.capability ? <p role="status">Leyendo capacidades operativas…</p>
         : !available ? <p className="notice">El servidor no acredita esta acción{flow.capability.reason ? ` (${flow.capability.reason})` : ''}.</p> : null}
       {!request ? <p className="notice">Falta una revisión o identidad válida para esta operación.</p> : null}
-      {error ? <p className="notice" role="alert">{error}</p> : null}
-      <div className="config-actions"><button type="button" className="button secondary" disabled={!canWrite || !available || !request || busy || inProgress}
-        onClick={() => { void preview(); }}>Previsualizar {LABELS[kind]}</button>
-        <button type="button" className="button primary" disabled={!canWrite || !available || busy || inProgress || !valid || !validated.preview.can_apply}
+      <div className="config-actions"><button type="button" className="button secondary" disabled={!canWrite || !available || !request || busy || inProgress || blocked}
+        aria-busy={previewing} onClick={() => { void preview(); }}>{previewing ? 'Previsualizando…' : `Previsualizar ${LABELS[kind]}`}</button>
+        <button type="button" className="button primary" disabled={!canWrite || !available || busy || inProgress || blocked || !valid || !validated.preview.can_apply}
           onClick={() => { void enqueue(); }}>Encolar {LABELS[kind]}</button></div>
+      {!valid && !blocked && !previewing ? <p className="m-0 text-xs text-muted">Previsualiza la operación para poder encolarla.</p> : null}
+      {error ? <p className="notice" role="alert">{error}</p> : null}
       {valid ? <><AgentFleetPreview preview={validated.preview} /><pre aria-label={`Solicitud de ${LABELS[kind]}`}>{JSON.stringify(validated.request, null, 2)}</pre></> : null}
-      {flow.operation ? <><AgentFleetOperation operation={flow.operation} busy={busy} current={!flow.readError && canWrite && available}
+      {flow.operation ? <><AgentFleetOperation operation={flow.operation} busy={busy} current={!flow.readError && canWrite && !!flow.capability?.available}
+        intended={kind} stale={flow.stale}
         control={(action) => { void flow.control(action); }} />
         {flow.readError ? <p className="notice" role="alert">{flow.readError}</p> : null}
         <button type="button" className="button secondary" disabled={busy} onClick={() => { void flow.refresh(); }}>Releer operación</button></> : null}

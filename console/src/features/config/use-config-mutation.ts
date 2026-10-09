@@ -23,6 +23,8 @@ export interface ConfigMutationNotice {
 
 const BLOQUEO_POR_DEFECTO = 'Cambio bloqueado: no tenés permiso para escribir configuración, o no se pudo leer el permiso. Ante la duda, cerrado.';
 
+const REVISION_RELEIDA = 'La configuración cambió mientras editabas; la releí. Revisa y confirma.';
+
 const SIN_DRY_RUN = 'Primero hay que previsualizar exactamente esta mutación sobre la revisión visible: el apply sólo se habilita sobre el dry-run que el servidor ya aceptó.';
 
 export interface ConfigMutationRunner {
@@ -44,7 +46,7 @@ export interface ConfigMutationRunner {
   run: (mutation: ConfigMutation, dryRun: boolean) => Promise<boolean>;
   /** The write itself, for callers that compose their own wording out of the outcome. */
   change: (
-    mutation: ConfigMutation, dryRun: boolean, camino?: CaminoDeCambio,
+    mutation: ConfigMutation, dryRun: boolean, camino?: CaminoDeCambio, revisionOverride?: number,
   ) => Promise<ConfigChangeOutcome>;
   /** Marks the channel busy while a write that is NOT `changeConfiguration` is in flight. */
   ocupar: <T>(tarea: () => Promise<T>) => Promise<T>;
@@ -76,6 +78,7 @@ interface ConfigMutationOptions {
   access: Resource<ConsoleAccess>;
   canal?: string;
   encadenado?: RevisionEncadenada;
+  redoDryRunOnConflict?: boolean;
   /** Answer every write with this while writing is blocked, instead of the RBAC refusal. */
   bloqueo?: string;
   fallback?: string;
@@ -133,15 +136,16 @@ export function useConfigMutation(options: ConfigMutationOptions): ConfigMutatio
   }
 
   async function change(
-    mutation: ConfigMutation, dryRun: boolean, camino?: CaminoDeCambio,
+    mutation: ConfigMutation, dryRun: boolean, camino?: CaminoDeCambio, revisionOverride?: number,
   ): Promise<ConfigChangeOutcome> {
+    const revisionToSend = revisionOverride ?? expectedRevision;
     if (bloqueo !== undefined) return { ok: false, conflict: false, message: bloqueo };
     const describeError = options.describeError;
     return ocupar(async () => {
       const outcome = await executeConfigurationChange({
         mutation,
         dryRun,
-        ...(expectedRevision === undefined ? {} : { expectedRevision }),
+        ...(revisionToSend === undefined ? {} : { expectedRevision: revisionToSend }),
         change: (next, changeOptions) => api.changeConfiguration(next, changeOptions),
         reload: options.config.reload,
         ...(options.fallback === undefined ? {} : { fallback: options.fallback }),
@@ -170,7 +174,22 @@ export function useConfigMutation(options: ConfigMutationOptions): ConfigMutatio
       return false;
     }
     setNotice(undefined);
-    const outcome = await change(mutation, dryRun);
+    let outcome = await change(mutation, dryRun);
+    if (!outcome.ok && outcome.conflict) {
+      setValidated(undefined);
+      setPreview(undefined);
+      const fresh = outcome.recarga?.releido ? outcome.recarga.revision : undefined;
+      if (fresh !== undefined && options.redoDryRunOnConflict !== false) {
+        const redo = await change(mutation, true, 'previsualizado', fresh);
+        if (redo.ok) {
+          setValidated({ mutationKey, expectedRevision: fresh });
+          setPreview(options.redactar ? options.redactar(redo.result) : JSON.stringify(redo.result, null, 2));
+          setNotice({ text: `${REVISION_RELEIDA} Dry-run aceptado: ${redo.result.summary ?? 'el servidor no devolvió resumen'}.`, tone: 'success' });
+          return dryRun;
+        }
+        outcome = redo;
+      }
+    }
     if (!outcome.ok) {
       if (outcome.conflict || outcome.uncertain !== undefined) {
         setValidated(undefined);

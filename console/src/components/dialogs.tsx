@@ -47,23 +47,34 @@ export function ConfirmDialog({
 }
 
 /** A modal form: the title, an optional purpose line, and room for the fields and the write bar. */
-export function FormDialog({ open, title, description, busy = false, wide = false, initialFocus, finalFocus, onClose, children }: {
+export function FormDialog({ open, title, description, busy = false, wide = false, anchorTop = false, initialFocus, finalFocus, onClose, children }: {
   open: boolean;
   title: ReactNode;
   description?: ReactNode;
   busy?: boolean;
   wide?: boolean;
+  /** Pinned to the top edge: content that grows below (a receipt) must not move the buttons the operator is about to press. */
+  anchorTop?: boolean;
   initialFocus?: ComponentProps<typeof Dialog.Popup>['initialFocus'];
   finalFocus?: ComponentProps<typeof Dialog.Popup>['finalFocus'];
   onClose: () => void;
   children: ReactNode;
 }) {
   return (
-    <Dialog.Root open={open} onOpenChange={(next) => { if (!next && !busy) onClose(); }}>
+    <Dialog.Root open={open} onOpenChange={(next, details) => {
+      if (next) return;
+      // Focus drifting out, or a press on a node a re-render already replaced (the opening click itself), is not a request to close.
+      const pressed = details.event.target;
+      if (details.reason === 'focus-out' || (details.reason === 'outside-press' && pressed instanceof Node && !pressed.isConnected)) {
+        details.cancel(); return;
+      }
+      if (!busy) onClose();
+    }}>
       <Dialog.Portal>
         <Dialog.Backdrop className="fixed inset-0 z-50 bg-scrim" />
         <Dialog.Popup initialFocus={initialFocus} finalFocus={finalFocus}
-          className={cn('fixed top-1/2 left-1/2 z-50 grid max-h-[calc(100dvh-1.5rem)] -translate-x-1/2 -translate-y-1/2 content-start gap-3 overflow-y-auto rounded-xl border border-line bg-surface p-5 shadow-pop',
+          className={cn('fixed left-1/2 z-50 grid max-h-[calc(100dvh-1.5rem)] -translate-x-1/2 content-start gap-3 overflow-y-auto rounded-xl border border-line bg-surface p-5 shadow-pop',
+            anchorTop ? 'top-3 sm:top-[6dvh] max-h-[calc(100dvh-1.5rem)] sm:max-h-[88dvh]' : 'top-1/2 -translate-y-1/2',
             wide ? 'w-[min(94vw,720px)]' : 'w-[min(94vw,640px)]')}>
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">

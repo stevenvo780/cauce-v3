@@ -5,7 +5,7 @@ import { useConsoleAccess } from '../../api/console-access';
 import type { ConfigurationSnapshot } from '../../api/types';
 import { AgentLifecycleFields } from './AgentLifecycleFields';
 import { AgentFleetOperation, AgentFleetPreview } from './AgentFleetOperation';
-import { operationSummary } from './fleet-operation-text';
+import { blockingOperation, fleetErrorText, operationSummary } from './fleet-operation-text';
 import { agentLifecycleDraft, agentLifecycleRequest, FLEET_ACTION_LABELS, type AgentLifecycleDraft } from './agent-lifecycle-model';
 import { useAgentLifecycle } from './use-agent-lifecycle';
 import './agent-lifecycle.css';
@@ -29,10 +29,11 @@ export function AgentLifecyclePanel({ snapshot, target, onReloaded, initialDraft
   const [validated, setValidated] = useState<{ input: FleetOperationRequest; receipt: FleetOperationPreview }>();
   const [error, setError] = useState<string>();
   const [sending, setSending] = useState(false);
+  const [previewing, setPreviewing] = useState(false);
   const [sessionInvalid, setSessionInvalid] = useState(false);
   const [inventoryNotice, setInventoryNotice] = useState<string>();
   const previousRevision = useRef(snapshot.revision);
-  const flow = useAgentLifecycle(open, target);
+  const flow = useAgentLifecycle(open, target, () => { void reloadSnapshot(); });
   const heading = useRef<HTMLHeadingElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
   const generation = useRef(0);
@@ -48,6 +49,7 @@ export function AgentLifecyclePanel({ snapshot, target, onReloaded, initialDraft
   const samePreview = !!input && !!validated && JSON.stringify(input) === JSON.stringify(validated.input);
   const busy = sending || flow.busy;
   const inProgress = !!flow.operation && ['queued', 'running', 'awaiting_auth', 'cancelling'].includes(flow.operation.status);
+  const blocked = !!blockingOperation(flow.operation, kind);
   useEffect(() => { if (open) heading.current?.focus({ preventScroll: true }); }, [open]);
   useEffect(() => {
     if (previousRevision.current === snapshot.revision) return;
@@ -71,26 +73,26 @@ export function AgentLifecyclePanel({ snapshot, target, onReloaded, initialDraft
     setKey(newKey()); setValidated(undefined); setError(undefined);
   }
   async function preview() {
-    if (!canWrite || !available || busy || inProgress) return;
+    if (!canWrite || !available || busy || inProgress || blocked) return;
     if (!input) { setError(prepared.error); return; }
     const expected = JSON.stringify(input);
     const sequence = ++generation.current;
-    setSending(true); setError(undefined); setValidated(undefined);
+    setSending(true); setPreviewing(true); setError(undefined); setValidated(undefined);
     try {
       const receipt = await api.previewFleetOperation(input);
       if (sequence === generation.current && expected === currentFingerprint.current) setValidated({ input, receipt });
-    } catch (cause) { if (sequence === generation.current) setError(cause instanceof Error ? cause.message : 'No se pudo previsualizar la operación.'); }
-    finally { setSending(false); }
+    } catch (cause) { if (sequence === generation.current) setError(cause instanceof Error ? fleetErrorText(cause.message, flow.operation, kind) : 'No se pudo previsualizar la operación.'); }
+    finally { setSending(false); setPreviewing(false); }
   }
   async function enqueue() {
-    if (!canWrite || !available || busy || inProgress || !samePreview || !validated.receipt.can_apply) return;
+    if (!canWrite || !available || busy || inProgress || blocked || !samePreview || !validated.receipt.can_apply) return;
     const sequence = ++generation.current;
     setSending(true); setError(undefined);
     try {
       const operation = await api.enqueueFleetOperation(validated.input);
       if (sequence === generation.current) { flow.accept(operation); setValidated(undefined); setKey(newKey()); onDirtyChange?.(false); }
     } catch (cause) {
-      if (sequence === generation.current) setError(cause instanceof Error ? cause.message : 'No se pudo confirmar el encolado. Reintenta con la misma solicitud.');
+      if (sequence === generation.current) setError(cause instanceof Error ? fleetErrorText(cause.message, flow.operation, kind) : 'No se pudo confirmar el encolado. Reintenta con la misma solicitud.');
     } finally { setSending(false); }
   }
   async function revalidate() {
@@ -99,7 +101,8 @@ export function AgentLifecyclePanel({ snapshot, target, onReloaded, initialDraft
     else setError('No se pudo acreditar la sesión actual. Reintenta la lectura de permisos.');
   }
   async function reloadSnapshot() {
-    try { onReloaded?.(await api.getConfiguration()); }
+    if (!onReloaded) return;
+    try { onReloaded(await api.getConfiguration()); }
     catch { setError('No se pudo releer el inventario. El recibo operativo se conserva.'); }
   }
   const agent = target?.resource === 'agent' ? [...(snapshot.agents ?? []), ...(snapshot.retired?.agents ?? [])]
@@ -130,15 +133,16 @@ export function AgentLifecyclePanel({ snapshot, target, onReloaded, initialDraft
       {draftKind ? <AgentLifecycleFields draft={draft} snapshot={snapshot} capability={flow.capability} target={target}
         disabled={busy || inProgress || !canWrite || !available} edit={edit} /> : null}
       {kind === 'purge' ? <p className="notice">La purga elimina el registro retirado. El servidor exige ausencia de dependencias antes de aplicar.</p> : null}
-      {error ? <p className="notice" role="alert">{error}</p> : null}
-      <div className="acciones"><button type="button" className="button secondary" disabled={busy || inProgress || !canWrite || !available}
-        onClick={() => { void preview(); }}>Previsualizar operación</button>
-        <button type="button" className="button" disabled={busy || inProgress || !canWrite || !available || !samePreview || !validated.receipt.can_apply}
+      <div className="acciones"><button type="button" className="button secondary" disabled={busy || inProgress || blocked || !canWrite || !available}
+        aria-busy={previewing} onClick={() => { void preview(); }}>{previewing ? 'Previsualizando…' : 'Previsualizar operación'}</button>
+        <button type="button" className="button" disabled={busy || inProgress || blocked || !canWrite || !available || !samePreview || !validated.receipt.can_apply}
           onClick={() => { void enqueue(); }}>Encolar operación</button></div>
+      {!samePreview && !blocked && !previewing ? <p className="m-0 text-xs text-muted">Previsualiza la operación para poder encolarla.</p> : null}
+      {error ? <p className="notice" role="alert">{error}</p> : null}
       {samePreview ? <><AgentFleetPreview preview={validated.receipt} />
         <details><summary>Solicitud exacta de esta previsualización</summary><pre>{JSON.stringify(validated.input, null, 2)}</pre></details></> : null}
       {flow.operation ? <><AgentFleetOperation operation={flow.operation} busy={busy} current={!flow.readError && canWrite && !!flow.capability?.available}
-        onAuthRefreshed={flow.accept}
+        onAuthRefreshed={flow.accept} intended={kind} stale={flow.stale}
         control={(action) => { void flow.control(action); }} />
         {flow.readError ? <p className="notice" role="alert">{flow.readError}</p> : null}
         <button type="button" className="button secondary" disabled={busy} onClick={() => { void flow.refresh(); }}>Releer operación</button>

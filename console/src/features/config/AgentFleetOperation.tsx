@@ -1,7 +1,7 @@
 import type { FleetOperation, FleetOperationPreview } from '@cauce/protocol/fleet-operation';
 import { FLEET_ACTION_LABELS } from './agent-lifecycle-model';
 import { AuthOperationPanel } from './AuthOperationPanel';
-import { ERRORS, purgeEntries, STATUS, STEP_STATUS, STEPS } from './fleet-operation-text';
+import { blockingOperation, blockingText, cancellable, ERRORS, purgeEntries, resumable, STALE_RESUME_TEXT, STATUS, STEP_STATUS, STEPS } from './fleet-operation-text';
 
 export function AgentFleetPreview({ preview }: { preview: FleetOperationPreview }) {
   const deleted = purgeEntries(preview, 'delete');
@@ -21,12 +21,16 @@ export function AgentFleetPreview({ preview }: { preview: FleetOperationPreview 
     <details><summary>Huella exacta</summary><code>{preview.request_sha256}</code></details>
   </section>;
 }
-export function AgentFleetOperation({ operation, busy, current, control, onAuthRefreshed }: {
+export function AgentFleetOperation({ operation, busy, current, control, onAuthRefreshed, intended, stale = false }: {
   operation: FleetOperation; busy: boolean; current: boolean; control: (action: 'cancel' | 'resume') => void;
   onAuthRefreshed?: (value: FleetOperation) => void;
+  /** The action the operator wants next: an unresolved operation of another kind has to be cancelled first. */
+  intended?: FleetOperation['kind']; stale?: boolean;
 }) {
-  const cancel = ['queued', 'running', 'awaiting_auth'].includes(operation.status);
-  const resume = operation.status === 'awaiting_auth' || (operation.status === 'failed' && operation.error?.retryable === true);
+  const blocking = intended ? blockingOperation(operation, intended) : undefined;
+  const cancel = cancellable(operation);
+  const resume = resumable(operation) && !stale;
+  const cancelPrimary = cancel && (!!blocking || stale);
   const error = operation.error;
   return <section className="agent-fleet-receipt" aria-label="Operación de flota">
     <p role="status">{FLEET_ACTION_LABELS[operation.kind]}: {STATUS[operation.status]}. La aceptación HTTP acredita el encolado; los pasos muestran el efecto verificado.</p>
@@ -39,10 +43,12 @@ export function AgentFleetOperation({ operation, busy, current, control, onAuthR
       {' '}<span className="text-xs">Código: <code>{error.code}</code></span></p> : null}
     {operation.status === 'awaiting_auth' && onAuthRefreshed
       ? <AuthOperationPanel operation={operation} allowed={current} onRefreshed={onAuthRefreshed} /> : null}
+    {blocking && intended ? <p className="notice" role="note">{blockingText(blocking, intended)}</p> : null}
+    {stale ? <p className="notice" role="alert">{STALE_RESUME_TEXT}</p> : null}
     {!current ? <p className="notice">La última lectura no se pudo acreditar. Relee el estado antes de recuperar la operación.</p> : null}
     <div className="acciones">
-      <button type="button" className={resume ? 'button primary' : 'button secondary'} disabled={busy || !current || !resume} onClick={() => { control('resume'); }}>Reanudar operación</button>
-      <button type="button" className="button secondary" disabled={busy || !current || !cancel} onClick={() => { control('cancel'); }}>Cancelar operación</button>
+      <button type="button" className={resume && !cancelPrimary ? 'button primary' : 'button secondary'} disabled={busy || !current || !resume} onClick={() => { control('resume'); }}>Reanudar operación</button>
+      <button type="button" className={cancelPrimary ? 'button primary' : 'button secondary'} disabled={busy || !current || !cancel} onClick={() => { control('cancel'); }}>Cancelar operación</button>
     </div>
     <details><summary>Identidad de la operación</summary>
       <p>ID: <code>{operation.id}</code> · Versión: {operation.version}</p>

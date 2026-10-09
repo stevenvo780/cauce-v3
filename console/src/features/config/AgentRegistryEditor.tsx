@@ -110,7 +110,7 @@ export function AgentRegistryEditor({ tenantId, alias, snapshot, hosts, onReload
   const writeBlock = agentWriteBlock(current, 'update');
   const deleteBlock = agentWriteBlock(current, 'delete');
   const runner = useConfigMutation({
-    config: resource, access, encadenado: chained, canal: `agent-registry:${tenantId}/${alias}`,
+    config: resource, access, encadenado: chained, canal: `agent-registry:${tenantId}/${alias}`, redoDryRunOnConflict: false,
     ...(writeBlock === undefined ? {} : { bloqueo: writeBlock }),
   });
   const agent = current.agents?.find((row) => row.tenant_id === tenantId && row.alias === alias);

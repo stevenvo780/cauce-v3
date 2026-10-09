@@ -15,7 +15,7 @@ export function AgentRemovalDialog({ tenantId, alias, retired, snapshot, onReloa
   onReloaded: (snapshot: ConfigurationSnapshot) => void; onClose: () => void;
 }) {
   const kind = retired ? 'purge' : 'retire';
-  return <FormDialog open wide title={`Eliminar agente ${tenantId}/${alias}`}
+  return <FormDialog open wide anchorTop title={`Eliminar agente ${tenantId}/${alias}`}
     description="Eliminar un agente con ejecución lleva dos pasos: retirarlo y después borrarlo definitivamente." onClose={onClose}>
     <div className="config-modal-cuerpo grid gap-3">
       <ol className="m-0 grid list-none gap-2 p-0" aria-label="Pasos para eliminar el agente">

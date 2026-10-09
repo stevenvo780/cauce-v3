@@ -2,7 +2,7 @@ import './admin-ui.css';
 import { PageFreshness } from '../../components/PageFreshness';
 import { Tabs } from '@base-ui/react/tabs';
 import { ShieldOff } from 'lucide-react';
-import { useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { ConsoleAccessBoundary } from '../../api/console-access';
 import type { ConsoleAccess } from '../../api/types';
 import { LinkButton, Notice } from '../../components/kit';
@@ -40,12 +40,36 @@ function seccionPedida(search: string): ConfigSectionId {
   return CONFIG_SECTIONS.find((section) => section.id === pedida)?.id ?? SECCION_POR_DEFECTO;
 }
 
+const REFOCUS_THROTTLE_MS = 10_000;
+
+/** Fleet operations bump the configuration revision without the console noticing: reread when the tab comes back. */
+function useRefreshOnReturn(reload: () => Promise<unknown>, idle: boolean) {
+  const latest = useRef({ reload, idle });
+  latest.current = { reload, idle };
+  const lastRead = useRef(Date.now());
+  useEffect(() => {
+    function onReturn() {
+      if (document.visibilityState === 'hidden' || !latest.current.idle) return;
+      if (Date.now() - lastRead.current < REFOCUS_THROTTLE_MS) return;
+      lastRead.current = Date.now();
+      void latest.current.reload();
+    }
+    document.addEventListener('visibilitychange', onReturn);
+    window.addEventListener('focus', onReturn);
+    return () => {
+      document.removeEventListener('visibilitychange', onReturn);
+      window.removeEventListener('focus', onReturn);
+    };
+  }, []);
+}
+
 function ConfigPageContent() {
   const ctx = useConfigWrites();
   const { config } = ctx;
   const search = useRouteSearch();
   const [seccion, setSeccion] = useState<ConfigSectionId>(() => seccionPedida(search));
   const ancha = useMediaQuery('(min-width: 768px)');
+  useRefreshOnReturn(config.reload, !ctx.busy && !config.loading);
 
   if (config.loading && !config.data) return <LoadingState label="Leyendo configuración versionada…" />;
   // A 403 is NOT a crash: the GET was refused for lack of `read`. See `esNegativaDePermiso` and `SinPermisoDeLectura`.

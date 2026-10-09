@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { FleetTargetSchema, type FleetCapability, type FleetOperation, type FleetTarget } from '@cauce/protocol/fleet-operation';
 import { useApi } from '../../api/context';
+import { isStaleResume } from './fleet-operation-text';
 
 const pending = (operation: FleetOperation | undefined) => operation && ['queued', 'running', 'awaiting_auth', 'cancelling'].includes(operation.status);
-export function useAgentLifecycle(open: boolean, target?: FleetTarget) {
+const TERMINAL: readonly FleetOperation['status'][] = ['succeeded', 'failed', 'cancelled'];
+/** `onTerminal` fires when a shown operation moves into a terminal state: its effects changed the configuration revision. */
+export function useAgentLifecycle(open: boolean, target?: FleetTarget, onTerminal?: () => void) {
   const api = useApi();
   const [capability, setCapability] = useState<FleetCapability>();
   const [capabilityError, setCapabilityError] = useState<string>();
@@ -12,7 +15,10 @@ export function useAgentLifecycle(open: boolean, target?: FleetTarget) {
   const [operation, setOperation] = useState<FleetOperation>();
   const [readError, setReadError] = useState<string>();
   const [busy, setBusy] = useState(false);
+  const [stale, setStale] = useState(false);
   const sequence = useRef(0);
+  const terminalRef = useRef(onTerminal);
+  terminalRef.current = onTerminal;
   const accepted = useRef<FleetOperation | undefined>(undefined);
   const targetKey = JSON.stringify(target);
   useEffect(() => {
@@ -47,6 +53,8 @@ export function useAgentLifecycle(open: boolean, target?: FleetTarget) {
       return;
     }
     accepted.current = value;
+    if (previous?.id === value.id && previous.status !== value.status && TERMINAL.includes(value.status)) terminalRef.current?.();
+    if (previous?.id !== value.id || previous.version !== value.version) setStale(false);
     setReadError(undefined);
     setOperation(value);
     // Updated in place: moving the row the operator just pressed would re-insert its button in the DOM and drop its focus.
@@ -77,8 +85,12 @@ export function useAgentLifecycle(open: boolean, target?: FleetTarget) {
         : api.resumeFleetOperation(operation.id, operation.version));
       if (read === sequence.current) accept(value);
     } catch (cause) {
-      if (read === sequence.current) setReadError(cause instanceof Error ? cause.message : 'No se pudo recuperar la operación. Relee su versión actual.');
+      if (read === sequence.current) {
+        // The operation itself is intact: only cancelling it is left, so the controls must stay usable.
+        if (action === 'resume' && cause instanceof Error && isStaleResume(cause.message)) setStale(true);
+        else setReadError(cause instanceof Error ? cause.message : 'No se pudo recuperar la operación. Relee su versión actual.');
+      }
     } finally { if (read === sequence.current) setBusy(false); }
   }
-  return { capability, capabilityError, history, historyError, operation, readError, busy, accept, refresh, control };
+  return { capability, capabilityError, history, historyError, operation, readError, stale, busy, accept, refresh, control };
 }

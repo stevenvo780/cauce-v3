@@ -93,6 +93,22 @@ it('«Eliminar definitivamente» on a retired agent opens the removal guide at t
   expect(within(dialog).queryByRole('combobox')).not.toBeInTheDocument();
 });
 
+it('a retired agent that keeps historical memberships opens as retired, from the list and from the URL', async () => {
+  serve(['config.read', 'config.write']);
+  const withHistory = { ...snapshot, memberships: [...(snapshot.memberships ?? []), { tenant_id: 'A', alias: 'old', room_id: 'grp.a', enabled: false }] };
+  const user = userEvent.setup();
+  const view = renderWithApi(<ConsoleAccessBoundary><AgentesSection snapshot={withHistory} /></ConsoleAccessBoundary>);
+  const purge = await screen.findByRole('button', { name: 'Eliminar definitivamente A/old' });
+  await waitFor(() => { expect(purge).toBeEnabled(); });
+  await user.click(purge);
+  expect(await screen.findByRole('dialog', { name: 'Eliminar agente A/old' })).toBeInTheDocument();
+  view.unmount();
+  window.history.replaceState({}, '', '/config?seccion=agentes&agente=A%2Fold');
+  renderWithApi(<ConsoleAccessBoundary><AgentesSection snapshot={withHistory} /></ConsoleAccessBoundary>);
+  await user.click(await screen.findByRole('button', { name: 'Eliminar agente A/old' }));
+  expect(await screen.findByRole('dialog', { name: 'Eliminar agente A/old' })).toBeInTheDocument();
+});
+
 it('without config.write every write button is disabled and states the reason; member-only agents get none', async () => {
   serve(['config.read']);
   renderSection();

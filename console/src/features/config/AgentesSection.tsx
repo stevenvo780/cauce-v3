@@ -73,9 +73,11 @@ export function AgentesSection({ snapshot: leido, onReload, tablaCompleta, ctx }
   const reloaded = (siguiente: ConfigurationSnapshot) => { setReleido(siguiente); onReload?.(); };
   const retired = (snapshot.retired?.agents ?? []).flatMap((row) => retiredAgent(row) ?? []);
   const wanted = parseAgentRef(openRef);
-  const sheetAgent = wanted ? agents.find((agent) => agent.tenantId === wanted.tenantId && agent.alias === wanted.alias) : undefined;
-  const sheetRetired = wanted && !sheetAgent
+  const listed = wanted ? agents.find((agent) => agent.tenantId === wanted.tenantId && agent.alias === wanted.alias) : undefined;
+  // A retired agent keeps its historical memberships, so it is also listed as member-only: the retired row is the operable one.
+  const sheetRetired = wanted && !listed?.registered
     ? retired.find((agent) => agent.tenantId === wanted.tenantId && agent.alias === wanted.alias) : undefined;
+  const sheetAgent = sheetRetired ? undefined : listed;
   const shown = sheetAgent ?? sheetRetired;
   const sheetRef = shown ? `${shown.tenantId}/${shown.alias}` : undefined;
   // A link to an agent that is gone (deleted, or never existed) must not leave a dead param behind.

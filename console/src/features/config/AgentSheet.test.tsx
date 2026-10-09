@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from '@testing-library/react';
+import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { vi } from 'vitest';
@@ -148,4 +148,28 @@ it('asks before discarding a pending group move chosen in the Grupos tab', async
   await user.keyboard('{Escape}');
   expect(await screen.findByText(/Tenés cambios sin guardar/)).toBeInTheDocument();
   expect(screen.getByRole('dialog')).toBeInTheDocument();
+});
+
+it('opens the removal guide on the first click when the sheet was opened from the URL', async () => {
+  window.history.replaceState({}, '', '/config?seccion=agentes&agente=A/run');
+  const user = userEvent.setup();
+  renderSection();
+  await user.click(await screen.findByRole('button', { name: 'Eliminar agente A/run' }));
+  expect(await screen.findByRole('heading', { name: 'Eliminar agente A/run' })).toBeInTheDocument();
+  expect(screen.getByLabelText('Pasos para eliminar el agente')).toBeInTheDocument();
+});
+
+it('keeps the removal guide open when focus leaves it right after it opens', async () => {
+  window.history.replaceState({}, '', '/config?seccion=agentes&agente=A/run');
+  const user = userEvent.setup();
+  renderSection();
+  await user.click(await screen.findByRole('button', { name: 'Eliminar agente A/run' }));
+  const guide = await screen.findByLabelText('Pasos para eliminar el agente');
+  const outside = document.createElement('button');
+  document.body.append(outside);
+  act(() => { outside.focus(); });
+  await new Promise((resolve) => { setTimeout(resolve, 50); });
+  expect(guide).toBeInTheDocument();
+  expect(screen.getByRole('heading', { name: 'Eliminar agente A/run' })).toBeInTheDocument();
+  outside.remove();
 });
