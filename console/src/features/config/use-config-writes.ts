@@ -43,7 +43,10 @@ export function useConfigWrites() {
   const [action, setAction] = useState<ConfigAction>('create');
   const [editor, setEditor] = useState(() => mutationText('acl_edge', 'create'));
   const [pendiente, setPendiente] = useState<AccionPendienteVigente>();
-  const [formTarget, setFormTarget] = useState<ConfigFormTarget>();
+  const [formTarget, setFormTargetRaw] = useState<ConfigFormTarget>();
+  /** The open form is painted in a dialog (the Agents view) instead of inline under its table. */
+  const [formModal, setFormModal] = useState(false);
+  const setFormTarget = (target: ConfigFormTarget | undefined) => { setFormTargetRaw(target); if (!target) setFormModal(false); };
   const [removal, setRemoval] = useState<{ target: FleetTarget; kind: 'retire' | 'restore' | 'purge' }>();
   // Navigating stays available under RBAC `unknown`, but writing fails closed; a reload error invalidates a prior ALLOW.
   const estadoPermisoDeEscritura = access.error
@@ -85,7 +88,7 @@ export function useConfigWrites() {
    * the `<pre>` they were reading is no longer in view, and returning later would show them a "Confirm" whose content
    * they no longer remember. Same with the green ones: they are valid only for the screen that produced them.
    */
-  function openForm(target: ConfigFormTarget) {
+  function openForm(target: ConfigFormTarget, modal = false) {
     const definition = configFormDefinition(target.collection);
     if (!definition || !config.data || !canUseConfigForm(config.data, definition, target.action, target.row)) return;
     setPendiente(undefined);
@@ -95,6 +98,7 @@ export function useConfigWrites() {
     if (fleetTarget && (target.action === 'retire' || target.action === 'restore')) {
       setFormTarget(undefined); setRemoval({ target: fleetTarget, kind: target.action }); return;
     }
+    setFormModal(modal);
     setFormTarget(target);
   }
 
@@ -268,7 +272,7 @@ export function useConfigWrites() {
     config, access, groups, politicasDeRol, snapshotRevision,
     estadoPermisoDeEscritura, motivoDeSoloLectura, soloLectura, busy,
     canalEditor, canalRollback, canalAccion, canalFormulario, interruptores,
-    formTarget, setFormTarget, openForm, removal, setRemoval,
+    formTarget, formModal, setFormTarget, openForm, removal, setRemoval,
     pendiente, setPendiente, confirmarAccion,
     resource, action, editor, selectTemplate, editarMutacion, submit,
     rollback, alCambiarDeSeccion,

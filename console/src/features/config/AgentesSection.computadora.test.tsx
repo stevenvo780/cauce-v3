@@ -71,7 +71,8 @@ it('una lectura 403 de computadoras degrada en silencio: sin error ni insignias'
 });
 
 it('offers retire only for agents with a runtime and preselects retire in the lifecycle panel', async () => {
-  server.use(http.get('http://localhost/v3/console/fleet/hosts', () => HttpResponse.json({ hosts: [] })));
+  server.use(http.get('http://localhost/v3/console/fleet/hosts', () => HttpResponse.json({ hosts: [] })),
+    http.get('http://localhost/v3/console/fleet/capability', () => HttpResponse.json({ available: true, actions: ['retire'], placements: [] })));
   const user = userEvent.setup();
   renderWithApi(<ConsoleAccessBoundary><AgentesSection snapshot={withRuntime} /></ConsoleAccessBoundary>);
   await openAgentMenu(user, 'A/two');

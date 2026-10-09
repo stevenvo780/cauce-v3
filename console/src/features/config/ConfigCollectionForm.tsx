@@ -1,4 +1,4 @@
-import { useId, useState } from 'react';
+import { useEffect, useId, useState } from 'react';
 import type { ConfigMutation, ConfigurationSnapshot } from '../../api/types';
 import { buildFormMutation, configFormValues, type ConfigFormDefinition, type ConfigFormField, type ConfigFormTarget } from './config-form-model';
 import type { ConfigMutationRunner } from './use-config-mutation';
@@ -16,7 +16,7 @@ function suggestionsFor(field: ConfigFormField, snapshot: ConfigurationSnapshot,
   return [...new Set(matching.map((row) => row[field.suggestionKey ?? field.key]).filter((value): value is string => typeof value === 'string'))];
 }
 
-export function ConfigCollectionForm({ definition, target, snapshot, runner, busy, onCancel, onRelated }: {
+export function ConfigCollectionForm({ definition, target, snapshot, runner, busy, onCancel, onRelated, onDirtyChange }: {
   definition: ConfigFormDefinition;
   target: ConfigFormTarget;
   snapshot: ConfigurationSnapshot;
@@ -24,6 +24,8 @@ export function ConfigCollectionForm({ definition, target, snapshot, runner, bus
   busy: boolean;
   onCancel: () => void;
   onRelated: (target: ConfigFormTarget) => void;
+  /** Reports whether the fields differ from what the form opened with. */
+  onDirtyChange?: ((dirty: boolean) => void) | undefined;
 }) {
   const formId = useId();
   const scopedIdentity = scopedFormIdentity(snapshot, definition);
@@ -33,6 +35,9 @@ export function ConfigCollectionForm({ definition, target, snapshot, runner, bus
   const title = `${ACTION_LABEL[target.action]} ${definition.label}`;
   const disabled = busy || !runner.canWrite || !canUseConfigForm(snapshot, definition, target.action, values);
   const identityOnly = ['delete', 'retire', 'restore'].includes(target.action);
+  const dirty = !identityOnly && JSON.stringify(values) !== JSON.stringify(initial);
+  useEffect(() => { onDirtyChange?.(dirty); }, [dirty, onDirtyChange]);
+  useEffect(() => () => { onDirtyChange?.(false); }, [onDirtyChange]);
   let mutation: ConfigMutation | undefined;
   try { mutation = buildFormMutation(definition, target.action, values, initial); } catch { mutation = undefined; }
 
