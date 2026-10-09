@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# cuotas — la TUI de cuotas de IA (ai-usage-tui.mjs). VIVE AQUI, en server2.
+#
+# kant 2026-09-22, por decision de Steven: no en la torre (es su PC: cuando arranca Windows se
+# lleva el sistema de cuotas por delante) y tampoco en el VPS (lo prefiere en casa). server2 es
+# la eleccion natural porque aqui ya corren los contenedores cuota-* que MIDEN.
+#
+#   cuotas             la TUI interactiva
+#   cuotas <vista>     snapshot (daily|weekly|monthly|session|blocks)
+#   cuotas --tabla     la tabla corta
+#   cuotas --json      el measurement.json crudo
+#   cuotas tokens      consumo de tokens por tier/agente/modelo (7d; "30d" para el mes; --recolectar)
+#
+# Si la TUI no puede arrancar, cae a la tabla en vez de dejarte sin nada.
+set -uo pipefail
+S=/home/server/.local/share/ai-usage-live
+BIN=/home/server/.local/bin
+TABLA="$BIN/cuotas-tabla"
+case "${1:-}" in
+  login) shift
+    if command -v cuota-auth >/dev/null 2>&1; then exec cuota-auth "$@"; fi
+    exec "$BIN/cuota-auth" "$@" ;;
+  --tabla|--simple) shift; exec "$TABLA" "$@" ;;
+  --json) exec "$TABLA" --json ;;
+  tokens) shift; exec python3 /home/server/cuotas-cli/tokens/tokens-ver.py "$@" ;;
+esac
+"$BIN/cuotas-sync-tui" >/dev/null 2>&1 || true
+# node se resuelve por ruta ABSOLUTA: por ssh no interactivo el PATH no trae ~/.local/bin,
+# y con `command -v node` esto caia a la tabla en silencio cuando se entraba desde la torre
+# o desde server1. Ese fue el sintoma "el TUI no responde".
+NODE=""
+for c in "$HOME/.local/bin/node" /usr/local/bin/node /usr/bin/node; do
+  [ -x "$c" ] && { NODE="$c"; break; }
+done
+[ -z "$NODE" ] && NODE="$(command -v node 2>/dev/null || true)"
+if [ -n "$NODE" ] && [ -r "$S/ai-usage-tui.mjs" ]; then
+  cd "$S" && exec "$NODE" ai-usage-tui.mjs "$@" 2>>"$S/tui-stderr.log"
+fi
+echo "cuotas: no encuentro node en server2; muestro la tabla." >&2
+exec "$TABLA" "$@"
