@@ -104,6 +104,10 @@ export function planFleetHostSlices(row: FleetOperationRow, agents: Record<strin
     return { host_id, agents: ordered, targets, target_sha256: scopeDigest(row, host_id, ordered, targets, previous) };
   });
 }
+function adoptedDraft(agent: Record<string, unknown>): boolean {
+  return isRegistryDraft({ runtime_key: agent.runtime_key as string | null, retired_at: null,
+    enabled: agent.enabled === true, lifecycle_state: String(agent.lifecycle_state) });
+}
 export async function loadFleetHostSlices(client: DatabaseClient, row: FleetOperationRow): Promise<FleetHostSlice[]> {
   const event = (await client.query<{ metadata: unknown }>(`SELECT metadata FROM fleet_operation_events
     WHERE operation_id=$1 AND event='step_completed' AND metadata->>'step' IN ('prepare','fence') ORDER BY id LIMIT 1`, [row.id])).rows[0];
@@ -114,15 +118,19 @@ export async function loadFleetHostSlices(client: DatabaseClient, row: FleetOper
   }).loose().safeParse(event?.metadata);
   if (!metadata.success) conflict('fleet operation has no sealed host scope');
   const slices = metadata.data.host_slices;
-  for (const agent of metadata.data.previous_agents) assertPlacement(agent, row.request);
+  const create = row.request.kind === 'create';
+  for (const agent of metadata.data.previous_agents) if (!(create && adoptedDraft(agent))) assertPlacement(agent, row.request);
   const expected = planFleetHostSlices({ ...row, desired_revision: String(metadata.data.prepared_revision) },
     slices.flatMap(slice => slice.agents), metadata.data.previous_agents);
   if (sha256Hex(expected) !== sha256Hex(slices)) conflict('fleet host scope digest differs from its prepared placements');
   const identities = slices.flatMap(slice => slice.targets).map(identity).sort();
   const fenced = metadata.data.fenced_targets.map(identity).sort();
-  const creation = row.request.kind === 'create'
-    && fenced.length === 0 && identities.length === 1
-    && identities[0] === identity(row.request.target);
+  const targetIdentity = identity(row.request.target);
+  const previous = metadata.data.previous_agents;
+  const adopting = previous.length === 1 && previous[0] !== undefined && adoptedDraft(previous[0])
+    && identity(previous[0]) === targetIdentity && fenced.length === 1 && fenced[0] === targetIdentity;
+  const creation = create && (fenced.length === 0 || adopting)
+    && identities.length === 1 && identities[0] === targetIdentity;
   if ((row.request.kind === 'create' ? !creation : sha256Hex(identities) !== sha256Hex(fenced))
       || sha256Hex(metadata.data.previous_agents.map(identity).sort()) !== sha256Hex(fenced)) {
     conflict('fleet host scope differs from its exact durable fence');

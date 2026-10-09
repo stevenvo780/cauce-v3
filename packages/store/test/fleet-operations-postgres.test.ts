@@ -120,13 +120,29 @@ describe('durable fleet operations', () => {
   it('adopts a console registry draft on create but refuses an agent that already has a runtime', async () => {
     const repo = repository();
     await pool.query(`INSERT INTO agents(tenant_id,alias,harness_id,display_name,enabled,lifecycle_state) VALUES('Steven','drafted','codex','Borrador',false,'draft')`);
-    const prepared = await repo.prepare(await claimFor(repo, 'drafted'));
+    const draftClaim = await claimFor(repo, 'drafted');
+    const prepared = await repo.prepare(draftClaim);
     expect(prepared.operation.desired_revision).toBe(1);
+    const slices = await repo.hostSlices(draftClaim);
+    expect(slices.flatMap(slice => slice.targets.map(target => target.alias))).toEqual(['drafted']);
     expect((await pool.query('SELECT enabled,lifecycle_state,runtime_key FROM agents WHERE alias=$1', ['drafted'])).rows)
       .toEqual([{ enabled: false, lifecycle_state: 'provisioning', runtime_key: 'drafted' }]);
     await pool.query(`INSERT INTO agents(tenant_id,alias,harness_id,enabled,lifecycle_state,runtime_key) VALUES('Steven','installed','codex',false,'draft','installed')`);
     await expect(repo.enqueue('Steven', 'fleet_operator', { ...create('installed', 'installed-host'), expected_revision: 1 }))
       .rejects.toThrow(/already exists/u);
+  });
+  it('still rejects a sealed create scope whose previous agent already has a runtime', async () => {
+    const repo = repository();
+    await pool.query(`INSERT INTO agents(tenant_id,alias,harness_id,display_name,enabled,lifecycle_state) VALUES('Steven','forged','codex','Borrador',false,'draft')`);
+    const claim = await claimFor(repo, 'forged'); await repo.prepare(claim);
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN'); await client.query("SET LOCAL session_replication_role = 'replica'");
+      await client.query(`UPDATE fleet_operation_events SET metadata=jsonb_set(metadata,'{previous_agents,0,runtime_key}','"forged"')
+        WHERE operation_id=$1 AND event='step_completed' AND metadata->>'step' IN ('prepare','fence')`, [claim.operation.id]);
+      await client.query('COMMIT');
+    } finally { client.release(); }
+    await expect(repo.hostSlices(claim)).rejects.toThrow(/exact complete durable placement|exact durable fence|digest/u);
   });
 
   it('rejects stale desired revision and unauthorized control before any enqueue', async () => {
