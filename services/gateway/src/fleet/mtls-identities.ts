@@ -16,12 +16,16 @@ const IdentityDocument = z.object({ version: z.literal(1), identities: z.array(z
   expires_at: z.unknown().optional(), principal: z.unknown(),
 }).loose()).max(20_000) }).strict();
 const reportedInvalidExpiries = new Set<string>();
-async function readIdentities(filename: string, ownerUid: number) {
+/** The live base registry is operator-owned and may belong to root or to the gateway uid; the fleet registry stays root-only. */
+export function fleetBaseRegistryOwners(processUid = process.getuid?.() ?? 0): readonly number[] {
+  return [...new Set([0, processUid])];
+}
+async function readIdentities(filename: string, owners: readonly number[]) {
   try {
     const file = await open(filename, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
     try {
       const stat = await file.stat();
-      if (!stat.isFile() || stat.uid !== ownerUid || stat.nlink !== 1 || (stat.mode & 0o022) !== 0 || stat.size > 8_388_608) throw new Error();
+      if (!stat.isFile() || !owners.includes(stat.uid) || stat.nlink !== 1 || (stat.mode & 0o022) !== 0 || stat.size > 8_388_608) throw new Error();
       const body = await file.readFile('utf8');
       if (Buffer.byteLength(body) > 8_388_608) throw new Error();
       const identities = IdentityDocument.parse(JSON.parse(body)).identities;
@@ -37,7 +41,8 @@ async function readIdentities(filename: string, ownerUid: number) {
 }
 export class FleetMtlsIdentityProvider implements MtlsIdentityProvider {
   constructor(private readonly basePath: string, private readonly fleetPath: string,
-    private readonly namespace: 'normal' | 'bootstrap', private readonly ownerUid = 0) {
+    private readonly namespace: 'normal' | 'bootstrap', private readonly ownerUid = 0,
+    private readonly baseOwnerUids: readonly number[] = [ownerUid]) {
     if (basePath === fleetPath || ![basePath, fleetPath].every(path => path.startsWith('/') && !path.split('/').includes('..'))) {
       throw new Error('Fleet mTLS identity registries must be distinct absolute paths');
     }
@@ -48,7 +53,9 @@ export class FleetMtlsIdentityProvider implements MtlsIdentityProvider {
   }
   async resolveFingerprintAuthority(fingerprint: string): Promise<MtlsIdentityAuthority> {
     if (!/^[a-f0-9]{64}$/u.test(fingerprint)) throw new AuthError('fleet certificate fingerprint is invalid');
-    const [base, fleet] = await Promise.all([readIdentities(this.basePath, this.ownerUid), readIdentities(this.fleetPath, this.ownerUid)]);
+    // The base registry may be owned by the gateway uid, so it never grants bootstrap authority: that namespace reads the fleet registry only.
+    const [base, fleet] = await Promise.all([this.namespace === 'bootstrap' ? Promise.resolve([]) : readIdentities(this.basePath, this.baseOwnerUids),
+      readIdentities(this.fleetPath, [this.ownerUid])]);
     const matches = [...base, ...fleet].filter(identity => identity.certificate_sha256 === fingerprint);
     if (matches.length === 0) throw new FleetCredentialRejectedError();
     if (matches.length !== 1) throw new AuthError('fleet certificate mapping is ambiguous');
@@ -69,7 +76,8 @@ export class FleetMtlsIdentityProvider implements MtlsIdentityProvider {
 export class FleetTokenProbeAuthProvider implements AuthProvider {
   readonly name = 'fleet-token-probe';
   readonly mode = 'production' as const;
-  constructor(private readonly path: string, private readonly ownerUid = 0, private readonly basePath?: string) {
+  constructor(private readonly path: string, private readonly ownerUid = 0, private readonly basePath?: string,
+    private readonly baseOwnerUids: readonly number[] = [ownerUid]) {
     if (basePath !== undefined && (basePath === path || ![basePath, path].every(value => value.startsWith('/') && !value.split('/').includes('..')))) {
       throw new Error('Fleet token identity registries must be distinct absolute paths');
     }
@@ -78,8 +86,8 @@ export class FleetTokenProbeAuthProvider implements AuthProvider {
     const header = request.headers.authorization;
     if (typeof header !== 'string' || !/^Bearer [a-f0-9]{64}$/u.test(header)) throw new AuthError('invalid credential probe transport');
     const hash = createHash('sha256').update(header.slice(7)).digest('hex');
-    const authorities = await Promise.all([readIdentities(this.path, this.ownerUid),
-      ...(this.basePath === undefined ? [] : [readIdentities(this.basePath, this.ownerUid)])]);
+    const authorities = await Promise.all([readIdentities(this.path, [this.ownerUid]),
+      ...(this.basePath === undefined ? [] : [readIdentities(this.basePath, this.baseOwnerUids)])]);
     const matches = authorities.flat().filter(identity => identity.token_sha256 === hash);
     if (matches.length === 0) throw new FleetCredentialRejectedError();
     if (matches.length !== 1) throw new AuthError('fleet bearer mapping is ambiguous');

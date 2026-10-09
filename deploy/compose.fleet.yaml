@@ -18,13 +18,8 @@ services:
         target: /run/cauce-fleet/config
         read_only: true
         bind: {create_host_path: false}
-      # El proveedor de flota exige registros con propietario uid 0: copia root:1000 0640 del registro vivo,
-      # refrescada por sync-registry-base.py. Reemplaza el montaje vivo del mismo destino de compose.yaml.
-      - type: bind
-        source: /etc/cauce-v3/fleet-v35/registry-base
-        target: /run/cauce-identities
-        read_only: true
-        bind: {create_host_path: false}
+      # El registro base es el montaje vivo de compose.yaml (/run/cauce-identities); el gateway acepta que sea de root
+      # o de su propio uid. El registro de flota sigue exigiendo uid 0.
       - type: bind
         source: /etc/cauce-v3/fleet-v35/registry-fleet
         target: /run/cauce-fleet-identities
