@@ -65,20 +65,28 @@ it('lista cada computadora con su estado, su fuente, su ejecutor y sus agentes',
   renderWithApi(<ComputadorasSection snapshot={HUB_SNAPSHOT} soloLectura={false} />);
 
   expect(await screen.findByText(/solo sus agentes dejan de estar disponibles/i)).toBeInTheDocument();
+  const resumen = within(screen.getByRole('list', { name: 'Resumen de la flota' }));
+  expect(resumen.getByText('Registradas').nextElementSibling).toHaveTextContent('2');
+  expect(resumen.getByText('Sin registrar').nextElementSibling).toHaveTextContent('1');
+  expect(resumen.getByText('Agentes').nextElementSibling).toHaveTextContent('1');
+  expect(screen.getByRole('heading', { name: 'Detectadas sin registrar (1)' })).toBeInTheDocument();
   const uno = tarjeta('Equipo uno');
   expect(within(uno).getByText('uno')).toBeInTheDocument();
-  expect(within(uno).getByText('Conectada, según el controlador de flota')).toBeInTheDocument();
+  expect(within(uno).getByText('Conectada')).toBeInTheDocument();
+  expect(within(uno).getByText('Estado: según el controlador de flota')).toBeInTheDocument();
   expect(within(uno).getByText('Aprobada para crear agentes')).toBeInTheDocument();
   expect(within(uno).getByText('worker')).toBeInTheDocument();
-  expect(within(uno).getByText(/en línea/)).toBeInTheDocument();
+  expect(within(uno).getByText('A, en línea')).toBeInTheDocument();
 
   const dos = tarjeta('Equipo dos');
-  expect(within(dos).getByText('Sin datos, ningún controlador ni agente lo ha reportado')).toBeInTheDocument();
+  expect(within(dos).getByText('Sin datos')).toBeInTheDocument();
+  expect(within(dos).getByText('Estado: ningún controlador ni agente lo ha reportado')).toBeInTheDocument();
   expect(within(dos).getByText('Pendiente: falta instalar y aprobar el ejecutor en esta computadora')).toBeInTheDocument();
   expect(within(dos).getByText('Nunca')).toBeInTheDocument();
 
   const tres = tarjeta('Equipo tres');
   expect(within(tres).getByText('Sin registrar')).toBeInTheDocument();
+  expect(within(tres).getByText('Registra la computadora para aprobarla.')).toBeInTheDocument();
   expect(within(tres).getByRole('button', { name: 'Registrar' })).toBeEnabled();
   expect(within(tres).queryByRole('checkbox', { name: 'Habilitada' })).not.toBeInTheDocument();
 });
@@ -88,7 +96,7 @@ it('registra una computadora nueva con su identificador, nombre y notas', async 
   const writes = flota([]);
   renderWithApi(<ComputadorasSection snapshot={HUB_SNAPSHOT} soloLectura={false} />);
   await user.click(await screen.findByRole('button', { name: 'Registrar computadora' }));
-  await user.type(screen.getByRole('textbox', { name: /identificador/i }), 'nueva-1');
+  await user.type(await screen.findByRole('textbox', { name: /identificador/i }), 'nueva-1');
   await user.type(screen.getByRole('textbox', { name: 'Nombre visible' }), 'Nueva uno');
   await user.type(screen.getByRole('textbox', { name: 'Notas' }), 'Rack del fondo');
   await user.click(screen.getByRole('button', { name: 'Guardar' }));
@@ -102,7 +110,8 @@ it('una computadora conocida sin registrar abre el formulario prellenado', async
   flota([computadora('tres', { registered: false, approved: false, version: 0, display_name: 'tres' })]);
   renderWithApi(<ComputadorasSection snapshot={HUB_SNAPSHOT} soloLectura={false} />);
   await user.click(await within(await screen.findByRole('article', { name: 'tres' })).findByRole('button', { name: 'Registrar' }));
-  expect(screen.getByRole('textbox', { name: /identificador/i })).toHaveValue('tres');
+  expect(await screen.findByRole('form', { name: 'Registrar computadora' })).toBeInTheDocument();
+  expect(await screen.findByRole('textbox', { name: /identificador/i })).toHaveValue('tres');
   expect(screen.getByRole('textbox', { name: 'Nombre visible' })).toHaveValue('tres');
 });
 
@@ -181,7 +190,7 @@ it('un alta con identificador repetido explica el duplicado, no un conflicto de 
   server.use(http.post('*/v3/console/fleet/hosts', () => HttpResponse.json({ detail: 'duplicate' }, { status: 409 })));
   renderWithApi(<ComputadorasSection snapshot={HUB_SNAPSHOT} soloLectura={false} />);
   await user.click(await screen.findByRole('button', { name: 'Registrar computadora' }));
-  await user.type(screen.getByRole('textbox', { name: /identificador/i }), 'dup-1');
+  await user.type(await screen.findByRole('textbox', { name: /identificador/i }), 'dup-1');
   await user.type(screen.getByRole('textbox', { name: 'Nombre visible' }), 'Duplicada');
   await user.click(screen.getByRole('button', { name: 'Guardar' }));
   expect(await screen.findByRole('alert')).toHaveTextContent('Ya existe una computadora con ese identificador.');
@@ -193,6 +202,19 @@ it('mientras se edita una computadora, su interruptor y su eliminación quedan b
   renderWithApi(<ComputadorasSection snapshot={HUB_SNAPSHOT} soloLectura={false} />);
   const tarjeta = await screen.findByRole('article', { name: 'Equipo uno' });
   await user.click(within(tarjeta).getByRole('button', { name: 'Editar' }));
-  expect(within(tarjeta).getByRole('checkbox', { name: 'Habilitada' })).toBeDisabled();
-  expect(within(tarjeta).getByRole('button', { name: 'Eliminar' })).toBeDisabled();
+  expect(within(tarjeta).getByRole('checkbox', { name: 'Habilitada', hidden: true })).toBeDisabled();
+  expect(within(tarjeta).getByRole('button', { name: 'Eliminar', hidden: true })).toBeDisabled();
+});
+
+it('una computadora deshabilitada muestra una sola insignia y muchos agentes se pliegan', async () => {
+  const user = userEvent.setup();
+  const agentes = Array.from({ length: 9 }, (_, i) => ({ tenant_id: 'A', alias: `ag${String(i)}`, enabled: true, online: i % 2 === 0 }));
+  flota([computadora('uno', { enabled: false, agents: agentes })]);
+  renderWithApi(<ComputadorasSection snapshot={HUB_SNAPSHOT} soloLectura={false} />);
+  const uno = await screen.findByRole('article', { name: 'Equipo uno' });
+  expect(within(uno).getByText('Deshabilitada')).toBeInTheDocument();
+  expect(within(uno).queryByText('Conectada')).not.toBeInTheDocument();
+  expect(within(uno).queryByText('ag8')).not.toBeInTheDocument();
+  await user.click(within(uno).getByRole('button', { name: '+3 más' }));
+  expect(within(uno).getByText('ag8')).toBeInTheDocument();
 });

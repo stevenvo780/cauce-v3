@@ -18,6 +18,27 @@ export function estadoDeComputadora(host: FleetHost): { etiqueta: string; tono: 
   return { ...ESTADO[host.status], fuente: FUENTE[host.status_source] };
 }
 
+/** The one status a card shows: a disabled computer reads as disabled whatever the controller says about it. */
+export function insigniaDeEstado(host: FleetHost): { etiqueta: string; tono: Tone } {
+  if (!host.registered) return { etiqueta: 'Sin registrar', tono: 'warn' };
+  if (!host.enabled) return { etiqueta: 'Deshabilitada', tono: 'neutral' };
+  const { etiqueta, tono } = estadoDeComputadora(host);
+  return { etiqueta, tono };
+}
+
+export interface ResumenDeFlota { registradas: number; conectadas: number; deshabilitadas: number; sinRegistrar: number; agentes: number }
+
+export function resumenDeFlota(hosts: readonly FleetHost[]): ResumenDeFlota {
+  const registradas = hosts.filter((host) => host.registered);
+  return {
+    registradas: registradas.length,
+    conectadas: registradas.filter((host) => host.enabled && host.status === 'reachable').length,
+    deshabilitadas: registradas.filter((host) => !host.enabled).length,
+    sinRegistrar: hosts.length - registradas.length,
+    agentes: hosts.reduce((total, host) => total + host.agents.length, 0),
+  };
+}
+
 export function ejecutorDeComputadora(host: FleetHost): string {
   return host.approved
     ? 'Aprobada para crear agentes'

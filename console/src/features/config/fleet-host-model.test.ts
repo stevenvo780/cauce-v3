@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { FleetHost } from '@cauce/protocol/fleet-hosts';
 import { ApiError } from '../../api/client/core';
-import { ejecutorDeComputadora, estadoDeComputadora, insigniaDeComputadora, mensajeDeEscritura, sePuedeEliminar } from './fleet-host-model';
+import { ejecutorDeComputadora, estadoDeComputadora, insigniaDeComputadora, insigniaDeEstado, resumenDeFlota, mensajeDeEscritura, sePuedeEliminar } from './fleet-host-model';
 
 const base = {
   host_id: 'uno', display_name: 'Uno', notes: '', enabled: true, status: 'reachable', status_source: 'controller',
@@ -50,4 +50,20 @@ describe('insignia de la computadora de un agente', () => {
     expect(insigniaDeComputadora({ ...base, enabled: false })).toBe('Deshabilitado: computadora deshabilitada');
     expect(insigniaDeComputadora({ ...base, status: 'unreachable', status_source: 'agents' })).toBe('Deshabilitado: computadora sin conexión');
   });
+});
+
+it('la insignia única prioriza sin registrar y deshabilitada sobre el estado de conexión', () => {
+  expect(insigniaDeEstado(base)).toEqual({ etiqueta: 'Conectada', tono: 'ok' });
+  expect(insigniaDeEstado({ ...base, enabled: false })).toEqual({ etiqueta: 'Deshabilitada', tono: 'neutral' });
+  expect(insigniaDeEstado({ ...base, registered: false, enabled: false })).toEqual({ etiqueta: 'Sin registrar', tono: 'warn' });
+});
+
+it('el resumen cuenta registradas, conectadas, deshabilitadas, sin registrar y agentes', () => {
+  const agente = { tenant_id: 'A', alias: 'w', enabled: true, online: true };
+  expect(resumenDeFlota([
+    { ...base, agents: [agente, agente] },
+    { ...base, host_id: 'dos', status: 'unreachable' },
+    { ...base, host_id: 'tres', enabled: false },
+    { ...base, host_id: 'cuatro', registered: false, agents: [agente] },
+  ])).toEqual({ registradas: 3, conectadas: 1, deshabilitadas: 1, sinRegistrar: 1, agentes: 3 });
 });
