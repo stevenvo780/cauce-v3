@@ -26,26 +26,26 @@ def require_root():
         raise Abort('requires root')
 
 
-def directory_fd(directory, private=False):
+def directory_fd(directory, private=False, owners=(0,)):
     try:
         descriptor = open_absolute_directory(directory)
     except (OSError, InvalidAbsolutePath):
         raise Abort('directory contains a symlink or is unavailable: ' + str(directory)) from None
     details = os.fstat(descriptor)
-    if details.st_uid != 0 or details.st_mode & (0o077 if private else 0o022):
+    if details.st_uid not in owners or details.st_mode & (0o077 if private else 0o022):
         os.close(descriptor)
         raise Abort('directory ownership or mode is unsafe: ' + str(directory))
     return descriptor
 
 
-def safe_read(filename, private=False, maximum=8_388_608):
+def safe_read(filename, private=False, maximum=8_388_608, owners=(0,)):
     filename = pathlib.Path(filename)
-    parent = directory_fd(filename.parent)
+    parent = directory_fd(filename.parent, owners=owners)
     descriptor = None
     try:
         descriptor = open_regular_at(parent, filename.name, os.O_RDONLY | os.O_NONBLOCK)
         details = os.fstat(descriptor)
-        if not stat.S_ISREG(details.st_mode) or details.st_uid != 0 or details.st_nlink != 1 \
+        if not stat.S_ISREG(details.st_mode) or details.st_uid not in owners or details.st_nlink != 1 \
                 or details.st_size > maximum or details.st_mode & (0o077 if private else 0o022):
             raise Abort('file ownership, links, size or mode is unsafe: ' + filename.name)
         chunks = bytearray()
@@ -77,9 +77,9 @@ def staged_sha256(filename):
     return digest.hexdigest()
 
 
-def write_new(filename, body, uid, gid, mode, replace=False):
+def write_new(filename, body, uid, gid, mode, replace=False, owners=(0,)):
     filename = pathlib.Path(filename)
-    parent = directory_fd(filename.parent)
+    parent = directory_fd(filename.parent, owners=owners)
     temporary = '.' + filename.name + '.upgrade-' + uuid.uuid4().hex
     descriptor = None
     try:
@@ -275,12 +275,12 @@ def verify_pins(new_root, documents):
 
 def restore_configs(ctx):
     restored = True
-    for filename, backup, expected in reversed(ctx['rollback']):
+    for filename, backup, expected, owners in reversed(ctx['rollback']):
         try:
-            body, details = safe_read(backup)
+            body, details = safe_read(backup, owners=owners)
             if hashlib.sha256(body).hexdigest() != expected:
                 raise Abort('configuration backup was altered: ' + backup.name)
-            write_new(filename, body, details.st_uid, details.st_gid, stat.S_IMODE(details.st_mode), replace=True)
+            write_new(filename, body, details.st_uid, details.st_gid, stat.S_IMODE(details.st_mode), replace=True, owners=owners)
             say(f'  restored {filename}')
         except (Abort, OSError) as error:
             say(f'  NOT restored {filename}: {error}')

@@ -251,7 +251,7 @@ def validate_candidates(args, ctx, new_root, work):
     policy = candidate / 'executor.server.v1.json'
     write_new(policy, ctx['changes'][args.controller / 'executor.server.v1.json'][1], 0, 0, 0o600)
     produced = executor_capabilities(ctx, new_root, policy)
-    current, _ = safe_read(args.capability)
+    current, _ = safe_read(args.capability, owners=gateway_owners(args))
     new_document, old_document = json.loads(produced), json.loads(current)
     if new_document.get('available') is not True:
         raise Abort('the release executor reports available != true for the candidate policy')
@@ -270,16 +270,21 @@ def validate_candidates(args, ctx, new_root, work):
         raise Abort('containers on the release in service cannot be migrated; fix or purge them first: ' + ', '.join(blocked))
 
 
+def gateway_owners(args):
+    # The gateway reads its fleet config as its own uid and requires private files, so that directory is gateway-owned.
+    return (0, args.gateway_uid)
+
+
 def write_configs(args, ctx, stamp):
-    pending = [(filename, before, after, metadata) for filename, (before, after, metadata) in ctx['changes'].items() if before != after]
+    pending = [(filename, before, after, metadata, (0,)) for filename, (before, after, metadata) in ctx['changes'].items() if before != after]
     if ctx['capability_changed']:
-        body, info = safe_read(args.capability)
-        pending.append((args.capability, body, ctx['capability_new'], (info.st_uid, info.st_gid, stat.S_IMODE(info.st_mode))))
-    for filename, before, after, metadata in pending:
+        body, info = safe_read(args.capability, owners=gateway_owners(args))
+        pending.append((args.capability, body, ctx['capability_new'], (info.st_uid, info.st_gid, stat.S_IMODE(info.st_mode)), gateway_owners(args)))
+    for filename, before, after, metadata, owners in pending:
         backup = filename.with_name(f'{filename.name}.pre-upgrade-{args.release}-{stamp}')
-        write_new(backup, before, *metadata)
-        ctx['rollback'].append((filename, backup, hashlib.sha256(before).hexdigest()))
-        write_new(filename, after, *metadata, replace=True)
+        write_new(backup, before, *metadata, owners=owners)
+        ctx['rollback'].append((filename, backup, hashlib.sha256(before).hexdigest(), owners))
+        write_new(filename, after, *metadata, replace=True, owners=owners)
         say(f'  rewrote {filename} (backup {backup.name})')
 
 
@@ -495,6 +500,7 @@ def parse_arguments(argv=None):
     parser.add_argument('--work-root', type=pathlib.Path, default=pathlib.Path('/var/tmp/cauce-v35-private-deployment-plan/upgrade-kit'))
     parser.add_argument('--postgres-container', default='cauce-v3-prod-postgres-1')
     parser.add_argument('--host-id', default='server')
+    parser.add_argument('--gateway-uid', type=int, default=1000, help='owner of the gateway fleet config (it reads private files as this uid)')
     parser.add_argument('--accept-capability-change', action='store_true')
     parser.add_argument('--apply', action='store_true')
     parser.add_argument('--keep-work', action='store_true')

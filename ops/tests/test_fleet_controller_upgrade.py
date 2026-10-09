@@ -86,6 +86,25 @@ class UpgradeSecurityTests(UpgradeFixture):
             lib.safe_read(original)
         self.owner.start()
 
+    def test_gateway_config_is_accepted_only_when_its_owner_is_allowed(self):
+        capability = self.file(self.root / 'gateway/capability.v1.json', b'{}\n', 0o600)
+        self.owner.stop()
+        try:
+            with self.assertRaises(lib.Abort):
+                lib.safe_read(capability)
+            self.assertEqual(lib.safe_read(capability, owners=(0, os.geteuid()))[0], b'{}\n')
+            lib.write_new(capability, b'{"v":2}\n', os.geteuid(), os.getegid(), 0o600, replace=True, owners=(0, os.geteuid()))
+            self.assertEqual(capability.read_bytes(), b'{"v":2}\n')
+            self.assertEqual(stat.S_IMODE(capability.stat().st_mode), 0o600)
+            with self.assertRaises(lib.Abort):
+                lib.write_new(capability, b'x\n', os.geteuid(), os.getegid(), 0o600, replace=True)
+        finally:
+            self.owner.start()
+
+    def test_gateway_uid_defaults_to_the_gateway_process_user(self):
+        self.assertEqual(self.arguments().gateway_uid, 1000)
+        self.assertEqual(self.kit.gateway_owners(self.arguments('--gateway-uid', '1001')), (0, 1001))
+
     def test_atomic_write_replaces_only_after_sync_and_preserves_mode(self):
         original = self.file(self.root / 'policy.json', b'old\n', 0o640)
         lib.write_new(original, b'new\n', 0, os.getegid(), 0o640, replace=True)
