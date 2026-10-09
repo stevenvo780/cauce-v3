@@ -38,7 +38,8 @@ def path(value) -> pathlib.Path:
     return pathlib.Path(value)
 
 
-def directory(location: pathlib.Path, private=False) -> int:
+def directory(location: pathlib.Path, private=False, owners: frozenset[int] | None = None) -> int:
+    owners = owners or frozenset({os.geteuid()})
     descriptor = os.open('/', os.O_RDONLY | os.O_DIRECTORY)
     try:
         for component in location.parts[1:]:
@@ -47,10 +48,10 @@ def directory(location: pathlib.Path, private=False) -> int:
             descriptor = following
             details = os.fstat(descriptor)
             sticky = component in {'tmp'} and details.st_uid == 0 and details.st_mode & stat.S_ISVTX
-            if details.st_uid not in {0, os.geteuid()} or details.st_mode & 0o022 and not sticky:
+            if details.st_uid not in {0} | owners or details.st_mode & 0o022 and not sticky:
                 raise AuthorityError('authority directory is unsafe')
         details = os.fstat(descriptor)
-        if details.st_uid != os.geteuid() or private and details.st_mode & 0o077:
+        if details.st_uid not in owners or private and details.st_mode & 0o077:
             raise AuthorityError('authority directory has a different owner or mode')
         return descriptor
     except BaseException:
@@ -58,15 +59,16 @@ def directory(location: pathlib.Path, private=False) -> int:
         raise
 
 
-def read(location: pathlib.Path, private=False) -> tuple[bytes, os.stat_result]:
-    parent = directory(location.parent)
+def read(location: pathlib.Path, private=False, owners: frozenset[int] | None = None) -> tuple[bytes, os.stat_result]:
+    owners = owners or frozenset({os.geteuid()})
+    parent = directory(location.parent, owners=owners)
     try:
         descriptor = os.open(location.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
     finally:
         os.close(parent)
     try:
         details = os.fstat(descriptor)
-        if not stat.S_ISREG(details.st_mode) or details.st_uid != os.geteuid() or details.st_nlink != 1 \
+        if not stat.S_ISREG(details.st_mode) or details.st_uid not in owners or details.st_nlink != 1 \
                 or details.st_mode & (0o077 if private else 0o022) or details.st_size > 8388608:
             raise AuthorityError('authority file is unsafe')
         with os.fdopen(descriptor, 'rb', closefd=False) as stream:
@@ -82,8 +84,8 @@ def identity(details):
     return (details.st_dev, details.st_ino, details.st_size, details.st_mtime_ns, details.st_ctime_ns, details.st_mode)
 
 
-def publish(location: pathlib.Path, document: dict, original=None):
-    parent = directory(location.parent)
+def publish(location: pathlib.Path, document: dict, original=None, owners: frozenset[int] | None = None):
+    parent = directory(location.parent, owners=owners)
     temporary = '.' + location.name + '.' + secrets.token_hex(16)
     try:
         raw = (json.dumps(document, sort_keys=True, separators=(',', ':')) + '\n').encode()
@@ -92,6 +94,8 @@ def publish(location: pathlib.Path, document: dict, original=None):
             with os.fdopen(output, 'wb', closefd=False) as stream:
                 stream.write(raw)
                 stream.flush()
+            if original is not None:
+                os.fchown(output, original.st_uid, original.st_gid)
             os.fchmod(output, 0o600 if original is None else stat.S_IMODE(original.st_mode))
             os.fsync(output)
         finally:
@@ -128,7 +132,8 @@ def target(agent, record):
 
 
 def policy_paths(policy):
-    if set(policy) != {'version', 'state_root', 'registries', 'signer'} or policy['version'] != 1 \
+    if not {'version', 'state_root', 'registries', 'signer'} <= set(policy) <= {'version', 'state_root', 'registries', 'signer', 'base_registry_owner_uid'} \
+            or policy['version'] != 1 \
             or set(policy['registries']) != set(AUTHORITIES) \
             or set(policy['signer']) != {'certificate', 'key', 'certificate_sha256', 'key_sha256'}:
         raise AuthorityError('authority policy is invalid')
@@ -138,7 +143,12 @@ def policy_paths(policy):
     for name, location in registries.items():
         if location.name != ('mtls_identities.json' if name.endswith('mtls') else 'token_hashes.json'):
             raise AuthorityError('authority filename is invalid')
-    return path(policy['state_root']), registries
+    owner = policy.get('base_registry_owner_uid', os.geteuid())
+    if type(owner) is not int or not 0 <= owner < 2 ** 32:
+        raise AuthorityError('authority policy is invalid')
+    base = frozenset({os.geteuid(), owner})
+    owners = {location: base if name.startswith('base_') else frozenset({os.geteuid()}) for name, location in registries.items()}
+    return path(policy['state_root']), registries, owners
 
 
 def validate_packet(packet):
@@ -156,10 +166,10 @@ def validate_packet(packet):
         raise AuthorityError('authority request is invalid')
 
 
-def inventory(registries, agent):
+def inventory(registries, owners, agent):
     rows = []
     for name in AUTHORITIES:
-        raw, original = read(registries[name])
+        raw, original = read(registries[name], owners=owners[registries[name]])
         document = json.loads(raw)
         if not isinstance(document, dict) or set(document) != {'version', 'identities'} or document['version'] != 1 \
                 or not isinstance(document['identities'], list) or len(document['identities']) > 20000 \
@@ -264,7 +274,7 @@ def issue(policy, packet, rows, journal, journal_path, journal_stat):
 
 def perform(policy, packet):
     validate_packet(packet)
-    state, registries = policy_paths(policy)
+    state, registries, owners = policy_paths(policy)
     with ExitStack() as stack:
         parent = directory(state, private=True)
         stack.callback(os.close, parent)
@@ -275,7 +285,7 @@ def perform(policy, packet):
             raise AuthorityError('authority lock is unsafe')
         fcntl.flock(lock, fcntl.LOCK_EX)
         for location in sorted(registries.values()):
-            registry_parent = directory(location.parent)
+            registry_parent = directory(location.parent, owners=owners[location])
             stack.callback(os.close, registry_parent)
             descriptor = os.open('.' + location.name + '.lock', os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600, dir_fd=registry_parent)
             stack.callback(os.close, descriptor)
@@ -292,7 +302,7 @@ def perform(policy, packet):
             journal, journal_stat = {'binding': binding}, None
         if journal.get('binding') != binding:
             raise AuthorityError('authority journal scope changed')
-        rows = inventory(registries, packet['agent'])
+        rows = inventory(registries, owners, packet['agent'])
         action = packet['action']
         if action == 'inventory':
             return observation(rows)
@@ -319,8 +329,8 @@ def perform(policy, packet):
             for name, document, original, _ in rows:
                 kept = [row for row in document['identities'] if not target(packet['agent'], row)]
                 if kept != document['identities']:
-                    publish(registries[name], {**document, 'identities': kept}, original)
-            rows = inventory(registries, packet['agent'])
+                    publish(registries[name], {**document, 'identities': kept}, original, owners[registries[name]])
+            rows = inventory(registries, owners, packet['agent'])
             journal['revoke_complete'] = True
             _, current_stat = read(journal_path, private=True)
             publish(journal_path, journal, current_stat)

@@ -9,7 +9,7 @@ import { readFile } from 'node:fs/promises';
 import { createPool, type DatabasePool } from '@cauce/store';
 import { configuredFleetCapability } from './console/fleet-capability.js';
 import { configuredFleetGateway } from './fleet/gateway-config.js';
-import { FleetMtlsIdentityProvider, FleetTokenProbeAuthProvider } from './fleet/mtls-identities.js';
+import { FleetMtlsIdentityProvider, FleetTokenProbeAuthProvider, fleetBaseRegistryOwners } from './fleet/mtls-identities.js';
 import { buildGateway } from './app.js';
 import {
   configuredAckDeadlineMs, configuredDeliveryAdmission, configuredDeliveryLeaseCap, configuredBlobApi } from './config.js';
@@ -85,13 +85,13 @@ function configuredFleetToken(): FleetTokenProbeAuthProvider {
   const fleet = process.env.CAUCE_FLEET_TOKEN_HASH_FILE;
   const base = process.env.CAUCE_TOKEN_HASH_FILE;
   if (!fleet || !base) throw new Error('Fleet credential probes require the base and fleet token registries');
-  return new FleetTokenProbeAuthProvider(fleet, 0, base);
+  return new FleetTokenProbeAuthProvider(fleet, 0, base, fleetBaseRegistryOwners());
 }
 function configuredMtls(namespace: 'normal' | 'bootstrap' = 'normal'): MtlsAuthProvider {
   const path = process.env.CAUCE_MTLS_IDENTITY_FILE;
   if (!path) throw new Error('CAUCE_MTLS_IDENTITY_FILE is required for mTLS auth');
   const fleetPath = process.env.CAUCE_FLEET_MTLS_IDENTITY_FILE;
-  if (fleetPath !== undefined) return new MtlsAuthProvider(new FleetMtlsIdentityProvider(path, fleetPath, namespace));
+  if (fleetPath !== undefined) return new MtlsAuthProvider(new FleetMtlsIdentityProvider(path, fleetPath, namespace, 0, fleetBaseRegistryOwners()));
   if (namespace === 'bootstrap') throw new Error('Bootstrap requires the additional fleet identity registry');
   return new MtlsAuthProvider(new HashedMtlsIdentityFileProvider(path));
 }
