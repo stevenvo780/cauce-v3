@@ -1,9 +1,8 @@
-import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Footprints, LocateFixed, Maximize, Maximize2, Minimize2, Minus, Plus, X } from 'lucide-react';
-import type { PointerEvent, ReactNode, Ref } from 'react';
+import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Ellipsis, Footprints, LocateFixed, Mail, Map as MapIcon, Maximize, Maximize2, Minimize2, Minus, Plus, X } from 'lucide-react';
+import { useState, type PointerEvent, type ReactNode, type Ref } from 'react';
 import { cn } from '../../cn';
-import type { Dir } from './layout';
-
-const BUTTON = 'grid size-9 pointer-coarse:size-11 cursor-pointer place-items-center rounded-md border-0 bg-transparent text-fg-2 hover:bg-subtle hover:text-fg disabled:cursor-default disabled:opacity-35 disabled:hover:bg-transparent focus-visible:outline-2 focus-visible:outline-brand';
+import { HUD_BUTTON, HUD_ICON_BUTTON, HUD_ON, HUD_PANEL, HUD_TEXT } from './hud-style';
+import type { Dir } from './level';
 
 function ControlButton({ label, onClick, disabled = false, pressed, children }: {
   label: string;
@@ -20,7 +19,7 @@ function ControlButton({ label, onClick, disabled = false, pressed, children }: 
       aria-pressed={pressed}
       disabled={disabled}
       onClick={onClick}
-      className={cn(BUTTON, pressed ? 'bg-brand-soft text-brand-ink hover:bg-brand-soft hover:text-brand-ink' : null)}
+      className={cn(HUD_ICON_BUTTON, pressed ? HUD_ON : null)}
     >
       {children}
     </button>
@@ -31,35 +30,52 @@ export interface OfficeControlsProps {
   canZoomIn: boolean;
   canZoomOut: boolean;
   paseo: boolean;
-  /** Short frames lay the toolbar out in a row so it never runs past the top. */
-  horizontal?: boolean;
+  campus: boolean;
+  map: boolean;
+  /** Where the tubes feed is toggled from on phones, which have no room for its own header. */
+  tubes?: { open: boolean; onToggle: () => void };
+  /** Phones keep zoom and framing in sight and fold the rest behind one button. */
+  compact?: boolean;
   onZoomIn: () => void;
   onZoomOut: () => void;
   onFit: () => void;
   onCenterMe: () => void;
   onTogglePaseo: () => void;
+  onToggleMap: () => void;
   maximized: boolean;
   onToggleMaximized: () => void;
 }
 
+/** The camera as a column of pixel buttons; every action also has a key. */
 export function OfficeControls(props: OfficeControlsProps) {
+  const [more, setMore] = useState(false);
+  const folded = props.compact === true && !more;
   return (
-    <div
-      role="toolbar"
-      aria-label="Cámara de la oficina"
-      aria-orientation={props.horizontal ? 'horizontal' : 'vertical'}
-      className={cn('absolute right-2 bottom-2 z-10 flex gap-0.5 rounded-lg', props.horizontal ? 'flex-row' : 'flex-col', 'border border-line bg-surface/92 p-1 shadow-card backdrop-blur-sm')}
-    >
+    <div role="toolbar" aria-label="Cámara de la oficina" aria-orientation="vertical" className={cn(HUD_PANEL, 'pointer-events-auto flex flex-col gap-1 p-1')}>
       <ControlButton label="Acercar" onClick={props.onZoomIn} disabled={!props.canZoomIn}><Plus size={16} aria-hidden="true" /></ControlButton>
       <ControlButton label="Alejar" onClick={props.onZoomOut} disabled={!props.canZoomOut}><Minus size={16} aria-hidden="true" /></ControlButton>
-      <ControlButton label="Ver toda la oficina" onClick={props.onFit}><Maximize size={15} aria-hidden="true" /></ControlButton>
-      <span aria-hidden="true" className={props.horizontal ? 'mx-0.5 my-1.5 w-px bg-line' : 'mx-1.5 my-0.5 h-px bg-line'} />
+      <ControlButton label={props.campus ? 'Ver todo el campus' : 'Ver todo el edificio'} onClick={props.onFit}><Maximize size={15} aria-hidden="true" /></ControlButton>
+      {props.compact ? (
+        <ControlButton label={more ? 'Menos controles' : 'Más controles'} pressed={more} onClick={() => { setMore(!more); }}><Ellipsis size={16} aria-hidden="true" /></ControlButton>
+      ) : null}
+      {folded ? null : <MoreControls {...props} />}
+    </div>
+  );
+}
+
+function MoreControls(props: OfficeControlsProps) {
+  return (
+    <>
       <ControlButton label="Centrar en mí" onClick={props.onCenterMe}><LocateFixed size={16} aria-hidden="true" /></ControlButton>
       <ControlButton label="Modo paseo" pressed={props.paseo} onClick={props.onTogglePaseo}><Footprints size={16} aria-hidden="true" /></ControlButton>
+      <ControlButton label={props.map ? 'Ocultar el mapa' : 'Mostrar el mapa'} pressed={props.map} onClick={props.onToggleMap}><MapIcon size={16} aria-hidden="true" /></ControlButton>
+      {props.tubes ? (
+        <ControlButton label={props.tubes.open ? 'Ocultar los tubos' : 'Mostrar los tubos'} pressed={props.tubes.open} onClick={props.tubes.onToggle}><Mail size={16} aria-hidden="true" /></ControlButton>
+      ) : null}
       <ControlButton label={props.maximized ? 'Salir de pantalla completa' : 'Pantalla completa'} pressed={props.maximized} onClick={props.onToggleMaximized}>
         {props.maximized ? <Minimize2 size={16} aria-hidden="true" /> : <Maximize2 size={16} aria-hidden="true" />}
       </ControlButton>
-    </div>
+    </>
   );
 }
 
@@ -78,7 +94,7 @@ export function DirectionPad({ onHold, padRef }: { onHold: (dir: Dir, held: bool
     onHold(dir, held);
   };
   return (
-    <div ref={padRef} className="absolute bottom-2 left-2 z-10 grid touch-none grid-cols-3 grid-rows-3 gap-0.5 select-none" role="group" aria-label="Caminar">
+    <div ref={padRef} className="pointer-events-auto grid touch-none grid-cols-3 grid-rows-3 gap-0.5 select-none" role="group" aria-label="Caminar">
       {PAD.map((key) => (
         <button
           key={key.dir}
@@ -88,10 +104,7 @@ export function DirectionPad({ onHold, padRef }: { onHold: (dir: Dir, held: bool
           onPointerUp={press(key.dir, false)}
           onPointerCancel={press(key.dir, false)}
           onContextMenu={(event) => { event.preventDefault(); }}
-          className={cn(
-            key.area,
-            'grid size-11 cursor-pointer place-items-center rounded-lg border border-line bg-surface/75 text-fg-2 shadow-card backdrop-blur-sm active:bg-brand-soft active:text-brand-ink',
-          )}
+          className={cn(key.area, HUD_BUTTON, 'size-11 opacity-85 active:bg-[#ffcd75] active:text-[#1a1c2c]')}
         >
           {key.icon}
         </button>
@@ -100,23 +113,16 @@ export function DirectionPad({ onHold, padRef }: { onHold: (dir: Dir, held: bool
   );
 }
 
-export function OfficeHint({ touch, top = false, onClose }: { touch: boolean; top?: boolean; onClose: () => void }) {
+export function OfficeHint({ touch, onClose }: { touch: boolean; onClose: () => void }) {
   const tips = touch
-    ? ['Arrastrá para mirar', 'pellizcá para acercar', 'tocá el piso para caminar']
-    : ['Arrastrá para mirar', 'rueda para acercar', 'clic en el piso para caminar', 'P: modo paseo'];
+    ? ['Tocá un edificio para entrar', 'arrastrá para mirar', 'pellizcá para acercar']
+    : ['Clic en un edificio para entrar', '1–9 cambian de edificio', 'arrastrá o WASD para mirar', 'P: paseo'];
   return (
-    <div className={cn('pointer-events-none absolute left-2 z-10 flex max-w-[calc(100%-4.5rem)] pointer-coarse:max-w-[calc(100%-5rem)]', top ? 'top-14 items-start' : 'bottom-2 items-end')}>
-      <p role="status" className="pointer-events-auto m-0 flex items-center gap-1 rounded-lg border border-line bg-surface/92 py-1 pr-1 pl-2.5 text-xs text-fg-2 shadow-card backdrop-blur-sm">
-        <span>{tips.join(' · ')}</span>
-        <button
-          type="button"
-          aria-label="Ocultar la ayuda"
-          onClick={onClose}
-          className="grid size-6 shrink-0 cursor-pointer place-items-center rounded border-0 bg-transparent text-muted hover:bg-subtle hover:text-fg pointer-coarse:size-11"
-        >
-          <X size={13} aria-hidden="true" />
-        </button>
-      </p>
-    </div>
+    <p role="status" className={cn(HUD_PANEL, HUD_TEXT, 'pointer-events-auto m-0 flex max-w-full items-center gap-2 py-1 pr-1 pl-2.5 text-[10px] text-[#c5d3dc]')}>
+      <span className="min-w-0">{tips.join(' · ')}</span>
+      <button type="button" aria-label="Ocultar la ayuda" onClick={onClose} className={cn(HUD_BUTTON, 'size-6 pointer-coarse:size-10')}>
+        <X size={12} aria-hidden="true" />
+      </button>
+    </p>
   );
 }

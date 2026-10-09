@@ -2,6 +2,7 @@ import type { Avatar } from './avatar';
 import { OPERATOR_ID, paintRows, rect, type Ctx, type SpriteCache } from './paint';
 import { OFFICE } from './palette';
 import { drawProp } from './props';
+import { capsule } from './render-fixtures';
 import type { Actor } from './simulation';
 import {
   BLANKET_X, BLANKET_Y, BUBBLE, CHAR_H, CHAR_W, GLYPH_Z, GLYPH_Z_SMALL, ICONS, LIE_H, LIE_W, blanketRows,
@@ -34,18 +35,45 @@ export interface ActorLook {
 const SEATED: ReadonlySet<string> = new Set(['sit', 'type', 'lie', 'ghost', 'read', 'eat']);
 const CHAT_ICONS: readonly IconName[] = ['heart', 'idea', 'coffee', 'note'];
 const BREATH = 1.6;
+const PATIENT: Readonly<Record<string, string>> = { o: OFFICE.outline, w: OFFICE.sheet, b: '#9fd8e3', l: '#c7eef5', d: '#7cc0cc' };
 
-/** `gaze` turns someone standing around towards the operator walking up to them. */
-export function actorLook(actor: Actor, gaze: Facing | null = null): ActorLook {
+export const blankLook = (): ActorLook => ({
+  x: 0, y: 0, frame: 'stand', facing: 'down', step: 0, ghost: false, seated: false, lying: false,
+  labelAbove: false, labelY: 0, hit: { x: 0, y: 0, w: 0, h: 0 }, head: { x: 0, y: 0 },
+});
+
+function setLook(out: ActorLook, x: number, y: number, hit: { w: number; h: number; dx: number; dy: number }, head: { dx: number; dy: number }): ActorLook {
+  out.x = x;
+  out.y = y;
+  out.hit.x = x + hit.dx;
+  out.hit.y = y + hit.dy;
+  out.hit.w = hit.w;
+  out.hit.h = hit.h;
+  out.head.x = x + head.dx;
+  out.head.y = y + head.dy;
+  return out;
+}
+
+const LYING_HIT = { w: LIE_W, h: LIE_H, dx: 0, dy: 0 };
+const LYING_HEAD = { dx: 10, dy: 1 };
+const BODY_HIT = { w: 14, h: 23, dx: 1, dy: 1 };
+const BODY_HEAD = { dx: 11, dy: 2 };
+
+/**
+ * `gaze` turns someone standing around towards the operator walking up to them; `lift` makes them
+ * hop. Pass `out` to fill a look kept between frames instead of making a new one.
+ */
+export function actorLook(actor: Actor, gaze: Facing | null = null, lift = 0, out: ActorLook = blankLook()): ActorLook {
   if (actor.pose === 'lie') {
-    const x = Math.round(actor.x - 14);
-    const y = Math.round(actor.y - 12);
-    return {
-      x, y, frame: 'sleep', facing: 'right', step: 0, ghost: false, seated: true, lying: true,
-      labelAbove: false, labelY: Math.round(actor.y) + 8,
-      hit: { x, y, w: LIE_W, h: LIE_H },
-      head: { x: x + 10, y: y + 1 },
-    };
+    out.frame = 'sleep';
+    out.facing = 'right';
+    out.step = 0;
+    out.ghost = false;
+    out.seated = true;
+    out.lying = true;
+    out.labelAbove = false;
+    out.labelY = Math.round(actor.y) + 8;
+    return setLook(out, Math.round(actor.x - 14), Math.round(actor.y - 12), LYING_HIT, LYING_HEAD);
   }
   const game = actor.pose === 'play' ? actor.rest.game : undefined;
   const seated = SEATED.has(actor.pose) || game === 'beanbag';
@@ -65,13 +93,17 @@ export function actorLook(actor: Actor, gaze: Facing | null = null): ActorLook {
   if (actor.behaviour.shake && actor.pose === 'sit') dx = Math.floor(actor.clock * 14) % 3 === 0 ? 1 : 0;
   if (game === 'pingpong') dx = Math.round(Math.sin(actor.clock * 4.4) * 1.5);
   const x = Math.round(actor.x - CHAR_W / 2 + dx);
-  const y = Math.round(actor.y - CHAR_H + 1 + dy);
+  const y = Math.round(actor.y - CHAR_H + 1 + dy - lift);
   const labelAbove = seated && facing === 'down';
-  const feet = Math.round(actor.y);
-  return {
-    x, y, frame, facing, step: Math.floor(actor.walked / 5), ghost: actor.pose === 'ghost', seated, lying: false,
-    labelAbove, labelY: labelAbove ? y + 1 : feet + 4, hit: { x: x + 1, y: y + 1, w: 14, h: 23 }, head: { x: x + 11, y: y + 2 },
-  };
+  out.frame = frame;
+  out.facing = facing;
+  out.step = Math.floor(actor.walked / 5);
+  out.ghost = actor.pose === 'ghost' || actor.state === 'down';
+  out.seated = seated;
+  out.lying = false;
+  out.labelAbove = labelAbove;
+  out.labelY = labelAbove ? y + 1 : Math.round(actor.y) + 4;
+  return setLook(out, x, y, BODY_HIT, BODY_HEAD);
 }
 
 function paintIcon(ctx: Ctx, name: IconName, x: number, y: number): void {
@@ -91,7 +123,8 @@ function blanketColors(actor: Actor): Record<string, string> {
 
 function drawLying(ctx: Ctx, sprites: SpriteCache, actor: Actor, look: ActorLook): void {
   const inhale = Math.floor(actor.clock / BREATH) % 2 === 1;
-  paintRows(ctx, blanketRows(19, 7, inhale), look.x + BLANKET_X, look.y + BLANKET_Y - (inhale ? 1 : 0), blanketColors(actor));
+  const colors = actor.rest.rest === 'pod' ? PATIENT : blanketColors(actor);
+  paintRows(ctx, blanketRows(19, 7, inhale), look.x + BLANKET_X, look.y + BLANKET_Y - (inhale ? 1 : 0), colors);
   ctx.drawImage(sprites.lying(actor.id), look.x, look.y);
 }
 
@@ -113,7 +146,9 @@ function drawToy(ctx: Ctx, actor: Actor, look: ActorLook, time: number): void {
   }
 }
 
-export function drawActor(ctx: Ctx, sprites: SpriteCache, actor: Actor, look: ActorLook, time: number): void {
+/** `holding` draws the capsule just collected from the station in the person's hands. */
+export function drawActor(ctx: Ctx, sprites: SpriteCache, actor: Actor, look: ActorLook, time: number, holding = false): void {
+  if (actor.pose === 'hidden') return;
   if (look.lying) {
     drawLying(ctx, sprites, actor, look);
     return;
@@ -134,7 +169,8 @@ export function drawActor(ctx: Ctx, sprites: SpriteCache, actor: Actor, look: Ac
   }
   const cx = look.x + CHAR_W / 2;
   const handY = look.y + 16;
-  if ((actor.carry === 'paper' || actor.pose === 'handover') && look.facing !== 'up') {
+  if ((actor.carry === 'capsule' || holding) && look.facing !== 'up') capsule(ctx, look.facing === 'left' ? cx - 9 : cx + 1, handY - 3, OFFICE.brass);
+  else if ((actor.carry === 'paper' || actor.pose === 'handover') && look.facing !== 'up') {
     const px = look.facing === 'left' ? cx - 9 : look.facing === 'right' ? cx + 3 : cx - 3;
     rect(ctx, px - 1, handY - 4, 7, 8, OFFICE.outline);
     rect(ctx, px, handY - 3, 5, 6, OFFICE.paper);
@@ -152,7 +188,8 @@ export function drawActor(ctx: Ctx, sprites: SpriteCache, actor: Actor, look: Ac
 }
 
 /** Overlays that must sit above every piece of furniture: bubbles and the selection marks. */
-export function drawActorOverlay(ctx: Ctx, actor: Actor, look: ActorLook, time: number, selected: boolean, hovered: boolean): void {
+export function drawActorOverlay(ctx: Ctx, actor: Actor, look: ActorLook, time: number, selected: boolean, hovered: boolean, emote: IconName | null = null): void {
+  if (actor.pose === 'hidden') return;
   const cx = look.lying ? look.x + LIE_W / 2 : look.x + CHAR_W / 2;
   if (selected || hovered) {
     const y = look.lying ? look.y + LIE_H + 1 : Math.round(actor.y) + (look.seated ? 2 : 0);
@@ -172,9 +209,9 @@ export function drawActorOverlay(ctx: Ctx, actor: Actor, look: ActorLook, time: 
       rect(ctx, ax, top + 3, 1, 1, SELECT);
     }
   }
-  const icon: IconName | null = actor.bubble === 'mail' ? 'mail'
+  const icon: IconName | null = emote ?? (actor.bubble === 'mail' ? 'mail'
     : actor.bubble === 'alert' ? 'alert'
-      : actor.bubble === 'paper' ? 'paper' : chatIcon(actor, time);
+      : actor.bubble === 'paper' ? 'paper' : chatIcon(actor, time));
   if (icon) {
     const bob = Math.floor(time * 2.5) % 2;
     const bx = look.labelAbove ? cx + 6 : cx + 2;
@@ -245,34 +282,6 @@ export function drawSleepTrail(
       });
     });
   }
-  ctx.globalAlpha = 1;
-}
-
-export type LabelTone = 'normal' | 'selected' | 'dim' | 'operator';
-
-/** Measures a name tag in device px without drawing it, so trails and prompts can avoid it. */
-export function labelRect(ctx: Ctx, text: string, x: number, y: number, above: boolean, fontPx: number): ScreenRect {
-  ctx.font = `600 ${String(fontPx)}px "Inter Variable", Inter, system-ui, sans-serif`;
-  const width = Math.ceil(ctx.measureText(text).width) + fontPx;
-  const height = Math.round(fontPx * 1.5);
-  const left = Math.round(x - width / 2);
-  const top = Math.round(above ? y - height : y);
-  return { left, top, right: left + width, bottom: top + height };
-}
-
-/** Device-pixel name tag: drawn after the art is scaled so the text stays sharp. */
-export function drawLabel(ctx: Ctx, text: string, box: ScreenRect, fontPx: number, tone: LabelTone): void {
-  ctx.font = `600 ${String(fontPx)}px "Inter Variable", Inter, system-ui, sans-serif`;
-  ctx.globalAlpha = tone === 'dim' ? 0.4 : 1;
-  ctx.fillStyle = tone === 'selected' ? SELECT : tone === 'operator' ? OFFICE.operatorMarkDark : 'rgba(37, 28, 24, 0.78)';
-  const height = box.bottom - box.top;
-  ctx.beginPath();
-  ctx.roundRect(box.left, box.top, box.right - box.left, height, height / 2);
-  ctx.fill();
-  ctx.fillStyle = '#ffffff';
-  ctx.textBaseline = 'middle';
-  ctx.textAlign = 'center';
-  ctx.fillText(text, Math.round((box.left + box.right) / 2), box.top + height / 2 + 0.5);
   ctx.globalAlpha = 1;
 }
 

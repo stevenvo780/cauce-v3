@@ -1,82 +1,93 @@
 import type { LiveState } from '../live/agent-state';
 import type { Vec } from './camera';
-import { TILE, type OfficeLayout, type RoomId } from './layout';
-import { OFFICE } from './palette';
+import { alongRoute, type Campus } from './campus';
+import { CAMPUS, TILE } from './level';
+import { STATE_PIXEL } from './hud-style';
+import type { World } from './simulation';
 import { teamTone } from './teams';
 
-const ROOM_FILL: Readonly<Record<RoomId, string>> = {
-  programadores: OFFICE.carpet,
-  cocina: OFFICE.tile,
-  patio: OFFICE.playFloor,
-  jardin: OFFICE.grass,
-  dormitorio: OFFICE.rest,
+const scratch = { x: 0, y: 0 };
+const SHARED_FILL: Readonly<Record<string, string>> = {
+  cafe: '#b5543f', dorm: '#5a5fa8', lobby: '#7e8796', shop: '#8a929e', park: '#3f8a44',
 };
 
-const DOT: Readonly<Record<LiveState, string>> = {
-  thinking: '#3b6fd1',
-  receiving: '#d99a1e',
-  delegating: '#1f9a8a',
-  blocked: '#e5484d',
-  settled: '#2f8f5b',
-  idle: '#7a5bc4',
-  down: '#8c929c',
-};
-
-/** Largest CSS size of the map inside `max`, keeping the building's proportions. */
-export function minimapSize(layout: Pick<OfficeLayout, 'cols' | 'rows'>, max: { width: number; height: number }): { width: number; height: number } {
-  const k = Math.min(max.width / (layout.cols * TILE), max.height / (layout.rows * TILE));
-  return { width: Math.round(layout.cols * TILE * k), height: Math.round(layout.rows * TILE * k) };
+/** Largest CSS size of the map inside `max`, keeping the campus proportions. */
+export function minimapSize(campus: Pick<Campus, 'cols' | 'rows'>, max: { width: number; height: number }): { width: number; height: number } {
+  const k = Math.min(max.width / (campus.cols * TILE), max.height / (campus.rows * TILE));
+  return { width: Math.round(campus.cols * TILE * k), height: Math.round(campus.rows * TILE * k) };
 }
 
-/** Where a click on the map lands in the art, given the map's own CSS box. */
-export function minimapToWorld(layout: Pick<OfficeLayout, 'cols' | 'rows'>, box: { left: number; top: number; width: number; height: number }, client: Vec): Vec {
+/** Where a click on the map lands on the campus, given the map's own CSS box. */
+export function minimapToWorld(campus: Pick<Campus, 'cols' | 'rows'>, box: { left: number; top: number; width: number; height: number }, client: Vec): Vec {
   return {
-    x: ((client.x - box.left) / box.width) * layout.cols * TILE,
-    y: ((client.y - box.top) / box.height) * layout.rows * TILE,
+    x: ((client.x - box.left) / box.width) * campus.cols * TILE,
+    y: ((client.y - box.top) / box.height) * campus.rows * TILE,
   };
 }
 
 export interface MinimapInput {
-  layout: OfficeLayout;
-  people: readonly { x: number; y: number; state: LiveState }[];
-  avatar: Vec | null;
-  /** The part of the art the camera shows, in art px. */
-  view: { x: number; y: number; w: number; h: number };
+  campus: Campus;
+  world: World;
+  /** The map shown now; its house is outlined. */
+  level: string;
+  /** The part of the campus the camera shows, in art px, while the campus is shown. */
+  view: { x: number; y: number; w: number; h: number } | null;
+  alerts: ReadonlyMap<string, number>;
+  states: ReadonlyMap<string, LiveState>;
 }
 
-export function drawMinimap(ctx: CanvasRenderingContext2D, input: MinimapInput, width: number, height: number): void {
-  const { layout } = input;
-  const k = width / (layout.cols * TILE);
+export function drawMinimap(ctx: CanvasRenderingContext2D, input: MinimapInput, width: number, height: number, time: number): void {
+  const { campus } = input;
+  const k = width / (campus.cols * TILE);
   ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.clearRect(0, 0, width, height);
-  ctx.fillStyle = OFFICE.wallTop;
+  ctx.fillStyle = '#5aa957';
   ctx.fillRect(0, 0, width, height);
-  for (const room of layout.rooms) {
-    ctx.fillStyle = ROOM_FILL[room.id];
-    ctx.fillRect(room.x * TILE * k, room.y * TILE * k, room.w * TILE * k, room.h * TILE * k);
+  for (const zone of campus.zones) {
+    if (zone.kind !== 'street' && zone.kind !== 'plaza' && zone.kind !== 'road' && zone.kind !== 'sidewalk') continue;
+    ctx.fillStyle = zone.kind === 'road' ? '#4a4e5a' : zone.kind === 'plaza' ? '#e2d9c6' : '#c9c2b4';
+    ctx.fillRect(zone.x * TILE * k, zone.y * TILE * k, zone.w * TILE * k, zone.h * TILE * k);
   }
-  for (const team of layout.teams) {
-    ctx.fillStyle = teamTone(team.hue, 50, 58);
-    ctx.fillRect(team.rug.x * TILE * k, team.sign.y * TILE * k, team.rug.w * TILE * k, (team.rug.h + 1) * TILE * k);
+  const blink = Math.floor(time * 2) % 2 === 0;
+  for (const site of campus.sites) {
+    const x = Math.round(site.x * TILE * k);
+    const y = Math.round(site.y * TILE * k);
+    const w = Math.max(2, Math.round(site.w * TILE * k));
+    const h = Math.max(2, Math.round(site.h * TILE * k));
+    ctx.fillStyle = '#0e0f17';
+    ctx.fillRect(x - 1, y - 1, w + 2, h + 2);
+    ctx.fillStyle = site.kind === 'group' ? teamTone(site.hue, 50, 50) : SHARED_FILL[site.kind] ?? '#7e8796';
+    if (site.phase?.kind === 'demolish') ctx.globalAlpha = 0.4;
+    ctx.fillRect(x, y, w, h);
+    ctx.globalAlpha = 1;
+    if (site.id === input.level) {
+      ctx.strokeStyle = '#ffcd75';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(x - 2, y - 2, w + 4, h + 4);
+    }
+    if ((input.alerts.get(site.id) ?? 0) > 0 && blink) {
+      ctx.fillStyle = '#b13e53';
+      ctx.fillRect(x + w - 4, y - 2, 5, 5);
+    }
   }
-  const dot = Math.max(2, Math.round(width / 60));
-  for (const person of input.people) {
-    ctx.fillStyle = OFFICE.outline;
-    ctx.fillRect(Math.round(person.x * k - dot / 2) - 1, Math.round((person.y - 6) * k - dot / 2) - 1, dot + 2, dot + 2);
-    ctx.fillStyle = DOT[person.state];
-    ctx.fillRect(Math.round(person.x * k - dot / 2), Math.round((person.y - 6) * k - dot / 2), dot, dot);
+  ctx.fillStyle = '#ffcd75';
+  ctx.fillRect(Math.round(campus.hub.x * k) - 2, Math.round(campus.hub.y * k) - 2, 4, 4);
+  const dot = Math.max(2, Math.round(width / 70));
+  for (const actor of input.world.actors.values()) {
+    if (actor.level !== CAMPUS || actor.pose === 'hidden') continue;
+    ctx.fillStyle = '#0e0f17';
+    ctx.fillRect(Math.round(actor.x * k - dot / 2) - 1, Math.round((actor.y - 6) * k - dot / 2) - 1, dot + 2, dot + 2);
+    ctx.fillStyle = STATE_PIXEL[input.states.get(actor.id) ?? actor.state];
+    ctx.fillRect(Math.round(actor.x * k - dot / 2), Math.round((actor.y - 6) * k - dot / 2), dot, dot);
   }
-  if (input.avatar) {
-    const size = dot + 2;
-    const x = Math.round(input.avatar.x * k - size / 2);
-    const y = Math.round((input.avatar.y - 6) * k - size / 2);
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(x - 1, y - 1, size + 2, size + 2);
-    ctx.fillStyle = OFFICE.operatorMark;
-    ctx.fillRect(x, y, size, size);
+  for (const capsule of input.world.line.capsules) {
+    if (capsule.phase !== 'flying' || capsule.at < 0) continue;
+    ctx.fillStyle = '#ffcd75';
+    alongRoute(capsule.route, capsule.at, scratch);
+    ctx.fillRect(Math.round(scratch.x * k) - 1, Math.round(scratch.y * k) - 1, 3, 3);
   }
+  if (!input.view) return;
   const unit = Math.max(1, Math.round(width / 160));
-  ctx.strokeStyle = OFFICE.outline;
+  ctx.strokeStyle = '#f4f4f4';
   ctx.lineWidth = unit;
   const left = Math.max(0, input.view.x * k);
   const top = Math.max(0, input.view.y * k);

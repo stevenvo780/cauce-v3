@@ -1,5 +1,8 @@
-import { TILE, WALL_ROWS, type Dir, type OfficeLayout, type Point, type Spot } from './layout';
-import { findPath } from './pathfinding';
+import { TILE, type Dir, type Point, type Spot } from './level';
+import { findCheapestPath, findPath } from './pathfinding';
+
+/** The part of a map the operator walks on. */
+export interface Grid { cols: number; rows: number; walkable: readonly boolean[]; cost?: Uint8Array }
 
 /** Art px per second: a little brisker than the agents, it is the operator in a hurry. */
 export const AVATAR_SPEED = 62;
@@ -20,19 +23,28 @@ export interface Avatar {
 }
 
 export function createAvatar(door: Spot): Avatar {
-  return { x: door.px.x, y: door.px.y, dir: 'down', moving: false, walked: 0, route: [] };
+  return { x: door.px.x, y: door.px.y, dir: door.dir, moving: false, walked: 0, route: [] };
+}
+
+/** Puts the operator on a door of another map, as if they had just stepped through it. */
+export function teleport(avatar: Avatar, spot: Spot): void {
+  avatar.x = spot.px.x;
+  avatar.y = spot.px.y;
+  avatar.dir = spot.dir;
+  avatar.route = [];
+  avatar.moving = false;
 }
 
 export const tileAt = (x: number, y: number): Point => ({ x: Math.floor(x / TILE), y: Math.floor((y - 1) / TILE) });
 const tileFeet = (tile: Point): Point => ({ x: tile.x * TILE + TILE / 2, y: tile.y * TILE + TILE - 3 });
 
-export function walkableAt(layout: OfficeLayout, tile: Point): boolean {
-  return tile.x >= 0 && tile.y >= WALL_ROWS && tile.x < layout.cols && tile.y < layout.rows
+export function walkableAt(layout: Grid, tile: Point): boolean {
+  return tile.x >= 0 && tile.y >= 0 && tile.x < layout.cols && tile.y < layout.rows
     && (layout.walkable[tile.y * layout.cols + tile.x] ?? false);
 }
 
 /** The feet are a small box; every corner must stand on floor. */
-export function feetFree(layout: OfficeLayout, x: number, y: number): boolean {
+export function feetFree(layout: Grid, x: number, y: number): boolean {
   const corners = [
     [x - FOOT_HALF_W, y - FOOT_H], [x + FOOT_HALF_W - 1, y - FOOT_H],
     [x - FOOT_HALF_W, y - 1], [x + FOOT_HALF_W - 1, y - 1],
@@ -47,7 +59,7 @@ export function dirOf(dx: number, dy: number, fallback: Dir): Dir {
 }
 
 /** Moves each axis on its own so walking into a desk at an angle slides along it. */
-export function moveBy(avatar: Avatar, layout: OfficeLayout, dx: number, dy: number): boolean {
+export function moveBy(avatar: Avatar, layout: Grid, dx: number, dy: number): boolean {
   const startX = avatar.x;
   const startY = avatar.y;
   if (dx !== 0 && feetFree(layout, avatar.x + dx, avatar.y)) avatar.x += dx;
@@ -59,10 +71,10 @@ export function moveBy(avatar: Avatar, layout: OfficeLayout, dx: number, dy: num
 }
 
 /** Nearest walkable floor tile to `tile`, searching outwards; `null` when the room has none. */
-export function nearestFloor(layout: OfficeLayout, tile: Point): Point | null {
+export function nearestFloor(layout: Grid, tile: Point): Point | null {
   const start = {
     x: Math.min(layout.cols - 1, Math.max(0, tile.x)),
-    y: Math.min(layout.rows - 1, Math.max(WALL_ROWS, tile.y)),
+    y: Math.min(layout.rows - 1, Math.max(0, tile.y)),
   };
   const seen = new Set<number>([start.y * layout.cols + start.x]);
   const queue: Point[] = [start];
@@ -71,7 +83,7 @@ export function nearestFloor(layout: OfficeLayout, tile: Point): Point | null {
     for (const [dx, dy] of [[0, 1], [1, 0], [-1, 0], [0, -1]] as const) {
       const next = { x: current.x + dx, y: current.y + dy };
       const key = next.y * layout.cols + next.x;
-      if (next.x < 0 || next.y < WALL_ROWS || next.x >= layout.cols || next.y >= layout.rows || seen.has(key)) continue;
+      if (next.x < 0 || next.y < 0 || next.x >= layout.cols || next.y >= layout.rows || seen.has(key)) continue;
       seen.add(key);
       queue.push(next);
     }
@@ -80,11 +92,11 @@ export function nearestFloor(layout: OfficeLayout, tile: Point): Point | null {
 }
 
 /** Plans a walk to the floor tile nearest `tile`. Returns false when there is nowhere to go. */
-export function walkTo(avatar: Avatar, layout: OfficeLayout, tile: Point): boolean {
+export function walkTo(avatar: Avatar, layout: Grid, tile: Point): boolean {
   const goal = nearestFloor(layout, tile);
   if (!goal) return false;
   const from = nearestFloor(layout, tileAt(avatar.x, avatar.y)) ?? goal;
-  const path = findPath(layout.walkable, layout.cols, from, goal);
+  const path = layout.cost ? findCheapestPath(layout.walkable, layout.cost, layout.cols, from, goal) : findPath(layout.walkable, layout.cols, from, goal);
   if (!path) return false;
   avatar.route = path.map(tileFeet);
   return true;
@@ -103,7 +115,7 @@ export function arrive(avatar: Avatar): void {
 }
 
 /** One whole tile in a direction, for reduced motion and single key taps. */
-export function stepTile(avatar: Avatar, layout: OfficeLayout, dir: Dir): boolean {
+export function stepTile(avatar: Avatar, layout: Grid, dir: Dir): boolean {
   const here = tileAt(avatar.x, avatar.y);
   const delta = { up: [0, -1], down: [0, 1], left: [-1, 0], right: [1, 0] }[dir];
   const next = { x: here.x + delta[0], y: here.y + delta[1] };
@@ -120,7 +132,7 @@ export function stepTile(avatar: Avatar, layout: OfficeLayout, dir: Dir): boolea
  * Advances the avatar by `dt` seconds. A held direction wins over a planned walk and cancels it, so
  * the keyboard and the D-pad always feel in control.
  */
-export function stepAvatar(avatar: Avatar, layout: OfficeLayout, input: Point, dt: number, speed = AVATAR_SPEED): void {
+export function stepAvatar(avatar: Avatar, layout: Grid, input: Point, dt: number, speed = AVATAR_SPEED): void {
   const delta = Math.min(dt, 0.1);
   if (input.x !== 0 || input.y !== 0) {
     avatar.route = [];

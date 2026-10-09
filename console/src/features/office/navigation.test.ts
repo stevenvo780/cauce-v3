@@ -4,11 +4,12 @@ import {
   AVATAR_SPEED, arrive, createAvatar, feetFree, nearbyAgent, nearestFloor, stepAvatar, stepTile, tileAt, walkTo, walkableAt,
 } from './avatar';
 import {
-  EDGE_SLACK, centerOn, clampCamera, reveal, doubleTapZoom, ease, fitZoom, follow, originOf, panBy, screenToWorld, stepZoom, worldToScreen,
+  EDGE_SLACK, centerOn, clampCamera, reveal, doubleTapZoom, ease, fitCamera, fitZoom, follow, originOf, panBy, screenToWorld, stepZoom, worldToScreen,
   zoomAt, zoomLimits, type Camera,
 } from './camera';
 import { isDoubleTap, isTap, movedPast, pinchOf, pinchZoom, wheelPassesThrough, wheelZoom } from './gesture';
-import { TILE, WALL_ROWS, buildLayout } from './layout';
+import { buildGroupRoom } from './interior';
+import { TILE, WALL_ROWS } from './level';
 
 const view = { width: 1200, height: 800 };
 const world = { width: 400, height: 300 };
@@ -55,6 +56,20 @@ describe('camera', () => {
     const covered = clampCamera({ x: 9999, y: 195, zoom: 2 }, view, fits, limits, { right: 400, bottom: 0 });
     expect(covered.x).toBe(fits.width - (view.width - 400) / 4 + EDGE_SLACK + 400 / 4);
     expect(clampCamera(covered, view, fits, limits).x).toBe(fits.width / 2);
+  });
+
+  it('keeps the map clear of the HUD bars and fits it between them on a whole step', () => {
+    const hud = { top: 100, bottom: 120, right: 0 };
+    const fitted = fitCamera({ x: 0, y: 0, w: 400, h: 300 }, view, { min: 1, max: 8 }, hud);
+    expect(fitted.zoom).toBe(1);
+    const roomy = fitCamera({ x: 0, y: 0, w: 200, h: 100 }, view, { min: 1, max: 8 }, hud);
+    expect(roomy.zoom).toBe(5);
+    const top = worldToScreen(roomy, view, { x: 0, y: 0 }).y;
+    const bottom = worldToScreen(roomy, view, { x: 0, y: 100 }).y;
+    expect(top - 100).toBeCloseTo(view.height - 120 - bottom, 0);
+    const clamped = clampCamera({ x: 200, y: -999, zoom: 4 }, view, world, limits, hud);
+    expect(worldToScreen(clamped, view, { x: 0, y: -EDGE_SLACK }).y).toBeCloseTo(100, 0);
+    expect(centerOn({ x: 0, y: 0, zoom: 2 }, { x: 50, y: 50 }, { right: 0, bottom: 0, top: 100, left: 40 })).toEqual({ x: 40, y: 25, zoom: 2 });
   });
 
   it('reveals a box only when it is out of the uncovered view', () => {
@@ -150,7 +165,8 @@ describe('gestures', () => {
 });
 
 describe('operator avatar', () => {
-  const layout = buildLayout({ pods: 2, podCols: 2, side: 'right', compact: false, beds: 8 });
+  const layout = buildGroupRoom({ id: 'grupo:a', label: 'a', hue: 10, seats: 8 });
+  const far = layout.desks[3].visit.tile;
 
   it('walks in through the door, onto floor', () => {
     const avatar = createAvatar(layout.door);
@@ -184,14 +200,14 @@ describe('operator avatar', () => {
 
   it('keys take over from a planned walk', () => {
     const avatar = createAvatar(layout.door);
-    walkTo(avatar, layout, layout.beds[0].tile);
+    walkTo(avatar, layout, far);
     stepAvatar(avatar, layout, { x: 1, y: 0 }, 0.05);
     expect(avatar.route).toEqual([]);
   });
 
   it('jumps straight to the end without motion and steps whole tiles', () => {
     const avatar = createAvatar(layout.door);
-    walkTo(avatar, layout, layout.beds[0].tile);
+    walkTo(avatar, layout, far);
     const goal = must(avatar.route.at(-1), 'goal');
     arrive(avatar);
     expect([avatar.x, avatar.y]).toEqual([goal.x, goal.y]);

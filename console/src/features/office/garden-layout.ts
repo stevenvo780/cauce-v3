@@ -1,5 +1,7 @@
-import type { Dir, Furniture, Point, Room, Spot, Zone } from './layout';
+import type { Dir, Furniture, Point, Spot, Zone } from './level';
 import { TILE } from './tile';
+
+interface Room { x: number; y: number; w: number; h: number }
 
 /** The fountain plaza is drawn for a block this size; wider or taller gardens get lawn, lanes and wings around it. */
 export const GARDEN_CORE_W = 10;

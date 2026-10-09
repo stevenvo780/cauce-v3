@@ -38,7 +38,7 @@ export function TablasDeSeccion({ ctx, seccion, omitir = [] }: {
         : propio;
       const definition = configFormDefinition(coleccion.key);
       const Form = coleccion.key === 'rooms' ? GroupEditor : ConfigCollectionForm;
-      const form = ctx.formTarget?.collection === coleccion.key && definition && ctx.config.data
+      const form = ctx.formTarget?.collection === coleccion.key && !ctx.formModal && definition && ctx.config.data
         ? <Form key={`${coleccion.key}:${ctx.formTarget.action}:${JSON.stringify(ctx.formTarget.row ?? {})}`}
           definition={definition} target={ctx.formTarget} snapshot={ctx.config.data} runner={ctx.canalFormulario} busy={ctx.busy}
           onCancel={() => { ctx.setFormTarget(undefined); ctx.canalFormulario.clear(); }} onRelated={ctx.openForm} />

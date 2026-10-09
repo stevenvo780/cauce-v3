@@ -36,16 +36,6 @@ export function rememberHint(): void {
   hintRemembered = true;
 }
 
-/** Short landscape screens keep a strip of page above and below the canvas to scroll with. */
-function availableHeight(): { height: number; roomy: boolean } {
-  const roomy = window.matchMedia('(min-width: 640px)').matches;
-  const tall = window.innerHeight;
-  const height = roomy
-    ? Math.min(1180, Math.max(Math.min(460, tall - 96), tall - 168))
-    : Math.max(Math.min(340, tall - 96), Math.round(tall * 0.7));
-  return { height, roomy };
-}
-
 export function scrollBand(element: HTMLElement): { top: number; bottom: number } {
   let top = 0;
   let bottom = window.innerHeight;
@@ -66,28 +56,41 @@ export function clippingOf(element: HTMLElement): Clipping {
   return { above: rect.top < band.top - 1, below: rect.bottom > band.bottom + 1 };
 }
 
-export function useBox(ref: RefObject<HTMLElement | null>, fill = false) {
-  const [box, setBox] = useState({ width: 960, height: 640, dpr: 1, roomy: true });
+/** The element's size in CSS px and the device pixel ratio, kept current as either changes. */
+export function useFrameSize(ref: RefObject<HTMLElement | null>) {
+  const [box, setBox] = useState({ width: 960, height: 640, dpr: 1 });
   useEffect(() => {
     const element = ref.current;
     if (!element) return undefined;
     const measure = () => {
       const width = Math.floor(element.clientWidth);
-      if (width <= 0) return;
-      const available = availableHeight();
-      const roomy = available.roomy;
-      const height = fill ? window.innerHeight : available.height;
+      const height = Math.floor(element.clientHeight);
+      if (width <= 0 || height <= 0) return;
       const dpr = Math.min(3, Math.max(1, window.devicePixelRatio || 1));
-      setBox((current) => (current.width === width && current.height === height && current.dpr === dpr && current.roomy === roomy
-        ? current : { width, height, dpr, roomy }));
+      setBox((current) => (current.width === width && current.height === height && current.dpr === dpr ? current : { width, height, dpr }));
     };
     measure();
     const observer = new ResizeObserver(measure);
     observer.observe(element);
     window.addEventListener('resize', measure);
     return () => { observer.disconnect(); window.removeEventListener('resize', measure); };
-  }, [ref, fill]);
+  }, [ref]);
   return box;
+}
+
+/** Height in CSS px of an element, for the camera to keep the map clear of the HUD bars. */
+export function useHeight(ref: RefObject<HTMLElement | null>): number {
+  const [height, setHeight] = useState(0);
+  useEffect(() => {
+    const element = ref.current;
+    if (!element) return undefined;
+    const measure = () => { setHeight(Math.round(element.getBoundingClientRect().height)); };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => { observer.disconnect(); };
+  }, [ref]);
+  return height;
 }
 
 export function useMaximized(ref: RefObject<HTMLElement | null>, escapeBlocked: RefObject<boolean>): [boolean, () => void] {
