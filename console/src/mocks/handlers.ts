@@ -27,6 +27,20 @@ function mockMeaning(input: unknown): string {
   return JSON.stringify(input);
 }
 
+function mockFleetOperations() {
+  const base = { request_sha256: 'a'.repeat(64), actor: { tenant_id: 'Steven', alias: 'kant' }, expected_revision: 4,
+    desired_revision: null, applied_revision: null, steps: [], error: null };
+  return [
+    { ...base, id: '33333333-3333-4333-8333-333333333333', kind: 'create', status: 'running', version: 1,
+      target: { resource: 'agent', tenant_id: 'Steven', alias: 'nuevo' }, created_at: '2026-10-07T12:30:00Z', updated_at: '2026-10-07T12:31:00Z' },
+    { ...base, id: '22222222-2222-4222-8222-222222222222', kind: 'retire', status: 'succeeded', version: 3,
+      target: { resource: 'agent', tenant_id: 'Steven', alias: 'viejo' }, created_at: '2026-10-07T11:00:00Z', updated_at: '2026-10-07T11:05:00Z' },
+    { ...base, id: '11111111-1111-4111-8111-111111111111', kind: 'purge', status: 'failed', version: 2,
+      target: { resource: 'room', tenant_id: 'Steven', room_id: 'sala-vieja' }, steps: [{ name: 'purge', status: 'failed' }],
+      error: { code: 'STEP_FAILED', step: 'purge', retryable: true }, created_at: '2026-10-07T10:00:00Z', updated_at: '2026-10-07T10:02:00Z' },
+  ];
+}
+
 export const handlers = [
   ...agentPreferencesHandlers(),
   http.get('*/v3/auth/session', () => HttpResponse.json({
@@ -50,6 +64,7 @@ export const handlers = [
   http.get('*/v3/console/activity', () => HttpResponse.json(mockActivity())),
   http.get('*/v3/console/quotas', () => HttpResponse.json(mockQuotas())),
   http.get('*/v3/console/fleet/capability', () => HttpResponse.json({ available: false, actions: [], placements: [], reason: 'executor_unconfigured' })),
+  http.get('*/v3/console/fleet/operations/recent', () => HttpResponse.json({ operations: mockFleetOperations() })),
   http.get('*/v3/console/fleet/hosts', () => HttpResponse.json({ hosts: mockFleetHosts() })),
   // The per-trace chain endpoint existed in the gateway and did not have a single consumer.
   http.get('*/v3/console/chains/:traceId', ({ params }) => HttpResponse.json(mockChain(String(params.traceId)))),

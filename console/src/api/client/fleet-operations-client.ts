@@ -4,11 +4,14 @@ import {
   type FleetCapability, type FleetOperation, type FleetOperationPreview, type FleetOperationRequest, type FleetTarget,
 } from '@cauce/protocol/fleet-operation';
 import { FleetCapabilitySchema } from '@cauce/protocol/fleet-operation';
+import { ApiError } from './core';
 import type { RequestFn } from './system-client';
 
 export interface FleetOperationsClient {
   getFleetCapability(): Promise<FleetCapability>;
   listFleetOperations(target: FleetTarget): Promise<FleetOperation[]>;
+  /** Newest first across every target; undefined when the server predates the route. */
+  listRecentFleetOperations(limit?: number): Promise<FleetOperation[] | undefined>;
   previewFleetOperation(input: FleetOperationRequest): Promise<FleetOperationPreview>;
   enqueueFleetOperation(input: FleetOperationRequest): Promise<FleetOperation>;
   getFleetOperation(id: string): Promise<FleetOperation>;
@@ -68,6 +71,18 @@ export function fleetOperationsClient(request: RequestFn): FleetOperationsClient
         if (identity(operation.target) !== identity(target)) invalidReceipt();
         return operation;
       });
+    },
+    listRecentFleetOperations: async (limit = 50) => {
+      try {
+        const value = await request<unknown>(`/v3/console/fleet/operations/recent?limit=${String(limit)}`, { cache: 'no-store' });
+        if (!value || typeof value !== 'object' || Array.isArray(value)) invalidReceipt();
+        const envelope = value as Record<string, unknown>;
+        if (Object.keys(envelope).some((key) => key !== 'operations') || !Array.isArray(envelope.operations) || envelope.operations.length > 200) invalidReceipt();
+        return envelope.operations.map((row: unknown) => operationReceipt(row));
+      } catch (error) {
+        if (error instanceof ApiError && (error.status === 404 || error.status === 501)) return undefined;
+        throw error;
+      }
     },
     previewFleetOperation: async (input) => {
       const validated = FleetOperationRequestSchema.parse(input);

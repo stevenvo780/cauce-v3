@@ -5,6 +5,7 @@ import { onNavClick } from '../../router';
 import { FORM_GRID } from './config-ui';
 import { ConfigSectionHeader } from './ConfigSectionHeader';
 import { TablasDeSeccion } from './ConfigTables';
+import { RecentFleetOperations } from './RecentFleetOperations';
 import { actionsFor, rollbackPolicy, templates } from './mutation-editor';
 import type { ConfigWrites } from './use-config-writes';
 import type { ConfigResource, ConfigAction } from '../../api/types';
@@ -79,6 +80,8 @@ export function AvanzadoSection({ ctx }: { ctx: ConfigWrites }) {
         {canalEditor.notice ? <Outcome tone={canalEditor.notice.tone} canal={canalEditor.canal}>{canalEditor.notice.text}</Outcome> : null}
       </section>
     </details>
+
+    <RecentFleetOperations />
 
     <TablasDeSeccion ctx={ctx} seccion="avanzado" />
   </div>;
