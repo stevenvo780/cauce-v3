@@ -1,20 +1,9 @@
-import { TILE } from './layout';
+import { TILE } from './level';
 import { rect, type Ctx } from './paint';
 import { OFFICE } from './palette';
 import { seededRandom } from './random';
 
 const SHADOW = OFFICE.shadow;
-
-/** An inner wall running towards the viewer: its top seen from above, its end face at the bottom. */
-export function paintPillar(ctx: Ctx, x0: number, y0: number, h: number): void {
-  rect(ctx, x0 + 2, y0 - 4, 12, h - 8, OFFICE.wallTop);
-  rect(ctx, x0 + 2, y0 - 4, 1, h - 8, OFFICE.trimDark);
-  rect(ctx, x0 + 13, y0 - 4, 1, h - 8, OFFICE.trimDark);
-  rect(ctx, x0 + 2, y0 + h - 12, 12, 1, OFFICE.trimDark);
-  rect(ctx, x0 + 2, y0 + h - 11, 12, 7, OFFICE.wall);
-  rect(ctx, x0 + 2, y0 + h - 4, 12, 2, OFFICE.trim);
-  rect(ctx, x0 + 2, y0 + h - 2, 12, 2, SHADOW);
-}
 
 export function paintNightWindow(ctx: Ctx, x: number, w: number, top: number, bottom: number): void {
   const h = bottom - top;
