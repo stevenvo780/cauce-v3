@@ -52,7 +52,7 @@ function fixture() {
       expected_revision: request.expected_revision, target: request.target, kind: request.kind, steps: [], dependencies: [], can_apply: true })),
     enqueueFleetOperation: vi.fn(async (request: FleetOperationRequest) => { calls.push(request.kind); return receipt(request); }),
     getFleetOperation: vi.fn<(_id: string) => Promise<FleetOperation>>(),
-    listFleetOperations: vi.fn(), cancelFleetOperation: vi.fn(), resumeFleetOperation: vi.fn(),
+    listFleetOperations: vi.fn(), listRecentFleetOperations: vi.fn(), cancelFleetOperation: vi.fn(), resumeFleetOperation: vi.fn(),
   };
   let reads = 0;
   const configuration: Resource<ConfigurationSnapshot> = { data: snapshot(), loading: false,

@@ -14,7 +14,10 @@ export interface FleetHostsClient {
 const path = '/v3/console/fleet/hosts';
 
 export function fleetHostsClient(request: RequestFn): FleetHostsClient {
-  const hostPath = (hostId: string) => `${path}/${encodeURIComponent(FleetHostIdSchema.parse(hostId))}`;
+  const hostPath = (hostId: string) => {
+    FleetHostIdSchema.parse(hostId);
+    return `${path}/${encodeURIComponent(hostId)}`;
+  };
   return {
     listFleetHosts: async () => FleetHostListSchema.parse(await request(path, { cache: 'no-store' })).hosts,
     createFleetHost: async (input) => FleetHostSchema.parse(await request(path, {
@@ -24,8 +27,8 @@ export function fleetHostsClient(request: RequestFn): FleetHostsClient {
       method: 'PATCH', body: JSON.stringify(FleetHostUpdateSchema.parse(input)),
     })),
     deleteFleetHost: async (hostId, expectedVersion) => {
-      const version = FleetHostUpdateSchema.shape.expected_version.parse(expectedVersion);
-      await request(`${hostPath(hostId)}?expected_version=${String(version)}`, { method: 'DELETE' });
+      FleetHostUpdateSchema.shape.expected_version.parse(expectedVersion);
+      await request(`${hostPath(hostId)}?expected_version=${String(expectedVersion)}`, { method: 'DELETE' });
     },
   };
 }
