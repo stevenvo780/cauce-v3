@@ -262,6 +262,13 @@ describe('company isolation enforced by PostgreSQL', () => {
     await expect(probeCompanyIsolationPath(pool)).rejects.toThrow(/schema-054 company isolation/u);
     await pool.query('ALTER FUNCTION cauce_fill_company() SET search_path=pg_catalog,public,pg_temp');
     await expect(probeCompanyIsolationPath(pool)).resolves.toBeUndefined();
+    await pool.query(`DROP TRIGGER company_links_platform_write ON company_links;
+      CREATE TRIGGER company_links_platform_write BEFORE INSERT ON company_links FOR EACH STATEMENT EXECUTE FUNCTION cauce_append_only()`);
+    await expect(probeCompanyIsolationPath(pool)).rejects.toThrow(/schema-054 company isolation/u);
+    await pool.query(`DROP TRIGGER company_links_platform_write ON company_links;
+      CREATE TRIGGER company_links_platform_write BEFORE INSERT OR UPDATE OR DELETE OR TRUNCATE ON company_links
+        FOR EACH STATEMENT EXECUTE FUNCTION cauce_platform_write_guard()`);
+    await expect(probeCompanyIsolationPath(pool)).resolves.toBeUndefined();
     await pool.query('ALTER TABLE agents DROP CONSTRAINT agents_host_company_fkey');
     await expect(probeCompanyIsolationPath(pool)).rejects.toThrow(/schema-054 company isolation/u);
   });

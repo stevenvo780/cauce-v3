@@ -83,28 +83,16 @@ CREATE TABLE agent_role_template_owners (
   created_at timestamptz NOT NULL DEFAULT now()
 );
 
--- G1: the platform plane is written only by the platform role, besides the missing grants.
-CREATE FUNCTION cauce_platform_plane_guard()
-RETURNS trigger LANGUAGE plpgsql SET search_path=pg_catalog,public,pg_temp AS $$
-BEGIN
-  IF NOT cauce_platform_operator() THEN
-    RAISE EXCEPTION '% is writable only by the platform role',TG_TABLE_NAME USING ERRCODE='42501';
-  END IF;
-  RETURN NULL;
-END
-$$;
-
 -- Serializes every change that could remove the last owner of a company or the last platform
 -- administrator. Row locks need UPDATE, which the runtime never holds on these tables.
 CREATE FUNCTION cauce_lock_owner_guard(p_company text)
-RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public AS $$
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public,pg_temp AS $$
 BEGIN
   PERFORM 1 FROM public.platform_admins admin ORDER BY admin.human_id FOR NO KEY UPDATE OF admin;
   PERFORM 1 FROM public.company_admins admin WHERE admin.company_id=p_company AND admin.role='owner'
     ORDER BY admin.human_id FOR NO KEY UPDATE OF admin;
 END
 $$;
-REVOKE ALL ON FUNCTION cauce_lock_owner_guard(text) FROM PUBLIC;
 
 -- G3: a new company commits with an owner, and a company with an owner never commits without one.
 CREATE FUNCTION cauce_company_owner_continuity()
@@ -157,7 +145,7 @@ $$;
 -- home company of the person; an unknown person yields no row.
 CREATE FUNCTION cauce_company_authority(p_human uuid, p_company text)
 RETURNS TABLE(home_company text, platform_admin boolean, company_role text, company_enabled boolean)
-LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public AS $$
+LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public,pg_temp AS $$
 DECLARE
   acting text;
 BEGIN
@@ -174,7 +162,6 @@ BEGIN
   RETURN NEXT;
 END
 $$;
-REVOKE ALL ON FUNCTION cauce_company_authority(uuid,text) FROM PUBLIC;
 
 CREATE FUNCTION cauce_platform_record(
   p_action text, p_company text, p_peer text, p_subject uuid, p_admin uuid, p_metadata jsonb
@@ -351,25 +338,27 @@ SELECT tenant.company_id,seed.role,tenant.id,agent.alias FROM (VALUES('infra_esc
   JOIN tenants tenant ON tenant.id='Steven' AND tenant.company_id='humanizar'
   JOIN agents agent ON agent.tenant_id=tenant.id AND agent.alias=seed.alias;
 
+-- G1: only the platform role writes the platform plane, besides the missing grants: the statement
+-- guard of 052.
 CREATE TRIGGER companies_platform_write BEFORE INSERT OR UPDATE OR DELETE OR TRUNCATE ON companies
-  FOR EACH STATEMENT EXECUTE FUNCTION cauce_platform_plane_guard();
+  FOR EACH STATEMENT EXECUTE FUNCTION cauce_platform_write_guard();
 CREATE TRIGGER company_links_platform_write BEFORE INSERT OR UPDATE OR DELETE OR TRUNCATE ON company_links
-  FOR EACH STATEMENT EXECUTE FUNCTION cauce_platform_plane_guard();
+  FOR EACH STATEMENT EXECUTE FUNCTION cauce_platform_write_guard();
 CREATE TRIGGER platform_admins_platform_write BEFORE INSERT OR UPDATE OR DELETE OR TRUNCATE ON platform_admins
-  FOR EACH STATEMENT EXECUTE FUNCTION cauce_platform_plane_guard();
+  FOR EACH STATEMENT EXECUTE FUNCTION cauce_platform_write_guard();
 CREATE TRIGGER company_admins_platform_write BEFORE INSERT OR UPDATE OR DELETE OR TRUNCATE ON company_admins
-  FOR EACH STATEMENT EXECUTE FUNCTION cauce_platform_plane_guard();
+  FOR EACH STATEMENT EXECUTE FUNCTION cauce_platform_write_guard();
 CREATE TRIGGER platform_authority_events_platform_write
   BEFORE INSERT OR UPDATE OR DELETE OR TRUNCATE ON platform_authority_events
-  FOR EACH STATEMENT EXECUTE FUNCTION cauce_platform_plane_guard();
+  FOR EACH STATEMENT EXECUTE FUNCTION cauce_platform_write_guard();
 CREATE TRIGGER company_system_principals_platform_write
   BEFORE INSERT OR UPDATE OR DELETE OR TRUNCATE ON company_system_principals
-  FOR EACH STATEMENT EXECUTE FUNCTION cauce_platform_plane_guard();
+  FOR EACH STATEMENT EXECUTE FUNCTION cauce_platform_write_guard();
 CREATE TRIGGER company_agent_roles_platform_write BEFORE INSERT OR UPDATE OR DELETE OR TRUNCATE ON company_agent_roles
-  FOR EACH STATEMENT EXECUTE FUNCTION cauce_platform_plane_guard();
+  FOR EACH STATEMENT EXECUTE FUNCTION cauce_platform_write_guard();
 CREATE TRIGGER agent_role_template_owners_platform_write
   BEFORE INSERT OR UPDATE OR DELETE OR TRUNCATE ON agent_role_template_owners
-  FOR EACH STATEMENT EXECUTE FUNCTION cauce_platform_plane_guard();
+  FOR EACH STATEMENT EXECUTE FUNCTION cauce_platform_write_guard();
 CREATE TRIGGER platform_authority_events_append_only BEFORE UPDATE OR DELETE ON platform_authority_events
   FOR EACH ROW EXECUTE FUNCTION cauce_append_only();
 CREATE CONSTRAINT TRIGGER companies_owner_required AFTER INSERT ON companies
@@ -385,35 +374,29 @@ CREATE TRIGGER agents_role_template_company_guard BEFORE INSERT OR UPDATE OF rol
 CREATE TRIGGER agent_role_template_owners_company_guard BEFORE INSERT OR UPDATE ON agent_role_template_owners
   FOR EACH ROW EXECUTE FUNCTION cauce_role_template_company_guard();
 
-REVOKE ALL ON FUNCTION cauce_platform_record(text,text,text,uuid,uuid,jsonb),cauce_platform_assert_admin(uuid),
-  cauce_platform_create_company(text,text,uuid),cauce_platform_set_company_state(text,text,uuid),
-  cauce_platform_link(text,text,uuid),cauce_platform_unlink(text,text,uuid),
-  cauce_platform_grant_admin(text,uuid,text,text,uuid),cauce_platform_revoke_admin(text,uuid,uuid),
-  cauce_platform_plane_guard(),cauce_company_owner_continuity(),cauce_console_users_owner_guard(),
-  cauce_platform_admins_journal(),cauce_role_template_company_guard() FROM PUBLIC;
--- Applies only where the runtime and platform group roles have been provisioned.
-DO $$
+-- The grants of 054, replayed by cauce_apply_runtime_grants() of 052 after a restore without ACLs.
+-- The runtime only reads the tables of 054, and executes the resolver and the owner lock that its
+-- writes to console_users call. The platform writes them as their owner; as in 052, membership in
+-- cauce_platform only lets it through the write guard.
+CREATE FUNCTION cauce_runtime_grants_054()
+RETURNS void LANGUAGE plpgsql SET search_path=pg_catalog,public,pg_temp AS $$
 BEGIN
-  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='cauce_runtime') THEN
-    GRANT SELECT ON company_admins,platform_authority_events,company_system_principals,company_agent_roles,
-      agent_role_template_owners TO cauce_runtime;
-    GRANT USAGE,SELECT ON SEQUENCE platform_authority_events_id_seq TO cauce_runtime;
-    REVOKE INSERT,UPDATE,DELETE,TRUNCATE ON company_admins,platform_authority_events,company_system_principals,
-      company_agent_roles,agent_role_template_owners FROM cauce_runtime;
-    GRANT EXECUTE ON FUNCTION cauce_company_authority(uuid,text),cauce_lock_owner_guard(text),
-      cauce_console_users_owner_guard(),cauce_role_template_company_guard() TO cauce_runtime;
-  END IF;
-  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='cauce_platform') THEN
-    GRANT SELECT,INSERT,UPDATE,DELETE ON company_admins,company_system_principals,company_agent_roles,
-      agent_role_template_owners TO cauce_platform;
-    GRANT SELECT,INSERT ON platform_authority_events TO cauce_platform;
-    GRANT EXECUTE ON FUNCTION cauce_lock_owner_guard(text),cauce_platform_record(text,text,text,uuid,uuid,jsonb),
-      cauce_platform_assert_admin(uuid),cauce_platform_create_company(text,text,uuid),
-      cauce_platform_set_company_state(text,text,uuid),cauce_platform_link(text,text,uuid),
-      cauce_platform_unlink(text,text,uuid),cauce_platform_grant_admin(text,uuid,text,text,uuid),
-      cauce_platform_revoke_admin(text,uuid,uuid),cauce_platform_plane_guard(),cauce_company_owner_continuity(),
-      cauce_platform_admins_journal() TO cauce_platform;
-  END IF;
-END;
+  REVOKE ALL ON FUNCTION cauce_lock_owner_guard(text),cauce_company_authority(uuid,text),
+    cauce_company_owner_continuity(),cauce_console_users_owner_guard(),cauce_platform_record(text,text,text,uuid,uuid,jsonb),
+    cauce_platform_assert_admin(uuid),cauce_platform_admins_journal(),cauce_platform_create_company(text,text,uuid),
+    cauce_platform_set_company_state(text,text,uuid),cauce_platform_link(text,text,uuid),cauce_platform_unlink(text,text,uuid),
+    cauce_platform_grant_admin(text,uuid,text,text,uuid),cauce_platform_revoke_admin(text,uuid,uuid),
+    cauce_role_template_company_guard(),cauce_runtime_grants_054() FROM PUBLIC;
+  GRANT SELECT ON company_admins,platform_authority_events,company_system_principals,company_agent_roles,
+    agent_role_template_owners TO cauce_runtime;
+  GRANT EXECUTE ON FUNCTION cauce_company_authority(uuid,text),cauce_lock_owner_guard(text) TO cauce_runtime;
+  GRANT EXECUTE ON FUNCTION cauce_lock_owner_guard(text),cauce_company_authority(uuid,text),
+    cauce_company_owner_continuity(),cauce_console_users_owner_guard(),cauce_platform_record(text,text,text,uuid,uuid,jsonb),
+    cauce_platform_assert_admin(uuid),cauce_platform_admins_journal(),cauce_platform_create_company(text,text,uuid),
+    cauce_platform_set_company_state(text,text,uuid),cauce_platform_link(text,text,uuid),cauce_platform_unlink(text,text,uuid),
+    cauce_platform_grant_admin(text,uuid,text,text,uuid),cauce_platform_revoke_admin(text,uuid,uuid),
+    cauce_role_template_company_guard(),cauce_runtime_grants_054() TO cauce_platform;
+END
 $$;
+SELECT cauce_runtime_grants_054();
 SELECT set_config('lock_timeout',current_setting('cauce.migration_lock_timeout'),true);

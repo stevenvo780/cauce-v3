@@ -1,8 +1,11 @@
 import { readFile } from 'node:fs/promises';
 import { afterAll, describe, expect, it } from 'vitest';
-import { applyMigrationsThrough, createPool, withTransaction, type DatabaseClient, type DatabasePool } from '../src/index.js';
+import {
+  applyMigrations, applyMigrationsThrough, createPool, withTransaction, type DatabaseClient, type DatabasePool,
+} from '../src/index.js';
 import { legacyAdoptionSnapshot, lockLegacyAdoptionTargets } from '../src/fleet-adoption-snapshot.js';
 import { preparePostgresSuite } from './postgres-suite.js';
+import { seedCompanyIsolation } from './companies-postgres.fixtures.js';
 import {
   closeTestDatabase, provisionTestLogin, runtimeRoleRequested, startEmptyTestDatabase, startTestCaseDatabase,
   startTestDatabase, startTestDatabaseThrough, TEST_RUNTIME_LOGIN, type EmptyTestDatabase, type TestDatabase,
@@ -17,7 +20,28 @@ const EXCEPTIONS: Record<string, string[]> = {
   agent_chain_policies: ['SELECT', 'UPDATE'], fleet_operation_events: ['SELECT', 'INSERT'],
   fleet_operations: ['SELECT', 'INSERT', 'UPDATE'], fleet_runtime_identities: ['SELECT', 'INSERT', 'UPDATE'],
   config_revisions: ['SELECT', 'INSERT', 'UPDATE'], audit_events: DML, tenants: ['SELECT', 'INSERT', 'DELETE'],
+  company_admins: ['SELECT'], platform_authority_events: ['SELECT'], company_system_principals: ['SELECT'],
+  company_agent_roles: ['SELECT'], agent_role_template_owners: ['SELECT'],
 };
+// Every function of 052-054, and only those, is closed to PUBLIC. The runtime executes the DEFINER lock
+// helpers, the resolver and the helpers its guarded writes call; a trigger fires without EXECUTE on its
+// function, so every other function is classified to the platform alone.
+const RUNTIME_FUNCTIONS = ['cauce_assert_company_reachable(text,text)', 'cauce_company_authority(uuid,text)',
+  'cauce_config_revision_scope(jsonb)', 'cauce_lock_company_link(text,text)', 'cauce_lock_hub_star_tenant(text)',
+  'cauce_lock_owner_guard(text)', 'cauce_platform_operator()'];
+const PLATFORM_FUNCTIONS = ['cauce_append_only()', 'cauce_apply_runtime_grants()', 'cauce_company_immutable()',
+  'cauce_company_owner_continuity()', 'cauce_config_revision_company()', 'cauce_console_users_owner_guard()',
+  'cauce_fill_company()', 'cauce_fill_company_from_human()', 'cauce_fill_host_company()', 'cauce_fill_operation_company()',
+  'cauce_pair_company_guard()', 'cauce_platform_admins_journal()', 'cauce_platform_assert_admin(uuid)',
+  'cauce_platform_create_company(text,text,uuid)', 'cauce_platform_grant_admin(text,uuid,text,text,uuid)',
+  'cauce_platform_link(text,text,uuid)', 'cauce_platform_record(text,text,text,uuid,uuid,jsonb)',
+  'cauce_platform_revoke_admin(text,uuid,uuid)', 'cauce_platform_set_company_state(text,text,uuid)',
+  'cauce_platform_unlink(text,text,uuid)', 'cauce_quota_company_guard()', 'cauce_register_placed_host()',
+  'cauce_role_template_company_guard()', 'cauce_runtime_grants_052()', 'cauce_runtime_grants_053()',
+  'cauce_runtime_grants_054()', 'cauce_tenants_company_admission()'];
+const DEFINERS = ['cauce_company_authority(uuid,text)', 'cauce_lock_company_link(text,text)',
+  'cauce_lock_hub_star_tenant(text)', 'cauce_lock_owner_guard(text)'];
+const DOWNS = ['054_company_admins.sql', '053_company_isolation.sql', version];
 const OBSERVED = ['adapter_outbox', 'agent_output_materializations', 'agents', 'connection_leases', 'dead_letters',
   'deliveries', 'messages', 'outbox_dead_letters', 'tenants'];
 const PRIVILEGES = "ARRAY['SELECT','INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER']";
@@ -147,13 +171,22 @@ describe('least-privilege runtime roles on PostgreSQL', () => {
         WHERE attrelid='tenants'::regclass AND attnum>0 AND NOT attisdropped
           AND NOT has_column_privilege('cauce_runtime','tenants',attname,'UPDATE') ORDER BY attname) AS fixed`)).rows[0]?.fixed)
       .toEqual(['company_id', 'id']);
-    const sequences = (await admin.query<{ name: string; usage: boolean; update: boolean }>(`SELECT c.relname AS name,
+    // A sequence serves the runtime exactly when it inserts into the table that owns it.
+    const sequences = (await admin.query<{ name: string; usage: boolean; any: boolean; update: boolean; inserts: boolean }>(`
+      SELECT c.relname AS name,
         has_sequence_privilege('cauce_runtime',c.oid,'USAGE') AND has_sequence_privilege('cauce_runtime',c.oid,'SELECT') AS usage,
-        has_sequence_privilege('cauce_runtime',c.oid,'UPDATE') AS update
+        has_sequence_privilege('cauce_runtime',c.oid,'USAGE') OR has_sequence_privilege('cauce_runtime',c.oid,'SELECT') AS any,
+        has_sequence_privilege('cauce_runtime',c.oid,'UPDATE') AS update,
+        COALESCE((SELECT bool_or(has_table_privilege('cauce_runtime',dependency.refobjid,'INSERT')) FROM pg_depend dependency
+          WHERE dependency.classid='pg_class'::regclass AND dependency.objid=c.oid
+            AND dependency.refclassid='pg_class'::regclass AND dependency.deptype IN ('a','i')),false) AS inserts
       FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
       WHERE n.nspname='public' AND c.relkind='S' AND ${NOT_EXTENSION('pg_class', 'c')} ORDER BY 1`)).rows;
     expect(sequences.length).toBeGreaterThan(0);
-    for (const sequence of sequences) expect(sequence).toEqual({ name: sequence.name, usage: true, update: false });
+    for (const sequence of sequences) {
+      expect(sequence).toEqual({ ...sequence, usage: sequence.inserts, any: sequence.inserts, update: false });
+    }
+    expect(sequences.find(sequence => sequence.name === 'platform_authority_events_id_seq')).toMatchObject({ any: false });
     const functions = (await admin.query<{ name: string; definer: boolean; runtime: boolean; platform: boolean;
       public: boolean; pinned: boolean }>(`SELECT p.oid::regprocedure::text AS name,p.prosecdef AS definer,
         has_function_privilege('cauce_runtime',p.oid,'EXECUTE') AS runtime,
@@ -167,8 +200,10 @@ describe('least-privilege runtime roles on PostgreSQL', () => {
       if (fn.definer) expect({ [fn.name]: { public: fn.public, pinned: fn.pinned } })
         .toEqual({ [fn.name]: { public: false, pinned: true } });
     }
-    expect(functions.filter(fn => fn.definer && fn.runtime).map(fn => fn.name))
-      .toEqual(expect.arrayContaining(['cauce_lock_company_link(text,text)', 'cauce_lock_hub_star_tenant(text)']));
+    expect(functions.filter(fn => fn.definer).map(fn => fn.name)).toEqual(expect.arrayContaining(DEFINERS));
+    expect(functions.filter(fn => !fn.public).map(fn => fn.name).sort()).toEqual([...RUNTIME_FUNCTIONS, ...PLATFORM_FUNCTIONS].sort());
+    expect(functions.filter(fn => !fn.public && fn.runtime).map(fn => fn.name).sort()).toEqual([...RUNTIME_FUNCTIONS].sort());
+    expect(functions.filter(fn => PLATFORM_FUNCTIONS.includes(fn.name) && !fn.platform).map(fn => fn.name)).toEqual([]);
   });
 
   it('denies the runtime login platform writes, company moves, DDL and trigger tampering', async () => {
@@ -194,6 +229,23 @@ describe('least-privilege runtime roles on PostgreSQL', () => {
         WHEN MATCHED THEN UPDATE SET allow_control=true`,
       'WITH changed AS (UPDATE role_policies SET allow_control=true RETURNING 1) SELECT count(*) FROM changed',
       'SELECT cauce_apply_runtime_grants()', 'SELECT cauce_runtime_grants_052()',
+      'SELECT cauce_runtime_grants_053()', 'SELECT cauce_runtime_grants_054()',
+      "INSERT INTO company_admins(company_id,human_id,role,source) VALUES('humanizar',gen_random_uuid(),'owner','v4.0-hub-operator')",
+      "UPDATE company_admins SET role='owner'", 'DELETE FROM company_admins', 'TRUNCATE company_admins',
+      'INSERT INTO platform_admins(human_id) VALUES(gen_random_uuid())', 'UPDATE platform_admins SET human_id=human_id',
+      "INSERT INTO platform_authority_events(action) VALUES('admin.grant')", 'DELETE FROM platform_authority_events',
+      "SELECT nextval('platform_authority_events_id_seq')",
+      "INSERT INTO company_system_principals(company_id,kind,tenant_id,principal_alias) VALUES('humanizar','director','Steven','zeus')",
+      'DELETE FROM company_agent_roles', 'DELETE FROM agent_role_template_owners',
+      'SELECT 1 FROM company_admins FOR SHARE', 'SELECT 1 FROM company_system_principals FOR SHARE',
+      "SELECT cauce_platform_grant_admin('humanizar',gen_random_uuid(),'intruder@example.test','owner',gen_random_uuid())",
+      "SELECT cauce_platform_revoke_admin('humanizar',gen_random_uuid(),gen_random_uuid())",
+      "SELECT cauce_platform_create_company('intruder','Intruder',gen_random_uuid())",
+      "SELECT cauce_platform_set_company_state('humanizar','retired',gen_random_uuid())",
+      "SELECT cauce_platform_link('humanizar','intruder',gen_random_uuid())",
+      "SELECT cauce_platform_unlink('humanizar','intruder',gen_random_uuid())",
+      "SELECT cauce_platform_assert_admin(gen_random_uuid())",
+      `SELECT cauce_platform_record('admin.grant','humanizar',NULL,NULL,NULL,'{}')`,
     ];
     for (const statement of denied) expect({ [statement]: await attempt(runtime, statement) }).toEqual({ [statement]: '42501' });
     expect(await attempt(runtime, 'CREATE TEMP VIEW policy_view AS SELECT * FROM role_policies',
@@ -203,6 +255,10 @@ describe('least-privilege runtime roles on PostgreSQL', () => {
       "INSERT INTO audit_events(tenant_id,actor_alias,action,decision) VALUES('Steven','kant','runtime.grants','allow')",
       "INSERT INTO tenants(id,company_id) VALUES('RuntimeGrants','humanizar')", 'SELECT count(*) FROM companies',
       "SELECT cauce_lock_hub_star_tenant('Steven')", "SELECT cauce_lock_company_link('humanizar','humanizar')",
+      'SELECT count(*) FROM company_admins', 'SELECT count(*) FROM platform_authority_events',
+      'SELECT count(*) FROM company_system_principals', 'SELECT count(*) FROM company_agent_roles',
+      'SELECT count(*) FROM agent_role_template_owners', 'SELECT * FROM cauce_company_authority(gen_random_uuid(),NULL)',
+      "SELECT cauce_lock_owner_guard('humanizar')",
     ]) expect({ [statement]: await attempt(runtime, statement) }).toEqual({ [statement]: 'ok' });
   });
 
@@ -248,6 +304,58 @@ describe('least-privilege runtime roles on PostgreSQL', () => {
     }
   });
 
+  it('runs the company guards of 053 and 054 as the runtime login and keeps the platform plane closed', async () => {
+    const { full } = ready();
+    const current = await startTestCaseDatabase(full);
+    const runtime = createPool(await provisionTestLogin(current.adminPool, current.adminUrl, 'cauce_gateway', 'cauce_runtime'), { max: 1 });
+    try {
+      const people = await seedCompanyIsolation(current.adminPool);
+      await current.adminPool.query(`INSERT INTO agent_role_templates(slug,display_name,brief) VALUES('praxis-clinic','Clinic','Clinic brief');
+        INSERT INTO agent_role_template_owners(slug,company_id) VALUES('praxis-clinic','praxis')`);
+      const handoff = (from: string, fromAlias: string, to: string, toAlias: string): string => `INSERT INTO secret_handoffs(id,
+        from_tenant,from_alias,to_tenant,to_alias,label,sealed,sealing_key_id,ephemeral_public,nonce,expires_at)
+        VALUES(gen_random_uuid(),'${from}','${fromAlias}','${to}','${toAlias}','runtime','\\x00','key',
+          decode(repeat('00',32),'hex'),decode(repeat('00',12),'hex'),now()+interval '1 hour')`;
+      const allowed = [
+        `INSERT INTO config_revisions(actor_tenant,actor_alias,operation,inverse_operation,summary)
+          VALUES('PraxisHub','company_admin','{"resource":"room"}','{}','runtime')`,
+        `UPDATE console_users SET active=false WHERE id='${people.miguel}'`,
+        "INSERT INTO rooms(id,tenant_id) VALUES('runtime-room','PraxisTeam')",
+        handoff('Steven', 'kant', 'Miguel', 'janus'),
+      ];
+      for (const statement of allowed) expect({ [statement]: await attempt(runtime, statement) }).toEqual({ [statement]: 'ok' });
+      expect((await runtime.query('SELECT * FROM cauce_company_authority($1,NULL)', [people.leon])).rows)
+        .toEqual([{ home_company: 'praxis', platform_admin: false, company_role: 'owner', company_enabled: true }]);
+      const guarded: Record<string, string> = {
+        [`UPDATE console_users SET active=false WHERE id='${people.leon}'`]: '23514',
+        [`UPDATE console_users SET role='reader' WHERE id='${people.steven}'`]: '23514',
+        [handoff('Steven', 'kant', 'PraxisHub', 'company_admin')]: '23514',
+        "UPDATE agents SET role_brief='Clinic brief',role_template_slug='praxis-clinic' WHERE tenant_id='Steven' AND alias='kant'": '23514',
+        "INSERT INTO fleet_hosts(host_id,display_name) VALUES('ambiguous-host','Ambiguous')": '23502',
+        [`INSERT INTO company_admins(company_id,human_id,role,source,granted_by)
+          VALUES('humanizar','${people.miguel}','admin','platform','${people.steven}')`]: '42501',
+        "UPDATE company_admins SET role='admin'": '42501',
+        [`DELETE FROM company_admins WHERE human_id='${people.miguel}'`]: '42501',
+        [`INSERT INTO platform_admins(human_id) VALUES('${people.miguel}')`]: '42501',
+        [`DELETE FROM platform_admins WHERE human_id='${people.steven}'`]: '42501',
+        [`SELECT cauce_platform_grant_admin('humanizar','${people.miguel}','miguel@example.test','admin','${people.steven}')`]: '42501',
+        [`SELECT cauce_platform_revoke_admin('humanizar','${people.miguel}','${people.steven}')`]: '42501',
+      };
+      for (const [statement, code] of Object.entries(guarded)) {
+        expect({ [statement]: await attempt(runtime, statement) }).toEqual({ [statement]: code });
+      }
+      expect(await attempt(runtime, "SELECT set_config('cauce.company_move','on',true)",
+        "UPDATE agents SET company_id='praxis' WHERE tenant_id='Steven' AND alias='kant'")).toBe('23514');
+      expect((await current.adminPool.query(`SELECT company_id,human_id::text,role FROM company_admins ORDER BY company_id,human_id`)).rows)
+        .toEqual([{ company_id: 'humanizar', human_id: people.steven, role: 'owner' }, { company_id: 'humanizar', human_id: people.miguel, role: 'owner' },
+          { company_id: 'praxis', human_id: people.leon, role: 'owner' }].sort((left, right) =>
+          left.company_id.localeCompare(right.company_id) || left.human_id.localeCompare(right.human_id)));
+    } finally {
+      await runtime.end();
+      await current.close();
+    }
+  });
+
   it('gives the observer login read access to the metric tables only', async () => {
     const { reader } = ready();
     for (const table of OBSERVED) expect({ [table]: await attempt(reader, `SELECT count(*) FROM ${table}`) }).toEqual({ [table]: 'ok' });
@@ -272,9 +380,9 @@ describe('least-privilege runtime roles on PostgreSQL', () => {
 });
 
 describe('runtime roles migration rollback', () => {
-  it('reapplies every grant after a restore without ACLs', async () => {
-    const { server } = ready();
-    const current = await startTestCaseDatabase(server);
+  it('reapplies every grant of 052-054 after a restore without ACLs', async () => {
+    const { full } = ready();
+    const current = await startTestCaseDatabase(full);
     const runtime = createPool(await provisionTestLogin(current.adminPool, current.adminUrl, 'cauce_gateway', 'cauce_runtime'), { max: 1 });
     const groups = ['PUBLIC', 'cauce_runtime', 'cauce_observer', 'cauce_platform'];
     try {
@@ -307,6 +415,28 @@ describe('runtime roles migration rollback', () => {
         .toEqual({ version: '051_companies.sql' });
       expect(await catalog(current.adminPool)).toEqual(await catalog(previous.adminPool));
       await applyMigrationsThrough(current.adminPool, version);
+      expect(await catalog(current.adminPool)).toEqual(before);
+    } finally {
+      await previous.close();
+      await current.close();
+    }
+  });
+
+  it('returns through 054 and 053 to the 051 catalog and reapplies the same grants', async () => {
+    const { full, server } = ready();
+    const current = await startTestCaseDatabase(full);
+    const previous = await startEmptyTestDatabase(server.adminUrl);
+    try {
+      await applyMigrationsThrough(previous.adminPool, '051_companies.sql');
+      const before = await catalog(current.adminPool);
+      for (const down of DOWNS) {
+        await current.adminPool.query(await readFile(new URL(`../migrations/down/${down}`, import.meta.url), 'utf8'));
+      }
+      expect(await groupDependencies(current.adminPool)).toBe(0);
+      expect((await current.adminPool.query('SELECT max(version) AS version FROM schema_migrations')).rows[0])
+        .toEqual({ version: '051_companies.sql' });
+      expect(await catalog(current.adminPool)).toEqual(await catalog(previous.adminPool));
+      await applyMigrations(current.adminPool);
       expect(await catalog(current.adminPool)).toEqual(before);
     } finally {
       await previous.close();

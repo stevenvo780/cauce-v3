@@ -33,11 +33,11 @@ async function operator(email: string, tenant: string, alias: string): Promise<s
 const companyFunctions = ['cauce_platform_operator', 'cauce_fill_company', 'cauce_fill_company_from_human', 'cauce_company_immutable',
   'cauce_tenants_company_admission', 'cauce_assert_company_reachable', 'cauce_pair_company_guard', 'cauce_fill_host_company',
   'cauce_register_placed_host', 'cauce_fill_operation_company', 'cauce_config_revision_scope', 'cauce_config_revision_company',
-  'cauce_append_only', 'cauce_quota_company_guard', 'cauce_platform_plane_guard', 'cauce_lock_owner_guard',
+  'cauce_append_only', 'cauce_quota_company_guard', 'cauce_runtime_grants_053', 'cauce_lock_owner_guard',
   'cauce_company_owner_continuity', 'cauce_console_users_owner_guard', 'cauce_company_authority', 'cauce_platform_record',
   'cauce_platform_assert_admin', 'cauce_platform_admins_journal', 'cauce_platform_create_company',
   'cauce_platform_set_company_state', 'cauce_platform_link', 'cauce_platform_unlink', 'cauce_platform_grant_admin',
-  'cauce_platform_revoke_admin', 'cauce_role_template_company_guard'];
+  'cauce_platform_revoke_admin', 'cauce_role_template_company_guard', 'cauce_runtime_grants_054'];
 async function role(name: string): Promise<void> {
   await pool.query(`DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='${name}') THEN CREATE ROLE ${name} NOLOGIN; END IF; END $$`);
 }
@@ -152,7 +152,6 @@ describe('company owners and the platform plane on PostgreSQL', () => {
     await role('cauce_company_test_runtime');
     await pool.query(`GRANT SELECT,INSERT,UPDATE,DELETE ON companies,company_links,platform_admins,company_admins,platform_authority_events,
       company_system_principals,company_agent_roles,agent_role_template_owners TO cauce_company_test_runtime`);
-    await pool.query('GRANT EXECUTE ON FUNCTION cauce_platform_operator() TO cauce_company_test_runtime');
     for (const statement of ["INSERT INTO companies(id,name) VALUES('rogue','Rogue')", 'DELETE FROM company_links',
       `INSERT INTO platform_admins(human_id) VALUES('${people.miguel}')`, "UPDATE company_admins SET role='owner'",
       "DELETE FROM platform_authority_events", "DELETE FROM company_agent_roles", "DELETE FROM company_system_principals",
@@ -160,37 +159,34 @@ describe('company owners and the platform plane on PostgreSQL', () => {
       await expect(inTransaction(async (client) => {
         await client.query('SET LOCAL ROLE cauce_company_test_runtime');
         await client.query(statement);
-      })).rejects.toMatchObject({ code: '42501', message: expect.stringMatching(/writable only by the platform role/u) as unknown });
+      })).rejects.toMatchObject({ code: '42501', message: expect.stringMatching(/requires the cauce_platform role/u) as unknown });
     }
   });
 
   it('grants the runtime read-only authority tables and only the resolver functions', async () => {
-    await role('cauce_runtime'); await role('cauce_platform');
-    if (!database) throw new Error('test database absent');
-    const provisioned = await startTestCaseDatabase(database);
-    try {
-      const privileges = (await provisioned.pool.query<Record<string, unknown>>(`SELECT
-        has_table_privilege('cauce_runtime','company_admins','SELECT') AS read_admins,
-        has_table_privilege('cauce_runtime','company_admins','INSERT') AS write_admins,
-        has_table_privilege('cauce_runtime','company_system_principals','UPDATE') AS write_principals,
-        has_table_privilege('cauce_runtime','platform_authority_events','SELECT') AS read_events,
-        has_function_privilege('cauce_runtime','cauce_company_authority(uuid,text)','EXECUTE') AS resolve,
-        has_function_privilege('cauce_runtime','cauce_platform_grant_admin(text,uuid,text,text,uuid)','EXECUTE') AS grant_admin,
-        has_function_privilege('cauce_platform','cauce_platform_grant_admin(text,uuid,text,text,uuid)','EXECUTE') AS platform_grant,
-        has_table_privilege('cauce_platform','company_admins','INSERT') AS platform_write,
-        has_function_privilege('cauce_runtime','cauce_platform_operator()','EXECUTE')
-          AND has_function_privilege('cauce_runtime','cauce_assert_company_reachable(text,text)','EXECUTE')
-          AND has_function_privilege('cauce_runtime','cauce_config_revision_scope(jsonb)','EXECUTE') AS guard_helpers,
-        (SELECT count(*)::int FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
-          WHERE n.nspname='public' AND p.proname=ANY($1::text[])) AS company_functions,
-        (SELECT count(*)::int FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
-          WHERE n.nspname='public' AND p.proname=ANY($1::text[])
-            AND (p.proacl IS NULL OR EXISTS (SELECT 1 FROM aclexplode(p.proacl) entry WHERE entry.grantee=0))) AS public_functions`,
-      [companyFunctions])).rows[0];
-      expect(privileges).toEqual({ read_admins: true, write_admins: false, write_principals: false, read_events: true,
-        resolve: true, grant_admin: false, platform_grant: true, platform_write: true, guard_helpers: true,
-        company_functions: companyFunctions.length, public_functions: 0 });
-    } finally { await provisioned.close(); }
+    const privileges = (await pool.query<Record<string, unknown>>(`SELECT
+      has_table_privilege('cauce_runtime','company_admins','SELECT') AS read_admins,
+      has_table_privilege('cauce_runtime','company_admins','INSERT') AS write_admins,
+      has_table_privilege('cauce_runtime','company_system_principals','UPDATE') AS write_principals,
+      has_table_privilege('cauce_runtime','platform_authority_events','SELECT') AS read_events,
+      has_sequence_privilege('cauce_runtime','platform_authority_events_id_seq','USAGE') AS event_sequence,
+      has_function_privilege('cauce_runtime','cauce_company_authority(uuid,text)','EXECUTE') AS resolve,
+      has_function_privilege('cauce_runtime','cauce_platform_grant_admin(text,uuid,text,text,uuid)','EXECUTE') AS grant_admin,
+      has_function_privilege('cauce_runtime','cauce_console_users_owner_guard()','EXECUTE') AS trigger_function,
+      has_function_privilege('cauce_platform','cauce_platform_grant_admin(text,uuid,text,text,uuid)','EXECUTE') AS platform_grant,
+      has_function_privilege('cauce_runtime','cauce_platform_operator()','EXECUTE')
+        AND has_function_privilege('cauce_runtime','cauce_assert_company_reachable(text,text)','EXECUTE')
+        AND has_function_privilege('cauce_runtime','cauce_config_revision_scope(jsonb)','EXECUTE')
+        AND has_function_privilege('cauce_runtime','cauce_lock_owner_guard(text)','EXECUTE') AS guard_helpers,
+      (SELECT count(*)::int FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+        WHERE n.nspname='public' AND p.proname=ANY($1::text[])) AS company_functions,
+      (SELECT count(*)::int FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+        WHERE n.nspname='public' AND p.proname=ANY($1::text[])
+          AND (p.proacl IS NULL OR EXISTS (SELECT 1 FROM aclexplode(p.proacl) entry WHERE entry.grantee=0))) AS public_functions`,
+    [companyFunctions])).rows[0];
+    expect(privileges).toEqual({ read_admins: true, write_admins: false, write_principals: false, read_events: true,
+      event_sequence: false, resolve: true, grant_admin: false, trigger_function: false, platform_grant: true, guard_helpers: true,
+      company_functions: companyFunctions.length, public_functions: 0 });
   });
 
   it('reserves owned role templates to their company', async () => {

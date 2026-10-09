@@ -325,7 +325,7 @@ Las cuatro migraciones siguen el patrón de 051:
 - toman al inicio `pg_advisory_xact_lock(783_003_003)` y el propio de cada una;
 - fijan `lock_timeout` de 5 s;
 - bloquean todas las tablas al inicio, en orden canónico;
-- dan grants condicionales (`DO … IF EXISTS role`);
+- declaran sus grants en una función propia, `cauce_runtime_grants_NNN()`, que la migración ejecuta y que `cauce_apply_runtime_grants()` (052) repite tras una restauración sin ACL. Como 052 va primero, los roles siempre existen y no hace falta el bloque condicional `DO … IF EXISTS role`;
 - tienen su `down`.
 
 El migrador aplica todas las pendientes en **una sola transacción** (`db.ts:runMigrations`). Si un bloqueo no llega, no se aplica nada y basta con reintentar.
@@ -346,7 +346,7 @@ El migrador aplica todas las pendientes en **una sola transacción** (`db.ts:run
   - **`agent_chain_policies`:** `SELECT` y `UPDATE`.
   - **Funciones y secuencias:** `USAGE` y `SELECT` de las secuencias de migración; `EXECUTE` de `cauce_lock_company_link` y `cauce_lock_hub_star_tenant`.
 - **Observador:** `SELECT` de lo que leen `outbox-metrics`, el watchdog y `mcp-fleet-monitor`.
-- **Regla para el futuro:** toda tabla, secuencia o función nueva declara su clase de grant en su propia migración. Un test falla si queda alguna sin clasificar.
+- **Regla para el futuro:** toda tabla, secuencia o función nueva declara su clase de grant en la `cauce_runtime_grants_NNN()` de su propia migración. Un test falla si queda alguna sin clasificar. Una secuencia solo se concede al runtime si inserta en la tabla que la posee.
 - **`down`:** revoca y borra los roles. Se niega si hay conectado algún login miembro.
 
 #### 4.2 `053_company_isolation.sql` (expand, compatible con el runtime V4.0)
@@ -405,13 +405,13 @@ El migrador aplica todas las pendientes en **una sola transacción** (`db.ts:run
     CHECK (source='v4.0-hub-operator' OR granted_by IS NOT NULL));
   ```
 - **Guardas:**
-  - **G1:** escribir `companies`, `company_links`, `platform_admins` o `company_admins` exige ser miembro de `cauce_platform`. Si no, 42501. Es defensa en profundidad, además del REVOKE.
+  - **G1:** escribir `companies`, `company_links`, `platform_admins`, `company_admins` o las demás tablas de esta migración exige ser miembro de `cauce_platform`. Si no, 42501. Es defensa en profundidad, además del REVOKE, y reutiliza el trigger por sentencia `cauce_platform_write_guard()` de 052.
   - **G3:** `CONSTRAINT TRIGGER` diferido. Una empresa que tuvo al menos un dueño activo no puede terminar una transacción sin ninguno. Una empresa nueva debe tener dueño al hacer `COMMIT`.
   - **G4:** en `console_users`, desactivar, cambiar de rol o retirar al último dueño activo de una empresa, o al último SA activo, devuelve 23514. Bloquea con el helper DEFINER `cauce_lock_owner_guard`.
 - **`platform_authority_events`:** historial del plano de plataforma, solo de anexar.
 - **DEFINER `cauce_company_authority(human, company)`:** devuelve `home_company`, `platform_admin`, `company_role` y `company_enabled` con `FOR SHARE`.
-  - Lleva `search_path` fijo, nombres calificados y ningún SQL dinámico.
-  - Tiene `REVOKE ALL FROM PUBLIC` y `EXECUTE` solo para `cauce_runtime`.
+  - Lleva `search_path=pg_catalog,public,pg_temp` (con `pg_temp` el último, como toda DEFINER desde 052), nombres calificados y ningún SQL dinámico.
+  - Tiene `REVOKE ALL FROM PUBLIC` y `EXECUTE` solo para `cauce_runtime` y `cauce_platform`.
 - **Funciones de plataforma** (INVOKER, `EXECUTE` solo para `cauce_platform`):
   - `cauce_platform_create_company`, `cauce_platform_set_company_state`, `cauce_platform_link` y `cauce_platform_unlink`.
   - `cauce_platform_grant_admin(company, human, email, role, admin)`:
@@ -434,7 +434,7 @@ El migrador aplica todas las pendientes en **una sola transacción** (`db.ts:run
   - `director` = Steven/argos.
   - `infra_escalation` = Steven/zeus.
   - `coordination` = Steven/kant.
-- **Grants:** el runtime tiene `SELECT` sobre todo lo anterior y `EXECUTE` de la función DEFINER. No escribe en ninguna de estas tablas.
+- **Grants:** el runtime tiene `SELECT` sobre todo lo anterior y `EXECUTE` de las dos DEFINER (`cauce_company_authority` y `cauce_lock_owner_guard`, que G4 llama cuando el runtime cambia una persona). No escribe en ninguna de estas tablas ni usa la secuencia de `platform_authority_events`. Los triggers se disparan sin `EXECUTE`, así que las funciones de trigger y las de plataforma solo se conceden a `cauce_platform`. La plataforma escribe como dueña de las tablas; ser miembro de `cauce_platform` solo le abre la guarda de escritura.
 
 #### 4.4 `055_drop_legacy_company_default.sql` (R2)
 

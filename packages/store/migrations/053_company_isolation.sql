@@ -22,8 +22,8 @@ SELECT set_config('statement_timeout',current_setting('cauce.migration_statement
 -- Guards run as the writer, so every function pins its search path with pg_temp last: a temporary
 -- table of the writer never shadows the tables or catalogs a guard reads.
 
--- Membership in cauce_platform is the only authority above a company. Before the role exists, only
--- a superuser qualifies.
+-- Membership in cauce_platform is the only authority above a company. On a cluster restored without
+-- its roles, until cauce_apply_runtime_grants() recreates them, only a superuser qualifies.
 CREATE FUNCTION cauce_platform_operator()
 RETURNS boolean LANGUAGE plpgsql STABLE SET search_path=pg_catalog,public,pg_temp AS $$
 BEGIN
@@ -460,26 +460,25 @@ BEGIN
 END;
 $$;
 
--- Trigger functions fire without EXECUTE; each function is still granted to the role whose writes
--- run it, and the helpers that guards call are granted to the platform role as well.
-REVOKE ALL ON FUNCTION cauce_platform_operator(),cauce_fill_company(),cauce_fill_company_from_human(),
-  cauce_company_immutable(),cauce_tenants_company_admission(),cauce_assert_company_reachable(text,text),
-  cauce_pair_company_guard(),cauce_fill_host_company(),cauce_register_placed_host(),cauce_fill_operation_company(),
-  cauce_config_revision_scope(jsonb),cauce_config_revision_company(),cauce_append_only(),cauce_quota_company_guard()
-  FROM PUBLIC;
-DO $$
+-- The grants of 053, replayed by cauce_apply_runtime_grants() of 052 after a restore without ACLs.
+-- A trigger fires without EXECUTE on its function, so the runtime executes only the helpers its
+-- guarded writes call; every function of 053 is classified to the platform.
+CREATE FUNCTION cauce_runtime_grants_053()
+RETURNS void LANGUAGE plpgsql SET search_path=pg_catalog,public,pg_temp AS $$
 BEGIN
-  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='cauce_runtime') THEN
-    GRANT EXECUTE ON FUNCTION cauce_platform_operator(),cauce_fill_company(),cauce_fill_company_from_human(),
-      cauce_company_immutable(),cauce_tenants_company_admission(),cauce_assert_company_reachable(text,text),
-      cauce_pair_company_guard(),cauce_fill_host_company(),cauce_register_placed_host(),cauce_fill_operation_company(),
-      cauce_config_revision_scope(jsonb),cauce_config_revision_company(),cauce_append_only(),cauce_quota_company_guard()
-      TO cauce_runtime;
-  END IF;
-  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='cauce_platform') THEN
-    GRANT EXECUTE ON FUNCTION cauce_platform_operator(),cauce_assert_company_reachable(text,text),
-      cauce_config_revision_scope(jsonb) TO cauce_platform;
-  END IF;
-END;
+  REVOKE ALL ON FUNCTION cauce_platform_operator(),cauce_fill_company(),cauce_fill_company_from_human(),
+    cauce_company_immutable(),cauce_tenants_company_admission(),cauce_assert_company_reachable(text,text),
+    cauce_pair_company_guard(),cauce_fill_host_company(),cauce_register_placed_host(),cauce_fill_operation_company(),
+    cauce_config_revision_scope(jsonb),cauce_config_revision_company(),cauce_append_only(),cauce_quota_company_guard(),
+    cauce_runtime_grants_053() FROM PUBLIC;
+  GRANT EXECUTE ON FUNCTION cauce_platform_operator(),cauce_assert_company_reachable(text,text),
+    cauce_config_revision_scope(jsonb) TO cauce_runtime;
+  GRANT EXECUTE ON FUNCTION cauce_platform_operator(),cauce_fill_company(),cauce_fill_company_from_human(),
+    cauce_company_immutable(),cauce_tenants_company_admission(),cauce_assert_company_reachable(text,text),
+    cauce_pair_company_guard(),cauce_fill_host_company(),cauce_register_placed_host(),cauce_fill_operation_company(),
+    cauce_config_revision_scope(jsonb),cauce_config_revision_company(),cauce_append_only(),cauce_quota_company_guard(),
+    cauce_runtime_grants_053() TO cauce_platform;
+END
 $$;
+SELECT cauce_runtime_grants_053();
 SELECT set_config('lock_timeout',current_setting('cauce.migration_lock_timeout'),true);

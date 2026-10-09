@@ -209,6 +209,7 @@ describe('company isolation and owner migrations from a production-shaped 051 da
   });
 
   it('takes its table locks first and fails fast behind a long reader', async () => {
+    await applyMigrationsThrough(pool, await predecessor());
     const reader = await pool.connect();
     try {
       await reader.query('BEGIN'); await reader.query('SELECT count(*) FROM tenants');
@@ -235,6 +236,7 @@ describe('company isolation and owner migrations from a production-shaped 051 da
   });
 
   it('bounds the whole lock phase even when every single wait stays under lock_timeout', async () => {
+    await applyMigrationsThrough(pool, await predecessor());
     const holders = await Promise.all([pool.connect(), pool.connect()]);
     const [tenants, rooms] = holders;
     try {

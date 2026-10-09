@@ -83,6 +83,7 @@ ALTER TABLE messages ADD CONSTRAINT messages_room_id_fkey FOREIGN KEY (room_id) 
 ALTER TABLE messages DROP CONSTRAINT messages_room_id_tenant_id_fkey;
 ALTER TABLE tenants DROP CONSTRAINT tenants_id_company_key;
 
+DROP FUNCTION cauce_runtime_grants_053();
 DROP FUNCTION cauce_quota_company_guard();
 DROP FUNCTION cauce_append_only();
 DROP FUNCTION cauce_config_revision_company();
