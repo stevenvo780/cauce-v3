@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { z } from 'zod';
 import { FleetOperationRequestSchema } from '@cauce/protocol';
-import { assertFleetOperationAuthority, loadFleetHostScope, lockFleetRevision, preparedState, publicFleetOperation, withTransaction,
+import { assertFleetOperationAuthority, loadFleetHostScope, lockFleetRevision, preparedState, providerAccountConsentSql, publicFleetOperation, withTransaction,
   type DatabaseClient, type DatabasePool, type FleetOperationRow } from '@cauce/store';
 import { ProviderAuthError } from '../console/provider-auth.contracts.js';
 import { assertProviderAuthSealedScope, createProviderAuthDependencies, resolveProviderAuthRequest,
@@ -151,7 +151,7 @@ async function activeExecution(client: DatabaseClient, scope: ProviderAuthPhysic
   const sealed = await assertProviderAuthSealedScope(client, row, agent);
   if (sealed.target_sha256 !== scope.host_scope_sha256) throw denied();
   const account = (await client.query<{ provider: string; external_account_id: string; enabled: boolean; consent: boolean }>(`SELECT provider,external_account_id,enabled,
-    (payer_tenant_id=$2 OR shared_with_pool) AS consent FROM provider_accounts WHERE id=$1 FOR SHARE`, [scope.account_id, scope.tenant_id])).rows[0];
+    ${providerAccountConsentSql('provider_accounts', '$2')} AS consent FROM provider_accounts WHERE id=$1 FOR SHARE`, [scope.account_id, scope.tenant_id])).rows[0];
   if (!account?.enabled || !account.consent || account.provider !== scope.provider_id || account.external_account_id !== scope.expected_external_account_id) throw denied();
   const trusted_accounts = await readFleetProviderAccounts(client, scopedFleetProviderAgents(
     row.request, prepared.fenced_targets, prepared.previous_agents, snapshot.agents));

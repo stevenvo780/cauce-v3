@@ -10,6 +10,7 @@ import {
   type ConfigurationLeafMutation,
 } from './configuration/contracts.js';
 import { ConfigurationMutations } from './configuration/mutations.js';
+import { assertCompanyMutation, configurationTenantScopeSql } from './configuration/company-scope.js';
 import { assertRuntimeSynchronizedMutation, configurationCapabilities, configurationDependencies, configurationIdentity, databaseError } from './configuration/shared.js';
 
 export { ConfigurationError };
@@ -60,7 +61,7 @@ export class ConfigurationRepository extends ConfigurationMutations {
 
   async get(actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>> {
     const authority = await withTransaction(this.pool, async (client) => {
-      const hub = await this.assertRead(client, actorTenant, actorAlias);
+      const actor = await this.assertRead(client, actorTenant, actorAlias);
       const control = await client.query<{ can_control: boolean }>(
         `SELECT EXISTS(SELECT 1 FROM memberships membership
          JOIN role_policies role ON role.role=membership.role
@@ -72,10 +73,12 @@ export class ConfigurationRepository extends ConfigurationMutations {
            AND to_jsonb(tenant)->>'retired_at' IS NULL AND to_jsonb(room)->>'retired_at' IS NULL) AS can_control`,
         [actorTenant, actorAlias],
       );
-      return { hub, control: control.rows[0]?.can_control === true };
+      return { hub: actor.is_hub, company: actor.company_id, control: control.rows[0]?.can_control === true };
     });
     const hub = authority.hub;
-    const scope = hub ? null : actorTenant;
+    const scope = actorTenant;
+    const owned = (owner: string): string => configurationTenantScopeSql(owner, hub);
+    const companyOwned = (owner: string): string => configurationTenantScopeSql(owner, true);
     const [
       revision, tenants, rooms, memberships, edges, harnesses, policies, destinations, chainPolicies,
       agents, providerAccounts, routingCeiling, agentAccountBindings, revisions, agentProfiles
@@ -83,17 +86,17 @@ export class ConfigurationRepository extends ConfigurationMutations {
         this.pool.query<{ revision: string }>('SELECT COALESCE(max(id),0)::text AS revision FROM config_revisions'),
         this.pool.query<Record<string, unknown>>(
           `SELECT id,display_name,is_hub,enabled,created_at,to_jsonb(tenants)->>'retired_at' AS retired_at FROM tenants
-           WHERE ($1::text IS NULL OR id=$1) AND to_jsonb(tenants)->>'purged_at' IS NULL ORDER BY id`, [scope]
+           WHERE ${owned('tenants.id')} AND to_jsonb(tenants)->>'purged_at' IS NULL ORDER BY id`, [scope]
         ),
         this.pool.query<Record<string, unknown>>(
           `SELECT id,tenant_id,display_name,enabled,created_at,to_jsonb(rooms)->>'retired_at' AS retired_at FROM rooms
-           WHERE ($1::text IS NULL OR tenant_id=$1) AND to_jsonb(rooms)->>'purged_at' IS NULL
+           WHERE ${owned('rooms.tenant_id')} AND to_jsonb(rooms)->>'purged_at' IS NULL
              AND NOT EXISTS(SELECT 1 FROM tenants WHERE tenants.id=rooms.tenant_id AND to_jsonb(tenants)->>'purged_at' IS NOT NULL)
            ORDER BY tenant_id,id`, [scope]
         ),
         this.pool.query<Record<string, unknown>>(
           `SELECT tenant_id,room_id,alias,role,enabled,created_at,to_jsonb(memberships)->>'retired_at' AS retired_at FROM memberships
-           WHERE ($1::text IS NULL OR tenant_id=$1)
+           WHERE ${owned('memberships.tenant_id')}
              AND NOT EXISTS(SELECT 1 FROM agents WHERE agents.tenant_id=memberships.tenant_id AND agents.alias=memberships.alias AND to_jsonb(agents)->>'purged_at' IS NOT NULL)
              AND NOT EXISTS(SELECT 1 FROM rooms WHERE rooms.id=memberships.room_id AND to_jsonb(rooms)->>'purged_at' IS NOT NULL)
              AND NOT EXISTS(SELECT 1 FROM tenants WHERE tenants.id=memberships.tenant_id AND to_jsonb(tenants)->>'purged_at' IS NOT NULL)
@@ -101,7 +104,8 @@ export class ConfigurationRepository extends ConfigurationMutations {
         ),
         this.pool.query<Record<string, unknown>>(
           `SELECT from_tenant,to_tenant,enabled,allow_route,allow_read,allow_control,created_at FROM acl_edges
-           WHERE ($1::text IS NULL OR from_tenant=$1 OR to_tenant=$1)
+           WHERE ${companyOwned('acl_edges.from_tenant')} AND ${companyOwned('acl_edges.to_tenant')}
+             AND (${hub ? 'true' : 'from_tenant=$1 OR to_tenant=$1'})
              AND NOT EXISTS(SELECT 1 FROM tenants WHERE tenants.id IN (acl_edges.from_tenant,acl_edges.to_tenant) AND to_jsonb(tenants)->>'purged_at' IS NOT NULL)
            ORDER BY from_tenant,to_tenant`, [scope]
         ),
@@ -117,7 +121,7 @@ export class ConfigurationRepository extends ConfigurationMutations {
                   allow_kinds,require_prior_contact,contact_ttl_days,min_interval_seconds,max_per_hour,
                   max_per_day,max_per_root,quiet_hours_start,quiet_hours_end,quiet_hours_tz,enabled,
                   created_at,updated_at
-           FROM egress_destinations WHERE ($1::text IS NULL OR tenant_id=$1)
+           FROM egress_destinations WHERE ${owned('egress_destinations.tenant_id')}
              AND NOT EXISTS(SELECT 1 FROM tenants WHERE tenants.id=egress_destinations.tenant_id AND to_jsonb(tenants)->>'purged_at' IS NOT NULL)
              AND NOT EXISTS(SELECT 1 FROM agents WHERE agents.tenant_id=egress_destinations.tenant_id AND agents.alias=egress_destinations.alias AND to_jsonb(agents)->>'purged_at' IS NOT NULL)
            ORDER BY tenant_id,alias,handle`, [scope]
@@ -151,7 +155,7 @@ export class ConfigurationRepository extends ConfigurationMutations {
                   to_jsonb(agents)->>'runtime_mode' AS runtime_mode,to_jsonb(agents)->>'systemd_user' AS systemd_user,
                   to_jsonb(agents)->>'primary_account_id' AS primary_account_id,to_jsonb(agents)->>'model_id' AS model_id,
                   to_jsonb(agents)->>'reasoning_effort' AS reasoning_effort
-           FROM agents WHERE ($1::text IS NULL OR tenant_id=$1) AND to_jsonb(agents)->>'purged_at' IS NULL
+           FROM agents WHERE ${owned('agents.tenant_id')} AND to_jsonb(agents)->>'purged_at' IS NULL
              AND NOT EXISTS(SELECT 1 FROM tenants WHERE tenants.id=agents.tenant_id AND to_jsonb(tenants)->>'purged_at' IS NOT NULL)
            ORDER BY tenant_id,alias`, [scope]
         ),
@@ -162,24 +166,28 @@ export class ConfigurationRepository extends ConfigurationMutations {
         // material and stay behind the payer scope.
         this.pool.query<Record<string, unknown>>(
           `SELECT id,provider,payer_tenant_id,label,shared_with_pool,enabled,created_at,updated_at,
-                  CASE WHEN $1::text IS NULL OR payer_tenant_id=$1 THEN external_account_id END AS external_account_id,
-                  CASE WHEN $1::text IS NULL OR payer_tenant_id=$1 THEN credential_ref_kind END AS credential_ref_kind
+                  CASE WHEN ${hub ? 'true' : 'payer_tenant_id=$1'} THEN external_account_id END AS external_account_id,
+                  CASE WHEN ${hub ? 'true' : 'payer_tenant_id=$1'} THEN credential_ref_kind END AS credential_ref_kind
            FROM provider_accounts
-           WHERE ($1::text IS NULL OR payer_tenant_id=$1 OR shared_with_pool)
+           WHERE ${companyOwned('provider_accounts.payer_tenant_id')}
+             AND (${hub ? 'true' : 'payer_tenant_id=$1 OR shared_with_pool'})
              AND NOT EXISTS(SELECT 1 FROM tenants WHERE tenants.id=provider_accounts.payer_tenant_id AND to_jsonb(tenants)->>'purged_at' IS NOT NULL)
            ORDER BY id`, [scope]
         ),
         this.pool.query<Record<string, unknown>>(
           `SELECT tenant_id,alias,account_id,account_payer_tenant,created_by_tenant,created_at
            FROM alias_routing_ceiling
-           WHERE ($1::text IS NULL OR tenant_id=$1 OR account_payer_tenant=$1)
+           WHERE ${companyOwned('alias_routing_ceiling.tenant_id')} AND ${companyOwned('alias_routing_ceiling.account_payer_tenant')}
+             AND (${hub ? 'true' : 'tenant_id=$1 OR account_payer_tenant=$1'})
              AND NOT EXISTS(SELECT 1 FROM tenants WHERE tenants.id IN (alias_routing_ceiling.tenant_id,alias_routing_ceiling.account_payer_tenant) AND to_jsonb(tenants)->>'purged_at' IS NOT NULL)
              AND NOT EXISTS(SELECT 1 FROM agents WHERE agents.tenant_id=alias_routing_ceiling.tenant_id AND agents.alias=alias_routing_ceiling.alias AND to_jsonb(agents)->>'purged_at' IS NOT NULL)
            ORDER BY tenant_id,alias,account_id`, [scope]
         ),
         this.pool.query<Record<string, unknown>>(
           `SELECT tenant_id,agent_alias,account_id,priority,enabled,created_at,updated_at
-           FROM agent_account_bindings WHERE ($1::text IS NULL OR tenant_id=$1)
+           FROM agent_account_bindings WHERE ${owned('agent_account_bindings.tenant_id')}
+             AND EXISTS(SELECT 1 FROM provider_accounts account WHERE account.id=agent_account_bindings.account_id
+               AND ${companyOwned('account.payer_tenant_id')})
              AND NOT EXISTS(SELECT 1 FROM tenants WHERE tenants.id=agent_account_bindings.tenant_id AND to_jsonb(tenants)->>'purged_at' IS NOT NULL)
              AND NOT EXISTS(SELECT 1 FROM agents WHERE agents.tenant_id=agent_account_bindings.tenant_id AND agents.alias=agent_account_bindings.agent_alias AND to_jsonb(agents)->>'purged_at' IS NOT NULL)
              AND NOT EXISTS(SELECT 1 FROM provider_accounts account JOIN tenants tenant ON tenant.id=account.payer_tenant_id
@@ -189,7 +197,7 @@ export class ConfigurationRepository extends ConfigurationMutations {
         this.pool.query<Record<string, unknown>>(
           // Orders explicitly by the numeric column config_revisions.id to avoid lexicographic ordering over id::text.
           `SELECT id::text,actor_tenant,actor_alias,operation,summary,rolled_back_revision_id::text,created_at
-           FROM config_revisions WHERE $1::text IS NULL OR actor_tenant=$1
+           FROM config_revisions WHERE ${owned('config_revisions.actor_tenant')}
            ORDER BY config_revisions.id DESC LIMIT 100`, [scope]
         ),
         this.pool.query<Record<string, unknown>>(
@@ -198,7 +206,7 @@ export class ConfigurationRepository extends ConfigurationMutations {
           // which validates the full document, syncs the runtime, and records its ACK.
           `SELECT tenant_id,alias,purpose,role_summary,human_brief,responsibilities,restrictions,
                   tools,operating_rules,created_at,updated_at
-           FROM agent_profiles WHERE ($1::text IS NULL OR tenant_id=$1)
+           FROM agent_profiles WHERE ${owned('agent_profiles.tenant_id')}
              AND NOT EXISTS(SELECT 1 FROM tenants WHERE tenants.id=agent_profiles.tenant_id AND to_jsonb(tenants)->>'purged_at' IS NOT NULL)
              AND NOT EXISTS(SELECT 1 FROM agents WHERE agents.tenant_id=agent_profiles.tenant_id AND agents.alias=agent_profiles.alias AND to_jsonb(agents)->>'purged_at' IS NOT NULL)
            ORDER BY tenant_id,alias`, [scope]
@@ -206,7 +214,7 @@ export class ConfigurationRepository extends ConfigurationMutations {
     ]);
     return {
       revision: Number(revision.rows[0]?.revision ?? 0), observed_at: new Date().toISOString(),
-      capabilities: configurationCapabilities(actorTenant, actorAlias, hub, authority.control),
+      capabilities: configurationCapabilities(actorTenant, actorAlias, hub, authority.control, authority.company),
       tenants: tenants.rows.filter((row) => !row.retired_at), rooms: rooms.rows.filter((row) => !row.retired_at),
       memberships: memberships.rows.filter((row) => !row.retired_at),
       retired: { tenants: tenants.rows.filter((row) => row.retired_at), rooms: rooms.rows.filter((row) => row.retired_at),
@@ -225,9 +233,11 @@ export class ConfigurationRepository extends ConfigurationMutations {
     actorTenant: Tenant, actorAlias: string, mutation: ConfigurationLeafMutation, expectedRevision?: number,
   ): Promise<ConfigurationDependencyPreview> {
     return withTransaction(this.pool, async (client) => {
-      const hub = await this.assertControl(client, actorTenant, actorAlias);
+      const authority = await this.assertControl(client, actorTenant, actorAlias);
+      const hub = authority.is_hub;
       this.authorizeMutation(mutation, actorTenant, hub);
       const revision = await this.lockRevision(client, expectedRevision);
+      await assertCompanyMutation(client, mutation, authority.company_id);
       const dependencies = await configurationDependencies(client, mutation);
       return { revision, resource: mutation.resource, identity: configurationIdentity(mutation),
         dependencies, can_delete: dependencies.every((dependency) => !dependency.blocking) };
@@ -243,12 +253,14 @@ export class ConfigurationRepository extends ConfigurationMutations {
   ): Promise<ConfigurationChangeResult> {
     assertRuntimeSynchronizedMutation(mutation);
     return this.transaction<ConfigurationChangeResult>(async (client) => {
-      const hub = await this.assertControl(client, actorTenant, actorAlias);
+      const authority = await this.assertControl(client, actorTenant, actorAlias);
+      const hub = authority.is_hub;
       this.authorizeMutation(mutation, actorTenant, hub);
       const revision = await this.lockRevision(client, expectedRevision);
-      const controlBefore = await this.controlState(client);
-      const { inverse, summary } = await this.execute(client, mutation);
-      await this.assertRecoverableControl(client, controlBefore);
+      await assertCompanyMutation(client, mutation, authority.company_id);
+      const controlBefore = await this.controlState(client, authority.company_id);
+      const { inverse, summary } = await this.execute(client, mutation, authority.company_id);
+      await this.assertRecoverableControl(client, controlBefore, authority.company_id);
       await this.assertControl(client, actorTenant, actorAlias);
       if (dryRun) {
         return { result: {
@@ -289,7 +301,8 @@ export class ConfigurationRepository extends ConfigurationMutations {
       throw new ConfigurationError('not_found', 'configuration revision is invalid');
     }
     return this.transaction<ConfigurationChangeResult>(async (client) => {
-      const hub = await this.assertControl(client, actorTenant, actorAlias);
+      const authority = await this.assertControl(client, actorTenant, actorAlias);
+      const hub = authority.is_hub;
       const currentRevision = await this.lockRevision(client, expectedRevision);
       const selected = await client.query<RevisionRow>(
         `SELECT id::text,actor_tenant,actor_alias,operation,inverse_operation,summary,
@@ -303,9 +316,11 @@ export class ConfigurationRepository extends ConfigurationMutations {
       }
       assertRuntimeSynchronizedMutation(original.inverse_operation);
       this.authorizeMutation(original.inverse_operation, actorTenant, hub);
-      const controlBefore = await this.controlState(client);
-      const { inverse: redo, summary } = await this.execute(client, original.inverse_operation);
-      await this.assertRecoverableControl(client, controlBefore);
+      await assertCompanyMutation(client, { resource: 'tenant', action: 'update', id: original.actor_tenant, value: {} }, authority.company_id);
+      await assertCompanyMutation(client, original.inverse_operation, authority.company_id);
+      const controlBefore = await this.controlState(client, authority.company_id);
+      const { inverse: redo, summary } = await this.execute(client, original.inverse_operation, authority.company_id);
+      await this.assertRecoverableControl(client, controlBefore, authority.company_id);
       await this.assertControl(client, actorTenant, actorAlias);
       const rollbackSummary = `rollback ${String(revisionId)}: ${summary}`;
       if (dryRun) {
@@ -357,9 +372,9 @@ export class ConfigurationRepository extends ConfigurationMutations {
     }
   }
 
-  private async assertControl(client: DatabaseClient, tenant: Tenant, alias: string): Promise<boolean> {
-    const result = await client.query<{ is_hub: boolean }>(
-      `SELECT tenant.is_hub FROM memberships membership
+  private async assertControl(client: DatabaseClient, tenant: Tenant, alias: string): Promise<{ is_hub: boolean; company_id: string }> {
+    const result = await client.query<{ is_hub: boolean; company_id: string }>(
+      `SELECT tenant.is_hub,tenant.company_id FROM memberships membership
        JOIN role_policies role ON role.role=membership.role
        JOIN tenants tenant ON tenant.id=membership.tenant_id
        JOIN rooms room ON room.id=membership.room_id AND room.tenant_id=membership.tenant_id
@@ -370,12 +385,12 @@ export class ConfigurationRepository extends ConfigurationMutations {
     );
     const row = result.rows[0];
     if (!row) throw new ConfigurationError('forbidden', 'control permission is required for configuration');
-    return row.is_hub;
+    return row;
   }
 
-  private async assertRead(client: DatabaseClient, tenant: Tenant, alias: string): Promise<boolean> {
-    const result = await client.query<{ is_hub: boolean }>(
-      `SELECT tenant.is_hub FROM memberships membership
+  private async assertRead(client: DatabaseClient, tenant: Tenant, alias: string): Promise<{ is_hub: boolean; company_id: string }> {
+    const result = await client.query<{ is_hub: boolean; company_id: string }>(
+      `SELECT tenant.is_hub,tenant.company_id FROM memberships membership
        JOIN role_policies role ON role.role=membership.role
        JOIN tenants tenant ON tenant.id=membership.tenant_id
        JOIN rooms room ON room.id=membership.room_id AND room.tenant_id=membership.tenant_id
@@ -386,7 +401,7 @@ export class ConfigurationRepository extends ConfigurationMutations {
     );
     const row = result.rows[0];
     if (!row) throw new ConfigurationError('forbidden', 'read permission is required for configuration');
-    return row.is_hub;
+    return row;
   }
 
   private authorizeMutation(mutation: ConfigMutation, actorTenant: Tenant, hub: boolean): void {
@@ -414,9 +429,9 @@ export class ConfigurationRepository extends ConfigurationMutations {
     throw new ConfigurationError('forbidden', 'configuration resource is outside the actor tenant');
   }
 
-  private async controlState(client: DatabaseClient): Promise<{ hub_control_count: number; human_control_count: number }> {
+  private async controlState(client: DatabaseClient, company: string): Promise<{ hub_control_count: number; human_control_count: number }> {
     const selected = await client.query<{ hub_control_count: string | number; human_control_count: string | number }>(
-      `SELECT (SELECT count(*) FROM tenants tenant WHERE tenant.is_hub AND tenant.enabled
+      `SELECT (SELECT count(*) FROM tenants tenant WHERE tenant.company_id=$1 AND tenant.is_hub AND tenant.enabled
          AND to_jsonb(tenant)->>'retired_at' IS NULL AND EXISTS(
            SELECT 1 FROM memberships membership
            JOIN role_policies role ON role.role=membership.role
@@ -425,23 +440,23 @@ export class ConfigurationRepository extends ConfigurationMutations {
              AND to_jsonb(membership)->>'retired_at' IS NULL AND to_jsonb(room)->>'retired_at' IS NULL)) AS hub_control_count,
        (SELECT count(DISTINCT human_user.id) FROM console_users human_user
          JOIN tenants tenant ON tenant.id=human_user.tenant_id
-         WHERE human_user.active AND human_user.role='operator' AND tenant.is_hub AND tenant.enabled
+         WHERE tenant.company_id=$1 AND human_user.active AND human_user.role='operator' AND tenant.is_hub AND tenant.enabled
            AND to_jsonb(tenant)->>'retired_at' IS NULL
            AND EXISTS(SELECT 1 FROM memberships membership
              JOIN role_policies role ON role.role=membership.role
              JOIN rooms room ON room.id=membership.room_id AND room.tenant_id=membership.tenant_id
              WHERE membership.tenant_id=human_user.tenant_id AND membership.alias=human_user.alias
                AND membership.enabled AND room.enabled AND role.allow_control
-               AND to_jsonb(membership)->>'retired_at' IS NULL AND to_jsonb(room)->>'retired_at' IS NULL)) AS human_control_count`,
+               AND to_jsonb(membership)->>'retired_at' IS NULL AND to_jsonb(room)->>'retired_at' IS NULL)) AS human_control_count`, [company],
     );
     const row = selected.rows[0];
     return { hub_control_count: Number(row?.hub_control_count ?? 0), human_control_count: Number(row?.human_control_count ?? 0) };
   }
 
   private async assertRecoverableControl(
-    client: DatabaseClient, before: { hub_control_count: number; human_control_count: number },
+    client: DatabaseClient, before: { hub_control_count: number; human_control_count: number }, company: string,
   ): Promise<void> {
-    const after = await this.controlState(client);
+    const after = await this.controlState(client, company);
     if ((before.hub_control_count > 0 && after.hub_control_count === 0)
       || (before.human_control_count > 0 && after.human_control_count === 0)) {
       throw new ConfigurationError('conflict', 'configuration cannot remove the last HUB or human control authority');

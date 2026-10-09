@@ -1,4 +1,4 @@
-import { type DatabasePool } from '@cauce/store';
+import { hubStarRouteSql, type DatabasePool } from '@cauce/store';
 import { probeSchemaContract } from './probe.js';
 
 /** Proves the schema and authority used by `claimDeliveries` without observing an identity. */
@@ -86,7 +86,7 @@ export async function probeDeliveryAdmissionPath(pool: DatabasePool): Promise<vo
                         AND edge.to_tenant=membership.tenant_id
                         AND edge.enabled AND edge.allow_route
                         AND source_tenant.enabled
-                        AND (source_tenant.is_hub OR tenant.is_hub)
+                        AND ${hubStarRouteSql('source_tenant', 'tenant')}
                     )
                   )) AS route_allowed,
               (SELECT count(*) FROM deliveries delivery

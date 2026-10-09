@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { hashPassword } from '../password.js';
 import { normalizeEmail } from '../console-users.js';
 import { consoleRoleAuthority } from '../console-user-authority.js';
-import { assertPeopleAuthority, peopleAliasAuthority, protectLastPeopleAdministrator } from './people-admin-authority.js';
+import { assertPeopleAuthority, assertPeopleCompany, peopleAliasAuthority, peopleCompanyScopeSql, protectLastPeopleAdministrator } from './people-admin-authority.js';
 import { ownsPeopleTerminalSession, revokePeopleAccess } from './people-admin-revoke.js';
 import {
   PEOPLE_ADMIN_CAPABILITIES, PeopleAdminControlSchema, PeopleAdminCreateSchema, PeopleAdminError, PeopleAdminIdSchema,
@@ -12,9 +12,13 @@ import {
 
 const COLUMNS = 'id,email,display_name,role,tenant_id,alias,active,(extract(epoch FROM updated_at)*1000000)::numeric(20,0)::text AS revision';
 function person(value: unknown): PeopleAdminPerson { return PeopleAdminPersonSchema.parse(value); }
-async function lockPerson(client: DatabaseClient, id: string, revision: string): Promise<PeopleAdminPerson> {
-  const row = (await client.query<PeopleAdminPerson>(`SELECT ${COLUMNS} FROM console_users WHERE id=$1 FOR UPDATE`, [id])).rows[0];
+async function lockPerson(client: DatabaseClient, id: string, revision: string, actorTenant: string): Promise<PeopleAdminPerson> {
+  const row = (await client.query<PeopleAdminPerson>(`SELECT ${COLUMNS} FROM console_users
+    WHERE id=$1 AND ${peopleCompanyScopeSql('tenant_id', '$2')} FOR UPDATE`, [id, actorTenant])).rows[0];
   if (!row) throw new PeopleAdminError('not_found');
+  const foreign = await client.query(`SELECT 1 FROM human_tenant_memberships
+    WHERE human_id=$1 AND enabled AND revoked_at IS NULL AND NOT (${peopleCompanyScopeSql('tenant_id', '$2')}) FOR SHARE`, [id, actorTenant]);
+  if (foreign.rowCount) throw new PeopleAdminError('conflict');
   const current = person(row); if (current.revision !== revision) throw new PeopleAdminError('conflict'); return current;
 }
 async function syncMembership(client: DatabaseClient, value: PeopleAdminPerson): Promise<void> {
@@ -72,7 +76,8 @@ export class PeopleAdminRepository {
   }
   async list(actor: PeopleAdminActor) {
     return this.transaction(actor, async client => {
-      const rows = await client.query<PeopleAdminPerson>(`SELECT ${COLUMNS} FROM console_users ORDER BY email_normalized,id LIMIT 1001`);
+      const rows = await client.query<PeopleAdminPerson>(`SELECT ${COLUMNS} FROM console_users
+        WHERE ${peopleCompanyScopeSql('tenant_id')} ORDER BY email_normalized,id LIMIT 1001`, [actor.tenant_id]);
       if (rows.rows.length > 1000) throw new PeopleAdminError('conflict');
       return { items: rows.rows.map(person), capabilities: PEOPLE_ADMIN_CAPABILITIES };
     });
@@ -81,6 +86,7 @@ export class PeopleAdminRepository {
     let value; try { value = PeopleAdminCreateSchema.parse(input); } catch (error) { mapped(error); }
     const passwordHash = await hashPassword(value.password);
     return this.transaction(actor, async client => {
+      await assertPeopleCompany(client, value.tenant_id, actor.tenant_id);
       await peopleAliasAuthority(client, value);
       const row = (await client.query<PeopleAdminPerson>(`INSERT INTO console_users(email,email_normalized,password_hash,display_name,role,tenant_id,alias,active)
         VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING ${COLUMNS}`,
@@ -92,8 +98,9 @@ export class PeopleAdminRepository {
     let patch; try { PeopleAdminIdSchema.parse(id); patch = PeopleAdminUpdateSchema.parse(input); } catch (error) { mapped(error); }
     const passwordHash = patch.password === undefined ? undefined : await hashPassword(patch.password);
     return this.transaction(actor, async client => {
-      const previous = await lockPerson(client, id, patch.expected_revision);
+      const previous = await lockPerson(client, id, patch.expected_revision, actor.tenant_id);
       const next = person({ ...previous, ...Object.fromEntries(Object.entries(patch).filter(([key]) => !['expected_revision', 'password'].includes(key))) });
+      await assertPeopleCompany(client, next.tenant_id, actor.tenant_id);
       if (next.active) await peopleAliasAuthority(client, next);
       await protectLastPeopleAdministrator(client, previous, next);
       const authorityChanged = previous.role !== next.role || previous.tenant_id !== next.tenant_id || previous.alias !== next.alias || previous.active !== next.active;
@@ -118,7 +125,7 @@ export class PeopleAdminRepository {
   async purge(actor: PeopleAdminActor, id: string, input: unknown) {
     let control; try { PeopleAdminIdSchema.parse(id); control = PeopleAdminControlSchema.parse(input); } catch (error) { mapped(error); }
     return this.transaction(actor, async client => {
-      const previous = await lockPerson(client, id, control.expected_revision);
+      const previous = await lockPerson(client, id, control.expected_revision, actor.tenant_id);
       if (previous.active) throw new PeopleAdminError('conflict');
       await assertNoHistory(client, previous);
       const removed = await client.query('DELETE FROM console_users WHERE id=$1 RETURNING id', [id]);

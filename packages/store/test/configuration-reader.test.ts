@@ -16,7 +16,7 @@ function readerPool(): { pool: DatabasePool; queries: QueryRecord[] } {
     const barrier = schemaBarrierReply(normalized, params);
     if (barrier !== undefined) return barrier;
     if (normalized.includes('role.allow_read')) {
-      return { rows: [{ is_hub: false }], rowCount: 1 };
+      return { rows: [{ is_hub: false, company_id: 'humanizar' }], rowCount: 1 };
     }
     if (normalized.includes('COALESCE(max(id),0)::text AS revision')) {
       return { rows: [{ revision: '0' }], rowCount: 1 };
@@ -47,7 +47,7 @@ describe('configuration reader authority', () => {
     expect(authorization?.sql).not.toContain('role.allow_control');
     expect(authorization?.params).toEqual(['Pablo', 'midas']);
 
-    const scopedReads = queries.filter((record) => record.sql.includes('$1::text IS NULL'));
+    const scopedReads = queries.filter((record) => record.sql.includes('scope_actor'));
     expect(scopedReads.length).toBeGreaterThan(0);
     expect(scopedReads.every((record) => record.params[0] === 'Pablo')).toBe(true);
     expect(queries.some((record) => /\b(INSERT|UPDATE|DELETE)\b/iu.test(record.sql))).toBe(false);

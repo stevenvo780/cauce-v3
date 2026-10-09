@@ -1,5 +1,6 @@
 import { FleetOperationRequestSchema, sha256Hex, type FleetOperationPreview, type FleetOperationRequest, type FleetTarget } from '@cauce/protocol';
 import type { DatabaseClient } from '../db.js';
+import { LEGACY_COMPANY, providerAccountConsentSql } from '../configuration/company-scope.js';
 import { fleetPurgeDependencies } from './fleet-operation-lifecycle.js';
 import { FleetOperationError, isRegistryDraft } from './fleet-operation-contracts.js';
 import { assertFleetHostAccess } from './fleet-operation-hosts.js';
@@ -12,15 +13,17 @@ export function fleetRequest(value: unknown): FleetOperationRequest {
 export async function assertFleetAuthority(
   client: DatabaseClient, tenant: string, alias: string, target: FleetTarget, control = true,
 ): Promise<void> {
-  const result = await client.query<{ is_hub: boolean; allow_read: boolean; allow_control: boolean }>(
-    `SELECT tenant.is_hub,bool_or(policy.allow_read) AS allow_read,bool_or(policy.allow_control) AS allow_control
+  // A hub administers only its own company; a missing target is reported later as not found.
+  const result = await client.query<{ is_hub: boolean; allow_read: boolean; allow_control: boolean; foreign_target: boolean }>(
+    `SELECT tenant.is_hub,bool_or(policy.allow_read) AS allow_read,bool_or(policy.allow_control) AS allow_control,
+            EXISTS (SELECT 1 FROM tenants target WHERE target.id=$3 AND target.company_id<>tenant.company_id) AS foreign_target
        FROM memberships membership JOIN tenants tenant ON tenant.id=membership.tenant_id
        JOIN rooms room ON room.id=membership.room_id AND room.tenant_id=membership.tenant_id
        JOIN role_policies policy ON policy.role=membership.role
       WHERE membership.tenant_id=$1 AND membership.alias=$2 AND membership.enabled AND tenant.enabled AND room.enabled
-      GROUP BY tenant.is_hub`, [tenant, alias]);
+      GROUP BY tenant.is_hub,tenant.company_id`, [tenant, alias, target.tenant_id]);
   const authority = result.rows[0];
-  if (!authority || !(control ? authority.allow_control : authority.allow_read)
+  if (!authority || !(control ? authority.allow_control : authority.allow_read) || authority.foreign_target
       || (!authority.is_hub && (target.tenant_id !== tenant || (control && target.resource !== 'room')))) {
     throw new FleetOperationError('forbidden', 'fleet operation is outside the current operator authority');
   }
@@ -50,8 +53,8 @@ export async function validateFleetTarget(
   coordinatorHosts?: readonly string[],
 ): Promise<{ host: string; preview: FleetOperationPreview }> {
   const { target } = request;
-  const tenant = (await client.query<{ enabled: boolean; retired_at: Date | null; purged_at: Date | null }>(
-    'SELECT enabled,retired_at,purged_at FROM tenants WHERE id=$1 FOR SHARE', [target.tenant_id])).rows[0];
+  const tenant = (await client.query<{ enabled: boolean; retired_at: Date | null; purged_at: Date | null; company_id: string }>(
+    'SELECT enabled,retired_at,purged_at,company_id FROM tenants WHERE id=$1 FOR SHARE', [target.tenant_id])).rows[0];
   if (!tenant) throw new FleetOperationError('not_found', 'target tenant was not found');
   if (tenant.purged_at) throw new FleetOperationError('conflict', 'purged tenant identity is permanent');
   const activating = ['create', 'update', 'start', 'restore'].includes(request.kind);
@@ -68,6 +71,7 @@ export async function validateFleetTarget(
     if (request.kind === 'create' && agent && !prepared && !isRegistryDraft(agent)) throw new FleetOperationError('conflict', 'agent identity already exists');
     if (request.kind !== 'create' && !agent) throw new FleetOperationError('not_found', 'target agent was not found');
     if (request.kind === 'create' || request.kind === 'update') {
+      if (tenant.company_id !== LEGACY_COMPANY) throw new FleetOperationError('forbidden', 'fleet hosts are reserved to the legacy company');
       const parameters = request.parameters;
       if (parameters.memberships.find((member) => member.room_id === parameters.primary_room_id)?.enabled === false) {
         throw new FleetOperationError('conflict', 'primary membership must be enabled in the activation intent');
@@ -89,7 +93,7 @@ export async function validateFleetTarget(
         }
       }
       if (parameters.primary_account_id && !(await client.query(
-        'SELECT 1 FROM provider_accounts WHERE id=$1 AND enabled AND (payer_tenant_id=$2 OR shared_with_pool) FOR SHARE',
+        `SELECT 1 FROM provider_accounts WHERE id=$1 AND enabled AND ${providerAccountConsentSql('provider_accounts', '$2')} FOR SHARE`,
         [parameters.primary_account_id, target.tenant_id])).rowCount) throw new FleetOperationError('forbidden', 'provider account has no current payer consent');
       host = parameters.placement.host_id;
     } else {

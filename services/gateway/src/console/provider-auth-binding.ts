@@ -1,4 +1,4 @@
-import { loadFleetHostScope, planFleetHostSlices, preparedState, withTransaction,
+import { loadFleetHostScope, planFleetHostSlices, preparedState, providerAccountConsentSql, withTransaction,
   type DatabaseClient, type DatabasePool, type FleetOperationRow } from '@cauce/store';
 import { randomUUID } from 'node:crypto';
 import { isLiteralTrue } from '@cauce/protocol';
@@ -55,12 +55,16 @@ async function context(client: DatabaseClient, actor: ProviderAuthActor, request
   const initiator = (await client.query<{ subject: string | null }>(`SELECT metadata->>'actor_subject' AS subject
     FROM fleet_operation_events WHERE operation_id=$1 AND event='queued' ORDER BY id LIMIT 1`, [operation.id])).rows[0];
   if (initiator?.subject !== actor.subject) throw denied();
-  const agent = (await client.query<Agent>(`SELECT *
-    FROM agents WHERE tenant_id=$1 AND alias=$2 FOR SHARE`, [operation.target.tenant_id, operation.target.alias])).rows[0];
+  const agent = (await client.query<Agent>(`SELECT agent.*
+    FROM agents agent JOIN tenants target ON target.id=agent.tenant_id JOIN tenants actor ON actor.company_id=target.company_id
+    WHERE agent.tenant_id=$1 AND agent.alias=$2 AND actor.id=$3 FOR SHARE OF agent`,
+  [operation.target.tenant_id, operation.target.alias, actor.tenant_id])).rows[0];
   if (agent?.retired_at !== null || agent.purged_at !== null) throw denied();
-  const account = (await client.query<Account>(`SELECT id,provider,external_account_id,payer_tenant_id,shared_with_pool,enabled
-    FROM provider_accounts WHERE id=$1 FOR SHARE`, [agent.primary_account_id])).rows[0];
-  if (!account?.enabled || (account.payer_tenant_id !== agent.tenant_id && !account.shared_with_pool)) throw denied();
+  const selected = (await client.query<Account & { consent: boolean }>(`SELECT id,provider,external_account_id,payer_tenant_id,shared_with_pool,enabled,
+    ${providerAccountConsentSql('provider_accounts', '$2')} AS consent FROM provider_accounts WHERE id=$1 FOR SHARE`,
+  [agent.primary_account_id, agent.tenant_id])).rows[0];
+  if (!selected?.enabled || !selected.consent) throw denied();
+  const { consent: _consent, ...account } = selected;
   return { actor, operation, agent, account };
 }
 export async function assertProviderAuthSealedScope(client: DatabaseClient, operation: FleetOperationRow,

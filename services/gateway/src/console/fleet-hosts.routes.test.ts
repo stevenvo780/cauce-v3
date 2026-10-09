@@ -78,7 +78,7 @@ describe('fleet host routes', () => {
   it('lists hosts only for a hub actor', async () => {
     const hub = await fixture();
     expect((await hub.app.inject({ method: 'GET', url: PATH })).statusCode).toBe(200);
-    expect(hub.query).toHaveBeenCalledWith(expect.stringContaining('role.allow_control'), ['Steven', 'kant']);
+    expect(hub.query).toHaveBeenCalledWith(expect.stringContaining('tenant.company_id=$3'), ['Steven', 'kant', 'humanizar']);
 
     const notHub = await fixture({ isHub: false, actor: new FixedAuthProvider(testPrincipal({ permissions: ['read'] })) });
     expect((await notHub.app.inject({ method: 'GET', url: PATH })).statusCode).toBe(403);
@@ -127,7 +127,7 @@ describe('fleet host routes', () => {
     const response = await app.inject({ method: 'POST', url: PATH, payload: { host_id: 'nueva', display_name: 'Nueva' } });
     expect(response.statusCode).toBe(201);
     expect(response.json()).toMatchObject({ host_id: 'nueva', display_name: 'Nueva' });
-    expect(query).toHaveBeenCalledWith(expect.stringContaining('role.allow_control'), ['Steven', 'kant']);
+    expect(query).toHaveBeenCalledWith(expect.stringContaining('role.allow_control'), ['Steven', 'kant', 'humanizar']);
     expect(repository.create).toHaveBeenCalledWith({ host_id: 'nueva', display_name: 'Nueva', notes: '' }, [HOST_ID]);
   });
 

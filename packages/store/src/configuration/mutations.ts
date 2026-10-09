@@ -30,13 +30,14 @@ async function assertUnpurgedAccountScope(client: DatabaseClient, account: strin
 export abstract class ConfigurationMutations {
   protected async execute(
     client: DatabaseClient,
-    mutation: ConfigMutation
+    mutation: ConfigMutation,
+    company: string,
   ): Promise<{ inverse: ConfigMutation; summary: string }> {
     if (mutation.resource === 'batch') {
       const inverse: ConfigurationLeafMutation[] = [];
       const summaries: string[] = [];
       for (const leaf of mutation.mutations) {
-        const result = await this.execute(client, leaf);
+        const result = await this.execute(client, leaf, company);
         inverse.unshift(...(result.inverse.resource === 'batch' ? result.inverse.mutations : [result.inverse]));
         summaries.push(result.summary);
       }
@@ -55,7 +56,7 @@ export abstract class ConfigurationMutations {
         await assertUnpurgedAccountScope(client, mutation.account_id);
       }
     }
-    if (mutation.resource === 'tenant') return tenantMutation(client, mutation);
+    if (mutation.resource === 'tenant') return tenantMutation(client, mutation, company);
     if (mutation.resource === 'room') return roomMutation(client, mutation);
     if (mutation.resource === 'membership') return membershipMutation(client, mutation);
     if (mutation.resource === 'acl_edge') return aclEdgeMutation(client, mutation);

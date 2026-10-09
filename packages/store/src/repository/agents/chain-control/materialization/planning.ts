@@ -1,3 +1,4 @@
+import { hubStarRouteSql } from '../../../acl-edges.js';
 import { isAlias, MAX_DELEGATION_FEEDBACK_ITEMS, type Tenant } from '@cauce/protocol';
 import { isClientMailboxAlias, clientMailboxRoutingTargets, resolveClientMailbox } from '../../../../client-mailbox.js';
 import type { DatabaseClient } from '../../../../db.js';
@@ -179,7 +180,7 @@ export async function allowedTargetTenants(
       if (candidate.tenant_id !== row.recipient_tenant) {
         const edge = await client.query(`SELECT 1 FROM acl_edges edge JOIN tenants source ON source.id=edge.from_tenant
           JOIN tenants target ON target.id=edge.to_tenant WHERE edge.from_tenant=$1 AND edge.to_tenant=$2
-          AND source.enabled AND target.enabled AND edge.enabled AND edge.allow_route AND (source.is_hub OR target.is_hub)
+          AND source.enabled AND target.enabled AND edge.enabled AND edge.allow_route AND ${hubStarRouteSql('source', 'target', true)}
           FOR SHARE OF edge,source,target`, [row.recipient_tenant, candidate.tenant_id]);
         if (edge.rowCount !== 1) continue;
       }
@@ -210,7 +211,7 @@ export async function allowedTargetTenants(
        JOIN tenants source ON source.id=edge.from_tenant
        JOIN tenants target ON target.id=edge.to_tenant
        WHERE edge.from_tenant=$1 AND edge.to_tenant=$2
-         AND edge.enabled AND edge.allow_route AND (source.is_hub OR target.is_hub)
+         AND edge.enabled AND edge.allow_route AND ${hubStarRouteSql('source', 'target', true)}
        FOR SHARE OF edge,source,target`,
       [row.recipient_tenant, candidate]
     );

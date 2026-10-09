@@ -1,3 +1,4 @@
+import { hubStarRouteSql } from '../../acl-edges.js';
 import { clientMailboxStoredSql } from '../../../client-mailbox.js';
 import { isRfcUuid, parseBlobArtifactUri, type DeliveryState, type Tenant } from '@cauce/protocol';
 import type { DatabaseClient } from '../../../db.js';
@@ -23,10 +24,12 @@ async function mayCarryBlobToRoot(
   const result = await client.query(
     `SELECT 1 FROM acl_edges outbound JOIN acl_edges inbound
        ON inbound.from_tenant=$2 AND inbound.to_tenant=$1
+     JOIN tenants source ON source.id=outbound.from_tenant JOIN tenants target ON target.id=outbound.to_tenant
      WHERE outbound.from_tenant=$1 AND outbound.to_tenant=$2
        AND outbound.enabled AND outbound.allow_route
        AND inbound.enabled AND inbound.allow_read
-     LIMIT 1 FOR SHARE OF outbound,inbound`,
+       AND ${hubStarRouteSql('source', 'target', true)}
+     LIMIT 1 FOR SHARE OF outbound,inbound,source,target`,
     [sourceTenant, targetTenant],
   );
   return result.rowCount === 1;
@@ -180,14 +183,14 @@ export abstract class AgentFaninMaterializationRepository extends AgentResponseR
                   JOIN tenants reader ON reader.id=read_edge.from_tenant
                   JOIN tenants owner ON owner.id=read_edge.to_tenant
                   WHERE read_edge.from_tenant=$2 AND read_edge.to_tenant=materialization.target_tenant
-                    AND read_edge.enabled AND read_edge.allow_read AND (reader.is_hub OR owner.is_hub)
+                    AND read_edge.enabled AND read_edge.allow_read AND ${hubStarRouteSql('reader', 'owner', true)}
                 )
                 AND EXISTS (
                   SELECT 1 FROM acl_edges route_edge
                   JOIN tenants sender ON sender.id=route_edge.from_tenant
                   JOIN tenants receiver ON receiver.id=route_edge.to_tenant
                   WHERE route_edge.from_tenant=materialization.target_tenant AND route_edge.to_tenant=$2
-                    AND route_edge.enabled AND route_edge.allow_route AND (sender.is_hub OR receiver.is_hub)
+                    AND route_edge.enabled AND route_edge.allow_route AND ${hubStarRouteSql('sender', 'receiver', true)}
                 )
               )) AS tenant_visible
        FROM agent_output_materializations materialization

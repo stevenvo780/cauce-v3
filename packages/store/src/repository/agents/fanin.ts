@@ -1,6 +1,8 @@
 import { clientMailboxStoredSql } from '../../client-mailbox.js';
 import type { DeliveryState, Tenant } from '@cauce/protocol'; /* eslint @typescript-eslint/prefer-optional-chain: "error" */
 import { StoreError } from '../errors.js';
+import { hubStarRouteSql } from '../acl-edges.js';
+import { LEGACY_COMPANY } from '../../configuration/company-scope.js';
 import { terminal } from '../messages.js';
 import {
   chainNode, opaqueNodeId
@@ -41,7 +43,11 @@ export abstract class AgentFaninRepository extends AgentFaninMaterializationRepo
               (
                 (notice.parent_tenant=$2 AND notice.parent_alias=$3)
                 OR (notice.child_tenant=$2 AND notice.child_alias=$3)
-                OR EXISTS (SELECT 1 FROM tenants hub WHERE hub.id=$2 AND hub.is_hub AND hub.enabled)
+                OR EXISTS (SELECT 1 FROM tenants hub WHERE hub.id=$2 AND hub.is_hub AND hub.enabled
+                  AND NOT EXISTS (SELECT 1 FROM unnest(ARRAY[notice.parent_tenant,notice.child_tenant]) endpoint(id)
+                    LEFT JOIN tenants owner ON owner.id=endpoint.id
+                    -- Notices have no tenant foreign key; a deleted endpoint stays with the legacy company.
+                    WHERE COALESCE(owner.company_id,'${LEGACY_COMPANY}')<>hub.company_id))
               ) AS visible
        FROM agent_failure_notices notice WHERE notice.id=$1::bigint`,
       [noticeId, actorTenant, actorAlias]
@@ -94,8 +100,10 @@ export abstract class AgentFaninRepository extends AgentFaninMaterializationRepo
                     AND participant.recipient_tenant=$2 AND participant.recipient_alias=$3)
           AND (${message}.tenant_id=$2 OR EXISTS (
             SELECT 1 FROM acl_edges edge
+            JOIN tenants source ON source.id=edge.from_tenant
+            JOIN tenants target ON target.id=edge.to_tenant
             WHERE edge.from_tenant=$2 AND edge.to_tenant=${message}.tenant_id
-              AND edge.enabled AND edge.allow_read)))
+              AND edge.enabled AND edge.allow_read AND ${hubStarRouteSql('source', 'target')})))
     )`;
     const [edges, branches, relays] = await Promise.all([
       this.pool.query<{

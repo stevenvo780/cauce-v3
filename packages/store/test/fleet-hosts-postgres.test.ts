@@ -159,6 +159,7 @@ describe('fleet hosts on PostgreSQL', () => {
   });
 
   it('rolls back only while no host is registered', async () => {
+    await pool.query(await readFile(new URL('../migrations/down/051_companies.sql', import.meta.url), 'utf8'));
     const down = await readFile(new URL('../migrations/down/050_fleet_hosts.sql', import.meta.url), 'utf8');
     await createFleetHost(pool, { host_id: 'alpha', display_name: 'Alfa', notes: '' });
     await expect(pool.query(down)).rejects.toThrow(/populated host schema/u);

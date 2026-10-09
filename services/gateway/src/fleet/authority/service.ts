@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
-import { assertFleetOperationAuthority, FleetOperationError, loadFleetHostScope, lockFleetRevision, withTransaction,
+import { assertFleetOperationAuthority, FleetOperationError, loadFleetHostScope, lockFleetRevision, providerAccountConsentSql, withTransaction,
   type DatabaseClient, type DatabasePool, type FleetOperationRow } from '@cauce/store';
 import { runAuthorityCommand, type AuthorityCommand } from './command.js';
 import { AuthorityHostSchema, AuthorityInventorySchema, AuthorityIssuedSchema, AuthorityRequestSchema,
@@ -48,7 +48,7 @@ async function resolveAuthority(client: DatabaseClient, scope: AuthorityScope, r
       WHERE agent.runtime_key=$1 AND agent.tenant_id=$2 AND agent.alias=$3 AND agent.host_id=$4
         AND NOT agent.enabled AND agent.retired_at IS NULL AND agent.purged_at IS NULL
         AND tenant.enabled AND tenant.retired_at IS NULL AND room.enabled AND room.retired_at IS NULL
-        AND account.enabled AND (account.payer_tenant_id=agent.tenant_id OR account.shared_with_pool)
+        AND account.enabled AND ${providerAccountConsentSql('account', 'agent.tenant_id')}
       FOR SHARE OF agent,tenant,room,account`, [agent.runtime_key, agent.tenant_id, agent.alias, host])).rowCount;
     if (consent !== 1) throw new FleetAuthorityError('AUTHORITY_REVOKED');
   } else if (request.action === 'revoke' && !(row.status === 'cancelling' || row.cancel_requested

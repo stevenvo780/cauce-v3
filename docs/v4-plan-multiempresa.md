@@ -150,6 +150,53 @@ Orden obligatorio: V4.0, V4.1, V4.2 y V4.3 en ese orden. V4.2 y V4.3 pueden avan
 2. **Tráfico entre empresas prohibido** salvo un enlace explícito entre sus hubs que sólo crea el super-administrador.
 3. **Un mismo dominio para todas las empresas.** Cada persona pertenece a una empresa y sólo ve lo de su empresa; no hay hosts virtuales ni marca por dominio. Sustituye la propuesta de `companies.domain` de la sección 2: la empresa se resuelve por la pertenencia de la persona, y un super-administrador puede cambiar de empresa en la sesión.
 4. **La migración trae estructura e historial** (espacios, grupos, agentes, perfiles, mensajes y auditoría). Contraseñas, tokens, grants OAuth y certificados se vuelven a emitir en el destino.
-5. **Super-administrador de plataforma:** pendiente de confirmar; la recomendación es un rol separado del hub de Humanizar, asignado sólo al dueño.
+5. **Super-administrador de plataforma:** sólo Steven, con identidad humana durable y rol separado del hub de Humanizar.
 
 Archivos centrales a tocar: `packages/store/migrations/` (nueva 051+), `packages/store/src/configuration/shared.ts`, `packages/store/src/configuration.ts`, `services/gateway/src/console/people-admin-authority.ts`, `services/gateway/src/publish-operation.ts`, `packages/store/src/repository/messages/publishing.ts`.
+
+## Estado V4.0
+
+Implementado en el worktree `claude/v4-0-empresas`, pendiente de revisión final, integración y despliegue. Producción sigue en la migración 050: nada multiempresa está desplegado y V4.0 no añade pantallas (el selector de empresa, la administración de empresas y las personas, hosts y cuentas por empresa son V4.2).
+
+`051_companies.sql` crea Humanizar y asigna todos los espacios existentes a `humanizar`, sin modificar sus datos previos; el `down` devuelve los datos y el esquema de 050 (funciones, triggers, índices, restricciones y columnas; sólo queda el rastro interno e inocuo de la columna borrada). Cada empresa puede tener un hub; la estrella local y los enlaces explícitos entre dos hubs se comprueban en PostgreSQL y en los predicados de rutas. Las lecturas y escrituras de configuración y la administración de personas quedan acotadas a la empresa del actor. Se conserva el contrato de capacidades `scope:'hub'` hasta V4.1. Praxis sólo existe en las pruebas; llegará con la importación posterior. El dominio continúa siendo único.
+
+Qué cambia además en V4.0:
+
+- **Despliegue.** 051 toma todos sus bloqueos al inicio, primero el exclusivo sobre `tenants`, con `lock_timeout` de 5 s. Si una transacción larga lo impide, la migración falla entera sin aplicar nada y sin dejar el ruteo bloqueado; basta con reintentar el despliegue. Sin competencia tarda unos 120 ms. El runtime V4 exige 051 (sus consultas de ruteo leen `company_id` y `company_links`): no se levanta sobre una base en 050.
+- **Flota.** Un hub sólo opera (previsualizar, encolar, consultar, cancelar, reanudar, adoptar) espacios, grupos y agentes de su empresa. Las computadoras (`fleet_hosts`) siguen siendo un catálogo único de la instalación: sólo el hub de Humanizar las lista o modifica, y sólo agentes de Humanizar pueden colocarse en una, sea por configuración (`host_id`) o por una operación de flota `create`/`update`.
+- **Cuentas de pool.** Una cuenta `shared_with_pool` sólo la usan espacios de la misma empresa que la paga, en la flota, la autenticación del proveedor, la admisión y el arranque.
+- **Retiro de un enlace.** Borrar, cambiar o truncar `company_links` deshabilita (`enabled=false`) toda arista entre empresas que ya no esté cubierta; el historial se conserva. Como toda lectura y todo control por arista exige `enabled`, la otra empresa desaparece a la vez del ruteo, la terminal, el detalle de mensajes, la bandeja, el DLQ y los inventarios. Volver a habilitar una arista exige otra vez un enlace vigente. Invariante en la base: toda arista habilitada cumple la estrella por empresa.
+- **Espacios sin empresa.** Un alta de espacio que omite `company_id` cae en Humanizar sólo mientras Humanizar sea la única empresa; con una segunda empresa falla. El código de configuración ya pasa la empresa explícita.
+
+`platform_admins.human_id` referencia el UUID `console_users.id`, la misma identidad que usa la sesión y `human_tenant_memberships`. No hay un UUID de Steven inequívoco en los datos versionados: la migración deja vacíos los administradores y los enlaces. Ningún código de la aplicación escribe estas tablas ni lee `platform_admins`; `company_links` sólo se consulta para autorizar rutas. **En producción esa protección es sólo de aplicación:** el runtime y el migrador usan el mismo secreto `database_url` y el mismo rol `cauce`, que es superusuario y dueño de todas las tablas, así que el gateway podría escribirlas. Los permisos de sólo lectura de 051 sólo se aplican si existe un rol dedicado `cauce_gateway`, que hoy no existe. El dueño debe confirmar personalmente su UUID y correo y ejecutar este comando con su conexión PostgreSQL de operador; no se infiere autoridad de nombres ni alias y no se cambia ninguna contraseña:
+
+```bash
+psql --dbname=CONEXION_DEL_OPERADOR --set=ON_ERROR_STOP=1 \
+  --set=steven_human_id=UUID_CONFIRMADO --set=steven_email=CORREO_CONFIRMADO <<'SQL'
+BEGIN;
+LOCK TABLE platform_admins IN SHARE ROW EXCLUSIVE MODE;
+CREATE TEMP TABLE confirmed_platform_principal ON COMMIT DROP AS
+  SELECT person.id FROM console_users person JOIN tenants tenant ON tenant.id=person.tenant_id
+  WHERE person.id=:'steven_human_id'::uuid AND person.email_normalized=lower(btrim(:'steven_email'))
+    AND person.active AND tenant.company_id='humanizar' FOR SHARE OF person,tenant;
+DO $$
+BEGIN
+  IF (SELECT count(*) FROM confirmed_platform_principal)<>1 OR EXISTS (
+    SELECT 1 FROM platform_admins WHERE human_id NOT IN (SELECT id FROM confirmed_platform_principal)
+  ) THEN RAISE EXCEPTION 'confirm the sole platform administrator identity'; END IF;
+END;
+$$;
+INSERT INTO platform_admins(human_id) SELECT id FROM confirmed_platform_principal ON CONFLICT DO NOTHING;
+COMMIT;
+SQL
+```
+
+Un enlace requiere un `created_by` presente en `platform_admins` y un par de empresas en orden canónico; no crea por sí solo una ACL ni permisos de tráfico. El `down` restaura las reglas de 004, la función DLQ de 030 y el hub único sólo si no perdería empresas, administradores ni enlaces. Una vez sembrado Steven en `platform_admins`, el `down` se niega a propósito: un rollback exige borrar antes esa fila (se puede volver a crear).
+
+Límites: no hay RLS ni auditoría completa de cada endpoint. Los identificadores de recursos, los catálogos y el contador de revisiones siguen siendo globales: los catálogos sólo los modifica el hub de Humanizar, las revisiones visibles se filtran por empresa, pero una escritura de una empresa invalida la previsualización pendiente de otra, y un id global revela si existe en otra empresa (alta de espacio, `rooms.id`, correo de persona). `companies.enabled/retired_at` son metadatos en esta fase, no un interruptor de acceso.
+
+Antes de alojar una segunda empresa real (requisitos, además de V4.1–V4.3, el selector de consola y ensayar la importación en un clon con respaldo):
+
+1. Un rol de runtime de mínimo privilegio con secreto propio, sin escritura sobre `companies`, `platform_admins` ni `company_links`; o una guarda en la base que el runtime no pueda satisfacer.
+2. Quitar el valor por omisión de `tenants.company_id` en una migración posterior, cuando el runtime V4 ya esté en producción.
+3. Claves por empresa para los ids globales y para las computadoras (V4.1).

@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { isAnyUuid, type Tenant } from '@cauce/protocol';
 import type { DatabaseClient } from './db.js';
 import { StoreError } from './repository/errors.js';
+import { hubStarRouteSql } from './repository/acl-edges.js';
 
 export const CLIENT_MAILBOX_CAPACITY = 1000;
 export const CLIENT_MAILBOX_MESSAGE_BYTES = 16 * 1024;
@@ -59,7 +60,7 @@ export async function clientMailboxRoutingTargets(client: DatabaseClient, tenant
   const rows = await client.query<ClientMailbox>(`SELECT ${MAILBOX_COLUMNS} ${ACTIVE_MAILBOX_SQL}
     AND (grant_row.tenant_id=$1 OR EXISTS (SELECT 1 FROM acl_edges edge JOIN tenants source ON source.id=edge.from_tenant
       WHERE edge.from_tenant=$1 AND edge.to_tenant=grant_row.tenant_id AND source.enabled
-        AND edge.enabled AND edge.allow_route AND (source.is_hub OR tenant.is_hub)))
+        AND edge.enabled AND edge.allow_route AND ${hubStarRouteSql('source', 'tenant')}))
     AND ($2::text IS NULL OR ${MAILBOX_ALIAS_SQL}=$2)
     ORDER BY grant_row.tenant_id,grant_row.id LIMIT CASE WHEN $2::text IS NULL THEN 100 ELSE NULL END`, [tenant, alias ?? null]);
   return rows.rows.map((row) => ({ tenant_id: row.tenant_id, alias: row.alias, online: false,

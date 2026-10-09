@@ -47,7 +47,7 @@ export function assertRuntimeSynchronizedMutation(mutation: unknown): void {
 }
 
 export function configurationCapabilities(
-  tenant: string, alias: string, hub: boolean, control: boolean,
+  tenant: string, alias: string, hub: boolean, control: boolean, company = 'humanizar',
 ): ConfigurationCapabilities {
   const resources = [
     'tenant', 'room', 'membership', 'acl_edge', 'harness', 'role_policy', 'chain_policy',
@@ -58,7 +58,8 @@ export function configurationCapabilities(
     actor: { tenant_id: tenant, alias, is_hub: hub, can_control: control },
     resources: resources.map((resource): ConfigurationResourceCapability => {
       const owned = ['room', 'membership', 'egress_destination', 'acl_edge'].includes(resource);
-      if (!control || resource === 'agent_profile' || (!hub && !owned)) {
+      const global = ['harness', 'role_policy', 'chain_policy'].includes(resource);
+      if (!control || resource === 'agent_profile' || (!hub && !owned) || (global && company !== 'humanizar')) {
         return { resource, actions: [], scope: 'none' };
       }
       const actions: ConfigurationResourceCapability['actions'] = resource === 'chain_policy' ? ['update']

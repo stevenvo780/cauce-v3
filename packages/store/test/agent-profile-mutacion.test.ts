@@ -76,7 +76,8 @@ describe('perfil canónico: el editor genérico falla cerrado', () => {
 
   it('un rollback histórico no revive la vía duplicada ni escribe una revisión falsa', async () => {
     const { pool, queries } = fakePool([
-      { includes: 'SELECT tenant.is_hub FROM memberships', rows: [{ is_hub: true }] },
+      { includes: 'SELECT tenant.is_hub,tenant.company_id FROM memberships', rows: [{ is_hub: true, company_id: 'humanizar' }] },
+      { includes: 'SELECT id,company_id FROM tenants', rows: [{ id: 'Steven', company_id: 'humanizar' }] },
       { includes: 'COALESCE(max(id),0)::text AS revision', rows: [{ revision: '12' }] },
       {
         includes: 'FROM config_revisions WHERE id=$1 FOR UPDATE',
@@ -102,7 +103,8 @@ describe('perfil canónico: el editor genérico falla cerrado', () => {
 
   it('no borra un agente si el cascade perdería su perfil canónico', async () => {
     const { pool, queries } = fakePool([
-      { includes: 'SELECT tenant.is_hub FROM memberships', rows: [{ is_hub: true }] },
+      { includes: 'SELECT tenant.is_hub,tenant.company_id FROM memberships', rows: [{ is_hub: true, company_id: 'humanizar' }] },
+      { includes: 'SELECT id,company_id FROM tenants', rows: [{ id: 'Steven', company_id: 'humanizar' }] },
       { includes: 'COALESCE(max(id),0)::text AS revision', rows: [{ revision: '3' }] },
       {
         includes: 'FROM agents WHERE tenant_id=$1 AND alias=$2 FOR UPDATE',

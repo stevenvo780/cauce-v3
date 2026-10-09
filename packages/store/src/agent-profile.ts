@@ -5,6 +5,7 @@ import {
 } from '@cauce/protocol'; /* eslint @typescript-eslint/no-unnecessary-boolean-literal-compare: "error" */
 import type { DatabaseClient, DatabasePool } from './db.js';
 import { withTransaction } from './db.js';
+import { hubStarRouteSql } from './repository/acl-edges.js';
 import { agentContextReconcileLockKey } from './repository/agent-context-lock.js';
 import { assertAgentContextAdmissionAllowed } from './repository/agent-context-quarantine.js';
 import { canPrepareAgentProfileDraft, prepareAgentProfileDraft, type AgentProfileDraftActor } from './repository/agent-profile-draft.js';
@@ -470,7 +471,7 @@ const DESTINOS_SQL = `
          JOIN tenants source_tenant ON source_tenant.id=edge.from_tenant
          WHERE edge.from_tenant=$1 AND edge.to_tenant=membership.tenant_id
            AND edge.enabled AND edge.allow_route AND source_tenant.enabled
-           AND (source_tenant.is_hub OR target_tenant.is_hub)
+           AND ${hubStarRouteSql('source_tenant', 'target_tenant')}
        )
      )
    GROUP BY membership.alias

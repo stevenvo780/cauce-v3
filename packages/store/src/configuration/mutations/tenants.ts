@@ -15,7 +15,7 @@ export async function assertUnpurgedConfigurationScope(client: DatabaseClient, t
 }
 
 export async function tenantMutation(
-  client: DatabaseClient, mutation: Extract<ConfigurationLeafMutation, { resource: 'tenant' }>
+  client: DatabaseClient, mutation: Extract<ConfigurationLeafMutation, { resource: 'tenant' }>, company: string,
 ): Promise<{ inverse: ConfigMutation; summary: string }> {
   const selected = await client.query<{
     id: string; display_name: string | null; is_hub: boolean; enabled: boolean;
@@ -28,8 +28,8 @@ export async function tenantMutation(
     if (old) throw new ConfigurationError('conflict', 'tenant already exists');
     const value = valueRequired(mutation);
     await client.query(
-      `INSERT INTO tenants(id,display_name,is_hub,enabled) VALUES($1,$2,$3,$4)`,
-      [mutation.id, value.display_name ?? null, value.is_hub ?? false, value.enabled ?? true]
+      `INSERT INTO tenants(id,display_name,is_hub,enabled,company_id) VALUES($1,$2,$3,$4,$5)`,
+      [mutation.id, value.display_name ?? null, value.is_hub ?? false, value.enabled ?? true, company]
     );
     return { inverse: { resource: 'tenant', action: 'delete', id: mutation.id }, summary: `create tenant ${mutation.id}` };
   }

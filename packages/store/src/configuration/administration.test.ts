@@ -80,7 +80,7 @@ describe('configuration delete dependencies', () => {
     };
     const client = { query } as unknown as DatabaseClient;
     const result = resource === 'tenant'
-      ? await tenantMutation(client, { resource, action: 'delete', id: 'Acme' })
+      ? await tenantMutation(client, { resource, action: 'delete', id: 'Acme' }, 'humanizar')
       : await membershipMutation(client, { resource, action: 'delete', tenant_id: 'Acme', room_id: 'unused', alias: 'unused' });
     expect(result.inverse).toMatchObject({ resource, action: 'create', value: { enabled: true } });
     expect(deleted).toBe(true);
@@ -103,7 +103,7 @@ describe('recoverable configuration retirement', () => {
     };
     const client = { query } as unknown as DatabaseClient;
     const invoke = async (action: 'retire' | 'restore') => {
-      if (resource === 'tenant') return tenantMutation(client, { resource, action, id: 'Acme' });
+      if (resource === 'tenant') return tenantMutation(client, { resource, action, id: 'Acme' }, 'humanizar');
       if (resource === 'room') return roomMutation(client, { resource, action, tenant_id: 'Acme', id: 'unused' });
       return membershipMutation(client, { resource, action, tenant_id: 'Acme', room_id: 'unused', alias: 'unused' });
     };
@@ -118,7 +118,7 @@ describe('recoverable configuration retirement', () => {
 });
 
 class MutationExecutor extends ConfigurationMutations {
-  run(client: DatabaseClient, mutation: ConfigMutation) { return this.execute(client, mutation); }
+  run(client: DatabaseClient, mutation: ConfigMutation) { return this.execute(client, mutation, 'humanizar'); }
 }
 
 describe('atomic configuration inverse composition', () => {

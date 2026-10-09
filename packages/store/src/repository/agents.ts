@@ -14,6 +14,7 @@ import {
 import { canonicallyEqual } from './config.js';
 import { DeliveryAcksRepository, type RoutingTarget } from './deliveries.js';
 import { StoreError } from './errors.js';
+import { hubStarRouteSql } from './acl-edges.js';
 import { agentDeploymentStatus, type DeliveryRow } from './observability.js';
 import type { HumanMessageOptions } from './messages/contracts.js';
 import { withHumanMessageTransaction } from './messages/human-authority.js';
@@ -311,7 +312,7 @@ export abstract class AgentsRepository extends DeliveryAcksRepository {
              WHERE edge.from_tenant=$1 AND edge.to_tenant=membership.tenant_id
                AND edge.enabled AND edge.allow_route
                AND source_tenant.enabled
-               AND (source_tenant.is_hub OR target_tenant.is_hub)
+               AND ${hubStarRouteSql('source_tenant', 'target_tenant')}
            )
          )
        GROUP BY membership.tenant_id,membership.alias

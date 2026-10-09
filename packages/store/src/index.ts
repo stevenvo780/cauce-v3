@@ -23,6 +23,8 @@ export * from './fleet-adoption.js';
 export * from './repository/fleet-operations.js';
 export * from './repository/fleet-hosts.js';
 export { lockFleetRevision } from './repository/fleet-operation-authority.js';
+export { LEGACY_COMPANY, providerAccountConsentSql } from './configuration/company-scope.js';
+export { hubStarRouteSql } from './repository/acl-edges.js';
 export { assertFleetOperationAuthority } from './repository/fleet-operation-human.js';
 export { lockFleetClaim, preparedState } from './repository/fleet-operation-state.js';
 export * from './agent-preferences.js';

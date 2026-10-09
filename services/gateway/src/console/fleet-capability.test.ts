@@ -21,7 +21,7 @@ describe('fleet execution capability', () => {
     const query = vi.fn().mockResolvedValue({ rows: [{ provider: 'gemini' }] });
     const pool = { query } as unknown as DatabasePool;
     await expect(assertFleetProviderAccount(pool, catalog, approved)).resolves.toBeUndefined();
-    expect(query).toHaveBeenCalledWith(expect.stringMatching(/enabled AND \(payer_tenant_id=\$2 OR shared_with_pool\)/), ['gemini-account', 'Nuevo']);
+    expect(query).toHaveBeenCalledWith(expect.stringMatching(/enabled AND \(provider_accounts\.payer_tenant_id=\$2 OR \(provider_accounts\.shared_with_pool AND EXISTS[\s\S]+consent_payer\.company_id/), ['gemini-account', 'Nuevo']);
     for (const rows of [[], [{ provider: 'unapproved' }], [{ provider: 'gemini' }, { provider: 'codex' }]]) {
       query.mockResolvedValueOnce({ rows });
       await expect(assertFleetProviderAccount(pool, catalog, approved)).rejects.toThrow('provider account');

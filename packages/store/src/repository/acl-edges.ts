@@ -1,3 +1,13 @@
+export function hubStarRouteSql(source: string, target: string, lockLink = false): string {
+  const link = lockLink ? `cauce_lock_company_link(${source}.company_id,${target}.company_id)`
+    : `EXISTS (SELECT 1 FROM company_links link
+        WHERE (link.company_a=${source}.company_id AND link.company_b=${target}.company_id)
+           OR (link.company_a=${target}.company_id AND link.company_b=${source}.company_id))`;
+  return `((${source}.company_id=${target}.company_id AND (${source}.is_hub OR ${target}.is_hub))
+    OR (${source}.company_id<>${target}.company_id AND ${source}.is_hub AND ${target}.is_hub
+      AND ${link}))`;
+}
+
 /** Hub-anchored cross-tenant edge predicate, locked in the caller's transaction. The permission
  * column is a closed union because it is interpolated into the statement, never bound. */
 export function hubEdgeExistsSql(
@@ -11,7 +21,7 @@ export function hubEdgeExistsSql(
        WHERE edge.from_tenant=$${String(fromParameter)} AND edge.to_tenant=$${String(toParameter)}
          AND edge.enabled AND edge.${permissionColumn}
          AND source_tenant.enabled AND target_tenant.enabled
-         AND (source_tenant.is_hub OR target_tenant.is_hub)
+         AND ${hubStarRouteSql('source_tenant', 'target_tenant', true)}
        FOR SHARE OF edge,source_tenant,target_tenant`;
 }
 
@@ -23,7 +33,7 @@ export function tenantReadableSql(readerExpression: string, ownerExpression: str
        WHERE edge.from_tenant=${from} AND edge.to_tenant=${to}
          AND edge.enabled AND edge.${permission}
          AND source_tenant.enabled AND target_tenant.enabled
-         AND (source_tenant.is_hub OR target_tenant.is_hub))`;
+         AND ${hubStarRouteSql('source_tenant', 'target_tenant')})`;
   return `(${ownerExpression}=${readerExpression} OR (`
     + `${edge('allow_read', readerExpression, ownerExpression)} AND `
     + `${edge('allow_route', ownerExpression, readerExpression)}))`;

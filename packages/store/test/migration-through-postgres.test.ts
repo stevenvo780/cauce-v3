@@ -12,7 +12,7 @@ const version043 = '043_blob_tenant_entitlements.sql';
 const version044 = '044_human_mcp_identity.sql';
 const version045 = '045_mcp_oauth_authorization.sql';
 const version046 = '046_human_client_provenance.sql';
-const laterVersions = ['047_agent_preferences.sql', '048_ui_fleet_lifecycle.sql', '049_ui_execution_preferences.sql', '050_fleet_hosts.sql'];
+const laterVersions = ['047_agent_preferences.sql', '048_ui_fleet_lifecycle.sql', '049_ui_execution_preferences.sql', '050_fleet_hosts.sql', '051_companies.sql'];
 const preferenceTables = ['console_agent_favorites', 'agent_appearances'];
 const provenanceTables = [
   'human_oauth_client_delegations',

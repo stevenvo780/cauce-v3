@@ -24,8 +24,9 @@ function administrationPool(options: { hub?: boolean; control?: boolean; hubBefo
         human_control_count: authorityReads === 1 ? options.humanBefore ?? 1 : options.humanAfter ?? 1 }], rowCount: 1 };
     }
     if (normalized.includes(' AS can_control')) return { rows: [{ can_control: options.control ?? true }], rowCount: 1 };
-    if (normalized.includes('role.allow_read')) return { rows: [{ is_hub: options.hub ?? true }], rowCount: 1 };
-    if (normalized.includes('role.allow_control')) return { rows: options.control === false ? [] : [{ is_hub: options.hub ?? true }], rowCount: options.control === false ? 0 : 1 };
+    if (normalized.includes('role.allow_read')) return { rows: [{ is_hub: options.hub ?? true, company_id: 'humanizar' }], rowCount: 1 };
+    if (normalized.includes('role.allow_control')) return { rows: options.control === false ? [] : [{ is_hub: options.hub ?? true, company_id: 'humanizar' }], rowCount: options.control === false ? 0 : 1 };
+    if (normalized.startsWith('SELECT id,company_id')) return { rows: (params[0] as string[]).map(id => ({ id, company_id: 'humanizar' })), rowCount: (params[0] as string[]).length };
     if (normalized.includes('COALESCE(max(id),0)')) return { rows: [{ revision: '4' }], rowCount: 1 };
     if (normalized.startsWith('SELECT id,tenant_id,display_name')) return { rows: rooms.has(String(params[0])) ? [rooms.get(String(params[0]))] : [], rowCount: rooms.has(String(params[0])) ? 1 : 0 };
     if (normalized.startsWith('INSERT INTO rooms')) {

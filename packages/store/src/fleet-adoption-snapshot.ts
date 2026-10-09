@@ -1,5 +1,6 @@
 import { sha256Hex } from '@cauce/protocol';
 import type { DatabaseClient } from './db.js';
+import { providerAccountConsentSql } from './configuration/company-scope.js';
 import { agentContextReconcileLockKey } from './repository/agent-context-lock.js';
 import { LEGACY_ADOPTION_FIELDS, LegacyAdoptionError, LegacyAdoptionFactsSchema,
   type LegacyAdoptionBlocker, type LegacyAdoptionFence, type LegacyAdoptionFacts, type LegacyAdoptionRow,
@@ -87,7 +88,7 @@ export async function legacyAdoptionSnapshot(client: DatabaseClient, targets: re
     }
     if (facts.primary_account_id !== null) {
       const account = (await client.query(`SELECT 1 FROM provider_accounts WHERE id=$1 AND enabled AND provider=$3
-        AND (payer_tenant_id=$2 OR shared_with_pool) FOR SHARE`, [facts.primary_account_id, target.tenant_id, facts.account_provider])).rowCount;
+        AND ${providerAccountConsentSql('provider_accounts', '$2')} FOR SHARE`, [facts.primary_account_id, target.tenant_id, facts.account_provider])).rowCount;
       if (account !== 1) block('account_not_authorized');
     }
     const after = { ...before, ...patch };

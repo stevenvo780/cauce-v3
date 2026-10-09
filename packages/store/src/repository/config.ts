@@ -1,3 +1,4 @@
+import { hubStarRouteSql } from './acl-edges.js';
 import type { ConfigLeafMutation, ConfigMutation, Permission, Tenant } from '@cauce/protocol';
 import { selectAccountForAlias, type AccountSelection } from '../accounts.js';
 import type { DatabaseClient } from '../db.js';
@@ -117,7 +118,7 @@ export abstract class ConfigRepository extends OutboxOperatorRepository {
                WHERE edge.from_tenant=$1 AND edge.to_tenant=$3
                  AND edge.enabled AND edge.${permissionColumn}
                  AND source_tenant.enabled AND target_tenant.enabled
-                 AND (source_tenant.is_hub OR target_tenant.is_hub)
+                 AND ${hubStarRouteSql('source_tenant', 'target_tenant')}
             )
           )
         LIMIT 1`,
@@ -222,15 +223,18 @@ export abstract class ConfigRepository extends OutboxOperatorRepository {
            ) ORDER BY r.id) FROM rooms r WHERE r.tenant_id=t.id
          ),'[]'::jsonb) AS rooms
           FROM tenants t WHERE t.id=$1 OR EXISTS (
-            SELECT 1 FROM acl_edges a WHERE a.from_tenant=$1 AND a.to_tenant=t.id
-              AND a.enabled AND a.allow_read
+            SELECT 1 FROM acl_edges a JOIN tenants source ON source.id=a.from_tenant
+            WHERE a.from_tenant=$1 AND a.to_tenant=t.id
+              AND a.enabled AND a.allow_read AND ${hubStarRouteSql('source', 't')}
           ) ORDER BY t.id`, [actorTenant]
       ),
       this.pool.query<Record<string, unknown>>(
-        `SELECT from_tenant,to_tenant,enabled,allow_route,allow_read,allow_control,
-                'explicit'::text AS policy FROM acl_edges
-         WHERE (from_tenant=$1 OR to_tenant=$1) AND allow_read
-         ORDER BY from_tenant,to_tenant`, [actorTenant]
+        `SELECT edge.from_tenant,edge.to_tenant,edge.enabled,edge.allow_route,edge.allow_read,edge.allow_control,
+                'explicit'::text AS policy FROM acl_edges edge
+         JOIN tenants source ON source.id=edge.from_tenant JOIN tenants target ON target.id=edge.to_tenant
+         WHERE (edge.from_tenant=$1 OR edge.to_tenant=$1) AND edge.allow_read
+           AND ${hubStarRouteSql('source', 'target')}
+         ORDER BY edge.from_tenant,edge.to_tenant`, [actorTenant]
       )
     ]);
     return { observed_at: new Date().toISOString(), tenants: tenants.rows, acl_edges: edges.rows };

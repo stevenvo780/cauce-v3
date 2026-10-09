@@ -1,4 +1,5 @@
 import type { DatabaseClient } from '../db.js';
+import { providerAccountConsentSql } from '../configuration/company-scope.js';
 import { FleetOperationError, type FleetOperationRow } from './fleet-operation-contracts.js';
 import { preparedState } from './fleet-operation-state.js';
 
@@ -20,7 +21,7 @@ export async function admitFleetAgent(client: DatabaseClient, row: FleetOperatio
       WHERE agent.tenant_id=$1 AND agent.alias=$2 AND agent.retired_at IS NULL
         AND tenant.enabled AND tenant.retired_at IS NULL AND room.enabled AND room.retired_at IS NULL
         AND primary_member.retired_at IS NULL AND policy.allow_route AND harness.enabled AND account.enabled
-        AND (account.payer_tenant_id=agent.tenant_id OR account.shared_with_pool)
+        AND ${providerAccountConsentSql('account', 'agent.tenant_id')}
       FOR UPDATE OF agent FOR SHARE OF tenant,room,primary_member,policy,harness,account`,
     [target.tenant_id, target.alias])).rows[0];
   if (!agent) throw new FleetOperationError('conflict', 'admission requires current tenant room routing harness and account authority');

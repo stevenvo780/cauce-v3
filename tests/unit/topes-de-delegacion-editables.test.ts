@@ -226,7 +226,7 @@ describe('el techo de entregas en vuelo de un agente se puede editar', () => {
     const snapshot = snapshots[0];
     const seleccion = snapshot?.match(/^\s*SELECT\s+([\s\S]+?)\s+FROM\s+agents\s+WHERE/iu)?.[1];
     expect(seleccion).toMatch(/\bmax_concurrent_deliveries\b/u);
-    expect(snapshot).toMatch(/WHERE\s+\(\s*\$1::text\s+IS\s+NULL\s+OR\s+tenant_id\s*=\s*\$1\s*\)\s+AND\s+to_jsonb\(agents\)->>'purged_at'\s+IS\s+NULL/iu);
+    expect(snapshot).toMatch(/AND\s+to_jsonb\(agents\)->>'purged_at'\s+IS\s+NULL/iu);
     expect(snapshot).toMatch(/AND\s+NOT\s+EXISTS\(SELECT\s+1\s+FROM\s+tenants\s+WHERE\s+tenants\.id\s*=\s*agents\.tenant_id\s+AND\s+to_jsonb\(tenants\)->>'purged_at'\s+IS\s+NOT\s+NULL\)/iu);
   });
 

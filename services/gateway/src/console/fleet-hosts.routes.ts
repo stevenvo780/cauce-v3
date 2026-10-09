@@ -5,7 +5,7 @@ import {
   type FleetCapability, type FleetHost, type FleetHostCreate, type FleetHostUpdate,
 } from '@cauce/protocol';
 import {
-  FleetOperationError, StoreError, createFleetHost, deleteFleetHost, listFleetHosts, updateFleetHost, type DatabasePool,
+  FleetOperationError, LEGACY_COMPANY, StoreError, createFleetHost, deleteFleetHost, listFleetHosts, updateFleetHost, type DatabasePool,
 } from '@cauce/store';
 import {
   AuthError, AuthorizationError, requireOperatorPermission, requirePermission, type AuthProvider, type Principal,
@@ -59,18 +59,19 @@ function hostError(reply: FastifyReply, error: unknown): void {
   void reply.code(500).send({ error: 'fleet_host_unverified', message: 'fleet host could not be verified' });
 }
 
-/** Mirrors the store's configuration control check: the actor must hold a control role on a hub tenant. */
-async function requireHubControl(pool: Pick<DatabasePool, 'query'>, actor: Principal): Promise<void> {
+/** Mirrors the store's configuration control check: the actor must hold a control role on a hub tenant.
+ * Hosts stay one installation-wide catalog, so only the legacy company hub may list or change them. */
+export async function requireHubControl(pool: Pick<DatabasePool, 'query'>, actor: Principal): Promise<void> {
   const result = await pool.query<{ is_hub: boolean }>(
     `SELECT tenant.is_hub FROM memberships membership
      JOIN role_policies role ON role.role=membership.role
      JOIN tenants tenant ON tenant.id=membership.tenant_id
      JOIN rooms room ON room.id=membership.room_id AND room.tenant_id=membership.tenant_id
      WHERE membership.tenant_id=$1 AND membership.alias=$2 AND membership.enabled
-       AND tenant.enabled AND room.enabled AND role.allow_control
+       AND tenant.enabled AND room.enabled AND role.allow_control AND tenant.company_id=$3
        AND to_jsonb(membership)->>'retired_at' IS NULL
        AND to_jsonb(tenant)->>'retired_at' IS NULL AND to_jsonb(room)->>'retired_at' IS NULL LIMIT 1`,
-    [actor.tenant_id, actor.alias],
+    [actor.tenant_id, actor.alias, LEGACY_COMPANY],
   );
   if (result.rows[0]?.is_hub !== true) throw new AuthorizationError('hub control is required for fleet hosts');
 }
