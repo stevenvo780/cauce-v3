@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { FleetEvidenceSchema, FleetOperationRequestSchema, FleetStepNameSchema, type FleetStepName } from '@cauce/protocol';
 import type { FleetExecution, FleetEffectResult } from './executor.js';
 import { fleetHostSpawn, type FleetSshTransport } from './host-transport.js';
+import { BoundedTail, logHostCommandFailure } from './host-stderr.js';
 
 export interface HostCommandConfig { python: string; executable: string; policyFile: string; timeoutMs?: number; transport?: FleetSshTransport }
 const ReceiptSchema = z.object({ evidence: FleetEvidenceSchema, awaiting_auth: z.boolean().optional() }).strict();
@@ -47,12 +48,13 @@ async function runHostCommand(
   if (isAborted()) throw unverified();
   return new Promise((resolve, reject) => {
     const child = spawn(specification.executable, specification.arguments, {
-      detached: true, stdio: ['pipe', 'pipe', 'ignore'],
+      detached: true, stdio: ['pipe', 'pipe', 'pipe'],
       env: { PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: process.env.HOME ?? '', TMPDIR: '/var/tmp' },
     });
     let failed = false; let done = false; let bytes = 0;
     let force: NodeJS.Timeout | undefined;
     const chunks: Buffer[] = [];
+    const stderr = new BoundedTail();
     const kill = (termination: NodeJS.Signals) => {
       if (child.pid === undefined) return;
       try { process.kill(-child.pid, termination); } catch { /* The process group may already be gone. */ }
@@ -70,10 +72,13 @@ async function runHostCommand(
       bytes += chunk.byteLength;
       if (bytes > MAX_RECEIPT_BYTES) stop(); else chunks.push(chunk);
     });
+    child.stderr.on('data', (chunk: Buffer) => { stderr.push(chunk); });
+    child.stderr.on('error', () => undefined);
     child.once('error', () => { cleanup(); reject(unverified()); });
     child.stdin.on('error', stop);
     child.once('close', (code) => {
       cleanup();
+      if (code !== 0) logHostCommandFailure(step, code, stderr.text());
       if (code !== 0 || failed) { reject(unverified()); return; }
       try {
         const receipt = ReceiptSchema.parse(JSON.parse(Buffer.concat(chunks).toString('utf8')));
