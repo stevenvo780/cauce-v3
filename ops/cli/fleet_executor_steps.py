@@ -87,7 +87,7 @@ class Executor:
     def artifacts(self):
         kind = self.context['request']['kind']
         if kind in {'stop', 'retire', 'purge'}:
-            if self.journal.get('stopped') is not True or (kind != 'stop' and not self.journal.get('revoked')):
+            if self.journal.get('stopped') is not True or (kind != 'stop' and self.journal.get('revocation_complete') is not True):
                 raise SafeFailure('fenced artifacts require observed stop and revocation')
             rows = scoped_agents(self.policy, self.context)
             for row in rows:
