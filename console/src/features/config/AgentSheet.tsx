@@ -1,5 +1,6 @@
 import { Dialog } from '@base-ui/react/dialog';
 import { Tabs } from '@base-ui/react/tabs';
+import { Trash2 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState, type ComponentProps } from 'react';
 import type { FleetHost } from '@cauce/protocol/fleet-hosts';
 import { AgentOrb } from '../../components/AgentOrb';
@@ -9,6 +10,7 @@ import type { ConfigurationSnapshot } from '../../api/types';
 import { agentView, type SheetTab } from './agent-view';
 import { AgentLifecyclePanel } from './AgentLifecyclePanel';
 import { AgentRegistryEditor } from './AgentRegistryEditor';
+import { AgentRemovalDialog } from './AgentRemovalDialog';
 import { GroupsTab, SummaryTab } from './AgentSheetTabs';
 import { teamBlock } from './team-access';
 import { TeamFormDialog } from './TeamFormDialog';
@@ -21,7 +23,7 @@ const TAB = 'cursor-pointer whitespace-nowrap border-0 border-b-2 border-transpa
   + 'transition-colors hover:text-fg focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-brand data-[active]:border-brand data-[active]:text-fg';
 const TAB_LABEL: Record<SheetTab, string> = { resumen: 'Resumen', registro: 'Registro', operacion: 'Operación', grupos: 'Grupos' };
 
-export interface SheetIntent { tab: SheetTab; kind?: 'retire' | 'purge' }
+export interface SheetIntent { tab: SheetTab; kind?: 'retire' | 'purge'; remove?: boolean }
 
 /**
  * The one place an agent is read and edited: a right-side drawer (full screen on phones). Every tab
@@ -49,6 +51,7 @@ export function AgentSheet({ agent, retired = false, snapshot, hosts, intent, fi
   const [dirtySources, setDirtySources] = useState<ReadonlySet<SheetTab>>(new Set());
   const dirty = dirtySources.size > 0;
   const [confirming, setConfirming] = useState(false);
+  const [removing, setRemoving] = useState(Boolean(intent.remove) && agent.registered);
   const keepEditing = useRef<HTMLButtonElement>(null);
   const popup = useRef<HTMLDivElement>(null);
   const target = { resource: 'agent' as const, tenant_id: agent.tenantId, alias: agent.alias };
@@ -103,6 +106,10 @@ export function AgentSheet({ agent, retired = false, snapshot, hosts, intent, fi
               </>}
             </div>
           </div>
+          {agent.registered ? <Button size="sm" variant="danger" aria-label={`Eliminar agente ${view.ref}`}
+            title={retired || view.hasRuntime ? 'Retirar y después eliminar definitivamente' : 'Sin ejecución: se elimina el registro'}
+            onClick={() => { if (retired || view.hasRuntime) setRemoving(true); else select('registro'); }}>
+            <Trash2 size={12} aria-hidden="true" />Eliminar</Button> : null}
           <CloseButton />
         </header>
         {confirming ? <div className="shrink-0 border-b border-line px-5 py-3">
@@ -140,6 +147,8 @@ export function AgentSheet({ agent, retired = false, snapshot, hosts, intent, fi
           </Tabs.Panel>)}
         </Tabs.Root>}
         {ctx ? <TeamFormDialog ctx={ctx} /> : null}
+        {removing ? <AgentRemovalDialog tenantId={agent.tenantId} alias={agent.alias} retired={retired} snapshot={snapshot}
+          onReloaded={onReloaded} onClose={() => { setRemoving(false); }} /> : null}
       </Dialog.Popup>
     </Dialog.Portal>
   </Dialog.Root>;

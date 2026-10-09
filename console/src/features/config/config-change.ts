@@ -81,6 +81,20 @@ const COMO_LLEGO: Record<CaminoDeCambio, string> = {
   rollback: 'pediste el rollback sobre la revisión',
 };
 
+const CONFLICTOS: Record<string, string> = {
+  'revision changed': 'otro operador cambió la configuración mientras tanto',
+  'already exists': 'ya existe un registro con esa identidad',
+  'durable dependencies': 'el recurso todavía tiene dependencias (miembros, entregas o historial)',
+  'primary membership must be removed': 'primero hay que quitarle al agente su grupo principal',
+  'membership has active deliveries': 'la membresía tiene entregas en curso',
+  'require a verified fleet operation': 'ese cambio toca la ejecución del agente y se hace con una operación de flota (pestaña Operación)',
+  'requires a verified fleet operation': 'la admisión del agente se habilita con una operación de flota (pestaña Operación)',
+  'identity is permanent': 'esa identidad ya se eliminó definitivamente y no se puede reutilizar',
+  'last hub or human control authority': 'no se puede quitar la última autoridad de control humano',
+  'retirement state is incomplete': 'el retiro todavía no terminó',
+  'violates a durable constraint': 'el cambio contradice una restricción guardada',
+};
+
 export function describeConfigError(
   error: unknown,
   fallback: string,
@@ -95,6 +109,11 @@ export function describeConfigError(
       message: `Conflicto de revisión: ${COMO_LLEGO[camino]} ${mismatch.expected} y el servidor ya va por la ${mismatch.current}. `
         + `Otro operador cambió la configuración y no se aplicó nada: ${QUE_HACER[camino]}`,
     };
+  }
+  if (error instanceof ApiError && error.status === 409) {
+    const known = Object.entries(CONFLICTOS).find(([english]) => error.message.toLowerCase().includes(english))?.[1];
+    return { conflict: false, message: `El servidor rechazó el cambio y no se aplicó nada: ${known ?? `hay un conflicto con el estado guardado («${error.message}»)`}. `
+      + 'Relee el inventario y vuelve a intentarlo sobre los datos actuales.' };
   }
   return { conflict: false, message: error instanceof Error ? error.message : fallback };
 }

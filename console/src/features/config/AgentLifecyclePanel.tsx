@@ -5,6 +5,7 @@ import { useConsoleAccess } from '../../api/console-access';
 import type { ConfigurationSnapshot } from '../../api/types';
 import { AgentLifecycleFields } from './AgentLifecycleFields';
 import { AgentFleetOperation, AgentFleetPreview } from './AgentFleetOperation';
+import { operationSummary } from './fleet-operation-text';
 import { agentLifecycleDraft, agentLifecycleRequest, FLEET_ACTION_LABELS, type AgentLifecycleDraft } from './agent-lifecycle-model';
 import { useAgentLifecycle } from './use-agent-lifecycle';
 import './agent-lifecycle.css';
@@ -12,10 +13,12 @@ import './agent-lifecycle.css';
 type Kind = FleetOperationRequest['kind'];
 const newKey = () => `fleet_${crypto.randomUUID()}`;
 const ACTION_LABELS: Record<Kind, string> = { ...FLEET_ACTION_LABELS, purge: 'Eliminar definitivamente' };
-export function AgentLifecyclePanel({ snapshot, target, onReloaded, initialDraft, initialOpen = false, initialKind, triggerLabel, hideTrigger = false, embedded = false, onClose, onDirtyChange }: {
+export function AgentLifecyclePanel({ snapshot, target, onReloaded, initialDraft, initialOpen = false, initialKind, triggerLabel, hideTrigger = false, embedded = false, fixedKind = false, onClose, onDirtyChange }: {
   snapshot: ConfigurationSnapshot; target?: FleetTarget; onReloaded?: (value: ConfigurationSnapshot) => void;
   initialDraft?: AgentLifecycleDraft; initialOpen?: boolean; initialKind?: Kind | undefined; triggerLabel?: string | undefined;
-  hideTrigger?: boolean; embedded?: boolean; onClose?: () => void; onDirtyChange?: (dirty: boolean) => void;
+  hideTrigger?: boolean; embedded?: boolean; onClose?: () => void;
+  /** The action is decided by the caller (the removal guide): no action picker and no preparation copy. */
+  fixedKind?: boolean; onDirtyChange?: (dirty: boolean) => void;
 }) {
   const api = useApi();
   const access = useConsoleAccess();
@@ -111,7 +114,7 @@ export function AgentLifecyclePanel({ snapshot, target, onReloaded, initialDraft
       <div className="settings-context-heading"><h3 ref={heading} tabIndex={-1}>{target ? 'Ejecución y ciclo de vida' : 'Preparar nuevo agente'}</h3>
         {embedded ? null : <button type="button" className="button secondary" onClick={() => { setOpen(false); trigger.current?.focus(); onClose?.(); }}>Cerrar operaciones</button>}
       </div>
-      <p>Preparar no exige una ejecución activa. La operación guarda su intención y acredita cada paso antes de admitir entregas.</p>
+      {fixedKind ? null : <p>Preparar no exige una ejecución activa. La operación guarda su intención y acredita cada paso antes de admitir entregas.</p>}
       {agent ? <p>Estado durable del agente: {typeof agent.lifecycle_state === 'string' ? agent.lifecycle_state : 'Sin publicar en esta lectura'}.</p> : null}
       {!canWrite ? <p className="notice">No se acreditó permiso para operar agentes desde esta cuenta.</p> : null}
       {sessionInvalid ? <button type="button" className="button secondary" onClick={() => { void revalidate(); }}>Revalidar sesión y cerrar borrador</button> : null}
@@ -120,7 +123,7 @@ export function AgentLifecyclePanel({ snapshot, target, onReloaded, initialDraft
       {draftKind && flow.capability?.available && !flow.capability.placements.length ? <p className="notice">El ejecutor no publicó hosts permitidos para preparar agentes.</p> : null}
       {flow.capabilityError ? <p className="notice">{flow.capabilityError}</p> : null}
       {flow.capability && !available ? <p className="notice">Esta acción no está disponible en el ejecutor publicado{flow.capability.reason ? ` (${flow.capability.reason})` : ''}.</p> : null}
-      {target ? <label>Acción operativa<select value={kind} disabled={busy || inProgress} onChange={(event) => {
+      {target && !fixedKind ? <label>Acción operativa<select value={kind} disabled={busy || inProgress} onChange={(event) => {
         setKind(event.target.value as Kind); setKey(newKey()); setValidated(undefined); setError(undefined); generation.current += 1;
       }}>{Object.entries(ACTION_LABELS).filter(([action]) => action !== 'create').map(([action, label]) =>
         <option key={action} value={action}>{label}</option>)}</select></label> : null}
@@ -143,7 +146,7 @@ export function AgentLifecyclePanel({ snapshot, target, onReloaded, initialDraft
       <details><summary>Historial operativo durable</summary>
         {flow.historyError ? <p className="notice">{flow.historyError}</p> : null}
         {flow.history?.length ? <ul>{flow.history.map((operation) => <li key={operation.id}>
-          {ACTION_LABELS[operation.kind]} · {operation.status} · {operation.created_at}
+          {operationSummary(operation)} · {operation.created_at}
           <button type="button" className="button secondary" aria-label={`Abrir operación ${operation.id}`}
             disabled={busy} onClick={() => { flow.accept(operation); }}>{operation.id}</button></li>)}</ul>
           : <p>{target ? 'No hay operaciones acreditadas en esta lectura.' : 'El historial de este agente se podrá releer desde su registro guardado.'}</p>}

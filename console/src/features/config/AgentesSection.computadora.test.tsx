@@ -95,5 +95,5 @@ it('labels the purge of a retired agent as Eliminar definitivamente', async () =
   await user.click(await screen.findByRole('button', { name: 'Operar agente A/old' }));
   const select = screen.getByRole('combobox', { name: 'Acción operativa' });
   expect(within(select).getByRole('option', { name: 'Eliminar definitivamente' })).toBeInTheDocument();
-  expect(screen.getByText(/«Eliminar definitivamente» purga el registro retirado/)).toBeInTheDocument();
+  expect(screen.getByText(/«Eliminar definitivamente» es el paso 2: borra la configuración del agente/)).toBeInTheDocument();
 });

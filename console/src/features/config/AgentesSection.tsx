@@ -81,9 +81,9 @@ export function AgentesSection({ snapshot: leido, onReload, tablaCompleta, ctx }
   // A link to an agent that is gone (deleted, or never existed) must not leave a dead param behind.
   useEffect(() => { if (openRef && !shown) setOpenRef(undefined); }, [openRef, shown, setOpenRef]);
 
-  const open = (agent: SettingsAgent, tab: SheetIntent['tab'] = 'resumen', kind?: 'retire' | 'purge') => {
+  const open = (agent: SettingsAgent, tab: SheetIntent['tab'] = 'resumen', kind?: 'retire' | 'purge' | 'remove') => {
     const ref = `${agent.tenantId}/${agent.alias}`;
-    setIntent({ ref, tab, ...(kind ? { kind } : {}) });
+    setIntent({ ref, tab, ...(kind === 'remove' ? { remove: true } : kind ? { kind } : {}) });
     setOpenRef(ref);
   };
   const openCreated = (ref: string) => { setIntent({ ref, tab: 'resumen' }); setOpenRef(ref); };
@@ -125,10 +125,10 @@ export function AgentesSection({ snapshot: leido, onReload, tablaCompleta, ctx }
       </nav> : null}
       <p className="m-0 text-xs text-muted">El registro describe la configuración guardada. El arnés en ejecución,
         los permisos y la aplicación del contexto se comprueban en la página de cada agente; si falta evidencia, se indica como desconocida.
-        «Retirar» (en cada tarjeta) detiene la ejecución y conserva el historial; la eliminación definitiva (purga) es el segundo paso, en «Agentes retirados».</p>
+        «Eliminar» (en cada tarjeta y en la ficha) guía los dos pasos: retirar, que detiene la ejecución y conserva el historial, y eliminar definitivamente.</p>
     </SectionCard>
     {retired.length ? <SectionCard level={3} title="Agentes retirados" description="El historial y los datos se conservan hasta una purga acreditada.">
-      <p className="m-0 text-xs text-muted">«Eliminar definitivamente» purga el registro retirado. Exige que no queden dependencias y no se puede deshacer.</p>
+      <p className="m-0 text-xs text-muted">«Eliminar definitivamente» es el paso 2: borra la configuración del agente y conserva los mensajes ya enviados. No se puede deshacer.</p>
       <ul className="m-0 grid list-none gap-2 p-0" aria-label="Agentes retirados">
         {retired.map((agent) => <li key={agent.key} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-line bg-surface px-3 py-2">
           <strong className="font-mono text-[13px]">{agent.tenantId}/{agent.alias}</strong>
@@ -137,7 +137,7 @@ export function AgentesSection({ snapshot: leido, onReload, tablaCompleta, ctx }
               onClick={() => { open(agent, 'operacion'); }}>Operar</Button>
             <Button size="sm" variant="danger" disabled={Boolean(writeBlock)} title={writeBlock ?? 'Purga el registro retirado; no se puede deshacer'}
               aria-label={`Eliminar definitivamente ${agent.tenantId}/${agent.alias}`}
-              onClick={() => { open(agent, 'operacion', 'purge'); }}>Eliminar definitivamente</Button>
+              onClick={() => { open(agent, 'operacion', 'remove'); }}>Eliminar definitivamente</Button>
           </span>
         </li>)}
       </ul>

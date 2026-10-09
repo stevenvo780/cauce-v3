@@ -13,6 +13,7 @@ export function useAgentLifecycle(open: boolean, target?: FleetTarget) {
   const [readError, setReadError] = useState<string>();
   const [busy, setBusy] = useState(false);
   const sequence = useRef(0);
+  const accepted = useRef<FleetOperation | undefined>(undefined);
   const targetKey = JSON.stringify(target);
   useEffect(() => {
     if (!open) return undefined;
@@ -30,12 +31,14 @@ export function useAgentLifecycle(open: boolean, target?: FleetTarget) {
         if (!stored || operation.version > stored.version) merged.set(operation.id, operation);
       }
       return [...merged.values()].sort((left, right) => right.created_at.localeCompare(left.created_at)).slice(0, 100);
-    }); setHistoryError(undefined); } }, () => {
+    }); setHistoryError(undefined);
+    // The newest operation, when it failed or is still running, is what the operator came back for.
+    const latest = [...value].sort((left, right) => right.created_at.localeCompare(left.created_at)).at(0);
+    if (latest && !accepted.current && (latest.status === 'failed' || pending(latest))) { accepted.current = latest; setOperation(latest); } } }, () => {
       if (active) setHistoryError('No se pudo leer el historial durable. Las operaciones de esta pestaña conservan su recibo.');
     });
     return () => { active = false; sequence.current += 1; };
   }, [api, open, targetKey]);
-  const accepted = useRef<FleetOperation | undefined>(undefined);
   function accept(value: FleetOperation) {
     const previous = accepted.current;
     if (previous?.id === value.id && (value.version < previous.version || value.request_sha256 !== previous.request_sha256
