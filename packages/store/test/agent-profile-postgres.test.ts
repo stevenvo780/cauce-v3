@@ -452,7 +452,7 @@ describe('derived facts of the alias', () => {
   it('los permisos son la UNIÓN de todas las salas del alias, no la de una', async () => {
     await pool.query(
       `INSERT INTO rooms(id,tenant_id,enabled) VALUES ('grp.steven2','Steven',true)
-       ON CONFLICT (id) DO NOTHING`
+       ON CONFLICT DO NOTHING`
     );
     await pool.query(
       `INSERT INTO role_policies(role,allow_route,allow_read,allow_control,allow_notify)

@@ -203,6 +203,7 @@ describe('buildLoopbackHealthProbe / registerHealthRoutes', () => {
       terminalRelayInstanceProbe: async () => undefined,
       profileRuntimeProbe: async () => undefined,
       consolePublishIntentProbe: async () => undefined,
+      companyIsolationProbe: async () => undefined,
       wakeProbe: async () => undefined,
     });
     const response = await app.inject({ method: 'GET', url: '/metrics' });
@@ -354,6 +355,7 @@ describe('readiness: wake pump telemetry', () => {
       terminalRelayInstanceProbe: async () => undefined,
       profileRuntimeProbe: async () => undefined,
       consolePublishIntentProbe: async () => undefined,
+      companyIsolationProbe: async () => undefined,
     });
     const response = await app.inject({ method: 'GET', url: '/health/ready' });
     expect(response.statusCode).toBe(503);
@@ -380,6 +382,7 @@ describe('readiness: wake pump telemetry', () => {
       terminalRelayInstanceProbe: async () => undefined,
       profileRuntimeProbe: async () => undefined,
       consolePublishIntentProbe: async () => undefined,
+      companyIsolationProbe: async () => undefined,
     });
     const response = await app.inject({ method: 'GET', url: '/health/ready' });
     expect(response.statusCode).toBe(503);
@@ -405,6 +408,7 @@ describe('readiness: wake pump telemetry', () => {
       terminalRelayInstanceProbe: async () => undefined,
       profileRuntimeProbe: async () => undefined,
       consolePublishIntentProbe: async () => undefined,
+      companyIsolationProbe: async () => undefined,
       wakePumpMaxStaleMs: 60_000,
     });
     const response = await app.inject({ method: 'GET', url: '/health/ready' });
@@ -429,6 +433,7 @@ describe('readiness: wake pump telemetry', () => {
       terminalRelayInstanceProbe: async () => undefined,
       profileRuntimeProbe: async () => undefined,
       consolePublishIntentProbe: async () => undefined,
+      companyIsolationProbe: async () => undefined,
     });
     const response = await app.inject({ method: 'GET', url: '/health/ready' });
     expect(response.statusCode).toBe(503);
@@ -451,6 +456,7 @@ describe('readiness: wake pump telemetry', () => {
       terminalRelayInstanceProbe: async () => undefined,
       profileRuntimeProbe: async () => undefined,
       consolePublishIntentProbe: async () => undefined,
+      companyIsolationProbe: async () => undefined,
     });
     const response = await app.inject({ method: 'GET', url: '/health/ready' });
     expect(response.statusCode).toBe(200);
@@ -476,6 +482,7 @@ describe('readiness: cada probe de schema responde con su reason exacto', () => 
       terminalRelayInstanceProbe: probeName === 'terminal_relay_instance' ? stubThrow : async () => undefined,
       profileRuntimeProbe: probeName === 'profile_runtime' ? stubThrow : async () => undefined,
       consolePublishIntentProbe: probeName === 'console_publish_intent' ? stubThrow : async () => undefined,
+      companyIsolationProbe: probeName === 'company_isolation' ? stubThrow : async () => undefined,
     });
   }
 
@@ -487,6 +494,7 @@ describe('readiness: cada probe de schema responde con su reason exacto', () => 
     { probe: 'terminal_relay_instance', reason: 'terminal_relay_instance_path_unavailable' },
     { probe: 'profile_runtime', reason: 'profile_runtime_path_unavailable' },
     { probe: 'console_publish_intent', reason: 'console_publish_intent_path_unavailable' },
+    { probe: 'company_isolation', reason: 'company_isolation_path_unavailable' },
   ] as const;
 
   for (const { probe, reason } of cases) {
@@ -516,6 +524,7 @@ describe('readiness: orden de evaluación entre probes', () => {
       terminalRelayInstanceProbe: async () => { seen.push('terminal_relay_instance'); },
       profileRuntimeProbe: async () => { seen.push('profile_runtime'); },
       consolePublishIntentProbe: async () => { seen.push('console_publish_intent'); },
+      companyIsolationProbe: async () => { seen.push('company_isolation'); },
       wakeProbe: async () => { seen.push('wake'); },
     });
     await app.inject({ method: 'GET', url: '/health/ready' });
@@ -526,6 +535,7 @@ describe('readiness: orden de evaluación entre probes', () => {
       'terminal_relay_instance',
       'profile_runtime',
       'console_publish_intent',
+      'company_isolation',
       'wake',
     ]);
   });

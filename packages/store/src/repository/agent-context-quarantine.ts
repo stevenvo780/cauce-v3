@@ -184,7 +184,8 @@ async function exclusive(client: DatabaseClient, tenantId: Tenant, alias: string
   await client.query(`SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, [agentContextReconcileLockKey(tenantId, alias)]);
 }
 export async function lockAgentContextSnapshot(client: DatabaseClient, tenantId: Tenant, alias: string): Promise<ContextWriteSnapshot> {
-  const agent = await client.query<{ enabled: boolean; value: unknown }>(`SELECT enabled,to_jsonb(agent) AS value FROM agents agent WHERE tenant_id=$1 AND alias=$2 FOR UPDATE`, [tenantId, alias]);
+  // The derived company column is excluded so descriptors sealed before it existed still match.
+  const agent = await client.query<{ enabled: boolean; value: unknown }>(`SELECT enabled,to_jsonb(agent)-'company_id' AS value FROM agents agent WHERE tenant_id=$1 AND alias=$2 FOR UPDATE`, [tenantId, alias]);
   if (agent.rows[0]?.enabled !== true) conflict('context write target is absent or disabled');
   const profile = await client.query<{ revision: string | number; value: unknown }>(
     `SELECT revision,to_jsonb(profile) AS value FROM agent_profiles profile WHERE tenant_id=$1 AND alias=$2 FOR UPDATE`, [tenantId, alias],

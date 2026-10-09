@@ -31,7 +31,7 @@ async function placedAgent(alias: string, hostId: string, lease: 'live' | 'expir
 }
 
 describe('fleet hosts on PostgreSQL', () => {
-  it('unions registered, approved and placed hosts with the lease rule', async () => {
+  it('unions registered and approved hosts, registering a host on its first placement, with the lease rule', async () => {
     await createFleetHost(pool, { host_id: 'alpha', display_name: 'Alfa', notes: '' });
     await placedAgent('live_one', 'beta', 'live');
     await placedAgent('dead_one', 'gamma', 'expired');
@@ -42,18 +42,20 @@ describe('fleet hosts on PostgreSQL', () => {
     const byId = Object.fromEntries(hosts.map((host) => [host.host_id, host]));
     expect(byId.alpha).toMatchObject({ registered: true, approved: false, version: 1, status: 'unknown', status_source: 'none', last_seen_at: null });
     expect(byId.beta).toMatchObject({
-      registered: false, approved: true, version: 0, display_name: 'beta', status: 'reachable', status_source: 'agents',
+      registered: true, approved: true, version: 1, display_name: 'beta', status: 'reachable', status_source: 'agents',
       agents: [{ tenant_id: 'Steven', alias: 'live_one', enabled: true, online: true }],
     });
     expect(byId.beta?.last_seen_at).not.toBeNull();
     expect(byId.delta).toMatchObject({ registered: false, approved: true, status: 'unknown', agents: [] });
     expect(byId.gamma).toMatchObject({ status: 'unreachable', status_source: 'agents' });
     expect(byId.gamma?.agents.map((agent) => agent.online)).toEqual([false, false]);
+    expect((await pool.query('SELECT host_id,company_id FROM fleet_hosts ORDER BY host_id')).rows).toEqual(
+      ['alpha', 'beta', 'gamma'].map((host_id) => ({ host_id, company_id: 'humanizar' })));
   });
 
   it('ignores purged agents', async () => {
     await pool.query("INSERT INTO agents(tenant_id,alias,enabled,host_id,retired_at,purged_at) VALUES('Steven','gone',false,'ghost',now(),now())");
-    expect(await listFleetHosts(pool, { approvedHostIds: [] })).toEqual([]);
+    expect((await listFleetHosts(pool, { approvedHostIds: [] })).map((host) => [host.host_id, host.agents])).toEqual([['ghost', []]]);
   });
 
   it('prefers a fresh controller report and falls back to agents when it is stale', async () => {
@@ -156,11 +158,13 @@ describe('fleet hosts on PostgreSQL', () => {
       .rejects.toThrow(/fleet operation/u);
     await expect(repo.apply('Steven', 'admin', { ...base, action: 'update', value: { host_id: null } }, false, recorded.revision))
       .rejects.toThrow(/fleet operation/u);
+    expect((await pool.query('SELECT host_id,company_id FROM fleet_hosts ORDER BY host_id')).rows)
+      .toEqual([{ host_id: 'alpha', company_id: 'humanizar' }, { host_id: 'beta', company_id: 'humanizar' }]);
   });
 
   it('rolls back only while no host is registered', async () => {
-    for (const later of ['052_runtime_roles.sql', '051_companies.sql']) {
-      await pool.query(await readFile(new URL(`../migrations/down/${later}`, import.meta.url), 'utf8'));
+    for (const version of ['054_company_admins.sql', '053_company_isolation.sql', '052_runtime_roles.sql', '051_companies.sql']) {
+      await pool.query(await readFile(new URL(`../migrations/down/${version}`, import.meta.url), 'utf8'));
     }
     const down = await readFile(new URL('../migrations/down/050_fleet_hosts.sql', import.meta.url), 'utf8');
     await createFleetHost(pool, { host_id: 'alpha', display_name: 'Alfa', notes: '' });

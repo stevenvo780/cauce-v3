@@ -18,12 +18,14 @@ import {
 import {
   probeConsolePublishIntentPath,
 } from './health/schema-console-publish-intent.js';
+import { probeCompanyIsolationPath } from './health/schema-companies.js';
 import {
   CONTEXT_CONTAMINATION_REASONS, contextContamination,
 } from './console/contaminacion-de-contexto.js';
 import { publishRedactionMetrics } from './routes/publish-redaction.js';
 
 export {
+  probeCompanyIsolationPath,
   probeConsolePublishIntentPath,
   probeDeliveryAdmissionPath,
   probeProfileRuntimePath,
@@ -64,6 +66,7 @@ export interface HealthOptions {
   profileRuntimeExpectationsProbe?: () => Promise<DegradedProfileExpectations>;
   /** Test override; production probes schema-037's durable console publish journal indexes. */
   consolePublishIntentProbe?: () => Promise<void>;
+  companyIsolationProbe?: () => Promise<void>;
   /** How long a core wake cycle may go without a clean completion before readiness fails. */
   wakePumpMaxStaleMs?: number;
 }
@@ -309,6 +312,13 @@ async function readiness(options: HealthOptions, reply: FastifyReply): Promise<u
     } catch {
       return reply.code(503).send({
         status: 'not_ready', reason: 'console_publish_intent_path_unavailable',
+      });
+    }
+    try {
+      await (options.companyIsolationProbe?.() ?? probeCompanyIsolationPath(options.pool));
+    } catch {
+      return reply.code(503).send({
+        status: 'not_ready', reason: 'company_isolation_path_unavailable',
       });
     }
     try {
