@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
-import type { FleetCapability, FleetOperationRequest, FleetTarget } from '@cauce/protocol';
+import { sha256Hex, type FleetCapability, FleetOperationRequest, FleetTarget } from '@cauce/protocol';
 import { FleetOperationsRepository, providerAccountConsentSql, withTransaction, type DatabasePool } from '../src/index.js';
 import { assertFleetAuthority } from '../src/repository/fleet-operation-authority.js';
 import { preparePostgresSuite } from './postgres-suite.js';
@@ -87,6 +87,26 @@ describe('fleet administration scoped to the actor company', () => {
     await assertFleetProviderAccount(pool, catalog, create('Isa', 'grp.isa', 'humanizar-pool'));
     await expect(assertFleetProviderAccount(pool, catalog, create('PraxisTeam', 'company-team', 'humanizar-pool')))
       .rejects.toMatchObject({ code: 'forbidden' });
+  });
+  it('lists recent operations across targets scoped to the actor company or tenant', async () => {
+    const repository = new FleetOperationsRepository(pool, { controllerHost: 'company-host' });
+    const seed = async (tenant: string, alias: string, room: string, age: number): Promise<string> => {
+      const request = { ...retire({ resource: 'room', tenant_id: tenant, room_id: room }), idempotency_key: `recent-${tenant}` };
+      return (await pool.query<{ id: string }>(
+        `INSERT INTO fleet_operations(actor_tenant,actor_alias,target,target_key,cohort_key,executor_host,kind,request,request_hash,
+          idempotency_key,expected_revision,steps,created_at)
+         VALUES($1,$2,$3::jsonb,$4,$4,'company-host','retire',$5::jsonb,$8,$6,0,'[]'::jsonb,now()-make_interval(secs=>$7)) RETURNING id`,
+        [tenant, alias, JSON.stringify(request.target), sha256Hex(request.target), JSON.stringify(request), request.idempotency_key, age, sha256Hex(request)])).rows[0]?.id ?? '';
+    };
+    const ownOperation = await seed('PraxisHub', 'company_admin', 'praxis-empty', 30);
+    const teamOperation = await seed('PraxisTeam', 'team_agent', 'company-team', 10);
+    const foreignOperation = await seed('Steven', 'company_admin', 'company-empty', 20);
+    const ids = async (tenant: string, alias: string) => (await repository.listRecent(tenant, alias, 50)).map(operation => operation.id);
+    expect(await ids('PraxisHub', 'company_admin')).toEqual([teamOperation, ownOperation]);
+    expect(await ids('PraxisTeam', 'team_agent')).toEqual([teamOperation]);
+    expect(await ids('Steven', 'company_admin')).toEqual([foreignOperation]);
+    expect(await repository.listRecent('PraxisHub', 'company_admin', 1)).toHaveLength(1);
+    await expect(repository.listRecent('PraxisHub', 'company_admin', 0)).rejects.toMatchObject({ code: 'invalid_input' });
   });
   it('lists and changes installation hosts only as the legacy company hub', async () => {
     await requireHubControl(pool, principal('Steven'));

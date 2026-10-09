@@ -1,4 +1,5 @@
 import { sha256Hex, type FleetOperation, type FleetOperationPreview, type FleetOperationRequest, type FleetTarget } from '@cauce/protocol';
+import { configurationTenantScopeSql } from '../configuration/company-scope.js';
 import { withTransaction, type DatabasePool } from '../db.js';
 import { assertFleetAuthority, fleetRequest, lockFleetRevision, recordFleetEvent, validateFleetTarget } from './fleet-operation-authority.js';
 import { FleetOperationError, publicFleetOperation, type FleetOperationRow } from './fleet-operation-contracts.js';
@@ -76,6 +77,21 @@ export class FleetOperationsRepository extends FleetOperationExecution {
       await assertFleetAuthority(client, tenant, alias, target, false);
       const rows = await client.query<FleetOperationRow>(`SELECT * FROM fleet_operations WHERE target_key=$1
         ORDER BY created_at DESC,id DESC LIMIT 100`, [sha256Hex(target)]);
+      const operations: FleetOperation[] = [];
+      for (const row of rows.rows) operations.push(publicFleetOperation(await loadFleetOrigin(client, row)));
+      return operations;
+    });
+  }
+  async listRecent(tenant: string, alias: string, limit: number, actorSubject?: string): Promise<FleetOperation[]> {
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 200) throw new FleetOperationError('invalid_input', 'recent operation limit is invalid');
+    return withTransaction(this.pool, async (client) => {
+      await assertFleetHumanAuthority(client, tenant, alias, actorSubject, false);
+      // Read authority is proven against the actor's own tenant; the rows are then scoped to its company (hub) or tenant (non-hub).
+      await assertFleetAuthority(client, tenant, alias, { resource: 'tenant', tenant_id: tenant }, false);
+      const hub = (await client.query<{ is_hub: boolean }>('SELECT is_hub FROM tenants WHERE id=$1', [tenant])).rows[0]?.is_hub === true;
+      const rows = await client.query<FleetOperationRow>(
+        `SELECT * FROM fleet_operations operation WHERE ${configurationTenantScopeSql("operation.target->>'tenant_id'", hub)}
+         ORDER BY created_at DESC,id DESC LIMIT $2`, [tenant, limit]);
       const operations: FleetOperation[] = [];
       for (const row of rows.rows) operations.push(publicFleetOperation(await loadFleetOrigin(client, row)));
       return operations;

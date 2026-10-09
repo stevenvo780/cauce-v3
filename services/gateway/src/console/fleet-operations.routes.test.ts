@@ -29,6 +29,7 @@ function repositoryDouble() {
     preview: vi.fn(async (): Promise<unknown> => preview),
     enqueue: vi.fn(async (): Promise<unknown> => operation),
     list: vi.fn(async (): Promise<unknown> => [operation]),
+    listRecent: vi.fn(async (): Promise<unknown> => [operation]),
     get: vi.fn(async (): Promise<unknown> => operation),
     cancel: vi.fn(async (): Promise<unknown> => ({ ...operation, version: 1, status: 'cancelled' })),
     resume: vi.fn(async (): Promise<unknown> => ({ ...operation, version: 1 })),
@@ -303,6 +304,25 @@ describe('fleet inventory endpoints', () => {
     expect(response.statusCode).toBe(200);
     expect(response.json()).toEqual({ available: false, actions: [], placements: [], reason: 'executor_unconfigured' });
   });
+  it('lists recent operations without a target, bounds the limit and requires authentication', async () => {
+    const { app, repository } = await fixture();
+    const newer = { ...operation, id: '71000000-0000-4000-8000-000000000002', created_at: '2026-10-07T21:00:00.000Z' };
+    repository.listRecent.mockResolvedValue([newer, operation]);
+    const response = await app.inject({ method: 'GET', url: `${PATH}/recent`, headers: HEADERS });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ operations: [newer, operation] });
+    expect(repository.listRecent).toHaveBeenCalledWith('Steven', 'kant', 50, undefined);
+    await app.inject({ method: 'GET', url: `${PATH}/recent?limit=200`, headers: HEADERS });
+    expect(repository.listRecent).toHaveBeenLastCalledWith('Steven', 'kant', 200, undefined);
+    for (const limit of ['0', '201', 'x', '1.5']) {
+      expect((await app.inject({ method: 'GET', url: `${PATH}/recent?limit=${limit}`, headers: HEADERS })).statusCode).toBe(400);
+    }
+    expect((await app.inject({ method: 'GET', url: `${PATH}/recent?target=1`, headers: HEADERS })).statusCode).toBe(400);
+    expect((await app.inject({ method: 'GET', url: `${PATH}/recent` })).statusCode).toBeGreaterThanOrEqual(401);
+    repository.listRecent.mockResolvedValue([operation, operation, operation]);
+    expect((await app.inject({ method: 'GET', url: `${PATH}/recent?limit=2`, headers: HEADERS })).statusCode).toBe(400);
+  });
+
   it('lists only durable receipts for an exact target and rejects a swapped identity', async () => {
     const { app, repository } = await fixture();
     const url = `${PATH}?resource=agent&tenant_id=Steven&alias=jarvis`;

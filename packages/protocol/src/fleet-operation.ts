@@ -43,6 +43,8 @@ export const FleetOperationRequestSchema = z.union([
   z.object({ ...RequestBase, kind: z.enum(['retire', 'restore', 'purge']), target: FleetTargetSchema, parameters: z.object({}).strict() }).strict(),
 ]);
 export const FleetOperationControlSchema = z.object({ expected_version: z.number().int().nonnegative() }).strict();
+export const FleetOperationRecentQuerySchema = z.object({ limit: z.coerce.number().int().min(1).max(200).default(50) }).strict();
+export type FleetOperationRecentQuery = z.infer<typeof FleetOperationRecentQuerySchema>;
 export const FleetOperationStatusSchema = z.enum(['queued', 'running', 'awaiting_auth', 'cancelling', 'cancelled', 'failed', 'succeeded']);
 export const AgentLifecycleSchema = z.enum(['draft', 'provisioning', 'auth_pending', 'verifying', 'ready', 'failed', 'retiring', 'retired']);
 export const FleetStepNameSchema = z.enum(['prepare', 'artifacts', 'credentials', 'runtime', 'authenticate', 'profile', 'verify', 'admission', 'fence', 'stop', 'revoke', 'purge']);

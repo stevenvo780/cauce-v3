@@ -2,7 +2,7 @@ import type { FastifyInstance, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import {
   FleetCapabilitySchema, FleetTargetSchema, FleetOperationControlSchema, FleetOperationPreviewSchema,
-  FleetOperationRequestSchema, FleetOperationSchema, sha256Hex,
+  FleetOperationRecentQuerySchema, FleetOperationRequestSchema, FleetOperationSchema, sha256Hex,
   type FleetCapability, type FleetOperation, type FleetOperationRequest, type FleetTarget, type Tenant,
 } from '@cauce/protocol';
 import { FleetOperationError, StoreError } from '@cauce/store';
@@ -12,6 +12,7 @@ import { principal, replyError } from '../routes/shared.js';
 
 export interface FleetOperationsRepositoryBinding {
   list?(actorTenant: Tenant, actorAlias: string, target: FleetTarget, actorSubject?: string): Promise<unknown>;
+  listRecent?(actorTenant: Tenant, actorAlias: string, limit: number, actorSubject?: string): Promise<unknown>;
   preview(actorTenant: Tenant, actorAlias: string, input: FleetOperationRequest, actorSubject?: string): Promise<unknown>;
   enqueue(actorTenant: Tenant, actorAlias: string, input: FleetOperationRequest, actorSubject?: string): Promise<unknown>;
   get(actorTenant: Tenant, actorAlias: string, id: string, actorSubject?: string): Promise<unknown>;
@@ -94,6 +95,16 @@ export function registerFleetOperationRoutes(
       if (!repository.list) throw new StoreError('conflict', 'fleet history is unavailable');
       const rows = z.array(FleetOperationSchema).max(100).parse(await repository.list(actor.tenant_id, actor.alias, target, actor.operator_profile?.id));
       if (rows.some((row) => !sameTarget(row.target, target))) invalidReceipt();
+      return { operations: rows };
+    } catch (error) { fleetError(reply, error); }
+  });
+  app.get(`${path}/recent`, async (request, reply) => {
+    try {
+      const actor = await principal(request, authProvider);
+      requireOperatorPermission(actor, 'control');
+      const { limit } = FleetOperationRecentQuerySchema.parse(request.query);
+      if (!repository.listRecent) throw new StoreError('conflict', 'fleet history is unavailable');
+      const rows = z.array(FleetOperationSchema).max(limit).parse(await repository.listRecent(actor.tenant_id, actor.alias, limit, actor.operator_profile?.id));
       return { operations: rows };
     } catch (error) { fleetError(reply, error); }
   });

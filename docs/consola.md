@@ -207,6 +207,13 @@ habilitar o deshabilitar una computadora y eliminarla mientras no tenga agentes
 (`/v3/console/fleet/hosts`, con CAS por `expected_version`). Instalar el ejecutor, las claves SSH y la
 aprobación de plantillas sigue siendo un paso del operador, fuera de la consola.
 
+`GET /v3/console/fleet/operations/recent?limit=N` (por defecto 50, máximo 200) lista las operaciones de
+flota más recientes sin nombrar un destino, para alcanzar una operación fallida cuyo destino ya fue
+purgado. Exige el mismo permiso `control` y la misma autoridad humana de lectura que el listado por
+destino, y devuelve la misma forma pública, de más nueva a más antigua (`created_at`, luego `id`). Un
+actor que no es hub ve solo las operaciones cuyo `target.tenant_id` es su propio tenant; un hub, solo las
+de tenants de su propia compañía. Nunca devuelve operaciones de otra compañía.
+
 El estado de cada computadora es el del controlador de flota cuando reportó hace menos de 90 s. El
 controlador lo reescribe cada 30 s. Sin ese reporte, el estado se deriva de los arriendos de sus agentes.
 Solo una computadora deshabilitada o reportada caída por el controlador bloquea operaciones de flota
