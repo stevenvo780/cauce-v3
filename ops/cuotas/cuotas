@@ -1,0 +1,57 @@
+#!/bin/bash
+# Lector local: una linea por (espacio, cliente) con sesion. Sin navegador.
+#   cuotas-claude-local            tabla legible
+#   cuotas-claude-local --json     una linea JSON por (espacio, cliente), para el publicador
+# Claude: leer-cuota.mjs (endpoints OAuth del CLI). Codex: codex-http-probe.py (la misma sonda
+# del VPS, lee el auth.json del espacio y NUNCA invoca el CLI de codex ni refresca).
+set -u
+JSON=no; [ "${1:-}" = "--json" ] && JSON=si
+emite() {  # $1 label  $2 provider  $3 json del lector
+  if [ "$JSON" = si ]; then
+    printf '%s\n' "$3" | python3 -c "
+import json,sys
+d=json.load(sys.stdin); d['label']='$1'; d['provider']='$2'; print(json.dumps(d,ensure_ascii=False))"
+  else
+    printf '%s\n' "$3" | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+if '$2'=='claude':
+    if d.get('ok'):
+        w={x['key']:x for x in d.get('windows',[])}
+        print('  %-16s claude  %-30s 5h=%3s%%  7d=%3s%%  (%s)' % ('$1', d.get('email') or '?', w.get('5h',{}).get('usedPercent','?'), w.get('7d',{}).get('usedPercent','?'), d.get('plan','?')))
+    else: print('  %-16s claude  SIN DATO: %s' % ('$1', d.get('nota')))
+elif '$2'=='grok':
+    if d.get('ok'):
+        w={x['key']:x for x in d.get('windows',[])}
+        print('  %-16s grok    %-30s 7d=%3s%%  (%s)' % ('$1', d.get('email') or '?', w.get('7d',{}).get('usedPercent','?'), d.get('plan') or 'grok-build'))
+    else: print('  %-16s grok    SIN DATO: %s' % ('$1', d.get('nota')))
+else:
+    if not d.get('error'):
+        v={x['clave']:x for x in d.get('ventanas',[])}
+        print('  %-16s codex   %-30s 7d=%3s%%  (%s)' % ('$1', d.get('identidad') or '?', v.get('7d',{}).get('usado_pct','?'), d.get('plan','?')))
+    else: print('  %-16s codex   SIN DATO: %s' % ('$1', str(d.get('error'))[:70]))"
+  fi
+}
+for c in $(docker ps --filter name='^cuota-' --format '{{.Names}}' | sort); do
+  if docker exec "$c" test -s /home/node/.claude/.credentials.json 2>/dev/null; then
+    emite "$c" claude "$(timeout 45 docker exec "$c" node /usr/local/bin/leer-cuota.mjs 2>/dev/null || echo '{"ok":false,"nota":"el lector no respondio"}')"
+  fi
+  # 2026-10-05 (kant): un espacio de Claude sin sesion sale como fila con el motivo, no desaparece.
+  case "$c" in cuota-claude-*)
+    docker exec "$c" test -s /home/node/.claude/.credentials.json 2>/dev/null \
+      || emite "$c" claude "{\"ok\":false,\"nota\":\"sin sesion de Claude: falta cuota-auth ${c#cuota-}\"}" ;;
+  esac
+  if docker exec "$c" test -s /home/node/.grok/auth.json 2>/dev/null; then
+    emite "$c" grok "$(timeout 60 docker exec "$c" node /usr/local/bin/leer-cuota-grok.mjs 2>/dev/null || echo '{"ok":false,"nota":"el lector de grok no respondio"}')"
+  fi
+  if docker exec "$c" test -s /home/node/.codex/auth.json 2>/dev/null; then
+    # 2026-09-27 (kant): la sesion de cada espacio es propia (no la comparte la flota), asi que se
+    # refresca aqui antes de que venza; sin esto la lectura moria a los 10 dias del login.
+    timeout 45 docker exec -i "$c" python3 - /home/node/.codex < /home/server/cuotas-cli/codex-refrescar.py >/dev/null 2>&1
+    # Sin '|| echo': la sonda sale con rc!=0 cuando informa un error, y el respaldo se pegaba
+    # detras de su JSON -> JSON invalido -> la fila desaparecia en vez de mostrar el motivo.
+    r=$(timeout 60 docker exec "$c" python3 /usr/local/bin/codex-http-probe.py /home/node/.codex 2>/dev/null)
+    [ -n "$r" ] || r='{"error":"la sonda no respondio","ventanas":[]}'
+    emite "$c" codex "$r"
+  fi
+done
