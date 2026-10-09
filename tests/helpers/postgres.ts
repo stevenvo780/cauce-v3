@@ -12,12 +12,16 @@ export interface TestDatabase {
   container: StartedTestContainer;
   pool: DatabasePool;
   url: string;
+  adminPool: DatabasePool;
+  adminUrl: string;
 }
 
 export interface EmptyTestDatabase {
   close: () => Promise<void>;
   pool: DatabasePool;
   url: string;
+  adminPool: DatabasePool;
+  adminUrl: string;
 }
 
 export interface DockerTestRequirement {
@@ -419,6 +423,8 @@ export async function startEmptyTestDatabase(serverUrl: string): Promise<EmptyTe
     return {
       pool,
       url,
+      adminPool: pool,
+      adminUrl: url,
       close: async () => {
         try {
           await pool.end();
@@ -442,9 +448,53 @@ export function startTestDatabaseThrough(version: string): Promise<TestDatabase>
   return startTestDatabaseAt(version);
 }
 
-const ownedTestServers = new WeakMap<DatabasePool, { url: string; migrationThrough: string | undefined }>();
+export const TEST_RUNTIME_LOGIN = 'cauce_test_runtime';
+const RUNTIME_ROLES_MIGRATION = '052_runtime_roles.sql';
+const ROLE_NAME = /^[a-z_][a-z0-9_]{0,62}$/u;
+
+export function runtimeRoleRequested(): boolean {
+  return process.env.CAUCE_TEST_RUNTIME_ROLE === '1';
+}
+
+// Roles outlive each database and a concurrent ALTER ROLE fails, so the password derives from the
+// admin credentials: every suite on one cluster agrees on it and never alters an existing role.
+export async function provisionTestLogin(
+  admin: DatabasePool, adminUrl: string, login: string, group: string,
+): Promise<string> {
+  if (!ROLE_NAME.test(login) || !ROLE_NAME.test(group)) throw new Error('test role names must be plain identifiers');
+  const target = new URL(adminUrl);
+  const password = createHash('sha256')
+    .update(`${login}\n${target.username}:${target.password}@${target.host}`).digest('hex');
+  try {
+    await admin.query(`CREATE ROLE ${login} LOGIN PASSWORD '${password}' IN ROLE ${group}`);
+  } catch (error) {
+    if (!['42710', '23505'].includes(errorField(error, 'code'))) throw error;
+  }
+  target.username = login;
+  target.password = password;
+  return target.toString();
+}
+
+const adminPools = new WeakMap<DatabasePool, DatabasePool>();
+async function withRuntimePool(
+  adminPool: DatabasePool, adminUrl: string, migrationThrough: string | undefined,
+): Promise<{ pool: DatabasePool; url: string; adminPool: DatabasePool; adminUrl: string }> {
+  if (!runtimeRoleRequested() || (migrationThrough !== undefined && migrationThrough < RUNTIME_ROLES_MIGRATION)) {
+    return { pool: adminPool, url: adminUrl, adminPool, adminUrl };
+  }
+  const url = await provisionTestLogin(adminPool, adminUrl, TEST_RUNTIME_LOGIN, 'cauce_runtime');
+  const pool = createPool(url);
+  adminPools.set(pool, adminPool);
+  return { pool, url, adminPool, adminUrl };
+}
+
+async function closePools(database: { pool: DatabasePool; adminPool: DatabasePool }): Promise<void> {
+  await Promise.all([...new Set([database.pool, database.adminPool])].map((pool) => pool.end().catch(() => undefined)));
+}
+
+const ownedTestServers = new WeakMap<DatabasePool, { url: string; adminUrl: string; migrationThrough: string | undefined }>();
 function ownTestServer(database: TestDatabase, migrationThrough?: string): TestDatabase {
-  ownedTestServers.set(database.pool, { url: database.url, migrationThrough });
+  ownedTestServers.set(database.pool, { url: database.url, adminUrl: database.adminUrl, migrationThrough });
   return database;
 }
 
@@ -453,21 +503,24 @@ export async function startTestCaseDatabase(database: TestDatabase): Promise<Emp
   if (server?.url !== database.url) {
     throw new Error('case database requires an unchanged server created by startTestDatabase');
   }
-  const serverUrl = server.url;
+  const serverUrl = server.adminUrl;
   assertTestDatabaseUrl(serverUrl);
   const { url, soltar } = await crearBaseEfimera(serverUrl, createPool, { pruneExpired: false });
-  const pool = createPool(url);
+  const adminPool = createPool(url);
+  let pools: { pool: DatabasePool; adminPool: DatabasePool } = { pool: adminPool, adminPool };
   let closing: Promise<void> | undefined;
   const close = (): Promise<void> => {
-    closing ??= pool.end().finally(soltar);
+    closing ??= closePools(pools).finally(soltar);
     return closing;
   };
   try {
-    await waitForDatabase(pool);
-    if (server.migrationThrough === undefined) await applyMigrations(pool);
-    else await applyMigrationsThrough(pool, server.migrationThrough);
-    await guardarSemillaDeCatalogo(pool);
-    return { pool, url, close };
+    await waitForDatabase(adminPool);
+    if (server.migrationThrough === undefined) await applyMigrations(adminPool);
+    else await applyMigrationsThrough(adminPool, server.migrationThrough);
+    await guardarSemillaDeCatalogo(adminPool);
+    const runtime = await withRuntimePool(adminPool, url, server.migrationThrough);
+    pools = runtime;
+    return { ...runtime, close };
   } catch (error) {
     await close();
     throw error;
@@ -475,10 +528,7 @@ export async function startTestCaseDatabase(database: TestDatabase): Promise<Emp
 }
 
 async function startTestDatabaseAt(migrationThrough?: string): Promise<TestDatabase> {
-  /*
-   * External database support via CAUCE_TEST_DATABASE_URL for environments where the Docker
-   * daemon is unavailable for testcontainers.
-   */
+  // CAUCE_TEST_DATABASE_URL serves environments where testcontainers has no Docker daemon.
   const externa = process.env.CAUCE_TEST_DATABASE_URL;
   if (externa) {
     if (process.env.CAUCE_REQUIRE_TESTCONTAINERS === '1') {
@@ -496,7 +546,8 @@ async function startTestDatabaseAt(migrationThrough?: string): Promise<TestDatab
       if (migrationThrough === undefined) await applyMigrations(pool);
       else await applyMigrationsThrough(pool, migrationThrough);
       await guardarSemillaDeCatalogo(pool);
-      return ownTestServer({ container: contenedorDesacoplado(soltar, tirarConexiones), pool, url }, migrationThrough);
+      const runtime = await withRuntimePool(pool, url, migrationThrough);
+      return ownTestServer({ container: contenedorDesacoplado(soltar, tirarConexiones), ...runtime }, migrationThrough);
     } catch (error) {
       await pool.end();
       await soltar();
@@ -538,7 +589,8 @@ async function startTestDatabaseAt(migrationThrough?: string): Promise<TestDatab
     if (migrationThrough === undefined) await applyMigrations(pool);
     else await applyMigrationsThrough(pool, migrationThrough);
     await guardarSemillaDeCatalogo(pool);
-    return ownTestServer({ container, pool, url }, migrationThrough);
+    const runtime = await withRuntimePool(pool, url, migrationThrough);
+    return ownTestServer({ container, ...runtime }, migrationThrough);
   } catch (error) {
     await pool.end();
     await container.stop();
@@ -622,8 +674,9 @@ async function restaurarCatalogo(client: DatabaseClient): Promise<void> {
 }
 
 export async function resetTestDatabase(pool: DatabasePool): Promise<void> {
+  const admin = adminPools.get(pool) ?? pool;
   for (let attempt = 1; attempt <= 5; attempt += 1) {
-    const client = await pool.connect();
+    const client = await admin.connect();
     try {
       await client.query('BEGIN');
       // Catalog restore belongs to the same retryable transaction as the dynamic reset. Keeping
@@ -676,9 +729,7 @@ export async function closeTestDatabase(database?: TestDatabase, pool?: Database
   if (pool) {
     await pool.end().catch(() => undefined);
   }
-  if (database?.pool && database.pool !== pool) {
-    await database.pool.end().catch(() => undefined);
-  }
+  if (database) await closePools(database);
   if (database?.container) {
     await database.container.stop().catch(() => undefined);
   }

@@ -62,23 +62,30 @@ prepare_terminal() {
   esac
   export CAUCE_TERMINAL_RELAY_INSTANCE_ID="$INSTANCE_ID"
 }
+compose_recipe() {
+  local name
+  RECIPE=(env)
+  if [ "$MCP_HUMAN_ENABLED" = 1 ]; then
+    for name in "${MCP_NAMES[@]:1}"; do RECIPE+=(-u "$name"); done
+  fi
+  RECIPE+=("CAUCE_TERMINAL_RELAY_INSTANCE_ID=$INSTANCE_ID" "CAUCE_BLOB_API_ENABLED=$BLOB_API_ENABLED")
+  if [ "$MCP_HUMAN_ENABLED" = 1 ] && [ "$MCP_PROVIDER" = local ]; then
+    RECIPE+=("CAUCE_MCP_OAUTH_SIGNING_KEY_PATH=$MCP_SIGNING_KEY_PATH")
+  fi
+  if [ "$TERMINAL_ENABLED" = 0 ]; then
+    RECIPE+=(CAUCE_GATEWAY_RELAY_CLIENT_CERT_PATH=/dev/null CAUCE_GATEWAY_RELAY_CLIENT_KEY_PATH=/dev/null)
+  fi
+  RECIPE+=("${COMPOSE[@]}")
+}
 deployment_failed() {
   local exit_status="${2:-1}"
   echo "deploy: $1" >&2
   if [ "$MCP_HUMAN_ENABLED" = 1 ]; then
-    local -a mcp_unset=()
-    for name in "${MCP_NAMES[@]:1}"; do mcp_unset+=(-u "$name"); done
-    local -a recovery=(env "${mcp_unset[@]}"
-      "CAUCE_TERMINAL_RELAY_INSTANCE_ID=$INSTANCE_ID" "CAUCE_BLOB_API_ENABLED=$BLOB_API_ENABLED")
-    [ "$MCP_PROVIDER" != local ] || recovery+=("CAUCE_MCP_OAUTH_SIGNING_KEY_PATH=$MCP_SIGNING_KEY_PATH")
-    if [ "$TERMINAL_ENABLED" = 0 ]; then
-      recovery+=(CAUCE_GATEWAY_RELAY_CLIENT_CERT_PATH=/dev/null CAUCE_GATEWAY_RELAY_CLIENT_KEY_PATH=/dev/null)
-    fi
-    recovery+=("${COMPOSE[@]}")
+    compose_recipe
     echo "Rollback MCP manual: solo despues de verificar/restaurar esquema, BD y volumen segun el error; restaura el archivo completo (flag y configuracion incluidos):" >&2
     printf 'cp -a %q %q\n' "$ENV_FILE.pre-deploy-$STAMP" "$ENV_FILE" >&2
-    printf '%q ' "${recovery[@]}" >&2; printf 'config\n' >&2
-    printf '%q ' "${recovery[@]}" >&2; printf 'up -d --wait --wait-timeout 300 --remove-orphans\n' >&2
+    printf '%q ' "${RECIPE[@]}" >&2; printf 'config\n' >&2
+    printf '%q ' "${RECIPE[@]}" >&2; printf 'up -d --wait --wait-timeout 300 --remove-orphans\n' >&2
   fi
   exit "$exit_status"
 }
@@ -234,6 +241,20 @@ if [ "$FLEET_OVERLAY" = 1 ]; then
   COMPOSE+=(-f "$REPO/deploy/compose.fleet.yaml")
   "${COMPOSE[@]}" config >/dev/null || die "el compose de flota no renderiza con $ENV_FILE"
 fi
+OWNER_DATABASE_URL="$(env_value CAUCE_DATABASE_URL_SECRET_PATH)"
+for service in GATEWAY DISPATCHER BRIDGE OBSERVER; do
+  name="CAUCE_DATABASE_URL_${service}_SECRET_PATH"
+  [ "$(env_declarations "$name")" -le 1 ] || die "$name esta duplicado en $ENV_FILE"
+  value="$(env_value "$name")"
+  if [ "${!name+x}" = x ] && [ "${!name}" != "$value" ]; then
+    die "$name del entorno contradice el archivo de la instancia"
+  fi
+  if [ -z "$value" ] || [ "$value" = "$OWNER_DATABASE_URL" ]; then
+    echo "AVISO: runtime con superusuario: ${service,,} usa el secreto del migrador (falta $name; ver docs/runbook-rol-runtime.md)" >&2
+  elif [ ! -f "$value" ] || [ ! -r "$value" ]; then
+    die "$name no apunta a un fichero legible ($value)"
+  fi
+done
 REGISTRY="${REGISTRY%/}"
 [[ "$REGISTRY" =~ ^[a-zA-Z0-9][a-zA-Z0-9._:/-]*$ ]] || die "CAUCE_DEPLOY_REGISTRY invalido"
 [[ "$EXPECTED_GIT_REF" =~ ^[a-zA-Z0-9][a-zA-Z0-9._/-]*$ ]] || die "CAUCE_DEPLOY_EXPECTED_GIT_REF invalido"
@@ -263,6 +284,12 @@ if [ "${CAUCE_BLOB_API_ENABLED+x}" = x ] \
   die "CAUCE_BLOB_API_ENABLED del entorno contradice el archivo de la instancia"
 fi
 export CAUCE_BLOB_API_ENABLED="$BLOB_API_ENABLED"
+if [ "${CAUCE_DEPLOY_PRINT_COMPOSE:-0}" = 1 ]; then
+  [ "$MCP_HUMAN_ENABLED" = 1 ] || prepare_terminal
+  compose_recipe
+  printf '%q ' "${RECIPE[@]}"; printf '\n'
+  exit 0
+fi
 BACKUP_BLOB_VOLUME="$(env_value COMPOSE_PROJECT_NAME)"
 BACKUP_BLOB_VOLUME="${BACKUP_BLOB_VOLUME:-cauce-v3-prod}_blobs_data"
 cd "$REPO"

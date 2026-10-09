@@ -21,16 +21,17 @@ import { renewRelayClaim } from './relay-proxy/claim-transition.js';
 
 let database: TestDatabase | undefined;
 let pool: DatabasePool;
+let admin: DatabasePool;
 const key = randomBytes(32);
 const users = new MemoryConsoleUserStore();
 const provider = new PasswordAuthProvider({ users, signingKey: key });
 const authority = new TerminalSessionAuthority(provider, randomBytes(32));
 preparePostgresSuite(import.meta.url, async () => {
-  database = await startTestDatabase(); pool = database.pool;
+  database = await startTestDatabase(); pool = database.pool; admin = database.adminPool;
 });
 beforeEach(async () => {
   await resetTestDatabase(pool);
-  await pool.query('TRUNCATE terminal_control_holds,terminal_sessions,console_users CASCADE');
+  await admin.query('TRUNCATE terminal_control_holds,terminal_sessions,console_users CASCADE');
   await pool.query(`INSERT INTO agents(tenant_id,alias,container_name,runtime_user,home_directory,state_directory,harness_id,enabled)
     VALUES('Steven','kant','actor','dev','/home/dev','/state/kant','codex',true),('Steven','argos','target','claw','/home/claw','/state/argos','codex',true)`);
   await pool.query(`INSERT INTO rooms(id,tenant_id) VALUES('authority-room','Steven') ON CONFLICT DO NOTHING`);

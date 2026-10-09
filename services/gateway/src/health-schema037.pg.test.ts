@@ -76,13 +76,13 @@ describe('gateway schema-037 readiness on PostgreSQL 16', () => {
 
       await expect(probeConsolePublishIntentPath(database.pool)).resolves.toBeUndefined();
 
-      await database.pool.query(
+      await database.adminPool.query(
         'DELETE FROM schema_migration_ledger WHERE version=$1',
         [migration037],
       );
       await expect(probeConsolePublishIntentPath(database.pool))
         .rejects.toThrow(/schema-037 console publish intent/u);
-      await database.pool.query(
+      await database.adminPool.query(
         `INSERT INTO schema_migration_ledger(
            version,source_sha256,source_origin,recorded_at
          ) VALUES ($1,$2,$3,$4)`,
@@ -95,14 +95,14 @@ describe('gateway schema-037 readiness on PostgreSQL 16', () => {
       );
       await expect(probeConsolePublishIntentPath(database.pool)).resolves.toBeUndefined();
 
-      await database.pool.query('DROP INDEX audit_events_console_publish_head_037_idx');
+      await database.adminPool.query('DROP INDEX audit_events_console_publish_head_037_idx');
       await expect(probeConsolePublishIntentPath(database.pool))
         .rejects.toThrow(/schema-037 console publish intent/u);
-      await database.pool.query(indexDefinitions.audit_events_console_publish_head_037_idx);
+      await database.adminPool.query(indexDefinitions.audit_events_console_publish_head_037_idx);
 
       // The right name and columns are insufficient when DESC/NULL ordering drifts.
       await replaceIndex(
-        database.pool,
+        database.adminPool,
         'audit_events_console_publish_rate_037_idx',
         `CREATE INDEX audit_events_console_publish_rate_037_idx
            ON audit_events (
@@ -111,11 +111,11 @@ describe('gateway schema-037 readiness on PostgreSQL 16', () => {
       );
       await expect(probeConsolePublishIntentPath(database.pool))
         .rejects.toThrow(/schema-037 console publish intent/u);
-      await replaceIndex(database.pool, 'audit_events_console_publish_rate_037_idx');
+      await replaceIndex(database.adminPool, 'audit_events_console_publish_rate_037_idx');
 
       // Preserve the name and complete key while widening the partial predicate.
       await replaceIndex(
-        database.pool,
+        database.adminPool,
         'audit_events_console_publish_key_037_idx',
         `CREATE INDEX audit_events_console_publish_key_037_idx
            ON audit_events (tenant_id,actor_alias,(metadata->>'idempotency_key'),id)
@@ -123,11 +123,11 @@ describe('gateway schema-037 readiness on PostgreSQL 16', () => {
       );
       await expect(probeConsolePublishIntentPath(database.pool))
         .rejects.toThrow(/schema-037 console publish intent/u);
-      await replaceIndex(database.pool, 'audit_events_console_publish_key_037_idx');
+      await replaceIndex(database.adminPool, 'audit_events_console_publish_key_037_idx');
 
       // Preserve name, arity, ordering and predicate while changing one JSON expression.
       await replaceIndex(
-        database.pool,
+        database.adminPool,
         'audit_events_console_publish_nonce_037_idx',
         `CREATE INDEX audit_events_console_publish_nonce_037_idx
            ON audit_events (
@@ -137,13 +137,13 @@ describe('gateway schema-037 readiness on PostgreSQL 16', () => {
       );
       await expect(probeConsolePublishIntentPath(database.pool))
         .rejects.toThrow(/schema-037 console publish intent/u);
-      await replaceIndex(database.pool, 'audit_events_console_publish_nonce_037_idx');
+      await replaceIndex(database.adminPool, 'audit_events_console_publish_nonce_037_idx');
       await expect(probeConsolePublishIntentPath(database.pool)).resolves.toBeUndefined();
 
-      await database.pool.query(`CREATE ROLE ${role} LOGIN PASSWORD '${password}'`);
+      await database.adminPool.query(`CREATE ROLE ${role} LOGIN PASSWORD '${password}'`);
       roleCreated = true;
-      await database.pool.query(`GRANT USAGE ON SCHEMA public TO ${role}`);
-      await database.pool.query(
+      await database.adminPool.query(`GRANT USAGE ON SCHEMA public TO ${role}`);
+      await database.adminPool.query(
         `GRANT SELECT ON schema_migrations,schema_migration_ledger,audit_events TO ${role}`,
       );
       const restrictedUrl = new URL(database.url);
@@ -156,10 +156,10 @@ describe('gateway schema-037 readiness on PostgreSQL 16', () => {
       await expect(probeConsolePublishIntentPath(restrictedPool))
         .rejects.toThrow(/schema-037 console publish intent/u);
 
-      await database.pool.query(`GRANT INSERT ON audit_events TO ${role}`);
+      await database.adminPool.query(`GRANT INSERT ON audit_events TO ${role}`);
       await expect(probeConsolePublishIntentPath(restrictedPool))
         .rejects.toThrow(/schema-037 console publish intent/u);
-      await database.pool.query(`GRANT USAGE ON SEQUENCE audit_events_id_seq TO ${role}`);
+      await database.adminPool.query(`GRANT USAGE ON SEQUENCE audit_events_id_seq TO ${role}`);
       await expect(probeConsolePublishIntentPath(restrictedPool)).resolves.toBeUndefined();
     } finally {
       try {
@@ -167,14 +167,14 @@ describe('gateway schema-037 readiness on PostgreSQL 16', () => {
           await restrictedPool?.end();
         } finally {
           if (roleCreated) {
-            await database.pool.query(`DROP OWNED BY ${role}`);
-            await database.pool.query(`DROP ROLE ${role}`);
+            await database.adminPool.query(`DROP OWNED BY ${role}`);
+            await database.adminPool.query(`DROP ROLE ${role}`);
           }
           for (const [name, definition] of Object.entries(indexDefinitions)) {
-            await replaceIndex(database.pool, name as IndexName, definition);
+            await replaceIndex(database.adminPool, name as IndexName, definition);
           }
           if (ledgerRow !== undefined) {
-            await database.pool.query(
+            await database.adminPool.query(
               `INSERT INTO schema_migration_ledger(
                  version,source_sha256,source_origin,recorded_at
                ) VALUES ($1,$2,$3,$4)

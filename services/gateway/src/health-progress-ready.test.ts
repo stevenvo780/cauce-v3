@@ -425,15 +425,15 @@ describe('gateway readiness stops lying about the listener the agents actually u
 
       // This role can connect and parse every SELECT in the probe, but cannot take the row locks,
       // update the wake lease, or insert the exhausted claim in its DLQ. SELECT 1 remains green.
-      await database.pool.query(`CREATE ROLE ${role} LOGIN PASSWORD '${password}'`);
+      await database.adminPool.query(`CREATE ROLE ${role} LOGIN PASSWORD '${password}'`);
       roleCreated = true;
-      await database.pool.query(`GRANT USAGE ON SCHEMA public TO ${role}`);
-      await database.pool.query(
+      await database.adminPool.query(`GRANT USAGE ON SCHEMA public TO ${role}`);
+      await database.adminPool.query(
         `GRANT SELECT ON schema_migrations,connection_leases,adapter_outbox,outbox_dead_letters,
                          terminal_sessions
            TO ${role}`,
       );
-      await database.pool.query(`GRANT UPDATE ON terminal_sessions TO ${role}`);
+      await database.adminPool.query(`GRANT UPDATE ON terminal_sessions TO ${role}`);
       const restrictedUrl = new URL(database.url);
       restrictedUrl.username = role;
       restrictedUrl.password = password;
@@ -451,20 +451,20 @@ describe('gateway readiness stops lying about the listener the agents actually u
       await expect(probeProfileRuntimePath(restrictedPool))
         .rejects.toThrow(/schema-035 profile runtime/u);
 
-      await database.pool.query(`GRANT UPDATE ON connection_leases,adapter_outbox TO ${role}`);
-      await database.pool.query(`GRANT INSERT ON outbox_dead_letters TO ${role}`);
-      await database.pool.query(
+      await database.adminPool.query(`GRANT UPDATE ON connection_leases,adapter_outbox TO ${role}`);
+      await database.adminPool.query(`GRANT INSERT ON outbox_dead_letters TO ${role}`);
+      await database.adminPool.query(
         `GRANT SELECT ON agents,memberships,role_policies,tenants,rooms,acl_edges,
                          delivery_lane_fairness,deliveries,messages TO ${role}`,
       );
-      await database.pool.query(`GRANT INSERT,UPDATE ON delivery_lane_fairness TO ${role}`);
-      await database.pool.query(`GRANT UPDATE ON deliveries TO ${role}`);
+      await database.adminPool.query(`GRANT INSERT,UPDATE ON delivery_lane_fairness TO ${role}`);
+      await database.adminPool.query(`GRANT UPDATE ON deliveries TO ${role}`);
       await expect(probeDeliveryAdmissionPath(restrictedPool)).resolves.toBeUndefined();
       for (const routeTable of ['memberships', 'role_policies', 'tenants', 'rooms', 'acl_edges']) {
-        await database.pool.query(`REVOKE SELECT ON ${routeTable} FROM ${role}`);
+        await database.adminPool.query(`REVOKE SELECT ON ${routeTable} FROM ${role}`);
         await expect(probeDeliveryAdmissionPath(restrictedPool))
           .rejects.toThrow(/schema-015 delivery admission/u);
-        await database.pool.query(`GRANT SELECT ON ${routeTable} TO ${role}`);
+        await database.adminPool.query(`GRANT SELECT ON ${routeTable} TO ${role}`);
       }
       await expect(probeDeliveryAdmissionPath(restrictedPool)).resolves.toBeUndefined();
       await expect(probeWakePath(restrictedPool)).resolves.toBeUndefined();
@@ -482,39 +482,39 @@ describe('gateway readiness stops lying about the listener the agents actually u
 
       // Table UPDATE is not enough: every successful claim transaction writes durable audit.
       // A role with a green SELECT 1 and all claim columns but no audit INSERT must stay unready.
-      await database.pool.query(`GRANT INSERT ON audit_events TO ${role}`);
-      await database.pool.query(`GRANT USAGE ON SEQUENCE audit_events_id_seq TO ${role}`);
+      await database.adminPool.query(`GRANT INSERT ON audit_events TO ${role}`);
+      await database.adminPool.query(`GRANT USAGE ON SEQUENCE audit_events_id_seq TO ${role}`);
       await expect(probeTerminalClaimPath(restrictedPool)).resolves.toBeUndefined();
       await expect(probeTerminalBrowserOwnerPath(restrictedPool))
         .rejects.toThrow(/schema-033 browser owner/u);
-      await database.pool.query(`GRANT INSERT ON terminal_sessions TO ${role}`);
+      await database.adminPool.query(`GRANT INSERT ON terminal_sessions TO ${role}`);
       await expect(probeTerminalBrowserOwnerPath(restrictedPool)).resolves.toBeUndefined();
       await expect(probeTerminalRelayInstancePath(restrictedPool)).resolves.toBeUndefined();
       await expect(probeProfileRuntimePath(restrictedPool))
         .rejects.toThrow(/schema-035 profile runtime/u);
-      await database.pool.query(
+      await database.adminPool.query(
         `GRANT SELECT,INSERT,UPDATE ON agent_profile_runtime_expectations TO ${role}`,
       );
-      await database.pool.query(
+      await database.adminPool.query(
         `GRANT SELECT,INSERT ON agent_profile_runtime_adoptions TO ${role}`,
       );
-      await database.pool.query(`GRANT SELECT,UPDATE ON agent_profiles TO ${role}`);
-      await database.pool.query(`GRANT SELECT ON deliveries TO ${role}`);
+      await database.adminPool.query(`GRANT SELECT,UPDATE ON agent_profiles TO ${role}`);
+      await database.adminPool.query(`GRANT SELECT ON deliveries TO ${role}`);
       await expect(probeProfileRuntimePath(restrictedPool)).resolves.toBeUndefined();
 
-      await database.pool.query(
+      await database.adminPool.query(
         `ALTER TABLE agent_profile_runtime_adoptions
            DISABLE TRIGGER agent_profile_runtime_adoptions_expectation_guard`,
       );
       await expect(probeProfileRuntimePath(database.pool))
         .rejects.toThrow(/schema-035 profile runtime/u);
-      await database.pool.query(
+      await database.adminPool.query(
         `ALTER TABLE agent_profile_runtime_adoptions
            ENABLE TRIGGER agent_profile_runtime_adoptions_expectation_guard`,
       );
       await expect(probeProfileRuntimePath(database.pool)).resolves.toBeUndefined();
 
-      await database.pool.query(
+      await database.adminPool.query(
         `CREATE OR REPLACE FUNCTION cauce_profile_runtime_documents_valid(candidate jsonb)
          RETURNS boolean LANGUAGE plpgsql IMMUTABLE PARALLEL SAFE
          AS $$ BEGIN RETURN true; END $$`,
@@ -522,7 +522,7 @@ describe('gateway readiness stops lying about the listener the agents actually u
       await expect(probeProfileRuntimePath(database.pool))
         .rejects.toThrow(/schema-035 profile runtime/u);
 
-      await database.pool.query(
+      await database.adminPool.query(
         `ALTER TABLE terminal_sessions DROP CONSTRAINT terminal_sessions_relay_instance_shape,
            ADD CONSTRAINT terminal_sessions_relay_instance_shape CHECK (
              (
@@ -543,13 +543,13 @@ describe('gateway readiness stops lying about the listener the agents actually u
       await expect(probeTerminalRelayInstancePath(database.pool))
         .rejects.toThrow(/schema-034 relay instance/u);
 
-      await database.pool.query(
+      await database.adminPool.query(
         `DROP INDEX terminal_sessions_request_id_idx;
          CREATE INDEX terminal_sessions_request_id_idx ON terminal_sessions(request_id)`,
       );
       await expect(probeTerminalBrowserOwnerPath(database.pool))
         .rejects.toThrow(/schema-033 browser owner/u);
-      await database.pool.query(
+      await database.adminPool.query(
         `DROP INDEX terminal_sessions_request_id_idx;
          CREATE UNIQUE INDEX terminal_sessions_request_id_idx ON terminal_sessions(request_id)`,
       );
@@ -557,7 +557,7 @@ describe('gateway readiness stops lying about the listener the agents actually u
 
       // Preserve every expected fragment but add an invalid owner generation: exact comparison
       // must reject the widened CHECK rather than accepting it by substring.
-      await database.pool.query(
+      await database.adminPool.query(
         `ALTER TABLE terminal_sessions DROP CONSTRAINT terminal_sessions_browser_owner_shape,
            ADD CONSTRAINT terminal_sessions_browser_owner_shape CHECK (
              (
@@ -572,7 +572,7 @@ describe('gateway readiness stops lying about the listener the agents actually u
 
       // The old substring probe accepted this widened constraint because every expected fragment
       // was still present. Exact structural comparison must reject the extra invalid state.
-      await database.pool.query(
+      await database.adminPool.query(
         `ALTER TABLE terminal_sessions DROP CONSTRAINT terminal_sessions_relay_claim_shape,
            ADD CONSTRAINT terminal_sessions_relay_claim_shape CHECK (
              (
@@ -591,8 +591,8 @@ describe('gateway readiness stops lying about the listener the agents actually u
     } finally {
       await restrictedPool?.end();
       if (roleCreated) {
-        await database.pool.query(`DROP OWNED BY ${role}`);
-        await database.pool.query(`DROP ROLE ${role}`);
+        await database.adminPool.query(`DROP OWNED BY ${role}`);
+        await database.adminPool.query(`DROP ROLE ${role}`);
       }
       await database.pool.end();
       await database.container.stop();

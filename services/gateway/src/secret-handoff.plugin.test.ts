@@ -517,7 +517,7 @@ describe('sealed credential hand-off plane', () => {
     const id = (await grant()).body.id as string;
 
     actor = principalOf('Steven', 'argos');
-    await pool.query(
+    await (database?.adminPool ?? pool).query(
       `ALTER TABLE audit_events ADD CONSTRAINT audit_blocks_read CHECK (action <> 'secret.read')`,
     );
     const failed = await claim(id);
@@ -528,21 +528,21 @@ describe('sealed credential hand-off plane', () => {
     );
     expect(untouched.rows[0]?.read_at).toBeNull();
 
-    await pool.query(`ALTER TABLE audit_events DROP CONSTRAINT audit_blocks_read`);
+    await (database?.adminPool ?? pool).query(`ALTER TABLE audit_events DROP CONSTRAINT audit_blocks_read`);
     expect((await claim(id)).statusCode).toBe(200);
   });
 
   it('rolls the grant back when its audit row cannot be written', async () => {
     await publishRecipientKey();
     actor = principalOf('Steven', 'kant');
-    await pool.query(
+    await (database?.adminPool ?? pool).query(
       `ALTER TABLE audit_events ADD CONSTRAINT audit_blocks_grant
          CHECK (action <> 'secret.granted')`,
     );
     expect((await grant()).status).toBe(500);
     expect((await pool.query(`SELECT 1 FROM secret_handoffs`)).rowCount).toBe(0);
 
-    await pool.query(`ALTER TABLE audit_events DROP CONSTRAINT audit_blocks_grant`);
+    await (database?.adminPool ?? pool).query(`ALTER TABLE audit_events DROP CONSTRAINT audit_blocks_grant`);
     expect((await grant()).status).toBe(201);
   });
 

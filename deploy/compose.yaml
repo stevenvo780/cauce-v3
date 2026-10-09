@@ -107,7 +107,7 @@ services:
       NODE_EXTRA_CA_CERTS: /run/secrets/gateway_tls_ca
       PORT: "8443"
     secrets:
-      - source: database_url
+      - source: database_url_gateway
         target: database_url
         uid: "1000"
         gid: "1000"
@@ -337,7 +337,17 @@ services:
       CAUCE_DELIVERY_LEASE_CAP_MS: ${CAUCE_DELIVERY_LEASE_CAP_MS:-604800000}
       ACK_TIMEOUT_MS: ${ACK_TIMEOUT_MS:-600000}
       INTERACTIVE_BURST: ${INTERACTIVE_BURST:-3}
-    secrets: *runtime-secrets
+    secrets:
+      - source: database_url_dispatcher
+        target: database_url
+        uid: "1000"
+        gid: "1000"
+        mode: 0400
+      - source: postgres_ca
+        target: postgres_ca
+        uid: "1000"
+        gid: "1000"
+        mode: 0444
     healthcheck:
       test: ["CMD", "node", "deploy/readiness-probe.mjs", "http://127.0.0.1:8082/health/ready", "ready"]
       interval: 10s
@@ -363,7 +373,7 @@ services:
       CAUCE_RELEASE_STATE_FILE: /run/secrets/release_state
       PORT: "8084"
     secrets:
-      - source: database_url
+      - source: database_url_observer
         target: database_url
         uid: "1000"
         gid: "1000"
@@ -410,7 +420,17 @@ services:
       CAUCE_TELEGRAM_EGRESS_LEASE_MS: ${CAUCE_TELEGRAM_EGRESS_LEASE_MS:-90000}
       CAUCE_TELEGRAM_UPDATE_STALE_MS: ${CAUCE_TELEGRAM_UPDATE_STALE_MS:-180000}
       CAUCE_TELEGRAM_EGRESS_STALE_MS: ${CAUCE_TELEGRAM_EGRESS_STALE_MS:-180000}
-    secrets: *runtime-secrets
+    secrets:
+      - source: database_url_bridge
+        target: database_url
+        uid: "1000"
+        gid: "1000"
+        mode: 0400
+      - source: postgres_ca
+        target: postgres_ca
+        uid: "1000"
+        gid: "1000"
+        mode: 0444
     volumes:
       - type: bind
         source: ${CAUCE_TELEGRAM_RUNTIME_DIR:-/dev/null}
@@ -532,8 +552,18 @@ services:
     networks: [backend, edge]
 
 secrets:
+  # The migrator keeps the owner role. Each runtime service gets its own least-privilege login;
+  # until provision-db-roles.py adds its path it falls back to the owner URL and deploy.sh warns.
   database_url:
     file: ${CAUCE_DATABASE_URL_SECRET_PATH:?set CAUCE_DATABASE_URL_SECRET_PATH}
+  database_url_gateway:
+    file: ${CAUCE_DATABASE_URL_GATEWAY_SECRET_PATH:-${CAUCE_DATABASE_URL_SECRET_PATH:?set CAUCE_DATABASE_URL_SECRET_PATH}}
+  database_url_dispatcher:
+    file: ${CAUCE_DATABASE_URL_DISPATCHER_SECRET_PATH:-${CAUCE_DATABASE_URL_SECRET_PATH:?set CAUCE_DATABASE_URL_SECRET_PATH}}
+  database_url_bridge:
+    file: ${CAUCE_DATABASE_URL_BRIDGE_SECRET_PATH:-${CAUCE_DATABASE_URL_SECRET_PATH:?set CAUCE_DATABASE_URL_SECRET_PATH}}
+  database_url_observer:
+    file: ${CAUCE_DATABASE_URL_OBSERVER_SECRET_PATH:-${CAUCE_DATABASE_URL_SECRET_PATH:?set CAUCE_DATABASE_URL_SECRET_PATH}}
   postgres_ca:
     file: ${CAUCE_POSTGRES_CA_PATH:?set CAUCE_POSTGRES_CA_PATH}
   release_state:

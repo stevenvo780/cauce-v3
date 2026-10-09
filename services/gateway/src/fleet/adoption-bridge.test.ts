@@ -153,7 +153,7 @@ describe('legacy adoption bridge protocol and cleanup', () => {
 });
 describe('legacy adoption PostgreSQL transaction drain', () => {
   let database: TestDatabase;
-  beforeAll(async () => { database = await startTestDatabase(); await database.pool.query('CREATE TABLE bridge_commit_proof (outcome text)'); });
+  beforeAll(async () => { database = await startTestDatabase(); await database.adminPool.query('CREATE TABLE bridge_commit_proof (outcome text); GRANT SELECT,INSERT ON bridge_commit_proof TO PUBLIC'); });
   afterAll(async () => { await database.pool.end(); await database.container.stop(); });
   it.each(['COMMIT', 'ROLLBACK'])('retains its real flock until PostgreSQL %s after channel loss', async outcome => {
     const pool = createPool(database.url, { max: 1 }); const drainPool = createPool(database.url, { max: 1 });

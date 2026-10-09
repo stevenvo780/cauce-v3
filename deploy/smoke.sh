@@ -5,8 +5,27 @@ set -uo pipefail
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 ENV_FILE="${CAUCE_ENV_FILE:-}"
 central_project() { [ -r "$1" ] && [ "$(sed -n 's/^COMPOSE_PROJECT_NAME=//p' "$1" | tail -1 | tr -d '\r')" = cauce-v3-prod ]; }
+# Runtime services and the host fleet controller must not connect as the owner role once the
+# least-privilege switch is declared complete (CAUCE_RUNTIME_ROLES_ENFORCED=1).
+runtime_roles() {
+  local enforced="${CAUCE_RUNTIME_ROLES_ENFORCED:-}" owner_connections
+  [ -n "$enforced" ] || [ ! -r "$ENV_FILE" ] || enforced="$(sed -n 's/^CAUCE_RUNTIME_ROLES_ENFORCED=//p' "$ENV_FILE" | tail -1 | tr -d '\r')"
+  owner_connections="$(docker exec cauce-v3-prod-postgres-1 psql -X -U cauce -d cauce -tA -c "SELECT count(*) FROM pg_stat_activity WHERE usename=current_user AND backend_type='client backend' AND application_name IN ('cauce-v3','cauce-fleet-host','cauce-fleet-adoption-drain','cauce-fleet-auth')" 2>/dev/null)"
+  if [ "$owner_connections" = 0 ]; then
+    echo "OK  rol de runtime: ningun servicio de runtime conecta con el rol propietario"
+  elif [ "$enforced" = 1 ]; then
+    echo "ROJO rol de runtime: ${owner_connections:-consulta fallida} conexiones de runtime con el rol propietario"
+    return 1
+  else
+    echo "AVISO rol de runtime: ${owner_connections:-consulta fallida} conexiones de runtime con el rol propietario (docs/runbook-rol-runtime.md)"
+  fi
+}
 if [ -z "$ENV_FILE" ] || central_project "$ENV_FILE"; then
-  exec "$REPO_DIR/deploy/smoke-central.sh"  # la flota central (deploy.sh con prod.env) usa su propio censo
+  "$REPO_DIR/deploy/smoke-central.sh"  # la flota central (deploy.sh con prod.env) usa su propio censo
+  central=$?
+  runtime_roles
+  roles=$?
+  exit $(( central != 0 ? central : roles ))
 fi
 DOCKER_BIN="${CAUCE_SMOKE_DOCKER_BIN:-docker}"
 CURL_BIN="${CAUCE_SMOKE_CURL_BIN:-curl}"
