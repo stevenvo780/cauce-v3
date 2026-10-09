@@ -2,17 +2,17 @@ import { FleetHostCreateSchema, FleetHostUpdateSchema, type FleetHost } from '@c
 import { useState, type SyntheticEvent } from 'react';
 import { useApi } from '../../api/context';
 import type { ConfigurationSnapshot } from '../../api/types';
-import { cn } from '../../cn';
-import { Button, Notice, Pill } from '../../components/kit';
+import { Plus } from 'lucide-react';
+import { Button, Notice } from '../../components/kit';
 import { ConfirmDialog } from '../../components/dialogs';
-import { EmptyState, Time } from '../../components/ui';
+import { EmptyState } from '../../components/ui';
 import { CONFIG_SIN_CONTROL_REASON } from '../../router';
-import { TONE_CLASS } from '../../status-tone';
 import { ConfigSectionHeader } from './ConfigSectionHeader';
 import { canUseConfigForm } from './config-form-access';
-import { CHECK_LABEL, FORM_GRID } from './config-ui';
+import { ComputadoraCard } from './ComputadoraCard';
+import { ComputadoraFormDialog, type Editor } from './ComputadoraFormDialog';
 import { configFormDefinition } from './config-form-model';
-import { ejecutorDeComputadora, estadoDeComputadora, mensajeDeEscritura, sePuedeEliminar, type AccionDeEscritura } from './fleet-host-model';
+import { mensajeDeEscritura, resumenDeFlota, type AccionDeEscritura } from './fleet-host-model';
 import { useFleetHosts } from './use-fleet-hosts';
 
 /**
@@ -21,16 +21,10 @@ import { useFleetHosts } from './use-fleet-hosts';
  */
 const DEFINICION_HUB = configFormDefinition('tenants');
 
+const GRID_TARJETAS = 'm-0 grid list-none grid-cols-[repeat(auto-fill,minmax(min(100%,20rem),1fr))] gap-3 p-0';
+
 function esHub(snapshot: ConfigurationSnapshot | undefined): boolean {
   return snapshot?.capabilities?.actor.is_hub === true;
-}
-
-interface Editor {
-  modo: 'alta' | 'editar';
-  hostId: string;
-  displayName: string;
-  notes: string;
-  version: number;
 }
 
 export function ComputadorasSection({ snapshot, soloLectura }: { snapshot?: ConfigurationSnapshot; soloLectura: boolean }) {
@@ -97,108 +91,62 @@ export function ComputadorasSection({ snapshot, soloLectura }: { snapshot?: Conf
 
   const motivo = soloLectura ? CONFIG_SIN_CONTROL_REASON : !escribe ? 'Solo un hub puede registrar o cambiar computadoras.' : undefined;
   const editando = editor?.modo === 'editar' ? editor.hostId : undefined;
+  const registradas = hosts.filter((host) => host.registered);
+  const detectadas = hosts.filter((host) => !host.registered);
+  const resumen = resumenDeFlota(hosts);
+  const tarjeta = (host: FleetHost) => <li key={host.host_id}>
+    <ComputadoraCard host={host} escribe={escribe} busy={busy} bloqueada={editando === host.host_id}
+      onEditar={abrirEdicion} onAlternar={alternar} onEliminar={setBorrar} onRegistrar={abrirAlta} />
+  </li>;
 
   return <div className="grid gap-4">
     <ConfigSectionHeader seccion="computadoras" />
-    <Notice tone="info">
+    <p className="m-0 text-xs leading-relaxed text-muted">
       Si una computadora está apagada o deshabilitada, solo sus agentes dejan de estar disponibles; el resto del sistema sigue funcionando.
       Instalar el ejecutor (acceso SSH, usuarios y aprobación) sigue siendo un paso del operador en cada computadora: registrarla aquí no lo instala.
-    </Notice>
+    </p>
     {motivo ? <Notice tone="warn" role="note">Las acciones de esta sección están apagadas: {motivo}</Notice> : null}
     {flota.forbidden ? <Notice tone="info" role="note">Solo el hub administra computadoras.</Notice>
       : flota.error ? <Notice tone="danger" role="alert">{flota.error}</Notice> : null}
-    {error ? <Notice tone="danger" role="alert">{error}</Notice> : null}
+    {error && !editor ? <Notice tone="danger" role="alert">{error}</Notice> : null}
 
-    <div>
-      <Button variant="primary" disabled={!escribe || busy} onClick={() => { abrirAlta(); }}>Registrar computadora</Button>
-    </div>
-
-    {editor ? <form aria-label={editor.modo === 'alta' ? 'Registrar computadora' : `Editar ${editor.hostId}`}
-      onSubmit={(event) => { void guardar(event); }}
-      className="grid gap-3 rounded-xl border border-line bg-surface p-4">
-      <div className={FORM_GRID}>
-        <label className="grid gap-1">Identificador (host_id)
-          {editor.modo === 'alta'
-            ? <input required value={editor.hostId} disabled={busy} onChange={(event) => { setEditor({ ...editor, hostId: event.target.value }); }} />
-            : <code className="text-sm">{editor.hostId}</code>}
-        </label>
-        <label className="grid gap-1">Nombre visible
-          <input required maxLength={80} value={editor.displayName} disabled={busy}
-            onChange={(event) => { setEditor({ ...editor, displayName: event.target.value }); }} />
-        </label>
-      </div>
-      <label className="grid gap-1">Notas
-        <textarea maxLength={500} rows={2} value={editor.notes} disabled={busy}
-          onChange={(event) => { setEditor({ ...editor, notes: event.target.value }); }} />
-      </label>
-      <div className="flex flex-wrap justify-end gap-2">
-        <Button size="sm" disabled={busy} onClick={() => { setEditor(undefined); }}>Cancelar</Button>
-        <Button size="sm" variant="primary" type="submit" disabled={busy}>Guardar</Button>
-      </div>
-    </form> : null}
+    {flota.hosts ? <ul aria-label="Resumen de la flota"
+      className="m-0 grid list-none grid-cols-2 gap-px overflow-hidden rounded-xl border border-line bg-line p-0 sm:grid-cols-3 lg:grid-cols-5">
+      {[
+        ['Registradas', resumen.registradas, ''],
+        ['Conectadas', resumen.conectadas, resumen.conectadas ? 'text-ok-ink' : ''],
+        ['Deshabilitadas', resumen.deshabilitadas, ''],
+        ['Sin registrar', resumen.sinRegistrar, resumen.sinRegistrar ? 'text-warn-ink' : ''],
+        ['Agentes', resumen.agentes, ''],
+      ].map(([etiqueta, valor, tinta]) => <li key={etiqueta} className="flex items-baseline justify-between gap-2 bg-surface max-sm:last:col-span-2 px-3 py-2.5 sm:grid sm:justify-start sm:gap-0">
+        <span className="text-xs text-muted">{etiqueta}</span>
+        <strong className={`text-xl leading-tight font-semibold tabular-nums ${tinta as string}`}>{valor}</strong>
+      </li>)}
+    </ul> : null}
 
     {flota.loading && !flota.hosts ? <p role="status" className="m-0 text-[13px] text-muted">Leyendo computadoras…</p> : null}
     {flota.hosts && hosts.length === 0 ? <EmptyState>No hay computadoras registradas ni conocidas todavía.</EmptyState> : null}
 
-    <ul className={cn('m-0 grid list-none gap-3 p-0', 'md:grid-cols-2')}>
-      {hosts.map((host) => {
-        const estado = estadoDeComputadora(host);
-        return <li key={host.host_id}>
-          <article aria-labelledby={`computadora-${host.host_id}`} className="grid content-start gap-3 rounded-xl border border-line bg-surface p-4">
-            <header className="flex flex-wrap items-start justify-between gap-2">
-              <div className="grid min-w-0 gap-0.5">
-                <h3 id={`computadora-${host.host_id}`} className="m-0 text-[15px] font-semibold break-words">{host.display_name}</h3>
-                <code className="text-xs text-muted break-all">{host.host_id}</code>
-              </div>
-              {host.registered
-                ? <Pill tone={estado.tono}>{estado.etiqueta}</Pill>
-                : <Pill tone="warn">Sin registrar</Pill>}
-            </header>
+    <section aria-labelledby="computadoras-registradas" className="grid gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h3 id="computadoras-registradas" className="m-0 text-sm font-semibold">Registradas{flota.hosts ? ` (${String(registradas.length)})` : ''}</h3>
+        <Button variant="primary" size="sm" disabled={!escribe || busy} onClick={() => { abrirAlta(); }}>
+          <Plus size={14} aria-hidden="true" />Registrar computadora
+        </Button>
+      </div>
+      {registradas.length ? <ul className={GRID_TARJETAS}>{registradas.map(tarjeta)}</ul> : hosts.length ? <EmptyState>Ninguna computadora registrada todavía.</EmptyState> : null}
+    </section>
 
-            <dl className="m-0 grid gap-1.5 text-[13px]">
-              <div className="grid gap-0.5 sm:grid-cols-[9rem_minmax(0,1fr)]">
-                <dt className="text-muted">Estado</dt>
-                <dd className="m-0">{estado.etiqueta}, {estado.fuente}</dd>
-              </div>
-              <div className="grid gap-0.5 sm:grid-cols-[9rem_minmax(0,1fr)]">
-                <dt className="text-muted">Último contacto</dt>
-                <dd className="m-0">{host.last_seen_at ? <Time value={host.last_seen_at} relativo /> : 'Nunca'}</dd>
-              </div>
-              <div className="grid gap-0.5 sm:grid-cols-[9rem_minmax(0,1fr)]">
-                <dt className="text-muted">Ejecutor</dt>
-                <dd className={cn('m-0', !host.approved && 'text-warn')}>{host.registered ? ejecutorDeComputadora(host) : 'Registra la computadora para aprobarla.'}</dd>
-              </div>
-            </dl>
+    {detectadas.length ? <section aria-labelledby="computadoras-detectadas" className="grid gap-3">
+      <div className="grid gap-0.5">
+        <h3 id="computadoras-detectadas" className="m-0 text-sm font-semibold">Detectadas sin registrar ({detectadas.length})</h3>
+        <p className="m-0 text-xs text-muted">Sus agentes o el controlador las reportan, pero Cauce aún no las tiene en el registro.</p>
+      </div>
+      <ul className={GRID_TARJETAS}>{detectadas.map(tarjeta)}</ul>
+    </section> : null}
 
-            {host.registered ? <label className={CHECK_LABEL}>
-              <input type="checkbox" checked={host.enabled} disabled={!escribe || busy || editando === host.host_id}
-                onChange={() => { alternar(host); }} />
-              Habilitada
-            </label> : null}
-
-            <section aria-label={`Agentes de ${host.display_name}`} className="grid gap-1.5">
-              <h4 className="m-0 text-xs font-medium text-muted">Agentes ({host.agents.length})</h4>
-              {host.agents.length ? <ul className="m-0 grid list-none gap-1 p-0 text-[13px]">
-                {host.agents.map((agent) => <li key={`${agent.tenant_id}/${agent.alias}`} className="flex flex-wrap items-center gap-2">
-                  <span aria-hidden="true" className={cn('size-2 shrink-0 rounded-full', TONE_CLASS[agent.online ? 'ok' : 'neutral'].dot)} />
-                  <span className="break-all">{agent.alias}</span>
-                  <span className="text-xs text-muted">{agent.tenant_id} · {agent.online ? 'en línea' : 'fuera de línea'}</span>
-                </li>)}
-              </ul> : <p className="m-0 text-xs text-muted">Sin agentes en esta computadora.</p>}
-            </section>
-
-            <footer className="flex flex-wrap items-center gap-2">
-              {host.registered ? <>
-                <Button size="sm" disabled={!escribe || busy} onClick={() => { abrirEdicion(host); }}>Editar</Button>
-                {sePuedeEliminar(host)
-                  ? <Button size="sm" variant="danger" disabled={!escribe || busy || editando === host.host_id} onClick={() => { setBorrar(host); }}>Eliminar</Button>
-                  : <span className="text-xs text-muted">Para eliminarla, quita antes sus agentes.</span>}
-              </> : <Button size="sm" variant="primary" disabled={!escribe || busy} onClick={() => { abrirAlta(host); }}>Registrar</Button>}
-            </footer>
-          </article>
-        </li>;
-      })}
-    </ul>
+    <ComputadoraFormDialog editor={editor} busy={busy} error={error}
+      onChange={setEditor} onSubmit={(event) => { void guardar(event); }} onClose={() => { setEditor(undefined); }} />
 
     <ConfirmDialog open={!!borrar} tone="danger" busy={busy}
       title={borrar ? `Eliminar la computadora ${borrar.display_name}` : ''}

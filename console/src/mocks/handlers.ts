@@ -50,7 +50,7 @@ export const handlers = [
   http.get('*/v3/console/activity', () => HttpResponse.json(mockActivity())),
   http.get('*/v3/console/quotas', () => HttpResponse.json(mockQuotas())),
   http.get('*/v3/console/fleet/capability', () => HttpResponse.json({ available: false, actions: [], placements: [], reason: 'executor_unconfigured' })),
-  http.get('*/v3/console/fleet/hosts', () => HttpResponse.json({ hosts: [] })),
+  http.get('*/v3/console/fleet/hosts', () => HttpResponse.json({ hosts: mockFleetHosts() })),
   // The per-trace chain endpoint existed in the gateway and did not have a single consumer.
   http.get('*/v3/console/chains/:traceId', ({ params }) => HttpResponse.json(mockChain(String(params.traceId)))),
   http.get('*/v3/console/messages', () => HttpResponse.json(mockMessages())),
@@ -374,3 +374,17 @@ export const handlers = [
   http.get('*/v3/console/terminal/sessions', () => HttpResponse.json({ items: [] })),
   http.delete('*/v3/console/terminal/sessions/:sid', () => new HttpResponse(null, { status: 204 })),
 ];
+
+function mockFleetHosts() {
+  const agent = (alias: string, online: boolean) => ({ tenant_id: 'Steven', alias, enabled: true, online });
+  const host = (host_id: string, display_name: string, extra: Record<string, unknown>) => ({
+    host_id, display_name, notes: '', enabled: true, status: 'reachable', status_source: 'controller',
+    last_seen_at: new Date(Date.now() - 90_000).toISOString(), registered: true, approved: true, version: 2, agents: [], ...extra,
+  });
+  return [
+    host('kratos', 'Torre principal', { agents: ['kant', 'hegel', 'spinoza', 'platon', 'aristoteles', 'epicuro', 'seneca', 'nietzsche'].map((alias, i) => agent(alias, i !== 3)) }),
+    host('portatil-steven', 'Portátil de Steven', { status: 'unreachable', last_seen_at: new Date(Date.now() - 86_400_000).toISOString(), agents: [agent('descartes', false)] }),
+    host('nas-casa', 'NAS del salón', { enabled: false, approved: false }),
+    host('rpi-taller', 'rpi-taller', { registered: false, approved: false, version: 0, status: 'unknown', status_source: 'none', last_seen_at: null }),
+  ];
+}

@@ -37,3 +37,40 @@ export function purgeEntries(preview: FleetOperationPreview, action: 'delete' | 
     return [`${TABLES[table] ?? table} (${count})`];
   });
 }
+
+type OperationKind = FleetOperation['kind'];
+const UNRESOLVED_STATUSES: readonly FleetOperation['status'][] = ['failed', 'queued', 'running', 'awaiting_auth', 'cancelling'];
+const KIND_NOUNS: Record<OperationKind, string> = { create: 'preparación', update: 'actualización', start: 'inicio', stop: 'detención',
+  retire: 'retiro', restore: 'restauración', purge: 'eliminación definitiva' };
+const KIND_VERBS: Record<OperationKind, string> = { create: 'preparar', update: 'actualizar', start: 'iniciar', stop: 'detener',
+  retire: 'retirar', restore: 'restaurar', purge: 'eliminar definitivamente' };
+
+export function isUnresolved(operation: FleetOperation | undefined): operation is FleetOperation {
+  return !!operation && UNRESOLVED_STATUSES.includes(operation.status);
+}
+
+/** An unresolved operation of ANOTHER kind: the server refuses to enqueue the intended action until it is cancelled. */
+export function blockingOperation(operation: FleetOperation | undefined, intended: OperationKind): FleetOperation | undefined {
+  return isUnresolved(operation) && operation.kind !== intended ? operation : undefined;
+}
+
+export function blockingText(operation: FleetOperation | undefined, intended: OperationKind): string {
+  return `Hay una operación${operation ? ` de ${KIND_NOUNS[operation.kind]}` : ' de flota'} sin terminar; cancélala para poder ${KIND_VERBS[intended]}.`;
+}
+
+export const STALE_RESUME_TEXT = 'La configuración cambió desde que se lanzó; cancélala y vuelve a lanzarla.';
+export const isStaleResume = (message: string) => /revision changed;?\s*preview the operation again/iu.test(message);
+
+/** Server refusals of preview/enqueue/control, in Spanish; anything else passes through. */
+export function fleetErrorText(message: string, operation: FleetOperation | undefined, intended: OperationKind): string {
+  if (/already has an unresolved fleet operation/iu.test(message)) return blockingText(operation, intended);
+  if (isStaleResume(message)) return STALE_RESUME_TEXT;
+  return message;
+}
+
+export function cancellable(operation: FleetOperation): boolean {
+  return ['queued', 'running', 'awaiting_auth', 'failed'].includes(operation.status);
+}
+export function resumable(operation: FleetOperation): boolean {
+  return operation.status === 'awaiting_auth' || (operation.status === 'failed' && operation.error?.retryable === true);
+}

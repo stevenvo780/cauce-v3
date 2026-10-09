@@ -136,23 +136,27 @@ it('reports a hub-only 403 from the server and never enables apply', async () =>
   expect(screen.getByRole('button', { name: 'Crear registro' })).toBeDisabled();
 });
 
-it('reports a 409 conflict and invalidates the preview', async () => {
+it('rereads on a stale-revision 409, redoes only the dry-run and asks for a new confirmation', async () => {
+  const bodies: ChangeBody[] = [];
+  let revision = 4;
   server.use(
     access(),
     http.post('http://localhost/v3/console/config/changes', async ({ request }) => {
       const body = await request.json() as ChangeBody;
-      return body.dry_run
-        ? HttpResponse.json(receipt(body, false))
-        : HttpResponse.json({ error: 'conflict', message: 'revision changed: expected 4, current 5' }, { status: 409 });
+      bodies.push(body);
+      if (body.dry_run) return HttpResponse.json(receipt(body, false, body.expected_revision));
+      revision = 5;
+      return HttpResponse.json({ error: 'conflict', message: 'revision changed: expected 4, current 5' }, { status: 409 });
     }),
-    http.get('http://localhost/v3/console/config', () => HttpResponse.json({ ...initial, revision: 5 })),
+    http.get('http://localhost/v3/console/config', () => HttpResponse.json({ ...initial, revision })),
   );
   const user = await toReview();
   await user.click(screen.getByRole('button', { name: 'Previsualizar alta' }));
   await screen.findByLabelText('Preview del alta de agente');
   await user.click(screen.getByRole('button', { name: 'Crear registro' }));
-  expect(await screen.findByRole('alert')).toHaveTextContent(/Conflicto de revisión/);
-  expect(screen.getByRole('button', { name: 'Crear registro' })).toBeDisabled();
+  expect(await screen.findByText(/La configuración cambió mientras editabas; la releí\. Revisa y confirma\./)).toBeInTheDocument();
+  await waitFor(() => { expect(bodies.map((body) => [body.dry_run, body.expected_revision])).toEqual([[true, 4], [false, 4], [true, 5]]); });
+  expect(screen.getByRole('button', { name: 'Crear registro' })).toBeEnabled();
 });
 
 it('reports an accepted registration as partial when snapshot reload fails', async () => {
