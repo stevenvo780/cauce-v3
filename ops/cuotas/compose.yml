@@ -1,0 +1,56 @@
+# Un contenedor por cuenta de Claude. Cada uno con su propio volumen para el token,
+# asi las sesiones no se mezclan. Ninguno publica puertos: no hay nada que exponer.
+#
+# Como se autentica cada uno (una sola vez, Steven por terminal):
+#   docker exec -it cuota-claude-1 claude auth login
+# Como se lee una cuota:
+#   docker exec cuota-claude-1 node /usr/local/bin/leer-cuota.mjs
+#
+# Consumo: ~5 MB de RAM por contenedor en reposo (solo un `sleep`). La imagen (806 MB)
+# es una sola para todos.
+services:
+  # stevenvallejo780@gmail.com: Claude (claude#1) + Gemini (steven780) + Codex (codex200)
+  cuota-claude-1:
+    image: cuota-cli:latest
+    container_name: cuota-claude-1
+    hostname: cuota-claude-1
+    restart: unless-stopped
+    volumes: ["cuota-claude-1:/home/node"]
+    mem_limit: 512m
+    network_mode: bridge
+  # cuota-claude-2 (saldantia, cuenta de Jhon) retirado 2026-09-27 por kant: la cuenta murio (Steven).
+  # juanotalora653@gmail.com: Claude (claude#3, Juan). kant 2026-10-05: antes se leia por CDP del
+  # navegador nav-claude-3 de server3; ahora por CLI como las demas (pedido de Steven).
+  cuota-claude-3:
+    image: cuota-cli:latest
+    container_name: cuota-claude-3
+    hostname: cuota-claude-3
+    restart: unless-stopped
+    volumes: ["cuota-claude-3:/home/node"]
+    mem_limit: 512m
+    network_mode: bridge
+  # b2b@polidinamica.com: cuenta de Codex (antes el navegador nav-claude-4 en chatgpt.com)
+  cuota-codex-b2b:
+    image: cuota-cli:latest
+    container_name: cuota-codex-b2b
+    hostname: cuota-codex-b2b
+    restart: unless-stopped
+    volumes: ["cuota-codex-b2b:/home/node"]
+    mem_limit: 512m
+    network_mode: bridge
+
+  # cuenta Grok / SuperGrok de Steven (login device-auth: cuota-auth grok-1 grok)
+  cuota-grok-1:
+    image: cuota-cli:latest
+    container_name: cuota-grok-1
+    hostname: cuota-grok-1
+    restart: unless-stopped
+    volumes: ["cuotas-cli_cuota-grok-1:/home/node"]
+    mem_limit: 512m
+    network_mode: bridge
+
+volumes:
+  cuota-claude-3:
+  cuotas-cli_cuota-grok-1:
+  cuota-claude-1:
+  cuota-codex-b2b:

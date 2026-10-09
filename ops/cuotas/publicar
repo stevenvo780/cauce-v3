@@ -1,0 +1,16 @@
+#!/bin/bash
+# Lee las cuotas por CLI y deja el resultado en el VPS, donde vive la sonda que arma el
+# contexto de cuotas de la flota. Empuja server2 -> VPS (y no al reves) porque server2 ya
+# tiene llave hacia el VPS y el VPS no la tiene hacia server2; ademas asi el VPS nunca
+# necesita entrar aqui, que es donde viven los tokens.
+#
+# Lo que viaja son SOLO porcentajes y correos: el token no sale del contenedor.
+set -u
+DEST=/home/stev/.local/share/cauce-quota-http/cuotas-cli.json
+TMP=$(mktemp)
+trap 'rm -f "$TMP"' EXIT
+/home/server/cuotas-cli/cuotas-claude-local --json > "$TMP" 2>/dev/null
+[ -s "$TMP" ] || { echo "sin salida"; exit 1; }
+# Fichero temporal y renombrado atomico: la sonda nunca lee una version a medias.
+timeout 60 ssh -o BatchMode=yes -o ConnectTimeout=15 vps-tn "cat > $DEST.tmp && chown stev:stev $DEST.tmp && chmod 600 $DEST.tmp && mv $DEST.tmp $DEST" < "$TMP" \
+  && echo "publicado $(wc -l < "$TMP") cuentas en el VPS" || { echo "no pude publicar"; exit 1; }

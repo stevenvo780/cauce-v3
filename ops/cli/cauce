@@ -761,6 +761,7 @@ cmd_retirar() {  # $1=alias
 case "${1:-}" in
   ""|flota|estado) if [[ ${1:-} == estado ]]; then cmd_estado "${2:-}"; else cmd_flota; fi ;;
   -h|--help|help|ayuda) uso ;;
+  cuotas) shift; exec ssh -t -o BatchMode=yes "${CUOTAS_HOST:-server2}" "\$HOME/.local/bin/cuotas $*" ;;
   ver) shift; cmd_ver "$@" ;;
   pila-test) shift; d=$(dirname "${BASH_SOURCE[0]}")/../tests/cauce-pila-test.cli.mjs; [ -f "$d" ] || { echo "pila-test solo existe en el repo (falta $d)"; exit 3; }; exec node "$d" "$@" ;;
   *)
