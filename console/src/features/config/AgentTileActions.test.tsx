@@ -1,4 +1,4 @@
-import { screen, waitFor } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { ConsoleAccessBoundary } from '../../api/console-access';
@@ -53,16 +53,19 @@ it('«Preparar» on the tile opens the sheet on the Operación tab', async () =>
   expect(await screen.findByRole('tab', { name: 'Operación', selected: true })).toBeInTheDocument();
 });
 
-it('«Retirar» exists only for an agent with a runtime and opens its retire flow', async () => {
+it('«Eliminar» on an agent with a runtime opens the removal guide at the retire step, without an action selector', async () => {
   serve(['config.read', 'config.write'], ['retire']);
   const user = userEvent.setup();
   renderSection();
-  const retire = await screen.findByRole('button', { name: 'Retirar agente A/run' });
-  await waitFor(() => { expect(retire).toBeEnabled(); });
-  expect(screen.queryByRole('button', { name: 'Retirar agente A/one' })).not.toBeInTheDocument();
-  await user.click(retire);
-  expect(await screen.findByRole('tab', { name: 'Operación', selected: true })).toBeInTheDocument();
-  expect(await screen.findByRole('option', { name: 'Retirar', selected: true })).toBeInTheDocument();
+  const remove = await screen.findByRole('button', { name: 'Eliminar agente A/run' });
+  await waitFor(() => { expect(remove).toBeEnabled(); });
+  expect(screen.queryByRole('button', { name: 'Retirar agente A/run' })).not.toBeInTheDocument();
+  await user.click(remove);
+  const dialog = await screen.findByRole('dialog', { name: 'Eliminar agente A/run' });
+  expect(within(dialog).getByText('Paso actual')).toBeInTheDocument();
+  expect(within(dialog).getByRole('button', { name: 'Previsualizar operación' })).toBeInTheDocument();
+  expect(within(dialog).queryByRole('combobox')).not.toBeInTheDocument();
+  expect(within(dialog).queryByText(/La purga elimina el registro retirado/)).not.toBeInTheDocument();
 });
 
 it('an agent without runtime shows «Eliminar», which opens the registry where the record is deleted, and says why', async () => {
@@ -77,14 +80,17 @@ it('an agent without runtime shows «Eliminar», which opens the registry where 
   expect(await screen.findByRole('button', { name: 'Eliminar registro' })).toBeInTheDocument();
 });
 
-it('«Eliminar definitivamente» on a retired agent opens the purge flow', async () => {
+it('«Eliminar definitivamente» on a retired agent opens the removal guide at the purge step', async () => {
   serve(['config.read', 'config.write']);
   const user = userEvent.setup();
   renderSection();
   const purge = await screen.findByRole('button', { name: 'Eliminar definitivamente A/old' });
   await waitFor(() => { expect(purge).toBeEnabled(); });
   await user.click(purge);
-  expect(await screen.findByRole('option', { name: 'Eliminar definitivamente', selected: true })).toBeInTheDocument();
+  const dialog = await screen.findByRole('dialog', { name: 'Eliminar agente A/old' });
+  expect(within(dialog).getByText('Hecho')).toBeInTheDocument();
+  expect(await within(dialog).findByText(/La purga elimina el registro retirado/)).toBeInTheDocument();
+  expect(within(dialog).queryByRole('combobox')).not.toBeInTheDocument();
 });
 
 it('without config.write every write button is disabled and states the reason; member-only agents get none', async () => {
@@ -92,7 +98,7 @@ it('without config.write every write button is disabled and states the reason; m
   renderSection();
   const edit = await screen.findByRole('button', { name: 'Editar agente A/one' });
   await waitFor(() => { expect(edit).toBeDisabled(); expect(edit).toHaveAttribute('title', expect.stringMatching(/permiso|lectura/i)); });
-  for (const name of ['Preparar agente A/one', 'Eliminar agente A/one', 'Retirar agente A/run', 'Eliminar definitivamente A/old']) {
+  for (const name of ['Preparar agente A/one', 'Eliminar agente A/one', 'Eliminar agente A/run', 'Eliminar definitivamente A/old']) {
     const button = screen.getByRole('button', { name });
     expect(button).toBeDisabled();
     expect(button).toHaveAttribute('title', edit.getAttribute('title'));
@@ -101,10 +107,23 @@ it('without config.write every write button is disabled and states the reason; m
   expect(screen.queryByRole('group', { name: 'Acciones visibles de A/ghost' })).not.toBeInTheDocument();
 });
 
-it('«Retirar» follows the fleet retire capability, not the registry delete capability', async () => {
+it('«Eliminar» on a runtime agent depends only on write access: the dialog explains a missing retire capability', async () => {
   serve(['config.read', 'config.write'], ['update']);
+  const user = userEvent.setup();
   renderSection();
-  const retire = await screen.findByRole('button', { name: 'Retirar agente A/run' });
-  await waitFor(() => { expect(retire).toBeDisabled(); });
-  expect(retire).toHaveAttribute('title', expect.stringContaining('no acredita el retiro'));
+  const remove = await screen.findByRole('button', { name: 'Eliminar agente A/run' });
+  await waitFor(() => { expect(remove).toBeEnabled(); });
+  await user.click(remove);
+  const dialog = await screen.findByRole('dialog', { name: 'Eliminar agente A/run' });
+  expect(await within(dialog).findByText(/no está disponible en el ejecutor publicado/)).toBeInTheDocument();
+  expect(within(dialog).getByRole('button', { name: 'Previsualizar operación' })).toBeDisabled();
+});
+
+it('«Retirar agente» stays in the tile menu and still follows the fleet retire capability', async () => {
+  serve(['config.read', 'config.write'], ['update']);
+  const user = userEvent.setup();
+  renderSection();
+  await user.click(await screen.findByRole('button', { name: 'Acciones de A/run' }));
+  const item = await screen.findByRole('menuitem', { name: 'Retirar agente' });
+  await waitFor(() => { expect(item).toHaveAttribute('aria-disabled', 'true'); });
 });

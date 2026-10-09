@@ -256,7 +256,7 @@ it('no convierte los demás 409 en el mensaje de revisión ni los vuelve genéri
   await irA(user, HISTORIAL);
   await user.click(await screen.findByRole('button', { name: /preview \/ dry-run/i }));
 
-  expect(await screen.findByText('ACL edge already exists')).toBeInTheDocument();
+  expect(await screen.findByText(/no se aplicó nada: ya existe un registro con esa identidad\./)).toBeInTheDocument();
   expect(screen.queryByText(/conflicto de revisión/i)).not.toBeInTheDocument();
 });
 

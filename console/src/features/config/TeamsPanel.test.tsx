@@ -85,7 +85,7 @@ it('«Eliminar» on a team with running agents goes through the retirement dialo
   await waitFor(() => { expect(remove).toBeEnabled(); });
   expect(remove).toHaveAttribute('title', expect.stringContaining('se retira primero'));
   await user.click(remove);
-  expect(await screen.findByRole('dialog')).toHaveTextContent('Retiro y recuperación de grupo');
+  expect(await screen.findByRole('dialog')).toHaveTextContent('Retirar o eliminar grupo');
   expect(screen.getByRole('button', { name: 'Previsualizar retiro' })).toBeInTheDocument();
 });
 
@@ -144,7 +144,7 @@ it('retire and purge buttons follow the retire/restore capability, not just read
   renderWithApi(<ConfigPage />);
   const edit = await screen.findByRole('button', { name: 'Editar equipo Miguel/grp.miguel' });
   await waitFor(() => { expect(edit).toBeEnabled(); });
-  for (const name of ['Retiro y recuperación del equipo Miguel/grp.miguel', 'Historial y purga del equipo Miguel/old', 'Restaurar equipo Miguel/old']) {
+  for (const name of ['Retiro y recuperación del equipo Miguel/grp.miguel', 'Eliminar definitivamente el equipo Miguel/old', 'Restaurar equipo Miguel/old']) {
     const button = screen.getByRole('button', { name });
     expect(button).toBeDisabled();
     expect(button).toHaveAttribute('title', expect.stringContaining('no acredita'));

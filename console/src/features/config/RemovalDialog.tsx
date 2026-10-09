@@ -4,11 +4,12 @@ import { useApi } from '../../api/context';
 import { useConsoleAccess } from '../../api/console-access';
 import { FormDialog } from '../../components/dialogs';
 import { AgentFleetOperation, AgentFleetPreview } from './AgentFleetOperation';
+import { operationSummary } from './fleet-operation-text';
 import { useAgentLifecycle } from './use-agent-lifecycle';
 import './agent-lifecycle.css';
 
 type RemovalKind = 'retire' | 'restore' | 'purge';
-const LABELS = { retire: 'retiro', restore: 'restauración', purge: 'purga' };
+const LABELS = { retire: 'retiro', restore: 'restauración', purge: 'eliminación definitiva' };
 export function RemovalDialog({ target, kind: initialKind, revision, onClose, reload }: {
   target: FleetTarget; kind: RemovalKind; revision: number | undefined; onClose: () => void; reload?: () => Promise<unknown>;
 }) {
@@ -64,15 +65,17 @@ export function RemovalDialog({ target, kind: initialKind, revision, onClose, re
     finally { setSending(false); }
   }
   return <FormDialog open wide busy={sending} onClose={onClose}
-    title={`Retiro y recuperación de ${target.resource === 'tenant' ? 'espacio' : 'grupo'}`}>
+    title={`Retirar o eliminar ${target.resource === 'tenant' ? 'espacio' : 'grupo'}`}>
     <div className="config-modal-cuerpo agent-lifecycle-panel">
       <p>Identidad exacta: <code>{JSON.stringify(target)}</code></p>
-      <p>Pausar admisión cambia la configuración de entrega. El retiro coordina el cierre de entregas y la detención de runtimes. La purga exige resolver las dependencias.</p>
+      <p>Eliminar un {target.resource === 'tenant' ? 'espacio' : 'grupo'} lleva dos pasos. <strong>1. Retirar</strong>: cierra sus entregas y detiene
+        los runtimes de sus agentes; se conserva todo y se puede restaurar. <strong>2. Eliminar definitivamente</strong>: borra la configuración
+        retirada y conserva los mensajes ya enviados como historial; no se puede deshacer.</p>
       <label>Tipo de operación<select value={kind} disabled={busy || inProgress} onChange={(event) => {
         setKind(event.target.value as RemovalKind); setValidated(undefined); setKey(`fleet_${crypto.randomUUID()}`); sequence.current += 1;
-      }}><option value="retire">Retirar</option><option value="restore">Restaurar</option><option value="purge">Purgar definitivamente</option></select></label>
+      }}><option value="retire">Retirar</option><option value="restore">Restaurar</option><option value="purge">Eliminar definitivamente</option></select></label>
       {kind === 'restore' ? <p>Los agentes conservan la admisión deshabilitada hasta que una operación individual verifique su ejecución.</p> : null}
-      {kind === 'purge' ? <p className="notice">La purga elimina el registro retirado de forma definitiva. Comprueba las dependencias en la previsualización.</p> : null}
+      {kind === 'purge' ? <p className="notice">Exige que el retiro haya terminado. La previsualización muestra qué se borra y qué se conserva.</p> : null}
       {!canWrite ? <p className="notice">No se acreditó autoridad actual para operar este grupo o espacio.</p> : null}
       {flow.capabilityError ? <p className="notice">{flow.capabilityError}</p> : !flow.capability ? <p role="status">Leyendo capacidades operativas…</p>
         : !available ? <p className="notice">El servidor no acredita esta acción{flow.capability.reason ? ` (${flow.capability.reason})` : ''}.</p> : null}
@@ -89,7 +92,7 @@ export function RemovalDialog({ target, kind: initialKind, revision, onClose, re
         <button type="button" className="button secondary" disabled={busy} onClick={() => { void flow.refresh(); }}>Releer operación</button></> : null}
       <details open><summary>Historial operativo durable</summary>
         {flow.historyError ? <p className="notice">{flow.historyError}</p> : null}
-        {flow.history?.length ? <ul>{flow.history.map((operation) => <li key={operation.id}>{operation.kind} · {operation.status}
+        {flow.history?.length ? <ul>{flow.history.map((operation) => <li key={operation.id}>{operationSummary(operation)}
           <button type="button" className="button small" disabled={busy} aria-label={`Abrir operación ${operation.id}`}
             onClick={() => { flow.accept(operation); }}>{operation.id}</button></li>)}</ul> : <p>No hay operaciones acreditadas en esta lectura.</p>}
       </details>

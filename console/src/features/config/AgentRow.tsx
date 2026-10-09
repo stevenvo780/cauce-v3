@@ -21,7 +21,7 @@ export function AgentRow({ agent, snapshot, hosts, writeBlock, retireBlock, onOp
   retireBlock?: string | undefined;
   snapshot: ConfigurationSnapshot;
   hosts: FleetHost[] | undefined;
-  onOpen: (tab?: SheetTab, kind?: 'retire') => void;
+  onOpen: (tab?: SheetTab, kind?: 'retire' | 'remove') => void;
 }) {
   const view = agentView(agent, snapshot, hosts);
   const href = `/messages/${encodeURIComponent(agent.tenantId)}/${encodeURIComponent(agent.alias)}?view=context`;
@@ -30,6 +30,7 @@ export function AgentRow({ agent, snapshot, hosts, writeBlock, retireBlock, onOp
   const editBlock = writeBlock ?? agentWriteBlock(snapshot, 'update');
   const removeBlock = writeBlock ?? deleteBlock;
   const retiringBlock = writeBlock ?? retireBlock;
+  const removalBlock = view.hasRuntime ? writeBlock : removeBlock;
   const prepareBlock = writeBlock ?? agentWriteBlock(snapshot, 'update');
   return <li className={`relative min-w-0 rounded-xl border border-line bg-surface shadow-card transition-colors hover:border-line-strong hover:bg-subtle ${memberOnly ? 'opacity-70' : ''}`}>
     <button type="button" data-agent-tile={view.ref} onClick={() => { onOpen(); }} aria-label={`Abrir agente ${view.ref}`}
@@ -58,13 +59,11 @@ export function AgentRow({ agent, snapshot, hosts, writeBlock, retireBlock, onOp
         <Button size="sm" disabled={Boolean(prepareBlock)} title={prepareBlock ?? 'Preparar o actualizar la ejecución del agente'}
           aria-label={`Preparar agente ${view.ref}`} onClick={() => { onOpen('operacion'); }}>
           <Rocket size={12} aria-hidden="true" />Preparar</Button>
-        {view.hasRuntime
-          ? <Button size="sm" variant="danger" disabled={Boolean(retiringBlock)} title={retiringBlock ?? 'Detiene la ejecución y conserva el historial; la purga es el segundo paso'}
-            aria-label={`Retirar agente ${view.ref}`} onClick={() => { onOpen('operacion', 'retire'); }}>
-            <Trash2 size={12} aria-hidden="true" />Retirar</Button>
-          : <Button size="sm" variant="danger" disabled={Boolean(removeBlock)} title={removeBlock ?? 'Sin ejecución que retirar: se elimina el registro desde su pestaña Registro'}
-            aria-label={`Eliminar agente ${view.ref}`} onClick={() => { onOpen('registro'); }}>
-            <Trash2 size={12} aria-hidden="true" />Eliminar</Button>}
+        <Button size="sm" variant="danger" disabled={Boolean(removalBlock)}
+          title={removalBlock ?? (view.hasRuntime ? 'Guía de dos pasos: retirar y después eliminar definitivamente'
+            : 'Sin ejecución que retirar: se elimina el registro desde su pestaña Registro')}
+          aria-label={`Eliminar agente ${view.ref}`} onClick={() => { if (view.hasRuntime) onOpen('resumen', 'remove'); else onOpen('registro'); }}>
+          <Trash2 size={12} aria-hidden="true" />Eliminar</Button>
     </div>}
     {memberOnly ? null : <Menu.Root>
       <Menu.Trigger aria-label={`Acciones de ${view.ref}`} title={`Acciones de ${view.ref}`} className={KEBAB}>

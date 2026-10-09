@@ -91,9 +91,11 @@ export function TeamsPanel({ snapshot, ctx }: { snapshot: ConfigurationSnapshot;
           return <li key={id} className="flex flex-wrap items-center justify-between gap-2 text-[13px]">
             <span className="font-mono text-xs">{id}</span>
             <span className="flex gap-1.5">
-              {fleetTarget ? <Button size="sm" disabled={Boolean(restoreBlock) || ctx.busy} title={restoreBlock}
-                aria-label={`Historial y purga del equipo ${id}`}
-                onClick={() => { ctx.setFormTarget(undefined); ctx.setRemoval({ target: fleetTarget, kind: 'purge' }); }}>Historial y purga</Button> : null}
+              {fleetTarget ? <Button size="sm" variant="danger" disabled={Boolean(restoreBlock) || ctx.busy}
+                title={restoreBlock ?? 'Paso 2: borra la configuración retirada; los mensajes quedan como historial'}
+                aria-label={`Eliminar definitivamente el equipo ${id}`}
+                onClick={() => { ctx.setFormTarget(undefined); ctx.setRemoval({ target: fleetTarget, kind: 'purge' }); }}>
+                <Trash2 size={12} aria-hidden="true" />Eliminar definitivamente</Button> : null}
               <Button size="sm" disabled={Boolean(restoreBlock) || ctx.busy}
                 title={restoreBlock} aria-label={`Restaurar equipo ${id}`}
                 onClick={() => { open({ collection: 'rooms', action: 'restore', row: room }); }}>Restaurar</Button>

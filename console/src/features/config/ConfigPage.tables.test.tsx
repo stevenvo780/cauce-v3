@@ -159,8 +159,8 @@ it('muestra el rechazo del servidor en la propia colección y no dice que aplic�
   await user.click(await screen.findByRole('switch', { name: MEMBERSHIP_JANUS }));
 
   const aviso = await within(panelDe(/membresías/i)).findByRole('alert');
-  expect(aviso).toHaveTextContent('membership has active deliveries or a live lease');
-  expect(aviso).toHaveTextContent(/NO se aplicó/i);
+  expect(aviso).toHaveTextContent('la membresía tiene entregas en curso');
+  expect(aviso).toHaveTextContent(/no se aplicó nada/i);
   expect(screen.queryByText(/aplicado en la revisión/i)).not.toBeInTheDocument();
   expect(screen.getByRole('switch', { name: MEMBERSHIP_JANUS })).toBeChecked();
 });
