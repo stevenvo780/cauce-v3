@@ -17,22 +17,7 @@ import type {
   TelegramAliasConfig,
   TelegramBridgeConfig
 } from '../../services/telegram-bridge/src/types.js';
-
-/**
- * Cobertura pura de `services/telegram-bridge/src/config.ts`.
- *
- * El parser (`parseTelegramBridgeConfig`) valida el contrato del JSON de la flota:
- * forma de los alias, uniqueness, invariantes cross-alias (un único ambient host
- * por (chat, thread), usernames únicos, aliases únicos por tenant). Los helpers
- * puros (`groupRouting`, `effectiveChatPolicy`, `chatParticipants`,
- * `fleetDirectory`, `fleetParticipationGaps`) son lo que `main.ts` enchufa en el
- * resolver de addressing y el egress, así que cubrirlos protege el cableado.
- *
- * Los lectores de filesystem (`loadTelegramBridgeConfig`, `readTelegramToken`,
- * `assertV2PollerDisabled`) se ejercitan contra un directorio temporal real
- * (sin red, sin Postgres): las invariantes que importan son la ruta absoluta, la
- * regex del token y el contenido del marker — no el path en disco.
- */
+import { selectTelegramAliases } from '../../services/telegram-bridge/src/identity.js';
 
 const TENANT = 'Steven';
 const CHAT_ID = '-5001';
@@ -132,11 +117,11 @@ describe('fleetDirectory: indexa usernames y bot ids para el resolver', () => {
     const config = buildConfig([
       rawAlias('kant', { bot_username: 'Kant_Bot' }),
       rawAlias('argos', { bot_username: 'argos_bot' }),
-      rawAlias('jarvis') // sin bot_username -> no indexado
+      rawAlias('jarvis')
     ]);
     const directory = fleetDirectory(config);
-    expect(directory.byUsername.get('kant_bot')).toBe('kant');
-    expect(directory.byUsername.get('argos_bot')).toBe('argos');
+    expect(directory.byUsername.get('kant_bot')).toBe(`${TENANT}/kant`);
+    expect(directory.byUsername.get('argos_bot')).toBe(`${TENANT}/argos`);
     expect(directory.byUsername.has('jarvis')).toBe(false);
     expect(directory.byBotId.size).toBe(0);
   });
@@ -146,17 +131,30 @@ describe('fleetDirectory: indexa usernames y bot ids para el resolver', () => {
       rawAlias('kant', { bot_username: 'kant_bot' }),
       rawAlias('argos', { bot_username: 'argos_bot' })
     ]);
-    const directory = fleetDirectory(config, new Map([['kant', '1234567'], ['argos', '7654321']]));
-    expect(directory.byBotId.get('1234567')).toBe('kant');
-    expect(directory.byBotId.get('7654321')).toBe('argos');
+    const directory = fleetDirectory(config, new Map([[`${TENANT}/kant`, '1234567'], [`${TENANT}/argos`, '7654321']]));
+    expect(directory.byBotId.get('1234567')).toBe(`${TENANT}/kant`);
+    expect(directory.byBotId.get('7654321')).toBe(`${TENANT}/argos`);
     expect(directory.byUsername.size).toBe(2);
+  });
+  it('mantiene separados los mismos alias de distintos tenants y rechaza el selector ambiguo', () => {
+    const config = buildConfig([rawAlias('kant', { bot_username: 'kant_bot' }), rawAlias('kant', {
+      tenant_id: 'Other', bot_username: 'other_kant_bot', recipients: [{ tenant_id: 'Other', alias: 'kant' }],
+      token_file: '/synthetic/other-kant.token', v2_shutdown_marker_file: '/synthetic/other-kant.marker'
+    })]);
+    const directory = fleetDirectory(config, new Map([[`${TENANT}/kant`, '1234567'], ['Other/kant', '7654321']]));
+    expect(directory.byUsername.get('kant_bot')).toBe(`${TENANT}/kant`);
+    expect(directory.byUsername.get('other_kant_bot')).toBe('Other/kant');
+    expect(directory.byBotId.get('1234567')).toBe(`${TENANT}/kant`); expect(directory.byBotId.get('7654321')).toBe('Other/kant');
+    expect(chatParticipants(config, CHAT_ID, '0')).toEqual(new Set([`${TENANT}/kant`, 'Other/kant']));
+    expect(() => selectTelegramAliases(config.aliases, 'kant')).toThrow('unknown or ambiguous');
+    expect(selectTelegramAliases(config.aliases, `${TENANT}/kant`)).toEqual([config.aliases[0]]);
   });
 });
 
 describe('chatParticipants: conjunto de aliases habilitados para un (chat, thread)', () => {
   it('un alias legacy cuenta como participante de cualquier chat en su allowed_chat_ids', () => {
     const config = buildConfig([rawAlias('kant')]);
-    expect(chatParticipants(config, CHAT_ID, '0').has('kant')).toBe(true);
+    expect(chatParticipants(config, CHAT_ID, '0')).toEqual(new Set([`${TENANT}/kant`]));
   });
 
   it('un alias scoped solo participa si declaró el chat con un mode distinto de off', () => {
@@ -165,8 +163,8 @@ describe('chatParticipants: conjunto de aliases habilitados para un (chat, threa
       rawAlias('mudo', { bot_username: 'mudo_bot', chats: [{ chat_id: CHAT_ID, mode: 'off' }] })
     ]);
     const participants = chatParticipants(config, CHAT_ID, '0');
-    expect(participants.has('kant')).toBe(true);
-    expect(participants.has('mudo')).toBe(false);
+    expect(participants.has(`${TENANT}/kant`)).toBe(true);
+    expect(participants.has(`${TENANT}/mudo`)).toBe(false);
   });
 
   it('un alias scoped que no nombró el chat no participa aunque el chat esté en allowed_chat_ids', () => {
@@ -177,7 +175,6 @@ describe('chatParticipants: conjunto de aliases habilitados para un (chat, threa
 
 describe('fleetParticipationGaps: pares (alias, chat) no inicializados en selected', () => {
   it('lista los pares que faltan en el conjunto vivo y omite los que ya corren', () => {
-    // kant ambient, argos solo mention: ambos participan pero solo kant responde mensajes sin dueño.
     const config = buildConfig([
       rawAlias('kant', { bot_username: 'kant_bot', chats: [{ chat_id: CHAT_ID, mode: 'always' }] }),
       rawAlias('argos', { bot_username: 'argos_bot', chats: [{ chat_id: CHAT_ID, mode: 'mention' }] })
@@ -253,7 +250,7 @@ describe('parseTelegramBridgeConfig: invariantes cross-alias', () => {
   });
 
   it('rechaza duplicados de alias y de ambient host en el mismo (chat, thread)', () => {
-    expect(() => buildConfig([rawAlias('kant'), rawAlias('kant')])).toThrow('alias names must be unique');
+    expect(() => buildConfig([rawAlias('kant'), rawAlias('kant')])).toThrow('tenant and alias pairs must be unique');
     expect(() => buildConfig([
       rawAlias('kant', { bot_username: 'kant_bot', chats: [{ chat_id: CHAT_ID, mode: 'always' }] }),
       rawAlias('argos', { bot_username: 'argos_bot', chats: [{ chat_id: CHAT_ID, mode: 'always' }] })
@@ -373,31 +370,33 @@ describe('lectura de filesystem: loadTelegramBridgeConfig / readTelegramToken / 
 
   it('assertV2PollerDisabled exige un marker con permisos 0600 y contenido exacto', async () => {
     const alias = aliasConPaths();
-    await writeFile(alias.v2_shutdown_marker_file, `v2-poller-disabled:${alias.alias}\n`, 'utf8');
+    await writeFile(alias.v2_shutdown_marker_file, `v2-poller-disabled:${alias.tenant_id}/${alias.alias}\n`, 'utf8');
     await chmod(alias.v2_shutdown_marker_file, 0o600);
     await assertV2PollerDisabled(alias);
 
-    await writeFile(alias.v2_shutdown_marker_file, 'v2-poller-disabled:otro\n', 'utf8');
+    await writeFile(alias.v2_shutdown_marker_file, `v2-poller-disabled:${alias.tenant_id}/otro\n`, 'utf8');
     await chmod(alias.v2_shutdown_marker_file, 0o600);
+    await expect(assertV2PollerDisabled(alias)).rejects.toThrow('not confirmed');
+    await writeFile(alias.v2_shutdown_marker_file, `v2-poller-disabled:Other/${alias.alias}\n`, 'utf8');
+    await expect(assertV2PollerDisabled(alias)).rejects.toThrow('not confirmed');
+    await writeFile(alias.v2_shutdown_marker_file, `v2-poller-disabled:${alias.alias}\n`, 'utf8');
     await expect(assertV2PollerDisabled(alias)).rejects.toThrow('not confirmed');
   });
 
   it('assertV2PollerDisabled acepta 0640 (read para grupo/otros está permitido; solo se vetan escrituras)', async () => {
     const alias = aliasConPaths();
-    await writeFile(alias.v2_shutdown_marker_file, `v2-poller-disabled:${alias.alias}`, 'utf8');
+    await writeFile(alias.v2_shutdown_marker_file, `v2-poller-disabled:${alias.tenant_id}/${alias.alias}`, 'utf8');
     await chmod(alias.v2_shutdown_marker_file, 0o640);
     await assertV2PollerDisabled(alias);
   });
 
   it('assertV2PollerDisabled rechaza marker con escritura para grupo o para otros', async () => {
     const alias = aliasConPaths();
-    await writeFile(alias.v2_shutdown_marker_file, `v2-poller-disabled:${alias.alias}`, 'utf8');
+    await writeFile(alias.v2_shutdown_marker_file, `v2-poller-disabled:${alias.tenant_id}/${alias.alias}`, 'utf8');
 
-    // Group write: 0o660.
     await chmod(alias.v2_shutdown_marker_file, 0o660);
     await expect(assertV2PollerDisabled(alias)).rejects.toThrow('not a protected regular file');
 
-    // Other write: 0o606.
     await chmod(alias.v2_shutdown_marker_file, 0o606);
     await expect(assertV2PollerDisabled(alias)).rejects.toThrow('not a protected regular file');
   });
@@ -405,7 +404,7 @@ describe('lectura de filesystem: loadTelegramBridgeConfig / readTelegramToken / 
   it('assertV2PollerDisabled rechaza enlaces simbólicos hacia el marker', async () => {
     const alias = aliasConPaths();
     const real = join(workdir, 'real-marker');
-    await writeFile(real, `v2-poller-disabled:${alias.alias}`, 'utf8');
+    await writeFile(real, `v2-poller-disabled:${alias.tenant_id}/${alias.alias}`, 'utf8');
     await chmod(real, 0o600);
     await symlink(real, alias.v2_shutdown_marker_file);
     await expect(assertV2PollerDisabled(alias)).rejects.toThrow('not a protected regular file');

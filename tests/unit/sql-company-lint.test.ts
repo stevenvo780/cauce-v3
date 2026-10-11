@@ -17,12 +17,6 @@ const SQL_KEYWORDS = new Set(['on', 'where', 'join', 'left', 'right', 'inner', '
   'order', 'group', 'limit', 'for', 'union', 'returning', 'window', 'set', 'as', 'having', 'offset']);
 const CLAUSE_END = /^(?:order\s+by|group\s+by|limit|union|returning|for\s+(?:share|update|no\s+key|key))\b/iu;
 
-/** Statements that later work packages fix; each entry goes away with the fix that removes it. */
-const PENDING_FIXES: readonly { readonly file: string; readonly statement: string; readonly owner: string }[] = [
-  { file: 'packages/store/src/configuration.ts', statement: 'rooms.id=memberships.room_id', owner: 'WP-D' },
-  { file: 'packages/store/src/repository/fleet-operation-lifecycle.ts', statement: 'rooms.id=memberships.room_id', owner: 'WP-E' },
-];
-
 interface RoomsReference { readonly line: number; readonly clause: string; readonly unbound: boolean }
 
 function sourceFiles(directory: string): string[] {
@@ -144,10 +138,6 @@ describe('SQL that reaches rooms binds the tenant of the room', () => {
   it('finds no production statement that reaches a room by id without its tenant', () => {
     const { references, unbound } = scan();
     expect(references).toBeGreaterThan(40);
-    const pending = (violation: { file: string; clause: string }): boolean => PENDING_FIXES
-      .some((fix) => fix.file === violation.file && violation.clause.includes(fix.statement));
-    expect(unbound.filter((violation) => !pending(violation))).toEqual([]);
-    expect(PENDING_FIXES.filter((fix) => !unbound.some((violation) => violation.file === fix.file
-      && violation.clause.includes(fix.statement))).map((fix) => `${fix.owner} ${fix.file}`)).toEqual([]);
+    expect(unbound).toEqual([]);
   });
 });

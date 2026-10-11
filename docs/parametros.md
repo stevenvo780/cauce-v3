@@ -109,9 +109,14 @@ dice 60K/150K. Manda el árbol; el roadmap se re-verifica en T063.
 | `CAUCE_CONTEXT_REPOSITORY_ROOT` (`gateway/console/context-repository/binding.ts`) | ruta absoluta | sin default; raíz canónica confiable de un repo con objetos sueltos, sin packs, alternates ni worktrees enlazados | env del servidor, junto con la identidad | unit binding + inspección Git |
 | `CAUCE_CONSOLE_SESSION_TTL_SECONDS` (`DEFAULT_SESSION_TTL_MS`=8 h) | s | 28_800 (8 h), rango 60–86_400 | env | — |
 | Login throttle | intentos | 8 fallos / 15 min / 10_000 claves | fijo | — |
+| Registro de empresa (`gateway/company-registration.ts`, `MAX_ATTEMPTS`, `MAX_TRACKED_IPS`) | intentos/IP | 5 intentos por IP en 15 min; hasta 10_000 IP activas; rechaza con 429 al alcanzar cualquiera de los topes | fijo, local al proceso del gateway | unit registro de empresa |
 | scrypt (`DEFAULT_SCRYPT_COST`, `DEFAULT_SCRYPT_BLOCK_SIZE`, `DEFAULT_SCRYPT_PARALLELISM`, `MAX_MEMORY`=96 MiB) | N/r/p | 32_768 / 8 / 1; clave 32 B, salt 16 B | fijo | — |
 | Contraseña (`MIN_PASSWORD_LENGTH`, `MAX_PASSWORD_LENGTH`) | chars | 12–1_024 | fijo | — |
 | `CAUCE_AUTH_PROVIDER`, `CAUCE_CONSOLE_PASSWORD_FALLBACK` | enum | `mtls` (fallback token-file/none) | env | — |
+| `CAUCE_PLATFORM_PASSWORD` (`gateway/platform-cli-main.ts`) | secreto | sin default; contraseña actual para autenticar el CLI de plataforma; se elimina de `process.env` al leerla. Ausente o vacía usa prompt sin eco; sin TTY aborta | env del CLI o prompt, nunca argv | — |
+| `CAUCE_SPACE_BACKUP_DIRECTORY` (`gateway/app.ts`, `fleet/space-backup.files.ts`) | ruta absoluta | sin default; habilita las rutas de backup de espacio con auth por contraseña. El almacenamiento exige directorio canónico privado del usuario efectivo y crea con modo 0700 | env del gateway u opción `spaceBackups.directory` | unit backup de espacio |
+| `CAUCE_PROJECT_ROOT` (`gateway/app.ts`) | ruta | directorio actual del proceso por defecto; raíz que contiene `ops/cli/space_backup_validate.py` y `space_archive.py` para verificar el archivo recibido | env del gateway u opción `spaceBackups.projectRoot` | unit backup de espacio |
+| `CAUCE_SPACE_BACKUP_PYTHON` (`gateway/app.ts`) | ruta de ejecutable | `/usr/bin/python3`; intérprete del validador de backups de espacio | env del gateway u opción `spaceBackups.python` | unit backup de espacio |
 | `CAUCE_DEV_OPERATOR` (`gateway/auth.ts:DevOnlyAuthProvider`) | `<tenant>/<alias>` | sin default; única identidad de las cabeceras de desarrollo que actúa como operador; ausente, todas son agentes. Solo cuenta con `CAUCE_DEV_AUTH=1` fuera de producción; las pruebas fijan `Steven/kant` en `vitest.config.ts`, `ops/compose.test.yaml` también y `deploy/compose.dev.yaml` la deriva de `CAUCE_CONSOLE_TENANT`/`CAUCE_CONSOLE_ALIAS` | env de desarrollo y pruebas | unit auth |
 | `CAUCE_MCP_PUBLIC_ORIGIN` | origen | sin default; origen HTTPS exacto, sin ruta, query, fragmento ni credenciales; la audiencia MCP deriva `{origen}/mcp` | env público, no secreto | arranque MCP |
 | `CAUCE_MCP_OAUTH_ISSUER` | URL | sin default; emisor HTTPS exacto esperado en el token | env público, no secreto | arranque MCP |
@@ -166,6 +171,7 @@ según `CAUCE_MCP_OAUTH_PROVIDER` en `deploy/deploy.sh`.
 | `history_window_seconds` / bucket / puntos | s/s/n | 86_400 / 1_800 / 48 | fijo | — |
 | `MAX_QUOTA_WINDOWS_PER_COLLECTION` (`quotas.ts:74`) | ventanas | 512 | fijo | — |
 | `CAUCE_FLEET_OPERATIONS_ENABLED` (`gateway/console/fleet-capability.ts`) | flag | ausente o `0` desactiva operaciones; `1` exige catálogo aprobado; otros valores abortan el arranque | env del gateway | unit capability |
+| `CAUCE_FLEET_IDENTITY_DIRECTORY` (`gateway/fleet/main.ts`) | ruta absoluta | sin default; directorio canónico de la identidad del host enrolado. Selecciona ese transporte y prohíbe mezclarlo con conexión directa a DB, socket/policy de auth o catálogo del coordinador | env del worker | unit host config |
 | `CAUCE_FLEET_COMMAND_TIMEOUT_MS` (`gateway/fleet/main.ts`) | ms | 60_000 por defecto, entero 1–300_000; vence cada comando del executor físico | env del worker | unit host config + command |
 | `CAUCE_FLEET_POLL_MS` (`gateway/fleet/main.ts`) | ms | 1_000 por defecto, entero 25–60_000; intervalo de reclamo del worker | env del worker | unit host config + worker |
 | `CAUCE_FLEET_LEASE_MS` (`gateway/fleet/main.ts`) | ms | 30_000 por defecto, entero 1_000–300_000; lease del worker durable de flota | env del worker | unit host config + worker |
@@ -218,6 +224,7 @@ según `CAUCE_MCP_OAUTH_PROVIDER` en `deploy/deploy.sh`.
 |---|---|---|
 | `CAUCE_DEV_AUTH=1`, `CAUCE_ACK_DEADLINE_MS=50`, `DISPATCHER_POLL_MS=20`, `ACK_TIMEOUT_MS=50` | overrides de timing | e2e |
 | `CAUCE_RETRY_TIMEOUT_MS=45000`, `CAUCE_PRESENCE_LEASE_MS=500`, `CAUCE_FAULT_MODE=none` | overrides de arnés | e2e |
+| `CAUCE_CHANNEL_TEST_PROFILE_PATH` (`gateway/fleet/host-channel.fixtures.ts`) | nombre de referencia `env_path` de la cuenta fixture; no es parámetro del orquestador ni configuración de producción | unit canal de host |
 | Puerto `127.0.0.1:18080`, postgres tmpfs, red interna | aislamiento | — |
 
 ## Decisiones del dueño (FR-011..FR-015, cerradas 2026-09-27)

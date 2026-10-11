@@ -158,6 +158,19 @@ describe('parseArguments — validaciones que tiran ANTES de tocar la base', () 
 
     await expect(importCli()).rejects.toThrow(/falta el valor de --email/);
   });
+
+  it.each([
+    [], ['--tenant', 'Equipo'], ['--alias', 'member'],
+  ])('sin identidad completa para el alta: rechaza antes de crear el pool (%j)', async (...identity) => {
+    const createPoolSpy = vi.fn(() => stub.pool);
+    vi.doMock('@cauce/store', () => importUnitStoreMock(createPoolSpy));
+    process.argv = ['node', 'console-user-cli.js', '--email', 'person@example.com', ...identity];
+
+    await expect(importCli()).rejects.toThrow(/--tenant y --alias son obligatorios/);
+    expect(createPoolSpy).not.toHaveBeenCalled();
+    expect(stub.query).not.toHaveBeenCalled();
+    expect(stub.end).not.toHaveBeenCalled();
+  });
 });
 
 describe('parseArguments — última gana con flags duplicados', () => {
@@ -229,12 +242,13 @@ describe('alta de cuenta (INSERT con ON CONFLICT)', () => {
   });
 
   it('role "reader" se persiste en la fila INSERT', async () => {
-    const row = { id: '00000000-0000-4000-8000-000000000002', role: 'operator', tenant_id: 'Steven', alias: 'kant', active: true };
+    const row = { id: '00000000-0000-4000-8000-000000000002', role: 'reader', tenant_id: 'Equipo', alias: 'salva', active: true };
     stub.query.mockResolvedValueOnce({ rows: [row], rowCount: 1 });
     process.argv = [
       'node', 'console-user-cli.js',
       '--email', 'reader@example.com',
       '--role', 'reader',
+      '--tenant', 'Equipo',
       '--alias', 'salva',
     ];
 
@@ -244,11 +258,11 @@ describe('alta de cuenta (INSERT con ON CONFLICT)', () => {
     expect(params[3]).toBe('reader');
   });
 
-  it('valores por defecto: sin --name deriva del local-part; sin --alias usa kant; sin --tenant usa Steven; sin --role usa operator', async () => {
-    const row = { id: '00000000-0000-4000-8000-000000000003', role: 'operator', tenant_id: 'Steven', alias: 'kant', active: true };
+  it('sin --name deriva del local-part y sin --role usa operator; la identidad sigue explícita', async () => {
+    const row = { id: '00000000-0000-4000-8000-000000000003', role: 'operator', tenant_id: 'Equipo', alias: 'member', active: true };
     stub.query.mockResolvedValueOnce({ rows: [row], rowCount: 1 });
 
-    process.argv = ['node', 'console-user-cli.js', '--email', 'kant@example.com'];
+    process.argv = ['node', 'console-user-cli.js', '--email', 'person@example.com', '--tenant', 'Equipo', '--alias', 'member'];
 
     await importCli();
 
@@ -256,12 +270,11 @@ describe('alta de cuenta (INSERT con ON CONFLICT)', () => {
     const insert = exigir(stub.query.mock.calls.find(([sql]) => String(sql).startsWith('INSERT INTO console_users')),
       'el INSERT de la cuenta');
     const params = insert[1] as unknown[];
-    expect(params.slice(2, 7)).toEqual([null, null, null, null, null]);
+    expect(params.slice(2, 7)).toEqual([null, null, 'Equipo', 'member', null]);
     const sql = String(insert[0]);
     expect(sql).toContain("COALESCE($3,split_part($8,'@',1))");
     expect(sql).toContain("COALESCE($4,'operator')");
-    expect(sql).toContain("COALESCE($5,'Steven')");
-    expect(sql).toContain("COALESCE($6,'kant')");
+    expect(sql).toContain('$5,$6,COALESCE($7,true)');
   });
 
   it('forma --email=valor se acepta (igual que --email valor)', async () => {
@@ -270,6 +283,7 @@ describe('alta de cuenta (INSERT con ON CONFLICT)', () => {
     process.argv = [
       'node', 'console-user-cli.js',
       '--email=kant@example.com',
+      '--tenant', 'Steven',
       '--alias', 'kant',
     ];
 
@@ -282,14 +296,17 @@ describe('alta de cuenta (INSERT con ON CONFLICT)', () => {
 
   it('cuenta existente: cierra el pool después de guardar', async () => {
     stub.query.mockResolvedValueOnce({ rows: [], rowCount: 0 })
+      .mockResolvedValueOnce({ rows: [{ same: true }], rowCount: 1 })
       .mockResolvedValueOnce({ rows: [{ id: '00000000-0000-4000-8000-000000000005', role: 'reader', tenant_id: 'Equipo', alias: 'salva', active: false }], rowCount: 1 });
-    process.argv = ['node', 'console-user-cli.js', '--email', 'a@b.c', '--alias', 'kant'];
+    process.argv = ['node', 'console-user-cli.js', '--email', 'a@b.c', '--tenant', 'Equipo', '--alias', 'salva'];
 
     await importCli();
 
-    expect(stub.query).toHaveBeenCalledTimes(2);
+    expect(stub.query).toHaveBeenCalledTimes(3);
     expect(stub.query.mock.calls[0]?.[0]).toContain('ON CONFLICT (email_normalized) DO NOTHING');
-    expect(stub.query.mock.calls[1]?.[0]).toMatch(/^UPDATE console_users SET/);
+    expect(stub.query.mock.calls[1]?.[0]).toContain('person.company_id=target.company_id');
+    expect(stub.query.mock.calls[1]?.[1]).toEqual(['a@b.c', 'Equipo']);
+    expect(stub.query.mock.calls[2]?.[0]).toMatch(/^UPDATE console_users SET/);
 
 
     expect(stub.end).toHaveBeenCalledTimes(1);
@@ -338,7 +355,7 @@ describe('desactivación de cuenta (UPDATE active=false)', () => {
     });
     vi.doMock('@cauce/store', () => importUnitStoreMock(createPoolSpy));
     stub.query.mockResolvedValueOnce({ rows: [{ id: '00000000-0000-4000-8000-000000000099', role: 'operator', tenant_id: 'Steven', alias: 'kant', active: true }], rowCount: 1 });
-    process.argv = ['node', 'console-user-cli.js', '--email', 'a@b.c', '--alias', 'kant'];
+    process.argv = ['node', 'console-user-cli.js', '--email', 'a@b.c', '--tenant', 'Steven', '--alias', 'kant'];
 
     await importCli();
 
@@ -356,7 +373,7 @@ describe('lectura interactiva de la contraseña (promptPassword + readPassword)'
 
     Reflect.deleteProperty(process.env, 'CAUCE_CONSOLE_USER_PASSWORD');
     Object.defineProperty(process.stdin, 'isTTY', { configurable: true, value: false });
-    process.argv = ['node', 'console-user-cli.js', '--email', 'a@b.c', '--alias', 'kant'];
+    process.argv = ['node', 'console-user-cli.js', '--email', 'a@b.c', '--tenant', 'Steven', '--alias', 'kant'];
 
     await expect(importCli()).rejects.toThrow(/sin TTY.*CAUCE_CONSOLE_USER_PASSWORD/);
     expect(stub.query).not.toHaveBeenCalled();
@@ -369,7 +386,7 @@ describe('lectura interactiva de la contraseña (promptPassword + readPassword)'
       rows: [{ id: '00000000-0000-4000-8000-000000000010', role: 'operator', tenant_id: 'Steven', alias: 'kant', active: true }],
       rowCount: 1,
     });
-    process.argv = ['node', 'console-user-cli.js', '--email', 'a@b.c', '--alias', 'kant'];
+    process.argv = ['node', 'console-user-cli.js', '--email', 'a@b.c', '--tenant', 'Steven', '--alias', 'kant'];
 
     await importCli();
 
@@ -381,7 +398,7 @@ describe('lectura interactiva de la contraseña (promptPassword + readPassword)'
   it('con TTY y dos ingresos DISTINTOS: la validación "no coinciden" tira antes del INSERT', async () => {
     Reflect.deleteProperty(process.env, 'CAUCE_CONSOLE_USER_PASSWORD');
     enableTty(['a-long-enough-password', 'otra-cosa-distinta']);
-    process.argv = ['node', 'console-user-cli.js', '--email', 'a@b.c', '--alias', 'kant'];
+    process.argv = ['node', 'console-user-cli.js', '--email', 'a@b.c', '--tenant', 'Steven', '--alias', 'kant'];
 
     await expect(importCli()).rejects.toThrow(/las contraseñas no coinciden/);
     expect(stub.query).not.toHaveBeenCalled();
@@ -395,10 +412,6 @@ describe('mantenimiento conservador de una cuenta existente', () => {
       display_name: 'Persona existente', role: 'reader', tenant_id: 'Equipo', alias: 'salva',
       active: false, created_at: new Date(0), updated_at: new Date(1) };
     stub = createStubPool(async (sql, params) => {
-      if (sql.startsWith('INSERT INTO console_users')) {
-        expect(sql).toContain('ON CONFLICT (email_normalized) DO NOTHING');
-        return { rows: [], rowCount: 0 };
-      }
       expect(sql).toMatch(/^UPDATE console_users SET/);
       expect(params).toEqual(['a@b.c', 'MOCKED-SCRYPT-HASH', null, null, null, null, null]);
       expect(sql).toContain('display_name=COALESCE($3,console_users.display_name)');
@@ -411,8 +424,10 @@ describe('mantenimiento conservador de una cuenta existente', () => {
       return { rows: [{ id: changed.id, role: changed.role, tenant_id: changed.tenant_id,
         alias: changed.alias, active: changed.active }], rowCount: 1 };
     });
-    process.argv = ['node', 'console-user-cli.js', '--email', 'a@b.c'];
+    process.argv = ['node', 'console-user-cli.js', '--email', 'a@b.c', '--update'];
     await importCli();
+    expect(stub.query).toHaveBeenCalledTimes(1);
+    expect(stub.query.mock.calls[0]?.[0]).not.toContain('INSERT INTO console_users');
     expect(stub.end).toHaveBeenCalledTimes(1);
   });
 });
@@ -450,7 +465,7 @@ describe('operaciones explícitas y errores sin efectos', () => {
 
   it('un error de persistencia se propaga y cierra el pool', async () => {
     stub.query.mockRejectedValueOnce(new Error('fixture database failure'));
-    process.argv = ['node', 'console-user-cli.js', '--email', 'a@b.c'];
+    process.argv = ['node', 'console-user-cli.js', '--email', 'a@b.c', '--tenant', 'Equipo', '--alias', 'member'];
     await expect(importCli()).rejects.toThrow('fixture database failure');
     expect(stub.end).toHaveBeenCalledTimes(1);
   });
@@ -460,7 +475,7 @@ describe('operaciones explícitas y errores sin efectos', () => {
       assertPasswordPolicy: () => { throw new Error('fixture policy failure'); },
       hashPassword: vi.fn(),
     }));
-    process.argv = ['node', 'console-user-cli.js', '--email', 'a@b.c'];
+    process.argv = ['node', 'console-user-cli.js', '--email', 'a@b.c', '--tenant', 'Equipo', '--alias', 'member'];
     await expect(importCli()).rejects.toThrow('fixture policy failure');
     expect(stub.query).not.toHaveBeenCalled();
     expect(stub.end).toHaveBeenCalledTimes(1);

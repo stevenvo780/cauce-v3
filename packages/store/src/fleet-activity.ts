@@ -233,8 +233,7 @@ SELECT p.tenant_id,
         SELECT d.id                 AS delivery_id,
                d.message_id,
                m.trace_id,
-               -- La raíz humana lleva el alias LIGADO a la cuenta de consola (Steven→kant), no quien
-               -- delega: atribuirla pintaba a ese alias «Delegando» sin estar haciendo nada.
+               -- Human-root messages carry a console alias without agent execution authority.
                CASE WHEN raiz.humana THEN NULL ELSE m.tenant_id END   AS from_tenant,
                CASE WHEN raiz.humana THEN NULL ELSE m.actor_alias END AS from_alias,
                raiz.humana          AS from_human,

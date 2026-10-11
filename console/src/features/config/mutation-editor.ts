@@ -4,7 +4,7 @@ export const templates: Record<ConfigResource, ConfigMutation> = {
   tenant: { resource: 'tenant', action: 'create', id: 'Acme', value: { display_name: 'Acme', is_hub: false, enabled: true } },
   room: { resource: 'room', action: 'create', tenant_id: 'Acme', id: 'grp.acme', value: { display_name: 'Acme room', enabled: true } },
   membership: { resource: 'membership', action: 'create', tenant_id: 'Acme', room_id: 'grp.acme', alias: 'agent', value: { role: 'agent', enabled: true } },
-  acl_edge: { resource: 'acl_edge', action: 'create', from_tenant: 'Acme', to_tenant: 'Steven', value: { enabled: true, allow_route: false, allow_read: false, allow_control: false } },
+  acl_edge: { resource: 'acl_edge', action: 'create', from_tenant: 'Acme', to_tenant: 'Partner', value: { enabled: true, allow_route: false, allow_read: false, allow_control: false } },
   // No `command`, same as the harness step of the wizard: the column is stored and no execution path reads it (see
   // `campos-inertes.ts`). The schema still accepts it—whoever needs it writes it by hand right here, that is what
   // the escape hatch is for—, but the template no longer offers it pre-filled: a template is a suggestion, and we
