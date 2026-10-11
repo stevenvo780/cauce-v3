@@ -28,6 +28,7 @@ export const NAV_ENTRIES: NavEntry[] = [
   { id: 'messages', label: 'Chat', icon: MessageSquareText },
   { id: 'live', label: 'Oficina', icon: Building2 },
   { id: 'accounts', label: 'Cuentas y cuotas', icon: CreditCard },
+  { id: 'my-quotas', label: 'Mis cuotas', icon: CreditCard },
   { id: 'queues', label: 'Colas y DLQ', icon: ListRestart },
   { id: 'observability', label: 'Señales y auditoría', icon: Gauge },
   { id: 'config', label: 'Ajustes', icon: Settings2 },

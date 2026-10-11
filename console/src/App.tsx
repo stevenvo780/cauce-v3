@@ -15,6 +15,7 @@ import { NAV_ENTRIES } from './nav';
 import { onNavClick, redirect, useRouteSearch, useRouteSegments } from './router';
 import { AppShell } from './shell/AppShell';
 import { FleetProvider } from './shell/fleet';
+import { CompanySessionProvider } from './features/auth/company-session';
 import { fleetAgentId } from './features/terminal/fleet';
 
 function deferredPage<P extends object>(
@@ -41,6 +42,9 @@ const LiveFleetPage = deferredPage(async () => ({
 }));
 const AccountsPage = deferredPage(async () => ({
   default: (await import('./features/accounts/AccountsPage')).AccountsPage,
+}));
+const MyQuotasPage = deferredPage(async () => ({
+  default: (await import('./features/accounts/MyQuotasPage')).MyQuotasPage,
 }));
 const MessagesPage = deferredPage(async () => ({
   default: (await import('./features/messages/MessagesPage')).MessagesPage,
@@ -75,6 +79,7 @@ const DEEP_ROUTE_ARITY: Partial<Record<string, number>> = { messages: 2, termina
 const PAGES: Record<string, ComponentType<RoutePageProps>> = {
   live: LiveFleetPage,
   accounts: AccountsPage,
+  'my-quotas': MyQuotasPage,
   messages: MessagesPage,
   queues: QueuesPage,
   observability: ObservabilityPage,
@@ -167,6 +172,7 @@ const NOT_FOUND_TITLE = 'Ruta no encontrada';
 export function App() {
   return (
     <AuthGate>{(gate) => (
+      <CompanySessionProvider state={gate.state}>
       <ConsoleAccessProvider>
         <TerminalRelayProvider>
           <CSPProvider disableStyleElements>
@@ -174,6 +180,7 @@ export function App() {
           </CSPProvider>
         </TerminalRelayProvider>
       </ConsoleAccessProvider>
+      </CompanySessionProvider>
     )}</AuthGate>
   );
 }

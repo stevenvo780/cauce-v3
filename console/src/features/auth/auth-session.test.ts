@@ -48,6 +48,7 @@ describe('sessionAuthority', () => {
       platform_override: true } } satisfies ConsoleAuthState;
     expect(authSessionKey(switched)).not.toBe(authSessionKey(base));
     expect(authSessionKey({ ...base, authority: { ...owner } })).toBe(authSessionKey(base));
+    expect(authSessionKey({ ...base, home_tenant: 'Other' })).not.toBe(authSessionKey({ ...base, home_tenant: 'One' }));
   });
 
   it('una revalidación sin autoridad conserva la ya decidida para la misma sesión y nunca la inventa', () => {

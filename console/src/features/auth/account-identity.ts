@@ -11,7 +11,7 @@ export function authSessionKey(state: ConsoleAuthState | undefined): string {
   const authority = sessionAuthority(state);
   return JSON.stringify([
     state?.authenticated, state?.login_mode, state?.subject,
-    state?.csrf_token, state?.roles, state?.permissions,
+    state?.csrf_token, state?.roles, state?.permissions, state?.home_tenant,
     authority?.role, authority?.scope, authority?.acting_company,
   ]);
 }

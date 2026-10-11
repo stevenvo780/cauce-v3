@@ -124,7 +124,7 @@ it('la barra y las páginas activas comparten una sola consulta de acceso', asyn
   expect(accessReads).toBe(1);
 });
 
-it('el menú tiene UNA sola entrada para cuentas, cuotas y licencias, no tres que se llaman casi igual', async () => {
+it('el menú conserva cuentas de agentes y distingue Mis cuotas sin agente', async () => {
   window.history.pushState({}, '', '/live');
   renderWithApi(<App />);
 
@@ -132,7 +132,7 @@ it('el menú tiene UNA sola entrada para cuentas, cuotas y licencias, no tres qu
   await openTools();
   const entries = within(nav).getAllByRole('link')
     .filter((link) => /cuota|licencia|cuenta/i.test(link.textContent));
-  expect(entries.map((link) => link.textContent)).toEqual(['Cuentas y cuotas']);
+  expect(entries.map((link) => link.textContent)).toEqual(['Cuentas y cuotas', 'Mis cuotas']);
 });
 
 it.each([
@@ -231,7 +231,7 @@ it('conserva el href real que permite abrir una ruta en otra pestaña', async ()
   expect(window.location.pathname).toBe('/accounts');
 });
 
-it('el menú contiene las ocho entradas consolidadas', async () => {
+it('el menú contiene las nueve entradas consolidadas', async () => {
   window.history.pushState({}, '', '/live');
   renderWithApi(<App />);
 
@@ -244,6 +244,7 @@ it('el menú contiene las ocho entradas consolidadas', async () => {
     'Oficina',
     'Terminal',
     'Cuentas y cuotas',
+    'Mis cuotas',
     'Colas y DLQ',
     'Señales y auditoría',
     'Ajustes',

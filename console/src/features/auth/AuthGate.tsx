@@ -6,6 +6,7 @@ import { Logo } from '../../components/brand/Logo';
 import { Button, LinkButton, Notice, Spinner } from '../../components/kit';
 import { useAuthGate, type AuthGateState } from './auth-session';
 import { authSessionKey } from './account-identity';
+import { RegistrationForm } from './RegistrationForm';
 
 /**
  * Console session gate.
@@ -74,6 +75,7 @@ function PasswordLoginForm({ login, busy, reason }: {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [failure, setFailure] = useState<string>();
+  const [registering, setRegistering] = useState(false);
 
   const submit = async (event: SyntheticEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -88,10 +90,11 @@ function PasswordLoginForm({ login, busy, reason }: {
     }
   };
 
+  if (registering) return <AuthScreen><Logo /><RegistrationForm onLogin={login} onCancel={() => { setRegistering(false); }} /></AuthScreen>;
   return (
     <AuthScreen>
       <Logo />
-      <h1>Consola de Cauce V3</h1>
+      <h1>Consola de Cauce</h1>
       <Lede>{LEDE}</Lede>
       {reason ? <Notice tone="warn">{reason}</Notice> : null}
       <form className="grid gap-3" onSubmit={(event) => { void submit(event); }}>
@@ -114,6 +117,7 @@ function PasswordLoginForm({ login, busy, reason }: {
           <LogIn size={16} aria-hidden="true" /> {busy ? 'Entrando…' : 'Iniciar sesión'}
         </Button>
       </form>
+      <Button type="button" variant="ghost" disabled={busy} onClick={() => { setRegistering(true); }}>Crear cuenta y empresa</Button>
       {FINEPRINT}
     </AuthScreen>
   );

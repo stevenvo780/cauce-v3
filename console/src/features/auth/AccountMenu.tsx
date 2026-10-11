@@ -10,6 +10,7 @@ import { humanProfileName } from './account-identity';
 import type { AuthGateState } from './auth-session';
 import { ClientConnectionsPanel } from './ClientConnectionsPanel';
 import { HumanProfileEditor } from './HumanProfileEditor';
+import { CompanySelector } from './CompanySelector';
 
 function Avatar({ name, known, size }: { name: string; known: boolean; size: number }) {
   return (
@@ -115,6 +116,8 @@ function AccountPopover({ gate, routeKey }: { gate: AuthGateState; routeKey: str
                 )}
               </div>
             ) : null}
+
+            {signedIn && open && state?.authority ? <CompanySelector /> : null}
 
             {signedIn && state?.login_mode === 'password' ? (
               <ClientConnectionsPanel key={`${state.subject ?? ''}:${state.csrf_token ?? ''}`} active={open} disabled={busy} />

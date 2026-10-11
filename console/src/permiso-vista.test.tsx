@@ -55,6 +55,7 @@ const PERMISOS_PLENOS: readonly ConsolePermission[] = [
 const GOBIERNO_NAV: Record<string, 'config.write' | 'relay' | null> = {
   live: null,
   accounts: null,
+  'my-quotas': null,
   messages: null,
   queues: null,
   observability: null,
