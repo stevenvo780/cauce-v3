@@ -16,7 +16,7 @@ WORK=$(mktemp -d)
 cleanup() { rm -rf "$WORK"; }
 trap cleanup EXIT
 
-ESPERADOS=(cauce host_enrollment.py host_channel_client.py cauce-credenciales.lib.sh cauce-panel cauce-huerfanas cauce-reponer cauce-estado cauce-sesiones cauce-attach)
+ESPERADOS=(cauce cauce-platform host_enrollment.py host_channel_client.py context_client.py context_native.py space_archive.py cauce-credenciales.lib.sh cauce-panel cauce-huerfanas cauce-reponer cauce-estado cauce-sesiones cauce-attach)
 
 # py_compile writes `<dir>/__pycache__/<name>.pyc` a level deeper, so the probe reaches depth 2.
 MARCA="$WORK/marca"
@@ -47,6 +47,13 @@ else
   bad "enrolamiento disponible desde el CLI instalado"
 fi
 n_instalados=$(find "$DEST" -maxdepth 1 -type f | wc -l)
+for context_command in context context-native spaces; do
+  if PYTHONDONTWRITEBYTECODE=1 "$DEST/cauce" "$context_command" --help >/dev/null 2>&1; then
+    ok "$context_command disponible desde el CLI instalado"
+  else
+    bad "$context_command disponible desde el CLI instalado"
+  fi
+done
 if [ "$n_instalados" = "${#ESPERADOS[@]}" ]; then
   ok "publica exactamente ${#ESPERADOS[@]} ficheros"
 else

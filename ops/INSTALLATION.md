@@ -8,6 +8,11 @@
 2. Configurar paths, nunca valores secretos:
 
    - collector: `CAUCE_DATABASE_URL` desde el mecanismo privado autorizado;
+   - principal de gate de la empresa, sin valor por defecto: `CAUCE_GATE_TENANT` (espacio del
+     certificado), `CAUCE_GATE_ROOM` (sala) y `CAUCE_GATE_ACTOR` (agente actor durable) en el collector
+     de fases con round-trip; `CAUCE_GATE_ROOM` en el probe; `CAUCE_GATE_TENANT` en
+     `provision-gate-identity.py`. Deben coincidir con la fila `gate_probe` de
+     `company_system_principals`; en Humanizar son `Steven`, `grp.steven` y `kant`;
    - probe: `CAUCE_GATE_PROBE_URL` HTTPS y
      `CAUCE_GATE_PROBE_{CA,CERT,KEY}_FILE` absolutos;
    - `CAUCE_GATE_PROBE_KEY_FILE` y evidencia temporal sin permisos group/world;

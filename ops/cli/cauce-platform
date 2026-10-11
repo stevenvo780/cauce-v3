@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+cli_directory=$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")
+source_root=$(cd "$cli_directory/../.." && pwd)
+if [[ -n ${CAUCE_PROJECT_ROOT:-} ]]; then
+  project_root=$CAUCE_PROJECT_ROOT
+elif [[ -f $source_root/services/gateway/src/platform-cli-main.ts || -f $source_root/services/gateway/dist/platform-cli-main.js ]]; then
+  project_root=$source_root
+else
+  project_root=$HOME/.local/share/cauce-v3
+fi
+
+if [[ $project_root != /* ]]; then
+  printf 'CAUCE_PROJECT_ROOT debe ser una ruta absoluta.\n' >&2
+  exit 2
+fi
+if [[ -f $project_root/services/gateway/dist/platform-cli-main.js ]]; then
+  exec node "$project_root/services/gateway/dist/platform-cli-main.js" "$@"
+elif [[ -f $project_root/services/gateway/src/platform-cli-main.ts ]]; then
+  exec pnpm --dir "$project_root" exec tsx "$project_root/services/gateway/src/platform-cli-main.ts" "$@"
+fi
+printf 'No encuentro el runtime de Cauce; configura CAUCE_PROJECT_ROOT con la instalación verificada.\n' >&2
+exit 2

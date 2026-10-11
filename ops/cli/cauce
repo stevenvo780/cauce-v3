@@ -9,12 +9,33 @@ BIN=$cli_home/.local/bin
 CONFIG=$cli_home/.config/cauce-v3/container-aliases
 TMUX_SOCKET=cauce
 
+if [[ ${1:-} == platform ]]; then
+  cli_directory=$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")
+  platform_helper=$cli_directory/cauce-platform
+  [[ -f $platform_helper ]] || platform_helper=$OPS/cli/cauce-platform
+  shift
+  exec bash "$platform_helper" "$@"
+fi
+
 if [[ ${1:-} == hosts ]]; then
   cli_directory=$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")
   host_helper=$cli_directory/host_enrollment.py
   [[ -f $host_helper ]] || host_helper=$OPS/cli/host_enrollment.py
   shift
   exec python3 "$host_helper" "$@"
+fi
+
+if [[ ${1:-} == context || ${1:-} == context-native || ${1:-} == spaces ]]; then
+    cli_directory=$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")
+    case "$1" in
+      context) context_helper=context_client.py ;;
+      context-native) context_helper=context_native.py ;;
+      spaces) context_helper=space_archive.py ;;
+    esac
+    [[ -f $cli_directory/$context_helper ]] || cli_directory=$OPS/cli
+    shift
+    export PYTHONDONTWRITEBYTECODE=1
+    exec python3 "$cli_directory/$context_helper" "$@"
 fi
 
 if [[ -v CAUCE_FLEET_RUNTIME_STATE ]]; then
@@ -152,6 +173,9 @@ ${c_b}cauce${c_reset} — operar la flota Cauce V3
   ${c_b}cauce <alias> retirar${c_reset}    baja: para la unit y revoca lo que se pueda
   ${c_b}cauce ver [alias...]${c_reset}     mirar varios a la vez
   ${c_b}cauce hosts enroll${c_reset} --gateway <URL> --invitation-stdin   registrar este ordenador
+  ${c_b}cauce context${c_reset} --help                  historial y edición de contextos
+  ${c_b}cauce context-native${c_reset} --help           registrar cambios de archivos nativos
+  ${c_b}cauce spaces backup|restore${c_reset} --help    copia y recuperación de un espacio
 
 Al entrar con ${c_b}cauce <alias>${c_reset} te dice en la cabecera cual de los tres modos te toco:
   ${c_ok}compartida${c_reset}  la TUI REAL del agente, y la MISMA conversacion que Telegram.

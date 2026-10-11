@@ -39,8 +39,12 @@ instalar() {  # $1=source directory under ops/  $2=name, the same on both sides
 
 mkdir -p "$BIN"
 instalar cli cauce
+instalar cli cauce-platform
 instalar cli host_enrollment.py
 instalar cli host_channel_client.py
+instalar cli context_client.py
+instalar cli context_native.py
+instalar cli space_archive.py
 instalar cli cauce-credenciales.lib.sh  # sourced by cauce: login, aprovisionar, retirar
 instalar cli cauce-panel
 instalar cli cauce-huerfanas
