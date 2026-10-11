@@ -4,6 +4,7 @@ import { FleetOperationsRepository, type DatabasePool, type FleetOperationClaim 
 import { aggregateHostEvidence } from '../src/repository/fleet-operation-hosts.js';
 import { preparePostgresSuite } from './postgres-suite.js';
 import { startTestCaseDatabase, startTestDatabase, type EmptyTestDatabase, type TestDatabase } from '../../../tests/helpers/postgres.js';
+import { seedFleetHuman } from './fleet-human-postgres.fixtures.js';
 
 function required<T>(value: T | undefined): T {
   if (value === undefined) throw new Error('Missing host barrier fixture value');
@@ -12,12 +13,15 @@ function required<T>(value: T | undefined): T {
 let database: TestDatabase | undefined;
 let caseDatabase: EmptyTestDatabase | undefined;
 let pool: DatabasePool;
+let actorSubject: string;
 preparePostgresSuite(import.meta.url, async () => { database = await startTestDatabase(); }, 120_000);
 beforeEach(async () => {
   if (!database) throw new Error('test server absent');
   caseDatabase = await startTestCaseDatabase(database); pool = caseDatabase.pool;
   await pool.query("INSERT INTO rooms(id,tenant_id) VALUES('host-control','Steven'),('host-group','Isa'),('host-empty','Isa')");
+  await pool.query("INSERT INTO agents(tenant_id,alias) VALUES('Steven','host_operator')");
   await pool.query("INSERT INTO memberships(tenant_id,room_id,alias,role) VALUES('Steven','host-control','host_operator','operator')");
+  actorSubject = await seedFleetHuman(caseDatabase.adminPool, 'Steven', 'host_operator');
   await agent('host_a', 'host-a'); await agent('host_b', 'host-b');
 });
 afterEach(async () => { await caseDatabase?.close(); caseDatabase = undefined; });
@@ -37,7 +41,7 @@ function request(kind: 'retire' | 'purge' = 'retire', room = 'host-group'): Flee
     expected_revision: 0, idempotency_key: `hosts-${kind}-${room}` };
 }
 async function claimed(repo: FleetOperationsRepository, input = request()): Promise<FleetOperationClaim> {
-  await repo.enqueue('Steven', 'host_operator', input);
+  await repo.enqueue('Steven', 'host_operator', input, actorSubject);
   const claim = await repo.claim('host-worker', 'host-a'); if (!claim) throw new Error('claim absent');
   return claim;
 }
@@ -54,6 +58,16 @@ async function assertUnfenced(): Promise<void> {
   expect((await pool.query('SELECT 1 FROM config_revisions')).rowCount).toBe(0);
 }
 describe('durable exact fleet host barriers', () => {
+  it('rejects the legacy bus actor and rechecks human control before claiming a group', async () => {
+    const repo = repository();
+    await expect(repo.enqueue('Steven', 'host_operator', request())).rejects.toMatchObject({ code: 'forbidden' });
+    const queued = await repo.enqueue('Steven', 'host_operator', request(), actorSubject);
+    await pool.query("UPDATE human_tenant_memberships SET permissions=ARRAY['read'] WHERE tenant_id='Steven' AND actor_alias='host_operator'");
+    expect(await repo.claim('host-worker', 'host-a')).toBeNull();
+    expect((await pool.query('SELECT status,error FROM fleet_operations WHERE id=$1', [queued.id])).rows)
+      .toEqual([{ status: 'failed', error: { code: 'AUTHORITY_REVOKED', retryable: false } }]);
+    await assertUnfenced();
+  });
   it.each(['artifacts', 'admission'] as const)('rejects different global desired images at the %s barrier', step => {
     const receipts = ['a', 'b'].map((host, index) => ({ host_id: host, target_sha256: host.repeat(64),
       evidence: { artifact_sha256: String(index + 1).repeat(64), ...(step === 'admission' ? { authority_verified: true } : {}) } }));
@@ -61,22 +75,22 @@ describe('durable exact fleet host barriers', () => {
   });
   it('rejects a foreign host without an enabled coordinator before enqueue or fencing', async () => {
     const repo = repository(false);
-    await expect(repo.preview('Steven', 'host_operator', request())).rejects.toMatchObject({ code: 'conflict' });
-    await expect(repo.enqueue('Steven', 'host_operator', request())).rejects.toMatchObject({ code: 'conflict' });
+    await expect(repo.preview('Steven', 'host_operator', request(), actorSubject)).rejects.toMatchObject({ code: 'conflict' });
+    await expect(repo.enqueue('Steven', 'host_operator', request(), actorSubject)).rejects.toMatchObject({ code: 'conflict' });
     await assertUnfenced(); expect((await pool.query('SELECT 1 FROM fleet_operations')).rowCount).toBe(0);
   });
   it('rejects missing or incomplete registered host transports before fencing', async () => {
     for (const coordinatorHosts of [undefined, ['host-a'], ['host-a', 'host-b', 'host-b']]) {
       const repo = new FleetOperationsRepository(pool, { controllerHost: 'host-a', coordinatorEnabled: true,
         ...(coordinatorHosts === undefined ? {} : { coordinatorHosts }) });
-      await expect(repo.preview('Steven', 'host_operator', request())).rejects.toMatchObject({ code: 'conflict' });
-      await expect(repo.enqueue('Steven', 'host_operator', request())).rejects.toMatchObject({ code: 'conflict' });
+      await expect(repo.preview('Steven', 'host_operator', request(), actorSubject)).rejects.toMatchObject({ code: 'conflict' });
+      await expect(repo.enqueue('Steven', 'host_operator', request(), actorSubject)).rejects.toMatchObject({ code: 'conflict' });
     }
     await assertUnfenced();
   });
   it.each(['host_id', 'runtime_mode', 'systemd_user', 'state_directory'] as const)('rejects invalid or incomplete %s before any fence', async field => {
     await pool.query(`UPDATE agents SET ${field}=${field === 'state_directory' ? "'/home/dev/../unsafe'" : 'NULL'} WHERE tenant_id='Isa' AND alias='host_b'`);
-    await expect(repository().enqueue('Steven', 'host_operator', request())).rejects.toMatchObject({ code: 'conflict' });
+    await expect(repository().enqueue('Steven', 'host_operator', request(), actorSubject)).rejects.toMatchObject({ code: 'conflict' });
     await assertUnfenced();
   });
   it('rechecks placement under the preparation transaction after an accepted preview and enqueue', async () => {
@@ -110,14 +124,17 @@ describe('durable exact fleet host barriers', () => {
       { stopped_verified: true, revocation_verified: true })).rejects.toMatchObject({ code: 'conflict' });
     await expect(repo.completeStep(claim, 'stop', { stopped_verified: true })).rejects.toMatchObject({ code: 'conflict' });
     await receipts(repo, claim, 'stop', { stopped_verified: true });
-    expect((await repo.get('Steven', 'host_operator', claim.operation.id)).steps.find(step => step.name === 'stop')?.status).toBe('succeeded');
+    expect((await repo.get('Steven', 'host_operator', claim.operation.id, actorSubject)).steps.find(step => step.name === 'stop')?.status).toBe('succeeded');
   });
   it('preserves the immutable prepared placement against a direct history rewrite', async () => {
     const repo = repository(); const claim = await claimed(repo); await repo.prepare(claim);
     const original = await repo.hostSlices(claim);
-    await expect(pool.query(`UPDATE fleet_operation_events SET metadata=jsonb_set(metadata,
+    if (!caseDatabase) throw new Error('test database absent');
+    const mutation = `UPDATE fleet_operation_events SET metadata=jsonb_set(metadata,
       '{host_slices,0,agents,0,state_directory}','"/modified-state"'::jsonb)
-      WHERE operation_id=$1 AND metadata->>'step'='fence'`, [claim.operation.id])).rejects.toThrow('fleet operation history is permanent');
+      WHERE operation_id=$1 AND metadata->>'step'='fence'`;
+    if (pool !== caseDatabase.adminPool) await expect(pool.query(mutation, [claim.operation.id])).rejects.toMatchObject({ code: '42501' });
+    await expect(caseDatabase.adminPool.query(mutation, [claim.operation.id])).rejects.toThrow('fleet operation history is permanent');
     expect(await repo.hostSlices(claim)).toEqual(original);
   });
   it('keeps durable resources until every host has stopped, revoked and physically purged', async () => {
@@ -157,7 +174,7 @@ describe('durable exact fleet host barriers', () => {
     expect(retry.epoch).toBe(claim.epoch + 1); expect(await repo.hostReceipts(retry, 'stop')).toEqual([]);
     await expect(repo.completeHostStep(claim, 'stop', 'host-a', required((await repo.hostSlices(retry))[0]).target_sha256, { stopped_verified: true }))
       .rejects.toMatchObject({ code: 'conflict' });
-    const before = (await repo.get('Steven', 'host_operator', retry.operation.id)).version;
+    const before = (await repo.get('Steven', 'host_operator', retry.operation.id, actorSubject)).version;
     expect((await repo.completeStep(retry, 'stop', { stopped_verified: true })).version).toBe(before);
     expect((await repo.settle(retry)).status).toBe('succeeded');
   });
@@ -165,7 +182,10 @@ describe('durable exact fleet host barriers', () => {
     const repo = repository(); const claim = await claimed(repo); await repo.prepare(claim);
     await completed(repo, claim, 'stop', { stopped_verified: true }); await completed(repo, claim, 'revoke', { revocation_verified: true });
     await completed(repo, claim, 'artifacts', { artifact_sha256: 'a'.repeat(64) });
-    await expect(pool.query("UPDATE fleet_operation_events SET metadata=metadata-'host_barrier' WHERE operation_id=$1 AND metadata->>'step'='stop' AND metadata ? 'host_barrier'", [claim.operation.id]))
+    if (!caseDatabase) throw new Error('test database absent');
+    const mutation = "UPDATE fleet_operation_events SET metadata=metadata-'host_barrier' WHERE operation_id=$1 AND metadata->>'step'='stop' AND metadata ? 'host_barrier'";
+    if (pool !== caseDatabase.adminPool) await expect(pool.query(mutation, [claim.operation.id])).rejects.toMatchObject({ code: '42501' });
+    await expect(caseDatabase.adminPool.query(mutation, [claim.operation.id]))
       .rejects.toThrow('fleet operation history is permanent');
     expect((await repo.settle(claim)).status).toBe('succeeded');
     expect((await pool.query("SELECT purged_at,enabled FROM agents WHERE alias='host_b'")).rows[0]).toEqual({ purged_at: null, enabled: false });
@@ -181,7 +201,7 @@ describe('durable exact fleet host barriers', () => {
     if (resource === 'room') expect((await pool.query("SELECT 1 FROM rooms WHERE id='host-group' AND purged_at IS NULL")).rowCount).toBe(0);
     else expect((await pool.query("SELECT lifecycle_state,purged_at IS NOT NULL AS purged FROM agents WHERE alias='host_a'")).rows[0])
       .toEqual({ lifecycle_state: 'retired', purged: true });
-    const resumed = await repo.resume('Steven', 'host_operator', failed.id, failed.version); expect(resumed.status).toBe('queued');
+    const resumed = await repo.resume('Steven', 'host_operator', failed.id, failed.version, actorSubject); expect(resumed.status).toBe('queued');
     const retry = await repo.claim('host-retry', 'host-a'); if (!retry) throw new Error('retry absent'); await repo.prepare(retry);
     expect((await pool.query("SELECT metadata FROM fleet_operation_events WHERE operation_id=$1 AND metadata ? 'host_barrier' ORDER BY id", [claim.operation.id])).rows)
       .toEqual(original);
@@ -191,7 +211,7 @@ describe('durable exact fleet host barriers', () => {
   });
   it('requires both compensation effects and every host before cancelling a prepared group', async () => {
     const repo = repository(); const claim = await claimed(repo); await repo.prepare(claim);
-    const current = await repo.get('Steven', 'host_operator', claim.operation.id); await repo.cancel('Steven', 'host_operator', current.id, current.version);
+    const current = await repo.get('Steven', 'host_operator', claim.operation.id, actorSubject); await repo.cancel('Steven', 'host_operator', current.id, current.version, actorSubject);
     for (const slice of await repo.hostSlices(claim)) {
       await expect(repo.completeHostStep(claim, 'compensate', slice.host_id, slice.target_sha256, { stopped_verified: true }))
         .rejects.toMatchObject({ code: 'conflict' });
@@ -216,7 +236,7 @@ describe('durable exact fleet host barriers', () => {
       parameters: { runtime_key: 'new-host-agent', harness_id: 'codex', primary_room_id: 'host-group',
         memberships: [{ room_id: 'host-group', role: 'agent' }], placement: { host_id: 'host-c', mode: 'container',
           container_name: 'new-host-agent', runtime_user: 'dev', home_directory: '/home/dev', state_directory: '/home/dev/new-agent' } } };
-    await repo.enqueue('Steven', 'host_operator', input);
+    await repo.enqueue('Steven', 'host_operator', input, actorSubject);
     expect(await repo.claim('remote-host-worker', 'host-c')).toBeNull();
     const claim = await repo.claim('host-worker', 'host-a'); if (!claim) throw new Error('claim absent');
     expect((await repo.prepare(claim)).fenced_targets).toEqual([]);

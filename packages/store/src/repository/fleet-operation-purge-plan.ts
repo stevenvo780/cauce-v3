@@ -1,6 +1,7 @@
 import type { FleetTarget } from '@cauce/protocol';
 import type { DatabaseClient } from '../db.js';
 import type { ConfigurationDependency } from '../configuration/contracts.js';
+import { runtimePrincipalScopeSql } from './system-principal-scope.js';
 
 export const PURGE_CONFIGURATION = ['agent_profile_runtime_adoptions', 'agent_profile_runtime_expectations', 'agent_profiles',
   'agent_account_bindings', 'alias_routing_ceiling', 'egress_destinations', 'agent_sealing_keys', 'agent_appearances', 'console_agent_favorites'];
@@ -43,6 +44,7 @@ export async function purgeTables(client: DatabaseClient): Promise<PurgeTable[]>
 }
 export const HISTORICAL_MEMBERSHIP = `EXISTS(SELECT 1 FROM messages message WHERE message.tenant_id=entry.tenant_id
   AND message.room_id=entry.room_id AND message.actor_alias=entry.alias)`;
+export const PRESERVED_MEMBERSHIP = `(${HISTORICAL_MEMBERSHIP} OR NOT ${runtimePrincipalScopeSql('entry.tenant_id', 'entry.alias')})`;
 export function purgeDependency(target: FleetTarget, table: string, action: 'delete' | 'preserve' | 'blocked', count: string): ConfigurationDependency {
   return { type: `purge.${action}.${table}`, identity: { tenant_id: target.tenant_id,
     ...(target.resource === 'agent' ? { alias: target.alias } : target.resource === 'room' ? { room_id: target.room_id } : {}),
@@ -54,9 +56,10 @@ async function countRows(client: DatabaseClient, target: FleetTarget, table: str
     purgeParams(target))).rows[0]?.count ?? '0';
 }
 function runtimePredicate(target: FleetTarget): string {
-  if (target.resource === 'agent') return 'entry.tenant_id=$1 AND entry.alias=$2';
-  if (target.resource === 'tenant') return 'entry.tenant_id=$1 AND $2::text IS NULL';
-  return `entry.tenant_id=$1 AND EXISTS(SELECT 1 FROM memberships member
+  const runtime = runtimePrincipalScopeSql('entry.tenant_id', 'entry.alias');
+  if (target.resource === 'agent') return `entry.tenant_id=$1 AND entry.alias=$2 AND ${runtime}`;
+  if (target.resource === 'tenant') return `entry.tenant_id=$1 AND $2::text IS NULL AND ${runtime}`;
+  return `entry.tenant_id=$1 AND ${runtime} AND EXISTS(SELECT 1 FROM memberships member
     WHERE member.tenant_id=entry.tenant_id AND member.alias=entry.alias AND member.room_id=$2)`;
 }
 export async function purgeDependencies(client: DatabaseClient, target: FleetTarget): Promise<ConfigurationDependency[]> {
@@ -67,11 +70,12 @@ export async function purgeDependencies(client: DatabaseClient, target: FleetTar
     if (!predicate) continue;
     if (table.table_name === 'memberships') {
       for (const [action, history] of [['preserve', true], ['delete', false]] as const) {
-        const count = await countRows(client, target, table.table_name, `(${predicate}) AND ${history ? '' : 'NOT '}${HISTORICAL_MEMBERSHIP}`);
+        const count = await countRows(client, target, table.table_name, `(${predicate}) AND ${history ? '' : 'NOT '}${PRESERVED_MEMBERSHIP}`);
         if (count !== '0') dependencies.push(purgeDependency(target, table.table_name, action, count));
       }
     } else {
-      const count = await countRows(client, target, table.table_name, predicate);
+      const scope = removable ? `(${predicate}) AND ${runtimePrincipalScopeSql('entry.tenant_id', table.table_name === 'agent_account_bindings' ? 'entry.agent_alias' : 'entry.alias')}` : predicate;
+      const count = await countRows(client, target, table.table_name, scope);
       if (count !== '0') dependencies.push(purgeDependency(target, table.table_name, removable ? 'delete' : 'preserve', count));
     }
   }

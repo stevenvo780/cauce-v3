@@ -19,6 +19,7 @@ import { fleetReadableSql } from '../fleet-activity.js';
 import { agentDeploymentStatus, type DeliveryRow } from './observability.js';
 import type { HumanMessageOptions } from './messages/contracts.js';
 import { withHumanMessageTransaction } from './messages/human-authority.js';
+import { runtimePrincipalScopeSql } from './system-principal-scope.js';
 
 export type ProfileRuntimeAdoptionAck = ProfileRuntimeAdoptionEvidence & {
   readonly adopted_at: string;
@@ -236,7 +237,8 @@ export abstract class AgentsRepository extends DeliveryAcksRepository {
         WHERE EXISTS (
           SELECT 1 FROM memberships own JOIN role_policies role ON role.role=own.role
           WHERE own.tenant_id=$1 AND own.alias=$2 AND own.enabled AND role.allow_read
-        ) AND ${ownTenantOnly ? 'l.tenant_id=$1' : fleetReadableSql('$1::text', 'l.tenant_id')}
+        ) AND ${runtimePrincipalScopeSql('l.tenant_id', 'l.alias')}
+          AND ${ownTenantOnly ? 'l.tenant_id=$1' : fleetReadableSql('$1::text', 'l.tenant_id')}
        ORDER BY tenant_id,alias`, [actorTenant, actorAlias]
     );
     return result.rows.map((row) => ({
@@ -296,6 +298,7 @@ export abstract class AgentsRepository extends DeliveryAcksRepository {
        LEFT JOIN connection_leases lease
          ON lease.tenant_id=membership.tenant_id AND lease.alias=membership.alias
        WHERE membership.enabled AND target_tenant.enabled AND target_room.enabled
+         AND ${runtimePrincipalScopeSql('membership.tenant_id', 'membership.alias')}
          AND NOT (membership.tenant_id=$1 AND membership.alias=$2)
          AND NOT (membership.alias=ANY($3::text[]))
          AND (
@@ -401,7 +404,8 @@ export abstract class AgentsRepository extends DeliveryAcksRepository {
            AND ceiling.alias=b.agent_alias AND ceiling.account_id=b.account_id
          WHERE b.tenant_id=a.tenant_id AND b.agent_alias=a.alias AND b.enabled
        ) routing ON true
-       WHERE a.purged_at IS NULL AND ${ownTenantOnly ? 'a.tenant_id=$1' : fleetReadableSql('$1::text', 'a.tenant_id')}
+       WHERE a.purged_at IS NULL AND ${runtimePrincipalScopeSql('a.tenant_id', 'a.alias')}
+         AND ${ownTenantOnly ? 'a.tenant_id=$1' : fleetReadableSql('$1::text', 'a.tenant_id')}
        ORDER BY a.tenant_id,a.alias`, [actorTenant]
     );
     return { items: result.rows.map((row) => ({
@@ -446,7 +450,8 @@ export abstract class AgentsRepository extends DeliveryAcksRepository {
          SELECT (l.lease_until>now()) AS online, l.last_heartbeat_at, l.instance_id
          FROM connection_leases l WHERE l.tenant_id=a.tenant_id AND l.alias=a.alias
        ) lease ON true
-       WHERE a.purged_at IS NULL AND a.tenant_id=$1 AND a.alias=$2 AND ${fleetReadableSql('$3::text', 'a.tenant_id')}
+       WHERE a.purged_at IS NULL AND a.tenant_id=$1 AND a.alias=$2 AND ${runtimePrincipalScopeSql('a.tenant_id', 'a.alias')}
+         AND ${fleetReadableSql('$3::text', 'a.tenant_id')}
        LIMIT 1`, [tenantId, alias, actorTenant]
     );
     const agent = agentResult.rows[0];

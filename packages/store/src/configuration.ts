@@ -18,6 +18,7 @@ import {
   assertCompanyMutation, authorizeConfigurationMutation, companyWide, configurationCapabilities, configurationScopeSql, isPlatformMutation,
 } from './configuration/company-scope.js';
 import { assertRuntimeSynchronizedMutation, configurationDependencies, configurationIdentity, databaseError } from './configuration/shared.js';
+import { assertEditablePrincipalMutation, runtimePrincipalScopeSql } from './repository/system-principal-scope.js';
 
 export { ConfigurationError };
 export type {
@@ -122,6 +123,7 @@ export class ConfigurationRepository extends ConfigurationMutations {
         this.queryable.query<Record<string, unknown>>(
           `SELECT tenant_id,room_id,alias,role,enabled,created_at,to_jsonb(memberships)->>'retired_at' AS retired_at FROM memberships
            WHERE ${owned('memberships.tenant_id')}
+             AND ${runtimePrincipalScopeSql('memberships.tenant_id', 'memberships.alias')}
              AND NOT EXISTS(SELECT 1 FROM agents WHERE agents.tenant_id=memberships.tenant_id AND agents.alias=memberships.alias AND to_jsonb(agents)->>'purged_at' IS NOT NULL)
              AND NOT EXISTS(SELECT 1 FROM rooms WHERE rooms.tenant_id=memberships.tenant_id AND rooms.id=memberships.room_id AND to_jsonb(rooms)->>'purged_at' IS NOT NULL)
              AND NOT EXISTS(SELECT 1 FROM tenants WHERE tenants.id=memberships.tenant_id AND to_jsonb(tenants)->>'purged_at' IS NOT NULL)
@@ -181,6 +183,7 @@ export class ConfigurationRepository extends ConfigurationMutations {
                   to_jsonb(agents)->>'primary_account_id' AS primary_account_id,to_jsonb(agents)->>'model_id' AS model_id,
                   to_jsonb(agents)->>'reasoning_effort' AS reasoning_effort
            FROM agents WHERE ${owned('agents.tenant_id')} AND to_jsonb(agents)->>'purged_at' IS NULL
+             AND ${runtimePrincipalScopeSql('agents.tenant_id', 'agents.alias')}
              AND NOT EXISTS(SELECT 1 FROM tenants WHERE tenants.id=agents.tenant_id AND to_jsonb(tenants)->>'purged_at' IS NOT NULL)
            ORDER BY tenant_id,alias`, scope
         ),
@@ -264,6 +267,7 @@ export class ConfigurationRepository extends ConfigurationMutations {
     return this.transact(async (client) => {
       const { current, revision } = await this.lockForWrite(client, actor, mutation, expectedRevision);
       if (!isPlatformMutation(mutation)) await assertCompanyMutation(client, mutation, current.actingCompany);
+      await assertEditablePrincipalMutation(client, mutation);
       const dependencies = await configurationDependencies(client, mutation);
       return { revision, resource: mutation.resource, identity: configurationIdentity(mutation),
         dependencies, can_delete: dependencies.every((dependency) => !dependency.blocking) };
@@ -409,6 +413,7 @@ export class ConfigurationRepository extends ConfigurationMutations {
     const company = current.actingCompany;
     if (isPlatformMutation(mutation)) return this.execute(client, mutation, company);
     await assertCompanyMutation(client, mutation, company);
+    await assertEditablePrincipalMutation(client, mutation);
     const controlBefore = await this.controlState(client, company);
     const changed = await this.execute(client, mutation, company);
     await this.assertRecoverableControl(client, controlBefore, company);

@@ -4,6 +4,7 @@ import { assertFleetOperationAuthority } from './fleet-operation-human.js';
 import { FleetOperationError, isRegistryDraft, type FleetOperationRow, type FencedFleetTarget } from './fleet-operation-contracts.js';
 import { prepareFleetTransition, settleFleetTransition } from './fleet-operation-lifecycle.js';
 import { admitFleetAgent } from './fleet-operation-admission.js';
+import { runtimePrincipalScopeSql } from './system-principal-scope.js';
 export { admitFleetAgent } from './fleet-operation-admission.js';
 
 export async function fleetAgentTargets(client: DatabaseClient, row: FleetOperationRow): Promise<FencedFleetTarget[]> {
@@ -11,6 +12,7 @@ export async function fleetAgentTargets(client: DatabaseClient, row: FleetOperat
   const result = await client.query<{ tenant_id: string; alias: string }>(
     `SELECT agent.tenant_id,agent.alias FROM agents agent WHERE agent.tenant_id=$1
       AND agent.purged_at IS NULL
+      AND ${runtimePrincipalScopeSql('agent.tenant_id', 'agent.alias')}
       AND ($2::text IS NULL OR agent.alias=$2)
       AND ($3::text IS NULL OR agent.primary_room_id=$3 OR EXISTS (
         SELECT 1 FROM memberships member WHERE member.tenant_id=agent.tenant_id AND member.alias=agent.alias AND member.room_id=$3))

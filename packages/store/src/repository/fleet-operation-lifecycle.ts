@@ -3,6 +3,7 @@ import type { DatabaseClient } from '../db.js';
 import { FleetOperationError, type FleetOperationRow, type FencedFleetTarget } from './fleet-operation-contracts.js';
 import { purgeDependencies } from './fleet-operation-purge-plan.js';
 import { purgeRetiredTarget } from './fleet-operation-purge.js';
+import { runtimePrincipalScopeSql } from './system-principal-scope.js';
 
 export interface FleetMembershipIntent {
   tenant_id: string; room_id: string; alias: string; role: string; enabled: boolean;
@@ -19,7 +20,8 @@ async function prepareGroupAgents(client: DatabaseClient, row: FleetOperationRow
   if (target.resource === 'agent') return;
   await client.query(`UPDATE agents agent SET enabled=false,
     lifecycle_state=CASE WHEN agent.retired_at IS NULL THEN $3 ELSE agent.lifecycle_state END,updated_at=clock_timestamp()
-    WHERE agent.tenant_id=$1 AND agent.purged_at IS NULL AND ($2::text IS NULL OR agent.primary_room_id=$2 OR EXISTS (
+    WHERE agent.tenant_id=$1 AND agent.purged_at IS NULL AND ${runtimePrincipalScopeSql('agent.tenant_id', 'agent.alias')}
+      AND ($2::text IS NULL OR agent.primary_room_id=$2 OR EXISTS (
       SELECT 1 FROM memberships member WHERE member.tenant_id=agent.tenant_id AND member.alias=agent.alias AND member.room_id=$2))`,
   [target.tenant_id, target.resource === 'room' ? target.room_id : null, state]);
 }
@@ -55,6 +57,7 @@ export async function fleetMembershipIntent(client: DatabaseClient, row: FleetOp
   const stamp = row.kind === 'restore' ? await retirementStamp(client, row.target) : undefined;
   return (await client.query<FleetMembershipIntent>(`SELECT tenant_id,room_id,alias,role,
     COALESCE(retired_enabled,enabled) AS enabled FROM memberships WHERE ${scope.predicate}
+      AND ${runtimePrincipalScopeSql('memberships.tenant_id', 'memberships.alias')}
       AND NOT EXISTS(SELECT 1 FROM agents WHERE agents.tenant_id=memberships.tenant_id AND agents.alias=memberships.alias AND agents.purged_at IS NOT NULL)
       ${stamp === undefined ? '' : `AND (retired_at IS NULL OR retired_at=$${String(scope.params.length + 1)}::timestamptz)`}
     ORDER BY room_id,alias FOR UPDATE`, stamp === undefined ? scope.params : [...scope.params, stamp])).rows;
@@ -76,7 +79,7 @@ export async function prepareFleetTransition(client: DatabaseClient, row: FleetO
       await client.query(`UPDATE rooms SET retired_enabled=COALESCE(retired_enabled,enabled),retired_at=COALESCE(retired_at,now()),enabled=false WHERE tenant_id=$1`, scope.params);
     }
     await client.query(`UPDATE memberships SET retired_enabled=COALESCE(retired_enabled,enabled),retired_at=COALESCE(retired_at,now()),enabled=false
-      WHERE ${scope.predicate}`, scope.params);
+      WHERE ${scope.predicate} AND ${runtimePrincipalScopeSql('memberships.tenant_id', 'memberships.alias')}`, scope.params);
     return;
   }
   if (kind === 'restore') {
@@ -125,6 +128,7 @@ export async function settleFleetTransition(client: DatabaseClient, row: FleetOp
       [target.tenant_id, target.room_id]);
     const scope = targetPredicate(target);
     await client.query(`UPDATE memberships SET enabled=retired_enabled,retired_at=NULL,retired_enabled=NULL WHERE ${scope.predicate}
+      AND ${runtimePrincipalScopeSql('memberships.tenant_id', 'memberships.alias')}
       AND NOT EXISTS(SELECT 1 FROM agents WHERE agents.tenant_id=memberships.tenant_id AND agents.alias=memberships.alias AND agents.purged_at IS NOT NULL)
       AND NOT EXISTS(SELECT 1 FROM rooms WHERE rooms.tenant_id=memberships.tenant_id AND rooms.id=memberships.room_id
         AND rooms.purged_at IS NOT NULL)

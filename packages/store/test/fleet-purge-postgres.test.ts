@@ -5,7 +5,7 @@ import { purgeFleetTarget } from '../src/repository/fleet-operation-lifecycle.js
 import type { FleetOperationRow } from '../src/repository/fleet-operation-contracts.js';
 import { preparePostgresSuite } from './postgres-suite.js';
 import { startTestCaseDatabase, startTestDatabase, type EmptyTestDatabase, type TestDatabase } from '../../../tests/helpers/postgres.js';
-import { finishPurge, messageFixture, preparePurge, profileAdoptionFixture, purgeFixture, purgeRequest } from './fleet-purge-postgres.fixtures.js';
+import { finishPurge, messageFixture, preparePurge, profileAdoptionFixture, PURGE_ACTOR_SUBJECT, purgeAuthority, purgeFixture, purgeRequest } from './fleet-purge-postgres.fixtures.js';
 
 let database: TestDatabase | undefined;
 let current: EmptyTestDatabase | undefined;
@@ -13,7 +13,7 @@ let pool: DatabasePool;
 preparePostgresSuite(import.meta.url, async () => { database = await startTestDatabase(); }, 120_000);
 beforeEach(async () => {
   if (!database) throw new Error('test database missing');
-  current = await startTestCaseDatabase(database); pool = current.pool; await purgeFixture(pool);
+  current = await startTestCaseDatabase(database); pool = current.pool; await purgeFixture(pool, current.adminPool);
 });
 afterEach(async () => { await current?.close(); current = undefined; });
 afterAll(async () => { if (database) { await database.pool.end(); await database.container.stop(); } });
@@ -32,7 +32,7 @@ describe('fleet purge with preserved historical identities', () => {
   });
   it('previews owned configuration removal and historical preservation without blocking a retired agent', async () => {
     await messageFixture(pool);
-    const preview = await new FleetOperationsRepository(pool).preview('Steven', 'purge_operator', purgeRequest());
+    const preview = await new FleetOperationsRepository(pool).preview('Steven', 'purge_operator', purgeRequest(), PURGE_ACTOR_SUBJECT);
     expect(preview.can_apply).toBe(true);
     expect(preview.dependencies).toEqual(expect.arrayContaining([
       expect.objectContaining({ type: 'purge.delete.agent_profiles', blocking: false }),
@@ -75,22 +75,22 @@ describe('fleet purge with preserved historical identities', () => {
       documents: [{ name: 'AGENTS.md', path: '/home/dev/AGENTS.md', sha: 'b'.repeat(64) }] })]);
     expect((await pool.query("SELECT 1 FROM agent_profiles WHERE tenant_id='Isa' AND alias='purge_agent'")).rowCount).toBe(1);
     expect((await pool.query("SELECT 1 FROM provider_accounts WHERE id='purge-account'")).rowCount).toBe(1);
-    const snapshot = await new ConfigurationRepository(pool).get('Steven', 'purge_operator');
+    const snapshot = await new ConfigurationRepository(pool).get('Steven', 'purge_operator', purgeAuthority);
     const retired = snapshot.retired as { agents: Record<string, unknown>[]; memberships: Record<string, unknown>[] };
     for (const rows of [snapshot.agents, snapshot.memberships, retired.agents, retired.memberships] as Record<string, unknown>[][]) {
       expect(rows.some(value => value.tenant_id === 'Steven' && value.alias === 'purge_agent')).toBe(false);
     }
     expect(retired.agents.some(value => value.tenant_id === 'Isa' && value.alias === 'purge_agent')).toBe(true);
-    expect((await repo.get('Steven', 'purge_operator', claim.operation.id)).status).toBe('succeeded');
+    expect((await repo.get('Steven', 'purge_operator', claim.operation.id, PURGE_ACTOR_SUBJECT)).status).toBe('succeeded');
   });
   it('blocks active work including outgoing deliveries while preserving completed history', async () => {
     const message = await messageFixture(pool, 'pending');
     await pool.query("UPDATE deliveries SET recipient_alias='another_agent' WHERE message_id=$1", [message]);
     const repo = new FleetOperationsRepository(pool);
-    const preview = await repo.preview('Steven', 'purge_operator', purgeRequest());
+    const preview = await repo.preview('Steven', 'purge_operator', purgeRequest(), PURGE_ACTOR_SUBJECT);
     expect(preview.can_apply).toBe(false);
     expect(preview.dependencies).toEqual(expect.arrayContaining([expect.objectContaining({ type: 'purge.blocked.deliveries', blocking: true })]));
-    await expect(repo.enqueue('Steven', 'purge_operator', purgeRequest())).rejects.toMatchObject({ code: 'conflict' });
+    await expect(repo.enqueue('Steven', 'purge_operator', purgeRequest(), PURGE_ACTOR_SUBJECT)).rejects.toMatchObject({ code: 'conflict' });
   });
   it('requires verified stop and revoke before deleting any owned configuration', async () => {
     const { claim } = await preparePurge(pool);
@@ -104,14 +104,15 @@ describe('fleet purge with preserved historical identities', () => {
     for (const kind of ['restore', 'start'] as const) await expect(repo.enqueue('Steven', 'purge_operator', {
       kind, parameters: {}, target: { resource: 'agent', tenant_id: 'Steven', alias: 'purge_agent' },
       expected_revision: 2, idempotency_key: `reactivate-${kind}`,
-    })).rejects.toMatchObject({ code: 'conflict' });
+    }, PURGE_ACTOR_SUBJECT)).rejects.toMatchObject({ code: 'conflict' });
     await expect(new ConfigurationRepository(pool).apply('Steven', 'purge_operator', { resource: 'agent', action: 'create',
-      tenant_id: 'Steven', alias: 'purge_agent', value: {} }, false, 2)).rejects.toMatchObject({ code: 'conflict' });
+      tenant_id: 'Steven', alias: 'purge_agent', value: {} }, false, 2, purgeAuthority)).rejects.toMatchObject({ code: 'conflict' });
     expect((await pool.query("SELECT 1 FROM fleet_runtime_identities WHERE tenant_id='Steven' AND alias='purge_agent'")).rowCount).toBe(1);
   });
   it('rolls back all deletion and purge audit if any configuration removal fails', async () => {
     const { repo, claim } = await preparePurge(pool);
-    await pool.query(`CREATE FUNCTION reject_test_binding_delete() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+    if (!current) throw new Error('test database missing');
+    await current.adminPool.query(`CREATE FUNCTION reject_test_binding_delete() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
       RAISE EXCEPTION 'isolated binding failure'; END; $$;
       CREATE TRIGGER reject_test_binding_delete BEFORE DELETE ON agent_account_bindings FOR EACH ROW EXECUTE FUNCTION reject_test_binding_delete()`);
     await expect(finishPurge(repo, claim)).rejects.toThrow('isolated binding failure');
@@ -130,8 +131,8 @@ describe('fleet purge with preserved historical identities', () => {
     expect((await pool.query('SELECT 1 FROM messages WHERE id=$1', [message])).rowCount).toBe(1);
     expect((await pool.query("SELECT 1 FROM agent_profiles WHERE tenant_id='Steven' AND alias='purge_agent'")).rowCount).toBe(1);
     await expect(repo.enqueue('Steven', 'purge_operator', { kind: 'restore', target, parameters: {}, expected_revision: 2,
-      idempotency_key: 'restore-purged-room' })).rejects.toMatchObject({ code: 'conflict' });
-    const snapshot = await new ConfigurationRepository(pool).get('Steven', 'purge_operator');
+      idempotency_key: 'restore-purged-room' }, PURGE_ACTOR_SUBJECT)).rejects.toMatchObject({ code: 'conflict' });
+    const snapshot = await new ConfigurationRepository(pool).get('Steven', 'purge_operator', purgeAuthority);
     expect(JSON.stringify([snapshot.rooms, snapshot.memberships, snapshot.retired])).not.toContain('purge-owned');
   });
   it('purges a tenant and its owned runtime configuration while preserving historical routing anchors', async () => {
@@ -152,8 +153,8 @@ describe('fleet purge with preserved historical identities', () => {
     expect((await pool.query<{ purged: boolean }>("SELECT purged_at IS NOT NULL AS purged FROM agents WHERE tenant_id='PurgeTenant'")).rows[0]?.purged).toBe(true);
     expect((await pool.query('SELECT 1 FROM messages WHERE id=$1', [message?.id])).rowCount).toBe(1);
     await expect(repo.enqueue('Steven', 'purge_operator', { kind: 'restore', target, parameters: {}, expected_revision: 2,
-      idempotency_key: 'restore-purged-tenant' })).rejects.toMatchObject({ code: 'conflict' });
-    const snapshot = await new ConfigurationRepository(pool).get('Steven', 'purge_operator');
+      idempotency_key: 'restore-purged-tenant' }, PURGE_ACTOR_SUBJECT)).rejects.toMatchObject({ code: 'conflict' });
+    const snapshot = await new ConfigurationRepository(pool).get('Steven', 'purge_operator', purgeAuthority);
     expect(JSON.stringify([snapshot.tenants, snapshot.rooms, snapshot.agents, snapshot.memberships, snapshot.retired])).not.toContain('PurgeTenant');
     expect((await pool.query("SELECT 1 FROM agent_profiles WHERE tenant_id='Isa' AND alias='purge_agent'")).rowCount).toBe(1);
   });
@@ -162,7 +163,7 @@ describe('fleet purge with preserved historical identities', () => {
     const { repo, claim } = await preparePurge(pool, { resource: 'room', tenant_id: 'Steven', room_id: 'purge-owned' });
     await finishPurge(repo, claim);
     await expect(new ConfigurationRepository(pool).apply('Steven', 'purge_operator', { resource: 'membership', action: 'create',
-      tenant_id: 'Steven', room_id: 'purge-owned', alias: 'new_draft', value: { role: 'agent', enabled: false } }, false, 2))
+      tenant_id: 'Steven', room_id: 'purge-owned', alias: 'new_draft', value: { role: 'agent', enabled: false } }, false, 2, purgeAuthority))
       .rejects.toMatchObject({ code: 'conflict' });
     expect((await pool.query("SELECT 1 FROM memberships WHERE room_id='purge-owned' AND alias='new_draft'")).rowCount).toBe(0);
   });
@@ -170,9 +171,9 @@ describe('fleet purge with preserved historical identities', () => {
     await pool.query(`INSERT INTO connection_leases(tenant_id,alias,instance_id,epoch,lease_until)
       VALUES('Steven','purge_agent','isolated-lease',1,clock_timestamp()+interval '1 hour')`);
     const repo = new FleetOperationsRepository(pool);
-    expect((await repo.preview('Steven', 'purge_operator', purgeRequest())).can_apply).toBe(false);
+    expect((await repo.preview('Steven', 'purge_operator', purgeRequest(), PURGE_ACTOR_SUBJECT)).can_apply).toBe(false);
     await pool.query("UPDATE connection_leases SET lease_until=clock_timestamp()-interval '1 second' WHERE alias='purge_agent'");
-    const preview = await repo.preview('Steven', 'purge_operator', purgeRequest());
+    const preview = await repo.preview('Steven', 'purge_operator', purgeRequest(), PURGE_ACTOR_SUBJECT);
     expect(preview.can_apply).toBe(true);
     expect(preview.dependencies).toEqual(expect.arrayContaining([expect.objectContaining({ type: 'purge.preserve.connection_leases', blocking: false })]));
   });

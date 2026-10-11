@@ -7,6 +7,7 @@ import {
 } from '../configuration.js';
 import { StoreError } from './errors.js';
 import { OutboxOperatorRepository } from './outbox.js';
+import { runtimePrincipalScopeSql } from './system-principal-scope.js';
 
 const PERMISSION_COLUMNS: Record<Permission, string> = {
   route: 'allow_route', read: 'allow_read', control: 'allow_control', notify: 'allow_notify',
@@ -94,6 +95,7 @@ export abstract class ConfigRepository extends OutboxOperatorRepository {
          FROM agents agent
          JOIN tenants target_tenant ON target_tenant.id=agent.tenant_id
         WHERE agent.tenant_id=$3 AND agent.alias=$4 AND target_tenant.enabled
+          AND ${runtimePrincipalScopeSql('agent.tenant_id', 'agent.alias')}
           AND agent.purged_at IS NULL AND target_tenant.purged_at IS NULL
           AND ($5::text IN ('read','configure') OR agent.enabled)
           AND ($5::text<>'configure' OR to_jsonb(agent)->>'retired_at' IS NULL)
@@ -223,6 +225,7 @@ export abstract class ConfigRepository extends OutboxOperatorRepository {
                LEFT JOIN agents agent
                  ON agent.tenant_id=m.tenant_id AND agent.alias=m.alias
                WHERE m.tenant_id=t.id AND m.room_id=r.id
+                 AND ${runtimePrincipalScopeSql('m.tenant_id', 'm.alias')}
              ),'[]'::jsonb)
            ) ORDER BY r.id) FROM rooms r WHERE r.tenant_id=t.id
          ),'[]'::jsonb) AS rooms

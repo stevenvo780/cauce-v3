@@ -1,10 +1,22 @@
 import type { FleetEvidence, FleetOperationRequest, FleetStepName, FleetTarget } from '@cauce/protocol';
-import { FleetOperationsRepository, type DatabasePool, type FleetOperationClaim } from '../src/index.js';
+import { FleetOperationsRepository, lockCompanyAuthority, type ConfigurationAuthorityResolver, type DatabasePool, type FleetOperationClaim } from '../src/index.js';
 import { aggregateHostEvidence } from '../src/repository/fleet-operation-hosts.js';
 
-export async function purgeFixture(pool: DatabasePool): Promise<void> {
+const humanId = 'fdbc7f94-5f87-4a1a-aa7d-e107439c5c58';
+export const PURGE_ACTOR_SUBJECT = `console:${humanId}`;
+export const purgeAuthority: ConfigurationAuthorityResolver = client => lockCompanyAuthority(client,
+  { tenant: 'Steven', alias: 'purge_operator', humanId });
+export async function purgeFixture(pool: DatabasePool, admin: DatabasePool): Promise<void> {
   await pool.query("INSERT INTO rooms(id,tenant_id) VALUES('purge-admin','Steven'),('purge-owned','Steven'),('purge-unused','Steven'),('purge-foreign','Isa')");
+  await pool.query("INSERT INTO agents(tenant_id,alias) VALUES('Steven','purge_operator')");
   await pool.query("INSERT INTO memberships(tenant_id,room_id,alias,role) VALUES('Steven','purge-admin','purge_operator','operator')");
+  await pool.query(`INSERT INTO console_users(id,email,email_normalized,password_hash,display_name,role,tenant_id,alias)
+    VALUES($1,'purge-human@example.test','purge-human@example.test',$2,'Purge human','operator','Steven','purge_operator')`,
+  [humanId, '$scrypt$' + 'x'.repeat(48)]);
+  await pool.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,role,permissions)
+    VALUES($1,'Steven','purge_operator','operator',ARRAY['read','control'])`, [humanId]);
+  await admin.query(`INSERT INTO company_admins(company_id,human_id,role,source,granted_by)
+    SELECT company_id,$1,'owner','platform',$1 FROM tenants WHERE id='Steven'`, [humanId]);
   await pool.query(`INSERT INTO provider_accounts(id,provider,external_account_id,payer_tenant_id,credential_ref_kind,credential_ref,enabled)
     VALUES('purge-account','codex','isolated-purge-account','Steven','env_path','CAUCE_TEST_PURGE_PROFILE_PATH',true)`);
   for (const [tenant, room] of [['Steven', 'purge-owned'], ['Isa', 'purge-foreign']] as const) {
@@ -54,7 +66,7 @@ export function purgeRequest(target: FleetTarget = { resource: 'agent', tenant_i
 
 export async function preparePurge(pool: DatabasePool, target?: FleetTarget): Promise<{ repo: FleetOperationsRepository; claim: FleetOperationClaim }> {
   const repo = new FleetOperationsRepository(pool, { controllerHost: 'purge-host' });
-  await repo.enqueue('Steven', 'purge_operator', purgeRequest(target));
+  await repo.enqueue('Steven', 'purge_operator', purgeRequest(target), PURGE_ACTOR_SUBJECT);
   const claim = await repo.claim('purge-worker', 'purge-host');
   if (!claim) throw new Error('purge claim missing');
   await repo.prepare(claim);

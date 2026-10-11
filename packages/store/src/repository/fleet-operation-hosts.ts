@@ -2,6 +2,7 @@ import { FleetEvidenceSchema, sha256Hex, type FleetEvidence, type FleetOperation
 import { z } from 'zod';
 import type { DatabaseClient } from '../db.js';
 import { FleetOperationError, isRegistryDraft, type FleetOperationClaim, type FleetOperationRow, type FencedFleetTarget } from './fleet-operation-contracts.js';
+import { isDeliverySourceOnly, runtimePrincipalScopeSql } from './system-principal-scope.js';
 
 export type FleetHostStep = FleetStepName | 'compensate';
 export interface FleetHostSlice {
@@ -70,6 +71,7 @@ export async function readFleetGroupAgents(client: DatabaseClient, request: Flee
     agent.host_id,agent.runtime_mode,agent.container_name,agent.runtime_user,agent.home_directory,agent.state_directory,
     agent.systemd_user,agent.primary_room_id,agent.primary_account_id,agent.model_id,agent.reasoning_effort,agent.enabled,agent.lifecycle_state
     FROM agents agent WHERE agent.tenant_id=$1 AND agent.purged_at IS NULL
+      AND ${runtimePrincipalScopeSql('agent.tenant_id', 'agent.alias')}
       AND ($2::text IS NULL OR agent.alias=$2)
       AND ($3::text IS NULL OR agent.primary_room_id=$3 OR EXISTS(SELECT 1 FROM memberships member
         WHERE member.tenant_id=agent.tenant_id AND member.alias=agent.alias AND member.room_id=$3))
@@ -80,6 +82,9 @@ export async function assertFleetHostAccess(
   client: DatabaseClient, request: FleetOperationRequest, controllerHost: string | undefined, coordinatorEnabled: boolean,
   coordinatorHosts?: readonly string[],
 ): Promise<void> {
+  if (request.target.resource === 'agent' && await isDeliverySourceOnly(client, request.target.tenant_id, request.target.alias)) {
+    throw new FleetOperationError('forbidden', 'delivery source principal has no physical runtime');
+  }
   const grouped = usesFleetHostSlices(request);
   if ((grouped || coordinatorEnabled) && !Host.safeParse(controllerHost).success) conflict('fleet controller host is unavailable');
   const registered = new Set(coordinatorHosts);
