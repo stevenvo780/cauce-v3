@@ -127,6 +127,8 @@ La consola ofrece solicitud, sondeo y descarga del ZIP; la restauración usa est
 
 ## Evidencia y límites de esta guía
 
-La CLI de plataforma pasó 10 pruebas unitarias y 13 PostgreSQL; la última ejecutó el entrypoint real con credenciales sintéticas actuales, export `0600`, plan, import y replay. El installer vigente pasó con `ALL OK` en un destino temporal. Enrolamiento Python pasó 9 pruebas. Context CLI pasó 6 pruebas con servidor HTTP fixture; la autoridad real está comprobada por 5 pruebas API con PostgreSQL. Backup durable pasó 11 pruebas PostgreSQL/HTTP/Ed25519/Python, incluida descarga y restauración real de un proyecto sintético de 100 000 bytes. La regresión Python/SDK pasó 10 pruebas.
+La CLI de plataforma pasó 10 pruebas unitarias y 13 PostgreSQL; la última ejecutó el entrypoint real con credenciales sintéticas actuales, export `0600`, plan, import y replay. El installer vigente pasó con `ALL OK` en un destino temporal. Enrolamiento Python pasó 9 pruebas. Context CLI pasó 6 pruebas con servidor HTTP fixture; la autoridad real está comprobada por 5 pruebas API con PostgreSQL. Backup durable pasó 16 pruebas PostgreSQL/HTTP/Ed25519/Python, incluida descarga y restauración real de un proyecto sintético de 100 000 bytes. La regresión Python/SDK pasó 10 pruebas.
 
 Estos resultados acreditan sus alcances locales. No acreditan altas de proveedores actuales, terminales de todos los agentes, migraciones físicas ni recorridos publicados. Los recibos exactos y las pruebas fallidas conservadas figuran en [la matriz](v4-matriz-local.md).
+
+Límites del ZIP: 20 000 entradas de contenido, 128 MiB por archivo y 1 GiB total. El manifiesto adicional tiene su propio límite. El backup durable reserva hasta 1 GiB por operación, con cuotas de 4 GiB por empresa y 16 GiB global. Un límite excedido produce fallo y ningún recibo completo. Las pruebas de copia mayores de 96 MiB y sus límites están en `v4-copias-espacios.md`; ninguna es aceptación productiva.
