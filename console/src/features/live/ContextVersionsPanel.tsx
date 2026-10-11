@@ -27,7 +27,7 @@ export function ContextVersionsPanel({ tenantId, alias, canWrite }: { tenantId: 
   }, [draft]);
   const snapshot = context.data;
   const files = draft?.files ?? snapshot?.files ?? [];
-  const current = files.find(file => file.path === selected) ?? files[0];
+  const current = files.find(file => file.path === selected) ?? files.at(0);
   const writable = canWrite && !!snapshot && !context.error && !context.loading && !busy;
   async function operation(action: () => Promise<unknown>, message: string, discard = false) {
     if (busy) return;
@@ -62,7 +62,7 @@ export function ContextVersionsPanel({ tenantId, alias, canWrite }: { tenantId: 
     <div className="flex flex-wrap justify-between gap-2"><h3 className="m-0">Contexto versionado</h3>
       <Button disabled={busy || context.loading || !!draft} onClick={() => { void operation(async () => undefined, 'Estado releído.'); }}>Releer versiones</Button></div>
     {context.loading && !snapshot ? <p role="status">Leyendo el contexto…</p> : null}
-    {context.error || history.error || error ? <Notice tone="danger" role="alert">{error || context.error?.message || history.error?.message}</Notice> : null}
+    {context.error || history.error || error ? <Notice tone="danger" role="alert">{error || (context.error?.message ?? history.error?.message)}</Notice> : null}
     {notice ? <Notice tone="info" role="status">{notice}</Notice> : null}
     {snapshot ? <>
       <dl className="m-0 grid grid-cols-2 gap-2 text-sm"><div><dt>Guardado</dt><dd>{snapshot.version}</dd></div>

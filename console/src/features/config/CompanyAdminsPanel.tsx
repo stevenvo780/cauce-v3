@@ -30,7 +30,7 @@ export function CompanyAdminsPanel({ companyId, canAssignPeople }: { companyId: 
   return <section aria-label="Autoridad de empresa" className="grid gap-3 rounded-xl border border-line bg-subtle p-4">
     <div className="flex flex-wrap justify-between gap-2"><h3 className="m-0 text-base">Dueños y administradores</h3><Button size="sm" disabled={busy || admins.loading} onClick={() => { void admins.reload(); }}>Releer autoridad</Button></div>
     {admins.loading ? <p role="status">Leyendo autoridad…</p> : null}
-    {error || admins.error || people.error ? <Notice tone="danger" role="alert">{error || admins.error?.message || people.error?.message}</Notice> : null}
+    {error || admins.error || people.error ? <Notice tone="danger" role="alert">{error || (admins.error?.message ?? people.error?.message)}</Notice> : null}
     {notice ? <Notice tone="ok" role="status">{notice}</Notice> : null}
     <ul className="m-0 grid list-none gap-2 p-0">{admins.data?.items.map(admin => <li key={admin.user_id} className="flex flex-wrap justify-between gap-2 border-b border-line py-2">
       <span>{admin.display_name} · {admin.email} · {admin.role === 'owner' ? 'Dueño' : 'Administrador'}</span>

@@ -5,7 +5,7 @@ export const officeRoomKey = (tenant: string, room: string) => JSON.stringify([t
 export interface OfficeRoomInfo { tenant: string; id: string; label: string; agents: string[] }
 export function officeRooms(topology?: TopologySnapshot): OfficeRoomInfo[] {
   return (topology?.tenants ?? []).flatMap(tenant => tenant.id ? (tenant.rooms ?? []).flatMap(room => room.id ? [{
-    tenant: tenant.id ?? '', id: room.id, label: room.label?.trim() || room.id,
+    tenant: tenant.id ?? '', id: room.id, label: (room.label?.trim() ?? '') || room.id,
     agents: (room.members ?? []).filter(member => member.alias && member.enabled !== false && member.agent_enabled !== false)
       .map(member => `${tenant.id ?? ''}/${member.alias ?? ''}`),
   }] : []) : []);

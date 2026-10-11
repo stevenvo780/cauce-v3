@@ -68,7 +68,7 @@ export function OfficeWorkspace({ campus, topology, agents, onAgent }: {
           <Button variant="primary" disabled={!writable || !draft} onClick={() => { void save(); }}>Guardar plano</Button>
           <Button disabled={busy || !draft} onClick={() => { setDraft(undefined); setError(''); }}>Descartar cambios de plano</Button></div></header>
       {layout.loading ? <p role="status">Leyendo plano…</p> : null}
-      {layout.error || quotas.error || error ? <Notice tone="danger" role="alert">{error || layout.error?.message || quotas.error?.message}</Notice> : null}
+      {layout.error || quotas.error || error ? <Notice tone="danger" role="alert">{error || (layout.error?.message ?? quotas.error?.message)}</Notice> : null}
       {notice ? <Notice tone="ok" role="status">{notice}</Notice> : null}
       {!rooms.length ? <Notice tone="info">Aún no hay salas. Crea una desde «Gestionar salas y asignaciones».</Notice> : null}
       <p className="m-0 text-xs text-muted">Selecciona una sala para cambiar su posición, tamaño y partes. Los agentes y asignaciones vienen de las salas actuales.</p>

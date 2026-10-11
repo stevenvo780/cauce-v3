@@ -47,7 +47,7 @@ it('habilita únicamente acciones del host y proveedor del entorno y bloquea hos
 
 it('revocar capacidad tras el consentimiento bloquea la confirmación sin enviar una acción', async () => {
   const action = vi.spyOn(testApi, 'actQuotaEnvironment'); const user = userEvent.setup();
-  const allowed = { ...snapshot, capabilities: { ...snapshot.capabilities, hosts: [{ ...snapshot.capabilities.hosts[0]!, provider_actions: { codex: ['authenticate' as const] } }] } };
+  const allowed = { ...snapshot, capabilities: { ...snapshot.capabilities, hosts: [{ ...snapshot.capabilities.hosts[0], provider_actions: { codex: ['authenticate' as const] } }] } };
   const view = renderWithApi(<QuotaEnvironmentPanel snapshot={allowed} accounts={accounts} canWrite reload={vi.fn()} />);
   await user.click(screen.getByRole('button', { name: 'Autenticar cuenta' }));
   view.rerender(<ApiProvider api={testApi}><QuotaEnvironmentPanel snapshot={snapshot} accounts={accounts} canWrite reload={vi.fn()} /></ApiProvider>);

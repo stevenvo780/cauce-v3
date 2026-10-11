@@ -61,7 +61,7 @@ export function HostEnrollmentPanel({ canEnroll }: { canEnroll: boolean }) {
       <Notice tone="warn">Esta invitación se entrega una sola vez. Caduca <Time value={currentInvitation.expires_at} />. Conserva su contenido antes de cerrar; podrás cancelar y crear otra si lo pierdes.</Notice>
       <label>Invitación del ordenador<textarea readOnly className="min-h-32 font-mono text-xs" value={JSON.stringify(currentInvitation, null, 2)} /></label>
       <p className="m-0 text-xs">En ese ordenador, con Cauce CLI instalado, ejecuta el comando y pega la invitación por su entrada estándar:</p>
-      <code className="overflow-auto whitespace-pre-wrap break-words rounded-md bg-subtle p-2 text-xs">cauce hosts enroll --gateway https://consola.humanizar.tech --invitation-stdin</code>
+      <code className="overflow-auto whitespace-pre-wrap break-words rounded-md bg-subtle p-2 text-xs">{`cauce hosts enroll --gateway ${window.location.origin} --invitation-stdin`}</code>
       <div className="flex flex-wrap gap-2"><Button onClick={() => { void copy(); }}>Copiar invitación</Button>
         <Button disabled={busy} onClick={() => { setInvitation(undefined); setNotice('La invitación sigue pendiente hasta su uso, caducidad o cancelación.'); }}>Cerrar invitación</Button></div>
     </section> : null}

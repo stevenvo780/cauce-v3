@@ -55,9 +55,9 @@ export function MyQuotasPage() {
   return <div className="grid gap-6">
     <header className="flex flex-wrap items-end justify-between gap-3"><div><h1 className="m-0 text-2xl font-semibold">Mis cuotas</h1>
       <p className="m-0 mt-1 max-w-2xl text-sm text-muted">Consulta tus suscripciones, incluso sin agentes. Fija las cuentas que sigues y opera sus entornos de consulta.</p></div>
-      <Button disabled={busy || accounts.loading || environments.loading} onClick={() => { void reload().catch(cause => { setError(cause instanceof Error ? cause.message : 'No se pudo actualizar.'); }); }}>Actualizar cuotas y entornos</Button></header>
+      <Button disabled={busy || accounts.loading || environments.loading} onClick={() => { void reload().catch((cause: unknown) => { setError(cause instanceof Error ? cause.message : 'No se pudo actualizar.'); }); }}>Actualizar cuotas y entornos</Button></header>
     {accounts.loading && !accounts.data ? <p role="status">Leyendo cuentas y ventanas…</p> : null}
-    {accounts.error || environments.error || preferences.error || error ? <Notice tone="danger" role="alert">{error || accounts.error?.message || environments.error?.message || preferences.error?.message}
+    {accounts.error || environments.error || preferences.error || error ? <Notice tone="danger" role="alert">{error || (accounts.error?.message ?? environments.error?.message ?? preferences.error?.message)}
       {preferences.error ? <Button size="sm" disabled={preferences.loading} onClick={() => { void preferences.reload(); }}>Releer tarjetas fijadas</Button> : null}</Notice> : null}
     {notice ? <Notice tone="ok" role="status">{notice}</Notice> : null}
     <div className="flex flex-wrap gap-2"><Button aria-pressed={filterPinned} disabled={!preferences.data || !!preferences.error} onClick={() => { setFilterPinned(!filterPinned); }}>{filterPinned ? 'Ver todas las cuentas' : 'Ver sólo cuentas fijadas'}</Button>
@@ -84,7 +84,7 @@ function QuotaAccountForm({ account, providers, busy, save, cancel }: {
   account?: QuotaAccount; providers: readonly QuotaProvider[]; busy: boolean; save: (input: AccountFormValues) => Promise<void>; cancel: () => void;
 }) {
   const [label, setLabel] = useState(account?.label ?? '');
-  const [provider, setProvider] = useState<string>(account?.provider ?? providers[0] ?? 'codex');
+  const [provider, setProvider] = useState<string>(account?.provider ?? providers.at(0) ?? 'codex');
   const [enabled, setEnabled] = useState(account?.enabled ?? true);
   const [paused, setPaused] = useState(account?.paused_until ?? '');
   const [reason, setReason] = useState(account?.paused_reason ?? '');

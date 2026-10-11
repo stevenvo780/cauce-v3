@@ -9,14 +9,14 @@ import { CompanySessionProvider } from '../auth/company-session';
 import { SpaceBackupPanel } from './SpaceBackupPanel';
 import { canBackupSpace } from './space-backup-authority';
 
-const state: ConsoleAuthState = { authenticated: true, subject: 'owner@example.test', home_tenant: 'One', authority: { role: 'company_owner', scope: 'company',
-  home_company: 'one', acting_company: 'one', platform_override: false } };
+const state = { authenticated: true, subject: 'owner@example.test', home_tenant: 'One', authority: { role: 'company_owner', scope: 'company',
+  home_company: 'one', acting_company: 'one', platform_override: false } } satisfies ConsoleAuthState;
 const pending: SpaceBackup = { id: '00000000-0000-4000-8000-000000000050', company_id: 'one', tenant_id: 'One', alias: 'agent',
   status: 'pending', sha256: null, manifest_sha256: null, bytes: null, error: null, download_url: null };
 const ready: SpaceBackup = { ...pending, status: 'ready', sha256: 'a'.repeat(64), manifest_sha256: 'b'.repeat(64), bytes: 22,
   download_url: `/v3/console/spaces/One/agent/backups/${pending.id}/download` };
 const createUrl = vi.fn(() => 'blob:backup'); const revokeUrl = vi.fn();
-function panel(session = state) { return <CompanySessionProvider state={session}><SpaceBackupPanel tenantId="One" alias="agent" /></CompanySessionProvider>; }
+function panel(session: ConsoleAuthState = state) { return <CompanySessionProvider state={session}><SpaceBackupPanel tenantId="One" alias="agent" /></CompanySessionProvider>; }
 beforeEach(() => {
   Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: createUrl });
   Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: revokeUrl });
@@ -58,7 +58,7 @@ it('cambiar de empresa durante la descarga aborta el cuerpo y no crea URL local 
   vi.spyOn(testApi, 'downloadSpaceBackup').mockImplementation(async (_backup, value) => { signal = value; return new Promise<Blob>(resolve => { release = resolve; }); });
   const view = renderWithApi(panel()); fireEvent.click(screen.getByRole('button', { name: 'Crear backup del espacio' }));
   fireEvent.click(await screen.findByRole('button', { name: 'Descargar backup ZIP' }));
-  view.rerender(<ApiProvider api={testApi}>{panel({ ...state, authority: { ...state.authority!, acting_company: 'other' } })}</ApiProvider>);
+  view.rerender(<ApiProvider api={testApi}>{panel({ ...state, authority: { ...state.authority, acting_company: 'other' } })}</ApiProvider>);
   expect(signal?.aborted).toBe(true); await act(async () => { release?.(new Blob(['private'], { type: 'application/zip' })); });
   expect(createUrl).not.toHaveBeenCalled(); expect(screen.queryByText('Backup disponible')).not.toBeInTheDocument();
 });
@@ -69,9 +69,9 @@ it('consulta la operación pendiente y detiene el sondeo al llegar a ready', asy
   expect(screen.getByText('Backup disponible')).toBeVisible(); await act(async () => { await vi.advanceTimersByTimeAsync(3000); }); expect(read).toHaveBeenCalledOnce();
 });
 it('reader no crea backups y tenant_operator sólo habilita su tenant acreditado por sesión', () => {
-  const reader = { ...state, authority: { ...state.authority!, role: 'reader' as const } };
+  const reader = { ...state, authority: { ...state.authority, role: 'reader' as const } };
   const view = renderWithApi(panel(reader)); expect(screen.getByRole('button', { name: 'Crear backup del espacio' })).toBeDisabled();
-  const operator = { ...state, subject: 'operator@example.test', authority: { ...state.authority!, role: 'tenant_operator' as const, scope: 'tenant' as const } };
+  const operator = { ...state, subject: 'operator@example.test', authority: { ...state.authority, role: 'tenant_operator' as const, scope: 'tenant' as const } };
   expect(canBackupSpace(operator, 'One')).toBe(true); expect(canBackupSpace(operator, 'Other')).toBe(false);
   expect(canBackupSpace({ ...operator, home_tenant: undefined }, 'One')).toBe(false);
   expect(canBackupSpace({ ...operator, home_tenant: 'Other' }, 'One')).toBe(false);

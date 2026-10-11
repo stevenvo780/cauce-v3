@@ -2,7 +2,7 @@ import type { QuotaEnvironment, QuotaEnvironmentAction, QuotaEnvironmentsSnapsho
 
 export function quotaHostSupports(host: QuotaHostCapabilities, provider: string, action: QuotaEnvironmentAction): boolean {
   return host.providers.some(value => value === provider)
-    && Object.entries(host.provider_actions).some(([value, actions]) => value === provider && actions?.includes(action));
+    && Object.entries(host.provider_actions).some(([value, actions]) => value === provider && Array.isArray(actions) && actions.includes(action));
 }
 
 export function quotaEnvironmentExecutable(snapshot: QuotaEnvironmentsSnapshot | undefined, environment: QuotaEnvironment, action: QuotaEnvironmentAction): boolean {

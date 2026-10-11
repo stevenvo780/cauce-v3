@@ -30,6 +30,8 @@ function BackupPanel({ target, allowed }: { target: SpaceBackupTarget; allowed: 
   const active = useRef(true); const generation = useRef(0); const requests = useRef(new Set<AbortController>());
   const idempotency = useRef(randomUuid()); const url = useRef<string | undefined>(undefined); const locked = useRef(false);
   const enabled = allowed && !invalidated;
+  const requestIsCurrent = useCallback((request: AbortController, started: number) => active.current && permitted.current
+    && started === generation.current && !request.signal.aborted, []);
   useLayoutEffect(() => {
     active.current = true;
     const clear = () => {
@@ -54,7 +56,7 @@ function BackupPanel({ target, allowed }: { target: SpaceBackupTarget; allowed: 
     if (!background) { locked.current = true; setBusy(kind); setError(''); setNotice(''); }
     try {
       const value = await action(AbortSignal.any([request.signal, AbortSignal.timeout(30_000)]));
-      if (!active.current || !permitted.current || started !== generation.current || request.signal.aborted) return;
+      if (!requestIsCurrent(request, started)) return;
       if (kind === 'downloading') {
         const link = document.createElement('a'); url.current = URL.createObjectURL(value as Blob);
         link.href = url.current; link.download = `space-${target.alias.replace(/[^A-Za-z0-9_-]/gu, '_').slice(0, 64)}-${backup?.id ?? ''}.zip`;
@@ -72,7 +74,7 @@ function BackupPanel({ target, allowed }: { target: SpaceBackupTarget; allowed: 
       requests.current.delete(request);
       if (active.current && started === generation.current && !background) { locked.current = false; setBusy(undefined); }
     }
-  }, [enabled, target.alias, backup?.id]);
+  }, [enabled, target.alias, backup?.id, requestIsCurrent]);
   const refresh = () => { if (backup) void perform('reading', signal => api.getSpaceBackup(target, backup.id, signal)); };
   useEffect(() => {
     if (!enabled || !backup || !['pending', 'running'].includes(backup.status) || busy) return;
