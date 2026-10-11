@@ -32,6 +32,8 @@ El gateway comparte una instancia de `AgentProviderAuthBroker` entre el servicio
 
 El consumidor del ordenador necesita `CAUCE_FLEET_ENROLLED_AUTH_POLICY_FILE`: una política privada y pinneada con los perfiles, plantillas y comandos admitidos por el executor. El archivo usa el contrato existente de autenticación; no contiene sesiones ni tokens de proveedor. Las reservas y cada efecto conservan empresa seleccionada, actor, cuenta, host, hash y epoch. Un reinicio no acredita un login terminado: el cierre debe confirmar que el PTY y sus procesos se detuvieron, y la verificación posterior debe confirmar la cuenta correspondiente.
 
+Los pins del helper cubren su ejecutable y todas las dependencias importadas, con un máximo combinado de 64 archivos. Los pins de comandos de proveedor conservan el máximo de 32, igual en TypeScript y Python. El cierre real de 33 archivos del helper se verificó sin omitir dependencias; la política no debe confundir ese cierre con los archivos de un comando de login. Se mantienen los controles de propietario, permisos, hardlinks, symlinks, tamaño y hash de cada archivo.
+
 Las pruebas con PTY nativa y un CLI sintético acreditan el transporte, la cancelación y los fences. La autenticación de las cuentas reales y el consumo por los agentes migrados requieren su propia verificación publicada.
 
 ## Autoridad central de credenciales para ordenadores enrolados
@@ -41,3 +43,11 @@ El endpoint `POST /v3/fleet/hosts/:host_id/authority` transporta íntegro el sob
 El gateway se configura mediante `CAUCE_FLEET_AUTHORITY_SOCKET`, `CAUCE_FLEET_AUTHORITY_OWNER_UID`, `CAUCE_FLEET_AUTHORITY_PEER_UID` y, cuando los UID difieren, `CAUCE_FLEET_AUTHORITY_GROUP_GID`. El socket requiere directorio 0750 y socket 0660 con el grupo aprobado cuando se comparte; con un único UID exige 0700 y 0600. La comprobación incluye propietario y credenciales del proceso conectado. Una configuración parcial impide el arranque.
 
 La entrada `services/gateway/dist/fleet/authority/signed-main.js` usa además `CAUCE_FLEET_AUTHORITY_COMMAND_FILE` y `CAUCE_FLEET_AUTHORITY_DATABASE_URL_FILE`, ambos archivos privados. El executor remoto selecciona autoridad con `{identity_directory,host_id,ca_certificate}` y usa HTTPS firmado. La acción cerrada `ready` verifica el emisor pinneado, su política y el par CA/clave sin emitir credenciales. Las capacidades de creación dependen de esta disponibilidad real; la lectura de cuotas conserva sus capacidades independientes. La instalación física y la emisión desde un ordenador de destino siguen pendientes de los gates del código final.
+
+## Contratos de Grok y Muse
+
+Grok usa un perfil de cuenta dedicado mediante `GROK_HOME` y la receta cerrada `login --device-auth`. Muse usa su CLI absoluto pinneado para `login`; el bridge se declara por separado en `muse: {bridge, bridge_sha256}`. El runtime pinnea ambos archivos y Muse recibe `XDG_CONFIG_HOME=<perfil>/config`, `XDG_DATA_HOME=<perfil>/data` y `MUSE_NO_AUTO_UPDATE=1`. HOME conserva el usuario canónico. No se usa el launcher mutable ni se reconstruye el enlace legacy de Hegel.
+
+El ambiente configurable de login sólo admite LANG, LC_ALL, TERM y NO_COLOR; el sistema añade las rutas aprobadas. La PTY fija umask077 antes de ejecutar el CLI. Una prueba local con padre umask000 acredita archivos0600 y directorios0700; no cambió permisos de credenciales existentes.
+
+Las recetas y los parsers no acreditan identidad de cuenta. La investigación pública conservada en `provider-identity-contracts.md`, dentro del estado privado de ejecución, no cerró el contrato de identidad remota y expiración del CLI Grok1.0.41 ni Muse1.4.4. Los drivers conservan la autenticación verificable y sus capacidades en estado no soportado. Muse tampoco anuncia un collector de cuota inexistente. Estas limitaciones impiden acreditar Hades y Hegel migrados hasta resolver el contrato y autenticar las cuentas legítimas en destino.
