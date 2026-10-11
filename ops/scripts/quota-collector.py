@@ -84,7 +84,7 @@ import ssl
 import subprocess
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -121,7 +121,7 @@ def env(name: str, default: str | None = None) -> str | None:
 
 
 def iso_now() -> str:
-    dt = datetime.now(timezone.utc)
+    dt = datetime.now(UTC)
     return dt.strftime('%Y-%m-%dT%H:%M:%S.') + f'{dt.microsecond // 1000:03d}Z'
 
 
@@ -342,11 +342,11 @@ def collect_raw(cmd: list[str], timeout: int, fallback_providers: list[str]) -> 
 # ------------------------------------------------------------------------------------------
 
 def normalize_window(raw_window: dict) -> dict:
-    window_key = sanitize_key(pick(raw_window, 'key', 'window_key'), 'window')
-    used_percent = to_number(pick(raw_window, 'usedPercent', 'used_percent'))
-    remaining_percent = to_number(pick(raw_window, 'remainingPercent', 'remaining_percent'))
+    window_key = sanitize_key(pick(raw_window, 'key', 'window_key', 'clave'), 'window')
+    used_percent = to_number(pick(raw_window, 'usedPercent', 'used_percent', 'usado_pct'))
+    remaining_percent = to_number(pick(raw_window, 'remainingPercent', 'remaining_percent', 'restante_pct'))
     used_units = to_units(pick(raw_window, 'usedUnits', 'used_units'), 0)
-    if used_percent is None and remaining_percent is None and used_units is None:
+    if used_percent is None and remaining_percent is None and used_units is None and raw_window.get('status') not in {'unknown', 'error'}:
         # Mirrors CHECK quota_window_samples_has_a_number: discard here, with a reason.
         raise ValueError(f"ventana '{window_key}' sin usedPercent/remainingPercent/usedUnits")
     return {
@@ -357,7 +357,8 @@ def normalize_window(raw_window: dict) -> dict:
         'used_units': used_units,
         'limit_units': to_units(pick(raw_window, 'limitUnits', 'limit_units'), 1),
         'window_minutes': to_units(pick(raw_window, 'windowMinutes', 'window_minutes'), 1),
-        'reset_at': pick(raw_window, 'resetAt', 'reset_at'),
+        'reset_at': pick(raw_window, 'resetAt', 'reset_at', 'reinicia_en'),
+        'observed_at': pick(raw_window, 'observedAt', 'observed_at'),
         'status': sanitize_status(pick(raw_window, 'status')),
         'family': trim(pick(raw_window, 'family'), 64),
         'model': trim(pick(raw_window, 'model'), 128),
@@ -365,7 +366,7 @@ def normalize_window(raw_window: dict) -> dict:
 
 
 def normalize_provider(name: str, raw: dict, bindings: AccountBindings, captured_at: str) -> dict:
-    windows_raw = raw.get('windows')
+    windows_raw = pick(raw, 'windows', 'ventanas')
     if not isinstance(windows_raw, list):
         windows_raw = []
 
@@ -398,7 +399,7 @@ def normalize_provider(name: str, raw: dict, bindings: AccountBindings, captured
                 'binding_note': binding_note,
             })
 
-    note = trim(pick(raw, 'note'), 512)
+    note = trim(pick(raw, 'note', 'nota', 'error'), 512)
     if dropped:
         extra = f'{len(dropped)} ventana(s) descartada(s): {"; ".join(dropped[:3])}'
         note = f'{note} | {extra}' if note else trim(extra, 512)
@@ -413,6 +414,7 @@ def normalize_provider(name: str, raw: dict, bindings: AccountBindings, captured
         'note': note,
         'effective_remaining_percent': to_number(pick(raw, 'effectiveRemainingPercent', 'effective_remaining_percent')),
         'observed_at': pick(raw, 'observedAt', 'observed_at', default=captured_at),
+        'account_id': bindings.resolve(name, sanitize_key(pick(raw, 'limitId', 'limit_id', default='default'), 'default'))[0],
         'available_groups': to_str_list(pick(raw, 'availableGroups', 'available_groups', default=[])),
         'limiting_groups': to_str_list(pick(raw, 'limitingGroups', 'limiting_groups', default=[])),
         'windows': flat_windows,

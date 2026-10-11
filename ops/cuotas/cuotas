@@ -45,8 +45,6 @@ for c in $(docker ps --filter name='^cuota-' --format '{{.Names}}' | sort); do
     emite "$c" grok "$(timeout 60 docker exec "$c" node /usr/local/bin/leer-cuota-grok.mjs 2>/dev/null || echo '{"ok":false,"nota":"el lector de grok no respondio"}')"
   fi
   if docker exec "$c" test -s /home/node/.codex/auth.json 2>/dev/null; then
-    # La sesion de cada espacio es propia: se refresca aqui antes de que venza (si no, muere a los 10 dias).
-    timeout 45 docker exec -i "$c" python3 - /home/node/.codex < /home/server/cuotas-cli/codex-refrescar.py >/dev/null 2>&1
     # Sin '|| echo': la sonda sale con rc!=0 si informa un error y el respaldo rompia su JSON.
     r=$(timeout 60 docker exec "$c" python3 /usr/local/bin/codex-http-probe.py /home/node/.codex 2>/dev/null)
     [ -n "$r" ] || r='{"error":"la sonda no respondio","ventanas":[]}'

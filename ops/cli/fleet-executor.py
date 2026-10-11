@@ -37,20 +37,32 @@ def main() -> int:
     action = parser.add_mutually_exclusive_group(required=True)
     action.add_argument('--binding', action='store_true')
     action.add_argument('--capabilities', action='store_true')
+    action.add_argument('--quota', action='store_true')
+    action.add_argument('--quota-auth-verify', action='store_true')
     action.add_argument('--step', choices=('prepare', 'artifacts', 'credentials', 'runtime', 'authenticate',
         'profile', 'verify', 'admission', 'fence', 'stop', 'revoke', 'purge', 'compensate', 'login-stop'))
     args = parser.parse_args()
     policy = load_policy(args.policy)
     if args.capabilities:
         from fleet_executor_templates import capabilities
-        print(json.dumps(capabilities(policy), sort_keys=True, separators=(',', ':')))
+        receipt = capabilities(policy)
+        if 'quota_environments' in policy:
+            from quota_runtime import capabilities as quota_capabilities
+            receipt['quota_environments'] = quota_capabilities(policy)
+        print(json.dumps(receipt, sort_keys=True, separators=(',', ':')))
         return 0
     encoded = sys.stdin.buffer.read(1024 * 1024 + 1)
     if len(encoded) > 1024 * 1024:
         raise SafeFailure('execution payload exceeds its limit')
-    context = validate_payload(json.loads(encoded))
     for termination in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
         signal.signal(termination, cancelled)
+    if args.quota or args.quota_auth_verify:
+        from quota_runtime import perform as quota_perform
+        from quota_runtime import verify_authentication
+        receipt = (verify_authentication if args.quota_auth_verify else quota_perform)(policy, json.loads(encoded))
+        print(json.dumps(receipt, sort_keys=True, separators=(',', ':')))
+        return 0
+    context = validate_payload(json.loads(encoded))
     receipt = approved_binding(policy, context) if args.binding else perform(policy, context, args.step)
     print(json.dumps(receipt, sort_keys=True, separators=(',', ':')))
     return 0

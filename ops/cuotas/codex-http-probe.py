@@ -35,7 +35,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 ESQUEMA = 1
 
@@ -87,7 +87,7 @@ def iso(epoch):
     if epoch in (None, "", 0):
         return None
     try:
-        return datetime.fromtimestamp(float(epoch), timezone.utc).isoformat().replace("+00:00", "Z")
+        return datetime.fromtimestamp(float(epoch), UTC).isoformat().replace("+00:00", "Z")
     except Exception:
         return None
 
@@ -122,7 +122,7 @@ def nombre_ventana(segundos, respaldo):
     return respaldo
 
 
-def ventanas_de(rl, prefijo=""):
+def ventanas_de(rl, prefijo="", limit_id="default", model=None):
     """Normaliza un bloque rate_limit {primary_window, secondary_window} a la lista
     "ventanas" del contrato. La clave sale de la DURACION, no de la posicion."""
     salida = []
@@ -130,10 +130,16 @@ def ventanas_de(rl, prefijo=""):
         v = (rl or {}).get(pos)
         if not isinstance(v, dict):
             continue
-        clave = prefijo + nombre_ventana(v.get("limit_window_seconds"), respaldo)
+        key = nombre_ventana(v.get("limit_window_seconds"), respaldo)
+        seconds = v.get("limit_window_seconds")
+        clave = prefijo + key
         pct = v.get("used_percent")
         salida.append({
             "clave": clave,
+            "key": key,
+            "limitId": limit_id,
+            "model": v.get("model") or model,
+            "windowMinutes": seconds / 60 if isinstance(seconds, (int, float)) and seconds > 0 else None,
             "usado_pct": float(pct) if isinstance(pct, (int, float)) else None,
             "reset_at": iso(v.get("reset_at")),
         })
@@ -289,12 +295,15 @@ def sonda(codex_home):
     # Ventanas adicionales (hoy: el cubo Spark de GPT-5.3-Codex, con sus propias 5h y
     # semanal). Se prefijan con el nombre del limite para no pisar las principales.
     for ad in (datos.get("additional_rate_limits") or []):
+        if not isinstance(ad, dict):
+            continue
         nombre = ad.get("limit_name") or ad.get("metered_feature") or "adicional"
-        out["ventanas"].extend(ventanas_de(ad.get("rate_limit"), prefijo=nombre + ":"))
+        group = ad.get("limit_id") or ad.get("limitId") or nombre
+        out["ventanas"].extend(ventanas_de(ad.get("rate_limit"), prefijo=nombre + ":", limit_id=group, model=ad.get("model")))
 
     # Limite de revision de codigo, cuando existe (suele venir null).
     if datos.get("code_review_rate_limit"):
-        out["ventanas"].extend(ventanas_de(datos["code_review_rate_limit"], prefijo="code_review:"))
+        out["ventanas"].extend(ventanas_de(datos["code_review_rate_limit"], prefijo="code_review:", limit_id="code_review"))
 
     # Estado "cuota agotada" NO es un error: la medicion es valida y vale oro. Se
     # marca en extra y se deja error=null para que el colector no descarte el dato.

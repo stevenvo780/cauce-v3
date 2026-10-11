@@ -75,7 +75,7 @@ def load_policy(filename: pathlib.Path) -> dict:
     finally:
         os.close(parent)
     required = {'schemaVersion', 'host_id', 'executor_user', 'roots', 'native', 'containers', 'bundles', 'profiles', 'hooks'}
-    if not isinstance(policy, dict) or set(policy) - {'signer', 'authority', 'transport', 'container_templates', 'profile_templates', 'shared_containers', 'legacy_credentials'} != required or type(policy['schemaVersion']) is not int or policy['schemaVersion'] != 1:
+    if not isinstance(policy, dict) or set(policy) - {'signer', 'authority', 'transport', 'container_templates', 'profile_templates', 'shared_containers', 'legacy_credentials', 'quota_environments'} != required or type(policy['schemaVersion']) is not int or policy['schemaVersion'] != 1:
         raise SafeFailure('invalid executor policy schema')
     if policy['executor_user'] != pwd.getpwuid(os.geteuid()).pw_name or re.fullmatch(r'[a-z][a-z0-9_-]{0,63}', policy['host_id']) is None:
         raise SafeFailure('executor host or execution user differs')
@@ -116,6 +116,9 @@ def load_policy(filename: pathlib.Path) -> dict:
     validate_shared_containers(policy)
     from fleet_executor_legacy_credentials import validate_legacy_credentials
     validate_legacy_credentials(policy)
+    if 'quota_environments' in policy:
+        from quota_runtime import configuration
+        configuration(policy)
     return policy
 
 

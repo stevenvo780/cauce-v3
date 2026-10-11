@@ -462,7 +462,27 @@ def test_network_failure_never_leaks_credential_content():
     print('✓ un fallo de red (conexion rechazada) nunca vuelca contenido de client.key en stdout/stderr')
 
 
+def test_native_cli_shapes_and_probe_rate_limit_are_preserved():
+    module = load_module()
+    bindings = module.AccountBindings(None)
+    captured = '2026-10-11T12:00:00Z'
+    codex = module.normalize_provider('codex', {'ok': True, 'ventanas': [
+        {'clave': '7d', 'usado_pct': 8, 'reset_at': None},
+        {'clave': 'model:5h', 'usado_pct': 15, 'limitId': None, 'model': 'model'}]}, bindings, captured)
+    assert codex['windows'][0]['used_percent'] == 8
+    assert codex['windows'][0]['group_key'] == 'default'
+    assert codex['windows'][1]['model'] == 'model'
+    unknown = module.normalize_window({'key': 'session', 'status': 'unknown'})
+    assert unknown['used_percent'] is None
+    limited = module.normalize_provider('claude', {'ok': False, 'rateLimited': True, 'retryAfter': 60,
+        'nota': 'HTTP 429: probe limited'}, bindings, captured)
+    assert limited['ok'] is False and limited['windows'] == []
+    assert '429' in limited['note']
+    print('✓ CLI nativo y fallo 429 de sonda no inventan agotamiento ni reinicios')
+
+
 TESTS = [
+    test_native_cli_shapes_and_probe_rate_limit_are_preserved,
     test_fake_server_startup_failure_reaps_process,
     test_fake_server_cleanup_attempts_all_terminations_before_waits,
     test_script_exists_and_shebang,
