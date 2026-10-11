@@ -62,3 +62,13 @@ Revisor distinto por frente; un diff/brief/reporte por tarea. Gates completos, r
 ## Task 8: Despliegue, aceptación final y documentación
 
 Implementar → local → desplegar → E2E publicado → corregir/repetir. Recorrer los nueve criterios obligatorios y los 97 párrafos de la matriz; probar todos los recursos, fallos, backups/restore, signup/enrolamiento y agentes migrados. Documentar comportamiento real. No completar el objetivo con pendientes esenciales.
+
+## Cierre local de perfiles y procedencia
+
+La validación de rutas de los proveedores comparte una primitiva ligera. OpenClaw prepara su configuración desde el layout real de módulos del contenedor sin cargar el materializador ni montar los generadores de flota. La reproducción independiente verifica preparación y replay, las variables de los tres drivers y los rechazos de symlinks y permisos abiertos. No acredita autenticación ni ejecución de un proveedor real.
+
+El SDK exige el `GROK_HOME` exacto al adoptar una terminal Grok. La comprobación independiente usa tmux real: rechaza el perfil ajeno y adopta el correcto conservando el proceso. Muse usa su perfil XDG dedicado y rechaza directorios existentes ajenos o accesibles por otros usuarios sin cambiar sus permisos ni archivos. Los esfuerzos siguen las capacidades de cada harness. El consumo nativo de Grok continúa sin acreditarse. Las pruebas locales conservan los negativos originales y el límite de una invocación tmux con `LC_ALL=C` impuesto manualmente.
+
+El dominio de verificación incluye los productores PTY; esa inclusión no cambia el alcance del digest de la imagen runtime. El runner falla ante errores o formatos inválidos de HEAD y digest, cambios de identidad y un árbol final con archivos modificados o sin commitear. Las contrapruebas independientes cubren 17 casos del runner. La matriz completa y los gates de artefacto se ejecutan posteriormente sobre el SHA congelado, con imagen inmutable y etiquetas comprobadas; su preparación no equivale a haberlos superado.
+
+En server2 se midió el intérprete regular `/usr/bin/python3.14` y se verificaron las raíces privadas del usuario `server`. Los CLI públicos Grok y Muse están preparados con manifiestos de integridad. Estos recibos no acreditan instalación, enrolamiento, migración, login ni despliegue. Continúan pendientes la identidad y vigencia reales de Grok/Muse, las cuatro migraciones y la aceptación publicada de los 97 requisitos.
