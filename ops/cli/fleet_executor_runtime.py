@@ -133,7 +133,7 @@ def sdk_environment(policy: dict, agent: dict, bootstrap: bool, operation_id: st
         raise SafeFailure('SDK requires an approved verified TLS gateway transport')
     gateway = urlsplit(transport['gateway_url'])
     instance = str(uuid.uuid5(uuid.NAMESPACE_URL, '\0'.join((operation_id or receipt['generation'], agent['tenant_id'], agent['runtime_key']))))
-    values = {'CAUCE_ROOM': room, 'CAUCE_INSTANCE_ID': instance,
+    values = {'CAUCE_ROOM': room, 'CAUCE_INSTANCE_ID': instance, 'CAUCE_SPACE_ROOT': str(path(agent['state_directory']) / 'space'),
               'CAUCE_RELAY_URL': urlunsplit(('wss', gateway.netloc, '/v3/ws', '', ''))}
     model = agent.get('model_id')
     if model is not None:
@@ -183,7 +183,7 @@ def native_proof(policy: dict, agent: dict, identity: dict, bundle: dict, *, boo
                 raw = pathlib.Path(f'/proc/{document["pid"]}/environ').read_bytes()
             environment = {item.split(b'=', 1)[0].decode(): item.split(b'=', 1)[1].decode()
                            for item in raw.split(b'\0') if item.startswith((b'CAUCE_BOOTSTRAP=', b'CAUCE_FLEET_OPERATION_ID=',
-                               b'CAUCE_ROOM=', b'CAUCE_INSTANCE_ID=', b'CAUCE_RELAY_URL=', b'CAUCE_MODEL_ID=', b'CAUCE_REASONING_EFFORT='))}
+                               b'CAUCE_ROOM=', b'CAUCE_INSTANCE_ID=', b'CAUCE_SPACE_ROOT=', b'CAUCE_RELAY_URL=', b'CAUCE_MODEL_ID=', b'CAUCE_REASONING_EFFORT='))}
             namespace_proof(environment, bootstrap, operation_id)
             sdk_environment_proof(policy, agent, environment, bootstrap, operation_id)
         return document
