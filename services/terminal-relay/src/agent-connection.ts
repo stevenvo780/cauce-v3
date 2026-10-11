@@ -104,6 +104,8 @@ export class AgentConnection {
         ? {} : { openclaw_workspace: this.hello.openclaw_workspace }),
       ...(this.hello.muse_workspace === undefined
         ? {} : { muse_workspace: this.hello.muse_workspace }),
+      ...(this.hello.grok_workspace === undefined
+        ? {} : { grok_workspace: this.hello.grok_workspace }),
       ...(this.hello.cwd === undefined ? {} : { cwd: this.hello.cwd }),
       ...(this.hello.workspace_root === undefined
         ? {} : { workspace_root: this.hello.workspace_root }),

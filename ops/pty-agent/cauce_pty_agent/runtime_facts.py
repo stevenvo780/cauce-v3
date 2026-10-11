@@ -21,11 +21,11 @@ BUNDLE_KEYS = (
 )
 OPTIONAL_BUNDLE_KEYS = frozenset(("governance_journal_dir",))
 RUNTIME_FACT_KEYS = frozenset((
-    "codex_home", "claude_config_dir", "openclaw_workspace", "muse_workspace", "cwd", "workspace_root",
+    "codex_home", "claude_config_dir", "openclaw_workspace", "muse_workspace", "grok_workspace", "cwd", "workspace_root",
     "project_root", "project_doc_max_bytes", "project_doc_fallback_filenames",
 ))
 RUNTIME_PATH_FACT_KEYS = frozenset((
-    "codex_home", "claude_config_dir", "openclaw_workspace", "muse_workspace", "cwd", "workspace_root",
+    "codex_home", "claude_config_dir", "openclaw_workspace", "muse_workspace", "grok_workspace", "cwd", "workspace_root",
     "project_root",
 ))
 
@@ -137,8 +137,9 @@ def _runtime_facts_config(value: Any, harness: str, home: str) -> dict[str, Any]
         "claude": "claude_config_dir",
         "openclaw": "openclaw_workspace",
         "muse": "muse_workspace",
+        "grok": "grok_workspace",
     }.get(harness)
-    profile_keys = {"codex_home", "claude_config_dir", "openclaw_workspace", "muse_workspace"}
+    profile_keys = {"codex_home", "claude_config_dir", "openclaw_workspace", "muse_workspace", "grok_workspace"}
     if any(key in profile_keys and key != expected for key in value):
         return {}
     validated: dict[str, Any] = {}

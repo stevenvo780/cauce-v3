@@ -34,6 +34,7 @@ export interface AgentHello {
   readonly claude_config_dir?: string;
   readonly openclaw_workspace?: string;
   readonly muse_workspace?: string;
+  readonly grok_workspace?: string;
     /** Effective measured context; optional for older agents during rollout. */
   readonly cwd?: string;
   readonly workspace_root?: string;
@@ -242,6 +243,7 @@ export function parseAgentHello(payload: Buffer): AgentHello | undefined {
   const claudeConfigDir = rutaMedida(source, 'claude_config_dir');
   const openclawWorkspace = rutaMedida(source, 'openclaw_workspace');
   const museWorkspace = rutaMedida(source, 'muse_workspace');
+  const grokWorkspace = rutaMedida(source, 'grok_workspace');
   let cwd = rutaMedida(source, 'cwd');
   let workspaceRoot = rutaMedida(source, 'workspace_root');
   let projectRoot = rutaMedida(source, 'project_root');
@@ -270,6 +272,7 @@ export function parseAgentHello(payload: Buffer): AgentHello | undefined {
       || (harness === 'claude' && claudeConfigDir !== undefined)
       || (harness === 'openclaw' && openclawWorkspace !== undefined)
       || (harness === 'muse' && museWorkspace !== undefined)
+      || (harness === 'grok' && grokWorkspace !== undefined)
       || (harness === 'hermes' && cwd !== undefined && projectRoot !== undefined));
   const writerInstanceId = writerInstanceIdField(source);
   const features = featuresField(source).filter((feature) =>
@@ -292,6 +295,7 @@ export function parseAgentHello(payload: Buffer): AgentHello | undefined {
       ...(harness === 'claude' && claudeConfigDir !== undefined ? { claude_config_dir: claudeConfigDir } : {}),
       ...(harness === 'openclaw' && openclawWorkspace !== undefined ? { openclaw_workspace: openclawWorkspace } : {}),
       ...(harness === 'muse' && museWorkspace !== undefined ? { muse_workspace: museWorkspace } : {}),
+      ...(harness === 'grok' && grokWorkspace !== undefined ? { grok_workspace: grokWorkspace } : {}),
       ...(cwd === undefined ? {} : { cwd }),
       ...(workspaceRoot === undefined ? {} : { workspace_root: workspaceRoot }),
       ...(projectRoot === undefined ? {} : { project_root: projectRoot }),

@@ -380,6 +380,7 @@ wire_for_harness = {
     "claude": ("CLAUDE_CONFIG_DIR", "claude_config_dir"),
     "openclaw": ("CAUCE_OPENCLAW_WORKSPACE", "openclaw_workspace"),
     "muse": ("CAUCE_MUSE_WORKSPACE", "muse_workspace"),
+    "grok": ("CAUCE_GROK_WORKSPACE", "grok_workspace"),
 }.get(harness)
 observed = set()
 for name in os.listdir("/proc"):

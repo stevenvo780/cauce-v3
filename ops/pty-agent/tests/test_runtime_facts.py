@@ -163,15 +163,20 @@ class RuntimeFactsTest(unittest.TestCase):
             "project_root": str(self.workspace),
         })
 
-    def test_muse_workspace_is_measured_from_the_matching_live_adapter(self) -> None:
-        muse_workspace = self.home / "clawd"
-        muse_workspace.mkdir()
-        self._spawn_adapter({"CAUCE_MUSE_WORKSPACE": str(muse_workspace)})
-        self.assertEqual(self._measured("muse"), {
-            "muse_workspace": str(muse_workspace),
-            "cwd": str(self.workspace),
-            "project_root": str(self.workspace),
-        })
+    def test_provider_workspace_is_measured_from_the_matching_live_adapter(self) -> None:
+        for harness, variable, fact in (
+            ("muse", "CAUCE_MUSE_WORKSPACE", "muse_workspace"),
+            ("grok", "CAUCE_GROK_WORKSPACE", "grok_workspace"),
+        ):
+            with self.subTest(harness=harness):
+                workspace = self.home / harness
+                workspace.mkdir()
+                self._spawn_adapter({variable: str(workspace)})
+                self.assertEqual(self._measured(harness), {
+                    fact: str(workspace), "cwd": str(self.workspace), "project_root": str(self.workspace),
+                })
+                self.processes[-1].terminate()
+                self.processes[-1].wait(timeout=2)
 
     def test_muse_bridge_without_workspace_keeps_only_the_process_facts(self) -> None:
         self._spawn_adapter({})
@@ -179,6 +184,22 @@ class RuntimeFactsTest(unittest.TestCase):
             "cwd": str(self.workspace),
             "project_root": str(self.workspace),
         })
+
+    def test_grok_login_home_does_not_certify_a_workspace(self) -> None:
+        login_home = self.home / ".grok"
+        login_home.mkdir()
+        self._spawn_adapter({"GROK_HOME": str(login_home)})
+        self.assertEqual(self._measured("grok"), {})
+
+    def test_grok_workspace_rejects_symlinks_and_foreign_home(self) -> None:
+        link = self.home / "linked-workspace"
+        link.symlink_to(self.workspace, target_is_directory=True)
+        for workspace in (link, self.workspace):
+            with self.subTest(workspace=str(workspace)):
+                self._spawn_adapter({"CAUCE_GROK_WORKSPACE": str(workspace)})
+                self.assertEqual(self._measured("grok"), {})
+                self.processes[-1].terminate()
+                self.processes[-1].wait(timeout=2)
 
     def test_codex_instruction_knobs_are_projected_from_the_measured_profile_only(self) -> None:
         codex_home = self.home / ".codex"
@@ -506,16 +527,15 @@ class RuntimeFactsBundleValidationTest(unittest.TestCase):
         self.assertEqual(result["project_doc_max_bytes"], 16777216)
         self.assertEqual(result["project_doc_fallback_filenames"], ["TEAM.md", "LOCAL.md"])
 
-    def test_muse_workspace_crosses_only_its_own_bundle(self) -> None:
-        muse_workspace = self.home / "clawd"
-        muse_workspace.mkdir()
-        facts = {
-            "muse_workspace": str(muse_workspace),
-            "cwd": str(self.cwd),
-            "project_root": str(self.cwd),
-        }
-        self.assertEqual(agent._runtime_facts_config(facts, "muse", str(self.home)), facts)
-        self.assertEqual(agent._runtime_facts_config(facts, "codex", str(self.home)), {})
+    def test_provider_workspace_crosses_only_its_own_bundle(self) -> None:
+        for harness, fact in (("muse", "muse_workspace"), ("grok", "grok_workspace")):
+            with self.subTest(harness=harness):
+                workspace = self.home / harness
+                workspace.mkdir()
+                facts = {fact: str(workspace), "cwd": str(self.cwd), "project_root": str(self.cwd)}
+                self.assertEqual(agent._runtime_facts_config(facts, harness, str(self.home)), facts)
+                for other in ("codex", "grok" if harness == "muse" else "muse"):
+                    self.assertEqual(agent._runtime_facts_config(facts, other, str(self.home)), {})
 
     def test_partial_or_badly_typed_instruction_pair_is_omitted_but_paths_survive(self) -> None:
         cases = (

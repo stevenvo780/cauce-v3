@@ -293,19 +293,20 @@ describe('agent admission and identity', () => {
     });
   });
 
-  it('publica el workspace medido de Muse en la presencia', async () => {
+  it.each(['muse', 'grok'])('publica el workspace medido de %s en la presencia', async (provider) => {
+    const workspaceField = `${provider}_workspace`;
     const harness = await startHarness();
     const agent = await FakePtyAgent.connect(harness.agentPort, {
       cert: TEST_AGENT_CERTIFICATE, key: TEST_AGENT_PRIVATE_KEY
     }, {
       v: 1, tenant_id: 'Steven', alias: 'jarvis', container_id: 'claw', generation: '6364e6cc38930893688a8d19cb7a32ba', image_id: 'sha256:abc',
-      runtime_user: 'claw', runtime_uid: 1000, harness: 'muse', agent_version: '0.6.0', modes: ['shell'],
-      runtime_facts_observed: true, home: '/home/claw', muse_workspace: '/home/claw/clawd',
+      runtime_user: 'claw', runtime_uid: 1000, harness: provider, agent_version: '0.6.0', modes: ['shell'],
+      runtime_facts_observed: true, home: '/home/claw', [workspaceField]: '/home/claw/clawd',
     });
     await waitFor(() => agent.helloAck !== undefined);
     await waitFor(() => harness.leg.presence().length === 1);
     expect(harness.leg.presence()[0]).toMatchObject({
-      harness: 'muse', runtime_facts_observed: true, muse_workspace: '/home/claw/clawd',
+      harness: provider, runtime_facts_observed: true, [workspaceField]: '/home/claw/clawd',
     });
   });
 
