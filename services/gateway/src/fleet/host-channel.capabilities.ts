@@ -5,7 +5,7 @@ import type { DatabaseClient, DatabasePool } from '@cauce/store';
 
 const Identifier=z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/u);
 const Template=FleetRuntimeCapabilitySchema.safeExtend({template_id:Identifier,
-  provider:z.enum(['codex','claude','gemini','minimax','grok','feihoa'])});
+  provider:z.enum(['codex','claude','gemini','minimax','grok','feihoa','muse'])});
 const QuotaProvider=z.enum(['codex','claude','gemini','grok']);
 const QuotaActions=z.array(z.enum(['create','authenticate','query','update_cli','delete'])).max(5)
   .refine(value=>new Set(value).size===value.length);

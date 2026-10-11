@@ -1,3 +1,4 @@
+import { MuseDriver, nativeLoginRecipe, nativeProviderCompatible, nativeProviderLogin } from './host-provider-native.js';
 import { OpenClawDriver, openClawCompatible, openClawLogin } from './host-provider-openclaw.js';
 import { readFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
@@ -24,35 +25,34 @@ const Identifier = z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/u);
 const User = z.string().regex(/^[a-z_][a-z0-9_-]{0,31}$/u);
 const Hash = z.string().regex(/^[0-9a-f]{64}$/u);
 const Text = z.string().min(1).max(4096).refine(value => !/[\p{Cc}]/u.test(value));
-const Provider = z.enum(['codex', 'claude', 'gemini', 'minimax', 'grok', 'feihoa']);
+const Provider = z.enum(['codex', 'claude', 'gemini', 'minimax', 'grok', 'feihoa', 'muse']);
 const Profile = z.object({ provider: Provider, path: LoginPathSchema, identity: Text, runtime_user: User,
-  container_name: Text.optional(), command: LoginPathSchema.optional(), command_sha256: Hash.optional(), command_files: LoginPinsSchema.optional(), openclaw: OpenClawDriver.optional(),
-}).strict().refine(openClawCompatible).refine(value => (value.command === undefined) === (value.command_sha256 === undefined));
+  container_name: Text.optional(), command: LoginPathSchema.optional(), command_sha256: Hash.optional(), command_files: LoginPinsSchema.optional(), openclaw: OpenClawDriver.optional(), muse: MuseDriver.optional(),
+}).strict().refine(openClawCompatible).refine(nativeProviderCompatible).refine(value => (value.command === undefined) === (value.command_sha256 === undefined));
 const Profiles = z.record(Identifier, Profile).refine(value => Object.keys(value).length <= 1000);
 const Login = z.object({ method: z.enum(['device', 'terminal']), command: LoginCommandSchema, sha256: Hash,
-  files: LoginPinsSchema.optional(), env: z.record(z.string().regex(/^[A-Z_][A-Z0-9_]{0,63}$/u), Text).refine(value => Object.keys(value).length <= 32).optional() }).strict();
+  files: LoginPinsSchema.optional(), env: z.partialRecord(z.enum(['LANG', 'LC_ALL', 'TERM', 'NO_COLOR']), Text).refine(value => Object.keys(value).length <= 32).optional() }).strict();
 const Template = z.object({ provider: Provider, runtime_user: User, path_root: LoginPathSchema,
-  command: LoginPathSchema, command_sha256: Hash, command_files: LoginPinsSchema.optional(), openclaw: OpenClawDriver.optional(),
+  command: LoginPathSchema, command_sha256: Hash, command_files: LoginPinsSchema.optional(), openclaw: OpenClawDriver.optional(), muse: MuseDriver.optional(),
   runtime_mode: z.enum(['native', 'container']).optional(), container_name: z.string().regex(/^[a-z][a-z0-9-]{0,127}$/u).optional(),
   container_prefix: z.string().regex(/^[a-z][a-z0-9-]{0,47}-$/u).optional(), login: Login.optional(),
-}).strict().refine(openClawCompatible).refine(value => {
+}).strict().refine(openClawCompatible).refine(nativeProviderCompatible).refine(value => {
   const selectors = Number(value.container_name !== undefined) + Number(value.container_prefix !== undefined);
   return value.runtime_mode === 'container' ? selectors === 1 : selectors === 0;
 }).refine(value => {
   const login = value.login; if (!login) return true;
   if (login.command.slice(1).some(arg => arg.startsWith('/') && login.files?.[arg] === undefined)) return false;
-  const args = value.provider === 'codex' ? login.method === 'device' ? ['login', '--device-auth'] : ['login']
-    : value.provider === 'claude' && login.method === 'terminal' ? ['auth', 'login'] : undefined;
-  return value.openclaw === undefined ? login.command[0] === value.command && login.sha256 === value.command_sha256 && isDeepStrictEqual(login.command.slice(1), args)
+  return value.openclaw === undefined ? nativeLoginRecipe(value, login)
     : login.command[0] === value.openclaw.node_command && login.sha256 === value.openclaw.node_command_sha256
       && login.method === 'device' && isDeepStrictEqual(login.command.slice(1), [value.command, 'models', 'auth', 'login']) && login.files?.[value.command] === value.command_sha256;
 });
 const Templates = z.array(Template).max(100).refine(value => new Set(value.map(row => JSON.stringify([
   row.provider, row.runtime_user, row.openclaw !== undefined, row.runtime_mode, row.container_name, row.container_prefix]))).size === value.length);
+const LoginKey = z.enum(['codex', 'claude', 'openclaw', 'grok', 'muse']);
 const Policy = z.object({ schemaVersion: z.literal(1), host_id: Identifier, state_root: LoginPathSchema,
   helper: z.object({ executable: LoginPathSchema, sha256: Hash, files: HelperLoginPinsSchema.optional() }).strict(), profiles: Profiles,
   profile_templates: Templates.optional(),
-  logins: z.partialRecord(z.enum(['codex', 'claude', 'openclaw']), Login) }).strict();
+  logins: z.partialRecord(LoginKey, Login) }).strict();
 const ExecutorPolicy = z.object({ schemaVersion: z.literal(1), host_id: Identifier, profiles: Profiles, profile_templates: Templates.optional() }).loose();
 const Agent = z.object({ tenant_id: Text, alias: Identifier, harness_id: Identifier, host_id: Identifier, runtime_user: User,
   primary_account_id: Identifier, runtime_key: Text, runtime_mode: z.enum(['native', 'container']), container_name: Text,
@@ -87,7 +87,7 @@ function selected(policy: z.infer<typeof Policy>, accountId: string, provider: s
   let templateLogin: z.infer<typeof Login> | undefined;
   if (!profile) {
     const templates = policy.profile_templates?.filter(value => value.provider === provider && value.runtime_user === runtimeUser
-      && (harness === 'openclaw') === (value.openclaw !== undefined) && (value.runtime_mode === undefined || value.runtime_mode === placement.runtime_mode)
+      && (harness === 'openclaw') === (value.openclaw !== undefined) && (harness === 'muse') === (value.muse !== undefined) && (value.runtime_mode === undefined || value.runtime_mode === placement.runtime_mode)
       && (value.container_name === undefined || value.container_name === placement.container_name)
       && (value.container_prefix === undefined || typeof placement.container_name === 'string' && placement.container_name.startsWith(value.container_prefix))) ?? [];
     const template = templates.length === 1 ? templates[0] : undefined;
@@ -99,13 +99,15 @@ function selected(policy: z.infer<typeof Policy>, accountId: string, provider: s
       command: template.command, command_sha256: template.command_sha256,
       ...(template.command_files === undefined ? {} : { command_files: template.command_files }),
       ...(template.openclaw === undefined ? {} : { openclaw: template.openclaw }),
+      ...(template.muse === undefined ? {} : { muse: template.muse }),
       ...(placement.runtime_mode === 'container' ? { container_name: Text.parse(placement.container_name) } : {}) });
   }
   if (profile.provider !== provider || profile.identity !== identity || profile.runtime_user !== runtimeUser
-      || (provider !== 'codex' && provider !== 'claude') || (harness === 'openclaw') !== (profile.openclaw !== undefined)
+      || !['codex', 'claude', 'grok', 'muse'].includes(provider) || (harness === 'openclaw') !== (profile.openclaw !== undefined) || (harness === 'muse') !== (profile.muse !== undefined)
+      || (provider === 'grok' && harness !== 'grok')
       || (placement.runtime_mode === 'container' ? profile.container_name !== placement.container_name : profile.container_name !== undefined)) throw denied();
-  const loginKey = harness === 'openclaw' ? 'openclaw' : provider;
-  const login = Login.safeParse(templateLogin ?? policy.logins[loginKey]); if (!login.success) throw denied();
+  const loginKey = LoginKey.safeParse(harness === 'openclaw' ? 'openclaw' : provider); if (!loginKey.success) throw denied();
+  const login = Login.safeParse(templateLogin ?? policy.logins[loginKey.data]); if (!login.success) throw denied();
   return { profile, login: login.data };
 }
 function resolver(options: HostProviderAuthOptions): ProviderAuthPolicyResolver {
@@ -174,9 +176,8 @@ async function loginConfiguration(options: HostProviderAuthOptions, execution: F
     'home_directory', 'state_directory', 'primary_account_id'] as const) if (binding.agent[key] !== agent[key]) throw denied();
   if (!isDeepStrictEqual(binding.profile_binding, profile) || (agent.runtime_mode === 'container') !== (binding.runtime_binding !== undefined)
       || (profile.container_name !== undefined && profile.container_name !== agent.container_name)) throw denied();
-  const projected = agent.harness_id === 'openclaw' ? openClawLogin(profile, agent, login) : { command: login.command, files: login.files,
-    env: { [profile.provider === 'codex' ? 'CODEX_HOME' : 'CLAUDE_CONFIG_DIR']: profile.path } };
-  const env = { ...login.env };
+  const projected = agent.harness_id === 'openclaw' ? openClawLogin(profile, agent, login) : nativeProviderLogin(profile, login);
+  const env: Record<string, string> = { ...login.env };
   for (const [key, value] of Object.entries({ HOME: agent.home_directory, PATH: '/usr/bin:/bin', ...projected.env })) {
     if (env[key] !== undefined && env[key] !== value) throw denied(); env[key] = value;
   }

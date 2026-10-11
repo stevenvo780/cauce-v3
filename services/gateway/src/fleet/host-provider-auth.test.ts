@@ -380,8 +380,8 @@ describe('host provider authentication factory', () => {
   });
   it('refuses a substituted provider home and requires verified adapter stop before opening login', async () => {
     const login = policy.logins.codex; if (!login) throw new Error('login absent'); login.env = { CODEX_HOME: '/synthetic-substitute' }; await savePolicy();
-    const value = await service(); const failed = await value.start(actor, await value.resolve(actor, operationId));
-    expect(failed.status).toBe('failed'); expect(await trace()).not.toContain('login');
+    await expect(service()).rejects.toMatchObject({ code: 'HOST_UNAVAILABLE' });
+    expect(await trace()).toEqual([]);
     delete login.env; await savePolicy(); await writeFile(join(directory, 'unverified-stop'), 'synthetic');
     const retry = await service(); const stopped = await retry.start(actor, await retry.resolve(actor, operationId));
     expect(stopped.status).toBe('failed'); expect(stopped.error).toBe('STOP_UNCONFIRMED'); expect(stopped.cleanup_pending).toBe(true);
