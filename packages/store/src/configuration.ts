@@ -44,6 +44,8 @@ interface ConfigurationActor {
   readonly resolve: ConfigurationAuthorityResolver;
 }
 
+interface ControlState { hub_control_count: number; owner_count: number; platform_admin_count: number }
+
 function configurationActor(tenant: Tenant, alias: string, resolve?: ConfigurationAuthorityResolver): ConfigurationActor {
   return { tenant, alias, resolve: resolve ?? (client => lockCompanyAuthority(client, { tenant, alias })) };
 }
@@ -381,12 +383,13 @@ export class ConfigurationRepository extends ConfigurationMutations {
 
   private async lockForWrite(
     client: DatabaseClient, actor: ConfigurationActor, mutation: ConfigMutation, expected?: number,
-    peeked: CompanyAuthority | undefined = undefined,
+    peeked?: CompanyAuthority,
   ): Promise<{ current: CompanyAuthority; revision: number }> {
     peeked ??= await this.peek(client, actor);
     this.authorizeMutation(mutation, peeked);
     if (isPlatformMutation(mutation)) await lockPlatformConfiguration(client);
     else await lockCompanyConfiguration(client, peeked.actingCompany);
+    await client.query('SELECT cauce_lock_owner_guard($1)', [peeked.actingCompany]);
     const current = await this.authority(client, actor);
     if (current.actingCompany !== peeked.actingCompany) throw new ConfigurationError('conflict', 'the acting company changed');
     this.authorizeMutation(mutation, current);
@@ -433,23 +436,15 @@ export class ConfigurationRepository extends ConfigurationMutations {
     return Number(insertedRevision.id);
   }
 
-  /** Company and owner counts: a change may not leave the company without hub control or a qualified owner. */
-  protected async controlState(client: DatabaseClient, company: string): Promise<{ hub_control_count: number; owner_count: number }> {
-    const selected = await client.query<{ hub_control_count: string | number; owner_count: string | number }>(
-      `SELECT (SELECT count(*) FROM tenants tenant WHERE tenant.company_id=$1 AND tenant.is_hub AND tenant.enabled
-         AND tenant.retired_at IS NULL AND tenant.purged_at IS NULL AND EXISTS(
-           SELECT 1 FROM memberships membership
-           JOIN role_policies role ON role.role=membership.role
-           JOIN rooms room ON room.id=membership.room_id AND room.tenant_id=membership.tenant_id
-           JOIN agents agent ON agent.tenant_id=membership.tenant_id AND agent.alias=membership.alias
-           WHERE membership.tenant_id=tenant.id AND membership.enabled AND room.enabled AND role.allow_control
-             AND membership.retired_at IS NULL AND room.retired_at IS NULL AND room.purged_at IS NULL
-             AND agent.retired_at IS NULL AND agent.purged_at IS NULL)) AS hub_control_count,
-       (SELECT count(*) FROM company_admins owner
-         JOIN console_users person ON person.id=owner.human_id
+  /** A company mutation keeps recoverable company control and a qualified platform administrator. */
+  protected async controlState(client: DatabaseClient, company: string): Promise<ControlState> {
+    const selected = await client.query<Record<keyof ControlState, string | number>>(
+      `WITH qualified AS (
+         SELECT person.id,person.company_id FROM console_users person
          JOIN human_tenant_memberships home ON home.human_id=person.id AND home.tenant_id=person.tenant_id
-         JOIN tenants tenant ON tenant.id=person.tenant_id AND tenant.company_id=owner.company_id
-         WHERE owner.company_id=$1 AND owner.role='owner' AND person.active AND person.role='operator'
+         JOIN tenants tenant ON tenant.id=person.tenant_id AND tenant.company_id=person.company_id
+         JOIN companies company ON company.id=tenant.company_id
+         WHERE person.active AND person.role='operator' AND company.enabled AND company.retired_at IS NULL
            AND tenant.enabled AND tenant.retired_at IS NULL AND tenant.purged_at IS NULL
            AND home.enabled AND home.revoked_at IS NULL AND home.role='operator' AND home.actor_alias=person.alias
            AND 'control'=ANY(home.permissions) AND EXISTS(
@@ -460,16 +455,33 @@ export class ConfigurationRepository extends ConfigurationMutations {
              WHERE membership.tenant_id=person.tenant_id AND membership.alias=person.alias
                AND membership.enabled AND membership.retired_at IS NULL AND role.allow_control
                AND room.enabled AND room.retired_at IS NULL AND room.purged_at IS NULL
-               AND agent.retired_at IS NULL AND agent.purged_at IS NULL)) AS owner_count`, [company],
+               AND agent.retired_at IS NULL AND agent.purged_at IS NULL))
+       SELECT (SELECT count(*) FROM tenants tenant WHERE tenant.company_id=$1 AND tenant.is_hub AND tenant.enabled
+         AND tenant.retired_at IS NULL AND tenant.purged_at IS NULL AND EXISTS(
+           SELECT 1 FROM memberships membership
+           JOIN role_policies role ON role.role=membership.role
+           JOIN rooms room ON room.id=membership.room_id AND room.tenant_id=membership.tenant_id
+           JOIN agents agent ON agent.tenant_id=membership.tenant_id AND agent.alias=membership.alias
+           WHERE membership.tenant_id=tenant.id AND membership.enabled AND room.enabled AND role.allow_control
+             AND membership.retired_at IS NULL AND room.retired_at IS NULL AND room.purged_at IS NULL
+             AND agent.retired_at IS NULL AND agent.purged_at IS NULL)) AS hub_control_count,
+       (SELECT count(*) FROM company_admins owner
+         JOIN qualified person ON person.id=owner.human_id AND person.company_id=owner.company_id
+         WHERE owner.company_id=$1 AND owner.role='owner') AS owner_count,
+       (SELECT count(*) FROM platform_admins admin JOIN qualified person ON person.id=admin.human_id) AS platform_admin_count`, [company],
     );
     const row = selected.rows[0];
-    return { hub_control_count: Number(row?.hub_control_count ?? 0), owner_count: Number(row?.owner_count ?? 0) };
+    return { hub_control_count: Number(row?.hub_control_count ?? 0), owner_count: Number(row?.owner_count ?? 0),
+      platform_admin_count: Number(row?.platform_admin_count ?? 0) };
   }
 
   private async assertRecoverableControl(
-    client: DatabaseClient, before: { hub_control_count: number; owner_count: number }, company: string,
+    client: DatabaseClient, before: ControlState, company: string,
   ): Promise<void> {
     const after = await this.controlState(client, company);
+    if (before.platform_admin_count > 0 && after.platform_admin_count === 0) {
+      throw new ConfigurationError('conflict', 'configuration cannot remove the last qualified platform administrator');
+    }
     if ((before.hub_control_count > 0 && after.hub_control_count === 0)
       || (before.owner_count > 0 && after.owner_count === 0)) {
       throw new ConfigurationError('conflict', 'configuration cannot remove the last HUB control or qualified company owner');

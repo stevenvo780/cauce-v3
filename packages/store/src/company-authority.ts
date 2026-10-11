@@ -90,6 +90,7 @@ export async function lockCompanyAuthority(client: DatabaseClient, request: Comp
   const { tenant, alias, humanId, requestedCompany } = request;
   if (typeof tenant !== 'string' || typeof alias !== 'string'
     || (requestedCompany !== undefined && !COMPANY_ID_PATTERN.test(requestedCompany))) unavailable();
+  await client.query('SELECT cauce_lock_authority_read_guard()');
   const home = (await client.query<{ company_id: string; active: boolean }>(
     `SELECT tenant.company_id,tenant.enabled AND tenant.retired_at IS NULL AND company.enabled
        AND company.retired_at IS NULL AS active FROM tenants tenant JOIN companies company ON company.id=tenant.company_id
