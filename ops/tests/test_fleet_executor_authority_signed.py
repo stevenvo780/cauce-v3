@@ -7,8 +7,7 @@ import sys
 import tempfile
 import unittest
 
-OPS = pathlib.Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(OPS / 'cli'))
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / 'cli'))
 import fleet_executor_authority as authority
 from fleet_executor_policy import SafeFailure
 from host_channel_client import ensure_key, save_private

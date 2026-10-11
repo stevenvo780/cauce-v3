@@ -15,9 +15,9 @@ import stat
 import struct
 import sys
 import tempfile
-import uuid
 import urllib.error
 import urllib.request
+import uuid
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / 'scripts'))
 from fleet_executor_identity import principal_for  # noqa: E402
