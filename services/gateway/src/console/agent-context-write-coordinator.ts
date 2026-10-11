@@ -93,7 +93,7 @@ export async function coordinateDocumentRequest(
         tenantId: input.tenantId, alias: input.alias, kind: input.kind, path: input.path,
         sha256: effect.sha, bytes: effect.bytes, actorTenant: input.actor.tenant_id, actorAlias: input.actor.alias,
       }, { tenant_id: input.actor.tenant_id, actor_alias: input.actor.alias,
-        action: 'agent_document.write', decision: 'allow', metadata: input.auditMetadata(effect.sha, effect.bytes) });
+        action: 'agent_document.write', decision: 'allow', metadata: input.auditMetadata(effect.sha, effect.bytes) }, input.content);
     },
   });
 }

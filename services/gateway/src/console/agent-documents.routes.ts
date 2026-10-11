@@ -202,7 +202,7 @@ export interface AgentDocumentsDeps {
   readContext?: import('./agent-profile.routes.js').AgentProfileDeps['readContext'];
   coordinateWrite?: import('./agent-profile.routes.js').AgentProfileDeps['coordinateWrite'];
   persistDocumentWrite?: (client: import('@cauce/store').DatabaseClient,
-    entry: import('@cauce/store').DocumentRevisionInput, audit: TerminalAuditEntry) => Promise<void>;
+    entry: import('@cauce/store').DocumentRevisionInput, audit: TerminalAuditEntry, content: string) => Promise<void>;
 
 }
 

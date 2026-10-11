@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+set -euo pipefail
+context_ops=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+exec python3 "$context_ops/cli/context_native.py" "$@"

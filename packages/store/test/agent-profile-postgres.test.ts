@@ -314,7 +314,7 @@ describe('AgentProfileRepository', () => {
   });
 
   it('si falla la auditoría, el desired y su revisión hacen rollback en la misma transacción', async () => {
-    await pool.query(`
+    await database.adminPool.query(`
       CREATE OR REPLACE FUNCTION cauce_test_reject_profile_audit() RETURNS trigger AS $$
       BEGIN
         IF NEW.action='agent_profile.desired' THEN
@@ -332,7 +332,7 @@ describe('AgentProfileRepository', () => {
         tenant_id: 'Steven', alias: 'zeus', purpose: 'No queda parcialmente guardado.',
       }, null, ACTOR)).rejects.toThrow('audit unavailable');
     } finally {
-      await pool.query(`
+      await database.adminPool.query(`
         DROP TRIGGER IF EXISTS cauce_test_reject_profile_audit ON audit_events;
         DROP FUNCTION IF EXISTS cauce_test_reject_profile_audit();
       `);
@@ -454,7 +454,7 @@ describe('derived facts of the alias', () => {
       `INSERT INTO rooms(id,tenant_id,enabled) VALUES ('grp.steven2','Steven',true)
        ON CONFLICT DO NOTHING`
     );
-    await pool.query(
+    await database.adminPool.query(
       `INSERT INTO role_policies(role,allow_route,allow_read,allow_control,allow_notify)
        VALUES ('perfil_ctl',false,false,true,false)
        ON CONFLICT (role) DO UPDATE SET allow_control=true`
@@ -494,7 +494,7 @@ describe('derived facts of the alias', () => {
     // `agent_notify` is NOT seeded by any migration: 009 only NAMES it in a comment, as the role an
     // operator would create. In the shared database it existed because another suite left it —
     // assuming that is measuring someone else's residue; in a clean DB the FK rejects it.
-    await pool.query(
+    await database.adminPool.query(
       `INSERT INTO role_policies(role,allow_route,allow_read,allow_control,allow_notify)
        VALUES ('perfil_notify',true,true,false,true)
        ON CONFLICT (role) DO UPDATE SET allow_notify=true`
@@ -620,7 +620,7 @@ describe('derived facts of the alias', () => {
    * use will try them — and burn the turn on a delivery the database rejects.
    */
   it('control negativo: sin permiso de ruta la lista de destinos viene vacía', async () => {
-    await pool.query(
+    await database.adminPool.query(
       `INSERT INTO role_policies(role,allow_route,allow_read,allow_control,allow_notify)
        VALUES ('perfil_sin_ruta',false,true,false,false)
        ON CONFLICT (role) DO UPDATE SET allow_route=false`

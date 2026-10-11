@@ -5,6 +5,7 @@ import {
 } from '@cauce/protocol'; /* eslint @typescript-eslint/no-unnecessary-boolean-literal-compare: "error" */
 import type { DatabaseClient, DatabasePool } from './db.js';
 import { withTransaction } from './db.js';
+import { recordProfileContextVersionInTransaction } from './context-version-legacy.js';
 import { hubStarRouteSql } from './repository/acl-edges.js';
 import { agentContextReconcileLockKey } from './repository/agent-context-lock.js';
 import { assertAgentContextAdmissionAllowed } from './repository/agent-context-quarantine.js';
@@ -235,6 +236,7 @@ export class AgentProfileRepository {
       );
     }
     const state = stored(row);
+    await recordProfileContextVersionInTransaction(client, state.perfil, actor);
     await this.audit(client, actor, 'agent_profile.desired', {
       target_tenant: profile.tenant_id,
       target_alias: profile.alias,
