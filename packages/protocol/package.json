@@ -36,6 +36,10 @@
     "./agent-preferences": {
       "types": "./src/schemas/agent-preferences.ts",
       "import": "./dist/schemas/agent-preferences.js"
+    },
+    "./quotas": {
+      "types": "./src/schemas/quotas.ts",
+      "import": "./dist/schemas/quotas.js"
     }
   },
   "files": ["dist"],

@@ -9,6 +9,7 @@ import { readFile } from 'node:fs/promises';
 import { createPool, type DatabasePool } from '@cauce/store';
 import { configuredFleetCapability } from './console/fleet-capability.js';
 import { configuredFleetGateway } from './fleet/gateway-config.js';
+import { HostCapabilityRegistry } from './fleet/host-channel.capabilities.js';
 import { FleetMtlsIdentityProvider, FleetTokenProbeAuthProvider, fleetBaseRegistryOwners } from './fleet/mtls-identities.js';
 import { buildGateway } from './app.js';
 import {
@@ -256,7 +257,8 @@ const consolePublishTelemetry = new ConsolePublishTelemetry();
 const blobs = configuredBlobApi(process.env);
 const contextRepository = configuredContextRepository();
 const fleetCapability = configuredFleetCapability();
-const fleet = await configuredFleetGateway(pool, fleetCapability);
+const hostCapabilityRegistry = new HostCapabilityRegistry(pool);
+const fleet = await configuredFleetGateway(pool, fleetCapability, process.env, { hostCapabilityRegistry });
 const app = await buildGateway({
   ...(process.env.CAUCE_FLEET_MTLS_IDENTITY_FILE === undefined ? {} : {
     bootstrapProviders: { bootstrap: configuredMtls('bootstrap'), normal: configuredMtls('normal'),
@@ -265,6 +267,7 @@ const app = await buildGateway({
       }) },
   }),
   ...fleet,
+  hostCapabilityRegistry,
   ...(humanMcp === undefined ? {} : { humanMcp }),
   ...(contextRepository === undefined ? {} : { contextRepository }),
   pool,

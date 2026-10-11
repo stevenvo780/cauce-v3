@@ -44,6 +44,11 @@ beforeEach(async () => {
   current = await startTestCaseDatabase(database); pool = current.pool; admin = current.adminPool;
   hash ??= await hashPassword(PASSWORD, { cost: 1_024, blockSize: 8, parallelism: 1 });
   const seeded = await seedCompanyIsolation(admin);
+  await admin.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,role,permissions)
+    VALUES($1,'PraxisHub','company_admin','operator',ARRAY['read','control'])`, [seeded.leon]);
+  await admin.query("UPDATE memberships SET role='operator' WHERE tenant_id='Miguel' AND alias='janus'");
+  await admin.query(`INSERT INTO memberships(tenant_id,room_id,alias,role)
+    VALUES('Steven','company-humanizar','zeus','operator') ON CONFLICT(tenant_id,room_id,alias) DO UPDATE SET role='operator'`);
   await admin.query('UPDATE console_users SET password_hash=$1', [hash]);
   people = { ...seeded, team: await person('team@example.test', 'PraxisTeam', 'team_agent', ['read', 'control']) };
   provider = new PasswordAuthProvider({ users: new PostgresConsoleUserStore(pool), signingKey: KEY });
@@ -195,6 +200,16 @@ describe('console session company authority', () => {
     expect((await switchTo(praxis, null)).statusCode).toBe(403);
     for (const url of ['/v3/console/companies', '/v3/console/platform/events']) expect((await get(url, praxis)).statusCode).toBe(403);
     expect(await sessionAudits()).toHaveLength(1);
+  });
+
+  it('revokes company and platform authority when durable room control is removed', async () => {
+    const miguel = await login('miguel@example.test');
+    const praxis = await switched(await login('steven@example.test'), 'praxis');
+    await admin.query("UPDATE memberships SET role='agent' WHERE (tenant_id,alias) IN (('Steven','kant'),('Miguel','janus'))");
+    expect(await authority(miguel)).toMatchObject({ role: 'reader', scope: 'tenant' });
+    expect(await authority(praxis)).toMatchObject({ role: 'reader', scope: 'tenant', acting_company: 'humanizar', platform_override: false });
+    expect((await get('/v3/console/platform/events', miguel)).statusCode).toBe(403);
+    expect((await switchTo(praxis, 'praxis')).statusCode).toBe(403);
   });
 
   it('acts at home once the company of the claim is disabled or retired', async () => {

@@ -30,6 +30,13 @@ const DIRECTORIOS_DE_DATOS = [
 ];
 
 const FICHEROS_DE_DATOS = [
+  'services/decisiones/test/company-isolation-postgres.test.ts',
+  'services/decisiones/test/bundle.test.ts',
+  'services/gateway/src/fleet/host-channel.routes.test.ts',
+  'services/gateway/src/fleet/host-channel.executor.test.ts',
+  'services/gateway/src/fleet/quota-auth-postgres.test.ts',
+  'services/gateway/src/context-version-runtime-postgres.test.ts',
+  'services/gateway/src/context-version.routes-postgres.test.ts',
   'services/dispatcher/test/index.test.ts',
   'services/dispatcher/test/metrics.test.ts',
   'services/gateway/src/health-progress.test.ts',

@@ -64,7 +64,7 @@ describe('public configuration receipt transport', () => {
     expect(response.statusCode).toBe(dry_run ? 200 : 201);
     expect(response.json()).toEqual({ ...receipt, applied: !dry_run, dry_run });
     expect(response.body).not.toContain('PRIVATE_LOCATOR');
-    expect(repository.applyConfigurationChange).toHaveBeenCalledWith('Steven', 'kant', mutation, dry_run, 6);
+    expect(repository.applyConfigurationChange).toHaveBeenCalledWith('Steven', 'kant', mutation, dry_run, 6, undefined);
   });
   it.each([undefined, 'a'.repeat(64)])('returns conflict for an unverifiable full intent hash %s', async (mutation_sha256) => {
     const { app } = route({ ...receipt, mutation_sha256 });

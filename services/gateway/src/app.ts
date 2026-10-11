@@ -9,7 +9,7 @@ import {
   type DeliveryEnvelope, type OutboxAckWithConnection, type Tenant,
 } from '@cauce/protocol';
 import {
-  CauceRepository, type AgentPreferencesRepository, type subscribeDeliveryWakes,
+  CauceRepository, type AgentPreferencesRepository, type QuotaEnvironmentOptions, type ConfigurationAuthorityResolver, type subscribeDeliveryWakes,
   type ConnectionSessionFence, type DatabasePool, type DeliveryLeaseCap,
   type FencedWakeOutboxRecipient, type LeaseResult, type OutboxEvent,
   type HumanMessageOptions, type PublishOptions, type PublishResult,
@@ -25,6 +25,22 @@ import {
 import { OidcBffAuthProvider, registerOidcBff } from './oidc-bff.js';
 import { PasswordAuthProvider, registerPasswordAuth } from './password-auth.js';
 import { PostgresConsoleCompanyAuthority } from './console-user-authority.js';
+import { registerHostEnrollmentRoutes } from './console/host-enrollment.routes.js';
+import { registerHostChannelRoutes } from './fleet/host-channel.routes.js';
+import { HostCapabilityRegistry } from './fleet/host-channel.capabilities.js';
+import { createCompanyFleetCapabilitySource } from './fleet/host-capability-source.js';
+import { configuredFleetGateway } from './fleet/gateway-config.js';
+import { QuotaAuthBroker, registerQuotaAuthHostRoute } from './fleet/quota-auth-broker.js';
+import { quotaAwareProviderAuthService } from './fleet/quota-auth-router.js';
+import { registerContextVersionRoutes, type ContextVersionRouteOptions } from './context-version.routes.js';
+import { DeliveryContextRuntimeSink } from './context-version-runtime.js';
+import { registerSpaceBackupConsoleRoutes } from './console/space-backup.routes.js';
+import { registerSpaceBackupHostRoutes } from './fleet/space-backup.routes.js';
+import type { SpaceBackupStorage } from './fleet/space-backup.files.js';
+import { registerCompanyRegistrationRoute } from './company-registration.js';
+import { registerCompanyOfficeRoutes } from './console/company-office.routes.js';
+import { registerCompanyAdminRoutes } from './routes/console/company-admins.js';
+import { registerQuotaEnvironmentRoutes } from './routes/console/quota-environments.js';
 import { registerCompanyRoutes } from './routes/console/companies.js';
 import { WakePumpTelemetry } from './wake-pump-telemetry.js';
 import {
@@ -150,15 +166,15 @@ interface GatewayNarrowedRepository {
   /** The receipt stays `unknown`: the route re-validates it field by field before answering. */
   applyConfigurationChange(
     actorTenant: Tenant, actorAlias: string, mutation: ConfigMutation, dryRun: boolean,
-    expectedRevision?: number,
+    expectedRevision?: number, authority?: ConfigurationAuthorityResolver,
   ): Promise<unknown>;
   getConfigurationDependencies?(
     actorTenant: Tenant, actorAlias: string, mutation: ConfigLeafMutation,
-    expectedRevision?: number,
+    expectedRevision?: number, authority?: ConfigurationAuthorityResolver,
   ): Promise<unknown>;
   rollbackConfiguration(
     actorTenant: Tenant, actorAlias: string, revisionId: number, dryRun: boolean,
-    expectedRevision?: number,
+    expectedRevision?: number, authority?: ConfigurationAuthorityResolver,
   ): Promise<unknown>;
 }
 
@@ -171,8 +187,12 @@ export interface GatewayOptions {
   bootstrapProviders?: FleetCredentialProviders;
   providerAuthService?: ProviderAuthService;
   contextRepository?: ContextRepositoryBinding;
+  contextVersion?: ContextVersionRouteOptions;
+  spaceBackups?: SpaceBackupStorage;
+  quotaEnvironments?: QuotaEnvironmentOptions;
   fleetOperationsRepository?: FleetOperationsRepositoryBinding;
   fleetCapability?: import('@cauce/protocol').FleetCapability;
+  hostCapabilityRegistry?: HostCapabilityRegistry;
   pool: DatabasePool;
   authProvider: AuthProvider;
   repository?: GatewayRepository;
@@ -304,6 +324,17 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
   });
 
   await app.register(websocket, { options: { maxPayload: GATEWAY_WS_MAX_PAYLOAD_BYTES } });
+  const hostCapabilities = options.hostCapabilityRegistry ?? new HostCapabilityRegistry(options.pool);
+  const configuredCapability = options.fleetCapability ?? { available: false, actions: [], placements: [], reason: 'executor_unconfigured' };
+  const fleetCapability = options.authProvider instanceof PasswordAuthProvider
+    ? createCompanyFleetCapabilitySource(options.pool, options.authProvider, hostCapabilities, configuredCapability)
+    : configuredCapability;
+  const fleetBinding = options.fleetOperationsRepository ?? (options.authProvider instanceof PasswordAuthProvider
+    ? (await configuredFleetGateway(options.pool, configuredCapability, process.env,
+      { hostCapabilityRegistry: hostCapabilities })).fleetOperationsRepository : undefined);
+  const quotaAuthentication = options.authProvider instanceof PasswordAuthProvider ? new QuotaAuthBroker(options.pool) : undefined;
+  const providerAuthentication = quotaAuthentication === undefined ? options.providerAuthService
+    : quotaAwareProviderAuthService(quotaAuthentication, options.providerAuthService);
   app.addHook('onRequest', createConsoleSecurityHook({
     ...(options.consoleOrigins === undefined ? {} : { allowedOrigins: options.consoleOrigins })
   }));
@@ -311,13 +342,35 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
   if (options.authProvider instanceof PasswordAuthProvider) {
     options.authProvider.useCompanyAuthority(new PostgresConsoleCompanyAuthority(options.pool));
     registerPasswordAuth(app, options.authProvider);
+    registerCompanyRegistrationRoute(app, options.pool);
+    registerCompanyOfficeRoutes(app, options.authProvider, options.pool);
+    registerHostEnrollmentRoutes(app, options.authProvider, options.pool,
+      options.fleetCapability?.available ? options.fleetCapability.placements.map(host => host.host_id) : []);
+    registerHostChannelRoutes(app, options.pool);
+    if (quotaAuthentication) registerQuotaAuthHostRoute(app, options.pool, quotaAuthentication);
+    const backupDirectory = options.spaceBackups?.directory ?? process.env.CAUCE_SPACE_BACKUP_DIRECTORY;
+    if (backupDirectory !== undefined) {
+      const storage = options.spaceBackups ?? { directory: backupDirectory,
+        projectRoot: process.env.CAUCE_PROJECT_ROOT ?? process.cwd(), python: process.env.CAUCE_SPACE_BACKUP_PYTHON ?? '/usr/bin/python3' };
+      registerSpaceBackupConsoleRoutes(app, options.authProvider, options.pool, storage);
+      registerSpaceBackupHostRoutes(app, options.pool, storage);
+    }
+    const repositoryRoot = options.contextVersion?.repositoryRoot ?? process.env.CAUCE_CONTEXT_REPOSITORY_ROOT;
+    registerContextVersionRoutes(app, options.authProvider, options.pool, {
+      ...options.contextVersion,
+      ...(repositoryRoot === undefined ? {} : { repositoryRoot,
+        runtime: options.contextVersion?.runtime ?? new DeliveryContextRuntimeSink(options.pool) }),
+    });
     registerPeopleAdminRoutes(app, options.authProvider, new PeopleAdminRepository(options.pool));
     registerCompanyRoutes(app, options.authProvider, options.pool);
+    registerCompanyAdminRoutes(app, options.authProvider, options.pool);
+    registerQuotaEnvironmentRoutes(app, options.authProvider, options.pool, options.quotaEnvironments);
   }
-  if (options.providerAuthService !== undefined) {
+  if (providerAuthentication !== undefined) {
     if (!(options.authProvider instanceof PasswordAuthProvider)) throw new Error('provider authentication requires password authority');
-    registerProviderAuthRoutes(app, options.authProvider, options.providerAuthService);
-    registerProviderAuthSocket(app, options.authProvider, options.providerAuthService, options.consoleOrigins ?? []);
+    registerProviderAuthRoutes(app, options.authProvider, providerAuthentication);
+    if (options.consoleOrigins?.length) registerProviderAuthSocket(app, options.authProvider, providerAuthentication, options.consoleOrigins);
+    else app.addHook('onClose', () => providerAuthentication.shutdown());
   }
   if (options.legacyFleetAdoptionService !== undefined) {
     if (!(options.authProvider instanceof PasswordAuthProvider)) throw new Error('legacy fleet adoption requires password authority');
@@ -333,12 +386,12 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
 
   const agentProfiles = registerConsoleRoutes(app, consoleRoutes, publishHandler);
 
-  if (options.fleetOperationsRepository !== undefined) {
-    registerFleetOperationRoutes(app, options.authProvider, options.fleetOperationsRepository, options.fleetCapability);
+  if (fleetBinding !== undefined) {
+    registerFleetOperationRoutes(app, options.authProvider, fleetBinding, fleetCapability);
   } else {
     registerFleetCapabilityRoute(app, options.authProvider, { available: false, actions: [], placements: [], reason: 'executor_unconfigured' });
   }
-  registerFleetHostRoutes(app, options.authProvider, options.pool, options.fleetCapability);
+  registerFleetHostRoutes(app, options.authProvider, options.pool, fleetCapability);
 
   registerConsolePublishIntentRoutes(
     app, options, repository, consolePublishTelemetry,

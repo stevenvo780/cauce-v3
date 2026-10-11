@@ -1,10 +1,11 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import {
   ConfigChangeRequestSchema, ConfigurationDependencySchema, ConfigurationIdentitySchema, ConfigLeafMutationSchema, ConfigRollbackRequestSchema,
 } from '@cauce/protocol';
-import { ConfigurationError, StoreError } from '@cauce/store';
-import { AuthError, AuthorizationError, requireOperatorPermission, requirePermission } from '../../auth.js';
+import { ConfigurationError, StoreError, type ConfigurationAuthorityResolver } from '@cauce/store';
+import { AuthError, AuthorizationError, requireOperatorPermission, requirePermission, type AuthProvider } from '../../auth.js';
+import { consoleHumanAccess } from '../../console-human-authority.js';
 import { principal, replyError } from '../shared.js';
 import type { ConsoleRoutes } from './contracts.js';
 import { validatedConfigurationReceipt } from './helpers.js';
@@ -19,6 +20,20 @@ const ConfigurationDependenciesPreviewSchema = z.object({
   dependencies: z.array(ConfigurationDependencySchema), can_delete: z.boolean(),
 }).strict();
 
+/**
+ * A console session resolves its company or platform authority inside each configuration transaction;
+ * any other principal reaches at most its own tenant.
+ */
+async function withConfigurationAuthority<T>(
+  provider: AuthProvider, request: FastifyRequest, reply: FastifyReply,
+  work: (authority: ConfigurationAuthorityResolver | undefined) => Promise<T>,
+): Promise<T> {
+  const access = await consoleHumanAccess(provider, request, reply, 'read');
+  try {
+    return await work(access === undefined ? undefined : client => access.companyAuthority(client));
+  } finally { access?.close(); }
+}
+
 export function registerConsoleOperationsRoutes(
   app: FastifyInstance,
   context: ConsoleRoutes,
@@ -28,7 +43,8 @@ export function registerConsoleOperationsRoutes(
     try {
       const actor = await principal(request, options.authProvider);
       requirePermission(actor, 'read');
-      return await repository.getConfiguration(actor.tenant_id, actor.alias);
+      return await withConfigurationAuthority(options.authProvider, request, reply,
+        authority => repository.getConfiguration(actor.tenant_id, actor.alias, authority));
     } catch (error) { replyError(reply, error); }
   });
 
@@ -37,9 +53,10 @@ export function registerConsoleOperationsRoutes(
       const actor = await principal(request, options.authProvider);
       requireOperatorPermission(actor, 'control');
       const change = ConfigChangeRequestSchema.parse(request.body);
-      const result = await repository.applyConfigurationChange(
-        actor.tenant_id, actor.alias, change.mutation, change.dry_run, change.expected_revision
-      );
+      const result = await withConfigurationAuthority(options.authProvider, request, reply,
+        authority => repository.applyConfigurationChange(
+          actor.tenant_id, actor.alias, change.mutation, change.dry_run, change.expected_revision, authority,
+        ));
       return await reply.code(change.dry_run ? 200 : 201).send(validatedConfigurationReceipt(
         result, change.dry_run, null, change.mutation,
       ));
@@ -56,9 +73,9 @@ export function registerConsoleOperationsRoutes(
           error: 'not_supported', message: 'configuration dependency preview is not configured',
         });
       }
-      const result = ConfigurationDependenciesPreviewSchema.safeParse(await repository.getConfigurationDependencies(
-        actor.tenant_id, actor.alias, input.mutation, input.expected_revision,
-      ));
+      const dependencies = repository.getConfigurationDependencies.bind(repository);
+      const result = ConfigurationDependenciesPreviewSchema.safeParse(await withConfigurationAuthority(options.authProvider, request, reply,
+        authority => dependencies(actor.tenant_id, actor.alias, input.mutation, input.expected_revision, authority)));
       const identity = new Map(Object.entries(input.mutation).filter(([key, value]) =>
         !['resource', 'action', 'value'].includes(key) && typeof value === 'string'));
       if (!result.success || result.data.resource !== input.mutation.resource
@@ -88,9 +105,10 @@ export function registerConsoleOperationsRoutes(
       const revisionId = Number(request.params.revisionId);
       if (!Number.isSafeInteger(revisionId) || revisionId < 1) throw new Error('revision id must be positive');
       const rollback = ConfigRollbackRequestSchema.parse(request.body);
-      const result = await repository.rollbackConfiguration(
-        actor.tenant_id, actor.alias, revisionId, rollback.dry_run, rollback.expected_revision
-      );
+      const result = await withConfigurationAuthority(options.authProvider, request, reply,
+        authority => repository.rollbackConfiguration(
+          actor.tenant_id, actor.alias, revisionId, rollback.dry_run, rollback.expected_revision, authority,
+        ));
       return await reply.code(rollback.dry_run ? 200 : 201).send(validatedConfigurationReceipt(
         result, rollback.dry_run, revisionId,
       ));

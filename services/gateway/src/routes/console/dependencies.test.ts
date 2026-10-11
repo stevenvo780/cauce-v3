@@ -44,7 +44,7 @@ describe('configuration dependency preview', () => {
     });
     expect(response.statusCode).toBe(200);
     expect(response.json()).toEqual(preview);
-    expect(repository.getConfigurationDependencies).toHaveBeenCalledWith('Steven', 'kant', mutation, 7);
+    expect(repository.getConfigurationDependencies).toHaveBeenCalledWith('Steven', 'kant', mutation, 7, undefined);
     expect(repository.applyConfigurationChange).not.toHaveBeenCalled();
   });
 
@@ -127,7 +127,7 @@ describe('configuration dependency preview', () => {
     const backend = vi.spyOn(ConfigurationRepository.prototype, 'getDependencies').mockResolvedValue(preview);
     const repository = new CauceRepository(fakePool());
     await expect(repository.getConfigurationDependencies('Steven', 'kant', mutation, 7)).resolves.toEqual(preview);
-    expect(backend).toHaveBeenCalledWith('Steven', 'kant', mutation, 7);
+    expect(backend).toHaveBeenCalledWith('Steven', 'kant', mutation, 7, undefined);
     const conflict = new ConfigurationError('conflict', 'configuration resource has durable dependencies', preview.dependencies);
     backend.mockRejectedValue(conflict);
     await expect(repository.getConfigurationDependencies('Steven', 'kant', mutation, 7)).rejects.toBe(conflict);

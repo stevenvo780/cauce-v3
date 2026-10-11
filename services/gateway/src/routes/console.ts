@@ -9,7 +9,8 @@ import {
   AliasSchema, CreateJobSchema, DeliveryIdSchema, ProfileRuntimeContractSchema, TenantSchema,
   type Tenant,
 } from '@cauce/protocol';
-import { AgentContextRevisionsStore, AgentProfileRepository, CauceRepository, StoreError } from '@cauce/store';
+import { AgentContextRevisionsStore, AgentProfileRepository, CauceRepository, StoreError,
+  recordNativeContextVersionInTransaction } from '@cauce/store';
 import { messageReader, requireOperatorPermission, requirePermission } from '../auth.js';
 import { registerAgentContextHistoryRoutes } from '../console/agent-context-history.routes.js';
 import {
@@ -416,8 +417,9 @@ function registerConsoleAgentRoutes(
       readRuntimeExpectation: (tenantId, alias) => expectativaDeRuntime(options.pool, tenantId, alias, true),
       readContext: (tenantId, alias) => perfiles.readContextWithPresence(tenantId, alias),
       coordinateWrite: (input) => coordinator.coordinate(input),
-      persistDocumentWrite: async (client, document, audit) => {
+      persistDocumentWrite: async (client, document, audit, content) => {
         await new AgentContextRevisionsStore(client as unknown as DatabasePool).recordDocumentRevision(document);
+        await recordNativeContextVersionInTransaction(client, document, content);
         await recordTerminalAudit(client as unknown as DatabasePool, audit);
       },
       resolveOperator: resolveProfileOperator,
