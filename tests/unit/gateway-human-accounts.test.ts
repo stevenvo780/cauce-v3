@@ -11,10 +11,11 @@ afterEach(async () => {
   finally { vi.restoreAllMocks(); }
 });
 
-function humanAuthorityClient(users: readonly ConsoleUser[]): DatabaseClient {
+function humanAuthorityClient(users: readonly ConsoleUser[]) {
   const query = vi.fn(async (sql: string, values: unknown[] = []) => {
-    const user = users.find((entry) => entry.id === values[0]);
+    if (sql === 'SELECT cauce_lock_authority_read_guard()' && values.length === 0) return { rows: [], rowCount: 1 };
     if (sql.startsWith("SELECT set_config('statement_timeout'")) return { rows: [], rowCount: 0 };
+    const user = users.find((entry) => entry.id === values[0]);
     if (user === undefined) throw new Error('unknown human authority fixture');
     if (sql.includes('FROM console_users')) return { rows: [{ ...user,
       password_changed_at: new Date(user.password_changed_at),
@@ -26,7 +27,7 @@ function humanAuthorityClient(users: readonly ConsoleUser[]): DatabaseClient {
     };
     throw new Error('unexpected human authority SQL');
   });
-  return { query } as unknown as DatabaseClient;
+  return { client: { query } as unknown as DatabaseClient, query };
 }
 
 describe('authenticated human accounts through the existing console gateway', () => {
@@ -98,7 +99,7 @@ describe('authenticated human accounts through the existing console gateway', ()
     vi.mocked(test.repository.listMessages).mockResolvedValue({ items: rows });
     const own = rows[0];
     if (own === undefined) throw new Error('expected the first account message');
-    const client = humanAuthorityClient([test.first, test.other]);
+    const { client, query } = humanAuthorityClient([test.first, test.other]);
     const scopes: Readonly<HumanPublishProvenance>[] = [];
     const detailStore = vi.spyOn(CauceRepository.prototype, 'getHumanMessage').mockImplementation(async (messageId, options) => {
       expect(messageId).toBe(ids.message);
@@ -134,6 +135,7 @@ describe('authenticated human accounts through the existing console gateway', ()
     })));
     expect(detailStore).toHaveBeenCalledTimes(2);
     expect(legacyStore).toHaveBeenCalledOnce();
+    expect(query).toHaveBeenCalledWith('SELECT cauce_lock_authority_read_guard()');
     expect(test.repository.getMessage).not.toHaveBeenCalled();
   });
 

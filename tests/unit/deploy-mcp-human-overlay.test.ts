@@ -124,11 +124,16 @@ function execute(configuration: string, options: {
   const repository = join(directory, 'repo with spaces');
   const binaries = join(directory, 'bin');
   const deployment = join(repository, 'deploy');
+  const scripts = join(repository, 'ops/scripts');
   const migrations = join(repository, 'packages/store/migrations');
   mkdirSync(deployment, { recursive: true });
+  mkdirSync(scripts, { recursive: true });
   mkdirSync(migrations, { recursive: true });
   mkdirSync(binaries);
   copyFileSync(join(root, 'deploy/deploy.sh'), join(deployment, 'deploy.sh'));
+  for (const name of ['source-digest.py', 'digest_lib.py']) {
+    copyFileSync(join(root, 'ops/scripts', name), join(scripts, name));
+  }
   for (const name of ['compose.yaml', 'compose.postgres.yaml', 'compose.mcp-human.yaml', 'compose.mcp-human-local.yaml']) {
     if (name === 'compose.mcp-human.yaml' && options.missingOverlay) continue;
     if (name === 'compose.mcp-human-local.yaml' && options.missingLocalOverlay) continue;
