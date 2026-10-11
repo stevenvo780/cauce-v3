@@ -6,6 +6,7 @@ import {
   topology,
 } from './data';
 import { agentPreferencesHandlers } from './agent-preferences-demo';
+import { v4Handlers } from './v4-handlers';
 
 const preparedIntentByMeaning = new Map<string, string>();
 
@@ -42,6 +43,7 @@ function mockFleetOperations() {
 }
 
 export const handlers = [
+  ...v4Handlers,
   ...agentPreferencesHandlers(),
   http.get('*/v3/auth/session', () => HttpResponse.json({
     authenticated: true,
