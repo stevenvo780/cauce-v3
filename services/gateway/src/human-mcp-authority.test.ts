@@ -320,9 +320,18 @@ describe('durable human MCP authority', () => {
   });
 });
 
+const homeMembershipLockQuery = `
+  SELECT human.tenant_id, human.actor_alias, human.role, human.permissions, human.enabled, human.revision::text, human.revoked_at
+  FROM human_tenant_memberships human JOIN tenants tenant ON tenant.id=human.tenant_id
+  JOIN companies company ON company.id=tenant.company_id
+  WHERE human.human_id=$1 AND human.tenant_id=$2 AND tenant.enabled AND tenant.retired_at IS NULL
+    AND company.enabled AND company.retired_at IS NULL FOR SHARE OF human,tenant
+`.replace(/\s+/gu, ' ').trim();
+
 function lockedRows() {
   const record = snapshot();
   return [
+    [],
     [{ human_id: record.humanId }],
     [{ id: record.humanId, active: true, role: 'operator', tenant_id: 'Steven', display_name: 'Fixture' }],
     [{ id: record.bindingId, human_id: record.humanId, enabled: true, revoked_at: null, revision: record.bindingRevision }],
@@ -332,41 +341,42 @@ function lockedRows() {
 }
 
 describe('human identity locking query contract', () => {
-  it('locks account then exact binding then default membership on the supplied client', async () => {
+  it('takes the authority guard before account, exact binding and default membership locks on the supplied client', async () => {
     const rows = lockedRows();
     const query = vi.fn(async (_sql: string, _values: unknown[]) => ({ rows: rows.shift() ?? [] }));
     const client = { query } as unknown as DatabaseClient;
     const key = { provider: 'oauth' as const, namespace: ' HTTPS://Issuer.test/ ', subject: ' Subject ' };
     const result = await lockHumanIdentity(client, key, user.id);
-    expect(query.mock.calls.map(([sql]) => sql)).toEqual([
+    expect(query.mock.calls.map(([sql]) => sql.replace(/\s+/gu, ' ').trim())).toEqual([
+      'SELECT cauce_lock_authority_read_guard()',
       expect.stringMatching(/^SELECT human_id FROM human_external_identities/),
       expect.stringMatching(/FROM console_users WHERE id=\$1 FOR SHARE$/),
       expect.stringMatching(/FROM human_external_identities[\s\S]+FOR SHARE$/),
-      expect.stringMatching(/FROM human_tenant_memberships WHERE human_id=\$1 AND tenant_id=\$2 FOR SHARE$/),
+      homeMembershipLockQuery,
     ]);
-    expect(query.mock.calls[0]?.[1]).toEqual(['oauth', key.namespace, key.subject]);
-    expect(query.mock.calls[2]?.[1]).toEqual(['oauth', key.namespace, key.subject]);
-    expect(query.mock.calls[0]?.[0]).toContain('namespace=$2 COLLATE "C" AND subject=$3 COLLATE "C"');
-    expect(query.mock.calls[3]?.[1]).toEqual([user.id, 'Steven']);
+    expect(query.mock.calls[1]?.[1]).toEqual(['oauth', key.namespace, key.subject]);
+    expect(query.mock.calls[3]?.[1]).toEqual(['oauth', key.namespace, key.subject]);
+    expect(query.mock.calls[1]?.[0]).toContain('namespace=$2 COLLATE "C" AND subject=$3 COLLATE "C"');
+    expect(query.mock.calls[4]?.[1]).toEqual([user.id, 'Steven']);
     expect(result).toMatchObject({ ...key, humanId: user.id, bindingRevision: '9007199254740993' });
     expect(query.mock.calls.every(([sql]) => !/email|password|token|SELECT \*/i.test(sql))).toBe(true);
   });
 
   it('revalidates the binding UUID after locking the preliminary account', async () => {
     const rows = lockedRows();
-    rows[2] = [{ ...rows[2]?.[0], human_id: '00000000-0000-4000-8000-000000000082' }];
-    const query = vi.fn(async () => ({ rows: rows.shift() ?? [] }));
-    await expect(lockHumanIdentity({ query } as unknown as DatabaseClient,
-      { provider: 'oauth', namespace: 'issuer', subject: 'subject' }, user.id)).rejects.toMatchObject({ code: 'forbidden' });
-    expect(query).toHaveBeenCalledTimes(3);
-  });
-
-  it('rejects a missing default membership without selecting an alternative', async () => {
-    const rows = lockedRows(); rows[3] = [];
+    rows[3] = [{ ...rows[3]?.[0], human_id: '00000000-0000-4000-8000-000000000082' }];
     const query = vi.fn(async () => ({ rows: rows.shift() ?? [] }));
     await expect(lockHumanIdentity({ query } as unknown as DatabaseClient,
       { provider: 'oauth', namespace: 'issuer', subject: 'subject' }, user.id)).rejects.toMatchObject({ code: 'forbidden' });
     expect(query).toHaveBeenCalledTimes(4);
+  });
+
+  it('rejects a missing default membership without selecting an alternative', async () => {
+    const rows = lockedRows(); rows[4] = [];
+    const query = vi.fn(async () => ({ rows: rows.shift() ?? [] }));
+    await expect(lockHumanIdentity({ query } as unknown as DatabaseClient,
+      { provider: 'oauth', namespace: 'issuer', subject: 'subject' }, user.id)).rejects.toMatchObject({ code: 'forbidden' });
+    expect(query).toHaveBeenCalledTimes(5);
   });
 });
 
@@ -486,16 +496,17 @@ describe('durable human read authority', () => {
     const f = durableFixture();
     const client = { query } as unknown as DatabaseClient;
     await expect(createHumanReadAuthority(identity(), f.pinned, signal())(client)).resolves.toEqual(f.pinned);
-    expect(query.mock.calls.map(([sql]) => sql)).toEqual([
+    expect(query.mock.calls.map(([sql]) => sql.replace(/\s+/gu, ' ').trim())).toEqual([
       expect.stringContaining("set_config('statement_timeout'"),
+      'SELECT cauce_lock_authority_read_guard()',
       expect.stringMatching(/^SELECT human_id FROM human_external_identities/),
       expect.stringMatching(/FROM console_users WHERE id=\$1 FOR SHARE$/),
       expect.stringMatching(/FROM human_external_identities[\s\S]+FOR SHARE$/),
-      expect.stringMatching(/FROM human_tenant_memberships WHERE human_id=\$1 AND tenant_id=\$2 FOR SHARE$/),
+      homeMembershipLockQuery,
     ]);
-    expect(query.mock.calls[1]?.[1]).toEqual(['oauth', identity().issuer, identity().subject]);
-    expect(query.mock.calls[2]?.[1]).toEqual([user.id]);
-    expect(query.mock.calls[3]?.[1]).toEqual(query.mock.calls[1]?.[1]);
-    expect(query.mock.calls[4]?.[1]).toEqual([user.id, 'Steven']);
+    expect(query.mock.calls[2]?.[1]).toEqual(['oauth', identity().issuer, identity().subject]);
+    expect(query.mock.calls[3]?.[1]).toEqual([user.id]);
+    expect(query.mock.calls[4]?.[1]).toEqual(query.mock.calls[2]?.[1]);
+    expect(query.mock.calls[5]?.[1]).toEqual([user.id, 'Steven']);
   });
 });

@@ -10,6 +10,7 @@ import { pathToFileURL } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { FleetOperationsRepository, type DatabasePool } from '@cauce/store';
+import { seedFleetHuman } from '../../../../packages/store/test/fleet-human-postgres.fixtures.js';
 import { startTestCaseDatabase, startTestDatabase, type EmptyTestDatabase, type TestDatabase } from '../../../../tests/helpers/postgres.js';
 import type { FleetSshTransport } from './host-transport.js';
 import { startAuthBridge } from './auth-bridge-server.js';
@@ -17,7 +18,7 @@ import { ProviderAuthManager } from '../console/provider-auth.sessions.js';
 
 const execute = promisify(execFile); const hash = (value: string | Buffer) => createHash('sha256').update(value).digest('hex');
 const projectRoot = resolve(import.meta.dirname, '../../../..');
-let database: TestDatabase; let current: EmptyTestDatabase; let pool: DatabasePool;
+let database: TestDatabase; let current: EmptyTestDatabase; let pool: DatabasePool; let operatorSubject: string;
 let directory: string; let path: string; let daemon: ChildProcess; let transport: FleetSshTransport;
 let host: ChildProcess | undefined; let diagnostic: string; let authBridge: Awaited<ReturnType<typeof startAuthBridge>> | undefined;
 async function contents(filename: string): Promise<string> { try { return await readFile(filename, 'utf8'); } catch { return ''; } }
@@ -54,7 +55,9 @@ beforeEach(async () => {
   current = await startTestCaseDatabase(database); pool = current.pool; diagnostic = ''; host = undefined;
   path = await mkdtemp(join(directory, 'case-'));
   await pool.query("INSERT INTO rooms(id,tenant_id) VALUES('lifecycle-control','Steven'),('lifecycle-group','Isa'),('lifecycle-empty','Isa')");
+  await pool.query("INSERT INTO agents(tenant_id,alias) VALUES('Steven','lifecycle_operator')");
   await pool.query("INSERT INTO memberships(tenant_id,room_id,alias,role) VALUES('Steven','lifecycle-control','lifecycle_operator','operator')");
+  operatorSubject = await seedFleetHuman(current.adminPool, 'Steven', 'lifecycle_operator');
   for (const suffix of ['a', 'b']) {
     const alias = `lifecycle_${suffix}`; const runtime = `lifecycle-${suffix}`;
     await pool.query("INSERT INTO memberships(tenant_id,room_id,alias,role) VALUES('Isa','lifecycle-group',$1,'agent')", [alias]);
@@ -71,7 +74,7 @@ function repository() { return new FleetOperationsRepository(pool, { controllerH
 async function enqueue(room = 'lifecycle-group') {
   const revision = (await pool.query<{ revision: string }>('SELECT COALESCE(MAX(id),0)::text AS revision FROM config_revisions')).rows[0]?.revision;
   return repository().enqueue('Steven', 'lifecycle_operator', { kind: 'retire', target: { resource: 'room', tenant_id: 'Isa', room_id: room },
-    parameters: {}, expected_revision: Number(revision), idempotency_key: `main-${room}` });
+    parameters: {}, expected_revision: Number(revision), idempotency_key: `main-${room}` }, operatorSubject);
 }
 async function launch(blocked = false): Promise<ChildProcess> {
   const executable = join(path, 'executor.py'); const log = join(path, 'effect.jsonl');
