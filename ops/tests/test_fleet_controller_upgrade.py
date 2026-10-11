@@ -140,6 +140,13 @@ class UpgradeSecurityTests(UpgradeFixture):
 
 
 class UpgradePinTests(UpgradeFixture):
+    def test_new_release_contains_backup_workers_and_dynamic_helper(self):
+        ops = SCRIPT.parent.parent
+        closure = set().union(*(lib.python_closure(ops, entry) for entry in self.kit.OPS_ENTRIES))
+        self.assertTrue({'cli/space_backup_runtime.py', 'cli/space_backup_local.py',
+                         'cli/space_archive.py', 'cli/space_backup_validate.py'} <= closure,
+                        'a clean host upgrade must install both backup workers and their helpers')
+
     def test_rewriter_moves_path_keys_and_updates_authority_hook_bundle_pins(self):
         hook = self.file(self.new / 'ops/cli/hook.py', b'import helper\n')
         helper = self.file(self.new / 'ops/cli/helper.py', b'LIMIT = 2\n')

@@ -23,7 +23,7 @@ class QuotaRuntimeTest(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         bundle = pathlib.Path(temporary.name)
-        shutil.copytree(ROOT.parent / 'packages/adapter-sdk/descriptors', bundle / 'descriptors')
+        shutil.copytree(ROOT.parent / 'packages/adapter-sdk/descriptors', bundle / 'packages/adapter-sdk/dist/descriptors')
         self.policy = {'host_id': 'fixture-host', 'executor_user': 'fixture-user', 'roots': {'runtime': '/fixture/runtime'},
                        'bundles': {'codex': {'directory': str(bundle), 'digest': bundle_digest(str(bundle)),
                                             'executable': '/usr/local/bin/codex', 'executable_sha256': 'a' * 64, 'argv': []}},
@@ -106,7 +106,7 @@ class QuotaRuntimeTest(unittest.TestCase):
         self.policy['quota_environments']['providers'] = ['codex', 'gemini']
         self.assertEqual(runtime.capabilities(self.policy), {'providers': ['codex'],
             'actions': {'codex': ['create', 'authenticate', 'query', 'update_cli', 'delete']}})
-        descriptor = pathlib.Path(self.policy['bundles']['codex']['directory']) / 'descriptors/codex.json'
+        descriptor = pathlib.Path(self.policy['bundles']['codex']['directory']) / 'packages/adapter-sdk/dist/descriptors/codex.json'
         descriptor.write_text(descriptor.read_text() + '\n')
         self.assertEqual(runtime.capabilities(self.policy), {'providers': [], 'actions': {}})
         with patch.object(runtime, 'inspect_container', return_value=self.observed), patch.object(runtime, 'validate'), \
