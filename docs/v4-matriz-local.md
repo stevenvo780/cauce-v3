@@ -153,8 +153,14 @@ Todas las filas conservan aceptación `unverified`. La columna de cobertura es l
 - Gaia, Hegel, Hades y Argos no tienen aquí recibos de migración local, canary completo, copia recuperable, ubicación final y liberación medida de recursos de VPS.
 - Mis cuotas y cuotas por agente necesitan autenticación/consulta/update/ciclo Docker físicos con las cuentas autorizadas actuales. UI, parsers y mTLS descartable no acreditan esos efectos.
 - GitHub está probado con contenido sintético y transporte VPS preparado. Contextos productivos, escrituras desde todas las vías y consumo por agentes reales siguen pendientes. `native_document:none` conserva el límite de proyección legacy física.
-- El backup durable tiene límite de 32 MiB y el CLI de 256 MiB total; espacios de varios GiB no quedan cubiertos por una copia íntegra demostrada. Restore sintético de 100000 bytes no es una migración productiva.
+- El backup durable y el CLI admiten 1 GiB total y 128 MiB por archivo. Hay ensayos con ZIP/restore y un JSONL sintético mayor de 96 MiB; espacios productivos de varios GiB siguen sin una copia íntegra demostrada y esos ensayos no acreditan una migración física.
 - El diagnóstico y la simplificación de auditoría necesitan inventario de uso/consumidores y evidencia del retiro seguro de redundancias. Decisiones PG/mTLS usa FakeJev, sin llamada actual al proveedor.
 - El fallo de E15 y los dos de E23 se conservan. E01 y E09 acreditan ensayos focales posteriores en verde, sin convertir las corridas históricas en PASS ni acreditar gate global.
 
 Las guías [CLI](v4-cli.md), [espacios/contextos](v4-archivos-contextos.md), [consola](v4-consola.md) y [autenticación runtime](v4-autenticacion-runtime.md) describen lo implementado y sus límites. El coordinador debe actualizar evidencia local/final cuando ejecute los pasos pendientes; el status de aceptación requiere evidencia publicada correspondiente.
+
+## Evidencia de la recuperación posterior
+
+`forward-restore-verified.json` acredita un respaldo productivo restaurado fuera de la VPS, en PostgreSQL sin red exterior, y el ensayo canónico hasta 063 con hashes de migración concordantes. Conserva exactamente los campos originales de 21 856 mensajes, 20 412 entregas y 29 290 registros de outbox. Las dos columnas de contexto añadidas a entregas permanecen vacías para el histórico; el primer fingerprint negativo se conserva. No acredita la imagen final ni cambios de producción.
+
+`agent-auth-evidence.json` registra 82 casos focales únicos de autenticación enrolada, router y compatibilidad legacy. El HTTP firmado, PostgreSQL y PTY son reales, mientras que el CLI y la prueba del proveedor son sintéticos. `root-final-wiring-review.md` registra la corrección del arranque sin contraseña mediante RED y GREEN de composición, sin atribuirle efectos de proveedor. La revisión transversal de los autores y el gate completo del código final siguen pendientes.

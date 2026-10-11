@@ -1,6 +1,6 @@
 # Tarea 1 — Núcleo, autoridad y canal firmado de Cauce V4
 
-Estado: núcleo y canal implementados en checkout aislado; validación focal con PostgreSQL hermético y rol SQL runtime real. Sin commits, integración ni producción. `app.ts/index.ts`, cliente firmado y autenticación de cuotas pertenecen al proceso principal. Este informe acredita el alcance indicado; el gate completo y la aceptación de V4 corresponden al integrador.
+Estado: núcleo y canal implementados y registrados en la rama aislada; validación focal con PostgreSQL hermético y rol SQL runtime real. La integración, el despliegue y la aceptación completa siguen pendientes. Este informe acredita el alcance indicado; el gate completo y la aceptación de V4 corresponden al integrador.
 
 ## Cambios e interfaces
 
