@@ -13,6 +13,8 @@ export interface ComputadoraCardProps {
   host: FleetHost;
   /** Whether the actor may write at all; `busy` and `bloqueada` only pause the controls for a moment. */
   escribe: boolean;
+  crea?: boolean;
+  borra?: boolean;
   busy: boolean;
   bloqueada: boolean;
   onEditar: (host: FleetHost) => void;
@@ -53,7 +55,7 @@ function Interruptor({ host, disabled, onChange }: { host: FleetHost; disabled: 
   </label>;
 }
 
-export function ComputadoraCard({ host, escribe, busy, bloqueada, onEditar, onAlternar, onEliminar, onRegistrar }: ComputadoraCardProps) {
+export function ComputadoraCard({ host, escribe, crea = escribe, borra = escribe, busy, bloqueada, onEditar, onAlternar, onEliminar, onRegistrar }: ComputadoraCardProps) {
   const estado = estadoDeComputadora(host);
   const insignia = insigniaDeEstado(host);
   const idTitulo = `computadora-${host.host_id}`;
@@ -102,11 +104,11 @@ export function ComputadoraCard({ host, escribe, busy, bloqueada, onEditar, onAl
         <span className="ml-auto flex flex-wrap items-center justify-end gap-2">
           <Button size="sm" disabled={!escribe || busy} onClick={() => { onEditar(host); }}>Editar</Button>
           {sePuedeEliminar(host)
-            ? <Button size="sm" variant="danger" disabled={!escribe || busy || bloqueada} onClick={() => { onEliminar(host); }}>Eliminar</Button>
+            ? <Button size="sm" variant="danger" disabled={!borra || busy || bloqueada} onClick={() => { onEliminar(host); }}>Eliminar</Button>
             : null}
         </span>
         {sePuedeEliminar(host) ? null : <p className="m-0 basis-full text-xs text-muted">Para eliminarla, quita antes sus agentes.</p>}
-      </> : <Button size="sm" variant="primary" className="ml-auto" disabled={!escribe || busy} onClick={() => { onRegistrar(host); }}>Registrar</Button>}
+      </> : <Button size="sm" variant="primary" className="ml-auto" disabled={!crea || busy} onClick={() => { onRegistrar(host); }}>Registrar</Button>}
     </footer>
   </article>;
 }

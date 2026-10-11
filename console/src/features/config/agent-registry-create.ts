@@ -150,7 +150,7 @@ const AGENT_DEFINITION = { resource: 'agent', label: 'Agente', fields: [] } as u
 
 /** The reason the fleet capability denies this agent action, or `undefined` when it is allowed. */
 export function agentWriteBlock(snapshot: ConfigurationSnapshot, action: ConfigAction): string | undefined {
-  return canUseConfigForm(snapshot, AGENT_DEFINITION, action) ? undefined : 'Solo el hub administra agentes';
+  return canUseConfigForm(snapshot, AGENT_DEFINITION, action) ? undefined : 'Tu autoridad de empresa no permite administrar agentes';
 }
 
 /** The computer an agent row is placed on, whether the registry row or its runtime placement carries it. */

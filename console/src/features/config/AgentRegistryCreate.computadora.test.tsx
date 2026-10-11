@@ -113,19 +113,19 @@ it('keeps unusable computers visible but disabled, with the reason', async () =>
   expect(screen.getByRole('option', { name: 'EDGE-3 · deshabilitada' })).toBeDisabled();
 });
 
-it('replaces the create and edit actions with the hub reason when the capability denies agents', async () => {
+it('replaces the create and edit actions with the company authority reason when the capability denies agents', async () => {
   const gated = {
     ...base,
     capabilities: {
       actor: { tenant_id: 'A', is_hub: false, can_control: true },
-      resources: [{ resource: 'agent', actions: ['create', 'update', 'delete'], scope: 'hub' }],
+      resources: [{ resource: 'agent', actions: [], scope: 'none' }],
     },
   } as unknown as ConfigurationSnapshot;
   server.use(access(), http.get(HOSTS, () => HttpResponse.json({ hosts: [] })));
   renderSection(gated);
   const user = userEvent.setup();
   await user.click(await screen.findByRole('button', { name: 'Añadir agente' }));
-  expect(screen.getByText('Solo el hub administra agentes')).toBeInTheDocument();
+  expect(screen.getByText('Tu autoridad de empresa no permite administrar agentes')).toBeInTheDocument();
   expect(screen.getByRole('textbox', { name: 'Alias' })).toBeDisabled();
   expect(screen.queryByRole('button', { name: 'Crear registro' })).not.toBeInTheDocument();
 });

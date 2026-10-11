@@ -4,12 +4,12 @@ import type { ConfigFormDefinition } from './config-form-model';
 interface Capability {
   resource: string;
   actions: string[];
-  scope: 'hub' | 'tenant' | 'outgoing_acl' | 'none';
+  scope: 'hub' | 'company' | 'platform' | 'tenant' | 'outgoing_acl' | 'none';
   tenant_id?: string;
 }
 
 interface Capabilities {
-  actor: { tenant_id: string; is_hub: boolean; can_control: boolean };
+  actor: { tenant_id: string; can_control: boolean };
   resources: Capability[];
 }
 
@@ -19,14 +19,14 @@ function capabilities(snapshot: ConfigurationSnapshot): Capabilities | undefined
   if (!raw || typeof raw !== 'object') return null;
   const value = raw as Partial<Capabilities>;
   if (!value.actor || typeof value.actor.tenant_id !== 'string'
-    || typeof value.actor.is_hub !== 'boolean' || typeof value.actor.can_control !== 'boolean'
+    || typeof value.actor.can_control !== 'boolean'
     || !Array.isArray(value.resources)) return null;
   if (value.resources.some((entry: unknown) => {
     if (entry === null || typeof entry !== 'object') return true;
     const record = entry as Partial<Capability>;
     return typeof record.resource !== 'string'
     || !Array.isArray(record.actions) || !record.actions.every((action) => typeof action === 'string')
-    || !['hub', 'tenant', 'outgoing_acl', 'none'].includes(record.scope ?? '')
+    || !['hub', 'company', 'platform', 'tenant', 'outgoing_acl', 'none'].includes(record.scope ?? '')
     || (record.tenant_id !== undefined && typeof record.tenant_id !== 'string');
   })) return null;
   return value as Capabilities;
@@ -47,7 +47,7 @@ export function canUseConfigForm(snapshot: ConfigurationSnapshot, definition: Co
   if (!access?.actor.can_control) return false;
   const resource = access.resources.find((entry) => entry.resource === definition.resource);
   if (!resource || !resource.actions.includes(action) || resource.scope === 'none') return false;
-  if (resource.scope === 'hub') return access.actor.is_hub;
+  if (['hub', 'company', 'platform'].includes(resource.scope)) return true;
   const identity = scopedFormIdentity(snapshot, definition);
   return row === undefined || Object.entries(identity).every(([key, value]) => row[key] === value);
 }

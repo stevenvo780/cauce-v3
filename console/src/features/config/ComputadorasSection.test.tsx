@@ -41,8 +41,8 @@ function flota(hosts: Host[]): Write[] {
 
 const HUB_SNAPSHOT = {
   revision: 3,
-  capabilities: { actor: { tenant_id: 'A', alias: 'hub', is_hub: true, can_control: true },
-    resources: [{ resource: 'tenant', actions: ['create', 'update', 'delete'], scope: 'hub' }] },
+  capabilities: { actor: { tenant_id: 'A', alias: 'owner', role: 'platform_admin', scope: 'platform', company_id: 'test-company', can_control: true },
+    resources: [{ resource: 'fleet_host', actions: ['create', 'update', 'delete'], scope: 'platform' }] },
 } as unknown as ConfigurationSnapshot;
 // A tenant operator with control gets a tenant-scoped tenants resource: the form gate alone would allow writes.
 const TENANT_OPERATOR_SNAPSHOT = {
@@ -172,7 +172,7 @@ it.each([
   flota([computadora('uno')]);
   renderWithApi(<ComputadorasSection snapshot={snapshot} soloLectura={false} />);
   expect(await screen.findByRole('button', { name: 'Registrar computadora' })).toBeDisabled();
-  expect(screen.getByText(/Solo un hub puede registrar o cambiar computadoras/)).toBeInTheDocument();
+  expect(screen.getByText(/Tu autoridad de empresa no permite cambiar computadoras/)).toBeInTheDocument();
   expect(within(screen.getByRole('article', { name: 'Equipo uno' })).getByRole('button', { name: 'Editar' })).toBeDisabled();
   expect(within(screen.getByRole('article', { name: 'Equipo uno' })).getByRole('checkbox', { name: 'Habilitada' })).toBeDisabled();
 });
@@ -180,7 +180,7 @@ it.each([
 it('una lectura 403 muestra un aviso tranquilo de solo lectura, sin error', async () => {
   server.use(http.get('*/v3/console/fleet/hosts', () => HttpResponse.json({ error: 'forbidden' }, { status: 403 })));
   renderWithApi(<ComputadorasSection snapshot={HUB_SNAPSHOT} soloLectura={false} />);
-  expect(await screen.findByText('Solo el hub administra computadoras.')).toBeInTheDocument();
+  expect(await screen.findByText('Esta sesión no puede consultar las computadoras de esta empresa.')).toBeInTheDocument();
   expect(screen.queryByRole('alert')).not.toBeInTheDocument();
 });
 

@@ -8,29 +8,28 @@ import { ConfirmDialog } from '../../components/dialogs';
 import { EmptyState } from '../../components/ui';
 import { CONFIG_SIN_CONTROL_REASON } from '../../router';
 import { ConfigSectionHeader } from './ConfigSectionHeader';
-import { canUseConfigForm } from './config-form-access';
 import { ComputadoraCard } from './ComputadoraCard';
 import { ComputadoraFormDialog, type Editor } from './ComputadoraFormDialog';
-import { configFormDefinition } from './config-form-model';
 import { mensajeDeEscritura, resumenDeFlota, type AccionDeEscritura } from './fleet-host-model';
 import { useFleetHosts } from './use-fleet-hosts';
-
-/**
- * The fleet registry is hub-only on the server. The tenant form gate alone also admits tenant operators, so the
- * hub flag is checked explicitly; a snapshot without capabilities is read-only.
- */
-const DEFINICION_HUB = configFormDefinition('tenants');
+import { HostEnrollmentPanel } from './HostEnrollmentPanel';
+import { canManageCompany } from '../auth/company-authority';
 
 const GRID_TARJETAS = 'm-0 grid list-none grid-cols-[repeat(auto-fill,minmax(min(100%,20rem),1fr))] gap-3 p-0';
 
-function esHub(snapshot: ConfigurationSnapshot | undefined): boolean {
-  return snapshot?.capabilities?.actor.is_hub === true;
+function hostPermission(snapshot: ConfigurationSnapshot | undefined, action: 'create' | 'update' | 'delete'): boolean {
+  const capabilities = snapshot?.capabilities;
+  if (!capabilities?.actor.can_control || !Array.isArray(capabilities.resources)) return false;
+  const grant = capabilities.resources.find(resource => resource.resource === 'fleet_host');
+  return !!grant && Array.isArray(grant.actions) && grant.actions.includes(action) && ['platform', 'company'].includes(grant.scope);
 }
 
 export function ComputadorasSection({ snapshot, soloLectura }: { snapshot?: ConfigurationSnapshot; soloLectura: boolean }) {
   const api = useApi();
   const flota = useFleetHosts(true, snapshot?.revision);
-  const escribe = !soloLectura && esHub(snapshot) && !!snapshot && !!DEFINICION_HUB && canUseConfigForm(snapshot, DEFINICION_HUB, 'create');
+  const escribe = !soloLectura && hostPermission(snapshot, 'update');
+  const crea = !soloLectura && hostPermission(snapshot, 'create');
+  const borra = !soloLectura && hostPermission(snapshot, 'delete');
   const [editor, setEditor] = useState<Editor>();
   const [borrar, setBorrar] = useState<FleetHost>();
   const [busy, setBusy] = useState(false);
@@ -89,24 +88,25 @@ export function ComputadorasSection({ snapshot, soloLectura }: { snapshot?: Conf
     if (ok) setBorrar(undefined);
   }
 
-  const motivo = soloLectura ? CONFIG_SIN_CONTROL_REASON : !escribe ? 'Solo un hub puede registrar o cambiar computadoras.' : undefined;
+  const motivo = soloLectura ? CONFIG_SIN_CONTROL_REASON : !escribe ? 'Tu autoridad de empresa no permite cambiar computadoras.' : undefined;
   const editando = editor?.modo === 'editar' ? editor.hostId : undefined;
   const registradas = hosts.filter((host) => host.registered);
   const detectadas = hosts.filter((host) => !host.registered);
   const resumen = resumenDeFlota(hosts);
   const tarjeta = (host: FleetHost) => <li key={host.host_id}>
-    <ComputadoraCard host={host} escribe={escribe} busy={busy} bloqueada={editando === host.host_id}
+    <ComputadoraCard host={host} escribe={escribe} crea={crea} borra={borra} busy={busy} bloqueada={editando === host.host_id}
       onEditar={abrirEdicion} onAlternar={alternar} onEliminar={setBorrar} onRegistrar={abrirAlta} />
   </li>;
 
   return <div className="grid gap-4">
     <ConfigSectionHeader seccion="computadoras" />
+    <HostEnrollmentPanel canEnroll={!soloLectura && canManageCompany(snapshot?.capabilities?.actor.role)} />
     <p className="m-0 text-xs leading-relaxed text-muted">
       Si una computadora está apagada o deshabilitada, solo sus agentes dejan de estar disponibles; el resto del sistema sigue funcionando.
       Instalar el ejecutor (acceso SSH, usuarios y aprobación) sigue siendo un paso del operador en cada computadora: registrarla aquí no lo instala.
     </p>
     {motivo ? <Notice tone="warn" role="note">Las acciones de esta sección están apagadas: {motivo}</Notice> : null}
-    {flota.forbidden ? <Notice tone="info" role="note">Solo el hub administra computadoras.</Notice>
+    {flota.forbidden ? <Notice tone="info" role="note">Esta sesión no puede consultar las computadoras de esta empresa.</Notice>
       : flota.error ? <Notice tone="danger" role="alert">{flota.error}</Notice> : null}
     {error && !editor ? <Notice tone="danger" role="alert">{error}</Notice> : null}
 
@@ -130,7 +130,7 @@ export function ComputadorasSection({ snapshot, soloLectura }: { snapshot?: Conf
     <section aria-labelledby="computadoras-registradas" className="grid gap-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h3 id="computadoras-registradas" className="m-0 text-sm font-semibold">Registradas{flota.hosts ? ` (${String(registradas.length)})` : ''}</h3>
-        <Button variant="primary" size="sm" disabled={!escribe || busy} onClick={() => { abrirAlta(); }}>
+        <Button variant="primary" size="sm" disabled={!crea || busy} onClick={() => { abrirAlta(); }}>
           <Plus size={14} aria-hidden="true" />Registrar computadora
         </Button>
       </div>
