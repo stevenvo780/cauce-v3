@@ -76,16 +76,17 @@ async function operatorGateway(denyBeforeRouting = false, authority: 'password' 
   const unexpected = async (): Promise<never> => { throw new Error('Routing fixture must not invoke application handlers'); };
   const pool = fakePool();
   const repository = fakeRepository();
+  const directory = await mkdtemp(join(tmpdir(), 'cauce-route-contract-'));
+  fixtureDirectories.push(directory);
   const app = await buildGateway({ pool, repository, authProvider: provider,
     consoleOrigins: ['http://localhost'],
+    spaceBackups: { directory: join(directory, 'backups'), projectRoot: directory },
     fleetOperationsRepository: { list: unexpected, preview: unexpected, enqueue: unexpected, get: unexpected, cancel: unexpected, resume: unexpected },
     ...(provider instanceof PasswordAuthProvider ? { providerAuthService: { start: unexpected, get: unexpected, verify: unexpected, cancel: unexpected, issueSocketTicket: unexpected,
       consumeSocketTicket: unexpected, attach: unexpected, revokeOperation: unexpected, shutdown: async () => undefined, resolve: unexpected } satisfies ProviderAuthService } : {}),
     deliveryWakeSubscriber: noDeliveryWakes, outboxPollMs: 60_000 });
   apps.push(app);
   if (denyBeforeRouting) app.addHook('onRequest', async (_request, reply) => reply.code(403).send({ error: 'forbidden' }));
-  const directory = await mkdtemp(join(tmpdir(), 'cauce-route-contract-'));
-  fixtureDirectories.push(directory);
   const grantsFile = join(directory, 'grants.json');
   await writeFile(grantsFile, JSON.stringify({ version: 1, grants: [] }));
   await registerTerminalControlPlane(app, { pool, repository, authProvider: provider, config: {
@@ -185,6 +186,28 @@ describe('console API surface matches the gateway routing table', () => {
     expect(calls).toContainEqual({ method: 'DELETE', path: '/v3/console/favorites/1/1' });
     expect(calls).toContainEqual({ method: 'PUT', path: '/v3/console/agents/1/1/appearance' });
     expect(calls).toContainEqual({ method: 'DELETE', path: '/v3/console/agents/1/1/appearance?expected_revision=1' });
+    for (const call of [
+      { method: 'GET', path: '/v3/console/context/agents/1/1' },
+      { method: 'PUT', path: '/v3/console/context/agents/1/1' },
+      { method: 'GET', path: '/v3/console/context/agents/1/1/history' },
+      { method: 'GET', path: '/v3/console/context/agents/1/1/history?before=1' },
+      { method: 'GET', path: '/v3/console/context/agents/1/1/diff?from=1&to=1' },
+      { method: 'POST', path: '/v3/console/context/agents/1/1/restore' },
+      { method: 'POST', path: '/v3/console/context/agents/1/1/sync/retry' },
+      { method: 'POST', path: '/v3/console/context/agents/1/1/apply' },
+      { method: 'GET', path: '/v3/console/quota-accounts' },
+      { method: 'POST', path: '/v3/console/quota-accounts' },
+      { method: 'PATCH', path: '/v3/console/quota-accounts/1' },
+      { method: 'DELETE', path: '/v3/console/quota-accounts/1?expected_version=1' },
+      { method: 'GET', path: '/v3/console/quota-environments' },
+      { method: 'POST', path: '/v3/console/quota-environments' },
+      { method: 'PATCH', path: '/v3/console/quota-environments/1' },
+      { method: 'POST', path: '/v3/console/quota-environments/1/actions' },
+      { method: 'DELETE', path: '/v3/console/quota-environments/1' },
+      { method: 'POST', path: '/v3/console/spaces/1/1/backups' },
+      { method: 'GET', path: '/v3/console/spaces/1/1/backups/1' },
+      { method: 'GET', path: '/v3/console/spaces/1/1/backups/1/download' },
+    ]) expect(calls).toContainEqual(call);
     expect(calls.map((call) => call.path)).not.toContain('/v3/console/topology/access');
 
     expect(await unroutedPaths(calls)).toEqual([]);

@@ -43,6 +43,17 @@ function binding(identifier: ts.Identifier): ts.VariableDeclaration | ts.Paramet
   }
   return undefined;
 }
+function hasEncoderDeclaration(identifier: ts.Identifier): boolean {
+  let declared = false;
+  visit(identifier.getSourceFile(), node => {
+    if ((ts.isVariableDeclaration(node) || ts.isParameter(node) || ts.isBindingElement(node)
+        || ts.isImportClause(node) || ts.isImportSpecifier(node) || ts.isNamespaceImport(node) || ts.isImportEqualsDeclaration(node)
+        || ts.isFunctionDeclaration(node) || ts.isFunctionExpression(node) || ts.isClassDeclaration(node) || ts.isClassExpression(node)
+        || ts.isEnumDeclaration(node) || ts.isModuleDeclaration(node))
+        && node.name && ts.isIdentifier(node.name) && node.name.text === identifier.text) declared = true;
+  });
+  return declared;
+}
 function finite(type: ts.TypeNode | undefined, at: ts.Node): readonly string[] {
   if (!type) return [OPAQUE];
   if (ts.isUnionTypeNode(type)) {
@@ -98,6 +109,9 @@ function evaluate(expression: ts.Expression, env: Environment, depth = 0): reado
     if (ts.isIdentifier(expression.expression)) {
       if (['encodeURIComponent', 'String'].includes(expression.expression.text)) return expression.arguments[0] ? next(expression.arguments[0]) : ['1'];
       const found = binding(expression.expression);
+      if (found && ts.isVariableDeclaration(found) && found.initializer && ts.isIdentifier(found.initializer)
+          && (found.parent.flags & ts.NodeFlags.Const) !== 0 && ['encodeURIComponent', 'String'].includes(found.initializer.text)
+          && !hasEncoderDeclaration(found.initializer)) return expression.arguments[0] ? next(expression.arguments[0]) : ['1'];
       const helper = found && (ts.isFunctionDeclaration(found) ? found
         : ts.isVariableDeclaration(found) && found.initializer && functionNode(found.initializer) ? found.initializer : undefined);
       if (helper) {
@@ -133,6 +147,19 @@ function callEnvironments(node: ts.CallExpression, source: ts.SourceFile): Envir
     return env;
   });
 }
+function preservesMethod(expression: ts.Expression, depth = 0): boolean {
+  if (depth > 20) return false;
+  const next = (child: ts.Expression) => preservesMethod(child, depth + 1);
+  if (ts.isParenthesizedExpression(expression) || ts.isAsExpression(expression)) return next(expression.expression);
+  if (ts.isConditionalExpression(expression)) return next(expression.whenTrue) && next(expression.whenFalse);
+  if (!ts.isObjectLiteralExpression(expression)) return false;
+  return expression.properties.every(property => {
+    if (ts.isSpreadAssignment(property)) return next(property.expression);
+    return (ts.isPropertyAssignment(property) || ts.isShorthandPropertyAssignment(property))
+      && !ts.isComputedPropertyName(property.name)
+      && (ts.isStringLiteral(property.name) ? property.name.text : property.name.getText()) !== 'method';
+  });
+}
 function methodExpression(options: ts.Expression | undefined): ts.Expression | undefined {
   if (!options) return undefined;
   if (ts.isIdentifier(options)) {
@@ -140,7 +167,7 @@ function methodExpression(options: ts.Expression | undefined): ts.Expression | u
     if (found && ts.isVariableDeclaration(found) && found.initializer) return methodExpression(found.initializer);
     throw unresolved();
   }
-  if (!ts.isObjectLiteralExpression(options) || options.properties.some(ts.isSpreadAssignment)) throw unresolved();
+  if (!ts.isObjectLiteralExpression(options) || options.properties.some(property => ts.isSpreadAssignment(property) && !preservesMethod(property.expression))) throw unresolved();
   const property = options.properties.find(row => row.name && (ts.isStringLiteral(row.name) ? row.name.text : row.name.getText()) === 'method');
   if (property && ts.isPropertyAssignment(property)) return property.initializer;
   if (property && ts.isShorthandPropertyAssignment(property)) return property.name;

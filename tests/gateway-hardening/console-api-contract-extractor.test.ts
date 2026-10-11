@@ -44,4 +44,47 @@ describe('console API route extraction from TypeScript syntax', () => {
       expect(() => extractClientCalls(source)).toThrow('el extractor no supo sacar la ruta');
     }
   });
+  it('preserves HTTP methods through conditional body-only spreads', () => {
+    const options = "{ method: 'POST', ...(input ? { body: JSON.stringify(input) } : {}) }";
+    expect(extractClientCalls(`request('/v3/console/context/restore', ${options});`))
+      .toEqual([{ method: 'POST', path: '/v3/console/context/restore' }]);
+    expect(extractClientCalls("request('/v3/console/context', { ...(input ? { ...{ body: input } } : {}) });"))
+      .toEqual([{ method: 'GET', path: '/v3/console/context' }]);
+  });
+  it('resolves constant aliases of the built-in route encoders', () => {
+    expect(extractClientCalls("const id=encodeURIComponent; const text=String; request(`/v3/console/quota-accounts/${id(account)}?version=${text(version)}`);"))
+      .toEqual([{ method: 'GET', path: '/v3/console/quota-accounts/1?version=1' }]);
+  });
+  it.each([
+    'unknownOptions', 'input ? { body: input } : unknownOptions',
+    "input ? { body: input } : { method: 'DELETE' }", '{ method }',
+    "{ ...{ method: 'DELETE' } }", '{ [key]: input }', "{ ['method']: 'DELETE' }",
+    "{ get method() { return 'DELETE'; } }", "{ method: 'DELETE' }",
+  ])('rejects a spread that may replace the HTTP method: %s', spread => {
+    expect(() => extractClientCalls(`request('/v3/console/context', { method: 'POST', ...(${spread}) });`))
+      .toThrow('el extractor no supo sacar la ruta');
+  });
+  it.each([
+    'let id=encodeURIComponent;', 'const id=unknownEncoder;',
+    'const encodeURIComponent=unknownEncoder; const id=encodeURIComponent;',
+    'function client(encodeURIComponent: Encoder) { const id=encodeURIComponent;',
+    "import { encodeURIComponent } from './unknown-encoder'; const id=encodeURIComponent;",
+    "import { encode as encodeURIComponent } from './unknown-encoder'; const id=encodeURIComponent;",
+    "import encodeURIComponent from './unknown-encoder'; const id=encodeURIComponent;",
+    "import * as encodeURIComponent from './unknown-encoder'; const id=encodeURIComponent;",
+    "import encodeURIComponent = require('./unknown-encoder'); const id=encodeURIComponent;",
+    'const { encodeURIComponent }=unknownEncoders; const id=encodeURIComponent;',
+    'const { encode: encodeURIComponent }=unknownEncoders; const id=encodeURIComponent;',
+    'const { encoders: { encodeURIComponent } }=unknownEncoders; const id=encodeURIComponent;',
+    'const [encodeURIComponent]=unknownEncoders; const id=encodeURIComponent;',
+    'function client({ encodeURIComponent }: Encoders) { const id=encodeURIComponent;',
+    'const id=encodeURIComponent; const encodeURIComponent=unknownEncoder;',
+    'class encodeURIComponent {} const id=encodeURIComponent;',
+    'const adjacent=(encodeURIComponent: Encoder) => {}; const id=encodeURIComponent;',
+    "import { String } from './unknown-encoder'; const id=String;",
+  ])('rejects mutable, unknown or shadowed encoder aliases: %s', declaration => {
+    const end = declaration.startsWith('function') ? '}' : '';
+    expect(() => extractClientCalls(declaration + ' request(`/v3/console/quota-accounts/${id(account)}`);' + end))
+      .toThrow('el extractor no supo sacar la ruta');
+  });
 });

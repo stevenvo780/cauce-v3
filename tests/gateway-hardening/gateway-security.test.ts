@@ -621,7 +621,7 @@ describe('gateway hardening facades and RBAC', () => {
       roles: roles('agent'), permissions: grants('read', 'control')
     }));
     expect((await denied.inject({ method: 'GET', url: '/v3/console/config' })).statusCode).toBe(200);
-    expect(repository.getConfiguration).toHaveBeenCalledWith('Pablo', 'midas');
+    expect(repository.getConfiguration).toHaveBeenCalledWith('Pablo', 'midas', undefined);
 
     const allowed = await gateway(repository, testPrincipal({
       roles: roles('operator'), permissions: grants('read', 'control')
@@ -647,9 +647,9 @@ describe('gateway hardening facades and RBAC', () => {
     expect(preview.json()).toMatchObject({ rolled_back_revision_id: null });
     expect(apply.json()).toMatchObject({ rolled_back_revision_id: null });
     expect(rollback.json()).toMatchObject({ rolled_back_revision_id: 1 });
-    expect(repository.applyConfigurationChange).toHaveBeenNthCalledWith(1, 'Pablo', 'midas', mutation, true, 0);
-    expect(repository.applyConfigurationChange).toHaveBeenNthCalledWith(2, 'Pablo', 'midas', mutation, false, 0);
-    expect(repository.rollbackConfiguration).toHaveBeenCalledWith('Pablo', 'midas', 1, false, 1);
+    expect(repository.applyConfigurationChange).toHaveBeenNthCalledWith(1, 'Pablo', 'midas', mutation, true, 0, undefined);
+    expect(repository.applyConfigurationChange).toHaveBeenNthCalledWith(2, 'Pablo', 'midas', mutation, false, 0, undefined);
+    expect(repository.rollbackConfiguration).toHaveBeenCalledWith('Pablo', 'midas', 1, false, 1, undefined);
   });
 
   it('rejects malformed configuration receipts after apply and never reflects private extras', async () => {
