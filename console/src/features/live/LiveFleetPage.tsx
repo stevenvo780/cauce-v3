@@ -12,6 +12,7 @@ import { HudAlerts, HudFreshness, HudStates, type AlertItem } from '../office/Hu
 import { HUD_BUTTON, HUD_PANEL, HUD_TEXT } from '../office/hud-style';
 import { OfficeDialog } from '../office/OfficeDialog';
 import { OfficeGame, type OfficeAgent } from '../office/OfficeGame';
+import { OfficeWorkspace } from '../office/OfficeWorkspace';
 import { groupDirectory, membershipsOf } from '../office/teams';
 import { useOfficeChat } from '../office/use-office-chat';
 import { RECENT_VISITOR_MS, useMcpVisitors } from '../office/visitors';
@@ -240,6 +241,7 @@ export function LiveFleetPage() {
   return (
     <div className="relative flex min-h-0 flex-1 flex-col">
       <section aria-label="Oficina" data-objeto-principal="oficina" className="relative min-h-0 flex-1">
+        <OfficeWorkspace topology={topology.data} agents={officeAgents} onAgent={(key) => { redirect(`/live?agente=${encodeURIComponent(key)}&ficha=1`); }} campus={
         <OfficeGame
           agents={officeAgents}
           groups={groups}
@@ -260,6 +262,7 @@ export function LiveFleetPage() {
             panel: <OfficeDialog model={chat.dialog} state={talking.state} onClose={() => { setTalkKey(null); }} />,
           } : null}
         />
+        } />
       </section>
       <AgentSheet
         view={selected && sheetWanted ? selected : null}

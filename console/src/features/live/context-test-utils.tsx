@@ -6,6 +6,7 @@ import { AgentContextPanel, type ContextSection } from './AgentContextPanel';
 
 const TAB_NAME: Record<ContextSection, RegExp> = {
   perfil: /^Perfil/u, ficheros: /^Ficheros/u, directiva: /^Directiva/u, historial: /^Historial/u, git: /^Git/u,
+  versiones: /^Versiones y aplicación/u,
 };
 
 /** Renders the canonical context page of Steven/kant on one of its sections. */

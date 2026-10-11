@@ -15,8 +15,9 @@ import { PerfilTab } from './PerfilTab';
 import { TabStrip } from './context-ui';
 import { useNativeReload } from './use-native-reload';
 import { useContextEditorStore } from './context-editor-store';
+import { ContextVersionsPanel } from './ContextVersionsPanel';
 
-type Section = 'perfil' | 'ficheros' | 'directiva' | 'historial' | 'git';
+type Section = 'perfil' | 'ficheros' | 'directiva' | 'historial' | 'git' | 'versiones';
 export type ContextSection = Section;
 
 interface PanelProps {
@@ -93,6 +94,7 @@ function ContextPanelContent({ tenantId, alias, initialSection = 'perfil' }: Pan
           { id: 'directiva', label: 'Directiva' },
           { id: 'historial', label: 'Historial' },
           { id: 'git', label: 'Git' },
+          { id: 'versiones', label: 'Versiones y aplicación' },
         ]} />
         <Button variant="ghost" size="sm" className="mb-1.5" disabled={state.busy} onClick={refresh}
           aria-label="Actualizar estado del contexto" title="Actualizar estado del contexto">
@@ -161,6 +163,11 @@ function ContextPanelContent({ tenantId, alias, initialSection = 'perfil' }: Pan
             refreshRevision={state.revision} onSettled={refreshReaders}
             onWriteInFlightChange={onWriteInFlight}
           />
+        </div>
+      </Tabs.Panel>
+      <Tabs.Panel value="versiones" keepMounted className={panel}>
+        <div ref={target('versiones')} tabIndex={-1} className="outline-none">
+          <ContextVersionsPanel key={identity} tenantId={tenantId} alias={alias} canWrite={configWritePermission === 'allowed' && !state.busy && !dirty} />
         </div>
       </Tabs.Panel>
     </Tabs.Root>

@@ -14,6 +14,7 @@ import { onNavClick } from '../../router';
 import { queueDeliveryPath } from '../deliveries/delivery-links';
 import { deliveryPolicy } from '../deliveries/delivery-policy';
 import { FLAG_LABEL } from './activity';
+import { AgentQuotaDetail } from '../accounts/AgentQuotaDetail';
 import { LIVE_STATE_META, aliasDe, humanSeconds, type LiveAgentView, type OrigenEncargo } from './agent-state';
 
 /**
@@ -76,6 +77,7 @@ function SheetBody({ view, status, onTalk }: { view: LiveAgentView; status: Reso
 
       <div className="min-h-0 flex-1 overflow-y-auto p-4">
         <Dialog.Description className="m-0 text-[13px] leading-relaxed text-fg-2">{view.reason}</Dialog.Description>
+        <AgentQuotaDetail tenant={view.tenantId} alias={view.alias} />
 
         <dl className="mt-4 grid grid-cols-3 gap-2">
           <Stat label="En vuelo" value={String(view.inFlight)} />

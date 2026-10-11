@@ -9,12 +9,13 @@ import { onNavClick, useRouteSearch } from '../../router';
 import { useFleet } from '../../shell/fleet-context';
 import { agentLiveState } from '../terminal/fleet';
 import type { ContextSection } from '../live/AgentContextPanel';
+import { SpaceBackupPanel } from '../live/SpaceBackupPanel';
 
 const AgentContextPanel = lazy(async () => ({
   default: (await import('../live/AgentContextPanel')).AgentContextPanel,
 }));
 
-const SECTIONS: readonly ContextSection[] = ['perfil', 'ficheros', 'directiva', 'historial', 'git'];
+const SECTIONS: readonly ContextSection[] = ['perfil', 'ficheros', 'directiva', 'historial', 'git', 'versiones'];
 
 /** `/messages/<tenant>/<alias>?view=context[&tab=...]`: the canonical profile and context page. */
 export function AgentSettingsView({ tenantId, alias, conversationPath }: {
@@ -43,6 +44,7 @@ export function AgentSettingsView({ tenantId, alias, conversationPath }: {
     </header>
     <div className="min-h-0 flex-1 overflow-y-auto">
       <div className="mx-auto w-full max-w-5xl px-4 pb-8 sm:px-6">
+        <SpaceBackupPanel tenantId={tenantId} alias={alias} />
         <ErrorBoundary label={`Perfil y contexto de ${alias}`} resetKey={`${tenantId}:${alias}`}>
           <Suspense fallback={<LoadingState label="Abriendo el perfil y contexto del agente…" />}>
             <AgentContextPanel tenantId={tenantId} alias={alias}
