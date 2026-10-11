@@ -35,6 +35,7 @@ beforeEach(async () => {
     VALUES('authority@example.test','authority@example.test',$1,'Authority fixture','operator','Steven','authority_operator') RETURNING id`,
   ['$scrypt$' + 'x'.repeat(48)])).rows[0];
   if (!human) throw new Error('Test human absent'); humanId = human.id;
+  await current.adminPool.query("INSERT INTO company_admins(company_id,human_id,role,source) SELECT company_id,id,'admin','v4.0-hub-operator' FROM console_users WHERE id=$1", [humanId]);
   await pool.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,role,permissions)
     VALUES($1,'Steven','authority_operator','operator',ARRAY['read','control'])`, [humanId]);
   await pool.query(`INSERT INTO provider_accounts(id,provider,external_account_id,payer_tenant_id,credential_ref_kind,credential_ref,enabled)

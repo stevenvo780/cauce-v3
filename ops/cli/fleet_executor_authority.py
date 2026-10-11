@@ -71,6 +71,8 @@ def validate_scope(scope: dict, host: str) -> dict:
 def scope_for(policy: dict, context: dict, agent: dict) -> dict:
     configuration = validate_authority(policy.get('authority'), policy['host_id'])
     source = context.get('fleet_scope')
+    if isinstance(source, dict):
+        source = {key: value for key, value in source.items() if key != 'placement_role'}
     if not isinstance(source, dict) or set(source) != SCOPE_FIELDS - {'runtime_key'} \
             or source.get('operation_id') != context['operation_id'] or agent.get('host_id') != configuration['host_id']:
         raise SafeFailure('central authority requires the current durable host claim')

@@ -1,6 +1,6 @@
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
-import { AgentProfileRepository, FleetOperationError, assertFleetOperationAuthority, loadFleetHostScope, planFleetHostSlices, preparedState,
+import { AgentProfileRepository, FleetOperationError, assertFleetOperationAuthority, assertFleetRelocationSourceBarrier, loadFleetHostScope, planFleetHostSlices, preparedState, selectFleetHostSlices,
   providerAccountConsentSql, withTransaction, type DatabaseClient, type DatabasePool, type FleetOperationRow, type StoredAgentContext } from '@cauce/store';
 import {
   BootstrapAckSchema, BootstrapCreateSchema, BootstrapError, BootstrapRecordSchema, bootstrapPrompt,
@@ -64,7 +64,9 @@ export class BootstrapRepository {
     try {
       const sealed = await loadFleetHostScope(client, operation, agent.host_id);
       const previous = await preparedState(client, operation.id);
-      const exact = planFleetHostSlices(operation, sealed.agents, previous.previous_agents);
+      const exact = selectFleetHostSlices(planFleetHostSlices(operation, sealed.agents, previous.previous_agents), 'profile');
+      if (sealed.placement_role === 'source') throw forbidden();
+      await assertFleetRelocationSourceBarrier(client, operation);
       if (exact.length !== 1 || exact[0]?.target_sha256 !== sealed.target_sha256 || sealed.targets.length !== 1
           || sealed.targets[0]?.runtime_key !== agent.runtime_key) throw forbidden();
       const selected = sealed.agents.find(value => value.tenant_id === agent.tenant_id && value.alias === agent.alias);

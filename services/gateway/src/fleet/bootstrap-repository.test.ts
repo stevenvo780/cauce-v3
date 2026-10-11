@@ -23,6 +23,7 @@ beforeEach(async () => {
   const person = (await pool.query<{ id: string }>(`INSERT INTO console_users(email,email_normalized,password_hash,display_name,role,tenant_id,alias)
     VALUES('boot@example.test','boot@example.test',$1,'Boot','operator','Steven','boot-owner') RETURNING id`, ['$scrypt$' + 'x'.repeat(48)])).rows[0];
   if (!person) throw new Error('person absent');
+  await current.adminPool.query("INSERT INTO company_admins(company_id,human_id,role,source) SELECT company_id,id,'admin','v4.0-hub-operator' FROM console_users WHERE id=$1", [person.id]);
   await pool.query("INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,role,permissions) VALUES($1,'Steven','boot-owner','operator',ARRAY['read','control'])", [person.id]);
   await pool.query("INSERT INTO agent_profiles(tenant_id,alias,purpose) VALUES('Steven','boot-agent','Boot purpose')");
   operationId = randomUUID();

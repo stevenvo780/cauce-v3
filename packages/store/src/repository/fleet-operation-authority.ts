@@ -63,10 +63,10 @@ export async function lockFleetRevision(client: DatabaseClient, expected?: numbe
   }
   return revision;
 }
-export function fleetSteps(request: FleetOperationRequest): FleetOperationPreview['steps'] {
+export function fleetSteps(request: FleetOperationRequest, relocation = false): FleetOperationPreview['steps'] {
   if (request.kind === 'restore' && request.target.resource !== 'agent') return ['prepare', 'artifacts', 'admission'];
   switch (request.kind) {
-    case 'update': return ['prepare', 'stop', 'artifacts', 'credentials', 'runtime', 'authenticate', 'profile', 'verify', 'admission'];
+    case 'update': return ['prepare', 'stop', ...(relocation ? ['revoke' as const] : []), 'artifacts', 'credentials', 'runtime', 'authenticate', 'profile', 'verify', 'admission'];
     case 'create': case 'restore': return ['prepare', 'artifacts', 'credentials', 'runtime', 'authenticate', 'profile', 'verify', 'admission'];
     case 'start': return ['prepare', 'runtime', 'authenticate', 'profile', 'verify', 'admission'];
     case 'stop': return ['fence', 'stop', 'artifacts'];
@@ -88,6 +88,7 @@ export async function validateFleetTarget(
     throw new FleetOperationError('conflict', 'target tenant is not active');
   }
   let host: string | undefined;
+  let relocation = false;
   if (target.resource === 'agent') {
     const agent = (await client.query<{ host_id: string | null; runtime_key: string | null; primary_room_id: string | null; harness_id: string;
       purged_at: Date | null; retired_at: Date | null; enabled: boolean; lifecycle_state: string }>(
@@ -114,7 +115,13 @@ export async function validateFleetTarget(
       if (!harness.rowCount) throw new FleetOperationError('conflict', 'target harness is not enabled');
       if (agent?.runtime_key && agent.runtime_key !== parameters.runtime_key) throw new FleetOperationError('conflict', 'physical runtime identity is immutable');
       if (request.kind === 'update' && agent?.host_id !== parameters.placement.host_id) {
-        throw new FleetOperationError('conflict', 'host relocation requires an explicit multi-host migration operation');
+        if (!coordinatorEnabled || !agent?.host_id || !coordinatorHosts?.includes(agent.host_id)
+            || !coordinatorHosts.includes(parameters.placement.host_id)) {
+          throw new FleetOperationError('conflict', 'host relocation requires its approved source and destination coordinator');
+        }
+        const source = (await client.query<{ company_id: string }>('SELECT company_id FROM fleet_hosts WHERE host_id=$1 FOR KEY SHARE', [agent.host_id])).rows[0];
+        if (source?.company_id !== tenant.company_id) throw new FleetOperationError('forbidden', 'relocation source belongs to another company');
+        relocation = true;
       }
       if (request.kind === 'create' && !prepared && (await client.query('SELECT 1 FROM fleet_runtime_identities WHERE runtime_key=$1 OR (tenant_id=$2 AND alias=$3)',
         [parameters.runtime_key, target.tenant_id, target.alias])).rowCount) throw new FleetOperationError('conflict', 'physical runtime identity is reserved');
@@ -156,7 +163,7 @@ export async function validateFleetTarget(
   }
   const dependencies = request.kind === 'purge' ? await fleetPurgeDependencies(client, request) : [];
   return { host, preview: { request_sha256: sha256Hex(request), expected_revision: request.expected_revision, target, kind: request.kind,
-    steps: fleetSteps(request), dependencies, can_apply: !dependencies.some((dependency) => dependency.blocking) } };
+    steps: fleetSteps(request, relocation), dependencies, can_apply: !dependencies.some((dependency) => dependency.blocking) } };
 }
 
 export async function recordFleetEvent(

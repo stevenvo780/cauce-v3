@@ -131,7 +131,7 @@ def validate_payload(document) -> dict:
     if 'fleet_scope' in document:
         scope = document['fleet_scope']
         fields = {'operation_id', 'host_id', 'scope_sha256', 'prepared_revision', 'worker_id', 'claim_token', 'claim_epoch'}
-        if not isinstance(scope, dict) or set(scope) != fields or scope['operation_id'] != document['operation_id'] \
+        if not isinstance(scope, dict) or set(scope) - {'placement_role'} != fields or scope['operation_id'] != document['operation_id'] \
                 or re.fullmatch(r'[a-z][a-z0-9_-]{0,63}', scope.get('host_id', '')) is None \
                 or re.fullmatch(r'[a-f0-9]{64}', scope.get('scope_sha256', '')) is None \
                 or re.fullmatch(r'[A-Za-z0-9_-]{1,128}', scope.get('worker_id', '')) is None \
@@ -217,6 +217,8 @@ def validate_payload(document) -> dict:
             if any(row.get('resource') == 'agent' and row.get('tenant_id') == agent.get('tenant_id')
                     and row.get('alias') == agent.get('alias') for row in scoped):
                 validate_execution_selection(agent)
+    from fleet_migration import placement_role
+    placement_role(document)
     return document
 
 
@@ -229,6 +231,10 @@ def target_agent(context: dict) -> dict:
     target, parameters = request['target'], request['parameters']
     if target['resource'] != 'agent':
         raise SafeFailure('agent effect requires an agent target')
+    from fleet_migration import placement_role
+    if placement_role(context) == 'source':
+        return {**context['previous_agents'][0], '_trusted_accounts': context.get('trusted_accounts', []),
+                '_trusted_accounts_present': 'trusted_accounts' in context}
     if request['kind'] in {'create', 'update'}:
         placement = parameters['placement']
         identities = [row for row in context.get('snapshot', {}).get('agents', []) if row.get('tenant_id') == target['tenant_id']

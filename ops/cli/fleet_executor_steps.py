@@ -25,6 +25,7 @@ from fleet_executor_retirement import (
     scoped_agents,
 )
 from fleet_executor_runtime import NamespaceMismatch, start, stop
+from fleet_migration import approve_step, placement_role
 
 SCRIPTS = pathlib.Path(__file__).resolve().parents[1] / 'scripts'
 sys.path.insert(0, str(SCRIPTS))
@@ -58,6 +59,8 @@ class Executor:
         if self.journal.get('request_sha256') != self.request_hash:
             raise SafeFailure('operation replay changed its declarative request')
         inputs = {name: context[name] for name in ('fenced_targets', 'previous_agents', 'desired_memberships')}
+        if placement_role(context) is not None:
+            inputs['placement_role'] = placement_role(context)
         if 'global_desired_memberships' in context:
             inputs['global_desired_memberships'] = context['global_desired_memberships']
         inputs_hash = hashlib.sha256(json.dumps(inputs, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
@@ -86,6 +89,23 @@ class Executor:
 
     def artifacts(self):
         kind = self.context['request']['kind']
+        if placement_role(self.context) == 'source':
+            if self.journal.get('stopped') is not True or self.journal.get('revocation_complete') is not True:
+                raise SafeFailure('migration source artifacts require observed stop and revocation')
+            source = copy.deepcopy(self.context.get('snapshot'))
+            if not isinstance(source, dict):
+                raise SafeFailure('missing durable migration source snapshot')
+            agent = self.agent()
+            identity = (agent['tenant_id'], agent['alias'])
+            if any((row.get('tenant_id'), row.get('alias')) == identity for row in source.get('agents', [])):
+                raise SafeFailure('migration source snapshot still contains the moved agent')
+            source['memberships'] = [row for row in source.get('memberships', [])
+                                     if (row.get('tenant_id'), row.get('alias')) != identity]
+            receipt = self.materialize_snapshot(source)
+            publish_applied(self.state, receipt['generation'], self.journal['expected_applied'])
+            self.journal['generation'] = receipt['generation']
+            self.save()
+            return {'artifact_sha256': receipt['generation']}
         if kind in {'stop', 'retire', 'purge'}:
             if self.journal.get('stopped') is not True or (kind != 'stop' and self.journal.get('revocation_complete') is not True):
                 raise SafeFailure('fenced artifacts require observed stop and revocation')
@@ -174,7 +194,7 @@ class Executor:
             raise SafeFailure('registered certificate pair is missing; no rotation performed')
         proof = provision(key, pki, pathlib.Path(signer['certificate']), pathlib.Path(signer['key']), snapshot, manifest, bootstrap=bootstrap)
         expires = datetime.datetime.fromisoformat(proof['expires_at'].replace('Z', '+00:00'))
-        ttl_days = 1 if bootstrap else max(1, (expires - datetime.datetime.now(datetime.timezone.utc)).days)
+        ttl_days = 1 if bootstrap else max(1, (expires - datetime.datetime.now(datetime.UTC)).days)
         registered = registry.register(key, pki / key, identities, snapshot, ttl_days, bootstrap=bootstrap)
         if registered['certificate_sha256'] != proof['certificate_fingerprint']:
             raise SafeFailure('registered certificate fingerprint differs')
@@ -191,7 +211,7 @@ class Executor:
             self.credentials()
         self.generation()
         agent = self.agent()
-        if self.context['request']['kind'] == 'update':
+        if self.context['request']['kind'] == 'update' and placement_role(self.context) != 'destination':
             previous = [row for row in self.context['previous_agents'] if row.get('tenant_id') == agent['tenant_id'] and row.get('alias') == agent['alias']]
             if len(previous) != 1:
                 raise SafeFailure('update requires the original runtime placement')
@@ -392,6 +412,14 @@ class Executor:
             stop(self.policy, row)
         self.journal['stopped'] = True
         self.save()
+        if placement_role(self.context) == 'source':
+            from fleet_executor_authority import call, inventory, scope_for
+            for row in rows:
+                scope = scope_for(self.policy, self.context, row)
+                inventory(call(self.policy['authority'], scope, 'verify_absent'), row, absent=True)
+            self.journal['source_compensation_verified'] = True
+            self.save()
+            return {'stopped_verified': True, 'revocation_verified': True}
         revoked = self.journal.setdefault('compensated', {})
         for row in rows:
             references = credential_references(self.policy, row)
@@ -447,6 +475,9 @@ def executor_lock(policy: dict):
 
 
 def perform(policy: dict, context: dict, step: str) -> dict:
+    approve_step(context, step)
+    if placement_role(context) is not None and step in {'credentials', 'revoke', 'compensate'} and 'authority' not in policy:
+        raise SafeFailure('migration credentials require the durable central authority')
     if context.get('fleet_scope', {}).get('host_id', policy['host_id']) != policy['host_id']:
         raise SafeFailure('coordinated effect belongs to another host')
     target = context['request']['target']

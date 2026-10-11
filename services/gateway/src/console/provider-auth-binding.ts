@@ -1,4 +1,4 @@
-import { StoreError, loadFleetHostScope, lockCompanyAuthority, planFleetHostSlices, preparedState, providerAccountConsentSql, withTransaction,
+import { StoreError, assertFleetRelocationSourceBarrier, loadFleetHostScope, lockCompanyAuthority, planFleetHostSlices, preparedState, selectFleetHostSlices, providerAccountConsentSql, withTransaction,
   type CompanyAuthority, type DatabaseClient, type DatabasePool, type FleetOperationRow } from '@cauce/store';
 import { randomUUID } from 'node:crypto';
 import { isLiteralTrue } from '@cauce/protocol';
@@ -63,7 +63,9 @@ export async function assertProviderAuthSealedScope(client: DatabaseClient, oper
         || typeof agent.host_id !== 'string' || typeof agent.runtime_key !== 'string' || operation.desired_revision === null) throw denied();
     const sealed = await loadFleetHostScope(client, operation, agent.host_id);
     const prepared = await preparedState(client, operation.id);
-    const exact = planFleetHostSlices(operation, sealed.agents, prepared.previous_agents);
+    const exact = selectFleetHostSlices(planFleetHostSlices(operation, sealed.agents, prepared.previous_agents), 'authenticate');
+    if (sealed.placement_role === 'source') throw denied();
+    await assertFleetRelocationSourceBarrier(client, operation);
     if (exact.length !== 1 || exact[0]?.target_sha256 !== sealed.target_sha256 || sealed.targets.length !== 1
         || sealed.targets[0]?.runtime_key !== agent.runtime_key) throw denied();
     const selected = sealed.agents.find(value => value.tenant_id === agent.tenant_id && value.alias === agent.alias);

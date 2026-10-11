@@ -22,14 +22,70 @@ function fixture() {
   const receipts: CoordinatedHostReceipt[] = []; const calls: string[] = [];
   const repository = { hostSlices: async () => slices, hostReceipts: async () => [...receipts],
     completeHostStep: async (_claim: FleetOperationClaim, _step: string, host: string, digest: string, evidence: FleetEvidence) => {
-      calls.push(`receipt:${host}`); receipts.push({ host_id: host, target_sha256: digest, evidence }); return operation;
+      calls.push(`receipt:${host}`); const role = slices.find(slice => slice.host_id === host)?.placement_role;
+      receipts.push({ host_id: host, target_sha256: digest, evidence, ...(role === undefined ? {} : { placement_role: role }) }); return operation;
     } };
   const transport = { perform: async (host: string) => { calls.push(`effect:${host}`); return { evidence: { stopped_verified: true } }; },
     compensate: async (host: string) => { calls.push(`compensate:${host}`); return { stopped_verified: true, revocation_verified: true }; } };
   return { slices, claim, execution, receipts, calls, repository, transport };
 }
+function relocationFixture() {
+  const f = fixture();
+  const parameters = { runtime_key: 'runtime-a', harness_id: 'codex', primary_room_id: 'team',
+    memberships: [{ room_id: 'team', role: 'agent' }], placement: { host_id: 'host-b', mode: 'native' as const,
+      runtime_user: 'dev', home_directory: '/home/dev', state_directory: '/home/dev/agent', systemd_user: 'stev' } };
+  const request: FleetOperationRequest = { kind: 'update', target: { resource: 'agent', tenant_id: 'Steven', alias: 'a' },
+    parameters, expected_revision: 0, idempotency_key: 'relocation-fixture' };
+  f.execution.request = request; f.claim.request = request;
+  f.execution.operation.kind = request.kind; f.execution.operation.target = request.target;
+  const source = { tenant_id: 'Steven', alias: 'a', runtime_key: 'runtime-a', host_id: 'host-a', primary_account_id: 'source-account' };
+  const destination = { ...source, host_id: 'host-b', primary_account_id: 'destination-account' };
+  f.execution.previous_agents = [source]; f.execution.snapshot = { agents: [destination] };
+  f.slices.forEach((slice, index) => { slice.placement_role = index === 0 ? 'source' : 'destination';
+    slice.agents = [index === 0 ? source : destination]; slice.targets = [{ tenant_id: 'Steven', alias: 'a', runtime_key: 'runtime-a' }]; });
+  return f;
+}
 
 describe('fleet host coordination', () => {
+  it('selects only the source for relocation stop and only the destination for credentials', async () => {
+    const f = relocationFixture();
+    const transport = { ...f.transport, perform: async (host: string, step: string) => {
+      f.calls.push(`effect:${host}`); return { evidence: step === 'stop' ? { stopped_verified: true } : { certificate_fingerprint: 'a'.repeat(64) } };
+    } };
+    const coordinator = new FleetCoordinator(f.repository, transport);
+    await coordinator.perform('stop', f.execution, new AbortController().signal, f.claim);
+    expect(f.calls).toEqual(['effect:host-a', 'receipt:host-a']);
+    f.calls.length = 0; f.receipts.length = 0;
+    await coordinator.perform('credentials', f.execution, new AbortController().signal, f.claim);
+    expect(f.calls).toEqual(['effect:host-b', 'receipt:host-b']);
+  });
+  it('seals both role-specific artifact images without pretending they are identical', async () => {
+    const f = relocationFixture(); const packets: FleetExecution[] = [];
+    const transport = { ...f.transport, perform: async (host: string, _step: string, packet: FleetExecution) => {
+      packets.push(packet); return { evidence: { artifact_sha256: host === 'host-a' ? 'a'.repeat(64) : 'b'.repeat(64) } };
+    } };
+    expect((await new FleetCoordinator(f.repository, transport).perform('artifacts', f.execution, new AbortController().signal, f.claim)).evidence.artifact_sha256).toHaveLength(64);
+    expect(packets[0]?.previous_agents).toEqual(f.execution.previous_agents);
+    expect(packets[0]?.snapshot?.agents).toEqual([]); expect(packets[0]?.fleet_scope?.placement_role).toBe('source');
+    expect(packets[1]?.previous_agents).toEqual([]); expect(packets[1]?.snapshot).toEqual(f.execution.snapshot);
+    expect(packets[1]?.fleet_scope?.placement_role).toBe('destination');
+  });
+  it('accepts destination-only awaiting auth for a two-host relocation', async () => {
+    const f = relocationFixture(); const hosts: string[] = [];
+    const transport = { ...f.transport, perform: async (host: string) => { hosts.push(host); return { evidence: {}, awaiting_auth: true }; } };
+    expect(await new FleetCoordinator(f.repository, transport).perform('authenticate', f.execution, new AbortController().signal, f.claim))
+      .toEqual({ evidence: {}, awaiting_auth: true });
+    expect(hosts).toEqual(['host-b']); expect(f.receipts).toEqual([]);
+  });
+  it('compensates destination before source and rejects altered role pairs', async () => {
+    const f = relocationFixture(); const coordinator = new FleetCoordinator(f.repository, f.transport);
+    await coordinator.compensate(f.execution, new AbortController().signal, f.claim);
+    expect(f.calls).toEqual(['compensate:host-b', 'receipt:host-b', 'compensate:host-a', 'receipt:host-a']);
+    f.calls.length = 0; const source = f.slices[0]; if (!source) throw new Error('missing fixture source');
+    source.placement_role = 'destination';
+    await expect(coordinator.perform('stop', f.execution, new AbortController().signal, f.claim)).rejects.toThrow();
+    expect(f.calls).toEqual([]);
+  });
   it('drops adopted registry drafts from previous agents but keeps the fenced target', () => {
     const draft = { tenant_id: 'Steven', alias: 'drafted', runtime_key: null, enabled: false, lifecycle_state: 'draft', host_id: null };
     const live = { tenant_id: 'Steven', alias: 'live', runtime_key: 'live', enabled: true, lifecycle_state: 'ready', host_id: 'host-a' };
@@ -58,6 +114,26 @@ describe('fleet host coordination', () => {
   it('rejects a receipt for changed placements before any effect', async () => {
     const f = fixture(); f.receipts.push({ host_id: 'host-a', target_sha256: 'f'.repeat(64), evidence: { stopped_verified: true } });
     await expect(new FleetCoordinator(f.repository, f.transport).perform('stop', f.execution, new AbortController().signal, f.claim)).rejects.toThrow();
+    expect(f.calls).toEqual([]);
+  });
+  it.each(['role', 'extra', 'duplicate'] as const)('rejects %s receipt changes after saving a host effect', async corruption => {
+    const f = relocationFixture(); const completeHostStep = f.repository.completeHostStep;
+    f.repository.completeHostStep = async (...args: Parameters<typeof completeHostStep>) => {
+      const result = await completeHostStep(...args); const receipt = f.receipts[0];
+      if (!receipt) throw new Error('missing fixture receipt');
+      if (corruption === 'role') receipt.placement_role = 'source';
+      else f.receipts.push({ ...receipt, host_id: corruption === 'extra' ? 'foreign-host' : receipt.host_id });
+      return result;
+    };
+    await expect(new FleetCoordinator(f.repository, f.transport).compensate(f.execution, new AbortController().signal, f.claim)).rejects.toThrow();
+    expect(f.calls).toEqual(['compensate:host-b', 'receipt:host-b']);
+  });
+  it('rejects duplicate receipts before executing a missing compensation host', async () => {
+    const f = relocationFixture(); const slice = f.slices[0]; if (!slice) throw new Error('missing fixture slice');
+    const receipt = { host_id: slice.host_id, target_sha256: slice.target_sha256, placement_role: slice.placement_role,
+      evidence: { stopped_verified: true, revocation_verified: true } };
+    f.receipts.push(receipt, { ...receipt });
+    await expect(new FleetCoordinator(f.repository, f.transport).compensate(f.execution, new AbortController().signal, f.claim)).rejects.toThrow();
     expect(f.calls).toEqual([]);
   });
   it('does not persist a receipt after the effect loses its claim signal', async () => {

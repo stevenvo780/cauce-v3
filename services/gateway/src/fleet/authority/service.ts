@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
-import { assertFleetOperationAuthority, FleetOperationError, loadFleetHostScope, lockFleetRevision, providerAccountConsentSql, withTransaction,
+import { assertFleetOperationAuthority, assertFleetRelocationSourceBarrier, FleetOperationError, loadFleetHostScope, lockFleetRevision, providerAccountConsentSql, withTransaction,
   type DatabaseClient, type DatabasePool, type FleetOperationRow } from '@cauce/store';
 import { runAuthorityCommand, type AuthorityCommand } from './command.js';
 import { AuthorityHostSchema, AuthorityInventorySchema, AuthorityIssuedSchema, AuthorityRequestSchema,
@@ -34,6 +34,8 @@ async function resolveAuthority(client: DatabaseClient, scope: AuthorityScope, r
     WHERE runtime_key=$1 AND tenant_id=$2 AND alias=$3`, [agent.runtime_key, agent.tenant_id, agent.alias])).rowCount;
   if (reserved !== 1) throw new FleetAuthorityError('AUTHORITY_REVOKED');
   if (request.action === 'issue') {
+    if (slice.placement_role === 'source') throw new FleetAuthorityError('AUTHORITY_REVOKED');
+    await assertFleetRelocationSourceBarrier(client, row);
     if (row.status !== 'running' || row.cancel_requested || row.target.resource !== 'agent'
         || !['create', 'update', 'start', 'restore'].includes(row.kind)) throw new FleetAuthorityError('AUTHORITY_REVOKED');
     const admitted = request.phase === 'normal';
@@ -55,6 +57,11 @@ async function resolveAuthority(client: DatabaseClient, scope: AuthorityScope, r
       || row.steps.some(step => step.name === 'revoke' && step.status === 'running'))) {
     throw new FleetAuthorityError('AUTHORITY_REVOKED');
   }
+  if (request.action === 'revoke' && slice.placement_role === 'destination' && row.status !== 'cancelling' && !row.cancel_requested) {
+    throw new FleetAuthorityError('AUTHORITY_REVOKED');
+  }
+  if (request.action === 'revoke' && slice.placement_role === 'source'
+      && row.steps.some(step => step.name === 'credentials' && step.status !== 'pending')) throw new FleetAuthorityError('AUTHORITY_REVOKED');
   return { row, agent };
 }
 async function authority(client: DatabaseClient, scope: AuthorityScope, request: AuthorityRequest, host: string) {

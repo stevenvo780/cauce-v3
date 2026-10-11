@@ -6,7 +6,7 @@ import { FleetOperationError, publicFleetOperation, type FleetOperationClaim, ty
 import { prepareFleetDesired, previousFleetAgents, settleFleetDesired } from './fleet-operation-desired.js';
 import { assertPrecedingSteps, fleetStep, lockFleetClaim, preparedState, recordFleetRevision, saveFleetState } from './fleet-operation-state.js';
 import { fleetMembershipIntent, purgeFleetTarget } from './fleet-operation-lifecycle.js';
-import { assertFleetHostBarrier, assertFleetSealedHostBarrier, hostStepEvidence, loadFleetHostScope, loadFleetHostSlices, planFleetHostSlices,
+import { assertFleetHostBarrier, assertFleetSealedHostBarrier, assertFleetRelocationSourceBarrier, hostStepEvidence, loadFleetHostScope, loadFleetHostSlices, planFleetHostSlices, selectFleetHostSlices,
   readFleetGroupAgents, readFleetHostReceipts, usesFleetHostSlices, type FleetHostReceipt, type FleetHostSlice, type FleetHostStep } from './fleet-operation-hosts.js';
 
 function stepEvidence(name: FleetStepName, input: FleetEvidence): FleetEvidence {
@@ -50,8 +50,13 @@ export abstract class FleetOperationExecution extends FleetOperationClaims {
         if (!['running', 'succeeded'].includes(fleetStep(row, name).status)) throw new FleetOperationError('conflict', 'host step has not been started');
       }
       const slice = await loadFleetHostScope(client, row, host);
+      if (!selectFleetHostSlices(await loadFleetHostSlices(client, row), name).some(selected => selected.host_id === host)) {
+        throw new FleetOperationError('conflict', 'host is not selected for this relocation step');
+      }
+      if ((slice.placement_role === 'destination' || name === 'artifacts') && name !== 'compensate') await assertFleetRelocationSourceBarrier(client, row);
       if (slice.target_sha256 !== digest) throw new FleetOperationError('conflict', 'host receipt differs from its sealed scope');
       const receipt: FleetHostReceipt = { host_id: host, target_sha256: digest, step: name,
+        ...(slice.placement_role === undefined ? {} : { placement_role: slice.placement_role }),
         epoch: claim.epoch, claim_token: claim.claim_token, evidence: proof };
       const prior = (await readFleetHostReceipts(client, row, claim, name)).find(entry => entry.host_id === host);
       if (prior) {
@@ -99,6 +104,7 @@ export abstract class FleetOperationExecution extends FleetOperationClaims {
         throw new FleetOperationError('invalid_input', 'this step is controlled by the durable lifecycle transaction');
       }
       assertPrecedingSteps(row, name);
+      if (['artifacts', 'credentials', 'runtime', 'authenticate', 'profile', 'verify', 'admission'].includes(name)) await assertFleetRelocationSourceBarrier(client, row);
       const step = fleetStep(row, name);
       if (step.status === 'succeeded' || step.status === 'running') return publicFleetOperation(row);
       step.status = 'running';
@@ -122,7 +128,8 @@ export abstract class FleetOperationExecution extends FleetOperationClaims {
       }
       if (step.status !== 'running') throw new FleetOperationError('conflict', 'fleet step has not been started');
       const explicit = await readFleetHostReceipts(client, row, claim, name);
-      const direct = !usesFleetHostSlices(row.request) && explicit.length === 0;
+      const scopes = await loadFleetHostSlices(client, row);
+      const direct = !usesFleetHostSlices(row.request) && !scopes.some(slice => slice.placement_role !== undefined) && explicit.length === 0;
       let receipts: FleetHostReceipt[];
       if (!direct) receipts = await assertFleetHostBarrier(client, row, claim, name, proof);
       else {
@@ -142,6 +149,9 @@ export abstract class FleetOperationExecution extends FleetOperationClaims {
     return this.transaction(async (client) => {
       const row = await this.current(client, claim);
       const step = fleetStep(row, 'authenticate');
+      const selected = selectFleetHostSlices(await loadFleetHostSlices(client, row), 'authenticate');
+      if (selected.length !== 1) throw new FleetOperationError('conflict', 'authentication requires one selected durable host');
+      await assertFleetRelocationSourceBarrier(client, row);
       if (step.status !== 'running' && step.status !== 'waiting') throw new FleetOperationError('conflict', 'authentication step is not active');
       step.status = 'waiting'; row.status = 'awaiting_auth'; row.error = { code: 'PROVIDER_AUTH_REQUIRED', step: 'authenticate', retryable: true };
       if (row.target.resource === 'agent') await client.query(`UPDATE agents SET lifecycle_state='auth_pending',enabled=false,updated_at=clock_timestamp()
@@ -191,7 +201,8 @@ export abstract class FleetOperationExecution extends FleetOperationClaims {
     return this.transaction(async (client) => {
       const row = await lockFleetClaim(client, claim, true);
       if (!row.cancel_requested) throw new FleetOperationError('conflict', 'compensation requires an operator cancellation');
-      if (usesFleetHostSlices(row.request) && row.desired_revision !== null) {
+      if (row.desired_revision !== null && (usesFleetHostSlices(row.request)
+          || (await loadFleetHostSlices(client, row)).some(slice => slice.placement_role !== undefined))) {
         await assertFleetHostBarrier(client, row, claim, 'compensate', proof.data);
       }
       const attempted = (name: FleetStepName): boolean => row.steps.some((step) => step.name === name && step.status !== 'pending');

@@ -6,21 +6,25 @@ import { FleetOperationError, isRegistryDraft, type FleetOperationClaim, type Fl
 export type FleetHostStep = FleetStepName | 'compensate';
 export interface FleetHostSlice {
   host_id: string;
+  placement_role?: 'source' | 'destination' | undefined;
   targets: (FencedFleetTarget & { runtime_key: string })[];
   agents: Record<string, unknown>[];
   target_sha256: string;
 }
 export interface FleetHostReceipt {
   host_id: string; target_sha256: string; step: FleetHostStep;
+  placement_role?: 'source' | 'destination' | undefined;
   epoch: number; claim_token: string; evidence: FleetEvidence;
 }
 const Host = z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/u);
 const Digest = z.string().regex(/^[a-f0-9]{64}$/u);
 const SliceSchema = z.object({ host_id: Host, target_sha256: Digest,
+  placement_role: z.enum(['source', 'destination']).optional(),
   targets: z.array(z.object({ resource: z.literal('agent'), tenant_id: z.string(), alias: z.string(), runtime_key: z.string() }).strict()).max(1000),
   agents: z.array(z.record(z.string(), z.unknown())).max(2000),
 }).strict();
 const ReceiptSchema = z.object({ host_id: Host, target_sha256: Digest, step: z.string(),
+  placement_role: z.enum(['source', 'destination']).optional(),
   epoch: z.number().int().nonnegative(), claim_token: z.uuid(), evidence: FleetEvidenceSchema,
 }).strict();
 function conflict(message: string): never { throw new FleetOperationError('conflict', message); }
@@ -42,6 +46,23 @@ function assertPlacement(agent: Record<string, unknown>, request: FleetOperation
   }
 }
 export function usesFleetHostSlices(request: FleetOperationRequest): boolean { return request.target.resource !== 'agent'; }
+export function isFleetRelocation(request: FleetOperationRequest, previous: readonly Record<string, unknown>[]): boolean {
+  return request.kind === 'update' && previous.length === 1 && previous[0]?.host_id !== request.parameters.placement.host_id;
+}
+export function selectFleetHostSlices<T extends Pick<FleetHostSlice, 'host_id' | 'placement_role'>>(
+  slices: readonly T[], step: FleetHostStep,
+): T[] {
+  if (!slices.some(slice => slice.placement_role !== undefined)) return [...slices];
+  if (slices.length !== 2 || new Set(slices.map(slice => slice.host_id)).size !== 2
+      || slices.filter(slice => slice.placement_role === 'source').length !== 1
+      || slices.filter(slice => slice.placement_role === 'destination').length !== 1) conflict('relocation requires its exact source and destination');
+  if (step === 'stop' || step === 'revoke') return slices.filter(slice => slice.placement_role === 'source');
+  if (['credentials', 'runtime', 'authenticate', 'profile', 'verify', 'admission'].includes(step)) {
+    return slices.filter(slice => slice.placement_role === 'destination');
+  }
+  if (step === 'compensate') return [...slices].sort((left, right) => Number(left.placement_role === 'source') - Number(right.placement_role === 'source'));
+  return [...slices];
+}
 
 export async function readFleetGroupAgents(client: DatabaseClient, request: FleetOperationRequest): Promise<Record<string, unknown>[]> {
   const target = request.target;
@@ -77,13 +98,27 @@ export async function assertFleetHostAccess(
     if (grouped && !coordinatorEnabled && agent.host_id !== controllerHost) conflict('group lifecycle requires its configured host coordinator');
   }
 }
-function scopeDigest(row: FleetOperationRow, host: string, agents: Record<string, unknown>[], targets: FleetHostSlice['targets'], previous: Record<string, unknown>[]): string {
+function scopeDigest(row: FleetOperationRow, host: string, agents: Record<string, unknown>[], targets: FleetHostSlice['targets'], previous: Record<string, unknown>[], role?: FleetHostSlice['placement_role']): string {
   return sha256Hex({ operation_id: row.id, request_sha256: row.request_hash, prepared_revision: row.desired_revision,
-    host_id: host, agents, targets, previous_agents: previous.filter(agent => agent.host_id === host) });
+    host_id: host, ...(role === undefined ? {} : { placement_role: role }), agents, targets, previous_agents: previous.filter(agent => agent.host_id === host) });
 }
 export function planFleetHostSlices(row: FleetOperationRow, agents: Record<string, unknown>[], previous: Record<string, unknown>[] = []): FleetHostSlice[] {
   if (row.desired_revision === null || !Host.safeParse(row.executor_host).success || agents.length > 1000) {
     conflict('fleet host scope has no durable prepared revision');
+  }
+  if (isFleetRelocation(row.request, previous)) {
+    const source = previous[0]; const destination = agents[0];
+    if (row.request.kind !== 'update' || !source || !destination || agents.length !== 1
+        || identity(source) !== identity(destination) || identity(source) !== identity(row.request.target)
+        || source.runtime_key !== destination.runtime_key || source.runtime_key !== row.request.parameters.runtime_key
+        || destination.host_id !== row.request.parameters.placement.host_id) conflict('relocation changes its immutable durable identity');
+    return ([['source', source], ['destination', destination]] as const).map(([placement_role, agent]) => {
+      assertPlacement(agent, row.request);
+      const host_id = String(agent.host_id); const members = [structuredClone(agent)];
+      const targets = [{ resource: 'agent' as const, tenant_id: String(agent.tenant_id), alias: String(agent.alias), runtime_key: String(agent.runtime_key) }];
+      return { host_id, placement_role, agents: members, targets,
+        target_sha256: scopeDigest(row, host_id, members, targets, previous, placement_role) };
+    }).sort((left, right) => left.host_id.localeCompare(right.host_id));
   }
   const hosts = new Map<string, Record<string, unknown>[]>();
   const seen = new Set<string>();
@@ -121,9 +156,9 @@ export async function loadFleetHostSlices(client: DatabaseClient, row: FleetOper
   const create = row.request.kind === 'create';
   for (const agent of metadata.data.previous_agents) if (!(create && adoptedDraft(agent))) assertPlacement(agent, row.request);
   const expected = planFleetHostSlices({ ...row, desired_revision: String(metadata.data.prepared_revision) },
-    slices.flatMap(slice => slice.agents), metadata.data.previous_agents);
+    slices.filter(slice => slice.placement_role !== 'source').flatMap(slice => slice.agents), metadata.data.previous_agents);
   if (sha256Hex(expected) !== sha256Hex(slices)) conflict('fleet host scope digest differs from its prepared placements');
-  const identities = slices.flatMap(slice => slice.targets).map(identity).sort();
+  const identities = [...new Set(slices.flatMap(slice => slice.targets).map(identity))].sort();
   const fenced = metadata.data.fenced_targets.map(identity).sort();
   const targetIdentity = identity(row.request.target);
   const previous = metadata.data.previous_agents;
@@ -161,7 +196,7 @@ export async function readFleetHostReceipts(
   const events = (await client.query<{ receipt: unknown }>(`SELECT metadata->'host_receipt' AS receipt FROM fleet_operation_events
     WHERE operation_id=$1 AND event='step_completed' AND metadata->>'step'=$2
       AND metadata ? 'host_receipt' ORDER BY id`, [row.id, name])).rows;
-  const slices = await loadFleetHostSlices(client, row);
+  const slices = selectFleetHostSlices(await loadFleetHostSlices(client, row), name);
   const receipts = new Map<string, FleetHostReceipt>();
   for (const event of events) {
     const parsed = ReceiptSchema.safeParse(event.receipt);
@@ -169,7 +204,7 @@ export async function readFleetHostReceipts(
     const receipt = parsed.data;
     if (receipt.epoch !== claim.epoch || receipt.claim_token !== claim.claim_token) continue;
     const slice = slices.find(slice => slice.host_id === receipt.host_id);
-    if (receipt.target_sha256 !== slice?.target_sha256 || receipt.step !== name) conflict('durable host receipt scope differs');
+    if (receipt.target_sha256 !== slice?.target_sha256 || receipt.placement_role !== slice.placement_role || receipt.step !== name) conflict('durable host receipt scope differs');
     const proof = hostStepEvidence(name, receipt.evidence);
     const entry = { ...receipt, step: name, evidence: proof };
     const prior = receipts.get(receipt.host_id);
@@ -178,16 +213,19 @@ export async function readFleetHostReceipts(
   }
   return [...receipts.values()].sort((left, right) => left.host_id.localeCompare(right.host_id));
 }
-export function aggregateHostEvidence(name: FleetHostStep, receipts: Pick<FleetHostReceipt, 'host_id' | 'target_sha256' | 'evidence'>[]): FleetEvidence {
+export function aggregateHostEvidence(name: FleetHostStep, receipts: Pick<FleetHostReceipt, 'host_id' | 'target_sha256' | 'evidence' | 'placement_role'>[]): FleetEvidence {
   if (receipts.length === 0 || new Set(receipts.map(receipt => receipt.host_id)).size !== receipts.length) {
     conflict('a fleet host barrier requires explicit unique host receipts');
   }
   for (const receipt of receipts) hostStepEvidence(name, receipt.evidence);
-  if (['artifacts', 'admission'].includes(name) && new Set(receipts.map(receipt => receipt.evidence.artifact_sha256)).size !== 1) {
+  const relocationArtifacts = name === 'artifacts' && receipts.length === 2
+    && receipts.some(receipt => receipt.placement_role === 'source') && receipts.some(receipt => receipt.placement_role === 'destination');
+  if (['artifacts', 'admission'].includes(name) && !relocationArtifacts && new Set(receipts.map(receipt => receipt.evidence.artifact_sha256)).size !== 1) {
     conflict('fleet host artifacts must describe the same global desired image');
   }
   const evidence = sha256Hex([...receipts].sort((left, right) => left.host_id.localeCompare(right.host_id))
-    .map(({ host_id, target_sha256, evidence }) => ({ host_id, target_sha256, evidence })));
+    .map(({ host_id, target_sha256, evidence, placement_role }) => ({ host_id, target_sha256, evidence,
+      ...(placement_role === undefined ? {} : { placement_role }) })));
   if (name === 'artifacts') return { artifact_sha256: evidence };
   if (name === 'admission') return { authority_verified: true, artifact_sha256: evidence };
   if (name === 'compensate' || name === 'purge') return { stopped_verified: true, revocation_verified: true };
@@ -200,7 +238,7 @@ export function aggregateHostEvidence(name: FleetHostStep, receipts: Pick<FleetH
 export async function assertFleetHostBarrier(
   client: DatabaseClient, row: FleetOperationRow, claim: FleetOperationClaim, name: FleetHostStep, proof: FleetEvidence,
 ): Promise<FleetHostReceipt[]> {
-  const slices = await loadFleetHostSlices(client, row);
+  const slices = selectFleetHostSlices(await loadFleetHostSlices(client, row), name);
   const receipts = await readFleetHostReceipts(client, row, claim, name);
   if (receipts.length !== slices.length || slices.some(slice => !receipts.some(receipt => receipt.host_id === slice.host_id))) {
     conflict('fleet effect requires every sealed host receipt under the current claim');
@@ -219,19 +257,28 @@ export async function assertFleetSealedHostBarrier(
     receipts: z.array(ReceiptSchema).min(1).max(100) }).strict() }).loose().safeParse(events[0]?.metadata);
   if (!seal.success) conflict('completed fleet host barrier has an invalid shape');
   const barrier = seal.data.host_barrier;
-  const slices = await loadFleetHostSlices(client, row);
+  const slices = selectFleetHostSlices(await loadFleetHostSlices(client, row), name);
   if (barrier.receipts.length !== slices.length || new Set(barrier.receipts.map(receipt => receipt.host_id)).size !== slices.length) {
     conflict('completed fleet host barrier does not cover every exact host');
   }
   for (const receipt of barrier.receipts) {
     const slice = slices.find(slice => slice.host_id === receipt.host_id);
-    if (receipt.target_sha256 !== slice?.target_sha256 || receipt.step !== name
+    if (receipt.target_sha256 !== slice?.target_sha256 || receipt.placement_role !== slice.placement_role || receipt.step !== name
       || receipt.epoch !== barrier.epoch || receipt.claim_token !== barrier.claim_token) conflict('completed host receipt differs from its sealed claim scope');
     hostStepEvidence(name, receipt.evidence);
   }
   if (barrier.direct && (row.target.resource !== 'agent' || slices.length !== 1 || barrier.receipts[0]?.host_id !== row.executor_host)) {
     conflict('direct fleet barrier requires one exact durable agent host');
   }
+  if (barrier.direct && slices.some(slice => slice.placement_role !== undefined)) conflict('relocation cannot use a direct host barrier');
   const completed = barrier.direct ? barrier.receipts[0]?.evidence : aggregateHostEvidence(name, barrier.receipts);
   if (sha256Hex(completed) !== sha256Hex(proof)) conflict('completed fleet aggregate differs from its immutable barrier');
+}
+export async function assertFleetRelocationSourceBarrier(client: DatabaseClient, row: FleetOperationRow): Promise<void> {
+  if (!(await loadFleetHostSlices(client, row)).some(slice => slice.placement_role !== undefined)) return;
+  for (const name of ['stop', 'revoke'] as const) {
+    const step = row.steps.find(step => step.name === name);
+    if (step?.status !== 'succeeded') conflict('relocation destination requires the completed source stop and revocation');
+    await assertFleetSealedHostBarrier(client, row, name, step.evidence ?? {});
+  }
 }

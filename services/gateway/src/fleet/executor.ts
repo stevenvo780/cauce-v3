@@ -12,6 +12,7 @@ export interface FleetExecution {
   snapshot?: Record<string, unknown>;
   trusted_accounts?: FleetProviderAccounts;
   fleet_scope?: {
+    placement_role?: 'source' | 'destination';
     operation_id: string; host_id: string; scope_sha256: string; prepared_revision: number;
     worker_id: string; claim_token: string; claim_epoch: number;
   };
