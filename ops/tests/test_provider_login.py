@@ -72,9 +72,9 @@ class ProviderLoginPtyTest(unittest.TestCase):
                 os.close(descriptor)
         self.temporary.cleanup()
 
-    def start(self):
+    def start(self, *, umask=-1):
         self.process = subprocess.Popen([sys.executable, str(HELPER)], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE, env={**os.environ, 'PYTHONDONTWRITEBYTECODE': '1'})
+            stderr=subprocess.PIPE, env={**os.environ, 'PYTHONDONTWRITEBYTECODE': '1'}, umask=umask)
         self.send(self.plan)
         started = self.wait_for('started')
         self.child = started['pid']
@@ -117,6 +117,17 @@ class ProviderLoginPtyTest(unittest.TestCase):
     def output_until(self, marker):
         while marker not in self.output:
             self.frame()
+
+    def test_new_login_files_are_private_under_a_permissive_parent_umask(self):
+        self.worker.write_text(self.worker.read_text().replace(
+            'print("TTY_READY"',
+            'os.mkdir("new-private-directory")\n'
+            'with open("new-private-file", "w") as stream: stream.write("synthetic")\n'
+            'print("TTY_READY"'))
+        self.start(umask=0)
+        self.output_until(b'TTY_READY')
+        self.assertEqual((self.root / 'new-private-file').stat().st_mode & 0o777, 0o600)
+        self.assertEqual((self.root / 'new-private-directory').stat().st_mode & 0o777, 0o700)
 
     def test_real_pty_input_resize_close_and_no_transcript_persisted(self):
         started = self.start()

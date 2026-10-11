@@ -247,6 +247,7 @@ def run_guardian(plan: dict, user, root: int, lock: int, controller: dict) -> in
                 os.setuid(user.pw_uid)
             if os.getuid() != user.pw_uid or os.getgid() != user.pw_gid:
                 os._exit(125)
+            os.umask(0o077)
             os.chdir(plan['cwd'])
             os.execve(plan['command'][0], plan['command'], {**plan['env'], 'HOME': plan['home'],
                 'USER': user.pw_name, 'LOGNAME': user.pw_name, 'TERM': 'xterm-256color'})
