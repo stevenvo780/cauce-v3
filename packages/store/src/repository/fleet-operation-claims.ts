@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { withTransaction, type DatabasePool } from '../db.js';
+import { withTransaction, type DatabaseClient, type DatabasePool } from '../db.js';
 import { lockFleetRevision, recordFleetEvent } from './fleet-operation-authority.js';
 import { FleetOperationError, publicFleetOperation, type FleetOperationClaim, type FleetOperationRow } from './fleet-operation-contracts.js';
 import { assertFleetOperationAuthority, loadFleetOrigin } from './fleet-operation-human.js';
@@ -15,16 +15,21 @@ function leaseParameters(worker: string, host: string, leaseMs: number): void {
 export const FLEET_COMPENSATION_BACKOFF_BASE_MS = 5_000;
 export const FLEET_COMPENSATION_BACKOFF_CAP_MS = 300_000;
 export abstract class FleetOperationClaims {
-  constructor(protected readonly pool: DatabasePool) {}
-  async claim(worker: string, host: string, leaseMs = 30_000): Promise<FleetOperationClaim | null> {
+  constructor(protected readonly pool: DatabasePool, private readonly transactionClient?: DatabaseClient) {}
+  protected transaction<T>(work: (client: DatabaseClient) => Promise<T>): Promise<T> {
+    return this.transactionClient === undefined ? withTransaction(this.pool, work) : work(this.transactionClient);
+  }
+  async claim(worker: string, host: string, leaseMs = 30_000, companyId?: string): Promise<FleetOperationClaim | null> {
     leaseParameters(worker, host, leaseMs);
-    return withTransaction(this.pool, async (client) => {
+    return this.transaction(async (client) => {
       await lockFleetRevision(client);
       await client.query(`UPDATE fleet_operations SET worker_id=NULL,claim_token=NULL,lease_expires_at=NULL,
-        version=version+1,updated_at=clock_timestamp() WHERE worker_id IS NOT NULL AND lease_expires_at<=clock_timestamp()`);
+        version=version+1,updated_at=clock_timestamp() WHERE worker_id IS NOT NULL AND lease_expires_at<=clock_timestamp()
+          AND ($1::text IS NULL OR company_id=$1)`, [companyId ?? null]);
       const row = (await client.query<FleetOperationRow>(
         `SELECT operation.* FROM fleet_operations operation
           WHERE operation.executor_host=$1 AND operation.status IN ('queued','running','cancelling')
+            AND ($4::text IS NULL OR operation.company_id=$4)
             AND (operation.lease_expires_at IS NULL OR operation.lease_expires_at<=now())
             AND NOT EXISTS (SELECT 1 FROM fleet_operations other WHERE other.id<>operation.id
               AND other.cohort_key=operation.cohort_key AND other.worker_id IS NOT NULL)
@@ -36,7 +41,7 @@ export abstract class FleetOperationClaims {
               WHERE backoff.failures>0 AND backoff.last_failure
                 +LEAST($2::double precision*power(2,backoff.failures-1),$3::double precision)*interval '1 millisecond'>clock_timestamp())
           ORDER BY operation.created_at,operation.id LIMIT 1 FOR UPDATE OF operation SKIP LOCKED`,
-        [host, FLEET_COMPENSATION_BACKOFF_BASE_MS, FLEET_COMPENSATION_BACKOFF_CAP_MS])).rows[0];
+        [host, FLEET_COMPENSATION_BACKOFF_BASE_MS, FLEET_COMPENSATION_BACKOFF_CAP_MS, companyId ?? null])).rows[0];
       if (!row) return null;
       try { await assertFleetOperationAuthority(client, row); }
       catch (error) {
@@ -61,7 +66,7 @@ export abstract class FleetOperationClaims {
   }
   async renew(claim: FleetOperationClaim, leaseMs = 30_000): Promise<boolean> {
     leaseParameters(claim.worker_id, 'renew', leaseMs);
-    return withTransaction(this.pool, async (client) => {
+    return this.transaction(async (client) => {
       const row = (await client.query<FleetOperationRow>(
         `SELECT * FROM fleet_operations WHERE id=$1 AND worker_id=$2 AND claim_token=$3 AND epoch=$4
           AND lease_expires_at>clock_timestamp() AND status IN ('running','cancelling') FOR UPDATE`,

@@ -21,6 +21,8 @@ beforeEach(async ({ task }) => {
     VALUES($1,'fleet@isolated.test','fleet@isolated.test',$2,'Fleet human','operator','Steven','human_fleet_operator')`,
   [humanId, '$scrypt$' + 'x'.repeat(40)]);
   if (!task.name.includes('absent human membership')) await membership();
+  await caseDatabase.adminPool.query(`INSERT INTO company_admins(company_id,human_id,role,source,granted_by)
+    VALUES('humanizar',$1,'admin','platform',$1)`, [humanId]);
 });
 afterEach(async () => { await caseDatabase?.close(); caseDatabase = undefined; });
 afterAll(async () => { if (database) { await database.pool.end(); await database.container.stop(); } });
@@ -46,7 +48,7 @@ describe('durable human fleet provenance', () => {
     const queued = await repo.enqueue('Steven', 'human_fleet_operator', create(), subject);
     expect(queued.actor.actor_subject).toBe(subject);
     expect((await pool.query<{ metadata: Record<string, unknown> }>('SELECT metadata FROM fleet_operation_events WHERE operation_id=$1 AND event=\'queued\'', [queued.id])).rows[0]?.metadata)
-      .toEqual({ actor_subject: subject });
+      .toEqual({ actor_subject: subject, acting_company: 'humanizar' });
     const claim = await repo.claim('human-worker', 'human-host'); if (!claim) throw new Error('claim absent');
     expect(claim.operation.actor.actor_subject).toBe(subject);
     expect((await repo.prepare(claim)).operation.actor.actor_subject).toBe(subject);
@@ -102,10 +104,12 @@ describe('durable human fleet provenance', () => {
     [otherId, '$scrypt$' + 'x'.repeat(40)]);
     await pool.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,role,permissions)
       VALUES($1,'Steven','human_fleet_operator','operator',ARRAY['read','control'])`, [otherId]);
+    await caseDatabase?.adminPool.query(`INSERT INTO company_admins(company_id,human_id,role,source,granted_by)
+      VALUES('humanizar',$1,'admin','platform',$1)`, [otherId]);
     const queued = await repo.enqueue('Steven', 'human_fleet_operator', create(), subject);
     expect((await repo.enqueue('Steven', 'human_fleet_operator', create(), subject)).id).toBe(queued.id);
     await expect(repo.enqueue('Steven', 'human_fleet_operator', create(), `console:${otherId}`)).rejects.toMatchObject({ code: 'conflict' });
-    await expect(repo.enqueue('Steven', 'human_fleet_operator', create())).rejects.toMatchObject({ code: 'conflict' });
+    await expect(repo.enqueue('Steven', 'human_fleet_operator', create())).rejects.toMatchObject({ code: 'forbidden' });
   });
   it('fails closed when a current human membership is disabled, revoked or no longer uses the exact alias', async () => {
     const repo = repository(); await membership();

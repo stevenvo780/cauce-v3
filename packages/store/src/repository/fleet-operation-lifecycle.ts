@@ -126,7 +126,8 @@ export async function settleFleetTransition(client: DatabaseClient, row: FleetOp
     const scope = targetPredicate(target);
     await client.query(`UPDATE memberships SET enabled=retired_enabled,retired_at=NULL,retired_enabled=NULL WHERE ${scope.predicate}
       AND NOT EXISTS(SELECT 1 FROM agents WHERE agents.tenant_id=memberships.tenant_id AND agents.alias=memberships.alias AND agents.purged_at IS NOT NULL)
-      AND NOT EXISTS(SELECT 1 FROM rooms WHERE rooms.id=memberships.room_id AND rooms.purged_at IS NOT NULL)
+      AND NOT EXISTS(SELECT 1 FROM rooms WHERE rooms.tenant_id=memberships.tenant_id AND rooms.id=memberships.room_id
+        AND rooms.purged_at IS NOT NULL)
       AND retired_at=$${String(scope.params.length + 1)}::timestamptz`, [...scope.params, stamp]);
     await settleGroupAgents(client, row);
   }

@@ -1,11 +1,11 @@
 import Fastify, { type FastifyInstance } from 'fastify';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { FleetCapability, FleetHost } from '@cauce/protocol';
-import { FleetOperationError, type DatabasePool } from '@cauce/store';
+import { FleetOperationError, type CompanyAuthoritySource, type DatabaseClient, type DatabasePool } from '@cauce/store';
 import type { FastifyRequest } from 'fastify';
 import { AuthError, type AuthProvider } from '../auth.js';
 import { FixedAuthProvider, testPrincipal } from '../test-support/gateway-doubles.js';
-import { registerFleetHostRoutes, type FleetHostRepository } from './fleet-hosts.routes.js';
+import { registerFleetHostRoutes, type FleetHostHumanAccess, type FleetHostRepository } from './fleet-hosts.routes.js';
 
 const PATH = '/v3/console/fleet/hosts';
 const HOST_ID = 'server';
@@ -13,6 +13,8 @@ const operator = testPrincipal({ tenant_id: 'Steven', alias: 'kant', roles: ['op
 const capability: FleetCapability = { available: true, actions: ['create', 'update', 'start', 'stop', 'retire'],
   placements: [{ host_id: HOST_ID, modes: ['native'], runtime_users: ['stev'], systemd_users: [],
     home_roots: ['/home/stev'], state_roots: ['/home/stev/state'] }] };
+const authority: CompanyAuthoritySource = async () => ({ humanId: 'human-id', homeTenant: 'Steven', alias: 'kant',
+  homeCompany: 'humanizar', actingCompany: 'humanizar', role: 'company_owner', scope: 'company', platformOverride: false });
 const host: FleetHost = {
   host_id: HOST_ID, display_name: 'Servidor', notes: '', enabled: true, status: 'reachable', status_source: 'controller',
   last_seen_at: '2026-10-07T20:00:00.000Z', registered: true, approved: true, version: 3, agents: [],
@@ -35,18 +37,16 @@ function repositoryDouble() {
   } satisfies Record<keyof FleetHostRepository, unknown>;
 }
 
-function poolDouble(isHub: boolean | 'missing' = true) {
-  const query = vi.fn(async () => ({ rows: isHub === 'missing' ? [] : [{ is_hub: isHub }], rowCount: 1 }));
-  return { pool: { query } as unknown as DatabasePool, query };
-}
-
-async function fixture(options: { actor?: FixedAuthProvider | AuthProvider; isHub?: boolean | 'missing'; capability?: FleetCapability } = {}) {
+async function fixture(options: { actor?: FixedAuthProvider | AuthProvider; human?: boolean; capability?: FleetCapability } = {}) {
   const repository = repositoryDouble();
-  const { pool, query } = poolDouble(options.isHub);
-  const app = Fastify({ logger: false });
-  apps.push(app);
-  registerFleetHostRoutes(app, options.actor ?? new FixedAuthProvider(operator), pool, options.capability ?? capability, repository);
-  return { app, repository, query };
+  const pool = {} as DatabasePool;
+  const app = Fastify({ logger: false }); apps.push(app);
+  const access: FleetHostHumanAccess = async () => options.human === false ? undefined : ({
+    options: { signal: new AbortController().signal, humanAuthority: async () => ({ humanId: 'human-id', tenantId: 'Steven', actorAlias: 'kant' }) },
+    companyAuthority: authority, close: () => undefined,
+  });
+  registerFleetHostRoutes(app, options.actor ?? new FixedAuthProvider(operator), pool, options.capability ?? capability, repository, access);
+  return { app, repository };
 }
 
 afterEach(async () => {
@@ -72,27 +72,37 @@ describe('fleet host routes', () => {
     const response = await app.inject({ method: 'GET', url: PATH });
     expect(response.statusCode).toBe(200);
     expect(response.json()).toEqual({ hosts: [host] });
-    expect(repository.list).toHaveBeenCalledWith([HOST_ID]);
+    expect(repository.list).toHaveBeenCalledWith(expect.any(Function), [HOST_ID]);
+  });
+  it('invokes company authority with its verified session receiver before releasing it', async () => {
+    const app = Fastify({ logger: false });apps.push(app);
+    const client = {} as DatabaseClient;const repository = repositoryDouble();let closed = false;
+    const human = {
+      options: { signal: new AbortController().signal, humanAuthority: async () => ({ humanId: 'human-id', tenantId: 'Steven', actorAlias: 'kant' }) },
+      async companyAuthority(actual: DatabaseClient) {
+        expect(this).toBe(human);expect(actual).toBe(client);expect(closed).toBe(false);
+        return authority(actual);
+      },
+      close: () => { closed = true; },
+    };
+    const list = vi.fn(async (source: CompanyAuthoritySource) => {
+      expect(await source(client)).toMatchObject({ humanId: 'human-id', actingCompany: 'humanizar' });return [host];
+    });
+    registerFleetHostRoutes(app, new FixedAuthProvider(operator), {} as DatabasePool, capability, { ...repository, list }, async () => human);
+    expect((await app.inject({ method: 'GET', url: PATH })).statusCode).toBe(200);
+    expect(list).toHaveBeenCalledOnce();expect(closed).toBe(true);
   });
 
-  it('lists hosts only for a hub actor', async () => {
-    const hub = await fixture();
-    expect((await hub.app.inject({ method: 'GET', url: PATH })).statusCode).toBe(200);
-    expect(hub.query).toHaveBeenCalledWith(expect.stringContaining('tenant.company_id=$3'), ['Steven', 'kant', 'humanizar']);
-
-    const notHub = await fixture({ isHub: false, actor: new FixedAuthProvider(testPrincipal({ permissions: ['read'] })) });
-    expect((await notHub.app.inject({ method: 'GET', url: PATH })).statusCode).toBe(403);
-    expect(notHub.repository.list).not.toHaveBeenCalled();
-
-    const noControlRow = await fixture({ isHub: 'missing', actor: new FixedAuthProvider(testPrincipal({ permissions: ['read'] })) });
-    expect((await noControlRow.app.inject({ method: 'GET', url: PATH })).statusCode).toBe(403);
-    expect(noControlRow.repository.list).not.toHaveBeenCalled();
+  it('requires a verified human session even when an operator alias has hub topology', async () => {
+    const { app, repository } = await fixture({ human: false });
+    expect((await app.inject({ method: 'GET', url: PATH })).statusCode).toBe(403);
+    expect(repository.list).not.toHaveBeenCalled();
   });
 
   it('lists no approved hosts when the fleet capability is unavailable', async () => {
     const { app, repository } = await fixture({ capability: { available: false, actions: [], placements: [], reason: 'executor_unconfigured' } });
     expect((await app.inject({ method: 'GET', url: PATH })).statusCode).toBe(200);
-    expect(repository.list).toHaveBeenCalledWith([]);
+    expect(repository.list).toHaveBeenCalledWith(expect.any(Function), []);
   });
 
   it('requires the read permission for listing', async () => {
@@ -101,13 +111,13 @@ describe('fleet host routes', () => {
     expect(repository.list).not.toHaveBeenCalled();
   });
 
-  it('requires operator control and hub authority before mutations', async () => {
+  it('requires operator control and a verified human before mutations', async () => {
     const readOnly = await fixture({ actor: new FixedAuthProvider(testPrincipal({ roles: ['operator'], permissions: ['read'] })) });
     const response = await readOnly.app.inject({ method: 'POST', url: PATH, payload: { host_id: 'nueva', display_name: 'Nueva' } });
     expect(response.statusCode).toBe(403);
     expect(readOnly.repository.create).not.toHaveBeenCalled();
 
-    const notHub = await fixture({ isHub: false });
+    const notHub = await fixture({ human: false });
     for (const request of [
       { method: 'POST' as const, url: PATH, payload: { host_id: 'nueva', display_name: 'Nueva' } },
       { method: 'PATCH' as const, url: `${PATH}/${HOST_ID}`, payload: { expected_version: 3, enabled: false } },
@@ -115,20 +125,19 @@ describe('fleet host routes', () => {
     ]) {
       expect((await notHub.app.inject(request)).statusCode).toBe(403);
     }
-    const noControlRow = await fixture({ isHub: 'missing' });
+    const noControlRow = await fixture({ human: false });
     expect((await noControlRow.app.inject({ method: 'DELETE', url: `${PATH}/${HOST_ID}?expected_version=3` })).statusCode).toBe(403);
     for (const method of [...Object.values(notHub.repository), ...Object.values(noControlRow.repository)]) {
       expect(method).not.toHaveBeenCalled();
     }
   });
 
-  it('creates a host for a hub operator and returns the validated receipt', async () => {
-    const { app, repository, query } = await fixture();
+  it('passes the human company resolver to creation and validates the durable receipt', async () => {
+    const { app, repository } = await fixture();
     const response = await app.inject({ method: 'POST', url: PATH, payload: { host_id: 'nueva', display_name: 'Nueva' } });
     expect(response.statusCode).toBe(201);
     expect(response.json()).toMatchObject({ host_id: 'nueva', display_name: 'Nueva' });
-    expect(query).toHaveBeenCalledWith(expect.stringContaining('role.allow_control'), ['Steven', 'kant', 'humanizar']);
-    expect(repository.create).toHaveBeenCalledWith({ host_id: 'nueva', display_name: 'Nueva', notes: '' }, [HOST_ID]);
+    expect(repository.create).toHaveBeenCalledWith({ host_id: 'nueva', display_name: 'Nueva', notes: '' }, expect.any(Function), [HOST_ID]);
   });
 
   it('rejects invalid create bodies before writing', async () => {
@@ -147,7 +156,7 @@ describe('fleet host routes', () => {
     const updated = await app.inject({ method: 'PATCH', url: `${PATH}/${HOST_ID}`, payload: { expected_version: 3, enabled: false } });
     expect(updated.statusCode).toBe(200);
     expect(updated.json()).toMatchObject({ enabled: false, version: 4 });
-    expect(repository.update).toHaveBeenCalledWith(HOST_ID, { expected_version: 3, enabled: false }, [HOST_ID]);
+    expect(repository.update).toHaveBeenCalledWith(HOST_ID, { expected_version: 3, enabled: false }, expect.any(Function), [HOST_ID]);
 
     repository.update.mockRejectedValueOnce(new FleetOperationError('conflict', 'fleet host version changed; reload and retry'));
     const conflict = await app.inject({ method: 'PATCH', url: `${PATH}/${HOST_ID}`, payload: { expected_version: 2, enabled: true } });
@@ -176,7 +185,7 @@ describe('fleet host routes', () => {
     const { app, repository } = await fixture();
     const response = await app.inject({ method: 'DELETE', url: `${PATH}/${HOST_ID}?expected_version=3` });
     expect(response.statusCode).toBe(204);
-    expect(repository.delete).toHaveBeenCalledWith(HOST_ID, 3);
+    expect(repository.delete).toHaveBeenCalledWith(HOST_ID, 3, expect.any(Function));
   });
 
   it('requires a positive integer expected version for delete', async () => {

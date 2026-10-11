@@ -5,6 +5,7 @@ import type { DatabasePool, FleetOperationClaim } from '../src/index.js';
 import type { FleetOperation, FleetOperationRequest, FleetOperationPreview, FleetStepName, FleetEvidence, FleetError, FleetTarget } from '@cauce/protocol';
 import { preparePostgresSuite } from './postgres-suite.js';
 import { startTestCaseDatabase, startTestDatabase, type EmptyTestDatabase, type TestDatabase } from '../../../tests/helpers/postgres.js';
+import { seedFleetHuman } from './fleet-human-postgres.fixtures.js';
 
 interface Repository {
   enqueue(tenant: string, alias: string, request: FleetOperationRequest): Promise<FleetOperation>;
@@ -29,21 +30,34 @@ interface Repository {
 let database: TestDatabase | undefined;
 let caseDatabase: EmptyTestDatabase | undefined;
 let pool: DatabasePool;
+let admin:DatabasePool;let operatorSubject:string;let readerSubject:string;
+class HumanFleetRepository extends FleetOperationsRepository {
+  private origin(tenant:string,alias:string):string|undefined {
+    return tenant==='Steven'&&alias==='fleet_operator'?operatorSubject:tenant==='Isa'&&alias==='fleet_reader'?readerSubject:undefined;
+  }
+  override enqueue(tenant:string,alias:string,input:FleetOperationRequest,subject?:string) {return super.enqueue(tenant,alias,input,subject??this.origin(tenant,alias));}
+  override preview(tenant:string,alias:string,input:FleetOperationRequest,subject?:string) {return super.preview(tenant,alias,input,subject??this.origin(tenant,alias));}
+  override get(tenant:string,alias:string,id:string,subject?:string) {return super.get(tenant,alias,id,subject??this.origin(tenant,alias));}
+  override cancel(tenant:string,alias:string,id:string,version:number,subject?:string) {return super.cancel(tenant,alias,id,version,subject??this.origin(tenant,alias));}
+  override resume(tenant:string,alias:string,id:string,version:number,subject?:string) {return super.resume(tenant,alias,id,version,subject??this.origin(tenant,alias));}
+}
 preparePostgresSuite(import.meta.url, async () => {
   database = await startTestDatabase();
 }, 120_000);
 beforeEach(async () => {
   if (!database) throw new Error('test server absent');
-  caseDatabase = await startTestCaseDatabase(database); pool = caseDatabase.pool;
+  caseDatabase = await startTestCaseDatabase(database); pool = caseDatabase.pool;admin=caseDatabase.adminPool;
   await pool.query("INSERT INTO rooms(id,tenant_id) VALUES('fleet-test','Steven'),('fleet-other','Isa')");
+  await pool.query("INSERT INTO agents(tenant_id,alias) VALUES('Steven','fleet_operator'),('Isa','fleet_reader')");
   await pool.query("INSERT INTO memberships(tenant_id,room_id,alias,role) VALUES('Steven','fleet-test','fleet_operator','operator'),('Isa','fleet-other','fleet_reader','agent')");
+  operatorSubject=await seedFleetHuman(admin,'Steven','fleet_operator');readerSubject=await seedFleetHuman(admin,'Isa','fleet_reader',null);
   await pool.query(`INSERT INTO provider_accounts(id,provider,external_account_id,payer_tenant_id,credential_ref_kind,credential_ref,enabled)
     VALUES('fleet-test-account','codex','isolated-test-account','Steven','env_path','CAUCE_ISOLATED_TEST_ACCOUNT_PATH',true)`);
 });
 afterEach(async () => { await caseDatabase?.close(); caseDatabase = undefined; });
 afterAll(async () => { if (database) { await database.pool.end(); await database.container.stop(); } });
 function repository(): Repository {
-  return new FleetOperationsRepository(pool);
+  return new HumanFleetRepository(pool);
 }
 function create(name: string, host = 'test-host'): FleetOperationRequest {
   return { kind: 'create', target: { resource: 'agent', tenant_id: 'Steven', alias: name }, expected_revision: 0,
@@ -135,7 +149,7 @@ describe('durable fleet operations', () => {
     const repo = repository();
     await pool.query(`INSERT INTO agents(tenant_id,alias,harness_id,display_name,enabled,lifecycle_state) VALUES('Steven','forged','codex','Borrador',false,'draft')`);
     const claim = await claimFor(repo, 'forged'); await repo.prepare(claim);
-    const client = await pool.connect();
+    const client = await admin.connect();
     try {
       await client.query('BEGIN'); await client.query("SET LOCAL session_replication_role = 'replica'");
       await client.query(`UPDATE fleet_operation_events SET metadata=jsonb_set(metadata,'{previous_agents,0,runtime_key}','"forged"')
@@ -339,7 +353,7 @@ describe('durable fleet operations', () => {
       .toEqual({ enabled: true, active: true });
   });
   it('restores a room declaratively while leaving its affected agents disabled', async () => {
-    const repo = new FleetOperationsRepository(pool, { controllerHost: 'group-host' }) as Repository;
+    const repo = new HumanFleetRepository(pool, { controllerHost: 'group-host' }) as Repository;
     await pool.query("INSERT INTO rooms(id,tenant_id) VALUES('lifecycle-room','Steven')");
     const input = create('room_member', 'group-host'); if (input.kind !== 'create') throw new Error('fixture absent');
     input.parameters.primary_room_id = 'lifecycle-room'; input.parameters.memberships = [{ room_id: 'lifecycle-room', role: 'agent' }];
@@ -355,15 +369,16 @@ describe('durable fleet operations', () => {
     expect((await pool.query("SELECT enabled,lifecycle_state FROM agents WHERE alias='room_member'")).rows[0]).toEqual({ enabled: false, lifecycle_state: 'draft' });
   });
   it('purges an unused room and preserves message anchors when purging a used room', async () => {
-    const repo = new FleetOperationsRepository(pool, { controllerHost: 'purge-host' }) as Repository;
+    const repo = new HumanFleetRepository(pool, { controllerHost: 'purge-host' }) as Repository;
     await pool.query("INSERT INTO rooms(id,tenant_id) VALUES('unused-room','Steven')");
     const purge = await transition(repo, 'purge', { resource: 'room', tenant_id: 'Steven', room_id: 'unused-room' }, 0, 'purge-host');
     await repo.prepare(purge); await finishRemoval(repo, purge);
     expect((await pool.query("SELECT 1 FROM rooms WHERE id='unused-room'")).rowCount).toBe(0);
     await pool.query("INSERT INTO rooms(id,tenant_id) VALUES('purge-control','Steven')");
     await pool.query("INSERT INTO memberships(tenant_id,room_id,alias,role) VALUES('Steven','purge-control','fleet_operator','operator')");
-    await pool.query(`INSERT INTO agents(tenant_id,alias,runtime_key,host_id,runtime_mode,container_name,runtime_user,home_directory,state_directory,systemd_user,harness_id)
-      VALUES('Steven','fleet_operator','fleet-operator','purge-host','container','fleet-operator','dev','/home/dev','/home/dev/fleet-operator','stev','codex')`);
+    await pool.query(`UPDATE agents SET runtime_key='fleet-operator',host_id='purge-host',runtime_mode='container',container_name='fleet-operator',
+      runtime_user='dev',home_directory='/home/dev',state_directory='/home/dev/fleet-operator',systemd_user='stev',harness_id='codex'
+      WHERE tenant_id='Steven' AND alias='fleet_operator'`);
     const message = (await pool.query<{ id: string }>(`INSERT INTO messages(request_id,trace_id,tenant_id,room_id,actor_alias,body,lane)
       VALUES(gen_random_uuid(),'purge-used-room','Steven','fleet-test','fleet_operator','{}','interactive') RETURNING id`)).rows[0];
     const used = await transition(repo, 'purge', { resource: 'room', tenant_id: 'Steven', room_id: 'fleet-test' }, 2, 'purge-host');
@@ -392,7 +407,7 @@ describe('durable fleet operations', () => {
     expect((await pool.query<{ enabled: boolean }>("SELECT enabled FROM agents WHERE alias='revision_race'")).rows[0]?.enabled).toBe(false);
   });
   it('preserves a permanent physical identity tombstone when purging an otherwise empty agent', async () => {
-    const repo = new FleetOperationsRepository(pool, { controllerHost: 'empty-host' }) as Repository;
+    const repo = new HumanFleetRepository(pool, { controllerHost: 'empty-host' }) as Repository;
     await pool.query(`INSERT INTO agents(tenant_id,alias,runtime_key,host_id,runtime_mode,container_name,runtime_user,home_directory,state_directory,systemd_user,harness_id)
       VALUES('Steven','empty_agent','permanent-key','empty-host','container','empty-agent','dev','/home/dev','/home/dev/empty-agent','stev','codex')`);
     const purge = await transition(repo, 'purge', { resource: 'agent', tenant_id: 'Steven', alias: 'empty_agent' }, 0, 'empty-host');
@@ -403,7 +418,7 @@ describe('durable fleet operations', () => {
     await expect(repo.enqueue('Steven', 'fleet_operator', { ...create('empty_agent', 'empty-host'), expected_revision: 2 })).rejects.toMatchObject({ code: 'conflict' });
   });
   it('restores a tenant without restoring a room that had already been retired independently', async () => {
-    const repo = new FleetOperationsRepository(pool, { controllerHost: 'tenant-host' }) as Repository;
+    const repo = new HumanFleetRepository(pool, { controllerHost: 'tenant-host' }) as Repository;
     await pool.query("INSERT INTO tenants(id) VALUES('FleetTenant')");
     await pool.query("INSERT INTO rooms(id,tenant_id) VALUES('tenant-active-room','FleetTenant'),('tenant-old-room','FleetTenant')");
     await pool.query("UPDATE rooms SET retired_at=clock_timestamp()-interval '1 day',retired_enabled=true,enabled=false WHERE id='tenant-old-room'");

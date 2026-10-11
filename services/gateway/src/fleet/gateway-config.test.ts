@@ -2,12 +2,15 @@ import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
 import type { FleetCapability } from '@cauce/protocol';
-import { createPool, fleetHostAvailability, type DatabasePool } from '@cauce/store';
-import { FleetHostUnavailableError, configuredFleetGateway } from './gateway-config.js';
+import { createPool, fleetHostAvailability, type DatabaseClient, type DatabasePool } from '@cauce/store';
+import { FleetHostUnavailableError, configuredFleetGateway, configuredFleetRepository } from './gateway-config.js';
 
 vi.mock('@cauce/store', async (importOriginal) => ({
   ...await importOriginal<typeof import('@cauce/store')>(),
   fleetHostAvailability: vi.fn(async () => ({ usable: true })),
+  assertFleetAuthority: vi.fn(async () => ({ actingCompany: 'fixture-company' })),
+  withTransaction: async <T>(database: DatabasePool, work: (client: DatabaseClient) => Promise<T>): Promise<T> =>
+    work(database as unknown as DatabaseClient),
 }));
 
 const pool = createPool('postgresql://localhost/cauce_test_config_unused', { max: 1 });
@@ -36,6 +39,15 @@ describe('fleet gateway deployment configuration', () => {
     expect(result.providerAuthService).toBeDefined();
     await expect(configuredFleetGateway(pool, capability, { ...environment, CAUCE_FLEET_CONTROLLER_HOST: 'other' })).rejects.toThrow('catalogs differ');
     await chmod(filename, 0o644); await expect(configuredFleetGateway(pool, capability, environment)).rejects.toThrow();
+  });
+  it('gives the physical CLI the same explicit coordinator configuration without a capability request', async () => {
+    const { environment } = await config([{ host_id: 'server', socket_path: '/run/fleet/server.sock' },
+      { host_id: 'remote', socket_path: '/run/fleet/remote.sock' }]);
+    const repository = await configuredFleetRepository(pool, environment);
+    expect(repository).toMatchObject({ controllerHost: 'server', coordinatorEnabled: true, coordinatorHosts: ['server', 'remote'] });
+    expect(repository.forCompany('praxis')).toMatchObject({ controllerHost: 'server', coordinatorEnabled: true, coordinatorHosts: ['server', 'remote'] });
+    await expect(configuredFleetRepository(pool, { ...environment, CAUCE_FLEET_CONTROLLER_HOST: 'other' })).rejects.toThrow('catalogs differ');
+    expect(await configuredFleetRepository(pool, {})).toMatchObject({ coordinatorEnabled: false });
   });
   it('rejects missing and repeated host routes before binding operations', async () => {
     const missing = await config([{ host_id: 'other', socket_path: '/run/fleet/other.sock' }]);

@@ -1,11 +1,12 @@
 import type { FastifyInstance } from 'fastify';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { sha256Hex, type FleetOperation, type FleetOperationPreview, type FleetOperationRequest } from '@cauce/protocol';
-import { FleetOperationError } from '@cauce/store';
+import { FleetOperationError, type CompanyAuthoritySource } from '@cauce/store';
 import { FixedAuthProvider, buildTestGateway, testPrincipal } from '../test-support/gateway-doubles.js';
 import { MemoryConsoleUserStore } from '../test-support/console-users.js';
 import { hashPassword } from '../password.js';
 import { PasswordAuthProvider } from '../password-auth.js';
+import * as humanAccess from '../console-human-authority.js';
 
 const apps: FastifyInstance[] = [];
 const OPERATION_ID = '71000000-0000-4000-8000-000000000001';
@@ -46,9 +47,35 @@ async function fixture(authProvider?: FixedAuthProvider | PasswordAuthProvider) 
 
 afterEach(async () => {
   while (apps.length > 0) await apps.pop()?.close();
+  vi.restoreAllMocks();
 });
 
 describe('durable fleet operation routes', () => {
+  it.each([
+    { method: 'POST' as const, url: PATH, payload: input },
+    { method: 'POST' as const, url: `${PATH}/preview`, payload: input },
+    { method: 'GET' as const, url: `${PATH}?resource=agent&tenant_id=Steven&alias=jarvis` },
+    { method: 'GET' as const, url: `${PATH}/recent` },
+    { method: 'GET' as const, url: `${PATH}/${OPERATION_ID}` },
+    { method: 'POST' as const, url: `${PATH}/${OPERATION_ID}/cancel`, payload: { expected_version: 0 } },
+    { method: 'POST' as const, url: `${PATH}/${OPERATION_ID}/resume`, payload: { expected_version: 0 } },
+    { method: 'POST' as const, url: `${PATH}/preview`, payload: { ...input, company_id: 'browser-company' } },
+  ])('binds verified company authority and closes its access on every route result', async request => {
+    const source = vi.fn<CompanyAuthoritySource>(); const close = vi.fn();
+    vi.spyOn(humanAccess, 'consoleHumanAccess').mockResolvedValue({ options: {
+      signal: new AbortController().signal, humanAuthority: vi.fn(),
+    }, companyAuthority: source, close });
+    const active = repositoryDouble();
+    const repository = { ...repositoryDouble(), forAuthority: vi.fn(() => active) };
+    const app = await buildTestGateway({ fleetOperationsRepository: repository }); apps.push(app);
+    const response = await app.inject({ ...request, headers: HEADERS });
+    expect(response.statusCode).toBe(request.url.endsWith('/preview') && request.payload && 'company_id' in request.payload
+      ? 400 : request.url === PATH ? 202 : 200);
+    expect(repository.forAuthority).toHaveBeenCalledOnce();
+    expect(repository.forAuthority).toHaveBeenCalledWith(expect.any(Function));
+    expect(close).toHaveBeenCalledOnce();
+    for (const [key, method] of Object.entries(repository)) if (key !== 'forAuthority') expect(method).not.toHaveBeenCalled();
+  });
   it('returns a validated preview for the authenticated actor without enqueueing', async () => {
     const { app, repository } = await fixture();
     const response = await app.inject({ method: 'POST', url: `${PATH}/preview`, headers: HEADERS, payload: input });

@@ -1,5 +1,5 @@
 import { FleetEvidenceSchema, FleetErrorSchema, sha256Hex, type FleetEvidence, type FleetError, type FleetOperation, type FleetStepName } from '@cauce/protocol';
-import { withTransaction, type DatabaseClient } from '../db.js';
+import type { DatabaseClient } from '../db.js';
 import { lockFleetRevision } from './fleet-operation-authority.js';
 import { FleetOperationClaims } from './fleet-operation-claims.js';
 import { FleetOperationError, publicFleetOperation, type FleetOperationClaim, type FleetOperationRow, type FleetExecutionState } from './fleet-operation-contracts.js';
@@ -33,15 +33,15 @@ export abstract class FleetOperationExecution extends FleetOperationClaims {
   protected abstract readonly coordinatorHosts: readonly string[] | undefined;
 
   async hostSlices(claim: FleetOperationClaim): Promise<FleetHostSlice[]> {
-    return withTransaction(this.pool, async client => loadFleetHostSlices(client, await lockFleetClaim(client, claim, true)));
+    return this.transaction(async client => loadFleetHostSlices(client, await lockFleetClaim(client, claim, true)));
   }
   async hostReceipts(claim: FleetOperationClaim, name: FleetHostStep): Promise<FleetHostReceipt[]> {
-    return withTransaction(this.pool, async client => readFleetHostReceipts(client, await lockFleetClaim(client, claim, true), claim, name));
+    return this.transaction(async client => readFleetHostReceipts(client, await lockFleetClaim(client, claim, true), claim, name));
   }
   async completeHostStep(claim: FleetOperationClaim, name: FleetHostStep, host: string,
     digest: string, evidence: FleetEvidence): Promise<FleetOperation> {
     const proof = hostStepEvidence(name, evidence);
-    return withTransaction(this.pool, async client => {
+    return this.transaction(async client => {
       const row = name === 'compensate' ? await lockFleetClaim(client, claim, true) : await this.current(client, claim);
       if (name === 'compensate') {
         if (!row.cancel_requested || row.status !== 'cancelling') throw new FleetOperationError('conflict', 'host compensation requires cancellation');
@@ -63,14 +63,14 @@ export abstract class FleetOperationExecution extends FleetOperationClaims {
   }
 
   async execution(claim: FleetOperationClaim): Promise<FleetExecutionState> {
-    return withTransaction(this.pool, async (client) => {
+    return this.transaction(async (client) => {
       const row = await lockFleetClaim(client, claim, true);
       return { operation: publicFleetOperation(row), request: row.request, ...await preparedState(client, row.id) };
     });
   }
 
   async prepare(claim: FleetOperationClaim): Promise<Omit<FleetExecutionState, 'request'>> {
-    return withTransaction(this.pool, async (client) => {
+    return this.transaction(async (client) => {
       const row = await lockFleetClaim(client, claim);
       await lockFleetRevision(client, Number(row.desired_revision ?? row.expected_revision));
       if (row.desired_revision !== null) {
@@ -93,7 +93,7 @@ export abstract class FleetOperationExecution extends FleetOperationClaims {
   }
 
   async startStep(claim: FleetOperationClaim, name: FleetStepName): Promise<FleetOperation> {
-    return withTransaction(this.pool, async (client) => {
+    return this.transaction(async (client) => {
       const row = await this.current(client, claim);
       if (name === 'prepare' || name === 'fence') {
         throw new FleetOperationError('invalid_input', 'this step is controlled by the durable lifecycle transaction');
@@ -108,7 +108,7 @@ export abstract class FleetOperationExecution extends FleetOperationClaims {
 
   async completeStep(claim: FleetOperationClaim, name: FleetStepName, evidence: FleetEvidence): Promise<FleetOperation> {
     const proof = stepEvidence(name, evidence);
-    return withTransaction(this.pool, async (client) => {
+    return this.transaction(async (client) => {
       const row = await this.current(client, claim);
       if (name === 'prepare' || name === 'fence') {
         throw new FleetOperationError('invalid_input', 'this step is controlled by the durable lifecycle transaction');
@@ -139,7 +139,7 @@ export abstract class FleetOperationExecution extends FleetOperationClaims {
   }
 
   async awaitAuth(claim: FleetOperationClaim): Promise<FleetOperation> {
-    return withTransaction(this.pool, async (client) => {
+    return this.transaction(async (client) => {
       const row = await this.current(client, claim);
       const step = fleetStep(row, 'authenticate');
       if (step.status !== 'running' && step.status !== 'waiting') throw new FleetOperationError('conflict', 'authentication step is not active');
@@ -153,7 +153,7 @@ export abstract class FleetOperationExecution extends FleetOperationClaims {
   async fail(claim: FleetOperationClaim, input: FleetError): Promise<FleetOperation> {
     const parsed = FleetErrorSchema.safeParse(input);
     if (!parsed.success) throw new FleetOperationError('invalid_input', 'fleet failure must use the typed error contract');
-    return withTransaction(this.pool, async (client) => {
+    return this.transaction(async (client) => {
       const row = await lockFleetClaim(client, claim, true);
       row.status = row.cancel_requested ? 'cancelling' : 'failed'; row.error = parsed.data;
       if (parsed.data.step) fleetStep(row, parsed.data.step).status = 'failed';
@@ -169,7 +169,7 @@ export abstract class FleetOperationExecution extends FleetOperationClaims {
   }
 
   async settle(claim: FleetOperationClaim): Promise<FleetOperation> {
-    return withTransaction(this.pool, async (client) => {
+    return this.transaction(async (client) => {
       const row = await this.current(client, claim);
       if (row.steps.some((step) => step.status !== 'succeeded')) {
         throw new FleetOperationError('conflict', 'fleet operation still has unverified steps');
@@ -188,7 +188,7 @@ export abstract class FleetOperationExecution extends FleetOperationClaims {
   async compensate(claim: FleetOperationClaim, evidence: FleetEvidence = {}): Promise<FleetOperation> {
     const proof = FleetEvidenceSchema.safeParse(evidence);
     if (!proof.success) throw new FleetOperationError('invalid_input', 'compensation evidence contains unsupported fields');
-    return withTransaction(this.pool, async (client) => {
+    return this.transaction(async (client) => {
       const row = await lockFleetClaim(client, claim, true);
       if (!row.cancel_requested) throw new FleetOperationError('conflict', 'compensation requires an operator cancellation');
       if (usesFleetHostSlices(row.request) && row.desired_revision !== null) {

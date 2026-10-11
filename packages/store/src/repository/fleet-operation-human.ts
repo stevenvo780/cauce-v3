@@ -1,4 +1,5 @@
 import type { DatabaseClient } from '../db.js';
+import { COMPANY_ID_PATTERN } from '../company-authority.js';
 import { assertFleetAuthority } from './fleet-operation-authority.js';
 import { FleetOperationError, type FleetOperationRow } from './fleet-operation-contracts.js';
 
@@ -32,11 +33,20 @@ export async function loadFleetOrigin(client: DatabaseClient, row: FleetOperatio
     }
     row.actor_subject = subject;
   } else delete row.actor_subject;
+  if (queued && Object.hasOwn(queued.metadata, 'acting_company')) {
+    const company = queued.metadata.acting_company;
+    if (typeof company !== 'string' || !COMPANY_ID_PATTERN.test(company) || company !== row.company_id) {
+      throw new FleetOperationError('forbidden', 'fleet operation company provenance is invalid');
+    }
+    row.acting_company = company;
+  } else delete row.acting_company;
   return row;
 }
 
+/** Every step re-resolves the authority of the origin: a revoked owner or administrator stops its queued work. */
 export async function assertFleetOperationAuthority(client: DatabaseClient, row: FleetOperationRow): Promise<void> {
   await loadFleetOrigin(client, row);
   await assertFleetHumanAuthority(client, row.actor_tenant, row.actor_alias, row.actor_subject);
-  await assertFleetAuthority(client, row.actor_tenant, row.actor_alias, row.target);
+  const authority = await assertFleetAuthority(client, row.actor_tenant, row.actor_alias, row.target, true, row.actor_subject, row.acting_company);
+  if (authority.actingCompany !== row.company_id) throw new FleetOperationError('forbidden', 'fleet operation company authority changed');
 }

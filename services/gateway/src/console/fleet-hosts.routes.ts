@@ -1,32 +1,38 @@
-import type { FastifyInstance, FastifyReply } from 'fastify';
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import {
   FleetHostCreateSchema, FleetHostIdSchema, FleetHostSchema, FleetHostUpdateSchema,
   type FleetCapability, type FleetHost, type FleetHostCreate, type FleetHostUpdate,
 } from '@cauce/protocol';
 import {
-  FleetOperationError, LEGACY_COMPANY, StoreError, createFleetHost, deleteFleetHost, listFleetHosts, updateFleetHost, type DatabasePool,
+  FleetOperationError, StoreError, createFleetHost, deleteFleetHost, listFleetHosts, updateFleetHost,
+  type CompanyAuthoritySource, type DatabasePool,
 } from '@cauce/store';
 import {
-  AuthError, AuthorizationError, requireOperatorPermission, requirePermission, type AuthProvider, type Principal,
+  AuthError, AuthorizationError, requireOperatorPermission, requirePermission, type AuthProvider,
 } from '../auth.js';
+import { consoleHumanAccess, type ConsoleHumanAccess } from '../console-human-authority.js';
 import { principal, replyError } from '../routes/shared.js';
+import type { FleetCapabilitySource } from './fleet-operations.routes.js';
 
+/** Every call resolves the company role of the console person in its own transaction. */
 export interface FleetHostRepository {
-  list(approvedHostIds: readonly string[]): Promise<unknown>;
-  create(input: FleetHostCreate, approvedHostIds: readonly string[]): Promise<unknown>;
-  update(hostId: string, input: FleetHostUpdate, approvedHostIds: readonly string[]): Promise<unknown>;
-  delete(hostId: string, expectedVersion: number): Promise<void>;
+  list(authority: CompanyAuthoritySource, approvedHostIds: readonly string[]): Promise<unknown>;
+  create(input: FleetHostCreate, authority: CompanyAuthoritySource, approvedHostIds: readonly string[]): Promise<unknown>;
+  update(hostId: string, input: FleetHostUpdate, authority: CompanyAuthoritySource, approvedHostIds: readonly string[]): Promise<unknown>;
+  delete(hostId: string, expectedVersion: number, authority: CompanyAuthoritySource): Promise<void>;
 }
 
 export function fleetHostRepository(pool: DatabasePool): FleetHostRepository {
   return {
-    list: (approvedHostIds) => listFleetHosts(pool, { approvedHostIds }),
-    create: (input, approvedHostIds) => createFleetHost(pool, input, approvedHostIds),
-    update: (hostId, input, approvedHostIds) => updateFleetHost(pool, hostId, input, approvedHostIds),
-    delete: (hostId, expectedVersion) => deleteFleetHost(pool, hostId, expectedVersion),
+    list: (authority, approvedHostIds) => listFleetHosts(pool, { authority, approvedHostIds }),
+    create: (input, authority, approvedHostIds) => createFleetHost(pool, input, { authority, approvedHostIds }),
+    update: (hostId, input, authority, approvedHostIds) => updateFleetHost(pool, hostId, input, { authority, approvedHostIds }),
+    delete: (hostId, expectedVersion, authority) => deleteFleetHost(pool, hostId, expectedVersion, { authority, approvedHostIds: [] }),
   };
 }
+
+export type FleetHostHumanAccess = (request: FastifyRequest, reply: FastifyReply) => Promise<ConsoleHumanAccess | undefined>;
 
 const ERROR_STATUS = { forbidden: 403, conflict: 409, not_found: 404, invalid_input: 422 } as const;
 const ExpectedVersionQuerySchema = z.object({
@@ -59,36 +65,33 @@ function hostError(reply: FastifyReply, error: unknown): void {
   void reply.code(500).send({ error: 'fleet_host_unverified', message: 'fleet host could not be verified' });
 }
 
-/** Mirrors the store's configuration control check: the actor must hold a control role on a hub tenant.
- * Hosts stay one installation-wide catalog, so only the legacy company hub may list or change them. */
-export async function requireHubControl(pool: Pick<DatabasePool, 'query'>, actor: Principal): Promise<void> {
-  const result = await pool.query<{ is_hub: boolean }>(
-    `SELECT tenant.is_hub FROM memberships membership
-     JOIN role_policies role ON role.role=membership.role
-     JOIN tenants tenant ON tenant.id=membership.tenant_id
-     JOIN rooms room ON room.id=membership.room_id AND room.tenant_id=membership.tenant_id
-     WHERE membership.tenant_id=$1 AND membership.alias=$2 AND membership.enabled
-       AND tenant.enabled AND room.enabled AND role.allow_control AND tenant.company_id=$3
-       AND to_jsonb(membership)->>'retired_at' IS NULL
-       AND to_jsonb(tenant)->>'retired_at' IS NULL AND to_jsonb(room)->>'retired_at' IS NULL LIMIT 1`,
-    [actor.tenant_id, actor.alias, LEGACY_COMPANY],
-  );
-  if (result.rows[0]?.is_hub !== true) throw new AuthorizationError('hub control is required for fleet hosts');
+/** Company authority comes only from the verified console session, never from the hub topology. */
+async function withHostAuthority<T>(
+  access: FleetHostHumanAccess, request: FastifyRequest, reply: FastifyReply, work: (authority: CompanyAuthoritySource) => Promise<T>,
+): Promise<T> {
+  const human = await access(request, reply);
+  if (human === undefined) throw new AuthorizationError('a console session is required for fleet hosts');
+  try { return await work(client=>human.companyAuthority(client)); } finally { human.close(); }
 }
 
 export function registerFleetHostRoutes(
   app: FastifyInstance, authProvider: AuthProvider, pool: DatabasePool,
-  capability: FleetCapability = { available: false, actions: [], placements: [], reason: 'executor_unconfigured' },
+  capability: FleetCapability|FleetCapabilitySource = { available: false, actions: [], placements: [], reason: 'executor_unconfigured' },
   repository: FleetHostRepository = fleetHostRepository(pool),
+  access: FleetHostHumanAccess = (request, reply) => consoleHumanAccess(authProvider, request, reply, 'read'),
 ): void {
   const path = '/v3/console/fleet/hosts';
-  const approvedHostIds = capability.available ? capability.placements.map((placement) => placement.host_id) : [];
+  const approvedHosts=async(request:FastifyRequest,reply:FastifyReply):Promise<string[]>=>{
+    const current=typeof capability==='function'?await capability(request,reply):capability;
+    return current.available?current.placements.map(placement=>placement.host_id):[];
+  };
   app.get(path, async (request, reply) => {
     try {
       const actor = await principal(request, authProvider);
       requirePermission(actor, 'read');
-      await requireHubControl(pool, actor);
-      const hosts = z.array(z.unknown()).parse(await repository.list(approvedHostIds));
+      const approvedHostIds=await approvedHosts(request,reply);
+      const hosts = z.array(z.unknown()).parse(await withHostAuthority(access, request, reply,
+        authority => repository.list(authority, approvedHostIds)));
       return { hosts: hosts.map(hostReceipt) };
     } catch (error) { hostError(reply, error); }
   });
@@ -97,9 +100,10 @@ export function registerFleetHostRoutes(
     try {
       const actor = await principal(request, authProvider);
       requireOperatorPermission(actor, 'control');
-      await requireHubControl(pool, actor);
       const input = FleetHostCreateSchema.parse(request.body);
-      return await reply.code(201).send(hostReceipt(await repository.create(input, approvedHostIds)));
+      const approvedHostIds=await approvedHosts(request,reply);
+      const created = await withHostAuthority(access, request, reply, authority => repository.create(input, authority, approvedHostIds));
+      return await reply.code(201).send(hostReceipt(created));
     } catch (error) { hostError(reply, error); }
   });
 
@@ -107,10 +111,11 @@ export function registerFleetHostRoutes(
     try {
       const actor = await principal(request, authProvider);
       requireOperatorPermission(actor, 'control');
-      await requireHubControl(pool, actor);
       const hostId = FleetHostIdSchema.parse(request.params.host_id);
       const input = FleetHostUpdateSchema.parse(request.body);
-      return await reply.send(hostReceipt(await repository.update(hostId, input, approvedHostIds)));
+      const approvedHostIds=await approvedHosts(request,reply);
+      const updated = await withHostAuthority(access, request, reply, authority => repository.update(hostId, input, authority, approvedHostIds));
+      return await reply.send(hostReceipt(updated));
     } catch (error) { hostError(reply, error); }
   });
 
@@ -118,10 +123,9 @@ export function registerFleetHostRoutes(
     try {
       const actor = await principal(request, authProvider);
       requireOperatorPermission(actor, 'control');
-      await requireHubControl(pool, actor);
       const hostId = FleetHostIdSchema.parse(request.params.host_id);
       const { expected_version: expectedVersion } = ExpectedVersionQuerySchema.parse(request.query);
-      await repository.delete(hostId, expectedVersion);
+      await withHostAuthority(access, request, reply, authority => repository.delete(hostId, expectedVersion, authority));
       return await reply.code(204).send();
     } catch (error) { hostError(reply, error); }
   });

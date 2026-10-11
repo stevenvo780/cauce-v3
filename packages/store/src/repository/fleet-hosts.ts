@@ -1,5 +1,7 @@
 import { fleetHostUsable, type FleetHost, type FleetHostCreate, type FleetHostUpdate } from '@cauce/protocol';
-import { withTransaction, type DatabasePool } from '../db.js';
+import { assertPlatformAdmin, type CompanyAuthority } from '../company-authority.js';
+import { withTransaction, type DatabaseClient, type DatabasePool } from '../db.js';
+import { StoreError } from './errors.js';
 import { FleetOperationError } from './fleet-operation-contracts.js';
 
 const CONTROLLER_FRESH_SECONDS = 90;
@@ -10,30 +12,56 @@ interface HostRow {
 }
 interface AgentRow { host_id: string; tenant_id: string; alias: string; enabled: boolean; online: boolean; last_heartbeat_at: Date | null }
 
+/** Resolves the company authority of a verified console person inside the caller transaction. */
+export type CompanyAuthoritySource = (client: DatabaseClient) => Promise<CompanyAuthority>;
+export interface FleetHostScope { readonly authority: CompanyAuthoritySource; readonly approvedHostIds: readonly string[] }
+
+/** Owners and administrators manage the computers of their company; only the platform registers or removes one. */
+async function hostAuthority(client: DatabaseClient, scope: FleetHostScope, platform = false): Promise<CompanyAuthority> {
+  const authority = await scope.authority(client);
+  if (platform) assertPlatformAdmin(authority);
+  else if (authority.scope !== 'company' && authority.scope !== 'platform') {
+    throw new StoreError('forbidden', 'company authority is required for fleet hosts');
+  }
+  return authority;
+}
+
+async function auditHost(client: DatabaseClient, authority: CompanyAuthority, action: string, hostId: string): Promise<void> {
+  await client.query(`INSERT INTO audit_events(tenant_id,actor_alias,action,decision,company_id,actor_human_id,metadata)
+    VALUES($1,$2,$3,'allow',$4,$5,$6::jsonb)`, [authority.homeTenant, authority.alias, action, authority.actingCompany,
+    authority.humanId, JSON.stringify({ host_id: hostId, platform_override: authority.platformOverride })]);
+}
+
+/**
+ * A company sees its registered computers and the agents placed on them. An approved computer nobody
+ * registered yet is shown to the platform, and to the only company while a single one exists, since
+ * its first placement registers it there.
+ */
 async function loadFleetHosts(
-  db: Pick<DatabasePool, 'query'>, approvedHostIds: readonly string[], onlyHost: string | null,
+  db: Pick<DatabasePool, 'query'>, authority: CompanyAuthority, approvedHostIds: readonly string[], onlyHost: string | null,
 ): Promise<FleetHost[]> {
   const hosts = await db.query<HostRow>(
     `WITH known AS (
-       SELECT host_id FROM fleet_hosts
-       UNION SELECT unnest($1::text[])
-       UNION SELECT host_id FROM agents WHERE host_id IS NOT NULL AND purged_at IS NULL)
+       SELECT host_id FROM fleet_hosts WHERE company_id=$4
+       UNION SELECT approved.host_id FROM unnest($1::text[]) approved(host_id)
+        WHERE ($5::boolean OR (SELECT count(*) FROM companies)=1)
+          AND NOT EXISTS (SELECT 1 FROM fleet_hosts host WHERE host.host_id=approved.host_id))
      SELECT known.host_id,(host.host_id IS NOT NULL) AS registered,host.display_name,host.notes,host.enabled,
             host.version::text AS version,host.controller_status,host.controller_seen_at,
             COALESCE(host.controller_seen_at > now() - make_interval(secs => $3),false) AS controller_fresh
        FROM known LEFT JOIN fleet_hosts host ON host.host_id=known.host_id
       WHERE $2::text IS NULL OR known.host_id=$2
       ORDER BY known.host_id`,
-    [[...approvedHostIds], onlyHost, CONTROLLER_FRESH_SECONDS],
+    [[...approvedHostIds], onlyHost, CONTROLLER_FRESH_SECONDS, authority.actingCompany, authority.role === 'platform_admin'],
   );
   const agents = await db.query<AgentRow>(
     `SELECT agent.host_id,agent.tenant_id,agent.alias,agent.enabled,
             COALESCE(lease.lease_until > now(),false) AS online,lease.last_heartbeat_at
        FROM agents agent
        LEFT JOIN connection_leases lease ON lease.tenant_id=agent.tenant_id AND lease.alias=agent.alias
-      WHERE agent.host_id IS NOT NULL AND agent.purged_at IS NULL AND ($1::text IS NULL OR agent.host_id=$1)
+      WHERE agent.host_id IS NOT NULL AND agent.purged_at IS NULL AND agent.company_id=$2 AND ($1::text IS NULL OR agent.host_id=$1)
       ORDER BY agent.tenant_id,agent.alias`,
-    [onlyHost],
+    [onlyHost, authority.actingCompany],
   );
   const byHost = new Map<string, AgentRow[]>();
   for (const agent of agents.rows) byHost.set(agent.host_id, [...byHost.get(agent.host_id) ?? [], agent]);
@@ -62,59 +90,76 @@ async function loadFleetHosts(
   });
 }
 
-async function loadFleetHost(db: Pick<DatabasePool, 'query'>, hostId: string, approvedHostIds: readonly string[]): Promise<FleetHost> {
-  const host = (await loadFleetHosts(db, approvedHostIds, hostId))[0];
+async function loadFleetHost(
+  db: Pick<DatabasePool, 'query'>, authority: CompanyAuthority, hostId: string, approvedHostIds: readonly string[],
+): Promise<FleetHost> {
+  const host = (await loadFleetHosts(db, authority, approvedHostIds, hostId))[0];
   if (!host) throw new FleetOperationError('not_found', 'fleet host was not found');
   return host;
 }
 
-export async function listFleetHosts(db: Pick<DatabasePool, 'query'>, options: { approvedHostIds: readonly string[] }): Promise<FleetHost[]> {
-  return loadFleetHosts(db, options.approvedHostIds, null);
+export async function listFleetHosts(pool: DatabasePool, scope: FleetHostScope): Promise<FleetHost[]> {
+  return withTransaction(pool, async client => loadFleetHosts(client, await hostAuthority(client, scope), scope.approvedHostIds, null));
 }
 
-export async function createFleetHost(
-  db: Pick<DatabasePool, 'query'>, input: FleetHostCreate, approvedHostIds: readonly string[] = [],
-): Promise<FleetHost> {
-  const inserted = await db.query(
-    'INSERT INTO fleet_hosts(host_id,display_name,notes) VALUES($1,$2,$3) ON CONFLICT (host_id) DO NOTHING',
-    [input.host_id, input.display_name, input.notes]);
-  if (inserted.rowCount === 0) throw new FleetOperationError('conflict', 'fleet host already exists');
-  return loadFleetHost(db, input.host_id, approvedHostIds);
+/** The platform registers a computer in the company it is acting for. */
+export async function createFleetHost(pool: DatabasePool, input: FleetHostCreate, scope: FleetHostScope): Promise<FleetHost> {
+  return withTransaction(pool, async client => {
+    const authority = await hostAuthority(client, scope, true);
+    const inserted = await client.query(
+      'INSERT INTO fleet_hosts(host_id,display_name,notes,company_id) VALUES($1,$2,$3,$4) ON CONFLICT (host_id) DO NOTHING',
+      [input.host_id, input.display_name, input.notes, authority.actingCompany]);
+    if (inserted.rowCount === 0) throw new FleetOperationError('conflict', 'fleet host already exists');
+    await auditHost(client, authority, 'fleet_host.create', input.host_id);
+    return loadFleetHost(client, authority, input.host_id, scope.approvedHostIds);
+  });
 }
 
 export async function updateFleetHost(
-  db: Pick<DatabasePool, 'query'>, hostId: string, input: FleetHostUpdate, approvedHostIds: readonly string[] = [],
+  pool: DatabasePool, hostId: string, input: FleetHostUpdate, scope: FleetHostScope,
 ): Promise<FleetHost> {
-  const updated = await db.query(
-    `UPDATE fleet_hosts SET display_name=COALESCE($3,display_name),notes=COALESCE($4,notes),enabled=COALESCE($5,enabled),
-            version=version+1,updated_at=now()
-      WHERE host_id=$1 AND version=$2`,
-    [hostId, input.expected_version, input.display_name ?? null, input.notes ?? null, input.enabled ?? null]);
-  if (updated.rowCount === 0) {
-    const exists = await db.query('SELECT 1 FROM fleet_hosts WHERE host_id=$1', [hostId]);
-    throw exists.rowCount === 0
-      ? new FleetOperationError('not_found', 'fleet host was not found')
-      : new FleetOperationError('conflict', 'fleet host version changed; reload and retry');
-  }
-  return loadFleetHost(db, hostId, approvedHostIds);
+  return withTransaction(pool, async client => {
+    const authority = await hostAuthority(client, scope);
+    const updated = await client.query(
+      `UPDATE fleet_hosts SET display_name=COALESCE($3,display_name),notes=COALESCE($4,notes),enabled=COALESCE($5,enabled),
+              version=version+1,updated_at=now()
+        WHERE host_id=$1 AND version=$2 AND company_id=$6`,
+      [hostId, input.expected_version, input.display_name ?? null, input.notes ?? null, input.enabled ?? null, authority.actingCompany]);
+    if (updated.rowCount === 0) {
+      const exists = await client.query('SELECT 1 FROM fleet_hosts WHERE host_id=$1 AND company_id=$2', [hostId, authority.actingCompany]);
+      throw exists.rowCount === 0
+        ? new FleetOperationError('not_found', 'fleet host was not found')
+        : new FleetOperationError('conflict', 'fleet host version changed; reload and retry');
+    }
+    await auditHost(client, authority, 'fleet_host.update', hostId);
+    return loadFleetHost(client, authority, hostId, scope.approvedHostIds);
+  });
 }
 
-export async function deleteFleetHost(db: DatabasePool, hostId: string, expectedVersion: number): Promise<void> {
-  await withTransaction(db, async (client) => {
-    const row = (await client.query<{ version: string }>('SELECT version::text AS version FROM fleet_hosts WHERE host_id=$1 FOR UPDATE', [hostId])).rows[0];
+export async function deleteFleetHost(pool: DatabasePool, hostId: string, expectedVersion: number, scope: FleetHostScope): Promise<void> {
+  await withTransaction(pool, async (client) => {
+    const authority = await hostAuthority(client, scope);
+    const row = (await client.query<{ version: string }>('SELECT version::text AS version FROM fleet_hosts WHERE host_id=$1 AND company_id=$2 FOR UPDATE',
+      [hostId, authority.actingCompany])).rows[0];
     if (!row) throw new FleetOperationError('not_found', 'fleet host was not found');
     if (Number(row.version) !== expectedVersion) throw new FleetOperationError('conflict', 'fleet host version changed; reload and retry');
     const placed = await client.query('SELECT 1 FROM agents WHERE host_id=$1 AND purged_at IS NULL LIMIT 1', [hostId]);
     if (placed.rowCount) throw new FleetOperationError('conflict', 'the computer still has agents; move or remove them first');
-    await client.query('DELETE FROM fleet_hosts WHERE host_id=$1', [hostId]);
+    const active = await client.query(`SELECT 1 FROM fleet_operations WHERE executor_host=$1
+      AND status NOT IN ('succeeded','failed','cancelled') LIMIT 1`, [hostId]);
+    if (active.rowCount) throw new FleetOperationError('conflict', 'the computer still has active operations');
+    await client.query('DELETE FROM fleet_hosts WHERE host_id=$1 AND company_id=$2', [hostId, authority.actingCompany]);
+    await auditHost(client, authority, 'fleet_host.delete', hostId);
   });
 }
 
 export async function recordFleetHostStatus(
   db: Pick<DatabasePool, 'query'>, hostId: string, status: Exclude<FleetHost['status'], 'unknown'>,
 ): Promise<void> {
+  // A report registers an unknown computer only while a single company exists; afterwards the platform registers it.
   await db.query(
-    `INSERT INTO fleet_hosts(host_id,display_name,controller_status,controller_seen_at) VALUES($1,$1,$2,now())
+    `INSERT INTO fleet_hosts(host_id,display_name,controller_status,controller_seen_at) SELECT $1,$1,$2,now()
+      WHERE EXISTS (SELECT 1 FROM fleet_hosts WHERE host_id=$1) OR (SELECT count(*) FROM companies)=1
      ON CONFLICT (host_id) DO UPDATE SET controller_status=EXCLUDED.controller_status,controller_seen_at=EXCLUDED.controller_seen_at`,
     [hostId, status]);
 }

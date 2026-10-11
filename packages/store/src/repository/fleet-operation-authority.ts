@@ -1,32 +1,58 @@
 import { FleetOperationRequestSchema, sha256Hex, type FleetOperationPreview, type FleetOperationRequest, type FleetTarget } from '@cauce/protocol';
 import type { DatabaseClient } from '../db.js';
-import { LEGACY_COMPANY, providerAccountConsentSql } from '../configuration/company-scope.js';
+import { lockCompanyAuthority, type CompanyAuthority } from '../company-authority.js';
+import { providerAccountConsentSql } from '../configuration/company-scope.js';
+import { StoreError } from './errors.js';
 import { fleetPurgeDependencies } from './fleet-operation-lifecycle.js';
 import { FleetOperationError, isRegistryDraft } from './fleet-operation-contracts.js';
 import { assertFleetHostAccess } from './fleet-operation-hosts.js';
+import type { CompanyAuthoritySource } from './fleet-hosts.js';
+
+export type FleetAuthorityScope = string | CompanyAuthoritySource;
 
 export function fleetRequest(value: unknown): FleetOperationRequest {
   const parsed = FleetOperationRequestSchema.safeParse(value);
   if (!parsed.success) throw new FleetOperationError('invalid_input', 'fleet operation request is invalid');
   return parsed.data;
 }
-export async function assertFleetAuthority(
-  client: DatabaseClient, tenant: string, alias: string, target: FleetTarget, control = true,
-): Promise<void> {
-  // A hub administers only its own company; a missing target is reported later as not found.
-  const result = await client.query<{ is_hub: boolean; allow_read: boolean; allow_control: boolean; foreign_target: boolean }>(
-    `SELECT tenant.is_hub,bool_or(policy.allow_read) AS allow_read,bool_or(policy.allow_control) AS allow_control,
-            EXISTS (SELECT 1 FROM tenants target WHERE target.id=$3 AND target.company_id<>tenant.company_id) AS foreign_target
-       FROM memberships membership JOIN tenants tenant ON tenant.id=membership.tenant_id
-       JOIN rooms room ON room.id=membership.room_id AND room.tenant_id=membership.tenant_id
-       JOIN role_policies policy ON policy.role=membership.role
-      WHERE membership.tenant_id=$1 AND membership.alias=$2 AND membership.enabled AND tenant.enabled AND room.enabled
-      GROUP BY tenant.is_hub,tenant.company_id`, [tenant, alias, target.tenant_id]);
-  const authority = result.rows[0];
-  if (!authority || !(control ? authority.allow_control : authority.allow_read) || authority.foreign_target
-      || (!authority.is_hub && (target.tenant_id !== tenant || (control && target.resource !== 'room')))) {
-    throw new FleetOperationError('forbidden', 'fleet operation is outside the current operator authority');
+const CONSOLE_SUBJECT = /^console:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/u;
+
+function outsideAuthority(): never {
+  throw new FleetOperationError('forbidden', 'fleet operation is outside the current operator authority');
+}
+
+/** The console person behind a fleet subject; any other subject acts without one. */
+export function fleetHumanId(subject: string | undefined): string | undefined {
+  return subject === undefined ? undefined : CONSOLE_SUBJECT.exec(subject)?.[1];
+}
+
+export async function resolveFleetAuthority(
+  client: DatabaseClient, tenant: string, alias: string, subject?: string, scope?: FleetAuthorityScope,
+): Promise<CompanyAuthority> {
+  const humanId = fleetHumanId(subject);
+  let authority: CompanyAuthority;
+  try {
+    authority = typeof scope === 'function' ? await scope(client) : await lockCompanyAuthority(client, {
+      tenant, alias, ...(humanId === undefined ? {} : { humanId }), ...(scope === undefined ? {} : { requestedCompany: scope }),
+    });
   }
+  catch (error) { if (error instanceof StoreError && error.code === 'forbidden') outsideAuthority(); throw error; }
+  if (authority.homeTenant !== tenant || authority.alias !== alias || authority.humanId !== (humanId ?? null)
+      || (typeof scope === 'string' && authority.actingCompany !== scope)) outsideAuthority();
+  return authority;
+}
+
+/** A selected company needs durable platform authority; a tenant operator controls only its rooms. */
+export async function assertFleetAuthority(
+  client: DatabaseClient, tenant: string, alias: string, target: FleetTarget, control = true, subject?: string, scope?: FleetAuthorityScope,
+): Promise<CompanyAuthority> {
+  const authority = await resolveFleetAuthority(client, tenant, alias, subject, scope);
+  if (authority.scope === 'company' || authority.scope === 'platform') {
+    const owner = (await client.query<{ company_id: string }>('SELECT company_id FROM tenants WHERE id=$1', [target.tenant_id])).rows[0];
+    if (owner !== undefined && owner.company_id !== authority.actingCompany) outsideAuthority();
+  } else if (target.tenant_id !== tenant || authority.scope !== 'tenant'
+      || (control && (authority.role !== 'tenant_operator' || target.resource !== 'room'))) outsideAuthority();
+  return authority;
 }
 export async function lockFleetRevision(client: DatabaseClient, expected?: number): Promise<number> {
   await client.query('SELECT pg_advisory_xact_lock(783_003_004)');
@@ -71,8 +97,16 @@ export async function validateFleetTarget(
     if (request.kind === 'create' && agent && !prepared && !isRegistryDraft(agent)) throw new FleetOperationError('conflict', 'agent identity already exists');
     if (request.kind !== 'create' && !agent) throw new FleetOperationError('not_found', 'target agent was not found');
     if (request.kind === 'create' || request.kind === 'update') {
-      if (tenant.company_id !== LEGACY_COMPANY) throw new FleetOperationError('forbidden', 'fleet hosts are reserved to the legacy company');
       const parameters = request.parameters;
+      // A computer serves one company; while only one exists, the first placement registers it there.
+      const placed = (await client.query<{ company_id: string }>('SELECT company_id FROM fleet_hosts WHERE host_id=$1 FOR KEY SHARE',
+        [parameters.placement.host_id])).rows[0];
+      if (placed !== undefined && placed.company_id !== tenant.company_id) {
+        throw new FleetOperationError('forbidden', 'fleet host belongs to another company');
+      }
+      if (placed === undefined && (await client.query('SELECT 1 FROM companies OFFSET 1 LIMIT 1')).rowCount) {
+        throw new FleetOperationError('conflict', 'fleet host must be registered in the target company first');
+      }
       if (parameters.memberships.find((member) => member.room_id === parameters.primary_room_id)?.enabled === false) {
         throw new FleetOperationError('conflict', 'primary membership must be enabled in the activation intent');
       }

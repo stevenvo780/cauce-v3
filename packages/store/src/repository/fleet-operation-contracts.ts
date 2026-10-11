@@ -9,7 +9,7 @@ export class FleetOperationError extends Error {
 }
 
 export interface FleetOperationRow {
-  id: string; actor_tenant: string; actor_alias: string; actor_subject?: string;
+  id: string; company_id: string; actor_tenant: string; actor_alias: string; actor_subject?: string; acting_company?: string;
   target: FleetOperation['target']; kind: FleetOperation['kind']; request: FleetOperationRequest;
   request_hash: string; cohort_key: string; executor_host: string; status: FleetOperation['status']; version: string;
   expected_revision: string; desired_revision: string | null; applied_revision: string | null;
