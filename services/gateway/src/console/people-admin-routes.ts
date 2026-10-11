@@ -46,7 +46,7 @@ async function run<T>(request: FastifyRequest, reply: FastifyReply, provider: Au
   if (!access) throw new AuthorizationError();
   try {
     return await action({ tenant_id: who.tenant_id, alias: who.alias, subject: who.operator_profile.id,
-      signal: access.options.signal, humanAuthority: access.options.humanAuthority });
+      signal: access.options.signal, humanAuthority: access.options.humanAuthority, companyAuthority: client => access.companyAuthority(client) });
   } finally { access.close(); }
 }
 export function registerPeopleAdminRoutes(app: FastifyInstance, provider: AuthProvider, repository: PeopleAdminRepositoryBinding): void {

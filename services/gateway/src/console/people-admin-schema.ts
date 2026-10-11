@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { DatabaseClient } from '@cauce/store';
+import type { CompanyAuthority, DatabaseClient } from '@cauce/store';
 import { MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH } from '../password.js';
 
 const Email = z.string().trim().toLowerCase().max(254).pipe(z.email());
@@ -22,6 +22,7 @@ export type PeopleAdminControl = z.infer<typeof PeopleAdminControlSchema>;
 export interface PeopleAdminActor {
   tenant_id: string; alias: string; subject: string; signal?: AbortSignal;
   humanAuthority(client: DatabaseClient): Promise<{ humanId: string; tenantId: string; actorAlias: string }>;
+  companyAuthority?(client: DatabaseClient): Promise<CompanyAuthority>;
 }
 export const PEOPLE_ADMIN_CAPABILITIES = { create: true, update: true, retire: true, restore: true, purge: true } as const;
 export const PeopleAdminListSchema = z.object({ items: z.array(PeopleAdminPersonSchema).max(1000).refine(items => new Set(items.map(item => item.id)).size === items.length),

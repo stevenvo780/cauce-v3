@@ -1,37 +1,52 @@
 import { randomUUID } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
-import type { DatabasePool } from '@cauce/store';
+import { createPool, type DatabasePool } from '@cauce/store';
 import { preparePostgresSuite } from '../../../../packages/store/test/postgres-suite.js';
-import { startTestCaseDatabase, startTestDatabase, type EmptyTestDatabase, type TestDatabase } from '../../../../tests/helpers/postgres.js';
+import { provisionTestLogin, startTestCaseDatabase, startTestDatabase, TEST_RUNTIME_LOGIN,
+  type EmptyTestDatabase, type TestDatabase } from '../../../../tests/helpers/postgres.js';
 import { PeopleAdminRepository } from './people-admin-store.js';
 import type { PeopleAdminActor, PeopleAdminPerson } from './people-admin-schema.js';
 import { encodeTerminalSubject } from '../terminal/authority-continuity.js';
 import { verifyPassword } from '../password.js';
 import { seedPeopleOAuth } from './people-admin-fixtures.js';
 
-let database: TestDatabase | undefined; let current: EmptyTestDatabase | undefined; let pool: DatabasePool;
+let database: TestDatabase | undefined; let current: EmptyTestDatabase | undefined; let pool: DatabasePool; let admin: DatabasePool;
+let runtime: DatabasePool | undefined;
 let actor: PeopleAdminActor; let owner: PeopleAdminPerson; let repository: PeopleAdminRepository;
 preparePostgresSuite(import.meta.url, async () => { database = await startTestDatabase(); }, 120_000);
 beforeEach(async () => {
-  if (!database) throw new Error('test database absent'); current = await startTestCaseDatabase(database); pool = current.pool;
-  await pool.query("INSERT INTO rooms(id,tenant_id) VALUES('people-hub','Steven')");
+  if (!database) throw new Error('test database absent'); current = await startTestCaseDatabase(database); pool = current.pool; admin = current.adminPool;
+  await admin.query("INSERT INTO rooms(id,tenant_id) VALUES('people-hub','Steven')");
   for (const alias of ['people-owner', 'people-target', 'people-second']) {
-    await pool.query("INSERT INTO agents(tenant_id,alias,harness_id) VALUES('Steven',$1,'codex')", [alias]);
-    await pool.query("INSERT INTO memberships(tenant_id,room_id,alias,role) VALUES('Steven','people-hub',$1,'operator')", [alias]);
+    await admin.query("INSERT INTO agents(tenant_id,alias,harness_id) VALUES('Steven',$1,'codex')", [alias]);
+    await admin.query("INSERT INTO memberships(tenant_id,room_id,alias,role) VALUES('Steven','people-hub',$1,'operator')", [alias]);
   }
-  const row = (await pool.query<PeopleAdminPerson>(`INSERT INTO console_users(email,email_normalized,password_hash,display_name,role,tenant_id,alias)
+  const row = (await admin.query<PeopleAdminPerson>(`INSERT INTO console_users(email,email_normalized,password_hash,display_name,role,tenant_id,alias)
     VALUES('owner@example.test','owner@example.test',$1,'Owner','operator','Steven','people-owner')
     RETURNING id,email,display_name,role,tenant_id,alias,active,(extract(epoch from updated_at)*1000000)::numeric(20,0)::text AS revision`, ['$scrypt$' + 'x'.repeat(48)])).rows[0];
   if (!row) throw new Error('fixture owner absent'); owner = row;
-  await pool.query("INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,role,permissions) VALUES($1,'Steven','people-owner','operator',ARRAY['read','control'])", [owner.id]);
+  await admin.query("INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,role,permissions) VALUES($1,'Steven','people-owner','operator',ARRAY['read','control'])", [owner.id]);
+  await admin.query("INSERT INTO company_admins(company_id,human_id,role,source,granted_by) VALUES('humanizar',$1,'owner','platform',$1)", [owner.id]);
   actor = { tenant_id: 'Steven', alias: 'people-owner', subject: `console:${owner.id}`,
     humanAuthority: async () => ({ humanId: owner.id, tenantId: 'Steven', actorAlias: 'people-owner' }) };
   repository = new PeopleAdminRepository(pool);
 });
-afterEach(async () => { await current?.close(); current = undefined; });
+afterEach(async () => { await runtime?.end(); runtime = undefined; await current?.close(); current = undefined; });
 afterAll(async () => { if (database) { await database.pool.end(); await database.container.stop(); } });
 const person = () => ({ email: 'target@example.test', display_name: 'Target', role: 'reader' as const,
   tenant_id: 'Steven', alias: 'people-target', active: true, password: 'synthetic-private-passphrase' });
+async function runtimePool(): Promise<DatabasePool> {
+  if (!current) throw new Error('test database absent');
+  runtime ??= createPool(await provisionTestLogin(admin, current.adminUrl, TEST_RUNTIME_LOGIN, 'cauce_runtime'));
+  return runtime;
+}
+async function inactiveOrphan(): Promise<PeopleAdminPerson> {
+  const orphan = (await pool.query<PeopleAdminPerson>(`INSERT INTO console_users(email,email_normalized,password_hash,display_name,role,tenant_id,alias,active)
+    VALUES('orphan@example.test','orphan@example.test',$1,'Orphan','reader','Steven','missing-alias',false)
+    RETURNING id,email,display_name,role,tenant_id,alias,active,(extract(epoch from updated_at)*1000000)::numeric(20,0)::text AS revision`, ['$scrypt$' + 'x'.repeat(48)])).rows[0];
+  if (!orphan) throw new Error('fixture orphan absent'); return orphan;
+}
 
 describe('human administration on PostgreSQL', () => {
   it('normalizes mixed-case emails before persistence and in create update and list receipts', async () => {
@@ -84,10 +99,15 @@ describe('human administration on PostgreSQL', () => {
     await expect(repository.update(actor, created.id, { expected_revision: created.revision, active: false })).rejects.toMatchObject({ code: 'conflict' });
     expect((await repository.list(actor)).items.find(row => row.id === created.id)?.active).toBe(true);
   });
-  it('protects the last effective administrator rather than counting stale accounts or memberships', async () => {
-    await pool.query("INSERT INTO console_users(email,email_normalized,password_hash,display_name,role,tenant_id,alias) VALUES('stale@example.test','stale@example.test',$1,'Stale','operator','Steven','missing-alias')", ['$scrypt$' + 'x'.repeat(48)]);
-    await expect(repository.retire(actor, owner.id, { expected_revision: owner.revision })).rejects.toMatchObject({ code: 'conflict' });
-    await expect(repository.update(actor, owner.id, { expected_revision: owner.revision, role: 'reader' })).rejects.toMatchObject({ code: 'conflict' });
+  it('refuses self-service retirement and protects the last owner from a platform administrator', async () => {
+    await expect(repository.retire(actor, owner.id, { expected_revision: owner.revision })).rejects.toMatchObject({ code: 'forbidden' });
+    await expect(repository.update(actor, owner.id, { expected_revision: owner.revision, role: 'reader' })).rejects.toMatchObject({ code: 'forbidden' });
+    const platform = await repository.create(actor, { ...person(), email: 'platform@example.test', role: 'operator', alias: 'people-second' });
+    await admin.query('INSERT INTO platform_admins(human_id) VALUES($1)', [platform.id]);
+    const platformActor: PeopleAdminActor = { tenant_id: 'Steven', alias: 'people-second', subject: `console:${platform.id}`,
+      humanAuthority: async () => ({ humanId: platform.id, tenantId: 'Steven', actorAlias: 'people-second' }) };
+    await expect(repository.retire(platformActor, owner.id, { expected_revision: owner.revision })).rejects.toMatchObject({ code: 'conflict' });
+    await expect(repository.update(platformActor, owner.id, { expected_revision: owner.revision, role: 'reader' })).rejects.toMatchObject({ code: 'conflict' });
     expect((await pool.query<{ active: boolean }>('SELECT active FROM console_users WHERE id=$1', [owner.id])).rows[0]?.active).toBe(true);
   });
   it('retires stable human terminal identities even after email rename and releases their control holds', async () => {
@@ -138,21 +158,56 @@ describe('human administration on PostgreSQL', () => {
     expect((await pool.query('SELECT 1 FROM cauce_oauth_refresh_tokens WHERE grant_id=$1', [oauth.identity.grantId])).rowCount).toBe(1);
     expect((await pool.query<{ enabled: boolean }>('SELECT enabled FROM human_external_identities WHERE human_id=$1', [created.id])).rows[0]?.enabled).toBe(true);
   });
-  it('serializes concurrent self-retirement so one effective administrator always survives', async () => {
-    const second = await repository.create(actor, { ...person(), role: 'operator', alias: 'people-second' });
-    const secondActor: PeopleAdminActor = { tenant_id: second.tenant_id, alias: second.alias, subject: `console:${second.id}`,
-      humanAuthority: async () => ({ humanId: second.id, tenantId: second.tenant_id, actorAlias: second.alias }) };
-    const results = await Promise.allSettled([repository.retire(actor, owner.id, { expected_revision: owner.revision }),
-      repository.retire(secondActor, second.id, { expected_revision: second.revision })]);
-    expect(results.filter(result => result.status === 'fulfilled')).toHaveLength(1);
-    expect(results.filter(result => result.status === 'rejected')).toHaveLength(1);
-    expect((await pool.query<{ n: number }>("SELECT count(*)::integer AS n FROM console_users WHERE active AND role='operator'")).rows[0]?.n).toBe(1);
+  it('retains a person with a real historical administration reference', async () => {
+    const orphan = await inactiveOrphan();
+    const restricted = await runtimePool();
+    await admin.query("INSERT INTO company_admin_versions(company_id,human_id,version) VALUES('humanizar',$1,1)", [orphan.id]);
+    expect((await restricted.query('SELECT cauce_human_has_admin_history($1) AS present', [orphan.id])).rows).toEqual([{ present: true }]);
+    await expect(new PeopleAdminRepository(restricted).purge(actor, orphan.id, { expected_revision: orphan.revision })).rejects.toMatchObject({ code: 'conflict' });
+    expect((await pool.query('SELECT 1 FROM console_users WHERE id=$1', [orphan.id])).rowCount).toBe(1);
+  });
+  it('exposes only a boolean history helper without table access or grant authority', async () => {
+    const restricted = await runtimePool();
+    const facts = (await admin.query<{ definer: boolean; boolean: boolean; arguments: number; settings: string[];
+      runtime: boolean; observer: boolean; public: boolean }>(`SELECT p.prosecdef AS definer,p.prorettype='bool'::regtype AS boolean,p.pronargs AS arguments,
+      p.proconfig AS settings,has_function_privilege('cauce_runtime',p.oid,'EXECUTE') AS runtime,
+      has_function_privilege('cauce_observer',p.oid,'EXECUTE') AS observer,
+      EXISTS(SELECT 1 FROM aclexplode(p.proacl) acl WHERE acl.grantee=0) AS public
+      FROM pg_proc p WHERE p.oid='cauce_human_has_admin_history(uuid)'::regprocedure`)).rows[0];
+    expect(facts).toEqual({ definer: true, boolean: true, arguments: 1, settings: ['search_path=pg_catalog, public, pg_temp'],
+      runtime: true, observer: false, public: false });
+    expect((await restricted.query('SELECT cauce_human_has_admin_history($1) AS absent,cauce_human_has_admin_history(NULL) AS empty', [randomUUID()])).rows)
+      .toEqual([{ absent: false, empty: false }]);
+    expect((await admin.query(`SELECT has_table_privilege('cauce_runtime','company_admin_versions','SELECT') AS read,
+      has_table_privilege('cauce_runtime','company_admin_versions','INSERT,UPDATE,DELETE') AS write,
+      has_function_privilege('cauce_runtime','cauce_runtime_grants_061()','EXECUTE') AS grants`)).rows)
+      .toEqual([{ read: false, write: false, grants: false }]);
+    await expect(restricted.query('SELECT 1 FROM company_admin_versions LIMIT 1')).rejects.toMatchObject({ code: '42501' });
+  });
+  it('replays and rolls back helper grants without changing administration history', async () => {
+    const orphan = await inactiveOrphan();
+    const restricted = await runtimePool();
+    await admin.query("INSERT INTO company_admin_versions(company_id,human_id,version) VALUES('humanizar',$1,1)", [orphan.id]);
+    await admin.query('REVOKE EXECUTE ON FUNCTION cauce_human_has_admin_history(uuid) FROM cauce_runtime');
+    await expect(restricted.query('SELECT cauce_human_has_admin_history($1)', [orphan.id])).rejects.toMatchObject({ code: '42501' });
+    await admin.query('SELECT cauce_apply_runtime_grants()');
+    expect((await restricted.query('SELECT cauce_human_has_admin_history($1) AS present', [orphan.id])).rows).toEqual([{ present: true }]);
+    await admin.query(await readFile(new URL('../../../../packages/store/migrations/down/061_people_admin_history.sql', import.meta.url), 'utf8'));
+    expect((await admin.query("SELECT to_regprocedure('cauce_human_has_admin_history(uuid)') AS helper,to_regprocedure('cauce_runtime_grants_061()') AS grants")).rows)
+      .toEqual([{ helper: null, grants: null }]);
+    expect((await admin.query('SELECT version::text FROM company_admin_versions WHERE human_id=$1', [orphan.id])).rows).toEqual([{ version: '1' }]);
+    expect((await admin.query("SELECT has_table_privilege('cauce_runtime','company_admin_versions','SELECT') AS read")).rows).toEqual([{ read: false }]);
+  });
+  it('fails closed on an unclassified private foreign key even if its table shares the history name', async () => {
+    const orphan = await inactiveOrphan();
+    const restricted = await runtimePool();
+    await admin.query(`CREATE SCHEMA people_history_fixture;
+      CREATE TABLE people_history_fixture.company_admin_versions(human_id uuid REFERENCES public.console_users(id))`);
+    await expect(new PeopleAdminRepository(restricted).purge(actor, orphan.id, { expected_revision: orphan.revision })).rejects.toMatchObject({ code: 'forbidden' });
+    expect((await pool.query('SELECT 1 FROM console_users WHERE id=$1', [orphan.id])).rowCount).toBe(1);
   });
   it('purges only an inactive orphan with no references or historical events', async () => {
-    const orphan = (await pool.query<PeopleAdminPerson>(`INSERT INTO console_users(email,email_normalized,password_hash,display_name,role,tenant_id,alias,active)
-      VALUES('orphan@example.test','orphan@example.test',$1,'Orphan','reader','Steven','missing-alias',false)
-      RETURNING id,email,display_name,role,tenant_id,alias,active,(extract(epoch from updated_at)*1000000)::numeric(20,0)::text AS revision`, ['$scrypt$' + 'x'.repeat(48)])).rows[0];
-    if (!orphan) throw new Error('fixture orphan absent');
+    const orphan = await inactiveOrphan();
     const subject = encodeTerminalSubject({ kind: 'human', humanId: orphan.id, loginSid: 'fixture-login-session', actor: { tenantId: 'Steven', alias: orphan.alias },
       credentialStamp: Buffer.alloc(32, 1).toString('base64url'), issuedAtSeconds: Math.floor(Date.now() / 1000), expiresAtSeconds: Math.floor(Date.now() / 1000) + 60 });
     const terminalId = randomUUID();

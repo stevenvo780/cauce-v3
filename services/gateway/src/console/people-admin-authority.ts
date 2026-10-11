@@ -1,53 +1,71 @@
-import type { DatabaseClient } from '@cauce/store';
+import { lockCompanyAuthority, StoreError, type CompanyAuthority, type DatabaseClient } from '@cauce/store';
+import { normalizeEmail } from '../console-users.js';
 import { PeopleAdminError, type PeopleAdminActor, type PeopleAdminPerson } from './people-admin-schema.js';
 
-export function peopleCompanyScopeSql(target: string, actorParameter = '$1'): string {
-  return `${target} IN (SELECT owner.id FROM tenants owner JOIN tenants actor ON actor.company_id=owner.company_id
-    WHERE actor.id=${actorParameter})`;
-}
-export async function assertPeopleCompany(client: DatabaseClient, targetTenant: string, actorTenant: string): Promise<void> {
-  const result = await client.query(`SELECT id FROM tenants WHERE id=$1 AND ${peopleCompanyScopeSql('id', '$2')} FOR SHARE`, [targetTenant, actorTenant]);
+/** Platform administrators, company owners and company administrators; the hub grants nothing here. */
+const ADMINISTRATOR_ROLES: ReadonlySet<string> = new Set(['platform_admin', 'company_owner', 'company_admin']);
+const PROTECTED_FIELDS = ['email', 'role', 'tenant_id', 'alias', 'active'] as const;
+
+export async function assertPeopleCompany(client: DatabaseClient, targetTenant: string, company: string): Promise<void> {
+  const result = await client.query('SELECT id FROM tenants WHERE id=$1 AND company_id=$2 FOR SHARE', [targetTenant, company]);
   if (!result.rowCount) throw new PeopleAdminError('forbidden');
 }
 
-export async function assertPeopleAuthority(client: DatabaseClient, actor: PeopleAdminActor): Promise<void> {
+/** The verified person must hold a company or platform role; the resolver decides it, never the hub flag. */
+export async function assertPeopleAuthority(client: DatabaseClient, actor: PeopleAdminActor): Promise<CompanyAuthority> {
   actor.signal?.throwIfAborted();
   let verified: { humanId: string; tenantId: string; actorAlias: string };
   try { verified = await actor.humanAuthority(client); } catch { throw new PeopleAdminError('forbidden'); }
   if (`console:${verified.humanId}` !== actor.subject || verified.tenantId !== actor.tenant_id || verified.actorAlias !== actor.alias) {
     throw new PeopleAdminError('forbidden');
   }
-  const administrators = await effectivePeopleAdministrators(client, actor.tenant_id);
-  if (!administrators.has(verified.humanId)) throw new PeopleAdminError('forbidden');
+  let authority: CompanyAuthority;
+  try {
+    authority = actor.companyAuthority === undefined
+      ? await lockCompanyAuthority(client, { tenant: verified.tenantId, alias: verified.actorAlias, humanId: verified.humanId })
+      : await actor.companyAuthority(client);
+  } catch (error) {
+    if (error instanceof StoreError && error.code === 'forbidden') throw new PeopleAdminError('forbidden');
+    throw error;
+  }
+  if (!ADMINISTRATOR_ROLES.has(authority.role) || authority.humanId !== verified.humanId
+      || authority.homeTenant !== verified.tenantId || authority.alias !== verified.actorAlias) throw new PeopleAdminError('forbidden');
   actor.signal?.throwIfAborted();
+  return authority;
 }
-export async function effectivePeopleAdministrators(client: DatabaseClient, actorTenant: string): Promise<Set<string>> {
-  const result = await client.query<{ id: string }>(`SELECT person.id FROM console_users person
-    JOIN human_tenant_memberships human ON human.human_id=person.id AND human.tenant_id=person.tenant_id AND human.actor_alias=person.alias
-    JOIN agents agent ON agent.tenant_id=person.tenant_id AND agent.alias=person.alias
-    JOIN tenants tenant ON tenant.id=person.tenant_id JOIN memberships member ON member.tenant_id=person.tenant_id AND member.alias=person.alias
-    JOIN rooms room ON room.tenant_id=member.tenant_id AND room.id=member.room_id JOIN role_policies policy ON policy.role=member.role
-    WHERE ${peopleCompanyScopeSql('person.tenant_id')} AND person.active AND person.role='operator' AND human.enabled AND human.revoked_at IS NULL AND human.role='operator'
-      AND 'control'=ANY(human.permissions) AND agent.retired_at IS NULL AND tenant.enabled AND tenant.is_hub
-      AND member.enabled AND room.enabled AND policy.allow_control
-    FOR SHARE OF person,human,agent,tenant,member,room,policy`, [actorTenant]);
-  return new Set(result.rows.map(row => row.id));
+
+/**
+ * Who may be changed by whom. Nobody changes their own role, state or placement; a company owner
+ * leaves owners and platform administrators alone, and a company administrator also leaves the
+ * other administrators alone. Returns whether the target holds an owner or platform role, whose
+ * continuity the caller must re-check after changing its membership.
+ */
+export async function assertMayAdminister(
+  client: DatabaseClient, authority: CompanyAuthority, previous: PeopleAdminPerson, next: PeopleAdminPerson | undefined,
+): Promise<boolean> {
+  if (previous.id === authority.humanId) {
+    const changed = next === undefined || PROTECTED_FIELDS.some(field => field === 'email'
+      ? normalizeEmail(previous.email) !== normalizeEmail(next.email) : previous[field] !== next[field]);
+    if (changed) throw new PeopleAdminError('forbidden');
+    return false;
+  }
+  const facts = (await client.query<{ platform_admin: boolean; company_role: string | null }>(
+    'SELECT platform_admin,company_role FROM cauce_company_authority($1,$2)', [previous.id, authority.actingCompany])).rows[0];
+  if (!facts) throw new PeopleAdminError('not_found');
+  const holder = facts.platform_admin || facts.company_role === 'owner';
+  if (authority.role !== 'platform_admin' && (holder || (authority.role === 'company_admin' && facts.company_role === 'admin'))) {
+    throw new PeopleAdminError('forbidden');
+  }
+  return holder;
 }
-export async function peopleAliasAuthority(client: DatabaseClient, value: Pick<PeopleAdminPerson, 'tenant_id' | 'alias' | 'role'>): Promise<{ hub: boolean; control: boolean }> {
-  const result = await client.query<{ hub: boolean; read: boolean; control: boolean }>(`SELECT tenant.is_hub AS hub,policy.allow_read AS read,policy.allow_control AS control
+
+/** The alias of an active person must be a live agent with read access, and control for an operator. */
+export async function assertPeopleAlias(client: DatabaseClient, value: Pick<PeopleAdminPerson, 'tenant_id' | 'alias' | 'role'>): Promise<void> {
+  const result = await client.query<{ read: boolean; control: boolean }>(`SELECT policy.allow_read AS read,policy.allow_control AS control
     FROM agents agent JOIN tenants tenant ON tenant.id=agent.tenant_id
     JOIN memberships member ON member.tenant_id=agent.tenant_id AND member.alias=agent.alias
     JOIN rooms room ON room.tenant_id=member.tenant_id AND room.id=member.room_id JOIN role_policies policy ON policy.role=member.role
     WHERE agent.tenant_id=$1 AND agent.alias=$2 AND agent.retired_at IS NULL AND tenant.enabled AND member.enabled AND room.enabled
     FOR SHARE OF agent,tenant,member,room,policy`, [value.tenant_id, value.alias]);
-  const readable = result.rows.some(row => row.read);
-  const control = result.rows.some(row => row.control);
-  if (!readable || (value.role === 'operator' && !control)) throw new PeopleAdminError('conflict');
-  return { hub: result.rows.some(row => row.hub), control };
-}
-export async function protectLastPeopleAdministrator(client: DatabaseClient, previous: PeopleAdminPerson, next: PeopleAdminPerson): Promise<void> {
-  const administrators = await effectivePeopleAdministrators(client, previous.tenant_id);
-  if (!administrators.has(previous.id)) return;
-  const authority = await peopleAliasAuthority(client, next);
-  if (administrators.size === 1 && (!next.active || next.role !== 'operator' || !authority.hub || !authority.control)) throw new PeopleAdminError('conflict');
+  if (!result.rows.some(row => row.read) || (value.role === 'operator' && !result.rows.some(row => row.control))) throw new PeopleAdminError('conflict');
 }
