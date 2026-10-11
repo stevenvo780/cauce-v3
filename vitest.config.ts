@@ -35,6 +35,7 @@ const FICHEROS_DE_DATOS = [
   'services/gateway/src/fleet/host-channel.routes.test.ts',
   'services/gateway/src/fleet/host-channel.executor.test.ts',
   'services/gateway/src/fleet/quota-auth-postgres.test.ts',
+  'services/gateway/src/fleet/gateway-config-postgres.test.ts',
   'services/gateway/src/context-version-runtime-postgres.test.ts',
   'services/gateway/src/context-version.routes-postgres.test.ts',
   'services/dispatcher/test/index.test.ts',

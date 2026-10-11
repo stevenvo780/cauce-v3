@@ -1,7 +1,7 @@
 import { normalize } from 'node:path';
 import { z } from 'zod';
 import type { FleetCapability, FleetOperationRequest } from '@cauce/protocol';
-import { FleetOperationsRepository, assertFleetAuthority, fleetHostAvailability, withTransaction, type CompanyAuthoritySource, type DatabaseClient, type DatabasePool } from '@cauce/store';
+import { FleetOperationError, FleetOperationsRepository, assertFleetAuthority, fleetHostAvailability, withTransaction, type CompanyAuthoritySource, type DatabaseClient, type DatabasePool } from '@cauce/store';
 import { assertFleetPlacement, assertFleetProviderAccount } from '../console/fleet-capability.js';
 import { readPrivateJson } from './provider-login.js';
 import { HostProviderAuthService } from './auth-bridge-client.js';
@@ -59,9 +59,9 @@ async function assertFleetHostOperable(pool: DatabasePool, request: FleetOperati
   if (!(await fleetHostAvailability(pool, hostId)).usable) throw new FleetHostUnavailableError(hostId);
 }
 
-async function placedHostId(pool: DatabasePool, target: { tenant_id: string; alias: string }): Promise<string | null> {
+async function placedHostId(pool: DatabasePool | DatabaseClient, target: { tenant_id: string; alias: string }): Promise<string | null> {
   const result = await pool.query<{ host_id: string | null }>(
-    'SELECT host_id FROM agents WHERE tenant_id=$1 AND alias=$2 AND purged_at IS NULL', [target.tenant_id, target.alias]);
+    'SELECT host_id FROM agents WHERE tenant_id=$1 AND alias=$2 AND purged_at IS NULL FOR SHARE', [target.tenant_id, target.alias]);
   return result.rows[0]?.host_id ?? null;
 }
 
@@ -84,9 +84,11 @@ export async function configuredFleetGateway(pool: DatabasePool, capability: Fle
     const current=registry===undefined?capability:await registry.fleet(authority.actingCompany,capability);
     assertFleetPlacement(current,input);await assertFleetProviderAccount(pool,current,input);await assertFleetHostOperable(pool,input);
     if (!repository) throw new Error('fleet repository is unavailable');
+    const hostId=registry===undefined||config===undefined?null:input.kind==='create'||input.kind==='update'?input.parameters.placement.host_id
+      :input.target.resource==='agent'?await placedHostId(client,input.target):null;
     const selected=registry!==undefined && input.target.resource==='agent'
-      && (input.kind==='create'||input.kind==='update') && config!==undefined
-      && !config.hosts.some(host=>host.host_id===input.parameters.placement.host_id)?new FleetOperationsRepository(pool):repository;
+      && config!==undefined && current.placements.some(host=>host.host_id===hostId)
+      && !config.hosts.some(host=>host.host_id===hostId)?new FleetOperationsRepository(pool):repository;
     return (source===undefined?selected:selected.forAuthority(source)).forTransaction(client);
   };
   const bind=(selected:FleetOperationsRepository,source?:CompanyAuthoritySource):FleetOperationsRepositoryBinding=>{
@@ -94,7 +96,13 @@ export async function configuredFleetGateway(pool: DatabasePool, capability: Fle
     return {
       forAuthority: authority=>bind(selected,authority),
       list: scoped.list.bind(scoped), listRecent: scoped.listRecent.bind(scoped), get: scoped.get.bind(scoped),
-      cancel: scoped.cancel.bind(scoped), resume: scoped.resume.bind(scoped),
+      cancel: scoped.cancel.bind(scoped),
+      resume: async (tenant,alias,id,expected,subject)=>withTransaction(pool,async client=>{
+        const operation=await scoped.forTransaction(client).get(tenant,alias,id,subject);
+        const stored=(await client.query<{request:FleetOperationRequest}>('SELECT request FROM fleet_operations WHERE id=$1',[operation.id])).rows[0];
+        if (!stored) throw new FleetOperationError('not_found','fleet operation was not found');
+        return (await approved(client,tenant,alias,stored.request,subject,source)).resume(tenant,alias,id,expected,subject);
+      }),
       preview: async (tenant,alias,input,subject)=>withTransaction(pool,async client=>
         (await approved(client,tenant,alias,input,subject,source)).preview(tenant,alias,input,subject)),
       enqueue: async (tenant,alias,input,subject)=>withTransaction(pool,async client=>
