@@ -1,5 +1,5 @@
-import { loadFleetHostScope, planFleetHostSlices, preparedState, providerAccountConsentSql, withTransaction,
-  type DatabaseClient, type DatabasePool, type FleetOperationRow } from '@cauce/store';
+import { StoreError, loadFleetHostScope, lockCompanyAuthority, planFleetHostSlices, preparedState, providerAccountConsentSql, withTransaction,
+  type CompanyAuthority, type DatabaseClient, type DatabasePool, type FleetOperationRow } from '@cauce/store';
 import { randomUUID } from 'node:crypto';
 import { isLiteralTrue } from '@cauce/protocol';
 import { ProviderAuthError, ProviderAuthRequestSchema } from './provider-auth.contracts.js';
@@ -7,7 +7,7 @@ import type { ProviderAuthActor, ProviderAuthDependencies, ProviderAuthLogin, Pr
 
 export type ProviderAuthPolicyScope = Pick<ProviderAuthRequest, 'provider_id' | 'account_id' | 'harness_id' | 'host_id' | 'runtime_user' | 'profile_id'>;
 interface Agent extends Record<string, unknown> { tenant_id: string; alias: string; runtime_key: string; harness_id: string; host_id: string;
-  runtime_user: string; primary_account_id: string; retired_at: Date | null; purged_at: Date | null }
+  runtime_user: string; primary_account_id: string; retired_at: Date | null; purged_at: Date | null; company_id: string }
 interface Account { id: string; provider: string; external_account_id: string; payer_tenant_id: string; shared_with_pool: boolean; enabled: boolean }
 export interface ProviderAuthPolicyContext { actor: ProviderAuthActor; operation: FleetOperationRow; agent: Agent; account: Account }
 export type ProviderAuthPolicyResolver = (client: DatabaseClient, context: ProviderAuthPolicyContext) => Promise<ProviderAuthPolicyScope>;
@@ -25,28 +25,19 @@ interface Reservation {
 }
 const denied = () => new ProviderAuthError('AUTHORITY_REVOKED');
 
-async function human(client: DatabaseClient, actor: ProviderAuthActor): Promise<void> {
+/** Provider login belongs to the fleet plane: only an owner, an administrator or the platform of the agent's company. */
+async function human(client: DatabaseClient, actor: ProviderAuthActor): Promise<CompanyAuthority> {
   const match = /^console:([0-9a-f-]{36})$/u.exec(actor.subject);
-  if (!match) throw denied();
-  const account = (await client.query<{ active: boolean; role: string; tenant_id: string; alias: string }>(
-    'SELECT active,role,tenant_id,alias FROM console_users WHERE id=$1::uuid FOR SHARE', [match[1]])).rows[0];
-  if (!account?.active || account.role !== 'operator' || account.tenant_id !== actor.tenant_id || account.alias !== actor.alias) throw denied();
-  const membership = (await client.query<{ enabled: boolean; revoked_at: Date | null; role: string; actor_alias: string; permissions: string[] }>(
-    `SELECT enabled,revoked_at,role,actor_alias,permissions FROM human_tenant_memberships
-      WHERE human_id=$1::uuid AND tenant_id=$2 FOR SHARE`, [match[1], actor.tenant_id])).rows[0];
-  if (!membership || !membership.enabled || membership.revoked_at !== null || membership.role !== 'operator'
-      || membership.actor_alias !== actor.alias || !membership.permissions.includes('control')) throw denied();
-  const authority = (await client.query<{ allowed: boolean }>(`SELECT bool_or(policy.allow_control AND tenant.is_hub) AS allowed
-    FROM memberships member JOIN tenants tenant ON tenant.id=member.tenant_id
-    JOIN rooms room ON room.id=member.room_id AND room.tenant_id=member.tenant_id
-    JOIN role_policies policy ON policy.role=member.role
-    WHERE member.tenant_id=$1 AND member.alias=$2 AND member.enabled AND tenant.enabled AND room.enabled
-      AND member.retired_at IS NULL AND tenant.retired_at IS NULL AND room.retired_at IS NULL`,
-  [actor.tenant_id, actor.alias])).rows[0];
-  if (authority?.allowed !== true) throw denied();
+  if (!match?.[1]) throw denied();
+  let authority: CompanyAuthority;
+  try { authority = await lockCompanyAuthority(client, { tenant: actor.tenant_id, alias: actor.alias, humanId: match[1],
+    ...(actor.requestedCompany === undefined ? {} : { requestedCompany: actor.requestedCompany }) }); }
+  catch (error) { if (error instanceof StoreError) throw denied(); throw error; }
+  if (authority.scope !== 'company' && authority.scope !== 'platform') throw denied();
+  return authority;
 }
 async function context(client: DatabaseClient, actor: ProviderAuthActor, request: ProviderAuthRequest, lock = false): Promise<ProviderAuthPolicyContext> {
-  await human(client, actor);
+  const authority = await human(client, actor);
   const operation = (await client.query<FleetOperationRow>(`SELECT *
     FROM fleet_operations WHERE id=$1 ${lock ? 'FOR UPDATE' : 'FOR SHARE'}`, [request.operation_id])).rows[0];
   if (operation?.status !== 'awaiting_auth' || operation.cancel_requested || operation.target.resource !== 'agent'
@@ -55,10 +46,8 @@ async function context(client: DatabaseClient, actor: ProviderAuthActor, request
   const initiator = (await client.query<{ subject: string | null }>(`SELECT metadata->>'actor_subject' AS subject
     FROM fleet_operation_events WHERE operation_id=$1 AND event='queued' ORDER BY id LIMIT 1`, [operation.id])).rows[0];
   if (initiator?.subject !== actor.subject) throw denied();
-  const agent = (await client.query<Agent>(`SELECT agent.*
-    FROM agents agent JOIN tenants target ON target.id=agent.tenant_id JOIN tenants actor ON actor.company_id=target.company_id
-    WHERE agent.tenant_id=$1 AND agent.alias=$2 AND actor.id=$3 FOR SHARE OF agent`,
-  [operation.target.tenant_id, operation.target.alias, actor.tenant_id])).rows[0];
+  const agent = (await client.query<Agent>(`SELECT * FROM agents WHERE tenant_id=$1 AND alias=$2 AND company_id=$3 FOR SHARE`,
+    [operation.target.tenant_id, operation.target.alias, authority.actingCompany])).rows[0];
   if (agent?.retired_at !== null || agent.purged_at !== null) throw denied();
   const selected = (await client.query<Account & { consent: boolean }>(`SELECT id,provider,external_account_id,payer_tenant_id,shared_with_pool,enabled,
     ${providerAccountConsentSql('provider_accounts', '$2')} AS consent FROM provider_accounts WHERE id=$1 FOR SHARE`,
@@ -151,9 +140,10 @@ export function createProviderAuthDependencies(
         const value = await context(client, actor, request, true);
         if (Number(value.operation.version) !== request.expected_operation_version) throw new ProviderAuthError('SESSION_CONFLICT');
         const trusted = await scope(client, value, request, resolve);
-        const reservations = await client.query<{ operation_id: string; reservation: Reservation }>(`SELECT DISTINCT ON (operation_id)
-          operation_id,metadata->'provider_auth' AS reservation FROM fleet_operation_events
-          WHERE metadata->'provider_auth'->>'cohort'=$1 ORDER BY operation_id,id DESC`, [cohort]);
+        const reservations = await client.query<{ operation_id: string; reservation: Reservation }>(`SELECT DISTINCT ON (event.operation_id)
+          event.operation_id,event.metadata->'provider_auth' AS reservation FROM fleet_operation_events event
+          JOIN fleet_operations operation ON operation.id=event.operation_id AND operation.company_id=$2
+          WHERE event.metadata->'provider_auth'->>'cohort'=$1 ORDER BY event.operation_id,event.id DESC`, [cohort, value.agent.company_id]);
         for (const prior of reservations.rows) {
           if (prior.reservation.state !== 'reserved') continue;
           if (Date.parse(prior.reservation.expires_at) > Date.now()) throw new ProviderAuthError('SESSION_CONFLICT');

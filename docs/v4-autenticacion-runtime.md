@@ -15,3 +15,13 @@ Se corrigen imports runtime de contexto para consumir el paquete store publicado
 La API de sesión publica home_tenant explícito: subject sigue siendo correo, nunca una fuente de autoridad o pertenencia. El campo Session.stopped sin consumidores se elimina; las pruebas stopped del proceso continúan siendo obligatorias.
 
 No se migró ningún agente ni se desplegó esta etapa. El repositorio privado de contextos sólo tiene el ensayo GitHub sintético registrado antes; faltan contextos reales y consumo en agentes.
+
+## Revisión de cierre de autenticación
+
+La selección de empresa del cookie firmado se conserva en el actor, la reserva, la sesión privada y el socket. La autoridad durable recibe esa selección y exige que coincida con la empresa del objetivo. El administrador de plataforma no puede usar la sesión seleccionada de otra empresa para abrir o verificar un login ajeno.
+
+El host vuelve a comprobar abort y TTL después de la última lectura asíncrona y antes de persistir la verificación; drena la renovación pendiente y mantiene una sola renovación en vuelo. El apagado y un fence perdido impiden guardar el resultado tardío.
+
+`auth-selected-company-regression-2.log`: seis archivos, **55/55 PASS**, incluye PostgreSQL con runtime role y pruebas diferidas de apagado/renovación. La fixture antigua ahora concede explícitamente el rol company_admin con el pool administrativo; no se relajaron permisos del runtime. `integrated-types-recovery-3.log`: typecheck global exit0. Lint global y matriz completa seguían en ejecución al guardar esta etapa.
+
+El broker VPS ya posee deploy key limitada al repositorio privado de contextos y una lectura autenticada real de main. No acredita todavía contextos reales ni consumo por los agentes, ni autenticación de un proveedor nuevo.

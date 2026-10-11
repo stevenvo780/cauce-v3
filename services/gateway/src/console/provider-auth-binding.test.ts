@@ -22,6 +22,7 @@ beforeEach(async ({ task }) => {
   const human = (await pool.query<{ id: string }>(`INSERT INTO console_users(email,email_normalized,password_hash,display_name,role,tenant_id,alias)
     VALUES('auth@example.test','auth@example.test',$1,'Fixture','operator','Steven','auth-human') RETURNING id`, ['$scrypt$' + 'x'.repeat(48)])).rows[0];
   if (!human) throw new Error('test human absent');
+  await current.adminPool.query("INSERT INTO company_admins(company_id,human_id,role,source) SELECT company_id,id,'admin','v4.0-hub-operator' FROM console_users WHERE id=$1", [human.id]);
   actor = { tenant_id: 'Steven', alias: 'auth-human', subject: `console:${human.id}` };
   await pool.query("INSERT INTO agents(tenant_id,alias) VALUES('Steven','auth-human')");
   if (!task.name.includes('absent human membership')) await pool.query("INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,role,permissions) VALUES($1,'Steven','auth-human','operator',ARRAY['read','control'])", [human.id]);

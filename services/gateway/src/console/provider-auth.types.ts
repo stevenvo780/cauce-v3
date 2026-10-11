@@ -1,4 +1,4 @@
-export interface ProviderAuthActor { tenant_id: string; alias: string; subject: string }
+export interface ProviderAuthActor { tenant_id: string; alias: string; subject: string; requestedCompany?: string }
 export interface ProviderAuthRequest {
   operation_id: string;
   expected_operation_version: number;

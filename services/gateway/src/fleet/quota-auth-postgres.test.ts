@@ -77,6 +77,16 @@ async function fixture(options: { verificationFails?: boolean } = {}) {
   return { broker, repository, request, actor, host, claim, handle, login, inputs, state: () => ({ started, stopped }) };
 }
 describe('quota authentication over real signed HTTP and runtime PostgreSQL', () => {
+  it('rejects another selected company even when the requester is a platform administrator', async () => {
+    const f = await fixture(); const other = await channelCompany(pool, 'quota-auth-company-selection');
+    if (!current) throw new Error('test database missing');
+    await current.adminPool.query('INSERT INTO platform_admins(human_id) VALUES($1)', [f.actor.subject.slice(8)]);
+    await expect(f.broker.service.resolve?.({ ...f.actor, requestedCompany: other.company.id }, f.claim.id))
+      .rejects.toMatchObject({ code: 'AUTHORITY_REVOKED' });
+    await expect(f.broker.service.start({ ...f.actor, requestedCompany: other.company.id }, f.request))
+      .rejects.toMatchObject({ code: 'AUTHORITY_REVOKED' });
+    expect(f.state().started).toBe(0); expect(f.inputs).toEqual([]);
+  }, 30_000);
   it('fails durably after provider verification rejects, confirms stop and never requeues authentication', async () => {
     const f = await fixture({ verificationFails: true });
     const session = await f.broker.service.start(f.actor, f.request);

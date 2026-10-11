@@ -64,9 +64,8 @@ export class QuotaHostAuthentication {
       verified: false, unsubscribe: () => undefined, loop: Promise.resolve(),
       expiresAt: new Date(Date.now() + plan.ttl_seconds * 1000).toISOString() };
     try {
-      const receipt = z.object({ registered: z.literal(true) }).strict().parse(await this.channel.request('POST',
+      z.object({ registered: z.literal(true) }).strict().parse(await this.channel.request('POST',
         `/v3/fleet/hosts/${this.options.host}/quota-auth`, { action: 'register', claim, expires_at: session.expiresAt, method: login.method }));
-      if (!receipt.registered) throw new Error('Quota terminal was not registered');
       kickoffSignal.throwIfAborted();
       session.unsubscribe = login.subscribeOutput(bytes => {
         if (bytes.byteLength > 65_536 || session.events.length >= 16) { abort.abort(); return; }
@@ -100,17 +99,24 @@ export class QuotaHostAuthentication {
           if (!(await session.login.close()).stopped) throw new Error('Quota login stop was not confirmed');
           if (!await this.repository.resumeAuthentication(session.claim)) throw new Error('Quota authentication fence was revoked');
           if (!isDeepStrictEqual(await this.repository.execution(session.claim), session.execution)) throw new Error('Quota authentication changed');
+          let renewing: Promise<void> | undefined;
           const lease = setInterval(() => {
-            void this.repository.renew(session.claim).then(valid => { if (!valid) session.abort.abort(); }).catch(() => { session.abort.abort(); });
+            if (renewing) return;
+            renewing = this.repository.renew(session.claim).then(valid => { if (!valid) session.abort.abort(); })
+              .catch(() => { session.abort.abort(); }).finally(() => { renewing = undefined; });
           }, 5000);
           lease.unref();
           try {
             const evidence = await this.options.verify(session.execution, session.abort.signal);
             session.abort.signal.throwIfAborted();
             if (!isDeepStrictEqual(await this.repository.execution(session.claim), session.execution)) throw new Error('Quota authentication changed');
+            clearInterval(lease);
+            await renewing;
+            session.abort.signal.throwIfAborted();
+            if (Date.now() >= Date.parse(session.expiresAt)) throw new Error('Quota session expired');
             await this.repository.finish(session.claim, evidence);
             session.verified = true;
-          } finally { clearInterval(lease); }
+          } finally { clearInterval(lease); await renewing; }
           break;
         }
       }

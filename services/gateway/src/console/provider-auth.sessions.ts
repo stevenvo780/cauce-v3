@@ -39,7 +39,7 @@ export class ProviderAuthManager {
     const parsed = ProviderAuthRequestSchema.safeParse(value);
     if (!parsed.success || !actor.subject) throw new ProviderAuthError('INVALID_REQUEST');
     const request = parsed.data;
-    const key = JSON.stringify([actor.subject, actor.tenant_id, actor.alias, request.request_id]);
+    const key = JSON.stringify([actor.subject, actor.tenant_id, actor.alias, actor.requestedCompany, request.request_id]);
     const fingerprint = JSON.stringify(request);
     const prior = this.requests.get(key);
     if (prior) {
@@ -199,7 +199,8 @@ export class ProviderAuthManager {
   }
 
   private sameActor(left: ProviderAuthActor, right: ProviderAuthActor): boolean {
-    return left.subject === right.subject && left.tenant_id === right.tenant_id && left.alias === right.alias;
+    return left.subject === right.subject && left.tenant_id === right.tenant_id && left.alias === right.alias
+      && left.requestedCompany === right.requestedCompany;
   }
 
   private lookup(actor: ProviderAuthActor, id: string): Session {
@@ -254,7 +255,8 @@ export class ProviderAuthManager {
       for (const [key, ticket] of this.tickets) if (ticket.sessionId === session.snapshot.session_id) this.tickets.delete(key);
       session.timer = setTimeout(() => {
         this.sessions.delete(session.snapshot.session_id);
-        this.requests.delete(JSON.stringify([session.actor.subject, session.actor.tenant_id, session.actor.alias, session.request.request_id]));
+        this.requests.delete(JSON.stringify([session.actor.subject, session.actor.tenant_id, session.actor.alias,
+          session.actor.requestedCompany, session.request.request_id]));
       }, 900_000);
       session.timer.unref();
     } catch {

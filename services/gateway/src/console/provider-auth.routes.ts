@@ -11,7 +11,9 @@ export async function providerAuthActor(request: FastifyRequest, provider: AuthP
     ? await provider.authenticateConsoleFresh(request) : await principal(request, provider);
   requireOperatorPermission(actor, 'control');
   if (actor.channel !== 'console' || !actor.operator_profile?.id) throw new AuthorizationError();
-  return { tenant_id: actor.tenant_id, alias: actor.alias, subject: actor.operator_profile.id };
+  const session = provider instanceof PasswordAuthProvider ? await provider.verifiedConsoleSession(request) : undefined;
+  return { tenant_id: actor.tenant_id, alias: actor.alias, subject: actor.operator_profile.id,
+    ...(session?.requestedCompany === undefined ? {} : { requestedCompany: session.requestedCompany }) };
 }
 
 function authError(reply: FastifyReply, error: unknown): void {

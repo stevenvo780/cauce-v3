@@ -37,7 +37,7 @@ async function readScope(client: DatabaseClient, id: string): Promise<AuthScope>
       AND (account.enabled OR account.quota_registration_key IS NOT NULL AND account.quota_identity_hash IS NULL)
       AND account.canonical_account_id IS NULL AND host.enabled AND identity.enabled
       AND op.status IN ('running','awaiting_auth','done','failed') FOR SHARE OF op,environment,account,host,identity`, [id])).rows[0];
-  if (!row || !row.claim_token || !row.worker_id) throw denied();
+  if (!row?.claim_token || !row.worker_id) throw denied();
   return row;
 }
 function sameFence(entry: Entry, scope: AuthScope): boolean {
@@ -96,7 +96,7 @@ export class QuotaAuthBroker {
     await withTransaction(this.pool, async client => {
       const scope = await readScope(client, request.operation_id);
       const authority = await lockCompanyAuthority(client, { tenant: actor.tenant_id, alias: actor.alias,
-        humanId, requestedCompany: scope.company_id });
+        humanId, ...(actor.requestedCompany === undefined ? {} : { requestedCompany: actor.requestedCompany }) });
       assertQuotaAuthority(authority, true);
       if (!sameFence(entry, scope) || scope.requested_by !== humanId || authority.actingCompany !== scope.company_id
           || scope.status === 'failed' || request.expected_operation_version !== entry.claim.claim_epoch
@@ -127,7 +127,7 @@ export class QuotaAuthBroker {
     if (this.entries.size >= 1000) throw new ProviderAuthError('SESSION_CONFLICT');
     const timer = setTimeout(() => {
       const entry = this.entries.get(claim.id);
-      if (entry) { void this.service.revokeOperation(claim.id).catch(() => undefined).finally(() => this.dispose(entry)); }
+      if (entry) { void this.service.revokeOperation(claim.id).catch(() => undefined).finally(() => { this.dispose(entry); }); }
     }, expires - Date.now());
     timer.unref();
     this.entries.set(claim.id, { scope, claim, expiresAt, method, commands: new Map(), listeners: new Set(),

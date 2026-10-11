@@ -31,6 +31,18 @@ function fixture(options: { stopped?: boolean; loginStopped?: boolean; identity?
 afterEach(() => { vi.useRealTimers(); });
 
 describe('sensitive provider bootstrap', () => {
+  it('rejects metadata, input and tickets when the same human changes the selected company', async () => {
+    const f = fixture(); const first = { ...actor, requestedCompany: 'company-one' };
+    const changed = { ...actor, requestedCompany: 'company-two' };
+    const session = await f.manager.start(first, input);
+    const ticket = await f.manager.issueSocketTicket(first, session.session_id);
+    await expect(f.manager.get(changed, session.session_id)).rejects.toMatchObject({ code: 'AUTHORITY_REVOKED' });
+    await expect(f.manager.attach(changed, session.session_id, () => undefined)).rejects.toMatchObject({ code: 'AUTHORITY_REVOKED' });
+    await expect(f.manager.verify(changed, session.session_id)).rejects.toMatchObject({ code: 'AUTHORITY_REVOKED' });
+    await expect(f.manager.consumeSocketTicket(changed, session.session_id, ticket.ticket)).rejects.toMatchObject({ code: 'AUTHORITY_REVOKED' });
+    expect(f.state().written).toBe(''); expect(f.state().started).toBe(false);
+    await f.manager.cancel(first, session.session_id);
+  });
   it('releases the cohort if expiry resolution fails and accepts a later valid retry', async () => {
     const f = fixture();
     f.deps.expiration = async () => { throw new Error('authority changed while resolving expiry'); };

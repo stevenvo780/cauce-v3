@@ -9,7 +9,8 @@ function bytes(data: RawData): Buffer {
   return Array.isArray(data) ? Buffer.concat(data) : Buffer.isBuffer(data) ? data : Buffer.from(data);
 }
 function sameActor(left: ProviderAuthActor, right: ProviderAuthActor): boolean {
-  return left.subject === right.subject && left.alias === right.alias && left.tenant_id === right.tenant_id;
+  return left.subject === right.subject && left.alias === right.alias && left.tenant_id === right.tenant_id
+    && left.requestedCompany === right.requestedCompany;
 }
 export async function attachProviderAuthSocket(
   socket: WebSocket, request: FastifyRequest, auth: AuthProvider, manager: ProviderAuthService, origins: readonly string[],
