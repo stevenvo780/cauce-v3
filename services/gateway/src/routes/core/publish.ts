@@ -152,11 +152,15 @@ export function registerCorePublishRoutes(
       const actor = await principal(request, options.authProvider);
       requirePermission(actor, 'route');
       await repository.assertPermission(actor.tenant_id, actor.alias, 'route');
-      const provider = (request.query as { provider?: unknown } | undefined)?.provider;
+      const { provider, model } = request.query as { provider?: unknown; model?: unknown };
       if (typeof provider !== 'string') {
         return await reply.code(400).send({ error: 'invalid_input', message: 'provider query parameter is required' });
       }
-      return await repository.selectAccount(actor.tenant_id, actor.alias, provider);
+      if (model !== undefined && (typeof model !== 'string' || model.trim().length === 0 || model.length > 128)) {
+        return await reply.code(400).send({ error: 'invalid_input', message: 'model query parameter is invalid' });
+      }
+      return await (model === undefined ? repository.selectAccount(actor.tenant_id, actor.alias, provider)
+        : repository.selectAccount(actor.tenant_id, actor.alias, provider, model));
     } catch (error) { replyError(reply, error); }
   });
   return publishHandler;

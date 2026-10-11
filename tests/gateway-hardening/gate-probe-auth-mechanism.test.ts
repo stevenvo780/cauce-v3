@@ -32,7 +32,11 @@ class StubFallbackProvider implements AuthProvider {
 async function passwordFallbackGateway(fallbackName: string) {
   const app = await buildGateway({
     pool: fakePool(),
-    repository: fakeRepository(),
+    repository: Object.assign(fakeRepository(), {
+      systemGatePrincipal: async () => ({
+        tenant_id: 'Steven', room_id: 'grp.steven', actor_alias: 'kant', principal_alias: 'gate-probe',
+      }),
+    }),
     authProvider: new PasswordAuthProvider({
       users: new MemoryConsoleUserStore(),
       signingKey: randomBytes(32),

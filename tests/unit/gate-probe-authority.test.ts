@@ -32,12 +32,14 @@ describe('reserved system gate probe authority', () => {
     expect(SYSTEM_PRINCIPAL_ALIASES).toEqual(['gate-probe', 'quota-collector']);
   });
 
-  test('store rejects forged gate authority before opening a transaction', async () => {
+  // Tenant, room and actor are company data and are matched inside the transaction; the company-context
+  // PostgreSQL suite forges each of them. What needs no data fails before a connection is taken.
+  test('store rejects structurally forged gate authority before opening a transaction', async () => {
     const query = vi.fn(async () => ({ rows: [], rowCount: 0 }));
     const repository = new CauceRepository({ query } as unknown as DatabasePool);
     for (const forged of [
-      command({ actor_alias: 'quota-collector' }),
       command({ authenticated_context: { session_id: 'gate-probe', channel: 'adapter' } }),
+      command({ authenticated_context: { session_id: 'quota-collector', channel: 'gate' } }),
       command({ priority: 0 }),
       command({ recipients: [{ tenant_id: 'Steven', alias: 'kant' }, { tenant_id: 'Steven', alias: 'argos' }] }),
     ]) {

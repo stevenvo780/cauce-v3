@@ -558,7 +558,11 @@ describe('gateway hardening facades and RBAC', () => {
       roles: roles('agent'), permissions: grants('route', 'read'),
     };
 
-    const repository = fakeRepository();
+    const repository = Object.assign(fakeRepository(), {
+      systemGatePrincipal: async () => ({
+        tenant_id: 'Steven', room_id: 'grp.steven', actor_alias: 'kant', principal_alias: 'gate-probe',
+      }),
+    });
     const accepted = await gateGateway(repository, exact);
     expect((await accepted.inject({ method: 'POST', url: '/v3/messages', payload })).statusCode).toBe(202);
     expect(repository.publish).toHaveBeenCalledWith(expect.objectContaining({

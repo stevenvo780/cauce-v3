@@ -141,6 +141,16 @@ async function roundTripEvidenceFor(target) {
   return { deliveryId: decoded.deliveryId, nonce: decoded.nonce, startedAt };
 }
 
+function gateIdentity() {
+  const identity = {
+    tenant: process.env.CAUCE_GATE_TENANT, room: process.env.CAUCE_GATE_ROOM, actor: process.env.CAUCE_GATE_ACTOR,
+  };
+  if (!identity.tenant || !identity.room || !identity.actor) {
+    throw new Error('CAUCE_GATE_TENANT, CAUCE_GATE_ROOM and CAUCE_GATE_ACTOR are required for this phase');
+  }
+  return identity;
+}
+
 function number(value, label) {
   const parsed = Number(value);
   if (!Number.isSafeInteger(parsed) || parsed < 0) throw new Error(`database returned invalid ${label}`);
@@ -148,6 +158,7 @@ function number(value, label) {
 }
 
 async function waitForTerminal(client, target, evidence, timeoutMs) {
+  const gate = gateIdentity();
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const result = await client.query(
@@ -155,14 +166,15 @@ async function waitForTerminal(client, target, evidence, timeoutMs) {
          FROM deliveries d
          JOIN messages m ON m.id=d.message_id
         WHERE d.id=$1 AND d.recipient_tenant=$2 AND d.recipient_alias=$3
-          AND m.tenant_id='Steven' AND m.room_id='grp.steven' AND m.actor_alias='kant'
+          AND m.tenant_id=$6 AND m.room_id=$7 AND m.actor_alias=$8
           AND m.auth_session_id='gate-probe' AND m.auth_channel='gate' AND m.origin IS NULL
           AND m.lane='interactive' AND m.priority=-100
           AND m.body->>'type'='system.gate.probe'
           AND m.body->>'nonce'=$4
           AND (SELECT count(*) FROM jsonb_object_keys(m.body))=3
           AND m.created_at >= $5::timestamptz`,
-      [evidence.deliveryId, target.tenant, target.alias, evidence.nonce, evidence.startedAt],
+      [evidence.deliveryId, target.tenant, target.alias, evidence.nonce, evidence.startedAt,
+        gate.tenant, gate.room, gate.actor],
     );
     const status = result.rows[0]?.status;
     if (status === undefined) return;
@@ -267,6 +279,7 @@ async function collectSnapshot() {
       status: 'not-run', completedAt: null, terminalAckApplied: false, activeLeaseMatch: false,
     };
     if (evidence) {
+      const gate = gateIdentity();
       const proofResult = await client.query(
         `SELECT d.status,d.terminal_at,
            (d.status='done'
@@ -289,7 +302,7 @@ async function collectSnapshot() {
            ) AS active_lease_match
          FROM deliveries d JOIN messages m ON m.id=d.message_id
         WHERE d.id=$1 AND d.recipient_tenant=$2 AND d.recipient_alias=$3
-          AND m.tenant_id='Steven' AND m.room_id='grp.steven' AND m.actor_alias='kant'
+          AND m.tenant_id=$7 AND m.room_id=$8 AND m.actor_alias=$9
           AND m.auth_session_id='gate-probe' AND m.auth_channel='gate' AND m.origin IS NULL
           AND m.lane='interactive' AND m.priority=-100
           AND m.body->>'type'='system.gate.probe'
@@ -298,7 +311,7 @@ async function collectSnapshot() {
           AND m.created_at >= $5::timestamptz`,
         [
           evidence.deliveryId, target.tenant, target.alias, evidence.nonce,
-          evidence.startedAt, pollerFreshMs,
+          evidence.startedAt, pollerFreshMs, gate.tenant, gate.room, gate.actor,
         ],
       );
       const proof = proofResult.rows[0];

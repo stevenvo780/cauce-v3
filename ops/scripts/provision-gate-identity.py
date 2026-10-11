@@ -10,6 +10,7 @@ import importlib.util
 import json
 import os
 import pathlib
+import re
 import secrets
 import stat
 import subprocess
@@ -23,10 +24,17 @@ REGISTRY = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(REGISTRY)
 from update_alias_lib import SafeArgumentParser  # noqa: E402
 
-PRINCIPAL = {
-    "tenant_id": "Steven", "alias": "gate-probe", "session_id": "gate-probe",
-    "channel": "gate", "roles": ["agent"], "permissions": ["route", "read"],
-}
+TENANT_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{0,63}$")
+
+
+def gate_principal(tenant: str) -> dict[str, object]:
+    """The reserved gate identity of one company's tenant; the tenant is never defaulted."""
+    if not TENANT_PATTERN.fullmatch(tenant):
+        raise ValueError("gate identity: invalid tenant")
+    return {
+        "tenant_id": tenant, "alias": "gate-probe", "session_id": "gate-probe",
+        "channel": "gate", "roles": ["agent"], "permissions": ["route", "read"],
+    }
 
 
 def openssl(*arguments: str, input_data: bytes | None = None) -> bytes:
@@ -56,10 +64,10 @@ def validate_file(path: pathlib.Path, private: bool) -> None:
 
 def certificate_expiry(cert: pathlib.Path) -> datetime.datetime:
     expiry = openssl("x509", "-in", str(cert), "-noout", "-enddate").decode("ascii").strip()
-    return datetime.datetime.strptime(expiry, "notAfter=%b %d %H:%M:%S %Y GMT").replace(tzinfo=datetime.timezone.utc)
+    return datetime.datetime.strptime(expiry, "notAfter=%b %d %H:%M:%S %Y GMT").replace(tzinfo=datetime.UTC)
 
 
-def validate_pair(directory: pathlib.Path, ca_cert: pathlib.Path) -> dict[str, object]:
+def validate_pair(directory: pathlib.Path, ca_cert: pathlib.Path, tenant: str) -> dict[str, object]:
     cert, key = directory / "gate-probe.crt", directory / "gate-probe.key"
     validate_file(cert, False)
     validate_file(key, True)
@@ -78,18 +86,18 @@ def validate_pair(directory: pathlib.Path, ca_cert: pathlib.Path) -> dict[str, o
     return {
         "certificate_sha256": REGISTRY.certificate_sha256_from_pem(cert.read_text(encoding="ascii")),
         "expires_at": expires_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "principal": PRINCIPAL.copy(),
+        "principal": gate_principal(tenant),
     }
 
 
-def issue(directory: pathlib.Path, ca_cert: pathlib.Path, ca_key: pathlib.Path) -> None:
+def issue(directory: pathlib.Path, ca_cert: pathlib.Path, ca_key: pathlib.Path, tenant: str) -> None:
     validate_file(ca_key, True)
     openssl("x509", "-in", str(ca_cert), "-noout", "-checkend", "172800")
     if b"CA:TRUE" not in openssl("x509", "-in", str(ca_cert), "-noout", "-text"):
         raise RuntimeError("gate identity: signer is not a CA")
     if openssl("x509", "-in", str(ca_cert), "-pubkey", "-noout") != openssl("pkey", "-in", str(ca_key), "-pubout"):
         raise RuntimeError("gate identity: CA certificate/key mismatch")
-    days = min(365, (certificate_expiry(ca_cert) - datetime.datetime.now(datetime.timezone.utc)).days)
+    days = min(365, (certificate_expiry(ca_cert) - datetime.datetime.now(datetime.UTC)).days)
     if days < 2:
         raise RuntimeError("gate identity: signer validity is too short")
     # Publish the complete pair together; never replace an existing credential directory.
@@ -107,7 +115,7 @@ def issue(directory: pathlib.Path, ca_cert: pathlib.Path, ca_key: pathlib.Path) 
         )
         key.chmod(0o400)
         cert.chmod(0o444)
-        validate_pair(pair, ca_cert)
+        validate_pair(pair, ca_cert, tenant)
         for path in (key, cert):
             with path.open("rb") as handle:
                 os.fsync(handle.fileno())
@@ -127,7 +135,8 @@ def issue(directory: pathlib.Path, ca_cert: pathlib.Path, ca_key: pathlib.Path) 
 
 
 def provision(directory: pathlib.Path, ca_cert: pathlib.Path, ca_key: pathlib.Path,
-              identities: pathlib.Path) -> dict[str, object]:
+              identities: pathlib.Path, tenant: str) -> dict[str, object]:
+    principal = gate_principal(tenant)
     for path in (directory, ca_cert, ca_key, identities):
         REGISTRY.validate_absolute(path, "gate identity path")
     validate_file(ca_cert, False)
@@ -145,13 +154,13 @@ def provision(directory: pathlib.Path, ca_cert: pathlib.Path, ca_key: pathlib.Pa
         existing = [record for record in document["identities"]
                     if isinstance(record, dict) and isinstance(record.get("principal"), dict)
                     and record["principal"].get("alias") == "gate-probe"]
-        if len(existing) > 1 or (existing and existing[0].get("principal") != PRINCIPAL):
+        if len(existing) > 1 or (existing and existing[0].get("principal") != principal):
             raise RuntimeError("gate identity: conflicting reserved principal; nothing replaced")
         if not directory.exists() and not directory.is_symlink():
             if existing:
                 raise RuntimeError("gate identity: registered credential is missing; explicit recovery required")
-            issue(directory, ca_cert, ca_key)
-        record = validate_pair(directory, ca_cert)
+            issue(directory, ca_cert, ca_key, tenant)
+        record = validate_pair(directory, ca_cert, tenant)
         if existing:
             if existing[0] != record:
                 raise RuntimeError("gate identity: existing registration differs; nothing replaced")
@@ -181,7 +190,8 @@ def main() -> int:
         print("gate identity: invalid command line")
         return 2
     try:
-        result = provision(args.output_dir, args.ca_cert, args.ca_key, args.identities_dir)
+        result = provision(args.output_dir, args.ca_cert, args.ca_key, args.identities_dir,
+                           os.environ.get("CAUCE_GATE_TENANT", ""))
     except (OSError, RuntimeError, ValueError):
         print("gate identity: provisioning failed; no existing credential replaced")
         return 1

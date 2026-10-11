@@ -116,6 +116,7 @@ async function gateway(value: Awaited<ReturnType<typeof fixture>>, response = { 
 function environment(value: Awaited<ReturnType<typeof fixture>>, origin: string) {
   return {
     CAUCE_GATE_INVENTORY_FILE: value.inventory,
+    CAUCE_GATE_ROOM: 'grp.steven',
     CAUCE_GATE_PROBE_URL: origin,
     CAUCE_GATE_PROBE_CA_FILE: value.ca,
     CAUCE_GATE_PROBE_CERT_FILE: value.cert,
@@ -145,11 +146,13 @@ describe('authentic mTLS round-trip probe', () => {
     ]);
     expect((await lstat(value.output)).mode & 0o077).toBe(0);
     const published = endpoint.received() as {
+      room_id: string;
       recipients: { tenant_id: string; alias: string }[];
       body: { type: string; nonce: string; timeout_ms: number };
       lane: string;
       priority: number;
     };
+    expect(published.room_id).toBe('grp.steven');
     expect(published.recipients).toEqual([{ tenant_id: 'Steven', alias: 'kant' }]);
     expect(published.body).toEqual({ type: 'system.gate.probe', nonce: evidence.nonce, timeout_ms: 5000 });
     expect(published.body.timeout_ms).toBe(5000);
@@ -168,6 +171,15 @@ describe('authentic mTLS round-trip probe', () => {
     result = await run(['kant', value.output], environment(value, 'https://127.0.0.1:1'));
     expect(result.status).toBe(2);
     expect(result.stderr).toContain('must not be group/world accessible');
+    expect(await lstat(value.output).catch(() => undefined)).toBeUndefined();
+  });
+
+  test('has no default gate room: the deployment must name it', async () => {
+    const value = await fixture();
+    const { CAUCE_GATE_ROOM: _room, ...withoutRoom } = environment(value, 'https://127.0.0.1:1');
+    const result = await run(['kant', value.output], withoutRoom);
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain('CAUCE_GATE_ROOM is required');
     expect(await lstat(value.output).catch(() => undefined)).toBeUndefined();
   });
 

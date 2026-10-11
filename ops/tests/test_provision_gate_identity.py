@@ -20,6 +20,8 @@ SPEC.loader.exec_module(MODULE)
 
 
 class GateIdentityTest(unittest.TestCase):
+    TENANT = "Steven"
+
     @classmethod
     def setUpClass(cls):
         cls.ca_temp = tempfile.TemporaryDirectory(prefix="cauce-gate-test-ca-")
@@ -57,14 +59,14 @@ class GateIdentityTest(unittest.TestCase):
         self.registry.chmod(0o400)
 
     def provision(self):
-        return MODULE.provision(self.output, self.ca_cert, self.ca_key, self.identities)
+        return MODULE.provision(self.output, self.ca_cert, self.ca_key, self.identities, self.TENANT)
 
     def test_issues_only_fixed_principal_preserves_registry_and_is_idempotent(self):
         before_ca = self.ca_key.stat()
         self.assertEqual(self.provision()["identities_added"], 1)
         data = json.loads(self.registry.read_text())
         self.assertEqual(data["identities"][0], self.previous)
-        self.assertEqual(data["identities"][1]["principal"], MODULE.PRINCIPAL)
+        self.assertEqual(data["identities"][1]["principal"], MODULE.gate_principal(self.TENANT))
         self.assertLessEqual(MODULE.certificate_expiry(self.output / "gate-probe.crt"), MODULE.certificate_expiry(self.ca_cert))
         self.assertEqual(stat.S_IMODE((self.output / "gate-probe.key").stat().st_mode), 0o400)
         self.assertEqual(stat.S_IMODE(self.registry.stat().st_mode), 0o400)
@@ -83,7 +85,7 @@ class GateIdentityTest(unittest.TestCase):
         self.assertFalse(self.output.exists())
 
     def test_registered_missing_credential_is_not_rotated(self):
-        self.document["identities"].append({"principal": MODULE.PRINCIPAL})
+        self.document["identities"].append({"principal": MODULE.gate_principal(self.TENANT)})
         self.save()
         with self.assertRaisesRegex(RuntimeError, "registered credential is missing"):
             self.provision()
@@ -121,6 +123,14 @@ class GateIdentityTest(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "unsafe credential"):
             self.provision()
 
+    def test_tenant_is_required_and_validated_before_any_issuance(self):
+        for tenant in ("", "bad tenant", "9x"):
+            with self.assertRaises(ValueError):
+                MODULE.provision(self.output, self.ca_cert, self.ca_key, self.identities, tenant)
+        self.assertFalse(self.output.exists())
+        self.assertEqual(json.loads(self.registry.read_text()), self.document)
+        self.assertEqual(MODULE.gate_principal("Other")["tenant_id"], "Other")
+
     def test_short_lived_ca_is_rejected_before_issuance(self):
         short_cert = self.root / "short-ca.crt"
         subprocess.run([
@@ -128,7 +138,7 @@ class GateIdentityTest(unittest.TestCase):
             "-subj", "/CN=short-lived-test", "-addext", "basicConstraints=critical,CA:TRUE",
         ], check=True, capture_output=True)
         with self.assertRaises(RuntimeError):
-            MODULE.provision(self.output, short_cert, self.ca_key, self.identities)
+            MODULE.provision(self.output, short_cert, self.ca_key, self.identities, self.TENANT)
         self.assertFalse(self.output.exists())
         self.assertEqual(json.loads(self.registry.read_text()), self.document)
 

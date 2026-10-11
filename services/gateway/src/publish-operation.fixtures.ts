@@ -15,6 +15,10 @@ export const payload = {
   body: { text: 'publish operation fixture' }, idempotency_key: 'operation-fixture-key',
   lane: 'interactive', priority: 10,
 };
+/** The gate-probe principal data of the fixture company. */
+export const gatePrincipal = {
+  tenant_id: 'Steven', room_id: 'grp.steven', actor_alias: 'kant', principal_alias: 'gate-probe',
+} as const;
 export function input(overrides: Partial<PublishOperationInput> = {}): PublishOperationInput {
   return {
     actor, body: payload, entry: 'direct', authMechanism: 'development',
@@ -34,7 +38,10 @@ export function fixture(options: { duplicate?: boolean; verify?: boolean } = {})
       });
     });
   const verify = vi.fn(async () => options.verify ?? true);
-  const repository = fakeRepository({ publish, verifyPublishReceipt: verify });
+  const repository = Object.assign(
+    fakeRepository({ publish, verifyPublishReceipt: verify }),
+    { systemGatePrincipal: vi.fn(async () => gatePrincipal) },
+  );
   return { repository, calls, publish, verify };
 }
 export async function httpGateway(repository: ReturnType<typeof fakeRepository>) {

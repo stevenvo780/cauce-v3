@@ -41,7 +41,9 @@ async function targetFromInventory() {
   if (!entry || typeof entry.tenant !== 'string') {
     throw new Error('alias is not declared in the gate inventory');
   }
-  return { tenant: entry.tenant, sourceRoom: 'grp.steven', alias };
+  const sourceRoom = process.env.CAUCE_GATE_ROOM;
+  if (!sourceRoom) throw new Error('CAUCE_GATE_ROOM is required: the gate room of the probe company');
+  return { tenant: entry.tenant, sourceRoom, alias };
 }
 
 function gatewayUrl() {

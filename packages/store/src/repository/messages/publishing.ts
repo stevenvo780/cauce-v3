@@ -5,6 +5,7 @@ import {
   buildPublishReceipt,
   consolePublishIntentSemanticHash,
   isSystemGateProbeBody,
+  SYSTEM_PRINCIPAL_ALIASES,
   publishRequestHash,
   isAnyUuid,
   TenantSchema,
@@ -24,6 +25,7 @@ import {
   validConsoleOperatorScope,
 } from '../config.js';
 import { StoreError } from '../errors.js';
+import { systemGatePrincipal, type SystemGatePrincipal } from '../../company-context.js';
 import { grantCarriedBlobs } from '../blob-carry.js';
 import { loadClientMailbox, type ClientMailboxQuery, type ClientMailboxPage } from '../../client-mailbox-read.js';
 import { isClientMailboxAlias, lockClientMailboxes } from '../../client-mailbox.js';
@@ -56,6 +58,15 @@ function conversationKind(chatType: unknown): 'dm' | 'group' | 'unknown' {
   return 'unknown';
 }
 
+async function assertSystemGatePrincipal(client: DatabaseClient, input: PublishMessage): Promise<void> {
+  const principal = await systemGatePrincipal(client, input.tenant_id);
+  if (principal?.tenant_id !== input.tenant_id || principal.room_id !== input.room_id
+      || principal.actor_alias !== input.actor_alias
+      || principal.principal_alias !== input.authenticated_context?.session_id) {
+    throw new StoreError('forbidden', 'system gate probe authority or payload is invalid');
+  }
+}
+
 async function humanPublicationAuthority(
   client: DatabaseClient, input: PublishMessage, options: PublishOptions,
 ): Promise<HumanPublishProvenance | undefined> {
@@ -84,6 +95,10 @@ async function humanPublicationAuthority(
 
 
 export abstract class MessagePublishingRepository extends ConfigRepository {
+  systemGatePrincipal(tenant: Tenant): Promise<SystemGatePrincipal | undefined> {
+    return systemGatePrincipal(this.pool, tenant);
+  }
+
   // Verify receipt IDs against locked durable rows, never that receipt's own digest.
   async verifyPublishReceipt(input: PublishMessage, candidate: PublishResult, options: PublishOptions = {}): Promise<boolean> {
     const parsed = PublishResultSchema.safeParse(candidate);
@@ -145,13 +160,11 @@ export abstract class MessagePublishingRepository extends ConfigRepository {
       };
     }
     if (input.recipients.length === 0) throw new StoreError('no_route', 'message has zero recipients');
-    if (input.body.type === SYSTEM_GATE_PROBE_MESSAGE_TYPE) {
+    const systemGateProbe = input.body.type === SYSTEM_GATE_PROBE_MESSAGE_TYPE;
+    if (systemGateProbe) {
       const recipient = input.recipients[0];
       const gateAuthorized = isSystemGateProbeBody(input.body)
-        && input.tenant_id === 'Steven'
-        && input.room_id === 'grp.steven'
-        && input.actor_alias === 'kant'
-        && input.authenticated_context?.session_id === 'gate-probe'
+        && input.authenticated_context?.session_id === SYSTEM_PRINCIPAL_ALIASES[0]
         && input.authenticated_context.channel === 'gate'
         && input.authenticated_context.origin === undefined
         && input.origin === undefined
@@ -171,6 +184,7 @@ export abstract class MessagePublishingRepository extends ConfigRepository {
       throw new StoreError('conflict', 'recipient list contains duplicates');
     }
     const work = async (client: DatabaseClient): Promise<PublishResult> => {
+      if (systemGateProbe) await assertSystemGatePrincipal(client, input);
       const human = await humanPublicationAuthority(client, input, options);
       await lockClientMailboxes(client, uniqueRecipients);
       await assertPublishRoute(client, input, human !== undefined);
