@@ -2,7 +2,7 @@ import Fastify, { type FastifyInstance, type FastifyReply, type FastifyServerOpt
 import { errorLabel, logEvent } from '@cauce/protocol';
 import type { DecisionService } from './decide.js';
 import { DecisionError } from './errors.js';
-import type { IdentifyCaller } from './identity.js';
+import type { Caller, IdentifyCaller } from './identity.js';
 
 export interface AppOptions {
   readonly service: DecisionService;
@@ -51,23 +51,24 @@ export function buildApp(options: AppOptions): FastifyInstance {
 
   app.get('/v1/plantillas', async (request, reply) => {
     try {
-      await options.identify(request.raw.socket);
-      return service.listing();
+      const caller = await options.identify(request.raw.socket);
+      return service.listing(caller);
     } catch (error) { return send(reply, error); }
   });
 
   app.get<{ Params: { id: string } }>('/v1/plantillas/:id', async (request, reply) => {
     try {
-      await options.identify(request.raw.socket);
-      return service.detail(request.params.id);
+      const caller = await options.identify(request.raw.socket);
+      return service.detail(caller, request.params.id);
     } catch (error) { return send(reply, error); }
   });
 
   app.post('/v1/decidir', async (request, reply) => {
+    let caller: Caller | undefined;
     try {
-      const caller = await options.identify(request.raw.socket);
+      caller = await options.identify(request.raw.socket);
       return await service.decide(caller, request.body);
-    } catch (error) { return send(reply, service.withFallback(error, request.body)); }
+    } catch (error) { return send(reply, service.withFallback(error, caller, request.body)); }
   });
 
   return app;

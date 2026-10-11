@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { ServiceConfig } from '../../src/config.js';
-import { startService, type RunningService } from '../../src/server.js';
+import { startService, type RunningService, type ServiceDependencies } from '../../src/server.js';
 import { FakeJev } from './fake-jev.js';
 import { createTestPki, writeIdentities, type IdentityEntry, type TestPki } from './pki.js';
 
@@ -28,6 +28,7 @@ export interface HarnessOptions {
   readonly config?: Partial<ServiceConfig>;
   readonly limits?: Partial<ServiceConfig['limits']>;
   readonly jev?: Partial<ServiceConfig['jev']>;
+  readonly dependencies?: ServiceDependencies;
 }
 
 /** The real service on loopback: TLS with mandatory client certs, the test CA and a fake Jev. */
@@ -42,6 +43,7 @@ export async function startHarness(options: HarnessOptions = {}): Promise<Harnes
   writeIdentities(identitiesFile, options.identities?.(pki) ?? [{ fingerprint: pki.client('zeus').fingerprint, alias: 'zeus' }]);
   const auditFile = join(directory, 'auditoria', 'auditoria.jsonl');
   const config: ServiceConfig = {
+    databaseUrl: 'postgresql://unused-in-unit-fixture',
     host: '127.0.0.1', port: 0, healthPort: 0,
     tlsCertFile: pki.serverCert, tlsKeyFile: pki.serverKey, clientCaFile: pki.caCert,
     identitiesFile, allowedAliases: new Set(['*']), allowedTenants: new Set(['Steven']), enabledTemplates: new Set(),
@@ -51,7 +53,7 @@ export async function startHarness(options: HarnessOptions = {}): Promise<Harnes
     limits: { perMinute: 600, burst: 100, dailyInputTokens: 1_000_000, dailyInputTokensTotal: 10_000_000, concurrency: 8, concurrencyPerAlias: 8, ...(options.limits ?? {}) },
     ...(options.config ?? {}),
   };
-  const service = await startService(config);
+  const service = await startService(config, undefined, options.dependencies ?? { resolveCompany: async () => ({ company: 'humanizar' }) });
   return {
     pki, jev, service, directory, auditFile, keyFile, identitiesFile,
     call(client, method, path, body) {

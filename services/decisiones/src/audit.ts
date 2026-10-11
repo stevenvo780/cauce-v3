@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { appendFile, mkdir, rename, stat } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { errorLabel, logEvent } from '@cauce/protocol';
+import type { DatabasePool } from '@cauce/store';
 
 /**
  * One line per decision. The state never enters: only its SHA-256 and its length, so a decision
@@ -10,8 +11,10 @@ import { errorLabel, logEvent } from '@cauce/protocol';
 export interface AuditRecord {
   readonly ts: string;
   readonly id: string;
+  readonly company: string;
   readonly tenant: string;
   readonly alias: string;
+  readonly host?: string;
   readonly plantilla: string | null;
   readonly version_plantilla: string | null;
   readonly version_catalogo: string;
@@ -38,6 +41,28 @@ export interface AuditRecord {
 
 export interface AuditSink {
   write(record: AuditRecord): Promise<void>;
+}
+
+export class PostgresAudit implements AuditSink {
+  constructor(private readonly pool: Pick<DatabasePool, 'query'>) {}
+
+  async write(record: AuditRecord): Promise<void> {
+    await this.pool.query(
+      `INSERT INTO audit_events(tenant_id,actor_alias,company_id,action,decision,metadata)
+       VALUES($1,$2,$3,$4,$5,$6::jsonb)`,
+      [record.tenant, record.alias, record.company,
+        record.estado === 'ok' ? 'decision.resolved' : 'decision.failed',
+        record.estado === 'ok' ? 'info' : 'deny', JSON.stringify({
+          operation_id: record.id, operation: record.plantilla ?? 'free',
+          ...(record.host === undefined ? {} : { host_id: record.host }),
+          template_version: record.version_plantilla, catalog_version: record.version_catalogo,
+          state_sha256: record.state_sha256, state_bytes: record.state_bytes,
+          outcome: record.decision, origin: record.origen, status: record.estado,
+          model: record.modelo, jev_request_id: record.jev_request_id, ms: record.ms,
+          tokens_charged: record.tokens_cobrados,
+        })],
+    );
+  }
 }
 
 export function stateDigest(serialized: string): { sha256: string; bytes: number } {

@@ -105,7 +105,7 @@ describe('cliente de Jev', () => {
     for (const impostor of ['https://jevapi.org/v1/systemone', 'https://api.typesafe.ai.jev-ai.pro/v1', 'http://api.typesafe.ai/v1/systemone']) {
       expect(() => { assertOfficialJevUrl(impostor); }).toThrow(/api\.typesafe\.ai/u);
     }
-    const base = { CAUCE_DECISIONES_TLS_CERT_FILE: 'c', CAUCE_DECISIONES_TLS_KEY_FILE: 'k', CAUCE_DECISIONES_CLIENT_CA_FILE: 'a', CAUCE_DECISIONES_IDENTITY_FILE: 'i' };
+    const base = { CAUCE_DECISIONES_DATABASE_URL: 'postgresql://fixture', CAUCE_DECISIONES_TLS_CERT_FILE: 'c', CAUCE_DECISIONES_TLS_KEY_FILE: 'k', CAUCE_DECISIONES_CLIENT_CA_FILE: 'a', CAUCE_DECISIONES_IDENTITY_FILE: 'i' };
     expect(() => loadConfig({ ...base, NODE_ENV: 'production', CAUCE_DECISIONES_JEV_URL: 'https://jevtypesafeai.com/v1/systemone' })).toThrow(/api\.typesafe\.ai/u);
     expect(loadConfig({ ...base, NODE_ENV: 'production' }).jev).toMatchObject({ url: 'https://api.typesafe.ai/v1/systemone', keyFile: '/etc/cauce-v3/secrets/typesafe-jev.key', model: 'jev-latest', totalTimeoutMs: 30_000 });
   });

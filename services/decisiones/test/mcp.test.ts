@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createDecisionesMcpServer, decisionesForwarder, EmissionRuntime, RESPALDO_SIN_SERVICIO } from '@cauce/adapter-sdk';
-import { loadCatalog } from '../src/catalog.js';
+import { companyCatalog, loadCatalog } from '../src/catalog.js';
 import { defaultAnswers } from './support/fake-jev.js';
 import { startHarness, type Harness } from './support/servicio.js';
 
@@ -147,7 +147,7 @@ describe('MCP cauce-decisiones a través del adaptador', () => {
   });
 
   it('el respaldo del adaptador para las plantillas de seguridad es el si_falla del catálogo', async () => {
-    const catalogo = await loadCatalog(fileURLToPath(new URL('../catalogo/', import.meta.url)));
+    const catalogo = companyCatalog(await loadCatalog(fileURLToPath(new URL('../catalogo/', import.meta.url))), 'humanizar');
     const cerradas = [...catalogo.plantillas.values()].filter((plantilla) => !plantilla.siFalla.llm).map((plantilla) => plantilla.id);
     expect(cerradas).toEqual(expect.arrayContaining(Object.keys(RESPALDO_SIN_SERVICIO)));
     for (const [id, respaldo] of Object.entries(RESPALDO_SIN_SERVICIO)) {

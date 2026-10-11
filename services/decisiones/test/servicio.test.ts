@@ -53,7 +53,7 @@ describe('servicio de decisiones sobre mTLS', () => {
 
   it('health informa catálogo y credencial sin exponerla', async () => {
     const health = await h.call(zeus(), 'GET', '/health');
-    expect(health.body).toMatchObject({ ok: true, catalogo: { plantillas: 11 }, jev: { credencial: 'presente' } });
+    expect(health.body).toMatchObject({ ok: true, catalogo: { plantillas: 5 }, jev: { credencial: 'presente' } });
     expect(JSON.stringify(health.body)).not.toContain(TEST_KEY);
     const internal = await fetch(`http://127.0.0.1:${String((h.service.health.address() as AddressInfo).port)}/health/ready`);
     expect(internal.status).toBe(200);
@@ -140,7 +140,8 @@ describe('servicio de decisiones sobre mTLS', () => {
     const libre = await h.call(zeus(), 'POST', '/v1/decidir', { state: 'x', questions: { a: { type: 'noul', instructions: 'x' } }, umbrales: { confianza: 2 } });
     expect(libre.body).toMatchObject({ error: 'solicitud_invalida', respaldo: { decision: 'llm', caer_a_llm: true } });
     const ajeno = await h.call(h.pki.client('pablo'), 'POST', '/v1/decidir', { plantilla: 'aprobacion_humana', state: { accion_propuesta: 'x' } });
-    expect(ajeno.body).toMatchObject({ error: 'no_autorizado', respaldo: { decision: 'exige_aprobacion' } });
+    expect(ajeno.body).toMatchObject({ error: 'no_autorizado' });
+    expect(ajeno.body).not.toHaveProperty('respaldo');
     expect(h.jev.seen).toHaveLength(0);
   });
 
@@ -179,7 +180,7 @@ describe('servicio de decisiones sobre mTLS', () => {
 
 describe('habilitación explícita', () => {
   it('sin lista de alias o de tenants no pasa nadie, y los tenants no admiten comodín', async () => {
-    const base = { CAUCE_DECISIONES_TLS_CERT_FILE: 'c', CAUCE_DECISIONES_TLS_KEY_FILE: 'k', CAUCE_DECISIONES_CLIENT_CA_FILE: 'a', CAUCE_DECISIONES_IDENTITY_FILE: 'i' };
+    const base = { CAUCE_DECISIONES_DATABASE_URL: 'postgresql://fixture', CAUCE_DECISIONES_TLS_CERT_FILE: 'c', CAUCE_DECISIONES_TLS_KEY_FILE: 'k', CAUCE_DECISIONES_CLIENT_CA_FILE: 'a', CAUCE_DECISIONES_IDENTITY_FILE: 'i' };
     expect(loadConfig(base)).toMatchObject({ allowedAliases: new Set(), allowedTenants: new Set() });
     expect(loadConfig({ ...base, CAUCE_DECISIONES_ALIASES: ' ', CAUCE_DECISIONES_TENANTS: '' })).toMatchObject({ allowedAliases: new Set(), allowedTenants: new Set() });
     expect(() => loadConfig({ ...base, CAUCE_DECISIONES_TENANTS: 'Steven,*' })).toThrow(/nombrá cada tenant/u);
@@ -213,7 +214,8 @@ describe('límites por alias', () => {
       expect(Number(third.headers['retry-after'])).toBeGreaterThan(0);
       const pilot = await limited.call(limited.pki.client('jarvis'), 'POST', '/v1/decidir', body);
       expect(pilot.status).toBe(403);
-      expect(pilot.body).toMatchObject({ error: 'no_autorizado', respaldo: { decision: 'llm' } });
+      expect(pilot.body).toMatchObject({ error: 'no_autorizado' });
+      expect(pilot.body).not.toHaveProperty('respaldo');
     } finally { await limited.stop(); }
   });
 });

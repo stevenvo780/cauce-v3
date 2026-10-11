@@ -1,7 +1,10 @@
+import { readFileSync } from 'node:fs';
+import { isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { assertOfficialJevUrl, DEFAULT_JEV_URL } from './jev-client.js';
 
 export interface ServiceConfig {
+  readonly databaseUrl: string;
   readonly host: string;
   readonly port: number;
   readonly healthPort: number;
@@ -48,6 +51,24 @@ function required(env: Env, name: string): string {
   return value;
 }
 
+function databaseUrl(env: Env): string {
+  const direct = env[`${PREFIX}DATABASE_URL`]?.trim();
+  const file = env[`${PREFIX}DATABASE_URL_FILE`]?.trim();
+  if (direct && file) throw new Error(`${PREFIX}DATABASE_URL y DATABASE_URL_FILE son excluyentes`);
+  let value = direct;
+  if (file) {
+    if (!isAbsolute(file)) throw new Error(`${PREFIX}DATABASE_URL_FILE debe ser una ruta absoluta`);
+    try { value = readFileSync(file, 'utf8').trim(); }
+    catch { throw new Error('el secreto de conexión PostgreSQL no está disponible'); }
+  }
+  if (!value) throw new Error(`falta ${PREFIX}DATABASE_URL o DATABASE_URL_FILE`);
+  let protocol: string;
+  try { protocol = new URL(value).protocol; }
+  catch { throw new Error('la conexión PostgreSQL no es una URL válida'); }
+  if (!['postgres:', 'postgresql:'].includes(protocol)) throw new Error('la conexión PostgreSQL debe usar postgres o postgresql');
+  return value;
+}
+
 function integer(env: Env, name: string, fallback: number, min: number, max: number): number {
   const raw = env[PREFIX + name];
   if (raw === undefined || raw === '') return fallback;
@@ -62,12 +83,20 @@ function list(env: Env, name: string): Set<string> | undefined {
   return new Set(raw.split(',').map((item) => item.trim()).filter((item) => item.length > 0));
 }
 
-/* No wildcard: letting a tenant's agents spend Steven's key and send their data to TypeSafe is a
-   decision taken tenant by tenant. */
 function tenants(env: Env): Set<string> {
   const allowed = list(env, 'TENANTS') ?? new Set<string>();
   if (allowed.has('*')) throw new Error(`${PREFIX}TENANTS no admite '*': nombrá cada tenant`);
   return allowed;
+}
+
+function enabledTemplates(env: Env): Set<string> {
+  const enabled = list(env, 'HABILITAR_PLANTILLAS') ?? new Set<string>();
+  for (const key of enabled) {
+    if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,95}\/[a-z][a-z0-9_]{1,63}$/u.test(key)) {
+      throw new Error(`${PREFIX}HABILITAR_PLANTILLAS requiere empresa/id`);
+    }
+  }
+  return enabled;
 }
 
 export function loadConfig(env: Env = process.env): ServiceConfig {
@@ -76,6 +105,7 @@ export function loadConfig(env: Env = process.env): ServiceConfig {
   if (production) assertOfficialJevUrl(url);
   const totalTimeoutMs = integer(env, 'TIMEOUT_MS', 30_000, 1_000, 120_000);
   return {
+    databaseUrl: databaseUrl(env),
     host: env[`${PREFIX}HOST`] ?? '0.0.0.0',
     port: integer(env, 'PORT', 8447, 1, 65_535),
     healthPort: integer(env, 'HEALTH_PORT', 8088, 1, 65_535),
@@ -85,7 +115,7 @@ export function loadConfig(env: Env = process.env): ServiceConfig {
     identitiesFile: required(env, 'IDENTITY_FILE'),
     allowedAliases: list(env, 'ALIASES') ?? new Set(),
     allowedTenants: tenants(env),
-    enabledTemplates: list(env, 'HABILITAR_PLANTILLAS') ?? new Set(),
+    enabledTemplates: enabledTemplates(env),
     catalogDir: env[`${PREFIX}CATALOGO_DIR`] ?? fileURLToPath(new URL('../catalogo/', import.meta.url)),
     auditFile: env[`${PREFIX}AUDIT_FILE`] ?? '/var/lib/cauce-decisiones/auditoria.jsonl',
     auditMaxBytes: integer(env, 'AUDIT_MAX_BYTES', 50 * 1024 * 1024, 1024, 1024 * 1024 * 1024),

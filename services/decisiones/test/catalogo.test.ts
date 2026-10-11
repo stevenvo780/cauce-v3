@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { expandQuestions, loadCatalog, parsePlantilla, type Catalog } from '../src/catalog.js';
+import { companyCatalog, expandQuestions, loadCatalog, parsePlantilla, type Catalog } from '../src/catalog.js';
 import { DecisionService, PREFILTER_SCAN } from '../src/decide.js';
 import type { AuditRecord } from '../src/audit.js';
 import { DecisionError } from '../src/errors.js';
@@ -88,12 +88,12 @@ function service(catalog: Catalog, jev: JevCaller, audit: AuditRecord[] = []): D
     catalog, jev, redact: true,
     limits: new Limits({ perMinute: 600, burst: 100, dailyInputTokens: 1_000_000, dailyInputTokensTotal: 10_000_000, concurrency: 4, concurrencyPerAlias: 4 }),
     audit: { write: async (record) => { audit.push(record); } },
-    enabledTemplates: new Set(['guardia_privacidad_jarvis']),
+    enabledTemplates: new Set(['humanizar/guardia_privacidad_jarvis']),
   });
 }
 
 let catalog: Catalog;
-beforeAll(async () => { catalog = await loadCatalog(CATALOGO); });
+beforeAll(async () => { catalog = companyCatalog(await loadCatalog(CATALOGO), 'humanizar'); });
 
 describe('catálogo versionado', () => {
   it('carga las 11 plantillas con versión semver y el modelo calibrado', () => {
@@ -111,8 +111,8 @@ describe('catálogo versionado', () => {
     const recorded = grabado.casos.find((entry) => entry.caso === '08-aprobacion_humana-prod');
     expect(recorded).toBeDefined();
     if (recorded === undefined) return;
-    const comoArgos = await service(catalog, new RecordedJev(recorded)).decide({ tenant: 'Steven', alias: 'argos' }, { plantilla: recorded.plantilla, state: recorded.state });
-    const comoHades = await service(catalog, new RecordedJev(recorded)).decide({ tenant: 'Steven', alias: 'hades' }, { plantilla: recorded.plantilla, state: recorded.state });
+    const comoArgos = await service(catalog, new RecordedJev(recorded)).decide({ company: 'humanizar', tenant: 'Steven', alias: 'argos' }, { plantilla: recorded.plantilla, state: recorded.state });
+    const comoHades = await service(catalog, new RecordedJev(recorded)).decide({ company: 'humanizar', tenant: 'Steven', alias: 'hades' }, { plantilla: recorded.plantilla, state: recorded.state });
     expect(comoArgos.decision).toBe('sin_aprobacion');
     expect(comoHades.decision).toBe('exige_aprobacion');
   });
@@ -124,7 +124,7 @@ describe('catálogo versionado', () => {
       expect(expected, recorded.caso).toBeDefined();
       if (expected === undefined) continue;
       const jev = new RecordedJev(recorded);
-      const result = await service(catalog, jev).decide({ tenant: 'Steven', alias: 'hades' }, { plantilla: recorded.plantilla, state: recorded.state });
+      const result = await service(catalog, jev).decide({ company: 'humanizar', tenant: 'Steven', alias: 'hades' }, { plantilla: recorded.plantilla, state: recorded.state });
       expect(recorded.questions_sha256, recorded.caso).toMatch(/^[a-f0-9]{64}$/u);
       expect(jev.stale, `${recorded.caso}: las preguntas cambiaron desde la grabación, re-grabá el caso contra Jev`).toBe(false);
       expect([result.decision, result.valor, result.origen], recorded.caso).toEqual([expected[0], expected[1], expected[2] ?? 'jev']);
@@ -140,7 +140,7 @@ describe('catálogo versionado', () => {
       '23-reintentar_escalar_cerrar-cerrar': 0.74, '29-respuesta_cumple-sin_evidencia': 0.96, '09-aprobacion_humana-libre': 0.8,
     };
     for (const recorded of grabado.casos) {
-      const result = await service(catalog, new RecordedJev(recorded)).decide({ tenant: 'Steven', alias: 'hades' }, { plantilla: recorded.plantilla, state: recorded.state });
+      const result = await service(catalog, new RecordedJev(recorded)).decide({ company: 'humanizar', tenant: 'Steven', alias: 'hades' }, { plantilla: recorded.plantilla, state: recorded.state });
       if (recorded.caso in esperada) expect(result.confianza, recorded.caso).toBe(esperada[recorded.caso]);
       if (result.origen === 'jev' && result.caer_a_llm === false) expect(result.confianza, recorded.caso).toBeGreaterThanOrEqual(0.5);
     }
@@ -166,7 +166,7 @@ describe('catálogo versionado', () => {
         ? { type: 'noul', noul: 0.1 }
         : { type: 'choice', choice: Object.keys(question.criteria as object)[0], confidence: 0.9, probabilities: { [Object.keys(question.criteria as object)[0] ?? '']: 0.95 } })]));
       const fijo = new RecordedJev({ caso: plantilla, plantilla, modelo: 'jev-1.13.0', state, answers, usage: { input_tokens: 1 } });
-      const result = await service(catalog, fijo).decide({ tenant: 'Steven', alias: 'hades' }, { plantilla, state });
+      const result = await service(catalog, fijo).decide({ company: 'humanizar', tenant: 'Steven', alias: 'hades' }, { plantilla, state });
       expect(result.decision, plantilla).not.toMatch(/^(cabe|partir|cumple|incompleta|P1|P2|P3|extremo)$/u);
       if (plantilla !== 'elegir_modelo') expect(result.caer_a_llm, plantilla).toBe(true);
     }
@@ -182,7 +182,7 @@ describe('catálogo versionado', () => {
     pregunta.instructions = '¿`mensaje` es sólo un saludo?';
     const alterado: Catalog = { ...catalog, plantillas: new Map([...catalog.plantillas, ['requiere_respuesta', parsePlantilla(definicion, 'requiere_respuesta.json')]]) };
     const jev = new RecordedJev(recorded);
-    await service(alterado, jev).decide({ tenant: 'Steven', alias: 'hades' }, { plantilla: 'requiere_respuesta', state: recorded.state });
+    await service(alterado, jev).decide({ company: 'humanizar', tenant: 'Steven', alias: 'hades' }, { plantilla: 'requiere_respuesta', state: recorded.state });
     expect(jev.stale).toBe(true);
   });
 
@@ -190,7 +190,7 @@ describe('catálogo versionado', () => {
     for (const [caso, decision] of Object.entries(ESPERADO_ZEUS)) {
       const recorded = grabado.casos.find((entry) => entry.caso === caso);
       if (recorded === undefined) throw new Error(caso);
-      const result = await service(catalog, new RecordedJev(recorded)).decide({ tenant: 'Steven', alias: 'zeus' }, { plantilla: 'aprobacion_humana', state: recorded.state });
+      const result = await service(catalog, new RecordedJev(recorded)).decide({ company: 'humanizar', tenant: 'Steven', alias: 'zeus' }, { plantilla: 'aprobacion_humana', state: recorded.state });
       expect(result.decision, caso).toBe(decision);
     }
   });
@@ -199,7 +199,7 @@ describe('catálogo versionado', () => {
     const recorded = grabado.casos.find((entry) => entry.caso === '09-aprobacion_humana-libre');
     if (recorded === undefined) throw new Error('falta el caso');
     const origen = async (accion: string): Promise<unknown> =>
-      (await service(catalog, new RecordedJev(recorded)).decide({ tenant: 'Steven', alias: 'zeus' }, { plantilla: 'aprobacion_humana', state: { accion_propuesta: accion } })).origen;
+      (await service(catalog, new RecordedJev(recorded)).decide({ company: 'humanizar', tenant: 'Steven', alias: 'zeus' }, { plantilla: 'aprobacion_humana', state: { accion_propuesta: accion } })).origen;
     const shell = [
       "awk '{print $1}' registro.log", 'echo "$2 ${10}" > salida', 'git log -n 5', "awk '{print $12}' /var/log/cauce/acceso.log | sort | uniq -c",
       'echo "$10 $11" en un script de prueba', "awk '$12 > 100' datos.tsv", "awk '{print $10, $12}' x", "awk '{s+=$12} END {print s}' x",
@@ -213,7 +213,7 @@ describe('catálogo versionado', () => {
     const recorded = grabado.casos.find((entry) => entry.caso === '09-aprobacion_humana-libre');
     if (recorded === undefined) throw new Error('falta el caso');
     const origen = async (accion: string): Promise<unknown> =>
-      (await service(catalog, new RecordedJev(recorded)).decide({ tenant: 'Steven', alias: 'jarvis' }, { plantilla: 'aprobacion_humana', state: { accion_propuesta: accion } })).origen;
+      (await service(catalog, new RecordedJev(recorded)).decide({ company: 'humanizar', tenant: 'Steven', alias: 'jarvis' }, { plantilla: 'aprobacion_humana', state: { accion_propuesta: accion } })).origen;
     const peligrosas = [
       'rm -rf /srv/datos', 'rm -Rf x', 'rm -fr x', 'git push origin main --force', 'git push -f', 'docker compose -f prod.yaml down -v',
       'DELETE FROM clientes;', 'DROP TABLE x', 'TRUNCATE eventos', 'systemctl --user restart cauce', 'docker volume rm datos',
@@ -246,7 +246,7 @@ describe('catálogo versionado', () => {
     const recorded = grabado.casos.find((entry) => entry.caso === '09-aprobacion_humana-libre');
     if (recorded === undefined) throw new Error('falta el caso');
     const inicio = performance.now();
-    await service(catalog, new RecordedJev(recorded)).decide({ tenant: 'Steven', alias: 'jarvis' }, { plantilla: 'aprobacion_humana', state: { accion_propuesta: 'docker compose down '.repeat(3_000) } });
+    await service(catalog, new RecordedJev(recorded)).decide({ company: 'humanizar', tenant: 'Steven', alias: 'jarvis' }, { plantilla: 'aprobacion_humana', state: { accion_propuesta: 'docker compose down '.repeat(3_000) } });
     expect(performance.now() - inicio).toBeLessThan(500);
   });
 
@@ -299,11 +299,11 @@ describe('catálogo versionado', () => {
       limits: new Limits({ perMinute: 60, burst: 5, dailyInputTokens: 10_000, dailyInputTokensTotal: 10_000, concurrency: 1, concurrencyPerAlias: 1 }),
       audit: { write: async () => undefined },
     });
-    const error = await apagado.decide({ tenant: 'Steven', alias: 'jarvis' }, { plantilla: 'guardia_privacidad_jarvis', state: recorded.state }).catch((failure: unknown) => failure);
+    const error = await apagado.decide({ company: 'humanizar', tenant: 'Steven', alias: 'jarvis' }, { plantilla: 'guardia_privacidad_jarvis', state: recorded.state }).catch((failure: unknown) => failure);
     expect(error).toBeInstanceOf(DecisionError);
     expect((error as DecisionError).toBody()).toMatchObject({ error: 'plantilla_deshabilitada', respaldo: { decision: 'bloquear' } });
     expect(jev.calls).toBe(0);
-    const listado = apagado.listing().plantillas as { id: string; habilitada: boolean }[];
+    const listado = apagado.listing({ company: 'humanizar', tenant: 'Steven', alias: 'jarvis' }).plantillas as { id: string; habilitada: boolean }[];
     expect(listado.find((entry) => entry.id === 'guardia_privacidad_jarvis')?.habilitada).toBe(false);
     expect(listado.find((entry) => entry.id === 'ruteo_alias')?.habilitada).toBe(true);
   });

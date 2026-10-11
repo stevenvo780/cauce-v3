@@ -6,11 +6,11 @@ import {
 } from './answers.js';
 import { stateDigest, type AuditRecord, type AuditSink } from './audit.js';
 import {
-  expandQuestions, fieldText, setResolver, summary,
+  companyCatalog, expandQuestions, fieldText, setResolver, summary,
   type Catalog, type Outcome, type Plantilla,
 } from './catalog.js';
 import { DecisionError, invalid, type FallbackOutcome } from './errors.js';
-import type { Caller } from './identity.js';
+import { callerKey, type Caller } from './identity.js';
 import type { JevCaller } from './jev-client.js';
 import type { Limits, Reservation } from './limits.js';
 import {
@@ -123,37 +123,37 @@ export class DecisionService {
 
   get catalog(): Catalog { return this.options.catalog; }
 
-  private enabled(plantilla: Plantilla): boolean {
-    return plantilla.requiresEnablement === undefined || this.options.enabledTemplates?.has(plantilla.id) === true;
+  private enabled(plantilla: Plantilla, caller: Caller): boolean {
+    return plantilla.requiresEnablement === undefined || this.options.enabledTemplates?.has(`${caller.company}/${plantilla.id}`) === true;
   }
 
-  listing(): Record<string, unknown> {
-    const { catalog } = this.options;
+  listing(caller: Caller): Record<string, unknown> {
+    const catalog = companyCatalog(this.options.catalog, caller.company);
     return {
       version_catalogo: catalog.version,
       modelo_calibrado: catalog.calibratedModel,
-      plantillas: [...catalog.plantillas.values()].map((plantilla) => summary(plantilla, this.enabled(plantilla))),
+      plantillas: [...catalog.plantillas.values()].map((plantilla) => summary(plantilla, this.enabled(plantilla, caller))),
     };
   }
 
-  detail(id: string): Record<string, unknown> {
-    const plantilla = this.options.catalog.plantillas.get(id);
+  detail(caller: Caller, id: string): Record<string, unknown> {
+    const plantilla = companyCatalog(this.options.catalog, caller.company).plantillas.get(id);
     if (plantilla === undefined) throw new DecisionError('plantilla_desconocida', `no existe la plantilla '${id.slice(0, 64)}'`);
     return { version_catalogo: this.options.catalog.version, plantilla: plantilla.definition };
   }
 
   /** The fallback of the template the body names, or the free one; undefined when it names none known. */
-  fallbackFor(body: unknown): FallbackOutcome | undefined {
+  fallbackFor(caller: Caller, body: unknown): FallbackOutcome | undefined {
     if (!isPlainObject(body)) return undefined;
     if (body.plantilla === undefined) return body.questions === undefined ? undefined : FREE_FALLBACK;
-    const plantilla = typeof body.plantilla === 'string' ? this.options.catalog.plantillas.get(body.plantilla) : undefined;
+    const plantilla = typeof body.plantilla === 'string' ? companyCatalog(this.options.catalog, caller.company).plantillas.get(body.plantilla) : undefined;
     return plantilla === undefined ? undefined : staticOutcome(plantilla.siFalla);
   }
 
   /** Any refusal of a decision carries the fallback to apply: a security template fails closed even on a 400. */
-  withFallback(error: unknown, body: unknown): unknown {
-    if (!(error instanceof DecisionError) || error.details.respaldo !== undefined) return error;
-    const fallback = this.fallbackFor(body);
+  withFallback(error: unknown, caller: Caller | undefined, body: unknown): unknown {
+    if (caller === undefined || !(error instanceof DecisionError) || error.details.respaldo !== undefined) return error;
+    const fallback = this.fallbackFor(caller, body);
     return fallback === undefined ? error : error.withFallback(fallback);
   }
 
@@ -161,7 +161,7 @@ export class DecisionService {
     try {
       return await this.decideRequest(caller, body);
     } catch (error) {
-      throw this.withFallback(error, body);
+      throw this.withFallback(error, caller, body);
     }
   }
 
@@ -170,16 +170,16 @@ export class DecisionService {
     if (this.options.redact && (secretInKeys(request.state) || secretInKeys(request.questions))) {
       throw invalid('hay un secreto en un nombre de campo, un id de pregunta o una opción: sacalo antes de preguntar');
     }
-    const plantilla = request.plantilla === undefined ? undefined : this.options.catalog.plantillas.get(request.plantilla);
+    const plantilla = request.plantilla === undefined ? undefined : companyCatalog(this.options.catalog, caller.company).plantillas.get(request.plantilla);
     if (request.plantilla !== undefined && plantilla === undefined) {
       throw new DecisionError('plantilla_desconocida', `no existe la plantilla '${request.plantilla.slice(0, 64)}': usá listar_plantillas`);
     }
     const fallback = plantilla === undefined ? FREE_FALLBACK : staticOutcome(plantilla.siFalla);
-    if (plantilla !== undefined && !this.enabled(plantilla)) {
+    if (plantilla !== undefined && !this.enabled(plantilla, caller)) {
       throw new DecisionError('plantilla_deshabilitada', `${plantilla.id} está apagada: ${plantilla.requiresEnablement ?? ''}`, { respaldo: fallback });
     }
     try {
-      this.options.limits.admit(caller.alias);
+      this.options.limits.admit(callerKey(caller));
     } catch (error) {
       throw error instanceof DecisionError ? error.withFallback(fallback) : error;
     }
@@ -192,7 +192,9 @@ export class DecisionService {
     const digest = stateDigest(JSON.stringify(state));
     return {
       id: this.newId(),
+      company: caller.company,
       tenant: caller.tenant,
+      ...(caller.host === undefined ? {} : { host: caller.host }),
       alias: caller.alias,
       plantilla: plantilla?.id ?? null,
       version_plantilla: plantilla?.version ?? null,
@@ -244,8 +246,8 @@ export class DecisionService {
       const sentState = inOriginalOrder(state, redaction.value);
       const sentQuestions = asked === undefined ? questions : inOriginalOrder(questions, asked.value);
       estimate = estimateInputTokens(sentState, sentQuestions);
-      reservation = limits.reserve(base.alias, estimate * jev.maxRequests);
-      const call = await limits.withSlot(base.alias, () => jev.evaluate(sentState, sentQuestions));
+      reservation = limits.reserve(callerKey(base), estimate * jev.maxRequests);
+      const call = await limits.withSlot(callerKey(base), () => jev.evaluate(sentState, sentQuestions));
       billable = call.billable;
       const parsed = parseJevResponse(call.body, questions);
       const charged = (parsed.usage.input_tokens > 0 ? parsed.usage.input_tokens : estimate) * billable;

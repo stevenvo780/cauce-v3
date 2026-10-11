@@ -1,4 +1,4 @@
-import { readdir, readFile } from 'node:fs/promises';
+import { lstat, readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { invalid } from './errors.js';
 import {
@@ -57,6 +57,8 @@ export interface Catalog {
   readonly version: string;
   readonly calibratedModel: string;
   readonly plantillas: ReadonlyMap<string, Plantilla>;
+  readonly companies: ReadonlyMap<string, ReadonlyMap<string, Plantilla>>;
+  readonly scopeCompany?: string;
 }
 
 const ID = /^[a-z][a-z0-9_]{1,63}$/u;
@@ -242,20 +244,57 @@ export function parsePlantilla(raw: unknown, source: string): Plantilla {
   };
 }
 
+async function readTemplates(directory: string): Promise<Map<string, Plantilla>> {
+  if (!(await lstat(directory)).isDirectory()) throw new Error('plantillas debe ser un directorio regular');
+  const plantillas = new Map<string, Plantilla>();
+  const entries = await readdir(directory, { withFileTypes: true });
+  for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+    if (!entry.name.endsWith('.json')) continue;
+    if (!entry.isFile()) throw new Error(`${entry.name}: la plantilla debe ser un fichero regular`);
+    const file = entry.name;
+    const plantilla = parsePlantilla(JSON.parse(await readFile(join(directory, file), 'utf8')), file);
+    if (`${plantilla.id}.json` !== file) throw new Error(`${file}: el id '${plantilla.id}' no coincide con el nombre del fichero`);
+    plantillas.set(plantilla.id, plantilla);
+  }
+  return plantillas;
+}
+
+export function companyCatalog(catalog: Catalog, company: string): Catalog {
+  if (catalog.scopeCompany !== undefined && catalog.scopeCompany !== company) {
+    throw new Error('el catálogo pertenece a otra empresa');
+  }
+  return {
+    ...catalog, scopeCompany: company,
+    plantillas: new Map([...catalog.plantillas, ...(catalog.companies.get(company) ?? [])]),
+  };
+}
+
 export async function loadCatalog(directory: string): Promise<Catalog> {
   const index = JSON.parse(await readFile(join(directory, 'catalogo.json'), 'utf8')) as unknown;
   if (!isPlainObject(index)) throw new Error('catalogo.json debe ser un objeto');
   const version = text(index.version, 'catalogo.json.version');
   if (!SEMVER.test(version)) throw new Error('catalogo.json.version debe ser semver');
-  const plantillas = new Map<string, Plantilla>();
-  const files = (await readdir(join(directory, 'plantillas'))).filter((name) => name.endsWith('.json')).sort();
-  for (const file of files) {
-    const plantilla = parsePlantilla(JSON.parse(await readFile(join(directory, 'plantillas', file), 'utf8')), file);
-    if (`${plantilla.id}.json` !== file) throw new Error(`${file}: el id '${plantilla.id}' no coincide con el nombre del fichero`);
-    plantillas.set(plantilla.id, plantilla);
+  const plantillas = await readTemplates(join(directory, 'plantillas'));
+  const companies = new Map<string, ReadonlyMap<string, Plantilla>>();
+  const companyDir = join(directory, 'empresas');
+  const companyDirectory = await lstat(companyDir).catch((error: unknown) => {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+    throw error;
+  });
+  if (companyDirectory !== undefined && !companyDirectory.isDirectory()) throw new Error('empresas debe ser un directorio regular');
+  const entries = companyDirectory === undefined ? [] : await readdir(companyDir, { withFileTypes: true });
+  for (const entry of entries) {
+    if (!entry.isDirectory() || !/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,95}$/u.test(entry.name)) {
+      throw new Error('directorio de empresa inválido');
+    }
+    const scoped = await readTemplates(join(companyDir, entry.name, 'plantillas'));
+    for (const id of scoped.keys()) {
+      if (plantillas.has(id)) throw new Error(`${id}: una plantilla privada no reemplaza una común`);
+    }
+    companies.set(entry.name, scoped);
   }
   if (plantillas.size === 0) throw new Error('el catálogo no tiene plantillas');
-  return { version, calibratedModel: text(index.modelo_calibrado, 'catalogo.json.modelo_calibrado'), plantillas };
+  return { version, calibratedModel: text(index.modelo_calibrado, 'catalogo.json.modelo_calibrado'), plantillas, companies };
 }
 
 function readPath(state: JsonValue, path: string): JsonValue | undefined {

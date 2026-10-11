@@ -20,12 +20,17 @@ modelo ─ MCP stdio «cauce-decisiones» (sin credenciales)
   y busca el SHA-256 del certificado en el mismo `mtls_identities.json` del gateway, que relee en cada
   petición: borrar la fila de un alias en ese registro lo revoca también acá. Hace falta rol `agent` o
   `adapter` y permiso `route`. Un cuerpo que traiga `alias`, `tenant` o `from` se rechaza.
-- **Habilitación explícita, cerrada por defecto.** El servicio **no** consulta la base: deshabilitar un
-  tenant, un agente o una membresía desde la consola corta al alias en el bus, pero su certificado
-  sigue vigente acá. Por eso, además del certificado, hacen falta dos listas: `CAUCE_DECISIONES_TENANTS`
-  (tenants cuyos agentes gastan la clave de Jev de Steven y mandan su `state` a TypeSafe, uno por uno y
-  sin comodín) y `CAUCE_DECISIONES_ALIASES` (alias, o `*` para todos los de esos tenants). Vacías o
-  ausentes = nadie. Para revocar a un alias acá, sacalo de la lista y reiniciá sólo este servicio.
+- **Empresa y revocación durable.** Tras verificar el certificado, el servicio consulta PostgreSQL
+  para resolver la empresa del tenant y comprobar empresa, tenant, agente, membresía, sala y permiso
+  `route` vigentes. La consulta ocurre en cada solicitud; una revocación se aplica en la siguiente.
+  No toma empresa, host ni alias del cuerpo. Si PostgreSQL no responde, la solicitud falla.
+- **Habilitación explícita, cerrada por defecto.** Además de la autoridad durable hacen falta
+  `CAUCE_DECISIONES_TENANTS` (tenants uno por uno, sin comodín) y `CAUCE_DECISIONES_ALIASES`
+  (alias, o `*` dentro de los tenants habilitados). Vacías o ausentes = nadie. Las plantillas que
+  requieren consentimiento se habilitan con `empresa/id`, nunca sólo con un nombre de plantilla.
+- **Políticas por empresa.** Cada identidad ve las plantillas comunes y únicamente las definiciones
+  de su empresa. Un homónimo de otra empresa no hereda las excepciones de aprobación ni los destinos
+  de ruteo. Si su empresa carece de una definición, la respuesta es `plantilla_desconocida`.
 - **La clave de Jev** sólo existe en vpstn. Se monta en este contenedor y en ningún otro, se lee en
   cada llamada (rotarla in-place no pide reinicio; ver «Rotar la clave de Jev») y no aparece en logs,
   errores, auditoría ni respuestas. En
@@ -51,6 +56,12 @@ pasar por la regla temporal de agora: el mapa midió que llegan a 100.64.0.11 de
 ctrl-infra, agv2-steven-hades-oc y server2. El servicio reutiliza el certificado de servidor del
 gateway, cuyos SAN incluyen 100.64.0.11 (verificado), y también su registro de identidades. No
 aparecen secretos nuevos.
+
+El pool PostgreSQL usa como máximo cuatro conexiones, con usuario runtime y la validación TLS de
+`createPool` (`sslmode=verify-full` y `PGSSLROOTCERT` en producción). Necesita `SELECT` sobre
+`companies`, `tenants`, `agents`, `memberships`, `rooms`, `role_policies`, y `INSERT` sobre
+`audit_events` con acceso a su secuencia. Además de JSONL, registra empresa, tenant, alias,
+operación y host durable cuando existe; guarda hash y tamaño del state, nunca su contenido.
 
 ## Contrato HTTP (mTLS obligatorio)
 
@@ -88,14 +99,14 @@ Cómo leer los campos:
   umbrales por defecto son: confianza 0,6 y noul firme a partir de 0,8 para «sí» o por debajo de 0,2
   para «no».
 
-**Errores.** Todo error trae `{error, mensaje}`. Todo rechazo de `POST /v1/decidir` trae además
-`respaldo`, el resultado que el agente debe aplicar: también un 400 por un campo faltante, un 403 por
-alias fuera del piloto o un 413. Las plantillas de seguridad fallan cerradas: `aprobacion_humana` exige
+**Errores.** Todo error trae `{error, mensaje}`. Un rechazo con identidad autorizada y plantilla disponible trae además
+`respaldo`, el resultado que el agente debe aplicar: también un 400 por un campo faltante, un 403
+por plantilla deshabilitada o un 413. Una identidad desconocida o revocada y una plantilla ajena no reciben un respaldo privado. Las plantillas de seguridad fallan cerradas: `aprobacion_humana` exige
 aprobación y `guardia_privacidad_jarvis` bloquea. Las demás devuelven `caer_a_llm: true`. Cuando el
 servicio ni siquiera contesta (adaptador sin `DECISIONES_URL`, servicio inalcanzable, adaptador caído,
 timeout), el respaldo lo pone el adaptador con la misma regla: `RESPALDO_SIN_SERVICIO` en
 `packages/adapter-sdk/src/sdk/mcp-emission/decisiones.ts`, que un test compara con el `si_falla` del
-catálogo. Sólo `plantilla_desconocida` y `listar_plantillas` no traen respaldo.
+catálogo. Las operaciones de listado y los rechazos anteriores a resolver la identidad tampoco traen respaldo.
 
 | Código | HTTP | Cuándo |
 |---|---|---|
@@ -123,7 +134,10 @@ timeout.
 
 - **`catalogo.json`** tiene la versión del catálogo, el modelo con el que se calibró y la medición del
   23-09.
-- **`plantillas/<id>.json`** tiene una plantilla por fichero. **Agregar una plantilla es agregar un
+- **`plantillas/<id>.json`** contiene sólo plantillas comunes.
+- **`empresas/<empresa>/plantillas/<id>.json`** contiene las políticas de esa empresa. Dos empresas
+  pueden definir un mismo id privado, pero una definición privada no puede reemplazar una común.
+  El cargador rechaza enlaces simbólicos y directorios incompletos. **Agregar una plantilla es agregar un
   fichero** y reiniciar el servicio. El cargador valida todo al arrancar, y una plantilla rota impide
   el arranque en vez de fallar en una decisión.
 
@@ -139,7 +153,7 @@ Campos de una plantilla:
 - `restricciones`: `{<choice>: {fijas: ["ninguno"], minimo: 2}}`. El agente las restringe con
   `opciones.restringir`.
 - `conjuntos`: `{<nombre>: {defecto: [...], por_alias: {zeus: [...]}}}`. Se resuelve con el alias del
-  certificado.
+  certificado dentro del catálogo autorizado de su empresa.
 - `indicadores`: `{<nombre>: {ponderado: {id: peso}} | {max: CONJ} | {min: CONJ}}`. En `ponderado`, cada
   score se normaliza por su nivel máximo.
 - `prefiltros`: `[{campos, patron, flags, solo_alias?, excepto_alias?, entonces}]`. Son regex sobre el
@@ -181,6 +195,7 @@ hasta que se re-graba el caso contra Jev y se actualiza el hash.
 
 | Variable | Defecto |
 |---|---|
+| `CAUCE_DECISIONES_DATABASE_URL` / `_DATABASE_URL_FILE` | exactamente uno; el fichero debe ser absoluto y se lee en memoria |
 | `CAUCE_DECISIONES_TLS_CERT_FILE`, `_TLS_KEY_FILE`, `_CLIENT_CA_FILE`, `_IDENTITY_FILE` | obligatorias |
 | `CAUCE_DECISIONES_JEV_KEY_FILE` | `/etc/cauce-v3/secrets/typesafe-jev.key` |
 | `CAUCE_DECISIONES_JEV_URL` | `https://api.typesafe.ai/v1/systemone` (en producción no se acepta otro origen) |
@@ -188,9 +203,9 @@ hasta que se re-graba el caso contra Jev y se actualiza el hash.
 | `CAUCE_DECISIONES_TIMEOUT_MS` / `_INTENTO_TIMEOUT_MS` / `_RONDAS` / `_HEDGE_MS` | 30000 / 15000 / 3 / 3000 |
 | `CAUCE_DECISIONES_ALIASES` | vacío = nadie; `*` = todos los alias de los tenants habilitados (piloto: `zeus`) |
 | `CAUCE_DECISIONES_TENANTS` | vacío = nadie; sin comodín (compose: `Steven`) |
-| `CAUCE_DECISIONES_HABILITAR_PLANTILLAS` | vacío (`guardia_privacidad_jarvis` queda apagada) |
-| `CAUCE_DECISIONES_POR_MINUTO` / `_RAFAGA` / `_TOKENS_DIA` / `_TOKENS_DIA_TOTAL` | 60 / 20 / 2000000 por alias / 20000000 la flota |
-| `CAUCE_DECISIONES_CONCURRENCIA` / `_CONCURRENCIA_ALIAS` | 16 en total / 4 por alias |
+| `CAUCE_DECISIONES_HABILITAR_PLANTILLAS` | vacío; claves `empresa/id` (por ejemplo `humanizar/guardia_privacidad_jarvis`) |
+| `CAUCE_DECISIONES_POR_MINUTO` / `_RAFAGA` / `_TOKENS_DIA` / `_TOKENS_DIA_TOTAL` | 60 / 20 / 2000000 por identidad `(empresa, tenant, alias)` / 20000000 globales |
+| `CAUCE_DECISIONES_CONCURRENCIA` / `_CONCURRENCIA_ALIAS` | 16 en total / 4 por identidad `(empresa, tenant, alias)` |
 | `CAUCE_DECISIONES_AUDIT_FILE` / `_AUDIT_MAX_BYTES` | `/var/lib/cauce-decisiones/auditoria.jsonl` / 50 MiB (rota a `.1`) |
 | `CAUCE_DECISIONES_PORT` / `_HEALTH_PORT` / `_REDACTAR` | 8447 / 8088 (sólo 127.0.0.1) / `1` |
 

@@ -2,13 +2,40 @@ import { timingSafeEqual } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { TLSSocket } from 'node:tls';
 import { AliasSchema, TenantSchema } from '@cauce/protocol';
+import type { DatabasePool } from '@cauce/store';
 import { DecisionError } from './errors.js';
 import { isPlainObject } from './questions.js';
 
 /** Who is asking, taken from the verified client certificate and never from the request body. */
 export interface Caller {
+  readonly company: string;
   readonly tenant: string;
+  readonly host?: string;
   readonly alias: string;
+}
+
+export type ResolveCompany = (tenant: string, alias: string) => Promise<{ company: string; host?: string } | undefined>;
+
+export function durableCompanyResolver(pool: Pick<DatabasePool, 'query'>): ResolveCompany {
+  return async (tenant, alias) => {
+    const row = (await pool.query<{ company: string; host: string | null }>(
+      `SELECT company.id AS company,agent.host_id AS host FROM tenants tenant
+       JOIN companies company ON company.id=tenant.company_id
+       JOIN agents agent ON agent.tenant_id=tenant.id AND agent.company_id=company.id
+       WHERE tenant.id=$1 AND agent.alias=$2 AND tenant.enabled AND tenant.purged_at IS NULL
+         AND company.enabled AND company.retired_at IS NULL AND agent.enabled AND agent.purged_at IS NULL
+         AND EXISTS (SELECT 1 FROM memberships membership
+           JOIN rooms room ON room.id=membership.room_id AND room.tenant_id=tenant.id
+           JOIN role_policies policy ON policy.role=membership.role
+           WHERE membership.tenant_id=tenant.id AND membership.alias=agent.alias
+             AND membership.enabled AND room.enabled AND policy.allow_route)`, [tenant, alias],
+    )).rows[0];
+    return row === undefined ? undefined : { company: row.company, ...(row.host === null ? {} : { host: row.host }) };
+  };
+}
+
+export function callerKey(caller: Pick<Caller, 'company' | 'tenant' | 'alias'>): string {
+  return JSON.stringify([caller.company, caller.tenant, caller.alias]);
 }
 
 export type IdentifyCaller = (socket: unknown) => Promise<Caller>;
@@ -20,6 +47,7 @@ export interface MtlsIdentityOptions {
   readonly allowedAliases: ReadonlySet<string>;
   /** Only agents of these tenants may ask; empty = nobody. */
   readonly allowedTenants: ReadonlySet<string>;
+  readonly resolveCompany: ResolveCompany;
   readonly now?: () => number;
 }
 
@@ -60,12 +88,6 @@ function stringList(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
 }
 
-/**
- * Same mapping as the gateway: Node verified the chain against the Cauce CA, and the SHA-256 of
- * the leaf selects exactly one principal. The file is re-read per request so a removal revokes at once.
- * The database is not consulted: a tenant, agent or membership disabled there keeps its certificate,
- * which is why access also needs both explicit allowlists, and both fail closed.
- */
 export function mtlsIdentity(options: MtlsIdentityOptions): IdentifyCaller {
   const now = options.now ?? Date.now;
   return async (socket) => {
@@ -94,6 +116,8 @@ export function mtlsIdentity(options: MtlsIdentityOptions): IdentifyCaller {
     if (!options.allowedAliases.has('*') && !options.allowedAliases.has(alias.data)) {
       throw new DecisionError('no_autorizado', `${alias.data} todavía no está habilitado para decisiones`);
     }
-    return { tenant: tenant.data, alias: alias.data };
+    const scope = await options.resolveCompany(tenant.data, alias.data);
+    if (scope === undefined) throw new DecisionError('no_autorizado', 'la identidad o su permiso durable no están habilitados');
+    return { ...scope, tenant: tenant.data, alias: alias.data };
   };
 }

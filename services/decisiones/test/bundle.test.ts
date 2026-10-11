@@ -5,6 +5,9 @@ import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { seedDevelopmentDatabase } from '../../../packages/store/src/seed-dev-cli.js';
+import { preparePostgresSuite } from '../../../packages/store/test/postgres-suite.js';
+import { startTestCaseDatabase, startTestDatabase, type EmptyTestDatabase, type TestDatabase } from '../../../tests/helpers/postgres.js';
 import { FakeJev } from './support/fake-jev.js';
 import { createTestPki, writeIdentities } from './support/pki.js';
 
@@ -25,27 +28,39 @@ function freePort(): Promise<number> {
   });
 }
 
+let database: TestDatabase | undefined;
+let current: EmptyTestDatabase | undefined;
+preparePostgresSuite(import.meta.url, async () => { database = await startTestDatabase(); }, 120_000);
+
 describe('bundle de despliegue', () => {
   const jev = new FakeJev();
   let child: ChildProcess | undefined;
   afterAll(async () => {
     child?.kill('SIGKILL');
     await jev.stop();
+    await current?.close();
+    if (database) { await database.pool.end(); await database.container.stop(); }
   });
 
   it('arranca sólo con variables de entorno, decide por mTLS y se apaga con SIGTERM', async () => {
+    if (!database) throw new Error('test database absent');
+    current = await startTestCaseDatabase(database);
+    await seedDevelopmentDatabase(current.adminUrl, () => undefined);
     execFileSync('pnpm', ['run', 'build'], { cwd: PACKAGE, stdio: 'ignore' });
     await jev.start();
     const pki = createTestPki();
     const directory = mkdtempSync(join(tmpdir(), 'cauce-decisiones-bundle-'));
     const identities = join(directory, 'mtls_identities.json');
     writeIdentities(identities, [{ fingerprint: pki.client('zeus').fingerprint, alias: 'zeus' }]);
+    const databaseFile = join(directory, 'postgresql.url');
+    writeFileSync(databaseFile, `${current.url}\n`, { mode: 0o600 });
     const keyFile = join(directory, 'jev.key');
     writeFileSync(keyFile, 'tsk_bundle_0123456789abcdefghijkl\n', { mode: 0o600 });
     const [port, healthPort] = [await freePort(), await freePort()];
     child = spawn(process.execPath, [join(PACKAGE, 'dist/decisiones.mjs')], {
       env: {
         PATH: process.env.PATH, NODE_ENV: 'test',
+        CAUCE_DECISIONES_DATABASE_URL_FILE: databaseFile,
         CAUCE_DECISIONES_HOST: '127.0.0.1', CAUCE_DECISIONES_PORT: String(port), CAUCE_DECISIONES_HEALTH_PORT: String(healthPort),
         CAUCE_DECISIONES_TLS_CERT_FILE: pki.serverCert, CAUCE_DECISIONES_TLS_KEY_FILE: pki.serverKey,
         CAUCE_DECISIONES_CLIENT_CA_FILE: pki.caCert, CAUCE_DECISIONES_IDENTITY_FILE: identities,
