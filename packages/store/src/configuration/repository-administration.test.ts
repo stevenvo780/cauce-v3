@@ -1,10 +1,19 @@
 import { describe, expect, it } from 'vitest';
 import { configurationMutationHashInput, sha256Hex, type ConfigMutation } from '@cauce/protocol';
+import type { CompanyAuthority, CompanyRole } from '../company-authority.js';
 import { ConfigurationRepository } from '../configuration.js';
 import type { DatabasePool } from '../db.js';
 import { schemaBarrierReply } from '../../../../tests/helpers/schema-barrier.js';
 
-function administrationPool(options: { hub?: boolean; control?: boolean; hubBefore?: number; hubAfter?: number; humanBefore?: number; humanAfter?: number; failSecond?: boolean } = {}) {
+function as(role: CompanyRole, homeTenant = 'Steven', alias = 'kant') {
+  const authority: CompanyAuthority = { humanId: role === 'tenant_operator' ? null : '00000000-0000-4000-8000-000000000001',
+    homeTenant, alias, homeCompany: 'humanizar', actingCompany: 'humanizar', role, platformOverride: false,
+    scope: role === 'company_owner' ? 'company' : role === 'tenant_operator' || role === 'reader' ? 'tenant' : 'none' };
+  return async () => authority;
+}
+const owner = as('company_owner');
+
+function administrationPool(options: { hubBefore?: number; hubAfter?: number; ownersBefore?: number; ownersAfter?: number; failSecond?: boolean } = {}) {
   let writes = 0;
   let authorityReads = 0;
   let committed = false;
@@ -21,13 +30,10 @@ function administrationPool(options: { hub?: boolean; control?: boolean; hubBefo
     if (normalized.includes(' AS hub_control_count')) {
       authorityReads += 1;
       return { rows: [{ hub_control_count: authorityReads === 1 ? options.hubBefore ?? 1 : options.hubAfter ?? 1,
-        human_control_count: authorityReads === 1 ? options.humanBefore ?? 1 : options.humanAfter ?? 1 }], rowCount: 1 };
+        owner_count: authorityReads === 1 ? options.ownersBefore ?? 1 : options.ownersAfter ?? 1 }], rowCount: 1 };
     }
-    if (normalized.includes(' AS can_control')) return { rows: [{ can_control: options.control ?? true }], rowCount: 1 };
-    if (normalized.includes('role.allow_read')) return { rows: [{ is_hub: options.hub ?? true, company_id: 'humanizar' }], rowCount: 1 };
-    if (normalized.includes('role.allow_control')) return { rows: options.control === false ? [] : [{ is_hub: options.hub ?? true, company_id: 'humanizar' }], rowCount: options.control === false ? 0 : 1 };
     if (normalized.startsWith('SELECT id,company_id')) return { rows: (params[0] as string[]).map(id => ({ id, company_id: 'humanizar' })), rowCount: (params[0] as string[]).length };
-    if (normalized.includes('COALESCE(max(id),0)')) return { rows: [{ revision: '4' }], rowCount: 1 };
+    if (normalized.includes(' AS revision')) return { rows: [{ revision: '4' }], rowCount: 1 };
     if (normalized.startsWith('SELECT id,tenant_id,display_name')) return { rows: rooms.has(String(params[0])) ? [rooms.get(String(params[0]))] : [], rowCount: rooms.has(String(params[0])) ? 1 : 0 };
     if (normalized.startsWith('INSERT INTO rooms')) {
       if (options.failSecond && writes > 0) throw Object.assign(new Error('durable conflict'), { code: '23505' });
@@ -52,24 +58,27 @@ const batch: ConfigMutation = { resource: 'batch', action: 'apply', mutations: [
 
 describe('configuration administration repository', () => {
   it('projects current read-only capability and keeps retired rows recoverable outside active listings', async () => {
-    const fake = administrationPool({ control: false });
-    const snapshot = await new ConfigurationRepository(fake.pool).get('Steven', 'kant');
-    expect(snapshot.capabilities).toMatchObject({ actor: { is_hub: true, can_control: false } });
+    const fake = administrationPool();
+    const snapshot = await new ConfigurationRepository(fake.pool).get('Steven', 'kant', as('reader'));
+    expect(snapshot.capabilities).toMatchObject({ actor: { role: 'reader', scope: 'tenant', can_control: false } });
     expect(snapshot.tenants).toEqual([{ id: 'Steven', enabled: true, is_hub: true, retired_at: null }]);
     expect(snapshot.retired).toMatchObject({ tenants: [{ id: 'Acme', enabled: false, is_hub: false, retired_at: '2026-10-07T00:00:00.000Z' }] });
     expect(fake.state().writes).toBe(0);
   });
 
   it('authorizes every batch leaf before writing any item', async () => {
-    const fake = administrationPool({ hub: false });
-    await expect(new ConfigurationRepository(fake.pool).apply('Pablo', 'midas', batch, false, 4)).rejects.toMatchObject({ code: 'forbidden' });
+    const fake = administrationPool();
+    await expect(new ConfigurationRepository(fake.pool).apply('Pablo', 'midas', batch, false, 4, as('tenant_operator', 'Pablo', 'midas')))
+      .rejects.toMatchObject({ code: 'forbidden' });
+    await expect(new ConfigurationRepository(fake.pool).apply('Pablo', 'midas', batch, false, 4, owner))
+      .rejects.toMatchObject({ code: 'forbidden', message: 'configuration authority does not belong to the actor' });
     expect(fake.rooms.size).toBe(0);
     expect(fake.revisions).toEqual([]);
   });
 
   it('rolls back the whole batch when a later resource conflicts', async () => {
     const fake = administrationPool({ failSecond: true });
-    await expect(new ConfigurationRepository(fake.pool).apply('Steven', 'kant', batch, false, 4)).rejects.toMatchObject({ code: 'conflict' });
+    await expect(new ConfigurationRepository(fake.pool).apply('Steven', 'kant', batch, false, 4, owner)).rejects.toMatchObject({ code: 'conflict' });
     expect(fake.rooms.size).toBe(0);
     expect(fake.revisions).toEqual([]);
     expect(fake.state()).toMatchObject({ committed: false, rolledBack: true });
@@ -77,7 +86,7 @@ describe('configuration administration repository', () => {
 
   it('previews a batch with a reverse ordered inverse and no durable revision', async () => {
     const fake = administrationPool();
-    const preview = await new ConfigurationRepository(fake.pool).apply('Steven', 'kant', batch, true, 4);
+    const preview = await new ConfigurationRepository(fake.pool).apply('Steven', 'kant', batch, true, 4, owner);
     expect(preview).toMatchObject({ applied: false, dry_run: true, revision: 4, inverse_mutation: { resource: 'batch', action: 'apply', mutations: [
       { resource: 'room', action: 'delete', tenant_id: 'Steven', id: 'second' },
       { resource: 'room', action: 'delete', tenant_id: 'Steven', id: 'first' },
@@ -87,9 +96,9 @@ describe('configuration administration repository', () => {
     expect(fake.state()).toMatchObject({ committed: false, rolledBack: true });
   });
 
-  it.each([{ hubAfter: 0 }, { humanAfter: 0 }])('rejects loss of the last effective HUB or human control authority', async (options) => {
+  it.each([{ hubAfter: 0 }, { ownersAfter: 0 }])('rejects loss of the last hub control or qualified owner', async (options) => {
     const fake = administrationPool(options);
-    await expect(new ConfigurationRepository(fake.pool).apply('Steven', 'kant', batch, false, 4)).rejects.toMatchObject({ code: 'conflict' });
+    await expect(new ConfigurationRepository(fake.pool).apply('Steven', 'kant', batch, false, 4, owner)).rejects.toMatchObject({ code: 'conflict' });
     expect(fake.revisions).toEqual([]);
     expect(fake.rooms.size).toBe(0);
     expect(fake.state().committed).toBe(false);
@@ -97,7 +106,7 @@ describe('configuration administration repository', () => {
 
   it('rejects a stale revision before executing any batch item', async () => {
     const fake = administrationPool();
-    await expect(new ConfigurationRepository(fake.pool).apply('Steven', 'kant', batch, false, 3)).rejects.toMatchObject({ code: 'conflict' });
+    await expect(new ConfigurationRepository(fake.pool).apply('Steven', 'kant', batch, false, 3, owner)).rejects.toMatchObject({ code: 'conflict' });
     expect(fake.state().writes).toBe(0);
   });
 });
@@ -113,8 +122,8 @@ describe('configuration nested receipts and dependency revisions', () => {
     ] };
     const original = structuredClone(mutation);
     const repository = new ConfigurationRepository(fake.pool);
-    const receipt = await repository.apply('Steven', 'kant', mutation, false, 4);
-    const snapshot = await repository.get('Steven', 'kant');
+    const receipt = await repository.apply('Steven', 'kant', mutation, false, 4, owner);
+    const snapshot = await repository.get('Steven', 'kant', owner);
     expect(JSON.stringify(receipt)).not.toContain('PRIVATE_LOCATOR');
     expect(JSON.stringify(snapshot)).not.toContain('PRIVATE_LOCATOR');
     expect(JSON.stringify(fake.audits)).not.toContain('PRIVATE_LOCATOR');
@@ -127,9 +136,9 @@ describe('configuration nested receipts and dependency revisions', () => {
   it('returns a dependency preview tied to the observed revision and rejects a stale preview', async () => {
     const fake = administrationPool();
     const repository = new ConfigurationRepository(fake.pool);
-    expect(await repository.getDependencies('Steven', 'kant', { resource: 'room', action: 'delete', tenant_id: 'Steven', id: 'first' }, 4))
+    expect(await repository.getDependencies('Steven', 'kant', { resource: 'room', action: 'delete', tenant_id: 'Steven', id: 'first' }, 4, owner))
       .toEqual({ revision: 4, resource: 'room', identity: { tenant_id: 'Steven', id: 'first' }, dependencies: [], can_delete: true });
-    await expect(repository.getDependencies('Steven', 'kant', { resource: 'room', action: 'delete', tenant_id: 'Steven', id: 'first' }, 3)).rejects.toMatchObject({ code: 'conflict' });
+    await expect(repository.getDependencies('Steven', 'kant', { resource: 'room', action: 'delete', tenant_id: 'Steven', id: 'first' }, 3, owner)).rejects.toMatchObject({ code: 'conflict' });
     expect(fake.state().writes).toBe(0);
   });
 });

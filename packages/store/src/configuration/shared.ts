@@ -1,5 +1,5 @@
 import type { DatabaseClient } from '../db.js';
-import { ConfigurationError, type ConfigurationCapabilities, type ConfigurationDependency, type ConfigurationLeafMutation, type ConfigurationResourceCapability } from './contracts.js';
+import { ConfigurationError, type ConfigurationDependency, type ConfigurationLeafMutation } from './contracts.js';
 
 export function has(value: object, key: string): boolean {
   return Object.prototype.hasOwnProperty.call(value, key);
@@ -44,32 +44,6 @@ export function assertRuntimeSynchronizedMutation(mutation: unknown): void {
       'agent role_brief is a read-only legacy projection; write the canonical profile instead',
     );
   }
-}
-
-export function configurationCapabilities(
-  tenant: string, alias: string, hub: boolean, control: boolean, company = 'humanizar',
-): ConfigurationCapabilities {
-  const resources = [
-    'tenant', 'room', 'membership', 'acl_edge', 'harness', 'role_policy', 'chain_policy',
-    'egress_destination', 'agent', 'provider_account', 'alias_routing_ceiling',
-    'agent_account_binding', 'agent_profile',
-  ] as const;
-  return {
-    actor: { tenant_id: tenant, alias, is_hub: hub, can_control: control },
-    resources: resources.map((resource): ConfigurationResourceCapability => {
-      const owned = ['room', 'membership', 'egress_destination', 'acl_edge'].includes(resource);
-      const global = ['harness', 'role_policy', 'chain_policy'].includes(resource);
-      if (!control || resource === 'agent_profile' || (!hub && !owned) || (global && company !== 'humanizar')) {
-        return { resource, actions: [], scope: 'none' };
-      }
-      const actions: ConfigurationResourceCapability['actions'] = resource === 'chain_policy' ? ['update']
-        : resource === 'alias_routing_ceiling' ? ['create', 'delete']
-          : ['tenant', 'room', 'membership'].includes(resource)
-            ? ['create', 'update', 'delete', 'retire', 'restore'] : ['create', 'update', 'delete'];
-      return hub ? { resource, actions, scope: 'hub' }
-        : { resource, actions, scope: resource === 'acl_edge' ? 'outgoing_acl' : 'tenant', tenant_id: tenant };
-    }),
-  };
 }
 
 const dependencyTables: Readonly<Record<ConfigurationLeafMutation['resource'], string>> = {

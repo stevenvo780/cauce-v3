@@ -1,4 +1,6 @@
 import type { ConfigMutation } from '@cauce/protocol';
+import type { CompanyAuthority, CompanyAuthorityScope, CompanyRole } from '../company-authority.js';
+import type { DatabaseClient } from '../db.js';
 
 /** `invalid_input` keeps malformed operator text out of opaque PostgreSQL CHECK failures. */
 export type ConfigurationErrorCode = 'forbidden' | 'conflict' | 'not_found' | 'invalid_input';
@@ -12,6 +14,8 @@ export class ConfigurationError extends Error {
     this.name = 'ConfigurationError';
   }
 }
+
+export type ConfigurationAuthorityResolver = (client: DatabaseClient) => Promise<CompanyAuthority>;
 
 export interface ConfigurationChangeResult {
   applied: boolean;
@@ -27,11 +31,12 @@ export interface ConfigurationChangeResult {
 
 export type ConfigurationLeafMutation = Exclude<ConfigMutation, { resource: 'batch' }>;
 export type ConfigurationAction = 'create' | 'update' | 'delete' | 'retire' | 'restore';
+export type ConfigurationCapabilityResource = ConfigurationLeafMutation['resource'] | 'agent_profile' | 'fleet_host';
 
 export interface ConfigurationResourceCapability {
-  readonly resource: ConfigurationLeafMutation['resource'] | 'agent_profile';
+  readonly resource: ConfigurationCapabilityResource;
   readonly actions: readonly ConfigurationAction[];
-  readonly scope: 'hub' | 'tenant' | 'outgoing_acl' | 'none';
+  readonly scope: CompanyAuthorityScope;
   readonly tenant_id?: string;
 }
 
@@ -39,8 +44,11 @@ export interface ConfigurationCapabilities {
   readonly actor: {
     readonly tenant_id: string;
     readonly alias: string;
-    readonly is_hub: boolean;
     readonly can_control: boolean;
+    readonly role: CompanyRole;
+    readonly scope: CompanyAuthorityScope;
+    readonly company_id: string;
+    readonly platform_override: boolean;
   };
   readonly resources: readonly ConfigurationResourceCapability[];
 }

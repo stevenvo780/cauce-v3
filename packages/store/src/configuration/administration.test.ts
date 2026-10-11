@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import type { ConfigMutation } from '@cauce/protocol';
+import type { CompanyAuthority, CompanyRole } from '../company-authority.js';
 import type { DatabaseClient } from '../db.js';
+import { authorizeConfigurationMutation, configurationCapabilities, isPlatformMutation } from './company-scope.js';
+import type { ConfigurationCapabilities } from './contracts.js';
 import * as shared from './shared.js';
 import { ConfigurationMutations } from './mutations.js';
 import { roomMutation, membershipMutation, tenantMutation } from './mutations/tenants.js';
@@ -20,28 +23,73 @@ function referenceClient(table: string, references: Record<string, unknown>[]) {
   return { client: { query } as unknown as DatabaseClient, state };
 }
 
-describe('configuration administration capabilities', () => {
-  it('keeps read-only actors unable to mutate every configuration resource', () => {
-    const capabilities = shared.configurationCapabilities('Pablo', 'midas', false, false);
-    expect(capabilities.actor).toEqual({ tenant_id: 'Pablo', alias: 'midas', is_hub: false, can_control: false });
+function authority(role: CompanyRole, overrides: Partial<CompanyAuthority> = {}): CompanyAuthority {
+  const scope = role === 'platform_admin' ? 'platform' : role === 'company_owner' || role === 'company_admin' ? 'company'
+    : role === 'none' ? 'none' : 'tenant';
+  return { humanId: null, homeTenant: 'Pablo', alias: 'midas', homeCompany: 'humanizar', actingCompany: 'humanizar',
+    role, scope, platformOverride: false, ...overrides };
+}
+
+function capability(capabilities: ConfigurationCapabilities, resource: string) {
+  return capabilities.resources.find((entry) => entry.resource === resource);
+}
+
+describe('configuration capabilities by company role', () => {
+  it.each(['reader', 'none'] as const)('keeps a %s unable to mutate every configuration resource', (role) => {
+    const capabilities = configurationCapabilities(authority(role));
+    expect(capabilities.actor).toEqual({ tenant_id: 'Pablo', alias: 'midas', can_control: false, role, scope: role === 'none' ? 'none' : 'tenant',
+      company_id: 'humanizar', platform_override: false });
     expect(capabilities.resources.every((resource) => resource.actions.length === 0 && resource.scope === 'none')).toBe(true);
   });
 
-  it('exposes tenant and outgoing ACL actions without granting registry or global control', () => {
-    const capabilities = shared.configurationCapabilities('Pablo', 'midas', false, true);
-    expect(capabilities.resources.find((resource) => resource.resource === 'room')).toMatchObject({
-      actions: ['create', 'update', 'delete', 'retire', 'restore'], scope: 'tenant', tenant_id: 'Pablo',
-    });
-    expect(capabilities.resources.find((resource) => resource.resource === 'acl_edge')).toMatchObject({ scope: 'outgoing_acl' });
-    expect(capabilities.resources.find((resource) => resource.resource === 'agent')).toMatchObject({ actions: [], scope: 'none' });
-    expect(capabilities.resources.find((resource) => resource.resource === 'provider_account')).toMatchObject({ actions: [], scope: 'none' });
+  it('gives a tenant operator its own tenant and outgoing ACL without registry, accounts or catalogs', () => {
+    const capabilities = configurationCapabilities(authority('tenant_operator', { homeTenant: 'Steven', alias: 'kant' }));
+    expect(capability(capabilities, 'room')).toEqual({ resource: 'room', actions: ['create', 'update', 'delete', 'retire', 'restore'], scope: 'tenant', tenant_id: 'Steven' });
+    expect(capability(capabilities, 'acl_edge')).toMatchObject({ scope: 'outgoing_acl', tenant_id: 'Steven' });
+    for (const resource of ['tenant', 'agent', 'provider_account', 'alias_routing_ceiling', 'agent_account_binding', 'chain_policy', 'fleet_host']) {
+      expect(capability(capabilities, resource), resource).toMatchObject({ actions: [], scope: 'none' });
+    }
   });
 
-  it('keeps canonical profile writes outside the generic editor even for HUB control', () => {
-    const capabilities = shared.configurationCapabilities('Steven', 'kant', true, true);
-    expect(capabilities.resources.find((resource) => resource.resource === 'chain_policy')).toMatchObject({ actions: ['update'], scope: 'hub' });
-    expect(capabilities.resources.find((resource) => resource.resource === 'alias_routing_ceiling')).toMatchObject({ actions: ['create', 'delete'], scope: 'hub' });
-    expect(capabilities.resources.find((resource) => resource.resource === 'agent_profile')).toMatchObject({ actions: [], scope: 'none' });
+  it.each(['company_owner', 'company_admin', 'platform_admin'] as const)('opens the whole company to a %s', (role) => {
+    const capabilities = configurationCapabilities(authority(role));
+    for (const resource of ['tenant', 'room', 'membership', 'acl_edge', 'egress_destination', 'agent', 'agent_account_binding']) {
+      expect(capability(capabilities, resource), resource).toMatchObject({ scope: 'company' });
+    }
+    expect(capability(capabilities, 'alias_routing_ceiling')).toMatchObject({ actions: ['create', 'delete'], scope: 'company' });
+    expect(capability(capabilities, 'provider_account')).toMatchObject(role === 'company_admin'
+      ? { actions: [], scope: 'none' } : { actions: ['create', 'update', 'delete'], scope: 'company' });
+    expect(capability(capabilities, 'fleet_host')).toMatchObject(role === 'platform_admin'
+      ? { actions: ['create', 'update', 'delete'], scope: 'platform' } : { actions: ['update'], scope: 'company' });
+    expect(capability(capabilities, 'chain_policy')).toMatchObject(role === 'platform_admin'
+      ? { actions: ['update'], scope: 'platform' } : { actions: [], scope: 'none' });
+  });
+
+  it('never offers harnesses, role policies or canonical profiles, not even to the platform', () => {
+    const capabilities = configurationCapabilities(authority('platform_admin', { actingCompany: 'praxis', platformOverride: true }));
+    expect(capabilities.actor).toMatchObject({ company_id: 'praxis', platform_override: true, scope: 'platform' });
+    for (const resource of ['harness', 'role_policy', 'agent_profile']) {
+      expect(capability(capabilities, resource), resource).toMatchObject({ actions: [], scope: 'none' });
+    }
+    expect(JSON.stringify(capabilities)).not.toContain('hub');
+  });
+
+  it('authorizes leaves against the scope and rejects mixed or catalog batches', () => {
+    const operator = configurationCapabilities(authority('tenant_operator'));
+    const platform = configurationCapabilities(authority('platform_admin'));
+    const room = { resource: 'room', action: 'create', tenant_id: 'Pablo', id: 'own', value: {} } as const;
+    expect(() => { authorizeConfigurationMutation(room, operator); }).not.toThrow();
+    expect(() => { authorizeConfigurationMutation({ ...room, tenant_id: 'Steven' }, operator); }).toThrow(/outside the actor tenant/u);
+    expect(() => { authorizeConfigurationMutation({ resource: 'acl_edge', action: 'create', from_tenant: 'Steven', to_tenant: 'Pablo', value: {} }, operator); })
+      .toThrow(/outside the actor tenant/u);
+    expect(() => { authorizeConfigurationMutation({ resource: 'egress_destination', action: 'create', tenant_id: 'Pablo', alias: 'midas', handle: 'group',
+      value: { require_prior_contact: false } }, operator); }).toThrow(/prior contact/u);
+    expect(() => { authorizeConfigurationMutation({ resource: 'harness', action: 'update', id: 'codex', value: {} }, platform); })
+      .toThrow(/platform CLI/u);
+    expect(() => { authorizeConfigurationMutation({ resource: 'batch', action: 'apply', mutations: [
+      { resource: 'chain_policy', action: 'update', id: 'default', value: {} }, room,
+    ] }, platform); }).toThrow(/cannot mix platform catalogs and company resources/u);
+    expect(isPlatformMutation({ resource: 'chain_policy', action: 'update', id: 'default', value: {} })).toBe(true);
   });
 });
 

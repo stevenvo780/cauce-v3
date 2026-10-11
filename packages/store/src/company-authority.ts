@@ -57,9 +57,13 @@ async function tenantReach(client: DatabaseClient, tenant: string, alias: string
     `SELECT policy.allow_control,policy.allow_read FROM memberships member
      JOIN role_policies policy ON policy.role=member.role
      JOIN rooms room ON room.tenant_id=member.tenant_id AND room.id=member.room_id
+     JOIN tenants tenant ON tenant.id=member.tenant_id
+     JOIN agents agent ON agent.tenant_id=member.tenant_id AND agent.alias=member.alias
      WHERE member.tenant_id=$1 AND member.alias=$2 AND member.enabled AND member.retired_at IS NULL
-       AND room.enabled AND room.retired_at IS NULL
-     FOR SHARE OF member,room,policy`, [tenant, alias],
+       AND room.enabled AND room.retired_at IS NULL AND room.purged_at IS NULL
+       AND tenant.enabled AND tenant.retired_at IS NULL AND tenant.purged_at IS NULL
+       AND agent.retired_at IS NULL AND agent.purged_at IS NULL
+     FOR SHARE OF member,room,policy,tenant,agent`, [tenant, alias],
   )).rows;
   return { control: rows.some(row => row.allow_control), read: rows.some(row => row.allow_read) };
 }
@@ -87,16 +91,19 @@ export async function lockCompanyAuthority(client: DatabaseClient, request: Comp
   if (typeof tenant !== 'string' || typeof alias !== 'string'
     || (requestedCompany !== undefined && !COMPANY_ID_PATTERN.test(requestedCompany))) unavailable();
   const home = (await client.query<{ company_id: string; active: boolean }>(
-    'SELECT company_id,enabled AND retired_at IS NULL AS active FROM tenants WHERE id=$1 FOR SHARE', [tenant],
+    `SELECT tenant.company_id,tenant.enabled AND tenant.retired_at IS NULL AND company.enabled
+       AND company.retired_at IS NULL AS active FROM tenants tenant JOIN companies company ON company.id=tenant.company_id
+     WHERE tenant.id=$1 FOR SHARE OF tenant`, [tenant],
   )).rows[0];
   if (!home) unavailable();
   const person = humanId === undefined ? undefined : await lockConsolePerson(client, humanId);
   if (humanId !== undefined && (!person?.account.active || person.account.defaultTenant !== tenant
     || person.account.actorAlias !== alias || person.account.company !== home.company_id)) unavailable();
   const membership = person?.membership?.actorAlias === alias ? person.membership : undefined;
-  const qualified = qualifies(person);
+  const reach = home.active ? await tenantReach(client, tenant, alias) : { control: false, read: false };
+  const qualified = qualifies(person) && reach.control;
   const base = { humanId: person?.humanId ?? null, homeTenant: tenant, alias, homeCompany: home.company_id };
-  if (person !== undefined && qualified) {
+  if (person !== undefined && qualified && home.active) {
     const facts = await companyFacts(client, person.humanId, null);
     if (facts.home_company !== home.company_id) unavailable();
     if (facts.platform_admin) {
@@ -108,7 +115,6 @@ export async function lockCompanyAuthority(client: DatabaseClient, request: Comp
       return resolved(base, home.company_id, facts.company_role === 'owner' ? 'company_owner' : 'company_admin', 'company');
     }
   }
-  const reach = home.active ? await tenantReach(client, tenant, alias) : { control: false, read: false };
   const control = reach.control && (person === undefined || qualified);
   const read = reach.read && (person === undefined || membership?.permissions.includes('read') === true);
   return resolved(base, home.company_id, control ? 'tenant_operator' : read ? 'reader' : 'none', control || read ? 'tenant' : 'none');
@@ -133,7 +139,12 @@ export async function assertKeepsCompanyAuthority(client: DatabaseClient, humanI
   const subject = holders.find(holder => holder.human_id === person.id);
   if (subject === undefined) return;
   const qualified = new Set<string>();
-  for (const holder of holders) if (qualifies(await lockConsolePerson(client, holder.human_id))) qualified.add(holder.human_id);
+  for (const holder of holders) {
+    const person = await lockConsolePerson(client, holder.human_id);
+    if (qualifies(person) && person && (await tenantReach(client, person.account.defaultTenant, person.account.actorAlias)).control) {
+      qualified.add(holder.human_id);
+    }
+  }
   if (subject.owner && !holders.some(holder => holder.owner && qualified.has(holder.human_id))) {
     throw new StoreError('conflict', `company ${company} must keep a qualified owner`);
   }
