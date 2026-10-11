@@ -31,6 +31,7 @@
     "renewable_delivery_claims_v1": true,
     "delegation_feedback_v1": true,
     "agent_identity_v1": true,
+    "company_context_v1": true,
     "agent_profile_v1": true,
     "agent_profile_adoption_v1": true,
     "client_mailbox_v1": true,
@@ -41,6 +42,7 @@
     "persistent_sessions": true,
     "loopback_api": true,
     "stable_alias_sessions": true,
-    "api_cancellation": "abort_signal"
+    "api_cancellation": "abort_signal",
+    "versioned_context_v1": true
   }
 }

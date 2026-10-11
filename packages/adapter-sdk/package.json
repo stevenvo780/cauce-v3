@@ -18,6 +18,7 @@
   "files": [
     "dist/src",
     "dist/bridge",
+    "dist/descriptors",
     "manifests",
     "docs",
     "README.md"

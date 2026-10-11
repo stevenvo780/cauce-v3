@@ -9,3 +9,7 @@ await Promise.all(
     await chmod(target, 0o755);
   }),
 );
+const descriptors = new URL('../dist/descriptors/', import.meta.url);
+await mkdir(descriptors, { recursive: true });
+await Promise.all(['claude','codex','hermes','opencode','openclaw','grok','muse','fake'].map(name =>
+  copyFile(new URL(`../descriptors/${name}.json`, import.meta.url), new URL(`${name}.json`, descriptors))));

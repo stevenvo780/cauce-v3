@@ -5,7 +5,12 @@
   "harness_executable": "codex",
   "invocation": {
     "prompt_transport": "stdin",
-    "fixed_args": ["exec", "--skip-git-repo-check", "--json", "-"],
+    "fixed_args": [
+      "exec",
+      "--skip-git-repo-check",
+      "--json",
+      "-"
+    ],
     "output_dialect": "codex-jsonl",
     "session_mapping": "observed thread id then exec resume",
     "session_scope": "authenticated tenant+actor+origin channel/session/conversation"
@@ -31,6 +36,7 @@
     "renewable_delivery_claims_v1": true,
     "delegation_feedback_v1": true,
     "agent_identity_v1": true,
+    "company_context_v1": true,
     "agent_profile_v1": true,
     "agent_profile_adoption_v1": true,
     "client_mailbox_v1": true,
@@ -38,6 +44,7 @@
     "human_message_client_delegation_v1": true,
     "attachments_v1": true,
     "native_image_input_v1": true,
-    "persistent_sessions": true
+    "persistent_sessions": true,
+    "versioned_context_v1": true
   }
 }
