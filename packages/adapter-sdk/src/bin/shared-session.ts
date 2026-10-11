@@ -4,7 +4,7 @@ import { CliTmux } from "../shared-session/tmux.js";
 import { ensureSharedSession, sharedSessionStatus } from "../shared-session/session.js";
 import { cliSharedSessionSpec, harnessConfigDirectory } from "../shared-session/config.js";
 import { SharedTuiPointerStore } from "../shared-session/native-pointer.js";
-import { ensureMuseLoginLink } from "../shared-session/muse.js";
+import { prepareMuseProfile } from '../shared-session/muse-profile.js';
 import { exactConversationIsSecure } from "../shared-session/resume.js";
 import { readDegradations } from "../shared-session/degradation-log.js";
 import { TUI_WINDOW, isSharedSessionHarness, sessionName } from "../shared-session/types.js";
@@ -111,7 +111,7 @@ async function main(): Promise<void> {
   }
 
   if (options.command === "ensure") {
-    if (sessionSpec.harness === "muse") await ensureMuseLoginLink(home, options.alias);
+    if (sessionSpec.harness === 'muse') await prepareMuseProfile(sessionSpec.environment ?? {});
     // Notice goes to stderr, not stdout JSON: invoked by `cauce <alias>` parsing stdout.
     const result = await ensureSharedSession(tmux, sessionSpec, {
       sleep,

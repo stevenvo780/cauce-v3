@@ -93,6 +93,7 @@ test("el directorio y las rutas del gateway salen de la MISMA tabla del protocol
     ["codex", { HOME: "/h", CODEX_HOME: "/otro" }],
     ["openclaw", { HOME: "/h", CAUCE_OPENCLAW_WORKSPACE: "/ws" }],
     ["muse", { HOME: "/h", CAUCE_MUSE_WORKSPACE: "/ws-muse" }],
+    ["grok", { HOME: "/h", CAUCE_GROK_WORKSPACE: "/ws-grok" }],
   ] as const) {
     const directorio = directorioDelArnes(harness, entorno);
     assert.ok(directorio !== undefined, `${harness} no resolvió directorio`);
@@ -105,6 +106,7 @@ test("el directorio y las rutas del gateway salen de la MISMA tabla del protocol
         openclawWorkspace: "CAUCE_OPENCLAW_WORKSPACE" in entorno
           ? entorno.CAUCE_OPENCLAW_WORKSPACE
           : undefined,
+        grokWorkspace: "CAUCE_GROK_WORKSPACE" in entorno ? entorno.CAUCE_GROK_WORKSPACE : undefined,
         museWorkspace: "CAUCE_MUSE_WORKSPACE" in entorno
           ? entorno.CAUCE_MUSE_WORKSPACE
           : undefined,

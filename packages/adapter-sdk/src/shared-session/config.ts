@@ -1,11 +1,11 @@
 import { homedir } from "node:os";
-import { isAbsolute, join } from "node:path";
+import { basename, dirname, isAbsolute, join, normalize } from "node:path";
 import type { HarnessId } from "../sdk/types.js";
 import type { SharedSessionSpec } from "./session.js";
 import { sharedSessionResume } from "./resume.js";
 import { isSharedSessionHarness, type SharedSessionHarness } from "./types.js";
 import { commandPinsFromEnvironment, type CommandPins } from '../sdk/command-pins.js';
-import { projectSelectionArguments, selectionArguments, selectionFromEnvironment } from '../sdk/execution-selection.js';
+import { executionSelection, projectSelectionArguments, selectionArguments, selectionFromEnvironment } from '../sdk/execution-selection.js';
 
 /** Shared session configuration from environment variables. */
 export interface SharedSessionConfig {
@@ -21,6 +21,7 @@ export interface SharedSessionConfig {
   readonly configDirectory: string;
   /** What the TUI must see in its environment, whoever creates it. */
   readonly paneEnvironment: Readonly<Record<string, string>>;
+  readonly unsetEnvironment?: readonly string[];
   readonly harnessArguments: readonly string[];
   readonly nativeId?: string; // CAUCE_SHARED_SESSION_NATIVE_ID: seeded on start while there is no pointer.
 }
@@ -37,41 +38,50 @@ function physicalAlias(alias: string, environment: NodeJS.ProcessEnv): string {
 
 export function claudePermissionArguments(
   harness: SharedSessionHarness,
-  environment: NodeJS.ProcessEnv,
+  _environment: NodeJS.ProcessEnv,
 ): readonly string[] {
   switch (harness) {
     case "claude": return ["--dangerously-skip-permissions"];
     case "codex": return ["--yolo"];
     case "grok": return ["--always-approve"]; // grok 1.0.41 --help; `--yolo` is only `grok agent`.
-    // Same flags as the headless bridge (muse-cauce), so the TUI and `muse exec` load the same rules.
-    case "muse": return ["--yolo", "--trust-workspace", "--reasoning-effort", museReasoningEffort(environment)];
+    case "muse": return ["--yolo", "--trust-workspace"];
   }
 }
 
-/** Muse's effort levels (`muse --help`, 1.4.0). The alias runs at max by Steven's decision. */
-const MUSE_REASONING_EFFORTS = new Set(["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"]);
-
 export function museReasoningEffort(environment: NodeJS.ProcessEnv): string {
-  const declared = environment.MUSE_REASONING_EFFORT;
-  if (declared === undefined || declared === "") return "max";
-  if (!MUSE_REASONING_EFFORTS.has(declared)) throw new Error("MUSE_REASONING_EFFORT no es un nivel de Muse");
+  const durable = environment.CAUCE_REASONING_EFFORT;
+  const legacy = environment.MUSE_REASONING_EFFORT;
+  if (durable !== undefined && legacy !== undefined && legacy !== '' && durable !== legacy) throw new Error('Muse effort differs from durable selection');
+  const declared = durable ?? (legacy === '' ? undefined : legacy) ?? 'max';
+  executionSelection('muse', { reasoningEffort: declared });
   return declared;
 }
 
-/**
- * Muse's data directory for a shared alias: `$XDG_DATA_HOME/muse`, with an XDG_DATA_HOME of its own.
- * Muse has no variable for its sessions but XDG_DATA_HOME, and the default (`~/.local/share/muse`)
- * is shared with every Muse in the container (e.g. the owner's own TUI writes an 80 MB log there);
- * this gives the shared TUI its own folder next to its login. `CAUCE_MUSE_DATA_HOME` overrides it.
- */
-export function museDataHome(home: string, alias: string, environment: NodeJS.ProcessEnv): string {
-  const declared = environment.CAUCE_MUSE_DATA_HOME;
-  if (declared !== undefined && declared !== "") {
-    if (!isAbsolute(declared)) throw new Error("CAUCE_MUSE_DATA_HOME debe ser una ruta absoluta");
-    return declared;
+export const MUSE_CREDENTIAL_OVERRIDES = ['META_API_KEY', 'MUSE_AUTH_PATH', 'MUSE_CONFIG_DIR'] as const;
+
+export function museProfileDirectories(home: string, alias: string, environment: NodeJS.ProcessEnv): { config: string; data: string } {
+  if (!/^[a-z][a-z0-9_-]{0,63}$/u.test(alias)) throw new Error('invalid Muse shared alias');
+  for (const name of [...MUSE_CREDENTIAL_OVERRIDES, 'CAUCE_MUSE_CONFIG_HOME', 'CAUCE_MUSE_DATA_HOME']) {
+    if (environment[name] !== undefined && environment[name] !== '') throw new Error('unsupported Muse profile override');
   }
-  if (!/^[a-z][a-z0-9_-]{0,63}$/u.test(alias)) throw new Error("alias inválido para la sesión compartida de muse");
-  return join(home, ".local", "share", "cauce-v3", "config", alias, ".local", "share");
+  const declaredConfig = environment.XDG_CONFIG_HOME; const declaredData = environment.XDG_DATA_HOME;
+  if ((declaredConfig === undefined) !== (declaredData === undefined)) throw new Error('Muse requires both dedicated XDG directories');
+  const root = join(home, '.local', 'share', 'cauce-v3', 'config', alias);
+  const config = declaredConfig ?? join(root, 'config'); const data = declaredData ?? join(root, 'data');
+  if ([config, data].some(path => !isAbsolute(path) || path === '/' || path.includes('\0') || normalize(path) !== path)
+    || dirname(config) === '/' || basename(config) !== 'config' || basename(data) !== 'data' || dirname(config) !== dirname(data)) {
+    throw new Error('Muse config and data must belong to the same canonical dedicated profile');
+  }
+  return { config, data };
+}
+
+export function museDataHome(home: string, alias: string, environment: NodeJS.ProcessEnv): string {
+  return museProfileDirectories(home, alias, environment).data;
+}
+
+function sharedSelection(harness: SharedSessionHarness, environment: NodeJS.ProcessEnv) {
+  const selected = selectionFromEnvironment(harness, environment);
+  return harness === 'muse' ? { ...selected, reasoningEffort: museReasoningEffort(environment) } : selected;
 }
 const SHARED_SESSION_WORKSPACE_ENV = "CAUCE_SHARED_SESSION_WORKSPACE";
 const SHARED_SESSION_NATIVE_ID_ENV = "CAUCE_SHARED_SESSION_NATIVE_ID";
@@ -121,7 +131,10 @@ export function sharedSessionPaneEnvironment(
   environment: NodeJS.ProcessEnv = process.env,
   alias?: string,
 ): Readonly<Record<string, string>> {
-  if (harness === "muse") return { XDG_DATA_HOME: museDataHome(home, requireAlias(alias), environment) };
+  if (harness === "muse") {
+    const directories = museProfileDirectories(home, requireAlias(alias), environment);
+    return { XDG_CONFIG_HOME: directories.config, XDG_DATA_HOME: directories.data, MUSE_NO_AUTO_UPDATE: '1' };
+  }
   const directory = harnessConfigDirectory(harness, home, environment);
   return { [configDirectoryVariable(harness).variable]: directory };
 }
@@ -137,12 +150,13 @@ export function cliSharedSessionSpec(
 ): SharedSessionSpec {
   alias = physicalAlias(alias, environment);
   const configDirectory = harnessConfigDirectory(harness, home, environment, alias);
-  const selection = selectionFromEnvironment(harness, environment); const pins = commandPinsFromEnvironment(environment);
+  const selection = sharedSelection(harness, environment); const pins = commandPinsFromEnvironment(environment);
   return {
     alias,
     harness,
     workspace,
     environment: sharedSessionPaneEnvironment(harness, home, environment, alias),
+    ...(harness === 'muse' ? { unsetEnvironment: MUSE_CREDENTIAL_OVERRIDES } : {}),
     harnessArguments: projectSelectionArguments(harness, claudePermissionArguments(harness, environment), selection),
     requiredArguments: selectionArguments(harness, selection),
     ...(pins === undefined ? {} : { command: pins.command, commandPins: pins }),
@@ -180,7 +194,7 @@ export function loadSharedSessionConfig(
   const home = environment.HOME ?? homedir();
   if (!isAbsolute(home)) throw new Error("HOME debe ser una ruta absoluta para la sesión compartida");
   const nativeId = environment[SHARED_SESSION_NATIVE_ID_ENV];
-  const selection = selectionFromEnvironment(harnessId, environment); const pins = commandPinsFromEnvironment(environment);
+  const selection = sharedSelection(harnessId, environment); const pins = commandPinsFromEnvironment(environment);
   if (nativeId !== undefined && nativeId !== "") {
     if (harnessId === "codex") {
       throw new Error(`${SHARED_SESSION_NATIVE_ID_ENV} no existe para codex: reanuda con resume --last`);
@@ -196,6 +210,7 @@ export function loadSharedSessionConfig(
     stateDirectory,
     configDirectory: harnessConfigDirectory(harnessId, home, environment, alias),
     paneEnvironment: sharedSessionPaneEnvironment(harnessId, home, environment, alias),
+    ...(harnessId === 'muse' ? { unsetEnvironment: MUSE_CREDENTIAL_OVERRIDES } : {}),
     harnessArguments: projectSelectionArguments(harnessId, claudePermissionArguments(harnessId, environment), selection),
     requiredArguments: selectionArguments(harnessId, selection),
     ...(pins === undefined ? {} : { command: pins.command, commandPins: pins }),

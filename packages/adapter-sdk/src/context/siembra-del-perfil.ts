@@ -437,6 +437,7 @@ export function directorioDelArnes(
     codexHome: entorno.CODEX_HOME,
     openclawWorkspace: entorno.CAUCE_OPENCLAW_WORKSPACE,
     museWorkspace: entorno.CAUCE_MUSE_WORKSPACE,
+    grokWorkspace: entorno.CAUCE_GROK_WORKSPACE,
   });
 }
 

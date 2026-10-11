@@ -1,5 +1,5 @@
 import { constants as fsConstants, type Dirent } from "node:fs";
-import { lstat, mkdir, open, readdir, realpath, symlink } from "node:fs/promises";
+import { lstat, open, readdir, realpath } from "node:fs/promises";
 import { basename, dirname, join, normalize } from "node:path";
 import { envelopeHasCorrelation, isEnvelopeText, stripJsonFence } from "./envelope.js";
 import { readJsonlSince } from "./rollout.js";
@@ -484,31 +484,4 @@ export function museTranscript(museData: string): TranscriptReader<MuseLogLine> 
     startedTurn: museStartedTurn,
     stdout: museStdout,
   };
-}
-
-/**
- * Re-creates `~/.config/muse` -> the alias's persistent login when it is missing.
- *
- * The login lives under `~/.local/share/cauce-v3/config/<alias>/.config/muse` (a mounted volume);
- * `~/.config` is NOT one, so re-flattening the container drops the link and the TUI would start
- * logged out. The headless bridge (muse-cauce) repairs it per turn; the shared TUI never goes
- * through it, so whoever creates the pane repairs it first. An existing entry is never touched.
- */
-export async function ensureMuseLoginLink(home: string, alias: string): Promise<"present" | "linked" | "absent"> {
-  const link = join(home, ".config", "muse");
-  const login = join(home, ".local", "share", "cauce-v3", "config", alias, ".config", "muse");
-  try {
-    await lstat(link);
-    return "present";
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") return "present";
-  }
-  try {
-    if (!(await lstat(login)).isDirectory()) return "absent";
-    await mkdir(dirname(link), { recursive: true });
-    await symlink(login, link);
-    return "linked";
-  } catch {
-    return "absent";
-  }
 }

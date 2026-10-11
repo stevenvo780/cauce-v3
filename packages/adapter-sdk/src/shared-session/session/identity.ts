@@ -16,7 +16,7 @@ import {
 } from "../types.js";
 import { signalAborted } from "../../runtime-state.js";
 import type { CommandPins } from '../../sdk/command-pins.js';
-import { selectedPaneArgumentsMatch } from './selection.js';
+import { selectedPaneArgumentsMatch, selectedPaneEnvironmentMatch } from './selection.js';
 
 export interface SharedSessionSpec {
   readonly commandPins?: CommandPins;
@@ -31,6 +31,7 @@ export interface SharedSessionSpec {
    * Environment variables applied to the panel startup command (`env K=V ...`).
    */
   readonly environment?: Readonly<Record<string, string>>;
+  readonly unsetEnvironment?: readonly string[];
   readonly harnessArguments?: readonly string[];
   /** Resume specification for a previous conversation if any. See `ResumeSpec`. */
   readonly resume?: ResumeSpec;
@@ -195,6 +196,8 @@ async function existingHarnessPane(
  * observed command is never included in errors: it may contain private arguments.
  */
 export function paneCommandMatches(spec: SharedSessionSpec, command: string): boolean {
+  if ((spec.harness === 'grok' || spec.harness === 'muse')
+    && !selectedPaneEnvironmentMatch(command, spec.environment, spec.unsetEnvironment)) return false;
   if (!selectedPaneArgumentsMatch(command, spec.commandPins?.command, spec.requiredArguments)) return false;
   const expected = executableName(spec.command ?? spec.harness);
   const others = SHARED_SESSION_HARNESSES.filter((harness) => harness !== spec.harness);

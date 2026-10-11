@@ -1,7 +1,7 @@
 import type { HarnessAdapterOptions } from "../contracts/harness.js";
 import { HttpEgressReceiptSource } from "../sdk/egress-receipt-source.js";
 import { readFileSync } from "node:fs";
-import { mkdir, realpath } from "node:fs/promises";
+import { realpath } from "node:fs/promises";
 import { join } from "node:path";
 import { AdapterClient } from "../sdk/client.js";
 import { bootstrapOnStartup } from "../sdk/bootstrap-runner.js";
@@ -27,7 +27,8 @@ import { correlationTimeoutFromEnvironment } from "../shared-session/paste-runne
 import { claudeTranscript } from "../shared-session/transcript.js";
 import { codexTranscript } from "../shared-session/rollout.js";
 import { grokTranscript } from "../shared-session/grok.js";
-import { ensureMuseLoginLink, museTranscript } from "../shared-session/muse.js";
+import { museTranscript } from "../shared-session/muse.js";
+import { prepareMuseProfile } from '../shared-session/muse-profile.js';
 import type { PasteSessionOptions } from "../shared-session/paste-runner/contracts.js";
 import { loadSharedSessionConfig, type SharedSessionConfig } from "../shared-session/config.js";
 import { exactConversationIsSecure, sharedSessionResume } from "../shared-session/resume.js";
@@ -161,8 +162,7 @@ export async function sharedSessionRunner(
   let shared = configured;
   if (configured.harness !== "codex") {
     try {
-      // Muse's data dir is the alias's own; on the first start nothing has created it yet.
-      if (configured.harness === "muse") await mkdir(configured.configDirectory, { recursive: true, mode: 0o700 });
+      if (configured.harness === "muse") await prepareMuseProfile(configured.paneEnvironment);
       shared = { ...configured,
         configDirectory: await realpath(configured.configDirectory),
         workspace: await realpath(configured.workspace) };
@@ -173,10 +173,6 @@ export async function sharedSessionRunner(
         "La terminal canónica no pudo acreditarse; el consumidor no aceptará pedidos hasta recuperar su binding",
         false);
     }
-  }
-  if (shared.harness === "muse" && await ensureMuseLoginLink(shared.home, shared.alias) === "linked") {
-    logger({ event: "shared_session_resume", alias: shared.alias,
-      error_message: "se repuso el enlace ~/.config/muse al login persistente del alias" });
   }
   if (shared.nativeId !== undefined && shared.harness !== "codex") {
     await seedCanonicalConversation(shared, shared.harness, shared.nativeId, logger);
@@ -200,6 +196,7 @@ export async function sharedSessionRunner(
     harness: shared.harness,
     workspace: shared.workspace,
     environment: shared.paneEnvironment,
+    ...(shared.unsetEnvironment === undefined ? {} : { unsetEnvironment: shared.unsetEnvironment }),
     harnessArguments: shared.harnessArguments,
     ...(shared.command === undefined ? {} : { command: shared.command }),
     ...(shared.commandPins === undefined ? {} : { commandPins: shared.commandPins }),

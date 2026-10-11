@@ -1,3 +1,5 @@
+import { paneEnvironmentPrefix, shellQuote } from './pane-environment.js';
+export { paneEnvironmentPrefix } from './pane-environment.js';
 import { randomBytes } from "node:crypto";
 import { signalAborted } from "../runtime-state.js";
 import { assertCommandPins } from '../sdk/command-pins.js';
@@ -502,26 +504,6 @@ async function startTui(
 /**
  * The `env K=V …` prefix that sets the pane's environment, already escaped for `bash -lc`.
  */
-export function paneEnvironmentPrefix(
-  environment: Readonly<Record<string, string>> | undefined,
-): { ok: true; prefix: string } | { ok: false; detail: string } {
-  const entries = Object.entries(environment ?? {});
-  if (entries.length === 0) return { ok: true, prefix: "" };
-  const parts: string[] = [];
-  for (const [name, value] of entries) {
-    if (!/^[A-Za-z_][A-Za-z0-9_]*$/u.test(name)) {
-      return { ok: false, detail: `nombre de variable inválido para la sesión compartida: ${name}` };
-    }
-    parts.push(`${name}=${shellQuote(value)}`);
-  }
-  return { ok: true, prefix: `env ${parts.join(" ")} ` };
-}
-
-/** Single quotes, which on POSIX interpret NOTHING. The value never touches the shell parser. */
-function shellQuote(value: string): string {
-  return `'${value.replace(/'/gu, "'\\''")}'`;
-}
-
 export function resumeArgumentSuffix(
   args: readonly string[] | undefined,
 ): { ok: true; suffix: string } | { ok: false; detail: string } {
@@ -572,7 +554,7 @@ async function createSession(
   if (signalAborted(options.signal)) {
     return { ok: false, created: false, cancelled: true, detail: "preflight cancelado" };
   }
-  const environment = paneEnvironmentPrefix(spec.environment);
+  const environment = paneEnvironmentPrefix(spec.environment, spec.unsetEnvironment);
   if (!environment.ok) {
     return {
       ok: false, created: false, failure: "session_absent", detail: environment.detail,

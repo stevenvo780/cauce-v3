@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { lstat, mkdir, readlink } from "node:fs/promises";
+import { lstat } from "node:fs/promises";
+import { sharedSessionRunner } from "../src/bin/shared.js";
 import { join } from "node:path";
 import test from "node:test";
 import { parseMuseOutput } from "../src/sdk/output-parser.js";
@@ -9,7 +10,6 @@ import {
   museReasoningEffort,
 } from "../src/shared-session/config.js";
 import {
-  ensureMuseLoginLink,
   museConversationHistoryState,
   museSessionFiles,
   museSessionIsSecure,
@@ -91,14 +91,14 @@ test("muse: SHARED_SESSION=1 usa un XDG_DATA_HOME propio del alias, esfuerzo max
   const config = loadSharedSessionConfig("muse", "hegel", "/state/hegel", {
     CAUCE_SHARED_SESSION: "1", HOME: "/home/dev",
   });
-  const dataHome = "/home/dev/.local/share/cauce-v3/config/hegel/.local/share";
+  const dataHome = "/home/dev/.local/share/cauce-v3/config/hegel/data";
   assert.equal(config?.configDirectory, `${dataHome}/muse`);
-  assert.deepEqual(config.paneEnvironment, { XDG_DATA_HOME: dataHome });
+  assert.deepEqual(config.paneEnvironment, { XDG_CONFIG_HOME: "/home/dev/.local/share/cauce-v3/config/hegel/config", XDG_DATA_HOME: dataHome, MUSE_NO_AUTO_UPDATE: "1" });
   assert.deepEqual(config.harnessArguments, ["--yolo", "--trust-workspace", "--reasoning-effort", "max"]);
   assert.equal(museReasoningEffort({ MUSE_REASONING_EFFORT: "xhigh" }), "xhigh");
   assert.throws(() => museReasoningEffort({ MUSE_REASONING_EFFORT: "turbo" }));
-  assert.equal(harnessConfigDirectory("muse", "/home/dev", { CAUCE_MUSE_DATA_HOME: "/datos/muse" }, "hegel"),
-    "/datos/muse/muse");
+  assert.equal(harnessConfigDirectory("muse", "/home/dev", { XDG_CONFIG_HOME: "/datos/config", XDG_DATA_HOME: "/datos/data" }, "hegel"),
+    "/datos/data/muse");
   assert.throws(() => harnessConfigDirectory("muse", "/home/dev", {}), /alias/u);
 });
 
@@ -221,15 +221,13 @@ test("muse: reanuda EXACTO por el puntero y sin puntero con historia se bloquea"
     { state: "launch", args: [], resumed: false });
 });
 
-test("muse: repone el enlace ~/.config/muse al login del alias y nunca pisa uno existente", async () => {
-  const { home } = await freshState("muse-enlace");
-  assert.equal(await ensureMuseLoginLink(home, "hegel"), "absent", "sin login persistente no inventa nada");
-  const login = join(home, ".local", "share", "cauce-v3", "config", "hegel", ".config", "muse");
-  await mkdir(login, { recursive: true });
-  assert.equal(await ensureMuseLoginLink(home, "hegel"), "linked");
-  assert.equal(await readlink(join(home, ".config", "muse")), login);
-  assert.ok((await lstat(join(home, ".config", "muse"))).isSymbolicLink());
-  assert.equal(await ensureMuseLoginLink(home, "hegel"), "present");
+test("muse: el runner usa un perfil dedicado sin crear enlaces al login legacy", async () => {
+  const { state, home, workspace } = await freshState("muse-isolated-profile");
+  const configured = loadSharedSessionConfig("muse", "hegel", state, {
+    HOME: home, CAUCE_SHARED_SESSION: "1", CAUCE_SHARED_SESSION_WORKSPACE: workspace,
+  });
+  assert.ok(configured); await sharedSessionRunner(configured, () => undefined);
+  await assert.rejects(lstat(join(home, ".config", "muse")), { code: "ENOENT" });
 });
 
 test("muse: el turno del bus entra por la caja de la TUI y la respuesta sale de session.jsonl", async () => {
