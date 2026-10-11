@@ -18,7 +18,7 @@ FIELDS = {'provider_id', 'method_id', 'version', 'auth_list_source', 'auth_list_
 
 
 def validate_definition(value: dict, provider: str) -> None:
-    from fleet_executor_policy import path
+    from fleet_policy_paths import path
     if not isinstance(value, dict) or set(value) != FIELDS or provider != 'codex' \
             or value['provider_id'] != 'openai' or value['method_id'] not in {'oauth', 'device-code'} \
             or value['version'] != VERSION or value['auth_list_sha256'] != AUTH_LIST_SHA256:
@@ -58,11 +58,13 @@ def profile_id(account: str) -> str:
 
 
 def owned_directory(value: pathlib.Path, *, create: bool = False) -> int:
-    from fleet_executor_policy import path
-    from secure_path import open_absolute_directory
+    from fleet_executor_view import open_directory
+    from fleet_policy_paths import path
     path(str(value))
+    if value == pathlib.Path('/') or create and value.parent == pathlib.Path('/'):
+        raise ValueError
     if create:
-        parent = open_absolute_directory(value.parent)
+        parent = open_directory(value.parent)
         try:
             try:
                 os.mkdir(value.name, 0o700, dir_fd=parent)
@@ -70,7 +72,7 @@ def owned_directory(value: pathlib.Path, *, create: bool = False) -> int:
                 pass
         finally:
             os.close(parent)
-    descriptor = open_absolute_directory(value)
+    descriptor = open_directory(value)
     details = os.fstat(descriptor)
     if details.st_uid != os.geteuid() or details.st_mode & 0o077:
         os.close(descriptor)

@@ -14,7 +14,7 @@ def login_command(binding: dict) -> list[str]:
 
 
 def execution_arguments(agent: dict, prompt_file: str) -> list[str]:
-    from fleet_executor_policy import path
+    from fleet_policy_paths import path
     validate_provider_selection(agent, 'grok', frozenset())
     return ['--prompt-file', str(path(prompt_file)), '--output-format', 'json', '--verbatim',
             '--no-subagents', '--disable-web-search', '--tools', '', '--max-turns', '1',

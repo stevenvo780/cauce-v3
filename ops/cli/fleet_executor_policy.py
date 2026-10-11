@@ -12,12 +12,9 @@ import uuid
 from urllib.parse import urlsplit
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / 'scripts'))
+from fleet_policy_paths import SafeFailure, path
 from fleet_runtime_materialization import external_directory
 from secure_path import open_absolute_directory, open_regular_at
-
-
-class SafeFailure(ValueError):
-    pass
 
 
 def digest(path: pathlib.Path) -> str:
@@ -36,13 +33,6 @@ def digest(path: pathlib.Path) -> str:
             os.close(descriptor)
     finally:
         os.close(parent)
-
-
-def path(value) -> pathlib.Path:
-    if not isinstance(value, str) or not value.startswith('/') or str(pathlib.PurePosixPath(value)) != value \
-            or '..' in pathlib.PurePosixPath(value).parts or any(ord(character) < 32 for character in value):
-        raise SafeFailure('noncanonical policy path')
-    return pathlib.Path(value)
 
 
 def private_directory(value) -> pathlib.Path:

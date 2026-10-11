@@ -17,7 +17,7 @@ class ProviderProofError(ValueError):
 
 
 def validate_provider_binding(binding: dict, agent: dict, provider: str) -> pathlib.Path:
-    from fleet_executor_policy import path
+    from fleet_policy_paths import path
     if not isinstance(binding, dict) or binding.get('provider') != provider or agent.get('harness_id') != provider \
             or binding.get('runtime_user') != agent.get('runtime_user') or 'openclaw' in binding \
             or ('muse' in binding) != (provider == 'muse'):

@@ -8,7 +8,7 @@ EFFORTS = frozenset({'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max',
 
 
 def validate_definition(value: dict, provider: str) -> None:
-    from fleet_executor_policy import path
+    from fleet_policy_paths import path
     if provider != 'muse' or not isinstance(value, dict) or set(value) != {'bridge', 'bridge_sha256'} \
             or not isinstance(value['bridge_sha256'], str) or re.fullmatch(r'[a-f0-9]{64}', value['bridge_sha256']) is None:
         raise ValueError('Muse bridge has no exact approved definition')
@@ -28,7 +28,7 @@ def login_command(binding: dict) -> list[str]:
 
 
 def execution_arguments(agent: dict, prompt_file: str) -> list[str]:
-    from fleet_executor_policy import path
+    from fleet_policy_paths import path
     validate_provider_selection(agent, 'muse', EFFORTS)
     return ['exec', '--json', '--provider', 'meta', '--prompt-file', str(path(prompt_file)),
             '--disable-web-tools', '--disable-reminders', '--no-foreign-personal-context', '--no-session-log',
