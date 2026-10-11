@@ -44,6 +44,7 @@ export interface ProviderAuthReservation {
 }
 export interface ProviderAuthDependencies {
   authorize(actor: ProviderAuthActor, request: ProviderAuthRequest): Promise<void>;
+  expiration?(actor: ProviderAuthActor, request: ProviderAuthRequest, maximum: string): Promise<string>;
   reserve(actor: ProviderAuthActor, request: ProviderAuthRequest, sessionId: string, expiresAt: string): Promise<ProviderAuthReservation>;
   audit(metadata: { actor_subject: string; session_id: string; operation_id: string; status: ProviderAuthStatus; error: ProviderAuthCode | null }): Promise<void>;
 }

@@ -48,6 +48,7 @@ export interface ConsolePasswordAuthState {
   authenticated: boolean;
   login_mode: LoginMode;
   subject?: string;
+  home_tenant?: string;
   name?: string;
   roles?: readonly string[];
   permissions?: readonly string[];
@@ -357,6 +358,7 @@ export class PasswordAuthProvider implements AuthProvider {
       authenticated: true,
       login_mode: 'password',
       subject: user.email,
+      home_tenant: user.tenant_id,
       name: user.display_name,
       roles: ceiling.roles,
       permissions: ceiling.permissions,
@@ -539,7 +541,7 @@ export function registerPasswordAuth(app: FastifyInstance, provider: PasswordAut
     // nor needs one, and requiring it would leave it unable to publish anything.
     const path = routedPath(request.url);
     if (!path.startsWith('/v3/') || !isUnsafe(request.method)) return;
-    if (path === '/v3/auth/login') return;
+    if (path === '/v3/auth/login' || path === '/v3/auth/register') return;
     if (!provider.handles(request)) return;
     try {
       await provider.requireCsrf(request);

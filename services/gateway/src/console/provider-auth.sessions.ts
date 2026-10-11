@@ -60,13 +60,21 @@ export class ProviderAuthManager {
     if (this.cohorts.has(cohort)) throw new ProviderAuthError('SESSION_CONFLICT');
     this.cohorts.add(cohort);
     const id = randomUUID();
+    const maximumExpiration = new Date(Date.now() + this.ttlMs).toISOString();
+    let expiresAt: string;
+    try { expiresAt = await this.dependencies.expiration?.(actor, request, maximumExpiration) ?? maximumExpiration; }
+    catch (error) { this.cohorts.delete(cohort); throw error; }
+    const lifetime = Date.parse(expiresAt) - Date.now();
+    if (!Number.isFinite(lifetime) || lifetime <= 0 || Date.parse(expiresAt) > Date.parse(maximumExpiration)) {
+      this.cohorts.delete(cohort); throw new ProviderAuthError('SESSION_EXPIRED');
+    }
     const session: Session = { actor: { ...actor }, request, cohort, abort: new AbortController(), reservation: undefined,
       login: undefined, unsubscribe: undefined, timer: undefined, revalidation: undefined, closing: undefined, connected: false, initializing: true,
       snapshot: { session_id: id, operation_id: request.operation_id, provider_id: request.provider_id,
         account_id: request.account_id, harness_id: request.harness_id, host_id: request.host_id, runtime_user: request.runtime_user, profile_id: request.profile_id,
-        method: 'device', status: 'opening', expires_at: new Date(Date.now() + this.ttlMs).toISOString(), cleanup_pending: false, error: null } };
+        method: 'device', status: 'opening', expires_at: expiresAt, cleanup_pending: false, error: null } };
     this.sessions.set(id, session);
-    session.timer = setTimeout(() => { void this.finish(session, 'expired', 'SESSION_EXPIRED'); }, this.ttlMs);
+    session.timer = setTimeout(() => { void this.finish(session, 'expired', 'SESSION_EXPIRED'); }, lifetime);
     session.timer.unref();
     try {
       session.reservation = await this.dependencies.reserve(actor, request, id, session.snapshot.expires_at);

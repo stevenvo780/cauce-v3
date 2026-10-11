@@ -31,6 +31,24 @@ function fixture(options: { stopped?: boolean; loginStopped?: boolean; identity?
 afterEach(() => { vi.useRealTimers(); });
 
 describe('sensitive provider bootstrap', () => {
+  it('releases the cohort if expiry resolution fails and accepts a later valid retry', async () => {
+    const f = fixture();
+    f.deps.expiration = async () => { throw new Error('authority changed while resolving expiry'); };
+    await expect(f.manager.start(actor, input)).rejects.toThrow('authority changed');
+    f.deps.expiration = async (_actor, _request, maximum) => maximum;
+    const session = await f.manager.start(actor, input);
+    expect(session.status).toBe('awaiting_login');
+    await f.manager.cancel(actor, session.session_id);
+  });
+  it('caps the session lifetime to the underlying authentication deadline', async () => {
+    vi.useFakeTimers();
+    const f = fixture(); const deadline = new Date(Date.now() + 600).toISOString();
+    f.deps.expiration = async () => deadline;
+    const session = await f.manager.start(actor, input);
+    expect(session.expires_at).toBe(deadline);
+    await vi.advanceTimersByTimeAsync(601);
+    expect(await f.manager.get(actor, session.session_id)).toMatchObject({ status: 'expired', error: 'SESSION_EXPIRED' });
+  });
   it('opens without an agent or routing admission and starts only when its exclusive channel attaches', async () => {
     const f = fixture(); const session = await f.manager.start(actor, input);
     expect(session).toMatchObject({ status: 'awaiting_login', method: 'device', operation_id: input.operation_id });
