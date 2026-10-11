@@ -1,7 +1,7 @@
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
-import { AgentProfileRepository, FleetOperationError, loadFleetHostScope, planFleetHostSlices, preparedState, providerAccountConsentSql, withTransaction,
-  type DatabaseClient, type DatabasePool, type FleetOperationRow, type StoredAgentContext } from '@cauce/store';
+import { AgentProfileRepository, FleetOperationError, assertFleetOperationAuthority, loadFleetHostScope, planFleetHostSlices, preparedState,
+  providerAccountConsentSql, withTransaction, type DatabaseClient, type DatabasePool, type FleetOperationRow, type StoredAgentContext } from '@cauce/store';
 import {
   BootstrapAckSchema, BootstrapCreateSchema, BootstrapError, BootstrapRecordSchema, bootstrapPrompt,
   type BootstrapAck, type BootstrapCreate, type BootstrapDescriptor, type BootstrapIdentity,
@@ -33,26 +33,10 @@ export class BootstrapRepository {
         || operation.target.alias !== identity.alias || !['create', 'update', 'start', 'restore'].includes(operation.kind)) throw forbidden();
     if (!state && (operation.status !== 'running' || operation.cancel_requested || !operation.worker_live
         || !operation.worker_id || !operation.claim_token)) throw conflict();
-    const origin = (await client.query<{ subject: string }>(`SELECT metadata->>'actor_subject' AS subject
-      FROM fleet_operation_events WHERE operation_id=$1 AND event='queued' ORDER BY id LIMIT 1`, [operationId])).rows[0];
-    const match = /^console:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/u.exec(origin?.subject ?? '');
-    if (!match) throw forbidden();
-    const human = await client.query(`SELECT 1 FROM console_users person
-      JOIN human_tenant_memberships human ON human.human_id=person.id AND human.tenant_id=person.tenant_id AND human.actor_alias=person.alias
-      JOIN memberships member ON member.tenant_id=person.tenant_id AND member.alias=person.alias
-      JOIN agents actor ON actor.tenant_id=member.tenant_id AND actor.alias=member.alias
-      JOIN tenants tenant ON tenant.id=member.tenant_id JOIN rooms room ON room.id=member.room_id AND room.tenant_id=member.tenant_id
-      JOIN role_policies policy ON policy.role=member.role
-      WHERE person.id=$1 AND person.active AND person.role='operator' AND person.tenant_id=$2 AND person.alias=$3
-        AND human.enabled AND human.revoked_at IS NULL AND human.role='operator' AND 'control'=ANY(human.permissions)
-        AND member.enabled AND tenant.enabled AND room.enabled AND policy.allow_control AND actor.retired_at IS NULL
-        AND member.retired_at IS NULL AND tenant.retired_at IS NULL AND room.retired_at IS NULL
-        AND ($4=person.tenant_id OR tenant.is_hub)
-      FOR SHARE OF person,human,member,actor,tenant,room,policy`, [match[1], operation.actor_tenant, operation.actor_alias, identity.tenant_id]);
-    if (!human.rowCount) throw forbidden();
-    if (identity.tenant_id !== operation.actor_tenant && !(await client.query(`SELECT 1 FROM acl_edges
-      WHERE from_tenant=$1 AND to_tenant=$2 AND enabled AND allow_control AND to_jsonb(acl_edges)->>'retired_at' IS NULL FOR SHARE`,
-    [operation.actor_tenant, identity.tenant_id])).rowCount) throw forbidden();
+    // The bootstrap acts for the person who queued the operation, with the authority that person still holds.
+    try { await assertFleetOperationAuthority(client, operation); }
+    catch (error) { if (error instanceof FleetOperationError) throw forbidden(); throw error; }
+    if (!operation.actor_subject?.startsWith('console:')) throw forbidden();
     const agent = (await client.query<Agent>(`SELECT agent.* FROM agents agent JOIN tenants tenant ON tenant.id=agent.tenant_id
       JOIN harness_definitions harness ON harness.id=agent.harness_id
       JOIN provider_accounts account ON account.id=agent.primary_account_id

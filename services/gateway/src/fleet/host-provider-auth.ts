@@ -133,6 +133,9 @@ async function activeExecution(client: DatabaseClient, scope: ProviderAuthPhysic
   const row = await operation(client, scope, true);
   await lockFleetRevision(client, Number(row.desired_revision ?? row.expected_revision));
   await assertFleetOperationAuthority(client, row);
+  // This computer logs in accounts only for operations of the company that owns it.
+  if (!(await client.query(`SELECT 1 FROM fleet_hosts host JOIN fleet_operations operation ON operation.company_id=host.company_id
+    WHERE host.host_id=$1 AND operation.id=$2`, [scope.host_id, row.id])).rowCount) throw denied();
   const reservation = (await client.query<{ state: string; expires: string }>(`SELECT metadata->'provider_auth'->>'state' AS state,
     metadata->'provider_auth'->>'expires_at' AS expires FROM fleet_operation_events
     WHERE operation_id=$1 AND metadata ? 'provider_auth' ORDER BY id DESC LIMIT 1`, [row.id])).rows[0];

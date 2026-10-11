@@ -48,26 +48,30 @@ export class FleetExecutor {
     const shutdown = () => { abort.abort(); };
     this.options.signal?.addEventListener('abort', shutdown, { once: true });
     if (this.options.signal?.aborted) abort.abort();
-    let renewing = false;
+    let renewing: Promise<void> | undefined;
+    let stopping = false;
     const heartbeat = setInterval(() => {
-      if (renewing) return;
-      renewing = true;
-      void this.repository.renew(claim, leaseMs).then((valid) => {
+      if (renewing || stopping) return;
+      renewing = this.repository.renew(claim, leaseMs).then((valid) => {
         if (!valid) abort.abort();
-      }).catch(() => { abort.abort(); }).finally(() => { renewing = false; });
+      }).catch(() => { abort.abort(); }).finally(() => { renewing = undefined; });
     }, Math.max(250, Math.floor(leaseMs / 3)));
     heartbeat.unref();
     let step: FleetStepName | undefined;
     try {
       if (isAborted()) return true;
       let execution = await this.repository.execution(claim);
+      if (isAborted()) return true;
       if (execution.operation.status !== 'cancelling') {
         await this.repository.prepare(claim);
+        if (isAborted()) return true;
         execution = await this.repository.execution(claim);
+        if (isAborted()) return true;
       }
       for (;;) {
         if (isAborted()) return true;
         execution = await this.repository.execution(claim);
+        if (isAborted()) return true;
         if (execution.operation.status === 'cancelling') {
           const evidence = this.options.compensate === undefined ? {} : await this.options.compensate(execution, abort.signal, claim);
           if (isAborted()) return true;
@@ -78,7 +82,9 @@ export class FleetExecutor {
         if (!next) break;
         step = next.name;
         await this.repository.startStep(claim, step);
+        if (isAborted()) return true;
         execution = await this.repository.execution(claim);
+        if (isAborted()) return true;
         if (execution.operation.status === 'cancelling') continue;
         const result = await this.options.perform(step, execution, abort.signal, claim);
         if (isAborted()) return true;
@@ -93,6 +99,7 @@ export class FleetExecutor {
         }
         await this.repository.completeStep(claim, step, FleetEvidenceSchema.parse(result.evidence));
       }
+      if (isAborted()) return true;
       await this.repository.settle(claim);
     } catch (caught) {
       if (!abort.signal.aborted) {
@@ -102,8 +109,9 @@ export class FleetExecutor {
         try { await this.repository.fail(claim, error); } catch { /* A replaced claim cannot settle the operation. */ }
       }
     } finally {
-      abort.abort(); clearInterval(heartbeat);
+      stopping = true; abort.abort(); clearInterval(heartbeat);
       this.options.signal?.removeEventListener('abort', shutdown);
+      await renewing;
     }
     return true;
   }

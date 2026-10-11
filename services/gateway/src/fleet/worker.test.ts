@@ -34,6 +34,18 @@ function deferred<T>() {
 }
 afterEach(() => { vi.useRealTimers(); });
 describe('fleet host worker lifecycle', () => {
+  it('shares one serialized loop and alternates quota work with fleet work', async () => {
+    const { repository } = fixture(); repository.claim.mockResolvedValue(null);
+    const quota = vi.fn(async () => true);
+    const worker = new FleetHostWorker(repository, { worker: 'worker', host: 'isolated',
+      runQuotaOnce: quota, perform: async () => ({ evidence: {} }) });
+    expect(await worker.runOnce()).toBe(true);
+    expect(repository.claim).not.toHaveBeenCalled();
+    expect(await worker.runOnce()).toBe(true);
+    expect(repository.claim).toHaveBeenCalledTimes(1);
+    await worker.shutdown();
+    expect(await worker.runOnce()).toBe(false); expect(quota).toHaveBeenCalledTimes(2);
+  });
   it('serializes concurrent runOnce calls and waits for the aborted physical effect at shutdown', async () => {
     const { repository } = fixture();
     const started = deferred<AbortSignal>(); const finished = deferred<undefined>();

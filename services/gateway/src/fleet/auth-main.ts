@@ -8,7 +8,7 @@ import { createFleetAuthDatabasePool } from './fleet-database.js';
 
 export async function runFleetAuthHost(environment: NodeJS.ProcessEnv = process.env): Promise<void> {
   const config = readFleetHostConfig(environment);
-  if (!config.auth || config.controllerFile !== undefined) throw new Error('Fleet authentication host configuration is invalid');
+  if (!config.auth || config.controllerFile !== undefined || config.databaseFile === undefined) throw new Error('Fleet authentication host configuration is invalid');
   const databaseUrl = await readFleetHostDatabaseUrl(config.databaseFile);
   const pool = createFleetAuthDatabasePool(databaseUrl, environment);
   let service: ProviderAuthService | undefined;

@@ -14,6 +14,14 @@ async function secret(body = 'postgresql://worker:synthetic-private-secret@127.0
   const file = join(temporary, 'database-url'); await writeFile(file, body, { mode: 0o600 }); return file;
 }
 describe('fleet host process configuration', () => {
+  it('enrolled hosts use a private identity and cannot also acquire database or controller credentials', () => {
+    const { CAUCE_FLEET_DATABASE_URL_FILE: _unused, ...withoutDatabase } = configured;
+    const enrolled = { ...withoutDatabase, CAUCE_FLEET_IDENTITY_DIRECTORY: '/home/dev/.local/state/cauce-v3/hosts/company/host' };
+    const config = readFleetHostConfig(enrolled);
+    expect(config.databaseFile).toBeUndefined(); expect(config.identityDirectory).toBe(enrolled.CAUCE_FLEET_IDENTITY_DIRECTORY);
+    expect(() => readFleetHostConfig({ ...enrolled, CAUCE_FLEET_DATABASE_URL_FILE: configured.CAUCE_FLEET_DATABASE_URL_FILE })).toThrow('configuration is invalid');
+    expect(() => readFleetHostConfig({ ...enrolled, CAUCE_FLEET_CONTROLLER_FILE: '/run/private/controller.json' })).toThrow('configuration is invalid');
+  });
   it('requires both auth paths and validates the optional socket group', () => {
     const auth = { CAUCE_FLEET_API_SOCKET: '/run/cauce-fleet/auth.sock', CAUCE_FLEET_AUTH_POLICY_FILE: '/run/private/auth-policy.json' };
     expect(readFleetHostConfig({ ...configured, ...auth, CAUCE_FLEET_API_GROUP_GID: '1000' }).auth).toEqual({

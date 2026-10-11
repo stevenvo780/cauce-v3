@@ -74,8 +74,12 @@ export function createFleetProviderAuthRouter(pool: DatabasePool, options: Fleet
   const session = async (actor: ProviderAuthActor, id: string): Promise<SessionScope> => {
     actorValid(actor); if (!ProviderAuthSessionIdSchema.safeParse(id).success) throw new ProviderAuthError('INVALID_REQUEST');
     return withTransaction(pool, async client => {
-      const rows = (await client.query<{ operation_id: string; metadata: unknown }>(`SELECT operation_id,metadata FROM fleet_operation_events
-        WHERE metadata->'provider_auth'->>'session_id'=$1 OR metadata->'provider_auth_status'->>'session_id'=$1 ORDER BY id`, [id])).rows;
+      // A login session is looked up only among the operations of the actor's company.
+      const rows = (await client.query<{ operation_id: string; metadata: unknown }>(`SELECT event.operation_id,event.metadata
+        FROM fleet_operation_events event JOIN fleet_operations operation ON operation.id=event.operation_id
+        JOIN tenants actor ON actor.id=$2 AND actor.company_id=operation.company_id
+        WHERE (event.metadata->'provider_auth'->>'session_id'=$1 OR event.metadata->'provider_auth_status'->>'session_id'=$1)
+        ORDER BY event.id`, [id, actor.tenant_id])).rows;
       const origin = reservations(rows, id);
       if (origin.reservation.actor_subject !== actor.subject) throw denied();
       const value = await loadProviderAuthRoutingScope(client, actor, origin.operation_id);

@@ -17,11 +17,12 @@ import { guardFleetTransport } from './host-availability.js';
 import { createLegacyAdoptionProbe } from './legacy-adoption-probe.js';
 import { startLegacyAdoptionBridge } from './adoption-bridge-server.js';
 import { drainLegacyFleetTransaction } from './adoption-drain.js';
+import { runEnrolledFleetHost } from './enrolled-main.js';
 
 const CONTROLLER_HEARTBEAT_MS = 30_000;
 
 export interface FleetHostConfig {
-  projectRoot: string; databaseFile: string; host: string; worker: string; command: HostCommandConfig;
+  projectRoot: string; databaseFile?: string; identityDirectory?: string; host: string; worker: string; command: HostCommandConfig;
   pollMs: number; leaseMs: number;
   auth?: { socket: string; policyFile: string; groupGid?: number };
   controllerFile?: string;
@@ -46,7 +47,12 @@ export function readFleetHostConfig(environment: NodeJS.ProcessEnv): FleetHostCo
       groupGid: integer(environment.CAUCE_FLEET_API_GROUP_GID, 0, 1, 2_147_483_647),
     }) } : undefined;
   if (!hasAuth && environment.CAUCE_FLEET_API_GROUP_GID !== undefined) throw invalid();
-  return { projectRoot: path(environment.CAUCE_FLEET_PROJECT_ROOT), databaseFile: path(environment.CAUCE_FLEET_DATABASE_URL_FILE), host, worker,
+  const identityDirectory = environment.CAUCE_FLEET_IDENTITY_DIRECTORY;
+  if (identityDirectory !== undefined && (environment.CAUCE_FLEET_DATABASE_URL_FILE !== undefined || hasAuth
+      || environment.CAUCE_FLEET_CONTROLLER_FILE !== undefined)) throw invalid();
+  return { projectRoot: path(environment.CAUCE_FLEET_PROJECT_ROOT), host, worker,
+    ...(identityDirectory === undefined ? { databaseFile: path(environment.CAUCE_FLEET_DATABASE_URL_FILE) }
+      : { identityDirectory: path(identityDirectory) }),
     command: { python: path(environment.CAUCE_FLEET_PYTHON), executable: path(environment.CAUCE_FLEET_EXECUTABLE),
       policyFile: path(environment.CAUCE_FLEET_POLICY_FILE), timeoutMs: integer(environment.CAUCE_FLEET_COMMAND_TIMEOUT_MS, 60_000, 1, 300_000) },
     pollMs: integer(environment.CAUCE_FLEET_POLL_MS, 1000, 25, 60_000), leaseMs: integer(environment.CAUCE_FLEET_LEASE_MS, 30_000, 1000, 300_000),
@@ -71,6 +77,8 @@ export async function readFleetHostDatabaseUrl(filename: string): Promise<string
 }
 export async function runFleetHost(environment: NodeJS.ProcessEnv = process.env): Promise<void> {
   const config = readFleetHostConfig(environment);
+  if (config.identityDirectory !== undefined) { await runEnrolledFleetHost(config); return; }
+  if (config.databaseFile === undefined) throw invalid();
   const databaseUrl = await readFleetHostDatabaseUrl(config.databaseFile);
   const controller = config.controllerFile === undefined ? undefined : await readFleetControllerConfig(config.controllerFile, config.host);
   let snapshotQuery: string;

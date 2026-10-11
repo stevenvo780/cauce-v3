@@ -2,6 +2,7 @@ import { FleetExecutor, type FleetExecutionRepository, type FleetExecutorOptions
 
 export interface FleetHostWorkerOptions extends Omit<FleetExecutorOptions, 'signal'> {
   pollMs?: number;
+  runQuotaOnce?(signal: AbortSignal): Promise<boolean>;
   onError?(): void;
 }
 export class FleetHostWorker {
@@ -10,6 +11,7 @@ export class FleetHostWorker {
   private readonly pollMs: number;
   private active: Promise<boolean> | undefined;
   private loop: Promise<void> | undefined;
+  private quotaTurn = false;
   constructor(repository: FleetExecutionRepository, private readonly options: FleetHostWorkerOptions) {
     this.pollMs = options.pollMs ?? 1000;
     if (!Number.isSafeInteger(this.pollMs) || this.pollMs < 25 || this.pollMs > 60_000) throw new Error('Fleet host poll interval is invalid');
@@ -17,8 +19,17 @@ export class FleetHostWorker {
   }
   runOnce(): Promise<boolean> {
     if (this.abort.signal.aborted) return Promise.resolve(false);
-    this.active ??= this.executor.runOnce().finally(() => { this.active = undefined; });
+    this.active ??= this.runTurn().finally(() => { this.active = undefined; });
     return this.active;
+  }
+  private async runTurn(): Promise<boolean> {
+    if (this.options.runQuotaOnce) {
+      this.quotaTurn = !this.quotaTurn;
+      if (this.quotaTurn && await this.options.runQuotaOnce(this.abort.signal)) return true;
+    }
+    if (await this.executor.runOnce()) return true;
+    return !this.abort.signal.aborted && this.options.runQuotaOnce !== undefined
+      ? this.options.runQuotaOnce(this.abort.signal) : false;
   }
   start(): Promise<void> { this.loop ??= this.runLoop(); return this.loop; }
   async shutdown(): Promise<void> {

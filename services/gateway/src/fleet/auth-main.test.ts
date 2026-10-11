@@ -10,6 +10,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import { FleetOperationsRepository } from '@cauce/store';
 import { startTestCaseDatabase, startTestDatabase, type EmptyTestDatabase, type TestDatabase } from '../../../../tests/helpers/postgres.js';
 import { runFleetAuthHost } from './auth-main.js';
+import { seedFleetHuman } from '../../../../packages/store/test/fleet-human-postgres.fixtures.js';
 
 const root = resolve(import.meta.dirname, '../../../..');
 let database: TestDatabase; let current: EmptyTestDatabase; let directory: string;
@@ -60,10 +61,12 @@ async function launch() {
 describe('real authentication host lifecycle without a fleet worker', () => {
   it.each(['SIGTERM', 'SIGINT'] as const)('serves a private bridge and drains PostgreSQL on %s without claiming queued work', async signal => {
     await current.pool.query("INSERT INTO rooms(id,tenant_id) VALUES('auth-control','Steven'),('auth-queued','Isa')");
+    await current.pool.query("INSERT INTO agents(tenant_id,alias) VALUES('Steven','auth_operator')");
     await current.pool.query("INSERT INTO memberships(tenant_id,room_id,alias,role) VALUES('Steven','auth-control','auth_operator','operator')");
+    const subject=await seedFleetHuman(current.adminPool,'Steven','auth_operator');
     const revision = Number((await current.pool.query<{ revision: string }>('SELECT COALESCE(MAX(id),0)::text AS revision FROM config_revisions')).rows[0]?.revision);
     const operation = await new FleetOperationsRepository(current.pool, { controllerHost: 'server' }).enqueue('Steven', 'auth_operator', {
-      kind: 'retire', target: { resource: 'room', tenant_id: 'Isa', room_id: 'auth-queued' }, parameters: {}, expected_revision: revision, idempotency_key: 'auth-no-claim' });
+      kind: 'retire', target: { resource: 'room', tenant_id: 'Isa', room_id: 'auth-queued' }, parameters: {}, expected_revision: revision, idempotency_key: 'auth-no-claim' },subject);
     await launch();
     const socket = await lstat(join(directory, 'bridge/auth.sock')); expect(socket.isSocket()).toBe(true);
     expect(socket.uid).toBe(process.geteuid?.()); expect(socket.mode & 0o777).toBe(0o660);
