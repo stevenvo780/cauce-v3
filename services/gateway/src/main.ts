@@ -9,6 +9,8 @@ import { readFile } from 'node:fs/promises';
 import { createPool, type DatabasePool } from '@cauce/store';
 import { configuredFleetCapability } from './console/fleet-capability.js';
 import { configuredFleetGateway } from './fleet/gateway-config.js';
+import { AgentProviderAuthBroker } from './fleet/agent-provider-auth-broker.js';
+import { configuredSignedFleetAuthority } from './fleet/authority/gateway-config.js';
 import { HostCapabilityRegistry } from './fleet/host-channel.capabilities.js';
 import { FleetMtlsIdentityProvider, FleetTokenProbeAuthProvider, fleetBaseRegistryOwners } from './fleet/mtls-identities.js';
 import { buildGateway } from './app.js';
@@ -258,7 +260,11 @@ const blobs = configuredBlobApi(process.env);
 const contextRepository = configuredContextRepository();
 const fleetCapability = configuredFleetCapability();
 const hostCapabilityRegistry = new HostCapabilityRegistry(pool);
-const fleet = await configuredFleetGateway(pool, fleetCapability, process.env, { hostCapabilityRegistry });
+const agentProviderAuthBroker = authProvider instanceof PasswordAuthProvider ? new AgentProviderAuthBroker(pool) : undefined;
+const signedFleetAuthorityClient = configuredSignedFleetAuthority();
+const fleet = await configuredFleetGateway(pool, fleetCapability, process.env,
+  { hostCapabilityRegistry,
+    ...(agentProviderAuthBroker === undefined ? {} : { enrolledProviderAuthService: agentProviderAuthBroker.service }) });
 const app = await buildGateway({
   ...(process.env.CAUCE_FLEET_MTLS_IDENTITY_FILE === undefined ? {} : {
     bootstrapProviders: { bootstrap: configuredMtls('bootstrap'), normal: configuredMtls('normal'),
@@ -268,6 +274,8 @@ const app = await buildGateway({
   }),
   ...fleet,
   hostCapabilityRegistry,
+  ...(agentProviderAuthBroker === undefined ? {} : { agentProviderAuthBroker }),
+  ...(signedFleetAuthorityClient === undefined ? {} : { signedFleetAuthorityClient }),
   ...(humanMcp === undefined ? {} : { humanMcp }),
   ...(contextRepository === undefined ? {} : { contextRepository }),
   pool,

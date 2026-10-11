@@ -66,17 +66,22 @@ async function placedHostId(pool: DatabasePool | DatabaseClient, target: { tenan
 }
 
 export async function configuredFleetGateway(pool: DatabasePool, capability: FleetCapability, environment: NodeJS.ProcessEnv = process.env,
-  options:{hostCapabilityRegistry?:HostCapabilityRegistry}={}) {
+  options:{hostCapabilityRegistry?:HostCapabilityRegistry;enrolledProviderAuthService?:ProviderAuthService}={}) {
   const config = await fleetApiConfiguration(environment);
   if (config && (!capability.available
     || capability.placements.some(host => !config.hosts.some(registered => registered.host_id === host.host_id)))) {
     throw new Error('Fleet API and controller host catalogs differ');
   }
+  const enrolled = options.enrolledProviderAuthService;
+  const socket = environment.CAUCE_FLEET_API_SOCKET;
   const providerAuthService: ProviderAuthService | undefined = config === undefined
-    ? environment.CAUCE_FLEET_API_SOCKET === undefined ? undefined : new HostProviderAuthService(environment.CAUCE_FLEET_API_SOCKET)
+    ? enrolled === undefined ? socket === undefined ? undefined : new HostProviderAuthService(socket)
+      : createFleetProviderAuthRouter(pool, { hosts: [], enrolled,
+        ...(socket === undefined ? {} : { legacySingleHost: new HostProviderAuthService(socket) }) })
     : createFleetProviderAuthRouter(pool, { hosts: config.hosts.map(host => ({ host_id: host.host_id, socket_path: host.socket_path,
       ...(host.socket_policy === undefined ? {} : { socket_policy: { ownerUid: host.socket_policy.ownerUid,
-        ...(host.socket_policy.groupGid === undefined ? {} : { groupGid: host.socket_policy.groupGid }) } }) })) });
+        ...(host.socket_policy.groupGid === undefined ? {} : { groupGid: host.socket_policy.groupGid }) } }) })),
+      ...(enrolled === undefined ? {} : { enrolled }) });
   const repository = !capability.available && options.hostCapabilityRegistry===undefined ? undefined : fleetRepository(pool, environment, config);
   const approved=async(client:DatabaseClient,tenant:string,alias:string,input:FleetOperationRequest,subject?:string,source?:CompanyAuthoritySource)=>{
     const registry=options.hostCapabilityRegistry;

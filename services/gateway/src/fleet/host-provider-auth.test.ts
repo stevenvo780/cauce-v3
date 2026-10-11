@@ -54,6 +54,8 @@ beforeEach(async ({ task }) => {
   if (!human) throw new Error('test human absent');
   actor = { tenant_id: 'Steven', alias: 'physical-human', subject: `console:${human.id}` };
   await pool.query("INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,role,permissions) VALUES($1,'Steven','physical-human','operator',ARRAY['read','control'])", [human.id]);
+  await current.adminPool.query(`INSERT INTO company_admins(company_id,human_id,role,source,granted_by)
+    SELECT company_id,id,'admin','import',id FROM console_users WHERE id=$1`, [human.id]);
   await pool.query(`INSERT INTO provider_accounts(id,provider,external_account_id,payer_tenant_id,credential_ref_kind,credential_ref,enabled)
     VALUES('physical-account','codex','physical-identity','Steven','env_path','CAUCE_SYNTHETIC_TOKEN_PATH',true)`);
   const placementContainer = /placement container ([a-z-]+)/u.exec(task.name)?.[1];
@@ -110,6 +112,12 @@ async function configureOpenClaw(): Promise<void> {
   await savePolicy(); await saveExecutorPolicy();
 }
 describe('host provider authentication factory', () => {
+  it('rejects a tenant operator without company authority before physical effects', async () => {
+    await current?.adminPool.query('DELETE FROM company_admins WHERE human_id=$1', [actor.subject.slice(8)]);
+    const value = await service();
+    await expect(value.resolve(actor, operationId)).rejects.toMatchObject({ code: 'AUTHORITY_REVOKED' });
+    expect(await trace()).toEqual([]);
+  });
   it.each(['container-one', 'container-two', 'approved-new'])('uses sealed placement container %s login and functional pins without public configuration', async name => {
     const one = '/usr/bin/true'; const two = '/usr/bin/false';
     policy.profiles = {}; policy.logins = {};

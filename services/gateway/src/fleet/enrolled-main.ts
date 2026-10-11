@@ -13,6 +13,7 @@ import { performQuotaHostCommand, verifyQuotaAuthenticationHostCommand } from '.
 import { QuotaHostAuthentication } from './quota-auth-host.js';
 import { HostCapabilitiesSchema } from './host-channel.capabilities.js';
 import { SpaceBackupHost } from './space-backup.host.js';
+import { AgentProviderAuthHost } from './agent-provider-auth-host.js';
 import type { FleetHostConfig } from './main.js';
 
 const QuotaCapabilities = z.object({ providers: z.array(z.enum(['claude','codex','gemini','grok'])),
@@ -47,6 +48,8 @@ export async function runEnrolledFleetHost(config: FleetHostConfig): Promise<voi
   const abort = new AbortController();
   const source = new HostChannelFleetSource(channel);
   const quotaSource = new HostChannelQuotaRepository(channel, config.host);
+  const agentAuthentication = config.enrolledAuthPolicyFile === undefined ? undefined : new AgentProviderAuthHost(channel, {
+    hostConfig: { host: config.host, command: config.command }, authPolicyFile: config.enrolledAuthPolicyFile, projectRoot: config.projectRoot });
   const backups = new SpaceBackupHost(channel, { python: config.command.python, policyFile: config.command.policyFile,
     projectRoot: config.projectRoot, ...(config.command.timeoutMs === undefined ? {} : { timeoutMs: config.command.timeoutMs }) });
   const authentication = new QuotaHostAuthentication(channel, quotaSource, { host: config.host, command: config.command,
@@ -83,6 +86,7 @@ export async function runEnrolledFleetHost(config: FleetHostConfig): Promise<voi
     return activeReport;
   };
   await heartbeat();
+  agentAuthentication?.start();
   const timer = setInterval(() => { void heartbeat().catch(() => {
     process.stderr.write('Enrolled host capability report could not be verified\n');
   }); }, 30_000);
@@ -91,7 +95,7 @@ export async function runEnrolledFleetHost(config: FleetHostConfig): Promise<voi
   const shutdown = (): Promise<void> => {
     abort.abort(); clearInterval(timer);
     closing ??= worker.shutdown().finally(async () => {
-      await authentication.shutdown(); await activeReport?.catch(() => undefined);
+      await authentication.shutdown(); await agentAuthentication?.shutdown(); await activeReport?.catch(() => undefined);
     });
     return closing;
   };

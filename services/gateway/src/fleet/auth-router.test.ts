@@ -1,9 +1,10 @@
-import { randomUUID } from 'node:crypto';
+import { generateKeyPairSync, randomUUID, sign } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { createPool, planFleetHostSlices, type DatabasePool, type FleetOperationRow } from '@cauce/store';
+import { createPool, HostEnrollmentRepository, hostEnrollmentMessage, lockCompanyAuthority, planFleetHostSlices,
+  type DatabasePool, type FleetOperationRow } from '@cauce/store';
 import { preparePostgresSuite } from '../../../../packages/store/test/postgres-suite.js';
 import { startTestCaseDatabase, startTestDatabase, type EmptyTestDatabase, type TestDatabase } from '../../../../tests/helpers/postgres.js';
 import { createProviderAuthDependencies, resolveProviderAuthRequest, type ProviderAuthPolicyResolver } from '../console/provider-auth-binding.js';
@@ -12,6 +13,8 @@ import { ProviderAuthManager } from '../console/provider-auth.sessions.js';
 import type { ProviderAuthActor, ProviderAuthSnapshot } from '../console/provider-auth.types.js';
 import { startAuthBridge } from './auth-bridge-server.js';
 import { createFleetProviderAuthRouter, type FleetProviderAuthRouterOptions } from './auth-router.js';
+import { HostProviderAuthService } from './auth-bridge-client.js';
+import { AgentProviderAuthBroker } from './agent-provider-auth-broker.js';
 
 let database: TestDatabase | undefined; let current: EmptyTestDatabase | undefined; let pool: DatabasePool;
 let actor: ProviderAuthActor; let directory: string; let options: FleetProviderAuthRouterOptions;
@@ -32,6 +35,9 @@ beforeEach(async ({ task }) => {
   actor = { tenant_id: 'Steven', alias: 'router-human', subject: `console:${human.id}` };
   await pool.query("INSERT INTO agents(tenant_id,alias) VALUES('Steven','router-human')");
   await pool.query("INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,role,permissions) VALUES($1,'Steven','router-human','operator',ARRAY['read','control'])", [human.id]);
+  await current.adminPool.query(`INSERT INTO company_admins(company_id,human_id,role,source,granted_by)
+    SELECT company_id,id,'admin','import',id FROM console_users WHERE id=$1`, [human.id]);
+  if (task.name.includes('never downgrades an enrolled identity')) await enroll('host-a');
   options = { hosts: [] };
   for (const host of ['host-a', 'host-b']) {
     const alias = `router-${host}`; const account = `account-${host}`; const operationId = randomUUID(); operations[host] = operationId;
@@ -87,7 +93,50 @@ afterEach(async () => {
 afterAll(async () => { if (database) { await database.pool.end(); await database.container.stop(); } });
 function operation(host = 'host-a'): string { const id = operations[host]; if (!id) throw new Error('test operation absent'); return id; }
 async function open(host = 'host-a') { return router.start(actor, await router.resolve(actor, operation(host))); }
+async function enroll(hostId: string): Promise<void> {
+  const repository = new HostEnrollmentRepository(pool); const keys = generateKeyPairSync('ed25519');
+  const invitation = await repository.invite(client => lockCompanyAuthority(client,
+    { tenant: actor.tenant_id, alias: actor.alias, humanId: actor.subject.slice(8) }), { host_id: hostId, display_name: hostId });
+  await repository.claim(invitation.enrollment_id, { invitation_token: invitation.invitation_token,
+    public_key: keys.publicKey.export({ type: 'spki', format: 'der' }).toString('base64'),
+    proof: sign(null, Buffer.from(hostEnrollmentMessage(invitation)), keys.privateKey).toString('base64') });
+}
+function legacy() {
+  const configured = options.hosts[0]; if (!configured) throw new Error('legacy host absent');
+  return new HostProviderAuthService(configured.socket_path, configured.socket_policy);
+}
 describe('durable provider auth host routing over private Unix sockets with PostgreSQL max1', () => {
+  it('rejects a tenant operator without company authority before contacting the host', async () => {
+    await current?.adminPool.query('DELETE FROM company_admins WHERE human_id=$1', [actor.subject.slice(8)]);
+    await expect(router.resolve(actor, operation())).rejects.toMatchObject({ code: 'AUTHORITY_REVOKED' });
+    expect((await pool.query("SELECT 1 FROM fleet_operation_events WHERE metadata ? 'provider_auth'")).rowCount).toBe(0);
+    expect(received).toEqual({ 'host-a': '', 'host-b': '' });
+  });
+  it('uses the configured legacy singleton only for an unregistered sealed host and projects the selected company safely', async () => {
+    const selectedCompany = (await pool.query<{ company_id: string }>("SELECT company_id FROM tenants WHERE id='Steven'")).rows[0]?.company_id;
+    if (!selectedCompany) throw new Error('selected company absent');
+    const selectedActor = { ...actor, requestedCompany: selectedCompany };
+    const singleton = createFleetProviderAuthRouter(pool, { hosts: [], legacySingleHost: legacy() });
+    try {
+      const request = await singleton.resolve(selectedActor, operation());
+      const session = await singleton.start(selectedActor, request);
+      expect(session).toMatchObject({ host_id: 'host-a', status: 'awaiting_login' });
+      expect((await singleton.cancel(selectedActor, session.session_id)).cleanup_pending).toBe(false);
+      await expect(singleton.resolve({ ...selectedActor, requestedCompany: 'foreign-company' }, operation())).rejects.toMatchObject({ code: 'AUTHORITY_REVOKED' });
+    } finally { await singleton.shutdown(); }
+  });
+  it('never downgrades an enrolled identity to a configured legacy singleton when enrolled transport is absent or disabled', async () => {
+    const missing = createFleetProviderAuthRouter(pool, { hosts: [], legacySingleHost: legacy() });
+    try { await expect(missing.resolve(actor, operation())).rejects.toMatchObject({ code: 'HOST_UNAVAILABLE' }); }
+    finally { await missing.shutdown(); }
+    await current?.adminPool.query("UPDATE fleet_host_identities SET enabled=false WHERE host_id='host-a'");
+    const broker = new AgentProviderAuthBroker(pool);
+    const disabled = createFleetProviderAuthRouter(pool, { hosts: [], enrolled: broker.service, legacySingleHost: legacy() });
+    try {
+      await expect(disabled.resolve(actor, operation())).rejects.toMatchObject({ code: 'AUTHORITY_REVOKED' });
+      expect((await pool.query("SELECT 1 FROM fleet_operation_events WHERE metadata ? 'provider_auth'")).rowCount).toBe(0);
+    } finally { await disabled.shutdown(); await broker.shutdown(); }
+  });
   it('resolves and starts on the exact sealed physical host while the controller lives elsewhere', async () => {
     const request = await router.resolve(actor, operation()); expect(request.host_id).toBe('host-a');
     const session = await router.start(actor, request); expect(session).toMatchObject({ host_id: 'host-a', status: 'awaiting_login' });

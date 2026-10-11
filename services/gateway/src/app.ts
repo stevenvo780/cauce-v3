@@ -30,6 +30,11 @@ import { registerHostChannelRoutes } from './fleet/host-channel.routes.js';
 import { HostCapabilityRegistry } from './fleet/host-channel.capabilities.js';
 import { createCompanyFleetCapabilitySource } from './fleet/host-capability-source.js';
 import { configuredFleetGateway } from './fleet/gateway-config.js';
+import { AgentProviderAuthBroker } from './fleet/agent-provider-auth-broker.js';
+import { registerAgentProviderAuthHostRoute } from './fleet/agent-provider-auth-route.js';
+import { configuredSignedFleetAuthority } from './fleet/authority/gateway-config.js';
+import type { SignedFleetAuthorityClient } from './fleet/authority/signed-client.js';
+import { registerHostAuthorityRoutes } from './fleet/host-authority.routes.js';
 import { QuotaAuthBroker, registerQuotaAuthHostRoute } from './fleet/quota-auth-broker.js';
 import { quotaAwareProviderAuthService } from './fleet/quota-auth-router.js';
 import { registerContextVersionRoutes, type ContextVersionRouteOptions } from './context-version.routes.js';
@@ -186,6 +191,8 @@ export interface GatewayOptions {
   legacyFleetAdoptionService?: LegacyFleetAdoptionService;
   bootstrapProviders?: FleetCredentialProviders;
   providerAuthService?: ProviderAuthService;
+  agentProviderAuthBroker?: AgentProviderAuthBroker;
+  signedFleetAuthorityClient?: SignedFleetAuthorityClient;
   contextRepository?: ContextRepositoryBinding;
   contextVersion?: ContextVersionRouteOptions;
   spaceBackups?: SpaceBackupStorage;
@@ -325,16 +332,23 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
 
   await app.register(websocket, { options: { maxPayload: GATEWAY_WS_MAX_PAYLOAD_BYTES } });
   const hostCapabilities = options.hostCapabilityRegistry ?? new HostCapabilityRegistry(options.pool);
+  const signedFleetAuthority = options.signedFleetAuthorityClient ?? configuredSignedFleetAuthority();
+  if (signedFleetAuthority) registerHostAuthorityRoutes(app, signedFleetAuthority);
   const configuredCapability = options.fleetCapability ?? { available: false, actions: [], placements: [], reason: 'executor_unconfigured' };
   const fleetCapability = options.authProvider instanceof PasswordAuthProvider
     ? createCompanyFleetCapabilitySource(options.pool, options.authProvider, hostCapabilities, configuredCapability)
     : configuredCapability;
-  const fleetBinding = options.fleetOperationsRepository ?? (options.authProvider instanceof PasswordAuthProvider
-    ? (await configuredFleetGateway(options.pool, configuredCapability, process.env,
-      { hostCapabilityRegistry: hostCapabilities })).fleetOperationsRepository : undefined);
+  const agentAuthentication = options.agentProviderAuthBroker
+    ?? (options.authProvider instanceof PasswordAuthProvider ? new AgentProviderAuthBroker(options.pool) : undefined);
+  const configuredFleet = options.fleetOperationsRepository === undefined && options.authProvider instanceof PasswordAuthProvider
+    ? await configuredFleetGateway(options.pool, configuredCapability, process.env,
+      { hostCapabilityRegistry: hostCapabilities,
+        ...(agentAuthentication === undefined ? {} : { enrolledProviderAuthService: agentAuthentication.service }) }) : undefined;
+  const fleetBinding = options.fleetOperationsRepository ?? configuredFleet?.fleetOperationsRepository;
   const quotaAuthentication = options.authProvider instanceof PasswordAuthProvider ? new QuotaAuthBroker(options.pool) : undefined;
-  const providerAuthentication = quotaAuthentication === undefined ? options.providerAuthService
-    : quotaAwareProviderAuthService(quotaAuthentication, options.providerAuthService);
+  const fleetAuthentication = options.providerAuthService ?? configuredFleet?.providerAuthService ?? agentAuthentication?.service;
+  const providerAuthentication = quotaAuthentication === undefined ? fleetAuthentication
+    : quotaAwareProviderAuthService(quotaAuthentication, fleetAuthentication);
   app.addHook('onRequest', createConsoleSecurityHook({
     ...(options.consoleOrigins === undefined ? {} : { allowedOrigins: options.consoleOrigins })
   }));
@@ -348,6 +362,7 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
       options.fleetCapability?.available ? options.fleetCapability.placements.map(host => host.host_id) : []);
     registerHostChannelRoutes(app, options.pool);
     if (quotaAuthentication) registerQuotaAuthHostRoute(app, options.pool, quotaAuthentication);
+    if (agentAuthentication) registerAgentProviderAuthHostRoute(app, options.pool, agentAuthentication);
     const backupDirectory = options.spaceBackups?.directory ?? process.env.CAUCE_SPACE_BACKUP_DIRECTORY;
     if (backupDirectory !== undefined) {
       const storage = options.spaceBackups ?? { directory: backupDirectory,

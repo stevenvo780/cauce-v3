@@ -193,6 +193,8 @@ function guardedLogin(login: ProviderAuthLogin, start: () => Promise<void>): Pro
     write: bytes => login.write(bytes), resize: (cols, rows) => login.resize(cols, rows), close: () => login.close() };
 }
 
+export { policies as readHostProviderAuthPolicy, loginConfiguration as hostProviderLoginConfiguration };
+
 export async function createHostProviderAuthService(pool: DatabasePool, options: HostProviderAuthOptions): Promise<HostProviderAuthService> {
   LoginPathSchema.parse(options.projectRoot); Identifier.parse(options.hostConfig.host);
   await policies(options);

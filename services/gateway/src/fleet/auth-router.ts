@@ -10,13 +10,15 @@ import type { AuthBridgeSocketPolicy } from './auth-bridge-socket.js';
 
 export interface FleetProviderAuthRouterOptions {
   hosts: { host_id: string; socket_path: string; socket_policy?: AuthBridgeSocketPolicy }[];
+  enrolled?: ProviderAuthService;
+  legacySingleHost?: ProviderAuthService;
 }
 const Identifier = z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/u);
 const User = z.string().regex(/^[a-z_][a-z0-9_-]{0,31}$/u);
 const SocketPolicy = z.object({ ownerUid: z.number().int().nonnegative().optional(), groupGid: z.number().int().nonnegative().optional() }).strict();
 const Options = z.object({ hosts: z.array(z.object({ host_id: Identifier,
   socket_path: z.string().refine(value => value.startsWith('/') && normalize(value) === value && !/[\p{Cc}]/u.test(value)),
-  socket_policy: SocketPolicy.optional() }).strict()).min(1).max(100) }).strict().refine(value =>
+  socket_policy: SocketPolicy.optional() }).strict()).max(100) }).strict().refine(value =>
   new Set(value.hosts.map(host => host.host_id)).size === value.hosts.length
     && new Set(value.hosts.map(host => host.socket_path)).size === value.hosts.length);
 const Reservation = z.object({ session_id: z.uuid(), actor_subject: HostActorSchema.shape.subject, cohort: z.string().max(512),
@@ -29,7 +31,9 @@ const denied = () => new ProviderAuthError('AUTHORITY_REVOKED');
 const conflict = () => new ProviderAuthError('SESSION_CONFLICT');
 type RoutingScope = Awaited<ReturnType<typeof loadProviderAuthRoutingScope>>;
 interface SessionScope { value: RoutingScope; reservation: z.infer<typeof Reservation> }
-function actorValid(actor: ProviderAuthActor): void { if (!HostActorSchema.safeParse(actor).success) throw denied(); }
+function actorValid(actor: ProviderAuthActor): void {
+  if (!HostActorSchema.extend({ requestedCompany: Identifier.optional() }).safeParse(actor).success) throw denied();
+}
 function cohort(value: string) {
   try { return Cohort.parse(JSON.parse(value)); } catch { throw conflict(); }
 }
@@ -60,29 +64,42 @@ function reservations(rows: { operation_id: string; metadata: unknown }[], sessi
 export function createFleetProviderAuthRouter(pool: DatabasePool, options: FleetProviderAuthRouterOptions): ProviderAuthService & {
   resolve: NonNullable<ProviderAuthService['resolve']>;
 } {
-  const parsed = Options.safeParse(options); if (!parsed.success) throw new ProviderAuthError('INVALID_REQUEST');
+  const parsed = Options.safeParse({ hosts: options.hosts });
+  if (!parsed.success || !parsed.data.hosts.length && options.enrolled === undefined && options.legacySingleHost === undefined) throw new ProviderAuthError('INVALID_REQUEST');
   const hosts = new Map(parsed.data.hosts.map(host => {
     const policy: AuthBridgeSocketPolicy = { ownerUid: host.socket_policy?.ownerUid ?? 0,
       ...(host.socket_policy?.groupGid === undefined ? {} : { groupGid: host.socket_policy.groupGid }) };
     return [host.host_id, new HostProviderAuthService(host.socket_path, policy)] as const;
   }));
-  const host = (id: string) => { const service = hosts.get(id); if (!service) throw new ProviderAuthError('HOST_UNAVAILABLE'); return service; };
+  const host = async (id: string): Promise<ProviderAuthService> => {
+    const configured = hosts.get(id); if (configured) return configured;
+    const enrolled = (await pool.query('SELECT 1 FROM fleet_host_identities WHERE host_id=$1', [id])).rowCount === 1;
+    const service = enrolled ? options.enrolled : options.legacySingleHost;
+    if (!service) throw new ProviderAuthError('HOST_UNAVAILABLE'); return service;
+  };
+  const serviceActor = (service: ProviderAuthService, actor: ProviderAuthActor): ProviderAuthActor => service === options.enrolled
+    ? actor : { tenant_id: actor.tenant_id, alias: actor.alias, subject: actor.subject };
   const operation = async (actor: ProviderAuthActor, id: string): Promise<RoutingScope> => {
     actorValid(actor); if (!ProviderAuthSessionIdSchema.safeParse(id).success) throw new ProviderAuthError('INVALID_REQUEST');
-    return withTransaction(pool, client => loadProviderAuthRoutingScope(client, actor, id));
+    return withTransaction(pool, async client => {
+      const value = await loadProviderAuthRoutingScope(client, actor, id);
+      if (actor.requestedCompany !== undefined && actor.requestedCompany !== value.agent.company_id) throw denied();
+      return value;
+    });
   };
   const session = async (actor: ProviderAuthActor, id: string): Promise<SessionScope> => {
     actorValid(actor); if (!ProviderAuthSessionIdSchema.safeParse(id).success) throw new ProviderAuthError('INVALID_REQUEST');
     return withTransaction(pool, async client => {
-      // A login session is looked up only among the operations of the actor's company.
       const rows = (await client.query<{ operation_id: string; metadata: unknown }>(`SELECT event.operation_id,event.metadata
         FROM fleet_operation_events event JOIN fleet_operations operation ON operation.id=event.operation_id
-        JOIN tenants actor ON actor.id=$2 AND actor.company_id=operation.company_id
-        WHERE (event.metadata->'provider_auth'->>'session_id'=$1 OR event.metadata->'provider_auth_status'->>'session_id'=$1)
-        ORDER BY event.id`, [id, actor.tenant_id])).rows;
+        JOIN tenants actor ON actor.id=$2
+        WHERE operation.company_id=COALESCE($3::text,actor.company_id)
+          AND (event.metadata->'provider_auth'->>'session_id'=$1 OR event.metadata->'provider_auth_status'->>'session_id'=$1)
+        ORDER BY event.id`, [id, actor.tenant_id, actor.requestedCompany ?? null])).rows;
       const origin = reservations(rows, id);
       if (origin.reservation.actor_subject !== actor.subject) throw denied();
       const value = await loadProviderAuthRoutingScope(client, actor, origin.operation_id);
+      if (actor.requestedCompany !== undefined && actor.requestedCompany !== value.agent.company_id) throw denied();
       const [hostId, user, profile] = cohort(origin.reservation.cohort);
       if (hostId !== value.sealed.host_id || user !== value.agent.runtime_user || profile !== value.account.id) throw denied();
       return { value, reservation: origin.reservation };
@@ -95,26 +112,32 @@ export function createFleetProviderAuthRouter(pool: DatabasePool, options: Fleet
   };
   const readSession = async (action: 'get' | 'verify' | 'cancel', actor: ProviderAuthActor, id: string) => {
     const value = await session(actor, id);
-    const response = await host(value.value.sealed.host_id)[action](actor, id);
+    const hostId = value.value.sealed.host_id;
+    const selected = await host(hostId); const response = await selected[action](serviceActor(selected, actor), id);
     return snapshot(await session(actor, id), id, response);
   };
   return {
     resolve: async (actor, id) => {
-      const value = await operation(actor, id); const response = await host(value.sealed.host_id).resolve(actor, id);
+      const value = await operation(actor, id); const selected = await host(value.sealed.host_id);
+      if (!selected.resolve) throw new ProviderAuthError('HOST_UNAVAILABLE');
+      const response = await selected.resolve(serviceActor(selected, actor), id);
       matches(await operation(actor, id), response); return response;
     },
     start: async (actor, input) => {
       const request = ProviderAuthRequestSchema.safeParse(input); if (!request.success) throw new ProviderAuthError('INVALID_REQUEST');
       const value = await operation(actor, request.data.operation_id); matches(value, request.data);
-      const response = await host(value.sealed.host_id).start(actor, request.data);
+      const selected = await host(value.sealed.host_id); const response = await selected.start(serviceActor(selected, actor), request.data);
       matches(value, response); matches(await operation(actor, request.data.operation_id), response);
       return snapshot(await session(actor, response.session_id), response.session_id, response);
     },
     get: (actor, id) => readSession('get', actor, id), verify: (actor, id) => readSession('verify', actor, id), cancel: (actor, id) => readSession('cancel', actor, id),
-    issueSocketTicket: async (actor, id) => { const value = await session(actor, id); return host(value.value.sealed.host_id).issueSocketTicket(actor, id); },
-    consumeSocketTicket: async (actor, id, ticket) => { const value = await session(actor, id); await host(value.value.sealed.host_id).consumeSocketTicket(actor, id, ticket); },
+    issueSocketTicket: async (actor, id) => { const value = await session(actor, id); const hostId = value.value.sealed.host_id;
+      const selected = await host(hostId); return selected.issueSocketTicket(serviceActor(selected, actor), id); },
+    consumeSocketTicket: async (actor, id, ticket) => { const value = await session(actor, id); const hostId = value.value.sealed.host_id;
+      const selected = await host(hostId); await selected.consumeSocketTicket(serviceActor(selected, actor), id, ticket); },
     attach: async (actor, id, output) => {
-      const value = await session(actor, id); const channel = await host(value.value.sealed.host_id).attach(actor, id, output);
+      const value = await session(actor, id); const hostId = value.value.sealed.host_id;
+      const selected = await host(hostId); const channel = await selected.attach(serviceActor(selected, actor), id, output);
       const check = async () => {
         try {
           const current = await session(actor, id);
@@ -139,8 +162,9 @@ export function createFleetProviderAuthRouter(pool: DatabasePool, options: Fleet
         if (agent?.runtime_user !== user || agent.primary_account_id !== profile) throw denied();
         await assertProviderAuthSealedScope(client, row, agent); return hostId;
       });
-      if (hostId !== undefined) await host(hostId).revokeOperation(id);
+      if (hostId !== undefined) await (await host(hostId)).revokeOperation(id);
     },
-    shutdown: async () => { for (const service of hosts.values()) await service.shutdown(); },
+    shutdown: async () => { for (const service of hosts.values()) await service.shutdown();
+      await options.enrolled?.shutdown(); await options.legacySingleHost?.shutdown(); },
   };
 }

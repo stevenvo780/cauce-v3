@@ -14,6 +14,14 @@ async function secret(body = 'postgresql://worker:synthetic-private-secret@127.0
   const file = join(temporary, 'database-url'); await writeFile(file, body, { mode: 0o600 }); return file;
 }
 describe('fleet host process configuration', () => {
+  it('allows a private enrolled authentication policy without database or legacy socket credentials', () => {
+    const { CAUCE_FLEET_DATABASE_URL_FILE: _unused, ...withoutDatabase } = configured;
+    const enrolled = { ...withoutDatabase, CAUCE_FLEET_IDENTITY_DIRECTORY: '/home/dev/private/identity',
+      CAUCE_FLEET_ENROLLED_AUTH_POLICY_FILE: '/home/dev/private/agent-auth.json' };
+    expect(readFleetHostConfig(enrolled).enrolledAuthPolicyFile).toBe('/home/dev/private/agent-auth.json');
+    expect(() => readFleetHostConfig({ ...enrolled, CAUCE_FLEET_ENROLLED_AUTH_POLICY_FILE: '/home/dev/../public/policy' })).toThrow();
+    expect(() => readFleetHostConfig({ ...configured, CAUCE_FLEET_ENROLLED_AUTH_POLICY_FILE: '/home/dev/private/policy' })).toThrow();
+  });
   it('enrolled hosts use a private identity and cannot also acquire database or controller credentials', () => {
     const { CAUCE_FLEET_DATABASE_URL_FILE: _unused, ...withoutDatabase } = configured;
     const enrolled = { ...withoutDatabase, CAUCE_FLEET_IDENTITY_DIRECTORY: '/home/dev/.local/state/cauce-v3/hosts/company/host' };
