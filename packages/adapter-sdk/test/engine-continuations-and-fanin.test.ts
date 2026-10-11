@@ -6,6 +6,7 @@ import {HARNESS_DEFINITIONS} from '../src/harnesses/index.js';
 import {AdapterEngine} from '../src/sdk/engine.js';
 import type {Delivery, DeliveryEvent} from '../src/sdk/types.js';
 import {ControlledRunner, CountingHarnessAdapter, SUCCESS, delivery, root, setup, storeFor} from './engine-fixtures.js';
+import {PRAXIS_LEADER} from './company-context-fixtures.js';
 
 async function optionalFile(path: string): Promise<string | undefined> {
   try { return await readFile(path, "utf8"); }
@@ -505,6 +506,7 @@ test("Hospital director fan-in sends a short human reply without raw branch repo
     room_id: "grp.hospital",
     actor_alias: "cauce",
     recipient_alias: "operador",
+    company_context: PRAXIS_LEADER,
     body: {
       type: "agent.fanin",
       fanin_data_v1: {
@@ -572,6 +574,7 @@ test("Hospital director fan-in preserves a clear local conclusion without raw br
     ...delivery("hospital-conclusion-fanin"),
     tenant_id: "Hospital", room_id: "grp.hospital",
     actor_alias: "cauce", recipient_alias: "operador",
+    company_context: PRAXIS_LEADER,
     trace_id: rootDelivery.trace_id,
     body: {
       type: "agent.fanin",

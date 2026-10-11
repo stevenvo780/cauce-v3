@@ -7,6 +7,7 @@ import { AdapterEngine } from "../src/sdk/engine.js";
 import { PRAXIS_SUPERVISION_NOTICE_MESSAGE_TYPE } from "../src/sdk/engine/praxis-supervision-notice.js";
 import type { Delivery, DeliveryEvent } from "../src/sdk/types.js";
 import { ControlledRunner, delivery, root, storeFor, waitFor } from "./engine-fixtures.js";
+import { HUMANIZAR_MEMBER, PRAXIS_LEADER } from "./company-context-fixtures.js";
 
 class SupervisionHarness extends HarnessAdapter {
   executeCalls = 0;
@@ -27,7 +28,7 @@ function noticeDelivery(id: string, overrides: Partial<Delivery> = {}): Delivery
   const { origin: _origin, ...base } = delivery(id);
   return {
     ...base, tenant_id: "Hospital", room_id: "grp.hospital",
-    actor_alias: "praxis-supervisor", recipient_alias: "operador",
+    actor_alias: "praxis-supervisor", recipient_alias: "operador", company_context: PRAXIS_LEADER,
     authenticated_context: { session_id: "praxis-supervisor", channel: "adapter" },
     body: { type: PRAXIS_SUPERVISION_NOTICE_MESSAGE_TYPE, kind: "alert", text: "El trabajo requiere atención." },
     ...overrides,
@@ -68,7 +69,7 @@ test("authenticated supervision sends one fixed-destination notification through
     assert.deepEqual(record.output, {
       reply: "Aviso de supervisión registrado.", messages: [], artifacts: [],
       status: "done", retryable: false,
-      notify: [{ to: "steven_dm", kind, body: text }],
+      notify: [{ to: "owner_dm", kind, body: text }],
     });
     const events = context.events.filter((event) => event.delivery_id === input.delivery_id);
     assert.deepEqual(events.map((event) => event.phase), ["accepted", "done"]);
@@ -246,4 +247,26 @@ test("notice claim loss during async preparation is rechecked at the durable per
   assert.equal(context.store.getDelivery(input.delivery_id)?.state, "accepted");
   assert.equal(context.store.pendingEvents().some((event) => event.phase === "done"), false);
   assert.deepEqual(context.events.map((event) => event.phase), ["accepted"]);
+});
+
+test("the notice authority and its destination come from the company data, never from the adapter", async () => {
+  const context = await setup("supervision-company-data");
+  const { supervision_notice: notice, ...leader } = PRAXIS_LEADER;
+  assert.ok(notice);
+  const rehomed = { ...leader, supervision_notice: { ...notice, notify_handle: "ops_alerts" } };
+  const accepted = noticeDelivery("supervision-rehomed", { company_context: rehomed });
+  await context.engine.handleDelivery(accepted);
+  assert.deepEqual(context.store.getDelivery(accepted.delivery_id)?.output?.notify, [
+    { to: "ops_alerts", kind: "alert", body: "El trabajo requiere atención." },
+  ]);
+  const { company_context: _none, ...withoutCompany } = noticeDelivery("supervision-no-company");
+  for (const input of [
+    withoutCompany,
+    noticeDelivery("supervision-other-company", { company_context: HUMANIZAR_MEMBER }),
+    noticeDelivery("supervision-other-actor", { actor_alias: "operador" }),
+  ]) {
+    await context.engine.handleDelivery(input);
+    assert.equal(context.store.getDelivery(input.delivery_id)?.state, "failed", input.delivery_id);
+  }
+  assert.equal(context.runner.calls, 0);
 });

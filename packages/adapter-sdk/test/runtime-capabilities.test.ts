@@ -7,6 +7,8 @@ import { helloCapabilityStrings } from "../src/sdk/client.js";
 const HELLO_SUFFIXES = [
   "console_human_scope_v1",
   "agent_identity_v1",
+  "company_context_v1",
+  "versioned_context_v1",
   "agent_profile_adoption_v1",
   "agent_profile_v1",
   "client_mailbox_v1",
@@ -49,7 +51,7 @@ test("hello advertises only capabilities consumed by runtime or operational read
       [`harness.${definition.id}`, ...HELLO_SUFFIXES, ...workState].sort(),
       definition.id,
     );
-    assert.equal(advertised.length, 11 + workState.length, definition.id);
+    assert.equal(advertised.length, 13 + workState.length, definition.id);
     assert.equal(new Set(advertised).size, advertised.length, definition.id);
   }
 });

@@ -13,9 +13,13 @@ import {
   IDENTITY_END,
   PRIMARY_DUTY_HEADER,
   protocolPrompt,
+  textoFijoDelSobre,
   type HarnessRequestContext,
 } from "../src/harnesses/shared.js";
 import { testStateRoot } from "./test-state.js";
+import {
+  HUMANIZAR_DIRECTOR, HUMANIZAR_MEMBER, PRAXIS_LEADER, PRAXIS_MEMBER,
+} from "./company-context-fixtures.js";
 
 const stateRoot = testStateRoot();
 
@@ -69,7 +73,6 @@ test("los tres bloques salen en orden: identidad, deber, mecanica", () => {
     assert.ok(duty < at, `el deber primario tiene que preceder: ${mechanic}`);
   }
 
-  // The routing inventory itself travels inside the trusted context, at the very bottom.
   assert.ok(duty < prompt.indexOf('"routing_targets"'));
   assert.ok(prompt.indexOf(DELEGATION_MECHANICS_HEADER) < prompt.indexOf('"routing_targets"'));
 });
@@ -342,6 +345,7 @@ test("el harness recibe identidad y deber antes de la mecanica por stdin", async
 
 const DIRECTOR = {
   self_alias: "argos", tenant_id: "Steven", room_id: "grp.steven", sender_alias: "zeus",
+  company_context: HUMANIZAR_DIRECTOR,
 } as const;
 
 test("para el alias que dirige, el deber primario manda REPARTIR y VERIFICAR; construir es la excepción", () => {
@@ -382,7 +386,7 @@ test("el operador del Hospital dirige y sus developers escalan hacia él", () =>
   const leader = protocolPrompt(
     "request",
     undefined,
-    context({ self_alias: "operador", tenant_id: "Hospital", room_id: "grp.hospital" }),
+    context({ self_alias: "operador", tenant_id: "Hospital", room_id: "grp.hospital", company_context: PRAXIS_LEADER }),
   );
   assert.match(leader, /tu entrega es REPARTIR y VERIFICAR/u);
   assert.match(leader, /Escribir código de producto NUNCA es tuyo/u);
@@ -391,7 +395,7 @@ test("el operador del Hospital dirige y sus developers escalan hacia él", () =>
   assert.doesNotMatch(leader, /Para coordinación de trabajo, kant/u);
   for (const self_alias of ["teseo", "perseo"]) {
     const developer = protocolPrompt(
-      "request", undefined, context({ self_alias, tenant_id: "Hospital", room_id: "grp.hospital" }),
+      "request", undefined, context({ self_alias, tenant_id: "Hospital", room_id: "grp.hospital", company_context: PRAXIS_MEMBER }),
     );
     assert.match(developer, /Esta entrega es TU trabajo/u);
     assert.match(developer, /escalá a operador/u);
@@ -402,7 +406,7 @@ test("el operador del Hospital dirige y sus developers escalan hacia él", () =>
 test("el deber del director no nombra tenant, alias ni herramienta de ningún proyecto", () => {
   for (const native_profile_context of [false, true]) {
     const prompt = protocolPrompt("Revisá todo", undefined, context({
-      self_alias: "operador", tenant_id: "Hospital", room_id: "grp.hospital",
+      self_alias: "operador", tenant_id: "Hospital", room_id: "grp.hospital", company_context: PRAXIS_LEADER,
       ...(native_profile_context ? { native_profile_context: true as const } : {}),
     }));
     assert.equal(prompt.split(PRIMARY_DUTY_HEADER).length - 1, 1);
@@ -418,7 +422,7 @@ test("el deber del director no nombra tenant, alias ni herramienta de ningún pr
 
 test("el director itera sin tope y no puede tapar una comprobación para cerrar", () => {
   const prompt = protocolPrompt("Poné el sitio en teal", undefined, context({
-    self_alias: "operador", tenant_id: "Hospital", room_id: "grp.hospital",
+    self_alias: "operador", tenant_id: "Hospital", room_id: "grp.hospital", company_context: PRAXIS_LEADER,
   }));
   assert.match(prompt, /SIN tope de intentos/u);
   assert.match(prompt, /Cada vuelta cambia algo; repetir igual no cuenta/u);
@@ -431,7 +435,7 @@ test("el director itera sin tope y no puede tapar una comprobación para cerrar"
 
 test("el director reparte archivos disjuntos y cierra para lector no técnico", () => {
   const prompt = protocolPrompt("request", undefined, context({
-    self_alias: "operador", tenant_id: "Hospital", room_id: "grp.hospital",
+    self_alias: "operador", tenant_id: "Hospital", room_id: "grp.hospital", company_context: PRAXIS_LEADER,
   }));
   assert.match(prompt, /Repartí archivos DISJUNTOS/u);
   assert.match(prompt, /dos ejecutores nunca reciben el mismo archivo/u);
@@ -441,7 +445,7 @@ test("el director reparte archivos disjuntos y cierra para lector no técnico", 
 
 test("el acceso del dueño completa una revision autorizada sin reenviar credenciales ni ampliar alcance", () => {
   const prompt = protocolPrompt("Acceso para la revisión anterior", undefined, context({
-    self_alias: "operador", tenant_id: "Hospital", room_id: "grp.hospital",
+    self_alias: "operador", tenant_id: "Hospital", room_id: "grp.hospital", company_context: PRAXIS_LEADER,
     sender_alias: "console-proxy", agent_message: false, message_type: "request", channel: "telegram",
   }));
   assert.match(prompt, /No pidas permiso de lo ya autorizado/u);
@@ -454,7 +458,7 @@ test("el acceso del dueño completa una revision autorizada sin reenviar credenc
 });
 
 test("una revision del Hospital cierra con evidencia en reply y sin delegacion ficticia", () => {
-  const ctx = context({ self_alias: "operador", tenant_id: "Hospital", room_id: "grp.hospital" });
+  const ctx = context({ self_alias: "operador", tenant_id: "Hospital", room_id: "grp.hospital", company_context: PRAXIS_LEADER });
   const prompt = protocolPrompt("Revisá todo", undefined, ctx);
   assert.match(prompt, /o por qué no hizo falta repartir/u);
   assert.match(prompt, /Un encargo que no salió por "messages" no existe/u);
@@ -471,7 +475,7 @@ test("una revision del Hospital cierra con evidencia en reply y sin delegacion f
 
 test("el mandato del director no pesa más que el del ejecutor: el sobre de argos no crece", () => {
   const director = protocolPrompt("request", undefined, context(DIRECTOR));
-  const ejecutor = protocolPrompt("request", undefined, context({ ...DIRECTOR, self_alias: "zeus" }));
+  const ejecutor = protocolPrompt("request", undefined, context({ ...DIRECTOR, self_alias: "zeus", company_context: HUMANIZAR_MEMBER }));
   assert.ok(
     director.length <= ejecutor.length + 100,
     `el sobre del director mide ${String(director.length)} y el del ejecutor ${String(ejecutor.length)}`,
@@ -522,4 +526,39 @@ test("durable human metadata reaches both trusted prompt paths without changing 
     assert.equal(payload.self_alias, requestContext.self_alias);
     assert.equal(prompt.split(PRIMARY_DUTY_HEADER).length - 1, 1);
   }
+});
+
+// The three escalation lines the adapter used to hard-code, kept verbatim: data must reproduce them exactly.
+const HUMANIZAR_LINE = "Si la infraestructura te deja sin poder trabajar (el harness no arranca, credenciales vencidas, bwrap/userns, mount perdido, entregas que mueren por deadline), escalá a zeus con el error textual crudo. Para coordinación de trabajo, kant.";
+const PRAXIS_LEADER_LINE = "Si la infraestructura te deja sin poder trabajar, informá el error textual crudo a tu humano y cerrá; no inventes un bypass. Vos coordinás todo el trabajo de esta flota.";
+const PRAXIS_MEMBER_LINE = "Si la infraestructura te deja sin poder trabajar, escalá a operador con el error textual crudo. Para coordinación, decisiones e integración, operador es el líder de esta flota.";
+
+function fixedLine(ctx: ReturnType<typeof context>): string {
+  const lines = textoFijoDelSobre(ctx).split("\n");
+  const line = lines.find((entry) => entry.startsWith("Si la infraestructura te deja sin poder trabajar"));
+  assert.ok(line, "the identity block carries an escalation line");
+  return line;
+}
+
+test("las líneas de escalación salen de los datos de la empresa y reproducen el texto histórico", () => {
+  for (const [alias, company] of [["argos", HUMANIZAR_DIRECTOR], ["zeus", HUMANIZAR_MEMBER], ["kant", HUMANIZAR_MEMBER]] as const) {
+    assert.equal(fixedLine(context({ self_alias: alias, company_context: company })), HUMANIZAR_LINE, alias);
+  }
+  const praxis = { tenant_id: "Hospital", room_id: "grp.hospital" } as const;
+  assert.equal(fixedLine(context({ ...praxis, self_alias: "operador", company_context: PRAXIS_LEADER })), PRAXIS_LEADER_LINE);
+  assert.equal(fixedLine(context({ ...praxis, self_alias: "teseo", company_context: PRAXIS_MEMBER })), PRAXIS_MEMBER_LINE);
+});
+
+test("sin company_context no se nombra a nadie ni se concede el mandato de director", () => {
+  const prompt = protocolPrompt("request", undefined, context({ self_alias: "argos" }));
+  assert.match(prompt, /Si la infraestructura te deja sin poder trabajar, informá el error textual crudo a tu humano y cerrá; no inventes un bypass\./u);
+  const identity = prompt.slice(prompt.indexOf(IDENTITY_BEGIN), prompt.indexOf(IDENTITY_END));
+  assert.doesNotMatch(identity, /zeus|kant/u);
+  assert.doesNotMatch(prompt, /REPARTIR y VERIFICAR/u);
+  assert.match(prompt, /Esta entrega es TU trabajo/u);
+});
+
+test("el contexto de empresa no se filtra al JSON de metadatos de la entrega", () => {
+  const prompt = protocolPrompt("request", undefined, context({ self_alias: "argos", company_context: HUMANIZAR_DIRECTOR }));
+  assert.doesNotMatch(prompt, /company_context|company_id|gate_probe/u);
 });

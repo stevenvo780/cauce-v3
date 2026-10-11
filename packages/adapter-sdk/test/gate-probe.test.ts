@@ -9,6 +9,7 @@ import type {
   AdapterLog, CommandRunRequest, CommandRunResult, CommandRunner, Delivery, DeliveryEvent,
 } from '../src/sdk/types.js';
 import { testStateRoot } from "./test-state.js";
+import { HUMANIZAR_MEMBER } from "./company-context-fixtures.js";
 
 const root = testStateRoot();
 
@@ -47,6 +48,7 @@ function probeDelivery(overrides: Partial<Delivery> = {}): Delivery {
     room_id: 'grp.steven',
     actor_alias: 'kant',
     recipient_alias: 'kant',
+    company_context: HUMANIZAR_MEMBER,
     authenticated_context: { session_id: 'gate-probe', channel: 'gate' },
     body: {
       type: 'system.gate.probe',
@@ -114,6 +116,39 @@ test('system.gate.probe is fail-closed when any trusted authority field differs'
     assert.equal(context.events[1]?.error?.code, 'UNAUTHORIZED_GATE_PROBE');
     assert.equal(context.store.getDelivery('10000000-0000-4000-8000-000000000001')?.request, undefined);
     assert.deepEqual(context.logs, []);
+  } finally {
+    await rm(context.directory, { recursive: true, force: true });
+  }
+});
+
+test('system.gate.probe needs the company principal as data and matches it field by field', async () => {
+  const context = await setup('gate-probe-data');
+  try {
+    const { company_context: _absent, ...withoutCompany } = probeDelivery();
+    const forged = [
+      withoutCompany,
+      probeDelivery({ tenant_id: 'Miguel' }),
+      probeDelivery({ room_id: 'grp.miguel' }),
+      probeDelivery({ authenticated_context: { session_id: 'other-principal', channel: 'gate' } }),
+      probeDelivery({ company_context: { company_id: 'other', gate_probe: {
+        tenant_id: 'Hospital', room_id: 'grp.hospital', actor_alias: 'operador', principal_alias: 'gate-probe',
+      } } }),
+    ];
+    for (const [index, delivery] of forged.entries()) {
+      const unique = {
+        ...delivery,
+        delivery_id: `10000000-0000-4000-8000-00000000010${String(index)}`,
+        event_id: `20000000-0000-4000-8000-00000000010${String(index)}`,
+        message_id: `30000000-0000-4000-8000-00000000010${String(index)}`,
+        request_id: `40000000-0000-4000-8000-00000000010${String(index)}`,
+      } satisfies Delivery;
+      await context.engine.handleDelivery(unique);
+    }
+    assert.equal(context.runner.calls, 0);
+    assert.deepEqual(
+      context.events.filter((event) => event.phase === 'failed').map((event) => event.error?.code),
+      Array<string>(forged.length).fill('UNAUTHORIZED_GATE_PROBE'),
+    );
   } finally {
     await rm(context.directory, { recursive: true, force: true });
   }

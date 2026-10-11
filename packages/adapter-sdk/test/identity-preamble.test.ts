@@ -18,6 +18,7 @@ import {
   type HarnessRequestContext,
 } from "../src/harnesses/shared.js";
 import { testStateRoot } from "./test-state.js";
+import { HUMANIZAR_DIRECTOR } from "./company-context-fixtures.js";
 
 const stateRoot = testStateRoot();
 const definitions = Object.values(HARNESS_DEFINITIONS);
@@ -51,6 +52,7 @@ const baseContext: HarnessRequestContext = {
   agent_message: true,
   message_type: "agent.message",
   routing_targets: [{ tenant_id: "Steven", alias: "zeus", online: true }],
+  company_context: HUMANIZAR_DIRECTOR,
 };
 
 async function stdinFor(
