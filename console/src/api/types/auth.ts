@@ -27,6 +27,7 @@ export interface ConsoleAuthState {
   authenticated: boolean | null;
   login_mode?: LoginMode | null;
   subject?: string | null;
+  home_tenant?: string | null;
   name?: string | null;
   roles?: string[] | null;
   permissions?: string[] | null;

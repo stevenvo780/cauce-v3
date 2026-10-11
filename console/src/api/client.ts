@@ -22,6 +22,13 @@ import { fleetOperationsClient, type FleetOperationsClient } from './client/flee
 import { fleetHostsClient, type FleetHostsClient } from './client/fleet-hosts-client';
 import { clientDelegationsClient, type ClientDelegationsClient } from './client/client-delegations-client';
 import { agentPreferencesClient, type AgentPreferencesClient } from './client/agent-preferences-client';
+import { companyClient, type CompanyClient, type RegistrationInput, type RegistrationResult } from './client/company-client';
+import { contextVersionsClient, type ContextVersionsClient } from './client/context-versions-client';
+import { myQuotasClient, type MyQuotasClient } from './client/my-quotas-client';
+import { registrationReceipt } from './client/v4-responses';
+import { hostEnrollmentClient, type HostEnrollmentClient } from './client/host-enrollment-client';
+import { spaceBackupsClient, type SpaceBackupsClient } from './client/space-backups-client';
+import { readBoundedBlob } from './client/bounded-blob';
 /**
  * A 401 on ANY data call is the session dying, and until it is noticed the console keeps painting
  * error cards inside a shell that no longer has a session behind it. The gate polls every 60 s, so
@@ -38,7 +45,7 @@ type UnauthorizedListener = () => void;
 const AUTH_PATH = '/v3/auth/';
 
 /* eslint-disable @typescript-eslint/no-unsafe-declaration-merging -- the merge IS the surface; client.test.ts asserts every merged method at runtime. */
-export interface CauceApi extends SystemClient, MessagingClient, AgentClient, ContextRepositoryClient, NativeContextRepositoryClient, ClientDelegationsClient, FleetOperationsClient, FleetHostsClient, ProviderAuthClient, PeopleAdminClient, NativeAdminClient, AgentPreferencesClient {}
+export interface CauceApi extends SystemClient, MessagingClient, AgentClient, ContextRepositoryClient, NativeContextRepositoryClient, ClientDelegationsClient, FleetOperationsClient, FleetHostsClient, ProviderAuthClient, PeopleAdminClient, NativeAdminClient, AgentPreferencesClient, CompanyClient, ContextVersionsClient, MyQuotasClient, HostEnrollmentClient, SpaceBackupsClient {}
 
 export class CauceApi {
   private readonly baseUrl: string;
@@ -50,6 +57,8 @@ export class CauceApi {
   private sessionIdentity: string | undefined;
   private sessionRequest?: { generation: number; promise: Promise<ConsoleAuthState> };
   private bffSessionSupported: boolean | null = null;
+  private companySwitchInFlight = false;
+  private companyScopeVerified = true;
   private readonly developmentIdentity?: { tenant: string; alias: string };
   private readonly unauthorizedListeners = new Set<UnauthorizedListener>();
   private readonly authSessionListeners = new Set<(state: ConsoleAuthState) => void>();
@@ -74,6 +83,8 @@ export class CauceApi {
     Object.assign(this, systemClient(request), messagingClient(request), agentClient(request), contextRepositoryClient(request), nativeContextRepositoryClient(request));
     Object.assign(this, nativeAdminClient(request, () => this.authGeneration));
     Object.assign(this, clientDelegationsClient(request), fleetOperationsClient(request), fleetHostsClient(request), providerAuthClient(request), peopleAdminClient(request), agentPreferencesClient(request));
+    Object.assign(this, companyClient(request), contextVersionsClient(request), myQuotasClient(request));
+    Object.assign(this, hostEnrollmentClient(request), spaceBackupsClient(request, () => this.authGeneration));
   }
 
   private async request<T>(
@@ -81,10 +92,16 @@ export class CauceApi {
     init: RequestInit = {},
     options: RequestOptions = {},
   ): Promise<T> {
-    const { requireCsrf = true, mapError, responseMode } = options;
+    const { requireCsrf = true, mapError, responseMode, maxResponseBytes } = options;
     const requestGeneration = this.authGeneration;
     const method = init.method?.toUpperCase() ?? 'GET';
     const unsafe = isUnsafeMethod(method);
+    if (unsafe && this.companySwitchInFlight && path !== '/v3/auth/session/company') {
+      throw new ApiError('Hay un cambio de empresa en curso. Espera su confirmación antes de otra operación.', 409, 'company_switch_in_flight');
+    }
+    if (unsafe && !this.companyScopeVerified && !['/v3/auth/session/company', '/v3/auth/logout', '/v3/auth/login', '/v3/auth/register'].includes(path)) {
+      throw new ApiError('No se pudo verificar la empresa de la sesión. Relee la sesión antes de escribir.', 409, 'company_scope_unverified');
+    }
     const csrfToken = unsafe && requireCsrf ? await this.csrfForMutation() : undefined;
 
     if (unsafe && requestGeneration !== this.authGeneration) {
@@ -126,7 +143,7 @@ export class CauceApi {
         body = response.status === 204
           ? undefined
           : response.ok && responseMode === 'blob'
-            ? await response.blob()
+            ? await readBoundedBlob(response, maxResponseBytes)
             : contentType.includes('application/json')
             ? await response.json()
             : await response.text();
@@ -207,7 +224,9 @@ export class CauceApi {
   }
 
   private acceptSession(state: ConsoleAuthState): void {
-    const identity = JSON.stringify([state.authenticated, state.subject, state.csrf_token]);
+    this.companyScopeVerified = state.authenticated !== null || !this.companySwitchInFlight;
+    const identity = JSON.stringify([state.authenticated, state.subject, state.csrf_token, state.home_tenant,
+      state.authority?.acting_company, state.authority?.role, state.authority?.scope]);
     if (this.sessionIdentity !== undefined && identity !== this.sessionIdentity) this.advanceAuthGeneration();
     this.confirmedSession = state;
     this.sessionIdentity = identity;
@@ -227,6 +246,29 @@ export class CauceApi {
     }, { requireCsrf: false });
     if (generation === this.authGeneration) this.acceptSession(state);
     return state;
+  }
+
+  async register(input: RegistrationInput): Promise<RegistrationResult> {
+    return registrationReceipt(await this.request('/v3/auth/register', { method: 'POST', body: JSON.stringify(input) }, { requireCsrf: false }));
+  }
+
+  async switchCompany(companyId: string | null): Promise<ConsoleAuthState> {
+    if (this.companySwitchInFlight) throw new ApiError('Ya hay un cambio de empresa en curso.', 409, 'company_switch_in_flight');
+    this.companySwitchInFlight = true;
+    this.companyScopeVerified = false;
+    this.advanceAuthGeneration();
+    const generation = this.authGeneration;
+    this.sessionRead += 1;
+    try {
+      const state = await this.request<ConsoleAuthState>('/v3/auth/session/company', {
+        method: 'POST', body: JSON.stringify({ company_id: companyId }),
+      });
+      if (generation === this.authGeneration) this.acceptSession(state);
+      return state;
+    } catch (cause) {
+      await this.getAuthSession().catch(() => undefined);
+      throw cause;
+    } finally { this.companySwitchInFlight = false; }
   }
 
   updateHumanProfile(name: string): Promise<{ name: string }> {

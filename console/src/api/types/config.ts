@@ -22,10 +22,12 @@ export type ConfigMutation = ConfigLeafMutation | (Record<string, unknown> & {
 });
 
 export interface ConfigurationCapabilities {
-  actor: { tenant_id: string; alias: string; is_hub: boolean; can_control: boolean };
+  actor: { tenant_id: string; alias: string; is_hub?: boolean; can_control: boolean;
+    role?: import('./auth').ConsoleAuthorityRole; scope?: import('./auth').ConsoleAuthorityScope;
+    company_id?: string; platform_override?: boolean };
   resources: {
-    resource: AnyConfigResource | 'agent_profile'; actions: ConfigAction[];
-    scope: 'hub' | 'tenant' | 'outgoing_acl' | 'none'; tenant_id?: string;
+    resource: AnyConfigResource | 'agent_profile' | 'fleet_host'; actions: ConfigAction[];
+    scope: 'hub' | 'company' | 'platform' | 'tenant' | 'outgoing_acl' | 'none'; tenant_id?: string;
   }[];
 }
 

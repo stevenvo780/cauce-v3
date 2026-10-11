@@ -132,6 +132,7 @@ export interface RequestOptions {
   requireCsrf?: boolean;
   mapError?: (status: number, body: unknown) => Error | undefined;
   responseMode?: 'json' | 'blob';
+  maxResponseBytes?: number;
 }
 
 /** Maximum wait time for HTTP requests before aborting on timeout. */
