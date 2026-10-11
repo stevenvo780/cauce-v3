@@ -1,10 +1,10 @@
 import { createHash,randomUUID,sign } from 'node:crypto';
-import { chmod,mkdir,mkdtemp,readFile,rm,writeFile } from 'node:fs/promises';
+import { chmod,mkdir,mkdtemp,readFile,rm,truncate,writeFile } from 'node:fs/promises';
 import { tmpdir,userInfo } from 'node:os';
 import { join } from 'node:path';
 import Fastify,{type FastifyInstance} from 'fastify';
 import { afterAll,afterEach,beforeEach,describe,expect,it } from 'vitest';
-import { SpaceBackupRepository,hostRequestMessage,type DatabasePool,type RegisteredCompany,type SpaceBackupClaim } from '../src/index.js';
+import { SPACE_BACKUP_MAX_BYTES,SpaceBackupRepository,hostRequestMessage,type DatabaseClient,type DatabasePool,type RegisteredCompany,type SpaceBackupClaim } from '../src/index.js';
 import { startTestCaseDatabase,startTestDatabase,type EmptyTestDatabase,type TestDatabase } from '../../../tests/helpers/postgres.js';
 import { preparePostgresSuite } from './postgres-suite.js';
 import { channelCapabilities,channelCompany,channelHost,channelPost,companySource,type ChannelHost } from '../../../services/gateway/src/fleet/host-channel.fixtures.js';
@@ -127,6 +127,7 @@ describe('durable space backup with real PostgreSQL runtime role and signed HTTP
     expect((await readFile(join(storage.directory,`${claim.id}.1.part`))).length).toBe(65_536);
     await admin.query("UPDATE space_backups SET lease_until=now()-interval '1 second' WHERE id=$1",[claim.id]);
     const next=(await command({action:'claim'})).json<{claim:SpaceBackupClaim}>().claim;expect(next.claim_epoch).toBe(claim.claim_epoch+1);
+    await expect(readFile(join(storage.directory,`${claim.id}.1.part`))).rejects.toThrow();
     expect((await command({action:'renew',claim:fence(claim)})).statusCode).toBe(409);
     expect((await command({action:'renew',claim:fence(next)})).json()).toEqual({renewed:true});
   });
@@ -146,7 +147,8 @@ describe('durable space backup with real PostgreSQL runtime role and signed HTTP
   it('records explicit oversized source failure through the real helper and signed host worker',async()=>{
     const response=await post({idempotency_key:'oversized-source'});expect(response.statusCode).toBe(202);const id=response.json<{id:string}>().id;
     const agent=(await pool.query<{state_directory:string}>("SELECT state_directory FROM agents WHERE tenant_id=$1 AND alias='worker'",[north.hub.id])).rows[0];
-    if(!agent) throw new Error('placed agent absent');await writeFile(join(agent.state_directory,'space/projects/large.dat'),Buffer.alloc(16*1024*1024+1,65),{mode:0o600});
+    if(!agent) throw new Error('placed agent absent');const excessive=join(agent.state_directory,'space/projects/large.dat');
+    await writeFile(excessive,'',{mode:0o600});await truncate(excessive,128*1024*1024+1);
     const worker=new SpaceBackupHost({identity:host,request:async(_method,_path,payload)=>{
       const result=await command(payload);if(result.statusCode!==200) throw new Error('signed host request failed');return result.json<unknown>();
     }},{python:'/usr/bin/python3',projectRoot,policyFile});
@@ -165,7 +167,7 @@ describe('durable space backup with real PostgreSQL runtime role and signed HTTP
     const ready={...row,status:'ready' as const};await expect(openSpaceBackupDownload(storage,ready)).rejects.toThrow('copy differs');
     expect((await command({action:'finish',claim:fence(claim)})).statusCode).toBe(409);
     expect((await app.inject({method:'GET',url:`${base()}/${claim.id}/download`,headers:{cookie}})).statusCode).toBe(409);
-    expect((await command({action:'begin',claim:fence(claim),bytes:32*1024*1024+1,sha256:receipt.sha256,manifest_sha256:receipt.manifest_sha256})).statusCode).toBe(400);
+    expect((await command({action:'begin',claim:fence(claim),bytes:SPACE_BACKUP_MAX_BYTES+1,sha256:receipt.sha256,manifest_sha256:receipt.manifest_sha256})).statusCode).toBe(400);
   });
   it('cleans every expired epoch privately and disables expired downloads without a false ready state',async()=>{
     const {claim}=await createClaim();await mkdir(storage.directory,{mode:0o700,recursive:true});
@@ -203,5 +205,108 @@ describe('durable space backup with real PostgreSQL runtime role and signed HTTP
       FROM space_backups backup CROSS JOIN generate_series(1,19) item WHERE backup.id=$1`,[id]);
     expect((await post({idempotency_key:'retention-overflow'})).statusCode).toBe(409);
     expect((await post({idempotency_key:'retention-existing'})).json<{id:string}>().id).toBe(id);
+  });
+  it('serializes durable byte reservations and leaves global capacity for another company',async()=>{
+    storage.companyMaxBytes=2*SPACE_BACKUP_MAX_BYTES;storage.globalMaxBytes=3*SPACE_BACKUP_MAX_BYTES;
+    const repository=new SpaceBackupRepository(pool,storage);
+    const northResult=await Promise.allSettled([0,1,2].map(index=>repository.enqueue(companySource(north),north.hub.id,'worker',
+      {idempotency_key:`byte-north-${String(index)}`})));
+    expect(northResult.filter(result=>result.status==='fulfilled')).toHaveLength(2);
+    expect(northResult.filter(result=>result.status==='rejected')).toHaveLength(1);
+    await admin.query(`INSERT INTO agents(tenant_id,alias,harness_id,enabled,company_id,host_id,runtime_key,runtime_mode,container_name,
+      runtime_user,home_directory,state_directory,systemd_user) SELECT $1,'worker',harness_id,false,$2,$3,'south-worker',runtime_mode,
+      $4,runtime_user,home_directory,state_directory,systemd_user FROM agents WHERE tenant_id=$5 AND alias='worker'`,
+    [south.hub.id,south.company.id,other.host_id,`host:${other.host_id}`,north.hub.id]);
+    expect((await channelPost(app,other,{...channelCapabilities(),policy_sha256:digest(await readFile(policyFile))})).statusCode).toBe(200);
+    const southResult=await Promise.allSettled([0,1].map(index=>repository.enqueue(companySource(south),south.hub.id,'worker',
+      {idempotency_key:`byte-south-${String(index)}`})));
+    expect(southResult.filter(result=>result.status==='fulfilled')).toHaveLength(1);
+    expect(southResult.filter(result=>result.status==='rejected')).toHaveLength(1);
+    expect((await pool.query('SELECT company_id,count(*)::integer AS count FROM space_backups GROUP BY company_id ORDER BY company_id')).rows)
+      .toEqual([{company_id:north.company.id,count:2},{company_id:south.company.id,count:1}]);
+    const prior=northResult.find(result=>result.status==='fulfilled');if(prior?.status!=='fulfilled') throw new Error('reservation absent');
+    const key=(await pool.query<{idempotency_key:string}>('SELECT idempotency_key FROM space_backups WHERE id=$1',[prior.value.id])).rows[0]?.idempotency_key;
+    expect(await repository.enqueue(companySource(north),north.hub.id,'worker',{idempotency_key:key})).toEqual(prior.value);
+  });
+  it('serializes enqueue against signed begin without a lock cycle',async()=>{
+    const {claim}=await createClaim();
+    let release:()=>void=()=>undefined;const barrier=new Promise<void>(resolve=>{release=resolve;});
+    let reached:(pid:number)=>void=()=>undefined;const holding=new Promise<number>(resolve=>{reached=resolve;});
+    let paused=false;
+    const gatedPool={connect:async()=>{
+      const client=await pool.connect();const query=client.query.bind(client);const free=client.release.bind(client);
+      const pid=(await query<{pid:number}>('SELECT pg_backend_pid() AS pid')).rows[0]?.pid;
+      if(pid===undefined) {free();throw new Error('admission backend absent');}
+      client.query=(async(sql:string,parameters?:unknown[])=>{
+        const result=await query(sql,parameters);
+        if(!paused&&sql==='SELECT pg_advisory_xact_lock($1)'&&parameters?.[0]===783_003_060) {
+          paused=true;reached(pid);await barrier;
+        }
+        return result;
+      }) as DatabaseClient['query'];
+      client.release=(error?:boolean|Error)=>{client.query=query;client.release=free;free(error);};return client;
+    }} as unknown as DatabasePool;
+    const admission=Fastify();admission.addHook('onRequest',createConsoleSecurityHook());
+    const provider=new PasswordAuthProvider({users:new PostgresConsoleUserStore(pool),signingKey:Buffer.alloc(32,84)});
+    registerSpaceBackupConsoleRoutes(admission,provider,gatedPool,storage);
+    const enqueue=Promise.resolve(admission.inject({method:'POST',url:base(),payload:{idempotency_key:'enqueue-begin-barrier'},
+      headers:{cookie,origin:'http://localhost','x-csrf-token':csrf}}));
+    let begin:ReturnType<typeof command>|undefined;
+    try {
+      await expect.poll(()=>paused,{timeout:5000,interval:10}).toBe(true);
+      const pid=await holding;
+      begin=command({action:'begin',claim:fence(claim),bytes:100_000,sha256:'1'.repeat(64),manifest_sha256:'2'.repeat(64)});
+      await expect.poll(async()=>{
+        const result=await admin.query<{waiting:boolean}>(`SELECT EXISTS(SELECT 1 FROM pg_stat_activity
+          WHERE datname=current_database() AND pid<>$1 AND wait_event_type='Lock' AND $1=ANY(pg_blocking_pids(pid))) AS waiting`,[pid]);
+        return result.rows[0]?.waiting;
+      },{timeout:5000,interval:10}).toBe(true);
+      release();const admitted=await enqueue;const started=await begin;
+      console.log('BACKUP_ADMISSION_BEGIN_BARRIER',JSON.stringify({enqueue:admitted.statusCode,begin:started.statusCode}));
+      expect([admitted.statusCode,started.statusCode]).toEqual([202,200]);
+    } finally {release();await Promise.allSettled([enqueue,begin]);await admission.close();}
+  });
+  it('charges ready bytes and failed partial copies while releasing expired reservations',async()=>{
+    storage.companyMaxBytes=2*SPACE_BACKUP_MAX_BYTES+512*1024*1024;storage.globalMaxBytes=4*SPACE_BACKUP_MAX_BYTES;
+    const {claim}=await createClaim();await upload(claim);expect((await command({action:'finish',claim:fence(claim)})).statusCode).toBe(200);
+    expect((await post({idempotency_key:'quota-ready-first'})).statusCode).toBe(202);
+    expect((await post({idempotency_key:'quota-ready-second'})).statusCode).toBe(202);
+    expect((await post({idempotency_key:'quota-ready-third'})).statusCode).toBe(409);
+    await admin.query("UPDATE space_backups SET expires_at=now()-interval '1 second' WHERE idempotency_key='quota-ready-first'");
+    expect((await post({idempotency_key:'quota-after-expiry'})).statusCode).toBe(202);
+    const partial=(await command({action:'claim'})).json<{claim:SpaceBackupClaim}>().claim;
+    const value=await exported(partial);await command({action:'begin',claim:fence(partial),...value});
+    const chunk=await invokeSpaceBackupHelper({python:'/usr/bin/python3',projectRoot,policyFile},{action:'read',claim:partial,offset:0},new AbortController().signal);
+    expect((await command({action:'append',claim:fence(partial),...(chunk as {offset:number;data:string})})).statusCode).toBe(200);
+    expect((await command({action:'fail',claim:fence(partial),error:'EXPORT_FAILED'})).statusCode).toBe(200);
+    await admin.query("UPDATE space_backups SET expires_at=now()-interval '1 second' WHERE id<>$1",[partial.id]);
+    storage.companyMaxBytes=SPACE_BACKUP_MAX_BYTES;storage.globalMaxBytes=4*SPACE_BACKUP_MAX_BYTES;
+    expect((await post({idempotency_key:'quota-retained-partial'})).statusCode).toBe(409);
+    expect((await readFile(join(storage.directory,`${partial.id}.${String(partial.claim_epoch)}.part`))).length).toBe(65_536);
+  });
+  it('rechecks reservation capacity at begin and admits large bounded receipts without ready metadata',async()=>{
+    const {claim}=await createClaim();
+    expect((await command({action:'begin',claim:fence(claim),bytes:96*1024*1024,sha256:'1'.repeat(64),manifest_sha256:'2'.repeat(64)})).json()).toEqual({offset:0});
+    expect((await app.inject({method:'GET',url:`${base()}/${claim.id}`,headers:{cookie}})).json())
+      .toMatchObject({status:'running',bytes:96*1024*1024,download_url:null});
+    storage.companyMaxBytes=SPACE_BACKUP_MAX_BYTES;storage.globalMaxBytes=SPACE_BACKUP_MAX_BYTES;
+    await admin.query(`INSERT INTO space_backups(company_id,tenant_id,alias,host_id,requested_by,idempotency_key,agent_snapshot,policy_sha256)
+      SELECT company_id,tenant_id,alias,host_id,requested_by,'begin-reservation-extra',agent_snapshot,policy_sha256 FROM space_backups WHERE id=$1`,[claim.id]);
+    expect((await command({action:'begin',claim:fence(claim),bytes:96*1024*1024,sha256:'1'.repeat(64),manifest_sha256:'2'.repeat(64)})).statusCode).toBe(409);
+    expect((await command({action:'finish',claim:fence(claim)})).statusCode).toBe(409);
+  });
+  it('persists export-failed after a disk error without advertising a partial copy as ready',async()=>{
+    const response=await post({idempotency_key:'disk-failure-backup'});const id=response.json<{id:string}>().id;
+    const worker=new SpaceBackupHost({identity:host,request:async(_method,_path,payload)=>{
+      const result=await command(payload);if(result.statusCode!==200) throw new Error('signed host request failed');return result.json<unknown>();
+    }},{python:'/usr/bin/python3',projectRoot,policyFile},async(config,input,signal)=>{
+      if(input.action==='read'&&Number(input.offset)>0) throw Object.assign(new Error('No space left on device'),{code:'ENOSPC'});
+      return invokeSpaceBackupHelper(config,input,signal);
+    });
+    expect(await worker.runOnce(new AbortController().signal)).toBe(true);
+    expect((await app.inject({method:'GET',url:`${base()}/${id}`,headers:{cookie}})).json())
+      .toMatchObject({status:'failed',error:'EXPORT_FAILED',download_url:null});
+    expect((await pool.query<{received_bytes:number}>('SELECT received_bytes FROM space_backups WHERE id=$1',[id])).rows[0]?.received_bytes).toBe(65_536);
+    expect((await app.inject({method:'GET',url:`${base()}/${id}/download`,headers:{cookie}})).statusCode).toBe(409);
   });
 });

@@ -2,9 +2,9 @@ import { createHash } from 'node:crypto';
 import { constants } from 'node:fs';
 import { lstat,mkdir,open,readdir,realpath,rename,unlink } from 'node:fs/promises';
 import { isAbsolute,join,resolve } from 'node:path';
-import { StoreError,SPACE_BACKUP_MAX_BYTES,type SpaceBackupRow } from '@cauce/store';
+import { StoreError,SPACE_BACKUP_MAX_BYTES,type SpaceBackupQuotaLimits,type SpaceBackupRow } from '@cauce/store';
 import { assertLoginPins,boundedProviderReceipt } from './provider-login.js';
-export interface SpaceBackupStorage {directory:string;projectRoot:string;python?:string}
+export interface SpaceBackupStorage extends SpaceBackupQuotaLimits {directory:string;projectRoot:string;python?:string}
 export async function prepareSpaceBackupDirectory(options:SpaceBackupStorage):Promise<void> {
   const path=options.directory;
   if (!isAbsolute(path)||resolve(path)!==path||path==='/') throw new Error('Space backup storage must be a canonical directory');

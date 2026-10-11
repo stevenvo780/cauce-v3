@@ -11,7 +11,7 @@ import zipfile
 
 import space_archive
 
-MAX_BYTES = 32 * 1024 * 1024
+MAX_BYTES = 1024 * 1024 * 1024
 CHUNK_BYTES = 64 * 1024
 
 

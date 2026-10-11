@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { HostEnrollmentRepository,StoreError,claimSpaceBackup,lockedSpaceBackup,type SpaceBackupRow,type DatabasePool } from '@cauce/store';
+import { HostEnrollmentRepository,StoreError,assertSpaceBackupByteCapacity,claimSpaceBackup,lockedSpaceBackup,type SpaceBackupRow,type DatabasePool } from '@cauce/store';
 import { SpaceBackupHostCommandSchema } from './space-backup.contracts.js';
 import { appendSpaceBackup,expireSpaceBackupCopies,verifySpaceBackup,type SpaceBackupStorage } from './space-backup.files.js';
 import { replyError } from '../routes/shared.js';
@@ -15,8 +15,10 @@ export function registerSpaceBackupHostRoutes(app:FastifyInstance,pool:DatabaseP
         const command=SpaceBackupHostCommandSchema.parse((request.body as {payload:unknown}).payload);
         if (command.action==='claim') {
           const expired=(await client.query<SpaceBackupRow>('SELECT id,claim_epoch FROM space_backups WHERE expires_at<=now()')).rows;
-          await expireSpaceBackupCopies(storage,expired);return {claim:await claimSpaceBackup(client,host)};
+          await expireSpaceBackupCopies(storage,expired);const claim=await claimSpaceBackup(client,host);
+          if (claim) await expireSpaceBackupCopies(storage,[claim]);return {claim};
         }
+        if (command.action==='begin') await assertSpaceBackupByteCapacity(client,host.company_id,storage);
         const row=await lockedSpaceBackup(client,host,command.claim,command.action==='finish');
         if (command.action==='fail') {await client.query("UPDATE space_backups SET status='failed',error=$2,lease_until=NULL WHERE id=$1",[row.id,command.error]);return {failed:true};}
         if (command.action==='begin') {

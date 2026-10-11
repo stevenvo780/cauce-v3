@@ -1,7 +1,10 @@
 import { z } from 'zod';
 import { AliasSchema, TenantSchema } from '@cauce/protocol';
-export const SPACE_BACKUP_MAX_BYTES=32*1024*1024;
+export const SPACE_BACKUP_MAX_BYTES=1024*1024*1024;
 export const SPACE_BACKUP_CHUNK_BYTES=64*1024;
+export interface SpaceBackupQuotaLimits {companyMaxBytes?:number;globalMaxBytes?:number}
+export const SPACE_BACKUP_COMPANY_BYTES=4*SPACE_BACKUP_MAX_BYTES;
+export const SPACE_BACKUP_GLOBAL_BYTES=16*SPACE_BACKUP_MAX_BYTES;
 const Identifier=z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/u);
 const Path=z.string().max(4096).regex(/^\/(?:[^\p{Cc}\\]+)$/u).refine(value=>!value.split('/').slice(1).some(part=>part==='.'||part==='..'||part===''));
 export const SpaceBackupTargetSchema=z.object({tenant_id:TenantSchema,alias:AliasSchema}).strict();

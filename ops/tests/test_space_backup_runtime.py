@@ -57,7 +57,7 @@ class SpaceBackupRuntimeTest(unittest.TestCase):
     def invoke(self, action, claim=None, **fields):
         return subprocess.run([sys.executable, str(CLI), '--policy', str(self.policy_file)],
             input=json.dumps({'action': action, 'claim': self.claim if claim is None else claim, **fields}),
-            text=True, capture_output=True, timeout=20)
+            text=True, capture_output=True, timeout=120)
 
     def exported(self):
         response = self.invoke('export')
@@ -116,18 +116,60 @@ class SpaceBackupRuntimeTest(unittest.TestCase):
         self.assertFalse(list(self.state.glob('space-backup-*')))
 
     def test_file_or_total_size_limit_is_explicit_and_removes_partial_archive(self):
-        (self.space / 'projects/large.txt').write_bytes(b'x' * (16 * 1024 * 1024 + 1))
+        with (self.space / 'projects/large.txt').open('wb') as output:
+            output.truncate(128 * 1024 * 1024 + 1)
         result = self.invoke('export')
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(json.loads(result.stdout), {'error': 'LIMIT_EXCEEDED'})
         self.assertFalse(list(self.state.glob('space-backup-*')))
         (self.space / 'projects/large.txt').unlink()
-        for name in ('a', 'b', 'c'):
-            (self.space / 'data' / name).write_bytes(b'x' * (12 * 1024 * 1024))
+        for index in range(9):
+            with (self.space / 'data' / str(index)).open('wb') as output:
+                output.truncate(128 * 1024 * 1024)
         result = self.invoke('export')
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(json.loads(result.stdout), {'error': 'LIMIT_EXCEEDED'})
         self.assertFalse(list(self.state.glob('space-backup-*')))
+
+    def test_large_project_jsonl_exports_validates_and_restores_with_exact_bytes_and_manifest(self):
+        source = self.space / 'data/project-leads.jsonl'
+        line = b'{"source":"synthetic","lead":"fixture"}\n'
+        block = line * (1024 * 1024 // len(line))
+        expected_hash = hashlib.sha256()
+        with source.open('wb') as output:
+            for _ in range(97):
+                output.write(block)
+                expected_hash.update(block)
+        size = source.stat().st_size
+        self.assertGreaterEqual(size, 96 * 1024 * 1024)
+        receipt = self.exported()
+        self.assertGreater(receipt['bytes'], 32 * 1024 * 1024)
+        archive = self.state / f"space-backup-{self.claim['id']}-1.zip"
+        checked = subprocess.run([sys.executable, str(VALIDATE)], input=json.dumps({'archive': str(archive),
+            'identity': self.identity, 'manifest_sha256': receipt['manifest_sha256']}), capture_output=True, text=True, timeout=120)
+        self.assertEqual(checked.returncode, 0, checked.stderr)
+        last_offset = receipt['bytes'] - min(64 * 1024, receipt['bytes'])
+        last = self.invoke('read', offset=last_offset)
+        self.assertEqual(last.returncode, 0, last.stderr)
+        self.assertEqual(len(base64.b64decode(json.loads(last.stdout)['data'], validate=True)), receipt['bytes'] - last_offset)
+        destination = self.root / 'restored-large-space'
+        arguments = [sys.executable, str(fixtures.OPS / 'cli/space_archive.py'), 'restore', '--archive', str(archive), '--directory', str(destination)]
+        for field, value in self.identity.items():
+            arguments.extend(['--' + field.replace('_', '-'), value])
+        restored = subprocess.run(arguments, capture_output=True, text=True, timeout=120)
+        self.assertEqual(restored.returncode, 0, restored.stderr)
+        result = json.loads(restored.stdout)
+        self.assertEqual(result['identity'], self.identity)
+        self.assertEqual(result['manifest_sha256'], receipt['manifest_sha256'])
+        target = destination / 'data/project-leads.jsonl'
+        self.assertEqual(target.stat().st_size, size)
+        actual_hash = hashlib.sha256()
+        with target.open('rb') as incoming:
+            while chunk := incoming.read(1024 * 1024):
+                actual_hash.update(chunk)
+        self.assertEqual(actual_hash.hexdigest(), expected_hash.hexdigest())
+        self.assertFalse((destination / 'config/auth.json').exists())
+        self.assertFalse((destination / 'data/sessions.sqlite').exists())
 
     def test_foreign_context_manifest_and_tampered_private_archive_fail(self):
         (self.space / 'config/context-state.json').write_text(json.dumps({**self.identity, 'company_id': 'foreign'}))

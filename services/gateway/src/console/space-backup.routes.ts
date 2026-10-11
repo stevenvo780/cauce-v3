@@ -7,7 +7,7 @@ import { PasswordAuthProvider } from '../password-auth.js';
 import { replyError } from '../routes/shared.js';
 import { openSpaceBackupDownload,type SpaceBackupStorage } from '../fleet/space-backup.files.js';
 export function registerSpaceBackupConsoleRoutes(app:FastifyInstance,provider:AuthProvider,pool:DatabasePool,storage:SpaceBackupStorage):void {
-  const repository=new SpaceBackupRepository(pool);
+  const repository=new SpaceBackupRepository(pool,storage);
   const base='/v3/console/spaces/:tenant_id/:alias/backups';
   for (const action of ['create','read','download'] as const) {
     app.route({method:action==='create'?'POST':'GET',url:action==='create'?base:`${base}/:id${action==='download'?'/download':''}`,bodyLimit:8192,
