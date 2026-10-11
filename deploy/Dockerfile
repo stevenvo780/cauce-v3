@@ -1,7 +1,7 @@
 ARG CAUCE_NODE_BASE=docker.io/library/node@sha256:56a687b4d23e7a6cb49114924f5e257fcfbd33ad1f28f5c67aea9365996f2819
 ARG CAUCE_PYTHON_BASE=docker.io/library/python@sha256:53739acebd52a300f19f52d93f2a6165f63300689bdf6f8af2bff0d63780e5e6
 ARG CAUCE_NGINX_BASE=docker.io/nginxinc/nginx-unprivileged@sha256:28d91bdce70ad09025ea901458fdd149259d8e05982ade79d4ef2c0d9470eb48
-ARG CAUCE_SCHEMA_COMPATIBLE_THROUGH=054_company_admins.sql
+ARG CAUCE_SCHEMA_COMPATIBLE_THROUGH=062_authority_read_guard.sql
 ARG CAUCE_TERMINAL_RELAY_INSTANCE_ID=""
 FROM ${CAUCE_NODE_BASE} AS build
 WORKDIR /app
@@ -75,8 +75,11 @@ ENV NODE_ENV=production
 WORKDIR /app
 COPY --from=python-runtime /usr/local /usr/local
 RUN python3 -c 'import asyncio, json; assert asyncio and json' \
-  && mkdir -p /var/lib/cauce-adapter /var/lib/cauce-terminal /var/lib/cauce-v3/blobs \
-  && chown node:node /var/lib/cauce-adapter /var/lib/cauce-terminal /var/lib/cauce-v3/blobs
+  && apt-get update && apt-get install -y --no-install-recommends git openssh-client \
+  && rm -rf /var/lib/apt/lists/* \
+  && mkdir -p /var/lib/cauce-adapter /var/lib/cauce-terminal /var/lib/cauce-v3/blobs /var/lib/cauce-v3/contexts /var/lib/cauce-v3/space-backups \
+  && chown node:node /var/lib/cauce-adapter /var/lib/cauce-terminal /var/lib/cauce-v3/blobs /var/lib/cauce-v3/contexts /var/lib/cauce-v3/space-backups \
+  && chmod 0700 /var/lib/cauce-v3/contexts /var/lib/cauce-v3/space-backups
 COPY --from=production-dependencies --chown=node:node /app/node_modules ./node_modules
 COPY --from=production-dependencies --chown=node:node /app/packages ./packages
 COPY --from=production-dependencies --chown=node:node /app/services ./services
@@ -90,6 +93,8 @@ COPY --from=build --chown=node:node /app/packages/protocol/dist ./packages/proto
 COPY --from=build --chown=node:node /app/packages/mcp-fleet-monitor/dist ./packages/mcp-fleet-monitor/dist
 COPY --from=build --chown=node:node /app/packages/adapter-sdk/dist/src ./packages/adapter-sdk/dist/src
 COPY --from=build --chown=node:node /app/packages/adapter-sdk/dist/bridge ./packages/adapter-sdk/dist/bridge
+COPY --from=build --chown=node:node /app/packages/adapter-sdk/dist/descriptors ./packages/adapter-sdk/dist/descriptors
+COPY --chown=node:node ops/cli/space_archive.py ops/cli/space_backup_validate.py ./ops/cli/
 RUN chmod -R 0555 ./packages/adapter-sdk/dist/bridge
 COPY --chown=node:node deploy/runtime/runtime-store.package.json ./packages/store/package.json
 COPY --chown=node:node deploy/runtime/readiness-probe.mjs deploy/runtime/local-readiness-probe.mjs deploy/runtime/unix-readiness-probe.mjs deploy/runtime/postgres-tls.mjs deploy/runtime/migrate.mjs deploy/runtime/migration-integrity.mjs deploy/runtime/schema-version.mjs deploy/runtime/fleet-snapshot.mjs deploy/runtime/outbox-metrics.mjs deploy/runtime/outbox-metrics-core.mjs deploy/runtime/release-state-metrics.mjs deploy/runtime/reconcile-stale-console-outbox.mjs deploy/runtime/reconcile-stale-console-outbox-core.mjs deploy/runtime/runtime-package-smoke.mjs ./deploy/

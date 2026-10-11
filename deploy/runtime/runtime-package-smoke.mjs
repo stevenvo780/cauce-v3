@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { constants } from 'node:fs';
 import { access, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
@@ -186,6 +187,91 @@ export async function validateRuntimeBridges({
   }
 }
 
+function runtimeCommand(command, args, input) {
+  const result = spawnSync(command, args, {
+    input, encoding: 'utf8', timeout: 20_000, maxBuffer: 2_097_152,
+    env: { PATH: process.env.PATH ?? '/usr/local/bin:/usr/bin:/bin',
+      PYTHONDONTWRITEBYTECODE: '1', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_TERMINAL_PROMPT: '0' },
+  });
+  if (result.error || result.status !== 0) {
+    throw new Error(`runtime resource command failed: ${command} (exit ${String(result.status)})`, { cause: result.error });
+  }
+  return result.stdout.trim();
+}
+
+export async function validateRuntimeHarnessDescriptors({
+  descriptorModule = new URL('../packages/adapter-sdk/dist/src/context/harness-descriptor.js', import.meta.url),
+} = {}) {
+  const { packagedHarnessDescriptor } = await import(descriptorModule);
+  for (const harness of ['claude', 'codex', 'hermes', 'opencode', 'openclaw', 'grok', 'muse', 'fake']) {
+    const descriptor = await packagedHarnessDescriptor(harness);
+    if (descriptor.harness !== harness || descriptor.operations.execute !== 'native-execution') {
+      throw new Error(`runtime harness descriptor differs: ${harness}`);
+    }
+  }
+  console.log('runtime harness descriptors passed: 8/8');
+}
+
+export async function validateRuntimeContextBroker({
+  brokerModule = new URL('../packages/store/dist/context-git.js', import.meta.url),
+} = {}) {
+  runtimeCommand('git', ['--version']);
+  runtimeCommand('ssh', ['-V']);
+  const { ContextGitBroker } = await import(brokerModule);
+  const directory = await mkdtemp(join(tmpdir(), 'cauce-runtime-context-smoke-'));
+  try {
+    const repository = join(directory, 'repository'); const remote = join(directory, 'remote.git');
+    await mkdir(repository, { mode: 0o700 });
+    runtimeCommand('git', ['init', '--initial-branch=main', repository]);
+    runtimeCommand('git', ['init', '--bare', '--initial-branch=main', remote]);
+    runtimeCommand('git', ['-C', repository, 'remote', 'add', 'origin', remote]);
+    const files = [{ path: 'context/AGENTS.md', content: 'Runtime context fixture.\n' }];
+    const version = { company_id: 'runtime_fixture', tenant_id: 'Runtime', alias: 'fixture', version: 1, files,
+      digest: createHash('sha256').update(JSON.stringify(files)).digest('hex'), source: 'cli', restored_from: null,
+      actor_human_id: null, actor_alias: 'fixture', created_at: '2000-01-01T00:00:00.000Z' };
+    const broker = new ContextGitBroker(repository);
+    const commit = await broker.commit(version);
+    if (!/^[a-f0-9]{40,64}$/u.test(commit) || await broker.commit(version) !== commit) {
+      throw new Error('runtime context broker commit is not idempotent');
+    }
+    await broker.push(commit);
+    const observed = runtimeCommand('git', ['--git-dir', remote, 'rev-parse', 'refs/heads/main']);
+    const content = runtimeCommand('git', ['--git-dir', remote, 'show',
+      `${commit}:companies/runtime_fixture/tenants/Runtime/agents/fixture/context/AGENTS.md`]);
+    if (observed !== commit || content !== files[0].content.trim()) throw new Error('runtime context push readback differs');
+    console.log('runtime context broker passed: commit, idempotency, local push and readback');
+  } finally { await rm(directory, { recursive: true, force: true }); }
+}
+
+export async function validateRuntimeSpaceBackups({
+  helperDirectory = fileURLToPath(new URL('../ops/cli/', import.meta.url)),
+  python = process.env.CAUCE_SPACE_BACKUP_PYTHON ?? 'python3',
+} = {}) {
+  const directory = await mkdtemp(join(tmpdir(), 'cauce-runtime-backup-smoke-'));
+  try {
+    const source = join(directory, 'source'); const restored = join(directory, 'restored');
+    const archive = join(directory, 'space.zip'); const content = 'Runtime backup fixture.\n';
+    await mkdir(join(source, 'context'), { recursive: true, mode: 0o700 });
+    await writeFile(join(source, 'context', 'AGENTS.md'), content, { mode: 0o600 });
+    const identity = { company_id: 'runtime_fixture', tenant_id: 'Runtime', alias: 'fixture', runtime_key: 'runtime-fixture' };
+    const identityArgs = Object.entries(identity).flatMap(([key, value]) => [`--${key.replaceAll('_', '-')}`, value]);
+    const helper = join(helperDirectory, 'space_archive.py');
+    const receipt = JSON.parse(runtimeCommand(python, [helper, 'backup', '--archive', archive, '--directory', source, ...identityArgs]));
+    if (receipt.state !== 'backed_up' || receipt.files !== 1 || !/^[a-f0-9]{64}$/u.test(receipt.manifest_sha256)) {
+      throw new Error('runtime space backup receipt differs');
+    }
+    const verified = JSON.parse(runtimeCommand(python, [join(helperDirectory, 'space_backup_validate.py')],
+      JSON.stringify({ archive, identity, manifest_sha256: receipt.manifest_sha256 })));
+    if (verified.verified !== true) throw new Error('runtime space backup manifest was not verified');
+    const restore = JSON.parse(runtimeCommand(python, [helper, 'restore', '--archive', archive, '--directory', restored, ...identityArgs]));
+    if (restore.state !== 'restored' || restore.manifest_sha256 !== receipt.manifest_sha256
+      || await readFile(join(restored, 'context', 'AGENTS.md'), 'utf8') !== content) {
+      throw new Error('runtime space restore readback differs');
+    }
+    console.log('runtime space backup passed: ZIP, manifest verification, restore and readback');
+  } finally { await rm(directory, { recursive: true, force: true }); }
+}
+
 export async function validateRuntimePackage() {
   for (const [name, relativeManifest] of runtimePackages) {
     const manifestUrl = new URL(relativeManifest, import.meta.url);
@@ -235,6 +321,9 @@ export async function validateRuntimePackage() {
   }
 
   await validateRuntimeBridges();
+  await validateRuntimeHarnessDescriptors();
+  await validateRuntimeContextBroker();
+  await validateRuntimeSpaceBackups();
   console.log('runtime package smoke passed');
 }
 

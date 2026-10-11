@@ -58,14 +58,19 @@ resolver() {
 
 # Paths only, taken from prod.env so the service reuses the gateway's PKI and identity registry.
 generar_env() {
-  local imagen=$1 bind cert clave ca identidades
+  local imagen=$1 bind cert clave ca identidades database_path postgres_ca bus_project
   bind=$(valor_de CAUCE_PRIVATE_BIND_IP "$PROD_ENV")
   cert=$(valor_de CAUCE_GATEWAY_TLS_CERT_PATH "$PROD_ENV")
   clave=$(valor_de CAUCE_GATEWAY_TLS_KEY_PATH "$PROD_ENV")
   ca=$(valor_de CAUCE_GATEWAY_CLIENT_CA_PATH "$PROD_ENV")
   identidades=$(valor_de CAUCE_GATEWAY_IDENTITY_DIR "$PROD_ENV")
+  database_path=${CAUCE_DECISIONES_DATABASE_URL_SECRET_PATH:-$(valor_de CAUCE_DATABASE_URL_GATEWAY_SECRET_PATH "$PROD_ENV")}
+  postgres_ca=$(valor_de CAUCE_POSTGRES_CA_PATH "$PROD_ENV")
+  bus_project=$(valor_de COMPOSE_PROJECT_NAME "$PROD_ENV")
+  bus_project=${bus_project:-cauce-v3-prod}
   for par in "CAUCE_PRIVATE_BIND_IP=$bind" "CAUCE_GATEWAY_TLS_CERT_PATH=$cert" "CAUCE_GATEWAY_TLS_KEY_PATH=$clave" \
-    "CAUCE_GATEWAY_CLIENT_CA_PATH=$ca" "CAUCE_GATEWAY_IDENTITY_DIR=$identidades"; do
+    "CAUCE_GATEWAY_CLIENT_CA_PATH=$ca" "CAUCE_GATEWAY_IDENTITY_DIR=$identidades" \
+    "CAUCE_DECISIONES_DATABASE_URL_SECRET_PATH=$database_path" "CAUCE_POSTGRES_CA_PATH=$postgres_ca"; do
     [[ -n ${par#*=} ]] || die "falta ${par%%=*} en $PROD_ENV"
   done
   [[ -f $identidades/mtls_identities.json ]] || die "no existe $identidades/mtls_identities.json"
@@ -73,6 +78,8 @@ generar_env() {
     "CAUCE_DECISIONES_IMAGE=$imagen" "CAUCE_PRIVATE_BIND_IP=$bind" "CAUCE_DECISIONES_TLS_PORT=$PORT" \
     "CAUCE_GATEWAY_TLS_CERT_PATH=$cert" "CAUCE_GATEWAY_TLS_KEY_PATH=$clave" "CAUCE_GATEWAY_CLIENT_CA_PATH=$ca" \
     "CAUCE_GATEWAY_IDENTITY_DIR=$identidades" "CAUCE_TYPESAFE_JEV_KEY_PATH=$KEY" \
+    "CAUCE_DECISIONES_DATABASE_URL_SECRET_PATH=$database_path" "CAUCE_POSTGRES_CA_PATH=$postgres_ca" \
+    "CAUCE_DECISIONES_BACKEND_NETWORK=${CAUCE_DECISIONES_BACKEND_NETWORK:-${bus_project}_backend}" \
     'CAUCE_DECISIONES_ALIASES=zeus' 'CAUCE_DECISIONES_TENANTS=Steven' 'CAUCE_DECISIONES_HABILITAR_PLANTILLAS=' \
     'CAUCE_DECISIONES_JEV_MODEL=jev-latest'
 }
@@ -152,12 +159,22 @@ modo_aplicar() {
   paso "imagen $imagen desde git archive $sha"
   construir "$sha" "$imagen"
   if [[ -f $ENV_FILE ]]; then
+    cp -p -- "$ENV_FILE" "$ENV_FILE.pre-v4-$(date -u +%Y%m%dT%H%M%SZ)"
     previa=$(valor_de CAUCE_DECISIONES_IMAGE "$ENV_FILE")
     [[ -z $previa || $previa == "$imagen" ]] || fijar IMAGEN_ANTES "$previa" "$REVERT_FILE"
     fijar CAUCE_DECISIONES_IMAGE "$imagen" "$ENV_FILE"
   else
     (umask 077 && generar_env "$imagen" > "$ENV_FILE")
   fi
+  local generated name value
+  generated=$(generar_env "$imagen")
+  for name in CAUCE_DECISIONES_DATABASE_URL_SECRET_PATH CAUCE_POSTGRES_CA_PATH CAUCE_DECISIONES_BACKEND_NETWORK; do
+    if [[ -z $(valor_de "$name" "$ENV_FILE") ]]; then
+      value=$(printf '%s\n' "$generated" | sed -n "s/^$name=//p")
+      [[ -n $value ]] || die "falta $name en el entorno de decisiones"
+      fijar "$name" "$value" "$ENV_FILE"
+    fi
+  done
   puerto_libre
   compose config -q || die "el compose no renderiza con $ENV_FILE"
   paso 'up'

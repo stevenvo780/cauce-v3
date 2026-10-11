@@ -51,6 +51,9 @@ function pathsOf(domain, tree) {
 
 // 1. Domain composition: full is exactly the union, and nothing is stranded outside every domain.
 const runtimePaths = pathsOf('runtime');
+for (const helper of ['ops/cli/space_archive.py', 'ops/cli/space_backup_validate.py']) {
+  assert(runtimePaths.has(helper), `runtime domain must cover copied helper ${helper}`);
+}
 const consolePaths = pathsOf('console');
 const testcontainersPaths = pathsOf('testcontainers');
 const verificationPaths = pathsOf('verification');
@@ -167,7 +170,8 @@ for (const sentinel of [
 // 5. Operational QA stays out of the runtime-image identity while remaining covered by the
 //    verification domain.
 assert(
-  ![...runtimePaths].some((entry) => entry.startsWith('ops/')),
+  ![...runtimePaths].some((entry) => entry.startsWith('ops/')
+    && !['ops/cli/space_archive.py', 'ops/cli/space_backup_validate.py'].includes(entry)),
   'operational QA must not invalidate runtime-image evidence',
 );
 assert(verificationPaths.has('ops/scripts/fault-compose.sh'), 'verification lost the live fault driver');
@@ -490,6 +494,12 @@ try {
     await rm(futureGate);
     assert.equal(digestOf('verification', sandbox), beforeSymlink.verification, 'removing symlink must restore verification');
     assert.equal(digestOf('full', sandbox), beforeSymlink.full, 'removing symlink must restore full');
+  }
+
+  for (const helper of ['ops/cli/space_archive.py', 'ops/cli/space_backup_validate.py']) {
+    const beforeHelper = digestOf('runtime', sandbox);
+    await write(helper, 'print("runtime helper")\n');
+    assert.notEqual(digestOf('runtime', sandbox), beforeHelper, `copied helper ${helper} must invalidate runtime evidence`);
   }
 
   // 9j. Renames are observable: paths are hashed alongside bytes.

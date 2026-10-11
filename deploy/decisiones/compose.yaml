@@ -19,6 +19,9 @@ services:
     stop_grace_period: 20s
     environment:
       NODE_ENV: production
+      CAUCE_DECISIONES_DATABASE_URL_FILE: /run/secrets/database_url
+      PGSSLMODE: verify-full
+      PGSSLROOTCERT: /run/secrets/postgres_ca
       CAUCE_DECISIONES_PORT: "8447"
       CAUCE_DECISIONES_HEALTH_PORT: "8088"
       CAUCE_DECISIONES_TLS_CERT_FILE: /run/secrets/decisiones_tls_cert
@@ -45,6 +48,8 @@ services:
       - decisiones_tls_key
       - decisiones_client_ca
       - typesafe_jev_key
+      - database_url
+      - postgres_ca
     volumes:
       - type: bind
         source: ${CAUCE_GATEWAY_IDENTITY_DIR:?directorio con mtls_identities.json}
@@ -55,11 +60,15 @@ services:
       - decisiones_auditoria:/var/lib/cauce-decisiones
     ports:
       - "${CAUCE_PRIVATE_BIND_IP:?IP del tailnet}:${CAUCE_DECISIONES_TLS_PORT:-8447}:8447"
-    networks: [salida]
+    networks: [salida, backend]
 
 # File secrets are bind mounts outside swarm: the HOST owner is what the container sees, so every
 # file here must be readable by uid 1000 (stev) on the host.
 secrets:
+  database_url:
+    file: ${CAUCE_DECISIONES_DATABASE_URL_SECRET_PATH:?conexión del rol runtime de decisiones}
+  postgres_ca:
+    file: ${CAUCE_POSTGRES_CA_PATH:?CA para PostgreSQL verify-full}
   decisiones_tls_cert:
     file: ${CAUCE_GATEWAY_TLS_CERT_PATH:?certificado de servidor con SAN 100.64.0.11}
   decisiones_tls_key:
@@ -78,3 +87,6 @@ volumes:
 networks:
   salida:
     driver: bridge
+  backend:
+    external: true
+    name: ${CAUCE_DECISIONES_BACKEND_NETWORK:?red backend del bus publicado}

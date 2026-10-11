@@ -301,6 +301,9 @@ EXPECTED_COMMIT="$(git rev-parse --verify "${EXPECTED_GIT_REF}^{commit}" 2>/dev/
   || die "HEAD != $EXPECTED_GIT_REF; sincroniza primero"
 
 REV="$(git rev-parse --short HEAD)"
+RELEASE_COMMIT="$(git rev-parse HEAD)"
+RUNTIME_SOURCE_DIGEST="$(python3 ops/scripts/source-digest.py --domain runtime)"
+CONSOLE_SOURCE_DIGEST="$(python3 ops/scripts/source-digest.py --domain console)"
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 RUNTIME_TAG="$REGISTRY/cauce-v3-runtime:$REV"
 CONSOLE_TAG="$REGISTRY/cauce-v3-console:$REV"
@@ -441,9 +444,9 @@ fi
 # Both images come from deploy/Dockerfile: `runtime` is NOT the last stage (console is), so the
 # target is explicit; the console stage bakes the relay instance id into its nginx route at build.
 [ "$MCP_HUMAN_ENABLED" = 1 ] || prepare_terminal
-docker build -f deploy/Dockerfile --target runtime --build-arg "CAUCE_SCHEMA_COMPATIBLE_THROUGH=$LAST_MIGRATION" --label "org.opencontainers.image.revision=$REV" -t "$RUNTIME_TAG" .
+docker build -f deploy/Dockerfile --target runtime --build-arg "CAUCE_SCHEMA_COMPATIBLE_THROUGH=$LAST_MIGRATION" --build-arg "CAUCE_SOURCE_DIGEST=$RUNTIME_SOURCE_DIGEST" --build-arg "CAUCE_RELEASE_COMMIT=$RELEASE_COMMIT" -t "$RUNTIME_TAG" .
 docker build -f deploy/Dockerfile --target console --build-arg "CAUCE_TERMINAL_RELAY_INSTANCE_ID=$INSTANCE_ID" \
-  --label "org.opencontainers.image.revision=$REV" -t "$CONSOLE_TAG" .
+  --build-arg "CAUCE_SOURCE_DIGEST=$CONSOLE_SOURCE_DIGEST" --build-arg "CAUCE_RELEASE_COMMIT=$RELEASE_COMMIT" -t "$CONSOLE_TAG" .
 [ "$(docker inspect --format '{{index .Config.Labels "io.cauce.terminal-relay.instance-id"}}' "$CONSOLE_TAG")" = "$INSTANCE_ID" ] \
   || die "la imagen de consola no lleva el instance id horneado"
 docker push -q "$RUNTIME_TAG" && docker push -q "$CONSOLE_TAG"

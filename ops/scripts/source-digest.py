@@ -155,7 +155,8 @@ DOMAIN_INPUTS: dict[str, tuple[str, ...]] = {
     # stage next to the runtime sources. Neither takes part in the console build (console
     # builds with `tsc -b` over its own project references plus Vite).
     "runtime": SHARED_MANIFESTS
-    + ("tsconfig.build.json", "vitest.config.ts", "packages", "services", "deploy"),
+    + ("tsconfig.build.json", "vitest.config.ts", "packages", "services", "deploy",
+       "ops/cli/space_archive.py", "ops/cli/space_backup_validate.py"),
     # `deploy` stays whole here as well: the console image copies deploy/nginx-console-tls.conf, and
     # enumerating single files would let a future console-relevant deploy file escape the digest.
     # Over-coverage is harmless for this domain because console evidence is cheap to regenerate.

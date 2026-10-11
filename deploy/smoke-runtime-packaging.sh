@@ -6,6 +6,7 @@ runtime_image=${CAUCE_RUNTIME_SMOKE_IMAGE:-cauce-v3-runtime-smoke:local}
 postgres_image=${CAUCE_RUNTIME_SMOKE_POSTGRES_IMAGE:-postgres:16-alpine}
 rebuild=${CAUCE_RUNTIME_SMOKE_REBUILD:-1}
 
+[[ $(id -u) != 0 ]] || { printf 'runtime packaging smoke requires a normal host user\n' >&2; exit 78; }
 command -v docker >/dev/null 2>&1 || { printf 'runtime packaging smoke requires Docker\n' >&2; exit 127; }
 docker info >/dev/null 2>&1 || { printf 'runtime packaging smoke cannot reach Docker\n' >&2; exit 127; }
 
@@ -84,4 +85,4 @@ if [[ ! "$migration_count" =~ ^[1-9][0-9]*$ ]]; then
   exit 1
 fi
 
-printf 'runtime packaging smoke passed: imports, non-root/read-only, PostgreSQL migrator (%s migrations)\n' "$migration_count"
+printf 'runtime packaging smoke passed: imports, bridges, 8 harness descriptors, Git/SSH, local context commit/push, ZIP backup/restore, non-root/read-only, PostgreSQL migrator (%s migrations)\n' "$migration_count"
