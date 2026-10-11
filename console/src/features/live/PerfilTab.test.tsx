@@ -436,8 +436,8 @@ it('un alias openclaw reparte los campos entre sus cinco ficheros gobernados', a
   expect(rotuloDe(/Instrucciones fijas de funcionamiento/i)).toContain('→ AGENTS.md');
 });
 
-it('un alias codex junta los siete campos en AGENTS.md, sin nombrar ficheros ajenos', async () => {
-  await abrirCon({ harness: 'codex' });
+it.each(['codex', 'muse', 'grok'])('un alias %s junta los siete campos en AGENTS.md, sin nombrar ficheros ajenos', async (harness) => {
+  await abrirCon({ harness });
   expect(rotuloDe(/Identidad y propósito/i)).toContain('→ AGENTS.md');
   expect(rotuloDe(/^Herramientas/i)).toContain('→ AGENTS.md');
   expect(screen.getByText(/Campos canónicos de kant/i).closest('section')?.textContent ?? '')

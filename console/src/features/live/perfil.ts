@@ -91,7 +91,7 @@ const REPARTO_OPENCLAW: Record<CampoDelPerfil, string> = {
 function ficheroDelCampo(harness: string, campo: CampoDelPerfil): string | undefined {
   if (harness === 'claude') return 'CLAUDE.md';
   if (harness === 'codex') return 'AGENTS.md';
-  if (harness === 'muse') return 'AGENTS.md';
+  if (harness === 'muse' || harness === 'grok') return 'AGENTS.md';
   if (harness === 'openclaw') return REPARTO_OPENCLAW[campo];
   return undefined;
 }

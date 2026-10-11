@@ -85,6 +85,28 @@ function rutaMapa(tenantId: string, alias: string): string {
   return `/v3/console/tenants/${tenantId}/agents/${alias}/documents`;
 }
 
+it('Grok inventory resolves only the measured workspace and preserves registry identity without measured paths', async () => {
+  const facts: RuntimeFacts = { harness: 'grok', home: '/home/claw', grokWorkspace: '/workspace/project' };
+  const app = servidor({
+    authorizeTarget: async (_actor, tenant_id, alias) => ({ tenant_id, alias, harness_id: 'grok', home_directory: '/home/claw', enabled: true }),
+    probe: probe({ 'Steven:hades': { facts, source: 'measured' } }),
+  });
+  try {
+    const result = await app.inject({ method: 'GET', url: rutaMapa('Steven', 'hades') });
+    expect(result.statusCode).toBe(200);
+    expect(result.json()).toMatchObject({ harness: 'grok', facts_source: 'measured' });
+    expect(result.json<DocumentsResponse>().items).toEqual([expect.objectContaining({ path: '/workspace/project/AGENTS.md', editable: false })]);
+  } finally { await app.close(); }
+  const unknown = servidor({
+    authorizeTarget: async (_actor, tenant_id, alias) => ({ tenant_id, alias, harness_id: 'grok', home_directory: '/home/claw', enabled: true }),
+  });
+  try {
+    const result = await unknown.inject({ method: 'GET', url: rutaMapa('Steven', 'hades') });
+    expect(result.statusCode).toBe(200); expect(result.json()).toMatchObject({ harness: 'grok' });
+    expect(result.json<DocumentsResponse>().items).toEqual([]);
+  } finally { await unknown.close(); }
+});
+
 function rutaContenido(tenantId: string, alias: string, kind = 'directive'): string {
   return `${rutaMapa(tenantId, alias)}/${kind}/content`;
 }

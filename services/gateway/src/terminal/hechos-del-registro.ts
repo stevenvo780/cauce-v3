@@ -9,7 +9,7 @@ import type { AgentRegistry } from './registry.js';
  */
 
 /** Harnesses whose governing files this path knows how to resolve. */
-const ARNESES_CONOCIDOS = ['claude', 'codex', 'openclaw', 'hermes', 'muse'] as const;
+const ARNESES_CONOCIDOS = ['claude', 'codex', 'openclaw', 'hermes', 'muse', 'grok'] as const;
 
 function arnesConocido(valor: string): valor is RuntimeFacts['harness'] {
   return (ARNESES_CONOCIDOS as readonly string[]).includes(valor);
@@ -36,7 +36,7 @@ export function hechosDelRegistro(registry: AgentRegistry): MeasuredFactsSource 
       const {
         harness, home, runtime_facts_observed: runtimeFactsObserved,
         codex_home: codexHome, claude_config_dir: claudeConfigDir,
-        openclaw_workspace: openclawWorkspace, muse_workspace: museWorkspace,
+        openclaw_workspace: openclawWorkspace, muse_workspace: museWorkspace, grok_workspace: grokWorkspace,
         cwd, workspace_root: workspaceRoot,
         project_root: projectRoot, project_doc_max_bytes: projectDocMaxBytes,
         project_doc_fallback_filenames: projectDocFallbackFilenames,
@@ -56,6 +56,7 @@ export function hechosDelRegistro(registry: AgentRegistry): MeasuredFactsSource 
           || (harness === 'claude' && !rutaCanonica(claudeConfigDir))
           || (harness === 'openclaw' && !rutaCanonica(openclawWorkspace))
           || (harness === 'muse' && !rutaCanonica(museWorkspace))
+          || (harness === 'grok' && !rutaCanonica(grokWorkspace))
           || (harness === 'hermes' && (!rutaCanonica(cwd) || !rutaCanonica(projectRoot)))) {
         return undefined;
       }
@@ -73,6 +74,7 @@ export function hechosDelRegistro(registry: AgentRegistry): MeasuredFactsSource 
         ...(claudeConfigDir === undefined ? {} : { claudeConfigDir }),
         ...(openclawWorkspace === undefined ? {} : { openclawWorkspace }),
         ...(museWorkspace === undefined ? {} : { museWorkspace }),
+        ...(grokWorkspace === undefined ? {} : { grokWorkspace }),
         ...(cwd === undefined ? {} : { cwd }),
         ...(workspaceRoot === undefined ? {} : { workspaceRoot }),
         ...(projectRoot === undefined ? {} : { projectRoot }),

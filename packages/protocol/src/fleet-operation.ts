@@ -4,6 +4,15 @@ import { ConfigurationDependencySchema } from './configuration-identity.js';
 
 export const RuntimeKeySchema = z.string().regex(/^[a-z][a-z0-9-]{0,63}$/);
 const IdentifierSchema = z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/);
+const ReasoningEffortSchema = z.enum(['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra']);
+const LEGACY_EFFORTS = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
+function supportsReasoningEffort(harness: string, effort: string | null | undefined): boolean {
+  if (effort == null) return true;
+  const supported: readonly string[] = harness === 'muse' ? ReasoningEffortSchema.options
+    : harness === 'codex' || harness === 'openclaw' ? LEGACY_EFFORTS
+    : harness === 'claude' ? ['low', 'medium', 'high', 'xhigh', 'max'] : [];
+  return supported.includes(effort);
+}
 const DirectorySchema = z.string().min(2).max(512).regex(/^\/(?!.*(?:\/\/|(?:^|\/)\.\.?\/))[^\p{Cc}]+$/u)
   .refine((value) => !/(?:^|\/)\.\.?$/u.test(value));
 export const FleetPlacementSchema = z.object({
@@ -28,10 +37,11 @@ const AgentParametersSchema = z.object({
   placement: FleetPlacementSchema,
   primary_account_id: IdentifierSchema.nullable().optional(),
   model_id: z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_./:-]{0,127}$/).nullable().optional(),
-  reasoning_effort: z.enum(['minimal', 'low', 'medium', 'high', 'xhigh', 'max']).nullable().optional(),
+  reasoning_effort: ReasoningEffortSchema.nullable().optional(),
 }).strict().refine((value) => {
   const rooms = value.memberships.map((membership) => membership.room_id);
-  return new Set(rooms).size === rooms.length && rooms.includes(value.primary_room_id);
+  return new Set(rooms).size === rooms.length && rooms.includes(value.primary_room_id)
+    && supportsReasoningEffort(value.harness_id, value.reasoning_effort);
 });
 const RequestBase = {
   expected_revision: z.number().int().nonnegative(),
@@ -97,10 +107,11 @@ export const FleetRuntimeCapabilitySchema = z.object({
   home_directory: DirectorySchema, state_root: DirectorySchema,
   container_name: z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/).optional(),
   container_prefix: z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$/).optional(),
-  reasoning_efforts: z.array(z.enum(['minimal', 'low', 'medium', 'high', 'xhigh', 'max'])).optional(),
+  reasoning_efforts: z.array(ReasoningEffortSchema).optional(),
 }).strict().refine(value => value.mode === 'container'
   ? (value.container_name !== undefined) !== (value.container_prefix !== undefined)
-  : value.container_name === undefined && value.container_prefix === undefined);
+  : value.container_name === undefined && value.container_prefix === undefined)
+  .refine(value => value.reasoning_efforts?.every(effort => supportsReasoningEffort(value.harness_id, effort)) !== false);
 export const FleetCapabilitySchema = z.object({
   available: z.boolean(),
   actions: z.array(FleetOperationPreviewSchema.shape.kind),
@@ -126,5 +137,6 @@ export function matchingFleetRuntime(capability: FleetCapability, request: Fleet
     && runtime.home_directory === placement.home_directory
     && placement.state_directory === `${runtime.state_root.replace(/\/$/u, '')}/${runtime_key}`
     && (runtime.mode !== 'container' || placement.container_name === (runtime.container_name ?? `${runtime.container_prefix ?? ''}${runtime_key}`))
+    && supportsReasoningEffort(parameters.harness_id, parameters.reasoning_effort)
     && (parameters.reasoning_effort == null || runtime.reasoning_efforts?.includes(parameters.reasoning_effort) === true));
 }

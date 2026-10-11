@@ -43,6 +43,25 @@ describe('fleet operation request authority', () => {
 
 
 describe('fleet effect and execution catalogue', () => {
+  it('projects only reasoning efforts supported by the exact harness and runtime', () => {
+    const base = { mode: 'container' as const, provider: 'muse', runtime_user: 'dev', home_directory: '/home/dev',
+      state_root: '/home/dev/.cauce', container_name: 'cauce-agents' };
+    const efforts = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'];
+    for (const reasoning_effort of efforts) {
+      for (const kind of ['create', 'update']) expect(valid({ ...input, kind,
+        parameters: { ...input.parameters, harness_id: 'muse', reasoning_effort } })).toBe(true);
+    }
+    expect(protocol.FleetRuntimeCapabilitySchema.safeParse({ ...base, harness_id: 'muse', reasoning_efforts: efforts }).success).toBe(true);
+    expect(protocol.FleetRuntimeCapabilitySchema.safeParse({ ...base, harness_id: 'grok', reasoning_efforts: [] }).success).toBe(true);
+    expect(valid({ ...input, parameters: { ...input.parameters, harness_id: 'grok', reasoning_effort: 'high' } })).toBe(false);
+    expect(protocol.FleetRuntimeCapabilitySchema.safeParse({ ...base, harness_id: 'grok', reasoning_efforts: ['high'] }).success).toBe(false);
+    for (const harness_id of ['codex', 'claude', 'openclaw']) {
+      for (const reasoning_effort of ['none', 'ultra']) {
+        expect(valid({ ...input, parameters: { ...input.parameters, harness_id, reasoning_effort } })).toBe(false);
+        expect(protocol.FleetRuntimeCapabilitySchema.safeParse({ ...base, harness_id, reasoning_efforts: [reasoning_effort] }).success).toBe(false);
+      }
+    }
+  });
   it('matches identical placements by the durable account provider without equating it to the harness', () => {
     const runtime = { mode: 'container' as const, harness_id: 'openclaw', provider: 'codex', runtime_user: 'dev',
       home_directory: '/home/dev', state_root: '/home/dev/.cauce', container_name: 'cauce-agents' };

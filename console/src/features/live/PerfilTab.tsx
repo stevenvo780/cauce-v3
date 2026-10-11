@@ -108,7 +108,7 @@ export function PerfilTab({
   const runtimeNoVerificado = perfil.data?.runtime_state === 'runtime_unverified';
   const ficheros = perfil.data?.ficheros ?? [];
   const aplicable = ficheros.length > 0;
-  const arnesConPerfil = ['claude', 'codex', 'openclaw', 'muse'].includes(perfil.data?.harness ?? '');
+  const arnesConPerfil = ['claude', 'codex', 'openclaw', 'muse', 'grok'].includes(perfil.data?.harness ?? '');
   const destinos = destinosDelArnes(perfil.data?.harness, ficheros);
   const sinDestino = motivoSinDestino(destinos);
   const busy = localBusy || writeInFlight;

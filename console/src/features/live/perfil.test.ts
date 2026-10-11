@@ -301,7 +301,7 @@ describe('el destino de cada campo sale del arnés REAL, no de openclaw cableado
     return reparto;
   }
 
-  for (const harness of ['claude', 'codex', 'openclaw'] as const) {
+  for (const harness of ['claude', 'codex', 'openclaw', 'muse', 'grok'] as const) {
     it(`en ${harness}, la etiqueta nombra el MISMO fichero que compone ficherosDelArnes`, () => {
       const reparto = repartoReal(harness);
       const nombres = nombresDelArnes(harness).map((nombre) => ({ nombre }));
@@ -314,7 +314,7 @@ describe('el destino de cada campo sale del arnés REAL, no de openclaw cableado
   }
 
   it('CONTROL NEGATIVO: los SIETE campos se consumen en los tres arneses, sólo cambia el reparto', () => {
-    for (const harness of ['claude', 'codex', 'openclaw'] as const) {
+    for (const harness of ['claude', 'codex', 'openclaw', 'muse', 'grok'] as const) {
       const reparto = repartoReal(harness);
       for (const campo of CAMPOS_DEL_PERFIL) expect(reparto[campo]).not.toEqual([]);
     }

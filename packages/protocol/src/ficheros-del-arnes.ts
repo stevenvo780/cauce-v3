@@ -290,7 +290,7 @@ export interface PresupuestoDeContexto {
 /** What Codex applies to a project document unless the alias `config.toml` overrides it. */
 export const TOPE_CODEX_POR_DEFECTO_BYTES = 32 * 1_024;
 
-export type ArnesDeGobierno = "claude" | "codex" | "hermes" | "openclaw" | "muse";
+export type ArnesDeGobierno = "claude" | "codex" | "hermes" | "openclaw" | "muse" | "grok";
 
 /** The one budget table. A harness without `porFichero`/`total` declares no cap of its own. */
 export const PRESUPUESTOS_DE_CONTEXTO: Readonly<Record<ArnesDeGobierno, PresupuestoDeContexto>> = {
@@ -299,6 +299,7 @@ export const PRESUPUESTOS_DE_CONTEXTO: Readonly<Record<ArnesDeGobierno, Presupue
   hermes: { unit: "utf16_strictest" },
   openclaw: { unit: "utf16_strictest", ...TOPES_OPENCLAW },
   muse: { unit: "utf16_strictest" },
+  grok: { unit: "utf16_strictest" },
 };
 
 export function presupuestoDeContexto(harness: string): PresupuestoDeContexto | undefined {
@@ -413,7 +414,7 @@ export function esFicheroDelAgente(nombre: string): boolean {
 }
 
 export interface RaizDeDocumentosDelArnes {
-  readonly hecho: "claudeConfigDir" | "codexHome" | "home" | "openclawWorkspace" | "museWorkspace";
+  readonly hecho: "claudeConfigDir" | "codexHome" | "home" | "openclawWorkspace" | "museWorkspace" | "grokWorkspace";
   /** Directory under a canonical HOME used when that fact is absent. Absent = fail closed. */
   readonly porDefectoBajoHome?: string;
 }
@@ -435,6 +436,7 @@ Readonly<Record<ArnesDeGobierno, DocumentosDeGobiernoDelArnes>> = {
   hermes: { raiz: { hecho: "home" }, documentos: ["AGENTS.md"] },
   openclaw: { raiz: { hecho: "openclawWorkspace" }, documentos: FICHEROS_OPENCLAW },
   muse: { raiz: { hecho: "museWorkspace" }, documentos: ["AGENTS.md"] },
+  grok: { raiz: { hecho: "grokWorkspace" }, documentos: ["AGENTS.md"] },
 };
 
 export interface HechosDeRutasDelArnes {
@@ -443,6 +445,7 @@ export interface HechosDeRutasDelArnes {
   readonly codexHome?: string | undefined;
   readonly openclawWorkspace?: string | undefined;
   readonly museWorkspace?: string | undefined;
+  readonly grokWorkspace?: string | undefined;
 }
 
 const MAX_RUTA_DE_GOBIERNO = 4_096;
@@ -534,7 +537,7 @@ export function nombresDelArnes(harness: string): readonly string[] {
   if (harness === "claude") return ["CLAUDE.md"];
   if (harness === "codex") return ["AGENTS.md"];
   if (harness === "openclaw") return [...FICHEROS_OPENCLAW];
-  if (harness === "muse") return ["AGENTS.md"];
+  if (harness === "muse" || harness === "grok") return ["AGENTS.md"];
   return [];
 }
 
@@ -589,7 +592,7 @@ export function ficherosDelArnes(
   if (nombres.length === 0) return [];
   const generados: FicheroGenerado[] = [];
   const nombreCanonico = harness === "claude" ? "CLAUDE.md" : "AGENTS.md";
-  const revisionNativa = harness === "claude" || harness === "openclaw" || harness === "muse"
+  const revisionNativa = harness === "claude" || harness === "openclaw" || harness === "muse" || harness === "grok"
     ? opciones.revision
     : undefined;
   for (const nombre of nombres) {

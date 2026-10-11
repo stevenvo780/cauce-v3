@@ -7,7 +7,7 @@ import {
 } from '@cauce/protocol';
 
 /** Running harness inferred from the measured environment. */
-export type HarnessKind = 'claude' | 'codex' | 'openclaw' | 'hermes' | 'muse' | 'unknown';
+export type HarnessKind = 'claude' | 'codex' | 'openclaw' | 'hermes' | 'muse' | 'grok' | 'unknown';
 
 export type DocumentKind =
   | 'directive' | 'tools' | 'prompts' | 'mcp' | 'identity' | 'human'
@@ -44,6 +44,7 @@ export interface RuntimeFacts {
   /** Effective OpenClaw workspace; not inferred from HOME or openclaw.json. */
   readonly openclawWorkspace?: string;
   readonly museWorkspace?: string;
+  readonly grokWorkspace?: string;
   /** Opaque generation of the container that measured these facts. Required to vouch for writes. */
   readonly generation?: string;
   /** Container that published the measurement; evidence, never derived from the SQL registry. */
@@ -197,8 +198,8 @@ export function effectiveManualPaths(facts: RuntimeFacts): readonly EffectiveMan
         path: join(workspace, 'AGENTS.md'), scope: 'workspace', selection: 'all', group: 'workspace',
       });
     }
-  } else if (facts.harness === 'muse') {
-    const workspace = facts.museWorkspace?.trim();
+  } else if (facts.harness === 'muse' || facts.harness === 'grok') {
+    const workspace = (facts.harness === 'muse' ? facts.museWorkspace : facts.grokWorkspace)?.trim();
     if (workspace !== undefined && canonicalContextDirectory(workspace)) {
       candidates.push({
         path: join(workspace, 'AGENTS.md'), scope: 'workspace', selection: 'all', group: 'workspace',
@@ -453,13 +454,14 @@ export function resolveAgentDocuments(facts: RuntimeFacts): AgentDocument[] {
         },
       ];
     }
-    case 'muse': {
-      const workspace = facts.museWorkspace?.trim();
-      if (!workspace?.startsWith('/')) return [];
+    case 'muse':
+    case 'grok': {
+      const workspace = (facts.harness === 'muse' ? facts.museWorkspace : facts.grokWorkspace)?.trim();
+      if (workspace === undefined || !canonicalContextDirectory(workspace)) return [];
       return [{
         kind: 'directive',
         category: 'manual',
-        label: 'Manual del proyecto Muse (AGENTS.md)',
+        label: `Manual del proyecto ${facts.harness === 'muse' ? 'Muse' : 'Grok'} (AGENTS.md)`,
         path: join(workspace, 'AGENTS.md'),
         format: 'markdown',
         editable: false,
@@ -486,7 +488,7 @@ export function documentForKind(facts: RuntimeFacts, kind: DocumentKind): AgentD
 }
 
 export function harnessFromCommand(cmdline: string): HarnessKind {
-  const match = /\bbin\/(claude|codex|openclaw|hermes|muse)\.js\b/.exec(cmdline);
+  const match = /\bbin\/(claude|codex|openclaw|hermes|muse|grok)\.js\b/.exec(cmdline);
   return match ? (match[1] as HarnessKind) : 'unknown';
 }
 
@@ -501,6 +503,7 @@ export function harnessFromCapabilities(capabilities: readonly string[]): Harnes
     if (capability === 'harness.openclaw') return 'openclaw';
     if (capability === 'harness.hermes') return 'hermes';
     if (capability === 'harness.muse') return 'muse';
+    if (capability === 'harness.grok') return 'grok';
   }
   return 'unknown';
 }
