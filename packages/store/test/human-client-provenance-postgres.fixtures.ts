@@ -1,3 +1,4 @@
+import { installHistoricalHumanAuthority } from './human-historical-authority.fixtures.js';
 import { lockClientDeclarationOwner } from '../../../services/gateway/src/client-delegation-control.js';
 import { generateKeyPairSync, randomUUID } from 'node:crypto';
 import { GenericContainer, Wait, type StartedTestContainer } from 'testcontainers';
@@ -70,6 +71,12 @@ export async function databaseThrough(version: '046_human_client_provenance.sql'
   const pool = await createDatabase('template0');
   await applyMigrationsThrough(pool, version);
   await seedCatalog(pool);
+  return pool;
+}
+// Only the provenance ledger is historical; current identity dependencies are canonical overlays.
+export async function hybridHumanAuthorityDatabase(): Promise<DatabasePool> {
+  const pool = await databaseThrough('046_human_client_provenance.sql');
+  await installHistoricalHumanAuthority(pool);
   return pool;
 }
 export async function seed(pool: DatabasePool) {

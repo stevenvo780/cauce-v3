@@ -1,13 +1,24 @@
 import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { describe, expect, it } from 'vitest';
-import { applyMigrations } from '@cauce/store';
-import { database, databaseThrough, seed, connection } from '../../../packages/store/test/human-client-provenance-postgres.fixtures.js';
+import { applyMigrations, resolveHumanIdentity, type DatabasePool } from '@cauce/store';
+import { database, databaseThrough, hybridHumanAuthorityDatabase, seed, connection, issuer } from '../../../packages/store/test/human-client-provenance-postgres.fixtures.js';
 import { lineageRoot } from '../../../packages/store/test/human-message-lineage-postgres.fixtures.js';
 
 const version = '046_human_client_provenance.sql';
 const down = await readFile(new URL(`../../../packages/store/migrations/down/${version}`, import.meta.url), 'utf8');
 const tables = ['human_message_client_provenance', 'human_client_delegation_operations', 'human_oauth_client_delegations'] as const;
+async function durableAuthorityState(pool: DatabasePool) {
+  const ledgers = [];
+  for (const ledger of ['schema_migrations', 'schema_migration_ledger']) {
+    ledgers.push((await pool.query(`SELECT to_jsonb(record) AS value FROM ${ledger} record ORDER BY version`)).rows);
+  }
+  const effects = [...tables, 'messages', 'deliveries', 'idempotency_keys', 'cauce_oauth_requests', 'cauce_oauth_grants',
+    'cauce_oauth_codes', 'cauce_oauth_tokens', 'cauce_oauth_refresh_tokens', 'cauce_oauth_grant_revocations'];
+  const counts = (await pool.query(effects.map(table =>
+    `SELECT '${table}' AS name,count(*)::integer AS count FROM ${table}`).join(' UNION ALL '))).rows;
+  return { ledgers, counts };
+}
 
 describe('human client rollback serialization on disposable PostgreSQL', () => {
   it('builds the historical prefix on a fresh database while latest fixtures keep later migrations', async () => {
@@ -19,6 +30,28 @@ describe('human client rollback serialization on disposable PostgreSQL', () => {
     }
     expect((await historical.query<{ name: string | null }>("SELECT to_regclass('fleet_operations') AS name")).rows[0]?.name).toBeNull();
     expect((await latest.query<{ name: string | null }>("SELECT to_regclass('fleet_operations') AS name")).rows[0]?.name).toBe('fleet_operations');
+  });
+  it('rejects current human authority on the pure historical prefix without adding dependencies or effects', async () => {
+    const pool = await databaseThrough(version); const owner = await seed(pool);
+    const before = await durableAuthorityState(pool);
+    expect((await pool.query("SELECT to_regprocedure('cauce_lock_authority_read_guard()') AS guard")).rows).toEqual([{ guard: null }]);
+    await expect(resolveHumanIdentity(pool, { provider: 'oauth', namespace: issuer, subject: owner.humanId },
+      new AbortController().signal)).rejects.toMatchObject({ code: '42883' });
+    expect(await durableAuthorityState(pool)).toEqual(before);
+  });
+  it.each(['disabled', 'retired'] as const)('denies current publication for a %s company on the hybrid fixture without effects', async change => {
+    const pool = await hybridHumanAuthorityDatabase(); const owner = await seed(pool); const c = await connection(pool, owner);
+    const key = { provider: 'oauth' as const, namespace: issuer, subject: owner.humanId };
+    expect(await resolveHumanIdentity(pool, key, new AbortController().signal)).toMatchObject({ humanId: owner.humanId });
+    const result = await pool.query(`UPDATE companies SET enabled=false,retired_at=CASE WHEN $1 THEN now() ELSE NULL END
+      WHERE id=(SELECT company_id FROM tenants WHERE id='Steven') RETURNING retired_at IS NOT NULL AS retired`, [change === 'retired']);
+    expect(result.rows).toEqual([{ retired: change === 'retired' }]);
+    const before = await durableAuthorityState(pool);
+    expect(await resolveHumanIdentity(pool, key, new AbortController().signal)).toBeUndefined();
+    await expect(c.operations.submit({ request_key: randomUUID(), room_id: 'grp.steven',
+      recipients: [{ tenant_id: 'Steven', alias: 'argos' }], body: { text: 'denied company publication' } }))
+      .rejects.toMatchObject({ failure: { status_code: 401 } });
+    expect(await durableAuthorityState(pool)).toEqual(before);
   });
   it('removes the empty schema and both migration records atomically and can migrate up again', async () => {
     const pool = await databaseThrough(version);
@@ -64,7 +97,7 @@ describe('human client rollback serialization on disposable PostgreSQL', () => {
 
   for (const table of tables) {
     it(`waits for a concurrent committed insert into ${table} and preserves it`, async () => {
-      const pool = await databaseThrough(version); const owner = await seed(pool); const c = await connection(pool, owner);
+      const pool = await hybridHumanAuthorityDatabase(); const owner = await seed(pool); const c = await connection(pool, owner);
       const root = await lineageRoot(pool, owner.humanId);
       const holder = await pool.connect(); const rollback = await pool.connect();
       let attempt: Promise<unknown> | undefined;

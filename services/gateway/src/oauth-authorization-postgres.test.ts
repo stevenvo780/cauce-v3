@@ -176,7 +176,7 @@ function barrier() {
   });
 
   it('enforces scope, hash, challenge, stamp and TTL constraints and immutable authority', async () => {
-    const pool = await database(version); const f = await authorized(pool);
+    const pool = await database(); const f = await authorized(pool);
     for (const invalid of ['{}', '{cauce.admin}', '{cauce.read,cauce.read}']) {
       await expect(pool.query('SELECT $1::cauce_oauth_scopes', [invalid])).rejects.toThrow();
     }
@@ -187,7 +187,14 @@ function barrier() {
     await expect(pool.query(`INSERT INTO cauce_oauth_requests SELECT repeat('a',64),browser_hash,client_id,client_name,redirect_uri,resource,scopes,challenge,state,created_at,created_at+interval '5 minutes 1 microsecond',NULL FROM cauce_oauth_requests LIMIT 1`)).rejects.toThrow();
     await expect(pool.query('UPDATE cauce_oauth_grants SET credential_stamp=$1', ['z'.repeat(43)])).rejects.toThrow('immutable');
     await expect(pool.query('UPDATE cauce_oauth_codes SET consumed_at=NULL')).rejects.toThrow('immutable');
-    await expect(pool.query('TRUNCATE cauce_oauth_requests,cauce_oauth_grants,cauce_oauth_codes,cauce_oauth_tokens,cauce_oauth_refresh_tokens,cauce_oauth_grant_revocations')).rejects.toThrow('approved');
+    const retainedTables = ['cauce_oauth_requests', 'cauce_oauth_grants', 'cauce_oauth_codes', 'cauce_oauth_tokens',
+      'cauce_oauth_refresh_tokens', 'cauce_oauth_grant_revocations', 'human_oauth_client_delegations',
+      'human_message_client_provenance', 'human_client_delegation_operations'];
+    const retentionCounts = async () => (await pool.query<{ name: string; count: number }>(retainedTables.map(table =>
+      `SELECT '${table}' AS name,count(*)::integer AS count FROM ${table}`).join(' UNION ALL '))).rows;
+    const beforeRetention = await retentionCounts();
+    await expect(pool.query('TRUNCATE cauce_oauth_requests,cauce_oauth_grants,cauce_oauth_codes,cauce_oauth_tokens,cauce_oauth_refresh_tokens,cauce_oauth_grant_revocations CASCADE')).rejects.toThrow('approved');
+    expect(await retentionCounts()).toEqual(beforeRetention);
     await expect(pool.query('DELETE FROM cauce_oauth_grants')).rejects.toThrow('retention');
     expect(await f.store.validate(f.issued.identity)).toBe(true);
   });
