@@ -74,6 +74,7 @@ try {
     env: {
       ...cleanEnvironment,
       CAUCE_GATE_INVENTORY_FILE: inventory,
+      CAUCE_GATE_ROOM: 'grp.probe-company',
       CAUCE_GATE_PROBE_HTTP_TIMEOUT_MS: '1.5',
     },
   });

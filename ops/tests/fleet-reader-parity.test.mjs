@@ -11,6 +11,9 @@ import { fileURLToPath } from 'node:url';
 const ops = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const scripts = path.join(ops, 'scripts');
 const fixtureSnapshot = path.join(ops, 'tests/fixtures/fleet_snapshot/minimal/flota.json');
+const cleanEnvironment = Object.fromEntries(
+  Object.entries(process.env).filter(([name]) => !name.startsWith('CAUCE_GATE_')),
+);
 
 function checked(result, label) {
   assert.equal(result.status, 0, `${label} failed:\n${result.stderr}`);
@@ -32,7 +35,7 @@ function topLevelFunction(source, name) {
   return match[0];
 }
 
-async function javascriptReader(scriptName, dependencyName, alias, inventory) {
+async function javascriptReader(scriptName, dependencyName, alias, inventory, sourceRoom) {
   const source = await readFile(path.join(scripts, scriptName), 'utf8');
   const dependency = topLevelFunction(source, dependencyName);
   const target = topLevelFunction(source, 'targetFromInventory');
@@ -48,7 +51,11 @@ process.stdout.write(JSON.stringify(await targetFromInventory()));
   const result = spawnSync(process.execPath, ['--input-type=module', '--eval', program, alias], {
     cwd: scripts,
     encoding: 'utf8',
-    env: { ...process.env, CAUCE_GATE_INVENTORY_FILE: inventory },
+    env: {
+      ...cleanEnvironment,
+      CAUCE_GATE_INVENTORY_FILE: inventory,
+      ...(sourceRoom === undefined ? {} : { CAUCE_GATE_ROOM: sourceRoom }),
+    },
   });
   return JSON.parse(checked(result, `${scriptName} inventory reader for ${alias}`));
 }
@@ -124,12 +131,17 @@ async function assertParity(root) {
       { tenant: entry.tenant, alias },
       `gate-collector.mjs diverged from container_alias_lib for ${alias}`,
     );
-    assert.deepEqual(
-      await javascriptReader('gate-roundtrip-probe.mjs', 'regularFile', alias, inventory),
-      { tenant: entry.tenant, sourceRoom: 'grp.steven', alias },
-      `gate-roundtrip-probe.mjs diverged from container_alias_lib for ${alias}`,
+    for (const sourceRoom of [`gate.${alias}`, `gate.alternate.${alias}`]) {
+      assert.deepEqual(
+        await javascriptReader('gate-roundtrip-probe.mjs', 'regularFile', alias, inventory, sourceRoom),
+        { tenant: entry.tenant, sourceRoom, alias },
+        `gate-roundtrip-probe.mjs diverged from container_alias_lib for ${alias}`,
+      );
+    }
+    await assert.rejects(
+      javascriptReader('gate-roundtrip-probe.mjs', 'regularFile', alias, inventory),
+      /CAUCE_GATE_ROOM is required/u,
     );
-
   }
 
   for (const [alias, entry] of Object.entries(canonical)) {

@@ -15,6 +15,7 @@ const SHELL_ESPERADOS = [
   "ops/cli/cauce-huerfanas",
   "ops/cli/cauce-panel",
   "ops/cli/cauce-plataforma-contenedor",
+  "ops/cli/cauce-platform",
   "ops/cli/cauce-reponer",
   "ops/container-runtime/muse-cauce",
   "ops/cuotas/cuota-auth",
@@ -29,6 +30,8 @@ const SHELL_ESPERADOS = [
   "ops/guardias/cauce-soltar",
   "ops/guardias/cauce-tmux-panel",
   "ops/guardias/secreto",
+  "ops/scripts/context-cli",
+  "ops/scripts/context-native",
 ];
 const PYTHON_ESPERADOS = [
   "ops/guardias/cauce-ai-live",
