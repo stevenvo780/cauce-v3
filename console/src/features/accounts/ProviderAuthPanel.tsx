@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { assertProviderAuthTarget, type ProviderAuthClient, type ProviderAuthRequest, type ProviderAuthSnapshot } from '../../api/client/provider-auth-client';
 import { ProviderAuthTerminal } from './ProviderAuthTerminal';
 
-interface Props { request: ProviderAuthRequest; client: ProviderAuthClient; onAuthenticated?: (snapshot: ProviderAuthSnapshot) => void }
+interface Props { request: ProviderAuthRequest; client: ProviderAuthClient; onAuthenticated?: (snapshot: ProviderAuthSnapshot) => void; title?: string; showRuntime?: boolean }
 const active = (value: ProviderAuthSnapshot) => ['opening', 'awaiting_login', 'verifying'].includes(value.status);
 const message = (value: ProviderAuthSnapshot) => value.cleanup_pending ? 'No se confirmó la parada. El perfil sigue reservado; revisa su recuperación.'
   : value.error === 'IDENTITY_MISMATCH' ? 'La cuenta conectada no corresponde a la identidad autorizada.'
@@ -10,7 +10,7 @@ const message = (value: ProviderAuthSnapshot) => value.cleanup_pending ? 'No se 
       : value.status === 'expired' ? 'La conexión caducó. Relee la operación antes de continuar.'
         : 'La conexión no se pudo verificar. Relee la operación antes de continuar.';
 
-export function ProviderAuthPanel({ request, client, onAuthenticated }: Props) {
+export function ProviderAuthPanel({ request, client, onAuthenticated, title = 'Conectar la cuenta del agente', showRuntime = true }: Props) {
   const [session, setSession] = useState<ProviderAuthSnapshot | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -65,9 +65,9 @@ export function ProviderAuthPanel({ request, client, onAuthenticated }: Props) {
     setError('El terminal de autenticación se cerró. Relee el estado de la operación.');
   } }, []);
   return <section aria-label="Conexión de proveedor">
-    <h3>Conectar la cuenta del agente</h3>
-    <p>{request.provider_id} · {request.account_id} · {request.harness_id}</p>
-    <p>{request.host_id} · {request.runtime_user}</p>
+    <h3>{title}</h3>
+    <p>{request.provider_id} · {request.account_id}{showRuntime ? ` · ${request.harness_id}` : ''}</p>
+    <p>{request.host_id}{showRuntime ? ` · ${request.runtime_user}` : ''}</p>
     {error && <p role="alert">{error}</p>}
     {!session && <button disabled={busy} onClick={() => { void run('start'); }}>Conectar cuenta</button>}
     {session?.status === 'awaiting_login' && <>
