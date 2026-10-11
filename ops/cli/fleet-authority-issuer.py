@@ -193,6 +193,30 @@ def principal(packet):
             'roles': [] if bootstrap else ['adapter'], 'permissions': [] if bootstrap else ['route', 'read']}
 
 
+def read_signer(policy):
+    ca_pem, _ = read(path(policy['signer']['certificate']))
+    key_pem, _ = read(path(policy['signer']['key']), private=True)
+    if digest(ca_pem) != policy['signer']['certificate_sha256'] or digest(key_pem) != policy['signer']['key_sha256']:
+        raise AuthorityError('authority signer pin changed')
+    if b'CA:TRUE' not in openssl('x509', '-text', '-noout', input_data=ca_pem) \
+            or openssl('x509', '-pubkey', '-noout', input_data=ca_pem) != openssl('pkey', '-pubout', input_data=key_pem):
+        raise AuthorityError('authority signer does not match its CA')
+    end = openssl('x509', '-enddate', '-noout', input_data=ca_pem).decode().strip()
+    expiry = datetime.datetime.strptime(end, 'notAfter=%b %d %H:%M:%S %Y GMT').replace(tzinfo=datetime.UTC)
+    if (expiry - datetime.datetime.now(datetime.UTC)).days < 1:
+        raise AuthorityError('authority signer validity is too short')
+    return ca_pem, key_pem, expiry
+
+
+def readiness(policy):
+    state, registries, owners = policy_paths(policy)
+    descriptor = directory(state, private=True)
+    os.close(descriptor)
+    inventory(registries, owners, {'tenant_id': '', 'alias': ''})
+    read_signer(policy)
+    return {'ready': True}
+
+
 def issue_certificate(policy, packet):
     csr = packet['csr_pem']
     if packet['phase'] not in {'bootstrap', 'normal'} or not isinstance(csr, str) or len(csr.encode()) > 16384 \
@@ -207,15 +231,7 @@ def issue_certificate(policy, packet):
     if subject != ('subject=CN=agent-' + packet['scope']['runtime_key']).encode() or extensions \
             or b'Public Key Algorithm: rsaEncryption' not in text or bits is None or not 2048 <= int(bits[1]) <= 4096:
         raise AuthorityError('authority CSR is outside its canonical runtime')
-    ca_pem, _ = read(path(policy['signer']['certificate']))
-    key_pem, _ = read(path(policy['signer']['key']), private=True)
-    if digest(ca_pem) != policy['signer']['certificate_sha256'] or digest(key_pem) != policy['signer']['key_sha256']:
-        raise AuthorityError('authority signer pin changed')
-    if b'CA:TRUE' not in openssl('x509', '-text', '-noout', input_data=ca_pem) \
-            or openssl('x509', '-pubkey', '-noout', input_data=ca_pem) != openssl('pkey', '-pubout', input_data=key_pem):
-        raise AuthorityError('authority signer does not match its CA')
-    end = openssl('x509', '-enddate', '-noout', input_data=ca_pem).decode().strip()
-    expiry = datetime.datetime.strptime(end, 'notAfter=%b %d %H:%M:%S %Y GMT').replace(tzinfo=datetime.UTC)
+    ca_pem, key_pem, expiry = read_signer(policy)
     days = min(1 if packet['phase'] == 'bootstrap' else 730,
                (expiry - datetime.datetime.now(datetime.UTC)).days)
     if days < 1:
@@ -343,14 +359,18 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--policy', required=True)
     parser.add_argument('--policy-sha256', required=True)
+    parser.add_argument('--ready', action='store_true')
     args = parser.parse_args()
     raw, _ = read(path(args.policy), private=True)
     if digest(raw) != args.policy_sha256:
         raise AuthorityError('authority policy pin changed')
-    encoded = sys.stdin.buffer.read(65537)
-    if len(encoded) > 65536:
-        raise AuthorityError('authority payload exceeds limit')
-    result = perform(json.loads(raw), json.loads(encoded))
+    if args.ready:
+        result = readiness(json.loads(raw))
+    else:
+        encoded = sys.stdin.buffer.read(65537)
+        if len(encoded) > 65536:
+            raise AuthorityError('authority payload exceeds limit')
+        result = perform(json.loads(raw), json.loads(encoded))
     sys.stdout.write(json.dumps(result, sort_keys=True, separators=(',', ':')))
 
 

@@ -23,6 +23,26 @@ from fleet_executor_policy import SafeFailure  # noqa: E402
 
 
 class CentralAuthorityAdapterTest(unittest.TestCase):
+    def test_issuer_readiness_checks_signer_and_registries_without_issuing_or_journaling(self):
+        policy = self.root / 'readiness-policy.json'
+        policy.write_text(json.dumps(self.central))
+        policy.chmod(0o600)
+        command = [sys.executable, str(OPS / 'cli/fleet-authority-issuer.py'), '--policy', str(policy),
+            '--policy-sha256', hashlib.sha256(policy.read_bytes()).hexdigest(), '--ready']
+        observed = subprocess.run(command, capture_output=True, text=True, timeout=10)
+        self.assertEqual(observed.returncode, 0, observed.stderr)
+        self.assertEqual(json.loads(observed.stdout), {'ready': True})
+        self.assertEqual(list(pathlib.Path(self.central['state_root']).iterdir()), [])
+        for registry in self.registries.values():
+            self.assertEqual(json.loads(pathlib.Path(registry).read_text()), {'version': 1, 'identities': []})
+        self.central['signer']['key_sha256'] = '0' * 64
+        policy.write_text(json.dumps(self.central))
+        command[-2] = hashlib.sha256(policy.read_bytes()).hexdigest()
+        denied = subprocess.run(command, capture_output=True, text=True, timeout=10)
+        self.assertEqual(denied.returncode, 2)
+        self.assertEqual(denied.stdout, '')
+        self.assertNotIn('PRIVATE', denied.stderr)
+
     @classmethod
     def setUpClass(cls):
         spec = importlib.util.spec_from_file_location('fixture_central_issuer', OPS / 'cli/fleet-authority-issuer.py')
@@ -81,13 +101,17 @@ class CentralAuthorityAdapterTest(unittest.TestCase):
                 body = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
                 fixture.requests.append(copy.deepcopy(body))
                 try:
-                    expected = {**fixture.scope, 'runtime_key': 'physical-a'}
-                    if self.path != '/authority' or body['scope'] != expected or fixture.denied:
-                        raise ValueError('scope expired or changed')
-                    packet = {**body, 'scope': {name: body['scope'][name] for name in
-                        ('operation_id', 'host_id', 'scope_sha256', 'runtime_key')},
-                        'agent': {name: fixture.agent[name] for name in ('tenant_id', 'alias')}}
-                    output = fixture.issuer.perform(fixture.central, packet)
+                    if self.path == '/authority-ready' and body == {}:
+                        fixture.issuer.readiness(fixture.central)
+                        output = {'ready': True, 'host_id': fixture.policy['host_id']}
+                    else:
+                        expected = {**fixture.scope, 'runtime_key': 'physical-a'}
+                        if self.path != '/authority' or body['scope'] != expected or fixture.denied:
+                            raise ValueError('scope expired or changed')
+                        packet = {**body, 'scope': {name: body['scope'][name] for name in
+                            ('operation_id', 'host_id', 'scope_sha256', 'runtime_key')},
+                            'agent': {name: fixture.agent[name] for name in ('tenant_id', 'alias')}}
+                        output = fixture.issuer.perform(fixture.central, packet)
                     if fixture.mutate:
                         output = fixture.mutate(output)
                     if fixture.drop:
@@ -120,6 +144,14 @@ class CentralAuthorityAdapterTest(unittest.TestCase):
 
     def prepare(self):
         return adapter.prepare(self.policy, self.context, self.agent, self.snapshot, self.manifest, bootstrap=True)
+
+    def test_legacy_readiness_requires_a_usable_central_issuer_without_materializing_credentials(self):
+        self.assertTrue(adapter.authority_ready(self.policy))
+        self.assertEqual(list(pathlib.Path(self.central['state_root']).iterdir()), [])
+        self.central['signer']['key_sha256'] = '0' * 64
+        self.assertFalse(adapter.authority_ready(self.policy))
+        self.assertEqual(list(pathlib.Path(self.central['state_root']).iterdir()), [])
+        self.assertEqual(self.requests, [{}, {}])
 
     def test_real_certificate_is_verified_and_preserved_without_remote_private_signer(self):
         proof = self.prepare()

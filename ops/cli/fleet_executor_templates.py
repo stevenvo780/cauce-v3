@@ -194,7 +194,7 @@ def resolve_profile(policy: dict, agent: dict) -> dict | None:
     return result
 
 
-def capabilities(policy: dict) -> dict:
+def runtime_candidates(policy: dict) -> list[dict]:
     runtimes = []
     measured = {}
     fields = ('runtime_user', 'systemd_user', 'home_directory', 'state_root')
@@ -236,6 +236,11 @@ def capabilities(policy: dict) -> dict:
             if mode == 'container':
                 runtime['container_name' if name else 'container_prefix'] = name or candidate['prefix']
             runtimes.append(runtime)
+    return runtimes
+
+
+def capabilities(policy: dict) -> dict:
+    runtimes = runtime_candidates(policy)
     enabled = bool(runtimes) and 'transport' in policy and all(key in policy['hooks'] for key in ('authenticate', 'profile', 'verify', 'revoke'))
     placement = {'host_id': policy['host_id'], 'modes': sorted({row['mode'] for row in runtimes}),
         'runtime_users': sorted({row['runtime_user'] for row in runtimes}),
@@ -243,6 +248,9 @@ def capabilities(policy: dict) -> dict:
         'home_roots': sorted({row['home_directory'] for row in runtimes}), 'state_roots': sorted({row['state_root'] for row in runtimes}),
         'runtimes': runtimes}
     if not enabled:
+        return {'available': False, 'actions': [], 'placements': [], 'reason': 'executor_unconfigured'}
+    from fleet_executor_authority import authority_ready
+    if not authority_ready(policy):
         return {'available': False, 'actions': [], 'placements': [], 'reason': 'executor_unconfigured'}
     return {'available': True, 'actions': ['create', 'update', 'start', 'stop', 'retire', 'restore', 'purge'],
             'placements': [placement]}

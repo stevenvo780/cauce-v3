@@ -16,6 +16,8 @@ import struct
 import sys
 import tempfile
 import uuid
+import urllib.error
+import urllib.request
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / 'scripts'))
 from fleet_executor_identity import principal_for  # noqa: E402
@@ -40,13 +42,105 @@ def sha256(raw: bytes) -> str:
 
 
 def validate_authority(configuration: dict, host: str) -> dict:
-    if not isinstance(configuration, dict) or set(configuration) != {'socket_path', 'owner_uid', 'host_id', 'ca_certificate'} \
-            or type(configuration['owner_uid']) is not int or configuration['owner_uid'] < 0 \
+    legacy = {'socket_path', 'owner_uid', 'host_id', 'ca_certificate'}
+    signed = {'identity_directory', 'host_id', 'ca_certificate'}
+    if not isinstance(configuration, dict) or set(configuration) not in (legacy, signed) \
             or configuration['host_id'] != host or re.fullmatch(r'[a-z][a-z0-9_-]{0,63}', host) is None:
         raise SafeFailure('central authority policy differs from the approved host')
-    path(configuration['socket_path'])
+    if set(configuration) == legacy:
+        if type(configuration['owner_uid']) is not int or configuration['owner_uid'] < 0:
+            raise SafeFailure('central authority socket owner is invalid')
+        path(configuration['socket_path'])
+    else:
+        signed_channel(configuration)
     digest(path(configuration['ca_certificate']))
     return configuration
+
+
+def signed_channel(configuration: dict):
+    from host_channel_client import HostChannel, HostFailure
+    try:
+        location = private_directory(configuration['identity_directory'])
+        parent = open_absolute_directory(location)
+        try:
+            for name in ('identity.json', 'private.pem'):
+                descriptor = open_regular_at(parent, name, os.O_RDONLY)
+                try:
+                    info = os.fstat(descriptor)
+                    if info.st_uid != os.geteuid() or info.st_nlink != 1 or info.st_mode & 0o077 or info.st_size > 16384:
+                        raise SafeFailure('signed authority identity is not private')
+                finally:
+                    os.close(descriptor)
+        finally:
+            os.close(parent)
+        channel = HostChannel(location)
+        if channel.identity['host_id'] != configuration['host_id']:
+            raise SafeFailure('signed authority identity differs from the approved host')
+        return channel
+    except (HostFailure, OSError, ValueError, KeyError):
+        raise SafeFailure('signed authority identity is unavailable') from None
+
+
+def signed_call(configuration: dict, payload: dict) -> dict:
+    from host_channel_client import HostFailure, NoRedirect, stable_json
+    try:
+        channel = signed_channel(configuration)
+        route = '/v3/fleet/hosts/' + configuration['host_id'] + '/authority'
+        body = stable_json(channel.packet('POST', route, payload))
+        if len(body) > 262144:
+            raise SafeFailure('signed authority payload exceeds its limit')
+        context = ssl.create_default_context()
+        context.load_verify_locations(cafile=configuration['ca_certificate'])
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect(), urllib.request.HTTPSHandler(context=context))
+        request = urllib.request.Request(channel.gateway + route, data=body, method='POST',
+            headers={'Content-Type': 'application/json', 'Accept': 'application/json'})
+        with opener.open(request, timeout=90) as response:
+            raw = response.read(65537)
+            if response.status != 200 or len(raw) > 65536:
+                raise SafeFailure('signed authority effect is unverified')
+        result = json.loads(raw)
+        if not isinstance(result, dict):
+            raise SafeFailure('signed authority returned no bounded object')
+        return result
+    except (HostFailure, OSError, ValueError, urllib.error.URLError):
+        raise SafeFailure('signed authority effect is unverified') from None
+
+
+def authority_ready(policy: dict) -> bool:
+    try:
+        if 'authority' not in policy:
+            signer = policy.get('signer')
+            if not isinstance(signer, dict) or set(signer) != {'certificate', 'key'}:
+                return False
+            certificate, key = path(signer['certificate']), path(signer['key'])
+            details = key.stat(follow_symlinks=False)
+            if details.st_mode & 0o077 or details.st_uid != os.geteuid() or details.st_nlink != 1:
+                return False
+            public, private = checked_file(certificate), checked_file(key)
+            return b'CA:TRUE' in openssl('x509', '-text', '-noout', input_data=public) \
+                and openssl('x509', '-pubkey', '-noout', input_data=public) == openssl('pkey', '-pubout', input_data=private) \
+                and expiry(certificate) - datetime.datetime.now(datetime.UTC) > datetime.timedelta(days=1)
+        configuration = validate_authority(policy.get('authority'), policy['host_id'])
+        if 'identity_directory' in configuration:
+            return signed_call(configuration, {'action': 'ready'}) == {'ready': True, 'host_id': policy['host_id']}
+        before = socket_identity(configuration)
+        connection = http.client.HTTPConnection('localhost', timeout=3)
+        endpoint = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        try:
+            endpoint.settimeout(3)
+            endpoint.connect(configuration['socket_path'])
+            _, uid, _ = struct.unpack('3i', endpoint.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
+            if uid != configuration['owner_uid'] or before != socket_identity(configuration):
+                return False
+            connection.sock = endpoint
+            connection.request('POST', '/authority-ready', body='{}', headers={'Content-Type': 'application/json'})
+            response = connection.getresponse()
+            return response.status == 200 and json.loads(response.read(1025)) == {'ready': True, 'host_id': policy['host_id']}
+        finally:
+            connection.close()
+            endpoint.close()
+    except (SafeFailure, OSError, ValueError, KeyError, http.client.HTTPException):
+        return False
 
 
 def validate_scope(scope: dict, host: str) -> dict:
@@ -105,6 +199,8 @@ def call(configuration: dict, scope: dict, action: str, **fields) -> dict:
     packet = json.dumps({'action': action, 'scope': scope, **fields}, separators=(',', ':')).encode()
     if len(packet) > 65536:
         raise SafeFailure('central authority request exceeds its limit')
+    if 'identity_directory' in configuration:
+        return signed_call(configuration, json.loads(packet))
     connection = http.client.HTTPConnection('localhost', timeout=30)
     endpoint = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     try:
@@ -277,7 +373,8 @@ def prepare(policy: dict, context: dict, agent: dict, snapshot: pathlib.Path, ma
 def prepare_locked(policy: dict, context: dict, agent: dict, snapshot: pathlib.Path, manifest: pathlib.Path, bootstrap: bool) -> dict:
     scope = scope_for(policy, context, agent)
     configuration = policy['authority']
-    socket_identity(configuration)
+    if 'identity_directory' not in configuration:
+        socket_identity(configuration)
     principal = validate_manifest(agent, snapshot, manifest, bootstrap)
     key, phase = agent['runtime_key'], 'bootstrap' if bootstrap else 'normal'
     pki, tokens = (pathlib.Path(policy['roots'][name]) / phase for name in ('pki', 'tokens'))

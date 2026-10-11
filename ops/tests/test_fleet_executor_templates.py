@@ -107,23 +107,23 @@ class PlacementTemplateSelectionTest(unittest.TestCase):
         self.policy['profiles'] = {'account': {**self.template, 'path': '/profiles/account'}}
         self.assertFalse(self.subject.capabilities(self.policy)['available'])
 
-    def test_capabilities_match_existing_and_whole_create_prefix_fail_closed(self):
+    def test_runtime_candidates_match_existing_and_whole_create_prefix_fail_closed(self):
         self.templates()
         candidate = {'runtime_user': 'dev', 'systemd_user': 'stev', 'home_directory': '/home/dev',
             'state_root': '/state', 'profile_root': '/profiles'}
         self.policy.update(host_id='isolated', native=[], containers={'container-one': candidate, 'container-three': candidate},
             container_templates=[dict(candidate, harness_id='codex', prefix='approved-')],
             transport={}, hooks={key: {} for key in ('authenticate', 'profile', 'verify', 'revoke')})
-        runtimes = self.subject.capabilities(self.policy)['placements'][0]['runtimes']
+        runtimes = self.subject.runtime_candidates(self.policy)
         self.assertEqual([row.get('container_name') for row in runtimes], ['container-one'])
         self.policy['profile_templates'].append(dict(self.template, runtime_mode='container', container_prefix='approved-'))
-        runtimes = self.subject.capabilities(self.policy)['placements'][0]['runtimes']
+        runtimes = self.subject.runtime_candidates(self.policy)
         self.assertEqual([row.get('container_prefix') for row in runtimes if 'container_prefix' in row], ['approved-'])
         self.policy['profile_templates'].append(dict(self.template, runtime_mode='container', container_name='approved-special'))
-        runtimes = self.subject.capabilities(self.policy)['placements'][0]['runtimes']
+        runtimes = self.subject.runtime_candidates(self.policy)
         self.assertFalse(any('container_prefix' in row for row in runtimes))
         self.policy['profile_templates'].append(copy.deepcopy(self.template))
-        runtimes = self.subject.capabilities(self.policy)['placements'][0]['runtimes']
+        runtimes = self.subject.runtime_candidates(self.policy)
         self.assertEqual([row.get('container_name') for row in runtimes], ['container-three'])
 
 
@@ -245,6 +245,20 @@ class NativeTemplateProfileTest(unittest.TestCase):
             capture_output=True, text=True, timeout=10)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(json.loads(result.stdout), {'available': False, 'actions': [], 'placements': [], 'reason': 'executor_unconfigured'})
+
+    def test_capability_stays_unavailable_without_authority_and_with_an_unusable_signer(self):
+        self.dynamic_profile()
+        self.configure_signer()
+        self.policy['hooks']['revoke'] = self.policy['hooks']['verify']
+        signer = self.policy.pop('signer')
+        for approved in (None, {**signer, 'key': str(self.root / 'missing.key')}):
+            if approved is not None:
+                self.policy['signer'] = approved
+            self.save_policy()
+            result = subprocess.run([sys.executable, str(fixtures.CLI), '--policy', str(self.policy_file), '--capabilities'],
+                capture_output=True, text=True, timeout=10)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(json.loads(result.stdout), {'available': False, 'actions': [], 'placements': [], 'reason': 'executor_unconfigured'})
 
 
 class ContainerTemplateProfileTest(unittest.TestCase):

@@ -64,7 +64,8 @@ async function fixture(remoteAuth = true) {
   let effects = 0;
   let stopAuth: (() => Promise<void>) | undefined;
   for (const [socket, host] of [[controllerSocket, 'controller'], [centralSocket, 'remote']] as const) {
-    const app = await startFleetAuthoritySocket(socket, { execute: async () => { effects += 1; throw new Error('Unexpected authority action'); } },
+    const app = await startFleetAuthoritySocket(socket, { execute: async () => { effects += 1; throw new Error('Unexpected authority action'); },
+      executeInTransaction: async () => { effects += 1; throw new Error('Unexpected authority action'); } },
       { ownerUid: process.geteuid?.() ?? 0, host_id: host }); cleanup.push(() => app.close());
   }
   if (remoteAuth) {
@@ -85,7 +86,8 @@ async function fixture(remoteAuth = true) {
 async function healthyHost(f: Awaited<ReturnType<typeof fixture>>): Promise<void> {
   const directory = join(f.path, 'reverse-healthy'); await mkdir(directory, { mode: 0o700 });
   const socket = join(f.path, 'central', 'healthy.sock');
-  const app = await startFleetAuthoritySocket(socket, { execute: async () => { throw new Error('Unexpected authority action'); } },
+  const app = await startFleetAuthoritySocket(socket, { execute: async () => { throw new Error('Unexpected authority action'); },
+    executeInTransaction: async () => { throw new Error('Unexpected authority action'); } },
     { ownerUid: process.geteuid?.() ?? 0, host_id: 'healthy' }); cleanup.push(() => app.close());
   const base = f.config.hosts[1]; if (!base) throw new Error('Fixture host absent');
   f.config.hosts.push({ host_id: 'healthy', command: base.command, authority_socket: socket, authority_remote_socket: join(directory, 'authority.sock') });

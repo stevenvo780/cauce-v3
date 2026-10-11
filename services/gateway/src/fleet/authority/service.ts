@@ -8,7 +8,10 @@ import { AuthorityHostSchema, AuthorityInventorySchema, AuthorityIssuedSchema, A
 
 const Agent = z.object({ tenant_id: z.string(), alias: z.string(), runtime_key: z.string(), host_id: z.string() }).loose();
 export interface FleetAuthorityOptions { host_id: string; command: AuthorityCommand }
-export interface FleetAuthorityService { execute(input: unknown): Promise<unknown> }
+export interface FleetAuthorityService {
+  execute(input: unknown): Promise<unknown>;
+  executeInTransaction(client: DatabaseClient, input: unknown): Promise<unknown>;
+}
 async function resolveAuthority(client: DatabaseClient, scope: AuthorityScope, request: AuthorityRequest, host: string) {
   if (scope.host_id !== host) throw new FleetAuthorityError('AUTHORITY_REVOKED');
   await lockFleetRevision(client);
@@ -73,30 +76,29 @@ async function authority(client: DatabaseClient, scope: AuthorityScope, request:
 }
 export function createFleetAuthorityService(pool: DatabasePool, options: FleetAuthorityOptions): FleetAuthorityService {
   const host = AuthorityHostSchema.parse(options.host_id);
-  return { execute: async input => {
+  const executeInTransaction = async (client: DatabaseClient, input: unknown): Promise<unknown> => {
     const parsed = AuthorityRequestSchema.safeParse(input);
     if (!parsed.success) throw new FleetAuthorityError('INVALID_REQUEST');
     const request = parsed.data;
     if (request.action === 'issue' && createHash('sha256').update(request.csr_pem).digest('hex') !== request.csr_sha256) {
       throw new FleetAuthorityError('INVALID_REQUEST');
     }
-    return withTransaction(pool, async client => {
-      const { agent } = await authority(client, request.scope, request, host);
-      const { scope, ...action } = request;
-      const packet = { ...action, scope: { operation_id: scope.operation_id, host_id: host,
-        scope_sha256: scope.scope_sha256, runtime_key: scope.runtime_key },
-      agent: { tenant_id: agent.tenant_id, alias: agent.alias } };
-      const output = await runAuthorityCommand(options.command, packet);
-      await authority(client, scope, request, host);
-      const result = request.action === 'issue' ? AuthorityIssuedSchema.parse(output) : AuthorityInventorySchema.parse(output);
-      if (request.action === 'issue' && 'token' in result
-          && createHash('sha256').update(result.token).digest('hex') !== result.token_sha256) throw new FleetAuthorityError('AUTHORITY_UNAVAILABLE');
-      if (request.action === 'verify_absent' || request.action === 'revoke') {
-        if (!('authorities' in result) || result.authorities.some(row => row.matching_records.length > 0)) {
-          throw new FleetAuthorityError('AUTHORITY_UNAVAILABLE');
-        }
+    const { agent } = await authority(client, request.scope, request, host);
+    const { scope, ...action } = request;
+    const packet = { ...action, scope: { operation_id: scope.operation_id, host_id: host,
+      scope_sha256: scope.scope_sha256, runtime_key: scope.runtime_key },
+    agent: { tenant_id: agent.tenant_id, alias: agent.alias } };
+    const output = await runAuthorityCommand(options.command, packet);
+    await authority(client, scope, request, host);
+    const result = request.action === 'issue' ? AuthorityIssuedSchema.parse(output) : AuthorityInventorySchema.parse(output);
+    if (request.action === 'issue' && 'token' in result
+        && createHash('sha256').update(result.token).digest('hex') !== result.token_sha256) throw new FleetAuthorityError('AUTHORITY_UNAVAILABLE');
+    if (request.action === 'verify_absent' || request.action === 'revoke') {
+      if (!('authorities' in result) || result.authorities.some(row => row.matching_records.length > 0)) {
+        throw new FleetAuthorityError('AUTHORITY_UNAVAILABLE');
       }
-      return result;
-    });
-  } };
+    }
+    return result;
+  };
+  return { executeInTransaction, execute: input => withTransaction(pool, client => executeInTransaction(client, input)) };
 }

@@ -2,16 +2,17 @@ import { execFile } from 'node:child_process';
 import { createHash, X509Certificate } from 'node:crypto';
 import { chmod, lstat, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { request as httpRequest } from 'node:http';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { FleetOperationsRepository, createPool, type DatabasePool, type FleetOperationClaim } from '@cauce/store';
+import { FleetOperationsRepository, createPool, withTransaction, type DatabasePool, type FleetOperationClaim } from '@cauce/store';
 import { preparePostgresSuite } from '../../../../../packages/store/test/postgres-suite.js';
 import { startTestCaseDatabase, startTestDatabase, type EmptyTestDatabase, type TestDatabase } from '../../../../../tests/helpers/postgres.js';
 import { FleetAuthorityClient } from './client.js';
 import { createFleetAuthorityService } from './service.js';
 import { startFleetAuthoritySocket } from './socket.js';
-import type { AuthorityCommand } from './command.js';
+import { runAuthorityReadiness, type AuthorityCommand } from './command.js';
 import type { AuthorityScope } from './schemas.js';
 
 const execute = promisify(execFile);
@@ -23,6 +24,15 @@ let scope: AuthorityScope; let humanId: string; let command: AuthorityCommand;
 let server: Awaited<ReturnType<typeof startFleetAuthoritySocket>> | undefined;
 let client: FleetAuthorityClient;
 let request: { phase: 'bootstrap'; csr_pem: string; csr_sha256: string; idempotency_key: string };
+async function readiness() {
+  return new Promise<{ status: number; body: unknown }>((resolve, reject) => {
+    const outgoing = httpRequest({ socketPath: join(directory, 'host-a.sock'), path: '/authority-ready', method: 'POST',
+      headers: { 'content-type': 'application/json' } }, response => {
+      let body = ''; response.on('data', chunk => { body += String(chunk); });
+      response.on('end', () => { resolve({ status: response.statusCode ?? 0, body: JSON.parse(body) as unknown }); });
+    }); outgoing.on('error', reject); outgoing.end('{}');
+  });
+}
 preparePostgresSuite(import.meta.url, async () => { database = await startTestDatabase(); }, 120_000);
 beforeEach(async () => {
   if (!database) throw new Error('Test database absent');
@@ -73,7 +83,8 @@ beforeEach(async () => {
   const executable = fileURLToPath(new URL('../../../../../ops/cli/fleet-authority-issuer.py', import.meta.url));
   command = { python: '/usr/bin/python3', executable, sha256: hash(await readFile(executable)), policy_file, policy_sha256: hash(await readFile(policy_file)) };
   const service = createFleetAuthorityService(pool, { host_id: 'host-a', command });
-  const socket = join(directory, 'host-a.sock'), socketPolicy = { host_id: 'host-a', ownerUid: process.geteuid?.() ?? 0 };
+  const socket = join(directory, 'host-a.sock'), socketPolicy = { host_id: 'host-a', ownerUid: process.geteuid?.() ?? 0,
+    readiness: () => runAuthorityReadiness(command) };
   server = await startFleetAuthoritySocket(socket, service, socketPolicy); client = new FleetAuthorityClient(socket, socketPolicy);
 });
 afterEach(async () => {
@@ -82,6 +93,17 @@ afterEach(async () => {
 });
 afterAll(async () => { if (database) { await database.pool.end(); await database.container.stop(); } });
 describe('central fleet authority through a private host socket and PostgreSQL', () => {
+  it('reports legacy authority readiness only while the private issuer remains usable', async () => {
+    expect(await readiness()).toEqual({ status: 200, body: { ready: true, host_id: 'host-a' } });
+    await chmod(join(directory, 'ca.key'), 0o644);
+    expect(await readiness()).toEqual({ status: 409, body: { error: 'AUTHORITY_UNAVAILABLE' } });
+  });
+  it('validates and issues with the caller transaction without acquiring another pool connection', async () => {
+    const service = createFleetAuthorityService(pool, { host_id: 'host-a', command });
+    expect(typeof service.executeInTransaction).toBe('function');
+    const issued = await withTransaction(pool, client => service.executeInTransaction(client, { action: 'issue', scope, ...request }));
+    expect(new X509Certificate((issued as { certificate_pem: string }).certificate_pem).subject).toBe('CN=agent-runtime-a');
+  });
   it('issues a real constrained CSR certificate and recovers the same private response after caller loss', async () => {
     const issued = await client.issue(scope, request);
     expect(new X509Certificate(issued.certificate_pem).fingerprint256.replaceAll(':', '').toLowerCase()).toBe(issued.certificate_sha256);

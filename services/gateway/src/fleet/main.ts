@@ -11,6 +11,7 @@ import { createHostProviderAuthService } from './host-provider-auth.js';
 import { readFleetControllerConfig, createFleetControllerTransport } from './controller-config.js';
 import { FleetCoordinator } from './coordinator.js';
 import { createFleetAuthorityService } from './authority/service.js';
+import { runAuthorityReadiness } from './authority/command.js';
 import { startFleetAuthoritySocket } from './authority/socket.js';
 import { startFleetHostChannels } from './host-channels.js';
 import { guardFleetTransport } from './host-availability.js';
@@ -25,6 +26,7 @@ export interface FleetHostConfig {
   projectRoot: string; databaseFile?: string; identityDirectory?: string; host: string; worker: string; command: HostCommandConfig;
   pollMs: number; leaseMs: number;
   auth?: { socket: string; policyFile: string; groupGid?: number };
+  enrolledAuthPolicyFile?: string;
   controllerFile?: string;
 }
 function invalid(): Error { return new Error('Fleet host configuration is invalid'); }
@@ -48,11 +50,14 @@ export function readFleetHostConfig(environment: NodeJS.ProcessEnv): FleetHostCo
     }) } : undefined;
   if (!hasAuth && environment.CAUCE_FLEET_API_GROUP_GID !== undefined) throw invalid();
   const identityDirectory = environment.CAUCE_FLEET_IDENTITY_DIRECTORY;
+  const enrolledAuthPolicyFile = environment.CAUCE_FLEET_ENROLLED_AUTH_POLICY_FILE;
+  if (enrolledAuthPolicyFile !== undefined && identityDirectory === undefined) throw invalid();
   if (identityDirectory !== undefined && (environment.CAUCE_FLEET_DATABASE_URL_FILE !== undefined || hasAuth
       || environment.CAUCE_FLEET_CONTROLLER_FILE !== undefined)) throw invalid();
   return { projectRoot: path(environment.CAUCE_FLEET_PROJECT_ROOT), host, worker,
     ...(identityDirectory === undefined ? { databaseFile: path(environment.CAUCE_FLEET_DATABASE_URL_FILE) }
       : { identityDirectory: path(identityDirectory) }),
+    ...(enrolledAuthPolicyFile === undefined ? {} : { enrolledAuthPolicyFile: path(enrolledAuthPolicyFile) }),
     command: { python: path(environment.CAUCE_FLEET_PYTHON), executable: path(environment.CAUCE_FLEET_EXECUTABLE),
       policyFile: path(environment.CAUCE_FLEET_POLICY_FILE), timeoutMs: integer(environment.CAUCE_FLEET_COMMAND_TIMEOUT_MS, 60_000, 1, 300_000) },
     pollMs: integer(environment.CAUCE_FLEET_POLL_MS, 1000, 25, 60_000), leaseMs: integer(environment.CAUCE_FLEET_LEASE_MS, 30_000, 1000, 300_000),
@@ -96,11 +101,15 @@ export async function runFleetHost(environment: NodeJS.ProcessEnv = process.env)
   let stopWorker = () => { channelState.lost = true; };
   const authorities: Awaited<ReturnType<typeof startFleetAuthoritySocket>>[] = [];
   try {
-    if (controller?.authority_command) {
+    const authorityCommand = controller?.authority_command;
+    if (controller && authorityCommand) {
       for (const host of controller.hosts) {
         if (host.authority_socket === undefined) throw invalid();
-        const service = createFleetAuthorityService(pool, { host_id: host.host_id, command: controller.authority_command });
-        authorities.push(await startFleetAuthoritySocket(host.authority_socket, service, { ownerUid: process.geteuid?.() ?? 0, host_id: host.host_id }));
+        const service = createFleetAuthorityService(pool, { host_id: host.host_id, command: authorityCommand });
+        authorities.push(await startFleetAuthoritySocket(host.authority_socket, service, {
+          ownerUid: process.geteuid?.() ?? 0, host_id: host.host_id,
+          readiness: () => runAuthorityReadiness(authorityCommand),
+        }));
       }
     }
   } catch (error) { await Promise.all(authorities.map(authority => authority.close())); await adoptionDrainPool?.end(); await pool.end(); throw error; }

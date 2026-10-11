@@ -5,18 +5,25 @@ import { assertLoginPins, readPrivateJson } from '../provider-login.js';
 import { AuthorityDigestSchema, FleetAuthorityError } from './schemas.js';
 
 const Path = z.string().refine(value => value.startsWith('/') && normalize(value) === value && !/[\p{Cc}]/u.test(value));
-const Config = z.object({ python: Path, executable: Path, sha256: AuthorityDigestSchema,
+export const AuthorityCommandSchema = z.object({ python: Path, executable: Path, sha256: AuthorityDigestSchema,
   policy_file: Path, policy_sha256: AuthorityDigestSchema, timeout_ms: z.number().int().min(1).max(120_000).optional(),
 }).strict();
-export type AuthorityCommand = z.infer<typeof Config>;
+export type AuthorityCommand = z.infer<typeof AuthorityCommandSchema>;
 export async function runAuthorityCommand(input: AuthorityCommand, packet: unknown): Promise<unknown> {
-  const config = Config.parse(input);
+  return run(input, packet, false);
+}
+export async function runAuthorityReadiness(input: AuthorityCommand): Promise<void> {
+  z.object({ ready: z.literal(true) }).strict().parse(await run(input, {}, true));
+}
+async function run(input: AuthorityCommand, packet: unknown, ready: boolean): Promise<unknown> {
+  const config = AuthorityCommandSchema.parse(input);
   const encoded = Buffer.from(JSON.stringify(packet));
   if (encoded.length > 65_536) throw new FleetAuthorityError('INVALID_REQUEST');
   await assertLoginPins({ [config.executable]: config.sha256, [config.policy_file]: config.policy_sha256 });
   await readPrivateJson(config.policy_file);
   return new Promise((resolve, reject) => {
-    const child = spawn(config.python, [config.executable, '--policy', config.policy_file, '--policy-sha256', config.policy_sha256], {
+    const child = spawn(config.python, [config.executable, '--policy', config.policy_file, '--policy-sha256', config.policy_sha256,
+      ...(ready ? ['--ready'] : [])], {
       detached: true, stdio: ['pipe', 'pipe', 'ignore'], env: { PATH: '/usr/bin:/bin', TMPDIR: '/var/tmp', PYTHONDONTWRITEBYTECODE: '1' },
     });
     let stopped = false; let bytes = 0; let escalation: NodeJS.Timeout | undefined;
