@@ -50,6 +50,7 @@ import { runSystemGateProbe } from "./engine/system-gate-probe.js";
 import { isConversationStatusRequest, runConversationStatus } from "./engine/conversation-status.js";
 import { PRAXIS_SUPERVISION_NOTICE_MESSAGE_TYPE, runPraxisSupervisionNotice } from "./engine/praxis-supervision-notice.js";
 import { DEFAULT_NO_PROGRESS_TIMEOUT_MS } from "./message-timeout.js";
+import { validateVersionedContext, VersionedContextTurn } from './engine/versioned-context.js';
 import type { EmissionRuntime } from "./mcp-emission/runtime.js";
 import type { EmissionTurn } from "./mcp-emission/tools.js";
 export type {
@@ -283,9 +284,11 @@ export class AdapterEngine {
     delivery: Delivery,
     invocation: DeliveryHarnessInvocation,
   ): Promise<void> {
+    const space = new VersionedContextTurn();
     try {
-      await this.runReservedDelivery(delivery, invocation);
+      await this.runReservedDelivery(delivery, invocation, space);
     } finally {
+      space.release();
       invocation.reservation?.release();
     }
   }
@@ -303,6 +306,7 @@ export class AdapterEngine {
   private async runReservedDelivery(
     delivery: Delivery,
     invocation: DeliveryHarnessInvocation,
+    space: VersionedContextTurn,
   ): Promise<void> {
     const { harness, session, reservation, humanInitiator, clientIdentity, selectionError } = invocation;
     const occurredAt = this.clock.now().toISOString();
@@ -331,6 +335,7 @@ export class AdapterEngine {
     }
     let executionBudget: ExecutionBudget;
     try {
+      validateVersionedContext(delivery, this.ownTenantId);
       executionBudget = executionBudgetFor(
         delivery,
         timeoutFromBody(delivery.body, this.defaultTimeoutMs),
@@ -345,16 +350,17 @@ export class AdapterEngine {
     const controller = new AbortController();
     this.controllers.set(delivery.delivery_id, controller);
 
-    // Waits to acquire the session lock before transitioning to 'started'.
-    if (reservation !== undefined) {
+    if (reservation !== undefined || space.root !== undefined) {
       const acquired = await this.awaitSessionTurn(
         accepted.record,
-        reservation,
+        { wait: async signal => { await reservation?.wait(signal); await space.wait(signal); } },
         executionBudget,
         controller,
       );
       if (!acquired) return;
     }
+    try { controller.signal.throwIfAborted(); await space.materialize(delivery, this.ownTenantId, harness.definition.id); }
+    catch (error) { await this.finishError(accepted.record, this.adapterError(error, accepted.record)); return; }
 
     const onOpenClawPhase = harness.definition.id === "openclaw" ? deliveryPhaseObserver(this.logger, delivery) : undefined;
     const phase = phaseEmitter(onOpenClawPhase, "engine");
@@ -379,6 +385,8 @@ export class AdapterEngine {
       message_type: messageType,
       routing_targets: routingTargetsFromDelivery(delivery),
       ...selfRoleFromDelivery(delivery),
+      ...(delivery.company_context === undefined ? {} : { company_context: delivery.company_context }),
+      ...(delivery.versioned_context === undefined ? {} : { versioned_context: delivery.versioned_context }),
       ...(delivery.profile_runtime_contract === undefined
         ? {}
         : { native_profile_contract: delivery.profile_runtime_contract }),
@@ -431,8 +439,7 @@ export class AdapterEngine {
           delivery.body,
           {
             ...(processedReplies.length === 0 ? {} : { processedReplies }),
-            ...(this.ownTenantId === 'Hospital' && delivery.recipient_alias === 'operador'
-              ? { humanFacingReceipt: true } : {}),
+            ...(delivery.company_context?.human_receipt === true ? { humanFacingReceipt: true } : {}),
           },
         ), {
           messageType,
@@ -551,6 +558,8 @@ export class AdapterEngine {
         await this.finishError(started.record, error, output);
         return;
       }
+      try { await space.verify(); }
+      catch (error) { await this.finishError(started.record, this.adapterError(error, started.record)); return; }
 
       const profileAdoption = profileAdoptionFor(delivery, consumedProfile);
       const done = await this.store.transitionAndEnqueue(
@@ -560,6 +569,8 @@ export class AdapterEngine {
         {
           output,
           ...(profileAdoption === undefined ? {} : { profileAdoption }),
+          ...(consumption === undefined || delivery.versioned_context === undefined || delivery.epoch !== this.store.epoch || this.fenced.has(delivery.delivery_id)
+            ? {} : { contextAdoption: { version: delivery.versioned_context.version, digest: delivery.versioned_context.digest, input_sha256: consumption.input_sha256 } }),
           ...(consumption === undefined || delivery.epoch !== this.store.epoch || this.fenced.has(delivery.delivery_id)
             ? {} : { consumptionWitness: consumption }),
           retainRequest: output.messages.length > 0
@@ -574,14 +585,9 @@ export class AdapterEngine {
     }
   }
 
-  /**
-   * Waits for the session lock's turn with the delivery renewal kept in 'accepted'.
-   * If the wait exceeds `queueWaitTimeoutMs`, fails with a retryable error without declaring
-   * execution start. Returns `false` when the delivery was closed by error or cancellation.
-   */
   private async awaitSessionTurn(
     record: InboxRecord,
-    reservation: HarnessSessionReservation,
+    reservation: Pick<HarnessSessionReservation, 'wait'>,
     budget: ExecutionBudget,
     controller: AbortController,
   ): Promise<boolean> {
@@ -615,10 +621,6 @@ export class AdapterEngine {
     }
     if (failure === undefined) return true;
 
-    // Nothing has run yet, so nothing can be ambiguous. Degrading an ambiguous code here would be
-    // lying the other way: it would send to dead-letters "held for manual replay" a delivery
-    // the harness never saw. The normalization to FENCED is the same the execution path applies,
-    // and it always holds here since there is never an ambiguous execution to preserve.
     const queueError = this.adapterError(failure, record);
     const normalized = this.fenced.has(record.delivery_id)
       ? new AdapterError("FENCED", "Execution lost its fencing epoch", true)
@@ -733,11 +735,7 @@ export class AdapterEngine {
     return asAdapterError(error);
   }
 
-  private async finishError(
-    record: InboxRecord,
-    error: AdapterError,
-    output?: StructuredOutput,
-  ): Promise<void> {
+  private async finishError(record: InboxRecord, error: AdapterError, output?: StructuredOutput): Promise<void> {
     const payload = { code: error.code, message: error.message, retryable: error.retryable };
     const failed = await this.store.transitionAndEnqueue(
       record.delivery_id,
@@ -752,7 +750,6 @@ export class AdapterEngine {
     );
     await this.publishLifecycleEvent(failed.event);
   }
-
   private async replayPending(record: InboxRecord): Promise<void> {
     for (const event of this.store.pendingEventsFor(record)) await this.publishEvent(event);
   }

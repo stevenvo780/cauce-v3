@@ -150,6 +150,47 @@ export const HumanMessageInitiatorSchema = z.object({
   root_message_id: z.string().regex(UUID_ANY_PATTERN),
 }).strict();
 
+export const COMPANY_CONTEXT_CAPABILITY = 'company_context_v1' as const;
+
+const CompanyPrincipalRefSchema = z.object({ tenant_id: TenantSchema, alias: AliasSchema }).strict();
+
+export const CompanyContextSchema = z.object({
+  company_id: z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/u),
+  director: z.literal(true).optional(),
+  human_receipt: z.literal(true).optional(),
+  infra_escalation: CompanyPrincipalRefSchema.optional(),
+  coordination: CompanyPrincipalRefSchema.optional(),
+  gate_probe: z.object({
+    tenant_id: TenantSchema,
+    room_id: z.string().min(1).max(128),
+    actor_alias: AliasSchema,
+    principal_alias: AliasSchema,
+  }).strict().optional(),
+  supervision_notice: z.object({
+    tenant_id: TenantSchema,
+    room_id: z.string().min(1).max(128),
+    actor_alias: AliasSchema,
+    principal_alias: AliasSchema,
+    recipient_alias: AliasSchema,
+    notify_handle: z.string().min(1).max(64),
+  }).strict().optional(),
+}).strict();
+export type CompanyContext = z.infer<typeof CompanyContextSchema>;
+
+export const VERSIONED_CONTEXT_CAPABILITY = 'versioned_context_v1' as const;
+export const VersionedContextSchema = z.object({
+  company_id: z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/u),
+  tenant_id: TenantSchema, alias: AliasSchema,
+  version: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+  digest: z.string().regex(/^[a-f0-9]{64}$/u),
+  files: z.array(z.object({ path: z.string().max(256).regex(/^(?:context|directives)\/[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)*\.(?:md|txt|json|yaml|yml)$/u),
+    content: z.string().max(262_144) }).strict()).max(100),
+}).strict();
+export type VersionedContext = z.infer<typeof VersionedContextSchema>;
+export const ContextAdoptionEvidenceSchema = z.object({ version: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+  digest: z.string().regex(/^[a-f0-9]{64}$/u), input_sha256: z.string().regex(/^[a-f0-9]{64}$/u) }).strict();
+export type ContextAdoptionEvidence = z.infer<typeof ContextAdoptionEvidenceSchema>;
+
 export const DeliveryEnvelopeSchema = z.object({
   type: z.literal('delivery'),
   version: z.literal(PROTOCOL_VERSION),
@@ -201,6 +242,8 @@ export const DeliveryEnvelopeSchema = z.object({
    */
   profile_runtime_contract: ProfileRuntimeContractSchema.optional(),
   conversation_work_state: ConversationWorkStateSchema.optional(),
+  company_context: CompanyContextSchema.optional(),
+  versioned_context: VersionedContextSchema.optional(),
 }).strict();
 
 /**

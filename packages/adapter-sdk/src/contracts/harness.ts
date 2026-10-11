@@ -3,7 +3,7 @@ import type { NoticeSelection } from "../sdk/notify-history.js";
 import type { CommandPins } from '../sdk/command-pins.js';
 import type { ExecutionSelection } from '../sdk/execution-selection.js';
 import type { HarnessTimeoutKind } from "../sdk/message-timeout.js";
-import type { DeliveryEnvelope, ProfileRuntimeContract } from "@cauce/protocol";
+import type { CompanyContext, DeliveryEnvelope, ProfileRuntimeContract, VersionedContext } from "@cauce/protocol";
 import type { DurableStore, SessionOrigin } from "../sdk/durable-store.js";
 import type {
   CommandRunner,
@@ -39,6 +39,8 @@ export interface HarnessRequestContext {
    * Alias's declared role (`agents.role_brief`). Absent = no role declared.
    */
   readonly self_role?: string;
+  readonly company_context?: CompanyContext;
+  readonly versioned_context?: VersionedContext;
   /**
    * Summary of the fixed text as it is written TODAY in the harness's instructions file inside
    * the container, measured by whoever can look at it. When it matches the text this adapter

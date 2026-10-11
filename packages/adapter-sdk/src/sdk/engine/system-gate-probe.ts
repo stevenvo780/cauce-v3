@@ -35,12 +35,13 @@ export async function runSystemGateProbe(
   }
 
   const context = delivery.authenticated_context;
+  const principal = delivery.company_context?.gate_probe;
   const authorized = isSystemGateProbeBody(delivery.body)
-    && delivery.tenant_id === "Steven"
-    && delivery.room_id === "grp.steven"
-    && delivery.actor_alias === "kant"
+    && principal?.tenant_id === delivery.tenant_id
+    && delivery.room_id === principal.room_id
+    && delivery.actor_alias === principal.actor_alias
     && delivery.origin === undefined
-    && context?.session_id === "gate-probe"
+    && context?.session_id === principal.principal_alias
     && context.channel === "gate"
     && context.origin === undefined;
   if (!authorized) {

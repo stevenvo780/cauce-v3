@@ -452,12 +452,13 @@ export class AdapterClient {
       ...(event.execution_started === true ? { execution_started: true } : {}),
       ...(detail === undefined ? {} : { error: detail }),
       ...(event.error === undefined ? {} : { error_code: event.error.code }),
-      ...(event.output === undefined && event.profile_adoption === undefined && event.harness_consumption_v1 === undefined
+      ...(event.output === undefined && event.profile_adoption === undefined && event.harness_consumption_v1 === undefined && event.context_adoption === undefined
         ? {}
         : {
             result: {
               ...(event.output === undefined ? {} : { output: event.output }),
               ...(event.harness_consumption_v1 === undefined ? {} : { harness_consumption_v1: event.harness_consumption_v1 }),
+              ...(event.context_adoption === undefined ? {} : { context_adoption: event.context_adoption }),
               ...(event.profile_adoption === undefined
                 ? {}
                 : { profile_adoption: event.profile_adoption }),

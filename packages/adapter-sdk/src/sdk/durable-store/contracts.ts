@@ -28,6 +28,7 @@ export interface InboxRecord {
   readonly output?: StructuredOutput;
   readonly profile_adoption?: ProfileRuntimeAdoptionEvidence;
   readonly harness_consumption_v1?: HarnessConsumptionWitness;
+  readonly context_adoption?: import('@cauce/protocol').ContextAdoptionEvidence;
   /** Exact store-side outcome of this turn's StructuredOutput.messages. */
   readonly delegation_rejections?: readonly DelegationRejectionNotice[];
   readonly delegation_materializations?: readonly DelegationMaterializationNotice[];
@@ -182,6 +183,7 @@ export interface DeliveryTransitionDetails {
   readonly output?: StructuredOutput;
   readonly profileAdoption?: ProfileRuntimeAdoptionEvidence;
   readonly consumptionWitness?: HarnessConsumptionWitness;
+  readonly contextAdoption?: import('@cauce/protocol').ContextAdoptionEvidence;
   readonly error?: InboxRecord["error"];
   readonly retainRequest?: boolean;
   readonly attempt?: number;

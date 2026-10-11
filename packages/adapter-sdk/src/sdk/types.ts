@@ -52,6 +52,9 @@ export interface AdapterCapabilities {
   readonly delegation_feedback_v1?: true;
   /** Accepts `self_role` in the envelope and emits it as the identity preamble. */
   readonly agent_identity_v1?: true;
+  /** Accepts `company_context` in the envelope: director, escalation targets and reserved principals. */
+  readonly company_context_v1?: true;
+  readonly versioned_context_v1?: true;
   /** Declares the adapter receives `hello_ack.agent_profile` and syncs it into the harness files. */
   readonly agent_profile_v1?: true;
   /** Accepts per-delivery runtime profile contract and emits consumption evidence upon completion. */
@@ -197,9 +200,9 @@ export interface DeliveryEvent {
    */
   readonly execution_started?: true;
   readonly output?: StructuredOutput;
-  /** Adapter-generated proof that this exact turn consumed the contracted runtime profile. */
   readonly profile_adoption?: ProfileRuntimeAdoptionEvidence;
   readonly harness_consumption_v1?: HarnessConsumptionWitness;
+  readonly context_adoption?: import('@cauce/protocol').ContextAdoptionEvidence;
   readonly error?: AdapterErrorPayload;
 }
 

@@ -18,6 +18,8 @@ export * from "./context/perfil-a-contexto.js";
 // The seeder is the ONLY writer of the profile on the container's disk. Exported so
 // integration tests can measure it without going through the socket.
 export * from "./context/siembra-del-perfil.js";
+export * from "./context/harness-descriptor.js";
+export * from "./context/space-layout.js";
 export * from "./harnesses/index.js";
 export * from "./harnesses/shared.js";
 export * from "./shared-session/index.js";

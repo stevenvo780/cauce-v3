@@ -13,6 +13,11 @@ interface SupervisionNoticeRuntime {
   readonly ownRoom: string | undefined;
 }
 
+interface AuthorizedNotice extends SupervisionNoticeBody {
+  /** The company's own egress destination, never a constant of this adapter. */
+  readonly notifyHandle: string;
+}
+
 interface SupervisionNoticeBody {
   readonly type: typeof PRAXIS_SUPERVISION_NOTICE_MESSAGE_TYPE;
   readonly text: string;
@@ -22,20 +27,25 @@ interface SupervisionNoticeBody {
 function authorizedNotice(
   delivery: Delivery,
   runtime: Pick<SupervisionNoticeRuntime, "ownTenantId" | "ownRoom">,
-): SupervisionNoticeBody | undefined {
+): AuthorizedNotice | undefined {
   const context = delivery.authenticated_context;
-  if (runtime.ownTenantId !== "Hospital"
-    || (runtime.ownRoom !== undefined && runtime.ownRoom !== "grp.hospital")
-    || delivery.tenant_id !== "Hospital" || delivery.room_id !== "grp.hospital"
-    || delivery.recipient_alias !== "operador" || delivery.actor_alias !== "praxis-supervisor"
-    || context?.session_id !== "praxis-supervisor" || context.channel !== "adapter"
+  const principal = delivery.company_context?.supervision_notice;
+  if (principal === undefined
+    || runtime.ownTenantId !== principal.tenant_id
+    || (runtime.ownRoom !== undefined && runtime.ownRoom !== principal.room_id)
+    || delivery.tenant_id !== principal.tenant_id || delivery.room_id !== principal.room_id
+    || delivery.recipient_alias !== principal.recipient_alias || delivery.actor_alias !== principal.actor_alias
+    || context?.session_id !== principal.principal_alias || context.channel !== "adapter"
     || context.origin !== undefined || delivery.origin !== undefined) return undefined;
   const body = delivery.body;
   if (body.type !== PRAXIS_SUPERVISION_NOTICE_MESSAGE_TYPE
     || Object.keys(body).some((key) => key !== "type" && key !== "text" && key !== "kind")
     || typeof body.text !== "string" || body.text.trim().length === 0 || body.text.length > 800
     || (body.kind !== "alert" && body.kind !== "decision_request" && body.kind !== "digest")) return undefined;
-  return { type: PRAXIS_SUPERVISION_NOTICE_MESSAGE_TYPE, text: body.text, kind: body.kind };
+  return {
+    type: PRAXIS_SUPERVISION_NOTICE_MESSAGE_TYPE, text: body.text, kind: body.kind,
+    notifyHandle: principal.notify_handle,
+  };
 }
 
 function ownsNoticeClaim(delivery: Delivery, runtime: SupervisionNoticeRuntime): boolean {
@@ -59,7 +69,7 @@ export async function runPraxisSupervisionNotice(delivery: Delivery, runtime: Su
   const notice = authorizedNotice(delivery, runtime);
   const output: StructuredOutput | undefined = notice === undefined ? undefined : {
     reply: "Aviso de supervisión registrado.",
-    messages: [], notify: [{ to: "steven_dm", kind: notice.kind, body: notice.text }],
+    messages: [], notify: [{ to: notice.notifyHandle, kind: notice.kind, body: notice.text }],
     status: "done", retryable: false, artifacts: [],
   };
   const terminal = await runtime.store.transitionAndEnqueueIfCurrent(

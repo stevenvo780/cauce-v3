@@ -12,7 +12,6 @@ import { SpawnCommandRunner } from "../sdk/process-runner.js";
 import { WebSocketConsumerConnector } from "../sdk/websocket-transport.js";
 import { OpenClawApiRunner } from "../sdk/openclaw-api-runner.js";
 import { HarnessAdapter, sanitizeProcessOutput } from "../harnesses/shared.js";
-import { harnessDefinition } from "../harnesses/index.js";
 import type {
   AdapterLog,
   AdapterLogger,
@@ -40,6 +39,8 @@ import { emissionGateway } from "../sdk/mcp-emission/gateway.js";
 import { decisionesForwarder } from "../sdk/mcp-emission/decisiones.js";
 import { commandPinsFromEnvironment } from '../sdk/command-pins.js';
 import { selectionFromEnvironment } from '../sdk/execution-selection.js';
+import { definitionFromDescriptor, packagedHarnessDescriptor } from '../context/harness-descriptor.js';
+import { prepareSpaceLayout } from '../context/space-layout.js';
 
 function commandOverride(
   harnessId: HarnessId,
@@ -274,15 +275,17 @@ function pointedRunner(
 }
 
 export async function runCli(harnessId: HarnessId): Promise<void> {
+  const descriptor = await packagedHarnessDescriptor(harnessId);
+  const spaceRoot = process.env.CAUCE_SPACE_ROOT;
+  if (spaceRoot !== undefined) await prepareSpaceLayout(spaceRoot);
   const runtime = await loadCliRuntimeConfig(harnessId);
   const commandPins = commandPinsFromEnvironment(); let selected = selectionFromEnvironment(harnessId);
   if (commandPins !== undefined && runtime.harnessCommand !== undefined && runtime.harnessCommand !== commandPins.command) throw new Error('configured harness command differs from its pinned binding');
   const tenantId = TenantSchema.parse(runtime.tenant);
-  if (harnessId === "muse" && tenantId === "Hospital"
-    && runtime.muse?.workspace !== "/home/node/clawd") {
-    throw new Error("Hospital Muse workspace must be exactly /home/node/clawd");
+  if (harnessId === "muse" && runtime.muse !== undefined && runtime.muse.workspace !== "/home/node/clawd") {
+    throw new Error("Muse workspace must be exactly /home/node/clawd");
   }
-  // Muse: default `muse-cauce exec` (hegel); MSP (Hospital) only with explicit config, loaded lazily.
+  // Muse: default `muse-cauce exec` (hegel); MSP only with explicit config, loaded lazily.
   const museMsp = harnessId === "muse" && runtime.muse !== undefined;
   if (museMsp && runtime.harnessCommand !== undefined
     && runtime.harnessCommand !== runtime.muse.executable) {
@@ -290,7 +293,7 @@ export async function runCli(harnessId: HarnessId): Promise<void> {
   }
   const definition = runtimeHarnessDefinition(
     harnessId,
-    museMsp ? (await import("../harnesses/muse-msp.js")).museMspDefinition : harnessDefinition(harnessId),
+    museMsp ? (await import("../harnesses/muse-msp.js")).museMspDefinition : definitionFromDescriptor(descriptor),
     runtime.openClaw?.transport,
   );
   const canonicalOpenClawTerminalSession = harnessId === "openclaw";
