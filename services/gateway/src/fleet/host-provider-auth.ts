@@ -17,7 +17,7 @@ import { readFleetProviderAccounts, scopedFleetProviderAgents } from './accounts
 import { trustedFleetBaseline } from './baseline.js';
 import { fleetHostInputs } from './coordinator.js';
 import { performHostCommand, performHostLoginStop, type HostCommandConfig } from './host-command.js';
-import { assertLoginPins, cleanupProviderLogin, ContainerLoginBindingSchema, createProviderLogin, LoginCommandSchema,
+import { assertLoginPins, cleanupProviderLogin, ContainerLoginBindingSchema, createProviderLogin, HelperLoginPinsSchema, LoginCommandSchema,
   LoginPathSchema, LoginPinsSchema, queryProviderLoginBinding, readPrivateJson, type ProviderLoginConfig } from './provider-login.js';
 
 const Identifier = z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/u);
@@ -50,7 +50,7 @@ const Template = z.object({ provider: Provider, runtime_user: User, path_root: L
 const Templates = z.array(Template).max(100).refine(value => new Set(value.map(row => JSON.stringify([
   row.provider, row.runtime_user, row.openclaw !== undefined, row.runtime_mode, row.container_name, row.container_prefix]))).size === value.length);
 const Policy = z.object({ schemaVersion: z.literal(1), host_id: Identifier, state_root: LoginPathSchema,
-  helper: z.object({ executable: LoginPathSchema, sha256: Hash, files: LoginPinsSchema.optional() }).strict(), profiles: Profiles,
+  helper: z.object({ executable: LoginPathSchema, sha256: Hash, files: HelperLoginPinsSchema.optional() }).strict(), profiles: Profiles,
   profile_templates: Templates.optional(),
   logins: z.partialRecord(z.enum(['codex', 'claude', 'openclaw']), Login) }).strict();
 const ExecutorPolicy = z.object({ schemaVersion: z.literal(1), host_id: Identifier, profiles: Profiles, profile_templates: Templates.optional() }).loose();

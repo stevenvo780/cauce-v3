@@ -91,9 +91,9 @@ export class AgentProviderAuthBroker {
         if (!isDeepStrictEqual(existing.physical, physical)) throw denied();
         return existing;
       }
-      if (!reservation || reservation.state !== 'reserved' || sessionId !== undefined && reservation.session_id !== sessionId) throw denied();
+      if (reservation?.state !== 'reserved' || sessionId !== undefined && reservation.session_id !== sessionId) throw denied();
       const row = (await client.query<FleetOperationRow>('SELECT * FROM fleet_operations WHERE id=$1', [physical.operation_id])).rows[0];
-      if (!row || row.desired_revision === null) throw denied();
+      if (row?.desired_revision == null) throw denied();
       const actor = { tenant_id: row.actor_tenant, alias: row.actor_alias, subject: reservation.actor_subject,
         requestedCompany: row.company_id };
       const value = await loadProviderAuthRoutingScope(client, actor, row.id);
@@ -173,7 +173,7 @@ export class AgentProviderAuthBroker {
         accepted.push(() => { this.pending.delete(event.id); clearTimeout(pending.timer); pending.resolve(event); });
       } else {
         const output = this.outputs.get(event.fence.session_id);
-        if (!output || output.binding.physical.host_id !== host.host_id || !isDeepStrictEqual(event.fence, output.binding.fence)) throw denied();
+        if (output?.binding.physical.host_id !== host.host_id || !isDeepStrictEqual(event.fence, output.binding.fence)) throw denied();
         if (!activeSessions.has(event.fence.session_id)) continue;
         const sequence = sequences.get(event.fence.session_id) ?? output.sequence;
         if (event.sequence <= sequence) continue;

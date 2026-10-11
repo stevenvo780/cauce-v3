@@ -15,6 +15,7 @@ const Hash = z.string().regex(/^[0-9a-f]{64}$/u);
 const Literal = z.string().max(4096).refine(value => !/[\p{Cc}]/u.test(value));
 export const LoginCommandSchema = z.array(Literal).min(1).max(32).refine(value => LoginPathSchema.safeParse(value[0]).success);
 export const LoginPinsSchema = z.record(LoginPathSchema, Hash).refine(value => Object.keys(value).length <= 32);
+export const HelperLoginPinsSchema = z.record(LoginPathSchema, Hash).refine(value => Object.keys(value).length <= 64);
 export const ContainerLoginBindingSchema = z.object({ container_id: Hash, generation: Hash, image_digest: z.string().regex(/^sha256:[0-9a-f]{64}$/u),
   python: LoginPathSchema, helper: z.literal('/cauce/executor/provider-login.py') }).strict();
 const PacketSchema = z.object({ operation_id: z.uuid(), command: LoginCommandSchema,
@@ -54,7 +55,7 @@ export async function readPrivateJson(filename: string): Promise<unknown> {
 }
 export async function assertLoginPins(pins: Record<string, string>): Promise<void> {
   try {
-    LoginPinsSchema.parse(pins);
+    HelperLoginPinsSchema.parse(pins);
     for (const [filename, expected] of Object.entries(pins)) {
       const file = await open(filename, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
       try {
