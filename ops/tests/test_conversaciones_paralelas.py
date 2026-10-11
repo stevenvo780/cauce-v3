@@ -12,7 +12,7 @@ spec = importlib.util.spec_from_file_location(
 guardia = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(guardia)
 
-AHORA = datetime.datetime(2026, 10, 8, 20, 0, tzinfo=datetime.timezone.utc)
+AHORA = datetime.datetime(2026, 10, 8, 20, 0, tzinfo=datetime.UTC)
 FILAS = [
     ["Steven", "jarvis", "9c81eaf2", "12", "console,human-mcp", "78c81e05", "10-08 19:00"],
     ["Steven", "jarvis", "ed834a0e", "4", "telegram", "telegram", "10-08 18:00"],

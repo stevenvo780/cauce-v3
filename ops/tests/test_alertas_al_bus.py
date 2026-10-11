@@ -26,7 +26,7 @@ def cargar_guardia():
 
 
 bus = cargar_guardia()
-AHORA = datetime.datetime(2026, 9, 2, 9, 30, tzinfo=datetime.timezone.utc)
+AHORA = datetime.datetime(2026, 9, 2, 9, 30, tzinfo=datetime.UTC)
 
 
 def alertas_de(fichero=FIXTURE):

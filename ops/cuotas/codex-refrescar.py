@@ -18,7 +18,7 @@ import sys
 import tempfile
 import time
 import urllib.request
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 home = sys.argv[1] if len(sys.argv) > 1 else os.path.expanduser('~/.codex')
 ruta = os.path.join(home, 'auth.json')
@@ -49,7 +49,7 @@ for k in ('id_token', 'access_token', 'refresh_token'):
     if r.get(k):
         tok[k] = r[k]
 auth['tokens'] = tok
-auth['last_refresh'] = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.%fZ')
+auth['last_refresh'] = datetime.now(UTC).strftime('%Y-%m-%dT%H:%M:%S.%fZ')
 fd, tmp = tempfile.mkstemp(dir=home, prefix='.auth-')
 with os.fdopen(fd, 'w') as f:
     json.dump(auth, f, indent=2)
@@ -57,4 +57,4 @@ os.chmod(tmp, 0o600)
 os.replace(tmp, ruta)
 nuevo = claims(tok['access_token']).get('exp', 0)
 print(json.dumps({'refrescado': True, 'rota_refresh': bool(r.get('refresh_token')),
-                  'expira': datetime.fromtimestamp(nuevo, timezone.utc).strftime('%Y-%m-%dT%H:%MZ')}))
+                  'expira': datetime.fromtimestamp(nuevo, UTC).strftime('%Y-%m-%dT%H:%MZ')}))

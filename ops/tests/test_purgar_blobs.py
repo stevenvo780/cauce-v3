@@ -14,7 +14,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "scripts
 
 import purgar_blobs  # noqa: E402
 
-AHORA = dt.datetime(2026, 9, 5, 12, 0, tzinfo=dt.timezone.utc)
+AHORA = dt.datetime(2026, 9, 5, 12, 0, tzinfo=dt.UTC)
 VIVO = "a" * 64
 CADUCADO = "b" * 64
 HUERFANO = "c" * 64

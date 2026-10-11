@@ -48,7 +48,7 @@ def openssl(*arguments: str, input_data: bytes | None = None) -> bytes:
 
 def expiry(path: pathlib.Path) -> datetime.datetime:
     result = openssl('x509', '-in', str(path), '-noout', '-enddate').decode().strip()
-    return datetime.datetime.strptime(result, 'notAfter=%b %d %H:%M:%S %Y GMT').replace(tzinfo=datetime.timezone.utc)
+    return datetime.datetime.strptime(result, 'notAfter=%b %d %H:%M:%S %Y GMT').replace(tzinfo=datetime.UTC)
 
 
 def pair_proof(directory: pathlib.Path, key: str, ca_cert: pathlib.Path) -> dict:
@@ -100,7 +100,7 @@ def provision(key: str, output: pathlib.Path, ca_cert: pathlib.Path, ca_key: pat
         text = openssl('x509', '-in', str(ca_cert), '-noout', '-text')
         if b'CA:TRUE' not in text or openssl('x509', '-in', str(ca_cert), '-pubkey', '-noout') != openssl('pkey', '-in', str(ca_key), '-pubout'):
             raise ValueError('signer certificate/key is not the approved CA')
-        days = min(730, (expiry(ca_cert) - datetime.datetime.now(datetime.timezone.utc)).days)
+        days = min(730, (expiry(ca_cert) - datetime.datetime.now(datetime.UTC)).days)
         if days < 2:
             raise ValueError('signer validity is too short')
         with tempfile.TemporaryDirectory(prefix=f'.{key}.pair-', dir=output) as temporary:

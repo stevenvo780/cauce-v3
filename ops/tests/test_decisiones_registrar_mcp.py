@@ -4,9 +4,8 @@ import pathlib
 import subprocess
 import sys
 import tempfile
-import unittest
-
 import tomllib
+import unittest
 
 SCRIPT = pathlib.Path(__file__).resolve().parents[1] / 'scripts/decisiones-registrar-mcp.py'
 BIN = '/opt/cauce-v3-adapter/zeus/releases/nueva/packages/adapter-sdk/dist/src/bin/cauce-decisiones-mcp.js'

@@ -215,9 +215,9 @@ def issue_certificate(policy, packet):
             or openssl('x509', '-pubkey', '-noout', input_data=ca_pem) != openssl('pkey', '-pubout', input_data=key_pem):
         raise AuthorityError('authority signer does not match its CA')
     end = openssl('x509', '-enddate', '-noout', input_data=ca_pem).decode().strip()
-    expiry = datetime.datetime.strptime(end, 'notAfter=%b %d %H:%M:%S %Y GMT').replace(tzinfo=datetime.timezone.utc)
+    expiry = datetime.datetime.strptime(end, 'notAfter=%b %d %H:%M:%S %Y GMT').replace(tzinfo=datetime.UTC)
     days = min(1 if packet['phase'] == 'bootstrap' else 730,
-               (expiry - datetime.datetime.now(datetime.timezone.utc)).days)
+               (expiry - datetime.datetime.now(datetime.UTC)).days)
     if days < 1:
         raise AuthorityError('authority signer validity is too short')
     with tempfile.TemporaryDirectory(prefix='.authority-csr-', dir=policy['state_root']) as temporary:
@@ -233,7 +233,7 @@ def issue_certificate(policy, packet):
         certificate = openssl('x509', '-req', '-sha256', '-in', request, '-CA', ca, '-CAkey', key,
                               '-set_serial', '0x' + secrets.token_hex(16), '-days', str(days), '-extfile', extension).decode()
     expires = openssl('x509', '-enddate', '-noout', input_data=certificate.encode()).decode().strip()
-    leaf_expiry = datetime.datetime.strptime(expires, 'notAfter=%b %d %H:%M:%S %Y GMT').replace(tzinfo=datetime.timezone.utc)
+    leaf_expiry = datetime.datetime.strptime(expires, 'notAfter=%b %d %H:%M:%S %Y GMT').replace(tzinfo=datetime.UTC)
     token = secrets.token_hex(32)
     return {'certificate_pem': certificate, 'ca_pem': ca_pem.decode(), 'token': token,
             'certificate_sha256': digest(ssl.PEM_cert_to_DER_cert(certificate)), 'token_sha256': digest(token.encode()),

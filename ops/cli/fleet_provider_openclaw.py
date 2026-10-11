@@ -9,7 +9,7 @@ import stat
 import subprocess
 import sys
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 VERSION = '2026.6.6'
 AUTH_LIST_SHA256 = '31f4f35423fa6d909eaa448612f06a2030d43f91872f90c07d11e4638bff2c90'
@@ -197,7 +197,7 @@ def authenticated_openclaw(packet: dict) -> bool:
         if not isinstance(selected.get('expiresAt'), str):
             return False
         expires = datetime.fromisoformat(selected['expiresAt'].replace('Z', '+00:00'))
-        if expires <= datetime.now(timezone.utc):
+        if expires <= datetime.now(UTC):
             return False
         model = agent.get('model_id')
         expected = 'CAUCE_BOOTSTRAP_' + packet['nonce']

@@ -12,7 +12,7 @@ import pathlib
 import subprocess
 import sys
 import tempfile
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -125,7 +125,7 @@ def test_psql_preserves_headers_and_rejects_sql_errors():
 
 def test_timezone_aware_checks_and_legacy_state():
     module = load_watchdog_module()
-    now = datetime(2026, 1, 1, 12, tzinfo=timezone.utc)
+    now = datetime(2026, 1, 1, 12, tzinfo=UTC)
 
     def healthy_lease_query(_database_url, query):
         if 'FROM agents' in query:
@@ -151,7 +151,7 @@ def test_timezone_aware_checks_and_legacy_state():
 
 def test_enabled_registry_extends_expected_lease_coverage_fail_closed():
     module = load_watchdog_module()
-    now = datetime(2026, 1, 1, 12, tzinfo=timezone.utc)
+    now = datetime(2026, 1, 1, 12, tzinfo=UTC)
     assert 'SELECT DISTINCT alias' in module.ENABLED_ALIASES_QUERY
     assert 'FROM agents' in module.ENABLED_ALIASES_QUERY
     assert 'WHERE enabled' in module.ENABLED_ALIASES_QUERY
@@ -216,7 +216,7 @@ def test_oldest_pending_is_not_hidden_by_recent_work():
 
     with patch.object(module, 'run_psql', pending_query):
         result = module.check_pending_deliveries(
-            'postgres://test', datetime(2026, 1, 1, 12, tzinfo=timezone.utc),
+            'postgres://test', datetime(2026, 1, 1, 12, tzinfo=UTC),
         )
         assert result['pending_aliases'] == [{'alias': 'atlas', 'count': 2, 'age_min': 240}]
 
@@ -236,7 +236,7 @@ def test_state_file():
         assert 'previous_alerts' in state, 'state has previous_alerts key'
 
         # Test save_state
-        state['last_run_at'] = datetime.now(timezone.utc).isoformat()
+        state['last_run_at'] = datetime.now(UTC).isoformat()
         state['aliases']['argos'] = {'last_epoch': 15}
         state['previous_alerts']['connection_leases'] = {'status': 'critical'}
 
@@ -258,7 +258,7 @@ def test_output_formats():
     """Test JSON and text output formats."""
     watchdog_module = load_watchdog_module()
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     checks = {
         'connection_leases': {
             'status': 'critical',
@@ -297,14 +297,14 @@ def test_claimed_not_started():
             'recipient_alias|count|age_min\n'
             'zeus|4|532\n'
         )
-        check = watchdog_module.check_claimed_not_started('postgres://x', datetime.now(timezone.utc))
+        check = watchdog_module.check_claimed_not_started('postgres://x', datetime.now(UTC))
         assert check['status'] == 'critical', f"deaf alias must be critical (got {check['status']})"
         assert 'zeus' in check['message'], 'the message names the alias'
         assert check['stuck_aliases'] == [{'alias': 'zeus', 'count': 4, 'age_min': 532}]
 
         # NEGATIVE CONTROL: else a check that always said critical would pass above.
         watchdog_module.run_psql = lambda *_args, **_kwargs: 'recipient_alias|count|age_min\n'
-        healthy = watchdog_module.check_claimed_not_started('postgres://x', datetime.now(timezone.utc))
+        healthy = watchdog_module.check_claimed_not_started('postgres://x', datetime.now(UTC))
         assert healthy['status'] == 'ok', 'a fleet with nothing stuck stays ok'
         assert healthy['stuck_aliases'] == []
     finally:
