@@ -43,7 +43,7 @@ function grupo(vista: Snapshot, provider: string, groupKey: string): SnapshotGro
 }
 
 // Inside the 24 h window of the sparkline: an older captured_at is filtered out of the history.
-let reloj = Date.now() - 3_600_000;
+let reloj = Date.now() - 300_000;
 
 function instante(): string {
   reloj += 60_000;
@@ -80,7 +80,8 @@ preparePostgresSuite(import.meta.url, async () => {
 beforeEach(async () => {
   if (!databaseStarted) return;
   await resetTestDatabase(pool);
-  await pool.query('TRUNCATE quota_collections,quota_window_state CASCADE');
+  await database.adminPool.query('TRUNCATE quota_collections,quota_window_state CASCADE');
+  reloj = Date.now() - 300_000;
 });
 
 afterAll(async () => {
@@ -213,15 +214,15 @@ describe('quotaSnapshot: por qué un grupo quedó sin vincular', () => {
       .toBe('cuenta desconocida: cuenta-fantasma — la nota del recolector');
   });
 
-  it('una cuenta de OTRO tenant se trata como desconocida y no vincula nada', async () => {
+  it('una cuenta compartida dentro de la empresa conserva su identidad aunque pague otro tenant', async () => {
     await cuenta('cuenta-de-miguel', 'Miguel');
     await repository.recordQuotaSample('Steven', 'quota-collector', muestra('kratos', [
       { group_key: 'ajeno', window_key: 'session', remaining_percent: 50, account_id: 'cuenta-de-miguel' }
     ]));
 
     const vista = await snapshot('Steven', 'kant');
-    expect(grupo(vista, 'claude', 'ajeno').account_id).toBeNull();
-    expect(vista.unbound_groups[0]).toMatchObject({ group_key: 'ajeno', reason: 'unknown_account_id' });
+    expect(grupo(vista, 'claude', 'ajeno').account_id).toBe('cuenta-de-miguel');
+    expect(vista.unbound_groups).toEqual([]);
   });
 
   it('varias ventanas del mismo grupo se cuentan una sola vez y la peor razón gana', async () => {
@@ -281,7 +282,7 @@ describe('quotaSnapshot: aislamiento entre tenants', () => {
   });
 
   it('un alias sin permiso de lectura no obtiene el panel', async () => {
-    await pool.query(`UPDATE role_policies SET allow_read=false WHERE role='agent'`);
+    await database.adminPool.query(`UPDATE role_policies SET allow_read=false WHERE role='agent'`);
     await expect(repository.quotaSnapshot('Isa', 'salva')).rejects.toMatchObject({ code: 'forbidden' });
   });
 });

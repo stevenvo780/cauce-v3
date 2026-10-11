@@ -43,14 +43,16 @@ export const QuotaWindowSampleSchema = z.object({
   status: QuotaStatusSchema.nullable().optional(),
   family: z.string().min(1).max(64).nullable().optional(),
   model: z.string().min(1).max(128).nullable().optional(),
+  observed_at: z.iso.datetime({ offset: true }).nullable().optional(),
   // The subscription this window draws from, when the collector knows it. Absent
   // or unknown to the registry is not an error: the sample is still stored, with
   // account_id nulled server-side and surfaced under unbound_groups[].
   account_id: QuotaAccountIdSchema.nullable().optional(),
   binding_note: z.string().min(1).max(128).nullable().optional()
 }).strict().refine(
-  (window) => window.used_percent != null || window.remaining_percent != null || window.used_units != null,
-  { message: 'a window sample needs at least one of used_percent, remaining_percent or used_units' }
+  (window) => window.used_percent != null || window.remaining_percent != null || window.used_units != null
+    || window.status === 'unknown' || window.status === 'error',
+  { message: 'a window sample needs at least one of used_percent, remaining_percent or used_units, or an explicit unknown/error status' }
 );
 
 export const QuotaProviderReportSchema = z.object({
@@ -66,6 +68,7 @@ export const QuotaProviderReportSchema = z.object({
   note: z.string().max(512).nullable().optional(),
   effective_remaining_percent: z.number().min(0).max(100).nullable().optional(),
   observed_at: z.iso.datetime({ offset: true }).nullable().optional(),
+  account_id: QuotaAccountIdSchema.nullable().optional(),
   available_groups: z.array(z.string().min(1).max(128)).max(64).default([]),
   limiting_groups: z.array(z.string().min(1).max(128)).max(64).default([]),
   windows: z.array(QuotaWindowSampleSchema).max(64).default([])
@@ -95,3 +98,34 @@ export const QuotaSampleRequestSchema = z.object({
     seenProviders.add(provider.provider);
   }
 });
+
+export const QuotaEnvironmentProviderSchema = z.enum(['claude', 'codex', 'gemini', 'grok']);
+export const QuotaEnvironmentCreateSchema = z.object({
+  account_id: QuotaAccountIdSchema,
+  host_id: z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/u),
+  label: z.string().trim().min(1).max(80),
+  idempotency_key: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/u),
+}).strict();
+export const QuotaAccountCreateSchema = z.object({
+  provider: QuotaEnvironmentProviderSchema,
+  label: z.string().trim().min(1).max(80),
+  idempotency_key: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/u),
+}).strict();
+export const QuotaAccountUpdateSchema = z.object({
+  expected_version: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+  label: z.string().trim().min(1).max(80).optional(),
+  enabled: z.boolean().optional(),
+  paused_until: z.iso.datetime({ offset: true }).nullable().optional(),
+  paused_reason: z.string().trim().min(1).max(128).nullable().optional(),
+}).strict().refine(value => Object.keys(value).length > 1);
+export const QuotaEnvironmentUpdateSchema = z.object({
+  expected_version: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+  label: z.string().trim().min(1).max(80),
+}).strict();
+export const QuotaEnvironmentActionSchema = z.object({
+  action: z.enum(['create', 'authenticate', 'query', 'update_cli', 'delete']),
+  expected_version: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+  idempotency_key: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/u),
+  consent: z.boolean().optional(),
+}).strict().refine(value => value.action !== 'authenticate' || value.consent === true,
+  'authentication requires consent');

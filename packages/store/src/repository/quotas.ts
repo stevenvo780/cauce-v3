@@ -1,7 +1,8 @@
 import type { QuotaSampleRequest, Tenant } from '@cauce/protocol';
 import { SUPPORTED_QUOTA_SCHEMA_VERSIONS } from '@cauce/protocol';
 import { AUTOMATIC_PAUSE_PREFIX } from '../accounts.js';
-import { withTransaction } from '../db.js';
+import { quotaObservationStatus, quotaRemaining, QUOTA_STALE_AFTER_SECONDS, type QuotaObservationStatus } from '../quota-state.js';
+import { withTransaction, type DatabaseClient } from '../db.js';
 import { tenantReadableSql } from './acl-edges.js';
 import { DeliveryControlRepository } from './deliveries/control.js';
 import { StoreError } from './errors.js';
@@ -21,7 +22,7 @@ export interface QuotaThresholds {
 }
 
 export const DEFAULT_QUOTA_THRESHOLDS: QuotaThresholds = {
-  stale_after_seconds: 900,
+  stale_after_seconds: QUOTA_STALE_AFTER_SECONDS,
   warn_remaining_percent: 25,
   critical_remaining_percent: 10,
   history_window_seconds: 86_400,
@@ -136,6 +137,9 @@ interface QuotaProviderRow {
 }
 
 interface QuotaWindowStateRow {
+  captured_at: Date;
+  received_at: Date;
+  provider_ok: boolean | null;
   host: string;
   provider: string;
   group_key: string;
@@ -160,6 +164,8 @@ interface QuotaWindowStateRow {
 }
 
 interface QuotaHistoryRow {
+  model: string | null;
+  account_id: string | null;
   host: string;
   provider: string;
   group_key: string;
@@ -183,6 +189,9 @@ interface QuotaHistoryPoint {
 }
 
 interface QuotaSnapshotWindow {
+  captured_at: string;
+  received_at: string;
+  observation_status: QuotaObservationStatus;
   window_key: string;
   label: string | null;
   used_percent: number | null;
@@ -256,7 +265,7 @@ export abstract class QuotasRepository extends DeliveryControlRepository {
       this.pool.query<QuotaProviderRow>(
         `SELECT DISTINCT ON (qc.host,pr.provider)
            qc.host,pr.provider,pr.ok,pr.available,pr.kind,pr.source,pr.plan,
-           pr.note,pr.effective_remaining_percent,pr.observed_at,
+           pr.note,pr.effective_remaining_percent,COALESCE(pr.observed_at,qc.captured_at) AS observed_at,
            qc.received_at,pr.available_groups,pr.limiting_groups
          FROM quota_provider_reports pr
          JOIN quota_collections qc ON qc.id=pr.collection_id
@@ -267,7 +276,7 @@ export abstract class QuotasRepository extends DeliveryControlRepository {
       // The CURRENT materialized state of each window -- the table that exists precisely so
       // this endpoint does not have to scan history on every read.
       this.pool.query<QuotaWindowStateRow>(
-        `SELECT s.host,s.provider,s.group_key,s.window_key,s.label,
+        `SELECT s.host,s.provider,s.group_key,s.window_key,s.label,s.captured_at,s.received_at,latest.ok AS provider_ok,
                 s.used_percent,s.remaining_percent,s.used_units,s.limit_units,
                 s.window_minutes,s.reset_at,s.status,s.family,s.model,
                 s.account_id,s.binding_note,
@@ -275,6 +284,10 @@ export abstract class QuotasRepository extends DeliveryControlRepository {
                 p.payer_tenant_id,p.paused_until,p.paused_reason
          FROM quota_window_state s
          LEFT JOIN provider_accounts p ON p.id=s.account_id AND p.company_id=s.company_id
+         LEFT JOIN LATERAL (SELECT pr.ok FROM quota_provider_reports pr JOIN quota_collections qc ON qc.id=pr.collection_id
+           WHERE qc.collector_tenant=s.collector_tenant AND qc.host=s.host AND pr.provider=s.provider
+             AND (pr.account_id IS NULL OR pr.account_id=s.account_id)
+           ORDER BY qc.captured_at DESC,qc.received_at DESC LIMIT 1) latest ON true
          WHERE s.collector_tenant = ANY($1::text[])
          ORDER BY s.host,s.provider,s.group_key,s.window_key`,
         [visibleTenantIds]
@@ -285,19 +298,19 @@ export abstract class QuotasRepository extends DeliveryControlRepository {
       // fleetActivity().
       this.pool.query<QuotaHistoryRow>(
         `WITH bucketed AS (
-           SELECT host,provider,group_key,window_key,
+           SELECT host,provider,group_key,window_key,model,model_key,account_id,account_key,
                   to_timestamp(floor(extract(epoch FROM captured_at)/$2::double precision)*$2::double precision) AS bucket,
                   captured_at,used_percent
              FROM quota_window_samples
             WHERE collection_id IN (SELECT id FROM quota_collections WHERE collector_tenant = ANY($1::text[]))
               AND captured_at >= $3::timestamptz - ($4::double precision * interval '1 second')
          ), sampled AS (
-           SELECT DISTINCT ON (host,provider,group_key,window_key,bucket)
-                  host,provider,group_key,window_key,bucket,used_percent
+           SELECT DISTINCT ON (host,provider,group_key,window_key,model_key,account_key,bucket)
+                  host,provider,group_key,window_key,model,model_key,account_id,account_key,bucket,used_percent
              FROM bucketed
-            ORDER BY host,provider,group_key,window_key,bucket,captured_at DESC
+            ORDER BY host,provider,group_key,window_key,model_key,account_key,bucket,captured_at DESC
          )
-         SELECT host,provider,group_key,window_key,bucket,used_percent
+         SELECT host,provider,group_key,window_key,model,account_id,bucket,used_percent
            FROM sampled
           ORDER BY host,provider,group_key,window_key,bucket`,
         [visibleTenantIds, DEFAULT_QUOTA_THRESHOLDS.history_bucket_seconds, observedAt, DEFAULT_QUOTA_THRESHOLDS.history_window_seconds]
@@ -319,7 +332,7 @@ export abstract class QuotasRepository extends DeliveryControlRepository {
 
     const historyByWindow = new Map<string, QuotaHistoryPoint[]>();
     for (const row of historyRows.rows) {
-      const key = JSON.stringify([row.host, row.provider, row.group_key, row.window_key]);
+      const key = JSON.stringify([row.host, row.provider, row.group_key, row.window_key, row.model, row.account_id]);
       const points = historyByWindow.get(key) ?? [];
       points.push({ at: row.bucket.toISOString(), used_percent: row.used_percent === null ? null : Number(row.used_percent) });
       historyByWindow.set(key, points);
@@ -333,7 +346,8 @@ export abstract class QuotasRepository extends DeliveryControlRepository {
     for (const row of stateRows.rows) {
       const providerKey = JSON.stringify([row.host, row.provider]);
       const providerGroups = groupsByProvider.get(providerKey) ?? new Map<string, MutableQuotaSnapshotGroup>();
-      let group = providerGroups.get(row.group_key);
+      const groupIdentity = JSON.stringify([row.group_key, row.account_id]);
+      let group = providerGroups.get(groupIdentity);
       if (!group) {
         group = {
           group_key: row.group_key,
@@ -342,7 +356,7 @@ export abstract class QuotasRepository extends DeliveryControlRepository {
           paused_until: null, paused_reason: null, min_remaining_percent: null,
           severity: 'unknown', windows: []
         };
-        providerGroups.set(row.group_key, group);
+        providerGroups.set(groupIdentity, group);
         groupsByProvider.set(providerKey, providerGroups);
       }
       if (group.account_id === null && row.account_id !== null) {
@@ -354,13 +368,17 @@ export abstract class QuotasRepository extends DeliveryControlRepository {
         group.paused_reason = row.paused_reason;
       }
 
-      const remainingPercent = row.remaining_percent === null ? null : Number(row.remaining_percent);
-      const resetPassed = row.reset_at !== null && row.reset_at.getTime() <= observedAt.getTime();
-      const severity = resetPassed ? 'unknown' : windowSeverity(remainingPercent, row.status, DEFAULT_QUOTA_THRESHOLDS);
-      const historyKey = JSON.stringify([row.host, row.provider, row.group_key, row.window_key]);
+      const reportedRemaining = quotaRemaining(row.remaining_percent === null ? null : Number(row.remaining_percent),
+        row.used_percent === null ? null : Number(row.used_percent));
+      const observationStatus = quotaObservationStatus({ receivedAt: row.received_at, capturedAt: row.captured_at, resetAt: row.reset_at,
+        status: row.status, providerOk: row.provider_ok, hasValue: reportedRemaining !== null || row.used_units !== null, now: observedAt });
+      const remainingPercent = observationStatus === 'ok' ? reportedRemaining : null;
+      const severity = observationStatus === 'ok' ? windowSeverity(remainingPercent, row.status, DEFAULT_QUOTA_THRESHOLDS) : 'unknown';
+      const historyKey = JSON.stringify([row.host, row.provider, row.group_key, row.window_key, row.model, row.account_id]);
       const points = historyByWindow.get(historyKey) ?? [];
 
       group.windows.push({
+        captured_at: row.captured_at.toISOString(), received_at: row.received_at.toISOString(), observation_status: observationStatus,
         window_key: row.window_key,
         label: row.label,
         used_percent: row.used_percent === null ? null : Number(row.used_percent),
@@ -412,18 +430,20 @@ export abstract class QuotasRepository extends DeliveryControlRepository {
       };
     });
 
-    const staleHosts = new Set(collectors.filter((collector) => collector.stale).map((collector) => collector.host));
     const providers = providerRows.rows.map((row) => {
       const providerKey = JSON.stringify([row.host, row.provider]);
       const groups = [...(groupsByProvider.get(providerKey)?.values() ?? [])];
+      const observationStatus = quotaObservationStatus({ receivedAt: row.received_at, capturedAt: row.observed_at, resetAt: null,
+        status: null, providerOk: row.ok, hasValue: groups.some(group => group.windows.some(window => window.observation_status === 'ok')), now: observedAt });
       return {
         host: row.host, provider: row.provider, ok: row.ok, available: row.available,
         kind: row.kind, source: row.source, plan: row.plan, note: row.note,
-        effective_remaining_percent: row.effective_remaining_percent === null ? null : Number(row.effective_remaining_percent),
+        observation_status: observationStatus, received_at: row.received_at.toISOString(),
+        effective_remaining_percent: observationStatus !== 'ok' || row.effective_remaining_percent === null ? null : Number(row.effective_remaining_percent),
         observed_at: row.observed_at?.toISOString() ?? null,
         age_seconds: Math.max(0, Math.round((observedAt.getTime() - row.received_at.getTime()) / 1_000)),
         available_groups: row.available_groups, limiting_groups: row.limiting_groups,
-        severity: staleHosts.has(row.host) ? 'unknown' : worstQuotaSeverity(groups.map((group) => group.severity)),
+        severity: observationStatus === 'ok' ? worstQuotaSeverity(groups.map((group) => group.severity)) : 'unknown',
         groups
       };
     });
@@ -452,7 +472,7 @@ export abstract class QuotasRepository extends DeliveryControlRepository {
    * All in ONE transaction: (host,captured_at) collision => 202 duplicate=true without writing anything else:
    * the collector can retry without fear of duplicating the series.
    */
-  async recordQuotaSample(actorTenant: Tenant, actorAlias: string, sample: QuotaSampleRequest): Promise<QuotaSampleIngestResult> {
+  async recordQuotaSample(actorTenant: Tenant, actorAlias: string, sample: QuotaSampleRequest, transactionClient?: DatabaseClient): Promise<QuotaSampleIngestResult> {
     // Synchronous check BEFORE touching the database: a schema_version this gateway version
     // does not understand is not blindly mapped -- that is exactly how a misread sample
     // triggers the auto-pause of a healthy subscription.
@@ -463,7 +483,7 @@ export abstract class QuotasRepository extends DeliveryControlRepository {
     const providerCount = sample.providers.length;
     const windowCount = sample.providers.reduce((count, provider) => count + provider.windows.length, 0);
 
-    return withTransaction(this.pool, async (client) => {
+    const record = async (client: DatabaseClient): Promise<QuotaSampleIngestResult> => {
       const insertedCollection = await client.query<{ id: string }>(
         `INSERT INTO quota_collections(host,collector_tenant,collector_alias,captured_at,schema_version,app_version,provider_count,window_count)
          VALUES($1,$2,$3,$4,$5,$6,$7,$8)
@@ -496,6 +516,7 @@ export abstract class QuotasRepository extends DeliveryControlRepository {
       // transaction -- exactly what "an unknown account_id does not fail the POST" forbids.
       const suppliedAccountIds = new Set<string>();
       for (const provider of sample.providers) {
+        if (provider.account_id != null) suppliedAccountIds.add(provider.account_id);
         for (const window of provider.windows) {
           if (window.account_id !== null && window.account_id !== undefined) suppliedAccountIds.add(window.account_id);
         }
@@ -507,7 +528,7 @@ export abstract class QuotasRepository extends DeliveryControlRepository {
       // breaks the POST (it is stored unbound), so a foreign account takes exactly that same path:
       // the sample is stored, not bound, and the reason is written into unbound_groups.
       const knownAccountRows = await client.query<{ id: string }>(
-        `SELECT id FROM provider_accounts WHERE id = ANY($1::text[]) AND payer_tenant_id = $2`,
+        `SELECT id FROM provider_accounts WHERE id = ANY($1::text[]) AND company_id = (SELECT company_id FROM tenants WHERE id=$2)`,
         [[...suppliedAccountIds], actorTenant]
       );
       const knownAccountIds = new Set(knownAccountRows.rows.map((row) => row.id));
@@ -518,13 +539,14 @@ export abstract class QuotasRepository extends DeliveryControlRepository {
 
       for (const provider of sample.providers) {
         await client.query(
-          `INSERT INTO quota_provider_reports(collection_id,provider,ok,available,kind,source,plan,note,effective_remaining_percent,observed_at,available_groups,limiting_groups)
-           VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12::jsonb)`,
+          `INSERT INTO quota_provider_reports(collection_id,provider,ok,available,kind,source,plan,note,effective_remaining_percent,observed_at,available_groups,limiting_groups,account_id)
+           VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12::jsonb,$13)`,
           [
             collectionId, provider.provider, provider.ok, provider.available,
             provider.kind ?? null, provider.source ?? null, provider.plan ?? null, provider.note ?? null,
             provider.effective_remaining_percent ?? null, provider.observed_at ?? null,
-            JSON.stringify(provider.available_groups), JSON.stringify(provider.limiting_groups)
+            JSON.stringify(provider.available_groups), JSON.stringify(provider.limiting_groups),
+            provider.account_id != null && knownAccountIds.has(provider.account_id) ? provider.account_id : null
           ]
         );
 
@@ -567,7 +589,7 @@ export abstract class QuotasRepository extends DeliveryControlRepository {
             `INSERT INTO quota_window_samples(collection_id,provider,group_key,window_key,host,captured_at,label,used_percent,remaining_percent,used_units,limit_units,window_minutes,reset_at,status,family,model,account_id,binding_note)
              VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
             [
-              collectionId, provider.provider, window.group_key, window.window_key, sample.host, sample.captured_at,
+              collectionId, provider.provider, window.group_key, window.window_key, sample.host, window.observed_at ?? provider.observed_at ?? sample.captured_at,
               window.label ?? null, window.used_percent ?? null, window.remaining_percent ?? null,
               window.used_units ?? null, window.limit_units ?? null, window.window_minutes ?? null,
               window.reset_at ?? null, window.status ?? null, window.family ?? null, window.model ?? null,
@@ -580,7 +602,7 @@ export abstract class QuotasRepository extends DeliveryControlRepository {
           await client.query(
             `INSERT INTO quota_window_state(collector_tenant,host,provider,group_key,window_key,collection_id,captured_at,label,used_percent,remaining_percent,used_units,limit_units,window_minutes,reset_at,status,family,model,account_id,binding_note)
              VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
-             ON CONFLICT (collector_tenant,host,provider,group_key,window_key) DO UPDATE SET
+             ON CONFLICT (collector_tenant,host,provider,group_key,window_key,model_key,account_key) DO UPDATE SET
                collection_id=EXCLUDED.collection_id, captured_at=EXCLUDED.captured_at, received_at=now(),
                label=EXCLUDED.label, used_percent=EXCLUDED.used_percent, remaining_percent=EXCLUDED.remaining_percent,
                used_units=EXCLUDED.used_units, limit_units=EXCLUDED.limit_units, window_minutes=EXCLUDED.window_minutes,
@@ -588,7 +610,7 @@ export abstract class QuotasRepository extends DeliveryControlRepository {
                account_id=EXCLUDED.account_id, binding_note=EXCLUDED.binding_note
              WHERE quota_window_state.captured_at < EXCLUDED.captured_at`,
             [
-              actorTenant, sample.host, provider.provider, window.group_key, window.window_key, collectionId, sample.captured_at,
+              actorTenant, sample.host, provider.provider, window.group_key, window.window_key, collectionId, window.observed_at ?? provider.observed_at ?? sample.captured_at,
               window.label ?? null, window.used_percent ?? null, window.remaining_percent ?? null,
               window.used_units ?? null, window.limit_units ?? null, window.window_minutes ?? null,
               window.reset_at ?? null, window.status ?? null, window.family ?? null, window.model ?? null,
@@ -608,8 +630,13 @@ export abstract class QuotasRepository extends DeliveryControlRepository {
                 updated_at = now()
            FROM quota_window_state s
           WHERE s.account_id = p.id AND s.collection_id = $1
-            AND (s.remaining_percent <= 0 OR s.status = 'rate-limited')
-            AND s.reset_at IS NOT NULL
+            AND (s.remaining_percent <= 0 OR s.used_percent >= 100 OR s.status = 'rate-limited')
+            AND s.reset_at > now() AND s.model IS NULL
+            AND (s.status IS NULL OR s.status NOT IN ('unknown','error','stale'))
+            AND s.received_at>now()-interval '15 minutes'
+            AND s.captured_at>now()-interval '15 minutes' AND s.captured_at<=now()+interval '60 seconds'
+            AND (p.paused_reason IS NULL OR starts_with(p.paused_reason,$2))
+            AND EXISTS (SELECT 1 FROM quota_provider_reports pr WHERE pr.collection_id=$1 AND pr.provider=s.provider AND pr.ok)
          RETURNING p.id AS account_id, p.provider, s.group_key, s.window_key, p.paused_until`,
         [collectionId, AUTOMATIC_PAUSE_PREFIX]
       );
@@ -627,12 +654,19 @@ export abstract class QuotasRepository extends DeliveryControlRepository {
             SET paused_until = NULL, paused_reason = NULL, updated_at = now()
           WHERE starts_with(p.paused_reason, $1)
             AND p.company_id = (SELECT collector.company_id FROM tenants collector WHERE collector.id = $2)
-            AND NOT EXISTS (
-              SELECT 1 FROM quota_window_state s
-               WHERE s.account_id = p.id AND (s.remaining_percent <= 0 OR s.status = 'rate-limited')
-            )
+            AND (p.paused_until <= now() OR (
+              EXISTS (SELECT 1 FROM quota_window_state s JOIN quota_provider_reports pr ON pr.collection_id=s.collection_id AND pr.provider=s.provider
+                WHERE s.account_id=p.id AND s.collection_id=$3 AND pr.ok AND s.received_at>now()-interval '15 minutes'
+                  AND s.captured_at>now()-interval '15 minutes' AND s.captured_at<=now()+interval '60 seconds'
+                  AND (s.status IS NULL OR s.status NOT IN ('unknown','error','stale'))
+                  AND (s.remaining_percent>0 OR s.used_percent<100))
+              AND NOT EXISTS (SELECT 1 FROM quota_window_state s WHERE s.account_id=p.id
+                AND (s.reset_at IS NULL OR s.reset_at>now())
+                AND (s.received_at<=now()-interval '15 minutes' OR s.captured_at<=now()-interval '15 minutes'
+                  OR s.captured_at>now()+interval '60 seconds' OR s.status IN ('rate-limited','unknown','error','stale')
+                  OR COALESCE(s.remaining_percent,100-s.used_percent,0)<=0))))
          RETURNING p.id AS account_id, p.provider`,
-        [AUTOMATIC_PAUSE_PREFIX, actorTenant]
+        [AUTOMATIC_PAUSE_PREFIX, actorTenant, collectionId]
       );
       const resumedAccounts: QuotaSampleResumedAccount[] = resumedAccountRows.rows.map((row) => ({
         account_id: row.account_id, provider: row.provider
@@ -660,6 +694,7 @@ export abstract class QuotasRepository extends DeliveryControlRepository {
         unbound_groups: [...unboundGroups.values()], paused_accounts: pausedAccounts, resumed_accounts: resumedAccounts,
         pruned_collections: prunedCollections.rows[0]?.pruned ?? 0
       };
-    });
+    };
+    return transactionClient === undefined ? withTransaction(this.pool, record) : record(transactionClient);
   }
 }

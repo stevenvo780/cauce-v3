@@ -74,8 +74,10 @@ interface CandidateRow {
   exhausted_window: string | null;
   /** `reset_at` of that window. NULL = the provider did not report a reset horizon. */
   exhausted_reset_at: Date | null;
+  exhausted_model: string | null;
 }
 
+// The account, the ceiling and the quota windows must belong to the company of the binding.
 const CANDIDATES_SQL = `
   SELECT b.account_id,
          p.provider,
@@ -89,18 +91,29 @@ const CANDIDATES_SQL = `
          p.paused_until,
          p.paused_reason,
          q.exhausted_window,
-         q.exhausted_reset_at
+         q.exhausted_reset_at,
+         q.exhausted_model
     FROM agent_account_bindings b
     JOIN alias_routing_ceiling c
-      ON c.tenant_id = b.tenant_id AND c.alias = b.agent_alias AND c.account_id = b.account_id
+      ON c.tenant_id = b.tenant_id AND c.alias = b.agent_alias AND c.account_id = b.account_id AND c.company_id = b.company_id
     JOIN provider_accounts p
-      ON p.id = b.account_id
+      ON p.id = b.account_id AND p.company_id = b.company_id
     LEFT JOIN LATERAL (
       SELECT s.provider || '/' || s.group_key || '/' || s.window_key AS exhausted_window,
-             s.reset_at AS exhausted_reset_at
+             s.reset_at AS exhausted_reset_at, s.model AS exhausted_model
         FROM quota_window_state s
-       WHERE s.account_id = p.id
-         AND (s.remaining_percent <= 0 OR s.status = 'rate-limited')
+       WHERE s.account_id = p.id AND s.company_id = p.company_id
+         AND ($5::text IS NULL OR s.model IS NULL OR s.model=$5
+           OR (s.model IN ('sonnet','opus','haiku')
+             AND ($5 LIKE 'claude-'||s.model||'-%' OR $5 LIKE s.model||'[%')))
+         AND (s.status IS NULL OR s.status NOT IN ('unknown','error','stale'))
+         AND (s.remaining_percent <= 0 OR s.used_percent >= 100 OR s.status = 'rate-limited')
+         AND s.received_at > $4::timestamptz - interval '15 minutes'
+         AND s.captured_at > $4::timestamptz - interval '15 minutes' AND s.captured_at <= $4::timestamptz + interval '60 seconds'
+         AND NOT EXISTS (SELECT 1 FROM quota_provider_reports pr WHERE pr.collection_id=s.collection_id AND pr.provider=s.provider AND NOT pr.ok)
+         AND NOT EXISTS (SELECT 1 FROM quota_provider_reports pr JOIN quota_collections qc ON qc.id=pr.collection_id
+           WHERE qc.collector_tenant=s.collector_tenant AND qc.host=s.host AND pr.provider=s.provider
+             AND (pr.account_id IS NULL OR pr.account_id=s.account_id) AND qc.captured_at>s.captured_at AND NOT pr.ok)
          AND (s.reset_at IS NULL OR s.reset_at > $4::timestamptz)
        ORDER BY s.remaining_percent ASC NULLS LAST, s.provider, s.group_key, s.window_key
        LIMIT 1
@@ -121,6 +134,7 @@ export interface SelectAccountOptions {
   readonly tenant_id: Tenant;
   readonly alias: string;
   readonly provider: string;
+  readonly model?: string;
   /** Injectable for deterministic tests. */
   readonly now?: Date;
 }
@@ -139,7 +153,7 @@ async function selectWithClient(
   now: Date
 ): Promise<AccountSelection> {
   const rows = await client.query<CandidateRow>(CANDIDATES_SQL, [
-    options.tenant_id, options.alias, options.provider, now.toISOString()
+    options.tenant_id, options.alias, options.provider, now.toISOString(), options.model ?? null
   ]);
 
   const autoPaused: { account_id: string; paused_until: string; paused_reason: string }[] = [];
@@ -232,7 +246,9 @@ async function evaluate(
 
   if (row.exhausted_window === null) return { skipped: null, detail: null, pausedUntil: null };
 
-  // Exhausted and with no current pause. Always skipped; persisting the pause depends on having a horizon.
+  if (row.exhausted_model !== null) {
+    return { skipped: 'quota_exhausted', detail: `Límite agotado para ${row.exhausted_model} en ${row.exhausted_window}.`, pausedUntil: null };
+  }
   if (row.exhausted_reset_at === null) {
     return {
       skipped: 'quota_exhausted',
