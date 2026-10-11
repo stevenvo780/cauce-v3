@@ -29,7 +29,7 @@ def certificate_fingerprint(path: Path) -> tuple[str, str]:
     not_after = result.stdout.strip().removeprefix("notAfter=")
     if not not_after:
         raise ValueError("certificate expiry is missing")
-    expiry = datetime.datetime.strptime(not_after, "%b %d %H:%M:%S %Y %Z").replace(tzinfo=datetime.timezone.utc)
+    expiry = datetime.datetime.strptime(not_after, "%b %d %H:%M:%S %Y %Z").replace(tzinfo=datetime.UTC)
     return fingerprint, expiry.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 

@@ -53,7 +53,7 @@ MENSAJE = "Check-in de ventas con Jhon: leer ventas/CRM.md y ventas/JHON.md y en
 
 
 def main() -> int:
-    today = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
+    today = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%d")
     payload = {
         "room_id": "grp.jhon",
         "recipients": [{"tenant_id": "Jhon", "alias": "hegel"}],
@@ -81,7 +81,7 @@ def main() -> int:
     finally:
         conn.close()
 
-    stamp = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    stamp = datetime.datetime.now(datetime.UTC).isoformat()
     print(f"[{stamp}] key=hegel-ventas-checkin-{today} POST /v3/messages -> HTTP {resp.status}")
     print(text)
     # 202 = accepted (new delivery or same-day dedup); both are success.

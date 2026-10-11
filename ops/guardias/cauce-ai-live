@@ -82,7 +82,7 @@ def _horas(iso: str | None) -> str:
         return "?"
     try:
         dt = datetime.datetime.fromisoformat(iso.replace("Z", "+00:00"))
-        h = (dt - datetime.datetime.now(datetime.timezone.utc)).total_seconds() / 3600
+        h = (dt - datetime.datetime.now(datetime.UTC)).total_seconds() / 3600
         return f"{h:.0f}h" if h >= 0 else "vencida"
     except Exception:
         return "?"
@@ -127,7 +127,7 @@ def sonda_codex() -> dict:
         rl = (d.get("rate_limits") or [{}])[0].get("primary") or {}
         if d.get("ok") and "used_percent" in rl:
             r.update(ok=True, libre_7d=100 - rl["used_percent"],
-                     reset_7d=_horas(datetime.datetime.fromtimestamp(rl["resets_at"], datetime.timezone.utc).isoformat())
+                     reset_7d=_horas(datetime.datetime.fromtimestamp(rl["resets_at"], datetime.UTC).isoformat())
                      if rl.get("resets_at") else "?")
         else:
             r["note"] = d.get("note", "sin datos")
@@ -139,7 +139,7 @@ def sonda_codex() -> dict:
 def recolecta() -> dict:
     cuentas = [sonda_claude(c) for c in CLAUDE]
     cuentas.append(sonda_codex())
-    return {"generado": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
+    return {"generado": datetime.datetime.now(datetime.UTC).isoformat(timespec="seconds"),
             "cuentas": cuentas}
 
 

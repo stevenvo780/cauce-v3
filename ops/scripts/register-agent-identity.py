@@ -225,7 +225,7 @@ def register(
     tenant, wire = principal["tenant_id"], principal["alias"]
     certificate_sha256 = certificate_sha256_from_pem(read_certificate(cert_dir, alias))
     expires_at = (
-        datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=ttl_days)
+        datetime.datetime.now(datetime.UTC) + datetime.timedelta(days=ttl_days)
     ).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     identities_fd = open_absolute_directory(identities_dir, "directorio de identidades")
@@ -252,7 +252,7 @@ def register(
                 expiry = same_certificate.get("expires_at")
                 try:
                     valid_until = datetime.datetime.fromisoformat(expiry.replace("Z", "+00:00"))
-                    if valid_until.tzinfo is None or valid_until <= datetime.datetime.now(datetime.timezone.utc):
+                    if valid_until.tzinfo is None or valid_until <= datetime.datetime.now(datetime.UTC):
                         raise ValueError
                 except (AttributeError, TypeError, ValueError):
                     raise RegisterIdentityError("registered certificate identity has expired or invalid expiry") from None

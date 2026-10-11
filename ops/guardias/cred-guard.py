@@ -50,7 +50,7 @@ OBJETIVOS = [
     ("ctrl-infra",   "/home/dev/.codex/auth.json",  "codex/kant"),
 ]
 
-ahora = datetime.datetime.now(datetime.timezone.utc)
+ahora = datetime.datetime.now(datetime.UTC)
 filas, credential_locations, problemas = [], [], 0
 
 for contenedor, ruta, etiqueta in OBJETIVOS:

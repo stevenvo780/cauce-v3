@@ -153,7 +153,7 @@ class StateLock:
 
 
 def utc_day(now: float) -> str:
-    return dt.datetime.fromtimestamp(now, dt.timezone.utc).strftime("%Y-%m-%d")
+    return dt.datetime.fromtimestamp(now, dt.UTC).strftime("%Y-%m-%d")
 
 
 def reserve_notice_post(state: dict, now: float, limit: int) -> bool:
@@ -217,7 +217,7 @@ def auth_resume_event(goal_hash: str, now: float) -> dict:
     if not re.fullmatch(r"[a-f0-9]{64}", goal_hash):
         raise SupervisionError("invalid_goal_digest")
     return {"schema_version": 1, "goal_sha256": goal_hash, "reason": "provider_reauthenticated",
-            "nonce": str(uuid.uuid4()), "created_at": dt.datetime.fromtimestamp(now, dt.timezone.utc).isoformat().replace("+00:00", "Z")}
+            "nonce": str(uuid.uuid4()), "created_at": dt.datetime.fromtimestamp(now, dt.UTC).isoformat().replace("+00:00", "Z")}
 
 
 def resumable_reservation(root: object, goal_hash: str) -> bool:

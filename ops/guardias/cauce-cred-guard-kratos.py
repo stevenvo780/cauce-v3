@@ -29,7 +29,7 @@ HOST = os.environ.get("CAUCE_CRED_GUARD_HOST", "kratos")
 if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", HOST):
     raise SystemExit("CAUCE_CRED_GUARD_HOST is invalid")
 
-ahora = datetime.datetime.now(datetime.timezone.utc)
+ahora = datetime.datetime.now(datetime.UTC)
 filas, problemas = [], 0
 
 for contenedor, ruta, etiqueta in OBJETIVOS:

@@ -337,7 +337,7 @@ def detenido(marca_anterior, ahora, periodos=PERIODOS_ANTES_DE_AVISAR):
 def planificar(alertas, estado=None, ahora=None):
     """Los payloads de UNA corrida. Función pura: es lo que miden los tests."""
     estado = estado or {}
-    ahora = ahora or datetime.datetime.now(datetime.timezone.utc)
+    ahora = ahora or datetime.datetime.now(datetime.UTC)
     vivas = alertas_firing(alertas)
     payloads = []
     if vivas:
@@ -403,7 +403,7 @@ def construir_parser():
 
 def main(argv=None):
     args = construir_parser().parse_args(argv)
-    ahora = datetime.datetime.now(datetime.timezone.utc)
+    ahora = datetime.datetime.now(datetime.UTC)
     estado = leer_estado()
     try:
         alertas = obtener_alertas(args.prometheus_url, args.contenedor,

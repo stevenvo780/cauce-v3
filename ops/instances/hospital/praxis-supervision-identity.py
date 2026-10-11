@@ -60,7 +60,7 @@ def atomic_json(path: pathlib.Path, document: dict, uid: int, gid: int, mode: in
 
 def expiry(path: pathlib.Path) -> dt.datetime:
     value = subprocess.check_output(['openssl', 'x509', '-in', str(path), '-noout', '-enddate'], text=True)
-    return dt.datetime.strptime(value.strip().split('=', 1)[1], '%b %d %H:%M:%S %Y %Z').replace(tzinfo=dt.timezone.utc)
+    return dt.datetime.strptime(value.strip().split('=', 1)[1], '%b %d %H:%M:%S %Y %Z').replace(tzinfo=dt.UTC)
 
 
 def verify_owned_leaf(key: pathlib.Path, certificate: pathlib.Path) -> None:
@@ -123,7 +123,7 @@ def maintain_identity() -> int:
         current_fingerprint = hashlib.sha256(ssl.PEM_cert_to_DER_cert(certificate.read_text())).hexdigest()
         if record['certificate_sha256'] != current_fingerprint:
             raise ValueError('registered leaf differs from the owned certificate')
-        remaining = expiry(certificate) - dt.datetime.now(dt.timezone.utc)
+        remaining = expiry(certificate) - dt.datetime.now(dt.UTC)
         if remaining < dt.timedelta(days=2):
             private_path(folder / 'client.csr', 0o600)
             private_path(folder / 'client.ext', 0o600)

@@ -1117,8 +1117,8 @@ def main():
             if bloqueo and recuperadas:
                 try:
                     momento = datetime.datetime.strptime(cuando, "%Y-%m-%d %H:%M").replace(
-                        tzinfo=datetime.timezone.utc)
-                    horas = (datetime.datetime.now(datetime.timezone.utc)
+                        tzinfo=datetime.UTC)
+                    horas = (datetime.datetime.now(datetime.UTC)
                              - momento).total_seconds() / 3600.0
                     sin_reconfirmar = horas >= HORAS_DECLARACION_CADUCA
                 except (ValueError, TypeError):
@@ -1255,7 +1255,7 @@ def main():
                     # alarm: it's true, known, and nothing to do. Repeating it every run for
                     # days trains people to skip notices.
                     vuelve = reset_del_panel(panel_txt)
-                    ahora_utc = datetime.datetime.now(datetime.timezone.utc)
+                    ahora_utc = datetime.datetime.now(datetime.UTC)
                     if vuelve and vuelve > ahora_utc:
                         faltan = cuanto_falta((vuelve - ahora_utc).total_seconds())
                         evidencia["cuando vuelve, segun el PROPIO panel"] = (

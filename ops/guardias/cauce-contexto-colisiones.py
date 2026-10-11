@@ -355,7 +355,7 @@ def informe(contextos: Sequence[Contexto], hallazgos: Sequence[dict], inventario
                   AVISO: sum(1 for h in hallazgos if h["severidad"] == AVISO)}
     return {
         "guardia": GUARDIA,
-        "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "ts": datetime.datetime.now(datetime.UTC).isoformat(),
         "inventario": inventario,
         "alias_medidos": [contexto.alias for contexto in contextos],
         "hallazgos": sorted(hallazgos, key=lambda h: (h["severidad"] != ALERTA, h["regla"], h["alias"])),

@@ -571,7 +571,7 @@ class ManagerWorker:
         safe_directory(self.state_root, create=True)
         alias_root = self.state_root / "transactions" / alias
         safe_directory(alias_root, create=True)
-        stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        stamp = dt.datetime.now(dt.UTC).strftime("%Y%m%dT%H%M%SZ")
         transaction = alias_root / f"{stamp}-{release_sha[:12]}-{uuid.uuid4().hex[:8]}"
         transaction.mkdir(mode=0o700)
         fsync_directory(alias_root)
@@ -630,7 +630,7 @@ class ManagerWorker:
         else:
             self.runner.run(["systemctl", "--user", "stop", unit])
         state["consumed"] = True
-        state["rollbackAt"] = dt.datetime.now(dt.timezone.utc).isoformat()
+        state["rollbackAt"] = dt.datetime.now(dt.UTC).isoformat()
         self._write_state(transaction, state)
 
     def apply(
@@ -697,7 +697,7 @@ class ManagerWorker:
                 ):
                     fail(f"health/capability del PTY de {alias} no acredito release y modos")
                 state["committed"] = True
-                state["committedAt"] = dt.datetime.now(dt.timezone.utc).isoformat()
+                state["committedAt"] = dt.datetime.now(dt.UTC).isoformat()
                 self._write_state(transaction, state)
                 return {
                     "status": "updated",

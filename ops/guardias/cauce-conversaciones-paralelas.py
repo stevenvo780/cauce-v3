@@ -126,7 +126,7 @@ def corrida(filas: list[list[str]], memoria: dict[str, str], ahora: datetime.dat
 
 
 def main() -> int:
-    ahora = datetime.datetime.now(datetime.timezone.utc)
+    ahora = datetime.datetime.now(datetime.UTC)
     try:
         with open(ESTADO, encoding="utf-8") as fichero:
             memoria = json.load(fichero).get("avisados", {})

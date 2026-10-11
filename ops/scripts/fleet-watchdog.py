@@ -142,8 +142,8 @@ def parse_enabled_aliases(output: str) -> set[str]:
 def utc_timestamp(value: str) -> datetime.datetime:
     parsed = datetime.datetime.fromisoformat(value.replace('Z', '+00:00'))
     if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=datetime.timezone.utc)
-    return parsed.astimezone(datetime.timezone.utc)
+        parsed = parsed.replace(tzinfo=datetime.UTC)
+    return parsed.astimezone(datetime.UTC)
 
 
 def check_connection_leases(database_url: str, now: datetime.datetime) -> dict[str, Any]:
@@ -645,7 +645,7 @@ def main() -> None:
 
     # Load previous state
     previous_state = load_state(state_file)
-    now = datetime.datetime.now(datetime.timezone.utc)
+    now = datetime.datetime.now(datetime.UTC)
 
     # Run checks
     checks = {

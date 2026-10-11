@@ -14,10 +14,10 @@ import json
 import os
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 MAPA = os.path.expanduser('~/.local/share/cauce-v3/ops/container-aliases.json')
-AHORA = datetime.now(timezone.utc)
+AHORA = datetime.now(UTC)
 
 # space -> (container|None for host, user, home, aliases served)
 EXTRA_HOST = ('host:kratos', None, os.environ.get('USER', 'stev'), '/home/stev/red-servidores', ['kant'])
@@ -62,7 +62,7 @@ def estado_claude(contenedor, usuario, home):
                         f'print((d.get(\'oauthAccount\') or {{}}).get(\'emailAddress\',\'\'))" 2>/dev/null')
     if not vence:
         return 'sin vencimiento', cuenta
-    cuando = datetime.fromtimestamp(vence / 1000, timezone.utc)
+    cuando = datetime.fromtimestamp(vence / 1000, UTC)
     if cuando < AHORA:
         return f'VENCIDO {cuando:%d-%b %H:%M}', cuenta
     horas = (cuando - AHORA).total_seconds() / 3600
@@ -94,7 +94,7 @@ def estado_gemini(contenedor, usuario, home):
         return 'ILEGIBLE', activa
     if not vence:
         return 'sin vencimiento', activa
-    cuando = datetime.fromtimestamp(vence / 1000, timezone.utc)
+    cuando = datetime.fromtimestamp(vence / 1000, UTC)
     if cuando < AHORA:
         return f'VENCIDO {cuando:%d-%b}', activa
     return f'ok ({(cuando - AHORA).total_seconds()/3600:.0f} h)', activa

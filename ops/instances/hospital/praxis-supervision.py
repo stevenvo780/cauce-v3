@@ -387,7 +387,7 @@ class Supervisor:
             baseline = dict(engineering, git_head=seed["head"])
             self.state["active_root"] = {"message_id": message_id, "baseline": baseline,
                                          "reserved_at": published.timestamp(), "bootstrap_key": key, **binding}
-            day = published.astimezone(dt.timezone.utc).strftime("%Y-%m-%d")
+            day = published.astimezone(dt.UTC).strftime("%Y-%m-%d")
             self.state["roots"][day] = max(self.state["roots"].get(day, 0) + 1, self.config.get("bootstrap_daily_roots", 1))
         self.state["bootstrap_message_id"] = message_id
         self.state["bootstrap_generation"] = generation
@@ -451,7 +451,7 @@ class Supervisor:
         return "message_id" in reserved
 
     def notice(self, signature: str, kind: str, text: str):
-        day = dt.datetime.fromtimestamp(self.now, dt.timezone.utc).strftime("%Y-%m-%d")
+        day = dt.datetime.fromtimestamp(self.now, dt.UTC).strftime("%Y-%m-%d")
         notices = self.state.setdefault("notices", {})
         token = digest(signature.encode())[:24]
         record = notices.get(token)
@@ -675,7 +675,7 @@ class Supervisor:
         if (previous is not None and not self.state.get("continuation_earned")
                 and not self.state.get("auth_retry_earned") and not made_progress(previous, engineering)):
             return self.pause("no_new_progress")
-        day = dt.datetime.fromtimestamp(self.now, dt.timezone.utc).strftime("%Y-%m-%d")
+        day = dt.datetime.fromtimestamp(self.now, dt.UTC).strftime("%Y-%m-%d")
         roots = self.state.setdefault("roots", {})
         if roots.get(day, 0) >= self.config["root_limit"]:
             self.notice("root_fuel:" + day, "digest", "Praxis: límite diario de continuaciones alcanzado; el monitor conserva observación.")

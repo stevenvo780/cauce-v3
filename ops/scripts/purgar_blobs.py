@@ -31,7 +31,7 @@ def analizar_filas(texto: str) -> dict[str, dt.datetime]:
         except ValueError:
             continue
         if momento.tzinfo is None:
-            momento = momento.replace(tzinfo=dt.timezone.utc)
+            momento = momento.replace(tzinfo=dt.UTC)
         anterior = filas.get(partes[0])
         if anterior is None or momento > anterior:
             filas[partes[0]] = momento
@@ -43,7 +43,7 @@ def ficheros_en_disco(directorio: pathlib.Path) -> dict[str, dt.datetime]:
     for entrada in directorio.iterdir():
         if not entrada.is_file() or not HEX_SHA256.match(entrada.name):
             continue
-        encontrados[entrada.name] = dt.datetime.fromtimestamp(entrada.stat().st_mtime, tz=dt.timezone.utc)
+        encontrados[entrada.name] = dt.datetime.fromtimestamp(entrada.stat().st_mtime, tz=dt.UTC)
     return encontrados
 
 
@@ -89,7 +89,7 @@ def main(argv: list[str] | None = None) -> int:
     else:
         print("hace falta --psql o --desde-stdin", file=sys.stderr)
         return 2
-    ahora = dt.datetime.now(tz=dt.timezone.utc)
+    ahora = dt.datetime.now(tz=dt.UTC)
     plan = planificar(filas, ficheros_en_disco(args.dir), ahora, args.dias)
     for clave in ("caducados", "huerfanos", "sin_fichero"):
         print(f"{clave}: {len(plan[clave])}")

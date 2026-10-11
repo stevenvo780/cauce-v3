@@ -286,7 +286,7 @@ def issue(
     principal = principal_for(flota_json, alias, bootstrap, IssueTokenError)
     tenant = principal["tenant_id"]
     expires_at = (
-        datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=ttl_days)
+        datetime.datetime.now(datetime.UTC) + datetime.timedelta(days=ttl_days)
     ).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     if idempotent:
@@ -383,7 +383,7 @@ def issue_idempotent(alias: str, tokens_dir: pathlib.Path, identities_dir: pathl
             if len(matches) != 1 or matches[0].get("principal") != principal or matches[0].get("token_sha256") != digest:
                 raise IssueTokenError("token replay conflicts with its exact principal or fingerprint")
             expiry = matches[0].get("expires_at")
-            if not isinstance(expiry, str) or datetime.datetime.fromisoformat(expiry.replace("Z", "+00:00")) <= datetime.datetime.now(datetime.timezone.utc):
+            if not isinstance(expiry, str) or datetime.datetime.fromisoformat(expiry.replace("Z", "+00:00")) <= datetime.datetime.now(datetime.UTC):
                 raise IssueTokenError("registered token credential has expired")
             expires_at = expiry
         else:
@@ -412,7 +412,7 @@ def describe_dry_run(
     token_path = tokens_dir / f"{alias}.token"
     conflict = token_path.exists() or token_path.is_symlink()
     expires_at = (
-        datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=ttl_days)
+        datetime.datetime.now(datetime.UTC) + datetime.timedelta(days=ttl_days)
     ).strftime("%Y-%m-%dT%H:%M:%SZ")
     return (
         f"dry-run: alias={alias} tenant={tenant} "

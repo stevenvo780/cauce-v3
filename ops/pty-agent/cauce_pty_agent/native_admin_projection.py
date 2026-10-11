@@ -2,10 +2,9 @@ from __future__ import annotations
 
 import json
 import re
+import tomllib
 from typing import Any
 from urllib.parse import urlsplit
-
-import tomllib
 
 from .native_admin_paths import ID, MAX_FILE_BYTES, NativeError
 
