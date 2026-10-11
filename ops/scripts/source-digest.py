@@ -145,6 +145,7 @@ VERIFICATION_OPERATIONAL_INPUTS = (
     "ops/harness",
     "ops/manifests",
     "ops/observability",
+    "ops/pty-agent",
     "ops/runbooks",
     "ops/schemas",
     "ops/scripts",

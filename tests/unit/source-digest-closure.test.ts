@@ -48,6 +48,7 @@ describe('source digest verification closure', () => {
       'ops/scripts/compose-files.sh',
       'ops/scripts/run-testcontainers.sh',
       'ops/scripts/source-digest.py',
+      'ops/pty-agent/cauce_pty_agent/runtime_facts.py',
       'ops/scripts/validate.sh',
       'ops/schemas/testcontainers-evidence.schema.json',
     ]) {
@@ -122,6 +123,8 @@ describe('source digest verification closure', () => {
       ['ops/scripts/validate.sh', '#!/bin/sh\nexit 7\n'],
       ['ops/schemas/testcontainers-evidence.schema.json', '{"additionalProperties":true}\n'],
       ['ops/scripts/future-operational-gate.py', 'print("future gate")\n'],
+      ['ops/pty-agent/cauce_pty_agent/runtime_facts.py', 'synthetic = "before"\n'],
+      ['ops/pty-agent/cauce_pty_agent/runtime_facts.py', 'synthetic = "after"\n'],
       ['ops/schemas/future-operational-evidence.schema.json', '{"type":"string"}\n'],
     ] as const) {
       await writeTree(root, relative, contents);
