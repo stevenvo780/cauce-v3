@@ -81,14 +81,32 @@ def provider_environment(policy: dict, agent: dict) -> dict:
         values.update(CAUCE_HARNESS_COMMAND=driver['node_command'], CAUCE_HARNESS_COMMAND_SHA256=driver['node_command_sha256'],
             CAUCE_HARNESS_BRIDGE=driver['bridge'], CAUCE_HARNESS_COMMAND_FILES=json.dumps(files, sort_keys=True, separators=(',', ':')))
         return values
-    variable = {'codex': 'CODEX_HOME', 'claude': 'CLAUDE_CONFIG_DIR', 'gemini': 'GEMINI_CLI_HOME'}.get(binding.get('provider'))
-    if variable is None:
-        raise SafeFailure('runtime provider environment is not approved')
-    values = {variable: str(path(binding['path']))}
+    provider = binding.get('provider')
+    if provider in {'grok', 'muse'}:
+        from importlib import import_module
+        values = import_module('fleet_provider_' + provider).environment(binding, agent)
+    else:
+        variable = {'codex': 'CODEX_HOME', 'claude': 'CLAUDE_CONFIG_DIR', 'gemini': 'GEMINI_CLI_HOME'}.get(provider)
+        if variable is None:
+            raise SafeFailure('runtime provider environment is not approved')
+        values = {variable: str(path(binding['path']))}
     if binding.get('command') is not None:
         executable = str(path(binding['command']))
         fingerprint = binding.get('command_sha256')
         files = binding.get('command_files', {})
+        if not isinstance(files, dict):
+            raise SafeFailure('provider command files are not approved')
+        files = dict(files)
+        if provider in {'grok', 'muse'}:
+            if executable in files and files[executable] != fingerprint:
+                raise SafeFailure('provider executable has conflicting pins')
+            files[executable] = fingerprint
+        if provider == 'muse':
+            driver = binding['muse']
+            executable, fingerprint = driver['bridge'], driver['bridge_sha256']
+            if executable in files and files[executable] != fingerprint:
+                raise SafeFailure('Muse bridge has conflicting pins')
+            files[executable] = fingerprint
         if not isinstance(fingerprint, str) or re.fullmatch(r'[0-9a-f]{64}', fingerprint) is None \
                 or not isinstance(files, dict) or len(files) > 32 or any(not isinstance(value, str) \
                     or re.fullmatch(r'[0-9a-f]{64}', value) is None for value in files.values()):
@@ -143,8 +161,9 @@ def sdk_environment(policy: dict, agent: dict, bootstrap: bool, operation_id: st
         values['CAUCE_MODEL_ID'] = model
     effort = agent.get('reasoning_effort')
     if effort is not None:
+        from fleet_provider_muse import EFFORTS
         compatible = {'minimal', 'low', 'medium', 'high', 'xhigh', 'max'} if agent['harness_id'] in {'codex', 'openclaw'} else \
-            {'low', 'medium', 'high', 'xhigh', 'max'} if agent['harness_id'] == 'claude' else set()
+            {'low', 'medium', 'high', 'xhigh', 'max'} if agent['harness_id'] == 'claude' else EFFORTS if agent['harness_id'] == 'muse' else set()
         if effort not in compatible or row.get('reasoningEffort') != effort:
             raise SafeFailure('reasoning effort is not approved')
         values['CAUCE_REASONING_EFFORT'] = effort

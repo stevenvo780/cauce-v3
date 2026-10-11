@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import pathlib
+import re
 import selectors
 import signal
 import stat
@@ -13,6 +14,33 @@ import time
 
 class ProviderProofError(ValueError):
     pass
+
+
+def validate_provider_binding(binding: dict, agent: dict, provider: str) -> pathlib.Path:
+    from fleet_executor_policy import path
+    if not isinstance(binding, dict) or binding.get('provider') != provider or agent.get('harness_id') != provider \
+            or binding.get('runtime_user') != agent.get('runtime_user') or 'openclaw' in binding \
+            or ('muse' in binding) != (provider == 'muse'):
+        raise ProviderProofError('provider profile differs from its exact runtime identity')
+    root = path(binding.get('path'))
+    home = path(agent['home_directory'])
+    state = path(agent['state_directory'])
+    if root in {pathlib.Path('/'), home, home / '.grok', home / '.config/muse'} \
+            or root.is_relative_to(state) or state.is_relative_to(root):
+        raise ProviderProofError('provider profile must be dedicated to the approved account')
+    path(binding.get('command'))
+    if not isinstance(binding.get('command_sha256'), str) or re.fullmatch(r'[a-f0-9]{64}', binding['command_sha256']) is None:
+        raise ProviderProofError('provider command has no exact pin')
+    return root
+
+
+def validate_provider_selection(agent: dict, provider: str, efforts: frozenset[str]) -> None:
+    model = agent.get('model_id')
+    effort = agent.get('reasoning_effort')
+    if agent.get('harness_id') != provider or (model is not None and (not isinstance(model, str)
+            or re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_./:-]{0,127}', model) is None)) \
+            or (effort is not None and (not isinstance(effort, str) or effort not in efforts)):
+        raise ProviderProofError('provider model or reasoning effort is not supported')
 
 
 def pinned_descriptor(filename: str) -> int:
@@ -55,7 +83,20 @@ def provider_command(packet: dict) -> str:
     fingerprint = binding.get("command_sha256")
     if not isinstance(command, str) or not command.startswith("/") or ".." in pathlib.PurePosixPath(command).parts:
         raise ProviderProofError("approved provider executable is unavailable")
-    files = {command: fingerprint, **binding.get("command_files", {})}
+    files = binding.get('command_files', {})
+    if not isinstance(files, dict) or len(files) > 32:
+        raise ProviderProofError('provider command files exceed their approved bound')
+    files = dict(files)
+    if command in files and files[command] != fingerprint:
+        raise ProviderProofError('provider command has conflicting pins')
+    files[command] = fingerprint
+    if binding.get('provider') == 'muse':
+        from fleet_provider_muse import validate_definition
+        validate_definition(binding.get('muse'), 'muse')
+        bridge = binding['muse']
+        if bridge['bridge'] in files and files[bridge['bridge']] != bridge['bridge_sha256']:
+            raise ProviderProofError('Muse bridge has conflicting pins')
+        files[bridge['bridge']] = bridge['bridge_sha256']
     for filename, expected in files.items():
         descriptor = pinned_descriptor(filename)
         try:
@@ -87,9 +128,14 @@ def command_output(command: list[str], packet: dict, timeout: int = 30) -> bytes
         environment.update(openclaw_environment(binding, packet['agent']))
         environment['OPENCLAW_AUTH_STORE_READONLY'] = '1'
         variable = None
+    elif binding['provider'] in {'grok', 'muse'}:
+        from importlib import import_module
+        environment.update(import_module('fleet_provider_' + binding['provider']).environment(binding, packet['agent']))
+        environment['PATH'] = '/usr/bin:/bin'
+        variable = None
     else:
         variable = {"codex": "CODEX_HOME", "claude": "CLAUDE_CONFIG_DIR"}.get(binding["provider"])
-    if variable is None and packet['agent']['harness_id'] != 'openclaw':
+    if variable is None and packet['agent']['harness_id'] not in {'openclaw', 'grok', 'muse'}:
         raise ProviderProofError("provider identity inspection is unavailable")
     if variable is not None:
         environment[variable] = binding["path"]
@@ -203,6 +249,12 @@ def authenticated_provider(packet: dict) -> bool:
             if result.get("loggedIn") is not True or not isinstance(result.get("email"), str):
                 return False
             identity = result["email"]
+        elif provider == 'grok':
+            from fleet_provider_grok import authenticated_grok
+            return authenticated_grok(packet)
+        elif provider == 'muse':
+            from fleet_provider_muse import authenticated_muse
+            return authenticated_muse(packet)
         else:
             raise ProviderProofError("provider has no approved account inspection")
         if identity != packet["identity"]:

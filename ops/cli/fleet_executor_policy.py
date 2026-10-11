@@ -195,7 +195,11 @@ def validate_payload(document) -> dict:
             raise SafeFailure('request may only contain declarative agent fields')
         from fleet_provider_openclaw import validate_execution_selection
         validate_execution_selection(parameters)
-        if parameters.get('reasoning_effort') is not None and parameters['reasoning_effort'] not in {'minimal', 'low', 'medium', 'high', 'xhigh', 'max'}:
+        if parameters['harness_id'] in {'grok', 'muse'}:
+            from fleet_provider_identity import validate_provider_selection
+            from fleet_provider_muse import EFFORTS
+            validate_provider_selection(parameters, parameters['harness_id'], EFFORTS if parameters['harness_id'] == 'muse' else frozenset())
+        elif parameters.get('reasoning_effort') is not None and parameters['reasoning_effort'] not in {'minimal', 'low', 'medium', 'high', 'xhigh', 'max'}:
             raise SafeFailure('unsupported declarative reasoning effort')
         placement = parameters['placement']
         if not isinstance(placement, dict) or set(placement) - {'host_id', 'mode', 'container_name', 'runtime_user', 'systemd_user', 'home_directory', 'state_directory'}:
@@ -217,6 +221,10 @@ def validate_payload(document) -> dict:
             if any(row.get('resource') == 'agent' and row.get('tenant_id') == agent.get('tenant_id')
                     and row.get('alias') == agent.get('alias') for row in scoped):
                 validate_execution_selection(agent)
+                if agent.get('harness_id') in {'grok', 'muse'}:
+                    from fleet_provider_identity import validate_provider_selection
+                    from fleet_provider_muse import EFFORTS
+                    validate_provider_selection(agent, agent['harness_id'], EFFORTS if agent['harness_id'] == 'muse' else frozenset())
     from fleet_migration import placement_role
     placement_role(document)
     return document

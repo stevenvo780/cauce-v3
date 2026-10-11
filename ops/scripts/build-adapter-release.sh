@@ -53,7 +53,7 @@ for entry in list(root.rglob('*')):
     finally:
         if os.path.lexists(temporary):
             os.unlink(temporary)
-for harness in ('claude', 'codex', 'openclaw', 'grok'):
+for harness in ('claude', 'codex', 'openclaw', 'grok', 'muse'):
     entry = package / f'dist/src/bin/{harness}.js'
     if not entry.is_file() or not entry.stat().st_mode & 0o111:
         raise SystemExit(f'missing executable: {harness}')

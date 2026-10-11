@@ -83,7 +83,7 @@ class BuilderIsolation(unittest.TestCase):
         shutil.copy2(BUILDER, self.repo / 'ops/scripts/build-adapter-release.sh')
         shutil.copytree(ROOT / 'ops/container-runtime', self.repo / 'ops/container-runtime', dirs_exist_ok=True)
         (self.repo / 'packages/protocol/dist/index.js').write_text('export const protocol = 3;\n')
-        for harness in ['claude', 'codex', 'openclaw', 'grok']:
+        for harness in ['claude', 'codex', 'openclaw', 'grok', 'muse']:
             entry = self.repo / f'packages/adapter-sdk/dist/src/bin/{harness}.js'
             entry.write_text('#!/usr/bin/env node\n')
             entry.chmod(0o755)
@@ -139,7 +139,7 @@ class BuilderIsolation(unittest.TestCase):
                 else:
                     self.assertEqual(path.stat().st_mode & 0o222, 0, str(path))
             package = release / 'packages/adapter-sdk'
-            for harness in ['claude', 'codex', 'openclaw', 'grok']:
+            for harness in ['claude', 'codex', 'openclaw', 'grok', 'muse']:
                 self.assertEqual(stat.S_IMODE((package / f'dist/src/bin/{harness}.js').stat().st_mode), 0o555)
             dependency = package / 'node_modules/dependency'
             self.assertEqual((dependency / 'index.js').stat().st_ino, (dependency / 'alias.js').stat().st_ino)
@@ -152,6 +152,14 @@ class BuilderIsolation(unittest.TestCase):
         self.assertIn('bundle link escapes release: packages/adapter-sdk/external-link', result.stderr)
         self.assertEqual(snapshot(self.repo / 'packages'), sources)
         self.assertEqual(snapshot(self.store), store)
+
+    def test_missing_muse_entry_is_rejected(self) -> None:
+        filename = 'packages/adapter-sdk/dist/src/bin/muse.js'
+        self.git('rm', filename)
+        self.git('-c', 'user.name=fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-qm', 'fixture without Muse', '--', filename)
+        result = self.build('missing-muse')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('missing executable: muse', result.stderr)
 
     def test_second_protocol_compile_does_not_hit_eacces(self) -> None:
         first = self.build('first')

@@ -7,6 +7,7 @@ import os
 import pathlib
 import pwd
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -243,7 +244,7 @@ class OpenClawProviderTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'explicit measured provider model'):
             fleet_executor_policy.validate_payload(document)
 
-    def test_capability_requires_observed_version_and_pins_without_claiming_account_authentication(self):
+    def test_capability_requires_ready_fixture_authority_and_measured_provider_pins(self):
         template = {**self.binding, 'path_root': str(self.root / 'profiles')}
         template.pop('path')
         template.pop('identity')
@@ -251,9 +252,20 @@ class OpenClawProviderTest(unittest.TestCase):
                   'home_directory': str(self.root), 'state_root': str(self.state)}], 'containers': {},
                   'bundles': {'codex': {}, 'openclaw': {}}, 'profiles': {}, 'profile_templates': [template],
                   'transport': {}, 'hooks': {key: {} for key in ('authenticate', 'profile', 'verify', 'revoke')}}
+        self.assertFalse(templates.capabilities(policy)['available'])
+        certificate, key = self.root / 'capability-ca.crt', self.root / 'capability-ca.key'
+        subprocess.run(['openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '2',
+            '-subj', '/CN=isolated-capability-fixture', '-addext', 'basicConstraints=critical,CA:TRUE',
+            '-keyout', str(key), '-out', str(certificate)], capture_output=True, check=True, timeout=10)
+        key.chmod(0o600)
+        certificate.chmod(0o600)
+        policy['signer'] = {'certificate': str(certificate), 'key': str(key)}
         observed = templates.capabilities(policy)
         runtimes = observed['placements'][0]['runtimes']
         self.assertEqual([(row['harness_id'], row['provider']) for row in runtimes], [('openclaw', 'codex')])
+        policy['signer']['key'] = str(self.root / 'missing-capability-key')
+        self.assertFalse(templates.capabilities(policy)['available'])
+        policy['signer']['key'] = str(key)
         template['openclaw']['node_command_sha256'] = '0' * 64
         self.assertFalse(templates.capabilities(policy)['available'])
 

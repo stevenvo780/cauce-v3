@@ -38,11 +38,12 @@ def ensure_private(parent: int, name: str, uid: int, gid: int, *, initialize_emp
         raise
 
 
-def prepare_empty_profile(root: str, profile: str, uid: int, gid: int, *, initialize_empty: bool = False):
+def prepare_empty_profile(root: str, profile: str, uid: int, gid: int, *, initialize_empty: bool = False, provider: str | None = None):
     root_path, destination = pathlib.Path(root), pathlib.Path(profile)
     if any(not value.startswith('/') or str(pathlib.PurePosixPath(value)) != value or '..' in pathlib.PurePosixPath(value).parts
             or any(ord(char) < 32 for char in value) for value in (root, profile)) or uid <= 0 or gid <= 0 \
-            or not destination.is_relative_to(root_path) or len(destination.relative_to(root_path).parts) != 2:
+            or not destination.is_relative_to(root_path) or len(destination.relative_to(root_path).parts) != 2 \
+            or provider not in {None, 'grok', 'muse'}:
         raise ValueError('invalid separate provider profile destination')
     runtime, account = destination.relative_to(root_path).parts
     if re.fullmatch(r'[a-z][a-z0-9-]{0,63}', runtime) is None or re.fullmatch(r'[0-9a-f]{64}', account) is None:
@@ -57,6 +58,9 @@ def prepare_empty_profile(root: str, profile: str, uid: int, gid: int, *, initia
             following = ensure_private(current, component, uid, gid)
             os.close(current)
             current = following
+        if provider == 'muse':
+            for component in ('config', 'data'):
+                os.close(ensure_private(current, component, uid, gid))
         os.fsync(current)
     finally:
         os.close(current)
@@ -79,7 +83,8 @@ def prepare_profile(policy: dict, raw_agent: dict):
         if dynamic:
             external_directory(pathlib.Path(template['path_root']))
             user = pwd.getpwnam(agent['runtime_user'])
-            prepare_empty_profile(template['path_root'], binding['path'], user.pw_uid, user.pw_gid)
+            prepare_empty_profile(template['path_root'], binding['path'], user.pw_uid, user.pw_gid,
+                **({'provider': 'muse'} if binding['provider'] == 'muse' else {}))
         prepare_openclaw(binding, agent)
         return
     from fleet_executor_container import (
@@ -99,7 +104,7 @@ def prepare_profile(policy: dict, raw_agent: dict):
     if dynamic:
         docker('exec', '--user', '0', '--env', 'PYTHONDONTWRITEBYTECODE=1', identity['container_id'], agent['_placement']['python'],
             f'{EXECUTOR_DESTINATION}/fleet_executor_profiles.py', '--root', template['path_root'], '--profile', binding['path'],
-            '--uid', uid, '--gid', gid, '--initialize-empty')
+            '--uid', uid, '--gid', gid, '--initialize-empty', *(['--provider', 'muse'] if binding['provider'] == 'muse' else []))
     if 'openclaw' in binding:
         checked_command([DOCKER, 'exec', '-i', '--user', agent['runtime_user'], '--env', 'PYTHONDONTWRITEBYTECODE=1', identity['container_id'],
             agent['_placement']['python'], f'{EXECUTOR_DESTINATION}/fleet_provider_openclaw.py', '--prepare'],
@@ -130,7 +135,8 @@ if __name__ == '__main__':
         parser.add_argument('--uid', type=int, required=True)
         parser.add_argument('--gid', type=int, required=True)
         parser.add_argument('--initialize-empty', action='store_true')
+        parser.add_argument('--provider', choices=('grok', 'muse'))
         args = parser.parse_args()
-        prepare_empty_profile(args.root, args.profile, args.uid, args.gid, initialize_empty=args.initialize_empty)
+        prepare_empty_profile(args.root, args.profile, args.uid, args.gid, initialize_empty=args.initialize_empty, provider=args.provider)
     except Exception:
         raise SystemExit('provider profile preparation was not verified') from None

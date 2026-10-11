@@ -9,10 +9,10 @@ import stat
 RECIPES = {'install': 'runtime-package', 'authenticate': 'provider-login', 'execute': 'native-execution',
            'update': 'provider-update', 'quota': 'quota-collector'}
 HARNESSES = frozenset({'claude', 'codex', 'hermes', 'opencode', 'openclaw', 'grok', 'muse', 'fake'})
-PACKAGES = {'claude': '@anthropic-ai/claude-code', 'codex': '@openai/codex', 'grok': '@xai-official/grok'}
+PACKAGES = {'claude': '@anthropic-ai/claude-code', 'codex': '@openai/codex'}
 LOGIN = {'claude': ('/usr/local/bin/claude', 'auth', 'login'),
          'codex': ('/usr/local/bin/codex', 'login', '--device-auth'),
-         'grok': ('/usr/local/bin/grok', 'login', '--device-auth')}
+         'grok': ('/usr/local/bin/grok', 'login', '--device-auth'), 'muse': ('/usr/local/bin/muse', 'login')}
 QUOTA = {'claude': ('node', '/usr/local/bin/leer-cuota.mjs'),
          'codex': ('python3', '/usr/local/bin/codex-http-probe.py', '/home/node/.codex'),
          'grok': ('node', '/usr/local/bin/leer-cuota-grok.mjs')}

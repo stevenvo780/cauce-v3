@@ -1,11 +1,42 @@
 #!/bin/bash
-# Bridge between the Cauce adapter and Muse Code ("muse"): copies the prompt from stdin to a temp file (`muse exec --prompt-file` rejects /dev/stdin), re-links MUSE_CONFIG_DIR into ~/.config/muse if a re-flattened image dropped it, and runs at MUSE_REASONING_EFFORT (default "max", adapter only).
-set -u
-MUSE_CONFIG_DIR="${MUSE_CONFIG_DIR:-$HOME/.local/share/cauce-v3/config/hegel/.config/muse}"
-if [ ! -e "$HOME/.config/muse" ] && [ -d "$MUSE_CONFIG_DIR" ]; then
-  mkdir -p "$HOME/.config" && ln -s "$MUSE_CONFIG_DIR" "$HOME/.config/muse"
+# Muse requires a regular prompt file rather than a pipe.
+set -euo pipefail
+args=("$@")
+command="${CAUCE_MUSE_CLI_COMMAND:-}"
+fingerprint="${CAUCE_MUSE_CLI_SHA256:-}"
+[[ "$command" == /* && -f "$command" && ! -L "$command" && -x "$command" \
+  && "$fingerprint" =~ ^[a-f0-9]{64}$ && "$(readlink -f -- "$command")" == "$command" \
+  && "${XDG_CONFIG_HOME:-}" == /* && "${XDG_DATA_HOME:-}" == /* \
+  && "$XDG_CONFIG_HOME" != "$XDG_DATA_HOME" ]] || exit 78
+for key in $(compgen -e); do
+  case "$key" in META_*|GROK_*|MUSE_AUTH_PATH|MUSE_CONFIG_DIR|MUSE_BASE_URL|MUSE_API_BASE_URL) exit 78 ;; esac
+done
+read -r actual _ < <(sha256sum -- "$command")
+[[ "$actual" == "$fingerprint" ]] || exit 78
+export MUSE_NO_AUTO_UPDATE=1
+umask 077
+provider_count=0
+for ((index=0; index<${#args[@]}; index++)); do
+  case "${args[$index]}" in
+    --prompt-file|--prompt-file=*) exit 78 ;;
+    --provider)
+      [[ "${args[$((index + 1))]:-}" == meta ]] || exit 78
+      provider_count=$((provider_count + 1)) ;;
+    --provider=meta) provider_count=$((provider_count + 1)) ;;
+    --provider=*) exit 78 ;;
+  esac
+done
+[[ "$provider_count" -le 1 ]] || exit 78
+[[ "$provider_count" != 0 ]] || args+=(--provider meta)
+effort_count=0
+for arg in "${args[@]}"; do
+  case "$arg" in --reasoning-effort|--reasoning-effort=*) effort_count=$((effort_count + 1)) ;; esac
+done
+[[ "$effort_count" -le 1 ]] || exit 78
+if [[ "$effort_count" == 0 ]]; then
+  args+=(--reasoning-effort "${MUSE_REASONING_EFFORT:-max}")
 fi
 tmp=$(mktemp "${TMPDIR:-/tmp}/muse-prompt.XXXXXX") || exit 70
 trap 'rm -f "$tmp"' EXIT
 cat > "$tmp"
-"$HOME/.local/bin/muse" "$@" --reasoning-effort "${MUSE_REASONING_EFFORT:-max}" --prompt-file "$tmp"
+"$command" "${args[@]}" --prompt-file "$tmp"

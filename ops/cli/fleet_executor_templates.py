@@ -9,7 +9,7 @@ from fleet_executor_policy import SafeFailure, bounded_text, path
 
 USER = re.compile(r'[A-Za-z_][A-Za-z0-9_-]{0,63}')
 HASH = re.compile(r'[0-9a-f]{64}')
-PROVIDERS = {'codex', 'claude', 'gemini'}
+PROVIDERS = {'codex', 'claude', 'gemini', 'grok', 'muse'}
 CONTAINER = re.compile(r'[a-z][a-z0-9-]{0,127}')
 PREFIX = re.compile(r'[a-z][a-z0-9-]{0,47}-')
 
@@ -36,13 +36,14 @@ def validate_login(row: dict):
         raise SafeFailure('provider login argument has no exact file pin')
     env = login.get('env', {})
     if not isinstance(env, dict) or len(env) > 32 or any(not isinstance(key, str)
-            or re.fullmatch(r'[A-Z_][A-Z0-9_]{0,63}', key) is None or not isinstance(value, str)
+            or key not in {'LANG', 'LC_ALL', 'TERM', 'NO_COLOR'} or not isinstance(value, str)
             or not 1 <= len(value) <= 4096 or any(unicodedata.category(char) == 'Cc' for char in value)
             for key, value in env.items()):
         raise SafeFailure('invalid approved provider login environment')
     driver = row.get('openclaw')
     if driver is None:
-        arguments = ['login', '--device-auth'] if row['provider'] == 'codex' and login['method'] == 'device' else \
+        arguments = ['login', '--device-auth'] if row['provider'] in {'codex', 'grok'} and login['method'] == 'device' else \
+            ['login'] if row['provider'] == 'muse' and login['method'] == 'device' else \
             ['login'] if row['provider'] == 'codex' else ['auth', 'login'] if row['provider'] == 'claude' and login['method'] == 'terminal' else None
         valid = command[0] == row['command'] and login['sha256'] == row['command_sha256'] and command[1:] == arguments
     else:
@@ -123,7 +124,7 @@ def validate_templates(policy: dict):
         raise SafeFailure('invalid bounded provider profile templates')
     identities = set()
     for row in profiles:
-        if not isinstance(row, dict) or set(row) - {'command_files', 'openclaw', 'runtime_mode', 'container_name', 'container_prefix', 'login'} != fields or row['provider'] not in PROVIDERS \
+        if not isinstance(row, dict) or set(row) - {'command_files', 'openclaw', 'muse', 'runtime_mode', 'container_name', 'container_prefix', 'login'} != fields or row['provider'] not in PROVIDERS \
                 or not isinstance(row['runtime_user'], str) or USER.fullmatch(row['runtime_user']) is None \
                 or not isinstance(row['command_sha256'], str) or HASH.fullmatch(row['command_sha256']) is None:
             raise SafeFailure('invalid approved provider profile template')
@@ -139,6 +140,11 @@ def validate_templates(policy: dict):
         if 'openclaw' in row:
             from fleet_provider_openclaw import validate_definition
             validate_definition(row['openclaw'], row['provider'])
+        if (row['provider'] == 'muse') != ('muse' in row):
+            raise SafeFailure('Muse profile requires its exact approved bridge')
+        if 'muse' in row:
+            from fleet_provider_muse import validate_definition
+            validate_definition(row['muse'], row['provider'])
         selectors = [key for key in ('container_name', 'container_prefix') if key in row]
         if 'runtime_mode' in row and row['runtime_mode'] not in ('native', 'container') \
                 or selectors and row.get('runtime_mode') != 'container' \
@@ -189,6 +195,8 @@ def resolve_profile(policy: dict, agent: dict) -> dict | None:
         result['command_files'] = template['command_files']
     if 'openclaw' in template:
         result['openclaw'] = dict(template['openclaw'])
+    if 'muse' in template:
+        result['muse'] = dict(template['muse'])
     if agent['runtime_mode'] == 'container':
         result['container_name'] = agent['container_name']
     return result
@@ -202,8 +210,12 @@ def runtime_candidates(policy: dict) -> list[dict]:
             [('container', name, row) for name, row in sorted(policy['containers'].items())] +
             [('container', None, row) for row in policy.get('container_templates', [])]):
         for harness in sorted(policy['bundles']):
-            if harness not in {'codex', 'claude', 'openclaw'} or candidate.get('harness_id', harness) != harness:
+            if harness not in {'codex', 'claude', 'openclaw', 'grok', 'muse'} or candidate.get('harness_id', harness) != harness:
                 continue
+            if harness in {'grok', 'muse'}:
+                from importlib import import_module
+                if not import_module('fleet_provider_' + harness).authentication_supported():
+                    continue
             provider = 'codex' if harness == 'openclaw' else harness
             prefix = candidate.get('prefix') if mode == 'container' and name is None else None
             templates = matching_templates(policy, provider, candidate['runtime_user'], harness, mode, name, prefix)
@@ -230,8 +242,10 @@ def runtime_candidates(policy: dict) -> list[dict]:
                 if not approved:
                     continue
             runtime = {key: candidate.get(key) for key in fields}
+            from fleet_provider_muse import EFFORTS
             runtime.update(mode=mode, harness_id=harness, provider=provider,
-                reasoning_efforts=(['minimal', 'low', 'medium', 'high', 'xhigh', 'max'] if harness == 'openclaw' else
+                reasoning_efforts=([] if harness == 'grok' else sorted(EFFORTS) if harness == 'muse' else
+                    ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'] if harness == 'openclaw' else
                     ['minimal', 'low', 'medium', 'high', 'xhigh'] if harness == 'codex' else ['low', 'medium', 'high', 'xhigh', 'max']))
             if mode == 'container':
                 runtime['container_name' if name else 'container_prefix'] = name or candidate['prefix']

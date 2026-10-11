@@ -17,7 +17,7 @@ def binding_for(policy: dict, agent: dict) -> tuple[str, dict]:
     account = agent.get('primary_account_id')
     agent = approve_agent(policy, agent)
     binding = resolve_profile(policy, agent)
-    if not isinstance(binding, dict) or set(binding) - {'container_name', 'command', 'command_sha256', 'command_files', 'openclaw'} != {'provider', 'path', 'identity', 'runtime_user'} \
+    if not isinstance(binding, dict) or set(binding) - {'container_name', 'command', 'command_sha256', 'command_files', 'openclaw', 'muse'} != {'provider', 'path', 'identity', 'runtime_user'} \
             or binding['runtime_user'] != agent['runtime_user']:
         raise SafeFailure('missing approved provider profile binding')
     if agent['harness_id'] == 'openclaw':
@@ -25,6 +25,11 @@ def binding_for(policy: dict, agent: dict) -> tuple[str, dict]:
         validate_definition(binding.get('openclaw'), binding['provider'])
     elif 'openclaw' in binding:
         raise SafeFailure('OpenClaw provider driver differs from the harness')
+    if agent['harness_id'] in {'grok', 'muse'}:
+        from importlib import import_module
+        import_module('fleet_provider_' + agent['harness_id']).environment(binding, agent)
+    elif 'muse' in binding:
+        raise SafeFailure('Muse provider driver differs from the harness')
     if not isinstance(binding['identity'], str) or not binding['identity'] or not isinstance(binding['provider'], str):
         raise SafeFailure('invalid provider profile identity')
     if agent['runtime_mode'] == 'container':
