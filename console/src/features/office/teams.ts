@@ -1,6 +1,7 @@
 import type { TopologySnapshot } from '../../api/types';
 import { seedOf } from './random';
 import { hslHex } from './palette';
+import { officeRoomKey } from './office-layout';
 
 export interface OfficeTeam { id: string; label: string; hue?: number }
 
@@ -55,11 +56,14 @@ export function groupDirectory(topology: TopologySnapshot | undefined): GroupDir
   const order = new Map<string, number>();
   const labels = new Map<string, string>();
   for (const tenant of topology?.tenants ?? []) {
+    if (!tenant.id) continue;
     for (const room of tenant.rooms ?? []) {
-      if (!room.id || order.has(room.id)) continue;
-      order.set(room.id, order.size);
+      if (!room.id) continue;
+      const key = officeRoomKey(tenant.id, room.id);
+      if (order.has(key)) continue;
+      order.set(key, order.size);
       const label = room.label?.trim() ?? '';
-      labels.set(room.id, label.length > 0 ? label : room.id);
+      labels.set(key, label.length > 0 ? label : room.id);
     }
   }
   return { order, labels, hues: resolveHues(order.keys()) };
@@ -70,15 +74,17 @@ export function groupDirectory(topology: TopologySnapshot | undefined): GroupDir
  * operational ones; every other enabled membership is a secondary group.
  */
 export function membershipOf(agent: RosterAgent, directory: GroupDirectory): Membership {
-  const rank = (id: string) => directory.order.get(id) ?? Number.MAX_SAFE_INTEGER;
+  const keyOf = (id: string) => officeRoomKey(agent.tenantId, id);
+  const rank = (id: string) => directory.order.get(keyOf(id)) ?? Number.MAX_SAFE_INTEGER;
   const enabled = agent.roomIds
-    .filter((id) => agent.roomMembership[id] !== false)
+    .filter((id) => agent.roomMembership[id] !== false && directory.order.has(keyOf(id)))
     .sort((a, b) => rank(a) - rank(b));
   const primary = enabled.find((id) => id.startsWith(PRIMARY_PREFIX)) ?? enabled.at(0);
   if (!primary) return { team: NO_TEAM, groups: [] };
+  const key = keyOf(primary);
   return {
-    team: { id: primary, label: directory.labels.get(primary) ?? primary, hue: directory.hues.get(primary) },
-    groups: enabled.filter((id) => id !== primary),
+    team: { id: key, label: directory.labels.get(key) ?? primary, hue: directory.hues.get(key) },
+    groups: enabled.filter((id) => id !== primary).map(keyOf),
   };
 }
 

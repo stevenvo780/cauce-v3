@@ -8,6 +8,7 @@ import { HUD_BUTTON, HUD_ON, HUD_PANEL, HUD_TEXT, STATE_PIXEL } from './hud-styl
 import type { OfficeAgent } from './office-agent';
 import { BubbleIcon } from './PixelGlyph';
 import type { IconName } from './sprites';
+import { AgentQuotaDetail } from '../accounts/AgentQuotaDetail';
 
 interface EmoteChoice { icon: IconName; label: string }
 
@@ -85,6 +86,7 @@ export function AgentCard({ agent, place, following, onClose, onTalk, onSheet, o
         </button>
       </header>
       <p className="m-0 mt-2 line-clamp-3 text-[12px] leading-snug text-[#c5d3dc]">{agent.reason}</p>
+      {!agent.visitor ? <AgentQuotaDetail tenant={agent.id.slice(0, cut)} alias={agent.id.slice(cut + 1)} compact /> : null}
       <div className="mt-2.5 flex flex-wrap gap-1">
         {onTalk ? (
           <button type="button" onClick={onTalk} className={cn(HUD_BUTTON, HUD_TEXT, HUD_ON, 'h-8 px-2.5')}>
