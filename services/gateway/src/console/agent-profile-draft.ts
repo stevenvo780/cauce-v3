@@ -28,7 +28,7 @@ export function createAgentProfileDraftBinding(provider: AuthProvider, profiles:
         if (target?.tenant_id !== tenantId || target.alias !== alias || target.enabled) return false;
         const access = await consoleHumanAccess(provider, request, reply, 'read'); if (!access) return false;
         try { return await profiles.canPrepareDraft({ tenant_id: who.tenant_id, alias: who.alias, subject: who.operator_profile?.id ?? '', reason: '',
-          humanAuthority: access.options.humanAuthority, signal: access.options.signal,
+          humanAuthority: access.options.humanAuthority, companyAuthority: client => access.companyAuthority(client), signal: access.options.signal,
         }, tenantId, alias); } finally { access.close(); }
       } catch (error) { if (error instanceof AuthError || error instanceof AuthorizationError) return false; throw error; }
     },
@@ -38,7 +38,7 @@ export function createAgentProfileDraftBinding(provider: AuthProvider, profiles:
       const access = await consoleHumanAccess(provider, request, reply, 'read'); if (!access) throw new AuthorizationError();
       try { return await profiles.prepareDraft(input.profile, input.expected_revision, {
         tenant_id: who.tenant_id, alias: who.alias, subject: who.operator_profile?.id ?? '', reason: input.reason,
-        humanAuthority: access.options.humanAuthority, signal: access.options.signal,
+        humanAuthority: access.options.humanAuthority, companyAuthority: client => access.companyAuthority(client), signal: access.options.signal,
       }); } finally { access.close(); }
     },
   };

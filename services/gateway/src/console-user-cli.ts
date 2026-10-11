@@ -2,12 +2,12 @@ import { createInterface } from 'node:readline';
 import { createPool } from '@cauce/store';
 import { normalizeEmail } from './console-users.js';
 import { assertPasswordPolicy, hashPassword } from './password.js';
-import { maintainConsoleUser, type ConsoleUserMaintenance } from './console-user-maintenance.js';
+import { assertProvisionTarget, maintainConsoleUser, type ConsoleUserMaintenance } from './console-user-maintenance.js';
 
 /**
  * CLI to provision, change password and deactivate console users.
  *
- *   pnpm console:user --email user@example.com --name "User" --role operator --alias kant
+ *   pnpm console:user --email user@example.com --name "User" --role operator --tenant Steven --alias kant
  *   pnpm console:user --email user@example.com --deactivate
  */
 
@@ -56,7 +56,7 @@ function parseArguments(argv: readonly string[]): Options {
   if (role !== undefined && role !== 'operator' && role !== 'reader') throw new Error('--role debe ser operator o reader');
   const alias = values.get('alias');
   if (alias !== undefined && !/^[a-z][a-z0-9_-]{1,63}$/.test(alias)) throw new Error('--alias inválido');
-  return {
+  const options: Options = {
     email,
     name: values.get('name')?.trim(),
     role,
@@ -64,6 +64,8 @@ function parseArguments(argv: readonly string[]): Options {
     alias,
     deactivate, updateOnly, activate
   };
+  if (!deactivate) assertProvisionTarget(options);
+  return options;
 }
 
 /** Prompt without echo. Fails if there is no TTY: asking a pipe for a password would leave it in a log. */

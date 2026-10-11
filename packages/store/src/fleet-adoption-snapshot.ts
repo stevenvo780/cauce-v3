@@ -47,8 +47,8 @@ export async function legacyAdoptionSnapshot(client: DatabaseClient, targets: re
       'SELECT baseline,runtime_key FROM fleet_runtime_identities WHERE tenant_id=$1 AND alias=$2 FOR SHARE',
       [target.tenant_id, target.alias])).rows[0];
     if (!baseline?.baseline || baseline.runtime_key !== agent.runtime_key) block('not_legacy_baseline');
-    const tenant = (await client.query<{ retired_at: Date | null; purged_at: Date | null }>(
-      'SELECT retired_at,purged_at FROM tenants WHERE id=$1 FOR SHARE', [target.tenant_id])).rows[0];
+    const tenant = (await client.query<{ retired_at: Date | null; purged_at: Date | null; company_id: string }>(
+      'SELECT retired_at,purged_at,company_id FROM tenants WHERE id=$1 FOR SHARE', [target.tenant_id])).rows[0];
     if (agent.retired_at || agent.purged_at || !tenant || tenant.retired_at || tenant.purged_at) block('retired_identity');
     const members = (await client.query<MemberRow>(`SELECT member.room_id,member.role,member.enabled,member.retired_at,
       room.enabled AS room_enabled,room.retired_at AS room_retired_at,policy.allow_route FROM memberships member
@@ -85,6 +85,14 @@ export async function legacyAdoptionSnapshot(client: DatabaseClient, targets: re
       if (field === 'primary_account_id' && observed === null) continue;
       if (before[field] !== null && before[field] !== observed) block('contradictory_field', field);
       else if (before[field] === null && observed !== null) patch[field] = observed;
+    }
+    // The measured computer must already serve the agent's company, or be the first one of the only company.
+    if (patch.host_id != null) {
+      const host = (await client.query<{ company_id: string }>('SELECT company_id FROM fleet_hosts WHERE host_id=$1 FOR KEY SHARE',
+        [patch.host_id])).rows[0];
+      if (host ? host.company_id !== tenant?.company_id : (await client.query('SELECT 1 FROM companies OFFSET 1 LIMIT 1')).rowCount) {
+        block('legacy_placement_unrepresentable', 'host_id');
+      }
     }
     if (facts.primary_account_id !== null) {
       const account = (await client.query(`SELECT 1 FROM provider_accounts WHERE id=$1 AND enabled AND provider=$3

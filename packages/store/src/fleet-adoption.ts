@@ -11,7 +11,7 @@ async function authority(client: DatabaseClient, actor: LegacyAdoptionActor, tar
   await actor.authorize(client);
   if (!actor.subject.startsWith('console:') && actor.subject !== 'system:legacy-fleet-installer') throw new LegacyAdoptionError('forbidden');
   if (actor.subject.startsWith('console:')) await assertFleetHumanAuthority(client, actor.tenant_id, actor.alias, actor.subject);
-  for (const target of targets) await assertFleetAuthority(client, actor.tenant_id, actor.alias, { resource: 'agent', ...target });
+  for (const target of targets) await assertFleetAuthority(client, actor.tenant_id, actor.alias, { resource: 'agent', ...target }, true, actor.subject);
 }
 async function preview(client: DatabaseClient, actor: LegacyAdoptionActor, targets: LegacyAdoptionTarget[],
   fence: LegacyAdoptionFence, expectedRevision?: number): Promise<LegacyAdoptionPreview> {

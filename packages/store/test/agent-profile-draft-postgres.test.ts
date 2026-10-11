@@ -1,6 +1,7 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { emptyAgentProfile } from '@cauce/protocol';
 import { AgentProfileRepository } from '../src/agent-profile.js';
+import { lockCompanyAuthority } from '../src/company-authority.js';
 import type { AgentProfileDraftActor } from '../src/repository/agent-profile-draft.js';
 import type { DatabasePool } from '../src/db.js';
 import { preparePostgresSuite } from './postgres-suite.js';
@@ -22,7 +23,8 @@ beforeEach(async () => {
   if (!human) throw new Error('fixture human absent');
   await pool.query("INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,role,permissions) VALUES($1,'Steven','draft-owner','operator',ARRAY['read','control'])", [human.id]);
   actor = { tenant_id: 'Steven', alias: 'draft-owner', subject: `console:${human.id}`, reason: 'Preparar el agente antes de iniciarlo',
-    humanAuthority: async () => ({ humanId: human.id, tenantId: 'Steven', actorAlias: 'draft-owner' }) };
+    humanAuthority: async () => ({ humanId: human.id, tenantId: 'Steven', actorAlias: 'draft-owner' }),
+    companyAuthority: client => lockCompanyAuthority(client, { tenant: 'Steven', alias: 'draft-owner', humanId: human.id }) };
   repository = new AgentProfileRepository(pool);
 });
 afterEach(async () => { await current?.close(); current = undefined; });

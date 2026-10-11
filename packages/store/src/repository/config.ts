@@ -3,7 +3,7 @@ import type { ConfigLeafMutation, ConfigMutation, Permission, Tenant } from '@ca
 import { selectAccountForAlias, type AccountSelection } from '../accounts.js';
 import type { DatabaseClient } from '../db.js';
 import {
-  ConfigurationRepository, type ConfigurationChangeResult, type ConfigurationDependencyPreview,
+  ConfigurationRepository, type ConfigurationAuthorityResolver, type ConfigurationChangeResult, type ConfigurationDependencyPreview,
 } from '../configuration.js';
 import { StoreError } from './errors.js';
 import { OutboxOperatorRepository } from './outbox.js';
@@ -156,8 +156,10 @@ export abstract class ConfigRepository extends OutboxOperatorRepository {
     };
   }
 
-  async getConfiguration(actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>> {
-    return new ConfigurationRepository(this.pool).get(actorTenant, actorAlias);
+  async getConfiguration(
+    actorTenant: Tenant, actorAlias: string, authority?: ConfigurationAuthorityResolver,
+  ): Promise<Record<string, unknown>> {
+    return new ConfigurationRepository(this.pool).get(actorTenant, actorAlias, authority);
   }
 
   async applyConfigurationChange(
@@ -165,19 +167,20 @@ export abstract class ConfigRepository extends OutboxOperatorRepository {
     actorAlias: string,
     mutation: ConfigMutation,
     dryRun: boolean,
-    expectedRevision?: number
+    expectedRevision?: number,
+    authority?: ConfigurationAuthorityResolver,
   ): Promise<ConfigurationChangeResult> {
     return new ConfigurationRepository(this.pool).apply(
-      actorTenant, actorAlias, mutation, dryRun, expectedRevision
+      actorTenant, actorAlias, mutation, dryRun, expectedRevision, authority
     );
   }
 
   async getConfigurationDependencies(
     actorTenant: Tenant, actorAlias: string, mutation: ConfigLeafMutation,
-    expectedRevision?: number,
+    expectedRevision?: number, authority?: ConfigurationAuthorityResolver,
   ): Promise<ConfigurationDependencyPreview> {
     return new ConfigurationRepository(this.pool).getDependencies(
-      actorTenant, actorAlias, mutation, expectedRevision,
+      actorTenant, actorAlias, mutation, expectedRevision, authority,
     );
   }
 
@@ -186,10 +189,11 @@ export abstract class ConfigRepository extends OutboxOperatorRepository {
     actorAlias: string,
     revisionId: number,
     dryRun: boolean,
-    expectedRevision?: number
+    expectedRevision?: number,
+    authority?: ConfigurationAuthorityResolver,
   ): Promise<ConfigurationChangeResult> {
     return new ConfigurationRepository(this.pool).rollback(
-      actorTenant, actorAlias, revisionId, dryRun, expectedRevision
+      actorTenant, actorAlias, revisionId, dryRun, expectedRevision, authority
     );
   }
 
@@ -256,14 +260,17 @@ export abstract class ConfigRepository extends OutboxOperatorRepository {
    * describing the locator: "the borrower receives a reference it can only dereference on a host
    * that already holds the material".
    */
-  async selectAccount(actorTenant: Tenant, actorAlias: string, provider: string): Promise<AccountSelection> {
+  async selectAccount(actorTenant: Tenant, actorAlias: string, provider: string, model?: string): Promise<AccountSelection> {
     // Same character set as the CHECK on `provider_accounts.provider`. Validated here, not just
     // at the route, so no future caller can slip an arbitrary string into the query parameter.
     if (!/^[a-z][a-z0-9_.-]{0,63}$/.test(provider)) {
       throw new StoreError('invalid_input', `invalid provider name: ${provider}`);
     }
+    if (model !== undefined && (model.trim().length === 0 || model.length > 128)) {
+      throw new StoreError('invalid_input', 'invalid model name');
+    }
     return selectAccountForAlias(this.pool, {
-      tenant_id: actorTenant, alias: actorAlias, provider
+      tenant_id: actorTenant, alias: actorAlias, provider, ...(model === undefined ? {} : { model })
     });
   }
 }

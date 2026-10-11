@@ -41,8 +41,11 @@ async function lockHomeMembership(
   client: DatabaseClient, humanId: string, tenantId: string,
 ): Promise<HumanIdentitySnapshot['membership'] | undefined> {
   const membership = (await client.query<MembershipRow>(
-    `SELECT tenant_id, actor_alias, role, permissions, enabled, revision::text, revoked_at
-     FROM human_tenant_memberships WHERE human_id=$1 AND tenant_id=$2 FOR SHARE`,
+    `SELECT human.tenant_id, human.actor_alias, human.role, human.permissions, human.enabled, human.revision::text, human.revoked_at
+     FROM human_tenant_memberships human JOIN tenants tenant ON tenant.id=human.tenant_id
+     JOIN companies company ON company.id=tenant.company_id
+     WHERE human.human_id=$1 AND human.tenant_id=$2 AND tenant.enabled AND tenant.retired_at IS NULL
+       AND company.enabled AND company.retired_at IS NULL FOR SHARE OF human,tenant`,
     [humanId, tenantId],
   )).rows[0];
   if (!membership?.enabled || membership.revoked_at !== null) return undefined;

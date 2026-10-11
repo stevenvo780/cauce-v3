@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
-  applyMigrations, applyMigrationsThrough, ConfigurationRepository, createFleetHost, inspectMigrationIntegrity,
+  applyMigrations, applyMigrationsThrough, ConfigurationRepository, inspectMigrationIntegrity,
   lockAgentContextSnapshot, migrationSourcesForApply, recordFleetHostStatus, withTransaction, type DatabasePool,
 } from '../src/index.js';
 import { preparePostgresSuite } from './postgres-suite.js';
@@ -281,7 +281,7 @@ describe('company isolation and owner migrations from a production-shaped 051 da
     expect((await pool.query(`SELECT scope,company_id FROM config_revisions WHERE id>=$1 ORDER BY id`, [created.revision])).rows)
       .toEqual([{ scope: 'company', company_id: 'humanizar' }, { scope: 'platform', company_id: null }]);
     expect((await pool.query("SELECT company_id FROM rooms WHERE id='legacy-room'")).rows).toEqual([{ company_id: 'humanizar' }]);
-    await createFleetHost(pool, { host_id: 'legacy-host', display_name: 'Legacy host', notes: '' });
+    await pool.query("INSERT INTO fleet_hosts(host_id,display_name,notes) VALUES('legacy-host','Legacy host','')");
     await recordFleetHostStatus(pool, 'kratos', 'reachable');
     await recordFleetHostStatus(pool, 'reported-host', 'reachable');
     await pool.query("UPDATE agents SET host_id='placed-host' WHERE tenant_id='Isa' AND alias='salva'");
