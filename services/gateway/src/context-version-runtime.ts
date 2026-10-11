@@ -15,7 +15,11 @@ export class DeliveryContextRuntimeSink implements ContextRuntimeSink {
     const evidence = () => this.pool.query<{ applied_at: Date | null }>(`SELECT applied_at FROM agent_context_outbox
       WHERE company_id=$1 AND tenant_id=$2 AND alias=$3 AND version=$4`, [version.company_id, version.tenant_id, version.alias, version.version]);
     if ((await evidence()).rows[0]?.applied_at) return { version: version.version, digest: version.digest };
-    const principal = (await this.pool.query<{ tenant_id: string; alias: string; room_id: string }>(`SELECT principal.tenant_id,
+    const sourceOnly = (await this.pool.query(`SELECT 1 FROM company_system_principals
+      WHERE company_id=$1 AND kind='director' AND delivery_source_only`, [version.company_id])).rowCount !== 0;
+    const principal = (await this.pool.query<{ tenant_id: string; alias: string; room_id: string }>(sourceOnly
+      ? 'SELECT * FROM cauce_ensure_context_director_anchor($1,$2,$3,$4,$5)'
+      : `SELECT principal.tenant_id,
       principal.principal_alias AS alias,membership.room_id FROM company_system_principals principal
       JOIN tenants source ON source.id=principal.tenant_id AND source.company_id=principal.company_id
       JOIN tenants target ON target.id=$2 AND target.company_id=principal.company_id
@@ -23,9 +27,16 @@ export class DeliveryContextRuntimeSink implements ContextRuntimeSink {
       JOIN memberships membership ON membership.tenant_id=actor.tenant_id AND membership.alias=actor.alias
       JOIN role_policies policy ON policy.role=membership.role
       JOIN rooms room ON room.tenant_id=membership.tenant_id AND room.id=membership.room_id
-      WHERE principal.company_id=$1 AND principal.kind='director' AND actor.enabled AND actor.retired_at IS NULL
+      WHERE principal.company_id=$1 AND principal.kind='director' AND NOT principal.delivery_source_only AND actor.enabled AND actor.retired_at IS NULL
         AND actor.purged_at IS NULL AND source.enabled AND target.enabled AND membership.enabled AND room.enabled AND policy.allow_route
-      ORDER BY membership.room_id LIMIT 1`, [version.company_id, version.tenant_id])).rows[0];
+      ORDER BY membership.room_id LIMIT 1`, sourceOnly
+      ? [version.company_id, version.tenant_id, version.alias, version.version, version.digest]
+      : [version.company_id, version.tenant_id]).catch((error: unknown) => {
+        if (sourceOnly && error instanceof Error && 'code' in error && error.code === '22023') {
+          throw new Error('context application director is unavailable', { cause: error });
+        }
+        throw error;
+      })).rows[0];
     if (!principal) throw new Error('context application director is unavailable');
     const hash = createHash('sha256').update(JSON.stringify([version.company_id, version.tenant_id, version.alias, version.version, version.digest])).digest('hex');
     const baseKey = `context-apply:${hash}`;
