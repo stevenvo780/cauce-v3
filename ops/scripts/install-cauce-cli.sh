@@ -20,7 +20,7 @@ sintaxis() {  # $1=source
   case "$(head -n 1 "$1")" in
     (*python3*) PYTHONPYCACHEPREFIX="$PYCACHE" python3 -m py_compile "$1" ;;
     (*bash*|*/sh|*' sh') bash -n "$1" ;;
-    (*) case "$1" in (*.lib.sh) bash -n "$1" ;; (*) printf 'no se que interprete usa %s: no lo instalo\n' "$1" >&2; return 1 ;; esac ;;
+    (*) case "$1" in (*.lib.sh) bash -n "$1" ;; (*.py) PYTHONPYCACHEPREFIX="$PYCACHE" python3 -m py_compile "$1" ;; (*) printf 'no se que interprete usa %s: no lo instalo\n' "$1" >&2; return 1 ;; esac ;;
   esac
 }
 
@@ -39,6 +39,8 @@ instalar() {  # $1=source directory under ops/  $2=name, the same on both sides
 
 mkdir -p "$BIN"
 instalar cli cauce
+instalar cli host_enrollment.py
+instalar cli host_channel_client.py
 instalar cli cauce-credenciales.lib.sh  # sourced by cauce: login, aprovisionar, retirar
 instalar cli cauce-panel
 instalar cli cauce-huerfanas

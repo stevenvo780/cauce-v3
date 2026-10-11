@@ -9,9 +9,17 @@ BIN=$cli_home/.local/bin
 CONFIG=$cli_home/.config/cauce-v3/container-aliases
 TMUX_SOCKET=cauce
 
+if [[ ${1:-} == hosts ]]; then
+  cli_directory=$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")
+  host_helper=$cli_directory/host_enrollment.py
+  [[ -f $host_helper ]] || host_helper=$OPS/cli/host_enrollment.py
+  shift
+  exec python3 "$host_helper" "$@"
+fi
+
 if [[ -v CAUCE_FLEET_RUNTIME_STATE ]]; then
   case "${1:-}" in
-    ""|flota|estado|ver|-h|--help|help|ayuda) ;;
+    ""|flota|estado|ver|cuotas|coutas|-h|--help|help|ayuda) ;;
     pila-test) printf 'La pila de pruebas de flota dinámica requiere la consola y el coordinator durable.\n' >&2; exit 2 ;;
     *) case "${2:-}" in
       estado|sesiones|ver|panel) ;;
@@ -143,6 +151,7 @@ ${c_b}cauce${c_reset} — operar la flota Cauce V3
   ${c_b}cauce <alias> aprovisionar${c_reset} [--dry-run]  alta de credenciales (docs/operacion.md (alta y baja))
   ${c_b}cauce <alias> retirar${c_reset}    baja: para la unit y revoca lo que se pueda
   ${c_b}cauce ver [alias...]${c_reset}     mirar varios a la vez
+  ${c_b}cauce hosts enroll${c_reset} --gateway <URL> --invitation-stdin   registrar este ordenador
 
 Al entrar con ${c_b}cauce <alias>${c_reset} te dice en la cabecera cual de los tres modos te toco:
   ${c_ok}compartida${c_reset}  la TUI REAL del agente, y la MISMA conversacion que Telegram.
@@ -761,7 +770,11 @@ cmd_retirar() {  # $1=alias
 case "${1:-}" in
   ""|flota|estado) if [[ ${1:-} == estado ]]; then cmd_estado "${2:-}"; else cmd_flota; fi ;;
   -h|--help|help|ayuda) uso ;;
-  cuotas) shift; exec ssh -t -o BatchMode=yes "${CUOTAS_HOST:-server2}" "\$HOME/.local/bin/cuotas $*" ;;
+  cuotas|coutas)
+    shift
+    printf -v quota_arguments '%q ' "$@"
+    exec ssh -t -o BatchMode=yes "${CUOTAS_HOST:-server2}" "\$HOME/.local/bin/cuotas $quota_arguments"
+    ;;
   ver) shift; cmd_ver "$@" ;;
   pila-test) shift; d=$(dirname "${BASH_SOURCE[0]}")/../tests/cauce-pila-test.cli.mjs; [ -f "$d" ] || { echo "pila-test solo existe en el repo (falta $d)"; exit 3; }; exec node "$d" "$@" ;;
   *)

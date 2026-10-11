@@ -16,7 +16,7 @@ WORK=$(mktemp -d)
 cleanup() { rm -rf "$WORK"; }
 trap cleanup EXIT
 
-ESPERADOS=(cauce cauce-credenciales.lib.sh cauce-panel cauce-huerfanas cauce-reponer cauce-estado cauce-sesiones cauce-attach)
+ESPERADOS=(cauce host_enrollment.py host_channel_client.py cauce-credenciales.lib.sh cauce-panel cauce-huerfanas cauce-reponer cauce-estado cauce-sesiones cauce-attach)
 
 # py_compile writes `<dir>/__pycache__/<name>.pyc` a level deeper, so the probe reaches depth 2.
 MARCA="$WORK/marca"
@@ -41,6 +41,11 @@ if [ "$rc" = 0 ]; then ok "install exits 0"; else bad "install exits 0 (rc=$rc):
 for n in "${ESPERADOS[@]}"; do
   if [ -x "$DEST/$n" ]; then ok "publica $n"; else bad "publica $n"; fi
 done
+if "$DEST/cauce" hosts enroll --help 2>&1 | grep -q -- '--invitation-stdin'; then
+  ok "enrolamiento disponible desde el CLI instalado"
+else
+  bad "enrolamiento disponible desde el CLI instalado"
+fi
 n_instalados=$(find "$DEST" -maxdepth 1 -type f | wc -l)
 if [ "$n_instalados" = "${#ESPERADOS[@]}" ]; then
   ok "publica exactamente ${#ESPERADOS[@]} ficheros"
