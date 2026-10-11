@@ -1,3 +1,4 @@
+import { telegramAliasKey } from './identity.js';
 import { randomUUID } from 'node:crypto';
 import { logEvent, type Origin } from '@cauce/protocol';
 import type { TelegramActivity } from './activity.js';
@@ -167,8 +168,8 @@ export class TelegramPoller {
     this.observer = options.observer;
     const username = options.botUsername ?? options.config.bot_username;
     this.fleet = options.fleet ?? {
-      byUsername: new Map(username === undefined ? [] : [[username.toLowerCase(), options.config.alias]]),
-      byBotId: new Map([[options.botId, options.config.alias]])
+      byUsername: new Map(username === undefined ? [] : [[username.toLowerCase(), telegramAliasKey(options.config)]]),
+      byBotId: new Map([[options.botId, telegramAliasKey(options.config)]])
     };
     this.self = {
       bot_id: options.botId,
@@ -183,15 +184,15 @@ export class TelegramPoller {
     // Reserved fleet names for impersonation detection in groups.
     this.reservedNames = new Set([
       ...this.fleet.byUsername.keys(),
-      ...this.fleet.byUsername.values(),
-      ...this.fleet.byBotId.values(),
+      ...[...this.fleet.byUsername.values()].map(key => key.split('/').at(-1) ?? key),
+      ...[...this.fleet.byBotId.values()].map(key => key.split('/').at(-1) ?? key),
       options.config.alias
     ]);
   }
 
   private markPollFenced(): void {
     this.onMetric('poll_fenced');
-    this.observer.pollCycleFenced(this.config.alias);
+    this.observer.pollCycleFenced(telegramAliasKey(this.config));
   }
 
   /**
@@ -653,7 +654,7 @@ export class TelegramPoller {
     this.currentLease = after;
     // This is real per-update progress.  Lease renewal by itself must not keep health green
     // while the same update is hung forever.
-    this.observer.pollCycleHeartbeat(this.config.alias);
+    this.observer.pollCycleHeartbeat(telegramAliasKey(this.config));
     return after;
   }
 
@@ -704,17 +705,17 @@ export class TelegramPoller {
   async run(signal: AbortSignal, idleMs = 250): Promise<void> {
     let failures = 0;
     while (!signal.aborted) {
-      this.observer.pollCycleStarted(this.config.alias);
+      this.observer.pollCycleStarted(telegramAliasKey(this.config));
       try {
         const count = await this.runOnce(signal);
-        this.observer.pollCycleSucceeded(this.config.alias, count);
+        this.observer.pollCycleSucceeded(telegramAliasKey(this.config), count);
         failures = 0;
         if (count === 0) await sleep(idleMs, signal);
       } catch (error) {
         // An operator-requested shutdown is not a failed poll. The cursor remains at the last
         // completely handled update, so the first unhandled update is replayed after restart.
         if ((signal as unknown as { aborted: boolean }).aborted) break;
-        this.observer.pollCycleFailed(this.config.alias);
+        this.observer.pollCycleFailed(telegramAliasKey(this.config));
         this.onMetric('poll_error');
         failures += 1;
         // Error log entry for the polling cycle.

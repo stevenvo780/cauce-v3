@@ -1,3 +1,4 @@
+import { telegramAliasKey } from './identity.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { hasVisibleText } from '@cauce/protocol';
 import type { TelegramActivity, TelegramActivityTarget, TelegramTerminalOutcome } from './activity.js';
@@ -279,7 +280,7 @@ export class TelegramEgressWorker {
 
   constructor(options: TelegramEgressWorkerOptions) {
     this.repository = options.repository;
-    this.aliases = new Map(options.aliases.map((entry) => [entry.alias, entry]));
+    this.aliases = new Map(options.aliases.map((entry) => [telegramAliasKey(entry), entry]));
     this.apis = options.apis;
     this.workerId = options.workerId ?? `telegram-egress:${randomUUID()}`;
     this.leaseMs = options.leaseMs ?? 90_000;
@@ -433,8 +434,9 @@ export class TelegramEgressWorker {
 
   private async process(event: TelegramOriginRelay): Promise<void> {
     const bridgeAlias = aliasFrom(event);
-    const config = bridgeAlias ? this.aliases.get(bridgeAlias) : undefined;
-    const api = bridgeAlias ? this.apis.get(bridgeAlias) : undefined;
+    const key = bridgeAlias ? telegramAliasKey({ tenant_id: event.tenant_id, alias: bridgeAlias }) : undefined;
+    const config = key ? this.aliases.get(key) : undefined;
+    const api = key ? this.apis.get(key) : undefined;
     const chatId = event.origin.conversation_id;
     const interimAcknowledgement = isInterimAcknowledgement(event.payload);
     const threadId = originThreadId(event);

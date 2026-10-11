@@ -30,7 +30,7 @@ describe('Telegram fenced egress', () => {
 
     await new TelegramEgressWorker({
       activity: noopActivity(), observer: noopObserver(),
-      repository, aliases: [config()], apis: new Map([['kant', api]])
+      repository, aliases: [config()], apis: new Map([['Steven/kant', api]])
     }).runOnce();
 
     expect(repository.claimLimits).toEqual([1]);
@@ -47,7 +47,7 @@ describe('Telegram fenced egress', () => {
 
     await new TelegramEgressWorker({
       activity: noopActivity(), observer: noopObserver(),
-      repository, aliases: [config()], apis: new Map([['kant', api]]),
+      repository, aliases: [config()], apis: new Map([['Steven/kant', api]]),
       onMetric: (metric) => metrics.push(metric)
     }).runOnce();
 
@@ -65,7 +65,7 @@ describe('Telegram fenced egress', () => {
 
     await new TelegramEgressWorker({
       activity: noopActivity(), observer: noopObserver(),
-      repository, aliases: [config()], apis: new Map([['kant', api]]),
+      repository, aliases: [config()], apis: new Map([['Steven/kant', api]]),
       onMetric: (metric) => metrics.push(metric)
     }).runOnce();
 
@@ -101,7 +101,7 @@ describe('Telegram fenced egress', () => {
       observer: noopObserver(),
       repository,
       aliases: [config()],
-      apis: new Map([['kant', api]]),
+      apis: new Map([['Steven/kant', api]]),
       activity: {
         begin: () => undefined,
         finish: (_target, outcome) => finishes.push({ outcome }),
@@ -124,7 +124,7 @@ describe('Telegram fenced egress', () => {
     repository.outboxState = 'failed';
     await new TelegramEgressWorker({
       activity: noopActivity(), observer: noopObserver(),
-      repository, aliases: [config()], apis: new Map([['kant', api]])
+      repository, aliases: [config()], apis: new Map([['Steven/kant', api]])
     }).runOnce();
     expect(api.sends).toHaveLength(1);
     expect(repository.acknowledgements.at(-1)).toMatchObject({
@@ -181,7 +181,7 @@ describe('Telegram fenced egress', () => {
       observer: noopObserver(),
       repository,
       aliases: [config()],
-      apis: new Map([['kant', api]]),
+      apis: new Map([['Steven/kant', api]]),
       onMetric: (metric) => metrics.push(metric),
       activity: {
         begin: () => undefined,
@@ -222,7 +222,7 @@ describe('Telegram fenced egress', () => {
 
     await new TelegramEgressWorker({
       activity: noopActivity(), observer: noopObserver(),
-      repository, aliases: [config()], apis: new Map([['kant', api]])
+      repository, aliases: [config()], apis: new Map([['Steven/kant', api]])
     }).runOnce();
 
     expect([...repository.effects.values()]).toEqual([
@@ -250,7 +250,7 @@ describe('Telegram fenced egress', () => {
 
     await new TelegramEgressWorker({
       activity: noopActivity(), observer: noopObserver(),
-      repository, aliases: [config()], apis: new Map([['kant', api]])
+      repository, aliases: [config()], apis: new Map([['Steven/kant', api]])
     }).runOnce();
 
     expect(api.sends).toHaveLength(0);
@@ -276,7 +276,7 @@ describe('Telegram fenced egress', () => {
 
     await new TelegramEgressWorker({
       activity: noopActivity(), observer: noopObserver(),
-      repository, aliases: [config()], apis: new Map([['kant', api]])
+      repository, aliases: [config()], apis: new Map([['Steven/kant', api]])
     }).runOnce();
 
     expect(api.sends).toEqual([{ chat: '201', text: 'adapter reply', options: { parse_mode: 'html' }, arity: 3 }]);
@@ -294,7 +294,7 @@ describe('Telegram fenced egress', () => {
       observer: noopObserver(),
       repository,
       aliases: [config()],
-      apis: new Map([['kant', api]]),
+      apis: new Map([['Steven/kant', api]]),
       activity
     }).runOnce();
     await activity.whenIdle();
@@ -317,7 +317,7 @@ describe('Telegram fenced egress', () => {
         observer: noopObserver(),
         repository,
         aliases: [config()],
-        apis: new Map([['kant', api]]),
+        apis: new Map([['Steven/kant', api]]),
         activity
       }).runOnce();
       await activity.whenIdle();
@@ -337,7 +337,7 @@ describe('Telegram fenced egress', () => {
       observer: noopObserver(),
       repository,
       aliases: [config()],
-      apis: new Map([['kant', api]]),
+      apis: new Map([['Steven/kant', api]]),
       activity
     }).runOnce();
     await activity.whenIdle();
@@ -358,7 +358,7 @@ describe('Telegram fenced egress', () => {
     const repository = new MemoryEgressRepository(relay());
     const worker = new TelegramEgressWorker({
       activity: noopActivity(), observer: noopObserver(),
-      repository, aliases: [config()], apis: new Map([['kant', client]]), baseRetryMs: 10
+      repository, aliases: [config()], apis: new Map([['Steven/kant', client]]), baseRetryMs: 10
     });
 
     await worker.runOnce();
@@ -380,7 +380,7 @@ describe('Telegram fenced egress', () => {
     const repository = new MemoryEgressRepository(relay());
     await new TelegramEgressWorker({
       activity: noopActivity(), observer: noopObserver(),
-      repository, aliases: [config()], apis: new Map([['kant', client]])
+      repository, aliases: [config()], apis: new Map([['Steven/kant', client]])
     }).runOnce();
 
     expect([...repository.effects.values()][0]?.state).toBe('dead');
@@ -396,7 +396,7 @@ describe('Telegram fenced egress', () => {
     const repository = new MemoryEgressRepository(relay());
     await new TelegramEgressWorker({
       activity: noopActivity(), observer: noopObserver(),
-      repository, aliases: [config()], apis: new Map([['kant', client]])
+      repository, aliases: [config()], apis: new Map([['Steven/kant', client]])
     }).runOnce();
 
     expect([...repository.effects.values()][0]?.state).toBe('ambiguous');
@@ -419,7 +419,7 @@ describe('Telegram fenced egress', () => {
     }));
     await new TelegramEgressWorker({
       activity: noopActivity(), observer: noopObserver(),
-      repository, aliases: [config()], apis: new Map([['kant', api]])
+      repository, aliases: [config()], apis: new Map([['Steven/kant', api]])
     }).runOnce();
 
     expect([...repository.effects.values()].map((effect) => effect.state)).toEqual(['sent', 'ambiguous']);
@@ -427,7 +427,7 @@ describe('Telegram fenced egress', () => {
     expect(repository.acknowledgements.some((ack) => ack.status === 'sent')).toBe(false);
     await new TelegramEgressWorker({
       activity: noopActivity(), observer: noopObserver(),
-      repository, aliases: [config()], apis: new Map([['kant', api]])
+      repository, aliases: [config()], apis: new Map([['Steven/kant', api]])
     }).runOnce();
     expect(api.calls).toBe(2);
   });
@@ -439,7 +439,7 @@ describe('Telegram fenced egress', () => {
     }));
     await new TelegramEgressWorker({
       activity: noopActivity(), observer: noopObserver(),
-      repository, aliases: [config()], apis: new Map([['kant', api]])
+      repository, aliases: [config()], apis: new Map([['Steven/kant', api]])
     }).runOnce();
 
     expect(api.sends).toHaveLength(2);
@@ -452,7 +452,7 @@ describe('Telegram fenced egress', () => {
     const repository = new MemoryEgressRepository(relay({ tenant_id: 'Isa' }));
     await new TelegramEgressWorker({
       activity: noopActivity(), observer: noopObserver(),
-      repository, aliases: [config()], apis: new Map([['kant', api]])
+      repository, aliases: [config()], apis: new Map([['Steven/kant', api]])
     }).runOnce();
 
     expect(api.sends).toHaveLength(0);
@@ -474,7 +474,7 @@ describe('Telegram group egress', () => {
         bot_username: 'kant_bot',
         chats: [{ chat_id: String(GROUP_CHAT_ID), mode: 'off', session_scope: 'user', reply_to_origin: true, threads: [] }]
       })],
-      apis: new Map([['kant', api]])
+      apis: new Map([['Steven/kant', api]])
     }).runOnce();
 
     expect(api.sends).toHaveLength(0);
@@ -496,7 +496,7 @@ describe('Telegram group egress', () => {
         bot_username: 'kant_bot',
         chats: [] // scoped, default-deny: no entry for GROUP_CHAT_ID
       })],
-      apis: new Map([['kant', api]])
+      apis: new Map([['Steven/kant', api]])
     }).runOnce();
 
     expect(api.sends).toHaveLength(0);
@@ -511,7 +511,7 @@ describe('Telegram group egress', () => {
       activity: noopActivity(), observer: noopObserver(),
       repository,
       aliases: [legacyGroupConfig({ alias: 'kant', allowed_chat_ids: [String(GROUP_CHAT_ID)] })],
-      apis: new Map([['kant', api]])
+      apis: new Map([['Steven/kant', api]])
     }).runOnce();
 
     expect(api.sends).toEqual([{ chat: String(GROUP_CHAT_ID), text: 'done', options: { parse_mode: 'html' }, arity: 3 }]);
@@ -538,7 +538,7 @@ describe('Telegram group egress', () => {
         bot_username: 'kant_bot',
         chats: [{ chat_id: String(GROUP_CHAT_ID), mode: 'always', session_scope: 'user', reply_to_origin: true, threads: [] }]
       })],
-      apis: new Map([['kant', api]])
+      apis: new Map([['Steven/kant', api]])
     }).runOnce();
 
     expect(api.sends).toHaveLength(2);
@@ -559,7 +559,7 @@ describe('Telegram group egress', () => {
         bot_username: 'kant_bot',
         chats: [{ chat_id: String(GROUP_CHAT_ID), mode: 'always', session_scope: 'user', reply_to_origin: false, threads: [] }]
       })],
-      apis: new Map([['kant', api]])
+      apis: new Map([['Steven/kant', api]])
     }).runOnce();
 
     expect(api.sends).toEqual([{ chat: String(GROUP_CHAT_ID), text: 'done', options: { parse_mode: 'html' }, arity: 3 }]);
@@ -576,7 +576,7 @@ describe('Telegram proactive egress', () => {
       observer: noopObserver(),
       repository,
       aliases: [config()],
-      apis: new Map([['kant', api]]),
+      apis: new Map([['Steven/kant', api]]),
       activity: {
         begin: () => undefined,
         finish: (_target, outcome) => finishes.push({ outcome }),
@@ -595,7 +595,7 @@ describe('Telegram proactive egress', () => {
     const repository = new MemoryEgressRepository(proactiveRelay({ external_message_id: '301' }));
     await new TelegramEgressWorker({
       activity: noopActivity(), observer: noopObserver(),
-      repository, aliases: [config()], apis: new Map([['kant', api]])
+      repository, aliases: [config()], apis: new Map([['Steven/kant', api]])
     }).runOnce();
 
     expect(api.sends).toHaveLength(0);
@@ -607,10 +607,32 @@ describe('Telegram proactive egress', () => {
     const repository = new MemoryEgressRepository(proactiveRelay({ conversation_id: '999' }));
     await new TelegramEgressWorker({
       activity: noopActivity(), observer: noopObserver(),
-      repository, aliases: [config()], apis: new Map([['kant', api]])
+      repository, aliases: [config()], apis: new Map([['Steven/kant', api]])
     }).runOnce();
 
     expect(api.sends).toHaveLength(0);
     expect(repository.acknowledgements[0]?.status).toBe('dead');
+  });
+});
+
+
+describe('Telegram egress tenant identity', () => {
+  it.each(['North', 'South'])('uses the exact tenant API for the shared alias in %s', async tenant => {
+    const north = new FakeTelegram(); const south = new FakeTelegram();
+    const repository = new MemoryEgressRepository(relay({ tenant_id: tenant }));
+    const aliases = ['North', 'South'].map(tenant_id => config({ tenant_id, recipients: [{ tenant_id, alias: 'kant' }] }));
+    await new TelegramEgressWorker({ repository, aliases, apis: new Map([['North/kant', north], ['South/kant', south]]),
+      activity: noopActivity(), observer: noopObserver() }).runOnce();
+    expect(north.sends).toHaveLength(tenant === 'North' ? 1 : 0);
+    expect(south.sends).toHaveLength(tenant === 'South' ? 1 : 0);
+    expect(repository.acknowledgements.at(-1)?.status).toBe('sent');
+  });
+
+  it('refuses a foreign tenant event even when its alias is locally configured', async () => {
+    const api = new FakeTelegram(); const repository = new MemoryEgressRepository(relay({ tenant_id: 'South' }));
+    await new TelegramEgressWorker({ repository, aliases: [config({ tenant_id: 'North' })],
+      apis: new Map([['North/kant', api]]), activity: noopActivity(), observer: noopObserver() }).runOnce();
+    expect(api.sends).toHaveLength(0);
+    expect(repository.acknowledgements.at(-1)?.status).toBe('dead');
   });
 });

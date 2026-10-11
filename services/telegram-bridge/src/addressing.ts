@@ -1,3 +1,4 @@
+import { telegramAliasKey } from './identity.js';
 import type { TelegramChatPolicy, TelegramEntity, TelegramMessage, TelegramUser } from './types.js';
 import { positiveTelegramId } from './validation.js';
 
@@ -213,12 +214,12 @@ function aliasesFor(
   for (const username of usernames) {
     const alias = fleet.byUsername.get(username);
     if (alias !== undefined) result.add(alias);
-    else if (selfUsername !== undefined && username === selfUsername) result.add(self.alias);
+    else if (selfUsername !== undefined && username === selfUsername) result.add(telegramAliasKey(self));
   }
   for (const userId of userIds) {
     const alias = fleet.byBotId.get(userId);
     if (alias !== undefined) result.add(alias);
-    else if (userId === self.bot_id) result.add(self.alias);
+    else if (userId === self.bot_id) result.add(telegramAliasKey(self));
   }
   return result;
 }
@@ -336,8 +337,8 @@ export function resolveAddressing(input: AddressingInput): AddressingDecision {
   const targets = new Set<string>([...mentioned, ...commanded]);
 
   // P2
-  if (targets.has(self.alias)) {
-    return allow(mentioned.has(self.alias) ? 'mention' : 'command');
+  if (targets.has(telegramAliasKey(self))) {
+    return allow(mentioned.has(telegramAliasKey(self)) ? 'mention' : 'command');
   }
   // P3 — narrowed to the aliases that actually serve this (chat, thread).
   const served = participants === undefined

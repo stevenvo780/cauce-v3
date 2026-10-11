@@ -96,7 +96,7 @@ describe('Telegram poller lifecycle and recovery', () => {
     });
 
     await poller.runOnce();
-    expect(seen).toEqual(['heartbeat:kant']);
+    expect(seen).toEqual(['heartbeat:Steven/kant']);
     expect(begun).toEqual(['121']);
 
     // A lost lease is progress evidence too: it must reach the observer, not be swallowed.
@@ -107,7 +107,7 @@ describe('Telegram poller lifecycle and recovery', () => {
       config: config(), botId: '900001', api: new FakeTelegram([]), repository, ingress, ownerId: 'other'
     }).runOnce();
     await poller.runOnce();
-    expect(seen).toContain('fenced:kant');
+    expect(seen).toContain('fenced:Steven/kant');
   });
 
   it('fences a competing poller for the same bot', async () => {
@@ -155,7 +155,7 @@ describe('Telegram egress crash recovery and replay', () => {
     const repository = new MemoryEgressRepository(relay());
     const crashing = new TelegramEgressWorker({
       activity: noopActivity(), observer: noopObserver(),
-      repository, aliases: [config()], apis: new Map([['kant', api]]),
+      repository, aliases: [config()], apis: new Map([['Steven/kant', api]]),
       hooks: { beforeBegin: () => { throw new EgressCrash('before_begin'); } }
     });
     await expect(crashing.runOnce()).rejects.toBeInstanceOf(EgressCrash);
@@ -164,7 +164,7 @@ describe('Telegram egress crash recovery and replay', () => {
 
     await new TelegramEgressWorker({
       activity: noopActivity(), observer: noopObserver(),
-      repository, aliases: [config()], apis: new Map([['kant', api]])
+      repository, aliases: [config()], apis: new Map([['Steven/kant', api]])
     }).runOnce();
     expect(api.sends).toHaveLength(1);
     expect(repository.acknowledgements.at(-1)?.status).toBe('sent');
@@ -175,7 +175,7 @@ describe('Telegram egress crash recovery and replay', () => {
     const repository = new MemoryEgressRepository(relay());
     await expect(new TelegramEgressWorker({
       activity: noopActivity(), observer: noopObserver(),
-      repository, aliases: [config()], apis: new Map([['kant', api]]),
+      repository, aliases: [config()], apis: new Map([['Steven/kant', api]]),
       hooks: { beforeSend: () => { throw new EgressCrash('before_send'); } }
     }).runOnce()).rejects.toBeInstanceOf(EgressCrash);
 
@@ -189,7 +189,7 @@ describe('Telegram egress crash recovery and replay', () => {
     })).rejects.toThrow('sent ACK without confirmed effects');
     await new TelegramEgressWorker({
       activity: noopActivity(), observer: noopObserver(),
-      repository, aliases: [config()], apis: new Map([['kant', api]])
+      repository, aliases: [config()], apis: new Map([['Steven/kant', api]])
     }).runOnce();
 
     const effect = [...repository.effects.values()][0];
@@ -212,12 +212,12 @@ describe('Telegram egress crash recovery and replay', () => {
     const repository = new MemoryEgressRepository(relay());
     await expect(new TelegramEgressWorker({
       activity: noopActivity(), observer: noopObserver(),
-      repository, aliases: [config()], apis: new Map([['kant', api]])
+      repository, aliases: [config()], apis: new Map([['Steven/kant', api]])
     }).runOnce()).rejects.toBeInstanceOf(EgressCrash);
 
     await new TelegramEgressWorker({
       activity: noopActivity(), observer: noopObserver(),
-      repository, aliases: [config()], apis: new Map([['kant', api]])
+      repository, aliases: [config()], apis: new Map([['Steven/kant', api]])
     }).runOnce();
 
     expect(api.calls).toBe(1);
@@ -230,7 +230,7 @@ describe('Telegram egress crash recovery and replay', () => {
     const repository = new MemoryEgressRepository(relay());
     const crashing = new TelegramEgressWorker({
       activity: noopActivity(), observer: noopObserver(),
-      repository, aliases: [config()], apis: new Map([['kant', api]]),
+      repository, aliases: [config()], apis: new Map([['Steven/kant', api]]),
       hooks: { afterSend: () => { throw new EgressCrash('after_send'); } }
     });
     await expect(crashing.runOnce()).rejects.toBeInstanceOf(EgressCrash);
@@ -238,7 +238,7 @@ describe('Telegram egress crash recovery and replay', () => {
 
     await new TelegramEgressWorker({
       activity: noopActivity(), observer: noopObserver(),
-      repository, aliases: [config()], apis: new Map([['kant', api]])
+      repository, aliases: [config()], apis: new Map([['Steven/kant', api]])
     }).runOnce();
     expect(api.sends).toHaveLength(1);
     expect([...repository.effects.values()][0]?.state).toBe('ambiguous');
@@ -251,7 +251,7 @@ describe('Telegram egress crash recovery and replay', () => {
     const repository = new MemoryEgressRepository(relay());
     await expect(new TelegramEgressWorker({
       activity: noopActivity(), observer: noopObserver(),
-      repository, aliases: [config()], apis: new Map([['kant', api]]),
+      repository, aliases: [config()], apis: new Map([['Steven/kant', api]]),
       hooks: { afterComplete: () => { throw new EgressCrash('after_complete'); } }
     }).runOnce()).rejects.toBeInstanceOf(EgressCrash);
 
@@ -259,7 +259,7 @@ describe('Telegram egress crash recovery and replay', () => {
     expect(repository.acknowledgements).toHaveLength(0);
     await new TelegramEgressWorker({
       activity: noopActivity(), observer: noopObserver(),
-      repository, aliases: [config()], apis: new Map([['kant', api]])
+      repository, aliases: [config()], apis: new Map([['Steven/kant', api]])
     }).runOnce();
 
     expect(api.sends).toHaveLength(1);
@@ -271,12 +271,12 @@ describe('Telegram egress crash recovery and replay', () => {
     const repository = new MemoryEgressRepository(relay());
     await expect(new TelegramEgressWorker({
       activity: noopActivity(), observer: noopObserver(),
-      repository, aliases: [config()], apis: new Map([['kant', api]]),
+      repository, aliases: [config()], apis: new Map([['Steven/kant', api]]),
       hooks: { beforeSend: () => { throw new EgressCrash('before_send'); } }
     }).runOnce()).rejects.toBeInstanceOf(EgressCrash);
     await new TelegramEgressWorker({
       activity: noopActivity(), observer: noopObserver(),
-      repository, aliases: [config()], apis: new Map([['kant', api]])
+      repository, aliases: [config()], apis: new Map([['Steven/kant', api]])
     }).runOnce();
     const effect = [...repository.effects.values()][0];
     if (!effect) throw new Error('Effect not found');
@@ -300,7 +300,7 @@ describe('Telegram egress crash recovery and replay', () => {
     expect(replayed).toMatchObject({ state: 'prepared', replay_count: 1 });
     await new TelegramEgressWorker({
       activity: noopActivity(), observer: noopObserver(),
-      repository, aliases: [config()], apis: new Map([['kant', api]])
+      repository, aliases: [config()], apis: new Map([['Steven/kant', api]])
     }).runOnce();
 
     expect(api.sends).toHaveLength(1);

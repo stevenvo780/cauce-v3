@@ -1,6 +1,7 @@
 import { lstat, readFile } from 'node:fs/promises';
 import { isAbsolute, normalize } from 'node:path';
 import { TenantSchema } from '@cauce/protocol';
+import { telegramAliasKey } from './identity.js';
 import type { FleetDirectory, GroupRouting } from './addressing.js';
 import type {
   BridgeRecipient, SessionScope, TelegramAliasConfig, TelegramBridgeConfig, TelegramChatMode,
@@ -319,11 +320,14 @@ export function parseTelegramBridgeConfig(value: unknown): TelegramBridgeConfig 
     throw new Error('aliases must be a non-empty array');
   }
   const aliases = root.aliases.map(aliasConfig);
-  if (new Set(aliases.map((entry) => entry.alias)).size !== aliases.length) {
-    throw new Error('alias names must be unique');
+  if (new Set(aliases.map(telegramAliasKey)).size !== aliases.length) {
+    throw new Error('tenant and alias pairs must be unique');
   }
   if (new Set(aliases.map((entry) => normalize(entry.token_file))).size !== aliases.length) {
     throw new Error('token_file values must be unique across aliases');
+  }
+  if (new Set(aliases.map(entry => normalize(entry.v2_shutdown_marker_file))).size !== aliases.length) {
+    throw new Error('shutdown marker paths must be unique across aliases');
   }
   assertFleetUsernames(aliases);
   assertSingleAmbientHost(aliases);
@@ -341,7 +345,7 @@ export function fleetDirectory(
 ): FleetDirectory {
   const byUsername = new Map<string, string>();
   for (const alias of config.aliases) {
-    if (alias.bot_username !== undefined) byUsername.set(alias.bot_username.toLowerCase(), alias.alias);
+    if (alias.bot_username !== undefined) byUsername.set(alias.bot_username.toLowerCase(), telegramAliasKey(alias));
   }
   const byBotId = new Map<string, string>();
   for (const [alias, botId] of botIds) byBotId.set(botId, alias);
@@ -364,11 +368,11 @@ export function chatParticipants(
   const participants = new Set<string>();
   for (const alias of config.aliases) {
     if (alias.chats === undefined) {
-      if (alias.allowed_chat_ids.includes(chatId)) participants.add(alias.alias);
+      if (alias.allowed_chat_ids.includes(chatId)) participants.add(telegramAliasKey(alias));
       continue;
     }
     const policy = effectiveChatPolicy(alias, chatId, threadId);
-    if (policy !== undefined && policy.mode !== 'off') participants.add(alias.alias);
+    if (policy !== undefined && policy.mode !== 'off') participants.add(telegramAliasKey(alias));
   }
   return participants;
 }
@@ -381,11 +385,11 @@ export function fleetParticipationGaps(
   config: TelegramBridgeConfig,
   selected: readonly TelegramAliasConfig[]
 ): { alias: string; chat_id: string }[] {
-  const running = new Set(selected.map((entry) => entry.alias));
+  const running = new Set(selected.map(telegramAliasKey));
   const chats = new Set(selected.flatMap((entry) => (entry.chats ?? []).map((chat) => chat.chat_id)));
   const gaps: { alias: string; chat_id: string }[] = [];
   for (const alias of config.aliases) {
-    if (running.has(alias.alias)) continue;
+    if (running.has(telegramAliasKey(alias))) continue;
     for (const chat of alias.chats ?? []) {
       if (chats.has(chat.chat_id)) gaps.push({ alias: alias.alias, chat_id: chat.chat_id });
     }
@@ -415,8 +419,10 @@ export async function assertV2PollerDisabled(config: TelegramAliasConfig): Promi
   if (!info.isFile() || info.isSymbolicLink() || (info.mode & 0o022) !== 0) {
     throw new Error(`V2 shutdown marker for ${config.alias} is not a protected regular file`);
   }
-  const expected = `v2-poller-disabled:${config.alias}`;
-  if ((await readFile(config.v2_shutdown_marker_file, 'utf8')).trim() !== expected) {
+  const expected = `v2-poller-disabled:${telegramAliasKey(config)}`;
+  const legacyPath = `/run/cauce-telegram/${config.alias}.disabled`;
+  const content = (await readFile(config.v2_shutdown_marker_file, 'utf8')).trim();
+  if (content !== expected && !(normalize(config.v2_shutdown_marker_file) === legacyPath && content === `v2-poller-disabled:${config.alias}`)) {
     throw new Error(`V2 poller shutdown is not confirmed for ${config.alias}`);
   }
 }

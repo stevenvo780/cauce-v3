@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { AddressingInput, AddressingSelf, FleetDirectory } from '../src/addressing.js';
 import { addressingBucket, resolveAddressing, telegramThreadId } from '../src/addressing.js';
+import { fleetDirectory, parseTelegramBridgeConfig } from '../src/config.js';
 import type { TelegramChatPolicy, TelegramEntity, TelegramMessage } from '../src/types.js';
 
 const SELF: AddressingSelf = {
@@ -12,14 +13,14 @@ const SELF: AddressingSelf = {
 
 const FLEET: FleetDirectory = {
   byUsername: new Map([
-    ['jarvis_cauce_bot', 'jarvis'],
-    ['kant_cauce_bot', 'kant'],
-    ['socrates_cauce_bot', 'socrates']
+    ['jarvis_cauce_bot', 'Steven/jarvis'],
+    ['kant_cauce_bot', 'Steven/kant'],
+    ['socrates_cauce_bot', 'Steven/socrates']
   ]),
   byBotId: new Map([
-    ['900001', 'jarvis'],
-    ['900002', 'kant'],
-    ['900003', 'socrates']
+    ['900001', 'Steven/jarvis'],
+    ['900002', 'Steven/kant'],
+    ['900003', 'Steven/socrates']
   ])
 };
 
@@ -215,7 +216,7 @@ describe('addressing precedence', () => {
     // The bug this closes: `fleet.byUsername` covers the whole file, so naming an alias that is
     // not in this group used to silence every alias that IS in it — nobody answered at all.
     const toAbsentPeer = message(mention('', 'socrates_cauce_bot'));
-    const present = new Set(['jarvis', 'kant']);
+    const present = new Set(['Steven/jarvis', 'Steven/kant']);
     expect(resolve({ message: toAbsentPeer, participants: present, policy: policy({ default_alias: 'jarvis' }) }))
       .toMatchObject({ addressed: true, reason: 'default_alias' });
     // With no ambient host nobody answers, but the silence is now reported as its own reason
@@ -231,7 +232,7 @@ describe('addressing precedence', () => {
     // `participants` is built from effectiveChatPolicy, so an `off` peer is simply absent from it.
     expect(resolve({
       message: message(mention('', 'kant_cauce_bot')),
-      participants: new Set(['jarvis']),
+      participants: new Set(['Steven/jarvis']),
       policy: policy({ mode: 'always' })
     })).toMatchObject({ addressed: true, reason: 'always' });
   });
@@ -465,4 +466,16 @@ describe('echo suppression across a shared group', () => {
     expect(decisions.map((entry) => entry.addressed)).toEqual([true, false, false]);
     expect(decisions.slice(1).map((entry) => entry.reason)).toEqual(['other_bot_mentioned', 'other_bot_mentioned']);
   });
+});
+
+
+it('does not interpret the foreign bot with a homonymous alias as self', () => {
+  const config = parseTelegramBridgeConfig({ aliases: ['North', 'South'].map(tenant_id => ({ alias: 'jarvis', tenant_id, room_id: 'office',
+    token_file: `/test/${tenant_id}/token`, v2_shutdown_marker_file: `/test/${tenant_id}/marker`, allowed_user_ids: ['101'], allowed_chat_ids: ['-5044661837'],
+    recipients: [{ tenant_id, alias: 'jarvis' }], bot_username: `${tenant_id.toLowerCase()}_bot`, chats: [], poll_timeout_seconds: 25, poll_lease_ms: 60000 })) });
+  const fleet = fleetDirectory(config);
+  const self = { ...SELF, tenant_id: 'North', username: 'north_bot' };
+  expect(resolve({ self, fleet, message: message(mention('', 'south_bot')), participants: new Set(['North/jarvis', 'South/jarvis']) }))
+    .toMatchObject({ addressed: false, reason: 'other_bot_mentioned' });
+  expect(resolve({ self, fleet, message: message(mention('', 'north_bot')) })).toMatchObject({ addressed: true, reason: 'mention' });
 });

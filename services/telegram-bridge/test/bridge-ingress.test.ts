@@ -85,8 +85,8 @@ describe('Telegram group routing (poller integration)', () => {
       api,
       repository,
       ingress,
-      fleet: { byUsername: new Map([['kant_bot', 'kant'], ['argos_bot', 'argos']]), byBotId: new Map() },
-      participants: () => new Set(['kant', 'argos']),
+      fleet: { byUsername: new Map([['kant_bot', 'Steven/kant'], ['argos_bot', 'Steven/argos']]), byBotId: new Map() },
+      participants: () => new Set(['Steven/kant', 'Steven/argos']),
       onMetric: (metric) => metrics.push(metric),
       onSuppressed: (record) => suppressed.push(record)
     }).runOnce();
@@ -325,8 +325,8 @@ describe('Telegram DM identity (poller integration)', () => {
 
   /** Directory with two live aliases: source of the reserved names the poller uses. */
   const FLEET = {
-    byUsername: new Map([['kant_bot', 'kant'], ['zeus_bot', 'zeus']]),
-    byBotId: new Map([['900001', 'kant']])
+    byUsername: new Map([['kant_bot', 'Steven/kant'], ['zeus_bot', 'Steven/zeus']]),
+    byBotId: new Map([['900001', 'Steven/kant']])
   };
 
   async function publish(updateEntry: TelegramUpdate): Promise<TelegramIngressMessage> {

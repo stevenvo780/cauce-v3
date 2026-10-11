@@ -110,7 +110,7 @@ describe('Telegram PostgreSQL crash recovery', () => {
       activity: noopActivity(), observer: noopObserver(),
       repository: firstRepository,
       aliases: [alias],
-      apis: new Map([['kant', api]]),
+      apis: new Map([['Steven/kant', api]]),
       leaseMs: 1_000,
       hooks: { beforeSend: () => { throw new EgressCrash('before_send'); } }
     }).runOnce()).rejects.toBeInstanceOf(EgressCrash);
@@ -126,7 +126,7 @@ describe('Telegram PostgreSQL crash recovery', () => {
       activity: noopActivity(), observer: noopObserver(),
       repository: restartedRepository,
       aliases: [alias],
-      apis: new Map([['kant', api]])
+      apis: new Map([['Steven/kant', api]])
     }).runOnce(); // final expired attempt is dead-lettered and reconciled without being reclaimed
 
     const ambiguous = await restartedRepository.getEffect(`${EVENT_ID}:0`);
@@ -175,7 +175,7 @@ describe('Telegram PostgreSQL crash recovery', () => {
       activity: noopActivity(), observer: noopObserver(),
       repository: restartedRepository,
       aliases: [alias],
-      apis: new Map([['kant', api]])
+      apis: new Map([['Steven/kant', api]])
     }).runOnce();
 
     expect(api.sends).toHaveLength(1);

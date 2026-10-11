@@ -281,10 +281,10 @@ describe('dentro del lote cada miembro se juzga en su propio mensaje', () => {
 
 const FLOTA: Flota = {
   fleet: {
-    byUsername: new Map([['kant_bot', 'kant'], ['otro_bot', 'otro']]),
-    byBotId: new Map([['900001', 'kant'], ['900002', 'otro']])
+    byUsername: new Map([['kant_bot', 'Steven/kant'], ['otro_bot', 'Steven/otro']]),
+    byBotId: new Map([['900001', 'Steven/kant'], ['900002', 'Steven/otro']])
   },
-  participants: () => new Set(['kant'])
+  participants: () => new Set(['Steven/kant'])
 };
 
 describe('un miembro dirigido a otro alias de la flota no viaja bajo el epígrafe del primario', () => {

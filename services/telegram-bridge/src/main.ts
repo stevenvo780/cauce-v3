@@ -1,6 +1,7 @@
 import { integerEnv, logEvent, portEnv, requiredEnv, type LogField } from '@cauce/protocol';
 import { CauceRepository, createPool } from '@cauce/store';
 import { TelegramActivityIndicator } from './activity.js';
+import { selectTelegramAliases, telegramAliasKey } from './identity.js';
 import {
   assertV2PollerDisabled, chatParticipants, fleetDirectory, fleetParticipationGaps,
   loadTelegramBridgeConfig, readTelegramToken
@@ -16,15 +17,6 @@ import { boundedTelegramRequestTimeoutMs, TelegramBridgeProgress } from './progr
 import { TelegramHttpClient } from './telegram.js';
 import { transcriptionConfig } from './transcription.js';
 import type { TelegramAliasConfig, TelegramApi } from './types.js';
-
-function selected(configs: readonly TelegramAliasConfig[]): TelegramAliasConfig[] {
-  const selector = process.env.CAUCE_TELEGRAM_ALIASES;
-  if (!selector) return [...configs];
-  const names = new Set(selector.split(',').map((value) => value.trim()).filter(Boolean));
-  const result = configs.filter((entry) => names.has(entry.alias));
-  if (result.length !== names.size || result.length === 0) throw new Error('CAUCE_TELEGRAM_ALIASES contains an unknown alias');
-  return result;
-}
 
 /**
  * Read BEFORE opening the pool: a malformed URL kills the process at startup instead of being
@@ -62,7 +54,7 @@ function degraded(reason: string, detail: Readonly<Record<string, LogField>>): v
 
 try {
   const config = await loadTelegramBridgeConfig(requiredEnv(process.env, 'CAUCE_TELEGRAM_CONFIG_FILE'));
-  const aliases = selected(config.aliases);
+  const aliases = selectTelegramAliases(config.aliases, process.env.CAUCE_TELEGRAM_ALIASES);
   // A partial fleet in a shared chat leaves mentions of the missing alias unanswered. The resolver
   // already handles it (P3 suppresses only against declared participants, and an unserved mention
   // falls through to the ambient host), so this is a warning, not a boot failure.
@@ -94,12 +86,12 @@ try {
       degraded('bot_username_mismatch', { alias: alias.alias, groups_disabled: true });
     }
     await repository.initializeCursor(identity.id, alias.tenant_id, alias.alias);
-    apis.set(alias.alias, api);
-    identities.set(alias.alias, identity.id);
+    apis.set(telegramAliasKey(alias), api);
+    identities.set(telegramAliasKey(alias), identity.id);
     // Prefer the verified `getMe` username over the declared one: it is the name Telegram will
     // actually put in the mention entities.
     const username = identity.username ?? alias.bot_username;
-    if (username !== undefined) usernames.set(alias.alias, username);
+    if (username !== undefined) usernames.set(telegramAliasKey(alias), username);
     // `chats: []` (present but empty) is the explicit default-deny mode, so a mismatched alias
     // stops serving groups while every private chat keeps working untouched.
     running.push(mismatched ? { ...alias, chats: [] } : alias);
@@ -110,7 +102,7 @@ try {
         degraded('operator_command_menu', { alias: alias.alias });
       }
     }
-    progress.registerPoller(alias.alias, pollStaleMs);
+    progress.registerPoller(telegramAliasKey(alias), pollStaleMs);
   }
   progress.registerEgress(egressStaleMs);
   // Do not advertise a live endpoint while configuration, V2 exclusion, bot identity or cursor
@@ -120,14 +112,14 @@ try {
   // Built from the COMPLETE file so suppression stays correct even during an incremental start.
   const fleet = fleetDirectory(config, identities);
   const pollers = running.map((alias) => {
-    const api = apis.get(alias.alias);
+    const api = apis.get(telegramAliasKey(alias));
     if (api === undefined) {
       throw new Error(`Missing Telegram API instance for alias ${alias.alias}`);
     }
-    const username = usernames.get(alias.alias);
+    const username = usernames.get(telegramAliasKey(alias));
     return new TelegramPoller({
       config: alias,
-      botId: identities.get(alias.alias) ?? '',
+      botId: identities.get(telegramAliasKey(alias)) ?? '',
       api,
       repository,
       ingress,

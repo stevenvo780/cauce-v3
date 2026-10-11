@@ -354,7 +354,7 @@ function fakeApi(
 function worker(repository: TelegramEgressRepository, api: TelegramApi): TelegramEgressWorker {
   return new TelegramEgressWorker({
     activity: noopActivity(), observer: noopObserver(),
-    repository, aliases: [ALIAS], apis: new Map([['seneca', api]])
+    repository, aliases: [ALIAS], apis: new Map([['Pablo/seneca', api]])
   });
 }
 

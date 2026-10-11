@@ -5,6 +5,7 @@ import {
   parseTelegramBridgeConfig
 } from '../src/config.js';
 import type { TelegramBridgeConfig } from '../src/types.js';
+import { selectTelegramAliases } from '../src/identity.js';
 
 /**
  * Coverage for the config layer, where the production invariants of the group-routing
@@ -24,7 +25,7 @@ function rawAlias(alias: string, overrides: Record<string, unknown> = {}): Recor
     tenant_id: tenant,
     room_id: 'grp.steven',
     token_file: `/synthetic/${tenant}/${alias}.token`,
-    v2_shutdown_marker_file: `/synthetic/${alias}.marker`,
+    v2_shutdown_marker_file: `/synthetic/${tenant}/${alias}.marker`,
     allowed_user_ids: ['101'],
     allowed_chat_ids: [CHAT_ID],
     recipients: [{ tenant_id: tenant, alias }],
@@ -154,9 +155,9 @@ describe('chatParticipants', () => {
       rawAlias('jarvis') // legacy: no `chats` key, but CHAT_ID is in its allowed_chat_ids
     ]);
     const participants = chatParticipants(config, CHAT_ID, '0');
-    expect(participants.has('kant')).toBe(true);
-    expect(participants.has('argos')).toBe(false); // mode: off never serves the scope
-    expect(participants.has('jarvis')).toBe(true); // legacy participation via allowed_chat_ids
+    expect(participants.has('Steven/kant')).toBe(true);
+    expect(participants.has('Steven/argos')).toBe(false); // mode: off never serves the scope
+    expect(participants.has('Steven/jarvis')).toBe(true); // legacy participation via allowed_chat_ids
   });
 
   it('excludes a scoped alias that opted into routing but never declared this chat', () => {
@@ -165,8 +166,8 @@ describe('chatParticipants', () => {
       rawAlias('argos', { bot_username: 'argos_bot', chats: [] }) // scoped, default-deny, no entry for CHAT_ID
     ]);
     const participants = chatParticipants(config, CHAT_ID, '0');
-    expect(participants.has('kant')).toBe(true);
-    expect(participants.has('argos')).toBe(false);
+    expect(participants.has('Steven/kant')).toBe(true);
+    expect(participants.has('Steven/argos')).toBe(false);
   });
 });
 
@@ -211,18 +212,18 @@ describe('fleetDirectory', () => {
       rawAlias('kant', { bot_username: 'kant_bot', chats: [] }),
       rawAlias('argos', { bot_username: 'argos_bot', chats: [] })
     ]);
-    const directory = fleetDirectory(config, new Map([['kant', '900001']]));
+    const directory = fleetDirectory(config, new Map([['Steven/kant', '900001']]));
     // Both usernames are present, even though only kant is "running" in this deployment: an
     // incremental start must still be able to suppress a mention of argos.
-    expect(directory.byUsername.get('kant_bot')).toBe('kant');
-    expect(directory.byUsername.get('argos_bot')).toBe('argos');
-    expect(directory.byBotId.get('900001')).toBe('kant');
+    expect(directory.byUsername.get('kant_bot')).toBe('Steven/kant');
+    expect(directory.byUsername.get('argos_bot')).toBe('Steven/argos');
+    expect(directory.byBotId.get('900001')).toBe('Steven/kant');
     expect(directory.byBotId.size).toBe(1);
   });
 });
 
 describe('parseTelegramBridgeConfig: multi-tenant token isolation', () => {
-  it('rejects duplicate alias names within the same bridge configuration', () => {
+  it('accepts identical alias names in different tenants in one bridge configuration', () => {
     expect(() => build([
       rawAlias('zeus', {
         tenant_id: 'Steven',
@@ -235,7 +236,7 @@ describe('parseTelegramBridgeConfig: multi-tenant token isolation', () => {
         token_file: '/synthetic/Hospital/zeus.token',
         recipients: [{ tenant_id: 'Hospital', alias: 'zeus' }]
       })
-    ])).toThrow('alias names must be unique');
+    ])).not.toThrow();
   });
 
   it('rejects sharing token_file across aliases (insecure token sharing)', () => {
@@ -290,4 +291,20 @@ describe('parseTelegramBridgeConfig: multi-tenant token isolation', () => {
     ])).toThrow('token_file values must be unique across aliases');
   });
 
+});
+
+
+describe('shared bridge selection', () => {
+  it('requires a qualified selector for a repeated alias', () => {
+    const config = build(['North', 'South'].map(tenant_id => rawAlias('zeus', { tenant_id })));
+    expect(() => selectTelegramAliases(config.aliases, 'zeus')).toThrow('ambiguous');
+    expect(selectTelegramAliases(config.aliases, 'South/zeus')).toEqual([config.aliases[1]]);
+    expect(selectTelegramAliases(config.aliases)).toHaveLength(2);
+  });
+  it('rejects a duplicate identity or shared shutdown marker independently', () => {
+    expect(() => build([rawAlias('zeus'), rawAlias('zeus', { token_file: '/different/token', v2_shutdown_marker_file: '/different/marker' })]))
+      .toThrow('tenant and alias pairs must be unique');
+    expect(() => build(['North', 'South'].map(tenant_id => rawAlias('zeus', { tenant_id, v2_shutdown_marker_file: '/shared/marker' }))))
+      .toThrow('shutdown marker paths must be unique');
+  });
 });
