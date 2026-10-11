@@ -1,6 +1,10 @@
 import { clientMailboxRoutingTargets } from '../../client-mailbox.js';
+import { CompanyContextCache } from '../../company-context.js';
+import { versionedContextForDelivery } from '../../context-version-adoption.js';
 import type { ProfileRuntimeContract, Tenant } from '@cauce/protocol'; /* eslint @typescript-eslint/no-unnecessary-boolean-literal-compare: "error" */
 import {
+  COMPANY_CONTEXT_CAPABILITY,
+  VERSIONED_CONTEXT_CAPABILITY,
   HUMAN_MESSAGE_INITIATOR_CAPABILITY,
   HUMAN_PRIORITY_FLOOR, isLiteralTrue, PROTOCOL_VERSION,
 } from '@cauce/protocol';
@@ -25,6 +29,7 @@ import type {
 } from './contracts.js';
 
 export abstract class DeliveryClaimsRepository extends MessagesRepository {
+  private readonly companyContexts = new CompanyContextCache();
   protected abstract profileRuntimeExpectation(client: DatabaseClient, tenantId: Tenant, alias: string): Promise<ProfileRuntimeContract | undefined>;
   protected abstract selfRoleFromProfile(client: DatabaseClient, tenantId: Tenant, alias: string): Promise<string | undefined>;
   protected abstract routingTargets(client: DatabaseClient, sourceTenant: Tenant, sourceAlias: string): Promise<RoutingTarget[]>;
@@ -301,6 +306,9 @@ export abstract class DeliveryClaimsRepository extends MessagesRepository {
         && capabilities.includes('conversation_work_v1');
       const includeConsoleHumanScope = Array.isArray(capabilities)
         && capabilities.includes('console_human_scope_v1');
+      const includeCompanyContext = Array.isArray(capabilities)
+        && capabilities.includes(COMPANY_CONTEXT_CAPABILITY);
+      const includeVersionedContext = Array.isArray(capabilities) && capabilities.includes(VERSIONED_CONTEXT_CAPABILITY);
 
       await client.query(
         `INSERT INTO delivery_lane_fairness(tenant_id,alias) VALUES($1,$2)
@@ -498,6 +506,11 @@ export abstract class DeliveryClaimsRepository extends MessagesRepository {
       const selfRole = includeSelfRole && claimedRows.length > 0
         ? await this.selfRoleFromProfile(client, tenantId, alias)
         : undefined;
+      const companyContext = includeCompanyContext && claimedRows.length > 0
+        ? await this.companyContexts.read(client, tenantId, alias)
+        : undefined;
+      const versionedContext = includeVersionedContext && claimedRows.length > 0
+        ? await versionedContextForDelivery(client, tenantId, alias, claimedRows.map(row => row.id)) : undefined;
       const profileRuntimeContract = includeProfileRuntimeContract && claimedRows.length > 0
         ? await this.profileRuntimeExpectation(client, tenantId, alias)
         : undefined;
@@ -546,6 +559,8 @@ export abstract class DeliveryClaimsRepository extends MessagesRepository {
           ...(workState === undefined ? {} : { conversation_work_state: workState }),
           ...(routingTargets === undefined ? {} : { routing_targets: routingTargets }),
           ...(selfRole === undefined ? {} : { self_role: selfRole }),
+          ...(companyContext === undefined ? {} : { company_context: companyContext }),
+          ...(versionedContext === undefined ? {} : { versioned_context: versionedContext }),
           ...(profileRuntimeContract === undefined
             ? {}
             : { profile_runtime_contract: profileRuntimeContract }),

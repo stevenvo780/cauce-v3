@@ -1,6 +1,7 @@
 import type { Ack, DeliveryState, ProfileRuntimeAdoptionEvidence, Tenant } from '@cauce/protocol';
 import type { DatabaseClient } from '../../db.js';
 import { withTransaction } from '../../db.js';
+import { recordContextAdoptionInTransaction } from '../../context-version-adoption.js';
 import { withoutInlineArtifactBytes } from '../artifact-payload.js';
 import { StoreError } from '../errors.js';
 import { terminal } from '../messages.js';
@@ -305,6 +306,7 @@ export abstract class DeliveryAcksRepository extends DeliveryClaimsRepository {
     );
     if (nextStatus === 'done') {
       await this.recordProfileRuntimeAdoption(client, tenantId, alias, row, ack, runtimeAdoption);
+      await recordContextAdoptionInTransaction(client, { deliveryId, tenantId, alias, result: input.persistedResult });
     }
     if (nextStatus === 'retry') {
       await client.query(
