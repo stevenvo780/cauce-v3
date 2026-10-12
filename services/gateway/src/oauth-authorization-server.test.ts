@@ -21,7 +21,7 @@ const verifier = 'v'.repeat(43);
 const challenge = createHash('sha256').update(verifier).digest('base64url');
 const session = { userId, credentialStamp: 's'.repeat(43), issuedAt: Math.floor(Date.now() / 1000) - 10, expiresAt: Math.floor(Date.now() / 1000) + 3600, csrf: 'c'.repeat(43) };
 
-async function fixture(authenticated = true, registrationLimiter?: OAuthRegistrationLimiter, stream?: Writable) {
+async function fixture(authenticated = true, registrationLimiter?: OAuthRegistrationLimiter, stream?: Writable, grantTtlSeconds?: number) {
   const app = stream === undefined ? Fastify() : Fastify({ logger: { stream } });
   const { privateKey } = generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
   const tokens = new OAuthTokens({ issuer, resource: `${issuer}/mcp`, signingKey: privateKey, kid: 'fixture' });
@@ -54,6 +54,7 @@ async function fixture(authenticated = true, registrationLimiter?: OAuthRegistra
     client_name: '<script>unsafe</script>', redirect_uris: [redirectUri, 'http://127.0.0.1/callback'], token_endpoint_auth_method: 'none' }) }) });
   const login = vi.fn(async (_request, reply: Parameters<import('./password-auth.js').PasswordAuthProvider['login']>[1]) => { await reply.code(200).send({ authenticated: true }); });
   await registerOAuthAuthorizationServer(app, { clients, tokens, store, passwordAuth: { login, verifyCredentialStamp: () => false },
+    ...(grantTtlSeconds === undefined ? {} : { grantTtlSeconds }),
     ...(registrationLimiter === undefined ? {} : { registrationLimiter }),
     session: async () => { if (!authenticated) throw new OAuthError('access_denied'); return session; } });
   const authorize = (override: Record<string, string> = {}) => `/oauth/authorize?${new URLSearchParams({ response_type: 'code',
@@ -68,6 +69,34 @@ async function fixture(authenticated = true, registrationLimiter?: OAuthRegistra
 }
 
 describe('OAuth HTTP protocol with injected store, without PostgreSQL', () => {
+  it.each([[undefined, '30 días'], [28_800, '8 horas'], [300, '5 minutos']] as const)(
+    'shows the actual grant lifetime %s with nonce-bound CSS and unchecked consent', async (ttl, label) => {
+      const f = await fixture(true, undefined, undefined, ttl);
+      try {
+        const flow = await f.start();
+        const response = await f.app.inject({ url: `/oauth/continue?request_id=${flow.id}`, headers: { cookie: flow.cookie, 'sec-fetch-site': 'same-origin' } });
+        expect(response.body).toContain(`Autorización por ${label}`);
+        expect(response.body).not.toContain(' checked');
+        const nonce = /<style nonce="([A-Za-z0-9_-]+)">/u.exec(response.body)?.[1];
+        expect(nonce).toBeTruthy();
+        if (!nonce) throw new Error('missing CSP style nonce');
+        expect(response.headers['content-security-policy']).toContain(`style-src 'nonce-${nonce}'`);
+        expect(response.headers['content-security-policy']).toContain(`script-src 'nonce-${nonce}'`);
+        expect(response.headers['content-security-policy']).not.toContain('unsafe-inline');
+        expect(response.body).toContain(`<script nonce="${nonce}">`);
+        expect(flow.response.body).not.toContain(`nonce="${nonce}"`);
+      } finally { await f.app.close(); }
+    },
+  );
+  it('accepts the locale sent by ChatGPT without changing consent authority', async () => {
+    const f = await fixture();
+    try {
+      const response = await f.app.inject(f.authorize({ ui_locales: 'es-419' }));
+      expect(response.statusCode).toBe(200);
+      expect(response.body).toContain('Continuar en Cauce');
+      expect(f.consent).not.toHaveBeenCalled();
+    } finally { await f.app.close(); }
+  });
   it('connects explicit local mode to local verification with exact issuer and resource', async () => {
     const f = await fixture();
     try {

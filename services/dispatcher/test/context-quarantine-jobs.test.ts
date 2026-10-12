@@ -17,7 +17,7 @@ beforeEach(async ({ skip }) => {
     await postgresRequirement.skipIfUnavailable(skip);
   }
   if (database === undefined) {
-    database = await startTestDatabase();
+    database = await startTestDatabase({ requireOwnedContainer: true });
     pool = database.pool;
     repository = new CauceRepository(pool);
     console.info('owned-dispatcher-context-jobs-postgres', execFileSync('docker', ['inspect', '--format',
@@ -27,8 +27,7 @@ beforeEach(async ({ skip }) => {
   await resetTestDatabase(pool);
 }, 180_000);
 
-afterAll(async () => {
-  if (database === undefined) return;
+async function closeOwnedDatabase(database: TestDatabase) {
   const containerId = database.container.getId();
   const results = await Promise.allSettled([database.pool.end(), database.container.stop()]);
   const failures = results.filter((result) => result.status === 'rejected');
@@ -38,7 +37,9 @@ afterAll(async () => {
     throw new Error('owned dispatcher metrics container absence is unverified');
   }
   console.info('owned-dispatcher-context-jobs-postgres-absent', containerId);
-});
+}
+
+afterAll(async () => { if (database) await closeOwnedDatabase(database); });
 
 function value(exposition: string, sample: string): number {
   const line = exposition.split('\n').find((candidate) => candidate.startsWith(`${sample} `));
@@ -47,6 +48,35 @@ function value(exposition: string, sample: string): number {
 }
 
 describe('dispatcher context-quarantine accounting', () => {
+  it('keeps external database fallback distinct from explicitly owned Docker containers', async () => {
+    if (!database) throw new Error('owned dispatcher database unavailable');
+    let external: TestDatabase | undefined;
+    let owned: TestDatabase | undefined;
+    try {
+      vi.stubEnv('CAUCE_TEST_DATABASE_URL', database.url);
+      vi.stubEnv('CAUCE_REQUIRE_TESTCONTAINERS', '0');
+      external = await startTestDatabase();
+      expect(external.container.getHost()).toBe('external');
+      expect(() => external?.container.getId()).toThrow('External PostgreSQL has no owned Docker container');
+      expect(() => external?.container.getName()).toThrow('External PostgreSQL has no owned Docker container');
+      expect(new URL(external.url).pathname).not.toBe(new URL(database.url).pathname);
+      vi.stubEnv('CAUCE_REQUIRE_TESTCONTAINERS', '1');
+      await expect(startTestDatabase()).rejects.toThrow('CAUCE_REQUIRE_TESTCONTAINERS=1 rejects the external database fallback');
+      vi.stubEnv('CAUCE_TEST_DATABASE_URL', 'postgresql://unused@127.0.0.1:1/cauce_test_closed');
+      owned = await startTestDatabase({ requireOwnedContainer: true });
+      expect(owned.container.getId()).toMatch(/^[0-9a-f]{64}$/u);
+      expect(owned.container.getId()).not.toBe(database.container.getId());
+      expect((await owned.pool.query('SELECT current_database() AS name')).rows[0]).toEqual({ name: 'cauce_test' });
+    } finally {
+      try {
+        if (external) await external.pool.end().finally(() => external?.container.stop());
+      } finally {
+        try { if (owned) await closeOwnedDatabase(owned); }
+        finally { vi.unstubAllEnvs(); }
+      }
+    }
+  }, 120_000);
+
   it('omits reserved rows from queue, lease and dead-letter metrics while retaining ordinary jobs', async () => {
     const queuedSentinel = await pool.query<{ id: string }>(
       `INSERT INTO jobs(tenant_id,lane,kind,payload,status)

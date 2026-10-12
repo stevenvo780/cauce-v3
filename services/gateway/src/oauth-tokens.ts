@@ -1,4 +1,4 @@
-import { randomUUID, sign, verify, createPublicKey, type KeyObject } from 'node:crypto';
+import { randomUUID, sign, verify, createPublicKey, createHmac, createSecretKey, type KeyObject } from 'node:crypto';
 import { isAnyUuid } from '@cauce/protocol';
 import { oauthOrigin, scopes, type OAuthAccessIdentity, type OAuthIssuedToken, type OAuthTokenInput } from './oauth-authorization-types.js';
 
@@ -9,6 +9,7 @@ export class OAuthTokens {
   private readonly publicKey: KeyObject;
   private readonly now: () => number;
   private readonly ttlSeconds: number;
+  private readonly refreshKey: KeyObject;
 
   constructor(private readonly options: {
     issuer: string;
@@ -30,11 +31,19 @@ export class OAuthTokens {
     }
     this.now = options.now ?? Date.now;
     this.publicKey = createPublicKey(options.signingKey);
+    this.refreshKey = createSecretKey(options.signingKey.export({ format: 'der', type: 'pkcs8' }));
     this.header = Buffer.from(JSON.stringify({ alg: 'ES256', typ: 'at+jwt', kid: options.kid })).toString('base64url');
   }
 
   jwks() {
     return { keys: [{ ...this.publicKey.export({ format: 'jwk' }), kid: this.options.kid, alg: 'ES256', use: 'sig' }] };
+  }
+
+  refreshSuccessor(tokenHash: string, grantId: string): string {
+    if (!/^[a-f0-9]{64}$/u.test(tokenHash) || !isAnyUuid(grantId)) throw new Error('OAuth refresh input is invalid');
+    return createHmac('sha256', this.refreshKey)
+      .update(JSON.stringify(['cauce-oauth-refresh-v1', this.issuer, this.resource, grantId, tokenHash]))
+      .digest('base64url');
   }
 
   issue(input: OAuthTokenInput): OAuthIssuedToken {

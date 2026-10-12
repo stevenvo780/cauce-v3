@@ -1,4 +1,4 @@
-import { generateKeyPairSync, sign } from 'node:crypto';
+import { createHash, generateKeyPairSync, sign } from 'node:crypto';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { OAuthTokens } from './oauth-tokens.js';
 
@@ -49,5 +49,19 @@ describe('local OAuth access tokens', () => {
   it('requires an injected P-256 private key and a TTL no larger than five minutes', () => {
     expect(() => new OAuthTokens({ issuer, resource: `${issuer}/mcp`, signingKey: privateKey, kid: 'x', ttlSeconds: 301 })).toThrow();
     expect(() => new OAuthTokens({ issuer, resource: `${issuer}/wrong`, signingKey: privateKey, kid: 'x' })).toThrow();
+  });
+  it('recovers refresh successors across signer restarts and separates key, grant and issuer', () => {
+    const previous = createHash('sha256').update('synthetic-refresh-secret').digest('hex');
+    const successor = create().refreshSuccessor(previous, grantId);
+    expect(create().refreshSuccessor(previous, grantId)).toBe(successor);
+    expect(successor).toMatch(/^[A-Za-z0-9_-]{43}$/u);
+    expect(create().refreshSuccessor(previous, userId)).not.toBe(successor);
+    expect(create().refreshSuccessor(createHash('sha256').update(successor).digest('hex'), grantId)).not.toBe(successor);
+    const otherIssuer = new OAuthTokens({ issuer: 'https://other.example', resource: 'https://other.example/mcp', signingKey: privateKey, kid: 'fixture' });
+    expect(otherIssuer.refreshSuccessor(previous, grantId)).not.toBe(successor);
+    const otherKey = generateKeyPairSync('ec', { namedCurve: 'prime256v1' }).privateKey;
+    const rotated = new OAuthTokens({ issuer, resource: `${issuer}/mcp`, signingKey: otherKey, kid: 'fixture' });
+    expect(rotated.refreshSuccessor(previous, grantId)).not.toBe(successor);
+    expect(() => create().refreshSuccessor('bad-hash', grantId)).toThrow();
   });
 });

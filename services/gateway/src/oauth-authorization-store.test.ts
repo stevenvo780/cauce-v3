@@ -47,7 +47,7 @@ function fixture(consumeCount = 1, challenge = request.challenge, sessionActive 
     else if (sql.includes('SELECT c.grant_id')) rows = [{ grant_id: grantId, human_id: userId, consumed: codeConsumed }];
     else if (sql.includes('FROM cauce_oauth_refresh_tokens r')) rows = [{ grant_id: grantId, human_id: userId, client_id: request.clientId,
       consumed: refreshConsumed !== false, recent: refreshConsumed === 'recent' }];
-    else if (sql.includes('FROM cauce_oauth_refresh_tokens WHERE')) rows = [{ consumed: false, live: true }];
+    else if (sql.includes('FROM cauce_oauth_refresh_tokens WHERE')) rows = [{ consumed: refreshConsumed !== false, recent: refreshConsumed === 'recent', live: true }];
     else if (sql.includes('SELECT credential_stamp')) rows = [{ credential_stamp: stamp }];
     else if (sql.includes('AS valid')) rows = [{ valid: true }];
     else if (sql.includes('FROM cauce_oauth_grants g')) rows = [{ id: grantId, human_id: userId, client_id: request.clientId,
@@ -250,7 +250,7 @@ describe('OAuth refresh rotation with an injected database client', () => {
     await expect(fake.store.refresh(refresh, signer, context())).rejects.toThrow('invalid_grant');
     const statements = fake.query.mock.calls.map(([sql]) => sql);
     expect(statements.find(sql => sql.includes('FROM cauce_oauth_refresh_tokens r'))).toContain("clock_timestamp()-interval '60 seconds'");
-    expect(statements.some(sql => sql.includes('cauce_oauth_grant_revocations'))).toBe(false);
+    expect(statements.some(sql => sql.includes('INSERT INTO cauce_oauth_grant_revocations'))).toBe(false);
     expect(statements).not.toContain('COMMIT');
     expect(signer).not.toHaveBeenCalled();
   });

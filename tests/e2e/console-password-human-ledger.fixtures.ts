@@ -28,7 +28,6 @@ export function object(value: unknown): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 export async function startConsoleLedgerFixture(options: { sessionTtlMs?: number; retainSessionLookup?: boolean } = {}) {
-  if (process.env.CAUCE_TEST_DATABASE_URL !== undefined) throw new Error('Disposable PostgreSQL is required');
   let database: TestDatabase | undefined;
   let app: Awaited<ReturnType<typeof buildGateway>> | undefined;
   let directory: string | undefined;
@@ -44,7 +43,7 @@ export async function startConsoleLedgerFixture(options: { sessionTtlMs?: number
     if (failures.length) throw new AggregateError(failures, 'Console ledger cleanup failed');
   };
   try {
-    database = await startTestDatabase();
+    database = await startTestDatabase({ requireOwnedContainer: true });
     console.info(`Owned PostgreSQL container: ${database.container.getId()}`);
     const metadata = await promisify(execFile)('docker', ['inspect', database.container.getId(), '--format',
       '{{json .Mounts}} {{json .NetworkSettings.Ports}}'], { timeout: 5000 });

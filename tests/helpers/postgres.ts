@@ -227,8 +227,12 @@ function contenedorDesacoplado(
   alDetener: () => Promise<void>,
   alReiniciar: () => Promise<void>,
 ): StartedTestContainer {
+  const requireOwnedContainer = (): never => {
+    throw new Error('External PostgreSQL has no owned Docker container; use requireOwnedContainer: true');
+  };
   return {
     stop: alDetener, restart: alReiniciar, getHost: () => 'external',
+    getId: requireOwnedContainer, getName: requireOwnedContainer,
   } as unknown as StartedTestContainer;
 }
 
@@ -441,8 +445,8 @@ export async function startEmptyTestDatabase(serverUrl: string): Promise<EmptyTe
   }
 }
 
-export function startTestDatabase(): Promise<TestDatabase> {
-  return startTestDatabaseAt();
+export function startTestDatabase(options: { requireOwnedContainer?: boolean } = {}): Promise<TestDatabase> {
+  return startTestDatabaseAt(undefined, options.requireOwnedContainer);
 }
 
 export function startTestDatabaseThrough(version: string): Promise<TestDatabase> {
@@ -528,10 +532,10 @@ export async function startTestCaseDatabase(database: TestDatabase): Promise<Emp
   }
 }
 
-async function startTestDatabaseAt(migrationThrough?: string): Promise<TestDatabase> {
+async function startTestDatabaseAt(migrationThrough?: string, requireOwnedContainer = false): Promise<TestDatabase> {
   // CAUCE_TEST_DATABASE_URL serves environments where testcontainers has no Docker daemon.
   const externa = process.env.CAUCE_TEST_DATABASE_URL;
-  if (externa) {
+  if (externa && !requireOwnedContainer) {
     if (process.env.CAUCE_REQUIRE_TESTCONTAINERS === '1') {
       throw new Error('CAUCE_REQUIRE_TESTCONTAINERS=1 rejects the external database fallback');
     }
