@@ -237,6 +237,11 @@ según `CAUCE_MCP_OAUTH_PROVIDER` en `deploy/deploy.sh`.
 | `CAUCE_RETRY_TIMEOUT_MS=45000`, `CAUCE_PRESENCE_LEASE_MS=500`, `CAUCE_FAULT_MODE=none` | overrides de arnés | e2e |
 | `CAUCE_TEST_DATABASE_URL` | URL opcional de una base externa cuyo nombre empieza por `cauce_test`; nunca productiva. Las fixtures OAuth no la utilizan: siempre aprovisionan sus propios contenedores desechables y bases aisladas por prueba | preflight `test:core`, fixtures de PostgreSQL |
 | `CAUCE_CHANNEL_TEST_PROFILE_PATH` (`gateway/fleet/host-channel.fixtures.ts`) | nombre de referencia `env_path` de la cuenta fixture; no es parámetro del orquestador ni configuración de producción | unit canal de host |
+| `CAUCE_ISOLATION_BASE_URL` (`gateway/security/route-isolation-harness.ts`) | URL opcional del gateway desplegado contra el que la guardia de aislamiento entre empresas repite los ataques; sin ella, todo corre contra la app local y una base desechable | guardia de aislamiento (modo externo) |
+| `CAUCE_ISOLATION_FIXTURE_FILE` | ruta privada del JSON `{a,b}` con los recursos canario de las dos empresas; obligatoria con `CAUCE_ISOLATION_BASE_URL` | guardia de aislamiento (modo externo) |
+| `CAUCE_ISOLATION_CANARY_DATABASE_URL` | URL de una conexión de solo lectura (`default_transaction_read_only=on`) para las instantáneas de filas canario; obligatoria con `CAUCE_ISOLATION_BASE_URL` | guardia de aislamiento (modo externo) |
+| `CAUCE_ISOLATION_UNCOVERED_ROUTE=1` | monta una ruta sin declarar en la app efímera para comprobar que la enumeración falla | experimento negativo de la guardia |
+| `CAUCE_ISOLATION_SYNTHETIC_PATH` (`gateway/security/route-isolation-fixtures.ts`) | nombre de referencia `env_path` de las cuentas fixture de la guardia; no es parámetro del orquestador | guardia de aislamiento |
 | Puerto `127.0.0.1:18080`, postgres tmpfs, red interna | aislamiento | — |
 
 ## Decisiones del dueño (FR-011..FR-015, cerradas 2026-09-27)
