@@ -57,9 +57,12 @@ describe('configuration lifecycle authority on PostgreSQL', () => {
       { tenant: 'Steven', alias: 'stale_web', humanId: webHuman }))).rejects.toMatchObject({ code: 'forbidden' });
     expect(await withTransaction(pool, client => lockCompanyAuthority(client, { tenant: 'Steven', alias: 'stale_web' })))
       .toMatchObject({ role: 'tenant_operator', humanId: null });
-    await expect(new ConfigurationRepository(pool).apply('Steven', 'bot_hub', {
-      resource: 'membership', action: 'retire', tenant_id: 'Steven', room_id: 'lifecycle-admin', alias: 'current_web',
-    }, false, 0, authority)).rejects.toMatchObject({ code: 'conflict' });
+    const retire = { resource: 'membership', action: 'retire', tenant_id: 'Steven', room_id: 'lifecycle-admin', alias: 'current_web' } as const;
+    await expect(new ConfigurationRepository(pool).apply('Steven', 'bot_hub', retire, false, 0, authority))
+      .rejects.toMatchObject({ code: 'forbidden' });
+    await expect(new ConfigurationRepository(pool).apply('Steven', 'current_web', retire, false, 0,
+      client => lockCompanyAuthority(client, { tenant: 'Steven', alias: 'current_web', humanId: webHuman })))
+      .rejects.toMatchObject({ code: 'conflict', message: 'configuration cannot remove the last qualified platform administrator' });
     expect((await pool.query<{ enabled: boolean; retired_at: unknown }>("SELECT enabled,retired_at FROM memberships WHERE alias='current_web'" )).rows[0])
       .toEqual({ enabled: true, retired_at: null });
   });

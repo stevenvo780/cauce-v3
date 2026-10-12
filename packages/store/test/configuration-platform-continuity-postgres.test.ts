@@ -79,10 +79,13 @@ afterAll(async () => {
   if (database) { await database.pool.end(); await database.container.stop(); }
 });
 
-function as(tenant: string, alias: string, humanId: string): ConfigurationAuthorityResolver {
-  return client => lockCompanyAuthority(client, { tenant, alias, humanId });
+function as(tenant: string, alias: string, humanId: string, requestedCompany?: string): ConfigurationAuthorityResolver {
+  return client => lockCompanyAuthority(client, { tenant, alias, humanId, ...(requestedCompany === undefined ? {} : { requestedCompany }) });
 }
 const owner = (): ConfigurationAuthorityResolver => as('Miguel', 'janus', actors.miguel);
+const steven = (requestedCompany?: string): ConfigurationAuthorityResolver => as('Steven', 'kant', actors.steven, requestedCompany);
+/** Below the platform nobody strips a platform administrator, so only another one can leave the platform without one. */
+const replacement = (id: string): ConfigurationAuthorityResolver => as('PraxisTeam', 'team_agent', id, 'humanizar');
 const platformConflict = 'configuration cannot remove the last qualified platform administrator';
 
 async function authority(humanId = actors.steven, tenant = 'Steven', alias = 'kant'): Promise<string> {
@@ -143,16 +146,16 @@ async function canonicalChange(mutation: ConfigMutation): Promise<{ app: Fastify
 }
 
 describe('configuration keeps a qualified platform administrator', () => {
-  it.each([false, true])('rejects the membership batch with dryRun=%s while its author stays owner', async dryRun => {
+  it.each([false, true])('rejects the membership batch of the last administrator with dryRun=%s', async dryRun => {
     expect(await authority()).toBe('platform_admin');
-    await expect(repository.apply('Miguel', 'janus', await loss('membership'), dryRun, undefined, owner()))
+    await expect(repository.apply('Steven', 'kant', await loss('membership'), dryRun, undefined, steven()))
       .rejects.toMatchObject({ code: 'conflict', message: platformConflict });
     await unchanged();
   });
 
   it.each([['membership', 'retire'], ['membership', 'delete'], ['room', 'update'], ['room', 'retire'],
     ['tenant', 'update'], ['tenant', 'retire']] as const)('rejects %s %s when it removes the last administrator', async (resource, action) => {
-    await expect(repository.apply('Miguel', 'janus', await loss(resource, action), false, undefined, owner()))
+    await expect(repository.apply('Steven', 'kant', await loss(resource, action), false, undefined, steven()))
       .rejects.toMatchObject({ code: 'conflict', message: platformConflict });
     await unchanged();
   });
@@ -160,7 +163,7 @@ describe('configuration keeps a qualified platform administrator', () => {
   it('does not count a dormant platform role as a qualified replacement', async () => {
     const second = await secondPlatform(false);
     expect(await authority(second, 'PraxisTeam', 'team_agent')).toBe('reader');
-    await expect(repository.apply('Miguel', 'janus', await loss('membership'), false, undefined, owner()))
+    await expect(repository.apply('Steven', 'kant', await loss('membership'), false, undefined, steven()))
       .rejects.toMatchObject({ code: 'conflict' });
     await unchanged();
   });
@@ -168,17 +171,20 @@ describe('configuration keeps a qualified platform administrator', () => {
   it('allows a change when a qualified administrator in another company remains', async () => {
     const second = await secondPlatform();
     expect(await authority(second, 'PraxisTeam', 'team_agent')).toBe('platform_admin');
-    expect((await repository.apply('Miguel', 'janus', await loss('membership'), false, undefined, owner())).applied).toBe(true);
+    await expect(repository.apply('Miguel', 'janus', await loss('membership'), false, undefined, owner()))
+      .rejects.toMatchObject({ code: 'forbidden' });
+    expect((await repository.apply('PraxisTeam', 'team_agent', await loss('membership'), false, undefined, replacement(second))).applied)
+      .toBe(true);
     expect(await authority()).toBe('reader');
     expect(await authority(second, 'PraxisTeam', 'team_agent')).toBe('platform_admin');
   });
 
   it.each([false, true])('rejects rollback dryRun=%s after the replacement leaves', async dryRun => {
     const second = await secondPlatform();
-    const removed = await repository.apply('Miguel', 'janus', await loss('membership'), false, undefined, owner());
-    const restored = await repository.apply('Miguel', 'janus', removed.inverse_mutation, false, undefined, owner());
+    const removed = await repository.apply('PraxisTeam', 'team_agent', await loss('membership'), false, undefined, replacement(second));
+    const restored = await repository.apply('PraxisTeam', 'team_agent', removed.inverse_mutation, false, undefined, replacement(second));
     await admin.query('DELETE FROM platform_admins WHERE human_id=$1', [second]);
-    await expect(repository.rollback('Miguel', 'janus', restored.revision, dryRun, undefined, owner()))
+    await expect(repository.rollback('Steven', 'kant', restored.revision, dryRun, undefined, steven()))
       .rejects.toMatchObject({ code: 'conflict', message: platformConflict });
     expect(await authority()).toBe('platform_admin');
     expect((await admin.query('SELECT id FROM config_revisions')).rowCount).toBe(2);
@@ -218,10 +224,9 @@ describe('configuration keeps a qualified platform administrator', () => {
     };
     const mutation = await loss('membership');
     const outcomes = await Promise.allSettled([
-      repository.apply('Miguel', 'janus', mutation, false, undefined, synchronized(owner())),
-      repository.apply('PraxisHub', 'company_admin', { resource: 'membership', action: 'update', tenant_id: 'PraxisTeam',
-        room_id: 'company-team', alias: 'team_agent', value: { role: 'agent' } }, false, undefined,
-      synchronized(as('PraxisHub', 'company_admin', actors.leon))),
+      repository.apply('PraxisTeam', 'team_agent', mutation, false, undefined, synchronized(replacement(second))),
+      repository.apply('Steven', 'kant', { resource: 'membership', action: 'update', tenant_id: 'PraxisTeam',
+        room_id: 'company-team', alias: 'team_agent', value: { role: 'agent' } }, false, undefined, synchronized(steven('praxis'))),
     ]);
     expect(outcomes.filter(result => result.status === 'fulfilled')).toHaveLength(1);
     expect(outcomes.filter(result => result.status === 'rejected')).toHaveLength(1);

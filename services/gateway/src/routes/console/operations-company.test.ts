@@ -69,6 +69,27 @@ describe('console configuration under the session company authority', () => {
       .toEqual([{ company_id: 'humanizar', actor_human_id: people.miguel }]);
   });
 
+  it('refuses a company administrator the home membership of an owner', async () => {
+    await admin.query("UPDATE memberships SET role='operator' WHERE tenant_id='Isa' AND alias='salva'");
+    const isa = (await admin.query<{ id: string }>(`INSERT INTO console_users(email,email_normalized,password_hash,display_name,role,tenant_id,alias)
+      VALUES('isa@example.test','isa@example.test',$1,'Isa','operator','Isa','salva') RETURNING id::text`, [hash])).rows[0]?.id;
+    await admin.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,role,permissions)
+      VALUES($1,'Isa','salva','operator',ARRAY['read','control'])`, [isa]);
+    await admin.query(`INSERT INTO company_admins(company_id,human_id,role,source,granted_by) VALUES('humanizar',$1,'admin','platform',$2)`,
+      [isa, people.steven]);
+    const session = await login('isa@example.test');
+    expect((await snapshot(session)).capabilities.actor).toMatchObject({ role: 'company_admin', company_id: 'humanizar' });
+    const refused = await post(session, '/v3/console/config/changes', { dry_run: false, mutation: { resource: 'membership',
+      action: 'update', tenant_id: 'Miguel', room_id: 'grp.miguel', alias: 'janus', value: { enabled: false } } });
+    expect(refused.statusCode).toBe(403);
+    expect(refused.json<{ error: string; message: string }>()).toMatchObject({ error: 'forbidden',
+      message: expect.stringContaining('solo la plataforma el de un dueño') as unknown });
+    expect((await pool.query("SELECT enabled FROM memberships WHERE tenant_id='Miguel' AND room_id='grp.miguel' AND alias='janus'")).rows)
+      .toEqual([{ enabled: true }]);
+    expect((await snapshot(await login('miguel@example.test'))).capabilities.actor).toMatchObject({ role: 'company_owner' });
+    expect((await pool.query('SELECT id FROM config_revisions')).rows).toEqual([]);
+  });
+
   it('confines the other company to itself and follows a platform switch', async () => {
     const leon = await snapshot(await login('leon@example.test'));
     expect(leon.tenants.map(row => row.id)).toEqual(['PraxisHub', 'PraxisTeam']);

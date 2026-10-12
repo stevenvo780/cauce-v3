@@ -18,6 +18,7 @@ import {
   assertCompanyMutation, authorizeConfigurationMutation, companyWide, configurationCapabilities, configurationScopeSql, isPlatformMutation,
 } from './configuration/company-scope.js';
 import { assertRuntimeSynchronizedMutation, configurationDependencies, configurationIdentity, databaseError } from './configuration/shared.js';
+import { assertHoldersKept, protectedHolders, QUALIFIED_PEOPLE_SQL } from './configuration/control-holders.js';
 import { assertEditablePrincipalMutation, runtimePrincipalScopeSql } from './repository/system-principal-scope.js';
 
 export { ConfigurationError };
@@ -415,7 +416,9 @@ export class ConfigurationRepository extends ConfigurationMutations {
     await assertCompanyMutation(client, mutation, company);
     await assertEditablePrincipalMutation(client, mutation);
     const controlBefore = await this.controlState(client, company);
+    const holders = await protectedHolders(client, current);
     const changed = await this.execute(client, mutation, company);
+    assertHoldersKept(current, holders, await protectedHolders(client, current));
     await this.assertRecoverableControl(client, controlBefore, company);
     if (!configurationCapabilities(await this.authority(client, actor)).actor.can_control) {
       throw new ConfigurationError('forbidden', 'control permission is required for configuration');
@@ -444,23 +447,7 @@ export class ConfigurationRepository extends ConfigurationMutations {
   /** A company mutation keeps recoverable company control and a qualified platform administrator. */
   protected async controlState(client: DatabaseClient, company: string): Promise<ControlState> {
     const selected = await client.query<Record<keyof ControlState, string | number>>(
-      `WITH qualified AS (
-         SELECT person.id,person.company_id FROM console_users person
-         JOIN human_tenant_memberships home ON home.human_id=person.id AND home.tenant_id=person.tenant_id
-         JOIN tenants tenant ON tenant.id=person.tenant_id AND tenant.company_id=person.company_id
-         JOIN companies company ON company.id=tenant.company_id
-         WHERE person.active AND person.role='operator' AND company.enabled AND company.retired_at IS NULL
-           AND tenant.enabled AND tenant.retired_at IS NULL AND tenant.purged_at IS NULL
-           AND home.enabled AND home.revoked_at IS NULL AND home.role='operator' AND home.actor_alias=person.alias
-           AND 'control'=ANY(home.permissions) AND EXISTS(
-             SELECT 1 FROM memberships membership
-             JOIN role_policies role ON role.role=membership.role
-             JOIN rooms room ON room.id=membership.room_id AND room.tenant_id=membership.tenant_id
-             JOIN agents agent ON agent.tenant_id=membership.tenant_id AND agent.alias=membership.alias
-             WHERE membership.tenant_id=person.tenant_id AND membership.alias=person.alias
-               AND membership.enabled AND membership.retired_at IS NULL AND role.allow_control
-               AND room.enabled AND room.retired_at IS NULL AND room.purged_at IS NULL
-               AND agent.retired_at IS NULL AND agent.purged_at IS NULL))
+      `WITH qualified AS (${QUALIFIED_PEOPLE_SQL})
        SELECT (SELECT count(*) FROM tenants tenant WHERE tenant.company_id=$1 AND tenant.is_hub AND tenant.enabled
          AND tenant.retired_at IS NULL AND tenant.purged_at IS NULL AND EXISTS(
            SELECT 1 FROM memberships membership
