@@ -12,6 +12,9 @@ import { fileSha256, readFileTurns } from './chat-file-send-real-browser.fixture
 interface FileInput extends Locator {
   setInputFiles(files: { name: string; mimeType: string; buffer: Buffer }[]): Promise<void>;
 }
+interface PointerPage extends BrowserPage {
+  mouse: { move(x: number, y: number): Promise<void>; wheel(deltaX: number, deltaY: number): Promise<void> };
+}
 interface FileChooserPage extends BrowserPage {
   waitForEvent(event: 'filechooser', options: { timeout: number }): Promise<unknown>;
 }
@@ -40,7 +43,10 @@ async function login(page: BrowserPage, tenant: FunctionalTenant): Promise<void>
 
 async function createMembership(page: BrowserPage, tenant: FunctionalTenant, active: Fixture): Promise<void> {
   await page.goto(`${active.baseUrl}/config`, { waitUntil: 'domcontentloaded' });
-  await page.getByRole('tab', { name: 'Espacios y salas', exact: true }).click();
+  await page.getByRole('heading', { name: 'Ajustes', exact: true }).waitFor({ state: 'visible', timeout: 20_000 });
+  const section = page.getByRole('combobox', { name: 'Sección', exact: true });
+  if (await section.count()) await section.selectOption('espacios');
+  else await page.getByRole('tab', { name: 'Espacios y salas', exact: true }).click();
   await page.getByRole('button', { name: 'Un solo recurso' }).click();
   await page.getByLabel('Recurso a crear').selectOption('membership');
   await page.getByLabel('Tenant', { exact: true }).fill(tenant.tenant);
@@ -243,6 +249,13 @@ async function incomingMedia(tenant: FunctionalTenant, id: string, originals: Me
 }
 
 async function previewMedia(page: BrowserPage, files: MediaFile[]): Promise<void> {
+  const scroll = await page.locator('[data-thread-scroll]').boundingBox();
+  if (!scroll) throw new Error('Missing conversation scroll viewport');
+  const distance = await page.evaluate(() => document.querySelector('[data-thread-scroll]')?.scrollHeight ?? 0);
+  await (page as PointerPage).mouse.move(scroll.x + scroll.width / 2, scroll.y + scroll.height / 2);
+  await (page as PointerPage).mouse.wheel(0, -distance);
+  await expect.poll(() => page.evaluate(() => document.querySelector('[data-thread-scroll]')?.scrollTop),
+    { timeout: 5_000, interval: 50 }).toBe(0);
   const image = files.find((file) => file.mimeType === 'image/png');
   if (!image) throw new Error('Missing owned raster image');
   const imageRow = page.locator(`ul[aria-label="Archivos del mensaje"] > li:has(strong:text-is(${JSON.stringify(image.name)}))`);
