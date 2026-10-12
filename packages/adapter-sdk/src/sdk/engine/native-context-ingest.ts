@@ -7,6 +7,15 @@ import { discoReal } from '../../context/siembra-del-perfil.js';
 import type { NativeContextIngest } from '../context-ingest-client.js';
 import { AdapterError } from '../errors.js';
 
+export async function readSpaceContextStateVersion(root: string): Promise<number | undefined> {
+  const path = join(root, 'config', 'context-state.json');
+  try {
+    if (!(await lstat(path)).isFile() || await realpath(path) !== path) return undefined;
+    const raw = JSON.parse(await readFile(path, 'utf8')) as { version?: unknown };
+    return typeof raw.version === 'number' ? raw.version : undefined;
+  } catch { return undefined; }
+}
+
 interface TrackedState { readonly version: number; readonly hashes: ReadonlyMap<string, string> }
 interface ScannedFile { readonly content: string; readonly sha256: string }
 

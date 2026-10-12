@@ -353,16 +353,16 @@ export class AdapterEngine {
     const controller = new AbortController();
     this.controllers.set(delivery.delivery_id, controller);
 
-    if (reservation !== undefined || space.root !== undefined) {
+    if (reservation !== undefined) {
       const acquired = await this.awaitSessionTurn(
         accepted.record,
-        { wait: async signal => { await reservation?.wait(signal); await space.wait(signal); } },
+        { wait: async signal => { await reservation.wait(signal); } },
         executionBudget,
         controller,
       );
       if (!acquired) return;
     }
-    try { controller.signal.throwIfAborted(); await space.materialize(delivery, this.ownTenantId, harness.definition.id); }
+    try { controller.signal.throwIfAborted(); await space.materialize(delivery, this.ownTenantId, harness.definition.id, controller.signal); }
     catch (error) { await this.finishError(accepted.record, this.adapterError(error, accepted.record)); return; }
 
     const onOpenClawPhase = harness.definition.id === "openclaw" ? deliveryPhaseObserver(this.logger, delivery) : undefined;

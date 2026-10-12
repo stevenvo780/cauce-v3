@@ -19,11 +19,6 @@ function context(version: number) {
 function claimed(id: string, version: number, session = 'shared-conversation') {
   return { ...delivery(id), ...conversation({ conversationId: session }), versioned_context: context(version) };
 }
-function barrier() {
-  let open: () => void = () => undefined;
-  const promise = new Promise<void>(resolve => { open = resolve; });
-  return { promise, open };
-}
 async function fixture(t: TestContext, queueWaitTimeoutMs = 2000, withWitness = false) {
   const root = await mkdtemp(join(tmpdir(), 'cauce-space-turn-'));
   const space = join(root, 'space'); const path = join(space, 'context/mission.md');
@@ -31,7 +26,7 @@ async function fixture(t: TestContext, queueWaitTimeoutMs = 2000, withWitness = 
   const reads: string[] = []; const releases: (() => void)[] = []; const executions: Promise<void>[] = [];
   const engines: AdapterEngine[] = []; let releasing = false;
   const runner: CommandRunner = { run: async input => {
-    reads.push(await readFile(path, 'utf8'));
+    reads.push(await readFile(path, 'utf8').catch(() => 'absent'));
     await new Promise<void>(resolve => {
       if (releasing || input.signal.aborted) resolve();
       else { releases.push(resolve); input.signal.addEventListener('abort', () => { resolve(); }, { once: true }); }
@@ -43,10 +38,10 @@ async function fixture(t: TestContext, queueWaitTimeoutMs = 2000, withWitness = 
     return { stdout, stderr: '', exitCode: 0, signal: null, timedOut: false, cancelled: false,
       ...(proof === undefined ? {} : { consumptionWitness: proof }) };
   } };
-  const createEngine = async (id: string, withoutSessionReservation = false) => {
+  const createEngine = async (id: string) => {
     const store = await DurableStore.open(join(root, id)); const events: DeliveryEvent[] = [];
     const definition = withWitness ? codexDefinition : fakeDefinition;
-    const harness = new HarnessAdapter({ definition: withoutSessionReservation ? { ...definition, sessionStrategy: { kind: 'none' } } : definition, runner, store });
+    const harness = new HarnessAdapter({ definition, runner, store });
     const engine: AdapterEngine = new AdapterEngine({ store, harness, ownTenantId: 'Steven',
       executionIntentMode: 'local-test-only', claimRenewalMs: 10, claimWatchdogMs: 2000, queueWaitTimeoutMs,
       publish: async event => { events.push(event); if (event.claim_renewal === true) engine.confirmClaim(event.delivery_id, event.attempt, event.claim_token); } });
@@ -62,56 +57,43 @@ async function fixture(t: TestContext, queueWaitTimeoutMs = 2000, withWitness = 
     const running = engine.handleDelivery(input); executions.push(running); return running;
   };
   const release = () => { const next = releases.shift(); assert.ok(next); next(); };
-  return { path, reads, createEngine, start, release };
+  const releaseLast = () => { const next = releases.pop(); assert.ok(next); next(); };
+  return { path, reads, createEngine, start, release, releaseLast };
 }
-for (const mode of ['same-session', 'different-sessions', 'different-engines', 'without-session-reservation'] as const) {
-  test(`versioned context remains stable throughout an active turn with ${mode}`, { timeout: 6000 }, async t => {
-    const f = await fixture(t); const a = await f.createEngine('a', mode === 'without-session-reservation');
-    const b = mode === 'different-engines' ? await f.createEngine('b') : a;
-    const first = f.start(a.engine, claimed('space-first', 1)); await waitFor(() => f.reads.length === 1, 'first runner');
-    const second = f.start(b.engine, claimed('space-second', 2, mode === 'same-session' ? 'shared-conversation' : 'other-conversation'));
-    await waitFor(() => b.events.some(event => event.delivery_id === 'space-second' && event.claim_renewal === true), 'accepted queue renewal');
-    assert.equal(await readFile(f.path, 'utf8'), 'Version 1 instructions.'); assert.equal(f.reads.length, 1);
-    assert.equal(b.store.getDelivery('space-second')?.state, 'accepted');
-    assert.equal(b.events.some(event => event.delivery_id === 'space-second' && event.phase === 'started'), false);
-    f.release(); await first; await waitFor(() => f.reads.length === 2, 'second runner');
-    assert.deepEqual(f.reads, ['Version 1 instructions.', 'Version 2 instructions.']); f.release(); await second;
-  });
-}
-for (const mode of ['cancel', 'timeout'] as const) {
-  test(`a ${mode} while awaiting the shared space never materializes its context and releases its reservation`, { timeout: 6000 }, async t => {
-    const f = await fixture(t, mode === 'timeout' ? 100 : 2000); const a = await f.createEngine('a');
-    const first = f.start(a.engine, claimed('space-blocker', 1)); await waitFor(() => f.reads.length === 1, 'blocking runner');
-    const second = f.start(a.engine, claimed('space-queued', 2, 'other-conversation'));
-    await waitFor(() => a.events.some(event => event.delivery_id === 'space-queued' && event.claim_renewal === true), 'queue heartbeat');
-    if (mode === 'cancel') await a.engine.cancel({ type: 'cancel', delivery_id: 'space-queued', epoch: 1 });
-    await waitFor(() => a.store.getDelivery('space-queued')?.state === 'failed', 'aborted space waiter', 2000);
-    await second;
-    assert.equal(await readFile(f.path, 'utf8'), 'Version 1 instructions.'); assert.equal(f.reads.length, 1);
-    assert.equal(a.events.some(event => event.delivery_id === 'space-queued' && event.phase === 'started'), false);
-    assert.equal(a.events.find(event => event.delivery_id === 'space-queued' && event.phase === 'failed')?.error?.code,
-      mode === 'cancel' ? 'CANCELLED' : 'SESSION_QUEUE_TIMEOUT');
-    f.release(); await first;
-    const third = f.start(a.engine, claimed('space-next', 3, 'third-conversation'));
-    await waitFor(() => f.reads.length === 2, 'runner after aborted waiter'); f.release(); await third;
-    assert.equal(await readFile(f.path, 'utf8'), 'Version 3 instructions.');
-  });
-}
-test('the space reservation remains held until the completed delivery is persisted', { timeout: 6000 }, async t => {
-  const entered = barrier(); const persist = barrier();
-  t.after(() => { persist.open(); });
+test('a long versioned turn does not block another session from materializing and executing', { timeout: 6000 }, async t => {
+  const f = await fixture(t); const a = await f.createEngine('a'); const b = await f.createEngine('b');
+  const first = f.start(a.engine, claimed('space-first', 1)); await waitFor(() => f.reads.length === 1, 'first runner');
+  const second = f.start(b.engine, claimed('space-second', 2, 'other-conversation'));
+  await waitFor(() => f.reads.length === 2, 'second runner while first is active');
+  assert.deepEqual(f.reads, ['Version 1 instructions.', 'Version 2 instructions.']);
+  f.releaseLast(); await second;
+  assert.equal(b.store.getDelivery('space-second')?.state, 'done');
+  assert.notEqual(a.store.getDelivery('space-first')?.state, 'done');
+  f.release(); await first;
+  assert.equal(a.store.getDelivery('space-first')?.state, 'done');
+  assert.equal(await readFile(f.path, 'utf8'), 'Version 2 instructions.');
+});
+test('a delivery without versioned context executes while a versioned turn is active', { timeout: 6000 }, async t => {
   const f = await fixture(t); const a = await f.createEngine('a');
-  const transition = a.store.transitionAndEnqueue.bind(a.store);
-  a.store.transitionAndEnqueue = async (...args) => {
-    if (args[0] === 'space-persist' && args[1] === 'done') { entered.open(); await persist.promise; }
-    return transition(...args);
-  };
-  const first = f.start(a.engine, claimed('space-persist', 1)); await waitFor(() => f.reads.length === 1, 'first runner');
-  f.release(); await entered.promise;
-  const second = f.start(a.engine, claimed('space-after', 2, 'other-conversation'));
-  await waitFor(() => a.events.some(event => event.delivery_id === 'space-after' && event.claim_renewal === true), 'persistence queue');
-  assert.equal(f.reads.length, 1); assert.equal(await readFile(f.path, 'utf8'), 'Version 1 instructions.');
-  persist.open(); await first; await waitFor(() => f.reads.length === 2, 'runner after persistence'); f.release(); await second;
+  const first = f.start(a.engine, claimed('space-versioned', 1)); await waitFor(() => f.reads.length === 1, 'versioned runner');
+  const plain = { ...delivery('space-plain'), ...conversation({ conversationId: 'plain-conversation' }) };
+  const second = f.start(a.engine, plain as ReturnType<typeof claimed>);
+  await waitFor(() => f.reads.length === 2, 'plain runner while versioned turn is active');
+  f.releaseLast(); await second;
+  assert.equal(a.store.getDelivery('space-plain')?.state, 'done');
+  assert.notEqual(a.store.getDelivery('space-versioned')?.state, 'done');
+  f.release(); await first;
+  assert.equal(a.store.getDelivery('space-versioned')?.state, 'done');
+});
+test('deliveries of one session still serialize through the session reservation', { timeout: 6000 }, async t => {
+  const f = await fixture(t); const a = await f.createEngine('a');
+  const first = f.start(a.engine, claimed('space-session-first', 1)); await waitFor(() => f.reads.length === 1, 'first runner');
+  const second = f.start(a.engine, claimed('space-session-second', 2));
+  await waitFor(() => a.events.some(event => event.delivery_id === 'space-session-second' && event.claim_renewal === true), 'session queue renewal');
+  assert.equal(f.reads.length, 1);
+  assert.equal(a.store.getDelivery('space-session-second')?.state, 'accepted');
+  f.release(); await first; await waitFor(() => f.reads.length === 2, 'second runner');
+  assert.deepEqual(f.reads, ['Version 1 instructions.', 'Version 2 instructions.']); f.release(); await second;
 });
 test('an external edit during execution fails without a false context adoption', { timeout: 6000 }, async t => {
   const f = await fixture(t, 2000, true); const a = await f.createEngine('a');

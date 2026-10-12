@@ -9,7 +9,7 @@ import { isAbsolute, resolve } from 'node:path';
 import { SessionReservation } from '../../harnesses/shared/session-reservation.js';
 import type { VersionedContext } from '@cauce/protocol';
 import type { NativeContextIngest } from '../context-ingest-client.js';
-import { ingestLocalContextEdits } from './native-context-ingest.js';
+import { ingestLocalContextEdits, readSpaceContextStateVersion } from './native-context-ingest.js';
 
 const spaceTurns = new Map<string, Promise<void>>();
 export class VersionedContextTurn {
@@ -19,38 +19,48 @@ export class VersionedContextTurn {
   constructor(readonly root: string | undefined = process.env.CAUCE_SPACE_ROOT,
     private readonly ingest: NativeContextIngest | undefined = undefined) {}
   get effectiveContext(): VersionedContext | undefined { return this.effective; }
-  async wait(signal: AbortSignal): Promise<void> {
+  private async acquire(signal: AbortSignal): Promise<void> {
     const root = this.root;
     if (root === undefined) return;
     if (!isAbsolute(root) || resolve(root) !== root || root === '/') throw new AdapterError('INVALID_VERSIONED_CONTEXT', 'Space root must be a canonical absolute directory', false);
-    if (this.reservation === undefined) {
-      const previous = spaceTurns.get(root) ?? Promise.resolve();
-      let release: () => void = () => undefined;
-      const completed = new Promise<void>(resolveCompleted => { release = resolveCompleted; });
-      const tail = previous.catch(() => undefined).then(() => completed);
-      spaceTurns.set(root, tail);
-      void tail.finally(() => { if (spaceTurns.get(root) === tail) spaceTurns.delete(root); });
-      this.reservation = new SessionReservation(root, previous, release);
-    }
-    await this.reservation.wait(signal);
+    const previous = spaceTurns.get(root) ?? Promise.resolve();
+    let release: () => void = () => undefined;
+    const completed = new Promise<void>(resolveCompleted => { release = resolveCompleted; });
+    const tail = previous.catch(() => undefined).then(() => completed);
+    spaceTurns.set(root, tail);
+    void tail.finally(() => { if (spaceTurns.get(root) === tail) spaceTurns.delete(root); });
+    this.reservation = new SessionReservation(root, previous, release);
+    try { await this.reservation.wait(signal); } catch (error) { this.release(); throw error; }
   }
-  release(): void { this.reservation?.release(); }
-  async materialize(delivery: Delivery, tenant: string | undefined, harness: HarnessId): Promise<void> {
-    if (this.ingest !== undefined && this.root !== undefined && delivery.versioned_context !== undefined) {
-      validateVersionedContext(delivery, tenant);
-      this.effective = await ingestLocalContextEdits(this.root, canonicalVersionedContext(delivery.versioned_context), this.ingest);
+  release(): void { this.reservation?.release(); this.reservation = undefined; }
+  async materialize(delivery: Delivery, tenant: string | undefined, harness: HarnessId, signal?: AbortSignal): Promise<void> {
+    if (this.root === undefined || delivery.versioned_context === undefined) {
+      this.materialized = await materializeVersionedContext(delivery, tenant, harness, { CAUCE_SPACE_ROOT: this.root });
+      return;
     }
-    const effectiveDelivery = this.effective === undefined ? delivery : { ...delivery, versioned_context: this.effective };
-    this.materialized = await materializeVersionedContext(effectiveDelivery, tenant, harness, { CAUCE_SPACE_ROOT: this.root });
+    await this.acquire(signal ?? new AbortController().signal);
+    try {
+      if (this.ingest !== undefined) {
+        validateVersionedContext(delivery, tenant);
+        this.effective = await ingestLocalContextEdits(this.root, canonicalVersionedContext(delivery.versioned_context), this.ingest);
+      }
+      const effectiveDelivery = this.effective === undefined ? delivery : { ...delivery, versioned_context: this.effective };
+      this.materialized = await materializeVersionedContext(effectiveDelivery, tenant, harness, { CAUCE_SPACE_ROOT: this.root });
+    } finally { this.release(); }
   }
   async verify(): Promise<void> {
-    if (this.materialized === undefined) return;
+    if (this.materialized === undefined || this.root === undefined) return;
+    await this.acquire(new AbortController().signal);
     try {
-      for (const document of this.materialized.documents) {
-        if (!(await lstat(document.path)).isFile() || await realpath(document.path) !== document.path
-            || createHash('sha256').update(await readFile(document.path)).digest('hex') !== document.sha256) throw new Error('Materialized context differs');
-      }
-    } catch { throw new AdapterError('VERSIONED_CONTEXT_CHANGED', 'Materialized versioned context changed during the turn', false); }
+      const currentVersion = await readSpaceContextStateVersion(this.root);
+      if (currentVersion !== undefined && currentVersion > this.materialized.version) return;
+      try {
+        for (const document of this.materialized.documents) {
+          if (!(await lstat(document.path)).isFile() || await realpath(document.path) !== document.path
+              || createHash('sha256').update(await readFile(document.path)).digest('hex') !== document.sha256) throw new Error('Materialized context differs');
+        }
+      } catch { throw new AdapterError('VERSIONED_CONTEXT_CHANGED', 'Materialized versioned context changed during the turn', false); }
+    } finally { this.release(); }
   }
 }
 
