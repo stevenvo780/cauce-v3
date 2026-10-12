@@ -1,14 +1,23 @@
 from __future__ import annotations
 
+import base64
+import hashlib
+import hmac
 import json
 import re
+import time
+import urllib.request
 
 from fleet_provider_identity import (
     nonce_roundtrip,
-    profile_identity_candidates,
+    profile_jwt_candidates,
     validate_provider_binding,
     validate_provider_selection,
 )
+
+ISSUER = 'https://auth.meta.com'
+JWKS_URI = 'https://auth.meta.com/.well-known/oauth/openid/jwks/'
+SHA256_DIGEST_INFO = bytes.fromhex('3031300d060960864801650304020105000420')
 
 EFFORTS = frozenset({'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'})
 
@@ -75,10 +84,76 @@ def reply_text(output: bytes):
     return None if failed else candidate
 
 
+def fetch_jwks() -> dict:
+    """Verified identity anchor: the provider signing keys, over TLS, fixed URI."""
+    request = urllib.request.Request(JWKS_URI)
+    opener = urllib.request.build_opener(type('NoRedirect', (urllib.request.HTTPRedirectHandler,),
+                                               {'redirect_request': lambda self, *args, **kwargs: None}))
+    with opener.open(request, timeout=10) as response:
+        raw = response.read(65537)
+    if len(raw) > 65536:
+        raise ValueError('JWKS response exceeds limit')
+    value = json.loads(raw)
+    if not isinstance(value, dict) or not isinstance(value.get('keys'), list):
+        raise ValueError('JWKS response is not a key set')
+    return value
+
+
+def base64_segment(value: str) -> bytes:
+    return base64.urlsafe_b64decode(value + '=' * (-len(value) % 4))
+
+
+def verify_id_token(token: str, jwks: dict) -> dict:
+    """RS256 verification against the provider JWKS; returns claims or raises."""
+    header_segment, payload_segment, signature_segment = token.split('.')
+    header = json.loads(base64_segment(header_segment))
+    if not isinstance(header, dict) or header.get('alg') != 'RS256':
+        raise ValueError('id_token is not RS256')
+    keys = [key for key in jwks['keys'] if isinstance(key, dict) and key.get('kty') == 'RSA']
+    if header.get('kid') is not None:
+        keys = [key for key in keys if key.get('kid') == header['kid']]
+    if len(keys) != 1:
+        raise ValueError('id_token signing key is not in the provider JWKS')
+    modulus = int.from_bytes(base64_segment(keys[0]['n']), 'big')
+    exponent = int.from_bytes(base64_segment(keys[0]['e']), 'big')
+    signature = int.from_bytes(base64_segment(signature_segment), 'big')
+    if signature >= modulus:
+        raise ValueError('id_token signature is out of range')
+    size = (modulus.bit_length() + 7) // 8
+    encoded = pow(signature, exponent, modulus).to_bytes(size, 'big')
+    digest = hashlib.sha256(f'{header_segment}.{payload_segment}'.encode()).digest()
+    expected = b'\x00\x01' + b'\xff' * (size - len(SHA256_DIGEST_INFO) - len(digest) - 3) \
+        + b'\x00' + SHA256_DIGEST_INFO + digest
+    if not hmac.compare_digest(encoded, expected):
+        raise ValueError('id_token signature does not verify')
+    claims = json.loads(base64_segment(payload_segment))
+    if not isinstance(claims, dict) or claims.get('iss') != ISSUER:
+        raise ValueError('id_token issuer differs')
+    if not isinstance(claims.get('exp'), (int, float)) or claims['exp'] <= time.time():
+        raise ValueError('id_token is expired')
+    if not isinstance(claims.get('sub'), str) or not claims['sub']:
+        raise ValueError('id_token has no subject')
+    return claims
+
+
+def verified_identities(config: str) -> set:
+    tokens = profile_jwt_candidates(str(config) + '/muse/auth.json')
+    if not tokens:
+        return set()
+    jwks = fetch_jwks()
+    identities = set()
+    for token in tokens:
+        try:
+            identities.add(verify_id_token(token, jwks)['sub'])
+        except Exception:
+            continue
+    return identities
+
+
 def authenticated(packet: dict) -> bool:
     try:
         config = environment(packet['profile_binding'], packet['agent'])['XDG_CONFIG_HOME']
-        if packet['identity'] not in profile_identity_candidates(str(config) + '/muse/auth.json'):
+        if packet['identity'] not in verified_identities(config):
             return False
         return nonce_roundtrip(packet, lambda prompt: execution_arguments(packet['agent'], prompt), reply_text)
     except Exception:

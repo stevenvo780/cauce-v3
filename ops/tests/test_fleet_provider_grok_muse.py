@@ -272,9 +272,31 @@ class IsolatedProviderTests(unittest.TestCase):
             self.assertEqual([row['harness_id'] for row in observed], [provider])
 
     @staticmethod
-    def jwt(payload):
-        segment = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode().rstrip('=')
-        return f'fixture.{segment}.fixture'
+    def b64(raw):
+        return base64.urlsafe_b64encode(raw).decode().rstrip('=')
+
+    def rsa_key(self, name):
+        pem = self.root / f'{name}.pem'
+        if not pem.exists():
+            subprocess.run(['openssl', 'genpkey', '-algorithm', 'RSA', '-pkeyopt', 'rsa_keygen_bits:2048',
+                            '-out', str(pem)], check=True, capture_output=True, timeout=30)
+            pem.chmod(0o600)
+        return pem
+
+    def jwk(self, name):
+        pem = self.rsa_key(name)
+        modulus = subprocess.run(['openssl', 'rsa', '-in', str(pem), '-modulus', '-noout'],
+                                 check=True, capture_output=True, text=True, timeout=10).stdout.strip().removeprefix('Modulus=')
+        n = int(modulus, 16).to_bytes((len(modulus) + 1) // 2, 'big').lstrip(b'\0')
+        return {'kty': 'RSA', 'kid': 'fixture', 'n': self.b64(n), 'e': self.b64((65537).to_bytes(3, 'big'))}
+
+    def signed_id_token(self, name, claims):
+        header = self.b64(json.dumps({'alg': 'RS256', 'kid': 'fixture'}).encode())
+        payload = self.b64(json.dumps(claims).encode())
+        signing = f'{header}.{payload}'.encode()
+        signature = subprocess.run(['openssl', 'dgst', '-sha256', '-sign', str(self.rsa_key(name))],
+                                   input=signing, check=True, capture_output=True, timeout=10).stdout
+        return f'{header}.{payload}.{self.b64(signature)}'
 
     FAKE_CLI = '''#!/usr/bin/python3
 import json, pathlib, re, sys, time
@@ -294,9 +316,9 @@ else:
     print(json.dumps({'payload': {'kind': 'run_terminal', 'terminal': 'completed', 'text': text}}))
 '''
 
-    def install_fake_cli(self, provider, mode, identity_value='subject'):
-        self.driver(provider)
-        fake = self.root / f'fake-{provider}-{mode}'
+    def install_fake_cli(self, provider, mode, identity_value='subject', *, signer='signing'):
+        driver = self.driver(provider)
+        fake = self.root / f'fake-{provider}-{mode}-{signer}'
         fake.write_text(self.FAKE_CLI.replace('__MODE__', mode).replace('__PROVIDER__', provider))
         fake.chmod(0o700)
         self.binding['command'] = str(fake)
@@ -306,13 +328,20 @@ else:
             profile.mkdir(mode=0o700, exist_ok=True)
             auth = profile / 'auth.json'
             auth.write_text(json.dumps({'https://auth.fixture.invalid': {
-                'key': 'fixture-token', 'email': identity_value}}))
+                'key': 'fixture-token', 'email': 'local-forged@fixture.invalid'}}))
+            patcher = mock.patch.object(driver, 'fetch_userinfo',
+                                        return_value={'email': identity_value, 'sub': 'subject-1'})
         else:
             directory = profile / 'config' / 'muse'
             directory.mkdir(mode=0o700, parents=True, exist_ok=True)
             auth = directory / 'auth.json'
-            auth.write_text(json.dumps({'token': self.jwt({'email': identity_value})}))
+            token = self.signed_id_token(signer, {'iss': 'https://auth.meta.com',
+                'sub': identity_value, 'exp': int(time.time()) + 3600})
+            auth.write_text(json.dumps({'token': token}))
+            patcher = mock.patch.object(driver, 'fetch_jwks', return_value={'keys': [self.jwk('signing')]})
         auth.chmod(0o600)
+        patcher.start()
+        self.addCleanup(patcher.stop)
         packet = {**self.packet, 'fleet_module': f'fleet_provider_{provider}'}
         return packet
 
@@ -340,6 +369,22 @@ else:
                     self.assertFalse(identity.authenticated_provider(self.install_fake_cli(provider, 'hang')))
                 self.assertLess(time.monotonic() - started, 8)
                 self.assertEqual(list(self.state.glob('.cauce-auth-prompt-*')), [])
+
+    def test_forged_id_token_signature_does_not_bind_muse_identity(self):
+        packet = self.install_fake_cli('muse', 'ok', signer='foreign')
+        with mock.patch.object(identity, 'command_output', side_effect=AssertionError('model turn forbidden')):
+            self.assertFalse(identity.authenticated_provider(packet))
+
+    def test_local_grok_email_field_does_not_bind_identity_without_userinfo(self):
+        driver = self.driver('grok')
+        profile = pathlib.Path(self.binding['path'])
+        profile.mkdir(mode=0o700, exist_ok=True)
+        (profile / 'auth.json').write_text(json.dumps({'https://auth.fixture.invalid': {
+            'key': 'fixture-token', 'email': 'subject'}}))
+        with mock.patch.object(driver, 'fetch_userinfo', side_effect=OSError('provider unavailable')), \
+                mock.patch.object(identity, 'command_output', side_effect=AssertionError('model turn forbidden')):
+            self.assertFalse(identity.authenticated_provider(
+                {**self.packet, 'fleet_module': 'fleet_provider_grok'}))
 
     def test_template_login_arguments_come_from_the_descriptor(self):
         self.driver('grok')

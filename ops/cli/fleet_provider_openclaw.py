@@ -19,13 +19,24 @@ INSPECTION_ENV = {'OPENCLAW_AUTH_STORE_READONLY': '1'}
 # The binding provider (the paying account) decides which OpenClaw provider id
 # and model namespace apply; the driver itself is provider-agnostic.
 PROVIDER_BY_BINDING = {'codex': 'openai', 'claude': 'anthropic'}
+# Measured login/identity flow fingerprint per upstream provider. Only OpenAI
+# has been measured against the real CLI flow; Anthropic stays unmeasured and
+# is refused explicitly instead of inheriting the OpenAI fingerprint.
+PROVIDER_FLOWS = {
+    'openai': {'version': VERSION, 'auth_list_sha256': AUTH_LIST_SHA256, 'methods': {'oauth', 'device-code'}},
+    'anthropic': None,
+}
 
 
 def validate_definition(value: dict, provider: str) -> None:
     from fleet_policy_paths import path
-    if not isinstance(value, dict) or set(value) != FIELDS or PROVIDER_BY_BINDING.get(provider) is None \
-            or value['provider_id'] != PROVIDER_BY_BINDING[provider] or value['method_id'] not in {'oauth', 'device-code'} \
-            or value['version'] != VERSION or value['auth_list_sha256'] != AUTH_LIST_SHA256:
+    provider_id = PROVIDER_BY_BINDING.get(provider)
+    if provider_id is not None and PROVIDER_FLOWS.get(provider_id) is None:
+        raise ValueError(f'OpenClaw {provider_id} flow has not been measured yet; refusing to declare it measured')
+    flow = PROVIDER_FLOWS.get(provider_id) if provider_id else None
+    if flow is None or not isinstance(value, dict) or set(value) != FIELDS \
+            or value['provider_id'] != provider_id or value['method_id'] not in flow['methods'] \
+            or value['version'] != flow['version'] or value['auth_list_sha256'] != flow['auth_list_sha256']:
         raise ValueError('OpenClaw provider driver has no measured independent account flow')
     for key, fingerprint in [('auth_list_source', 'auth_list_sha256'), ('node_command', 'node_command_sha256'), ('bridge', 'bridge_sha256')]:
         path(value[key])
@@ -46,6 +57,10 @@ def validate_execution_selection(agent: dict) -> None:
 
 def validate_binding(binding: dict, agent: dict) -> None:
     validate_definition(binding.get('openclaw'), binding.get('provider'))
+    provider_id = PROVIDER_BY_BINDING[binding['provider']]
+    model = agent.get('model_id')
+    if not isinstance(model, str) or not model.startswith(provider_id + '/'):
+        raise ValueError('OpenClaw model provider differs from its binding provider')
 
 
 def environment(binding: dict, agent: dict) -> dict:

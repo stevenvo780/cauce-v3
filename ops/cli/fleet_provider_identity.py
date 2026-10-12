@@ -46,18 +46,20 @@ def jwt_claims(token: str) -> dict:
     return json.loads(base64.urlsafe_b64decode(segment + '=' * (-len(segment) % 4)))
 
 
-def profile_identity_candidates(filename: str) -> set:
-    """Identity strings a profile credential file vouches for, without exposing
-    credential material: email-like fields and email/subject JWT claims."""
-    candidates = set()
+def read_profile_json(filename: str):
+    """Bounded read of a profile credential document; never logged or returned whole."""
     try:
         with open(filename, 'rb') as stream:
             raw = stream.read(262145)
         if len(raw) > 262144:
-            return candidates
-        document = json.loads(raw)
+            return None
+        return json.loads(raw)
     except (OSError, ValueError):
-        return candidates
+        return None
+
+
+def profile_values(document, wanted_keys: set) -> list:
+    values = []
     pending = [document]
     seen = 0
     while pending and seen < 256:
@@ -65,19 +67,32 @@ def profile_identity_candidates(filename: str) -> set:
         seen += 1
         if isinstance(value, dict):
             for key, item in value.items():
-                if key in {'email', 'user_email', 'account_email'} and isinstance(item, str) and item:
-                    candidates.add(item)
+                if key in wanted_keys and isinstance(item, str) and item:
+                    values.append(item)
                 pending.append(item)
         elif isinstance(value, list):
             pending.extend(value)
+    return values
+
+
+def profile_jwt_candidates(filename: str) -> list:
+    """JWT-shaped strings in a credential file. These are only hints: a token
+    proves identity only after its signature verifies against the provider JWKS."""
+    document = read_profile_json(filename)
+    if document is None:
+        return []
+    candidates = []
+    pending = [document]
+    seen = 0
+    while pending and seen < 256:
+        value = pending.pop()
+        seen += 1
+        if isinstance(value, dict):
+            pending.extend(value.values())
+        elif isinstance(value, list):
+            pending.extend(value)
         elif isinstance(value, str) and value.count('.') == 2:
-            try:
-                claims = jwt_claims(value)
-            except Exception:
-                continue
-            for key in ('email', 'sub'):
-                if isinstance(claims.get(key), str) and claims[key]:
-                    candidates.add(claims[key])
+            candidates.append(value)
     return candidates
 
 

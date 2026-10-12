@@ -271,8 +271,7 @@ class OpenClawProviderTest(unittest.TestCase):
         template['provider'] = 'claude'
         template['openclaw'] = {**template['openclaw'], 'provider_id': 'anthropic'}
         observed = templates.capabilities(policy)
-        runtimes = observed['placements'][0]['runtimes']
-        self.assertEqual([(row['harness_id'], row['provider']) for row in runtimes], [('openclaw', 'claude')])
+        self.assertFalse(observed['available'])
         template['provider'] = 'codex'
         template['openclaw'] = {**template['openclaw'], 'provider_id': 'openai'}
         policy['signer']['key'] = str(self.root / 'missing-capability-key')
@@ -291,36 +290,30 @@ class OpenClawProviderTest(unittest.TestCase):
             driver.validate_definition(self.binding['openclaw'], 'claude')
         anthropic = copy.deepcopy(self.binding['openclaw'])
         anthropic['provider_id'] = 'anthropic'
-        driver.validate_definition(anthropic, 'claude')
+        with self.assertRaisesRegex(ValueError, 'anthropic flow has not been measured yet'):
+            driver.validate_definition(anthropic, 'claude')
         with self.assertRaises(ValueError):
             driver.validate_definition(anthropic, 'codex')
 
-    def test_anthropic_binding_authenticates_and_resolves_its_own_template(self):
+    def test_anthropic_is_refused_until_measured_and_model_must_match_binding(self):
         self.binding['provider'] = 'claude'
         self.binding['openclaw'] = {**self.binding['openclaw'], 'provider_id': 'anthropic'}
         self.agent['model_id'] = 'anthropic/claude-opus-5'
-        (self.profile / 'openclaw.json').unlink()
-        driver.prepare(self.binding, self.agent)
-        (self.profile / 'mode').write_text('anthropic')
+        with self.assertRaisesRegex(ValueError, 'anthropic flow has not been measured yet'):
+            driver.prepare(self.binding, self.agent)
         packet = {**self.packet, 'fleet_module': 'fleet_provider_openclaw'}
-        self.assertTrue(identity.authenticated_provider(packet))
-        argv = json.loads((self.profile / 'observed-args').read_bytes())
-        self.assertEqual(argv[argv.index('--model') + 1], 'anthropic/claude-opus-5')
-        self.agent['model_id'] = 'openai/gpt-5.5'
         self.assertFalse(identity.authenticated_provider(packet))
-        self.agent['model_id'] = 'anthropic/claude-opus-5'
         native = {'provider': 'claude', 'runtime_user': 'fixture', 'path_root': str(self.root / 'profiles-native'),
                   'command': str(self.command), 'command_sha256': self.hash(self.command)}
         claw = {**native, 'path_root': str(self.root / 'profiles-claw'), 'openclaw': self.binding['openclaw']}
         policy = {'bundles': {}, 'profiles': {}, 'profile_templates': [native, claw]}
-        templates.validate_templates(policy)
-        agent = {**self.agent, 'tenant_id': 'tenant', '_placement': {'state_root': str(self.state)},
-                 '_trusted_accounts_present': True, '_trusted_accounts': [{'id': 'account-one', 'provider': 'claude',
-                  'external_account_id': 'observed@fixture.invalid', 'enabled': True, 'payer_tenant_id': 'tenant', 'shared_with_pool': False}]}
-        binding = templates.resolve_profile(policy, agent)
-        self.assertEqual(binding['provider'], 'claude')
-        self.assertEqual(binding['openclaw']['provider_id'], 'anthropic')
-        self.assertTrue(binding['path'].startswith(claw['path_root'] + '/runtime-one/'))
+        with self.assertRaises(ValueError):
+            templates.validate_templates(policy)
+        binding = {'provider': 'codex', 'openclaw': copy.deepcopy(self.binding['openclaw'])}
+        binding['openclaw']['provider_id'] = 'openai'
+        with self.assertRaisesRegex(ValueError, 'model provider differs'):
+            driver.validate_binding({**self.binding, 'provider': 'codex', 'openclaw': binding['openclaw']},
+                                    {**self.agent, 'model_id': 'anthropic/claude-opus-5'})
 
 
 if __name__ == '__main__':
