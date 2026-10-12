@@ -68,9 +68,9 @@ async function chainEdge(source: [string, string, string], target: [string, stri
   [sourceDelivery, root, sourceTenant, sourceAlias, target[0], target[1], produced, producedDelivery, randomUUID(),
     JSON.stringify({ root_message_id: root })]);
 }
-let clock = Date.now() - 3_600_000;
+let clock = Date.now();
 function sample(host: string, account: string, remaining: number): QuotaSampleRequest {
-  clock += 60_000;
+  clock = Math.max(clock + 1, Date.now());
   return { schema_version: 2, host, captured_at: new Date(clock).toISOString(),
     providers: [{ provider: 'codex', ok: true, available: true, available_groups: [], limiting_groups: [],
       windows: [{ group_key: 'default', window_key: 'week', remaining_percent: remaining, account_id: account,

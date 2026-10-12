@@ -24,7 +24,7 @@ const revocations: readonly Revocation[] = [
   { name: 'human membership', sql: `UPDATE human_tenant_memberships
     SET enabled=false,revoked_at=now(),revision=revision+1 WHERE human_id=$1 AND tenant_id='Steven'`,
   values: (id) => [id], deniedCode: 'forbidden' },
-  { name: 'source tenant', sql: `UPDATE tenants SET enabled=false WHERE id='Steven'`, values: () => [], deniedCode: 'invalid_actor' },
+  { name: 'source tenant', sql: `UPDATE tenants SET enabled=false WHERE id='Steven'`, values: () => [], deniedCode: 'forbidden' },
   { name: 'recipient tenant', sql: `UPDATE tenants SET enabled=false WHERE id='Isa'`, values: () => [], recipientTenant: 'Isa', deniedCode: 'no_route' },
   { name: 'actor room', sql: `UPDATE rooms SET enabled=false WHERE tenant_id='Steven' AND id='grp.steven'`, values: () => [], deniedCode: 'invalid_actor' },
   { name: 'recipient membership', sql: `UPDATE memberships SET enabled=false

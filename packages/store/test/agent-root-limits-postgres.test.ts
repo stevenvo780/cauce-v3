@@ -368,6 +368,9 @@ describe('lectura del resultado por quien publicó', () => {
   }, 120_000);
 
   it('la respuesta de una sonda de gate no se muestra a nadie', async () => {
+    await database.adminPool.query("INSERT INTO agents(tenant_id,alias) VALUES('Steven','kant') ON CONFLICT DO NOTHING");
+    await database.adminPool.query(`INSERT INTO company_system_principals(company_id,kind,tenant_id,room_id,actor_alias,principal_alias)
+      SELECT company_id,'gate_probe',id,'grp.steven','kant','gate-probe' FROM tenants WHERE id='Steven'`);
     const nonce = 'a'.repeat(32);
     const id = await answered(() => repository.publish(command({
       body: { type: 'system.gate.probe', nonce, timeout_ms: 60_000 }, priority: -100,

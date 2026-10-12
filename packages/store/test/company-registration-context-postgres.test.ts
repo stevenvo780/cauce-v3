@@ -23,7 +23,15 @@ async function exclusiveCase(): Promise<EmptyTestDatabase> {
   const external = process.env.CAUCE_TEST_ADMIN_DATABASE_URL ?? process.env.CAUCE_TEST_DATABASE_URL;
   if (!external) {
     if (!database) throw new Error('test database unavailable');
-    return startTestCaseDatabase(database);
+    const testCase = await startTestCaseDatabase(database);
+    try {
+      const url = await provisionTestLogin(testCase.adminPool, testCase.adminUrl, TEST_RUNTIME_LOGIN, 'cauce_runtime');
+      const runtime = createPool(url);
+      return { ...testCase, pool: runtime, url, close: async () => {
+        await runtime.end();
+        await testCase.close();
+      } };
+    } catch (error) { await testCase.close(); throw error; }
   }
   if (!esBaseDePruebas(external)) throw new Error('disposable test database required');
   const server = createPool(external);
@@ -47,6 +55,11 @@ async function exclusiveCase(): Promise<EmptyTestDatabase> {
 
 beforeEach(async () => {
   current = await exclusiveCase(); pool = current.pool; admin = current.adminPool;
+  const roles = (await pool.query<{ login: string; super: boolean }>(
+    'SELECT current_user AS login,rolsuper AS super FROM pg_roles WHERE rolname=current_user')).rows;
+  expect(roles).toEqual([{ login: TEST_RUNTIME_LOGIN, super: false }]);
+  const migrator = (await admin.query<{ login: string }>('SELECT current_user AS login')).rows[0]?.login;
+  console.info(`[testcontainers] registration context migrator=${migrator ?? 'missing'} runtime=${roles[0]?.login ?? 'missing'}`);
   company = await registerCompany(pool, { email: 'registered@example.test', name: 'Registered owner', passwordHash: hash,
     company: { slug: 'registered', name: 'Registered company' } });
 });

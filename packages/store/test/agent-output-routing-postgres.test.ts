@@ -1,13 +1,28 @@
 import { randomUUID } from 'node:crypto';
 import { requireValue } from './helpers.js';
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
+import { createPool } from '../src/index.js';
 import { SYSTEM_PRINCIPAL_ALIASES, type Tenant } from '@cauce/protocol';
 import {
-  claim, claimFanin, command, pool, registerAgentOutputSuite, repository,
+  claim, claimFanin, command, database, pool, registerAgentOutputSuite, repository,
   ROUTABLE_FLEET_EXCEPT_ARGOS, terminalAck,
 } from './agent-output-postgres-helpers.js';
 
 registerAgentOutputSuite(import.meta.url);
+
+beforeEach(async () => {
+  const name = (await pool.query<{ name: string }>('SELECT current_database() AS name')).rows[0]?.name;
+  if (!name || !/^cauce_test_[a-z0-9_]+$/u.test(name)) throw new Error('routing fixture requires its owned case database');
+  const url = new URL(database.adminUrl); url.pathname = `/${name}`;
+  const admin = createPool(url.toString(), { max: 1 });
+  try {
+    await admin.query("DELETE FROM memberships WHERE tenant_id='Steven' AND alias='context-director'");
+    await admin.query("SELECT cauce_register_company_director('humanizar','Steven')");
+    expect((await pool.query(`SELECT delivery_source_only FROM company_system_principals
+      WHERE company_id='humanizar' AND kind='director' AND principal_alias='context-director'`)).rows)
+      .toEqual([{ delivery_source_only: true }]);
+  } finally { await admin.end(); }
+});
 
 describe('transactional StructuredOutput.messages materialization', () => {
   it('advertises routing_targets only to capability-aware leases', async () => {
@@ -308,6 +323,8 @@ describe('transactional StructuredOutput.messages materialization', () => {
       `SELECT DISTINCT membership.tenant_id,membership.alias
        FROM memberships membership
        WHERE membership.enabled
+         AND NOT EXISTS(SELECT 1 FROM company_system_principals principal WHERE principal.delivery_source_only
+           AND principal.tenant_id=membership.tenant_id AND principal.principal_alias=membership.alias)
          AND NOT (membership.tenant_id='Steven' AND membership.alias='argos')
          AND NOT (membership.alias=ANY($1::text[]))
        ORDER BY membership.tenant_id,membership.alias`,
