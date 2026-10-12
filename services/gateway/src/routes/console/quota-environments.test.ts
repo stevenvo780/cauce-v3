@@ -54,7 +54,7 @@ describe('quota console routes under a real password session and company authori
   it('uses fresh signed host/provider capabilities without central presets or stale static fallback', async () => {
     const repository = new HostEnrollmentRepository(pool); const keys = generateKeyPairSync('ed25519');
     const invitation = await repository.invite(client => lockCompanyAuthority(client,
-      { tenant: 'Miguel', alias: 'janus', humanId: people.miguel }), { host_id: 'cold-quota-host', display_name: 'New quota computer' });
+      { tenant: 'Miguel', alias: 'janus', humanId: people.miguel }), { host_id: 'humanizar-cold_quota', display_name: 'New quota computer' });
     await repository.claim(invitation.enrollment_id, { invitation_token: invitation.invitation_token,
       public_key: keys.publicKey.export({ type: 'spki', format: 'der' }).toString('base64'),
       proof: sign(null, Buffer.from(hostEnrollmentMessage(invitation)), keys.privateKey).toString('base64') });

@@ -82,28 +82,44 @@ describe('company administrators, personal quota preferences and outbound host i
 
   it('enrols an uncatalogued computer using a new legitimate key and accepts a signed outbound heartbeat',async()=>{
     const repository=new HostEnrollmentRepository(pool); const pair=keys();
-    const invitation=await repository.invite(source(north),{host_id:'new-laptop',display_name:'New laptop'});
-    expect(invitation).toMatchObject({company_id:'north',host_id:'new-laptop',state:'pending'});
+    const invitation=await repository.invite(source(north),{host_id:'north-new_laptop',display_name:'New laptop'});
+    expect(invitation).toMatchObject({company_id:'north',host_id:'north-new_laptop',state:'pending'});
     const receipt=await repository.claim(invitation.enrollment_id,claim(invitation,pair));
-    expect(receipt).toMatchObject({host_id:'new-laptop',company_id:'north',state:'enrolled',executor_ready:false});
-    expect((await pool.query('SELECT public_key FROM fleet_host_identities WHERE host_id=$1',['new-laptop'])).rows)
+    expect(receipt).toMatchObject({host_id:'north-new_laptop',company_id:'north',state:'enrolled',executor_ready:false});
+    expect((await pool.query('SELECT public_key FROM fleet_host_identities WHERE host_id=$1',['north-new_laptop'])).rows)
       .toEqual([{public_key:pair.encoded}]);
     const packet=heartbeat(invitation,pair);
-    expect(await repository.heartbeat('new-laptop',packet)).toEqual({host_id:'new-laptop',company_id:'north',accepted:true});
-    expect((await pool.query("SELECT controller_status FROM fleet_hosts WHERE host_id='new-laptop'")).rows)
+    expect(await repository.heartbeat('north-new_laptop',packet)).toEqual({host_id:'north-new_laptop',company_id:'north',accepted:true});
+    expect((await pool.query("SELECT controller_status FROM fleet_hosts WHERE host_id='north-new_laptop'")).rows)
       .toEqual([{controller_status:'reachable'}]);
-    await expect(repository.heartbeat('new-laptop',packet)).rejects.toMatchObject({code:'conflict'});
+    await expect(repository.heartbeat('north-new_laptop',packet)).rejects.toMatchObject({code:'conflict'});
     expect(await repository.claim(invitation.enrollment_id,claim(invitation,pair))).toEqual(receipt);
     await admin.query("UPDATE fleet_host_enrollments SET expires_at=now()-interval '1 second' WHERE id=$1",[invitation.enrollment_id]);
     expect(await repository.claim(invitation.enrollment_id,claim(invitation,pair))).toEqual(receipt);
     await expect(repository.claim(invitation.enrollment_id,claim(invitation,keys()))).rejects.toMatchObject({code:'forbidden'});
-    expect((await pool.query("SELECT count(*)::int AS n FROM audit_events WHERE action='fleet_host.enrollment.claim' AND metadata->>'host_id'='new-laptop'")).rows)
+    expect((await pool.query("SELECT count(*)::int AS n FROM audit_events WHERE action='fleet_host.enrollment.claim' AND metadata->>'host_id'='north-new_laptop'")).rows)
       .toEqual([{n:1}]);
+  });
+
+  it('answers a computer of another company exactly like an absent one: each company names only its own partition',async()=>{
+    const repository=new HostEnrollmentRepository(pool);
+    const registered=await repository.invite(source(north),{host_id:'north-shared',display_name:'Shared'});
+    await repository.claim(registered.enrollment_id,claim(registered,keys()));
+    await repository.invite(source(north),{host_id:'north-pending',display_name:'Pending'});
+    const outside={code:'forbidden',message:'host id must be south-<name>, with lowercase letters, digits or underscores in the name'};
+    for (const host_id of ['north-shared','north-pending','north-absent','shared','south-two-parts']) {
+      await expect(repository.invite(source(south),{host_id,display_name:'Probe'})).rejects.toMatchObject(outside);
+    }
+    expect(await repository.invite(source(south),{host_id:'south-shared',display_name:'Own'})).toMatchObject({company_id:'south',state:'pending'});
+    expect((await admin.query("SELECT host_id,state FROM fleet_host_enrollments WHERE company_id='north' ORDER BY host_id")).rows)
+      .toEqual([{host_id:'north-pending',state:'pending'},{host_id:'north-shared',state:'enrolled'}]);
+    await admin.query('INSERT INTO platform_admins(human_id) VALUES($1)',[south.user.id]);
+    expect(await repository.invite(source(south),{host_id:'legacy-host',display_name:'Platform'})).toMatchObject({host_id:'legacy-host',state:'pending'});
   });
 
   it('rejects a forged key, modified scope, expired challenge and reused signed request without consuming valid proof',async()=>{
     const repository=new HostEnrollmentRepository(pool); const legitimate=keys(); const attacker=keys();
-    const invitation=await repository.invite(source(north),{host_id:'private-laptop',display_name:'Private laptop'});
+    const invitation=await repository.invite(source(north),{host_id:'north-private_laptop',display_name:'Private laptop'});
     await expect(repository.claim(invitation.enrollment_id,{...claim(invitation,attacker),public_key:legitimate.encoded}))
       .rejects.toMatchObject({code:'forbidden'});
     await repository.claim(invitation.enrollment_id,claim(invitation,legitimate));
@@ -111,37 +127,37 @@ describe('company administrators, personal quota preferences and outbound host i
     await expect(repository.heartbeat(invitation.host_id,{...packet,company_id:'south'})).rejects.toMatchObject({code:'forbidden'});
     await expect(repository.heartbeat(invitation.host_id,{...packet,issued_at:Date.now()-180_000})).rejects.toMatchObject({code:'forbidden'});
     expect(await repository.heartbeat(invitation.host_id,packet)).toMatchObject({accepted:true});
-    const expired=await repository.invite(source(south),{host_id:'expired-laptop',display_name:'Expired'});
+    const expired=await repository.invite(source(south),{host_id:'south-expired_laptop',display_name:'Expired'});
     await admin.query('UPDATE fleet_host_enrollments SET expires_at=now()-interval \'1 second\' WHERE id=$1',[expired.enrollment_id]);
     await expect(repository.claim(expired.enrollment_id,claim(expired,keys()))).rejects.toMatchObject({code:'conflict'});
   });
 
   it('fences simultaneous claims and revokes the identity when its empty computer is removed',async()=>{
     const repository=new HostEnrollmentRepository(pool); const pair=keys();
-    const invitation=await repository.invite(source(north),{host_id:'race-laptop',display_name:'Race'});
+    const invitation=await repository.invite(source(north),{host_id:'north-race_laptop',display_name:'Race'});
     const result=await Promise.allSettled([1,2].map(()=>repository.claim(invitation.enrollment_id,claim(invitation,pair))));
     expect(result.filter(item=>item.status==='fulfilled')).toHaveLength(2);
-    expect((await pool.query("SELECT count(*)::int AS n FROM fleet_host_identities WHERE host_id='race-laptop'")).rows).toEqual([{n:1}]);
-    await expect(deleteFleetHost(pool,'race-laptop',1,{authority:source(south),approvedHostIds:[]})).rejects.toMatchObject({code:'not_found'});
-    await deleteFleetHost(pool,'race-laptop',1,{authority:source(north),approvedHostIds:[]});
-    expect((await pool.query("SELECT host_id FROM fleet_host_identities WHERE host_id='race-laptop'")).rows).toEqual([]);
+    expect((await pool.query("SELECT count(*)::int AS n FROM fleet_host_identities WHERE host_id='north-race_laptop'")).rows).toEqual([{n:1}]);
+    await expect(deleteFleetHost(pool,'north-race_laptop',1,{authority:source(south),approvedHostIds:[]})).rejects.toMatchObject({code:'not_found'});
+    await deleteFleetHost(pool,'north-race_laptop',1,{authority:source(north),approvedHostIds:[]});
+    expect((await pool.query("SELECT host_id FROM fleet_host_identities WHERE host_id='north-race_laptop'")).rows).toEqual([]);
     await expect(repository.heartbeat(invitation.host_id,heartbeat(invitation,pair))).rejects.toMatchObject({code:'forbidden'});
   });
 
   it('revokes pending invitations within the company and refuses reusing a host key without partial enrollment',async()=>{
     const repository=new HostEnrollmentRepository(pool); const pair=keys();
-    const first=await repository.invite(source(north),{host_id:'first-laptop',display_name:'First'});
+    const first=await repository.invite(source(north),{host_id:'north-first_laptop',display_name:'First'});
     await repository.claim(first.enrollment_id,claim(first,pair));
-    const second=await repository.invite(source(north),{host_id:'second-laptop',display_name:'Second'});
+    const second=await repository.invite(source(north),{host_id:'north-second_laptop',display_name:'Second'});
     const alternateEncoding=Buffer.concat([Buffer.from(pair.encoded,'base64'),Buffer.from([0])]).toString('base64');
     await expect(repository.claim(second.enrollment_id,{...claim(second,pair),public_key:alternateEncoding}))
       .rejects.toMatchObject({code:'invalid_input'});
     await expect(repository.claim(second.enrollment_id,claim(second,pair))).rejects.toMatchObject({code:'conflict'});
-    expect((await pool.query("SELECT host_id FROM fleet_hosts WHERE host_id='second-laptop'")).rows).toEqual([]);
+    expect((await pool.query("SELECT host_id FROM fleet_hosts WHERE host_id='north-second_laptop'")).rows).toEqual([]);
     await expect(repository.revoke(source(south),second.enrollment_id)).rejects.toMatchObject({code:'not_found'});
     expect(await repository.revoke(source(north),second.enrollment_id)).toEqual({enrollment_id:second.enrollment_id,state:'revoked'});
     await expect(repository.claim(second.enrollment_id,claim(second,keys()))).rejects.toMatchObject({code:'conflict'});
-    expect((await repository.invite(source(north),{host_id:'second-laptop',display_name:'Retry'})).state).toBe('pending');
+    expect((await repository.invite(source(north),{host_id:'north-second_laptop',display_name:'Retry'})).state).toBe('pending');
   });
 
   it('refuses removing the last qualified owner while another owner lacks durable room control',async()=>{
@@ -162,10 +178,10 @@ describe('company administrators, personal quota preferences and outbound host i
     await withTransaction(pool,async client=>setCompanyAdmin(client,await source(north)(client),'north',
       {user_id:id,role:'admin',expected_version:0}));
     const repository=new HostEnrollmentRepository(pool); const pair=keys();
-    const invitation=await repository.invite(source(north,id),{host_id:'revoked-laptop',display_name:'Revoked'});
+    const invitation=await repository.invite(source(north,id),{host_id:'north-revoked_laptop',display_name:'Revoked'});
     await withTransaction(pool,async client=>setCompanyAdmin(client,await source(north)(client),'north',
       {user_id:id,role:null,expected_version:1}));
     await expect(repository.claim(invitation.enrollment_id,claim(invitation,pair))).rejects.toMatchObject({code:'forbidden'});
-    expect((await pool.query("SELECT host_id FROM fleet_hosts WHERE host_id='revoked-laptop'")).rows).toEqual([]);
+    expect((await pool.query("SELECT host_id FROM fleet_hosts WHERE host_id='north-revoked_laptop'")).rows).toEqual([]);
   });
 });

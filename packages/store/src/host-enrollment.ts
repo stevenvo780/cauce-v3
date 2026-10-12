@@ -7,11 +7,24 @@ import { HostClaimSchema, HostHeartbeatSchema, HostInvitationSchema, SignedHostR
   hostRequestMessage, verifyHostProof, type HostEnrollmentReceipt, type HostInvitation } from './host-enrollment-contracts.js';
 
 const INVITATION_TTL_MS = 10 * 60_000;
+const HOST_NAME = /^[a-z0-9_]+$/u;
 interface InvitationRow { id: string; company_id: string; host_id: string; display_name: string; notes: string;
   invited_by: string; token_hash: string; nonce: string; expires_at: Date; state: string }
 function authorize(authority: CompanyAuthority): void {
   if (authority.humanId === null || !['company_owner','company_admin','platform_admin'].includes(authority.role)) {
     throw new StoreError('forbidden', 'company host administration authority is required');
+  }
+}
+/**
+ * Host ids are global, so a company invites only inside its own `<company>-<name>` partition. The name
+ * carries no dash, so no two partitions overlap: the answer never depends on another company's
+ * computers. The platform sees every company and may name any computer.
+ */
+function assertCompanyHostId(authority: CompanyAuthority, hostId: string): void {
+  if (authority.role === 'platform_admin') return;
+  const prefix = `${authority.actingCompany}-`;
+  if (!hostId.startsWith(prefix) || !HOST_NAME.test(hostId.slice(prefix.length))) {
+    throw new StoreError('forbidden', `host id must be ${prefix}<name>, with lowercase letters, digits or underscores in the name`);
   }
 }
 async function audit(client: DatabaseClient, authority: CompanyAuthority, action: string, host: string): Promise<void> {
@@ -33,12 +46,13 @@ export class HostEnrollmentRepository {
   async invite(source: CompanyAuthoritySource, value: unknown): Promise<HostInvitation> {
     const input = HostInvitationSchema.parse(value); const token = randomBytes(32).toString('hex');
     return withTransaction(this.pool, async client => {
-      const authority = await source(client); authorize(authority);
+      const authority = await source(client); authorize(authority); assertCompanyHostId(authority, input.host_id);
       await client.query('SELECT pg_advisory_xact_lock($1::integer,hashtext($2))', [783_003_059, input.host_id]);
       if ((await client.query('SELECT 1 FROM fleet_hosts WHERE host_id=$1', [input.host_id])).rowCount) {
         throw new StoreError('conflict', 'host is already registered');
       }
-      await client.query("UPDATE fleet_host_enrollments SET state='revoked' WHERE host_id=$1 AND state='pending' AND expires_at<=now()", [input.host_id]);
+      await client.query(`UPDATE fleet_host_enrollments SET state='revoked'
+        WHERE host_id=$1 AND company_id=$2 AND state='pending' AND expires_at<=now()`, [input.host_id, authority.actingCompany]);
       const row = (await client.query<InvitationRow>(`INSERT INTO fleet_host_enrollments(company_id,host_id,display_name,notes,invited_by,token_hash,nonce,expires_at)
         VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (host_id) WHERE state='pending' DO NOTHING RETURNING *`,
       [authority.actingCompany, input.host_id, input.display_name, input.notes, authority.humanId,
