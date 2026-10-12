@@ -56,6 +56,15 @@ describe('OAuth Nginx source contract', () => {
     expect(body).not.toContain('proxy_hide_header Content-Security-Policy');
   });
 
+  it('streams space backup downloads unbuffered with the same headers and mTLS as /v3/', () => {
+    const body = block('~ ^/v3/console/spaces/[^/]+/[^/]+/backups/[^/]+/download$');
+    const api = block('/v3/');
+    expect(body).toContain('proxy_buffering off;');
+    expect(api).not.toContain('proxy_buffering');
+    const lines = (text: string) => text.split('\n').map(line => line.trim()).filter(line => /^proxy_(pass|set_header|ssl_|http_version)/u.test(line));
+    expect(lines(body)).toEqual(lines(api));
+  });
+
   it('keeps the single listener and existing MCP cookie boundary', () => {
     expect(source.match(/^\s*listen /gmu)).toHaveLength(1);
     for (const selector of ['= /mcp', '= /.well-known/oauth-protected-resource/mcp']) {
