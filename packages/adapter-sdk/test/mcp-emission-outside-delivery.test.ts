@@ -149,6 +149,47 @@ test("a delivery in flight in the engine, or no engine to ask, blocks the root",
   }
 });
 
+test("a delivery that starts while an outside send waits in the queue blocks the root", async () => {
+  let release = (): void => undefined;
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  const calls: GatewayCall[] = [];
+  const gateway: EmissionGateway = async (method, path, body) => {
+    calls.push({ method, path, ...(body === undefined ? {} : { body }) });
+    if (path === "/v3/agent/queue") await held;
+    return {};
+  };
+  const f = await runtimeWith(gateway);
+  try {
+    const queued = f.runtime.call("cauce_queue", {});
+    const send = f.runtime.call("cauce_send", { to: "zeus", body: "hola" });
+    begin(f.runtime);
+    release();
+    await queued;
+    const result = await send;
+    assert.equal(result.isError, true);
+    assert.match(textOf(result), /entrega de Cauce en curso/u);
+    assert.deepEqual(calls.map((call) => `${call.method} ${call.path}`), ["GET /v3/agent/queue"]);
+  } finally { release(); await f.close(); }
+});
+
+test("a delivery that starts while the prompt origin is read blocks the root", async () => {
+  let release = (): void => undefined;
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  const { calls, gateway } = recordingGateway();
+  const f = await runtimeWith(gateway, 0, null);
+  f.runtime.trackPromptOrigin(async () => { await held; return "human"; });
+  try {
+    const send = f.runtime.call("cauce_send", { to: "zeus", body: "hola" });
+    await Promise.resolve();
+    begin(f.runtime);
+    release();
+    const result = await send;
+    assert.equal(result.isError, true);
+    assert.match(textOf(result), /entrega de Cauce en curso/u);
+    assert.deepEqual(calls, []);
+  } finally { release(); await f.close(); }
+});
+
 test("@all, @human, itself, lists and invalid aliases are refused before the gateway", async () => {
   const { calls, gateway } = recordingGateway();
   const f = await runtimeWith(gateway);
