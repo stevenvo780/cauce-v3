@@ -177,6 +177,10 @@ def extract_release(archive: pathlib.Path, target: pathlib.Path) -> None:
                 if total > 4 * MAX_ARTIFACT:
                     raise HostFailure('release archive expands beyond its limit')
             bundle.extractall(staging, filter='data')
+            # The data filter leaves directories at the umask default, and approved bundle digests cover directory modes.
+            for member in bundle.getmembers():
+                if member.isdir():
+                    (staging / member.name).chmod(member.mode & 0o755 | 0o700)
         for required in REQUIRED_IN_RELEASE:
             if not (staging / required).is_file():
                 raise HostFailure(f'release does not contain {required}')

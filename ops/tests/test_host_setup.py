@@ -236,6 +236,26 @@ class HostSetupTests(unittest.TestCase):
             'policy': {'bundles': {'codex': {'directory': '@release@/bundle', 'digest': digest or real, 'executable': '/x',
                 'executable_sha256': 'a' * 64, 'argv': []}}}}
 
+    def test_release_directories_keep_their_archived_mode_whatever_the_umask(self):
+        buffer = io.BytesIO()
+        with tarfile.open(fileobj=buffer, mode='w') as archive:
+            for name, kind in (('ops', tarfile.DIRTYPE), ('ops/cli', tarfile.DIRTYPE), ('services', tarfile.DIRTYPE)):
+                info = tarfile.TarInfo(name)
+                info.type, info.mode = kind, 0o755 if name != 'services' else 0o777
+                archive.addfile(info)
+            for name in host_setup.REQUIRED_IN_RELEASE:
+                info = tarfile.TarInfo(name)
+                info.size, info.mode = 2, 0o644
+                archive.addfile(info, io.BytesIO(b'1\n'))
+        (self.home / 'release.tar').write_bytes(buffer.getvalue())
+        previous = os.umask(0o077)
+        try:
+            host_setup.extract_release(self.home / 'release.tar', self.home / 'extracted')
+        finally:
+            os.umask(previous)
+        modes = {name: (self.home / 'extracted' / name).stat().st_mode & 0o777 for name in ('ops', 'ops/cli', 'services')}
+        self.assertEqual(modes, {'ops': 0o755, 'ops/cli': 0o755, 'services': 0o755})
+
     def test_bundle_digest_is_verified_against_the_extracted_release(self):
         self.bundle_package('f' * 64)
         with self.assertRaisesRegex(HostFailure, 'bundle digest differs'):
