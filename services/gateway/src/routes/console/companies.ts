@@ -1,9 +1,8 @@
 import { z } from 'zod';
-import { CompanyRegistrationSchema } from '../../company-registration.js';
-import { hashPassword } from '../../password.js';
+import { CompanyRegistrationSchema, INVALID_REGISTRATION, registerCompanyWithOwner } from '../../company-registration.js';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import {
-  COMPANY_ID_PATTERN, StoreError, assertPlatformAdmin, registerCompany, updateCompany, withTransaction,
+  COMPANY_ID_PATTERN, StoreError, assertPlatformAdmin, updateCompany, withTransaction,
   type CompanyAuthority, type DatabaseClient, type DatabasePool,
 } from '@cauce/store';
 import { AuthError, AuthorizationError, type AuthProvider } from '../../auth.js';
@@ -72,12 +71,15 @@ export function registerCompanyRoutes(app: FastifyInstance, provider: AuthProvid
   app.post('/v3/console/companies', { bodyLimit: 8192 }, async (request, reply) => {
     reply.header('Cache-Control', 'no-store');
     try {
-      const input = CompanyRegistrationSchema.parse(request.body);
-      await withCompanyAuthority(provider, pool, request, reply, async (_client, authority) => {
-        if (authority.role !== 'company_owner') assertPlatformAdmin(authority);
+      const creator = await withCompanyAuthority(provider, pool, request, reply, async (_client, authority) => {
+        assertPlatformAdmin(authority);
+        return authority.humanId;
       });
-      const { password, ...data } = input;
-      return await reply.code(201).send(await registerCompany(pool, { ...data, passwordHash: await hashPassword(password) }));
+      const input = CompanyRegistrationSchema.safeParse(request.body);
+      if (!input.success) return await reply.code(400).send(INVALID_REGISTRATION);
+      if (await registerCompanyWithOwner(pool, input.data, reply)) {
+        request.log.info({ event: 'company_created', company_id: input.data.company.slug, actor_human_id: creator }, 'platform created a company');
+      }
     } catch (error) { failed(reply, error); }
   });
 

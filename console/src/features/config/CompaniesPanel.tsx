@@ -19,7 +19,7 @@ export function CompaniesPanel() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
-  const canCreate = authority?.role === 'platform_admin' || authority?.role === 'company_owner';
+  const canCreate = authority?.role === 'platform_admin';
   const canEdit = (company: CompanyRecord) => authority?.role === 'platform_admin'
     || authority?.role === 'company_owner' && company.id === authority.acting_company;
   async function perform(action: () => Promise<unknown>, message: string) {
@@ -35,7 +35,7 @@ export function CompaniesPanel() {
   }
   return <SectionCard level={3} title="Empresas" className="gap-2 p-3">
     {authority ? <p className="text-xs text-muted">{COMPANY_ROLE_LABEL[authority.role]} · {authority.acting_company}</p> : null}
-    <div className="flex flex-wrap gap-2"><Button disabled={!canCreate || busy || resource.loading || !!resource.error} onClick={() => { setCreating(true); }}>Crear empresa</Button>
+    <div className="flex flex-wrap gap-2">{canCreate ? <Button disabled={busy || resource.loading || !!resource.error} onClick={() => { setCreating(true); }}>Crear empresa</Button> : null}
       <Button disabled={busy || resource.loading} onClick={() => { void resource.reload(); }}>Releer empresas</Button></div>
     {resource.loading ? <p role="status">Leyendo empresas…</p> : null}
     {error || resource.error ? <Notice tone="danger" role="alert">{error || resource.error?.message}</Notice> : null}
@@ -57,7 +57,7 @@ export function CompaniesPanel() {
       <div className="flex gap-2"><Button disabled={busy} onClick={() => { void perform(() => retiring.state !== 'retired' ? api.retireCompany(retiring.id, retiring.version)
         : api.updateCompany(retiring.id, { expected_version: retiring.version, state: 'enabled' }), 'Estado de empresa actualizado.'); }}>Confirmar cambio de empresa</Button>
         <Button disabled={busy} onClick={() => { setRetiring(undefined); }}>Cancelar</Button></div></section> : null}
-    {creating ? <CompanyCreateForm busy={busy} cancel={() => { setCreating(false); }} save={input => perform(() => api.createCompany(input), 'Empresa y cuenta de dueño creadas.')} /> : null}
+    {creating && canCreate ? <CompanyCreateForm busy={busy} cancel={() => { setCreating(false); }} save={input => perform(() => api.createCompany(input), 'Empresa y cuenta de dueño creadas.')} /> : null}
     {adminsCompany ? <CompanyAdminsPanel key={adminsCompany} companyId={adminsCompany} canAssignPeople={authority?.acting_company === adminsCompany} /> : null}
   </SectionCard>;
 }
