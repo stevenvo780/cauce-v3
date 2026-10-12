@@ -1,5 +1,5 @@
 import Fastify, { type FastifyInstance } from 'fastify';
-import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FleetOperationsRepository, type DatabasePool } from '@cauce/store';
 import { preparePostgresSuite } from '../../../../packages/store/test/postgres-suite.js';
 import { startTestCaseDatabase, startTestDatabase, type EmptyTestDatabase, type TestDatabase } from '../../../../tests/helpers/postgres.js';
@@ -13,6 +13,7 @@ import { access, readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { configuredFleetGateway } from './gateway-config.js';
 import { HostCapabilityRegistry } from './host-channel.capabilities.js';
+import * as providerAuthBinding from '../console/provider-auth-binding.js';
 
 let database: TestDatabase; let current: EmptyTestDatabase; let pool: DatabasePool; let app: FastifyInstance;
 let router: ReturnType<typeof createFleetProviderAuthRouter> | undefined;
@@ -26,7 +27,7 @@ beforeEach(async () => {
   app = Fastify(); registerHostChannelRoutes(app, pool);
 });
 afterEach(async () => { await router?.shutdown(); await app.close(); await local?.hostRuntime.shutdown();
-  if (local) await rm(local.directory, { recursive: true, force: true }); await current.close(); router = undefined; local = undefined; });
+  if (local) await rm(local.directory, { recursive: true, force: true }); await current.close(); router = undefined; local = undefined; vi.restoreAllMocks(); });
 afterAll(async () => { await database.pool.end(); await database.container.stop(); });
 
 describe('enrolled agent provider authentication', () => {
@@ -84,16 +85,41 @@ describe('enrolled agent provider authentication', () => {
     expect(reservation?.reservation).toMatchObject({ state: 'released' });
   }, 30_000);
   it('fences a disabled enrolled host and closes its actual PTY without falling back to legacy', async () => {
+    let observedRevocation: (() => void) | undefined;
+    const revoked = new Promise<void>(resolve => { observedRevocation = resolve; });
+    const createDependencies = providerAuthBinding.createProviderAuthDependencies;
+    vi.spyOn(providerAuthBinding, 'createProviderAuthDependencies').mockImplementation((...args) => {
+      const dependencies = createDependencies(...args); const authorize = dependencies.authorize.bind(dependencies);
+      dependencies.authorize = async (...input) => {
+        try { await authorize(...input); } catch (error) { observedRevocation?.(); throw error; }
+      };
+      return dependencies;
+    });
     const f = await ready(); await f.router.attach(f.local.actor, f.session.session_id, () => undefined);
     const saved = JSON.parse(await readFile(join(f.local.directory, f.local.operation.id + '.json'), 'utf8')) as { processes: { pid: number }[] };
     await current.adminPool.query('UPDATE fleet_host_identities SET enabled=false WHERE host_id=$1', [f.local.host.host_id]);
     await expect(f.router.resolve(f.local.actor, f.local.operation.id)).rejects.toMatchObject({ code: 'AUTHORITY_REVOKED' });
+    const revokedAccess = f.broker.service.get(f.local.actor, f.session.session_id).catch((error: unknown) => error);
+    await revoked;
     await expect.poll(async () => {
       try { await access(join(f.local.directory, f.local.operation.id + '.json')); return false; } catch { return true; }
     }, { timeout: 5000 }).toBe(true);
     for (const processIdentity of saved.processes) expect(() => process.kill(processIdentity.pid, 0)).toThrow();
     await current.adminPool.query('UPDATE fleet_host_identities SET enabled=true WHERE host_id=$1', [f.local.host.host_id]);
-    expect(await f.router.cancel(f.local.actor, f.session.session_id)).toMatchObject({ status: 'cancelled', cleanup_pending: false });
+    const failed = await revokedAccess;
+    expect(failed).toMatchObject({ status: 'failed', error: 'AUTHORITY_REVOKED', cleanup_pending: false });
+    expect(await f.router.get(f.local.actor, f.session.session_id)).toEqual(failed);
+    const readStatus = async () => (await pool.query<{ id: string; status: unknown }>("SELECT id,metadata->'provider_auth_status' AS status FROM fleet_operation_events WHERE operation_id=$1 AND metadata->'provider_auth_status'->>'session_id'=$2 ORDER BY id DESC LIMIT 1", [f.local.operation.id, f.session.session_id])).rows[0];
+    const durable = await readStatus();
+    expect(durable?.status).toMatchObject({ session_id: f.session.session_id, status: 'failed', error: 'AUTHORITY_REVOKED' });
+    const reservation = (await pool.query<{ reservation: unknown }>("SELECT metadata->'provider_auth' AS reservation FROM fleet_operation_events WHERE operation_id=$1 AND metadata->'provider_auth'->>'session_id'=$2 ORDER BY id DESC LIMIT 1", [f.local.operation.id, f.session.session_id])).rows[0];
+    expect(reservation?.reservation).toMatchObject({ session_id: f.session.session_id, state: 'released' });
+    expect(await f.router.cancel(f.local.actor, f.session.session_id)).toEqual(failed);
+    expect(await f.router.cancel(f.local.actor, f.session.session_id)).toEqual(failed);
+    const recovered = new AgentProviderAuthBroker(pool);
+    try { expect(await recovered.service.get(f.local.actor, f.session.session_id)).toEqual(failed); }
+    finally { await recovered.shutdown(); }
+    expect(await readStatus()).toEqual(durable);
   }, 75_000);
   it('expires the durable session and does not send terminal input after its deadline', async () => {
     const f = await ready({ ttlMs: 2000 }); const terminal = await f.router.attach(f.local.actor, f.session.session_id, () => undefined);
