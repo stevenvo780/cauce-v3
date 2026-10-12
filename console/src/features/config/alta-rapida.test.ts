@@ -39,3 +39,9 @@ it('manda display_name null cuando el nombre queda vacío, no la cadena vacía q
       value: { display_name: 'Sala', enabled: true },
     });
 });
+
+test('el alta de membresía rechaza alias reservados por el CLI sin importar mayúsculas', () => {
+  const base = { ...BORRADOR_VACIO, tenantId: 'nuevo', roomId: 'sala', role: 'agent' };
+  expect(errorDeAlta('membership', { ...base, alias: 'platform' })).toMatch(/reservado/i);
+  expect(errorDeAlta('membership', { ...base, alias: 'Platform' })).toMatch(/reservado/i);
+});

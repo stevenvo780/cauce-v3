@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { RESERVED_ALIAS_MESSAGE, isReservedAlias } from '../patterns.js';
 import { AliasSchema, TenantSchema } from './core.js';
 import { EgressHandleSchema, NotifyKindSchema } from './messages.js';
 
@@ -20,7 +21,11 @@ const MembershipConfigMutationSchema = z.object({
   resource: z.literal('membership'), action: RetirableConfigActionSchema, tenant_id: TenantSchema,
   room_id: z.string().min(1).max(128), alias: AliasSchema,
   value: z.object({ role: z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/).optional(), enabled: z.boolean().optional() }).strict().optional()
-}).strict();
+}).strict().superRefine((mutation, context) => {
+  if (mutation.action === 'create' && isReservedAlias(mutation.alias)) {
+    context.addIssue({ code: 'custom', path: ['alias'], message: RESERVED_ALIAS_MESSAGE });
+  }
+});
 const AclEdgeConfigMutationSchema = z.object({
   resource: z.literal('acl_edge'), action: ConfigActionSchema,
   from_tenant: TenantSchema, to_tenant: TenantSchema,

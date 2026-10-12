@@ -1,3 +1,4 @@
+import { RESERVED_ALIAS_MESSAGE, isReservedAlias } from '@cauce/protocol';
 import type { ConfigMutation } from '../../api/types';
 
 /**
@@ -69,6 +70,7 @@ export function errorDeAlta(recurso: RecursoAlta, borrador: BorradorAlta): strin
     if (!TENANT.test(borrador.tenantId.trim())) return 'El tenant debe empezar con letra (máx. 64 caracteres).';
     const room = borrador.roomId.trim();
     if (room.length < 1 || room.length > 128) return 'El room necesita un id de 1 a 128 caracteres.';
+    if (isReservedAlias(borrador.alias)) return RESERVED_ALIAS_MESSAGE;
     if (!SLUG.test(borrador.alias.trim())) {
       return 'El alias debe ser minúsculas, empezar con letra y usar sólo letras, números, guion o guion bajo.';
     }
