@@ -83,6 +83,22 @@ async function latestServer(): Promise<TestDatabase> {
   return currentServer;
 }
 
+/** down/065 refuses under any later migration, so its cases run on a database migrated exactly through 065. */
+async function replayDatabase(): Promise<EmptyTestDatabase> {
+  const replay = await startEmptyTestDatabase((await latestServer()).adminUrl);
+  const pool = createPool(replay.adminUrl, { max: 4 });
+  const close = async (): Promise<void> => {
+    try { await pool.end(); } finally { await replay.close(); }
+  };
+  try {
+    await applyMigrationsThrough(pool, replayVersion);
+    return { pool, url: replay.url, adminPool: pool, adminUrl: replay.adminUrl, close };
+  } catch (error) {
+    await close();
+    throw error;
+  }
+}
+
 function ready(): { admin: DatabasePool; runtime: DatabasePool; reader: DatabasePool; full: TestDatabase; server: TestDatabase } {
   if (!database || !through || !gateway || !observer) throw new Error('runtime grants suite was not prepared');
   return { admin: database.adminPool, runtime: gateway, reader: observer, full: database, server: through };
@@ -618,7 +634,7 @@ describe('runtime grants across the complete migration bundle', () => {
 
   it('down/up preserves the 064 catalog, connected logins and prior atomic ledger', async () => {
     const latest = await latestServer();
-    const current = await startTestCaseDatabase(latest);
+    const current = await replayDatabase();
     const previous = await startEmptyTestDatabase(latest.adminUrl);
     let runtime: DatabasePool | undefined;
     try {
@@ -653,7 +669,7 @@ describe('runtime grants across the complete migration bundle', () => {
   });
 
   it('refuses down after later migrations or atomic ledger loss without changing the catalog', async () => {
-    const current = await startTestCaseDatabase(await latestServer());
+    const current = await replayDatabase();
     const down = await readFile(new URL(`../migrations/down/${replayVersion}`, import.meta.url), 'utf8');
     const before = await catalog(current.adminPool);
     const ledger = await migrationLedger(current.adminPool);
@@ -679,7 +695,7 @@ describe('runtime grants across the complete migration bundle', () => {
   });
 
   it('serializes down with the migration advisory lock without losing the ledger', async () => {
-    const current = await startTestCaseDatabase(await latestServer());
+    const current = await replayDatabase();
     const down = await readFile(new URL(`../migrations/down/${replayVersion}`, import.meta.url), 'utf8');
     const ledger = await migrationLedger(current.adminPool);
     const holder = await current.adminPool.connect();

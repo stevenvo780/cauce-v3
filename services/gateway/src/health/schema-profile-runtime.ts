@@ -263,7 +263,9 @@ export async function probeProfileRuntimePath(pool: DatabasePool): Promise<void>
                 AND bool_and(NOT function_record.proretset)
                 AND bool_and(function_record.prokind='f')
                 AND bool_and(function_record.pronargdefaults=0)
-                AND bool_and(function_record.proconfig IS NULL)
+                -- 066 pins the search path of the trigger, which reads a table by name; down/066 unpins it.
+                AND bool_and(function_record.proconfig IS NULL OR (function_record.proname='cauce_profile_runtime_adoption_matches_expectation'
+                  AND function_record.proconfig=ARRAY['search_path=pg_catalog, public, pg_temp']))
                 AND bool_and(function_record.prosrc=expected.body)
                 AND (
                   SELECT count(*)=2 FROM pg_proc actual

@@ -20,7 +20,7 @@ Cómo pasar el runtime de producción del rol propietario `cauce` (superusuario,
 |---|---|---|
 | Plataforma, solo lectura | `companies`, `company_links`, `platform_admins`, `schema_migrations`, `schema_migration_ledger`, `schema_migration_verifications`, `agent_role_templates`, vista `cauce_dlq_inventory_030` | `SELECT` |
 | Catálogo bloqueable | `harness_definitions`, `role_policies` | `SELECT`, `UPDATE` solo para bloqueos; toda escritura la rechaza el trigger `*_platform_write` (42501) |
-| Política de cadena | `agent_chain_policies` | `SELECT`, `UPDATE` |
+| Política de cadena | `agent_chain_policies` | `SELECT`, `UPDATE`; desde 066 el trigger diferido `agent_chain_policies_platform_revision` rechaza al confirmar (42501) todo cambio sin una revisión de plataforma de esa política en la misma transacción, salvo como `cauce_platform` |
 | Historial de flota | `fleet_operation_events` | `SELECT`, `INSERT` |
 | Historial de flota con bloqueos | `fleet_runtime_identities`, `fleet_operations` | `SELECT`, `INSERT`, `UPDATE`, sin `DELETE`; los triggers de 048 rechazan todo cambio de una identidad y los de atribución de una operación |
 | Revisiones | `config_revisions` | `SELECT`, `INSERT`, `UPDATE` (el trigger de solo-anexar llega en 053) |
@@ -32,7 +32,7 @@ Además: `CONNECT` a la base y `USAGE` del esquema `public`; `USAGE` y `SELECT` 
 
 **Permisos re-aplicables.** Los permisos no están sueltos en la migración: viven en `cauce_runtime_grants_052()`, y `cauce_apply_runtime_grants()` ejecuta en orden todas las `cauce_runtime_grants_NNN()`. Las dos son `INVOKER` y solo las ejecuta `cauce_platform`. Son idempotentes: crean los grupos si faltan, conceden `cauce_platform` a quien las llama y vuelven a quitar a `PUBLIC` las funciones DEFINER. Sirven para una restauración sin ACL (§6).
 
-**`search_path` de las funciones DEFINER.** Si `pg_temp` no aparece en `search_path`, PostgreSQL lo recorre el primero al resolver relaciones, y el runtime conserva `TEMPORARY` sobre la base. Una función DEFINER con una tabla sin cualificar sería secuestrable con una tabla temporal del mismo nombre. Por eso toda función DEFINER fija `search_path=pg_catalog,public,pg_temp`, con `pg_temp` el último. 052 se lo pone a las dos de 051, que además ya cualifican `public.`.
+**`search_path` de las funciones y `TEMPORARY`.** Si `pg_temp` no aparece en `search_path`, PostgreSQL lo recorre el primero al resolver relaciones y tipos. Una función con una tabla sin cualificar sería secuestrable con una tabla temporal del mismo nombre: las guardas son `INVOKER` y corren como quien escribe, así que una tabla temporal `messages` o `acl_edges` saltaba la guarda hub-star de `deliveries` y la de `tenants`. Por eso toda función DEFINER fija `search_path=pg_catalog,public,pg_temp`, con `pg_temp` el último (052 se lo pone a las dos de 051), y 066 extiende la regla a toda función de `public` que nombre una relación o un tipo de `public`, sea DEFINER o INVOKER. Las funciones SQL puras de los CHECK (`cauce_text_items_ok`, `cauce_utf16_units`) quedan sin `SET`, que impediría su inlining (038). Además 066 quita `TEMPORARY` sobre la base a `PUBLIC`, `cauce_runtime` y `cauce_observer` en `cauce_runtime_grants_066()`, así que la repetición tras una restauración, cuya base nueva vuelve a dar `TEMPORARY` a `PUBLIC`, lo quita otra vez. Ningún camino del runtime crea objetos temporales.
 
 **Orden de bloqueos.** 052 toma primero `tenants` en `ACCESS EXCLUSIVE` y después `audit_events`, `harness_definitions` y `role_policies` en `SHARE ROW EXCLUSIVE`. Es el orden canónico de 051 y 053, así que el bundle de R1, que va en una sola transacción, nunca lo invierte. `lock_timeout` es de 5 s.
 
@@ -49,6 +49,8 @@ Además: `CONNECT` a la base y `USAGE` del esquema `public`; `USAGE` y `SELECT` 
 - toda función DEFINER debe tener `search_path` fijo que termine en `pg_temp` y no ser ejecutable por `PUBLIC`;
 - toda función debe poder ejecutarla `cauce_runtime` o `cauce_platform`;
 - tras borrar todas las ACL del esquema, como deja `pg_restore --no-acl`, `cauce_apply_runtime_grants()` devuelve exactamente los permisos de los grupos y de `PUBLIC`.
+
+`packages/store/test/runtime-hardening-postgres.test.ts` falla además si una función de `public` nombra una relación o un tipo de `public` sin un `search_path` que termine en `pg_temp`, o si un fuente del runtime crea objetos temporales.
 
 **`down/052`** (solo en desarrollo o en un clon):
 - se niega si hay una migración posterior o un login miembro conectado a la base;
@@ -166,7 +168,7 @@ El script se niega si queda alguna conexión de runtime con `cauce`. Hace estos 
 
 Después revisa los consumidores del host que todavía lean la URL del propietario.
 
-**Paso 8. Endurecimiento opcional.** `REVOKE TEMPORARY ON DATABASE cauce FROM PUBLIC` y limitar `cauce` en `pg_hba`.
+**Paso 8. Endurecimiento opcional.** Limitar `cauce` en `pg_hba`. `TEMPORARY` ya no es de `PUBLIC` desde 066.
 
 ## 5. Rollback
 

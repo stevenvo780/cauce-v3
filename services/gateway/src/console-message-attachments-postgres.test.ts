@@ -27,7 +27,8 @@ describe('attachment authorization on isolated PostgreSQL temporary tables', () 
   });
   beforeEach(async () => {
     if (database === undefined) throw new Error('Attachment fixture database unavailable');
-    pool = createPool(database.url, { max: 1, connectionTimeoutMillis: 3_000 });
+    // Temporary tables need TEMPORARY, which 066 denies to the runtime login of CAUCE_TEST_RUNTIME_ROLE=1.
+    pool = createPool(database.adminUrl, { max: 1, connectionTimeoutMillis: 3_000 });
     client = await pool.connect();
     await client.query('BEGIN');
     await client.query(`
