@@ -1,6 +1,7 @@
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { applyMigrations, createPool } from './db.js';
+import { migrationLockTimeoutMs } from './migration-locks.js';
 
 // Production schema changes are a stage of deploy/deploy.sh's owner-attended build/pin/migrate/
 // up/smoke workflow. Keep the reusable CLI available for explicitly declared dev and
@@ -26,9 +27,10 @@ if (!canonicalProductionEntrypoints.has(invokedEntrypoint) && !directDevelopment
 
 const databaseUrl = process.env.DATABASE_URL;
 if (!databaseUrl) throw new Error('DATABASE_URL is required');
-const pool = createPool(databaseUrl);
+const lockTimeoutMs = migrationLockTimeoutMs(process.env.CAUCE_MIGRATION_LOCK_TIMEOUT_MS);
+const pool = createPool(databaseUrl, { applicationName: 'cauce-migrator' });
 try {
-  await applyMigrations(pool);
+  await applyMigrations(pool, { lockTimeoutMs });
   console.log('Cauce V3 migrations applied');
 } finally {
   await pool.end();

@@ -1,5 +1,6 @@
 export * from './db.js';
 export * from './migration-integrity.js';
+export * from './migration-locks.js';
 export * from './delegation-guard.js';
 export * from './repository.js';
 export * from './configuration.js';

@@ -218,7 +218,7 @@ describe('company isolation and owner migrations from a production-shaped 051 da
       const attempt = applyMigrationsThrough(pool, isolation).then(() => undefined, (error: unknown) => error);
       await expect.poll(async () => (await pool.query<{ relation: string; mode: string; granted: boolean }>(`SELECT relation::regclass::text AS relation,mode,granted
         FROM pg_locks WHERE locktype='relation' AND NOT granted AND pid IN (SELECT pid FROM pg_stat_activity
-          WHERE query LIKE '%783_003_053%' AND pid<>pg_backend_pid())`)).rows, { timeout: 4000 })
+          WHERE wait_event_type='Lock' AND pid<>pg_backend_pid())`)).rows, { timeout: 4000 })
         .toEqual([{ relation: 'tenants', mode: 'AccessExclusiveLock', granted: false }]);
       expect(await attempt).toMatchObject({ code: '55P03' });
       expect(Date.now() - started).toBeLessThan(15_000);

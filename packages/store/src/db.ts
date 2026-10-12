@@ -9,6 +9,7 @@ import {
   migrationSourcesForApply,
   recordLegacy024Verification,
 } from './migration-integrity.js';
+import { boundMigrationWaits, defaultMigrationLockTimeoutMs, lockMigrationTables } from './migration-locks.js';
 
 const { Pool } = pg;
 export type DatabasePool = pg.Pool;
@@ -84,15 +85,24 @@ export function createPool(connectionString: string, options: DatabasePoolOption
   return pool;
 }
 
-export async function applyMigrations(pool: DatabasePool): Promise<void> {
-  await runMigrations(pool);
+export interface MigrationRunOptions {
+  lockTimeoutMs?: number;
 }
 
-export async function applyMigrationsThrough(pool: DatabasePool, exactBundledVersion: string): Promise<void> {
-  await runMigrations(pool, exactBundledVersion);
+export async function applyMigrations(pool: DatabasePool, options: MigrationRunOptions = {}): Promise<void> {
+  await runMigrations(pool, undefined, options);
 }
 
-async function runMigrations(pool: DatabasePool, exactBundledVersion?: string): Promise<void> {
+export async function applyMigrationsThrough(
+  pool: DatabasePool, exactBundledVersion: string, options: MigrationRunOptions = {},
+): Promise<void> {
+  await runMigrations(pool, exactBundledVersion, options);
+}
+
+async function runMigrations(
+  pool: DatabasePool, exactBundledVersion: string | undefined, options: MigrationRunOptions,
+): Promise<void> {
+  const lockTimeoutMs = options.lockTimeoutMs ?? defaultMigrationLockTimeoutMs;
   const migrations = await migrationSourcesForApply();
   let cutoff = migrations.length - 1;
   if (exactBundledVersion !== undefined) {
@@ -100,6 +110,7 @@ async function runMigrations(pool: DatabasePool, exactBundledVersion?: string): 
     if (cutoff < 0) throw new Error(`migration cutoff is not bundled: ${exactBundledVersion}`);
   }
   await withTransaction(pool, async (client) => {
+    await boundMigrationWaits(client, lockTimeoutMs);
     await client.query(`CREATE TABLE IF NOT EXISTS schema_migrations (
       version text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now()
     )`);
@@ -124,6 +135,10 @@ async function runMigrations(pool: DatabasePool, exactBundledVersion?: string): 
       }
     }
     const pendingMigrations = migrations.slice(0, cutoff + 1);
+    const appliedVersions = new Set((await client.query<{ version: string }>('SELECT version FROM schema_migrations'))
+      .rows.map((row) => row.version));
+    await lockMigrationTables(client, pendingMigrations.map((migration) => migration.version)
+      .filter((version) => !appliedVersions.has(version)), lockTimeoutMs);
     for (const migration of pendingMigrations) {
       const applied = await client.query<{ exists: boolean; source_sha256: string | null }>(
         `SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version=$1) AS exists,
@@ -137,6 +152,7 @@ async function runMigrations(pool: DatabasePool, exactBundledVersion?: string): 
         }
         continue;
       }
+      await client.query("SELECT set_config('lock_timeout',$1,true)", [`${String(lockTimeoutMs)}ms`]);
       await client.query(migration.source);
       await client.query('INSERT INTO schema_migrations(version) VALUES ($1)', [migration.version]);
       await client.query(
@@ -145,7 +161,7 @@ async function runMigrations(pool: DatabasePool, exactBundledVersion?: string): 
         [migration.version, migration.sourceSha256],
       );
     }
-  }, { schemaMode: 'migrate' });
+  }, { schemaMode: 'migrate', schemaLockTimeoutMs: lockTimeoutMs });
 }
 
 export interface TransactionOptions {
