@@ -365,7 +365,7 @@ function registerConsoleAgentRoutes(
       readWriteExpectation: (tenantId, alias) => expectativaDeRuntime(options.pool, tenantId, alias, true),
       replaceProfileInTransaction: (client, profile, expectedRevision, actor, source) =>
         perfiles.replaceInTransaction(client, profile, expectedRevision, actor, source),
-      recordAuditInTransaction: (client, entry) => recordTerminalAudit(client as unknown as DatabasePool, entry),
+      recordAuditInTransaction: (client, entry) => recordTerminalAudit(client, entry),
       coordinateWrite: (input) => coordinator.coordinate(input),
       prepareRuntime: (tenantId, alias, contexto) =>
         prepareAgentProfileRuntime(profileProbe, tenantId, alias, contexto),
@@ -420,7 +420,7 @@ function registerConsoleAgentRoutes(
       persistDocumentWrite: async (client, document, audit, content) => {
         await new AgentContextRevisionsStore(client as unknown as DatabasePool).recordDocumentRevision(document);
         await recordNativeContextVersionInTransaction(client, document, content);
-        await recordTerminalAudit(client as unknown as DatabasePool, audit);
+        await recordTerminalAudit(client, audit);
       },
       resolveOperator: resolveProfileOperator,
       // A denial leaving no audit row is worse than an unavailable route: the write is awaited.

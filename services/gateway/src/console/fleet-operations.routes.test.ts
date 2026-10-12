@@ -102,7 +102,7 @@ describe('durable fleet operation routes', () => {
     repository.preview.mockResolvedValueOnce({ ...preview, kind: 'purge', request_sha256: sha256Hex(purge), resources });
     const response = await app.inject({ method: 'POST', url: `${PATH}/preview`, headers: HEADERS, payload: purge });
     expect(response.statusCode).toBe(200);
-    expect(response.json().resources).toEqual(resources);
+    expect((response.json() as { resources: unknown }).resources).toEqual(resources);
   });
   it.each(['preview', 'enqueue'] as const)('rejects a %s receipt with a hash for different request parameters', async (action) => {
     const { app, repository } = await fixture();

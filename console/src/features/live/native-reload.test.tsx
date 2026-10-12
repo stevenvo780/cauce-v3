@@ -49,7 +49,7 @@ function fixture() {
     getFleetCapability: vi.fn(async () => { calls.push('capability'); return capability; }),
     readNativePieces: vi.fn(async () => { calls.push('native'); return native; }),
     previewFleetOperation: vi.fn(async (request: FleetOperationRequest) => ({ request_sha256: await fleetRequestHash(request),
-      expected_revision: request.expected_revision, target: request.target, kind: request.kind, steps: [], dependencies: [], can_apply: true })),
+      expected_revision: request.expected_revision, target: request.target, kind: request.kind, steps: [], dependencies: [], resources: [], can_apply: true })),
     enqueueFleetOperation: vi.fn(async (request: FleetOperationRequest) => { calls.push(request.kind); return receipt(request); }),
     getFleetOperation: vi.fn<(_id: string) => Promise<FleetOperation>>(),
     listFleetOperations: vi.fn(), listRecentFleetOperations: vi.fn(), cancelFleetOperation: vi.fn(), resumeFleetOperation: vi.fn(),

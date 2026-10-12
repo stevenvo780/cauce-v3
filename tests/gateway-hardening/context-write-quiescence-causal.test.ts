@@ -171,7 +171,7 @@ describe('context writer physical quiescence', () => {
         tenantId: TENANT, alias: descriptor.alias, kind: 'directive', path: measuredPath,
         sha256: measuredSha, bytes: Buffer.byteLength(fixture.newContent), actorTenant: TENANT, actorAlias: 'kant',
       });
-      await recordTerminalAudit(client as unknown as DatabasePool, {
+      await recordTerminalAudit(client, {
         tenant_id: TENANT, actor_alias: 'kant', action: 'agent_document.write', decision: 'allow', trace_id: traceId,
         metadata: { operation_id: descriptor.operationId, sha_after: measuredSha, bytes: Buffer.byteLength(fixture.newContent) },
       });

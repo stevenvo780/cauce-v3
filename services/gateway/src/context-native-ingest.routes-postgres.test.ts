@@ -79,7 +79,7 @@ describe('native context ingest with real PostgreSQL and Git bare remote', () =>
     const marker = JSON.parse((await execute('git', ['--git-dir', remote, 'show', `main:${prefix}/.cauce-version.json`])).stdout) as Record<string, unknown>;
     expect(marker).toMatchObject({ version: 2, source: 'native', actor_alias: 'director', actor_human_id: null });
     const outbox = (await pool.query(`SELECT version::integer,state,git_commit FROM agent_context_outbox ORDER BY version`)).rows;
-    expect(outbox).toEqual([{ version: 1, state: 'synced', git_commit: expect.stringMatching(/^[a-f0-9]{40}$/u) },
+    expect(outbox).toEqual([{ version: 1, state: 'synced', git_commit: expect.stringMatching(/^[a-f0-9]{40}$/u) as string },
       { version: 2, state: 'synced', git_commit: commit }]);
   });
 
@@ -102,12 +102,13 @@ describe('native context ingest with real PostgreSQL and Git bare remote', () =>
     expect(result.statusCode).toBe(409);
     expect(result.json()).toMatchObject({ desired_version: 2, applied_version: 1, base_version: 1 });
     expect((await pool.query(`SELECT count(*)::integer AS count FROM agent_context_versions`)).rows).toEqual([{ count: 2 }]);
-    const advancedFiles = (await pool.query(`SELECT files FROM agent_context_versions WHERE version=2`)).rows[0]?.files as { path: string; content: string }[];
-    expect(advancedFiles.find(file => file.path === 'context/x.md')?.content).toBe('Advanced on the server.');
+    const versionRow = (await pool.query(`SELECT files FROM agent_context_versions WHERE version=2`)).rows[0] as { files: { path: string; content: string }[] } | undefined;
+    const advancedFiles = versionRow?.files;
+    expect(advancedFiles?.find(file => file.path === 'context/x.md')?.content).toBe('Advanced on the server.');
     const snapshot = await store.read(source, target().tenant_id, target().alias);
     expect(snapshot.application).toEqual({ state: 'error', last_error: 'native_context_conflict' });
     expect((await pool.query(`SELECT decision,metadata FROM audit_events WHERE action='context.native_conflict'`)).rows)
-      .toEqual([{ decision: 'deny', metadata: expect.objectContaining({ base_version: 1, desired_version: 2 }) }]);
+      .toEqual([{ decision: 'deny', metadata: expect.objectContaining({ base_version: 1, desired_version: 2 }) as Record<string, unknown> }]);
   });
 
   it('binds the target to the certificate principal and isolates companies', async () => {
