@@ -8,7 +8,9 @@ import type { ConsoleCompanyAuthority } from './console-user-authority.js';
 import type { ConsoleUser } from './console-users.js';
 import { MemoryConsoleUserStore } from './test-support/console-users.js';
 import { hashPassword } from './password.js';
-import { LoginThrottle, PasswordAuthProvider, isConsoleSurface, signConsoleSession } from './password-auth.js';
+import {
+  LoginThrottle, PasswordAuthProvider, PasswordWorkGate, PasswordWorkSaturated, isConsoleSurface, signConsoleSession,
+} from './password-auth.js';
 import { verifyConsoleCredentialStamp } from './console-credential-stamp.js';
 import { fakePool, fakeRepository, noDeliveryWakes } from './test-support/gateway-doubles.js';
 
@@ -151,6 +153,7 @@ async function fixture(options: {
   user?: ConsoleUser;
   fallback?: AuthProvider;
   throttle?: LoginThrottle;
+  addressThrottle?: LoginThrottle;
   companyAuthority?: ConsoleCompanyAuthority;
 } = {}) {
   let now = Date.UTC(2026, 7, 6, 12, 0, 0);
@@ -167,7 +170,8 @@ async function fixture(options: {
     },
     now: () => now,
     ...(options.fallback === undefined ? {} : { fallback: options.fallback }),
-    ...(options.throttle === undefined ? {} : { throttle: options.throttle })
+    ...(options.throttle === undefined ? {} : { throttle: options.throttle }),
+    ...(options.addressThrottle === undefined ? {} : { addressThrottle: options.addressThrottle })
   });
   const fake = repositoryDouble();
   const app = await buildGateway({
@@ -182,9 +186,9 @@ async function fixture(options: {
     ...fake,
     users,
     advance(ms: number) { now += ms; },
-    login(email: string, password: string) {
+    login(email: string, password: string, remoteAddress = '127.0.0.1') {
       return app.inject({
-        method: 'POST', url: '/v3/auth/login',
+        method: 'POST', url: '/v3/auth/login', remoteAddress,
         headers: { origin: 'http://localhost' },
         payload: { email, password }
       });
@@ -686,6 +690,33 @@ describe('login por contraseña de la consola', () => {
     }
   });
 
+  it('frena por dirección real a quien prueba muchos correos distintos desde la misma IP', async () => {
+    const test = await fixture({ addressThrottle: new LoginThrottle(3, 60_000) });
+    try {
+      for (const email of ['uno@example.test', 'dos@example.test', 'tres@example.test']) {
+        expect((await test.login(email, 'mal', '203.0.113.7')).statusCode).toBe(401);
+      }
+      const blocked = await test.login('steven@elenxos.com', PASSWORD, '203.0.113.7');
+      expect([blocked.statusCode, Number(blocked.headers['retry-after']) > 0]).toEqual([429, true]);
+      expect((await test.login('cuatro@example.test', 'mal', '203.0.113.8')).statusCode).toBe(401);
+      expect((await test.login('steven@elenxos.com', PASSWORD, '203.0.113.9')).statusCode).toBe(200);
+    } finally {
+      await test.app.close();
+    }
+  });
+
+  it('un login correcto no limpia el cupo de la dirección', async () => {
+    const test = await fixture({ addressThrottle: new LoginThrottle(2, 60_000) });
+    try {
+      expect((await test.login('uno@example.test', 'mal', '203.0.113.7')).statusCode).toBe(401);
+      expect((await test.login('steven@elenxos.com', PASSWORD, '203.0.113.7')).statusCode).toBe(200);
+      expect((await test.login('dos@example.test', 'mal', '203.0.113.7')).statusCode).toBe(401);
+      expect((await test.login('steven@elenxos.com', PASSWORD, '203.0.113.7')).statusCode).toBe(429);
+    } finally {
+      await test.app.close();
+    }
+  });
+
   it('rechaza una clave de firma corta en vez de arrancar con una sesión falsificable', async () => {
     expect(() => new PasswordAuthProvider({
       users: new MemoryConsoleUserStore(), signingKey: Buffer.alloc(16)
@@ -745,4 +776,22 @@ it('exposes the original verified login SID and ignores forged terminal identity
     await expect(test.provider.verifiedConsoleSession({ headers: { cookie: '__Host-cauce_session=invalid' },
       body: { loginSid: claims.sid } } as unknown as FastifyRequest)).rejects.toThrow(AuthError);
   } finally { await test.app.close(); }
+});
+
+describe('PasswordWorkGate', () => {
+  it('runs at most its concurrency, queues in order and refuses work beyond the queue', async () => {
+    const gate = new PasswordWorkGate(1, 1); const started: string[] = []; let release: () => void = () => undefined;
+    const first = gate.run(async () => { started.push('first'); await new Promise<void>(resolve => { release = resolve; }); return 'first'; });
+    const second = gate.run(async () => { started.push('second'); return 'second'; });
+    await expect(gate.run(async () => 'third')).rejects.toBeInstanceOf(PasswordWorkSaturated);
+    expect(started).toEqual(['first']); release();
+    await expect(Promise.all([first, second])).resolves.toEqual(['first', 'second']);
+    await expect(gate.run(async () => 'again')).resolves.toBe('again');
+  });
+
+  it('frees the slot when the work fails', async () => {
+    const gate = new PasswordWorkGate(1, 0);
+    await expect(gate.run(async () => { throw new Error('scrypt failed'); })).rejects.toThrow('scrypt failed');
+    await expect(gate.run(async () => 'next')).resolves.toBe('next');
+  });
 });

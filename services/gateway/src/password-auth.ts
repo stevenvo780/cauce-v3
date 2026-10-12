@@ -13,6 +13,7 @@ import {
   consoleRoleAuthority, consoleUserPrincipal, type ConsoleCompanyAuthority, type ConsoleSessionAuthority,
 } from './console-user-authority.js';
 import { DECOY_PASSWORD_HASH_PROMISE, MAX_PASSWORD_LENGTH, verifyPassword } from './password.js';
+import { rateLimitKey } from './client-ip.js';
 
 /**
  * Password authentication provider for console users.
@@ -169,6 +170,36 @@ export class LoginThrottle {
   }
 }
 
+export class PasswordWorkSaturated extends Error {
+  constructor() { super('password work is saturated'); }
+}
+
+/**
+ * Each scrypt derivation holds ~33 MB and a libuv thread (four by default, shared with file and DNS work) for ~100 ms,
+ * so password derivations share this one gate per process, and work beyond the queue is refused instead of piling up.
+ */
+export class PasswordWorkGate {
+  private running = 0;
+  private readonly waiting: (() => void)[] = [];
+
+  constructor(private readonly concurrency = 2, private readonly maxWaiting = 16) {}
+
+  async run<T>(work: () => Promise<T>): Promise<T> {
+    if (this.running < this.concurrency) this.running += 1;
+    else if (this.waiting.length >= this.maxWaiting) throw new PasswordWorkSaturated();
+    else await new Promise<void>(resolve => { this.waiting.push(resolve); });
+    try {
+      return await work();
+    } finally {
+      const next = this.waiting.shift();
+      if (next === undefined) this.running -= 1;
+      else next();
+    }
+  }
+}
+
+export const passwordWork = new PasswordWorkGate();
+
 export interface PasswordAuthProviderOptions {
   users: ConsoleUserStore;
   /** HMAC key for the JWT. Comes from a secret file, never from the repository or the browser. */
@@ -179,6 +210,8 @@ export interface PasswordAuthProviderOptions {
   cookieName?: string;
   now?: () => number;
   throttle?: LoginThrottle;
+  /** Keyed by the real client address; a successful login never resets it, or one valid account would launder guesses. */
+  addressThrottle?: LoginThrottle;
   /**
    * Channel of the machine principal associated with the web console.
    * Requires an explicit human session to access console surface routes, preventing the proxy's
@@ -228,6 +261,7 @@ export class PasswordAuthProvider implements AuthProvider {
   private readonly sessionTtlMs: number;
   private readonly now: () => number;
   private readonly throttle: LoginThrottle;
+  private readonly addressThrottle: LoginThrottle;
   private readonly machineChannelRequiringSession: string;
   private companyAuthority: ConsoleCompanyAuthority | undefined;
   private readonly requestCache = new WeakMap<FastifyRequest, LoadedSession>();
@@ -249,6 +283,7 @@ export class PasswordAuthProvider implements AuthProvider {
     }
     this.now = options.now ?? Date.now;
     this.throttle = options.throttle ?? new LoginThrottle();
+    this.addressThrottle = options.addressThrottle ?? new LoginThrottle(20);
     this.machineChannelRequiringSession = options.machineChannelRequiringSession ?? 'console';
     this.companyAuthority = options.companyAuthority;
   }
@@ -477,7 +512,8 @@ export class PasswordAuthProvider implements AuthProvider {
     }
     const now = this.now();
     const throttleKey = email.trim().toLowerCase();
-    const retryAfterMs = this.throttle.retryAfterMs(throttleKey, now);
+    const addressKey = rateLimitKey(request.ip);
+    const retryAfterMs = Math.max(this.throttle.retryAfterMs(throttleKey, now), this.addressThrottle.retryAfterMs(addressKey, now));
     if (retryAfterMs > 0) {
       await reply
         .header('Retry-After', String(Math.ceil(retryAfterMs / 1_000)))
@@ -487,9 +523,18 @@ export class PasswordAuthProvider implements AuthProvider {
     }
     const user = await this.users.findByEmail(email);
     const hash = user?.password_hash ?? await DECOY_PASSWORD_HASH_PROMISE;
-    const verified = await verifyPassword(hash, password);
+    let verified: boolean;
+    try {
+      verified = await passwordWork.run(() => verifyPassword(hash, password));
+    } catch (error) {
+      if (!(error instanceof PasswordWorkSaturated)) throw error;
+      await reply.header('Retry-After', '5').code(429)
+        .send({ error: 'too_many_requests', message: 'Hay demasiados inicios de sesión en curso. Probá de nuevo en unos segundos.' });
+      return;
+    }
     if (!user || !verified || !user.active) {
       this.throttle.recordFailure(throttleKey, now);
+      this.addressThrottle.recordFailure(addressKey, now);
       await reply
         .header('Cache-Control', 'no-store')
         .code(401)
