@@ -651,7 +651,7 @@ La URL ni la contraseña se imprimen. `empresa estado --estado disabled|retired`
   - `services/gateway/src/health/schema-companies.ts` (nuevo) y `services/gateway/src/health/probe.ts`;
   - `packages/store/test/companies-postgres.fixtures.ts` y `companies-migration-postgres.test.ts`;
   - nuevos: `packages/store/test/companies-isolation-db-postgres.test.ts`, `companies-isolation-migration-postgres.test.ts` y `companies-admins-db-postgres.test.ts`;
-  - `ops/scripts/rehearse-v41-clone.sh` (nuevo).
+  - `ops/scripts/rehearse-v41-clone.sh` (nuevo; hoy `ops/scripts/rehearse-migrations-clone.sh`, genérico para todo el bundle).
 - **Fixtures:**
   - humanizar: Steven como hub, Miguel no-hub, Isa;
   - praxis: PraxisHub, PraxisTeam y `leon@example.test` como dueño;
