@@ -1,6 +1,6 @@
 # V4: auditoría de membresías y propuesta de migración 066
 
-Estado: propuesta. No se ha creado `packages/store/migrations/066_*.sql` ni se ha tocado código. El SQL de la sección 5 **no se ha ejecutado** (no hay PostgreSQL en la máquina donde se redactó); debe probarse en PG antes de convertirse en archivo (ver sección 7).
+Estado: propuesta. No se ha creado `packages/store/migrations/066_*.sql` ni se ha tocado código. El `up` de la sección 5.1 se probó en PostgreSQL 16 sobre las migraciones 001–065 con los escenarios de la sección 7; el `down` solo se probó en el escenario «persona movida». Falta la prueba completa en PG del repositorio y el ensayo de clon (sección 7).
 
 Referencias de `file:line` medidas sobre `claude/v4-cierre` (HEAD `022e0ee6` más el árbol de trabajo). Las rutas de paquete son relativas a la raíz del repo; `M/NNN` abrevia `packages/store/migrations/NNN_*.sql`.
 
@@ -41,7 +41,9 @@ role_policies(role, allow_route, allow_read, allow_control, allow_notify)   (M/0
 
 Cadena de autoridad de una persona de consola (la repiten 6 sitios): `console_users` activo con rol → membresía hogar `human_tenant_memberships` (mismo `tenant_id` que la cuenta) habilitada → sala `memberships` del agente `alias` con `role_policies` que permita lo pedido.
 
-Solo existe la membresía **hogar**: ningún lector consulta una fila de `human_tenant_memberships` cuyo `tenant_id` difiera de `console_users.tenant_id` (todos hacen el JOIN por `tenant_id=account.tenant_id`: `human-identity.ts:44-48`, `client-mailbox.ts:23`, `configuration.ts:449`, `native-admin/service.ts:39-40`, `fleet-operation-human.ts:13-19`).
+Los **lectores** solo consultan la membresía **hogar**: ninguno lee una fila de `human_tenant_memberships` cuyo `tenant_id` difiera de `console_users.tenant_id` (todos hacen el JOIN por `tenant_id=account.tenant_id`: `human-identity.ts:44-48`, `client-mailbox.ts:23`, `configuration.ts:449`, `native-admin/service.ts:39-40`, `fleet-operation-human.ts:13-19`).
+
+Las **filas almacenadas** no se limitan a la hogar: `syncMembership` (`people-admin-store.ts:23-30`) revoca la fila anterior (`enabled=false`, `revoked_at`) y hace upsert en el tenant nuevo, de modo que mover a una persona de tenant deja una fila revocada en el tenant viejo, con el rol que tenía. Esa fila no se puede borrar ni reasignar (`human_membership_preserved`, `M/044:92-95`) y `human_message_initiators` la referencia. Toda comprobación de 066 (precondición del `up`, guarda de lector, repoblado del `down`) trata esas filas como historia: solo la membresía hogar (`h.tenant_id=u.tenant_id`) es autoridad vigente.
 
 ## 3. Inventario por concepto
 
@@ -196,17 +198,14 @@ SELECT pg_advisory_xact_lock(783_003_003);
 SELECT pg_advisory_xact_lock(783_003_066);
 LOCK TABLE console_users,human_tenant_memberships IN SHARE ROW EXCLUSIVE MODE;
 
--- Precondición: derivar solo es seguro si hoy no hay nada que perder.
+-- Precondición: solo la membresía hogar es autoridad vigente; las filas revocadas de tenants anteriores
+-- (syncMembership) son historia inmutable y su rol se descarta sin comprobarlo.
 DO $$
 BEGIN
-  IF EXISTS (SELECT 1 FROM human_tenant_memberships h JOIN console_users u ON u.id=h.human_id
-             WHERE h.tenant_id<>u.tenant_id) THEN
-    RAISE EXCEPTION 'cannot derive membership role: a membership outside the home tenant exists'
-      USING ERRCODE='23514';
-  END IF;
-  IF EXISTS (SELECT 1 FROM human_tenant_memberships h JOIN console_users u ON u.id=h.human_id
+  IF EXISTS (SELECT 1 FROM human_tenant_memberships h JOIN console_users u
+               ON u.id=h.human_id AND h.tenant_id=u.tenant_id
              WHERE h.role<>u.role) THEN
-    RAISE EXCEPTION 'cannot derive membership role: console_users.role and human_tenant_memberships.role differ'
+    RAISE EXCEPTION 'cannot derive membership role: console_users.role and the home membership role differ'
       USING ERRCODE='23514';
   END IF;
 END
@@ -274,10 +273,12 @@ CREATE TRIGGER console_users_role_revision AFTER UPDATE OF role ON console_users
   FOR EACH ROW WHEN (NEW.role IS DISTINCT FROM OLD.role) EXECUTE FUNCTION cauce_console_user_role_revision();
 
 -- Sustituye al CHECK «reader => solo read» (M/044:53), diferido para permitir reader+permisos en la misma transacción.
+-- Solo mira la membresía hogar: las filas revocadas de tenants anteriores conservan permisos antiguos y no cuentan.
 CREATE FUNCTION cauce_human_reader_ceiling() RETURNS trigger
 LANGUAGE plpgsql SET search_path=pg_catalog,public,pg_temp AS $$
 BEGIN
-  IF EXISTS (SELECT 1 FROM human_tenant_memberships h JOIN console_users u ON u.id=h.human_id
+  IF EXISTS (SELECT 1 FROM human_tenant_memberships h JOIN console_users u
+               ON u.id=h.human_id AND h.tenant_id=u.tenant_id
              WHERE h.human_id=(to_jsonb(NEW)->>TG_ARGV[0])::uuid
                AND u.role='reader' AND NOT h.permissions <@ ARRAY['read']::text[]) THEN
     RAISE EXCEPTION 'a reader may only hold the read permission'
@@ -290,7 +291,7 @@ CREATE CONSTRAINT TRIGGER human_memberships_reader_ceiling
   AFTER INSERT OR UPDATE OF permissions ON human_tenant_memberships
   DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION cauce_human_reader_ceiling('human_id');
 CREATE CONSTRAINT TRIGGER console_users_reader_ceiling
-  AFTER UPDATE OF role ON console_users
+  AFTER UPDATE OF role, tenant_id ON console_users
   DEFERRABLE INITIALLY DEFERRED FOR EACH ROW WHEN (NEW.role='reader') EXECUTE FUNCTION cauce_human_reader_ceiling('id');
 
 -- Último paso: ningún cuerpo de función ni trigger referencia ya la columna.
@@ -344,7 +345,13 @@ END $$;
 -- Repoblar sin subir revision (como M/053:258-259): restaurar no debe invalidar grants.
 ALTER TABLE human_tenant_memberships DISABLE TRIGGER cauce_oauth_membership_revision;
 ALTER TABLE human_tenant_memberships ADD COLUMN role text;
-UPDATE human_tenant_memberships h SET role=u.role FROM console_users u WHERE u.id=h.human_id;
+-- Hogar: el rol de la cuenta. Filas revocadas de tenants anteriores: su rol original no se conserva; se
+-- reconstruye el más estrecho compatible con el CHECK de lector (nadie las lee, están revocadas).
+UPDATE human_tenant_memberships h SET role=CASE
+    WHEN h.tenant_id=u.tenant_id THEN u.role
+    WHEN h.permissions <@ ARRAY['read']::text[] THEN 'reader'
+    ELSE 'operator' END
+  FROM console_users u WHERE u.id=h.human_id;
 ALTER TABLE human_tenant_memberships ENABLE TRIGGER cauce_oauth_membership_revision;
 ALTER TABLE human_tenant_memberships ALTER COLUMN role SET NOT NULL,
   ADD CONSTRAINT human_tenant_memberships_role_check CHECK (role IN ('operator','reader')),
@@ -385,8 +392,8 @@ SELECT pg_temp.cauce_066_patch('cauce_ensure_context_director_anchor(text,text,t
 Puntos de revisión del SQL antes de crear el archivo:
 - Los patrones literales deben coincidir con el cuerpo almacenado (`pg_get_functiondef` devuelve el cuerpo tal como se escribió). El helper aborta si no hay coincidencia; un patrón que coincidiera en dos sitios distintos de la misma función (p. ej. `cauce_require_company_owner` tiene una sola aparición, `cauce_set_company_admin` una) se reemplaza en todos, que es lo deseado.
 - `down` deja los cuerpos de `cauce_assert_qualified_company_owner` y `cauce_set_company_admin` idénticos a los de 055 por la simetría de patrones; verificarlo con `pg_get_functiondef` antes/después en la prueba.
-- La derivación no necesita backfill: el `up` solo corre si las dos columnas coinciden; si no, aborta con mensaje y exige reconciliar a mano (decidir cuál de las dos filas es la verdad antes de aplicar).
-- Producción corre esquema 051; el resto de la cadena (052–066) se aplica junta. Si 066 se aplica en esa cadena, la precondición opera sobre filas recién creadas por 053/055 (siempre coherentes); el riesgo real es solo en BDs que ya tengan datos de `--update`.
+- La derivación no necesita backfill: el `up` solo corre si la membresía hogar coincide con `console_users.role`; si no, aborta con mensaje y exige alinear esa fila (la hogar es una fila viva y editable) antes de aplicar. Las filas revocadas de tenants anteriores no se comprueban ni se pueden reconciliar: el `up` descarta su rol y el `down` lo reconstruye (ver arriba).
+- Producción corre esquema 051; el resto de la cadena (052–066) se aplica junta. Si 066 se aplica en esa cadena, la precondición opera sobre filas recién creadas por 053/055 (siempre coherentes); la divergencia solo puede aparecer en la membresía hogar de BDs con datos de `--update`; las filas revocadas por movimientos de people-admin existen en cualquier BD y por diseño no bloquean.
 
 ## 6. Cambios de código que implica 066
 
@@ -404,9 +411,19 @@ Código de producción
 Pruebas y fixtures (buscar con `grep -rn "human_tenant_memberships" -r tests services packages --include='*.ts'` las inserciones con columna `role`)
 - Inserciones con `role`: `tests/helpers/terminal-password.ts:51`, `tests/integration/human-identity-resolver-postgres.fixtures.ts:17,27`, `tests/integration/human-mcp-identity-postgres.fixtures.ts:51`, `services/gateway/src/oauth-client-provenance.fixtures.ts:39`, más los tests PG que insertan membresías a mano (lista del grep).
 - Tests que ejercitan la intersección de roles y pasarán a un solo rol: `oauth-grant-authority.test.ts`, `human-mcp-authority.test.ts`, `console-human-authority.read.test.ts`, `mcp-operations.test.ts`, `mcp-owned-authority-boundaries.test.ts`.
-- Nuevas pruebas PG: up/down de 066 con precondición fallida (roles divergentes y membresía fuera del tenant hogar), restauración exacta de los cuerpos tras down, cambio de rol de `console_users` sube `revision` de la membresía, lector con permisos de operador rechazado al hacer COMMIT (tanto desde `human_tenant_memberships` como desde `console_users`), y `migration-integrity-postgres.test.ts` con el SHA del ledger.
+- Nuevas pruebas PG: up/down de 066 con precondición fallida (rol divergente en la membresía hogar), restauración exacta de los cuerpos tras down, cambio de rol de `console_users` sube `revision` de la membresía, lector con permisos de operador rechazado al hacer COMMIT (tanto desde `human_tenant_memberships` como desde `console_users`), mover de tenant y después bajar a lector (y ambas cosas en la misma operación) con una fila revocada de operador en el tenant viejo: debe pasar; `up` con una persona movida (fila revocada con rol distinto al de la cuenta): debe pasar; `down` tras ese mismo escenario: debe repoblar sin violar el CHECK, y `migration-integrity-postgres.test.ts` con el SHA del ledger.
 
-## 7. Verificación pendiente
+## 7. Verificación
+
+Ejecutado en PostgreSQL 16 (001–065, cada archivo en su transacción, con una persona movida de tenant por el flujo de `syncMembership`, que deja una fila revocada de operador):
+- `up` con persona movida: pasa y la columna `role` desaparece (antes abortaba por la precondición).
+- Mover y después bajar a lector (y mover y bajar de rol en la misma transacción): COMMIT correcto.
+- Lector con permisos más allá de `read` en la membresía hogar: rechazado en COMMIT, tanto desde `human_tenant_memberships` como desde `console_users`.
+- Cambio de rol en `console_users` sube `revision` de la membresía.
+- Rol divergente en la membresía hogar: el `up` aborta con el mensaje esperado.
+- `down` tras persona movida y bajada a lector: repuebla `role` sin violar el CHECK (fila revocada de operador con permisos amplios queda `operator`).
+
+Pendiente:
 
 - [ ] Probar 066 up/down en PostgreSQL real (esquema completo 001–066) y con `ops/scripts/rehearse-v41-clone.sh`.
 - [ ] Comprobar con `pg_get_functiondef` que los cinco parches coinciden y que `down` restaura los cuerpos originales.
