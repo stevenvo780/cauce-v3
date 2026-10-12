@@ -60,7 +60,10 @@ export async function escenariosA(ctx) {
   assert(final?.argv.includes("CAUCE_INSTANCE_ID=systemd-container-atlas"));
   assert(final?.argv.includes(`CAUCE_SPACE_ROOT=${aliasState.atlas}/space`), "the legacy supervisor must export CAUCE_SPACE_ROOT");
   assert(final?.argv.includes(`TMPDIR=${aliasState.atlas}/space/tmp`));
-  assert(final?.argv.some((value) => value.startsWith("CAUCE_AGENT_WORKSPACE=")));
+  assert.equal(final?.argv.some((value) => value.startsWith("CAUCE_AGENT_WORKSPACE=")), false,
+    "an unmigrated alias must keep the cwd its harness already has sessions in");
+  const externalMountCall = (list) => list.find(({ argv }) => argv.includes("/bin/sh") && argv.some((value) => value.includes("external-mounts.json")));
+  assert(externalMountCall(calls)?.argv.includes("/workspace"), "the implicit shared /workspace must be declared as an external mount");
   assert(final?.argv.includes(`CAUCE_CONTAINER_ID=${firstId}`));
   assert(final?.argv.some((value) => value.startsWith("CAUCE_CONTAINER_GENERATION=")));
   assert.equal(final?.argv.some((value) => value.startsWith("CAUCE_TOKEN_FILE=")), false,
@@ -70,6 +73,22 @@ export async function escenariosA(ctx) {
   assert(final?.argv.includes("CAUCE_TLS_CA_FILE=/opt/cauce-v3-secrets/atlas/ca.crt"));
   assert.equal(final?.argv.some((value) => value.includes("FAKE_TOKEN_atlas") || value.includes("FAKE_KEY_atlas")), false);
   assert(final?.argv.includes("--bundle-digest") && final.argv.includes(bundleDigest));
+  // SPACE_CWD_MIGRATED=1 is the explicit per-alias switch to space/projects, with no external mount left to declare.
+  await writeConfig("atlas", [], { SPACE_CWD_MIGRATED: "1" });
+  await clearLog();
+  result = runSupervisor("start", "atlas", await dockerState("atlas"));
+  assert.equal(result.status, 0, result.stderr);
+  const migratedCalls = await records();
+  const migratedFinal = migratedCalls.find(({ argv }) => argv[0] === "exec" && argv.includes("CAUCE_ALIAS=atlas"));
+  assert(migratedFinal?.argv.includes(`CAUCE_AGENT_WORKSPACE=${aliasState.atlas}/space/projects`));
+  assert.equal(externalMountCall(migratedCalls), undefined);
+  await writeConfig("atlas");
+  await clearLog();
+  statePath = await dockerState("atlas");
+  result = runSupervisor("start", "atlas", statePath);
+  assert.equal(result.status, 0, result.stderr);
+  calls = await records();
+
   // The lifecycle controller runs as root and drops the adapter to the mapped non-root UID/GID.
   const finalUserIdx = final.argv.indexOf("--user");
   assert(finalUserIdx >= 0 && final.argv[finalUserIdx + 1] === "0", "controller exec must run as root");
@@ -202,6 +221,9 @@ export async function escenariosA(ctx) {
   const argosFinal = (await records()).find(({ argv }) => argv[0] === "exec" && argv.includes("CAUCE_ALIAS=argos"));
   assert(argosFinal?.argv.includes("CAUCE_OPENCLAW_WORKSPACE=/home/dev/clawd"));
   assert(argosFinal?.argv.includes("CAUCE_OPENCLAW_TRANSPORT=cli"));
+  const argosAgentWorkspace = argosFinal?.argv.find((value) => value.startsWith("CAUCE_AGENT_WORKSPACE="));
+  assert.equal(argosAgentWorkspace, "CAUCE_AGENT_WORKSPACE=/home/dev/clawd");
+  assert(externalMountCall(await records())?.argv.includes("/home/dev/clawd"), "the argos clawd workspace must be declared as an external mount");
   process.stdout.write("argos openclaw defaults: workspace-only persistence starts under cli transport\n");
 
   // ---- Shared session: a single conversation in the terminal and in Telegram. ----

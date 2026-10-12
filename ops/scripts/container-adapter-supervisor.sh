@@ -176,6 +176,9 @@ load_config() {
         [[ $harness == openclaw ]] || die "config key is not allowed for $harness: $key"
         ;;
       MUSE_EXECUTABLE|MUSE_CONFIG_HOME|MUSE_DATA_HOME|MUSE_WORKSPACE|MUSE_MODEL|MUSE_REASONING_EFFORT|MUSE_APPROVAL_MODE|MUSE_YOLO) [[ $harness == muse ]] || die "config key is not allowed for $harness: $key" ;;
+      # Per-alias switch of the harness cwd to space/projects: set only after the agent's files were copied,
+      # compared and verified. Until then the cwd the harness inherited is kept and declared as an external mount.
+      SPACE_CWD_MIGRATED) [[ $value =~ ^1$ ]] || die 'SPACE_CWD_MIGRATED must be exactly 1' ;;
       CLAUDE_PERMISSION_MODE) [[ $harness == claude ]] || die "config key is not allowed for $harness: $key" ;;
       CREDENTIAL_HOME)
         [[ $harness == claude || $harness == codex ]] || die "config key is not allowed for $harness: $key"
@@ -360,10 +363,9 @@ validate_container_identity_and_mount() {
     # per-cwd sessions that --resume reads: losing it on a recreate logs out and forks threads.
     runtime_paths+=("$container_home/.grok")
   elif [[ $harness == muse && -n $inventory_workspace ]]; then
-    # Workspace agent: its isolated profile and data, plus the pinned executable. A fixed MUSE_WORKSPACE is
-    # optional: without it the cwd is CAUCE_AGENT_WORKSPACE.
+    # Workspace agent: its isolated profile and data, plus the pinned executable.
     runtime_paths+=("${CONFIG[MUSE_CONFIG_HOME]}" "${CONFIG[MUSE_DATA_HOME]}")
-    [[ ! -v CONFIG[MUSE_WORKSPACE] ]] || runtime_paths+=("${CONFIG[MUSE_WORKSPACE]}")
+    runtime_paths+=("${CONFIG[MUSE_WORKSPACE]}")
     docker_id_exec --user "$container_user" test -x "${CONFIG[MUSE_EXECUTABLE]}" >/dev/null 2>&1 || die 'Muse executable is missing inside the assigned container'
   elif [[ $harness == muse ]]; then
     # The alias's Muse folder holds its login (.config/muse, linked from ~/.config/muse) and, with
@@ -458,16 +460,17 @@ prepare_space_layout() {
 }
 
 declare_external_workspace() {
-  # A workspace outside space/ (shared /workspace, legacy clawd) is an external mount: it stays the harness cwd
-  # until it is migrated, and space copies must exclude it with this reason instead of silently omitting it.
+  # A cwd outside space/ (shared /workspace, legacy clawd, the container working directory) is an external mount:
+  # it stays the harness cwd until the agent is migrated, and space copies must exclude it with this reason
+  # instead of silently omitting it.
   # shellcheck disable=SC2016
   docker_id_mutate --user "$container_user" /bin/sh -c '
     set -eu; umask 077
     target=$1/config/external-mounts.json
     [ ! -L "$target" ] || exit 78
-    printf "{\"mounts\":[{\"path\":\"%s\",\"excluded_from_copy\":true,\"reason\":\"external workspace outside the space; not copied until migrated to projects\"}]}\n" "$2" > "$target.tmp"
+    printf "{\"mounts\":[{\"path\":\"%s\",\"excluded_from_copy\":true,\"reason\":\"%s\"}]}\n" "$2" "$3" > "$target.tmp"
     mv -f "$target.tmp" "$target"
-  ' sh "$space_root" "$1" || die "cannot declare the external workspace mount for $alias_name" 78
+  ' sh "$space_root" "$1" "$2" || die "cannot declare the external workspace mount for $alias_name" 78
 }
 
 ensure_claude_binary() {
@@ -762,9 +765,15 @@ start_adapter() {
   done
   if [[ -n $inventory_workspace ]]; then
     environment+=("CAUCE_AGENT_WORKSPACE=$inventory_workspace")
-    [[ $inventory_workspace == "$space_root"/* ]] || declare_external_workspace "$inventory_workspace"
-  else
+    [[ $inventory_workspace == "$space_root"/* ]] \
+      || declare_external_workspace "$inventory_workspace" 'external workspace outside the space; not copied until migrated to projects'
+  elif [[ ${CONFIG[SPACE_CWD_MIGRATED]:-} == 1 ]]; then
     environment+=("CAUCE_AGENT_WORKSPACE=$space_root/projects")
+  else
+    # Not migrated: CAUCE_AGENT_WORKSPACE stays unset so the harness keeps the cwd it already has sessions,
+    # CLAUDE.md and .mcp.json in. The shared /workspace (or the container home) is declared, not copied.
+    declare_external_workspace "${CONFIG[SHARED_SESSION_WORKSPACE]:-/workspace}" \
+      'inherited working directory outside the space; not copied until the agent is migrated to projects'
   fi
   assert_generation
   # The lifecycle controller runs as root (to own the control plane) and drops the

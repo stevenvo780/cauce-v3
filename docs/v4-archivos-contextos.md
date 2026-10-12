@@ -29,9 +29,17 @@ space/
 
 ### Layout por agente en el supervisor legacy
 
-El supervisor de contenedores (`ops/scripts/container-adapter-supervisor.sh`, lanzado por las unidades rootless) deriva `CAUCE_SPACE_ROOT=<state_directory>/space` igual que el executor V4, crea los siete directorios (`0700`, como el usuario de ejecución y rechazando symlinks) antes de arrancar el adaptador y exporta `TMPDIR=<space>/tmp`, que es el productor real de `tmp/`. Sin workspace declarado en el inventario, `CAUCE_AGENT_WORKSPACE` (cwd del arnés) es `space/projects`.
+El supervisor de contenedores (`ops/scripts/container-adapter-supervisor.sh`, lanzado por las unidades rootless) deriva `CAUCE_SPACE_ROOT=<state_directory>/space` igual que el executor V4, crea los siete directorios (`0700`, como el usuario de ejecución y rechazando symlinks) antes de arrancar el adaptador y exporta `TMPDIR=<space>/tmp`, que es el productor real de `tmp/`.
 
-Un workspace declarado fuera del espacio (`/workspace` compartido de Hegel, el de Argos, `clawd` legado) sigue siendo el cwd hasta su migración y se registra como montaje externo en `config/external-mounts.json`, con `excluded_from_copy` y el motivo. `MUSE_WORKSPACE` es opcional: sin él, Muse usa `CAUCE_AGENT_WORKSPACE`.
+`CAUCE_AGENT_WORKSPACE` (cwd del arnés) sigue la migración de cada alias, para no perder sesiones por cwd (claude y grok las guardan por directorio) ni los `CLAUDE.md`, `AGENTS.md` y `.mcp.json` del proyecto:
+
+- Con workspace en el inventario, es ese workspace. Si está fuera del espacio (Argos, `clawd` legado) se declara como montaje externo.
+- Sin workspace y sin migrar, **no se exporta** y el arnés conserva el cwd heredado del contenedor. Se declara como montaje externo el `/workspace` compartido (o `SHARED_SESSION_WORKSPACE` si existe), que es el caso de Hegel, Atlas y Kratos.
+- Solo la clave explícita `SPACE_CWD_MIGRATED=1` en la configuración del alias lo cambia a `space/projects`. Se activa después de copiar sin mover, comparar manifiestos y verificar un turno con nonce.
+
+Los montajes externos se registran en `config/external-mounts.json` con `excluded_from_copy` y el motivo; las copias del espacio los excluyen explícitamente.
+
+`MUSE_WORKSPACE` sigue siendo obligatorio y debe coincidir con el workspace del inventario: el supervisor (`validate_config_values`) y el SDK (`config.ts`, `shared.ts`, que fija `/home/node/clawd`) lo exigen. Relajarlo requiere cambiar el SDK y la librería del supervisor, fuera de este alcance; hasta entonces Muse conserva su workspace fijo.
 
 `logs/` no tiene todavía un productor propio: el log del adaptador va al journal de la unidad (acotado por la configuración de journald), no a `space/logs`. Un log acotado y rotado dentro del espacio requiere un cambio en el SDK o en el helper de ejecución.
 
