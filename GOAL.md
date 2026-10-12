@@ -70,9 +70,10 @@ Todo el sistema debe ser multitenant. **Humanizar** y **Praxis** deben quedar co
 - [ ] Humanizar real en V4: ensayo 051→065 sobre dump fresco, siembra de super-admin (Steven) y owners (Steven, Miguel).
 - [ ] Praxis real: empresa con León como owner (Claude crea su usuario), recursos del hospital importados por `cauce platform change` y agentes migrados a servidores locales (ver §5).
 - [ ] Un ordenador recién enrolado ejecuta agentes sin el administrador (falta el instalador del executor y de su política firmada).
-- [ ] Bug: el limitador de registro es global en producción (no hay IP real tras nginx; tampoco en el claim de hosts).
-- [ ] Prueba adversarial por enumeración de rutas `/v3` y WS con dos empresas, también contra el despliegue.
-- [ ] Simplificación de membresías documentada y aplicada (doble rol, `company_id` desnormalizado) con migración 066 y su down.
+- [x] [local real] Limitador de registro y claim por IP real: `realip` de nginx tras Caddy y `trustProxy` acotado que falla cerrado, IPv6 por /64 (nginx y gateway reales en pruebas; 4830497d, 5f64c05a). Falta fijar `CAUCE_FRONT_PROXY_CIDR` y `CAUCE_TRUSTED_PROXY_CIDRS` en producción.
+- [x] [local real] Guardia adversarial que enumera las 173 rutas `/v3` y WS con dos empresas y huellas de filas (2f1080c8): encontró 2 fugas reales (existencia de hosts y poda global de cuotas) y 3 contratos 400/409, en corrección.
+- [ ] Prueba adversarial en verde sin excepciones y repetida contra el despliegue.
+- [ ] Simplificación de membresías aplicada con su migración y su down (propuesta revisada en `docs/v4-membresias.md`; la migración será la 068).
 
 ## 2. Credenciales y cuotas por agente
 
@@ -84,8 +85,8 @@ Espacio para administrar credenciales y cuentas de proveedores, con aislamiento 
 - [x] [código] Solo se muestran las ventanas que informa cada proveedor (Claude 5 h/7 d, Codex por duración y modelo, Grok por periodo).
 - [x] [local real] Cuenta compartida con aviso «Consumo compartido por N agentes», sin saldos independientes; estados ok/antiguo/desconocido/error; un 429 no se convierte en agotamiento.
 - [ ] Consultar la cuota en el contenedor donde corre el agente y vincular los agentes reales a su cuenta.
-- [ ] Corregir la lógica que trata compartir como error (guardián `cauce-v3-medico-monitor`, `cred-guard.py`); calcular `shared` antes del filtro por tenant.
-- [ ] Conservar el motivo de cada fallo (hoy todo es `quota probe unavailable`); «Pendiente de autenticación» en vez de «En pausa».
+- [x] [local real] Compartir cuenta ya no es error: el guardián y `cred-guard.py` lo anotan como nota informativa y solo escalan fallos reales; `shared` se calcula con todas las asignaciones de la empresa antes del filtro por tenant (PG; 51c9fd37, 6e05b7d8, c25cc0e6).
+- [x] [código] Motivo de cada fallo con seis códigos cerrados de lector a consola, con su acción en español; «Pendiente de autenticación» en cuentas recién creadas (de037ec7, 365d9faf, 6a6ed3ea, 7fc7d7b5).
 - [ ] Lectores para openclaw y muse, o «sin lector» explícito.
 - [ ] Contraste en producción de las ventanas mostradas con `coutas`; auditoría de logs sin secretos.
 
@@ -98,7 +99,7 @@ Registrar y consultar cuentas sin agente, instanciar un entorno Docker aislado c
 - [x] [local real] Cola durable con CAS y fencing para create/authenticate/query/update_cli/delete.
 - [ ] Imagen de cuotas construida con versiones fijadas y su digest en la política; host con ejecutor de cuotas (server2).
 - [ ] Ciclo Docker real desde la web: crear, autenticar (el dueño aprueba el código con las cuentas `cuota-claude-1`, `cuota-codex-b2b`, `cuota-grok-1`), consultar, `update_cli` y eliminar, más una prueba de escape del PTY.
-- [ ] **Restaurar el refresco de token** en entornos con sesión propia: V4 lo quitó; sin él, Claude caduca a las ~8 h y Grok a las ~6 h.
+- [x] [código] **Refresco de token restaurado** solo en entornos de «Mis cuotas» con sesión propia (flag explícito, nunca en contenedores de agentes), con candado, relectura y escritura atómica 0600 (25a27a83, 365d9faf, 425cd569). Falta el recibo real de un entorno autenticado hace >9 h.
 - [ ] Habilitar Grok (paquete e identidad) y dejar de ofrecer proveedores sin ejecutor (gemini).
 - [ ] Datos frescos sin pulsar botones (consulta al abrir la vista si la captura tiene >10 min) y prueba de uso cotidiano 24 h después en producción.
 
@@ -110,8 +111,8 @@ La oficina refleja los recursos reales de cada empresa, permite entrar al detall
 - [x] [código] El detalle del agente abre su estado, cola, cuotas y «Perfil y contexto» con historial, diferencias y restauración.
 - [x] [código] El cansancio distingue sin datos, error, antiguo, agotado, cansado (<25 %), pausa y «varía por modelo», en plano, campus y ficha.
 - [x] [local real] Editor de salas y partes con validación y CAS; el plano persiste tras recargar y en un segundo navegador.
-- [ ] Bug: la topología usa el tenant de origen y no la empresa activa (al cambiar de empresa se ven salas ajenas y guardar da 403).
-- [ ] El campus sigue el plano guardado.
+- [x] [local real] La topología y el plano usan la empresa activa: tras cambiar de empresa solo se ven sus salas y guardar el plano da 200 (PG; 022e0ee6, e3c63b0d).
+- [x] [código] El campus ordena sus edificios por la posición guardada en el plano y muestra «Leyendo cuotas…» al cargar (b86f7443, 42ac20fa).
 - [ ] e2e de alta, edición, asignación y baja de salas y agentes en la oficina, con re-login y segundo navegador; contraste del cansancio con cuotas reales en producción.
 
 ## 5. Migración de agentes a servidores locales
@@ -141,7 +142,7 @@ CRUD completo y real de todas las entidades desde la interfaz, con efecto en el 
 - [x] [local real] CLI: despacho previo intacto más `platform`, `hosts`, `context`, `spaces`.
 - [x] [local real] Copias con sha256, identidad y omisiones (PG 16/16; restauración CLI de >96 MiB).
 - [ ] Ciclo físico desde la web en Docker local y en server2: crear, editar la configuración, los componentes y las asignaciones del agente (operación update) con efecto comprobado en el contenedor, aplicar contexto, detener, retirar y purgar. Instalar en el VPS el enclave de autoridad firmado.
-- [ ] **Bug: la consola rechaza copias de más de 32 MiB** aunque el backend admite 1 GiB; la copia omite `.git` y código con `auth|session|token|profile` en el nombre.
+- [x] [código] Copias de hasta 1 GiB descargadas por enlace sin buffering con su SHA-256 visible; el filtro omite solo credenciales reales (archivos, directorios y tokens por contenido) e incluye el código con `auth|session|token` en el nombre; `.git` se omite con motivo `vcs_metadata` en el manifiesto (feda39de, 4a3a5a00, 08ea438f, 22b98c0d, 9f0a61d3).
 - [ ] Purga honesta (nombra contenedor y volúmenes, confirma con el alias) y sin huérfanos (`-provider-profiles`, create fallido); barrido de huérfanos como paso del gate, en ambos sentidos: recursos `cauce.fleet.*` sin fila y filas de agente o placement sin recurso real o con un estado distinto del de Docker.
 - [ ] Terminal por CLI (`cauce <alias>`) para agentes en flota dinámica; `cauce login` y `cauce spaces create|list|edit|retire`.
 - [ ] e2e real para ordenadores, personas, entornos de cuota y contextos; matriz CRUD verificable por máquina; runbook de recuperación de copias; pruebas físicas de interrupción.
@@ -178,7 +179,7 @@ Estructura estándar de espacios (contextos/directivas, proyectos, configuració
 Revisar los mecanismos por su uso real, eliminar lo que no aporta y quedarse con un diagnóstico pequeño y efectivo que relacione cada operación con empresa, agente, ordenador y componente, reconstruya cadenas de fallo e incluya infraestructura y sincronización de contextos, sin capas de apariencia.
 
 - [x] [código] Ids de cadena existentes de extremo a extremo (`trace_id` de mensajes, sesión de terminal, `operation_id` de flota) y `audit_events` con empresa y actor.
-- [ ] Inventario de uso real medido en producción (`docs/v4-diagnostico.md`).
+- [x] Inventario de uso real medido en producción en solo lectura, con productores, lectores y decisión por mecanismo (`docs/v4-diagnostico.md`; ec1dff01, 2a64d09f).
 - [ ] Poda: cinco guardias de credenciales solapadas, doble escritura JSONL+PG de decisiones y lector V3 de contextos, con regresión en verde (hoy V4 no borró ni un archivo).
 - [ ] Lectura de auditoría por empresa con filtros en servidor; consulta de cadena por id; causas saneadas de fallos de sync; ensayo de cuatro rupturas reales localizadas solo con los registros.
 
@@ -198,22 +199,23 @@ Máxima paralelización efectiva con revisión independiente; entorno local real
 
 - [x] Equipo de modelos y 4 carriles tmux listos (ver tiers); entorno local reproducible; git limpio y respaldado.
 - [x] [local real] Backup predeploy del 12-oct aprobado (ya caducado para la ventana real); restore aislado de producción con 052–064 y datos intactos.
-- [ ] Revisar los 6 secretos de GitGuardian (placeholders; el dueño marca los falsos positivos).
+- [x] Contraseñas de fixture sustituidas por placeholders construidos en ejecución (41a2fda6) e ids y correos del dueño fuera de `ops/cuotas` (75ddb35d). **Dueño:** marcar los falsos positivos históricos en GitGuardian.
 - [ ] Gate completo una vez por candidato (incluida cobertura de consola ≥ 94,49 %) y revisión Opus del diff.
-- [ ] Merge a `dev` y fast-forward de `main`; ensayo 052–065 sobre un dump fresco.
+- [x] [local real] Ensayo 052–065 sobre el dump de producción del 12-oct: 307 279 filas intactas, transacción de 663 ms, contención que falla sin aplicar nada y reversión real 065→051→065 con los `down` corregidos (4924052c, b976df33).
+- [ ] Merge a `dev` y fast-forward de `main`.
 - [ ] Prechequeo del VPS, backup fresco, `deploy.sh` y kit del controlador de flota; humo y ciclo completo hasta 0 flujos esenciales en rojo; versión publicada = código verificado.
 
 ## Trabajo a portar de ramas antiguas
 
 Verificado por contenido (Haiku/Sonnet + revisión Opus 5.5): trabajo valioso que no está en V4. Se porta a `claude/v4-cierre` con prueba focal, y la rama fuente se borra al terminar.
 
-- [ ] (P0) **Hospital (Praxis), supervisión y Muse**: de `origin/socrates/hospital-supervision-1699` (lo que corre hoy en el hospital), `ops/instances/hospital/muse-cli-backend.py` + test, el plugin `openclaw-muse-native/` + test y `packages/adapter-sdk/src/sdk/engine/conversation-status.ts` + test. No se porta el `safe.directory` de `7530677d`, porque ya está superado por `command_identity`.
-- [ ] (P0) **Hospital, revisión QA y continuidad**: de `origin/kant/rc2-hospital-praxis-20261007`, los commits `1eeca7d9`, `ef4e1fb0`, `caac19b6`, `bc4c60de` y `9cff3b73` entran sin conflictos; `6e3bc3ff` choca en `tests/unit`. Incluye un arreglo del store que V4 no tiene: rechazar con `no_route` un publish human-mcp hacia un consumidor vivo sin la capacidad.
-- [ ] (P1) **Renovación OAuth** (`b4cd9265`, PR #149): recuperación del refresh, consentimiento más claro y corrección de `ui_locales` → `invalid_request`. Las otras cuatro variantes eran copias.
-- [ ] (P1) **Consola**: reintentar un adjunto repite la acción que falló. Patch `08c69433` en `portar/consola-reintento-adjuntos/`; hay que ajustar `clearResource` y espiar `HTMLAnchorElement.click` en `MessageAttachments.test.tsx`.
+- [x] [local real] (P0) **Hospital (Praxis), supervisión y Muse** (98696901, 91e09ba6; aislamiento del backend en bf020517): de `origin/socrates/hospital-supervision-1699` (lo que corre hoy en el hospital), `ops/instances/hospital/muse-cli-backend.py` + test, el plugin `openclaw-muse-native/` + test y `packages/adapter-sdk/src/sdk/engine/conversation-status.ts` + test. No se porta el `safe.directory` de `7530677d`, porque ya está superado por `command_identity`.
+- [x] [local real] (P0) **Hospital, revisión QA y continuidad** (49b34d1a, a7f544eb, 8478d526, 40e6f520, f50c8014, 8fcd3280, d403c98f, 8eb47a82): de `origin/kant/rc2-hospital-praxis-20261007`, los commits `1eeca7d9`, `ef4e1fb0`, `caac19b6`, `bc4c60de` y `9cff3b73` entran sin conflictos; `6e3bc3ff` choca en `tests/unit`. Incluye un arreglo del store que V4 no tiene: rechazar con `no_route` un publish human-mcp hacia un consumidor vivo sin la capacidad.
+- [x] [código] (P1) **Renovación OAuth** (`b4cd9265`, PR #149; portada en 92112fc8): recuperación del refresh, consentimiento más claro y corrección de `ui_locales` → `invalid_request`. Las otras cuatro variantes eran copias.
+- [x] [código] (P1) **Consola** (f088e262): reintentar un adjunto repite la acción que falló. Patch `08c69433` en `portar/consola-reintento-adjuntos/`; hay que ajustar `clearResource` y espiar `HTMLAnchorElement.click` en `MessageAttachments.test.tsx`.
 - [ ] (P1) **Hospital, perfil de proyecto**: `ops/instances/hospital/project-profile.{py,json}` de `origin/codex/company-instances-20261006` (PR #131). El resto de esa rama (instalaciones por empresa) es una arquitectura descartada (`docs/v4-plan-multiempresa.md:41`): conservar solo su documento de diseño como referencia y cerrar el PR.
-- [ ] (P2) **Registros de Cronos**: 6 filas de `deploy/HISTORIAL.md` y el runbook del buzón (PRs #130 y #134), ordenados por fecha.
-- [ ] (P2) **Pruebas y documentos sin commitear**: dos tests de regresión de `mcp-emission-outside-delivery` (`portar/tests-mcp-emission-outside-delivery.patch`), `docs/v3.5-unir-computadoras.md` (estado medido de V3.5) y los e2e en curso `context-multiuser-continuity` (adaptarlos a la autenticación por empresa o descartarlos con motivo).
+- [x] (P2) **Registros de Cronos** (836c6eec, e603d474): 6 filas de `deploy/HISTORIAL.md` y el runbook del buzón (PRs #130 y #134), ordenados por fecha.
+- [x] (P2) **Pruebas y documentos sin commitear** (4c2cc25e, 93dcc8de): dos tests de regresión de `mcp-emission-outside-delivery` (`portar/tests-mcp-emission-outside-delivery.patch`), `docs/v3.5-unir-computadoras.md` (estado medido de V3.5) y los e2e en curso `context-multiuser-continuity` (adaptarlos a la autenticación por empresa o descartarlos con motivo).
 
 ## 12. Criterios obligatorios para dar por terminada la tarea
 
@@ -276,19 +278,19 @@ Al finalizar, entrega un informe verificable (`docs/v4-informe-final.md`) con la
 
 Las validó la pasada Opus; el detalle está en la sección 6 de `ordenes/v4-cierre-objetivo.md`.
 
-1. Higiene de secretos en GitHub antes del merge y sacar del código los identificadores de cuentas del dueño.
-2. Recibo de gates en el repo ligado al SHA, exigido por `deploy.sh`.
-3. `deploy.sh` más seguro: comprobar los bind mounts antes del build, escribir los pins solo tras un migrator correcto y exigir un backup de ≤ 2 h si hay migraciones pendientes.
-4. Ensayo de migración genérico para todo el bundle.
-5. Siembra del super-admin con un comando idempotente y unificación de los dos CLIs de plataforma.
-6. Una sola lectura de cuotas compartida por plano, campus y ficha.
-7. Mensajes de error accionables en español y motivo de cada capacidad no disponible.
-8. Pantalla «Empresa retirada».
-9. Validar `harness_definitions` contra los descriptores.
-10. Autor real en `git log` de contextos y aplicación en el siguiente turno natural.
-11. Inmutabilidad del historial de contextos.
-12. Contrato entre los handlers MSW y las rutas reales del gateway.
-13. Preflight de dependencias nativas del gate.
-14. Reservar los subcomandos del CLI como alias inválidos.
-15. Inventariar las dependencias de Argos con la VPS antes de moverlo.
-16. Retirar lo legacy (`fleet_adoption_probe_*`, `fleet_executor_legacy*`) tras migrar.
+- [ ] 1. Higiene de secretos en GitHub antes del merge y sacar del código los identificadores de cuentas del dueño.
+- [x] 2. Recibo de gates en el repo ligado al SHA, exigido por `deploy.sh`.
+- [x] 3. `deploy.sh` más seguro: comprobar los bind mounts antes del build, escribir los pins solo tras un migrator correcto y exigir un backup de ≤ 2 h si hay migraciones pendientes.
+- [x] 4. Ensayo de migración genérico para todo el bundle.
+- [x] 5. Siembra del super-admin con un comando idempotente y unificación de los dos CLIs de plataforma.
+- [ ] 6. Una sola lectura de cuotas compartida por plano, campus y ficha.
+- [ ] 7. Mensajes de error accionables en español y motivo de cada capacidad no disponible.
+- [x] 8. Pantalla «Empresa retirada».
+- [ ] 9. Validar `harness_definitions` contra los descriptores.
+- [ ] 10. Autor real en `git log` de contextos y aplicación en el siguiente turno natural.
+- [ ] 11. Inmutabilidad del historial de contextos.
+- [ ] 12. Contrato entre los handlers MSW y las rutas reales del gateway.
+- [ ] 13. Preflight de dependencias nativas del gate.
+- [x] 14. Reservar los subcomandos del CLI como alias inválidos.
+- [ ] 15. Inventariar las dependencias de Argos con la VPS antes de moverlo.
+- [ ] 16. Retirar lo legacy (`fleet_adoption_probe_*`, `fleet_executor_legacy*`) tras migrar.
