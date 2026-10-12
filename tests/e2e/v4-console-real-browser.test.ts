@@ -1,0 +1,386 @@
+import { randomUUID } from 'node:crypto';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { newTrustedPage, startConsoleFunctionalFixture } from './console-functional-browser.fixtures.js';
+import {
+  apiGet, asV4Page, BrowserErrorLog, bodySnippet, fillRegistration, HERMETIC_INSTANCE_RULES, login, openRegistration,
+  PATTERN_DEFECT_RULE, syntheticPerson, validity, type V4Page,
+} from './v4-console-real-browser.helpers.js';
+
+const run = randomUUID().replaceAll('-', '').slice(0, 8);
+const ownerA = syntheticPerson('a', run);
+const ownerB = syntheticPerson('b', run);
+const errors = new BrowserErrorLog([...HERMETIC_INSTANCE_RULES, PATTERN_DEFECT_RULE]);
+let fixture: Awaited<ReturnType<typeof startConsoleFunctionalFixture>> | undefined;
+let pageA: V4Page | undefined;
+let hubA = '';
+
+const active = () => { if (!fixture) throw new Error('V4 fixture is not initialized'); return fixture; };
+const pool = () => active().database.pool;
+const base = () => active().baseUrl;
+const ownerPage = () => { if (!pageA) throw new Error('owner A has no page yet'); return pageA; };
+
+async function freshPage(label: string, viewport = { width: 1440, height: 1000 }): Promise<V4Page> {
+  const page = asV4Page(await newTrustedPage(active(), viewport));
+  errors.watch(page, label);
+  return page;
+}
+
+/** Fails with the visible state of the page, which is what a person would have seen. */
+async function step<T>(page: V4Page, name: string, action: () => Promise<T>): Promise<T> {
+  try { return await action(); }
+  catch (cause) {
+    throw new Error(`${name} failed at ${page.url()}: ${await bodySnippet(page)} || console=${JSON.stringify(errors.trace.slice(-12))}`, { cause });
+  }
+}
+
+async function openConfig(page: V4Page, section: string): Promise<void> {
+  await page.goto(`${base()}/config?seccion=${section}`, { waitUntil: 'domcontentloaded' });
+  await page.getByRole('heading', { name: 'Ajustes', exact: true }).waitFor({ timeout: 20_000 });
+}
+
+beforeAll(async () => {
+  if (process.env.CAUCE_TEST_DATABASE_URL) throw new Error('this E2E requires its own Testcontainers PostgreSQL');
+  if (process.env.VITE_USE_MOCKS === 'true') throw new Error('mocks=false is required');
+  fixture = await startConsoleFunctionalFixture();
+}, 600_000);
+
+afterAll(async () => { await fixture?.close(); }, 180_000);
+
+describe('recorrido V4 de la consola en navegador real contra gateway y PostgreSQL reales', () => {
+  it('registro: rechaza entradas inválidas con su mensaje, crea la cuenta y la empresa y entra como dueño', async () => {
+    const page = await freshPage('owner-a');
+    pageA = page;
+    await step(page, 'registration', async () => {
+      const form = await openRegistration(page, base());
+      await fillRegistration(form, { ...ownerA, password: 'corta' });
+      await form.getByRole('button', { name: 'Crear cuenta y empresa', exact: true }).click();
+      const shortPassword = await validity(form.getByLabel('Contraseña', { exact: true }));
+      expect(shortPassword.valid).toBe(false);
+      expect(shortPassword.message).not.toBe('');
+      expect(await form.isVisible()).toBe(true);
+      errors.expectHttpError('/v3/auth/register', 400);
+      await fillRegistration(form, { ...ownerA, company: { ...ownerA.company, slug: 'Slug Inválido' } });
+      await form.getByRole('button', { name: 'Crear cuenta y empresa', exact: true }).click();
+      await expect.poll(async () => page.getByRole('alert').innerText(), { timeout: 15_000 })
+        .toContain('Revisa correo, nombre, contraseña y empresa.');
+      await fillRegistration(form, ownerA);
+      await form.getByRole('button', { name: 'Crear cuenta y empresa', exact: true }).click();
+      await page.getByRole('navigation', { name: 'Navegación principal', exact: true }).waitFor({ timeout: 30_000 });
+    });
+    const session = await apiGet(page, '/v3/auth/session');
+    expect(session.status).toBe(200);
+    expect(session.body).toMatchObject({ authenticated: true, authority: { role: 'company_owner', acting_company: ownerA.company.slug } });
+    const owner = await pool().query<{ tenant_id: string; company_role: string }>(
+      `SELECT u.tenant_id,a.role AS company_role FROM console_users u
+        JOIN company_admins a ON a.human_id=u.id AND a.company_id=u.company_id WHERE u.email=$1`, [ownerA.email]);
+    expect(owner.rows).toHaveLength(1);
+    expect(owner.rows[0]?.company_role).toBe('owner');
+    hubA = owner.rows[0]?.tenant_id ?? '';
+    const stored = await pool().query<{ password_hash: string }>('SELECT password_hash FROM console_users WHERE email=$1', [ownerA.email]);
+    expect(stored.rows[0]?.password_hash).not.toContain(ownerA.password);
+  });
+
+  it('registro duplicado: un identificador ocupado devuelve un error visible y no crea nada', async () => {
+    const page = await freshPage('duplicate-registration');
+    await step(page, 'duplicate registration', async () => {
+      errors.expectHttpError('/v3/auth/register', 409);
+      const form = await openRegistration(page, base());
+      await fillRegistration(form, { ...syntheticPerson('dup', run), company: { name: 'Otra empresa', slug: ownerA.company.slug } });
+      await form.getByRole('button', { name: 'Crear cuenta y empresa', exact: true }).click();
+      const alert = page.getByRole('alert');
+      await alert.waitFor({ timeout: 15_000 });
+      expect(await alert.innerText()).toContain('registration is unavailable; use another email or company identifier');
+    });
+    const count = await pool().query('SELECT 1 FROM console_users WHERE email=$1', [syntheticPerson('dup', run).email]);
+    expect(count.rowCount).toBe(0);
+  });
+
+  it('empresa: renombra la propia, crea otra con su dueño y rechaza entradas inválidas', async () => {
+    const page = ownerPage();
+    await step(page, 'company panel', async () => {
+      await openConfig(page, 'general');
+      const row = page.getByRole('listitem').filter({ hasText: ownerA.company.name });
+      await row.getByRole('button', { name: 'Editar', exact: true }).click();
+      await page.getByLabel('Nombre de empresa', { exact: true }).fill('   ');
+      expect(await page.getByRole('button', { name: 'Guardar empresa', exact: true }).isDisabled()).toBe(true);
+      await page.getByLabel('Nombre de empresa', { exact: true }).fill(`${ownerA.company.name} editada`);
+      await page.getByRole('button', { name: 'Guardar empresa', exact: true }).click();
+      await page.getByText('Empresa actualizada.', { exact: true }).waitFor({ timeout: 15_000 });
+      await page.reload({ waitUntil: 'domcontentloaded' });
+      await page.getByText(`${ownerA.company.name} editada`, { exact: true }).waitFor({ timeout: 15_000 });
+    });
+    const renamed = await pool().query<{ name: string; version: number }>('SELECT name,version::int FROM companies WHERE id=$1', [ownerA.company.slug]);
+    expect(renamed.rows[0]?.name).toBe(`${ownerA.company.name} editada`);
+    expect(renamed.rows[0]?.version).toBeGreaterThan(1);
+
+    await step(page, 'company create', async () => {
+      await page.getByRole('button', { name: 'Crear empresa', exact: true }).click();
+      const form = page.getByRole('form', { name: 'Crear empresa y dueño' });
+      const fill = async (person: typeof ownerB, password = person.password) => {
+        for (const [label, value] of [
+          ['Nombre de empresa', person.company.name], ['Identificador de empresa', person.company.slug],
+          ['Nombre del dueño', person.name], ['Correo del dueño', person.email], ['Contraseña inicial', password],
+        ] as const) await form.getByLabel(label, { exact: true }).fill(value);
+      };
+      await fill(ownerB, 'corta');
+      await form.getByRole('button', { name: 'Crear empresa y dueño', exact: true }).click();
+      const short = await validity(form.getByLabel('Contraseña inicial', { exact: true }));
+      expect(short.valid).toBe(false);
+      expect(short.message).not.toBe('');
+      errors.expectHttpError('/v3/console/companies', 409);
+      await fill({ ...ownerB, company: { ...ownerB.company, slug: ownerA.company.slug } });
+      await form.getByRole('button', { name: 'Crear empresa y dueño', exact: true }).click();
+      await page.getByRole('alert').waitFor({ timeout: 15_000 });
+      expect(await page.getByRole('alert').innerText()).toContain('registration is unavailable; use another email or company identifier');
+      expect(await pool().query('SELECT 1 FROM console_users WHERE email=$1', [ownerB.email])).toMatchObject({ rowCount: 0 });
+      await fill(ownerB);
+      await form.getByRole('button', { name: 'Crear empresa y dueño', exact: true }).click();
+      await page.getByText('Empresa y cuenta de dueño creadas.', { exact: true }).waitFor({ timeout: 20_000 });
+    });
+    const created = await pool().query<{ company_id: string; role: string }>(
+      `SELECT u.company_id,a.role FROM console_users u JOIN company_admins a ON a.human_id=u.id AND a.company_id=u.company_id WHERE u.email=$1`, [ownerB.email]);
+    expect(created.rows).toEqual([{ company_id: ownerB.company.slug, role: 'owner' }]);
+  });
+
+  it('ordenadores: rechaza una invitación inválida, entrega la válida una sola vez y la cancela', async () => {
+    const page = ownerPage();
+    await step(page, 'host invitation', async () => {
+      await openConfig(page, 'computadoras');
+      const panel = page.getByRole('region', { name: 'Añadir ordenador', exact: true });
+      await panel.getByRole('button', { name: 'Añadir ordenador', exact: true }).click();
+      const form = page.getByRole('form', { name: 'Invitar ordenador' });
+      await form.getByLabel('Identificador del ordenador').fill('Ordenador Inválido');
+      await form.getByLabel('Nombre del ordenador').fill('');
+      await form.getByRole('button', { name: 'Crear invitación', exact: true }).click();
+      const missingName = await validity(form.getByLabel('Nombre del ordenador'));
+      expect(missingName.valid).toBe(false);
+      expect(missingName.message).not.toBe('');
+      errors.expectHttpError('/v3/console/fleet/hosts/enrollments', 400);
+      await form.getByLabel('Nombre del ordenador').fill('Ordenador V4');
+      await form.getByRole('button', { name: 'Crear invitación', exact: true }).click();
+      await panel.getByRole('alert').waitFor({ timeout: 15_000 });
+      expect(await panel.getByRole('alert').innerText()).toContain('invalid host enrollment request');
+      await form.getByLabel('Identificador del ordenador').fill(`v4-${run}`);
+      await form.getByRole('button', { name: 'Crear invitación', exact: true }).click();
+      const invitation = panel.locator('textarea');
+      await invitation.waitFor({ timeout: 15_000 });
+      const receipt = JSON.parse(await invitation.inputValue()) as Record<string, unknown>;
+      expect(typeof receipt.enrollment_id).toBe('string');
+      expect(await panel.locator('code').innerText()).toBe(`cauce hosts enroll --gateway ${base()} --invitation-stdin`);
+      await panel.getByRole('button', { name: 'Cerrar invitación', exact: true }).click();
+      await page.reload({ waitUntil: 'domcontentloaded' });
+      expect(await panel.locator('textarea').count()).toBe(0);
+      const listed = await apiGet(page, '/v3/console/fleet/hosts/enrollments');
+      const secrets = Object.entries(receipt).filter(([key, value]) => /token|nonce|secret/iu.test(key) && typeof value === 'string');
+      expect(secrets.length).toBeGreaterThan(0);
+      for (const [, value] of secrets) expect(JSON.stringify(listed.body)).not.toContain(value as string);
+      await panel.getByRole('button', { name: 'Cancelar invitación de Ordenador V4', exact: true }).click();
+      await panel.getByText('Invitación cancelada.', { exact: true }).waitFor({ timeout: 15_000 });
+      const stored = await pool().query<{ state: string }>('SELECT state FROM fleet_host_enrollments WHERE id=$1', [receipt.enrollment_id]);
+      expect(stored.rows[0]?.state).toBe('revoked');
+    });
+  });
+
+  const roomId = `sala-${run}`;
+  const roomLabel = 'Sala V4 uno';
+  const renamedLabel = 'Sala V4 renombrada';
+  const planRoom = (label: string) => `Sala ${hubA}/${label}`;
+
+  it('oficina: la sala creada en /config aparece en «Plano editable», cambia de nombre y desaparece', async () => {
+    const page = ownerPage();
+    await step(page, 'room create', async () => {
+      await openConfig(page, 'espacios');
+      await page.getByRole('button', { name: 'Un solo recurso' }).click();
+      await page.getByLabel('Recurso a crear').selectOption('room');
+      await page.getByLabel('Tenant', { exact: true }).fill('1-inválido');
+      await page.getByLabel('Room', { exact: true }).fill(roomId);
+      await page.getByLabel('Nombre', { exact: true }).fill(roomLabel);
+      expect(await page.getByRole('button', { name: 'Crear', exact: true }).isDisabled()).toBe(true);
+      await page.getByText('El tenant debe empezar con letra (máx. 64 caracteres).').waitFor({ timeout: 15_000 });
+      await page.getByLabel('Tenant', { exact: true }).fill(hubA);
+      await page.getByRole('button', { name: 'Crear', exact: true }).click();
+      await page.getByRole('status').filter({ hasText: 'creado en la revisión' }).waitFor({ timeout: 20_000 });
+    });
+    const created = await pool().query<{ label: string | null }>('SELECT display_name AS label FROM rooms WHERE tenant_id=$1 AND id=$2', [hubA, roomId]);
+    expect(created.rows).toEqual([{ label: roomLabel }]);
+    await step(page, 'room in plan', async () => {
+      await page.goto(`${base()}/live`, { waitUntil: 'domcontentloaded' });
+      await page.getByRole('button', { name: 'Plano editable', exact: true }).click();
+      await page.getByRole('region', { name: planRoom(roomLabel), exact: true }).waitFor({ timeout: 20_000 });
+    });
+    await step(page, 'room rename', async () => {
+      await openConfig(page, 'espacios');
+      await page.getByRole('button', { name: `Editar sala/grupo ${hubA}/${roomId}`, exact: true }).click();
+      const form = page.getByRole('form', { name: 'Editar sala/grupo', exact: true });
+      await form.getByLabel('Nombre visible', { exact: true }).fill(renamedLabel);
+      await form.getByRole('button', { name: 'Previsualizar cambio', exact: true }).click();
+      await form.getByRole('button', { name: 'Confirmar edición', exact: true }).click();
+      await expect.poll(async () => (await pool().query<{ label: string }>(
+        'SELECT display_name AS label FROM rooms WHERE tenant_id=$1 AND id=$2', [hubA, roomId])).rows[0]?.label, { timeout: 20_000 }).toBe(renamedLabel);
+    });
+    await step(page, 'renamed room in plan', async () => {
+      await page.goto(`${base()}/live`, { waitUntil: 'domcontentloaded' });
+      await page.getByRole('button', { name: 'Plano editable', exact: true }).click();
+      await page.getByRole('region', { name: planRoom(renamedLabel), exact: true }).waitFor({ timeout: 20_000 });
+      expect(await page.getByRole('region', { name: planRoom(roomLabel), exact: true }).count()).toBe(0);
+    });
+    await step(page, 'room delete', async () => {
+      await openConfig(page, 'espacios');
+      await page.getByRole('button', { name: `Eliminar sala/grupo ${hubA}/${roomId}`, exact: true }).click();
+      const form = page.getByRole('form', { name: 'Eliminar sala/grupo', exact: true });
+      await form.getByRole('button', { name: 'Previsualizar cambio', exact: true }).click();
+      await form.getByRole('button', { name: 'Confirmar eliminación', exact: true }).click();
+      await expect.poll(async () => (await pool().query('SELECT 1 FROM rooms WHERE tenant_id=$1 AND id=$2', [hubA, roomId])).rowCount, { timeout: 20_000 }).toBe(0);
+    });
+    await step(page, 'deleted room gone from plan', async () => {
+      await page.goto(`${base()}/live`, { waitUntil: 'domcontentloaded' });
+      await page.getByRole('button', { name: 'Plano editable', exact: true }).click();
+      await page.getByRole('region', { name: planRoom('office'), exact: true }).waitFor({ timeout: 20_000 });
+      expect(await page.getByRole('region', { name: planRoom(renamedLabel), exact: true }).count()).toBe(0);
+    });
+  });
+
+  const partLabel = 'Zona V4 persistente';
+  const officeRoom = () => `Sala ${hubA}/office`;
+  let savedLayout: unknown;
+
+  async function openPlan(page: V4Page): Promise<void> {
+    await page.goto(`${base()}/live`, { waitUntil: 'domcontentloaded' });
+    await page.getByRole('button', { name: 'Plano editable', exact: true }).click();
+    await page.getByRole('region', { name: officeRoom(), exact: true }).waitFor({ timeout: 20_000 });
+  }
+
+  it('plano: rechaza una parte sin nombre, guarda con CAS y persiste tras cerrar sesión y en un segundo contexto', async () => {
+    const page = ownerPage();
+    await step(page, 'plan save', async () => {
+      await openPlan(page);
+      await page.getByRole('region', { name: officeRoom(), exact: true }).getByRole('button').first().click();
+      const editor = page.getByRole('region', { name: `Editar sala ${hubA}/office`, exact: true });
+      await editor.getByLabel('Posición horizontal de office', { exact: true }).fill('64');
+      await editor.getByRole('button', { name: 'Añadir parte', exact: true }).click();
+      await editor.getByLabel('Nombre de parte', { exact: true }).fill('   ');
+      await page.getByRole('button', { name: 'Guardar plano', exact: true }).click();
+      await page.getByText('Cada parte necesita un nombre de 1 a 120 caracteres.', { exact: true }).waitFor({ timeout: 15_000 });
+      expect(await pool().query('SELECT 1 FROM company_office_layouts WHERE company_id=$1', [ownerA.company.slug])).toMatchObject({ rowCount: 0 });
+      await editor.getByLabel('Nombre de parte', { exact: true }).fill(partLabel);
+      await page.getByRole('button', { name: 'Guardar plano', exact: true }).click();
+      await page.getByText('Plano de oficina guardado para esta empresa.', { exact: true }).waitFor({ timeout: 15_000 });
+    });
+    const stored = await apiGet(page, '/v3/console/office/layout');
+    expect(stored.status).toBe(200);
+    savedLayout = stored.body;
+    const sql = await pool().query<{ version: number; rooms: unknown }>('SELECT version::int,rooms FROM company_office_layouts WHERE company_id=$1', [ownerA.company.slug]);
+    expect(sql.rows).toHaveLength(1);
+    expect(sql.rows[0]?.rooms).toEqual((stored.body as { rooms: unknown }).rooms);
+    expect(JSON.stringify(sql.rows[0]?.rooms)).toContain(partLabel);
+
+    await step(page, 'plan after re-login', async () => {
+      await page.getByRole('button', { name: `Cuenta de ${ownerA.name}` }).click();
+      await page.getByRole('button', { name: 'Cerrar sesión', exact: true }).click();
+      await page.getByLabel('Correo', { exact: true }).waitFor({ timeout: 20_000 });
+      await login(page, base(), ownerA);
+      await openPlan(page);
+      await page.getByLabel(`Parte ${partLabel}`, { exact: true }).waitFor({ timeout: 15_000 });
+      expect((await apiGet(page, '/v3/console/office/layout')).body).toEqual(savedLayout);
+    });
+
+    const second = await freshPage('owner-a-second', { width: 390, height: 844 });
+    await step(second, 'plan in second context', async () => {
+      await login(second, base(), ownerA);
+      await openPlan(second);
+      await second.getByLabel(`Parte ${partLabel}`, { exact: true }).waitFor({ timeout: 15_000 });
+      expect((await apiGet(second, '/v3/console/office/layout')).body).toEqual(savedLayout);
+    });
+  });
+
+  const agentAlias = `agente-${run}`;
+
+  it('ficha: el agente del plano abre su ficha y desde ella el historial de contexto', async () => {
+    const page = ownerPage();
+    await pool().query(`INSERT INTO agents(tenant_id,alias,harness_id,display_name,enabled,container_name,runtime_user,home_directory,state_directory,company_id)
+      VALUES($1,$2,'codex',$2,true,$3,'stev',$4,$5,$6)`, [hubA, agentAlias, `cauce-v4-${run}`, `/srv/v4/${run}`, `/srv/v4/${run}/state`, ownerA.company.slug]);
+    await pool().query("INSERT INTO memberships(tenant_id,room_id,alias,role) VALUES($1,'office',$2,'agent')", [hubA, agentAlias]);
+    await pool().query('INSERT INTO agent_profiles(tenant_id,alias,role_summary) VALUES($1,$2,$3)', [hubA, agentAlias, 'Agente de prueba V4']);
+    await step(page, 'agent sheet', async () => {
+      await openPlan(page);
+      await page.getByRole('region', { name: officeRoom(), exact: true }).getByRole('button', { name: new RegExp(agentAlias, 'u') }).click();
+      const sheet = page.getByRole('dialog');
+      await sheet.getByText(agentAlias, { exact: true }).first().waitFor({ timeout: 15_000 });
+      await sheet.getByText('No hay una cuenta vinculada con cuota disponible para esta sesión.', { exact: true }).waitFor({ timeout: 15_000 });
+      await sheet.getByRole('link', { name: 'Perfil y contexto', exact: true }).click();
+      await page.getByRole('heading', { name: `Perfil y contexto de ${agentAlias}`, exact: true }).waitFor({ timeout: 20_000 });
+      await page.getByRole('tab', { name: 'Historial', exact: true }).click();
+      await page.getByText('Leyendo el diario del perfil…').waitFor({ state: 'hidden', timeout: 20_000 });
+      await page.getByText('Alta del perfil · revisión 1').first().waitFor({ timeout: 15_000 });
+      await page.getByRole('button', { name: 'Restaurar esta revisión', exact: true }).first().waitFor({ timeout: 15_000 });
+    });
+    const revisions = await pool().query<{ count: string }>(
+      `SELECT count(*)::text FROM agent_profile_revisions WHERE tenant_id=$1 AND alias=$2`, [hubA, agentAlias]);
+    expect(Number(revisions.rows[0]?.count)).toBeGreaterThanOrEqual(1);
+  });
+
+  let pageB: V4Page | undefined;
+
+  it('aislamiento: el dueño de B no ve nada de A y su acceso a A recibe 403', async () => {
+    const page = await freshPage('owner-b', { width: 390, height: 844 });
+    pageB = page;
+    await step(page, 'isolation', async () => {
+      await login(page, base(), ownerB);
+      const session = await apiGet(page, '/v3/auth/session');
+      expect(session.body).toMatchObject({ authenticated: true, authority: { role: 'company_owner', acting_company: ownerB.company.slug } });
+      errors.expectHttpError(`/v3/console/companies/${ownerA.company.slug}`, 403);
+      expect((await apiGet(page, `/v3/console/companies/${ownerA.company.slug}`)).status).toBe(403);
+      const topology = await apiGet(page, '/v3/console/topology');
+      expect(topology.status).toBe(200);
+      expect(JSON.stringify(topology.body)).not.toContain(hubA);
+      expect(JSON.stringify(topology.body)).not.toContain(agentAlias);
+      const layout = await apiGet(page, '/v3/console/office/layout');
+      expect(layout.status).toBe(200);
+      expect(JSON.stringify(layout.body)).not.toContain(hubA);
+      expect(JSON.stringify(layout.body)).not.toContain(partLabel);
+      expect((await apiGet(page, '/v3/console/quota-accounts')).body).toMatchObject({ accounts: [] });
+      await page.goto(`${base()}/live`, { waitUntil: 'domcontentloaded' });
+      await page.getByRole('button', { name: 'Plano editable', exact: true }).click();
+      await page.getByRole('heading', { name: 'Plano de oficina', exact: true }).waitFor({ timeout: 20_000 });
+      expect(await page.getByRole('region', { name: officeRoom(), exact: true }).count()).toBe(0);
+      expect(await page.getByText(agentAlias).count()).toBe(0);
+    });
+  });
+
+  it('retiro: B retira su empresa, se conserva el dato y su autoridad queda en none con 403 en lo protegido', async () => {
+    const page = pageB;
+    if (!page) throw new Error('owner B has no page yet');
+    await step(page, 'company retirement', async () => {
+      await openConfig(page, 'general');
+      const row = page.getByRole('listitem').filter({ hasText: ownerB.company.name });
+      await row.getByRole('button', { name: 'Retirar', exact: true }).click();
+      errors.relaxForbidden('owner-b');
+      await page.getByRole('button', { name: 'Confirmar cambio de empresa', exact: true }).click();
+      await expect.poll(async () => (await pool().query<{ enabled: boolean; retired: boolean }>(
+        'SELECT enabled,retired_at IS NOT NULL AS retired FROM companies WHERE id=$1', [ownerB.company.slug])).rows[0],
+      { timeout: 20_000 }).toEqual({ enabled: false, retired: true });
+    });
+    const session = await apiGet(page, '/v3/auth/session');
+    expect(session.body).toMatchObject({ authenticated: true, authority: { role: 'none' } });
+    for (const path of ['/v3/console/companies', '/v3/console/quota-accounts', '/v3/console/preferences', '/v3/console/office/layout']) {
+      expect({ path, status: (await apiGet(page, path)).status }).toEqual({ path, status: 403 });
+    }
+    const kept = await pool().query('SELECT 1 FROM console_users WHERE email=$1', [ownerB.email]);
+    expect(kept.rowCount).toBe(1);
+    const untouched = await pool().query<{ enabled: boolean }>('SELECT enabled FROM companies WHERE id=$1', [ownerA.company.slug]);
+    expect(untouched.rows).toEqual([{ enabled: true }]);
+  });
+
+  it('consola: ninguna página del recorrido registró errores del navegador', () => {
+    process.stdout.write(`V4 e2e tolerated console messages: ${JSON.stringify(Object.fromEntries(errors.ignored))}\n`);
+    errors.assertClean();
+  });
+
+  it.fails('DEFECTO DE PRODUCTO: los atributos pattern de los formularios V4 son válidos y rechazan el identificador en el navegador', async () => {
+    const page = asV4Page(await newTrustedPage(active(), { width: 1440, height: 1000 }));
+    const form = await openRegistration(page, base());
+    await fillRegistration(form, { ...syntheticPerson('pattern', run), company: { name: 'Patrón', slug: 'Slug Inválido' } });
+    expect((await validity(form.getByLabel('Identificador de empresa', { exact: true }))).valid).toBe(false);
+    expect(errors.ignored.get(PATTERN_DEFECT_RULE.id) ?? 0).toBe(0);
+  });
+});
