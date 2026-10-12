@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { buildGateway } from './app.js';
+import { rateLimitKey } from './client-ip.js';
 import { fakePool, fakeRepository, FixedAuthProvider, noDeliveryWakes, testPrincipal } from './test-support/gateway-doubles.js';
 
 let app: Awaited<ReturnType<typeof buildGateway>> | undefined;
@@ -70,4 +71,16 @@ describe('gateway trusted client IP configuration', () => {
     expect(error).toBeInstanceOf(Error);
     expect((error as Error).message).toContain('CAUCE_TRUSTED_PROXY_CIDRS');
   });
+});
+
+describe('rate limit key', () => {
+  it.each([
+    ['198.51.100.1', '198.51.100.1'],
+    ['::ffff:198.51.100.1', '198.51.100.1'],
+    ['2001:db8:1:2::1', '2001:db8:1:2::/64'],
+    ['2001:DB8:1:2:aaaa:bbbb:cccc:dddd', '2001:db8:1:2::/64'],
+    ['2001:db8::1', '2001:db8:0:0::/64'],
+    ['::1', '0:0:0:0::/64'],
+    ['fe80::1%eth0', 'fe80:0:0:0::/64'],
+  ])('maps %s to %s', (address, key) => { expect(rateLimitKey(address)).toBe(key); });
 });

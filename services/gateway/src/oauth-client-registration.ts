@@ -66,8 +66,8 @@ export function registrationDocument(client: OAuthRegisteredClient) {
 
 /**
  * Token bucket per key; bounded so a key flood cannot grow it without limit. The gateway keys it globally
- * (60 registrations, one more every 2 s): behind nginx/Caddy request.ip is the proxy, so per-address limiting
- * belongs at the edge and the durable cap in the store bounds what gets through.
+ * (60 registrations, one more every 2 s): per-address limiting belongs at the edge (nginx/Caddy) and the
+ * durable cap in the store bounds what gets through.
  */
 export class OAuthRegistrationLimiter {
   private readonly buckets = new Map<string, { tokens: number; at: number }>();

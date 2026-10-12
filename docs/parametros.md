@@ -138,6 +138,8 @@ dice 60K/150K. Manda el árbol; el roadmap se re-verifica en T063.
 | Lectura gobernanza (`DEFAULT_TIMEOUT_MS`=10 s, `MAX_RESPONSE_BYTES`, `MAX_DOCUMENT_BYTES`, `MAX_DIRECTORY_ENTRIES`, `MAX_PATH_BYTES`, `MAX_DATE_BYTES`, `MAX_REASON_BYTES`, `MAX_MEMORY_PATH_BYTES`, `MAX_MEMORY_DATE_BYTES`, `MAX_MEMORY_DIRECTORY_ENTRIES`, `MAX_SCANNED_EXPECTATIONS`=500) | bytes/n | doc ≤256 KiB, dir ≤200, path ≤4_096, fecha ≤64, reason ≤2_048 | fijo | — |
 | Auditoría resumen (`MAX_FIELDS`=10, `MAX_TEXT`=180) y paginación (`DEFAULT_PAGE`, `MAX_PAGE`) | n/chars | allowlist de metadata | fijo | — |
 | Puertos (`PORT`, `CAUCE_HEALTH_PORT`, `CAUCE_CONSOLE_ORIGINS`) | — | datos 8080, health 8081 (≠), consola 8444 | env | e2e |
+| `CAUCE_TRUSTED_PROXY_CIDRS`, `DEFAULT_TRUSTED_PROXY_CIDRS` (`gateway/src/client-ip.ts`) | CIDR, lista | `127.0.0.1/32,::1/128` (falla cerrado; vacío = ninguno). Producción: los /27../25 de la red edge `172.16.4.0/24` sin `.0` ni `.1` | env | unit |
+| `CAUCE_FRONT_PROXY_CIDR` (build-arg de la imagen de consola, `deploy/Dockerfile`; `set_real_ip_from` de nginx) | CIDR | vacío = no se confía en ningún salto; producción `100.64.0.11/32` (Caddy del host) | env de deploy, horneado en la imagen | unit (nginx real) |
 | Redacción (`MAX_SCANNED_CHARACTERS`, `MAX_RULE_MATCH_CHARACTERS`, `MAX_SCANNED_VALUE_CHARACTERS`, `MAX_SCANNED_NODES`, `MAX_SCANNED_TOTAL_CHARACTERS`) | chars/nodos | ventana 256 KiB, match 20 KiB, valor 1 MiB, nodos 100 K, total 4 MiB | fijo | e2e redaction |
 | `CAUCE_REDACT_PUBLISH` | bool | true | env | — |
 

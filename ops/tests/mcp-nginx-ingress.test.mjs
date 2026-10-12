@@ -40,6 +40,7 @@ for (const route of routes) {
       'Host $http_host',
       'Origin $http_origin',
       'X-Cauce-Operator ""',
+      'Forwarded ""',
       'X-Forwarded-For $remote_addr',
       'X-Forwarded-Host ""',
       'X-Forwarded-Proto ""',
@@ -100,6 +101,7 @@ test('every gateway proxy overwrites client IP headers and strips forwarded host
     expectDirective(body, 'proxy_set_header X-Forwarded-For', '$remote_addr');
     expectDirective(body, 'proxy_set_header X-Real-IP', '$remote_addr');
     expectDirective(body, 'proxy_set_header X-Forwarded-Host', '""');
+    expectDirective(body, 'proxy_set_header Forwarded', '""');
     expectDirective(body, 'proxy_set_header X-Forwarded-Proto', '""');
   }
 });

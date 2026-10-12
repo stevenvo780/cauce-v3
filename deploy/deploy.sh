@@ -547,7 +547,7 @@ fi
 # Both images come from deploy/Dockerfile: `runtime` is NOT the last stage (console is), so the
 # target is explicit; the console stage bakes the relay instance id into its nginx route at build.
 docker build -f deploy/Dockerfile --target runtime --build-arg "CAUCE_SCHEMA_COMPATIBLE_THROUGH=$LAST_MIGRATION" --build-arg "CAUCE_SOURCE_DIGEST=$RUNTIME_SOURCE_DIGEST" --build-arg "CAUCE_RELEASE_COMMIT=$RELEASE_COMMIT" -t "$RUNTIME_TAG" .
-docker build -f deploy/Dockerfile --target console --build-arg "CAUCE_TERMINAL_RELAY_INSTANCE_ID=$INSTANCE_ID" \
+docker build -f deploy/Dockerfile --target console --build-arg "CAUCE_TERMINAL_RELAY_INSTANCE_ID=$INSTANCE_ID" --build-arg "CAUCE_FRONT_PROXY_CIDR=$(env_value CAUCE_FRONT_PROXY_CIDR)" \
   --build-arg "CAUCE_SOURCE_DIGEST=$CONSOLE_SOURCE_DIGEST" --build-arg "CAUCE_RELEASE_COMMIT=$RELEASE_COMMIT" -t "$CONSOLE_TAG" .
 [ "$(docker inspect --format '{{index .Config.Labels "io.cauce.terminal-relay.instance-id"}}' "$CONSOLE_TAG")" = "$INSTANCE_ID" ] \
   || die "la imagen de consola no lleva el instance id horneado"

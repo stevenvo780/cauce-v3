@@ -118,6 +118,16 @@ origins. Without it, console requests must be same-origin with the gateway Host.
 Unsafe console requests require a matching `Origin`; cross-site browser requests
 are rejected before authentication.
 
+`CAUCE_TRUSTED_PROXY_CIDRS` lists the CIDRs of the immediate proxies whose `X-Forwarded-For` the gateway
+trusts to resolve `request.ip` (used by the registration and host-claim limiters, grouped by /64 for IPv6).
+Default `127.0.0.1/32,::1/128`; an empty value trusts no proxy. Never include a range that clients can
+reach or that masquerades them (for example a whole Docker pool: tailnet peers arrive NAT-ed inside it).
+Production lists only the edge network addresses of the console nginx
+(`172.16.4.2/31,172.16.4.4/30,...,172.16.4.128/25`, see `ops/config/prod.env.example`). The console nginx in
+turn trusts a single front proxy (Caddy) through the build-time `CAUCE_FRONT_PROXY_CIDR`
+(production `100.64.0.11/32`; empty disables realip) and then overwrites `X-Forwarded-For`/`X-Real-IP` with
+the resolved address and strips `X-Forwarded-Host`, `X-Forwarded-Proto` and `Forwarded`.
+
 `CAUCE_AUTH_PROVIDER=token-file` and `mtls` remain supported. The mTLS data listener always uses
 `requestCert: true` and `rejectUnauthorized: true`; it maps only Node-verified peer certificates
 and ignores forwarded certificate headers. In mTLS mode `/health/*` is removed from that listener.

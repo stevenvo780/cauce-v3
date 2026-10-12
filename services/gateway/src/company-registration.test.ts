@@ -45,4 +45,12 @@ describe('company registration client IP limits', () => {
     expect((await attempt('172.18.0.2', '198.51.100.99, 172.18.0.9')).statusCode).toBe(429);
     expect((await attempt('172.18.0.2', '198.51.100.99, 172.18.0.10')).statusCode).toBe(400);
   });
+
+  it('groups IPv6 clients by /64 so rotating the interface identifier does not reset the limit', async () => {
+    for (let count = 0; count < 5; count++) {
+      expect((await attempt('172.18.0.2', `2001:db8:1:2::${count.toString(16)}1`)).statusCode).toBe(400);
+    }
+    expect((await attempt('172.18.0.2', '2001:db8:1:2:ffff::9')).statusCode).toBe(429);
+    expect((await attempt('172.18.0.2', '2001:db8:1:3::1')).statusCode).toBe(400);
+  });
 });

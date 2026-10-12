@@ -20,3 +20,22 @@ export function configuredTrustedProxy(cidrs = process.env.CAUCE_TRUSTED_PROXY_C
     return hop === 0 && version !== 0 && trusted.check(address, version === 4 ? 'ipv4' : 'ipv6');
   };
 }
+
+/**
+ * Rate-limit key for a client address: IPv4 as is (IPv4-mapped IPv6 unwrapped), IPv6 grouped by its /64 so a
+ * single host with a whole /64 cannot mint a fresh bucket per address.
+ */
+export function rateLimitKey(address: string): string {
+  const bare = (address.split('%')[0] ?? address).toLowerCase();
+  const mapped = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/u.exec(bare)?.[1];
+  if (mapped !== undefined) return mapped;
+  if (isIP(bare) !== 6) return address;
+  let words: string[];
+  if (bare.includes('::')) {
+    const [head = '', tail = ''] = bare.split('::');
+    const left = head === '' ? [] : head.split(':');
+    const right = tail === '' ? [] : tail.split(':');
+    words = [...left, ...Array<string>(Math.max(0, 8 - left.length - right.length)).fill('0'), ...right];
+  } else words = bare.split(':');
+  return `${words.slice(0, 4).map(word => Number.parseInt(word, 16).toString(16)).join(':')}::/64`;
+}

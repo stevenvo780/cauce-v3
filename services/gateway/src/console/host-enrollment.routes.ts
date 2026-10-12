@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { HostEnrollmentRepository, HostId, StoreError, type DatabasePool } from '@cauce/store';
 import { AuthError, AuthorizationError, type AuthProvider } from '../auth.js';
+import { rateLimitKey } from '../client-ip.js';
 import { consoleHumanAccess } from '../console-human-authority.js';
 import { replyError } from '../routes/shared.js';
 
@@ -44,13 +45,14 @@ export function registerHostEnrollmentRoutes(app: FastifyInstance, provider: Aut
     try {
       if (request.headers.cookie !== undefined) throw new AuthorizationError('host identity requests cannot use a browser session');
       const now = Date.now();
+      const key = rateLimitKey(request.ip);
       for (const [ip, entry] of claims) if (entry.until<=now) claims.delete(ip);
-      const rate = claims.get(request.ip) ?? {count:0,until:now+60_000};
-      if (rate.count>=20 || (claims.size>=10_000 && !claims.has(request.ip))) {
+      const rate = claims.get(key) ?? {count:0,until:now+60_000};
+      if (rate.count>=20 || (claims.size>=10_000 && !claims.has(key))) {
         return await reply.header('Retry-After',String(Math.max(1,Math.ceil((rate.until-now)/1000)))).code(429)
           .send({error:'too_many_requests',message:'host enrollment rate exceeded'});
       }
-      rate.count+=1; claims.set(request.ip,rate);
+      rate.count+=1; claims.set(key,rate);
       const { enrollment_id } = EnrollmentParams.parse(request.params);
       return await repository.claim(enrollment_id,request.body);
     } catch (error) { return errorResponse(error,reply); }

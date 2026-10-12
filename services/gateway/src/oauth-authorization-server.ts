@@ -168,7 +168,7 @@ export async function registerOAuthAuthorizationServer(app: FastifyInstance, opt
           || request.headers['content-type']?.split(';')[0]?.trim() !== 'application/json') {
         throw new OAuthError('invalid_client_metadata');
       }
-      // Detrás de nginx/Caddy request.ip es siempre el proxy: el cupo es global y el límite por IP real va en el borde.
+      // El cupo es global: el límite por IP real de cliente (request.ip, con proxies de confianza) lo aplican el borde y los registros por IP.
       if (!limiter.take(REGISTRATION_BUCKET)) {
         reply.header('Retry-After', String(limiter.retryAfterSeconds));
         throw new OAuthError('temporarily_unavailable');

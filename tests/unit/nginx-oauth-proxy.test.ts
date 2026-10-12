@@ -24,6 +24,7 @@ let upstream: Server | undefined;
 const authStreams = new WebSocketServer({ noServer: true });
 let origin = '';
 let wrongOrigin = '';
+let trustedOrigin = '';
 let ca: Buffer;
 let enabled = true;
 const seen: { path: string; method: string; headers: Record<string, unknown>; body: string; peer: string }[] = [];
@@ -198,9 +199,12 @@ function proxyIdentity(): { uid: number; gid: number } {
   return uid === 0 ? { uid: 101, gid: 101 } : { uid, gid };
 }
 
-async function startProxy(image: string, directory: string, gatewayPort: number, wrong: boolean): Promise<string> {
+async function startProxy(image: string, directory: string, gatewayPort: number, wrong: boolean, frontProxy = ''): Promise<string> {
   const proxyPort = await port();
-  const config = source.replaceAll('${CAUCE_TERMINAL_RELAY_INSTANCE_ID}', 'a'.repeat(64))
+  // Mirrors the Dockerfile: an empty front-proxy pin removes the realip trust line, otherwise it is substituted.
+  const config = (frontProxy === '' ? source.replace(/^ *set_real_ip_from .*\n/mu, '')
+    : source.replaceAll('${CAUCE_FRONT_PROXY_CIDR}', frontProxy))
+    .replaceAll('${CAUCE_TERMINAL_RELAY_INSTANCE_ID}', 'a'.repeat(64))
     .replaceAll('listen 8444 ssl;', `listen 127.0.0.1:${String(proxyPort)} ssl;`)
     .replaceAll('root /usr/share/nginx/html;', 'root /tmp/fixture/spa;')
     .replaceAll('https://gateway:8443', `https://127.0.0.1:${String(gatewayPort)}`)
@@ -209,7 +213,7 @@ async function startProxy(image: string, directory: string, gatewayPort: number,
     .replaceAll('/run/secrets/gateway_tls_ca', `/tmp/fixture/${wrong ? 'wrong-ca' : 'ca'}.pem`)
     .replaceAll('/run/secrets/console_gateway_client_cert', '/tmp/fixture/client.pem')
     .replaceAll('/run/secrets/console_gateway_client_key', '/tmp/fixture/client.key');
-  const configPath = join(directory, wrong ? 'wrong.conf' : 'primary.conf');
+  const configPath = join(directory, wrong ? 'wrong.conf' : frontProxy === '' ? 'primary.conf' : 'trusted.conf');
   await writeFile(configPath, config, { mode: 0o444 });
   const { uid, gid } = proxyIdentity();
   for (const name of ['server.key', 'client.key', 'server.pem', 'client.pem', 'ca.pem', 'wrong-ca.pem', 'spa/index.html']) {
@@ -297,6 +301,7 @@ describe.sequential('OAuth through real pinned Nginx with fixture mTLS', () => {
     const image = /^ARG CAUCE_NGINX_BASE=(\S+@sha256:[a-f0-9]{64})$/mu.exec(dockerfile)?.[1];
     if (!image) throw new Error('No pinned Nginx image'); await docker(['image', 'inspect', image]);
     origin = await startProxy(image, root, address.port, false); wrongOrigin = await startProxy(image, root, address.port, true);
+    trustedOrigin = await startProxy(image, root, address.port, false, '127.0.0.1/32');
     console.info('OAUTH_NGINX_FIXTURE', JSON.stringify({ sourceSha256: createHash('sha256').update(source).digest('hex'),
       owner, image, containers, syntaxExit: 0, adaptations: ['loopback ports', 'fixture certificate paths', 'fixture SPA root', 'fixture relay pin'] }));
   }, 60_000);
@@ -358,6 +363,21 @@ describe.sequential('OAuth through real pinned Nginx with fixture mTLS', () => {
     expect(headers?.['x-real-ip']).toBe('127.0.0.1');
     expect(headers?.['x-forwarded-host']).toBeUndefined();
     expect(headers?.['x-forwarded-proto']).toBeUndefined();
+  });
+
+  it('uses the last X-Forwarded-For entry only from the trusted front proxy hop', async () => {
+    const headers = { 'x-forwarded-for': '198.51.100.99, 203.0.113.7', forwarded: 'for=198.51.100.99' };
+    expect((await send(trustedOrigin, '/oauth/token', 'GET', headers)).status).toBe(200);
+    expect(seen.at(-1)?.headers['x-forwarded-for']).toBe('203.0.113.7');
+    expect(seen.at(-1)?.headers['x-real-ip']).toBe('203.0.113.7');
+    expect(seen.at(-1)?.headers['forwarded']).toBeUndefined();
+  });
+
+  it('ignores X-Forwarded-For from a hop that is not the trusted front proxy', async () => {
+    const headers = { 'x-forwarded-for': '198.51.100.99, 203.0.113.7' };
+    expect((await send(origin, '/oauth/token', 'GET', headers)).status).toBe(200);
+    expect(seen.at(-1)?.headers['x-forwarded-for']).toBe('127.0.0.1');
+    expect(seen.at(-1)?.headers['x-real-ip']).toBe('127.0.0.1');
   });
 
   it.each(['/oauth/missing', '/oauth/denied', metadata])('never turns upstream negative/off responses into SPA: %s', async path => {

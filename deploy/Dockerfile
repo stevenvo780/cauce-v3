@@ -153,6 +153,13 @@ RUN case "${CAUCE_TERMINAL_RELAY_INSTANCE_ID}" in \
       *) test "${#CAUCE_TERMINAL_RELAY_INSTANCE_ID}" -eq 64 ;; \
     esac \
  && sed -i "s/\${CAUCE_TERMINAL_RELAY_INSTANCE_ID}/${CAUCE_TERMINAL_RELAY_INSTANCE_ID}/g" /etc/nginx/conf.d/default.conf
+# Front proxy (CIDR) whose X-Forwarded-For nginx trusts for the real client address; empty = none.
+ARG CAUCE_FRONT_PROXY_CIDR=""
+RUN case "${CAUCE_FRONT_PROXY_CIDR}" in \
+      "") sed -i "/set_real_ip_from/d" /etc/nginx/conf.d/default.conf ;; \
+      *[!0-9a-fA-F:./]*) exit 1 ;; \
+      *) sed -i "s#\${CAUCE_FRONT_PROXY_CIDR}#${CAUCE_FRONT_PROXY_CIDR}#g" /etc/nginx/conf.d/default.conf ;; \
+    esac
 LABEL io.cauce.terminal-relay.instance-id=${CAUCE_TERMINAL_RELAY_INSTANCE_ID}
 USER 101
 EXPOSE 8444
