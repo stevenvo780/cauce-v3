@@ -10,8 +10,13 @@ function revisionPool(revisions: Record<string, unknown>[]) {
     queries.push(normalized);
     const barrier = schemaBarrierReply(normalized, params);
     if (barrier !== undefined) return barrier;
-    if (normalized.includes('role.allow_read')) return { rows: [{ is_hub: false }], rowCount: 1 };
-    if (normalized.includes('COALESCE(max(id),0)::text AS revision')) {
+    if (normalized.startsWith('SELECT tenant.company_id,')) {
+      return { rows: [{ active: true, company_id: 'humanizar' }], rowCount: 1 };
+    }
+    if (normalized.includes('policy.allow_control,policy.allow_read')) {
+      return { rows: [{ allow_control: false, allow_read: true }], rowCount: 1 };
+    }
+    if (normalized.includes('SELECT GREATEST(COALESCE((SELECT max(id)')) {
       return { rows: [{ revision: '3' }], rowCount: 1 };
     }
     if (normalized.includes('FROM config_revisions')) return { rows: revisions, rowCount: revisions.length };
