@@ -17,6 +17,8 @@ export interface ReplyMediaSource {
 
 const FILE_ACTION = 'inline-flex min-h-8 cursor-pointer items-center gap-1.5 rounded-lg border border-line bg-surface px-2.5 text-xs text-fg hover:bg-subtle disabled:cursor-not-allowed disabled:opacity-60';
 
+type MediaAction = 'preview' | 'download';
+
 function detectedKind(blob: Blob, fallback: MessageMediaKind): MessageMediaKind {
   return blob.type ? messageMediaKind(blob.type) : fallback === 'image' ? 'document' : fallback;
 }
@@ -44,6 +46,7 @@ export function MessageMedia({
   const [expanded, setExpanded] = useState(false);
   const controller = useRef<AbortController | undefined>(undefined);
   const liveResource = useRef<MediaResource | undefined>(undefined);
+  const failedAction = useRef<MediaAction | undefined>(undefined);
   const closeButton = useRef<HTMLButtonElement>(null);
   const returnFocus = useRef<HTMLElement | null>(null);
   const dialogWasOpen = useRef(false);
@@ -54,6 +57,7 @@ export function MessageMedia({
     controller.current = undefined;
     revoke(liveResource.current, urls);
     liveResource.current = undefined;
+    failedAction.current = undefined;
     setResource(undefined);
     setLoading(false);
     setError(false);
@@ -85,9 +89,10 @@ export function MessageMedia({
     returnFocus.current?.focus();
   };
 
-  const load = async (): Promise<MediaResource | undefined> => {
+  const load = async (action: MediaAction): Promise<MediaResource | undefined> => {
     if (resource) return resource;
     if (!messageId || loading) return undefined;
+    failedAction.current = action;
     const abort = new AbortController();
     controller.current?.abort();
     controller.current = abort;
@@ -100,10 +105,12 @@ export function MessageMedia({
       if (abort.signal.aborted) return undefined;
       const next = { blob, url: urls.createObjectURL(blob) };
       liveResource.current = next;
+      failedAction.current = undefined;
       setResource(next);
       return next;
     } catch {
       if (!abort.signal.aborted) setError(true);
+      else if (controller.current === abort) failedAction.current = undefined;
       return undefined;
     } finally {
       if (controller.current === abort) {
@@ -114,7 +121,7 @@ export function MessageMedia({
   };
 
   const download = async () => {
-    const loaded = await load();
+    const loaded = await load('download');
     if (!loaded || loaded !== liveResource.current) return;
     const link = document.createElement('a');
     const downloadUrl = urls.createObjectURL(loaded.blob);
@@ -128,7 +135,7 @@ export function MessageMedia({
   };
 
   const activatePreview = async () => {
-    const loaded = await load();
+    const loaded = await load('preview');
     if (!loaded || loaded !== liveResource.current) return;
     const actualKind = detectedKind(loaded.blob, attachment.mediaKind);
     if (actualKind === 'image') openImage();
@@ -188,7 +195,7 @@ export function MessageMedia({
         Descargar
       </button>
       {error ? <button type="button" className={FILE_ACTION} disabled={!messageId || loading}
-        onClick={() => { void (attachment.mediaKind === 'image' ? activatePreview() : download()); }}>
+        onClick={() => { void (failedAction.current === 'preview' ? activatePreview() : download()); }}>
         <RotateCw size={14} aria-hidden="true" /> Reintentar
       </button> : null}
       {loading ? <span className="text-[11px] text-muted" role="status">Cargando archivo…</span> : null}

@@ -79,14 +79,17 @@ it('deja reintentar tras un error y no inserta SVG en un visor', async () => {
   const getAttachment = vi.spyOn(cauceApi, 'getMessageAttachment')
     .mockRejectedValueOnce(new Error('offline'))
     .mockResolvedValueOnce(new Blob(['<svg/>'], { type: 'image/svg+xml' }));
+  const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined);
   const urls = { createObjectURL: vi.fn(() => 'blob:svg'), revokeObjectURL: vi.fn() };
   render(<MessageAttachments api={cauceApi} urls={urls} messageId="message-file" files={[{ name: 'vector.svg', mime_type: 'image/png' }]} />);
   fireEvent.click(screen.getByRole('button', { name: 'Descargar' }));
   await screen.findByText('No se pudo cargar el archivo.');
   fireEvent.click(screen.getByRole('button', { name: /Reintentar/ }));
   await waitFor(() => { expect(getAttachment).toHaveBeenCalledTimes(2); });
+  await waitFor(() => { expect(click).toHaveBeenCalledOnce(); });
   expect(document.querySelector('img, audio, video, iframe, object, embed')).toBeNull();
   getAttachment.mockRestore();
+  click.mockRestore();
 });
 
 it('al cambiar la sesión retira de inmediato la vista previa cargada', async () => {
