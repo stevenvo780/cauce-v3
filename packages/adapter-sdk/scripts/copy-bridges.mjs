@@ -1,4 +1,4 @@
-import { chmod, copyFile, mkdir } from "node:fs/promises";
+import { chmod, copyFile, mkdir, readdir } from "node:fs/promises";
 
 const destination = new URL("../dist/bridge/", import.meta.url);
 await mkdir(destination, { recursive: true });
@@ -11,5 +11,7 @@ await Promise.all(
 );
 const descriptors = new URL('../dist/descriptors/', import.meta.url);
 await mkdir(descriptors, { recursive: true });
-await Promise.all(['claude','codex','hermes','opencode','openclaw','grok','muse','fake'].map(name =>
-  copyFile(new URL(`../descriptors/${name}.json`, import.meta.url), new URL(`${name}.json`, descriptors))));
+const descriptorFiles = (await readdir(new URL('../descriptors/', import.meta.url)))
+  .filter(name => /^[a-z][a-z0-9_-]{0,63}\.json$/u.test(name)).sort();
+await Promise.all(descriptorFiles.map(name =>
+  copyFile(new URL(`../descriptors/${name}`, import.meta.url), new URL(name, descriptors))));

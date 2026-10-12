@@ -10,9 +10,30 @@ import uuid
 from fleet_executor_container import docker, inspect_container
 from fleet_executor_policy import SafeFailure
 
-PROVIDERS = frozenset({'claude', 'codex', 'gemini', 'grok'})
+NON_HARNESS_PROVIDERS = frozenset({'gemini'})
 EXECUTOR_SOURCE = pathlib.Path(__file__).resolve().parent
 CAPABILITIES = ('SETUID', 'SETGID', 'CHOWN', 'DAC_OVERRIDE', 'FOWNER', 'SYS_PTRACE')
+
+
+def allowed_providers(policy: dict) -> frozenset:
+    """Quota providers derive from the descriptors inside the approved bundles
+    (those declaring the quota operation) plus non-harness providers."""
+    from harness_operations import HarnessOperationFailure, descriptor_names, resolve_operation
+    allowed = set(NON_HARNESS_PROVIDERS)
+    directories = {bundle['directory'] for bundle in (policy.get('bundles') or {}).values()
+                   if isinstance(bundle, dict) and isinstance(bundle.get('directory'), str)}
+    for directory in directories:
+        try:
+            names = descriptor_names(directory)
+        except (HarnessOperationFailure, OSError):
+            continue
+        for name in names:
+            try:
+                resolve_operation(name, 'quota', directory)
+            except HarnessOperationFailure:
+                continue
+            allowed.add(name)
+    return frozenset(allowed)
 
 
 def configuration(policy: dict) -> dict:
@@ -21,7 +42,7 @@ def configuration(policy: dict) -> dict:
             or not isinstance(quota['image'], str) or re.fullmatch(r'sha256:[a-f0-9]{64}', quota['image']) is None \
             or not isinstance(quota['network'], str) or re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,127}', quota['network']) is None \
             or not isinstance(quota['providers'], list) or not quota['providers'] \
-            or len(set(quota['providers'])) != len(quota['providers']) or any(value not in PROVIDERS for value in quota['providers']):
+            or len(set(quota['providers'])) != len(quota['providers']) or any(value not in allowed_providers(policy) for value in quota['providers']):
         raise SafeFailure('quota environment policy is unavailable')
     return quota
 
@@ -40,17 +61,36 @@ def provider_operation(policy: dict, provider: str, operation: str, *, command: 
         raise SafeFailure('quota provider operation or pinned descriptor is unavailable') from error
 
 
+QUOTA_ACTIONS = (('create', 'install', False), ('authenticate', 'authenticate', True),
+                 ('query', 'quota', True), ('update_cli', 'update', True), ('delete', 'install', False))
+
+
+def provider_actions(policy: dict, provider: str) -> tuple:
+    """Available quota actions for one provider, with the reason for each missing one."""
+    available = []
+    unavailable = {}
+    resolved = {}
+    for action, operation, command in QUOTA_ACTIONS:
+        if operation not in resolved:
+            try:
+                provider_operation(policy, provider, operation, command=command)
+                resolved[operation] = None
+            except SafeFailure as error:
+                resolved[operation] = str(error)
+        if resolved[operation] is None:
+            available.append(action)
+        else:
+            unavailable[action] = f'operations.{operation}: {resolved[operation]}'
+    return available, unavailable
+
+
 def capabilities(policy: dict) -> dict:
     approved = configuration(policy)
     actions = {}
     for provider in approved['providers']:
-        try:
-            provider_operation(policy, provider, 'install')
-            for operation in ('authenticate', 'quota', 'update'):
-                provider_operation(policy, provider, operation, command=True)
-        except SafeFailure:
-            continue
-        actions[provider] = ['create', 'authenticate', 'query', 'update_cli', 'delete']
+        available, _unavailable = provider_actions(policy, provider)
+        if available:
+            actions[provider] = available
     return {'providers': list(actions), 'actions': actions}
 
 

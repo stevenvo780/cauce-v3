@@ -202,19 +202,39 @@ def resolve_profile(policy: dict, agent: dict) -> dict | None:
     return result
 
 
+def fleet_harnesses(policy: dict) -> dict:
+    """Fleet-eligible harnesses derive from each bundle descriptor: a harness is
+    eligible only while its descriptor declares install, execute and authenticate."""
+    from harness_operations import HarnessOperationFailure, fleet_module, resolve_operation
+    eligible = {}
+    for harness, bundle in policy['bundles'].items():
+        directory = bundle.get('directory') if isinstance(bundle, dict) else None
+        if not isinstance(directory, str):
+            continue
+        try:
+            for operation in ('install', 'execute', 'authenticate'):
+                resolve_operation(harness, operation, directory)
+            eligible[harness] = fleet_module(harness, directory)
+        except HarnessOperationFailure:
+            continue
+    return eligible
+
+
 def runtime_candidates(policy: dict) -> list[dict]:
     runtimes = []
     measured = {}
+    eligible = fleet_harnesses(policy)
     fields = ('runtime_user', 'systemd_user', 'home_directory', 'state_root')
     for mode, name, candidate in ([('native', None, row) for row in policy['native']] +
             [('container', name, row) for name, row in sorted(policy['containers'].items())] +
             [('container', None, row) for row in policy.get('container_templates', [])]):
         for harness in sorted(policy['bundles']):
-            if harness not in {'codex', 'claude', 'openclaw', 'grok', 'muse'} or candidate.get('harness_id', harness) != harness:
+            if harness not in eligible or candidate.get('harness_id', harness) != harness:
                 continue
-            if harness in {'grok', 'muse'}:
+            if eligible[harness]:
                 from importlib import import_module
-                if not import_module('fleet_provider_' + harness).authentication_supported():
+                module = import_module(eligible[harness])
+                if hasattr(module, 'authentication_supported') and not module.authentication_supported():
                     continue
             provider = 'codex' if harness == 'openclaw' else harness
             prefix = candidate.get('prefix') if mode == 'container' and name is None else None

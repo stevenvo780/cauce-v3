@@ -205,14 +205,16 @@ function runtimeCommand(command, args, input) {
 export async function validateRuntimeHarnessDescriptors({
   descriptorModule = new URL('../packages/adapter-sdk/dist/src/context/harness-descriptor.js', import.meta.url),
 } = {}) {
-  const { packagedHarnessDescriptor } = await import(descriptorModule);
-  for (const harness of ['claude', 'codex', 'hermes', 'opencode', 'openclaw', 'grok', 'muse', 'fake']) {
+  const { packagedHarnessDescriptor, packagedHarnessIds } = await import(descriptorModule);
+  const harnesses = await packagedHarnessIds();
+  if (harnesses.length === 0) throw new Error('runtime harness descriptors are missing');
+  for (const harness of harnesses) {
     const descriptor = await packagedHarnessDescriptor(harness);
     if (descriptor.harness !== harness || descriptor.operations.execute !== 'native-execution') {
       throw new Error(`runtime harness descriptor differs: ${harness}`);
     }
   }
-  console.log('runtime harness descriptors passed: 8/8');
+  console.log(`runtime harness descriptors passed: ${harnesses.length}/${harnesses.length}`);
 }
 
 export async function validateRuntimeContextBroker({

@@ -7,6 +7,7 @@ import json
 import os
 import pathlib
 import pwd
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -31,6 +32,8 @@ class PhysicalExecutorTest(unittest.TestCase):
         self.bundle.mkdir(mode=0o700)
         self.worker = self.bundle / 'worker.py'
         self.worker.write_text('import time\ntime.sleep(60)\n')
+        shutil.copytree(OPS.parent / 'packages/adapter-sdk/descriptors',
+                        self.bundle / 'packages/adapter-sdk/dist/descriptors')
         self.executable = pathlib.Path(sys.executable).resolve()
         self.policy_file = self.root / 'policy.json'
         self.policy = {'schemaVersion': 1, 'host_id': 'fixture-host', 'executor_user': self.user,

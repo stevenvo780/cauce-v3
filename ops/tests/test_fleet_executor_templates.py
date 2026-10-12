@@ -5,8 +5,10 @@ import hashlib
 import json
 import os
 import pathlib
+import shutil
 import subprocess
 import sys
+import tempfile
 import unittest
 import uuid
 from unittest import mock
@@ -23,7 +25,12 @@ class PlacementTemplateSelectionTest(unittest.TestCase):
         self.subject = fleet_executor_templates
         self.template = {'provider': 'codex', 'runtime_user': 'dev', 'path_root': '/profiles',
             'command': '/usr/bin/codex', 'command_sha256': 'a' * 64}
-        self.policy = {'bundles': {'codex': {}}, 'profiles': {}, 'profile_templates': []}
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        bundle = pathlib.Path(temporary.name)
+        shutil.copytree(fixtures.OPS.parent / 'packages/adapter-sdk/descriptors',
+                        bundle / 'packages/adapter-sdk/dist/descriptors')
+        self.policy = {'bundles': {'codex': {'directory': str(bundle)}}, 'profiles': {}, 'profile_templates': []}
         self.agent = {'primary_account_id': 'account', 'tenant_id': 'Team', 'harness_id': 'codex',
             'runtime_user': 'dev', 'runtime_key': 'physical-one', 'runtime_mode': 'container',
             'container_name': 'container-one', '_placement': {'profile_root': '/profiles', 'state_root': '/state'},
@@ -98,6 +105,14 @@ class PlacementTemplateSelectionTest(unittest.TestCase):
             fleet_executor_profiles.prepare_profile(self.policy, self.agent)
         external.assert_called_once_with(pathlib.Path('/profiles'))
         prepare.assert_called_once_with('/profiles', '/profiles/physical-one/' + hashlib.sha256(b'account').hexdigest(), 1000, 1000)
+
+    def test_fleet_eligibility_derives_from_the_bundle_descriptor(self):
+        self.assertEqual(self.subject.fleet_harnesses(self.policy), {'codex': None})
+        descriptor = pathlib.Path(self.policy['bundles']['codex']['directory']) / 'packages/adapter-sdk/dist/descriptors/codex.json'
+        value = json.loads(descriptor.read_text())
+        del value['operations']['install']
+        descriptor.write_text(json.dumps(value))
+        self.assertEqual(self.subject.fleet_harnesses(self.policy), {})
 
     def test_capabilities_do_not_project_native_static_profile_to_create_prefix(self):
         self.policy.update(host_id='isolated', native=[], containers={},

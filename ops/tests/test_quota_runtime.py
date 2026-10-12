@@ -104,6 +104,26 @@ class QuotaRuntimeTest(unittest.TestCase):
         self.assertEqual(report['provider_report']['note'], 'rate_limited')
         self.assertEqual(execute.call_args.args[0][-1], '--refresh-own-session')
 
+    def test_grok_keeps_query_without_update_and_reasons_are_reported(self):
+        bundle = self.policy['bundles']['codex']
+        self.policy['bundles']['grok'] = dict(bundle)
+        self.policy['quota_environments']['providers'] = ['grok']
+        self.assertEqual(runtime.capabilities(self.policy), {'providers': ['grok'],
+            'actions': {'grok': ['create', 'authenticate', 'query', 'delete']}})
+        available, unavailable = runtime.provider_actions(self.policy, 'grok')
+        self.assertIn('query', available)
+        self.assertNotIn('update_cli', available)
+        self.assertIn('operations.update', unavailable['update_cli'])
+
+    def test_allowed_providers_derive_from_bundle_descriptors(self):
+        self.assertEqual(runtime.allowed_providers(self.policy), frozenset({'claude', 'codex', 'gemini', 'grok'}))
+        descriptor = pathlib.Path(self.policy['bundles']['codex']['directory']) / 'packages/adapter-sdk/dist/descriptors/fake2.json'
+        descriptor.write_text(json.dumps({'schema_version': 1, 'harness': 'fake2',
+            'operations': {'install': 'runtime-package', 'execute': 'native-execution', 'quota': 'quota-collector'},
+            'context': {'native_document': 'AGENTS.md', 'max_bytes': 65536},
+            'provider': {'quota_argv': ['/usr/local/bin/node', '/usr/local/bin/leer-cuota.mjs']}}))
+        self.assertIn('fake2', runtime.allowed_providers(self.policy))
+
     def test_descriptors_are_pinned_and_unavailable_providers_never_claim_readiness(self):
         self.policy['quota_environments']['providers'] = ['codex', 'gemini']
         self.assertEqual(runtime.capabilities(self.policy), {'providers': ['codex'],
