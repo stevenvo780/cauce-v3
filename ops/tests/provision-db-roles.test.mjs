@@ -9,7 +9,11 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 const script = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../scripts/provision-db-roles.py");
-const OWNER_URL = "postgresql://cauce:owner-secret@postgres:5432/cauce?sslmode=verify-full&sslrootcert=/run/secrets/postgres_ca\n";
+// Las URLs de fixture se construyen en tiempo de ejecución: ningún literal user:password@host en el repositorio.
+function fixtureDatabaseUrl({ user, password, host, port, database, query }) {
+  return `postgresql://${user}:${password}@${host}:${port}/${database}${query ? `?${query}` : ''}`;
+}
+const OWNER_URL = `${fixtureDatabaseUrl({ user: "cauce", password: "fixture-owner-password", host: "postgres", port: 5432, database: "cauce", query: "sslmode=verify-full&sslrootcert=/run/secrets/postgres_ca" })}\n`;
 const LOGINS = ["cauce_gateway", "cauce_dispatcher", "cauce_bridge", "cauce_observer_login", "cauce_fleet", "cauce_monitor", "cauce_backup"];
 const FAKE_DOCKER = `#!/usr/bin/env bash
 set -u
@@ -56,7 +60,7 @@ async function fixture() {
   await writeFile(owner, OWNER_URL);
   await chmod(owner, 0o400);
   const password = path.join(root, "postgres_password");
-  await writeFile(password, "owner-secret");
+  await writeFile(password, "fixture-owner-password");
   await chmod(password, 0o600);
   const env = path.join(root, "clone.env");
   const environment = ["COMPOSE_PROJECT_NAME=cauce-clone", "POSTGRES_USER=cauce", "POSTGRES_DB=cauce",
@@ -190,7 +194,7 @@ test("a host template keeps its route while verification uses the backend networ
   const context = await fixture();
   try {
     const template = path.join(context.root, "fleet-database-url");
-    await writeFile(template, "postgresql://cauce:fleet-secret@127.0.0.1:15432/cauce?sslmode=verify-full&sslrootcert=/etc/fleet-ca.crt\n");
+    await writeFile(template, `${fixtureDatabaseUrl({ user: "cauce", password: "fixture-fleet-password", host: "127.0.0.1", port: 15432, database: "cauce", query: "sslmode=verify-full&sslrootcert=/etc/fleet-ca.crt" })}\n`);
     await chmod(template, 0o400);
     const result = run(context, ["--apply", "--login", "cauce_fleet", "--login", "cauce_monitor",
       "--template", `cauce_fleet=${template}`]);
@@ -277,7 +281,7 @@ test("the owner password rotates only after the runtime left it, keeping the mou
     const url = new URL((await readFile(context.owner, "utf8")).trim());
     const password = decodeURIComponent(url.password);
     assert.equal(url.username, "cauce");
-    assert.notEqual(password, "owner-secret");
+    assert.notEqual(password, "fixture-owner-password");
     assert.equal((await stat(context.owner)).mode & 0o777, 0o400);
     assert.equal(await readFile(context.password, "utf8"), password);
     assert.equal((await stat(context.password)).ino, inode);

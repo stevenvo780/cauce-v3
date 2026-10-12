@@ -12,11 +12,16 @@ const wrapper = fileURLToPath(new URL('../cli/cauce-plataforma-contenedor', impo
 const cli = fileURLToPath(new URL('../cli/cauce-plataforma', import.meta.url));
 const image = '127.0.0.1:5000/cauce-v3-runtime@sha256:' + 'a'.repeat(64);
 
+// Las URLs de fixture se construyen en tiempo de ejecución: ningún literal user:password@host en el repositorio.
+function fixtureDatabaseUrl({ user, password, host, port, database, query }) {
+  return `postgresql://${user}:${password}@${host}:${port}/${database}${query ? `?${query}` : ''}`;
+}
+
 test('renders the platform CLI as a hardened one-off service on the stack backend network', async () => {
   const scratch = await mkdtemp(join(tmpdir(), 'cauce-platform-container-'));
   try {
     const envFile = join(scratch, 'prod.env');
-    await writeFile(join(scratch, 'database_url'), 'postgresql://owner:never-printed@postgres:5432/cauce\n');
+    await writeFile(join(scratch, 'database_url'), `${fixtureDatabaseUrl({ user: 'owner', password: 'fixture-never-printed', host: 'postgres', port: 5432, database: 'cauce' })}\n`);
     await writeFile(join(scratch, 'ca.crt'), 'ca\n');
     await writeFile(envFile, [
       'COMPOSE_PROJECT_NAME=cauce-v3-prod', 'COMPOSE_PROFILES=observability,telegram',

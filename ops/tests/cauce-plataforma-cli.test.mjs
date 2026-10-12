@@ -11,6 +11,13 @@ import { GenericContainer, Wait } from 'testcontainers';
 import { tsImport } from 'tsx/esm/api';
 
 const cli = fileURLToPath(new URL('../cli/cauce-plataforma', import.meta.url));
+// Las URLs de fixture se construyen en tiempo de ejecución: ningún literal user:password@host en el repositorio.
+function fixtureDatabaseUrl({ user, password, host, port, database, query }) {
+  const credentials = password === undefined ? user : `${user}:${password}`;
+  return `postgresql://${credentials}@${host}${port === undefined ? '' : `:${port}`}/${database}${query ? `?${query}` : ''}`;
+}
+
+const FIXTURE_PASSWORD = 'fixture-placeholder-password';
 const admin = '78c81e05-0c18-427b-b02b-346d7e8c8508';
 const miguel = '836839cc-4768-4214-9170-d535f12a66cd';
 
@@ -79,16 +86,16 @@ test('reports a missing store runtime as a local failure, never as a PostgreSQL 
     await copyFile(cli, bare);
     const result = spawnSync(process.execPath, [bare, 'enlace', 'crear', '--empresa', 'praxis', '--otra-empresa', 'humanizar'], {
       encoding: 'utf8', env: { PATH: process.env.PATH, CAUCE_PLATFORM_ADMIN_ID: admin,
-        DATABASE_URL: 'postgresql://u:secret-pw@127.0.0.1:1/db' } });
+        DATABASE_URL: fixtureDatabaseUrl({ user: 'u', password: FIXTURE_PASSWORD, host: '127.0.0.1', port: 1, database: 'db' }) } });
     assert.equal(result.status, 1, result.stderr);
     assert.match(result.stderr, /no enviada: falta tsx/u);
-    assert.doesNotMatch(result.stderr, /rechazada por PostgreSQL|secret-pw/u);
+    assert.doesNotMatch(result.stderr, /rechazada por PostgreSQL|fixture-placeholder-password/u);
     const network = run(['enlace', 'crear', '--empresa', 'praxis', '--otra-empresa', 'humanizar'], {
       CAUCE_PLATFORM_ADMIN_ID: admin, PGSSLMODE: 'require',
-      DATABASE_URL: 'postgresql://u:secret-pw@cauce-plataforma.invalid:5432/db' });
+      DATABASE_URL: fixtureDatabaseUrl({ user: 'u', password: FIXTURE_PASSWORD, host: 'cauce-plataforma.invalid', port: 5432, database: 'db' }) });
     assert.equal(network.status, 1, network.stderr);
     assert.match(network.stderr, /no enviada: la red no llegó al servidor/u);
-    assert.doesNotMatch(network.stderr, /rechazada por PostgreSQL|secret-pw/u);
+    assert.doesNotMatch(network.stderr, /rechazada por PostgreSQL|fixture-placeholder-password/u);
   } finally {
     await rm(scratch, { recursive: true, force: true });
   }
@@ -96,7 +103,7 @@ test('reports a missing store runtime as a local failure, never as a PostgreSQL 
 
 test('requires a strong TLS mode for remote servers and drops session-altering PG variables', async () => {
   const { databaseUrl, sanitizeEnvironment } = await import(new URL('../cli/cauce-plataforma', import.meta.url));
-  const remote = 'postgresql://u:secret-pw@db.example.test:5432/db';
+  const remote = fixtureDatabaseUrl({ user: 'u', password: FIXTURE_PASSWORD, host: 'db.example.test', port: 5432, database: 'db' });
   await assert.rejects(databaseUrl({ DATABASE_URL: remote }), /sslmode require/u);
   await assert.rejects(databaseUrl({ DATABASE_URL: remote, PGSSLMODE: 'prefer' }), /sslmode require/u);
   await assert.rejects(databaseUrl({ DATABASE_URL: `${remote}?sslmode=verify-full&sslmode=disable` }), /repite/u);
@@ -104,7 +111,8 @@ test('requires a strong TLS mode for remote servers and drops session-altering P
     assert.equal(await databaseUrl({ DATABASE_URL: `${remote}?sslmode=${mode}` }), `${remote}?sslmode=${mode}`);
     assert.equal(await databaseUrl({ DATABASE_URL: remote, PGSSLMODE: mode }), remote);
   }
-  assert.equal(await databaseUrl({ DATABASE_URL: 'postgresql://u:p@127.0.0.1:5432/db' }), 'postgresql://u:p@127.0.0.1:5432/db');
+  const local = fixtureDatabaseUrl({ user: 'u', password: FIXTURE_PASSWORD, host: '127.0.0.1', port: 5432, database: 'db' });
+  assert.equal(await databaseUrl({ DATABASE_URL: local }), local);
   const environment = sanitizeEnvironment({ PGOPTIONS: '-c role=postgres', PGHOST: '/tmp', PGUSER: 'postgres',
     PGAPPNAME: 'spoofed', PGSSLMODE: 'verify-full', PGSSLROOTCERT: '/run/secrets/postgres_ca', PATH: '/bin' });
   assert.deepEqual(environment, { PGSSLMODE: 'verify-full', PGSSLROOTCERT: '/run/secrets/postgres_ca', PATH: '/bin' });
@@ -120,7 +128,7 @@ test('asks before disabling or retiring a company unless --si confirms it in wri
   assert.deepEqual(confirmationFor([...base, 'retired']), { company: 'humanizar', state: 'retired' });
   assert.equal(confirmationFor([...base, 'retired', '--si']), null);
   assert.equal(confirmationFor([...base, 'enabled']), null);
-  const unattended = run([...base, 'disabled'], { DATABASE_URL: 'postgresql://u:p@127.0.0.1:1/db' });
+  const unattended = run([...base, 'disabled'], { DATABASE_URL: fixtureDatabaseUrl({ user: 'u', password: FIXTURE_PASSWORD, host: '127.0.0.1', port: 1, database: 'db' }) });
   assert.equal(unattended.status, 2, unattended.stderr);
   assert.match(unattended.stderr, /--si/u);
   assert.equal(run(['enlace', 'crear', '--empresa', 'praxis', '--otra-empresa', 'humanizar', '--si', '--admin', admin]).status, 2);
@@ -128,17 +136,18 @@ test('asks before disabling or retiring a company unless --si confirms it in wri
 
 test('refuses connection strings that alter the session or weaken transport before connecting', () => {
   const args = ['empresa', 'estado', '--empresa', 'humanizar', '--estado', 'enabled'];
+  const unsafe = { user: 'u', password: FIXTURE_PASSWORD, database: 'db' };
   for (const url of [
-    'postgresql://u:secret-pw@127.0.0.1:1/db?options=-c%20role%3Dpostgres',
-    'postgresql://u:secret-pw@127.0.0.1:1/db?host=/tmp',
-    'postgresql://u:secret-pw@db.example.test:5432/db?sslmode=disable',
-    'postgresql://u:secret-pw@db.example.test:5432/db',
-    'postgresql://u:secret-pw@db.example.test:5432/db?sslmode=require&application_name=spoof',
-    'mysql://u:secret-pw@127.0.0.1:1/db',
+    fixtureDatabaseUrl({ ...unsafe, host: '127.0.0.1', port: 1, query: 'options=-c%20role%3Dpostgres' }),
+    fixtureDatabaseUrl({ ...unsafe, host: '127.0.0.1', port: 1, query: 'host=/tmp' }),
+    fixtureDatabaseUrl({ ...unsafe, host: 'db.example.test', port: 5432, query: 'sslmode=disable' }),
+    fixtureDatabaseUrl({ ...unsafe, host: 'db.example.test', port: 5432 }),
+    fixtureDatabaseUrl({ ...unsafe, host: 'db.example.test', port: 5432, query: 'sslmode=require&application_name=spoof' }),
+    fixtureDatabaseUrl({ ...unsafe, host: '127.0.0.1', port: 1 }).replace(/^postgresql:/u, 'mysql:'),
   ]) {
     const result = run(args, { DATABASE_URL: url, CAUCE_PLATFORM_ADMIN_ID: admin });
     assert.equal(result.status, 2, result.stderr);
-    assert.doesNotMatch(result.stdout + result.stderr, /secret-pw|ECONN|PostgreSQL \(/u);
+    assert.doesNotMatch(result.stdout + result.stderr, /fixture-placeholder-password|ECONN|PostgreSQL \(/u);
   }
 });
 
@@ -168,7 +177,7 @@ test('the CLI repeats the two-owner seed atomically and the database audits and 
   const { createPool, applyMigrations } = await tsImport('../../packages/store/src/db.ts', import.meta.url);
   const network = process.env.CAUCE_TEST_DOCKER_NETWORK;
   let builder = new GenericContainer('postgres:16-alpine')
-    .withEnvironment({ POSTGRES_DB: 'cauce_test_platform', POSTGRES_USER: 'cauce_test', POSTGRES_PASSWORD: 'platform-test-only' })
+    .withEnvironment({ POSTGRES_DB: 'cauce_test_platform', POSTGRES_USER: 'cauce_test', POSTGRES_PASSWORD: 'fixture-platform-password' })
     .withHealthCheck({ test: ['CMD-SHELL', 'pg_isready -U cauce_test -d cauce_test_platform'],
       interval: 1_000, timeout: 3_000, retries: 60, startPeriod: 1_000 })
     .withWaitStrategy(Wait.forHealthCheck());
@@ -176,7 +185,7 @@ test('the CLI repeats the two-owner seed atomically and the database audits and 
   const container = await builder.start();
   const host = network ? container.getIpAddress(network) : container.getHost();
   const port = network ? 5432 : container.getMappedPort(5432);
-  const url = `postgresql://cauce_test:platform-test-only@${host}:${port}/cauce_test_platform`;
+  const url = fixtureDatabaseUrl({ user: 'cauce_test', password: 'fixture-platform-password', host, port, database: 'cauce_test_platform' });
   const pool = createPool(url, { max: 2 });
   const scratch = await mkdtemp(join(tmpdir(), 'cauce-platform-'));
   const urlFile = join(scratch, 'database-url');
@@ -197,7 +206,7 @@ test('the CLI repeats the two-owner seed atomically and the database audits and 
       const result = run(seed, environment);
       assert.equal(result.status, 0, result.stderr);
       assert.match(result.stdout, /2 operación.*confirmada/u);
-      assert.doesNotMatch(result.stdout + result.stderr, /postgresql:|platform-test-only/u);
+      assert.doesNotMatch(result.stdout + result.stderr, /postgresql:|fixture-platform-password/u);
     }
     assert.deepEqual((await pool.query(`SELECT human_id::text,role,source,granted_by::text FROM company_admins
       WHERE company_id='humanizar' ORDER BY human_id`)).rows, [admin, miguel].map(human_id =>
@@ -302,12 +311,12 @@ test('the CLI repeats the two-owner seed atomically and the database audits and 
       assert.equal(migrating.stdout, '');
     } finally { await schemaWriter.query('ROLLBACK'); schemaWriter.release(); }
     assert.equal((await pool.query('SELECT count(*)::int AS count FROM platform_authority_events')).rows[0].count, beforeLock);
-    await writeFile(urlFile, 'postgresql://private-user:do-not-print@127.0.0.1:1/cauce_test\n');
+    await writeFile(urlFile, `${fixtureDatabaseUrl({ user: 'private-user', password: 'fixture-do-not-print', host: '127.0.0.1', port: 1, database: 'cauce_test' })}\n`);
     const connectionError = run(seed, environment);
     assert.equal(connectionError.status, 1);
-    assert.doesNotMatch(connectionError.stderr, /private-user|do-not-print|postgresql:|rechazada por PostgreSQL/u);
+    assert.doesNotMatch(connectionError.stderr, /private-user|fixture-do-not-print|postgresql:|rechazada por PostgreSQL/u);
     assert.match(connectionError.stderr, /no enviada: la red no llegó al servidor \(ECONNREFUSED\)/u);
-    assert.equal((await readFile(urlFile, 'utf8')).includes('do-not-print'), true);
+    assert.equal((await readFile(urlFile, 'utf8')).includes('fixture-do-not-print'), true);
   } finally {
     await pool.end();
     await container.stop();

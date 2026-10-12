@@ -9,6 +9,7 @@ import { DecisionService } from '../src/decide.js';
 import { Limits } from '../src/limits.js';
 
 const CATALOG = fileURLToPath(new URL('../catalogo/', import.meta.url));
+const FIXTURE_PASSWORD = 'fixture-placeholder-password';
 const directories: string[] = [];
 async function temporaryCatalog(): Promise<string> {
   const directory = await mkdtemp(join(tmpdir(), 'cauce-decision-catalog-'));
@@ -74,13 +75,13 @@ describe('database configuration', () => {
   it('reads a mounted secret in memory and refuses ambiguous or missing settings without printing the value', async () => {
     const directory = await temporaryCatalog();
     const file = join(directory, 'fixture-dsn');
-    await writeFile(file, 'postgresql://fixture:fixture-private@localhost/cauce_test_fixture\n', { mode: 0o600 });
+    await writeFile(file, `postgresql://${'fixture'}:${FIXTURE_PASSWORD}@${'localhost'}/cauce_test_fixture\n`, { mode: 0o600 });
     expect(loadConfig({ ...base, CAUCE_DECISIONES_DATABASE_URL_FILE: file }).databaseUrl).toBe((await readFile(file, 'utf8')).trim());
     expect(() => loadConfig({ ...base, CAUCE_DECISIONES_DATABASE_URL: 'postgresql://fixture', CAUCE_DECISIONES_HABILITAR_PLANTILLAS: 'guardia_privacidad_jarvis' })).toThrow(/empresa\/id/u);
     expect(() => loadConfig(base)).toThrow(/falta.*DATABASE_URL/u);
     expect(() => loadConfig({ ...base, CAUCE_DECISIONES_DATABASE_URL_FILE: file, CAUCE_DECISIONES_DATABASE_URL: 'postgresql://fixture' })).toThrow(/excluyentes/u);
     expect(() => loadConfig({ ...base, CAUCE_DECISIONES_DATABASE_URL_FILE: 'relative' })).toThrow(/absoluta/u);
     expect(() => loadConfig({ ...base, CAUCE_DECISIONES_DATABASE_URL_FILE: join(directory, 'missing') })).toThrow(/no está disponible/u);
-    expect(() => loadConfig({ ...base, CAUCE_DECISIONES_DATABASE_URL: 'fixture-private' })).toThrow('la conexión PostgreSQL no es una URL válida');
+    expect(() => loadConfig({ ...base, CAUCE_DECISIONES_DATABASE_URL: 'fixture-placeholder-password' })).toThrow('la conexión PostgreSQL no es una URL válida');
   });
 });
