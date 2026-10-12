@@ -74,6 +74,9 @@ class ExecutorInterruptionDrill(unittest.TestCase):
         from fleet_executor_policy import load_policy
         discard_operation(load_policy(self.policy_file), self.agent, self.context['operation_id'])
         self.assertEqual(self.resources('cleanup'), {'containers': [], 'volumes': []})
+        report = container_fixtures.sweep_owned_fleet(self.root / 'orphan-rows.json', [], self.container,
+                                                     self.policy['host_id'], self.agent['runtime_key'])
+        self.assertTrue(report['clean'], report)
 
     def interrupted_executor(self):
         checkpoint = self.root / 'checkpoint.json'
@@ -147,6 +150,9 @@ class ExecutorInterruptionDrill(unittest.TestCase):
         self.assertEqual(self.metadata()['pid'], metadata['pid'])
         self.assertEqual(self.inspect()['Id'], interrupted['Id'])
         self.assertEqual(self.resources('replayed'), owned)
+        report = container_fixtures.sweep_owned_fleet(self.root / 'orphan-rows.json', [self.agent], self.container,
+                                                     self.policy['host_id'], self.agent['runtime_key'])
+        self.assertTrue(report['clean'], report)
         stopped = self.run_step('stop', timeout=40)
         self.assertEqual(stopped.returncode, 0, stopped.stderr)
         self.assertIs(json.loads(stopped.stdout)['evidence']['stopped_verified'], True)

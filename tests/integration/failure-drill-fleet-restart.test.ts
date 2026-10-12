@@ -12,6 +12,7 @@ import { preparePostgresSuite } from '../../packages/store/test/postgres-suite.j
 import { seedFleetHuman } from '../../packages/store/test/fleet-human-postgres.fixtures.js';
 import { hashPassword } from '../../services/gateway/src/password.js';
 import { closeTestDatabase, startTestCaseDatabase, startTestDatabase, type EmptyTestDatabase, type TestDatabase } from '../helpers/postgres.js';
+import { sweepDatabaseFleet } from './failure-drill-ssh.fixtures.js';
 
 const execute = promisify(execFile);
 const origin = 'https://zz-canary.example.test';
@@ -31,7 +32,7 @@ beforeEach(async () => {
   current = await startTestCaseDatabase(database);
   directory = await mkdtemp(join(tmpdir(), 'zz-canary-fleet-restart-'));
   name = `zz-canary-fleet-${randomUUID().slice(0, 8)}`;
-  config = { url: current.url, host: 'zz-canary-host', name,
+  config = { url: current.url, host: name, name,
     checkpoint: join(directory, 'checkpoint'), release: join(directory, 'release') };
   await current.pool.query("INSERT INTO rooms(id,tenant_id) VALUES('zz-canary-room','Steven')");
   await current.pool.query("INSERT INTO agents(tenant_id,alias) VALUES('Steven','zz_canary_operator')");
@@ -43,7 +44,8 @@ beforeEach(async () => {
     container_name,runtime_user,systemd_user,home_directory,state_directory,lifecycle_state,enabled)
     VALUES('Steven','zz_canary_target','codex',$1,$2,'container',$1,'nobody','nobody','/nonexistent','/tmp/zz-canary-state','ready',true)`, [name, config.host]);
   await execute('docker', ['run', '--detach', '--name', name, '--label', `${label}=${name}`,
-    '--label', `cauce.fleet.runtime_key=${name}`, 'python:3.12-slim', 'python', '-c', 'import time; time.sleep(300)']);
+    '--label', `cauce.fleet.runtime_key=${name}`, '--label', `cauce.fleet.host=${config.host}`,
+    'python:3.12-slim', 'python', '-c', 'import time; time.sleep(300)']);
 });
 
 async function stop(child: ChildProcess): Promise<void> {
@@ -68,6 +70,10 @@ afterEach(async () => {
       for (const id of await containers(name)) await execute('docker', ['rm', '--force', '--volumes', id]);
       expect(await containers(name)).toEqual([]);
       console.info(`cleanup ${name}: 0 containers`);
+      if (!current || !directory) throw new Error('Owned fleet sweep database is absent');
+      await current.pool.query('DELETE FROM agents WHERE runtime_key=$1 AND host_id=$2', [name, config.host]);
+      const sweep = await sweepDatabaseFleet(current.pool, directory, name, config.host);
+      expect(sweep.exitCode).toBe(0); expect(sweep.report.clean).toBe(true);
     }
   } finally {
     await current?.close(); current = undefined;
@@ -163,5 +169,38 @@ it.each(['gateway', 'worker', 'both'] as const)('recovers a real stop operation 
   expect(agent.rows).toEqual([{ enabled: false, lifecycle_state: 'draft' }]);
   const durable = await new FleetOperationsRepository(current.pool).get('Steven', 'zz_canary_operator', receipt.operation_id, subject);
   expect(durable.status).toBe('succeeded');
+  if (!directory) throw new Error('Owned fleet sweep directory is absent');
+  const sweep = await sweepDatabaseFleet(current.pool, directory, config.name, config.host);
+  expect(sweep.exitCode).toBe(0); expect(sweep.report.clean).toBe(true);
   console.info(`SIGKILL ${victim}: running with no host receipt -> succeeded; 1 durable host receipt, same container ID`);
+});
+
+it('runs the real orphan gate against healthy rows, labelled and unlabelled volumes, and a missing-container PostgreSQL row', async () => {
+  if (!current || !directory) throw new Error('Owned orphan gate database is absent');
+  const database = current;
+  const path = directory;
+  const sweep = () => sweepDatabaseFleet(database.pool, path, config.name, config.host);
+  expect((await sweep()).exitCode).toBe(0);
+  for (const labelled of [true, false]) {
+    const volume = `${config.name}-${labelled ? 'labelled' : 'unlabelled'}-orphan`;
+    const labels = labelled ? ['--label', `cauce.fleet.runtime_key=${config.name}-orphan`, '--label', `cauce.fleet.host=${config.host}`] : [];
+    await execute('docker', ['volume', 'create', ...labels, volume]);
+    try {
+      const failed = await sweep();
+      expect(failed.exitCode).toBe(1); expect(failed.report.clean).toBe(false);
+      expect(failed.report.orphan_named_resources).toContainEqual({ kind: 'volume', name: volume });
+      if (labelled) expect(failed.report.orphan_resources).toContainEqual(expect.objectContaining({ kind: 'volume', name: volume }));
+    } finally { await execute('docker', ['volume', 'rm', volume]); }
+    expect((await sweep()).exitCode).toBe(0);
+  }
+  const missing = `${config.name}-missing`;
+  await database.pool.query(`INSERT INTO agents(tenant_id,alias,harness_id,runtime_key,host_id,runtime_mode,
+    container_name,runtime_user,systemd_user,home_directory,state_directory,lifecycle_state,enabled)
+    VALUES('Steven','zz_canary_missing','codex',$1,$2,'container',$1,'nobody','nobody','/nonexistent','/tmp/zz-canary-missing','draft',false)`, [missing, config.host]);
+  try {
+    const failed = await sweep();
+    expect(failed.exitCode).toBe(1);
+    expect(failed.report.orphan_rows).toContainEqual(expect.objectContaining({ runtime_key: missing, container_name: missing }));
+  } finally { await database.pool.query('DELETE FROM agents WHERE runtime_key=$1 AND host_id=$2', [missing, config.host]); }
+  expect((await sweep()).exitCode).toBe(0);
 });

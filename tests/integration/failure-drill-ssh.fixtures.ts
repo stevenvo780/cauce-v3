@@ -4,13 +4,69 @@ import { once } from 'node:events';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { connect, createServer } from 'node:net';
 import { userInfo } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { promisify } from 'node:util';
 import type { FleetSshTransport } from '../../services/gateway/src/fleet/host-transport.js';
+import type { DatabasePool } from '@cauce/store';
+import { objectRecord } from '@cauce/protocol';
+import { redactExecutorStderr } from '../../services/gateway/src/fleet/host-stderr.js';
 
 const execute = promisify(execFile);
 const hash = (body: Buffer | string): string => createHash('sha256').update(body).digest('hex');
+
+interface FleetSweepReport {
+  clean: boolean; sweep_exit: 0 | 1;
+  orphan_resources: { kind: string; name: string; runtime_key: string | null }[];
+  orphan_named_resources: { kind: string; name: string }[];
+  orphan_rows: { runtime_key: string; container_name: string }[];
+}
+function isFleetSweepReport(value: unknown): value is FleetSweepReport {
+  const report = objectRecord(value);
+  return report !== undefined && typeof report.clean === 'boolean' && (report.sweep_exit === 0 || report.sweep_exit === 1)
+    && Array.isArray(report.orphan_resources) && report.orphan_resources.every((value: unknown) => {
+      const row = objectRecord(value);
+      return row !== undefined && typeof row.kind === 'string' && typeof row.name === 'string'
+        && (typeof row.runtime_key === 'string' || row.runtime_key === null);
+    }) && Array.isArray(report.orphan_named_resources) && report.orphan_named_resources.every((value: unknown) => {
+      const row = objectRecord(value);
+      return row !== undefined && typeof row.kind === 'string' && typeof row.name === 'string';
+    }) && Array.isArray(report.orphan_rows) && report.orphan_rows.every((value: unknown) => {
+      const row = objectRecord(value);
+      return row !== undefined && typeof row.runtime_key === 'string' && typeof row.container_name === 'string';
+    });
+}
+export async function sweepDatabaseFleet(pool: DatabasePool, directory: string, prefix: string, host: string) {
+  const rows = (await pool.query(`SELECT runtime_key,container_name,runtime_mode,host_id FROM agents
+    WHERE purged_at IS NULL AND host_id=$1 AND left(runtime_key,length($2::text))=$2`, [host, prefix])).rows;
+  const filename = join(directory, 'orphan-rows.json');
+  await writeFile(filename, JSON.stringify(rows), { mode: 0o600 });
+  const program = [
+    'import json,pathlib,sys',
+    `sys.path.insert(0,${JSON.stringify(resolve(import.meta.dirname, '../../ops/tests'))})`,
+    'from test_fleet_executor_container import sweep_owned_fleet',
+    'report=sweep_owned_fleet(sys.argv[1],json.loads(pathlib.Path(sys.argv[1]).read_text()),sys.argv[2],sys.argv[3])',
+    'print(json.dumps(report));sys.exit(0 if report["clean"] else 1)',
+  ].join('\n');
+  let stdout: string;
+  let stderr: string;
+  let exitCode = 0;
+  try { ({ stdout, stderr } = await execute('/usr/bin/python3', ['-c', program, filename, prefix, host], { timeout: 75_000 })); }
+  catch (error) {
+    if (!(error instanceof Error && 'code' in error && error.code === 1 && 'stdout' in error && typeof error.stdout === 'string'
+      && 'stderr' in error && typeof error.stderr === 'string')) throw error;
+    stdout = error.stdout; stderr = error.stderr; exitCode = 1;
+  }
+  let decoded: unknown;
+  try { decoded = JSON.parse(stdout); }
+  catch { throw new Error(`Fleet orphan sweep infrastructure failed exit=${String(exitCode)} stdout_bytes=${String(Buffer.byteLength(stdout))} stderr=${redactExecutorStderr(stderr).slice(-4096)}`); }
+  if (!isFleetSweepReport(decoded)) throw new Error('Fleet orphan sweep report is malformed');
+  const report = decoded;
+  if (exitCode !== Number(!report.clean)) throw new Error('Fleet orphan sweep exit does not match its report');
+  if (stderr.trim()) console.info(redactExecutorStderr(stderr));
+  console.info(`FLEET_ORPHAN_SWEEP scope=${prefix} exit=${String(exitCode)} clean=${String(report.clean)} resources=${String(report.orphan_resources.length)} rows=${String(report.orphan_rows.length)} named=${String(report.orphan_named_resources.length)}`);
+  return { exitCode, report };
+}
 
 export async function contents(filename: string): Promise<string> {
   try { return await readFile(filename, 'utf8'); }
