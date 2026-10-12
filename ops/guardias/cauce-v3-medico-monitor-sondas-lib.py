@@ -47,10 +47,10 @@ def sql(consulta, columnas=None):
     cuerpo = consulta.strip().rstrip(";").strip()
     if not cuerpo:
         raise RuntimeError("consulta vacia")
-    orden = f"COPY ({cuerpo}) TO STDOUT WITH (FORMAT csv, FORCE_QUOTE *);"
+    orden = f"COPY ({company_scoped_query(cuerpo)}) TO STDOUT WITH (FORMAT csv, FORCE_QUOTE *);"
     rc, out, err = sh("agora", PG, entrada=orden)
     if rc != 0:
-        raise RuntimeError(f"psql rc={rc}: {err.strip()[:200]}")
+        raise RuntimeError(f"psql rc={rc}: stderr_chars={len(err)}")
     filas = [f for f in csv.reader(io.StringIO(out, newline="")) if f]
     if columnas is not None:
         malas = [f for f in filas if len(f) != columnas]
@@ -61,15 +61,20 @@ def sql(consulta, columnas=None):
     return filas
 
 
-def panel_del_alias(alias):
+def panel_del_alias(alias, tenant=None):
     """Last lines of the alias's tmux panel. READ-ONLY. None if it can't be read.
 
     The container is resolved from the `--container-id` of the live process, NOT from
     `agents.container_name`: the latter has been observed to disagree with reality.
     """
+    inventory = scoped_inventory()
+    matches = [key for key in inventory if key[1] == alias and (tenant is None or key[0] == tenant)]
+    if len(matches) != 1:
+        return None, "identidad del panel fuera de alcance o ambigua"
+    runtime_key = inventory[matches[0]]["runtime_key"]
     porque = None
     for host in ("vps", "kratos"):
-        rc, out, _ = sh(host, f"ps -eo args | grep 'run --alias {alias} ' | grep -v grep | "
+        rc, out, _ = sh(host, f"ps -eo args | grep 'run --alias {runtime_key} ' | grep -v grep | "
                               "grep -oE '\\-\\-container-id [a-f0-9]+' | head -1 | awk '{print $2}'", timeout=45)
         cid = (out or "").strip()
         if rc != 0 or not cid:
@@ -226,9 +231,11 @@ def reset_del_panel(texto):
 
 def inventario():
     """The aliases that exist, per the database. Source of truth for WHO exists."""
-    filas = sql("select tenant_id, alias, coalesce(container_name,'') from agents "
-                "where enabled order by alias;", columnas=3)
-    return {a: {"tenant": t, "contenedor_db": c} for t, a, c in filas}
+    filas = sql("select a.tenant_id,a.alias,coalesce(a.container_name,''),coalesce(a.runtime_key,''),t.company_id "
+                "from agents a join tenants t on t.id=a.tenant_id where a.enabled order by a.tenant_id,a.alias;", columnas=5)
+    company = guard_company_id()
+    return {(t, a): {"tenant": t, "contenedor_db": c, "runtime_key": runtime_key}
+            for t, a, c, runtime_key, owner in filas if owner == company}
 
 
 def procesos(host):
@@ -341,20 +348,25 @@ def _lee_reinicio(fresco, ventana_s=VENTANA_REINICIO_S):
     return False, ""
 
 
-def mapa_adaptadores(procs):
+def mapa_adaptadores(procs, inventory=None):
     """alias -> live adapter (host, pid, bundle, digest, container). Discovered from the
     LIVE process, not from the inventory: the inventory and unit Descriptions lie after a
     host move; the process argv does not."""
+    identities = runtime_identities(inventory if inventory is not None else scoped_inventory())
     res = {}
     for p in procs:
         m = RE_ADAPTADOR.search(p["args"])
         if not m:
             continue
-        alias = m.group("alias")
+        runtime_key = m.group("alias")
+        identity = identities.get(runtime_key)
+        if identity is None:
+            continue
         b = RE_BUNDLE.search(p["args"])
         d = RE_DIGEST.search(p["args"])
         c = RE_CTR.search(p["args"])
-        res[alias] = {"host": p["host"], "pid": p["pid"], "etimes": p["etimes"],
+        res[identity] = {"host": p["host"], "pid": p["pid"], "etimes": p["etimes"],
+                      "tenant": identity[0], "runtime_key": runtime_key,
                       "bundle": os.path.basename(b.group("bundle")) if b else "",
                       "digest": d.group("digest") if d else "",
                       "contenedor": c.group("ctr") if c else ""}
@@ -383,20 +395,24 @@ def sonda_telegram():
     # the storage host so tokens never leave it), so retrying is safe. Only CONNECTION
     # failures are retried (255 = ssh, 124 = timeout); any other rc is reported as-is, since
     # then the problem is not the network and persisting would hide it.
-    rc, out, err = sh("agora", "python3 -", entrada=SONDA_TELEGRAM, timeout=180)
+    inventory = scoped_inventory()
+    program = SONDA_TELEGRAM.replace("SCOPED_IDENTITIES_JSON", repr(json.dumps(sorted(inventory))))
+    rc, out, err = sh("agora", "python3 -", entrada=program, timeout=180)
     if rc in (124, 255):
-        rc2, out2, err2 = sh("agora", "python3 -", entrada=SONDA_TELEGRAM, timeout=180)
+        rc2, out2, err2 = sh("agora", "python3 -", entrada=program, timeout=180)
         if rc2 == 0:
             rc, out, err = rc2, out2, err2
         else:
             return {}, (f"sonda telegram rc={rc} y el reintento tambien fallo "
-                        f"(rc={rc2}): {(err2 or err).strip()[:130]}")
+                        f"(rc={rc2}): stderr_chars={len(err2 or err)}")
     if rc != 0:
-        return {}, f"sonda telegram rc={rc}: {err.strip()[:150]}"
+        return {}, f"sonda telegram rc={rc}: stderr_chars={len(err)}"
     try:
-        return json.loads(out.strip().split("\n")[-1]), None
+        rows = json.loads(out.strip().split("\n")[-1])
+        return {(row["tenant"], row["alias"]): row["status"] for row in rows
+                if (row["tenant"], row["alias"]) in inventory}, None
     except Exception as e:  # noqa: BLE001
-        return {}, f"sonda telegram ilegible: {e}"
+        return {}, f"sonda telegram ilegible: {type(e).__name__}"
 
 
 def turnos_muertos_de_zeus(lista):
@@ -412,10 +428,11 @@ def turnos_muertos_de_zeus(lista):
 
 
 def cursores():
-    filas = sql("select alias, next_update_id, "
+    filas = sql("select tenant_id, alias, next_update_id, "
                 "round(extract(epoch from (now()-updated_at))/60) "
-                "from channel_bridge_cursors;", columnas=3)
-    return {a: {"cursor": int(c), "quieto_min": int(float(m))} for a, c, m in filas}
+                "from channel_bridge_cursors;", columnas=4)
+    inventory = scoped_inventory()
+    return {(t, a): {"cursor": int(c), "quieto_min": int(float(m))} for t, a, c, m in filas if (t, a) in inventory}
 
 
 def entregas_trabadas():
@@ -438,10 +455,13 @@ def entregas_trabadas():
         "from deliveries where status in ('leased','accepted','started') "
         "order by created_at;", columnas=8)
     salida = []
+    inventory = scoped_inventory()
     for f in filas:
         if len(f) < 8:
             continue
         t, a, s, i, m, d, q, lease = f[:8]
+        if (t, a) not in inventory:
+            continue
         try:
             lease_min = int(float(lease)) if str(lease).strip() else None
         except ValueError:
@@ -488,7 +508,7 @@ def respuestas_perdidas(horas=24):
         "left(coalesce(d.last_error,''),110), "
         "(select count(*) from deliveries d2 "
         " join messages m2 on m2.id = d2.message_id "
-        " where d2.recipient_alias = d.recipient_alias and d2.status = 'done' "
+        " where d2.recipient_tenant = d.recipient_tenant and d2.recipient_alias = d.recipient_alias and d2.status = 'done' "
         # Anchored on `created_at`: the text exists from when the response was created,
         # not from when the bus gave up. A strict `> d.terminal_at` would miss fan-ins
         # emitted in the same second as the timeout.
@@ -506,16 +526,19 @@ def respuestas_perdidas(horas=24):
         "  and coalesce(m.body->>'type','') = 'agent.response' "
         "order by d.terminal_at desc;", columnas=7)
     perdidas, rechazadas = {}, {}
+    inventory = scoped_inventory()
     for f in filas:
         if len(f) < 7:
             continue
         tenant, destinatario, contesto, did, cuando, err, rescate = f[:7]
+        if (tenant, destinatario) not in inventory:
+            continue
         err = (err or "").strip()
         item = {"tenant": tenant, "contesto": contesto, "id": did,
-                "cuando": cuando, "error": err,
+                "cuando": cuando, "error": safe_last_error(err),
                 "rescatada": (rescate or "0").strip() not in ("", "0")}
         destino = perdidas if error_de_transporte(err) else rechazadas
-        destino.setdefault(destinatario, []).append(item)
+        destino.setdefault((tenant, destinatario), []).append(item)
     return perdidas, rechazadas
 
 
@@ -537,21 +560,28 @@ def conversaciones_paralelas(horas=24):
         "  to_char(s.ultimo at time zone 'UTC', 'MM-DD HH24:MI') "
         "from s join v using (tenant, alias) order by s.alias, s.turnos desc;", columnas=6)
     paralelas = {}
+    inventory = scoped_inventory()
     for tenant, alias, sesion, turnos, canales, ultimo in filas:
+        if (tenant, alias) not in inventory:
+            continue
         paralelas.setdefault((tenant, alias), []).append((sesion, int(turnos), canales, ultimo))
     return paralelas
 
 
-def captura_en_vuelo(alias):
+def captura_en_vuelo(alias, tenant=None):
     """What will be LOST if this alias is restarted. Captured BEFORE touching anything: if
     rescue fails, this metadata is the only thing that lets it be recovered by hand. Message
     bodies never enter the doctor's logs or reports."""
+    identities = [key for key in scoped_inventory() if key[1] == alias and (tenant is None or key[0] == tenant)]
+    if len(identities) != 1:
+        raise ValueError("in-flight capture requires an unambiguous scoped identity")
+    tenant = identities[0][0]
     filas = sql(
         "select d.id, d.message_id, m.actor_alias, m.tenant_id, m.room_id, m.lane, "
         "m.priority, m.request_id "
         "from deliveries d join messages m on m.id = d.message_id "
-        "where d.recipient_alias = '{}' "
-        "and d.status in ('leased','accepted','started');".format(alias.replace("'", "''")),
+        "where d.recipient_tenant = '{}' and d.recipient_alias = '{}' "
+        "and d.status in ('leased','accepted','started');".format(tenant.replace("'", "''"), alias.replace("'", "''")),
         columnas=8)
     return [{"delivery": f[0], "message": f[1], "actor": f[2], "tenant": f[3],
              "room": f[4], "lane": f[5], "priority": f[6], "request_id": f[7]}

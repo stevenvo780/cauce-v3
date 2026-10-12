@@ -43,6 +43,13 @@ class SqlProbe:
 
 
 class TestDeliveryStateRecovery(unittest.TestCase):
+    def setUp(self):
+        patch = mock.patch.object(MODULE, "DOCTOR_INVENTORY", {
+            ("Steven", "kant"): {"tenant": "Steven", "runtime_key": "kant"},
+        })
+        patch.start()
+        self.addCleanup(patch.stop)
+
     def test_leased_delivery_is_detected_as_in_flight(self):
         probe = SqlProbe([LEASED_ROW])
         with mock.patch.object(MODULE, "sql", probe):

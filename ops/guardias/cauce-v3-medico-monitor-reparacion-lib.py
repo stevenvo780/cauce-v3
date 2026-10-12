@@ -86,7 +86,7 @@ def matar_puente_dentro_del_contenedor(host, contenedor, alias):
 
 def reiniciar_puente_telegram():
     rc, _, err = sh("agora", f"docker restart {PUENTE_TELEGRAM}", timeout=180)
-    return rc == 0, (err.strip()[:150] if rc != 0 else "docker restart devolvio 0")
+    return rc == 0, f"rc={rc} stderr_chars={len(err)}"
 
 
 def restart_veto_for_inflight(deliveries):
@@ -111,7 +111,7 @@ def ciclo_rescate(alias, adaptador, apuntes):
                          "Se reporta; lo arregla el SDK, no el guardia."}
     # Restarting with work in flight kills it at attempt=1 and it does NOT retry. While
     # re-injection isn't implemented, this is destroying work, not rescuing it.
-    en_vuelo = captura_en_vuelo(alias)
+    en_vuelo = captura_en_vuelo(alias, adaptador.get("tenant"))
     if en_vuelo:
         return restart_veto_for_inflight(en_vuelo)
     if adaptador.get("bundle") != RELEASE_CON_FIX78 or adaptador.get("digest") != DIGEST_CON_FIX78:
@@ -123,12 +123,12 @@ def ciclo_rescate(alias, adaptador, apuntes):
         return {"resultado": "omitido",
                 "razon": f"{n} cliente(s) de tmux atados: reiniciar le tumba la TUI a su dueno"}
 
-    perdido = captura_en_vuelo(alias)          # paso 1
+    perdido = captura_en_vuelo(alias, adaptador.get("tenant"))
     if perdido:
         return restart_veto_for_inflight(perdido)
     apuntes.append({"tipo": "captura_previa", "alias": alias, "entregas": perdido})
 
-    unidad = f"cauce-v3-container-{alias}.service"
+    unidad = f"cauce-v3-container-{adaptador.get('runtime_key', alias)}.service"
     base = ("XDG_RUNTIME_DIR=/run/user/1000 systemctl --user" if adaptador["host"] == "kratos"
             else "sudo -u stev XDG_RUNTIME_DIR=/run/user/1000 systemctl --user")
     rc, out, err = sh(adaptador["host"], f"{base} restart {unidad} 2>&1", timeout=180)
@@ -150,9 +150,13 @@ def ciclo_rescate(alias, adaptador, apuntes):
 def avisar(texto):
     """Send the notice to the owner's chat. Runs on the storage host: the token never
     leaves it. Same path as the night-watch already uses, proven."""
-    rc, out, err = sh("agora", "python3 -", entrada=PLANTILLA_AVISO.replace(
+    identity = notice_identity()
+    if identity is None:
+        return False, "OUT_OF_SCOPE_NOTICE"
+    program = PLANTILLA_AVISO.replace("SCOPED_NOTICE_JSON", repr(json.dumps(identity)))
+    rc, out, err = sh("agora", "python3 -", entrada=program.replace(
         "json.load(sys.stdin)", f"json.loads({json.dumps({'texto': texto})!r})"), timeout=60)
-    return rc == 0 and "enviado" in out, err.strip()[:150]
+    return rc == 0 and "enviado" in out, f"stderr_chars={len(err)}"
 
 
 def robo_cpu_agora():
@@ -234,30 +238,33 @@ def canal_roto_ahora(ultima_muerte_ts, ultima_entrega_ok_ts):
 
 def avisos_propios_muertos(filas):
     """(list of `escalar` findings) from rows ALREADY read from the database:
-    [alias, count, latest_death_UTC, latest_last_error, latest_ok_UTC].
+    [tenant, alias, count, latest_death_UTC, latest_last_error, latest_ok_UTC].
     PURE function on purpose: separating it from `main()` is what lets it be tested
     without raising the other ten probes of a whole run (same pattern as
     `gravedad()`/`bloqueo_de_acceso()`)."""
     salida = []
-    for alias, n, cuando, ultimo, cuando_ok in filas:
+    inventory = scoped_inventory()
+    for tenant, alias, n, cuando, ultimo, cuando_ok in filas:
+        if (tenant, alias) not in inventory:
+            continue
         # Discriminator: the channel is only broken if the death is more recent than the OK
         if not canal_roto_ahora(cuando, cuando_ok):
             # Channel recovered after the death, or there was never a death: don't escalate
             continue
         salida.append({
-            "tipo": "aviso_propio_muerto", "alias": alias,
+            "tipo": "aviso_propio_muerto", "tenant": tenant, "alias": alias,
             "detalle": (f"{n} entrega(s) del PROPIO guardia hacia {alias} murieron en las ultimas "
                         f"24 h sin llegar (la ultima, {cuando} UTC): el canal por el que el medico "
                         "avisa de los fallos se rompio, y nadie se entero"),
             "evidencia": {
                 "como se identifica": "body->>'guardia' = 'cauce-medico-monitor' (no depende "
                                        "de body->>'type', que aqui sale NULO)",
-                "ultimo last_error (crudo)": (ultimo or "")[:400],
+                "last_error metadata": safe_last_error(ultimo),
                 "ultima_entrega_OK": cuando_ok or "(nunca)",
                 "consulta": "select d.* from deliveries d join messages m on m.id=d.message_id "
                             "where m.body->>'guardia'='cauce-medico-monitor' and d.recipient_"
-                            "alias='{}' and d.status in ('failed','dead') order by "
-                            "d.created_at desc".format(alias.replace("'", "''")),
+                            "tenant='{}' and d.recipient_alias='{}' and d.status in ('failed','dead') order by "
+                            "d.created_at desc".format(tenant.replace("'", "''"), alias.replace("'", "''")),
             }})
     return salida
 
@@ -414,8 +421,8 @@ def memoria_hallazgos(visto_antes, visto_ahora, t0):
     alert twice". Memory is therefore CARRIED; only forgotten when unseen for OLVIDO_HORAS
     (otherwise the state file grows forever).
     """
-    fusion = dict(visto_ahora)
-    for clave, v in (visto_antes if isinstance(visto_antes, dict) else {}).items():
+    fusion = scope_finding_memory(visto_ahora)
+    for clave, v in scope_finding_memory(visto_antes).items():
         if clave in fusion:
             continue
         ref = v.get("ultimo_visto") or v.get("ultimo_despacho") or v.get("primera_vez")
@@ -451,6 +458,8 @@ def publicar(tenant, alias, cuerpo, clave, extra=None):
     segundo canal, ni Telegram, ni notify: el unico Telegram que queda es la rama de "zeus
     caido", que ya existia y no se toca.
     """
+    if guard_company_id() != "humanizar" or (tenant, alias) not in scoped_inventory():
+        return False, "OUT_OF_SCOPE_RECIPIENT"
     marca = "[GUARDIA AUTOMATICO - cauce-medico-monitor - NO es kant]"
     texto = marca + "\n" + cuerpo
     # The fingerprint is computed on the NORMALIZED text, not on the raw. The body carries
@@ -472,8 +481,9 @@ def publicar(tenant, alias, cuerpo, clave, extra=None):
     prog = DESPACHO.replace("json.loads(sys.stdin.read())", f"json.loads({json.dumps(payload)!r})")
     rc, out, err = sh("agora", "python3 -", entrada=prog, timeout=90)
     lineas = [line for line in out.strip().split("\n") if line.strip()]
-    estado = lineas[0] if lineas else "?"
-    return (rc == 0 and estado == "202"), (out.strip() + " " + err.strip())[:400]
+    estado = lineas[0] if lineas and re.fullmatch(r"[0-9]{3}", lineas[0]) else "?"
+    return (rc == 0 and estado == "202"), (
+        f"rc={rc} status={estado} stdout_chars={len(out)} stderr_chars={len(err)}")
 
 
 def despachar_a_zeus(cuerpo, clave):
@@ -497,7 +507,8 @@ def despachar_a_zeus(cuerpo, clave):
     # unambiguously: a visible
     # first line and a stable body field that is detected without reading prose
     # (MessageBody is an open record, only restricting timeout_ms and attachments_v1).
-    return publicar("Steven", "zeus", cuerpo, clave)
+    identity = notice_identity()
+    return publicar(*identity, cuerpo, clave) if identity else (False, "OUT_OF_SCOPE_NOTICE")
 
 
 def git_commit(mensaje):

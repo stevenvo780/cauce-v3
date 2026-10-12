@@ -22,6 +22,13 @@ _spec.loader.exec_module(MODULE)
 
 
 class ConversacionesParalelas(unittest.TestCase):
+    def setUp(self) -> None:
+        patch = mock.patch.object(MODULE, "DOCTOR_INVENTORY", {
+            ("Miguel", "kratos"): {"tenant": "Miguel", "runtime_key": "kratos"},
+        })
+        patch.start()
+        self.addCleanup(patch.stop)
+
     def test_agrupa_por_alias_y_pide_seis_columnas(self) -> None:
         filas = [["Miguel", "kratos", "2e47628d", "19", "adapter,telegram", "10-08 16:38"],
                  ["Miguel", "kratos", "1702d085", "5", "console", "10-08 18:04"]]

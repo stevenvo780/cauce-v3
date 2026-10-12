@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The doctor's Telegram probe and notice read <tenant>/<alias>.token and fall back to the flat layout."""
+"""Telegram probes read only explicitly scoped tenant tokens and redact provider text."""
 from __future__ import annotations
 
 import contextlib
@@ -40,9 +40,13 @@ def _run(template: str, directory: pathlib.Path, stdin: str = "") -> tuple[str, 
     def urlopen(url: str, *_args: object, **_kwargs: object) -> _Response:
         token = urllib.parse.urlparse(url).path.split("/")[1][len("bot"):]
         seen.append(token)
-        return _Response(json.dumps({"result": {"pending_update_count": len(token)}}).encode())
+        return _Response(json.dumps({"result": {"pending_update_count": len(token),
+                                               "last_error_message": "foreign-private-canary"}}).encode())
 
     out = io.StringIO()
+    template = template.replace("SCOPED_IDENTITIES_JSON", repr(json.dumps([
+        ["Steven", "zeus"], ["Miguel", "janus"], ["Steven", "atlas"],
+    ]))).replace("SCOPED_NOTICE_JSON", repr(json.dumps(["Steven", "zeus"])))
     code = compile(template.replace(MODULE.TOKEN_DIR, str(directory)), "template", "exec")
     with mock.patch("urllib.request.urlopen", side_effect=urlopen), mock.patch("sys.stdin", io.StringIO(stdin)), \
             contextlib.redirect_stdout(out):
@@ -56,29 +60,31 @@ class TelegramTokenLayoutTests(unittest.TestCase):
         self.addCleanup(scratch.cleanup)
         self.directory = pathlib.Path(scratch.name)
 
-    def test_probe_prefers_the_tenant_layout_and_counts_each_alias_once(self) -> None:
+    def test_probe_reads_only_scoped_tenant_tokens_and_redacts_last_error(self) -> None:
         _token(self.directory / "zeus.token", "flat")
         _token(self.directory / "Steven" / "zeus.token", "tenant-layout")
         _token(self.directory / "atlas.token", "flat-only")
         _token(self.directory / "Miguel" / "janus.token", "tenant-only")
         _token(self.directory / "atlas.token.bak-old", "backup")
+        _token(self.directory / "ForeignTenant" / "zeus.token", "foreign-token")
         out, seen = _run(MODULE.SONDA_TELEGRAM, self.directory)
-        result = json.loads(out)
-        self.assertEqual(sorted(result), ["atlas", "janus", "zeus"])
-        self.assertEqual(result["zeus"]["pendientes"], len("tenant-layout"))
-        self.assertEqual(result["atlas"]["pendientes"], len("flat-only"))
-        self.assertEqual(sorted(seen), sorted(["tenant-layout", "flat-only", "tenant-only"]))
+        result = {(row["tenant"], row["alias"]): row["status"] for row in json.loads(out)}
+        self.assertEqual(result[("Steven", "zeus")]["pendientes"], len("tenant-layout"))
+        self.assertEqual(result[("Steven", "atlas")]["error"], "FileNotFoundError")
+        self.assertEqual(sorted(seen), sorted(["tenant-layout", "tenant-only"]))
+        self.assertNotIn("foreign", out)
+        self.assertEqual(result[("Steven", "zeus")]["ultimo_error_chars"], len("foreign-private-canary"))
 
-    def test_notice_uses_the_tenant_token_then_the_flat_one(self) -> None:
+    def test_notice_uses_the_exact_tenant_and_rejects_flat_fallback(self) -> None:
         stdin = json.dumps({"texto": "aviso"})
         _token(self.directory / "zeus.token", "flat")
-        self.assertEqual(_run(MODULE.PLANTILLA_AVISO, self.directory, stdin)[1], ["flat"])
+        with self.assertRaises(FileNotFoundError):
+            _run(MODULE.PLANTILLA_AVISO, self.directory, stdin)
         _token(self.directory / "Steven" / f"{MODULE.ALIAS_AVISO}.token", "tenant-layout")
         out, seen = _run(MODULE.PLANTILLA_AVISO, self.directory, stdin)
         self.assertEqual((out.strip(), seen), ("enviado", ["tenant-layout"]))
         _token(self.directory / "Hospital" / f"{MODULE.ALIAS_AVISO}.token", "other-tenant")
-        with self.assertRaisesRegex(SystemExit, "ambiguo"):
-            _run(MODULE.PLANTILLA_AVISO, self.directory, stdin)
+        self.assertEqual(_run(MODULE.PLANTILLA_AVISO, self.directory, stdin)[1], ["tenant-layout"])
 
 
 if __name__ == "__main__":
