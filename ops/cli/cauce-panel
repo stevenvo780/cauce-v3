@@ -1,9 +1,5 @@
 #!/usr/bin/env bash
 # cauce-panel <alias> — vuelca el panel tmux de la sesion compartida de un alias, y nada mas.
-# Existe porque el panel es la UNICA prueba de que un turno paso por el arnes: una entrega `done`
-# no lo prueba (el fan-in lo sintetiza el SDK sin invocar al arnes) y `cauce` diciendo "compartida"
-# tampoco (llego a decirlo con la ventana enclavada en CAUCE-DEGRADADO).
-#
 # Ojo, dos sitios distintos: kant corre nativo en la torre y su tmux es el del HOST; los demas
 # viven dentro de su contenedor y hay que entrar con docker exec. Barrer el /proc o el tmux
 # equivocado devuelve vacio con codigo 0, que es el fallo mas caro de este proyecto.
@@ -12,8 +8,61 @@
 #           1 = deberia haber panel y no lo hay
 set -uo pipefail
 A=${1:?uso: cauce-panel <alias>}
+cli_home=$(getent passwd "$(id -u)" 2>/dev/null | cut -d: -f6)
+[[ -n "$cli_home" && -d "$cli_home" ]] || cli_home=$HOME
+export HOME=$cli_home
 OPS=$HOME/.local/share/cauce-v3/ops
 if [[ -v CAUCE_FLEET_RUNTIME_STATE ]]; then
+  if [[ ${2:-} == --attach ]]; then
+    # shellcheck disable=SC2016
+    exec python3 -c '
+import importlib.machinery
+import importlib.util
+import os
+import pwd
+import shlex
+import sys
+
+sys.dont_write_bytecode = True
+path = os.path.expanduser("~/.local/bin/cauce-sesiones")
+try:
+    loader = importlib.machinery.SourceFileLoader("cauce_sessions", path)
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    sessions = importlib.util.module_from_spec(spec)
+    loader.exec_module(sessions)
+    alias = sessions.resolve_runtime_key(sys.argv[1], sessions.reader_fleet())
+    info = sessions.alias_info(alias)
+    if info["harness"] == "openclaw":
+        print("Este runtime no tiene terminal tmux; abra su sesión desde la consola.", file=sys.stderr)
+        raise SystemExit(3)
+    native = sessions.native_runtime(info)
+    user = info["user"] if native else info["systemdUser"]
+    interactive = sys.stdin.isatty() and sys.stdout.isatty()
+    arguments = ["tmux", "-L", "cauce", "attach-session", "-t", f"cauce-{alias}:agente"]
+    if not native:
+        arguments = ["docker", "exec", "-it" if interactive else "-i", "--user", info["user"],
+                     "--env", "HOME=" + info["home"], info["container"], *arguments]
+    host, destination = sessions.reader_location(alias, info)
+    if host == "local" or host == sessions.socket.gethostname().split(".")[0]:
+        account = pwd.getpwnam(user)
+        home = info["home"] if native else account.pw_dir
+        command = ["env", "HOME=" + home, "XDG_RUNTIME_DIR=/run/user/" + str(account.pw_uid), *arguments]
+        if os.geteuid() != account.pw_uid:
+            if os.geteuid() != 0:
+                raise PermissionError("runtime user differs from the current account")
+            command = ["runuser", "-u", user, "--", *command]
+    else:
+        home = shlex.quote(info["home"]) if native else "$(getent passwd \"$(id -u)\" | cut -d: -f6)"
+        script = "export HOME=" + home + "; export XDG_RUNTIME_DIR=/run/user/$(id -u); exec " + shlex.join(arguments)
+        command = ["ssh", "-t" if interactive else "-n", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes",
+                   "-o", "ConnectTimeout=6", "-l", user, destination, "sh -c " + shlex.quote(script)]
+    print("Abriendo la terminal existente de " + alias + "; salir: Ctrl-b d. Si no existe, revise el runtime en la consola.", file=sys.stderr)
+    os.execvp(command[0], command)
+except (OSError, ValueError, KeyError, ImportError) as error:
+    print("cauce-panel: no se pudo abrir la terminal verificada (" + type(error).__name__ + "). Revise el inventario aplicado y el usuario del runtime.", file=sys.stderr)
+    raise SystemExit(2) from None
+' "$A"
+  fi
   exec "$HOME/.local/bin/cauce-sesiones" "$A" --panel
 fi
 A=$(PYTHONDONTWRITEBYTECODE=1 python3 "$OPS/scripts/container-alias-query.py" "$A" --runtime-key) || exit $?

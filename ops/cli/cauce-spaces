@@ -1,0 +1,295 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import hashlib
+import importlib
+import json
+import pathlib
+import re
+import runpy
+import sys
+import urllib.parse
+
+CLI = pathlib.Path(__file__).resolve().parent
+sys.path.insert(0, str(CLI))
+context_client = importlib.import_module('context_client')
+ContextFailure, read_scoped = context_client.ContextFailure, context_client.read_scoped
+
+CONFIG = '/v3/console/config'
+OPERATIONS = '/v3/console/fleet/operations'
+IDENTITY = re.compile(r'[A-Za-z][A-Za-z0-9_-]{0,63}\Z')
+IDEMPOTENCY = re.compile(r'[A-Za-z0-9_-]{8,128}\Z')
+PARAMETER_KEYS = frozenset({'runtime_key', 'harness_id', 'display_name', 'primary_room_id', 'memberships',
+                          'placement', 'primary_account_id', 'model_id', 'reasoning_effort'})
+PLACEMENT_KEYS = frozenset({'host_id', 'mode', 'container_name', 'runtime_user', 'home_directory',
+                          'state_directory', 'systemd_user'})
+REGISTRY_KEYS = frozenset({'harness_id', 'primary_room_id', 'host_id', 'display_name', 'enabled',
+                         'container_name', 'runtime_user', 'home_directory', 'state_directory',
+                         'max_concurrent_deliveries'})
+REGISTRY_EDIT_KEYS = frozenset({'display_name', 'enabled', 'max_concurrent_deliveries'})
+AGENT_FIELDS = REGISTRY_KEYS | frozenset({'tenant_id', 'alias', 'runtime_key', 'runtime_mode', 'systemd_user',
+    'primary_account_id', 'model_id', 'reasoning_effort', 'lifecycle_state', 'placement', 'retired_at', 'purged_at'})
+STATUSES = frozenset({'queued', 'running', 'awaiting_auth', 'cancelling', 'cancelled', 'failed', 'succeeded'})
+
+
+class PrivateArgumentParser(argparse.ArgumentParser):
+    def error(self, _message):
+        self.print_usage(sys.stderr)
+        self.exit(2, 'Argumentos de spaces inválidos; usa --help.\n')
+
+
+def canonical(value: object) -> str:
+    return json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(',', ':'), allow_nan=False)
+
+
+def request_hash(value: dict) -> str:
+    return hashlib.sha256(canonical(value).encode()).hexdigest()
+
+
+def require_object(value: object, keys: frozenset, label: str) -> dict:
+    if not isinstance(value, dict) or set(value) - keys:
+        raise ContextFailure(f'{label}: formato inválido o campos no permitidos.')
+    return value
+
+
+def input_document(location: str) -> dict:
+    path = pathlib.Path(location).absolute()
+    try:
+        raw = read_scoped(path.parent, path.name, 262144)
+        def pairs(items):
+            result = {}
+            for key, value in items:
+                if key in result:
+                    raise ValueError
+                result[key] = value
+            return result
+        value = json.loads(raw, object_pairs_hook=pairs, parse_constant=lambda _: (_ for _ in ()).throw(ValueError()))
+    except (ValueError, UnicodeError, OSError):
+        raise ContextFailure('No se pudo leer un JSON regular, acotado y sin campos duplicados.') from None
+    if not isinstance(value, dict):
+        raise ContextFailure('El JSON de entrada debe ser un objeto.')
+    return value
+
+
+def parameters(value: dict) -> dict:
+    require_object(value, PARAMETER_KEYS, 'Parámetros de ejecución')
+    if not {'runtime_key', 'harness_id', 'primary_room_id', 'memberships', 'placement'} <= set(value):
+        raise ContextFailure('Faltan runtime_key, harness_id, primary_room_id, memberships o placement.')
+    for key in PARAMETER_KEYS - {'placement', 'memberships'}:
+        if key in value and not isinstance(value[key], str) and value[key] is not None:
+            raise ContextFailure('Los campos de identidad y perfil deben ser texto o null.')
+    if isinstance(value.get('display_name'), str):
+        value['display_name'] = value['display_name'].strip()
+    placement = require_object(value['placement'], PLACEMENT_KEYS, 'Ubicación')
+    if not {'host_id', 'mode', 'runtime_user', 'home_directory', 'state_directory'} <= set(placement):
+        raise ContextFailure('Completa host_id, mode, runtime_user, home_directory y state_directory.')
+    if any(not isinstance(item, str) for item in placement.values()):
+        raise ContextFailure('Los campos de ubicación deben ser texto.')
+    members = value['memberships']
+    if not isinstance(members, list) or not 1 <= len(members) <= 100:
+        raise ContextFailure('Las membresías deben contener entre 1 y 100 grupos.')
+    for member in members:
+        require_object(member, frozenset({'room_id', 'role', 'enabled'}), 'Membresía')
+        if not {'room_id', 'role'} <= set(member):
+            raise ContextFailure('Cada membresía requiere room_id y role.')
+        if not isinstance(member['room_id'], str) or not isinstance(member['role'], str) \
+                or 'enabled' in member and type(member['enabled']) is not bool:
+            raise ContextFailure('La membresía requiere room_id/role de texto y enabled booleano.')
+        member['role'] = member['role'].strip()
+    return value
+
+
+def snapshot(client, tenant: str) -> dict:
+    value = client.request('GET', CONFIG)
+    if not isinstance(value, dict) or type(value.get('revision')) is not int or value['revision'] < 0:
+        raise ContextFailure('El servidor no publicó una revisión durable de configuración.')
+    tenants = value.get('tenants', []) + value.get('retired', {}).get('tenants', [])
+    if not any(isinstance(row, dict) and row.get('id') == tenant for row in tenants):
+        raise ContextFailure('El espacio de trabajo no figura en tu inventario autorizado.')
+    return value
+
+
+def target(args) -> dict:
+    return {'resource': 'agent', 'tenant_id': args.tenant, 'alias': args.alias}
+
+
+def history(client, selected: dict) -> list:
+    result = client.request('GET', OPERATIONS + '?' + urllib.parse.urlencode(selected))
+    rows = result.get('operations') if isinstance(result, dict) else None
+    if not isinstance(rows, list) or any(not isinstance(row, dict) or row.get('target') != selected
+                                       or row.get('status') not in STATUSES for row in rows):
+        raise ContextFailure('El servidor no devolvió un historial durable del agente seleccionado.')
+    return rows
+
+
+def operation_result(value: dict, request: dict) -> dict:
+    if not isinstance(value, dict) or value.get('target') != request['target'] or value.get('kind') != request['kind'] \
+            or value.get('request_sha256') != request_hash(request) \
+            or value.get('expected_revision') != request['expected_revision'] \
+            or value.get('status') not in STATUSES or not isinstance(value.get('id'), str) \
+            or type(value.get('version')) is not int or value['version'] < 0:
+        raise ContextFailure('No se pudo acreditar el recibo solicitado; consulta spaces list antes de reintentar.')
+    state = value['status']
+    message = 'Operación registrada; consulta su estado con spaces list. El runtime aún no está acreditado.'
+    if state == 'succeeded':
+        message = 'El servidor acredita la operación completada en su recibo durable.'
+    elif state in ('failed', 'cancelled'):
+        message = 'La operación terminó sin completar el efecto solicitado; conserva el recibo para recuperarla desde la consola.'
+    return {'state': state, 'message': message, 'operation': value}
+
+
+def accepted_result(accepted: object, request: dict) -> dict:
+    operation = accepted.get('operation') if isinstance(accepted, dict) else None
+    if not isinstance(operation, dict) or accepted.get('operation_id') != operation.get('id') \
+            or accepted.get('status') != operation.get('status'):
+        raise ContextFailure('No se pudo acreditar la aceptación; consulta spaces list antes de reintentar.')
+    return operation_result(operation, request)
+
+
+def fleet_change(client, args) -> dict:
+    if not args.idempotency_key or not IDEMPOTENCY.fullmatch(args.idempotency_key):
+        raise ContextFailure('Indica --idempotency-key con 8 a 128 letras, números, guiones o guiones bajos.')
+    request = {'kind': {'edit': 'update'}.get(args.command, args.command), 'target': target(args),
+               'expected_revision': args.expected_revision, 'idempotency_key': args.idempotency_key,
+               'parameters': {} if args.command == 'retire' else parameters(input_document(args.input))}
+    if args.apply:
+        prior = next((row for row in history(client, request['target'])
+                      if row.get('request_sha256') == request_hash(request)), None)
+        if prior is not None:
+            return accepted_result(client.request('POST', OPERATIONS, request), request)
+    current = snapshot(client, args.tenant)
+    if current['revision'] != args.expected_revision:
+        raise ContextFailure('La revisión cambió; relee spaces list y prepara otra previsualización.')
+    capability = client.request('GET', '/v3/console/fleet/capability')
+    if not isinstance(capability, dict) or capability.get('available') is not True \
+            or request['kind'] not in capability.get('actions', []):
+        raise ContextFailure('El servidor no acredita capacidad para esta operación; habilita su ejecutor y catálogo.')
+    preview = client.request('POST', OPERATIONS + '/preview', request)
+    if not isinstance(preview, dict) or preview.get('target') != request['target'] \
+            or preview.get('kind') != request['kind'] or preview.get('expected_revision') != args.expected_revision \
+            or preview.get('request_sha256') != request_hash(request) or type(preview.get('can_apply')) is not bool:
+        raise ContextFailure('El servidor devolvió una previsualización distinta de la solicitud.')
+    if not args.apply:
+        return {'state': 'preview', 'preview': preview}
+    if not preview['can_apply']:
+        raise ContextFailure('La previsualización bloquea el cambio por dependencias; no se encoló nada.')
+    return accepted_result(client.request('POST', OPERATIONS, request), request)
+
+
+def registry_receipt(value: dict, mutation: dict, revision: int, dry_run: bool) -> dict:
+    expected_hash = hashlib.sha256(('cauce-v3:configuration-mutation:v1\n' + canonical(mutation)).encode()).hexdigest()
+    if not isinstance(value, dict) or value.get('mutation') != mutation or value.get('dry_run') is not dry_run \
+            or value.get('applied') is not (not dry_run) or value.get('rolled_back_revision_id') is not None \
+            or type(value.get('revision')) is not int \
+            or (value['revision'] != revision if dry_run else value['revision'] <= revision) \
+            or value.get('mutation_sha256', expected_hash) != expected_hash:
+        raise ContextFailure('No se pudo acreditar el recibo versionado del registro solicitado.')
+    return value
+
+
+def registry_change(client, args) -> dict:
+    current = snapshot(client, args.tenant)
+    if current['revision'] != args.expected_revision:
+        raise ContextFailure('La revisión cambió; relee spaces list antes de editar el registro.')
+    value = input_document(args.input)
+    require_object(value, REGISTRY_KEYS if args.command == 'create' else REGISTRY_EDIT_KEYS, 'Registro')
+    if not value:
+        raise ContextFailure('El cambio de registro debe contener al menos un campo.')
+    if 'enabled' in value and value['enabled'] is not False:
+        raise ContextFailure('Habilitar el agente requiere una operación de flota verificada.')
+    for key, item in value.items():
+        if key not in ('enabled', 'max_concurrent_deliveries') and not isinstance(item, str) and item is not None:
+            raise ContextFailure('Los campos del registro deben ser texto o null.')
+        if key == 'max_concurrent_deliveries' and item is not None and type(item) is not int:
+            raise ContextFailure('max_concurrent_deliveries debe ser entero o null.')
+        if isinstance(item, str) and key in ('display_name', 'container_name', 'runtime_user', 'home_directory', 'state_directory'):
+            value[key] = item.strip()
+    if args.command == 'create':
+        value['enabled'] = False
+    mutation = {'resource': 'agent', 'action': 'create' if args.command == 'create' else 'update',
+                'tenant_id': args.tenant, 'alias': args.alias, 'value': value}
+    body = {'dry_run': True, 'expected_revision': args.expected_revision, 'mutation': mutation}
+    preview = registry_receipt(client.request('POST', CONFIG + '/changes', body), mutation, args.expected_revision, True)
+    if not args.apply:
+        return {'state': 'preview', 'registry_only': True, 'receipt': preview}
+    body['dry_run'] = False
+    receipt = registry_receipt(client.request('POST', CONFIG + '/changes', body), mutation, args.expected_revision, False)
+    return {'state': 'registry_applied', 'registry_only': True,
+            'message': 'Registro actualizado. Este recibo no acredita un runtime operativo.', 'receipt': receipt}
+
+
+def list_spaces(client, args) -> dict:
+    current = snapshot(client, args.tenant)
+    def selected(row):
+        return isinstance(row, dict) and row.get('tenant_id') == args.tenant \
+            and (args.alias is None or row.get('alias') == args.alias)
+    agents = [row for row in current.get('agents', []) if selected(row)]
+    retired = [row for row in current.get('retired', {}).get('agents', []) if selected(row)]
+    if args.alias:
+        operations = history(client, target(args))
+    else:
+        recent = client.request('GET', OPERATIONS + '/recent?limit=200')
+        rows = recent.get('operations') if isinstance(recent, dict) else None
+        if not isinstance(rows, list) or any(not isinstance(row, dict) or not isinstance(row.get('target'), dict)
+                                           or row.get('status') not in STATUSES for row in rows):
+            raise ContextFailure('No se pudo acreditar el historial reciente de operaciones.')
+        operations = [row for row in rows if row['target'].get('resource') == 'agent'
+                      and row['target'].get('tenant_id') == args.tenant]
+    def project(row):
+        return {key: value for key, value in row.items() if key in AGENT_FIELDS}
+    return {'state': 'observed', 'tenant_id': args.tenant, 'revision': current['revision'],
+            'agents': [project(row) for row in agents], 'retired_agents': [project(row) for row in retired],
+            'operations': operations, 'history_limit': 100 if args.alias else 200}
+
+
+def parser() -> argparse.ArgumentParser:
+    result = PrivateArgumentParser(description='Registro y operaciones durables de espacios de agentes con sesión humana.')
+    commands = result.add_subparsers(dest='command', required=True)
+    for name in ('create', 'list', 'edit', 'retire'):
+        command = commands.add_parser(name)
+        command.add_argument('--session-file')
+        command.add_argument('--gateway')
+        command.add_argument('--origin')
+        command.add_argument('--ca-file')
+        command.add_argument('--tenant', required=True)
+        command.add_argument('--alias', required=name != 'list')
+        if name == 'list':
+            continue
+        command.add_argument('--expected-revision', type=int, required=True)
+        command.add_argument('--idempotency-key')
+        command.add_argument('--apply', action='store_true', help='Aplica después de previsualizar; sin esta opción solo muestra el plan.')
+        if name != 'retire':
+            command.add_argument('--input', required=True, help='JSON de parameters de flota, o value del registro con --registry-only.')
+            command.add_argument('--registry-only', action='store_true', help='Solo cambia el registro; no crea ni inicia un runtime.')
+    return result
+
+
+def main(argv=None) -> int:
+    args = parser().parse_args(argv)
+    try:
+        if not IDENTITY.fullmatch(args.tenant) or args.alias is not None and not IDENTITY.fullmatch(args.alias):
+            raise ContextFailure('Tenant y alias deben ser identificadores explícitos válidos.')
+        if args.command != 'list' and args.expected_revision < 0:
+            raise ContextFailure('--expected-revision debe ser una revisión no negativa.')
+        module = runpy.run_path(str(CLI / 'cauce-login'), run_name='cauce_console_session')
+        client = module['ConsoleSessionClient'](args.session_file or module['default_session_file'](),
+                                              gateway=args.gateway, origin=args.origin, ca_file=args.ca_file)
+        if args.command == 'list':
+            result = list_spaces(client, args)
+        elif getattr(args, 'registry_only', False):
+            result = registry_change(client, args)
+        else:
+            result = fleet_change(client, args)
+        print(json.dumps(result, ensure_ascii=False, separators=(',', ':')))
+        return 1 if result['state'] == 'failed' else 0
+    except ContextFailure as error:
+        print('cauce spaces: ' + str(error), file=sys.stderr)
+        return 1
+    except (OSError, ValueError, TypeError, KeyError, AttributeError):
+        print('cauce spaces: No se pudo verificar la sesión, la entrada o el recibo del gateway.', file=sys.stderr)
+        return 1
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())

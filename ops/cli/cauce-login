@@ -1,0 +1,252 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import getpass
+import json
+import os
+import pathlib
+import re
+import secrets
+import ssl
+import stat
+import sys
+import urllib.error
+import urllib.parse
+import urllib.request
+import warnings
+from http.cookies import CookieError, SimpleCookie
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+from context_client import ContextFailure, private_session
+
+CSRF = re.compile(r'[A-Za-z0-9_-]{32,128}\Z')
+
+
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, request, stream, code, message, headers, new_url):
+        return None
+
+
+class PrivateArgumentParser(argparse.ArgumentParser):
+    def error(self, message):
+        self.print_usage(sys.stderr)
+        self.exit(2, 'Argumentos de login inválidos; usa --help.\n')
+
+
+def trusted_origin(value: str) -> str:
+    try:
+        parsed = urllib.parse.urlsplit(value)
+        port = parsed.port
+        if not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment \
+                or parsed.path not in ('', '/') or any(ord(char) < 33 or ord(char) == 127 for char in value) \
+                or parsed.scheme != 'https' and not (parsed.scheme == 'http' and parsed.hostname in ('localhost', '127.0.0.1', '::1')):
+            raise ValueError()
+        host = parsed.hostname.lower()
+        if ':' in host:
+            host = '[' + host + ']'
+        default_port = 443 if parsed.scheme == 'https' else 80
+        return parsed.scheme + '://' + host + (':' + str(port) if port is not None and port != default_port else '')
+    except (ValueError, AttributeError):
+        raise ContextFailure('gateway and origin must use HTTPS or loopback HTTP without credentials or paths') from None
+
+
+def default_session_file() -> str:
+    if os.environ.get('CAUCE_CONSOLE_SESSION_FILE'):
+        return os.environ['CAUCE_CONSOLE_SESSION_FILE']
+    root = pathlib.Path(os.environ.get('XDG_STATE_HOME', str(pathlib.Path.home() / '.local' / 'state')))
+    return str(root / 'cauce-v3' / 'console-session.json')
+
+
+def request_json(gateway: str, origin: str, ca_file: str | None, method: str, path: str, body=None, headers=None):
+    parsed = urllib.parse.urlsplit(path)
+    if not path.startswith('/') or path.startswith('//') or parsed.scheme or parsed.netloc or parsed.fragment \
+            or '\\' in path or any(ord(char) < 32 or ord(char) == 127 for char in path):
+        raise ContextFailure('console request path must stay on its gateway')
+    payload = None if body is None else json.dumps(body, separators=(',', ':')).encode()
+    request = urllib.request.Request(gateway + path, method=method, data=payload,
+        headers={'Origin': origin, 'Accept': 'application/json', 'Content-Type': 'application/json', **(headers or {})})
+    opener = urllib.request.build_opener(NoRedirect(), urllib.request.HTTPSHandler(context=ssl.create_default_context(cafile=ca_file)))
+    try:
+        with opener.open(request, timeout=30) as response:
+            raw = response.read(2097153)
+            if len(raw) > 2097152:
+                raise ContextFailure('console response exceeds limit')
+            result = json.loads(raw) if raw else None
+            return result, response.headers.get_all('Set-Cookie', [])
+    except urllib.error.HTTPError as error:
+        code = error.code
+        error.close()
+        raise ContextFailure('console request rejected with HTTP ' + str(code) + '; redirects are disabled') from None
+    except (urllib.error.URLError, TimeoutError):
+        raise ContextFailure('console gateway is unavailable') from None
+
+
+class ConsoleSessionClient:
+    def __init__(self, session_file: str, gateway: str | None = None, origin: str | None = None, ca_file: str | None = None):
+        self.session = private_session(session_file)
+        stored_gateway = trusted_origin(self.session.get('gateway'))
+        stored_origin = trusted_origin(self.session.get('origin'))
+        self.gateway = trusted_origin(gateway) if gateway is not None else stored_gateway
+        self.origin = trusted_origin(origin) if origin is not None else stored_origin
+        if self.gateway != stored_gateway or self.origin != stored_origin:
+            raise ContextFailure('console session is bound to a different gateway or origin; log in again')
+        self.cookie = self.session['cookie']
+        self.csrf = self.session.get('csrf_token')
+        self.ca_file = ca_file
+
+    def request(self, method: str, path: str, body=None):
+        method = method.upper()
+        headers = {'Cookie': self.cookie}
+        if method not in ('GET', 'HEAD'):
+            if not isinstance(self.csrf, str) or not CSRF.fullmatch(self.csrf):
+                raise ContextFailure('console session requires a valid csrf_token for mutations')
+            headers['X-CSRF-Token'] = self.csrf
+        return request_json(self.gateway, self.origin, self.ca_file, method, path, body, headers)[0]
+
+
+def check_target(parent: int, name: str) -> None:
+    try:
+        info = os.stat(name, dir_fd=parent, follow_symlinks=False)
+    except FileNotFoundError:
+        return
+    if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or info.st_mode & 0o077:
+        raise ContextFailure('console session destination must be a private regular file owned by this user')
+
+
+def open_session_parent(location: str) -> tuple[int, str]:
+    path = pathlib.Path(location).absolute()
+    if '..' in path.parts or not path.name:
+        raise ContextFailure('console session path must not contain parent traversal')
+    descriptor = os.open('/', os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        for part in path.parts[1:-1]:
+            try:
+                os.mkdir(part, 0o700, dir_fd=descriptor)
+            except FileExistsError:
+                pass
+            next_fd = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=descriptor)
+            os.close(descriptor)
+            descriptor = next_fd
+        check_target(descriptor, path.name)
+        return descriptor, path.name
+    except BaseException:
+        os.close(descriptor)
+        raise
+
+
+def write_session(parent: int, name: str, session: dict) -> None:
+    temporary = '.console-session-' + secrets.token_hex(16) + '.tmp'
+    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=parent)
+    try:
+        with os.fdopen(descriptor, 'w', encoding='utf-8') as stream:
+            os.fchmod(stream.fileno(), 0o600)
+            json.dump(session, stream, separators=(',', ':'))
+            stream.flush()
+            os.fsync(stream.fileno())
+        check_target(parent, name)
+        os.replace(temporary, name, src_dir_fd=parent, dst_dir_fd=parent)
+        os.fsync(parent)
+    finally:
+        try:
+            os.unlink(temporary, dir_fd=parent)
+        except FileNotFoundError:
+            pass
+
+
+def login(gateway: str, origin: str | None, email: str, password: str, session_file: str, ca_file: str | None = None) -> dict:
+    gateway = trusted_origin(gateway)
+    origin = trusted_origin(origin) if origin is not None else gateway
+    if not isinstance(email, str) or not email or len(email) > 254 or '@' not in email \
+            or any(ord(char) < 32 or ord(char) == 127 for char in email):
+        raise ContextFailure('console login requires an email')
+    if not isinstance(password, str) or not password or len(password) > 4096:
+        raise ContextFailure('console login requires a password through stdin or an interactive terminal')
+    parent, name = open_session_parent(session_file)
+    try:
+        result, cookies = request_json(gateway, origin, ca_file, 'POST', '/v3/auth/login', {'email': email, 'password': password})
+        if not isinstance(result, dict) or result.get('authenticated') is not True:
+            raise ContextFailure('console password login is unavailable or authentication was rejected')
+        csrf = result.get('csrf_token')
+        cookie_values = SimpleCookie()
+        try:
+            for header in cookies:
+                cookie_values.load(header)
+        except CookieError:
+            raise ContextFailure('console login returned an invalid session cookie') from None
+        cookie = '; '.join(morsel.key + '=' + morsel.coded_value for morsel in cookie_values.values())
+        if not cookie or len(cookie) > 12000 or any(ord(char) < 32 or ord(char) == 127 for char in cookie) \
+                or not isinstance(csrf, str) or not CSRF.fullmatch(csrf):
+            raise ContextFailure('console login did not issue a usable cookie and CSRF token')
+        write_session(parent, name, {'version': 1, 'gateway': gateway, 'origin': origin, 'cookie': cookie, 'csrf_token': csrf, 'email': email})
+        return result
+    finally:
+        os.close(parent)
+
+
+def safe_status(result: dict) -> dict:
+    keys = ('authenticated', 'login_mode', 'subject', 'home_tenant', 'name', 'roles', 'permissions', 'expires_at')
+    safe = {key: result[key] for key in keys if key in result}
+    if isinstance(result.get('authority'), dict):
+        safe['authority'] = {key: result['authority'][key] for key in ('home_company', 'acting_company', 'platform_override', 'company_role')
+                             if key in result['authority']}
+    return safe
+
+
+def main() -> int:
+    parser = PrivateArgumentParser(prog='cauce login', allow_abbrev=False,
+        description='Inicia o renueva una sesión nominal de consola sin guardar la contraseña')
+    parser.add_argument('--gateway', default=os.environ.get('CAUCE_GATEWAY_URL'))
+    parser.add_argument('--origin')
+    parser.add_argument('--email')
+    parser.add_argument('--password-stdin', action='store_true')
+    parser.add_argument('--session-file', default=default_session_file())
+    parser.add_argument('--ca-file')
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument('--renew', action='store_true')
+    mode.add_argument('--status', action='store_true')
+    args = parser.parse_args()
+    try:
+        if args.status:
+            if args.password_stdin or args.email:
+                raise ContextFailure('--status only uses the saved session')
+            client = ConsoleSessionClient(args.session_file, args.gateway, args.origin, args.ca_file)
+            result = client.request('GET', '/v3/auth/session')
+            if not isinstance(result, dict):
+                raise ContextFailure('console session response is invalid')
+            print(json.dumps({**safe_status(result), 'state': 'authenticated' if result.get('authenticated') is True else 'expired'}, ensure_ascii=False))
+            return 0 if result.get('authenticated') is True else 1
+        existing = private_session(args.session_file) if args.renew else {}
+        gateway = args.gateway or existing.get('gateway')
+        if not gateway:
+            raise ContextFailure('set --gateway or CAUCE_GATEWAY_URL before logging in')
+        origin = args.origin or existing.get('origin') or gateway
+        if existing and (trusted_origin(gateway) != trusted_origin(existing.get('gateway'))
+                         or trusted_origin(origin) != trusted_origin(existing.get('origin'))):
+            raise ContextFailure('renewal must use the saved gateway and origin; start a new login for another destination')
+        email = args.email or existing.get('email')
+        if not email and sys.stdin.isatty():
+            email = input('Correo: ').strip()
+        if args.password_stdin:
+            password = sys.stdin.readline(4098).removesuffix('\n').removesuffix('\r')
+        elif sys.stdin.isatty():
+            with warnings.catch_warnings():
+                warnings.simplefilter('error', getpass.GetPassWarning)
+                password = getpass.getpass('Contraseña: ')
+        else:
+            raise ContextFailure('use --password-stdin or an interactive terminal; passwords are never CLI arguments')
+        result = login(gateway, origin, email, password, args.session_file, args.ca_file)
+        print(json.dumps({**safe_status(result), 'state': 'renewed' if args.renew else 'authenticated',
+                          'gateway': trusted_origin(gateway), 'session_file': str(pathlib.Path(args.session_file).absolute())}, ensure_ascii=False))
+        return 0
+    except ContextFailure as error:
+        print(str(error), file=sys.stderr)
+    except getpass.GetPassWarning:
+        print('No hay una terminal privada; usa --password-stdin.', file=sys.stderr)
+    except (OSError, ValueError, TypeError):
+        print('No se pudo completar el login; revisa destino, permisos y sesión.', file=sys.stderr)
+    return 1
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())
