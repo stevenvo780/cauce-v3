@@ -29,6 +29,8 @@ Por defecto mide los dos CODEX_HOME de kratos:
 """
 
 import base64
+import contextlib
+import fcntl
 import json
 import os
 import socket
@@ -198,6 +200,26 @@ def pedir_refresco(refresh_token, client_id):
         return json.load(r)
 
 
+def refresco_permitido(codex_home, home=None):
+    """Refresh may only rewrite the own-session credential of a quota container:
+    $HOME/.codex with HOME=/home/node. Fleet CODEX_HOME paths never qualify."""
+    home = os.environ.get('HOME', '') if home is None else home
+    return home == '/home/node' and os.path.realpath(codex_home) == os.path.realpath(os.path.join(home, '.codex'))
+
+
+@contextlib.contextmanager
+def candado_directorio(codex_home):
+    fd = os.open(codex_home, os.O_RDONLY)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+        finally:
+            os.close(fd)
+
+
 def guardar_auth(codex_home, auth):
     """Tmp en el mismo directorio + fsync + replace: el refresh token rota y un
     fichero truncado perderia tambien la cadena de renovacion."""
@@ -224,6 +246,7 @@ def guardar_auth(codex_home, auth):
 
 
 def sonda(codex_home, refresh=False):
+    refresh = bool(refresh and refresco_permitido(codex_home))
     out = base(codex_home)
 
     # --- 1. Leer credencial (SOLO LECTURA, sin bloquear el fichero) --------------
@@ -279,35 +302,57 @@ def sonda(codex_home, refresh=False):
         out["extra"]["estado"] = "sin_credencial"
         return out
 
-    refrescado = False
+    refresco_intentado = False
 
-    def aplicar_refresco():
-        nonlocal tokens, token, account_id, c_id, c_acc, exp, refrescado
-        respuesta = pedir_refresco(tokens['refresh_token'], c_acc.get('client_id'))
-        if not respuesta.get('access_token'):
-            raise ValueError('refresh sin access_token')
-        for campo in ('id_token', 'access_token', 'refresh_token'):
-            if respuesta.get(campo):
-                tokens[campo] = respuesta[campo]
-        auth['tokens'] = tokens
-        auth['last_refresh'] = datetime.now(UTC).strftime('%Y-%m-%dT%H:%M:%S.%fZ')
-        guardar_auth(codex_home, auth)
+    def adoptar(auth_actual, tokens_actuales):
+        nonlocal auth, tokens, token, account_id, c_id, c_acc, exp
+        auth = auth_actual
+        tokens = tokens_actuales
         token = tokens['access_token']
         c_id = claims(tokens.get('id_token'))
         c_acc = claims(token)
         exp = c_acc.get('exp')
         account_id = tokens.get('account_id') or (c_acc.get('https://api.openai.com/auth') or {}).get('chatgpt_account_id') or account_id
         out['identidad'] = c_id.get('email') or out['identidad']
-        out['extra']['last_refresh'] = auth['last_refresh']
+        out['extra']['last_refresh'] = auth.get('last_refresh')
         out['extra']['token_expira_at'] = iso(exp)
-        refrescado = True
+
+    def aplicar_refresco():
+        nonlocal refresco_intentado
+        # The read-decide-refresh-write cycle runs under the directory lock and
+        # re-reads the credential inside it: if another process already
+        # refreshed, its token is adopted and the refresh token is not spent again.
+        with candado_directorio(codex_home):
+            with open(ruta) as f:
+                auth_actual = json.load(f)
+            tokens_actuales = auth_actual.get('tokens') or {}
+            acceso = tokens_actuales.get('access_token')
+            if acceso and acceso != token:
+                exp_actual = claims(acceso).get('exp')
+                if isinstance(exp_actual, (int, float)) and exp_actual > time.time():
+                    adoptar(auth_actual, tokens_actuales)
+                    return
+            refresco_intentado = True
+            respuesta = pedir_refresco(tokens_actuales.get('refresh_token') or tokens['refresh_token'],
+                                       claims(acceso).get('client_id') or c_acc.get('client_id'))
+            if not respuesta.get('access_token'):
+                raise ValueError('refresh sin access_token')
+            for campo in ('id_token', 'access_token', 'refresh_token'):
+                if respuesta.get(campo):
+                    tokens_actuales[campo] = respuesta[campo]
+            auth_actual['tokens'] = tokens_actuales
+            auth_actual['last_refresh'] = datetime.now(UTC).strftime('%Y-%m-%dT%H:%M:%S.%fZ')
+            guardar_auth(codex_home, auth_actual)
+            adoptar(auth_actual, tokens_actuales)
 
     def fallo_refresco(causa):
         if isinstance(causa, urllib.error.HTTPError):
             if causa.code == 429:
                 return 'rate_limited'
-            return 'provider_error' if causa.code >= 500 else 'token_expired'
-        if isinstance(causa, (urllib.error.URLError, TimeoutError, OSError)):
+            if causa.code >= 500 or causa.code == 403:
+                return 'provider_error'
+            return 'token_expired'
+        if isinstance(causa, (urllib.error.URLError, TimeoutError)):
             return 'network'
         return 'provider_error'
 
@@ -358,7 +403,7 @@ def sonda(codex_home, refresh=False):
                 cuerpo = e.read().decode("utf-8", "replace")[:300]
             except Exception:
                 pass
-            if e.code == 401 and refresh and not refrescado and tokens.get('refresh_token'):
+            if e.code == 401 and refresh and not refresco_intentado and tokens.get('refresh_token'):
                 try:
                     aplicar_refresco()
                     indice -= 1
@@ -369,15 +414,24 @@ def sonda(codex_home, refresh=False):
                     out['extra']['estado'] = 'token_invalidado'
                     out['extra']['http_status'] = 401
                     return out
-            if e.code in (401, 403):
+            if e.code == 401:
                 # Credencial rechazada: reintentar en el otro endpoint no arregla un
                 # token muerto, solo suma ruido y otro 401 a la cuenta. Se corta aqui.
                 motivo = "revocado/invalidado" if ("invalidated" in cuerpo or "token_revoked" in cuerpo) \
                     else "rechazado"
-                out["error"] = (f"token {motivo} por el servidor (HTTP {e.code}). Reautenticar ese CODEX_HOME "
-                                f"a mano; la sonda no refresca.")
-                out["error_code"] = 'token_expired' if e.code == 401 else 'forbidden_credential_type'
+                out["error"] = (f"token {motivo} por el servidor (HTTP {e.code}). "
+                                f"Reautenticar ese CODEX_HOME a mano.")
+                out["error_code"] = 'token_expired'
                 out["extra"]["estado"] = "token_invalidado"
+                out["extra"]["http_status"] = e.code
+                out["extra"]["respuesta_servidor"] = cuerpo
+                return out
+            if e.code == 403:
+                # A 403 from this backend is usually an intermediary (Cloudflare)
+                # block, not evidence about the credential type.
+                out["error"] = "HTTP 403: el proveedor o un intermediario rechazaron la consulta"
+                out["error_code"] = 'provider_error'
+                out["extra"]["estado"] = "fallo_de_red"
                 out["extra"]["http_status"] = e.code
                 out["extra"]["respuesta_servidor"] = cuerpo
                 return out
@@ -462,8 +516,10 @@ def sonda(codex_home, refresh=False):
 
 
 def main():
-    refresh = '--refresh-own-session' in sys.argv[1:]
-    homes = [argumento for argumento in sys.argv[1:] if argumento != '--refresh-own-session'] or HOMES_POR_DEFECTO
+    explicitas = [argumento for argumento in sys.argv[1:] if argumento != '--refresh-own-session']
+    # Without explicit paths the defaults are fleet CODEX_HOME: never refresh those.
+    refresh = '--refresh-own-session' in sys.argv[1:] and bool(explicitas)
+    homes = explicitas or HOMES_POR_DEFECTO
     res = []
     for h in homes:
         try:

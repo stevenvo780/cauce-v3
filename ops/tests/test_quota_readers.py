@@ -1,11 +1,16 @@
 import base64
+import contextlib
+import fcntl
 import importlib.util
+import io
 import json
 import os
 import pathlib
 import stat
 import subprocess
+import sys
 import tempfile
+import threading
 import time
 import unittest
 import urllib.error
@@ -390,7 +395,8 @@ class QuotaReadersTest(unittest.TestCase):
             self.assertEqual(denied['error_code'], 'token_expired')
             self.assertIn('vencido', denied['error'])
             with patch.object(probe, 'pedir', return_value=usage) as request, patch.object(
-                    probe, 'pedir_refresco', return_value={'access_token': renewed, 'refresh_token': 'fixture-refresh-new'}) as refresh:
+                    probe, 'pedir_refresco', return_value={'access_token': renewed, 'refresh_token': 'fixture-refresh-new'}) as refresh, \
+                    patch.object(probe, 'refresco_permitido', return_value=True):
                 report = probe.sonda(directory, refresh=True)
             refresh.assert_called_once_with('fixture-refresh-old', 'fixture-client')
             self.assertEqual(request.call_args.args[1], renewed)
@@ -402,12 +408,125 @@ class QuotaReadersTest(unittest.TestCase):
         for secret in (expired, renewed, 'fixture-refresh-old', 'fixture-refresh-new'):
             self.assertNotIn(secret, json.dumps(report))
 
+    def test_codex_refresh_guard_only_allows_the_node_home_codex(self):
+        self.assertTrue(probe.refresco_permitido('/home/node/.codex', '/home/node'))
+        self.assertFalse(probe.refresco_permitido('/datos/agents/shared/.codex', '/home/node'))
+        self.assertFalse(probe.refresco_permitido('/home/stev/.codex', '/home/stev'))
+        self.assertFalse(probe.refresco_permitido('/home/node/.codex-200', '/home/node'))
+        with tempfile.TemporaryDirectory() as directory:
+            self.codex_home(directory, -3600)
+            with patch.object(probe, 'pedir') as request, patch.object(probe, 'pedir_refresco') as refresh:
+                denied = probe.sonda(directory, refresh=True)
+            request.assert_not_called()
+            refresh.assert_not_called()
+            self.assertEqual(denied['error_code'], 'token_expired')
+
+    def test_codex_cli_without_explicit_paths_never_refreshes_fleet_defaults(self):
+        with tempfile.TemporaryDirectory() as directory:
+            self.codex_home(directory, -3600)
+            with patch.object(probe, 'HOMES_POR_DEFECTO', [directory]), patch.object(probe, 'pedir_refresco') as refresh, \
+                    patch.object(probe, 'refresco_permitido', return_value=True), \
+                    patch.object(sys, 'argv', ['codex-http-probe.py', '--refresh-own-session']), \
+                    contextlib.redirect_stdout(io.StringIO()) as output:
+                self.assertEqual(probe.main(), 1)
+            refresh.assert_not_called()
+            self.assertEqual(json.loads(output.getvalue())['error_code'], 'token_expired')
+
+    def test_codex_refresh_adopts_a_token_refreshed_by_another_process(self):
+        usage = {'rate_limit': {'primary_window': {'used_percent': 5, 'limit_window_seconds': 604800}}}
+        other = self.jwt({'exp': int(time.time()) + 9 * 86400, 'client_id': 'fixture-client'})
+        with tempfile.TemporaryDirectory() as directory:
+            auth, _ = self.codex_home(directory, -3600)
+            real_lock = probe.candado_directorio
+
+            @contextlib.contextmanager
+            def other_process_first(home):
+                saved = json.loads(auth.read_text())
+                saved['tokens']['access_token'] = other
+                auth.write_text(json.dumps(saved))
+                with real_lock(home):
+                    yield
+
+            with patch.object(probe, 'candado_directorio', other_process_first), \
+                    patch.object(probe, 'pedir', return_value=usage) as request, \
+                    patch.object(probe, 'pedir_refresco') as refresh, \
+                    patch.object(probe, 'refresco_permitido', return_value=True):
+                report = probe.sonda(directory, refresh=True)
+            refresh.assert_not_called()
+            self.assertEqual(request.call_args.args[1], other)
+        self.assertIsNone(report['error'])
+
+    def test_codex_refresh_waits_for_the_directory_lock(self):
+        usage = {'rate_limit': {'primary_window': {'used_percent': 5, 'limit_window_seconds': 604800}}}
+        renewed = self.jwt({'exp': int(time.time()) + 9 * 86400, 'client_id': 'fixture-client'})
+        with tempfile.TemporaryDirectory() as directory:
+            self.codex_home(directory, -3600)
+            lock_fd = os.open(directory, os.O_RDONLY)
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+            called = threading.Event()
+
+            def fake_refresh(refresh_token, client_id):
+                called.set()
+                return {'access_token': renewed, 'refresh_token': 'fixture-refresh-new'}
+
+            result = {}
+            try:
+                with patch.object(probe, 'pedir', return_value=usage), patch.object(probe, 'pedir_refresco', fake_refresh), \
+                        patch.object(probe, 'refresco_permitido', return_value=True):
+                    worker = threading.Thread(target=lambda: result.update(report=probe.sonda(directory, refresh=True)))
+                    worker.start()
+                    self.assertFalse(called.wait(0.3))
+                    fcntl.flock(lock_fd, fcntl.LOCK_UN)
+                    worker.join(5)
+            finally:
+                os.close(lock_fd)
+            self.assertFalse(worker.is_alive())
+            self.assertTrue(called.is_set())
+        self.assertIsNone(result['report']['error'])
+
+    def test_codex_save_oserror_is_provider_error_and_leaves_no_temp(self):
+        with tempfile.TemporaryDirectory() as directory:
+            auth, _ = self.codex_home(directory, -3600)
+            before = auth.read_bytes()
+            renewed = self.jwt({'exp': int(time.time()) + 9 * 86400, 'client_id': 'fixture-client'})
+            with patch.object(probe, 'pedir'), patch.object(
+                    probe, 'pedir_refresco', return_value={'access_token': renewed}), \
+                    patch.object(probe, 'refresco_permitido', return_value=True), \
+                    patch('os.replace', side_effect=OSError('disk full')):
+                report = probe.sonda(directory, refresh=True)
+            self.assertEqual(auth.read_bytes(), before)
+            self.assertEqual(list(pathlib.Path(directory).glob('.auth-*')), [])
+        self.assertEqual(report['error_code'], 'provider_error')
+
+    def test_codex_403_is_provider_error_not_credential_type(self):
+        with tempfile.TemporaryDirectory() as directory:
+            self.codex_home(directory, 9 * 86400)
+            with patch.object(probe, 'pedir', side_effect=urllib.error.HTTPError(
+                    'https://fixture.invalid', 403, 'forbidden', {}, io.BytesIO(b'cf-block'))):
+                report = probe.sonda(directory)
+        self.assertEqual(report['error_code'], 'provider_error')
+        self.assertEqual(report['extra']['http_status'], 403)
+        self.assertNotIn('no refresca', report['error'])
+
+    def test_codex_refresh_token_is_spent_at_most_once_per_probe(self):
+        with tempfile.TemporaryDirectory() as directory:
+            self.codex_home(directory, 86400)
+            with patch.object(probe, 'pedir', side_effect=urllib.error.HTTPError(
+                    'https://fixture.invalid', 401, 'unauthorized', {}, io.BytesIO(b''))), \
+                    patch.object(probe, 'pedir_refresco', side_effect=urllib.error.HTTPError(
+                        'https://fixture.invalid', 500, 'error', {}, None)) as refresh, \
+                    patch.object(probe, 'refresco_permitido', return_value=True):
+                report = probe.sonda(directory, refresh=True)
+            refresh.assert_called_once()
+        self.assertEqual(report['error_code'], 'token_expired')
+
     def test_codex_valid_token_never_refreshes_even_with_flag(self):
         usage = {'rate_limit': {'primary_window': {'used_percent': 5, 'limit_window_seconds': 604800}}}
         with tempfile.TemporaryDirectory() as directory:
             auth, _ = self.codex_home(directory, 9 * 86400)
             before = auth.read_bytes()
-            with patch.object(probe, 'pedir', return_value=usage), patch.object(probe, 'pedir_refresco') as refresh:
+            with patch.object(probe, 'pedir', return_value=usage), patch.object(probe, 'pedir_refresco') as refresh, \
+                    patch.object(probe, 'refresco_permitido', return_value=True):
                 report = probe.sonda(directory, refresh=True)
             refresh.assert_not_called()
             self.assertEqual(auth.read_bytes(), before)
