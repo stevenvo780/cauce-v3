@@ -27,6 +27,17 @@
         "por_fichero": 32768
       }
     },
+    "grok": {
+      "raiz": {
+        "hecho": "grok_workspace"
+      },
+      "documentos": [
+        "AGENTS.md"
+      ],
+      "presupuesto": {
+        "unidad": "utf16_strictest"
+      }
+    },
     "hermes": {
       "raiz": {
         "hecho": "home"

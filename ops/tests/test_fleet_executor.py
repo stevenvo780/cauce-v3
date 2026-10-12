@@ -63,7 +63,11 @@ class PhysicalExecutorTest(unittest.TestCase):
 
     def tearDown(self):
         if CLI.exists():
-            self.run_step('stop', timeout=20)
+            require_verified_stop = getattr(self, 'require_verified_stop', False)
+            stopped = self.run_step('stop', timeout=65 if require_verified_stop else 20)
+            if require_verified_stop:
+                self.assertEqual(stopped.returncode, 0, stopped.stderr)
+                self.assertIs(json.loads(stopped.stdout)['evidence']['stopped_verified'], True)
         self.temporary.cleanup()
 
     def run_step(self, step, context=None, timeout=20):
@@ -215,6 +219,7 @@ class PhysicalExecutorTest(unittest.TestCase):
         self.assertEqual(json.loads(metadata.read_bytes())['pid'], pid)
         self.assertEqual(json.loads(replay.stdout)['evidence'], json.loads(admitted.stdout)['evidence'])
         self.assertFalse(self.context['snapshot']['agents'][0]['enabled'])
+        self.require_verified_stop = True
 
 
 if __name__ == '__main__':

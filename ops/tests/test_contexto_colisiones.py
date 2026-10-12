@@ -339,15 +339,15 @@ class GuardiaDeColisiones(unittest.TestCase):
 
         contextos, hallazgos = guardia.contextos_de_la_flota(inventario, contrato, HARNESS_RULES)
 
-        sin_contrato = sorted(  # Known gap pinned: grok has no row in the protocol contract yet.
+        sin_contrato = sorted(
             a for a, f in inventario["fleet"].items()
             if f.get("enabled") is True and f.get("harness") not in (contrato.get("arneses") or {})
         )
-        self.assertEqual(sin_contrato, [a for a in ["hades"] if a in inventario["fleet"]])
+        self.assertEqual(sin_contrato, [])
         brechas_conocidas = [
             {
                 "severidad": "alerta", "regla": "alias_no_proyectable", "alias": ["hades"], "ruta": "-",
-                "detalle": "el arnés 'grok' no está en el contrato de gobierno",
+                "detalle": "el hecho 'grok_workspace' no tiene raíz derivable en el inventario",
             },
             {
                 "severidad": "alerta", "regla": "alias_no_proyectable", "alias": ["hegel"], "ruta": "-",
