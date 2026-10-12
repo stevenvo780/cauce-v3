@@ -126,7 +126,8 @@ class QuotaRuntimeTest(unittest.TestCase):
         self.assertIn('fake2', runtime.allowed_providers(self.policy))
 
     def test_capadd_accepts_prefixed_and_unprefixed_docker_formats(self):
-        mount = lambda destination, **extra: {'Destination': destination, **extra}
+        def mount(destination, **extra):
+            return {'Destination': destination, **extra}
         for cap_add in (list(runtime.CAPABILITIES), ['CAP_' + name for name in runtime.CAPABILITIES]):
             observed = {**copy.deepcopy(self.observed),
                 'Config': {'User': '1000:1000', 'Labels': {
