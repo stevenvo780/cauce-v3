@@ -23,12 +23,12 @@ export function SpaceBackupPanel({ tenantId, alias }: { tenantId: string; alias:
 function BackupPanel({ target, allowed }: { target: SpaceBackupTarget; allowed: boolean }) {
   const api = useApi();
   const [backup, setBackup] = useState<SpaceBackup>();
-  const [busy, setBusy] = useState<'creating' | 'reading' | 'downloading'>();
+  const [busy, setBusy] = useState<'creating' | 'reading'>();
   const [error, setError] = useState(''); const [notice, setNotice] = useState('');
   const [invalidated, setInvalidated] = useState(false);
   const permitted = useRef(allowed && !invalidated); permitted.current = allowed && !invalidated;
   const active = useRef(true); const generation = useRef(0); const requests = useRef(new Set<AbortController>());
-  const idempotency = useRef(randomUuid()); const url = useRef<string | undefined>(undefined); const locked = useRef(false);
+  const idempotency = useRef(randomUuid()); const locked = useRef(false);
   const enabled = allowed && !invalidated;
   const requestIsCurrent = useCallback((request: AbortController, started: number) => active.current && permitted.current
     && started === generation.current && !request.signal.aborted, []);
@@ -36,7 +36,6 @@ function BackupPanel({ target, allowed }: { target: SpaceBackupTarget; allowed: 
     active.current = true;
     const clear = () => {
       generation.current += 1; for (const request of requests.current) request.abort(); requests.current.clear();
-      if (url.current) URL.revokeObjectURL(url.current); url.current = undefined;
     };
     const changed = api.onAuthGenerationChange(() => {
       permitted.current = false;
@@ -50,31 +49,32 @@ function BackupPanel({ target, allowed }: { target: SpaceBackupTarget; allowed: 
     });
     return () => { active.current = false; changed(); session(); clear(); };
   }, [api, target.company_id, target.tenant_id]);
-  const perform = useCallback(async (kind: 'creating' | 'reading' | 'downloading', action: (signal: AbortSignal) => Promise<SpaceBackup | Blob>, background = false) => {
+  const perform = useCallback(async (kind: 'creating' | 'reading', action: (signal: AbortSignal) => Promise<SpaceBackup>, background = false) => {
     if (!enabled || !permitted.current || locked.current && !background) return;
     const request = new AbortController(); const started = generation.current; requests.current.add(request);
     if (!background) { locked.current = true; setBusy(kind); setError(''); setNotice(''); }
     try {
       const value = await action(AbortSignal.any([request.signal, AbortSignal.timeout(30_000)]));
       if (!requestIsCurrent(request, started)) return;
-      if (kind === 'downloading') {
-        const link = document.createElement('a'); url.current = URL.createObjectURL(value as Blob);
-        link.href = url.current; link.download = `space-${target.alias.replace(/[^A-Za-z0-9_-]/gu, '_').slice(0, 64)}-${backup?.id ?? ''}.zip`;
-        link.hidden = true; document.body.append(link); link.click(); link.remove();
-        const downloaded = url.current;
-        window.setTimeout(() => { URL.revokeObjectURL(downloaded); if (url.current === downloaded) url.current = undefined; }, 0);
-        setNotice('Descarga preparada. Revisa los archivos de tu navegador.');
-      } else setBackup(value as SpaceBackup);
+      setBackup(value);
     } catch (cause) {
       if (!active.current || started !== generation.current || request.signal.aborted) return;
       if (cause instanceof ApiError && [401, 403].includes(cause.status)) { permitted.current = false; setBackup(undefined); setInvalidated(true); }
-      setError(kind === 'downloading' ? 'No se pudo verificar y descargar el backup. Relee su estado y permisos antes de reintentar.'
-        : 'No se pudo leer o preparar el backup. Actualiza su estado y comprueba tus permisos.');
+      setError('No se pudo leer o preparar el backup. Actualiza su estado y comprueba tus permisos.');
     } finally {
       requests.current.delete(request);
       if (active.current && started === generation.current && !background) { locked.current = false; setBusy(undefined); }
     }
-  }, [enabled, target.alias, backup?.id, requestIsCurrent]);
+  }, [enabled, requestIsCurrent]);
+  const download = (ready: SpaceBackup) => {
+    if (!enabled) return;
+    try {
+      const link = document.createElement('a'); link.href = api.spaceBackupDownloadUrl(ready);
+      link.download = `space-${target.alias.replace(/[^A-Za-z0-9_-]/gu, '_').slice(0, 64)}-${ready.id}.zip`;
+      link.hidden = true; document.body.append(link); link.click(); link.remove();
+      setError(''); setNotice('Descarga iniciada en tu navegador. Compara el SHA-256 del archivo con el de este recibo.');
+    } catch { setError('No se pudo preparar la descarga. Relee el estado del backup antes de reintentar.'); }
+  };
   const refresh = () => { if (backup) void perform('reading', signal => api.getSpaceBackup(target, backup.id, signal)); };
   useEffect(() => {
     if (!enabled || !backup || !['pending', 'running'].includes(backup.status) || busy) return;
@@ -89,7 +89,8 @@ function BackupPanel({ target, allowed }: { target: SpaceBackupTarget; allowed: 
     {notice ? <Notice tone="ok" role="status">{notice}</Notice> : null}
     {backup ? <div className="grid gap-1"><p className="m-0 text-sm" role="status">{STATUS[backup.status]}</p>
       {backup.error ? <Notice tone="danger" role="alert">{ERRORS[backup.error]}</Notice> : null}
-      {backup.status === 'ready' ? <p className="m-0 text-xs text-muted">{((backup.bytes ?? 0) / 1024 / 1024).toFixed(2)} MiB · ZIP con integridad verificada al descargar.</p> : null}</div> : null}
+      {backup.status === 'ready' ? <p className="m-0 text-xs text-muted">{((backup.bytes ?? 0) / 1024 / 1024).toFixed(2)} MiB · ZIP descargado por el navegador sin cargarlo en memoria.</p> : null}
+      {backup.status === 'ready' && backup.sha256 ? <p className="m-0 break-all text-xs text-muted">SHA-256: <code>{backup.sha256}</code></p> : null}</div> : null}
     <div className="flex flex-wrap gap-2">
       <Button disabled={!enabled || !!busy || backup?.status === 'pending' || backup?.status === 'running'} onClick={() => {
         if (backup) idempotency.current = randomUuid(); setBackup(undefined);
@@ -97,8 +98,8 @@ function BackupPanel({ target, allowed }: { target: SpaceBackupTarget; allowed: 
       }}>{busy === 'creating' ? 'Solicitando backup…' : backup ? 'Crear otro backup' : 'Crear backup del espacio'}</Button>
       {backup ? <Button disabled={!enabled || !!busy} onClick={refresh}>{busy === 'reading' ? 'Actualizando…' : 'Actualizar estado del backup'}</Button> : null}
       {backup?.status === 'ready' ? <Button variant="primary" disabled={!enabled || !!busy} onClick={() => {
-        void perform('downloading', signal => api.downloadSpaceBackup(backup, signal));
-      }}>{busy === 'downloading' ? 'Verificando descarga…' : 'Descargar backup ZIP'}</Button> : null}
+        download(backup);
+      }}>Descargar backup ZIP</Button> : null}
     </div>
   </section>;
 }

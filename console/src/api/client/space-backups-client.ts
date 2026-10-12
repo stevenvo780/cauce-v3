@@ -1,6 +1,6 @@
 import type { RequestFn } from './system-client';
 
-export const MAX_SPACE_BACKUP_BYTES = 32 * 1024 * 1024;
+export const MAX_SPACE_BACKUP_BYTES = 1024 * 1024 * 1024;
 export interface SpaceBackupTarget { company_id: string; tenant_id: string; alias: string }
 export interface SpaceBackup extends SpaceBackupTarget {
   id: string; status: 'pending' | 'running' | 'ready' | 'failed'; sha256: string | null; manifest_sha256: string | null;
@@ -9,7 +9,7 @@ export interface SpaceBackup extends SpaceBackupTarget {
 export interface SpaceBackupsClient {
   createSpaceBackup(target: SpaceBackupTarget, idempotencyKey: string, signal?: AbortSignal): Promise<SpaceBackup>;
   getSpaceBackup(target: SpaceBackupTarget, id: string, signal?: AbortSignal): Promise<SpaceBackup>;
-  downloadSpaceBackup(backup: SpaceBackup, signal?: AbortSignal): Promise<Blob>;
+  spaceBackupDownloadUrl(backup: SpaceBackup): string;
 }
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 const HASH = /^[a-f0-9]{64}$/u;
@@ -41,23 +41,16 @@ export function spaceBackupReceipt(value: unknown, target: SpaceBackupTarget, ex
   }
   return row as unknown as SpaceBackup;
 }
-export function spaceBackupsClient(request: RequestFn, generation: () => number): SpaceBackupsClient {
+export function spaceBackupsClient(request: RequestFn, baseUrl: string): SpaceBackupsClient {
   return {
     createSpaceBackup: async (target, idempotencyKey, signal) => {
       if (!/^[A-Za-z0-9_-]{8,128}$/u.test(idempotencyKey)) invalid();
       return spaceBackupReceipt(await request(path(target), { method: 'POST', body: JSON.stringify({ idempotency_key: idempotencyKey }), signal }), target);
     },
     getSpaceBackup: async (target, id, signal) => spaceBackupReceipt(await request(`${path(target)}/${backupId(id)}`, { cache: 'no-store', signal }), target, id),
-    downloadSpaceBackup: async (backup, signal) => {
-      const started = generation();
+    spaceBackupDownloadUrl: backup => {
       const receipt = spaceBackupReceipt(backup, backup, backup.id); if (receipt.status !== 'ready') invalid();
-      const blob = await request<Blob>(`${path(receipt)}/${backupId(receipt.id)}/download`, { cache: 'no-store', redirect: 'error', signal, headers: { Accept: 'application/zip' } },
-        { responseMode: 'blob', maxResponseBytes: MAX_SPACE_BACKUP_BYTES });
-      if (signal?.aborted || blob.type !== 'application/zip' || blob.size !== receipt.bytes) invalid();
-      const digest = await crypto.subtle.digest('SHA-256', await blob.arrayBuffer());
-      const hash = [...new Uint8Array(digest)].map(value => value.toString(16).padStart(2, '0')).join('');
-      if (signal?.aborted || hash !== receipt.sha256 || generation() !== started) invalid();
-      return blob;
+      return `${baseUrl}${path(receipt)}/${backupId(receipt.id)}/download`;
     },
   };
 }

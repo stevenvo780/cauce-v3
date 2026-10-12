@@ -13,7 +13,11 @@ import zipfile
 ROOTS = frozenset({'context', 'directives', 'projects', 'config', 'data'})
 IDENTITY_FIELDS = frozenset({'company_id', 'tenant_id', 'alias', 'runtime_key'})
 IDENTIFIER = re.compile(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\Z')
-SENSITIVE_NAME = re.compile(r'(?:^|[_.-])(?:auth|credentials?|secrets?|tokens?|sessions?|profiles?|passwords?|cookies?)(?:$|[_.-])', re.I)
+CREDENTIAL_FILE = re.compile(r'(?:auth\.json|credentials[^/]*\.json|cookies?(?:\.[^/]*)?|\.env(?:\..*)?|.*\.(?:pem|key|p12|pfx|keystore))\Z', re.I)
+CREDENTIAL_DIRECTORIES = frozenset({'.codex', '.claude', '.config', '.ssh', '.gnupg'})
+# .git config embeds remote URLs and hooks, and object stores break the entry cap or the hardlink check; the remote is the source of truth.
+VCS_DIRECTORY = '.git'
+OMISSION_REASONS = frozenset({'sensitive_path', 'sensitive_content', 'vcs_metadata'})
 SENSITIVE_CONTENT = re.compile(rb'-----BEGIN (?:[A-Z ]+ )?PRIVATE KEY-----|\bsk-[A-Za-z0-9_-]{20,}|["\x27]?(?:access_token|refresh_token|client_secret|api_key|password)["\x27]?\s*[:=]\s*["\x27]?[^\s"\x27]{6,}', re.I)
 MAX_FILE = 128 * 1024 * 1024
 MAX_TOTAL = 1024 * 1024 * 1024
@@ -44,12 +48,15 @@ def relative_path(value: str) -> str:
     return value
 
 
+def omission_reason(value: str) -> str | None:
+    parts = pathlib.PurePosixPath(value).parts
+    if any(part.lower() in CREDENTIAL_DIRECTORIES or CREDENTIAL_FILE.match(part) for part in parts):
+        return 'sensitive_path'
+    return 'vcs_metadata' if VCS_DIRECTORY in (part.lower() for part in parts) else None
+
+
 def excluded(value: str) -> bool:
-    if value == 'context/profile.json':
-        return False
-    return any(SENSITIVE_NAME.search(part) or part.lower() in {'.git', '.codex', '.claude', '.config', '.ssh', '.gnupg', '.env'} \
-               or part.lower().startswith('.env.') or part.lower().endswith(('.pem', '.key', '.p12', '.pfx', '.keystore'))
-               for part in pathlib.PurePosixPath(value).parts)
+    return omission_reason(value) is not None
 
 
 def open_directory(location: str, private: bool = True) -> int:
@@ -155,8 +162,9 @@ def backup_space(source: str, archive: str, expected_identity: dict) -> dict:
                     path = relative_path(prefix + '/' + name)
                     if len(directories) + len(files) + len(omissions) >= MAX_ENTRIES:
                         raise SpaceArchiveFailure('space contains too many archive entries')
-                    if excluded(path):
-                        omissions.append({'path': path, 'reason': 'sensitive_path'})
+                    reason = omission_reason(path)
+                    if reason:
+                        omissions.append({'path': path, 'reason': reason})
                         continue
                     details = os.stat(name, dir_fd=descriptor, follow_symlinks=False)
                     if stat.S_ISDIR(details.st_mode):
@@ -250,7 +258,7 @@ def validated_archive(zipped: zipfile.ZipFile, expected: dict) -> tuple[dict, by
     if len(manifest['omissions']) + len(entries) > MAX_ENTRIES + 1:
         raise SpaceArchiveFailure('space archive has too many omissions')
     for item in manifest['omissions']:
-        if not isinstance(item, dict) or set(item) != {'path', 'reason'} or item['reason'] not in {'sensitive_path', 'sensitive_content'}:
+        if not isinstance(item, dict) or set(item) != {'path', 'reason'} or item['reason'] not in OMISSION_REASONS:
             raise SpaceArchiveFailure('space omission receipt is invalid')
         relative_path(item['path'])
     size = 0

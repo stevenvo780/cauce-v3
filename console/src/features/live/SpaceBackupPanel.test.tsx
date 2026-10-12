@@ -1,7 +1,6 @@
 import { act, fireEvent, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { SpaceBackup } from '../../api/client/space-backups-client';
-import { ApiError } from '../../api/client/core';
 import type { ConsoleAuthState } from '../../api/types';
 import { ApiProvider } from '../../api/context';
 import { renderWithApi, testApi } from '../../test/render';
@@ -15,23 +14,21 @@ const pending: SpaceBackup = { id: '00000000-0000-4000-8000-000000000050', compa
   status: 'pending', sha256: null, manifest_sha256: null, bytes: null, error: null, download_url: null };
 const ready: SpaceBackup = { ...pending, status: 'ready', sha256: 'a'.repeat(64), manifest_sha256: 'b'.repeat(64), bytes: 22,
   download_url: `/v3/console/spaces/One/agent/backups/${pending.id}/download` };
-const createUrl = vi.fn(() => 'blob:backup'); const revokeUrl = vi.fn();
+let clicked: string[] = [];
 function panel(session: ConsoleAuthState = state) { return <CompanySessionProvider state={session}><SpaceBackupPanel tenantId="One" alias="agent" /></CompanySessionProvider>; }
 beforeEach(() => {
-  Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: createUrl });
-  Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: revokeUrl });
-  vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined);
+  clicked = [];
+  vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) { clicked.push(this.href); });
 });
 afterEach(() => { vi.useRealTimers(); });
 it('muestra pending y permite descargar únicamente ready después de releer el estado', async () => {
   vi.spyOn(testApi, 'createSpaceBackup').mockResolvedValue(pending); vi.spyOn(testApi, 'getSpaceBackup').mockResolvedValue(ready);
-  const blob = new Blob(['zip'], { type: 'application/zip' }); const download = vi.spyOn(testApi, 'downloadSpaceBackup').mockResolvedValue(blob);
   renderWithApi(panel()); fireEvent.click(screen.getByRole('button', { name: 'Crear backup del espacio' }));
   expect(await screen.findByText('Backup pendiente')).toBeVisible(); expect(screen.queryByRole('button', { name: 'Descargar backup ZIP' })).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: 'Actualizar estado del backup' }));
   fireEvent.click(await screen.findByRole('button', { name: 'Descargar backup ZIP' }));
-  expect(await screen.findByText(/Descarga preparada/u)).toBeVisible(); expect(download).toHaveBeenCalledWith(ready, expect.any(AbortSignal));
-  expect(createUrl).toHaveBeenCalledWith(blob); await waitFor(() => { expect(revokeUrl).toHaveBeenCalledWith('blob:backup'); });
+  expect(await screen.findByText(/Descarga iniciada/u)).toBeVisible(); expect(screen.getByText(ready.sha256 ?? '')).toBeVisible();
+  expect(clicked).toHaveLength(1); expect(clicked[0]).toContain(`/backups/${pending.id}/download`);
 });
 it('conserva idempotency_key tras una respuesta incierta y genera otra sólo para un nuevo backup', async () => {
   const create = vi.spyOn(testApi, 'createSpaceBackup').mockRejectedValueOnce(new Error('PRIVATE_PATH')).mockResolvedValue(ready);
@@ -42,25 +39,19 @@ it('conserva idempotency_key tras una respuesta incierta y genera otra sólo par
   fireEvent.click(screen.getByRole('button', { name: 'Crear otro backup' })); await waitFor(() => { expect(create).toHaveBeenCalledTimes(3); });
   expect(create.mock.calls[2]?.[1]).not.toBe(create.mock.calls[1]?.[1]);
 });
-it('error failed no ofrece descarga y una denegación al descargar retira el receipt disponible', async () => {
+it('error failed no ofrece descarga hasta que una relectura devuelve ready', async () => {
   vi.spyOn(testApi, 'createSpaceBackup').mockResolvedValue({ ...pending, status: 'failed', error: 'EXPIRED' });
   const read = vi.spyOn(testApi, 'getSpaceBackup').mockResolvedValue(ready);
-  vi.spyOn(testApi, 'downloadSpaceBackup').mockRejectedValue(new ApiError('PRIVATE_PERMISSION', 403, 'forbidden'));
   renderWithApi(panel()); fireEvent.click(screen.getByRole('button', { name: 'Crear backup del espacio' }));
   expect(await screen.findByRole('alert')).toHaveTextContent('El backup venció'); expect(screen.queryByRole('button', { name: 'Descargar backup ZIP' })).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: 'Actualizar estado del backup' }));
-  fireEvent.click(await screen.findByRole('button', { name: 'Descargar backup ZIP' })); await waitFor(() => {
-    expect(screen.queryByRole('button', { name: 'Descargar backup ZIP' })).not.toBeInTheDocument();
-  }); expect(read).toHaveBeenCalledOnce(); expect(createUrl).not.toHaveBeenCalled(); expect(document.body.textContent).not.toContain('PRIVATE_PERMISSION');
+  expect(await screen.findByRole('button', { name: 'Descargar backup ZIP' })).toBeVisible(); expect(read).toHaveBeenCalledOnce(); expect(clicked).toHaveLength(0);
 });
-it('cambiar de empresa durante la descarga aborta el cuerpo y no crea URL local del archivo anterior', async () => {
-  vi.spyOn(testApi, 'createSpaceBackup').mockResolvedValue(ready); let release: ((blob: Blob) => void) | undefined; let signal: AbortSignal | undefined;
-  vi.spyOn(testApi, 'downloadSpaceBackup').mockImplementation(async (_backup, value) => { signal = value; return new Promise<Blob>(resolve => { release = resolve; }); });
-  const view = renderWithApi(panel()); fireEvent.click(screen.getByRole('button', { name: 'Crear backup del espacio' }));
-  fireEvent.click(await screen.findByRole('button', { name: 'Descargar backup ZIP' }));
-  view.rerender(<ApiProvider api={testApi}>{panel({ ...state, authority: { ...state.authority, acting_company: 'other' } })}</ApiProvider>);
-  expect(signal?.aborted).toBe(true); await act(async () => { release?.(new Blob(['private'], { type: 'application/zip' })); });
-  expect(createUrl).not.toHaveBeenCalled(); expect(screen.queryByText('Backup disponible')).not.toBeInTheDocument();
+it('un backup de 100 MiB se muestra y se descarga por enlace', async () => {
+  vi.spyOn(testApi, 'createSpaceBackup').mockResolvedValue({ ...ready, bytes: 100 * 1024 * 1024 });
+  renderWithApi(panel()); fireEvent.click(screen.getByRole('button', { name: 'Crear backup del espacio' }));
+  expect(await screen.findByText(/100\.00 MiB/u)).toBeVisible(); fireEvent.click(screen.getByRole('button', { name: 'Descargar backup ZIP' }));
+  expect(clicked).toHaveLength(1);
 });
 it('consulta la operación pendiente y detiene el sondeo al llegar a ready', async () => {
   vi.useFakeTimers(); vi.spyOn(testApi, 'createSpaceBackup').mockResolvedValue(pending); const read = vi.spyOn(testApi, 'getSpaceBackup').mockResolvedValue(ready);

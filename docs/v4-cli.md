@@ -117,8 +117,8 @@ Restore exige un destino nuevo o vacío, valida el ZIP completo antes de crearlo
 |---|---:|---:|
 | Entradas | 20 000 | 20 000 |
 | Archivo individual | 16 MiB | 16 MiB |
-| Contenido total | 256 MiB | 32 MiB |
-| ZIP | Validado por el helper | 32 MiB |
+| Contenido total | 256 MiB | 1 GiB |
+| ZIP | Validado por el helper | 1 GiB |
 | Manifiesto | 8 MiB | 8 MiB |
 
 No es una instantánea transaccional del runtime. El helper cerca lecturas mediante fingerprints y falla si cambia el archivo observado; antes de migrar se debe obtener una copia consistente y demostrar su recuperación. Los espacios de varios GiB exceden el límite durable actual y no están cubiertos por una descarga completa demostrada.

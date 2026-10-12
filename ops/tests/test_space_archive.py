@@ -85,17 +85,38 @@ class SpaceArchiveTests(unittest.TestCase):
     def test_sensitive_paths_are_never_opened_and_known_sensitive_content_is_omitted(self):
         (self.space / 'config/auth.json').symlink_to('/unreadable/secret')
         (self.space / 'projects/.codex').symlink_to('/unreadable/profile')
-        (self.space / 'data/sessions.sqlite').write_bytes(b'session fixture')
+        (self.space / 'projects/cookies.txt').write_text('jar')
+        (self.space / 'projects/server.pem').write_text('pem')
         (self.space / 'projects/.env').write_text('API_KEY=synthetic-sensitive-credential')
         (self.space / 'config/service.json').write_text('{"access_token":"synthetic-sensitive-credential"}')
         (self.space / 'logs/session.txt').write_text('not backed up')
         result = self.backup()
         self.assertEqual({item['path'] for item in result['omissions']},
-                         {'config/auth.json', 'projects/.codex', 'data/sessions.sqlite', 'projects/.env', 'config/service.json'})
+                         {'config/auth.json', 'projects/.codex', 'projects/cookies.txt', 'projects/server.pem', 'projects/.env', 'config/service.json'})
         restore_space(str(self.archive), str(self.restored), self.identity)
         self.assertFalse((self.restored / 'config/service.json').exists())
         with zipfile.ZipFile(self.archive) as archived:
             self.assertFalse(any(b'synthetic-sensitive-credential' in archived.read(item) for item in archived.infolist()))
+
+    def test_project_sources_named_auth_or_session_are_kept_and_git_omission_is_declared(self):
+        project = self.space / 'projects/app'
+        (project / 'src/auth').mkdir(parents=True, mode=0o700)
+        (project / 'src/auth/login.ts').write_text('export const login = () => 1;\n')
+        (project / 'session.py').write_text('SESSION_TTL = 3600\n')
+        (project / 'token_utils.py').write_text('def parse(): pass\n')
+        (project / '.env').write_text('A=1')
+        (project / 'auth.json').write_text('{}')
+        (project / 'credentials.prod.json').write_text('{}')
+        (project / '.git').mkdir(mode=0o700)
+        (project / '.git/config').write_text('[remote "origin"]\n')
+        result = self.backup()
+        self.assertEqual({item['path']: item['reason'] for item in result['omissions']},
+                         {'projects/app/.env': 'sensitive_path', 'projects/app/auth.json': 'sensitive_path',
+                          'projects/app/credentials.prod.json': 'sensitive_path', 'projects/app/.git': 'vcs_metadata'})
+        restore_space(str(self.archive), str(self.restored), self.identity)
+        for kept in ('src/auth/login.ts', 'session.py', 'token_utils.py'):
+            self.assertTrue((self.restored / 'projects/app' / kept).is_file())
+        self.assertFalse((self.restored / 'projects/app/.git').exists())
 
     def test_symlinks_and_hardlinks_outside_sensitive_paths_fail_without_leaving_an_archive(self):
         linked = self.space / 'projects/link'
