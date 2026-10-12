@@ -10,7 +10,7 @@ Origen del estado: auditoría del 12-oct-2026 sobre la rama `codex/v4-complete` 
 - `[ ]` pendiente. Prioridad: **P0** bloquea un criterio de aceptación; **P1** necesario para cerrar el requisito; **P2** deseable.
 - **[DUEÑO]** necesita una acción o decisión que solo el dueño puede dar (ver §3).
 - `✓` después de una tarea: cómo se comprueba que está hecha.
-- `R` = esta rama (`claude/v4-cierre`, checkout `/datos/workspaces/personal/cauce-v4-claude`). `S` = estado privado de la ejecución de GPT (`/home/stev/.local/state/cauce-v3/v4-complete-20261011`); se usa solo como fuente histórica, nunca como evidencia de cierre.
+- `R` = esta rama (`claude/v4-cierre`), checkout único de Cauce en `/datos/workspaces/personal/cauce-v3`. `S` = estado privado de la ejecución de GPT (`/home/stev/.local/state/cauce-v3/v4-complete-20261011`); se usa solo como fuente histórica, nunca como evidencia de cierre.
 
 ## 1. Punto de partida verificado
 
@@ -28,7 +28,7 @@ Origen del estado: auditoría del 12-oct-2026 sobre la rama `codex/v4-complete` 
 
 ## 2. Reglas de ejecución
 
-El goal que fija el dueño está en `GOAL.md` en la raíz del checkout principal (`/datos/workspaces/personal/cauce-v3`), con los tiers de uso por modelo y los cuatro carriles tmux de delegación (`.cauce-delegados/v4/`). Este documento es su anexo de detalle.
+El goal que fija el dueño está en `GOAL.md` en la raíz del checkout principal (`/datos/workspaces/personal/cauce-v3`), con los tiers de uso por modelo y los cuatro carriles tmux de delegación (TUIs interactivas, kit en `.delegados/v4/` dentro del checkout, excluido de git). Este documento es su anexo de detalle.
 
 
 Lecciones de la ejecución anterior convertidas en reglas:
