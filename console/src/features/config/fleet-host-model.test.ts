@@ -19,7 +19,7 @@ describe('estado de la computadora', () => {
   it('distingue el ejecutor aprobado del pendiente', () => {
     expect(ejecutorDeComputadora(base)).toBe('Aprobada para crear agentes');
     expect(ejecutorDeComputadora({ ...base, approved: false }))
-      .toBe('Pendiente: falta instalar y aprobar el ejecutor en esta computadora');
+      .toBe('Pendiente: el ejecutor no está listo; ejecuta cauce hosts setup en esta computadora');
   });
 });
 

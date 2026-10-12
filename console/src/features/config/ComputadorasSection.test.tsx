@@ -81,7 +81,7 @@ it('lista cada computadora con su estado, su fuente, su ejecutor y sus agentes',
   const dos = tarjeta('Equipo dos');
   expect(within(dos).getByText('Sin datos')).toBeInTheDocument();
   expect(within(dos).getByText('Estado: ningún controlador ni agente lo ha reportado')).toBeInTheDocument();
-  expect(within(dos).getByText('Pendiente: falta instalar y aprobar el ejecutor en esta computadora')).toBeInTheDocument();
+  expect(within(dos).getByText('Pendiente: el ejecutor no está listo; ejecuta cauce hosts setup en esta computadora')).toBeInTheDocument();
   expect(within(dos).getByText('Nunca')).toBeInTheDocument();
 
   const tres = tarjeta('Equipo tres');

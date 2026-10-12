@@ -42,7 +42,7 @@ export function resumenDeFlota(hosts: readonly FleetHost[]): ResumenDeFlota {
 export function ejecutorDeComputadora(host: FleetHost): string {
   return host.approved
     ? 'Aprobada para crear agentes'
-    : 'Pendiente: falta instalar y aprobar el ejecutor en esta computadora';
+    : 'Pendiente: el ejecutor no está listo; ejecuta cauce hosts setup en esta computadora';
 }
 
 export function sePuedeEliminar(host: FleetHost): boolean {

@@ -33,6 +33,8 @@ it('invita desde la consola, conserva el token sólo en memoria y cancela con re
   await user.click(screen.getByRole('button', { name: 'Crear invitación' }));
   const invitation = await screen.findByRole('textbox', { name: 'Invitación del ordenador' });
   expect((invitation as HTMLTextAreaElement).value).toContain(token);
+  expect(screen.getByLabelText('Comando de enrolamiento')).toHaveTextContent('cauce hosts enroll --gateway');
+  expect(screen.getByLabelText('Comando de preparación')).toHaveTextContent(/^cauce hosts setup$/u);
   expect(writes).toEqual([{ host_id: 'equipo-1', display_name: 'Portátil' }]);
   expect(screen.getByText(/Pendiente de uso/u)).toBeVisible();
   expect(storageWrite).not.toHaveBeenCalled();
@@ -58,7 +60,26 @@ it('un receipt incompleto no acredita una invitación y un lector no puede crear
     display_name: 'Portátil', state: 'enrolled', expires_at: '2099-10-11T00:10:00Z', enrolled_at: '2026-10-11T00:03:00Z' }] })));
   renderWithApi(<HostEnrollmentPanel canEnroll={false} />);
   const list = within(await screen.findByRole('list', { name: 'Invitaciones de ordenadores' }));
-  expect(await list.findByText(/Identidad confirmada; revisa el estado del ejecutor/u)).toBeVisible();
+  expect(await list.findByText(/Identidad confirmada; falta preparar el ejecutor con cauce hosts setup/u)).toBeVisible();
   expect(screen.getByRole('button', { name: 'Añadir ordenador' })).toBeDisabled();
   expect(screen.queryByRole('button', { name: /Cancelar invitación de/u })).not.toBeInTheDocument();
+});
+it('muestra el ejecutor listo de cada ordenador y la huella para anclar identidades antiguas', async () => {
+  const fingerprint = 'e'.repeat(64);
+  const row = { enrollment_id: id, company_id: 'one', host_id: 'one-laptop', display_name: 'Portátil', state: 'enrolled',
+    expires_at: '2099-10-11T00:10:00Z', enrolled_at: '2026-10-11T00:03:00Z' };
+  server.use(http.get(path, () => HttpResponse.json({ setup_signer_fingerprint: fingerprint, enrollments: [
+    { ...row, executor_ready: true }, { ...row, enrollment_id: '22222222-2222-4222-8222-222222222222', host_id: 'one-desk', display_name: 'Torre', executor_ready: false },
+  ] })));
+  renderWithApi(<HostEnrollmentPanel canEnroll />);
+  const list = within(await screen.findByRole('list', { name: 'Invitaciones de ordenadores' }));
+  expect(await list.findByText(/Portátil · one-laptop · Ejecutor listo: puede crear agentes/u)).toBeVisible();
+  expect(list.getByText(/Torre · one-desk · Identidad confirmada; falta preparar el ejecutor/u)).toBeVisible();
+  expect(screen.getByText(`cauce hosts setup --signer-fingerprint ${fingerprint}`)).toBeVisible();
+});
+it('no muestra una huella malformada como ancla', async () => {
+  server.use(http.get(path, () => HttpResponse.json({ setup_signer_fingerprint: 'not-a-fingerprint', enrollments: [] })));
+  renderWithApi(<HostEnrollmentPanel canEnroll />);
+  expect(await screen.findByText('Aún no hay invitaciones.')).toBeVisible();
+  expect(screen.queryByText(/--signer-fingerprint/u)).not.toBeInTheDocument();
 });
