@@ -1,10 +1,10 @@
-import { LogIn, ShieldAlert } from 'lucide-react';
+import { Building2, LogIn, ShieldAlert } from 'lucide-react';
 import { Fragment, useState, type SyntheticEvent, type ReactNode } from 'react';
 import { useApi } from '../../api/context';
 import { cn } from '../../cn';
 import { Logo } from '../../components/brand/Logo';
 import { Button, LinkButton, Notice, Spinner } from '../../components/kit';
-import { useAuthGate, type AuthGateState } from './auth-session';
+import { sessionAuthority, useAuthGate, type AuthGateState } from './auth-session';
 import { authSessionKey } from './account-identity';
 import { RegistrationForm } from './RegistrationForm';
 
@@ -165,6 +165,21 @@ function ErrorScreen({ error, onRetry }: { error: Error; onRetry: () => void }) 
   );
 }
 
+/** The server resolved no authority for this session: the company was withdrawn. Nothing else renders. */
+function CompanyRetiredScreen({ onLogout, busy }: { onLogout: () => Promise<void>; busy: boolean }) {
+  return (
+    <AuthScreen role="alert">
+      <span className="grid size-10 place-items-center rounded-full bg-warn-soft text-warn-ink" aria-hidden="true"><Building2 size={20} /></span>
+      <h1>Tu empresa fue retirada</h1>
+      <Lede>
+        Esta cuenta ya no tiene acceso a la consola porque su empresa fue retirada de la plataforma.
+        Solo un administrador de plataforma puede restaurarla; contáctalo para recuperar el acceso.
+      </Lede>
+      <Button variant="primary" className="min-h-10" disabled={busy} onClick={() => { void onLogout(); }}>Cerrar sesión</Button>
+    </AuthScreen>
+  );
+}
+
 /**
  * Permanent notice when the gateway has no user login. It is ugly on purpose: it must be
  * annoying until the identity provider is configured.
@@ -194,6 +209,9 @@ export function AuthGate({ children }: { children: (gate: AuthGateState) => Reac
     return gate.state?.login_mode === 'password'
       ? <PasswordLoginForm login={gate.login} busy={gate.busy} reason={gate.state.reason} />
       : <RedirectLoginScreen loginUrl={api.getLoginUrl()} reason={gate.state?.reason} />;
+  }
+  if (gate.state?.authenticated === true && sessionAuthority(gate.state)?.role === 'none') {
+    return <CompanyRetiredScreen onLogout={gate.logout} busy={gate.busy} />;
   }
   return <Fragment key={authSessionKey(gate.state)}>{children(gate)}</Fragment>;
 }
