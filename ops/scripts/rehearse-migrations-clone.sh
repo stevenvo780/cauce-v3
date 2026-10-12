@@ -83,18 +83,14 @@ core_counts() {
     (SELECT count(*) FROM tenants),(SELECT count(*) FROM rooms),(SELECT count(*) FROM agents),
     (SELECT count(*) FROM memberships),(SELECT count(*) FROM console_users))"
 }
-deregister() {
-  printf "DELETE FROM schema_migration_ledger WHERE version='%s';\nDELETE FROM schema_migrations WHERE version='%s';\n" "$1" "$1"
-}
-# Applies every down after the base, newest first, each in one transaction. A down that leaves its own
-# version registered is deregistered in that same transaction, as the operator would have to, so the
-# next down sees the schema that is really there; those downs are reported at the end.
+# Applies every down after the base, newest first, each in one transaction exactly as an operator would:
+# each down deregisters its own version and refuses while a later one is still applied.
 refused_version=; refused_output=
 roll_back() {
   local database=$1 version output
   refused_version=; refused_output=
   for version in "${DOWNS[@]}"; do
-    if ! output=$({ cat "$migrations/down/$version"; deregister "$version"; } | psql_on "$database" -1 2>&1 >/dev/null); then
+    if ! output=$(psql_on "$database" -1 <"$migrations/down/$version" 2>&1 >/dev/null); then
       refused_version=$version; refused_output=$output; return 1
     fi
   done
@@ -165,7 +161,7 @@ docker exec -i "$NAME-pg" pg_restore --list <"$DUMP" >/dev/null || die 'the dump
 docker exec -i "$NAME-pg" pg_restore -U cauce -d cauce --no-owner --no-acl --exit-on-error <"$DUMP"
 BASE=$(psql_on cauce -c 'SELECT max(version) FROM schema_migrations')
 [ -z "$BASE_VERSION" ] || [ "$BASE" = "$BASE_VERSION" ] || die "the dump is at schema $BASE, not $BASE_VERSION"
-PENDING=(); DOWNS=(); UNREGISTERED=()
+PENDING=(); DOWNS=()
 for file in "$migrations"/[0-9]*.sql; do
   version=$(basename "$file")
   [[ "$version" > "$BASE" ]] || continue
@@ -174,8 +170,7 @@ for file in "$migrations"/[0-9]*.sql; do
 done
 [ "${#PENDING[@]}" -gt 0 ] || die "the image bundles nothing after $BASE"
 for (( index=${#PENDING[@]}-1; index>=0; index-- )); do
-  version=${PENDING[index]}; DOWNS+=("$version")
-  grep -q "DELETE FROM schema_migrations WHERE version='$version'" "$migrations/down/$version" || UNREGISTERED+=("$version")
+  DOWNS+=("${PENDING[index]}")
 done
 printf 'dump schema %s; bundle %s..%s (%s migrations)\n' "$BASE" "${PENDING[0]}" "${PENDING[-1]}" "${#PENDING[@]}"
 
@@ -243,12 +238,8 @@ INSERT INTO rehearsal.tolerated VALUES
   ('role_policies','migrated',$r$value->>'role'='context_broker'$r$,'063 adds the route-only context broker role'),
   ('agents','migrated',$r$(value->>'tenant_id',value->>'alias') IN (SELECT tenant_id,alias FROM rehearsal.backfilled_directors)$r$,
     '063 creates a context director for each enabled company without one'),
-  ('agents','rolled-back',$r$(value->>'tenant_id',value->>'alias') IN (SELECT tenant_id,alias FROM rehearsal.backfilled_directors)$r$,
-    'down/063 leaves the backfilled director disabled'),
   ('memberships','migrated',$r$(value->>'tenant_id',value->>'alias') IN (SELECT tenant_id,alias FROM rehearsal.backfilled_directors)$r$,
-    '063 joins each backfilled director to a hub room as context broker'),
-  ('memberships','rolled-back',$r$(value->>'tenant_id',value->>'alias') IN (SELECT tenant_id,alias FROM rehearsal.backfilled_directors)$r$,
-    'down/063 leaves the backfilled director membership disabled');
+    '063 joins each backfilled director to a hub room as context broker');
 CREATE FUNCTION rehearsal.compare(p_stage text) RETURNS SETOF text LANGUAGE plpgsql AS $$
 DECLARE
   legacy record;
@@ -494,11 +485,6 @@ psql_on cauce_unseeded -c 'SELECT line FROM rehearsal.catalog() line ORDER BY 1'
 printf 'up, down to %s and up again keep every legacy row and reproduce the same catalog\n' "$BASE"
 
 step 'rehearsal passed; the clone is destroyed on exit'
-if [ "${#UNREGISTERED[@]}" -gt 0 ]; then
-  printf 'WARNING: these downs leave their version in schema_migrations and schema_migration_ledger, so a manual\n'
-  printf 'rollback stops at the next down that checks for later migrations; the rehearsal deregistered them:\n'
-  printf '  %s\n' "${UNREGISTERED[@]}"
-fi
 cat <<'EOF'
 Not covered here: runtime logins (provision-db-roles.py) with gateway, dispatcher and telegram-bridge
 on a clone, smoke.sh with 0 errors with SQLSTATE 42501, and GET /v3/auth/session on a running stack.

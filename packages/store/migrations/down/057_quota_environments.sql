@@ -1,5 +1,9 @@
 SELECT pg_advisory_xact_lock(783_003_003);
 DO $$ BEGIN
+  IF EXISTS (SELECT version FROM schema_migrations WHERE version>'057_quota_environments.sql'
+    UNION ALL SELECT version FROM schema_migration_ledger WHERE version>'057_quota_environments.sql') THEN
+    RAISE EXCEPTION 'cannot downgrade schema 057 while a later migration is present';
+  END IF;
   IF EXISTS (SELECT 1 FROM quota_environments) OR EXISTS (SELECT 1 FROM provider_accounts WHERE quota_registration_key IS NOT NULL)
     OR EXISTS (SELECT 1 FROM quota_window_samples GROUP BY collection_id,provider,group_key,window_key HAVING count(*)>1)
     OR EXISTS (SELECT 1 FROM quota_window_state GROUP BY collector_tenant,host,provider,group_key,window_key HAVING count(*)>1)
@@ -30,3 +34,5 @@ ALTER TABLE provider_accounts DROP COLUMN quota_version;
 DROP INDEX provider_accounts_quota_identity;
 ALTER TABLE provider_accounts DROP COLUMN canonical_account_id;
 ALTER TABLE provider_accounts DROP COLUMN quota_identity_hash;
+DELETE FROM schema_migration_ledger WHERE version='057_quota_environments.sql';
+DELETE FROM schema_migrations WHERE version='057_quota_environments.sql';

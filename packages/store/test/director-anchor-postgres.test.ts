@@ -1,5 +1,4 @@
 import { randomUUID } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { FleetEvidence, FleetStepName } from '@cauce/protocol';
 import { applyMigrations, ConfigurationRepository, createPool, FleetOperationsRepository, withTransaction,
@@ -10,6 +9,7 @@ import { DeliveryContextRuntimeSink } from '../../../services/gateway/src/contex
 import { channelCompany, channelHost, companySource, type ChannelHost } from '../../../services/gateway/src/fleet/host-channel.fixtures.js';
 import { esBaseDePruebas, provisionTestLogin, startTestCaseDatabase, startTestDatabase, TEST_RUNTIME_LOGIN,
   type EmptyTestDatabase, type TestDatabase } from '../../../tests/helpers/postgres.js';
+import { downsThrough } from './migration-downs.fixtures.js';
 import { preparePostgresSuite } from './postgres-suite.js';
 
 let database: TestDatabase | undefined; let current: EmptyTestDatabase | undefined;
@@ -276,8 +276,8 @@ describe('source-only director anchor continuity', () => {
     const version = await branchVersion(); await admin.query('UPDATE rooms SET enabled=false WHERE tenant_id=$1', [company.hub.id]);
     await assertPublishedWithoutConsumption(version);
     const before = (await pool.query('SELECT * FROM memberships WHERE tenant_id=$1 AND alias=$2 ORDER BY room_id', [company.hub.id, broker])).rows;
-    const down = await readFile(new URL('../migrations/down/064_company_context_anchor.sql', import.meta.url), 'utf8');
-    await withTransaction(admin, client => client.query(down));
+    const downs = await downsThrough('064_company_context_anchor.sql');
+    await withTransaction(admin, async client => { for (const down of downs) await client.query(down); });
     expect((await pool.query('SELECT to_regprocedure($1) AS helper', [helper])).rows).toEqual([{ helper: null }]);
     await expect(pool.query('UPDATE memberships SET enabled=false WHERE tenant_id=$1 AND alias=$2', [company.hub.id, broker])).rejects.toMatchObject({ code: '42501' });
     expect((await pool.query('SELECT * FROM memberships WHERE tenant_id=$1 AND alias=$2 ORDER BY room_id', [company.hub.id, broker])).rows).toEqual(before);

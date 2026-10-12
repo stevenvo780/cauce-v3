@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { createPool, type DatabasePool } from '@cauce/store';
+import { createPool, withTransaction, type DatabasePool } from '@cauce/store';
+import { downsThrough } from '../../../../packages/store/test/migration-downs.fixtures.js';
 import { preparePostgresSuite } from '../../../../packages/store/test/postgres-suite.js';
 import { provisionTestLogin, startTestCaseDatabase, startTestDatabase, TEST_RUNTIME_LOGIN,
   type EmptyTestDatabase, type TestDatabase } from '../../../../tests/helpers/postgres.js';
@@ -192,7 +192,8 @@ describe('human administration on PostgreSQL', () => {
     await expect(restricted.query('SELECT cauce_human_has_admin_history($1)', [orphan.id])).rejects.toMatchObject({ code: '42501' });
     await admin.query('SELECT cauce_apply_runtime_grants()');
     expect((await restricted.query('SELECT cauce_human_has_admin_history($1) AS present', [orphan.id])).rows).toEqual([{ present: true }]);
-    await admin.query(await readFile(new URL('../../../../packages/store/migrations/down/061_people_admin_history.sql', import.meta.url), 'utf8'));
+    const downs = await downsThrough('061_people_admin_history.sql');
+    await withTransaction(admin, async client => { for (const down of downs) await client.query(down); });
     expect((await admin.query("SELECT to_regprocedure('cauce_human_has_admin_history(uuid)') AS helper,to_regprocedure('cauce_runtime_grants_061()') AS grants")).rows)
       .toEqual([{ helper: null, grants: null }]);
     expect((await admin.query('SELECT version::text FROM company_admin_versions WHERE human_id=$1', [orphan.id])).rows).toEqual([{ version: '1' }]);

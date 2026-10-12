@@ -1,5 +1,4 @@
 import { randomUUID } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { applyMigrations, CauceRepository, ConfigurationRepository, createPool, lockCompanyAuthority, registerCompany, withTransaction,
   type CompanyAuthoritySource, type DatabasePool, type RegisteredCompany } from '../src/index.js';
@@ -7,6 +6,7 @@ import { ContextVersionStore, readContextVersion } from '../src/context-version.
 import { esBaseDePruebas, provisionTestLogin, startTestCaseDatabase, startTestDatabase, TEST_RUNTIME_LOGIN,
   type EmptyTestDatabase, type TestDatabase } from '../../../tests/helpers/postgres.js';
 import { DeliveryContextRuntimeSink } from '../../../services/gateway/src/context-version-runtime.js';
+import { downsThrough } from './migration-downs.fixtures.js';
 import { preparePostgresSuite } from './postgres-suite.js';
 
 let database: TestDatabase | undefined;
@@ -67,9 +67,11 @@ afterEach(async () => { await current?.close(); current = undefined; });
 afterAll(async () => { if (database) { await database.pool.end(); await database.container.stop(); } });
 const source = (value = company): CompanyAuthoritySource => client => lockCompanyAuthority(client,
   { tenant: value.hub.id, alias: value.user.username, humanId: value.user.id });
+// Down reverts 063 with the real downs of every later migration in one transaction; up reapplies the bundle.
 async function migration(down = false): Promise<void> {
-  const sql = await readFile(new URL(`../migrations/${down ? 'down/' : ''}063_company_registration_director.sql`, import.meta.url), 'utf8');
-  await withTransaction(admin, client => client.query(sql));
+  if (!down) { await applyMigrations(admin); return; }
+  const downs = await downsThrough('063_company_registration_director.sql');
+  await withTransaction(admin, async client => { for (const sql of downs) await client.query(sql); });
 }
 async function context() {
   const store = new ContextVersionStore(pool);
@@ -230,23 +232,40 @@ describe('registered company context director', () => {
       company: { slug: 'rollback', name: 'Rollback' } })).company.id).toBe('rollback');
   });
 
-  it('downgrades without deleting real messages or deliveries and reapplies the registration contract', async () => {
+  it('refuses to downgrade a director that already published and keeps its messages, deliveries and registration', async () => {
+    await expect(new DeliveryContextRuntimeSink(pool, 50).apply(await context())).rejects.toThrow('consumed-turn evidence');
+    const state = async () => ({
+      messages: (await pool.query('SELECT id,actor_alias FROM messages ORDER BY id')).rows,
+      deliveries: (await pool.query('SELECT id,message_id,status FROM deliveries ORDER BY id')).rows,
+      directors: (await admin.query(`SELECT to_jsonb(principal) AS principal,to_jsonb(agent) AS agent,to_jsonb(member) AS membership
+        FROM company_system_principals principal JOIN agents agent ON agent.tenant_id=principal.tenant_id AND agent.alias=principal.principal_alias
+        JOIN memberships member ON member.tenant_id=agent.tenant_id AND member.alias=agent.alias ORDER BY 1`)).rows,
+      versions: (await admin.query('SELECT version FROM schema_migrations ORDER BY version')).rows,
+    });
+    const before = await state();
+    await expect(migration(true)).rejects.toThrow('export the history of the company context directors before reverting');
+    expect(await state()).toEqual(before);
+  });
+
+  it('downgrades away the director it registered and reapplies the registration contract under the same alias', async () => {
     const definitions = () => pool.query(`SELECT routine.proname,pg_get_functiondef(routine.oid) AS definition FROM pg_proc routine
       WHERE routine.proname IN ('cauce_register_company','cauce_register_company_without_director','cauce_register_company_director',
         'cauce_context_director_mutation_guard','cauce_context_director_recipient_guard','cauce_runtime_grants_063') ORDER BY routine.proname`);
     const originalDefinitions = (await definitions()).rows;
-    await expect(new DeliveryContextRuntimeSink(pool, 50).apply(await context())).rejects.toThrow('consumed-turn evidence');
-    const messages = (await pool.query('SELECT id,actor_alias FROM messages ORDER BY id')).rows;
-    const deliveries = (await pool.query('SELECT id,message_id,status FROM deliveries ORDER BY id')).rows;
+    const principals = () => pool.query('SELECT kind,tenant_id,principal_alias FROM company_system_principals WHERE company_id=$1', [company.company.id]);
+    const original = (await principals()).rows;
+    expect(original).toEqual([{ kind: 'director', tenant_id: company.hub.id, principal_alias: 'context-director' }]);
     await migration(true);
-    expect((await pool.query('SELECT id,actor_alias FROM messages ORDER BY id')).rows).toEqual(messages);
-    expect((await pool.query('SELECT id,message_id,status FROM deliveries ORDER BY id')).rows).toEqual(deliveries);
-    expect((await pool.query("SELECT enabled,role FROM memberships WHERE tenant_id=$1 AND alias='context-director'", [company.hub.id])).rows)
-      .toEqual([{ enabled: false, role: 'agent' }]);
+    expect((await principals()).rows).toEqual([]);
+    expect((await admin.query("SELECT 1 FROM agents WHERE tenant_id=$1 AND alias LIKE 'context-director%'", [company.hub.id])).rows).toEqual([]);
+    expect((await admin.query("SELECT 1 FROM memberships WHERE tenant_id=$1 AND alias LIKE 'context-director%'", [company.hub.id])).rows).toEqual([]);
+    expect((await admin.query("SELECT 1 FROM role_policies WHERE role='context_broker'")).rows).toEqual([]);
+    expect((await admin.query("SELECT max(version) AS version FROM schema_migrations")).rows).toEqual([{ version: '062_authority_read_guard.sql' }]);
     await migration();
     expect((await definitions()).rows).toEqual(originalDefinitions);
-    expect((await pool.query('SELECT principal_alias FROM company_system_principals WHERE company_id=$1', [company.company.id])).rows)
-      .toEqual([{ principal_alias: 'context-director-1' }]);
+    expect((await principals()).rows).toEqual(original);
+    expect((await pool.query("SELECT alias FROM agents WHERE tenant_id=$1 AND alias LIKE 'context-director%'", [company.hub.id])).rows)
+      .toEqual([{ alias: 'context-director' }]);
     expect((await registerCompany(pool, { email: 'after@example.test', name: 'After', passwordHash: hash,
       company: { slug: 'after', name: 'After' } })).company.id).toBe('after');
   });

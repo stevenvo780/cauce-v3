@@ -1,5 +1,4 @@
 import { randomUUID } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { ConfigMutation, FleetEvidence, FleetOperationRequest, FleetStepName } from '@cauce/protocol';
 import { applyMigrations, CauceRepository, ConfigurationRepository, createPool, FleetOperationsRepository, withTransaction,
@@ -11,6 +10,7 @@ import { DeliveryContextRuntimeSink } from '../../../services/gateway/src/contex
 import { channelCompany, channelCreate, channelHost, companySource, type ChannelHost } from '../../../services/gateway/src/fleet/host-channel.fixtures.js';
 import { esBaseDePruebas, provisionTestLogin, startTestCaseDatabase, startTestDatabase, TEST_RUNTIME_LOGIN,
   type EmptyTestDatabase, type TestDatabase } from '../../../tests/helpers/postgres.js';
+import { downsThrough } from './migration-downs.fixtures.js';
 import { preparePostgresSuite } from './postgres-suite.js';
 
 let database: TestDatabase | undefined;
@@ -207,8 +207,8 @@ describe('delivery source director stays separate from physical agents', () => {
       idempotency_key: 'physical-director-stop' }, `console:${physical.user.id}`)).can_apply).toBe(true);
     const request = { ...group('retire'), target: { resource: 'room' as const, tenant_id: physical.hub.id, room_id: 'office' } };
     expect(await withTransaction(pool, client => readFleetGroupAgents(client, request))).toEqual(expect.arrayContaining([expect.objectContaining({ alias: broker })]));
-    const down = await readFile(new URL('../migrations/down/063_company_registration_director.sql', import.meta.url), 'utf8');
-    await withTransaction(admin, client => client.query(down));
+    const downs = await downsThrough('063_company_registration_director.sql');
+    await withTransaction(admin, async client => { for (const down of downs) await client.query(down); });
     expect(await withTransaction(pool, client => readFleetGroupAgents(client, request))).toEqual(expect.arrayContaining([expect.objectContaining({ alias: broker })]));
     expect(await repository.getAgentByIdentity(physical.hub.id, broker, physical.hub.id, 'owner')).toMatchObject({ alias: broker });
   });
