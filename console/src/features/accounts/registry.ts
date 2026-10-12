@@ -608,7 +608,7 @@ export function describeRegistryError(
   if (error.status === 403) {
     return {
       conflict: false,
-      message: `Rechazado con 403. Los cuatro recursos del registro (agent, provider_account, alias_routing_ceiling, agent_account_binding) son hub-only: prestar una suscripción decide sobre la plata de otro tenant y no quedó como self-service. Respuesta del servidor: «${error.message}».`,
+      message: `Rechazado con 403. Este cambio no está autorizado para tu rol y alcance de empresa. Revisá los permisos para este recurso. Respuesta del servidor: «${error.message}».`,
     };
   }
   if (error.status === 409 && IMMUTABLE_ACCOUNT.test(error.message)) {

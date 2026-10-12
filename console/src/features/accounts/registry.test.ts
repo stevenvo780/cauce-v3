@@ -239,14 +239,17 @@ it('señala la suscripción externa ya registrada en vez de repetir el error gen
   expect(described.message).toMatch(/UNIQUE \(provider, external_account_id\)/);
 });
 
-it('explica que el registro es hub-only ante un 403', () => {
+it('explica los permisos de rol y empresa ante un 403 sin sugerir un reintento', () => {
   const described = describeRegistryError(
     new ApiError('configuration resource is outside the actor tenant', 403, 'forbidden'),
     ceilingMutation('create', 'Steven', 'kant', 'codex-steven'),
     contextFrom(),
   );
-  expect(described.message).toMatch(/hub-only/);
-  expect(described.message).toMatch(/plata de otro tenant/);
+  expect(described.conflict).toBe(false);
+  expect(described.message).toMatch(/403/);
+  expect(described.message).toMatch(/rol y alcance de empresa/);
+  expect(described.message).toContain('Respuesta del servidor: «configuration resource is outside the actor tenant».');
+  expect(described.message).not.toMatch(/hub/i);
 });
 
 it('explica la inmutabilidad en vez de dejar pasar el mensaje del store', () => {
