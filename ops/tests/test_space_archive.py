@@ -175,11 +175,41 @@ class SpaceArchiveTests(unittest.TestCase):
             {'path': '/workspace', 'excluded_from_copy': True, 'reason': 'outside the space'},
             {'path': 'projects/keep.txt', 'excluded_from_copy': False, 'reason': 'not excluded'}]}))
         result = self.backup()
-        self.assertEqual([item for item in result['omissions'] if item['reason'] == 'external_mount'],
-                         [{'path': 'projects/shared', 'reason': 'external_mount'}])
+        self.assertEqual(sorted(item['path'] for item in result['omissions'] if item['reason'] == 'external_mount'),
+                         ['/workspace', 'projects/shared'])
+        self.assertIn({'path': '/workspace', 'reason': 'external_mount'}, result['omissions'])
         restore_space(str(self.archive), str(self.restored), self.identity)
         self.assertFalse((self.restored / 'projects/shared').exists())
+        self.assertFalse((self.restored / 'workspace').exists())
         self.assertTrue((self.restored / 'projects/keep.txt').is_file())
+
+    def test_external_mount_receipt_outside_the_space_must_be_a_normalized_absolute_path(self):
+        for bad in ('/a/\x01b', '/', '/' + 'x' * 1100):
+            (self.space / 'config/external-mounts.json').write_text(json.dumps({'mounts': [
+                {'path': bad, 'excluded_from_copy': True, 'reason': 'x'}]}))
+            with self.assertRaises(SpaceArchiveFailure):
+                self.backup()
+            self.assertFalse(self.archive.exists())
+
+    def test_restore_rejects_external_mount_receipts_that_are_not_normalized_absolute_paths(self):
+        for bad in ('/a/../b', '/a//b', 'workspace', 'projects/../x', '/a/\x01b'):
+            (self.space / 'config/external-mounts.json').write_text(json.dumps({'mounts': [
+                {'path': '/workspace', 'excluded_from_copy': True, 'reason': 'x'}]}))
+            forged = self.root / 'forged.zip'
+            forged.unlink(missing_ok=True)
+            self.archive.unlink(missing_ok=True)
+            self.backup()
+            with zipfile.ZipFile(self.archive) as source, zipfile.ZipFile(forged, 'w') as target:
+                for entry in source.infolist():
+                    data = source.read(entry)
+                    if entry.filename == 'space-manifest.json':
+                        manifest = json.loads(data)
+                        manifest['omissions'] = [{'path': bad, 'reason': 'external_mount'}]
+                        data = json.dumps(manifest, sort_keys=True, separators=(',', ':')).encode()
+                    target.writestr(entry, data)
+            restored = self.root / 'forged-restored'
+            with self.assertRaises(SpaceArchiveFailure):
+                restore_space(str(forged), str(restored), self.identity)
 
     def test_malformed_external_mount_declaration_fails_closed(self):
         (self.space / 'config/external-mounts.json').write_text('{"mounts": 3}')

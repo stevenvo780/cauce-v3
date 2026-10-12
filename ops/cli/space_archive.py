@@ -54,16 +54,24 @@ def relative_path(value: str) -> str:
     return value
 
 
-def external_mounts(root: int, source: str) -> tuple[str, ...]:
-    """Archive-relative paths the supervisor declared as excluded external mounts; paths outside the space cannot be in the archive."""
+def external_mount_path(value: str) -> str:
+    path = pathlib.PurePosixPath(value)
+    if not isinstance(value, str) or str(path) != value or not path.is_absolute() or value == '/' or len(value.encode()) > 1024 \
+            or any(part == '..' or any(ord(character) < 32 or ord(character) == 127 for character in part) for part in path.parts):
+        raise SpaceArchiveFailure('archive external mount path is invalid')
+    return value
+
+
+def external_mounts(root: int, source: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Declared excluded mounts: archive-relative paths inside the space, and absolute paths outside it (recorded as receipts only)."""
     try:
         parent = open_relative_directory(root, 'config')
     except FileNotFoundError:
-        return ()
+        return (), ()
     try:
         data, _ = read_file(parent, 'external-mounts.json', MAX_MANIFEST)
     except FileNotFoundError:
-        return ()
+        return (), ()
     finally:
         os.close(parent)
     try:
@@ -72,16 +80,20 @@ def external_mounts(root: int, source: str) -> tuple[str, ...]:
             raise TypeError
     except (ValueError, TypeError, KeyError, AttributeError):
         raise SpaceArchiveFailure('external mount declaration is invalid') from None
-    inside = []
+    inside, outside = [], []
     for path in paths:
         normalized = pathlib.PurePosixPath(os.path.normpath(path))
         if normalized.is_absolute():
             if not normalized.is_relative_to(source):
+                try:
+                    outside.append(external_mount_path(str(normalized)))
+                except SpaceArchiveFailure:
+                    raise SpaceArchiveFailure('external mount declaration is invalid') from None
                 continue
             normalized = normalized.relative_to(source)
         if str(normalized) != '.':
             inside.append(str(normalized))
-    return tuple(inside)
+    return tuple(inside), tuple(sorted(set(outside)))
 
 
 def omission_reason(value: str, mounts: tuple[str, ...] = ()) -> str | None:
@@ -181,12 +193,13 @@ def backup_space(source: str, archive: str, expected_identity: dict) -> dict:
         raise SpaceArchiveFailure('space backup archive must be outside the source space')
     root = open_directory(source)
     root_before = os.fstat(root)
-    mounts = external_mounts(root, source)
+    mounts, outside_mounts = external_mounts(root, source)
     destination = pathlib.Path(archive)
     parent = open_directory(str(destination.parent))
     file_descriptor = None
     created_identity = None
-    directories, files, omissions = [], [], []
+    directories, files = [], []
+    omissions = [{'path': path, 'reason': 'external_mount'} for path in outside_mounts]
     size = 0
     try:
         file_descriptor = os.open(destination.name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=parent)
@@ -299,7 +312,10 @@ def validated_archive(zipped: zipfile.ZipFile, expected: dict) -> tuple[dict, by
     for item in manifest['omissions']:
         if not isinstance(item, dict) or set(item) != {'path', 'reason'} or item['reason'] not in OMISSION_REASONS:
             raise SpaceArchiveFailure('space omission receipt is invalid')
-        relative_path(item['path'])
+        if item['reason'] == 'external_mount' and isinstance(item['path'], str) and item['path'].startswith('/'):
+            external_mount_path(item['path'])
+        else:
+            relative_path(item['path'])
     size = 0
     for item in manifest['files']:
         if not isinstance(item, dict) or set(item) != {'path', 'bytes', 'sha256', 'mode'} \
