@@ -10,7 +10,8 @@ describe('Dockerfile runtime policy', () => {
   test('keeps the release Dockerfile portable when buildx is unavailable', async () => {
     const dockerfile = await readFile(join(repository, 'deploy/Dockerfile'), 'utf8');
     expect(dockerfile).not.toMatch(/^\s*COPY\b.*--chmod=/mu);
-    expect(dockerfile).not.toContain('apk add');
+    // git and openssh-client are the context broker's push transport; no other package comes from apk.
+    expect(dockerfile.match(/apk add[^\n]*/gu)).toEqual(['apk add --no-cache git openssh-client \\']);
     expect(dockerfile).toContain(
       'ARG CAUCE_NODE_BASE=docker.io/library/node@sha256:56a687b4d23e7a6cb49114924f5e257fcfbd33ad1f28f5c67aea9365996f2819',
     );

@@ -75,8 +75,7 @@ ENV NODE_ENV=production
 WORKDIR /app
 COPY --from=python-runtime /usr/local /usr/local
 RUN python3 -c 'import asyncio, json; assert asyncio and json' \
-  && apt-get update && apt-get install -y --no-install-recommends git openssh-client \
-  && rm -rf /var/lib/apt/lists/* \
+  && apk add --no-cache git openssh-client \
   && mkdir -p /var/lib/cauce-adapter /var/lib/cauce-terminal /var/lib/cauce-v3/blobs /var/lib/cauce-v3/contexts /var/lib/cauce-v3/space-backups \
   && chown node:node /var/lib/cauce-adapter /var/lib/cauce-terminal /var/lib/cauce-v3/blobs /var/lib/cauce-v3/contexts /var/lib/cauce-v3/space-backups \
   && chmod 0700 /var/lib/cauce-v3/contexts /var/lib/cauce-v3/space-backups
