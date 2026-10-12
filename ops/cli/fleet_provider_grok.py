@@ -1,12 +1,23 @@
 from __future__ import annotations
 
-from fleet_provider_identity import validate_provider_binding, validate_provider_selection
+import json
+
+from fleet_provider_identity import (
+    nonce_roundtrip,
+    profile_identity_candidates,
+    validate_provider_binding,
+    validate_provider_selection,
+)
 
 
 def environment(binding: dict, agent: dict) -> dict:
     root = validate_provider_binding(binding, agent, 'grok')
     validate_provider_selection(agent, 'grok', frozenset())
     return {'GROK_HOME': str(root)}
+
+
+def validate_binding(binding: dict, agent: dict) -> None:
+    environment(binding, agent)
 
 
 def login_command(binding: dict) -> list[str]:
@@ -22,9 +33,26 @@ def execution_arguments(agent: dict, prompt_file: str) -> list[str]:
 
 
 def authentication_supported() -> bool:
-    return False
+    return True
 
 
-def authenticated_grok(packet: dict) -> bool:
-    environment(packet['profile_binding'], packet['agent'])
-    return False
+def reply_text(output: bytes):
+    value = json.loads(output)
+    if not isinstance(value, dict) or value.get('type') == 'error':
+        return None
+    if value.get('stopReason') not in (None, 'end_turn'):
+        return None
+    return value.get('text') if isinstance(value.get('text'), str) else None
+
+
+def authenticated(packet: dict) -> bool:
+    try:
+        root = environment(packet['profile_binding'], packet['agent'])['GROK_HOME']
+        if packet['identity'] not in profile_identity_candidates(str(root) + '/auth.json'):
+            return False
+        return nonce_roundtrip(packet, lambda prompt: execution_arguments(packet['agent'], prompt), reply_text)
+    except Exception:
+        return False
+
+
+authenticated_grok = authenticated

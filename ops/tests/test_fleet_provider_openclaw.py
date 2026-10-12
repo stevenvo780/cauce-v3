@@ -27,6 +27,7 @@ const mode=fs.existsSync(root+'/mode')?fs.readFileSync(root+'/mode','utf8'):'';
 if(argv.includes('--version')) { console.log(mode==='version'?'2026.1.1':'OpenClaw 2026.6.6 (8c802aa)'); }
 else if(argv.includes('list')) {
  let meta={agentId:'runtime-one',provider:'openai',profiles:[{id:'cauce:account-one',provider:'openai',type:'oauth',email:'observed@fixture.invalid',expiresAt:'2099-01-01T00:00:00Z'}]};
+ if(mode==='anthropic') { meta.provider='anthropic'; meta.profiles[0].provider='anthropic'; }
  if(mode==='identity') meta.profiles[0].email='foreign@fixture.invalid';
  if(mode==='account') meta.profiles[0].id='cauce:foreign';
  if(mode==='provider') meta.profiles[0].provider='anthropic';
@@ -248,9 +249,13 @@ class OpenClawProviderTest(unittest.TestCase):
         template = {**self.binding, 'path_root': str(self.root / 'profiles')}
         template.pop('path')
         template.pop('identity')
+        release = self.root / 'release'
+        shutil.copytree(CLI.parents[1] / 'packages/adapter-sdk/descriptors',
+                        release / 'packages/adapter-sdk/dist/descriptors')
         policy = {'host_id': 'isolated', 'native': [{'runtime_user': 'fixture', 'systemd_user': 'fixture',
                   'home_directory': str(self.root), 'state_root': str(self.state)}], 'containers': {},
-                  'bundles': {'codex': {}, 'openclaw': {}}, 'profiles': {}, 'profile_templates': [template],
+                  'bundles': {'codex': {'directory': str(release)}, 'openclaw': {'directory': str(release)}},
+                  'profiles': {}, 'profile_templates': [template],
                   'transport': {}, 'hooks': {key: {} for key in ('authenticate', 'profile', 'verify', 'revoke')}}
         self.assertFalse(templates.capabilities(policy)['available'])
         certificate, key = self.root / 'capability-ca.crt', self.root / 'capability-ca.key'
@@ -263,6 +268,13 @@ class OpenClawProviderTest(unittest.TestCase):
         observed = templates.capabilities(policy)
         runtimes = observed['placements'][0]['runtimes']
         self.assertEqual([(row['harness_id'], row['provider']) for row in runtimes], [('openclaw', 'codex')])
+        template['provider'] = 'claude'
+        template['openclaw'] = {**template['openclaw'], 'provider_id': 'anthropic'}
+        observed = templates.capabilities(policy)
+        runtimes = observed['placements'][0]['runtimes']
+        self.assertEqual([(row['harness_id'], row['provider']) for row in runtimes], [('openclaw', 'claude')])
+        template['provider'] = 'codex'
+        template['openclaw'] = {**template['openclaw'], 'provider_id': 'openai'}
         policy['signer']['key'] = str(self.root / 'missing-capability-key')
         self.assertFalse(templates.capabilities(policy)['available'])
         policy['signer']['key'] = str(key)
@@ -277,6 +289,38 @@ class OpenClawProviderTest(unittest.TestCase):
                 driver.validate_definition(value, 'codex')
         with self.assertRaises(ValueError):
             driver.validate_definition(self.binding['openclaw'], 'claude')
+        anthropic = copy.deepcopy(self.binding['openclaw'])
+        anthropic['provider_id'] = 'anthropic'
+        driver.validate_definition(anthropic, 'claude')
+        with self.assertRaises(ValueError):
+            driver.validate_definition(anthropic, 'codex')
+
+    def test_anthropic_binding_authenticates_and_resolves_its_own_template(self):
+        self.binding['provider'] = 'claude'
+        self.binding['openclaw'] = {**self.binding['openclaw'], 'provider_id': 'anthropic'}
+        self.agent['model_id'] = 'anthropic/claude-opus-5'
+        (self.profile / 'openclaw.json').unlink()
+        driver.prepare(self.binding, self.agent)
+        (self.profile / 'mode').write_text('anthropic')
+        packet = {**self.packet, 'fleet_module': 'fleet_provider_openclaw'}
+        self.assertTrue(identity.authenticated_provider(packet))
+        argv = json.loads((self.profile / 'observed-args').read_bytes())
+        self.assertEqual(argv[argv.index('--model') + 1], 'anthropic/claude-opus-5')
+        self.agent['model_id'] = 'openai/gpt-5.5'
+        self.assertFalse(identity.authenticated_provider(packet))
+        self.agent['model_id'] = 'anthropic/claude-opus-5'
+        native = {'provider': 'claude', 'runtime_user': 'fixture', 'path_root': str(self.root / 'profiles-native'),
+                  'command': str(self.command), 'command_sha256': self.hash(self.command)}
+        claw = {**native, 'path_root': str(self.root / 'profiles-claw'), 'openclaw': self.binding['openclaw']}
+        policy = {'bundles': {}, 'profiles': {}, 'profile_templates': [native, claw]}
+        templates.validate_templates(policy)
+        agent = {**self.agent, 'tenant_id': 'tenant', '_placement': {'state_root': str(self.state)},
+                 '_trusted_accounts_present': True, '_trusted_accounts': [{'id': 'account-one', 'provider': 'claude',
+                  'external_account_id': 'observed@fixture.invalid', 'enabled': True, 'payer_tenant_id': 'tenant', 'shared_with_pool': False}]}
+        binding = templates.resolve_profile(policy, agent)
+        self.assertEqual(binding['provider'], 'claude')
+        self.assertEqual(binding['openclaw']['provider_id'], 'anthropic')
+        self.assertTrue(binding['path'].startswith(claw['path_root'] + '/runtime-one/'))
 
 
 if __name__ == '__main__':

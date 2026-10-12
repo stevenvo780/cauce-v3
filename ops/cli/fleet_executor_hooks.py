@@ -20,16 +20,21 @@ def binding_for(policy: dict, agent: dict) -> tuple[str, dict]:
     if not isinstance(binding, dict) or set(binding) - {'container_name', 'command', 'command_sha256', 'command_files', 'openclaw', 'muse'} != {'provider', 'path', 'identity', 'runtime_user'} \
             or binding['runtime_user'] != agent['runtime_user']:
         raise SafeFailure('missing approved provider profile binding')
-    if agent['harness_id'] == 'openclaw':
-        from fleet_provider_openclaw import validate_definition
-        validate_definition(binding.get('openclaw'), binding['provider'])
-    elif 'openclaw' in binding:
+    from fleet_provider_identity import resolve_fleet_module
+    try:
+        module_name = resolve_fleet_module(policy, agent['harness_id'])
+    except ValueError:
+        raise SafeFailure('fleet descriptor is unavailable') from None
+    if 'openclaw' in binding and module_name != 'fleet_provider_openclaw':
         raise SafeFailure('OpenClaw provider driver differs from the harness')
-    if agent['harness_id'] in {'grok', 'muse'}:
-        from importlib import import_module
-        import_module('fleet_provider_' + agent['harness_id']).environment(binding, agent)
-    elif 'muse' in binding:
+    if 'muse' in binding and module_name != 'fleet_provider_muse':
         raise SafeFailure('Muse provider driver differs from the harness')
+    if module_name:
+        from importlib import import_module
+        try:
+            import_module(module_name).validate_binding(binding, agent)
+        except (ValueError, KeyError, TypeError, AttributeError):
+            raise SafeFailure('provider driver binding is not approved') from None
     if not isinstance(binding['identity'], str) or not binding['identity'] or not isinstance(binding['provider'], str):
         raise SafeFailure('invalid provider profile identity')
     if agent['runtime_mode'] == 'container':
@@ -106,8 +111,14 @@ def invoke_bound(policy: dict, context: dict, agent: dict, step: str, account, p
         raise SafeFailure('functional hook argument file is not pinned')
     nonce = secrets.token_hex(32)
     identity = {field: agent[field] for field in ('tenant_id', 'alias', 'runtime_key')}
+    from fleet_provider_identity import resolve_fleet_module
+    try:
+        fleet_module_name = resolve_fleet_module(policy, agent['harness_id'])
+    except ValueError:
+        raise SafeFailure('fleet descriptor is unavailable') from None
     packet = {'operation_id': context['operation_id'], 'step': step, 'agent': {key: value for key, value in agent.items() if not key.startswith('_')},
-              'account_id': account, 'identity': provider_identity, 'profile_binding': binding, 'nonce': nonce}
+              'account_id': account, 'identity': provider_identity, 'profile_binding': binding, 'nonce': nonce,
+              'fleet_module': fleet_module_name}
     if credentials is not None:
         packet['cauce_credentials'] = credentials
         packet['transport'] = policy.get('transport')

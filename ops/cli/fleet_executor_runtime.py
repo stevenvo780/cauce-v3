@@ -69,9 +69,15 @@ def provider_environment(policy: dict, agent: dict) -> dict:
     if not isinstance(binding, dict) or binding.get('runtime_user') != agent['runtime_user'] \
             or (agent['runtime_mode'] == 'container' and binding.get('container_name', agent['container_name']) != agent['container_name']):
         raise SafeFailure('runtime provider binding differs from its execution identity')
-    if agent['harness_id'] == 'openclaw':
-        from fleet_provider_openclaw import environment
-        values = environment(binding, agent)
+    from fleet_provider_identity import resolve_fleet_module
+    try:
+        module_name = resolve_fleet_module(policy, agent['harness_id'])
+    except ValueError:
+        raise SafeFailure('fleet descriptor is unavailable') from None
+    from importlib import import_module
+    module = import_module(module_name) if module_name else None
+    if module_name == 'fleet_provider_openclaw':
+        values = module.environment(binding, agent)
         driver = binding['openclaw']
         files = {**binding.get('command_files', {}), binding['command']: binding['command_sha256'],
             driver['auth_list_source']: driver['auth_list_sha256'], driver['bridge']: driver['bridge_sha256']}
@@ -82,9 +88,8 @@ def provider_environment(policy: dict, agent: dict) -> dict:
             CAUCE_HARNESS_BRIDGE=driver['bridge'], CAUCE_HARNESS_COMMAND_FILES=json.dumps(files, sort_keys=True, separators=(',', ':')))
         return values
     provider = binding.get('provider')
-    if provider in {'grok', 'muse'}:
-        from importlib import import_module
-        values = import_module('fleet_provider_' + provider).environment(binding, agent)
+    if module is not None:
+        values = module.environment(binding, agent)
     else:
         variable = {'codex': 'CODEX_HOME', 'claude': 'CLAUDE_CONFIG_DIR', 'gemini': 'GEMINI_CLI_HOME'}.get(provider)
         if variable is None:
@@ -97,11 +102,11 @@ def provider_environment(policy: dict, agent: dict) -> dict:
         if not isinstance(files, dict):
             raise SafeFailure('provider command files are not approved')
         files = dict(files)
-        if provider in {'grok', 'muse'}:
+        if module is not None:
             if executable in files and files[executable] != fingerprint:
                 raise SafeFailure('provider executable has conflicting pins')
             files[executable] = fingerprint
-        if provider == 'muse':
+        if 'muse' in binding:
             driver = binding['muse']
             executable, fingerprint = driver['bridge'], driver['bridge_sha256']
             if executable in files and files[executable] != fingerprint:
@@ -291,8 +296,16 @@ def stop_native(policy: dict, raw_agent: dict) -> dict:
 
 
 def start(policy: dict, agent: dict, *, bootstrap: bool = True, operation_id: str | None = None) -> dict:
-    from fleet_provider_openclaw import validate_execution_selection
-    validate_execution_selection(agent)
+    from fleet_provider_identity import resolve_fleet_module
+    try:
+        module_name = resolve_fleet_module(policy, agent['harness_id'])
+    except ValueError:
+        raise SafeFailure('fleet descriptor is unavailable') from None
+    if module_name:
+        from importlib import import_module
+        module = import_module(module_name)
+        if hasattr(module, 'validate_execution_selection'):
+            module.validate_execution_selection(agent)
     if agent['runtime_mode'] == 'native':
         return start_native(policy, agent, bootstrap=bootstrap, operation_id=operation_id)
     from fleet_executor_container import start_container

@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import base64
+import contextlib
 import copy
 import hashlib
 import importlib
+import io
 import json
 import os
 import pathlib
@@ -11,6 +14,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 import uuid
 from unittest import mock
@@ -162,7 +166,7 @@ class IsolatedProviderTests(unittest.TestCase):
         with self.assertRaises(OSError):
             profiles.prepare_empty_profile(str(root), str(profile), os.getuid(), os.getgid(), provider='muse')
 
-    def test_muse_binding_remains_resolvable_while_authentication_is_closed(self):
+    def test_muse_binding_remains_resolvable_and_authentication_is_supported(self):
         driver = self.driver('muse')
         pathlib.Path(self.binding['path']).mkdir(mode=0o700)
         policy = {'profiles': {'account': self.binding}}
@@ -170,7 +174,7 @@ class IsolatedProviderTests(unittest.TestCase):
             account, binding = hooks.binding_for(policy, self.agent)
         self.assertEqual(account, 'account')
         self.assertEqual(binding['muse'], self.binding['muse'])
-        self.assertFalse(driver.authentication_supported())
+        self.assertTrue(driver.authentication_supported())
         self.assertFalse(identity.authenticated_provider(self.packet))
         for foreign in ({**self.binding, 'provider': 'grok'}, {**self.binding, 'muse': {'bridge': '/bridge'}}):
             with mock.patch.object(hooks, 'approve_agent', return_value=self.agent), self.assertRaises(ValueError):
@@ -245,14 +249,17 @@ class IsolatedProviderTests(unittest.TestCase):
                 self.assertNotIn('--effort', args)
             self.agent.pop('reasoning_effort')
 
-    def test_unproved_remote_identity_cannot_authenticate_or_emit_model_request(self):
+    def test_missing_profile_identity_cannot_authenticate_or_emit_model_request(self):
         for provider in ('grok', 'muse'):
             driver = self.driver(provider)
             with mock.patch.object(identity, 'command_output', side_effect=AssertionError('no model or token request')):
                 self.assertFalse(identity.authenticated_provider(self.packet))
-            self.assertFalse(driver.authentication_supported())
+            self.assertTrue(driver.authentication_supported())
 
-    def test_unproved_providers_do_not_advertise_operational_create_capabilities(self):
+    def test_providers_advertise_capabilities_only_with_a_descriptor_bundle(self):
+        release = self.root / 'release'
+        shutil.copytree(ROOT / 'packages/adapter-sdk/descriptors',
+                        release / 'packages/adapter-sdk/dist/descriptors')
         for provider in ('grok', 'muse'):
             self.driver(provider)
             policy = {'bundles': {provider: {}}, 'profiles': {'account': self.binding}, 'native': [
@@ -260,7 +267,96 @@ class IsolatedProviderTests(unittest.TestCase):
                 'containers': {}, 'host_id': 'isolated', 'transport': {},
                 'hooks': {name: {} for name in ('authenticate', 'profile', 'verify', 'revoke')}}
             self.assertEqual(templates.runtime_candidates(policy), [])
-            self.assertFalse(templates.capabilities(policy)['available'])
+            policy['bundles'] = {provider: {'directory': str(release)}}
+            observed = templates.runtime_candidates(policy)
+            self.assertEqual([row['harness_id'] for row in observed], [provider])
+
+    @staticmethod
+    def jwt(payload):
+        segment = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode().rstrip('=')
+        return f'fixture.{segment}.fixture'
+
+    FAKE_CLI = '''#!/usr/bin/python3
+import json, pathlib, re, sys, time
+mode = '__MODE__'
+if mode == 'hang':
+    time.sleep(30)
+if mode == 'fail':
+    sys.exit(3)
+args = sys.argv[1:]
+prompt = pathlib.Path(args[args.index('--prompt-file') + 1]).read_text()
+token = re.search(r'CAUCE_BOOTSTRAP_[0-9a-f]+', prompt).group(0)
+text = token if mode == 'ok' else 'wrong'
+if '__PROVIDER__' == 'grok':
+    print(json.dumps({'text': text, 'stopReason': 'end_turn'}))
+else:
+    print(json.dumps({'payload': {'kind': 'run_output_delta', 'text': text}}))
+    print(json.dumps({'payload': {'kind': 'run_terminal', 'terminal': 'completed', 'text': text}}))
+'''
+
+    def install_fake_cli(self, provider, mode, identity_value='subject'):
+        self.driver(provider)
+        fake = self.root / f'fake-{provider}-{mode}'
+        fake.write_text(self.FAKE_CLI.replace('__MODE__', mode).replace('__PROVIDER__', provider))
+        fake.chmod(0o700)
+        self.binding['command'] = str(fake)
+        self.binding['command_sha256'] = hashlib.sha256(fake.read_bytes()).hexdigest()
+        profile = pathlib.Path(self.binding['path'])
+        if provider == 'grok':
+            profile.mkdir(mode=0o700, exist_ok=True)
+            auth = profile / 'auth.json'
+            auth.write_text(json.dumps({'https://auth.fixture.invalid': {
+                'key': 'fixture-token', 'email': identity_value}}))
+        else:
+            directory = profile / 'config' / 'muse'
+            directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+            auth = directory / 'auth.json'
+            auth.write_text(json.dumps({'token': self.jwt({'email': identity_value})}))
+        auth.chmod(0o600)
+        packet = {**self.packet, 'fleet_module': f'fleet_provider_{provider}'}
+        return packet
+
+    def test_fake_cli_authenticates_grok_and_muse_with_identity_and_nonce(self):
+        for provider in ('grok', 'muse'):
+            with self.subTest(provider=provider):
+                packet = self.install_fake_cli(provider, 'ok')
+                streams = io.StringIO()
+                with contextlib.redirect_stdout(streams), contextlib.redirect_stderr(streams):
+                    self.assertTrue(identity.authenticated_provider(packet))
+                self.assertEqual(streams.getvalue(), '')
+                self.assertEqual(list(self.state.glob('.cauce-auth-prompt-*')), [])
+
+    def test_fake_cli_wrong_identity_wrong_nonce_exit_and_timeout_all_fail_closed(self):
+        for provider in ('grok', 'muse'):
+            with self.subTest(provider=provider, case='identity'):
+                self.assertFalse(identity.authenticated_provider(self.install_fake_cli(provider, 'ok', 'foreign')))
+            with self.subTest(provider=provider, case='nonce'):
+                self.assertFalse(identity.authenticated_provider(self.install_fake_cli(provider, 'wrong')))
+            with self.subTest(provider=provider, case='exit'):
+                self.assertFalse(identity.authenticated_provider(self.install_fake_cli(provider, 'fail')))
+            with self.subTest(provider=provider, case='timeout'):
+                started = time.monotonic()
+                with mock.patch.object(identity, 'ROUNDTRIP_TIMEOUT', 1):
+                    self.assertFalse(identity.authenticated_provider(self.install_fake_cli(provider, 'hang')))
+                self.assertLess(time.monotonic() - started, 8)
+                self.assertEqual(list(self.state.glob('.cauce-auth-prompt-*')), [])
+
+    def test_template_login_arguments_come_from_the_descriptor(self):
+        self.driver('grok')
+        bundle = self.root / 'descriptor-release'
+        shutil.copytree(ROOT / 'packages/adapter-sdk/descriptors',
+                        bundle / 'packages/adapter-sdk/dist/descriptors')
+        descriptor = bundle / 'packages/adapter-sdk/dist/descriptors/grok.json'
+        value = json.loads(descriptor.read_text())
+        value['provider']['authenticate_argv'] = ['/usr/local/bin/grok', 'login', '--device-auth', '--tenant', 'fixture']
+        descriptor.write_text(json.dumps(value))
+        row = {key: val for key, val in self.binding.items() if key not in {'path', 'identity'}}
+        row.update(path_root=str(self.root / 'profiles'), login={'method': 'device',
+            'command': [str(self.cli), 'login', '--device-auth', '--tenant', 'fixture'],
+            'sha256': self.binding['command_sha256']})
+        templates.validate_templates({'bundles': {'grok': {'directory': str(bundle)}}, 'profile_templates': [row]})
+        with self.assertRaises(ValueError):
+            templates.validate_templates({'bundles': {'grok': {}}, 'profile_templates': [row]})
 
     def test_lifecycle_recipes_have_muse_login_and_no_unpinned_grok_update(self):
         bundle = self.root / 'release'

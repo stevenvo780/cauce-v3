@@ -1,8 +1,14 @@
 from __future__ import annotations
 
+import json
 import re
 
-from fleet_provider_identity import validate_provider_binding, validate_provider_selection
+from fleet_provider_identity import (
+    nonce_roundtrip,
+    profile_identity_candidates,
+    validate_provider_binding,
+    validate_provider_selection,
+)
 
 EFFORTS = frozenset({'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'})
 
@@ -23,6 +29,10 @@ def environment(binding: dict, agent: dict) -> dict:
             'CAUCE_MUSE_CLI_COMMAND': binding['command'], 'CAUCE_MUSE_CLI_SHA256': binding['command_sha256']}
 
 
+def validate_binding(binding: dict, agent: dict) -> None:
+    environment(binding, agent)
+
+
 def login_command(binding: dict) -> list[str]:
     return [binding['command'], 'login']
 
@@ -38,9 +48,41 @@ def execution_arguments(agent: dict, prompt_file: str) -> list[str]:
 
 
 def authentication_supported() -> bool:
-    return False
+    return True
 
 
-def authenticated_muse(packet: dict) -> bool:
-    environment(packet['profile_binding'], packet['agent'])
-    return False
+def reply_text(output: bytes):
+    candidate = None
+    deltas = []
+    failed = False
+    for line in output.splitlines():
+        if not line.strip():
+            continue
+        event = json.loads(line)
+        payload = event.get('payload') if isinstance(event, dict) else None
+        if not isinstance(payload, dict):
+            continue
+        if payload.get('kind') == 'run_output_delta' and isinstance(payload.get('text'), str):
+            deltas.append(payload['text'])
+        if payload.get('kind') == 'run_terminal':
+            if payload.get('terminal') == 'completed':
+                candidate = payload['text'] if isinstance(payload.get('text'), str) and payload['text'] else ''.join(deltas)
+                failed = False
+            else:
+                failed = True
+    if candidate is None and deltas:
+        candidate = ''.join(deltas)
+    return None if failed else candidate
+
+
+def authenticated(packet: dict) -> bool:
+    try:
+        config = environment(packet['profile_binding'], packet['agent'])['XDG_CONFIG_HOME']
+        if packet['identity'] not in profile_identity_candidates(str(config) + '/muse/auth.json'):
+            return False
+        return nonce_roundtrip(packet, lambda prompt: execution_arguments(packet['agent'], prompt), reply_text)
+    except Exception:
+        return False
+
+
+authenticated_muse = authenticated

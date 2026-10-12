@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import os
@@ -14,6 +15,90 @@ import time
 
 class ProviderProofError(ValueError):
     pass
+
+
+ROUNDTRIP_TIMEOUT = 30
+
+
+def resolve_fleet_module(policy: dict, harness: str) -> str | None:
+    """Fleet module named by provider.fleet_module in the harness descriptor of
+    its approved bundle. Policies without a bundle entry (unit contexts) fall
+    back to a same-named module shipped beside the executor."""
+    bundle = (policy.get('bundles') or {}).get(harness)
+    directory = bundle.get('directory') if isinstance(bundle, dict) else None
+    if isinstance(directory, str):
+        from harness_operations import fleet_module
+        return fleet_module(harness, directory)
+    if re.fullmatch(r'[a-z][a-z0-9_-]{0,63}', harness or '') is None:
+        return None
+    candidate = f'fleet_provider_{harness}'
+    return candidate if (pathlib.Path(__file__).resolve().parent / f'{candidate}.py').is_file() else None
+
+
+def packet_fleet_module(packet: dict) -> str | None:
+    if 'fleet_module' in packet:
+        return packet['fleet_module']
+    return resolve_fleet_module({}, packet['agent']['harness_id'])
+
+
+def jwt_claims(token: str) -> dict:
+    segment = token.split('.')[1]
+    return json.loads(base64.urlsafe_b64decode(segment + '=' * (-len(segment) % 4)))
+
+
+def profile_identity_candidates(filename: str) -> set:
+    """Identity strings a profile credential file vouches for, without exposing
+    credential material: email-like fields and email/subject JWT claims."""
+    candidates = set()
+    try:
+        with open(filename, 'rb') as stream:
+            raw = stream.read(262145)
+        if len(raw) > 262144:
+            return candidates
+        document = json.loads(raw)
+    except (OSError, ValueError):
+        return candidates
+    pending = [document]
+    seen = 0
+    while pending and seen < 256:
+        value = pending.pop()
+        seen += 1
+        if isinstance(value, dict):
+            for key, item in value.items():
+                if key in {'email', 'user_email', 'account_email'} and isinstance(item, str) and item:
+                    candidates.add(item)
+                pending.append(item)
+        elif isinstance(value, list):
+            pending.extend(value)
+        elif isinstance(value, str) and value.count('.') == 2:
+            try:
+                claims = jwt_claims(value)
+            except Exception:
+                continue
+            for key in ('email', 'sub'):
+                if isinstance(claims.get(key), str) and claims[key]:
+                    candidates.add(claims[key])
+    return candidates
+
+
+def nonce_roundtrip(packet: dict, arguments, extract) -> bool:
+    """Functional proof: the pinned provider CLI must echo the packet nonce.
+    The prompt file is private, bounded to the state directory and removed."""
+    from fleet_policy_paths import path
+    agent = packet['agent']
+    expected = 'CAUCE_BOOTSTRAP_' + packet['nonce']
+    prompt = path(agent['state_directory']) / f".cauce-auth-prompt-{packet['nonce'][:16]}"
+    descriptor = os.open(prompt, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    try:
+        with os.fdopen(descriptor, 'w') as stream:
+            stream.write(f'Responde únicamente {expected}.')
+        output = command_output([provider_command(packet), *arguments(str(prompt))], packet, ROUNDTRIP_TIMEOUT)
+        return extract(output) == expected
+    finally:
+        try:
+            prompt.unlink()
+        except OSError:
+            pass
 
 
 def validate_provider_binding(binding: dict, agent: dict, provider: str) -> pathlib.Path:
@@ -90,9 +175,9 @@ def provider_command(packet: dict) -> str:
     if command in files and files[command] != fingerprint:
         raise ProviderProofError('provider command has conflicting pins')
     files[command] = fingerprint
-    if binding.get('provider') == 'muse':
+    if 'muse' in binding:
         from fleet_provider_muse import validate_definition
-        validate_definition(binding.get('muse'), 'muse')
+        validate_definition(binding.get('muse'), binding.get('provider'))
         bridge = binding['muse']
         if bridge['bridge'] in files and files[bridge['bridge']] != bridge['bridge_sha256']:
             raise ProviderProofError('Muse bridge has conflicting pins')
@@ -123,20 +208,18 @@ def command_output(command: list[str], packet: dict, timeout: int = 30) -> bytes
         "HOME": packet["agent"]["home_directory"],
     }
     binding = packet["profile_binding"]
-    if packet['agent']['harness_id'] == 'openclaw':
-        from fleet_provider_openclaw import environment as openclaw_environment
-        environment.update(openclaw_environment(binding, packet['agent']))
-        environment['OPENCLAW_AUTH_STORE_READONLY'] = '1'
-        variable = None
-    elif binding['provider'] in {'grok', 'muse'}:
+    module_name = packet_fleet_module(packet)
+    variable = None
+    if module_name:
         from importlib import import_module
-        environment.update(import_module('fleet_provider_' + binding['provider']).environment(binding, packet['agent']))
+        module = import_module(module_name)
+        environment.update(module.environment(binding, packet['agent']))
+        environment.update(getattr(module, 'INSPECTION_ENV', {}))
         environment['PATH'] = '/usr/bin:/bin'
-        variable = None
     else:
         variable = {"codex": "CODEX_HOME", "claude": "CLAUDE_CONFIG_DIR"}.get(binding["provider"])
-    if variable is None and packet['agent']['harness_id'] not in {'openclaw', 'grok', 'muse'}:
-        raise ProviderProofError("provider identity inspection is unavailable")
+        if variable is None:
+            raise ProviderProofError("provider identity inspection is unavailable")
     if variable is not None:
         environment[variable] = binding["path"]
     process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=environment,
@@ -236,9 +319,13 @@ def codex_identity(packet: dict) -> str:
 
 
 def authenticated_provider(packet: dict) -> bool:
-    if packet['agent']['harness_id'] == 'openclaw':
-        from fleet_provider_openclaw import authenticated_openclaw
-        return authenticated_openclaw(packet)
+    module_name = packet_fleet_module(packet)
+    if module_name:
+        try:
+            from importlib import import_module
+            return bool(import_module(module_name).authenticated(packet))
+        except (OSError, ValueError, KeyError, subprocess.SubprocessError, AttributeError):
+            return False
     provider = packet["profile_binding"]["provider"]
     try:
         command = provider_command(packet)
@@ -249,12 +336,6 @@ def authenticated_provider(packet: dict) -> bool:
             if result.get("loggedIn") is not True or not isinstance(result.get("email"), str):
                 return False
             identity = result["email"]
-        elif provider == 'grok':
-            from fleet_provider_grok import authenticated_grok
-            return authenticated_grok(packet)
-        elif provider == 'muse':
-            from fleet_provider_muse import authenticated_muse
-            return authenticated_muse(packet)
         else:
             raise ProviderProofError("provider has no approved account inspection")
         if identity != packet["identity"]:

@@ -15,12 +15,16 @@ VERSION = '2026.6.6'
 AUTH_LIST_SHA256 = '31f4f35423fa6d909eaa448612f06a2030d43f91872f90c07d11e4638bff2c90'
 FIELDS = {'provider_id', 'method_id', 'version', 'auth_list_source', 'auth_list_sha256',
           'node_command', 'node_command_sha256', 'bridge', 'bridge_sha256'}
+INSPECTION_ENV = {'OPENCLAW_AUTH_STORE_READONLY': '1'}
+# The binding provider (the paying account) decides which OpenClaw provider id
+# and model namespace apply; the driver itself is provider-agnostic.
+PROVIDER_BY_BINDING = {'codex': 'openai', 'claude': 'anthropic'}
 
 
 def validate_definition(value: dict, provider: str) -> None:
     from fleet_policy_paths import path
-    if not isinstance(value, dict) or set(value) != FIELDS or provider != 'codex' \
-            or value['provider_id'] != 'openai' or value['method_id'] not in {'oauth', 'device-code'} \
+    if not isinstance(value, dict) or set(value) != FIELDS or PROVIDER_BY_BINDING.get(provider) is None \
+            or value['provider_id'] != PROVIDER_BY_BINDING[provider] or value['method_id'] not in {'oauth', 'device-code'} \
             or value['version'] != VERSION or value['auth_list_sha256'] != AUTH_LIST_SHA256:
         raise ValueError('OpenClaw provider driver has no measured independent account flow')
     for key, fingerprint in [('auth_list_source', 'auth_list_sha256'), ('node_command', 'node_command_sha256'), ('bridge', 'bridge_sha256')]:
@@ -33,10 +37,15 @@ def validate_execution_selection(agent: dict) -> None:
     if agent.get('harness_id') != 'openclaw':
         return
     model = agent.get('model_id')
-    if not isinstance(model, str) or re.fullmatch(r'openai/[A-Za-z0-9][A-Za-z0-9_.:-]{0,111}', model) is None:
-        raise ValueError('OpenClaw activation requires an explicit measured provider model: openai/<model>')
+    if not isinstance(model, str) or re.fullmatch(
+            r'(?:openai|anthropic)/[A-Za-z0-9][A-Za-z0-9_.:-]{0,111}', model) is None:
+        raise ValueError('OpenClaw activation requires an explicit measured provider model: <provider>/<model>')
     if agent.get('reasoning_effort') not in {None, 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'}:
         raise ValueError('OpenClaw reasoning effort is not supported by the measured driver')
+
+
+def validate_binding(binding: dict, agent: dict) -> None:
+    validate_definition(binding.get('openclaw'), binding.get('provider'))
 
 
 def environment(binding: dict, agent: dict) -> dict:
@@ -202,6 +211,8 @@ def authenticated_openclaw(packet: dict) -> bool:
         if expires <= datetime.now(UTC):
             return False
         model = agent.get('model_id')
+        if not isinstance(model, str) or not model.startswith(driver['provider_id'] + '/'):
+            return False
         expected = 'CAUCE_BOOTSTRAP_' + packet['nonce']
         args = [*prefix, 'agent', '--local', '--agent', agent['runtime_key'], '--model', model, '--session-key',
                 'agent:' + agent['runtime_key'] + ':cauce-auth-' + str(uuid.uuid4()), '--json', '--timeout', '25',
@@ -218,6 +229,9 @@ def authenticated_openclaw(packet: dict) -> bool:
         return reply.get('status', 'ok') == 'ok' and texts == [expected]
     except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
         return False
+
+
+authenticated = authenticated_openclaw
 
 
 if __name__ == '__main__':

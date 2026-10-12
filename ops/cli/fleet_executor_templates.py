@@ -14,7 +14,22 @@ CONTAINER = re.compile(r'[a-z][a-z0-9-]{0,127}')
 PREFIX = re.compile(r'[a-z][a-z0-9-]{0,47}-')
 
 
-def validate_login(row: dict):
+def descriptor_login_arguments(policy: dict, harness: str):
+    """Login arguments declared by the harness descriptor in its bundle, if any."""
+    bundle = (policy.get('bundles') or {}).get(harness)
+    directory = bundle.get('directory') if isinstance(bundle, dict) else None
+    if not isinstance(directory, str):
+        return None
+    try:
+        from harness_operations import read_descriptor
+        descriptor, _ = read_descriptor(directory, harness)
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    argv = (descriptor.get('provider') or {}).get('authenticate_argv')
+    return argv[1:] if argv else None
+
+
+def validate_login(row: dict, policy: dict | None = None):
     login = row['login']
     if not isinstance(login, dict) or set(login) - {'files', 'env'} != {'method', 'command', 'sha256'} \
             or login['method'] not in ('device', 'terminal') or not isinstance(login['sha256'], str) \
@@ -42,10 +57,12 @@ def validate_login(row: dict):
         raise SafeFailure('invalid approved provider login environment')
     driver = row.get('openclaw')
     if driver is None:
-        arguments = ['login', '--device-auth'] if row['provider'] in {'codex', 'grok'} and login['method'] == 'device' else \
+        legacy = ['login', '--device-auth'] if row['provider'] in {'codex', 'grok'} and login['method'] == 'device' else \
             ['login'] if row['provider'] == 'muse' and login['method'] == 'device' else \
             ['login'] if row['provider'] == 'codex' else ['auth', 'login'] if row['provider'] == 'claude' and login['method'] == 'terminal' else None
-        valid = command[0] == row['command'] and login['sha256'] == row['command_sha256'] and command[1:] == arguments
+        declared = descriptor_login_arguments(policy, row['provider']) if policy else None
+        arguments = declared if declared is not None and login['method'] == 'device' else legacy
+        valid = legacy is not None and command[0] == row['command'] and login['sha256'] == row['command_sha256'] and command[1:] == arguments
     else:
         valid = command[0] == driver['node_command'] and login['sha256'] == driver['node_command_sha256'] \
             and command[1:] == [row['command'], 'models', 'auth', 'login'] and login['method'] == 'device' \
@@ -154,7 +171,7 @@ def validate_templates(policy: dict):
                 or 'container_prefix' in row and (not isinstance(row['container_prefix'], str) or PREFIX.fullmatch(row['container_prefix']) is None):
             raise SafeFailure('invalid approved provider container selector')
         if 'login' in row:
-            validate_login(row)
+            validate_login(row, policy)
         identity = (row['provider'], row['runtime_user'], 'openclaw' in row,
                     row.get('runtime_mode'), row.get('container_name'), row.get('container_prefix'))
         if identity in identities:
@@ -231,45 +248,50 @@ def runtime_candidates(policy: dict) -> list[dict]:
         for harness in sorted(policy['bundles']):
             if harness not in eligible or candidate.get('harness_id', harness) != harness:
                 continue
+            module = None
             if eligible[harness]:
                 from importlib import import_module
                 module = import_module(eligible[harness])
                 if hasattr(module, 'authentication_supported') and not module.authentication_supported():
                     continue
-            provider = 'codex' if harness == 'openclaw' else harness
-            prefix = candidate.get('prefix') if mode == 'container' and name is None else None
-            templates = matching_templates(policy, provider, candidate['runtime_user'], harness, mode, name, prefix)
-            if len(templates) > 1:
-                continue
-            templates = [row for row in templates if (not path(row['path_root']).is_relative_to(path(candidate['state_root']))
-                if mode == 'native' else row['path_root'] == candidate.get('profile_root'))
-                and (prefix is None or 'container_name' not in row and prefix.startswith(row.get('container_prefix', prefix)))]
-            profiles = [row for row in policy['profiles'].values() if row.get('provider') == provider
-                and prefix is None
-                and ('openclaw' in row) == (harness == 'openclaw')
-                and row.get('runtime_user') == candidate['runtime_user'] and row.get('command') and row.get('command_sha256')
-                and (row.get('container_name') == name if mode == 'container' else 'container_name' not in row)]
-            if not templates and not profiles:
-                continue
             if harness == 'openclaw':
-                from fleet_provider_openclaw import measured_definition
-                approved = False
-                for row in templates + profiles:
-                    key = json.dumps(row, sort_keys=True)
-                    if key not in measured:
-                        measured[key] = measured_definition(row)
-                    approved = approved or measured[key]
-                if not approved:
+                providers = sorted({row['provider'] for row in policy['profile_templates'] if 'openclaw' in row and row.get('provider')}
+                    | {row['provider'] for row in policy['profiles'].values() if 'openclaw' in row and row.get('provider')}) or ['codex']
+            else:
+                providers = [harness]
+            for provider in providers:
+                prefix = candidate.get('prefix') if mode == 'container' and name is None else None
+                templates = matching_templates(policy, provider, candidate['runtime_user'], harness, mode, name, prefix)
+                if len(templates) > 1:
                     continue
-            runtime = {key: candidate.get(key) for key in fields}
-            from fleet_provider_muse import EFFORTS
-            runtime.update(mode=mode, harness_id=harness, provider=provider,
-                reasoning_efforts=([] if harness == 'grok' else sorted(EFFORTS) if harness == 'muse' else
-                    ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'] if harness == 'openclaw' else
-                    ['minimal', 'low', 'medium', 'high', 'xhigh'] if harness == 'codex' else ['low', 'medium', 'high', 'xhigh', 'max']))
-            if mode == 'container':
-                runtime['container_name' if name else 'container_prefix'] = name or candidate['prefix']
-            runtimes.append(runtime)
+                templates = [row for row in templates if (not path(row['path_root']).is_relative_to(path(candidate['state_root']))
+                    if mode == 'native' else row['path_root'] == candidate.get('profile_root'))
+                    and (prefix is None or 'container_name' not in row and prefix.startswith(row.get('container_prefix', prefix)))]
+                profiles = [row for row in policy['profiles'].values() if row.get('provider') == provider
+                    and prefix is None
+                    and ('openclaw' in row) == (harness == 'openclaw')
+                    and row.get('runtime_user') == candidate['runtime_user'] and row.get('command') and row.get('command_sha256')
+                    and (row.get('container_name') == name if mode == 'container' else 'container_name' not in row)]
+                if not templates and not profiles:
+                    continue
+                if module is not None and hasattr(module, 'measured_definition'):
+                    approved = False
+                    for row in templates + profiles:
+                        key = json.dumps(row, sort_keys=True)
+                        if key not in measured:
+                            measured[key] = module.measured_definition(row)
+                        approved = approved or measured[key]
+                    if not approved:
+                        continue
+                runtime = {key: candidate.get(key) for key in fields}
+                from fleet_provider_muse import EFFORTS
+                runtime.update(mode=mode, harness_id=harness, provider=provider,
+                    reasoning_efforts=([] if harness == 'grok' else sorted(EFFORTS) if harness == 'muse' else
+                        ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'] if harness == 'openclaw' else
+                        ['minimal', 'low', 'medium', 'high', 'xhigh'] if harness == 'codex' else ['low', 'medium', 'high', 'xhigh', 'max']))
+                if mode == 'container':
+                    runtime['container_name' if name else 'container_prefix'] = name or candidate['prefix']
+                runtimes.append(runtime)
     return runtimes
 
 
