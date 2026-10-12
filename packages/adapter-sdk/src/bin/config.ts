@@ -190,7 +190,8 @@ function museFromEnvironment(harnessId: HarnessId): MuseRunnerConfig | undefined
     executable: absolutePath(requiredEnvironment("CAUCE_MUSE_EXECUTABLE"), "CAUCE_MUSE_EXECUTABLE"),
     configHome: absolutePath(requiredEnvironment("CAUCE_MUSE_CONFIG_HOME"), "CAUCE_MUSE_CONFIG_HOME"),
     dataHome: absolutePath(requiredEnvironment("CAUCE_MUSE_DATA_HOME"), "CAUCE_MUSE_DATA_HOME"),
-    workspace: absolutePath(requiredEnvironment("CAUCE_MUSE_WORKSPACE"), "CAUCE_MUSE_WORKSPACE"),
+    workspace: absolutePath(
+      process.env.CAUCE_MUSE_WORKSPACE ?? process.env.CAUCE_AGENT_WORKSPACE ?? process.cwd(), "CAUCE_MUSE_WORKSPACE"),
     approvalMode,
     ...(yolo === "1" ? { yolo: true } : {}),
     ...(process.env.CAUCE_MUSE_MODEL === undefined

@@ -1,7 +1,7 @@
 import type { HarnessAdapterOptions } from "../contracts/harness.js";
 import { HttpEgressReceiptSource } from "../sdk/egress-receipt-source.js";
 import { readFileSync } from "node:fs";
-import { realpath } from "node:fs/promises";
+import { realpath, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { AdapterClient } from "../sdk/client.js";
 import { bootstrapOnStartup } from "../sdk/bootstrap-runner.js";
@@ -279,8 +279,8 @@ export async function runCli(harnessId: HarnessId): Promise<void> {
   const commandPins = commandPinsFromEnvironment(); let selected = selectionFromEnvironment(harnessId);
   if (commandPins !== undefined && runtime.harnessCommand !== undefined && runtime.harnessCommand !== commandPins.command) throw new Error('configured harness command differs from its pinned binding');
   const tenantId = TenantSchema.parse(runtime.tenant);
-  if (harnessId === "muse" && runtime.muse !== undefined && runtime.muse.workspace !== "/home/node/clawd") {
-    throw new Error("Muse workspace must be exactly /home/node/clawd");
+  if (harnessId === "muse" && runtime.muse !== undefined && !(await stat(runtime.muse.workspace).then((entry) => entry.isDirectory(), () => false))) {
+    throw new Error("Muse workspace must be an existing directory");
   }
   // Muse: default `muse-cauce exec` (hegel); MSP only with explicit config, loaded lazily.
   const museMsp = harnessId === "muse" && runtime.muse !== undefined;

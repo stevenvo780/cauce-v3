@@ -77,6 +77,36 @@ test("a muse alias without CAUCE_MUSE_EXECUTABLE keeps the exec path; a stray MS
   }
 });
 
+test("Muse MSP workspace falls back to CAUCE_AGENT_WORKSPACE, then to the inherited cwd", async () => {
+  const names = [
+    "CAUCE_TENANT", "CAUCE_ROOM", "CAUCE_ALIAS", "CAUCE_INSTANCE_ID", "CAUCE_STATE_DIR",
+    "CAUCE_RELAY_URL", "CAUCE_ENVIRONMENT", "CAUCE_MUSE_EXECUTABLE", "CAUCE_MUSE_CONFIG_HOME",
+    "CAUCE_MUSE_DATA_HOME", "CAUCE_MUSE_WORKSPACE", "CAUCE_MUSE_APPROVAL_MODE", "CAUCE_MUSE_YOLO",
+    "CAUCE_AGENT_WORKSPACE",
+  ] as const;
+  const previous = new Map(names.map((name) => [name, process.env[name]]));
+  try {
+    for (const name of names) delete process.env[name];
+    Object.assign(process.env, {
+      CAUCE_TENANT: "Hospital", CAUCE_ROOM: "grp.hospital", CAUCE_ALIAS: "teseo",
+      CAUCE_INSTANCE_ID: "adapter-teseo", CAUCE_STATE_DIR: resolve(root, "state-teseo"),
+      CAUCE_RELAY_URL: "ws://127.0.0.1:8080/v3/ws", CAUCE_ENVIRONMENT: "test",
+      CAUCE_MUSE_EXECUTABLE: "/opt/muse-code/muse", CAUCE_MUSE_CONFIG_HOME: "/home/node/.muse/config",
+      CAUCE_MUSE_DATA_HOME: "/home/node/.muse/data", CAUCE_MUSE_APPROVAL_MODE: "onRequest",
+    });
+    assert.equal((await loadCliRuntimeConfig("muse", [])).muse?.workspace, process.cwd());
+    process.env.CAUCE_AGENT_WORKSPACE = "/home/node/.local/share/cauce-v3/space/projects";
+    assert.equal((await loadCliRuntimeConfig("muse", [])).muse?.workspace, "/home/node/.local/share/cauce-v3/space/projects");
+    process.env.CAUCE_MUSE_WORKSPACE = "/home/node/clawd";
+    assert.equal((await loadCliRuntimeConfig("muse", [])).muse?.workspace, "/home/node/clawd");
+  } finally {
+    for (const [name, value] of previous) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  }
+});
+
 test.beforeEach(async () => {
   await rm(root, { recursive: true, force: true });
   await mkdir(root, { recursive: true });

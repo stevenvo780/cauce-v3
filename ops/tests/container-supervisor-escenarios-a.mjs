@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { chmod, mkdir, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { materializeSupervisorOpsFixture } from "./fixtures/container-supervisor-ops-root.mjs";
 
@@ -64,6 +65,20 @@ export async function escenariosA(ctx) {
     "an unmigrated alias must keep the cwd its harness already has sessions in");
   const externalMountCall = (list) => list.find(({ argv }) => argv.includes("/bin/sh") && argv.some((value) => value.includes("external-mounts.json")));
   assert(externalMountCall(calls)?.argv.includes("/workspace"), "the implicit shared /workspace must be declared as an external mount");
+  // Run the declaration script the supervisor sent so the file content, not only its arguments, is checked.
+  const declaration = externalMountCall(calls).argv;
+  const declared = declaration.slice(declaration.indexOf("-c") + 1);
+  const declarationRoot = await mkdtemp(path.join(os.tmpdir(), "cauce-external-mounts-"));
+  await mkdir(path.join(declarationRoot, "config"));
+  const declarationRun = spawnSync("/bin/sh", ["-c", declared[0], "sh", declarationRoot, declared[3], declared[4]], { encoding: "utf8" });
+  assert.equal(declarationRun.status, 0, declarationRun.stderr);
+  assert.deepEqual(JSON.parse(await readFile(path.join(declarationRoot, "config/external-mounts.json"), "utf8")), {
+    mounts: [{
+      path: "/workspace", excluded_from_copy: true,
+      reason: "inherited working directory outside the space; not copied until the agent is migrated to projects",
+    }],
+  });
+  await rm(declarationRoot, { recursive: true, force: true });
   assert(final?.argv.includes(`CAUCE_CONTAINER_ID=${firstId}`));
   assert(final?.argv.some((value) => value.startsWith("CAUCE_CONTAINER_GENERATION=")));
   assert.equal(final?.argv.some((value) => value.startsWith("CAUCE_TOKEN_FILE=")), false,

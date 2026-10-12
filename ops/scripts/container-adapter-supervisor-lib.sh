@@ -214,7 +214,7 @@ PY
     [[ ${CONFIG[MUSE_EXECUTABLE]:-} == /opt/muse-code/muse ]] || die 'MUSE_EXECUTABLE must use the pinned Muse mount'
     [[ ${CONFIG[MUSE_CONFIG_HOME]:-} == "$container_home/.muse/config" ]] || die 'MUSE_CONFIG_HOME must use the isolated persistent profile'
     [[ ${CONFIG[MUSE_DATA_HOME]:-} == "$container_home/.muse/data" ]] || die 'MUSE_DATA_HOME must use the isolated persistent profile'
-    [[ ${CONFIG[MUSE_WORKSPACE]:-} == "$inventory_workspace" ]] || die 'MUSE_WORKSPACE differs from the canonical inventory workspace'
+    [[ ! -v CONFIG[MUSE_WORKSPACE] || ${CONFIG[MUSE_WORKSPACE]} == "$inventory_workspace" ]] || die 'MUSE_WORKSPACE differs from the canonical inventory workspace'
     [[ ${CONFIG[MUSE_APPROVAL_MODE]:-} =~ ^(denyUnmatched|onRequest|allowAll)$ ]] || die 'MUSE_APPROVAL_MODE is invalid'
     [[ ( ${CONFIG[MUSE_APPROVAL_MODE]} == allowAll && ${CONFIG[MUSE_YOLO]:-} == 1 ) || ( ${CONFIG[MUSE_APPROVAL_MODE]} != allowAll && ! -v CONFIG[MUSE_YOLO] ) ]] || die 'Muse YOLO and allowAll must be configured together'
     [[ ! -v CONFIG[MUSE_MODEL] || ${CONFIG[MUSE_MODEL]} =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] || die 'MUSE_MODEL is invalid'

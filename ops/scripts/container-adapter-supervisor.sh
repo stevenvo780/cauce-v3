@@ -365,7 +365,7 @@ validate_container_identity_and_mount() {
   elif [[ $harness == muse && -n $inventory_workspace ]]; then
     # Workspace agent: its isolated profile and data, plus the pinned executable.
     runtime_paths+=("${CONFIG[MUSE_CONFIG_HOME]}" "${CONFIG[MUSE_DATA_HOME]}")
-    runtime_paths+=("${CONFIG[MUSE_WORKSPACE]}")
+    runtime_paths+=("$inventory_workspace")
     docker_id_exec --user "$container_user" test -x "${CONFIG[MUSE_EXECUTABLE]}" >/dev/null 2>&1 || die 'Muse executable is missing inside the assigned container'
   elif [[ $harness == muse ]]; then
     # The alias's Muse folder holds its login (.config/muse, linked from ~/.config/muse) and, with
