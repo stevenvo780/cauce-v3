@@ -7,16 +7,12 @@ import { AgentLifecycleFields } from './AgentLifecycleFields';
 import { AgentFleetOperation, AgentFleetPreview } from './AgentFleetOperation';
 import { blockingOperation, fleetErrorText, operationSummary } from './fleet-operation-text';
 import { agentLifecycleDraft, agentLifecycleRequest, FLEET_ACTION_LABELS, type AgentLifecycleDraft } from './agent-lifecycle-model';
+import { purgeResources } from './agent-purge-resources';
 import { useAgentLifecycle } from './use-agent-lifecycle';
 import './agent-lifecycle.css';
 
 type Kind = FleetOperationRequest['kind'];
 const newKey = () => `fleet_${crypto.randomUUID()}`;
-function purgeContainer(agent: Record<string, unknown> | undefined): string | undefined {
-  const placement = agent?.placement && typeof agent.placement === 'object' ? agent.placement as Record<string, unknown> : agent;
-  const name = placement?.container_name ?? agent?.container_name;
-  return typeof name === 'string' && name ? name : undefined;
-}
 const ACTION_LABELS: Record<Kind, string> = { ...FLEET_ACTION_LABELS, purge: 'Eliminar definitivamente' };
 export function AgentLifecyclePanel({ snapshot, target, onReloaded, initialDraft, initialOpen = false, initialKind, triggerLabel, hideTrigger = false, embedded = false, fixedKind = false, onClose, onDirtyChange }: {
   snapshot: ConfigurationSnapshot; target?: FleetTarget; onReloaded?: (value: ConfigurationSnapshot) => void;
@@ -114,7 +110,7 @@ export function AgentLifecyclePanel({ snapshot, target, onReloaded, initialDraft
   }
   const agent = target?.resource === 'agent' ? [...(snapshot.agents ?? []), ...(snapshot.retired?.agents ?? [])]
     .find((row) => row.tenant_id === target.tenant_id && row.alias === target.alias) : undefined;
-  const container = purgeContainer(agent);
+  const resources = purgeResources(agent);
   return <div className="agent-lifecycle-panel" data-open={String(open)}>
     {hideTrigger ? null : <button ref={trigger} type="button" className="button secondary"
       onClick={() => { setOpen((value) => !value); }} aria-expanded={open}
@@ -142,8 +138,13 @@ export function AgentLifecyclePanel({ snapshot, target, onReloaded, initialDraft
         disabled={busy || inProgress || !canWrite || !available} edit={edit} /> : null}
       {kind === 'purge' ? <p className="notice">La purga elimina el registro retirado. El servidor exige ausencia de dependencias antes de aplicar.</p> : null}
       {kind === 'purge' && target?.resource === 'agent' ? <section aria-label="Recursos que se borrarán" className="grid gap-2">
-        {container ? <p className="m-0">Se borrará el contenedor <code>{container}</code> y sus volúmenes <code>{container}-state</code> y{' '}
-          <code>{container}-provider-profiles</code> (esta última guarda la sesión del proveedor). No se puede deshacer.</p>
+        {resources.kind === 'native' ? <p className="m-0">Se borrarán los directorios de estado y control del agente
+          {resources.host ? <> en el host <code>{resources.host}</code></> : null}
+          {resources.directory ? <> (<code>{resources.directory}</code>)</> : null}. No hay contenedor ni volúmenes. No se puede deshacer.</p>
+          : resources.kind === 'container' ? <p className="m-0">Contenedor registrado: <code>{resources.container}</code>. Si es propio del agente,
+            se borrará junto con sus volúmenes <code>{resources.container}-state</code> y, si existe, <code>{resources.container}-provider-profiles</code>{' '}
+            (guarda la sesión del proveedor). Si es un contenedor compartido con otros agentes, se conserva y solo se limpian los restos de este alias.
+            No se puede deshacer.</p>
           : <p className="m-0">Este agente no tiene contenedor registrado; se borrarán solo sus datos de configuración.</p>}
         <p className="m-0"><a href={`/messages/${encodeURIComponent(target.tenant_id)}/${encodeURIComponent(target.alias)}?view=context`}>Descargar copia</a>
           {' '}del espacio antes de purgar.</p>
