@@ -145,7 +145,15 @@ for unit in "$tmp_units"/cauce-v3-alias-*.service "$tmp_units/SHA256SUMS"; do
 done
 (cd "$ROOT/generated/systemd" && sha256sum -c SHA256SUMS >/dev/null)
 
-PYTHONDONTWRITEBYTECODE=1 python3 "$ROOT/scripts/generate-container-units.py" --rootless --home /home/dev --output "$tmp_container_units" >/dev/null
+profile_generation_options=()
+profile_generation_mode=${CAUCE_OPS_NO_PROFILE_EXPECTATION:-0}
+if [[ $profile_generation_mode == 1 ]]; then
+  profile_generation_options+=(--no-profile-expectation)
+elif [[ $profile_generation_mode != 0 ]]; then
+  printf 'CAUCE_OPS_NO_PROFILE_EXPECTATION must be 0 or 1\n' >&2
+  exit 1
+fi
+PYTHONDONTWRITEBYTECODE=1 python3 "$ROOT/scripts/generate-container-units.py" --rootless --home /home/dev "${profile_generation_options[@]}" --output "$tmp_container_units" >/dev/null
 container_units=("$tmp_container_units"/cauce-v3-container-*.service)
 container_configs=("$tmp_container_units"/configs/*.env.example)
 [[ ${#container_units[@]} -eq "$container_size" && ${#container_configs[@]} -eq "$container_size" ]] || {
