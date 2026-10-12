@@ -223,6 +223,7 @@ según `CAUCE_MCP_OAUTH_PROVIDER` en `deploy/deploy.sh`.
 | Parámetro | Unidad | Valor | Fuente | Cubre |
 |---|---|---|---|---|
 | Pool pg (`db.ts:73`) | conns/ms | máx 20, timeout 5_000 | fijo (caller pisa) | — |
+| `CAUCE_MIGRATION_LOCK_TIMEOUT_MS` (`migration-locks.ts:migrationLockTimeoutMs`, `defaultMigrationLockTimeoutMs`) | ms | 5_000 por defecto; entero 1–60_000, otro valor aborta el migrador | env del migrador (`migrate-cli.ts`) | unit migration-locks |
 | `subscribeDeliveryWakes` backoff (`db.ts:312`) | ms | 100 → 5_000 exp | fijo | — |
 | `claimJobs` / `claimFairJobs` (`jobs.ts:31`) | filas/ms | 1 / 30_000 (+burst 3) | fijo | — |
 | `claimOutbox` / `claimWakeOutbox` (`outbox/claims.ts:64`) | filas/ms | 50 / 30_000 | fijo | — |
