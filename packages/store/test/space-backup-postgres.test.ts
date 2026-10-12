@@ -79,6 +79,18 @@ async function upload(claim:SpaceBackupClaim) {
   return receipt;
 }
 describe('durable space backup with real PostgreSQL runtime role and signed HTTP',()=>{
+  it('records the verified backup host and component without private snapshots or duplicate events',async()=>{
+    const response=await post({idempotency_key:'diagnostic-backup-audit'});expect(response.statusCode).toBe(202);
+    const id=response.json<{id:string}>().id;
+    expect((await post({idempotency_key:'diagnostic-backup-audit'})).json<{id:string}>().id).toBe(id);
+    const events=(await pool.query<{company_id:string;actor_human_id:string;metadata:Record<string,unknown>}>(
+      "SELECT company_id,actor_human_id,metadata FROM audit_events WHERE action='space.backup.request' AND metadata->>'id'=$1",[id])).rows;
+    expect(events).toEqual([{company_id:north.company.id,actor_human_id:north.user.id,
+      metadata:{id,tenant_id:north.hub.id,alias:'worker',host_id:host.host_id,component:'backup'}}]);
+    expect(JSON.stringify(events)).not.toContain(other.host_id);
+    expect(JSON.stringify(events)).not.toContain('synthetic-secret-never-exported');
+    expect(JSON.stringify(events)).not.toMatch(/agent_snapshot|claim_token|credential|password|cookie|policy_sha256/u);
+  });
   it('runs real closed Python export through enrolled channel and downloads its verified private ZIP',async()=>{
     const created=await post({idempotency_key:'signed-full-backup'});expect(created.statusCode).toBe(202);const id=created.json<{id:string}>().id;
     expect((await post({idempotency_key:'signed-full-backup'})).json<{id:string}>().id).toBe(id);

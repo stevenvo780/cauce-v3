@@ -4,7 +4,7 @@ import {
 } from './facades.js';
 
 describe('safeAuditPage', () => {
-  it('keeps participant-visible cross-tenant rows but drops raw metadata and unsafe summaries', () => {
+  it('keeps company-scoped cross-tenant rows but drops raw metadata and unsafe summaries', () => {
     const page = safeAuditPage({
       next_cursor: '17',
       metadata: { token: 'page-secret' },
@@ -12,6 +12,9 @@ describe('safeAuditPage', () => {
         event_id: '18',
         at: '2026-08-26T08:00:00.000Z',
         tenant_id: 'Miguel',
+        company_id: 'humanizar',
+        host_id: 'zz-canary-audit-host',
+        component: 'delivery',
         actor_alias: 'atlas',
         action: 'delivery.ack',
         decision: 'info',
@@ -29,6 +32,9 @@ describe('safeAuditPage', () => {
         event_id: '18',
         at: '2026-08-26T08:00:00.000Z',
         tenant_id: 'Miguel',
+        company_id: 'humanizar',
+        host_id: 'zz-canary-audit-host',
+        component: 'delivery',
         actor_alias: 'atlas',
         action: 'delivery.ack',
         decision: 'info',
@@ -51,6 +57,9 @@ describe('safeAuditPage', () => {
         event_id: null,
         at: null,
         tenant_id: null,
+        company_id: null,
+        host_id: null,
+        component: null,
         actor_alias: null,
         action: null,
         decision: null,
@@ -59,6 +68,16 @@ describe('safeAuditPage', () => {
         summary: null,
       }],
     });
+  });
+
+  it('omits invalid company, host and unknown component values instead of reflecting metadata', () => {
+    const page = safeAuditPage({ next_cursor: null, items: [{ event_id: '3', action: 'context.sync', decision: 'info',
+      company_id: 'company/secret', host_id: 'host\nsecret', component: 'unknown-secret',
+      summary: JSON.stringify({ error_code: 'context_git_timeout', token: 'private-secret' }),
+      metadata: { company_id: 'company-secret', host_id: 'host-secret', component: 'component-secret' } }] });
+    expect(page.items).toEqual([expect.objectContaining({ company_id: null, host_id: null, component: null,
+      summary: '{"error_code":"context_git_timeout"}' })]);
+    expect(JSON.stringify(page)).not.toContain('secret');
   });
 });
 

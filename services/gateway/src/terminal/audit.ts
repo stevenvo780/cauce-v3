@@ -1,14 +1,8 @@
-import type { DatabasePool } from '@cauce/store';
+import { FleetHostIdSchema, isCanonicalUuidV4 } from '@cauce/protocol';
+import type { DatabaseClient, DatabasePool } from '@cauce/store';
 import type { TerminalSessionRow } from './types.js';
 
-/**
- * Audit trail of the PTY plane and of the governed documents that ride the same relay. Writes
- * straight through the pool: repository.ts belongs to another workflow and is not touched. Rows
- * land in audit_events, which is what /audit in the console already renders.
- * NEVER log a whole ticket, a single byte of PTY content, or a byte of a governed document. Of
- * the ticket only its sha256 truncated to 16 hex characters ever reaches metadata, and the rows
- * of the control plane carry counts and digest prefixes, never the keystrokes they measure.
- */
+/** Audit metadata excludes tickets, PTY bytes and document contents; only measurements and digest prefixes are safe. */
 
 type TerminalAuditAction =
   | 'terminal.session.request'
@@ -38,8 +32,41 @@ export interface TerminalAuditEntry {
   readonly metadata: Readonly<Record<string, unknown>>;
 }
 
-export async function recordTerminalAudit(pool: DatabasePool, entry: TerminalAuditEntry): Promise<void> {
-  await pool.query(
+function auditHost(value: unknown): string | null {
+  const result = FleetHostIdSchema.safeParse(value);
+  return result.success ? result.data : null;
+}
+
+async function terminalAuditHost(database: DatabasePool | DatabaseClient, entry: TerminalAuditEntry): Promise<string | null> {
+  const metadata = entry.metadata;
+  if (metadata.session_id === undefined
+      || (entry.action === 'terminal.session.request' && entry.decision === 'allow' && metadata.receipt_recovered !== true)) {
+    return auditHost(metadata.host_id);
+  }
+  if (!isCanonicalUuidV4(metadata.session_id)
+      || typeof metadata.target_tenant !== 'string' || typeof metadata.target_alias !== 'string') return null;
+  // Session rows lack a host snapshot; the original authorized admission is the durable source.
+  const result = await database.query<{ host_id: unknown }>(
+    `SELECT audit.metadata->>'host_id' AS host_id
+       FROM audit_events audit
+       JOIN tenants actor_tenant ON actor_tenant.id=audit.tenant_id
+       JOIN terminal_sessions session ON session.id::text=audit.metadata->>'session_id'
+       JOIN tenants target_tenant ON target_tenant.id=session.tenant_id
+      WHERE session.id=$1::uuid AND session.tenant_id=$2 AND session.alias=$3
+        AND audit.action='terminal.session.request' AND audit.decision='allow'
+        AND audit.metadata->>'target_tenant'=session.tenant_id
+        AND audit.metadata->>'target_alias'=session.alias
+        AND COALESCE(audit.company_id,actor_tenant.company_id)=target_tenant.company_id
+        AND ($4::text IS NULL OR audit.trace_id=$4)
+      ORDER BY audit.id LIMIT 1`,
+    [metadata.session_id, metadata.target_tenant, metadata.target_alias, entry.trace_id ?? null],
+  );
+  return auditHost(result.rows[0]?.host_id);
+}
+
+export async function recordTerminalAudit(database: DatabasePool | DatabaseClient, entry: TerminalAuditEntry): Promise<void> {
+  const metadata = { ...entry.metadata, host_id: await terminalAuditHost(database, entry), component: 'terminal' };
+  await database.query(
     `INSERT INTO audit_events(tenant_id, actor_alias, action, decision, trace_id, metadata)
      VALUES($1,$2,$3,$4,$5,$6::jsonb)`,
     [
@@ -48,7 +75,7 @@ export async function recordTerminalAudit(pool: DatabasePool, entry: TerminalAud
       entry.action,
       entry.decision,
       entry.trace_id ?? null,
-      JSON.stringify(entry.metadata)
+      JSON.stringify(metadata)
     ]
   );
 }
@@ -59,6 +86,7 @@ export interface TerminalAuditContext {
   readonly target_tenant: string;
   readonly target_alias: string;
   readonly container: string | null;
+  readonly host_id?: string | null;
   /** Tenant-qualified identities; bare aliases are ambiguous across tenants. */
   readonly cohort: readonly string[];
   readonly mode: string;
@@ -97,6 +125,8 @@ export function terminalAuditMetadata(
     container: context.container,
     cohort: [...context.cohort],
     mode: context.mode,
-    ...extra
+    ...extra,
+    host_id: context.host_id ?? null,
+    component: 'terminal',
   };
 }

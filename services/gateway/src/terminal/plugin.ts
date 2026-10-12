@@ -10,7 +10,7 @@ import {
   type GovernanceRelayClient, type MeasuredFactsSource
 } from '../console/agent-documents.js';
 import { replyError as replyCanonicalError } from '../routes/shared.js';
-import type { TerminalAuditEntry } from './audit.js';
+import { recordTerminalAudit } from './audit.js';
 import {
   GrantStore, containerCohort, loadFleetPlacements,
 } from './authority.js';
@@ -227,25 +227,6 @@ export function browserOwnerGeneration(value: string): string {
   return generation;
 }
 
-/** Audit writes which guard a state transition use the same PostgreSQL transaction. */
-async function recordTransactionalTerminalAudit(
-  client: DatabaseClient,
-  entry: TerminalAuditEntry,
-): Promise<void> {
-  await client.query(
-    `INSERT INTO audit_events(tenant_id, actor_alias, action, decision, trace_id, metadata)
-     VALUES($1,$2,$3,$4,$5,$6::jsonb)`,
-    [
-      entry.tenant_id,
-      entry.actor_alias,
-      entry.action,
-      entry.decision,
-      entry.trace_id ?? null,
-      JSON.stringify(entry.metadata),
-    ],
-  );
-}
-
 export async function registerTerminalControlPlane(
   app: FastifyInstance,
   options: TerminalControlPlaneOptions
@@ -296,7 +277,7 @@ export async function registerTerminalControlPlane(
     parseSessionExtend,
     browserOwnerGeneration,
     replyError,
-    recordTransactionalTerminalAudit,
+    recordTransactionalTerminalAudit: recordTerminalAudit,
   });
   /* ------------------------------------------------------------------ */
   /* Browser route: the DIRECTIVE of an alias                            */
@@ -331,6 +312,6 @@ export async function registerTerminalControlPlane(
     authority,
     relayPeerInstanceId: options.relayPeerInstanceId,
     replyError,
-    recordTransactionalTerminalAudit,
+    recordTransactionalTerminalAudit: recordTerminalAudit,
   });
 }

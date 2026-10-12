@@ -1,5 +1,5 @@
 import { RFC_UUID_PATTERN, SHA256_HEX_PATTERN, type DeliveryState } from '@cauce/protocol';
-import { safeAuditSummary } from '@cauce/store';
+import { COMPANY_ID_PATTERN, safeAuditSummary } from '@cauce/store';
 import type { Principal } from './auth.js';
 
 type Row = Record<string, unknown>;
@@ -105,6 +105,8 @@ const CANCELLABLE_DELIVERY_STATES: ReadonlySet<string> = new Set<DeliveryState>(
 const PARENT_NOTICE_DISPOSITIONS = new Set(['not_child', 'returned', 'denied', 'deferred', 'coalesced']);
 const AUDIT_ID = /^[1-9][0-9]{0,18}$/u;
 const AUDIT_ACTION = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/u;
+const AUDIT_HOST = /^[a-z][a-z0-9_-]{0,63}$/u;
+const AUDIT_COMPONENTS = new Set(['terminal', 'context', 'backup', 'fleet', 'gateway', 'delivery']);
 const AUDIT_DECISIONS = new Set(['allow', 'deny', 'info']);
 
 function boundedString(value: unknown, maxLength: number): string | null {
@@ -135,12 +137,8 @@ function safeAuditSummaryProjection(action: string | null, value: unknown): stri
   }
 }
 
-/**
- * Exact browser projection for the participant-aware audit query. The repository deliberately
- * returns cross-tenant rows when this principal is the sender or recipient participant, so this
- * facade does not filter by `tenant_id`: it repeats only the privacy allowlist and never reflects
- * raw metadata or unexpected fields from a test double.
- */
+// Company-scoped rows may cross tenants. Only the repository can authorize that scope;
+// this projection repeats the privacy allowlist without reflecting raw metadata.
 export function safeAuditPage(value: unknown): Row {
   const page = object(value) ?? {};
   const items = Array.isArray(page.items)
@@ -150,6 +148,10 @@ export function safeAuditPage(value: unknown): Row {
         event_id: matchingString(item.event_id, AUDIT_ID, 19),
         at: boundedString(item.at, 64),
         tenant_id: boundedString(item.tenant_id, 128),
+        company_id: matchingString(item.company_id, COMPANY_ID_PATTERN, 128),
+        host_id: matchingString(item.host_id, AUDIT_HOST, 64),
+        component: typeof item.component === 'string' && AUDIT_COMPONENTS.has(item.component)
+          ? item.component : null,
         actor_alias: item.actor_alias === null ? null : boundedString(item.actor_alias, 128),
         action,
         decision: typeof item.decision === 'string' && AUDIT_DECISIONS.has(item.decision)

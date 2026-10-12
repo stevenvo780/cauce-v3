@@ -44,6 +44,16 @@ afterEach(() => {
 });
 
 describe('recordTerminalAudit', () => {
+  it('standardizes the component and explicit unknown host for every terminal-plane emitter', async () => {
+    const query = vi.fn().mockResolvedValue({ rows: [], rowCount: 1 });
+    await recordTerminalAudit(poolCon(query), {
+      tenant_id: 'CompanyA', actor_alias: 'owner', action: 'agent_document.denied', decision: 'deny',
+      metadata: { component: 'backup', host_id: 'invalid/private-host', reason: 'not_readable' },
+    });
+    const params = exigir(query.mock.calls[0], 'audit insert')[1] as readonly unknown[];
+    expect(JSON.parse(params[5] as string)).toEqual({ component: 'terminal', host_id: null, reason: 'not_readable' });
+  });
+
   it('hace INSERT con todos los campos serializando metadata como jsonb', async () => {
     const query = vi.fn().mockResolvedValue({ rows: [], rowCount: 1 });
     const pool = poolCon(query);
@@ -67,8 +77,9 @@ describe('recordTerminalAudit', () => {
     expect(params[2]).toBe('terminal.session.request');
     expect(params[3]).toBe('allow');
     expect(params[4]).toBe('trace-1234');
-    expect(params[5]).toBe(JSON.stringify(entry.metadata));
-    expect(JSON.parse(params[5] as string)).toEqual(entry.metadata);
+    const metadata = { ...entry.metadata, host_id: null, component: 'terminal' };
+    expect(params[5]).toBe(JSON.stringify(metadata));
+    expect(JSON.parse(params[5] as string)).toEqual(metadata);
   });
 
   it('deja trace_id en null cuando no se provee', async () => {
@@ -85,7 +96,7 @@ describe('recordTerminalAudit', () => {
     expect(params[3]).toBe('deny');
   });
 
-  it('serializa un metadata vacío como "{}" sin perder la forma del objeto', async () => {
+  it('adds terminal component and explicit unknown host to empty metadata', async () => {
     const query = vi.fn().mockResolvedValue({ rows: [], rowCount: 1 });
     await recordTerminalAudit(poolCon(query), {
       tenant_id: 'Pablo',
@@ -95,8 +106,7 @@ describe('recordTerminalAudit', () => {
       metadata: {}
     });
     const params = exigir(query.mock.calls[0], 'una llamada registrada')[1] as readonly unknown[];
-    expect(params[5]).toBe('{}');
-    expect(JSON.parse(params[5] as string)).toEqual({});
+    expect(JSON.parse(params[5] as string)).toEqual({ host_id: null, component: 'terminal' });
   });
 
   it('preserva metadata profundamente anidado y arrays', async () => {
@@ -115,7 +125,7 @@ describe('recordTerminalAudit', () => {
       metadata: nested
     });
     const params = exigir(query.mock.calls[0], 'una llamada registrada')[1] as readonly unknown[];
-    expect(JSON.parse(params[5] as string)).toEqual(nested);
+    expect(JSON.parse(params[5] as string)).toEqual({ ...nested, host_id: null, component: 'terminal' });
   });
 
   it('relanza el error cuando metadata no es JSON-serializable (referencia circular)', async () => {
@@ -301,6 +311,22 @@ describe('«ni un byte de contenido» medido sobre los emisores reales, no sobre
 });
 
 describe('terminalAuditMetadata', () => {
+  it('protects the resolved host and terminal component from extra metadata', () => {
+    const context = {
+      operator_id: 'owner', attributed: true, target_tenant: 'CompanyA', target_alias: 'agent',
+      container: 'container-a', cohort: ['CompanyA:agent'], mode: 'shell', host_id: 'host-a',
+    };
+    expect(terminalAuditMetadata(context, { host_id: 'host-b', component: 'backup' })).toMatchObject({
+      host_id: 'host-a', component: 'terminal',
+    });
+  });
+
+  it('records an unknown host explicitly without accepting an extra host', () => {
+    expect(terminalAuditMetadata({ operator_id: 'owner', attributed: true,
+      target_tenant: 'CompanyA', target_alias: 'hidden', container: null, cohort: [], mode: 'shell',
+    }, { host_id: 'host-b' })).toMatchObject({ host_id: null, component: 'terminal' });
+  });
+
   it('compone el esqueleto compartido con los campos del contexto', () => {
     const context: TerminalAuditContext = {
       operator_id: 'pablo',
@@ -318,7 +344,9 @@ describe('terminalAuditMetadata', () => {
       target_alias: 'seneca',
       container: 'cauce-seneca-1',
       cohort: ['Pablo:seneca', 'Pablo:dedalo'],
-      mode: 'shell'
+      mode: 'shell',
+      host_id: null,
+      component: 'terminal',
     });
   });
 

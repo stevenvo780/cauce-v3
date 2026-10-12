@@ -588,12 +588,23 @@ function registerConsoleAgentRoutes(
   });
 
   app.get<{ Querystring: Record<string, unknown> }>('/v3/console/audit', async (request, reply) => {
+    let access: Awaited<ReturnType<typeof consoleHumanAccess>>;
     try {
       const actor = await principal(request, options.authProvider);
       requirePermission(actor, 'read');
+      access = await consoleHumanAccess(options.authProvider, request, reply, 'read');
       const query = parseAuditQuery(request.query);
-      return safeAuditPage(await repository.listAudit(actor.tenant_id, actor.alias, query));
+      const human = access;
+      reply.header('Cache-Control', 'no-store');
+      return safeAuditPage(await repository.listAudit(actor.tenant_id, actor.alias, {
+        ...query,
+        ...(human === undefined ? {} : { humanAuthority: async (client) => {
+          await human.options.humanAuthority(client);
+          return human.companyAuthority(client);
+        } }),
+      }));
     } catch (error) { replyError(reply, error); }
+    finally { access?.close(); }
   });
 
   // Follow one delegation chain live, by trace id. The response is a graph, not a row list:

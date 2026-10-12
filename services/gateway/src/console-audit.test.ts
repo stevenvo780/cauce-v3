@@ -18,6 +18,9 @@ function repository() {
         event_id: '42',
         at: '2026-08-26T08:00:00.000Z',
         tenant_id: 'Miguel',
+        company_id: 'humanizar',
+        host_id: 'zz-canary-audit-host',
+        component: 'delivery',
         actor_alias: 'atlas',
         action: 'delivery.ack',
         decision: 'info',
@@ -51,7 +54,7 @@ afterEach(async () => {
 });
 
 describe('audit console boundary', () => {
-  it('forwards one exact keyset page and preserves participant-visible cross-tenant events', async () => {
+  it('forwards one exact keyset page and preserves company-scoped cross-tenant events', async () => {
     const { app, store } = await gateway();
     const response = await app.inject({
       method: 'GET', url: '/v3/console/audit?limit=17&before=99', headers: headers(),
@@ -65,6 +68,9 @@ describe('audit console boundary', () => {
         event_id: '42',
         at: '2026-08-26T08:00:00.000Z',
         tenant_id: 'Miguel',
+        company_id: 'humanizar',
+        host_id: 'zz-canary-audit-host',
+        component: 'delivery',
         actor_alias: 'atlas',
         action: 'delivery.ack',
         decision: 'info',
@@ -86,6 +92,16 @@ describe('audit console boundary', () => {
     '/v3/console/audit?before=9223372036854775808',
     '/v3/console/audit?limit=1&limit=2',
     '/v3/console/audit?cursor=9',
+    '/v3/console/audit?trace_id=',
+    '/v3/console/audit?trace_id=first&trace_id=second',
+    '/v3/console/audit?trace_id=invalid%0Atrace',
+    `/v3/console/audit?trace_id=${'t'.repeat(257)}`,
+    '/v3/console/audit?alias=kant%25',
+    '/v3/console/audit?action=delivery.*',
+    '/v3/console/audit?from=2026-02-30T00:00:00Z',
+    '/v3/console/audit?to=2026-10-12',
+    '/v3/console/audit?from=2026-10-13T00:00:00Z&to=2026-10-12T00:00:00Z',
+    '/v3/console/audit?company_id=other-company',
   ])('rejects malformed, duplicate or unknown pagination before the store: %s', async (url) => {
     const { app, store } = await gateway();
     const response = await app.inject({ method: 'GET', url, headers: headers() });
@@ -104,5 +120,15 @@ describe('audit console boundary', () => {
     expect(store.listAudit).toHaveBeenCalledWith(
       'Steven', 'socrates', { limit: 100, before: null },
     );
+  });
+
+  it('forwards all server filters exactly without promoting an unverified principal', async () => {
+    const { app, store } = await gateway();
+    const query = new URLSearchParams({ limit: '1', before: '99', trace_id: 'trace/a?b', alias: 'atlas', action: 'delivery.ack',
+      from: '2026-10-12T00:00:00Z', to: '2026-10-12T23:59:59.999Z' });
+    const response = await app.inject({ method: 'GET', url: `/v3/console/audit?${query.toString()}`, headers: headers() });
+    expect(response.statusCode).toBe(200);
+    expect(store.listAudit).toHaveBeenCalledWith('Steven', 'kant', { limit: 1, before: '99', trace_id: 'trace/a?b',
+      alias: 'atlas', action: 'delivery.ack', from: '2026-10-12T00:00:00Z', to: '2026-10-12T23:59:59.999Z' });
   });
 });

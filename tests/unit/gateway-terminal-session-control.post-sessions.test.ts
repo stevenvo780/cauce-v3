@@ -99,6 +99,9 @@ describe('POST /v3/console/terminal/sessions: pre-validación del orquestador', 
     expect(authorizeAgentTarget).toHaveBeenCalledWith(
       'Steven', 'kant', 'Steven', 'jarvis', 'control'
     );
+    const audit = pool.__queries.find(query => query.text.includes('INSERT INTO audit_events'));
+    if (!audit) throw new Error('redacted audit unavailable');
+    expect(JSON.parse(audit.values[5] as string)).toMatchObject({ host_id: null, component: 'terminal' });
   });
 
   it('responde con 404 target_unavailable cuando no hay placement para el alias en la flota', async () => {
@@ -277,9 +280,9 @@ describe('POST /v3/console/terminal/sessions: pre-validación del orquestador', 
       tenant_id: targetTenant, alias: 'jarvis', container: 'claw', runtime_user: 'claw',
       tenant_name: targetTenant, alias_kind: 'claude', status: 'enabled'
     }));
-    const pool = stubFleetPool([
-      { tenant_id: 'Steven', alias: 'jarvis', container_name: 'claw', runtime_user: 'claw' }
-    ]);
+    const placement = { tenant_id: 'Steven', alias: 'jarvis', container_name: 'claw', runtime_user: 'claw',
+      company_id: 'humanizar', host_id: 'zz-canary-terminal-host' };
+    const pool = stubFleetPool([placement]);
     // Empty registry: resolve returns { status: 'unknown' }
     ctx = buildContext({ pool, repository: { authorizeAgentTarget } });
     const response = await ctx.app.inject({
@@ -290,6 +293,11 @@ describe('POST /v3/console/terminal/sessions: pre-validación del orquestador', 
     expect(response.statusCode).toBe(409);
     expect(response.json()).toMatchObject({ error: 'conflict', reason: 'agent_offline' });
     expect(pool.__queries.some((query) => query.text.includes('INSERT INTO terminal_sessions'))).toBe(false);
+    const audit = pool.__queries.find(query => query.text.includes('INSERT INTO audit_events'));
+    if (!audit) throw new Error('authorized placement audit unavailable');
+    expect(JSON.parse(audit.values[5] as string)).toMatchObject({
+      host_id: 'zz-canary-terminal-host', component: 'terminal',
+    });
   });
 
   it('responde 409 agent_offline cuando el modo requerido no está en la presencia online', async () => {

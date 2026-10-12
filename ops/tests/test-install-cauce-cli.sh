@@ -16,7 +16,7 @@ WORK=$(mktemp -d)
 cleanup() { rm -rf "$WORK"; }
 trap cleanup EXIT
 
-ESPERADOS=(cauce cauce-platform host_enrollment.py host_channel_client.py context_client.py context_native.py space_archive.py cauce-credenciales.lib.sh cauce-panel cauce-huerfanas cauce-reponer cauce-estado cauce-sesiones cauce-attach)
+ESPERADOS=(cauce cauce-platform cauce-diagnose host_enrollment.py host_channel_client.py host_setup.py context_client.py context_native.py space_archive.py cauce-credenciales.lib.sh cauce-panel cauce-huerfanas cauce-reponer cauce-estado cauce-sesiones cauce-attach)
 
 # py_compile writes `<dir>/__pycache__/<name>.pyc` a level deeper, so the probe reaches depth 2.
 MARCA="$WORK/marca"
@@ -41,6 +41,68 @@ if [ "$rc" = 0 ]; then ok "install exits 0"; else bad "install exits 0 (rc=$rc):
 for n in "${ESPERADOS[@]}"; do
   if [ -x "$DEST/$n" ]; then ok "publica $n"; else bad "publica $n"; fi
 done
+if cmp -s "$RAIZ/cli/cauce-diagnose" "$DEST/cauce-diagnose" && [ "$(stat -c '%a' "$DEST/cauce-diagnose" 2>/dev/null)" = 755 ]; then
+  ok "installed diagnose preserves source bytes and mode 0755"
+else
+  bad "installed diagnose preserves source bytes and mode 0755"
+fi
+if "$DEST/cauce-diagnose" --help > "$WORK/diagnose-help" 2>&1 && grep -q -- '--session-file' "$WORK/diagnose-help"; then
+  ok "installed diagnose loads context authentication and exposes its session option"
+else
+  bad "installed diagnose loads context authentication and exposes its session option"
+fi
+if python3 -B - "$DEST/cauce-diagnose" "$WORK" <<'PY'
+import json
+import pathlib
+import subprocess
+import sys
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+observed = []
+
+
+class Handler(BaseHTTPRequestHandler):
+    def log_message(self, *args):
+        pass
+
+    def do_GET(self):
+        observed.append((self.path, self.headers.get('Cookie'), self.headers.get('Origin')))
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b'{"company_id":"fixture","items":[],"truncated":false}')
+
+
+session = pathlib.Path(sys.argv[2]) / 'diagnose-session.json'
+session.write_text(json.dumps({'cookie': 'cauce_session=synthetic-install-session'}))
+session.chmod(0o600)
+server = HTTPServer(('127.0.0.1', 0), Handler)
+thread = threading.Thread(target=server.serve_forever, daemon=True)
+thread.start()
+origin = 'http://127.0.0.1:' + str(server.server_port)
+try:
+    result = subprocess.run([sys.argv[1], 'trace/install', '--gateway', origin, '--origin', origin,
+                             '--session-file', str(session)], capture_output=True, text=True, timeout=10)
+    assert result.returncode == 0 and result.stderr == ''
+    assert json.loads(result.stdout) == {'company_id': 'fixture', 'items': [], 'truncated': False}
+    assert observed == [('/v3/console/diagnose/trace%2Finstall', 'cauce_session=synthetic-install-session', origin)]
+finally:
+    server.shutdown()
+    server.server_close()
+    thread.join()
+PY
+then
+  ok "installed diagnose authenticates against a real local HTTP server"
+else
+  bad "installed diagnose authenticates against a real local HTTP server"
+fi
+# Installed copy, empty home: setup/status must reach host_setup and fail with a message, never a traceback.
+estado=$(HOME="$HOGAR" "$DEST/cauce" hosts status 2>&1); rc=$?
+if [ "$rc" = 1 ] && grep -q 'expected exactly one enrolled identity' <<< "$estado" && ! grep -q Traceback <<< "$estado"; then
+  ok "hosts status corre desde el CLI instalado sin trazas"
+else
+  bad "hosts status corre desde el CLI instalado sin trazas (rc=$rc): $estado"
+fi
 if "$DEST/cauce" hosts enroll --help 2>&1 | grep -q -- '--invitation-stdin'; then
   ok "enrolamiento disponible desde el CLI instalado"
 else

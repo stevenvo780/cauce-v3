@@ -1,5 +1,6 @@
 import {
-  ConfigMutationSchema, esFicheroDelAgente, isRfcUuid,
+  AliasSchema, ConfigMutationSchema, esFicheroDelAgente, hasUnsafeTextCodePoint, isRfcUuid,
+  isStrictUtcIso8601,
   configurationMutationHashInput, configurationReceiptMatches, sha256Hex,
   type ConfigMutation, type ProfileRuntimeContract,
 } from '@cauce/protocol';
@@ -20,7 +21,7 @@ const DLQ_RESOLUTION_KEYS = new Set([
   'possible_no_delivery_acknowledged',
 ]);
 const AUDIT_CURSOR_PATTERN = /^[1-9][0-9]{0,18}$/u;
-const AUDIT_QUERY_KEYS = new Set(['limit', 'before']);
+const AUDIT_QUERY_KEYS = new Set(['limit', 'before', 'trace_id', 'alias', 'action', 'from', 'to']);
 
 export function parseDlqLimit(value: unknown): number {
   if (value === undefined) return 200;
@@ -42,7 +43,10 @@ export function parseDlqCursor(value: unknown): string | null {
   return value;
 }
 
-export function parseAuditQuery(value: unknown): { limit: number; before: string | null } {
+export function parseAuditQuery(value: unknown): {
+  limit: number; before: string | null; trace_id?: string; alias?: string; action?: string;
+  from?: string; to?: string;
+} {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) {
     throw new StoreError('invalid_input', 'audit query must be an object');
   }
@@ -66,7 +70,24 @@ export function parseAuditQuery(value: unknown): { limit: number; before: string
   )) {
     throw new StoreError('invalid_input', 'audit cursor is invalid');
   }
-  return { limit: rawLimit === undefined ? 100 : Number(rawLimit), before: rawBefore ?? null };
+  const { trace_id: traceId, alias, action, from, to } = query;
+  if ((traceId !== undefined && (typeof traceId !== 'string' || traceId.length < 1
+      || traceId.length > 256 || hasUnsafeTextCodePoint(traceId)))
+    || (alias !== undefined && !AliasSchema.safeParse(alias).success)
+    || (action !== undefined && (typeof action !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/u.test(action)))
+    || (from !== undefined && !isStrictUtcIso8601(from, 64))
+    || (to !== undefined && !isStrictUtcIso8601(to, 64))
+    || (typeof from === 'string' && typeof to === 'string' && Date.parse(from) > Date.parse(to))) {
+    throw new StoreError('invalid_input', 'audit filters are invalid');
+  }
+  return {
+    limit: rawLimit === undefined ? 100 : Number(rawLimit), before: rawBefore ?? null,
+    ...(typeof traceId === 'string' ? { trace_id: traceId } : {}),
+    ...(typeof alias === 'string' ? { alias } : {}),
+    ...(typeof action === 'string' ? { action } : {}),
+    ...(typeof from === 'string' ? { from } : {}),
+    ...(typeof to === 'string' ? { to } : {}),
+  };
 }
 
 export function parseDlqResolution(

@@ -48,7 +48,7 @@ export class SpaceBackupRepository {
         VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8) RETURNING *`,[authority.actingCompany,tenant,alias,agent.host_id,authority.humanId,input.idempotency_key,JSON.stringify(agent),capability.policy_sha256])).rows[0];
       if (!row) throw new StoreError('conflict','space backup was not persisted');
       await client.query(`INSERT INTO audit_events(tenant_id,actor_alias,company_id,actor_human_id,action,decision,metadata)
-        VALUES($1,$2,$3,$4,'space.backup.request','allow',$5::jsonb)`,[authority.homeTenant,authority.alias,authority.actingCompany,authority.humanId,JSON.stringify({id:row.id,tenant_id:tenant,alias})]);
+        VALUES($1,$2,$3,$4,'space.backup.request','allow',$5::jsonb)`,[authority.homeTenant,authority.alias,authority.actingCompany,authority.humanId,JSON.stringify({id:row.id,tenant_id:tenant,alias,host_id:row.host_id,component:'backup'})]);
       return spaceBackupReceipt(row);
     });
   }

@@ -199,6 +199,8 @@ según `CAUCE_MCP_OAUTH_PROVIDER` en `deploy/deploy.sh`.
 | Notify por ACK (`:126`) | n/bytes | 4 directivas / 8 KiB | fijo | — |
 | Fan-in (`fanin/helpers.ts:6`) | bytes | 4 KiB/respuesta, 64 KiB agregado | fijo | — |
 | `MAX_DELEGATION_FEEDBACK_ITEMS` (`realtime.ts:231`) | items | 1_000 | fijo | — |
+| `MAX_ITEMS` (`gateway/routes/console/diagnose.ts:8`) | elementos | 500; máximo de nodos del diagnóstico antes de marcar `truncated` | fijo | PG HTTP de diagnose, truncamiento |
+| `MAX_ROUNDS` (`gateway/routes/console/diagnose.ts:9`) | rondas | 8; máximo de expansiones de referencias de la cadena | fijo | PG HTTP de diagnose, expansión acotada |
 | Gate humano: pregunta ≤8 KiB, gate_id ≤128 | bytes/chars | — | fijo (= CHECK SQL) | — |
 | Rechazo delegación (`MAX_DELEGATION_REJECTION_TARGET_CHARS`=256, `MAX_DELEGATION_REJECTION_REASON_CHARS`=12_000) | chars | target copiado, reason acotada | fijo | — |
 | `failureCoalesceWindowSeconds` | s | clamp 0–86_400 | DB (techo fijo) | — |

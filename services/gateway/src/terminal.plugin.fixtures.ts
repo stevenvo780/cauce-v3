@@ -31,6 +31,7 @@ interface AuditRow {
   actor_alias: string;
   action: string;
   decision: string;
+  trace_id: string | null;
   metadata: Record<string, unknown>;
 }
 
@@ -44,7 +45,8 @@ interface FakeDatabase {
   failNestedPoolQueries(): void;
   rooms: Record<string, string[]>;
   edges: string[];
-  placements: { tenant_id: string; alias: string; container_name: string; runtime_user: string }[];
+  placements: { tenant_id: string; alias: string; container_name: string; runtime_user: string;
+    company_id?: string; host_id?: string | null }[];
 }
 
 function isOpen(row: TerminalSessionRow, ttlSeconds: number, now: number): boolean {
@@ -60,7 +62,7 @@ function fakeDatabaseBase(): FakeDatabase {
   let checkedOutClients = 0;
   let rejectNestedPoolQueries = false;
   const clock = { now: () => Date.now() };
-  const state = {
+  const state: Pick<FakeDatabase, 'placements' | 'rooms' | 'edges'> = {
     placements: ([
       ['Steven', 'argos', 'ctrl-infra', 'dev'], ['Steven', 'jarvis', 'claw', 'claw'],
       ['Steven', 'kant', 'ctrl-infra', 'dev'], ['Steven', 'socrates', 'ws-prizma', 'dev'],
@@ -71,7 +73,8 @@ function fakeDatabaseBase(): FakeDatabase {
       ['Pablo', 'seneca', 'agv2-pablo-personal-oc', 'claw'], ['Pablo', 'vulcano', 'ws-pablo', 'dev'],
       ['Isa', 'salva', 'ws-isa', 'dev'], ['Jhon', 'hegel', 'agv2-jhon-hegel-oc', 'claw'],
     ] satisfies readonly (readonly [string, string, string, string])[]).map(
-      ([tenant_id, alias, container_name, runtime_user]) => ({ tenant_id, alias, container_name, runtime_user })
+      ([tenant_id, alias, container_name, runtime_user]) => ({ tenant_id, alias, container_name, runtime_user,
+        company_id: 'fixture-company', host_id: 'zz-canary-terminal-fixture' })
     ),
     rooms: {
       'Steven:kant': ['grp.steven'],
@@ -80,7 +83,7 @@ function fakeDatabaseBase(): FakeDatabase {
       'Miguel:iza': ['grp.miguel'],
       'Miguel:atlas': ['grp.miguel'],
       'Miguel:kratos': ['grp.miguel']
-    } as Record<string, string[]>,
+    },
     edges: ['Steven->Miguel'] as string[]
   };
 
@@ -92,16 +95,28 @@ function fakeDatabaseBase(): FakeDatabase {
       return { rows: [{ database_now: new Date(now) }], rowCount: 1 };
     }
     if (text.includes('SELECT tenant_id,alias,container_name,runtime_user')) {
-      return { rows: state.placements, rowCount: state.placements.length };
+      return { rows: state.placements.map(placement => ({ ...placement,
+        company_id: placement.company_id ?? 'fixture-company',
+        host_id: Object.hasOwn(placement, 'host_id') ? placement.host_id ?? null : 'zz-canary-terminal-fixture',
+      })), rowCount: state.placements.length };
+    }
+    if (text.includes("SELECT audit.metadata->>'host_id' AS host_id")) {
+      const [sessionId, tenant, alias, trace] = values;
+      const session = sessions.get(String(sessionId));
+      const admission = session !== undefined && session.tenant_id === tenant && session.alias === alias ? audit.find(row =>
+        row.action === 'terminal.session.request' && row.decision === 'allow'
+        && row.metadata.session_id === sessionId && row.metadata.target_tenant === tenant
+        && row.metadata.target_alias === alias && (trace === null || row.trace_id === trace)) : undefined;
+      return { rows: admission === undefined ? [] : [{ host_id: admission.metadata.host_id }], rowCount: admission === undefined ? 0 : 1 };
     }
     if (text.includes('INSERT INTO audit_events')) {
-      const [tenantId, actorAlias, action, decision, , metadata] = values as [string, string, string, string, unknown, string];
+      const [tenantId, actorAlias, action, decision, traceId, metadata] = values as [string, string, string, string, string | null, string];
       if (action === failingAuditAction) {
         failingAuditAction = undefined;
         throw new Error(`forced ${action} audit failure`);
       }
       audit.push({
-        tenant_id: tenantId, actor_alias: actorAlias, action, decision,
+        tenant_id: tenantId, actor_alias: actorAlias, action, decision, trace_id: traceId,
         metadata: JSON.parse(metadata) as Record<string, unknown>
       });
       return { rows: [], rowCount: 1 };

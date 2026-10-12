@@ -202,6 +202,7 @@ export function registerTerminalSessionControl(
         target_tenant: body.tenant_id,
         target_alias: body.alias,
         container: null,
+        host_id: null,
         cohort: [],
         mode: body.mode,
       };
@@ -231,8 +232,6 @@ export function registerTerminalSessionControl(
         return;
       }
       // Canonical actor permission and target visibility run before the fleet table is expanded.
-      // Missing and hidden targets therefore have one response and an audit row with no placement
-      // or cohort metadata supplied by the server.
       try {
         await repository.assertPermission(actor.tenant_id, actor.alias, 'control');
       } catch {
@@ -267,6 +266,7 @@ export function registerTerminalSessionControl(
         target_tenant: placement.tenant_id,
         target_alias: placement.alias,
         container: placement.container,
+        host_id: placement.host_id,
         cohort: cohortLabels(cohort),
       };
       const deny = async (
