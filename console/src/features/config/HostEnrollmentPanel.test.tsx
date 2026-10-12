@@ -1,7 +1,7 @@
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
-import { expect, it } from 'vitest';
+import { expect, it, vi } from 'vitest';
 import { server } from '../../mocks/server';
 import { renderWithApi } from '../../test/render';
 import { HostEnrollmentPanel } from './HostEnrollmentPanel';
@@ -24,6 +24,7 @@ it('invita desde la consola, conserva el token sólo en memoria y cancela con re
       revoked = String(params.id); rows = rows.map(row => ({ ...row, state: 'revoked' }));
       return HttpResponse.json({ enrollment_id: revoked, state: 'revoked' });
     }));
+  const storageWrite = vi.spyOn(Storage.prototype, 'setItem');
   const user = userEvent.setup(); const view = renderWithApi(<HostEnrollmentPanel canEnroll />);
   await waitFor(() => { expect(screen.getByRole('button', { name: 'Añadir ordenador' })).toBeEnabled(); });
   await user.click(screen.getByRole('button', { name: 'Añadir ordenador' }));
@@ -34,12 +35,13 @@ it('invita desde la consola, conserva el token sólo en memoria y cancela con re
   expect((invitation as HTMLTextAreaElement).value).toContain(token);
   expect(writes).toEqual([{ host_id: 'equipo-1', display_name: 'Portátil' }]);
   expect(screen.getByText(/Pendiente de uso/u)).toBeVisible();
-  expect(JSON.stringify(localStorage)).not.toContain(token); expect(JSON.stringify(sessionStorage)).not.toContain(token);
+  expect(storageWrite).not.toHaveBeenCalled();
   view.unmount(); renderWithApi(<HostEnrollmentPanel canEnroll />);
   expect(await screen.findByText(/Pendiente de uso/u)).toBeVisible();
   expect(screen.queryByRole('textbox', { name: 'Invitación del ordenador' })).not.toBeInTheDocument();
   await user.click(screen.getByRole('button', { name: 'Cancelar invitación de Portátil' }));
   expect(await screen.findByText('Invitación cancelada.')).toBeVisible(); expect(revoked).toBe(id);
+  expect(storageWrite).not.toHaveBeenCalled();
 });
 it('un receipt incompleto no acredita una invitación y un lector no puede crear ni cancelar', async () => {
   server.use(http.post(path, () => HttpResponse.json({ state: 'pending', invitation_token: token }, { status: 201 })));
