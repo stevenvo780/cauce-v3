@@ -2,7 +2,8 @@ import { preparePostgresSuite } from '../../packages/store/test/postgres-suite.j
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import type { ConfigMutation } from '@cauce/protocol';
-import { CauceRepository, type DatabasePool } from '@cauce/store';
+import { CauceRepository, lockCompanyAuthority, type DatabaseClient, type DatabasePool } from '@cauce/store';
+import { seedFleetHuman } from '../../packages/store/test/fleet-human-postgres.fixtures.js';
 import { buildGateway } from '../../services/gateway/src/index.js';
 import {
   FixedAuthProvider, grants, noDeliveryWakes, testPrincipal,
@@ -13,6 +14,8 @@ let database: TestDatabase;
 let databaseStarted = false;
 let pool: DatabasePool;
 let repository: CauceRepository;
+let humanId: string;
+const authority = (client: DatabaseClient) => lockCompanyAuthority(client, { tenant: 'Steven', alias: 'kant', humanId });
 
 preparePostgresSuite(import.meta.url, async () => {
   database = await startTestDatabase();
@@ -31,7 +34,9 @@ beforeEach(async () => {
     DELETE FROM tenants WHERE id='Acme';
     UPDATE memberships SET role='agent' WHERE alias IN ('midas','salva');
     UPDATE acl_edges SET enabled=true,allow_route=true,allow_read=true,allow_control=true;
+    INSERT INTO agents(tenant_id,alias,enabled) VALUES('Steven','kant',false);
   `);
+  humanId = (await seedFleetHuman(pool, 'Steven', 'kant', 'owner')).slice('console:'.length);
 });
 
 afterAll(async () => {
@@ -65,11 +70,15 @@ const salvaAgent: ConfigMutation = {
   value: { harness_id: 'codex', display_name: 'Salva', enabled: false }
 };
 
-/** Applies mutations as the hub operator, threading the optimistic revision through. */
+async function applyChange(mutation: ConfigMutation, dryRun: boolean, revision?: number) {
+  return repository.applyConfigurationChange('Steven', 'kant', mutation, dryRun, revision, authority);
+}
+
+/** Threads the optimistic revision through writes by the verified company owner. */
 async function applyAll(mutations: readonly ConfigMutation[], from = 0): Promise<number> {
   let revision = from;
   for (const mutation of mutations) {
-    const changed = await repository.applyConfigurationChange('Steven', 'kant', mutation, false, revision);
+    const changed = await applyChange(mutation, false, revision);
     expect(changed.applied).toBe(true);
     revision = changed.revision;
   }
@@ -86,8 +95,8 @@ async function admitSalvaFixture(): Promise<void> {
 }
 
 describe('agent registry CRUD, invariants, and rollback', () => {
-  it('previews without side effects and CRUDs every new configuration family', async () => {
-    const preview = await repository.applyConfigurationChange('Steven', 'kant', {
+  it('previews without side effects and CRUDs inactive drafts and provider routing configuration', async () => {
+    const preview = await applyChange({
       resource: 'tenant', action: 'create', id: 'Acme', value: { display_name: 'Acme', enabled: true }
     }, true, 0);
     expect(preview).toMatchObject({ applied: false, dry_run: true, revision: 0 });
@@ -119,7 +128,7 @@ describe('agent registry CRUD, invariants, and rollback', () => {
       }
     ]);
 
-    const snapshot = await repository.getConfiguration('Steven', 'kant');
+    const snapshot = await repository.getConfiguration('Steven', 'kant', authority);
     expect(snapshot.revision).toBe(revision);
     expect(snapshot.agents).toEqual(expect.arrayContaining([
       expect.objectContaining({ tenant_id: 'Acme', alias: 'acmebot', enabled: false, container_name: 'ws-acme' })
@@ -145,14 +154,14 @@ describe('agent registry CRUD, invariants, and rollback', () => {
   });
 
   it.each([true, false])('rejects generic agent admission without consuming a revision (dry-run %s)', async (dryRun) => {
-    await expect(repository.applyConfigurationChange('Steven', 'kant', {
+    await expect(applyChange({
       resource: 'agent', action: 'create', tenant_id: 'Isa', alias: 'salva',
       value: { enabled: true },
     }, dryRun, 0)).rejects.toMatchObject({ code: 'conflict', message: 'create an inactive draft and verify a fleet operation before admission' });
     expect((await pool.query("SELECT enabled FROM agents WHERE tenant_id='Isa' AND alias='salva'")).rows).toEqual([]);
     expect((await pool.query('SELECT count(*)::int AS count FROM config_revisions')).rows).toEqual([{ count: 0 }]);
     await applyAll([salvaAgent]);
-    await expect(repository.applyConfigurationChange('Steven', 'kant', {
+    await expect(applyChange({
       resource: 'agent', action: 'update', tenant_id: 'Isa', alias: 'salva', value: { enabled: true },
     }, dryRun, 1)).rejects.toMatchObject({ code: 'conflict', message: 'agent admission requires a verified fleet operation' });
     expect((await pool.query("SELECT enabled FROM agents WHERE tenant_id='Isa' AND alias='salva'")).rows).toEqual([{ enabled: false }]);
@@ -161,7 +170,7 @@ describe('agent registry CRUD, invariants, and rollback', () => {
 
   it('rejects a binding for an account the alias has no ceiling entry for', async () => {
     await applyAll([salvaAgent, isaAccount]);
-    await expect(repository.applyConfigurationChange('Steven', 'kant', {
+    await expect(applyChange({
       resource: 'agent_account_binding', action: 'create',
       tenant_id: 'Isa', agent_alias: 'salva', account_id: 'codex-isa', value: {}
     }, false, 2)).rejects.toMatchObject({ code: 'conflict' });
@@ -174,12 +183,12 @@ describe('agent registry CRUD, invariants, and rollback', () => {
       { payer_tenant_id: 'Pablo' },
       { external_account_id: 'acct-isa-002' }
     ]) {
-      await expect(repository.applyConfigurationChange('Steven', 'kant', {
+      await expect(applyChange({
         resource: 'provider_account', action: 'update', id: 'codex-isa', value
       }, false, 1)).rejects.toMatchObject({ code: 'conflict' });
     }
 
-    const relabelled = await repository.applyConfigurationChange('Steven', 'kant', {
+    const relabelled = await applyChange({
       resource: 'provider_account', action: 'update', id: 'codex-isa', value: { label: 'Isa Codex' }
     }, false, 1);
     expect(relabelled.applied).toBe(true);
@@ -187,7 +196,7 @@ describe('agent registry CRUD, invariants, and rollback', () => {
 
   it('refuses to register the same external subscription under two payers', async () => {
     await applyAll([isaAccount]);
-    await expect(repository.applyConfigurationChange('Steven', 'kant', {
+    await expect(applyChange({
       resource: 'provider_account', action: 'create', id: 'codex-pablo',
       value: {
         provider: 'openai', external_account_id: 'acct-isa-001', payer_tenant_id: 'Pablo',
@@ -202,7 +211,7 @@ describe('agent registry CRUD, invariants, and rollback', () => {
       { resource: 'alias_routing_ceiling', action: 'create', tenant_id: 'Isa', alias: 'salva', account_id: 'codex-isa' }
     ]);
 
-    await expect(repository.applyConfigurationChange('Steven', 'kant', {
+    await expect(applyChange({
       resource: 'provider_account', action: 'delete', id: 'codex-isa'
     }, false, 3)).rejects.toMatchObject({ code: 'conflict' });
     expect((await pool.query(`SELECT 1 FROM provider_accounts WHERE id='codex-isa'`)).rowCount).toBe(1);
@@ -219,22 +228,27 @@ describe('agent registry CRUD, invariants, and rollback', () => {
     });
     expect(published.delivery_ids).toHaveLength(1);
 
-    await expect(repository.applyConfigurationChange('Steven', 'kant', {
+    await expect(applyChange({
       resource: 'agent', action: 'delete', tenant_id: 'Isa', alias: 'salva'
     }, false, 1)).rejects.toMatchObject({ code: 'conflict' });
     expect((await pool.query(`SELECT 1 FROM agents WHERE tenant_id='Isa' AND alias='salva'`)).rowCount).toBe(1);
   });
 
-  it('keeps every registry resource hub-only, even inside the actor tenant', async () => {
+  it('requires human company authority for registry writes and owner authority for payer accounts', async () => {
     await applyAll([stevenAccount(false)]);
     await pool.query(`UPDATE memberships SET role='operator' WHERE tenant_id='Pablo' AND alias='midas'`);
+    await pool.query("INSERT INTO agents(tenant_id,alias,enabled) VALUES('Pablo','midas',false)");
+    const pabloId = (await seedFleetHuman(pool, 'Pablo', 'midas', null)).slice('console:'.length);
+    const pabloAuthority = (client: DatabaseClient) => lockCompanyAuthority(client, { tenant: 'Pablo', alias: 'midas', humanId: pabloId });
+    expect((await repository.getConfiguration('Pablo', 'midas', pabloAuthority)).capabilities)
+      .toMatchObject({ actor: { role: 'tenant_operator', scope: 'tenant' } });
 
+    const draft: ConfigMutation = { resource: 'agent', action: 'create', tenant_id: 'Pablo', alias: 'pablobot', value: { enabled: false } };
+    const accountUpdate: ConfigMutation = {
+      resource: 'provider_account', action: 'update', id: 'anthropic-max', value: { shared_with_pool: true }
+    };
     const denied: ConfigMutation[] = [
-      { resource: 'agent', action: 'create', tenant_id: 'Pablo', alias: 'pablobot', value: { enabled: false } },
-      {
-        resource: 'provider_account', action: 'update', id: 'anthropic-max',
-        value: { shared_with_pool: true }
-      },
+      draft, accountUpdate,
       {
         resource: 'alias_routing_ceiling', action: 'create',
         tenant_id: 'Pablo', alias: 'midas', account_id: 'anthropic-max'
@@ -245,19 +259,26 @@ describe('agent registry CRUD, invariants, and rollback', () => {
       }
     ];
     for (const mutation of denied) {
-      await expect(repository.applyConfigurationChange('Pablo', 'midas', mutation, false, 1))
+      await expect(repository.applyConfigurationChange('Pablo', 'midas', mutation, false, 1, pabloAuthority))
+        .rejects.toMatchObject({ code: 'forbidden' });
+      await expect(repository.applyConfigurationChange('Steven', 'kant', mutation, false, 1))
         .rejects.toMatchObject({ code: 'forbidden' });
     }
+    await pool.query(`INSERT INTO company_admins(company_id,human_id,role,source,granted_by)
+      SELECT company_id,$1,'admin','platform',$1 FROM tenants WHERE id='Pablo'`, [pabloId]);
+    expect((await repository.applyConfigurationChange('Pablo', 'midas', draft, false, 1, pabloAuthority)).applied).toBe(true);
+    await expect(repository.applyConfigurationChange('Pablo', 'midas', accountUpdate, false, 2, pabloAuthority))
+      .rejects.toMatchObject({ code: 'forbidden' });
   });
 
   it('rolls an agent update back as a new revision', async () => {
     await applyAll([salvaAgent]);
-    const updated = await repository.applyConfigurationChange('Steven', 'kant', {
+    const updated = await applyChange({
       resource: 'agent', action: 'update', tenant_id: 'Isa', alias: 'salva', value: { display_name: 'Renamed' }
     }, false, 1);
     expect(updated.revision).toBe(2);
 
-    const rolledBack = await repository.rollbackConfiguration('Steven', 'kant', updated.revision, false, 2);
+    const rolledBack = await repository.rollbackConfiguration('Steven', 'kant', updated.revision, false, 2, authority);
     expect(rolledBack).toMatchObject({ applied: true, revision: 3 });
     expect((await pool.query(`SELECT display_name FROM agents WHERE tenant_id='Isa' AND alias='salva'`)).rows[0])
       .toEqual({ display_name: 'Salva' });
@@ -265,17 +286,17 @@ describe('agent registry CRUD, invariants, and rollback', () => {
 
   it('rolls a pool publication and a ceiling grant back as new revisions', async () => {
     await applyAll([salvaAgent, stevenAccount(false)]);
-    const shared = await repository.applyConfigurationChange('Steven', 'kant', {
+    const shared = await applyChange({
       resource: 'provider_account', action: 'update', id: 'anthropic-max', value: { shared_with_pool: true }
     }, false, 2);
     const granted = await applyAll([{
       resource: 'alias_routing_ceiling', action: 'create', tenant_id: 'Isa', alias: 'salva', account_id: 'anthropic-max'
     }], shared.revision);
 
-    await repository.rollbackConfiguration('Steven', 'kant', granted, false, granted);
+    await repository.rollbackConfiguration('Steven', 'kant', granted, false, granted, authority);
     expect((await pool.query(`SELECT 1 FROM alias_routing_ceiling`)).rowCount).toBe(0);
 
-    await repository.rollbackConfiguration('Steven', 'kant', shared.revision, false, granted + 1);
+    await repository.rollbackConfiguration('Steven', 'kant', shared.revision, false, granted + 1, authority);
     expect((await pool.query(`SELECT shared_with_pool FROM provider_accounts WHERE id='anthropic-max'`)).rows[0])
       .toEqual({ shared_with_pool: false });
   });
@@ -285,7 +306,7 @@ describe('cross-tenant subscription pool', () => {
   it('routes an alias to an account paid by another tenant, but only once it is pooled', async () => {
     await applyAll([salvaAgent, stevenAccount(false)]);
 
-    await expect(repository.applyConfigurationChange('Steven', 'kant', {
+    await expect(applyChange({
       resource: 'alias_routing_ceiling', action: 'create',
       tenant_id: 'Isa', alias: 'salva', account_id: 'anthropic-max'
     }, false, 2)).rejects.toMatchObject({ code: 'conflict' });
@@ -317,7 +338,7 @@ describe('cross-tenant subscription pool', () => {
       }
     ]);
 
-    await expect(repository.applyConfigurationChange('Steven', 'kant', {
+    await expect(applyChange({
       resource: 'provider_account', action: 'update', id: 'anthropic-max', value: { shared_with_pool: false }
     }, false, 4)).rejects.toMatchObject({ code: 'conflict' });
     expect((await pool.query(`SELECT shared_with_pool FROM provider_accounts WHERE id='anthropic-max'`)).rows[0])
@@ -334,10 +355,6 @@ describe('cross-tenant subscription pool', () => {
 
   it('lets the payer keep routing its own private account', async () => {
     await applyAll([
-      {
-        resource: 'agent', action: 'create', tenant_id: 'Steven', alias: 'kant',
-        value: { harness_id: 'claude', enabled: false }
-      },
       stevenAccount(false),
       { resource: 'alias_routing_ceiling', action: 'create', tenant_id: 'Steven', alias: 'kant', account_id: 'anthropic-max' }
     ]);
@@ -382,6 +399,7 @@ describe('cross-tenant subscription pool', () => {
 
   it('keeps a private account invisible to every tenant that does not pay for it', async () => {
     await pool.query(`UPDATE memberships SET role='operator' WHERE tenant_id='Isa' AND alias='salva'`);
+    await pool.query("INSERT INTO agents(tenant_id,alias,enabled) VALUES('Isa','salva',false)");
     await applyAll([stevenAccount(false)]);
 
     const snapshot = await repository.getConfiguration('Isa', 'salva');

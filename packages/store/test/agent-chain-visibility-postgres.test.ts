@@ -2,7 +2,8 @@ import { preparePostgresSuite } from './postgres-suite.js';
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import type { Ack, DeliveryEnvelope, PublishMessage, Tenant } from '@cauce/protocol';
-import { CauceRepository, StoreError, type DatabasePool } from '../src/index.js';
+import { CauceRepository, StoreError, lockCompanyAuthority, type DatabasePool } from '../src/index.js';
+import { seedFleetHuman } from './fleet-human-postgres.fixtures.js';
 import {
   resetTestDatabase, startTestDatabase, type TestDatabase
 } from '../../../tests/helpers/postgres.js';
@@ -575,13 +576,17 @@ describe('agentChain read model', () => {
 });
 
 describe('versioned chain policy', () => {
-  it('previews, applies, audits and rolls back a chain policy change', async () => {
+  it('previews, applies, audits and rolls back a chain policy change as a verified platform person', async () => {
     await pool.query(
       `UPDATE memberships SET role='operator' WHERE tenant_id='Steven' AND alias='jarvis'`
     );
+    await database.adminPool.query("INSERT INTO agents(tenant_id,alias,enabled) VALUES('Steven','jarvis',false)");
+    const humanId = (await seedFleetHuman(database.adminPool, 'Steven', 'jarvis', null)).slice('console:'.length);
+    await database.adminPool.query('INSERT INTO platform_admins(human_id) VALUES($1)', [humanId]);
+    const authority = (client: Parameters<typeof lockCompanyAuthority>[0]) => lockCompanyAuthority(client, { tenant: 'Steven', alias: 'jarvis', humanId });
     const preview = await repository.applyConfigurationChange('Steven', 'jarvis', {
       resource: 'chain_policy', action: 'update', id: 'default', value: { cycle_cut_enabled: true }
-    }, true);
+    }, true, 0, authority);
     expect(preview).toMatchObject({ applied: false, dry_run: true });
     expect((await pool.query<{ cycle_cut_enabled: boolean }>(
       `SELECT cycle_cut_enabled FROM agent_chain_policies WHERE id='default'`
@@ -590,22 +595,32 @@ describe('versioned chain policy', () => {
     const applied = await repository.applyConfigurationChange('Steven', 'jarvis', {
       resource: 'chain_policy', action: 'update', id: 'default',
       value: { cycle_cut_enabled: true, progress_relay_max_events: 4 }
-    }, false);
+    }, false, 0, authority);
     expect((await pool.query<{ cycle_cut_enabled: boolean; progress_relay_max_events: number }>(
       `SELECT cycle_cut_enabled,progress_relay_max_events FROM agent_chain_policies WHERE id='default'`
     )).rows[0]).toEqual({ cycle_cut_enabled: true, progress_relay_max_events: 4 });
 
-    await repository.rollbackConfiguration('Steven', 'jarvis', applied.revision, false);
+    await repository.rollbackConfiguration('Steven', 'jarvis', applied.revision, false, applied.revision, authority);
     expect((await pool.query<{ cycle_cut_enabled: boolean; progress_relay_max_events: number }>(
       `SELECT cycle_cut_enabled,progress_relay_max_events FROM agent_chain_policies WHERE id='default'`
     )).rows[0]).toEqual({ cycle_cut_enabled: false, progress_relay_max_events: 12 });
+    expect((await pool.query("SELECT scope,actor_human_id::text FROM config_revisions ORDER BY id")).rows)
+      .toEqual([1, 2].map(() => ({ scope: 'platform', actor_human_id: humanId })));
+    expect((await pool.query("SELECT action,actor_human_id::text FROM audit_events WHERE action LIKE 'config.%' ORDER BY id")).rows)
+      .toEqual([{ action: 'config.change', actor_human_id: humanId }, { action: 'config.rollback', actor_human_id: humanId }]);
   });
 
-  it('denies a chain policy mutation from a non-hub operator', async () => {
+  it('denies a chain policy mutation to a company owner and to an agent in the hub', async () => {
     await pool.query(
       `UPDATE memberships SET role='operator' WHERE tenant_id='Pablo' AND alias='midas'`
     );
+    await database.adminPool.query("INSERT INTO agents(tenant_id,alias,enabled) VALUES('Pablo','midas',false),('Steven','kant',false)");
+    const humanId = (await seedFleetHuman(database.adminPool, 'Pablo', 'midas', 'owner')).slice('console:'.length);
+    const authority = (client: Parameters<typeof lockCompanyAuthority>[0]) => lockCompanyAuthority(client, { tenant: 'Pablo', alias: 'midas', humanId });
     await expect(repository.applyConfigurationChange('Pablo', 'midas', {
+      resource: 'chain_policy', action: 'update', id: 'default', value: { cycle_cut_enabled: true }
+    }, false, 0, authority)).rejects.toMatchObject({ code: 'forbidden' });
+    await expect(repository.applyConfigurationChange('Steven', 'kant', {
       resource: 'chain_policy', action: 'update', id: 'default', value: { cycle_cut_enabled: true }
     }, false)).rejects.toMatchObject({ code: 'forbidden' });
   });

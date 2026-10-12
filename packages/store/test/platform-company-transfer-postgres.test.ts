@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { sha256Hex, type ConfigLeafMutation } from '@cauce/protocol';
-import { ConfigurationRepository, FleetOperationsRepository, lockCompanyAuthority, withTransaction, type DatabasePool } from '../src/index.js';
+import { ConfigurationRepository, FleetOperationsRepository, createPool, lockCompanyAuthority, withTransaction, type DatabasePool } from '../src/index.js';
 import { applyPlatformConfiguration, readPlatformConfiguration, rollbackPlatformConfiguration, type PlatformActor } from '../src/configuration-platform.js';
 import { exportCompanyConfiguration, importCompanyConfiguration, planCompanyConfigurationImport } from '../src/company-transfer.js';
 import { parseCompanyTransferBundle, type CompanyTransferBundle } from '../src/company-transfer-model.js';
@@ -15,15 +15,15 @@ import { runPlatformCli } from '../../../services/gateway/src/platform-cli.js';
 import { hashPassword } from '../../../services/gateway/src/password.js';
 import { preparePostgresSuite } from './postgres-suite.js';
 import { seedCompanyIsolation, type CompanyIsolationFixture } from './companies-postgres.fixtures.js';
-import { startTestCaseDatabase, startTestDatabase, type EmptyTestDatabase, type TestDatabase } from '../../../tests/helpers/postgres.js';
+import { provisionTestLogin, startTestCaseDatabase, startTestDatabase, type EmptyTestDatabase, type TestDatabase } from '../../../tests/helpers/postgres.js';
 
 let database: TestDatabase | undefined; let current: EmptyTestDatabase | undefined;
-let admin: DatabasePool; let pool: DatabasePool; let people: CompanyIsolationFixture;
+let admin: DatabasePool; let people: CompanyIsolationFixture;
 const password = 'platform-current-test-password';
 preparePostgresSuite(import.meta.url, async () => { database = await startTestDatabase(); }, 120_000);
 beforeEach(async () => {
   if (!database) throw new Error('test database absent');
-  current = await startTestCaseDatabase(database); admin = current.adminPool; pool = current.pool;
+  current = await startTestCaseDatabase(database); admin = current.adminPool;
   people = await seedCompanyIsolation(admin);
   await admin.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,role,permissions)
     VALUES($1,'PraxisHub','company_admin','operator',ARRAY['read','control'])`, [people.leon]);
@@ -48,14 +48,19 @@ async function changedRoom(): Promise<{ current: CompanyTransferBundle; bundle: 
   return { current, bundle };
 }
 describe('human platform CLI and company transfer', () => {
-  it('keeps global catalogs outside the generic GUI and requires a durable platform person', async () => {
+  it('keeps global catalogs outside the generic GUI and requires a durable platform person and a platform database connection', async () => {
     const generic = new ConfigurationRepository(admin);
     await expect(generic.apply('Steven', 'kant', policy, false, 0,
       client => lockCompanyAuthority(client, { tenant: 'Steven', alias: 'kant', humanId: people.steven }))).rejects.toMatchObject({ code: 'forbidden' });
     await expect(applyPlatformConfiguration(admin, owner(), policy, false, 0)).rejects.toMatchObject({ code: 'forbidden' });
     await expect(readPlatformConfiguration(admin, { ...platform(), humanId: people.leon })).rejects.toMatchObject({ code: 'forbidden' });
     expect((await readPlatformConfiguration(admin, platform())).company_id).toBe('praxis');
-    await expect(applyPlatformConfiguration(pool, platform(), policy, false, 0)).rejects.toMatchObject({ code: '42501' });
+    if (!current) throw new Error('test database absent');
+    const runtime = createPool(await provisionTestLogin(admin, current.adminUrl, 'cauce_gateway', 'cauce_runtime'), { max: 1 });
+    try {
+      expect((await runtime.query('SELECT current_user AS role')).rows).toEqual([{ role: 'cauce_gateway' }]);
+      await expect(applyPlatformConfiguration(runtime, platform(), policy, false, 0)).rejects.toMatchObject({ code: '42501' });
+    } finally { await runtime.end(); }
     expect(await revisions()).toBe(0);
   });
   it('uses catalog preview, CAS, inverse rollback and human platform audit history', async () => {
