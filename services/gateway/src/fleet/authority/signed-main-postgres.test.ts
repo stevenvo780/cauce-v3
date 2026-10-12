@@ -54,7 +54,7 @@ preparePostgresSuite(import.meta.url, async () => { database = await startTestDa
 beforeEach(async () => {
   if (!database) throw new Error('Test database absent');
   current = await startTestCaseDatabase(database); pool = createPool(current.url, { max: 1 });
-  company = await channelCompany(pool, 'zz-canary-authority');
+  company = await channelCompany(pool, 'zz-canary');
   host = await channelHost(pool, company, `zz-canary-${randomBytes(4).toString('hex')}`);
   directory = await mkdtemp('/var/tmp/cauce-signed-enclave-');
   await mkdir(join(directory, 'run'), { mode: 0o700 }); socket = join(directory, 'run/authority.sock');
