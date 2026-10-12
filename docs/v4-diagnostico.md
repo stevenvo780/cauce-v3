@@ -47,19 +47,19 @@ auditoría (`listAudit`, `packages/store/src/repository/observability.ts:78`, ex
 | `message.publish` | 9 031 | 12-oct | `repository/messages/publishing.ts:444` | `messages/author.ts:32`, `messages/agent-roots.ts:87,105,149`, `human-message-lineage.ts:103` |
 | `delivery.ack` | 7 806 | 12-oct | `repository/deliveries/acks.ts` | ninguno; es la única desechable (30 d) |
 | `agent_document.denied` | 7 449 | 11-oct | rutas `services/gateway/src/console/agent-*.routes.ts` | solo listado |
-| `agent_output.materialize` | 5 589 | 12-oct | `agents/chain-control/outputs.ts`, `materialization/persistence.ts` | solo listado |
-| `agent_output.response` | 5 212 | 12-oct | `agents/chain-control/outputs.ts` | `observability/chain-sweep.ts:396,435`, `agents/fanin.ts:169`, `human-message-lineage.ts` |
-| `agent_output.fanin` | 1 351 | 12-oct | `agents/fanin/materialization.ts` | solo listado |
+| `agent_output.materialize` | 5 589 | 12-oct | `agents/chain-control/materialization/persistence.ts:121` (allow), `agents/chain-control/outputs.ts:340` (deny) | **estado**: `cauce_dlq_candidates_030` la usa para resolver dead letters (`030_dlq_causal_reconciliation.sql:63,781,791`) |
+| `agent_output.response` | 5 212 | 12-oct | `agents/fanin/response.ts:340,545` (allow) y `:651` (deny); también `observability/chain-sweep.ts:410` (deny) | **estado**: `observability/chain-sweep.ts:397,436,460`, `agents/fanin.ts:170`, `agents/fanin/materialization.ts:94,106,233`, `agents/chain-control/outputs.ts:34`, `human-message-lineage.ts:106` |
+| `agent_output.fanin` | 1 351 | 12-oct | `agents/fanin/materialization.ts:439` | **estado**: `cauce_dlq_candidates_030` (`030_dlq_causal_reconciliation.sql:63,781,791`) |
 | `egress.notify` | 1 171 | 12-oct | `agents/notifications.ts:126,382` | solo listado |
-| `dlq.reconcile` | 696 | 2-sep | **sin productor en el código actual** (solo en `specs/001-orquestador-multi-harness/auditoria-propuesta.md`) | solo listado |
+| `dlq.reconcile` | 696 | 2-sep | **vivo, en SQL**: `cauce_dlq_apply_030` (`030_dlq_causal_reconciliation.sql:1285`) y `cauce_reconcile_telegram_terminal_030` (`:2133`, `:2193`); ruta manual del operador (`docs/v3.1-pendientes.md:58`), ejercitada en `tests/e2e/queues-dlq-real-browser.test.ts:143` | solo listado (rastro de la reconciliación) |
 | `terminal.session.request/consume/close/revoked/input/resume/extended/authz_denied`, `terminal.control_taken/released` | 489/389/358/302/166/1/2/9/113/113 | 12-oct (`authz_denied` 7-oct) | `services/gateway/src/terminal/audit.ts` y `relay-proxy/*` | solo listado |
-| `console.publish.head/prepare/confirm/expire` | 442/221/220/1 | 12-oct | `repository/messages.ts`, `config/publish-policy.ts` | `repository/messages.ts:410` (colisión de claves), `health/schema-console-publish-intent.ts` |
+| `console.publish.head/prepare/confirm/expire` | 442/221/220/1 | 12-oct | `repository/config/publish-policy.ts:26-30` (constantes de prepare/confirm/expire) | **estado** (`prepare/confirm/expire`): `publish-policy.ts:255,317,456` (idempotencia, nonce y tasa), `repository/messages.ts:414` (colisión de claves), índices parciales verificados por `health/schema-console-publish-intent.ts:25-46` |
 | `config.change` | 150 | 9-oct | `packages/store/src/configuration.ts` | `audit-summary.ts` (resumen en listado) |
 | `agent_document.write/read` | 77/1 | 4-oct / 8-sep | rutas de consola y `agent-context-reconcile.ts` | solo listado |
-| `delivery.replay` | 57 | 28-sep | `repository/messages.ts` (replay) | **candado de idempotencia** + detector de ciclos (`agent-roots.ts`, `chain-control/materialization/lineage.ts`) |
+| `delivery.replay` | 57 | 28-sep | `repository/outbox/operator.ts:241` | **candado de idempotencia** (`outbox/operator.ts:150`) + detector de ciclos (`messages/agent-roots.ts:47`, `chain-control/materialization/lineage.ts:61`) |
 | `delivery.ack_timeout` | 57 | 8-sep | `observability/maintenance.ts` | solo listado (evidencia de por qué murió una entrega) |
-| `delivery.progress` | 34 | 29-sep | `services/gateway/src/routes/agent-emission.ts` / `agent-emission.ts` | solo listado |
-| `delivery.cancel` | 32 | 30-sep | rutas de cola de la consola | solo listado |
+| `delivery.progress` | 34 | 29-sep | `repository/agent-emission.ts:99` | **candado de duplicados** (`repository/agent-emission.ts:92`) |
+| `delivery.cancel` | 32 | 30-sep | `repository/deliveries/control.ts:132` | **estado**: `cauce_dlq_candidates_030` lo clasifica como `delivery_cancelled_v1` (`030_dlq_causal_reconciliation.sql:63,779`) |
 | `agent_chain.silence_sweep` | 29 | 23-sep | `observability/chain-sweep.ts:505` | solo listado |
 | `delivery.parked_no_consumer` | 25 | 23-ago | `observability/maintenance.ts` | solo listado |
 | `agent_profile.desired/adopted/write` | 19/7/3 | 5-sep / 8-sep / 5-sep | `agent-profile*.ts`, `repository/agents.ts` | `agent-profile-source.ts:45` (`desired`) |
@@ -76,12 +76,17 @@ auditoría (`listAudit`, `packages/store/src/repository/observability.ts:78`, ex
 1. **Lectura limitada a lo propio.** `listAudit` filtra por el actor (y su sala/entregas), así que un
    dueño no ve a sus agentes; el filtro por trace actúa en el navegador. Ya es tarea P0 de §9
    (lectura por empresa y filtros en servidor).
-2. **Tres acciones sin productor localizado** (`dlq.reconcile`, `delivery.invariant_repair`,
-   `mcp.client_delegation.create`): vienen de código retirado o de operaciones manuales. No bloquean nada;
-   documentarlas como históricas.
-3. La mayoría de las acciones (la mayoría) solo las lee el listado: su valor es forense. Eso no justifica
-   podarlas: las dos filas que sí son estado (`delivery.replay`, `agent_output.response`) se mezclan con
-   ellas en la misma tabla, por eso la política es por lista blanca de acciones y no por edad.
+2. **Dos acciones sin productor localizado** (`delivery.invariant_repair`, `mcp.client_delegation.create`):
+   probablemente operaciones manuales o SQL; no bloquean nada. `dlq.reconcile` **no** es histórica: la
+   escriben las funciones SQL de la migración 030, que el operador invoca a mano, y sus pruebas la
+   ejercitan. Retirarla rompería la reconciliación de dead letters.
+3. **Las acciones que son estado van más allá de dos.** Deciden con la fila: `delivery.replay`
+   (candado), `delivery.progress` (duplicados), `console.publish.prepare/confirm/expire`
+   (idempotencia y tasa), `agent_output.response` (confianza de la cadena) y, por la consulta de
+   candidatos de la DLQ (`cauce_dlq_candidates_030`), también `delivery.cancel`,
+   `agent_output.materialize` y `agent_output.fanin`. El resto es forense. Por eso la política es por
+   lista blanca de acciones (`repository/observability/policy.ts:127-143`) y no por edad, y la lista
+   desechable no debe ampliarse sin revisar estos lectores.
 
 ### Decisión
 
@@ -215,7 +220,7 @@ Activos: `cred-guard.timer` (30 min, último 16:21 hora local, `rc=0 problemas=0
 
 | Pieza | Dónde corre | Qué produce | Quién consume |
 |---|---|---|---|
-| `credential_health.py` (166 líneas) | biblioteca en cada host que ejecuta una guardia | clasificación pura (vencimiento, huella, compartida) | `cred-guard.py`, `cauce-cred-guard-kratos.py`, `cauce-v3-medico-monitor:49`, `ops/tests/test_credential_health.py` |
+| `credential_health.py` (166 líneas) | biblioteca del repo; **no está en el VPS** (junto a la guardia instalada no hay copia) y en kratos va con su propia copia de la guardia | clasificación pura (vencimiento, huella, compartida) | `cred-guard.py`, `cauce-cred-guard-kratos.py`, `cauce-v3-medico-monitor:49`, `ops/tests/test_credential_health.py` |
 | `cred-guard.py` (134 líneas) | VPS como `cauce-cred-guard` (sistema, 30 min) y kratos como `cred-guard.timer` (usuario, 30 min) | tabla por credencial y `problemas=N compartidas=M`; sale con 1 si hay muertas | solo humanos que lean el journal o `cred-guard.txt`; nadie en código |
 | `cred-guard.sh` (10 líneas) | kratos (envuelve al anterior) | `cred-guard.txt` y línea en `cred-guard.log` (151 kB, sin rotar); **fuerza `exit 0`** | nadie |
 | `cauce-cred-guard-kratos.py` (84 líneas) | hoy lo ejecuta el host server2 (el JSON remoto del VPS se renueva cada 15 min con `host: server2`); el timer de kratos está `disabled` | JSON de huellas y vencimientos en el VPS (`/var/lib/cauce-v3/cred-guard-kratos.json`) | `cred-guard.py` del VPS (lo lee como fila remota; STALE a los 60 min) |
@@ -223,10 +228,17 @@ Activos: `cred-guard.timer` (30 min, último 16:21 hora local, `rc=0 problemas=0
 
 ### Problemas detectados
 
-1. **El agregador del VPS falla en cada ejecución** (código 1, 144 fallos en 3 días): detecta una
-   credencial Claude de un contenedor del VPS sin `refreshToken` y con un vencimiento que sale como
-   «hace 497 733 h», es decir `expiresAt` ausente leído como 0. Hay un defecto de clasificación (un
-   vencimiento ausente no debería contarse como «vencido hace 56 años») y nadie recibe el aviso.
+1. **El agregador del VPS falla en cada ejecución** (código 1, 144 fallos en 3 días) y **lo que corre
+   no sale del repo**. La unidad `cauce-cred-guard` ejecuta `/usr/local/sbin/cauce-cred-guard.py`
+   (151 líneas, 27-sep, sha256 `0a8b7be3…`), una copia suelta que no importa `credential_health.py` y no
+   coincide con `ops/guardias/cred-guard.py` (`b362efbc…`); en el mismo directorio quedan dos `.bak`. La
+   copia de kratos (`~/.local/bin/cred-guard.py`, `29aff7e3…`) también difiere. Lo que reporta (credencial
+   Claude de un contenedor sin `refreshToken` y «vencida hace 497 733 h») es el cálculo de esa copia con
+   `expiresAt` ausente. En el repo, `hours_until_expiry` ya devuelve `None` si `expiresAt` falta o es ≤0
+   (`credential_health.py:62`), pero `FLEET_GUARD_POLICY.unknown_expiry_is_problem=True`
+   (`credential_health.py:38-42`) la seguiría clasificando como MUERTO «sin fecha» y la guardia saldría
+   con 1. Por tanto no se puede afirmar que sea un falso positivo: la credencial puede estar realmente
+   muerta, y nadie recibe el aviso.
 2. **Solapamiento real**: `cred-guard.py` corre dos veces en hosts distintos con listas de objetivos
    distintas (`OBJETIVOS` en el fuente), y el README admite que hay que instalar una copia de
    `credential_health.py` por host. La parte «una sonda por host, un agregador» está bien pensada; la
@@ -242,8 +254,8 @@ Activos: `cred-guard.timer` (30 min, último 16:21 hora local, `rc=0 problemas=0
 
 ### Decisión
 
-- **Fusionar** en tres piezas: (a) `credential_health.py` como única autoridad de clasificación (corregir
-  el vencimiento ausente), (b) una sola sonda por host (hoy `cred-guard.py` + `cauce-cred-guard-kratos.py`
+- **Fusionar** en tres piezas: (a) `credential_health.py` como única autoridad de clasificación (no se
+  toca la clasificación hasta confirmar con el dueño si la credencial es de verdad inválida), (b) una sola sonda por host (hoy `cred-guard.py` + `cauce-cred-guard-kratos.py`
   son la misma lógica con distintos `OBJETIVOS`; unificarlas con la lista por host) cuyo resultado se
   empuja al agregador, (c) la acción de renovación solo en `ops/cli/cauce-credenciales.lib.sh`.
 - **Podar**: `ops/guardias/cred-guard.sh` (envoltorio que oculta el código de salida),
@@ -257,7 +269,9 @@ Activos: `cred-guard.timer` (30 min, último 16:21 hora local, `rc=0 problemas=0
 ## Siguientes pasos
 
 1. Cablear el puente de alertas y `OnFailure=` (sección 4); es lo que hace que lo demás sirva.
-2. Corregir el vencimiento ausente en `credential_health.py` y fusionar las sondas (sección 7).
+2. Instalar la guardia desde el repo (un solo origen versionado, con `credential_health.py` al lado) en
+   el VPS y en kratos, y comprobar con el dueño si la credencial Claude sin `refreshToken` está de verdad
+   muerta antes de tocar la clasificación; después fusionar las sondas (sección 7).
 3. Podar médico, OTel, `cred-guard.sh`, `cauce-credenciales` suelto, units deshabilitadas y tablas
    `respaldo_quota_*` con `git diff --diff-filter=D` y `rg` sin referencias residuales.
 4. Fusionar el JSONL de decisiones (sección 2) con una prueba de que, si falla PG, no se escribe JSONL.
