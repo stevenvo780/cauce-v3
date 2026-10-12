@@ -16,17 +16,17 @@ const RESUMEN: readonly { clave: 'tenants' | 'rooms' | 'memberships' | 'agents' 
 
 export function GeneralSection({ ctx, onIr }: { ctx: ConfigWrites; onIr: (seccion: ConfigSectionId) => void }) {
   const snapshot = ctx.config.data;
-  return <div className="grid gap-4">
+  return <div className="grid gap-3">
     <ConfigSectionHeader seccion="general" />
     <CompaniesPanel />
-    <dl aria-label="Resumen de la configuración" className="m-0 grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-line bg-line max-sm:[&>div:last-child]:col-span-2 sm:max-lg:[&>div:last-child]:col-span-2 sm:grid-cols-3 lg:grid-cols-5">
+    <dl aria-label="Resumen de la configuración" className="m-0 grid grid-cols-3 gap-px overflow-hidden rounded-xl border border-line bg-line max-sm:[&>div:last-child]:col-span-2 sm:max-lg:[&>div:last-child]:col-span-2 lg:grid-cols-5">
       {RESUMEN.map((entrada) => {
         const filas = snapshot?.[entrada.clave];
         return <div key={entrada.clave} className="grid content-start gap-0.5 bg-surface">
           <button type="button" onClick={() => { onIr(entrada.seccion); }}
-            className="grid cursor-pointer content-start gap-0.5 border-0 bg-transparent p-3 text-left hover:bg-subtle">
-            <dt className="text-xs text-muted">{entrada.etiqueta}</dt>
-            <dd className="text-xl font-semibold tabular-nums">{Array.isArray(filas) ? filas.length : '—'}</dd>
+            className="flex min-h-11 cursor-pointer items-center justify-between gap-2 border-0 bg-transparent px-1.5 py-1.5 text-left hover:bg-subtle sm:grid sm:content-start sm:gap-0.5 sm:p-3">
+            <dt className="min-w-0 text-xs text-muted">{entrada.etiqueta}</dt>
+            <dd className="text-lg font-semibold tabular-nums sm:text-xl">{Array.isArray(filas) ? filas.length : '—'}</dd>
           </button>
         </div>;
       })}

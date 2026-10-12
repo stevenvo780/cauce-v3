@@ -95,7 +95,7 @@ function ConfigPageContent() {
     avanzado: <AvanzadoSection ctx={ctx} />,
   };
 
-  return <div className="grid gap-4">
+  return <div className="grid gap-3 [&>header]:mb-0">
     {ctx.removal ? <RemovalDialog key={JSON.stringify([ctx.removal.target, ctx.removal.kind])}
       target={ctx.removal.target} kind={ctx.removal.kind} revision={ctx.snapshotRevision}
       onClose={() => { ctx.setRemoval(undefined); }} reload={config.reload} /> : null}
@@ -120,8 +120,14 @@ function ConfigPageContent() {
     <Tabs.Root value={seccion} onValueChange={(valor) => { irA(valor as ConfigSectionId); }}
       orientation={ancha ? 'vertical' : 'horizontal'}
       className="grid grid-cols-[minmax(0,1fr)] gap-4 md:grid-cols-[13rem_minmax(0,1fr)] md:items-start md:gap-6">
+      <label className="flex items-center gap-3 md:hidden">
+        <span className="text-sm font-medium">Sección</span>
+        <select value={seccion} className="min-h-11 min-w-0 flex-1" onChange={event => { irA(event.target.value as ConfigSectionId); }}>
+          {CONFIG_SECTIONS.map(section => <option key={section.id} value={section.id}>{section.label}</option>)}
+        </select>
+      </label>
       <Tabs.List aria-label="Secciones de ajustes" activateOnFocus
-        className={cn('flex gap-1 max-md:flex-wrap max-md:border-b max-md:border-line max-md:pb-2', 'md:sticky md:top-4 md:flex-col')}>
+        className={cn('hidden gap-1 md:flex', 'md:sticky md:top-4 md:flex-col')}>
         {CONFIG_SECTIONS.map((section) => <Tabs.Tab key={section.id} value={section.id} className={NAV_TAB}>{section.label}</Tabs.Tab>)}
       </Tabs.List>
       {CONFIG_SECTIONS.map((section) => <Tabs.Panel key={section.id} value={section.id} keepMounted className="min-w-0 outline-none">

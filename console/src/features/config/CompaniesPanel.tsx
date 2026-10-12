@@ -32,16 +32,16 @@ export function CompaniesPanel() {
     } catch (cause) { setError(cause instanceof Error ? cause.message : 'No se confirmó el cambio de empresa.'); }
     finally { setBusy(false); }
   }
-  return <SectionCard level={3} title="Empresas" description="Gestiona las empresas dentro de la autoridad de esta sesión.">
+  return <SectionCard level={3} title="Empresas" className="gap-2 p-3">
     {authority ? <p className="text-xs text-muted">{COMPANY_ROLE_LABEL[authority.role]} · {authority.acting_company}</p> : null}
     <div className="flex flex-wrap gap-2"><Button disabled={!canCreate || busy || resource.loading || !!resource.error} onClick={() => { setCreating(true); }}>Crear empresa</Button>
       <Button disabled={busy || resource.loading} onClick={() => { void resource.reload(); }}>Releer empresas</Button></div>
     {resource.loading ? <p role="status">Leyendo empresas…</p> : null}
     {error || resource.error ? <Notice tone="danger" role="alert">{error || resource.error?.message}</Notice> : null}
     {notice ? <Notice tone="ok" role="status">{notice}</Notice> : null}
-    <ul className="m-0 grid list-none gap-2 p-0">{resource.data?.companies.map(company => <li key={company.id} className="flex flex-wrap items-center justify-between gap-2 border-b border-line py-3">
+    <ul className="m-0 grid list-none gap-2 p-0">{resource.data?.companies.map(company => <li key={company.id} className="flex flex-wrap items-center justify-between gap-2 border-b border-line py-2">
       <div><strong>{company.name}</strong><p className="m-0 text-xs text-muted">{company.state === 'enabled' ? 'Activa' : company.state === 'disabled' ? 'Deshabilitada' : 'Retirada'} · versión {company.version}</p></div>
-      <div className="flex gap-2"><Button size="sm" disabled={!canEdit(company) || busy || !!resource.error} onClick={() => { setName(company.name); setEditing(company); }}>Editar</Button>
+      <div className="flex flex-wrap gap-2"><Button size="sm" disabled={!canEdit(company) || busy || !!resource.error} onClick={() => { setName(company.name); setEditing(company); }}>Editar</Button>
         <Button size="sm" disabled={busy || !!resource.error} onClick={() => { setAdminsCompany(current => current === company.id ? undefined : company.id); }}>Autoridad de empresa</Button>
         <Button size="sm" disabled={!canEdit(company) || busy || !!resource.error} onClick={() => { setRetiring(company); }}>{company.state !== 'retired' ? 'Retirar' : 'Restaurar'}</Button></div>
     </li>)}</ul>

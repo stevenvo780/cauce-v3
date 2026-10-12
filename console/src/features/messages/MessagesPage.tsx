@@ -76,7 +76,7 @@ function MessagesPageContent({ params }: MessagesPageProps) {
     <div
       ref={envolturaRef}
       data-conversacion={seleccionado || pedido ? 'abierta' : undefined}
-      className="flex min-h-0 flex-col bg-surface h-[calc(var(--messenger-viewport-height,100dvh)_-_var(--messenger-top,0px))] max-[760px]:h-[calc(var(--messenger-viewport-height,100dvh)_-_var(--messenger-top,0px)_-_var(--messenger-navigation-height,calc(56px_+_env(safe-area-inset-bottom))))]"
+      className="flex min-h-0 flex-col bg-surface h-[calc(var(--messenger-viewport-height,100dvh)_-_var(--messenger-top,0px))] max-[761px]:h-[calc(var(--messenger-viewport-height,100dvh)_-_var(--messenger-top,0px)_-_var(--messenger-navigation-height,calc(56px_+_env(safe-area-inset-bottom))))]"
     >
       {seleccionado ? (
         <ConversationPane

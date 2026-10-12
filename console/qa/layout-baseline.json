@@ -3,9 +3,9 @@
     "huecoMaximo": 0,
     "huecoMaximoEn": "/",
     "desbordeMaximo": 0,
-    "recorteMaximo": 390,
-    "recorteMaximoEn": "/live",
-    "recorteMaximoQue": "section.-mx-4.flex.items-center",
+    "recorteMaximo": 222,
+    "recorteMaximoEn": "/messages/Steven/jarvis?view=context",
+    "recorteMaximoQue": "div.flex.gap-1.overflow-x-auto",
     "recorteSinTeclado": 0,
     "recorteSinTecladoEn": "/",
     "recorteSinTecladoQue": "",
@@ -23,17 +23,17 @@
       "/live": {
         "pantallas": 1,
         "foldDesaprovechado": 0,
-        "objetoPrincipalTop": 223,
+        "objetoPrincipalTop": 0,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/live#hoja": {
         "pantallas": 1,
         "foldDesaprovechado": 0,
-        "objetoPrincipalTop": 223,
+        "objetoPrincipalTop": 0,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/accounts": {
-        "pantallas": 5.12,
+        "pantallas": 5.05,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
@@ -69,7 +69,7 @@
         "objetoPrincipalBajoElPliegue": 0
       },
       "/observability": {
-        "pantallas": 1.26,
+        "pantallas": 1.22,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
@@ -105,8 +105,8 @@
     "huecoMaximoEn": "/",
     "desbordeMaximo": 0,
     "recorteMaximo": 0,
-    "recorteMaximoEn": "/",
-    "recorteMaximoQue": "",
+    "recorteMaximoEn": "/live",
+    "recorteMaximoQue": "ul.m-0.flex.min-w-0",
     "recorteSinTeclado": 0,
     "recorteSinTecladoEn": "/",
     "recorteSinTecladoQue": "",
@@ -124,13 +124,13 @@
       "/live": {
         "pantallas": 1,
         "foldDesaprovechado": 0,
-        "objetoPrincipalTop": 179,
+        "objetoPrincipalTop": 0,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/live#hoja": {
         "pantallas": 1,
         "foldDesaprovechado": 0,
-        "objetoPrincipalTop": 179,
+        "objetoPrincipalTop": 0,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/accounts": {
@@ -164,7 +164,7 @@
         "objetoPrincipalBajoElPliegue": 0
       },
       "/queues": {
-        "pantallas": 1.34,
+        "pantallas": 1.31,
         "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
@@ -177,7 +177,7 @@
       },
       "/config": {
         "pantallas": 1,
-        "foldDesaprovechado": 141,
+        "foldDesaprovechado": 18,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
@@ -225,13 +225,13 @@
       "/live": {
         "pantallas": 1,
         "foldDesaprovechado": 0,
-        "objetoPrincipalTop": 163,
+        "objetoPrincipalTop": 0,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/live#hoja": {
         "pantallas": 1,
         "foldDesaprovechado": 0,
-        "objetoPrincipalTop": 163,
+        "objetoPrincipalTop": 0,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/accounts": {
@@ -266,7 +266,7 @@
       },
       "/queues": {
         "pantallas": 1,
-        "foldDesaprovechado": 466,
+        "foldDesaprovechado": 494,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
@@ -278,7 +278,7 @@
       },
       "/config": {
         "pantallas": 1,
-        "foldDesaprovechado": 390,
+        "foldDesaprovechado": 266,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
@@ -326,13 +326,13 @@
       "/live": {
         "pantallas": 1,
         "foldDesaprovechado": 0,
-        "objetoPrincipalTop": 163,
+        "objetoPrincipalTop": 0,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/live#hoja": {
         "pantallas": 1,
         "foldDesaprovechado": 0,
-        "objetoPrincipalTop": 163,
+        "objetoPrincipalTop": 0,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/accounts": {
@@ -367,7 +367,7 @@
       },
       "/queues": {
         "pantallas": 1,
-        "foldDesaprovechado": 466,
+        "foldDesaprovechado": 494,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
@@ -379,7 +379,7 @@
       },
       "/config": {
         "pantallas": 1,
-        "foldDesaprovechado": 406,
+        "foldDesaprovechado": 282,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
@@ -427,13 +427,13 @@
       "/live": {
         "pantallas": 1,
         "foldDesaprovechado": 0,
-        "objetoPrincipalTop": 163,
+        "objetoPrincipalTop": 0,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/live#hoja": {
         "pantallas": 1,
         "foldDesaprovechado": 0,
-        "objetoPrincipalTop": 163,
+        "objetoPrincipalTop": 0,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/accounts": {
@@ -468,7 +468,7 @@
       },
       "/queues": {
         "pantallas": 1,
-        "foldDesaprovechado": 466,
+        "foldDesaprovechado": 494,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
@@ -480,7 +480,7 @@
       },
       "/config": {
         "pantallas": 1,
-        "foldDesaprovechado": 449,
+        "foldDesaprovechado": 325,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
@@ -528,13 +528,13 @@
       "/live": {
         "pantallas": 1,
         "foldDesaprovechado": 0,
-        "objetoPrincipalTop": 163,
+        "objetoPrincipalTop": 0,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/live#hoja": {
         "pantallas": 1,
         "foldDesaprovechado": 0,
-        "objetoPrincipalTop": 163,
+        "objetoPrincipalTop": 0,
         "objetoPrincipalBajoElPliegue": 0
       },
       "/accounts": {
@@ -569,7 +569,7 @@
       },
       "/queues": {
         "pantallas": 1,
-        "foldDesaprovechado": 466,
+        "foldDesaprovechado": 494,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
@@ -581,7 +581,7 @@
       },
       "/config": {
         "pantallas": 1,
-        "foldDesaprovechado": 449,
+        "foldDesaprovechado": 325,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },

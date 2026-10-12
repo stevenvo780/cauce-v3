@@ -257,7 +257,7 @@ export function AppShell({ routeId, activeAgentId, bounded = false, account, not
 
   return (
     <div
-      className="flex min-h-dvh bg-canvas text-fg [&:has([data-keyboard-open])_nav[aria-label='Navegación principal']]:hidden"
+      className="flex min-h-dvh bg-canvas text-fg [&:has([data-keyboard-open])_nav[aria-label='Navegación_principal']]:hidden"
       data-sidebar={phone ? 'bottom' : rail ? 'rail' : 'expanded'}
     >
       <a

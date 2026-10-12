@@ -67,7 +67,7 @@ export function HudStates({ order, tally, filter, onToggle, onClear }: {
   onClear: () => void;
 }) {
   return (
-    <div role="group" aria-label="Filtrar por estado" className="flex min-w-0 items-center gap-1 overflow-x-auto [scrollbar-width:none]">
+    <div role="group" aria-label="Filtrar por estado" className="flex min-w-0 flex-wrap items-center gap-1">
       {order.filter((state) => tally[state] > 0).map((state) => {
         const on = filter.has(state);
         return (

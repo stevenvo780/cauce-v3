@@ -68,7 +68,7 @@ export function Hotbar({ slots, current, onGo, compact = false }: {
         aria-label="Edificios del campus"
         aria-orientation="horizontal"
         onKeyDown={onKeyDown}
-        className="flex max-w-full gap-1 overflow-x-auto pt-1 [scrollbar-width:none]"
+        className="flex max-w-full flex-wrap justify-center gap-1 pt-1"
       >
         {slots.map((slot, index) => {
           const here = slot.id === current;

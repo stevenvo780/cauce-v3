@@ -223,7 +223,7 @@ export function LiveFleetPage() {
           </button>
         ) : (
           <>
-            <div className="min-w-0 flex-1">{states}</div>
+            <div className="min-w-min flex-1">{states}</div>
             <div className="ml-auto">{freshness}</div>
           </>
         )}

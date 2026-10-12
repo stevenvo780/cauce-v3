@@ -252,7 +252,7 @@ function ConsoleShell({ gate }: { gate: AuthGateState }) {
           ref={mainRef}
           tabIndex={-1}
           className={fullBleed
-            ? 'flex min-h-0 w-full flex-1 flex-col max-[760px]:pb-[calc(56px+env(safe-area-inset-bottom))] max-[760px]:has-[[data-keyboard-open]]:pb-0'
+            ? 'flex min-h-0 w-full flex-1 flex-col max-[761px]:pb-[calc(56px+env(safe-area-inset-bottom))] max-[761px]:has-[[data-keyboard-open]]:pb-0'
             : 'mx-auto w-full max-w-[1680px] flex-1 px-4 pt-4 pb-[calc(72px+env(safe-area-inset-bottom))] min-[761px]:px-8 min-[761px]:pt-6 min-[761px]:pb-10'}
         >
           {notFoundPath
