@@ -166,7 +166,37 @@ class PraxisProofTests(unittest.TestCase):
         self.assertIn("qa_report_missing_or_invalid", report["results"][0]["stderr"])
         self.assertEqual(report["inspected_images"], [])
         self.assertFalse(report["review"]["independent"])
+        self.assertEqual(report["author"], "praxis-proof.py")
+        self.assertEqual(report["producer_kind"], "automation")
         self.assertEqual(self.read("proof.json")["status"], "technical-progress")
+
+    def test_native_qa_producer_records_automation_identity_without_visual_approval(self):
+        script = ("import hashlib,json\nfrom pathlib import Path\n"
+                  "output=Path('proof-generated/qa'); output.mkdir(parents=True)\n"
+                  "image=output/'synthetic.png'; image.write_bytes(b'synthetic screenshot bytes')\n"
+                  "report={'status':'passed','source_sha256':{'apps/web/app.js':hashlib.sha256(Path('apps/web/app.js').read_bytes()).hexdigest()},"
+                  "'runs':[{'status':'passed','screenshots':[{'path':str(image),'sha256':hashlib.sha256(image.read_bytes()).hexdigest()}]}]}\n"
+                  "(output/'browser-qa.json').write_text(json.dumps(report))\n")
+        (self.workspace / "scripts/qa_professional.py").write_text(script)
+        self.git("add", "scripts/qa_professional.py")
+        self.git("commit", "-qm", "Synthetic QA producer")
+        self.commit = self.args.commit = self.git("rev-parse", "HEAD").strip()
+        self.args.qa = True
+        self.assertEqual(self.run_proof(), 0)
+        qa = self.read("qa.json")
+        self.assertEqual((qa["author"], qa["producer_kind"]), ("praxis-proof.py", "automation"))
+        self.assertEqual((qa["source_commit"], qa["status"], qa["exit_code"]), (self.commit, "passed", 0))
+        capture = qa["runs"][0]["screenshots"][0]
+        self.assertEqual(capture["sha256"], PROOF.digest(self.args.output / "qa/synthetic.png"))
+        self.assertEqual(qa["review"], {"independent": False, "reviewer": None})
+        self.assertEqual(qa["inspected_images"], [])
+        self.assertTrue(self.read("proof.json")["independent_review_pending"])
+        for name in ("qa.json", "snapshot.json", "tests.json"):
+            self.assertNotIn("production_clinical_accepted", self.read(name))
+
+    def test_gate_report_never_substitutes_an_actor_for_its_automation_author(self):
+        qa = PROOF.gate_report("qa", "synthetic", self.commit, {}, [], author="synthetic-actor", producer_kind="human")
+        self.assertEqual((qa["author"], qa["producer_kind"]), ("praxis-proof.py", "automation"))
 
     def test_discover_zero_tests_is_not_passed(self):
         selected = [["/usr/bin/python3", "-B", "-m", "unittest", "discover", "-s", "apps/api", "-p", "missing_*.py"]]

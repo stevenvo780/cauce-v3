@@ -145,7 +145,8 @@ def gate_report(gate_id, command, commit, sources, results, **extra):
     code = next((row["exit_code"] for row in results if row["exit_code"]), 0)
     return {"schema_version": 2, "gate_id": gate_id, "status": "passed" if code == 0 else "failed",
             "exit_code": code, "command": command, "source_commit": commit,
-            "source_files": sources, "results": results, **extra}
+            "source_files": sources, "results": results, **extra,
+            "author": "praxis-proof.py", "producer_kind": "automation"}
 
 
 def test_commands(python):
