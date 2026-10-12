@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Simple Cauce V3 deploy (PHASE 3). Replaces retired machinery (history in git).
-# Contract: build -> pin by digest -> migrate -> up -> smoke -> record. All or rollback.
+# Contract: gates receipt -> build -> migrate with candidate pins -> pin -> up -> smoke -> record.
 set -euo pipefail
 
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
@@ -11,15 +11,12 @@ HISTORY_FILE="${CAUCE_DEPLOY_HISTORY_FILE:-$REPO/deploy/HISTORIAL.md}"
 BACKUP_STATUS_FILE="${CAUCE_DEPLOY_BACKUP_STATUS_FILE:-/var/log/cauce-v3-backup/status.json}"
 BACKUP_MAX_AGE_HOURS="${CAUCE_DEPLOY_BACKUP_MAX_AGE_HOURS:-24}"
 BACKUP_MONITOR="${CAUCE_DEPLOY_BACKUP_MONITOR:-$REPO/ops/scripts/host-backup-monitor.sh}"
+GATES_RECEIPT="${CAUCE_DEPLOY_GATES_RECEIPT:-}"
+SIN_RECIBO="${CAUCE_DEPLOY_SIN_RECIBO:-}"
+MIGRATION_BACKUP_MAX_AGE_HOURS=2
 COMPOSE=(docker compose --env-file "$ENV_FILE" -f "$REPO/deploy/compose.yaml" -f "$REPO/deploy/compose.postgres.yaml" --project-directory "$REPO/deploy")
-SNAPSHOT_READY=0
 
-die() {
-  if [ "${MCP_HUMAN_ENABLED:-0}" = 1 ] && [ "${SNAPSHOT_READY:-0}" = 1 ]; then
-    deployment_failed "$*"
-  fi
-  echo "deploy: $*" >&2; exit 1
-}
+die() { echo "deploy: $*" >&2; exit 1; }
 env_value() { sed -n "s/^$1=//p" "$ENV_FILE" | tail -1 | tr -d '\r'; }
 env_declarations() { grep -Ec "^[[:space:]]*(export[[:space:]]+)?$1[[:space:]]*[=:]" "$ENV_FILE" || true; }
 profile_enabled() {
@@ -78,7 +75,6 @@ compose_recipe() {
   RECIPE+=("${COMPOSE[@]}")
 }
 deployment_failed() {
-  local exit_status="${2:-1}"
   echo "deploy: $1" >&2
   if [ "$MCP_HUMAN_ENABLED" = 1 ]; then
     compose_recipe
@@ -87,12 +83,7 @@ deployment_failed() {
     printf '%q ' "${RECIPE[@]}" >&2; printf 'config\n' >&2
     printf '%q ' "${RECIPE[@]}" >&2; printf 'up -d --wait --wait-timeout 300 --remove-orphans\n' >&2
   fi
-  exit "$exit_status"
-}
-deployment_error() {
-  local failure_status="$?"
-  trap - ERR
-  deployment_failed "comando fallido antes del migrator; pins pueden haber cambiado; snapshot previo: $ENV_FILE.pre-deploy-$STAMP" "$failure_status"
+  exit 1
 }
 
 [ "${CAUCE_FASE3_CON_DUENO:-}" = "si" ] || die "FASE 3 solo con el dueño presente (exporta CAUCE_FASE3_CON_DUENO=si)"
@@ -268,6 +259,21 @@ if ! [[ "$BACKUP_MAX_AGE_HOURS" =~ ^[0-9]+$ ]] \
 fi
 [ -d "$(dirname "$HISTORY_FILE")" ] || die "no existe el directorio de historial $(dirname "$HISTORY_FILE")"
 [ ! -L "$HISTORY_FILE" ] || die "CAUCE_DEPLOY_HISTORY_FILE no puede ser un symlink"
+if [ -n "$SIN_RECIBO" ]; then
+  [ -z "$GATES_RECEIPT" ] || die "CAUCE_DEPLOY_GATES_RECEIPT y CAUCE_DEPLOY_SIN_RECIBO son excluyentes"
+  [[ "$SIN_RECIBO" =~ ^[^|[:cntrl:]]{1,200}$ && "$SIN_RECIBO" =~ [^[:space:]] ]] \
+    || die "CAUCE_DEPLOY_SIN_RECIBO debe ser un motivo de una linea, sin '|' y de 200 caracteres o menos"
+else
+  [[ "$GATES_RECEIPT" = /* ]] \
+    || die "falta el recibo de gates: exporta CAUCE_DEPLOY_GATES_RECEIPT con la ruta absoluta del recibo de scripts/release-gates.sh (escape auditado: CAUCE_DEPLOY_SIN_RECIBO=motivo)"
+  [ -f "$GATES_RECEIPT" ] || die "no encuentro el recibo de gates $GATES_RECEIPT"
+fi
+for name in CAUCE_RUNTIME_IMAGE CAUCE_CONSOLE_IMAGE; do
+  [ "${!name+x}" != x ] || die "$name del entorno anularia el pin de $ENV_FILE; quitalo del entorno"
+  if [ "$(env_declarations "$name")" != 1 ] || ! grep -q "^$name=" "$ENV_FILE"; then
+    die "$name debe declararse una sola vez como $name=... en $ENV_FILE"
+  fi
+done
 BLOB_DECLARATIONS="$(grep -c '^CAUCE_BLOB_API_ENABLED=' "$ENV_FILE" || true)"
 [ "$BLOB_DECLARATIONS" -le 1 ] || die "CAUCE_BLOB_API_ENABLED esta duplicado en $ENV_FILE"
 if [ "$BLOB_DECLARATIONS" -eq 0 ]; then
@@ -302,12 +308,59 @@ EXPECTED_COMMIT="$(git rev-parse --verify "${EXPECTED_GIT_REF}^{commit}" 2>/dev/
 
 REV="$(git rev-parse --short HEAD)"
 RELEASE_COMMIT="$(git rev-parse HEAD)"
+if [ -n "$SIN_RECIBO" ]; then
+  echo "AVISO: despliegue de $REV SIN recibo de gates; motivo (queda en $HISTORY_FILE): $SIN_RECIBO" >&2
+  confirmar "¿Desplegar $REV sin recibo de gates?" || die "abortado: falta el recibo de gates"
+  GATES_EVIDENCE="SIN RECIBO DE GATES: $SIN_RECIBO"
+else
+  RELEASE_TREE="$(git rev-parse 'HEAD^{tree}')"
+  EXPECTED_GATES="$(bash "$REPO/scripts/release-gates.sh" --list)" \
+    || die "no pude listar los gates de scripts/release-gates.sh"
+  GATES_RECEIPT_SHA256="$(python3 - "$GATES_RECEIPT" "$RELEASE_COMMIT" "$RELEASE_TREE" "$EXPECTED_GATES" <<'PY'
+import hashlib
+import json
+import re
+import sys
+
+path, commit, tree, expected = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4].splitlines()
+try:
+    with open(path, "rb") as handle:
+        raw = handle.read()
+    receipt = json.loads(raw)
+    commands = receipt["comandos"]
+    problems = []
+    if receipt["commit"] != commit:
+        problems.append(f"commit del recibo {receipt['commit']} != HEAD {commit}")
+    if receipt["tree"] != tree:
+        problems.append(f"tree del recibo {receipt['tree']} != HEAD^{{tree}} {tree}")
+    if [command["cmd"] for command in commands] != expected:
+        problems.append("los comandos del recibo no son los de scripts/release-gates.sh --list en orden")
+    for command in commands:
+        if type(command["exit"]) is not int or command["exit"] != 0:
+            problems.append(f"{command['cmd']}: exit {command['exit']}")
+        if not re.fullmatch(r"[0-9a-f]{64}", str(command["log_sha256"])):
+            problems.append(f"{command['cmd']}: log_sha256 invalido")
+        if type(command["duracion"]) not in (int, float) or command["duracion"] < 0:
+            problems.append(f"{command['cmd']}: duracion invalida")
+    if not all(isinstance(receipt[key], str) and receipt[key] for key in ("inicio", "fin")):
+        problems.append("inicio o fin ausentes")
+except (OSError, ValueError, TypeError, KeyError) as error:
+    problems = [f"recibo ilegible: {error!r}"]
+if problems:
+    print("\n".join(problems), file=sys.stderr)
+    raise SystemExit(1)
+print(hashlib.sha256(raw).hexdigest())
+PY
+  )" || die "el recibo de gates $GATES_RECEIPT no acredita un gate verde de $RELEASE_COMMIT"
+  GATES_EVIDENCE="recibo de gates sha256:$GATES_RECEIPT_SHA256"
+fi
 RUNTIME_SOURCE_DIGEST="$(python3 ops/scripts/source-digest.py --domain runtime)"
 CONSOLE_SOURCE_DIGEST="$(python3 ops/scripts/source-digest.py --domain console)"
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 RUNTIME_TAG="$REGISTRY/cauce-v3-runtime:$REV"
 CONSOLE_TAG="$REGISTRY/cauce-v3-console:$REV"
-LAST_MIGRATION="$(find "$REPO/packages/store/migrations" -maxdepth 1 -type f -name '[0-9][0-9][0-9]_*.sql' -printf '%f\n' | sort -V | tail -1)" # never hardcode this: derive from what is actually bundled
+BUNDLED_MIGRATIONS="$(find "$REPO/packages/store/migrations" -maxdepth 1 -type f -name '[0-9][0-9][0-9]_*.sql' -printf '%f\n' | LC_ALL=C sort)"
+LAST_MIGRATION="$(printf '%s\n' "$BUNDLED_MIGRATIONS" | sort -V | tail -1)" # never hardcode this: derive from what is actually bundled
 [ -n "$LAST_MIGRATION" ] || die "no encuentro migraciones en packages/store/migrations"
 PROJECT_NAME="$(env_value COMPOSE_PROJECT_NAME)"
 PROJECT_NAME="${PROJECT_NAME:-cauce-v3-prod}"
@@ -319,6 +372,50 @@ PG_DB="$(env_value POSTGRES_DB)"
 if [ -z "$PG_USER" ] || [ -z "$PG_DB" ]; then
   die "POSTGRES_USER y POSTGRES_DB deben estar definidos"
 fi
+
+[ "$MCP_HUMAN_ENABLED" = 1 ] || prepare_terminal
+MISSING_BIND_SOURCES="$("${COMPOSE[@]}" config --format json | python3 -c '
+import json, os, sys
+model = json.load(sys.stdin)
+sources = [(name, mount["source"]) for name, service in model.get("services", {}).items()
+           for mount in service.get("volumes", []) if mount.get("type") == "bind"]
+sources += [(f"{kind}.{name}", item["file"]) for kind in ("secrets", "configs")
+            for name, item in model.get(kind, {}).items() if "file" in item]
+for owner, source in sorted(set(sources)):
+    if not os.path.exists(source):
+        print(f"{owner}: {source}")
+')" || die "no pude renderizar el compose con $ENV_FILE para comprobar las fuentes de los bind mounts"
+[ -z "$MISSING_BIND_SOURCES" ] \
+  || die "faltan fuentes de bind mounts del compose; no se construye nada:"$'\n'"$MISSING_BIND_SOURCES"
+
+count_pending_migrations() {
+  PENDING_MIGRATIONS=0
+  local containers volumes pg_running applied
+  containers="$(docker ps -a --format '{{.Names}}')" \
+    || die "no pude enumerar contenedores para contar migraciones pendientes"
+  if ! printf '%s\n' "$containers" | grep -Fxq "$PG_CONTAINER"; then
+    volumes="$(docker volume ls --format '{{.Name}}')" \
+      || die "no pude enumerar volumenes para contar migraciones pendientes"
+    if printf '%s\n' "$volumes" | grep -Fxq "${PROJECT_NAME}_cauce_pgdata"; then
+      die "hay datos de PostgreSQL sin contenedor inspeccionable; migraciones pendientes indeterminadas"
+    fi
+    return 0
+  fi
+  pg_running="$(docker inspect -f '{{.State.Running}}' "$PG_CONTAINER")" \
+    || die "no pude inspeccionar PostgreSQL para contar migraciones pendientes"
+  [ "$pg_running" = true ] || die "PostgreSQL existente no esta activo; migraciones pendientes indeterminadas"
+  applied="$(docker exec "$PG_CONTAINER" psql -XAtq -v ON_ERROR_STOP=1 -U "$PG_USER" -d "$PG_DB" \
+    -c 'SELECT version FROM schema_migrations')" \
+    || die "no pude consultar schema_migrations para contar migraciones pendientes"
+  PENDING_MIGRATIONS="$(LC_ALL=C comm -23 <(printf '%s\n' "$BUNDLED_MIGRATIONS") \
+    <(printf '%s\n' "$applied" | LC_ALL=C sort) | grep -c . || true)"
+}
+backup_monitor_accepts() {
+  STATUS_FILE="$BACKUP_STATUS_FILE" MAX_AGE_HOURS="$BACKUP_MAX_AGE_HOURS" \
+    REQUIRE_BLOB_VOLUME="$REQUIRE_BLOB_BACKUP" \
+    BLOB_VOLUME="$BACKUP_BLOB_VOLUME" \
+    "$BACKUP_MONITOR" >/dev/null
+}
 
 check_blob_migration_window() {
   BLOB_MIGRATION_PENDING=0
@@ -389,15 +486,21 @@ if [ "$REQUIRE_BLOB_BACKUP" = 1 ]; then
   [ "$BACKUP_MAX_AGE_HOURS" -le 24 ] \
     || die "la API de blobs o migracion 043 exige backup verificado de 24 horas o menos"
 fi
+count_pending_migrations
+MIGRATION_BACKUP_REQUIRED=0
+if [ "$PENDING_MIGRATIONS" -gt 0 ]; then
+  MIGRATION_BACKUP_REQUIRED=1
+  [ "$BACKUP_MAX_AGE_HOURS" -le "$MIGRATION_BACKUP_MAX_AGE_HOURS" ] || BACKUP_MAX_AGE_HOURS="$MIGRATION_BACKUP_MAX_AGE_HOURS"
+  echo "$PENDING_MIGRATIONS migraciones pendientes: se exige backup verificado de ${BACKUP_MAX_AGE_HOURS} h o menos"
+fi
 
 echo "== Cauce V3 deploy: commit $REV ($STAMP) =="
 
-if ! STATUS_FILE="$BACKUP_STATUS_FILE" MAX_AGE_HOURS="$BACKUP_MAX_AGE_HOURS" \
-  REQUIRE_BLOB_VOLUME="$REQUIRE_BLOB_BACKUP" \
-  BLOB_VOLUME="$BACKUP_BLOB_VOLUME" \
-  "$BACKUP_MONITOR" >/dev/null; then
+if ! backup_monitor_accepts; then
   [ "$REQUIRE_BLOB_BACKUP" = 0 ] \
     || die "la API de blobs o migracion 043 exige un backup verificado; no se admite omitir este control"
+  [ "$MIGRATION_BACKUP_REQUIRED" = 0 ] \
+    || die "hay $PENDING_MIGRATIONS migraciones pendientes y $BACKUP_STATUS_FILE no acredita un backup verificado de ${BACKUP_MAX_AGE_HOURS} h o menos; respalda y repite"
   echo "AVISO: el estado de backup no acredita una copia sana de <${BACKUP_MAX_AGE_HOURS}h en $BACKUP_STATUS_FILE."
   confirmar "¿Continuar igual?" || die "abortado por falta de backup fresco"
 fi
@@ -443,7 +546,6 @@ fi
 
 # Both images come from deploy/Dockerfile: `runtime` is NOT the last stage (console is), so the
 # target is explicit; the console stage bakes the relay instance id into its nginx route at build.
-[ "$MCP_HUMAN_ENABLED" = 1 ] || prepare_terminal
 docker build -f deploy/Dockerfile --target runtime --build-arg "CAUCE_SCHEMA_COMPATIBLE_THROUGH=$LAST_MIGRATION" --build-arg "CAUCE_SOURCE_DIGEST=$RUNTIME_SOURCE_DIGEST" --build-arg "CAUCE_RELEASE_COMMIT=$RELEASE_COMMIT" -t "$RUNTIME_TAG" .
 docker build -f deploy/Dockerfile --target console --build-arg "CAUCE_TERMINAL_RELAY_INSTANCE_ID=$INSTANCE_ID" \
   --build-arg "CAUCE_SOURCE_DIGEST=$CONSOLE_SOURCE_DIGEST" --build-arg "CAUCE_RELEASE_COMMIT=$RELEASE_COMMIT" -t "$CONSOLE_TAG" .
@@ -455,28 +557,38 @@ CONSOLE_DIGEST="$(docker inspect --format '{{index .RepoDigests 0}}' "$CONSOLE_T
 echo "runtime: $RUNTIME_DIGEST"
 echo "console: $CONSOLE_DIGEST"
 
-cp -a "$ENV_FILE" "$ENV_FILE.pre-deploy-$STAMP"
-if [ "$MCP_HUMAN_ENABLED" = 1 ]; then
-  SNAPSHOT_READY=1
-  trap deployment_error ERR
-fi
-sed -i "s|^CAUCE_RUNTIME_IMAGE=.*|CAUCE_RUNTIME_IMAGE=$RUNTIME_DIGEST|" "$ENV_FILE"
-sed -i "s|^CAUCE_CONSOLE_IMAGE=.*|CAUCE_CONSOLE_IMAGE=$CONSOLE_DIGEST|" "$ENV_FILE"
+CANDIDATE_ENV_FILE="$ENV_FILE.candidate-$STAMP"
+trap 'rm -f -- "$CANDIDATE_ENV_FILE"' EXIT
+cp -a "$ENV_FILE" "$CANDIDATE_ENV_FILE"
+sed -i "s|^CAUCE_RUNTIME_IMAGE=.*|CAUCE_RUNTIME_IMAGE=$RUNTIME_DIGEST|" "$CANDIDATE_ENV_FILE"
+sed -i "s|^CAUCE_CONSOLE_IMAGE=.*|CAUCE_CONSOLE_IMAGE=$CONSOLE_DIGEST|" "$CANDIDATE_ENV_FILE"
+CANDIDATE_COMPOSE=(docker compose --env-file "$CANDIDATE_ENV_FILE" "${COMPOSE[@]:4}")
 
-"${COMPOSE[@]}" config >/dev/null || deployment_failed "el compose canonico no renderiza con $ENV_FILE"
+"${CANDIDATE_COMPOSE[@]}" config >/dev/null || die "el compose con los pins nuevos no renderiza; $ENV_FILE sigue intacto"
 
-confirmar "¿Migrar hasta $LAST_MIGRATION (bundle de packages/store/migrations, una transaccion) y desplegar $REV?" || die "abortado por el dueño"
+confirmar "¿Migrar hasta $LAST_MIGRATION (bundle de packages/store/migrations, una transaccion) y desplegar $REV?" || die "abortado por el dueño; $ENV_FILE sigue intacto"
 check_blob_migration_window
 [ "$BLOB_MIGRATION_PENDING" = 0 ] || [ "$REQUIRE_BLOB_BACKUP" = 1 ] \
   || die "043 paso a pendiente despues del backup; repite el deploy con evidencia de tabla y volumen"
+count_pending_migrations
+if [ "$PENDING_MIGRATIONS" -gt 0 ]; then
+  [ "$MIGRATION_BACKUP_REQUIRED" = 1 ] \
+    || die "aparecieron $PENDING_MIGRATIONS migraciones pendientes despues de comprobar el backup; respalda y repite"
+  backup_monitor_accepts \
+    || die "el backup ya no tiene ${BACKUP_MAX_AGE_HOURS} h o menos al migrar; respalda y repite"
+fi
 
-if [ "$MCP_HUMAN_ENABLED" = 1 ]; then trap - ERR; fi
-"${COMPOSE[@]}" run --rm -T migrator || deployment_failed "migracion fallida; $ENV_FILE apunta a los digests nuevos (runtime=$RUNTIME_DIGEST console=$CONSOLE_DIGEST). Comprueba el esquema antes de restaurar pins anteriores: con 043 aplicada, el gateway viejo con API de blobs=1 es incompatible. Snapshot previo: $ENV_FILE.pre-deploy-$STAMP"
+"${CANDIDATE_COMPOSE[@]}" run --rm -T migrator \
+  || die "migracion fallida: PostgreSQL revirtio la transaccion y $ENV_FILE sigue con los pins anteriores; no hay pins que restaurar"
+cp -a "$ENV_FILE" "$ENV_FILE.pre-deploy-$STAMP" \
+  || die "no pude guardar $ENV_FILE.pre-deploy-$STAMP; la BD ya esta en $LAST_MIGRATION y $ENV_FILE sigue con los pins anteriores"
+mv -f "$CANDIDATE_ENV_FILE" "$ENV_FILE" \
+  || die "no pude instalar los pins nuevos en $ENV_FILE; la BD ya esta en $LAST_MIGRATION y $ENV_FILE sigue con los pins anteriores"
 "${COMPOSE[@]}" up -d --wait --wait-timeout 300 --remove-orphans || deployment_failed "up fallo; no levantes el gateway anterior con API de blobs=1 si 043 esta aplicada. Para revertir, restaura juntos BD y volumen del snapshot previo a 043, verifica esquema anterior y despues los pins de $ENV_FILE.pre-deploy-$STAMP"
 CAUCE_ENV_FILE="$ENV_FILE" "$REPO/deploy/refresh-observability.sh" \
   || deployment_failed "no se pudieron refrescar los bind mounts de observabilidad"
 CAUCE_ENV_FILE="$ENV_FILE" "$REPO/deploy/smoke.sh" \
   || deployment_failed "SMOKE ROJO: la BD puede estar en $LAST_MIGRATION. No levantes gateway viejo con API de blobs=1 sobre 043; para revertir, restaura juntos BD y volumen previos a 043, verifica esquema y despues los pins de $ENV_FILE.pre-deploy-$STAMP"
 
-echo "| $STAMP | $REV | $RUNTIME_DIGEST | $CONSOLE_DIGEST | smoke OK |" >> "$HISTORY_FILE"
+echo "| $STAMP | $REV | $RUNTIME_DIGEST | $CONSOLE_DIGEST | smoke OK; $GATES_EVIDENCE |" >> "$HISTORY_FILE"
 echo "== deploy $REV COMPLETO. Registra el resultado en $HISTORY_FILE. =="

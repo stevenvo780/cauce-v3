@@ -3,6 +3,7 @@ import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdir
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import { greenGatesReceipt } from './deploy-gates-fixtures.js';
 
 const root = resolve(import.meta.dirname, '../..');
 const publicValues = {
@@ -25,6 +26,7 @@ CAUCE_RUNTIME_IMAGE=fixture/runtime:previous
 CAUCE_CONSOLE_IMAGE=fixture/console:previous
 CAUCE_TERMINAL_ENABLED=0
 `;
+const fixtureCommit = 'feade86f7efa4408409c7b4285c576f4e2e38bcf';
 const temporaryDirectories: string[] = [];
 
 interface Command {
@@ -55,7 +57,7 @@ fs.appendFileSync(log, JSON.stringify({ command, args, mcp }) + '\n');
 if (command === 'id') { console.log('0'); process.exit(0); }
 if (command === 'date') { console.log('20261004T000000Z'); process.exit(0); }
 if (command === 'git') {
-  if (args[0] === 'rev-parse') console.log(args.includes('--short') ? 'feade86' : 'feade86f7efa4408409c7b4285c576f4e2e38bcf');
+  if (args[0] === 'rev-parse') console.log(args.includes('--short') ? 'feade86' : '${fixtureCommit}');
   else if (!['status', 'fetch'].includes(args[0])) process.exit(91);
   process.exit(0);
 }
@@ -67,6 +69,11 @@ if (args[0] === 'compose') {
   const operation = args.find(arg => ['config', 'run', 'up'].includes(arg));
   if (!operation) process.exit(93);
   const probe = args.includes('-');
+  if (operation === 'config' && !probe && args.includes('--format')) {
+    if (!process.env.CAUCE_TERMINAL_RELAY_INSTANCE_ID) process.exit(21);
+    process.stdout.write('{"services":{}}');
+    process.exit(0);
+  }
   if (operation === 'config' && (probe || process.env.MOCK_REAL_COMPOSE === '1')) {
     const rendered = require('node:child_process').spawnSync('docker',
       probe ? args : [...args, '--format', 'json', '--no-env-resolution', '--no-path-resolution'], {
@@ -128,9 +135,11 @@ function execute(configuration: string, options: {
   const migrations = join(repository, 'packages/store/migrations');
   mkdirSync(deployment, { recursive: true });
   mkdirSync(scripts, { recursive: true });
+  mkdirSync(join(repository, 'scripts'));
   mkdirSync(migrations, { recursive: true });
   mkdirSync(binaries);
   copyFileSync(join(root, 'deploy/deploy.sh'), join(deployment, 'deploy.sh'));
+  copyFileSync(join(root, 'scripts/release-gates.sh'), join(repository, 'scripts/release-gates.sh'));
   for (const name of ['source-digest.py', 'digest_lib.py']) {
     copyFileSync(join(root, 'ops/scripts', name), join(scripts, name));
   }
@@ -150,6 +159,8 @@ function execute(configuration: string, options: {
   const environmentFile = join(directory, 'instance with spaces.env');
   const history = join(directory, 'history.md');
   const log = join(directory, 'commands.jsonl');
+  const receipt = join(directory, 'gates receipt.json');
+  writeFileSync(receipt, JSON.stringify(greenGatesReceipt(fixtureCommit, fixtureCommit)));
   const dockerConfig = join(directory, 'docker-config');
   mkdirSync(dockerConfig);
   const initialEnvironment = baseEnvironment + configuration;
@@ -165,6 +176,7 @@ function execute(configuration: string, options: {
     CAUCE_DEPLOY_HISTORY_FILE: history,
     CAUCE_DEPLOY_BACKUP_STATUS_FILE: join(directory, 'backup-status.json'),
     CAUCE_DEPLOY_BACKUP_MONITOR: join(binaries, 'backup-monitor'),
+    CAUCE_DEPLOY_GATES_RECEIPT: receipt,
     MOCK_COMMAND_LOG: log,
     MOCK_OVERLAY: join(deployment, options.provider === 'local' ? 'compose.mcp-human-local.yaml' : 'compose.mcp-human.yaml'),
     MOCK_MCP_NAMES: options.provider === 'local' ? Object.keys(localValues).join(',') : '',
@@ -222,6 +234,19 @@ function composeCommands(commands: Command[]) {
   return commands.filter(command => command.command === 'docker' && command.args[0] === 'compose' && !command.args.includes('-'));
 }
 
+function composeOperations(commands: Command[]) {
+  return commands.map(command => command.args.find(arg => ['config', 'run', 'up'].includes(arg)));
+}
+
+function environmentFiles(result: ReturnType<typeof execute>) {
+  const candidate = `${result.environmentFile}.candidate-20261004T000000Z`;
+  expect(existsSync(candidate)).toBe(false);
+  return composeCommands(result.commands()).map(command => {
+    const file = command.args[command.args.indexOf('--env-file') + 1];
+    return file === candidate ? 'candidate' : file === result.environmentFile ? 'instance' : file;
+  });
+}
+
 function renderPublicConfiguration(configuration: string) {
   const directory = mkdtempSync(join(tmpdir(), 'cauce-mcp-dotenv-'));
   temporaryDirectories.push(directory);
@@ -258,8 +283,8 @@ describe('deploy human MCP overlay selection', () => {
     const result = execute(flag + publicConfiguration, { environment: publicValues });
     expect(result.status, result.stderr).toBe(0);
     const commands = composeCommands(result.commands());
-    expect(commands.map(command => command.args.find(arg => ['config', 'run', 'up'].includes(arg))))
-      .toEqual(['config', 'run', 'up']);
+    expect(composeOperations(commands)).toEqual(['config', 'config', 'run', 'up']);
+    expect(environmentFiles(result)).toEqual(['instance', 'candidate', 'candidate', 'instance']);
     for (const command of commands) {
       expect(command.args.filter(arg => arg.endsWith('.yaml'))).toEqual([
         join(result.repository, 'deploy/compose.yaml'), join(result.repository, 'deploy/compose.postgres.yaml'),
@@ -279,14 +304,13 @@ describe('deploy human MCP overlay selection', () => {
     const result = execute('CAUCE_MCP_HUMAN_ENABLED=1\n' + publicConfiguration);
     expect(result.status, result.stderr).toBe(0);
     const commands = composeCommands(result.commands());
-    expect(commands.map(command => command.args.find(arg => ['config', 'run', 'up'].includes(arg))))
-      .toEqual(['config', 'config', 'run', 'up']);
+    expect(composeOperations(commands)).toEqual(['config', 'config', 'config', 'run', 'up']);
+    expect(environmentFiles(result)).toEqual(['instance', 'instance', 'candidate', 'candidate', 'instance']);
     for (const command of commands) {
       expect(command.args.filter(arg => arg.endsWith('.yaml'))).toEqual([
         join(result.repository, 'deploy/compose.yaml'), join(result.repository, 'deploy/compose.postgres.yaml'),
         join(result.repository, 'deploy/compose.mcp-human.yaml'),
       ]);
-      expect(command.args[command.args.indexOf('--env-file') + 1]).toBe(result.environmentFile);
       expect(command.args[command.args.indexOf('--project-directory') + 1]).toBe(join(result.repository, 'deploy'));
       expect(command.mcp).toEqual(publicValues);
     }
@@ -358,7 +382,7 @@ describe('deploy human MCP overlay selection', () => {
     expect(result.stderr).not.toContain('Rollback MCP manual');
   });
 
-  it.each(['pinned-config', 'run', 'up', 'refresh-observability.sh', 'smoke.sh'])('preserves manual rollback with the exact overlay after %s fails', failure => {
+  it.each(['up', 'refresh-observability.sh', 'smoke.sh'])('preserves manual rollback with the exact overlay after %s fails', failure => {
     const result = execute('CAUCE_MCP_HUMAN_ENABLED=1\n' + publicConfiguration, { failure });
     expect(result.status, result.stderr).not.toBe(0);
     expect(result.snapshots()).toEqual([result.initialEnvironment]);
@@ -380,55 +404,32 @@ describe('deploy human MCP overlay selection', () => {
     }
   });
 
-  it.each(['confirmation', 'blob-check', 'blob-pending'])(
-    'offers manual recovery for %s before the migrator without changing the snapshot', failure => {
-    const result = execute('CAUCE_MCP_HUMAN_ENABLED=1\n' + publicConfiguration, {
-      failure, environment: failure === 'confirmation' ? { CAUCE_DEPLOY_CONFIRMADO: '' } : {},
-    });
-    expect(result.error).toBeUndefined();
-    expect(result.status, result.stderr).toBe(1);
-    expect(result.stderr.match(/Rollback MCP manual/g)).toHaveLength(1);
+  it.each(['', 'CAUCE_MCP_HUMAN_ENABLED=0\n', 'CAUCE_MCP_HUMAN_ENABLED=1\n'])(
+    'leaves the instance file intact when the deploy stops before installing pins (%j)', flag => {
     const reasons: Record<string, string> = {
       confirmation: 'abortado por el dueño',
       'blob-check': 'no pude enumerar contenedores',
       'blob-pending': '043 paso a pendiente despues del backup',
+      'pinned-config': 'el compose con los pins nuevos no renderiza',
+      run: 'migracion fallida',
     };
-    expect(result.stderr).toContain(reasons[failure]);
-    expect(result.snapshots()).toEqual([result.initialEnvironment]);
-    expect(result.currentEnvironment()).toContain('CAUCE_RUNTIME_IMAGE=fixture/runtime@sha256:');
-    expect(result.currentEnvironment()).not.toBe(result.initialEnvironment);
-    expect(existsSync(result.history)).toBe(false);
-    const beforeRecovery = result.commands();
-    expect(composeCommands(beforeRecovery).every(command => !command.args.includes('run') && !command.args.includes('up'))).toBe(true);
-    expect(beforeRecovery.some(command => command.args.includes('down') || command.args.includes('stop'))).toBe(false);
-    const recoveryCommands = result.stderr.split('\n').filter(line => line.startsWith('cp -a ') || line.startsWith('env -u '));
-    expect(recoveryCommands).toHaveLength(3);
-    const recovery = result.recover(recoveryCommands.join('\n'));
-    expect(recovery.status, recovery.stderr).toBe(0);
-    expect(result.currentEnvironment()).toBe(result.initialEnvironment);
-    expect(result.snapshots()).toEqual([result.initialEnvironment]);
-    const recovered = composeCommands(result.commands().slice(beforeRecovery.length));
-    expect(recovered.map(command => command.args.find(arg => ['config', 'up'].includes(arg)))).toEqual(['config', 'up']);
-    for (const command of recovered) {
-      expect(command.args).toContain(join(result.repository, 'deploy/compose.mcp-human.yaml'));
-      expect(command.args[command.args.indexOf('--env-file') + 1]).toBe(result.environmentFile);
-      expect(command.mcp).toEqual(publicValues);
-    }
-  });
-
-  it.each(['', 'CAUCE_MCP_HUMAN_ENABLED=0\n'])(
-    'keeps default/off pre-migrator aborts unchanged (%j)', flag => {
-    for (const failure of ['confirmation', 'blob-check', 'blob-pending']) {
+    for (const [failure, reason] of Object.entries(reasons)) {
       const result = execute(flag + publicConfiguration, {
         failure, environment: failure === 'confirmation' ? { CAUCE_DEPLOY_CONFIRMADO: '' } : {},
       });
+      expect(result.error).toBeUndefined();
       expect(result.status, result.stderr).toBe(1);
+      expect(result.stderr).toContain(reason);
       expect(result.stderr).not.toContain('Rollback MCP manual');
-      expect(result.snapshots()).toEqual([result.initialEnvironment]);
-      expect(result.currentEnvironment()).not.toBe(result.initialEnvironment);
+      expect(result.currentEnvironment()).toBe(result.initialEnvironment);
+      expect(result.snapshots()).toEqual([]);
       expect(existsSync(result.history)).toBe(false);
-      expect(composeCommands(result.commands()).every(command => !command.args.some(arg => arg.endsWith('compose.mcp-human.yaml'))
-        && !command.args.includes('run') && !command.args.includes('up'))).toBe(true);
+      const files = environmentFiles(result);
+      if (failure === 'run') expect(files.at(-1)).toBe('candidate');
+      const commands = composeCommands(result.commands());
+      expect(commands.every(command => !command.args.includes('up'))).toBe(true);
+      expect(commands.every(command => command.args.some(arg => arg.endsWith('compose.mcp-human.yaml')) === flag.endsWith('=1\n')))
+        .toBe(true);
     }
   });
 
@@ -515,8 +516,8 @@ describe('deploy human MCP local overlay selection', () => {
     const result = execute('CAUCE_MCP_HUMAN_ENABLED=1\n' + localConfiguration, { provider: 'local' });
     expect(result.status, result.stderr).toBe(0);
     const commands = composeCommands(result.commands());
-    expect(commands.map(command => command.args.find(arg => ['config', 'run', 'up'].includes(arg))))
-      .toEqual(['config', 'config', 'run', 'up']);
+    expect(composeOperations(commands)).toEqual(['config', 'config', 'config', 'run', 'up']);
+    expect(environmentFiles(result)).toEqual(['instance', 'instance', 'candidate', 'candidate', 'instance']);
     for (const command of commands) {
       expect(command.args.filter(arg => arg.endsWith('.yaml'))).toEqual([
         join(result.repository, 'deploy/compose.yaml'), join(result.repository, 'deploy/compose.postgres.yaml'),
@@ -585,7 +586,7 @@ describe('deploy human MCP local overlay selection', () => {
     expect(result.stderr).toContain('no puedo leer deploy/compose.mcp-human-local.yaml');
   });
 
-  it.each(['pinned-config', 'run', 'up'])('preserves manual rollback with the local overlay and signing key path after %s fails', failure => {
+  it.each(['up', 'refresh-observability.sh', 'smoke.sh'])('preserves manual rollback with the local overlay and signing key path after %s fails', failure => {
     const result = execute('CAUCE_MCP_HUMAN_ENABLED=1\n' + localConfiguration, { provider: 'local', failure });
     expect(result.status, result.stderr).not.toBe(0);
     expect(result.stderr).toContain('solo despues de verificar/restaurar esquema, BD y volumen');
