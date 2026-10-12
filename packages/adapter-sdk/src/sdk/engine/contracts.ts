@@ -7,6 +7,7 @@ import type { HarnessAdapter, RuntimeProfileMeasurement } from "../../contracts/
 import type { DurableStore } from "../durable-store.js";
 import type { AdapterLogger, Clock, Delivery, DeliveryEvent } from "../types.js";
 import type { EmissionRuntime } from "../mcp-emission/runtime.js";
+import type { NativeContextIngest } from "../context-ingest-client.js";
 
 export type EventPublisher = (event: DeliveryEvent) => Promise<void>;
 export type ExecutionIntentPublisher = (
@@ -24,6 +25,7 @@ export const DEFAULT_QUEUE_WAIT_TIMEOUT_MS = 6 * 60 * 60_000;
 interface AdapterEngineBaseOptions {
   readonly egressReceipts?: EgressReceiptSource;
   readonly emission?: EmissionRuntime;
+  readonly contextIngest?: NativeContextIngest;
   readonly store: DurableStore;
   readonly harness: HarnessAdapter;
   readonly harnessForDelivery?: (delivery: Delivery) => HarnessAdapter;

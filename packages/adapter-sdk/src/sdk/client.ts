@@ -21,6 +21,7 @@ import { ConsumerLease, DurableStore } from './durable-store.js';
 import { AdapterEngine } from './engine.js';
 import { AdapterError } from './errors.js';
 import type { EmissionRuntime } from './mcp-emission/runtime.js';
+import type { NativeContextIngest } from './context-ingest-client.js';
 import type { HarnessAdapter } from '../contracts/harness.js';
 import type {
   AdapterConfig,
@@ -37,6 +38,7 @@ import type {
 interface AdapterClientOptions {
   readonly egressReceipts?: EgressReceiptSource;
   readonly emission?: EmissionRuntime;
+  readonly contextIngest?: NativeContextIngest;
   readonly config: AdapterConfig;
   readonly connector: ConsumerConnector;
   readonly store: DurableStore;
@@ -124,6 +126,7 @@ export class AdapterClient {
     this.engine = new AdapterEngine({
       ...(options.egressReceipts === undefined ? {} : { egressReceipts: options.egressReceipts }),
       ...(options.emission === undefined ? {} : { emission: options.emission }),
+      ...(options.contextIngest === undefined ? {} : { contextIngest: options.contextIngest }),
       store: this.store,
       harness: this.harness,
       harnessForDelivery: humanHarnessSelector(this.harness, this.humanHarness),

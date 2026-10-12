@@ -7,12 +7,18 @@ import { createHash } from 'node:crypto';
 import { lstat, readFile, realpath } from 'node:fs/promises';
 import { isAbsolute, resolve } from 'node:path';
 import { SessionReservation } from '../../harnesses/shared/session-reservation.js';
+import type { VersionedContext } from '@cauce/protocol';
+import type { NativeContextIngest } from '../context-ingest-client.js';
+import { ingestLocalContextEdits } from './native-context-ingest.js';
 
 const spaceTurns = new Map<string, Promise<void>>();
 export class VersionedContextTurn {
   private reservation: SessionReservation | undefined;
   private materialized: SpaceContextWriteResult | undefined;
-  constructor(readonly root: string | undefined = process.env.CAUCE_SPACE_ROOT) {}
+  private effective: VersionedContext | undefined;
+  constructor(readonly root: string | undefined = process.env.CAUCE_SPACE_ROOT,
+    private readonly ingest: NativeContextIngest | undefined = undefined) {}
+  get effectiveContext(): VersionedContext | undefined { return this.effective; }
   async wait(signal: AbortSignal): Promise<void> {
     const root = this.root;
     if (root === undefined) return;
@@ -30,7 +36,12 @@ export class VersionedContextTurn {
   }
   release(): void { this.reservation?.release(); }
   async materialize(delivery: Delivery, tenant: string | undefined, harness: HarnessId): Promise<void> {
-    this.materialized = await materializeVersionedContext(delivery, tenant, harness, { CAUCE_SPACE_ROOT: this.root });
+    if (this.ingest !== undefined && this.root !== undefined && delivery.versioned_context !== undefined) {
+      validateVersionedContext(delivery, tenant);
+      this.effective = await ingestLocalContextEdits(this.root, canonicalVersionedContext(delivery.versioned_context), this.ingest);
+    }
+    const effectiveDelivery = this.effective === undefined ? delivery : { ...delivery, versioned_context: this.effective };
+    this.materialized = await materializeVersionedContext(effectiveDelivery, tenant, harness, { CAUCE_SPACE_ROOT: this.root });
   }
   async verify(): Promise<void> {
     if (this.materialized === undefined) return;

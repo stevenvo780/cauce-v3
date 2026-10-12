@@ -51,6 +51,7 @@ import { isConversationStatusRequest, runConversationStatus } from "./engine/con
 import { PRAXIS_SUPERVISION_NOTICE_MESSAGE_TYPE, runPraxisSupervisionNotice } from "./engine/praxis-supervision-notice.js";
 import { DEFAULT_NO_PROGRESS_TIMEOUT_MS } from "./message-timeout.js";
 import { validateVersionedContext, VersionedContextTurn } from './engine/versioned-context.js';
+import { defaultContextIngestClient, type NativeContextIngest } from './context-ingest-client.js';
 import type { EmissionRuntime } from "./mcp-emission/runtime.js";
 import type { EmissionTurn } from "./mcp-emission/tools.js";
 export type {
@@ -60,6 +61,7 @@ export { profileAdoptionFor } from "./engine/contracts.js";
 export class AdapterEngine {
   private readonly egressReceipts: AdapterEngineOptions["egressReceipts"];
   private readonly emission: EmissionRuntime | undefined;
+  private readonly contextIngest: NativeContextIngest | undefined;
   private readonly store: DurableStore;
   private readonly harness: HarnessAdapter;
   private readonly harnessForDelivery: AdapterEngineOptions["harnessForDelivery"];
@@ -86,6 +88,7 @@ export class AdapterEngine {
   constructor(options: AdapterEngineOptions) {
     this.egressReceipts = options.egressReceipts;
     this.emission = options.emission;
+    this.contextIngest = options.contextIngest;
     this.emission?.trackDeliveries(() => this.tasks.size);
     this.store = options.store;
     this.harness = options.harness;
@@ -284,7 +287,7 @@ export class AdapterEngine {
     delivery: Delivery,
     invocation: DeliveryHarnessInvocation,
   ): Promise<void> {
-    const space = new VersionedContextTurn();
+    const space = new VersionedContextTurn(undefined, this.contextIngest ?? defaultContextIngestClient());
     try {
       await this.runReservedDelivery(delivery, invocation, space);
     } finally {
@@ -368,6 +371,7 @@ export class AdapterEngine {
     const messageType = typeof delivery.body.type === "string"
       ? delivery.body.type
       : "request";
+    const effectiveVersionedContext = space.effectiveContext ?? delivery.versioned_context;
     const rawRequestContext: HarnessRequestContext = {
       ...(this.emission === undefined ? {} : { mcp_emit: true }),
       ...(humanInitiator === undefined ? {} : { human_initiator: humanInitiator }),
@@ -386,7 +390,7 @@ export class AdapterEngine {
       routing_targets: routingTargetsFromDelivery(delivery),
       ...selfRoleFromDelivery(delivery),
       ...(delivery.company_context === undefined ? {} : { company_context: delivery.company_context }),
-      ...(delivery.versioned_context === undefined ? {} : { versioned_context: delivery.versioned_context }),
+      ...(effectiveVersionedContext === undefined ? {} : { versioned_context: effectiveVersionedContext }),
       ...(delivery.profile_runtime_contract === undefined
         ? {}
         : { native_profile_contract: delivery.profile_runtime_contract }),
