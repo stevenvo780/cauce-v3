@@ -14,13 +14,6 @@ export interface RouteIsolationEntry {
   readonly reason: string;
   readonly probe?: RouteIsolationProbe;
   readonly errorMessageEcho?: string;
-  readonly localOnlyReason?: string;
-  readonly knownLeak?: {
-    readonly detail: string;
-    readonly expectedStatus: number;
-    readonly error?: string;
-    readonly changedTables?: readonly string[];
-  };
 }
 
 const DENIED = [403, 404] as const;
@@ -92,13 +85,11 @@ export const ROUTE_ISOLATION_MATRIX: readonly RouteIsolationEntry[] = [
   scoped('POST', '/v3/ack', '/v3/ack', { ...ACK, delivery_id: '{delivery}' }),
   scoped('POST', '/v3/egress/notifications', '/v3/egress/notifications',
     { destination: '{egressDestination}', kind: 'alert', body: 'isolation', idempotency_key: 'isolation-egress' }),
-  { ...actor('POST', '/v3/quotas/samples', 'La cuenta de B queda sin vínculo; la poda global de historia ajena se reproduce en una prueba adicional.',
+  actor('POST', '/v3/quotas/samples', 'La cuenta de B queda sin vínculo y la retención solo poda historia de la empresa del recolector.',
     { url: '/v3/quotas/samples', expectedStatus: [202], payload: { host: 'isolation-collector',
       captured_at: '2026-01-01T00:00:00Z', schema_version: 1, providers: [{ provider: 'codex', ok: true,
         account_id: '{account}', windows: [{ group_key: 'default', window_key: 'default',
           account_id: '{account}', remaining_percent: 0 }] }] } }),
-    knownLeak: { expectedStatus: 202, detail: 'Una muestra enviada por A poda colecciones de B recibidas hace más de 30 días mediante DELETE global. Se reproduce con una colección real envejecida y hashes de B.' },
-    localOnlyReason: 'La retención elimina historia de cualquier empresa; este probe solo se ejecuta en la BD desechable.' },
   actor('GET', '/v3/accounts/selection', 'Selecciona la cuenta del alias autenticado; provider/model no seleccionan otro titular.',
     { url: '/v3/accounts/selection?provider=codex', expectedStatus: [200] }),
   { method: 'GET', url: '/v3/ws', kind: 'websocket', reason: 'El hello con tenant y alias de B se rechaza antes de adquirir un lease.',
@@ -193,8 +184,7 @@ export const ROUTE_ISOLATION_MATRIX: readonly RouteIsolationEntry[] = [
   scoped('PATCH', '/v3/console/fleet/hosts/:host_id', '/v3/console/fleet/hosts/{host}', { expected_version: 1, display_name: 'isolation' }),
   scoped('DELETE', '/v3/console/fleet/hosts/:host_id', '/v3/console/fleet/hosts/{host}?expected_version=1'),
   actor('GET', '/v3/console/fleet/hosts/enrollments'),
-  { ...scoped('POST', '/v3/console/fleet/hosts/enrollments', '/v3/console/fleet/hosts/enrollments', { host_id: '{host}', display_name: 'isolation' }),
-    knownLeak: { expectedStatus: 409, error: 'conflict', detail: 'La búsqueda global de host_id revela la existencia de un host de B: 409 para el host de B, 201 para un identificador nuevo de A. No cambia filas de B.' } },
+  scoped('POST', '/v3/console/fleet/hosts/enrollments', '/v3/console/fleet/hosts/enrollments', { host_id: '{host}', display_name: 'isolation' }),
   scoped('DELETE', '/v3/console/fleet/hosts/enrollments/:enrollment_id', '/v3/console/fleet/hosts/enrollments/{invitation}'),
   host('POST', '/v3/fleet/hosts/enrollments/:enrollment_id/claim', '/v3/fleet/hosts/enrollments/{invitation}/claim'),
   host('POST', '/v3/fleet/hosts/:host_id/heartbeat', '/v3/fleet/hosts/{host}/heartbeat'),
@@ -225,6 +215,9 @@ export const ROUTE_ISOLATION_MATRIX: readonly RouteIsolationEntry[] = [
   scoped('POST', '/v3/console/spaces/:tenant_id/:alias/backups', '/v3/console/spaces/{tenant}/{alias}/backups', { idempotency_key: 'isolation-backup' }),
   scoped('GET', '/v3/console/spaces/:tenant_id/:alias/backups/:id', '/v3/console/spaces/{tenant}/{alias}/backups/{backup}'),
   scoped('GET', '/v3/console/spaces/:tenant_id/:alias/backups/:id/download', '/v3/console/spaces/{tenant}/{alias}/backups/{backup}/download'),
+  actor('POST', '/v3/context/ingest', 'El agente destino sale del principal autenticado; el cuerpo estricto no acepta tenant_id ni alias de B.',
+    { url: '/v3/context/ingest', expectedStatus: [400], payload: { base_version: 0,
+      files: [{ path: 'context/isolation.md', content: 'isolation' }], tenant_id: '{tenant}', alias: '{alias}' } }),
   scoped('GET', '/v3/console/context/agents/:tenant/:alias', '/v3/console/context/agents/{tenant}/{alias}'),
   scoped('PUT', '/v3/console/context/agents/:tenant/:alias', '/v3/console/context/agents/{tenant}/{alias}',
     { expected_version: 1, source: 'cli', files: [{ path: 'context/isolation.md', content: 'isolation' }] }),

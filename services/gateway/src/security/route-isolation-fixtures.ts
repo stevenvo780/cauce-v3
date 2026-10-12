@@ -70,7 +70,7 @@ export async function seedIsolationFixtures(database: EmptyTestDatabase, storage
   const companies: IsolationCompany[] = [];
   for (const [index, seed] of seeded.entries()) {
     const side = index === 0 ? 'a' : 'b';
-    const alias = `isolation-${side}`; const room = `${alias}-room`; const host = `${alias}-host`;
+    const alias = `isolation-${side}`; const room = `${alias}-room`; const host = `${seed.company_id}-host`;
     const account = `${alias}-account`; const email = `${seed.company_id}@dev.example`;
     const homeDirectory = join(storageDirectory, `home-${side}`); const stateDirectory = join(homeDirectory, '.cauce');
     const nativePiece = 'isolation-check';
@@ -103,7 +103,7 @@ export async function seedIsolationFixtures(database: EmptyTestDatabase, storage
     const source: CompanyAuthoritySource = client => lockCompanyAuthority(client,
       { tenant: seed.tenant_id, alias: 'owner', humanId: seed.human_id });
     const invitation = await new HostEnrollmentRepository(pool).invite(source,
-      { host_id: `${alias}-pending`, display_name: 'Pending synthetic host' });
+      { host_id: `${seed.company_id}-pending`, display_name: 'Pending synthetic host' });
     const environment = await insertId(pool, `INSERT INTO quota_environments(company_id,account_id,host_id,provider,label,
       container_name,status,idempotency_key,created_by) VALUES($1,$2,$3,'codex',$2,$4,'ready',$5,$6) RETURNING id`,
       [seed.company_id, account, host, `cauce-quota-${randomUUID().replaceAll('-', '')}`, `isolation-${side}-environment`, seed.human_id]);

@@ -63,17 +63,13 @@ function assertIsolationResponse(entry: RouteIsolationEntry, status: number, bod
   expect(harness.fixtures.b.privateSentinels.some(value => body.includes(value)),
   `${entry.method} ${entry.url} exposed private content in HTTP ${String(status)}`).toBe(false);
   expect(foreignData(body, entry), `${entry.method} ${entry.url} exposed company B data in HTTP ${String(status)}`).toBe(false);
-  const allowed = entry.knownLeak === undefined ? entry.probe?.expectedStatus ?? (entry.kind === 'scoped' ? [403, 404] : [200]) : [entry.knownLeak.expectedStatus];
+  const allowed = entry.probe?.expectedStatus ?? (entry.kind === 'scoped' ? [403, 404] : [200]);
   const error = body.startsWith('{') ? (JSON.parse(body) as { error?: string }).error : undefined;
   if (!allowed.includes(status) && harness.baseUrl === undefined) {
     const result = body.startsWith('{') ? JSON.parse(body) as { message?: string } : {};
     console.info(`ISOLATION_CONTRACT_FAILURE=${JSON.stringify({ route: entry.url, status, error, message: result.message })}`);
   }
   expect(allowed, `${entry.method} ${entry.url} returned HTTP ${String(status)}/${error ?? 'success'}`).toContain(status);
-  if (entry.knownLeak !== undefined) {
-    expect(error).toBe(entry.knownLeak.error);
-    console.info(`ISOLATION_KNOWN_LEAK=${JSON.stringify({ method: entry.method, route: entry.url, detail: entry.knownLeak.detail })}`);
-  }
   if (status >= 200 && status < 300 && body.length && entry.url.endsWith('/chains/:traceId')) {
     expect(JSON.parse(body)).toMatchObject({ nodes: [], edges: [], origin_relays: [] });
   }
@@ -202,16 +198,24 @@ describe('real gateway exhaustive route isolation under signed owner sessions', 
     expect(await snapshotCompany(pool, b)).toEqual(before);
   });
 
-  it('demonstrates the known host enrollment existence leak against a new canary identifier', async context => {
+  it('answers B hosts exactly like absent ones and lets A invite only inside its own host partition', async context => {
     if (harness.baseUrl !== undefined) { context.skip(); return; }
-    const before = await snapshotCompany(harness.snapshotPool, harness.fixtures.b);
-    const existing = await harness.request('POST', '/v3/console/fleet/hosts/enrollments', ownerA,
-      { host_id: harness.fixtures.b.host, display_name: 'isolation' });
-    expect(existing.status).toBe(409);
-    const missing = await harness.request('POST', '/v3/console/fleet/hosts/enrollments', ownerA,
-      { host_id: `zz-canary-isolation-${randomUUID()}`, display_name: 'isolation' });
-    expect(missing.status).toBe(201);
-    expect(await snapshotCompany(harness.snapshotPool, harness.fixtures.b)).toEqual(before);
+    const { a, b } = harness.fixtures;
+    const before = await snapshotCompany(harness.snapshotPool, b);
+    const invite = (host_id: string) => harness.request('POST', '/v3/console/fleet/hosts/enrollments', ownerA, { host_id, display_name: 'isolation' });
+    const registered = await invite(b.host);
+    const pending = await invite(`${b.company}-pending`);
+    const absent = await invite(`${b.company}-zz_canary_${randomUUID().replaceAll('-', '')}`);
+    const unqualified = await invite(`zz-canary-isolation-${randomUUID()}`);
+    for (const response of [registered, pending, absent, unqualified]) {
+      expect(response.status).toBe(403);
+      expect(response.body).toBe(registered.body);
+    }
+    expect(JSON.parse(registered.body)).toMatchObject({ error: 'forbidden' });
+    const own = await invite(`${a.company}-zz_canary_${randomUUID().replaceAll('-', '')}`);
+    expect(own.status).toBe(201);
+    expect(JSON.parse(own.body)).toMatchObject({ company_id: a.company, state: 'pending' });
+    expect(await snapshotCompany(harness.snapshotPool, b)).toEqual(before);
   });
 
   for (const entry of ROUTE_ISOLATION_MATRIX.filter(route => route.probe !== undefined && route.kind !== 'websocket' && route.kind !== 'public')) {
@@ -219,10 +223,6 @@ describe('real gateway exhaustive route isolation under signed owner sessions', 
       if (!harness.routes.some(route => routeKey(route.method, route.url) === routeKey(entry.method, entry.url))) {
         context.skip();
         return;
-      }
-      if (harness.baseUrl !== undefined && entry.localOnlyReason !== undefined) {
-        console.info(`ISOLATION_EXTERNAL_SKIP=${JSON.stringify({ route: entry.url, reason: entry.localOnlyReason })}`);
-        context.skip(); return;
       }
       const probe = expandProbe(entry, harness.fixtures.b, harness.fixtures.a);
       const before = await snapshotCompany(harness.snapshotPool, harness.fixtures.b);
@@ -240,28 +240,23 @@ describe('real gateway exhaustive route isolation under signed owner sessions', 
     });
   }
 
-  it('demonstrates the known quota retention mutation of B under an A sample', async context => {
+  it('keeps aged quota history of B under an A sample until a B collector prunes it', async context => {
     if (harness.baseUrl !== undefined) { context.skip(); return; }
     const pool = harness.snapshotPool;
-    const collection = await harness.request('POST', '/v3/quotas/samples', ownerB,
-      { host: 'isolation-retention-b', captured_at: new Date().toISOString(), schema_version: 1,
-        providers: [{ provider: 'codex', ok: true, account_id: harness.fixtures.b.account,
-          windows: [{ group_key: 'default', window_key: 'default', account_id: harness.fixtures.b.account, remaining_percent: 50 }] }] });
+    const sampleOf = (host: string) => ({ host, captured_at: new Date().toISOString(), schema_version: 1, providers: [] });
+    const collection = await harness.request('POST', '/v3/quotas/samples', ownerB, sampleOf('isolation-retention-b'));
     expect(collection.status).toBe(202);
     const { collection_id: collectionId } = JSON.parse(collection.body) as { collection_id: string };
-    expect(collectionId).toBeTypeOf('string');
     await pool.query("UPDATE quota_collections SET received_at=now()-interval '31 days',captured_at=now()-interval '31 days' WHERE id=$1", [collectionId]);
     const before = await snapshotCompany(pool, harness.fixtures.b);
-    const response = await harness.request('POST', '/v3/quotas/samples', ownerA,
-      { host: 'isolation-retention-a', captured_at: new Date().toISOString(), schema_version: 1, providers: [] });
-    expect(response.status).toBe(202);
-    const after = await snapshotCompany(pool, harness.fixtures.b);
-    const changed = Object.keys(before.tables).filter(table => before.tables[table]?.sha256 !== after.tables[table]?.sha256);
-    expect(changed.sort()).toEqual(['quota_collections', 'quota_provider_reports', 'quota_window_samples', 'quota_window_state']);
-    expect(after.count).toBe(before.count - 3);
-    expect(after.sha256).not.toBe(before.sha256);
+    const foreign = await harness.request('POST', '/v3/quotas/samples', ownerA, sampleOf('isolation-retention-a'));
+    expect(foreign.status).toBe(202);
+    expect(JSON.parse(foreign.body)).toMatchObject({ pruned_collections: 0 });
+    expect(await snapshotCompany(pool, harness.fixtures.b)).toEqual(before);
+    const own = await harness.request('POST', '/v3/quotas/samples', ownerB, sampleOf('isolation-retention-b'));
+    expect(own.status).toBe(202);
+    expect(JSON.parse(own.body)).toMatchObject({ pruned_collections: 1 });
     expect((await pool.query('SELECT id FROM quota_collections WHERE id=$1', [collectionId])).rowCount).toBe(0);
-    console.info(`ISOLATION_KNOWN_QUOTA_MUTATION=${JSON.stringify({ status: response.status, changed, before: before.count, after: after.count })}`);
   });
 
   it('uses real WS frames to admit A and reject B hello/subscription without modifying B', async () => {
