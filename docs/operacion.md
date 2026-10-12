@@ -8,16 +8,49 @@ Si una instalación conserva un release anterior fuera del árbol (con su propio
 
 ## 1. Desplegar
 
-**Precondiciones que `deploy/deploy.sh` verifica y aborta si fallan:**
+**Recibo de gates del SHA candidato.** `deploy.sh` no corre `pnpm`; exige un recibo verde de
+`scripts/release-gates.sh` del mismo commit. Se genera una vez por candidato, en un checkout limpio
+del SHA, con usuario normal (no root, por `qa:runtime-packaging`), tras `pnpm install --frozen-lockfile`
+y con `~/.venvs/cauce-qa/bin` en `PATH`:
+```bash
+scripts/release-gates.sh            # scripts/release-gates.sh --list muestra el orden
+```
+Corre en orden `pnpm typecheck`, `lint`, `test`, `coverage:ratchet`, `qa:testcontainers`, `qa:layout`,
+`qa:runtime-packaging`, `ops:validate` y `arch:validate`, en modo release (`CAUCE_RELEASE_VALIDATION=1`,
+`CAUCE_REQUIRE_TESTCONTAINERS=1`: sin Docker o testcontainers falla, no se salta), y se detiene en el
+primer rojo. Escribe un log por comando y `recibo.json` con `{commit, tree, comandos: [{cmd, exit,
+log_sha256, duracion, log}], inicio, fin}` en `~/.local/state/cauce-v3/release-gates/<commit>-<STAMP>/`
+(`CAUCE_RELEASE_GATES_DIR` lo cambia; nunca `/tmp`). Se niega con el árbol sucio y no emite recibo si
+algún gate cambia `HEAD` o el árbol. El recibo no puede ir dentro del commit que certifica: se copia
+junto al bundle en el VPS, fuera del clon (dentro ensuciaría el árbol), y se pasa por ruta absoluta en
+`CAUCE_DEPLOY_GATES_RECEIPT`.
+
+**Precondiciones que `deploy/deploy.sh` verifica y aborta si fallan (todas antes del build):**
 - `git status` limpio y `HEAD == origin/main` (`CAUCE_DEPLOY_EXPECTED_GIT_REF`).
-- Backup <24h acreditado por `ops/scripts/host-backup-monitor.sh` (o confirmación explícita si no lo hay).
+- Recibo de gates: `commit` = `HEAD`, `tree` = `HEAD^{tree}`, exactamente los comandos de
+  `scripts/release-gates.sh --list` en orden y todos con `exit` 0. Escape auditado, solo con el
+  dueño: `CAUCE_DEPLOY_SIN_RECIBO="motivo"` (una línea, sin `|`, excluyente con el recibo); pide
+  confirmación y el motivo queda en la fila de `deploy/HISTORIAL.md`, igual que el sha256 del recibo
+  cuando lo hay.
+- `CAUCE_RUNTIME_IMAGE` y `CAUCE_CONSOLE_IMAGE` declarados una sola vez como `NOMBRE=` en `prod.env`
+  y ausentes del entorno (un valor exportado anularía el pin del archivo).
+- Existen todas las fuentes de bind mounts y de `secrets`/`configs` con `file` del compose renderizado
+  tal como se va a levantar (perfiles activos, overlay MCP y overlay de flota incluidos): p. ej. el
+  repositorio y la clave del broker de contextos (`create_host_path: false`) y
+  `/etc/cauce-v3/fleet-v35/*` y `/run/cauce-fleet-v35/auth` con `CAUCE_DEPLOY_FLEET_OVERLAY=1`. El
+  error lista cada fuente ausente con su servicio.
+- Backup acreditado por `ops/scripts/host-backup-monitor.sh` con la edad de
+  `CAUCE_DEPLOY_BACKUP_MAX_AGE_HOURS` (24 h por defecto). Sin migraciones pendientes, un backup
+  viejo o ausente admite confirmación explícita. **Con migraciones pendientes** (archivos del bundle
+  que no están en `schema_migrations` del PostgreSQL vivo) la ventana baja a 2 h como máximo, no se
+  admite confirmación y el monitor se repite justo antes del migrator. Instalación nueva sin volumen
+  de datos: no hay nada que respaldar.
 - `CAUCE_BLOB_API_ENABLED` acepta solo `0` o `1` en el archivo de instancia, por defecto `0`; un valor exportado distinto aborta antes del build. Con `1`, el monitor de la instancia debe acreditar restauración aislada posterior a la migración 042 de la tabla `blobs` y del volumen `blobs_data`. La confirmación general no omite este control.
 - `CAUCE_TERMINAL_RELAY_INSTANCE_ID` en `prod.env` = sha256 del DER del certificado cliente del relay (el relay no arranca si no coincide).
 - `docker compose --env-file /etc/cauce-v3/prod.env -f deploy/compose.yaml -f deploy/compose.postgres.yaml config` renderiza sin error.
 
-**Precondición que el operador verifica a mano, `deploy.sh` NO la comprueba:** gate en verde
-(`pnpm typecheck && pnpm lint && pnpm test:unit`). El script no ejecuta ni un solo comando `pnpm`;
-confía en que quien despliega ya corrió el gate.
+Los envoltorios que llaman a `deploy.sh` (p. ej. `ops/instances/hospital/bootstrap-core.sh`) heredan
+`CAUCE_DEPLOY_GATES_RECEIPT` o `CAUCE_DEPLOY_SIN_RECIBO` del entorno de quien los ejecuta.
 
 Para activar blobs en Hospital: desplegar primero con `CAUCE_BLOB_API_ENABLED=0` para aplicar la
 migración 042 y crear el volumen, ejecutar `ops/instances/hospital/backup.sh`, comprobar con
@@ -44,25 +77,29 @@ anterior, o corregir hacia adelante. Restaurar solo pines antiguos bajo 043 deja
 **Comando** (dueño presente, root, `df -h /` con holgura para dos imágenes nuevas o `docker builder prune -f` antes):
 ```bash
 export CAUCE_FASE3_CON_DUENO=si CAUCE_DEPLOY_CONFIRMADO=si
+export CAUCE_DEPLOY_GATES_RECEIPT=/root/recibo-gates-<SHA>.json
 ./deploy/deploy.sh
 ```
-Hace, en orden: build de `deploy/Dockerfile --target runtime` y `--target console` (la consola hornea el instance-id) → push y pin por digest SHA256 en `prod.env` → migrator efímero (todas las migraciones pendientes en UNA transacción) → `docker compose up -d --wait --remove-orphans` (actualiza los servicios afectados y conserva el volumen de datos de PostgreSQL) → `deploy/refresh-observability.sh` → `deploy/smoke.sh`. Registra el resultado en `deploy/HISTORIAL.md` (commitear tras verificar).
+Hace, en orden: precondiciones → build de `deploy/Dockerfile --target runtime` y `--target console` (la consola hornea el instance-id) → push → copia candidata `prod.env.candidate-<STAMP>` con los digests SHA256 nuevos (mismos permisos; se borra al salir) → `config` y migrator efímero (todas las migraciones pendientes en UNA transacción) con esa copia → **solo si el migrator sale con 0**: snapshot `prod.env.pre-deploy-<STAMP>` y la copia candidata reemplaza a `prod.env` → `docker compose up -d --wait --remove-orphans` (actualiza los servicios afectados y conserva el volumen de datos de PostgreSQL) → `deploy/refresh-observability.sh` → `deploy/smoke.sh`. Registra el resultado en `deploy/HISTORIAL.md` con el sha256 del recibo o el motivo del escape (commitear tras verificar).
 
 El refresco recrea únicamente Prometheus y OTel que ya estén activos, sin dependencias ni perfiles apagados. Un reemplazo atómico de archivos por Git puede dejar un montaje individual leyendo el inode anterior; `up` sin cambios de imagen/configuración no garantiza su recarga. Si el refresco falla, no se registra un despliegue exitoso. Los adaptadores SDK se publican y activan por separado: el smoke central no prueba sus nuevos pins. Su canary exige la identidad mTLS reservada `gate-probe`; una entrega normal o un snapshot manual no la sustituye.
 
-**Criterios de parada**: cualquier precondición falla → no arranca. Migrator falla → PostgreSQL
-revierte solo la transacción (esquema intacto) y el script muere ahí — pero `prod.env` YA fue
-reescrito con los digests nuevos ANTES del migrator (paso previo), así que hay que restaurarlo a
-mano desde `prod.env.pre-deploy-<STAMP>`: no es cierto que "nada más se toca". Ningún contenedor
-llega a levantarse con los digests nuevos. `up` o smoke fallan → pasar a rollback (tampoco
-automático: el script solo imprime la receta, no la ejecuta).
+**Criterios de parada**: cualquier precondición falla → no arranca, no construye y `prod.env` no
+cambia. Render con los pins nuevos fallido o confirmación negada → no se migra. Migrator fallido →
+PostgreSQL revierte la transacción (esquema intacto). En esos casos `prod.env` sigue con los pins
+anteriores, no se crea `prod.env.pre-deploy-<STAMP>`, no hay pins que restaurar y ningún contenedor
+se levanta con los digests nuevos. Si falla justo después del migrator al guardar el snapshot o instalar los pins, la BD
+ya quedó en la última migración del bundle y `prod.env` sigue con los anteriores: decidir entre
+corregir hacia delante o restaurar la BD (paso 3 del rollback). `up`, refresco o smoke fallan →
+`prod.env` ya tiene los pins nuevos y `prod.env.pre-deploy-<STAMP>` los anteriores: pasar a rollback
+(tampoco automático: el script solo imprime la receta, no la ejecuta).
 
 **Rollback exacto** (nunca `docker compose down`: pararía postgres antes de restaurar):
 ```bash
 # 1. Parar todo menos postgres (los servicios de aplicación que el compose declare activos)
 docker compose --env-file /etc/cauce-v3/prod.env -f deploy/compose.yaml -f deploy/compose.postgres.yaml --project-directory deploy \
   stop gateway dispatcher telegram-bridge terminal-relay console outbox-metrics prometheus otel-collector
-# 2. Restaurar el prod.env previo
+# 2. Restaurar el prod.env previo (el snapshot solo existe si el migrator terminó con 0)
 cp -a /etc/cauce-v3/prod.env.pre-deploy-<STAMP> /etc/cauce-v3/prod.env
 # 3. Solo si el esquema ya quedó confirmado y hay que volver atrás: verificar sha256, terminar backends, dropdb/restore
 #    ($DB_BACKUP_DIR = directorio de dumps del timer de backup; su valor por defecto, en §5)
