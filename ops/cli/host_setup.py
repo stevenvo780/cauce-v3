@@ -29,11 +29,34 @@ from host_channel_client import (
     stable_json,
 )
 
-UNIT_NAME = 'cauce-v3-host-executor.service'
+UNIT_PREFIX = 'cauce-v3-host-executor-'
+SAFE_ID = re.compile(r'[A-Za-z0-9_.-]{1,128}')
 MAX_ARTIFACT = 512 * 1024 * 1024
 MAX_PACKAGE_AGE_MS = 3600 * 1000
 NAME = re.compile(r'[a-z][a-z0-9_-]{0,63}')
 HEX = re.compile(r'[a-f0-9]{64}')
+UNIT_TEMPLATE = '''[Unit]
+Description=Cauce V3 executor de flota de este ordenador (@HOST_ID@)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+Environment=CAUCE_FLEET_PROJECT_ROOT=@RELEASE@
+Environment=CAUCE_FLEET_HOST=@HOST_ID@
+Environment=CAUCE_FLEET_WORKER_ID=host-@HOST_ID@
+Environment=CAUCE_FLEET_IDENTITY_DIRECTORY=@IDENTITY@
+Environment=CAUCE_FLEET_PYTHON=@PYTHON@
+Environment=CAUCE_FLEET_EXECUTABLE=@RELEASE@/ops/cli/fleet-executor.py
+Environment=CAUCE_FLEET_POLICY_FILE=@POLICY@
+ExecStart=@NODE@ @RELEASE@/services/gateway/dist/fleet/main.js
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=default.target
+'''
 REQUIRED_IN_RELEASE = ('ops/cli/fleet-executor.py', 'services/gateway/dist/fleet/main.js')
 PLACEHOLDER = re.compile(r'@(release|install|identity)@')
 
@@ -43,14 +66,6 @@ def default_runner(command: list[str], timeout: int = 60) -> subprocess.Complete
 
 
 runner = default_runner
-
-
-def template_path() -> pathlib.Path:
-    here = pathlib.Path(__file__).resolve().parent
-    for candidate in (here.parent / 'systemd/user' / UNIT_NAME, here / UNIT_NAME):
-        if candidate.is_file():
-            return candidate
-    raise HostFailure('systemd user unit template is missing from this CLI installation')
 
 
 def verify_signature(package: dict, signature: str, signer: str) -> None:
@@ -83,7 +98,12 @@ def pin_signer(identity_directory: pathlib.Path, signer: str, write: bool) -> No
 
 
 def fetch_package(channel: HostChannel) -> tuple[dict, str]:
-    reply = channel.request('POST', '/v3/fleet/hosts/' + channel.identity['host_id'] + '/setup', {'action': 'package'})
+    try:
+        reply = channel.request('POST', '/v3/fleet/hosts/' + channel.identity['host_id'] + '/setup', {'action': 'package'})
+    except HostFailure as error:
+        if 'HTTP 404' in str(error):
+            raise HostFailure('this gateway does not serve setup packages yet (HTTP 404); the administrator must upgrade it. Nothing was installed') from None
+        raise
     package = reply.get('package')
     if not isinstance(package, dict) or not isinstance(reply.get('signature'), str) or not isinstance(reply.get('signer_public_key'), str):
         raise HostFailure('gateway did not return a signed setup package')
@@ -196,7 +216,7 @@ def render_unit(host_id: str, install_root: pathlib.Path, release: pathlib.Path,
     node = shutil.which('node')
     if node is None:
         raise HostFailure('Node.js 22 or newer is required to run the executor service')
-    text = template_path().read_text()
+    text = UNIT_TEMPLATE
     values = {'HOST_ID': host_id, 'INSTALL_ROOT': str(install_root), 'RELEASE': str(release), 'IDENTITY': str(identity),
         'PYTHON': shutil.which('python3') or sys.executable, 'POLICY': str(policy_file), 'NODE': node}
     return re.sub(r'@([A-Z_]+)@', lambda match: values[match.group(1)], text)
@@ -246,16 +266,29 @@ def locate_identity(state_root: pathlib.Path, explicit: pathlib.Path | None) -> 
 
 
 def paths_for(channel: HostChannel, install_base: pathlib.Path) -> dict:
-    root = install_base / channel.identity['company_id'] / channel.identity['host_id']
-    return {'install_root': root, 'policy': root / 'executor-policy.json',
-        'unit': pathlib.Path.home() / '.config/systemd/user' / UNIT_NAME}
+    company, host = channel.identity['company_id'], channel.identity['host_id']
+    if SAFE_ID.fullmatch(company) is None or SAFE_ID.fullmatch(host) is None:
+        raise HostFailure('enrolled identity has ids that cannot name a service')
+    root = install_base / company / host
+    name = f'{UNIT_PREFIX}{company}-{host}.service'
+    return {'install_root': root, 'policy': root / 'executor-policy.json', 'unit_name': name,
+        'unit': pathlib.Path.home() / '.config/systemd/user' / name}
+
+
+def reject_other_company(install_base: pathlib.Path, company: str) -> None:
+    others = sorted(item.parent.parent.name for item in install_base.glob('*/*/executor-policy.json') if item.parent.parent.name != company) \
+        if install_base.is_dir() else []
+    if others:
+        raise HostFailure(f'this system user already runs the executor of company {others[0]}; companies would share one UID and '
+            'could read each other\'s host keys. Use one system user per company')
 
 
 def setup(identity_directory: pathlib.Path, install_base: pathlib.Path, dry_run: bool) -> dict:
     channel = HostChannel(identity_directory)
+    paths = paths_for(channel, install_base)
+    reject_other_company(install_base, channel.identity['company_id'])
     package, signer = fetch_package(channel)
     pin_signer(channel.directory, signer, not dry_run)
-    paths = paths_for(channel, install_base)
     host_id, root = channel.identity['host_id'], paths['install_root']
     release_item = next(item for item in package['artifacts'] if item['kind'] == 'release')
     release = root / 'release' / release_item['sha256']
@@ -266,7 +299,7 @@ def setup(identity_directory: pathlib.Path, install_base: pathlib.Path, dry_run:
     if dry_run:
         plan['actions'] = [step for step, needed in (
             ('download and extract release', not plan['release_installed']),
-            ('write executor policy', True), ('install user unit ' + UNIT_NAME, True),
+            ('write executor policy', True), ('install user unit ' + paths['unit_name'], True),
             ('enable linger for ' + user, not plan['linger']), ('enable and start the service', True)) if needed]
         return plan
     for directory in (install_base, install_base / channel.identity['company_id'], root):
@@ -301,11 +334,11 @@ def setup(identity_directory: pathlib.Path, install_base: pathlib.Path, dry_run:
         plan['linger'] = linger_enabled(user)
     if changed:
         systemctl('daemon-reload')
-    if systemctl('enable', '--now', UNIT_NAME).returncode != 0:
-        raise HostFailure('could not start the user service; check XDG_RUNTIME_DIR and `systemctl --user status ' + UNIT_NAME + '`')
+    if systemctl('enable', '--now', paths['unit_name']).returncode != 0:
+        raise HostFailure('could not start the user service; check XDG_RUNTIME_DIR and `systemctl --user status ' + paths['unit_name'] + '`')
     if changed:
-        systemctl('restart', UNIT_NAME)
-    plan.update(release_installed=True, service_active=systemctl('is-active', UNIT_NAME).stdout.strip() == b'active',
+        systemctl('restart', paths['unit_name'])
+    plan.update(release_installed=True, service_active=systemctl('is-active', paths['unit_name']).stdout.strip() == b'active',
         policy_changed=changed, templates=report['templates'])
     if not plan['linger']:
         plan['warning'] = f'enable linger so the service survives logout: sudo loginctl enable-linger {user}'
@@ -318,7 +351,7 @@ def status(identity_directory: pathlib.Path, install_base: pathlib.Path) -> dict
     user = pwd.getpwuid(os.geteuid()).pw_name
     result = {'company_id': channel.identity['company_id'], 'host_id': channel.identity['host_id'],
         'policy_installed': paths['policy'].is_file(), 'unit_installed': paths['unit'].is_file(),
-        'service_active': systemctl('is-active', UNIT_NAME).stdout.strip() == b'active',
+        'service_active': systemctl('is-active', paths['unit_name']).stdout.strip() == b'active',
         'linger': linger_enabled(user), 'templates': 0, 'executor_ready': False}
     if result['policy_installed']:
         releases = sorted((paths['install_root'] / 'release').glob('*/.verified'))

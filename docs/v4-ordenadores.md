@@ -24,9 +24,13 @@ cauce hosts status            # ¿está listo? (salida 0 = executor_ready, 3 = n
 2. Descarga el release (`kind: release`, tar con `ops/cli/fleet-executor.py` y `services/gateway/dist/fleet/main.js`) comprobando tamaño y SHA-256 firmados; rechaza rutas absolutas, `..` y enlaces. Se extrae en `~/.local/share/cauce-v3/hosts/<empresa>/<host>/release/<sha256>/`.
 3. Compone `executor-policy.json` (0600): identidad, usuario y raíces los fija el cliente (la política del paquete no puede sobrescribirlos); plantillas, hooks, transporte y bundles vienen del paquete, con `@release@`, `@install@` e `@identity@` sustituidos. El digest de cada bundle se recalcula sobre el release extraído.
 4. Valida con `fleet-executor.py --capabilities`; si el executor rechaza la política, no arranca el servicio.
-5. Instala la unidad de usuario `~/.config/systemd/user/cauce-v3-host-executor.service` (plantilla `ops/systemd/user/`), `enable --now`, y reinicia solo si cambió algo. Repetirlo es idempotente.
+5. Instala la unidad de usuario `~/.config/systemd/user/cauce-v3-host-executor-<empresa>-<host>.service` (plantilla incrustada en `host_setup.py`, que el instalador de la CLI ya copia), `enable --now`, y reinicia solo si cambió algo. Repetirlo es idempotente.
 
 El servicio publica capacidades al gateway cada 30 s; la consola muestra `executor_ready` cuando la política tiene plantillas.
+
+### Una empresa por usuario del sistema
+
+Cada host tiene su propia unidad (nombre con empresa y host), así que un usuario puede ejecutar varios ordenadores de la misma empresa. `setup` rechaza (también con `--dry-run`) preparar una segunda **empresa** en el mismo usuario: compartirían UID y cada una podría leer la clave `private.pem` de la otra. Hace falta un usuario del sistema por empresa.
 
 ### Linger
 
@@ -43,4 +47,4 @@ Para que el servicio sobreviva al cierre de sesión (como el usuario `server` de
  "signature":"<base64 Ed25519 sobre JSON canónico de package>", "signer_public_key":"<base64 SPKI DER>"}
 ```
 
-Hasta que el gateway sirva esa ruta, `setup` falla con «host request rejected (HTTP 404)» y no toca el ordenador.
+Hasta que el gateway sirva esa ruta, `setup` falla con «this gateway does not serve setup packages yet (HTTP 404)» y no toca el ordenador. Faltan en el servidor: la ruta, la clave firmante, el release distribuible con sus dependencias (`@cauce/store`, `pg`, `zod`), la política por defecto de la empresa y la política de autenticación de agentes enrolada (`CAUCE_FLEET_ENROLLED_AUTH_POLICY_FILE`).

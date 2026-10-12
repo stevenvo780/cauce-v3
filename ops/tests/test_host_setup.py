@@ -115,6 +115,8 @@ class HostSetupTests(unittest.TestCase):
         self.addCleanup(self.server.server_close)
         self.addCleanup(self.server.shutdown)
 
+    unit_name = 'cauce-v3-host-executor-company-a-local-a.service'
+
     def install_base(self):
         return self.home / 'share'
 
@@ -126,7 +128,7 @@ class HostSetupTests(unittest.TestCase):
         self.assertEqual(oct(policy_file.stat().st_mode & 0o777), '0o600')
         policy = json.loads(policy_file.read_text())
         self.assertEqual((policy['host_id'], policy['schemaVersion']), ('local-a', 1))
-        unit = (self.home / '.config/systemd/user' / host_setup.UNIT_NAME).read_text()
+        unit = (self.home / '.config/systemd/user' / self.unit_name).read_text()
         self.assertIn('CAUCE_FLEET_HOST=local-a', unit)
         self.assertNotRegex(unit, r'@[A-Z_]+@')
         self.assertIn(['loginctl', 'enable-linger', policy['executor_user']], self.commands)
@@ -138,7 +140,7 @@ class HostSetupTests(unittest.TestCase):
         receipt = host_setup.setup(self.identity, self.install_base(), False)
         self.assertEqual(len(self.requests), downloads)
         self.assertFalse(receipt['policy_changed'])
-        self.assertNotIn(['systemctl', '--user', 'restart', host_setup.UNIT_NAME], self.commands)
+        self.assertNotIn(['systemctl', '--user', 'restart', self.unit_name], self.commands)
         self.assertNotIn(['systemctl', '--user', 'daemon-reload'], self.commands)
 
     def test_dry_run_changes_nothing(self):
@@ -228,6 +230,32 @@ class HostSetupTests(unittest.TestCase):
         self.assertTrue(after['executor_ready'])
         self.active = False
         self.assertFalse(host_setup.status(self.identity, self.install_base())['executor_ready'])
+
+    def test_second_company_for_the_same_system_user_is_rejected_and_first_unit_survives(self):
+        host_setup.setup(self.identity, self.install_base(), False)
+        unit = self.home / '.config/systemd/user' / self.unit_name
+        before = unit.read_text()
+        other = self.home / 'state/company-b/local-b'
+        key = ensure_key(other)
+        save_private(other / 'identity.json', {'gateway': self.url, 'enrollment_id': 'e2', 'company_id': 'company-b',
+            'host_id': 'local-b', 'state': 'enrolled', 'executor_ready': False, 'key_fingerprint': hashlib.sha256(key).hexdigest()})
+        for dry_run in (False, True):
+            with self.assertRaisesRegex(HostFailure, 'one system user per company'):
+                host_setup.setup(other, self.install_base(), dry_run)
+        self.assertEqual(unit.read_text(), before)
+        self.assertTrue(host_setup.status(self.identity, self.install_base())['executor_ready'])
+        self.assertFalse(host_setup.status(other, self.install_base())['executor_ready'])
+
+    def test_second_host_of_the_same_company_gets_its_own_unit(self):
+        host_setup.setup(self.identity, self.install_base(), False)
+        other = self.home / 'state/company-a/local-b'
+        key = ensure_key(other)
+        save_private(other / 'identity.json', {'gateway': self.url, 'enrollment_id': 'e2', 'company_id': 'company-a',
+            'host_id': 'local-b', 'state': 'enrolled', 'executor_ready': False, 'key_fingerprint': hashlib.sha256(key).hexdigest()})
+        self.package_overrides = {'host_id': 'local-b'}
+        host_setup.setup(other, self.install_base(), False)
+        units = sorted(item.name for item in (self.home / '.config/systemd/user').glob('cauce-v3-host-executor-*.service'))
+        self.assertEqual(units, [self.unit_name, 'cauce-v3-host-executor-company-a-local-b.service'])
 
 
 if __name__ == '__main__':

@@ -103,6 +103,13 @@ if [ "$rc" = 1 ] && grep -q 'expected exactly one enrolled identity' <<< "$estad
 else
   bad "hosts status corre desde el CLI instalado sin trazas (rc=$rc): $estado"
 fi
+# Installed copy, empty home: setup/status must reach host_setup and fail with a message, never a traceback.
+estado=$(HOME="$HOGAR" "$DEST/cauce" hosts status 2>&1); rc=$?
+if [ "$rc" = 1 ] && grep -q 'expected exactly one enrolled identity' <<< "$estado" && ! grep -q Traceback <<< "$estado"; then
+  ok "hosts status corre desde el CLI instalado sin trazas"
+else
+  bad "hosts status corre desde el CLI instalado sin trazas (rc=$rc): $estado"
+fi
 if "$DEST/cauce" hosts enroll --help 2>&1 | grep -q -- '--invitation-stdin'; then
   ok "enrolamiento disponible desde el CLI instalado"
 else
