@@ -97,6 +97,29 @@ async function seedTerminalDelivery(options: {
 }
 
 describe('resolved delivery DLQ rows in queue snapshots', () => {
+  it('answers an incident outside the control scope exactly like a missing one, before checking its state', async () => {
+    const foreign = await seedTerminalDelivery({
+      tenant: 'Miguel', room: 'grp.miguel', actor: 'janus', recipientAlias: 'janus',
+      status: 'dead', createdAt: '2026-01-05T00:00:00.000Z', classified: true,
+    });
+    await pool.query("UPDATE acl_edges SET allow_control=false WHERE from_tenant='Steven' AND to_tenant='Miguel'");
+    const attempts = [
+      { target: 'delivery', id: foreign.letterId, evidenceSha256: 'a'.repeat(64) },
+      { target: 'delivery', id: foreign.letterId, evidenceSha256: 'b'.repeat(64) },
+      { target: 'delivery', id: randomUUID(), evidenceSha256: 'a'.repeat(64) },
+      { target: 'outbox', id: foreign.letterId, evidenceSha256: 'a'.repeat(64) },
+    ] as const;
+    for (const attempt of attempts) {
+      await expect(repository.resolveOperationalDlqWithoutReplay('Steven', 'kant', {
+        ...attempt, reason: 'Foreign incident probe',
+        possibleDuplicateAcknowledged: false, possibleNoDeliveryAcknowledged: true,
+      })).rejects.toMatchObject({ code: 'not_found', message: 'DLQ incident was not found' });
+    }
+    expect((await pool.query('SELECT resolved_at FROM dead_letters WHERE id=$1', [foreign.letterId])).rows)
+      .toEqual([{ resolved_at: null }]);
+    expect((await pool.query('SELECT 1 FROM dlq_operator_resolutions')).rowCount).toBe(0);
+  });
+
   it('keeps the resolved row in history while reducing sample and full visible dead totals', async () => {
     const operator: Principal = {
       tenant_id: 'Steven',

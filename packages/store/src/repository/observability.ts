@@ -303,7 +303,7 @@ export abstract class ObservabilityRepository extends ObservabilityChainSweepRep
     return value;
   }
 
-  /** Exact, operator-audited closure of one classified incident without replay or side effects. */
+  /** Exact, audited closure without replay; an incident outside control scope is absent, whatever its state. */
   async resolveOperationalDlqWithoutReplay(
     actorTenant: Tenant,
     actorAlias: string,
@@ -322,18 +322,28 @@ export abstract class ObservabilityRepository extends ObservabilityChainSweepRep
       || typeof request.possibleNoDeliveryAcknowledged !== 'boolean') {
       throw new StoreError('invalid_input', 'DLQ no-replay resolution request is invalid');
     }
-    const result = await this.pool.query<{ value: OperationalDlqResolutionResult }>(
-      `SELECT cauce_resolve_dlq_without_replay_030(
-         $1,$2::uuid,$3,$4,$5,$6,$7,$8
-       ) AS value`,
-      [
-        request.target, request.id, request.evidenceSha256, reason, actorTenant, actorAlias,
-        request.possibleDuplicateAcknowledged, request.possibleNoDeliveryAcknowledged,
-      ]
-    );
-    const value = result.rows[0]?.value;
-    if (!value) throw new StoreError('conflict', 'DLQ no-replay resolution returned no receipt');
-    return value;
+    return withTransaction(this.pool, async (client) => {
+      await client.query('SELECT cauce_dlq_assert_control_030($1,$2)', [actorTenant, actorAlias]);
+      const letters = request.target === 'outbox' ? 'outbox_dead_letters' : 'dead_letters';
+      const visible = await client.query(
+        `SELECT 1 FROM ${letters} letter
+          WHERE letter.id=$1::uuid AND cauce_dlq_can_control_tenant_030($2,letter.tenant_id)`,
+        [request.id, actorTenant]
+      );
+      if (visible.rowCount !== 1) throw new StoreError('not_found', 'DLQ incident was not found');
+      const result = await client.query<{ value: OperationalDlqResolutionResult }>(
+        `SELECT cauce_resolve_dlq_without_replay_030(
+           $1,$2::uuid,$3,$4,$5,$6,$7,$8
+         ) AS value`,
+        [
+          request.target, request.id, request.evidenceSha256, reason, actorTenant, actorAlias,
+          request.possibleDuplicateAcknowledged, request.possibleNoDeliveryAcknowledged,
+        ]
+      );
+      const value = result.rows[0]?.value;
+      if (!value) throw new StoreError('conflict', 'DLQ no-replay resolution returned no receipt');
+      return value;
+    });
   }
 
   async queueSnapshot(actorTenant: Tenant, actorAlias: string, limit = 200): Promise<Record<string, unknown>> {
