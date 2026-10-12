@@ -84,8 +84,9 @@ describe('context broker reconciliation with a remote that advanced', () => {
     expect(await git(remote, ['log', '-1', '--format=%an|%ae|%cn|%ce|%at', human.git_commit])).toBe(
       `owner|owner@context_alpha.cauce.invalid|Cauce context broker|context-broker@cauce.invalid|${String(Math.floor(Date.parse(entry?.created_at ?? '') / 1000))}`);
 
+    const space = (await store.read(source, target().tenant_id, target().alias)).files;
     expect(await ingestNativeContextVersion(pool, target().tenant_id, target().alias,
-      { base_version: 1, files: [{ path: 'context/mission.md', content: 'Mission edited by the agent.' }] })).toMatchObject({ state: 'ingested' });
+      { base_version: 1, files: [...space, { path: 'context/notes/agent.md', content: 'Note written by the agent.' }] })).toMatchObject({ state: 'ingested' });
     await sync();
     const native = await outbox();
     expect(native).toMatchObject({ state: 'synced' });

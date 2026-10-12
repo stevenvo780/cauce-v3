@@ -1,7 +1,7 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import { AliasSchema, TenantSchema } from '@cauce/protocol';
-import { ContextGitBroker, ContextVersionStore, ingestNativeContextVersion, processContextOutbox, StoreError,
+import { ContextGitBroker, ContextRejectedError, ContextVersionStore, ingestNativeContextVersion, processContextOutbox, StoreError,
   type ContextRuntimeSink, type ContextTarget, type DatabasePool } from '@cauce/store';
 import { AuthError, AuthorizationError, requirePermission, type AuthProvider } from './auth.js';
 import { consoleHumanAccess } from './console-human-authority.js';
@@ -13,6 +13,11 @@ const Revision = z.coerce.number().int().positive().max(Number.MAX_SAFE_INTEGER)
 const HistoryQuery = z.object({ before: Revision.optional() }).strict();
 const DiffQuery = z.object({ from: z.coerce.number().int().min(0).max(Number.MAX_SAFE_INTEGER), to: Revision }).strict();
 export interface ContextVersionRouteOptions { readonly repositoryRoot?: string; readonly runtime?: ContextRuntimeSink }
+function sendRejection(reply: FastifyReply, error: ContextRejectedError): FastifyReply {
+  const status = error.reason === 'context_governed_path' ? 403
+    : error.reason === 'context_harness_limit' || error.reason === 'context_too_large' ? 413 : 422;
+  return reply.code(status).send({ error: error.reason, message: error.message, paths: error.paths, ...error.limit });
+}
 export function registerContextVersionRoutes(app: FastifyInstance, provider: AuthProvider, pool: DatabasePool,
   options: ContextVersionRouteOptions = {}): void {
   const store = new ContextVersionStore(pool);
@@ -45,6 +50,7 @@ export function registerContextVersionRoutes(app: FastifyInstance, provider: Aut
           message: 'the server context version advanced beyond the locally applied base; the local edit was not recorded',
           base_version: result.base_version, desired_version: result.desired_version, applied_version: result.applied_version });
       }
+      if (result.state === 'rejected') return await sendRejection(reply, result.error);
       if (git || options.runtime) tick(result.snapshot);
       return await reply.code(202).send(result.snapshot);
     } catch (error) {
@@ -82,6 +88,7 @@ export function registerContextVersionRoutes(app: FastifyInstance, provider: Aut
         } finally { access.close(); }
       } catch (error) {
         if (error instanceof z.ZodError) return await reply.code(400).send({ error: 'invalid_request', message: 'invalid context request' });
+        if (error instanceof ContextRejectedError) return await sendRejection(reply, error);
         if (error instanceof AuthError || error instanceof AuthorizationError || error instanceof StoreError) { replyError(reply, error); return; }
         throw error;
       }

@@ -4,9 +4,10 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { lockCompanyAuthority, type DatabasePool, AgentProfileRepository, withTransaction } from '../src/index.js';
+import { lockCompanyAuthority, type DatabasePool, AgentContextRevisionsStore, AgentProfileRepository, withTransaction } from '../src/index.js';
 import { ContextVersionStore } from '../src/context-version.js';
 import { recordNativeContextVersionInTransaction } from '../src/context-version-legacy.js';
+import { ContextRejectedError } from '../src/context-version-model.js';
 import { createHash } from 'node:crypto';
 import { ContextGitBroker } from '../src/context-git.js';
 import { processContextOutbox } from '../src/context-version-worker.js';
@@ -109,6 +110,50 @@ describe('durable context versions with real PostgreSQL and Git', () => {
     await expect(withTransaction(pool, client => recordNativeContextVersionInTransaction(client,
       { tenantId: target().tenant_id, alias: target().alias, kind: 'directive', path: '/scoped/AGENTS.md', sha256: 'a'.repeat(64), bytes: 1,
         actorTenant: target().tenant_id, actorAlias: 'owner' }, 'different'))).rejects.toMatchObject({ code: 'invalid_input' });
+    expect((await store.read(source(), target().tenant_id, target().alias)).version).toBe(1);
+  });
+  it('keeps V3 profile and document writes that the history cannot version and shows the pending reason', async () => {
+    await write();
+    const profiles = new AgentProfileRepository(pool);
+    const profile = await profiles.readWithPresence(target().tenant_id, target().alias);
+    const leaked = `Usa sk-proj-${'Ab3_-'.repeat(8)} para el proveedor.`;
+    await profiles.replace({ ...profile.perfil, purpose: leaked }, profile.revision, { tenant_id: target().tenant_id, alias: 'owner' });
+    expect((await profiles.read(target().tenant_id, target().alias)).purpose).toBe(leaked);
+    expect(await store.read(source(), target().tenant_id, target().alias)).toMatchObject({ version: 1,
+      versioning: { state: 'unversioned', reason: 'context_secret_detected', source: 'profile', paths: ['context/profile.json'] } });
+    const documents = new AgentContextRevisionsStore(pool);
+    for (const [content, reason] of [['x'.repeat(70_000), 'context_harness_limit'], ['﻿Equipo 👨‍👩‍👧 listo', 'context_unsafe_text']] as const) {
+      const document = { tenantId: target().tenant_id, alias: target().alias, kind: 'directive', path: '/scoped/AGENTS.md',
+        sha256: createHash('sha256').update(content).digest('hex'), bytes: Buffer.byteLength(content), actorTenant: target().tenant_id, actorAlias: 'owner' };
+      const refusal = await withTransaction(pool, async client => {
+        await new AgentContextRevisionsStore(client as unknown as DatabasePool).recordDocumentRevision(document);
+        return recordNativeContextVersionInTransaction(client, document, content, target().human_id);
+      });
+      expect(refusal).toBeInstanceOf(ContextRejectedError);
+      expect(refusal?.reason).toBe(reason);
+      expect((await documents.listDocumentRevisions(target().tenant_id, target().alias, 'directive', 5)).entries[0])
+        .toMatchObject({ sha256: document.sha256 });
+    }
+    expect((await store.read(source(), target().tenant_id, target().alias)).versioning)
+      .toMatchObject({ state: 'unversioned', reason: 'context_unsafe_text', source: 'directive', paths: ['directives/native-directive.md'] });
+    expect((await pool.query(`SELECT metadata->>'reason' AS reason FROM audit_events WHERE action='context.unversioned' ORDER BY id`)).rows)
+      .toEqual([{ reason: 'context_secret_detected' }, { reason: 'context_harness_limit' }, { reason: 'context_unsafe_text' }]);
+    await expect(write(1, [{ path: 'context/mission.md', content: 'Blocked while the profile holds a secret.' }]))
+      .rejects.toMatchObject({ reason: 'context_secret_detected', paths: ['context/profile.json'] });
+    const leakedProfile = await profiles.readWithPresence(target().tenant_id, target().alias);
+    await profiles.replace({ ...leakedProfile.perfil, purpose: 'Clean purpose' }, leakedProfile.revision, { tenant_id: target().tenant_id, alias: 'owner' });
+    expect(await store.read(source(), target().tenant_id, target().alias)).toMatchObject({ version: 2, versioning: { state: 'current' } });
+  });
+  it('blocks secrets and harness overflow as typed refusals that leave no version and roll back the profile', async () => {
+    await write();
+    const purpose = (await new AgentProfileRepository(pool).read(target().tenant_id, target().alias)).purpose;
+    const profile = { path: 'context/profile.json', content: JSON.stringify({ tenant_id: target().tenant_id, alias: target().alias, purpose: 'Rolled back' }) };
+    await expect(write(1, [profile, { path: 'context/notes/keys.md', content: `token ghp_${'a1B2'.repeat(6)}` }]))
+      .rejects.toMatchObject({ code: 'invalid_input', reason: 'context_secret_detected', paths: ['context/notes/keys.md'] });
+    expect((await new AgentProfileRepository(pool).read(target().tenant_id, target().alias)).purpose).toBe(purpose);
+    const refused = await write(1, [{ path: 'context/mission.md', content: 'x'.repeat(70_000) }]).catch((error: unknown) => error);
+    expect(refused).toBeInstanceOf(ContextRejectedError);
+    expect(refused).toMatchObject({ reason: 'context_harness_limit', limit: { max_bytes: 65_536 } });
     expect((await store.read(source(), target().tenant_id, target().alias)).version).toBe(1);
   });
   it('preserves context identity and Git folder when display name and primary room change', async () => {

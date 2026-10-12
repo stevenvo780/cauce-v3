@@ -4,26 +4,77 @@ import { AliasSchema, TenantSchema, hasGovernanceSensitivePathSegment, hasUnsafe
 import { COMPANY_ID_PATTERN } from './company-authority.js';
 import { StoreError } from './repository/errors.js';
 
+const MAX_FILE_CHARACTERS = 262_144;
+const MAX_TOTAL_BYTES = 1_048_576;
+/** Formats the shared redactor misses, aligned with SENSITIVE_CONTENT in ops/cli/space_archive.py; a version is immutable once pushed. */
+const SECRET_PATTERNS: readonly RegExp[] = [
+  /-----BEGIN (?:[A-Z0-9 ]{1,64} )?PRIVATE KEY-----/iu,
+  /\bsk-[A-Za-z0-9_-]{20,}/iu,
+  /\bgh[pousr]_[A-Za-z0-9]{20,}|\bgithub_pat_[A-Za-z0-9_]{20,}|\bglpat-[A-Za-z0-9_-]{20,}|\bxox[abprs]-[A-Za-z0-9-]{10,}|\b(?:AKIA|ASIA)[0-9A-Z]{16}\b|\bnpm_[A-Za-z0-9]{36}\b/u,
+  /\baws_secret_access_key["']?\s{0,16}[:=]\s{0,16}["']?(?!\$\{)[A-Za-z0-9/+]{20,}/iu,
+  /_authToken["']?\s{0,16}[:=]\s{0,16}["']?(?!\$\{)[^\s"']{8,}/iu,
+  /:\/\/[^\s/:@"']{1,256}:[^\s/@"']{1,256}@/u,
+  /["']?\b(?:access_token|refresh_token|client_secret|api_key|password)["']?\s{0,16}[:=]\s{0,16}["']?(?!\$\{)[^\s"']{6,}/iu,
+  /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/u,
+];
+/** `context.max_bytes` of each packaged descriptor in packages/adapter-sdk/descriptors; a test fails when they drift. */
+const HARNESS_CONTEXT_MAX_BYTES: ReadonlyMap<string, number> = new Map([
+  ['claude', 65_536], ['codex', 65_536], ['fake', 65_536], ['grok', 65_536],
+  ['hermes', 65_536], ['muse', 65_536], ['openclaw', 65_536], ['opencode', 65_536],
+]);
+/** The only files an agent may change through native ingest: the rest of a version is governed by its operators. */
+export const NATIVE_CONTEXT_WRITABLE_PREFIX = 'context/notes/';
+
 const FilePath = z.string().max(256).regex(/^(?:context|directives)\/[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)*\.(?:md|txt|json|yaml|yml)$/u)
   .refine(path => !path.split('/').some(hasGovernanceSensitivePathSegment));
-export const ContextFilesSchema = z.array(z.object({ path: FilePath, content: z.string().max(262_144) }).strict()).max(100)
-  .superRefine((files, context) => {
-    if (new Set(files.map(file => file.path)).size !== files.length) context.addIssue({ code: 'custom', message: 'duplicate context path' });
-    if (files.reduce((sum, file) => sum + Buffer.byteLength(file.content), 0) > 1_048_576) context.addIssue({ code: 'custom', message: 'context size limit' });
-    for (const [index, file] of files.entries()) {
-      const scan = redactSecrets(file.content, { enabled: true });
-      if (scan.count > 0 || scan.unscanned !== undefined || hasUnsafeTextCodePoint(file.content.replace(/[\n\r\t]/gu, ''))) {
-        context.addIssue({ code: 'custom', path: [index, 'content'], message: 'unsafe context content' });
-      }
-    }
-  });
+const ContextFileSchema = z.object({ path: FilePath, content: z.string() }).strict();
+const ContextFileListSchema = z.array(ContextFileSchema).max(100).superRefine((files, context) => {
+  if (new Set(files.map(file => file.path)).size !== files.length) context.addIssue({ code: 'custom', message: 'duplicate context path' });
+});
+export type ContextFile = z.infer<typeof ContextFileSchema>;
+export type ContextRejectionReason = 'context_invalid_files' | 'context_too_large' | 'context_secret_detected' | 'context_unsafe_text'
+  | 'context_harness_limit' | 'context_governed_path' | 'context_version_failed';
+const REJECTION_MESSAGES: Readonly<Record<ContextRejectionReason, string>> = {
+  context_invalid_files: 'context files have an invalid path, shape or duplicate',
+  context_too_large: `context exceeds ${String(MAX_FILE_CHARACTERS)} characters in a file or ${String(MAX_TOTAL_BYTES)} bytes in total`,
+  context_secret_detected: 'context contains a credential or secret and cannot be versioned',
+  context_unsafe_text: 'context contains control or invisible formatting characters',
+  context_harness_limit: 'context exceeds the document limit of the agent harness',
+  context_governed_path: `native ingest may only change files under ${NATIVE_CONTEXT_WRITABLE_PREFIX}; profile, directives and operator context are governed`,
+  context_version_failed: 'context version could not be recorded',
+};
+export interface ContextSizeLimit { readonly bytes: number; readonly max_bytes: number }
+/** A refused version: the reason and the affected paths are safe to show, the content never travels in it. */
+export class ContextRejectedError extends StoreError {
+  constructor(readonly reason: ContextRejectionReason, readonly paths: readonly string[] = [], readonly limit?: ContextSizeLimit) {
+    super(reason === 'context_governed_path' ? 'forbidden' : 'invalid_input', limit === undefined ? REJECTION_MESSAGES[reason]
+      : `${REJECTION_MESSAGES[reason]}: ${String(limit.bytes)} bytes for a limit of ${String(limit.max_bytes)} bytes`);
+    this.name = 'ContextRejectedError';
+  }
+}
+function containsSecret(content: string): boolean {
+  return redactSecrets(content, { enabled: true }).count > 0 || SECRET_PATTERNS.some(pattern => pattern.test(content));
+}
+function contentRejection(files: readonly ContextFile[]): ContextRejectedError | undefined {
+  const large = files.filter(file => file.content.length > MAX_FILE_CHARACTERS).map(file => file.path);
+  if (large.length > 0 || files.reduce((sum, file) => sum + Buffer.byteLength(file.content), 0) > MAX_TOTAL_BYTES) {
+    return new ContextRejectedError('context_too_large', large);
+  }
+  const secrets = files.filter(file => containsSecret(file.content)).map(file => file.path);
+  if (secrets.length > 0) return new ContextRejectedError('context_secret_detected', secrets);
+  const unsafe = files.filter(file => hasUnsafeTextCodePoint(file.content.replace(/[\n\r\t]/gu, ''))).map(file => file.path);
+  return unsafe.length > 0 ? new ContextRejectedError('context_unsafe_text', unsafe) : undefined;
+}
+export const ContextFilesSchema = ContextFileListSchema.superRefine((files, context) => {
+  const rejection = contentRejection(files);
+  if (rejection) context.addIssue({ code: 'custom', message: rejection.reason });
+});
 export const ContextUpdateSchema = z.object({ expected_version: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
-  files: ContextFilesSchema, source: z.enum(['ui', 'cli', 'native', 'profile', 'directive']) }).strict();
+  files: ContextFileListSchema, source: z.enum(['ui', 'cli', 'native', 'profile', 'directive']) }).strict();
 export const ContextRestoreSchema = z.object({ expected_version: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
   version: z.number().int().positive().max(Number.MAX_SAFE_INTEGER) }).strict();
 export const ContextNativeIngestSchema = z.object({ base_version: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
-  files: ContextFilesSchema }).strict();
-export type ContextFile = z.infer<typeof ContextFilesSchema>[number];
+  files: ContextFileListSchema }).strict();
 export interface ContextTarget { readonly company_id: string; readonly tenant_id: string; readonly alias: string }
 export interface ContextVersion extends ContextTarget {
   readonly version: number; readonly files: readonly ContextFile[]; readonly digest: string;
@@ -47,11 +98,36 @@ export interface ContextGitSink {
   commit(version: ContextVersion): Promise<string>;
   push(commit: string): Promise<void>;
 }
+function sortedContextFiles(files: readonly ContextFile[]): ContextFile[] {
+  return files.map(file => ({ path: file.path, content: file.content })).sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
+}
 export function canonicalContextFiles(value: unknown): ContextFile[] {
-  return ContextFilesSchema.parse(value).sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
+  return sortedContextFiles(ContextFilesSchema.parse(value));
+}
+/** A stored version was judged when written; reading it only checks its shape, so a stricter rule never makes history unreadable. */
+export function storedContextFiles(value: unknown): ContextFile[] {
+  return sortedContextFiles(ContextFileListSchema.parse(value));
+}
+export function harnessContextMaxBytes(harness: string | null): number {
+  return (harness === null ? undefined : HARNESS_CONTEXT_MAX_BYTES.get(harness)) ?? Math.min(...HARNESS_CONTEXT_MAX_BYTES.values());
+}
+/** The adapter measures this same projection before materializing a version (adapter-sdk context/space-layout.ts). */
+export function contextProjectionBytes(files: readonly ContextFile[]): number {
+  return Buffer.byteLength(files.map(file => `## ${file.path}\n\n${file.content}`).join('\n\n'));
+}
+/** Judges a candidate version and refuses it with a typed ContextRejectedError, never a ZodError. */
+export function versionableContextFiles(value: unknown, maxBytes: number): ContextFile[] {
+  const parsed = ContextFileListSchema.safeParse(value);
+  if (!parsed.success) throw new ContextRejectedError('context_invalid_files');
+  const files = sortedContextFiles(parsed.data);
+  const rejection = contentRejection(files);
+  if (rejection) throw rejection;
+  const bytes = contextProjectionBytes(files);
+  if (bytes > maxBytes) throw new ContextRejectedError('context_harness_limit', [], { bytes, max_bytes: maxBytes });
+  return files;
 }
 export function contextDigest(files: readonly ContextFile[]): string {
-  return createHash('sha256').update(JSON.stringify(canonicalContextFiles(files))).digest('hex');
+  return createHash('sha256').update(JSON.stringify(sortedContextFiles(files))).digest('hex');
 }
 export function assertContextTarget(target: ContextTarget): void {
   if (!COMPANY_ID_PATTERN.test(target.company_id) || !TenantSchema.safeParse(target.tenant_id).success

@@ -1,5 +1,19 @@
+import { readFile, readdir } from 'node:fs/promises';
 import { describe, expect, it } from 'vitest';
-import { ContextUpdateSchema, canonicalContextFiles, contextDigest, contextRepositoryPrefix, contextVersionDiff } from './context-version-model.js';
+import { ZodError } from 'zod';
+import { ContextFilesSchema, ContextRejectedError, ContextUpdateSchema, canonicalContextFiles, contextDigest, contextProjectionBytes,
+  contextRepositoryPrefix, contextVersionDiff, harnessContextMaxBytes, storedContextFiles, versionableContextFiles } from './context-version-model.js';
+import { StoreError } from './repository/errors.js';
+
+function rejection(value: unknown, maxBytes = 65_536): ContextRejectedError {
+  try { versionableContextFiles(value, maxBytes); } catch (error) {
+    expect(error).toBeInstanceOf(StoreError);
+    expect(error).not.toBeInstanceOf(ZodError);
+    if (error instanceof ContextRejectedError) return error;
+  }
+  throw new Error('context was accepted');
+}
+const file = (content: string) => [{ path: 'context/notes/a.md', content }];
 
 describe('versionable context boundary', () => {
   it('accepts prose, sorts exact paths and includes deleted files in differences', () => {
@@ -13,11 +27,67 @@ describe('versionable context boundary', () => {
   });
   it.each(['context/../auth.json', 'context/auth.json', 'data/session.json', '/context/guide.md', 'context/link.pem'])('rejects forbidden path %s', path => {
     expect(() => ContextUpdateSchema.parse({ expected_version: 0, source: 'cli', files: [{ path, content: 'safe' }] })).toThrow();
+    expect(rejection([{ path, content: 'safe' }]).reason).toBe('context_invalid_files');
   });
-  it('refuses recognized credentials and duplicates without exposing their value', () => {
+  it('refuses duplicates and recognized credentials with a typed reason that never carries the value', () => {
     const secret = `Authorization: Bearer ${'A1'.repeat(20)}`;
-    expect(ContextUpdateSchema.safeParse({ expected_version: 0, source: 'ui', files: [{ path: 'context/a.md', content: secret }] }).success).toBe(false);
+    expect(ContextFilesSchema.safeParse(file(secret)).success).toBe(false);
+    const refused = rejection(file(secret));
+    expect(refused).toMatchObject({ code: 'invalid_input', reason: 'context_secret_detected', paths: ['context/notes/a.md'] });
+    expect(JSON.stringify({ message: refused.message, paths: refused.paths })).not.toContain('A1A1');
     expect(() => canonicalContextFiles([{ path: 'context/a.md', content: 'a' }, { path: 'context/a.md', content: 'b' }])).toThrow();
+    expect(rejection([{ path: 'context/a.md', content: 'a' }, { path: 'context/a.md', content: 'b' }]).reason).toBe('context_invalid_files');
+  });
+  it.each([
+    ['a private key header without its end marker', '-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAA'],
+    ['a project-scoped OpenAI key', `OPENAI=sk-proj-${'Ab3_-'.repeat(8)}`],
+    ['a short GitHub token', `token ghp_${'a1B2'.repeat(6)}`],
+    ['a fine-grained GitHub token', `github_pat_${'11ABCDEFG0'.repeat(3)}`],
+    ['a GitLab token', `glpat-${'xY9_'.repeat(6)}`],
+    ['a Slack token', 'xoxb-1234567890-abcdef'],
+    ['an AWS key id', 'AKIAIOSFODNN7EXAMPLE'],
+    ['a literal AWS secret', `aws_secret_access_key = ${'wJalrXUtnFEMI/K7MDENG+'.repeat(2)}`],
+    ['an npm auth token', '//registry.npmjs.org/:_authToken=abcd1234efgh'],
+    ['a URL with user information', 'postgres://cauce:hunter22@db.internal:5432/cauce'],
+    ['a literal password assignment', 'password: "correct-horse"'],
+    ['a JWT', ['eyJhbGciOiJIUzI1NiJ9', 'eyJzdWIiOiIxIn0', 'c2lnbmF0dXJlLXZhbHVl'].join('.')],
+  ])('blocks %s instead of redacting it', (_label, content) => {
+    expect(rejection(file(`Context line.\n${content}\n`)).reason).toBe('context_secret_detected');
+    expect(ContextFilesSchema.safeParse(file(content)).success).toBe(false);
+  });
+  it.each([
+    'Usa la variable de entorno ${NPM_TOKEN} en _authToken=${NPM_TOKEN}.',
+    'password: ${DB_PASSWORD}',
+    'Clona https://github.com/stevenvo780/cauce-agent-contexts y revisa la tarea task-management-dashboard.',
+    'Authorization: responsabilidades del agente.',
+  ])('keeps ordinary prose and environment references versionable: %s', content => {
+    expect(versionableContextFiles(file(content), 65_536)).toEqual(file(content));
+  });
+  it('refuses invisible formatting and oversized documents with their own reasons', () => {
+    expect(rejection(file('Equipo 👨‍👩‍👧 listo')).reason).toBe('context_unsafe_text');
+    expect(rejection(file(`‮gnirts`)).reason).toBe('context_unsafe_text');
+    expect(rejection(file('x'.repeat(262_145)))).toMatchObject({ reason: 'context_too_large', paths: ['context/notes/a.md'] });
+  });
+  it('refuses a version above the harness document limit with its measured size', () => {
+    const fits = file('x'.repeat(65_536 - contextProjectionBytes(file(''))));
+    expect(versionableContextFiles(fits, 65_536)).toEqual(fits);
+    const over = file(`${fits[0]?.content ?? ''}x`);
+    expect(rejection(over)).toMatchObject({ reason: 'context_harness_limit', limit: { bytes: 65_537, max_bytes: 65_536 } });
+    expect(rejection(over).message).toContain('65537 bytes for a limit of 65536 bytes');
+  });
+  it('reads stored history by shape only, so a stricter rule never makes it unreadable', () => {
+    expect(storedContextFiles(file(`OPENAI=sk-proj-${'Ab3_-'.repeat(8)}`))).toHaveLength(1);
+  });
+  it('mirrors context.max_bytes of every packaged harness descriptor', async () => {
+    const directory = new URL('../../adapter-sdk/descriptors/', import.meta.url);
+    const names = (await readdir(directory)).filter(name => name.endsWith('.json'));
+    expect(names.length).toBeGreaterThan(0);
+    for (const name of names) {
+      const descriptor = JSON.parse(await readFile(new URL(name, directory), 'utf8')) as { harness: string; context: { max_bytes: number } };
+      expect(harnessContextMaxBytes(descriptor.harness)).toBe(descriptor.context.max_bytes);
+    }
+    expect(harnessContextMaxBytes(null)).toBe(65_536);
+    expect(harnessContextMaxBytes('constructor')).toBe(65_536);
   });
   it('keeps homonymous agent paths company scoped', () => {
     const one = contextRepositoryPrefix({ company_id: 'alpha', tenant_id: 'Alpha', alias: 'director' });

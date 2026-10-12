@@ -65,6 +65,19 @@ describe('versioned context HTTP authority with real PostgreSQL and signed human
     expect(restored.json<{ files: { path: string; content: string }[] }>().files).toEqual(expect.arrayContaining(files));
     expect((await request('GET', '/status')).json()).toMatchObject({ version: 3, application: { state: 'pending' } });
   });
+  it('blocks secrets with 422 and oversized versions with 413, naming the reason and never the value', async () => {
+    const secret = `postgres://cauce:${'s3cr3t'.repeat(3)}@db.internal/cauce`;
+    const blocked = await write(0, [{ path: 'context/mission.md', content: `Base: ${secret}` }]);
+    expect(blocked.statusCode).toBe(422);
+    expect(blocked.json()).toMatchObject({ error: 'context_secret_detected', paths: ['context/mission.md'] });
+    expect(blocked.body).not.toContain('s3cr3t');
+    const large = await write(0, [{ path: 'context/mission.md', content: 'x'.repeat(70_000) }]);
+    expect(large.statusCode).toBe(413);
+    expect(large.json()).toMatchObject({ error: 'context_harness_limit', max_bytes: 65_536,
+      message: expect.stringContaining('exceeds the document limit of the agent harness') as string });
+    expect((await current?.adminPool.query('SELECT count(*)::integer AS count FROM agent_context_versions'))?.rows).toEqual([{ count: 0 }]);
+    expect((await request('GET')).json()).toMatchObject({ version: 0, versioning: { state: 'current' } });
+  });
   it('returns unavailable apply explicitly and never invents applied state without a runtime', async () => {
     await write();
     const result = await request('POST', '/apply', {});
