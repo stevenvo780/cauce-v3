@@ -100,12 +100,33 @@ def main() -> int:
         default=pathlib.Path.home() / '.local/state/cauce-v3/hosts')
     heartbeat_parser = commands.add_parser('heartbeat')
     heartbeat_parser.add_argument('--identity-directory', type=pathlib.Path, required=True)
+    for name, help_text in (('setup', 'Install and start the fleet executor as a systemd user service'),
+                            ('status', 'Report whether the local executor is ready')):
+        sub = commands.add_parser(name, help=help_text)
+        sub.add_argument('--identity-directory', type=pathlib.Path)
+        sub.add_argument('--state-root', type=pathlib.Path, default=pathlib.Path.home() / '.local/state/cauce-v3/hosts')
+        sub.add_argument('--install-root', type=pathlib.Path, default=pathlib.Path.home() / '.local/share/cauce-v3/hosts')
+        if name == 'setup':
+            sub.add_argument('--dry-run', action='store_true')
     args = parser.parse_args()
     try:
+        if args.action in ('setup', 'status'):
+            import host_setup
+            identity = host_setup.locate_identity(args.state_root, args.identity_directory)
+            receipt = host_setup.setup(identity, args.install_root, args.dry_run) if args.action == 'setup' \
+                else host_setup.status(identity, args.install_root)
+            print(json.dumps(receipt, sort_keys=True))
+            return 0 if args.action == 'setup' or receipt['executor_ready'] else 3
         receipt = enroll(args.gateway, invitation_from_stdin(), args.state_root) if args.action == 'enroll' else heartbeat(args.identity_directory)
         print(json.dumps(receipt, sort_keys=True))
         return 0
-    except (HostFailure, OSError, ValueError, subprocess.SubprocessError):
+    except HostFailure as error:
+        if args.action in ('setup', 'status'):
+            print('cauce: ' + str(error), file=sys.stderr)
+            return 1
+        print('cauce: no se pudo verificar el enrolamiento o canal; identidad local conservada. Revisa la invitación, permisos, conexión y estado en la consola.', file=sys.stderr)
+        return 1
+    except (OSError, ValueError, subprocess.SubprocessError):
         print('cauce: no se pudo verificar el enrolamiento o canal; identidad local conservada. Revisa la invitación, permisos, conexión y estado en la consola.', file=sys.stderr)
         return 1
 

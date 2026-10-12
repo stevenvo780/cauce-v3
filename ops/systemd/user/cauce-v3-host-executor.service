@@ -1,0 +1,21 @@
+[Unit]
+Description=Cauce V3 executor de flota de este ordenador (@HOST_ID@)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+Environment=CAUCE_FLEET_PROJECT_ROOT=@RELEASE@
+Environment=CAUCE_FLEET_HOST=@HOST_ID@
+Environment=CAUCE_FLEET_WORKER_ID=host-@HOST_ID@
+Environment=CAUCE_FLEET_IDENTITY_DIRECTORY=@IDENTITY@
+Environment=CAUCE_FLEET_PYTHON=@PYTHON@
+Environment=CAUCE_FLEET_EXECUTABLE=@RELEASE@/ops/cli/fleet-executor.py
+Environment=CAUCE_FLEET_POLICY_FILE=@POLICY@
+ExecStart=@NODE@ @RELEASE@/services/gateway/dist/fleet/main.js
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=default.target
