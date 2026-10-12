@@ -28,6 +28,9 @@ Origen del estado: auditoría del 12-oct-2026 sobre la rama `codex/v4-complete` 
 
 ## 2. Reglas de ejecución
 
+El goal que fija el dueño está en `GOAL.md` en la raíz del checkout principal (`/datos/workspaces/personal/cauce-v3`), con los tiers de uso por modelo y los cuatro carriles tmux de delegación (`.cauce-delegados/v4/`). Este documento es su anexo de detalle.
+
+
 Lecciones de la ejecución anterior convertidas en reglas:
 
 1. **Nada de maquinaria nueva de despliegue.** No se crean orquestadores, observadores, controladores ni "holds" (GPT dejó 45 artefactos así en `S`, ninguno en el repo). Se despliega con lo existente: `deploy/deploy.sh` (con `CAUCE_DEPLOY_FLEET_OVERLAY=1`), `host-backup.sh`, `build-adapter-release.sh` y `fleet-controller-upgrade.py`, según `docs/operacion.md` §1 y `docs/v3.5-controlador-despliegue.md`.
@@ -52,6 +55,8 @@ Todo lo demás lo resuelve la especificación o es una decisión técnica delega
 - [x] Login real en «Mis cuotas»: con las cuentas de `cuota-claude-1`, `cuota-codex-b2b` y `cuota-grok-1`; avisar al dueño cuando el entorno esté listo para aprobar el código.
 - [x] Praxis: **Claude crea el usuario owner de León** (el dueño le entrega la contraseña fuera de banda); la V3 del hospital sigue en paralelo hasta que León valide. Pendiente: confirmar su correo (leerlo de la V3 del hospital en solo lectura o pedirlo).
 - [x] Hegel: valor por defecto (preguntarle por Cauce sus repos y clonarlos; no copiar `/workspace`).
+- [x] **Cambio de alcance de Praxis (dueño, 12-oct):** Cauce se retira de la máquina del hospital (`ssh hospital`, `vps-990525f1`). Sus agentes (muse frontend/backend, openclaw operator y sales, crm) se mueven a los servidores locales del dueño y esa VPS se apagará; lo publicado se moverá a otra infraestructura (posiblemente una VPS más barata, por decidir). Por tanto Praxis no convive con la V3 del hospital: se importa a V4 y sus agentes migran a server1/server2 con el mismo procedimiento que Gaia/Hades/Argos/Hegel.
+- [ ] (P0) **Portar a V4 el código que hoy corre en el hospital** y que no está en V4: runtime `da8d921bc` y adapters `72727a16`/`1fe69c1f` (rama `origin/socrates/hospital-supervision-1699`; las imágenes de muse/openclaw son de `0790d9f5`, que no está en este repo). ✓ Cada arreglo del hospital está en `claude/v4-cierre` (o descartado con motivo) antes de mover un agente de Praxis.
 
 1. **GitGuardian (PR #151, 6 secretos).** Preparo la revisión local con los candidatos; los vistos son URLs `postgres://` con contraseña de fixture en tests (`ops/tests/cauce-plataforma-cli.test.mjs`, `provision-db-roles.test.mjs`, `cauce-plataforma-contenedor.test.mjs`, `ops/scripts/rehearse-v41-clone.sh`, `services/decisiones/test/catalog-scope.test.ts`). ¿Los marcas como falsos positivos en el panel tras sustituirlos por placeholders, o hay alguno real que rotar?
 2. **Credenciales en la migración.** ¿Autorizas copiar en privado las sesiones de proveedor actuales de Gaia, Hades, Argos y Hegel a server2 (SSH directo, 0600, sin pasar por copias, Git ni logs)? Alternativa: login por dispositivo de los titulares en la ventana del traslado (Steven para Hades y Argos; Miguel para Gaia y Hegel). Por defecto, cada agente conserva su cuenta actual.
