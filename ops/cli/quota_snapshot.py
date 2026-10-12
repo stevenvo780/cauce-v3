@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime
+import re
 import importlib.util
 import pathlib
 
@@ -11,6 +12,11 @@ ERROR_CODES = frozenset({'not_authenticated', 'token_expired', 'forbidden_creden
                          'rate_limited', 'network', 'provider_error'})
 
 
+def _http_token(text: str, code: int) -> bool:
+    # El codigo cuenta solo como estado HTTP: 'HTTP 429', 'status 429', 'status: 429', 'http_status=429'.
+    return re.search(rf'(?<![a-z0-9])(?:http|status)(?![a-z0-9])[\s_:=/]*{code}(?![0-9])', text) is not None
+
+
 def failure_code(raw: dict) -> str:
     if raw.get('error_code') in ERROR_CODES:
         return raw['error_code']
@@ -18,11 +24,11 @@ def failure_code(raw: dict) -> str:
     status = raw.get('http_status') or extra.get('http_status')
     estado = extra.get('estado')
     text = ' '.join(str(raw.get(field) or '') for field in ('nota', 'note', 'error')).lower()
-    if raw.get('rateLimited') is True or status == 429 or '429' in text:
+    if raw.get('rateLimited') is True or status == 429 or _http_token(text, 429):
         return 'rate_limited'
     if 'api key' in text or status == 403:
         return 'forbidden_credential_type'
-    if estado == 'token_invalidado' or status == 401 or any(word in text for word in ('caducad', 'vencid', 'expired', '401')):
+    if estado == 'token_invalidado' or status == 401 or any(word in text for word in ('caducad', 'vencid', 'expired')) or _http_token(text, 401):
         return 'token_expired'
     if estado == 'sin_credencial' or any(word in text for word in (
             'sin autenticar', 'sin credencial', 'no existe', 'falta ', 'no trae', 'sin tokens', 'sin access')):

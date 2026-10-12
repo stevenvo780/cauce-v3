@@ -50,6 +50,14 @@ class QuotaSnapshotErrorCodeTest(unittest.TestCase):
         report = self.note('claude', {'ok': False, 'error_code': 'anything-the-reader-invents', 'nota': 'fallo raro'})
         self.assertEqual(report['provider_report']['note'], 'provider_error')
 
+    def test_status_numbers_only_count_as_http_tokens(self):
+        for text, code in (('HTTP 429 del proveedor', 'rate_limited'), ('status: 401', 'token_expired'),
+                           ('http_status=429', 'rate_limited')):
+            self.assertEqual(self.note('claude', {'ok': False, 'nota': text})['provider_report']['note'], code)
+        for text in ('fallo en la cuenta 4290 y 14011', 'ECONNRESET tras 429 bytes'):
+            self.assertNotIn(self.note('claude', {'ok': False, 'nota': text})['provider_report']['note'],
+                             ('rate_limited', 'token_expired'))
+
     def test_successful_sample_has_no_note(self):
         report = normalize_cli_snapshot('claude', {'ok': True, 'windows': [
             {'key': '5h', 'usedPercent': 10, 'windowMinutes': 300}]}, 'fixture-account')

@@ -235,6 +235,135 @@ class QuotaReadersTest(unittest.TestCase):
             self.assertNotIn(secret, response.stdout)
             self.assertNotIn(secret, response.stderr)
 
+    def test_claude_three_concurrent_readers_refresh_once_and_leave_no_orphans(self):
+        stub = (
+            'import {appendFileSync} from "node:fs";'
+            'globalThis.fetch=async(url,options={})=>{'
+            'if(url.includes("/oauth/token")){appendFileSync(process.env.HOME+"/refreshes",".");'
+            'const body=JSON.parse(options.body);'
+            'if(body.refresh_token!=="fixture-refresh-old")throw Error("second refresh with a rotated token");'
+            'await new Promise(r=>setTimeout(r,700));'
+            'return new Response(JSON.stringify({access_token:"fixture-token-new",refresh_token:"fixture-refresh-new",'
+            'expires_in:28800}),{status:200});}'
+            'if(options.headers.authorization!=="Bearer fixture-token-new")return new Response("{}",{status:401});'
+            'return new Response(JSON.stringify(url.endsWith("/usage")?{five_hour:{utilization:10}}'
+            ':{account:{has_claude_max:true}}),{status:200});};')
+        with tempfile.TemporaryDirectory() as directory:
+            home, auth = self.claude_home(directory, 1)
+            (home / 'fetch.mjs').write_text(stub)
+            procs = [subprocess.Popen(['node', '--import', str(home / 'fetch.mjs'), str(ROOT / 'cuotas' / 'leer-cuota.mjs'),
+                                       '--refresh-own-session'], env={**os.environ, 'HOME': str(home)},
+                                      stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) for _ in range(3)]
+            outputs = [proc.communicate(timeout=30)[0] for proc in procs]
+            self.assertEqual([json.loads(out)['ok'] for out in outputs], [True, True, True])
+            self.assertEqual((home / 'refreshes').read_text(), '.')
+            saved = json.loads(auth.read_text())['claudeAiOauth']
+            self.assertEqual((saved['accessToken'], saved['refreshToken']), ('fixture-token-new', 'fixture-refresh-new'))
+            self.assertEqual(stat.S_IMODE(auth.stat().st_mode), 0o600)
+            self.assertEqual(sorted(path.name for path in (home / '.claude').iterdir()), ['.credentials.json'])
+
+    def test_grok_concurrent_readers_refresh_once_and_leave_no_orphans(self):
+        stub = (
+            'import {appendFileSync} from "node:fs";'
+            'globalThis.fetch=async(url,options={})=>{'
+            'if(url.endsWith("/.well-known/openid-configuration"))return new Response('
+            'JSON.stringify({token_endpoint:"https://auth.fixture.invalid/oauth/token"}),{status:200});'
+            'if(url==="https://auth.fixture.invalid/oauth/token"){appendFileSync(process.env.HOME+"/refreshes",".");'
+            'if(new URLSearchParams(options.body).get("refresh_token")!=="fixture-refresh-old")throw Error("second refresh");'
+            'await new Promise(r=>setTimeout(r,700));'
+            'return new Response(JSON.stringify({access_token:"fixture-token-new",refresh_token:"fixture-refresh-new",'
+            'expires_in:21600}),{status:200});}'
+            'if(options.headers.authorization!=="Bearer fixture-token-new")return new Response("{}",{status:401});'
+            'return new Response(JSON.stringify({config:{creditUsagePercent:20,currentPeriod:{type:"weekly",'
+            'start:"2026-10-01T00:00:00Z",end:"2026-10-08T00:00:00Z"}}}),{status:200});};')
+        with tempfile.TemporaryDirectory() as directory:
+            home = pathlib.Path(directory)
+            (home / '.grok').mkdir()
+            auth = home / '.grok' / 'auth.json'
+            auth.write_text(json.dumps({'fixture': {'key': 'fixture-token-old', 'refresh_token': 'fixture-refresh-old',
+                                                     'oidc_issuer': 'https://auth.fixture.invalid', 'oidc_client_id': 'c'}}))
+            auth.chmod(0o600)
+            (home / 'fetch.mjs').write_text(stub)
+            procs = [subprocess.Popen(['node', '--import', str(home / 'fetch.mjs'), str(ROOT / 'cuotas' / 'leer-cuota-grok.mjs'),
+                                       '--refresh-own-session'], env={**os.environ, 'HOME': str(home)},
+                                      stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) for _ in range(3)]
+            outputs = [proc.communicate(timeout=30)[0] for proc in procs]
+            self.assertEqual([json.loads(out)['ok'] for out in outputs], [True, True, True])
+            self.assertEqual((home / 'refreshes').read_text(), '.')
+            self.assertEqual(json.loads(auth.read_text())['fixture']['key'], 'fixture-token-new')
+            self.assertEqual(sorted(path.name for path in (home / '.grok').iterdir()), ['auth.json'])
+
+    def test_claude_stale_orphan_lock_is_reclaimed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home, auth = self.claude_home(directory, 1)
+            lock = home / '.claude' / '.credentials.json.lock'
+            lock.write_text('9999')
+            old = time.time() - 600
+            os.utime(lock, (old, old))
+            response = self.run_reader(home, 'leer-cuota.mjs', self.CLAUDE_REFRESH_STUB, '--refresh-own-session')
+            self.assertTrue(json.loads(response.stdout)['ok'])
+            self.assertFalse(lock.exists())
+
+    def test_claude_timeout_is_network_not_http(self):
+        stub = ('globalThis.fetch=async()=>{throw new DOMException("timed out","TimeoutError")};')
+        with tempfile.TemporaryDirectory() as directory:
+            home, _ = self.claude_home(directory, 9_999_999_999_999)
+            report = json.loads(self.run_reader(home, 'leer-cuota.mjs', stub).stdout)
+        self.assertEqual(report['error_code'], 'network')
+        self.assertNotIn('HTTP', report['nota'])
+
+    def test_claude_preventive_refresh_failure_with_valid_token_continues(self):
+        stub = ('globalThis.fetch=async(url,options={})=>{if(url.includes("/oauth/token"))throw new TypeError("fetch failed");'
+                'return new Response(JSON.stringify(url.endsWith("/usage")?{five_hour:{utilization:4}}'
+                ':{account:{has_claude_pro:true}}),{status:200});};')
+        with tempfile.TemporaryDirectory() as directory:
+            home, auth = self.claude_home(directory, int(time.time() * 1000) + 60_000)
+            before = auth.read_bytes()
+            report = json.loads(self.run_reader(home, 'leer-cuota.mjs', stub, '--refresh-own-session').stdout)
+            self.assertEqual(auth.read_bytes(), before)
+        self.assertTrue(report['ok'])
+
+    def test_claude_200_with_non_json_body_is_provider_error(self):
+        stub = ('globalThis.fetch=async()=>new Response("<html>oops</html>",{status:200});')
+        with tempfile.TemporaryDirectory() as directory:
+            home, _ = self.claude_home(directory, 9_999_999_999_999)
+            report = json.loads(self.run_reader(home, 'leer-cuota.mjs', stub).stdout)
+        self.assertEqual(report['error_code'], 'provider_error')
+
+    def test_claude_credential_without_oauth_block_is_not_authenticated(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = pathlib.Path(directory)
+            (home / '.claude').mkdir()
+            (home / '.claude' / '.credentials.json').write_text('{"other":{}}')
+            report = json.loads(self.run_reader(home, 'leer-cuota.mjs', 'globalThis.fetch=async()=>{throw Error("x")};').stdout)
+        self.assertEqual(report['error_code'], 'not_authenticated')
+
+    def test_grok_timeout_is_network_and_non_json_is_provider_error(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = pathlib.Path(directory)
+            (home / '.grok').mkdir()
+            (home / '.grok' / 'auth.json').write_text(json.dumps({'fixture': {'key': 'fixture-token'}}))
+            timeout = json.loads(self.run_reader(
+                home, 'leer-cuota-grok.mjs', 'globalThis.fetch=async()=>{throw new DOMException("t","TimeoutError")};').stdout)
+            garbage = json.loads(self.run_reader(
+                home, 'leer-cuota-grok.mjs', 'globalThis.fetch=async()=>new Response("nope",{status:200});').stdout)
+        self.assertEqual(timeout['error_code'], 'network')
+        self.assertNotIn('HTTP', timeout['nota'])
+        self.assertEqual(garbage['error_code'], 'provider_error')
+
+    def test_grok_failed_discovery_is_provider_error_not_a_json_crash(self):
+        stub = ('globalThis.fetch=async(url)=>{if(url.endsWith("/.well-known/openid-configuration"))'
+                'return new Response("<html>",{status:503});return new Response("{}",{status:401})};')
+        with tempfile.TemporaryDirectory() as directory:
+            home = pathlib.Path(directory)
+            (home / '.grok').mkdir()
+            auth = home / '.grok' / 'auth.json'
+            auth.write_text(json.dumps({'fixture': {'key': 'k', 'refresh_token': 'r', 'oidc_client_id': 'c'}}))
+            report = json.loads(self.run_reader(home, 'leer-cuota-grok.mjs', stub, '--refresh-own-session').stdout)
+            self.assertEqual(list((home / '.grok').glob('*.tmp*')), [])
+        self.assertEqual(report['error_code'], 'provider_error')
+        self.assertIn('HTTP 503', report['nota'])
+
     @staticmethod
     def jwt(payload):
         segment = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode().rstrip('=')
