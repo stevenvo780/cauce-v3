@@ -12,6 +12,11 @@ import './agent-lifecycle.css';
 
 type Kind = FleetOperationRequest['kind'];
 const newKey = () => `fleet_${crypto.randomUUID()}`;
+function purgeContainer(agent: Record<string, unknown> | undefined): string | undefined {
+  const placement = agent?.placement && typeof agent.placement === 'object' ? agent.placement as Record<string, unknown> : agent;
+  const name = placement?.container_name ?? agent?.container_name;
+  return typeof name === 'string' && name ? name : undefined;
+}
 const ACTION_LABELS: Record<Kind, string> = { ...FLEET_ACTION_LABELS, purge: 'Eliminar definitivamente' };
 export function AgentLifecyclePanel({ snapshot, target, onReloaded, initialDraft, initialOpen = false, initialKind, triggerLabel, hideTrigger = false, embedded = false, fixedKind = false, onClose, onDirtyChange }: {
   snapshot: ConfigurationSnapshot; target?: FleetTarget; onReloaded?: (value: ConfigurationSnapshot) => void;
@@ -32,6 +37,7 @@ export function AgentLifecyclePanel({ snapshot, target, onReloaded, initialDraft
   const [previewing, setPreviewing] = useState(false);
   const [sessionInvalid, setSessionInvalid] = useState(false);
   const [inventoryNotice, setInventoryNotice] = useState<string>();
+  const [typedAlias, setTypedAlias] = useState('');
   const previousRevision = useRef(snapshot.revision);
   const flow = useAgentLifecycle(open, target, () => { void reloadSnapshot(); });
   const heading = useRef<HTMLHeadingElement>(null);
@@ -50,6 +56,7 @@ export function AgentLifecyclePanel({ snapshot, target, onReloaded, initialDraft
   const busy = sending || flow.busy;
   const inProgress = !!flow.operation && ['queued', 'running', 'awaiting_auth', 'cancelling'].includes(flow.operation.status);
   const blocked = !!blockingOperation(flow.operation, kind);
+  const aliasConfirmed = kind !== 'purge' || target?.resource !== 'agent' || typedAlias === target.alias;
   useEffect(() => { if (open) heading.current?.focus({ preventScroll: true }); }, [open]);
   useEffect(() => {
     if (previousRevision.current === snapshot.revision) return;
@@ -107,6 +114,7 @@ export function AgentLifecyclePanel({ snapshot, target, onReloaded, initialDraft
   }
   const agent = target?.resource === 'agent' ? [...(snapshot.agents ?? []), ...(snapshot.retired?.agents ?? [])]
     .find((row) => row.tenant_id === target.tenant_id && row.alias === target.alias) : undefined;
+  const container = purgeContainer(agent);
   return <div className="agent-lifecycle-panel" data-open={String(open)}>
     {hideTrigger ? null : <button ref={trigger} type="button" className="button secondary"
       onClick={() => { setOpen((value) => !value); }} aria-expanded={open}
@@ -133,9 +141,18 @@ export function AgentLifecyclePanel({ snapshot, target, onReloaded, initialDraft
       {draftKind ? <AgentLifecycleFields draft={draft} snapshot={snapshot} capability={flow.capability} target={target}
         disabled={busy || inProgress || !canWrite || !available} edit={edit} /> : null}
       {kind === 'purge' ? <p className="notice">La purga elimina el registro retirado. El servidor exige ausencia de dependencias antes de aplicar.</p> : null}
+      {kind === 'purge' && target?.resource === 'agent' ? <section aria-label="Recursos que se borrarán" className="grid gap-2">
+        {container ? <p className="m-0">Se borrará el contenedor <code>{container}</code> y sus volúmenes <code>{container}-state</code> y{' '}
+          <code>{container}-provider-profiles</code> (esta última guarda la sesión del proveedor). No se puede deshacer.</p>
+          : <p className="m-0">Este agente no tiene contenedor registrado; se borrarán solo sus datos de configuración.</p>}
+        <p className="m-0"><a href={`/messages/${encodeURIComponent(target.tenant_id)}/${encodeURIComponent(target.alias)}?view=context`}>Descargar copia</a>
+          {' '}del espacio antes de purgar.</p>
+        <label>Escribe el alias <code>{target.alias}</code> para confirmar
+          <input value={typedAlias} autoComplete="off" onChange={(event) => { setTypedAlias(event.target.value); }} /></label>
+      </section> : null}
       <div className="acciones"><button type="button" className="button secondary" disabled={busy || inProgress || blocked || !canWrite || !available}
         aria-busy={previewing} onClick={() => { void preview(); }}>{previewing ? 'Previsualizando…' : 'Previsualizar operación'}</button>
-        <button type="button" className="button" disabled={busy || inProgress || blocked || !canWrite || !available || !samePreview || !validated.receipt.can_apply}
+        <button type="button" className="button" disabled={busy || inProgress || blocked || !canWrite || !available || !samePreview || !validated.receipt.can_apply || !aliasConfirmed}
           onClick={() => { void enqueue(); }}>Encolar operación</button></div>
       {!samePreview && !blocked && !previewing ? <p className="m-0 text-xs text-muted">Previsualiza la operación para poder encolarla.</p> : null}
       {error ? <p className="notice" role="alert">{error}</p> : null}

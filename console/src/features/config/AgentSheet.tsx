@@ -103,6 +103,7 @@ export function AgentSheet({ agent, retired = false, snapshot, hosts, intent, fi
                 <Pill tone={view.state.tone}>{view.state.label}</Pill>
                 {agent.harness ? <Pill tone="info">{agent.harness}</Pill> : null}
                 {agent.registered ? <Pill tone="neutral">{view.hostName}</Pill> : null}
+                {agent.registered && !view.hostId && !view.hasRuntime ? <Pill tone="warn">Sin entorno</Pill> : null}
               </>}
             </div>
           </div>
