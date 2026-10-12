@@ -36,6 +36,13 @@ describe('host setup packages', () => {
     expect(verify(null, Buffer.from(stableHostJson(tampered)), key, Buffer.from(signed.signature, 'base64'))).toBe(false);
   });
 
+  it('drops a template whose harness only exists on the object prototype', () => {
+    const base = hostSetupConfig();
+    const subject = packager({ policy: { ...base.policy, container_templates: [...base.policy.container_templates, { harness_id: 'constructor', prefix: 'x-' }] } });
+    const policy = subject.build({ ...scope, harnesses: ['codex', 'constructor'] }).package.policy as { container_templates: { harness_id: string }[] };
+    expect(policy.container_templates.map(row => row.harness_id)).toEqual(['codex']);
+  });
+
   it('keeps identity, roots, native runtimes and foreign identities out of the approved template', () => {
     const base = hostSetupConfig();
     const rejected: Record<string, unknown>[] = [

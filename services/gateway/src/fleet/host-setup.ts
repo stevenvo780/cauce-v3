@@ -75,7 +75,7 @@ export class HostSetupPackager {
     const { policy, release, files } = this.config;
     const bundles = Object.fromEntries(Object.entries(policy.bundles).filter(([harness]) => enabled.has(harness)));
     const narrowed = { ...policy, bundles,
-      container_templates: policy.container_templates.filter(template => template.harness_id in bundles) };
+      container_templates: policy.container_templates.filter(template => Object.hasOwn(bundles, template.harness_id)) };
     const signed = { version: 1, company_id: scope.company_id, host_id: scope.host_id, issued_at: issuedAt,
       release_revision: release.revision,
       artifacts: [{ name: release.name, kind: 'release', url: release.url, sha256: release.sha256, size: release.size },
