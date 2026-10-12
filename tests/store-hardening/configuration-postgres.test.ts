@@ -3,13 +3,24 @@ import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import type { ConfigMutation } from '@cauce/protocol';
-import { CauceRepository, type DatabasePool } from '@cauce/store';
+import { applyPlatformConfiguration, CauceRepository, lockCompanyAuthority, rollbackPlatformConfiguration,
+  type DatabaseClient, type DatabasePool, type PlatformActor } from '@cauce/store';
+import { seedFleetHuman } from '../../packages/store/test/fleet-human-postgres.fixtures.js';
 import { resetTestDatabase, startTestDatabase, type TestDatabase } from '../helpers/postgres.js';
 
 let database: TestDatabase;
 let databaseStarted = false;
 let pool: DatabasePool;
 let repository: CauceRepository;
+let humanId: string;
+const authority = (client: DatabaseClient) => lockCompanyAuthority(client, { tenant: 'Steven', alias: 'kant', humanId });
+const platform = (): PlatformActor => ({ humanId, tenant: 'Steven', alias: 'kant', companyId: 'humanizar' });
+function applyChange(mutation: ConfigMutation, dryRun: boolean, expectedRevision?: number) {
+  return repository.applyConfigurationChange('Steven', 'kant', mutation, dryRun, expectedRevision, authority);
+}
+function rollbackChange(revision: number, dryRun: boolean, expectedRevision?: number) {
+  return repository.rollbackConfiguration('Steven', 'kant', revision, dryRun, expectedRevision, authority);
+}
 
 preparePostgresSuite(import.meta.url, async () => {
   database = await startTestDatabase();
@@ -32,7 +43,10 @@ beforeEach(async () => {
     DELETE FROM egress_destinations;
     UPDATE acl_edges SET enabled=true,allow_route=true,allow_read=true,allow_control=true;
     UPDATE memberships SET role='agent' WHERE tenant_id='Pablo' AND alias='midas';
+    INSERT INTO agents(tenant_id,alias,enabled) VALUES('Steven','kant',false),('Pablo','midas',false);
   `);
+  humanId = (await seedFleetHuman(pool, 'Steven', 'kant', 'owner')).slice('console:'.length);
+  await pool.query('INSERT INTO platform_admins(human_id) VALUES($1)', [humanId]);
 });
 
 afterAll(async () => {
@@ -121,8 +135,11 @@ describe('atomic configuration CRUD and rollback', () => {
     )).rows[0]).toEqual({ allow_route: false, allow_read: false, allow_control: false });
   });
 
-  it('previews without side effects and CRUDs every configuration family', async () => {
-    const preview = await repository.applyConfigurationChange('Steven', 'kant', {
+  it('previews company configuration and writes company resources plus platform catalogs through their authorities', async () => {
+    await expect(repository.applyConfigurationChange('Steven', 'kant', {
+      resource: 'tenant', action: 'create', id: 'Acme', value: { enabled: true }
+    }, false, 0)).rejects.toMatchObject({ code: 'forbidden' });
+    const preview = await applyChange({
       resource: 'tenant', action: 'create', id: 'Acme',
       value: { display_name: 'Acme', is_hub: false, enabled: true }
     }, true, 0);
@@ -141,12 +158,16 @@ describe('atomic configuration CRUD and rollback', () => {
       { resource: 'role_policy', action: 'create', role: 'observer', value: { allow_read: true } }
     ];
     for (const mutation of mutations) {
-      const changed = await repository.applyConfigurationChange('Steven', 'kant', mutation, false, revision);
+      const catalog = mutation.resource === 'harness' || mutation.resource === 'role_policy';
+      if (catalog) await expect(applyChange(mutation, false, revision)).rejects.toMatchObject({ code: 'forbidden' });
+      const changed = catalog
+        ? await applyPlatformConfiguration(pool, platform(), mutation, false, revision)
+        : await applyChange(mutation, false, revision);
       revision = changed.revision;
       expect(changed.applied).toBe(true);
     }
 
-    const snapshot = await repository.getConfiguration('Steven', 'kant');
+    const snapshot = await repository.getConfiguration('Steven', 'kant', authority);
     expect(snapshot.revision).toBe(revision);
     expect(typeof snapshot.observed_at).toBe('string');
     expect(snapshot.tenants).toEqual(expect.arrayContaining([expect.objectContaining({ id: 'Acme' })]));
@@ -159,24 +180,24 @@ describe('atomic configuration CRUD and rollback', () => {
   });
 
   it('rolls an ACL permission back as a new revision and rejects stale writers', async () => {
-    await repository.applyConfigurationChange('Steven', 'kant', {
+    await applyChange({
       resource: 'tenant', action: 'create', id: 'Acme', value: { enabled: true }
     }, false, 0);
-    await repository.applyConfigurationChange('Steven', 'kant', {
+    await applyChange({
       resource: 'acl_edge', action: 'create', from_tenant: 'Steven', to_tenant: 'Acme',
       value: { enabled: true, allow_route: false, allow_read: false, allow_control: false }
     }, false, 1);
-    const granted = await repository.applyConfigurationChange('Steven', 'kant', {
+    const granted = await applyChange({
       resource: 'acl_edge', action: 'update', from_tenant: 'Steven', to_tenant: 'Acme',
       value: { allow_route: true }
     }, false, 2);
     expect(granted.revision).toBe(3);
 
-    await expect(repository.applyConfigurationChange('Steven', 'kant', {
+    await expect(applyChange({
       resource: 'acl_edge', action: 'update', from_tenant: 'Steven', to_tenant: 'Acme', value: { allow_read: true }
     }, false, 2)).rejects.toMatchObject({ code: 'conflict' });
 
-    const preview = await repository.rollbackConfiguration('Steven', 'kant', granted.revision, true, 3);
+    const preview = await rollbackChange(granted.revision, true, 3);
     expect(preview).toMatchObject({
       applied: false, dry_run: true, revision: 3,
       rolled_back_revision_id: granted.revision,
@@ -184,7 +205,7 @@ describe('atomic configuration CRUD and rollback', () => {
     expect((await pool.query(`SELECT allow_route FROM acl_edges WHERE from_tenant='Steven' AND to_tenant='Acme'`)).rows[0])
       .toEqual({ allow_route: true });
 
-    const rolledBack = await repository.rollbackConfiguration('Steven', 'kant', granted.revision, false, 3);
+    const rolledBack = await rollbackChange(granted.revision, false, 3);
     expect(rolledBack).toMatchObject({
       applied: true, revision: 4, rolled_back_revision_id: granted.revision,
     });
@@ -204,17 +225,17 @@ describe('atomic configuration CRUD and rollback', () => {
         max_per_hour: 2, max_per_day: 8, max_per_root: 1
       }
     };
-    const preview = await repository.applyConfigurationChange('Steven', 'kant', destination, true, 0);
+    const preview = await applyChange(destination, true, 0);
     expect(preview).toMatchObject({ applied: false, dry_run: true });
     expect((await pool.query(`SELECT 1 FROM egress_destinations`)).rowCount).toBe(0);
 
-    const created = await repository.applyConfigurationChange('Steven', 'kant', destination, false, 0);
+    const created = await applyChange(destination, false, 0);
     expect(created.applied).toBe(true);
     expect(created.inverse_mutation).toMatchObject({
       resource: 'egress_destination', action: 'delete', tenant_id: 'Steven', alias: 'argos', handle: 'steven.dm'
     });
 
-    const relaxed = await repository.applyConfigurationChange('Steven', 'kant', {
+    const relaxed = await applyChange({
       resource: 'egress_destination', action: 'update',
       tenant_id: 'Steven', alias: 'argos', handle: 'steven.dm',
       value: { max_per_hour: 60 }
@@ -224,24 +245,24 @@ describe('atomic configuration CRUD and rollback', () => {
       `SELECT max_per_hour FROM egress_destinations`
     )).rows[0]?.max_per_hour).toBe(60);
 
-    await repository.rollbackConfiguration('Steven', 'kant', relaxed.revision, false, relaxed.revision);
+    await rollbackChange(relaxed.revision, false, relaxed.revision);
     const restored = await pool.query<{ max_per_hour: number; allow_kinds: string[] }>(
       `SELECT max_per_hour,allow_kinds FROM egress_destinations`
     );
     expect(restored.rows[0]?.max_per_hour).toBe(2);
     expect(restored.rows[0]?.allow_kinds).toEqual(['task_complete', 'alert']);
 
-    const snapshot = await repository.getConfiguration('Steven', 'kant');
+    const snapshot = await repository.getConfiguration('Steven', 'kant', authority);
     expect(snapshot.egress_destinations).toEqual(expect.arrayContaining([
       expect.objectContaining({ handle: 'steven.dm', alias: 'argos' })
     ]));
 
     // Rolling back the create must remove the destination entirely.
-    await repository.rollbackConfiguration('Steven', 'kant', created.revision, false);
+    await rollbackChange(created.revision, false);
     expect((await pool.query(`SELECT 1 FROM egress_destinations`)).rowCount).toBe(0);
   });
 
-  it('keeps cold contact on a group a hub-only decision', async () => {
+  it('requires company authority for cold group contact while preserving tenant and foreign-target restrictions', async () => {
     await pool.query(`UPDATE memberships SET role='operator' WHERE tenant_id='Pablo' AND alias='midas'`);
     const coldGroup: ConfigMutation = {
       resource: 'egress_destination', action: 'create',
@@ -266,10 +287,15 @@ describe('atomic configuration CRUD and rollback', () => {
       tenant_id: 'Steven', alias: 'argos', handle: 'x',
       value: { conversation_id: '-1005550000002', conversation_kind: 'group', allow_kinds: ['digest'] }
     }, false, allowed.revision)).rejects.toMatchObject({ code: 'forbidden' });
+    const waived = await applyChange({ ...coldGroup, action: 'update',
+      value: { require_prior_contact: false } }, false, allowed.revision);
+    expect(waived.applied).toBe(true);
+    expect((await pool.query("SELECT require_prior_contact FROM egress_destinations WHERE tenant_id='Pablo' AND handle='ops.group'")).rows)
+      .toEqual([{ require_prior_contact: false }]);
   });
 
   it('carries allow_notify through the role policy lifecycle', async () => {
-    const created = await repository.applyConfigurationChange('Steven', 'kant', {
+    const created = await applyPlatformConfiguration(pool, platform(), {
       resource: 'role_policy', action: 'create', role: 'observer',
       value: { allow_read: true, allow_notify: true }
     }, false, 0);
@@ -277,11 +303,11 @@ describe('atomic configuration CRUD and rollback', () => {
       `SELECT allow_notify FROM role_policies WHERE role='observer'`
     )).rows[0]?.allow_notify).toBe(true);
 
-    const revoked = await repository.applyConfigurationChange('Steven', 'kant', {
+    const revoked = await applyPlatformConfiguration(pool, platform(), {
       resource: 'role_policy', action: 'update', role: 'observer', value: { allow_notify: false }
     }, false, created.revision);
     expect(revoked.inverse_mutation).toMatchObject({ value: { allow_notify: true } });
-    await repository.rollbackConfiguration('Steven', 'kant', revoked.revision, false);
+    await rollbackPlatformConfiguration(pool, platform(), revoked.revision, false, revoked.revision);
     expect((await pool.query<{ allow_notify: boolean }>(
       `SELECT allow_notify FROM role_policies WHERE role='observer'`
     )).rows[0]?.allow_notify).toBe(true);
@@ -295,7 +321,7 @@ describe('atomic configuration CRUD and rollback', () => {
       idempotency_key: randomUUID(), lane: 'interactive', priority: 0
     });
     expect(published.delivery_ids).toHaveLength(1);
-    await expect(repository.applyConfigurationChange('Steven', 'kant', {
+    await expect(applyChange({
       resource: 'membership', action: 'delete', tenant_id: 'Isa', room_id: 'grp.isa', alias: 'salva'
     }, false, 0)).rejects.toMatchObject({ code: 'conflict' });
     expect((await pool.query(`SELECT 1 FROM memberships WHERE tenant_id='Isa' AND alias='salva'`)).rowCount).toBe(1);
@@ -310,7 +336,7 @@ describe('atomic configuration CRUD and rollback', () => {
       INSERT INTO config_revisions(actor_tenant,actor_alias,operation,inverse_operation,summary)
       SELECT 'Steven','kant','{}'::jsonb,'{}'::jsonb,'relleno ' || g FROM generate_series(1,121) g
     `);
-    const snapshot = await repository.getConfiguration('Steven', 'kant');
+    const snapshot = await repository.getConfiguration('Steven', 'kant', authority);
     const revisions = snapshot.revisions as { id: string }[];
     const ids = revisions.map((revision) => Number(revision.id));
 

@@ -31,7 +31,14 @@ async function exclusiveCase(): Promise<EmptyTestDatabase> {
   const external = process.env.CAUCE_TEST_ADMIN_DATABASE_URL ?? process.env.CAUCE_TEST_DATABASE_URL;
   if (!external) {
     if (!database) throw new Error('test database absent');
-    return startTestCaseDatabase(database);
+    const isolated = await startTestCaseDatabase(database);
+    try {
+      const runtimeUrl = await provisionTestLogin(isolated.adminPool, isolated.adminUrl, TEST_RUNTIME_LOGIN, 'cauce_runtime');
+      const runtime = createPool(runtimeUrl);
+      return { ...isolated, pool: runtime, url: runtimeUrl, close: async () => {
+        await runtime.end(); await isolated.close();
+      } };
+    } catch (error) { await isolated.close(); throw error; }
   }
   if (!esBaseDePruebas(external)) throw new Error('disposable test database required');
   const server = createPool(external);
@@ -325,6 +332,8 @@ describe('configuration keeps a qualified platform administrator', () => {
     expect(checked?.config).toEqual(['search_path=pg_catalog, public, pg_temp']);
     expect(checked?.definition).toContain('public.platform_admins');
     expect(checked?.definition).toContain('ORDER BY admin.human_id FOR SHARE OF admin');
+    expect((await pool.query('SELECT current_user AS role,rolsuper FROM pg_roles WHERE rolname=current_user')).rows)
+      .toEqual([{ role: TEST_RUNTIME_LOGIN, rolsuper: false }]);
     await admin.query('REVOKE EXECUTE ON FUNCTION cauce_lock_authority_read_guard() FROM cauce_runtime');
     await expect(pool.query('SELECT cauce_lock_authority_read_guard()')).rejects.toMatchObject({ code: '42501' });
     await admin.query('SELECT cauce_apply_runtime_grants()');

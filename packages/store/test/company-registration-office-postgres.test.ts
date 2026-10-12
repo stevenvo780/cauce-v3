@@ -1,9 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { lockCompanyAuthority, readCompanyOffice, registerCompany, updateCompany, withTransaction, writeCompanyOffice,
+import { createPool, lockCompanyAuthority, readCompanyOffice, registerCompany, updateCompany, withTransaction, writeCompanyOffice,
   type CompanyAuthoritySource, type DatabasePool, type RegisteredCompany } from '../src/index.js';
-import { startTestCaseDatabase, startTestDatabase, type EmptyTestDatabase, type TestDatabase } from '../../../tests/helpers/postgres.js';
+import { provisionTestLogin, startTestCaseDatabase, startTestDatabase, type EmptyTestDatabase, type TestDatabase } from '../../../tests/helpers/postgres.js';
 import { preparePostgresSuite } from './postgres-suite.js';
 import { hashPassword } from '../../../services/gateway/src/password.js';
 import { registerCompanyRegistrationRoute } from '../../../services/gateway/src/company-registration.js';
@@ -18,6 +18,7 @@ let database: TestDatabase | undefined;
 let current: EmptyTestDatabase | undefined;
 let pool: DatabasePool;
 let admin: DatabasePool;
+let runtime: DatabasePool | undefined;
 let first: RegisteredCompany;
 let second: RegisteredCompany;
 let hash: string;
@@ -27,13 +28,15 @@ preparePostgresSuite(import.meta.url, async () => { database = await startTestDa
 beforeAll(async () => { hash = await hashPassword(PASSWORD); });
 beforeEach(async () => {
   if (!database) throw new Error('test database absent');
-  current = await startTestCaseDatabase(database); pool = current.pool; admin = current.adminPool;
+  current = await startTestCaseDatabase(database); admin = current.adminPool;
+  runtime = createPool(await provisionTestLogin(admin, current.adminUrl, 'cauce_gateway', 'cauce_runtime'));
+  pool = runtime;
   first = await registerCompany(pool, { email: 'first@example.test', name: 'First', passwordHash: hash,
     company: { slug: 'north', name: 'North' } });
   second = await registerCompany(pool, { email: 'second@example.test', name: 'Second', passwordHash: hash,
     company: { slug: 'south', name: 'South' } });
 });
-afterEach(async () => { await app?.close(); app = undefined; await current?.close(); current = undefined; });
+afterEach(async () => { await app?.close(); app = undefined; await runtime?.end(); runtime = undefined; await current?.close(); current = undefined; });
 afterAll(async () => { if (database) { await database.pool.end(); await database.container.stop(); } });
 const source = (company: RegisteredCompany): CompanyAuthoritySource => client => lockCompanyAuthority(client,
   { tenant: company.hub.id, alias: 'owner', humanId: company.user.id });
@@ -50,6 +53,8 @@ async function http(): Promise<FastifyInstance> {
 
 describe('public registration with durable owner and isolated office', () => {
   it('registers from the runtime role atomically and resolves the human as a company owner', async () => {
+    expect((await pool.query('SELECT current_user AS role,rolsuper FROM pg_roles WHERE rolname=current_user')).rows)
+      .toEqual([{ role: 'cauce_gateway', rolsuper: false }]);
     expect((await pool.query("SELECT pg_has_role(current_user,'cauce_runtime','MEMBER') AS runtime")).rows[0]).toEqual({ runtime: true });
     expect(await withTransaction(pool, source(first))).toMatchObject({ role: 'company_owner', actingCompany: 'north', humanId: first.user.id });
     expect((await pool.query('SELECT role,permissions FROM human_tenant_memberships WHERE human_id=$1', [first.user.id])).rows)

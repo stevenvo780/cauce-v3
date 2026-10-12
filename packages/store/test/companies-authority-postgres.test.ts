@@ -32,6 +32,7 @@ beforeEach(async () => {
   await admin.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,role,permissions)
     VALUES($1,'PraxisHub','company_admin','operator',ARRAY['read','control'])`, [seeded.leon]);
   await admin.query(`UPDATE memberships SET role='operator' WHERE (tenant_id,alias) IN (('Isa','salva'),('Miguel','janus'))`);
+  await admin.query("INSERT INTO memberships(tenant_id,room_id,alias,role) VALUES('Steven','company-humanizar','zeus','operator')");
   const zeus = await person('Steven', 'zeus');
   await admin.query(`INSERT INTO company_admins(company_id,human_id,role,source,granted_by) VALUES('humanizar',$1,'admin','platform',$2)`,
     [zeus, seeded.steven]);
@@ -82,9 +83,10 @@ describe('company authority resolver on PostgreSQL', () => {
       await withTransaction(admin, client => client.query('SELECT cauce_platform_set_company_state($1,$2,$3)', ['praxis', state, actors.steven]));
       expect(summary(await resolve({ ...steven, requestedCompany: 'praxis' }))).toMatchObject({ actingCompany: 'humanizar', platformOverride: false });
       expect(summary(await resolve({ tenant: 'PraxisHub', alias: 'company_admin', humanId: actors.leon })))
-        .toEqual({ role: 'tenant_operator', scope: 'tenant', actingCompany: 'praxis', platformOverride: false });
+        .toEqual({ role: 'none', scope: 'none', actingCompany: 'praxis', platformOverride: false });
     }
     expect(summary(await resolve({ ...steven, requestedCompany: 'absent' }))).toMatchObject({ actingCompany: 'humanizar' });
+    await admin.query('INSERT INTO platform_admins(human_id) VALUES($1)', [actors.miguel]);
     await admin.query('DELETE FROM platform_admins WHERE human_id=$1', [actors.steven]);
     expect(summary(await resolve({ ...steven, requestedCompany: 'praxis' })))
       .toEqual({ role: 'company_owner', scope: 'company', actingCompany: 'humanizar', platformOverride: false });
