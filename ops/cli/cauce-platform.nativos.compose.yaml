@@ -1,0 +1,9 @@
+# Added by ops/cli/cauce-platform-contenedor only for `contexto sembrar --nativos DIR`: the host's
+# native context directory, read-only, at the path the wrapper hands to the seed instead of DIR.
+services:
+  cauce-platform:
+    volumes:
+      - type: bind
+        source: ${CAUCE_PLATAFORMA_NATIVOS:?run through ops/cli/cauce-platform-contenedor}
+        target: /run/cauce/nativos
+        read_only: true

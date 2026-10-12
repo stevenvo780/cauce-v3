@@ -1,6 +1,8 @@
-# One-off service for ops/cli/cauce-platform-contenedor: the platform CLI inside the release
-# runtime image, on the stack's backend network, with the migrator's owner URL and the
-# PostgreSQL CA as file secrets. It never publishes ports and never joins the stack project.
+# One-off service for ops/cli/cauce-platform-contenedor: the platform CLI (platform_admin.mjs, or
+# context_seed.mjs for `contexto`) inside the release runtime image, on the stack's backend network,
+# with the migrator's owner URL and the PostgreSQL CA as file secrets. Both scripts are mounted because
+# context_seed.mjs imports platform_admin.mjs; the image supplies packages/store/dist. It never
+# publishes ports and never joins the stack project.
 name: ${CAUCE_PLATAFORMA_PROYECTO:?run through ops/cli/cauce-platform-contenedor}
 
 services:
@@ -15,7 +17,7 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
-    entrypoint: ["/app/deploy/runtime-entrypoint.sh", "node", "ops/cli/platform_admin.mjs"]
+    entrypoint: ["/app/deploy/runtime-entrypoint.sh", "node", "ops/cli/${CAUCE_PLATAFORMA_ENTRADA:?run through ops/cli/cauce-platform-contenedor}"]
     command: ["--help"]
     environment:
       DATABASE_URL_FILE: /run/secrets/database_url
@@ -25,8 +27,12 @@ services:
       CAUCE_PLATFORM_ADMIN_ID: ${CAUCE_PLATFORM_ADMIN_ID:-}
     volumes:
       - type: bind
-        source: ${CAUCE_PLATAFORMA_CLI:?run through ops/cli/cauce-platform-contenedor}
+        source: ${CAUCE_PLATAFORMA_CLI:?run through ops/cli/cauce-platform-contenedor}/platform_admin.mjs
         target: /app/ops/cli/platform_admin.mjs
+        read_only: true
+      - type: bind
+        source: ${CAUCE_PLATAFORMA_CLI:?run through ops/cli/cauce-platform-contenedor}/context_seed.mjs
+        target: /app/ops/cli/context_seed.mjs
         read_only: true
     secrets:
       - database_url
