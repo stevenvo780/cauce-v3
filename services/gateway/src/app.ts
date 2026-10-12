@@ -1,4 +1,5 @@
 import { oauthLogMessage, oauthRequestLog } from './oauth-request-logging.js';
+import { configuredTrustedProxy } from './client-ip.js';
 import type { ContextRepositoryBinding } from './console/context-repository/binding.js';
 import { randomUUID } from 'node:crypto'; /* eslint @typescript-eslint/no-unnecessary-condition: "error" */
 import type { ServerOptions as HttpsServerOptions } from 'node:https';
@@ -267,6 +268,7 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
   });
   const maxQueryLimit = admission.maxInflightDeliveries + admission.humanReservedDeliveries;
   const app = Fastify({
+    trustProxy: configuredTrustedProxy(),
     logger: options.logger ? { ...(typeof options.logger === 'object' ? options.logger : {}),
       serializers: { ...(typeof options.logger === 'object' ? options.logger.serializers : {}), req: oauthRequestLog },
       hooks: { logMethod(args, method) {

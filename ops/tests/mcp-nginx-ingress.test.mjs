@@ -40,6 +40,10 @@ for (const route of routes) {
       'Host $http_host',
       'Origin $http_origin',
       'X-Cauce-Operator ""',
+      'X-Forwarded-For $remote_addr',
+      'X-Forwarded-Host ""',
+      'X-Forwarded-Proto ""',
+      'X-Real-IP $remote_addr',
     ].sort());
     expectDirective(body, 'proxy_pass_request_headers', 'on');
     assert.doesNotMatch(body, /\$(?:cookie_[a-z_]+|http_cookie|host)\b/u);
@@ -87,6 +91,18 @@ for (const route of routes) {
     assert.doesNotMatch(body, /index\.html|try_files|proxy_store/u);
   });
 }
+
+test('every gateway proxy overwrites client IP headers and strips forwarded host and protocol', () => {
+  const bodies = [...config.matchAll(/^ {2}location .+ \{([\s\S]*?)^ {2}\}/gmu)]
+    .map(match => match[1]).filter(body => body.includes('proxy_pass https://gateway:8443;'));
+  assert.equal(bodies.length, 9);
+  for (const body of bodies) {
+    expectDirective(body, 'proxy_set_header X-Forwarded-For', '$remote_addr');
+    expectDirective(body, 'proxy_set_header X-Real-IP', '$remote_addr');
+    expectDirective(body, 'proxy_set_header X-Forwarded-Host', '""');
+    expectDirective(body, 'proxy_set_header X-Forwarded-Proto', '""');
+  }
+});
 
 test('static MCP locations do not add a listener or replace the other API and SPA routes', () => {
   assert.deepEqual(values(config, 'listen'), ['8444 ssl']);

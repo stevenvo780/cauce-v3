@@ -327,6 +327,19 @@ describe.sequential('OAuth through real pinned Nginx with fixture mTLS', () => {
     expect(result.headers['referrer-policy']).toContain('no-referrer');
   });
 
+  it.each([metadata, '/oauth/token', '/mcp', '/.well-known/oauth-protected-resource/mcp',
+    '/v3/auth/register', '/v3/console/messages', '/v3/deliveries/fixture/ack'])('replaces forged forwarding headers at the gateway boundary: %s', async path => {
+    const result = await send(origin, path, 'GET', { host: 'oauth.example.invalid:9444',
+      'x-forwarded-for': '198.51.100.99, 10.0.0.1', 'x-real-ip': '198.51.100.99',
+      'x-forwarded-host': 'forged.example', 'x-forwarded-proto': 'http' });
+    expect(result.status).toBe(200);
+    const headers = seen.at(-1)?.headers;
+    expect(headers?.['x-forwarded-for']).toBe('127.0.0.1');
+    expect(headers?.['x-real-ip']).toBe('127.0.0.1');
+    expect(headers?.['x-forwarded-host']).toBeUndefined();
+    expect(headers?.['x-forwarded-proto']).toBeUndefined();
+  });
+
   it.each(['/oauth/missing', '/oauth/denied', metadata])('never turns upstream negative/off responses into SPA: %s', async path => {
     enabled = path !== metadata;
     try {
