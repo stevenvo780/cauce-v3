@@ -409,7 +409,7 @@ class Executor:
     def compensate(self) -> dict:
         rows = self.physical_placements()
         for row in rows:
-            if row['runtime_mode'] == 'container':
+            if row.get('runtime_mode') == 'container':
                 from fleet_executor_container import discard_operation
                 discard_operation(self.policy, row, self.context['operation_id'])
             stop(self.policy, row)

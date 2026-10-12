@@ -131,7 +131,7 @@ class DisposableContainerExecutorTest(unittest.TestCase):
     def test_failed_create_is_compensated_to_zero_containers_and_volumes(self):
         module, policy = self.operation_fixture()
         operation = str(uuid.uuid4())
-        with self.assertRaises(Exception):
+        with self.assertRaises(module.SafeFailure):
             module.create_container(policy, self.agent, {'/cauce/missing': '/nonexistent/zz-canary'}, operation_id=operation)
         self.assertEqual(self.volumes(), [self.container + '-state'])
         module.discard_operation(policy, self.agent, str(uuid.uuid4()))
