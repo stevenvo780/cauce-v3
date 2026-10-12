@@ -108,17 +108,21 @@ def owned_volumes(policy: dict, agent: dict) -> tuple[dict, list]:
     return volumes, existing
 
 
-def create_container(policy: dict, agent: dict, binds: dict | None = None) -> dict:
+OPERATION_LABEL = 'cauce.fleet.operation'
+
+
+def create_container(policy: dict, agent: dict, binds: dict | None = None, operation_id: str | None = None) -> dict:
     placement = agent['_placement']
     image = json.loads(docker('image', 'inspect', placement['image']))[0]
     if image['Id'] != placement['image']:
         raise SafeFailure('approved image digest is unavailable')
     volumes, existing = owned_volumes(policy, agent)
+    operation_labels = {OPERATION_LABEL: operation_id} if operation_id else {}
     for name, labels in volumes.items():
         if name not in existing:
-            docker('volume', 'create', *[value for key, value in labels.items() for value in ('--label', f'{key}={value}')], name)
+            docker('volume', 'create', *[value for key, value in {**labels, **operation_labels}.items() for value in ('--label', f'{key}={value}')], name)
     volume = agent['container_name'] + '-state'
-    label_arguments = [value for key, value in expected_labels(policy, agent).items() for value in ('--label', f'{key}={value}')]
+    label_arguments = [value for key, value in {**expected_labels(policy, agent), **operation_labels}.items() for value in ('--label', f'{key}={value}')]
     profile_arguments = ['--mount', f'type=volume,source={agent["container_name"]}-provider-profiles,destination={placement["profile_root"]}'] \
         if placement.get('profile_root') else []
     bind_arguments = [value for destination, source in (runtime_mounts(policy, agent) if binds is None else binds).items()
@@ -135,7 +139,7 @@ def create_container(policy: dict, agent: dict, binds: dict | None = None) -> di
     return created
 
 
-def ensure_container(policy: dict, agent: dict) -> dict:
+def ensure_container(policy: dict, agent: dict, operation_id: str | None = None) -> dict:
     placement = agent['_placement']
     if not isinstance(placement.get('image'), str) or re.fullmatch(r'sha256:[0-9a-f]{64}', placement['image']) is None:
         raise SafeFailure('container image must be approved by its exact digest')
@@ -147,7 +151,7 @@ def ensure_container(policy: dict, agent: dict) -> dict:
         return observed
     observed = observe_container(policy, agent)
     if observed is None:
-        observed = create_container(policy, agent)
+        observed = create_container(policy, agent, operation_id=operation_id)
     validate_container(policy, agent, observed)
     if not observed['State']['Running']:
         docker('start', observed['Id'])
@@ -207,7 +211,7 @@ def start_container(policy: dict, raw_agent: dict, *, bootstrap: bool = True, op
         from fleet_executor_legacy import assert_shared_start
         assert_shared_start(policy, agent)
     bundle = approved_bundle(policy, agent)
-    observed = ensure_container(policy, agent)
+    observed = ensure_container(policy, agent, operation_id)
     identity = identity_for(agent, observed)
     uid, gid = user_identity(agent, identity)
     try:
@@ -279,12 +283,25 @@ def purge_container(policy: dict, raw_agent: dict):
     if observed is not None:
         validate_container(policy, agent, observed)
         docker('rm', '-f', observed['Id'])
-    volume = agent['container_name'] + '-state'
-    volumes = docker('volume', 'ls', '--format', '{{.Name}}').decode().splitlines()
-    if volume in volumes:
-        labels = json.loads(docker('volume', 'inspect', volume))[0].get('Labels') or {}
-        if not all(labels.get(key) == value for key, value in expected_labels(policy, agent).items()):
-            raise SafeFailure('runtime volume belongs to another owner')
-        docker('volume', 'rm', volume)
+    existing = docker('volume', 'ls', '--format', '{{.Name}}').decode().splitlines()
+    for volume in owned_volumes(policy, agent)[0]:
+        if volume in existing:
+            docker('volume', 'rm', volume)
     if inspect_container(agent['container_name']) is not None:
         raise SafeFailure('container removal was not observed')
+
+
+def discard_operation(policy: dict, raw_agent: dict, operation_id: str) -> None:
+    """Remove only the container and volumes this operation created (labelled with its id and the agent owner labels)."""
+    agent = approve_agent(policy, raw_agent)
+    if agent['_placement'].get('ownership') == 'shared':
+        return
+    labels = {**expected_labels(policy, agent), OPERATION_LABEL: operation_id}
+    observed = inspect_container(agent['container_name'])
+    if observed is not None and all((observed['Config'].get('Labels') or {}).get(key) == value for key, value in labels.items()):
+        docker('rm', '-f', observed['Id'])
+    existing = docker('volume', 'ls', '--format', '{{.Name}}').decode().splitlines()
+    for name in (agent['container_name'] + '-state', agent['container_name'] + '-provider-profiles'):
+        if name in existing and all((json.loads(docker('volume', 'inspect', name))[0].get('Labels') or {}).get(key) == value
+                                    for key, value in labels.items()):
+            docker('volume', 'rm', name)

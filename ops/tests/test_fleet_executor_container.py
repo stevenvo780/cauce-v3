@@ -30,7 +30,7 @@ class DisposableContainerExecutorTest(unittest.TestCase):
     def tearDown(self):
         if getattr(self, 'container', None):
             subprocess.run(['docker', 'rm', '-f', self.container], capture_output=True)
-            subprocess.run(['docker', 'volume', 'rm', self.container + '-state'], capture_output=True)
+            subprocess.run(['docker', 'volume', 'rm', self.container + '-state', self.container + '-provider-profiles'], capture_output=True)
         self.temporary.cleanup()
 
     def configure_container(self):
@@ -112,6 +112,40 @@ class DisposableContainerExecutorTest(unittest.TestCase):
         still = json.loads(subprocess.run(['docker', 'inspect', self.container], capture_output=True, text=True, check=True).stdout)[0]
         self.assertEqual(still['Id'], original)
         self.assertTrue(still['State']['Running'])
+
+    def volumes(self):
+        return subprocess.run(['docker', 'volume', 'ls', '-q', '--filter', 'name=' + self.container], capture_output=True, text=True).stdout.split()
+
+    def containers(self):
+        return subprocess.run(['docker', 'ps', '-aq', '--filter', 'name=' + self.container], capture_output=True, text=True).stdout.split()
+
+    def operation_fixture(self):
+        self.configure_container()
+        sys.path.insert(0, str(fixtures.OPS / 'cli'))
+        import fleet_executor_container as module
+        from fleet_executor_policy import approve_agent, load_policy
+        policy = load_policy(self.policy_file)
+        self.agent = approve_agent(policy, self.agent)
+        return module, policy
+
+    def test_failed_create_is_compensated_to_zero_containers_and_volumes(self):
+        module, policy = self.operation_fixture()
+        operation = str(uuid.uuid4())
+        with self.assertRaises(Exception):
+            module.create_container(policy, self.agent, {'/cauce/missing': '/nonexistent/zz-canary'}, operation_id=operation)
+        self.assertEqual(self.volumes(), [self.container + '-state'])
+        module.discard_operation(policy, self.agent, str(uuid.uuid4()))
+        self.assertEqual(self.volumes(), [self.container + '-state'])
+        module.discard_operation(policy, self.agent, operation)
+        self.assertEqual((self.containers(), self.volumes()), ([], []))
+
+    def test_compensation_removes_created_container_but_never_another_operations_resources(self):
+        module, policy = self.operation_fixture()
+        module.create_container(policy, self.agent, operation_id='op-one')
+        module.discard_operation(policy, self.agent, 'op-two')
+        self.assertEqual((len(self.containers()), self.volumes()), (1, [self.container + '-state']))
+        module.discard_operation(policy, self.agent, 'op-one')
+        self.assertEqual((self.containers(), self.volumes()), ([], []))
 
 
 if __name__ == '__main__':

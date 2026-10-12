@@ -328,7 +328,7 @@ class ContainerTemplateProfileTest(unittest.TestCase):
         self.assertIn(b'HOME=/nonexistent\0', env)
         self.assertNotIn(b'CAUCE_CONFIG_FILE=', env)
 
-    def test_purge_removes_runtime_but_retains_provider_volume_bytes(self):
+    def test_purge_removes_runtime_and_provider_volume_after_revocation(self):
         self.dynamic_container()
         self.prepare_runtime()
         marker = self.profile + '/provider-session.fixture'
@@ -338,15 +338,8 @@ class ContainerTemplateProfileTest(unittest.TestCase):
         from fleet_executor_container import purge_container
         from fleet_executor_policy import load_policy
         purge_container(load_policy(self.policy_file), self.agent)
-        volume = self.container + '-provider-profiles'
-        self.assertEqual(subprocess.run(['docker', 'volume', 'inspect', volume], capture_output=True).returncode, 0)
-        result = subprocess.run(['docker', 'run', '--rm', '--network', 'none', '--user', '65534:65534', '--name',
-            'cauce-fleet-fixture-read-' + uuid.uuid4().hex[:10], '--mount', 'type=volume,source=' + volume + ',destination=/profiles',
-            self.image, '/usr/local/bin/python3.12', '-c', 'import hashlib,pathlib;print(hashlib.sha256(pathlib.Path(' +
-            repr('/profiles/' + self.key + '/' + hashlib.sha256(b'new-account').hexdigest() + '/provider-session.fixture') + ').read_bytes()).hexdigest())'],
-            capture_output=True, text=True, timeout=10)
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout.strip(), hashlib.sha256(b'PRIVATE_SESSION_FIXTURE').hexdigest())
+        for volume in (self.container + '-state', self.container + '-provider-profiles'):
+            self.assertNotEqual(subprocess.run(['docker', 'volume', 'inspect', volume], capture_output=True).returncode, 0)
 
     def test_name_outside_template_is_not_created(self):
         self.dynamic_container()
