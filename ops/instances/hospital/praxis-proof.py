@@ -335,6 +335,11 @@ def install_evidence(workspace, output, prefix, proof, env):
         os.close(lock)
 
 
+def interpreter_invocation():
+    """Record the interpreter flags this producer really ran with (-I is required from the trusted runtime)."""
+    return [sys.executable, *(["-I"] if sys.flags.isolated else []), "-B", str(Path(__file__).resolve())]
+
+
 def generate(args, invocation):
     workspace = args.workspace.resolve()
     output = args.output.resolve()
@@ -476,7 +481,7 @@ def main(argv=None):
     parser.add_argument("--qa", action="store_true")
     parser.add_argument("--install-evidence", action="store_true")
     args = parser.parse_args(argv)
-    invocation = shlex.join([sys.executable, "-B", str(Path(__file__).resolve()), *(argv if argv is not None else sys.argv[1:])])
+    invocation = shlex.join([*interpreter_invocation(), *(argv if argv is not None else sys.argv[1:])])
     try:
         return generate(args, invocation)
     except (ProofError, OSError, ValueError) as error:

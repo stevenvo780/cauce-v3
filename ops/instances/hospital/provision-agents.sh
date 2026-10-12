@@ -18,6 +18,15 @@ PKI_ROOT=$INSTANCE_ETC/container-pki
 LOCK_ROOT=/run/lock/hospital-cauce
 RELAY_URL=wss://172.17.0.1:18443/v3/ws
 ALIASES=(operador teseo perseo)
+RUNTIME_GUARD=$REPO/ops/instances/hospital/operator-runtime-guard.py
+# El fallback Muse del operador corre con el uid del operador dentro de su contenedor (PKI mTLS, ~/.openclaw,
+# socket de hospital-ops, CDP): en V4 queda apagado salvo opt-in explícito. Ver docs/v4-migracion-plan.md §4.
+OPERATOR_MUSE_FALLBACK=${CAUCE_HOSPITAL_OPERATOR_MUSE_FALLBACK:-0}
+case "$OPERATOR_MUSE_FALLBACK" in
+  0) ;;
+  1) echo "AVISO: CAUCE_HOSPITAL_OPERATOR_MUSE_FALLBACK=1: Muse corre dentro del contenedor del operador con acceso a su PKI" >&2 ;;
+  *) echo "CAUCE_HOSPITAL_OPERATOR_MUSE_FALLBACK debe ser 0 o 1" >&2; exit 1 ;;
+esac
 
 for command in docker openssl python3 systemctl flock git; do
   command -v "$command" >/dev/null || { echo "Falta $command" >&2; exit 1; }
@@ -57,6 +66,9 @@ registered=$(docker exec hospital-cauce-postgres-1 psql -XAtq -U cauce_hospital 
   || { echo "El registro Hospital todavía no coincide con la topología Muse; abortando antes de cambiar configs" >&2; exit 1; }
 install -o 1000 -g 1000 -m 0755 "$REPO/ops/instances/hospital/muse-pinned-launcher.sh" \
   /opt/hospital-agent/runtime/muse-code-bin/muse
+# Lo que el operador ejecuta para producir evidencia (y el backend Muse) vive root:root fuera del workspace
+# y entra al contenedor por un bind de solo lectura en /opt/cauce-hospital/runtime.
+python3 -I "$RUNTIME_GUARD" install --source "$REPO/ops/instances/hospital"
 install -d -m 0700 "$BUNDLE_ROOT" "$BUNDLE_ROOT/releases" "$CONFIG_ROOT" "$PKI_ROOT" "$LOCK_ROOT"
 temporary=
 image_container=
@@ -140,6 +152,10 @@ for alias in "${ALIASES[@]}"; do
   docker exec -u 1000:1000 "$container" sh -eu -c \
     'test -w /home/node/clawd && test -w /home/node/clawd/AGENTS.md && test -x /usr/local/bin/node'
 done
+# Montaje :ro con RW=false, ningún .py ni directorio escribible por 1000:1000, mismos bytes que en el host
+# y, con el fallback apagado, sin muse-cli en la config ni Muse en el contenedor del operador.
+python3 -I "$RUNTIME_GUARD" verify --container "$(container_for operador)" \
+  --muse-fallback "$OPERATOR_MUSE_FALLBACK"
 
 runtime_image=$(env_value "$ENV_FILE" CAUCE_RUNTIME_IMAGE)
 [[ "$runtime_image" =~ @sha256:[a-f0-9]{64}$ ]] \

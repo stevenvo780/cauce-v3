@@ -6,6 +6,32 @@ import plugin from "../instances/hospital/openclaw-muse-native/index.js";
 const pluginDirectory = new URL("../instances/hospital/openclaw-muse-native/", import.meta.url);
 const manifest = JSON.parse(await readFile(new URL("openclaw.plugin.json", pluginDirectory), "utf8"));
 const packageManifest = JSON.parse(await readFile(new URL("package.json", pluginDirectory), "utf8"));
+const FLAG = "CAUCE_HOSPITAL_OPERATOR_MUSE_FALLBACK";
+
+function withFlag(value, action) {
+  const previous = process.env[FLAG];
+  if (value === undefined) delete process.env[FLAG];
+  else process.env[FLAG] = value;
+  try {
+    return action();
+  } finally {
+    if (previous === undefined) delete process.env[FLAG];
+    else process.env[FLAG] = previous;
+  }
+}
+
+function registrationsWith(value) {
+  const accessedProperties = [];
+  const registrations = [];
+  const api = new Proxy({}, {
+    get(_target, property) {
+      accessedProperties.push(property);
+      return descriptor => registrations.push(descriptor);
+    },
+  });
+  withFlag(value, () => plugin.register(api));
+  return { accessedProperties, registrations };
+}
 
 function registeredBackend() {
   const registrations = [];
@@ -15,7 +41,7 @@ function registeredBackend() {
       return descriptor => registrations.push(descriptor);
     },
   });
-  plugin.register(api);
+  withFlag("1", () => plugin.register(api));
   assert.equal(registrations.length, 1);
   return registrations[0];
 }
@@ -57,10 +83,22 @@ test("native compaction ownership belongs to the descriptor rather than CLI conf
   assert.equal(Object.hasOwn(backend.config, "ownsNativeCompaction"), false);
 });
 
-test("the registered command retains the pinned Muse wrapper path", () => {
+test("the operator Muse fallback stays unregistered unless the container opts in with exactly 1", () => {
+  for (const value of [undefined, "", "0", "true", "yes", "1 ", " 1", "01"]) {
+    const { accessedProperties, registrations } = registrationsWith(value);
+    assert.deepEqual(registrations, [], `flag ${JSON.stringify(value)} must not register muse-cli`);
+    assert.deepEqual(accessedProperties, [], `flag ${JSON.stringify(value)} must not touch the plugin API`);
+  }
+  const enabled = registrationsWith("1");
+  assert.deepEqual(enabled.accessedProperties, ["registerCliBackend"]);
+  assert.equal(enabled.registrations.length, 1);
+});
+
+test("the registered command runs the trusted read-only backend in isolated Python mode", () => {
   const { config } = registeredBackend();
   assert.equal(config.command, "/usr/bin/python3");
-  assert.deepEqual(config.args, ["/home/node/clawd/.cauce/runtime/muse-cli-backend.py"]);
+  assert.deepEqual(config.args, ["-I", "-B", "/opt/cauce-hospital/runtime/muse-cli-backend.py"]);
+  assert.ok(config.args.every(argument => !argument.startsWith("/home/")), "no argument may live in the agent home");
 });
 
 test("the backend preserves JSONL streams and reuses existing session identities", () => {
@@ -92,6 +130,6 @@ test("an unavailable CLI backend API fails without falling back to a model or pr
       return undefined;
     },
   });
-  assert.throws(() => plugin.register(api), TypeError);
+  assert.throws(() => withFlag("1", () => plugin.register(api)), TypeError);
   assert.deepEqual(accessedProperties, ["registerCliBackend"]);
 });

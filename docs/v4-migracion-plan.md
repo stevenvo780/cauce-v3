@@ -129,7 +129,7 @@ Host: 8 núcleos, 22,9 GiB de RAM (**18,4 GiB disponibles**), sin swap, 172 GB l
 
 | Componente | Contenedor e imagen | Memoria | Capa / datos | Modelo y cuenta |
 |---|---|---|---|---|
-| **operador** (alias Cauce) | `hospital-agent-openclaw-operator-gateway-1`, `hospital-openclaw-builder:ef87f685` (362 MB, openclaw 2026.7.1-2) | 873 MiB | capa 985 MB; `state-operator` 165 MB, `operator-workspace` 382 MB, `state-muse-operator` 208 MB, `operator-ops` 12 MB, `operator-admin-jobs` 18 MB | `xai/grok-4.7` `xhigh`, fallback `muse-cli/muse-spark-1.3`; API de xAI; bot de Telegram; plugins `browser`, `hospital-ops`, `hospital-muse-native` |
+| **operador** (alias Cauce) | `hospital-agent-openclaw-operator-gateway-1`, `hospital-openclaw-builder:ef87f685` (362 MB, openclaw 2026.7.1-2) | 873 MiB | capa 985 MB; `state-operator` 165 MB, `operator-workspace` 382 MB, `state-muse-operator` 208 MB, `operator-ops` 12 MB, `operator-admin-jobs` 18 MB | `xai/grok-4.7` `xhigh`, fallback `muse-cli/muse-spark-1.3` (en V4 apagado: ver «Aislamiento» abajo); API de xAI; bot de Telegram; plugins `browser`, `hospital-ops`, `hospital-muse-native` |
 | **perseo** (muse frontend) | `hospital-agent-muse-frontend-1`, `hospital-openclaw-builder:8ef92b3a` (362 MB) | 280 MiB | capa 1,15 GB; `state-muse-frontend` 1,02 GB | login Meta en `~/.muse/config/muse` |
 | **teseo** (muse backend) | `hospital-agent-muse-backend-1`, misma imagen | 441 MiB | capa 552 MB; `state-muse-backend` 937 MB | login Meta |
 | ventas/atención (sin alias Cauce) | `hospital-agent-openclaw-sales-gateway-1`, `ghcr.io/openclaw/openclaw:2026.7.1-2` | 362 MiB | `state-sales` 142 MB | `xai/grok-4.6`; **canal WhatsApp**; plugin `hospital-crm` |
@@ -140,6 +140,65 @@ Host: 8 núcleos, 22,9 GiB de RAM (**18,4 GiB disponibles**), sin swap, 172 GB l
 - **Servicios de host (root)**: `cauce-v3-container-{operador,perseo,teseo}.service` (supervisor del checkout), `hospital-access.service` (custodia del acceso del director, montado en `/run/hospital-access/{perseo,teseo}`), `hospital-operator-ops.service` (broker tipado por socket), `praxis-preview.service` (`127.0.0.1:8077`), `hospital-agent-repair.timer` y **Caddy** (80, 443 y 8443: el sitio del CRM y la vista previa de Praxis, lo «publicado» que irá a otra infraestructura).
 - **Pila Cauce V3 del hospital** (`hospital-cauce-*`: consola, gateway, dispatcher, PG, telegram-bridge, prometheus, otel, registry): ~0,45 GiB. Se retira al importar Praxis en la V4 central. Las pilas de prueba `hospital-readiness-step0-*` y `ops-*` (`cauce-v3-test-runtime:local`, ~0,47 GiB) no se migran.
 - Agentes y servicios de Praxis suman **~2,5 GiB** de RAM medida.
+
+### Aislamiento del runtime y del fallback Muse del operador (requisito V4)
+
+**Runtime confiable.** Lo que el operador ejecuta para producir evidencia de supervisión (`praxis-proof.py`, `praxis-qa-review.py`) y el backend del fallback Muse (`muse-cli-backend.py` y su plugin `openclaw-muse-native/`) ya no viven en `/home/node/clawd/.cauce/runtime`, que el agente (uid 1000) puede reescribir, sino en **`/opt/cauce-hospital/runtime`** del host: `root:root`, directorios `0755`, ficheros `0644`. Lo instala `provision-agents.sh` con `ops/instances/hospital/operator-runtime-guard.py install`, que reemplaza cada fichero dentro del directorio (nunca el directorio: el bind fija su inodo), borra todo lo demás (`__pycache__`, `json.py` o `usercustomize.py` plantados, enlaces) y rechaza ancestros que no sean de root o que otros puedan escribir. Se invoca siempre en modo aislado: `/usr/bin/python3 -I -B /opt/cauce-hospital/runtime/muse-cli-backend.py` (plugin) y `/opt/praxis-qa-venv/bin/python -I -B /opt/cauce-hospital/runtime/praxis-{proof,qa-review}.py` (raíces del supervisor y `project-profile.json`). `-I` ignora `PYTHON*`, el *site* de usuario y el directorio del script; `-B` no escribe `.pyc`.
+
+El compose de `hospital-agent` **no está en este repo** (vive en `/opt/hospital-agent` del host del hospital y sus imágenes salen de `0790d9f5`, que tampoco está aquí). Montaje exacto que hay que añadir al servicio del operador (contenedor `hospital-agent-openclaw-operator-gateway-1`, servicio `openclaw-operator-gateway` del proyecto `hospital-agent`) y recrearlo con `docker compose up -d openclaw-operator-gateway`:
+
+```yaml
+services:
+  openclaw-operator-gateway:
+    volumes:
+      - type: bind
+        source: /opt/cauce-hospital/runtime
+        target: /opt/cauce-hospital/runtime
+        read_only: true
+```
+
+Comprobación (`operator-runtime-guard.py verify`, que `provision-agents.sh` corre antes de tocar bundles y aborta si falla): `docker inspect` muestra un único montaje en ese destino, `Type=bind`, `Source=/opt/cauce-hospital/runtime` y `RW=false`, sin otro montaje por debajo; `docker exec -u 1000:1000` ve cada directorio y cada `.py` legible y **no** escribible; y `sha256sum` dentro del contenedor da los mismos bytes que en el host. A mano:
+
+```sh
+docker inspect --format '{{range .Mounts}}{{if eq .Destination "/opt/cauce-hospital/runtime"}}{{.Type}} {{.Source}} RW={{.RW}}{{end}}{{end}}' \
+  hospital-agent-openclaw-operator-gateway-1          # → bind /opt/cauce-hospital/runtime RW=false
+docker exec -u 1000:1000 hospital-agent-openclaw-operator-gateway-1 sh -c \
+  'for p in /opt/cauce-hospital/runtime /opt/cauce-hospital/runtime/*.py; do test -w "$p" && echo "ESCRIBIBLE $p"; done; true'
+                                                      # → sin salida
+```
+
+**Fallback Muse del operador: apagado en V4.** Hoy la cadena `xai/grok-4.7` → `muse-cli/muse-spark-1.3` está en el `~/.openclaw/openclaw.json` del operador (`state-operator`, estado del agente, fuera del repo) y la sirve el plugin `hospital-muse-native`. Ese fallback corre con el uid 1000 dentro del contenedor del operador: Muse con `--yolo` puede leer el `client.key` mTLS del operador (rol director, `hospital_ops`/`vps_exec`), `openclaw-token`, las credenciales de Telegram y xAI de `~/.openclaw`, y usar el socket de hospital-ops y el CDP del navegador. Por eso:
+
+- `CAUCE_HOSPITAL_OPERATOR_MUSE_FALLBACK` (de `provision-agents.sh`) vale **`0` por defecto**; solo `0` o `1`. El plugin no registra `muse-cli` salvo que el entorno del contenedor tenga exactamente `CAUCE_HOSPITAL_OPERATOR_MUSE_FALLBACK=1`.
+- Con `0`, el aprovisionamiento falla si la config del operador menciona `muse-cli` o `hospital-muse-native`, si existe `~/.openclaw/extensions/hospital-muse-native`, si el contenedor trae el opt-in en su entorno o si tiene Muse (montajes en `/home/node/.muse` u `/opt/muse-code`, o los ficheros `/home/node/.muse/config` y `/opt/muse-code/muse`). Antes del corte: quitar el fallback de `agents.defaults.model.fallbacks`, la entrada y la extensión del plugin, y los montajes `state-muse-operator` y `muse-code-bin` del servicio del operador.
+- Con `1` (solo transitorio, con el riesgo de arriba aceptado por el dueño): el contenedor lleva el opt-in en su entorno, el plugin se carga por ruta desde `/opt/cauce-hospital/runtime/openclaw-muse-native` (nunca copiado a `~/.openclaw/extensions`, que es escribible) y la config tiene que referenciar esa ruta.
+
+**Destino en los servidores locales: contenedor propio.** Al migrar Praxis, el fallback Muse del operador va en su propio contenedor, como teseo y perseo, sin el PKI del operador ni `~/.openclaw`. Requisitos: uid `1000:1000`, raíz de solo lectura, `cap_drop: [ALL]`, `no-new-privileges`, `/tmp` en tmpfs (`noexec,nosuid,nodev`, 64 MiB) y una red propia con salida solo a la API de Meta, fuera de las redes `hospital-agent_*` del navegador, el `cdp-proxy`, hospital-ops y el CRM. Montajes permitidos (lista cerrada):
+
+| Destino | Origen | Modo |
+|---|---|---|
+| `/opt/cauce-hospital/runtime` | `/opt/cauce-hospital/runtime` | `ro` |
+| `/opt/muse-code` | `/opt/hospital-agent/runtime/muse-code-bin` (lanzador fijado) | `ro` |
+| `/home/node/.muse` | `state-muse-operador`: login Muse propio, no compartido con teseo ni perseo | `rw` |
+| `/home/node/clawd` | workspace propio del fallback, con el repo de Praxis (`/opt/hospital-agent/runtime/praxis/operator`) como subdirectorio | `rw` |
+| `/run/muse-fallback` | directorio del socket del puente | `rw` (solo el socket) |
+
+Prohibidos, entre otros: `/opt/cauce-v3-secrets` y `/etc/cauce-v3-hospital` (PKI y `openclaw-token`), `state-operator` (`/home/node/.openclaw`), `operator-ops`, `operator-admin-jobs`, `/run/hospital-access`, el socket de hospital-ops, el CDP, `/var/run/docker.sock` y los estados de teseo y perseo. El repo de Praxis es la única superficie compartida con el operador: sus hooks y su config de Git se tratan como no confiables (el supervisor ya usa `--no-optional-locks` y `core.fsmonitor=false`). El backend de OpenClaw ejecuta un comando local, así que el operador llega al contenedor solo por un socket Unix de propósito único con el mismo contrato que `muse-cli-backend.py` (prompt por stdin, `--system-prompt`, `--session-id`, JSONL de salida). **Ese puente está por construir; hasta entonces el fallback sigue en `0`.** Comprobación en el host de destino antes de activarlo:
+
+```sh
+docker inspect --format '{{range .Mounts}}{{.Destination}} RW={{.RW}}{{"\n"}}{{end}}' praxis-muse-operador | sort
+# → exactamente las cinco filas de la tabla, con RW=false en las dos primeras
+docker inspect --format '{{range $red, $_ := .NetworkSettings.Networks}}{{$red}} {{end}}' praxis-muse-operador
+# → solo su red propia
+docker exec -u 1000:1000 praxis-muse-operador sh -c \
+  'test ! -e /opt/cauce-v3-secrets && test ! -e /home/node/.openclaw && test ! -e /var/run/docker.sock \
+   && ! test -w /opt/cauce-hospital/runtime && ! test -w /opt/cauce-hospital/runtime/muse-cli-backend.py && echo aislado'
+# → aislado
+```
+
+**Temporales.** El backend escribe el prompt (`0600`) en `$TMPDIR/muse-openclaw-*` y lo borra al salir. Si lo matan con `SIGKILL`, el siguiente arranque barre los directorios propios con más de `TIMEOUT_SECONDS` + 300 s (45 min), sin seguir enlaces ni tocar los de otro uid. En el contenedor propio, `/tmp` es tmpfs y no sobrevive a un reinicio.
+
+**Retención de `~/.muse/data`.** Es el `XDG_DATA_HOME` de Muse: sesiones y transcripciones, que incluyen las instrucciones de sistema del operador y contenido sintético de Praxis (nunca datos clínicos reales: la raíz lo prohíbe). Política: vive solo en el montaje de estado de su contenedor (nunca en el workspace ni en Git); las sesiones sin actividad en 30 días se purgan por sesión con Muse detenido (una sesión purgada ya no se puede reanudar); entra en la copia cifrada del host con la retención de las copias; y al retirar el fallback se borra junto con su login de Muse. Vale igual para `state-muse-backend` y `state-muse-frontend`. La purga automática (timer) está pendiente.
 
 ## 5. Propuesta de ubicación
 

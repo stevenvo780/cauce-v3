@@ -46,7 +46,7 @@ ROOT_TEXT = (
     "next_work orienta; no obliga a repetir ni reemplaza elegir ingeniería independiente. "
     "Gobernanza se registra en paralelo, no sustituye código probado. "
     "Después de integrar y commitear el código canónico, el operador consulta --help "
-    "y ejecuta /opt/praxis-qa-venv/bin/python -B /home/node/clawd/.cauce/runtime/praxis-proof.py "
+    "y ejecuta /opt/praxis-qa-venv/bin/python -I -B /opt/cauce-hospital/runtime/praxis-proof.py "
     "con --workspace, --output, --artifact-prefix y --install-evidence, y --qa cuando "
     "corresponda; luego revisa imágenes independientes y sus hashes. Los developers "
     "pueden usar Python estándar para unidades sin navegador. Usá ese productor "
