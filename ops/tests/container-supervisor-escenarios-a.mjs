@@ -42,6 +42,11 @@ export async function escenariosA(ctx) {
   }
   assert(calls.some(({ argv }) => argv.includes("prepare-control") && argv.includes("/run/cauce-v3-supervisor")));
   assert(calls.some(({ argv }) => argv.includes("prepare-state") && argv.includes(aliasState.atlas)));
+  const spaceCall = calls.find(({ argv }) => argv.includes("/bin/sh") && argv.includes(`${aliasState.atlas}/space/tmp`));
+  assert(spaceCall, "the space layout must be prepared before the adapter starts");
+  for (const directory of ["context", "directives", "projects", "config", "data", "logs", "tmp"]) {
+    assert(spaceCall.argv.includes(`${aliasState.atlas}/space/${directory}`), `space/${directory} must be ensured`);
+  }
   assert(calls.some(({ argv }) => argv.includes("bundle-digest") && argv.includes("/opt/cauce-v3-adapter/atlas/releases/release-1")));
   const stopIndex = calls.findIndex(({ argv }) => argv.includes("stop") && argv.includes("--container-id"));
   const bundleCopyIndex = calls.findIndex(({ argv }) => argv[0] === "cp" && argv[1] === `${release}/.`);
@@ -53,6 +58,9 @@ export async function escenariosA(ctx) {
   assert(stopUserIdx >= 0 && stopCall.argv[stopUserIdx + 1] === "0", "stop must run as root");
   const final = calls.find(({ argv }) => argv[0] === "exec" && argv.includes("/usr/bin/env") && argv.includes("CAUCE_ALIAS=atlas"));
   assert(final?.argv.includes("CAUCE_INSTANCE_ID=systemd-container-atlas"));
+  assert(final?.argv.includes(`CAUCE_SPACE_ROOT=${aliasState.atlas}/space`), "the legacy supervisor must export CAUCE_SPACE_ROOT");
+  assert(final?.argv.includes(`TMPDIR=${aliasState.atlas}/space/tmp`));
+  assert(final?.argv.some((value) => value.startsWith("CAUCE_AGENT_WORKSPACE=")));
   assert(final?.argv.includes(`CAUCE_CONTAINER_ID=${firstId}`));
   assert(final?.argv.some((value) => value.startsWith("CAUCE_CONTAINER_GENERATION=")));
   assert.equal(final?.argv.some((value) => value.startsWith("CAUCE_TOKEN_FILE=")), false,

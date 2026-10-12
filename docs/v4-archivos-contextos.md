@@ -27,6 +27,14 @@ space/
 
 `prepareSpaceLayout` exige raíz absoluta canónica, directorios reales sin escape por symlinks y creación privada `0700`. Un archivo de propósito desconocido no se elimina por no encajar visualmente en la estructura. La normalización de espacios existentes requiere inventario, consumidores/rutas, copia recuperable y comparación de contenido antes/después.
 
+### Layout por agente en el supervisor legacy
+
+El supervisor de contenedores (`ops/scripts/container-adapter-supervisor.sh`, lanzado por las unidades rootless) deriva `CAUCE_SPACE_ROOT=<state_directory>/space` igual que el executor V4, crea los siete directorios (`0700`, como el usuario de ejecución y rechazando symlinks) antes de arrancar el adaptador y exporta `TMPDIR=<space>/tmp`, que es el productor real de `tmp/`. Sin workspace declarado en el inventario, `CAUCE_AGENT_WORKSPACE` (cwd del arnés) es `space/projects`.
+
+Un workspace declarado fuera del espacio (`/workspace` compartido de Hegel, el de Argos, `clawd` legado) sigue siendo el cwd hasta su migración y se registra como montaje externo en `config/external-mounts.json`, con `excluded_from_copy` y el motivo. `MUSE_WORKSPACE` es opcional: sin él, Muse usa `CAUCE_AGENT_WORKSPACE`.
+
+`logs/` no tiene todavía un productor propio: el log del adaptador va al journal de la unidad (acotado por la configuración de journald), no a `space/logs`. Un log acotado y rotado dentro del espacio requiere un cambio en el SDK o en el helper de ejecución.
+
 No se guardan credenciales en estas raíces versionables. La sesión del proveedor permanece en su perfil autorizado, con el usuario de ejecución correspondiente. Los backups excluyen rutas y contenido sensible conocido; no ofrecen un detector universal de secretos incrustados en proyectos o datos.
 
 ## Fuente durable y estados

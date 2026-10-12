@@ -129,6 +129,7 @@ IFS=$'\t' read -r tenant room container_name container_user container_home state
   || die 'container alias mapping returned invalid fields'
 valid_absolute_path "$container_home" || die 'mapped container home is invalid'
 valid_absolute_path "$state_directory" || die 'mapped state directory is invalid'
+space_root=$state_directory/space
 
 physical_alias_count=${inventory_policy[1]}
 inventory_workspace=${inventory_policy[2]}
@@ -359,8 +360,10 @@ validate_container_identity_and_mount() {
     # per-cwd sessions that --resume reads: losing it on a recreate logs out and forks threads.
     runtime_paths+=("$container_home/.grok")
   elif [[ $harness == muse && -n $inventory_workspace ]]; then
-    # Workspace agent: its isolated profile, data and workspace, plus the pinned executable.
-    runtime_paths+=("${CONFIG[MUSE_CONFIG_HOME]}" "${CONFIG[MUSE_DATA_HOME]}" "${CONFIG[MUSE_WORKSPACE]}")
+    # Workspace agent: its isolated profile and data, plus the pinned executable. A fixed MUSE_WORKSPACE is
+    # optional: without it the cwd is CAUCE_AGENT_WORKSPACE.
+    runtime_paths+=("${CONFIG[MUSE_CONFIG_HOME]}" "${CONFIG[MUSE_DATA_HOME]}")
+    [[ ! -v CONFIG[MUSE_WORKSPACE] ]] || runtime_paths+=("${CONFIG[MUSE_WORKSPACE]}")
     docker_id_exec --user "$container_user" test -x "${CONFIG[MUSE_EXECUTABLE]}" >/dev/null 2>&1 || die 'Muse executable is missing inside the assigned container'
   elif [[ $harness == muse ]]; then
     # The alias's Muse folder holds its login (.config/muse, linked from ~/.config/muse) and, with
@@ -437,6 +440,34 @@ prepare_state_securely() {
   # helper creates every state component below it with O_NOFOLLOW and the runtime UID/GID.
   docker_id_mutate --user 0 /usr/bin/python3 "$control_helper" prepare-state \
     --mount "$discovered_mount_destination" --state "$state_directory" --uid "$container_uid" --gid "$container_gid"
+}
+
+prepare_space_layout() {
+  # The seven standard directories must exist before the adapter starts, as the runtime user and without
+  # following symlinks: a pre-planted link would redirect space data outside the state directory.
+  # shellcheck disable=SC2016
+  docker_id_mutate --user "$container_user" /bin/sh -c '
+    set -eu; umask 077
+    for entry in "$@"; do
+      [ ! -L "$entry" ] || { echo "space path is a symlink: $entry" >&2; exit 78; }
+      [ -d "$entry" ] || mkdir -m 700 "$entry"
+    done
+  ' sh "$space_root" "$space_root"/context "$space_root"/directives "$space_root"/projects "$space_root"/config \
+    "$space_root"/data "$space_root"/logs "$space_root"/tmp \
+    || die "cannot prepare the standard space layout for $alias_name" 78
+}
+
+declare_external_workspace() {
+  # A workspace outside space/ (shared /workspace, legacy clawd) is an external mount: it stays the harness cwd
+  # until it is migrated, and space copies must exclude it with this reason instead of silently omitting it.
+  # shellcheck disable=SC2016
+  docker_id_mutate --user "$container_user" /bin/sh -c '
+    set -eu; umask 077
+    target=$1/config/external-mounts.json
+    [ ! -L "$target" ] || exit 78
+    printf "{\"mounts\":[{\"path\":\"%s\",\"excluded_from_copy\":true,\"reason\":\"external workspace outside the space; not copied until migrated to projects\"}]}\n" "$2" > "$target.tmp"
+    mv -f "$target.tmp" "$target"
+  ' sh "$space_root" "$1" || die "cannot declare the external workspace mount for $alias_name" 78
 }
 
 ensure_claude_binary() {
@@ -649,6 +680,7 @@ start_adapter() {
   copy_control_helper
   prepare_control_securely
   prepare_state_securely
+  prepare_space_layout
   stop_existing
   deploy_bundle
   deploy_pki
@@ -665,6 +697,7 @@ start_adapter() {
     "CAUCE_ALIAS=$wire_alias" "CAUCE_RUNTIME_KEY=$alias_name" "CAUCE_TENANT_ID=$tenant"
     "CAUCE_INSTANCE_ID=systemd-container-$alias_name" "CAUCE_STATE_DIR=$state_directory"
     "CAUCE_CONTROL_DIR=$control_dir"
+    "CAUCE_SPACE_ROOT=$space_root" "TMPDIR=$space_root/tmp"
     "CAUCE_ADOPTION_LIFECYCLE_FENCE=${CAUCE_ADOPTION_LIFECYCLE_FENCE:-0}"
     "CAUCE_CONTAINER_ID=$container_id" "CAUCE_CONTAINER_GENERATION=$container_generation"
     "CAUCE_CONTAINER_PRESENCE_GENERATION=$container_presence_generation"
@@ -727,7 +760,12 @@ start_adapter() {
     MUSE_EXECUTABLE MUSE_CONFIG_HOME MUSE_DATA_HOME MUSE_WORKSPACE MUSE_APPROVAL_MODE MUSE_MODEL MUSE_REASONING_EFFORT MUSE_YOLO; do
     [[ ! -v "CONFIG[$key]" ]] || environment+=("CAUCE_$key=${CONFIG[$key]}")
   done
-  [[ -z $inventory_workspace ]] || environment+=("CAUCE_AGENT_WORKSPACE=$inventory_workspace")
+  if [[ -n $inventory_workspace ]]; then
+    environment+=("CAUCE_AGENT_WORKSPACE=$inventory_workspace")
+    [[ $inventory_workspace == "$space_root"/* ]] || declare_external_workspace "$inventory_workspace"
+  else
+    environment+=("CAUCE_AGENT_WORKSPACE=$space_root/projects")
+  fi
   assert_generation
   # The lifecycle controller runs as root (to own the control plane) and drops the
   # adapter child to the mapped non-root UID/GID. This exec is intentionally unbounded.
