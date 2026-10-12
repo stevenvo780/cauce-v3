@@ -1,0 +1,24 @@
+[Unit]
+Description=Cauce enclave de autoridad firmada de la flota
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=@CONFIG_DIRECTORY@/authority.env
+@HOSTS_BIND@
+ExecStart=@NODE@ @RELEASE@/app/services/gateway/dist/fleet/authority/signed-main.js
+WorkingDirectory=/
+UMask=0077
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+LockPersonality=yes
+
+[Install]
+WantedBy=multi-user.target
