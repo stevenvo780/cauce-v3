@@ -312,7 +312,8 @@ psql_on postgres -c 'DROP DATABASE cauce_contended'
 
 step 'migrating the clone'
 # The migrator holds the exclusive schema lock for its whole transaction, so that span is the
-# window during which live traffic would wait. A watcher in another database samples it.
+# window during which live traffic would wait. A watcher in another database samples it; only client
+# backends count, since autovacuum keeps analyzing the fresh restore in transactions of its own.
 psql_on postgres >"$scratch/window" <<'SQL' &
 CREATE FUNCTION pg_temp.migration_window() RETURNS integer LANGUAGE plpgsql AS $$
 DECLARE
@@ -324,7 +325,7 @@ BEGIN
   LOOP
     PERFORM pg_stat_clear_snapshot();
     SELECT activity.pid,activity.xact_start INTO watched,began FROM pg_stat_activity activity
-      WHERE activity.datname='cauce' AND activity.xact_start IS NOT NULL LIMIT 1;
+      WHERE activity.datname='cauce' AND activity.backend_type='client backend' AND activity.xact_start IS NOT NULL LIMIT 1;
     EXIT WHEN watched IS NOT NULL;
     IF clock_timestamp()>deadline THEN RETURN -1; END IF;
     PERFORM pg_sleep(0.005);
