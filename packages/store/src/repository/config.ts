@@ -240,9 +240,9 @@ export abstract class ConfigRepository extends OutboxOperatorRepository {
                WHERE m.tenant_id=t.id AND m.room_id=r.id
                  AND ${runtimePrincipalScopeSql('m.tenant_id', 'm.alias')}
              ),'[]'::jsonb)
-           ) ORDER BY r.id) FROM rooms r WHERE r.tenant_id=t.id
+           ) ORDER BY r.id) FROM rooms r WHERE r.tenant_id=t.id AND r.retired_at IS NULL AND r.purged_at IS NULL
          ),'[]'::jsonb) AS rooms
-          FROM tenants t WHERE ${company ? 't.company_id=$1' : `t.id=$1 OR EXISTS (
+          FROM tenants t WHERE ${company ? 't.company_id=$1 AND t.retired_at IS NULL AND t.purged_at IS NULL' : `t.id=$1 OR EXISTS (
             SELECT 1 FROM acl_edges a JOIN tenants source ON source.id=a.from_tenant
             WHERE a.from_tenant=$1 AND a.to_tenant=t.id
               AND a.enabled AND a.allow_read AND ${hubStarRouteSql('source', 't')}

@@ -3,12 +3,13 @@ import type { TopologySnapshot } from '../../api/types';
 
 export const officeRoomKey = (tenant: string, room: string) => JSON.stringify([tenant, room]);
 export interface OfficeRoomInfo { tenant: string; id: string; label: string; agents: string[] }
-export function officeRooms(topology?: TopologySnapshot): OfficeRoomInfo[] {
+export function officeRooms(topology?: TopologySnapshot, available?: readonly { tenant_id: string; room_id: string }[]): OfficeRoomInfo[] {
+  const savable = available && new Set(available.map(room => officeRoomKey(room.tenant_id, room.room_id)));
   return (topology?.tenants ?? []).flatMap(tenant => tenant.id ? (tenant.rooms ?? []).flatMap(room => room.id ? [{
     tenant: tenant.id ?? '', id: room.id, label: (room.label?.trim() ?? '') || room.id,
     agents: (room.members ?? []).filter(member => member.alias && member.enabled !== false && member.agent_enabled !== false)
       .map(member => `${tenant.id ?? ''}/${member.alias ?? ''}`),
-  }] : []) : []);
+  }] : []) : []).filter(room => !savable || savable.has(officeRoomKey(room.tenant, room.id)));
 }
 export function reconcileOfficeLayout(rooms: readonly OfficeRoomInfo[], saved: readonly OfficeRoom[]): OfficeRoom[] {
   const layouts = new Map(saved.map(room => [officeRoomKey(room.tenant_id, room.room_id), room]));

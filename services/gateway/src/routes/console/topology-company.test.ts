@@ -68,10 +68,26 @@ describe('console topology under the session company', () => {
     const acting = await request(praxis, 'GET', '/v3/console/topology');
     expect(acting.statusCode).toBe(200);
     expect(tenantIds(acting)).toEqual(['PraxisHub', 'PraxisTeam']);
-    const layout = await request(praxis, 'GET', '/v3/console/office/layout');
-    expect(layout.statusCode).toBe(200);
-    const saved = await request(praxis, 'PUT', '/v3/console/office/layout', { expected_version: layout.json<{ version: number }>().version,
-      rooms: [{ tenant_id: 'PraxisHub', room_id: 'company-praxis', x: 1, y: 2, width: 10, height: 8, parts: [] }] });
+    await admin.query("INSERT INTO rooms(id,tenant_id,enabled) VALUES('off-room','PraxisTeam',false)");
+    await admin.query("INSERT INTO rooms(id,tenant_id,enabled,retired_at,retired_enabled) VALUES('gone-room','PraxisTeam',false,now(),true)");
+    await admin.query("INSERT INTO tenants(id,company_id,enabled) VALUES('PraxisOff','praxis',false)");
+    await admin.query("INSERT INTO rooms(id,tenant_id) VALUES('off-tenant-room','PraxisOff')");
+    const topo = await request(praxis, 'GET', '/v3/console/topology');
+    const listed = topo.json<{ tenants: { id: string; rooms: { id: string }[] }[] }>().tenants
+      .flatMap(tenant => tenant.rooms.map(room => ({ tenant_id: tenant.id, room_id: room.id })));
+    expect(listed.map(room => room.room_id)).not.toContain('gone-room');
+    expect(listed.map(room => room.room_id)).toContain('off-room');
+    const geometry = { x: 1, y: 2, width: 10, height: 8, parts: [] };
+    const everything = await request(praxis, 'PUT', '/v3/console/office/layout',
+      { expected_version: 0, rooms: listed.map(room => ({ ...room, ...geometry })) });
+    expect(everything.statusCode).toBe(403);
+    expect(everything.json<{ message: string }>().message).toMatch(/La sala PraxisTeam\/off-room|La sala PraxisOff\/off-tenant-room/u);
+    const fresh = await request(praxis, 'GET', '/v3/console/office/layout');
+    const { version, available } = fresh.json<{ version: number; available: { tenant_id: string; room_id: string }[] }>();
+    const savable = new Set(available.map(room => JSON.stringify([room.tenant_id, room.room_id])));
+    const rooms = listed.filter(room => savable.has(JSON.stringify([room.tenant_id, room.room_id]))).map(room => ({ ...room, ...geometry }));
+    expect(rooms.map(room => room.room_id).sort()).toEqual(['company-praxis', 'company-team']);
+    const saved = await request(praxis, 'PUT', '/v3/console/office/layout', { expected_version: version, rooms });
     expect(saved.statusCode).toBe(200);
     expect(tenantIds(await request(await login('miguel@example.test'), 'GET', '/v3/console/topology'))).not.toContain('PraxisHub');
     const own = tenantIds(await request(await login('leon@example.test'), 'GET', '/v3/console/topology'));

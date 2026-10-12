@@ -40,6 +40,14 @@ async function readLayout(client: DatabaseClient, authority: CompanyAuthority): 
   return { company_id: authority.actingCompany, version: Number(row?.version ?? 0),
     rooms: Rooms.parse(row?.rooms ?? []).filter(room => available.has(JSON.stringify([room.tenant_id, room.room_id]))) };
 }
+export async function readSavableOfficeRooms(pool: DatabasePool, source: CompanyAuthoritySource): Promise<{ tenant_id: string; room_id: string }[]> {
+  return withTransaction(pool, async client => {
+    const authority = await source(client); authorize(authority, false);
+    return [...await availableRooms(client, authority)].map(key => {
+      const [tenant_id, room_id] = JSON.parse(key) as [string, string]; return { tenant_id, room_id };
+    });
+  });
+}
 export async function readCompanyOffice(pool: DatabasePool, source: CompanyAuthoritySource): Promise<CompanyOfficeLayout> {
   return withTransaction(pool, async client => {
     const authority = await source(client); authorize(authority, false); return readLayout(client, authority);
@@ -52,7 +60,8 @@ export async function writeCompanyOffice(pool: DatabasePool, source: CompanyAuth
     await client.query('SELECT pg_advisory_xact_lock($1::integer,hashtext($2))', [783_003_056, authority.actingCompany]);
     const available = await availableRooms(client, authority);
     if (input.rooms.some(room => !available.has(JSON.stringify([room.tenant_id, room.room_id])))) {
-      throw new StoreError('forbidden', 'office room is unavailable in the acting company');
+      const room = input.rooms.find(item => !available.has(JSON.stringify([item.tenant_id, item.room_id])));
+      throw new StoreError('forbidden', `La sala ${room?.tenant_id ?? ''}/${room?.room_id ?? ''} no está disponible en la empresa activa (deshabilitada, retirada o de otra empresa).`);
     }
     const written = input.expected_version === 0
       ? await client.query(`INSERT INTO company_office_layouts(company_id,rooms,updated_by) VALUES($1,$2::jsonb,$3)

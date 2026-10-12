@@ -14,7 +14,7 @@ export interface OfficePart { id: string; label: string; x: number; y: number; w
 export interface OfficeRoom {
   tenant_id: string; room_id: string; x: number; y: number; width: number; height: number; parts: OfficePart[];
 }
-export interface OfficeLayout { company_id: string; version: number; rooms: OfficeRoom[] }
+export interface OfficeLayout { company_id: string; version: number; rooms: OfficeRoom[]; available?: { tenant_id: string; room_id: string }[] }
 export interface RegistrationInput { email: string; name: string; password: string; company: { slug: string; name: string } }
 export interface RegistrationResult {
   user: { id: string; username: string; email: string; name: string };

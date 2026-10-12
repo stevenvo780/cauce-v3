@@ -37,7 +37,7 @@ export * from './client-mailbox.js';
 export * from './client-mailbox-read.js';
 
 export { registerCompany, type CompanyRegistration, type RegisteredCompany } from './company-registration.js';
-export { CompanyOfficeUpdateSchema, readCompanyOffice, writeCompanyOffice, type CompanyOfficeLayout, type CompanyOfficeRoom } from './company-office.js';
+export { CompanyOfficeUpdateSchema, readCompanyOffice, readSavableOfficeRooms, writeCompanyOffice, type CompanyOfficeLayout, type CompanyOfficeRoom } from './company-office.js';
 export { updateCompany, setCompanyAdmin, type CompanySummary } from './company-administration.js';
 export { CompanyPreferencesUpdateSchema, readCompanyPreferences, writeCompanyPreferences, type CompanyPreferences } from './company-preferences.js';
 export * from './host-enrollment-contracts.js';

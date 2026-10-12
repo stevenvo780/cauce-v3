@@ -128,7 +128,7 @@ describe('public registration with durable owner and isolated office', () => {
       payload: { expected_version: 0, rooms: [room(created)] } });
     expect(saved.statusCode).toBe(200);
     const reloaded = await gateway.inject({ method: 'GET', url: '/v3/console/office/layout', headers: { cookie } });
-    expect(reloaded.statusCode).toBe(200); expect(reloaded.json()).toEqual(saved.json());
+    expect(reloaded.statusCode).toBe(200); expect(reloaded.json()).toMatchObject(saved.json());
     const companies = await gateway.inject({ method: 'GET', url: '/v3/console/companies', headers: { cookie } });
     expect(companies.statusCode).toBe(200); expect(companies.json<{ companies: unknown[] }>().companies).toHaveLength(1);
   });

@@ -27,7 +27,7 @@ export function OfficeWorkspace({ campus, topology, agents, onAgent }: {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
-  const rooms = officeRooms(topology);
+  const rooms = officeRooms(topology, layout.data?.available);
   const shown = reconcileOfficeLayout(rooms, draft?.rooms ?? layout.data?.rooms ?? []);
   const writable = canManageCompany(authority?.role) && !!layout.data && !layout.error && !layout.loading && !busy;
   const selected = shown.find(room => officeRoomKey(room.tenant_id, room.room_id) === roomKey);

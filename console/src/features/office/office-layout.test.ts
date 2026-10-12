@@ -16,3 +16,8 @@ it('rechaza geometrías no finitas y tamaños sin área', () => {
   expect(officeLayoutProblem([{ ...room, width: 0 }])).toMatch(/mayores que cero/u);
   expect(officeLayoutProblem([{ ...room, x: NaN }])).toMatch(/finitos/u);
 });
+it('limita las salas del plano a las que el servidor puede guardar', () => {
+  const topology = { tenants: [{ id: 'One', rooms: [{ id: 'on' }, { id: 'off', enabled: false }] }, { id: 'Linked', rooms: [{ id: 'hub' }] }] };
+  expect(officeRooms(topology, [{ tenant_id: 'One', room_id: 'on' }]).map(room => room.id)).toEqual(['on']);
+  expect(officeRooms(topology).map(room => room.id)).toEqual(['on', 'off', 'hub']);
+});
