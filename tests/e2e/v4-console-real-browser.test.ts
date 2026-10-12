@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { newTrustedPage, startConsoleFunctionalFixture } from './console-functional-browser.fixtures.js';
+import { seedQuotaHost } from './v4-console-real-browser.quotas.js';
 import {
   apiGet, asV4Page, BrowserErrorLog, bodySnippet, fillRegistration, HERMETIC_INSTANCE_RULES, login, openRegistration,
   PATTERN_DEFECT_RULE, syntheticPerson, validity, type V4Page,
@@ -313,10 +314,161 @@ describe('recorrido V4 de la consola en navegador real contra gateway y PostgreS
       await page.getByText('Leyendo el diario del perfil…').waitFor({ state: 'hidden', timeout: 20_000 });
       await page.getByText('Alta del perfil · revisión 1').first().waitFor({ timeout: 15_000 });
       await page.getByRole('button', { name: 'Restaurar esta revisión', exact: true }).first().waitFor({ timeout: 15_000 });
+      await page.getByRole('tab', { name: 'Versiones y aplicación', exact: true }).click();
+      const versions = page.getByRole('region', { name: 'Versiones de contexto', exact: true });
+      await versions.getByLabel('Nuevo archivo', { exact: true }).waitFor({ timeout: 20_000 });
+      await versions.getByLabel('Nuevo archivo', { exact: true }).fill('../x');
+      await versions.getByRole('button', { name: 'Añadir archivo', exact: true }).click();
+      await versions.getByRole('alert').waitFor({ timeout: 15_000 });
+      expect(await versions.getByRole('alert').innerText()).toContain('Usa una ruta relativa nueva dentro del contexto.');
     });
     const revisions = await pool().query<{ count: string }>(
       `SELECT count(*)::text FROM agent_profile_revisions WHERE tenant_id=$1 AND alias=$2`, [hubA, agentAlias]);
     expect(Number(revisions.rows[0]?.count)).toBeGreaterThanOrEqual(1);
+  });
+
+  it('autoridad de empresa: sin elegir persona no se puede guardar la asignación', async () => {
+    const page = ownerPage();
+    await step(page, 'company authority', async () => {
+      await openConfig(page, 'general');
+      const row = page.getByRole('listitem').filter({ hasText: `${ownerA.company.name} editada` });
+      await row.getByRole('button', { name: 'Autoridad de empresa', exact: true }).click();
+      const panel = page.getByRole('region', { name: 'Autoridad de empresa', exact: true });
+      const form = panel.getByRole('form', { name: 'Asignar autoridad de empresa' });
+      await form.waitFor({ timeout: 15_000 });
+      await expect.poll(async () => form.locator('select').nth(0).isDisabled(), { timeout: 15_000 }).toBe(false);
+      expect(await form.getByRole('button', { name: 'Guardar autoridad', exact: true }).isDisabled()).toBe(true);
+      const person = await validity(form.locator('select').nth(0));
+      expect(person.valid).toBe(false);
+      expect(person.message).not.toBe('');
+    });
+  });
+
+  const quotaHost = `cuotas-${run}`;
+  const quotaCard = (page: V4Page, label: string) => page.getByRole('article', { name: `Cuotas de ${label}`, exact: true });
+
+  it('mis cuotas: alta sin agente, fijar tarjeta, preferencias en otra sesión, edición con CAS y borrado', async () => {
+    const page = ownerPage();
+    await seedQuotaHost(pool(), { companyId: ownerA.company.slug, ownerEmail: ownerA.email, hostId: quotaHost });
+    let accountId = '';
+    const capabilities = await apiGet(page, '/v3/console/quota-environments');
+    expect(capabilities.body).toMatchObject({ capabilities: { available: true, providers: ['codex'] } });
+    await step(page, 'quota account create', async () => {
+      await page.goto(`${base()}/my-quotas`, { waitUntil: 'domcontentloaded' });
+      await page.getByRole('heading', { name: 'Mis cuotas', exact: true }).waitFor({ timeout: 20_000 });
+      await expect.poll(async () => page.getByRole('button', { name: 'Registrar cuenta', exact: true }).isDisabled(), { timeout: 20_000 }).toBe(false);
+      await page.getByRole('button', { name: 'Registrar cuenta', exact: true }).click();
+      const form = page.getByRole('form', { name: 'Registrar cuenta de cuotas' });
+      await form.getByLabel('Nombre de la cuenta', { exact: true }).fill('');
+      expect(await form.getByRole('button', { name: 'Registrar cuenta', exact: true }).isDisabled()).toBe(true);
+      const missing = await validity(form.getByLabel('Nombre de la cuenta', { exact: true }));
+      expect(missing.valid).toBe(false);
+      expect(missing.message).not.toBe('');
+      await form.getByLabel('Nombre de la cuenta', { exact: true }).fill('   ');
+      expect(await form.getByRole('button', { name: 'Registrar cuenta', exact: true }).isDisabled()).toBe(true);
+      await form.getByLabel('Nombre de la cuenta', { exact: true }).fill('Cuenta UI local');
+      await form.locator('select').selectOption('codex');
+      await form.getByRole('button', { name: 'Registrar cuenta', exact: true }).click();
+      await quotaCard(page, 'Cuenta UI local').waitFor({ timeout: 20_000 });
+    });
+    const created = (await apiGet(page, '/v3/console/quota-accounts')).body as { accounts: { id: string; label: string; observation_status: string; remaining_percent: number | null; agents: unknown[] }[] };
+    const account = created.accounts.find(item => item.label === 'Cuenta UI local');
+    expect(account).toMatchObject({ observation_status: 'unknown', remaining_percent: null, agents: [] });
+    accountId = account?.id ?? '';
+    await step(page, 'quota account pin', async () => {
+      await quotaCard(page, 'Cuenta UI local').getByRole('button', { name: 'Fijar cuenta', exact: true }).click();
+      await quotaCard(page, 'Cuenta UI local').getByRole('button', { name: 'Desfijar cuenta', exact: true }).waitFor({ timeout: 15_000 });
+      await page.reload({ waitUntil: 'domcontentloaded' });
+      await quotaCard(page, 'Cuenta UI local').getByRole('button', { name: 'Desfijar cuenta', exact: true }).waitFor({ timeout: 20_000 });
+    });
+    expect(((await apiGet(page, '/v3/console/preferences')).body as { pinned_quota_accounts: string[] }).pinned_quota_accounts).toContain(accountId);
+    const pinned = await pool().query<{ pinned_quota_accounts: string[] }>('SELECT pinned_quota_accounts FROM console_company_preferences WHERE company_id=$1', [ownerA.company.slug]);
+    expect(pinned.rows[0]?.pinned_quota_accounts).toContain(accountId);
+
+    const second = await freshPage('owner-a-quotas-second');
+    await step(second, 'preferences in second session', async () => {
+      await login(second, base(), ownerA);
+      await second.goto(`${base()}/my-quotas`, { waitUntil: 'domcontentloaded' });
+      await quotaCard(second, 'Cuenta UI local').getByRole('button', { name: 'Desfijar cuenta', exact: true }).waitFor({ timeout: 20_000 });
+      expect(((await apiGet(second, '/v3/console/preferences')).body as { pinned_quota_accounts: string[] }).pinned_quota_accounts).toContain(accountId);
+    });
+
+    await step(page, 'quota account edit', async () => {
+      await quotaCard(page, 'Cuenta UI local').getByRole('button', { name: 'Editar cuenta', exact: true }).click();
+      const form = page.getByRole('form', { name: 'Editar cuenta de cuotas' });
+      await form.getByLabel('Pausa hasta (fecha con zona horaria)', { exact: true }).fill('mañana por la tarde');
+      await form.getByRole('button', { name: 'Guardar cuenta', exact: true }).click();
+      await form.getByRole('alert').waitFor({ timeout: 15_000 });
+      expect(await form.getByRole('alert').innerText()).toContain('Introduce una fecha de pausa válida, con su zona horaria.');
+      await form.getByLabel('Pausa hasta (fecha con zona horaria)', { exact: true }).fill('');
+      await form.getByLabel('Nombre de la cuenta', { exact: true }).fill('Cuenta UI editada');
+      await form.getByLabel('Cuenta habilitada', { exact: true }).uncheck();
+      await form.getByRole('button', { name: 'Guardar cuenta', exact: true }).click();
+      await quotaCard(page, 'Cuenta UI editada').waitFor({ timeout: 20_000 });
+      await page.reload({ waitUntil: 'domcontentloaded' });
+      await quotaCard(page, 'Cuenta UI editada').waitFor({ timeout: 20_000 });
+    });
+    const edited = ((await apiGet(page, '/v3/console/quota-accounts')).body as { accounts: { id: string; label: string; enabled: boolean; version: number }[] }).accounts.find(item => item.id === accountId);
+    expect(edited).toMatchObject({ label: 'Cuenta UI editada', enabled: false });
+    expect(edited?.version).toBeGreaterThan(1);
+    expect((await pool().query<{ label: string; enabled: boolean }>('SELECT label,enabled FROM provider_accounts WHERE id=$1', [accountId])).rows).toEqual([{ label: 'Cuenta UI editada', enabled: false }]);
+
+    await step(page, 'quota account unpin and delete', async () => {
+      const card = quotaCard(page, 'Cuenta UI editada');
+      await card.getByRole('button', { name: 'Desfijar cuenta', exact: true }).click();
+      await card.getByRole('button', { name: 'Fijar cuenta', exact: true }).waitFor({ timeout: 15_000 });
+      await card.getByRole('button', { name: 'Eliminar cuenta', exact: true }).click();
+      await page.getByRole('button', { name: 'Confirmar eliminación de cuenta', exact: true }).click();
+      await page.getByText('Cuenta eliminada.', { exact: true }).waitFor({ timeout: 15_000 });
+      await page.reload({ waitUntil: 'domcontentloaded' });
+    });
+    expect((await pool().query('SELECT 1 FROM provider_accounts WHERE id=$1', [accountId])).rowCount).toBe(0);
+    expect(((await apiGet(page, '/v3/console/preferences')).body as { pinned_quota_accounts: string[] }).pinned_quota_accounts).not.toContain(accountId);
+  });
+
+  it('entornos de cuotas: crear y editar rechazan entradas inválidas y aceptan las válidas', async () => {
+    const page = ownerPage();
+    await step(page, 'quota environment account', async () => {
+      await page.goto(`${base()}/my-quotas`, { waitUntil: 'domcontentloaded' });
+      await expect.poll(async () => page.getByRole('button', { name: 'Registrar cuenta', exact: true }).isDisabled(), { timeout: 20_000 }).toBe(false);
+      await page.getByRole('button', { name: 'Registrar cuenta', exact: true }).click();
+      const account = page.getByRole('form', { name: 'Registrar cuenta de cuotas' });
+      await account.getByLabel('Nombre de la cuenta', { exact: true }).fill('Cuenta de entorno');
+      await account.getByRole('button', { name: 'Registrar cuenta', exact: true }).click();
+      await quotaCard(page, 'Cuenta de entorno').waitFor({ timeout: 20_000 });
+    });
+    await step(page, 'quota environment create', async () => {
+      const form = page.getByRole('form', { name: 'Crear entorno de cuotas' });
+      await expect.poll(async () => form.locator('select').nth(0).isDisabled(), { timeout: 20_000 }).toBe(false);
+      expect(await form.getByRole('button', { name: 'Crear entorno', exact: true }).isDisabled()).toBe(true);
+      const unselected = await validity(form.locator('select').nth(0));
+      expect(unselected.valid).toBe(false);
+      expect(unselected.message).not.toBe('');
+      await form.locator('select').nth(0).selectOption({ label: 'Cuenta de entorno · codex' });
+      await form.locator('select').nth(1).selectOption({ label: 'Ordenador de cuotas V4' });
+      await form.getByLabel('Nombre del entorno', { exact: true }).fill('   ');
+      expect(await form.getByRole('button', { name: 'Crear entorno', exact: true }).isDisabled()).toBe(true);
+      await form.getByLabel('Nombre del entorno', { exact: true }).fill('Entorno V4');
+      await form.getByRole('button', { name: 'Crear entorno', exact: true }).click();
+      await page.getByText('Creación solicitada. Espera su estado completado antes de usar el entorno.', { exact: true }).waitFor({ timeout: 20_000 });
+      await page.getByRole('article', { name: 'Entorno Entorno V4', exact: true }).waitFor({ timeout: 20_000 });
+    });
+    const stored = await pool().query<{ status: string; host_id: string }>('SELECT status,host_id FROM quota_environments WHERE company_id=$1 AND label=$2', [ownerA.company.slug, 'Entorno V4']);
+    expect(stored.rows).toEqual([{ status: 'pending', host_id: quotaHost }]);
+    await step(page, 'quota environment edit', async () => {
+      await page.getByRole('article', { name: 'Entorno Entorno V4', exact: true }).getByRole('button', { name: 'Editar entorno', exact: true }).click();
+      const form = page.getByRole('form', { name: 'Editar entorno de cuotas' });
+      await form.getByLabel('Nombre del entorno', { exact: true }).fill('');
+      await form.getByRole('button', { name: 'Guardar entorno', exact: true }).click();
+      const empty = await validity(form.getByLabel('Nombre del entorno', { exact: true }));
+      expect(empty.valid).toBe(false);
+      expect(empty.message).not.toBe('');
+      await form.getByLabel('Nombre del entorno', { exact: true }).fill('Entorno V4 editado');
+      await form.getByRole('button', { name: 'Guardar entorno', exact: true }).click();
+      await page.getByText('Configuración del entorno guardada.', { exact: true }).waitFor({ timeout: 20_000 });
+    });
+    const renamed = await pool().query<{ label: string }>('SELECT label FROM quota_environments WHERE company_id=$1', [ownerA.company.slug]);
+    expect(renamed.rows).toEqual([{ label: 'Entorno V4 editado' }]);
   });
 
   let pageB: V4Page | undefined;

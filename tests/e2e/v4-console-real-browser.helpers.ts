@@ -10,6 +10,7 @@ export interface V4Locator extends Locator {
   inputValue(): Promise<string>;
   isVisible(): Promise<boolean>;
   isDisabled(): Promise<boolean>;
+  selectOption(value: string | { label: string }): Promise<void>;
   locator(selector: string): V4Locator;
   filter(options: { hasText: string }): V4Locator;
   getByRole(role: string, options?: { name?: string | RegExp; exact?: boolean }): V4Locator;
