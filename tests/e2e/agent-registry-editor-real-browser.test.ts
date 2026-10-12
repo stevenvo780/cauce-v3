@@ -16,7 +16,7 @@ const evidenceSetting = 'CAUCE_AGENT_REGISTRY_EVIDENCE_DIR';
 let evidenceDirectory: string | undefined;
 let fixture: Awaited<ReturnType<typeof startConsoleFunctionalFixture>> | undefined;
 let resources: { postgres: string; browser: string; network: string; volume: string; image: string } | undefined;
-let hub: { tenant: string; actor: string; alias: string; email: string; password: string } | undefined;
+let hub: { tenant: string; actor: string; alias: string; email: string; password: string; humanId: string } | undefined;
 interface ConfigMutation {
   resource: 'agent'; action: 'update'; tenant_id: string; alias: string; value: Record<string, unknown>;
 }
@@ -25,7 +25,7 @@ interface ChangeRequest { expected_revision?: number; dry_run?: boolean; mutatio
 interface AgentRow {
   tenant_id: string; alias: string; display_name: string | null; enabled: boolean; harness_id: string | null;
   max_concurrent_deliveries: number | null; container_name: string | null; runtime_user: string | null;
-  home_directory: string | null; state_directory: string | null;
+  home_directory: string | null; state_directory: string | null; host_id: string | null;
 }
 async function docker(args: string[]): Promise<string> {
   return (await execute('docker', args, { timeout: 20_000, maxBuffer: 1024 * 1024 })).stdout.trim();
@@ -73,8 +73,26 @@ async function login(page: BrowserPage, email: string, password: string): Promis
 }
 async function openEditor(page: BrowserPage, tenant: string, alias: string): Promise<void> {
   await page.getByLabel('Buscar agente o grupo').fill(tenant === 'Steven' ? 'QA' : alias);
-  await page.getByRole('button', { name: `Editar registro de ${tenant}/${alias}` }).click();
-  await page.getByRole('heading', { name: `Registro · ${tenant}/${alias}` }).waitFor({ state: 'visible', timeout: 20_000 });
+  await page.getByRole('button', { name: `Acciones de ${tenant}/${alias}`, exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Editar registro', exact: true }).click();
+  await page.getByRole('region', { name: `Registro de ${tenant}/${alias}`, exact: true }).waitFor({ state: 'visible', timeout: 20_000 });
+}
+async function closeEditor(page: BrowserPage): Promise<void> {
+  const dialog = page.getByRole('dialog');
+  await dialog.getByRole('button', { name: 'Cerrar', exact: true }).click();
+  await dialog.waitFor({ state: 'hidden', timeout: 20_000 });
+}
+async function authenticatedChange(page: BrowserPage, request: ChangeRequest): Promise<ChangeResponse> {
+  return page.evaluate(async (payload) => {
+    const sessionResponse = await fetch('/v3/auth/session', { credentials: 'include' });
+    const session = await sessionResponse.json() as { csrf_token?: string };
+    if (sessionResponse.status !== 200 || !session.csrf_token) throw new Error('authenticated browser session is unavailable');
+    const response = await fetch('/v3/console/config/changes', {
+      method: 'POST', credentials: 'include', headers: { 'content-type': 'application/json', 'x-csrf-token': session.csrf_token },
+      body: JSON.stringify(payload),
+    });
+    return { status: response.status, body: await response.json() as unknown };
+  }, request);
 }
 async function openMutationEditor(page: BrowserPage) {
   await page.getByRole('tab', { name: 'Avanzado', exact: true }).click();
@@ -99,7 +117,7 @@ async function durable(tenant: string, alias: string): Promise<AgentRow | undefi
   if (!fixture) throw new Error('fixture is unavailable');
   const rows = await fixture.database.pool.query<AgentRow>(
     `SELECT tenant_id,alias,display_name,enabled,harness_id,max_concurrent_deliveries,
-            container_name,runtime_user,home_directory,state_directory
+            container_name,runtime_user,home_directory,state_directory,host_id
      FROM agents WHERE tenant_id=$1 AND alias=$2`, [tenant, alias],
   );
   return rows.rows[0];
@@ -180,12 +198,6 @@ async function verifyCleanup(): Promise<void> {
   await writeFile(`${evidenceDirectory}/resources-after.json`, JSON.stringify({ resources, absent }, null, 2) + '\n', { mode: 0o600 });
   expect(absent).toEqual({ postgres: true, browser: true, network: true, volume: true, image: true });
 }
-async function applyDisabled(page: BrowserPage): Promise<boolean> {
-  return page.evaluate(() => {
-    const button = Array.from(document.querySelectorAll('button')).find((item) => item.textContent.trim() === 'Aplicar cambio');
-    return button?.disabled ?? false;
-  });
-}
 beforeAll(async () => {
   if (process.env.CAUCE_REQUIRE_TESTCONTAINERS !== '1' || process.env.CAUCE_TEST_DATABASE_URL !== undefined
       || process.env.DATABASE_URL !== undefined || process.env.CAUCE_TEST_DOCKER_NETWORK !== undefined
@@ -225,10 +237,13 @@ beforeAll(async () => {
     "INSERT INTO memberships(tenant_id,room_id,alias,role) VALUES($1,$2,$3,'operator'),($1,$2,$4,'agent')",
     [tenant, room, actor, alias],
   );
-  await maintainConsoleUser(fixture.database.pool, {
+  const person = await maintainConsoleUser(fixture.database.pool, {
     email, name: 'QA registry operator', role: 'operator', tenant, alias: actor, updateOnly: false, activate: true,
   }, await hashPassword(password));
-  hub = { tenant, actor, alias, email, password };
+  await fixture.database.pool.query(
+    "INSERT INTO company_admins(company_id,human_id,role,source,granted_by) VALUES('humanizar',$1,'admin','platform',$1)", [person.id],
+  );
+  hub = { tenant, actor, alias, email, password, humanId: person.id };
   await writeFile(`${evidenceDirectory}/fixture.json`, JSON.stringify({ tenant, actor, alias, viewport: [1440, 360] }, null, 2) + '\n', { mode: 0o600 });
 }, 10 * 60_000);
 afterAll(async () => {
@@ -311,7 +326,7 @@ describe('V1 tipada de edición del registro de agentes', () => {
       harness_id: before.harness_id, display_name: before.display_name, enabled: before.enabled,
       container_name: before.container_name, runtime_user: before.runtime_user, home_directory: before.home_directory,
       state_directory: before.state_directory, max_concurrent_deliveries: before.max_concurrent_deliveries,
-      primary_room_id: null,
+      primary_room_id: null, host_id: before.host_id,
     });
     expect(await hubPage.getByText(`Aplicado en revisión ${String(revision)}`).count()).toBeGreaterThan(0);
     expect(await readAgent(hubPage, identity.tenant, identity.alias)).toMatchObject({
@@ -319,21 +334,21 @@ describe('V1 tipada de edición del registro de agentes', () => {
       agent: {
         tenant_id: identity.tenant, alias: identity.alias, display_name: displayName, enabled: false,
         max_concurrent_deliveries: null, harness_id: before.harness_id, container_name: before.container_name,
-        runtime_user: before.runtime_user, home_directory: before.home_directory, state_directory: before.state_directory,
+        runtime_user: before.runtime_user, home_directory: before.home_directory, state_directory: before.state_directory, host_id: before.host_id,
       },
     });
     const durableAfter = await durable(identity.tenant, identity.alias);
     expect(durableAfter).toMatchObject({
       tenant_id: identity.tenant, alias: identity.alias, display_name: displayName, enabled: false,
       max_concurrent_deliveries: null, harness_id: before.harness_id, container_name: before.container_name,
-      runtime_user: before.runtime_user, home_directory: before.home_directory, state_directory: before.state_directory,
+      runtime_user: before.runtime_user, home_directory: before.home_directory, state_directory: before.state_directory, host_id: before.host_id,
     });
     expect(await revisionCounts(identity.tenant, identity.alias)).toBe(revisionBefore + 1);
     const revisionRow = await active.database.pool.query<{ actor_tenant: string; actor_alias: string; operation: unknown; inverse_operation: unknown }>(
-      'SELECT actor_tenant,actor_alias,operation,inverse_operation FROM config_revisions WHERE id=$1', [revision],
+      'SELECT actor_tenant,actor_alias,actor_human_id::text,company_id,operation,inverse_operation FROM config_revisions WHERE id=$1', [revision],
     );
     expect(revisionRow.rows).toHaveLength(1);
-    expect(revisionRow.rows[0]).toMatchObject({ actor_tenant: identity.tenant, actor_alias: identity.actor, operation: mutation, inverse_operation: inverse });
+    expect(revisionRow.rows[0]).toMatchObject({ actor_tenant: identity.tenant, actor_alias: identity.actor, actor_human_id: identity.humanId, company_id: 'humanizar', operation: mutation, inverse_operation: inverse });
     const audit = await active.database.pool.query<{ tenant_id: string; actor_alias: string; action: string; decision: string; metadata: unknown }>(
       `SELECT tenant_id,actor_alias,action,decision,metadata FROM audit_events
        WHERE tenant_id=$1 AND actor_alias=$2 AND action='config.change' AND metadata->>'revision'=$3`,
@@ -343,10 +358,10 @@ describe('V1 tipada de edición del registro de agentes', () => {
     expect(audit.rows[0]).toMatchObject({ tenant_id: identity.tenant, actor_alias: identity.actor, action: 'config.change', decision: 'allow' });
     expect(object(audit.rows[0]?.metadata)).toMatchObject({ revision, mutation });
     await hubPage.screenshot({ path: `${evidenceDirectory}/hub-editor-mobile-applied.png` });
-    expect(await hubPage.getByRole('heading', { name: `Registro · ${identity.tenant}/${identity.alias}` }).count()).toBe(1);
+    expect(await registryEditor.count()).toBe(1);
     expect(browserErrors).toEqual([]);
     await hubPage.setViewportSize({ width: 1440, height: 900 });
-    await hubPage.getByRole('region', { name: `Registro de ${identity.tenant}/${identity.alias}`, exact: true }).getByRole('button', { name: 'Cerrar editor', exact: true }).click();
+    await closeEditor(hubPage);
     await assertAgentRegistryGeometry(hubPage, evidenceDirectory, 'desktop-closed', `${identity.tenant}/${identity.alias}`);
     const jsonEditor = await openMutationEditor(hubPage);
     let diagnosticPosts = 0;
@@ -376,45 +391,53 @@ describe('V1 tipada de edición del registro de agentes', () => {
     const ownBefore = await durable(ownTarget.tenant, ownTarget.alias);
     const ownRevisions = await revisionCounts(ownTarget.tenant, ownTarget.alias);
     if (!ownBefore) throw new Error('negative case lacks registered own-tenant target');
+    let negativePosts = 0;
+    nonHubPage.on('request', (value) => {
+      const request = value as { url(): string; method(): string };
+      if (new URL(request.url()).pathname === '/v3/console/config/changes' && request.method() === 'POST') negativePosts += 1;
+    });
     await openEditor(nonHubPage, ownTarget.tenant, ownTarget.alias);
-    await nonHubPage.getByRole('region', { name: `Registro de ${ownTarget.tenant}/${ownTarget.alias}`, exact: true })
-      .getByRole('textbox', { name: 'Nombre visible', exact: true }).fill(`forbidden-${ownTarget.alias}`);
-    const deniedResponse = responseForChange(nonHubPage);
-    const deniedRequest = requestForChange(nonHubPage);
-    await nonHubPage.getByRole('button', { name: 'Previsualizar cambio' }).click();
-    const deniedNotice = nonHubPage.getByRole('alert');
-    await deniedNotice.waitFor({ state: 'visible', timeout: 20_000 });
-    const denial = await deniedResponse;
-    const denialText = await deniedNotice.innerText();
-    const denialRequestBody = await deniedRequest;
+    const disabledControls = await nonHubPage.evaluate((target) => {
+      const section = Array.from(document.querySelectorAll('section[aria-label]')).find((item) => item.getAttribute('aria-label') === `Registro de ${target}`);
+      return Array.from(section?.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLButtonElement>('input,select,button') ?? [])
+        .map((control) => ({ label: control.getAttribute('aria-label') ?? control.textContent.trim(), disabled: control.disabled }));
+    }, `${ownTarget.tenant}/${ownTarget.alias}`);
+    expect(disabledControls.length).toBeGreaterThanOrEqual(6);
+    expect(disabledControls.every((control) => control.disabled)).toBe(true);
+    expect(negativePosts).toBe(0);
+    await assertNoMutation(nonHubPage, ownTarget.tenant, ownTarget.alias, ownBefore, ownRevisions);
+    const denialRequestBody = { expected_revision: (await readAgent(nonHubPage, ownTarget.tenant, ownTarget.alias)).revision,
+      dry_run: true, mutation: { resource: 'agent', action: 'update', tenant_id: ownTarget.tenant, alias: ownTarget.alias, value: { display_name: `forbidden-${ownTarget.alias}` } } };
+    const denial = await authenticatedChange(nonHubPage, denialRequestBody);
     await nonHubPage.screenshot({ path: `${evidenceDirectory}/nonhub-own-denied-360.png` });
     const denialBody = object(denial.body);
     await writeFile(`${evidenceDirectory}/nonhub-own-403.json`, JSON.stringify({ status: denial.status,
       error: denialBody.error, message: typeof denialBody.message === 'string' ? denialBody.message.slice(0, 300) : '',
-      request: denialRequestBody }, null, 2) + '\n', { mode: 0o600 });
+      request: denialRequestBody, disabledControls, uiPosts: 0, authenticatedPosts: negativePosts, writes: 0 }, null, 2) + '\n', { mode: 0o600 });
     expect(denial.status).toBe(403);
-    expect(denialText).toMatch(/forbidden|control|configuración|403|actor tenant/iu);
-    expect(await applyDisabled(nonHubPage)).toBe(true);
+    expect(denialBody.error).toBe('forbidden');
+    expect(denialBody.message).not.toMatch(/CSRF|sesión|session/iu);
+    expect(negativePosts).toBe(1);
     await assertNoMutation(nonHubPage, ownTarget.tenant, ownTarget.alias, ownBefore, ownRevisions);
-    await nonHubPage.getByRole('button', { name: 'Cerrar editor' }).click();
+    await closeEditor(nonHubPage);
     const foreign = { tenant: identity.tenant, alias: identity.alias };
     const foreignBefore = await durable(foreign.tenant, foreign.alias);
     const foreignRevisions = await revisionCounts(foreign.tenant, foreign.alias);
     const visibleSnapshot = await readAgent(nonHubPage, foreign.tenant, foreign.alias);
     expect(visibleSnapshot.status).toBe(200);
     expect(visibleSnapshot.agent).toBeUndefined();
-    expect(await nonHubPage.getByRole('button', { name: `Editar registro de ${foreign.tenant}/${foreign.alias}` }).count()).toBe(0);
-    await openMutationEditor(nonHubPage);
+    expect(await nonHubPage.getByRole('button', { name: `Acciones de ${foreign.tenant}/${foreign.alias}`, exact: true }).count()).toBe(0);
     const foreignMutation = { resource: 'agent', action: 'update', tenant_id: foreign.tenant, alias: foreign.alias, value: { enabled: false } };
-    await nonHubPage.getByLabel('Mutación JSON', { exact: true }).fill(JSON.stringify(foreignMutation));
-    const foreignResponse = responseForChange(nonHubPage);
-    await nonHubPage.getByRole('button', { name: 'Preview / dry-run', exact: true }).click();
-    const foreignNetwork = await foreignResponse;
+    const foreignRequest = { expected_revision: visibleSnapshot.revision, dry_run: true, mutation: foreignMutation };
+    const foreignNetwork = await authenticatedChange(nonHubPage, foreignRequest);
     const foreignDenial = { status: foreignNetwork.status, body: object(foreignNetwork.body) };
     await writeFile(`${evidenceDirectory}/nonhub-foreign-403.json`, JSON.stringify({ status: foreignDenial.status,
       error: foreignDenial.body.error, message: typeof foreignDenial.body.message === 'string' ? foreignDenial.body.message.slice(0, 300) : '',
-      uiRowVisible: false }, null, 2) + '\n', { mode: 0o600 });
+      request: foreignRequest, uiRowVisible: false, uiPosts: 0, authenticatedPosts: negativePosts, writes: 0 }, null, 2) + '\n', { mode: 0o600 });
     expect(foreignDenial.status).toBe(403);
+    expect(foreignDenial.body.error).toBe('forbidden');
+    expect(foreignDenial.body.message).not.toMatch(/CSRF|sesión|session/iu);
+    expect(negativePosts).toBe(2);
     expect(await durable(foreign.tenant, foreign.alias)).toEqual(foreignBefore);
     await assertNoMutation(nonHubPage, foreign.tenant, foreign.alias, undefined, foreignRevisions, foreignBefore);
   }, 240_000);

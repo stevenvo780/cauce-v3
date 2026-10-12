@@ -12,7 +12,7 @@ type Fixture = Awaited<ReturnType<typeof startConsoleFunctionalFixture>>;
 type Form = Locator & { getByLabel(name: string, options?: { exact?: boolean }): Locator };
 type Mutation = Record<string, unknown>;
 interface NetworkChange { status: number; request: Record<string, unknown>; receipt: Record<string, unknown> }
-interface User { email: string; password: string }
+interface User { email: string; password: string; humanId?: string }
 interface OwnedResources { postgres: string; browser: string; image: string; network: string; volumes: string[] }
 let fixture: Fixture | undefined;
 let evidence = '';
@@ -128,14 +128,19 @@ async function apply(page: BrowserPage, observer: ReturnType<typeof observe>, sc
   expect(applied.status).toBe(201); expect(applied.request).toMatchObject({ expected_revision: before, dry_run: false, mutation });
   expect(applied.receipt).toMatchObject({ applied: true, dry_run: false, mutation, rolled_back_revision_id: null });
   const next = Number(applied.receipt.revision); expect(Number.isSafeInteger(next)).toBe(true); expect(next).toBeGreaterThan(before);
-  const durable = await active().database.pool.query('SELECT actor_tenant,actor_alias,operation,inverse_operation FROM config_revisions WHERE id=$1', [next]);
-  expect(durable.rows).toHaveLength(1); expect(durable.rows[0]).toMatchObject({ actor_tenant: 'Steven', actor_alias: actor, operation: applied.request.mutation, inverse_operation: applied.receipt.inverse_mutation });
+  const durable = await active().database.pool.query('SELECT actor_tenant,actor_alias,actor_human_id::text,company_id,operation,inverse_operation FROM config_revisions WHERE id=$1', [next]);
+  expect(durable.rows).toHaveLength(1); expect(durable.rows[0]).toMatchObject({ actor_tenant: 'Steven', actor_alias: actor, actor_human_id: operator?.humanId, company_id: 'humanizar', operation: applied.request.mutation, inverse_operation: applied.receipt.inverse_mutation });
   const noticeScope = ['Crear registro', 'Confirmar eliminación del registro'].includes(applyLabel) ? page : scope;
   const message = applyLabel === 'Aplicar atómico' ? `Releído del servidor: las tablas de abajo están en la revisión ${String(next)}` : `Inventario releído en revisión ${String(next)}`;
   await noticeScope.getByRole('status').filter({ hasText: message }).waitFor({ timeout: 20_000 });
   expect(await revision()).toBe(next); ledger.push(applied);
 }
 async function openSpaces(page: BrowserPage): Promise<void> {
+  const dialog = page.getByRole('dialog');
+  if (await dialog.count()) {
+    await dialog.getByRole('button', { name: 'Cerrar', exact: true }).click();
+    await dialog.waitFor({ state: 'hidden', timeout: 20_000 });
+  }
   await page.getByRole('tab', { name: 'Espacios y salas', exact: true }).click();
   await page.getByRole('button', { name: 'Actualizar', exact: true }).click();
   await page.getByRole('button', { name: 'Actualizando…', exact: true }).waitFor({ state: 'hidden', timeout: 20_000 });
@@ -143,9 +148,11 @@ async function openSpaces(page: BrowserPage): Promise<void> {
 async function openRegistry(page: BrowserPage): Promise<Form> {
   await page.getByRole('tab', { name: 'Agentes', exact: true }).click();
   await page.getByRole('searchbox', { name: 'Buscar agente o grupo' }).fill(alias);
-  const trigger = page.getByRole('button', { name: `Editar registro de ${tenant}/${alias}`, exact: true });
-  if (await trigger.count()) await trigger.click();
   const editor = page.getByRole('region', { name: `Registro de ${tenant}/${alias}`, exact: true }) as Form;
+  if (!(await editor.count())) {
+    await page.getByRole('button', { name: `Acciones de ${tenant}/${alias}`, exact: true }).click();
+    await page.getByRole('menuitem', { name: 'Editar registro', exact: true }).click();
+  }
   await editor.waitFor({ state: 'visible', timeout: 20_000 });
   return editor;
 }
@@ -175,7 +182,9 @@ beforeAll(async () => {
   await active().database.pool.query("INSERT INTO memberships(tenant_id,room_id,alias,role) VALUES($1,$2,$3,'operator')", ['Steven', `crudop.${suffix}`, actor]);
   operator = { email: `crudop-${suffix}@cauce.test`, password: randomBytes(24).toString('base64url') };
   reader = { email: `crudreader-${suffix}@cauce.test`, password: randomBytes(24).toString('base64url') };
-  await maintainConsoleUser(active().database.pool, { email: operator.email, name: 'CRUD operator', role: 'operator', tenant: 'Steven', alias: actor, updateOnly: false, activate: true }, await hashPassword(operator.password));
+  const person = await maintainConsoleUser(active().database.pool, { email: operator.email, name: 'CRUD operator', role: 'operator', tenant: 'Steven', alias: actor, updateOnly: false, activate: true }, await hashPassword(operator.password));
+  operator.humanId = person.id;
+  await active().database.pool.query("INSERT INTO company_admins(company_id,human_id,role,source,granted_by) VALUES('humanizar',$1,'admin','platform',$1)", [person.id]);
   await maintainConsoleUser(active().database.pool, { email: reader.email, name: 'CRUD reader', role: 'reader', tenant: isaTenant.tenant, alias: isaTenant.operator, updateOnly: false, activate: true }, await hashPassword(reader.password));
   await writeFile(join(evidence, 'resources-before.json'), JSON.stringify({ resources, browserRuntime: active().browserRuntime }, null, 2) + '\n', { mode: 0o600 });
 }, 10 * 60_000);
@@ -212,9 +221,12 @@ describe('CRUD UI durable con Chromium, PasswordAuth y PostgreSQL', () => {
     await page.getByRole('tab', { name: 'Agentes', exact: true }).click();
     await page.getByRole('button', { name: 'Añadir agente', exact: true }).click(); const dialog = page.getByRole('dialog', { name: 'Añadir agente', exact: true }) as Form;
     await dialog.getByLabel('Espacio de trabajo').selectOption(tenant); await dialog.getByLabel('Alias', { exact: true }).fill(alias); await dialog.getByLabel('Nombre visible').fill('CRUD agente');
+    for (let step = 0; step < 3; step += 1) await dialog.getByRole('button', { name: 'Siguiente', exact: true }).click();
     await apply(page, observer, dialog, { resource: 'agent', action: 'create', tenant_id: tenant, alias, value: { display_name: 'CRUD agente', enabled: false, max_concurrent_deliveries: 2 } }, 'Previsualizar alta', 'Crear registro');
     const emptyRuntime = { enabled: false, container_name: null, runtime_user: null, home_directory: null, state_directory: null, harness_id: null };
     await assertRecord(page, 'agents', { display_name: 'CRUD agente', ...emptyRuntime });
+    await dialog.getByRole('button', { name: 'Terminar', exact: true }).click();
+    await dialog.waitFor({ state: 'hidden', timeout: 20_000 });
     const registryEditor = await openRegistry(page);
     await registryEditor.getByLabel('Nombre visible', { exact: true }).fill('CRUD agente editado');
     await apply(page, observer, registryEditor, { resource: 'agent', action: 'update', tenant_id: tenant, alias, value: { display_name: 'CRUD agente editado' } }, 'Previsualizar cambio', 'Aplicar cambio');
@@ -256,10 +268,23 @@ describe('CRUD UI durable con Chromium, PasswordAuth y PostgreSQL', () => {
   it('rechaza el alta del registro desde el operador no-hub sin crear agente ni revisión', async () => {
     const page = await newTrustedPage(active(), { width: 360, height: 900 }); const observer = observe(page); await login(page, isaTenant);
     await page.getByRole('button', { name: 'Añadir agente', exact: true }).click(); const dialog = page.getByRole('dialog', { name: 'Añadir agente', exact: true }) as Form;
-    const forbidden = `denied${suffix}`; await dialog.getByLabel('Espacio de trabajo').selectOption(isaTenant.tenant); await dialog.getByLabel('Alias', { exact: true }).fill(forbidden); await dialog.getByLabel('Nombre visible').fill('Alta rechazada');
-    const before = await revision(); const denied = await observer.click(dialog.getByRole('button', { name: 'Previsualizar alta', exact: true })); expect(denied.status).toBe(403);
-    await dialog.getByRole('alert').waitFor({ timeout: 20_000 }); expect(await revision()).toBe(before);
+    const disabled = await page.evaluate(() => Array.from(document.querySelectorAll<HTMLInputElement | HTMLSelectElement>('[role="dialog"] input,[role="dialog"] select')).map(control => control.disabled));
+    expect(disabled).toHaveLength(5); expect(disabled.every(Boolean)).toBe(true); expect(observer.changes).toEqual([]);
+    const forbidden = `denied${suffix}`; const before = await revision();
+    const request = { expected_revision: before, dry_run: true, mutation: { resource: 'agent', action: 'create', tenant_id: isaTenant.tenant, alias: forbidden, value: { display_name: 'Alta rechazada', enabled: false, max_concurrent_deliveries: 2 } } };
+    const denied = await page.evaluate(async payload => {
+      const sessionResponse = await fetch('/v3/auth/session', { credentials: 'include' });
+      const session = await sessionResponse.json() as { csrf_token?: string };
+      if (sessionResponse.status !== 200 || !session.csrf_token) throw new Error('authenticated browser session is unavailable');
+      const response = await fetch('/v3/console/config/changes', { method: 'POST', credentials: 'include',
+        headers: { 'content-type': 'application/json', 'x-csrf-token': session.csrf_token }, body: JSON.stringify(payload) });
+      return { status: response.status, body: await response.json() as unknown };
+    }, request);
+    expect(denied.status).toBe(403); expect(await revision()).toBe(before);
+    expect(object(denied.body).error).toBe('forbidden'); expect(object(denied.body).message).not.toMatch(/CSRF|sesión|session/iu);
     expect((await active().database.pool.query('SELECT alias FROM agents WHERE tenant_id=$1 AND alias=$2', [isaTenant.tenant, forbidden])).rows).toEqual([]);
+    await expect.poll(() => observer.changes).toHaveLength(1); expect(observer.changes[0]).toMatchObject({ status: 403, request });
+    await writeFile(join(evidence, 'non-hub-create-403.json'), JSON.stringify({ ...denied, request, disabled, uiPosts: 0, authenticatedPosts: 1, revisionBefore: before, revisionAfter: await revision(), writes: 0 }, null, 2) + '\n', { mode: 0o600 });
     await dialog.getByRole('button', { name: 'Cerrar', exact: true }).click(); await openSpaces(page);
     expect(await page.evaluate(() => Array.from(document.querySelectorAll<HTMLButtonElement>('button')).find(button => button.textContent === 'Crear espacio')?.disabled)).toBe(true);
     await page.screenshot({ path: join(evidence, 'non-hub-denial-360.png'), fullPage: true });
