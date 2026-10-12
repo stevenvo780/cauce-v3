@@ -4,6 +4,11 @@ import { Time } from '../../components/ui';
 import { accountFatigue, FATIGUE_LABEL, OBSERVATION_LABEL, quotaFailureReason } from './quota-availability';
 import { formatPercent } from './quotas';
 
+function sharedAgents({ agent_count: total, agents }: QuotaAccount): string {
+  const label = `${String(total)} ${total === 1 ? 'agente' : 'agentes'}`;
+  return total > agents.length ? `${label} (ves ${String(agents.length)} de tu espacio)` : label;
+}
+
 export function QuotaAccountCard({ account, pinned, canPin, onPin, canEdit, onEdit, onRemove }: {
   account: QuotaAccount; pinned: boolean; canPin?: boolean; onPin?: () => void;
   canEdit?: boolean; onEdit?: () => void; onRemove?: () => void;
@@ -16,8 +21,8 @@ export function QuotaAccountCard({ account, pinned, canPin, onPin, canEdit, onEd
     <header className="flex flex-wrap items-start justify-between gap-2"><div><h3 className="m-0 text-base">{account.label}</h3>
       <p className="m-0 text-xs text-muted">{account.provider}</p></div><Pill tone={tone}>{FATIGUE_LABEL[fatigue]}</Pill></header>
     {onPin ? <Button size="sm" aria-pressed={pinned} disabled={!canPin} onClick={onPin}>{pinned ? 'Desfijar cuenta' : 'Fijar cuenta'}</Button> : null}
-    <p className="m-0 text-sm">{account.shared || account.agents.length > 1
-      ? `Consumo compartido por ${String(account.agents.length)} agentes. Cada tarjeta muestra la misma suscripción.` : 'Cuota de esta suscripción.'}</p>
+    <p className="m-0 text-sm">{account.shared || account.agent_count > 1
+      ? `Consumo compartido por ${sharedAgents(account)}. Cada tarjeta muestra la misma suscripción.` : 'Cuota de esta suscripción.'}</p>
     {account.agents.length ? <ul className="m-0 flex list-none flex-wrap gap-1 p-0 text-xs">{account.agents.map(agent => <li key={`${agent.tenant_id}/${agent.alias}`} className="rounded-md bg-subtle px-2 py-1">{agent.tenant_id}/{agent.alias}{agent.enabled ? '' : ' (asignación deshabilitada)'}</li>)}</ul> : <p className="m-0 text-xs text-muted">Sin agente vinculado.</p>}
     {failure ? <Notice tone={account.note?.trim() === 'rate_limited' ? 'warn' : 'danger'}>{failure}</Notice>
       : account.note ? <Notice tone={account.observation_status === 'error' ? 'danger' : 'info'}>{account.note}</Notice> : null}

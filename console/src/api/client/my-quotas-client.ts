@@ -11,7 +11,7 @@ export interface AccountQuotaWindow {
 }
 export interface QuotaAccount {
   id: string; provider: string; label: string; enabled: boolean; version: number; payer_tenant_id: string;
-  shared: boolean; agents: { tenant_id: string; alias: string; enabled: boolean }[];
+  shared: boolean; agent_count: number; agents: { tenant_id: string; alias: string; enabled: boolean }[];
   paused_until: string | null; paused_reason: string | null; observation_status: QuotaObservationStatus;
   remaining_percent: number | null; note: string | null; windows: AccountQuotaWindow[];
 }

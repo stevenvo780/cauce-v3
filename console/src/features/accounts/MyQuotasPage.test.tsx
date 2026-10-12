@@ -11,7 +11,7 @@ import { MyQuotasPage } from './MyQuotasPage';
 vi.mock('./ProviderAuthTerminal', () => ({ ProviderAuthTerminal: () => null }));
 
 const account: QuotaAccount = { id: 'subscription', provider: 'codex', label: 'Cuenta compartida', enabled: true, version: 3,
-  payer_tenant_id: 'One', shared: true, agents: [{ tenant_id: 'One', alias: 'first', enabled: true }, { tenant_id: 'One', alias: 'second', enabled: true }],
+  payer_tenant_id: 'One', shared: true, agent_count: 2, agents: [{ tenant_id: 'One', alias: 'first', enabled: true }, { tenant_id: 'One', alias: 'second', enabled: true }],
   paused_until: null, paused_reason: null, observation_status: 'ok', remaining_percent: 56, note: null,
   windows: [{ group_key: 'primary', window_key: 'weekly', model: 'gpt', label: 'Semanal', host: 'host', used_percent: 44, remaining_percent: 56,
     window_minutes: 10_080, captured_at: null, received_at: '2026-10-11T00:00:00Z', reset_at: null, observation_status: 'ok' }] };
@@ -36,6 +36,15 @@ it('fija una suscripción compartida en el servidor y relee la misma preferencia
   expect(writes).toEqual([{ expected_version: 4, pinned_quota_accounts: ['subscription'] }]);
   view.unmount(); renderWithApi(owner());
   expect(await screen.findByRole('button', { name: 'Desfijar cuenta' })).toHaveAttribute('aria-pressed', 'true');
+});
+it('un lector de alcance tenant ve el total de agentes que comparten la cuenta sin alias ajenos', async () => {
+  server.use(http.get('*/v3/console/quota-accounts', () => HttpResponse.json({ company_id: 'one', observed_at: '2026-10-11T00:00:00Z', accounts: [
+    { ...account, shared: true, agent_count: 3, agents: [{ tenant_id: 'One', alias: 'janus', enabled: true }] },
+  ] })));
+  renderWithApi(owner());
+  const card = within(await screen.findByRole('article', { name: 'Cuotas de Cuenta compartida' }));
+  expect(card.getByText(/Consumo compartido por 3 agentes \(ves 1 de tu espacio\)/u)).toBeVisible();
+  expect(card.queryByText(/1 agentes/u)).not.toBeInTheDocument();
 });
 it('datos antiguos con saldo cero no muestran el cansancio de agotado', async () => {
   server.use(http.get('*/v3/console/quota-accounts', () => HttpResponse.json({ company_id: 'one', observed_at: '2026-10-11T00:00:00Z', accounts: [

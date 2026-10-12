@@ -26,6 +26,7 @@ export function quotaAccounts(value: unknown): QuotaAccountsSnapshot {
       || !nullableText(account.paused_reason) || !nullableText(account.note)) failed();
     for (const item of array(account.agents)) { const agent = object(item);
       if (![agent.tenant_id, agent.alias].every(text) || typeof agent.enabled !== 'boolean') failed(); }
+    if (typeof account.agent_count !== 'number' || !Number.isSafeInteger(account.agent_count) || account.agent_count < array(account.agents).length) failed();
     for (const item of array(account.windows)) { const window = object(item);
       if (![window.group_key, window.window_key, window.host].every(text) || !status(window.observation_status)
         || !percent(window.used_percent) || !percent(window.remaining_percent) || !nullableText(window.model) || !nullableText(window.label)

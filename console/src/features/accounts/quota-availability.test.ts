@@ -3,7 +3,7 @@ import type { QuotaAccount } from '../../api/client/my-quotas-client';
 import { accountFatigue, agentFatigue, agentQuotaAccounts, FATIGUE_LABEL, quotaFailureReason } from './quota-availability';
 
 const account: QuotaAccount = { id: 'subscription', provider: 'codex', label: 'Cuenta compartida', enabled: true, version: 1,
-  payer_tenant_id: 'Humanizar', shared: true, agents: [{ tenant_id: 'Humanizar', alias: 'kant', enabled: true },
+  payer_tenant_id: 'Humanizar', agent_count: 2, shared: true, agents: [{ tenant_id: 'Humanizar', alias: 'kant', enabled: true },
     { tenant_id: 'Humanizar', alias: 'zeus', enabled: true }], paused_until: null, paused_reason: null,
   observation_status: 'ok', remaining_percent: 60, note: null, windows: [] };
 describe('disponibilidad derivada de suscripciones', () => {
