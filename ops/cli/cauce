@@ -9,6 +9,12 @@ BIN=$cli_home/.local/bin
 CONFIG=$cli_home/.config/cauce-v3/container-aliases
 TMUX_SOCKET=cauce
 
+if [[ ${1:-} == diagnose ]]; then
+  shift
+  [[ -x $BIN/cauce-diagnose ]] || { printf 'cauce: falta cauce-diagnose; reinstale el CLI.\n' >&2; exit 3; }
+  exec "$BIN/cauce-diagnose" "$@"
+fi
+
 if [[ ${1:-} == platform ]]; then
   cli_directory=$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")
   platform_helper=$cli_directory/cauce-platform

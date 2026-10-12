@@ -1,6 +1,4 @@
 #!/usr/bin/env bash
-# The installer must publish every sibling binary `cauce` execs, and the syntax check dispatches
-# on the shebang because `bash -n` on a python file is a false verdict, not a check.
 set -uo pipefail
 
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -16,7 +14,7 @@ WORK=$(mktemp -d)
 cleanup() { rm -rf "$WORK"; }
 trap cleanup EXIT
 
-ESPERADOS=(cauce cauce-platform cauce-diagnose host_enrollment.py host_channel_client.py host_setup.py context_client.py context_native.py space_archive.py cauce-credenciales.lib.sh cauce-panel cauce-huerfanas cauce-reponer cauce-estado cauce-sesiones cauce-attach)
+ESPERADOS=(cauce cauce-platform cauce-diagnose cauce-login cauce-spaces host_enrollment.py host_channel_client.py host_setup.py context_client.py context_native.py space_archive.py cauce-credenciales.lib.sh cauce-panel cauce-huerfanas cauce-reponer cauce-estado cauce-sesiones cauce-attach)
 
 # py_compile writes `<dir>/__pycache__/<name>.pyc` a level deeper, so the probe reaches depth 2.
 MARCA="$WORK/marca"
@@ -103,26 +101,39 @@ if [ "$rc" = 1 ] && grep -q 'expected exactly one enrolled identity' <<< "$estad
 else
   bad "hosts status corre desde el CLI instalado sin trazas (rc=$rc): $estado"
 fi
-# Installed copy, empty home: setup/status must reach host_setup and fail with a message, never a traceback.
-estado=$(HOME="$HOGAR" "$DEST/cauce" hosts status 2>&1); rc=$?
-if [ "$rc" = 1 ] && grep -q 'expected exactly one enrolled identity' <<< "$estado" && ! grep -q Traceback <<< "$estado"; then
-  ok "hosts status corre desde el CLI instalado sin trazas"
-else
-  bad "hosts status corre desde el CLI instalado sin trazas (rc=$rc): $estado"
-fi
 if "$DEST/cauce" hosts enroll --help 2>&1 | grep -q -- '--invitation-stdin'; then
   ok "enrolamiento disponible desde el CLI instalado"
 else
   bad "enrolamiento disponible desde el CLI instalado"
 fi
 n_instalados=$(find "$DEST" -maxdepth 1 -type f | wc -l)
-for context_command in context context-native spaces; do
+for context_command in login context context-native spaces; do
   if PYTHONDONTWRITEBYTECODE=1 "$DEST/cauce" "$context_command" --help >/dev/null 2>&1; then
     ok "$context_command disponible desde el CLI instalado"
   else
     bad "$context_command disponible desde el CLI instalado"
   fi
 done
+DIAG_HOME="$WORK/diagnose-home"; SHIMS="$WORK/shims"
+mkdir -p "$DIAG_HOME/.local" "$SHIMS"
+ln -s "$DEST" "$DIAG_HOME/.local/bin"
+cat > "$SHIMS/getent" <<'EOF'
+#!/bin/sh
+printf 'fixture:x:1000:1000::%s:/bin/sh\n' "$CAUCE_TEST_CLI_HOME"
+EOF
+chmod +x "$SHIMS/getent"
+if HOME="$DIAG_HOME" CAUCE_TEST_CLI_HOME="$DIAG_HOME" CAUCE_FLEET_RUNTIME_STATE='' PATH="$SHIMS:$PATH" "$DEST/cauce" diagnose --help 2>&1 | grep -q 'cauce diagnose'; then
+  ok "diagnose tiene precedencia sobre aliases y flota dinámica desde el CLI instalado"
+else
+  bad "diagnose tiene precedencia sobre aliases y flota dinámica desde el CLI instalado"
+fi
+rm "$DIAG_HOME/.local/bin"
+missing=$(HOME="$DIAG_HOME" CAUCE_TEST_CLI_HOME="$DIAG_HOME" CAUCE_FLEET_RUNTIME_STATE='' PATH="$SHIMS:$PATH" "$DEST/cauce" diagnose --help 2>&1); rc=$?
+if [ "$rc" = 3 ] && grep -q 'falta cauce-diagnose' <<< "$missing"; then
+  ok "diagnose sin helper da un error accionable antes de resolver aliases"
+else
+  bad "diagnose sin helper da un error accionable (rc=$rc): $missing"
+fi
 if [ "$n_instalados" = "${#ESPERADOS[@]}" ]; then
   ok "publica exactamente ${#ESPERADOS[@]} ficheros"
 else

@@ -181,7 +181,7 @@ class DynamicMutationBlockTests(unittest.TestCase):
             for inventory in ("", "/missing/receipt"):
                 environment["CAUCE_FLEET_RUNTIME_STATE"] = inventory
                 for arguments in (["physical-one", "on"], ["physical-one", "off"], ["physical-one", "retirar"],
-                                  ["physical-one", "aprovisionar"], ["physical-one"], ["physical-one", "login", "--ver"],
+                                  ["physical-one", "aprovisionar"], ["physical-one", "login", "--ver"],
                                   ["physical-one", "auth"], ["pila-test"], ["pila-test", "estado"],
                                   ["pila-test", "ver"], ["pila-test", "panel"]):
                     result = subprocess.run(["bash", str(OPS / "cli/cauce"), *arguments], env=environment,
@@ -189,6 +189,32 @@ class DynamicMutationBlockTests(unittest.TestCase):
                     self.assertEqual(result.returncode, 2, (arguments, result.stderr))
                     self.assertIn("coordinator durable", result.stderr)
             self.assertFalse(log.exists(), "a mutation reached a runtime or identity helper")
+
+    def test_cli_entry_rejects_invalid_applied_inventory_before_terminal_commands(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="cauce-cli-invalid-") as temporary:
+            root = pathlib.Path(temporary)
+            home = root / "home"
+            home.mkdir()
+            log = root / "effects"
+            getent = root / "getent"
+            getent.write_text('#!/bin/sh\nprintf "fixture:x:1000:1000::%s:/bin/sh\\n" "$HOME"\n')
+            getent.chmod(0o700)
+            link = home / ".local/share/cauce-v3/ops"
+            link.parent.mkdir(parents=True)
+            link.symlink_to(OPS)
+            for command in ("docker", "ssh", "systemctl", "tmux"):
+                script = root / command
+                script.write_text('#!/bin/sh\nprintf "%s\\n" "$0" >> "$CAUCE_TEST_EFFECTS"\nexit 91\n')
+                script.chmod(0o700)
+            environment = {**os.environ, "HOME": str(home), "PATH": str(root) + ":" + os.environ["PATH"],
+                           "CAUCE_TEST_EFFECTS": str(log), "PYTHONDONTWRITEBYTECODE": "1"}
+            for inventory in ("", str(root / "missing-receipt")):
+                result = subprocess.run(["bash", str(OPS / "cli/cauce"), "physical-one"],
+                                        env={**environment, "CAUCE_FLEET_RUNTIME_STATE": inventory},
+                                        capture_output=True, text=True, check=False)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn("container alias lookup failed", result.stderr)
+            self.assertFalse(log.exists(), "invalid inventory reached a terminal command")
 
     def test_panel_guard_rejects_before_creating_state_or_lock(self) -> None:
         with tempfile.TemporaryDirectory(prefix="cauce-panel-guard-") as temporary:

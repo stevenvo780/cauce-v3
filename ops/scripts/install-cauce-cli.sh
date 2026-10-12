@@ -41,9 +41,10 @@ mkdir -p "$BIN"
 instalar cli cauce
 instalar cli cauce-platform
 instalar cli cauce-diagnose
+instalar cli cauce-login
+instalar cli cauce-spaces
 instalar cli host_enrollment.py
 instalar cli host_channel_client.py
-instalar cli host_setup.py
 instalar cli host_setup.py
 instalar cli context_client.py
 instalar cli context_native.py
