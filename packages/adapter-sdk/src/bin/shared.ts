@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { AdapterClient } from "../sdk/client.js";
 import { bootstrapOnStartup } from "../sdk/bootstrap-runner.js";
 import { BlobClient, configureDefaultBlobClient } from "../sdk/blob-client.js";
+import { ContextIngestClient, configureDefaultContextIngestClient } from "../sdk/context-ingest-client.js";
 import { DurableStore } from "../sdk/durable-store.js";
 import { ProcessExecutionError } from "../sdk/errors.js";
 import { SpawnCommandRunner } from "../sdk/process-runner.js";
@@ -271,6 +272,21 @@ function pointedRunner(
     });
 }
 
+export function configureGatewayHttpClients(
+  runtime: { readonly relayUrl: string; readonly bearerTokenFile?: string;
+    readonly mutualTls?: { readonly certFile: string; readonly keyFile: string; readonly caFile: string };
+    readonly developmentIdentity: boolean; readonly alias: string },
+  tenantId: string,
+): void {
+  const options = {
+    ...(runtime.bearerTokenFile === undefined ? {} : { bearerTokenFile: runtime.bearerTokenFile }),
+    ...(runtime.mutualTls === undefined ? {} : { mutualTls: runtime.mutualTls }),
+    ...(runtime.developmentIdentity ? { developmentIdentity: { tenant_id: tenantId, alias: runtime.alias } } : {}),
+  };
+  configureDefaultBlobClient(BlobClient.fromRelayUrl(runtime.relayUrl, options));
+  configureDefaultContextIngestClient(ContextIngestClient.fromRelayUrl(runtime.relayUrl, options));
+}
+
 export async function runCli(harnessId: HarnessId): Promise<void> {
   const descriptor = await packagedHarnessDescriptor(harnessId);
   const spaceRoot = process.env.CAUCE_SPACE_ROOT;
@@ -361,11 +377,7 @@ export async function runCli(harnessId: HarnessId): Promise<void> {
   if (runner instanceof PasteSessionRunner && shared?.harness === "grok") emission.trackPromptOrigin(() => runner.lastUserPromptOrigin()); // Only grok's shapes are measured.
   else if (shared !== undefined) emission.refuseOutsideDelivery(`fuera de una entrega todavía no se envía desde una TUI de ${shared.harness}`);
   try {
-    configureDefaultBlobClient(BlobClient.fromRelayUrl(runtime.relayUrl, {
-      ...(runtime.bearerTokenFile === undefined ? {} : { bearerTokenFile: runtime.bearerTokenFile }),
-      ...(runtime.mutualTls === undefined ? {} : { mutualTls: runtime.mutualTls }),
-      ...(runtime.developmentIdentity ? { developmentIdentity: { tenant_id: tenantId, alias: runtime.alias } } : {}),
-    }));
+    configureGatewayHttpClients(runtime, tenantId);
   } catch (error) {
     process.stderr.write(`blob client disabled: ${String(error instanceof Error ? error.message : error)}\n`);
   }
