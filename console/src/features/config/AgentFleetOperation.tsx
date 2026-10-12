@@ -14,7 +14,7 @@ export function AgentFleetPreview({ preview }: { preview: FleetOperationPreview 
     <p>Acción: {FLEET_ACTION_LABELS[preview.kind]} · Revisión esperada: {preview.expected_revision}</p>
     <ol>{preview.steps.map((step) => <li key={step}>{STEPS[step]}</li>)}</ol>
     {preview.resources.length ? <section aria-label="Recursos físicos del plan">
-      <p>Plan de recursos (el ejecutor solo borra lo que existe con las etiquetas de propiedad correctas; el resultado de la operación dice lo que realmente se borró):</p>
+      <p>Plan de recursos (el ejecutor solo borra lo que existe con las etiquetas de propiedad correctas; este es el plan, no el resultado):</p>
       <ul>{preview.resources.map((resource) => <li key={`${resource.type}:${resource.name}`} data-action={resource.action}>
         {resource.action === 'delete' ? 'Se borra' : 'Se conserva'}: {RESOURCE_TYPES[resource.type]} <code>{resource.name}</code> · {resource.reason}</li>)}</ul>
     </section> : null}
@@ -30,8 +30,8 @@ export function AgentFleetPreview({ preview }: { preview: FleetOperationPreview 
 }
 function PurgeOutcome({ operation }: { operation: FleetOperation }) {
   const step = operation.steps.find((value) => value.name === 'purge');
-  const text = step?.status === 'succeeded' ? 'El ejecutor observó la purga: los recursos físicos del agente ya no existen y se conservó lo que no era suyo (por ejemplo un contenedor compartido).'
-    : step?.status === 'failed' ? 'La purga física falló: no se acreditó qué se borró. Revisa la evidencia de los pasos.'
+  const text = step?.status === 'succeeded' ? 'La purga terminó. La operación aún no detalla qué recursos físicos se borraron (pendiente del ejecutor): lo anterior es el plan, no una comprobación de lo borrado.'
+    : step?.status === 'failed' ? 'La purga física falló: no se acreditó qué se borró.'
     : operation.status === 'succeeded' ? 'La operación terminó sin paso de purga acreditado.'
     : null;
   return text ? <section aria-label="Resultado de la purga"><p role="status">{text}</p></section> : null;

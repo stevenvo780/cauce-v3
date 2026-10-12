@@ -77,8 +77,8 @@ export const FleetErrorSchema = z.object({
 }).strict();
 /**
  * The physical resources a purge plans to touch, computed by the server with the executor's rules. It is the plan,
- * not the outcome: the executor only removes what exists with the expected ownership labels, and the operation
- * steps (with their evidence) say what was really removed.
+ * not the outcome: the executor only removes what exists with the expected ownership labels. The `purge` step
+ * evidence (`stopped_verified`, `revocation_verified`) does not yet itemise what was removed; that is pending.
  */
 export const FleetPurgeResourceSchema = z.object({
   type: z.enum(['container', 'volume', 'directory']), name: z.string().min(1).max(512),

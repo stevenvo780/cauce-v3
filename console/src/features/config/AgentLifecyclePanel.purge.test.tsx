@@ -46,7 +46,7 @@ it('lists the server plan, keeps purge disabled until the exact alias is typed a
   expect(screen.getByLabelText('Recursos que se borrarán')).not.toHaveTextContent('ws-w-state');
   expect(plan).toHaveTextContent('Se borra: Contenedor ws-w');
   expect(plan).toHaveTextContent('Se borra: Volumen ws-w-state');
-  expect(plan).toHaveTextContent('el resultado de la operación dice lo que realmente se borró');
+  expect(plan).toHaveTextContent('este es el plan, no el resultado');
   expect(screen.getByRole('link', { name: 'Descargar copia' })).toHaveAttribute('href', '/messages/A/w?view=context');
   const enqueue = screen.getByRole('button', { name: 'Encolar operación' });
   expect(enqueue).toBeDisabled();
@@ -70,5 +70,5 @@ it('reports the observed purge result when the operation finishes', () => {
     target, kind: 'purge', actor: { tenant_id: 'A', alias: 'op' }, expected_revision: 4, desired_revision: null, applied_revision: null,
     steps: [{ name: 'purge', status: 'succeeded' }], error: null, created_at: '2026-10-12T10:00:00.000Z', updated_at: '2026-10-12T10:00:00.000Z' };
   render(<AgentFleetOperation operation={operation} busy={false} current control={() => undefined} />);
-  expect(screen.getByLabelText('Resultado de la purga')).toHaveTextContent('El ejecutor observó la purga');
+  expect(screen.getByLabelText('Resultado de la purga')).toHaveTextContent('aún no detalla qué recursos físicos se borraron');
 });
