@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import type { ConsolePublishIntentCommand } from '@cauce/protocol';
+import { HUMAN_MESSAGE_INITIATOR_CAPABILITY, type ConsolePublishIntentCommand } from '@cauce/protocol';
 import {
   authorFor, consoleIntent, countsFor, databasePool, getRepository,
   blockingPids, installPublishBarrier, prepareHumanPublishIntent, publishCommand, publishOptions,
@@ -57,7 +57,123 @@ async function revoke(revocation: Revocation, humanId: string, alias: string): P
   await poolQuery(revocation.sql, revocation.values(humanId, alias));
 }
 
+async function connectRecipient(capabilities: string[]): Promise<void> {
+  const lease = await getRepository().acquireLease('Steven', 'argos', 'human-publication-recipient',
+    capabilities, 60_000, { resume: true });
+  expect(lease.acquired).toBe(true);
+}
+
 describe('human publication authority in PostgreSQL', () => {
+  it('rejects a new human-mcp publication without an effect when its active consumer cannot claim it', async () => {
+    const { command, options } = await preparedSubmission();
+    await connectRecipient([]);
+    await expect(getRepository().publish(command, options)).rejects.toMatchObject({
+      code: 'no_route',
+      message: `recipient Steven/argos has an active consumer without ${HUMAN_MESSAGE_INITIATOR_CAPABILITY}; human-mcp delivery cannot be consumed`,
+    });
+    expect(await countsFor(command)).toEqual({
+      messages: '0', initiators: '0', deliveries: '0', outbox: '0', audit: '0', idempotency: '0',
+    });
+  });
+
+  it('allows a new human-mcp publication when its active consumer declares the required capability', async () => {
+    const { command, options } = await preparedSubmission();
+    await connectRecipient([HUMAN_MESSAGE_INITIATOR_CAPABILITY]);
+    const receipt = await getRepository().publish(command, options);
+    expect(receipt.duplicate).toBe(false);
+    expect(await countsFor(command)).toEqual({
+      messages: '1', initiators: '1', deliveries: '1', outbox: '1', audit: '1', idempotency: '1',
+    });
+  });
+
+  it.each(['console', 'bus'])('keeps %s publication available to the same active consumer', async (channel) => {
+    const { command, options } = await preparedSubmission();
+    await connectRecipient([]);
+    const input = { ...command, authenticated_context: { session_id: `fixture-${channel}`, channel } };
+    const receipt = await getRepository().publish(input, options);
+    expect(receipt.duplicate).toBe(false);
+    expect(await countsFor(input)).toMatchObject({ messages: '1', deliveries: '1', idempotency: '1' });
+    expect((await poolQuery('SELECT auth_channel FROM messages WHERE id=$1', [receipt.message_id])).rows[0])
+      .toMatchObject({ auth_channel: channel });
+  });
+
+  it('recovers and verifies a historical receipt after the live consumer drops its human-mcp capability', async () => {
+    const { command, options } = await preparedSubmission();
+    await connectRecipient([HUMAN_MESSAGE_INITIATOR_CAPABILITY]);
+    const first = await getRepository().publish(command, options);
+    await connectRecipient([]);
+    const retry = await getRepository().publish({ ...command, request_id: randomUUID(), trace_id: `retry-${randomUUID()}` }, options);
+    expect(retry).toEqual({ ...first, duplicate: true });
+    expect(await getRepository().verifyPublishReceipt(command, first, options)).toBe(true);
+    expect(await countsFor(command)).toEqual({
+      messages: '1', initiators: '1', deliveries: '1', outbox: '1', audit: '1', idempotency: '1',
+    });
+  });
+
+  it.each(['expired', 'absent'])('preserves offline publication with an %s consumer lease', async (state) => {
+    const { command, options } = await preparedSubmission();
+    if (state === 'expired') {
+      await connectRecipient([]);
+      await poolQuery("UPDATE connection_leases SET lease_until=now()-interval '1 minute' WHERE tenant_id='Steven' AND alias='argos'");
+    }
+    expect((await getRepository().publish(command, options)).duplicate).toBe(false);
+    expect(await countsFor(command)).toMatchObject({ messages: '1', deliveries: '1', idempotency: '1' });
+  });
+
+  it.each(['expired', 'absent'])('serializes an incompatible consumer admission after publication with an %s lease', async (state) => {
+    const { account, command, options } = await preparedSubmission();
+    if (state === 'expired') {
+      await connectRecipient([]);
+      await poolQuery("UPDATE connection_leases SET lease_until=now()-interval '1 minute' WHERE tenant_id='Steven' AND alias='argos'");
+    }
+    const authority = options.humanAuthority;
+    if (authority === undefined) throw new Error('missing fixture human authority');
+    const barrier = await installPublishBarrier();
+    const observer = await databasePool().connect();
+    const settlement: Promise<unknown>[] = [];
+    let publisherPid: number | undefined;
+    try {
+      const publication = getRepository().publish(command, publishOptions(account, { authority: async (client) => {
+        const human = await authority(client);
+        publisherPid = (await client.query<{ pid: number }>('SELECT pg_backend_pid() AS pid')).rows[0]?.pid;
+        return human;
+      } }));
+      settlement.push(publication);
+      const publishDeadline = Date.now() + 5_000;
+      while (publisherPid === undefined && Date.now() < publishDeadline) await new Promise((resolve) => setTimeout(resolve, 5));
+      if (publisherPid === undefined) throw new Error('publication did not open its PostgreSQL backend');
+      await waitForBlocked(observer, publisherPid);
+      expect(await blockingPids(observer, publisherPid)).toContain(barrier.blockerPid);
+      const admission = getRepository().acquireLease('Steven', 'argos', 'human-publication-recipient', [],
+        60_000, { resume: true });
+      settlement.push(admission);
+      let consumerPid: number | undefined;
+      const admissionDeadline = Date.now() + 5_000;
+      while (consumerPid === undefined && Date.now() < admissionDeadline) {
+        consumerPid = (await observer.query<{ pid: number }>(
+          `SELECT pid FROM pg_stat_activity WHERE datname=current_database() AND $1=ANY(pg_blocking_pids(pid)) LIMIT 1`,
+          [publisherPid],
+        )).rows[0]?.pid;
+        if (consumerPid === undefined) await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      if (consumerPid === undefined) throw new Error('consumer admission bypassed the publication lock');
+      expect(await blockingPids(observer, consumerPid)).toContain(publisherPid);
+      expect((await observer.query("SELECT 1 FROM connection_leases WHERE tenant_id='Steven' AND alias='argos' AND lease_until>now()")).rows)
+        .toEqual([]);
+      await barrier.release();
+      expect((await publication).duplicate).toBe(false);
+      expect((await admission).acquired).toBe(true);
+      expect(await countsFor(command)).toMatchObject({ messages: '1', deliveries: '1', idempotency: '1' });
+      expect((await observer.query("SELECT capabilities FROM connection_leases WHERE tenant_id='Steven' AND alias='argos'")).rows[0])
+        .toEqual({ capabilities: [] });
+    } finally {
+      await barrier.release().catch(() => undefined);
+      await Promise.allSettled(settlement);
+      observer.release();
+      await removePublishBarrier(barrier);
+    }
+  });
+
   it('persists the trusted human root and returns one receipt on an owned idempotent retry', async () => {
     const { account, command, options } = await preparedSubmission('Steven', {
       text: `human publication ${randomUUID()}`,
