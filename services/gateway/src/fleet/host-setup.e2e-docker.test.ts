@@ -47,6 +47,7 @@ function command(file: string, args: string[], input?: string): Promise<{ code: 
     child.stdin.end(input ?? '');
   });
 }
+function gateway() { if (!app) throw new Error('gateway absent'); return app; }
 const onComputer = (args: string[], input?: string) => command('docker', ['exec', '-i', ...AS_USER, container, ...args], input);
 const cli = (args: string[], input?: string) => onComputer(['python3', '/opt/cauce-cli/host_enrollment.py', ...args], input);
 
@@ -174,7 +175,7 @@ describe.skipIf(process.env.CAUCE_HOST_SETUP_E2E !== '1')('a clean computer prep
   }, 120_000);
 
   it('enrolls with the console invitation, installs the user service and reports executor_ready', async () => {
-    const invitation = await inviteSetupHost(app as NonNullable<typeof app>, ownerA, 'setupe2e-laptop');
+    const invitation = await inviteSetupHost(gateway(), ownerA, 'setupe2e-laptop');
     expect(invitation.setup_signer_fingerprint).toBe(packager.signerFingerprint);
     const enrolled = await cli(['enroll', '--gateway', gatewayUrl, '--invitation-stdin'], JSON.stringify(invitation));
     expect(enrolled.code, enrolled.stderr).toBe(0);
@@ -199,8 +200,8 @@ describe.skipIf(process.env.CAUCE_HOST_SETUP_E2E !== '1')('a clean computer prep
   }, 300_000);
 
   it('another company neither sees that computer nor lets it ask for its setup package', async () => {
-    const ownerB = await registerSetupOwner(app as NonNullable<typeof app>, 'setupe2eb');
-    await inviteSetupHost(app as NonNullable<typeof app>, ownerB, 'setupe2eb-desk');
+    const ownerB = await registerSetupOwner(gateway(), 'setupe2eb');
+    await inviteSetupHost(gateway(), ownerB, 'setupe2eb-desk');
     expect((await enrollments(ownerB)).enrollments.map(row => row.host_id)).toEqual(['setupe2eb-desk']);
     expect((await capability(ownerB)).placements.map(row => row.host_id)).not.toContain('setupe2e-laptop');
     const forged = 'import pathlib,sys\nsys.path.insert(0,"/opt/cauce-cli")\nfrom host_channel_client import HostChannel,HostFailure,post_json\n'
