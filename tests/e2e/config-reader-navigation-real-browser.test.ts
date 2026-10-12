@@ -182,7 +182,9 @@ describe('navegación de Configuración para lectores', () => {
       expect(configLinkDisabled).not.toBe('true');
       await configLink.click();
       await page.getByRole('heading', { name: 'Ajustes', exact: true }).waitFor({ state: 'visible', timeout: 20_000 });
-      await page.getByRole('tab', { name: 'Avanzado', exact: true }).click();
+      const section = page.getByRole('combobox', { name: 'Sección', exact: true });
+      if (await section.count()) await section.selectOption('avanzado');
+      else await page.getByRole('tab', { name: 'Avanzado', exact: true }).click();
       await page.getByText(/Solo lectura:/u).waitFor({ state: 'visible', timeout: 20_000 });
 
       const snapshot = await page.evaluate(async () => {
@@ -218,8 +220,8 @@ describe('navegación de Configuración para lectores', () => {
       expect(writeButtons.length).toBeGreaterThan(0);
       expect(writeButtons.every((button) => button.disabled), JSON.stringify(writeButtons)).toBe(true);
 
-      const spacesTab = page.getByRole('tab', { name: 'Espacios y salas' });
-      await spacesTab.click();
+      if (await section.count()) await section.selectOption('espacios');
+      else await page.getByRole('tab', { name: 'Espacios y salas', exact: true }).click();
       await page.getByRole('heading', { name: 'Clientes', exact: true }).waitFor({ state: 'visible', timeout: 10_000 });
       await page.getByRole('button', { name: 'Espacio completo, paso a paso' }).click();
       await page.getByRole('group', { name: 'Wizard de espacios', exact: true }).waitFor({ state: 'visible' });

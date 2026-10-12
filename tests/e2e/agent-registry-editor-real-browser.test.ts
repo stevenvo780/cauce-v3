@@ -69,7 +69,10 @@ async function login(page: BrowserPage, email: string, password: string): Promis
   await page.getByRole('button', { name: 'Iniciar sesión' }).click();
   await page.getByRole('navigation', { name: 'Navegación principal', exact: true }).locator('a[href="/messages"], a[href^="/messages/"]').waitFor({ state: 'visible', timeout: 20_000 });
   await page.goto(`${fixture?.baseUrl ?? ''}/config`, { waitUntil: 'domcontentloaded' });
-  await page.getByRole('tab', { name: 'Agentes', exact: true }).click();
+  await page.getByRole('heading', { name: 'Ajustes', exact: true }).waitFor({ state: 'visible', timeout: 20_000 });
+  const section = page.getByRole('combobox', { name: 'Sección', exact: true });
+  if (await section.count()) await section.selectOption('agentes');
+  else await page.getByRole('tab', { name: 'Agentes', exact: true }).click();
 }
 async function openEditor(page: BrowserPage, tenant: string, alias: string): Promise<void> {
   await page.getByLabel('Buscar agente o grupo').fill(tenant === 'Steven' ? 'QA' : alias);

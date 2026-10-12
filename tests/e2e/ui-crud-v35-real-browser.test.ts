@@ -72,7 +72,10 @@ async function login(page: BrowserPage, user: User): Promise<void> {
   await page.getByRole('button', { name: 'Iniciar sesión' }).click();
   await page.getByRole('navigation', { name: 'Navegación principal', exact: true }).locator('a[href="/messages"], a[href^="/messages/"]').waitFor({ timeout: 20_000 });
   await page.goto(`${active().baseUrl}/config`, { waitUntil: 'domcontentloaded' });
-  await page.getByRole('tab', { name: 'Agentes', exact: true }).click();
+  await page.getByRole('heading', { name: 'Ajustes', exact: true }).waitFor({ state: 'visible', timeout: 20_000 });
+  const section = page.getByRole('combobox', { name: 'Sección', exact: true });
+  if (await section.count()) await section.selectOption('agentes');
+  else await page.getByRole('tab', { name: 'Agentes', exact: true }).click();
 }
 function observe(page: BrowserPage) {
   let pending: ((value: NetworkChange) => void) | undefined;
@@ -141,7 +144,10 @@ async function openSpaces(page: BrowserPage): Promise<void> {
     await dialog.getByRole('button', { name: 'Cerrar', exact: true }).click();
     await dialog.waitFor({ state: 'hidden', timeout: 20_000 });
   }
-  await page.getByRole('tab', { name: 'Espacios y salas', exact: true }).click();
+  await page.getByRole('heading', { name: 'Ajustes', exact: true }).waitFor({ state: 'visible', timeout: 20_000 });
+  const section = page.getByRole('combobox', { name: 'Sección', exact: true });
+  if (await section.count()) await section.selectOption('espacios');
+  else await page.getByRole('tab', { name: 'Espacios y salas', exact: true }).click();
   await page.getByRole('button', { name: 'Actualizar', exact: true }).click();
   await page.getByRole('button', { name: 'Actualizando…', exact: true }).waitFor({ state: 'hidden', timeout: 20_000 });
 }

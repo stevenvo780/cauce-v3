@@ -306,9 +306,11 @@ describe('perfil canónico desde configuración móvil y runtime Python medido',
     const menu = page.getByRole('dialog', { name: 'Gestión', exact: true });
     await menu.waitFor({ state: 'visible', timeout: 10_000 });
     await menu.getByRole('link', { name: 'Ajustes' }).click();
-    await page.getByRole('heading', { name: 'Ajustes' }).waitFor({ timeout: 20_000 });
+    await page.getByRole('heading', { name: 'Ajustes', exact: true }).waitFor({ state: 'visible', timeout: 20_000 });
     const artifactDirectory = process.env.CAUCE_E2E_ARTIFACT_DIR;
-    await page.getByRole('tab', { name: 'Agentes', exact: true }).click();
+    const section = page.getByRole('combobox', { name: 'Sección', exact: true });
+    if (await section.count()) await section.selectOption('agentes');
+    else await page.getByRole('tab', { name: 'Agentes', exact: true }).click();
     await page.getByRole('searchbox', { name: 'Buscar agente o grupo' }).fill(active.targetAlias);
     await page.getByRole('button', { name: `Acciones de ${active.tenant}/${active.targetAlias}`, exact: true }).click();
     const openContext = page.getByRole('menuitem', { name: `Perfil y contexto de ${active.tenant}/${active.targetAlias}`, exact: true });
