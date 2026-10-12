@@ -133,6 +133,7 @@ class HostEnrollmentTests(unittest.TestCase):
     def test_permissions_and_symlinks_are_rejected(self):
         unsafe = self.root / 'unsafe'
         unsafe.mkdir(mode=0o755)
+        unsafe.chmod(0o755)
         with self.assertRaises(HostFailure):
             private_directory(unsafe)
         linked = self.root / 'linked'
