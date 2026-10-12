@@ -1,12 +1,12 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { AliasSchema, TenantSchema } from '@cauce/protocol';
-import { ContextGitBroker, ContextVersionStore, processContextOutbox, StoreError,
+import { ContextGitBroker, ContextVersionStore, ingestNativeContextVersion, processContextOutbox, StoreError,
   type ContextRuntimeSink, type ContextTarget, type DatabasePool } from '@cauce/store';
-import { AuthError, AuthorizationError, type AuthProvider } from './auth.js';
+import { AuthError, AuthorizationError, requirePermission, type AuthProvider } from './auth.js';
 import { consoleHumanAccess } from './console-human-authority.js';
 import { PasswordAuthProvider } from './password-auth.js';
-import { replyError } from './routes/shared.js';
+import { principal, replyError } from './routes/shared.js';
 
 const Params = z.object({ tenant: TenantSchema, alias: AliasSchema }).strict();
 const Revision = z.coerce.number().int().positive().max(Number.MAX_SAFE_INTEGER);
@@ -34,6 +34,25 @@ export function registerContextVersionRoutes(app: FastifyInstance, provider: Aut
     app.addHook('onReady', async () => { timer = setInterval(() => { tick(); }, 5_000); timer.unref(); tick(); });
     app.addHook('onClose', async () => { clearInterval(timer); await running; });
   }
+  app.post('/v3/context/ingest', { bodyLimit: 1_100_000 }, async (request, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    try {
+      const actor = await principal(request, provider);
+      requirePermission(actor, 'route');
+      const result = await ingestNativeContextVersion(pool, actor.tenant_id, actor.alias, request.body);
+      if (result.state === 'conflict') {
+        return await reply.code(409).send({ error: 'context_version_conflict',
+          message: 'the server context version advanced beyond the locally applied base; the local edit was not recorded',
+          base_version: result.base_version, desired_version: result.desired_version, applied_version: result.applied_version });
+      }
+      if (git || options.runtime) tick(result.snapshot);
+      return await reply.code(202).send(result.snapshot);
+    } catch (error) {
+      if (error instanceof z.ZodError) return await reply.code(400).send({ error: 'invalid_request', message: 'invalid context ingest request' });
+      if (error instanceof AuthError || error instanceof AuthorizationError || error instanceof StoreError) { replyError(reply, error); return; }
+      throw error;
+    }
+  });
   const base = '/v3/console/context/agents/:tenant/:alias';
   for (const operation of ['read', 'write', 'history', 'diff', 'restore', 'retry', 'apply', 'status'] as const) {
     const method = operation === 'write' ? 'PUT' : ['restore', 'retry', 'apply'].includes(operation) ? 'POST' : 'GET';

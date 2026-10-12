@@ -3,7 +3,7 @@ import type { CompanyAuthority } from './company-authority.js';
 import { synchronizeContextProfile } from './context-version-profile.js';
 import type { CompanyAuthoritySource } from './repository/fleet-hosts.js';
 import { StoreError } from './repository/errors.js';
-import { ContextRestoreSchema, ContextUpdateSchema, canonicalContextFiles, contextDigest, contextVersionDiff,
+import { ContextNativeIngestSchema, ContextRestoreSchema, ContextUpdateSchema, canonicalContextFiles, contextDigest, contextVersionDiff,
   type ContextSnapshot, type ContextTarget, type ContextVersion } from './context-version-model.js';
 
 interface VersionRow extends Omit<ContextVersion, 'version' | 'created_at' | 'restored_from'> {
@@ -75,6 +75,56 @@ export async function persistContextVersionInTransaction(client: DatabaseClient,
       VALUES($1,$2,'context.version','allow',$3,$4,$5::jsonb)`, [authority.homeTenant, authority.alias, target.company_id,
       authority.humanId, JSON.stringify({ target_tenant: target.tenant_id, target_alias: target.alias, version: next, source, restored_from: restored })]);
     return contextSnapshot(client, target);
+}
+export type NativeContextIngestResult =
+  | { readonly state: 'ingested'; readonly snapshot: ContextSnapshot }
+  | { readonly state: 'conflict'; readonly base_version: number; readonly desired_version: number; readonly applied_version: number };
+export async function ingestNativeContextVersion(pool: DatabasePool, tenant: string, alias: string,
+  value: unknown): Promise<NativeContextIngestResult> {
+  const input = ContextNativeIngestSchema.parse(value);
+  return withTransaction(pool, async client => {
+    const row = (await client.query<{ company_id: string }>(`SELECT tenant.company_id FROM agents agent
+      JOIN tenants tenant ON tenant.id=agent.tenant_id WHERE agent.tenant_id=$1 AND agent.alias=$2
+        AND tenant.enabled AND tenant.retired_at IS NULL AND tenant.purged_at IS NULL
+        AND agent.retired_at IS NULL AND agent.purged_at IS NULL FOR SHARE OF agent,tenant`,
+    [tenant, alias])).rows[0];
+    if (!row) throw new StoreError('not_found', 'context target unavailable');
+    const target: ContextTarget = { company_id: row.company_id, tenant_id: tenant, alias };
+    await lockContextTarget(client, target);
+    const canonical = canonicalContextFiles(await synchronizeContextProfile(client, target, input.files));
+    const digest = contextDigest(canonical);
+    const snapshot = await contextSnapshot(client, target);
+    if (snapshot.desired_version === input.base_version + 1 && snapshot.digest === digest) {
+      const existing = await readContextVersion(client, target, snapshot.desired_version);
+      if (existing.source === 'native' && existing.actor_alias === alias && existing.actor_human_id === null) {
+        return { state: 'ingested', snapshot };
+      }
+    }
+    if (snapshot.desired_version !== input.base_version) {
+      if (snapshot.desired_version > 0) await client.query(`UPDATE agent_context_outbox SET apply_error='native_context_conflict'
+        WHERE company_id=$1 AND tenant_id=$2 AND alias=$3 AND version=$4
+          AND (apply_error IS NULL OR apply_error='native_context_conflict')`,
+      [target.company_id, tenant, alias, snapshot.desired_version]);
+      await client.query(`INSERT INTO audit_events(tenant_id,actor_alias,action,decision,company_id,metadata)
+        VALUES($1,$2,'context.native_conflict','deny',$3,$4::jsonb)`, [tenant, alias, target.company_id,
+        JSON.stringify({ target_tenant: tenant, target_alias: alias, base_version: input.base_version,
+          desired_version: snapshot.desired_version, applied_version: snapshot.applied_version, candidate_digest: digest })]);
+      return { state: 'conflict', base_version: input.base_version,
+        desired_version: snapshot.desired_version, applied_version: snapshot.applied_version };
+    }
+    const next = input.base_version + 1;
+    const scope = [target.company_id, tenant, alias];
+    await client.query(`INSERT INTO agent_context_versions(company_id,tenant_id,alias,version,files,digest,source,
+      restored_from,actor_human_id,actor_alias) VALUES($1,$2,$3,$4,$5::jsonb,$6,'native',NULL,NULL,$7)`,
+    [...scope, next, JSON.stringify(canonical), digest, alias]);
+    await client.query(`INSERT INTO agent_context_state(company_id,tenant_id,alias,desired_version) VALUES($1,$2,$3,$4)
+      ON CONFLICT(company_id,tenant_id,alias) DO UPDATE SET desired_version=EXCLUDED.desired_version`, [...scope, next]);
+    await client.query(`INSERT INTO agent_context_outbox(company_id,tenant_id,alias,version) VALUES($1,$2,$3,$4)`, [...scope, next]);
+    await client.query(`INSERT INTO audit_events(tenant_id,actor_alias,action,decision,company_id,actor_human_id,metadata)
+      VALUES($1,$2,'context.version','allow',$3,NULL,$4::jsonb)`, [tenant, alias, target.company_id,
+      JSON.stringify({ target_tenant: tenant, target_alias: alias, version: next, source: 'native', restored_from: null })]);
+    return { state: 'ingested', snapshot: await contextSnapshot(client, target) };
+  });
 }
 export class ContextVersionStore {
   constructor(readonly pool: DatabasePool) {}

@@ -21,6 +21,8 @@ export const ContextUpdateSchema = z.object({ expected_version: z.number().int()
   files: ContextFilesSchema, source: z.enum(['ui', 'cli', 'native', 'profile', 'directive']) }).strict();
 export const ContextRestoreSchema = z.object({ expected_version: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
   version: z.number().int().positive().max(Number.MAX_SAFE_INTEGER) }).strict();
+export const ContextNativeIngestSchema = z.object({ base_version: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+  files: ContextFilesSchema }).strict();
 export type ContextFile = z.infer<typeof ContextFilesSchema>[number];
 export interface ContextTarget { readonly company_id: string; readonly tenant_id: string; readonly alias: string }
 export interface ContextVersion extends ContextTarget {
