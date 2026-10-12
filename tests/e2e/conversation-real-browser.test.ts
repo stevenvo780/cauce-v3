@@ -294,6 +294,7 @@ describe('PR52 human conversation and durable reply in real Chromium', () => {
     expect(await page.evaluate(() => document.activeElement?.matches('[data-chat-composer] textarea'))).toBe(true);
     expect(await (page.locator('textarea') as unknown as InputLocator).inputValue()).toBe('');
 
+    await expect.poll(async () => (await messageEvidence(active, marker)).confirm, { timeout: 20_000 }).toBe('1');
     const durableRoot = await messageEvidence(active, marker);
     expect(durableRoot).toMatchObject({ status: 'pending', initiators: '1', outbox: '1', prepare: '1', confirm: '1' });
     await page.screenshot({ path: `${evidenceDirectory}/${marker}-single-touch.png`, fullPage: false });
