@@ -11,5 +11,18 @@
   "context": {
     "native_document": "CLAUDE.md",
     "max_bytes": 65536
+  },
+  "provider": {
+    "authenticate_argv": [
+      "/usr/local/bin/claude",
+      "auth",
+      "login"
+    ],
+    "quota_argv": [
+      "/usr/local/bin/node",
+      "/usr/local/bin/leer-cuota.mjs"
+    ],
+    "update_package": "@anthropic-ai/claude-code",
+    "fleet_module": null
   }
 }

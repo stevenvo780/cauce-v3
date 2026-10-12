@@ -5,11 +5,22 @@
     "install": "runtime-package",
     "execute": "native-execution",
     "authenticate": "provider-login",
-    "update": "provider-update",
     "quota": "quota-collector"
   },
   "context": {
     "native_document": "AGENTS.md",
     "max_bytes": 65536
+  },
+  "provider": {
+    "authenticate_argv": [
+      "/usr/local/bin/grok",
+      "login",
+      "--device-auth"
+    ],
+    "quota_argv": [
+      "/usr/local/bin/node",
+      "/usr/local/bin/leer-cuota-grok.mjs"
+    ],
+    "fleet_module": "fleet_provider_grok"
   }
 }

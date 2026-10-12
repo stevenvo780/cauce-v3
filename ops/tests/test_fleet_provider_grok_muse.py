@@ -7,6 +7,7 @@ import json
 import os
 import pathlib
 import pwd
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -262,10 +263,12 @@ class IsolatedProviderTests(unittest.TestCase):
             self.assertFalse(templates.capabilities(policy)['available'])
 
     def test_lifecycle_recipes_have_muse_login_and_no_unpinned_grok_update(self):
-        with mock.patch.object(operations, 'resolve_operation', return_value={}):
-            self.assertEqual(operations.provider_command('muse', 'authenticate', '/release'), ['/usr/local/bin/muse', 'login'])
-            with self.assertRaises(operations.HarnessOperationFailure):
-                operations.provider_command('grok', 'update', '/release')
+        bundle = self.root / 'release'
+        shutil.copytree(ROOT / 'packages/adapter-sdk/descriptors',
+                        bundle / 'packages/adapter-sdk/dist/descriptors')
+        self.assertEqual(operations.provider_command('muse', 'authenticate', str(bundle)), ['/usr/local/bin/muse', 'login'])
+        with self.assertRaises(operations.HarnessOperationFailure):
+            operations.provider_command('grok', 'update', str(bundle))
 
 
 class MuseBridgeTests(unittest.TestCase):

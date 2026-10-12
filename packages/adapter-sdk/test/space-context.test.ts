@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 import { mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { definitionFromDescriptor, executeHarnessOperation, packagedHarnessDescriptor, parseHarnessDescriptor } from '../src/context/harness-descriptor.js';
+import { definitionFromDescriptor, executeHarnessOperation, packagedHarnessDescriptor, packagedHarnessIds, parseHarnessDescriptor } from '../src/context/harness-descriptor.js';
 import { prepareSpaceLayout, SPACE_DIRECTORIES, writeSpaceContext } from '../src/context/space-layout.js';
 import { validateVersionedContext } from '../src/sdk/engine/versioned-context.js';
 import { protocolPrompt } from '../src/harnesses/shared/prompt.js';
@@ -17,9 +17,29 @@ test('packaged descriptors guide native execution and refuse arbitrary lifecycle
     assert.throws(() => parseHarnessDescriptor({ ...descriptor, operations: { execute: 'sh -c arbitrary' } }));
   }
   const fake = await packagedHarnessDescriptor('fake');
-  await assert.rejects(() => executeHarnessOperation(fake, 'authenticate', { run: async () => undefined }), /unsupported/u);
+  await assert.rejects(() => executeHarnessOperation(fake, 'authenticate', { run: async () => undefined }),
+    /operations\.authenticate: operation is not declared/u);
   const proof = await executeHarnessOperation(fake, 'execute', { run: async request => request });
   assert.deepEqual(proof, { harness: 'fake', operation: 'execute', recipe: 'native-execution' });
+});
+test('descriptor provider data is validated with field paths and ids derive from the directory', async () => {
+  assert.deepEqual(await packagedHarnessIds(),
+    ['claude', 'codex', 'fake', 'grok', 'hermes', 'muse', 'openclaw', 'opencode']);
+  const codex = await packagedHarnessDescriptor('codex');
+  assert.deepEqual(codex.provider?.authenticate_argv, ['/usr/local/bin/codex', 'login', '--device-auth']);
+  assert.equal(codex.provider?.update_package, '@openai/codex');
+  const grok = await packagedHarnessDescriptor('grok');
+  assert.equal(grok.operations.update, undefined);
+  assert.equal(grok.provider?.fleet_module, 'fleet_provider_grok');
+  assert.throws(() => parseHarnessDescriptor({ ...codex, provider: { ...codex.provider, quota_argv: ['node', 'x'] } }),
+    /provider\.quota_argv\[0\]: must be an absolute executable path under \/usr\/local\/bin/u);
+  assert.throws(() => parseHarnessDescriptor({ ...codex,
+    provider: { ...codex.provider, authenticate_argv: ['/usr/local/bin/codex', 'login;id'] } }),
+  /provider\.authenticate_argv\[1\]: contains shell metacharacters/u);
+  assert.throws(() => parseHarnessDescriptor({ ...codex, provider: { ...codex.provider, update_package: '@openai/codex;id' } }),
+    /provider\.update_package: must be an npm package name/u);
+  assert.throws(() => parseHarnessDescriptor({ ...codex, provider: {} }),
+    /provider\.authenticate_argv: required when operations\.authenticate is declared/u);
 });
 test('space context writes real files, preserves unmanaged prose and includes current directives in the prompt', async () => {
   const root = await mkdtemp(join(tmpdir(), 'cauce-space-context-'));

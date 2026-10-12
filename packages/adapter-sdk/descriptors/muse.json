@@ -4,12 +4,17 @@
   "operations": {
     "install": "runtime-package",
     "execute": "native-execution",
-    "authenticate": "provider-login",
-    "update": "provider-update",
-    "quota": "quota-collector"
+    "authenticate": "provider-login"
   },
   "context": {
     "native_document": "AGENTS.md",
     "max_bytes": 65536
+  },
+  "provider": {
+    "authenticate_argv": [
+      "/usr/local/bin/muse",
+      "login"
+    ],
+    "fleet_module": "fleet_provider_muse"
   }
 }

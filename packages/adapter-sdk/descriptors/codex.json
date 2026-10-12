@@ -11,5 +11,18 @@
   "context": {
     "native_document": "AGENTS.md",
     "max_bytes": 65536
+  },
+  "provider": {
+    "authenticate_argv": [
+      "/usr/local/bin/codex",
+      "login",
+      "--device-auth"
+    ],
+    "quota_argv": [
+      "/usr/local/bin/codex-http-probe.py",
+      "/home/node/.codex"
+    ],
+    "update_package": "@openai/codex",
+    "fleet_module": null
   }
 }

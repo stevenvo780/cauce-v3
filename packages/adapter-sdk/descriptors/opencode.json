@@ -3,10 +3,7 @@
   "harness": "opencode",
   "operations": {
     "install": "runtime-package",
-    "execute": "native-execution",
-    "authenticate": "provider-login",
-    "update": "provider-update",
-    "quota": "quota-collector"
+    "execute": "native-execution"
   },
   "context": {
     "native_document": "AGENTS.md",
