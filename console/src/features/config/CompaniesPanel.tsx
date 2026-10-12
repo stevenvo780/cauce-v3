@@ -5,6 +5,7 @@ import { useResource } from '../../api/use-resource';
 import { Button, Notice, SectionCard } from '../../components/kit';
 import { COMPANY_ROLE_LABEL, useCompanyAuthority } from '../auth/company-authority';
 import { CompanyAdminsPanel } from './CompanyAdminsPanel';
+import { COMPANY_SLUG_PATTERN } from './form-patterns';
 
 export function CompaniesPanel() {
   const api = useApi();
@@ -67,7 +68,7 @@ function CompanyCreateForm({ busy, save, cancel }: { busy: boolean; save: (input
   return <form aria-label="Crear empresa y dueño" className="grid gap-2" onSubmit={event => { event.preventDefault();
     void save(draft).finally(() => { setDraft(previous => ({ ...previous, password: '' })); }); }}>
     <label>Nombre de empresa<input required maxLength={80} value={draft.company.name} disabled={busy} onChange={event => { setDraft(previous => ({ ...previous, company: { ...previous.company, name: event.target.value } })); }} /></label>
-    <label>Identificador de empresa<input required pattern="[a-z][a-z0-9-]{1,62}" value={draft.company.slug} disabled={busy} onChange={event => { setDraft(previous => ({ ...previous, company: { ...previous.company, slug: event.target.value } })); }} /></label>
+    <label>Identificador de empresa<input required pattern={COMPANY_SLUG_PATTERN} value={draft.company.slug} disabled={busy} onChange={event => { setDraft(previous => ({ ...previous, company: { ...previous.company, slug: event.target.value } })); }} /></label>
     <label>Nombre del dueño<input required maxLength={120} value={draft.name} disabled={busy} onChange={event => { input('name', event.target.value); }} /></label>
     <label>Correo del dueño<input required type="email" value={draft.email} disabled={busy} onChange={event => { input('email', event.target.value); }} /></label>
     <label>Contraseña inicial<input required type="password" minLength={12} maxLength={1024} autoComplete="new-password" value={draft.password} disabled={busy} onChange={event => { input('password', event.target.value); }} /></label>

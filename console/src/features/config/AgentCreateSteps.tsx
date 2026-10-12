@@ -3,6 +3,7 @@ import { fleetHostUsable, type FleetHost } from '@cauce/protocol/fleet-hosts';
 import { cn } from '../../cn';
 import { Notice } from '../../components/kit';
 import { HINT } from './config-ui';
+import { AGENT_ALIAS_PATTERN } from './form-patterns';
 import { CREATE_STEPS, STEP_LABEL, type AgentRegistryCreateDraft, type CreateStep } from './agent-registry-create';
 
 export type CreateMode = 'register' | 'prepare';
@@ -68,7 +69,7 @@ export function IdentityStep({ draft, edit, disabled, tenants, aliasInput }: Ste
     </div>
     <div className="grid content-start gap-1.5">
       <label>Alias
-        <input ref={aliasInput} value={draft.alias} maxLength={64} pattern="[a-z][a-z0-9_-]{0,63}" placeholder="p. ej. worker"
+        <input ref={aliasInput} value={draft.alias} maxLength={64} pattern={AGENT_ALIAS_PATTERN} placeholder="p. ej. worker"
           aria-describedby="create-alias-hint" onChange={(event) => { edit({ alias: event.target.value }); }} disabled={disabled} />
       </label>
       <span id="create-alias-hint" className={HINT}>Identificador fijo: minúsculas, números, guiones.</span>

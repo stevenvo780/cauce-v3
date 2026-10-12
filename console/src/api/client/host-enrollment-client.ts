@@ -3,13 +3,21 @@ import type { RequestFn } from './system-client';
 export interface HostEnrollment {
   enrollment_id: string; company_id: string; host_id: string; display_name: string;
   state: 'pending' | 'enrolled' | 'revoked'; expires_at: string; enrolled_at: string | null;
+  /** True while the computer's executor published capabilities recently. */
+  executor_ready?: boolean;
+}
+export interface HostEnrollmentList {
+  enrollments: HostEnrollment[];
+  /** Present only when the gateway signs the setup package; absent means computers cannot be prepared from here. */
+  setup_signer_fingerprint?: string;
 }
 export interface HostInvitation {
   enrollment_id: string; company_id: string; host_id: string; nonce: string;
   invitation_token: string; expires_at: string; state: 'pending';
+  setup_signer_fingerprint?: string;
 }
 export interface HostEnrollmentClient {
-  getHostEnrollments(): Promise<{ enrollments: HostEnrollment[] }>;
+  getHostEnrollments(): Promise<HostEnrollmentList>;
   inviteHost(input: { host_id: string; display_name: string; notes?: string }): Promise<HostInvitation>;
   revokeHostInvitation(id: string): Promise<{ enrollment_id: string; state: 'revoked' }>;
 }
@@ -34,7 +42,7 @@ export function hostEnrollmentClient(request: RequestFn): HostEnrollmentClient {
           || !['pending', 'enrolled', 'revoked'].includes(String(enrollment.state))
           || (enrollment.enrolled_at !== null && !date(enrollment.enrolled_at))) throw new Error('No se pudo verificar el estado de la invitación.');
       }
-      return value as { enrollments: HostEnrollment[] };
+      return value as HostEnrollmentList;
     },
     inviteHost: async input => {
       const value = await request<unknown>(path, { method: 'POST', body: JSON.stringify(input) }); const row = object(value);

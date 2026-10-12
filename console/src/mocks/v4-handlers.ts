@@ -1,7 +1,7 @@
 import { http, HttpResponse } from 'msw';
 
 export const v4Handlers = [
-  http.get('*/v3/console/fleet/hosts/enrollments', () => HttpResponse.json({ enrollments: [] })),
+  http.get('*/v3/console/fleet/hosts/enrollments', () => HttpResponse.json({ enrollments: [], setup_signer_fingerprint: 'c'.repeat(64) })),
   http.get('*/v3/console/context/agents/:tenant/:alias', () => HttpResponse.json({ version: 0, files: [], desired_version: 0,
     applied_version: null, application: { state: 'pending', last_error: null },
     sync: { state: 'pending', git_commit: null, pushed_at: null, last_error: null } })),

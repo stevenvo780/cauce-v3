@@ -2,6 +2,7 @@ import { useState, type SyntheticEvent } from 'react';
 import { useApi } from '../../api/context';
 import { Button, Notice } from '../../components/kit';
 
+import { COMPANY_SLUG_PATTERN } from '../config/form-patterns';
 export function RegistrationForm({ onLogin, onCancel }: {
   onLogin: (email: string, password: string) => Promise<void>; onCancel: () => void;
 }) {
@@ -33,7 +34,7 @@ export function RegistrationForm({ onLogin, onCancel }: {
     <label>Contraseña<input type="password" required minLength={12} maxLength={1024} autoComplete="new-password" value={draft.password} disabled={busy} onChange={event => { edit('password', event.target.value); }} /></label>
     <p className="m-0 text-xs text-muted">Usa al menos 12 caracteres.</p>
     <label>Nombre de empresa<input required maxLength={80} value={draft.companyName} disabled={busy} onChange={event => { edit('companyName', event.target.value); }} /></label>
-    <label>Identificador de empresa<input required pattern="[a-z][a-z0-9-]{1,62}" maxLength={63} value={draft.slug} disabled={busy} onChange={event => { edit('slug', event.target.value); }} /></label>
+    <label>Identificador de empresa<input required pattern={COMPANY_SLUG_PATTERN} maxLength={63} value={draft.slug} disabled={busy} onChange={event => { edit('slug', event.target.value); }} /></label>
     <p className="m-0 text-xs text-muted">Entre 2 y 63 caracteres: comienza con una letra y usa minúsculas, números o guiones.</p>
     {error ? <Notice tone="danger" role="alert">{error}</Notice> : null}
     <Button type="submit" variant="primary" disabled={busy}>{busy ? 'Creando cuenta y empresa…' : 'Crear cuenta y empresa'}</Button>
