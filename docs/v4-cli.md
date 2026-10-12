@@ -109,15 +109,15 @@ cauce spaces restore --archive /ruta/privada/copia.zip --directory /ruta/privada
 
 La identidad exacta del manifiesto es `(company_id, tenant_id, alias, runtime_key)`. El runtime key procede del destino que eligió el operador; el helper no lo descubre recorriendo homes. Si existe `config/context-state.json`, su empresa/tenant/alias deben coincidir. Raíz y parent del ZIP deben ser privados y del UID actual; la copia es `0600`.
 
-Se exportan `context`, `directives`, `projects`, `config` y `data`, incluidas carpetas vacías y perfil canónico `context/profile.json`. El manifiesto registra hashes, modos permitidos y exclusiones. `logs`, `tmp` y paths/contenido sensible conocido quedan fuera. Este filtro no detecta todo secreto arbitrario embebido en archivos de trabajo.
+Se exportan `context`, `directives`, `projects`, `config` y `data`, incluidas carpetas vacías y perfil canónico `context/profile.json`. El manifiesto registra hashes, modos permitidos y exclusiones. `logs`, `tmp` y paths/contenido sensible conocido quedan fuera, cada uno declarado en el manifiesto con su motivo: `sensitive_path` (`.env*`, claves, `auth.json`, `credentials*`, `.npmrc`, `.pypirc`, `.htpasswd`, ficheros de cookies de datos), `sensitive_content` (claves privadas y tokens de GitHub, GitLab, Slack, AWS, npm o URLs con usuario y contraseña), `vcs_metadata` (`.git`) y `external_mount` (montajes de `config/external-mounts.json` declarados fuera de copia). Este filtro no detecta todo secreto arbitrario embebido en archivos de trabajo.
 
 Restore exige un destino nuevo o vacío, valida el ZIP completo antes de crearlo y relee el contenido antes del recibo final. Usa directorios `0700` y archivos `0600`, o `0700` cuando corresponde al bit de ejecución del dueño. No hace `chown`, restaura autenticación ni reactiva procesos. Un fallo parcial no recibe recibo de éxito. El restore de archivos no acredita por sí solo que el agente en ejecución haya adoptado una versión.
 
 | Límite | CLI local | Backup durable de consola |
 |---|---:|---:|
 | Entradas | 20 000 | 20 000 |
-| Archivo individual | 16 MiB | 16 MiB |
-| Contenido total | 256 MiB | 1 GiB |
+| Archivo individual | 128 MiB (`MAX_FILE`) | 128 MiB |
+| Contenido total | 1 GiB (`MAX_TOTAL`) | 1 GiB |
 | ZIP | Validado por el helper | 1 GiB |
 | Manifiesto | 8 MiB | 8 MiB |
 
