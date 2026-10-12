@@ -48,6 +48,7 @@ import { registerCompanyOfficeRoutes } from './console/company-office.routes.js'
 import { registerCompanyAdminRoutes } from './routes/console/company-admins.js';
 import { registerQuotaEnvironmentRoutes } from './routes/console/quota-environments.js';
 import { registerCompanyRoutes } from './routes/console/companies.js';
+import { registerDiagnoseRoute } from './routes/console/diagnose.js';
 import { WakePumpTelemetry } from './wake-pump-telemetry.js';
 import {
   type TrustedPublishCommand, type TrustedPublishIntentCommand,
@@ -358,6 +359,7 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
   if (options.authProvider instanceof PasswordAuthProvider) {
     options.authProvider.useCompanyAuthority(new PostgresConsoleCompanyAuthority(options.pool));
     registerPasswordAuth(app, options.authProvider);
+    registerDiagnoseRoute(app, options.authProvider, options.pool);
     registerCompanyRegistrationRoute(app, options.pool);
     registerCompanyOfficeRoutes(app, options.authProvider, options.pool);
     registerHostEnrollmentRoutes(app, options.authProvider, options.pool,

@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+cli_directory=$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")
+exec python3 -B - "$cli_directory" "$@" <<'PY'
+import argparse
+import json
+import sys
+import urllib.error
+import urllib.parse
+import urllib.request
+
+sys.path.insert(0, sys.argv.pop(1))
+from context_client import ContextClient, ContextFailure
+
+
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, request, stream, code, message, headers, new_url):
+        return None
+
+
+def main():
+    parser = argparse.ArgumentParser(prog='cauce diagnose', description='Read a company-scoped diagnostic chain using a console session')
+    parser.add_argument('id', help='Trace, operation, session, delivery or backup identifier')
+    parser.add_argument('--gateway', required=True)
+    parser.add_argument('--origin', required=True)
+    parser.add_argument('--session-file', required=True)
+    parser.add_argument('--ca-file')
+    args = parser.parse_args()
+    try:
+        if not args.id or len(args.id.encode('utf-16-le')) > 512 or args.id in ('.', '..') \
+                or any(ord(character) < 32 or ord(character) == 127 for character in args.id):
+            raise ContextFailure('diagnostic identifier is unavailable')
+        client = ContextClient(args.gateway, args.origin, args.session_file, args.ca_file)
+        request = urllib.request.Request(
+            client.gateway + '/v3/console/diagnose/' + urllib.parse.quote(args.id, safe=''),
+            headers={'Cookie': client.cookie, 'Origin': client.origin, 'Accept': 'application/json'},
+            method='GET',
+        )
+        opener = urllib.request.build_opener(NoRedirect(), urllib.request.HTTPSHandler(context=client.tls))
+        with opener.open(request, timeout=65) as response:
+            raw = response.read(2097153)
+            if len(raw) > 2097152:
+                raise ContextFailure('diagnostic response exceeds limit')
+            result = json.loads(raw)
+        if not isinstance(result, dict):
+            raise ContextFailure('diagnostic response is invalid')
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0
+    except urllib.error.HTTPError as error:
+        print('diagnostic request rejected with HTTP ' + str(error.code), file=sys.stderr)
+    except (urllib.error.URLError, TimeoutError):
+        print('diagnostic gateway is unavailable', file=sys.stderr)
+    except ContextFailure as error:
+        print(str(error), file=sys.stderr)
+    except (OSError, ValueError):
+        print('diagnostic request could not be completed; check the console session and destination', file=sys.stderr)
+    return 1
+
+
+raise SystemExit(main())
+PY

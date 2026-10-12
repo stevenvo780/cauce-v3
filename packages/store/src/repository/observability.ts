@@ -1,10 +1,13 @@
-import { isRfcUuid, type Tenant } from '@cauce/protocol'; /* eslint @typescript-eslint/no-unnecessary-type-conversion: "error", @typescript-eslint/no-unnecessary-condition: "error", @typescript-eslint/consistent-type-definitions: "off" */
+import { AliasSchema, hasUnsafeTextCodePoint, isRfcUuid, isStrictUtcIso8601, type Tenant } from '@cauce/protocol'; /* eslint @typescript-eslint/no-unnecessary-type-conversion: "error", @typescript-eslint/no-unnecessary-condition: "error", @typescript-eslint/consistent-type-definitions: "off" */
 import {
   agentWorkState, DEFAULT_FLEET_ACTIVITY_THRESHOLDS, FLEET_ACTIVITY_QUERY, FLEET_ACTIVITY_FLAGS,
   FLEET_WORK_STATES, fleetReadableSql, type FleetActivityFlag, type FleetWorkState
 } from '../fleet-activity.js';
 import { safeAuditSummary } from '../audit-summary.js';
+import { COMPANY_ID_PATTERN, lockCompanyAuthority } from '../company-authority.js';
+import { withTransaction } from '../db.js';
 import { postgresBigintString } from '../runtime-values.js';
+import type { CompanyAuthoritySource } from './fleet-hosts.js';
 import { StoreError } from './errors.js';
 import type {
   OperationalDlqPage, OperationalDlqResolutionRequest, OperationalDlqResolutionResult
@@ -22,6 +25,8 @@ type QueueSnapshotTotals = {
 type QueueSnapshotQueryRow =
   | (QueueSnapshotItem & QueueSnapshotTotals)
   | (QueueSnapshotTotals & { delivery_id: null });
+
+const AUDIT_COMPONENTS = new Set(['terminal', 'context', 'backup', 'fleet', 'gateway', 'delivery']);
 
 export {
   DEFAULT_DELIVERY_LEASE_CAP_GRACE_MS, DEFAULT_DELIVERY_LEASE_CAP_MS,
@@ -48,69 +53,101 @@ export abstract class ObservabilityRepository extends ObservabilityChainSweepRep
   async listAudit(
     actorTenant: Tenant,
     actorAlias: string,
-    options: { limit?: number; before?: string | null } = {},
+    options: { limit?: number; before?: string | null; trace_id?: string; alias?: string; action?: string;
+      from?: string; to?: string; humanAuthority?: CompanyAuthoritySource } = {},
   ): Promise<Record<string, unknown>> {
-    await this.assertPermission(actorTenant, actorAlias, 'read');
     const limit = options.limit ?? 100;
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 500) {
       throw new StoreError('invalid_input', 'audit limit must be an integer between 1 and 500');
     }
     const before = options.before ?? null;
     if (before !== null && (
-      !/^[1-9][0-9]{0,18}$/u.test(before)
+      typeof before !== 'string' || !/^[1-9][0-9]{0,18}$/u.test(before)
       || BigInt(before) > 9_223_372_036_854_775_807n
     )) {
       throw new StoreError('invalid_input', 'audit cursor is invalid');
     }
-    const result = await this.pool.query<{
-      event_id: string;
-      at: Date | string;
-      tenant_id: string | null;
-      actor_alias: string | null;
-      action: string;
-      decision: string;
-      request_id: string | null;
-      trace_id: string | null;
-      metadata: unknown;
-    }>(
-      `SELECT audit.id AS event_id,audit.created_at AS at,audit.tenant_id,audit.actor_alias,
-              audit.action,audit.decision,audit.request_id,audit.trace_id,audit.metadata
-       FROM audit_events audit
-       LEFT JOIN messages message ON message.id=audit.message_id
-       WHERE (
-         (audit.tenant_id=$1 AND audit.actor_alias=$2)
-         OR (message.id IS NOT NULL AND EXISTS (
-           SELECT 1 FROM memberships source_member WHERE source_member.tenant_id=$1
-             AND source_member.room_id=message.room_id AND source_member.alias=$2
-             AND source_member.enabled AND message.tenant_id=$1
-         ))
-         OR (audit.delivery_id IS NOT NULL AND EXISTS (
-           SELECT 1 FROM deliveries participant WHERE participant.id=audit.delivery_id
-             AND participant.recipient_tenant=$1 AND participant.recipient_alias=$2
-         ))
-       )
-         AND ($3::bigint IS NULL OR audit.id < $3::bigint)
-       ORDER BY audit.id DESC LIMIT $4`, [actorTenant, actorAlias, before, limit + 1]
-    );
-    const hasMore = result.rows.length > limit;
-    const visible = result.rows.slice(0, limit);
-    const lastVisible = visible.at(-1);
-    return {
-      items: visible.map((row) => ({
-        event_id: postgresBigintString(row.event_id),
-        at: row.at instanceof Date ? row.at.toISOString() : row.at,
-        tenant_id: row.tenant_id,
-        actor_alias: row.actor_alias,
-        action: row.action,
-        decision: row.decision,
-        request_id: row.request_id,
-        trace_id: row.trace_id,
-        summary: safeAuditSummary(row.action, row.metadata),
-      })),
-      next_cursor: hasMore && lastVisible !== undefined
-        ? postgresBigintString(lastVisible.event_id)
-        : null,
-    };
+    if ((options.trace_id !== undefined && (typeof options.trace_id !== 'string' || options.trace_id.length < 1
+      || options.trace_id.length > 256 || hasUnsafeTextCodePoint(options.trace_id)))
+      || (options.alias !== undefined && !AliasSchema.safeParse(options.alias).success)
+      || (options.action !== undefined && (typeof options.action !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/u.test(options.action)))
+      || (options.from !== undefined && !isStrictUtcIso8601(options.from, 64))
+      || (options.to !== undefined && !isStrictUtcIso8601(options.to, 64))
+      || (options.from !== undefined && options.to !== undefined && Date.parse(options.from) > Date.parse(options.to))) {
+      throw new StoreError('invalid_input', 'audit filters are invalid');
+    }
+    return withTransaction(this.pool, async client => {
+      const authority = await (options.humanAuthority?.(client) ?? lockCompanyAuthority(client, { tenant: actorTenant, alias: actorAlias }));
+      const companyWide = authority.scope === 'company' || authority.scope === 'platform';
+      if (authority.homeTenant !== actorTenant || authority.alias !== actorAlias || authority.scope === 'none'
+        || authority.scope === 'outgoing_acl' || !COMPANY_ID_PATTERN.test(authority.homeCompany)
+        || !COMPANY_ID_PATTERN.test(authority.actingCompany)
+        || (companyWide && (options.humanAuthority === undefined || authority.humanId === null))
+        || (!companyWide && authority.actingCompany !== authority.homeCompany)) {
+        throw new StoreError('forbidden', 'audit company authority is unavailable');
+      }
+      const readable = await client.query(`SELECT 1 FROM memberships member
+        JOIN role_policies policy ON policy.role=member.role JOIN tenants tenant ON tenant.id=member.tenant_id
+        JOIN rooms room ON room.tenant_id=member.tenant_id AND room.id=member.room_id
+        WHERE member.tenant_id=$1 AND member.alias=$2 AND member.enabled AND member.retired_at IS NULL
+          AND tenant.enabled AND room.enabled AND policy.allow_read
+          AND ($3::uuid IS NULL OR EXISTS (SELECT 1 FROM human_tenant_memberships human
+            WHERE human.human_id=$3 AND human.tenant_id=$1 AND human.actor_alias=$2 AND human.enabled
+              AND human.revoked_at IS NULL AND 'read'=ANY(human.permissions)))
+        FOR SHARE OF member,policy,tenant,room`, [actorTenant, actorAlias, authority.humanId]);
+      if (readable.rowCount === 0) throw new StoreError('forbidden', 'principal lacks read permission');
+      const result = await client.query<{
+        event_id: string;
+        at: Date | string;
+        tenant_id: string | null;
+        company_id: string;
+        host_id: string | null;
+        actor_alias: string | null;
+        action: string;
+        decision: string;
+        request_id: string | null;
+        trace_id: string | null;
+        metadata: unknown;
+      }>(
+        `SELECT audit.id AS event_id,audit.created_at AS at,audit.tenant_id,audit.actor_alias,
+                COALESCE(audit.company_id,tenant.company_id) AS company_id,host.host_id,
+                audit.action,audit.decision,audit.request_id,audit.trace_id,audit.metadata
+         FROM audit_events audit
+         LEFT JOIN tenants tenant ON tenant.id=audit.tenant_id
+         LEFT JOIN fleet_hosts host ON host.host_id=audit.metadata->>'host_id' AND host.company_id=$1
+         WHERE COALESCE(audit.company_id,tenant.company_id)=$1 AND ($2::text IS NULL OR audit.tenant_id=$2)
+           AND ($3::bigint IS NULL OR audit.id < $3::bigint)
+           AND ($4::text IS NULL OR audit.trace_id=$4) AND ($5::text IS NULL OR audit.actor_alias=$5)
+           AND ($6::text IS NULL OR audit.action=$6) AND ($7::timestamptz IS NULL OR audit.created_at>=$7)
+           AND ($8::timestamptz IS NULL OR audit.created_at<=$8)
+         ORDER BY audit.id DESC LIMIT $9`, [authority.actingCompany, companyWide ? null : actorTenant, before,
+        options.trace_id ?? null, options.alias ?? null, options.action ?? null, options.from ?? null, options.to ?? null, limit + 1]
+      );
+      const hasMore = result.rows.length > limit;
+      const visible = result.rows.slice(0, limit);
+      const lastVisible = visible.at(-1);
+      return {
+        items: visible.map((row) => {
+          const metadata = row.metadata !== null && typeof row.metadata === 'object' && !Array.isArray(row.metadata)
+            ? row.metadata as Record<string, unknown> : {};
+          return {
+            event_id: postgresBigintString(row.event_id),
+            at: row.at instanceof Date ? row.at.toISOString() : row.at,
+            tenant_id: row.tenant_id,
+            company_id: row.company_id,
+            host_id: row.host_id !== null && /^[a-z][a-z0-9_-]{0,63}$/u.test(row.host_id) ? row.host_id : null,
+            component: typeof metadata.component === 'string' && AUDIT_COMPONENTS.has(metadata.component) ? metadata.component : null,
+            actor_alias: row.actor_alias,
+            action: row.action,
+            decision: row.decision,
+            request_id: row.request_id,
+            trace_id: row.trace_id,
+            summary: safeAuditSummary(row.action, row.metadata),
+          };
+        }),
+        next_cursor: hasMore && lastVisible !== undefined ? postgresBigintString(lastVisible.event_id) : null,
+      };
+    });
   }
 
   /**

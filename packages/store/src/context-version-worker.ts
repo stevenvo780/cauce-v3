@@ -9,27 +9,43 @@ interface ReservedApplication { readonly version: ContextVersion; readonly token
 interface OutboxRow extends ContextTarget { readonly version: string; readonly state: string; readonly git_commit: string | null; readonly git_ready: boolean }
 const scopeOf = (version: ContextVersion) => [version.company_id, version.tenant_id, version.alias, version.version];
 
+function syncFailureCause(error: unknown, fallback: string): string {
+  const fields = error !== null && typeof error === 'object' ? error as Record<string, unknown> : {};
+  const details = [typeof error === 'string' ? error : '', ...['message', 'stderr', 'stdout', 'code', 'name']
+    .map(key => typeof fields[key] === 'string' ? fields[key] : '')].join('\n');
+  if (/context repository must be private|repository[ _-]not[ _-]private/iu.test(details)) return 'context_git_repository_not_private';
+  if (/timed?\s*out|timeout|ETIMEDOUT/iu.test(details) || (fields.killed === true && fields.signal === 'SIGTERM')) return 'context_git_timeout';
+  if (/authentication failed|permission denied \(publickey\)|could not read (?:username|password)|terminal prompts disabled|invalid (?:username|password)|access denied|(?:HTTP|error:)\s*(?:401|403)\b/iu.test(details)) return 'context_git_authentication_failed';
+  if (/non.fast.forward|fetch first|tip of your current branch is behind/iu.test(details)) return 'context_git_non_fast_forward';
+  if (/could not resolve|connection (?:refused|reset|closed)|network is unreachable|failed to connect|ECONN(?:REFUSED|RESET)|ENOTFOUND|EAI_AGAIN|EHOSTUNREACH|ENETUNREACH/iu.test(details)) return 'context_git_network_failed';
+  return fallback;
+}
 async function syncGit(client: DatabaseClient, row: OutboxRow, version: ContextVersion, git: ContextGitSink | undefined): Promise<string | undefined> {
   if (!row.git_ready) return undefined;
   const scope = scopeOf(version);
-  let failure = 'context_git_unavailable';
+  let stage = 'context_git_unavailable'; let failure: string | undefined;
   try {
     if (!git) throw new Error('context git is unavailable');
-    failure = 'context_git_commit_failed';
+    stage = 'context_git_commit_failed';
     const commit = row.git_commit ?? await git.commit(version);
     if (!/^[a-f0-9]{40,64}$/u.test(commit)) throw new Error('invalid context commit');
     await client.query(`UPDATE agent_context_outbox SET git_commit=$5 WHERE company_id=$1 AND tenant_id=$2 AND alias=$3 AND version=$4`, [...scope, commit]);
-    failure = 'context_push_failed';
+    stage = 'context_push_failed';
     await git.push(commit);
     await client.query(`UPDATE agent_context_outbox SET state='synced',pushed_at=clock_timestamp(),last_error=NULL,attempts=attempts+1
       WHERE company_id=$1 AND tenant_id=$2 AND alias=$3 AND version=$4`, scope);
-    return undefined;
-  } catch {
+  } catch (error) {
+    failure = syncFailureCause(error, stage);
     await client.query(`UPDATE agent_context_outbox SET state='error',last_error=$5,attempts=attempts+1,
       retry_at=clock_timestamp()+make_interval(secs=>LEAST(300,POWER(2,LEAST(attempts,8))::integer))
       WHERE company_id=$1 AND tenant_id=$2 AND alias=$3 AND version=$4`, [...scope, failure]);
-    return failure;
   }
+  await client.query(`INSERT INTO audit_events(tenant_id,actor_alias,action,decision,company_id,metadata)
+    SELECT $2,$3,'context.sync','info',$1,jsonb_build_object('component','context','host_id',
+      (SELECT host_id FROM agents WHERE company_id=$1 AND tenant_id=$2 AND alias=$3),
+      'target_tenant',$2::text,'target_alias',$3::text,'version',version,'git_commit',git_commit,'state',state,'error_code',last_error)
+    FROM agent_context_outbox WHERE company_id=$1 AND tenant_id=$2 AND alias=$3 AND version=$4`, scope);
+  return failure;
 }
 async function reserveApplication(pool: DatabasePool, options: ContextWorkerOptions, target?: ContextTarget): Promise<ReservedApplication | ContextWorkerResult> {
   return withTransaction(pool, async client => {
