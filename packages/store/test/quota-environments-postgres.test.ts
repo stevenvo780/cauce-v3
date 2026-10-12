@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { CauceRepository, lockCompanyAuthority, type DatabasePool } from '../src/index.js';
-import { createQuotaAccount, deleteQuotaAccount, listQuotaAccounts, updateQuotaAccount } from '../src/quota-accounts.js';
+import { createQuotaAccount, deleteQuotaAccount, listQuotaAccounts, quotaAccountSnapshot, updateQuotaAccount } from '../src/quota-accounts.js';
 import { QuotaEnvironmentRepository } from '../src/quota-environments.js';
 import { QuotaOperationsRepository } from '../src/quota-operations.js';
 import { bindQuotaEnvironmentIdentity } from '../src/quota-identity.js';
@@ -80,6 +80,19 @@ describe('quota accounts and managed environments with PostgreSQL', () => {
     expect(account?.agents.map(agent => agent.alias)).toEqual(['kant','zeus']);
     expect(account?.windows.map(window => window.model)).toEqual(['model-a','model-b']);
     expect(JSON.stringify(account)).not.toMatch(/credential_ref|humanizar-external/u);
+  });
+  it('reports a shared account to a tenant-scoped reader without exposing foreign aliases', async () => {
+    for (const [tenant, alias] of [['Steven','kant'],['Steven','zeus'],['Miguel','janus']]) {
+      await admin.query(`INSERT INTO alias_routing_ceiling(tenant_id,alias,account_id,account_payer_tenant,created_by_tenant)
+        VALUES($1,$2,'humanizar-account','Steven','Steven')`, [tenant, alias]);
+      await admin.query(`INSERT INTO agent_account_bindings(tenant_id,agent_alias,account_id,priority)
+        VALUES($1,$2,'humanizar-account',1)`, [tenant, alias]);
+    }
+    const authority = { humanId: actors.steven, homeTenant: 'Miguel', alias: 'janus', homeCompany: 'humanizar', actingCompany: 'humanizar',
+      role: 'tenant_operator', scope: 'tenant', platformOverride: false } as const;
+    const account = (await withTransaction(pool, client => quotaAccountSnapshot(client, authority))).accounts.find(row => row.id === 'humanizar-account');
+    expect(account).toMatchObject({ shared: true, agent_count: 3 });
+    expect(account?.agents).toEqual([expect.objectContaining({ tenant_id: 'Miguel', alias: 'janus' })]);
   });
   it('does not turn a probe 429 into exhaustion or clear manual pauses', async () => {
     const repo = new CauceRepository(pool);

@@ -15,7 +15,7 @@ export function assertQuotaAuthority(authority: CompanyAuthority, write: boolean
 interface AccountRow {
   id: string; provider: string; label: string | null; enabled: boolean; payer_tenant_id: string;
   paused_until: Date | null; paused_reason: string | null; quota_version: string;
-  agents: { tenant_id: string; alias: string; enabled: boolean }[];
+  agents: { tenant_id: string; alias: string; enabled: boolean }[]; agent_count: string;
 }
 interface WindowRow {
   account_id: string; provider: string; host: string; group_key: string; window_key: string;
@@ -31,7 +31,7 @@ export interface QuotaAccountWindow {
 }
 export interface QuotaAccountCard {
   id: string; provider: string; label: string | null; enabled: boolean; version: number; payer_tenant_id: string;
-  shared: boolean; agents: { tenant_id: string; alias: string; enabled: boolean }[];
+  shared: boolean; agent_count: number; agents: { tenant_id: string; alias: string; enabled: boolean }[];
   paused_until: string | null; paused_reason: string | null; observation_status: QuotaObservationStatus;
   remaining_percent: number | null; note: string | null; windows: QuotaAccountWindow[];
 }
@@ -42,7 +42,8 @@ export async function quotaAccountSnapshot(client: DatabaseClient, authority: Co
     p.paused_until,p.paused_reason,p.quota_version::text,
     COALESCE((SELECT jsonb_agg(jsonb_build_object('tenant_id',b.tenant_id,'alias',b.agent_alias,'enabled',b.enabled)
       ORDER BY b.tenant_id,b.agent_alias) FROM agent_account_bindings b WHERE b.account_id=p.id AND b.company_id=p.company_id
-      AND ($2::text IS NULL OR b.tenant_id=$2)),'[]'::jsonb) AS agents
+      AND ($2::text IS NULL OR b.tenant_id=$2)),'[]'::jsonb) AS agents,
+    (SELECT count(*) FROM agent_account_bindings b WHERE b.account_id=p.id AND b.company_id=p.company_id)::text AS agent_count
     FROM provider_accounts p WHERE p.company_id=$1 AND p.canonical_account_id IS NULL AND ($2::text IS NULL OR p.payer_tenant_id=$2
       OR EXISTS (SELECT 1 FROM agent_account_bindings b WHERE b.account_id=p.id AND b.tenant_id=$2)) ORDER BY p.provider,p.id`,
   [authority.actingCompany, authority.scope === 'tenant' ? authority.homeTenant : null]);
@@ -81,7 +82,7 @@ export async function quotaAccountSnapshot(client: DatabaseClient, authority: Co
       ?? (statuses.length > 0 ? 'ok' : 'unknown');
     const remaining = accountWindows.flatMap(window => window.remaining_percent === null ? [] : [window.remaining_percent]);
     return { id: row.id, provider: row.provider, label: row.label, enabled: row.enabled, version: Number(row.quota_version),
-      payer_tenant_id: row.payer_tenant_id, shared: row.agents.length > 1, agents: row.agents,
+      payer_tenant_id: row.payer_tenant_id, shared: Number(row.agent_count) > 1, agent_count: Number(row.agent_count), agents: row.agents,
       paused_until: row.paused_until?.toISOString() ?? null, paused_reason: row.paused_reason,
       observation_status: status, remaining_percent: status === 'ok' && remaining.length > 0 ? Math.min(...remaining) : null,
       note: report?.note ?? null, windows: accountWindows };
