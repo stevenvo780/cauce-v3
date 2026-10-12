@@ -75,11 +75,21 @@ export const FleetErrorSchema = z.object({
     'STEP_FAILED', 'PROVIDER_AUTH_REQUIRED', 'UNSUPPORTED_RUNTIME', 'VERIFICATION_FAILED', 'CANCELLED']),
   step: FleetStepNameSchema.optional(), retryable: z.boolean(),
 }).strict();
+/**
+ * The physical resources a purge plans to touch, computed by the server with the executor's rules. It is the plan,
+ * not the outcome: the executor only removes what exists with the expected ownership labels, and the operation
+ * steps (with their evidence) say what was really removed.
+ */
+export const FleetPurgeResourceSchema = z.object({
+  type: z.enum(['container', 'volume', 'directory']), name: z.string().min(1).max(512),
+  action: z.enum(['delete', 'keep']), reason: z.string().min(1).max(256),
+}).strict();
 export const FleetOperationPreviewSchema = z.object({
   request_sha256: Sha256HexSchema,
   expected_revision: z.number().int().nonnegative(), target: FleetTargetSchema,
   kind: z.enum(['create', 'update', 'start', 'stop', 'retire', 'restore', 'purge']),
   steps: z.array(FleetStepNameSchema), dependencies: z.array(ConfigurationDependencySchema), can_apply: z.boolean(),
+  resources: z.array(FleetPurgeResourceSchema).max(16).default([]),
 }).strict();
 export const FleetOperationSchema = z.object({
   request_sha256: Sha256HexSchema,
@@ -94,6 +104,7 @@ export const FleetOperationSchema = z.object({
 }).strict();
 export type FleetOperationRequest = z.infer<typeof FleetOperationRequestSchema>;
 export type FleetOperation = z.infer<typeof FleetOperationSchema>;
+export type FleetPurgeResource = z.infer<typeof FleetPurgeResourceSchema>;
 export type FleetOperationPreview = z.infer<typeof FleetOperationPreviewSchema>;
 export type FleetTarget = z.infer<typeof FleetTargetSchema>;
 export type FleetStepName = z.infer<typeof FleetStepNameSchema>;

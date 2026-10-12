@@ -42,6 +42,19 @@ describe('fleet purge with preserved historical identities', () => {
     ]));
     expect((await pool.query("SELECT 1 FROM agent_profiles WHERE tenant_id='Steven' AND alias='purge_agent'")).rowCount).toBe(1);
   });
+  it('previews the planned physical resources for own, shared and native runtimes', async () => {
+    const repo = new FleetOperationsRepository(pool);
+    const resources = async () => (await repo.preview('Steven', 'purge_operator', purgeRequest(), PURGE_ACTOR_SUBJECT)).resources;
+    expect(await resources()).toEqual([
+      expect.objectContaining({ type: 'container', name: 'purge-steven', action: 'delete' }),
+      expect.objectContaining({ type: 'volume', name: 'purge-steven-state', action: 'delete' }),
+      expect.objectContaining({ type: 'volume', name: 'purge-steven-provider-profiles', action: 'delete' }),
+    ]);
+    await pool.query("UPDATE agents SET container_name='purge-steven' WHERE tenant_id='Isa' AND alias='purge_agent'");
+    expect(await resources()).toEqual([expect.objectContaining({ type: 'container', name: 'purge-steven', action: 'keep' })]);
+    await pool.query("UPDATE agents SET runtime_mode='native',container_name='host:purge-host' WHERE tenant_id='Steven' AND alias='purge_agent'");
+    expect(await resources()).toEqual([expect.objectContaining({ type: 'directory', name: '/home/dev/.cauce/purge-steven', action: 'delete' })]);
+  });
   it('purges owned configuration atomically and hides its tombstone while retaining messages and audit', async () => {
     const query = await readFile(new URL('../../../ops/scripts/fleet-query.sql', import.meta.url), 'utf8');
     const before = (await pool.query<{ jsonb_build_object: { agents: { tenant_id: string; alias: string; enabled: boolean }[]; purgedRuntimeKeys: string[] } }>(query)).rows[0];

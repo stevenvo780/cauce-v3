@@ -4,6 +4,7 @@ import { lockCompanyAuthority, type CompanyAuthority } from '../company-authorit
 import { providerAccountConsentSql } from '../configuration/company-scope.js';
 import { StoreError } from './errors.js';
 import { fleetPurgeDependencies } from './fleet-operation-lifecycle.js';
+import { fleetPurgeResources } from './fleet-purge-resources.js';
 import { FleetOperationError, isRegistryDraft } from './fleet-operation-contracts.js';
 import { assertFleetHostAccess } from './fleet-operation-hosts.js';
 import type { CompanyAuthoritySource } from './fleet-hosts.js';
@@ -162,8 +163,9 @@ export async function validateFleetTarget(
     host = controllerHost;
   }
   const dependencies = request.kind === 'purge' ? await fleetPurgeDependencies(client, request) : [];
+  const resources = request.kind === 'purge' && target.resource === 'agent' ? await fleetPurgeResources(client, target.tenant_id, target.alias) : [];
   return { host, preview: { request_sha256: sha256Hex(request), expected_revision: request.expected_revision, target, kind: request.kind,
-    steps: fleetSteps(request, relocation), dependencies, can_apply: !dependencies.some((dependency) => dependency.blocking) } };
+    steps: fleetSteps(request, relocation), dependencies, can_apply: !dependencies.some((dependency) => dependency.blocking), resources } };
 }
 
 export async function recordFleetEvent(

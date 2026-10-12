@@ -23,7 +23,7 @@ const operation: FleetOperation = {
   desired_revision: null, applied_revision: null, steps: [{ name: 'prepare', status: 'pending' }], error: null,
   created_at: '2026-10-07T20:00:00.000Z', updated_at: '2026-10-07T20:00:00.000Z',
 };
-const preview: FleetOperationPreview = { request_sha256: sha256Hex(input), expected_revision: 7, target, kind: 'stop', steps: ['prepare', 'stop'], dependencies: [], can_apply: true };
+const preview: FleetOperationPreview = { request_sha256: sha256Hex(input), expected_revision: 7, target, kind: 'stop', steps: ['prepare', 'stop'], dependencies: [], can_apply: true, resources: [] };
 
 function repositoryDouble() {
   return {
@@ -95,6 +95,15 @@ describe('durable fleet operation routes', () => {
     expect(repository.enqueue.mock.calls).toEqual([['Steven', 'kant', input, undefined], ['Steven', 'kant', input, undefined]]);
   });
 
+  it('passes the planned purge resources through the validated preview', async () => {
+    const resources = [{ type: 'container', name: 'ws-humanizar', action: 'keep', reason: 'compartido' }];
+    const purge: FleetOperationRequest = { ...input, kind: 'purge' };
+    const { app, repository } = await fixture();
+    repository.preview.mockResolvedValueOnce({ ...preview, kind: 'purge', request_sha256: sha256Hex(purge), resources });
+    const response = await app.inject({ method: 'POST', url: `${PATH}/preview`, headers: HEADERS, payload: purge });
+    expect(response.statusCode).toBe(200);
+    expect(response.json().resources).toEqual(resources);
+  });
   it.each(['preview', 'enqueue'] as const)('rejects a %s receipt with a hash for different request parameters', async (action) => {
     const { app, repository } = await fixture();
     const request: FleetOperationRequest = {

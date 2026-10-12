@@ -3,6 +3,8 @@ import { FLEET_ACTION_LABELS } from './agent-lifecycle-model';
 import { AuthOperationPanel } from './AuthOperationPanel';
 import { blockingOperation, blockingText, cancellable, ERRORS, purgeEntries, resumable, STALE_RESUME_TEXT, STATUS, STEP_STATUS, STEPS } from './fleet-operation-text';
 
+const RESOURCE_TYPES = { container: 'Contenedor', volume: 'Volumen', directory: 'Directorio' };
+
 export function AgentFleetPreview({ preview }: { preview: FleetOperationPreview }) {
   const deleted = purgeEntries(preview, 'delete');
   const kept = purgeEntries(preview, 'preserve');
@@ -11,6 +13,11 @@ export function AgentFleetPreview({ preview }: { preview: FleetOperationPreview 
   return <section aria-label="Previsualización operativa" className="agent-fleet-receipt">
     <p>Acción: {FLEET_ACTION_LABELS[preview.kind]} · Revisión esperada: {preview.expected_revision}</p>
     <ol>{preview.steps.map((step) => <li key={step}>{STEPS[step]}</li>)}</ol>
+    {preview.resources.length ? <section aria-label="Recursos físicos del plan">
+      <p>Plan de recursos (el ejecutor solo borra lo que existe con las etiquetas de propiedad correctas; el resultado de la operación dice lo que realmente se borró):</p>
+      <ul>{preview.resources.map((resource) => <li key={`${resource.type}:${resource.name}`} data-action={resource.action}>
+        {resource.action === 'delete' ? 'Se borra' : 'Se conserva'}: {RESOURCE_TYPES[resource.type]} <code>{resource.name}</code> · {resource.reason}</li>)}</ul>
+    </section> : null}
     {deleted.length ? <p>Se borra: {deleted.join(', ')}.</p> : null}
     {kept.length ? <p>Se conserva como historial: {kept.join(', ')}.</p> : null}
     {blocked.length ? <p className="notice">Impide la purga: {blocked.join(', ')}.</p> : null}
@@ -20,6 +27,14 @@ export function AgentFleetPreview({ preview }: { preview: FleetOperationPreview 
     {!preview.can_apply ? <p className="notice">Las dependencias impiden encolar esta operación.</p> : null}
     <details><summary>Huella exacta</summary><code>{preview.request_sha256}</code></details>
   </section>;
+}
+function PurgeOutcome({ operation }: { operation: FleetOperation }) {
+  const step = operation.steps.find((value) => value.name === 'purge');
+  const text = step?.status === 'succeeded' ? 'El ejecutor observó la purga: los recursos físicos del agente ya no existen y se conservó lo que no era suyo (por ejemplo un contenedor compartido).'
+    : step?.status === 'failed' ? 'La purga física falló: no se acreditó qué se borró. Revisa la evidencia de los pasos.'
+    : operation.status === 'succeeded' ? 'La operación terminó sin paso de purga acreditado.'
+    : null;
+  return text ? <section aria-label="Resultado de la purga"><p role="status">{text}</p></section> : null;
 }
 export function AgentFleetOperation({ operation, busy, current, control, onAuthRefreshed, intended, stale = false }: {
   operation: FleetOperation; busy: boolean; current: boolean; control: (action: 'cancel' | 'resume') => void;
@@ -37,6 +52,7 @@ export function AgentFleetOperation({ operation, busy, current, control, onAuthR
     <ol>{operation.steps.map((step) => <li key={step.name} data-status={step.status}>
       {step.status === 'failed' ? <strong>{STEPS[step.name]}: {STEP_STATUS[step.status]}</strong> : <>{STEPS[step.name]}: {STEP_STATUS[step.status]}</>}
       {step.evidence ? <pre aria-label={`Evidencia de ${STEPS[step.name]}`}>{JSON.stringify(step.evidence, null, 2)}</pre> : null}</li>)}</ol>
+    {operation.kind === 'purge' ? <PurgeOutcome operation={operation} /> : null}
     {error ? <p className="notice" role="alert">
       {error.step ? <>Falló en el paso «{STEPS[error.step]}». </> : null}{ERRORS[error.code]}{' '}
       {error.retryable ? 'Se puede reanudar: retoma desde el paso que falló.' : 'No se puede reanudar: hace falta una operación nueva.'}

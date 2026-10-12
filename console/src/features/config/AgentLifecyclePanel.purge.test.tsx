@@ -1,23 +1,23 @@
 import { webcrypto } from 'node:crypto';
-import { screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
-import type { FleetOperationRequest } from '@cauce/protocol/fleet-operation';
+import type { FleetOperation, FleetOperationRequest } from '@cauce/protocol/fleet-operation';
 import { ConsoleAccessBoundary } from '../../api/console-access';
 import { fleetRequestHash } from '../../api/client/fleet-operations-client';
 import type { ConfigurationSnapshot } from '../../api/types';
 import { server } from '../../mocks/server';
 import { renderWithApi } from '../../test/render';
+import { AgentFleetOperation } from './AgentFleetOperation';
 import { AgentLifecyclePanel } from './AgentLifecyclePanel';
 
 Object.defineProperty(globalThis, 'crypto', { configurable: true, value: webcrypto });
-const row = (extra: Record<string, unknown>) => ({ tenant_id: 'A', alias: 'w', host_id: 'h', ...extra });
-const snapshotOf = (agent: Record<string, unknown>): ConfigurationSnapshot => ({ revision: 4, tenants: [{ id: 'A' }], agents: [],
-  retired: { tenants: [], rooms: [], memberships: [], agents: [agent] } });
-const snapshot = snapshotOf(row({ runtime_mode: 'container', container_name: 'ws-w' }));
+const snapshot: ConfigurationSnapshot = { revision: 4, tenants: [{ id: 'A' }], agents: [],
+  retired: { tenants: [], rooms: [], memberships: [], agents: [{ tenant_id: 'A', alias: 'w', host_id: 'h', runtime_mode: 'container', container_name: 'ws-w' }] } };
+type Resource = { type: string; name: string; action: string; reason: string };
 const target = { resource: 'agent' as const, tenant_id: 'A', alias: 'w' };
 
-it('names the container and volumes and keeps purge disabled until the exact alias is typed', async () => {
+async function preview(resources: Resource[]) {
   server.use(
     http.get('http://localhost/v3/console/access', () => HttpResponse.json({
       subject: 'A:operator', roles: ['operator'], permissions: ['config.read', 'config.write'] })),
@@ -26,22 +26,28 @@ it('names the container and volumes and keeps purge disabled until the exact ali
     http.post('http://localhost/v3/console/fleet/operations/preview', async ({ request }) => {
       const input = await request.json() as FleetOperationRequest;
       return HttpResponse.json({ kind: input.kind, target: input.target, expected_revision: input.expected_revision,
-        request_sha256: await fleetRequestHash(input), steps: ['fence'], can_apply: true, dependencies: [] });
+        request_sha256: await fleetRequestHash(input), steps: ['fence'], can_apply: true, dependencies: [], resources });
     }),
   );
   renderWithApi(<ConsoleAccessBoundary>
     <AgentLifecyclePanel snapshot={snapshot} target={target} initialOpen hideTrigger embedded fixedKind initialKind="purge" />
   </ConsoleAccessBoundary>);
   const user = userEvent.setup();
-  const resources = await screen.findByLabelText('Recursos que se borrarán');
-  expect(resources).toHaveTextContent('ws-w');
-  expect(resources).toHaveTextContent('ws-w-state');
-  expect(resources).toHaveTextContent('ws-w-provider-profiles');
-  expect(resources).toHaveTextContent('Si es propio del agente');
-  expect(screen.getByRole('link', { name: 'Descargar copia' })).toHaveAttribute('href', '/messages/A/w?view=context');
+  await screen.findByLabelText('Recursos que se borrarán');
   await waitFor(() => { expect(screen.getByRole('button', { name: 'Previsualizar operación' })).toBeEnabled(); });
   await user.click(screen.getByRole('button', { name: 'Previsualizar operación' }));
-  await screen.findByLabelText('Previsualización operativa');
+  return { user, plan: await screen.findByLabelText('Recursos físicos del plan') };
+}
+
+it('lists the server plan, keeps purge disabled until the exact alias is typed and links the backup', async () => {
+  const { user, plan } = await preview([
+    { type: 'container', name: 'ws-w', action: 'delete', reason: 'Contenedor propio' },
+    { type: 'volume', name: 'ws-w-state', action: 'delete', reason: 'Volumen de estado' }]);
+  expect(screen.getByLabelText('Recursos que se borrarán')).not.toHaveTextContent('ws-w-state');
+  expect(plan).toHaveTextContent('Se borra: Contenedor ws-w');
+  expect(plan).toHaveTextContent('Se borra: Volumen ws-w-state');
+  expect(plan).toHaveTextContent('el resultado de la operación dice lo que realmente se borró');
+  expect(screen.getByRole('link', { name: 'Descargar copia' })).toHaveAttribute('href', '/messages/A/w?view=context');
   const enqueue = screen.getByRole('button', { name: 'Encolar operación' });
   expect(enqueue).toBeDisabled();
   await user.type(screen.getByLabelText(/Escribe el alias/), 'W');
@@ -51,36 +57,18 @@ it('names the container and volumes and keeps purge disabled until the exact ali
   expect(enqueue).toBeEnabled();
 });
 
-function renderPurge(value: ConfigurationSnapshot) {
-  server.use(
-    http.get('http://localhost/v3/console/access', () => HttpResponse.json({
-      subject: 'A:operator', roles: ['operator'], permissions: ['config.read', 'config.write'] })),
-    http.get('http://localhost/v3/console/fleet/capability', () => HttpResponse.json({ available: true, actions: ['purge'], placements: [] })),
-    http.get('http://localhost/v3/console/fleet/operations', () => HttpResponse.json({ operations: [] })),
-  );
-  renderWithApi(<ConsoleAccessBoundary>
-    <AgentLifecyclePanel snapshot={value} target={target} initialOpen hideTrigger embedded fixedKind initialKind="purge" />
-  </ConsoleAccessBoundary>);
-  return screen.findByLabelText('Recursos que se borrarán');
-}
-
-it('describes a native agent by its host directories, not by a fake host: container', async () => {
-  const resources = await renderPurge(snapshotOf(row({ runtime_mode: 'native', container_name: 'host:h', state_directory: '/srv/agents/w' })));
-  expect(resources).toHaveTextContent('/srv/agents/w');
-  expect(resources).toHaveTextContent('en el host h');
-  expect(resources).not.toHaveTextContent('host:h');
-  expect(resources).not.toHaveTextContent('provider-profiles');
+it('shows a shared container as kept and a native directory as deleted', async () => {
+  const { plan } = await preview([
+    { type: 'container', name: 'ws-humanizar', action: 'keep', reason: 'Contenedor compartido' },
+    { type: 'directory', name: '/srv/agents/w', action: 'delete', reason: 'Estado nativo' }]);
+  expect(plan).toHaveTextContent('Se conserva: Contenedor ws-humanizar');
+  expect(plan).toHaveTextContent('Se borra: Directorio /srv/agents/w');
 });
 
-it('treats a host: container_name as native even when runtime_mode is null (legacy row)', async () => {
-  const resources = await renderPurge(snapshotOf(row({ runtime_mode: null, container_name: 'host:h' })));
-  expect(resources).not.toHaveTextContent('host:h-state');
-  expect(resources).toHaveTextContent('No hay contenedor ni volúmenes');
-});
-
-it('does not claim to delete a container it cannot show is owned, and says volumes are conditional', async () => {
-  const resources = await renderPurge(snapshotOf(row({ runtime_mode: null, container_name: 'ws-humanizar' })));
-  expect(resources).toHaveTextContent('Si es propio del agente');
-  expect(resources).toHaveTextContent('compartido con otros agentes, se conserva');
-  expect(resources).toHaveTextContent('si existe, ws-humanizar-provider-profiles');
+it('reports the observed purge result when the operation finishes', () => {
+  const operation: FleetOperation = { request_sha256: 'a'.repeat(64), id: '71000000-0000-4000-8000-000000000001', status: 'succeeded', version: 3,
+    target, kind: 'purge', actor: { tenant_id: 'A', alias: 'op' }, expected_revision: 4, desired_revision: null, applied_revision: null,
+    steps: [{ name: 'purge', status: 'succeeded' }], error: null, created_at: '2026-10-12T10:00:00.000Z', updated_at: '2026-10-12T10:00:00.000Z' };
+  render(<AgentFleetOperation operation={operation} busy={false} current control={() => undefined} />);
+  expect(screen.getByLabelText('Resultado de la purga')).toHaveTextContent('El ejecutor observó la purga');
 });

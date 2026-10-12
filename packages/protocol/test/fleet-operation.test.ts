@@ -81,3 +81,20 @@ describe('fleet effect and execution catalogue', () => {
     expect(valid({ ...input, parameters: { ...input.parameters, memberships: [{ room_id: 'nuevo-general', role: 'Custom role', enabled: false }] } })).toBe(true);
   });
 });
+
+describe('fleet purge preview resources', () => {
+  const preview = {
+    request_sha256: 'a'.repeat(64), expected_revision: 1, target: { resource: 'agent', tenant_id: 'Nuevo', alias: 'worker_1' },
+    kind: 'purge', steps: ['fence'], dependencies: [], can_apply: true,
+  };
+  const parse = (value: unknown) => (Reflect.get(protocol, 'FleetOperationPreviewSchema') as { safeParse(value: unknown): { success: boolean; data?: { resources: unknown[] } } }).safeParse(value);
+  it('lists the planned physical resources with action and reason, and defaults to none', () => {
+    const resources = [{ type: 'container', name: 'cauce-x', action: 'delete', reason: 'propio' }, { type: 'volume', name: 'cauce-x-state', action: 'keep', reason: 'otro dueño' }];
+    expect(parse({ ...preview, resources }).data?.resources).toEqual(resources);
+    expect(parse(preview).data?.resources).toEqual([]);
+  });
+  it('rejects unknown resource types, actions and extra fields', () => {
+    for (const resource of [{ type: 'network', name: 'n', action: 'delete', reason: 'r' }, { type: 'volume', name: 'v', action: 'drop', reason: 'r' },
+      { type: 'volume', name: 'v', action: 'delete', reason: 'r', extra: 1 }]) expect(parse({ ...preview, resources: [resource] }).success).toBe(false);
+  });
+});
