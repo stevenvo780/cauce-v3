@@ -347,13 +347,82 @@ def preserve_progress_baseline(state: dict, root: dict) -> None:
         **{key: root[key] for key in ("request_id", "trace_id", "delivery_ids", "body_sha256", "body_type") if key in root}}
 
 
+def reviewed_engineering_current(state: dict, engineering: dict) -> bool:
+    review = engineering.get("qa_review")
+    return (engineering.get("goal_sha256") == state.get("goal_sha256")
+            and engineering.get("verified_engineering") is True
+            and engineering.get("verification_source_current") is True
+            and engineering.get("source_files_match") is True
+            and {"qa", "tests", "snapshot"}.issubset(engineering.get("valid_gates", []))
+            and isinstance(review, dict) and review.get("goal_sha256") == state.get("goal_sha256")
+            and re.fullmatch(r"[a-f0-9]{64}", str(review.get("cohort_sha256", ""))) is not None
+            and review.get("source_files") == engineering.get("source_hashes"))
+
+
+def progress_baseline_bound(state: dict) -> bool:
+    baseline, binding = state.get("progress_pause_baseline"), state.get("progress_pause_binding", {})
+    if (not isinstance(baseline, dict) or baseline.get("goal_sha256") != state.get("goal_sha256")
+            or binding.get("goal_sha256") != state.get("goal_sha256")
+            or binding.get("baseline_sha256") != digest(canonical(baseline))
+            or binding.get("root") != state.get("last_finished", {}).get("root")
+            or binding.get("body_type") not in {"request", "praxis.supervision.continue"}):
+        return False
+    try:
+        uuid.UUID(binding["root"])
+        validated = causal_binding(binding, binding["body_sha256"], binding["body_type"])
+        return validated == state.get("last_finished", {}).get("binding")
+    except (KeyError, ValueError, TypeError, AttributeError, SupervisionError):
+        return False
+
+
+def held_review_credit_bound(state: dict, engineering: dict) -> bool:
+    held, finished = state.get("review_held_continuation", {}), state.get("last_finished", {})
+    measured, binding = finished.get("engineering", {}), held.get("binding", {})
+    if (held.get("status") != "held" or held.get("goal_sha256") != state.get("goal_sha256")
+            or held.get("source_sha256") != code_fingerprint(engineering)
+            or finished.get("root") != held.get("root") or finished.get("binding") != binding
+            or binding.get("body_type") not in {"request", "praxis.supervision.continue"}
+            or measured.get("goal_sha256") != state.get("goal_sha256") or measured.get("verified_engineering") is not True
+            or code_fingerprint(measured) != held.get("source_sha256")):
+        return False
+    try:
+        root = str(uuid.UUID(held["root"]))
+        binding = causal_binding(held["binding"], held["binding"]["body_sha256"], held["binding"]["body_type"])
+        return held.get("credit_id") == digest(canonical({"root": root, "binding": binding, "goal_sha256": state["goal_sha256"]}))
+    except (KeyError, ValueError, TypeError, AttributeError, SupervisionError):
+        return False
+
+
+def reconcile_review_cohort(state: dict, engineering: dict, now: float, made_progress) -> bool:
+    pending, current = state.get("pending_visual_review"), engineering.get("qa_review")
+    if (state.get("phase") != "waiting_visual_review" or state.get("active_root")
+            or not isinstance(pending, dict) or not reviewed_engineering_current(state, engineering)
+            or pending.get("goal_sha256") != state.get("goal_sha256")
+            or pending.get("cohort_sha256") == current.get("cohort_sha256")):
+        return False
+    held = held_review_credit_bound(state, engineering)
+    progressed = progress_baseline_bound(state) and made_progress(state["progress_pause_baseline"], engineering)
+    if not held and not progressed:
+        return False
+    record = {"at": now, "old_cohort_sha256": pending["cohort_sha256"], "cohort_sha256": current["cohort_sha256"],
+        "root": state.get("last_finished", {}).get("root"), "goal_sha256": state["goal_sha256"],
+        "binding": state.get("last_finished", {}).get("binding"), "evidence_sha256": digest(canonical(engineering))}
+    if held:
+        record["credit_id"] = state["review_held_continuation"]["credit_id"]
+    records = state.setdefault("visual_review_reconciliations", [])
+    records.append(record)
+    del records[:-24]
+    state["pending_visual_review"] = current
+    return True
+
+
 def recover_reviewed_progress(state: dict, engineering: dict, now: float, made_progress) -> bool:
     pending = state.get("pending_visual_review")
     current = engineering.get("qa_review")
     baseline = state.get("progress_pause_baseline")
     if (state.get("phase") != "waiting_visual_review" or state.get("active_root") or not isinstance(pending, dict)
             or not isinstance(current, dict) or pending.get("cohort_sha256") != current.get("cohort_sha256")
-            or "qa" not in engineering.get("valid_gates", []) or not isinstance(baseline, dict)
+            or not reviewed_engineering_current(state, engineering) or not progress_baseline_bound(state)
             or not made_progress(baseline, engineering)):
         return False
     state.setdefault("progress_recoveries", []).append({"at": now, "reason": "visual_review_completed",
@@ -362,6 +431,45 @@ def recover_reviewed_progress(state: dict, engineering: dict, now: float, made_p
     state["phase"], state["continuation_earned"] = "observing", True
     state["idle_since"], state["cooldown_until"] = now, now + state.get("review_cooldown_seconds", 1200)
     state.pop("pending_visual_review", None)
+    return True
+
+
+def recover_failed_visual_review(state: dict, engineering: dict, runtime: dict, now: float, idle_seconds: int, made_progress) -> bool:
+    pending, finished = state.get("pending_visual_review"), state.get("last_review_finished", {})
+    if (state.get("phase") != "circuit_paused" or state.get("pause_reason") != "visual_review_failed"
+            or state.get("active_root") or runtime.get("active") != 0 or runtime.get("ready") is not True
+            or not isinstance(runtime.get("observed_at"), (int, float)) or abs(now - runtime["observed_at"]) > 30
+            or now - state.get("idle_since", now) < idle_seconds or not isinstance(pending, dict)
+            or type(finished.get("at")) not in {int, float} or now - finished["at"] < idle_seconds
+            or (isinstance(runtime.get("last_activity_at"), (int, float)) and now - runtime["last_activity_at"] < idle_seconds)
+            or pending.get("goal_sha256") != state.get("goal_sha256")
+            or not re.fullmatch(r"[a-f0-9]{64}", str(pending.get("cohort_sha256", "")))
+            or finished.get("cohort_sha256") != pending["cohort_sha256"]
+            or not reviewed_engineering_current(state, engineering) or not progress_baseline_bound(state)
+            or not made_progress(state["progress_pause_baseline"], engineering)):
+        return False
+    request = state.get("visual_review_requests", {}).get(pending["cohort_sha256"], {})
+    try:
+        failed_root = str(uuid.UUID(finished["root"]))
+    except (KeyError, ValueError, TypeError, AttributeError):
+        return False
+    if request.get("status") != "closed" or request.get("message_id") != failed_root:
+        return False
+    binding = state["progress_pause_binding"]
+    credit_id = digest(canonical({"failed_review_root": failed_root, "binding": binding, "goal_sha256": state["goal_sha256"]}))
+    recoveries = state.get("visual_review_failure_recoveries", [])
+    if any(record.get("credit_id") == credit_id for record in recoveries):
+        return False
+    state["phase"] = "waiting_visual_review"
+    reconcile_review_cohort(state, engineering, now, made_progress)
+    if not recover_reviewed_progress(state, engineering, now, made_progress):
+        state["phase"] = "circuit_paused"
+        return False
+    record = {"at": now, "reason": "visual_review_failed", "credit_id": credit_id, "failed_review_root": failed_root,
+        "root": binding["root"], "binding": binding, "goal_sha256": state["goal_sha256"],
+        "cohort_sha256": engineering["qa_review"]["cohort_sha256"], "evidence_sha256": digest(canonical(engineering))}
+    state.setdefault("visual_review_failure_recoveries", []).append(record)
+    del state["visual_review_failure_recoveries"][:-24]
     return True
 
 
@@ -411,10 +519,17 @@ def hold_earned_review_credit(state: dict, engineering: dict, now: float) -> boo
 
 def restore_earned_review_credit(state: dict, engineering: dict, now: float) -> bool:
     held, current, pending = state.get("review_held_continuation", {}), engineering.get("qa_review"), state.get("pending_visual_review")
+    reconciled = any(record.get("credit_id") == held.get("credit_id")
+        and record.get("old_cohort_sha256") == held.get("cohort_sha256")
+        and record.get("cohort_sha256") == (current or {}).get("cohort_sha256")
+        and record.get("binding") == held.get("binding") and record.get("root") == held.get("root")
+        and record.get("goal_sha256") == state.get("goal_sha256") for record in state.get("visual_review_reconciliations", []))
     if (state.get("phase") != "waiting_visual_review" or state.get("active_root") or held.get("status") != "held"
-            or not isinstance(current, dict) or not isinstance(pending, dict) or "qa" not in engineering.get("valid_gates", [])
+            or not isinstance(current, dict) or not isinstance(pending, dict) or not reviewed_engineering_current(state, engineering)
+            or not held_review_credit_bound(state, engineering)
             or held.get("goal_sha256") != state.get("goal_sha256") or held.get("source_sha256") != code_fingerprint(engineering)
-            or held.get("cohort_sha256") != current.get("cohort_sha256") or pending.get("cohort_sha256") != current.get("cohort_sha256")
+            or (held.get("cohort_sha256") != current.get("cohort_sha256") and not reconciled)
+            or pending.get("cohort_sha256") != current.get("cohort_sha256")
             or state.get("last_finished", {}).get("root") != held.get("root")
             or state.get("last_finished", {}).get("binding") != held.get("binding")):
         return False
