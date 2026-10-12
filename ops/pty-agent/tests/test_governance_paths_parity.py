@@ -52,14 +52,16 @@ class GovernancePathsParityTest(unittest.TestCase):
         instance.bundle, root = self._bundle_for(harness)
         return instance, root
 
-    def test_contract_declares_the_five_harnesses_with_their_documents(self) -> None:
-        self.assertEqual(sorted(self.harnesses), ["claude", "codex", "hermes", "muse", "openclaw"])
+    def test_contract_declares_the_six_harnesses_with_their_documents(self) -> None:
+        self.assertEqual(sorted(self.harnesses), ["claude", "codex", "grok", "hermes", "muse", "openclaw"])
         self.assertEqual(
             sorted(self.harnesses["openclaw"]["documentos"]),
             ["AGENTS.md", "HEARTBEAT.md", "IDENTITY.md", "MEMORY.md", "SOUL.md", "TOOLS.md",
              "USER.md"],
         )
         self.assertEqual(self.harnesses["muse"]["documentos"], ["AGENTS.md"])
+        self.assertEqual(self.harnesses["grok"]["raiz"], {"hecho": "grok_workspace"})
+        self.assertEqual(self.harnesses["grok"]["documentos"], ["AGENTS.md"])
 
     def test_writable_profile_paths_match_the_contract_harness_by_harness(self) -> None:
         for harness, declared in sorted(self.harnesses.items()):
@@ -116,6 +118,54 @@ class GovernancePathsParityTest(unittest.TestCase):
                 instance = agent.PtyAgent.__new__(agent.PtyAgent)
                 instance.bundle = {"home": self.home, "harness": harness, "runtime_facts": {}}
                 self.assertEqual(instance._profile_governance_file_paths(), frozenset())
+
+    def test_grok_only_authorizes_the_measured_workspace_document(self) -> None:
+        instance, root = self._instance_for("grok")
+        pathlib.Path(root).mkdir()
+        facts = agent._runtime_facts_config(instance.bundle["runtime_facts"], "grok", self.home)
+        self.assertEqual(facts, {"grok_workspace": root})
+        instance.bundle["runtime_facts"] = facts
+        expected = frozenset({f"{root}/AGENTS.md"})
+        self.assertEqual(instance._profile_governance_file_paths(), expected)
+        self.assertEqual(instance._readable_global_governance_file_paths(), expected)
+        for path in (f"{self.home}/AGENTS.md", f"{root}/nested/AGENTS.md",
+                     f"{root}/AGENTS.override.md", f"{root}/auth.json", f"{root}/.env",
+                     f"{root}/private.key"):
+            with self.subTest(path=path):
+                self.assertFalse(instance._is_readable_governance_file_path(path))
+                self.assertFalse(instance._is_writable_governance_file_path(path))
+
+    def test_control_negativo_grok_missing_or_wrong_facts_have_no_paths(self) -> None:
+        instance, root = self._instance_for("grok")
+        for facts in ({}, {"cwd": root}, {"muse_workspace": root}, {"codex_home": root},
+                      {"grok_home": root}):
+            with self.subTest(facts=facts):
+                instance.bundle["runtime_facts"] = facts
+                self.assertEqual(instance._profile_governance_file_paths(), frozenset())
+                self.assertEqual(instance._readable_global_governance_file_paths(), frozenset())
+
+    def test_control_negativo_grok_nonstring_workspace_has_no_paths(self) -> None:
+        instance, _ = self._instance_for("grok")
+        for root in (None, 123, True, [], {}):
+            with self.subTest(root=root):
+                instance.bundle["runtime_facts"] = {"grok_workspace": root}
+                self.assertEqual(instance._profile_governance_file_paths(), frozenset())
+                self.assertEqual(instance._readable_global_governance_file_paths(), frozenset())
+
+    def test_control_negativo_grok_invalid_measured_workspace_has_no_paths(self) -> None:
+        instance, root = self._instance_for("grok")
+        pathlib.Path(root).mkdir()
+        link = pathlib.Path(self.home) / "linked-workspace"
+        link.symlink_to(root, target_is_directory=True)
+        with tempfile.TemporaryDirectory(dir=pathlib.Path(self.home).parent) as outside:
+            for value in (str(link), outside, "relative", root + "/../raiz-grok", "/",
+                          root + "\0", root + "/missing"):
+                with self.subTest(root=value):
+                    facts = agent._runtime_facts_config({"grok_workspace": value}, "grok", self.home)
+                    self.assertEqual(facts, {})
+                    instance.bundle["runtime_facts"] = facts
+                    self.assertEqual(instance._profile_governance_file_paths(), frozenset())
+                    self.assertEqual(instance._readable_global_governance_file_paths(), frozenset())
 
 
 if __name__ == "__main__":
