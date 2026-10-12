@@ -386,6 +386,10 @@ export interface AdapterLog {
     /** Start witness disabled because the configured bridge does not emit the mark. */
     | 'harness_start_witness_disabled'
     | 'connection_degraded' /** Transport is up but something else is not. */
+    /** Versioned context materialization degraded (conflict quarantine, oversize, superseded). */
+    | 'versioned_context_degraded'
+    /** Non-versionable files found inside the versioned context directories. */
+    | 'versioned_context_ignored'
     | 'internal_error'; // real cause of an INTERNAL
   phase_name?: OpenClawPhase;
   transport?: OpenClawPhaseObservation["transport"];

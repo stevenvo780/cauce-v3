@@ -364,6 +364,17 @@ export class AdapterEngine {
     }
     try { controller.signal.throwIfAborted(); await space.materialize(delivery, this.ownTenantId, harness.definition.id, controller.signal); }
     catch (error) { await this.finishError(accepted.record, this.adapterError(error, accepted.record)); return; }
+    if (space.ignoredPaths.length > 0) {
+      this.logger({ event: "versioned_context_ignored", delivery_id: delivery.delivery_id, attempt: accepted.record.attempt,
+        phase: "accepted", timestamp: this.clock.now().toISOString(),
+        reason: `${space.ignoredPaths.slice(0, 5).join(",")}${space.ignoredPaths.length > 5 ? ` (+${String(space.ignoredPaths.length - 5)})` : ""}` });
+    }
+    const materializationDegraded = space.takeMaterializationDegraded();
+    if (materializationDegraded !== undefined) {
+      this.logger({ event: "versioned_context_degraded", delivery_id: delivery.delivery_id, attempt: accepted.record.attempt,
+        phase: "accepted", timestamp: this.clock.now().toISOString(), reason: materializationDegraded.code,
+        error_message: materializationDegraded.paths.join(",") });
+    }
 
     const onOpenClawPhase = harness.definition.id === "openclaw" ? deliveryPhaseObserver(this.logger, delivery) : undefined;
     const phase = phaseEmitter(onOpenClawPhase, "engine");
@@ -564,6 +575,17 @@ export class AdapterEngine {
       }
       try { await space.verify(); }
       catch (error) { await this.finishError(started.record, this.adapterError(error, started.record)); return; }
+      const closeDegraded = space.takeMaterializationDegraded();
+      if (closeDegraded !== undefined) {
+        this.logger({ event: "versioned_context_degraded", delivery_id: delivery.delivery_id, attempt: started.record.attempt,
+          phase: "started", timestamp: this.clock.now().toISOString(), reason: closeDegraded.code,
+          error_message: closeDegraded.paths.join(",") });
+      }
+      if (space.ignoredPaths.length > 0) {
+        this.logger({ event: "versioned_context_ignored", delivery_id: delivery.delivery_id, attempt: started.record.attempt,
+          phase: "started", timestamp: this.clock.now().toISOString(),
+          reason: `${space.ignoredPaths.slice(0, 5).join(",")}${space.ignoredPaths.length > 5 ? ` (+${String(space.ignoredPaths.length - 5)})` : ""}` });
+      }
 
       const profileAdoption = profileAdoptionFor(delivery, consumedProfile);
       const done = await this.store.transitionAndEnqueue(
@@ -574,6 +596,7 @@ export class AdapterEngine {
           output,
           ...(profileAdoption === undefined ? {} : { profileAdoption }),
           ...(consumption === undefined || delivery.versioned_context === undefined || delivery.epoch !== this.store.epoch || this.fenced.has(delivery.delivery_id)
+            || space.materializedVersion !== delivery.versioned_context.version
             ? {} : { contextAdoption: { version: delivery.versioned_context.version, digest: delivery.versioned_context.digest, input_sha256: consumption.input_sha256 } }),
           ...(consumption === undefined || delivery.epoch !== this.store.epoch || this.fenced.has(delivery.delivery_id)
             ? {} : { consumptionWitness: consumption }),

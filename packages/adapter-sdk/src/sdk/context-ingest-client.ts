@@ -1,6 +1,8 @@
-import { request as httpRequest, type OutgoingHttpHeaders } from "node:http";
+import { readFile } from "node:fs/promises";
+import { request as httpRequest, type IncomingMessage, type OutgoingHttpHeaders } from "node:http";
 import { Agent as HttpsAgent, request as httpsRequest } from "node:https";
 import type { VersionedContext } from "@cauce/protocol";
+import { readBearerTokenFile } from "./secure-files.js";
 
 export interface NativeContextIngestInput {
   readonly base_version: number;
@@ -14,13 +16,18 @@ export interface NativeContextIngest {
 }
 
 export interface ContextIngestClientOptions {
-  readonly baseUrl: string;
-  readonly mutualTls?: { readonly ca: string; readonly cert: string; readonly key: string; readonly servername?: string };
-  readonly allowInsecureHttp?: boolean;
-  readonly bearerToken?: string;
-  readonly developmentIdentity?: { readonly tenantId: string; readonly alias: string };
-  readonly headers?: Readonly<Record<string, string>>;
-  readonly requestTimeoutMs?: number;
+  readonly mutualTls?: { readonly certFile: string; readonly keyFile: string; readonly caFile: string };
+  readonly bearerTokenFile?: string;
+  readonly developmentIdentity?: { readonly tenant_id: string; readonly alias: string };
+  readonly timeoutMs?: number;
+}
+
+export type ContextIngestErrorCode = "UNAUTHORIZED" | "REJECTED" | "TOO_LARGE" | "TRANSPORT";
+export class ContextIngestError extends Error {
+  constructor(readonly code: ContextIngestErrorCode, message: string) {
+    super(message);
+    this.name = "ContextIngestError";
+  }
 }
 
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -28,77 +35,88 @@ let defaultClient: NativeContextIngest | undefined;
 export function configureDefaultContextIngestClient(client: NativeContextIngest): void { defaultClient = client; }
 export function defaultContextIngestClient(): NativeContextIngest | undefined { return defaultClient; }
 
-/** Native context ingest over the same mTLS/bearer transports the adapter already uses. */
+async function drain(response: IncomingMessage): Promise<string> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of response) chunks.push(chunk as Buffer);
+  return Buffer.concat(chunks).toString("utf8");
+}
+
 export class ContextIngestClient implements NativeContextIngest {
-  readonly #base: URL;
-  readonly #options: ContextIngestClientOptions;
-  readonly #agent: HttpsAgent | undefined;
-  constructor(options: ContextIngestClientOptions) {
-    this.#options = { ...options };
-    this.#base = new URL(options.baseUrl);
-    if (this.#base.protocol !== "https:" && !(this.#base.protocol === "http:" && options.allowInsecureHttp === true)) {
-      throw new Error("ContextIngestClient requires an HTTPS gateway URL");
-    }
-    if (options.developmentIdentity !== undefined && !(this.#base.protocol === "http:" && options.allowInsecureHttp === true)) {
-      throw new Error("ContextIngestClient development identity requires insecure HTTP");
-    }
-    const mtls = options.mutualTls;
-    this.#agent = mtls === undefined ? undefined : new HttpsAgent({ ca: mtls.ca, cert: mtls.cert, key: mtls.key,
-      rejectUnauthorized: true, ...(mtls.servername === undefined ? {} : { servername: mtls.servername }) });
+  private agent: HttpsAgent | undefined;
+
+  private constructor(readonly baseUrl: string, private readonly options: ContextIngestClientOptions) {}
+
+  /** `wss://host:port/v3/ws` becomes `https://host:port`; `ws:` becomes `http:` (development). */
+  static fromRelayUrl(relayUrl: string, options: ContextIngestClientOptions): ContextIngestClient {
+    const parsed = new URL(relayUrl);
+    const protocol = parsed.protocol === "wss:" ? "https:" : parsed.protocol === "ws:" ? "http:" : parsed.protocol;
+    if (protocol !== "https:" && protocol !== "http:") throw new Error(`context ingest client cannot derive an origin from ${relayUrl}`);
+    return new ContextIngestClient(`${protocol}//${parsed.host}`, options);
   }
-  static fromRelayUrl(relayUrl: string, options: Omit<ContextIngestClientOptions, "baseUrl"> = {}): ContextIngestClient {
-    const base = new URL(relayUrl);
-    if (base.protocol === "ws:") base.protocol = "http:";
-    else if (base.protocol === "wss:") base.protocol = "https:";
-    base.pathname = ""; base.search = ""; base.hash = "";
-    return new ContextIngestClient({ ...options, baseUrl: base.href });
+
+  private async transport(): Promise<{ request: typeof httpsRequest; agent?: HttpsAgent }> {
+    if (!this.baseUrl.startsWith("https:")) return { request: httpRequest };
+    const tls = this.options.mutualTls;
+    if (tls === undefined) return { request: httpsRequest };
+    this.agent ??= new HttpsAgent({
+      cert: await readFile(tls.certFile),
+      key: await readFile(tls.keyFile),
+      ca: await readFile(tls.caFile),
+      keepAlive: false,
+    });
+    return { request: httpsRequest, agent: this.agent };
   }
-  #headers(contentLength: number): OutgoingHttpHeaders {
-    const headers: Record<string, string> = { "content-type": "application/json",
-      "content-length": String(contentLength), ...(this.#options.headers ?? {}) };
-    if (this.#options.bearerToken !== undefined) headers.authorization = `Bearer ${this.#options.bearerToken}`;
-    const dev = this.#options.developmentIdentity;
-    if (dev !== undefined) { headers["x-cauce-dev-tenant"] = dev.tenantId; headers["x-cauce-dev-alias"] = dev.alias; }
+
+  private async headers(extra: OutgoingHttpHeaders): Promise<OutgoingHttpHeaders> {
+    const headers: OutgoingHttpHeaders = { ...extra };
+    if (this.options.bearerTokenFile !== undefined) {
+      headers.authorization = `Bearer ${await readBearerTokenFile(this.options.bearerTokenFile)}`;
+    }
+    if (this.options.developmentIdentity !== undefined) {
+      headers["x-cauce-tenant"] = this.options.developmentIdentity.tenant_id;
+      headers["x-cauce-alias"] = this.options.developmentIdentity.alias;
+    }
     return headers;
   }
-  async #send(body: Buffer): Promise<{ status: number; body: string }> {
-    const url = new URL("/v3/context/ingest", this.#base);
-    const timeout = this.#options.requestTimeoutMs ?? DEFAULT_TIMEOUT_MS;
-    return new Promise((resolve, reject) => {
-      const request = url.protocol === "https:"
-        ? httpsRequest(url, { method: "POST", headers: this.#headers(body.byteLength), agent: this.#agent })
-        : httpRequest(url, { method: "POST", headers: this.#headers(body.byteLength) });
-      request.setTimeout(timeout, () => request.destroy(new Error("Context ingest request timed out")));
-      request.once("error", reject);
-      request.once("response", (response) => {
-        const chunks: Buffer[] = [];
-        response.on("data", (chunk: Buffer) => chunks.push(chunk));
-        response.once("end", () => resolve({ status: response.statusCode ?? 0, body: Buffer.concat(chunks).toString("utf8") }));
-        response.once("error", reject);
-      });
-      request.end(body);
-    });
-  }
+
   async ingest(input: NativeContextIngestInput): Promise<NativeContextIngestResult> {
-    const response = await this.#send(Buffer.from(JSON.stringify(input)));
-    if (response.status === 202) {
-      const snapshot = JSON.parse(response.body) as { company_id?: unknown; tenant_id?: unknown; alias?: unknown;
+    const { request, agent } = await this.transport();
+    const url = new URL("/v3/context/ingest", this.baseUrl);
+    const body = Buffer.from(JSON.stringify(input));
+    const headers = await this.headers({ "content-type": "application/json", "content-length": String(body.byteLength) });
+    const response = await new Promise<IncomingMessage>((resolve, reject) => {
+      const outgoing = request(url, {
+        method: "POST", headers,
+        ...(agent === undefined ? {} : { agent }), timeout: this.options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+      }, incoming => resolve(incoming));
+      outgoing.on("error", error => reject(new ContextIngestError("TRANSPORT", `context ingest gateway unreachable: ${error.message}`)));
+      outgoing.on("timeout", () => outgoing.destroy(new Error("context ingest timed out")));
+      outgoing.end(body);
+    });
+    const text = await drain(response);
+    const status = response.statusCode ?? 0;
+    if (status === 202) {
+      const snapshot = JSON.parse(text) as { company_id?: unknown; tenant_id?: unknown; alias?: unknown;
         version?: unknown; digest?: unknown; files?: unknown };
       if (typeof snapshot.company_id !== "string" || typeof snapshot.tenant_id !== "string" || typeof snapshot.alias !== "string"
         || typeof snapshot.version !== "number" || typeof snapshot.digest !== "string" || !Array.isArray(snapshot.files)) {
-        throw new Error("ContextIngestClient received an invalid ingest snapshot");
+        throw new ContextIngestError("REJECTED", "context ingest gateway returned an invalid snapshot");
       }
       return { state: "ingested", context: { company_id: snapshot.company_id, tenant_id: snapshot.tenant_id,
         alias: snapshot.alias, version: snapshot.version, digest: snapshot.digest,
         files: snapshot.files as VersionedContext["files"] } };
     }
-    if (response.status === 409) {
+    if (status === 409) {
       let conflict: { desired_version?: unknown; applied_version?: unknown } = {};
-      try { conflict = JSON.parse(response.body) as typeof conflict; } catch { conflict = {}; }
+      try { conflict = JSON.parse(text) as typeof conflict; } catch { conflict = {}; }
       return { state: "conflict",
         desired_version: typeof conflict.desired_version === "number" ? conflict.desired_version : input.base_version,
         applied_version: typeof conflict.applied_version === "number" ? conflict.applied_version : input.base_version };
     }
-    throw new Error(`Context ingest failed with HTTP ${String(response.status)}`);
+    const detail = text.slice(0, 200);
+    if (status === 401 || status === 403) throw new ContextIngestError("UNAUTHORIZED", `context ingest refused the credential (${String(status)}): ${detail}`);
+    if (status === 413) throw new ContextIngestError("TOO_LARGE", `context ingest exceeds the gateway cap: ${detail}`);
+    if (status >= 400 && status < 500) throw new ContextIngestError("REJECTED", `context ingest answered ${String(status)}: ${detail}`);
+    throw new ContextIngestError("TRANSPORT", `context ingest answered ${String(status)}: ${detail}`);
   }
 }
