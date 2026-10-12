@@ -124,6 +124,45 @@ docker compose --env-file /etc/cauce-v3/prod.env -f <PREV_RELEASE>/deploy/compos
 ```
 Los nombres de contenedor del ejemplo derivan del `COMPOSE_PROJECT_NAME` por defecto (`cauce-v3-prod`); con otro proyecto cambian en consecuencia.
 
+### Enclave de autoridad firmada de la flota
+
+`cauce-fleet-signed-authority.service` atiende, por un socket Unix, el `POST /v3/fleet/hosts/:host_id/authority` que el gateway recibe de los ordenadores enrolados. Comprueba la firma del ordenador, su empresa, nonce, operación, claim y epoch, y emite con el emisor central del controlador: mismo `fleet-authority-issuer.py`, misma política `authority.v1.json` y misma CA. El lock del emisor en su `state_root` permite que ambos emitan sin pisarse. Corre como root en `server`, desde la release del controlador (`/usr/local/lib/cauce-v35/<sha>/app/services/gateway/dist/fleet/authority/signed-main.js`), con su mismo `node`, su `/etc/hosts` privado y su conexión `database-url` (login `cauce_fleet`; el pool de 4 cabe en su límite de 20). Sin el enclave, el gateway responde `AUTHORITY_UNAVAILABLE` y los ordenadores enrolados no anuncian `create`.
+
+| Recurso | Dueño y modo |
+|---|---|
+| `/run/cauce-fleet-signed-authority/` | root:1000 `0750`; lo crea `/etc/tmpfiles.d/cauce-fleet-signed-authority.conf` en cada arranque, antes que Docker |
+| `/run/cauce-fleet-signed-authority/authority.sock` | root:1000 `0660`; lo crea el enclave. El overlay de flota lo monta de solo lectura en el gateway (uid 1000) |
+| `/etc/cauce-v3/fleet-v35/signed-authority/` | root `0700` |
+| `command.v1.json` | root `0600`; copia exacta del `authority_command` de `controller.v1.json` (ejecutable, política y pins) |
+| `authority.env` | root `0600`; `CAUCE_FLEET_AUTHORITY_*` y `NODE_ENV`/`PGSSLMODE`/`PGSSLROOTCERT` del controlador. Lleva la ruta del `database-url`, nunca la URL |
+| `/etc/systemd/system/cauce-fleet-signed-authority.service` | root `0644`; plantilla `ops/systemd/cauce-fleet-signed-authority.service` |
+
+**Prerrequisitos.** El controlador debe estar en una release que contenga `signed-main.js`, con `authority_command` en `controller.v1.json` y sus pins correctos. El preflight lo comprueba y, si falta, pide actualizar primero el controlador. `deploy.sh` exige que exista el directorio del socket antes del primer despliegue con este overlay, porque comprueba todas las fuentes de bind mounts.
+
+**Orden con un despliegue** (root en `server`; el instalador es `ops/scripts/fleet-authority-install.py`, preflight sin `--apply`):
+```bash
+# 0. Antes de deploy.sh, desde el clon del despliegue: solo el directorio del socket y su tmpfiles
+python3 ops/scripts/fleet-authority-install.py --socket-directory-only
+python3 ops/scripts/fleet-authority-install.py --socket-directory-only --apply
+# 1. deploy.sh con CAUCE_DEPLOY_FLEET_OVERLAY=1
+# 2. fleet-controller-upgrade.py a la release <R> (preflight y --apply), ver v3.5-controlador-despliegue.md
+# 3. Enclave, con el export de <R> que usó el kit
+python3 /var/tmp/cauce-v35-private-deployment-plan/upgrade-kit/src-<R>/ops/scripts/fleet-authority-install.py
+python3 /var/tmp/cauce-v35-private-deployment-plan/upgrade-kit/src-<R>/ops/scripts/fleet-authority-install.py --apply
+```
+El preflight no escribe nada. Deriva release, `node`, `/etc/hosts`, entorno TLS y comando del controlador; comprueba los pins, el modo del `database-url` sin leerlo y el `--ready` del emisor; y muestra el diff de cada fichero. `--apply` escribe solo lo que cambia, con respaldo `*.pre-authority-<stamp>`. Hace `daemon-reload` y `restart` solo si algo cambió o el enclave estaba parado. Después verifica `ready`:
+- la unidad está activa y sigue activa 3 s después;
+- el directorio es root:1000 `0750` y el socket, recién creado, root:1000 `0660`;
+- `--ready` del emisor: política, registros, `state_root` y par CA/clave;
+- sonda sin firma como uid 1000 para el host `zz-canary-probe`: `403 forbidden` prueba que el enclave llegó a PostgreSQL y rechaza un ordenador no enrolado (`409 AUTHORITY_UNAVAILABLE` indica que no hay BD);
+- la misma sonda como root: `403 AUTHORITY_REVOKED`, porque solo atiende al uid del gateway.
+
+Repetirlo sin cambios solo verifica. Tras cada actualización del controlador, repetir el paso 3 con el export de la release nueva: hasta entonces el enclave sigue en la anterior, que el kit conserva, y el preflight muestra la diferencia. Igual que el controlador, la unidad no se habilita en el arranque: tras reiniciar el host, `systemctl start cauce-fleet-v35-controller cauce-fleet-signed-authority`. Si falla al arrancar, `journalctl -u cauce-fleet-signed-authority` nombra la etapa sin secretos: `configuration`, `database configuration`, `issuer command` o `socket`.
+
+**Aceptación de punta a punta** (la acción `ready` firmada): en server2, como `server`, `python3 <release>/ops/cli/fleet-executor.py --policy <política> --capabilities` devuelve `available: true` solo si `authority_ready` obtuvo `{"ready":true,"host_id":"<host>"}` del gateway y del enclave. El ensayo local con PostgreSQL real está en `services/gateway/src/fleet/authority/signed-main-postgres.test.ts`.
+
+**Reversión.** Si la verificación de `--apply` falla, el instalador detiene el enclave y restaura los ficheros desde sus respaldos tras verificar su sha256. Después borra lo creado en esa ejecución, hace `daemon-reload` y arranca el enclave anterior si estaba activo. Conserva el directorio del socket y su tmpfiles, porque el gateway los monta. `ROLLBACK INCOMPLETE` deja el enclave parado y conserva todos los ficheros. Para volver a mano a una configuración anterior: copiar el `*.pre-authority-<stamp>` sobre su fichero, `systemctl daemon-reload && systemctl restart cauce-fleet-signed-authority` y repetir el preflight. `systemctl stop cauce-fleet-signed-authority` corta la emisión firmada (fail-closed) sin tocar el controlador ni su emisor.
+
 ## 2. Alta y baja de un agente
 
 Única fuente de verdad: BD (`agents` + `memberships`). Cadena declarativa obligatoria — nunca editar a mano `ops/container-aliases.json`, `ops/manifests/*.yaml` ni `ops/generated/**`:
