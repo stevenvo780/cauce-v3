@@ -765,6 +765,8 @@ start_adapter() {
   done
   if [[ -n $inventory_workspace ]]; then
     environment+=("CAUCE_AGENT_WORKSPACE=$inventory_workspace")
+    # Every CAUCE_MUSE_WORKSPACE reader (profile measurement, PTY launcher, seeding) needs the one effective workspace.
+    [[ $harness != muse || -v CONFIG[MUSE_WORKSPACE] ]] || environment+=("CAUCE_MUSE_WORKSPACE=$inventory_workspace")
     [[ $inventory_workspace == "$space_root"/* ]] \
       || declare_external_workspace "$inventory_workspace" 'external workspace outside the space; not copied until migrated to projects'
   elif [[ ${CONFIG[SPACE_CWD_MIGRATED]:-} == 1 ]]; then

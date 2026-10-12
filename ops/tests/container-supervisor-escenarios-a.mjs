@@ -241,6 +241,16 @@ export async function escenariosA(ctx) {
   assert(externalMountCall(await records())?.argv.includes("/home/dev/clawd"), "the argos clawd workspace must be declared as an external mount");
   process.stdout.write("argos openclaw defaults: workspace-only persistence starts under cli transport\n");
 
+  // A muse alias without MUSE_WORKSPACE gets the validated inventory workspace in BOTH variables,
+  // so profile measurement, seeding and the PTY launcher all read the same effective workspace.
+  await clearLog();
+  result = runSupervisor("start", "mnemo", await dockerState("mnemo"));
+  assert.equal(result.status, 0, result.stderr);
+  const museFinal = (await records()).find(({ argv }) => argv[0] === "exec" && argv.includes("CAUCE_ALIAS=mnemo"));
+  assert(museFinal?.argv.includes("CAUCE_AGENT_WORKSPACE=/home/dev/projects/mnemo"));
+  assert(museFinal?.argv.includes("CAUCE_MUSE_WORKSPACE=/home/dev/projects/mnemo"));
+  process.stdout.write("muse sin MUSE_WORKSPACE: CAUCE_MUSE_WORKSPACE exportado desde el inventario\n");
+
   // ---- Shared session: a single conversation in the terminal and in Telegram. ----
   // The switch only exists for claude and codex, only accepts the exact value 1, and when on it must
   // reach the adapter with a usable TERM (else tmux creates the session unknown-terminal and broken).

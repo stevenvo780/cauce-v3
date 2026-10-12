@@ -71,13 +71,14 @@ const aliasState = {
   atlas: "/home/dev/.local/state/cauce-v3/atlas", iza: "/home/claw/.openclaw/cauce-v3/iza",
   jarvis: "/home/claw/.openclaw/cauce-v3/jarvis", kratos: "/home/dev/.local/state/cauce-v3/kratos",
   zeus: "/home/dev/.local/state/cauce-v3/zeus", hades: "/home/claw/.local/state/cauce-v3/hades",
+  mnemo: "/home/dev/.local/state/cauce-v3/mnemo",
 };
 // The real fleet never dedicates a mount to the state dir: the state lives inside a broad
 // persistent bind. Physical co-location does not imply that aliases share the same mapped HOME.
 const aliasMount = {
   argos: "/home/dev/.local", atlas: "/home/dev/.local",
   iza: "/home/claw/.openclaw", jarvis: "/home/claw/.openclaw", kratos: "/home/dev/.local",
-  zeus: "/home/dev/.local", hades: "/home/claw",
+  zeus: "/home/dev/.local", hades: "/home/claw", mnemo: "/home/dev/.local",
 };
 let bundleDigest;
 let bundleDigest2;
@@ -172,6 +173,7 @@ async function dockerState(alias, overrides = {}) {
       ...(alias === "atlas" || alias === "kratos" ? [bind(`${alias}-codex`, "/home/dev/.codex")] : []),
       ...(alias === "zeus" ? [bind(`${alias}-claude`, "/home/dev/.claude"), bind(`${alias}-claude-json`, "/home/dev/.claude.json")] : []),
       ...(alias === "argos" ? [bind(`${alias}-workspace`, "/home/dev/clawd")] : []),
+      ...(alias === "mnemo" ? [bind(`${alias}-muse`, "/home/dev/.muse"), bind(`${alias}-workspace`, "/home/dev/projects")] : []),
       ...(alias === "iza" || alias === "jarvis" ? [bind(`${alias}-workspace`, "/home/claw/clawd")] : []),
     ],
     bundleDigest,
@@ -555,7 +557,7 @@ try {
 
   await chmod(configRoot, 0o700);
   await chmod(lockRoot, 0o700);
-  for (const harness of ["codex", "claude", "opencode", "hermes", "openclaw", "grok"]) {
+  for (const harness of ["codex", "claude", "opencode", "hermes", "openclaw", "grok", "muse"]) {
     await executable(path.join(release, `packages/adapter-sdk/dist/src/bin/${harness}.js`), "#!/usr/bin/env node\n");
   }
   await executable(path.join(release2, "packages/adapter-sdk/dist/src/bin/openclaw.js"),
@@ -565,7 +567,7 @@ try {
   bundleDigest2 = bundleDigestFor(release2);
   await copyFile(fakeDockerSource, path.join(binRoot, "docker"));
   await chmod(path.join(binRoot, "docker"), 0o755);
-  for (const alias of ["atlas", "argos", "iza", "jarvis", "kratos", "zeus", "hades"]) {
+  for (const alias of ["atlas", "argos", "iza", "jarvis", "kratos", "zeus", "hades", "mnemo"]) {
     await preparePki(alias, { bearer: alias !== "atlas" });
     await mkdir(path.join(mountSourceRoot, alias), { recursive: true });
   }
@@ -577,6 +579,10 @@ try {
   await writeConfig("kratos");
   await writeConfig("zeus");
   await writeConfig("hades");
+  await writeConfig("mnemo", [
+    "MUSE_EXECUTABLE=/opt/muse-code/muse", "MUSE_CONFIG_HOME=/home/dev/.muse/config",
+    "MUSE_DATA_HOME=/home/dev/.muse/data", "MUSE_APPROVAL_MODE=onRequest",
+  ]);
   await writeConfig("jarvis", [
     "OPENCLAW_TRANSPORT=api",
     "OPENCLAW_API_URL=http://127.0.0.1:18789/v1/chat/completions",

@@ -15,10 +15,12 @@ export const supervisorInventory = {
     ["kratos", "Miguel", "ws-humanizar", "dev", "claude", "/home/dev/.local/state/cauce-v3/kratos"],
     ["zeus", "Steven", "ws-zeus", "dev", "claude", "/home/dev/.local/state/cauce-v3/zeus"],
     ["hades", "Steven", "agv2-steven-hades-oc", "claw", "grok", "/home/claw/.local/state/cauce-v3/hades"],
+    ["mnemo", "Steven", "ctrl-infra", "dev", "muse", "/home/dev/.local/state/cauce-v3/mnemo"],
   ].map(([alias, tenant, container, user, harness, stateDirectory]) => [alias, {
     tenant, room: `grp.${tenant.toLowerCase()}`, container, user, home: `/home/${user}`,
     harness, stateDirectory, membershipRole: "agent", systemdUser: "stev",
     ...(harness === "openclaw" ? { workspace: `/home/${user}/clawd` } : {}),
+    ...(harness === "muse" ? { workspace: `/home/${user}/projects/mnemo` } : {}),
   }])),
 };
 
