@@ -1,21 +1,27 @@
 import { readFile } from 'node:fs/promises';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { FleetOperationRequest } from '@cauce/protocol';
-import { ConfigurationRepository, type DatabasePool, type FleetOperationClaim } from '../src/index.js';
+import { ConfigurationRepository, lockCompanyAuthority, type DatabasePool, type FleetOperationClaim } from '../src/index.js';
 import { FleetHostSource } from '../../../services/gateway/src/fleet/source.js';
 import { preparePostgresSuite } from './postgres-suite.js';
+import { seedFleetHuman } from './fleet-human-postgres.fixtures.js';
 import { startTestCaseDatabase, startTestDatabase, type EmptyTestDatabase, type TestDatabase } from '../../../tests/helpers/postgres.js';
 
 let database: TestDatabase | undefined;
 let caseDatabase: EmptyTestDatabase | undefined;
 let pool: DatabasePool;
 let source: FleetHostSource;
+let subject: string;
+const authority = (client: Parameters<typeof lockCompanyAuthority>[0]) => lockCompanyAuthority(client,
+  { tenant: 'Steven', alias: 'source_operator', humanId: subject.slice('console:'.length) });
 preparePostgresSuite(import.meta.url, async () => { database = await startTestDatabase(); }, 120_000);
 beforeEach(async () => {
   if (!database) throw new Error('test server absent');
   caseDatabase = await startTestCaseDatabase(database); pool = caseDatabase.pool;
   await pool.query("INSERT INTO rooms(id,tenant_id) VALUES('source-control','Steven'),('source-room','Isa')");
   await pool.query("INSERT INTO memberships(tenant_id,room_id,alias,role) VALUES('Steven','source-control','source_operator','operator')");
+  await caseDatabase.adminPool.query("INSERT INTO agents(tenant_id,alias,enabled) VALUES('Steven','source_operator',false)");
+  subject = await seedFleetHuman(caseDatabase.adminPool, 'Steven', 'source_operator');
   await pool.query(`INSERT INTO provider_accounts(id,provider,external_account_id,payer_tenant_id,credential_ref_kind,credential_ref,enabled)
     VALUES('source-account','codex','isolated-source-account','Isa','env_path','CAUCE_SYNTHETIC_PRIVATE_SECRET_PATH',true)`);
   source = new FleetHostSource(pool, { snapshotQuery: await readFile(new URL('../../../ops/scripts/fleet-query.sql', import.meta.url), 'utf8') });
@@ -30,7 +36,7 @@ function create(): FleetOperationRequest {
         home_directory: '/home/dev', state_directory: '/home/dev/.cauce/source-agent' } } };
 }
 async function claimed(): Promise<FleetOperationClaim> {
-  await source.enqueue('Steven', 'source_operator', create());
+  await source.enqueue('Steven', 'source_operator', create(), subject);
   const claim = await source.claim('source-worker', 'source-host'); if (!claim) throw new Error('claim absent');
   return claim;
 }
@@ -61,15 +67,15 @@ describe('host execution snapshot transaction', () => {
   it('rejects an unrelated newer configuration before an active physical effect', async () => {
     const claim = await claimed(); await source.prepare(claim);
     await new ConfigurationRepository(pool).apply('Steven', 'source_operator', { resource: 'room', action: 'update',
-      tenant_id: 'Isa', id: 'source-room', value: { enabled: false } }, false, 1);
+      tenant_id: 'Isa', id: 'source-room', value: { enabled: false } }, false, 1, authority);
     await expect(source.execution(claim)).rejects.toMatchObject({ code: 'conflict' });
   });
   it('allows cancellation cleanup after configuration changes and records the observed revision', async () => {
     const claim = await claimed(); await source.prepare(claim);
-    const operation = await source.get('Steven', 'source_operator', claim.operation.id);
-    await source.cancel('Steven', 'source_operator', operation.id, operation.version);
+    const operation = await source.get('Steven', 'source_operator', claim.operation.id, subject);
+    await source.cancel('Steven', 'source_operator', operation.id, operation.version, subject);
     await new ConfigurationRepository(pool).apply('Steven', 'source_operator', { resource: 'room', action: 'update',
-      tenant_id: 'Isa', id: 'source-room', value: { enabled: false } }, false, 1);
+      tenant_id: 'Isa', id: 'source-room', value: { enabled: false } }, false, 1, authority);
     const execution = await source.execution(claim);
     expect(execution.operation.status).toBe('cancelling');
     expect(execution.operation.desired_revision).toBe(1);
@@ -92,8 +98,8 @@ describe('host execution snapshot transaction', () => {
   });
   it('waits for the configuration lock before observing a committed newer snapshot', async () => {
     const claim = await claimed(); await source.prepare(claim);
-    const operation = await source.get('Steven', 'source_operator', claim.operation.id);
-    await source.cancel('Steven', 'source_operator', operation.id, operation.version);
+    const operation = await source.get('Steven', 'source_operator', claim.operation.id, subject);
+    await source.cancel('Steven', 'source_operator', operation.id, operation.version, subject);
     const client = await pool.connect();
     try {
       await client.query('BEGIN'); await client.query('SELECT pg_advisory_xact_lock(783_003_004)');

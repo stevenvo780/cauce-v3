@@ -3,6 +3,7 @@ import { FleetOperationsRepository } from '../src/index.js';
 import type { DatabasePool, FleetOperationClaim } from '../src/index.js';
 import type { FleetOperationRequest } from '@cauce/protocol';
 import { preparePostgresSuite } from './postgres-suite.js';
+import { seedFleetHuman } from './fleet-human-postgres.fixtures.js';
 import { startTestCaseDatabase, startTestDatabase, type EmptyTestDatabase, type TestDatabase } from '../../../tests/helpers/postgres.js';
 
 const HOST = 'backoff-host';
@@ -10,12 +11,15 @@ const FAILURE = { code: 'STEP_FAILED', retryable: true } as const;
 let database: TestDatabase | undefined;
 let caseDatabase: EmptyTestDatabase | undefined;
 let pool: DatabasePool;
+let subject: string;
 preparePostgresSuite(import.meta.url, async () => { database = await startTestDatabase(); }, 120_000);
 beforeEach(async () => {
   if (!database) throw new Error('test server absent');
   caseDatabase = await startTestCaseDatabase(database); pool = caseDatabase.pool;
   await pool.query("INSERT INTO rooms(id,tenant_id) VALUES('fleet-test','Steven')");
   await pool.query("INSERT INTO memberships(tenant_id,room_id,alias,role) VALUES('Steven','fleet-test','fleet_operator','operator')");
+  await caseDatabase.adminPool.query("INSERT INTO agents(tenant_id,alias,enabled) VALUES('Steven','fleet_operator',false)");
+  subject = await seedFleetHuman(caseDatabase.adminPool, 'Steven', 'fleet_operator');
   await pool.query(`INSERT INTO provider_accounts(id,provider,external_account_id,payer_tenant_id,credential_ref_kind,credential_ref,enabled)
     VALUES('fleet-test-account','codex','isolated-test-account','Steven','env_path','CAUCE_ISOLATED_TEST_ACCOUNT_PATH',true)`);
 });
@@ -35,11 +39,11 @@ async function claimed(repo: FleetOperationsRepository): Promise<FleetOperationC
   return claim;
 }
 async function cancelledOperation(repo: FleetOperationsRepository, name: string, enqueueNewer?: () => Promise<void>): Promise<string> {
-  await repo.enqueue('Steven', 'fleet_operator', create(name));
+  await repo.enqueue('Steven', 'fleet_operator', create(name), subject);
   await enqueueNewer?.();
   const claim = await claimed(repo); await repo.prepare(claim);
-  const current = await repo.get('Steven', 'fleet_operator', claim.operation.id);
-  await repo.cancel('Steven', 'fleet_operator', current.id, current.version);
+  const current = await repo.get('Steven', 'fleet_operator', claim.operation.id, subject);
+  await repo.cancel('Steven', 'fleet_operator', current.id, current.version, subject);
   await repo.fail(claim, FAILURE);
   return current.id;
 }
@@ -61,7 +65,7 @@ describe('fleet compensation backoff', () => {
 
   it('does not re-claim a failed compensation before its backoff and serves newer operations meanwhile', async () => {
     const repo = new FleetOperationsRepository(pool);
-    const stuck = await cancelledOperation(repo, 'stuck_cancel', async () => { await repo.enqueue('Steven', 'fleet_operator', create('newer_agent')); });
+    const stuck = await cancelledOperation(repo, 'stuck_cancel', async () => { await repo.enqueue('Steven', 'fleet_operator', create('newer_agent'), subject); });
     await failCompensation(repo);
     const newer = await claimed(repo);
     expect(newer.operation.id).not.toBe(stuck);
@@ -95,8 +99,8 @@ describe('fleet compensation backoff', () => {
     const id = await cancelledOperation(repo, 'operator_retry');
     await failCompensation(repo);
     expect(await repo.claim('backoff-worker', HOST)).toBeNull();
-    const current = await repo.get('Steven', 'fleet_operator', id);
-    await repo.cancel('Steven', 'fleet_operator', id, current.version);
+    const current = await repo.get('Steven', 'fleet_operator', id, subject);
+    await repo.cancel('Steven', 'fleet_operator', id, current.version, subject);
     expect((await claimed(repo)).operation.id).toBe(id);
   });
 

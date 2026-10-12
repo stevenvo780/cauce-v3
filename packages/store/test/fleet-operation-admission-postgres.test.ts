@@ -1,20 +1,24 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { FleetEvidence, FleetOperationRequest, FleetStepName } from '@cauce/protocol';
-import { ConfigurationRepository, FleetOperationsRepository, type DatabasePool, type FleetOperationClaim } from '../src/index.js';
+import { ConfigurationRepository, FleetOperationsRepository, lockCompanyAuthority, type DatabasePool, type FleetOperationClaim } from '../src/index.js';
 import { admitFleetAgent } from '../src/repository/fleet-operation-admission.js';
 import type { FleetOperationRow } from '../src/repository/fleet-operation-contracts.js';
 import { preparePostgresSuite } from './postgres-suite.js';
+import { seedFleetHuman } from './fleet-human-postgres.fixtures.js';
 import { startTestCaseDatabase, startTestDatabase, type EmptyTestDatabase, type TestDatabase } from '../../../tests/helpers/postgres.js';
 
 let database: TestDatabase | undefined;
 let caseDatabase: EmptyTestDatabase | undefined;
 let pool: DatabasePool;
+let subject: string;
 preparePostgresSuite(import.meta.url, async () => { database = await startTestDatabase(); }, 120_000);
 beforeEach(async () => {
   if (!database) throw new Error('test server absent');
   caseDatabase = await startTestCaseDatabase(database); pool = caseDatabase.pool;
   await pool.query("INSERT INTO rooms(id,tenant_id) VALUES('admission-control','Steven'),('admission-room','Isa'),('admission-optional','Isa')");
   await pool.query("INSERT INTO memberships(tenant_id,room_id,alias,role) VALUES('Steven','admission-control','admission_operator','operator')");
+  await caseDatabase.adminPool.query("INSERT INTO agents(tenant_id,alias,enabled) VALUES('Steven','admission_operator',false)");
+  subject = await seedFleetHuman(caseDatabase.adminPool, 'Steven', 'admission_operator');
   await pool.query(`INSERT INTO provider_accounts(id,provider,external_account_id,payer_tenant_id,credential_ref_kind,credential_ref,enabled)
     VALUES('admission-account','codex','isolated-admission-account','Isa','env_path','CAUCE_ISOLATED_ADMISSION_PATH',true)`);
 });
@@ -29,7 +33,7 @@ function create(): FleetOperationRequest {
         home_directory: '/home/dev', state_directory: '/home/dev/.cauce/admitted-agent' } } };
 }
 async function claim(repo: FleetOperationsRepository): Promise<FleetOperationClaim> {
-  await repo.enqueue('Steven', 'admission_operator', create());
+  await repo.enqueue('Steven', 'admission_operator', create(), subject);
   const value = await repo.claim('admission-worker', 'admission-host'); if (!value) throw new Error('claim absent');
   return value;
 }
@@ -50,11 +54,18 @@ const disabled = [
   ['harness', "UPDATE harness_definitions SET enabled=false WHERE id='codex'"],
 ] as const;
 describe('fleet admission current configuration', () => {
+  it('rejects preview and enqueue without the verified human even for an operator in the hub', async () => {
+    const repo = new FleetOperationsRepository(pool);
+    await expect(repo.preview('Steven', 'admission_operator', create())).rejects.toMatchObject({ code: 'forbidden' });
+    await expect(repo.enqueue('Steven', 'admission_operator', create())).rejects.toMatchObject({ code: 'forbidden' });
+    expect((await pool.query('SELECT 1 FROM fleet_operations')).rowCount).toBe(0);
+    expect((await pool.query('SELECT 1 FROM config_revisions')).rowCount).toBe(0);
+  });
   it.each(disabled)('rejects an unavailable %s before preview enqueue and preparation', async (_name, sql) => {
     const repo = new FleetOperationsRepository(pool); const value = await claim(repo);
     await pool.query(sql);
-    await expect(repo.preview('Steven', 'admission_operator', create())).rejects.toMatchObject({ code: 'conflict' });
-    await expect(repo.enqueue('Steven', 'admission_operator', { ...create(), idempotency_key: 'another-admission-key' }))
+    await expect(repo.preview('Steven', 'admission_operator', create(), subject)).rejects.toMatchObject({ code: 'conflict' });
+    await expect(repo.enqueue('Steven', 'admission_operator', { ...create(), idempotency_key: 'another-admission-key' }, subject))
       .rejects.toMatchObject({ code: 'conflict' });
     await expect(repo.prepare(value)).rejects.toMatchObject({ code: 'conflict' });
     expect((await pool.query("SELECT 1 FROM agents WHERE alias='admitted_agent'")).rowCount).toBe(0);
@@ -62,10 +73,10 @@ describe('fleet admission current configuration', () => {
   });
   it.each(disabled)('rejects an unavailable %s at settle even after complete runtime evidence', async (_name, sql) => {
     const repo = new FleetOperationsRepository(pool); const value = await claim(repo); await repo.prepare(value); await verify(repo, value);
-    const version = (await repo.get('Steven', 'admission_operator', value.operation.id)).version;
+    const version = (await repo.get('Steven', 'admission_operator', value.operation.id, subject)).version;
     await pool.query(sql);
     await expect(repo.settle(value)).rejects.toMatchObject({ code: 'conflict' });
-    expect((await repo.get('Steven', 'admission_operator', value.operation.id)).version).toBe(version);
+    expect((await repo.get('Steven', 'admission_operator', value.operation.id, subject)).version).toBe(version);
     expect((await pool.query("SELECT enabled,lifecycle_state FROM agents WHERE alias='admitted_agent'")).rows[0])
       .toEqual({ enabled: false, lifecycle_state: 'provisioning' });
     expect((await pool.query("SELECT 1 FROM memberships WHERE alias='admitted_agent' AND enabled")).rowCount).toBe(0);
@@ -85,7 +96,8 @@ describe('fleet admission current configuration', () => {
     const repo = new FleetOperationsRepository(pool); const value = await claim(repo); await repo.prepare(value); await verify(repo, value);
     const config = new ConfigurationRepository(pool);
     const result = await config.apply('Steven', 'admission_operator', { resource: 'room', action: 'update', tenant_id: 'Isa',
-      id: 'admission-room', value: { enabled: false } }, false, 1);
+      id: 'admission-room', value: { enabled: false } }, false, 1,
+    client => lockCompanyAuthority(client, { tenant: 'Steven', alias: 'admission_operator', humanId: subject.slice('console:'.length) }));
     expect(result.revision).toBe(2);
     await expect(repo.settle(value)).rejects.toMatchObject({ code: 'conflict' });
     expect((await pool.query("SELECT enabled FROM agents WHERE alias='admitted_agent'")).rows[0]).toEqual({ enabled: false });
