@@ -13,8 +13,11 @@ import zipfile
 ROOTS = frozenset({'context', 'directives', 'projects', 'config', 'data'})
 IDENTITY_FIELDS = frozenset({'company_id', 'tenant_id', 'alias', 'runtime_key'})
 IDENTIFIER = re.compile(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\Z')
-CREDENTIAL_FILE = re.compile(r'(?:auth\.json|credentials[^/]*\.json|cookies?(?:\.[^/]*)?|\.env(?:\..*)?|.*\.(?:pem|key|p12|pfx|keystore))\Z', re.I)
-CREDENTIAL_DIRECTORIES = frozenset({'.codex', '.claude', '.config', '.ssh', '.gnupg'})
+CREDENTIAL_FILE = re.compile(
+    r'(?:auth\.json|\.?credentials(?:[^/]*\.json|\.(?:ya?ml|toml|ini|txt))?|\.git-credentials|\.netrc|\.pgpass'
+    r'|id_(?:rsa|dsa|ecdsa|ed25519)|client_secrets?[^/]*\.json|secrets?\.(?:json|ya?ml|toml)|token\.json|[^/]+\.session'
+    r'|cookies?(?:\.[^/]*)?|\.env(?:\..*)?|.*\.(?:pem|key|p12|pfx|keystore))\Z', re.I)
+CREDENTIAL_DIRECTORIES = frozenset({'.codex', '.claude', '.config', '.ssh', '.gnupg', '.aws', '.docker', '.kube', '.gemini'})
 # .git config embeds remote URLs and hooks, and object stores break the entry cap or the hardlink check; the remote is the source of truth.
 VCS_DIRECTORY = '.git'
 OMISSION_REASONS = frozenset({'sensitive_path', 'sensitive_content', 'vcs_metadata'})

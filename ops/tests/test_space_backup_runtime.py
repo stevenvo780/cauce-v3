@@ -42,6 +42,7 @@ class SpaceBackupRuntimeTest(unittest.TestCase):
         (self.space / 'context/mission.md').write_text('Synthetic mission for the disposable space.')
         (self.space / 'config/auth.json').symlink_to('/not-accessible/credential')
         (self.space / 'data/sessions.sqlite').write_bytes(b'synthetic confidential session')
+        (self.space / 'data/.env').write_text('SYNTHETIC=1')
         (self.space / 'logs/output.log').write_text('not backed up')
         fields = {'tenant_id', 'alias', 'runtime_key', 'host_id', 'harness_id', 'runtime_mode', 'container_name',
                   'runtime_user', 'home_directory', 'state_directory', 'systemd_user'}
@@ -84,7 +85,8 @@ class SpaceBackupRuntimeTest(unittest.TestCase):
             self.assertEqual(hashlib.sha256(manifest_raw).hexdigest(), receipt['manifest_sha256'])
             manifest = json.loads(manifest_raw)
             self.assertEqual(manifest['identity'], self.identity)
-            self.assertEqual({item['path'] for item in manifest['omissions']}, {'config/auth.json', 'data/sessions.sqlite'})
+            self.assertEqual({item['path'] for item in manifest['omissions']}, {'config/auth.json', 'data/.env'})
+            self.assertIn('data/sessions.sqlite', zipped.namelist())
             self.assertNotIn('logs/output.log', zipped.namelist())
             self.assertEqual(zipped.read('projects/work.txt'), (self.space / 'projects/work.txt').read_bytes())
         checked = subprocess.run([sys.executable, str(VALIDATE)], input=json.dumps({'archive': str(archive),
@@ -169,7 +171,8 @@ class SpaceBackupRuntimeTest(unittest.TestCase):
                 actual_hash.update(chunk)
         self.assertEqual(actual_hash.hexdigest(), expected_hash.hexdigest())
         self.assertFalse((destination / 'config/auth.json').exists())
-        self.assertFalse((destination / 'data/sessions.sqlite').exists())
+        self.assertTrue((destination / 'data/sessions.sqlite').exists())
+        self.assertFalse((destination / 'data/.env').exists())
 
     def test_foreign_context_manifest_and_tampered_private_archive_fail(self):
         (self.space / 'config/context-state.json').write_text(json.dumps({**self.identity, 'company_id': 'foreign'}))

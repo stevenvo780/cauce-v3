@@ -118,6 +118,24 @@ class SpaceArchiveTests(unittest.TestCase):
             self.assertTrue((self.restored / 'projects/app' / kept).is_file())
         self.assertFalse((self.restored / 'projects/app/.git').exists())
 
+    def test_real_credential_names_are_omitted_while_lookalike_sources_stay(self):
+        project = self.space / 'projects/app'
+        names = ['.git-credentials', 'credentials', 'credentials.yaml', '.credentials.json', 'secrets.json', 'secrets.yaml',
+                 'client_secret.json', 'token.json', 'bot.session', '.netrc', '.pgpass', 'id_rsa', 'id_ed25519', '.aws/credentials',
+                 '.docker/config.json', '.kube/config', '.gemini/oauth.json']
+        for name in names:
+            target = project / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text('x')
+        for kept in ('session.py', 'token_utils.py', 'id_rsa.pub', 'secrets_manager.py'):
+            (project / kept).write_text('x = 1\n')
+        omitted = {item['path'] for item in self.backup()['omissions']}
+        for name in names:
+            self.assertTrue(any(path == f'projects/app/{name}' or f'projects/app/{name}'.startswith(path + '/') for path in omitted), name)
+        restore_space(str(self.archive), str(self.restored), self.identity)
+        for kept in ('session.py', 'token_utils.py', 'id_rsa.pub', 'secrets_manager.py'):
+            self.assertTrue((self.restored / 'projects/app' / kept).is_file(), kept)
+
     def test_symlinks_and_hardlinks_outside_sensitive_paths_fail_without_leaving_an_archive(self):
         linked = self.space / 'projects/link'
         linked.symlink_to(self.root, target_is_directory=True)
