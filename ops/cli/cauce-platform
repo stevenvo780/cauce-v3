@@ -20,6 +20,8 @@ fi
 case ${1:-} in
   admin|empresa|enlace)
     exec node "$project_root/ops/cli/platform_admin.mjs" "$@" ;;
+  contexto)
+    exec node "$project_root/ops/cli/context_seed.mjs" "$@" ;;
   contenedor)
     shift
     exec bash "$project_root/ops/cli/cauce-platform-contenedor" "$@" ;;
