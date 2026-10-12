@@ -41,6 +41,20 @@ test('descriptor provider data is validated with field paths and ids derive from
   assert.throws(() => parseHarnessDescriptor({ ...codex, provider: {} }),
     /provider\.authenticate_argv: required when operations\.authenticate is declared/u);
 });
+test('shared descriptor corpus matches node expectations', async () => {
+  const corpus = new URL('../../test/fixtures/descriptors/', import.meta.url);
+  const manifest = JSON.parse(await readFile(new URL('corpus.json', corpus), 'utf8')) as {
+    cases: { file: string; node: string }[];
+  };
+  for (const entry of manifest.cases) {
+    const value: unknown = JSON.parse(await readFile(new URL(entry.file, corpus), 'utf8'));
+    if (entry.node === 'ok') parseHarnessDescriptor(value);
+    else {
+      assert.throws(() => parseHarnessDescriptor(value),
+        (error: Error) => error.message.startsWith(`${entry.node}:`), entry.file);
+    }
+  }
+});
 test('space context writes real files, preserves unmanaged prose and includes current directives in the prompt', async () => {
   const root = await mkdtemp(join(tmpdir(), 'cauce-space-context-'));
   try {

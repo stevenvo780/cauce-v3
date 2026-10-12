@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import functools
 import hashlib
 import json
 import pathlib
@@ -15,13 +16,10 @@ EXECUTOR_SOURCE = pathlib.Path(__file__).resolve().parent
 CAPABILITIES = ('SETUID', 'SETGID', 'CHOWN', 'DAC_OVERRIDE', 'FOWNER', 'SYS_PTRACE')
 
 
-def allowed_providers(policy: dict) -> frozenset:
-    """Quota providers derive from the descriptors inside the approved bundles
-    (those declaring the quota operation) plus non-harness providers."""
+@functools.lru_cache(maxsize=8)
+def _allowed_for_directories(directories: tuple) -> frozenset:
     from harness_operations import HarnessOperationFailure, descriptor_names, resolve_operation
     allowed = set(NON_HARNESS_PROVIDERS)
-    directories = {bundle['directory'] for bundle in (policy.get('bundles') or {}).values()
-                   if isinstance(bundle, dict) and isinstance(bundle.get('directory'), str)}
     for directory in directories:
         try:
             names = descriptor_names(directory)
@@ -36,13 +34,26 @@ def allowed_providers(policy: dict) -> frozenset:
     return frozenset(allowed)
 
 
+def allowed_providers(policy: dict) -> frozenset:
+    """Quota providers derive from the descriptors inside the approved bundles
+    (those declaring the quota operation) plus non-harness providers. Computed
+    once per bundle directory set; never called while loading the policy."""
+    directories = tuple(sorted({bundle['directory'] for bundle in (policy.get('bundles') or {}).values()
+                                 if isinstance(bundle, dict) and isinstance(bundle.get('directory'), str)}))
+    return _allowed_for_directories(directories)
+
+
 def configuration(policy: dict) -> dict:
+    """Syntactic validation only: this runs on every policy load, so it must not
+    read the filesystem; descriptor-derived allowance is enforced by
+    capabilities() and packet() through allowed_providers()."""
     quota = policy.get('quota_environments')
     if not isinstance(quota, dict) or set(quota) != {'image', 'network', 'providers'} \
             or not isinstance(quota['image'], str) or re.fullmatch(r'sha256:[a-f0-9]{64}', quota['image']) is None \
             or not isinstance(quota['network'], str) or re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,127}', quota['network']) is None \
             or not isinstance(quota['providers'], list) or not quota['providers'] \
-            or len(set(quota['providers'])) != len(quota['providers']) or any(value not in allowed_providers(policy) for value in quota['providers']):
+            or len(set(quota['providers'])) != len(quota['providers']) \
+            or any(not isinstance(value, str) or re.fullmatch(r'[a-z][a-z0-9_-]{0,63}', value) is None for value in quota['providers']):
         raise SafeFailure('quota environment policy is unavailable')
     return quota
 
@@ -66,7 +77,9 @@ QUOTA_ACTIONS = (('create', 'install', False), ('authenticate', 'authenticate', 
 
 
 def provider_actions(policy: dict, provider: str) -> tuple:
-    """Available quota actions for one provider, with the reason for each missing one."""
+    """Available quota actions for one provider, with the descriptor field and
+    reason (the underlying HarnessOperationFailure) for each missing one."""
+    from harness_operations import HarnessOperationFailure
     available = []
     unavailable = {}
     resolved = {}
@@ -76,18 +89,23 @@ def provider_actions(policy: dict, provider: str) -> tuple:
                 provider_operation(policy, provider, operation, command=command)
                 resolved[operation] = None
             except SafeFailure as error:
-                resolved[operation] = str(error)
+                cause = error.__cause__
+                resolved[operation] = str(cause) if isinstance(cause, HarnessOperationFailure) \
+                    else f'operations.{operation}: {error}'
         if resolved[operation] is None:
             available.append(action)
         else:
-            unavailable[action] = f'operations.{operation}: {resolved[operation]}'
+            unavailable[action] = resolved[operation]
     return available, unavailable
 
 
 def capabilities(policy: dict) -> dict:
     approved = configuration(policy)
+    allowed = allowed_providers(policy)
     actions = {}
     for provider in approved['providers']:
+        if provider not in allowed:
+            raise SafeFailure('quota provider has no quota descriptor in its approved bundles')
         available, _unavailable = provider_actions(policy, provider)
         if available:
             actions[provider] = available
@@ -113,6 +131,7 @@ def packet(policy: dict, document: dict) -> dict:
             or re.fullmatch(r'[a-z][a-z0-9_-]{0,63}', environment['company_id']) is None \
             or re.fullmatch(r'[a-z][a-z0-9_-]{0,63}', environment['account_id']) is None \
             or environment['host_id'] != policy['host_id'] or environment['provider'] not in configuration(policy)['providers'] \
+            or environment['provider'] not in allowed_providers(policy) \
             or document['action'] == 'authenticate' and not document['consent']:
         raise SafeFailure('quota operation escapes its approved scope')
     return environment
@@ -232,6 +251,8 @@ def login_plan(policy: dict, document: dict) -> dict:
         raise SafeFailure('quota environment is not running')
     validate(policy, environment, observed)
     command = provider_operation(policy, environment['provider'], 'authenticate', command=True)
+    if pathlib.PurePosixPath(command[0]).name != environment['provider']:
+        raise SafeFailure('descriptor login executable differs from the quota provider')
     command[0] = provider_executable(environment)
     generation = hashlib.sha256((observed['Id'] + '\0' + observed['State']['StartedAt']).encode()).hexdigest()
     return {'operation_id': document['operation_id'], 'command': command, 'runtime_user': 'node',
@@ -282,6 +303,9 @@ def verify_authentication(policy: dict, document: dict) -> dict:
 
 
 def perform(policy: dict, document: dict) -> dict:
+    if isinstance(document, dict) and document.get('action') == 'query_agent':
+        from fleet_executor_agent_quota import perform as query_agent
+        return query_agent(policy, document)
     environment = packet(policy, document)
     action = document['action']
     if action == 'create':

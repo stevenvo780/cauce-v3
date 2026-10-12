@@ -13,7 +13,6 @@ HARNESS_ID = re.compile(r'[a-z][a-z0-9_-]{0,63}')
 ARGV0 = re.compile(r'/usr/local/bin/[A-Za-z0-9][A-Za-z0-9._+@-]{0,127}')
 ARGUMENT = re.compile(r'[A-Za-z0-9][A-Za-z0-9_@%+=:,./-]{0,255}|--[A-Za-z0-9][A-Za-z0-9_-]{0,253}|-[A-Za-z0-9_-]{1,254}|/[A-Za-z0-9_@%+=:,./-]{0,255}')
 NPM_PACKAGE = re.compile(r'(@[a-z0-9][a-z0-9._-]{0,63}/)?[a-z0-9][a-z0-9._-]{0,127}')
-FLEET_MODULE = re.compile(r'fleet_provider_[a-z][a-z0-9_]{0,63}')
 PROVIDER_FIELDS = {'authenticate_argv', 'quota_argv', 'update_package', 'fleet_module'}
 
 
@@ -72,12 +71,14 @@ def validate_argv(field: str, value) -> list:
     for index, argument in enumerate(value[1:], 1):
         if not ARGUMENT.fullmatch(argument):
             fail(f'{field}[{index}]', 'contains shell metacharacters or unsafe characters')
+        if '..' in pathlib.PurePosixPath(argument).parts:
+            fail(f'{field}[{index}]', 'must not contain parent directory segments')
+        if argument.startswith('/') and not argument.startswith(('/usr/local/bin/', '/home/node/')):
+            fail(f'{field}[{index}]', 'absolute paths are limited to /usr/local/bin and /home/node')
     return list(value)
 
 
-def validate_provider(operations: dict, provider) -> dict:
-    if provider is None:
-        provider = {}
+def validate_provider(operations: dict, provider, harness: str) -> dict:
     if not isinstance(provider, dict):
         fail('provider', 'must be an object')
     for field in provider:
@@ -89,13 +90,14 @@ def validate_provider(operations: dict, provider) -> dict:
     if 'quota_argv' in provider:
         validated['quota_argv'] = validate_argv('provider.quota_argv', provider['quota_argv'])
     if 'update_package' in provider:
-        if not isinstance(provider['update_package'], str) or not NPM_PACKAGE.fullmatch(provider['update_package']):
+        package = provider['update_package']
+        if not isinstance(package, str) or not NPM_PACKAGE.fullmatch(package) or package.endswith('.tgz'):
             fail('provider.update_package', 'must be an npm package name')
-        validated['update_package'] = provider['update_package']
+        validated['update_package'] = package
     if 'fleet_module' in provider:
         module = provider['fleet_module']
-        if module is not None and (not isinstance(module, str) or not FLEET_MODULE.fullmatch(module)):
-            fail('provider.fleet_module', 'must be null or a fleet_provider_* module name')
+        if module is not None and module != f'fleet_provider_{harness}':
+            fail('provider.fleet_module', f"must be null or exactly 'fleet_provider_{harness}'")
         validated['fleet_module'] = module
     if 'authenticate' in operations and 'authenticate_argv' not in validated and not validated.get('fleet_module'):
         fail('provider.authenticate_argv', 'required when operations.authenticate is declared without a fleet module')
@@ -162,14 +164,14 @@ def read_descriptor(bundle_directory: str, harness: str) -> tuple[dict, str]:
     context = value.get('context')
     if not isinstance(context, dict) or set(context) != {'native_document', 'max_bytes'}:
         fail('context', 'must declare exactly native_document and max_bytes')
-    if context['native_document'] not in {'AGENTS.md', 'CLAUDE.md', 'SOUL.md', 'none'}:
+    if not isinstance(context['native_document'], str) or context['native_document'] not in {'AGENTS.md', 'CLAUDE.md', 'SOUL.md', 'none'}:
         fail('context.native_document', 'must be AGENTS.md, CLAUDE.md, SOUL.md or none')
     if type(context['max_bytes']) is not int or not 1024 <= context['max_bytes'] <= 262144:
         fail('context.max_bytes', 'must be an integer between 1024 and 262144')
     if 'provider' in value:
-        value['provider'] = validate_provider(operations, value['provider'])
+        value['provider'] = validate_provider(operations, value['provider'], harness)
     else:
-        validate_provider(operations, None)
+        validate_provider(operations, {}, harness)
     return value, hashlib.sha256(raw).hexdigest()
 
 

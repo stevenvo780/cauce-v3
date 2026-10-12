@@ -1,0 +1,70 @@
+{
+  "note": "Expectation per parser: \"ok\" or the error field prefix. Float spellings (1.0) are indistinguishable from integers after JSON.parse in JavaScript, so node accepts them; python (json.loads) rejects them. Every other case must behave identically in both parsers.",
+  "cases": [
+    {
+      "file": "valid-minimal.json",
+      "python": "ok",
+      "node": "ok"
+    },
+    {
+      "file": "valid-provider.json",
+      "python": "ok",
+      "node": "ok"
+    },
+    {
+      "file": "invalid-provider-null.json",
+      "python": "provider",
+      "node": "provider"
+    },
+    {
+      "file": "invalid-schema-version-float.json",
+      "python": "schema_version",
+      "node": "ok"
+    },
+    {
+      "file": "invalid-max-bytes-float.json",
+      "python": "context.max_bytes",
+      "node": "ok"
+    },
+    {
+      "file": "invalid-native-document-number.json",
+      "python": "context.native_document",
+      "node": "context.native_document"
+    },
+    {
+      "file": "invalid-native-document-list.json",
+      "python": "context.native_document",
+      "node": "context.native_document"
+    },
+    {
+      "file": "invalid-argv-dotdot.json",
+      "python": "provider.quota_argv[1]",
+      "node": "provider.quota_argv[1]"
+    },
+    {
+      "file": "invalid-argv-outside-paths.json",
+      "python": "provider.quota_argv[1]",
+      "node": "provider.quota_argv[1]"
+    },
+    {
+      "file": "invalid-npm-tgz.json",
+      "python": "provider.update_package",
+      "node": "provider.update_package"
+    },
+    {
+      "file": "invalid-npm-path.json",
+      "python": "provider.update_package",
+      "node": "provider.update_package"
+    },
+    {
+      "file": "invalid-fleet-module-mismatch.json",
+      "python": "provider.fleet_module",
+      "node": "provider.fleet_module"
+    },
+    {
+      "file": "invalid-schema-version-two.json",
+      "python": "schema_version",
+      "node": "schema_version"
+    }
+  ]
+}

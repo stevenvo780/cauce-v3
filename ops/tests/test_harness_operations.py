@@ -97,6 +97,20 @@ class HarnessOperationsTests(unittest.TestCase):
         self.assertIn('fake2', descriptor_names(str(self.root)))
         self.assertEqual(resolve_operation('fake2', 'execute', str(self.root))['recipe'], 'native-execution')
 
+    def test_shared_descriptor_corpus_matches_python_expectations(self):
+        corpus = pathlib.Path(__file__).resolve().parents[2] / 'packages/adapter-sdk/test/fixtures/descriptors'
+        manifest = json.loads((corpus / 'corpus.json').read_text())
+        target = self.root / 'packages/adapter-sdk/dist/descriptors/fake2.json'
+        for case in manifest['cases']:
+            with self.subTest(case=case['file']):
+                target.write_bytes((corpus / case['file']).read_bytes())
+                if case['python'] == 'ok':
+                    read_descriptor(str(self.root), 'fake2')
+                else:
+                    with self.assertRaises(HarnessOperationFailure) as raised:
+                        read_descriptor(str(self.root), 'fake2')
+                    self.assertTrue(str(raised.exception).startswith(case['python'] + ':'), str(raised.exception))
+
     def test_operation_capabilities_report_reasons_per_operation(self):
         capabilities = operation_capabilities('grok', str(self.root))
         self.assertTrue(capabilities['quota']['available'])

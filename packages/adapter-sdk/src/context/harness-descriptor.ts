@@ -24,7 +24,6 @@ const HARNESS_ID = /^[a-z][a-z0-9_-]{0,63}$/u;
 const ARGV0 = /^\/usr\/local\/bin\/[A-Za-z0-9][A-Za-z0-9._+@-]{0,127}$/u;
 const ARGUMENT = /^(?:[A-Za-z0-9][A-Za-z0-9_@%+=:,./-]{0,255}|--[A-Za-z0-9][A-Za-z0-9_-]{0,253}|-[A-Za-z0-9_-]{1,254}|\/[A-Za-z0-9_@%+=:,./-]{0,255})$/u;
 const NPM_PACKAGE = /^(?:@[a-z0-9][a-z0-9._-]{0,63}\/)?[a-z0-9][a-z0-9._-]{0,127}$/u;
-const FLEET_MODULE = /^fleet_provider_[a-z][a-z0-9_]{0,63}$/u;
 const PROVIDER_FIELDS = ['authenticate_argv', 'quota_argv', 'update_package', 'fleet_module'];
 function fail(field: string, reason: string): never { throw new Error(`${field}: ${reason}`); }
 function object(value: unknown, field: string): Record<string, unknown> {
@@ -40,25 +39,30 @@ function validateArgv(field: string, value: unknown): readonly string[] {
   if (!ARGV0.test(argv[0] ?? '')) fail(`${field}[0]`, 'must be an absolute executable path under /usr/local/bin');
   argv.slice(1).forEach((argument, index) => {
     if (!ARGUMENT.test(argument)) fail(`${field}[${index + 1}]`, 'contains shell metacharacters or unsafe characters');
+    if (argument.split('/').includes('..')) fail(`${field}[${index + 1}]`, 'must not contain parent directory segments');
+    if (argument.startsWith('/') && !argument.startsWith('/usr/local/bin/') && !argument.startsWith('/home/node/')) {
+      fail(`${field}[${index + 1}]`, 'absolute paths are limited to /usr/local/bin and /home/node');
+    }
   });
   return Object.freeze(argv);
 }
-function validateProvider(operations: Record<string, unknown>, value: unknown): HarnessProviderDescriptor {
+function validateProvider(operations: Record<string, unknown>, value: unknown, harness: string): HarnessProviderDescriptor {
   const provider = value === undefined ? {} : object(value, 'provider');
   for (const field of Object.keys(provider)) if (!PROVIDER_FIELDS.includes(field)) fail(`provider.${field}`, 'unknown field');
   const validated: { -readonly [K in keyof HarnessProviderDescriptor]: HarnessProviderDescriptor[K] } = {};
   if ('authenticate_argv' in provider) validated.authenticate_argv = validateArgv('provider.authenticate_argv', provider.authenticate_argv);
   if ('quota_argv' in provider) validated.quota_argv = validateArgv('provider.quota_argv', provider.quota_argv);
   if ('update_package' in provider) {
-    if (typeof provider.update_package !== 'string' || !NPM_PACKAGE.test(provider.update_package)) {
+    if (typeof provider.update_package !== 'string' || !NPM_PACKAGE.test(provider.update_package)
+      || provider.update_package.endsWith('.tgz')) {
       fail('provider.update_package', 'must be an npm package name');
     }
     validated.update_package = provider.update_package;
   }
   if ('fleet_module' in provider) {
     const module = provider.fleet_module;
-    if (module !== null && (typeof module !== 'string' || !FLEET_MODULE.test(module))) {
-      fail('provider.fleet_module', 'must be null or a fleet_provider_* module name');
+    if (module !== null && module !== `fleet_provider_${harness}`) {
+      fail('provider.fleet_module', `must be null or exactly 'fleet_provider_${harness}'`);
     }
     validated.fleet_module = typeof module === 'string' ? module : null;
   }
@@ -94,7 +98,7 @@ export function parseHarnessDescriptor(value: unknown): HarnessDescriptor {
   }
   if (typeof context.max_bytes !== 'number' || !Number.isSafeInteger(context.max_bytes)
     || context.max_bytes < 1024 || context.max_bytes > 262_144) fail('context.max_bytes', 'must be an integer between 1024 and 262144');
-  const provider = validateProvider(operations, raw.provider);
+  const provider = validateProvider(operations, raw.provider, raw.harness);
   return Object.freeze({ schema_version: 1, harness: raw.harness as HarnessId,
     operations: Object.freeze({ ...operations }),
     context: Object.freeze({ native_document: context.native_document, max_bytes: context.max_bytes }) as HarnessDescriptor['context'],

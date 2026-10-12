@@ -122,7 +122,33 @@ class QuotaRuntimeTest(unittest.TestCase):
             'operations': {'install': 'runtime-package', 'execute': 'native-execution', 'quota': 'quota-collector'},
             'context': {'native_document': 'AGENTS.md', 'max_bytes': 65536},
             'provider': {'quota_argv': ['/usr/local/bin/node', '/usr/local/bin/leer-cuota.mjs']}}))
+        runtime._allowed_for_directories.cache_clear()
         self.assertIn('fake2', runtime.allowed_providers(self.policy))
+
+    def test_configuration_is_syntactic_and_allowance_is_enforced_later(self):
+        policy = {**self.policy, 'bundles': {'codex': {'directory': '/nonexistent-bundle'}},
+                  'quota_environments': {**self.policy['quota_environments'], 'providers': ['codex', 'gemini']}}
+        self.assertEqual(runtime.configuration(policy)['providers'], ['codex', 'gemini'])
+        with self.assertRaises(runtime.SafeFailure):
+            runtime.capabilities(policy)
+        document = {'operation_id': self.document['operation_id'], 'action': 'query', 'consent': False,
+                    'environment': {**self.document['environment'], 'provider': 'codex'}}
+        with self.assertRaises(runtime.SafeFailure):
+            runtime.packet(policy, document)
+        policy['quota_environments'] = {**policy['quota_environments'], 'providers': ['CODE X']}
+        with self.assertRaises(runtime.SafeFailure):
+            runtime.configuration(policy)
+
+    def test_login_plan_rejects_descriptor_executable_that_differs_from_provider(self):
+        descriptor = pathlib.Path(self.policy['bundles']['codex']['directory']) / 'packages/adapter-sdk/dist/descriptors/codex.json'
+        value = json.loads(descriptor.read_text())
+        value['provider']['authenticate_argv'] = ['/usr/local/bin/othercli', 'login']
+        descriptor.write_text(json.dumps(value))
+        with patch.object(runtime, 'inspect_container', return_value=self.observed), \
+                patch.object(runtime, 'validate'), patch.object(runtime, 'provider_executable') as executable:
+            with self.assertRaises(runtime.SafeFailure):
+                runtime.login_plan(self.policy, self.document)
+        executable.assert_not_called()
 
     def test_descriptors_are_pinned_and_unavailable_providers_never_claim_readiness(self):
         self.policy['quota_environments']['providers'] = ['codex', 'gemini']
