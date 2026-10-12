@@ -9,7 +9,7 @@ export const FATIGUE_LABEL: Record<FatigueState, string> = {
 };
 export function accountFatigue(account: QuotaAccount | undefined, now = Date.now()): FatigueState {
   if (!account) return 'unknown';
-  if (!account.enabled && !account.paused_until && account.observation_status === 'unknown' && !account.windows.length) return 'pending_auth';
+  if (!account.enabled && !account.paused_until && account.observation_status !== 'ok' && !account.windows.length) return 'pending_auth';
   if (!account.enabled || account.paused_until && Date.parse(account.paused_until) > now) return 'paused';
   if (account.observation_status !== 'ok') return account.observation_status;
   const remaining = account.remaining_percent;
@@ -27,7 +27,7 @@ export function agentFatigue(accounts: readonly QuotaAccount[], tenant: string, 
   const states = bound.map(account => accountFatigue(account));
   if (states.includes('available')) return 'available';
   if (states.includes('low')) return 'low';
-  for (const unknown of ['error', 'stale', 'unknown', 'model_dependent'] as const) if (states.includes(unknown)) return unknown;
+  for (const unknown of ['error', 'stale', 'unknown', 'model_dependent', 'pending_auth'] as const) if (states.includes(unknown)) return unknown;
   return states.every(state => state === 'paused') ? 'paused' : 'exhausted';
 }
 
@@ -45,8 +45,9 @@ export const QUOTA_FAILURE_ACTION: Record<string, string> = {
 };
 const FAILURE_CODE = /^[a-z][a-z0-9_]*$/u;
 export function quotaFailureReason(account: Pick<QuotaAccount, 'observation_status' | 'note'>): string | null {
-  if (account.observation_status !== 'error') return null;
+  if (account.observation_status !== 'error' && account.observation_status !== 'stale') return null;
   const code = account.note?.trim();
   if (!code || !FAILURE_CODE.test(code)) return null;
-  return QUOTA_FAILURE_ACTION[code] ?? `Error de consulta (${code})`;
+  const reason = QUOTA_FAILURE_ACTION[code] ?? `Error de consulta (${code})`;
+  return account.observation_status === 'stale' ? `Último fallo: ${reason}` : reason;
 }

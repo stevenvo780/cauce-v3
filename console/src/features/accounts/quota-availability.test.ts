@@ -52,4 +52,17 @@ describe('disponibilidad derivada de suscripciones', () => {
     expect(quotaFailureReason({ observation_status: 'ok', note: 'token_expired' })).toBeNull();
     expect(accountFatigue({ ...account, observation_status: 'error', note: 'rate_limited', remaining_percent: 0 })).toBe('error');
   });
+  it('un agente con solo una cuenta sin autenticar no sale agotado', () => {
+    const fresh = { ...account, enabled: false, observation_status: 'unknown' as const, remaining_percent: null };
+    expect(agentFatigue([fresh], 'Humanizar', 'kant')).toBe('pending_auth');
+  });
+  it('una cuenta nueva con consulta fallida not_authenticated sigue pendiente de autenticación', () => {
+    const failed = { ...account, enabled: false, observation_status: 'error' as const, note: 'not_authenticated', remaining_percent: null };
+    expect(accountFatigue(failed)).toBe('pending_auth');
+  });
+  it('traduce el código también cuando el dato ya está antiguo', () => {
+    expect(quotaFailureReason({ observation_status: 'stale', note: 'token_expired' })).toBe('Último fallo: Sesión caducada: autenticar de nuevo');
+    expect(quotaFailureReason({ observation_status: 'stale', note: 'weird_code' })).toBe('Último fallo: Error de consulta (weird_code)');
+    expect(quotaFailureReason({ observation_status: 'stale', note: 'texto libre' })).toBeNull();
+  });
 });
