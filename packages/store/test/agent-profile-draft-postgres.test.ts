@@ -69,8 +69,9 @@ describe('disabled profile drafts on real PostgreSQL', () => {
   it('never allows a draft callback to claim applied or leak the authored body through audit', async () => {
     await repository.prepareDraft({ ...profile, purpose: 'SYNTHETIC_PRIVATE_PROFILE' }, null, actor);
     const audit = (await pool.query<{ action: string; metadata: Record<string, unknown> }>('SELECT action,metadata FROM audit_events ORDER BY id')).rows;
-    expect(audit.map(event => event.action)).toEqual(['agent_profile.desired', 'agent_profile.draft']);
+    expect(audit.map(event => event.action)).toEqual(['context.version', 'agent_profile.desired', 'agent_profile.draft']);
     expect(JSON.stringify(audit)).not.toContain('SYNTHETIC_PRIVATE_PROFILE');
-    expect(audit[1]?.metadata).toMatchObject({ actor_subject: actor.subject, state: 'prepared_disabled', desired_revision: 1, applied_revision: null });
+    expect(audit[0]?.metadata).toEqual({ target_tenant: 'Steven', target_alias: 'draft-target', version: 1, source: 'profile', restored_from: null });
+    expect(audit[2]?.metadata).toMatchObject({ actor_subject: actor.subject, state: 'prepared_disabled', desired_revision: 1, applied_revision: null });
   });
 });

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ConfigMutation } from '@cauce/protocol';
-import { ConfigurationError, ConfigurationRepository } from '../src/configuration.js';
+import { ConfigurationError, ConfigurationRepository, type ConfigurationAuthorityResolver } from '../src/configuration.js';
 import type { DatabasePool } from '../src/db.js';
 import { schemaBarrierReply, schemaBarrierStatements } from '../../../tests/helpers/schema-barrier.js';
 
@@ -50,6 +50,10 @@ const unsupportedRoleProjectionMutation = {
   resource: 'agent', action: 'update', tenant_id: 'Steven', alias: 'zeus',
   value: { role_brief: 'no debe llegar a la base' },
 } as unknown as ConfigMutation;
+const ownerAuthority: ConfigurationAuthorityResolver = async () => ({
+  humanId: '00000000-0000-4000-8000-000000000001', homeTenant: 'Steven', alias: 'kant',
+  homeCompany: 'humanizar', actingCompany: 'humanizar', role: 'company_owner', scope: 'company', platformOverride: false,
+});
 
 describe('perfil canónico: el editor genérico falla cerrado', () => {
   it.each([
@@ -76,13 +80,12 @@ describe('perfil canónico: el editor genérico falla cerrado', () => {
 
   it('un rollback histórico no revive la vía duplicada ni escribe una revisión falsa', async () => {
     const { pool, queries } = fakePool([
-      { includes: 'SELECT tenant.is_hub,tenant.company_id FROM memberships', rows: [{ is_hub: true, company_id: 'humanizar' }] },
       { includes: 'SELECT id,company_id FROM tenants', rows: [{ id: 'Steven', company_id: 'humanizar' }] },
-      { includes: 'COALESCE(max(id),0)::text AS revision', rows: [{ revision: '12' }] },
+      { includes: 'SELECT GREATEST(COALESCE((SELECT max(id)', rows: [{ revision: '12' }] },
       {
-        includes: 'FROM config_revisions WHERE id=$1 FOR UPDATE',
+        includes: 'FROM config_revisions WHERE id=$1',
         rows: [{
-          id: '7', actor_tenant: 'Steven', actor_alias: 'kant',
+          id: '7', actor_tenant: 'Steven', actor_alias: 'kant', scope: 'company', company_id: 'humanizar',
           operation: { resource: 'agent_profile', action: 'update' },
           inverse_operation: unsupportedProfileMutation,
           summary: 'legacy profile edit', rolled_back_revision_id: null,
@@ -92,7 +95,7 @@ describe('perfil canónico: el editor genérico falla cerrado', () => {
     ]);
 
     await expect(new ConfigurationRepository(pool).rollback(
-      'Steven', 'kant', 7, false, 12,
+      'Steven', 'kant', 7, false, 12, ownerAuthority,
     )).rejects.toMatchObject({ code: 'invalid_input' });
     const sql = queries.map((query) => query.sql.replace(/\s+/gu, ' '));
     expect(sql.slice(0, 5)).toEqual(['BEGIN', ...schemaBarrierStatements]);
@@ -103,9 +106,8 @@ describe('perfil canónico: el editor genérico falla cerrado', () => {
 
   it('no borra un agente si el cascade perdería su perfil canónico', async () => {
     const { pool, queries } = fakePool([
-      { includes: 'SELECT tenant.is_hub,tenant.company_id FROM memberships', rows: [{ is_hub: true, company_id: 'humanizar' }] },
       { includes: 'SELECT id,company_id FROM tenants', rows: [{ id: 'Steven', company_id: 'humanizar' }] },
-      { includes: 'COALESCE(max(id),0)::text AS revision', rows: [{ revision: '3' }] },
+      { includes: 'SELECT GREATEST(COALESCE((SELECT max(id)', rows: [{ revision: '3' }] },
       {
         includes: 'FROM agents WHERE tenant_id=$1 AND alias=$2 FOR UPDATE',
         rows: [{
@@ -119,7 +121,7 @@ describe('perfil canónico: el editor genérico falla cerrado', () => {
 
     await expect(new ConfigurationRepository(pool).apply('Steven', 'kant', {
       resource: 'agent', action: 'delete', tenant_id: 'Steven', alias: 'zeus',
-    }, false, 3)).rejects.toMatchObject({ code: 'conflict' });
+    }, false, 3, ownerAuthority)).rejects.toMatchObject({ code: 'conflict' });
     expect(queries.slice(0, 5).map((query) => query.sql)).toEqual(['BEGIN', ...schemaBarrierStatements]);
     expect(queries.some((query) => /DELETE FROM agents/iu.test(query.sql))).toBe(false);
   });

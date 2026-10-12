@@ -15,11 +15,18 @@ function readerPool(): { pool: DatabasePool; queries: QueryRecord[] } {
     queries.push({ sql: normalized, params });
     const barrier = schemaBarrierReply(normalized, params);
     if (barrier !== undefined) return barrier;
-    if (normalized.includes('role.allow_read')) {
-      return { rows: [{ is_hub: false, company_id: 'humanizar' }], rowCount: 1 };
+    if (normalized.startsWith('SELECT tenant.company_id,')) {
+      return { rows: [{ active: true, company_id: 'humanizar' }], rowCount: 1 };
     }
-    if (normalized.includes('COALESCE(max(id),0)::text AS revision')) {
+    if (normalized.includes('policy.allow_control,policy.allow_read')) {
+      return { rows: [{ allow_control: false, allow_read: true }], rowCount: 1 };
+    }
+    if (normalized.includes('SELECT GREATEST(COALESCE((SELECT max(id)')) {
       return { rows: [{ revision: '0' }], rowCount: 1 };
+    }
+    if (normalized.includes('FROM config_revisions WHERE id=$1')) {
+      return { rows: [{ id: '1', actor_tenant: 'Pablo', actor_alias: 'midas', scope: 'company', company_id: 'humanizar',
+        inverse_operation: { resource: 'room', action: 'delete', tenant_id: 'Pablo', id: 'reader-denied' } }], rowCount: 1 };
     }
     return { rows: [], rowCount: 0 };
   };
@@ -42,14 +49,14 @@ describe('configuration reader authority', () => {
 
     expect(queries.slice(0, 5).map((record) => record.sql)).toEqual(['BEGIN', ...schemaBarrierStatements]);
     expect(snapshot).toMatchObject({ revision: 0, tenants: [], rooms: [], memberships: [] });
-    const authorization = queries.find((record) => record.sql.includes('FROM memberships membership'));
-    expect(authorization?.sql).toContain('role.allow_read');
-    expect(authorization?.sql).not.toContain('role.allow_control');
+    const authorization = queries.find((record) => record.sql.includes('FROM memberships member'));
+    expect(authorization?.sql).toContain('policy.allow_read');
     expect(authorization?.params).toEqual(['Pablo', 'midas']);
+    expect(snapshot.capabilities).toMatchObject({ actor: { role: 'reader', can_control: false, scope: 'tenant', company_id: 'humanizar' } });
 
-    const scopedReads = queries.filter((record) => record.sql.includes('scope_actor'));
+    const scopedReads = queries.filter((record) => record.sql.includes('company_scope'));
     expect(scopedReads.length).toBeGreaterThan(0);
-    expect(scopedReads.every((record) => record.params[0] === 'Pablo')).toBe(true);
+    expect(scopedReads.every((record) => record.params[0] === 'humanizar' && record.params[1] === 'Pablo')).toBe(true);
     expect(queries.some((record) => /\b(INSERT|UPDATE|DELETE)\b/iu.test(record.sql))).toBe(false);
   });
 
@@ -67,7 +74,7 @@ describe('configuration reader authority', () => {
     for (const [index, record] of queries.entries()) {
       if (record.sql === 'BEGIN') expect(queries.slice(index + 1, index + 5).map((query) => query.sql)).toEqual(schemaBarrierStatements);
     }
-    const controls = queries.filter((record) => record.sql.includes('role.allow_control'));
+    const controls = queries.filter((record) => record.sql.includes('policy.allow_control'));
     expect(controls).toHaveLength(2);
     expect(queries.some((record) => /\b(INSERT|UPDATE|DELETE)\b/iu.test(record.sql))).toBe(false);
   });

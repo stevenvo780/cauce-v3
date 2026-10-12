@@ -7,8 +7,9 @@ import {
   type ConfigMutation,
 } from '@cauce/protocol';
 import {
-  AgentProfileRepository, CauceRepository, ConfigurationError, type DatabasePool,
+  AgentProfileRepository, CauceRepository, ConfigurationError, lockCompanyAuthority, type DatabaseClient, type DatabasePool,
 } from '@cauce/store';
+import { seedFleetHuman } from '../../packages/store/test/fleet-human-postgres.fixtures.js';
 import { resetTestDatabase, startTestDatabase, type TestDatabase } from '../helpers/postgres.js';
 
 let database: TestDatabase;
@@ -16,6 +17,8 @@ let databaseStarted = false;
 let pool: DatabasePool;
 let repository: CauceRepository;
 let profiles: AgentProfileRepository;
+let humanId: string;
+const authority = (client: DatabaseClient) => lockCompanyAuthority(client, { tenant: 'Steven', alias: 'kant', humanId });
 
 const actor = { tenant_id: 'Steven', alias: 'kant' } as const;
 const edgeRole = `${'a'.repeat(1_100)}${'🎉'.repeat(100)}`;
@@ -36,7 +39,9 @@ beforeEach(async () => {
     DELETE FROM agents WHERE tenant_id='Isa' AND alias='salva';
     UPDATE memberships SET role='agent',enabled=true WHERE tenant_id='Isa' AND alias='salva';
     UPDATE acl_edges SET enabled=true,allow_route=true,allow_read=true,allow_control=true;
+    INSERT INTO agents(tenant_id,alias,enabled) VALUES('Steven','kant',false);
   `);
+  humanId = (await seedFleetHuman(pool, 'Steven', 'kant', 'owner')).slice('console:'.length);
   await repository.applyConfigurationChange('Steven', 'kant', {
     resource: 'agent', action: 'create', tenant_id: 'Isa', alias: 'salva',
     value: {
@@ -44,7 +49,7 @@ beforeEach(async () => {
       container_name: 'ws-salva', runtime_user: 'dev',
       home_directory: '/home/dev', state_directory: '/var/lib/salva',
     },
-  }, false, 0);
+  }, false, 0, authority);
 });
 
 afterAll(async () => {
@@ -101,7 +106,7 @@ describe('role_brief es una proyección, no una segunda fuente de verdad', () =>
     } as unknown as ConfigMutation;
     for (const mutation of [directRole, directProfile]) {
       await expect(repository.applyConfigurationChange(
-        'Steven', 'kant', mutation, false, beforeCount,
+        'Steven', 'kant', mutation, false, beforeCount, authority,
       )).rejects.toMatchObject({ code: 'invalid_input' });
     }
     const after = await pool.query<{ count: number }>(
@@ -150,7 +155,7 @@ describe('role_brief es una proyección, no una segunda fuente de verdad', () =>
       tenant_id: 'Isa', alias: 'salva', role_summary: 'Operación de Isa.',
     }, null, actor);
     await profiles.markApplied('Isa', 'salva', desired.revision, actor);
-    const snapshot = await repository.getConfiguration('Steven', 'kant');
+    const snapshot = await repository.getConfiguration('Steven', 'kant', authority);
     expect(snapshot.agents).toEqual(expect.arrayContaining([
       expect.objectContaining({ tenant_id: 'Isa', alias: 'salva', role_brief: 'Operación de Isa.' }),
     ]));
@@ -158,7 +163,7 @@ describe('role_brief es una proyección, no una segunda fuente de verdad', () =>
     const revision = Number(snapshot.revision);
     await expect(repository.applyConfigurationChange('Steven', 'kant', {
       resource: 'agent', action: 'delete', tenant_id: 'Isa', alias: 'salva',
-    }, false, revision)).rejects.toMatchObject({ code: 'conflict' });
+    }, false, revision, authority)).rejects.toMatchObject({ code: 'conflict' });
     expect(await profiles.readWithPresence('Isa', 'salva')).toMatchObject({ exists: true });
   });
 
@@ -187,7 +192,7 @@ describe('role_brief es una proyección, no una segunda fuente de verdad', () =>
       value: { purpose: 'duplicado' },
     } as unknown as ConfigMutation;
     const error = await repository.applyConfigurationChange(
-      'Steven', 'kant', mutation, true, 1,
+      'Steven', 'kant', mutation, true, 1, authority,
     ).catch((caught: unknown) => caught);
     expect(error).toBeInstanceOf(ConfigurationError);
     expect(error).toMatchObject({ code: 'invalid_input', message: 'agent_profile is only writable through the canonical profile endpoint with runtime ACK' });
