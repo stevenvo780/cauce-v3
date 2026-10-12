@@ -11,9 +11,12 @@ REGLAS QUE NO SE TOCAN (cada una tiene su motivo, no son formalismo):
     revoca la cadena de credenciales viva de toda la flota. Medir no puede costar
     tumbar a los agentes: por eso esto es HTTP a pelo.
 
-  * NUNCA se escribe auth.json ni se refresca el token. Si esta vencido o revocado,
-    la sonda devuelve error y la cuenta sale "sin dato" ese ciclo. Un hueco en el
-    panel es barato; rotarle el token a las sesiones vivas, no.
+  * NUNCA se escribe auth.json ni se refresca el token, SALVO con el flag explicito
+    --refresh-own-session, que solo pasa el runtime de cuotas dentro de un entorno
+    de sesion propia («Mis cuotas» o un contenedor cuota-*). Sin el flag, si el
+    token esta vencido o revocado, la sonda devuelve error y la cuenta sale
+    "sin dato" ese ciclo. Un hueco en el panel es barato; rotarle el token a las
+    sesiones vivas de la flota, no.
 
   * NUNCA se imprime un secreto. Del auth.json solo salen datos derivados no
     sensibles (email, plan, account_id, caducidad). El token jamas va a stdout, ni a
@@ -32,6 +35,7 @@ import json
 import os
 import socket
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -161,6 +165,7 @@ def base(codex_home):
         "ventanas": [],
         "extra": {"codex_home": codex_home, "estado": "sin_dato"},
         "error": None,
+        "error_code": None,
     }
 
 
@@ -177,7 +182,42 @@ def pedir(url, token, account_id, timeout):
         return json.load(r)
 
 
-def sonda(codex_home):
+def pedir_refresco(refresh_token, client_id):
+    cuerpo = json.dumps({'client_id': client_id or 'app_EMoamEEZ73f0CkXaXp7hrann',
+                         'grant_type': 'refresh_token', 'refresh_token': refresh_token,
+                         'scope': 'openid profile email'}).encode()
+    req = urllib.request.Request('https://auth.openai.com/oauth/token', data=cuerpo,
+                                 headers={'Content-Type': 'application/json'})
+    with urllib.request.urlopen(req, timeout=30) as r:
+        return json.load(r)
+
+
+def guardar_auth(codex_home, auth):
+    """Tmp en el mismo directorio + fsync + replace: el refresh token rota y un
+    fichero truncado perderia tambien la cadena de renovacion."""
+    ruta = os.path.join(codex_home, 'auth.json')
+    fd, tmp = tempfile.mkstemp(dir=codex_home, prefix='.auth-')
+    try:
+        with os.fdopen(fd, 'w') as f:
+            json.dump(auth, f, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, ruta)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+    dir_fd = os.open(codex_home, os.O_RDONLY)
+    try:
+        os.fsync(dir_fd)
+    finally:
+        os.close(dir_fd)
+
+
+def sonda(codex_home, refresh=False):
     out = base(codex_home)
 
     # --- 1. Leer credencial (SOLO LECTURA, sin bloquear el fichero) --------------
@@ -187,10 +227,12 @@ def sonda(codex_home):
             auth = json.load(f)
     except FileNotFoundError:
         out["error"] = f"no existe {ruta}"
+        out["error_code"] = "not_authenticated"
         out["extra"]["estado"] = "sin_credencial"
         return out
     except Exception as e:
         out["error"] = f"auth.json ilegible ({type(e).__name__}: {e})"
+        out["error_code"] = "not_authenticated"
         out["extra"]["estado"] = "sin_credencial"
         return out
 
@@ -219,29 +261,82 @@ def sonda(codex_home):
         # asiento que medir; se dice, no se inventa.
         if auth.get("OPENAI_API_KEY"):
             out["error"] = "auth.json en modo API key: no hay asiento OAuth que medir"
+            out["error_code"] = "forbidden_credential_type"
         else:
             out["error"] = "auth.json sin tokens.access_token"
+            out["error_code"] = "not_authenticated"
         out["extra"]["estado"] = "sin_credencial"
         return out
     if not account_id:
         out["error"] = "auth.json sin account_id (cabecera ChatGPT-Account-Id obligatoria)"
+        out["error_code"] = "not_authenticated"
         out["extra"]["estado"] = "sin_credencial"
         return out
+
+    refrescado = False
+
+    def aplicar_refresco():
+        nonlocal tokens, token, account_id, c_id, c_acc, exp, refrescado
+        respuesta = pedir_refresco(tokens['refresh_token'], c_acc.get('client_id'))
+        if not respuesta.get('access_token'):
+            raise ValueError('refresh sin access_token')
+        for campo in ('id_token', 'access_token', 'refresh_token'):
+            if respuesta.get(campo):
+                tokens[campo] = respuesta[campo]
+        auth['tokens'] = tokens
+        auth['last_refresh'] = datetime.now(UTC).strftime('%Y-%m-%dT%H:%M:%S.%fZ')
+        guardar_auth(codex_home, auth)
+        token = tokens['access_token']
+        c_id = claims(tokens.get('id_token'))
+        c_acc = claims(token)
+        exp = c_acc.get('exp')
+        account_id = tokens.get('account_id') or (c_acc.get('https://api.openai.com/auth') or {}).get('chatgpt_account_id') or account_id
+        out['identidad'] = c_id.get('email') or out['identidad']
+        out['extra']['last_refresh'] = auth['last_refresh']
+        out['extra']['token_expira_at'] = iso(exp)
+        refrescado = True
+
+    def fallo_refresco(causa):
+        if isinstance(causa, urllib.error.HTTPError):
+            if causa.code == 429:
+                return 'rate_limited'
+            return 'provider_error' if causa.code >= 500 else 'token_expired'
+        if isinstance(causa, (urllib.error.URLError, TimeoutError, OSError)):
+            return 'network'
+        return 'provider_error'
 
     # Vencimiento local: se comprueba ANTES de salir a red para no gastar una
     # peticion condenada. Pero NO es suficiente para detectar revocacion: el token de
     # codex200 esta *vigente* y aun asi el servidor lo rechaza con
     # 401 token_revoked. Vencido y revocado son dos estados distintos.
-    if isinstance(exp, (int, float)) and exp <= time.time():
-        out["error"] = f"access token vencido el {iso(exp)} (no se refresca a proposito)"
-        out["extra"]["estado"] = "token_invalidado"
-        return out
+    # Con el flag de sesion propia se refresca cuando quedan menos de 3 dias (el
+    # access token muere a los ~10 dias del login); sin flag jamas se refresca.
+    if isinstance(exp, (int, float)):
+        queda = exp - time.time()
+        if refresh and queda < 3 * 86400 and tokens.get('refresh_token'):
+            try:
+                aplicar_refresco()
+                queda = exp - time.time() if isinstance(exp, (int, float)) else 3 * 86400
+            except Exception as causa:
+                if queda <= 0:
+                    out['error'] = f"access token vencido el {iso(exp)} y el refresco fallo ({type(causa).__name__})"
+                    out['error_code'] = fallo_refresco(causa)
+                    out['extra']['estado'] = 'token_invalidado'
+                    return out
+        if queda <= 0:
+            out['error'] = f"access token vencido el {iso(exp)} (no se refresca a proposito)"
+            out['error_code'] = 'token_expired'
+            out['extra']['estado'] = 'token_invalidado'
+            return out
 
     # --- 2. Consultar el endpoint de uso ----------------------------------------
     limite = time.time() + PRESUPUESTO_RED_S
     datos = None
     fallos = []
-    for url in ENDPOINTS:
+    indice = 0
+    while indice < len(ENDPOINTS):
+        url = ENDPOINTS[indice]
+        indice += 1
         restante = limite - time.time()
         if restante <= 1.0:
             fallos.append(f"sin presupuesto de tiempo para {url}")
@@ -257,20 +352,32 @@ def sonda(codex_home):
                 cuerpo = e.read().decode("utf-8", "replace")[:300]
             except Exception:
                 pass
+            if e.code == 401 and refresh and not refrescado and tokens.get('refresh_token'):
+                try:
+                    aplicar_refresco()
+                    indice -= 1
+                    continue
+                except Exception as causa:
+                    out['error'] = f"token rechazado (HTTP 401) y el refresco fallo ({type(causa).__name__})"
+                    out['error_code'] = fallo_refresco(causa)
+                    out['extra']['estado'] = 'token_invalidado'
+                    out['extra']['http_status'] = 401
+                    return out
             if e.code in (401, 403):
                 # Credencial rechazada: reintentar en el otro endpoint no arregla un
                 # token muerto, solo suma ruido y otro 401 a la cuenta. Se corta aqui.
-                # (Tampoco se refresca: eso reescribiria el auth.json de la flota.)
                 motivo = "revocado/invalidado" if ("invalidated" in cuerpo or "token_revoked" in cuerpo) \
                     else "rechazado"
                 out["error"] = (f"token {motivo} por el servidor (HTTP {e.code}). Reautenticar ese CODEX_HOME "
                                 f"a mano; la sonda no refresca.")
+                out["error_code"] = 'token_expired' if e.code == 401 else 'forbidden_credential_type'
                 out["extra"]["estado"] = "token_invalidado"
                 out["extra"]["http_status"] = e.code
                 out["extra"]["respuesta_servidor"] = cuerpo
                 return out
             if e.code == 429:
                 out["error"] = "HTTP 429: el propio endpoint de uso esta limitando la sonda"
+                out["error_code"] = 'rate_limited'
                 out["extra"]["estado"] = "fallo_de_red"
                 out["extra"]["http_status"] = e.code
                 return out
@@ -282,6 +389,7 @@ def sonda(codex_home):
 
     if datos is None:
         out["error"] = "fallo de red/endpoint: " + " | ".join(fallos)[:300]
+        out["error_code"] = 'provider_error' if any(fallo.startswith('HTTP ') for fallo in fallos) else 'network'
         out["extra"]["estado"] = "fallo_de_red"
         return out
 
@@ -348,16 +456,18 @@ def sonda(codex_home):
 
 
 def main():
-    homes = sys.argv[1:] or HOMES_POR_DEFECTO
+    refresh = '--refresh-own-session' in sys.argv[1:]
+    homes = [argumento for argumento in sys.argv[1:] if argumento != '--refresh-own-session'] or HOMES_POR_DEFECTO
     res = []
     for h in homes:
         try:
-            res.append(sonda(h))
+            res.append(sonda(h, refresh=refresh))
         except Exception as e:
             # Red de seguridad: pase lo que pase, sale JSON valido. El colector no
             # debe tener que distinguir una traza de un resultado.
             r = base(h)
             r["error"] = f"fallo interno de la sonda ({type(e).__name__}: {e})"
+            r["error_code"] = "provider_error"
             r["extra"]["estado"] = "fallo_de_red"
             res.append(r)
     json.dump(res if len(res) > 1 else res[0], sys.stdout, ensure_ascii=False)

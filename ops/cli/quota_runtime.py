@@ -203,7 +203,8 @@ def login_plan(policy: dict, document: dict) -> dict:
 
 
 def query_observation(policy: dict, environment: dict) -> dict:
-    command = provider_operation(policy, environment['provider'], 'quota', command=True)
+    # Own-session environments only: the reader may refresh and rewrite its credential.
+    command = [*provider_operation(policy, environment['provider'], 'quota', command=True), '--refresh-own-session']
     response = subprocess.run(['/usr/bin/docker', 'exec', '--user', '1000:1000', environment['container_name'],
                                *command], capture_output=True, timeout=60, check=False)
     if len(response.stdout) > 65536:

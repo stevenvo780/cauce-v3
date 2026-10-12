@@ -32,7 +32,8 @@ ENV HOME=/home/node
 COPY --chown=node:node leer-cuota.mjs /usr/local/bin/leer-cuota.mjs
 COPY --chown=node:node leer-cuota-grok.mjs /usr/local/bin/leer-cuota-grok.mjs
 # La misma sonda de Codex que usa el VPS (copiada tal cual): lee un CODEX_HOME y devuelve el
-# contrato que el colector ya sabe parsear. Nunca refresca ni reescribe el auth.json.
+# contrato que el colector ya sabe parsear. Solo refresca y reescribe el auth.json cuando el
+# runtime de cuotas le pasa --refresh-own-session dentro de un entorno de sesion propia.
 COPY --chown=node:node codex-http-probe.py /usr/local/bin/codex-http-probe.py
 
 # El contenedor no hace nada por si mismo: se queda quieto y espera a que le pidan la lectura

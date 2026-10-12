@@ -3,7 +3,9 @@
 #   cuotas-claude-local            tabla legible
 #   cuotas-claude-local --json     una linea JSON por (espacio, cliente), para el publicador
 # Claude: leer-cuota.mjs (endpoints OAuth del CLI). Codex: codex-http-probe.py (la misma sonda
-# del VPS, lee el auth.json del espacio y NUNCA invoca el CLI de codex ni refresca).
+# del VPS, lee el auth.json del espacio y NUNCA invoca el CLI de codex). Cada contenedor
+# cuota-* tiene sesion propia, por eso aqui los lectores reciben --refresh-own-session; en
+# cualquier otro contexto leen sin refrescar.
 set -u
 JSON=no; [ "${1:-}" = "--json" ] && JSON=si
 emite() {  # $1 label  $2 provider  $3 json del lector
@@ -34,7 +36,7 @@ else:
 }
 for c in $(docker ps --filter name='^cuota-' --format '{{.Names}}' | sort); do
   if docker exec "$c" test -s /home/node/.claude/.credentials.json 2>/dev/null; then
-    emite "$c" claude "$(timeout 45 docker exec "$c" node /usr/local/bin/leer-cuota.mjs 2>/dev/null || echo '{"ok":false,"nota":"el lector no respondio"}')"
+    emite "$c" claude "$(timeout 45 docker exec "$c" node /usr/local/bin/leer-cuota.mjs --refresh-own-session 2>/dev/null || echo '{"ok":false,"nota":"el lector no respondio"}')"
   fi
   # Un espacio de Claude sin sesion sale como fila con el motivo, no desaparece.
   case "$c" in cuota-claude-*)
@@ -42,11 +44,11 @@ for c in $(docker ps --filter name='^cuota-' --format '{{.Names}}' | sort); do
       || emite "$c" claude "{\"ok\":false,\"nota\":\"sin sesion de Claude: falta cuota-auth ${c#cuota-}\"}" ;;
   esac
   if docker exec "$c" test -s /home/node/.grok/auth.json 2>/dev/null; then
-    emite "$c" grok "$(timeout 60 docker exec "$c" node /usr/local/bin/leer-cuota-grok.mjs 2>/dev/null || echo '{"ok":false,"nota":"el lector de grok no respondio"}')"
+    emite "$c" grok "$(timeout 60 docker exec "$c" node /usr/local/bin/leer-cuota-grok.mjs --refresh-own-session 2>/dev/null || echo '{"ok":false,"nota":"el lector de grok no respondio"}')"
   fi
   if docker exec "$c" test -s /home/node/.codex/auth.json 2>/dev/null; then
     # Sin '|| echo': la sonda sale con rc!=0 si informa un error y el respaldo rompia su JSON.
-    r=$(timeout 60 docker exec "$c" python3 /usr/local/bin/codex-http-probe.py /home/node/.codex 2>/dev/null)
+    r=$(timeout 60 docker exec "$c" python3 /usr/local/bin/codex-http-probe.py /home/node/.codex --refresh-own-session 2>/dev/null)
     [ -n "$r" ] || r='{"error":"la sonda no respondio","ventanas":[]}'
     emite "$c" codex "$r"
   fi
