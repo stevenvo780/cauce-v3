@@ -30,6 +30,7 @@ Por defecto mide los dos CODEX_HOME de kratos:
 
 import base64
 import contextlib
+import errno
 import fcntl
 import json
 import os
@@ -40,6 +41,10 @@ import time
 import urllib.error
 import urllib.request
 from datetime import UTC, datetime
+
+class RotadoPerdido(OSError):
+    """The provider already rotated the refresh token but saving it failed."""
+
 
 ESQUEMA = 1
 
@@ -342,19 +347,34 @@ def sonda(codex_home, refresh=False):
                     tokens_actuales[campo] = respuesta[campo]
             auth_actual['tokens'] = tokens_actuales
             auth_actual['last_refresh'] = datetime.now(UTC).strftime('%Y-%m-%dT%H:%M:%S.%fZ')
-            guardar_auth(codex_home, auth_actual)
+            try:
+                guardar_auth(codex_home, auth_actual)
+            except OSError as causa:
+                raise RotadoPerdido(str(causa)) from causa
             adoptar(auth_actual, tokens_actuales)
 
     def fallo_refresco(causa):
+        if isinstance(causa, RotadoPerdido):
+            return 'provider_error'
         if isinstance(causa, urllib.error.HTTPError):
             if causa.code == 429:
                 return 'rate_limited'
             if causa.code >= 500 or causa.code == 403:
                 return 'provider_error'
             return 'token_expired'
-        if isinstance(causa, (urllib.error.URLError, TimeoutError)):
+        if isinstance(causa, (urllib.error.URLError, TimeoutError, ConnectionError)):
+            return 'network'
+        if isinstance(causa, OSError) and causa.errno in {
+                errno.ECONNRESET, errno.ECONNREFUSED, errno.ECONNABORTED, errno.ENETUNREACH,
+                errno.EHOSTUNREACH, errno.ETIMEDOUT, errno.EPIPE}:
             return 'network'
         return 'provider_error'
+
+    def detalle_fallo(causa):
+        if isinstance(causa, RotadoPerdido):
+            return ('el proveedor ya roto el refresh token y no se pudo guardar la credencial '
+                    'nueva: la sesion debe autenticarse de nuevo')
+        return type(causa).__name__
 
     # Vencimiento local: se comprueba ANTES de salir a red para no gastar una
     # peticion condenada. Pero NO es suficiente para detectar revocacion: un token
@@ -370,7 +390,7 @@ def sonda(codex_home, refresh=False):
                 queda = exp - time.time() if isinstance(exp, (int, float)) else 3 * 86400
             except Exception as causa:
                 if queda <= 0:
-                    out['error'] = f"access token vencido el {iso(exp)} y el refresco fallo ({type(causa).__name__})"
+                    out['error'] = f"access token vencido el {iso(exp)} y el refresco fallo ({detalle_fallo(causa)})"
                     out['error_code'] = fallo_refresco(causa)
                     out['extra']['estado'] = 'token_invalidado'
                     return out
@@ -409,7 +429,7 @@ def sonda(codex_home, refresh=False):
                     indice -= 1
                     continue
                 except Exception as causa:
-                    out['error'] = f"token rechazado (HTTP 401) y el refresco fallo ({type(causa).__name__})"
+                    out['error'] = f"token rechazado (HTTP 401) y el refresco fallo ({detalle_fallo(causa)})"
                     out['error_code'] = fallo_refresco(causa)
                     out['extra']['estado'] = 'token_invalidado'
                     out['extra']['http_status'] = 401

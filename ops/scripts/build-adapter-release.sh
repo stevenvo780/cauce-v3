@@ -53,7 +53,11 @@ for entry in list(root.rglob('*')):
     finally:
         if os.path.lexists(temporary):
             os.unlink(temporary)
-for harness in ('claude', 'codex', 'openclaw', 'grok', 'muse'):
+descriptors = package / 'dist/descriptors'
+harnesses = sorted(path.stem for path in descriptors.glob('*.json')) if descriptors.is_dir() else []
+if not harnesses:
+    raise SystemExit('release carries no harness descriptors')
+for harness in harnesses:
     entry = package / f'dist/src/bin/{harness}.js'
     if not entry.is_file() or not entry.stat().st_mode & 0o111:
         raise SystemExit(f'missing executable: {harness}')

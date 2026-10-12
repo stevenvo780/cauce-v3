@@ -87,6 +87,9 @@ class BuilderIsolation(unittest.TestCase):
             entry = self.repo / f'packages/adapter-sdk/dist/src/bin/{harness}.js'
             entry.write_text('#!/usr/bin/env node\n')
             entry.chmod(0o755)
+            descriptor = self.repo / f'packages/adapter-sdk/dist/descriptors/{harness}.json'
+            descriptor.parent.mkdir(parents=True, exist_ok=True)
+            descriptor.write_text('{"harness":"' + harness + '"}\n')
         (self.repo / 'packages/adapter-sdk/scripts/package-smoke.mjs').write_text('process.exit(0);\n')
         self.bin = self.directory / 'bin'
         self.bin.mkdir()

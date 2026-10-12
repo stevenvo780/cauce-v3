@@ -497,6 +497,17 @@ class QuotaReadersTest(unittest.TestCase):
             self.assertEqual(auth.read_bytes(), before)
             self.assertEqual(list(pathlib.Path(directory).glob('.auth-*')), [])
         self.assertEqual(report['error_code'], 'provider_error')
+        self.assertIn('ya roto el refresh token', report['error'])
+        self.assertIn('debe autenticarse de nuevo', report['error'])
+
+    def test_codex_refresh_connection_reset_is_network(self):
+        with tempfile.TemporaryDirectory() as directory:
+            self.codex_home(directory, -3600)
+            with patch.object(probe, 'pedir'), patch.object(
+                    probe, 'pedir_refresco', side_effect=ConnectionResetError('reset by peer')), \
+                    patch.object(probe, 'refresco_permitido', return_value=True):
+                report = probe.sonda(directory, refresh=True)
+        self.assertEqual(report['error_code'], 'network')
 
     def test_codex_403_is_provider_error_not_credential_type(self):
         with tempfile.TemporaryDirectory() as directory:

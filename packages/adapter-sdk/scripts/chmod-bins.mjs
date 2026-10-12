@@ -1,7 +1,6 @@
-import { chmod } from "node:fs/promises";
+import { chmod, readdir } from "node:fs/promises";
 
-await Promise.all(
-  ["hermes", "opencode", "claude", "codex", "openclaw", "grok", "muse", "fake", "fake-harness", "shared-session", "cauce-mcp", "cauce-decisiones-mcp"].map((name) =>
-    chmod(new URL(`../dist/src/bin/${name}.js`, import.meta.url), 0o755),
-  ),
-);
+const bins = new URL("../dist/src/bin/", import.meta.url);
+const entries = (await readdir(bins)).filter(name => name.endsWith(".js")).sort();
+if (entries.length === 0) throw new Error("no built adapter bins to chmod");
+await Promise.all(entries.map((name) => chmod(new URL(name, bins), 0o755)));
