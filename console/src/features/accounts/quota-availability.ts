@@ -1,14 +1,15 @@
 import type { QuotaAccount, QuotaObservationStatus } from '../../api/client/my-quotas-client';
 
-export type FatigueState = QuotaObservationStatus | 'available' | 'low' | 'exhausted' | 'paused' | 'model_dependent';
+export type FatigueState = QuotaObservationStatus | 'available' | 'low' | 'exhausted' | 'paused' | 'model_dependent' | 'pending_auth';
 export const OBSERVATION_LABEL: Record<QuotaObservationStatus, string> = {
   unknown: 'Sin datos', error: 'Error de consulta', stale: 'Datos antiguos', ok: 'Actualizada',
 };
 export const FATIGUE_LABEL: Record<FatigueState, string> = {
-  ...OBSERVATION_LABEL, available: 'Disponible', low: 'Cansado', exhausted: 'Sin disponibilidad', paused: 'En pausa', model_dependent: 'Varía por modelo',
+  ...OBSERVATION_LABEL, available: 'Disponible', low: 'Cansado', exhausted: 'Sin disponibilidad', paused: 'En pausa', model_dependent: 'Varía por modelo', pending_auth: 'Pendiente de autenticación',
 };
 export function accountFatigue(account: QuotaAccount | undefined, now = Date.now()): FatigueState {
   if (!account) return 'unknown';
+  if (!account.enabled && !account.paused_until && account.observation_status === 'unknown' && !account.windows.length) return 'pending_auth';
   if (!account.enabled || account.paused_until && Date.parse(account.paused_until) > now) return 'paused';
   if (account.observation_status !== 'ok') return account.observation_status;
   const remaining = account.remaining_percent;
@@ -32,4 +33,20 @@ export function agentFatigue(accounts: readonly QuotaAccount[], tenant: string, 
 
 export function failedQuotaRead(account: QuotaAccount): QuotaAccount {
   return { ...account, observation_status: 'error', windows: account.windows.map(window => ({ ...window, observation_status: 'error' })) };
+}
+
+export const QUOTA_FAILURE_ACTION: Record<string, string> = {
+  not_authenticated: 'Cuenta sin autenticar: autentícala desde su entorno',
+  token_expired: 'Sesión caducada: autenticar de nuevo',
+  forbidden_credential_type: 'Tipo de credencial no permitido: autentica con una suscripción del proveedor',
+  rate_limited: 'El proveedor limitó la consulta; se reintentará',
+  network: 'No se pudo contactar al proveedor; se reintentará',
+  provider_error: 'El proveedor devolvió un error; reintenta más tarde',
+};
+const FAILURE_CODE = /^[a-z][a-z0-9_]*$/u;
+export function quotaFailureReason(account: Pick<QuotaAccount, 'observation_status' | 'note'>): string | null {
+  if (account.observation_status !== 'error') return null;
+  const code = account.note?.trim();
+  if (!code || !FAILURE_CODE.test(code)) return null;
+  return QUOTA_FAILURE_ACTION[code] ?? `Error de consulta (${code})`;
 }

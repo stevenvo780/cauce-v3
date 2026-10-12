@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { QuotaAccount } from '../../api/client/my-quotas-client';
-import { accountFatigue, agentFatigue, agentQuotaAccounts } from './quota-availability';
+import { accountFatigue, agentFatigue, agentQuotaAccounts, FATIGUE_LABEL, quotaFailureReason } from './quota-availability';
 
 const account: QuotaAccount = { id: 'subscription', provider: 'codex', label: 'Cuenta compartida', enabled: true, version: 1,
   payer_tenant_id: 'Humanizar', shared: true, agents: [{ tenant_id: 'Humanizar', alias: 'kant', enabled: true },
@@ -35,5 +35,21 @@ describe('disponibilidad derivada de suscripciones', () => {
     expect(accountFatigue(partial)).toBe('model_dependent');
     expect(agentFatigue([partial], 'Humanizar', 'kant')).toBe('model_dependent');
     expect(agentFatigue([{ ...partial, windows: [...partial.windows, { ...window, model: null }] }], 'Humanizar', 'kant')).toBe('exhausted');
+  });
+  it('una cuenta recién registrada dice pendiente de autenticación y no en pausa', () => {
+    const fresh = { ...account, enabled: false, observation_status: 'unknown' as const, remaining_percent: null };
+    expect(accountFatigue(fresh)).toBe('pending_auth');
+    expect(FATIGUE_LABEL.pending_auth).toBe('Pendiente de autenticación');
+    expect(accountFatigue({ ...fresh, paused_until: '2030-01-01T00:00:00Z' }, 0)).toBe('paused');
+  });
+  it('traduce cada código de fallo a una acción y un 429 nunca es agotado', () => {
+    const failed = (note: string | null) => ({ observation_status: 'error' as const, note });
+    expect(quotaFailureReason(failed('token_expired'))).toBe('Sesión caducada: autenticar de nuevo');
+    expect(quotaFailureReason(failed('rate_limited'))).toBe('El proveedor limitó la consulta; se reintentará');
+    for (const code of ['not_authenticated', 'forbidden_credential_type', 'network', 'provider_error']) expect(quotaFailureReason(failed(code))).toBeTruthy();
+    expect(quotaFailureReason(failed('weird_code'))).toBe('Error de consulta (weird_code)');
+    expect(quotaFailureReason(failed('quota probe unavailable'))).toBeNull();
+    expect(quotaFailureReason({ observation_status: 'ok', note: 'token_expired' })).toBeNull();
+    expect(accountFatigue({ ...account, observation_status: 'error', note: 'rate_limited', remaining_percent: 0 })).toBe('error');
   });
 });

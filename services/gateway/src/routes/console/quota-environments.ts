@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
-import { QuotaAccountIdSchema } from '@cauce/protocol';
+import { QuotaAccountCreateSchema, QuotaAccountIdSchema } from '@cauce/protocol';
 import { createQuotaAccount, deleteQuotaAccount, listQuotaAccounts, updateQuotaAccount, QuotaEnvironmentRepository,
   StoreError, type CompanyAuthoritySource, type DatabasePool, type QuotaEnvironmentOptions } from '@cauce/store';
 import { AuthError, AuthorizationError, type AuthProvider } from '../../auth.js';
@@ -9,6 +9,7 @@ import { replyError } from '../shared.js';
 import { HostCapabilityRegistry } from '../../fleet/host-channel.capabilities.js';
 
 const AccountParams = z.object({ id: QuotaAccountIdSchema }).strict();
+const AccountCreate = QuotaAccountCreateSchema.extend({ provider: z.enum(['claude', 'codex', 'grok']) }).strict();
 const EnvironmentParams = z.object({ id: z.uuid() }).strict();
 const DeleteVersion = z.object({ expected_version: z.string().regex(/^[1-9][0-9]{0,15}$/u).transform(Number)
   .pipe(z.number().int().positive().max(Number.MAX_SAFE_INTEGER)) }).strict();
@@ -48,7 +49,7 @@ export function registerQuotaEnvironmentRoutes(app: FastifyInstance, provider: A
     }
   };
   app.get('/v3/console/quota-accounts', handler(source => listQuotaAccounts(pool, source)));
-  app.post('/v3/console/quota-accounts', handler((source, request) => createQuotaAccount(pool, source, request.body)));
+  app.post('/v3/console/quota-accounts', handler((source, request) => createQuotaAccount(pool, source, AccountCreate.parse(request.body))));
   app.patch('/v3/console/quota-accounts/:id', handler((source, request) => updateQuotaAccount(pool, source, AccountParams.parse(request.params).id, request.body)));
   app.delete('/v3/console/quota-accounts/:id', handler((source, request) => deleteQuotaAccount(pool, source, AccountParams.parse(request.params).id,
     DeleteVersion.parse(request.query).expected_version)));

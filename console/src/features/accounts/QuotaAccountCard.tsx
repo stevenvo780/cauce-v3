@@ -1,7 +1,7 @@
 import type { QuotaAccount } from '../../api/client/my-quotas-client';
 import { Button, Notice, Pill } from '../../components/kit';
 import { Time } from '../../components/ui';
-import { accountFatigue, FATIGUE_LABEL, OBSERVATION_LABEL } from './quota-availability';
+import { accountFatigue, FATIGUE_LABEL, OBSERVATION_LABEL, quotaFailureReason } from './quota-availability';
 import { formatPercent } from './quotas';
 
 export function QuotaAccountCard({ account, pinned, canPin, onPin, canEdit, onEdit, onRemove }: {
@@ -9,6 +9,7 @@ export function QuotaAccountCard({ account, pinned, canPin, onPin, canEdit, onEd
   canEdit?: boolean; onEdit?: () => void; onRemove?: () => void;
 }) {
   const fatigue = accountFatigue(account);
+  const failure = quotaFailureReason(account);
   const tone = fatigue === 'available' ? 'ok' : fatigue === 'low' || fatigue === 'stale' ? 'warn'
     : fatigue === 'exhausted' || fatigue === 'error' ? 'danger' : 'neutral';
   return <article aria-label={`Cuotas de ${account.label}`} className="grid content-start gap-3 rounded-xl border border-line bg-surface p-4">
@@ -18,7 +19,8 @@ export function QuotaAccountCard({ account, pinned, canPin, onPin, canEdit, onEd
     <p className="m-0 text-sm">{account.shared || account.agents.length > 1
       ? `Consumo compartido por ${String(account.agents.length)} agentes. Cada tarjeta muestra la misma suscripción.` : 'Cuota de esta suscripción.'}</p>
     {account.agents.length ? <ul className="m-0 flex list-none flex-wrap gap-1 p-0 text-xs">{account.agents.map(agent => <li key={`${agent.tenant_id}/${agent.alias}`} className="rounded-md bg-subtle px-2 py-1">{agent.tenant_id}/{agent.alias}{agent.enabled ? '' : ' (asignación deshabilitada)'}</li>)}</ul> : <p className="m-0 text-xs text-muted">Sin agente vinculado.</p>}
-    {account.note ? <Notice tone={account.observation_status === 'error' ? 'danger' : 'info'}>{account.note}</Notice> : null}
+    {failure ? <Notice tone={account.note?.trim() === 'rate_limited' ? 'warn' : 'danger'}>{failure}</Notice>
+      : account.note ? <Notice tone={account.observation_status === 'error' ? 'danger' : 'info'}>{account.note}</Notice> : null}
     {account.paused_until ? <p className="m-0 text-xs">Pausa hasta <Time value={account.paused_until} />{account.paused_reason ? `: ${account.paused_reason}` : ''}</p> : null}
     <div aria-label={`Ventanas de ${account.label}`} className="grid gap-3">{account.windows.map((window, index) => {
       const known = window.observation_status === 'ok' && window.remaining_percent !== null && Number.isFinite(window.remaining_percent);
@@ -30,6 +32,7 @@ export function QuotaAccountCard({ account, pinned, canPin, onPin, canEdit, onEd
           hidden={!known} className="h-3 w-full accent-ok" />
         {!known && window.remaining_percent !== null ? <p className="m-0 text-xs text-muted">Último saldo informado: {formatPercent(window.remaining_percent)}; no acredita disponibilidad actual.</p> : null}
         <p className="m-0 text-xs text-muted">{window.window_minutes == null ? '' : `Ventana de ${String(window.window_minutes)} min. `}
+          {window.captured_at ? <>Medida <Time value={window.captured_at} relativo /> · </> : null}
           {window.received_at ? <>Actualizada <Time value={window.received_at} /></> : 'Sin fecha de actualización.'}
           {' '}{window.reset_at ? <>Reinicio <Time value={window.reset_at} /></> : 'Reinicio no informado.'}</p>
       </div>;

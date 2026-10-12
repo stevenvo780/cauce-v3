@@ -73,20 +73,20 @@ it('autenticar pide consentimiento y muestra operación pendiente sin afirmar au
   }
 });
 
-it('registra una cuenta sin ejecutor y respeta límites contractuales en las cuentas y entornos', async () => {
+it('registra una cuenta ofreciendo solo proveedores ejecutables y respeta límites contractuales en las cuentas y entornos', async () => {
   const environment = { id: 'env-1', company_id: 'one', account_id: 'subscription', host_id: 'host', provider: 'codex', label: 'Consulta GPT',
     status: 'ready', version: 2, created_at: '2026-10-11T00:00:00Z', updated_at: '2026-10-11T00:00:00Z' };
   const writes: unknown[] = [];
   server.use(http.get('*/v3/console/quota-accounts', () => HttpResponse.json({ company_id: 'one', observed_at: '2026-10-11T00:00:00Z', accounts: [account] })),
     http.get('*/v3/console/quota-environments', () => HttpResponse.json({ company_id: 'one', environments: [environment], operations: [],
-      capabilities: { available: false, providers: [], hosts: [], actions: [] } })),
+      capabilities: { available: true, providers: ['claude', 'codex'], hosts: [], actions: [] } })),
     http.post('*/v3/console/quota-accounts', async ({ request }) => { writes.push(await request.json()); return HttpResponse.json({ account_id: 'new-account', duplicate: false }); }));
   const user = userEvent.setup(); renderWithApi(owner());
   await waitFor(() => { expect(screen.getByRole('button', { name: 'Registrar cuenta' })).toBeEnabled(); });
   await user.click(screen.getByRole('button', { name: 'Registrar cuenta' }));
   const form = within(await screen.findByRole('form', { name: 'Registrar cuenta de cuotas' }));
   expect(form.getByRole('textbox', { name: 'Nombre de la cuenta' })).toHaveAttribute('maxlength', '80');
-  expect(form.getByRole('combobox', { name: 'Proveedor' })).toHaveTextContent('claudecodexgeminigrok');
+  expect(form.getByRole('combobox', { name: 'Proveedor' })).toHaveTextContent('claudecodex');
   await user.type(form.getByRole('textbox', { name: 'Nombre de la cuenta' }), 'Sin agentes');
   await user.click(form.getByRole('button', { name: 'Registrar cuenta' }));
   expect(await screen.findByText('Cuenta registrada. Crea su entorno para autenticar y consultar.')).toBeVisible();
@@ -139,4 +139,14 @@ it('releer cuentas conserva la sesión de autenticación del entorno mientras la
   await waitFor(() => { expect(screen.getByRole('button', { name: 'Actualizar cuotas y entornos' })).toBeEnabled(); });
   expect(screen.getByRole('button', { name: 'Verificar conexión' })).toBeVisible();
   expect(cancelled).not.toHaveBeenCalled(); expect(scopes).toHaveBeenCalledOnce();
+});
+
+it('muestra el motivo del fallo con su acción y la hora de medición', async () => {
+  const failing = { ...account, observation_status: 'error' as const, note: 'token_expired',
+    windows: [{ ...account.windows[0], observation_status: 'error' as const, captured_at: '2026-10-11T00:00:00Z' }] };
+  server.use(http.get('*/v3/console/quota-accounts', () => HttpResponse.json({ company_id: 'one', observed_at: '2026-10-11T00:00:00Z', accounts: [failing] })));
+  renderWithApi(owner());
+  const card = within(await screen.findByRole('article', { name: 'Cuotas de Cuenta compartida' }));
+  expect(card.getByText('Sesión caducada: autenticar de nuevo')).toBeVisible();
+  expect(card.getByText(/Medida/u)).toBeVisible();
 });

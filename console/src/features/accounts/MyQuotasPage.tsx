@@ -1,5 +1,4 @@
 import { useCallback, useRef, useState } from 'react';
-import { QuotaEnvironmentProviderSchema } from '@cauce/protocol/quotas';
 import type { QuotaAccount, QuotaProvider } from '../../api/client/my-quotas-client';
 import { useApi } from '../../api/context';
 import { usePolling } from '../../api/use-polling';
@@ -49,6 +48,7 @@ export function MyQuotasPage() {
     await write(async () => { await api.saveConsolePreferences({ expected_version: settings.version, pinned_quota_accounts: pinned });
       const reread = await preferences.reload(); if (reread.error) throw reread.error; }, 'Tarjetas fijadas guardadas para esta persona y empresa.');
   }
+  const executableProviders = environments.data?.capabilities.available ? environments.data.capabilities.providers : [];
   const pinned = preferences.data?.pinned_quota_accounts ?? [];
   const visible = [...accounts.data?.accounts ?? []].filter(account => !filterPinned || pinned.includes(account.id))
     .sort((left, right) => Number(pinned.includes(right.id)) - Number(pinned.includes(left.id)) || left.label.localeCompare(right.label));
@@ -62,9 +62,9 @@ export function MyQuotasPage() {
     {notice ? <Notice tone="ok" role="status">{notice}</Notice> : null}
     <div className="flex flex-wrap gap-2"><Button aria-pressed={filterPinned} disabled={!preferences.data || !!preferences.error} onClick={() => { setFilterPinned(!filterPinned); }}>{filterPinned ? 'Ver todas las cuentas' : 'Ver sólo cuentas fijadas'}</Button>
       <Button variant="primary" disabled={!canWrite} onClick={() => { setCreating(true); }}>Registrar cuenta</Button></div>
-    {creating ? <QuotaAccountForm providers={QuotaEnvironmentProviderSchema.options} busy={busy} cancel={() => { setCreating(false); }}
+    {creating ? <QuotaAccountForm providers={executableProviders} busy={busy} cancel={() => { setCreating(false); }}
       save={input => write(() => api.createQuotaAccount({ provider: input.provider, label: input.label, idempotency_key: input.idempotency_key }), 'Cuenta registrada. Crea su entorno para autenticar y consultar.')} /> : null}
-    {editing ? <QuotaAccountForm key={editing.id} account={editing} providers={QuotaEnvironmentProviderSchema.options} busy={busy} cancel={() => { setEditing(undefined); }}
+    {editing ? <QuotaAccountForm key={editing.id} account={editing} providers={executableProviders} busy={busy} cancel={() => { setEditing(undefined); }}
       save={input => write(() => api.updateQuotaAccount(editing.id, { expected_version: editing.version, label: input.label, enabled: input.enabled,
         paused_until: input.paused_until, paused_reason: input.paused_reason }), 'Cuenta actualizada.')} /> : null}
     {removing ? <section aria-label="Confirmar eliminación de cuenta" className="grid gap-2 rounded-xl border border-line p-4"><p>Eliminar {removing.label} exige retirar antes sus entornos y asignaciones. El servidor comprobará esas dependencias.</p>
@@ -96,7 +96,7 @@ function QuotaAccountForm({ account, providers, busy, save, cancel }: {
     <label>Nombre de la cuenta<input required maxLength={80} value={label} disabled={busy} onChange={event => { setLabel(event.target.value); }} /></label>
     <label>Proveedor<select value={provider} disabled={busy || !!account} onChange={event => { setProvider(event.target.value); }}>
       {[...new Set([...providers, ...account ? [account.provider] : []])].map(value => <option key={value}>{value}</option>)}</select></label>
-    {!account && !providers.length ? <Notice tone="warn">El servidor no ha informado proveedores disponibles. Relee los entornos.</Notice> : null}
+    {!account && !providers.length ? <Notice tone="warn">Ningún host puede ejecutar consultas de cuota todavía. Relee los entornos.</Notice> : null}
     {account ? <><label className="flex items-center gap-2"><input type="checkbox" checked={enabled} disabled={busy} onChange={event => { setEnabled(event.target.checked); }} />Cuenta habilitada</label>
       <label>Pausa hasta (fecha con zona horaria)<input placeholder="2026-10-12T12:00:00-05:00" value={paused} disabled={busy} onChange={event => { setPaused(event.target.value); }} /></label>
       <label>Motivo de pausa<input maxLength={128} value={reason} disabled={busy} onChange={event => { setReason(event.target.value); }} /></label></> : null}
