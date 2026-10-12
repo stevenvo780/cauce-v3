@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { requirePermission } from '../../auth.js';
+import { consoleHumanAccess } from '../../console-human-authority.js';
 import { consoleHumanSubject } from '../../console-message-author.js';
 import { visibleMessageList } from '../../facades.js';
 import { principal, replyError } from '../shared.js';
@@ -51,7 +52,11 @@ export function registerConsoleAccessRoutes(
     try {
       const actor = await principal(request, options.authProvider);
       requirePermission(actor, 'read');
-      return await repository.topology(actor.tenant_id, actor.alias);
+      const access = await consoleHumanAccess(options.authProvider, request, reply, 'read');
+      try {
+        return await repository.topology(actor.tenant_id, actor.alias,
+          access === undefined ? undefined : client => access.companyAuthority(client));
+      } finally { access?.close(); }
     } catch (error) { replyError(reply, error); }
   });
 
