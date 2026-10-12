@@ -81,13 +81,20 @@ export CAUCE_FASE3_CON_DUENO=si CAUCE_DEPLOY_CONFIRMADO=si
 export CAUCE_DEPLOY_GATES_RECEIPT=/root/recibo-gates-<SHA>.json
 ./deploy/deploy.sh
 ```
-Hace, en orden: precondiciones → build de `deploy/Dockerfile --target runtime` y `--target console` (la consola hornea el instance-id) → push → copia candidata `prod.env.candidate-<STAMP>` con los digests SHA256 nuevos (mismos permisos; se borra al salir) → `config` y migrator efímero (todas las migraciones pendientes en UNA transacción) con esa copia → **solo si el migrator sale con 0**: snapshot `prod.env.pre-deploy-<STAMP>` y la copia candidata reemplaza a `prod.env` → `docker compose up -d --wait --remove-orphans` (actualiza los servicios afectados y conserva el volumen de datos de PostgreSQL) → `deploy/refresh-observability.sh` → `deploy/smoke.sh`. Registra el resultado en `deploy/HISTORIAL.md` con el sha256 del recibo o el motivo del escape (commitear tras verificar).
+Hace, en orden: precondiciones → build de `deploy/Dockerfile --target runtime` y `--target console` (la consola hornea el instance-id) → push → copia candidata `prod.env.candidate-<STAMP>` con los digests SHA256 nuevos (mismos permisos; se borra al salir) → `config` y migrator efímero (todas las migraciones pendientes en UNA transacción) con esa copia; con migraciones pendientes, antes del migrator para el `dispatcher` (lee `deliveries` con `messages` en cada scrape) y comprueba `pg_stat_activity`, y lo vuelve a arrancar en cuanto el migrator termina, también si falla o se interrumpe → **solo si el migrator sale con 0**: snapshot `prod.env.pre-deploy-<STAMP>` y la copia candidata reemplaza a `prod.env` → `docker compose up -d --wait --remove-orphans` (actualiza los servicios afectados y conserva el volumen de datos de PostgreSQL) → `deploy/refresh-observability.sh` → `deploy/smoke.sh`. Registra el resultado en `deploy/HISTORIAL.md` con el sha256 del recibo o el motivo del escape (commitear tras verificar).
 
 El refresco recrea únicamente Prometheus y OTel que ya estén activos, sin dependencias ni perfiles apagados. Un reemplazo atómico de archivos por Git puede dejar un montaje individual leyendo el inode anterior; `up` sin cambios de imagen/configuración no garantiza su recarga. Si el refresco falla, no se registra un despliegue exitoso. Los adaptadores SDK se publican y activan por separado: el smoke central no prueba sus nuevos pins. Su canary exige la identidad mTLS reservada `gate-probe`; una entrega normal o un snapshot manual no la sustituye.
 
 **Criterios de parada**: cualquier precondición falla → no arranca, no construye y `prod.env` no
-cambia. Render con los pins nuevos fallido o confirmación negada → no se migra. Migrator fallido →
-PostgreSQL revierte la transacción (esquema intacto). En esos casos `prod.env` sigue con los pins
+cambia. Render con los pins nuevos fallido o confirmación negada → no se migra. Con migraciones
+pendientes, una sesión de la base `idle in transaction` desde hace más de 1 s o con una transacción
+de más de `CAUCE_DEPLOY_MAX_XACT_SECONDS` (5 s por defecto) → no se migra: el error lista pid,
+aplicación, estado y edad de cada una (nunca la consulta); terminarla o esperar y repetir. El migrator
+toma al empezar todos los locks de tablas que piden las migraciones pendientes (lista explícita en
+`packages/store/src/migration-locks.ts`): cada espera dura como mucho `CAUCE_MIGRATION_LOCK_TIMEOUT_MS`
+(5000 ms por defecto, `deploy.sh` lo pasa al migrator) y la toma de todos, ese tiempo más 1 s; si no
+los consigue, falla sin aplicar nada. Migrator fallido o interrumpido → PostgreSQL revierte la transacción
+(esquema intacto) y `deploy.sh` termina el backend que quede con `application_name=cauce-migrator`. En esos casos `prod.env` sigue con los pins
 anteriores, no se crea `prod.env.pre-deploy-<STAMP>`, no hay pins que restaurar y ningún contenedor
 se levanta con los digests nuevos. Si falla justo después del migrator al guardar el snapshot o instalar los pins, la BD
 ya quedó en la última migración del bundle y `prod.env` sigue con los anteriores: decidir entre

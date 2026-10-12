@@ -57,7 +57,13 @@ if (args[0] === 'compose') {
 }
 if (args[0] === 'ps') { if (env.MOCK_APPLIED !== undefined) console.log(env.MOCK_PG_CONTAINER); process.exit(0); }
 if (args[0] === 'volume') process.exit(0);
-if (args[0] === 'exec') { console.log(env.MOCK_APPLIED.split(',').join('\n')); process.exit(0); }
+if (args[0] === 'exec') {
+  const sql = args.join(' ');
+  if (sql.includes('pg_terminate_backend')) process.exit(0);
+  if (sql.includes('pg_stat_activity')) { if (env.MOCK_SESSIONS) console.log(env.MOCK_SESSIONS); process.exit(0); }
+  console.log(env.MOCK_APPLIED.split(',').join('\n')); process.exit(0);
+}
+if (['stop', 'start'].includes(args[0])) process.exit(env.MOCK_FAILURE === args[0] ? 18 : 0);
 if (args[0] === 'inspect') {
   if (args[1] === '-f') console.log('true');
   else if (args[2].includes('instance-id')) console.log('0'.repeat(64));
@@ -77,6 +83,7 @@ interface Options {
   failure?: string;
   composeModel?: object;
   realCompose?: boolean;
+  sessions?: string;
 }
 
 function temporaryDirectory(prefix: string) {
@@ -145,6 +152,7 @@ ${options.instance ?? ''}`;
       MOCK_REAL_COMPOSE: options.realCompose ? '1' : '0',
       MOCK_REAL_PATH: process.env.PATH ?? '',
       ...(options.applied ? { MOCK_APPLIED: options.applied.join(',') } : {}),
+      ...(options.sessions ? { MOCK_SESSIONS: options.sessions } : {}),
       ...(options.composeModel ? { MOCK_COMPOSE_MODEL: JSON.stringify(options.composeModel) } : {}),
       ...options.environment,
     },
@@ -386,6 +394,55 @@ describe('deploy backup window for pending migrations', () => {
     const result = deploy({ migrations, applied: migrations, backupAgeHours: 3 });
     expect(result.status, result.stderr).toBe(0);
     expect(result.commands().filter(entry => entry.command === 'backup-monitor').map(entry => entry.maxAge)).toEqual(['24']);
+  });
+});
+
+describe('deploy migrator under live traffic', () => {
+  const migrations = ['001_fixture.sql', '002_fixture.sql'];
+  const steps = (result: ReturnType<typeof deploy>) => result.commands().flatMap((entry) => {
+    if (entry.command !== 'docker') return [];
+    const sql = entry.args.join(' ');
+    if (entry.args[0] === 'stop' || entry.args[0] === 'start') return [`${entry.args[0]} ${entry.args.at(-1) ?? ''}`];
+    if (entry.args[0] === 'exec' && sql.includes('pg_terminate_backend')) return ['terminate'];
+    if (entry.args[0] === 'exec' && sql.includes('pg_stat_activity')) return ['sessions'];
+    return entry.args[0] === 'compose' && entry.args.includes('run') ? ['migrator'] : [];
+  });
+
+  it('stops the dispatcher and checks open transactions only while pending migrations run', () => {
+    const result = deploy({ migrations, applied: ['001_fixture.sql'] });
+    expect(result.status, result.stderr).toBe(0);
+    expect(steps(result)).toEqual(['stop release-fixture-dispatcher-1', 'sessions', 'migrator', 'start release-fixture-dispatcher-1']);
+    const settled = deploy({ migrations, applied: migrations });
+    expect(settled.status, settled.stderr).toBe(0);
+    expect(steps(settled)).toEqual(['migrator']);
+  });
+
+  it('refuses to migrate behind an idle transaction, lists it without data and restarts the dispatcher', () => {
+    const session = 'pid=4242 aplicacion=cauce-v3 estado=idle in transaction transaccion=31s';
+    const result = deploy({ migrations, applied: ['001_fixture.sql'], sessions: session });
+    expect(result.status, result.stderr).toBe(1);
+    expect(result.stderr).toContain('no se migro nada');
+    expect(result.stderr).toContain(session);
+    expect(steps(result)).toEqual(['stop release-fixture-dispatcher-1', 'sessions', 'start release-fixture-dispatcher-1']);
+    expect(result.instance()).toBe(result.initialInstance);
+    expect(result.leftovers()).toEqual([]);
+  });
+
+  it('terminates the migrator backend when the run fails and restarts the dispatcher', () => {
+    const result = deploy({ migrations, applied: ['001_fixture.sql'], failure: 'run' });
+    expect(result.status, result.stderr).toBe(1);
+    expect(result.stderr).toContain('migracion fallida');
+    expect(steps(result)).toEqual(['stop release-fixture-dispatcher-1', 'sessions', 'migrator', 'terminate',
+      'start release-fixture-dispatcher-1']);
+    expect(result.instance()).toBe(result.initialInstance);
+  });
+
+  it('passes the migration lock timeout to the migrator and rejects a malformed one before building', () => {
+    const result = deploy({ migrations, applied: ['001_fixture.sql'], environment: { CAUCE_MIGRATION_LOCK_TIMEOUT_MS: '8000' } });
+    expect(result.status, result.stderr).toBe(0);
+    expect(single(result.composeRuns('run')).args).toContain('CAUCE_MIGRATION_LOCK_TIMEOUT_MS=8000');
+    expectStoppedBeforeBuild(deploy({ environment: { CAUCE_MIGRATION_LOCK_TIMEOUT_MS: '5s' } }), 'CAUCE_MIGRATION_LOCK_TIMEOUT_MS');
+    expectStoppedBeforeBuild(deploy({ environment: { CAUCE_DEPLOY_MAX_XACT_SECONDS: '0' } }), 'CAUCE_DEPLOY_MAX_XACT_SECONDS');
   });
 });
 

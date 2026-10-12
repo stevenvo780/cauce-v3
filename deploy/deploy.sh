@@ -14,6 +14,8 @@ BACKUP_MONITOR="${CAUCE_DEPLOY_BACKUP_MONITOR:-$REPO/ops/scripts/host-backup-mon
 GATES_RECEIPT="${CAUCE_DEPLOY_GATES_RECEIPT:-}"
 SIN_RECIBO="${CAUCE_DEPLOY_SIN_RECIBO:-}"
 MIGRATION_BACKUP_MAX_AGE_HOURS=2
+MAX_XACT_SECONDS="${CAUCE_DEPLOY_MAX_XACT_SECONDS:-5}"
+MIGRATION_LOCK_TIMEOUT_MS="${CAUCE_MIGRATION_LOCK_TIMEOUT_MS:-}"
 COMPOSE=(docker compose --env-file "$ENV_FILE" -f "$REPO/deploy/compose.yaml" -f "$REPO/deploy/compose.postgres.yaml" --project-directory "$REPO/deploy")
 
 die() { echo "deploy: $*" >&2; exit 1; }
@@ -257,6 +259,9 @@ if ! [[ "$BACKUP_MAX_AGE_HOURS" =~ ^[0-9]+$ ]] \
    || [ "$BACKUP_MAX_AGE_HOURS" -lt 1 ]; then
   die "CAUCE_DEPLOY_BACKUP_MAX_AGE_HOURS debe ser un entero positivo"
 fi
+[[ "$MAX_XACT_SECONDS" =~ ^[1-9][0-9]{0,3}$ ]] || die "CAUCE_DEPLOY_MAX_XACT_SECONDS debe ser un entero entre 1 y 9999"
+[ -z "$MIGRATION_LOCK_TIMEOUT_MS" ] || [[ "$MIGRATION_LOCK_TIMEOUT_MS" =~ ^[1-9][0-9]{0,4}$ && "$MIGRATION_LOCK_TIMEOUT_MS" -le 60000 ]] \
+  || die "CAUCE_MIGRATION_LOCK_TIMEOUT_MS debe ser un entero de milisegundos entre 1 y 60000"
 [ -d "$(dirname "$HISTORY_FILE")" ] || die "no existe el directorio de historial $(dirname "$HISTORY_FILE")"
 [ ! -L "$HISTORY_FILE" ] || die "CAUCE_DEPLOY_HISTORY_FILE no puede ser un symlink"
 for name in CAUCE_RUNTIME_IMAGE CAUCE_CONSOLE_IMAGE; do
@@ -367,6 +372,7 @@ PROJECT_NAME="${PROJECT_NAME:-cauce-v3-prod}"
 [[ "$PROJECT_NAME" =~ ^[a-zA-Z0-9][a-zA-Z0-9_.-]*$ ]] || die "COMPOSE_PROJECT_NAME invalido"
 PG_CONTAINER="$PROJECT_NAME-postgres-1"
 GATEWAY_CONTAINER="$PROJECT_NAME-gateway-1"
+DISPATCHER_CONTAINER="$PROJECT_NAME-dispatcher-1"
 PG_USER="$(env_value POSTGRES_USER)"
 PG_DB="$(env_value POSTGRES_DB)"
 if [ -z "$PG_USER" ] || [ -z "$PG_DB" ]; then
@@ -415,6 +421,37 @@ backup_monitor_accepts() {
     REQUIRE_BLOB_VOLUME="$REQUIRE_BLOB_BACKUP" \
     BLOB_VOLUME="$BACKUP_BLOB_VOLUME" \
     "$BACKUP_MONITOR" >/dev/null
+}
+DISPATCHER_STOPPED=0
+pause_dispatcher() {
+  [ "$(docker inspect -f '{{.State.Running}}' "$DISPATCHER_CONTAINER" 2>/dev/null)" = true ] || return 0
+  DISPATCHER_STOPPED=1
+  docker stop "$DISPATCHER_CONTAINER" >/dev/null || die "no pude parar $DISPATCHER_CONTAINER antes de migrar"
+}
+resume_dispatcher() {
+  [ "$DISPATCHER_STOPPED" = 1 ] || return 0
+  DISPATCHER_STOPPED=0
+  docker start "$DISPATCHER_CONTAINER" >/dev/null \
+    || echo "deploy: AVISO: no pude reanudar $DISPATCHER_CONTAINER; arrancalo a mano (docker start $DISPATCHER_CONTAINER)" >&2
+}
+blocking_sessions() {
+  docker exec "$PG_CONTAINER" psql -XAtq -v ON_ERROR_STOP=1 -U "$PG_USER" -d "$PG_DB" -c "
+    SELECT format('pid=%s aplicacion=%s estado=%s transaccion=%ss', pid, COALESCE(NULLIF(application_name,''),'-'),
+      state, floor(extract(epoch FROM now()-xact_start))::bigint)
+    FROM pg_stat_activity
+    WHERE datname=current_database() AND backend_type='client backend' AND pid<>pg_backend_pid()
+      AND xact_start IS NOT NULL
+      AND ((state LIKE 'idle in transaction%' AND now()-state_change>interval '1 second')
+        OR now()-xact_start>interval '$MAX_XACT_SECONDS seconds')
+    ORDER BY xact_start"
+}
+MIGRATOR_RUNNING=0
+terminate_migrator() {
+  MIGRATOR_RUNNING=0
+  docker exec "$PG_CONTAINER" psql -XAtq -U "$PG_USER" -d "$PG_DB" -c "
+    SELECT count(pg_terminate_backend(pid,5000)) FROM pg_stat_activity
+    WHERE datname=current_database() AND application_name='cauce-migrator' AND pid<>pg_backend_pid()" >/dev/null \
+    || echo "deploy: AVISO: no pude terminar el backend del migrator; revisa pg_stat_activity (application_name=cauce-migrator)" >&2
 }
 
 check_blob_migration_window() {
@@ -558,7 +595,7 @@ echo "runtime: $RUNTIME_DIGEST"
 echo "console: $CONSOLE_DIGEST"
 
 CANDIDATE_ENV_FILE="$ENV_FILE.candidate-$STAMP"
-trap 'rm -f -- "$CANDIDATE_ENV_FILE"' EXIT
+trap '[ "$MIGRATOR_RUNNING" = 0 ] || terminate_migrator; resume_dispatcher; rm -f -- "$CANDIDATE_ENV_FILE"' EXIT
 cp -a "$ENV_FILE" "$CANDIDATE_ENV_FILE"
 sed -i "s|^CAUCE_RUNTIME_IMAGE=.*|CAUCE_RUNTIME_IMAGE=$RUNTIME_DIGEST|" "$CANDIDATE_ENV_FILE"
 sed -i "s|^CAUCE_CONSOLE_IMAGE=.*|CAUCE_CONSOLE_IMAGE=$CONSOLE_DIGEST|" "$CANDIDATE_ENV_FILE"
@@ -576,10 +613,21 @@ if [ "$PENDING_MIGRATIONS" -gt 0 ]; then
     || die "aparecieron $PENDING_MIGRATIONS migraciones pendientes despues de comprobar el backup; respalda y repite"
   backup_monitor_accepts \
     || die "el backup ya no tiene ${BACKUP_MAX_AGE_HOURS} h o menos al migrar; respalda y repite"
+  pause_dispatcher
+  BLOCKING_SESSIONS="$(blocking_sessions)" || die "no pude leer pg_stat_activity antes de migrar"
+  [ -z "$BLOCKING_SESSIONS" ] \
+    || die "sesiones con una transaccion abierta (idle in transaction >1 s o de mas de ${MAX_XACT_SECONDS} s) que el migrator esperaria con las tablas bloqueadas; no se migro nada. Terminalas o espera a que acaben y repite:"$'\n'"$BLOCKING_SESSIONS"
 fi
 
-"${CANDIDATE_COMPOSE[@]}" run --rm -T migrator \
-  || die "migracion fallida: PostgreSQL revirtio la transaccion y $ENV_FILE sigue con los pins anteriores; no hay pins que restaurar"
+MIGRATOR_ENV=()
+[ -z "$MIGRATION_LOCK_TIMEOUT_MS" ] || MIGRATOR_ENV=(-e "CAUCE_MIGRATION_LOCK_TIMEOUT_MS=$MIGRATION_LOCK_TIMEOUT_MS")
+MIGRATOR_RUNNING=1
+if ! "${CANDIDATE_COMPOSE[@]}" run --rm -T "${MIGRATOR_ENV[@]}" migrator; then
+  terminate_migrator
+  die "migracion fallida: PostgreSQL revirtio la transaccion y $ENV_FILE sigue con los pins anteriores; no hay pins que restaurar"
+fi
+MIGRATOR_RUNNING=0
+resume_dispatcher
 cp -a "$ENV_FILE" "$ENV_FILE.pre-deploy-$STAMP" \
   || die "no pude guardar $ENV_FILE.pre-deploy-$STAMP; la BD ya esta en $LAST_MIGRATION y $ENV_FILE sigue con los pins anteriores"
 mv -f "$CANDIDATE_ENV_FILE" "$ENV_FILE" \
