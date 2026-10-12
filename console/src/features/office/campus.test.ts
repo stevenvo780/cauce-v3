@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { alongRoute, buildCampus, capsuleRoute, footprint, routeLength, type Campus, type SiteSpec } from './campus';
 import { CORE, lotCell, sameCell } from './campus-lots';
-import { createPlanMemory, nextPhaseEnd, planCampus, type PlanAgent, type PlanGroup } from './campus-plan';
+import { createPlanMemory, nextPhaseEnd, orderByPlan, planCampus, type PlanAgent, type PlanGroup } from './campus-plan';
+import { officeRoomKey } from './office-layout';
 import { TILE } from './level';
 import { findCheapestPath } from './pathfinding';
 import { buildWorldMap, groupLevelId } from './world-map';
@@ -150,5 +151,29 @@ describe('planning the campus over time', () => {
     const renamed = planCampus(memory, [...crew, member('t/c', 'grp.a')], [{ id: 'grp.a', label: 'Equipo A', hue: 100 }], 3);
     expect(renamed).not.toBe(joined);
     expect(renamed.groups[0].label).toBe('Equipo A');
+  });
+});
+
+describe('campus following the saved floor plan', () => {
+  const rooms = ['alfa', 'beta', 'gamma'].map((id) => group(officeRoomKey('t', id)));
+  const at = (id: string, x: number, y: number) => ({ tenant_id: 't', room_id: id, x, y, width: 300, height: 260, parts: [] });
+  const lotsOf = (plan: ReturnType<typeof planCampus>) => plan.groups.map((item) => item.id);
+  const lotIndex = (plan: ReturnType<typeof planCampus>) => new Map(plan.groups.map((item) => [item.id, item.cell]));
+
+  it('gives the first lot to the room placed first, so two plans give two orders', () => {
+    const [alfa, beta, gamma] = rooms.map((item) => item.id);
+    const one = planCampus(createPlanMemory(), [], orderByPlan(rooms, [at('alfa', 0, 0), at('beta', 330, 0), at('gamma', 660, 0)]), 0);
+    const two = planCampus(createPlanMemory(), [], orderByPlan(rooms, [at('alfa', 660, 0), at('beta', 330, 0), at('gamma', 0, 0)]), 0);
+    expect(lotsOf(one)).toEqual([alfa, beta, gamma]);
+    expect(lotsOf(two)).toEqual([gamma, beta, alfa]);
+    expect(lotIndex(one).get(alfa)).toEqual(lotCell(0));
+    expect(lotIndex(two).get(gamma)).toEqual(lotCell(0));
+    expect(lotIndex(two).get(alfa)).toEqual(lotCell(2));
+  });
+
+  it('reads rows top to bottom and keeps rooms without a saved position last, in topology order', () => {
+    const ordered = orderByPlan(rooms, [at('gamma', 0, 0), at('alfa', 0, 300)]);
+    expect(ordered.map((item) => item.id)).toEqual([rooms[2].id, rooms[0].id, rooms[1].id]);
+    expect(orderByPlan(rooms, []).map((item) => item.id)).toEqual(rooms.map((item) => item.id));
   });
 });

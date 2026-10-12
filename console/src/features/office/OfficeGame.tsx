@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { ContextMenu } from '@base-ui/react/context-menu';
 import { pixelIconName } from '@cauce/protocol/agent-preferences';
+import { useApi } from '../../api/context';
+import { useResource } from '../../api/use-resource';
 import { FloatingTooltip } from '../../components/ui';
 import { AgentActionItems } from '../../components/agent-actions/AgentActionsMenu';
 import { MENU_POPUP } from '../../components/kit';
@@ -11,7 +13,7 @@ import { actorInputs } from './actor-inputs';
 import { AgentCard } from './AgentCard';
 import { AgentTip } from './AgentTip';
 import { stepZoom, type Inset } from './camera';
-import { createPlanMemory, nextPhaseEnd, planCampus, type PlanGroup } from './campus-plan';
+import { createPlanMemory, nextPhaseEnd, orderByPlan, planCampus, type PlanGroup } from './campus-plan';
 import { CampusMap } from './CampusMap';
 import { useNight } from './daylight';
 import { agentRefOf, clientPointOf, hintSeen, rememberHint, useFrameSize, useHeight, useMaximized } from './frame';
@@ -79,10 +81,14 @@ export function OfficeGame({ agents, groups, selectedId, sheetOpen, highlight, o
   const night = useNight();
 
   const ordered = useMemo(() => [...agents].sort((a, b) => a.id.localeCompare(b.id)), [agents]);
-  const memory = useRef(createPlanMemory());
+  const api = useApi();
+  const saved = useResource('office-layout', () => api.getOfficeLayout()).data;
+  // A new saved plan rebuilds the campus from scratch: the lots follow where the rooms sit.
+  const planned = useMemo(() => orderByPlan(groups, saved?.rooms ?? []), [groups, saved]);
+  const memory = useMemo(() => ({ current: createPlanMemory() }), [saved?.version]);
   const [phaseAt, setPhaseAt] = useState(0);
   const clock = Math.max(now, phaseAt) / 1000;
-  const campusPlan = useMemo(() => planCampus(memory.current, ordered, groups, clock), [ordered, groups, clock]);
+  const campusPlan = useMemo(() => planCampus(memory.current, ordered, planned, clock), [memory, ordered, planned, clock]);
   const lastMap = useRef<WorldMap | null>(null);
   const map = useMemo(() => {
     const built = buildWorldMap(campusPlan.plan, lastMap.current);
@@ -94,7 +100,7 @@ export function OfficeGame({ agents, groups, selectedId, sheetOpen, highlight, o
     if (left === null) return undefined;
     const timer = window.setTimeout(() => { setPhaseAt(Date.now()); }, left * 1000 + 80);
     return () => { window.clearTimeout(timer); };
-  }, [campusPlan]);
+  }, [campusPlan, memory]);
 
   const visitorIds = useMemo(() => ordered.filter((agent) => agent.visitor).map((agent) => agent.id), [ordered]);
   const waitOf = useSlots(visitorIds);

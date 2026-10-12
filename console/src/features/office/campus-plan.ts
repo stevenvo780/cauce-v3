@@ -1,9 +1,11 @@
 import type { LiveState } from '../live/agent-state';
 import { lotCell } from './campus-lots';
+import type { OfficeRoom } from '../../api/client/company-client';
 import { assignSlots } from './capacity';
 import { BUILD_S, DEMOLISH_S } from './render-buildings';
 import { SLEEP_SHARE } from './routine';
 import { GROUP_POLICY, SEATS_PER_POD, assignSeats, nextPods, type Seat } from './team-seats';
+import { officeRoomKey } from './office-layout';
 import { NO_TEAM, teamHue, type OfficeTeam } from './teams';
 import { groupLevelId, type GroupPlan, type WorldPlan } from './world-map';
 
@@ -54,6 +56,18 @@ function hysteresis(kept: number, need: number, slack: number): number {
 }
 
 /**
+ * Groups in the reading order of the saved floor plan (top to bottom, then left to right), so the
+ * campus follows where each room was placed. Rooms without a saved position keep their order, last.
+ */
+export function orderByPlan(groups: readonly PlanGroup[], rooms: readonly OfficeRoom[]): PlanGroup[] {
+  const at = new Map(rooms.map((room) => [officeRoomKey(room.tenant_id, room.room_id), room]));
+  return groups
+    .map((group, index) => ({ group, index, room: at.get(group.id) }))
+    .sort((a, b) => (a.room && b.room ? a.room.y - b.room.y || a.room.x - b.room.x : Number(!a.room) - Number(!b.room)) || a.index - b.index)
+    .map((entry) => entry.group);
+}
+
+/**
  * Where everything goes on the campus. Every group keeps its lot, its pods and its people keep
  * their desks across updates; a new group's house goes up, a removed one comes down before its lot
  * is freed. `now` is wall-clock seconds. While nothing in the layout changes (a poll that only
@@ -88,7 +102,7 @@ export function planCampus(memory: PlanMemory, agents: readonly PlanAgent[], dir
   for (const [id, since] of memory.born) if (now - since > BUILD_S) memory.born.delete(id);
   memory.present = new Map(live.map((group) => [group.id, group]));
 
-  memory.lots = assignSlots(memory.lots, [...liveIds, ...memory.retired.keys()]);
+  memory.lots = assignSlots(memory.lots, [...liveIds, ...memory.retired.keys()], undefined, true);
   const pods = new Map<string, number>();
   for (const group of live) pods.set(group.id, nextPods(members.get(group.id)?.length ?? 0, memory.pods.get(group.id), GROUP_POLICY));
   memory.pods = pods;

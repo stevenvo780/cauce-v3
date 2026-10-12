@@ -85,9 +85,10 @@ export function OfficeWorkspace({ campus, topology, agents, onAgent }: {
             <div className="relative z-10 mt-2 flex flex-wrap gap-2">{roomInfo?.agents.map(id => {
               const agent = agents.find(value => value.id === id);
               const cut = id.indexOf('/');
+              const reading = quotas.loading && !quotas.data && !quotas.error;
               const fatigue = quotas.error ? 'error' : agentFatigue(quotas.data?.accounts ?? [], id.slice(0, cut), id.slice(cut + 1));
               return <Button key={id} size="sm" onClick={() => { onAgent(id); }} className="grid h-auto gap-1 bg-surface p-2" title={agent?.reason}>
-                <span>{agent?.name ?? id.slice(cut + 1)}</span><FatigueIndicator state={fatigue} />
+                <span>{agent?.name ?? id.slice(cut + 1)}</span>{reading ? <span role="status" className="text-xs text-muted">Leyendo cuotas…</span> : <FatigueIndicator state={fatigue} />}
               </Button>;
             })}</div>
           </section>;

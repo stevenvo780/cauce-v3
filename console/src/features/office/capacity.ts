@@ -2,10 +2,10 @@
  * Keeps each id's slot while it stays present and below `limit`; newcomers take the lowest free one.
  * Without a limit slots grow past the end instead of failing.
  */
-export function assignSlots(previous: ReadonlyMap<string, number>, ids: readonly string[], limit?: number): Map<string, number> {
+export function assignSlots(previous: ReadonlyMap<string, number>, ids: readonly string[], limit?: number, keepOrder = false): Map<string, number> {
   const next = new Map<string, number>();
   const used = new Set<number>();
-  const present = [...ids].sort();
+  const present = keepOrder ? [...ids] : [...ids].sort();
   for (const id of present) {
     const slot = previous.get(id);
     if (slot !== undefined && !used.has(slot) && (limit === undefined || slot < limit)) {
