@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+# cauce:requiere docker
 import contextlib
 import datetime
 import importlib.util
@@ -7,6 +8,7 @@ import json
 import pathlib
 import select
 import subprocess
+import sys
 import tempfile
 import time
 import uuid
@@ -165,3 +167,7 @@ def test_invalid_company_stops_before_the_database_transport(monkeypatch):
     monkeypatch.setattr(guard, "PG", ["this-command-must-never-run"])
     with pytest.raises(ValueError, match="CAUCE_GUARD_COMPANY_ID inválido"):
         guard.sql(guard.CONSULTA)
+
+
+if __name__ == "__main__":
+    sys.exit(pytest.main(["-q", __file__]))
