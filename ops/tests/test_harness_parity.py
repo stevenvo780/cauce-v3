@@ -8,9 +8,9 @@ DESCRIPTORS = ROOT / 'packages/adapter-sdk/descriptors'
 # Providers that are not harnesses: they may appear in quota enums without a descriptor.
 NON_HARNESS_PROVIDERS = {'gemini', 'minimax', 'feihoa'}
 # Descriptor harnesses the gateway document catalog does not classify today.
-GATEWAY_OMITTED = {'opencode', 'fake'}
+GATEWAY_OMITTED = {'opencode', 'fake', 'fake2'}
 # Descriptor harnesses the console catalog has not picked up yet; shrink as it aligns.
-CONSOLE_PENDING = {'grok', 'muse', 'opencode', 'fake'}
+CONSOLE_PENDING = {'grok', 'muse', 'opencode', 'fake', 'fake2'}
 
 
 def text(path):
@@ -61,7 +61,7 @@ class HarnessParityTest(unittest.TestCase):
         for name in sorted(bins - names):
             checks.append(('packages/adapter-sdk/package.json', f"remove the cauce-adapter-{name} bin or add its descriptor"))
         session = text('packages/adapter-sdk/src/sdk/durable-store/session-file.ts')
-        match = re.search(r'\(\?:([a-z|]+)\):', session)
+        match = re.search(r'\(\?:([a-z0-9|]+)\):', session)
         self.assertIsNotNone(match, 'session-file.ts harness alternation not found')
         alternation = set(match.group(1).split('|'))
         for name in sorted(names - alternation):

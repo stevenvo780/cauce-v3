@@ -79,7 +79,8 @@ export async function runFakeCli(dialect, readPrompt = readStdinStream) {
       break;
     }
     case "fake":
-      process.stdout.write(`${JSON.stringify({ output, session_id: "fake-native" })}\n`);
+    case "fake2":
+      process.stdout.write(`${JSON.stringify({ output, session_id: `${dialect}-native` })}\n`);
       break;
     default:
       throw new Error("unknown fake dialect");

@@ -155,9 +155,45 @@ Se probó con PostgreSQL runtime, HTTP TCP, Ed25519, Python y filesystem reales:
 | `update` | `provider-update` |
 | `quota` | `quota-collector` |
 
-El catálogo reconoce `claude`, `codex`, `hermes`, `opencode`, `openclaw`, `grok`, `muse` y `fake`. Las recetas Python de instalación/login/cuotas con comandos cerrados están implementadas para Claude, Codex y Grok; otras operaciones sin implementación permanecen indisponibles. Reconocer una identidad de harness no prueba que todas sus operaciones estén soportadas.
+El catálogo reconoce `claude`, `codex`, `hermes`, `opencode`, `openclaw`, `grok`, `muse`, `fake` y `fake2`. Los datos cerrados de operación (argv de login y de cuota, paquete de actualización y módulo de flota) viven en la sección `provider` del propio descriptor y los validan igual el parser TypeScript y el Python; las listas de runtime (operaciones, cuotas, plantillas, empaquetado y smoke) se derivan del directorio de descriptores del bundle. Reconocer una identidad de harness no prueba que todas sus operaciones estén soportadas: cada descriptor declara solo las operaciones implementadas y las capacidades se calculan por acción con su motivo.
 
-Para añadir una integración hay que registrar su identidad/definición en el SDK, empaquetar y validar el descriptor, implementar las recetas necesarias en el helper cerrado y declarar capacidades frescas del host. Las pruebas deben incluir descriptor inválido, operación ausente, bundle/hash/usuario/rutas y ejecución física con el CLI correspondiente. El mecanismo actual reduce la definición repetida mediante recetas, pero no permite añadir cualquier proveedor sólo dejando un JSON: enums, driver y comandos soportados siguen requiriendo código. No se acredita extensibilidad completa sólo por las ocho fichas del catálogo.
+### Runbook: dar de alta un harness
+
+1. Crear `packages/adapter-sdk/descriptors/<harness>.json` (esquema 1) declarando solo las operaciones implementadas y, si aplica, la sección `provider` con argv absoluto bajo `/usr/local/bin`, paquete npm y `fleet_module` exactamente `fleet_provider_<harness>`.
+2. Correr el test de paridad y seguir exactamente la lista que imprime (hoy, para un harness nuevo):
+
+   ```text
+   packages/adapter-sdk/src/sdk/types.ts: add '<harness>' to the HarnessId union
+   packages/adapter-sdk/src/harnesses/index.ts: add the '<harness>' harness definition
+   packages/adapter-sdk/src/harnesses/<harness>.ts: create the harness definition module
+   packages/adapter-sdk/package.json: add the cauce-adapter-<harness> bin
+   packages/adapter-sdk/src/bin/<harness>.ts: create the adapter bin entrypoint
+   packages/adapter-sdk/src/sdk/durable-store/session-file.ts: add '<harness>' to the session key alternation
+   services/gateway/src/console/agent-documents/catalog.ts: add '<harness>' to HarnessKind or to GATEWAY_OMITTED in ops/tests/test_harness_parity.py
+   console/src/features/config/arneses.ts: add '<harness>' to ARNESES_REALES (or to CONSOLE_PENDING in ops/tests/test_harness_parity.py)
+   ```
+
+   Si el harness declara `quota`, la paridad exige además el enum de protocolo, el enum del gateway y una migración nueva para el CHECK SQL (nunca editar la 057). Si declara `fleet_module`, el módulo `ops/cli/fleet_provider_<harness>.py` debe existir y exponer `environment`, `validate_binding` y `authenticated`.
+3. Crear el manifiesto `packages/adapter-sdk/manifests/<harness>.json` coherente con la definición y el fixture de CLI falso `packages/adapter-sdk/test/fixtures/fake-<harness>.mjs` si los tests parametrizados lo ejercitan.
+4. Empaquetar: `pnpm --filter @cauce/adapter-sdk build` (el descriptor y el bin llegan solos a `dist/`) y construir el bundle con `ops/scripts/build-adapter-release.sh <destino>` en un árbol limpio; el digest del bundle es el que la política del host aprueba por harness.
+5. Ejecutar en verde: paridad, corpus de descriptores (pytest y node), los escenarios parametrizados del SDK para el harness nuevo y el roundtrip de adaptadores si el harness participa en él.
+
+El alta de `fake2` siguió este runbook: descriptor nuevo más las ediciones de paridad, sin tocar cuotas, plantillas ni runtime, que lo derivan del directorio. `fake` y `fake2` son harnesses de prueba: no se ofrecen en la UI ni en las plantillas de producción.
+
+### Mapa proveedor ↔ harness
+
+| Harness | Proveedor (binding) | Módulo de flota | Cuota en «Mis cuotas» |
+|---|---|---|---|
+| `claude` | `claude` | genérico (`CLAUDE_CONFIG_DIR`) | sí |
+| `codex` | `codex` | genérico (`CODEX_HOME`) | sí |
+| `grok` | `grok` | `fleet_provider_grok` | sí |
+| `muse` | `muse` | `fleet_provider_muse` | no |
+| `openclaw` | `codex` u `claude` (la cuenta que paga decide; Anthropic sin medir) | `fleet_provider_openclaw` | no |
+| `hermes` | `hermes` | genérico | no |
+| `opencode` | `opencode` | genérico | no |
+| `fake`, `fake2` | ninguno (prueba) | ninguno | no |
+
+Proveedores que no son harness y solo existen para cuotas: `gemini`, `minimax`, `feihoa`.
 
 ## Diagnóstico y fronteras de aceptación
 

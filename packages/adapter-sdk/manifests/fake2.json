@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "harness": "fake2",
+  "adapter_executable": "cauce-adapter-fake2",
+  "harness_executable": "cauce-fake-harness",
+  "invocation": {
+    "prompt_transport": "stdin",
+    "output_dialect": "cauce-structured-json",
+    "session_mapping": "generated --session id",
+    "session_scope": "authenticated tenant+actor+origin channel/session/conversation"
+  },
+  "capabilities": {
+    "mcp_emit": true,
+    "protocol_version": "3.0",
+    "harness": "fake2",
+    "structured_output": true,
+    "stdin_prompt": true,
+    "durable_inbox": true,
+    "durable_outbox": true,
+    "idempotent_delivery": true,
+    "heartbeat": true,
+    "cancellation": "process_group",
+    "fencing_epoch": true,
+    "origin_relay": true,
+    "attempt_scoped_delivery": true,
+    "event_id_correlation": true,
+    "claim_token_correlation": true,
+    "authenticated_session_scope": true,
+    "routing_targets_v1": true,
+    "renewable_delivery_claims_v1": true,
+    "delegation_feedback_v1": true,
+    "agent_identity_v1": true,
+    "company_context_v1": true,
+    "agent_profile_v1": true,
+    "agent_profile_adoption_v1": true,
+    "client_mailbox_v1": true,
+    "human_message_client_provenance_v1": true,
+    "human_message_client_delegation_v1": true,
+    "attachments_v1": true,
+    "persistent_sessions": true,
+    "versioned_context_v1": true
+  }
+}

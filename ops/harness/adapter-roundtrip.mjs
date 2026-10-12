@@ -21,8 +21,8 @@ const roundTripAliases = {
 };
 const adapterIdentities = [
   { tenant: 'Steven', room: 'grp.steven', alias: roundTripAliases.opencode, harness: 'opencode' },
-  ...roundTripAliases.reviewers.map((alias) => (
-    { tenant: 'Steven', room: 'grp.steven', alias, harness: 'fake' }
+  ...roundTripAliases.reviewers.map((alias, index) => (
+    { tenant: 'Steven', room: 'grp.steven', alias, harness: index === 0 ? 'fake' : 'fake2' }
   )),
   { tenant: 'Isa', room: 'grp.isa', alias: roundTripAliases.isolationSource, harness: 'fake' },
   { tenant: 'Jhon', room: 'grp.jhon', alias: roundTripAliases.isolationTarget, harness: 'fake' },
@@ -254,6 +254,7 @@ export async function runAdapterRoundTrip({ baseUrl, wsBaseUrl, timeoutMs = 30_0
   const entrypoints = {
     opencode: path.join(repositoryRoot, 'packages', 'adapter-sdk', 'dist', 'src', 'bin', 'opencode.js'),
     fake: path.join(repositoryRoot, 'packages', 'adapter-sdk', 'dist', 'src', 'bin', 'fake.js'),
+    fake2: path.join(repositoryRoot, 'packages', 'adapter-sdk', 'dist', 'src', 'bin', 'fake2.js'),
   };
   const adapters = [];
   let outcome;
@@ -262,6 +263,7 @@ export async function runAdapterRoundTrip({ baseUrl, wsBaseUrl, timeoutMs = 30_0
     await Promise.all([
       access(entrypoints.opencode, fsConstants.R_OK),
       access(entrypoints.fake, fsConstants.R_OK),
+      access(entrypoints.fake2, fsConstants.R_OK),
       access(fixture, fsConstants.X_OK),
     ]);
     await Promise.all(adapterIdentities.map(async ({ alias }) => {

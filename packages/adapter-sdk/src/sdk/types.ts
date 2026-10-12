@@ -19,7 +19,7 @@ import type {
 import { PROTOCOL_VERSION } from '@cauce/protocol';
 
 export { PROTOCOL_VERSION };
-export type HarnessId = 'hermes' | 'opencode' | 'claude' | 'codex' | 'openclaw' | 'grok' | 'muse' | 'fake';
+export type HarnessId = 'hermes' | 'opencode' | 'claude' | 'codex' | 'openclaw' | 'grok' | 'muse' | 'fake' | 'fake2';
 
 /** Runtime inventory; only traits with runtime or operational consumers reach the V3 hello. */
 export interface AdapterCapabilities {
