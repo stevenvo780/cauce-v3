@@ -10,7 +10,7 @@ refreshToken vacio y nadie lo vio.
 Que detecta, en orden de gravedad:
   MUERTO     refreshToken ausente o vacio  -> no puede renovar, muere cuando venza el access
   URGENTE    vence en menos de 2 horas
-  COMPARTIDA dos o mas contenedores con la MISMA huella -> se van a pisar
+  COMPARTIDA dos o mas contenedores con la MISMA huella -> nota informativa, no es un fallo
   OK
 
 La huella es sha256(refreshToken)[:10]: identifica la cuenta sin exponer el secreto.
@@ -126,7 +126,7 @@ for huella, etiqueta, contenedor, estado, detalle in filas:
 
 compartidas = shared_fingerprints(credential_locations)
 if compartidas:
-    print("\n== COMPARTIDAS (se van a pisar al rotar) ==")
+    print("\n== NOTA: cuentas compartidas (valido; si comparten el mismo refresh token, rotar uno puede invalidar al otro) ==")
     for huella, quienes in compartidas.items():
         print(f"  {huella} -> {', '.join(quienes)}")
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import ast
 import contextlib
+import datetime
 import io
 import json
 import math
@@ -172,6 +173,54 @@ class TestConsumerWiring(unittest.TestCase):
             self.assertEqual(call.args[0], fixture)
             self.assertIn("now_epoch", call.kwargs)
         self.assertIn("MUERTO", output.getvalue())
+
+    def test_vps_guard_reports_shared_fingerprint_as_a_note_not_a_failure(self):
+        fixture = fleet_record("shared-fingerprint", (time.time() + 200 * 3_600) * 1_000)
+        remote = json.dumps({"host": "kratos", "ts": datetime.datetime.now(datetime.UTC).isoformat(), "filas": []})
+        output = io.StringIO()
+        real_open = open
+
+        def synthetic_open(path, *args, **kwargs):
+            if str(path) == "/var/lib/cauce-v3/cred-guard-kratos.json":
+                return io.StringIO(remote)
+            return real_open(path, *args, **kwargs)
+
+        with (
+            mock.patch("subprocess.run", return_value=self.result(json.dumps(fixture))),
+            mock.patch("builtins.open", side_effect=synthetic_open),
+            contextlib.redirect_stdout(output),
+            self.assertRaises(SystemExit) as exited,
+        ):
+            runpy.run_path(str(GUARDS / "cred-guard.py"), run_name="credential_test_vps_shared")
+
+        self.assertEqual(exited.exception.code, 0)
+        self.assertIn("NOTA: cuentas compartidas", output.getvalue())
+        self.assertIn("problemas=0", output.getvalue())
+
+    def test_doctor_reports_shared_fingerprint_once_and_never_as_a_problem(self):
+        fixture = doctor_record("shared-fingerprint", (time.time() + 200 * 3_600) * 1_000)
+        namespace = runpy.run_path(str(GUARDS / "cauce-v3-medico-monitor"), run_name="credential_test_doctor_shared")
+        consumer = namespace["sonda_credenciales"]
+        consumer.__globals__["sh"] = lambda *_args, **_kwargs: (0, json.dumps(fixture), "")
+        problems, shared = consumer({
+            "alpha": {"contenedor": "container-one", "host": "kratos"},
+            "beta": {"contenedor": "container-two", "host": "kratos"},
+        })
+        self.assertEqual(problems, [])
+        self.assertEqual(shared, {"shared-fingerprint": ["alpha", "beta"]})
+        source = (GUARDS / "cauce-v3-medico-monitor").read_text(encoding="utf-8")
+        loop = source[source.index("for h, quienes in sorted(compartidas.items())"):source.index("# --- 5) AI account")]
+        self.assertIn('apuntes.append({"tipo": "credencial_compartida"', loop)
+        self.assertNotIn("escalar", loop)
+
+    def test_doctor_still_escalates_a_credential_without_refresh_token(self):
+        fixture = doctor_record(None, (time.time() - 3_600) * 1_000)
+        namespace = runpy.run_path(str(GUARDS / "cauce-v3-medico-monitor"), run_name="credential_test_doctor_dead")
+        consumer = namespace["sonda_credenciales"]
+        consumer.__globals__["sh"] = lambda *_args, **_kwargs: (0, json.dumps(fixture), "")
+        problems, shared = consumer({"alpha": {"contenedor": "container-one", "host": "kratos"}})
+        self.assertEqual(len(problems), 1)
+        self.assertEqual(shared, {})
 
     def test_kratos_guard_classifies_the_complete_record(self):
         fixture = fleet_record(None, (time.time() + 200 * 3_600) * 1_000)

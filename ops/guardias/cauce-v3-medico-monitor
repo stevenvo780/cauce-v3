@@ -775,11 +775,12 @@ def main():
     for p in sin_rt:
         hallazgos.append({"modo": 4, "alias": p["alias"], "detalle": p["detalle"]})
         escalar.append({"tipo": "credencial", "alias": p["alias"], "detalle": p["detalle"]})
+    # Sharing an account across agents is valid (owner's decision): informational note only.
+    # Two containers holding the SAME refresh token can still invalidate each other on rotation.
     for h, quienes in sorted(compartidas.items()):
-        d = f"credencial COMPARTIDA (huella {h}) entre: {', '.join(sorted(set(quienes)))}; al rotar se pisan"
-        hallazgos.append({"modo": 4, "alias": ",".join(sorted(set(quienes))), "detalle": d})
-        escalar.append({"tipo": "credencial", "alias": ",".join(sorted(set(quienes))),
-                        "detalle": d})
+        apuntes.append({"tipo": "credencial_compartida", "alias": ",".join(sorted(set(quienes))),
+                        "detalle": f"cuenta compartida (huella {h}) entre: {', '.join(sorted(set(quienes)))}; "
+                                   "valido, pero si comparten el mismo refresh token la rotacion de uno puede invalidar al otro"})
 
     # --- 5) AI account about to run out (anticipate, don't learn after) ---
     # DETECT and PREPARE; do not rotate or log in solo. Automatic rotation is reasonable,
