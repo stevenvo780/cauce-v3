@@ -85,7 +85,7 @@ export function OfficeGame({ agents, groups, selectedId, sheetOpen, highlight, o
   const saved = useResource('office-layout', () => api.getOfficeLayout()).data;
   // A new saved plan rebuilds the campus from scratch: the lots follow where the rooms sit.
   const planned = useMemo(() => orderByPlan(groups, saved?.rooms ?? []), [groups, saved]);
-  const memory = useMemo(() => ({ current: createPlanMemory() }), [saved?.version]);
+  const memory = useMemo(() => ({ version: saved?.version, current: createPlanMemory() }), [saved?.version]);
   const [phaseAt, setPhaseAt] = useState(0);
   const clock = Math.max(now, phaseAt) / 1000;
   const campusPlan = useMemo(() => planCampus(memory.current, ordered, planned, clock), [memory, ordered, planned, clock]);
