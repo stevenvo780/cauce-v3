@@ -6,7 +6,7 @@ import type { EventPublisher } from "./contracts.js";
 const STATUS_QUERIES = new Set([
   "como vas", "como vamos", "como va", "como van", "como va el trabajo",
   "como va todo", "que avance hay", "que avances hay", "estado del trabajo",
-  "cual es el estado del trabajo", "en que estado esta el trabajo", "/estado",
+  "cual es el estado del trabajo", "en que estado esta el trabajo", "/estado", "cuanto falta",
 ]);
 
 export function isConversationStatusRequest(
@@ -35,8 +35,9 @@ export function isConversationStatusRequest(
   const text = delivery.body.text;
   if (typeof text !== "string" || text.length > 128) return false;
   const normalized = text.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase()
-    .trim().replace(/^[¿¡!?.,\s]+|[¿¡!?.,\s]+$/gu, "").replace(/\s+/gu, " ");
-  return STATUS_QUERIES.has(normalized);
+    .trim().replace(/^[¿¡!?.,;:\s]+|[¿¡!?.,;:\s]+$/gu, "").replace(/\s+/gu, " ");
+  return normalized.split(/(?:[¿¡!?.,;:]+\s*(?:y\b\s*)?)+|\s+y\s+/u)
+    .every((clause) => STATUS_QUERIES.has(clause.trim()));
 }
 
 export function conversationStatusOutput(delivery: Delivery): StructuredOutput {
@@ -60,6 +61,7 @@ export function conversationStatusOutput(delivery: Delivery): StructuredOutput {
       + (state.has_more ? "El registro es parcial. " : "")
       + "Los turnos cerrados no acreditan que la app esté integrada. No tengo un resumen propio verificado.";
   }
+  reply += " No tengo una estimación de tiempo verificada.";
   return { reply, messages: [], notify: [], status: "done", retryable: false, artifacts: [] };
 }
 
