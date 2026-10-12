@@ -46,6 +46,13 @@ Lecciones de la ejecución anterior convertidas en reglas:
 
 Todo lo demás lo resuelve la especificación o es una decisión técnica delegada por la §11.
 
+**Respuestas del dueño (12-oct-2026):**
+- [x] GitGuardian: verificar, sustituir por placeholders evidentes; el dueño marca los falsos positivos en el panel y rota si alguno es real.
+- [x] Credenciales de la migración: **copiar en privado** las sesiones actuales a server2 (SSH directo, 0600, sin copias, Git ni logs); cada agente conserva su cuenta.
+- [x] Login real en «Mis cuotas»: con las cuentas de `cuota-claude-1`, `cuota-codex-b2b` y `cuota-grok-1`; avisar al dueño cuando el entorno esté listo para aprobar el código.
+- [x] Praxis: **Claude crea el usuario owner de León** (el dueño le entrega la contraseña fuera de banda); la V3 del hospital sigue en paralelo hasta que León valide. Pendiente: confirmar su correo (leerlo de la V3 del hospital en solo lectura o pedirlo).
+- [x] Hegel: valor por defecto (preguntarle por Cauce sus repos y clonarlos; no copiar `/workspace`).
+
 1. **GitGuardian (PR #151, 6 secretos).** Preparo la revisión local con los candidatos; los vistos son URLs `postgres://` con contraseña de fixture en tests (`ops/tests/cauce-plataforma-cli.test.mjs`, `provision-db-roles.test.mjs`, `cauce-plataforma-contenedor.test.mjs`, `ops/scripts/rehearse-v41-clone.sh`, `services/decisiones/test/catalog-scope.test.ts`). ¿Los marcas como falsos positivos en el panel tras sustituirlos por placeholders, o hay alguno real que rotar?
 2. **Credenciales en la migración.** ¿Autorizas copiar en privado las sesiones de proveedor actuales de Gaia, Hades, Argos y Hegel a server2 (SSH directo, 0600, sin pasar por copias, Git ni logs)? Alternativa: login por dispositivo de los titulares en la ventana del traslado (Steven para Hades y Argos; Miguel para Gaia y Hegel). Por defecto, cada agente conserva su cuenta actual.
 3. **Login real de proveedor desde la web.** Para cerrar el criterio 4 hace falta que apruebes en vivo (~5 min) un login OAuth/device-code en «Mis cuotas». ¿Qué cuentas (propuesta: las de `cuota-claude-1`, `cuota-codex-b2b` y `cuota-grok-1`) y en qué franja?
