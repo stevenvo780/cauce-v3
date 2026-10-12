@@ -72,7 +72,7 @@ function BackupPanel({ target, allowed }: { target: SpaceBackupTarget; allowed: 
       const link = document.createElement('a'); link.href = api.spaceBackupDownloadUrl(ready);
       link.download = `space-${target.alias.replace(/[^A-Za-z0-9_-]/gu, '_').slice(0, 64)}-${ready.id}.zip`;
       link.hidden = true; document.body.append(link); link.click(); link.remove();
-      setError(''); setNotice('Descarga iniciada en tu navegador. Compara el SHA-256 del archivo con el de este recibo.');
+      setError(''); setNotice('Descarga iniciada en el navegador: si no aparece, la copia pudo vencer o no tienes permiso; vuelve a generarla.');
     } catch { setError('No se pudo preparar la descarga. Relee el estado del backup antes de reintentar.'); }
   };
   const refresh = () => { if (backup) void perform('reading', signal => api.getSpaceBackup(target, backup.id, signal)); };
@@ -83,14 +83,16 @@ function BackupPanel({ target, allowed }: { target: SpaceBackupTarget; allowed: 
   }, [api, backup, enabled, busy, perform, target]);
   return <section aria-label="Backup del espacio" className="my-4 grid gap-3 rounded-xl border border-line bg-surface p-4">
     <div><h3 className="m-0 text-base font-semibold">Backup del espacio</h3>
-      <p className="m-0 mt-1 text-sm text-muted">Guarda contexto, directivas, proyectos, configuración y datos del espacio. El archivo excluye autenticación, credenciales, logs y temporales.</p></div>
+      <p className="m-0 mt-1 text-sm text-muted">Guarda contexto, directivas, proyectos, configuración y datos del espacio. El archivo excluye autenticación, credenciales, logs y temporales.</p>
+      <p className="m-0 mt-1 text-sm text-muted">Los proyectos se copian sin <code>.git</code>: los commits sin publicar no viajan. Los archivos <code>.env</code> y de credenciales se omiten.</p></div>
     {!enabled ? <Notice tone="warn">Hace falta autoridad vigente para controlar este espacio y descargar su backup.</Notice> : null}
     {error ? <Notice tone="danger" role="alert">{error}</Notice> : null}
     {notice ? <Notice tone="ok" role="status">{notice}</Notice> : null}
     {backup ? <div className="grid gap-1"><p className="m-0 text-sm" role="status">{STATUS[backup.status]}</p>
       {backup.error ? <Notice tone="danger" role="alert">{ERRORS[backup.error]}</Notice> : null}
-      {backup.status === 'ready' ? <p className="m-0 text-xs text-muted">{((backup.bytes ?? 0) / 1024 / 1024).toFixed(2)} MiB · ZIP descargado por el navegador sin cargarlo en memoria.</p> : null}
-      {backup.status === 'ready' && backup.sha256 ? <p className="m-0 break-all text-xs text-muted">SHA-256: <code>{backup.sha256}</code></p> : null}</div> : null}
+      {backup.status === 'ready' ? <p className="m-0 text-xs text-muted">{((backup.bytes ?? 0) / 1024 / 1024).toFixed(2)} MiB · ZIP listo para descargar; el navegador lo guarda sin cargarlo en memoria.</p> : null}
+      {backup.status === 'ready' && backup.sha256 ? <p className="m-0 break-all text-xs text-muted">SHA-256: <code>{backup.sha256}</code></p> : null}
+      {backup.status === 'ready' && backup.sha256 ? <p className="m-0 text-xs text-muted">Para comparar el SHA-256, ejecuta <code>sha256sum archivo.zip</code> sobre el archivo descargado y verifica que coincida con el valor de arriba.</p> : null}</div> : null}
     <div className="flex flex-wrap gap-2">
       <Button disabled={!enabled || !!busy || backup?.status === 'pending' || backup?.status === 'running'} onClick={() => {
         if (backup) idempotency.current = randomUuid(); setBackup(undefined);
