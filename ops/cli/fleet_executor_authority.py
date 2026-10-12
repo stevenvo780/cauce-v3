@@ -124,21 +124,35 @@ def authority_ready(policy: dict) -> bool:
         if 'identity_directory' in configuration:
             return signed_call(configuration, {'action': 'ready'}) == {'ready': True, 'host_id': policy['host_id']}
         before = socket_identity(configuration)
-        connection = http.client.HTTPConnection('localhost', timeout=3)
-        endpoint = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        try:
-            endpoint.settimeout(3)
-            endpoint.connect(configuration['socket_path'])
-            _, uid, _ = struct.unpack('3i', endpoint.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
-            if uid != configuration['owner_uid'] or before != socket_identity(configuration):
-                return False
-            connection.sock = endpoint
-            connection.request('POST', '/authority-ready', body='{}', headers={'Content-Type': 'application/json'})
-            response = connection.getresponse()
-            return response.status == 200 and json.loads(response.read(1025)) == {'ready': True, 'host_id': policy['host_id']}
-        finally:
-            connection.close()
-            endpoint.close()
+
+        def probe(route):
+            connection = http.client.HTTPConnection('localhost', timeout=3)
+            endpoint = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            try:
+                endpoint.settimeout(3)
+                endpoint.connect(configuration['socket_path'])
+                _, uid, _ = struct.unpack('3i', endpoint.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
+                if uid != configuration['owner_uid'] or before != socket_identity(configuration):
+                    return None, None
+                connection.sock = endpoint
+                connection.request('POST', route, body='{}', headers={'Content-Type': 'application/json'})
+                response = connection.getresponse()
+                return response.status, response.read(1025)
+            finally:
+                connection.close()
+                endpoint.close()
+
+        status, body = probe('/authority-ready')
+        if status == 200:
+            return json.loads(body) == {'ready': True, 'host_id': policy['host_id']}
+        if status != 404:
+            return False
+        # Legacy controllers expose only POST /authority: a 409 INVALID_REQUEST
+        # for an empty body proves the real authority protocol answers on the
+        # identity-verified socket, without materializing any credential.
+        status, body = probe('/authority')
+        return status == 409 and json.loads(body) == {'error': 'INVALID_REQUEST'} \
+            and before == socket_identity(configuration)
     except (SafeFailure, OSError, ValueError, KeyError, http.client.HTTPException):
         return False
 

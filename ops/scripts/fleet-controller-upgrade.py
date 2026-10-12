@@ -106,6 +106,10 @@ def ops_file_set(old_ops, source_ops):
         if not (source_ops / entry).is_file():
             raise Abort('the release ops lacks the entrypoint ' + entry)
         added |= set(python_closure(source_ops, entry)) - wanted
+    # Fleet provider drivers are selected dynamically (import_module of the
+    # module named by each harness descriptor), so static closure misses them.
+    for provider in sorted((source_ops / 'cli').glob('fleet_provider_*.py')):
+        added |= set(python_closure(source_ops, str(provider.relative_to(source_ops)))) - wanted
     present = {name for name in wanted if (source_ops / name).is_file()}
     return sorted(present | added), sorted(added), sorted(wanted - present)
 

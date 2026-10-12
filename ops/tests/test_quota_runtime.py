@@ -125,6 +125,22 @@ class QuotaRuntimeTest(unittest.TestCase):
         runtime._allowed_for_directories.cache_clear()
         self.assertIn('fake2', runtime.allowed_providers(self.policy))
 
+    def test_capadd_accepts_prefixed_and_unprefixed_docker_formats(self):
+        mount = lambda destination, **extra: {'Destination': destination, **extra}
+        for cap_add in (list(runtime.CAPABILITIES), ['CAP_' + name for name in runtime.CAPABILITIES]):
+            observed = {**copy.deepcopy(self.observed),
+                'Config': {'User': '1000:1000', 'Labels': {
+                    'cauce.quota.environment': self.environment['id'], 'cauce.quota.company': 'fixture-company',
+                    'cauce.quota.host': 'fixture-host', 'cauce.quota.owner': 'fixture-user'}},
+                'HostConfig': {'ReadonlyRootfs': True, 'Privileged': False, 'NetworkMode': 'fixture-network',
+                    'Memory': 512 * 1024 * 1024, 'PidsLimit': 128, 'CapDrop': ['ALL'], 'CapAdd': cap_add,
+                    'SecurityOpt': ['no-new-privileges']},
+                'Mounts': [mount('/home/node', Type='volume', Name=self.environment['container_name'] + '-profile', RW=True),
+                           mount('/cauce/executor', Type='bind', Source=str(runtime.EXECUTOR_SOURCE), RW=False)]}
+            volume = [{'Labels': observed['Config']['Labels']}]
+            with self.subTest(cap_add=cap_add[0]), patch.object(runtime, 'docker', return_value=json.dumps(volume)):
+                runtime.validate(self.policy, self.environment, observed)
+
     def test_configuration_is_syntactic_and_allowance_is_enforced_later(self):
         policy = {**self.policy, 'bundles': {'codex': {'directory': '/nonexistent-bundle'}},
                   'quota_environments': {**self.policy['quota_environments'], 'providers': ['codex', 'gemini']}}
@@ -169,6 +185,16 @@ class QuotaRuntimeTest(unittest.TestCase):
                 patch.object(runtime, 'query_observation', return_value=verified):
             self.assertEqual(runtime.verify_authentication(self.policy,self.document),
                              {'authenticated_verified': True, 'account_identity': 'remote-subscription'})
+        grok_document = copy.deepcopy(self.document)
+        grok_document['environment']['provider'] = 'grok'
+        grok_policy = copy.deepcopy(self.policy)
+        grok_policy['quota_environments']['providers'] = ['grok']
+        grok_policy['bundles'] = {'grok': dict(self.policy['bundles']['codex'])}
+        grok_report = {'ok': True, 'account_id': 'grok:' + 'b' * 64}
+        with patch.object(runtime, 'inspect_container', return_value=self.observed), patch.object(runtime, 'validate'), \
+                patch.object(runtime, 'query_observation', return_value=grok_report):
+            self.assertEqual(runtime.verify_authentication(grok_policy, grok_document),
+                             {'authenticated_verified': True, 'account_identity': grok_report['account_id']})
         for report in [{'error': 'HTTP 429', 'extra': {'account_id': 'remote-subscription'}},
                        {'ok': True, 'email': 'local-only@fixture.invalid'},
                        {'fuente': 'wham-http', 'error': None, 'extra': {}}]:

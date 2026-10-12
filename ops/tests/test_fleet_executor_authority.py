@@ -94,12 +94,29 @@ class CentralAuthorityAdapterTest(unittest.TestCase):
         self.manifest = self.root / 'manifest.yaml'
         self.manifest.write_text('metadata:\n  name: physical-a\nspec:\n  tenant: Equipo_42\n  alias: wire_a\n  bootstrap: true\n  admission: false\n')
         self.requests, self.mutate, self.drop, self.denied = [], None, False, False
+        self.legacy_socket = False
         fixture = self
 
         class Handler(http.server.BaseHTTPRequestHandler):
             def do_POST(self):
                 body = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
                 fixture.requests.append(copy.deepcopy(body))
+                if fixture.legacy_socket and self.path == '/authority-ready':
+                    encoded = b'{"error":"NOT_FOUND"}'
+                    self.send_response(404)
+                    self.send_header('Content-Type', 'application/json')
+                    self.send_header('Content-Length', str(len(encoded)))
+                    self.end_headers()
+                    self.wfile.write(encoded)
+                    return
+                if fixture.legacy_socket and self.path == '/authority' and body == {}:
+                    encoded = b'{"error":"INVALID_REQUEST"}'
+                    self.send_response(409)
+                    self.send_header('Content-Type', 'application/json')
+                    self.send_header('Content-Length', str(len(encoded)))
+                    self.end_headers()
+                    self.wfile.write(encoded)
+                    return
                 try:
                     if self.path == '/authority-ready' and body == {}:
                         fixture.issuer.readiness(fixture.central)
@@ -152,6 +169,14 @@ class CentralAuthorityAdapterTest(unittest.TestCase):
         self.assertFalse(adapter.authority_ready(self.policy))
         self.assertEqual(list(pathlib.Path(self.central['state_root']).iterdir()), [])
         self.assertEqual(self.requests, [{}, {}])
+
+    def test_legacy_socket_without_authority_ready_is_proved_by_identity_and_protocol(self):
+        self.legacy_socket = True
+        self.assertTrue(adapter.authority_ready(self.policy))
+        self.assertEqual(list(pathlib.Path(self.central['state_root']).iterdir()), [])
+        self.assertEqual(self.requests, [{}, {}])
+        self.policy['authority']['owner_uid'] = os.geteuid() + 1
+        self.assertFalse(adapter.authority_ready(self.policy))
 
     def test_real_certificate_is_verified_and_preserved_without_remote_private_signer(self):
         proof = self.prepare()

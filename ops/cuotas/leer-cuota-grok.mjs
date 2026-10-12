@@ -6,7 +6,7 @@
 // Refresh only with --refresh-own-session, which the quota runtime passes in own-session
 // environments; shared sessions are never refreshed while measuring quota.
 import { readFileSync, existsSync, openSync, writeSync, fsyncSync, fchmodSync, closeSync, renameSync, unlinkSync, statSync } from "node:fs";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -55,6 +55,12 @@ let doc, clave, entry;
 try { doc = JSON.parse(readFileSync(CRED, "utf8")); clave = Object.keys(doc)[0]; entry = doc[clave]; }
 catch (e) { salir(`credencial ilegible: ${e.name}`, "not_authenticated"); }
 if (!entry?.key) salir("la credencial no trae key", "not_authenticated");
+// Stable non-secret account identity: explicit account id when present, else a
+// hash of the stored account email; never token material.
+const accountSeed = entry.principal_id ?? entry.user_id ?? entry.id ?? entry.sub;
+const account_id = typeof accountSeed === "string" && accountSeed ? accountSeed
+  : typeof entry.email === "string" && entry.email
+    ? "grok:" + createHash("sha256").update(entry.email.toLowerCase()).digest("hex") : null;
 
 const pide = async (tok) => {
   const r = await fetch(USAGE, {
@@ -127,7 +133,7 @@ try {
   const c = j.config ?? {}; const per = c.currentPeriod ?? {}; const pct = c.creditUsagePercent;
   const duration = (Date.parse(per.end) - Date.parse(per.start)) / 60000;
   console.log(JSON.stringify({
-    ok: true, provider: "grok", email: entry.email ?? null, plan: entry.subscription_tier ?? null,
+    ok: true, provider: "grok", account_id, email: entry.email ?? null, plan: entry.subscription_tier ?? null,
     windows: [{ key: per.type ?? "billing", limitId: "default", windowMinutes: Number.isFinite(duration) && duration > 0 ? duration : null,
       usedPercent: (typeof pct === "number" ? pct : null), resetAt: per.end ?? null, periodType: per.type ?? null }],
   }));

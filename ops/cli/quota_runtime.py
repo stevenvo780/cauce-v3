@@ -142,6 +142,11 @@ def labels(policy: dict, environment: dict) -> dict:
             'cauce.quota.host': policy['host_id'], 'cauce.quota.owner': policy['executor_user']}
 
 
+def normalized_capabilities(values) -> set:
+    """Docker >= 20.10 reports added capabilities with a CAP_ prefix."""
+    return {value.removeprefix('CAP_') if isinstance(value, str) else value for value in values or []}
+
+
 def validate(policy: dict, environment: dict, observed: dict) -> None:
     approved = configuration(policy)
     expected = labels(policy, environment)
@@ -154,7 +159,7 @@ def validate(policy: dict, environment: dict, observed: dict) -> None:
             or host.get('ReadonlyRootfs') is not True or host.get('Privileged') is not False \
             or host.get('NetworkMode') != approved['network'] or host.get('PidMode') == 'host' \
             or host.get('Memory') != 512 * 1024 * 1024 or host.get('PidsLimit') != 128 \
-            or set(host.get('CapDrop') or []) != {'ALL'} or set(host.get('CapAdd') or []) != set(CAPABILITIES) \
+            or normalized_capabilities(host.get('CapDrop')) != {'ALL'} or normalized_capabilities(host.get('CapAdd')) != set(CAPABILITIES) \
             or not any(value.startswith('no-new-privileges') for value in host.get('SecurityOpt') or []) \
             or len(mounts) != 2 or state.get('Type') != 'volume' or state.get('Name') != environment['container_name'] + '-profile' \
             or state.get('RW') is not True or helper.get('Type') != 'bind' or helper.get('Source') != str(EXECUTOR_SOURCE) \

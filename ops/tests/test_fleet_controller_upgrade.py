@@ -147,6 +147,18 @@ class UpgradePinTests(UpgradeFixture):
                          'cli/space_archive.py', 'cli/space_backup_validate.py'} <= closure,
                         'a clean host upgrade must install both backup workers and their helpers')
 
+    def test_file_set_includes_dynamically_selected_fleet_providers(self):
+        old_ops = self.old / 'ops'
+        source_ops = self.new / 'ops'
+        self.file(old_ops / 'cli/fleet-executor.py', b'old\n')
+        for entry in self.kit.OPS_ENTRIES:
+            self.file(source_ops / entry, b'# entry\n')
+        self.file(source_ops / 'cli/fleet_provider_dyn.py', b'import dyn_helper\n')
+        self.file(source_ops / 'cli/dyn_helper.py', b'VALUE = 1\n')
+        files, added, _removed = self.kit.ops_file_set(old_ops, source_ops)
+        self.assertIn('cli/fleet_provider_dyn.py', files)
+        self.assertIn('cli/dyn_helper.py', added)
+
     def test_rewriter_moves_path_keys_and_updates_authority_hook_bundle_pins(self):
         hook = self.file(self.new / 'ops/cli/hook.py', b'import helper\n')
         helper = self.file(self.new / 'ops/cli/helper.py', b'LIMIT = 2\n')

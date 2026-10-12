@@ -42,6 +42,7 @@ import urllib.error
 import urllib.request
 from datetime import UTC, datetime
 
+
 class RotadoPerdido(OSError):
     """The provider already rotated the refresh token but saving it failed."""
 

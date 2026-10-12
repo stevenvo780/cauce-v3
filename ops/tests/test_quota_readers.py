@@ -240,6 +240,27 @@ class QuotaReadersTest(unittest.TestCase):
             self.assertNotIn(secret, response.stdout)
             self.assertNotIn(secret, response.stderr)
 
+    def test_grok_emits_stable_non_secret_account_id(self):
+        import hashlib as _hashlib
+        stub = ('globalThis.fetch=async(url,options={})=>{'
+            'if(options.headers.authorization!=="Bearer " + "fixture-token-old")return new Response("{}",{status:401});'
+            'return new Response(JSON.stringify({config:{creditUsagePercent:20,currentPeriod:{type:"weekly",'
+            'start:"2026-10-01T00:00:00Z",end:"2026-10-08T00:00:00Z"}}}),{status:200});};')
+        with tempfile.TemporaryDirectory() as directory:
+            home = pathlib.Path(directory)
+            (home / '.grok').mkdir()
+            auth = home / '.grok' / 'auth.json'
+            auth.write_text(json.dumps({'fixture': {'key': 'fixture-token-old',
+                'email': 'Fixture@Example.invalid'}}))
+            auth.chmod(0o600)
+            first = json.loads(self.run_reader(home, 'leer-cuota-grok.mjs', stub).stdout)
+            second = json.loads(self.run_reader(home, 'leer-cuota-grok.mjs', stub).stdout)
+        expected = 'grok:' + _hashlib.sha256(b'fixture@example.invalid').hexdigest()
+        self.assertTrue(first['ok'])
+        self.assertEqual(first['account_id'], expected)
+        self.assertEqual(second['account_id'], expected)
+        self.assertNotIn('fixture-token-old', json.dumps(first))
+
     def test_claude_three_concurrent_readers_refresh_once_and_leave_no_orphans(self):
         stub = (
             'import {appendFileSync} from "node:fs";'
