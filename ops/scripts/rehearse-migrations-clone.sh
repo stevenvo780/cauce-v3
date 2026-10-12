@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Rehearses every migration a runtime image bundles after the schema of a production dump, on a
-# disposable clone: contended locks fail fast without applying anything, the bundle commits within
-# the target window, legacy rows stay identical, the owners resolve, every down returns to the dump
+# disposable clone: contended locks fail fast without applying anything, readers shaped like the
+# gateway and the dispatcher metrics never hang it, the bundle commits within the target window,
+# legacy rows stay identical, the owners resolve, every down returns to the dump
 # schema and the bundle applies again. Added columns and tables are derived from the catalog, not
 # listed. The clone lives on an internal network with its data on tmpfs and is destroyed on every
 # exit; with --delete-dump the dump is deleted on every exit too, failures included.
@@ -95,10 +96,11 @@ roll_back() {
     fi
   done
 }
-# A reader holds ACCESS SHARE on one table of cauce_contended until it is released.
+# An open transaction keeps the lock of one statement on a table of cauce_contended (by default a read,
+# ACCESS SHARE) until it is released.
 reader() {
   docker exec -d -e "PGAPPNAME=rehearsal-$1" "$NAME-pg" psql -X -U cauce -d cauce_contended \
-    -c 'BEGIN' -c "SELECT count(*) FROM $1" -c 'SELECT pg_sleep(120)'
+    -c 'BEGIN' -c "${2:-SELECT count(*) FROM $1}" -c 'SELECT pg_sleep(120)'
 }
 readers() {
   for _ in $(seq 40); do
@@ -131,6 +133,42 @@ contend() {
   psql_on postgres -c "SELECT count(pg_terminate_backend(pid)) FROM pg_stat_activity WHERE datname='cauce_contended' AND pid<>pg_backend_pid()" >/dev/null
   printf 'contended attempt failed on %s after %s ms\n' "$expected" "$elapsed"
 }
+# Autocommit readers shaped like the dispatcher metrics and the gateway (readiness probe, history, quotas,
+# claims) run with pgbench on a copy of the clone while the bundle migrates it. A reader that dies of a
+# deadlock shows in the pgbench failures; the migrator must apply or fail fast with nothing applied.
+write_load() {
+  docker exec -i "$NAME-pg" sh -c 'cat >/tmp/rehearsal-metrics.sql' <<'SQL'
+SELECT lane,status,count(*) FROM jobs WHERE kind<>'context_write_quarantine' GROUP BY lane,status;
+SELECT m.lane,d.status,count(*) FROM deliveries d JOIN messages m ON m.id=d.message_id GROUP BY m.lane,d.status;
+SELECT m.lane,d.status,count(*),COALESCE(extract(epoch FROM now()-min(d.created_at)),0) FROM deliveries d JOIN messages m ON m.id=d.message_id WHERE d.status IN ('pending','retry','leased','accepted','started') GROUP BY m.lane,d.status;
+SELECT COALESCE(j.lane,m.lane),count(*) FROM dead_letters dl LEFT JOIN jobs j ON j.id=dl.job_id LEFT JOIN deliveries d ON d.id=dl.delivery_id LEFT JOIN messages m ON m.id=d.message_id WHERE dl.resolved_at IS NULL GROUP BY 1;
+SELECT m.lane,count(*) FROM deliveries d JOIN messages m ON m.id=d.message_id WHERE d.status IN ('leased','accepted','started') AND d.claim_expires_at>now() GROUP BY m.lane;
+SELECT count(*) FROM connection_leases WHERE lease_until>now();
+SELECT m.lane,o.status,count(*) FROM adapter_outbox o JOIN messages m ON m.id=o.message_id WHERE o.kind='origin_relay' GROUP BY m.lane,o.status;
+SQL
+  docker exec -i "$NAME-pg" sh -c 'cat >/tmp/rehearsal-gateway.sql' <<'SQL'
+SELECT a.alias,(SELECT count(*) FROM deliveries d JOIN messages m ON m.id=d.message_id WHERE d.recipient_tenant=a.tenant_id AND d.recipient_alias=a.alias AND d.status IN ('leased','accepted','started')) FROM agents a LEFT JOIN connection_leases l ON l.tenant_id=a.tenant_id AND l.alias=a.alias;
+SELECT count(*) FROM messages m LEFT JOIN deliveries d ON d.message_id=m.id WHERE m.room_id IN (SELECT room_id FROM memberships WHERE enabled);
+SELECT count(*) FROM quota_provider_reports pr JOIN quota_collections qc ON qc.id=pr.collection_id JOIN tenants t ON t.id=qc.collector_tenant;
+SELECT id FROM deliveries WHERE status IN ('pending','retry') ORDER BY created_at LIMIT 5 FOR UPDATE SKIP LOCKED;
+SQL
+}
+loaded_output=; loaded_status=; loaded_ms=; loaded_readers=
+migrate_under_load() {
+  local started
+  psql_on postgres -c 'CREATE DATABASE cauce_load TEMPLATE cauce'
+  docker exec "$NAME-pg" pgbench -n -U cauce -d cauce_load -T 12 --max-tries=1 --failures-detailed "$@" >"$scratch/load" 2>&1 &
+  local loader=$!
+  sleep 2
+  started=$(now_ms); loaded_status=0
+  loaded_output=$(migrate cauce_load 2>&1) || loaded_status=$?
+  loaded_ms=$(( $(now_ms) - started ))
+  wait "$loader" || die "pgbench aborted a reader: $(tail -n 5 "$scratch/load")"
+  loaded_readers=$(awk -F': ' '/^number of transactions actually processed/{t=$2} /^number of failed transactions/{f=$2}
+    /^number of deadlock failures/{d=$2} END{printf "%s reader rounds, failed %s, deadlocks %s", t, (f==""?"0":f), (d==""?"0":d)}' "$scratch/load")
+}
+loaded_head() { psql_on cauce_load -c 'SELECT max(version) FROM schema_migrations'; }
+reader_deadlocks() { awk -F': ' '/^number of deadlock failures/{split($2,n," "); print n[1]+0; f=1} END{if(!f) print 0}' "$scratch/load"; }
 # Every baseline row must still be there, unchanged in its baseline columns; a new row is accepted only
 # where a migration of the bundle documents it (rehearsal.tolerated).
 compare() {
@@ -287,19 +325,56 @@ printf 'placed hosts that V4.0 never registered: {%s}\n' \
 psql_on postgres -c 'CREATE DATABASE cauce_contended TEMPLATE cauce'
 
 step 'migrating behind contended locks must fail fast without applying anything'
-# The first migration takes tenants first under a 5 s lock_timeout.
-reader tenants; readers 1
+# The migrator takes every table lock of the bundle before the first migration, each wait under a 5 s
+# lock_timeout: an open transaction that read tenants or deliveries, or wrote connection_leases, stops it.
+for table in tenants deliveries; do
+  reader "$table"; readers 1
+  contend 'lock timeout' 15000
+done
+reader connection_leases 'UPDATE connection_leases SET lease_until=lease_until WHERE false'; readers 1
 contend 'lock timeout' 15000
-# 053 takes its lock phase in one statement: 5 s lock_timeout per wait and 6 s statement_timeout for
-# the phase. Readers on the first and the last table it locks exclusively, the first released 3 s
-# after the wait starts, keep every single wait under lock_timeout while the phase overruns.
+# The pre-lock is one statement: 6 s statement_timeout for all its waits. Readers on two tables it locks
+# exclusively, the first released 3 s after the wait starts, keep each wait under lock_timeout while
+# the whole phase overruns.
 reader agent_account_bindings; reader rooms; readers 2
 release_later agent_account_bindings & releaser=$!
 contend 'statement timeout' 12000
 wait "$releaser"
+# 063 takes SHARE ROW EXCLUSIVE on connection_leases, which ACCESS SHARE does not conflict with.
+reader connection_leases; readers 1
 migrate cauce_contended >/dev/null
-printf 'the retry without contention applied cleanly\n'
-psql_on postgres -c 'DROP DATABASE cauce_contended'
+printf 'with an open reader of connection_leases and no other contention the bundle applied cleanly\n'
+release connection_leases
+psql_on postgres -c 'DROP DATABASE cauce_contended WITH (FORCE)'
+
+step 'migrating while readers like the gateway and the dispatcher metrics run'
+write_load
+for script in metrics gateway; do
+  docker exec "$NAME-pg" pgbench -n -U cauce -d cauce -t 1 -f "/tmp/rehearsal-$script.sql" >/dev/null 2>&1 \
+    || die "the $script readers do not run on the dump schema"
+done
+migrate_under_load -c 6 -j 3 -f /tmp/rehearsal-metrics.sql
+[ "$loaded_status" = 0 ] || die "the bundle failed under the dispatcher metrics: $loaded_output"
+[ "$(loaded_head)" = "${PENDING[-1]}" ] && [ "$(reader_deadlocks)" = 0 ] || die "deadlock or partial bundle under the dispatcher metrics: $loaded_readers"
+printf 'dispatcher metrics, 6 clients: applied in %s ms; %s\n' "$loaded_ms" "$loaded_readers"
+psql_on postgres -c 'DROP DATABASE cauce_load WITH (FORCE)'
+migrate_under_load -c 8 -j 4 -f /tmp/rehearsal-metrics.sql -f /tmp/rehearsal-gateway.sql
+[ "$loaded_ms" -lt 20000 ] || die "the bundle took ${loaded_ms} ms under the mixed readers"
+if [ "$loaded_status" = 0 ]; then
+  [ "$(loaded_head)" = "${PENDING[-1]}" ] || die 'the bundle applied partially under the mixed readers'
+  printf 'gateway and metrics, 8 clients unthrottled: applied in %s ms; %s\n' "$loaded_ms" "$loaded_readers"
+else
+  printf '%s\n' "$loaded_output" | grep -Eq 'lock timeout|deadlock detected' || die "the bundle failed under load for another reason: $loaded_output"
+  [ "$(loaded_head)" = "$BASE" ] || die 'a failed bundle left migrations applied under load'
+  printf 'gateway and metrics, 8 clients unthrottled: failed clean in %s ms (%s); %s\n' "$loaded_ms" \
+    "$(printf '%s\n' "$loaded_output" | grep -Eo 'lock timeout|deadlock detected' | head -n 1)" "$loaded_readers"
+fi
+psql_on postgres -c 'DROP DATABASE cauce_load WITH (FORCE)'
+migrate_under_load -c 2 -j 2 -R 5 -f /tmp/rehearsal-metrics.sql -f /tmp/rehearsal-gateway.sql
+[ "$loaded_status" = 0 ] && [ "$(loaded_head)" = "${PENDING[-1]}" ] || die "the bundle did not apply under light load: $loaded_output"
+[ "$(reader_deadlocks)" = 0 ] || die "a reader deadlocked under light load: $loaded_readers"
+printf 'light load (5 reader rounds/s): applied in %s ms; %s\n' "$loaded_ms" "$loaded_readers"
+psql_on postgres -c 'DROP DATABASE cauce_load WITH (FORCE)'
 
 step 'migrating the clone'
 # The migrator holds the exclusive schema lock for its whole transaction, so that span is the
