@@ -14,7 +14,10 @@ export const HostReportSchema = z.object({ cli_version: z.string().min(1).max(12
 export const SignedHostRequestSchema = z.object({ company_id: HostId, host_id: HostId,
   issued_at: z.number().int().positive(), nonce: Hex, payload: z.record(z.string(),z.unknown()), proof: Base64 }).strict();
 export const HostHeartbeatSchema = SignedHostRequestSchema.extend({payload:HostReportSchema});
+export const HostSetupRequestSchema = SignedHostRequestSchema.extend({payload:z.object({action:z.literal('package')}).strict()});
 export type SignedHostRequest = z.infer<typeof SignedHostRequestSchema>;
+/** What a verified computer may receive at setup: its own company and host, and the harnesses the platform keeps enabled. */
+export interface HostSetupScope { host_id: string; company_id: string; harnesses: string[] }
 export interface HostInvitation { enrollment_id: string; company_id: string; host_id: string; nonce: string;
   invitation_token: string; expires_at: string; state: 'pending' }
 export interface HostEnrollmentReceipt { enrollment_id: string; company_id: string; host_id: string;

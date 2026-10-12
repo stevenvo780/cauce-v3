@@ -29,6 +29,7 @@ import { PostgresConsoleCompanyAuthority } from './console-user-authority.js';
 import { registerHostEnrollmentRoutes } from './console/host-enrollment.routes.js';
 import { registerHostChannelRoutes } from './fleet/host-channel.routes.js';
 import { HostCapabilityRegistry } from './fleet/host-channel.capabilities.js';
+import { configuredHostSetup, type HostSetupPackager } from './fleet/host-setup.js';
 import { createCompanyFleetCapabilitySource } from './fleet/host-capability-source.js';
 import { configuredFleetGateway } from './fleet/gateway-config.js';
 import { AgentProviderAuthBroker } from './fleet/agent-provider-auth-broker.js';
@@ -202,6 +203,7 @@ export interface GatewayOptions {
   fleetOperationsRepository?: FleetOperationsRepositoryBinding;
   fleetCapability?: import('@cauce/protocol').FleetCapability;
   hostCapabilityRegistry?: HostCapabilityRegistry;
+  hostSetup?: HostSetupPackager;
   pool: DatabasePool;
   authProvider: AuthProvider;
   repository?: GatewayRepository;
@@ -363,7 +365,8 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
     registerCompanyRegistrationRoute(app, options.pool);
     registerCompanyOfficeRoutes(app, options.authProvider, options.pool);
     registerHostEnrollmentRoutes(app, options.authProvider, options.pool,
-      options.fleetCapability?.available ? options.fleetCapability.placements.map(host => host.host_id) : []);
+      options.fleetCapability?.available ? options.fleetCapability.placements.map(host => host.host_id) : [],
+      options.hostSetup ?? await configuredHostSetup());
     registerHostChannelRoutes(app, options.pool);
     if (quotaAuthentication) registerQuotaAuthHostRoute(app, options.pool, quotaAuthentication);
     if (agentAuthentication) registerAgentProviderAuthHostRoute(app, options.pool, agentAuthentication);

@@ -25,7 +25,7 @@ const ExecutionSchema = z.object({ operation: FleetOperationSchema, request: Fle
 }).strict();
 
 function unavailable(): Error { return new Error('Signed host channel could not be verified'); }
-async function privateBytes(filename: string): Promise<Buffer> {
+export async function privateBytes(filename: string): Promise<Buffer> {
   const file = await open(filename, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   try {
     const info = await file.stat();

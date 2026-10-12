@@ -3,8 +3,9 @@ import { lockCompanyAuthority, type CompanyAuthority } from './company-authority
 import { withTransaction, type DatabaseClient, type DatabasePool } from './db.js';
 import { StoreError } from './repository/errors.js';
 import type { CompanyAuthoritySource } from './repository/fleet-hosts.js';
-import { HostClaimSchema, HostHeartbeatSchema, HostInvitationSchema, SignedHostRequestSchema, hostEnrollmentMessage, hostKeyFingerprint,
-  hostRequestMessage, verifyHostProof, type HostEnrollmentReceipt, type HostInvitation } from './host-enrollment-contracts.js';
+import { HostClaimSchema, HostHeartbeatSchema, HostInvitationSchema, HostSetupRequestSchema, SignedHostRequestSchema, hostEnrollmentMessage,
+  hostKeyFingerprint, hostRequestMessage, verifyHostProof, type HostEnrollmentReceipt, type HostInvitation,
+  type HostSetupScope } from './host-enrollment-contracts.js';
 
 const INVITATION_TTL_MS = 10 * 60_000;
 const HOST_NAME = /^[a-z0-9_]+$/u;
@@ -131,6 +132,17 @@ export class HostEnrollmentRepository {
       await client.query('UPDATE fleet_host_identities SET report=$2::jsonb,last_seen_at=now() WHERE host_id=$1',[host,JSON.stringify(packet.payload)]);
       await client.query("UPDATE fleet_hosts SET controller_status='reachable',controller_seen_at=now() WHERE host_id=$1",[host]);
       return { ...identity,accepted:true };
+    });
+  }
+  /** `build` runs inside the verified transaction: if it throws, the nonce and the audit row roll back. */
+  async setupPackage<T>(host: string, value: unknown, build: (scope: HostSetupScope) => T): Promise<T> {
+    const packet = HostSetupRequestSchema.parse(value);
+    return this.request(host,'POST',`/v3/fleet/hosts/${host}/setup`,packet,async (client,identity) => {
+      const harnesses = (await client.query<{ id: string }>('SELECT id FROM harness_definitions WHERE enabled ORDER BY id')).rows.map(row => row.id);
+      const result = build({ ...identity, harnesses });
+      await client.query(`INSERT INTO audit_events(action,decision,company_id,metadata) VALUES('fleet_host.setup.package','allow',$1,$2::jsonb)`,
+        [identity.company_id,JSON.stringify({ host_id: host, harnesses })]);
+      return result;
     });
   }
   async request<T>(host:string,method:string,path:string,value:unknown,

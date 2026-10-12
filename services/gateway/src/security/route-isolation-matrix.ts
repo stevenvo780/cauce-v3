@@ -188,6 +188,7 @@ export const ROUTE_ISOLATION_MATRIX: readonly RouteIsolationEntry[] = [
   scoped('DELETE', '/v3/console/fleet/hosts/enrollments/:enrollment_id', '/v3/console/fleet/hosts/enrollments/{invitation}'),
   host('POST', '/v3/fleet/hosts/enrollments/:enrollment_id/claim', '/v3/fleet/hosts/enrollments/{invitation}/claim'),
   host('POST', '/v3/fleet/hosts/:host_id/heartbeat', '/v3/fleet/hosts/{host}/heartbeat'),
+  host('POST', '/v3/fleet/hosts/:host_id/setup', '/v3/fleet/hosts/{host}/setup'),
   host('POST', '/v3/fleet/hosts/:host_id/channel', '/v3/fleet/hosts/{host}/channel'),
   host('POST', '/v3/fleet/hosts/:host_id/quota-auth', '/v3/fleet/hosts/{host}/quota-auth'),
   host('POST', '/v3/fleet/hosts/:host_id/agent-auth', '/v3/fleet/hosts/{host}/agent-auth'),

@@ -5,6 +5,7 @@ import { AuthError, AuthorizationError, type AuthProvider } from '../auth.js';
 import { rateLimitKey } from '../client-ip.js';
 import { consoleHumanAccess } from '../console-human-authority.js';
 import { replyError } from '../routes/shared.js';
+import type { HostSetupPackager } from '../fleet/host-setup.js';
 
 const EnrollmentParams = z.object({ enrollment_id: z.uuid() }).strict();
 const HostParams = z.object({ host_id: HostId }).strict();
@@ -13,9 +14,11 @@ function errorResponse(error: unknown, reply: import('fastify').FastifyReply): u
   if (error instanceof StoreError || error instanceof AuthError || error instanceof AuthorizationError) { replyError(reply,error); return; }
   return reply.code(503).send({ error: 'host_enrollment_unavailable', message: 'host enrollment could not be verified' });
 }
+/** With `setup`, invitations anchor its signer so the computer never trusts the first setup package it sees. */
 export function registerHostEnrollmentRoutes(app: FastifyInstance, provider: AuthProvider, pool: DatabasePool,
-  readyHostIds: readonly string[] = []): void {
+  readyHostIds: readonly string[] = [], setup?: HostSetupPackager): void {
   const repository = new HostEnrollmentRepository(pool,readyHostIds);
+  const anchor = setup === undefined ? {} : { setup_signer_fingerprint: setup.signerFingerprint };
   const claims = new Map<string, { count: number; until: number }>();
   const path = '/v3/console/fleet/hosts/enrollments';
   for (const method of ['GET','POST'] as const) app.route({ method,url:path,bodyLimit:8192,handler:async (request,reply) => {
@@ -25,8 +28,8 @@ export function registerHostEnrollmentRoutes(app: FastifyInstance, provider: Aut
       if (!access) throw new AuthorizationError('a console session is required');
       try {
         const source = (client: import('@cauce/store').DatabaseClient) => access.companyAuthority(client);
-        return method === 'GET' ? { enrollments: await repository.list(source) }
-          : await reply.code(201).send(await repository.invite(source,request.body));
+        return method === 'GET' ? { enrollments: await repository.list(source), ...anchor }
+          : await reply.code(201).send({ ...await repository.invite(source,request.body), ...anchor });
       } finally { access.close(); }
     } catch (error) { return errorResponse(error,reply); }
   } });
@@ -63,6 +66,17 @@ export function registerHostEnrollmentRoutes(app: FastifyInstance, provider: Aut
       if (request.headers.cookie !== undefined) throw new AuthorizationError('host identity requests cannot use a browser session');
       const { host_id } = HostParams.parse(request.params);
       return await repository.heartbeat(host_id,request.body);
+    } catch (error) { return errorResponse(error,reply); }
+  });
+  app.post('/v3/fleet/hosts/:host_id/setup', { bodyLimit:4096 }, async (request,reply) => {
+    reply.header('Cache-Control','no-store');
+    try {
+      if (request.headers.cookie !== undefined) throw new AuthorizationError('host identity requests cannot use a browser session');
+      const { host_id } = HostParams.parse(request.params);
+      return await repository.setupPackage(host_id,request.body,scope => {
+        if (!setup) throw new StoreError('not_found', 'this gateway does not serve host setup packages');
+        return setup.build(scope);
+      });
     } catch (error) { return errorResponse(error,reply); }
   });
 }
