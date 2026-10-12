@@ -259,15 +259,6 @@ if ! [[ "$BACKUP_MAX_AGE_HOURS" =~ ^[0-9]+$ ]] \
 fi
 [ -d "$(dirname "$HISTORY_FILE")" ] || die "no existe el directorio de historial $(dirname "$HISTORY_FILE")"
 [ ! -L "$HISTORY_FILE" ] || die "CAUCE_DEPLOY_HISTORY_FILE no puede ser un symlink"
-if [ -n "$SIN_RECIBO" ]; then
-  [ -z "$GATES_RECEIPT" ] || die "CAUCE_DEPLOY_GATES_RECEIPT y CAUCE_DEPLOY_SIN_RECIBO son excluyentes"
-  [[ "$SIN_RECIBO" =~ ^[^|[:cntrl:]]{1,200}$ && "$SIN_RECIBO" =~ [^[:space:]] ]] \
-    || die "CAUCE_DEPLOY_SIN_RECIBO debe ser un motivo de una linea, sin '|' y de 200 caracteres o menos"
-else
-  [[ "$GATES_RECEIPT" = /* ]] \
-    || die "falta el recibo de gates: exporta CAUCE_DEPLOY_GATES_RECEIPT con la ruta absoluta del recibo de scripts/release-gates.sh (escape auditado: CAUCE_DEPLOY_SIN_RECIBO=motivo)"
-  [ -f "$GATES_RECEIPT" ] || die "no encuentro el recibo de gates $GATES_RECEIPT"
-fi
 for name in CAUCE_RUNTIME_IMAGE CAUCE_CONSOLE_IMAGE; do
   [ "${!name+x}" != x ] || die "$name del entorno anularia el pin de $ENV_FILE; quitalo del entorno"
   if [ "$(env_declarations "$name")" != 1 ] || ! grep -q "^$name=" "$ENV_FILE"; then
@@ -295,6 +286,15 @@ if [ "${CAUCE_DEPLOY_PRINT_COMPOSE:-0}" = 1 ]; then
   compose_recipe
   printf '%q ' "${RECIPE[@]}"; printf '\n'
   exit 0
+fi
+if [ -n "$SIN_RECIBO" ]; then
+  [ -z "$GATES_RECEIPT" ] || die "CAUCE_DEPLOY_GATES_RECEIPT y CAUCE_DEPLOY_SIN_RECIBO son excluyentes"
+  [[ "$SIN_RECIBO" =~ ^[^|[:cntrl:]]{1,200}$ && "$SIN_RECIBO" =~ [^[:space:]] ]] \
+    || die "CAUCE_DEPLOY_SIN_RECIBO debe ser un motivo de una linea, sin '|' y de 200 caracteres o menos"
+else
+  [[ "$GATES_RECEIPT" = /* ]] \
+    || die "falta el recibo de gates: exporta CAUCE_DEPLOY_GATES_RECEIPT con la ruta absoluta del recibo de scripts/release-gates.sh (escape auditado: CAUCE_DEPLOY_SIN_RECIBO=motivo)"
+  [ -f "$GATES_RECEIPT" ] || die "no encuentro el recibo de gates $GATES_RECEIPT"
 fi
 BACKUP_BLOB_VOLUME="$(env_value COMPOSE_PROJECT_NAME)"
 BACKUP_BLOB_VOLUME="${BACKUP_BLOB_VOLUME:-cauce-v3-prod}_blobs_data"

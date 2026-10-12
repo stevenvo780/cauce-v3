@@ -31,7 +31,8 @@ junto al bundle en el VPS, fuera del clon (dentro ensuciaría el árbol), y se p
   `scripts/release-gates.sh --list` en orden y todos con `exit` 0. Escape auditado, solo con el
   dueño: `CAUCE_DEPLOY_SIN_RECIBO="motivo"` (una línea, sin `|`, excluyente con el recibo); pide
   confirmación y el motivo queda en la fila de `deploy/HISTORIAL.md`, igual que el sha256 del recibo
-  cuando lo hay.
+  cuando lo hay. `CAUCE_DEPLOY_PRINT_COMPOSE=1` no pide recibo ni escape: solo imprime la receta de
+  Compose y sale sin tocar git, imágenes ni la base ([runbook-rol-runtime.md](runbook-rol-runtime.md), paso 3).
 - `CAUCE_RUNTIME_IMAGE` y `CAUCE_CONSOLE_IMAGE` declarados una sola vez como `NOMBRE=` en `prod.env`
   y ausentes del entorno (un valor exportado anularía el pin del archivo).
 - Existen todas las fuentes de bind mounts y de `secrets`/`configs` con `file` del compose renderizado

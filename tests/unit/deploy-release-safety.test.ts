@@ -235,6 +235,22 @@ describe('deploy gates receipt', () => {
   it('refuses an escape next to a receipt', () => {
     expectStoppedBeforeBuild(deploy({ environment: { CAUCE_DEPLOY_SIN_RECIBO: 'motivo cualquiera' } }), 'son excluyentes');
   });
+
+  it('prints the compose recipe without a receipt because it deploys nothing', () => {
+    const result = deploy({ receipt: null, environment: { CAUCE_DEPLOY_PRINT_COMPOSE: '1' } });
+    expect(result.error).toBeUndefined();
+    expect(result.status, result.stderr).toBe(0);
+    const repository = join(result.directory, 'repo');
+    expect(result.stdout.trim()).toBe(`env CAUCE_TERMINAL_RELAY_INSTANCE_ID=${'0'.repeat(64)} CAUCE_BLOB_API_ENABLED=0 `
+      + 'CAUCE_GATEWAY_RELAY_CLIENT_CERT_PATH=/dev/null CAUCE_GATEWAY_RELAY_CLIENT_KEY_PATH=/dev/null '
+      + `docker compose --env-file ${join(result.directory, 'prod.env')} -f ${join(repository, 'deploy/compose.yaml')} `
+      + `-f ${join(repository, 'deploy/compose.postgres.yaml')} --project-directory ${join(repository, 'deploy')}`);
+    expect(result.stderr).not.toContain('recibo de gates');
+    expect(result.commands().filter(entry => ['docker', 'git', 'backup-monitor'].includes(entry.command))).toEqual([]);
+    expect(result.instance()).toBe(result.initialInstance);
+    expect(result.leftovers()).toEqual([]);
+    expect(existsSync(result.history)).toBe(false);
+  });
 });
 
 describe('deploy bind sources', () => {
