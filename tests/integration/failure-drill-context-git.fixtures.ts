@@ -72,6 +72,17 @@ export class ContextGitDrill {
     return (await this.database.pool.query<{ metadata: Record<string, unknown> }>(
       "SELECT metadata FROM audit_events WHERE action='context.sync' ORDER BY id")).rows.map(row => row.metadata);
   }
+  /** The second broker keeps pushing to the real remote but fetches a copy frozen now: the remote advances behind its back. */
+  async freezeSecondFetch(): Promise<void> {
+    const frozen = join(this.directory, 'zz-canary-drill-git-frozen.git');
+    await git(this.directory, ['clone', '--quiet', '--mirror', this.remote, frozen]);
+    await git(this.secondRepository, ['remote', 'set-url', 'origin', frozen]);
+    await git(this.secondRepository, ['remote', 'set-url', '--push', 'origin', this.remote]);
+  }
+  async thawSecondFetch(): Promise<void> {
+    await git(this.secondRepository, ['remote', 'set-url', 'origin', this.remote]);
+    await git(this.secondRepository, ['config', '--unset', 'remote.origin.pushurl']);
+  }
   remoteHead(): Promise<string> { return git(this.remote, ['rev-parse', 'refs/heads/main']); }
   remoteHistory(): Promise<string> { return git(this.remote, ['rev-list', 'refs/heads/main']); }
   remoteContent(target: ContextTarget): Promise<string> {

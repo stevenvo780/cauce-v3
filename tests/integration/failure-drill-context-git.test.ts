@@ -1,10 +1,11 @@
 import { access, rm, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { ContextSnapshot } from '@cauce/store';
 import { contextRepositoryPrefix } from '../../packages/store/src/context-version-model.js';
 import { startTestDatabase, type TestDatabase } from '../helpers/postgres.js';
 import { createDrill, git, type ContextGitDrill, type OutboxEvidence } from './failure-drill-context-git.fixtures.js';
+import { sweepDatabaseFleet } from './failure-drill-ssh.fixtures.js';
 
 let database: TestDatabase | undefined;
 const drills: ContextGitDrill[] = [];
@@ -18,7 +19,11 @@ afterAll(async () => {
   const failures: unknown[] = [];
   for (const drill of drills) {
     try {
-      await drill.close();
+      try {
+        const prefix = basename(drill.directory);
+        const sweep = await sweepDatabaseFleet(drill.database.pool, drill.directory, prefix, prefix);
+        expect(sweep.exitCode).toBe(0); expect(sweep.report.clean).toBe(true);
+      } finally { await drill.close(); }
       await expect(access(drill.directory)).rejects.toMatchObject({ code: 'ENOENT' });
       process.stdout.write(`failure-drill-context-git removed ${drill.directory}\n`);
     } catch (error) { failures.push(error); }
@@ -79,20 +84,24 @@ describe('context broker with real Git processes and durable PostgreSQL state', 
       git_state: snapshot.sync.state, runtime_state: snapshot.application.state, attempts: after.attempts })}\n`);
   });
 
-  describe('two writers with a non-fast-forward rejection', () => {
+  describe('two writers with a real non-fast-forward rejection after the remote advanced', () => {
+    const firstContent = 'The first real broker writer publishes this context.';
+    const secondContent = 'The second real broker writer must retain its rejected context.';
+    let rejectedSnapshot: ContextSnapshot;
+    let rejectedHistory: string[];
     let secondSnapshot: ContextSnapshot;
     let firstCommit: string;
     let secondCommit: string;
     let retry: OutboxEvidence;
-    let history: string;
+    let history: string[];
+    let mergeParents: string[];
 
     beforeAll(async () => {
       const drill = await fixture();
-      const firstContent = 'The first real broker writer publishes this context.';
-      const secondContent = 'The second real broker writer must retain its rejected context.';
       await Promise.all([drill.write(drill.first, firstContent), drill.write(drill.second, secondContent)]);
       expect(await git(drill.firstRepository, ['rev-parse', 'refs/heads/main'])).toBe(drill.initialCommit);
       expect(await git(drill.secondRepository, ['rev-parse', 'refs/heads/main'])).toBe(drill.initialCommit);
+      await drill.freezeSecondFetch();
       expect(await drill.process(drill.first)).toMatchObject({ state: 'pending', version: 1 });
       const first = await drill.outbox(drill.first);
       expect(first.state).toBe('synced');
@@ -106,45 +115,47 @@ describe('context broker with real Git processes and durable PostgreSQL state', 
         last_error: 'context_git_non_fast_forward', attempts: 1 });
       if (!rejected.git_commit) throw new Error('second writer lost its rejected real commit');
       secondCommit = rejected.git_commit;
-      expect(await git(drill.secondRepository, ['cat-file', '-t', secondCommit])).toBe('commit');
       const rejectedPath = `${secondCommit}:${contextRepositoryPrefix(drill.second)}/context/mission.md`;
       expect(await git(drill.secondRepository, ['show', rejectedPath])).toBe(secondContent);
-      await drill.retry(drill.second);
-      expect(await drill.process(drill.second)).toMatchObject({ state: 'error', error: 'context_git_non_fast_forward' });
-      retry = await drill.outbox(drill.second);
-      expect(retry).toMatchObject({ state: 'error', git_commit: secondCommit, pushed_at: null,
-        last_error: 'context_git_non_fast_forward', attempts: 2 });
-      expect(await git(drill.secondRepository, ['show', rejectedPath])).toBe(secondContent);
-      secondSnapshot = await drill.read(drill.second);
-      expect(secondSnapshot.files).toContainEqual({ path: 'context/mission.md', content: secondContent });
-      expect(secondSnapshot.application.state).toBe('pending');
+      rejectedSnapshot = await drill.read(drill.second);
+      rejectedHistory = (await drill.remoteHistory()).split('\n');
       expect(await drill.remoteHead()).toBe(firstCommit);
+
+      await drill.thawSecondFetch();
+      await drill.retry(drill.second);
+      expect(await drill.process(drill.second)).toMatchObject({ state: 'pending', version: 1 });
+      retry = await drill.outbox(drill.second);
+      secondSnapshot = await drill.read(drill.second);
+      history = (await drill.remoteHistory()).split('\n');
+      mergeParents = (await git(drill.remote, ['rev-list', '--parents', '-n', '1', 'refs/heads/main'])).split(' ').slice(1);
       expect(await drill.remoteContent(drill.first)).toBe(firstContent);
-      history = await drill.remoteHistory();
-      expect(history.split('\n')).toContain(firstCommit);
-      expect(history.split('\n')).not.toContain(secondCommit);
+      expect(await drill.remoteContent(drill.second)).toBe(secondContent);
       expect((await drill.audit()).map(row => [row.target_alias, row.state, row.error_code])).toEqual([
         [drill.first.alias, 'synced', null],
         [drill.second.alias, 'error', 'context_git_non_fast_forward'],
-        [drill.second.alias, 'error', 'context_git_non_fast_forward'],
+        [drill.second.alias, 'synced', null],
       ]);
-      process.stdout.write(`failure-drill-context-git negative ${JSON.stringify({ first_commit: firstCommit,
-        rejected_commit: secondCommit, retry_commit: retry.git_commit, git_state: secondSnapshot.sync.state,
-        last_error: secondSnapshot.sync.last_error, attempts: retry.attempts, remote_contains_rejected_commit: false,
-        cause: 'ContextGitBroker.push does not fetch or reconcile the remote branch before retry' })}\n`);
+      process.stdout.write(`failure-drill-context-git reconciled ${JSON.stringify({ first_commit: firstCommit,
+        rejected_commit: secondCommit, merge_parents: mergeParents, git_state: secondSnapshot.sync.state,
+        attempts: retry.attempts, remote_contains_rejected_commit: history.includes(secondCommit) })}\n`);
     });
 
-    it('retains both commits and never reports synced while the second writer is still rejected', () => {
-      expect(secondSnapshot.sync).toMatchObject({ state: 'error', git_commit: secondCommit, pushed_at: null });
-      expect(retry.attempts).toBe(2);
-      expect(history.split('\n')).toContain(firstCommit);
-      expect(history.split('\n')).not.toContain(secondCommit);
+    it('retains the rejected commit and never reports synced while the second writer is rejected', () => {
+      expect(rejectedSnapshot.sync).toMatchObject({ state: 'error', git_commit: secondCommit, pushed_at: null,
+        last_error: 'context_git_non_fast_forward' });
+      expect(rejectedSnapshot.files).toContainEqual({ path: 'context/mission.md', content: secondContent });
+      expect(rejectedSnapshot.application.state).toBe('pending');
+      expect(rejectedHistory).toContain(firstCommit);
+      expect(rejectedHistory).not.toContain(secondCommit);
     });
 
-    it.fails('automatically reconciles both writers and reaches synced on retry (missing broker reconciliation)', () => {
-      expect(secondSnapshot.sync.state, 'real non-fast-forward retry remains durably error').toBe('synced');
-      expect(history.split('\n')).toContain(firstCommit);
-      expect(history.split('\n')).toContain(secondCommit);
+    it('reconciles both writers on retry and reaches synced without losing a commit', () => {
+      expect(retry).toMatchObject({ state: 'synced', git_commit: secondCommit, last_error: null, attempts: 2 });
+      expect(retry.pushed_at).toBeInstanceOf(Date);
+      expect(secondSnapshot.sync).toMatchObject({ state: 'synced', git_commit: secondCommit });
+      expect(history).toContain(firstCommit);
+      expect(history).toContain(secondCommit);
+      expect(mergeParents).toEqual([firstCommit, secondCommit]);
     });
   });
 });
