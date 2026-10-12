@@ -381,6 +381,23 @@ alias habilitados de la instalación. Lee ambas salidas del relay y falla si no 
 consulta. No sustituirlo por conteos parciales ni usar una conexión sin TLS verificado para
 acreditar salud.
 
+Para comprobar recursos huérfanos en el host de ejecución, exporta a un JSON las filas actuales de
+`agents` que pertenecen a ese host, con `runtime_key`, `container_name`, `runtime_mode` y `host_id`.
+Incluye los agentes retirados que aún conservan recursos; excluye los purgados. Conserva el fichero
+con permisos privados y ejecuta:
+
+```bash
+python3 ops/cli/fleet_orphan_sweep.py --rows "$CAUCE_FLEET_ROWS_JSON" --host-id "$CAUCE_HOST_ID"
+```
+
+El comando solo lee Docker y el JSON: informa recursos con etiquetas `cauce.fleet.*` sin fila y
+filas de modo `container` cuyo contenedor no existe. Devuelve `0` si está limpio y `1` si encuentra
+huérfanos; no borra recursos ni verifica salud o procesos nativos. El JSON debe corresponder al
+estado actual del host para evitar falsos resultados. En pruebas puede limitarse con
+`--runtime-key-prefix` al prefijo único de la operación. Los gates físicos y simulacros añaden un
+inventario de nombres canarios propios para detectar también contenedores y volúmenes sin
+etiquetas, y exigen un barrido limpio después de su limpieza antes de cerrar la base de prueba.
+
 ## 7. Reglas de oro
 
 - El checkout del repo en el host del stack es material de PRODUCCIÓN: Prometheus, OTel y PostgreSQL montan ficheros de ahí. No rebasear ni cambiar de rama con producción arriba. Una actualización de Git exige verificar el contenido efectivo de los montajes; no implica una recarga automática.
