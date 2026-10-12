@@ -11,9 +11,9 @@ const script = fileURLToPath(new URL('../cli/cauce-diagnose', import.meta.url));
 const cookie = 'cauce_session=synthetic-diagnostic-session';
 const secret = 'synthetic-token-never-print';
 
-function execute(arguments_) {
+function execute(arguments_, environment = {}) {
   return new Promise((resolve, reject) => {
-    const child = spawn('bash', [script, ...arguments_], { env: { ...process.env, PYTHONDONTWRITEBYTECODE: '1' } });
+    const child = spawn('bash', [script, ...arguments_], { env: { ...process.env, PYTHONDONTWRITEBYTECODE: '1', ...environment } });
     let stdout = '';
     let stderr = '';
     child.stdout.on('data', data => { stdout += data; });
@@ -66,6 +66,22 @@ test('identifier remains one encoded URL segment', async t => {
   const result = await execute(['trace/a?b#c %á', ...context.options]);
   assert.equal(result.code, 0, result.stderr);
   assert.equal(context.requests[0].path, '/v3/console/diagnose/trace%2Fa%3Fb%23c%20%25%C3%A1');
+});
+
+test('environment proxies never receive the console cookie intended for the gateway', async t => {
+  const document = { company_id: 'alpha', items: [] };
+  const gateway = await fixture(t, (_request, reply) => reply.end(JSON.stringify(document)));
+  const proxy = await fixture(t, (_request, reply) => reply.end('{"received_by_proxy":true}'));
+  const environment = { http_proxy: proxy.origin, HTTP_PROXY: proxy.origin,
+    https_proxy: proxy.origin, HTTPS_PROXY: proxy.origin, all_proxy: proxy.origin, ALL_PROXY: proxy.origin,
+    no_proxy: '', NO_PROXY: '' };
+  const result = await execute(['trace-fixture', ...gateway.options], environment);
+  assert.deepEqual(proxy.requests, []);
+  assert.equal(result.code, 0, result.stderr);
+  assert.deepEqual(JSON.parse(result.stdout), document);
+  assert.equal(gateway.requests.length, 1);
+  assert.equal(gateway.requests[0].headers.cookie, cookie);
+  assert.ok(!result.stdout.includes(cookie) && !result.stderr.includes(cookie));
 });
 
 test('protocol-length Unicode traces reach HTTP and oversized identifiers do not', async t => {

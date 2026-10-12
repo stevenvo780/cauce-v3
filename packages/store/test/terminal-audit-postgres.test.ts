@@ -3,7 +3,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { FastifyInstance } from 'fastify';
-import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CauceRepository, withTransaction, type DatabasePool } from '../src/index.js';
 import { seedSyntheticCompanyContexts } from '../src/seed-dev-cli.js';
 import { preparePostgresSuite } from './postgres-suite.js';
@@ -107,6 +107,15 @@ function followup(sessionId: string, metadata: Record<string,unknown> = {}): Ter
 }
 
 describe('terminal audit metadata with signed HTTP sessions and real PostgreSQL', () => {
+  it.each(['agent_document.read','agent_document.write','agent_document.denied','agent_profile.write'] as const)(
+  'records context component for %s without trusting a supplied component', async action => {
+    await recordTerminalAudit(pool, { tenant_id: identity().tenant_id, actor_alias: identity().alias,
+      action, decision: 'info', metadata: { component: 'terminal', host_id: HOST } });
+    const rows = await pool.query<{ metadata: Record<string,unknown> }>(
+      'SELECT metadata FROM audit_events WHERE action=$1 ORDER BY id DESC LIMIT 1', [action]);
+    expect(rows.rows[0]?.metadata).toMatchObject({ component: 'context', host_id: HOST });
+  });
+
   it('records the resolved host throughout admission, relay, control, renewal and input closure', async () => {
     const request = body(); const receipt = await open(request);
     const owner = { request_id: request.request_id, owner_generation: receipt.owner_generation,
@@ -180,6 +189,48 @@ describe('terminal audit metadata with signed HTTP sessions and real PostgreSQL'
         host_id: FOREIGN_HOST, component: 'terminal' })]);
     await recordTerminalAudit(pool,followup(receipt.session_id,{ host_id: HOST, component: 'backup' }));
     expect((await audits(receipt.session_id)).at(-1)?.metadata).toMatchObject({ host_id: null, component: 'terminal' });
+  });
+
+  it('rejects admission evidence from a different actor or outside its issuance window', async () => {
+    const receipt = await open();
+    await admin().query(`UPDATE audit_events SET actor_alias='another-actor'
+      WHERE metadata->>'session_id'=$1`, [receipt.session_id]);
+    await recordTerminalAudit(pool,followup(receipt.session_id));
+    expect((await audits(receipt.session_id)).at(-1)?.metadata.host_id).toBeNull();
+    await admin().query(`UPDATE audit_events SET actor_alias=$2,created_at=created_at-interval '2 minutes'
+      WHERE action='terminal.session.request' AND metadata->>'session_id'=$1`, [receipt.session_id,identity().alias]);
+    await recordTerminalAudit(pool,followup(receipt.session_id));
+    expect((await audits(receipt.session_id)).at(-1)?.metadata.host_id).toBeNull();
+  });
+
+  it('bounds admission lookup through the tenant/time index amid unrelated audit history', async () => {
+    const receipt = await open();
+    await admin().query(`INSERT INTO audit_events(tenant_id,actor_alias,action,decision,created_at)
+      SELECT $1,$2,'fixture.unrelated','info',now()-interval '1 day' FROM generate_series(1,5000)
+      UNION ALL SELECT $3,$4,'fixture.unrelated','info',now() FROM generate_series(1,5000)`,
+    [identity().tenant_id,identity().alias,identity(1).tenant_id,identity(1).alias]);
+    await admin().query('ANALYZE audit_events');
+    const queries = vi.spyOn(pool,'query');
+    try {
+      await recordTerminalAudit(pool,followup(receipt.session_id));
+      const lookup = queries.mock.calls.find(call => typeof call[0] === 'string' && call[0].includes("SELECT audit.metadata->>'host_id' AS host_id"));
+      if (typeof lookup?.[0] !== 'string') throw new Error('admission lookup was not executed');
+      const plan = await pool.query(`EXPLAIN (ANALYZE,FORMAT JSON) ${lookup[0]}`,lookup[1] as unknown as unknown[]);
+      const explanation = JSON.stringify(plan.rows);
+      expect(explanation).toContain('audit_events_tenant_idx');
+      expect(explanation).not.toMatch(/"Node Type":"Seq Scan"[^}]*"Relation Name":"audit_events"/u);
+      expect((await audits(receipt.session_id)).at(-1)?.metadata.host_id).toBe(HOST);
+      console.info('TERMINAL_AUDIT_LOOKUP',JSON.stringify({ unrelatedRows:10000,index:'audit_events_tenant_idx',candidateLimit:1000 }));
+    } finally { queries.mockRestore(); }
+  });
+
+  it('leaves the host unknown when the bounded admission candidate window is exhausted', async () => {
+    const receipt = await open();
+    await admin().query(`INSERT INTO audit_events(tenant_id,actor_alias,action,decision,created_at)
+      SELECT $1,$2,'fixture.unrelated','info',clock_timestamp() FROM generate_series(1,1000)`,
+    [identity().tenant_id,identity().alias]);
+    await recordTerminalAudit(pool,followup(receipt.session_id,{ host_id:MOVED_HOST }));
+    expect((await audits(receipt.session_id)).at(-1)?.metadata.host_id).toBeNull();
   });
 
   it('normalizes unknown host evidence and uses the same transaction for the audit write', async () => {

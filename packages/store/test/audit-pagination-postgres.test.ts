@@ -1,5 +1,6 @@
+import { randomUUID } from 'node:crypto';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { CauceRepository, lockCompanyAuthority, type DatabaseClient, type DatabasePool } from '../src/index.js';
+import { CauceRepository, createPool, lockCompanyAuthority, type DatabaseClient, type DatabasePool } from '../src/index.js';
 import { seedSyntheticCompanyContexts } from '../src/seed-dev-cli.js';
 import { preparePostgresSuite } from './postgres-suite.js';
 import { requireValue } from './helpers.js';
@@ -28,16 +29,32 @@ function page(index = 0, options: NonNullable<Parameters<CauceRepository['listAu
   return repository.listAudit(fixture(index).tenant_id, 'owner', { ...options, humanAuthority: authority(index) });
 }
 async function audit(values: { tenant?: string | null; actor?: string; company?: string | null; action?: string;
-  trace?: string; at?: string; id?: string; metadata?: Record<string, unknown> } = {}) {
+  trace?: string; at?: string; id?: string; metadata?: Record<string, unknown>; message?: string; delivery?: string } = {}) {
   const result = await pool.query<{ id: string }>(`INSERT INTO audit_events
-    (id,tenant_id,actor_alias,company_id,action,decision,trace_id,metadata,created_at)
-    VALUES(COALESCE($1::bigint,nextval('audit_events_id_seq')),$2,$3,$4,$5,'allow',$6,$7::jsonb,$8::timestamptz) RETURNING id::text`,
+    (id,tenant_id,actor_alias,company_id,action,decision,trace_id,metadata,created_at,message_id,delivery_id)
+    VALUES(COALESCE($1::bigint,nextval('audit_events_id_seq')),$2,$3,$4,$5,'allow',$6,$7::jsonb,$8::timestamptz,$9,$10) RETURNING id::text`,
   [values.id ?? null, values.tenant === undefined ? 'ContextAlpha' : values.tenant, values.actor ?? 'director',
     values.company ?? null, values.action ?? 'context.sync', values.trace ?? 'zz-canary-audit-chain',
-    JSON.stringify(values.metadata ?? { state: 'synced' }), values.at ?? '2026-08-26T08:00:00Z']);
+    JSON.stringify(values.metadata ?? { state: 'synced' }), values.at ?? '2026-08-26T08:00:00Z', values.message ?? null, values.delivery ?? null]);
   return requireValue(result.rows[0], 'audit receipt').id;
 }
 function ids(result: Record<string, unknown>) { return (result.items as { event_id: string }[]).map(row => row.event_id); }
+async function blockedAuditPid() {
+  const until = Date.now() + 2_000;
+  while (Date.now() < until) {
+    const row = (await requireValue(current, 'case').adminPool.query<{ pid: number }>(`SELECT pid FROM pg_stat_activity
+      WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE '%FROM audit_events audit%'`)).rows[0];
+    if (row) return row.pid;
+    await new Promise(resolve => setTimeout(resolve, 20));
+  }
+  throw new Error('audit query did not wait on the PostgreSQL barrier');
+}
+function settled(operation: Promise<unknown>) { return operation.then(value => ({ value }), (error: unknown) => ({ error })); }
+async function bounded(operation: Promise<unknown>, milliseconds: number) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try { return await Promise.race([operation, new Promise(resolve => { timer = setTimeout(() => { resolve({ timed_out: true }); }, milliseconds); })]); }
+  finally { clearTimeout(timer); }
+}
 
 describe('company-scoped audit keyset pagination', () => {
   it('shows the owner every company tenant and honors explicit attribution before legacy fallback', async () => {
@@ -60,11 +77,27 @@ describe('company-scoped audit keyset pagination', () => {
     expect(switched.items).toEqual([expect.objectContaining({ company_id: 'context_beta' })]);
     expect(ids(await page())).toHaveLength(1);
   });
-  it('limits unverified agents and aliases to their home tenant without company promotion', async () => {
+  it('limits non-console actors to their own audit events without tenant or company promotion', async () => {
     const own = await audit(); await audit({ tenant: 'ContextPeer' }); await audit({ tenant: 'ContextBeta' });
     await audit({ tenant: 'ContextAlpha', company: 'context_beta' });
     expect(ids(await repository.listAudit(fixture().tenant_id, 'director'))).toEqual([own]);
-    expect(ids(await repository.listAudit(fixture().tenant_id, 'owner'))).toEqual([own]);
+    expect(ids(await repository.listAudit(fixture().tenant_id, 'owner'))).toEqual([]);
+    expect(ids(await repository.listAudit(fixture().tenant_id, 'owner', { alias: 'director' }))).toEqual([]);
+  });
+  it('includes indexed message and delivery participation without trusting recipient metadata', async () => {
+    const message = randomUUID(); const delivery = randomUUID();
+    await pool.query(`INSERT INTO messages(id,request_id,trace_id,tenant_id,room_id,actor_alias,body,origin,lane)
+      VALUES($1,gen_random_uuid(),'zz-canary-participant','ContextAlpha','context-room','owner',
+        '{"type":"command","text":"synthetic"}','{}','interactive')`, [message]);
+    await pool.query(`INSERT INTO deliveries(id,message_id,recipient_tenant,recipient_alias)
+      VALUES($1,$2,'ContextAlpha','director')`, [delivery, message]);
+    const shared = await audit({ actor: 'owner', message });
+    const received = await audit({ tenant: 'ContextPeer', actor: 'peer-agent', delivery });
+    await audit({ actor: 'owner', metadata: { recipient_alias: 'director' } });
+    await audit({ actor: 'peer-agent', company: 'context_beta', delivery });
+    const result = await repository.listAudit(fixture().tenant_id, 'director', { limit: 1 });
+    expect(ids(result)).toEqual([received]); expect(result.next_cursor).toBe(received);
+    expect(ids(await repository.listAudit(fixture().tenant_id, 'director', { before: received }))).toEqual([shared]);
   });
   it('projects registered company hosts and known components without metadata or secrets', async () => {
     const safe = await audit({ metadata: { host_id: 'zz-canary-audit-alpha', component: 'context', state: 'synced',
@@ -116,4 +149,39 @@ describe('company-scoped audit keyset pagination', () => {
     await current.adminPool.query("UPDATE role_policies SET allow_read=false WHERE role='agent'");
     await expect(repository.listAudit(fixture().tenant_id, 'director')).rejects.toMatchObject({ code: 'forbidden' });
   });
+  it('rejects a pre-aborted non-console read before waiting for a pool connection', async () => {
+    const controller = new AbortController(); controller.abort();
+    const options = { limit: 100, signal: controller.signal };
+    await expect(repository.listAudit(fixture().tenant_id, 'director', options)).rejects.toMatchObject({ name: 'AbortError' });
+  });
+  it.each(['agent', 'human'])('physically cancels an active %s audit query blocked in PostgreSQL', async kind => {
+    const admin = requireValue(current, 'case').adminPool; const barrier = await admin.connect();
+    const controller = new AbortController(); let pending: ReturnType<typeof settled> | undefined;
+    try {
+      await barrier.query('BEGIN; LOCK TABLE audit_events IN ACCESS EXCLUSIVE MODE');
+      const options = { limit: 100, signal: controller.signal, ...(kind === 'human' ? { humanAuthority: authority() } : {}) };
+      pending = settled(repository.listAudit(fixture().tenant_id, kind === 'human' ? 'owner' : 'director', options));
+      const pid = await blockedAuditPid(); controller.abort();
+      expect(await bounded(pending, 1_500)).toMatchObject({ error: { name: 'AbortError' } });
+      expect((await admin.query('SELECT pid FROM pg_stat_activity WHERE pid=$1', [pid])).rows).toEqual([]);
+    } finally { controller.abort(); await barrier.query('ROLLBACK'); barrier.release(); await pending; }
+    expect((await pool.query('SELECT 1 AS alive')).rows).toEqual([{ alive: 1 }]);
+  });
+  it('bounds an agent audit statement without a caller signal while keeping the pool usable', async () => {
+    const barrier = await requireValue(current, 'case').adminPool.connect(); let pending: ReturnType<typeof settled> | undefined;
+    try {
+      await barrier.query('BEGIN; LOCK TABLE audit_events IN ACCESS EXCLUSIVE MODE');
+      pending = settled(repository.listAudit(fixture().tenant_id, 'director'));
+      expect(await bounded(pending, 4_000)).toMatchObject({ error: { code: '57014' } });
+    } finally { await barrier.query('ROLLBACK'); barrier.release(); await pending; }
+    expect(ids(await repository.listAudit(fixture().tenant_id, 'director'))).toEqual([]);
+  }, 10_000);
+  it('expires a queued agent audit before the pool grants a slot and never starts late work', async () => {
+    const queued = createPool(requireValue(current, 'case').url, { max: 1, connectionTimeoutMillis: 10_000 });
+    const held = await queued.connect(); let pending: ReturnType<typeof settled> | undefined;
+    try {
+      pending = settled(new CauceRepository(queued).listAudit(fixture().tenant_id, 'director'));
+      expect(await bounded(pending, 6_500)).toMatchObject({ error: { name: 'TimeoutError' } });
+    } finally { held.release(); await pending; await queued.end(); }
+  }, 12_000);
 });

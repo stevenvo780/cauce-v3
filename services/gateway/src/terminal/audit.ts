@@ -1,6 +1,7 @@
 import { FleetHostIdSchema, isCanonicalUuidV4 } from '@cauce/protocol';
 import type { DatabaseClient, DatabasePool } from '@cauce/store';
 import type { TerminalSessionRow } from './types.js';
+import { decodeTerminalSubject } from './authority-continuity.js';
 
 /** Audit metadata excludes tickets, PTY bytes and document contents; only measurements and digest prefixes are safe. */
 
@@ -45,27 +46,42 @@ async function terminalAuditHost(database: DatabasePool | DatabaseClient, entry:
   }
   if (!isCanonicalUuidV4(metadata.session_id)
       || typeof metadata.target_tenant !== 'string' || typeof metadata.target_alias !== 'string') return null;
-  // Session rows lack a host snapshot; the original authorized admission is the durable source.
+  const sessions = await database.query<Pick<TerminalSessionRow, 'tenant_id' | 'alias' | 'console_subject' | 'issued_at'>>(
+    'SELECT * FROM terminal_sessions WHERE id=$1', [metadata.session_id],
+  );
+  const session = sessions.rows[0];
+  if (session?.tenant_id !== metadata.target_tenant || session.alias !== metadata.target_alias
+      || !(session.issued_at instanceof Date) || !Number.isFinite(session.issued_at.getTime())) return null;
+  let actor: ReturnType<typeof decodeTerminalSubject>['actor'];
+  try { actor = decodeTerminalSubject(session.console_subject).actor; } catch { return null; }
+  // The tenant/time index bounds admission evidence; absent evidence never falls back to a later placement.
   const result = await database.query<{ host_id: unknown }>(
     `SELECT audit.metadata->>'host_id' AS host_id
-       FROM audit_events audit
+       FROM (
+         SELECT * FROM audit_events
+          WHERE tenant_id=$5 AND created_at BETWEEN $7::timestamptz-interval '1 minute' AND $7::timestamptz+interval '1 minute'
+          ORDER BY created_at DESC LIMIT 1000
+       ) audit
        JOIN tenants actor_tenant ON actor_tenant.id=audit.tenant_id
        JOIN terminal_sessions session ON session.id::text=audit.metadata->>'session_id'
        JOIN tenants target_tenant ON target_tenant.id=session.tenant_id
       WHERE session.id=$1::uuid AND session.tenant_id=$2 AND session.alias=$3
         AND audit.action='terminal.session.request' AND audit.decision='allow'
+        AND audit.actor_alias=$6 AND audit.trace_id IS NOT DISTINCT FROM session.trace_id
         AND audit.metadata->>'target_tenant'=session.tenant_id
         AND audit.metadata->>'target_alias'=session.alias
         AND COALESCE(audit.company_id,actor_tenant.company_id)=target_tenant.company_id
         AND ($4::text IS NULL OR audit.trace_id=$4)
       ORDER BY audit.id LIMIT 1`,
-    [metadata.session_id, metadata.target_tenant, metadata.target_alias, entry.trace_id ?? null],
+    [metadata.session_id, metadata.target_tenant, metadata.target_alias, entry.trace_id ?? null,
+      actor.tenantId, actor.alias, session.issued_at],
   );
   return auditHost(result.rows[0]?.host_id);
 }
 
 export async function recordTerminalAudit(database: DatabasePool | DatabaseClient, entry: TerminalAuditEntry): Promise<void> {
-  const metadata = { ...entry.metadata, host_id: await terminalAuditHost(database, entry), component: 'terminal' };
+  const component = entry.action.startsWith('agent_document.') || entry.action.startsWith('agent_profile.') ? 'context' : 'terminal';
+  const metadata = { ...entry.metadata, host_id: await terminalAuditHost(database, entry), component };
   await database.query(
     `INSERT INTO audit_events(tenant_id, actor_alias, action, decision, trace_id, metadata)
      VALUES($1,$2,$3,$4,$5,$6::jsonb)`,

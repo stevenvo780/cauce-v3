@@ -37,7 +37,8 @@ def main():
             headers={'Cookie': client.cookie, 'Origin': client.origin, 'Accept': 'application/json'},
             method='GET',
         )
-        opener = urllib.request.build_opener(NoRedirect(), urllib.request.HTTPSHandler(context=client.tls))
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect(),
+            urllib.request.HTTPSHandler(context=client.tls))
         with opener.open(request, timeout=65) as response:
             raw = response.read(2097153)
             if len(raw) > 2097152:

@@ -5,7 +5,7 @@ import {
 } from '../fleet-activity.js';
 import { safeAuditSummary } from '../audit-summary.js';
 import { COMPANY_ID_PATTERN, lockCompanyAuthority } from '../company-authority.js';
-import { withTransaction } from '../db.js';
+import { withAbortableTransaction, withTransaction } from '../db.js';
 import { postgresBigintString } from '../runtime-values.js';
 import type { CompanyAuthoritySource } from './fleet-hosts.js';
 import { StoreError } from './errors.js';
@@ -54,7 +54,7 @@ export abstract class ObservabilityRepository extends ObservabilityChainSweepRep
     actorTenant: Tenant,
     actorAlias: string,
     options: { limit?: number; before?: string | null; trace_id?: string; alias?: string; action?: string;
-      from?: string; to?: string; humanAuthority?: CompanyAuthoritySource } = {},
+      from?: string; to?: string; humanAuthority?: CompanyAuthoritySource; signal?: AbortSignal } = {},
   ): Promise<Record<string, unknown>> {
     const limit = options.limit ?? 100;
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 500) {
@@ -76,7 +76,10 @@ export abstract class ObservabilityRepository extends ObservabilityChainSweepRep
       || (options.from !== undefined && options.to !== undefined && Date.parse(options.from) > Date.parse(options.to))) {
       throw new StoreError('invalid_input', 'audit filters are invalid');
     }
-    return withTransaction(this.pool, async client => {
+    const deadline = AbortSignal.timeout(5_000);
+    const signal = options.signal === undefined ? deadline : AbortSignal.any([options.signal, deadline]);
+    return withAbortableTransaction(this.pool, signal, async client => {
+      await client.query("SET LOCAL statement_timeout='2000ms'");
       const authority = await (options.humanAuthority?.(client) ?? lockCompanyAuthority(client, { tenant: actorTenant, alias: actorAlias }));
       const companyWide = authority.scope === 'company' || authority.scope === 'platform';
       if (authority.homeTenant !== actorTenant || authority.alias !== actorAlias || authority.scope === 'none'
@@ -114,14 +117,22 @@ export abstract class ObservabilityRepository extends ObservabilityChainSweepRep
                 audit.action,audit.decision,audit.request_id,audit.trace_id,audit.metadata
          FROM audit_events audit
          LEFT JOIN tenants tenant ON tenant.id=audit.tenant_id
+         LEFT JOIN messages message ON message.id=audit.message_id
          LEFT JOIN fleet_hosts host ON host.host_id=audit.metadata->>'host_id' AND host.company_id=$1
          WHERE COALESCE(audit.company_id,tenant.company_id)=$1 AND ($2::text IS NULL OR audit.tenant_id=$2)
+           AND ($10::text IS NULL OR (audit.tenant_id=$11 AND audit.actor_alias=$10)
+             OR (message.id IS NOT NULL AND message.tenant_id=$11 AND EXISTS (
+               SELECT 1 FROM memberships member WHERE member.tenant_id=$11 AND member.alias=$10
+                 AND member.room_id=message.room_id AND member.enabled AND member.retired_at IS NULL))
+             OR (audit.delivery_id IS NOT NULL AND EXISTS (SELECT 1 FROM deliveries participant
+               WHERE participant.id=audit.delivery_id AND participant.recipient_tenant=$11 AND participant.recipient_alias=$10)))
            AND ($3::bigint IS NULL OR audit.id < $3::bigint)
            AND ($4::text IS NULL OR audit.trace_id=$4) AND ($5::text IS NULL OR audit.actor_alias=$5)
            AND ($6::text IS NULL OR audit.action=$6) AND ($7::timestamptz IS NULL OR audit.created_at>=$7)
            AND ($8::timestamptz IS NULL OR audit.created_at<=$8)
-         ORDER BY audit.id DESC LIMIT $9`, [authority.actingCompany, companyWide ? null : actorTenant, before,
-        options.trace_id ?? null, options.alias ?? null, options.action ?? null, options.from ?? null, options.to ?? null, limit + 1]
+         ORDER BY audit.id DESC LIMIT $9`, [authority.actingCompany, companyWide || authority.humanId === null ? null : actorTenant, before,
+        options.trace_id ?? null, options.alias ?? null, options.action ?? null, options.from ?? null, options.to ?? null, limit + 1,
+        authority.humanId === null ? actorAlias : null, actorTenant]
       );
       const hasMore = result.rows.length > limit;
       const visible = result.rows.slice(0, limit);
