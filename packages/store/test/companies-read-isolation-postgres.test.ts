@@ -156,7 +156,7 @@ describe('company read isolation', () => {
       .rejects.toMatchObject({ code: 'not_found' });
   });
 
-  it('confines quota resumes and every report to the collector company, and ages out every company', async () => {
+  it('confines quota resumes, reports and retention to the collector company', async () => {
     const paused = (): Promise<{ id: string; paused: boolean }[]> => admin.query<{ id: string; paused: boolean }>(
       'SELECT id,paused_until IS NOT NULL AS paused FROM provider_accounts ORDER BY id').then((result) => result.rows);
     expect(await paused()).toEqual([{ id: 'humanizar-account', paused: false }, { id: 'praxis-account', paused: true }]);
@@ -167,9 +167,12 @@ describe('company read isolation', () => {
     const humanizar = await repository.recordQuotaSample('Steven', 'kant', sample('shared-quota', 'humanizar-account', 55));
     expect(humanizar).toMatchObject({ resumed_accounts: [], pruned_collections: 1 });
     expect(await paused()).toEqual([{ id: 'humanizar-account', paused: false }, { id: 'praxis-account', paused: true }]);
-    expect((await admin.query("SELECT 1 FROM quota_collections WHERE received_at < now()-interval '30 days'")).rowCount).toBe(0);
+    const aged = (): Promise<string[]> => admin.query<{ collector_tenant: string }>(
+      "SELECT collector_tenant FROM quota_collections WHERE received_at < now()-interval '30 days'").then((result) => result.rows.map((row) => row.collector_tenant));
+    expect(await aged()).toEqual(['PraxisHub']);
     const praxisRun = await repository.recordQuotaSample('PraxisHub', 'company_admin', sample('shared-quota', 'praxis-account', 50));
-    expect(praxisRun).toMatchObject({ resumed_accounts: [{ account_id: 'praxis-account' }], pruned_collections: 0 });
+    expect(praxisRun).toMatchObject({ resumed_accounts: [{ account_id: 'praxis-account' }], pruned_collections: 1 });
+    expect(await aged()).toEqual([]);
   });
 
   it('withholds the failure detail and the chain counters of another company, and of tenants without one', async () => {

@@ -672,19 +672,20 @@ export abstract class QuotasRepository extends DeliveryControlRepository {
         account_id: row.account_id, provider: row.provider
       }));
 
-      // Bounded retention (LIMIT 500) so a single POST never triggers an unbounded DELETE. The policy is
-      // installation-wide, so a company whose collectors went silent still ages out; the collector is
-      // told only how much of its own company's history went.
+      // Bounded retention (LIMIT 500) so a single POST never triggers an unbounded DELETE. A collector only
+      // ages out the history of its own company (its own tenant when it has none): a sample of one company
+      // never deletes another's rows. A company whose collectors went silent stops growing, so nothing piles up.
       const prunedCollections = await client.query<{ pruned: number }>(
         `WITH pruned AS (
            DELETE FROM quota_collections WHERE ctid IN (
-             SELECT ctid FROM quota_collections
-              WHERE received_at < now() - interval '30 days' ORDER BY received_at LIMIT 500
-           ) RETURNING collector_tenant
+             SELECT collection.ctid FROM quota_collections collection
+              WHERE collection.received_at < now() - interval '30 days'
+                AND (collection.collector_tenant = $1 OR collection.collector_tenant IN (
+                  SELECT peer.id FROM tenants peer JOIN tenants actor ON actor.company_id = peer.company_id WHERE actor.id = $1))
+              ORDER BY collection.received_at LIMIT 500
+           ) RETURNING 1
          )
-         SELECT count(*)::int AS pruned FROM pruned
-           JOIN tenants collector ON collector.id = pruned.collector_tenant
-          WHERE collector.company_id = (SELECT actor.company_id FROM tenants actor WHERE actor.id = $1)`,
+         SELECT count(*)::int AS pruned FROM pruned`,
         [actorTenant]
       );
 
