@@ -143,8 +143,9 @@ describe('recorrido V4 de la consola en navegador real contra gateway y PostgreS
     expect(created.rows).toEqual([{ company_id: ownerB.company.slug, role: 'owner' }]);
   });
 
-  it('ordenadores: rechaza una invitación inválida, entrega la válida una sola vez y la cancela', async () => {
+  it('ordenadores: rechaza una invitación inválida o fuera de la partición de su empresa, entrega la válida una sola vez y la cancela', async () => {
     const page = ownerPage();
+    const hostId = `${ownerA.company.slug}-v4${run}`;
     await step(page, 'host invitation', async () => {
       await openConfig(page, 'computadoras');
       const panel = page.getByRole('region', { name: 'Añadir ordenador', exact: true });
@@ -161,12 +162,18 @@ describe('recorrido V4 de la consola en navegador real contra gateway y PostgreS
       await form.getByRole('button', { name: 'Crear invitación', exact: true }).click();
       await panel.getByRole('alert').waitFor({ timeout: 15_000 });
       expect(await panel.getByRole('alert').innerText()).toContain('invalid host enrollment request');
+      errors.expectHttpError('/v3/console/fleet/hosts/enrollments', 403);
       await form.getByLabel('Identificador del ordenador').fill(`v4-${run}`);
+      await form.getByRole('button', { name: 'Crear invitación', exact: true }).click();
+      await expect.poll(async () => panel.getByRole('alert').innerText(), { timeout: 15_000 })
+        .toContain(`host id must be ${ownerA.company.slug}-<name>`);
+      await form.getByLabel('Identificador del ordenador').fill(hostId);
       await form.getByRole('button', { name: 'Crear invitación', exact: true }).click();
       const invitation = panel.locator('textarea');
       await invitation.waitFor({ timeout: 15_000 });
       const receipt = JSON.parse(await invitation.inputValue()) as Record<string, unknown>;
       expect(typeof receipt.enrollment_id).toBe('string');
+      expect(receipt.host_id).toBe(hostId);
       expect(await panel.locator('code').innerText()).toBe(`cauce hosts enroll --gateway ${base()} --invitation-stdin`);
       await panel.getByRole('button', { name: 'Cerrar invitación', exact: true }).click();
       await page.reload({ waitUntil: 'domcontentloaded' });
@@ -344,7 +351,7 @@ describe('recorrido V4 de la consola en navegador real contra gateway y PostgreS
     });
   });
 
-  const quotaHost = `cuotas-${run}`;
+  const quotaHost = `${ownerA.company.slug}-cuotas${run}`;
   const quotaCard = (page: V4Page, label: string) => page.getByRole('article', { name: `Cuotas de ${label}`, exact: true });
 
   it('mis cuotas: alta sin agente, fijar tarjeta, preferencias en otra sesión, edición con CAS y borrado', async () => {
