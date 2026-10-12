@@ -82,6 +82,7 @@
     "@cauce/protocol": "workspace:*",
     "@cauce/store": "workspace:*",
     "@eslint/js": "^9.31.0",
+    "@napi-rs/canvas": "0.1.100",
     "@types/node": "^24.0.15",
     "@types/pg": "^8.15.4",
     "@types/ws": "^8.18.1",
