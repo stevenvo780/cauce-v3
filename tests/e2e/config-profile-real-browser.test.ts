@@ -310,7 +310,8 @@ describe('perfil canónico desde configuración móvil y runtime Python medido',
     const artifactDirectory = process.env.CAUCE_E2E_ARTIFACT_DIR;
     await page.getByRole('tab', { name: 'Agentes', exact: true }).click();
     await page.getByRole('searchbox', { name: 'Buscar agente o grupo' }).fill(active.targetAlias);
-    const openContext = page.getByRole('link', { name: `Perfil y contexto de ${active.tenant}/${active.targetAlias}` });
+    await page.getByRole('button', { name: `Acciones de ${active.tenant}/${active.targetAlias}`, exact: true }).click();
+    const openContext = page.getByRole('menuitem', { name: `Perfil y contexto de ${active.tenant}/${active.targetAlias}`, exact: true });
     try {
       await openContext.waitFor({ state: 'visible', timeout: 20_000 });
     } catch (error) {

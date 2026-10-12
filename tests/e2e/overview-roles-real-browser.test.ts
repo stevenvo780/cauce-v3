@@ -134,7 +134,7 @@ async function openSignals(page: BrowserPage): Promise<void> {
 
 async function expectAgentMetrics(page: BrowserPage, tenant: FunctionalTenant, inFlight: unknown, queued: unknown): Promise<void> {
   if (!fixture) throw new Error('fixture not initialized');
-  await page.goto(`${fixture.baseUrl}/live?agente=${encodeURIComponent(`${tenant.tenant}/${tenant.target}`)}`, { waitUntil: 'domcontentloaded' });
+  await page.goto(`${fixture.baseUrl}/live?agente=${encodeURIComponent(`${tenant.tenant}/${tenant.target}`)}&ficha=1`, { waitUntil: 'domcontentloaded' });
   const detail = page.getByRole('dialog', { name: tenant.target, exact: true });
   await detail.waitFor({ state: 'visible', timeout: 20_000 });
   for (const [label, value] of [['En vuelo', inFlight], ['En cola', queued]] as const) {
