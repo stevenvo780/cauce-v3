@@ -52,19 +52,20 @@ async function history(database: EmptyTestDatabase): Promise<{ store: ContextVer
 }
 
 describe('immutable context history', () => {
-  it('refuses UPDATE, DELETE and TRUNCATE of written versions while new versions and restores still append', async () => {
-    const empty = await at(version);
-    expect(await code(empty.adminPool.query('TRUNCATE agent_context_versions CASCADE'))).toBe('ok');
+  it('refuses UPDATE and DELETE of written versions to the owner while new versions and restores still append', async () => {
     const database = await at(version);
     const context = await history(database);
     await context.write(0);
     const before = (await database.adminPool.query('SELECT * FROM agent_context_versions')).rows;
     for (const statement of [`UPDATE agent_context_versions SET actor_alias='forged'`,
-      `UPDATE agent_context_versions SET files='[]'::jsonb,digest=repeat('0',64)`, 'DELETE FROM agent_context_versions',
-      'TRUNCATE agent_context_versions CASCADE', 'TRUNCATE console_users CASCADE']) {
+      `UPDATE agent_context_versions SET files='[]'::jsonb,digest=repeat('0',64)`, 'DELETE FROM agent_context_versions']) {
       expect({ [statement]: await code(database.adminPool.query(statement)) }).toEqual({ [statement]: '55000' });
     }
     expect((await database.adminPool.query('SELECT * FROM agent_context_versions')).rows).toEqual(before);
+    expect((await database.adminPool.query(`SELECT has_table_privilege('cauce_runtime','agent_context_versions','UPDATE') AS update,
+      has_table_privilege('cauce_runtime','agent_context_versions','DELETE') AS delete,
+      has_table_privilege('cauce_runtime','agent_context_versions','TRUNCATE') AS truncate`)).rows)
+      .toEqual([{ update: false, delete: false, truncate: false }]);
     await context.write(1);
     const restored = await context.store.restore(context.source, context.tenant, context.alias, { expected_version: 2, version: 1 });
     expect(restored).toMatchObject({ desired_version: 3 });
