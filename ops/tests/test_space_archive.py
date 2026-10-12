@@ -136,6 +136,57 @@ class SpaceArchiveTests(unittest.TestCase):
         for kept in ('session.py', 'token_utils.py', 'id_rsa.pub', 'secrets_manager.py'):
             self.assertTrue((self.restored / 'projects/app' / kept).is_file(), kept)
 
+    def test_extra_credential_files_and_token_content_are_omitted_while_cookie_sources_stay(self):
+        project = self.space / 'projects/app'
+        (project / 'src/lib').mkdir(parents=True, mode=0o700)
+        for name in ('.npmrc', '.pypirc', '.htpasswd', 'cookies', 'cookies.txt', 'cookies.json', 'cookies.sqlite', 'Cookies'):
+            (project / name).write_text('x')
+        for kept in ('src/lib/cookies.ts', 'cookie.js'):
+            (project / kept).write_text('export const jar = 1;\n')
+        omitted = {item['path'] for item in self.backup()['omissions']}
+        for name in ('.npmrc', '.pypirc', '.htpasswd', 'cookies', 'cookies.txt', 'cookies.json', 'cookies.sqlite', 'Cookies'):
+            self.assertIn(f'projects/app/{name}', omitted, name)
+        restore_space(str(self.archive), str(self.restored), self.identity)
+        for kept in ('src/lib/cookies.ts', 'cookie.js'):
+            self.assertTrue((self.restored / 'projects/app' / kept).is_file(), kept)
+
+    def test_provider_tokens_and_url_credentials_in_content_are_omitted(self):
+        samples = {
+            'github': 'ghp_' + 'a' * 36, 'github_oauth': 'gho_' + 'b' * 36, 'github_user': 'ghu_' + 'c' * 36,
+            'github_server': 'ghs_' + 'd' * 36, 'github_pat': 'github_pat_' + 'e' * 30, 'gitlab': 'glpat-' + 'f' * 20,
+            'slack': 'xoxb-1234567890-abcdef', 'aws_key': 'AKIA' + 'A' * 16, 'aws_secret': 'aws_secret_access_key = wJalrXUtnFEMI',
+            'npm_auth': '//registry.npmjs.org/:_authToken=abc', 'npm_token': 'npm_' + 'g' * 36,
+            'url': 'git clone https://deploy:hunter2@example.test/repo.git'}
+        for name, content in samples.items():
+            (self.space / f'projects/{name}.txt').write_text(content)
+        (self.space / 'projects/plain.txt').write_text('see https://example.test/docs and ghp_short\n')
+        result = self.backup()
+        self.assertEqual({item['path']: item['reason'] for item in result['omissions']},
+                         {f'projects/{name}.txt': 'sensitive_content' for name in samples})
+        with zipfile.ZipFile(self.archive) as archived:
+            self.assertIn('projects/plain.txt', archived.namelist())
+
+    def test_declared_external_mounts_are_omitted_with_their_reason(self):
+        (self.space / 'projects/shared').mkdir(mode=0o700)
+        (self.space / 'projects/shared/big.bin').write_text('x')
+        (self.space / 'projects/keep.txt').write_text('keep')
+        (self.space / 'config/external-mounts.json').write_text(json.dumps({'mounts': [
+            {'path': str(self.space / 'projects/shared'), 'excluded_from_copy': True, 'reason': 'shared workspace'},
+            {'path': '/workspace', 'excluded_from_copy': True, 'reason': 'outside the space'},
+            {'path': 'projects/keep.txt', 'excluded_from_copy': False, 'reason': 'not excluded'}]}))
+        result = self.backup()
+        self.assertEqual([item for item in result['omissions'] if item['reason'] == 'external_mount'],
+                         [{'path': 'projects/shared', 'reason': 'external_mount'}])
+        restore_space(str(self.archive), str(self.restored), self.identity)
+        self.assertFalse((self.restored / 'projects/shared').exists())
+        self.assertTrue((self.restored / 'projects/keep.txt').is_file())
+
+    def test_malformed_external_mount_declaration_fails_closed(self):
+        (self.space / 'config/external-mounts.json').write_text('{"mounts": 3}')
+        with self.assertRaisesRegex(SpaceArchiveFailure, 'external mount declaration'):
+            self.backup()
+        self.assertFalse(self.archive.exists())
+
     def test_symlinks_and_hardlinks_outside_sensitive_paths_fail_without_leaving_an_archive(self):
         linked = self.space / 'projects/link'
         linked.symlink_to(self.root, target_is_directory=True)

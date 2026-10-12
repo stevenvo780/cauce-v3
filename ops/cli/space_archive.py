@@ -14,14 +14,17 @@ ROOTS = frozenset({'context', 'directives', 'projects', 'config', 'data'})
 IDENTITY_FIELDS = frozenset({'company_id', 'tenant_id', 'alias', 'runtime_key'})
 IDENTIFIER = re.compile(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\Z')
 CREDENTIAL_FILE = re.compile(
-    r'(?:auth\.json|\.?credentials(?:[^/]*\.json|\.(?:ya?ml|toml|ini|txt))?|\.git-credentials|\.netrc|\.pgpass'
+    r'(?:auth\.json|\.?credentials(?:[^/]*\.json|\.(?:ya?ml|toml|ini|txt))?|\.git-credentials|\.netrc|\.pgpass|\.npmrc|\.pypirc|\.htpasswd'
     r'|id_(?:rsa|dsa|ecdsa|ed25519)|client_secrets?[^/]*\.json|secrets?\.(?:json|ya?ml|toml)|token\.json|[^/]+\.session'
-    r'|cookies?(?:\.[^/]*)?|\.env(?:\..*)?|.*\.(?:pem|key|p12|pfx|keystore))\Z', re.I)
+    r'|cookies(?:\.(?:txt|json|sqlite))?|\.env(?:\..*)?|.*\.(?:pem|key|p12|pfx|keystore))\Z', re.I)
 CREDENTIAL_DIRECTORIES = frozenset({'.codex', '.claude', '.config', '.ssh', '.gnupg', '.aws', '.docker', '.kube', '.gemini'})
 # .git config embeds remote URLs and hooks, and object stores break the entry cap or the hardlink check; the remote is the source of truth.
 VCS_DIRECTORY = '.git'
-OMISSION_REASONS = frozenset({'sensitive_path', 'sensitive_content', 'vcs_metadata'})
-SENSITIVE_CONTENT = re.compile(rb'-----BEGIN (?:[A-Z ]+ )?PRIVATE KEY-----|\bsk-[A-Za-z0-9_-]{20,}|["\x27]?(?:access_token|refresh_token|client_secret|api_key|password)["\x27]?\s*[:=]\s*["\x27]?[^\s"\x27]{6,}', re.I)
+OMISSION_REASONS = frozenset({'sensitive_path', 'sensitive_content', 'vcs_metadata', 'external_mount'})
+SENSITIVE_CONTENT = re.compile(rb'-----BEGIN (?:[A-Z ]+ )?PRIVATE KEY-----|\bsk-[A-Za-z0-9_-]{20,}'
+    rb'|(?-i:\bgh[pous]_[A-Za-z0-9]{20,}|\bgithub_pat_[A-Za-z0-9_]{20,}|\bglpat-[A-Za-z0-9_-]{20,}|\bxox[abprs]-[A-Za-z0-9-]{10,}'
+    rb'|\bAKIA[0-9A-Z]{16}\b|\bnpm_[A-Za-z0-9]{36}\b)|aws_secret_access_key|_authToken|://[^\s/:@"\x27]+:[^\s/@"\x27]+@'
+    rb'|["\x27]?(?:access_token|refresh_token|client_secret|api_key|password)["\x27]?\s*[:=]\s*["\x27]?[^\s"\x27]{6,}', re.I)
 MAX_FILE = 128 * 1024 * 1024
 MAX_TOTAL = 1024 * 1024 * 1024
 MAX_ENTRIES = 20_000
@@ -51,7 +54,39 @@ def relative_path(value: str) -> str:
     return value
 
 
-def omission_reason(value: str) -> str | None:
+def external_mounts(root: int, source: str) -> tuple[str, ...]:
+    """Archive-relative paths the supervisor declared as excluded external mounts; paths outside the space cannot be in the archive."""
+    try:
+        parent = open_relative_directory(root, 'config')
+    except FileNotFoundError:
+        return ()
+    try:
+        data, _ = read_file(parent, 'external-mounts.json', MAX_MANIFEST)
+    except FileNotFoundError:
+        return ()
+    finally:
+        os.close(parent)
+    try:
+        paths = [item['path'] for item in json.loads(data)['mounts'] if item.get('excluded_from_copy') is True]
+        if not all(isinstance(path, str) and path for path in paths):
+            raise TypeError
+    except (ValueError, TypeError, KeyError, AttributeError):
+        raise SpaceArchiveFailure('external mount declaration is invalid') from None
+    inside = []
+    for path in paths:
+        normalized = pathlib.PurePosixPath(os.path.normpath(path))
+        if normalized.is_absolute():
+            if not normalized.is_relative_to(source):
+                continue
+            normalized = normalized.relative_to(source)
+        if str(normalized) != '.':
+            inside.append(str(normalized))
+    return tuple(inside)
+
+
+def omission_reason(value: str, mounts: tuple[str, ...] = ()) -> str | None:
+    if any(value == mount or value.startswith(mount + '/') for mount in mounts):
+        return 'external_mount'
     parts = pathlib.PurePosixPath(value).parts
     if any(part.lower() in CREDENTIAL_DIRECTORIES or CREDENTIAL_FILE.match(part) for part in parts):
         return 'sensitive_path'
@@ -146,6 +181,7 @@ def backup_space(source: str, archive: str, expected_identity: dict) -> dict:
         raise SpaceArchiveFailure('space backup archive must be outside the source space')
     root = open_directory(source)
     root_before = os.fstat(root)
+    mounts = external_mounts(root, source)
     destination = pathlib.Path(archive)
     parent = open_directory(str(destination.parent))
     file_descriptor = None
@@ -165,7 +201,7 @@ def backup_space(source: str, archive: str, expected_identity: dict) -> dict:
                     path = relative_path(prefix + '/' + name)
                     if len(directories) + len(files) + len(omissions) >= MAX_ENTRIES:
                         raise SpaceArchiveFailure('space contains too many archive entries')
-                    reason = omission_reason(path)
+                    reason = omission_reason(path, mounts)
                     if reason:
                         omissions.append({'path': path, 'reason': reason})
                         continue
