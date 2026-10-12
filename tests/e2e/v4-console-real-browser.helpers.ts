@@ -54,9 +54,9 @@ export interface IgnoredConsoleRule {
 /** The hermetic gateway has no terminal relay and no MCP mount: the console probes them and gets 501/404. */
 export const HERMETIC_INSTANCE_RULES: IgnoredConsoleRule[] = [
   { id: 'terminal-capability-501', reason: 'hermetic gateway without terminal relay',
-    matches: (text, url) => /status of 501/u.test(text) && safePath(url) === '/v3/console/terminal/capability' },
+    matches: (text, url) => text.includes('status of 501') && safePath(url) === '/v3/console/terminal/capability' },
   { id: 'mcp-client-delegations-404', reason: 'hermetic gateway without the optional MCP mount',
-    matches: (text, url) => /status of 404/u.test(text) && safePath(url) === '/v3/console/mcp/client-delegations' },
+    matches: (text, url) => text.includes('status of 404') && safePath(url) === '/v3/console/mcp/client-delegations' },
 ];
 
 /** Product defect found by this suite: `pattern` attributes with an unescaped hyphen are invalid under Chrome's `v` flag. */

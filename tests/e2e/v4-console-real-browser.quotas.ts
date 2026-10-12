@@ -1,15 +1,15 @@
 import { createHash, randomBytes } from 'node:crypto';
 
-interface Queryable { query<T = unknown>(sql: string, values?: unknown[]): Promise<{ rows: T[]; rowCount: number | null }> }
+interface Queryable { query(sql: string, values?: unknown[]): Promise<{ rows: { id: string }[]; rowCount: number | null }> }
 
 /**
  * The hermetic gateway has no configured executor, so the console only offers quota accounts when an enrolled host reports a fresh
  * quota capability. This writes the rows a real enrolled host leaves behind, valid for a day so the 120 s window never expires mid-run.
  */
 export async function seedQuotaHost(db: Queryable, input: { companyId: string; ownerEmail: string; hostId: string }): Promise<void> {
-  const owner = (await db.query<{ id: string }>('SELECT id FROM console_users WHERE email=$1', [input.ownerEmail])).rows[0];
+  const owner = (await db.query('SELECT id FROM console_users WHERE email=$1', [input.ownerEmail])).rows[0];
   if (!owner) throw new Error('quota host owner does not exist');
-  const enrollment = (await db.query<{ id: string }>(`INSERT INTO fleet_host_enrollments(company_id,host_id,display_name,invited_by,token_hash,nonce,expires_at,state,enrolled_at)
+  const enrollment = (await db.query(`INSERT INTO fleet_host_enrollments(company_id,host_id,display_name,invited_by,token_hash,nonce,expires_at,state,enrolled_at)
     VALUES($1,$2,'Ordenador de cuotas V4',$3,$4,$5,now()+interval '1 day','enrolled',now()) RETURNING id`,
   [input.companyId, input.hostId, owner.id, randomBytes(32).toString('hex'), randomBytes(32).toString('hex')])).rows[0];
   if (!enrollment) throw new Error('quota host enrollment was not created');

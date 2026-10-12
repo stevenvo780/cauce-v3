@@ -75,7 +75,7 @@ describe('database configuration', () => {
   it('reads a mounted secret in memory and refuses ambiguous or missing settings without printing the value', async () => {
     const directory = await temporaryCatalog();
     const file = join(directory, 'fixture-dsn');
-    await writeFile(file, `postgresql://${'fixture'}:${FIXTURE_PASSWORD}@${'localhost'}/cauce_test_fixture\n`, { mode: 0o600 });
+    await writeFile(file, `postgresql://fixture:${FIXTURE_PASSWORD}@localhost/cauce_test_fixture\n`, { mode: 0o600 });
     expect(loadConfig({ ...base, CAUCE_DECISIONES_DATABASE_URL_FILE: file }).databaseUrl).toBe((await readFile(file, 'utf8')).trim());
     expect(() => loadConfig({ ...base, CAUCE_DECISIONES_DATABASE_URL: 'postgresql://fixture', CAUCE_DECISIONES_HABILITAR_PLANTILLAS: 'guardia_privacidad_jarvis' })).toThrow(/empresa\/id/u);
     expect(() => loadConfig(base)).toThrow(/falta.*DATABASE_URL/u);

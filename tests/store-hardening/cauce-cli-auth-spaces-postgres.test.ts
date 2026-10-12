@@ -31,6 +31,7 @@ const tenantB = 'ContextBeta';
 const host = 'zz-canary-cli';
 let database: TestDatabase | undefined;
 let current: EmptyTestDatabase | undefined;
+function caseDatabase(): EmptyTestDatabase { if (current === undefined) throw new Error('test database not started'); return current; }
 let app: FastifyInstance | undefined;
 let directory: string | undefined;
 let gateway: string;
@@ -97,10 +98,10 @@ async function run(args: string[], input?: string): Promise<CommandResult> {
   });
 }
 
-function parsed<T>(raw: string): T {
-  try { return JSON.parse(raw) as T; } catch { throw new Error('CLI returned invalid JSON'); }
+function parsed(raw: string): unknown {
+  try { return JSON.parse(raw) as unknown; } catch { throw new Error('CLI returned invalid JSON'); }
 }
-async function saved(file: string): Promise<SavedSession> { return parsed<SavedSession>(await readFile(file, 'utf8')); }
+async function saved(file: string): Promise<SavedSession> { return parsed(await readFile(file, 'utf8')) as SavedSession; }
 async function safe(result: CommandResult): Promise<void> {
   const output = result.stdout + result.stderr;
   expect([fixturePassword, incorrectPassword].some(value => output.includes(value))).toBe(false);
@@ -114,7 +115,7 @@ async function safe(result: CommandResult): Promise<void> {
 async function success<T>(args: string[], input?: string): Promise<T> {
   const result = await run(args, input); await safe(result);
   expect(result.code, `CLI failed: ${result.stderr}`).toBe(0);
-  return parsed<T>(result.stdout);
+  return parsed(result.stdout) as T;
 }
 function login(file = sessionA, company = companyA): Promise<AuthState> {
   return success(['login', '--gateway', gateway, '--email', `${company}@dev.example`, '--password-stdin', '--session-file', file], fixturePassword);
@@ -137,7 +138,7 @@ async function foreignSnapshot(): Promise<string> {
     'SELECT * FROM config_revisions WHERE company_id=$1', 'SELECT * FROM fleet_operations WHERE company_id=$1',
   ];
   const rows = await Promise.all(queries.map(async query => {
-    const result = await current!.adminPool.query<{ records: string[] }>(`SELECT COALESCE(array_agg(to_jsonb(row)::text
+    const result = await caseDatabase().adminPool.query<{ records: string[] }>(`SELECT COALESCE(array_agg(to_jsonb(row)::text
       ORDER BY to_jsonb(row)::text),ARRAY[]::text[]) AS records FROM (${query}) row`, [companyB]);
     return result.rows[0]?.records ?? [];
   }));
@@ -192,9 +193,9 @@ describe('cauce CLI password sessions and spaces with a real PostgreSQL gateway'
     const value = await inputFile('registry-create', { display_name: 'CLI draft', harness_id: 'codex', max_concurrent_deliveries: 2 });
     const create = ['--alias', 'cli_draft', '--registry-only', '--input', value, '--expected-revision', String(initial.revision)];
     expect(await spaces('create', create)).toMatchObject({ state: 'preview', registry_only: true });
-    expect((await current!.pool.query('SELECT alias FROM agents WHERE tenant_id=$1 AND alias=$2', [tenantA, 'cli_draft'])).rows).toEqual([]);
+    expect((await caseDatabase().pool.query('SELECT alias FROM agents WHERE tenant_id=$1 AND alias=$2', [tenantA, 'cli_draft'])).rows).toEqual([]);
     expect(await spaces('create', [...create, '--apply'])).toMatchObject({ state: 'registry_applied', registry_only: true });
-    expect((await current!.pool.query('SELECT enabled,runtime_key,lifecycle_state FROM agents WHERE tenant_id=$1 AND alias=$2', [tenantA, 'cli_draft'])).rows)
+    expect((await caseDatabase().pool.query('SELECT enabled,runtime_key,lifecycle_state FROM agents WHERE tenant_id=$1 AND alias=$2', [tenantA, 'cli_draft'])).rows)
       .toEqual([{ enabled: false, runtime_key: null, lifecycle_state: 'draft' }]);
     const listed = await spaces<SpaceList>('list', ['--alias', 'cli_draft']);
     expect(listed.agents).toEqual([expect.objectContaining({ alias: 'cli_draft', display_name: 'CLI draft' })]);
@@ -203,11 +204,11 @@ describe('cauce CLI password sessions and spaces with a real PostgreSQL gateway'
     expect(await spaces('edit', edit)).toMatchObject({ state: 'registry_applied', registry_only: true });
     const stale = await run(['spaces', 'edit', '--tenant', tenantA, '--session-file', sessionA, ...edit]);
     await safe(stale); expect(stale.code).toBe(1);
-    expect((await current!.pool.query('SELECT display_name,enabled FROM agents WHERE tenant_id=$1 AND alias=$2', [tenantA, 'cli_draft'])).rows)
+    expect((await caseDatabase().pool.query('SELECT display_name,enabled FROM agents WHERE tenant_id=$1 AND alias=$2', [tenantA, 'cli_draft'])).rows)
       .toEqual([{ display_name: 'CLI edited', enabled: false }]);
-    expect((await current!.pool.query('SELECT company_id FROM config_revisions WHERE company_id=$1 ORDER BY id', [companyA])).rows)
+    expect((await caseDatabase().pool.query('SELECT company_id FROM config_revisions WHERE company_id=$1 ORDER BY id', [companyA])).rows)
       .toEqual([{ company_id: companyA }, { company_id: companyA }]);
-    expect((await current!.pool.query('SELECT id FROM fleet_operations')).rows).toEqual([]);
+    expect((await caseDatabase().pool.query('SELECT id FROM fleet_operations')).rows).toEqual([]);
     expect(await foreignSnapshot()).toBe(before);
   });
 
@@ -215,14 +216,14 @@ describe('cauce CLI password sessions and spaces with a real PostgreSQL gateway'
     await login(); const before = await foreignSnapshot(); const list = await spaces<SpaceList>('list');
     const args = ['--alias', 'cli_worker', '--expected-revision', String(list.revision), '--idempotency-key', 'cli-retire-operation'];
     expect(await spaces('retire', args)).toMatchObject({ state: 'preview' });
-    expect((await current!.pool.query('SELECT id FROM fleet_operations')).rows).toEqual([]);
+    expect((await caseDatabase().pool.query('SELECT id FROM fleet_operations')).rows).toEqual([]);
     const first = await spaces<OperationResult>('retire', [...args, '--apply']);
     expect(first).toMatchObject({ state: 'queued', operation: { status: 'queued', applied_revision: null } });
     const repeated = await spaces<OperationResult>('retire', [...args, '--apply']);
     expect(repeated.operation.id).toBe(first.operation.id);
-    expect((await current!.pool.query('SELECT company_id,kind,status,applied_revision FROM fleet_operations')).rows)
+    expect((await caseDatabase().pool.query('SELECT company_id,kind,status,applied_revision FROM fleet_operations')).rows)
       .toEqual([{ company_id: companyA, kind: 'retire', status: 'queued', applied_revision: null }]);
-    expect((await current!.pool.query('SELECT enabled,retired_at,lifecycle_state FROM agents WHERE tenant_id=$1 AND alias=$2', [tenantA, 'cli_worker'])).rows)
+    expect((await caseDatabase().pool.query('SELECT enabled,retired_at,lifecycle_state FROM agents WHERE tenant_id=$1 AND alias=$2', [tenantA, 'cli_worker'])).rows)
       .toEqual([{ enabled: true, retired_at: null, lifecycle_state: 'ready' }]);
     expect(await spaces('list', ['--alias', 'cli_worker'])).toMatchObject({ operations: [expect.objectContaining({ id: first.operation.id, status: 'queued' })] });
     expect(await foreignSnapshot()).toBe(before);
@@ -230,7 +231,7 @@ describe('cauce CLI password sessions and spaces with a real PostgreSQL gateway'
 
   it('previews and queues real create and edit requests with exact hashes while physical state remains unchanged', async () => {
     await login(); const before = await foreignSnapshot(); const list = await spaces<SpaceList>('list');
-    const original = (await current!.pool.query('SELECT * FROM agents WHERE tenant_id=$1 AND alias=$2', [tenantA, 'cli_worker'])).rows;
+    const original = (await caseDatabase().pool.query('SELECT * FROM agents WHERE tenant_id=$1 AND alias=$2', [tenantA, 'cli_worker'])).rows;
     const parameters = (name: string) => ({ runtime_key: name.replaceAll('_', '-'), harness_id: 'codex',
       primary_room_id: 'context-room', memberships: [{ room_id: 'context-room', role: 'agent' }],
       placement: { host_id: host, mode: 'container' as const, container_name: `zz-${name.replaceAll('_', '-')}`,
@@ -250,15 +251,15 @@ describe('cauce CLI password sessions and spaces with a real PostgreSQL gateway'
       expect(result).toMatchObject({ state: 'queued', operation: { status: 'queued', applied_revision: null,
         kind, target: request.target, request_sha256: sha256Hex(request) } });
       expect((await spaces<OperationResult>(command, [...args, '--apply'])).operation.id).toBe(result.operation.id);
-      expect((await current!.pool.query('SELECT request_hash FROM fleet_operations WHERE id=$1', [result.operation.id])).rows)
+      expect((await caseDatabase().pool.query('SELECT request_hash FROM fleet_operations WHERE id=$1', [result.operation.id])).rows)
         .toEqual([{ request_hash: sha256Hex(request) }]);
     }
-    expect((await current!.pool.query('SELECT kind,status,applied_revision FROM fleet_operations ORDER BY kind')).rows)
+    expect((await caseDatabase().pool.query('SELECT kind,status,applied_revision FROM fleet_operations ORDER BY kind')).rows)
       .toEqual([{ kind: 'create', status: 'queued', applied_revision: null }, { kind: 'update', status: 'queued', applied_revision: null }]);
-    expect((await current!.pool.query('SELECT alias FROM agents WHERE tenant_id=$1 AND alias=$2', [tenantA, 'cli_pending'])).rows).toEqual([]);
-    expect((await current!.pool.query('SELECT alias FROM memberships WHERE tenant_id=$1 AND alias=$2', [tenantA, 'cli_pending'])).rows).toEqual([]);
-    expect((await current!.pool.query('SELECT * FROM agents WHERE tenant_id=$1 AND alias=$2', [tenantA, 'cli_worker'])).rows).toEqual(original);
-    expect((await current!.pool.query('SELECT id FROM config_revisions WHERE company_id=$1', [companyA])).rows).toEqual([]);
+    expect((await caseDatabase().pool.query('SELECT alias FROM agents WHERE tenant_id=$1 AND alias=$2', [tenantA, 'cli_pending'])).rows).toEqual([]);
+    expect((await caseDatabase().pool.query('SELECT alias FROM memberships WHERE tenant_id=$1 AND alias=$2', [tenantA, 'cli_pending'])).rows).toEqual([]);
+    expect((await caseDatabase().pool.query('SELECT * FROM agents WHERE tenant_id=$1 AND alias=$2', [tenantA, 'cli_worker'])).rows).toEqual(original);
+    expect((await caseDatabase().pool.query('SELECT id FROM config_revisions WHERE company_id=$1', [companyA])).rows).toEqual([]);
     expect(await foreignSnapshot()).toBe(before);
   });
 

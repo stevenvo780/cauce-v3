@@ -13,7 +13,7 @@ const IMPORT = /(?:^|\n)\s*(import|export)\s+(type\s+)?(?:[^;'"]*?\s+from\s+)?'(
 function runtimeSpecifiers(file: string): string[] {
   const text = readFileSync(file, 'utf8');
   const found: string[] = [];
-  for (const m of text.matchAll(IMPORT)) if (!m[2]) found.push(m[3]!);
+  for (const m of text.matchAll(IMPORT)) if (!m[2] && m[3] !== undefined) found.push(m[3]);
   return found;
 }
 
@@ -21,7 +21,7 @@ function sourceFiles(dir: string): string[] {
   return readdirSync(dir).flatMap((name) => {
     const path = join(dir, name);
     if (statSync(path).isDirectory()) return name === 'node_modules' ? [] : sourceFiles(path);
-    return /\.tsx?$/.test(name) && !/\.(test|spec)\.tsx?$/.test(name) && !/\.d\.ts$/.test(name) ? [path] : [];
+    return /\.tsx?$/.test(name) && !/\.(test|spec)\.tsx?$/.test(name) && !name.endsWith(".d.ts") ? [path] : [];
   });
 }
 
@@ -40,7 +40,8 @@ function nodeImportsReachableFrom(entry: string): string[] {
   const hits: string[] = [];
   const stack = [entry];
   while (stack.length > 0) {
-    const file = stack.pop()!;
+    const file = stack.pop();
+    if (file === undefined) break;
     if (seen.has(file)) continue;
     seen.add(file);
     for (const spec of runtimeSpecifiers(file)) {

@@ -379,7 +379,7 @@ describe.sequential('OAuth through real pinned Nginx with fixture mTLS', () => {
     expect((await send(trustedOrigin, '/oauth/token', 'GET', headers)).status).toBe(200);
     expect(seen.at(-1)?.headers['x-forwarded-for']).toBe('203.0.113.7');
     expect(seen.at(-1)?.headers['x-real-ip']).toBe('203.0.113.7');
-    expect(seen.at(-1)?.headers['forwarded']).toBeUndefined();
+    expect(seen.at(-1)?.headers.forwarded).toBeUndefined();
   });
 
   it('ignores X-Forwarded-For from a hop that is not the trusted front proxy', async () => {

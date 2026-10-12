@@ -14,7 +14,7 @@ import { AgentLifecyclePanel } from './AgentLifecyclePanel';
 Object.defineProperty(globalThis, 'crypto', { configurable: true, value: webcrypto });
 const snapshot: ConfigurationSnapshot = { revision: 4, tenants: [{ id: 'A' }], agents: [],
   retired: { tenants: [], rooms: [], memberships: [], agents: [{ tenant_id: 'A', alias: 'w', host_id: 'h', runtime_mode: 'container', container_name: 'ws-w' }] } };
-type Resource = { type: string; name: string; action: string; reason: string };
+interface Resource { type: string; name: string; action: string; reason: string }
 const target = { resource: 'agent' as const, tenant_id: 'A', alias: 'w' };
 
 async function preview(resources: Resource[]) {

@@ -38,7 +38,7 @@ function unsigned(body: unknown) {
 async function launch(): Promise<ChildProcess> {
   diagnostic = '';
   const child = spawn(process.execPath, ['--import', 'tsx', entry], { cwd: projectRoot, env: environment, stdio: ['ignore', 'ignore', 'pipe'] });
-  child.stderr?.on('data', (chunk: Buffer) => { diagnostic += chunk.toString(); });
+  child.stderr.on('data', (chunk: Buffer) => { diagnostic += chunk.toString(); });
   closed = once(child, 'close'); enclave = child; return child;
 }
 async function listening(child: ChildProcess): Promise<void> {
@@ -81,7 +81,7 @@ beforeEach(async () => {
     CAUCE_FLEET_AUTHORITY_COMMAND_FILE: join(directory, 'command.v1.json'), CAUCE_FLEET_AUTHORITY_DATABASE_URL_FILE: join(directory, 'database-url') };
 });
 afterEach(async () => {
-  if (enclave && enclave.exitCode === null && enclave.signalCode === null) { enclave.kill('SIGKILL'); await exited(enclave); }
+  if (enclave?.exitCode === null && enclave.signalCode === null) { enclave.kill('SIGKILL'); await exited(enclave); }
   enclave = undefined; await pool.end(); await current?.close(); await rm(directory, { recursive: true, force: true });
 });
 afterAll(async () => { await database?.pool.end(); await database?.container.stop(); });
