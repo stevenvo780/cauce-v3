@@ -75,7 +75,6 @@ export abstract class ConfigRepository extends OutboxOperatorRepository {
 
   /**
    * Authorizes an actor against ONE canonical target `(tenant, alias)` and returns that same row.
-   *
    * It does not accept `alias` alone: the same name may exist in several tenants, and picking the
    * first one by order turns a URL into a cross-tenant leak. First the actor's effective permission
    * is required; then, for another tenant, the ACL edge for the SAME permission. Any absence leaves
@@ -264,12 +263,10 @@ export abstract class ConfigRepository extends OutboxOperatorRepository {
    * Which subscription the alias spends on its next execution (GET /v3/accounts/selection).
    *
    * `actorTenant`/`actorAlias` are the AUTHENTICATED mTLS identity and are ALSO the subject of
-   * the query: there is no parameter to ask about another alias. It is deliberate and it is half
    * of this route's security — the response includes the account's `credential_ref`, and even though
    * it is a locator rather than a secret, telling one agent where ANOTHER agent looks up its
    * credential is exactly the kind of data that has no reason to cross over. An alias only resolves
    * its own.
-   *
    * Note the difference with `getConfiguration()`, which NEVER returns `credential_ref`, not even
    * to its payer (see configuration.ts): that one feeds a browser; this one feeds the adapter
    * running on the host that already has the material mounted. Migration 010 says so when
@@ -277,8 +274,7 @@ export abstract class ConfigRepository extends OutboxOperatorRepository {
    * that already holds the material".
    */
   async selectAccount(actorTenant: Tenant, actorAlias: string, provider: string, model?: string): Promise<AccountSelection> {
-    // Same character set as the CHECK on `provider_accounts.provider`. Validated here, not just
-    // at the route, so no future caller can slip an arbitrary string into the query parameter.
+    // Same character set as the CHECK on `provider_accounts.provider`: validated here so no caller can slip an arbitrary string in.
     if (!/^[a-z][a-z0-9_.-]{0,63}$/.test(provider)) {
       throw new StoreError('invalid_input', `invalid provider name: ${provider}`);
     }

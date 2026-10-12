@@ -1,10 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { migrationSourcesForApply } from '../src/index.js';
 
-/**
- * The real downs from the newest bundled migration back through `version`, newest first: each down
- * refuses while a later migration is applied, so reverting one means reverting every later one too.
- */
+/** The real downs from the newest bundled migration back through `version`, newest first (each down refuses while a later one is applied). */
 export async function downsThrough(version: string): Promise<string[]> {
   const versions = (await migrationSourcesForApply()).map(source => source.version);
   const index = versions.indexOf(version);

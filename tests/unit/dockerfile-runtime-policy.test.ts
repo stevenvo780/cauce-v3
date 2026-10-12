@@ -30,10 +30,8 @@ describe('Dockerfile runtime policy', () => {
     );
   });
 
-  // ── NEGATIVE CONTROL: el assert de arriba prohíbe `COPY --chmod=` (buildx no está
-  //    disponible en el runner). Si el regex midiera cualquier cosa, el `not.toMatch`
-  //    pasaría siempre. Comprobamos que el mismo regex SÍ se dispara cuando alguien añade
-  //    laフラ prohibida: en ese caso el test original se pondría rojo.
+  // NEGATIVE CONTROL: the assert above forbids `COPY --chmod=` (no buildx on the runner); the same regex must fire when someone adds it,
+  // otherwise the `not.toMatch` would always pass.
   test('CONTROL NEGATIVO — añadir `COPY --chmod=` al Dockerfile haría fallar el assert original', async () => {
     const dockerfile = await readFile(join(repository, 'deploy/Dockerfile'), 'utf8');
     const mutado = dockerfile.replace(/(^COPY\b)/mu, 'COPY --chmod=0644 $1');

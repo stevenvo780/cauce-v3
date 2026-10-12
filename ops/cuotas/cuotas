@@ -4,8 +4,7 @@
 #   cuotas-claude-local --json     una linea JSON por (espacio, cliente), para el publicador
 # Claude: leer-cuota.mjs (endpoints OAuth del CLI). Codex: codex-http-probe.py (la misma sonda
 # del VPS, lee el auth.json del espacio y NUNCA invoca el CLI de codex). Cada contenedor
-# cuota-* tiene sesion propia, por eso aqui los lectores reciben --refresh-own-session; en
-# cualquier otro contexto leen sin refrescar.
+# cuota-* tiene sesion propia, por eso aqui los lectores reciben --refresh-own-session; en cualquier otro contexto leen sin refrescar.
 set -u
 JSON=no; [ "${1:-}" = "--json" ] && JSON=si
 emite() {  # $1 label  $2 provider  $3 json del lector

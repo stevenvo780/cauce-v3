@@ -3,9 +3,8 @@ import { createHash, randomBytes } from 'node:crypto';
 interface Queryable { query<T = unknown>(sql: string, values?: unknown[]): Promise<{ rows: T[]; rowCount: number | null }> }
 
 /**
- * The hermetic gateway has no configured executor, so the console only offers quota accounts when an enrolled host
- * reports a fresh quota capability. This writes the rows a real enrolled host leaves behind (enrollment, identity and
- * its capability report), valid for a day so the 120 s freshness window never expires mid-run.
+ * The hermetic gateway has no configured executor, so the console only offers quota accounts when an enrolled host reports a fresh
+ * quota capability. This writes the rows a real enrolled host leaves behind, valid for a day so the 120 s window never expires mid-run.
  */
 export async function seedQuotaHost(db: Queryable, input: { companyId: string; ownerEmail: string; hostId: string }): Promise<void> {
   const owner = (await db.query<{ id: string }>('SELECT id FROM console_users WHERE email=$1', [input.ownerEmail])).rows[0];

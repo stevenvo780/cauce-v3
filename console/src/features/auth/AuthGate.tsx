@@ -10,7 +10,6 @@ import { RegistrationForm } from './RegistrationForm';
 
 /**
  * Console session gate.
- *
  * Locks the entire application until the SERVER says there is a session. It decides nothing on
  * its own and stores no secret: the authority is the HttpOnly cookie, which this code cannot
  * read or forge. Neither the password nor the token end up in `localStorage` — an XSS here
