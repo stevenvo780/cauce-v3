@@ -1,17 +1,26 @@
-import { readFile } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { promisify } from 'node:util';
 import { afterAll, describe, expect, it } from 'vitest';
 import {
-  applyMigrations, applyMigrationsThrough, createPool, withTransaction, type DatabaseClient, type DatabasePool,
+  applyMigrationsThrough, createPool, migrationSourcesForApply, withTransaction, type DatabaseClient, type DatabasePool,
 } from '../src/index.js';
 import { legacyAdoptionSnapshot, lockLegacyAdoptionTargets } from '../src/fleet-adoption-snapshot.js';
 import { preparePostgresSuite } from './postgres-suite.js';
 import { seedCompanyIsolation } from './companies-postgres.fixtures.js';
 import {
   closeTestDatabase, provisionTestLogin, runtimeRoleRequested, startEmptyTestDatabase, startTestCaseDatabase,
-  startTestDatabase, startTestDatabaseThrough, TEST_RUNTIME_LOGIN, type EmptyTestDatabase, type TestDatabase,
+  startTestDatabaseThrough, TEST_RUNTIME_LOGIN, type EmptyTestDatabase, type TestDatabase,
 } from '../../../tests/helpers/postgres.js';
 
 const version = '052_runtime_roles.sql';
+const lastRuntimeRolesVersion = '054_company_admins.sql';
+const replayVersion = '065_runtime_grants_replay.sql';
+const execFileAsync = promisify(execFile);
+const GRANTEES = ['PUBLIC', 'cauce_runtime', 'cauce_observer', 'cauce_platform'];
 const DML = ['SELECT', 'INSERT', 'UPDATE', 'DELETE'];
 const EXCEPTIONS: Record<string, string[]> = {
   companies: ['SELECT'], company_links: ['SELECT'], platform_admins: ['SELECT'], agent_role_templates: ['SELECT'],
@@ -41,7 +50,7 @@ const PLATFORM_FUNCTIONS = ['cauce_append_only()', 'cauce_apply_runtime_grants()
   'cauce_runtime_grants_054()', 'cauce_tenants_company_admission()'];
 const DEFINERS = ['cauce_company_authority(uuid,text)', 'cauce_lock_company_link(text,text)',
   'cauce_lock_hub_star_tenant(text)', 'cauce_lock_owner_guard(text)'];
-const DOWNS = ['054_company_admins.sql', '053_company_isolation.sql', version];
+const DOWNS = [lastRuntimeRolesVersion, '053_company_isolation.sql', version];
 const OBSERVED = ['adapter_outbox', 'agent_output_materializations', 'agents', 'connection_leases', 'dead_letters',
   'deliveries', 'messages', 'outbox_dead_letters', 'tenants'];
 const PRIVILEGES = "ARRAY['SELECT','INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER']";
@@ -52,8 +61,9 @@ let database: TestDatabase | undefined;
 let through: TestDatabase | undefined;
 let gateway: DatabasePool | undefined;
 let observer: DatabasePool | undefined;
+let currentServer: TestDatabase | undefined;
 preparePostgresSuite(import.meta.url, async () => {
-  database = await startTestDatabase();
+  database = await startTestDatabaseThrough(lastRuntimeRolesVersion);
   through = await startTestDatabaseThrough(version);
   gateway = createPool(await provisionTestLogin(database.adminPool, database.adminUrl, 'cauce_gateway', 'cauce_runtime'), { max: 2 });
   observer = createPool(await provisionTestLogin(database.adminPool, database.adminUrl, 'cauce_observer_login', 'cauce_observer'), { max: 1 });
@@ -62,7 +72,16 @@ afterAll(async () => {
   await Promise.all([gateway?.end(), observer?.end()]);
   await closeTestDatabase(database);
   await closeTestDatabase(through);
+  await closeTestDatabase(currentServer);
 });
+
+async function latestServer(): Promise<TestDatabase> {
+  if (currentServer) return currentServer;
+  const latest = (await migrationSourcesForApply()).at(-1);
+  if (!latest) throw new Error('runtime grants require a complete migration bundle');
+  currentServer = await startTestDatabaseThrough(latest.version);
+  return currentServer;
+}
 
 function ready(): { admin: DatabasePool; runtime: DatabasePool; reader: DatabasePool; full: TestDatabase; server: TestDatabase } {
   if (!database || !through || !gateway || !observer) throw new Error('runtime grants suite was not prepared');
@@ -117,6 +136,58 @@ async function catalog(pool: DatabasePool): Promise<unknown> {
   return { privileges: await privileges(pool), definitions: await definitions(pool) };
 }
 
+async function migrationLedger(pool: DatabasePool): Promise<{ version: string }[]> {
+  return (await pool.query<{ version: string }>(`SELECT migration.*,ledger.source_sha256,ledger.source_origin,ledger.recorded_at
+    FROM schema_migrations migration LEFT JOIN schema_migration_ledger ledger USING(version) ORDER BY version`)).rows;
+}
+
+async function restoreWithoutAcls(server: TestDatabase, target: EmptyTestDatabase): Promise<void> {
+  const source = new URL(server.adminUrl);
+  const destination = new URL(target.adminUrl);
+  const ownedServer = process.env.CAUCE_TEST_DATABASE_URL ? '' : server.container.getId();
+  for (const url of [source, destination]) {
+    if (!/^cauce_test(?:_[a-z0-9_]+)?$/u.test(url.pathname.slice(1))) throw new Error('restore requires disposable databases');
+  }
+  if (source.host !== destination.host || source.username !== destination.username || source.password !== destination.password) {
+    throw new Error('restore requires databases on the same test server');
+  }
+  const ownNetwork = /^[a-f0-9]{64}$/u.test(ownedServer);
+  const temporary = await mkdtemp(join(tmpdir(), 'cauce-runtime-grants-'));
+  const cidFile = join(temporary, 'client.cid');
+  const name = `cauce-test-grants-${randomUUID()}`;
+  try {
+    const launched = await execFileAsync('docker', ['run', '--detach', '--rm', '--name', name, '--cidfile', cidFile,
+      '--network', ownNetwork ? `container:${ownedServer}` : process.env.CAUCE_TEST_DOCKER_NETWORK ?? 'host',
+      '--env', 'PGPASSWORD', 'postgres:16-alpine', 'sleep', 'infinity'],
+    { timeout: 30_000, env: { ...process.env, PGPASSWORD: decodeURIComponent(source.password) } });
+    const clientId = launched.stdout.trim();
+    if (!/^[a-f0-9]{64}$/u.test(clientId)) throw new Error('restore client did not return its owned container id');
+    console.info(`[testcontainers] owned restore client name=${name} id=${clientId}`);
+    const connection = ['--host=' + (ownNetwork ? '127.0.0.1' : source.hostname),
+      '--port=' + (ownNetwork ? '5432' : source.port || '5432'), '--username=' + decodeURIComponent(source.username)];
+    const { stdout: dump } = await execFileAsync('docker', ['exec', clientId, 'pg_dump', ...connection,
+      '--no-acl', '--format=custom', '--dbname=' + source.pathname.slice(1)],
+    { encoding: 'buffer', timeout: 30_000, maxBuffer: 64 * 1024 * 1024 });
+    await new Promise<void>((resolve, reject) => {
+      const restore = execFile('docker', ['exec', '-i', clientId, 'pg_restore', ...connection,
+        '--exit-on-error', '--no-owner', '--no-privileges', '--dbname=' + destination.pathname.slice(1)],
+      { timeout: 30_000, maxBuffer: 64 * 1024 * 1024 }, (error) => {
+        if (error) reject(new Error('test database restore failed', { cause: error })); else resolve();
+      });
+      restore.stdin?.end(dump);
+    });
+    console.info(`[testcontainers] restore client id=${clientId} dump_exit=0 restore_exit=0`);
+  } finally {
+    const clientId = await readFile(cidFile, 'utf8').catch(() => '');
+    try {
+      if (/^[a-f0-9]{64}$/u.test(clientId.trim())) await execFileAsync('docker', ['rm', '--force', clientId.trim()], { timeout: 30_000 });
+      console.info(`[testcontainers] owned restore client id=${clientId.trim()} cleanup_exit=0`);
+    } finally {
+      await rm(temporary, { recursive: true, force: true });
+    }
+  }
+}
+
 async function groupDependencies(pool: DatabasePool): Promise<number> {
   return Number((await pool.query<{ count: string }>(`SELECT count(*) FROM pg_shdepend dependency
     JOIN pg_roles role ON role.oid=dependency.refobjid
@@ -126,7 +197,7 @@ async function groupDependencies(pool: DatabasePool): Promise<number> {
           AND dependency.objid=(SELECT oid FROM pg_database WHERE datname=current_database())))`)).rows[0]?.count);
 }
 
-describe('least-privilege runtime roles on PostgreSQL', () => {
+describe('least-privilege runtime roles through schema 054 on PostgreSQL', () => {
   it('declares the group roles without login or elevated attributes', async () => {
     const { admin } = ready();
     const roles = (await admin.query<{ rolname: string; elevated: boolean; member_of: number }>(`SELECT rolname,
@@ -436,7 +507,7 @@ describe('runtime roles migration rollback', () => {
       expect((await current.adminPool.query('SELECT max(version) AS version FROM schema_migrations')).rows[0])
         .toEqual({ version: '051_companies.sql' });
       expect(await catalog(current.adminPool)).toEqual(await catalog(previous.adminPool));
-      await applyMigrations(current.adminPool);
+      await applyMigrationsThrough(current.adminPool, lastRuntimeRolesVersion);
       expect(await catalog(current.adminPool)).toEqual(before);
     } finally {
       await previous.close();
@@ -493,6 +564,140 @@ describe('runtime roles migration rollback', () => {
     } finally {
       await client.query('ROLLBACK').catch(() => undefined);
       client.release();
+    }
+  });
+});
+
+describe('runtime grants across the complete migration bundle', () => {
+  it('replays identical current grants after a real restore without ACLs', async () => {
+    const latest = await latestServer();
+    const restored = await startEmptyTestDatabase(latest.adminUrl);
+    let runtime: DatabasePool | undefined;
+    try {
+      const before = await privileges(latest.adminPool, GRANTEES);
+      const ledger = await migrationLedger(latest.adminPool);
+      await restoreWithoutAcls(latest, restored);
+      expect(await privileges(restored.adminPool, GRANTEES)).not.toEqual(before);
+      expect(await migrationLedger(restored.adminPool)).toEqual(ledger);
+      await restored.adminPool.query('SELECT cauce_apply_runtime_grants()');
+      expect(await privileges(restored.adminPool, GRANTEES)).toEqual(before);
+      await restored.adminPool.query('SELECT cauce_apply_runtime_grants()');
+      expect(await privileges(restored.adminPool, GRANTEES)).toEqual(before);
+      expect(await migrationLedger(restored.adminPool)).toEqual(ledger);
+      runtime = createPool(await provisionTestLogin(restored.adminPool, restored.adminUrl, 'cauce_gateway', 'cauce_runtime'), { max: 1 });
+      expect(await attempt(runtime, 'SELECT * FROM cauce_ensure_context_director_anchor(NULL,NULL,NULL,NULL,NULL)')).toBe('22023');
+      expect(await attempt(runtime, 'SELECT cauce_lock_host_company(NULL)')).toBe('ok');
+      for (const statement of ['SELECT cauce_quota_report_account_guard()',
+        'SELECT cauce_runtime_grants_065()', 'SELECT 1 FROM company_admin_versions']) {
+        expect({ [statement]: await attempt(runtime, statement) }).toEqual({ [statement]: '42501' });
+      }
+      const grants = (await restored.adminPool.query(`SELECT p.oid::regprocedure::text AS name,
+        has_function_privilege('cauce_runtime',p.oid,'EXECUTE') AS runtime,
+        has_function_privilege('cauce_observer',p.oid,'EXECUTE') AS observer,
+        has_function_privilege('cauce_platform',p.oid,'EXECUTE') AS platform,
+        EXISTS(SELECT 1 FROM aclexplode(COALESCE(p.proacl,acldefault('f',p.proowner))) entry WHERE entry.grantee=0) AS public
+        FROM pg_proc p WHERE p.oid=ANY(ARRAY['cauce_ensure_context_director_anchor(text,text,text,bigint,text)'::regprocedure,
+          'cauce_runtime_grants_065()'::regprocedure]) ORDER BY 1`)).rows;
+      expect(grants).toEqual([
+        { name: 'cauce_ensure_context_director_anchor(text,text,text,bigint,text)', runtime: true, observer: false, platform: true, public: false },
+        { name: 'cauce_runtime_grants_065()', runtime: false, observer: false, platform: true, public: false },
+      ]);
+      expect((await restored.adminPool.query(`SELECT p.proname FROM pg_proc p
+        CROSS JOIN LATERAL aclexplode(COALESCE(p.proacl,acldefault('f',p.proowner))) entry
+        WHERE p.pronamespace='public'::regnamespace AND entry.grantee=0 AND p.proname=ANY($1)`,
+      [['cauce_quota_report_account_guard', 'cauce_lock_host_company', 'cauce_ensure_context_director_anchor']])).rows).toEqual([]);
+      expect((await restored.adminPool.query(`SELECT
+        has_table_privilege('cauce_runtime','company_admin_versions','SELECT') AS runtime,
+        has_table_privilege('cauce_observer','company_admin_versions','SELECT') AS observer`)).rows)
+        .toEqual([{ runtime: false, observer: false }]);
+    } finally {
+      await runtime?.end();
+      await restored.close();
+    }
+  });
+
+  it('down/up preserves the 064 catalog, connected logins and prior atomic ledger', async () => {
+    const latest = await latestServer();
+    const current = await startTestCaseDatabase(latest);
+    const previous = await startEmptyTestDatabase(latest.adminUrl);
+    let runtime: DatabasePool | undefined;
+    try {
+      await applyMigrationsThrough(previous.adminPool, '064_company_context_anchor.sql');
+      const before = await catalog(current.adminPool);
+      const ledger = await migrationLedger(current.adminPool);
+      const members = async () => (await current.adminPool.query<{ role: string; member: string; admin_option: boolean }>(`
+        SELECT group_role.rolname AS role,member.rolname AS member,
+        membership.admin_option FROM pg_auth_members membership JOIN pg_roles group_role ON group_role.oid=membership.roleid
+        JOIN pg_roles member ON member.oid=membership.member WHERE group_role.rolname=ANY($1) ORDER BY 1,2`, [GRANTEES.slice(1)])).rows;
+      runtime = createPool(await provisionTestLogin(current.adminPool, current.adminUrl, 'cauce_gateway', 'cauce_runtime'), { max: 1 });
+      const memberships = await members();
+      expect(await attempt(runtime, 'SELECT 1 FROM agents')).toBe('ok');
+      const down = await readFile(new URL(`../migrations/down/${replayVersion}`, import.meta.url), 'utf8');
+      await current.adminPool.query(down);
+      expect(await catalog(current.adminPool)).toEqual(await catalog(previous.adminPool));
+      expect(await migrationLedger(current.adminPool)).toEqual(ledger.filter((row) => row.version !== replayVersion));
+      expect(await members()).toEqual(memberships);
+      expect(await attempt(runtime, 'SELECT 1 FROM agents')).toBe('ok');
+      await expect(current.adminPool.query(down)).resolves.toBeDefined();
+      await applyMigrationsThrough(current.adminPool, replayVersion);
+      expect(await catalog(current.adminPool)).toEqual(before);
+      expect(await members()).toEqual(memberships);
+      expect((await current.adminPool.query(`SELECT migration.version,ledger.source_origin
+        FROM schema_migrations migration JOIN schema_migration_ledger ledger USING(version)
+        WHERE migration.version=$1`, [replayVersion])).rows).toEqual([{ version: replayVersion, source_origin: 'applied-atomically' }]);
+    } finally {
+      await runtime?.end();
+      await previous.close();
+      await current.close();
+    }
+  });
+
+  it('refuses down after later migrations or atomic ledger loss without changing the catalog', async () => {
+    const current = await startTestCaseDatabase(await latestServer());
+    const down = await readFile(new URL(`../migrations/down/${replayVersion}`, import.meta.url), 'utf8');
+    const before = await catalog(current.adminPool);
+    const ledger = await migrationLedger(current.adminPool);
+    const client = await current.adminPool.connect();
+    try {
+      for (const [statement, message] of [
+        ["INSERT INTO schema_migrations(version) VALUES('066_later.sql')", 'later migration is present'],
+        [`DELETE FROM schema_migration_ledger WHERE version='${replayVersion}'`, 'atomic ledger state'],
+        [`UPDATE schema_migration_ledger SET source_sha256=repeat('0',64) WHERE version='${replayVersion}'`, 'atomic ledger state'],
+      ]) {
+        await client.query('BEGIN');
+        await client.query(statement ?? '');
+        expect(await failure(client.query(down))).toContain(message);
+        await client.query('ROLLBACK');
+        expect(await catalog(current.adminPool)).toEqual(before);
+        expect(await migrationLedger(current.adminPool)).toEqual(ledger);
+      }
+    } finally {
+      await client.query('ROLLBACK').catch(() => undefined);
+      client.release();
+      await current.close();
+    }
+  });
+
+  it('serializes down with the migration advisory lock without losing the ledger', async () => {
+    const current = await startTestCaseDatabase(await latestServer());
+    const down = await readFile(new URL(`../migrations/down/${replayVersion}`, import.meta.url), 'utf8');
+    const ledger = await migrationLedger(current.adminPool);
+    const holder = await current.adminPool.connect();
+    const contender = await current.adminPool.connect();
+    try {
+      await holder.query('BEGIN');
+      await holder.query('SELECT pg_advisory_xact_lock(783_003_003)');
+      await contender.query('BEGIN');
+      await contender.query("SET LOCAL lock_timeout='200ms'");
+      await expect(contender.query(down)).rejects.toMatchObject({ code: '55P03' });
+      await contender.query('ROLLBACK');
+      expect(await migrationLedger(current.adminPool)).toEqual(ledger);
+    } finally {
+      await holder.query('ROLLBACK').catch(() => undefined);
+      await contender.query('ROLLBACK').catch(() => undefined);
+      holder.release();
+      contender.release();
+      await current.close();
     }
   });
 });
