@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { mkdir } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { BrowserPage } from './console-functional-browser.fixtures.js';
 import { startAccountsAssignmentsFixture, type AccountsAssignmentsFixture } from './accounts-assignments-real-browser.fixtures.js';
@@ -11,6 +11,16 @@ beforeAll(async () => {
     throw new Error('este E2E exige Testcontainers propios; CAUCE_TEST_DATABASE_URL no se acepta');
   }
   fixture = await startAccountsAssignmentsFixture();
+  const authority = await fixture.database.adminPool.query<{ company_id: string }>(
+    `INSERT INTO company_admins(company_id,human_id,role,source,granted_by)
+     SELECT tenant.company_id,person.id,'owner','platform',person.id
+     FROM console_users person JOIN tenants tenant ON tenant.id=person.tenant_id
+     JOIN human_tenant_memberships home ON home.human_id=person.id AND home.tenant_id=person.tenant_id
+     WHERE person.email=$1 AND person.tenant_id=$2 AND person.alias=$3
+       AND home.actor_alias=person.alias AND home.enabled AND home.revoked_at IS NULL
+     RETURNING company_id`, [fixture.operatorEmail, fixture.tenant, fixture.operatorAlias],
+  );
+  expect(authority.rows).toEqual([{ company_id: 'humanizar' }]);
   process.stdout.write(
     `Accounts E2E owned resources: run=${fixture.runId} pg=${fixture.database.container.getId()} `
     + `browser=${fixture.browserContainer} image=${fixture.agentImageId} agent=${fixture.agentContainerId} `
@@ -52,7 +62,17 @@ async function openAccountsFromTools(page: BrowserPage) {
 async function preview(page: BrowserPage, label: string) {
   const actions = page.getByRole('group', { name: `Acciones de ${label}` });
   await actions.getByRole('button', { name: 'Previsualizar (dry-run)' }).click();
-  await page.getByRole('status').filter({ hasText: 'Dry-run aceptado:' }).waitFor({ timeout: 20_000 });
+  try {
+    await page.getByRole('status').filter({ hasText: 'Dry-run aceptado:' }).waitFor({ timeout: 20_000 });
+  } catch (error) {
+    const directory = process.env.CAUCE_E2E_ARTIFACT_DIR;
+    if (directory) {
+      await mkdir(directory, { recursive: true });
+      await writeFile(join(directory, 'preview-failure.json'), JSON.stringify({ label, body: await page.locator('body').innerText() }), { mode: 0o600 });
+      await page.screenshot({ path: join(directory, 'preview-failure.png'), fullPage: false });
+    }
+    throw error;
+  }
   return actions;
 }
 
