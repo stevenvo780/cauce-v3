@@ -13,7 +13,10 @@ const version044 = '044_human_mcp_identity.sql';
 const version045 = '045_mcp_oauth_authorization.sql';
 const version046 = '046_human_client_provenance.sql';
 const laterVersions = ['047_agent_preferences.sql', '048_ui_fleet_lifecycle.sql', '049_ui_execution_preferences.sql', '050_fleet_hosts.sql',
-  '051_companies.sql', '052_runtime_roles.sql', '053_company_isolation.sql', '054_company_admins.sql'];
+  '051_companies.sql', '052_runtime_roles.sql', '053_company_isolation.sql', '054_company_admins.sql',
+  '055_company_registration.sql', '056_company_office.sql', '057_quota_environments.sql', '058_context_versions.sql',
+  '059_host_enrollment.sql', '060_space_backups.sql', '061_people_admin_history.sql', '062_authority_read_guard.sql',
+  '063_company_registration_director.sql', '064_company_context_anchor.sql', '065_runtime_grants_replay.sql'];
 const preferenceTables = ['console_agent_favorites', 'agent_appearances'];
 const provenanceTables = [
   'human_oauth_client_delegations',

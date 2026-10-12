@@ -3,8 +3,9 @@ import { readFile } from 'node:fs/promises';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   applyMigrations, applyMigrationsThrough, ConfigurationRepository, inspectMigrationIntegrity,
-  lockAgentContextSnapshot, migrationSourcesForApply, recordFleetHostStatus, withTransaction, type DatabasePool,
+  lockAgentContextSnapshot, lockCompanyAuthority, migrationSourcesForApply, recordFleetHostStatus, withTransaction, type DatabasePool,
 } from '../src/index.js';
+import { applyPlatformConfiguration } from '../src/configuration-platform.js';
 import { preparePostgresSuite } from './postgres-suite.js';
 import { startTestCaseDatabase, startTestDatabaseThrough, type EmptyTestDatabase, type TestDatabase } from '../../../tests/helpers/postgres.js';
 
@@ -151,7 +152,7 @@ describe('company isolation and owner migrations from a production-shaped 051 da
     await applyMigrationsThrough(pool, await predecessor());
     const tables = await legacyTables();
     const before = await snapshot(tables); const structure = await schema(); const digest = await contextDigest();
-    await applyMigrations(pool);
+    await applyMigrationsThrough(pool, admins);
     expect(await snapshot(tables)).toEqual(before);
     expect(await contextDigest()).toBe(digest);
     expect((await pool.query("SELECT host_id,display_name,company_id FROM fleet_hosts WHERE host_id='approved'")).rows)
@@ -182,13 +183,13 @@ describe('company isolation and owner migrations from a production-shaped 051 da
     expect((await pool.query("SELECT host_id FROM fleet_hosts WHERE host_id='approved'")).rowCount).toBe(1);
     expect(await applied(isolation) || await applied(admins)).toBe(false);
     expect((await pool.query('SELECT version FROM schema_migration_ledger WHERE version=ANY($1::text[])', [[isolation, admins]])).rowCount).toBe(0);
-    await applyMigrations(pool);
+    await applyMigrationsThrough(pool, admins);
     expect(await snapshot(tables)).toEqual(before);
   });
 
   it('refuses lossy downgrades once owners, history or a second company exist', async () => {
     const people = await productionShape();
-    await applyMigrations(pool);
+    await applyMigrationsThrough(pool, admins);
     await expect(down(isolation)).rejects.toThrow(/later migration/u);
     await pool.query("INSERT INTO company_system_principals(company_id,kind,tenant_id,principal_alias) VALUES('humanizar','director','Steven','zeus')");
     await expect(down(admins)).rejects.toThrow(/preserves company authority/u);
@@ -260,24 +261,25 @@ describe('company isolation and owner migrations from a production-shaped 051 da
     await pool.query("INSERT INTO tenants(id,company_id,is_hub) VALUES('PraxisHub','praxis',true)");
     await pool.query(`INSERT INTO agents(tenant_id,alias,container_name,runtime_user,home_directory,state_directory,host_id)
       VALUES('PraxisHub','operador','operador','dev','/home/dev','/home/dev/.cauce/operador','kratos')`);
-    await expect(applyMigrations(pool)).rejects.toMatchObject({ code: '23514' });
+    await expect(applyMigrationsThrough(pool, admins)).rejects.toMatchObject({ code: '23514' });
     expect(await applied(isolation)).toBe(false);
     await pool.query("UPDATE agents SET host_id=NULL WHERE tenant_id='PraxisHub'");
-    await expect(applyMigrations(pool)).rejects.toMatchObject({ code: '23502' });
+    await expect(applyMigrationsThrough(pool, admins)).rejects.toMatchObject({ code: '23502' });
     await pool.query("DELETE FROM fleet_hosts WHERE host_id='spare'");
-    await applyMigrations(pool);
+    await applyMigrationsThrough(pool, admins);
     expect(await applied(admins)).toBe(true);
   });
 
-  it('keeps the V4.0 runtime writes working on the 054 schema', async () => {
-    await productionShape();
+  it('keeps legacy runtime writes working after upgrading to the current schema with durable human authority', async () => {
+    const people = await productionShape();
     await applyMigrations(pool);
     const repository = new ConfigurationRepository(pool);
     const created = await repository.apply('Steven', 'kant', { resource: 'batch', action: 'apply', mutations: [
       { resource: 'tenant', action: 'create', id: 'LegacyTeam', value: { display_name: 'Legacy' } },
       { resource: 'room', action: 'create', tenant_id: 'LegacyTeam', id: 'legacy-room', value: {} },
-    ] }, false);
-    await repository.apply('Steven', 'kant', { resource: 'harness', action: 'update', id: 'codex', value: { display_name: 'Codex' } }, false, created.revision);
+    ] }, false, undefined, client => lockCompanyAuthority(client, { tenant: 'Steven', alias: 'kant', humanId: people.kant }));
+    await applyPlatformConfiguration(pool, { tenant: 'Steven', alias: 'kant', humanId: people.kant, companyId: 'humanizar' },
+      { resource: 'harness', action: 'update', id: 'codex', value: { display_name: 'Codex' } }, false, created.revision);
     expect((await pool.query(`SELECT scope,company_id FROM config_revisions WHERE id>=$1 ORDER BY id`, [created.revision])).rows)
       .toEqual([{ scope: 'company', company_id: 'humanizar' }, { scope: 'platform', company_id: null }]);
     expect((await pool.query("SELECT company_id FROM rooms WHERE id='legacy-room'")).rows).toEqual([{ company_id: 'humanizar' }]);

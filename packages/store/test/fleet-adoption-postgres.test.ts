@@ -8,7 +8,8 @@ import { startTestCaseDatabase, startTestDatabaseThrough, type EmptyTestDatabase
 
 let database: TestDatabase | undefined; let current: EmptyTestDatabase | undefined; let pool: DatabasePool;
 const target = { tenant_id: 'Steven', alias: 'legacy-proof' };
-const actor: LegacyAdoptionActor = { tenant_id: 'Steven', alias: 'legacy-operator', subject: 'system:legacy-fleet-installer',
+const humanId = '5905c428-1572-4794-8ee9-dfd2fbb92522';
+const actor: LegacyAdoptionActor = { tenant_id: 'Steven', alias: 'legacy-operator', subject: `console:${humanId}`,
   authorize: async client => { await client.query('SELECT 1'); } };
 preparePostgresSuite(import.meta.url, async () => { database = await startTestDatabaseThrough('047_agent_preferences.sql'); }, 120_000);
 beforeEach(async () => {
@@ -22,6 +23,15 @@ beforeEach(async () => {
   await pool.query(`INSERT INTO provider_accounts(id,provider,external_account_id,payer_tenant_id,credential_ref_kind,credential_ref,enabled)
     VALUES('legacy-account','codex','PRIVATE_EXTERNAL_ID','Steven','env_path','CAUCE_PRIVATE_ACCOUNT_PATH',true)`);
   await applyMigrations(pool);
+  await pool.query(`INSERT INTO agents(tenant_id,alias,enabled,harness_id,container_name,runtime_user,home_directory,state_directory)
+    VALUES('Steven','legacy-operator',true,'codex','legacy-operator','dev','/home/dev','/home/dev/.cauce/legacy-operator')`);
+  await pool.query(`INSERT INTO console_users(id,email,email_normalized,password_hash,display_name,role,tenant_id,alias)
+    VALUES($1,'legacy@example.test','legacy@example.test',$2,'Legacy operator','operator','Steven','legacy-operator')`,
+  [humanId, '$scrypt$' + 'x'.repeat(48)]);
+  await pool.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,role,permissions)
+    VALUES($1,'Steven','legacy-operator','operator',ARRAY['read','control'])`, [humanId]);
+  await pool.query(`INSERT INTO company_admins(company_id,human_id,role,source,granted_by)
+    VALUES('humanizar',$1,'owner','import',$1)`, [humanId]);
 });
 afterEach(async () => { await pool.end(); await current?.close(); current = undefined; });
 afterAll(async () => { if (database) { await database.pool.end(); await database.container.stop(); } });
@@ -45,6 +55,11 @@ async function unchanged() {
   expect((await pool.query<{ host_id: string | null }>("SELECT host_id FROM agents WHERE alias='legacy-proof'")).rows[0]?.host_id).toBeNull();
 }
 describe('durable legacy metadata adoption with PostgreSQL max1', () => {
+  it('rejects a system subject without a verified human despite operator membership', async () => {
+    await expect(previewLegacyFleetAdoption(pool, { ...actor, subject: 'system:legacy-fleet-installer' }, [target], probe()))
+      .rejects.toMatchObject({ code: 'forbidden' });
+    await unchanged();
+  });
   it('previews only missing fields without writes and leaves unknown accounts explicit', async () => {
     const result = await previewLegacyFleetAdoption(pool, actor, [target], probe());
     expect(result).toMatchObject({ revision: 0, can_apply: true, blockers: [], rows: [{ target, patch: { host_id: 'legacy-host', runtime_mode: 'container' } }] });
