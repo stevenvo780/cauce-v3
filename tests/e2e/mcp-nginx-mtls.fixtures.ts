@@ -1,6 +1,6 @@
 import { createHash, randomUUID, X509Certificate } from 'node:crypto';
 import { execFile } from 'node:child_process';
-import { chmod, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, chown, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import type { IncomingHttpHeaders } from 'node:http';
 import { request as httpsRequest } from 'node:https';
 import { createServer as createTcpServer } from 'node:net';
@@ -261,11 +261,18 @@ function adaptConfiguration(configuration: string, nginxPort: number, gatewayPor
     .replaceAll('https://gateway:8443', `https://127.0.0.1:${String(gatewayPort)}`);
 }
 
+function nginxIdentity(): { uid: number; gid: number } {
+  const uid = process.getuid?.(); const gid = process.getgid?.();
+  if (uid === undefined || gid === undefined) throw new Error('MCP Nginx fixture requires POSIX UID and GID');
+  return uid === 0 ? { uid: 101, gid: 101 } : { uid, gid };
+}
+
 async function createSecretDirectory(
   parent: string, issuer: OAuthIssuerFixture, tls: GatewayTlsMaterial, wrongCa = false,
 ): Promise<string> {
   const directory = join(parent, wrongCa ? 'wrong-secrets' : 'secrets');
-  await mkdir(directory, { mode: 0o755 });
+  const { uid, gid } = nginxIdentity();
+  await mkdir(directory, { mode: 0o700 });
   const content: Record<typeof SECRET_NAMES[number], Buffer> = {
     console_tls_cert: issuer.tlsCertificate,
     console_tls_key: issuer.tlsKey,
@@ -278,7 +285,9 @@ async function createSecretDirectory(
     const secretPath = join(directory, name);
     await writeFile(secretPath, content[name], { mode: 0o600 });
     await chmod(secretPath, 0o600);
+    if (process.getuid?.() === 0) await chown(secretPath, uid, gid);
   }
+  if (process.getuid?.() === 0) await chown(directory, uid, gid);
   return directory;
 }
 
@@ -288,11 +297,7 @@ async function startNginx(
 ): Promise<{ id: string; origin: string }> {
   await assertLoopbackPortAvailable(port);
   const name = `cauce-mcp-nginx-${owner}-${secretsPath.endsWith('wrong-secrets') ? 'wrong' : 'primary'}`;
-  const uid = process.getuid?.();
-  const gid = process.getgid?.();
-  if (uid === undefined || gid === undefined || uid === 0) {
-    throw new Error('MCP Nginx fixture requires a normal unprivileged host UID');
-  }
+  const { uid, gid } = nginxIdentity();
   const id = await docker(['run', '--detach', '--name', name, '--label', `${OWNER_LABEL}=${owner}`,
     '--label', `${SUITE_LABEL}=${SUITE_NAME}`, '--network', 'host', '--read-only', '--cap-drop', 'ALL',
     '--security-opt', 'no-new-privileges:true', '--user', `${String(uid)}:${String(gid)}`,
@@ -307,6 +312,13 @@ async function startNginx(
   const object = await inspectDockerObject<DockerObject>('container', id);
   assertOwned(object, owner);
   if (object.Id !== id || object.Name !== `/${name}`) throw new Error('MCP Nginx fixture container identity changed');
+  const status = await docker(['exec', id, 'cat', '/proc/self/status']);
+  if (!new RegExp(`^Uid:\\s+${String(uid)}\\s+${String(uid)}\\s+${String(uid)}\\s+${String(uid)}$`, 'mu').test(status)
+      || !new RegExp(`^Gid:\\s+${String(gid)}\\s+${String(gid)}\\s+${String(gid)}\\s+${String(gid)}$`, 'mu').test(status)
+      || !/^CapEff:\s+0+$/mu.test(status) || !/^NoNewPrivs:\s+1$/mu.test(status)) {
+    throw new Error('MCP Nginx fixture runtime identity or capabilities differ from its security contract');
+  }
+  console.info('MCP_NGINX_RUNTIME_IDENTITY', JSON.stringify({ hostUid: process.getuid?.(), uid, gid, capabilities: 'none' }));
   await docker(['exec', id, 'nginx', '-t']);
   await docker(['exec', '--detach', id, 'nginx', '-g', 'daemon off;']);
   return { id, origin: `https://localhost:${String(port)}` };
