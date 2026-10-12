@@ -26,8 +26,6 @@ Uso:
     codex-http-probe.py [CODEX_HOME ...]
 Por defecto mide los dos CODEX_HOME de kratos:
     /datos/agents/shared/.codex  y  /datos/agents/shared/.codex-200
-
-kant, 2026-09-05.
 """
 
 import base64
@@ -63,18 +61,26 @@ ENDPOINTS = [
 # para la sonda entera, y aqui puede haber 2 endpoints x N cuentas.
 PRESUPUESTO_RED_S = 25.0
 
-# Clave estable de cuenta. Se indexa por ACCOUNT_ID, no por ruta, a proposito:
-# el mismo asiento aparece en varios CODEX_HOME (p.ej. /datos/agents/jhon-config/.codex
-# lleva el mismo account_id que .codex-200 pero con token fresco: es su relevo). Si
-# indexaramos por ruta, el panel contaria dos veces la misma cuota. Indexando por
-# asiento, el dir que tenga token vivo es el que reporta.
-CLAVE_POR_ACCOUNT = {
-    "56121ead-a9bb-4c23-9918-cc147deb3686": "codex-b2b",   # b2b@polidinamica.com
-    "b5fbdfe7-2b45-47f7-abca-c4cbf40f6fd3": "codex200",    # stevenvallejo780@gmail.com
-}
+# Stable account key, indexed by account id (the same seat can appear in several
+# CODEX_HOME). The id-to-key map is private host configuration: a flat JSON object
+# outside the repo named by CAUCE_CODEX_ACCOUNT_KEYS_FILE. Without it the key is
+# derived from the id prefix.
+def claves_por_account():
+    ruta = os.environ.get('CAUCE_CODEX_ACCOUNT_KEYS_FILE')
+    if not ruta:
+        return {}
+    try:
+        with open(ruta) as f:
+            datos = json.load(f)
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(datos, dict):
+        return {}
+    return {clave: valor for clave, valor in datos.items()
+            if isinstance(clave, str) and isinstance(valor, str) and valor}
 
 # Nombres humanos de ventana a partir de su duracion. OJO: NO se puede asumir que la
-# ventana "primary" sea la de 5h. Verificado en la cuenta pro b2b: viene
+# ventana "primary" sea la de 5h. Verificado en una cuenta pro: viene
 # primary_window con limit_window_seconds=604800 (semanal) y secondary_window=null.
 # Etiquetar primary como "5h" a ciegas produciria un panel que miente.
 NOMBRE_VENTANA = {
@@ -250,7 +256,7 @@ def sonda(codex_home, refresh=False):
     out["plan"] = autor.get("chatgpt_plan_type") or autor_acc.get("chatgpt_plan_type")
     account_id = account_id or autor_acc.get("chatgpt_account_id")
     if account_id:
-        out["cuenta"] = CLAVE_POR_ACCOUNT.get(account_id, "codex-" + account_id[:8])
+        out["cuenta"] = claves_por_account().get(account_id, "codex-" + account_id[:8])
         out["extra"]["account_id"] = account_id
     out["extra"]["last_refresh"] = auth.get("last_refresh")
     exp = c_acc.get("exp")
@@ -306,8 +312,8 @@ def sonda(codex_home, refresh=False):
         return 'provider_error'
 
     # Vencimiento local: se comprueba ANTES de salir a red para no gastar una
-    # peticion condenada. Pero NO es suficiente para detectar revocacion: el token de
-    # codex200 esta *vigente* y aun asi el servidor lo rechaza con
+    # peticion condenada. Pero NO es suficiente para detectar revocacion: un token
+    # puede estar *vigente* y aun asi el servidor lo rechaza con
     # 401 token_revoked. Vencido y revocado son dos estados distintos.
     # Con el flag de sesion propia se refresca cuando quedan menos de 3 dias (el
     # access token muere a los ~10 dias del login); sin flag jamas se refresca.
@@ -417,7 +423,7 @@ def sonda(codex_home, refresh=False):
     # marca en extra y se deja error=null para que el colector no descarte el dato.
     #
     # La senal autoritativa es `allowed`/`limit_reached`, NUNCA el porcentaje.
-    # Verificado contra el asiento de stevenvallejo780: used_percent=100
+    # Verificado contra un asiento real: used_percent=100
     # con allowed=true y limit_reached=false, o sea al tope de la ventana pero AUN
     # SIRVIENDO. Dar por muerta esa cuenta por el 100% dejaria al panel enrutando el
     # trabajo fuera de un asiento que funciona. Ese caso se etiqueta "al_limite".

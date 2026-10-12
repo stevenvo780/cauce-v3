@@ -35,6 +35,22 @@ class QuotaReadersTest(unittest.TestCase):
         self.assertIsNone(extra['reset_at'])
         self.assertNotIn('fixture-token', json.dumps(report))
 
+    def test_codex_account_key_comes_from_private_host_config_or_id_prefix(self):
+        usage = {'rate_limit': {'primary_window': {'used_percent': 1, 'limit_window_seconds': 604800}}}
+        with tempfile.TemporaryDirectory() as directory:
+            home = pathlib.Path(directory)
+            (home / 'auth.json').write_text(json.dumps({'tokens': {'access_token': 'fixture-token', 'account_id': 'fixture-seat-1234'}}))
+            private = home / 'account-keys.json'
+            private.write_text(json.dumps({'fixture-seat-1234': 'fixture-key', 'bad': 7}))
+            with patch.object(probe, 'pedir', return_value=usage):
+                with patch.dict(os.environ, {'CAUCE_CODEX_ACCOUNT_KEYS_FILE': str(private)}):
+                    self.assertEqual(probe.sonda(directory)['cuenta'], 'fixture-key')
+                with patch.dict(os.environ, {}, clear=False):
+                    os.environ.pop('CAUCE_CODEX_ACCOUNT_KEYS_FILE', None)
+                    self.assertEqual(probe.sonda(directory)['cuenta'], 'codex-fixture-')
+                with patch.dict(os.environ, {'CAUCE_CODEX_ACCOUNT_KEYS_FILE': str(home / 'missing.json')}):
+                    self.assertEqual(probe.sonda(directory)['cuenta'], 'codex-fixture-')
+
     def test_codex_429_keeps_windows_unknown_and_does_not_mutate_auth(self):
         with tempfile.TemporaryDirectory() as directory:
             auth = pathlib.Path(directory) / 'auth.json'

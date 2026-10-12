@@ -48,24 +48,28 @@ listar() {
       printf '  %-18s %-8s (parado)\n' "$c" "$st"
     fi
   done
+  # The space/client/owner checklist is private host configuration (one
+  # "espacio|cliente|etiqueta" line per entry), outside the repository.
+  lista="${CUOTA_AUTH_CHECKLIST:-$HOME/.config/cauce/cuota-auth-checklist.txt}"
   echo
   echo "  CHECKLIST (lo que falta por autenticar):"
+  if [ ! -r "$lista" ]; then
+    echo "    (sin checklist privada: $lista)"
+    echo
+    echo "  Para entrar:  cuota-auth <espacio> [claude|gemini|codex|grok|shell]"
+    echo "  Ej.: cuota-auth 2  ·  cuota-auth claude-2 gemini  ·  cuota-auth nuevo cuota-isa"
+    return
+  fi
   falta=0
   while IFS='|' read -r esp cli quien; do
+    case "$esp" in ''|'#'*) continue ;; esac
     docker ps --format '{{.Names}}' | grep -qx "$esp" || continue
     if [ "$(estado_cliente "$esp" "$cli" 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g')" = "autenticado" ]; then
       printf '    [x] %-16s %-7s %s\n' "$esp" "$cli" "$quien"
     else
       printf '    [ ] %-16s %-7s %s   ->  cuota-auth %s %s\n' "$esp" "$cli" "$quien" "${esp#cuota-}" "$cli"; falta=$((falta+1))
     fi
-  done <<'LISTA'
-cuota-claude-1|claude|stevenvallejo780@gmail.com  (claude#1)
-cuota-claude-3|claude|juanotalora653@gmail.com  (claude#3, Juan)
-cuota-claude-1|gemini|stevenvallejo780@gmail.com  (Gemini steven780)
-cuota-codex-b2b|codex|b2b@polidinamica.com  (codex-b2b)
-cuota-grok-1|grok|Steven  (SuperGrok / Grok)
-cuota-claude-1|codex|stevenvallejo780@gmail.com  (codex200; opcional, hoy vencida a proposito)
-LISTA
+  done < "$lista"
   [ "$falta" = 0 ] && verde "    todo autenticado" || echo "    faltan: $falta"
   echo
   echo "  Para entrar:  cuota-auth <espacio> [claude|gemini|codex|grok|shell]"
