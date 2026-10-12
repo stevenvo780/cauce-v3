@@ -1,10 +1,10 @@
-# One-off service for ops/cli/cauce-plataforma-contenedor: the platform CLI inside the release
+# One-off service for ops/cli/cauce-platform-contenedor: the platform CLI inside the release
 # runtime image, on the stack's backend network, with the migrator's owner URL and the
 # PostgreSQL CA as file secrets. It never publishes ports and never joins the stack project.
-name: ${CAUCE_PLATAFORMA_PROYECTO:?run through ops/cli/cauce-plataforma-contenedor}
+name: ${CAUCE_PLATAFORMA_PROYECTO:?run through ops/cli/cauce-platform-contenedor}
 
 services:
-  cauce-plataforma:
+  cauce-platform:
     image: ${CAUCE_RUNTIME_IMAGE:?set an immutable CAUCE_RUNTIME_IMAGE digest}
     user: "1000:1000"
     init: true
@@ -15,7 +15,7 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
-    entrypoint: ["/app/deploy/runtime-entrypoint.sh", "node", "ops/cli/cauce-plataforma.mjs"]
+    entrypoint: ["/app/deploy/runtime-entrypoint.sh", "node", "ops/cli/platform_admin.mjs"]
     command: ["--help"]
     environment:
       DATABASE_URL_FILE: /run/secrets/database_url
@@ -25,8 +25,8 @@ services:
       CAUCE_PLATFORM_ADMIN_ID: ${CAUCE_PLATFORM_ADMIN_ID:-}
     volumes:
       - type: bind
-        source: ${CAUCE_PLATAFORMA_CLI:?run through ops/cli/cauce-plataforma-contenedor}
-        target: /app/ops/cli/cauce-plataforma.mjs
+        source: ${CAUCE_PLATAFORMA_CLI:?run through ops/cli/cauce-platform-contenedor}
+        target: /app/ops/cli/platform_admin.mjs
         read_only: true
     secrets:
       - database_url
@@ -42,4 +42,4 @@ secrets:
 networks:
   backend:
     external: true
-    name: ${CAUCE_PLATAFORMA_RED:?run through ops/cli/cauce-plataforma-contenedor}
+    name: ${CAUCE_PLATAFORMA_RED:?run through ops/cli/cauce-platform-contenedor}

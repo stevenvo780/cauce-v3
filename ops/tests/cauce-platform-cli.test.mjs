@@ -10,7 +10,9 @@ import { test } from 'node:test';
 import { GenericContainer, Wait } from 'testcontainers';
 import { tsImport } from 'tsx/esm/api';
 
-const cli = fileURLToPath(new URL('../cli/cauce-plataforma', import.meta.url));
+import { parseSeedArguments } from '../cli/platform_admin.mjs';
+
+const cli = fileURLToPath(new URL('../cli/platform_admin.mjs', import.meta.url));
 // Las URLs de fixture se construyen en tiempo de ejecución: ningún literal user:password@host en el repositorio.
 function fixtureDatabaseUrl({ user, password, host, port, database, query }) {
   const credentials = password === undefined ? user : `${user}:${password}`;
@@ -63,10 +65,41 @@ test('rejects malformed identities, unknown options and unsupported operations b
   assert.match(ownerless.stderr, /bloqueada.*dueño/u);
 });
 
+test('parses the seed command and rejects malformed input before connecting', () => {
+  assert.deepEqual(parseSeedArguments(['admin', 'semilla', '--email', 'Steven@Elenxos.com']),
+    { email: 'steven@elenxos.com', company: null, role: 'owner', actor: null });
+  assert.deepEqual(parseSeedArguments(['admin', 'semilla', '--email', 'a@b.test', '--company', 'humanizar', '--role', 'admin', '--admin', admin.toUpperCase()]),
+    { email: 'a@b.test', company: 'humanizar', role: 'admin', actor: admin });
+  for (const args of [
+    ['--company', 'humanizar'], ['--email', 'sin-arroba'], ['--email', 'a@b.test', '--role', 'owner'],
+    ['--email', 'a@b.test', '--company', 'humanizar', '--role', 'root'], ['--email', 'a@b.test', '--company', 'Bad Id'],
+    ['--email', 'a@b.test', '--email', 'c@d.test'], ['--email', 'a@b.test', '--sql', 'x'],
+  ]) {
+    const result = run(['admin', 'semilla', ...args], { CAUCE_PLATFORM_ADMIN_ID: admin });
+    assert.equal(result.status, 2, result.stderr);
+    assert.doesNotMatch(result.stderr, /PostgreSQL|ECONN/u);
+  }
+});
+
+test('cauce platform routes authority groups to the engine and contenedor to the container wrapper', () => {
+  const entry = fileURLToPath(new URL('../cli/cauce', import.meta.url));
+  const env = { PATH: process.env.PATH, HOME: process.env.HOME };
+  const engine = spawnSync(entry, ['platform', 'admin', 'semilla', '--email', 'a@b.test'], { encoding: 'utf8', env });
+  assert.equal(engine.status, 2, engine.stderr);
+  assert.match(engine.stderr, /DATABASE_URL_FILE o DATABASE_URL/u);
+  const container = spawnSync(entry, ['platform', 'contenedor', '--mostrar'],
+    { encoding: 'utf8', env: { ...env, CAUCE_ENV_FILE: '/nonexistent/prod.env' } });
+  assert.equal(container.status, 2, container.stderr);
+  assert.match(container.stderr, /cauce-platform-contenedor: no puedo leer/u);
+  const configuration = spawnSync(entry, ['platform', 'show'], { encoding: 'utf8', env });
+  assert.notEqual(configuration.status, 0);
+  assert.doesNotMatch(configuration.stderr, /semilla|DATABASE_URL_FILE o/u);
+});
+
 test('runs through a symlink, as an installed command is invoked', async () => {
   const scratch = await mkdtemp(join(tmpdir(), 'cauce-platform-link-'));
   try {
-    const link = join(scratch, 'cauce-plataforma');
+    const link = join(scratch, 'cauce-platform');
     await symlink(cli, link);
     for (const command of [[process.execPath, link, '--help'], [link, '--help']]) {
       const result = spawnSync(command[0], command.slice(1), { encoding: 'utf8', env: { PATH: process.env.PATH } });
@@ -82,7 +115,7 @@ test('reports a missing store runtime as a local failure, never as a PostgreSQL 
   const scratch = await mkdtemp(join(tmpdir(), 'cauce-platform-bare-'));
   try {
     await mkdir(join(scratch, 'ops/cli'), { recursive: true });
-    const bare = join(scratch, 'ops/cli/cauce-plataforma');
+    const bare = join(scratch, 'ops/cli/cauce-platform');
     await copyFile(cli, bare);
     const result = spawnSync(process.execPath, [bare, 'enlace', 'crear', '--empresa', 'praxis', '--otra-empresa', 'humanizar'], {
       encoding: 'utf8', env: { PATH: process.env.PATH, CAUCE_PLATFORM_ADMIN_ID: admin,
@@ -92,7 +125,7 @@ test('reports a missing store runtime as a local failure, never as a PostgreSQL 
     assert.doesNotMatch(result.stderr, /rechazada por PostgreSQL|fixture-placeholder-password/u);
     const network = run(['enlace', 'crear', '--empresa', 'praxis', '--otra-empresa', 'humanizar'], {
       CAUCE_PLATFORM_ADMIN_ID: admin, PGSSLMODE: 'require',
-      DATABASE_URL: fixtureDatabaseUrl({ user: 'u', password: FIXTURE_PASSWORD, host: 'cauce-plataforma.invalid', port: 5432, database: 'db' }) });
+      DATABASE_URL: fixtureDatabaseUrl({ user: 'u', password: FIXTURE_PASSWORD, host: 'cauce-platform.invalid', port: 5432, database: 'db' }) });
     assert.equal(network.status, 1, network.stderr);
     assert.match(network.stderr, /no enviada: la red no llegó al servidor/u);
     assert.doesNotMatch(network.stderr, /rechazada por PostgreSQL|fixture-placeholder-password/u);
@@ -102,7 +135,7 @@ test('reports a missing store runtime as a local failure, never as a PostgreSQL 
 });
 
 test('requires a strong TLS mode for remote servers and drops session-altering PG variables', async () => {
-  const { databaseUrl, sanitizeEnvironment } = await import(new URL('../cli/cauce-plataforma', import.meta.url));
+  const { databaseUrl, sanitizeEnvironment } = await import(new URL('../cli/platform_admin.mjs', import.meta.url));
   const remote = fixtureDatabaseUrl({ user: 'u', password: FIXTURE_PASSWORD, host: 'db.example.test', port: 5432, database: 'db' });
   await assert.rejects(databaseUrl({ DATABASE_URL: remote }), /sslmode require/u);
   await assert.rejects(databaseUrl({ DATABASE_URL: remote, PGSSLMODE: 'prefer' }), /sslmode require/u);
@@ -122,7 +155,7 @@ test('requires a strong TLS mode for remote servers and drops session-altering P
 });
 
 test('asks before disabling or retiring a company unless --si confirms it in writing', async () => {
-  const { confirmationFor } = await import(new URL('../cli/cauce-plataforma', import.meta.url));
+  const { confirmationFor } = await import(new URL('../cli/platform_admin.mjs', import.meta.url));
   const base = ['empresa', 'estado', '--empresa', 'humanizar', '--admin', admin, '--estado'];
   assert.deepEqual(confirmationFor([...base, 'disabled']), { company: 'humanizar', state: 'disabled' });
   assert.deepEqual(confirmationFor([...base, 'retired']), { company: 'humanizar', state: 'retired' });
@@ -152,7 +185,7 @@ test('refuses connection strings that alter the session or weaken transport befo
 });
 
 test('only emits parameterized platform calls for every supported mutation', async () => {
-  const { planOperation } = await import(new URL('../cli/cauce-plataforma', import.meta.url));
+  const { planOperation } = await import(new URL('../cli/platform_admin.mjs', import.meta.url));
   const cases = [
     [['admin', 'otorgar', '--empresa', 'humanizar', '--id', miguel, '--email', 'miguel@elenxos.com', '--rol', 'owner'],
       'SELECT public.cauce_platform_grant_admin($1,$2,$3,$4,$5)', ['humanizar', miguel, 'miguel@elenxos.com', 'owner', admin]],
@@ -321,5 +354,90 @@ test('the CLI repeats the two-owner seed atomically and the database audits and 
     await pool.end();
     await container.stop();
     await rm(scratch, { recursive: true, force: true });
+  }
+});
+
+test('seeds the platform administrator and company owners idempotently without manual SQL', async () => {
+  const { createPool, applyMigrations } = await tsImport('../../packages/store/src/db.ts', import.meta.url);
+  const network = process.env.CAUCE_TEST_DOCKER_NETWORK;
+  let builder = new GenericContainer('postgres:16-alpine')
+    .withEnvironment({ POSTGRES_DB: 'cauce_test_seed', POSTGRES_USER: 'cauce_test', POSTGRES_PASSWORD: 'fixture-seed-password' })
+    .withHealthCheck({ test: ['CMD-SHELL', 'pg_isready -U cauce_test -d cauce_test_seed'],
+      interval: 1_000, timeout: 3_000, retries: 60, startPeriod: 1_000 })
+    .withWaitStrategy(Wait.forHealthCheck());
+  builder = network ? builder.withNetworkMode(network) : builder.withExposedPorts(5432);
+  const container = await builder.start();
+  const host = network ? container.getIpAddress(network) : container.getHost();
+  const port = network ? 5432 : container.getMappedPort(5432);
+  const url = fixtureDatabaseUrl({ user: 'cauce_test', password: 'fixture-seed-password', host, port, database: 'cauce_test_seed' });
+  const pool = createPool(url, { max: 2 });
+  const environment = { DATABASE_URL: url };
+  const snapshot = async () => JSON.stringify([
+    (await pool.query('SELECT human_id::text FROM platform_admins ORDER BY 1')).rows,
+    (await pool.query('SELECT company_id,human_id::text,role,source FROM company_admins ORDER BY 1,2')).rows,
+    (await pool.query('SELECT action,company_id,subject_human_id::text FROM platform_authority_events ORDER BY id')).rows,
+    (await pool.query("SELECT count(*)::int AS n FROM audit_events WHERE action LIKE 'platform.%'")).rows,
+  ]);
+  try {
+    await applyMigrations(pool);
+    await pool.query(`INSERT INTO console_users(id,email,email_normalized,password_hash,display_name,role,tenant_id,alias)
+      VALUES($1,'steven@elenxos.com','steven@elenxos.com',$3,'Steven','operator','Steven','kant'),
+            ($2,'miguel@elenxos.com','miguel@elenxos.com',$3,'Miguel','operator','Miguel','janus')`,
+    [admin, miguel, '$scrypt$' + 'x'.repeat(48)]);
+
+    const noActor = run(['admin', 'semilla', '--email', 'steven@elenxos.com', '--company', 'humanizar'], environment);
+    assert.equal(noActor.status, 1, noActor.stderr);
+    assert.match(noActor.stderr, /platform_admin activo/u);
+
+    const missing = run(['admin', 'semilla', '--email', 'nadie@elenxos.com'], environment);
+    assert.equal(missing.status, 1, missing.stderr);
+    assert.match(missing.stderr, /no existe ninguna persona con el correo nadie@elenxos\.com/u);
+    assert.equal(missing.stdout, '');
+
+    const platform = ['admin', 'semilla', '--email', 'Steven@elenxos.com'];
+    const first = run(platform, environment);
+    assert.equal(first.status, 0, first.stderr);
+    assert.match(first.stdout, /ahora es platform_admin/u);
+    const afterFirst = await snapshot();
+    const second = run(platform, environment);
+    assert.equal(second.status, 0, second.stderr);
+    assert.match(second.stdout, /ya era platform_admin; sin cambios/u);
+    assert.equal(await snapshot(), afterFirst);
+
+    for (const email of ['steven@elenxos.com', 'miguel@elenxos.com']) {
+      const owner = run(['admin', 'semilla', '--email', email, '--company', 'humanizar', '--role', 'owner'], environment);
+      assert.equal(owner.status, 0, owner.stderr);
+      assert.match(owner.stdout, /ahora es owner de humanizar/u);
+      assert.doesNotMatch(owner.stdout + owner.stderr, /postgresql:|fixture-seed-password/u);
+    }
+    const afterOwners = await snapshot();
+    for (const email of ['steven@elenxos.com', 'miguel@elenxos.com']) {
+      const again = run(['admin', 'semilla', '--email', email, '--company', 'humanizar'], environment);
+      assert.equal(again.status, 0, again.stderr);
+      assert.match(again.stdout, /ya era owner de humanizar; sin cambios/u);
+    }
+    assert.equal(await snapshot(), afterOwners);
+    assert.deepEqual((await pool.query(`SELECT human_id::text,role,source,granted_by::text FROM company_admins
+      WHERE company_id='humanizar' ORDER BY human_id`)).rows,
+    [admin, miguel].sort().map(human_id => ({ human_id, role: 'owner', source: 'platform', granted_by: admin })));
+
+    const resolved = await pool.query('SELECT platform_admin,company_role FROM cauce_company_authority($1,$2)', [miguel, 'humanizar']);
+    assert.deepEqual(resolved.rows, [{ platform_admin: false, company_role: 'owner' }]);
+    const { lockCompanyAuthority } = await tsImport('../../packages/store/src/company-authority.ts', import.meta.url);
+    const { withTransaction } = await tsImport('../../packages/store/src/db.ts', import.meta.url);
+    await pool.query("INSERT INTO rooms(id,tenant_id) VALUES('company-humanizar','Miguel')");
+    await pool.query(`INSERT INTO agents(tenant_id,alias,enabled,harness_id,container_name,runtime_user,home_directory,state_directory)
+      VALUES('Miguel','janus',true,'codex','seed-fixture','dev','/home/dev','/home/dev/.cauce')`);
+    await pool.query("INSERT INTO memberships(tenant_id,room_id,alias,role) VALUES('Miguel','company-humanizar','janus','operator')");
+    await pool.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,role,permissions)
+      VALUES($1,'Miguel','janus','operator',ARRAY['read','control'])`, [miguel]);
+    const authority = await withTransaction(pool, client => lockCompanyAuthority(client,
+      { tenant: 'Miguel', alias: 'janus', humanId: miguel }));
+    assert.equal(authority.role, 'company_owner');
+    assert.equal(authority.scope, 'company');
+    assert.equal(authority.actingCompany, 'humanizar');
+  } finally {
+    await pool.end();
+    await container.stop();
   }
 });

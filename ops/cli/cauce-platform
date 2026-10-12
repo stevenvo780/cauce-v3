@@ -15,6 +15,15 @@ if [[ $project_root != /* ]]; then
   printf 'CAUCE_PROJECT_ROOT debe ser una ruta absoluta.\n' >&2
   exit 2
 fi
+# admin|empresa|enlace act on authority tables with the owner URL; `contenedor` runs them in the
+# release runtime image (production). The rest is the human-authenticated configuration CLI.
+case ${1:-} in
+  admin|empresa|enlace)
+    exec node "$project_root/ops/cli/platform_admin.mjs" "$@" ;;
+  contenedor)
+    shift
+    exec bash "$project_root/ops/cli/cauce-platform-contenedor" "$@" ;;
+esac
 if [[ -f $project_root/services/gateway/dist/platform-cli-main.js ]]; then
   exec node "$project_root/services/gateway/dist/platform-cli-main.js" "$@"
 elif [[ -f $project_root/services/gateway/src/platform-cli-main.ts ]]; then

@@ -511,7 +511,7 @@ Antes hay que corregir los fixtures que insertan espacios sin `company_id`:
 | `cauce_observer_login` | `cauce_observer` | outbox-metrics, fleet-watchdog | 5 |
 | `cauce_monitor` | `cauce_observer` | `mcp-fleet-monitor` | 3 |
 | `cauce_backup` | `pg_read_all_data` | respaldo por TCP | 2 |
-| `cauce` (superusuario) | `cauce_platform` | migrador, `cauce-plataforma`, emergencias | — |
+| `cauce` (superusuario) | `cauce_platform` | migrador, `cauce platform`, emergencias | — |
 
 **Qué se le niega al runtime:**
 - ser dueño de tablas, DDL, `DISABLE TRIGGER` y `TRUNCATE`;
@@ -571,23 +571,23 @@ COMMIT;
 SQL
 ```
 
-Con WP-I, la misma siembra es `cauce-plataforma admin otorgar` repitiendo `--id` y `--email` en una sola transacción. En producción la CLI no corre en el host: `tsx` es una dependencia de desarrollo, `/opt/cauce-v3` no tiene `node_modules`, PostgreSQL no publica puerto en el host y la URL apunta a `postgres` con `verify-full`. Se ejecuta dentro de la imagen de runtime del despliegue vigente, en la red `backend` de la pila, con la URL de dueño (la del `migrator`) y la CA de PostgreSQL como secretos de fichero:
+Con WP-I, la misma siembra es `cauce platform admin otorgar` repitiendo `--id` y `--email` en una sola transacción. En producción la CLI no corre en el host: `tsx` es una dependencia de desarrollo, `/opt/cauce-v3` no tiene `node_modules`, PostgreSQL no publica puerto en el host y la URL apunta a `postgres` con `verify-full`. Se ejecuta dentro de la imagen de runtime del despliegue vigente, en la red `backend` de la pila, con la URL de dueño (la del `migrator`) y la CA de PostgreSQL como secretos de fichero:
 
 ```bash
 ssh root@167.114.118.213
 cd /datos/workspaces/zeus/cauce-v3-deploy/<clon del despliegue vigente>   # debe incluir WP-I
-ops/cli/cauce-plataforma-contenedor --mostrar   # solo muestra imagen, red y rutas de secretos; no ejecuta nada
+ops/cli/cauce-platform-contenedor --mostrar   # solo muestra imagen, red y rutas de secretos; no ejecuta nada
 CAUCE_PLATFORM_ADMIN_ID=78c81e05-0c18-427b-b02b-346d7e8c8508 \
-  ops/cli/cauce-plataforma-contenedor admin otorgar --empresa humanizar --rol owner \
+  ops/cli/cauce-platform-contenedor admin otorgar --empresa humanizar --rol owner \
   --id 78c81e05-0c18-427b-b02b-346d7e8c8508 --email steven@elenxos.com \
   --id 836839cc-4768-4214-9170-d535f12a66cd --email miguel@elenxos.com
 ```
 
-`ops/cli/cauce-plataforma-contenedor` lee `/etc/cauce-v3/prod.env` como datos (otro fichero con `CAUCE_ENV_FILE`), y lanza con `docker compose run --rm` el servicio de `ops/cli/cauce-plataforma.compose.yaml`:
+`ops/cli/cauce-platform-contenedor` lee `/etc/cauce-v3/prod.env` como datos (otro fichero con `CAUCE_ENV_FILE`), y lanza con `docker compose run --rm` el servicio de `ops/cli/cauce-platform.compose.yaml`:
 - imagen `CAUCE_RUNTIME_IMAGE`, usuario 1000, raíz de solo lectura, sin capacidades;
 - red externa `<COMPOSE_PROJECT_NAME>_backend` y proyecto propio `<COMPOSE_PROJECT_NAME>-plataforma`, así que no toca el proyecto de la pila;
 - `/run/secrets/database_url` desde `CAUCE_DATABASE_URL_SECRET_PATH` y `/run/secrets/postgres_ca` desde `CAUCE_POSTGRES_CA_PATH`, con `NODE_ENV=production`, `PGSSLMODE=verify-full` y `PGSSLROOTCERT`;
-- la CLI del clon montada en `/app/ops/cli/cauce-plataforma.mjs`, que usa la capa compilada del store de la imagen (`/app/packages/store/dist/db.js`).
+- la CLI del clon montada en `/app/ops/cli/platform_admin.mjs`, que usa la capa compilada del store de la imagen (`/app/packages/store/dist/db.js`).
 
 La URL ni la contraseña se imprimen. `empresa estado --estado disabled|retired` pide escribir el id de la empresa o `--si`. Un error de red, TLS, tiempo de espera o dependencia local se informa como «Operación no enviada», nunca como rechazo de PostgreSQL.
 
@@ -799,7 +799,7 @@ La URL ni la contraseña se imprimen. `empresa estado --estado disabled|retired`
 - **Modelo y dependencias:** codex-sol (effort medium) para la CLI. Los scripts y el runbook, gemini o minimax. Depende de A.
 - **Ficheros:**
   - `ops/cli/cauce-plataforma` (nuevo): `admin otorgar|revocar`, `empresa crear|estado|roles|principales`, `enlace crear|borrar`, `host registrar|asignar`, `catalogo aplicar <json>` y `persona contraseña` (`empresa crear` y las que no tienen función SQL quedan bloqueadas);
-  - `ops/cli/cauce-plataforma-contenedor` y `ops/cli/cauce-plataforma.compose.yaml` (nuevos): la CLI dentro de la imagen de runtime, en la red de la pila (§6.1);
+  - `ops/cli/cauce-platform-contenedor` y `ops/cli/cauce-platform.compose.yaml` (nuevos): la CLI dentro de la imagen de runtime, en la red de la pila (§6.1);
   - `ops/scripts/publish-telegram-token.py` (nuevo): único escritor de fila y token de Telegram, usado por `cauce <alias> aprovisionar` y `ops/instances/hospital/activate-telegram.sh`;
   - `ops/tests/cauce-plataforma-*.test.mjs`;
   - `ops/scripts/export-fleet-snapshot.py` y `ops/scripts/fleet_runtime_materialization.py` (`--company` y el gate de paridad);

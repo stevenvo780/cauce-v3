@@ -5,15 +5,18 @@ import { isAbsolute } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { fileURLToPath } from 'node:url';
 
-const HELP = `Uso: cauce-plataforma <grupo> <operación> [opciones]
+const HELP = `Uso: cauce platform <grupo> <operación> [opciones]
+  admin semilla --email CORREO [--company ID --role owner|admin]
   admin otorgar|revocar --empresa ID --id UUID [--email CORREO --rol owner|admin]
   empresa estado --empresa ID --estado enabled|disabled|retired [--si]
   enlace crear|borrar --empresa ID --otra-empresa ID
 
+semilla es idempotente: sin --company hace platform_admin a la persona; con --company le da el rol
+(owner por defecto) usando como actor --admin, CAUCE_PLATFORM_ADMIN_ID o el platform_admin más antiguo.
 Actor: --admin UUID o CAUCE_PLATFORM_ADMIN_ID (SA activo).
 Conexión: DATABASE_URL_FILE o DATABASE_URL; nunca se imprime. Un servidor remoto exige
 sslmode require, verify-ca o verify-full; las variables PG* que alteran la sesión se descartan.
-En producción se ejecuta dentro de la imagen de runtime con ops/cli/cauce-plataforma-contenedor.
+En producción se ejecuta dentro de la imagen de runtime: cauce platform contenedor <grupo> ...
 Para la siembra atómica, repetir --id y --email en admin otorgar.
 Deshabilitar o retirar una empresa pide confirmación; --si la da por escrito.
 Bloqueadas: empresa crear (054 exige un dueño en la misma transacción), y roles, principales,
@@ -42,6 +45,58 @@ const SQLSTATE = /^[0-9A-Z]{5}$/u;
 
 class UsageError extends Error {}
 class LocalError extends Error {}
+class SeedError extends Error {}
+
+const SEED_OPERATION = 'admin semilla';
+
+export function parseSeedArguments(argv, environment = process.env) {
+  const values = new Map();
+  for (let index = 2; index < argv.length; index += 2) {
+    const name = argv[index]?.startsWith('--') ? argv[index].slice(2) : '';
+    const value = argv[index + 1];
+    if (!['email', 'company', 'role', 'admin'].includes(name) || !value || value.startsWith('--')) {
+      throw new UsageError('Opción desconocida o sin valor; consultar --help.');
+    }
+    if (values.has(name)) throw new UsageError(`--${name} no se puede repetir.`);
+    if (value !== value.trim() || /\p{Cc}/u.test(value)) throw new UsageError(`--${name} contiene caracteres inválidos.`);
+    values.set(name, value);
+  }
+  const email = values.get('email')?.toLowerCase();
+  if (!email || !/^[^\s@]+@[^\s@]+$/u.test(email)) throw new UsageError('Falta --email o no es un correo válido.');
+  const company = values.get('company') ?? null;
+  if (company !== null && !COMPANY.test(company)) throw new UsageError('--company no es un id de empresa válido.');
+  if (company === null && values.has('role')) throw new UsageError('--role exige --company.');
+  const role = values.get('role') ?? 'owner';
+  if (!['owner', 'admin'].includes(role)) throw new UsageError('--role debe ser owner o admin.');
+  const actor = (values.get('admin') ?? environment.CAUCE_PLATFORM_ADMIN_ID ?? null)?.toLowerCase() ?? null;
+  if (actor !== null && !UUID.test(actor)) throw new UsageError('--admin o CAUCE_PLATFORM_ADMIN_ID debe ser un UUID.');
+  return { email, company, role, actor };
+}
+
+// Idempotent: it reads the current state first, so a repeated run writes nothing and audits nothing.
+export async function seedAuthority(client, { email, company, role, actor }) {
+  const person = (await client.query(
+    `SELECT id::text AS id,active,role,company_id FROM console_users WHERE email_normalized=lower(btrim($1)) FOR SHARE`,
+    [email])).rows[0];
+  if (!person) throw new SeedError(`no existe ninguna persona con el correo ${email}; crea su cuenta de consola primero`);
+  if (!person.active || person.role !== 'operator') {
+    throw new SeedError(`la cuenta de ${email} debe estar activa y ser operator`);
+  }
+  if (company === null) {
+    const inserted = await client.query(
+      'INSERT INTO platform_admins(human_id) VALUES($1) ON CONFLICT (human_id) DO NOTHING RETURNING human_id', [person.id]);
+    return inserted.rowCount === 1
+      ? `${email} ahora es platform_admin.` : `${email} ya era platform_admin; sin cambios.`;
+  }
+  const current = (await client.query('SELECT role FROM company_admins WHERE company_id=$1 AND human_id=$2 FOR SHARE',
+    [company, person.id])).rows[0];
+  if (current?.role === role) return `${email} ya era ${role} de ${company}; sin cambios.`;
+  const acting = actor ?? (await client.query(`SELECT a.human_id::text AS id FROM platform_admins a
+    JOIN console_users u ON u.id=a.human_id WHERE u.active AND u.role='operator' ORDER BY a.created_at,a.human_id LIMIT 1`)).rows[0]?.id;
+  if (!acting) throw new SeedError('no hay ningún platform_admin activo que actúe; siembra primero sin --company');
+  await client.query('SELECT public.cauce_platform_grant_admin($1,$2,$3,$4,$5)', [company, person.id, email, role, acting]);
+  return `${email} ahora es ${role} de ${company}.`;
+}
 
 export function parseArguments(argv, environment = process.env) {
   const operation = `${argv[0]} ${argv[1]}`;
@@ -180,7 +235,7 @@ async function loadStore() {
     if (tsImport) return tsImport(source.href, import.meta.url);
   }
   if (existsSync(compiled)) return import(compiled.href);
-  throw new LocalError('falta tsx y la capa compilada del store; usá ops/cli/cauce-plataforma-contenedor');
+  throw new LocalError('falta tsx y la capa compilada del store; usá cauce platform contenedor');
 }
 
 function isDatabaseError(error) {
@@ -207,12 +262,13 @@ export async function main(argv = process.argv.slice(2)) {
     process.stdout.write(HELP);
     return 0;
   }
-  let plan, url;
+  let plan, url, seed;
   try {
-    plan = planOperation(argv);
+    if (`${argv[0]} ${argv[1]}` === SEED_OPERATION) seed = parseSeedArguments(argv);
+    else plan = planOperation(argv);
     sanitizeEnvironment(process.env);
     url = await databaseUrl(process.env);
-    await confirm(confirmationFor(argv));
+    if (!seed) await confirm(confirmationFor(argv));
   } catch (error) {
     process.stderr.write(`${error instanceof UsageError ? error.message : 'Entrada inválida.'}\n`);
     return 2;
@@ -220,15 +276,25 @@ export async function main(argv = process.argv.slice(2)) {
   let pool;
   try {
     const { createPool, withTransaction } = await loadStore();
-    pool = createPool(url, { max: 1, applicationName: 'cauce-plataforma' });
-    await withTransaction(pool, async client => {
+    pool = createPool(url, { max: 1, applicationName: 'cauce-platform-admin' });
+    const message = await withTransaction(pool, async client => {
       await client.query("SET LOCAL lock_timeout='5s'");
       await client.query("SET LOCAL statement_timeout='30s'");
+      if (seed) return seedAuthority(client, seed);
       for (const statement of plan) await client.query(statement.text, statement.values);
+      return null;
     });
+    if (seed) {
+      process.stdout.write(`${message}\n`);
+      return 0;
+    }
     process.stdout.write(`${plan.length} operación(es) confirmada(s); auditoría de plataforma registrada.\n`);
     return 0;
   } catch (error) {
+    if (error instanceof SeedError) {
+      process.stderr.write(`Operación rechazada: ${error.message}.\n`);
+      return 1;
+    }
     if (!isDatabaseError(error)) {
       process.stderr.write(`Operación no enviada: ${localReason(error)}.\n`);
       return 1;

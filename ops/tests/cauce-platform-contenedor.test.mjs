@@ -8,8 +8,8 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-const wrapper = fileURLToPath(new URL('../cli/cauce-plataforma-contenedor', import.meta.url));
-const cli = fileURLToPath(new URL('../cli/cauce-plataforma', import.meta.url));
+const wrapper = fileURLToPath(new URL('../cli/cauce-platform-contenedor', import.meta.url));
+const cli = fileURLToPath(new URL('../cli/platform_admin.mjs', import.meta.url));
 const image = '127.0.0.1:5000/cauce-v3-runtime@sha256:' + 'a'.repeat(64);
 
 // Las URLs de fixture se construyen en tiempo de ejecución: ningún literal user:password@host en el repositorio.
@@ -43,7 +43,7 @@ test('renders the platform CLI as a hardened one-off service on the stack backen
     assert.match(out, /DATABASE_URL_FILE: \/run\/secrets\/database_url/u);
     assert.match(out, /target: \/run\/secrets\/postgres_ca/u);
     assert.ok(out.includes(`source: ${cli}`), 'mounts the CLI next to the wrapper');
-    assert.match(out, /target: \/app\/ops\/cli\/cauce-plataforma\.mjs\n\s+read_only: true/u);
+    assert.match(out, /target: \/app\/ops\/cli\/platform_admin\.mjs\n\s+read_only: true/u);
     assert.doesNotMatch(out, /never-printed|ports:|profiles:/u);
 
     const missing = spawnSync(wrapper, ['--mostrar'], { encoding: 'utf8',

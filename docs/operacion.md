@@ -130,6 +130,42 @@ La salida muestra rol, ámbito y estado activo devueltos por la base, no default
 Flags desconocidos o combinaciones incompatibles fallan antes de abrir el pool. Para cambiar un ámbito
 usar sus flags expresamente; esto no sustituye las reglas de autorización ni crea membresías de agentes.
 
+#### Siembra de autoridad: `cauce platform admin semilla`
+
+`cauce platform` es la única CLI de plataforma. Los grupos `admin`, `empresa` y `enlace` operan sobre
+las tablas de autoridad con la URL de dueño de la base (`DATABASE_URL_FILE` o `DATABASE_URL`, nunca
+se imprime); el resto (`show`, `change`, `rollback`, `export`, `plan-import`, `import`) es la CLI de
+configuración autenticada con una cuenta humana. `cauce platform contenedor ...` ejecuta los tres
+grupos de autoridad dentro de la imagen de runtime del despliegue (`ops/cli/cauce-platform-contenedor`).
+
+```bash
+cauce platform admin semilla --email persona@example.com                         # platform_admin
+cauce platform admin semilla --email persona@example.com --company ID [--role owner|admin]  # rol de empresa
+```
+
+- La persona se resuelve por correo normalizado; una cuenta inexistente, inactiva o que no sea
+  `operator` falla con exit 1 y un mensaje claro, sin crear nada.
+- Es idempotente: si el estado ya es el pedido, imprime «sin cambios» y no escribe ni audita. Con
+  `--company` usa `cauce_platform_grant_admin` (el rol por defecto es `owner`); sin `--company`
+  inserta en `platform_admins`, que el disparador de la 054 deja en `platform_authority_events`.
+- El actor del rol de empresa es `--admin UUID`, `CAUCE_PLATFORM_ADMIN_ID` o, si faltan, el
+  `platform_admin` activo más antiguo; por eso se siembra primero el `platform_admin`.
+- La persona debe tener su cuenta de consola en esa empresa (regla de `cauce_platform_grant_admin`).
+
+Primer despliegue de V4 en producción (en el clon del despliegue vigente del host, como root):
+
+```bash
+cd /datos/workspaces/zeus/cauce-v3-deploy/<clon del despliegue vigente>
+ops/cli/cauce-platform-contenedor --mostrar     # solo muestra imagen, red y secretos
+ops/cli/cauce-platform-contenedor admin semilla --email steven@elenxos.com
+for correo in steven@elenxos.com miguel@elenxos.com; do
+  ops/cli/cauce-platform-contenedor admin semilla --email "$correo" --company humanizar --role owner
+done
+```
+
+Repetir el bloque no cambia nada. Verificación: al volver a entrar, `GET /v3/auth/session` muestra
+`role=platform_admin` para Steven y `role=company_owner`, `scope=company` para Miguel.
+
 ## 3. Diagnóstico y recuperación de un adaptador caído
 
 `cauce <alias>` resuelve primero `~/.config/cauce-v3/alias-host.tsv` del usuario real de la
