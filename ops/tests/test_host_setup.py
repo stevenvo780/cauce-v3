@@ -61,6 +61,7 @@ class HostSetupTests(unittest.TestCase):
         self.start_server()
         save_private(self.identity / 'identity.json', {'gateway': self.url, 'enrollment_id': 'e', 'company_id': 'company-a',
             'host_id': 'local-a', 'state': 'enrolled', 'executor_ready': False, 'key_fingerprint': hashlib.sha256(key).hexdigest()})
+        host_setup.anchor_signer(self.identity, hashlib.sha256(self.signer).hexdigest())
 
     def run_command(self, command, timeout=60):
         self.commands.append(command)
@@ -149,7 +150,7 @@ class HostSetupTests(unittest.TestCase):
         self.assertIn('download and extract release', receipt['actions'])
         self.assertFalse(self.install_base().exists())
         self.assertFalse((self.home / '.config').exists())
-        self.assertFalse((self.identity / 'setup-signer.json').exists())
+        self.assertEqual(json.loads((self.identity / 'setup-signer.json').read_text()), {'fingerprint': hashlib.sha256(self.signer).hexdigest()})
         self.assertEqual(self.requests, [])
 
     def test_bad_signature_digest_and_foreign_host_are_rejected_before_install(self):
@@ -166,7 +167,7 @@ class HostSetupTests(unittest.TestCase):
             host_setup.setup(self.identity, self.install_base(), False)
         self.assertFalse((self.home / '.config').exists())
 
-    def test_policy_cannot_override_local_identity_and_signer_is_pinned(self):
+    def test_policy_cannot_override_local_identity_and_signer_is_anchored(self):
         self.package_overrides = {'policy': {'executor_user': 'root'}}
         with self.assertRaisesRegex(HostFailure, 'cannot override'):
             host_setup.setup(self.identity, self.install_base(), False)
@@ -174,8 +175,30 @@ class HostSetupTests(unittest.TestCase):
         host_setup.setup(self.identity, self.install_base(), False)
         other = self.home / 'other-signer'
         self.signer, self.signer_dir = ensure_key(other), other
-        with self.assertRaisesRegex(HostFailure, 'pinned'):
+        with self.assertRaisesRegex(HostFailure, 'differs from the anchored one'):
             host_setup.setup(self.identity, self.install_base(), False)
+
+    def test_unanchored_identity_never_trusts_the_first_signer(self):
+        (self.identity / 'setup-signer.json').unlink()
+        with self.assertRaisesRegex(HostFailure, 'no setup signer is anchored'):
+            host_setup.setup(self.identity, self.install_base(), False)
+        self.assertFalse((self.identity / 'setup-signer.json').exists())
+        self.assertFalse(self.install_base().exists())
+        with self.assertRaisesRegex(HostFailure, 'differs from the anchored one'):
+            host_setup.setup(self.identity, self.install_base(), False, 'a' * 64)
+        expected = hashlib.sha256(self.signer).hexdigest()
+        self.assertTrue(host_setup.setup(self.identity, self.install_base(), True, expected)['dry_run'])
+        self.assertFalse((self.identity / 'setup-signer.json').exists())
+        self.assertTrue(host_setup.setup(self.identity, self.install_base(), False, expected)['service_active'])
+        self.assertEqual(json.loads((self.identity / 'setup-signer.json').read_text()), {'fingerprint': expected})
+
+    def test_policy_user_placeholder_becomes_the_local_executor_user(self):
+        self.package_overrides = {'policy': {'hooks': {'verify': {'user': '@user@', 'argv': ['@release@/hook']}}, 'bundles': {}}}
+        host_setup.setup(self.identity, self.install_base(), False)
+        policy = json.loads((self.install_base() / 'company-a/local-a/executor-policy.json').read_text())
+        self.assertEqual(policy['hooks']['verify']['user'], policy['executor_user'])
+        self.assertTrue(policy['hooks']['verify']['argv'][0].endswith('/hook'))
+        self.assertNotIn('@', json.dumps(policy['hooks']))
 
     def test_executor_rejecting_policy_blocks_service_start(self):
         self.capabilities = {'available': False, 'placements': [], 'reason': 'executor_unconfigured'}
@@ -239,6 +262,7 @@ class HostSetupTests(unittest.TestCase):
         key = ensure_key(other)
         save_private(other / 'identity.json', {'gateway': self.url, 'enrollment_id': 'e2', 'company_id': 'company-b',
             'host_id': 'local-b', 'state': 'enrolled', 'executor_ready': False, 'key_fingerprint': hashlib.sha256(key).hexdigest()})
+        host_setup.anchor_signer(other, hashlib.sha256(self.signer).hexdigest())
         for dry_run in (False, True):
             with self.assertRaisesRegex(HostFailure, 'one system user per company'):
                 host_setup.setup(other, self.install_base(), dry_run)
@@ -252,6 +276,7 @@ class HostSetupTests(unittest.TestCase):
         key = ensure_key(other)
         save_private(other / 'identity.json', {'gateway': self.url, 'enrollment_id': 'e2', 'company_id': 'company-a',
             'host_id': 'local-b', 'state': 'enrolled', 'executor_ready': False, 'key_fingerprint': hashlib.sha256(key).hexdigest()})
+        host_setup.anchor_signer(other, hashlib.sha256(self.signer).hexdigest())
         self.package_overrides = {'host_id': 'local-b'}
         host_setup.setup(other, self.install_base(), False)
         units = sorted(item.name for item in (self.home / '.config/systemd/user').glob('cauce-v3-host-executor-*.service'))

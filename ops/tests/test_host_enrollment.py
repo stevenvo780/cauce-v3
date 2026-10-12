@@ -106,6 +106,27 @@ class HostEnrollmentTests(unittest.TestCase):
             with self.assertRaises(HostFailure):
                 channel.request('POST', '/v3/fleet/hosts/foreign/heartbeat', {})
 
+    def test_invitation_anchors_the_setup_signer_before_the_first_package(self):
+        anchor = 'c' * 64
+        with self.server() as (gateway, requests):
+            enroll(gateway, {**self.invitation, 'setup_signer_fingerprint': anchor}, self.root)
+            directory = self.root / 'company-a/local-a'
+            self.assertEqual(json.loads((directory / 'setup-signer.json').read_text()), {'fingerprint': anchor})
+            self.assertEqual((directory / 'setup-signer.json').stat().st_mode & 0o777, 0o600)
+            self.assertNotIn('setup_signer_fingerprint', json.loads((directory / 'identity.json').read_text()))
+            enroll(gateway, {**self.invitation, 'setup_signer_fingerprint': 'd' * 64}, self.root)
+            self.assertEqual(json.loads((directory / 'setup-signer.json').read_text()), {'fingerprint': anchor})
+            self.assertEqual(len(requests), 1)
+
+    def test_malformed_signer_anchor_rejects_the_invitation(self):
+        cli = pathlib.Path(__file__).resolve().parents[1] / 'cli/host_enrollment.py'
+        for anchor in ('A' * 64, 'c' * 63, 7):
+            invitation = json.dumps({**self.invitation, 'setup_signer_fingerprint': anchor})
+            result = subprocess.run([sys.executable, str(cli), 'enroll', '--gateway', 'http://127.0.0.1:9', '--invitation-stdin',
+                '--state-root', str(self.root)], input=invitation.encode(), capture_output=True, check=False)
+            self.assertEqual(result.returncode, 1)
+            self.assertFalse((self.root / 'company-a').exists())
+
     def test_response_failure_retains_pending_key_for_recovery(self):
         with self.server(redirect=True) as (gateway, requests):
             with self.assertRaises(HostFailure):

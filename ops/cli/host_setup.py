@@ -58,7 +58,8 @@ NoNewPrivileges=yes
 WantedBy=default.target
 '''
 REQUIRED_IN_RELEASE = ('ops/cli/fleet-executor.py', 'services/gateway/dist/fleet/main.js')
-PLACEHOLDER = re.compile(r'@(release|install|identity)@')
+PLACEHOLDER = re.compile(r'@(release|install|identity|user)@')
+SIGNER_PIN = 'setup-signer.json'
 
 
 def default_runner(command: list[str], timeout: int = 60) -> subprocess.CompletedProcess:
@@ -87,14 +88,27 @@ def verify_signature(package: dict, signature: str, signer: str) -> None:
             raise HostFailure('setup package signature is invalid; nothing was installed') from None
 
 
-def pin_signer(identity_directory: pathlib.Path, signer: str, write: bool) -> None:
-    pin = identity_directory / 'setup-signer.json'
-    fingerprint = hashlib.sha256(base64.b64decode(signer)).hexdigest()
-    if pin.exists() or pin.is_symlink():
-        if json.loads(private_file(pin)).get('fingerprint') != fingerprint:
-            raise HostFailure('setup signer differs from the one pinned on first setup; nothing was installed')
-    elif write:
-        save_private(pin, {'fingerprint': fingerprint})
+def anchor_signer(identity_directory: pathlib.Path, fingerprint: str) -> None:
+    if HEX.fullmatch(fingerprint) is None:
+        raise HostFailure('setup signer fingerprint must be 64 lowercase hex characters')
+    save_private(identity_directory / SIGNER_PIN, {'fingerprint': fingerprint})
+
+
+def pin_signer(identity_directory: pathlib.Path, signer: str, write: bool, explicit: str | None = None) -> None:
+    pin = identity_directory / SIGNER_PIN
+    if explicit is not None:
+        if HEX.fullmatch(explicit) is None:
+            raise HostFailure('setup signer fingerprint must be 64 lowercase hex characters')
+        anchored = explicit
+    elif pin.exists() or pin.is_symlink():
+        anchored = json.loads(private_file(pin)).get('fingerprint')
+    else:
+        raise HostFailure('no setup signer is anchored for this computer: enroll with a fresh console invitation or pass '
+            '--signer-fingerprint as shown in the console. Nothing was installed')
+    if hashlib.sha256(base64.b64decode(signer)).hexdigest() != anchored:
+        raise HostFailure('setup package signer differs from the anchored one; nothing was installed')
+    if explicit is not None and write:
+        anchor_signer(identity_directory, explicit)
 
 
 def fetch_package(channel: HostChannel) -> tuple[dict, str]:
@@ -102,7 +116,8 @@ def fetch_package(channel: HostChannel) -> tuple[dict, str]:
         reply = channel.request('POST', '/v3/fleet/hosts/' + channel.identity['host_id'] + '/setup', {'action': 'package'})
     except HostFailure as error:
         if 'HTTP 404' in str(error):
-            raise HostFailure('this gateway does not serve setup packages yet (HTTP 404); the administrator must upgrade it. Nothing was installed') from None
+            raise HostFailure('this gateway does not serve setup packages (HTTP 404); the platform administrator must configure host setup. '
+                'Nothing was installed') from None
         raise
     package = reply.get('package')
     if not isinstance(package, dict) or not isinstance(reply.get('signature'), str) or not isinstance(reply.get('signer_public_key'), str):
@@ -187,7 +202,7 @@ def compose_policy(package: dict, host_id: str, install_root: pathlib.Path, rele
     base = {'schemaVersion': 1, 'host_id': host_id, 'executor_user': user, 'roots': roots,
         'native': [{'runtime_user': user, 'systemd_user': user, 'home_directory': str(pathlib.Path.home()), 'state_root': roots['runtime']}],
         'containers': {}, 'profiles': {}, 'hooks': {}, 'bundles': {}}
-    supplied = substitute(package['policy'], {'release': str(release), 'install': str(install_root), 'identity': str(identity)})
+    supplied = substitute(package['policy'], {'release': str(release), 'install': str(install_root), 'identity': str(identity), 'user': user})
     forbidden = {'schemaVersion', 'host_id', 'executor_user', 'roots', 'signer'}
     if forbidden & set(supplied):
         raise HostFailure('setup policy cannot override local identity or roots')
@@ -283,12 +298,12 @@ def reject_other_company(install_base: pathlib.Path, company: str) -> None:
             'could read each other\'s host keys. Use one system user per company')
 
 
-def setup(identity_directory: pathlib.Path, install_base: pathlib.Path, dry_run: bool) -> dict:
+def setup(identity_directory: pathlib.Path, install_base: pathlib.Path, dry_run: bool, signer_fingerprint: str | None = None) -> dict:
     channel = HostChannel(identity_directory)
     paths = paths_for(channel, install_base)
     reject_other_company(install_base, channel.identity['company_id'])
     package, signer = fetch_package(channel)
-    pin_signer(channel.directory, signer, not dry_run)
+    pin_signer(channel.directory, signer, not dry_run, signer_fingerprint)
     host_id, root = channel.identity['host_id'], paths['install_root']
     release_item = next(item for item in package['artifacts'] if item['kind'] == 'release')
     release = root / 'release' / release_item['sha256']

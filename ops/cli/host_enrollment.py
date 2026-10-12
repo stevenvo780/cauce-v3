@@ -42,6 +42,9 @@ def invitation_from_stdin() -> dict:
                 raise ValueError()
         if value['state'] != 'pending':
             raise ValueError()
+        anchor = value.get('setup_signer_fingerprint')
+        if anchor is not None and (not isinstance(anchor, str) or re.fullmatch(r'[a-f0-9]{64}', anchor) is None):
+            raise ValueError()
         return value
     except (ValueError, KeyError, TypeError):
         raise HostFailure('paste the complete pending invitation JSON from the console') from None
@@ -60,6 +63,9 @@ def enroll(gateway: str, invitation: dict, state_root: pathlib.Path) -> dict:
             raise HostFailure('local host identity belongs to another enrollment; it was retained')
         if previous.get('state') == 'enrolled':
             return {key: previous[key] for key in ('company_id', 'host_id', 'state', 'key_fingerprint', 'executor_ready')}
+    if invitation.get('setup_signer_fingerprint') is not None:
+        from host_setup import anchor_signer
+        anchor_signer(directory, invitation['setup_signer_fingerprint'])
     save_private(identity_file, pending)
     message = {key: invitation[key] for key in ('enrollment_id', 'company_id', 'host_id', 'nonce')}
     message['version'] = 1
@@ -108,12 +114,13 @@ def main() -> int:
         sub.add_argument('--install-root', type=pathlib.Path, default=pathlib.Path.home() / '.local/share/cauce-v3/hosts')
         if name == 'setup':
             sub.add_argument('--dry-run', action='store_true')
+            sub.add_argument('--signer-fingerprint', help='setup signer fingerprint shown in the console, for identities enrolled without one')
     args = parser.parse_args()
     try:
         if args.action in ('setup', 'status'):
             import host_setup
             identity = host_setup.locate_identity(args.state_root, args.identity_directory)
-            receipt = host_setup.setup(identity, args.install_root, args.dry_run) if args.action == 'setup' \
+            receipt = host_setup.setup(identity, args.install_root, args.dry_run, args.signer_fingerprint) if args.action == 'setup' \
                 else host_setup.status(identity, args.install_root)
             print(json.dumps(receipt, sort_keys=True))
             return 0 if args.action == 'setup' or receipt['executor_ready'] else 3
