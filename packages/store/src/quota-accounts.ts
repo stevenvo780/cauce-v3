@@ -114,10 +114,18 @@ export async function createQuotaAccount(pool: DatabasePool, source: CompanyAuth
     return { account_id: id, duplicate: existing !== undefined };
   });
 }
+/** Authority before CAS: an account outside the acting company is absent, whatever its version. */
+async function lockCompanyQuotaAccount(client: DatabaseClient, authority: CompanyAuthority, id: string): Promise<number> {
+  const account = (await client.query<{ version: string }>('SELECT quota_version::text AS version FROM provider_accounts WHERE id=$1 AND company_id=$2 FOR UPDATE',
+    [id, authority.actingCompany])).rows[0];
+  if (!account) throw new StoreError('not_found', 'quota account was not found');
+  return Number(account.version);
+}
 export async function updateQuotaAccount(pool: DatabasePool, source: CompanyAuthoritySource, id: string, value: unknown) {
   const input = QuotaAccountUpdateSchema.parse(value);
   return withTransaction(pool, async client => {
     const authority = await source(client); assertQuotaAuthority(authority, true);
+    await lockCompanyQuotaAccount(client, authority, id);
     if (input.paused_reason?.startsWith('quota_exhausted:')) throw new StoreError('invalid_input', 'automatic pause reasons are reserved');
     const result = await client.query(`UPDATE provider_accounts SET label=CASE WHEN $3 THEN $4 ELSE label END,
       enabled=COALESCE($5,enabled),paused_until=CASE WHEN $6 THEN $7::timestamptz ELSE paused_until END,
@@ -127,16 +135,14 @@ export async function updateQuotaAccount(pool: DatabasePool, source: CompanyAuth
       RETURNING id`, [id, authority.actingCompany,
       input.label !== undefined, input.label ?? null, input.enabled ?? null, input.paused_until !== undefined,
       input.paused_until ?? null, input.paused_reason !== undefined, input.paused_reason ?? null, input.expected_version]);
-    if (!result.rowCount) throw new StoreError('conflict', 'quota account unavailable or version changed');
+    if (!result.rowCount) throw new StoreError('conflict', 'quota account version changed or the change is not allowed');
     return { account_id: id, version: input.expected_version + 1 };
   });
 }
 export async function deleteQuotaAccount(pool: DatabasePool, source: CompanyAuthoritySource, id: string, version: number) {
   return withTransaction(pool, async client => {
     const authority = await source(client); assertQuotaAuthority(authority, true);
-    const account = (await client.query<{ id: string }>(`SELECT id FROM provider_accounts WHERE id=$1 AND company_id=$2 AND quota_version=$3 FOR UPDATE`,
-      [id, authority.actingCompany, version])).rows[0];
-    if (!account) throw new StoreError('conflict', 'quota account unavailable or version changed');
+    if (await lockCompanyQuotaAccount(client, authority, id) !== version) throw new StoreError('conflict', 'quota account version changed');
     const aliases = await client.query<{ id: string }>('SELECT id FROM provider_accounts WHERE canonical_account_id=$1 AND company_id=$2 FOR UPDATE',
       [id, authority.actingCompany]);
     const ids = [id, ...aliases.rows.map(row => row.id)];

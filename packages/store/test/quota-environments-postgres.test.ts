@@ -44,9 +44,15 @@ describe('quota accounts and managed environments with PostgreSQL', () => {
       observation_status: 'unknown', remaining_percent: null, agents: [], version: 1 });
     await expect(updateQuotaAccount(pool, owner('humanizar'), created.account_id, { expected_version: 1, enabled: true }))
       .rejects.toMatchObject({ code: 'conflict' });
-    await expect(updateQuotaAccount(pool, owner('praxis'), created.account_id, { expected_version: 1, label: 'Foreign' })).rejects.toMatchObject({ code: 'conflict' });
+    for (const version of [1, 99]) {
+      await expect(updateQuotaAccount(pool, owner('praxis'), created.account_id, { expected_version: version, label: 'Foreign' }))
+        .rejects.toMatchObject({ code: 'not_found', message: 'quota account was not found' });
+      await expect(deleteQuotaAccount(pool, owner('praxis'), created.account_id, version))
+        .rejects.toMatchObject({ code: 'not_found', message: 'quota account was not found' });
+    }
     expect(await updateQuotaAccount(pool, owner('humanizar'), created.account_id, { expected_version: 1, label: 'Renamed' })).toMatchObject({ version: 2 });
     await expect(updateQuotaAccount(pool, owner('humanizar'), created.account_id, { expected_version: 1, label: 'Lost' })).rejects.toMatchObject({ code: 'conflict' });
+    await expect(deleteQuotaAccount(pool, owner('humanizar'), created.account_id, 1)).rejects.toMatchObject({ code: 'conflict' });
     expect(await deleteQuotaAccount(pool, owner('humanizar'), created.account_id, 2)).toMatchObject({ deleted: true });
   });
   it('queues idempotent typed effects and refuses foreign accounts/hosts and shell input', async () => {
