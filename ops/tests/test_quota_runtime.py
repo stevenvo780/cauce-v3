@@ -97,10 +97,12 @@ class QuotaRuntimeTest(unittest.TestCase):
         document = {**self.document, 'action': 'query'}
         body = json.dumps({'error': 'HTTP 429', 'ventanas': []}).encode()
         with patch.object(runtime, 'inspect_container', return_value=self.observed), patch.object(runtime, 'validate'), \
-                patch.object(runtime.subprocess, 'run', return_value=subprocess.CompletedProcess([], 1, stdout=body)):
+                patch.object(runtime.subprocess, 'run', return_value=subprocess.CompletedProcess([], 1, stdout=body)) as execute:
             report = runtime.perform(self.policy, document)
         self.assertEqual(report['observation_status'], 'error')
         self.assertFalse(report['provider_report']['ok'])
+        self.assertEqual(report['provider_report']['note'], 'rate_limited')
+        self.assertEqual(execute.call_args.args[0][-1], '--refresh-own-session')
 
     def test_descriptors_are_pinned_and_unavailable_providers_never_claim_readiness(self):
         self.policy['quota_environments']['providers'] = ['codex', 'gemini']
