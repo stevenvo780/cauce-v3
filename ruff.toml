@@ -3,6 +3,8 @@ line-length = 120
 # stays unanalysed while the gate still prints "All checks passed!". Kept in sync by
 # ops/tests/lint-shebang-coverage.test.mjs.
 extend-include = [
+  "ops/cli/cauce-login",
+  "ops/cli/cauce-spaces",
   "ops/guardias/cauce-ai-live",
   "ops/guardias/cauce-attach",
   "ops/guardias/cauce-attach-guard",

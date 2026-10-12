@@ -12,6 +12,7 @@ const { ficherosConShebang } = await import(helper);
 
 const SHELL_ESPERADOS = [
   "ops/cli/cauce",
+  "ops/cli/cauce-diagnose",
   "ops/cli/cauce-huerfanas",
   "ops/cli/cauce-panel",
   "ops/cli/cauce-platform",
@@ -34,6 +35,8 @@ const SHELL_ESPERADOS = [
   "ops/scripts/context-native",
 ];
 const PYTHON_ESPERADOS = [
+  "ops/cli/cauce-login",
+  "ops/cli/cauce-spaces",
   "ops/guardias/cauce-ai-live",
   "ops/guardias/cauce-attach",
   "ops/guardias/cauce-attach-guard",
