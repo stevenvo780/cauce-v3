@@ -2,13 +2,16 @@ import { generateKeyPairSync, randomBytes, sign, type KeyObject } from 'node:cry
 import type { FastifyInstance } from 'fastify';
 import { hostEnrollmentMessage, hostRequestMessage, type HostInvitation } from '@cauce/store';
 
+export function setupBundle(directory = '@release@/adapter') {
+  return { directory, digest: `sha256:${'d'.repeat(64)}`, executable: '/usr/local/bin/python3.12', executable_sha256: null, argv: [] };
+}
 export function hostSetupConfig(overrides: Record<string, unknown> = {}) {
   return {
     version: 1, signing_key_file: '/etc/cauce/host-setup.pem',
     release: { name: 'release', revision: 'a'.repeat(40), url: 'https://releases.example.test/executor.tar', sha256: 'b'.repeat(64), size: 4096 },
     files: [{ name: 'fleet-ca', url: 'https://releases.example.test/ca.pem', sha256: 'c'.repeat(64), size: 1200 }],
     policy: {
-      bundles: { codex: { directory: '@release@/adapter', digest: 'd'.repeat(64) }, claude: { directory: '@release@/adapter', digest: 'd'.repeat(64) } },
+      bundles: { codex: setupBundle(), claude: setupBundle() },
       container_templates: [{ harness_id: 'codex', prefix: 'zz-canary-' }, { harness_id: 'claude', prefix: 'zz-claude-' }],
       profile_templates: [{ provider: 'codex', runtime_user: 'node' }],
       hooks: { verify: { executable: '@release@/ops/cli/fleet-provider-hook.py', user: '@user@', argv: ['--company', '@company@'] } },

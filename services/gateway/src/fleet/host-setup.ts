@@ -16,8 +16,10 @@ const ArtifactUrl = z.string().max(2048).refine(value => {
   } catch { return false; }
 });
 const Artifact = z.object({ name: Name, url: ArtifactUrl, sha256: Hex, size: z.number().int().positive().max(512 * 1024 * 1024) }).strict();
+/** Same fields the executor demands of an approved runtime bundle; the directory always lives inside the signed release. */
 const Bundle = z.object({ directory: z.string().regex(/^@release@\/[A-Za-z0-9_./-]+$/u).refine(value => !value.split('/').includes('..')),
-  digest: Hex }).strict();
+  digest: z.string().regex(/^sha256:[a-f0-9]{64}$/u), executable: z.string().min(1).max(4096), executable_sha256: Hex.nullable(),
+  argv: z.array(z.string().max(4096)).max(32) }).strict();
 const Template = z.record(z.string(), z.unknown());
 const Policy = z.object({
   container_templates: z.array(Template.and(z.object({ harness_id: Name }))).max(100).default([]),

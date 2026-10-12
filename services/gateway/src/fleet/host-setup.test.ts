@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import { stableHostJson } from '@cauce/store';
 import { HostSetupConfigSchema, HostSetupPackager, configuredHostSetup } from './host-setup.js';
-import { hostSetupConfig } from './host-setup.fixtures.js';
+import { hostSetupConfig, setupBundle } from './host-setup.fixtures.js';
 
 const scope = { company_id: 'acme', host_id: 'acme-laptop', harnesses: ['codex', 'openclaw'] };
 function packager(overrides: Record<string, unknown> = {}) {
@@ -42,8 +42,9 @@ describe('host setup packages', () => {
       { policy: { ...base.policy, executor_user: 'root' } }, { policy: { ...base.policy, signer: { certificate: '/x', key: '/y' } } },
       { policy: { ...base.policy, native: [{ runtime_user: 'root' }] } }, { policy: { ...base.policy, roots: {} } },
       { policy: { ...base.policy, authority: { ...base.policy.authority, identity_directory: '/home/other/identity' } } },
-      { policy: { ...base.policy, bundles: { codex: { directory: '/opt/adapter', digest: 'd'.repeat(64) } } } },
-      { policy: { ...base.policy, bundles: { codex: { directory: '@release@/../adapter', digest: 'd'.repeat(64) } } } },
+      { policy: { ...base.policy, bundles: { codex: setupBundle('/opt/adapter') } } },
+      { policy: { ...base.policy, bundles: { codex: setupBundle('@release@/../adapter') } } },
+      { policy: { ...base.policy, bundles: { codex: { ...setupBundle(), digest: 'd'.repeat(64) } } } },
       { release: { ...base.release, url: 'http://releases.example.test/executor.tar' } },
       { release: { ...base.release, url: 'https://user:secret@releases.example.test/executor.tar' } },
       { release: { ...base.release, revision: 'main' } },
