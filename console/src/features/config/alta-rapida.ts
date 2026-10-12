@@ -1,4 +1,4 @@
-import { RESERVED_ALIAS_MESSAGE, isReservedAlias } from '@cauce/protocol';
+import { RESERVED_ALIAS_MESSAGE, isReservedAlias } from '@cauce/protocol/configuration';
 import type { ConfigMutation } from '../../api/types';
 
 /**
