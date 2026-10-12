@@ -5,6 +5,7 @@ import datetime
 import importlib.util
 import pathlib
 import unittest
+from unittest import mock
 
 RAIZ = pathlib.Path(__file__).resolve().parents[2]
 spec = importlib.util.spec_from_file_location(
@@ -14,8 +15,8 @@ spec.loader.exec_module(guardia)
 
 AHORA = datetime.datetime(2026, 10, 8, 20, 0, tzinfo=datetime.UTC)
 FILAS = [
-    ["Steven", "jarvis", "9c81eaf2", "12", "console,human-mcp", "78c81e05", "10-08 19:00"],
-    ["Steven", "jarvis", "ed834a0e", "4", "telegram", "telegram", "10-08 18:00"],
+    ["humanizar", "Steven", "jarvis", "9c81eaf2", "12", "console,human-mcp", "1", "10-08 19:00"],
+    ["humanizar", "Steven", "jarvis", "ed834a0e", "4", "telegram", "0", "10-08 18:00"],
 ]
 
 
@@ -29,6 +30,11 @@ class Bus:
 
 
 class ConversacionesParalelas(unittest.TestCase):
+    def test_no_publica_identificadores_humanos(self):
+        bus = Bus()
+        _, avisado = guardia.corrida(FILAS, {}, AHORA, bus)
+        self.assertNotIn("78c81e05", avisado)
+
     def test_avisa_a_zeus_con_alias_sesiones_y_canales(self):
         bus = Bus()
         memoria, avisado = guardia.corrida(FILAS, {}, AHORA, bus)
@@ -37,7 +43,7 @@ class ConversacionesParalelas(unittest.TestCase):
         self.assertEqual(payload["recipients"], [{"tenant_id": "Steven", "alias": "zeus"}])
         for dato in ("Steven/jarvis", "9c81eaf2", "ed834a0e", "telegram", "console,human-mcp"):
             self.assertIn(dato, avisado)
-        self.assertEqual(list(memoria), ["Steven/jarvis:9c81eaf2,ed834a0e"])
+        self.assertEqual(list(memoria), ["humanizar/Steven/jarvis:9c81eaf2,ed834a0e"])
 
     def test_no_repite_el_mismo_juego_hasta_que_pasa_el_silencio(self):
         bus = Bus()
@@ -51,7 +57,7 @@ class ConversacionesParalelas(unittest.TestCase):
     def test_una_conversacion_nueva_es_otro_problema_y_avisa_aunque_el_alias_ya_avisara(self):
         bus = Bus()
         memoria, _ = guardia.corrida(FILAS, {}, AHORA, bus)
-        tres = FILAS + [["Steven", "jarvis", "63645070", "1", "console", "aaaaaaaa", "10-08 19:30"]]
+        tres = FILAS + [["humanizar", "Steven", "jarvis", "63645070", "1", "console", "1", "10-08 19:30"]]
         _, avisado = guardia.corrida(tres, memoria, AHORA + datetime.timedelta(hours=1), bus)
         self.assertIn("63645070", avisado)
 
@@ -63,6 +69,43 @@ class ConversacionesParalelas(unittest.TestCase):
         bus = Bus()
         memoria, avisado = guardia.corrida([], {}, AHORA, bus)
         self.assertEqual((memoria, avisado, bus.enviados), ({}, None, []))
+
+    def test_descarta_filas_y_memoria_de_empresa_ajena(self):
+        foreign = [["outside", "ForeignTenant", "foreign-alias", "foreign-session", "2", "foreign-channel",
+                    "foreign-human", "10-08 19:30"]]
+        bus = Bus()
+        memoria, avisado = guardia.corrida(FILAS + foreign,
+                                         {"outside/ForeignTenant/foreign-alias:foreign-session": AHORA.isoformat()},
+                                         AHORA, bus)
+        for output in (avisado, str(bus.enviados), str(memoria), guardia.texto(guardia.paralelas(foreign))):
+            self.assertNotIn("foreign", output)
+        self.assertEqual(len(memoria), 1)
+
+    def test_salida_directa_descarta_identidad_de_empresa_ajena(self):
+        output = guardia.texto({("outside", "foreign-tenant", "foreign-alias"):
+                               [("foreign-session", "2", "foreign-channel", "foreign-human", "foreign-date")]})
+        self.assertNotIn("foreign", output)
+
+    def test_empresa_es_configurable_y_no_hereda_memoria(self):
+        foreign = [["outside", "ForeignTenant", "jarvis", "a0000001", "2", "console", "1", "10-08 19:30"],
+                   ["outside", "ForeignTenant", "jarvis", "b0000002", "1", "console", "1", "10-08 19:30"]]
+        with mock.patch.dict("os.environ", {"CAUCE_GUARD_COMPANY_ID": "outside"}):
+            avisado = guardia.texto(guardia.paralelas(FILAS + foreign))
+            memoria = guardia.vigentes({"humanizar/Steven/jarvis:9c81eaf2,ed834a0e": AHORA.isoformat()}, AHORA)
+        self.assertIn("ForeignTenant/jarvis", avisado)
+        self.assertNotIn("Steven", avisado)
+        self.assertEqual(memoria, {})
+
+    def test_empresa_ajena_no_publica_al_destino_de_humanizar(self):
+        bus = Bus()
+        foreign = [["outside", "ForeignTenant", "jarvis", "a0000001", "2", "console", "1", "10-08 19:30"]]
+        with mock.patch.dict("os.environ", {"CAUCE_GUARD_COMPANY_ID": "outside"}):
+            with self.assertRaisesRegex(RuntimeError, "destino"):
+                guardia.corrida(foreign, {}, AHORA, bus)
+            self.assertEqual(bus.enviados, [])
+            with mock.patch.object(guardia.ssl, "SSLContext", side_effect=AssertionError("certificates accessed")):
+                with self.assertRaisesRegex(RuntimeError, "destino"):
+                    guardia.publicar({})
 
     def test_la_consulta_cuenta_humanos_y_dms_de_telegram_no_continuaciones_de_agente(self):
         self.assertIn("human_message_initiators", guardia.CONSULTA)

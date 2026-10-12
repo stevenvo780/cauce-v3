@@ -19,6 +19,7 @@ import hashlib
 import http.client
 import json
 import os
+import re
 import ssl
 import subprocess
 import sys
@@ -35,57 +36,74 @@ DESTINATARIOS = [{"tenant_id": "Steven", "alias": "zeus"}]
 
 CONSULTA = """
 with t as (
-  select d.recipient_tenant tenant, d.recipient_alias alias,
+  select recipient.company_id, d.recipient_tenant tenant, d.recipient_alias alias,
          a.payload->'result'->'harness_consumption_v1'->>'native_session_id' sesion,
-         coalesce(m.auth_channel, '?') canal, coalesce(left(h.initiating_human_id::text, 8), 'telegram') humano,
+         coalesce(m.auth_channel, '?') canal, h.initiating_human_id humano,
          d.terminal_at
     from deliveries d
     join messages m on m.id = d.message_id
+    join tenants recipient on recipient.id = d.recipient_tenant
+    join tenants source on source.id = m.tenant_id
     join delivery_acks a on a.delivery_id = d.id and a.applied and a.status = 'done'
     left join human_message_initiators h on h.message_id = m.id
    where d.terminal_at > now() - interval '24 hours'
+     and recipient.company_id = :'guard_company_id' and source.company_id = :'guard_company_id'
      and (h.message_id is not null or (m.auth_channel = 'telegram' and m.body->>'type' = 'telegram.message'))),
 s as (
-  select tenant, alias, sesion, count(*) turnos, string_agg(distinct canal, ',') canales,
-         string_agg(distinct humano, ',') humanos, max(terminal_at) ultimo
-    from t where sesion is not null group by 1, 2, 3),
-v as (select tenant, alias from s group by 1, 2 having count(*) > 1)
-select s.tenant, s.alias, left(s.sesion, 8), s.turnos, s.canales, s.humanos,
+  select company_id, tenant, alias, sesion, count(*) turnos, string_agg(distinct canal, ',') canales,
+         count(distinct humano) humanos, max(terminal_at) ultimo
+    from t where sesion is not null group by 1, 2, 3, 4),
+v as (select company_id, tenant, alias from s group by 1, 2, 3 having count(*) > 1)
+select s.company_id, s.tenant, s.alias, left(s.sesion, 8), s.turnos, s.canales, s.humanos,
        to_char(s.ultimo at time zone 'UTC', 'MM-DD HH24:MI')
-  from s join v using (tenant, alias) order by s.alias, s.turnos desc;
+  from s join v using (company_id, tenant, alias) order by s.tenant, s.alias, s.turnos desc;
 """
 
 
+def company_id() -> str:
+    company = os.environ.get("CAUCE_GUARD_COMPANY_ID", "humanizar")
+    if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", company):
+        raise ValueError("CAUCE_GUARD_COMPANY_ID inválido")
+    return company
+
+
 def sql(consulta: str) -> list[list[str]]:
-    hecho = subprocess.run(PG, input=consulta, capture_output=True, text=True, timeout=60, check=False)
+    command = [*PG, "-v", "ON_ERROR_STOP=1", "-v", f"guard_company_id={company_id()}"]
+    hecho = subprocess.run(command, input=consulta, capture_output=True, text=True, timeout=60, check=False)
     if hecho.returncode != 0:
-        raise RuntimeError(f"psql rc={hecho.returncode}: {hecho.stderr.strip()[:200]}")
+        raise RuntimeError(f"psql rc={hecho.returncode}")
     return [linea.split("\t") for linea in hecho.stdout.splitlines() if linea.strip()]
 
 
-def paralelas(filas: list[list[str]]) -> dict[str, list[tuple[str, ...]]]:
-    alias: dict[str, list[tuple[str, ...]]] = {}
-    for tenant, nombre, sesion, turnos, canales, humanos, ultimo in filas:
-        alias.setdefault(f"{tenant}/{nombre}", []).append((sesion, turnos, canales, humanos, ultimo))
+def paralelas(filas: list[list[str]]) -> dict[tuple[str, str, str], list[tuple[str, ...]]]:
+    alias: dict[tuple[str, str, str], list[tuple[str, ...]]] = {}
+    company = company_id()
+    for owner, tenant, nombre, sesion, turnos, canales, humanos, ultimo in filas:
+        if owner == company:
+            alias.setdefault((owner, tenant, nombre), []).append((sesion, turnos, canales, humanos, ultimo))
     return alias
 
 
-def clave(nombre: str, sesiones: list[tuple[str, ...]]) -> str:
+def clave(nombre: tuple[str, str, str], sesiones: list[tuple[str, ...]]) -> str:
     """Mismo alias con el mismo juego de conversaciones = el mismo problema."""
-    return nombre + ":" + ",".join(sorted(s[0] for s in sesiones))
+    return "/".join(nombre) + ":" + ",".join(sorted(s[0] for s in sesiones))
 
 
-def texto(nuevos: dict[str, list[tuple[str, ...]]]) -> str:
+def texto(nuevos: dict[tuple[str, str, str], list[tuple[str, ...]]]) -> str:
     lineas = [MARCA, "Alias que atendieron a personas desde más de una conversación en 24 h:"]
-    for nombre, sesiones in sorted(nuevos.items()):
+    company = company_id()
+    for (owner, tenant, nombre), sesiones in sorted(nuevos.items()):
+        if owner != company:
+            continue
         detalle = "; ".join(f"{s} x{t} [{c}] humanos={h} último {u} UTC" for s, t, c, h, u in sesiones)
-        lineas.append(f"- {nombre}: {detalle}")
+        lineas.append(f"- {tenant}/{nombre}: {detalle}")
     lineas.append("Sólo una es la que muestra la consola. Si la otra es de alguien que debería verla, falta "
                   "en OWNER_HUMAN_ID/SHARED_HUMANS del alias; si es de su dueño, la regla no lo enruta.")
     return "\n".join(lineas)
 
 
 def payload_de(cuerpo: str, claves: list[str]) -> dict:
+    check_destination()
     huella = hashlib.sha256("|".join(sorted(claves)).encode()).hexdigest()[:24]
     return {"room_id": SALA, "recipients": list(DESTINATARIOS), "lane": "interactive",
             "body": {"text": cuerpo, "guardia": GUARDIA, "es_automatico": True},
@@ -93,6 +111,7 @@ def payload_de(cuerpo: str, claves: list[str]) -> dict:
 
 
 def publicar(payload: dict) -> int:
+    check_destination()
     contexto = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
     contexto.load_verify_locations(f"{PKI}/ca.crt")
     contexto.load_cert_chain(f"{PKI}/console-client.crt", f"{PKI}/console-client.key")
@@ -104,9 +123,16 @@ def publicar(payload: dict) -> int:
     return estado
 
 
+def check_destination() -> None:
+    if company_id() != "humanizar":
+        raise RuntimeError("el destino de la guardia pertenece a humanizar")
+
+
 def vigentes(memoria: dict[str, str], ahora: datetime.datetime) -> dict[str, str]:
+    prefix = company_id() + "/"
     return {k: v for k, v in memoria.items()
-            if (ahora - datetime.datetime.fromisoformat(v)).total_seconds() < SILENCIO_H * 3600}
+            if k.startswith(prefix) and
+            (ahora - datetime.datetime.fromisoformat(v)).total_seconds() < SILENCIO_H * 3600}
 
 
 def corrida(filas: list[list[str]], memoria: dict[str, str], ahora: datetime.datetime,
