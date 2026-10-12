@@ -1,6 +1,7 @@
 # Controlador de flota V3.5 en server: entorno de flota y montajes de solo lectura del gateway.
 # deploy.sh lo añade sólo con CAUCE_DEPLOY_FLEET_OVERLAY=1 en el env de la instancia; sin el controlador
-# instalado (/etc/cauce-v3/fleet-v35, /run/cauce-fleet-v35) el gateway no arranca: create_host_path es false.
+# instalado (/etc/cauce-v3/fleet-v35, /run/cauce-fleet-v35) ni el directorio del enclave (/run/cauce-fleet-signed-authority)
+# el gateway no arranca: create_host_path es false.
 services:
   gateway:
     environment:
@@ -12,6 +13,11 @@ services:
       CAUCE_FLEET_TOKEN_HASH_FILE: /run/cauce-fleet-identities/token_hashes.json
       CAUCE_MTLS_IDENTITY_FILE: /run/cauce-identities/mtls_identities.json
       CAUCE_TOKEN_HASH_FILE: /run/cauce-identities/token_hashes.json
+      # Deben coincidir con ops/scripts/fleet-authority-install.py: enclave root, directorio root:1000 0750 y socket 0660.
+      CAUCE_FLEET_AUTHORITY_SOCKET: /run/cauce-fleet-signed-authority/authority.sock
+      CAUCE_FLEET_AUTHORITY_OWNER_UID: "0"
+      CAUCE_FLEET_AUTHORITY_PEER_UID: "1000"
+      CAUCE_FLEET_AUTHORITY_GROUP_GID: "1000"
     volumes:
       - type: bind
         source: /etc/cauce-v3/fleet-v35/gateway
@@ -28,5 +34,10 @@ services:
       - type: bind
         source: /run/cauce-fleet-v35/auth
         target: /run/cauce-fleet-v35/auth
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: /run/cauce-fleet-signed-authority
+        target: /run/cauce-fleet-signed-authority
         read_only: true
         bind: {create_host_path: false}
