@@ -17,7 +17,7 @@ export const defaultMigrationLockTimeoutMs = 5_000;
  * a reader holding one of them never waits for a table the runner already holds.
  */
 export const migrationLockOrder: readonly string[] = [
-  'tenants', 'agent_account_bindings', 'agents', 'alias_routing_ceiling', 'audit_events', 'config_revisions',
+  'tenants', 'agent_account_bindings', 'agents', 'alias_routing_ceiling', 'terminal_sessions', 'audit_events', 'config_revisions',
   'console_agent_favorites', 'console_users', 'fleet_hosts', 'fleet_operations', 'human_tenant_memberships',
   'memberships', 'connection_leases', 'deliveries', 'messages', 'provider_accounts', 'quota_window_state',
   'quota_provider_reports', 'quota_window_samples', 'rooms', 'agent_failure_notices', 'agent_output_materializations',
@@ -67,6 +67,7 @@ export const migrationLockFootprints: Readonly<Record<string, Readonly<Record<st
   '065_runtime_grants_replay.sql': {},
   '066_runtime_hardening.sql': { agent_chain_policies: SRE },
   '067_context_history_immutable.sql': { agent_context_versions: SRE },
+  '069_diagnostic_frontier_indexes.sql': { audit_events: 'SHARE', messages: 'SHARE', terminal_sessions: 'SHARE' },
 };
 
 /** The first migration with a footprint; every bundled migration from it on must have one. */

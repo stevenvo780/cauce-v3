@@ -130,6 +130,10 @@ describe('company scoped diagnosis through a signed human session and real Postg
   it.each(['trace','operation','session','delivery','backup'] as const)('reconstructs the complete chain from a %s identifier', async kind => {
     const id = chain()[kind]; assertChain(await diagnose(id),id);
   });
+  it('normalizes UUID identifiers while preserving exact trace identifiers', async () => {
+    const id = chain().operation.toUpperCase(); assertChain(await diagnose(id),id);
+    expect((await diagnose(chain().trace.toUpperCase())).statusCode).toBe(404);
+  });
   it('rejects every foreign company identifier without disclosing existence', async () => {
     for (const kind of ['trace','operation','session','delivery','backup'] as const) expect((await diagnose(chain(1)[kind])).statusCode).toBe(404);
     expect((await diagnose(randomUUID())).statusCode).toBe(404);
@@ -187,8 +191,9 @@ describe('company scoped diagnosis through a signed human session and real Postg
     const body=first.json<Diagnosis>(); expect(body.truncated).toBe(true); expect(body.items).toHaveLength(500);
     expect(new Set(body.items.map(item=>item.id)).size).toBe(500);
     expect(body.items.every(item=>item.company_id===value.company_id && item.type==='audit')).toBe(true);
-    const keys=body.items.map(item=>`${item.at}\u0000${item.type}\u0000${item.id}`);
-    expect(keys).toEqual([...keys].sort());
+    const ids=body.items.map(item=>BigInt(item.id)); const firstId=ids[0];
+    if(firstId===undefined) throw new Error('first diagnostic event unavailable');
+    expect(ids).toEqual(Array.from({length:500},(_,index)=>firstId+BigInt(index)));
     const again=await diagnose(trace); expect(again.statusCode).toBe(200); expect(again.json<Diagnosis>().items).toEqual(body.items);
   });
   it('rejects unsupported query filters and control characters in identifiers', async () => {

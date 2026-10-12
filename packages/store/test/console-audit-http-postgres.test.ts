@@ -1,4 +1,5 @@
 import type { FastifyInstance, LightMyRequestResponse } from 'fastify';
+import { randomUUID } from 'node:crypto';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { CauceRepository, type DatabasePool } from '@cauce/store';
 import { seedSyntheticCompanyContexts } from '../src/seed-dev-cli.js';
@@ -19,6 +20,7 @@ interface AuditPage { items: AuditItem[]; next_cursor: string | null }
 interface AuditInput {
   id?: string; tenant?: string | null; actor?: string; company?: string | null;
   trace?: string; action?: string; at?: string; metadata?: Record<string, unknown>;
+  message?: string; delivery?: string;
 }
 const PASSWORD = 'audit-http-fixture-password';
 const ORIGIN = 'http://localhost';
@@ -69,11 +71,11 @@ function page(response: LightMyRequestResponse) {
 function ids(value: AuditPage) { return value.items.map(item => item.event_id); }
 async function seedAudit(input: AuditInput = {}) {
   const result = await admin().query<{ id: string }>(`INSERT INTO audit_events
-    (id,tenant_id,actor_alias,company_id,action,decision,trace_id,metadata,created_at)
-    VALUES(COALESCE($1::bigint,nextval('audit_events_id_seq')),$2,$3,$4,$5,'allow',$6,$7::jsonb,$8::timestamptz) RETURNING id::text`,
+    (id,tenant_id,actor_alias,company_id,action,decision,trace_id,metadata,created_at,message_id,delivery_id)
+    VALUES(COALESCE($1::bigint,nextval('audit_events_id_seq')),$2,$3,$4,$5,'allow',$6,$7::jsonb,$8::timestamptz,$9,$10) RETURNING id::text`,
   [input.id ?? null, input.tenant === undefined ? 'ContextAlpha' : input.tenant, input.actor ?? 'director',
     input.company ?? null, input.action ?? 'context.sync', input.trace ?? 'zz-canary-audit-chain',
-    JSON.stringify(input.metadata ?? { state: 'synced' }), input.at ?? TIME]);
+    JSON.stringify(input.metadata ?? { state: 'synced' }), input.at ?? TIME, input.message ?? null, input.delivery ?? null]);
   return requireValue(result.rows[0], 'audit receipt').id;
 }
 async function createReader() {
@@ -192,14 +194,26 @@ describe('company audit HTTP with signed human authority and real PostgreSQL', (
     const anonymous = await server().inject({ method: 'GET', url: '/v3/console/audit', headers });
     expect([401, 403]).toContain(anonymous.statusCode);
   });
-  it('keeps authenticated non-console agents at tenant scope without promoting coordinator or owner aliases', async () => {
-    const own = await seedAudit(); await seedAudit({ tenant: 'ContextPeer' }); await seedAudit({ tenant: 'ContextBeta' });
+  it('keeps authenticated non-console agents at own or participating events without promoting their aliases', async () => {
+    const directorOwn = await seedAudit(); const ownerOwn = await seedAudit({ actor: 'owner' });
+    await seedAudit({ tenant: 'ContextPeer' }); await seedAudit({ tenant: 'ContextBeta' });
+    await seedAudit({ actor: 'unrelated', metadata: { recipient_alias: 'owner' } });
+    const message = randomUUID(); const delivery = randomUUID();
+    await admin().query(`INSERT INTO messages(id,request_id,trace_id,tenant_id,room_id,actor_alias,body,lane)
+      VALUES($1,$2,'zz-canary-audit-participating',$3,'context-room','director',$4::jsonb,'interactive')`,
+    [message, randomUUID(), fixture().tenant_id, JSON.stringify({ type: 'command', text: PRIVATE })]);
+    await admin().query(`INSERT INTO deliveries(id,message_id,recipient_tenant,recipient_alias)
+      VALUES($1,$2,$3,'owner')`, [delivery, message, fixture().tenant_id]);
+    const roomParticipant = await seedAudit({ tenant: 'ContextPeer', message });
+    const deliveryParticipant = await seedAudit({ tenant: 'ContextPeer', actor: 'owner', delivery });
+    await seedAudit({ tenant: 'ContextBeta', message, delivery });
     for (const alias of ['director', 'owner']) {
       await server().close();
       app = await buildTestGateway({ pool, repository: new CauceRepository(pool), authProvider: new FixedAuthProvider(testPrincipal({
         tenant_id: fixture().tenant_id, alias, permissions: ['read'],
       })) });
-      expect(ids(page(await audit({}, { 'x-cauce-company': 'context_beta', 'x-cauce-human-id': fixture().human_id })))).toEqual([own]);
+      expect(ids(page(await audit({}, { 'x-cauce-company': 'context_beta', 'x-cauce-human-id': fixture().human_id })))).toEqual(
+        alias === 'director' ? [roomParticipant, directorOwn] : [deliveryParticipant, roomParticipant, ownerOwn]);
     }
   });
   it('rejects malformed and duplicate server filters rather than widening or silently dropping them', async () => {
