@@ -106,8 +106,11 @@ export async function persistContextVersionInTransaction(client: DatabaseClient,
 }
 export type NativeContextIngestResult =
   | { readonly state: 'ingested'; readonly snapshot: ContextSnapshot }
-  | { readonly state: 'conflict'; readonly base_version: number; readonly desired_version: number; readonly applied_version: number }
+  | { readonly state: 'conflict'; readonly base_version: number; readonly desired_version: number; readonly applied_version: number;
+      readonly digest_exists_in_history: boolean }
   | { readonly state: 'rejected'; readonly error: ContextRejectedError };
+const NATIVE_REFUSAL_AUDIT_LIMIT = 20;
+const NATIVE_REFUSAL_AUDIT_WINDOW_SECONDS = 60;
 /** The refusal stays visible in the application state of the current version, as the operator panel shows it. */
 async function recordNativeRefusal(client: DatabaseClient, target: ContextTarget, snapshot: ContextSnapshot, applyError: string,
   action: 'context.native_conflict' | 'context.native_rejected', metadata: Readonly<Record<string, unknown>>): Promise<void> {
@@ -115,8 +118,14 @@ async function recordNativeRefusal(client: DatabaseClient, target: ContextTarget
     WHERE company_id=$1 AND tenant_id=$2 AND alias=$3 AND version=$4 AND (apply_error IS NULL OR starts_with(apply_error,'native_context_'))`,
   [target.company_id, target.tenant_id, target.alias, snapshot.desired_version, applyError]);
   await client.query(`INSERT INTO audit_events(tenant_id,actor_alias,action,decision,company_id,metadata)
-    VALUES($1,$2,$3,'deny',$4,$5::jsonb)`, [target.tenant_id, target.alias, action, target.company_id,
-    JSON.stringify({ target_tenant: target.tenant_id, target_alias: target.alias, ...metadata })]);
+    SELECT $1,$2,$3,'deny',$4,$5::jsonb WHERE NOT EXISTS (
+      SELECT 1 FROM audit_events WHERE tenant_id=$1 AND actor_alias=$2 AND action=$3 AND company_id=$4
+        AND metadata-'applied_version'=$5::jsonb-'applied_version') AND (
+      SELECT count(*) FROM audit_events WHERE tenant_id=$1 AND actor_alias=$2 AND company_id=$4
+        AND action IN ('context.native_conflict','context.native_rejected')
+        AND created_at>clock_timestamp()-make_interval(secs => $6))<$7`, [target.tenant_id, target.alias, action, target.company_id,
+    JSON.stringify({ target_tenant: target.tenant_id, target_alias: target.alias, ...metadata }),
+    NATIVE_REFUSAL_AUDIT_WINDOW_SECONDS, NATIVE_REFUSAL_AUDIT_LIMIT]);
 }
 /** Judges the agent files against the locked server version, before anything is written. */
 function nativeIngestFiles(current: readonly ContextFile[], candidate: readonly ContextFile[], maxBytes: number): ContextFile[] {
@@ -139,6 +148,7 @@ export async function ingestNativeContextVersion(pool: DatabasePool, tenant: str
     await lockContextTarget(client, target);
     const snapshot = await contextSnapshot(client, target);
     const digest = contextDigest(input.files);
+    if (snapshot.desired_version === input.base_version && snapshot.digest === digest) return { state: 'ingested', snapshot };
     if (snapshot.desired_version === input.base_version + 1 && snapshot.digest === digest) {
       const existing = await readContextVersion(client, target, snapshot.desired_version);
       if (existing.source === 'native' && existing.actor_alias === alias && existing.actor_human_id === null) {
@@ -146,11 +156,15 @@ export async function ingestNativeContextVersion(pool: DatabasePool, tenant: str
       }
     }
     if (snapshot.desired_version !== input.base_version) {
+      const history = (await client.query<{ exists: boolean }>(`SELECT EXISTS(SELECT 1 FROM agent_context_versions
+        WHERE company_id=$1 AND tenant_id=$2 AND alias=$3 AND digest=$4) AS exists`,
+      [target.company_id, tenant, alias, digest])).rows[0];
       await recordNativeRefusal(client, target, snapshot, 'native_context_conflict', 'context.native_conflict', {
         base_version: input.base_version, desired_version: snapshot.desired_version, applied_version: snapshot.applied_version,
         candidate_digest: digest });
       return { state: 'conflict', base_version: input.base_version,
-        desired_version: snapshot.desired_version, applied_version: snapshot.applied_version };
+        desired_version: snapshot.desired_version, applied_version: snapshot.applied_version,
+        digest_exists_in_history: history?.exists ?? false };
     }
     let canonical: ContextFile[];
     try { canonical = nativeIngestFiles(snapshot.files, input.files, harnessContextMaxBytes(row.harness_id)); }
