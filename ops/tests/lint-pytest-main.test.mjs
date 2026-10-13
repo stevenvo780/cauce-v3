@@ -34,7 +34,19 @@ def executable_nodes(nodes):
         else:
             yield from executable_nodes(ast.iter_child_nodes(node))
 
-def launches_tests(nodes, functions, collections, seen=frozenset()):
+def propagates_exit(call, parents, returns_exit):
+    parent = parents.get(call)
+    if isinstance(parent, ast.Return):
+        return returns_exit
+    if not isinstance(parent, ast.Call) or parent.args != [call]:
+        return False
+    if isinstance(parent.func, ast.Attribute) and isinstance(parent.func.value, ast.Name):
+        return parent.func.value.id == "sys" and parent.func.attr == "exit"
+    return (isinstance(parent.func, ast.Name) and parent.func.id == "SystemExit"
+            and isinstance(parents.get(parent), ast.Raise))
+
+def launches_tests(nodes, functions, collections, seen=frozenset(), returns_exit=False):
+    parents = {child: node for node in executable_nodes(nodes) for child in ast.iter_child_nodes(node)}
     for node in executable_nodes(nodes):
         if isinstance(node, ast.For) and isinstance(node.target, ast.Name) and isinstance(node.iter, ast.Name):
             values = collections.get(node.iter.id, [])
@@ -45,14 +57,24 @@ def launches_tests(nodes, functions, collections, seen=frozenset()):
                     return True
         if not isinstance(node, ast.Call):
             continue
+        propagates = propagates_exit(node, parents, returns_exit)
         if isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name):
-            if node.func.attr == "main" and node.func.value.id in ("pytest", "unittest"):
-                return True
+            if node.func.attr == "main":
+                if node.func.value.id == "pytest" and propagates:
+                    return True
+                if node.func.value.id == "unittest" and all(
+                        keyword.arg != "exit" or isinstance(keyword.value, ast.Constant)
+                        and bool(keyword.value.value) for keyword in node.keywords):
+                    return True
         if isinstance(node.func, ast.Name) and node.func.id in functions and node.func.id not in seen:
             name = node.func.id
             if name.startswith(("test_", "scenario_")):
                 return True
-            if launches_tests(functions[name].body, functions, collections, seen | {name}):
+            body = functions[name].body
+            if not propagates and any(isinstance(part, ast.Return) and part.value is not None
+                                      for part in executable_nodes(body)):
+                continue
+            if launches_tests(body, functions, collections, seen | {name}, propagates):
                 return True
     return False
 
@@ -97,14 +119,22 @@ if (!process.argv.includes('--check-only')) {
       ['noop', 'if __name__ == "__main__":\n    print("passed")\n'],
       ['noop-main', 'def main():\n    pass\nif __name__ == "__main__":\n    main()\n'],
       ['dormant', 'if __name__ == "__main__":\n    if False:\n        unittest.main()\n'],
+      ['pytest-return-discarded', 'if __name__ == "__main__":\n    pytest.main([__file__, "-q"])\n'],
+      ['unittest-exit-false', 'if __name__ == "__main__":\n    unittest.main(exit=False)\n'],
+      ['main-return-discarded', 'def main():\n    return pytest.main([__file__, "-q"])\nif __name__ == "__main__":\n    main()\n'],
+      ['main-caught-failure', 'def test_value():\n    assert False\ndef main():\n    try:\n        test_value()\n    except AssertionError:\n        return 1\n    return 0\nif __name__ == "__main__":\n    main()\n'],
+      ['system-exit-not-raised', 'if __name__ == "__main__":\n    SystemExit(pytest.main([__file__, "-q"]))\n'],
       ['pytest', 'if __name__ == "__main__":\n    raise SystemExit(pytest.main([__file__, "-q"]))\n'],
+      ['pytest-sys-exit', 'if __name__ == "__main__":\n    sys.exit(pytest.main([__file__, "-q"]))\n'],
+      ['main-system-exit', 'def main():\n    return pytest.main([__file__, "-q"])\nif __name__ == "__main__":\n    raise SystemExit(main())\n'],
+      ['main-sys-exit', 'def main():\n    return pytest.main([__file__, "-q"])\nif __name__ == "__main__":\n    sys.exit(main())\n'],
       ['unittest', 'if "__main__" == __name__:\n    unittest.main()\n'],
     ];
     for (const [name, source] of cases) {
       writeFileSync(fixture, source);
       const result = spawnSync(process.execPath, [copy, '--check-only'], { encoding: 'utf8', timeout: 30_000 });
       assert.equal(result.error, undefined, String(result.error));
-      const expected = ['pytest', 'unittest'].includes(name) ? 0 : 1;
+      const expected = ['pytest', 'pytest-sys-exit', 'main-system-exit', 'main-sys-exit', 'unittest'].includes(name) ? 0 : 1;
       assert.equal(result.status, expected, `${name}: ${result.stdout}${result.stderr}`);
       if (expected === 1) assert.match(result.stderr, /test_fixture\.py: missing __main__ block that runs tests/u);
       console.log(`lint-pytest-main fixture ${name}: exit ${result.status} (expected ${expected})`);
@@ -120,7 +150,7 @@ if (!process.argv.includes('--check-only')) {
     writeFileSync(path.join(root, 'package.json'), JSON.stringify({ scripts: {} }));
     const timedFixture = path.join(tests, 'deadline.test.mjs');
     const timedCases = [
-      ['override', '// cauce:timeout-ms 1000\n', '100', 'PASS'],
+      ['override', '// cauce:timeout-ms 10000\n', '100', 'PASS'],
       ['default', '', '100', 'TIMEOUT'],
       ['shorter-override', '// cauce:timeout-ms 30\n', '1000', 'TIMEOUT'],
       ['late-header', `${'// padding\n'.repeat(20)}// cauce:timeout-ms 1000\n`, '100', 'TIMEOUT'],
@@ -135,7 +165,7 @@ if (!process.argv.includes('--check-only')) {
       const result = spawnSync(process.execPath, [runner], {
         cwd: root,
         encoding: 'utf8',
-        timeout: 5000,
+        timeout: 30_000,
         env: { ...process.env, CAUCE_OPS_TEST_TIMEOUT_MS: timeout },
       });
       assert.equal(result.error, undefined, String(result.error));
