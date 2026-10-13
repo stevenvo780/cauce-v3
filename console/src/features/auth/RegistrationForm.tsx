@@ -1,8 +1,23 @@
 import { useState, type SyntheticEvent } from 'react';
+import { ApiError } from '../../api/client/core';
 import { useApi } from '../../api/context';
 import { Button, Notice } from '../../components/kit';
-
 import { COMPANY_SLUG_PATTERN } from '../config/form-patterns';
+
+export const REGISTRATION_INPUT_HINT = 'Revisa correo, nombre, contraseña (12 caracteres o más) e identificador de empresa (de 2 a 63 minúsculas, números o guiones, empezando por una letra).';
+export const UNREACHABLE_SERVER = 'No se pudo contactar con el servidor. Revisa la conexión y vuelve a intentarlo.';
+
+/** Said by status: the server message is never shown, and a 409 must not tell a taken email from a taken identifier. */
+function registrationErrorText(cause: unknown): string {
+  if (!(cause instanceof ApiError)) return cause instanceof Error && !(cause instanceof TypeError) ? cause.message : UNREACHABLE_SERVER;
+  if (cause.status === 400) return REGISTRATION_INPUT_HINT;
+  if (cause.status === 409) return 'No se pudo completar el registro: el correo o el identificador de empresa ya están en uso. '
+    + 'Si ya tienes cuenta, inicia sesión; si no, prueba con otro identificador.';
+  if (cause.status === 429) return 'Demasiados intentos de registro. Espera unos minutos y vuelve a intentarlo.';
+  if (cause.status === 504) return 'El servidor no contestó a tiempo. Antes de reintentar, prueba a iniciar sesión por si la cuenta se creó.';
+  return 'El registro no está disponible ahora. Intenta más tarde.';
+}
+
 export function RegistrationForm({ onLogin, onCancel }: {
   onLogin: (email: string, password: string) => Promise<void>; onCancel: () => void;
 }) {
@@ -16,11 +31,12 @@ export function RegistrationForm({ onLogin, onCancel }: {
     if (busy) return;
     setBusy(true); setError('');
     const { email, password, name, companyName, slug } = draft;
+    let registered = false;
     try {
       await api.register({ email: email.trim(), name: name.trim(), password, company: { name: companyName.trim(), slug: slug.trim() } });
-      setCreated(true);
+      registered = true; setCreated(true);
       await onLogin(email.trim(), password);
-    } catch (cause) { setError(cause instanceof Error ? cause.message : 'No se pudo crear la cuenta.'); }
+    } catch (cause) { setError(registered ? 'No se pudo iniciar sesión automáticamente.' : registrationErrorText(cause)); }
     finally { setDraft(previous => ({ ...previous, password: '' })); setBusy(false); }
   }
   const edit = (key: keyof typeof draft, value: string) => { setDraft(previous => ({ ...previous, [key]: value })); };
