@@ -74,7 +74,6 @@ mkdir -m 700 "$OUT" || die "no pude crear $OUT"
 
 LANE_DIRS=("$REPO")
 FREE_LANES=()
-LANE_LIMIT="$JOBS"
 LANES=""
 LANES_ROOT_CREATED=""
 declare -A NUMBER=() LOG_OF=() STARTED_AT=() RESULT=() RUN_DISPLAY=() RUN_LANE=() RUN_BEGAN=()
@@ -119,8 +118,7 @@ prepare_lane() {
     [ -d "$LANES_ROOT" ] || LANES_ROOT_CREATED=1
     if ! mkdir -p "$LANES_ROOT" || ! LANES="$(mktemp -d "$LANES_ROOT/${COMMIT:0:12}-XXXXXX")"; then
       LANES=""
-      LANE_LIMIT="${#LANE_DIRS[@]}"
-      echo "release-gates: AVISO: no pude crear carriles en $LANES_ROOT; sigo con $LANE_LIMIT carril(es)" >&2
+      echo "release-gates: AVISO: no pude crear carriles en $LANES_ROOT; sigo con ${#LANE_DIRS[@]} carril(es)" >&2
       return 1
     fi
   fi
@@ -136,8 +134,7 @@ prepare_lane() {
     return 0
   fi
   git worktree remove --force "$dir" >/dev/null 2>&1 || rm -rf "$dir"
-  LANE_LIMIT="${#LANE_DIRS[@]}"
-  echo "release-gates: AVISO: el carril $index no quedo listo (log en $log); sigo con $LANE_LIMIT carril(es)" >&2
+  echo "release-gates: AVISO: el carril $index no quedo listo (log en $log); sigo con ${#LANE_DIRS[@]} carril(es)" >&2
   return 1
 }
 
@@ -181,11 +178,13 @@ else
 fi
 launch "${ORPHAN_SWEEP[*]}" orphan-sweep 0 "${ORPHAN_SWEEP[@]}"
 reap
-PENDING=("${ORDER[@]}")
-[ -z "$FAILED" ] || PENDING=()
+PENDING=()
+if [ -z "$FAILED" ]; then
+  PENDING=("${ORDER[@]}")
+  while [ "${#LANE_DIRS[@]}" -lt "$JOBS" ] && prepare_lane; do :; done
+fi
 while :; do
-  while [ -z "$FAILED" ] && [ "${#PENDING[@]}" -gt 0 ] && [ "${#RUN_DISPLAY[@]}" -lt "$LANE_LIMIT" ]; do
-    [ "${#FREE_LANES[@]}" -gt 0 ] || prepare_lane || continue
+  while [ -z "$FAILED" ] && [ "${#PENDING[@]}" -gt 0 ] && [ "${#FREE_LANES[@]}" -gt 0 ]; do
     lane="${FREE_LANES[0]}"
     FREE_LANES=("${FREE_LANES[@]:1}")
     gate="${PENDING[0]}"

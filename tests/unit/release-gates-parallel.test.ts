@@ -99,6 +99,18 @@ describe('release gates in parallel lanes', () => {
     expect(gates.git('worktree', 'list', '--porcelain').match(/^worktree /gmu)).toHaveLength(1);
   });
 
+  it('falls back to the lanes it could prepare and still certifies every gate', () => {
+    const gates = repository();
+    const result = gates.run({ CAUCE_RELEASE_GATES_JOBS: '3', MOCK_RED_GATE: 'install' });
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stderr).toContain('AVISO: el carril 1 no quedo listo');
+    const receipt = gates.receipt(only(gates.receipts()));
+    expect(receipt.carriles).toBe(1);
+    expect(receipt.comandos.map(command => [command.cmd, command.exit, command.carril]))
+      .toEqual(releaseGateCommands().map(cmd => [cmd, 0, 0]));
+    expect(gates.git('worktree', 'list', '--porcelain').match(/^worktree /gmu)).toHaveLength(1);
+  });
+
   it('refuses the receipt when a gate dirties its worktree lane', () => {
     const gates = repository();
     const result = gates.run({ CAUCE_RELEASE_GATES_JOBS: '2', MOCK_DIRTY_GATE: 'coverage:ratchet' });
