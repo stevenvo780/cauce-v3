@@ -3,6 +3,7 @@ import { chmod, lstat, mkdtemp, readdir, rmdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createConnection, createServer, type Socket } from 'node:net';
+import { createNetworkWithFallback } from './docker-network-subnet.js';
 
 interface DockerResult { stdout: string }
 type Docker = (args: string[]) => Promise<DockerResult>;
@@ -178,7 +179,7 @@ export async function isolatedBrowserNetwork(docker: Docker, ports: readonly num
     return cleanup;
   };
   try {
-    id = (await docker(['network', 'create', '--internal', '--label', `cauce.e2e.owner=${owner}`, name])).stdout.trim();
+    id = await createNetworkWithFallback(async (args) => (await docker([...args])).stdout, ['--internal', '--label', `cauce.e2e.owner=${owner}`], name);
     const inspected = JSON.parse((await docker(['network', 'inspect', name])).stdout) as {
       Id: string; Internal: boolean; Labels: Record<string, string>; IPAM: { Config: { Gateway: string }[] };
     }[];

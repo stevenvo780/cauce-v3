@@ -1,3 +1,4 @@
+import { createNetworkWithFallback } from './docker-network-subnet.js';
 import { createHash, randomUUID, X509Certificate } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { chmod, chown, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
@@ -136,8 +137,8 @@ function networkGateway(network: DockerNetwork): string {
 
 async function createNetwork(owner: string): Promise<{ name: string; id: string; gateway: string }> {
   const name = `cauce-mcp-nginx-${owner}`;
-  const id = await docker(['network', 'create', '--driver', 'bridge', '--label', `${OWNER_LABEL}=${owner}`,
-    '--label', `${SUITE_LABEL}=${SUITE_NAME}`, name]);
+  const id = await createNetworkWithFallback(docker, ['--driver', 'bridge', '--label', `${OWNER_LABEL}=${owner}`,
+    '--label', `${SUITE_LABEL}=${SUITE_NAME}`], name);
   const network = await inspectDockerObject<DockerNetwork>('network', id);
   assertOwned(network, owner);
   if (network.Id !== id || network.Name !== name) throw new Error('MCP Nginx fixture network identity changed');
@@ -255,7 +256,8 @@ function validateConfiguration(configuration: string): void {
 }
 
 function adaptConfiguration(configuration: string, nginxPort: number, gatewayPort: number): string {
-  return configuration.replace('${CAUCE_TERMINAL_RELAY_INSTANCE_ID}', RELAY_PIN)
+  // Mirrors deploy/Dockerfile with an empty CAUCE_FRONT_PROXY_CIDR: no front hop is trusted.
+  return configuration.replace('${CAUCE_TERMINAL_RELAY_INSTANCE_ID}', RELAY_PIN).replace(/^\s*set_real_ip_from .*\n/gmu, '')
     .replaceAll('/run/secrets/', '/tmp/secrets/')
     .replaceAll('listen 8444 ssl;', `listen 127.0.0.1:${String(nginxPort)} ssl;`)
     .replaceAll('https://gateway:8443', `https://127.0.0.1:${String(gatewayPort)}`);
