@@ -57,7 +57,9 @@ async function blockedQueries() {
 }
 
 describe('bounded diagnosis through signed sessions and real PostgreSQL', () => {
-  it.each(['native_context_conflict', 'context_runtime_verification_failed', PRIVATE])('projects only known application errors: %s', async error => {
+  it.each(['native_context_conflict', 'native_context_governed_path', 'context_runtime_verification_failed', 'context_runtime_unsupported',
+    'context_runtime_offline', 'context_runtime_attempts_exhausted', 'context_version_unreadable', PRIVATE,
+  ])('projects only known application errors: %s', async error => {
     const value = fixture(); const trace = `zz-canary-diagnose-${randomUUID()}`;
     await admin().query(`INSERT INTO agent_context_versions(company_id,tenant_id,alias,version,files,digest,source,actor_human_id,actor_alias,created_at)
       VALUES($1,$2,$3,1,'[]'::jsonb,$4,'ui',$5,'owner',$6)`,

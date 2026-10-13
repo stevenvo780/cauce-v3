@@ -14,6 +14,10 @@ const UUID_REFERENCE_TYPES = new Set(['message', 'delivery', 'session', 'operati
 const SYNC_ERRORS = ['context_git_unavailable', 'context_git_commit_failed', 'context_push_failed',
   'context_git_authentication_failed', 'context_git_network_failed', 'context_git_non_fast_forward',
   'context_git_timeout', 'context_git_repository_not_private'];
+const APPLICATION_ERRORS = ['context_runtime_verification_failed', 'context_runtime_unsupported', 'context_runtime_offline',
+  'context_runtime_attempts_exhausted', 'context_version_unreadable', 'native_context_conflict', 'native_context_invalid_files',
+  'native_context_too_large', 'native_context_secret_detected', 'native_context_unsafe_text', 'native_context_harness_limit',
+  'native_context_governed_path', 'native_context_version_failed'];
 
 interface ChainRow {
   node_key: string;
@@ -141,8 +145,7 @@ const CHAIN_QUERY = `WITH context_refs AS (
       'application_state',CASE WHEN outbox.applied_at IS NOT NULL THEN 'applied'
         WHEN outbox.apply_token IS NOT NULL AND outbox.apply_lease_until>now() THEN 'applying'
         WHEN outbox.apply_error IS NOT NULL THEN 'error' ELSE 'pending' END,
-      'application_error_code',CASE WHEN outbox.apply_error IN ('context_runtime_verification_failed','native_context_conflict')
-        THEN outbox.apply_error END),'{}'::jsonb
+      'application_error_code',CASE WHEN outbox.apply_error=ANY($18::text[]) THEN outbox.apply_error END),'{}'::jsonb
   FROM context_refs context JOIN LATERAL (SELECT * FROM agent_context_outbox outbox
     WHERE outbox.company_id=$1 AND outbox.tenant_id=context.tenant AND outbox.alias=context.alias
       AND outbox.version=context.version OFFSET 0) outbox ON true
@@ -223,7 +226,8 @@ async function chain(client: DatabaseClient, authority: CompanyAuthority, id: st
       [authority.actingCompany, tenant, JSON.stringify(currentFrontier.contexts), [...nodes.keys()], available + 1, SYNC_ERRORS,
         FleetErrorSchema.shape.code.options, FleetStepNameSchema.options, currentFrontier.audits, currentFrontier.traces,
         currentFrontier.messages, currentFrontier.deliveries, currentFrontier.sessions, currentFrontier.operations,
-        currentFrontier.operation_events, currentFrontier.backups, currentFrontier.receipts.map(value => JSON.stringify(value))]);
+        currentFrontier.operation_events, currentFrontier.backups, currentFrontier.receipts.map(value => JSON.stringify(value)),
+        APPLICATION_ERRORS]);
     if (result.rows.length > available) truncated = true;
     const matched = new Set(frontier); frontier = [];
     for (const row of result.rows.slice(0, available)) {
