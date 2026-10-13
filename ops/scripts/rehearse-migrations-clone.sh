@@ -274,6 +274,7 @@ INSERT INTO rehearsal.tolerated VALUES
   ('fleet_hosts','rolled-back',$r$value->>'host_id' IN (SELECT host_id FROM rehearsal.unregistered_hosts)$r$,
     'down/053 keeps the hosts the backfill registered'),
   ('role_policies','migrated',$r$value->>'role'='context_broker'$r$,'063 adds the route-only context broker role'),
+  ('harness_definitions','migrated',$r$value->>'id' IN ('grok','muse','fake2')$r$,'073 seeds the grok, muse and fake2 harnesses'),
   ('agents','migrated',$r$(value->>'tenant_id',value->>'alias') IN (SELECT tenant_id,alias FROM rehearsal.backfilled_directors)$r$,
     '063 creates a context director for each enabled company without one'),
   ('memberships','migrated',$r$(value->>'tenant_id',value->>'alias') IN (SELECT tenant_id,alias FROM rehearsal.backfilled_directors)$r$,
