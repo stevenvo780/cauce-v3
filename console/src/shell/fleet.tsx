@@ -3,7 +3,8 @@ import { useApi } from '../api/context';
 import { usePolling } from '../api/use-polling';
 import { useResource } from '../api/use-resource';
 import { buildLiveViews, type LiveAgentView } from '../features/live/agent-state';
-import { FleetContext, type FleetData } from './fleet-context';
+import { SharedResource } from '../api/shared-resource';
+import { FleetContext, QUOTA_ACCOUNTS_POLL_MS, type FleetData } from './fleet-context';
 import { saludDeColaPorAgente } from '../features/messages/queue-health';
 import { construirRosterDeMensajeria } from '../features/messages/roster';
 import { fleetAgentId } from '../features/terminal/fleet';
@@ -19,6 +20,8 @@ export function FleetProvider({ children }: { children: ReactNode }) {
   const messages = useResource('fleet-messages', () => api.listMessages());
   const activity = useResource('fleet-activity', () => api.getFleetActivity());
   const queues = useResource('fleet-queues', () => api.getQueues());
+  // Quotas are only read while a view that shows them is mounted: most pages never subscribe.
+  const quotaAccounts = useMemo(() => new SharedResource(() => api.getQuotaAccounts(), QUOTA_ACCOUNTS_POLL_MS), [api]);
 
   usePolling(messages.reload, 2_500, { pausedWhile: messages.loading });
   usePolling(status.reload, 5_000, { pausedWhile: status.loading });
@@ -70,6 +73,7 @@ export function FleetProvider({ children }: { children: ReactNode }) {
     messages,
     activity,
     queues,
+    quotaAccounts,
     activityIntervalMs,
     setActivityIntervalMs,
     loading: (status.loading && !status.data) || (topology.loading && !topology.data)
@@ -82,7 +86,7 @@ export function FleetProvider({ children }: { children: ReactNode }) {
       void activity.reload();
       void queues.reload();
     },
-  }), [agents, salud, live, status, topology, messages, activity, queues, activityIntervalMs]);
+  }), [agents, salud, live, status, topology, messages, activity, queues, quotaAccounts, activityIntervalMs]);
 
   return <FleetContext.Provider value={value}>{children}</FleetContext.Provider>;
 }
