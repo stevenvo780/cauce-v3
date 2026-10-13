@@ -227,6 +227,19 @@ hasta que se re-graba el caso contra Jev y se actualiza el hash.
 
 ## Despliegue (preparado, no aplicado)
 
+Antes de `aplicar`, el dueño aprovisiona el login mínimo del servicio y comprueba el plan:
+
+```bash
+python3 ops/scripts/provision-db-roles.py --env /etc/cauce-v3/prod.env --login cauce_decisiones
+python3 ops/scripts/provision-db-roles.py --env /etc/cauce-v3/prod.env --login cauce_decisiones --apply
+```
+
+El login `cauce_decisiones` pertenece a `cauce_decisiones_read`: lee el catálogo necesario y sólo
+inserta auditoría. El script publica `database_url_decisiones` y su ruta en
+`CAUCE_DECISIONES_DATABASE_URL_SECRET_PATH` de `prod.env`. No se reutiliza `database_url_gateway`.
+Si el login ya existe, no se rota durante un despliegue: `--rotate --login cauce_decisiones --apply`
+es una operación explícita que exige recrear el contenedor del servicio.
+
 1. **Servicio, en vpstn como root.** El script, el compose y la imagen salen del commit, no del árbol
    de trabajo: sirve cualquier clon que tenga el commit, esté en la rama que esté. En vpstn el worktree
    de ws-zeus no sirve (su `.git` apunta a una ruta que sólo existe dentro del contenedor) y
@@ -247,7 +260,9 @@ hasta que se re-graba el caso contra Jev y se actualiza el hash.
    3. Guarda el `compose.yaml` de ese commit en `/etc/cauce-v3/decisiones.d/<commit>/`: `down`,
       `estado` y `anterior` usan siempre el compose que levantó el contenedor.
    4. La primera vez genera `/etc/cauce-v3/decisiones.env` con las rutas de `prod.env`; las siguientes
-      sólo cambia la imagen y anota la que reemplaza (`IMAGEN_ANTES`).
+      cambia la imagen y anota la que reemplaza (`IMAGEN_ANTES`), completa las rutas que faltan y
+      sustituye la ruta heredada del secreto del gateway por la del login mínimo de decisiones.
+      Conserva una ruta de decisiones ya configurada y guarda el entorno previo antes de cambiarlo.
    5. Levanta el proyecto compose `cauce-decisiones` y corre el humo: health, TLS y una decisión real
       con el certificado de zeus.
 
@@ -326,6 +341,29 @@ contenedor con la misma imagen. En los dos casos, comprobá con `desplegar.sh es
 de Docker sigue verde sin credencial, a propósito, porque así se apaga Jev. Lo que delata una clave
 ilegible es `credencial_jev: false` en `estado` y el evento `decisiones_sin_credencial_jev` en
 `docker logs cauce-decisiones-decisiones-1`.
+
+## Restauración sin ACL
+
+Después de `pg_restore --no-acl`, antes de levantar decisiones, hay que reponer los permisos de
+`cauce_decisiones_read`: `SELECT cauce_apply_runtime_grants()` sólo repone los de las migraciones,
+y este grupo lo crea `provision-db-roles.py`. En el mismo clúster, donde los roles ya existen:
+
+```bash
+docker exec -i cauce-v3-prod-postgres-1 psql -X -v ON_ERROR_STOP=1 -U cauce -d cauce <<'SQL'
+BEGIN;
+GRANT USAGE ON SCHEMA public TO cauce_decisiones_read;
+GRANT SELECT ON companies, tenants, agents, memberships, rooms, role_policies TO cauce_decisiones_read;
+GRANT INSERT ON audit_events TO cauce_decisiones_read;
+GRANT USAGE, SELECT ON SEQUENCE audit_events_id_seq TO cauce_decisiones_read;
+COMMIT;
+SQL
+```
+
+En un clúster nuevo, aprovisiona primero los roles según el
+[runbook de runtime](../../docs/runbook-rol-runtime.md#6-restauración); el aprovisionamiento de
+`cauce_decisiones` también crea su grupo y concede esos permisos. Si se rotan sus credenciales,
+recrea el proyecto de decisiones para que monte el nuevo fichero. Verifica `desplegar.sh estado`
+y una decisión real con auditoría; un health verde por sí solo no prueba los permisos de escritura.
 
 ## Reversa
 

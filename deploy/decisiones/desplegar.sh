@@ -21,6 +21,7 @@ die() { printf 'desplegar-decisiones: %s\n' "$*" >&2; exit 1; }
 paso() { printf '\n== %s\n' "$*"; }
 valor_de() { [[ -f $2 ]] || return 0; sed -n "s/^$1=//p" "$2" | tail -1; }
 fijar() { if grep -q "^$1=" "$3"; then sed -i "s|^$1=.*|$1=$2|" "$3"; else printf '%s=%s\n' "$1" "$2" >> "$3"; fi; }
+is_gateway_secret() { [[ -n $1 && ( ${1##*/} == database_url_gateway || $1 == "$(valor_de CAUCE_DATABASE_URL_GATEWAY_SECRET_PATH "$PROD_ENV")" ) ]]; }
 
 # Any clone holding the commit works, whatever branch it has checked out: the script, the compose
 # file and the image all come from the commit, not from the working tree.
@@ -73,6 +74,7 @@ generar_env() {
     "CAUCE_DECISIONES_DATABASE_URL_SECRET_PATH=$database_path" "CAUCE_POSTGRES_CA_PATH=$postgres_ca"; do
     [[ -n ${par#*=} ]] || die "falta ${par%%=*} en $PROD_ENV"
   done
+  is_gateway_secret "$database_path" && die 'el secreto de decisiones no puede ser el del gateway; aprovisiona cauce_decisiones'
   [[ -f $database_path ]] || die "no existe el secreto de cauce_decisiones: $database_path"
   [[ -f $identidades/mtls_identities.json ]] || die "no existe $identidades/mtls_identities.json"
   printf '%s\n' \
@@ -176,7 +178,8 @@ modo_aplicar() {
     (umask 077 && generar_env "$imagen" > "$ENV_FILE")
   fi
   for name in CAUCE_DECISIONES_DATABASE_URL_SECRET_PATH CAUCE_POSTGRES_CA_PATH CAUCE_DECISIONES_BACKEND_NETWORK; do
-    if [[ -z $(valor_de "$name" "$ENV_FILE") ]]; then
+    value=$(valor_de "$name" "$ENV_FILE")
+    if [[ -z $value ]] || { [[ $name == CAUCE_DECISIONES_DATABASE_URL_SECRET_PATH ]] && is_gateway_secret "$value"; }; then
       value=$(printf '%s\n' "$generated" | sed -n "s/^$name=//p")
       [[ -n $value ]] || die "falta $name en el entorno de decisiones"
       fijar "$name" "$value" "$ENV_FILE"
