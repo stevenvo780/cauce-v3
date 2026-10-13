@@ -10,8 +10,8 @@ Inventario de solo lectura previo a mover Argos. La inspección se limitó al co
 | Redes | `ctrl-infra-proxy`, `net-claw`, `net-claw-ws`, `ws_net-out` y `control_default`. |
 | Puertos | Docker declara `22/tcp`, sin publicación en el host. La captura de sockets vio `sshd` en 22, OpenClaw en 18789 y el shim en 18799 dentro del contenedor; 18789 y 18799 no aparecen como puertos Docker publicados. |
 | Variables de entorno | Solo nombres: `API_KEY`, `BW_SERVER`, `DEBIAN_FRONTEND`, `DISPLAY`, `DOCKER_HOST`, `HISTFILE`, `LANG`, `LC_ALL`, `NEXUS_URL`, `NODE_ENV`, `NVIDIA_DRIVER_CAPABILITIES`, `NVIDIA_VISIBLE_DEVICES`, `PATH`, `PIP_DISABLE_PIP_VERSION_CHECK`, `PYTHONUNBUFFERED`, `WORKER_NAME`, `XDG_RUNTIME_DIR`. No se consultaron ni registraron valores. |
-| Persistencia | `/datos/agents/ctrl-infra-config` está montado en escritura para estado y configuración de Argos; `/datos/workspaces` llega como `/workspace`, también en escritura y con todos los workspaces del host. |
-| Configuración compartida | Hay montajes seleccionados de `/datos/agents/shared` en lectura y escritura. No se enumeran ficheros. También hay montajes de identidad SSH con permisos de lectura y escritura, y otro de solo lectura; sus fuentes privadas no se publican ni se abrieron. |
+| Persistencia | El volumen de estado de ctrl-infra está montado en escritura para estado y configuración de Argos; el árbol de workspaces del host (montado como `/workspace`) también llega en escritura y contiene todos los workspaces del host. |
+| Configuración compartida | Hay montajes seleccionados de la configuración compartida de agentes en lectura y escritura. No se enumeran ficheros. También hay montajes de identidad SSH con permisos de lectura y escritura, y otro de solo lectura; sus fuentes privadas no se publican ni se abrieron. |
 | Volúmenes Docker | `ctrl-infra-cache` y `ctrl-infra-etcssh`, ambos en escritura. |
 
 ## MCP configurados
@@ -27,7 +27,7 @@ Los servidores de transporte `stdio` se lanzan como procesos locales dentro del 
 | Claude | `ai-usage`, `brave-search`, `cloud-offload`, `firebase`, `github`, `godaddy`, `graphify`, `hostinger`, `neon`, `sentry`, `sequential-thinking` | `stdio` con ejecutables locales (`node`, `npx`, `python3`, `firebase` o `bash`); sin URL HTTP explícita. |
 | Gemini | No se encontró un registro MCP en la configuración revisada. | No detectado en ese perfil. |
 
-El MCP `cauce-decisiones` tiene además un backend vivo llamado `cauce-decisiones-decisiones-1`, con `8447/tcp` publicado en el host. No se mostró una dirección del host ni se infirió que ese puerto sea el endpoint del proceso MCP `stdio`.
+El MCP `cauce-decisiones` tiene además un backend vivo llamado `cauce-decisiones-decisiones-1`, con puerto publicado en el host. No se mostró una dirección del host ni se infirió que ese puerto sea el endpoint del proceso MCP `stdio`.
 
 ## Unidades y guardias
 
@@ -58,9 +58,9 @@ Las conexiones se capturaron en tres muestras separadas por diez segundos, limit
 | `ctrl-infra` / `cauce-v3-container-argos.service` | Runtime de Argos | Contenedor sano, usuario `dev`, redes y montajes anteriores; el supervisor está activo. | Mover solo el estado y runtime propios de Argos a su host V4. Mantener `ctrl-infra` mientras tenga consumidores del shim. |
 | `ctrl-infra-docker-proxy:2375` | API Docker filtrada | Proxy `ghcr.io/tecnativa/docker-socket-proxy:latest`, en `ctrl-infra-proxy`, socket Docker montado en solo lectura y sin puerto publicado al host. La política se conoce como de solo lectura por el plan vigente; sus valores de configuración no se imprimieron ni verificaron en vivo. | Sustituir por un proxy de destino con allowlist explícita de solo lectura. El montaje del socket en solo lectura, por sí solo, no demuestra que la API rechace mutaciones. |
 | SSH a `ws-*` por `net-claw-ws` | Acceso remoto a workspaces | Red presente en Argos y montajes de identidad SSH; `sshd` escucha dentro de `ctrl-infra`. No se observó una sesión SSH saliente en las tres muestras. | Sustituir las rutas de red y provisionar una identidad nueva, con permisos limitados. No trasladar una identidad compartida de la VPS. |
-| `/workspace` ← `/datos/workspaces` | Datos de proyectos | Árbol completo montado `rw`. | Mover o clonar solo repositorios y datos asignados a Argos; retirar el montaje global. |
-| `/datos/agents/ctrl-infra-config` | Estado/configuración persistente | Raíz montada `rw` para OpenClaw, perfiles de CLI y workspace legado. | Extraer únicamente el contexto y estado de Argos conforme al manifiesto de migración. |
-| `/datos/agents/shared` | Configuración e identidades compartidas | Montajes seleccionados `ro` y `rw`; algunos corresponden a credenciales. | Sustituir por credenciales aisladas por agente y reprovisionadas por su titular; no copiar el árbol compartido. |
+| Árbol de workspaces del host (montado como `/workspace`) | Datos de proyectos | Árbol completo montado `rw`. | Mover o clonar solo repositorios y datos asignados a Argos; retirar el montaje global. |
+| Volumen de estado de ctrl-infra | Estado/configuración persistente | Raíz montada `rw` para OpenClaw, perfiles de CLI y workspace legado. | Extraer únicamente el contexto y estado de Argos conforme al manifiesto de migración. |
+| Configuración compartida de agentes | Configuración e identidades compartidas | Montajes seleccionados `ro` y `rw`; algunos corresponden a credenciales. | Sustituir por credenciales aisladas por agente y reprovisionadas por su titular; no copiar el árbol compartido. |
 | MCP `cauce`, `cauce-decisiones`, `ai-usage`, `cloud-offload` | Integración de Argos | Declarados por OpenClaw como procesos `stdio`; el backend `cauce-decisiones-decisiones-1` está vivo. | Configurar de nuevo solo los MCP necesarios y sus destinos nombrados para el host V4. |
 | MCPs de Codex y Claude | Herramientas de los perfiles CLI | Hay servidores `stdio` y tres endpoints HTTP de Codex listados arriba. | Reinstalar en el host nuevo los que Argos realmente usa; verificar permisos y endpoints sin copiar variables secretas. |
 | `BW_SERVER`, `NEXUS_URL`, `host.docker.internal` | Vaultwarden, terminal remota y puente al host | Los nombres de servicio/variables están configurados; no se mostraron sus valores. Las conexiones TCP observadas no se pudieron asociar de forma concluyente a estos nombres. | Reemplazar por rutas a servicios nombrados accesibles desde V4 y reprovisionar sus accesos de forma aislada. |
