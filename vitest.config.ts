@@ -1,6 +1,7 @@
 import { relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vitest/config';
+import { opcionesDeTrozo } from './scripts/trozos-vitest.mjs';
 
 const RAIZ = fileURLToPath(new URL('.', import.meta.url));
 
@@ -137,6 +138,7 @@ export default defineConfig({
     // once per worktree, against stale code and with the ports and containers of the real run.
     exclude: EXCLUSIONES,
     ...(proyectos.length > 0 ? { projects: proyectos } : {}),
+    ...opcionesDeTrozo({ repartirTrabajadores: true }),
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json-summary', 'html'],

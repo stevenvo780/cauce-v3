@@ -6,6 +6,7 @@ import tailwindcss from '@tailwindcss/vite';
 import { configDefaults } from 'vitest/config';
 import react from '@vitejs/plugin-react';
 import { defineConfig, loadEnv, type Plugin } from 'vite';
+import { opcionesDeTrozo } from '../scripts/trozos-vitest.mjs';
 import { ansiPaletteCss, xtermAnsiPalette } from './vite/ansi-palette';
 import { mockStore } from './vite/mock-store';
 
@@ -85,6 +86,7 @@ export default defineConfig(({ mode }) => {
       coverage: {
         reporter: ['text', 'html'],
       },
+      ...opcionesDeTrozo(),
     },
   };
 });
