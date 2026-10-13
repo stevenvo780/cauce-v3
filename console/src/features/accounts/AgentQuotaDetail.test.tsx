@@ -87,6 +87,15 @@ it('permite consultar con lector vigente aunque la última observación no tuvie
   expect(screen.queryByText(/Sin lector de cuota para este harness/u)).not.toBeInTheDocument();
 });
 
+it('explica una sola vez la ubicación no operativa con su etiqueta y sin el aviso de lector ausente', async () => {
+  read.mockResolvedValue({ ...empty, status: 'unsupported', reader_available: false, can_query: false, reason: 'quota_target_unplaced' });
+  show();
+  expect(await screen.findByText('Sin ubicación operativa')).toBeVisible();
+  expect(screen.getAllByText('La consulta de cuota requiere un agente habilitado, un entorno de contenedor y un ordenador habilitado.')).toHaveLength(1);
+  expect(screen.queryByText(/Sin lector de cuota/u)).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Consultar' })).not.toBeInTheDocument();
+});
+
 it('encola con revisión e idempotencia y relee hasta el resultado durable', async () => {
   let current = empty;
   read.mockImplementation(async () => current);

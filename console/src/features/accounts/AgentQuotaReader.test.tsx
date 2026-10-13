@@ -82,6 +82,15 @@ it('traduce el timeout de lectura en la ficha sin presentar el mensaje remoto', 
 });
 
 it('explica el fallo del ordenador por código de operación', async () => {
-  await show(async () => ({ ...empty, status: 'failed', operation: { ...pending.operation!, status: 'failed', error_code: 'HOST_UNAVAILABLE' } }));
+  const operation = pending.operation;
+  if (!operation) throw new Error('Falta la operación pendiente del fixture.');
+  await show(async () => ({ ...empty, status: 'failed', operation: { ...operation, status: 'failed', error_code: 'HOST_UNAVAILABLE' } }));
   expect(screen.getByText('La computadora del entorno no está disponible. Revisa su conexión.')).toBeVisible();
+});
+
+it('etiqueta la ausencia de ubicación operativa sin atribuirla al lector del harness', async () => {
+  await show(async () => ({ ...empty, status: 'unsupported', reader_available: false, can_query: false, reason: 'quota_target_unplaced' }));
+  expect(screen.getByText('Sin ubicación operativa')).toBeVisible();
+  expect(screen.queryByText(/Sin lector de cuota/u)).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Consultar' })).not.toBeInTheDocument();
 });

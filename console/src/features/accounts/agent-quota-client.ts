@@ -1,6 +1,8 @@
 import { QuotaProviderReportSchema } from '@cauce/protocol/quotas';
 import type { QuotaProviderReport } from '@cauce/protocol';
 import type { RequestFn } from '../../api/client/system-client';
+import { ApiError } from '../../api/client/core';
+import { describeQuotaError } from './quota-messages';
 
 export type AgentQuotaStatus = 'unknown' | 'pending' | 'running' | 'unsupported' | 'ok' | 'error' | 'failed';
 export interface AgentQuotaOperation {
@@ -9,7 +11,7 @@ export interface AgentQuotaOperation {
 }
 export interface AgentQuotaReading {
   tenant_id: string; alias: string; revision: number; reader_available: boolean; can_query: boolean;
-  reason: 'quota_reader_unavailable' | null; status: AgentQuotaStatus; captured_at: string | null;
+  reason: 'quota_reader_unavailable' | 'quota_target_unplaced' | null; status: AgentQuotaStatus; captured_at: string | null;
   binding: null | { account_id: string; enabled: boolean; shared: boolean; agent_count: number };
   sample: QuotaProviderReport | null; operation: AgentQuotaOperation | null;
 }
@@ -18,6 +20,18 @@ export interface AgentQuotaQueryReceipt { operation_id: string; status: AgentQuo
 export interface AgentQuotaClient {
   getAgentQuota(tenant: string, alias: string): Promise<AgentQuotaReading>;
   queryAgentQuota(tenant: string, alias: string, input: AgentQuotaQuery): Promise<AgentQuotaQueryReceipt>;
+}
+export function describeAgentQuotaError(cause: unknown, action: 'read' | 'query' = 'read'): string {
+  const fallback = action === 'read' ? 'No se pudo leer la cuota. Relee antes de consultar.'
+    : 'No se confirmó la consulta. Relee su estado antes de reintentar.';
+  return describeQuotaError(cause instanceof ApiError && cause.status === 504 ? undefined : cause, fallback);
+}
+async function quotaRequest<T>(request: () => Promise<T>, action: 'read' | 'query'): Promise<T> {
+  try { return await request(); } catch (cause) {
+    const message = describeAgentQuotaError(cause, action);
+    if (cause instanceof ApiError) throw new ApiError(message, cause.status, cause.code);
+    throw new Error(message);
+  }
 }
 function invalid(): never { throw new Error('No se pudo verificar la lectura de cuota del agente. Relee antes de consultar.'); }
 function record(value: unknown): Record<string, unknown> {
@@ -32,7 +46,8 @@ function operationStatus(value: unknown): boolean { return ['pending', 'running'
 function reading(value: unknown, tenant: string, alias: string): AgentQuotaReading {
   const row = record(value);
   if (row.tenant_id !== tenant || row.alias !== alias || typeof row.reader_available !== 'boolean' || typeof row.can_query !== 'boolean'
-    || !Number.isSafeInteger(row.revision) || Number(row.revision) < 0 || row.reason !== null && row.reason !== 'quota_reader_unavailable'
+    || !Number.isSafeInteger(row.revision) || Number(row.revision) < 0
+    || row.reason !== null && row.reason !== 'quota_reader_unavailable' && row.reason !== 'quota_target_unplaced'
     || !['unknown', 'pending', 'running', 'unsupported', 'ok', 'error', 'failed'].includes(String(row.status))
     || row.captured_at !== null && !date(row.captured_at)) invalid();
   if (row.binding !== null) {
@@ -55,11 +70,11 @@ function reading(value: unknown, tenant: string, alias: string): AgentQuotaReadi
 export function agentQuotaClient(request: RequestFn): AgentQuotaClient {
   const path = (tenant: string, alias: string) => `/v3/console/agents/${encodeURIComponent(tenant)}/${encodeURIComponent(alias)}/quota`;
   return {
-    getAgentQuota: async (tenant, alias) => reading(await request(path(tenant, alias), { cache: 'no-store' }), tenant, alias),
+    getAgentQuota: async (tenant, alias) => reading(await quotaRequest(() => request(path(tenant, alias), { cache: 'no-store' }), 'read'), tenant, alias),
     queryAgentQuota: async (tenant, alias, input) => {
       if (!Number.isSafeInteger(input.expected_revision) || input.expected_revision < 0
         || !/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/u.test(input.idempotency_key)) invalid();
-      const row = record(await request(path(tenant, alias), { method: 'POST', body: JSON.stringify(input) }));
+      const row = record(await quotaRequest(() => request(path(tenant, alias), { method: 'POST', body: JSON.stringify(input) }), 'query'));
       if (!text(row.operation_id) || !operationStatus(row.status)) invalid();
       return { operation_id: row.operation_id, status: row.status } as AgentQuotaQueryReceipt;
     },

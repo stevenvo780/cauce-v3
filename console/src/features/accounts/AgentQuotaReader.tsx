@@ -7,9 +7,10 @@ import { Button, Notice, Pill } from '../../components/kit';
 import { Time } from '../../components/ui';
 import { randomUuid } from '../../random-id';
 import { canManageCompany, useCompanyAuthority } from '../auth/company-authority';
-import { QUOTA_FAILURE_ACTION } from './quota-availability';
-import { describeOperationError, describeQuotaError } from './quota-messages';
+import { QUOTA_FAILURE_ACTION, quotaTargetUnavailableReason } from './quota-availability';
+import { describeOperationError } from './quota-messages';
 import { formatPercent } from './quotas';
+import { describeAgentQuotaError } from './agent-quota-client';
 import type { AgentQuotaQuery, AgentQuotaReading, AgentQuotaStatus } from './agent-quota-client';
 
 const STATUS_LABEL: Record<AgentQuotaStatus, string> = {
@@ -17,10 +18,6 @@ const STATUS_LABEL: Record<AgentQuotaStatus, string> = {
   ok: 'Medición recibida', error: 'Error de consulta', failed: 'La operación falló',
 };
 const POLL_DELAYS = [2_000, 4_000, 8_000, 16_000, 30_000, 30_000];
-const READ_FAILURE = 'No se pudo leer la cuota. Relee antes de consultar.';
-function quotaError(cause: unknown, fallback: string): string {
-  return describeQuotaError(cause instanceof ApiError && cause.status === 504 ? undefined : cause, fallback);
-}
 
 export function AgentQuotaReader({ tenant, alias, quota }: { tenant: string; alias: string; quota: Resource<AgentQuotaReading> }) {
   const api = useApi();
@@ -65,10 +62,10 @@ export function AgentQuotaReader({ tenant, alias, quota }: { tenant: string; ali
       retry.current = null; setRequested(receipt.operation_id);
     } catch (cause) {
       if (cause instanceof ApiError && [400, 401, 403, 404, 409, 422].includes(cause.status)) retry.current = null;
-      setError(quotaError(cause, 'No se confirmó la consulta. Relee su estado antes de reintentar.'));
+      setError(describeAgentQuotaError(cause, 'query'));
     } finally {
       const result = await reloadQuota();
-      if (result.error) setError(quotaError(result.error, READ_FAILURE));
+      if (result.error) setError(describeAgentQuotaError(result.error));
       mutating.current = false; setBusy(false);
     }
   }
@@ -76,15 +73,16 @@ export function AgentQuotaReader({ tenant, alias, quota }: { tenant: string; ali
     setPolling({ id: pollId, attempts: 0 });
     setExpiredPollId(null); setPollRound(current => current + 1);
     const result = await reloadQuota();
-    setError(result.error ? quotaError(result.error, READ_FAILURE) : '');
+    setError(result.error ? describeAgentQuotaError(result.error) : '');
   }
   const status = awaitingReceipt ? 'pending' : data?.status;
+  const unavailableTarget = quotaTargetUnavailableReason(data);
   return <section aria-label={`Cuota de ${alias}`} className="mt-3 grid gap-3 rounded-lg border border-line p-3">
     <header className="flex flex-wrap items-center justify-between gap-2"><h3 className="m-0 text-sm font-semibold">Cuota del agente</h3>
-      {status && status !== 'unsupported' ? <Pill tone={status === 'error' || status === 'failed' ? 'danger' : 'neutral'}>{STATUS_LABEL[status]}</Pill> : null}
+      {status && (status !== 'unsupported' || unavailableTarget) ? <Pill tone={status === 'error' || status === 'failed' ? 'danger' : 'neutral'}>{unavailableTarget ? 'Sin ubicación operativa' : STATUS_LABEL[status]}</Pill> : null}
     </header>
     {quota.loading && !data ? <p className="m-0 text-xs" role="status">Leyendo la cuota del agente…</p> : null}
-    {error || quota.error ? <Notice tone="danger" role="alert">{error || quotaError(quota.error, READ_FAILURE)}</Notice> : null}
+    {error || quota.error ? <Notice tone="danger" role="alert">{error || describeAgentQuotaError(quota.error)}</Notice> : null}
     {unresponsive ? <Notice tone="danger" role="alert">El ordenador no responde. Relee la cuota para comprobar si la consulta terminó.</Notice>
       : pending ? <p className="m-0 text-xs" role="status">La consulta sigue pendiente; la ficha relee el resultado del ordenador.</p> : null}
     {data ? <>
