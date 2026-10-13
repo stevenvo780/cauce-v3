@@ -121,6 +121,22 @@ describe('versioned context HTTP authority with real PostgreSQL and signed human
     expect((await pool.query('SELECT applied_at,apply_error FROM agent_context_outbox')).rows)
       .toEqual([{ applied_at: null, apply_error: 'context_runtime_verification_failed' }]);
   });
+  it('counts the attempt of an application still awaiting its ACK when the gateway closes', async () => {
+    await app.close();
+    let queued!: () => void; const waiting = new Promise<void>(resolve => { queued = resolve; });
+    app = await buildTestGateway({ pool, authProvider: provider, contextVersion: { runtime: { apply: async (_version, ready, stop) => {
+      ready?.(); queued();
+      await new Promise<void>(resolve => { stop?.addEventListener('abort', () => { resolve(); }, { once: true }); });
+      throw new Error('context application consumed-turn evidence is unavailable');
+    } } } });
+    await app.ready();
+    await write();
+    expect((await request('POST', '/apply', {})).statusCode).toBe(202);
+    await waiting;
+    await app.close();
+    expect((await pool.query('SELECT apply_token,apply_error FROM agent_context_outbox')).rows)
+      .toEqual([{ apply_token: null, apply_error: 'context_runtime_verification_failed' }]);
+  });
   it('isolates the other company and revalidates revoked human authority on every request', async () => {
     const other = await app.inject({ method: 'GET', url: '/v3/console/context/agents/ContextBeta/director', headers: { cookie } });
     expect(other.statusCode).toBe(404);

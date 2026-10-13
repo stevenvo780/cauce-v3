@@ -4,10 +4,11 @@ import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
-import { lockCompanyAuthority, settleContextApplications, type ContextVersion, type DatabaseClient, type DatabasePool } from '../src/index.js';
+import { lockCompanyAuthority, settleContextApplications, withTransaction, type ContextVersion, type DatabaseClient,
+  type DatabasePool } from '../src/index.js';
 import { ContextGitBroker } from '../src/context-git.js';
-import { ContextVersionStore } from '../src/context-version.js';
-import { processContextOutbox } from '../src/context-version-worker.js';
+import { ContextVersionStore, lockContextTarget } from '../src/context-version.js';
+import { CONTEXT_APPLICATION_CONCURRENCY, processContextOutbox } from '../src/context-version-worker.js';
 import { seedSyntheticCompanyContexts } from '../src/seed-dev-cli.js';
 import { preparePostgresSuite } from './postgres-suite.js';
 import { startTestCaseDatabase, startTestDatabase, type EmptyTestDatabase, type TestDatabase } from '../../../tests/helpers/postgres.js';
@@ -118,6 +119,27 @@ describe('safe diagnostics for durable context synchronization', () => {
     expect(recovered.events).toHaveLength(2);
     expect((await execute('git', ['--git-dir', remote, 'rev-parse', 'main'])).stdout.trim()).toBe(failed.sync[0]?.git_commit);
   });
+  it('pushes holding neither the outbox row nor the schema lock, so the ACK and a migration go through meanwhile', async () => {
+    let pushing!: () => void; const started = new Promise<void>(resolve => { pushing = resolve; });
+    let release!: () => void; const released = new Promise<void>(resolve => { release = resolve; });
+    const run = processContextOutbox(pool, { git: { commit: async () => 'b'.repeat(40),
+      push: async () => { pushing(); await released; } } }, target());
+    await started;
+    const migration = await pool.connect();
+    try {
+      // The ACK order: the target lock first, then the outbox row of the version.
+      await withTransaction(pool, async client => {
+        await client.query("SET LOCAL lock_timeout='1s'");
+        await lockContextTarget(client, target());
+        await client.query("UPDATE agent_context_outbox SET apply_error='native_context_conflict' WHERE tenant_id=$1", [target().tenant_id]);
+      });
+      await migration.query('BEGIN');
+      expect((await migration.query('SELECT pg_try_advisory_xact_lock(783_003_003) AS locked')).rows).toEqual([{ locked: true }]);
+    } finally { await migration.query('ROLLBACK'); migration.release(); release(); }
+    expect(await run).toEqual({ state: 'pending', version: 1 });
+    expect((await pool.query('SELECT state,git_commit,apply_error FROM agent_context_outbox')).rows)
+      .toEqual([{ state: 'synced', git_commit: 'b'.repeat(40), apply_error: 'native_context_conflict' }]);
+  });
   it('rejects an unprotected broker repository before creating a Git commit', async () => {
     directory = await mkdtemp(join(tmpdir(), 'zz-canary-context-unprotected-'));
     await execute('git', ['init', '--initial-branch=main', directory]); await chmod(directory, 0o755);
@@ -164,6 +186,41 @@ describe('bounded dedicated application of the desired version', () => {
       .toEqual({ state: 'error', version: 1, error: 'context_runtime_attempts_exhausted' });
     expect(calls).toEqual([]);
     expect(await application()).toEqual({ apply_error: 'context_runtime_attempts_exhausted', leased: false, retry_in: null });
+  });
+  it('keeps at most four applications in flight and serves the next agent once one ends', async () => {
+    if (!current) throw new Error('database unavailable');
+    await current.adminPool.query(`INSERT INTO agents(tenant_id,alias,harness_id,display_name,enabled,container_name,runtime_user,
+      home_directory,state_directory,max_concurrent_deliveries) VALUES('ContextAlpha','zz-canary-context','fake','zz-canary-context',
+      true,'ws-zz-canary-context','dev','/home/dev','/home/dev/.cauce/dev',3)`);
+    for (const [index, alias] of [[0, 'owner'], [0, 'zz-canary-context'], [1, 'director'], [1, 'owner']] as const) {
+      const value = target(index);
+      await store.write(client => lockCompanyAuthority(client, { tenant: value.tenant_id, alias: 'owner', humanId: value.human_id }),
+        value.tenant_id, alias, { expected_version: 0, source: 'ui', files: [{ path: 'context/mission.md', content: `Mission of ${alias}.` }] });
+    }
+    const releases = new Map<string, () => void>();
+    const runtime = { apply: async (version: ContextVersion, waiting?: () => void) => {
+      waiting?.(); await new Promise<void>(resolve => { releases.set(`${version.tenant_id}/${version.alias}`, resolve); });
+      return { version: version.version, digest: version.digest };
+    } };
+    const leased = async () => (await pool.query<{ agent: string }>(`SELECT tenant_id||'/'||alias AS agent FROM agent_context_outbox
+      WHERE apply_token IS NOT NULL ORDER BY 1`)).rows.map(row => row.agent);
+    try {
+      expect(await processContextOutbox(pool, { git, runtime })).toEqual({ state: 'pending', version: 1 });
+      expect(await processContextOutbox(pool, { git, runtime })).toEqual({ state: 'pending', version: 1 });
+      const first = await leased();
+      expect(first).toHaveLength(CONTEXT_APPLICATION_CONCURRENCY);
+      expect(releases.size).toBe(CONTEXT_APPLICATION_CONCURRENCY);
+      releases.get(first[0] ?? '')?.();
+      for (let retry = 0; retry < 100 && releases.size === CONTEXT_APPLICATION_CONCURRENCY; retry++) {
+        await processContextOutbox(pool, { git, runtime });
+        await new Promise<void>(resolve => { setTimeout(resolve, 10); });
+      }
+      expect(releases.size).toBe(CONTEXT_APPLICATION_CONCURRENCY + 1);
+      expect(await leased()).toHaveLength(CONTEXT_APPLICATION_CONCURRENCY);
+      expect(await leased()).not.toContain(first[0]);
+    } finally { for (const resolve of releases.values()) resolve(); }
+    await settleContextApplications(pool);
+    expect(await leased()).toEqual([]);
   });
   it('serves another agent while the first application only awaits its ACK', async () => {
     const other = target(1);

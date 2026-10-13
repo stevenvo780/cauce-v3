@@ -1,8 +1,9 @@
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import { AliasSchema, TenantSchema } from '@cauce/protocol';
-import { ContextGitBroker, ContextRejectedError, ContextVersionStore, ingestNativeContextVersion, processContextOutbox, StoreError,
-  type ContextRuntimeSink, type ContextTarget, type DatabasePool } from '@cauce/store';
+import { ContextGitBroker, ContextRejectedError, ContextVersionStore, ingestNativeContextVersion, processContextOutbox,
+  requestContextApplication, settleContextApplications, StoreError, type ContextApplicationRuntime, type ContextTarget,
+  type DatabasePool } from '@cauce/store';
 import { AuthError, AuthorizationError, requirePermission, type AuthProvider } from './auth.js';
 import { consoleHumanAccess } from './console-human-authority.js';
 import { PasswordAuthProvider } from './password-auth.js';
@@ -12,7 +13,7 @@ const Params = z.object({ tenant: TenantSchema, alias: AliasSchema }).strict();
 const Revision = z.coerce.number().int().positive().max(Number.MAX_SAFE_INTEGER);
 const HistoryQuery = z.object({ before: Revision.optional() }).strict();
 const DiffQuery = z.object({ from: z.coerce.number().int().min(0).max(Number.MAX_SAFE_INTEGER), to: Revision }).strict();
-export interface ContextVersionRouteOptions { readonly repositoryRoot?: string; readonly runtime?: ContextRuntimeSink }
+export interface ContextVersionRouteOptions { readonly repositoryRoot?: string; readonly runtime?: ContextApplicationRuntime }
 function sendRejection(reply: FastifyReply, error: ContextRejectedError): FastifyReply {
   const status = error.reason === 'context_governed_path' ? 403
     : error.reason === 'context_harness_limit' || error.reason === 'context_too_large' ? 413 : 422;
@@ -37,7 +38,10 @@ export function registerContextVersionRoutes(app: FastifyInstance, provider: Aut
   };
   if (git || options.runtime) {
     app.addHook('onReady', async () => { timer = setInterval(() => { tick(); }, 5_000); timer.unref(); tick(); });
-    app.addHook('onClose', async () => { clearInterval(timer); await running; });
+    app.addHook('onClose', async () => {
+      clearInterval(timer); await running;
+      await settleContextApplications(pool, { stopWaiting: true });
+    });
   }
   app.post('/v3/context/ingest', { bodyLimit: 1_100_000 }, async (request, reply) => {
     reply.header('Cache-Control', 'no-store');
@@ -80,6 +84,7 @@ export function registerContextVersionRoutes(app: FastifyInstance, provider: Aut
           if (operation === 'apply') {
             const snapshot = await store.retry(authority, target.tenant, target.alias);
             if (!options.runtime) return await reply.code(503).send({ error: 'context_runtime_unavailable', snapshot });
+            await requestContextApplication(pool, snapshot);
             const busy = running !== undefined;
             tick(snapshot);
             return await reply.code(202).send({ ...snapshot, operation: { state: busy ? 'busy' : 'pending', version: snapshot.desired_version } });

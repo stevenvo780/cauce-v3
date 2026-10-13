@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { setTimeout as sleep } from 'node:timers/promises';
 import { HarnessConsumptionEvidenceSchema, VERSIONED_CONTEXT_CAPABILITY } from '@cauce/protocol';
 import { CauceRepository, ContextRuntimeUnsupportedError, type ContextApplicationRuntime, type ContextRuntimeReadiness,
   type ContextTarget, type ContextVersion, type DatabasePool } from '@cauce/store';
@@ -23,7 +24,7 @@ export class DeliveryContextRuntimeSink implements ContextApplicationRuntime {
     return capabilities.includes(VERSIONED_CONTEXT_CAPABILITY) && capabilities.some(capability => WITNESS_HARNESSES.has(capability))
       ? 'ready' : 'unsupported';
   }
-  async apply(version: ContextVersion, waiting?: () => void): Promise<{ version: number; digest: string }> {
+  async apply(version: ContextVersion, waiting?: () => void, stop?: AbortSignal): Promise<{ version: number; digest: string }> {
     const evidence = () => this.pool.query<{ applied_at: Date | null }>(`SELECT applied_at FROM agent_context_outbox
       WHERE company_id=$1 AND tenant_id=$2 AND alias=$3 AND version=$4`, [version.company_id, version.tenant_id, version.alias, version.version]);
     if ((await evidence()).rows[0]?.applied_at) return { version: version.version, digest: version.digest };
@@ -77,7 +78,7 @@ export class DeliveryContextRuntimeSink implements ContextApplicationRuntime {
     }
     waiting?.();
     const deadline = Date.now() + this.timeoutMs;
-    while (Date.now() < deadline) {
+    while (Date.now() < deadline && stop?.aborted !== true) {
       const row = (await this.pool.query<{ applied_at: Date | null; digest: string; desired_version: string }>(`SELECT outbox.applied_at,version.digest,current.desired_version
         FROM agent_context_outbox outbox JOIN agent_context_versions version USING(company_id,tenant_id,alias,version)
         JOIN agent_context_state current USING(company_id,tenant_id,alias)
@@ -86,7 +87,7 @@ export class DeliveryContextRuntimeSink implements ContextApplicationRuntime {
       if (row?.digest !== version.digest) throw new Error('context application scope changed');
       if (row.applied_at !== null) return { version: version.version, digest: version.digest };
       if (Number(row.desired_version) !== version.version) throw new Error('context application was replaced');
-      await new Promise<void>(resolve => { setTimeout(resolve, Math.min(250, Math.max(1, deadline - Date.now()))); });
+      await sleep(Math.min(250, Math.max(1, deadline - Date.now())), undefined, stop ? { signal: stop } : {}).catch(() => undefined);
     }
     throw new Error('context application consumed-turn evidence is unavailable');
   }

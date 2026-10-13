@@ -1,8 +1,8 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { VERSIONED_CONTEXT_CAPABILITY, type DeliveryEnvelope } from '@cauce/protocol';
-import { CauceRepository, ContextRuntimeUnsupportedError, lockCompanyAuthority, processContextOutbox, settleContextApplications,
-  type DatabaseClient, type DatabasePool } from '@cauce/store';
+import { CauceRepository, ContextRuntimeUnsupportedError, lockCompanyAuthority, processContextOutbox, requestContextApplication,
+  settleContextApplications, type DatabaseClient, type DatabasePool } from '@cauce/store';
 import { ContextVersionStore, readContextVersion } from '../../../packages/store/src/context-version.js';
 import { seedSyntheticCompanyContexts } from '../../../packages/store/src/seed-dev-cli.js';
 import { preparePostgresSuite } from '../../../packages/store/test/postgres-suite.js';
@@ -31,7 +31,9 @@ async function context(index = 0, expected = 0) {
   const client = await pool.connect();
   try { return await readContextVersion(client, target(index), expected + 1); } finally { client.release(); }
 }
-const request = (index = 0) => store.retry(source(index), target(index).tenant_id, target(index).alias);
+const retry = (index = 0) => store.retry(source(index), target(index).tenant_id, target(index).alias);
+/** «Aplicar al agente», as the console route asks for it. */
+const request = async (index = 0) => { await requestContextApplication(pool, await retry(index)); };
 const applied = async (index = 0) => (await store.read(source(index), target(index).tenant_id, target(index).alias)).applied_version;
 async function lease(index: number, capabilities: string[]) {
   const value = await repository.acquireLease(target(index).tenant_id, target(index).alias, `native-context-consumer-${String(index)}`, capabilities, 60_000);
@@ -71,7 +73,7 @@ async function turns(index = 0): Promise<number> {
 }
 async function outbox(index = 0) {
   const row = (await pool.query<{ apply_error: string | null; applied: boolean; leased: boolean; parked: boolean; retry_in: number | null }>(
-    `SELECT apply_error,applied_at IS NOT NULL AS applied,apply_token IS NOT NULL AS leased,apply_retry_at='infinity' AS parked,
+    `SELECT apply_error,applied_at IS NOT NULL AS applied,apply_token IS NOT NULL AS leased,apply_retry_at>clock_timestamp() AS parked,
       CASE WHEN isfinite(apply_retry_at) THEN EXTRACT(EPOCH FROM apply_retry_at-clock_timestamp())::float8 END AS retry_in
     FROM agent_context_outbox WHERE tenant_id=$1 ORDER BY version DESC LIMIT 1`, [target(index).tenant_id])).rows[0];
   if (!row) throw new Error('context outbox absent');
@@ -146,6 +148,28 @@ describe('bounded application of versioned context to the live agent', () => {
     await settleContextApplications(pool);
     expect(await applied()).toBe(2);
     expect(await turns()).toBe(1);
+  });
+  it('retries a sync without spending a dedicated turn on the version left to the natural turn', async () => {
+    await context(); await lease(0, READY); const runtime = new DeliveryContextRuntimeSink(pool, 5_000);
+    expect(await processContextOutbox(pool, { git, runtime })).toEqual({ state: 'pending', version: 1 });
+    await retry();
+    expect(await processContextOutbox(pool, { git, runtime })).toEqual({ state: 'pending', version: 1 });
+    await settleContextApplications(pool);
+    expect(await turns()).toBe(0);
+    expect(await outbox()).toMatchObject({ apply_error: null, leased: false, parked: true });
+  });
+  it('probes again a version left to the natural turn and shows why when the agent returns without the capability', async () => {
+    await context(); await lease(0, READY); const runtime = new DeliveryContextRuntimeSink(pool, 5_000);
+    expect(await processContextOutbox(pool, { git, runtime })).toEqual({ state: 'pending', version: 1 });
+    const parked = await outbox();
+    expect(parked).toMatchObject({ apply_error: null, parked: true });
+    expect(parked.retry_in).toBeGreaterThan(290); expect(parked.retry_in).toBeLessThanOrEqual(300);
+    await pool.query("UPDATE connection_leases SET capabilities='[\"harness.codex\"]'::jsonb WHERE tenant_id=$1", [target().tenant_id]);
+    await pool.query('UPDATE agent_context_outbox SET apply_retry_at=now() WHERE isfinite(apply_retry_at)');
+    expect(await processContextOutbox(pool, { git, runtime })).toEqual({ state: 'error', version: 1, error: 'context_runtime_unsupported' });
+    expect(await turns()).toBe(0);
+    expect((await store.read(source(), target().tenant_id, target().alias)).application)
+      .toEqual({ state: 'error', last_error: 'context_runtime_unsupported' });
   });
   it.each([
     ['that does not negotiate versioned context', ['harness.codex']],

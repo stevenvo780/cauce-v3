@@ -10,8 +10,8 @@ export type ContextRuntimeReadiness = 'ready' | 'offline' | 'unsupported';
  * turns only on an operator request; without a probe every due application is a dedicated attempt. Both are bounded.
  */
 export interface ContextApplicationRuntime extends ContextRuntimeSink {
-  /** `waiting` fires once the dedicated turn is queued and only the agent's ACK is awaited. */
-  apply(version: ContextVersion, waiting?: () => void): Promise<{ readonly version: number; readonly digest: string }>;
+  /** `waiting` fires once the dedicated turn is queued and only the agent's ACK is awaited; `stop` ends that wait early. */
+  apply(version: ContextVersion, waiting?: () => void, stop?: AbortSignal): Promise<{ readonly version: number; readonly digest: string }>;
   readiness?(target: ContextTarget): Promise<ContextRuntimeReadiness>;
 }
 export class ContextRuntimeUnsupportedError extends Error {
@@ -22,20 +22,27 @@ export interface ContextWorkerResult { readonly state: 'idle' | 'busy' | 'synced
 /** Dedicated turns one request may spend. The retries wait 60 s and 120 s, longer than the delivery sink waits for an ACK. */
 export const CONTEXT_APPLICATION_ATTEMPTS = 3;
 const RETRY_BASE_SECONDS = 60;
-const APPLICATION_CONCURRENCY = 4;
+/** How long a version left to the natural turn waits before its agent is probed again, e.g. back without the capability. */
+const PARK_REVIEW_SECONDS = 300;
+/** Applications one process runs at once, the ones only awaiting an ACK included. */
+export const CONTEXT_APPLICATION_CONCURRENCY = 4;
 const VERIFICATION_FAILED = 'context_runtime_verification_failed';
+const COMMIT = /^[a-f0-9]{40,64}$/u;
 type ApplicationRefusal = 'context_runtime_unsupported' | 'context_runtime_offline' | 'context_runtime_attempts_exhausted';
 type ApplicationOutcome = { readonly kind: 'park' | 'attempted' } | { readonly kind: 'refused'; readonly code: ApplicationRefusal };
 interface Candidate { readonly target: ContextTarget; readonly version: number; readonly gitError?: string }
 interface ReservedApplication {
   readonly runtime: ContextApplicationRuntime; readonly version: ContextVersion; readonly token: string;
   readonly gitError?: string; readonly attempt: number;
-  /** The schedule moved after the version was written: an operator retry or apply, or a dedicated attempt that failed. */
-  readonly rescheduled: boolean;
+  /** The operator asked for a dedicated turn: `apply_retry_at` is `-infinity`, which no scheduled retry ever is. */
+  readonly requested: boolean;
+  /** A dedicated turn is due: the operator asked for it, or a dedicated attempt failed and its request continues. */
+  readonly dedicated: boolean;
 }
 interface OutboxRow extends ContextTarget { readonly version: string; readonly state: string; readonly last_error: string | null; readonly git_commit: string | null; readonly git_ready: boolean }
+interface Application { readonly done: Promise<void>; readonly stop: AbortController }
 const scopeOf = (version: ContextVersion) => [version.company_id, version.tenant_id, version.alias, version.version];
-const inFlight = new WeakMap<DatabasePool, Set<Promise<void>>>();
+const inFlight = new WeakMap<DatabasePool, Set<Application>>();
 
 function syncFailureCause(error: unknown, fallback: string): string {
   const fields = error !== null && typeof error === 'object' ? error as Record<string, unknown> : {};
@@ -48,32 +55,34 @@ function syncFailureCause(error: unknown, fallback: string): string {
   if (/could not resolve|connection (?:refused|reset|closed)|network is unreachable|failed to connect|ECONN(?:REFUSED|RESET)|ENOTFOUND|EAI_AGAIN|EHOSTUNREACH|ENETUNREACH/iu.test(details)) return 'context_git_network_failed';
   return fallback;
 }
-async function syncGit(client: DatabaseClient, row: OutboxRow, version: ContextVersion, git: ContextGitSink | undefined): Promise<string | undefined> {
-  if (!row.git_ready) return undefined;
-  const scope = scopeOf(version);
-  let stage = 'context_git_unavailable'; let failure: string | undefined;
+/** Git I/O runs outside any transaction; its outcome is stored after it, taking the target lock before the row as every writer does. */
+async function syncGit(pool: DatabasePool, row: OutboxRow, version: ContextVersion, git: ContextGitSink | undefined): Promise<string | undefined> {
+  let stage = 'context_git_unavailable'; let failure: string | undefined; let commit = row.git_commit;
   try {
     if (!git) throw new Error('context git is unavailable');
     stage = 'context_git_commit_failed';
-    const commit = row.git_commit ?? await git.commit(version);
-    if (!/^[a-f0-9]{40,64}$/u.test(commit)) throw new Error('invalid context commit');
-    await client.query(`UPDATE agent_context_outbox SET git_commit=$5 WHERE company_id=$1 AND tenant_id=$2 AND alias=$3 AND version=$4`, [...scope, commit]);
+    commit ??= await git.commit(version);
+    if (!COMMIT.test(commit)) { commit = null; throw new Error('invalid context commit'); }
     stage = 'context_push_failed';
     await git.push(commit);
-    await client.query(`UPDATE agent_context_outbox SET state='synced',pushed_at=clock_timestamp(),last_error=NULL,attempts=attempts+1
-      WHERE company_id=$1 AND tenant_id=$2 AND alias=$3 AND version=$4`, scope);
   } catch (error) {
     failure = syncFailureCause(error, stage);
-    await client.query(`UPDATE agent_context_outbox SET state='error',last_error=$5,attempts=attempts+1,
-      retry_at=clock_timestamp()+make_interval(secs=>LEAST(300,POWER(2,LEAST(attempts,8))::integer))
-      WHERE company_id=$1 AND tenant_id=$2 AND alias=$3 AND version=$4`, [...scope, failure]);
   }
-  await client.query(`INSERT INTO audit_events(tenant_id,actor_alias,action,decision,company_id,metadata)
-    SELECT $2,$3,'context.sync','info',$1,jsonb_build_object('component','context','host_id',
-      (SELECT host_id FROM agents WHERE company_id=$1 AND tenant_id=$2 AND alias=$3),
-      'target_tenant',$2::text,'target_alias',$3::text,'version',version,'git_commit',git_commit,'state',state,'error_code',last_error)
-    FROM agent_context_outbox WHERE company_id=$1 AND tenant_id=$2 AND alias=$3 AND version=$4
-      AND (state IS DISTINCT FROM $5::text OR last_error IS DISTINCT FROM $6::text)`, [...scope, row.state, row.last_error]);
+  const scope = scopeOf(version);
+  await withTransaction(pool, async client => {
+    await lockContextTarget(client, version);
+    await client.query(`UPDATE agent_context_outbox SET git_commit=COALESCE($5,git_commit),attempts=attempts+1,last_error=$6,
+      state=CASE WHEN $6::text IS NULL THEN 'synced' ELSE 'error' END,
+      pushed_at=CASE WHEN $6::text IS NULL THEN clock_timestamp() ELSE pushed_at END,
+      retry_at=CASE WHEN $6::text IS NULL THEN retry_at ELSE clock_timestamp()+make_interval(secs=>LEAST(300,POWER(2,LEAST(attempts,8))::integer)) END
+      WHERE company_id=$1 AND tenant_id=$2 AND alias=$3 AND version=$4`, [...scope, commit, failure ?? null]);
+    await client.query(`INSERT INTO audit_events(tenant_id,actor_alias,action,decision,company_id,metadata)
+      SELECT $2,$3,'context.sync','info',$1,jsonb_build_object('component','context','host_id',
+        (SELECT host_id FROM agents WHERE company_id=$1 AND tenant_id=$2 AND alias=$3),
+        'target_tenant',$2::text,'target_alias',$3::text,'version',version,'git_commit',git_commit,'state',state,'error_code',last_error)
+      FROM agent_context_outbox WHERE company_id=$1 AND tenant_id=$2 AND alias=$3 AND version=$4
+        AND (state IS DISTINCT FROM $5::text OR last_error IS DISTINCT FROM $6::text)`, [...scope, row.state, row.last_error]);
+  });
   return failure;
 }
 /** The lowest due version of each agent, oldest due first, so one agent never holds the others back. */
@@ -89,19 +98,43 @@ const DUE_VERSIONS = `SELECT * FROM (SELECT DISTINCT ON (outbox.company_id,outbo
     AND ($1::text IS NULL OR (outbox.company_id=$1 AND outbox.tenant_id=$2 AND outbox.alias=$3))
   ORDER BY outbox.company_id,outbox.tenant_id,outbox.alias,outbox.version) due
   ORDER BY due_at,company_id,tenant_id,alias LIMIT $5`;
-/** Git stays serialized by the shared broker lock; it never holds a target lock, so an adoption ACK cannot deadlock with it. */
+/**
+ * Serializes the broker across processes with a session lock, so no transaction stays open during Git I/O. A connection whose
+ * unlock is uncertain is destroyed, which releases the lock with it.
+ */
+async function withBrokerLock<T>(pool: DatabasePool, work: () => Promise<T>): Promise<T | 'busy'> {
+  const client = await pool.connect();
+  const ignore = (): void => undefined;
+  client.on('error', ignore);
+  let clean = false;
+  try {
+    const locked = (await client.query<{ locked: boolean }>('SELECT pg_try_advisory_lock(783_003_058) AS locked')).rows[0]?.locked === true;
+    if (!locked) { clean = true; return 'busy'; }
+    try { return await work(); } finally {
+      clean = (await client.query<{ unlocked: boolean }>('SELECT pg_advisory_unlock(783_003_058) AS unlocked')
+        .catch(() => undefined))?.rows[0]?.unlocked === true;
+    }
+  } finally {
+    if (clean) client.off('error', ignore);
+    client.release(!clean);
+  }
+}
 async function syncDueVersions(pool: DatabasePool, git: ContextGitSink | undefined, target: ContextTarget | undefined,
   applications: boolean, limit: number): Promise<Candidate[] | 'busy'> {
-  return withTransaction(pool, async client => {
-    const locked = (await client.query<{ locked: boolean }>('SELECT pg_try_advisory_xact_lock(783_003_058) AS locked')).rows[0];
-    if (locked?.locked !== true) return 'busy';
-    await client.query("SET LOCAL statement_timeout='60000ms'; SET LOCAL idle_in_transaction_session_timeout='60000ms'");
-    const rows = (await client.query<OutboxRow>(DUE_VERSIONS,
-      [target?.company_id ?? null, target?.tenant_id ?? null, target?.alias ?? null, applications, limit])).rows;
+  return withBrokerLock(pool, async () => {
+    const due = await withTransaction(pool, async client => {
+      const rows = (await client.query<OutboxRow>(DUE_VERSIONS,
+        [target?.company_id ?? null, target?.tenant_id ?? null, target?.alias ?? null, applications, limit])).rows;
+      const read: { row: OutboxRow; target: ContextTarget; version?: ContextVersion }[] = [];
+      for (const row of rows) {
+        const identity = { company_id: row.company_id, tenant_id: row.tenant_id, alias: row.alias };
+        read.push({ row, target: identity, ...(row.git_ready ? { version: await readContextVersion(client, identity, Number(row.version)) } : {}) });
+      }
+      return read;
+    });
     const candidates: Candidate[] = [];
-    for (const row of rows) {
-      const identity = { company_id: row.company_id, tenant_id: row.tenant_id, alias: row.alias };
-      const gitError = row.git_ready ? await syncGit(client, row, await readContextVersion(client, identity, Number(row.version)), git) : undefined;
+    for (const { row, target: identity, version } of due) {
+      const gitError = version ? await syncGit(pool, row, version, git) : undefined;
       candidates.push({ target: identity, version: Number(row.version), ...(gitError ? { gitError } : {}) });
     }
     return candidates;
@@ -127,12 +160,11 @@ async function reserveApplication(pool: DatabasePool, options: ContextWorkerOpti
     const snapshot = await contextSnapshot(client, candidate.target);
     if (snapshot.desired_version !== candidate.version || snapshot.applied_version >= candidate.version) return settled(candidate, candidate.version, 'synced');
     const scope = [candidate.target.company_id, candidate.target.tenant_id, candidate.target.alias, candidate.version];
-    const row = (await client.query<{ apply_error: string | null; rescheduled: boolean }>(`SELECT outbox.apply_error,
-      outbox.apply_retry_at>version.created_at AS rescheduled FROM agent_context_outbox outbox
-      JOIN agent_context_versions version USING(company_id,tenant_id,alias,version)
-      WHERE outbox.company_id=$1 AND outbox.tenant_id=$2 AND outbox.alias=$3 AND outbox.version=$4 AND outbox.applied_at IS NULL
-        AND outbox.apply_retry_at<=now() AND (outbox.apply_token IS NULL OR outbox.apply_lease_until<=now())
-      FOR UPDATE OF outbox SKIP LOCKED`, scope)).rows[0];
+    const row = (await client.query<{ apply_error: string | null; requested: boolean }>(`SELECT apply_error,
+      apply_retry_at='-infinity' AS requested FROM agent_context_outbox
+      WHERE company_id=$1 AND tenant_id=$2 AND alias=$3 AND version=$4 AND applied_at IS NULL
+        AND apply_retry_at<=now() AND (apply_token IS NULL OR apply_lease_until<=now())
+      FOR UPDATE SKIP LOCKED`, scope)).rows[0];
     if (!row || !applications) return settled(candidate, candidate.version, 'pending');
     const runtime = options.runtime;
     if (!runtime) {
@@ -143,22 +175,23 @@ async function reserveApplication(pool: DatabasePool, options: ContextWorkerOpti
     const token = randomUUID();
     await client.query(`UPDATE agent_context_outbox SET apply_token=$5,apply_lease_until=clock_timestamp()+interval '90 seconds'
       WHERE company_id=$1 AND tenant_id=$2 AND alias=$3 AND version=$4`, [...scope, token]);
-    return { runtime, version: await readContextVersion(client, candidate.target, candidate.version), token, rescheduled: row.rescheduled,
-      attempt: await nextAttempt(client, candidate.target, candidate.version, row.apply_error),
+    return { runtime, version: await readContextVersion(client, candidate.target, candidate.version), token, requested: row.requested,
+      dedicated: row.requested || row.apply_error === VERIFICATION_FAILED, attempt: await nextAttempt(client, candidate.target, candidate.version, row.apply_error),
       ...(candidate.gitError ? { gitError: candidate.gitError } : {}) };
   });
 }
-async function runApplication(pool: DatabasePool, reservation: ReservedApplication, waiting: () => void): Promise<ContextWorkerResult> {
+async function runApplication(pool: DatabasePool, reservation: ReservedApplication, waiting: () => void,
+  stop: AbortSignal): Promise<ContextWorkerResult> {
   const runtime = reservation.runtime;
   const readiness = runtime.readiness ? await runtime.readiness(reservation.version) : 'ready';
   const refuse = (code: ApplicationRefusal): ApplicationOutcome => ({ kind: 'refused', code });
   let outcome: ApplicationOutcome = { kind: 'attempted' };
   if (readiness === 'unsupported') outcome = refuse('context_runtime_unsupported');
-  else if (!reservation.rescheduled && runtime.readiness) outcome = { kind: 'park' };
+  else if (!reservation.dedicated && runtime.readiness) outcome = { kind: 'park' };
   else if (readiness === 'offline') outcome = refuse('context_runtime_offline');
   else if (reservation.attempt > CONTEXT_APPLICATION_ATTEMPTS) outcome = refuse('context_runtime_attempts_exhausted');
   else {
-    try { await runtime.apply(reservation.version, waiting); } catch (error) {
+    try { await runtime.apply(reservation.version, waiting, stop); } catch (error) {
       /* The durable ACK decides adoption even if the request times out after consumption. */
       if (error instanceof ContextRuntimeUnsupportedError) outcome = refuse('context_runtime_unsupported');
     }
@@ -175,12 +208,15 @@ async function finishApplication(pool: DatabasePool, reservation: ReservedApplic
     if (!fenced) return { state: 'pending', version: version.version };
     const failure = fenced.applied_at !== null || outcome.kind === 'park' ? null : outcome.kind === 'refused' ? outcome.code
       : attempt >= CONTEXT_APPLICATION_ATTEMPTS ? 'context_runtime_attempts_exhausted' : VERIFICATION_FAILED;
-    const retrySeconds = failure === VERIFICATION_FAILED ? RETRY_BASE_SECONDS * 2 ** (attempt - 1) : null;
+    const retrySeconds = failure === VERIFICATION_FAILED ? RETRY_BASE_SECONDS * 2 ** (attempt - 1)
+      : outcome.kind === 'park' ? PARK_REVIEW_SECONDS : null;
+    // An operator request that arrived while this evaluation ran stays due.
     await client.query(`UPDATE agent_context_outbox SET apply_token=NULL,apply_lease_until=NULL,apply_error=COALESCE($6,apply_error),
-      apply_retry_at=CASE WHEN applied_at IS NOT NULL THEN apply_retry_at WHEN $7::integer IS NULL THEN 'infinity'::timestamptz
-        ELSE clock_timestamp()+make_interval(secs=>$7::integer) END
+      apply_retry_at=CASE WHEN applied_at IS NOT NULL THEN apply_retry_at
+        WHEN apply_retry_at='-infinity' AND NOT $8::boolean THEN apply_retry_at
+        WHEN $7::integer IS NULL THEN 'infinity'::timestamptz ELSE clock_timestamp()+make_interval(secs=>$7::integer) END
       WHERE company_id=$1 AND tenant_id=$2 AND alias=$3 AND version=$4 AND apply_token=$5`,
-    [...scopeOf(version), reservation.token, failure, retrySeconds]);
+    [...scopeOf(version), reservation.token, failure, retrySeconds, reservation.requested]);
     if (failure) await client.query(`INSERT INTO audit_events(tenant_id,actor_alias,action,decision,company_id,metadata)
       VALUES($2,$3,'context.apply',$5,$1,jsonb_build_object('component','context','host_id',
         (SELECT host_id FROM agents WHERE company_id=$1 AND tenant_id=$2 AND alias=$3),'target_tenant',$2::text,'target_alias',$3::text,
@@ -189,30 +225,49 @@ async function finishApplication(pool: DatabasePool, reservation: ReservedApplic
     return settled(reservation, version.version, fenced.applied_at === null ? 'pending' : 'synced', failure ?? undefined);
   });
 }
-function applicationsOf(pool: DatabasePool): Set<Promise<void>> {
+function applicationsOf(pool: DatabasePool): Set<Application> {
   const known = inFlight.get(pool);
   if (known) return known;
-  const created = new Set<Promise<void>>(); inFlight.set(pool, created);
+  const created = new Set<Application>(); inFlight.set(pool, created);
   return created;
 }
 /** Resolves when the application ends or only awaits the agent's ACK; that wait continues without holding the caller. */
-function startApplication(pool: DatabasePool, reservation: ReservedApplication, active: Set<Promise<void>>): Promise<ContextWorkerResult> {
+function startApplication(pool: DatabasePool, reservation: ReservedApplication, active: Set<Application>): Promise<ContextWorkerResult> {
   return new Promise(resolve => {
     const waiting = () => { resolve(settled(reservation, reservation.version.version, 'pending')); };
-    const run: Promise<void> = runApplication(pool, reservation, waiting).then(resolve, waiting)
-      .finally(() => { active.delete(run); });
-    active.add(run);
+    const stop = new AbortController();
+    const application: Application = { stop, done: runApplication(pool, reservation, waiting, stop.signal).then(resolve, waiting)
+      .finally(() => { active.delete(application); }) };
+    active.add(application);
   });
 }
-/** Waits for the applications this process still awaits, e.g. before its pool closes. */
-export async function settleContextApplications(pool: DatabasePool): Promise<void> {
-  await Promise.all([...applicationsOf(pool)]);
+/**
+ * Waits for the applications this process still runs, e.g. before its pool closes. With `stopWaiting` they stop awaiting the
+ * ACK and record their attempt now; a later ACK still adopts the version.
+ */
+export async function settleContextApplications(pool: DatabasePool, options: { readonly stopWaiting?: boolean } = {}): Promise<void> {
+  const active = [...applicationsOf(pool)];
+  if (options.stopWaiting) for (const application of active) application.stop.abort();
+  await Promise.all(active.map(application => application.done));
+}
+/**
+ * «Aplicar al agente»: the desired version gets dedicated turns. A sync retry alone only makes it due again, so a runtime
+ * that probes the agent still leaves it to the natural turn.
+ */
+export async function requestContextApplication(pool: DatabasePool, target: ContextTarget): Promise<void> {
+  await withTransaction(pool, async client => {
+    await lockContextTarget(client, target);
+    await client.query(`UPDATE agent_context_outbox outbox SET apply_retry_at='-infinity',apply_error=NULL FROM agent_context_state current
+      WHERE outbox.company_id=$1 AND outbox.tenant_id=$2 AND outbox.alias=$3 AND outbox.applied_at IS NULL
+        AND current.company_id=outbox.company_id AND current.tenant_id=outbox.tenant_id AND current.alias=outbox.alias
+        AND current.desired_version=outbox.version`, [target.company_id, target.tenant_id, target.alias]);
+  });
 }
 export async function processContextOutbox(pool: DatabasePool, options: ContextWorkerOptions, target?: ContextTarget): Promise<ContextWorkerResult> {
   const active = applicationsOf(pool);
-  const slots = options.runtime ? APPLICATION_CONCURRENCY - active.size : APPLICATION_CONCURRENCY;
+  const slots = options.runtime ? CONTEXT_APPLICATION_CONCURRENCY - active.size : CONTEXT_APPLICATION_CONCURRENCY;
   const applications = slots > 0;
-  const candidates = await syncDueVersions(pool, options.git, target, applications, target ? 1 : applications ? slots : APPLICATION_CONCURRENCY);
+  const candidates = await syncDueVersions(pool, options.git, target, applications, target ? 1 : applications ? slots : CONTEXT_APPLICATION_CONCURRENCY);
   if (candidates === 'busy') return { state: 'busy' };
   const results = await Promise.all(candidates.map(async candidate => {
     const reservation = await reserveApplication(pool, options, candidate, applications);
