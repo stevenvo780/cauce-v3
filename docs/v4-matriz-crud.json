@@ -7,7 +7,7 @@
     },
     {
       "id": "people_crud_browser",
-      "reason": "Falta el CRUD completo de personas en navegador real con persistencia, revocación y protección del último administrador."
+      "reason": "El E2E cubre alta, lectura, cambio de rol y retiro con revocación; faltan restauración, purga y protección del último administrador desde navegador."
     },
     {
       "id": "company_admins_lifecycle_browser",
@@ -23,11 +23,11 @@
     },
     {
       "id": "quota_environment_execution_browser",
-      "reason": "El navegador acredita metadatos del entorno; falta completar y releer su ejecución física, autenticación, consulta y eliminación."
+      "reason": "Los E2E verifican metadatos y estados con recibos de fixture; faltan contenedor y proveedor reales, autenticación y consulta, limpieza física y ausencia de recursos huérfanos."
     },
     {
       "id": "context_versions_lifecycle_browser",
-      "reason": "Falta un recorrido completo de versiones desde navegador real que compruebe contenido durable y aplicación al agente."
+      "reason": "Falta retirar un archivo del contexto desde navegador y verificar la versión durable; la aplicación al agente se controla en context_application_browser."
     },
     {
       "id": "context_git_concurrent_recovery",
@@ -103,7 +103,7 @@
     },
     {
       "id": "context_application_browser",
-      "reason": "Guardar o reescribir ficheros no prueba adopción de la versión por el agente; falta su recibo correlacionado desde el flujo UI."
+      "reason": "El E2E confirma un 503 del servicio de aplicación; falta un recibo correlacionado que acredite adopción de la versión por el agente."
     },
     {
       "id": "human_memberships_management",
@@ -556,9 +556,8 @@
       "label": "Personas y acceso web",
       "operations": {
         "C": {
-          "status": "pending",
-          "reason": "Falta el CRUD completo de personas en navegador real con persistencia, revocación y protección del último administrador.",
-          "pending_id": "people_crud_browser",
+          "status": "covered",
+          "reason": "Cobertura versionada de navegador real y PostgreSQL: crea una persona y relee el inventario y su autoridad.",
           "api": [
             {
               "method": "POST",
@@ -574,14 +573,14 @@
           ],
           "tests": [
             {
-              "file": "console/src/features/auth/PeopleAdminPanel.test.tsx",
-              "name": "creates a person with a current catalog identity and writes the password without displaying it"
+              "file": "tests/e2e/v4-people-real-browser.test.ts",
+              "name": "crea una persona operadora, aplica su rol, cambia a lector y revoca su acceso al desactivarla"
             }
           ]
         },
         "R": {
           "status": "covered",
-          "reason": "Cobertura de componente versionada; no acredita ejecución física ni un recorrido E2E.",
+          "reason": "Cobertura de navegador real y PostgreSQL: relee la persona creada y comprueba el aislamiento entre empresas.",
           "api": [
             {
               "method": "GET",
@@ -597,14 +596,18 @@
           ],
           "tests": [
             {
-              "file": "console/src/features/auth/PeopleAdminPanel.test.tsx",
-              "name": "updates with exact CAS, omits an empty password and requires a reread after a conflict"
+              "file": "tests/e2e/v4-people-real-browser.test.ts",
+              "name": "crea una persona operadora, aplica su rol, cambia a lector y revoca su acceso al desactivarla"
+            },
+            {
+              "file": "tests/e2e/v4-people-real-browser.test.ts",
+              "name": "una empresa distinta no lista a la persona y su edición directa recibe 404"
             }
           ]
         },
         "U": {
           "status": "pending",
-          "reason": "Edición y restauración tienen cobertura de componente; falta su persistencia y autoridad en navegador real.",
+          "reason": "El E2E verifica el cambio durable de rol y su efecto en la autoridad; la restauración aún solo tiene cobertura de componente.",
           "pending_id": "people_crud_browser",
           "api": [
             {
@@ -631,12 +634,16 @@
             {
               "file": "console/src/features/auth/PeopleAdminPanel.test.tsx",
               "name": "retires, restores and purges with confirmation and the current durable revision"
+            },
+            {
+              "file": "tests/e2e/v4-people-real-browser.test.ts",
+              "name": "crea una persona operadora, aplica su rol, cambia a lector y revoca su acceso al desactivarla"
             }
           ]
         },
         "D": {
           "status": "pending",
-          "reason": "Retiro y purga tienen confirmación y CAS en componente; falta el recorrido real de revocación y eliminación.",
+          "reason": "El E2E verifica el retiro y la revocación de sesión; faltan purga y protección del último administrador en navegador.",
           "pending_id": "people_crud_browser",
           "api": [
             {
@@ -659,6 +666,10 @@
             {
               "file": "console/src/features/auth/PeopleAdminPanel.test.tsx",
               "name": "retires, restores and purges with confirmation and the current durable revision"
+            },
+            {
+              "file": "tests/e2e/v4-people-real-browser.test.ts",
+              "name": "crea una persona operadora, aplica su rol, cambia a lector y revoca su acceso al desactivarla"
             }
           ]
         }
@@ -1527,7 +1538,7 @@
       "operations": {
         "C": {
           "status": "pending",
-          "reason": "El navegador crea metadatos; falta acreditar el contenedor ready y su perfil de proveedor real.",
+          "reason": "El navegador persiste metadatos y la prueba entrega un recibo de fixture; falta verificar el contenedor real y el perfil del proveedor.",
           "pending_id": "quota_environment_execution_browser",
           "api": [
             {
@@ -1546,12 +1557,16 @@
             {
               "file": "tests/e2e/v4-console-real-browser.test.ts",
               "name": "entornos de cuotas: crear y editar rechazan entradas inválidas y aceptan las válidas"
+            },
+            {
+              "file": "tests/e2e/v4-quota-environments-real-browser.test.ts",
+              "name": "el dueño crea, edita y elimina su entorno con confirmación persistida"
             }
           ]
         },
         "R": {
           "status": "covered",
-          "reason": "Cobertura versionada de navegador real y PostgreSQL; la matriz enlaza la prueba y no sustituye su ejecución sobre el candidato. Consulta el estado durable, que puede seguir pending.",
+          "reason": "Cobertura versionada de navegador real y PostgreSQL: relee metadatos y estado durable, que puede seguir pending.",
           "api": [
             {
               "method": "GET",
@@ -1569,12 +1584,16 @@
             {
               "file": "tests/e2e/v4-console-real-browser.test.ts",
               "name": "entornos de cuotas: crear y editar rechazan entradas inválidas y aceptan las válidas"
+            },
+            {
+              "file": "tests/e2e/v4-quota-environments-real-browser.test.ts",
+              "name": "el dueño crea, edita y elimina su entorno con confirmación persistida"
             }
           ]
         },
         "U": {
           "status": "covered",
-          "reason": "Cobertura versionada de navegador real y PostgreSQL; la matriz enlaza la prueba y no sustituye su ejecución sobre el candidato. Solo cambia el nombre del entorno; los comandos físicos se documentan en quota_environment_actions.",
+          "reason": "Cobertura versionada de navegador real y PostgreSQL: edita el nombre y relee la nueva revisión; la ejecución física se documenta aparte.",
           "api": [
             {
               "method": "PATCH",
@@ -1592,12 +1611,16 @@
             {
               "file": "tests/e2e/v4-console-real-browser.test.ts",
               "name": "entornos de cuotas: crear y editar rechazan entradas inválidas y aceptan las válidas"
+            },
+            {
+              "file": "tests/e2e/v4-quota-environments-real-browser.test.ts",
+              "name": "el dueño crea, edita y elimina su entorno con confirmación persistida"
             }
           ]
         },
         "D": {
           "status": "pending",
-          "reason": "La UI solicita borrado durable; falta acreditar eliminación física y ausencia de recursos huérfanos.",
+          "reason": "El E2E relee el retiro durable con un recibo de fixture; falta probar eliminación física y ausencia de recursos huérfanos en el host.",
           "pending_id": "quota_environment_execution_browser",
           "api": [
             {
@@ -1616,6 +1639,10 @@
             {
               "file": "console/src/features/accounts/QuotaEnvironmentPanel.test.tsx",
               "name": "habilita únicamente acciones del host y proveedor del entorno y bloquea hosts retirados"
+            },
+            {
+              "file": "tests/e2e/v4-quota-environments-real-browser.test.ts",
+              "name": "el dueño crea, edita y elimina su entorno con confirmación persistida"
             }
           ]
         }
@@ -1847,9 +1874,8 @@
       "label": "Versiones durables del contexto",
       "operations": {
         "C": {
-          "status": "pending",
-          "reason": "Falta un recorrido completo de versiones desde navegador real que compruebe contenido durable y aplicación al agente.",
-          "pending_id": "context_versions_lifecycle_browser",
+          "status": "covered",
+          "reason": "Cobertura versionada de navegador real y PostgreSQL: guarda versiones durables y verifica autoría e historial; la aplicación se registra por separado.",
           "api": [
             {
               "method": "PUT",
@@ -1865,14 +1891,14 @@
           ],
           "tests": [
             {
-              "file": "console/src/features/live/ContextVersionsPanel.test.tsx",
-              "name": "un conflicto conserva el texto y versión del borrador; lectores sólo consultan"
+              "file": "tests/e2e/v4-contexts-real-browser.test.ts",
+              "name": "edita, rechaza secretos, restaura y aplica aislamiento entre personas y empresas"
             }
           ]
         },
         "R": {
           "status": "covered",
-          "reason": "Cobertura de componente versionada; no acredita ejecución física ni un recorrido E2E.",
+          "reason": "El E2E comprueba la lectura del historial durable; diff conserva además su evidencia de componente.",
           "api": [
             {
               "method": "GET",
@@ -1902,6 +1928,10 @@
             {
               "file": "console/src/features/live/ContextVersionsPanel.test.tsx",
               "name": "restaurar crea nueva versión con CAS y no la presenta usada o sincronizada antes de verificarse"
+            },
+            {
+              "file": "tests/e2e/v4-contexts-real-browser.test.ts",
+              "name": "edita, rechaza secretos, restaura y aplica aislamiento entre personas y empresas"
             }
           ]
         },
@@ -1920,9 +1950,8 @@
       "label": "Archivos del contexto deseado",
       "operations": {
         "C": {
-          "status": "pending",
-          "reason": "Falta un recorrido completo de versiones desde navegador real que compruebe contenido durable y aplicación al agente.",
-          "pending_id": "context_versions_lifecycle_browser",
+          "status": "covered",
+          "reason": "Cobertura versionada de navegador real y PostgreSQL: añade un archivo a una nueva versión y relee su contenido.",
           "api": [
             {
               "method": "PUT",
@@ -1938,14 +1967,14 @@
           ],
           "tests": [
             {
-              "file": "console/src/features/live/ContextVersionsPanel.test.tsx",
-              "name": "un conflicto conserva el texto y versión del borrador; lectores sólo consultan"
+              "file": "tests/e2e/v4-contexts-real-browser.test.ts",
+              "name": "edita, rechaza secretos, restaura y aplica aislamiento entre personas y empresas"
             }
           ]
         },
         "R": {
           "status": "covered",
-          "reason": "Cobertura de componente versionada; no acredita ejecución física ni un recorrido E2E.",
+          "reason": "El E2E relee el contenido del archivo en las versiones y el historial; la prueba de componente conserva cobertura del contrato de lectura.",
           "api": [
             {
               "method": "GET",
@@ -1963,13 +1992,16 @@
             {
               "file": "console/src/features/live/ContextVersionsPanel.test.tsx",
               "name": "un conflicto conserva el texto y versión del borrador; lectores sólo consultan"
+            },
+            {
+              "file": "tests/e2e/v4-contexts-real-browser.test.ts",
+              "name": "edita, rechaza secretos, restaura y aplica aislamiento entre personas y empresas"
             }
           ]
         },
         "U": {
-          "status": "pending",
-          "reason": "Falta un recorrido completo de versiones desde navegador real que compruebe contenido durable y aplicación al agente.",
-          "pending_id": "context_versions_lifecycle_browser",
+          "status": "covered",
+          "reason": "Cobertura versionada de navegador real y PostgreSQL: edita el contenido y confirma una nueva versión durable.",
           "api": [
             {
               "method": "PUT",
@@ -1985,14 +2017,14 @@
           ],
           "tests": [
             {
-              "file": "console/src/features/live/ContextVersionsPanel.test.tsx",
-              "name": "un conflicto conserva el texto y versión del borrador; lectores sólo consultan"
+              "file": "tests/e2e/v4-contexts-real-browser.test.ts",
+              "name": "edita, rechaza secretos, restaura y aplica aislamiento entre personas y empresas"
             }
           ]
         },
         "D": {
           "status": "pending",
-          "reason": "Quitar del borrador y guardar crea una versión sin ese archivo; falta el recorrido real y la aplicación al runtime.",
+          "reason": "Falta retirar un archivo del borrador desde navegador y releer la versión resultante; la aplicación al runtime tiene su propia fila pendiente.",
           "pending_id": "context_versions_lifecycle_browser",
           "api": [
             {
@@ -2029,9 +2061,8 @@
           "reason": "Acción auxiliar sin entidad independiente; esta operación no forma parte de su contrato."
         },
         "U": {
-          "status": "pending",
-          "reason": "La restauración crea una versión nueva con CAS; la prueba de componente no acredita adopción ni sincronización Git.",
-          "pending_id": "context_versions_lifecycle_browser",
+          "status": "covered",
+          "reason": "Cobertura versionada de navegador real y PostgreSQL: restaura una versión anterior como una versión nueva con origen persistido.",
           "api": [
             {
               "method": "POST",
@@ -2049,6 +2080,10 @@
             {
               "file": "console/src/features/live/ContextVersionsPanel.test.tsx",
               "name": "restaurar crea nueva versión con CAS y no la presenta usada o sincronizada antes de verificarse"
+            },
+            {
+              "file": "tests/e2e/v4-contexts-real-browser.test.ts",
+              "name": "edita, rechaza secretos, restaura y aplica aislamiento entre personas y empresas"
             }
           ]
         },
@@ -2114,7 +2149,7 @@
         },
         "U": {
           "status": "pending",
-          "reason": "Guardar o reescribir ficheros no prueba adopción de la versión por el agente; falta su recibo correlacionado desde el flujo UI.",
+          "reason": "El E2E confirma que la aplicación devuelve 503 y deja la versión pendiente; falta un recibo correlacionado del agente desde el flujo UI.",
           "pending_id": "context_application_browser",
           "api": [
             {
@@ -2133,6 +2168,10 @@
             {
               "file": "console/src/features/live/ContextVersionsPanel.test.tsx",
               "name": "un conflicto conserva el texto y versión del borrador; lectores sólo consultan"
+            },
+            {
+              "file": "tests/e2e/v4-contexts-real-browser.test.ts",
+              "name": "edita, rechaza secretos, restaura y aplica aislamiento entre personas y empresas"
             }
           ]
         },
