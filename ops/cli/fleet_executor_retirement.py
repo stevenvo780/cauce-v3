@@ -7,6 +7,7 @@ import pathlib
 import re
 import shutil
 import ssl
+import stat
 
 from fleet_executor_pki import checked_file
 from fleet_executor_policy import SafeFailure, approve_agent, open_absolute_directory, open_regular_at
@@ -109,6 +110,17 @@ def remove_registry_principals(policy: dict, agent: dict, script_loader) -> None
     publish_gateway_registry(policy)
 
 
+def drop_owned_directory(root: pathlib.Path, name: str, removed: list[dict]) -> None:
+    path = root / name
+    try:
+        existed = stat.S_ISDIR(os.lstat(path).st_mode)
+    except FileNotFoundError:
+        existed = False
+    remove_tree(root, name)
+    if existed and not path.exists():
+        removed.append({'type': 'directory', 'name': str(path)})
+
+
 def remove_tree(root: pathlib.Path, name: str) -> None:
     parent = open_absolute_directory(root)
     try:
@@ -182,18 +194,20 @@ def remove_runtime_credentials(policy: dict, agent: dict) -> None:
            f'{EXECUTOR_DESTINATION}/fleet_executor_view.py', '--root', '/run/cauce-credentials/' + agent['runtime_key'], '--remove')
 
 
-def purge_runtime(policy: dict, agent: dict) -> None:
+def purge_runtime(policy: dict, agent: dict) -> dict:
     stop(policy, agent)
+    removed: list[dict] = []
     if agent['runtime_mode'] == 'container':
         from fleet_executor_container import purge_container
-        purge_container(policy, agent)
+        removed.extend(purge_container(policy, agent)['removed'])
     else:
         identity = native_identity(policy, agent)
         control = identity['control']
         if control.parent.exists():
-            remove_tree(control.parent, agent['runtime_key'])
-        remove_tree(pathlib.Path(agent['_placement']['state_root']), agent['runtime_key'])
+            drop_owned_directory(control.parent, agent['runtime_key'], removed)
+        drop_owned_directory(pathlib.Path(agent['_placement']['state_root']), agent['runtime_key'], removed)
     views = pathlib.Path(policy['roots']['runtime']) / '.credential-views'
     if views.exists():
-        remove_tree(views, agent['runtime_key'])
+        drop_owned_directory(views, agent['runtime_key'], removed)
     remove_credentials(policy, agent)
+    return {'removed': removed}

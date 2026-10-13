@@ -1,4 +1,4 @@
-import type { FleetOperation, FleetOperationPreview } from '@cauce/protocol/fleet-operation';
+import type { FleetEvidence, FleetOperation, FleetOperationPreview } from '@cauce/protocol/fleet-operation';
 import { FLEET_ACTION_LABELS } from './agent-lifecycle-model';
 import { AuthOperationPanel } from './AuthOperationPanel';
 import { blockingOperation, blockingText, cancellable, ERRORS, purgeEntries, resumable, STALE_RESUME_TEXT, STATUS, STEP_STATUS, STEPS } from './fleet-operation-text';
@@ -28,9 +28,18 @@ export function AgentFleetPreview({ preview }: { preview: FleetOperationPreview 
     <details><summary>Huella exacta</summary><code>{preview.request_sha256}</code></details>
   </section>;
 }
+function removedLabel(removed: NonNullable<FleetEvidence['removed']>): string {
+  return removed.map((item) => `${RESOURCE_TYPES[item.type]} ${item.name}`).join(', ');
+}
 function PurgeOutcome({ operation }: { operation: FleetOperation }) {
   const step = operation.steps.find((value) => value.name === 'purge');
-  const text = step?.status === 'succeeded' ? 'La purga terminó. La operación aún no detalla qué recursos físicos se borraron (pendiente del ejecutor): lo anterior es el plan, no una comprobación de lo borrado.'
+  const removed = step?.evidence?.removed;
+  const text = step?.status === 'succeeded'
+    ? removed
+      ? removed.length
+        ? `La purga terminó. El ejecutor borró: ${removedLabel(removed)}.`
+        : 'La purga terminó. El ejecutor no borró contenedores ni volúmenes propios.'
+      : 'La purga terminó. La operación aún no detalla qué recursos físicos se borraron (pendiente del ejecutor): lo anterior es el plan, no una comprobación de lo borrado.'
     : step?.status === 'failed' ? 'La purga física falló: no se acreditó qué se borró.'
     : operation.status === 'succeeded' ? 'La operación terminó sin paso de purga acreditado.'
     : null;

@@ -271,16 +271,28 @@ class Executor:
                 or self.journal.get('revocation_complete') is not True:
             raise SafeFailure('purge requires observed stop and credential revocation')
         rows = scoped_agents(self.policy, self.context)
+        removed = self.journal.get('removed') if isinstance(self.journal.get('removed'), list) else []
+        record = self.journal.get('purged') is not True
         for row in rows:
             if 'authority' in self.policy:
                 from fleet_executor_authority import revoke
                 revoke(self.policy, self.context, row, self.journal, self.save)
             if credential_references(self.policy, row)['credentials']:
                 raise SafeFailure('new credential material appeared after revocation')
-            purge_runtime(self.policy, row)
-        self.journal['purged'] = True
-        self.save()
-        return {'stopped_verified': True, 'revocation_verified': True}
+            observed = purge_runtime(self.policy, row)
+            if record and isinstance(observed, dict):
+                fresh = [item for item in observed.get('removed', []) if isinstance(item, dict)]
+                if fresh:
+                    removed = [*removed, *fresh]
+                    self.journal['removed'] = removed
+                    self.save()
+        if record:
+            self.journal['purged'] = True
+            self.journal['removed'] = removed
+            self.save()
+        elif isinstance(self.journal.get('removed'), list):
+            removed = self.journal['removed']
+        return {'stopped_verified': True, 'revocation_verified': True, 'removed': removed}
 
     def authenticate(self):
         agent = self.agent()

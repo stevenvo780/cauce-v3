@@ -71,6 +71,9 @@ export const FleetEvidenceSchema = z.object({
   bootstrap_verified: z.boolean().optional(),
   profile_verified: z.boolean().optional(), roundtrip_verified: z.boolean().optional(),
   stopped_verified: z.boolean().optional(), revocation_verified: z.boolean().optional(),
+  removed: z.array(z.object({
+    type: z.enum(['container', 'volume', 'directory']), name: z.string().min(1).max(512),
+  }).strict()).max(512).optional(),
 }).strict();
 export const FleetStepSchema = z.object({
   name: FleetStepNameSchema, status: z.enum(['pending', 'running', 'waiting', 'succeeded', 'failed', 'compensated']),
@@ -84,7 +87,7 @@ export const FleetErrorSchema = z.object({
 /**
  * The physical resources a purge plans to touch, computed by the server with the executor's rules. It is the plan,
  * not the outcome: the executor only removes what exists with the expected ownership labels. The `purge` step
- * evidence (`stopped_verified`, `revocation_verified`) does not yet itemise what was removed; that is pending.
+ * evidence field `removed` lists the resources that removal actually deleted.
  */
 export const FleetPurgeResourceSchema = z.object({
   type: z.enum(['container', 'volume', 'directory']), name: z.string().min(1).max(512),

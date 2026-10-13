@@ -77,6 +77,15 @@ describe('fleet effect and execution catalogue', () => {
     expect(protocol.FleetEvidenceSchema.safeParse({ stopped_verified: true, revocation_verified: true }).success).toBe(true);
     expect(protocol.FleetEvidenceSchema.safeParse({ stdout: 'sensitive' }).success).toBe(false);
   });
+  it('lists only the resources a purge actually removed', () => {
+    expect(protocol.FleetEvidenceSchema.safeParse({
+      stopped_verified: true, revocation_verified: true,
+      removed: [{ type: 'container', name: 'ws-w' }, { type: 'volume', name: 'ws-w-state' }],
+    }).success).toBe(true);
+    expect(protocol.FleetEvidenceSchema.safeParse({ removed: [] }).success).toBe(true);
+    expect(protocol.FleetEvidenceSchema.safeParse({ removed: [{ type: 'network', name: 'n' }] }).success).toBe(false);
+    expect(protocol.FleetEvidenceSchema.safeParse({ removed: [{ type: 'volume', name: 'v', action: 'delete' }] }).success).toBe(false);
+  });
   it('preserves membership intent and dynamic roles', () => {
     expect(valid({ ...input, parameters: { ...input.parameters, memberships: [{ room_id: 'nuevo-general', role: 'Custom role', enabled: false }] } })).toBe(true);
   });

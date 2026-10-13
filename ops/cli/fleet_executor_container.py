@@ -272,23 +272,27 @@ def stop_container(policy: dict, raw_agent: dict) -> dict:
     return {'stopped_verified': True}
 
 
-def purge_container(policy: dict, raw_agent: dict):
+def purge_container(policy: dict, raw_agent: dict) -> dict:
     agent = approve_agent(policy, raw_agent)
     stop_container(policy, agent)
     observed = inspect_container(agent['container_name'])
     if agent['_placement'].get('ownership') == 'shared':
         from fleet_executor_legacy import purge_shared
         purge_shared(policy, agent, observed)
-        return
+        return {'removed': []}
+    removed = []
     if observed is not None:
         validate_container(policy, agent, observed)
         docker('rm', '-f', observed['Id'])
+        removed.append({'type': 'container', 'name': agent['container_name']})
     existing = docker('volume', 'ls', '--format', '{{.Name}}').decode().splitlines()
     for volume in owned_volumes(policy, agent)[0]:
         if volume in existing:
             docker('volume', 'rm', volume)
+            removed.append({'type': 'volume', 'name': volume})
     if inspect_container(agent['container_name']) is not None:
         raise SafeFailure('container removal was not observed')
+    return {'removed': removed}
 
 
 def discard_operation(policy: dict, raw_agent: dict, operation_id: str) -> None:

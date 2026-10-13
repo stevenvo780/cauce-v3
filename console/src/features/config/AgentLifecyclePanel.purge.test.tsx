@@ -72,3 +72,22 @@ it('reports the observed purge result when the operation finishes', () => {
   render(<AgentFleetOperation operation={operation} busy={false} current control={() => undefined} />);
   expect(screen.getByLabelText('Resultado de la purga')).toHaveTextContent('aún no detalla qué recursos físicos se borraron');
 });
+
+it('shows the resources the executor actually deleted', () => {
+  const operation: FleetOperation = { request_sha256: 'a'.repeat(64), id: '71000000-0000-4000-8000-000000000001', status: 'succeeded', version: 3,
+    target, kind: 'purge', actor: { tenant_id: 'A', alias: 'op' }, expected_revision: 4, desired_revision: null, applied_revision: null,
+    steps: [{ name: 'purge', status: 'succeeded', evidence: { removed: [
+      { type: 'container', name: 'ws-w' }, { type: 'volume', name: 'ws-w-state' }, { type: 'directory', name: '/srv/agents/w' }] } }],
+    error: null, created_at: '2026-10-12T10:00:00.000Z', updated_at: '2026-10-12T10:00:00.000Z' };
+  render(<AgentFleetOperation operation={operation} busy={false} current control={() => undefined} />);
+  expect(screen.getByLabelText('Resultado de la purga')).toHaveTextContent('El ejecutor borró: Contenedor ws-w, Volumen ws-w-state, Directorio /srv/agents/w');
+});
+
+it('says when the executor finished without deleting a container or volume', () => {
+  const operation: FleetOperation = { request_sha256: 'a'.repeat(64), id: '71000000-0000-4000-8000-000000000001', status: 'succeeded', version: 3,
+    target, kind: 'purge', actor: { tenant_id: 'A', alias: 'op' }, expected_revision: 4, desired_revision: null, applied_revision: null,
+    steps: [{ name: 'purge', status: 'succeeded', evidence: { removed: [] } }], error: null,
+    created_at: '2026-10-12T10:00:00.000Z', updated_at: '2026-10-12T10:00:00.000Z' };
+  render(<AgentFleetOperation operation={operation} busy={false} current control={() => undefined} />);
+  expect(screen.getByLabelText('Resultado de la purga')).toHaveTextContent('no borró contenedores ni volúmenes propios');
+});

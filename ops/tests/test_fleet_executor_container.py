@@ -13,6 +13,7 @@ import time
 import unittest
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from unittest.mock import patch
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import test_fleet_executor as fixtures
@@ -319,6 +320,54 @@ class DisposableContainerExecutorTest(unittest.TestCase):
         self.assertEqual((len(self.containers()), self.volumes()), (1, [self.container + '-state']))
         module.discard_operation(policy, self.agent, 'op-one')
         self.assertEqual((self.containers(), self.volumes()), ([], []))
+
+
+class PurgeRemovalEvidenceTest(unittest.TestCase):
+    def purge(self, inspections, volumes, ownership='dedicated'):
+        sys.path.insert(0, str(fixtures.OPS / 'cli'))
+        import fleet_executor_container as container
+        agent = {'container_name': 'ws-w', '_placement': {'ownership': ownership}}
+        calls = []
+
+        def docker(*arguments):
+            calls.append(arguments)
+            if arguments[:2] == ('volume', 'ls'):
+                return volumes
+            return b''
+
+        with patch.object(container, 'approve_agent', return_value=agent), \
+                patch.object(container, 'stop_container'), \
+                patch.object(container, 'inspect_container', side_effect=inspections), \
+                patch.object(container, 'validate_container'), \
+                patch.object(container, 'owned_volumes', return_value=(
+                    {'ws-w-state': {}, 'ws-w-provider-profiles': {}}, [])), \
+                patch.object(container, 'docker', side_effect=docker):
+            result = container.purge_container({}, agent)
+        return result, calls
+
+    def test_reports_only_the_container_and_volumes_that_existed(self):
+        result, calls = self.purge([{'Id': 'abc'}, None], b'ws-w-state\nforeign\n')
+        self.assertEqual(result, {'removed': [
+            {'type': 'container', 'name': 'ws-w'}, {'type': 'volume', 'name': 'ws-w-state'}]})
+        self.assertIn(('rm', '-f', 'abc'), calls)
+        self.assertIn(('volume', 'rm', 'ws-w-state'), calls)
+        self.assertFalse(any(call[:2] == ('volume', 'rm') and call[-1] == 'ws-w-provider-profiles' for call in calls))
+
+    def test_reports_nothing_when_the_container_and_volumes_are_already_gone(self):
+        result, calls = self.purge([None, None], b'')
+        self.assertEqual(result, {'removed': []})
+        self.assertFalse(any(call[:1] == ('rm',) or call[:2] == ('volume', 'rm') for call in calls))
+
+    def test_shared_container_is_not_listed_as_removed(self):
+        sys.path.insert(0, str(fixtures.OPS / 'cli'))
+        import fleet_executor_container as container
+        agent = {'container_name': 'ws-humanizar', '_placement': {'ownership': 'shared'}}
+        with patch.object(container, 'approve_agent', return_value=agent), \
+                patch.object(container, 'stop_container'), \
+                patch.object(container, 'inspect_container', return_value={'Id': 'shared'}), \
+                patch('fleet_executor_legacy.purge_shared') as purge_shared:
+            self.assertEqual(container.purge_container({}, agent), {'removed': []})
+        purge_shared.assert_called_once()
 
 
 if __name__ == '__main__':
