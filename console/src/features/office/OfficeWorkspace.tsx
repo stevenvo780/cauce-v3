@@ -74,7 +74,7 @@ export function OfficeWorkspace({ campus, topology, agents, onAgent }: {
       {notice ? <Notice tone="ok" role="status">{notice}</Notice> : null}
       {!rooms.length ? <Notice tone="info">Aún no hay salas. Crea una desde «Gestionar salas y asignaciones».</Notice> : null}
       <p className="m-0 text-xs text-muted">Selecciona una sala para cambiar su posición, tamaño y partes. Los agentes y asignaciones vienen de las salas actuales.</p>
-      <div className="max-h-[65dvh] overflow-auto rounded-xl border border-line bg-subtle">
+      <div className="min-h-64 max-h-[65dvh] overflow-auto rounded-xl border border-line bg-subtle">
         <div aria-label="Mapa de salas y agentes" className="relative" style={{ width, height }}>{shown.map(room => {
           const identity = officeRoomKey(room.tenant_id, room.room_id);
           const roomInfo = rooms.find(value => officeRoomKey(value.tenant, value.id) === identity);

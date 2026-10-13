@@ -69,6 +69,9 @@ async function prepare(page, view) {
     }
     await new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done)));
   });
+  if (view.action === 'plan' && await page.locator('[aria-label="Mapa de salas y agentes"]').evaluate(node => node.parentElement.clientHeight) < 64) {
+    throw new Error('Office map viewport cannot show a room selector');
+  }
 }
 
 async function measureState(browser, origin, respond, width, theme, view) {
