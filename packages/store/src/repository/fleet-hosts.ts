@@ -136,19 +136,39 @@ export async function updateFleetHost(
   });
 }
 
+/** Why a computer cannot be removed yet; the query reports the first dependency the operator has to clear. */
+const HOST_DEPENDENCY_MESSAGE = {
+  agents: 'La computadora todavía tiene agentes; muévelos o elimínalos antes de darla de baja.',
+  operations: 'La computadora todavía tiene operaciones de flota en curso; espera a que terminen o cancélalas.',
+  enrollment: 'La computadora tiene una invitación de inscripción pendiente; revócala antes de darla de baja.',
+  quota: 'La computadora todavía aloja entornos de cuota; elimínalos antes de darla de baja.',
+  backups: 'La computadora tiene copias de espacio registradas; no se puede dar de baja mientras existan.',
+} as const;
+
+/** Removing a computer is a platform action; its enrolled identity goes with it. */
 export async function deleteFleetHost(pool: DatabasePool, hostId: string, expectedVersion: number, scope: FleetHostScope): Promise<void> {
   await withTransaction(pool, async (client) => {
-    const authority = await hostAuthority(client, scope);
+    const authority = await hostAuthority(client, scope, true);
+    const company = authority.actingCompany;
     const row = (await client.query<{ version: string }>('SELECT version::text AS version FROM fleet_hosts WHERE host_id=$1 AND company_id=$2 FOR UPDATE',
-      [hostId, authority.actingCompany])).rows[0];
+      [hostId, company])).rows[0];
     if (!row) throw new FleetOperationError('not_found', 'fleet host was not found');
     if (Number(row.version) !== expectedVersion) throw new FleetOperationError('conflict', 'fleet host version changed; reload and retry');
-    const placed = await client.query('SELECT 1 FROM agents WHERE host_id=$1 AND purged_at IS NULL LIMIT 1', [hostId]);
-    if (placed.rowCount) throw new FleetOperationError('conflict', 'the computer still has agents; move or remove them first');
-    const active = await client.query(`SELECT 1 FROM fleet_operations WHERE executor_host=$1
-      AND status NOT IN ('succeeded','failed','cancelled') LIMIT 1`, [hostId]);
-    if (active.rowCount) throw new FleetOperationError('conflict', 'the computer still has active operations');
-    await client.query('DELETE FROM fleet_hosts WHERE host_id=$1 AND company_id=$2', [hostId, authority.actingCompany]);
+    const blocker = (await client.query<{ kind: keyof typeof HOST_DEPENDENCY_MESSAGE }>(`SELECT kind FROM (
+        SELECT 1 AS rank,'agents' AS kind FROM agents WHERE host_id=$1 AND purged_at IS NULL
+        UNION ALL SELECT 2,'operations' FROM fleet_operations WHERE executor_host=$1 AND status NOT IN ('succeeded','failed','cancelled')
+        UNION ALL SELECT 3,'enrollment' FROM fleet_host_enrollments
+          WHERE host_id=$1 AND company_id=$2 AND state='pending' AND expires_at>now()
+        UNION ALL SELECT 4,'quota' FROM quota_environments WHERE host_id=$1 AND company_id=$2 AND status<>'deleted'
+        UNION ALL SELECT 5,'backups' FROM space_backups WHERE host_id=$1 AND company_id=$2
+      ) dependency ORDER BY rank LIMIT 1`, [hostId, company])).rows[0];
+    if (blocker) throw new FleetOperationError('conflict', HOST_DEPENDENCY_MESSAGE[blocker.kind]);
+    await client.query(`UPDATE fleet_host_enrollments SET state='revoked'
+      WHERE host_id=$1 AND company_id=$2 AND state='pending'`, [hostId, company]);
+    await client.query(`DELETE FROM quota_environment_operations WHERE company_id=$2
+      AND environment_id IN (SELECT id FROM quota_environments WHERE host_id=$1 AND company_id=$2 AND status='deleted')`, [hostId, company]);
+    await client.query("DELETE FROM quota_environments WHERE host_id=$1 AND company_id=$2 AND status='deleted'", [hostId, company]);
+    await client.query('DELETE FROM fleet_hosts WHERE host_id=$1 AND company_id=$2', [hostId, company]);
     await auditHost(client, authority, 'fleet_host.delete', hostId);
   });
 }

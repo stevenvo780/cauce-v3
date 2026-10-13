@@ -136,7 +136,54 @@ describe('fleet hosts on PostgreSQL', () => {
   it('refuses to delete a computer that still has agents', async () => {
     await createFleetHost(pool, { host_id: 'alpha', display_name: 'Alfa', notes: '' }, scope());
     await placedAgent('live_one', 'alpha', 'none');
-    await expect(deleteFleetHost(pool, 'alpha', 1, scope())).rejects.toThrow(/still has agents/u);
+    await expect(deleteFleetHost(pool, 'alpha', 1, scope())).rejects.toThrow(/todavía tiene agentes/u);
+  });
+
+  it('lets a company edit its computers but leaves removing one to the platform', async () => {
+    await createFleetHost(pool, { host_id: 'alpha', display_name: 'Alfa', notes: '' }, scope());
+    for (const role of ['company_owner', 'company_admin'] as const) {
+      await expect(deleteFleetHost(pool, 'alpha', 1, scope([], role))).rejects.toMatchObject({ code: 'forbidden' });
+    }
+    expect(await updateFleetHost(pool, 'alpha', { expected_version: 1, notes: 'rack' }, scope([], 'company_owner'))).toMatchObject({ version: 2 });
+    expect((await pool.query("SELECT 1 FROM fleet_hosts WHERE host_id='alpha'")).rowCount).toBe(1);
+  });
+
+  it('explains every dependency that keeps a computer and clears only the finished ones', async () => {
+    if (!current) throw new Error('test database absent');
+    const admin = current.adminPool;
+    await createFleetHost(pool, { host_id: 'alpha', display_name: 'Alfa', notes: '' }, scope());
+    await admin.query(`INSERT INTO console_users(id,email,email_normalized,password_hash,display_name,role,tenant_id,alias)
+      VALUES($1,'host-deps@example.test','host-deps@example.test',$2,'Host deps','operator','Steven','kant')`, [HUMAN, '$scrypt$' + 'x'.repeat(48)]);
+    await admin.query(`INSERT INTO provider_accounts(id,provider,external_account_id,payer_tenant_id,credential_ref_kind,credential_ref)
+      VALUES('host-deps-account','codex','host-deps-account','Steven','env_path','CAUCE_TEST_ACCOUNT_PATH')`);
+    const environment = async (status: string, suffix: string): Promise<string> => (await admin.query<{ id: string }>(
+      `INSERT INTO quota_environments(company_id,account_id,host_id,provider,label,container_name,status,idempotency_key,created_by)
+       VALUES('humanizar','host-deps-account','alpha','codex','Entorno',$1,$2,$3,$4) RETURNING id::text`,
+      [`cauce-quota-${suffix.repeat(32)}`, status, `environment-${suffix}`, HUMAN])).rows[0]?.id ?? '';
+    const refused = async (message: RegExp) => {
+      const attempt = deleteFleetHost(pool, 'alpha', 1, scope());
+      await expect(attempt).rejects.toMatchObject({ code: 'conflict' });
+      await expect(attempt).rejects.toThrow(message);
+    };
+    const enrollment = (await admin.query<{ id: string }>(`INSERT INTO fleet_host_enrollments(company_id,host_id,display_name,invited_by,token_hash,nonce,expires_at)
+      VALUES('humanizar','alpha','Alfa',$1,$2,$3,now()+interval '1 hour') RETURNING id::text`, [HUMAN, 'a'.repeat(64), 'b'.repeat(64)])).rows[0]?.id;
+    await refused(/invitación de inscripción pendiente/u);
+    await admin.query("UPDATE fleet_host_enrollments SET expires_at=now()-interval '1 second' WHERE id=$1", [enrollment]);
+    const active = await environment('ready', 'a');
+    await refused(/entornos de cuota/u);
+    await admin.query("UPDATE quota_environments SET status='deleted' WHERE id=$1", [active]);
+    await admin.query(`INSERT INTO quota_environment_operations(environment_id,company_id,action,status,idempotency_key,requested_by)
+      VALUES($1,'humanizar','delete','done','environment-a-delete',$2)`, [active, HUMAN]);
+    await admin.query(`INSERT INTO agents(tenant_id,alias,enabled) VALUES('Steven','backed_up',false)`);
+    const backup = (await admin.query<{ id: string }>(`INSERT INTO space_backups(company_id,tenant_id,alias,host_id,requested_by,idempotency_key,
+      agent_snapshot,policy_sha256,status,error) VALUES('humanizar','Steven','backed_up','alpha',$1,'backup-alpha','{}'::jsonb,$2,'failed','EXPIRED')
+      RETURNING id::text`, [HUMAN, 'c'.repeat(64)])).rows[0]?.id;
+    await refused(/copias de espacio/u);
+    await admin.query('DELETE FROM space_backups WHERE id=$1', [backup]);
+    await deleteFleetHost(pool, 'alpha', 1, scope());
+    expect((await admin.query("SELECT state FROM fleet_host_enrollments WHERE host_id='alpha'")).rows).toEqual([{ state: 'revoked' }]);
+    expect((await admin.query("SELECT 1 FROM quota_environments WHERE host_id='alpha'")).rowCount).toBe(0);
+    expect((await admin.query("SELECT 1 FROM fleet_hosts WHERE host_id='alpha'")).rowCount).toBe(0);
   });
 
   it('places agents on a host through the registry until the runtime key is assigned', async () => {
