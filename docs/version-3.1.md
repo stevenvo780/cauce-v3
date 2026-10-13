@@ -149,8 +149,8 @@ alterar los bytes. Esto es evidencia histórica y no describe el estado actual d
 
 Kant, Salva y el acceso público a sus archivos funcionan en server2. El audio de Telegram
 funciona en server1, también probado con el origen de la workstation detenido. Las cuotas
-se publican desde el VPS con identidad y fecha observadas. El inventario refleja trece alias
-Docker en doce contenedores, más Astra y Kant nativos; las herramientas de ops instaladas
+se publican desde el VPS con identidad y fecha observadas. El inventario declara doce alias
+Docker en diez contenedores; Astra y Kant son nativos. Las herramientas de ops instaladas
 conservan sus versiones anteriores para reversión.
 
 Cinco canaries históricos del SDK previo acreditaron `mcp_deposit` y ACK final para el SDK MCP

@@ -656,9 +656,12 @@ quede un contenedor con las dos puertas abiertas.
 `deploy/compose.dev.yaml` publica las dos piernas del relay (8445 y 8446) en
 `CAUCE_DEV_BIND_IP` y levanta el gateway con `CAUCE_TERMINAL_ENABLED=1`. Las dos piernas van con
 TLS, no en claro: el relay construye siempre un listener HTTPS con `requestCert: true` y
-`rejectUnauthorized: true` (`services/terminal-relay/src/browser-leg.ts:113-122`), y dev apunta
+`rejectUnauthorized: true` (función `createBrowserHttpsServer` de
+`services/terminal-relay/src/browser-leg.ts`), y dev apunta
 certificado, clave, CA de cliente y CA de agentes al mismo `relay.crt`/`relay.key`
-(`deploy/compose.dev.yaml:123-126`) — dos archivos que el script de abajo **no** crea. Como el
+(`CAUCE_TERMINAL_RELAY_TLS_CERT_FILE`, `CAUCE_TERMINAL_RELAY_TLS_KEY_FILE`,
+`CAUCE_TERMINAL_RELAY_CLIENT_CA_FILE` y `CAUCE_TERMINAL_RELAY_AGENT_CA_FILE` en
+`deploy/compose.dev.yaml`) — dos archivos que el script de abajo **no** crea. Como el
 stack de dev no tiene bloque `secrets:`, la clave de tickets y el token compartido viven en el
 mismo directorio de trabajo:
 
@@ -674,12 +677,14 @@ CAUCE_TERMINAL_CONFIG_DIR=/ruta/privada/cauce-terminal-dev \
 CAUCE_ENV_FILE=/ruta/privada/dev.env ops/scripts/compose.sh dev up --build -d --wait
 ```
 
-El nginx de dev (`console/nginx.conf:15`) **no** tiene el mismo `location` que producción:
-declara el literal viejo `location = /v3/console/terminal/ws` y hace `proxy_pass` en claro a
+El nginx de dev, en el bloque `location = /v3/console/terminal/ws` de `console/nginx.conf`,
+**no** tiene el mismo `location` que producción: declara el literal viejo y hace `proxy_pass` en
+claro a
 `http://terminal-relay:8446`, sin ninguna directiva `proxy_ssl_*`. Producción declara otro
 literal, el de la identidad del relay
-(`location = "/v3/console/terminal/relays/${CAUCE_TERMINAL_RELAY_INSTANCE_ID}/ws"` en
-`deploy/console/nginx-console-tls.conf`), con mTLS completo contra la CA interna. Dev no
+(`location = "/v3/console/terminal/relays/${CAUCE_TERMINAL_RELAY_INSTANCE_ID}/ws"` en el bloque
+correspondiente de `deploy/console/nginx-console-tls.conf`), con mTLS completo contra la CA
+interna. Dev no
 acredita producción: la auth es de desarrollo y los grants son de juguete.
 
 ### 6.1 Pendiente abierto: hoy el circuito de dev no cierra
@@ -687,19 +692,20 @@ acredita producción: la auth es de desarrollo y los grants son de juguete.
 Esto es trabajo del workstream de consola/deploy; acá sólo queda anotado el orden real en que
 falla, que no es el orden en que se descubre. Los cuatro puntos, en cascada:
 
-1. **El stack de dev no arranca.** `deploy/compose.dev.yaml` no define
-   `CAUCE_TERMINAL_RELAY_INSTANCE_ID` ni para el gateway (env en las líneas 57-68) ni para el
-   relay (118-136), y los dos lo exigen: el gateway tira
+1. **El stack de dev no arranca.** Los bloques `environment` de `gateway` y `terminal-relay` en
+   `deploy/compose.dev.yaml` no definen `CAUCE_TERMINAL_RELAY_INSTANCE_ID`, y ambos lo exigen:
+   el gateway tira
    `CAUCE_TERMINAL_RELAY_INSTANCE_ID is required when the terminal plane is enabled`
-   (`services/gateway/src/terminal/config.ts:79`, alcanzado porque dev trae
-   `CAUCE_TERMINAL_ENABLED` en `1`) y el relay lo pide por `requiredEnv`
-   (`services/terminal-relay/src/config.ts:96`). Esto precede a cualquier problema de PTY: sin
+   (función `relayInstanceIds` de `services/gateway/src/terminal/config.ts`, alcanzada porque dev
+   trae `CAUCE_TERMINAL_ENABLED` en `1`) y el relay lo pide en `relayInstanceId` de
+   `services/terminal-relay/src/config.ts`. Esto precede a cualquier problema de PTY: sin
    resolverlo no hay nada que probar.
 2. **La ruta que reparte el gateway no existe en el nginx de dev.** El grant devuelve
    `/v3/console/terminal/relays/<64hex>/ws`
-   (`services/gateway/src/terminal/session-control.ts:77`), y dev sólo declara
-   `location = /v3/console/terminal/ws` (`console/nginx.conf:15`). El upgrade del navegador cae
-   entonces en `location /v3/` (`console/nginx.conf:36-40`), que va al gateway y **no** manda
+   (función `terminalRelayWebsocketPath` de `services/gateway/src/terminal/session-control.ts`),
+   y dev sólo declara `location = /v3/console/terminal/ws` en `console/nginx.conf`. El upgrade del
+   navegador cae entonces en el bloque `location /v3/` de `console/nginx.conf`, que va al gateway y
+   **no** manda
    `Upgrade` ni `Connection`: el WebSocket no llega a nacer.
 3. **El `Origin` es el primer rechazo de la capa de aplicación.** El handler `server.on('upgrade')`
    de `BrowserLeg` en `services/terminal-relay/src/browser-leg.ts` comprueba en este orden: ruta →
@@ -709,13 +715,15 @@ falla, que no es el orden en que se descubre. Los cuatro puntos, en cascada:
 4. **Con el proxy en claro el relay no registra nada.** El nginx de dev proxea
    `http://terminal-relay:8446` sin `proxy_ssl_certificate` contra un listener construido con
    `requestCert: true, rejectUnauthorized: true`
-   (`services/terminal-relay/src/browser-leg.ts:113-122`): el handshake muere en el transporte y el
+   (función `createBrowserHttpsServer` de `services/terminal-relay/src/browser-leg.ts`): el
+   handshake muere en el transporte y el
    evento `upgrade` no llega a dispararse, así que no se emite ni `origin_mismatch` ni
    `untrusted_client_certificate`. Lo que ve el operador es un 502 de nginx o un error de TLS, no
    un rechazo del relay — por eso este punto se descubre el último aunque falle el primero.
 
 **El `location` de match exacto de producción no se convierte en prefijo.** El literal está
-fijado por `tests/unit/terminal-relay-operability.test.ts:56-58`, y el match exacto es una
+fijado por la prueba «ships one manifest-pinned relay route and no wildcard/client-selected upstream»
+de `tests/unit/terminal-relay-operability.test.ts`, y el match exacto es una
 propiedad de cerco: la identidad de otro relay tiene que seguir siendo un 404 en el borde. Lo que
 se arregla es dev, alineándolo con el literal de producción; no al revés.
 

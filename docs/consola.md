@@ -83,7 +83,7 @@ las vistas.
 Cada entidad operativa tiene una sola superficie de mutación. Las demás vistas pueden proyectar el
 mismo dato para dar contexto, pero sólo enlazan a su autoridad:
 
-- `/live`, pestaña **Contexto**: perfil canónico y manual del arnés del agente;
+- `/live`, pestañas **Perfil** y **Ficheros**: perfil canónico y manual del arnés del agente;
 - `/accounts`: cuentas de proveedor, techos por alias y bindings de fallback;
 - `/messages/:tenant/:alias`: redacción y publicación durable;
 - `/queues?delivery=:id`: replay, cancelación y resolución de DLQ;
@@ -98,8 +98,8 @@ el recibo exacto y releen la cola ante una respuesta incierta antes de afirmar �
 
 ## Contexto y ficheros de gobernanza
 
-El drawer de `/live` tiene un solo lugar de mutación: la pestaña **Contexto**. Allí conviven dos
-controles distintos sin duplicar navegación:
+El drawer de `/live` separa ambos flujos de edición: la pestaña **Perfil** contiene el perfil
+canónico y **Ficheros** contiene el manual ajeno al perfil:
 
 - el perfil canónico (`purpose`, `role_summary`, `human_brief`, responsabilidades, restricciones,
   herramientas declaradas y reglas operativas), leído y escrito mediante
@@ -122,9 +122,10 @@ Si el fichero contiene un marcador `CAUCE` de una versión que el gateway todav�
 edición falla cerrada hasta actualizarlo. En documentos CRLF, la consola restaura ese mismo estilo
 de salto antes del PUT para no alterar los bloques por la normalización propia de `<textarea>`.
 
-`Ficheros` no guarda nada: lista rutas derivadas de hechos medidos y abre únicamente contenido
-permitido en modo de sólo lectura. Configuraciones sensibles, credenciales, directorios y memoria
-viva permanecen fuera de la escritura web.
+`Ficheros` lista rutas derivadas de hechos medidos y muestra únicamente contenido permitido. Con
+permiso `config.write`, el manual (`directive`) se puede editar como borrador y aplicar; los demás
+ficheros accesibles siguen en modo de sólo lectura. Configuraciones sensibles, credenciales,
+directorios y memoria viva permanecen fuera de la escritura web.
 
 El campo `tools` del perfil sólo declara herramientas en el contexto. No concede permisos, no
 habilita binarios ni configura MCP; las capacidades acreditadas proceden del runtime y la
@@ -164,18 +165,19 @@ juego de arneses soportado y la consola no ofrece una edición ficticia para él
   la recarga deshabilitados mientras dura la cuarentena, en vez de dejar que el operador lo
   descubra por un 409.
 - **Reconciliar una expectativa divergente.** Para Claude y Codex, si el único motivo es
-  `expectation_sha_mismatch`, Contexto permite preparar una vista previa y autorizar explícitamente
-  conservar el exterior sin cambios. La vista muestra huellas, no acredita revisar su contenido.
+  `expectation_sha_mismatch`, la pestaña **Perfil** permite preparar una vista previa y autorizar
+  explícitamente conservar el exterior sin cambios. La vista muestra huellas, no acredita revisar
+  su contenido.
   Los POST `context/reconcile/preview` y `context/reconcile/apply` exigen identidad de operador
   atribuida, permiso de control y motivo; la aplicación compara revisión, generación y huellas
   exactas, rechaza trabajo en vuelo y sólo regenera el bloque gestionado. Auditoría durable antes
   del efecto, ACK y lectura posterior preceden al registro de la expectativa y del historial.
   El resultado es `pending_session_refresh`, no adopción por el modelo. Un efecto incierto exige
   volver a medir; nunca se presenta como una escritura que no ocurrió.
-- **Historial y diff.** Un panel único sobre `agent_profile_revisions` y
-  `agent_document_revisions` lista revisiones con actor y fecha, compara dos revisiones del perfil
-  (los siete campos) y del manual (sha y bytes; el cuerpo del manual no se guarda) y restaura por
-  la vía canónica: borrador en Contexto y PUT con CAS y ACK, nunca una escritura paralela.
+- **Historial y diff.** La pestaña **Historial** muestra revisiones de `agent_profile_revisions` y
+  `agent_document_revisions`, y compara revisiones del perfil (los siete campos) y del manual
+  (sha y bytes; el cuerpo no se guarda). La restauración del perfil carga sus siete campos en un
+  borrador de **Perfil**; la escritura posterior sigue la vía canónica con CAS, motivo y ACK.
 - **`written_pending_session`.** El PUT del manual responde escrito en disco, no leído por el
   proceso. El editor del manual pinta ese estado con el mismo vocabulario que el perfil usa para
   `pending_session_refresh`, sin inventar uno paralelo.
