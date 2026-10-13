@@ -5,6 +5,16 @@ import { useResource } from '../../api/use-resource';
 import { Button, Notice } from '../../components/kit';
 import { Time } from '../../components/ui';
 
+const ORIGEN: Record<string, string> = { ui: 'Consola', cli: 'CLI', native: 'Nativo (en el espacio)', restore: 'Restauración', profile: 'Perfil', directive: 'Directiva' };
+const NATIVE_APPLY_ERRORS: Record<string, string> = {
+  native_context_governed_path: 'El agente intentó cambiar archivos gobernados desde su espacio; solo puede editar context/notes/. Nada de esa edición se guardó.',
+  native_context_secret_detected: 'La edición del agente en su espacio se rechazó porque el contenido parece un secreto.',
+  native_context_too_large: 'La edición del agente en su espacio se rechazó porque supera el tamaño máximo del contexto.',
+  native_context_harness_limit: 'La edición del agente en su espacio se rechazó porque supera el límite de documento de su harness.',
+  native_context_unsafe_text: 'La edición del agente en su espacio se rechazó porque el texto no es válido.',
+  native_context_invalid_files: 'La edición del agente en su espacio se rechazó porque los archivos no son válidos.',
+};
+
 export function ContextVersionsPanel({ tenantId, alias, canWrite }: { tenantId: string; alias: string; canWrite: boolean }) {
   const api = useApi();
   const identity = `${tenantId}/${alias}`;
@@ -71,7 +81,10 @@ export function ContextVersionsPanel({ tenantId, alias, canWrite }: { tenantId: 
         <div><dt>Versión deseada</dt><dd>{snapshot.desired_version}</dd></div><div><dt>GitHub</dt><dd>{snapshot.sync.state === 'synced' ? 'Sincronizado' : snapshot.sync.state === 'error' ? 'Error de sincronización' : 'Pendiente'}</dd></div></dl>
       {snapshot.desired_version !== snapshot.applied_version ? <Notice tone="warn">El agente aún no acredita la versión {snapshot.desired_version}. Guardar una versión no demuestra que ya la esté usando.</Notice> : null}
       {snapshot.sync.last_error ? <Notice tone="warn">{snapshot.sync.last_error}</Notice> : null}
-      {snapshot.application.last_error ? <Notice tone="danger">{snapshot.application.last_error}</Notice> : null}
+      {snapshot.application.last_error === 'native_context_conflict' ? <Notice tone="danger" role="alert">
+        Conflicto de ingesta nativa: el agente editó su contexto dentro del espacio sobre una versión anterior y esta ya había avanzado. No se perdió nada: su edición quedó apartada en el espacio como copia en conflicto y sigue trabajando con la versión del servidor.
+        <div className="mt-2"><Button size="sm" disabled={!writable || !!draft} onClick={() => { setDraft({ version: snapshot.version, files: snapshot.files }); setNotice('Borrador creado desde la versión actual. Incorpora el contenido acordado con el agente y guarda una nueva versión; la adoptará en su próximo turno.'); }}>Resolver desde esta ficha</Button></div>
+      </Notice> : snapshot.application.last_error ? <Notice tone="danger">{NATIVE_APPLY_ERRORS[snapshot.application.last_error] ?? snapshot.application.last_error}</Notice> : null}
       {snapshot.sync.git_commit ? <p className="m-0 text-xs break-all">Commit: <code>{snapshot.sync.git_commit}</code>{snapshot.sync.pushed_at ? <> · publicado <Time value={snapshot.sync.pushed_at} /></> : null}</p> : null}
       <div className="flex flex-wrap gap-2"><Button disabled={!writable || !!draft} onClick={() => { void operation(() => api.applyVersionedContext(tenantId, alias), 'Aplicación solicitada. El estado usado por el agente se muestra arriba.'); }}>Aplicar al agente</Button>
         <Button disabled={!writable || !!draft} onClick={() => { void operation(() => api.retryContextSync(tenantId, alias), 'Sincronización solicitada.'); }}>Reintentar sincronización</Button></div>
@@ -92,7 +105,7 @@ export function ContextVersionsPanel({ tenantId, alias, canWrite }: { tenantId: 
     <section aria-label="Historial de versiones"><h3>Historial</h3>
       {history.loading ? <p role="status">Leyendo historial…</p> : null}
       <ul className="m-0 grid list-none gap-2 p-0">{[...history.data?.entries ?? [], ...older?.entries ?? []].map(entry => <li key={entry.version} className="grid gap-2 border-b border-line py-2">
-        <span>Versión {entry.version} · {entry.source} · <Time value={entry.created_at} />{entry.restored_from == null ? '' : ` · restaurada de ${String(entry.restored_from)}`}</span>
+        <span>Versión {entry.version} · {ORIGEN[entry.source] ?? entry.source} · {entry.actor_alias || 'sin autor registrado'} · <Time value={entry.created_at} />{entry.restored_from == null ? '' : ` · restaurada de ${String(entry.restored_from)}`}</span>
         <div className="flex gap-2"><Button size="sm" disabled={busy || !snapshot} onClick={() => { void compare(entry.version); }}>Ver diferencias de versión {entry.version}</Button>
           <Button size="sm" disabled={!writable || !!draft} onClick={() => { setRestoring(entry.version); }}>Restaurar versión {entry.version}</Button></div></li>)}</ul>
       {history.data && !history.data.entries.length ? <p>Aún no hay cambios registrados.</p> : null}

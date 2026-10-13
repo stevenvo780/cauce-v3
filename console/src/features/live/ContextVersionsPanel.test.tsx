@@ -12,8 +12,8 @@ function snapshot(): VersionedContextSnapshot { return { version: 2, files: [{ p
   desired_version: 2, applied_version: 1, application: { state: 'pending', last_error: null }, sync: { state: 'error', git_commit: null, pushed_at: null, last_error: 'GitHub no disponible' } }; }
 function handlers(current: () => VersionedContextSnapshot) {
   server.use(http.get(base, () => HttpResponse.json(current())), http.get(base + '/history', () => HttpResponse.json({ entries: [
-    { version: 2, source: 'ui', restored_from: null, created_at: '2026-10-11T00:00:00Z', actor_human_id: 'owner', digest: 'digest' },
-    { version: 1, source: 'cli', restored_from: null, created_at: '2026-10-10T00:00:00Z', actor_human_id: null, digest: 'earlier' },
+    { version: 2, source: 'ui', restored_from: null, created_at: '2026-10-11T00:00:00Z', actor_human_id: 'owner', actor_alias: 'dueno', digest: 'digest' },
+    { version: 1, source: 'cli', restored_from: null, created_at: '2026-10-10T00:00:00Z', actor_human_id: null, actor_alias: 'dueno', digest: 'earlier' },
   ], next_cursor: null })));
 }
 it('restaurar crea nueva versión con CAS y no la presenta usada o sincronizada antes de verificarse', async () => {
@@ -49,4 +49,24 @@ it('un conflicto conserva el texto y versión del borrador; lectores sólo consu
   view.unmount(); renderWithApi(<ContextVersionsPanel tenantId="One" alias="worker" canWrite={false} />);
   await waitFor(() => { expect(screen.getByRole('textbox', { name: 'Contenido de context/directivas.md' })).toBeDisabled(); });
   expect(screen.getByRole('button', { name: 'Aplicar al agente' })).toBeDisabled();
+});
+it('muestra origen y autor de cada versión, incluidas las nativas del agente', async () => {
+  handlers(() => ({ ...snapshot(), version: 3, desired_version: 3 }));
+  server.use(http.get(base + '/history', () => HttpResponse.json({ entries: [
+    { version: 3, source: 'native', restored_from: null, created_at: '2026-10-12T00:00:00Z', actor_human_id: null, actor_alias: 'worker', digest: 'native-digest' },
+    { version: 2, source: 'ui', restored_from: null, created_at: '2026-10-11T00:00:00Z', actor_human_id: 'owner', actor_alias: 'dueno', digest: 'digest' },
+  ], next_cursor: null })));
+  renderWithApi(<ContextVersionsPanel tenantId="One" alias="worker" canWrite />);
+  expect(await screen.findByText(/Versión 3 · Nativo \(en el espacio\) · worker/u)).toBeVisible();
+  expect(screen.getByText(/Versión 2 · Consola · dueno/u)).toBeVisible();
+});
+it('un conflicto de ingesta nativa se explica en español y se resuelve creando un borrador', async () => {
+  handlers(() => ({ ...snapshot(), application: { state: 'error', last_error: 'native_context_conflict' } }));
+  const user = userEvent.setup(); renderWithApi(<ContextVersionsPanel tenantId="One" alias="worker" canWrite />);
+  const banner = await screen.findByRole('alert');
+  expect(banner).toHaveTextContent('Conflicto de ingesta nativa');
+  expect(banner).toHaveTextContent('No se perdió nada');
+  await user.click(within(banner).getByRole('button', { name: 'Resolver desde esta ficha' }));
+  expect(await screen.findByText(/Borrador sin guardar, basado en la versión 2/u)).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Guardar nueva versión' })).toBeEnabled();
 });
