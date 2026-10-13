@@ -7,11 +7,10 @@ import { join } from 'node:path';
 import { deflateSync } from 'node:zlib';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ProfileRevisionEntry } from '@cauce/store';
-import { AuthError } from '../../auth.js';
 import { registerAgentProfileRoutes, type AgentProfileDeps } from '../agent-profile.routes.js';
 import { contexto, preparedRuntime, runtimePreflight, profileWriteFixtureDeps, RUNTIME_ADOPTION } from '../agent-profile.fixtures.js';
-import { registerContextSourcePreviewRoute } from './apply-routes.js';
 import { confirmContextSource, prepareContextSource, snapshotContextSourceDeps, type ContextSourceDeps } from './apply-preview.js';
+import { ContextRepositoryError } from './model.js';
 
 function required<T>(value: T | undefined): T {
   if (value === undefined) throw new Error('Missing test dependency');
@@ -30,7 +29,7 @@ const oldJournal: ProfileRevisionEntry = { ...target, ...fields, id: '30', revis
   operation: 'insert', actor_tenant: null, actor_alias: null, changed_at: 'private-time' };
 const newJournal: ProfileRevisionEntry = { ...oldJournal, ...context.perfil, id: '42', revision: 4, operation: 'update' };
 
-describe.each(['journal', 'git_authored'])('Git %s preview and the canonical profile writer', (kind) => {
+describe.each(['journal', 'git_authored'])('Git %s preparation and the canonical profile writer', (kind) => {
   const authored = kind === 'git_authored';
   const expectedProvenance = authored ? { source_kind: 'git_authored' } : { source_journal_id: '30', source_revision: 1 };
   let root: string;
@@ -85,24 +84,23 @@ describe.each(['journal', 'git_authored'])('Git %s preview and the canonical pro
       instance_id: 'fixture', readReceipt: vi.fn(async () => undefined),
       confirm: ({ source, profile, current, preflight, ...caller }) => confirmContextSource(sourceDeps(), caller, source, profile, current, preflight),
     };
-    app = Fastify(); registerAgentProfileRoutes(app, deps); registerContextSourcePreviewRoute(app, sourceDeps());
+    app = Fastify(); registerAgentProfileRoutes(app, deps);
   });
   afterEach(async () => { await app.close(); await rm(root, { recursive: true, force: true }); });
-  const preview = () => app.inject({ method: 'POST', url: `${BASE}/context/repository/preview`, payload: { commit, reason } });
+  const caller = { actor, operator, tenantId: target.tenant_id, alias: target.alias, reason };
+  const prepare = () => prepareContextSource(sourceDeps(), caller, commit);
   async function body() {
-    const response = await preview(); expect(response.statusCode).toBe(200);
-    const data = response.json<{ expected_revision: number; context_source: Record<string, unknown> }>();
-    return { expected_revision: data.expected_revision, profile: fields, reason, context_source: data.context_source };
+    const data = await prepare();
+    return { expected_revision: data.expected_revision, profile: fields, reason,
+      context_source: { ...data.context_source } as Record<string, unknown> };
   }
   const put = (payload: Record<string, unknown>) => app.inject({ method: 'PUT', url: `${BASE}/perfil`, payload });
 
-  it('previews real immutable loose objects without CAS or native writes', async () => {
-    const response = await preview();
-    expect(response.statusCode).toBe(200);
-    expect(response.headers['cache-control']).toBe('no-store');
-    expect(response.json()).toMatchObject({ ...target, application: 'not_applied', sourceState: 'not_observed',
+  it('prepares real immutable loose objects without CAS or native writes', async () => {
+    const result = await prepare();
+    expect(result).toMatchObject({ ...target, application: 'not_applied', sourceState: 'not_observed',
       expected_revision: 4, context_source: { commit, ...expectedProvenance, expected_journal_id: '42' } });
-    expect(response.body).not.toContain(root); expect(response.body).not.toContain('private-time');
+    expect(JSON.stringify(result)).not.toContain(root); expect(JSON.stringify(result)).not.toContain('private-time');
     expect(deps.replaceProfile).not.toHaveBeenCalled(); expect(apply).not.toHaveBeenCalled();
   });
 
@@ -110,13 +108,12 @@ describe.each(['journal', 'git_authored'])('Git %s preview and the canonical pro
     expect(Object.isFrozen(binding)).toBe(false);
     expect(Object.isFrozen(captured.binding)).toBe(true);
     binding.instance_id = 'other'; binding.repositoryPath = join(root, 'not-the-bound-root');
-    const response = await preview();
-    expect(response.statusCode).toBe(200);
-    expect(response.json()).toMatchObject({ context_source: { instance_id: 'fixture', commit } });
+    const result = await prepare();
+    expect(result).toMatchObject({ context_source: { instance_id: 'fixture', commit } });
     expect(binding.instance_id).toBe('other');
   });
 
-  it('retains the exact binding between preview and confirmation when the caller mutates its input', async () => {
+  it('retains the exact binding between preparation and confirmation when the caller mutates its input', async () => {
     const payload = await body();
     binding.instance_id = 'other'; binding.repositoryPath = join(root, 'not-the-bound-root');
     expect((await put(payload)).statusCode).toBe(202);
@@ -173,16 +170,6 @@ describe.each(['journal', 'git_authored'])('Git %s preview and the canonical pro
     expect(deps.replaceProfile).toHaveBeenCalledTimes(1); expect(apply).not.toHaveBeenCalled();
   });
 
-  it.each(['unauthenticated', 'hidden', 'unattributed', 'disabled'])('rejects %s before source/profile/runtime I/O', async (kind) => {
-    if (kind === 'unauthenticated') vi.mocked(deps.authorize).mockRejectedValue(new AuthError('denied'));
-    if (kind === 'hidden') vi.mocked(deps.authorizeTarget).mockResolvedValue(undefined);
-    if (kind === 'unattributed') vi.mocked(required(deps.resolveOperator)).mockResolvedValue({ operator_id: 'none', attributed: false });
-    if (kind === 'disabled') vi.mocked(deps.authorizeTarget).mockResolvedValue({ ...target, enabled: false });
-    await rm(root, { recursive: true, force: true });
-    expect((await preview()).statusCode).toBe(kind === 'unauthenticated' ? 401 : kind === 'hidden' ? 404 : kind === 'unattributed' ? 403 : 409);
-    expect(journal).not.toHaveBeenCalled(); expect(deps.readContext).not.toHaveBeenCalled(); expect(deps.prepareRuntime).not.toHaveBeenCalled();
-  });
-
   it.each(['reason', 'operator', 'profile', 'commit', 'instance', 'revision', 'journal', 'generation', 'native_bytes'])('rejects a changed %s at confirmation', async (kind) => {
     const payload = await body();
     if (kind === 'reason') payload.reason = 'Another explicit reason';
@@ -205,13 +192,13 @@ describe.each(['journal', 'git_authored'])('Git %s preview and the canonical pro
 
   it('keeps a v1 journal claim with new content inspect-only', async () => {
     commit = await fixture({ ...fields, purpose: 'Authored only in Git' }, false);
-    expect((await preview()).json()).toMatchObject({ error: 'source_journal_unverified' });
+    await expect(prepare()).rejects.toMatchObject({ code: 'source_journal_unverified' });
     expect(deps.prepareRuntime).not.toHaveBeenCalled();
   });
 
   it('rejects a version already current without creating another revision', async () => {
     vi.mocked(deps.readContext).mockResolvedValue({ contexto: { ...context, perfil: { ...target, ...fields } }, exists: true, revision: 1, applied_revision: 1 });
-    expect((await preview()).json()).toMatchObject({ error: 'profile_already_current' });
+    await expect(prepare()).rejects.toMatchObject({ code: 'profile_already_current' });
     expect(deps.replaceProfile).not.toHaveBeenCalled();
   });
 
@@ -292,32 +279,25 @@ describe.each(['journal', 'git_authored'])('Git %s preview and the canonical pro
       return { ...prepared, verification: { ...prepared.verification,
         documents: [{ ...required(prepared.verification.documents[0]), name: 'MEMORY.md', observed_sha: null }] } };
     }));
-    expect((await preview()).json()).toMatchObject({ error: 'agent_memory_not_preserved' });
+    await expect(prepare()).rejects.toMatchObject({ code: 'agent_memory_not_preserved' });
     expect(deps.replaceProfile).not.toHaveBeenCalled();
   });
 
-  it('discards authorization revoked after measurement', async () => {
-    vi.mocked(deps.authorizeTarget).mockResolvedValueOnce({ ...target, enabled: true }).mockResolvedValue(undefined);
-    expect((await preview()).statusCode).toBe(403); expect(deps.replaceProfile).not.toHaveBeenCalled();
-  });
-
-  it('rejects browser-selected roots and malformed confirmation without source I/O', async () => {
-    const response = await app.inject({ method: 'POST', url: `${BASE}/context/repository/preview`, payload: { commit, reason, repositoryPath: '/browser' } });
-    expect(response.statusCode).toBe(400); expect(journal).not.toHaveBeenCalled();
+  it('rejects malformed confirmation without source I/O', async () => {
     expect((await put({ expected_revision: 4, profile: fields, reason, context_source: { commit } })).statusCode).toBe(409);
     expect(deps.readContext).not.toHaveBeenCalled();
   });
 
   it('propagates denied runtime preflight without CAS or a fallback writer', async () => {
     vi.mocked(required(deps.prepareRuntime)).mockRejectedValue(Object.assign(new Error('denied mount'), { code: 'permission_denied' }));
-    expect((await preview()).statusCode).toBe(503);
+    await expect(prepare()).rejects.toThrow('denied mount');
     expect(deps.replaceProfile).not.toHaveBeenCalled(); expect(apply).not.toHaveBeenCalled();
   });
 
   it('does not accept recognized secrets from a source version', async () => {
     commit = await fixture({ ...fields, purpose: 'Authorization: Bearer ghp_123456789012345678901234567890123456' });
-    const response = await preview(); expect(response.statusCode).toBe(409);
-    expect(response.body).not.toContain('ghp_'); expect(deps.replaceProfile).not.toHaveBeenCalled();
+    await expect(prepare()).rejects.toBeInstanceOf(ContextRepositoryError);
+    expect(deps.replaceProfile).not.toHaveBeenCalled();
   });
 
 
@@ -347,7 +327,7 @@ describe.each(['journal', 'git_authored'])('Git %s preview and the canonical pro
     expect(deps.replaceProfile).not.toHaveBeenCalled(); expect(apply).not.toHaveBeenCalled();
   });
 
-  it('rejects altered commit object bytes after preview', async () => {
+  it('rejects altered commit object bytes after preparation', async () => {
     const payload = await body();
     await writeFile(join(root, '.git', 'objects', commit.slice(0, 2), commit.slice(2)), deflateSync(Buffer.from('commit 7\0changed')));
     expect((await put(payload)).statusCode).toBe(409);
@@ -358,18 +338,18 @@ describe.each(['journal', 'git_authored'])('Git %s preview and the canonical pro
     journal.mockImplementation(async (_tenant, _alias, revision) => revision === 1 ? oldJournal
       : invalid === 'absent' ? undefined : { ...newJournal,
         ...(invalid === 'wrong_identity' ? { alias: 'other' } : invalid === 'wrong_content' ? { purpose: 'Unverified current' } : { operation: 'delete' as const }) });
-    expect((await preview()).statusCode).toBe(409);
+    await expect(prepare()).rejects.toBeInstanceOf(ContextRepositoryError);
     expect(deps.prepareRuntime).not.toHaveBeenCalled(); expect(deps.replaceProfile).not.toHaveBeenCalled();
   });
 
   it('rejects an absent profile instead of creating it from Git', async () => {
     vi.mocked(deps.readContext).mockResolvedValue({ contexto: context, exists: false, revision: null, applied_revision: null });
-    expect((await preview()).json()).toMatchObject({ error: 'profile_absent' });
+    await expect(prepare()).rejects.toMatchObject({ code: 'profile_absent' });
     expect(deps.prepareRuntime).not.toHaveBeenCalled(); expect(deps.replaceProfile).not.toHaveBeenCalled();
   });
 
-  it('keeps direct preparation pure with no registered endpoints', async () => {
-    const result = await prepareContextSource(sourceDeps(), { actor, operator, tenantId: target.tenant_id, alias: target.alias, reason }, commit);
+  it('keeps direct preparation pure', async () => {
+    const result = await prepare();
     expect(result.context_source.commit).toBe(commit); expect(apply).not.toHaveBeenCalled();
   });
 });

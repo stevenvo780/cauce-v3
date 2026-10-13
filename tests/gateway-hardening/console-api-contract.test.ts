@@ -165,8 +165,6 @@ describe('console API surface matches the gateway routing table', () => {
     expect(calls).toContainEqual({ method: 'GET', path: '/v3/console/tenants/1/agents/1/documents' });
     expect(calls).toContainEqual({ method: 'GET', path: '/v3/console/tenants/1/agents/1/perfil' });
     expect(calls).toContainEqual({ method: 'GET', path: '/v3/console/tenants/1/agents/1/context/repository' });
-    expect(calls).toContainEqual({ method: 'POST', path: '/v3/console/tenants/1/agents/1/context/repository/preview' });
-    expect(calls).toContainEqual({ method: 'GET', path: '/v3/console/tenants/1/agents/1/context/repository/inspect?1' });
     for (const action of ['cancel', 'resume']) expect(calls).toContainEqual({ method: 'POST', path: `/v3/console/fleet/operations/1/${action}` });
     expect(calls).toContainEqual({ method: 'GET', path: '/v3/console/fleet/operations?1' });
     expect(calls).toContainEqual({ method: 'POST', path: '/v3/console/fleet/operations/preview' });

@@ -1,7 +1,6 @@
 import { AgentContextWriteCoordinator } from '../console/agent-context-write-coordinator.js';
 import type { DatabasePool } from '@cauce/store';
 import { registerNativeContextRepositoryRoutes } from '../console/context-repository/native-routes.js';
-import { registerContextSourcePreviewRoute } from '../console/context-repository/apply-routes.js';
 import { confirmContextSource, snapshotContextSourceDeps } from '../console/context-repository/apply-preview.js';
 import { registerContextRepositoryRoutes } from '../console/context-repository/routes.js';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
@@ -395,7 +394,6 @@ function registerConsoleAgentRoutes(
       readContext: (tenantId, alias) => perfiles.readContextWithPresence(tenantId, alias),
       readRuntimeExpectation: (tenantId, alias) => expectativaDeRuntime(options.pool, tenantId, alias, true),
     }));
-    registerContextSourcePreviewRoute(app, sourceDeps);
     registerAgentDocumentRoutes(app, {
       authorize: autorizarPerfil,
       authorizeTarget: autorizarDestino,
@@ -429,8 +427,6 @@ function registerConsoleAgentRoutes(
       authorize: autorizarPerfil,
       authorizeTarget: (actor, tenantId, alias, permission) =>
         autorizarDestino(actor, tenantId, alias, permission),
-      readProfileRevision: (tenantId, alias, revision) =>
-        diario.readProfileRevision(tenantId, alias, revision),
     });
     registerAgentContextHistoryRoutes(app, {
       authorize: autorizarPerfil,
