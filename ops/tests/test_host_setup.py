@@ -51,6 +51,16 @@ class HostSetupTests(unittest.TestCase):
         self.package_overrides: dict = {}
         self.tamper_signature = False
         self.requests: list[str] = []
+        self.image = b''
+        self.image_id = 'sha256:' + 'e' * 64
+        self.docker_images: dict[str, str] = {}
+        self.loaded_as = self.image_id
+        self.cut_after: int | None = None
+        host_setup.DOCKER = '/bin/sh'
+        self.addCleanup(setattr, host_setup, 'DOCKER', '/usr/bin/docker')
+        delays = mock.patch.object(host_setup, 'DOWNLOAD_RETRY_SECONDS', (0, 0))
+        delays.start()
+        self.addCleanup(delays.stop)
         node = mock.patch('shutil.which', side_effect=lambda name: '/usr/bin/' + name)
         node.start()
         self.addCleanup(node.stop)
@@ -76,7 +86,22 @@ class HostSetupTests(unittest.TestCase):
             out = b'active\n' if self.active else b'inactive\n'
         if command[-1] == '--capabilities':
             out = json.dumps(self.capabilities).encode()
+        if command[0] == host_setup.DOCKER and command[1:3] == ['image', 'inspect']:
+            found = self.docker_images.get(command[-1])
+            if found is None:
+                return subprocess.CompletedProcess(command, 1, b'', b'Error response from daemon: No such image: ' + command[-1].encode())
+            out = found.encode() + b'\n'
+        if command[0] == host_setup.DOCKER and command[1] == 'load':
+            self.assertEqual(hashlib.sha256(pathlib.Path(command[-1]).read_bytes()).hexdigest(), hashlib.sha256(self.image).hexdigest())
+            self.docker_images[self.image_id] = self.loaded_as
         return subprocess.CompletedProcess(command, 0, out, b'')
+
+    def artifacts(self) -> list[dict]:
+        items = [{'name': 'release', 'kind': 'release', 'sha256': hashlib.sha256(self.archive).hexdigest(), 'size': len(self.archive)}]
+        if self.image:
+            items.append({'name': 'agent-image', 'kind': 'image', 'sha256': hashlib.sha256(self.image).hexdigest(), 'size': len(self.image),
+                'image_id': self.image_id})
+        return items
 
     def start_server(self):
         test = self
@@ -85,19 +110,28 @@ class HostSetupTests(unittest.TestCase):
             def log_message(self, *_args):
                 pass
 
-            def do_GET(self):
-                test.requests.append(self.path)
-                self.send_response(200)
-                self.send_header('Content-Length', str(len(test.archive)))
-                self.end_headers()
-                self.wfile.write(test.archive)
-
             def do_POST(self):
-                json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+                packet = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+                if self.path.endswith('/setup/artifact'):
+                    wanted = packet['payload']
+                    test.requests.append(f'{wanted["name"]}@{wanted["offset"]}')
+                    body = {'release': test.archive, 'agent-image': test.image}[wanted['name']][wanted['offset']:]
+                    self.send_response(206 if wanted['offset'] else 200)
+                    self.send_header('Content-Length', str(len(body)))
+                    if wanted['offset']:
+                        total = wanted['offset'] + len(body)
+                        self.send_header('Content-Range', f'bytes {wanted["offset"]}-{total - 1}/{total}')
+                    self.end_headers()
+                    if test.cut_after is not None and len(body) > test.cut_after:
+                        self.wfile.write(body[:test.cut_after])
+                        test.cut_after = None
+                        self.close_connection = True
+                        self.connection.shutdown(2)
+                        return
+                    self.wfile.write(body)
+                    return
                 package = {'version': 1, 'company_id': 'company-a', 'host_id': 'local-a', 'issued_at': time.time_ns() // 1000000,
-                    'artifacts': [{'name': 'release', 'kind': 'release', 'sha256': hashlib.sha256(test.archive).hexdigest(),
-                        'size': len(test.archive), 'url': test.url + '/artifacts/release'}],
-                    'policy': {'hooks': {}, 'bundles': {}}, **test.package_overrides}
+                    'artifacts': test.artifacts(), 'policy': {'hooks': {}, 'bundles': {}}, **test.package_overrides}
                 proof = self.sign(package)
                 body = stable_json({'package': package, 'signature': proof, 'signer_public_key': base64.b64encode(test.signer).decode()})
                 self.send_response(200)
@@ -161,9 +195,8 @@ class HostSetupTests(unittest.TestCase):
         self.package_overrides = {'host_id': 'other-host'}
         with self.assertRaisesRegex(HostFailure, 'another computer'):
             host_setup.setup(self.identity, self.install_base(), False)
-        self.package_overrides = {'artifacts': [{'name': 'release', 'kind': 'release', 'sha256': 'a' * 64,
-            'size': len(self.archive), 'url': self.url + '/artifacts/release'}]}
-        with self.assertRaisesRegex(HostFailure, 'digest differs'):
+        self.package_overrides = {'artifacts': [{'name': 'release', 'kind': 'release', 'sha256': 'a' * 64, 'size': len(self.archive)}]}
+        with self.assertRaisesRegex(HostFailure, 'no coincide con el SHA-256 firmado'):
             host_setup.setup(self.identity, self.install_base(), False)
         self.assertFalse((self.home / '.config').exists())
 
@@ -232,7 +265,7 @@ class HostSetupTests(unittest.TestCase):
         self.archive = release_tar({'ops/container-runtime/cauce_container_base.py': (runtime / 'cauce_container_base.py').read_bytes(),
             'bundle/index.js': b'1\n'})
         self.package_overrides = {'artifacts': [{'name': 'release', 'kind': 'release', 'sha256': hashlib.sha256(self.archive).hexdigest(),
-            'size': len(self.archive), 'url': self.url + '/artifacts/release'}],
+            'size': len(self.archive)}],
             'policy': {'bundles': {'codex': {'directory': '@release@/bundle', 'digest': digest or real, 'executable': '/x',
                 'executable_sha256': 'a' * 64, 'argv': []}}}}
 
@@ -263,6 +296,65 @@ class HostSetupTests(unittest.TestCase):
         self.assertFalse(self.active)
         self.bundle_package()
         self.assertTrue(host_setup.setup(self.identity, self.install_base(), False)['service_active'])
+
+    def test_release_with_internal_links_extracts_and_escaping_links_are_refused(self):
+        def linked(target: str) -> bytes:
+            buffer = io.BytesIO()
+            with tarfile.open(fileobj=buffer, mode='w') as archive:
+                for name in host_setup.REQUIRED_IN_RELEASE + ('adapter/node_modules/.pnpm/ws/index.js',):
+                    info = tarfile.TarInfo(name)
+                    info.size = 2
+                    archive.addfile(info, io.BytesIO(b'1\n'))
+                link = tarfile.TarInfo('adapter/node_modules/ws')
+                link.type, link.linkname = tarfile.SYMTYPE, target
+                archive.addfile(link)
+            return buffer.getvalue()
+        (self.home / 'inside.tar').write_bytes(linked('.pnpm/ws'))
+        host_setup.extract_release(self.home / 'inside.tar', self.home / 'inside')
+        self.assertEqual((self.home / 'inside/adapter/node_modules/ws/index.js').read_text(), '1\n')
+        for target in ('../../../escape', '/etc'):
+            (self.home / 'outside.tar').write_bytes(linked(target))
+            with self.assertRaisesRegex(HostFailure, 'unsafe entry'):
+                host_setup.extract_release(self.home / 'outside.tar', self.home / 'outside')
+
+    def test_a_cut_download_resumes_from_the_signed_offset(self):
+        self.archive = release_tar({'ops/padding.bin': os.urandom(200_000)})
+        self.cut_after = 70_000
+        self.assertTrue(host_setup.setup(self.identity, self.install_base(), False)['service_active'])
+        self.assertEqual(self.requests, ['release@0', 'release@70000'])
+
+    def test_agent_image_is_downloaded_loaded_and_checked_once(self):
+        self.image = os.urandom(150_000)
+        self.package_overrides = {'policy': {'hooks': {}, 'bundles': {}, 'container_templates': [{'harness_id': 'codex', 'image': self.image_id}]}}
+        dry = host_setup.setup(self.identity, self.install_base(), True)
+        self.assertIn('download and load agent image ' + self.image_id, dry['actions'])
+        self.assertEqual(self.requests, [])
+        receipt = host_setup.setup(self.identity, self.install_base(), False)
+        self.assertEqual((receipt['image_id'], receipt['image_present'], receipt['image_loaded']), (self.image_id, False, True))
+        self.assertEqual(self.requests, ['release@0', 'agent-image@0'])
+        loads = [command for command in self.commands if command[:2] == [host_setup.DOCKER, 'load']]
+        self.assertEqual(len(loads), 1)
+        self.assertFalse(pathlib.Path(loads[0][-1]).exists())
+        self.requests, self.commands = [], []
+        again = host_setup.setup(self.identity, self.install_base(), False)
+        self.assertEqual((again['image_present'], again['image_loaded']), (True, False))
+        self.assertEqual(self.requests, [])
+        self.assertFalse(any(command[:2] == [host_setup.DOCKER, 'load'] for command in self.commands))
+
+    def test_agent_image_of_another_id_or_template_never_starts_the_service(self):
+        self.image = os.urandom(1000)
+        self.package_overrides = {'policy': {'hooks': {}, 'bundles': {}, 'container_templates': [{'harness_id': 'codex', 'image': 'sha256:' + 'f' * 64}]}}
+        with self.assertRaisesRegex(HostFailure, 'no usa la imagen de agentes'):
+            host_setup.setup(self.identity, self.install_base(), False)
+        self.assertEqual(self.requests, [])
+        self.package_overrides = {'policy': {'hooks': {}, 'bundles': {}, 'container_templates': [{'harness_id': 'codex', 'image': self.image_id}]}}
+        self.loaded_as = 'sha256:' + '1' * 64
+        with self.assertRaisesRegex(HostFailure, 'otro almacén'):
+            host_setup.setup(self.identity, self.install_base(), False)
+        self.assertFalse(self.active)
+        self.image_id, self.loaded_as = 'e' * 64, 'e' * 64
+        with self.assertRaisesRegex(HostFailure, 'artifact is invalid'):
+            host_setup.setup(self.identity, self.install_base(), False)
 
     def test_status_reports_executor_ready_only_after_setup(self):
         before = host_setup.status(self.identity, self.install_base())
