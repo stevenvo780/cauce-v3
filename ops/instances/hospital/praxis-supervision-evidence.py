@@ -9,6 +9,7 @@ import os
 import re
 import shlex
 import stat
+import sys
 import uuid
 from pathlib import Path
 
@@ -43,6 +44,7 @@ def acceptance_path(config: dict, state) -> Path | None:
 def owner_conversation_id(state) -> str:
     value = os.environ.get("CAUCE_OWNER_TELEGRAM_CHAT_ID", "")
     if not ID.fullmatch(value):
+        print("falta CAUCE_OWNER_TELEGRAM_CHAT_ID", file=sys.stderr)
         raise state.SupervisionError("owner_conversation_unconfigured")
     return value
 

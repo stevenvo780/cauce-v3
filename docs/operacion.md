@@ -342,6 +342,26 @@ después de la segunda consulta. Por esa razón el reinicio requiere el interrup
 (`ops/guardias/systemd/cauce-v3-medico-monitor.service:13`). No se habilitó el reinicio automático
 ni existe reinyección automática del trabajo en vuelo.
 
+### Guardias: variables obligatorias
+
+Las units de usuario leen `%h/.config/cauce/guardias.env`. Las de sistema leen
+`/etc/cauce-v3/guardias.env`. Ese fichero queda fuera del repositorio. Sin el prefijo `-`,
+systemd no arranca la unit si el fichero no existe. El monitor médico y `cauce-ai-live` llevan
+el prefijo: pueden arrancar sin él. El monitor, si falta el chat, lo anota en su log y en el
+journal y sigue. `cred-guard` y la supervisión de Praxis no lo llevan: la variable es obligatoria.
+
+| Variable | Quién la exige | Significado | Ejemplo ficticio |
+|---|---|---|---|
+| `CAUCE_CRED_GUARD_TARGETS` | `cred-guard.py` | Ruta de un JSON privado con `targets` y `remote_targets` | `/etc/cauce-v3/cred-guard-targets.json` |
+| `CAUCE_OWNER_TELEGRAM_CHAT_ID` | aviso del médico y `praxis-supervision-evidence.py` | Chat del operador. El médico sigue si falta. Praxis rechaza el origen (`owner_conversation_unconfigured`) tras escribir el nombre de la variable. | `1000000001` |
+| `CAUCE_DECISIONES_SMOKE_PKI` | `deploy/decisiones/desplegar.sh` | Directorio de la PKI de humo. Sin ella el despliegue sale 1. | `/etc/cauce-v3/pki/smoke` |
+| `CAUCE_REMOTE_USER` | `cauce` cuando la ruta es `vps` | Usuario remoto. Si falta, esa ruta sale 2 y `cauce flota` omite el VPS. | `ops` |
+
+`CODEX_HOME` no es obligatoria. Si falta, `cauce-ai-live` lo escribe en stderr y usa `~/.codex`.
+
+Las copias ya instaladas (el binario de `~/.local/bin`, las units del host y `/usr/local/sbin`) no
+cambian hasta reinstalar. Editar este árbol no las actualiza.
+
 **Regla de orden con el plano PTY**: los hechos medidos del runtime y el ticket firmado están atados
 a la generación del contenedor, y el pty-agent los mide UNA vez al arrancar. Tras reiniciar un
 adaptador hay que reiniciar su PTY —adaptador primero, PTY después—; si no, la medición queda

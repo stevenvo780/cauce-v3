@@ -12,12 +12,15 @@ ENV_FILE=${CAUCE_DECISIONES_ENV_FILE:-/etc/cauce-v3/decisiones.env}
 REVERT_FILE=${CAUCE_DECISIONES_REVERT_FILE:-/etc/cauce-v3/decisiones.revert}
 DESPLIEGUES=${CAUCE_DECISIONES_DEPLOY_DIR:-/etc/cauce-v3/decisiones.d}
 KEY=${CAUCE_TYPESAFE_JEV_KEY_PATH:-/etc/cauce-v3/secrets/typesafe-jev.key}
-SMOKE_PKI=${CAUCE_DECISIONES_SMOKE_PKI:?falta CAUCE_DECISIONES_SMOKE_PKI}
 PROJECT=cauce-decisiones
 SERVICE_USER=stev
 PORT=8447
 
 die() { printf 'desplegar-decisiones: %s\n' "$*" >&2; exit 1; }
+if [[ -z ${CAUCE_DECISIONES_SMOKE_PKI:-} ]]; then
+  die 'falta CAUCE_DECISIONES_SMOKE_PKI'
+fi
+SMOKE_PKI=$CAUCE_DECISIONES_SMOKE_PKI
 paso() { printf '\n== %s\n' "$*"; }
 valor_de() { [[ -f $2 ]] || return 0; sed -n "s/^$1=//p" "$2" | tail -1; }
 fijar() { if grep -q "^$1=" "$3"; then sed -i "s|^$1=.*|$1=$2|" "$3"; else printf '%s=%s\n' "$1" "$2" >> "$3"; fi; }

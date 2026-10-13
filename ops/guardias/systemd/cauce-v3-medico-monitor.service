@@ -10,6 +10,7 @@ Type=oneshot
 # Contencion 2026-08-06: el libro no correlaciona aun el acuse de agent.response
 # con la entrega original y puede reencolar trabajo ya terminado. Mantener las
 # sondas activas sin publicar reintentos hasta desplegar y verificar esa correlacion.
+EnvironmentFile=-%h/.config/cauce/guardias.env
 ExecStart=%h/.local/bin/cauce-v3-medico-monitor --solo-detectar
 # Las sondas hablan con Telegram y con dos hosts por SSH: una corrida lenta es normal.
 TimeoutStartSec=20min

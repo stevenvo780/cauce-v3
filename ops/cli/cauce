@@ -200,9 +200,17 @@ EOF
 }
 
 usuario_remoto() {
-  local usuario=${CAUCE_REMOTE_USER:-}
-  [[ $usuario =~ ^[a-z_][a-z0-9_-]{0,31}$ ]] || return 1
+  local usuario=${CAUCE_REMOTE_USER-}
+  [[ -n $usuario && $usuario =~ ^[a-z_][a-z0-9_-]{0,31}$ ]] || return 1
   printf '%s\n' "$usuario"
+}
+
+aviso_usuario_remoto() {
+  if [[ -z ${CAUCE_REMOTE_USER-} ]]; then
+    printf 'falta CAUCE_REMOTE_USER\n' >&2
+  else
+    printf 'CAUCE_REMOTE_USER invalido\n' >&2
+  fi
 }
 
 cmd_flota() {
@@ -243,7 +251,8 @@ cmd_flota() {
   if [ -r "$MAPA_HOST" ] && awk '$2=="vps"{f=1} END{exit !f}' "$MAPA_HOST"; then
     printf "\n  %s--- en el VPS (100.64.0.11) ---%s\n" "$c_dim" "$c_reset"
     if ! remote_user=$(usuario_remoto); then
-      printf "  %sCAUCE_REMOTE_USER vacio o invalido: se omite el VPS%s\n" "$c_dim" "$c_reset"
+      aviso_usuario_remoto
+      printf "  %sse omite el VPS%s\n" "$c_dim" "$c_reset"
     elif ! ssh -n -o BatchMode=yes -o ConnectTimeout=10 vps "U=\$(id -u ${remote_user}); H=\$(getent passwd ${remote_user} | cut -d: -f6); sudo -u ${remote_user} XDG_RUNTIME_DIR=/run/user/\$U HOME=\$H \$H/.local/bin/cauce flota" 2>/dev/null | sed -n '/ALIAS/,/entrar:/p' | grep -v 'entrar:'; then
       printf "  %sno pude preguntarle al VPS%s\n" "$c_err" "$c_reset"
     fi
@@ -708,7 +717,7 @@ remoto_cauce() {  # $1=ruta $2=alias, resto=argumentos tal cual
   case "$route" in
     vps)
       destination=vps
-      remote_user=$(usuario_remoto) || { printf 'CAUCE_REMOTE_USER vacio o invalido\n' >&2; return 2; }
+      remote_user=$(usuario_remoto) || { aviso_usuario_remoto; return 2; }
       # shellcheck disable=SC2016
       fixed_script="remote_uid=\$(id -u ${remote_user}) || exit 69; remote_home=\$(getent passwd ${remote_user} | cut -d: -f6) || exit 69; case \"\$remote_home\" in /*) ;; *) exit 69 ;; esac; test -d \"\$remote_home\" && test -x \"\$remote_home/.local/bin/cauce\" || exit 69; cd \"\$remote_home\" || exit 69; exec sudo -u ${remote_user} env HOME=\"\$remote_home\" XDG_RUNTIME_DIR=\"/run/user/\$remote_uid\" \"\$remote_home/.local/bin/cauce\" \"\$@\""
       ;;

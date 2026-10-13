@@ -4,5 +4,6 @@ Documentation=file:%h/.local/bin/cred-guard.py
 
 [Service]
 Type=oneshot
+EnvironmentFile=%h/.config/cauce/guardias.env
 ExecStart=/usr/bin/python3 %h/.local/bin/cred-guard.py --sonda-remota
 TimeoutStartSec=120

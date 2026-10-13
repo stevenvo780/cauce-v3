@@ -3,4 +3,5 @@ Description=Refresca la cuota real por cuenta de la flota y el fichero que leen 
 
 [Service]
 Type=oneshot
+EnvironmentFile=-%h/.config/cauce/guardias.env
 ExecStart=%h/.local/bin/cauce-ai-live --context

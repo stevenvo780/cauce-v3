@@ -5,6 +5,7 @@ After=docker.service
 [Service]
 Type=oneshot
 User=root
+EnvironmentFile=/etc/cauce-v3/guardias.env
 ExecStart=/usr/local/sbin/praxis-supervision --once
 TimeoutStartSec=60
 UMask=0077

@@ -153,7 +153,16 @@ def avisar(texto):
     identity = notice_identity()
     if identity is None:
         return False, "OUT_OF_SCOPE_NOTICE"
+    chat = os.environ.get("CAUCE_OWNER_TELEGRAM_CHAT_ID", "")
+    if not str(chat).isdigit():
+        return False, "falta CAUCE_OWNER_TELEGRAM_CHAT_ID"
     program = PLANTILLA_AVISO.replace("SCOPED_NOTICE_JSON", repr(json.dumps(identity)))
+    program = (
+        "import os\nos.environ['CAUCE_OWNER_TELEGRAM_CHAT_ID'] = "
+        + json.dumps(chat)
+        + "\n"
+        + program
+    )
     rc, out, err = sh("agora", "python3 -", entrada=program.replace(
         "json.load(sys.stdin)", f"json.loads({json.dumps({'texto': texto})!r})"), timeout=60)
     return rc == 0 and "enviado" in out, f"stderr_chars={len(err)}"
@@ -519,3 +528,23 @@ def git_commit(mensaje):
     rc, _, _ = sh("kratos", f"git -C {ESTADO_DIR} -c user.name=cauce-medico "
                             f"-c user.email=medico@cauce.local commit -q -m '{seguro}'", timeout=60)
     return rc == 0
+
+
+def warn_missing_owner_chat():
+    # The entrypoint stays up: a missing chat is an error in the journal and the monitor log.
+    if globals().get("__name__") != "__main__":
+        return
+    chat = os.environ.get("CAUCE_OWNER_TELEGRAM_CHAT_ID", "")
+    if str(chat).isdigit():
+        return
+    message = "falta CAUCE_OWNER_TELEGRAM_CHAT_ID"
+    print(message, file=sys.stderr)
+    try:
+        os.makedirs(ESTADO_DIR, exist_ok=True)
+        with open(BITACORA_LOG, "a", encoding="utf-8") as handle:
+            handle.write(message + "\n")
+    except OSError:
+        pass
+
+
+warn_missing_owner_chat()
