@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, open, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -8,7 +8,7 @@ import { emptyAgentProfile } from '@cauce/protocol';
 import { deliveryHarnesses } from '../src/bin/shared.js';
 import { codexDefinition } from '../src/harnesses/codex.js';
 import { claudeDefinition } from '../src/harnesses/claude.js';
-import { commandPinsFromEnvironment, type CommandPins } from '../src/sdk/command-pins.js';
+import { MAX_PINNED_FILE_BYTES, assertCommandPins, commandPinsFromEnvironment, type CommandPins } from '../src/sdk/command-pins.js';
 import { executionSelection, selectionArguments, selectionForProfile, type ExecutionSelection } from '../src/sdk/execution-selection.js';
 import { DurableStore } from '../src/sdk/durable-store.js';
 import { SpawnCommandRunner } from '../src/sdk/process-runner.js';
@@ -107,6 +107,21 @@ test('a changed executable, conflicting command pin or symlinked parent is rejec
       CAUCE_HARNESS_COMMAND_FILES: JSON.stringify({ [f.command]: 'f'.repeat(64) }) }), /file pin/u);
     await assert.rejects(readFile(f.calls), { code: 'ENOENT' });
   } finally { await f.close(); }
+});
+test('a native provider CLI larger than 256 MiB is pinned by digest; a file beyond the bound is refused unread', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'execution-selection-large-'));
+  try {
+    // Codex 0.160 ships its native CLI as a single binary of about 290 MB; a sparse file of that size hashes as zeros.
+    const native = join(directory, 'codex'); const size = 300 * 1024 * 1024;
+    const file = await open(native, 'w', 0o700); try { await file.truncate(size); } finally { await file.close(); }
+    const digest = createHash('sha256'); const zeros = Buffer.alloc(1024 * 1024);
+    for (let written = 0; written < size; written += zeros.length) digest.update(zeros);
+    const sha256 = digest.digest('hex');
+    assert.equal(await assertCommandPins(native, { command: native, sha256, files: {} }), sha256);
+    const runaway = join(directory, 'runaway');
+    const huge = await open(runaway, 'w', 0o700); try { await huge.truncate(MAX_PINNED_FILE_BYTES + 1); } finally { await huge.close(); }
+    await assert.rejects(assertCommandPins(runaway, { command: runaway, sha256, files: {} }), /exceeds its limit/u);
+  } finally { await rm(directory, { recursive: true, force: true }); }
 });
 test('shared TUI uses the same explicit arguments and refuses a prior model or executable instead of relabeling it', async () => {
   const selected = { modelId: 'test/model', reasoningEffort: 'xhigh' }; const f = await fixture('codex', selected);

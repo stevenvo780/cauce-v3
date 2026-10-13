@@ -5,6 +5,8 @@ import { isAbsolute, normalize } from 'node:path';
 
 export interface CommandPins { readonly command: string; readonly sha256: string; readonly files: Readonly<Record<string, string>> }
 const HASH = /^[a-f0-9]{64}$/u;
+/** Native provider CLIs ship as one large binary (Codex 0.160 is about 290 MB, Claude Code about 260 MB); the bound only stops hashing a runaway file. */
+export const MAX_PINNED_FILE_BYTES = 1024 * 1024 * 1024;
 function checkedPath(value: unknown): string {
   if (typeof value !== 'string' || !isAbsolute(value) || normalize(value) !== value || /[\p{Cc}]/u.test(value)) throw new Error('invalid pinned command path');
   return value;
@@ -39,13 +41,14 @@ async function fileDigest(filename: string): Promise<string> {
     const file = await open(`/proc/self/fd/${String(directory.fd)}/${name}`, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
     try {
       const stat = await file.stat();
-      if (!stat.isFile() || stat.nlink !== 1 || ![0, process.geteuid?.()].includes(stat.uid) || (stat.mode & 0o022) !== 0 || stat.size > 268_435_456) {
+      if (!stat.isFile() || stat.nlink !== 1 || ![0, process.geteuid?.()].includes(stat.uid) || (stat.mode & 0o022) !== 0) {
         throw new Error('pinned harness file ownership or mode changed');
       }
+      if (stat.size > MAX_PINNED_FILE_BYTES) throw new Error('pinned harness file exceeds its limit');
       const hash = createHash('sha256'); const buffer = Buffer.alloc(65_536); let total = 0;
       for (;;) {
         const read = await file.read(buffer, 0, buffer.length, null); if (read.bytesRead === 0) break;
-        total += read.bytesRead; if (total > 268_435_456) throw new Error('pinned harness file exceeds its limit');
+        total += read.bytesRead; if (total > MAX_PINNED_FILE_BYTES) throw new Error('pinned harness file exceeds its limit');
         hash.update(buffer.subarray(0, read.bytesRead));
       }
       return hash.digest('hex');
