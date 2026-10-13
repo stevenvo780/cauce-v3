@@ -8,7 +8,7 @@ Sustituye al censo del 11-oct (GPT), que medía tamaños pero no fijaba ubicaci�
 
 ### VPS principal (`<host-prod>`, 16 núcleos)
 
-Recibo «antes»: `.delegados/v4/recibos/vps-antes-20261012.json`, generado por `ops/scripts/measure-vps-footprint.sh` (§6) a las **21:51:35 UTC**. Sello interno `sha256` `04e2bdac6da521df322f2cb787317ab582f3c1c7011d45528697f7c5011087a5`; sha256 del fichero `31454938df12e3abcbf7ab2fbd6b5465b778591f6e0e313c7a838fe84360e93f`.
+Recibo del 12-oct: `.delegados/v4/recibos/vps-antes-20261012.json`, generado por `ops/scripts/measure-vps-footprint.sh` a las **21:51:35 UTC**. Sello interno `sha256` `04e2bdac6da521df322f2cb787317ab582f3c1c7011d45528697f7c5011087a5`; sha256 del fichero `31454938df12e3abcbf7ab2fbd6b5465b778591f6e0e313c7a838fe84360e93f`. Es la referencia histórica de RAM, swap, disco y RSS. El «antes» del corte se vuelve a medir con el script único del §6, que añade los tamaños por alias con un alcance fijo, para que el «después» use el mismo formato y el mismo alcance.
 
 | Medida | Valor |
 |---|---|
@@ -215,7 +215,7 @@ docker exec -u 1000:1000 praxis-muse-operador sh -c \
 - **Balance de server2**: hoy usa 12,1 GB y tiene 11,6 GiB disponibles. Con los cuatro agentes (~2,2 GiB medidos) quedaría con **~9,5 GiB disponibles** y ~7 GiB si Minecraft llega a su tope de 12 GiB. Los límites sumarían 27 GiB sobre 22,8 físicos: son topes, no reservas, pero por eso Praxis no se apila en server2 salvo necesidad. Disco: imágenes (~6 GB si Gaia y Hades comparten capas) y datos (Gaia ~0,9 GB, Hades ~2,3 GB, Argos ~3–4 GB seleccionados, Hegel 36 MB + repos) caben de sobra en 149,8 GB.
 - **server1**: reserva y destino preferido de Praxis (278 GB libres, 11,3 GiB disponibles), pero **no tiene Docker**: instalarlo es una decisión del dueño. **server3** se descarta: 7,1 GiB de RAM con la mitad ocupada por los navegadores `nav-*`.
 - **Cómo es el overlay V3 (patrón Salva)**: en el repo, `ops/flota-fisica.json` lleva `placement.<alias> = {"dockerHost": "server2", "systemdUser": "server"}` (hoy solo Salva; Kant y Astra solo `systemdUser`). Se regenera con `ops/scripts/regenerate-fleet.sh` (pasa a `ops/container-aliases.json`) y se valida con `ops/scripts/validate.sh`. `container-alias-query.py --route` resuelve `ssh:server@server2` para el CLI. En server2, como `server` (UID 1000, linger), se instalan: `~/.config/systemd/user/cauce-v3-container-<alias>.service` con `CAUCE_CONTAINER_OPS_ROOT=%h/.local/share/cauce-v3-release-tools/<sha>/ops`, `CONFIG_ROOT=%h/.config/cauce-v3/container-aliases` (`<alias>.env`), `PKI_ROOT=%h/.config/cauce-v3/container-pki` y `BUNDLE_ROOT=%h/.local/share/cauce-v3-adapter`; el *drop-in* `90-migration-prepared.conf` con `ConditionPathExists=%h/.config/cauce-v3/<alias>-migration.ready` como interruptor del corte; `cauce-v3-pty@<alias>.service`. El repo define `cauce-cred-guard-kratos.timer`, que publica la medición de credenciales de Kratos a la VPS; no define un timer `cauce-cred-guard-server2.timer`. Salva corre hoy así (`cauce-migration/ws-isa:20260908`, 6 GiB, 2 CPU). Detalle: `docs/v3.5-despliegue-flota.md`.
-- **Orden canario**: **Gaia → Hades → Argos → Hegel → Praxis**, uno cada vez. Antes de cada corte: copia cifrada a kratos y Drive con restauración de prueba; ensayo de reversión con Gaia; origen detenido antes del primer refresco de credenciales en destino. Se acepta por alias con: nonce respondido por Cauce desde server2, terminal por CLI y web, cuota de su cuenta, contexto aplicado (versión y digest), host nuevo en la UI, edición de contexto N+1 desde la UI y detener/arrancar aplicado en el host nuevo. En Argos, además, que inspeccione la VPS desde server2. El origen se libera tras 7 días sin incidentes y se mide «después» con el mismo script.
+- **Orden canario**: **Gaia → Hades → Argos → Hegel → Praxis**, uno cada vez. Antes de cada corte: medición «antes» (§6.1) y copia con manifiesto y restauración de prueba (§6.3), cifrada a kratos y Drive; ensayo de reversión con Gaia; origen detenido antes del primer refresco de credenciales en destino. Se acepta por alias con: nonce respondido por Cauce desde server2, terminal por CLI y web, cuota de su cuenta, contexto aplicado (versión y digest), host nuevo en la UI, edición de contexto N+1 desde la UI y detener/arrancar aplicado en el host nuevo. En Argos, además, que inspeccione la VPS desde server2. El origen se libera tras 7 días sin incidentes y se mide «después» con el mismo script y el mismo alcance (§6.1, `--alcance-de`).
 - **Normalización durante el traslado** (manifiesto ruta vieja → nueva con sha256):
   - **Gaia**: clonar `gaia-clawd` en el mismo HEAD → `space/projects/gaia-clawd`; `AGENTS.md`, `IDENTITY.md`, `SOUL.md`, `USER.md`, `TOOLS.md`, `HEARTBEAT.md` y `00-CONTEXTO-ACTUAL.md` → `space/context` como primera versión; catálogo y documentos de negocio → `space/data`; sin `.bak`.
   - **Hades**: `~/.grok/AGENTS.md` → `space/context`; `xenia` por Git → `space/projects/xenia`, con sus JSONL de `data/` por manifiesto; los 440 ficheros sueltos → `space/data/envios` y `space/data/notas`; fuera `__pycache__` y `*.hdr`.
@@ -235,20 +235,89 @@ docker exec -u 1000:1000 praxis-muse-operador sh -c \
 9. **Código del hospital fuera de V4**: hay que portar `socrates/hospital-supervision-1699` (§3 de las órdenes) antes de mover un agente de Praxis. El canal WhatsApp de ventas exige revincular o copiar su estado en privado.
 10. **Pendientes de solo lectura no resolubles**: titulares de Claude (Gaia), Grok (Hades) y Muse (Hegel, Praxis) sin identificar; correo de León ausente; Kant sin consultar (escribirle por Cauce no es solo lectura); `cauce-v3-profile-expectation@*` en fallo en la VPS y en server2.
 
-## 6. Script de medición antes/después
+## 6. Paquete previo a cada corte: medición, copia y terminal
 
-`ops/scripts/measure-vps-footprint.sh` mide en solo lectura un host Docker y los alias indicados, y emite un JSON sellado con sha256 (sobre el JSON canónico sin el campo `sha256`):
+Todo sale de un único punto de entrada, `ops/scripts/v4-medicion-migracion.sh`. La medición se ejecuta en el host medido, en local o enviada por ssh. La copia se ejecuta donde viven los datos. Nada de esto detiene, reinicia ni modifica el agente. La ejecución del corte (canario Gaia → Hades → Argos → Hegel) es del dueño y del orquestador.
+
+### 6.1 Medición antes/después con un único alcance
 
 ```sh
-ops/scripts/measure-vps-footprint.sh --ssh <usuario>@<host-prod> --label antes \
-  --out .delegados/v4/recibos/vps-antes-20261012.json \
-  'gaia=agv2-miguel-finca-oc:index\.js gateway' 'hades=agv2-steven-hades-oc' \
-  'argos=ctrl-infra:index\.js gateway' 'hegel=ws-humanizar'
-ops/scripts/measure-vps-footprint.sh --verify .delegados/v4/recibos/vps-antes-20261012.json
-ops/scripts/measure-vps-footprint.sh --compare <antes.json> <despues.json>
+# «antes», en la VPS y antes del canario
+ops/scripts/v4-medicion-migracion.sh medir --ssh <usuario>@<host-prod> --label antes \
+  --out .delegados/v4/recibos/vps-antes-<fecha>.json gaia hades argos hegel
+# «después», tras el canario, con el alcance copiado del «antes»
+ops/scripts/v4-medicion-migracion.sh medir --ssh <usuario>@<host-prod> --label despues \
+  --alcance-de .delegados/v4/recibos/vps-antes-<fecha>.json --out .delegados/v4/recibos/vps-despues-<fecha>.json
+ops/scripts/v4-medicion-migracion.sh verificar <recibo.json>
+ops/scripts/v4-medicion-migracion.sh comparar <antes.json> <despues.json>
 ```
 
-- Cada argumento es `ALIAS=CONTENEDOR[:REGEX]`. El RSS de un alias es la suma del árbol de procesos que cuelga del adaptador (`--alias <alias>`), del agente PTY (`cauce-pty-bundle-<alias>.json`), del panel tmux `cauce-<alias>` y de los procesos que casen con la regex opcional (el gateway de openclaw).
-- Recoge `free -b`, swap, `df -B1 /`, carga, `docker stats --no-stream`, `docker inspect --size` (imagen, capa escribible, límites, montajes) y el tamaño de la imagen.
-- Las líneas de comando solo se usan en memoria en el host medido: el recibo lleva conteos y sumas, nunca argumentos ni entorno.
-- `--out` no sobrescribe un recibo existente; `--compare` verifica los dos sellos y da la diferencia de RAM disponible y usada, swap, disco, RSS por alias y memoria por contenedor.
+- **Host**: `free -b`, swap, `df -B1 /`, carga, `docker stats --no-stream` y `docker inspect --size` (imagen, capa escribible, límites, montajes). También la identidad física observada: hostname, huella de `/etc/machine-id` (16 hex) y nombre del demonio Docker.
+- **RSS por proceso**: es la suma del árbol que cuelga del adaptador (`--alias <alias>`), del agente PTY, del panel tmux `cauce-<alias>` y, en openclaw, del gateway. Se desglosa por ejecutable (`comm`). Las líneas de comando solo se usan en memoria en el host medido; el recibo nunca lleva argumentos ni entorno.
+- **Alcance único de tamaños**: se deriva de `ops/container-aliases.json` y va dentro del recibo con su propio `scopeSha256`. Por alias incluye:
+  - `estado` (`stateDirectory`), `configuracion` (`<home>/.local/share/cauce-v3/config/<alias>`, el login y el perfil del arnés) y `espacio` (`workspace`, si existe);
+  - todos los montajes del contenedor.
+
+  Un montaje es **propio** si el contenedor solo sirve a ese alias y ningún otro contenedor monta el mismo origen, un ancestro o un descendiente. Si no, es **compartido**. `ownBytes` suma los montajes propios y las rutas del alias que no caen dentro de ellos (capa escribible o montaje compartido), sin contar dos veces una ruta anidada. `sharedBytes` suma los compartidos: en Hegel, todo `ws-humanizar`, `/workspace` incluido. Todo se mide con `du --apparent-size` dentro del contenedor (solo metadatos, sin leer contenido), excluye los montajes anidados y mide una sola vez el origen montado por varios contenedores. El alcance de los cuatro sale con `scopeSha256` `633eba320a634271fc5e9a0e578f46bc6a872a1e24b385212261c1e99fa8a422`.
+- **Reconciliación**: las cifras «Gaia 3 MB, Hades 498 MB, Argos 52 MB y Hegel 30 KB propios» no tienen recibo ni alcance escrito, y no cuadran con el inventario del §2 (Gaia monta 105 MB + 786 MB; Hades, 2,29 GB). Quedan sustituidas por `aliases.<alias>.ownBytes` y `sharedBytes` del recibo «antes». La capa escribible del contenedor va aparte (`containers.<c>.writableBytes`).
+- **Comparación**: `comparar` exige los dos sellos y el mismo `scopeSha256`. Da la diferencia de RAM disponible y usada, swap, disco y memoria y capa por contenedor, y por alias la de RSS, `ownBytes` y `sharedBytes`. Un alias que ya no corre en el host cuenta como 0 allí. El disco que de verdad libera el origen, que se conserva 7 días, lo da `diskUsed`.
+- `--out` no sobrescribe un recibo y lo crea con permisos 0600.
+
+### 6.2 Precedente de Salva en server2 (`dockerHost`)
+
+```sh
+ops/scripts/v4-medicion-migracion.sh medir --ruta-declarada --label precedente-salva \
+  --out .delegados/v4/recibos/precedente-salva-<fecha>.json salva
+```
+
+`--ruta-declarada` no elige el host: mide por ssh justo la ruta que declara la configuración (`placement.salva.dockerHost` → `ssh:server@server2`). El recibo lleva `correlation.salva` con:
+
+- `declaredRoute`, `measuredVia` y `routeMatches`;
+- si `ws-isa` corre y si hay adaptador o panel de `salva`;
+- `correlated`, más la identidad física observada en `host`.
+
+Con `correlated: true` el precedente queda probado en solo lectura.
+
+### 6.3 Copia recuperable y restauración de prueba
+
+```sh
+# en el host de origen, con el agente detenido para el corte
+ops/scripts/v4-medicion-migracion.sh copiar --alias gaia \
+  --origen clawd=<home-del-agente>/clawd --origen openclaw=<home-del-agente>/.openclaw --destino <copia-gaia>
+ops/scripts/v4-medicion-migracion.sh comprobar-copia <copia-gaia>
+ops/scripts/v4-medicion-migracion.sh restaurar <copia-gaia> --recibo <restauracion-prueba.json>
+# traslado con normalización al espacio de destino
+ops/scripts/v4-medicion-migracion.sh restaurar <copia-gaia> --destino <espacio> --propietario <uid>:<gid> \
+  --mapa clawd=projects/gaia-clawd --mapa openclaw=data/openclaw --omitir '*.bak*' \
+  --duplicar clawd/AGENTS.md=context/AGENTS.md --recibo <restauracion-gaia.json>
+```
+
+- **Proyectos por Git**: cada repositorio (también los anidados) viaja como bundle con todas las refs y el HEAD. El manifiesto guarda el HEAD, la rama y los remotos sin credenciales; los remotos que ejecutan comandos (`ext::`) se descartan. Lo modificado, lo no seguido y lo ignorado viaja como datos. Lo seguido que falta en disco queda como `deleted`.
+- **Datos con manifiesto**: cada fichero lleva ruta, modo, tamaño y sha256. El almacén es direccionable por contenido y el manifiesto va sellado con sha256.
+- **Omisiones con motivo**, sin leer el contenido:
+  - por nombre: `auth`, `session`, `token`, `profile` y `credential` (`.ssh`, `.env`, claves, `*.hdr`, etc.); los nombres se normalizan con NFKC antes de compararlos;
+  - `regenerable`: `node_modules`, `__pycache__`, cachés;
+  - `special`: sockets y FIFOs;
+  - `symlink-outside`: enlaces con destino absoluto o fuera del árbol.
+
+  Además, `sensitive-content` deja fuera cualquier otro fichero cuyo contenido lleve material de credenciales: claves privadas, tokens conocidos, JWT, userinfo en una URL o asignaciones de secretos. Así se cubre también un enlace duro con nombre inocente. Lo ya commiteado viaja en el bundle igual que está en el remoto y queda listado en `trackedSensitive`. Las credenciales de cada alias se trasladan en privado por decisión del dueño (§3), nunca por esta copia.
+- **Seguridad del recorrido**: se recorre por descriptores con `O_NOFOLLOW`, se verifican dispositivo, inodo y tipo, y se hashea y copia desde el mismo descriptor. Si un fichero cambia o se sustituye por un enlace a mitad de la copia, la copia aborta: hay que detener el agente y repetirla.
+- **Restauración**: valida el manifiesto entero antes de escribir y exige un destino vacío y propio que no sea un enlace. No escribe a través de enlaces, quita setuid, setgid, sticky y la escritura global, y como root exige `--propietario`. Sin `--destino` restaura en un temporal y lo borra al terminar. El recibo lista cada ruta vieja → nueva con su sha256, los HEAD comprobados, lo excluido por el layout y los problemas; `verified: true` significa que el árbol restaurado coincide con el manifiesto.
+- La copia es un directorio 0700. Cifrarla y llevarla a kratos y a Drive corresponde a la canalización de copias existente.
+
+### 6.4 Terminal por CLI con un agente real
+
+`ops/tests/test-cauce-cli-dynamic.py` incluye un recorrido real con un contenedor desechable y tmux real en el host local:
+
+1. `cauce <alias> ver` muestra la sesión nominal `cauce-<alias>:agente`.
+2. `cauce <alias>` entra en un pty real, ve la marca de la sesión y sale con Ctrl-b d (exit 0).
+3. `on` y `off` se rechazan sin reiniciar el runtime.
+4. No quedan clientes tmux, procesos, contenedores ni imágenes.
+
+Sin Docker se salta, salvo con `CAUCE_REQUIRE_REAL_DOCKER=1`. Con un agente ya migrado, el frente de migración repite el mismo conductor contra el CLI instalado:
+
+```sh
+python3 ops/tests/test-cauce-cli-dynamic.py recorrido hades   # o hegel; Gaia y Argos (openclaw) usan la consola
+```
+
+Imprime `{"alias", "exit", "sawSession", "detached", "seconds"}` y sale con 0 solo si entró, vio `cauce-<alias>` y salió desacoplado.
