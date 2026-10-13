@@ -4,16 +4,9 @@ import { useApi } from '../../api/context';
 import { useResource } from '../../api/use-resource';
 import { Button, Notice } from '../../components/kit';
 import { Time } from '../../components/ui';
+import { applicationNotice, contextRequestMessage } from './context-version-messages';
 
 const ORIGEN: Record<string, string> = { ui: 'Consola', cli: 'CLI', native: 'Nativo (en el espacio)', restore: 'Restauración', profile: 'Perfil', directive: 'Directiva' };
-const NATIVE_APPLY_ERRORS: Record<string, string> = {
-  native_context_governed_path: 'El agente intentó cambiar archivos gobernados desde su espacio; solo puede editar context/notes/. Nada de esa edición se guardó.',
-  native_context_secret_detected: 'La edición del agente en su espacio se rechazó porque el contenido parece un secreto.',
-  native_context_too_large: 'La edición del agente en su espacio se rechazó porque supera el tamaño máximo del contexto.',
-  native_context_harness_limit: 'La edición del agente en su espacio se rechazó porque supera el límite de documento de su harness.',
-  native_context_unsafe_text: 'La edición del agente en su espacio se rechazó porque el texto no es válido.',
-  native_context_invalid_files: 'La edición del agente en su espacio se rechazó porque los archivos no son válidos.',
-};
 
 export function ContextVersionsPanel({ tenantId, alias, canWrite }: { tenantId: string; alias: string; canWrite: boolean }) {
   const api = useApi();
@@ -38,6 +31,8 @@ export function ContextVersionsPanel({ tenantId, alias, canWrite }: { tenantId: 
   const snapshot = context.data;
   const files = draft?.files ?? snapshot?.files ?? [];
   const current = files.find(file => file.path === selected) ?? files.at(0);
+  const appliedNotice = snapshot?.application.last_error ? applicationNotice(snapshot.application.last_error) : undefined;
+  const applicationState = snapshot?.application.state === 'error' && appliedNotice?.pending ? 'pending' : snapshot?.application.state;
   const writable = canWrite && !!snapshot && !context.error && !context.loading && !busy;
   async function operation(action: () => Promise<unknown>, message: string, discard = false) {
     if (busy) return;
@@ -47,9 +42,9 @@ export function ContextVersionsPanel({ tenantId, alias, canWrite }: { tenantId: 
       if (discard) { setDraft(undefined); setRestoring(undefined); setOlder(undefined); setDiff(undefined); }
       const reread = await context.reload();
       const versions = await history.reload();
-      if (reread.error || versions.error) throw new Error('La operación respondió, pero su estado no se pudo releer. Reintenta la consulta.');
-      setNotice(message);
-    } catch (cause) { setError(cause instanceof Error ? cause.message : 'No se confirmó la operación del contexto.'); }
+      if (reread.error || versions.error) setError('La operación respondió, pero su estado no se pudo releer. Reintenta la consulta.');
+      else setNotice(message);
+    } catch (cause) { setError(contextRequestMessage(cause, 'No se confirmó la operación del contexto.')); }
     finally { setBusy(false); }
   }
   function updateFiles(next: VersionedContextFile[]) { if (snapshot) setDraft({ version: draft?.version ?? snapshot.version, files: next }); }
@@ -57,7 +52,7 @@ export function ContextVersionsPanel({ tenantId, alias, canWrite }: { tenantId: 
     if (!snapshot || busy) return;
     setBusy(true); setError('');
     try { setDiff(await api.getContextVersionDiff(tenantId, alias, version, snapshot.version)); }
-    catch (cause) { setError(cause instanceof Error ? cause.message : 'No se pudieron leer las diferencias.'); }
+    catch (cause) { setError(contextRequestMessage(cause, 'No se pudieron leer las diferencias.')); }
     finally { setBusy(false); }
   }
   async function loadOlder() {
@@ -65,26 +60,26 @@ export function ContextVersionsPanel({ tenantId, alias, canWrite }: { tenantId: 
     if (cursor == null || busy) return;
     setBusy(true); setError('');
     try { const next = await api.getContextVersions(tenantId, alias, cursor); setOlder(previous => ({ ...next, entries: [...previous?.entries ?? [], ...next.entries] })); }
-    catch (cause) { setError(cause instanceof Error ? cause.message : 'No se pudieron leer más versiones.'); }
+    catch (cause) { setError(contextRequestMessage(cause, 'No se pudieron leer más versiones.')); }
     finally { setBusy(false); }
   }
   return <section aria-label="Versiones de contexto" className="grid gap-4">
     <div className="flex flex-wrap justify-between gap-2"><h3 className="m-0">Contexto versionado</h3>
       <Button disabled={busy || context.loading || !!draft} onClick={() => { void operation(async () => undefined, 'Estado releído.'); }}>Releer versiones</Button></div>
     {context.loading && !snapshot ? <p role="status">Leyendo el contexto…</p> : null}
-    {context.error || history.error || error ? <Notice tone="danger" role="alert">{error || (context.error?.message ?? history.error?.message)}</Notice> : null}
+    {context.error || history.error || error ? <Notice tone="danger" role="alert">{error || contextRequestMessage(context.error ?? history.error, 'No se pudo leer el contexto. Reintenta la consulta.')}</Notice> : null}
     {notice ? <Notice tone="info" role="status">{notice}</Notice> : null}
     {snapshot ? <>
       <dl className="m-0 grid grid-cols-2 gap-2 text-sm"><div><dt>Guardado</dt><dd>{snapshot.version}</dd></div>
         <div><dt>Usado por el agente</dt><dd>{snapshot.applied_version ?? 'Sin aplicación verificada'}</dd></div>
-        <div><dt>Aplicación</dt><dd>{snapshot.application.state === 'applied' ? 'Aplicada' : snapshot.application.state === 'error' ? 'Error de aplicación' : 'Aplicación pendiente'}</dd></div>
+        <div><dt>Aplicación</dt><dd>{applicationState === 'applied' ? 'Aplicada' : applicationState === 'error' ? 'Error de aplicación' : 'Aplicación pendiente'}</dd></div>
         <div><dt>Versión deseada</dt><dd>{snapshot.desired_version}</dd></div><div><dt>GitHub</dt><dd>{snapshot.sync.state === 'synced' ? 'Sincronizado' : snapshot.sync.state === 'error' ? 'Error de sincronización' : 'Pendiente'}</dd></div></dl>
       {snapshot.desired_version !== snapshot.applied_version ? <Notice tone="warn">El agente aún no acredita la versión {snapshot.desired_version}. Guardar una versión no demuestra que ya la esté usando.</Notice> : null}
       {snapshot.sync.last_error ? <Notice tone="warn">{snapshot.sync.last_error}</Notice> : null}
       {snapshot.application.last_error === 'native_context_conflict' ? <Notice tone="danger" role="alert">
         Conflicto de ingesta nativa: el agente editó su contexto dentro del espacio sobre una versión anterior y esta ya había avanzado. No se perdió nada: su edición quedó apartada en el espacio como copia en conflicto y sigue trabajando con la versión del servidor.
         <div className="mt-2"><Button size="sm" disabled={!writable || !!draft} onClick={() => { setDraft({ version: snapshot.version, files: snapshot.files }); setNotice('Borrador creado desde la versión actual. Incorpora el contenido acordado con el agente y guarda una nueva versión; la adoptará en su próximo turno.'); }}>Resolver desde esta ficha</Button></div>
-      </Notice> : snapshot.application.last_error ? <Notice tone="danger">{NATIVE_APPLY_ERRORS[snapshot.application.last_error] ?? snapshot.application.last_error}</Notice> : null}
+      </Notice> : appliedNotice ? <Notice tone={appliedNotice.pending ? 'warn' : 'danger'}>{appliedNotice.message}</Notice> : null}
       {snapshot.sync.git_commit ? <p className="m-0 text-xs break-all">Commit: <code>{snapshot.sync.git_commit}</code>{snapshot.sync.pushed_at ? <> · publicado <Time value={snapshot.sync.pushed_at} /></> : null}</p> : null}
       <div className="flex flex-wrap gap-2"><Button disabled={!writable || !!draft} onClick={() => { void operation(() => api.applyVersionedContext(tenantId, alias), 'Aplicación solicitada. El estado usado por el agente se muestra arriba.'); }}>Aplicar al agente</Button>
         <Button disabled={!writable || !!draft} onClick={() => { void operation(() => api.retryContextSync(tenantId, alias), 'Sincronización solicitada.'); }}>Reintentar sincronización</Button></div>

@@ -70,3 +70,24 @@ it('un conflicto de ingesta nativa se explica en español y se resuelve creando 
   expect(await screen.findByText(/Borrador sin guardar, basado en la versión 2/u)).toBeVisible();
   expect(screen.getByRole('button', { name: 'Guardar nueva versión' })).toBeEnabled();
 });
+it.each([
+  ['context_runtime_unsupported', /adaptador sin contexto versionado: actualiza su paquete/u, 'Error de aplicación'],
+  ['context_runtime_attempts_exhausted', /Se agotaron los reintentos/u, 'Error de aplicación'],
+  ['context_version_unreadable', /No se pudo leer la versión guardada/u, 'Error de aplicación'],
+  ['context_runtime_offline', /desconectado: la versión se aplicará cuando vuelva/u, 'Aplicación pendiente'],
+  ['context_runtime_verification_failed', /próximo turno/u, 'Aplicación pendiente'],
+])('traduce %s a español y sólo lo marca como error si exige acción', async (code, text, state) => {
+  handlers(() => ({ ...snapshot(), application: { state: 'error', last_error: code } }));
+  renderWithApi(<ContextVersionsPanel tenantId="One" alias="worker" canWrite />);
+  expect(await screen.findByText(text)).toBeVisible();
+  expect(screen.queryByText(code)).not.toBeInTheDocument();
+  expect(screen.getByText(state)).toBeVisible();
+});
+it('un error del servidor se muestra por código, no con su mensaje en inglés', async () => {
+  handlers(snapshot);
+  server.use(http.post(base + '/apply', () => HttpResponse.json({ error: 'context_runtime_unavailable', message: 'runtime sink missing' }, { status: 503 })));
+  const user = userEvent.setup(); renderWithApi(<ContextVersionsPanel tenantId="One" alias="worker" canWrite />);
+  await user.click(await screen.findByRole('button', { name: 'Aplicar al agente' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent('no está disponible');
+  expect(screen.queryByText(/runtime sink missing/u)).not.toBeInTheDocument();
+});
