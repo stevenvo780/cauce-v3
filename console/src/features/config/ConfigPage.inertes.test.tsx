@@ -175,7 +175,6 @@ describe('la tabla de cómo funciona cada arnés de verdad', () => {
 
     const panel = panelDe(/qué lee cada arnés/i);
     expect(within(panel).getByText(/CLAUDE\.md/)).toBeInTheDocument();
-    // Codex, OpenClaw, Grok, Muse and Hermes read AGENTS.md since 0b6bc056 added Grok and Muse to the catalog.
     expect(within(panel).getAllByText(/AGENTS\.md/)).toHaveLength(5);
     expect(within(panel).getAllByText(/openclaw\.json/)).toHaveLength(2);
     expect(within(panel).getByText(/perfil canónico por lote no declara soporte para Hermes/i))
