@@ -130,7 +130,6 @@ export interface CancelDelivery {
 
 export type HeartbeatFrame = Extract<WsInbound, { type: 'heartbeat' }>;
 
-/** Correlated receipt for one exact durable ACK event. */
 interface AckResultFrame {
   readonly type: 'ack_result';
   readonly event_id: string;
@@ -328,7 +327,6 @@ export interface CommandRunner {
 }
 
 export interface SafeRunnerLog {
-  /** Operational event from the process runner. */
   readonly event: 'spawn' | 'exit' | 'terminate' | 'orphaned_pipes';
   readonly harness: HarnessId;
   readonly exitCode?: number | null;

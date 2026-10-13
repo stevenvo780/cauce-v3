@@ -46,6 +46,7 @@ import {
 import { inlineWithoutSecrets } from "./engine/secret-guard.js";
 import type { SealedSecretGateway, TurnInput, TurnInputDeps } from "./engine/turn-cleanup.js";
 import { materializeTurnInput, releaseTurn } from "./engine/turn-cleanup.js";
+import { commitExecutionIntent, persistClaimRenewal, type ExecutionIntentDeps } from "./engine/execution-intent.js";
 import { runSystemGateProbe } from "./engine/system-gate-probe.js";
 import { isConversationStatusRequest, runConversationStatus } from "./engine/conversation-status.js";
 import { PRAXIS_SUPERVISION_NOTICE_MESSAGE_TYPE, runPraxisSupervisionNotice } from "./engine/praxis-supervision-notice.js";
@@ -500,7 +501,8 @@ export class AdapterEngine {
             // The adapter calls this after another disk preflight, then revalidates once more
             // before its runner. This operation proves ownership and marks the point of no return.
             try {
-              await this.commitExecutionIntent(
+              await commitExecutionIntent(
+                this.intentDeps(),
                 started.record,
                 controller.signal,
                 this.claimWatchdogMs ?? executionBudget.claimWatchdogMs,
@@ -680,75 +682,15 @@ export class AdapterEngine {
     phase: "accepted" | "started" = "started",
     options: { readonly executionStarted?: boolean } = {},
   ): Promise<void> {
-    const event = await this.persistClaimRenewal(record, phase, options);
+    const event = await persistClaimRenewal(this.intentDeps(), record, phase, options);
     await this.publishEvent(event).catch(() => undefined);
   }
 
-  private async commitExecutionIntent(
-    record: InboxRecord,
-    signal: AbortSignal,
-    watchdogMs: number,
-  ): Promise<void> {
-    let event: DeliveryEvent;
-    try {
-      event = await this.persistClaimRenewal(record, "started", { executionStarted: true });
-    } catch {
-      throw new AdapterError(
-        "EXECUTION_INTENT_PERSISTENCE_FAILED",
-        "Durable execution intent could not be persisted before harness invocation",
-        true,
-      );
-    }
-    if (this.publishExecutionIntent === undefined) {
-      await this.publishEvent(event).catch(() => undefined);
-      return;
-    }
-    const monitor = this.claimMonitors.get(record.delivery_id);
-    const ownershipLeftMs = monitor?.attempt === record.attempt && monitor.claimToken === record.claim_token
-      ? monitor.expiresAt() - this.clock.now().getTime()
-      : Number.POSITIVE_INFINITY;
-    const beforeWatchdogFencesMs = ownershipLeftMs - Math.ceil(watchdogMs / 10);
-    const budgetMs = Math.min(
-      Math.max(100, Math.min(30_000, Math.floor(watchdogMs / 2))),
-      beforeWatchdogFencesMs,
-    );
-    if (budgetMs <= 0) {
-      throw new AdapterError(
-        "EXECUTION_INTENT_CONFIRMATION_FAILED",
-        "Persisting the execution intent consumed the ownership left before the claim watchdog",
-        true,
-      );
-    }
-    await this.publishExecutionIntent(event, signal, budgetMs);
-  }
-
-  private async persistClaimRenewal(
-    record: InboxRecord,
-    phase: "accepted" | "started",
-    options: { readonly executionStarted?: boolean },
-  ): Promise<DeliveryEvent> {
-    const event: DeliveryEvent = {
-      event_id: randomUUID(),
-      delivery_id: record.delivery_id,
-      attempt: record.attempt,
-      claim_token: record.claim_token,
-      epoch: this.store.epoch,
-      phase,
-      occurred_at: this.clock.now().toISOString(),
-      claim_renewal: true,
-      ...(options.executionStarted === true ? { execution_started: true } : {}),
-      ...(record.origin === undefined ? {} : { origin: record.origin }),
+  private intentDeps(): ExecutionIntentDeps {
+    return {
+      store: this.store, clock: this.clock, logger: this.logger, publishEvent: this.publishEvent,
+      publishExecutionIntent: this.publishExecutionIntent, claimMonitors: this.claimMonitors,
     };
-    this.logger({
-      event: "claim_renewal_start",
-      delivery_id: record.delivery_id,
-      attempt: record.attempt,
-      phase,
-      timestamp: event.occurred_at,
-    });
-    // A renewal must reach stable local storage before it can be treated as recoverable work.
-    await this.store.enqueue(event);
-    return event;
   }
 
   private adapterError(error: unknown, record: InboxRecord): AdapterError { // INTERNAL hides the cause: log it
