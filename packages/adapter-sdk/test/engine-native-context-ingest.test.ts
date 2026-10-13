@@ -72,7 +72,7 @@ test('a local context edit is ingested before the turn, N+1 is adopted, and the 
   assert.equal(f.store.getDelivery('ingest-second')?.state, 'done', JSON.stringify(f.store.getDelivery('ingest-second')?.error));
   assert.equal(calls.length, 1);
   assert.equal(calls[0]?.base_version, 1);
-  assert.deepEqual(calls[0]?.files, [
+  assert.deepEqual(calls[0].files, [
     { path: 'context/mission.md', content: 'Edited inside the space.' },
     { path: 'directives/local.md', content: 'Created inside the space.' }]);
   assert.equal(f.reads.at(-1), 'Edited inside the space.');

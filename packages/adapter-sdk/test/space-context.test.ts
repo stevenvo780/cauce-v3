@@ -27,7 +27,7 @@ test('descriptor provider data is validated with field paths and ids derive from
     ['claude', 'codex', 'fake', 'fake2', 'grok', 'hermes', 'muse', 'openclaw', 'opencode']);
   const codex = await packagedHarnessDescriptor('codex');
   assert.deepEqual(codex.provider?.authenticate_argv, ['/usr/local/bin/codex', 'login', '--device-auth']);
-  assert.equal(codex.provider?.update_package, '@openai/codex');
+  assert.equal(codex.provider.update_package, '@openai/codex');
   const grok = await packagedHarnessDescriptor('grok');
   assert.equal(grok.operations.update, undefined);
   assert.equal(grok.provider?.fleet_module, 'fleet_provider_grok');

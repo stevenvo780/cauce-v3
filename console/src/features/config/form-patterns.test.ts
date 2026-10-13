@@ -8,7 +8,7 @@ function sources(dir: string): string[] {
   return readdirSync(dir).flatMap(name => {
     const path = join(dir, name);
     if (statSync(path).isDirectory()) return sources(path);
-    return /\.tsx$/u.test(name) && !/\.test\.tsx$/u.test(name) ? [path] : [];
+    return name.endsWith('.tsx') && !name.endsWith('.test.tsx') ? [path] : [];
   });
 }
 const compiles = (pattern: string) => new RegExp(`^(?:${pattern})$`, 'v');
@@ -21,7 +21,7 @@ it('cada pattern declarado compila con el flag v que aplican los navegadores', (
 it('ningún pattern literal de los formularios queda sin validar con el flag v', () => {
   const found: string[] = [];
   for (const file of sources(srcRoot)) {
-    for (const match of readFileSync(file, 'utf8').matchAll(/\bpattern="([^"]*)"/gu)) found.push(match[1] ?? '');
+    for (const match of readFileSync(file, 'utf8').matchAll(/\bpattern="([^"]*)"/gu)) found.push(match[1]);
   }
   for (const pattern of found) expect(() => compiles(pattern), pattern).not.toThrow();
 });

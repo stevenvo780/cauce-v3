@@ -33,15 +33,15 @@ function object(value: unknown, field: string): Record<string, unknown> {
 function validateArgv(field: string, value: unknown): readonly string[] {
   if (!Array.isArray(value) || value.length < 1 || value.length > 8) fail(field, 'must be a list of 1 to 8 arguments');
   const argv = value.map((argument: unknown, index): string => {
-    if (typeof argument !== 'string') fail(`${field}[${index}]`, 'must be a string');
+    if (typeof argument !== 'string') fail(`${field}[${String(index)}]`, 'must be a string');
     return argument;
   });
   if (!ARGV0.test(argv[0] ?? '')) fail(`${field}[0]`, 'must be an absolute executable path under /usr/local/bin');
   argv.slice(1).forEach((argument, index) => {
-    if (!ARGUMENT.test(argument)) fail(`${field}[${index + 1}]`, 'contains shell metacharacters or unsafe characters');
-    if (argument.split('/').includes('..')) fail(`${field}[${index + 1}]`, 'must not contain parent directory segments');
+    if (!ARGUMENT.test(argument)) fail(`${field}[${String(index + 1)}]`, 'contains shell metacharacters or unsafe characters');
+    if (argument.split('/').includes('..')) fail(`${field}[${String(index + 1)}]`, 'must not contain parent directory segments');
     if (argument.startsWith('/') && !argument.startsWith('/usr/local/bin/') && !argument.startsWith('/home/node/')) {
-      fail(`${field}[${index + 1}]`, 'absolute paths are limited to /usr/local/bin and /home/node');
+      fail(`${field}[${String(index + 1)}]`, 'absolute paths are limited to /usr/local/bin and /home/node');
     }
   });
   return Object.freeze(argv);

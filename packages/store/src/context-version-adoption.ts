@@ -8,7 +8,7 @@ import { lockContextTarget, readContextVersion } from './context-version.js';
 /** Stored files were judged when written: an unreadable version is a typed error the claim absorbs, never a crash. */
 async function readStoredVersion(client: DatabaseClient, target: ContextTarget, version: number) {
   try { return await readContextVersion(client, target, version); } catch (error) {
-    if (error instanceof ZodError) throw new StoreError('invalid_input', `stored context version ${version} is unreadable`);
+    if (error instanceof ZodError) throw new StoreError('invalid_input', `stored context version ${String(version)} is unreadable`);
     throw error;
   }
 }

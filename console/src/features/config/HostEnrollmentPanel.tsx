@@ -16,7 +16,7 @@ function inviteFailure(cause: unknown, prefix: string): string {
     return prefix ? `Este ordenador debe llamarse ${prefix}nombre, con letras minúsculas, números o guiones bajos en el nombre, o tu rol no permite invitar.` : 'Tu rol no permite invitar ordenadores.';
   }
   if (cause instanceof ApiError && cause.status === 409) {
-    return /already registered/u.test(cause.message)
+    return cause.message.includes('already registered')
       ? 'Ese identificador ya pertenece a un ordenador registrado. Elige otro nombre.'
       : 'Ese ordenador ya tiene una invitación pendiente. Cancélala o espera a que caduque antes de crear otra.';
   }

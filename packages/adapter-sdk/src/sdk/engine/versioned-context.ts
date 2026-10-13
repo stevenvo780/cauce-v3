@@ -28,7 +28,7 @@ export class VersionedContextTurn {
   private degraded: MaterializationDegradation | undefined;
   private readonly ignored: string[] = [];
   constructor(readonly root: string | undefined = process.env.CAUCE_SPACE_ROOT,
-    private readonly ingest: NativeContextIngest | undefined = undefined) {}
+    private readonly ingest?: NativeContextIngest) {}
   get effectiveContext(): VersionedContext | undefined { return this.effective; }
   get materializationDegraded(): MaterializationDegradation | undefined { return this.degraded; }
   takeMaterializationDegraded(): MaterializationDegradation | undefined {
