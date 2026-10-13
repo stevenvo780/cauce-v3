@@ -21,6 +21,23 @@ QUOTA_READERS = {'claude', 'codex', 'grok'}
 # harnesses. The executor answers quota_reader_unavailable for these and the
 # console renders that closed code as an explicit no-reader state.
 NO_QUOTA_READER = {'openclaw', 'muse', 'hermes', 'opencode', 'fake', 'fake2'}
+# Closed vocabulary of harness_definitions.capabilities as seeded by the migrations;
+# the strings are rendered into agent profile facts, so a new one is a deliberate edit here.
+SEEDED_CAPABILITIES = {'messages.receive', 'ack.timeline', 'origin.relay', 'jobs.interactive', 'jobs.batch'}
+
+
+def seeded_harness_definitions():
+    rows = {}
+    duplicates = []
+    for path in sorted((ROOT / 'packages/store/migrations').glob('*.sql')):
+        for block in re.finditer(r'INSERT INTO harness_definitions\b.*?;', path.read_text(), re.S):
+            for match in re.finditer(r"\('([^']+)','([^']*)','(\[[^']*\])'::jsonb\)", block.group(0)):
+                harness, display_name, capabilities = match.groups()
+                if harness in rows:
+                    duplicates.append((f'packages/store/migrations/{path.name}',
+                                       f"harness '{harness}' is seeded more than once"))
+                rows[harness] = (path.name, display_name, json.loads(capabilities))
+    return rows, duplicates
 
 
 def text(path):
@@ -172,6 +189,30 @@ class HarnessParityTest(unittest.TestCase):
                 checks.append((f'packages/adapter-sdk/descriptors/{name}.json',
                                'declares a quota reader but is classified as an explicit no-reader harness; '
                                'move it to QUOTA_READERS or remove the operation'))
+        self.problems(checks)
+
+    def test_harness_definitions_seed_matches_descriptors(self):
+        docs = descriptors()
+        names = set(docs)
+        rows, checks = seeded_harness_definitions()
+        for name in sorted(names - set(rows)):
+            checks.append(('packages/store/migrations/ (new migration, never edit a published one)',
+                           f"seed harness_definitions for descriptor '{name}'"))
+        for name in sorted(set(rows) - names):
+            checks.append((f'packages/store/migrations/{rows[name][0]}',
+                           f"harness '{name}' is seeded without a descriptor in packages/adapter-sdk/descriptors/"))
+        for name, (migration, display_name, capabilities) in sorted(rows.items()):
+            if not display_name.strip():
+                checks.append((f'packages/store/migrations/{migration}', f"harness '{name}' seeds an empty display_name"))
+            if not capabilities or not all(isinstance(capability, str) for capability in capabilities):
+                checks.append((f'packages/store/migrations/{migration}', f"harness '{name}' seeds empty or non-string capabilities"))
+            for capability in sorted(set(capabilities) - SEEDED_CAPABILITIES):
+                checks.append((f'packages/store/migrations/{migration}',
+                               f"harness '{name}' seeds capability '{capability}' outside the closed vocabulary "
+                               'in SEEDED_CAPABILITIES (ops/tests/test_harness_parity.py)'))
+            if name in docs and docs[name]['operations'].get('execute') != 'native-execution':
+                checks.append((f'packages/adapter-sdk/descriptors/{name}.json',
+                               'a seeded harness must declare native execution'))
         self.problems(checks)
 
     def test_parsers_share_the_provider_fields(self):
