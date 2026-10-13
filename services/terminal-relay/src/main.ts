@@ -145,6 +145,16 @@ healthServer.once('listening', () => {
   logEvent('terminal_relay_health_listening', { port: config.healthPort });
 });
 
+let stopRecordingRetention: (() => void) | undefined;
+if (config.recordingDir !== undefined) {
+  const serviceDirectory = new URL('.', import.meta.url).pathname.endsWith('/dist/') ? 'dist' : 'src';
+  const { startRecordingRetention } =
+    await import(new URL(
+      `../../gateway/${serviceDirectory}/terminal/recording-retention.js`, import.meta.url,
+    ).href) as typeof import('../../gateway/src/terminal/recording-retention.js');
+  stopRecordingRetention = startRecordingRetention(config.recordingDir);
+}
+
 // Presence is how the gateway learns which alias has a terminal at all; it is not a heartbeat
 // of this process, so a failed publish is logged and retried on the next tick.
 const presence = setInterval(() => {
@@ -159,6 +169,7 @@ const stop = (signal: string): void => {
   healthState.beginShutdown();
   logEvent('terminal_relay_stopping', { signal });
   clearInterval(presence);
+  stopRecordingRetention?.();
   if (presenceDebounce !== undefined) clearTimeout(presenceDebounce);
   sessions.closeAll(CLOSE_CODES.going_away, 'relay_shutdown');
   void sessions.flush()

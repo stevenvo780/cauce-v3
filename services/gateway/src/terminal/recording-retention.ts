@@ -85,3 +85,30 @@ export async function sweepOldRecordings(
   }
   return { deleted, kept };
 }
+
+export function startRecordingRetention(
+  directory: string,
+  options: Pick<RecordingSweepOptions, 'now' | 'log'> = {},
+): () => void {
+  const log = options.log ?? ((message: string): void => { console.warn(message); });
+  let running = false;
+  let stopped = false;
+  const sweep = async (): Promise<void> => {
+    if (running || stopped) return;
+    running = true;
+    try {
+      await sweepOldRecordings(directory, options);
+    } catch {
+      log('sweepOldRecordings: recording sweep failed');
+    } finally {
+      running = false;
+    }
+  };
+  const timer = setInterval(() => { void sweep(); }, 3_600_000);
+  timer.unref();
+  void sweep();
+  return () => {
+    stopped = true;
+    clearInterval(timer);
+  };
+}
