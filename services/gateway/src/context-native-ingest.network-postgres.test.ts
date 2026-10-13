@@ -33,8 +33,8 @@ afterEach(async () => { await app?.close(); app = undefined; await current?.clos
 afterAll(async () => { if (database) { await database.pool.end(); await database.container.stop(); } });
 
 async function candidate(tenant: string, content: string): Promise<{ path: string; content: string }[]> {
-  const files = (await pool.query(`SELECT files FROM agent_context_versions WHERE tenant_id=$1 ORDER BY version DESC LIMIT 1`, [tenant]))
-    .rows[0]?.files as { path: string; content: string }[] ?? [];
+  const files = (await pool.query<{ files: { path: string; content: string }[] }>(
+    `SELECT files FROM agent_context_versions WHERE tenant_id=$1 ORDER BY version DESC LIMIT 1`, [tenant])).rows[0]?.files ?? [];
   const next = files.map(file => file.path === 'context/notes/x.md' ? { ...file, content } : file);
   if (!next.some(file => file.path === 'context/notes/x.md')) next.push({ path: 'context/notes/x.md', content });
   return next;
