@@ -9,6 +9,7 @@ import { PeopleAdminRepository } from './people-admin-store.js';
 import type { PeopleAdminActor, PeopleAdminPerson } from './people-admin-schema.js';
 import { encodeTerminalSubject } from '../terminal/authority-continuity.js';
 import { verifyPassword } from '../password.js';
+import { PasswordWorkSaturated, passwordWork } from '../password-auth.js';
 import { seedPeopleOAuth } from './people-admin-fixtures.js';
 
 let database: TestDatabase | undefined; let current: EmptyTestDatabase | undefined; let pool: DatabasePool; let admin: DatabasePool;
@@ -40,6 +41,12 @@ async function runtimePool(): Promise<DatabasePool> {
   if (!current) throw new Error('test database absent');
   runtime ??= createPool(await provisionTestLogin(admin, current.adminUrl, TEST_RUNTIME_LOGIN, 'cauce_runtime'));
   return runtime;
+}
+async function withSaturatedPasswordGate(work: () => Promise<void>): Promise<void> {
+  let release = () => {};
+  const held = new Promise<void>(resolve => { release = resolve; });
+  const slots = Array.from({ length: 64 }, () => passwordWork.run(() => held).catch((error: unknown) => error));
+  try { await work(); } finally { release(); await Promise.all(slots); }
 }
 async function inactiveOrphan(): Promise<PeopleAdminPerson> {
   const orphan = (await pool.query<PeopleAdminPerson>(`INSERT INTO console_users(email,email_normalized,password_hash,display_name,role,tenant_id,alias,active)
@@ -222,5 +229,22 @@ describe('human administration on PostgreSQL', () => {
     expect((await pool.query('SELECT 1 FROM console_users WHERE id=$1', [orphan.id])).rowCount).toBe(0);
     const created = await repository.create(actor, person()); const retired = await repository.retire(actor, created.id, { expected_revision: created.revision });
     await expect(repository.purge(actor, retired.id, { expected_revision: retired.revision })).rejects.toMatchObject({ code: 'conflict' });
+  });
+  it('checks authority and the target before taking the shared password gate, and a saturated gate refuses without writing', async () => {
+    const password = 'synthetic-private-passphrase';
+    const stranger: PeopleAdminActor = { ...actor, humanAuthority: async () => { throw new Error('not an administrator'); } };
+    await withSaturatedPasswordGate(async () => {
+      await expect(repository.create(stranger, person())).rejects.toMatchObject({ code: 'forbidden' });
+      await expect(repository.create(actor, { ...person(), tenant_id: 'NoCompanyTenant' })).rejects.toMatchObject({ code: 'forbidden' });
+      await expect(repository.update(actor, randomUUID(), { expected_revision: owner.revision, password })).rejects.toMatchObject({ code: 'not_found' });
+      await expect(repository.update(stranger, owner.id, { expected_revision: owner.revision, password })).rejects.toMatchObject({ code: 'forbidden' });
+      await expect(repository.create(actor, person())).rejects.toBeInstanceOf(PasswordWorkSaturated);
+      await expect(repository.update(actor, owner.id, { expected_revision: owner.revision, password })).rejects.toBeInstanceOf(PasswordWorkSaturated);
+    });
+    expect((await pool.query('SELECT 1 FROM console_users WHERE email=$1', [person().email])).rowCount).toBe(0);
+    expect((await pool.query('SELECT password_hash FROM console_users WHERE id=$1', [owner.id])).rows).toEqual([{ password_hash: '$scrypt$' + 'x'.repeat(48) }]);
+    const created = await repository.create(actor, person());
+    const stored = (await pool.query<{ password_hash: string }>('SELECT password_hash FROM console_users WHERE id=$1', [created.id])).rows[0];
+    expect(await verifyPassword(stored?.password_hash ?? '', password)).toBe(true);
   });
 });

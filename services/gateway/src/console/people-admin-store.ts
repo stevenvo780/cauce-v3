@@ -4,6 +4,7 @@ import {
 } from '@cauce/store';
 import { z } from 'zod';
 import { hashPassword } from '../password.js';
+import { passwordWork } from '../password-auth.js';
 import { normalizeEmail } from '../console-users.js';
 import { consoleRoleAuthority } from '../console-user-authority.js';
 import { assertMayAdminister, assertPeopleAlias, assertPeopleAuthority, assertPeopleCompany } from './people-admin-authority.js';
@@ -98,12 +99,20 @@ export class PeopleAdminRepository {
       return { items: rows.rows.map(person), capabilities: PEOPLE_ADMIN_CAPABILITIES };
     });
   }
+  /** A derivation holds a slot of the process-wide password gate, so it runs only once the checks the write repeats have passed. */
+  private async derive(actor: PeopleAdminActor, password: string, checks: (client: DatabaseClient, authority: CompanyAuthority) => Promise<unknown>): Promise<string> {
+    await this.transaction(actor, checks);
+    return passwordWork.run(() => hashPassword(password));
+  }
   async create(actor: PeopleAdminActor, input: unknown): Promise<PeopleAdminPerson> {
     let value; try { value = PeopleAdminCreateSchema.parse(input); } catch (error) { mapped(error); }
-    const passwordHash = await hashPassword(value.password);
-    return this.transaction(actor, async (client, authority) => {
+    const placement = async (client: DatabaseClient, authority: CompanyAuthority) => {
       await assertPeopleCompany(client, value.tenant_id, authority.actingCompany);
       await assertPeopleAlias(client, value);
+    };
+    const passwordHash = await this.derive(actor, value.password, placement);
+    return this.transaction(actor, async (client, authority) => {
+      await placement(client, authority);
       const row = (await client.query<PeopleAdminPerson>(`INSERT INTO console_users(email,email_normalized,password_hash,display_name,role,tenant_id,alias,active)
         VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING ${COLUMNS}`,
       [value.email, normalizeEmail(value.email), passwordHash, value.display_name, value.role, value.tenant_id, value.alias, value.active])).rows[0];
@@ -112,13 +121,17 @@ export class PeopleAdminRepository {
   }
   async update(actor: PeopleAdminActor, id: string, input: unknown): Promise<PeopleAdminPerson> {
     let patch; try { PeopleAdminIdSchema.parse(id); patch = PeopleAdminUpdateSchema.parse(input); } catch (error) { mapped(error); }
-    const passwordHash = patch.password === undefined ? undefined : await hashPassword(patch.password);
-    return this.transaction(actor, async (client, authority) => {
+    const prepare = async (client: DatabaseClient, authority: CompanyAuthority) => {
       const previous = await lockPerson(client, id, patch.expected_revision, authority.actingCompany);
       const next = person({ ...previous, ...Object.fromEntries(Object.entries(patch).filter(([key]) => !['expected_revision', 'password'].includes(key))) });
       const holder = await assertMayAdminister(client, authority, previous, next);
       await assertPeopleCompany(client, next.tenant_id, authority.actingCompany);
       if (next.active) await assertPeopleAlias(client, next);
+      return { previous, next, holder };
+    };
+    const passwordHash = patch.password === undefined ? undefined : await this.derive(actor, patch.password, prepare);
+    return this.transaction(actor, async (client, authority) => {
+      const { previous, next, holder } = await prepare(client, authority);
       const authorityChanged = previous.role !== next.role || previous.tenant_id !== next.tenant_id || previous.alias !== next.alias || previous.active !== next.active;
       const securityChanged = authorityChanged || previous.email !== next.email || passwordHash !== undefined;
       if (securityChanged) await revokePeopleAccess(client, previous);

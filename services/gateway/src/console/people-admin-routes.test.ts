@@ -1,7 +1,7 @@
 import Fastify from 'fastify';
 import { describe, expect, it } from 'vitest';
 import { registerPeopleAdminRoutes, type PeopleAdminRepositoryBinding } from './people-admin-routes.js';
-import { PasswordAuthProvider, signConsoleSession } from '../password-auth.js';
+import { PasswordAuthProvider, PasswordWorkSaturated, signConsoleSession } from '../password-auth.js';
 import { MemoryConsoleUserStore } from '../test-support/console-users.js';
 import { createConsoleCredentialStamp } from '../console-credential-stamp.js';
 import { PeopleAdminError } from './people-admin-schema.js';
@@ -69,6 +69,17 @@ describe('human administration routes', () => {
       const result = await broken.app.inject({ method: 'DELETE', url: `/v3/console/people/${id}`, headers: broken.headers, payload: { expected_revision: row.revision } });
       expect(result.statusCode).toBe(503); expect(result.body).not.toContain('PRIVATE');
     } finally { await broken.app.close(); }
+  });
+  it('answers 429 with Retry-After when the shared password gate is saturated', async () => {
+    const f = await fixture({ error: new PasswordWorkSaturated() }); try {
+      const created = await f.app.inject({ method: 'POST', url: '/v3/console/people', headers: f.headers,
+        payload: { email: 'new@example.test', display_name: 'New', role: 'reader', tenant_id: 'Steven', alias: 'new-user', active: true, password: 'fixture-password' } });
+      expect(created.statusCode).toBe(429); expect(created.headers['retry-after']).toBe('5');
+      expect(created.json<{ error: string }>().error).toBe('too_many_requests');
+      const updated = await f.app.inject({ method: 'PATCH', url: `/v3/console/people/${id}`, headers: f.headers,
+        payload: { expected_revision: row.revision, password: 'fixture-password' } });
+      expect(updated.statusCode).toBe(429);
+    } finally { await f.app.close(); }
   });
   it('rejects a missing or mismatched CSRF token before a mutation', async () => {
     const f = await fixture(); try {

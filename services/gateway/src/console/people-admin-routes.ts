@@ -2,7 +2,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { AuthError, AuthorizationError, requireOperatorPermission, type AuthProvider } from '../auth.js';
 import { consoleHumanAccess } from '../console-human-authority.js';
-import { PasswordAuthProvider } from '../password-auth.js';
+import { PasswordAuthProvider, PasswordWorkSaturated } from '../password-auth.js';
 import { principal } from '../routes/shared.js';
 import {
   PeopleAdminControlSchema, PeopleAdminCreateSchema, PeopleAdminError, PeopleAdminIdSchema, PeopleAdminListSchema,
@@ -20,6 +20,11 @@ export interface PeopleAdminRepositoryBinding {
 }
 const STATUS = { invalid_request: 400, forbidden: 403, conflict: 409, not_found: 404, unverified: 503 } as const;
 function fail(reply: FastifyReply, error: unknown): void {
+  if (error instanceof PasswordWorkSaturated) {
+    void reply.header('Retry-After', '5').code(429)
+      .send({ error: 'too_many_requests', message: 'Hay demasiadas contraseñas en proceso. Intenta de nuevo en unos segundos.' });
+    return;
+  }
   const code = error instanceof PeopleAdminError ? error.code : error instanceof AuthError ? 'unauthorized'
     : error instanceof AuthorizationError ? 'forbidden' : error instanceof z.ZodError ? 'invalid_request' : 'unverified';
   const status = code === 'unauthorized' ? 401 : STATUS[code];
