@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { newTrustedPage, startConsoleFunctionalFixture } from './console-functional-browser.fixtures.js';
+import { INVALID_REGISTRATION, REGISTRATION_IN_USE } from '../../services/gateway/src/company-registration.js';
+import { isaTenant, newTrustedPage, startConsoleFunctionalFixture } from './console-functional-browser.fixtures.js';
 import { seedQuotaHost } from './v4-console-real-browser.quotas.js';
 import {
   apiGet, asV4Page, BrowserErrorLog, bodySnippet, fillRegistration, HERMETIC_INSTANCE_RULES, login, openRegistration,
@@ -34,6 +35,16 @@ async function step<T>(page: V4Page, name: string, action: () => Promise<T>): Pr
   }
 }
 
+/** Sends a write with the session's own CSRF token, as a person could outside the interface. */
+async function apiPost(page: V4Page, path: string, payload: unknown): Promise<number> {
+  return page.evaluate(async ({ target, body }: { target: string; body: string }) => {
+    const session = await (await fetch('/v3/auth/session', { credentials: 'include', cache: 'no-store' })).json() as { csrf_token?: string };
+    const response = await fetch(target, { method: 'POST', credentials: 'include', body,
+      headers: { 'Content-Type': 'application/json', 'X-Cauce-Console': '1', 'X-CSRF-Token': session.csrf_token ?? '' } });
+    return response.status;
+  }, { target: path, body: JSON.stringify(payload) });
+}
+
 async function openConfig(page: V4Page, section: string): Promise<void> {
   await page.goto(`${base()}/config?seccion=${section}`, { waitUntil: 'domcontentloaded' });
   await page.getByRole('heading', { name: 'Ajustes', exact: true }).waitFor({ timeout: 20_000 });
@@ -59,11 +70,15 @@ describe('recorrido V4 de la consola en navegador real contra gateway y PostgreS
       expect(shortPassword.valid).toBe(false);
       expect(shortPassword.message).not.toBe('');
       expect(await form.isVisible()).toBe(true);
-      errors.expectHttpError('/v3/auth/register', 400);
       await fillRegistration(form, { ...ownerA, company: { ...ownerA.company, slug: 'Slug Inválido' } });
       await form.getByRole('button', { name: 'Crear cuenta y empresa', exact: true }).click();
-      await expect.poll(async () => page.getByRole('alert').innerText(), { timeout: 15_000 })
-        .toContain('Revisa correo, nombre, contraseña y empresa.');
+      const invalidSlug = await validity(form.getByLabel('Identificador de empresa', { exact: true }));
+      expect(invalidSlug.valid).toBe(false);
+      expect(invalidSlug.message).not.toBe('');
+      errors.expectHttpError('/v3/auth/register', 400);
+      await fillRegistration(form, { ...ownerA, name: '   ' });
+      await form.getByRole('button', { name: 'Crear cuenta y empresa', exact: true }).click();
+      await expect.poll(async () => page.getByRole('alert').innerText(), { timeout: 15_000 }).toContain(INVALID_REGISTRATION.message);
       await fillRegistration(form, ownerA);
       await form.getByRole('button', { name: 'Crear cuenta y empresa', exact: true }).click();
       await page.getByRole('navigation', { name: 'Navegación principal', exact: true }).waitFor({ timeout: 30_000 });
@@ -81,19 +96,23 @@ describe('recorrido V4 de la consola en navegador real contra gateway y PostgreS
     expect(stored.rows[0]?.password_hash).not.toContain(ownerA.password);
   });
 
-  it('registro duplicado: un identificador ocupado devuelve un error visible y no crea nada', async () => {
+  it('registro duplicado: un identificador o un correo ocupados devuelven el mismo error visible y no crean nada', async () => {
     const page = await freshPage('duplicate-registration');
-    await step(page, 'duplicate registration', async () => {
-      errors.expectHttpError('/v3/auth/register', 409);
-      const form = await openRegistration(page, base());
-      await fillRegistration(form, { ...syntheticPerson('dup', run), company: { name: 'Otra empresa', slug: ownerA.company.slug } });
-      await form.getByRole('button', { name: 'Crear cuenta y empresa', exact: true }).click();
-      const alert = page.getByRole('alert');
-      await alert.waitFor({ timeout: 15_000 });
-      expect(await alert.innerText()).toContain('registration is unavailable; use another email or company identifier');
-    });
-    const count = await pool().query('SELECT 1 FROM console_users WHERE email=$1', [syntheticPerson('dup', run).email]);
-    expect(count.rowCount).toBe(0);
+    const duplicate = syntheticPerson('dup', run);
+    for (const [label, attempt] of [
+      ['taken company identifier', { ...duplicate, company: { name: 'Otra empresa', slug: ownerA.company.slug } }],
+      ['taken email', { ...duplicate, email: ownerA.email }],
+    ] as const) {
+      await step(page, `duplicate registration with a ${label}`, async () => {
+        errors.expectHttpError('/v3/auth/register', 409);
+        const form = await openRegistration(page, base());
+        await fillRegistration(form, attempt);
+        await form.getByRole('button', { name: 'Crear cuenta y empresa', exact: true }).click();
+        await expect.poll(async () => page.getByRole('alert').innerText(), { timeout: 15_000 }).toContain(REGISTRATION_IN_USE.message);
+      });
+    }
+    expect((await pool().query('SELECT 1 FROM console_users WHERE email=$1', [duplicate.email])).rowCount).toBe(0);
+    expect((await pool().query('SELECT 1 FROM companies WHERE id=$1', [duplicate.company.slug])).rowCount).toBe(0);
   });
 
   it('empresa: renombra la propia, crea otra con su dueño y rechaza entradas inválidas', async () => {
@@ -114,9 +133,22 @@ describe('recorrido V4 de la consola en navegador real contra gateway y PostgreS
     expect(renamed.rows[0]?.name).toBe(`${ownerA.company.name} editada`);
     expect(renamed.rows[0]?.version).toBeGreaterThan(1);
 
-    await step(page, 'company create', async () => {
-      await page.getByRole('button', { name: 'Crear empresa', exact: true }).click();
-      const form = page.getByRole('form', { name: 'Crear empresa y dueño' });
+    await step(page, 'owner without company creation', async () => {
+      await page.getByText(`Dueño de empresa · ${ownerA.company.slug}`, { exact: true }).waitFor({ timeout: 15_000 });
+      expect(await page.getByRole('button', { name: 'Crear empresa', exact: true }).count()).toBe(0);
+      errors.expectHttpError('/v3/console/companies', 403);
+      expect(await apiPost(page, '/v3/console/companies', ownerB)).toBe(403);
+    });
+    expect((await pool().query('SELECT 1 FROM companies WHERE id=$1', [ownerB.company.slug])).rowCount).toBe(0);
+
+    const granted = await active().database.adminPool.query('INSERT INTO platform_admins(human_id) SELECT id FROM console_users WHERE email=$1', [isaTenant.email]);
+    expect(granted.rowCount).toBe(1);
+    const platform = await freshPage('platform-admin');
+    await step(platform, 'company create', async () => {
+      await login(platform, base(), { email: isaTenant.email, password: isaTenant.password, name: 'Plataforma', company: { name: '', slug: '' } });
+      await openConfig(platform, 'general');
+      await platform.getByRole('button', { name: 'Crear empresa', exact: true }).click();
+      const form = platform.getByRole('form', { name: 'Crear empresa y dueño' });
       const fill = async (person: typeof ownerB, password = person.password) => {
         for (const [label, value] of [
           ['Nombre de empresa', person.company.name], ['Identificador de empresa', person.company.slug],
@@ -131,12 +163,11 @@ describe('recorrido V4 de la consola en navegador real contra gateway y PostgreS
       errors.expectHttpError('/v3/console/companies', 409);
       await fill({ ...ownerB, company: { ...ownerB.company, slug: ownerA.company.slug } });
       await form.getByRole('button', { name: 'Crear empresa y dueño', exact: true }).click();
-      await page.getByRole('alert').waitFor({ timeout: 15_000 });
-      expect(await page.getByRole('alert').innerText()).toContain('registration is unavailable; use another email or company identifier');
+      await platform.getByRole('alert').filter({ hasText: REGISTRATION_IN_USE.message }).waitFor({ timeout: 15_000 });
       expect(await pool().query('SELECT 1 FROM console_users WHERE email=$1', [ownerB.email])).toMatchObject({ rowCount: 0 });
       await fill(ownerB);
       await form.getByRole('button', { name: 'Crear empresa y dueño', exact: true }).click();
-      await page.getByText('Empresa y cuenta de dueño creadas.', { exact: true }).waitFor({ timeout: 20_000 });
+      await platform.getByText('Empresa y cuenta de dueño creadas.', { exact: true }).waitFor({ timeout: 20_000 });
     });
     const created = await pool().query<{ company_id: string; role: string }>(
       `SELECT u.company_id,a.role FROM console_users u JOIN company_admins a ON a.human_id=u.id AND a.company_id=u.company_id WHERE u.email=$1`, [ownerB.email]);
@@ -533,13 +564,6 @@ describe('recorrido V4 de la consola en navegador real contra gateway y PostgreS
   it('consola: ninguna página del recorrido registró errores del navegador', () => {
     process.stdout.write(`V4 e2e tolerated console messages: ${JSON.stringify(Object.fromEntries(errors.ignored))}\n`);
     errors.assertClean();
-  });
-
-  it.fails('DEFECTO DE PRODUCTO: los atributos pattern de los formularios V4 son válidos y rechazan el identificador en el navegador', async () => {
-    const page = asV4Page(await newTrustedPage(active(), { width: 1440, height: 1000 }));
-    const form = await openRegistration(page, base());
-    await fillRegistration(form, { ...syntheticPerson('pattern', run), company: { name: 'Patrón', slug: 'Slug Inválido' } });
-    expect((await validity(form.getByLabel('Identificador de empresa', { exact: true }))).valid).toBe(false);
     expect(errors.ignored.get(PATTERN_DEFECT_RULE.id) ?? 0).toBe(0);
   });
 });

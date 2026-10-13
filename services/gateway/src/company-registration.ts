@@ -19,7 +19,7 @@ export type CompanyRegistrationInput = z.infer<typeof CompanyRegistrationSchema>
 export const INVALID_REGISTRATION = { error: 'invalid_request', message: 'Revisa correo, nombre, contraseña (12 caracteres o más) '
   + 'e identificador de empresa (de 2 a 63 minúsculas, números o guiones, empezando por una letra).' };
 /** One body for a taken email and a taken or reserved slug: the reply must not say which of them exists. */
-const IN_USE = { error: 'conflict', message: 'No se pudo completar el registro: el correo o el identificador de empresa ya están en uso.' };
+export const REGISTRATION_IN_USE = { error: 'conflict', message: 'No se pudo completar el registro: el correo o el identificador de empresa ya están en uso.' };
 const TOO_MANY = { error: 'too_many_requests', message: 'Demasiados registros. Intenta más tarde.' };
 
 const WINDOW_MS = 15 * 60_000;
@@ -48,7 +48,7 @@ export async function registerCompanyWithOwner(pool: DatabasePool, input: Compan
     return true;
   } catch (error) {
     if (error instanceof PasswordWorkSaturated) await limited(reply, 5_000);
-    else if (error instanceof StoreError && error.code === 'conflict') await reply.code(409).send(IN_USE);
+    else if (error instanceof StoreError && error.code === 'conflict') await reply.code(409).send(REGISTRATION_IN_USE);
     else if (error instanceof StoreError && error.code === 'invalid_input') await reply.code(400).send(INVALID_REGISTRATION);
     else {
       reply.log.warn({ event: 'company_registration_failed', reason: errorLabel(error) }, 'company registration failed');
@@ -72,7 +72,7 @@ export function registerCompanyRegistrationRoute(app: FastifyInstance, pool: Dat
     current.count += 1; attempts.set(key, current);
     const input = CompanyRegistrationSchema.safeParse(request.body);
     if (!input.success) return reply.code(400).send(INVALID_REGISTRATION);
-    if (reserved.has(input.data.company.slug)) return reply.code(409).send(IN_USE);
+    if (reserved.has(input.data.company.slug)) return reply.code(409).send(REGISTRATION_IN_USE);
     if (hour.until <= now) hour = { count: 0, until: now + HOUR_MS };
     if (hour.count >= hourlyRegistrations) return limited(reply, hour.until - now);
     hour.count += 1;
