@@ -79,6 +79,10 @@ export async function hybridHumanAuthorityDatabase(): Promise<DatabasePool> {
   await installHistoricalHumanAuthority(pool);
   return pool;
 }
+async function membershipRoleColumnExists(pool: DatabasePool): Promise<boolean> {
+  return (await pool.query(`SELECT 1 FROM information_schema.columns
+    WHERE table_schema='public' AND table_name='human_tenant_memberships' AND column_name='role'`)).rowCount === 1;
+}
 export async function seed(pool: DatabasePool) {
   const humanId = randomUUID(); const alias = 'kant'; const email = `${humanId}@example.invalid`;
   await pool.query(`INSERT INTO console_users(id,email,email_normalized,password_hash,display_name,role,tenant_id,alias,active)
@@ -86,8 +90,15 @@ export async function seed(pool: DatabasePool) {
   [humanId, email, await hashPassword('fixture-only-passphrase', { cost: 1024, blockSize: 8, parallelism: 1 }), alias]);
   await pool.query(`INSERT INTO human_external_identities(human_id,provider,namespace,subject)
     VALUES($1::uuid,'oauth',$2,$1::text)`, [humanId, issuer]);
-  await pool.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,permissions)
-    VALUES($1,'Steven',$2,ARRAY['read','route'])`, [humanId, alias]);
+  // Historical prefixes (through 046) still carry the membership role that 081 dropped;
+  // there it must equal the account role, which is the source of truth afterwards.
+  if (await membershipRoleColumnExists(pool)) {
+    await pool.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,role,permissions)
+      VALUES($1,'Steven',$2,'operator',ARRAY['read','route'])`, [humanId, alias]);
+  } else {
+    await pool.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,permissions)
+      VALUES($1,'Steven',$2,ARRAY['read','route'])`, [humanId, alias]);
+  }
   const users = new PostgresConsoleUserStore(pool); const user = await users.findById(humanId);
   if (!user?.password_changed_at_us) throw new Error('missing fixture account');
   const credentialStamp = createConsoleCredentialStamp(key, { userId: humanId, passwordHash: user.password_hash,
