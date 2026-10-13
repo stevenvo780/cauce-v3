@@ -267,7 +267,7 @@ describe('CauceApi', () => {
   it('treats a missing PTY backend as disabled', async () => {
     server.use(http.get('http://localhost/v3/console/terminal/capability', () => new HttpResponse(null, { status: 404 })));
     const capability = await new CauceApi('http://localhost').getTerminalCapability();
-    expect(capability).toEqual({ available: false, reason: 'Backend PTY no disponible' });
+    expect(capability).toEqual({ available: false, reason: 'El backend del terminal no está habilitado. Pide a un administrador que configure el servicio PTY para esta instalación.' });
   });
 
   it('distinguishes an absent agent from an unpublished directive or history endpoint', async () => {
@@ -287,6 +287,16 @@ describe('CauceApi', () => {
         new HttpResponse(null, { status: 404 })),
     );
     await expect(api.getAgentDirective('Steven', 'missing')).resolves.toMatchObject({ publicado: false });
+  });
+
+  it('explains a missing profile in Spanish and keeps the server reason', async () => {
+    server.use(http.get('http://localhost/v3/console/tenants/Steven/agents/kant/perfil', () => HttpResponse.json(
+      { error: 'not_found', message: 'agent not found or not visible' }, { status: 404 },
+    )));
+    const error = await new CauceApi('http://localhost').getAgentPerfil('Steven', 'kant').catch((cause: unknown) => cause);
+    expect(error).toMatchObject({ status: 404, code: 'not_found' });
+    expect((error as Error).message).toMatch(/No se encontró el agente/i);
+    expect((error as Error).message).toContain('agent not found or not visible');
   });
 
   it('passes only a bounded opaque DLQ cursor and rejects malformed pagination locally', async () => {
@@ -454,6 +464,8 @@ describe('CauceApi', () => {
       .catch((error: unknown) => error);
 
     expect(fallo).toBeInstanceOf(ContextoContaminadoError);
+    expect((fallo as Error).message).toContain('esos ficheros tienen algo que no es suyo');
+    expect((fallo as Error).message).toMatch(/contenido externo/i);
     expect((fallo as ContextoContaminadoError).cuerpo).toMatchObject({ contaminacion: veredicto });
   });
 
@@ -472,7 +484,33 @@ describe('CauceApi', () => {
 
     expect(fallo).toBeInstanceOf(EntregaEnVueloError);
     expect(fallo).toMatchObject({ status: 409, code: 'delivery_in_flight' });
+    expect((fallo as Error).message).toContain('hay una entrega en vuelo para este alias');
     expect((fallo as EntregaEnVueloError).cuerpo).toMatchObject({ deliveries: ['dlv-71'] });
+  });
+
+  it.each([
+    [409, 'agent_disabled', 'Habilítalo desde Configuración'],
+    [409, 'profile_revision_conflict', 'aplicar el borrador sobre la revisión vigente'],
+    [503, 'profile_write_unavailable', 'Conserva el borrador'],
+    [403, 'forbidden', 'Tu sesión ya no tiene permiso'],
+  ] as const)('traduce %s %s al guardar un perfil y conserva el motivo', async (status, code, action) => {
+    server.use(http.put('http://localhost/v3/console/tenants/Steven/agents/kant/perfil', () =>
+      HttpResponse.json({ error: code, message: 'la sesión no tiene control sobre este alias' }, { status })));
+    const error = await new CauceApi('http://localhost').putAgentPerfil('Steven', 'kant', PERFIL, 4, 'ajusto el rol declarado')
+      .catch((cause: unknown) => cause);
+    expect(error).toMatchObject({ status, code });
+    expect((error as Error).message).toContain(action);
+    expect((error as Error).message).toContain('la sesión no tiene control sobre este alias');
+  });
+
+  it('traduce un código de reconciliación y conserva el motivo del servidor', async () => {
+    server.use(http.post('http://localhost/v3/console/tenants/Steven/agents/kant/context/reconcile/preview',
+      () => HttpResponse.json({ error: 'runtime_unverified', message: 'runtime probe failed' }, { status: 409 })));
+    const error = await new CauceApi('http://localhost').previewContextReconciliation('Steven', 'kant', 'reviso las huellas')
+      .catch((cause: unknown) => cause);
+    expect(error).toMatchObject({ status: 409, code: 'runtime_unverified' });
+    expect((error as Error).message).toContain('Revisa la conexión');
+    expect((error as Error).message).toContain('runtime probe failed');
   });
 
   it('un 400 que nombra `reason` se separa de un 400 de los campos del perfil', async () => {

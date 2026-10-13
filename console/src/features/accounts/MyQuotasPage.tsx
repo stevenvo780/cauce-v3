@@ -10,7 +10,7 @@ import { QuotaAccountCard } from './QuotaAccountCard';
 import { QuotaEnvironmentPanel } from './QuotaEnvironmentPanel';
 import { EXECUTABLE_QUOTA_PROVIDERS } from './quota-environment-capabilities';
 import { failedQuotaRead } from './quota-availability';
-import { automaticPauseWindow, canManageQuotaAccounts, describeQuotaError, pauseReasonText } from './quota-messages';
+import { automaticPauseWindow, canManageQuotaAccounts, describeQuotaEnvironmentError, describeQuotaError, pauseReasonText } from './quota-messages';
 
 export function MyQuotasPage() {
   const api = useApi();
@@ -66,7 +66,7 @@ export function MyQuotasPage() {
   return <div className="grid gap-6">
     <header className="flex flex-wrap items-end justify-between gap-3"><div><h1 className="m-0 text-2xl font-semibold">Mis cuotas</h1>
       <p className="m-0 mt-1 max-w-2xl text-sm text-muted">Consulta tus suscripciones, incluso sin agentes. Fija las cuentas que sigues y opera sus entornos de consulta.</p></div>
-      <Button disabled={busy || accounts.loading || environments.loading} onClick={() => { void reload().catch((cause: unknown) => { setError(describeQuotaError(cause, 'No se pudo actualizar.')); }); }}>Actualizar cuotas y entornos</Button></header>
+      <Button disabled={busy || accounts.loading || environments.loading} onClick={() => { void reload().catch((cause: unknown) => { setError(describeQuotaEnvironmentError(cause, 'No se pudo actualizar.')); }); }}>Actualizar cuotas y entornos</Button></header>
     {accounts.loading && !accounts.data ? <p role="status">Leyendo cuentas y ventanas…</p> : null}
     {preferences.loading && !preferences.data ? <p role="status">Leyendo tarjetas fijadas…</p> : null}
     {environments.loading && !environments.data ? <p role="status">Leyendo entornos de consulta…</p> : null}

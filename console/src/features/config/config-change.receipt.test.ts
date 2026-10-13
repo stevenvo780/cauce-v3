@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { configurationMutationSha256, publicConfigurationMutation, type ConfigMutation } from '@cauce/protocol/configuration';
 import type { ConfigurationChangeResult } from '../../api/types';
-import { executeConfigurationChange } from './config-change';
+import { ApiError } from '../../api/client/core';
+import { describeConfigError, executeConfigurationChange } from './config-change';
 
 const mutation: ConfigMutation = { resource: 'provider_account', action: 'create', id: 'account', value: {
   provider: 'codex', payer_tenant_id: 'Steven', external_account_id: 'one',
@@ -37,5 +38,12 @@ describe('full intent proof before configuration transport', () => {
     expect(outcome).toMatchObject({ ok: false, message: 'digest unavailable' });
     expect(change).not.toHaveBeenCalled();
     expect(reload).not.toHaveBeenCalled();
+  });
+  it('keeps a concrete 403 reason beside the Spanish action', () => {
+    const described = describeConfigError(new ApiError('operator must be hub', 403, 'forbidden'), 'fallback');
+    expect(described.message).toContain('permiso de control');
+    expect(described.message).toContain('operator must be hub');
+    const generic = describeConfigError(new ApiError('Forbidden', 403, 'forbidden'), 'fallback');
+    expect(generic.message).not.toContain('Forbidden');
   });
 });

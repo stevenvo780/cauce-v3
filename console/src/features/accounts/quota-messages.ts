@@ -41,6 +41,14 @@ export function describeQuotaError(cause: unknown, fallback: string): string {
   return STATUS_MESSAGE[cause.status] ?? fallback;
 }
 
+export function describeQuotaEnvironmentError(cause: unknown, fallback: string): string {
+  if (!(cause instanceof ApiError)) return fallback;
+  if (cause.status === 500) {
+    return 'El servidor no confirmó el estado del entorno. Actualiza cuotas y entornos para comprobar el resultado antes de repetir la operación.';
+  }
+  return describeQuotaError(cause, fallback);
+}
+
 const OPERATION_ERROR: Record<string, string> = {
   AUTH_EXPIRED: 'La autenticación venció. Autentica la cuenta de nuevo.',
   AUTHORITY_REVOKED: 'La persona que lo pidió perdió permiso. Repite la operación con un rol vigente.',
@@ -55,6 +63,10 @@ const OPERATION_ERROR: Record<string, string> = {
   FUNCTIONAL_CHECK_FAILED: 'La comprobación posterior falló. Autentica de nuevo y reintenta la consulta.',
 };
 
+export function describeKnownOperationError(code: string): string | undefined {
+  return OPERATION_ERROR[code];
+}
+
 export function describeOperationError(code: string): string {
-  return OPERATION_ERROR[code] ?? 'La operación falló. Reintenta; si se repite, revisa el entorno.';
+  return describeKnownOperationError(code) ?? 'La operación falló. Reintenta; si se repite, revisa el entorno.';
 }

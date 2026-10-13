@@ -82,10 +82,15 @@ it.each([['active', 'stop'], ['retired', 'purge']])('ofrece %s por su identidad 
   else await user.click(await screen.findByRole('button', { name: `Operar agente A/${alias}` }));
   const form = within(screen.getByRole('region', { name: `Operación de A/${alias}` }));
   await user.selectOptions(form.getByRole('combobox', { name: 'Acción operativa' }), kind);
+  if (kind === 'purge') await user.type(form.getByRole('textbox', { name: /Escribe el alias/i }), alias);
   await waitFor(() => { expect(form.getByRole('button', { name: 'Previsualizar operación' })).toBeEnabled(); });
   await user.click(form.getByRole('button', { name: 'Previsualizar operación' }));
   await form.findByLabelText('Previsualización operativa');
-  expect(previews[0]).toMatchObject({ kind, target: { resource: 'agent', tenant_id: 'A', alias } });
+  expect(previews[0]).toMatchObject({
+    kind,
+    target: { resource: 'agent', tenant_id: 'A', alias },
+    ...(kind === 'purge' ? { parameters: { confirm_alias: alias } } : {}),
+  });
 });
 
 it('expone administración de personas al entrar en Acceso y roles', async () => {
