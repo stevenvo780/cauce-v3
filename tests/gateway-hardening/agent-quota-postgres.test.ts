@@ -1,6 +1,10 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import type { FastifyInstance, LightMyRequestResponse } from 'fastify';
-import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CauceRepository, type DatabasePool, type RegisteredCompany } from '@cauce/store';
 import { AgentQuotaClaimSchema, AgentQuotaExecutionSchema, type AgentQuotaClaim } from '@cauce/protocol';
 import { preparePostgresSuite } from '../../packages/store/test/postgres-suite.js';
@@ -16,9 +20,17 @@ const ORIGIN = 'http://localhost';
 let database: TestDatabase; let current: EmptyTestDatabase; let pool: DatabasePool; let admin: DatabasePool;
 let app: FastifyInstance; let north: RegisteredCompany; let south: RegisteredCompany;
 let host: ChannelHost; let other: ChannelHost; let session: { cookie: string; csrf: string };
-let passwordHash: string | undefined;
+let passwordHash: string | undefined; let approvals: string | undefined;
+const descriptors = new URL('../../packages/adapter-sdk/descriptors/', import.meta.url);
 preparePostgresSuite(import.meta.url, async () => { database = await startTestDatabase(); });
 beforeEach(async () => {
+  // Quota readers exist only for owner-approved descriptors: pin the packaged codex descriptor, never openclaw.
+  approvals = await mkdtemp(join(tmpdir(), 'zz-canary-agent-quota-approvals-'));
+  const approvalsFile = join(approvals, 'approvals.json');
+  const codex = await readFile(new URL('codex.json', descriptors));
+  await writeFile(approvalsFile, JSON.stringify({ codex: createHash('sha256').update(codex).digest('hex') }), { mode: 0o600 });
+  vi.stubEnv('CAUCE_HARNESS_DESCRIPTOR_APPROVALS_FILE', approvalsFile);
+  vi.stubEnv('CAUCE_HARNESS_DESCRIPTOR_DIRECTORY', fileURLToPath(descriptors).replace(/\/$/u, ''));
   current = await startTestCaseDatabase(database); pool = current.pool; admin = current.adminPool;
   north = await channelCompany(pool, 'north'); south = await channelCompany(pool, 'south');
   host = await channelHost(pool, north); other = await channelHost(pool, south);
@@ -44,7 +56,10 @@ beforeEach(async () => {
   const cookie = (Array.isArray(raw) ? raw : raw === undefined ? [] : [raw]).find(value => value.startsWith('__Host-cauce_session='));
   session = { cookie: cookie?.split(';', 1)[0] ?? '', csrf: login.json<{ csrf_token: string }>().csrf_token };
 });
-afterEach(async () => { await app.close(); await current.close(); });
+afterEach(async () => {
+  await app.close(); await current.close();
+  vi.unstubAllEnvs(); if (approvals) await rm(approvals, { recursive: true, force: true }); approvals = undefined;
+});
 afterAll(async () => { await database.pool.end(); await database.container.stop(); });
 const path = (company = north, alias = 'worker') => `/v3/console/agents/${company.hub.id}/${alias}/quota`;
 const read = (company = north, alias = 'worker') => app.inject({ method: 'GET', url: path(company, alias), headers: { cookie: session.cookie } });
