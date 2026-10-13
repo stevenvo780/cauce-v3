@@ -107,12 +107,12 @@ describe('real gateway exhaustive route isolation under signed owner sessions', 
   });
 
   it('enumerates onRoute registrations and rejects every uncovered method/path', () => {
-    assertRouteCoverage(harness.routes);
-    console.info(`ISOLATION_ROUTE_COUNT=${String(new Set(harness.routes.map(route => routeKey(route.method, route.url))).size)}`);
+    assertRouteCoverage(harness.catalogRoutes);
+    console.info(`ISOLATION_ROUTE_COUNT=${String(new Set(harness.catalogRoutes.map(route => routeKey(route.method, route.url))).size)}`);
   });
 
   it('proves the enumeration guard catches an added real Fastify route', async () => {
-    const routes = [...harness.routes];
+    const routes = [...harness.catalogRoutes];
     const Fastify = (await import('fastify')).default;
     const app = Fastify();
     app.addHook('onRoute', route => {
@@ -123,6 +123,18 @@ describe('real gateway exhaustive route isolation under signed owner sessions', 
       await app.ready();
       expect(() => { assertRouteCoverage(routes); }).toThrow('uncovered routes: GET /v3/zz-uncovered-isolation-probe');
     } finally { await app.close(); }
+  });
+
+  it('proves the enumeration guard catches a removed Fastify registration', () => {
+    const key = 'GET /v3/console/companies/:company_id';
+    expect(harness.catalogRoutes.some(route => routeKey(route.method, route.url) === key)).toBe(true);
+    const routes = harness.catalogRoutes.filter(route => routeKey(route.method, route.url) !== key);
+    expect(() => { assertRouteCoverage(routes); }).toThrow(`unregistered matrix routes: ${key}`);
+  });
+
+  it('does not require websocket registrations for the HTTP catalog', () => {
+    const sockets = new Set(ROUTE_ISOLATION_MATRIX.filter(route => route.kind === 'websocket').map(route => routeKey(route.method, route.url)));
+    assertRouteCoverage(harness.catalogRoutes.filter(route => !sockets.has(routeKey(route.method, route.url))));
   });
 
   it('proves both sessions are owners of distinct populated companies and foreign resources exist', async () => {

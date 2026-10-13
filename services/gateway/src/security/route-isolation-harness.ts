@@ -1,4 +1,5 @@
 import { channel } from 'node:diagnostics_channel';
+import { generateKeyPairSync } from 'node:crypto';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -8,6 +9,20 @@ import { CauceRepository, FleetOperationsRepository, type DatabasePool } from '@
 import { startTestCaseDatabase, startTestDatabase, type EmptyTestDatabase, type TestDatabase } from '../../../../tests/helpers/postgres.js';
 import { buildGateway } from '../app.js';
 import { PasswordAuthProvider } from '../password-auth.js';
+import { JwksJwtAuthProvider, MtlsAuthProvider } from '../auth.js';
+import { OidcBffAuthProvider, PostgresOidcSessionStore } from '../oidc-bff.js';
+import { OAuthClients } from '../oauth-client-metadata.js';
+import { PostgresOAuthStore } from '../oauth-authorization-store.js';
+import { OAuthTokens } from '../oauth-tokens.js';
+import { registerOAuthAuthorizationServer } from '../oauth-authorization-server.js';
+import { createOAuthPasswordSession } from '../oauth-password-session.js';
+import { registerClientDelegationRoutes } from '../routes/mcp-client-delegations.js';
+import { FleetMtlsIdentityProvider } from '../fleet/mtls-identities.js';
+import { SignedFleetAuthorityClient } from '../fleet/authority/signed-client.js';
+import { createLegacyFleetAdoptionService } from '../fleet/adoption.js';
+import { HostLegacyAdoptionProbe } from '../fleet/adoption-bridge-client.js';
+import { buildLoopbackHealthProbe } from '../health.js';
+import { WakePumpTelemetry } from '../wake-pump-telemetry.js';
 import { PostgresConsoleUserStore } from '../console-users.js';
 import { ROUTE_ISOLATION_MATRIX, type RouteIsolationEntry } from './route-isolation-matrix.js';
 import { seedIsolationFixtures, type IsolationCompany } from './route-isolation-fixtures.js';
@@ -26,6 +41,9 @@ export function assertRouteCoverage(routes: readonly RegisteredRoute[]): void {
   if (declared.size !== ROUTE_ISOLATION_MATRIX.length) throw new Error('duplicate matrix entries');
   const missing = routes.filter(route => !declared.has(routeKey(route.method, route.url)));
   if (missing.length) throw new Error(`uncovered routes: ${[...new Set(missing.map(route => routeKey(route.method, route.url)))].join(', ')}`);
+  const registered = new Set(routes.map(route => routeKey(route.method, route.url)));
+  const unregistered = ROUTE_ISOLATION_MATRIX.filter(entry => entry.kind !== 'websocket' && !registered.has(routeKey(entry.method, entry.url)));
+  if (unregistered.length) throw new Error(`unregistered matrix routes: ${unregistered.map(entry => routeKey(entry.method, entry.url)).join(', ')}`);
   for (const route of routes) {
     const entry = declared.get(routeKey(route.method, route.url));
     if (!entry?.reason) throw new Error(`route requires an explicit reason: ${routeKey(route.method, route.url)}`);
@@ -69,6 +87,7 @@ export class IsolationHarness {
   externalPool: DatabasePool | undefined;
   fixtures!: { a: IsolationCompany; b: IsolationCompany };
   routes: RegisteredRoute[] = [];
+  catalogRoutes: RegisteredRoute[] = [];
   baseUrl = process.env.CAUCE_ISOLATION_BASE_URL;
   terminalCleanup: (() => Promise<void>) | undefined;
 
@@ -105,6 +124,7 @@ export class IsolationHarness {
       if (process.env.CAUCE_ISOLATION_UNCOVERED_ROUTE === '1') app.get('/v3/zz-uncovered-isolation-probe', async () => ({ ok: true }));
       await app.ready();
     } finally { initialization.unsubscribe(listener); }
+    await this.collectCatalogRoutes(provider);
     if (this.baseUrl !== undefined) {
       const fixtureFile = process.env.CAUCE_ISOLATION_FIXTURE_FILE;
       const databaseUrl = process.env.CAUCE_ISOLATION_CANARY_DATABASE_URL;
@@ -114,6 +134,50 @@ export class IsolationHarness {
       this.snapshotPool = this.externalPool;
       const validation = await validateCanaryFixtures(this.snapshotPool, this.fixtures);
       console.info(`ISOLATION_CANARY_VALIDATION=${JSON.stringify(validation)}`);
+    }
+  }
+
+  private async collectCatalogRoutes(provider: PasswordAuthProvider): Promise<void> {
+    if (!this.current || !this.directory) throw new Error('local isolation database unavailable');
+    const pool = this.current.pool;
+    const directory = this.directory;
+    this.catalogRoutes = [...this.routes];
+    const initialization = channel('fastify.initialization');
+    const listener = (value: unknown) => {
+      const { fastify } = value as { fastify: FastifyInstance };
+      fastify.addHook('onRoute', route => {
+        for (const method of Array.isArray(route.method) ? route.method : [route.method]) this.catalogRoutes.push({ method, url: route.url });
+      });
+    };
+    const apps: FastifyInstance[] = [];
+    const issuer = 'https://isolation.example.test';
+    const tokens = new OAuthTokens({ issuer, resource: `${issuer}/mcp`, kid: 'isolation',
+      signingKey: generateKeyPairSync('ec', { namedCurve: 'prime256v1' }).privateKey });
+    const store = new PostgresOAuthStore(pool, issuer, provider.verifyCredentialStamp.bind(provider));
+    const bootstrapProvider = (namespace: 'bootstrap' | 'normal') => new MtlsAuthProvider(new FleetMtlsIdentityProvider(
+      join(directory, 'base-identities.json'), join(directory, 'fleet-identities.json'), namespace));
+    initialization.subscribe(listener);
+    try {
+      const optional = await buildGateway({ pool, authProvider: provider, logger: false,
+        fleetOperationsRepository: new FleetOperationsRepository(pool),
+        bootstrapProviders: { bootstrap: bootstrapProvider('bootstrap'), normal: bootstrapProvider('normal') },
+        signedFleetAuthorityClient: new SignedFleetAuthorityClient(join(directory, 'authority.sock'), { ownerUid: 0, peerUid: 0 }),
+        legacyFleetAdoptionService: createLegacyFleetAdoptionService(pool, new HostLegacyAdoptionProbe(join(directory, 'adoption.sock'))) });
+      apps.push(optional);
+      await registerOAuthAuthorizationServer(optional, { tokens, store, clients: new OAuthClients(), passwordAuth: provider,
+        session: createOAuthPasswordSession({ provider }) });
+      registerClientDelegationRoutes(optional, pool, provider, { issuer, resource: tokens.resource,
+        verifyCredentialStamp: provider.verifyCredentialStamp.bind(provider) });
+      const oidc = new OidcBffAuthProvider({ issuer, jwksUrl: `${issuer}/jwks`, clientId: 'isolation',
+        authorizationEndpoint: `${issuer}/authorize`, tokenEndpoint: `${issuer}/token`, redirectUri: `${issuer}/v3/auth/callback`,
+        bearerProvider: new JwksJwtAuthProvider({ issuer, audience: 'isolation', jwksUrl: `${issuer}/jwks` }),
+        sessionStore: new PostgresOidcSessionStore(pool, Buffer.alloc(32, 43)) });
+      apps.push(await buildGateway({ pool, authProvider: oidc, logger: false }));
+      apps.push(await buildLoopbackHealthProbe({ pool, wakePumpTelemetry: new WakePumpTelemetry() }));
+      await Promise.all(apps.map(app => app.ready()));
+    } finally {
+      initialization.unsubscribe(listener);
+      await Promise.all(apps.map(app => app.close()));
     }
   }
 
