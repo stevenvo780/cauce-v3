@@ -17,7 +17,9 @@ const laterVersions = ['047_agent_preferences.sql', '048_ui_fleet_lifecycle.sql'
   '055_company_registration.sql', '056_company_office.sql', '057_quota_environments.sql', '058_context_versions.sql',
   '059_host_enrollment.sql', '060_space_backups.sql', '061_people_admin_history.sql', '062_authority_read_guard.sql',
   '063_company_registration_director.sql', '064_company_context_anchor.sql', '065_runtime_grants_replay.sql',
-  '066_runtime_hardening.sql', '067_context_history_immutable.sql'];
+  '066_runtime_hardening.sql', '067_context_history_immutable.sql', '069_diagnostic_frontier_indexes.sql',
+  '070_agent_quota_operations.sql', '073_harness_definitions_seed.sql', '077_agent_quota_expiry.sql',
+  '078_authority_lock_scope.sql', '079_host_enrollment_compatibility.sql'];
 const preferenceTables = ['console_agent_favorites', 'agent_appearances'];
 const provenanceTables = [
   'human_oauth_client_delegations',
