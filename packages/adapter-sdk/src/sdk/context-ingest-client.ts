@@ -107,9 +107,12 @@ export class ContextIngestClient implements NativeContextIngest {
         files: snapshot.files as VersionedContext["files"] } };
     }
     if (status === 409) {
-      let conflict: { desired_version?: unknown; applied_version?: unknown } = {};
-      try { conflict = JSON.parse(text) as typeof conflict; } catch { conflict = {}; }
-      return { state: "conflict",
+      let conflict: { error?: unknown; desired_version?: unknown; applied_version?: unknown } = {};
+      try {
+        const parsed: unknown = JSON.parse(text);
+        if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) conflict = parsed;
+      } catch { conflict = {}; }
+      if (conflict.error === "context_version_conflict") return { state: "conflict",
         desired_version: typeof conflict.desired_version === "number" ? conflict.desired_version : input.base_version,
         applied_version: typeof conflict.applied_version === "number" ? conflict.applied_version : input.base_version };
     }

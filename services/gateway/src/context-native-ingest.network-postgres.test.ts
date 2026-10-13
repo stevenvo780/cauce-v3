@@ -47,6 +47,17 @@ function clientFor(tenant: string, alias: string): ContextIngestClient {
 }
 
 describe('native context ingest over a real socket with the SDK client', () => {
+  it('reports a governed profile rejection through the SDK instead of a version conflict', async () => {
+    const files = await candidate('ContextAlpha', 'Note alongside the governed edit.');
+    expect(files.some(file => file.path === 'context/profile.json')).toBe(true);
+    const before = (await pool.query<Record<string, unknown>>('SELECT * FROM agent_profiles ORDER BY tenant_id,alias')).rows;
+    const client = clientFor('ContextAlpha', 'director');
+    await expect(client.ingest({ base_version: 1,
+      files: files.map(file => file.path === 'context/profile.json' ? { ...file, content: '{}' } : file) }))
+      .rejects.toMatchObject({ code: 'REJECTED', message: expect.stringContaining('profile_is_governed') as string });
+    expect((await pool.query('SELECT count(*)::integer AS count FROM agent_context_versions')).rows).toEqual([{ count: 1 }]);
+    expect((await pool.query<Record<string, unknown>>('SELECT * FROM agent_profiles ORDER BY tenant_id,alias')).rows).toEqual(before);
+  });
   it('ingests, conflicts and isolates by the development identity headers', async () => {
     const client = clientFor('ContextAlpha', 'director');
     const ingested = await client.ingest({ base_version: 1, files: await candidate('ContextAlpha', 'Edited in the space.') });

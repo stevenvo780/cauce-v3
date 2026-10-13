@@ -15,9 +15,11 @@ const HistoryQuery = z.object({ before: Revision.optional() }).strict();
 const DiffQuery = z.object({ from: z.coerce.number().int().min(0).max(Number.MAX_SAFE_INTEGER), to: Revision }).strict();
 export interface ContextVersionRouteOptions { readonly repositoryRoot?: string; readonly runtime?: ContextApplicationRuntime }
 function sendRejection(reply: FastifyReply, error: ContextRejectedError): FastifyReply {
-  const status = error.reason === 'context_governed_path' ? 403
-    : error.reason === 'context_harness_limit' || error.reason === 'context_too_large' ? 413 : 422;
-  return reply.code(status).send({ error: error.reason, message: error.message, paths: error.paths, ...error.limit });
+  const reason = error.reason === 'context_governed_path' && error.paths.includes('context/profile.json')
+    ? 'profile_is_governed' : error.reason;
+  const status = reason === 'profile_is_governed' ? 409 : reason === 'context_governed_path' ? 403
+    : reason === 'context_harness_limit' || reason === 'context_too_large' ? 413 : 422;
+  return reply.code(status).send({ error: reason, message: error.message, paths: error.paths, ...error.limit });
 }
 export function registerContextVersionRoutes(app: FastifyInstance, provider: AuthProvider, pool: DatabasePool,
   options: ContextVersionRouteOptions = {}): void {
@@ -53,7 +55,8 @@ export function registerContextVersionRoutes(app: FastifyInstance, provider: Aut
       if (result.state === 'conflict') {
         return await reply.code(409).send({ error: 'context_version_conflict',
           message: 'the server context version advanced beyond the locally applied base; the local edit was not recorded',
-          base_version: result.base_version, desired_version: result.desired_version, applied_version: result.applied_version });
+          base_version: result.base_version, desired_version: result.desired_version, applied_version: result.applied_version,
+          digest_exists_in_history: result.digest_exists_in_history });
       }
       if (result.state === 'rejected') return await sendRejection(reply, result.error);
       if (git || options.runtime) tick(result.snapshot);

@@ -30,6 +30,7 @@ const REQUEST_CODES: Record<string, string> = {
   context_unsafe_text: 'El texto contiene caracteres de control o invisibles no permitidos.',
   context_harness_limit: 'El contexto supera el límite de documento del harness del agente.',
   context_governed_path: 'Esa ruta está gobernada: solo se puede editar context/notes/ desde el espacio del agente.',
+  profile_is_governed: 'El perfil del agente está gobernado: edítalo desde la consola; desde su espacio solo puede editar context/notes/.',
   context_version_failed: 'No se pudo registrar la versión del contexto. Reintenta.',
   context_runtime_unavailable: 'El servicio que aplica el contexto al agente no está disponible. La versión quedó pendiente.',
 };
