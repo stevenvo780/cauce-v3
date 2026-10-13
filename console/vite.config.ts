@@ -6,9 +6,14 @@ import tailwindcss from '@tailwindcss/vite';
 import { configDefaults } from 'vitest/config';
 import react from '@vitejs/plugin-react';
 import { defineConfig, loadEnv, type Plugin } from 'vite';
-import { opcionesDeTrozo } from '../scripts/trozos-vitest.mjs';
+import type { InlineConfig } from 'vitest/node';
 import { ansiPaletteCss, xtermAnsiPalette } from './vite/ansi-palette';
 import { mockStore } from './vite/mock-store';
+
+interface ModuloDeTrozos { opcionesDeTrozo: () => InlineConfig }
+const trozos: InlineConfig = process.env.CAUCE_TEST_SHARD
+  ? ((await import(new URL('../scripts/trozos-vitest.mjs', import.meta.url).href)) as ModuloDeTrozos).opcionesDeTrozo()
+  : {};
 
 const ANSI_CSS_ID = 'virtual:cauce/xterm-ansi.css';
 const ANSI_CSS_RESOLVED = `\0${ANSI_CSS_ID}`;
@@ -86,7 +91,7 @@ export default defineConfig(({ mode }) => {
       coverage: {
         reporter: ['text', 'html'],
       },
-      ...opcionesDeTrozo(),
+      ...trozos,
     },
   };
 });

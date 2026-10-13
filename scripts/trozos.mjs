@@ -18,6 +18,7 @@ import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 export const RAIZ = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+export const VARIABLES_DE_TROZO = ['CAUCE_TEST_SHARD', 'CAUCE_TEST_SHARD_DIR', 'CAUCE_TEST_SUITE'];
 const FORMATO = /^([1-9]\d{0,3})\/([1-9]\d{0,3})$/u;
 const REGISTRO = /^reparto-(\d+)-.+\.json$/u;
 const FICHERO_DE_PRUEBA = /\.test\.[cm]?js$/u;
@@ -33,7 +34,7 @@ export function leerTrozo(valor = process.env.CAUCE_TEST_SHARD) {
 
 export function sinTrozo(entorno = process.env) {
   const limpio = { ...entorno };
-  delete limpio.CAUCE_TEST_SHARD;
+  for (const nombre of VARIABLES_DE_TROZO) delete limpio[nombre];
   return limpio;
 }
 
@@ -161,7 +162,7 @@ export async function ejecutar([comando, ...argumentos]) {
     const deLaOrden = new Set(ficherosDeLaOrden(argumentos));
     finales = argumentos.filter((argumento) => !deLaOrden.has(argumento) || elegidos.has(relativa(argumento)));
   }
-  return esperar(spawn(comando, finales, { stdio: 'inherit' }));
+  return esperar(spawn(comando, finales, { stdio: 'inherit', env: sinTrozo() }));
 }
 
 const invocadoDirecto = process.argv[1] !== undefined
