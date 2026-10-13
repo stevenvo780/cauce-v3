@@ -100,9 +100,11 @@ cauce hosts setup             # descarga el paquete firmado, escribe la polític
 En la máquina:
 
 ```bash
-cauce hosts status; echo "salida=$?"     # salida=0 y "executor_ready": true
+cauce hosts status; echo "salida=$?"     # salida=0, "executor_ready": true y "provider_auth": true
 systemctl --user status cauce-v3-host-executor-<empresa>-<empresa>-<nombre>.service
 ```
+
+`"provider_auth": true` significa que la máquina puede iniciar la sesión del proveedor de cada agente desde la consola (paso 5 de [Asignar agentes](#5-asignar-agentes)). Si sale `false`, la plataforma no aprobó todavía la receta de login del proveedor: los agentes se crearán, pero se quedarán en «Esperando autenticación» (ver [Límites actuales](#límites-actuales)).
 
 En la consola, con **Releer invitaciones**:
 
@@ -116,8 +118,15 @@ El ejecutor publica su estado cada 30 segundos; si deja de hacerlo, la fila pasa
 1. **Ajustes → Agentes → Añadir agente → «Solo preparar, sin desplegar»**.
 2. Elige el espacio de trabajo, el alias, el nombre visible, la clave física de ejecución y sus grupos.
 3. En **Host operativo**, elige `<empresa>-<nombre>`; en **Plantilla de ejecución**, la que ofrece esa computadora; en **Cuenta principal de ejecución**, la cuenta del proveedor que pagará al agente.
-4. **Previsualizar operación** y, si el resumen es correcto, **Encolar operación**. Espera a **«Completada»**.
-5. Escríbele en su sala: el agente tiene que contestar.
+4. **Previsualizar operación** y, si el resumen es correcto, **Encolar operación**. La operación avanza paso a paso. La primera vez que un agente usa su cuenta en esta computadora se para en **«Esperando autenticación»**: su contenedor ya existe, pero el proveedor todavía no tiene sesión dentro.
+5. **Autentica el proveedor del agente** desde la consola, en el mismo recibo de la operación o en la pestaña **Operación** de la ficha del agente:
+   1. En **«Autenticar la cuenta principal»** comprueba el proveedor, la cuenta y la computadora, y pulsa **Conectar cuenta**.
+   2. Se abre un terminal con el login del proveedor, que corre dentro del contenedor del agente en tu máquina. Sigue lo que pide: con Codex, abre en tu navegador la dirección que muestra y escribe el código; con Claude, abre la dirección y pega en el terminal el código que te devuelve. Entra con la cuenta que elegiste como «Cuenta principal de ejecución».
+   3. Cuando el terminal confirme el inicio de sesión, pulsa **Verificar conexión**. Cauce comprueba que la identidad es la de esa cuenta y que el CLI del proveedor responde; aparece **«Cuenta e identidad verificadas»**.
+   4. Pulsa **Reanudar operación** y espera a **«Completada»**.
+
+   La sesión del proveedor se queda en el volumen de perfiles del agente, en tu máquina; ni el terminal ni el código pasan a la plataforma. Si la operación no se para en «Esperando autenticación», la cuenta ya tenía sesión en ese agente y puedes saltar este paso.
+6. Escríbele en su sala: el agente tiene que contestar.
 
 En la máquina, `docker ps --filter label=cauce.fleet.host=<empresa>-<nombre>` muestra su contenedor. Para pararlo, arrancarlo, cambiar su configuración o retirarlo, usa la pestaña **Operación** del agente; nunca `docker stop` ni `docker rm` a mano: el ejecutor lo detectaría como divergencia.
 
@@ -146,7 +155,10 @@ Los mensajes de `cauce hosts setup` y `status` salen en inglés, con el prefijo 
 | `cauce hosts status` sale con 3, `reason: service_inactive` | el servicio está parado | `journalctl --user -u cauce-v3-host-executor-<empresa>-<empresa>-<nombre>.service -n 50` |
 | al crear un agente: `approved image digest is unavailable` | la imagen de los agentes no está cargada en esta máquina | la plataforma indica cómo cargarla (ver Límites) |
 | al crear un agente: permiso denegado en Docker | el usuario no está en `docker`, o su gestor arrancó antes de añadirlo | `sudo usermod -aG docker cauce-<empresa>` y `sudo systemctl restart user@$(id -u cauce-<empresa>).service` |
-| la operación queda en «Esperando autenticación» | falta el inicio de sesión del proveedor en esta máquina (ver Límites) | pulsa **Cancelar operación** en la pestaña Operación del agente |
+| la operación queda en «Esperando autenticación» | el proveedor aún no tiene sesión en el contenedor del agente | autentícalo desde la consola (paso 5 de [Asignar agentes](#5-asignar-agentes)); si no vas a hacerlo, **Cancelar operación** |
+| **Conectar cuenta** falla («La conexión no se pudo verificar») o no aparece el terminal | la máquina no sirve el login (`cauce hosts status` da `"provider_auth": false`) o su política de login no casa con la del ejecutor | repite `cauce hosts setup`; el diario lo explica: `journalctl --user -u cauce-v3-host-executor-<empresa>-<empresa>-<nombre>.service \| grep 'provider authentication'` |
+| **Verificar conexión**: «La cuenta conectada no corresponde a la identidad autorizada» | iniciaste sesión con otra cuenta del proveedor | **Cancelar conexión**, **Conectar cuenta** otra vez y entra con la cuenta correcta |
+| **Verificar conexión**: «La conexión caducó» | pasaron más de 10 minutos desde **Conectar cuenta** | vuelve a pulsar **Conectar cuenta** |
 
 ## 7. Dar de baja la computadora
 
@@ -173,5 +185,5 @@ Hasta que la plataforma resuelva estos puntos, una computadora nueva se puede **
 - **Preparación activada en producción.** El gateway necesita su configuración y su clave de firma (`CAUCE_FLEET_HOST_SETUP_CONFIG_FILE`, [parámetros](parametros.md)). Sin ellas, la consola solo muestra el comando de enrolamiento.
 - **Paquete publicado.** Falta construir y publicar en una URL HTTPS el paquete que descarga `setup`; hoy solo lo construye la prueba automática.
 - **Imagen de los agentes.** El ejecutor usa una imagen fijada por su digest y no la descarga: hay que cargarla en cada máquina.
-- **Inicio de sesión del proveedor.** Una computadora preparada con `setup` aún no puede iniciar sesión con la cuenta del proveedor dentro del contenedor del agente, así que el alta se queda esperando autenticación.
+- **Receta de login del proveedor.** `setup` solo habilita el login desde la consola si cada plantilla de perfil de la configuración de preparación trae su receta `login` (ver [ordenadores](v4-ordenadores.md#login-del-proveedor-desde-la-consola)); sin ella, `cauce hosts status` da `"provider_auth": false` y el alta se queda esperando autenticación. La imagen de los agentes tiene que traer el CLI del proveedor fijado por su digest.
 - **Ruta de los agentes hacia el gateway.** Los agentes se conectan con mTLS al gateway, que solo escucha en la red privada de la plataforma; la máquina tiene que estar en esa red o la plataforma tiene que publicar otra ruta.
