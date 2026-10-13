@@ -27,16 +27,20 @@ export function CompanyAdminsPanel({ companyId, canAssignPeople }: { companyId: 
     } catch (cause) { setError(cause instanceof Error ? cause.message : 'No se confirmó la autoridad de empresa.'); }
     finally { setBusy(false); }
   }
+  const eligiblePeople = people.data?.items.filter(person => person.active) ?? [];
   return <section aria-label="Autoridad de empresa" className="grid gap-3 rounded-xl border border-line bg-subtle p-4">
     <div className="flex flex-wrap justify-between gap-2"><h3 className="m-0 text-base">Dueños y administradores</h3><Button size="sm" disabled={busy || admins.loading} onClick={() => { void admins.reload(); }}>Releer autoridad</Button></div>
     {admins.loading ? <p role="status">Leyendo autoridad…</p> : null}
+    {canAssignPeople && people.loading ? <p role="status">Leyendo personas elegibles…</p> : null}
     {error || admins.error || people.error ? <Notice tone="danger" role="alert">{error || (admins.error?.message ?? people.error?.message)}</Notice> : null}
     {notice ? <Notice tone="ok" role="status">{notice}</Notice> : null}
+    {admins.data && admins.data.items.length === 0 && !admins.error ? <p className="m-0 text-sm text-muted">Todavía no hay dueños ni administradores asignados a esta empresa.</p> : null}
     <ul className="m-0 grid list-none gap-2 p-0">{admins.data?.items.map(admin => <li key={admin.user_id} className="flex flex-wrap justify-between gap-2 border-b border-line py-2">
       <span>{admin.display_name} · {admin.email} · {admin.role === 'owner' ? 'Dueño' : 'Administrador'}</span>
       <Button size="sm" variant="danger" disabled={!ready || !admins.data?.capabilities.revoke || admin.role === 'owner' && !admins.data.capabilities.grant_owner}
         onClick={() => { setConfirmation(admin); }}>Revocar autoridad de {admin.display_name}</Button>
     </li>)}</ul>
+    {canAssignPeople && !people.loading && !people.error && people.data && eligiblePeople.length === 0 ? <p className="m-0 text-sm text-muted">No hay personas activas elegibles para asignar en esta empresa.</p> : null}
     <form aria-label="Asignar autoridad de empresa" className="grid gap-2 sm:grid-cols-3" onSubmit={event => { event.preventDefault();
       if (!canAssignPeople || people.loading || people.error) return;
       const current = admins.data?.items.find(admin => admin.user_id === personId); void write(personId, role, current?.version ?? 0); }}>

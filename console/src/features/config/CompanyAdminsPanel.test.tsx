@@ -16,3 +16,27 @@ it('no proyecta las personas de la empresa actuada como candidatas de una empres
   expect(screen.getByRole('button', { name: 'Guardar autoridad' })).toBeDisabled();
   expect(peopleReads).toBe(0);
 });
+
+const SIN_CAPACIDADES = { create: false, update: false, retire: false, restore: false, purge: false };
+
+it('dice que no hay administradores ni personas elegibles cuando las dos lecturas llegan vacías', async () => {
+  server.use(http.get('*/v3/console/companies/two/admins', () => HttpResponse.json({ company_id: 'two', items: [],
+    capabilities: { grant_admin: true, grant_owner: true, revoke: true } })),
+  http.get('*/v3/console/people', () => HttpResponse.json({ items: [], capabilities: SIN_CAPACIDADES })));
+  renderWithApi(<CompanyAdminsPanel companyId="two" canAssignPeople />);
+  expect(await screen.findByText(/Todavía no hay dueños ni administradores asignados/u)).toBeVisible();
+  expect(await screen.findByText(/No hay personas activas elegibles para asignar/u)).toBeVisible();
+});
+
+it('anuncia la lectura de personas mientras el selector está deshabilitado', async () => {
+  server.use(http.get('*/v3/console/companies/two/admins', () => HttpResponse.json({ company_id: 'two', items: [],
+    capabilities: { grant_admin: true, grant_owner: true, revoke: true } })),
+  http.get('*/v3/console/people', async () => {
+    await new Promise(resolve => { setTimeout(resolve, 600); });
+    return HttpResponse.json({ items: [], capabilities: SIN_CAPACIDADES });
+  }));
+  renderWithApi(<CompanyAdminsPanel companyId="two" canAssignPeople />);
+  expect(await screen.findByText(/Leyendo personas elegibles…/u)).toBeVisible();
+  expect(screen.getByRole('combobox', { name: 'Persona' })).toBeDisabled();
+  expect(await screen.findByText(/No hay personas activas elegibles para asignar/u)).toBeVisible();
+});
