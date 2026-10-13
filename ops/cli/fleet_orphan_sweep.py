@@ -40,9 +40,12 @@ def fleet_resources() -> list[dict]:
     return found
 
 
-def container_observations() -> dict[str, dict]:
+def container_observations(names: set[str]) -> dict[str, dict]:
+    if not names:
+        return {}
     observed = {}
-    for item in docker_json('container', 'ps', '-a', '-q'):
+    name_filter = 'name=^/(' + '|'.join(re.escape(name) for name in sorted(names)) + ')$'
+    for item in docker_json('container', 'ps', '-a', '-q', '--filter', name_filter):
         labels = (item.get('Config') or {}).get('Labels') or {}
         state = item.get('State') or {}
         observed[item['Name'].lstrip('/')] = {'running': bool(state.get('Running')), 'labels': labels,
@@ -127,7 +130,8 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     resources = [row for row in fleet_resources() if (row['runtime_key'] or '').startswith(arguments.runtime_key_prefix)
                  and (not arguments.host_id or row['host_id'] == arguments.host_id)]
-    report = sweep(rows, resources, container_observations())
+    names = {row['container_name'] for row in rows if row.get('runtime_mode') == 'container'}
+    report = sweep(rows, resources, container_observations(names))
     report['clean'] = not report['orphan_resources'] and not report['orphan_rows'] and not report['divergences']
     print(json.dumps(report, sort_keys=True))
     return 0 if report['clean'] else 1

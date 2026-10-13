@@ -40,8 +40,8 @@ def sweep(rows: pathlib.Path, prefix: str, host: str) -> tuple[dict, int]:
 
 
 def remove(name: str) -> None:
-    subprocess.run(['docker', 'rm', '-f', name], capture_output=True)
-    subprocess.run(['docker', 'volume', 'rm', name + '-state', name + '-provider-profiles'], capture_output=True)
+    subprocess.run(['docker', 'rm', '-f', name], capture_output=True, timeout=40)
+    subprocess.run(['docker', 'volume', 'rm', name + '-state', name + '-provider-profiles'], capture_output=True, timeout=40)
 
 
 def build(root: pathlib.Path, host: str) -> tuple[dict, pathlib.Path, str]:
@@ -105,7 +105,13 @@ def main() -> int:
             for name in (manifest.get('runtime_key'), manifest.get('fail_key')):
                 if isinstance(name, str) and name.startswith('zz-canary-'):
                     remove(name)
+                    report = reports.sweep_owned_fleet(root / 'cleanup-rows.json', [], name, manifest['host_id'], name)
+                    if report['clean'] is not True:
+                        raise SystemExit('cleanup left owned resources: ' + json.dumps(report))
         return 0
+    if not all(name.startswith('zz-canary-') for name in (arguments.runtime_key, arguments.fail_key)) \
+            or arguments.runtime_key == arguments.fail_key:
+        raise SystemExit('prepare requires distinct zz-canary runtime keys')
     root.mkdir(mode=0o700, exist_ok=True)
     host = arguments.runtime_key
     image = image_id()
@@ -113,6 +119,11 @@ def main() -> int:
     place(policy, arguments.fail_key, image, user)
     place(policy, arguments.runtime_key, image, user)
     save(policy, policy_file)
+    manifest = {'policy': str(policy_file), 'python': sys.executable, 'host_id': host, 'tenant_id': arguments.tenant,
+                'alias': arguments.alias, 'runtime_key': arguments.runtime_key, 'fail_key': arguments.fail_key,
+                'container_name': arguments.runtime_key, 'runtime_user': 'nobody', 'home_directory': '/nonexistent',
+                'state_directory': f'{STATE_ROOT}/{arguments.runtime_key}', 'systemd_user': user, 'fail_clean': False}
+    manifest_path.write_text(json.dumps(manifest))
     rows = root / 'rows.json'
     rows.write_text('[]')
     failed = agent(policy, arguments.tenant, arguments.alias + 'fail', arguments.fail_key, user)
@@ -133,10 +144,7 @@ def main() -> int:
         raise SystemExit('failed create compensation left orphans: ' + json.dumps(report))
     created = agent(policy, arguments.tenant, arguments.alias, arguments.runtime_key, user)
     create_container(policy, created, operation_id=str(uuid.uuid4()))
-    manifest = {'policy': str(policy_file), 'python': sys.executable, 'host_id': host, 'tenant_id': arguments.tenant,
-                'alias': arguments.alias, 'runtime_key': arguments.runtime_key, 'fail_key': arguments.fail_key,
-                'container_name': arguments.runtime_key, 'runtime_user': 'nobody', 'home_directory': '/nonexistent',
-                'state_directory': f'{STATE_ROOT}/{arguments.runtime_key}', 'systemd_user': user, 'fail_clean': True}
+    manifest['fail_clean'] = True
     manifest_path.write_text(json.dumps(manifest))
     print(json.dumps(manifest))
     return 0
