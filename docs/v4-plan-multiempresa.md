@@ -806,7 +806,7 @@ La URL ni la contraseña se imprimen. `empresa estado --estado disabled|retired`
   - `ops/tests/cauce-plataforma-*.test.mjs`;
   - `ops/scripts/export-fleet-snapshot.py` y `ops/scripts/fleet_runtime_materialization.py` (`--company` y el gate de paridad);
   - Telegram: `ops/telegram-runtime/config.json` (ruta de token `<tenant>/<alias>.token`), `services/telegram-bridge/src/config.ts` y `services/telegram-bridge/test/config.test.ts`;
-  - guardias sin el default `steven_dm`: `ops/guardias/catalogo-mouseion-health.sh` (y su unidad, que fija el destino) y `ops/guardias/cauce-attach` (`attach-aviso.json` por host, ver `ops/guardias/README.md`); `ops/guardias/cauce-v3-medico-monitor` lee las dos disposiciones de token.
+  - guardias sin el default `steven_dm`: `ops/guardias/catalogo-mouseion-health.sh` y `ops/guardias/cauce-attach` (`attach-aviso.json` por host, ver `ops/guardias/README.md`); `ops/guardias/systemd/cauce-catalogo-health.service` solo fija `CATALOGO_INFORME` y deja `CAUCE_DESTINO_AVISO`, `CAUCE_TENANT_AVISO` y `CAUCE_SALA_AVISO` a un drop-in del host; `ops/guardias/cauce-v3-medico-monitor` abre solo `<tenant>/<alias>.token` bajo el directorio de telegram-runtime (`TOKEN_DIR`, `SONDA_TELEGRAM` y `PLANTILLA_AVISO`; `sonda_telegram` en `ops/guardias/cauce-v3-medico-monitor-sondas-lib.py` reutiliza esa sonda).
 - **Tests:**
   - la CLI solo llama a funciones `cauce_platform_*` y audita;
   - la paridad por empresa no falla con agentes de otra empresa;
