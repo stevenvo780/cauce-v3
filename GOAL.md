@@ -101,7 +101,7 @@ Registrar y consultar cuentas sin agente, instanciar un entorno Docker aislado c
 - [ ] Ciclo Docker real desde la web: crear, autenticar (el dueño aprueba el código con las cuentas `cuota-claude-1`, `cuota-codex-b2b`, `cuota-grok-1`), consultar, `update_cli` y eliminar, más una prueba de escape del PTY.
 - [x] [código] **Refresco de token restaurado** solo en entornos de «Mis cuotas» con sesión propia (flag explícito, nunca en contenedores de agentes), con candado, relectura y escritura atómica 0600 (25a27a83, 365d9faf, 425cd569). Falta el recibo real de un entorno autenticado hace >9 h.
 - [ ] Habilitar Grok (paquete e identidad) y dejar de ofrecer proveedores sin ejecutor (gemini).
-- [ ] Datos frescos sin pulsar botones (consulta al abrir la vista si la captura tiene >10 min) y prueba de uso cotidiano 24 h después en producción.
+- [ ] Datos frescos sin pulsar botones (consulta al abrir la vista si la captura tiene >10 min). (Decisión del dueño, 13-oct: la prueba de uso de 24 h no es requisito; el dueño usa la plataforma durante la semana y reporta.)
 
 ## 4. Oficina interactiva y configurable
 
@@ -129,7 +129,7 @@ Mueve a **Gaia, Hegel, Hades y Argos** a servidores de la red local para liberar
 - [ ] Registrar bindings reales (cuenta, modelo, pagador) sin cambiar de cuenta; **copiar en privado** las sesiones a server2 (SSH, 0600, sin copias, Git ni logs), decisión del dueño.
 - [ ] Copia recuperable y ensayo de reversión antes de cada corte; proyectos por git y datos con manifiesto; normalizar el layout durante el traslado.
 - [ ] Canario Gaia, luego Hades, Argos y Hegel (Hegel con espacio propio y sus repos, sin tocar `ws-humanizar`). Por alias: nonce por Cauce, terminal por CLI y web, cuota, contexto aplicado y host en la UI. Tras el traslado, además: una edición de contexto desde la UI crea la versión N+1, sincronizada y ligada al mismo historial del alias, y una operación de la UI (detener y arrancar) se aplica en el host nuevo.
-- [ ] Liberación del origen tras 7 días y medición VPS antes y después con un único script.
+- [ ] Medición VPS antes y después de migrar con un único script. La liberación del origen 7 días después la hace el dueño como seguimiento y no cuenta para el cierre funcional (13-oct).
 - [ ] Praxis: portar a V4 los arreglos del hospital (`socrates/hospital-supervision-1699`), inventariar sus agentes y servicios, migrarlos a los servidores locales con el mismo procedimiento, verificar y retirar Cauce del hospital antes de apagar la VPS.
 
 ## 6. Gestión de recursos, Docker y CLI de Cauce
