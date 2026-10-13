@@ -1,8 +1,8 @@
 import { execFile, spawn } from 'node:child_process';
-import { createHash, generateKeyPairSync } from 'node:crypto';
+import { createHash, generateKeyPairSync, randomUUID } from 'node:crypto';
 import { chmod, cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer, type Server } from 'node:http';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -19,6 +19,7 @@ import { inviteSetupHost, registerSetupOwner, type SetupOwnerSession } from './h
 const execute = promisify(execFile);
 const ROOT = fileURLToPath(new URL('../../../../', import.meta.url));
 const hash = (value: string | Buffer) => createHash('sha256').update(value).digest('hex');
+const RESOURCE_PREFIX = `zz-canary-host-setup-${randomUUID().slice(0, 8)}`;
 /** A clean computer: systemd as PID 1, a normal user with linger, Python 3.12, OpenSSL and Node.js 22, and nothing of Cauce. */
 const COMPUTER_IMAGE = `FROM node:22-bookworm AS node
 FROM python:3.12-slim
@@ -34,7 +35,8 @@ const TREE = ['services/gateway/src', 'packages/store/src', 'packages/protocol/s
   'ops/cli', 'ops/scripts', 'ops/container-runtime'];
 
 let database: TestDatabase | undefined; let current: EmptyTestDatabase | undefined; let pool: DatabasePool;
-let work = ''; let container = ''; let gatewayUrl = ''; let packager: HostSetupPackager;
+let closePool = () => Promise.resolve();
+let work = ''; let container = ''; let image = ''; let gatewayUrl = ''; let packager: HostSetupPackager;
 let app: Awaited<ReturnType<typeof buildGateway>> | undefined; let artifacts: Server | undefined;
 let bridge: Awaited<ReturnType<typeof startSignedFleetAuthorityBridge>> | undefined;
 
@@ -51,7 +53,6 @@ function gateway() { if (!app) throw new Error('gateway absent'); return app; }
 const onComputer = (args: string[], input?: string) => command('docker', ['exec', '-i', ...AS_USER, container, ...args], input);
 const cli = (args: string[], input?: string) => onComputer(['python3', '/opt/cauce-cli/host_enrollment.py', ...args], input);
 
-/** The release a platform would approve: the committed executor tree, its Python helpers, the adapter descriptors and a self-contained host process. */
 async function buildRelease(tree: string): Promise<{ archive: Buffer; bundleDigest: string; hookDigest: string; revision: string }> {
   const stage = join(work, 'stage');
   for (const part of ['ops/cli', 'ops/scripts', 'ops/container-runtime']) await cp(join(tree, part), join(stage, part), { recursive: true });
@@ -96,12 +97,16 @@ async function signedAuthority(): Promise<{ client: SignedFleetAuthorityClient; 
   return { client: new SignedFleetAuthorityClient(socket, { ownerUid: uid, peerUid: uid }), ca: await readFile(certificate) };
 }
 async function computerImage(): Promise<string> {
-  const tag = `zz-canary-host-setup:${hash(COMPUTER_IMAGE).slice(0, 12)}`;
-  if ((await command('docker', ['image', 'inspect', tag])).code !== 0) {
-    const built = await command('docker', ['build', '-q', '-t', tag, '-'], COMPUTER_IMAGE);
-    if (built.code !== 0) throw new Error(`computer image build failed: ${built.stderr}`);
-  }
-  return tag;
+  image = `${RESOURCE_PREFIX}:computer`;
+  const built = await command('docker', ['build', '-q', '-t', image, '-'], COMPUTER_IMAGE);
+  if (built.code !== 0) throw new Error(`computer image build failed: ${built.stderr}`);
+  return image;
+}
+async function inventory() {
+  const containers = await execute('docker', ['ps', '-a', '--format', '{{.Names}}', '--filter', `name=^/${RESOURCE_PREFIX}`]);
+  const volumes = await execute('docker', ['volume', 'ls', '--format', '{{.Name}}', '--filter', `name=^${RESOURCE_PREFIX}`]);
+  const images = await execute('docker', ['image', 'ls', '--format', '{{.Repository}}:{{.Tag}}', '--filter', `reference=${RESOURCE_PREFIX}:*`]);
+  return { containers: containers.stdout.trim(), volumes: volumes.stdout.trim(), images: images.stdout.trim() };
 }
 async function serveArtifacts(files: Record<string, Buffer>): Promise<string> {
   artifacts = createServer((request, response) => {
@@ -123,17 +128,27 @@ async function capability(session: SetupOwnerSession) {
   return JSON.parse(response?.body ?? '{}') as { available: boolean; placements: { host_id: string }[] };
 }
 
-describe.skipIf(process.env.CAUCE_HOST_SETUP_E2E !== '1')('a clean computer prepares its executor without the platform administrator', () => {
+describe('a clean computer prepares its executor without the platform administrator', () => {
   let ownerA: SetupOwnerSession;
   beforeAll(async () => {
-    work = await mkdtemp('/var/tmp/cauce-host-setup-e2e-');
+    const before = await inventory();
+    expect(before).toEqual({ containers: '', volumes: '', images: '' });
+    console.info('HOST_SETUP_DOCKER_BEFORE', RESOURCE_PREFIX, JSON.stringify(before));
+    work = await mkdtemp(`/var/tmp/${RESOURCE_PREFIX}-`);
     const tree = join(work, 'tree'); await mkdir(tree);
-    await execute('bash', ['-c', 'git -C "$1" archive HEAD "${@:3}" | tar -x -C "$2"', 'archive', ROOT, tree, ...TREE]);
+    const tracked = (await execute('git', ['-C', ROOT, 'ls-files', '-z', '--', ...TREE])).stdout.split('\0').filter(Boolean);
+    const deleted = new Set((await execute('git', ['-C', ROOT, 'ls-files', '--deleted', '-z', '--', ...TREE])).stdout.split('\0'));
+    for (const part of tracked.filter(part => !deleted.has(part))) {
+      await mkdir(dirname(join(tree, part)), { recursive: true }); await cp(join(ROOT, part), join(tree, part));
+    }
     await execute('chmod', ['-R', 'u=rwX,go=rX', join(tree, 'ops/cli')]);
     database = await startTestDatabase(); current = await startTestCaseDatabase(database); pool = createPool(current.url, { max: 8 });
-    const [release, authority, image] = await Promise.all([buildRelease(tree), signedAuthority(), computerImage()]);
+    closePool = () => pool.end();
+    const [release, authority, computer] = await Promise.all([buildRelease(tree), signedAuthority(), computerImage()]);
+    console.info('HOST_SETUP_RELEASE', JSON.stringify({ revision: release.revision, source: 'working-tree-tracked',
+      archive_sha256: hash(release.archive), bundle_digest: release.bundleDigest, hook_sha256: release.hookDigest }));
     const origin = await serveArtifacts({ '/release.tar': release.archive, '/fleet-ca.pem': authority.ca });
-    const imageId = (await execute('docker', ['image', 'inspect', '--format', '{{.Id}}', image])).stdout.trim();
+    const imageId = (await execute('docker', ['image', 'inspect', '--format', '{{.Id}}', computer])).stdout.trim();
     const hook = { executable: '@release@/ops/cli/fleet-provider-hook.py', sha256: release.hookDigest, argv: [], user: '@user@' };
     packager = new HostSetupPackager(HostSetupConfigSchema.parse({ version: 1, signing_key_file: '/etc/cauce/unused.pem',
       release: { name: 'release', revision: release.revision, url: `${origin}/release.tar`, sha256: hash(release.archive), size: release.archive.length },
@@ -153,10 +168,9 @@ describe.skipIf(process.env.CAUCE_HOST_SETUP_E2E !== '1')('a clean computer prep
       authProvider: new PasswordAuthProvider({ users: new PostgresConsoleUserStore(pool), signingKey: Buffer.alloc(32, 61) }),
       hostSetup: packager, signedFleetAuthorityClient: authority.client, fleetOperationsRepository: new FleetOperationsRepository(pool) });
     gatewayUrl = await app.listen({ host: '127.0.0.1', port: 0 });
-    container = `zz-canary-hostsetup-${String(process.pid)}`;
-    await command('docker', ['rm', '-f', container]);
+    container = RESOURCE_PREFIX;
     const started = await command('docker', ['run', '-d', '--name', container, '--privileged', '--cgroupns=private', '--network', 'host',
-      '--tmpfs', '/run', '--tmpfs', '/run/lock', '-v', `${join(tree, 'ops/cli')}:/opt/cauce-cli:ro`, image]);
+      '--tmpfs', '/run', '--tmpfs', '/run/lock', '-v', `${join(tree, 'ops/cli')}:/opt/cauce-cli:ro`, computer]);
     if (started.code !== 0) throw new Error(`computer did not start: ${started.stderr}`);
     const settle = async (probe: () => Promise<boolean>) => {
       for (let attempt = 0; attempt < 100 && !await probe(); attempt++) await new Promise(resolve => setTimeout(resolve, 200));
@@ -167,11 +181,21 @@ describe.skipIf(process.env.CAUCE_HOST_SETUP_E2E !== '1')('a clean computer prep
     ownerA = await registerSetupOwner(app, 'setupe2e');
   }, 600_000);
   afterAll(async () => {
-    if (container) await command('docker', ['rm', '-f', container]);
-    await app?.close(); await bridge?.close(); await new Promise(resolve => artifacts?.close(resolve));
-    await pool.end(); await current?.close();
+    const cleanup = await Promise.allSettled([
+      container ? execute('docker', ['rm', '-f', container]) : Promise.resolve(),
+      app?.close(), bridge?.close(),
+      artifacts === undefined ? Promise.resolve() : new Promise<void>((resolve, reject) => artifacts?.close(error => {
+        if (error) reject(error); else resolve();
+      })),
+    ]);
+    if (image) cleanup.push(...await Promise.allSettled([execute('docker', ['image', 'rm', image])]));
+    const after = await inventory();
+    console.info('HOST_SETUP_DOCKER_AFTER', RESOURCE_PREFIX, JSON.stringify(after));
+    await closePool(); await current?.close();
     if (database) { await database.pool.end(); await database.container.stop(); }
     if (work) await rm(work, { recursive: true, force: true });
+    expect(after).toEqual({ containers: '', volumes: '', images: '' });
+    for (const result of cleanup) if (result.status === 'rejected') throw result.reason;
   }, 120_000);
 
   it('enrolls with the console invitation, installs the user service and reports executor_ready', async () => {
@@ -197,6 +221,7 @@ describe.skipIf(process.env.CAUCE_HOST_SETUP_E2E !== '1')('a clean computer prep
     expect(await capability(ownerA)).toMatchObject({ available: true, placements: [{ host_id: 'setupe2e-laptop' }] });
     expect((await pool.query('SELECT 1 FROM platform_admins')).rowCount).toBe(0);
     expect((await onComputer(['systemctl', '--user', 'is-active', unit])).stdout.trim()).toBe('active');
+    expect((await execute('docker', ['ps', '--format', '{{.Names}}', '--filter', `name=^/${container}$`])).stdout.trim()).toBe(container);
   }, 300_000);
 
   it('another company neither sees that computer nor lets it ask for its setup package', async () => {
