@@ -39,6 +39,19 @@ El supervisor de contenedores (`ops/scripts/container-adapter-supervisor.sh`, la
 
 Los montajes externos se registran en `config/external-mounts.json` con `excluded_from_copy` y el motivo; las copias del espacio los excluyen explícitamente.
 
+### Inventario y migración verificable del cwd heredado
+
+El procedimiento por agente lo ejecuta el orquestador, como el usuario de ejecución del agente (dentro del contenedor, `docker exec --user <usuario>`), con `ops/cli/space_archive.py` de la release (o `cauce spaces inventory|migrate`). Todas las operaciones exigen la identidad completa (`--company-id`, `--tenant-id`, `--alias`, `--runtime-key`) y la contrastan con `config/context-state.json` si existe.
+
+1. Inventario de solo lectura: `space_archive.py inventory --dry-run --directory <state_directory>/space --workspace <cwd heredado> <identidad>`. Lista cada ruta con tamaño, sha256, modo, sitio en la guía (los siete directorios, `native_document` o `desconocida`) y el motivo por el que la copia la omitiría (`excluded_root`, `outside_allowlist`, `sensitive_path`, `sensitive_content`, `vcs_metadata`, `special_file`, `exceeds_file_limit`). Del cwd heredado indica si se copia o queda en origen. No escribe nada ni imprime contenido.
+2. Plan: `space_archive.py migrate --dry-run --workspace <cwd> --directory <space> <identidad>` muestra el manifiesto previo, lo que se copiaría y los conflictos con `space/projects`, sin escribir.
+3. Con el alias detenido, `space_archive.py migrate --workspace <cwd> --directory <space> <identidad>` copia sin mover a `space/projects` directorios, archivos (bit de ejecución y mtime) y symlinks; `.git` viaja como dato del proyecto. Las rutas sensibles (`.env`, `auth.json`, `.claude/`, `.ssh/`…) y los archivos especiales quedan sólo en origen y se declaran en `kept_at_origin`. Si el espacio vive dentro del cwd heredado, se salta como `space_root`. Recalcula el manifiesto del origen (si cambió, falla y pide detener el agente), calcula el de `space/projects` y compara: `lost` debe ser `[]`. El recibo `config/space-migration.json` (`0600`) guarda ambos sha256 de manifiesto, lo copiado, lo que quedó en origen y la reversión. Sale con 1 si hay pérdidas o conflictos.
+4. Repetirla es seguro: los archivos idénticos cuentan como `existing` y un destino divergente se informa como conflicto antes de escribir.
+5. Se añade `SPACE_CWD_MIGRATED=1` al `.env` del alias, se reinicia y se verifica un turno con nonce que lee el archivo desde la ruta nueva. Claude y grok guardan sus sesiones nativas por directorio: tras el cambio, el arnés empieza sesión nueva en `space/projects`.
+6. Reversión: quitar `SPACE_CWD_MIGRATED=1` y reiniciar; el origen no se modificó.
+
+Pruebas locales: `ops/tests/test_space_archive.py` (`SpaceMigrationTests`: inventario sin escrituras ni contenido, migración sin pérdidas, reanudación, conflicto, espacio dentro del cwd y copia del espacio migrado restaurada) y `packages/adapter-sdk/test/space-migration-turn.test.ts` (tras migrar, el turno del engine corre en `space/projects` y un proceso real responde el nonce leído por ruta relativa, no la copia rancia del origen). La migración de los espacios productivos y su turno con nonce siguen pendientes del orquestador.
+
 Cuando el inventario declara un workspace de Muse, la política de aprovisionamiento exige `MUSE_WORKSPACE` y lo valida contra el inventario; el supervisor rechaza un valor distinto. El SDK no fija `/home/node/clawd`: resuelve el workspace con `CAUCE_MUSE_WORKSPACE ?? CAUCE_AGENT_WORKSPACE ?? process.cwd()` en `packages/adapter-sdk/src/bin/config.ts`.
 
 `logs/` no tiene todavía un productor propio: el log del adaptador va al journal de la unidad (acotado por la configuración de journald), no a `space/logs`. Un log acotado y rotado dentro del espacio requiere un cambio en el SDK o en el helper de ejecución.
@@ -123,6 +136,29 @@ El broker filtra variables heredadas `GIT_*`, deshabilita hooks y fija la autor�
 El código no pasa al transporte SSH las opciones `-i`, `UserKnownHostsFile`, `StrictHostKeyChecking`, `IdentitiesOnly` ni `-F /dev/null`; Git usa la configuración SSH efectiva del entorno del broker.
 
 Compose prepara `CAUCE_CONTEXT_REPOSITORY_ROOT=/var/lib/cauce-v3/contexts`, `CAUCE_PROJECT_ROOT=/app`, `CAUCE_SPACE_BACKUP_DIRECTORY=/var/lib/cauce-v3/space-backups` y `CAUCE_SPACE_BACKUP_PYTHON=/usr/local/bin/python3`. Las rutas de host pueden elegirse con `CAUCE_CONTEXT_REPOSITORY_DIRECTORY` y `CAUCE_CONTEXT_GIT_KEY_DIRECTORY`. `space_backups_data` persiste las copias durables. Configuración preparada no equivale a imagen publicada ni worker activo demostrado.
+
+### Preflight del broker
+
+`ops/scripts/context-broker-preflight.py` es de solo lectura y usa el mismo entorno Git que el broker. Dentro del gateway: `docker exec -i <gateway> python3 - --repository /var/lib/cauce-v3/contexts --key /run/cauce-context-git/id_ed25519 < ops/scripts/context-broker-preflight.py`. Comprueba raíz canónica `0700` del uid esperado (`--uid`, 1000 por defecto), `.git` sin escritura de grupo u otros, `core.sshCommand` con `-i` hacia la deploy key privada del mismo uid, `rev-parse main` igual a `ls-remote origin main` y `push --dry-run` con salida 0. Imprime un JSON por comprobación y sale con 0 sólo si todas pasan; no imprime la clave ni la URL del remoto. Probado contra un remoto bare local en `ops/tests/test_context_broker_preflight.py`.
+
+### Siembra real (Humanizar y Praxis)
+
+1. Preflight en verde.
+2. `cauce platform contexto sembrar --empresa humanizar --simular` (con `--nativos DIR` si se recogieron `context/` y `directives/` de los espacios en `DIR/<tenant>/<alias>/`): revisar el plan, una línea por agente activo; las personas no son agentes.
+3. La misma orden sin `--simular` registra la versión 1 de cada agente sin historial y la encola para el broker; el worker del gateway la publica.
+4. `git ls-tree -r --name-only origin/main` dentro del repositorio del broker debe listar `companies/humanizar/tenants/<tenant>/agents/<alias>/.cauce-version.json` por agente; el preflight vuelve a salir 0.
+5. Repetir la siembra devuelve `existing` y no crea versiones. Escanear el remoto con gitleaks (0 hallazgos) y retirar la carpeta sintética `v4_verificacion`.
+6. Praxis, igual con `--empresa` de Praxis, después de importarla.
+
+La siembra idempotente con empuje a un bare está probada en `packages/store/test/context-seed-postgres.test.ts`; la corrida contra GitHub y la VPS es del orquestador.
+
+### Ensayo del fallo de sincronización
+
+En producción, con una versión de prueba de un agente `zz-canary-` y el preflight en verde: cortar el envío (por ejemplo, `remote set-url` temporal a una ruta inexistente dentro del repositorio del broker), guardar una edición y comprobar que queda `failed` con `context_push_failed`, el commit retenido en `main` local y el preflight fallando en `main_matches_origin` y `push_dry_run`. Restaurar el remoto, pulsar **Reintentar** (o `POST …/retry`) y esperar `synced` con `git_commit` alcanzable desde `ls-remote origin main`; el preflight vuelve a salir 0. El broker hace fetch antes de cada commit e integra por carpeta si el remoto avanzó, sin perder commits. El fixture que reproduce estos pasos es `rehearses the sync-failure drill…` en `packages/store/test/context-git-reconcile-postgres.test.ts`; el ensayo desplegado sigue pendiente.
+
+### Documento nativo desde la versión aplicada
+
+`packages/store/test/context-adoption-chain-postgres.test.ts` recorre en local la cadena completa con PostgreSQL y Git reales: una persona edita y crea la versión N+1, el broker la publica con la persona como autora y el broker como committer, el siguiente turno natural la recibe, el engine real del SDK regenera `AGENTS.md` con `Version N+1; digest …` antes de ejecutar y el ACK con testigo de consumo deja `applied_version`, `applied_digest` y `context.adopted` con versión, digest y turno nativo. El proveedor es un runner de prueba: el turno con Claude o Codex reales sigue pendiente.
 
 ## Copias durables y recuperación
 

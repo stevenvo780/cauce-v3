@@ -22,10 +22,6 @@
       "reason": "El simulacro actual incorpora reconciliación de escritores; falta verificar recuperación de Git desde navegador real y sobre el despliegue. La matriz no acredita aceptación de V4."
     },
     {
-      "id": "backup_lifecycle_browser",
-      "reason": "Falta unir solicitud, ejecución física y descarga verificada de la copia desde navegador real."
-    },
-    {
       "id": "backup_restore_delete",
       "reason": "La consola no ofrece restauración ni eliminación de copias; la recuperación sigue fuera de este flujo."
     },
@@ -2187,9 +2183,8 @@
       "label": "Copias descargables del espacio persistente",
       "operations": {
         "C": {
-          "status": "pending",
-          "reason": "Falta unir solicitud, ejecución física y descarga verificada de la copia desde navegador real.",
-          "pending_id": "backup_lifecycle_browser",
+          "status": "covered",
+          "reason": "Gateway real con PostgreSQL: la consola solicita, el host ejecuta la exportación física por el canal firmado, la descarga HTTP de más de 32 MiB llega por stream con el SHA-256 del recibo y space_archive.py la restaura con hashes iguales; el panel descarga por stream, calcula el SHA-256 y sólo guarda el ZIP si coincide. No acredita un navegador real ni una copia productiva.",
           "api": [
             {
               "method": "POST",
@@ -2207,13 +2202,16 @@
             {
               "file": "console/src/features/live/SpaceBackupPanel.test.tsx",
               "name": "muestra pending y permite descargar únicamente ready después de releer el estado"
+            },
+            {
+              "file": "packages/store/test/space-backup-postgres.test.ts",
+              "name": "requests, physically exports and streams a copy above 32 MiB to the console, then restores it with equal hashes"
             }
           ]
         },
         "R": {
-          "status": "pending",
-          "reason": "El componente consulta y descarga ready; falta acreditar el ZIP físico y su SHA desde navegador real.",
-          "pending_id": "backup_lifecycle_browser",
+          "status": "covered",
+          "reason": "Gateway real con PostgreSQL: la consola solicita, el host ejecuta la exportación física por el canal firmado, la descarga HTTP de más de 32 MiB llega por stream con el SHA-256 del recibo y space_archive.py la restaura con hashes iguales; el panel descarga por stream, calcula el SHA-256 y sólo guarda el ZIP si coincide. No acredita un navegador real ni una copia productiva.",
           "api": [
             {
               "method": "GET",
@@ -2229,12 +2227,25 @@
               "file": "console/src/features/live/SpaceBackupPanel.tsx",
               "kind": "text",
               "value": "Actualizar estado del backup"
+            },
+            {
+              "file": "console/src/features/live/SpaceBackupPanel.tsx",
+              "kind": "text",
+              "value": "SHA-256 calculado del archivo guardado"
             }
           ],
           "tests": [
             {
               "file": "console/src/features/live/SpaceBackupPanel.test.tsx",
-              "name": "muestra pending y permite descargar únicamente ready después de releer el estado"
+              "name": "descarga por stream un ZIP de más de 32 MiB, calcula su SHA-256 visible y guarda sólo si coincide"
+            },
+            {
+              "file": "console/src/features/live/SpaceBackupPanel.test.tsx",
+              "name": "descarta el archivo guardado si el SHA-256 o el tamaño del stream no coinciden con el recibo"
+            },
+            {
+              "file": "packages/store/test/space-backup-postgres.test.ts",
+              "name": "requests, physically exports and streams a copy above 32 MiB to the console, then restores it with equal hashes"
             }
           ]
         },

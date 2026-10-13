@@ -54,3 +54,20 @@ it('no ofrece enlace de descarga para un recibo que no está ready', () => {
   const api = new CauceApi('https://console.example', async () => Response.json(auth));
   expect(() => api.spaceBackupDownloadUrl({ ...ready, status: 'running', download_url: null })).toThrow();
 });
+it('la descarga verificable devuelve el cuerpo sin cargarlo, con sesión y sin CSRF, y rechaza un tamaño ajeno al recibo', async () => {
+  const calls: { url: string; init?: RequestInit }[] = [];
+  const respond = (length: string) => vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url; calls.push({ url, ...(init ? { init } : {}) });
+    return new Response(bytes.slice(), { headers: { 'content-type': 'application/zip', 'content-length': length } });
+  });
+  const api = new CauceApi('https://console.example', respond(String(bytes.length)));
+  const body = await api.downloadSpaceBackup(ready, new AbortController().signal);
+  expect(new Uint8Array(await new Response(body).arrayBuffer())).toEqual(bytes);
+  expect(calls[0]?.url).toBe(`https://console.example${path}`);
+  expect(calls[0]?.init).toMatchObject({ credentials: 'include', cache: 'no-store', method: 'GET' });
+  expect(calls[0]?.init?.headers).not.toHaveProperty('X-CSRF-Token');
+  await expect(new CauceApi('https://console.example', respond('999')).downloadSpaceBackup(ready, new AbortController().signal))
+    .rejects.toThrow('No se pudo verificar');
+  await expect(api.downloadSpaceBackup({ ...ready, status: 'running', download_url: null }, new AbortController().signal))
+    .rejects.toThrow('No se pudo verificar');
+});

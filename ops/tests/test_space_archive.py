@@ -437,5 +437,158 @@ class SpaceArchiveTests(unittest.TestCase):
         self.assertFalse(self.archive.exists())
 
 
+class SpaceMigrationTests(unittest.TestCase):
+    """Legacy harness cwd moved into space/projects by copy: inventory first, then manifests before and after without losses."""
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.root = pathlib.Path(self.temporary.name)
+        self.identity = {'company_id': 'zz_canary', 'tenant_id': 'ZzCanary', 'alias': 'zz-canary-agent', 'runtime_key': 'zz-canary-agent'}
+        self.workspace = self.root / 'workspace'
+        self.workspace.mkdir(mode=0o755)
+        (self.workspace / 'CLAUDE.md').write_text('Legacy project instructions.\n')
+        (self.workspace / 'nonce.txt').write_text('zz-canary-nonce-legacy\n')
+        (self.workspace / 'src').mkdir()
+        (self.workspace / 'src/app.py').write_text('print("hola")\n')
+        (self.workspace / 'run.sh').write_text('exit 0\n')
+        (self.workspace / 'run.sh').chmod(0o755)
+        (self.workspace / 'empty').mkdir()
+        (self.workspace / '.git/objects/ab').mkdir(parents=True)
+        (self.workspace / '.git/HEAD').write_text('ref: refs/heads/main\n')
+        (self.workspace / '.git/objects/ab/cdef').write_bytes(bytes(range(256)) * 64)
+        (self.workspace / '.env').write_text('TOKEN=zz-canary-never-copied\n')
+        (self.workspace / 'link').symlink_to('src/app.py')
+        os.mkfifo(self.workspace / 'pipe')
+        self.space = self.root / 'state/space'
+        self.space.mkdir(parents=True, mode=0o700)
+        for name in space_archive.STANDARD_DIRECTORIES:
+            (self.space / name).mkdir(mode=0o700)
+        (self.space / 'config/context-state.json').write_text(json.dumps({**self.identity, 'version': 1}))
+
+    def tearDown(self):
+        self.temporary.cleanup()
+
+    def listing(self, base: pathlib.Path) -> dict:
+        return {str(path.relative_to(base)): (path.lstat().st_mode, path.lstat().st_mtime_ns) for path in sorted(base.rglob('*'))}
+
+    def cli(self, *arguments: str) -> tuple[int, str]:
+        output = io.StringIO()
+        identity = [item for field, value in self.identity.items() for item in ('--' + field.replace('_', '-'), value)]
+        with patch.object(sys, 'argv', ['space_archive.py', *arguments, *identity]), patch('sys.stdout', output), \
+                patch('sys.stderr', io.StringIO()):
+            try:
+                code = space_archive.main()
+            except SystemExit as stop:
+                code = stop.code
+        return code, output.getvalue()
+
+    def migrate(self, dry_run: bool = False) -> dict:
+        return space_archive.migrate_workspace(str(self.workspace), str(self.space), self.identity, dry_run)
+
+    def test_inventory_dry_run_classifies_every_path_and_backup_exclusion_without_content_or_writes(self):
+        (self.space / 'CLAUDE.md').write_text('Native document.\n')
+        (self.space / 'notas-sueltas.txt').write_text('Unknown purpose.\n')
+        (self.space / 'logs/adapter.log').write_text('log line\n')
+        (self.space / 'config/auth.json').write_text('{"token":"zz-canary-auth"}')
+        (self.space / 'projects/notes.py').write_text('DSN = "postgres://zz:zz-canary-literal@db/app"\n')
+        (self.space / 'data/big.bin').write_bytes(b'\0' * 1024)
+        (self.space / 'data/big.bin').chmod(0o644)
+        space_before, workspace_before = self.listing(self.space), self.listing(self.workspace)
+        code, output = self.cli('inventory', '--dry-run', '--directory', str(self.space), '--workspace', str(self.workspace))
+        self.assertEqual(code, 0)
+        result = json.loads(output)
+        self.assertEqual((result['state'], result['dry_run'], result['missing_directories']), ('inventoried', True, []))
+        entries = {entry['path']: entry for entry in result['entries']}
+        self.assertEqual(entries['CLAUDE.md']['classification'], 'native_document')
+        self.assertEqual(entries['notas-sueltas.txt']['classification'], 'desconocida')
+        self.assertEqual(result['unknown'], ['notas-sueltas.txt'])
+        self.assertEqual(entries['logs/adapter.log']['backup'], 'excluded_root')
+        self.assertEqual(entries['config/auth.json']['backup'], 'sensitive_path')
+        self.assertEqual(entries['projects/notes.py']['backup'], 'sensitive_content')
+        self.assertEqual(entries['data/big.bin'], {'path': 'data/big.bin', 'mode': 0o644, 'kind': 'file', 'bytes': 1024,
+                                                    'sha256': hashlib.sha256(b'\0' * 1024).hexdigest(),
+                                                    'classification': 'data', 'backup': None})
+        legacy = {entry['path']: entry for entry in result['workspace']['entries']}
+        self.assertEqual({path: legacy[path]['migration'] for path in ('.env', '.git/HEAD', 'link', 'pipe', 'run.sh')},
+                         {'.env': 'sensitive_path', '.git/HEAD': 'copy', 'link': 'copy', 'pipe': 'special_file', 'run.sh': 'copy'})
+        self.assertEqual(legacy['link']['target'], 'src/app.py')
+        for secret in ('zz-canary-never-copied', 'zz-canary-auth', 'zz-canary-literal', 'Legacy project instructions'):
+            self.assertNotIn(secret, output)
+        self.assertEqual((self.listing(self.space), self.listing(self.workspace)), (space_before, workspace_before))
+        self.assertEqual(self.cli('inventory', '--directory', str(self.space))[0], 2)
+
+    def test_migration_copies_without_moving_and_its_manifest_diff_loses_nothing(self):
+        workspace_before = self.listing(self.workspace)
+        planned = self.migrate(dry_run=True)
+        self.assertEqual((planned['state'], planned['lost'], planned['conflicts'], planned['after']), ('planned', [], [], None))
+        self.assertEqual(list((self.space / 'projects').iterdir()), [])
+        self.assertFalse((self.space / 'config/space-migration.json').exists())
+        code, output = self.cli('migrate', '--directory', str(self.space), '--workspace', str(self.workspace))
+        self.assertEqual(code, 0)
+        result = json.loads(output)
+        self.assertEqual((result['state'], result['lost'], result['conflicts']), ('migrated', [], []))
+        self.assertEqual(result['before']['sha256'], planned['before']['sha256'])
+        self.assertEqual({item['path']: item['reason'] for item in result['kept_at_origin']}, {'.env': 'sensitive_path', 'pipe': 'special_file'})
+        after = {entry['path']: entry for entry in result['after']['entries']}
+        for entry in result['before']['entries']:
+            if entry['path'] in ('.env', 'pipe'):
+                self.assertNotIn(entry['path'], after)
+                continue
+            self.assertTrue(space_archive.same_entry(entry, after[entry['path']]), entry['path'])
+        projects = self.space / 'projects'
+        self.assertEqual((projects / 'nonce.txt').read_text(), 'zz-canary-nonce-legacy\n')
+        self.assertEqual((projects / '.git/objects/ab/cdef').read_bytes(), bytes(range(256)) * 64)
+        self.assertEqual(os.readlink(projects / 'link'), 'src/app.py')
+        self.assertEqual(stat.S_IMODE((projects / 'run.sh').stat().st_mode), 0o700)
+        self.assertEqual(stat.S_IMODE((projects / 'src/app.py').stat().st_mode), 0o600)
+        self.assertEqual((projects / 'src/app.py').stat().st_mtime_ns, (self.workspace / 'src/app.py').stat().st_mtime_ns)
+        self.assertTrue((projects / 'empty').is_dir())
+        self.assertFalse((projects / '.env').exists())
+        self.assertEqual(self.listing(self.workspace), workspace_before)
+        receipt_path = self.space / 'config/space-migration.json'
+        receipt = json.loads(receipt_path.read_text())
+        self.assertEqual(stat.S_IMODE(receipt_path.stat().st_mode), 0o600)
+        self.assertEqual((receipt['state'], receipt['lost'], receipt['before_sha256'], receipt['after_sha256']),
+                         ('migrated', [], result['before']['sha256'], result['after']['sha256']))
+        self.assertIn('SPACE_CWD_MIGRATED', receipt['rollback'])
+        archive, restored = self.root / 'migrated.zip', self.root / 'restored'
+        backup_space(str(self.space), str(archive), self.identity)
+        restore_space(str(archive), str(restored), self.identity)
+        self.assertEqual((restored / 'projects/nonce.txt').read_text(), 'zz-canary-nonce-legacy\n')
+        self.assertEqual((restored / 'projects/run.sh').read_text(), 'exit 0\n')
+
+    def test_rerun_resumes_identical_copies_and_a_divergent_destination_stops_before_writing(self):
+        first = self.migrate()
+        again = self.migrate()
+        self.assertEqual((again['state'], again['copied'], again['lost']), ('migrated', 0, []))
+        self.assertEqual(again['existing'], len(first['before']['entries']) - len(first['kept_at_origin']))
+        (self.space / 'projects/src/app.py').write_text('edited after the migration\n')
+        (self.workspace / 'extra.txt').write_text('new legacy file\n')
+        code, output = self.cli('migrate', '--directory', str(self.space), '--workspace', str(self.workspace))
+        self.assertEqual(code, 1)
+        result = json.loads(output)
+        self.assertEqual((result['state'], result['conflicts']), ('conflict', ['src/app.py']))
+        self.assertFalse((self.space / 'projects/extra.txt').exists())
+        self.assertEqual((self.space / 'projects/src/app.py').read_text(), 'edited after the migration\n')
+
+    def test_space_inside_the_workspace_is_skipped_and_a_workspace_inside_the_space_or_a_foreign_space_is_refused(self):
+        home = self.root / 'home'
+        shutil.copytree(self.workspace, home, symlinks=True, ignore=shutil.ignore_patterns('pipe'))
+        nested = home / '.cauce/state/space'
+        nested.mkdir(parents=True, mode=0o700)
+        for name in space_archive.STANDARD_DIRECTORIES:
+            (nested / name).mkdir(mode=0o700)
+        result = space_archive.migrate_workspace(str(home), str(nested), self.identity)
+        self.assertEqual(result['lost'], [])
+        self.assertIn({'path': '.cauce/state/space', 'reason': 'space_root'}, result['kept_at_origin'])
+        self.assertFalse((nested / 'projects/.cauce/state/space').exists())
+        with self.assertRaisesRegex(SpaceArchiveFailure, 'already lives inside the space'):
+            space_archive.migrate_workspace(str(self.space / 'projects'), str(self.space), self.identity)
+        (self.space / 'config/context-state.json').write_text(json.dumps({**self.identity, 'alias': 'zz-canary-other'}))
+        with self.assertRaisesRegex(SpaceArchiveFailure, 'another context identity'):
+            self.migrate()
+        self.assertEqual(list((self.space / 'projects').iterdir()), [])
+
+
 if __name__ == '__main__':
     unittest.main()

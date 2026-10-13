@@ -449,25 +449,301 @@ def restore_space(archive: str, destination: str, expected_identity: dict) -> di
         os.close(archive_parent)
 
 
+STANDARD_DIRECTORIES = ('context', 'directives', 'projects', 'config', 'data', 'logs', 'tmp')
+NATIVE_DOCUMENTS = frozenset({'AGENTS.md', 'CLAUDE.md', 'GEMINI.md', 'SOUL.md'})
+MAX_TREE_ENTRIES = 500_000
+CHUNK_BYTES = 1024 * 1024
+MIGRATION_RECEIPT = 'space-migration.json'
+ROLLBACK = 'Quita SPACE_CWD_MIGRATED=1 de la configuración del alias y reinícialo: el origen no se modificó.'
+
+
+def write_all(descriptor: int, data: bytes) -> None:
+    view = memoryview(data)
+    while view:
+        view = view[os.write(descriptor, view):]
+
+
+def stream_file(parent: int, name: str, output: int | None = None, keep: bool = False) -> tuple[str, int, int, bytes | None]:
+    """Hashes a regular file without following links and optionally copies it; content is kept only for the secret scan."""
+    descriptor = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
+    try:
+        before = os.fstat(descriptor)
+        if not stat.S_ISREG(before.st_mode):
+            raise SpaceArchiveFailure('tree file changed type during its read')
+        digest, size, kept = hashlib.sha256(), 0, bytearray()
+        while chunk := os.read(descriptor, CHUNK_BYTES):
+            digest.update(chunk)
+            size += len(chunk)
+            if keep and size <= MAX_FILE:
+                kept += chunk
+            if output is not None:
+                write_all(output, chunk)
+        if size != before.st_size or fingerprint(os.fstat(descriptor)) != fingerprint(before):
+            raise SpaceArchiveFailure('tree file changed during its read')
+        return digest.hexdigest(), size, before.st_mtime_ns, bytes(kept) if keep and size <= MAX_FILE else None
+    finally:
+        os.close(descriptor)
+
+
+def descend(root: int, relative: str, owned: bool) -> int:
+    descriptor = os.dup(root)
+    try:
+        for part in pathlib.PurePosixPath(relative).parts:
+            following = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=descriptor)
+            os.close(descriptor)
+            descriptor = following
+            if owned and os.fstat(descriptor).st_uid != os.geteuid():
+                raise SpaceArchiveFailure('migrated directory has an unexpected owner')
+        return descriptor
+    except BaseException:
+        os.close(descriptor)
+        raise
+
+
+def tree_entries(location: str, private: bool, skip: str | None = None, annotate=None) -> list[dict]:
+    """Every entry below location without its content: kind, mode, bytes and sha256 of files and the target of links."""
+    root = open_directory(location, private)
+    entries: list[dict] = []
+
+    def walk(descriptor: int, prefix: str) -> None:
+        for name in sorted(os.listdir(descriptor)):
+            if len(entries) >= MAX_TREE_ENTRIES:
+                raise SpaceArchiveFailure('tree has too many entries to inventory')
+            details = os.stat(name, dir_fd=descriptor, follow_symlinks=False)
+            entry, content = {'path': prefix + name, 'mode': stat.S_IMODE(details.st_mode)}, None
+            if entry['path'] == skip:
+                entry['kind'] = 'space_root'
+            elif stat.S_ISDIR(details.st_mode):
+                entry['kind'] = 'directory'
+            elif stat.S_ISLNK(details.st_mode):
+                entry.update(kind='symlink', target=os.readlink(name, dir_fd=descriptor))
+            elif stat.S_ISREG(details.st_mode):
+                sha256, size, _, content = stream_file(descriptor, name, keep=annotate is not None)
+                entry.update(kind='file', bytes=size, sha256=sha256)
+            else:
+                entry['kind'] = 'special'
+            if annotate is not None:
+                annotate(entry, content)
+            entries.append(entry)
+            if entry['kind'] == 'directory':
+                child = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=descriptor)
+                try:
+                    walk(child, entry['path'] + '/')
+                finally:
+                    os.close(child)
+    try:
+        walk(root, '')
+    finally:
+        os.close(root)
+    return entries
+
+
+def classification(path: str) -> str:
+    top = path.split('/', 1)[0]
+    return top if top in STANDARD_DIRECTORIES else 'native_document' if path in NATIVE_DOCUMENTS else 'desconocida'
+
+
+def backup_reason(entry: dict, content: bytes | None) -> str | None:
+    top = entry['path'].split('/', 1)[0]
+    if top in ('logs', 'tmp'):
+        return 'excluded_root'
+    if top not in ROOTS:
+        return 'outside_allowlist'
+    reason = omission_reason(entry['path'])
+    if reason or entry['kind'] == 'directory':
+        return reason
+    if entry['kind'] != 'file':
+        return 'special_file'
+    if entry['bytes'] > MAX_FILE:
+        return 'exceeds_file_limit'
+    return 'sensitive_content' if content is not None and sensitive_content(entry['path'], content) else None
+
+
+def migration_reason(entry: dict) -> str | None:
+    """Why an entry of the legacy cwd stays only at its origin; Git metadata is project data and moves with it."""
+    if entry['kind'] in ('space_root', 'special'):
+        return 'space_root' if entry['kind'] == 'space_root' else 'special_file'
+    reason = omission_reason(entry['path'])
+    return None if reason == 'vcs_metadata' else reason
+
+
+def space_skip(workspace: str, directory: str) -> str | None:
+    source, space = pathlib.PurePosixPath(workspace), pathlib.PurePosixPath(directory)
+    if source.is_relative_to(space):
+        raise SpaceArchiveFailure('the workspace already lives inside the space')
+    return str(space.relative_to(source)) if space.is_relative_to(source) else None
+
+
+def verify_space_identity(root: int, expected: dict) -> None:
+    try:
+        config = os.open('config', os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=root)
+    except FileNotFoundError:
+        return
+    try:
+        raw, _ = read_file(config, 'context-state.json', MAX_MANIFEST)
+    except FileNotFoundError:
+        return
+    finally:
+        os.close(config)
+    verify_context_identity(raw, expected)
+
+
+def inventory_space(directory: str, expected_identity: dict, workspace: str | None = None) -> dict:
+    """Dry run that writes nothing: path, size, sha256, place in the layout and backup exclusion of every entry, never content."""
+    expected = identity(expected_identity)
+
+    def annotate(entry: dict, content: bytes | None) -> None:
+        entry['classification'] = classification(entry['path'])
+        entry['backup'] = backup_reason(entry, content)
+        if entry['path'] == 'config/context-state.json' and content is not None:
+            verify_context_identity(content, expected)
+    entries = tree_entries(directory, True, annotate=annotate)
+    directories = {entry['path'] for entry in entries if entry['kind'] == 'directory'}
+    result = {'state': 'inventoried', 'dry_run': True, 'identity': expected, 'directory': directory, 'entries': entries,
+              'missing_directories': [name for name in STANDARD_DIRECTORIES if name not in directories],
+              'unknown': [entry['path'] for entry in entries if entry['classification'] == 'desconocida'],
+              'bytes': sum(entry.get('bytes', 0) for entry in entries), 'workspace': None}
+    if workspace is not None:
+        legacy = tree_entries(workspace, False, skip=space_skip(workspace, directory))
+        for entry in legacy:
+            entry.update(classification='projects', migration=migration_reason(entry) or 'copy')
+        result['workspace'] = {'directory': workspace, 'entries': legacy, 'bytes': sum(entry.get('bytes', 0) for entry in legacy)}
+    return result
+
+
+def manifest_digest(entries: list[dict]) -> str:
+    return hashlib.sha256(json.dumps(entries, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+
+
+def same_entry(before: dict, after: dict | None) -> bool:
+    if after is None or before['kind'] != after['kind']:
+        return False
+    if before['kind'] == 'file':
+        return (before['sha256'], before['bytes'], before['mode'] & 0o100) == (after['sha256'], after['bytes'], after['mode'] & 0o100)
+    return before.get('target') == after.get('target')
+
+
+def copy_entry(source_root: int, target_root: int, entry: dict) -> None:
+    relative = pathlib.PurePosixPath(entry['path'])
+    source = descend(source_root, str(relative.parent), False)
+    try:
+        target = descend(target_root, str(relative.parent), True)
+        try:
+            if entry['kind'] == 'directory':
+                os.mkdir(relative.name, 0o700, dir_fd=target)
+            elif entry['kind'] == 'symlink':
+                os.symlink(entry['target'], relative.name, dir_fd=target)
+            else:
+                mode = 0o700 if entry['mode'] & stat.S_IXUSR else 0o600
+                output = os.open(relative.name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, mode, dir_fd=target)
+                try:
+                    os.fchmod(output, mode)
+                    sha256, size, mtime, _ = stream_file(source, relative.name, output)
+                    os.fsync(output)
+                    os.utime(output, ns=(mtime, mtime))
+                finally:
+                    os.close(output)
+                if (sha256, size) != (entry['sha256'], entry['bytes']):
+                    raise SpaceArchiveFailure('source changed during migration; stop the agent and retry')
+        finally:
+            os.close(target)
+    finally:
+        os.close(source)
+
+
+def write_receipt(root: int, receipt: dict) -> None:
+    config = os.open('config', os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=root)
+    try:
+        temporary = MIGRATION_RECEIPT + '.tmp'
+        output = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600, dir_fd=config)
+        try:
+            write_all(output, json.dumps(receipt, ensure_ascii=False, sort_keys=True).encode())
+            os.fsync(output)
+        finally:
+            os.close(output)
+        os.replace(temporary, MIGRATION_RECEIPT, src_dir_fd=config, dst_dir_fd=config)
+        os.fsync(config)
+    finally:
+        os.close(config)
+
+
+def migrate_workspace(workspace: str, directory: str, expected_identity: dict, dry_run: bool = False) -> dict:
+    """Copies the legacy harness cwd into space/projects without moving it and proves from both manifests that nothing was lost."""
+    expected = identity(expected_identity)
+    skip = space_skip(workspace, directory)
+    projects = str(pathlib.PurePosixPath(directory) / 'projects')
+    root = open_directory(directory)
+    try:
+        verify_space_identity(root, expected)
+        try:
+            os.close(open_directory(projects))
+        except FileNotFoundError:
+            raise SpaceArchiveFailure('space/projects is missing; prepare the space layout first') from None
+        before = tree_entries(workspace, False, skip=skip)
+        existing = {entry['path']: entry for entry in tree_entries(projects, True)}
+        kept = [{'path': entry['path'], 'reason': migration_reason(entry)} for entry in before if migration_reason(entry)]
+        pending = [entry for entry in before if not migration_reason(entry) and entry['path'] not in existing]
+        conflicts = [entry['path'] for entry in before if not migration_reason(entry) and entry['path'] in existing
+                     and not same_entry(entry, existing[entry['path']])]
+        result = {'identity': expected, 'workspace': workspace, 'cwd': projects, 'dry_run': dry_run, 'kept_at_origin': kept,
+                  'conflicts': conflicts, 'copied': 0, 'existing': len(before) - len(kept) - len(pending) - len(conflicts),
+                  'before': {'sha256': manifest_digest(before), 'entries': before}, 'rollback': ROLLBACK}
+        if dry_run or conflicts:
+            return {**result, 'state': 'conflict' if conflicts else 'planned', 'to_copy': len(pending), 'after': None, 'lost': []}
+        source_root = open_directory(workspace, False)
+        target_root = open_directory(projects)
+        try:
+            for entry in pending:
+                copy_entry(source_root, target_root, entry)
+            os.fsync(target_root)
+        finally:
+            os.close(target_root)
+            os.close(source_root)
+        if tree_entries(workspace, False, skip=skip) != before:
+            raise SpaceArchiveFailure('source changed during migration; stop the agent and retry')
+        after = tree_entries(projects, True)
+        indexed = {entry['path']: entry for entry in after}
+        lost = [entry['path'] for entry in before if not migration_reason(entry) and not same_entry(entry, indexed.get(entry['path']))]
+        receipt = {'schema_version': 1, 'state': 'incomplete' if lost else 'migrated', 'identity': expected, 'workspace': workspace,
+                   'cwd': projects, 'before_sha256': result['before']['sha256'], 'after_sha256': manifest_digest(after),
+                   'copied': len(pending), 'kept_at_origin': kept, 'lost': lost, 'rollback': ROLLBACK}
+        write_receipt(root, receipt)
+        return {**result, **receipt, 'dry_run': False, 'after': {'sha256': receipt['after_sha256'], 'entries': after}}
+    finally:
+        os.close(root)
+
+
 def main() -> int:
-    parser = argparse.ArgumentParser(description='Backup privado de los datos permitidos de un espacio Cauce')
-    parser.add_argument('operation', choices=('backup', 'restore'))
-    parser.add_argument('--archive', required=True)
+    parser = argparse.ArgumentParser(description='Backup, inventario y migración privados de los datos permitidos de un espacio Cauce')
+    parser.add_argument('operation', choices=('backup', 'restore', 'inventory', 'migrate'))
+    parser.add_argument('--archive')
     parser.add_argument('--directory', required=True)
+    parser.add_argument('--workspace')
+    parser.add_argument('--dry-run', action='store_true')
     for field in sorted(IDENTITY_FIELDS):
         parser.add_argument('--' + field.replace('_', '-'), required=True)
     args = parser.parse_args()
+    archived = args.operation in ('backup', 'restore')
+    if archived != (args.archive is not None) or archived and (args.workspace is not None or args.dry_run) \
+            or args.operation == 'migrate' and args.workspace is None or args.operation == 'inventory' and not args.dry_run:
+        parser.error('backup y restore exigen --archive; migrate exige --workspace; inventory es de solo lectura y exige --dry-run')
     try:
         expected = {field: getattr(args, field) for field in IDENTITY_FIELDS}
-        operation = backup_space if args.operation == 'backup' else restore_space
-        result = operation(args.directory, args.archive, expected) if args.operation == 'backup' else operation(args.archive, args.directory, expected)
+        if args.operation == 'inventory':
+            result = inventory_space(args.directory, expected, args.workspace)
+        elif args.operation == 'migrate':
+            result = migrate_workspace(args.workspace, args.directory, expected, args.dry_run)
+        elif args.operation == 'backup':
+            result = backup_space(args.directory, args.archive, expected)
+        else:
+            result = restore_space(args.archive, args.directory, expected)
         omissions = result.get('omissions') or []
         if omissions:
             print('omisiones:', file=sys.stderr)
             for item in omissions:
                 print(f"{item['reason']} {item['path']}", file=sys.stderr)
         print(json.dumps(result, ensure_ascii=False, indent=2))
-        return 0
+        return 1 if result.get('lost') or result.get('conflicts') else 0
     except (OSError, ValueError, zipfile.BadZipFile, RuntimeError) as error:
         print(str(error) if isinstance(error, SpaceArchiveFailure) else 'El backup o la restauración no pudo completarse; revisa identidad, rutas y permisos.', file=sys.stderr)
         return 1

@@ -12,7 +12,7 @@ La restauración del CLI valida la identidad completa (`company_id`, `tenant_id`
 
 1. Abre **Perfil y contexto** del agente correcto y localiza **Backup del espacio**. Comprueba que la empresa, el tenant y el alias visibles son los esperados y que tienes autoridad vigente.
 2. Pulsa **Crear backup del espacio**. Espera a que el estado sea `ready`; `pending` y `running` no son descargables. Si el estado es `failed`, corrige la causa indicada y solicita una copia nueva.
-3. Descarga el ZIP mientras siga vigente. Las copias retenidas vencen a las 24 horas. Conserva juntos el recibo durable y el archivo descargado. La vista muestra el estado, tamaño y SHA-256 del ZIP; el recibo durable incluye también el SHA-256 del manifiesto.
+3. Descarga el ZIP mientras siga vigente. Las copias retenidas vencen a las 24 horas. Conserva juntos el recibo durable y el archivo descargado. La vista muestra el estado, tamaño y SHA-256 del ZIP; el recibo durable incluye también el SHA-256 del manifiesto. En navegadores con selector de archivo (Chromium), **Descargar backup ZIP** pide dónde guardarlo, lee la descarga por stream, calcula el SHA-256 y sólo conserva el archivo si tamaño y hash coinciden con el recibo; entonces muestra el SHA-256 calculado y la orden `cauce spaces restore` exacta. En el resto de navegadores la descarga es un enlace directo y la comparación del paso 4 es manual.
 4. Asigna la ruta local del ZIP a `ARCHIVE` y compara el resultado con el SHA-256 mostrado por la consola:
 
    ```sh
