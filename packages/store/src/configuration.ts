@@ -169,11 +169,8 @@ export class ConfigurationRepository extends ConfigurationMutations {
           // happens in `agent_profiles` and is published to the runtime with ACK; the generic
           // editor rejects any attempt to mutate this column.
           /*
-           * `max_concurrent_deliveries` (migration 015) is the REAL ceiling of in-flight
-           * deliveries for an agent: `repository.ts` enforces it when distributing quota. It was
-           * not in the snapshot or in the mutation, so it could only be changed via SQL — and
-           * 015 itself documents the `UPDATE ... = NULL` as the emergency exit when the ceiling
-           * strangles an agent that can actually parallelise. That exit now has a screen.
+           * Include the enforced in-flight delivery ceiling so configuration rollback restores
+           * the agent's prior limit.
            */
           `SELECT tenant_id,alias,harness_id,display_name,enabled,
                   container_name,runtime_user,home_directory,state_directory,role_brief,
