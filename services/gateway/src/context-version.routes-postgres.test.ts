@@ -7,7 +7,8 @@ import { startTestCaseDatabase, startTestDatabase, type EmptyTestDatabase, type 
 import { PostgresConsoleUserStore } from './console-users.js';
 import { PasswordAuthProvider } from './password-auth.js';
 import { hashPassword } from './password.js';
-import { buildTestGateway } from './test-support/gateway-doubles.js';
+import type { Principal } from './auth.js';
+import { buildTestGateway, FixedAuthProvider, testPrincipal } from './test-support/gateway-doubles.js';
 
 const PASSWORD = 'context-http-fixture-password'; const ORIGIN = 'http://localhost';
 let database: TestDatabase | undefined; let current: EmptyTestDatabase | undefined; let pool: DatabasePool;
@@ -40,6 +41,35 @@ function request(method: 'GET' | 'PUT' | 'POST', suffix = '', payload?: Record<s
 const write = (expected = 0, content = files) => request('PUT', '', { expected_version: expected, source: 'ui', files: content });
 
 describe('versioned context HTTP authority with real PostgreSQL and signed human sessions', () => {
+  async function nativeEffects() {
+    return Promise.all(['agent_context_state', 'agent_context_versions', 'agent_context_outbox', 'agent_profiles']
+      .map(async table => (await pool.query<Record<string, unknown>>(`SELECT * FROM ${table} ORDER BY tenant_id,alias`)).rows)
+      .concat([(async () => (await pool.query<Record<string, unknown>>("SELECT * FROM audit_events WHERE action LIKE 'context.%' ORDER BY id")).rows)()]));
+  }
+  const nativePayload = { base_version: 0, files: [{ path: 'context/notes/local.md', content: 'Local agent note.' }] };
+  it('rejects native ingest from a signed human session without version, profile, outbox or audit effects', async () => {
+    const before = await nativeEffects();
+    const result = await app.inject({ method: 'POST', url: '/v3/context/ingest',
+      headers: { cookie, origin: ORIGIN, 'x-csrf-token': csrf }, payload: nativePayload });
+    expect(result.statusCode).toBe(403);
+    expect(result.json()).toMatchObject({ error: 'forbidden' });
+    expect(await nativeEffects()).toEqual(before);
+  });
+  it.each<Partial<Principal>>([
+    { roles: ['operator'] }, { roles: ['agent', 'operator'] },
+    { roles: ['agent'], operator_id: 'fixture-operator' },
+    { roles: ['adapter'], operator_id: 'fixture-operator' }, { roles: [] },
+  ])('rejects native ingest from a non-agent principal %j without durable effects', async authority => {
+    await app.close();
+    const fallback = new FixedAuthProvider(testPrincipal({ tenant_id: 'ContextAlpha', alias: 'director', ...authority }));
+    app = await buildTestGateway({ pool, authProvider: new PasswordAuthProvider({
+      users: new PostgresConsoleUserStore(pool), signingKey: Buffer.alloc(32, 19), fallback }) });
+    const before = await nativeEffects();
+    const result = await app.inject({ method: 'POST', url: '/v3/context/ingest', payload: nativePayload });
+    expect(result.statusCode).toBe(403);
+    expect(result.json()).toMatchObject({ error: 'forbidden' });
+    expect(await nativeEffects()).toEqual(before);
+  });
   it('requires both same-origin and exact session CSRF for every mutation', async () => {
     for (const [method, suffix, payload] of [
       ['PUT', '', { expected_version: 0, source: 'ui', files }], ['POST', '/restore', { expected_version: 0, version: 1 }],

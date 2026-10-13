@@ -4,7 +4,7 @@ import { AliasSchema, TenantSchema } from '@cauce/protocol';
 import { ContextGitBroker, ContextRejectedError, ContextVersionStore, ingestNativeContextVersion, processContextOutbox,
   requestContextApplication, settleContextApplications, StoreError, type ContextApplicationRuntime, type ContextTarget,
   type DatabasePool } from '@cauce/store';
-import { AuthError, AuthorizationError, requirePermission, type AuthProvider } from './auth.js';
+import { AuthError, AuthorizationError, isAgentPrincipal, requirePermission, type AuthProvider } from './auth.js';
 import { consoleHumanAccess } from './console-human-authority.js';
 import { PasswordAuthProvider } from './password-auth.js';
 import { principal, replyError } from './routes/shared.js';
@@ -48,6 +48,7 @@ export function registerContextVersionRoutes(app: FastifyInstance, provider: Aut
     try {
       const actor = await principal(request, provider);
       requirePermission(actor, 'route');
+      if (!isAgentPrincipal(actor) || actor.operator_id !== undefined) throw new AuthorizationError('native context ingest requires an agent principal');
       const result = await ingestNativeContextVersion(pool, actor.tenant_id, actor.alias, request.body);
       if (result.state === 'conflict') {
         return await reply.code(409).send({ error: 'context_version_conflict',
