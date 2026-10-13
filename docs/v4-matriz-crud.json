@@ -22,6 +22,10 @@
       "reason": "El simulacro actual incorpora reconciliación de escritores; falta verificar recuperación de Git desde navegador real y sobre el despliegue. La matriz no acredita aceptación de V4."
     },
     {
+      "id": "backup_lifecycle_browser",
+      "reason": "Falta unir solicitud, ejecución física, descarga verificada y restauración de la copia desde navegador real. La cadena HTTP con PostgreSQL y la prueba del componente con stream simulado son evidencia complementaria."
+    },
+    {
       "id": "backup_restore_delete",
       "reason": "La consola no ofrece restauración ni eliminación de copias; la recuperación sigue fuera de este flujo."
     },
@@ -2187,8 +2191,9 @@
       "label": "Copias descargables del espacio persistente",
       "operations": {
         "C": {
-          "status": "covered",
-          "reason": "Gateway real con PostgreSQL: la consola solicita, el host ejecuta la exportación física por el canal firmado, la descarga HTTP de más de 32 MiB llega por stream con el SHA-256 del recibo y space_archive.py la restaura con hashes iguales; el panel descarga por stream, calcula el SHA-256 y sólo guarda el ZIP si coincide. No acredita un navegador real ni una copia productiva.",
+          "status": "pending",
+          "reason": "La cadena HTTP con PostgreSQL prueba solicitud, exportación física, descarga de más de 32 MiB y restauración con hashes iguales; el componente verifica un stream simulado. Falta ejecutar esa cadena desde el panel en navegador real.",
+          "pending_id": "backup_lifecycle_browser",
           "api": [
             {
               "method": "POST",
@@ -2214,8 +2219,9 @@
           ]
         },
         "R": {
-          "status": "covered",
-          "reason": "Gateway real con PostgreSQL: la consola solicita, el host ejecuta la exportación física por el canal firmado, la descarga HTTP de más de 32 MiB llega por stream con el SHA-256 del recibo y space_archive.py la restaura con hashes iguales; el panel descarga por stream, calcula el SHA-256 y sólo guarda el ZIP si coincide. No acredita un navegador real ni una copia productiva.",
+          "status": "pending",
+          "reason": "La cadena HTTP con PostgreSQL prueba solicitud, exportación física, descarga de más de 32 MiB y restauración con hashes iguales; el componente verifica un stream simulado. Falta ejecutar esa cadena desde el panel en navegador real.",
+          "pending_id": "backup_lifecycle_browser",
           "api": [
             {
               "method": "GET",
