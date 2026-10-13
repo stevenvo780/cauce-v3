@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import ipaddress
 import json
 import os
 import pathlib
@@ -78,13 +79,22 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
+def loopback_host(host: str | None) -> bool:
+    if host == 'localhost':
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
 def trusted_origin(value: str) -> str:
     try:
         parsed = urllib.parse.urlsplit(value)
         port = parsed.port
         if not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment \
                 or parsed.path not in ('', '/') or any(ord(char) < 33 or ord(char) == 127 for char in value) \
-                or parsed.scheme != 'https' and not (parsed.scheme == 'http' and parsed.hostname in ('localhost', '127.0.0.1', '::1')):
+                or parsed.scheme != 'https' and not (parsed.scheme == 'http' and loopback_host(parsed.hostname)):
             raise ValueError()
         host = parsed.hostname.lower()
         if ':' in host:
@@ -97,6 +107,7 @@ def trusted_origin(value: str) -> str:
 
 def request_json(gateway: str, origin: str, ca_file: str | None, method: str, path: str, body=None, headers=None,
                  timeout: int = 30, rejected: str = 'console request rejected', unavailable: str = 'console gateway is unavailable'):
+    gateway = trusted_origin(gateway)
     parsed = urllib.parse.urlsplit(path)
     if not path.startswith('/') or path.startswith('//') or parsed.scheme or parsed.netloc or parsed.fragment \
             or '\\' in path or any(ord(char) < 32 or ord(char) == 127 for char in path):
@@ -104,7 +115,10 @@ def request_json(gateway: str, origin: str, ca_file: str | None, method: str, pa
     payload = None if body is None else json.dumps(body, separators=(',', ':')).encode()
     request = urllib.request.Request(gateway + path, method=method, data=payload,
         headers={'Origin': origin, 'Accept': 'application/json', 'Content-Type': 'application/json', **(headers or {})})
-    opener = urllib.request.build_opener(urllib.request.ProxyHandler(), NoRedirect(),
+    proxies = {} if loopback_host(urllib.parse.urlsplit(gateway).hostname) else {
+        scheme: proxy for scheme, proxy in urllib.request.getproxies().items() if scheme == 'https'
+    }
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler(proxies), NoRedirect(),
         urllib.request.HTTPSHandler(context=ssl.create_default_context(cafile=ca_file)))
     try:
         with opener.open(request, timeout=timeout) as response:

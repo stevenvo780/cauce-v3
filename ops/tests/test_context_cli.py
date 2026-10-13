@@ -2,6 +2,7 @@ import hashlib
 import json
 import os
 import pathlib
+import socket
 import sys
 import tempfile
 import threading
@@ -118,7 +119,7 @@ class ContextCliTests(unittest.TestCase):
     def test_https_proxy_from_environment_receives_a_connect_request(self):
         class Proxy(Handler):
             def do_CONNECT(self):
-                Handler.observed.append((self.command, self.path, self.headers.get('Cookie')))
+                Handler.observed.append((self.command, self.path, self.headers.get('Cookie'), self.headers.get('X-CSRF-Token')))
                 self.send_response(502)
                 self.end_headers()
 
@@ -126,26 +127,87 @@ class ContextCliTests(unittest.TestCase):
         gateway = 'https://console.example.invalid'
         with patch.dict(os.environ, {'HTTPS_PROXY': self.url}, clear=True):
             with self.assertRaisesRegex(ContextFailure, 'console gateway is unavailable'):
-                request_json(gateway, gateway, None, 'GET', '/v3/auth/session',
-                             headers={'Cookie': 'cauce_session=synthetic-test'}, timeout=2)
-        self.assertEqual(Handler.observed, [('CONNECT', 'console.example.invalid:443', None)])
+                request_json(gateway, gateway, None, 'POST', '/v3/auth/login', {'password': 'synthetic-password'},
+                             headers={'Cookie': 'cauce_session=synthetic-test', 'X-CSRF-Token': 'a' * 43}, timeout=2)
+        self.assertEqual(Handler.observed, [('CONNECT', 'console.example.invalid:443', None, None)])
 
-    def test_redirects_from_an_environment_proxy_are_not_followed(self):
+    def test_remote_plaintext_is_rejected_before_proxy_network_access(self):
+        gateway = 'http://console.example.invalid'
+        with patch.dict(os.environ, {'HTTP_PROXY': self.url, 'HTTPS_PROXY': self.url}, clear=True):
+            with self.assertRaisesRegex(ContextFailure, 'HTTPS or loopback HTTP'):
+                request_json(gateway, gateway, None, 'POST', '/v3/auth/login', {'password': 'synthetic-password'},
+                             headers={'Cookie': 'cauce_session=synthetic-test'}, timeout=2)
+        self.assertEqual(Handler.observed, [])
+
+    def test_loopback_bypasses_environment_proxies_for_cookie_and_csrf(self):
         class Proxy(Handler):
+            def do_GET(self):
+                self.server.observed.append(self.path)
+                self.send_response(502)
+                self.end_headers()
+
+            do_PUT = do_GET
+            do_CONNECT = do_GET
+
+        proxy = HTTPServer(('127.0.0.1', 0), Proxy)
+        proxy.observed = []
+        thread = threading.Thread(target=proxy.serve_forever, kwargs={'poll_interval': 0.01}, daemon=True)
+        thread.start()
+        proxy_url = 'http://127.0.0.1:' + str(proxy.server_port)
+        try:
+            with patch.dict(os.environ, {'HTTP_PROXY': proxy_url, 'HTTPS_PROXY': proxy_url}, clear=True):
+                for host in ('127.0.0.1', 'localhost'):
+                    gateway = 'http://' + host + ':' + str(self.server.server_port)
+                    with self.subTest(host=host):
+                        result, _ = request_json(gateway, gateway, None, 'GET', '/v3/auth/session',
+                                                 headers={'Cookie': 'cauce_session=synthetic-test'}, timeout=2)
+                        self.assertEqual(result['version'], 0)
+                self.client.request('PUT', 'Alpha', 'director', body={'expected_version': 0, 'files': []})
+                with self.assertRaisesRegex(ContextFailure, 'console gateway is unavailable'):
+                    gateway = self.url.replace('http:', 'https:')
+                    request_json(gateway, gateway, None, 'GET', '/v3/auth/session', timeout=2)
+            self.assertEqual(proxy.observed, [])
+            self.assertEqual(Handler.observed[-1], ('PUT', 'a' * 43))
+        finally:
+            proxy.shutdown()
+            proxy.server_close()
+            thread.join()
+
+    def test_loopback_ipv4_range_and_ipv6_are_direct(self):
+        class IPv6Server(HTTPServer):
+            address_family = socket.AF_INET6
+
+        for host, server_class in (('127.42.0.7', HTTPServer), ('::1', IPv6Server)):
+            with self.subTest(host=host):
+                server = server_class((host, 0), Handler)
+                thread = threading.Thread(target=server.serve_forever, kwargs={'poll_interval': 0.01}, daemon=True)
+                thread.start()
+                gateway = 'http://' + ('[' + host + ']' if ':' in host else host) + ':' + str(server.server_port)
+                try:
+                    with patch.dict(os.environ, {'HTTP_PROXY': 'http://127.0.0.1:9',
+                                                 'HTTPS_PROXY': 'http://127.0.0.1:9'}, clear=True):
+                        self.assertEqual(request_json(gateway, gateway, None, 'GET', '/v3/auth/session', timeout=2)[0]['version'], 0)
+                finally:
+                    server.shutdown()
+                    server.server_close()
+                    thread.join()
+
+    def test_redirects_from_the_gateway_are_not_followed_with_proxies_configured(self):
+        class Redirect(Handler):
             def do_GET(self):
                 Handler.observed.append((self.path, self.headers.get('Cookie')))
                 self.send_response(302)
                 self.send_header('Location', self.url + '/redirect-target')
                 self.end_headers()
 
-        Proxy.url = self.url
-        self.server.RequestHandlerClass = Proxy
-        gateway = 'http://127.0.0.1:9'
-        with patch.dict(os.environ, {'HTTP_PROXY': self.url}, clear=True):
+        Redirect.url = self.url
+        self.server.RequestHandlerClass = Redirect
+        gateway = self.url
+        with patch.dict(os.environ, {'HTTP_PROXY': 'http://127.0.0.1:9', 'HTTPS_PROXY': 'http://127.0.0.1:9'}, clear=True):
             with self.assertRaisesRegex(ContextFailure, 'HTTP 302; redirects are disabled'):
                 request_json(gateway, gateway, None, 'GET', '/v3/auth/session',
                              headers={'Cookie': 'cauce_session=synthetic-test'}, timeout=2)
-        self.assertEqual(Handler.observed, [(gateway + '/v3/auth/session', 'cauce_session=synthetic-test')])
+        self.assertEqual(Handler.observed, [('/v3/auth/session', 'cauce_session=synthetic-test')])
 
     def test_mutations_without_session_csrf_are_rejected_before_network_access(self):
         self.session.write_text(json.dumps({'cookie': 'cauce_session=synthetic-test', 'gateway': self.url, 'origin': self.url}))

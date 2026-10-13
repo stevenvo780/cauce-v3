@@ -184,6 +184,37 @@ class ConsoleLoginTests(unittest.TestCase):
         self.assertEqual(self.server.observed, [('CONNECT', 'console.example.invalid:443', None)])
         self.assertFalse(self.session.exists())
 
+    def test_login_status_and_renew_bypass_loopback_proxies(self):
+        class Proxy(Handler):
+            def do_GET(self):
+                self.server.observed.append(self.path)
+                self.send_response(502)
+                self.end_headers()
+
+            do_POST = do_GET
+
+        proxy = ThreadingHTTPServer(('127.0.0.1', 0), Proxy)
+        proxy.observed = []
+        thread = threading.Thread(target=proxy.serve_forever, kwargs={'poll_interval': 0.01}, daemon=True)
+        thread.start()
+        proxy_url = 'http://127.0.0.1:' + str(proxy.server_port)
+        try:
+            with patch.dict(os.environ, {'HTTP_PROXY': proxy_url, 'HTTPS_PROXY': proxy_url}, clear=True):
+                login = self.command('--gateway', self.url, '--email', 'owner@example.test',
+                                     '--password-stdin', password=PASSWORD + '\n')
+                self.assertEqual(login.returncode, 0, login.stderr)
+                self.assertEqual(self.command('--status').returncode, 0)
+                renewed = self.command('--renew', '--password-stdin', password=PASSWORD + '\n')
+                self.assertEqual(renewed.returncode, 0, renewed.stderr)
+                self.assertTrue(login_cli.ConsoleSessionClient(str(self.session)).request('POST', '/v3/console/spaces', {})['ok'])
+            self.assertEqual(proxy.observed, [])
+            self.assertEqual([row[1] for row in self.server.observed],
+                             ['/v3/auth/login', '/v3/auth/session', '/v3/auth/login', '/v3/console/spaces'])
+        finally:
+            proxy.shutdown()
+            proxy.server_close()
+            thread.join()
+
     def test_refuses_public_session_and_foreign_owner(self):
         self.authenticate()
         self.session.chmod(0o644)

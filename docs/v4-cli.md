@@ -82,6 +82,8 @@ cauce context --gateway https://cauce.example.invalid --origin https://cauce.exa
 
 HTTPS es obligatorio salvo loopback local. `--ca-file /ruta/ca.pem` permite elegir una CA. Las mutaciones transmiten Origin y CSRF; una sesión con permiso de lectura no obtiene permiso de edición. El cliente tiene timeout de 65 segundos y límite de respuesta de 2 MiB.
 
+Si hay un proxy en el entorno, configura `NO_PROXY=<ip del gateway>` para acceder directamente al gateway; si lo llamas por nombre, incluye también ese nombre, separado por coma. `urllib` no admite rangos CIDR en `NO_PROXY`: enumera las IP o nombres concretos. Los clientes de sesión usados por `login`, `context`, `context-native` y `spaces` omiten automáticamente el proxy para `localhost`, `127.0.0.0/8` y `::1`, incluso sin `NO_PROXY`. Para gateways remotos sólo usan `HTTPS_PROXY` mediante CONNECT; rechazan HTTP remoto y las redirecciones.
+
 | Subcomando | Argumentos propios | Resultado |
 |---|---|---|
 | `read` | Ninguno | Versión actual y archivos autorizados |
