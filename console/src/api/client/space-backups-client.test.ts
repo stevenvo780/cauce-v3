@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { expect, it, vi } from 'vitest';
-import { CauceApi } from '../client';
+import { ApiError, CauceApi } from '../client';
 import { MAX_SPACE_BACKUP_BYTES, spaceBackupReceipt, type SpaceBackup, type SpaceBackupTarget } from './space-backups-client';
 
 const target: SpaceBackupTarget = { company_id: 'one', tenant_id: 'One', alias: 'agent' };
@@ -83,7 +83,7 @@ it('rechaza y cancela el stream de una respuesta tardía cuando cambió la sesi�
     return Response.json(auth);
   });
   const result = api.downloadSpaceBackup(ready, new AbortController().signal).then(() => ({ code: 'accepted' }),
-    (error: { code: string }) => ({ code: error.code }));
+    (error: unknown) => ({ code: error instanceof ApiError ? error.code : String(error) }));
   await api.login('zz-canary@example.test', 'zz-canary-test-password'); release();
   expect(await result).toEqual({ code: 'session_changed' }); expect(cancel).toHaveBeenCalledOnce();
 });

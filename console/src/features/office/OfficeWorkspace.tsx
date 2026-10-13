@@ -104,7 +104,9 @@ export function OfficeWorkspace({ campus, topology, agents, onAgent }: {
     <div key={planSaves} className={mode === 'campus' ? 'flex min-h-0 flex-1 flex-col' : 'hidden'}>
       {mode === 'campus' && quotaFailure ? <div className="shrink-0"><ErrorNotice failure={{ ...quotaFailure,
         message: `${quotaFailure.message}${quotaFailure.message.includes('Relee el plano y las cuotas.') ? '' : ' Relee el plano y las cuotas.'} Abre «Plano editable» para hacerlo.` }} /></div> : null}
-      <section aria-label="Cansancio de agentes del campus" className="flex shrink-0 gap-2 overflow-x-auto border-b border-line bg-subtle p-2">
+      {/* The strip wraps instead of scrolling sideways: a wheel or a phone swipe never reveals what a horizontal
+          scroller cuts. Two rows stay in view and the rest scrolls down, so the campus keeps its height. */}
+      <section aria-label="Cansancio de agentes del campus" className="flex max-h-36 shrink-0 flex-wrap content-start gap-2 overflow-y-auto border-b border-line bg-subtle p-2">
         {[...new Set(rooms.flatMap(room => room.agents))].map(agentButton)}
       </section>
       <div className="min-h-0 flex-1">{campus}</div>
