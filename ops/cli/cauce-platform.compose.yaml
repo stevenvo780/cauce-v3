@@ -1,8 +1,9 @@
 # One-off service for ops/cli/cauce-platform-contenedor: the platform CLI (platform_admin.mjs, or
 # context_seed.mjs for `contexto`) inside the release runtime image, on the stack's backend network,
-# with the migrator's owner URL and the PostgreSQL CA as file secrets. Both scripts are mounted because
-# context_seed.mjs imports platform_admin.mjs; the image supplies packages/store/dist. It never
-# publishes ports and never joins the stack project.
+# with the migrator's owner URL and the PostgreSQL CA as file secrets. The three scripts are mounted
+# because context_seed.mjs imports platform_admin.mjs and platform_admin.mjs loads company_import.mjs for
+# `empresa importar`; the image supplies packages/store/dist. It never publishes ports and never joins
+# the stack project.
 name: ${CAUCE_PLATAFORMA_PROYECTO:?run through ops/cli/cauce-platform-contenedor}
 
 services:
@@ -25,6 +26,7 @@ services:
       PGSSLMODE: verify-full
       PGSSLROOTCERT: /run/secrets/postgres_ca
       CAUCE_PLATFORM_ADMIN_ID: ${CAUCE_PLATFORM_ADMIN_ID:-}
+      CAUCE_IMPORT_OWNER_EMAIL: ${CAUCE_IMPORT_OWNER_EMAIL:-}
     volumes:
       - type: bind
         source: ${CAUCE_PLATAFORMA_CLI:?run through ops/cli/cauce-platform-contenedor}/platform_admin.mjs
@@ -33,6 +35,10 @@ services:
       - type: bind
         source: ${CAUCE_PLATAFORMA_CLI:?run through ops/cli/cauce-platform-contenedor}/context_seed.mjs
         target: /app/ops/cli/context_seed.mjs
+        read_only: true
+      - type: bind
+        source: ${CAUCE_PLATAFORMA_CLI:?run through ops/cli/cauce-platform-contenedor}/company_import.mjs
+        target: /app/ops/cli/company_import.mjs
         read_only: true
     secrets:
       - database_url

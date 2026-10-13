@@ -1,0 +1,9 @@
+# Added by ops/cli/cauce-platform-contenedor only for `empresa importar --inventario FILE`: that host file,
+# read-only, at the path the wrapper hands to the CLI instead of FILE.
+services:
+  cauce-platform:
+    volumes:
+      - type: bind
+        source: ${CAUCE_PLATAFORMA_INVENTARIO:?run through ops/cli/cauce-platform-contenedor}
+        target: /run/cauce/inventario.json
+        read_only: true
