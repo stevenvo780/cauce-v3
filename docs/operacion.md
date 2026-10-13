@@ -212,6 +212,22 @@ systemctl --user daemon-reload && systemctl --user enable --now cauce-v3-contain
 ```
 **La única pieza que pide un humano**: el token del bot de Telegram, generado en BotFather — `aprovisionar` lo solicita interactivamente, lo deja en `/etc/cauce-v3/telegram-runtime/<tenant>/<alias>.token` (0600) y recién entonces reemplaza la fila del alias en `config.json` (`ops/scripts/publish-telegram-token.py`).
 
+El paso [3d] de `aprovisionar` configura el launcher PTY con `CAUCE_PTY_RELAY_HOST`
+(obligatoria, nombre DNS o IP; IPv6 entre corchetes) y `CAUCE_PTY_RELAY_PORT`
+(opcional, de 1 a 65535; por defecto `8445`). Ejemplo ficticio:
+
+```bash
+export CAUCE_PTY_RELAY_HOST=relay.example.invalid
+export CAUCE_PTY_RELAY_PORT=9445
+ops/cli/cauce <alias> aprovisionar --dry-run
+```
+
+El dry-run muestra ambos valores efectivos sin escribir archivos. Sin host, el paso
+[3d] falla nombrando `CAUCE_PTY_RELAY_HOST` y no escribe el `.env` del launcher.
+La escritura conserva modo `0600` en `${XDG_CONFIG_HOME:-$HOME/.config}/cauce-v3/pty/<alias>.env`;
+si ese archivo ya existe, se conserva sin reemplazarlo. Las variables deben estar
+disponibles en el host que ejecuta el aprovisionamiento.
+
 **Baja**: `ops/cli/cauce <alias> retirar` (para la unit y revoca token e identidad mTLS) → `UPDATE agents SET enabled=false` → re-exportar snapshot (el alias pasa a `retired`) → `regenerate-fleet.sh` (purga manifest y units huérfanas: `ops/scripts/generate-container-units.py:309-310` y `ops/scripts/generate-units.py:122`) → `validate.sh`.
 
 **Aviso de orden**: `enabled=false` en BD saca al agente del enrutado de entregas, pero el `hello`/lease del gateway se autoriza además por certificado mTLS — un agente dado de baja en BD puede seguir conectándose hasta que `retirar` revoca su credencial. No dar el UPDATE por baja completa sin correr `retirar`.

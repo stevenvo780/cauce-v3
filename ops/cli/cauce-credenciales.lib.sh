@@ -363,6 +363,37 @@ pty_pki_root() {
   printf '%s\n' "${CAUCE_PTY_PKI_ROOT:-${XDG_CONFIG_HOME:-$HOME/.config}/cauce-v3/pty-pki}"
 }
 
+write_pty_launcher_env() {
+  local pty_env=$1 pty_dir=$2 pty_key=$3 dry=$4
+  local relay_host=${CAUCE_PTY_RELAY_HOST:-} relay_port=${CAUCE_PTY_RELAY_PORT:-8445}
+  if [ -z "$relay_host" ]; then
+    printf "  [3d] %sfalta CAUCE_PTY_RELAY_HOST: exporta el host del relay PTY antes de aprovisionar%s\n" "$c_err" "$c_reset" >&2
+    return 1
+  fi
+  if [[ ! $relay_host =~ ^([A-Za-z0-9.-]+|\[[0-9A-Fa-f:]+\])$ ]]; then
+    printf "  [3d] %sCAUCE_PTY_RELAY_HOST no es un nombre de host o IP valido%s\n" "$c_err" "$c_reset" >&2
+    return 1
+  fi
+  if [[ ! $relay_port =~ ^[0-9]{1,5}$ ]] || (( 10#$relay_port < 1 || 10#$relay_port > 65535 )); then
+    printf "  [3d] %sCAUCE_PTY_RELAY_PORT debe ser un puerto entre 1 y 65535%s\n" "$c_err" "$c_reset" >&2
+    return 1
+  fi
+  if [ -e "$pty_env" ]; then
+    printf "  [3d] %s ya existe (se salta): %s\n" "$pty_env" "$(estampa_modo "$pty_env")"
+  elif [ "$dry" = 1 ]; then
+    printf "  [3d] haria: escribir %s (RELAY_HOST=%s RELAY_PORT=%s, PKI_DIR/ALIAS_KEY_FILE, modo 600)\n" "$pty_env" "$relay_host" "$relay_port"
+  elif install -d -m 0700 -- "${pty_env%/*}" \
+    && ( umask 177; printf 'RELAY_HOST=%s\nRELAY_PORT=%s\nPKI_DIR=%s\nALIAS_KEY_FILE=%s\n' \
+         "$relay_host" "$relay_port" "$pty_dir" "$pty_key" >"$pty_env.tmp" ) \
+    && chmod 600 -- "$pty_env.tmp" && mv -- "$pty_env.tmp" "$pty_env"; then
+    printf "  [3d] %s -> %s\n" "$pty_env" "$(estampa_modo "$pty_env")"
+  else
+    rm -f -- "$pty_env.tmp"
+    printf "  [3d] %sno pude escribir %s%s\n" "$c_err" "$pty_env" "$c_reset" >&2
+    return 1
+  fi
+}
+
 # ops/flota.json is authoritative; stdout and exit statuses form this helper's caller contract.
 flota_estado_alias() {  # $1=alias
   [ -f "$FLOTA_JSON" ] || return 3
@@ -586,21 +617,7 @@ PY
 
   # Keep the launcher environment aligned with pty_pki_root().
   local pty_env="${XDG_CONFIG_HOME:-$HOME/.config}/cauce-v3/pty/$a.env"
-  if [ -e "$pty_env" ]; then
-    printf "  [3d] %s ya existe (se salta): %s\n" "$pty_env" "$(estampa_modo "$pty_env")"
-  elif [ "$dry" = 1 ]; then
-    printf "  [3d] haria: escribir %s (RELAY_HOST/RELAY_PORT/PKI_DIR/ALIAS_KEY_FILE, modo 600)\n" "$pty_env"
-  else
-    install -d -m 0700 -- "${pty_env%/*}"
-    if ( umask 177; printf 'RELAY_HOST=100.64.0.6\nRELAY_PORT=8445\nPKI_DIR=%s\nALIAS_KEY_FILE=%s\n' \
-         "$pty_dir" "$pty_key" >"$pty_env.tmp" ) && mv -- "$pty_env.tmp" "$pty_env"; then
-      printf "  [3d] %s -> %s\n" "$pty_env" "$(estampa_modo "$pty_env")"
-    else
-      rm -f -- "$pty_env.tmp"
-      printf "  [3d] %sno pude escribir %s%s\n" "$c_err" "$pty_env" "$c_reset"
-      return 1
-    fi
-  fi
+  write_pty_launcher_env "$pty_env" "$pty_dir" "$pty_key" "$dry" || return 1
 
   # Skip existing identity material; update-alias-config.py --init refuses to overwrite it.
   local cp_dir="/etc/cauce-v3/container-pki/$a" cp_env="/etc/cauce-v3/container-aliases/$a.env"
