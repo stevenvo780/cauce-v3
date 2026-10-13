@@ -10,7 +10,7 @@ Origen del estado: auditoría del 12-oct-2026 sobre la rama `codex/v4-complete` 
 - `[ ]` pendiente. Prioridad: **P0** bloquea un criterio de aceptación; **P1** necesario para cerrar el requisito; **P2** deseable.
 - **[DUEÑO]** necesita una acción o decisión que solo el dueño puede dar (ver §3).
 - `✓` después de una tarea: cómo se comprueba que está hecha.
-- `R` = esta rama (`claude/v4-cierre`), checkout único de Cauce en `/datos/workspaces/personal/cauce-v3`. `S` = estado privado de la ejecución de GPT (`directorio de estado del operador/cauce-v3/v4-complete-20261011`); se usa solo como fuente histórica, nunca como evidencia de cierre.
+- `R` = esta rama (`claude/v4-cierre`), checkout único de Cauce en la raíz del repositorio. `S` = estado privado de la ejecución de GPT (`directorio de estado del operador/cauce-v3/v4-complete-20261011`); se usa solo como fuente histórica, nunca como evidencia de cierre.
 
 ## 1. Punto de partida verificado
 
@@ -22,13 +22,13 @@ Origen del estado: auditoría del 12-oct-2026 sobre la rama `codex/v4-complete` 
 | Producción | VPS `<host-prod>` corre **V3**: runtime `34cd5ea0`, esquema 051. **0 % de V4 desplegado.** |
 | VPS (12-oct 18:55 UTC) | 62 GiB RAM (30 disponibles), **swap 9/9 GiB llena**, disco 83 % (82 GB libres), load 5–8 en 16 núcleos. `ws-humanizar` 13,6 GiB y 116 % CPU. |
 | Agentes a migrar | Gaia → `agv2-miguel-finca-oc` (openclaw, `anthropic/claude-opus-5`); Hades → `agv2-steven-hades-oc` (grok); Hegel → dentro de `ws-humanizar` (muse, compartido con Atlas y Kratos); Argos → dentro de `ctrl-infra` (openclaw, OpenAI). Ninguno migrado. Bindings de cuenta/modelo en V4: NULL. |
-| Servidores locales | server1 `192.168.78.232`: 23 GB RAM (~11,8 disp.), 261 GB libres, **sin Docker** (LXD). server2 `192.168.78.211`: 23 GB RAM (~11,7 disp.), ~143 GiB libres, Docker; ya aloja `ws-isa`/Salva, Minecraft y los contenedores `cuota-cli` (`cuota-claude-1`, `cuota-claude-3`, `cuota-codex-b2b`, `cuota-grok-1`). server3: no responde en `.126`; visto en `.125` con huella SSH sin verificar. Kant (operador) vive en server2. |
+| Servidores locales | server1 (IP de la LAN del host): 23 GB RAM (~11,8 disp.), 261 GB libres, **sin Docker** (LXD). server2 (IP de la LAN del host): 23 GB RAM (~11,7 disp.), ~143 GiB libres, Docker; ya aloja `ws-isa`/Salva, Minecraft y los contenedores `cuota-cli` (`cuota-claude-1`, `cuota-claude-3`, `cuota-codex-b2b`, `cuota-grok-1`). server3: no responde en `.126`; visto en `.125` con huella SSH sin verificar. Kant (operador) vive en server2. |
 | Empresas | Humanizar = Steven + Miguel (producción actual). Praxis = León, instancia V3 aparte por `ssh hospital` (tenant `Hospital`, esquema 043), aún no importada. Solo Steven es super-admin de plataforma. |
 | Avance real | ~**35 %** frente a los criterios: código ~70 %, probado en local con componentes reales ~35 %, desplegado 0 %. (GPT declaró 55 %, que mide esfuerzo, no aceptación.) |
 
 ## 2. Reglas de ejecución
 
-El goal que fija el dueño está en `GOAL.md` en la raíz del checkout principal (`/datos/workspaces/personal/cauce-v3`), con los tiers de uso por modelo y los cuatro carriles tmux de delegación (TUIs interactivas, kit en `.delegados/v4/` dentro del checkout, excluido de git). Este documento es su anexo de detalle.
+El goal que fija el dueño está en `GOAL.md` en la raíz del repositorio, con los tiers de uso por modelo y los cuatro carriles tmux de delegación (TUIs interactivas, kit en `.delegados/v4/` dentro del checkout, excluido de git). Este documento es su anexo de detalle.
 
 
 Lecciones de la ejecución anterior convertidas en reglas:
@@ -195,7 +195,7 @@ Todo lo demás lo resuelve la especificación o es una decisión técnica delega
 - [ ] (P0) Copia recuperable antes de cada corte (estado, workspace y sesiones, cifrada, a kratos y Drive), restauración de prueba aparte y **ensayo de reversión con Gaia**. ✓ sha256 de copia = listado restaurado; tras revertir, Gaia responde un nonce desde la VPS y se rehace el corte.
 - [ ] (P0) Proyectos por git (mismo HEAD, sin commits sin publicar) y datos no versionados con manifiesto; `space_archive` omite `.git` y archivos con `auth|session|token|profile` en el nombre. ✓ Mismo HEAD y `git status --porcelain` en destino; sha256 iguales; omisiones con motivo.
 - [ ] (P0) [DUEÑO] Credenciales en destino (§3, pregunta 2). ✓ Cada agente se autentica en server2 con la misma cuenta (mismo id en `auth status`) y 0 secretos en los recibos.
-- [ ] (P1) Normalizar durante el traslado: rutas legadas → layout estándar (`/home/claw/clawd` → `space/projects`; `AGENTS.md`/`IDENTITY.md`/`SOUL.md` → `space/context`); contexto y directivas importados como primera versión. ✓ Manifiesto ruta vieja → nueva con sha256; el agente responde leyendo desde la nueva ruta.
+- [ ] (P1) Normalizar durante el traslado: rutas legadas → layout estándar (`<home-del-agente>/clawd` → `space/projects`; `AGENTS.md`/`IDENTITY.md`/`SOUL.md` → `space/context`); contexto y directivas importados como primera versión. ✓ Manifiesto ruta vieja → nueva con sha256; el agente responde leyendo desde la nueva ruta.
 - [ ] (P0) **Canario Gaia**, luego Hades, Argos y Hegel (Hegel con espacio propio y los repos que él indique, sin tocar `ws-humanizar`). ✓ Por alias: nonce respondido por Cauce desde server2, terminal por CLI y web, cuota de su cuenta, contexto aplicado (versión y digest) y host server2 en la UI; Argos inspecciona la VPS desde server2; `ws-humanizar` sigue sirviendo a Atlas y Kratos.
 - [ ] (P1) Liberar origen tras 7 días sin incidentes: borrar `agv2-miguel-finca-oc` y `agv2-steven-hades-oc` con sus imágenes; en `ctrl-infra` y `ws-humanizar` quitar solo las unidades y el estado de Argos y Hegel. ✓ `docker ps -a` ya no los lista y los demás procesos siguen vivos.
 - [ ] (P1) **Medición antes/después con un único script** (`free -b`, swap, `df -B1`, `docker stats --no-stream`, RSS por proceso de Argos y Hegel dentro de sus contenedores compartidos). ✓ Dos recibos con sha256 y la diferencia por alias. Ahorro esperado modesto (~0,5 GiB RAM y ~5,7 GB de imágenes por Gaia y Hades; Argos y Hegel liberan solo sus procesos).
@@ -323,7 +323,7 @@ Todo lo demás lo resuelve la especificación o es una decisión técnica delega
 - [ ] (P1) Tabla de pruebas reales por categoría (SSH, Docker, terminales, proveedores, GitHub, comunicación entre agentes) con recibo sobre el SHA final o bloqueo explícito.
 - [ ] (P0) `docs/v4-guia.md`: guía de uso y administración por las áreas listadas en `GOAL.md` §10, enlazada desde README y `docs/consola.md`. ✓ Cada afirmación comprobada en el despliegue.
 - [ ] (P0) Subsección «Desplegar V4» en `docs/operacion.md` (no otro runbook): prerrequisitos (broker, enclave, ensayo de migración, backup fresco), orden deploy.sh → adapter → controlador, verificaciones, ventana de reversión, backup/restauración de espacio, migración de agentes, enrolamiento y diagnóstico. ✓ Cada comando aparece en el recibo del despliegue.
-- [x] (P1) Actualizar la documentación desfasada de consola, contextos y CLI; reemplazar rutas privadas, correos e identificadores personales por descripciones y placeholders. ✓ El barrido `grep -cE '/home/stev|/tmp/|/var/tmp' docs/*.md` da 0 salvo la especificación literal del dueño; las pruebas unitarias que leen documentación pasan.
+- [x] (P1) Actualizar la documentación desfasada de consola, contextos y CLI; reemplazar rutas privadas, correos e identificadores personales por descripciones y placeholders. ✓ El barrido `grep -cE '<ruta-home-del-operador>|/tmp/|/var/tmp' docs/*.md` da 0 salvo la especificación literal del dueño; las pruebas unitarias que leen documentación pasan.
 
 ## 5. Integración, despliegue y release
 
