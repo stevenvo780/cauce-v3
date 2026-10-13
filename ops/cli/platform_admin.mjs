@@ -10,6 +10,7 @@ const HELP = `Uso: cauce platform <grupo> <operación> [opciones]
   admin otorgar|revocar --empresa ID --id UUID [--email CORREO --rol owner|admin]
   empresa estado --empresa ID --estado enabled|disabled|retired [--si]
   enlace crear|borrar --empresa ID --otra-empresa ID
+  empresa importar --inventario RUTA --email CORREO --nombre NOMBRE --dry-run|--apply (ver empresa importar --help)
 
 semilla es idempotente: sin --company hace platform_admin a la persona; con --company le da el rol
 (owner por defecto) usando como actor --admin, CAUCE_PLATFORM_ADMIN_ID o el platform_admin más antiguo.
@@ -261,6 +262,10 @@ export async function main(argv = process.argv.slice(2)) {
   if (argv.length === 1 && ['--help', '-h'].includes(argv[0])) {
     process.stdout.write(HELP);
     return 0;
+  }
+  // The company import lives in its own module, loaded only here so the other operations never depend on it.
+  if (`${argv[0]} ${argv[1]}` === 'empresa importar') {
+    return (await import('./company_import.mjs')).main(argv, { databaseUrl, isDatabaseError, localReason, sanitizeEnvironment, UsageError });
   }
   let plan, url, seed;
   try {

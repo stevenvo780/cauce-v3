@@ -1,0 +1,22 @@
+{
+  "format": "cauce-company-inventory",
+  "version": 1,
+  "company": { "id": "praxis", "name": "Praxis" },
+  "hub_edges": { "allow_route": true, "allow_read": true, "allow_control": false },
+  "tenants": [
+    { "id": "Hospital", "display_name": "Hospital Conecta", "enabled": true }
+  ],
+  "rooms": [
+    { "tenant_id": "Hospital", "id": "grp.hospital", "display_name": "Equipo de desarrollo Hospital Conecta", "enabled": true }
+  ],
+  "agents": [
+    { "tenant_id": "Hospital", "alias": "operador", "display_name": "Operador de Hospital Conecta", "max_concurrent_deliveries": 2 },
+    { "tenant_id": "Hospital", "alias": "perseo", "display_name": "Perseo · Developer generalista", "max_concurrent_deliveries": 2 },
+    { "tenant_id": "Hospital", "alias": "teseo", "display_name": "Teseo · Developer generalista", "max_concurrent_deliveries": 2 }
+  ],
+  "memberships": [
+    { "tenant_id": "Hospital", "room_id": "grp.hospital", "alias": "operador", "role": "operator", "enabled": true },
+    { "tenant_id": "Hospital", "room_id": "grp.hospital", "alias": "perseo", "role": "agent", "enabled": true },
+    { "tenant_id": "Hospital", "room_id": "grp.hospital", "alias": "teseo", "role": "agent", "enabled": true }
+  ]
+}
