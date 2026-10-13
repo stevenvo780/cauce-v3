@@ -219,7 +219,10 @@ def issuer_write_paths(state):
         raise Abort('the issuer policy must name an absolute state_root and registry paths') from None
     if not isinstance(registries, dict) or not registries:
         raise Abort('the issuer policy must name registry paths')
-    return {str(root), *(str(absolute(location).parent) for location in registries.values())}
+    paths = {root, *(absolute(location).parent for location in registries.values())}
+    if any(len(path.parts) < 3 for path in paths):
+        raise Abort('the issuer state_root and registry parents must be at least two levels below /')
+    return {str(path) for path in paths}
 
 
 def desired_files(args, state):
