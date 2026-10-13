@@ -448,19 +448,74 @@ class ApplyTests(InstallFixture):
                 self.assertEqual(self.tree(), before)
                 self.assertEqual(self.host.events, [])
 
-    def test_failed_disable_reports_incomplete_rollback(self):
-        def failed_disable(command, **options):
-            if command[:2] == ['systemctl', 'disable']:
-                return subprocess.CompletedProcess(command, 1, '', 'injected disable failure')
-            return self.fail_after_enable(command, **options)
+    def fail_enable_and_disable(self, command, **options):
+        if command[:2] == ['systemctl', 'disable']:
+            self.host.events.append('disable')
+            return subprocess.CompletedProcess(command, 1, '', 'injected disable failure')
+        return self.fail_after_enable(command, **options)
 
-        with mock.patch.object(self.kit, 'run', side_effect=failed_disable):
-            with self.assertRaisesRegex(lib.Abort, 'injected enable failure'):
+    def test_failed_disable_still_removes_created_configuration_and_reports_the_final_state(self):
+        with mock.patch.object(self.kit, 'run', side_effect=self.fail_enable_and_disable):
+            with self.assertRaisesRegex(lib.Abort, 'ROLLBACK INCOMPLETE:.*disable.*inactive.*injected enable failure'):
                 self.kit.install(self.arguments('--apply'))
         self.assertIn('ROLLBACK INCOMPLETE', self.output.getvalue())
         self.assertTrue(self.host.enabled)
+        self.assertFalse(self.arguments().unit.exists())
+        self.assertFalse((self.fleet / 'signed-authority').exists())
+        self.assertFalse(self.host.active)
+        self.assertEqual(self.host.events[-3:], ['stop', 'disable', 'daemon-reload'])
+
+    def test_failed_disable_still_restores_the_previous_configuration_and_running_service(self):
+        self.kit.install(self.arguments('--apply'))
+        args = self.arguments('--apply')
+        previous = {path: path.read_bytes() for path in (args.unit, args.config_directory / 'command.v1.json')}
+        self.host.enabled = False
+        self.release(NEW)
+        with mock.patch.object(self.kit, 'run', side_effect=self.fail_enable_and_disable):
+            with self.assertRaisesRegex(lib.Abort, 'ROLLBACK INCOMPLETE:.*disable.*configuration restored.*active') as failure:
+                self.kit.install(args)
+        self.assertNotIn('installation reverted', str(failure.exception))
+        self.assertEqual({path: path.read_bytes() for path in previous}, previous)
+        self.assertTrue(self.host.active)
+        self.assertTrue(self.host.enabled)
+        self.assertEqual(self.host.events[-4:], ['stop', 'disable', 'daemon-reload', 'start'])
+
+    def test_failed_disable_without_a_restart_leaves_the_previous_service_active(self):
+        self.kit.install(self.arguments('--apply'))
+        self.host.enabled = False
+        before = self.tree()
+        with mock.patch.object(self.kit, 'run', side_effect=self.fail_enable_and_disable):
+            with self.assertRaisesRegex(lib.Abort, 'ROLLBACK INCOMPLETE:.*active'):
+                self.kit.install(self.arguments('--apply'))
+        self.assertEqual(self.tree(), before)
+        self.assertTrue(self.host.active)
+        self.assertTrue(self.host.enabled)
+        self.assertNotIn('stop', self.host.events)
+
+    def test_unrestored_backup_keeps_recovery_files_and_reports_incomplete_rollback(self):
+        self.kit.install(self.arguments('--apply'))
+        self.release(NEW)
+        with mock.patch.object(self.kit, 'restore_configs', return_value=False), \
+                mock.patch.object(self.kit, 'run', side_effect=self.fail_after_enable):
+            with self.assertRaisesRegex(lib.Abort, 'ROLLBACK INCOMPLETE:.*backup.*inactive'):
+                self.kit.install(self.arguments('--apply'))
         self.assertTrue(self.arguments().unit.exists())
-        self.assertTrue((self.fleet / 'signed-authority/authority.env').exists())
+        self.assertTrue(list(self.root.rglob('*.pre-authority-*')))
+        self.assertFalse(self.host.active)
+
+    def test_a_previous_service_that_cannot_restart_reports_incomplete_rollback(self):
+        self.kit.install(self.arguments('--apply'))
+        self.release(NEW)
+
+        def failed_start(command, **options):
+            if command[:2] == ['systemctl', 'start']:
+                return subprocess.CompletedProcess(command, 1, '', '')
+            return self.fail_after_enable(command, **options)
+
+        with mock.patch.object(self.kit, 'run', side_effect=failed_start):
+            with self.assertRaisesRegex(lib.Abort, 'ROLLBACK INCOMPLETE:.*did not become active.*inactive'):
+                self.kit.install(self.arguments('--apply'))
+        self.assertIn(str(self.tools / OLD).encode(), self.arguments().unit.read_bytes())
         self.assertFalse(self.host.active)
 
 

@@ -376,27 +376,32 @@ def rollback(args, ctx, was_active, failure):
     if ctx.get('restarted'):
         run(['systemctl', 'stop', unit], check=False)
     if ctx.get('enable_attempted') and run(['systemctl', 'disable', unit], check=False).returncode != 0:
-        say(f'ROLLBACK INCOMPLETE: the new {unit} enablement was not removed; every file is kept for recovery')
-        return False
-    if not restore_configs(ctx):
-        say(f'ROLLBACK INCOMPLETE: a backup was not restored; {unit} is left stopped and every file is kept')
-        return False
-    try:
-        for filename in reversed(ctx['created']):
-            filename.unlink(missing_ok=True)
-            say(f'  removed {filename}')
-        if ctx.get('created_directory'):
-            args.config_directory.rmdir()
-    except OSError as error:
-        errors.append(f'created files were not removed: {error}')
-    run(['systemctl', 'daemon-reload'], check=False)
-    if was_active:
-        run(['systemctl', 'start', unit], check=False)
-        if not wait_until(lambda: service_active(unit), 30):
-            errors.append(f'the previous {unit} did not become active')
+        errors.append(f'systemctl disable failed for {unit}; the new enablement may remain')
+    if restore_configs(ctx):
+        configuration = 'backups restored'
+        try:
+            for filename in reversed(ctx['created']):
+                filename.unlink(missing_ok=True)
+                say(f'  removed {filename}')
+            if ctx.get('created_directory'):
+                args.config_directory.rmdir()
+            configuration = 'previous configuration restored'
+        except OSError as error:
+            errors.append(f'created files were not removed: {error}')
+        if run(['systemctl', 'daemon-reload'], check=False).returncode != 0:
+            errors.append('systemctl daemon-reload failed during rollback')
+        if was_active:
+            run(['systemctl', 'start', unit], check=False)
+            if not wait_until(lambda: service_active(unit), 30):
+                errors.append(f'the previous {unit} did not become active')
+    else:
+        configuration = 'configuration not fully restored'
+        errors.append('a backup was not restored; current and recovery files were kept')
     if errors:
-        say('ROLLBACK INCOMPLETE: ' + ' | '.join(errors))
-    return not errors
+        detail = ' | '.join(errors) + f'; {configuration}; {unit} is {"active" if service_active(unit) else "inactive"}'
+        say('ROLLBACK INCOMPLETE: ' + detail)
+        return detail
+    return None
 
 
 def apply(args, state, changes):
@@ -430,7 +435,9 @@ def apply(args, state, changes):
         ctx['enable_attempted'] = not was_enabled
         run(['systemctl', 'enable', unit])
     except BaseException as error:
-        rollback(args, ctx, was_active, str(error))
+        incomplete = rollback(args, ctx, was_active, str(error))
+        if incomplete:
+            raise Abort(f'ROLLBACK INCOMPLETE: {incomplete}; installation failed: {error}') from None
         raise Abort(f'installation reverted: {error}') from None
     return 'apply OK' if ctx.get('restarted') else 'no changes; the running enclave was verified'
 
