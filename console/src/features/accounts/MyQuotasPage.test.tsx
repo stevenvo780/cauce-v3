@@ -18,6 +18,19 @@ const account: QuotaAccount = { id: 'subscription', provider: 'codex', label: 'C
 function owner() { return <CompanySessionProvider state={{ authenticated: true, authority: { role: 'company_owner', scope: 'company',
   home_company: 'one', acting_company: 'one', platform_override: false } }}><MyQuotasPage /></CompanySessionProvider>; }
 
+it('explains a failed initial environment read before asking to retry', async () => {
+  server.use(
+    http.get('*/v3/console/quota-accounts', () => HttpResponse.json({ company_id: 'one', observed_at: '2026-10-11T00:00:00Z', accounts: [account] })),
+    http.get('*/v3/console/quota-environments', () => HttpResponse.json({ error: 'internal', message: 'ENGLISH SERVER ERROR' }, { status: 500 })),
+    http.get('*/v3/console/preferences', () => HttpResponse.json({ version: 1, pinned_quota_accounts: [] })),
+  );
+  renderWithApi(owner());
+  const alert = await screen.findByRole('alert');
+  expect(alert).toHaveTextContent('El servidor no confirmó el estado del entorno');
+  expect(alert).toHaveTextContent('antes de repetir la operación');
+  expect(alert.textContent).not.toContain('ENGLISH SERVER ERROR');
+});
+
 it('explica el 500 de una actualización manual de entornos antes de volver a intentarlo', async () => {
   let reads = 0;
   server.use(

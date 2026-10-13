@@ -1,4 +1,5 @@
 import { ApiError } from '../../api/client/core';
+import { spanishWithReason } from '../../api/error-message';
 import type { ConsoleAuthorityRole } from '../../api/types';
 
 /** Provider accounts spend the payer's money: only the owner and the platform manage them. */
@@ -43,10 +44,23 @@ export function describeQuotaError(cause: unknown, fallback: string): string {
 
 export function describeQuotaEnvironmentError(cause: unknown, fallback: string): string {
   if (!(cause instanceof ApiError)) return fallback;
+  if (cause.status === 409 && cause.code === 'conflict'
+    && /quota executor is unavailable for this host and provider/iu.test(cause.message)) {
+    return 'El ejecutor de cuotas no está disponible para ese ordenador y proveedor. Revisa la conexión del ordenador y que el proveedor esté habilitado antes de repetir la operación.';
+  }
+  if (cause.status === 403 && cause.code === 'forbidden'
+    && /quota account or host is unavailable in the acting company/iu.test(cause.message)) {
+    return 'La cuenta o el ordenador no están disponibles en la empresa seleccionada. Actualiza la lista y comprueba la empresa antes de crear el entorno.';
+  }
   if (cause.status === 500) {
     return 'El servidor no confirmó el estado del entorno. Actualiza cuotas y entornos para comprobar el resultado antes de repetir la operación.';
   }
-  return describeQuotaError(cause, fallback);
+  const message = describeQuotaError(cause, fallback);
+  if ((cause.status === 403 || cause.status === 409)
+    && !/^quota (?:account|environment) (?:version changed|changed)/iu.test(cause.message)) {
+    return spanishWithReason(message, cause.message);
+  }
+  return message;
 }
 
 const OPERATION_ERROR: Record<string, string> = {

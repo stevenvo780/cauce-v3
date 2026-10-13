@@ -70,7 +70,10 @@ export function MyQuotasPage() {
     {accounts.loading && !accounts.data ? <p role="status">Leyendo cuentas y ventanas…</p> : null}
     {preferences.loading && !preferences.data ? <p role="status">Leyendo tarjetas fijadas…</p> : null}
     {environments.loading && !environments.data ? <p role="status">Leyendo entornos de consulta…</p> : null}
-    {accounts.error || environments.error || preferences.error || error ? <Notice tone="danger" role="alert">{error || describeQuotaError(accounts.error ?? environments.error ?? preferences.error, 'No se pudieron leer las cuotas.')}
+    {accounts.error || environments.error || preferences.error || error ? <Notice tone="danger" role="alert">{error || (accounts.error
+      ? describeQuotaError(accounts.error, 'No se pudieron leer las cuotas.')
+      : environments.error ? describeQuotaEnvironmentError(environments.error, 'No se pudieron leer los entornos.')
+        : describeQuotaError(preferences.error, 'No se pudieron leer las cuotas.'))}
       {preferences.error || pinFailed ? <Button size="sm" disabled={preferences.loading} onClick={() => { setPinFailed(false); void preferences.reload(); }}>Releer tarjetas fijadas</Button> : null}</Notice> : null}
     {notice ? <Notice tone="ok" role="status">{notice}</Notice> : null}
     <div className="flex flex-wrap gap-2"><Button aria-pressed={filterPinned} disabled={!preferences.data || !!preferences.error} onClick={() => { setFilterPinned(!filterPinned); }}>{filterPinned ? 'Ver todas las cuentas' : 'Ver sólo cuentas fijadas'}</Button>

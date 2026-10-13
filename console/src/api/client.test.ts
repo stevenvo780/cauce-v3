@@ -513,6 +513,29 @@ describe('CauceApi', () => {
     expect((error as Error).message).toContain('runtime probe failed');
   });
 
+  it.each(['agent_disabled', 'profile_revision_conflict'])('keeps reconciliation recovery specific for %s', async (code) => {
+    server.use(http.post('http://localhost/v3/console/tenants/Steven/agents/kant/context/reconcile/preview',
+      () => HttpResponse.json({ error: code, message: 'la medición no coincide' }, { status: 409 })));
+    const error = await new CauceApi('http://localhost').previewContextReconciliation('Steven', 'kant', 'reviso las huellas')
+      .catch((cause: unknown) => cause);
+    expect(error).toMatchObject({ status: 409, code });
+    expect((error as Error).message).toContain('vuelve a medir');
+    expect((error as Error).message).toContain('la medición no coincide');
+    expect((error as Error).message).not.toContain('guardar el perfil');
+    expect((error as Error).message).not.toContain('aplicar el borrador');
+  });
+
+  it('explains a failed profile write even when the gateway sends no message', async () => {
+    server.use(http.put('http://localhost/v3/console/tenants/Steven/agents/kant/perfil',
+      () => HttpResponse.json({ error: 'profile_write_failed' }, { status: 502 })));
+    const error = await new CauceApi('http://localhost').putAgentPerfil('Steven', 'kant', PERFIL, 4, 'ajusto el rol declarado')
+      .catch((cause: unknown) => cause);
+    expect(error).toMatchObject({ status: 502, code: 'profile_write_failed' });
+    expect((error as Error).message).toContain('No se pudo escribir el perfil');
+    expect((error as Error).message).toContain('Conserva el borrador');
+    expect((error as Error).message).not.toContain('Bad Gateway');
+  });
+
   it('un 400 que nombra `reason` se separa de un 400 de los campos del perfil', async () => {
     let cuerpo: Record<string, unknown> = {
       error: 'invalid_input', field: 'reason', message: 'el motivo va entre 8 y 280 caracteres',

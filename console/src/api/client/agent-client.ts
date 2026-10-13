@@ -273,6 +273,7 @@ const GOVERNANCE_ERROR_TEXT: Readonly<Record<string, string>> = {
   context_source_unavailable: 'La fuente de contexto no respondió. Revisa su conexión y vuelve a intentarlo cuando esté disponible.',
   profile_write_unavailable: 'Esta instalación no puede preparar la escritura del perfil. Conserva el borrador y vuelve a intentarlo cuando el servicio esté disponible.',
   profile_write_unconfirmed: 'El servidor no confirmó el resultado de la escritura. Relee el perfil para comprobar qué revisión quedó activa antes de repetir el cambio.',
+  profile_write_failed: 'No se pudo escribir el perfil. Conserva el borrador y relee el estado para comprobar el resultado antes de repetir el cambio.',
 };
 
 const RECONCILIATION_ERROR_TEXT: Readonly<Record<string, string>> = {
@@ -307,17 +308,22 @@ function perfilNoEncontrado(status: number, body: unknown): ApiError | undefined
   return errorDeCodigo(status, body, { not_found: GOVERNANCE_ERROR_TEXT.not_found });
 }
 
-/** The whole refusal vocabulary of a governance write, in one place for both writing routes. */
-function falloDeGobernanza(status: number, body: unknown): ApiError | undefined {
+function falloDeContexto(status: number, body: unknown): ApiError | undefined {
   return sesionSinPersona(status, body)
     ?? motivoNoAdmitido(status, body)
     ?? contextoContaminado(status, body)
-    ?? entregaEnVuelo(status, body)
-    ?? errorDeCodigo(status, body, GOVERNANCE_ERROR_TEXT);
+    ?? entregaEnVuelo(status, body);
+}
+
+/** The whole refusal vocabulary of a governance write, in one place for both writing routes. */
+function falloDeGobernanza(status: number, body: unknown): ApiError | undefined {
+  return falloDeContexto(status, body) ?? errorDeCodigo(status, body, GOVERNANCE_ERROR_TEXT);
 }
 
 function falloDeReconciliacion(status: number, body: unknown): ApiError | undefined {
-  return falloDeGobernanza(status, body) ?? errorDeCodigo(status, body, RECONCILIATION_ERROR_TEXT);
+  return falloDeContexto(status, body)
+    ?? errorDeCodigo(status, body, RECONCILIATION_ERROR_TEXT)
+    ?? errorDeCodigo(status, body, GOVERNANCE_ERROR_TEXT);
 }
 
 export function putAgentPerfil(
