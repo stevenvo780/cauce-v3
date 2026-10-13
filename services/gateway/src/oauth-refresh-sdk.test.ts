@@ -77,8 +77,8 @@ describe.sequential('MCP SDK refresh against durable OAuth authority', () => {
         if (change === 'revoked binding') await pool.query('UPDATE human_external_identities SET enabled=false,revoked_at=clock_timestamp() WHERE id=$1', [f.bindingId]);
         if (change === 'changed tenant') {
           await pool.query('INSERT INTO agents(tenant_id,alias) VALUES ($1,$2)', ['Isa', f.alias]);
-          await pool.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,role,permissions)
-            VALUES ($1,'Isa',$2,'operator',ARRAY['read','route'])`, [f.userId, f.alias]);
+          await pool.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,permissions)
+            VALUES ($1,'Isa',$2,ARRAY['read','route'])`, [f.userId, f.alias]);
           await pool.query('UPDATE console_users SET tenant_id=$2 WHERE id=$1', [f.userId, 'Isa']);
         }
         await expect(refreshAuthorization(issuer, options)).rejects.toThrow();

@@ -25,7 +25,7 @@ beforeEach(async ({ task }) => {
   await current.adminPool.query("INSERT INTO company_admins(company_id,human_id,role,source) SELECT company_id,id,'admin','v4.0-hub-operator' FROM console_users WHERE id=$1", [human.id]);
   actor = { tenant_id: 'Steven', alias: 'auth-human', subject: `console:${human.id}` };
   await pool.query("INSERT INTO agents(tenant_id,alias) VALUES('Steven','auth-human')");
-  if (!task.name.includes('absent human membership')) await pool.query("INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,role,permissions) VALUES($1,'Steven','auth-human','operator',ARRAY['read','control'])", [human.id]);
+  if (!task.name.includes('absent human membership')) await pool.query("INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,permissions) VALUES($1,'Steven','auth-human',ARRAY['read','control'])", [human.id]);
   await pool.query(`INSERT INTO provider_accounts(id,provider,external_account_id,payer_tenant_id,credential_ref_kind,credential_ref,enabled)
     VALUES('auth-main','codex','fixture-external','Steven','env_path','CAUCE_TEST_TOKEN_PATH',true)`);
   await pool.query(`INSERT INTO agents(tenant_id,alias,runtime_key,harness_id,container_name,runtime_user,home_directory,state_directory,host_id,runtime_mode,systemd_user,primary_account_id,lifecycle_state)

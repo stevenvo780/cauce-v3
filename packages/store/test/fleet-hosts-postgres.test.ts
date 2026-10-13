@@ -258,8 +258,8 @@ describe('fleet hosts on PostgreSQL', () => {
     if (!current) throw new Error('test database absent');
     await current.adminPool.query(`INSERT INTO console_users(id,email,email_normalized,password_hash,display_name,role,tenant_id,alias)
       VALUES($1,'host-admin@example.test','host-admin@example.test',$2,'Host owner','operator','Steven','admin')`, [HUMAN, '$scrypt$'+'x'.repeat(48)]);
-    await current.adminPool.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,role,permissions)
-      VALUES($1,'Steven','admin','operator',ARRAY['read','control'])`, [HUMAN]);
+    await current.adminPool.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,permissions)
+      VALUES($1,'Steven','admin',ARRAY['read','control'])`, [HUMAN]);
     await current.adminPool.query(`INSERT INTO company_admins(company_id,human_id,role,source,granted_by)
       VALUES('humanizar',$1,'owner','import',$1)`, [HUMAN]);
     const authority: ConfigurationAuthorityResolver = client => lockCompanyAuthority(client,

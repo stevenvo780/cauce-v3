@@ -246,8 +246,10 @@ describe('human MCP operations over real OAuth, SDK transport and PostgreSQL', (
     expect(readDenied.isError).toBe(true);
     expect((await call(publishOnly, 'cauce_inbox')).isError).toBe(true);
     const roleChange = await fixture.pool.query(
-      `UPDATE human_tenant_memberships SET role='reader', permissions=ARRAY['read']::text[], revision=revision+1
-        WHERE human_id=$1::uuid AND tenant_id=$2`,
+      // The membership role derives from the account (081): lower the permissions and the account role together.
+      `WITH membership AS (UPDATE human_tenant_memberships SET permissions=ARRAY['read']::text[], revision=revision+1
+        WHERE human_id=$1::uuid AND tenant_id=$2 RETURNING human_id)
+       UPDATE console_users SET role='reader' WHERE id IN (SELECT human_id FROM membership)`,
       [stevenA.id, stevenA.tenant],
     );
     expect(roleChange.rowCount).toBe(1);

@@ -16,6 +16,9 @@ interface CliRun {
 function createStubPool(impl?: (sql: string, params: unknown[]) => Promise<{ rows: unknown[]; rowCount: number | null }>): CliRun {
   const query = vi.fn(async (sql: string, params: unknown[] = []) => {
     if (impl) return impl(sql, params);
+    // The home membership is copied from the console_users row this same transaction just
+    // inserted (INSERT ... SELECT on id, tenant, alias and role), so it matches exactly one row.
+    if (sql.startsWith('INSERT INTO human_tenant_memberships')) return { rows: [], rowCount: 1 };
     return { rows: [], rowCount: 0 };
   });
   const end = vi.fn(async () => undefined);

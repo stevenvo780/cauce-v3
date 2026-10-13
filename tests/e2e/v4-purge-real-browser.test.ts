@@ -48,7 +48,7 @@ function redact(text: string): string {
 async function stopWorker(): Promise<void> {
   const child = worker;
   worker = undefined;
-  if (!child || child.exitCode !== null || child.signalCode !== null) return;
+  if (child?.exitCode !== null || child.signalCode !== null) return;
   child.kill('SIGTERM');
   await new Promise<void>((resolve) => {
     const timer = setTimeout(() => { child.kill('SIGKILL'); resolve(); }, 5_000);
@@ -158,7 +158,7 @@ describe('purga real de un contenedor desechable', () => {
     while (await enqueue.isDisabled()) {
       if (Date.now() > queuedAt) {
         const panel = await typed.evaluate(element => element.closest('.agent-lifecycle-panel')?.textContent);
-        throw new Error(`enqueue stayed disabled: ${panel}; errors=${errors.unexpected.join('; ')}`);
+        throw new Error(`enqueue stayed disabled: ${panel ?? '<no panel>'}; errors=${errors.unexpected.join('; ')}`);
       }
       await current.waitForTimeout(200);
     }

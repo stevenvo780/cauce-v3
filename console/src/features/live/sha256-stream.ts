@@ -56,13 +56,13 @@ export class Sha256Stream {
       words[index] = ((words[index - 16] ?? 0) + small + (words[index - 7] ?? 0) + large) >>> 0;
     }
     const state = this.state;
-    let [a, b, c, d, e, f, g, h] = [state[0] ?? 0, state[1] ?? 0, state[2] ?? 0, state[3] ?? 0, state[4] ?? 0, state[5] ?? 0, state[6] ?? 0, state[7] ?? 0];
+    let [a, b, c, d, e, f, g, h] = [state[0], state[1], state[2], state[3], state[4], state[5], state[6], state[7]];
     for (let index = 0; index < 64; index++) {
-      const first = (h + (rotate(e, 6) ^ rotate(e, 11) ^ rotate(e, 25)) + ((e & f) ^ (~e & g)) + (K[index] ?? 0) + (words[index] ?? 0)) >>> 0;
+      const first = (h + (rotate(e, 6) ^ rotate(e, 11) ^ rotate(e, 25)) + ((e & f) ^ (~e & g)) + (K[index]) + (words[index])) >>> 0;
       const second = ((rotate(a, 2) ^ rotate(a, 13) ^ rotate(a, 22)) + ((a & b) ^ (a & c) ^ (b & c))) >>> 0;
       h = g; g = f; f = e; e = (d + first) >>> 0; d = c; c = b; b = a; a = (first + second) >>> 0;
     }
-    state[0] = (state[0] ?? 0) + a; state[1] = (state[1] ?? 0) + b; state[2] = (state[2] ?? 0) + c; state[3] = (state[3] ?? 0) + d;
-    state[4] = (state[4] ?? 0) + e; state[5] = (state[5] ?? 0) + f; state[6] = (state[6] ?? 0) + g; state[7] = (state[7] ?? 0) + h;
+    state[0] = (state[0]) + a; state[1] = (state[1]) + b; state[2] = (state[2]) + c; state[3] = (state[3]) + d;
+    state[4] = (state[4]) + e; state[5] = (state[5]) + f; state[6] = (state[6]) + g; state[7] = (state[7]) + h;
   }
 }

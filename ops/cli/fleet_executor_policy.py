@@ -80,6 +80,10 @@ def load_policy(filename: pathlib.Path) -> dict:
         raise SafeFailure('executor roots must not overlap')
     if not isinstance(policy['native'], list) or not all(isinstance(policy[field], dict) for field in ('containers', 'bundles', 'profiles', 'hooks')):
         raise SafeFailure('invalid executor allowlists')
+    for bundle in policy['bundles'].values():
+        if isinstance(bundle, dict) and 'descriptor_sha256' in bundle and (not isinstance(bundle['descriptor_sha256'], str)
+                or re.fullmatch(r'[a-f0-9]{64}', bundle['descriptor_sha256']) is None):
+            raise SafeFailure('invalid approved descriptor digest')
     if 'transport' in policy:
         transport = policy['transport']
         if not isinstance(transport, dict) or set(transport) - {'registry_directory'} != {'bootstrap_url', 'gateway_url', 'ca_certificate', 'network'}:

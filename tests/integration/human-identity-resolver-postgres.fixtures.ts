@@ -15,8 +15,8 @@ export async function seedIdentity(pool: DatabasePool, sharedAlias?: string) {
     await client.query(`INSERT INTO human_external_identities(human_id,provider,namespace,subject,revision)
       VALUES($1,$2,$3,$4,9007199254740993)`, [humanId, key.provider, key.namespace, key.subject]);
     await client.query(`INSERT INTO human_tenant_memberships
-      (human_id,tenant_id,actor_alias,role,permissions,revision)
-      VALUES($1,'Steven',$2,'operator',ARRAY['read','route'],9007199254740994)`, [humanId, alias]);
+      (human_id,tenant_id,actor_alias,permissions,revision)
+      VALUES($1,'Steven',$2,ARRAY['read','route'],9007199254740994)`, [humanId, alias]);
   });
   return { humanId, alias, key };
 }
@@ -24,8 +24,8 @@ export async function seedIdentity(pool: DatabasePool, sharedAlias?: string) {
 export async function addDefaultMembership(pool: DatabasePool, humanId: string, alias: string): Promise<void> {
   await withTransaction(pool, async (client) => {
     await client.query("INSERT INTO agents(tenant_id,alias) VALUES('Jhon',$1) ON CONFLICT DO NOTHING", [alias]);
-    await client.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,role,permissions)
-      VALUES($1,'Jhon',$2,'operator',ARRAY['read','route'])`, [humanId, alias]);
+    await client.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,permissions)
+      VALUES($1,'Jhon',$2,ARRAY['read','route'])`, [humanId, alias]);
   });
 }
 

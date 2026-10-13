@@ -116,8 +116,8 @@ describe('company isolation enforced by PostgreSQL', () => {
   });
 
   it('keeps memberships, favorites and administrators inside the company of the person', async () => {
-    await rejects(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,role,permissions)
-      VALUES($1,'PraxisHub','company_admin','operator',ARRAY['read'])`, '23503', [people.miguel]);
+    await rejects(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,permissions)
+      VALUES($1,'PraxisHub','company_admin',ARRAY['read'])`, '23503', [people.miguel]);
     await rejects("INSERT INTO console_agent_favorites(human_id,tenant_id,alias) VALUES($1,'PraxisHub','company_admin')", '23503', [people.miguel]);
     await rejects("INSERT INTO company_admins(company_id,human_id,role,source,granted_by) VALUES('praxis',$1,'admin','platform',$2)",
       '23503', [people.miguel, people.steven]);

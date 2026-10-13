@@ -19,22 +19,38 @@ INSPECTION_ENV = {'OPENCLAW_AUTH_STORE_READONLY': '1'}
 # The binding provider (the paying account) decides which OpenClaw provider id
 # and model namespace apply; the driver itself is provider-agnostic.
 PROVIDER_BY_BINDING = {'codex': 'openai', 'claude': 'anthropic'}
-# Measured login/identity flow fingerprint per upstream provider. Only OpenAI
-# has been measured against the real CLI flow; Anthropic stays unmeasured and
-# is refused explicitly instead of inheriting the OpenAI fingerprint.
+# Login/identity flow per upstream provider: the pinned release and its
+# provider-agnostic auth-list source, the isolated login methods, the profile
+# types that method stores and whether the listing must carry an expiry.
+# OpenAI was measured against the real CLI. Anthropic uses the isolated
+# setup-token login (never the external Claude CLI import) and is exercised
+# only with a controlled CLI until the migration front authenticates a real
+# account: authentication still demands the observed account profile, its
+# email identity and a nonce round trip through an anthropic/ model, so a
+# wrong assumption about the real listing fails closed. A flow set to None is
+# refused before any CLI inspection or profile write.
 PROVIDER_FLOWS = {
-    'openai': {'version': VERSION, 'auth_list_sha256': AUTH_LIST_SHA256, 'methods': {'oauth', 'device-code'}},
-    'anthropic': None,
+    'openai': {'version': VERSION, 'auth_list_sha256': AUTH_LIST_SHA256, 'methods': {'oauth', 'device-code'},
+               'profile_types': {'oauth'}, 'expiry_required': True},
+    'anthropic': {'version': VERSION, 'auth_list_sha256': AUTH_LIST_SHA256, 'methods': {'setup-token'},
+                  'profile_types': {'token'}, 'expiry_required': False},
 }
+
+
+def provider_flow(provider: str) -> tuple[str, dict]:
+    provider_id = PROVIDER_BY_BINDING.get(provider)
+    if provider_id is None:
+        raise ValueError(f'OpenClaw has no account flow for binding provider {provider!r}')
+    flow = PROVIDER_FLOWS.get(provider_id)
+    if flow is None:
+        raise ValueError(f'OpenClaw {provider_id} flow has not been measured yet; refusing to declare it measured')
+    return provider_id, flow
 
 
 def validate_definition(value: dict, provider: str) -> None:
     from fleet_policy_paths import path
-    provider_id = PROVIDER_BY_BINDING.get(provider)
-    if provider_id is not None and PROVIDER_FLOWS.get(provider_id) is None:
-        raise ValueError(f'OpenClaw {provider_id} flow has not been measured yet; refusing to declare it measured')
-    flow = PROVIDER_FLOWS.get(provider_id) if provider_id else None
-    if flow is None or not isinstance(value, dict) or set(value) != FIELDS \
+    provider_id, flow = provider_flow(provider)
+    if not isinstance(value, dict) or set(value) != FIELDS \
             or value['provider_id'] != provider_id or value['method_id'] not in flow['methods'] \
             or value['version'] != flow['version'] or value['auth_list_sha256'] != flow['auth_list_sha256']:
         raise ValueError('OpenClaw provider driver has no measured independent account flow')
@@ -215,16 +231,18 @@ def authenticated_openclaw(packet: dict) -> bool:
         selected = profiles[0]
         if not isinstance(selected, dict):
             return False
+        _, flow = provider_flow(binding['provider'])
         if selected.get('id') != profile_id(packet['account_id']) or selected.get('provider') != binding['openclaw']['provider_id'] \
-                or selected.get('type') != 'oauth' or selected.get('email') != packet['identity']:
+                or selected.get('type') not in flow['profile_types'] or selected.get('email') != packet['identity']:
             return False
         if any(selected.get(field) for field in ('cooldownUntil', 'disabledUntil')):
             return False
-        if not isinstance(selected.get('expiresAt'), str):
-            return False
-        expires = datetime.fromisoformat(selected['expiresAt'].replace('Z', '+00:00'))
-        if expires <= datetime.now(UTC):
-            return False
+        if 'expiresAt' in selected or flow['expiry_required']:
+            if not isinstance(selected.get('expiresAt'), str):
+                return False
+            expires = datetime.fromisoformat(selected['expiresAt'].replace('Z', '+00:00'))
+            if expires <= datetime.now(UTC):
+                return False
         model = agent.get('model_id')
         if not isinstance(model, str) or not model.startswith(driver['provider_id'] + '/'):
             return False

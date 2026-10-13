@@ -157,8 +157,8 @@ function barrier() {
       expect((await pool.query('SELECT id FROM cauce_oauth_grants WHERE id=$1', [incoherent])).rowCount).toBe(1);
     }
     await pool.query("INSERT INTO agents(tenant_id,alias) VALUES('Isa',$1)", [f.alias]);
-    await pool.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,role,permissions)
-      VALUES($1,'Isa',$2,'operator',ARRAY['read','route'])`, [f.userId, f.alias]);
+    await pool.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,permissions)
+      VALUES($1,'Isa',$2,ARRAY['read','route'])`, [f.userId, f.alias]);
     const wrongTenant = randomUUID();
     await pool.query(`INSERT INTO cauce_oauth_grants SELECT $1,human_id,issuer,resource,client_id,redirect_uri,scopes,binding_id,binding_revision,membership_revision,'Isa',actor_alias,credential_stamp,created_at,expires_at FROM cauce_oauth_grants WHERE id=$2`, [wrongTenant, f.issued.identity.grantId]);
     const bad = { ...f.issued.identity, grantId: wrongTenant, tokenId: randomUUID() };

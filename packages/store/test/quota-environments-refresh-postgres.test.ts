@@ -15,8 +15,8 @@ preparePostgresSuite(import.meta.url, async () => { database = await startTestDa
 beforeEach(async () => {
   current = await startTestCaseDatabase(database); pool = current.pool; admin = current.adminPool;
   actors = await seedCompanyIsolation(admin); clock = Date.now();
-  await admin.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,role,permissions)
-    VALUES($1,'PraxisHub','company_admin','operator',ARRAY['read','control'])`, [actors.leon]);
+  await admin.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,permissions)
+    VALUES($1,'PraxisHub','company_admin',ARRAY['read','control'])`, [actors.leon]);
 });
 afterEach(async () => { await current?.close(); });
 afterAll(async () => { await database.pool.end(); await database.container.stop(); });

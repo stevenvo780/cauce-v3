@@ -140,9 +140,10 @@ export async function makeReader(account: HumanMcpAccount): Promise<void> {
     VALUES('human-reader',false,true,false) ON CONFLICT(role) DO UPDATE SET allow_route=false,allow_read=true,allow_control=false`);
   await databasePool().query(`UPDATE memberships SET role='human-reader'
     WHERE tenant_id='Steven' AND room_id='grp.steven' AND alias=$1`, [account.alias]);
-  await databasePool().query("UPDATE console_users SET role='reader' WHERE id=$1", [account.humanId]);
-  await databasePool().query(`UPDATE human_tenant_memberships SET role='reader',permissions=ARRAY['read']
+  // The membership role derives from the account (081): lower the permissions before the reader ceiling applies.
+  await databasePool().query(`UPDATE human_tenant_memberships SET permissions=ARRAY['read']
     WHERE human_id=$1 AND tenant_id='Steven'`, [account.humanId]);
+  await databasePool().query("UPDATE console_users SET role='reader' WHERE id=$1", [account.humanId]);
 }
 
 export async function changeAlias(account: HumanMcpAccount, alias = `human_${randomUUID().slice(0, 8)}`): Promise<string> {

@@ -76,8 +76,19 @@ compose_recipe() {
   fi
   RECIPE+=("${COMPOSE[@]}")
 }
+# 081 drops the membership role the previous gateway reads: reverting needs its down before the old pins.
+ROLE_081_MIGRATION=081_membresia_rol_derivado.sql
+ROLE_081_PENDING=0
+membership_role_rollback() {
+  [ "$ROLE_081_PENDING" = 1 ] || return 0
+  echo "REVERSION con $ROLE_081_MIGRATION aplicada: el gateway anterior lee human_tenant_memberships.role, que esa migracion retiro." >&2
+  echo "ANTES de restaurar los pins de $ENV_FILE.pre-deploy-$STAMP o levantar la version anterior, aplica su down (aborta si hay una migracion posterior):" >&2
+  printf 'docker exec -i %q psql -X -v ON_ERROR_STOP=1 --single-transaction -U %q -d %q < %q\n' \
+    "$PG_CONTAINER" "$PG_USER" "$PG_DB" "$REPO/packages/store/migrations/down/$ROLE_081_MIGRATION" >&2
+}
 deployment_failed() {
   echo "deploy: $1" >&2
+  membership_role_rollback
   if [ "$MCP_HUMAN_ENABLED" = 1 ]; then
     compose_recipe
     echo "Rollback MCP manual: solo despues de verificar/restaurar esquema, BD y volumen segun el error; restaura el archivo completo (flag y configuracion incluidos):" >&2
@@ -382,6 +393,56 @@ fi
 [ "$MCP_HUMAN_ENABLED" = 1 ] || prepare_terminal
 COMPOSE_MODEL="$("${COMPOSE[@]}" config --format json)" \
   || die "no pude renderizar el compose con $ENV_FILE para comprobar las fuentes de los bind mounts"
+approvals_rc=0
+DESCRIPTOR_APPROVALS="$(python3 -c '
+import hashlib, json, os, re, stat, sys
+gateway = json.load(sys.stdin).get("services", {}).get("gateway")
+if not isinstance(gateway, dict) or "environment" not in gateway:
+    raise SystemExit(0)
+hint = ("generalo con ops/scripts/harness-descriptor-approvals.py <harness...> --output <archivo> "
+        "desde este clon y que el dueno apruebe cada pin (docs/operacion.md)")
+def stop(message):
+    print(f"{message}; {hint}")
+    raise SystemExit(3)
+target = (gateway.get("environment") or {}).get("CAUCE_HARNESS_DESCRIPTOR_APPROVALS_FILE")
+if not isinstance(target, str) or not target.startswith("/"):
+    stop("el gateway del compose no define CAUCE_HARNESS_DESCRIPTOR_APPROVALS_FILE como ruta absoluta")
+mounts = [mount for mount in gateway.get("volumes", []) if mount.get("type") == "bind"
+          and isinstance(mount.get("target"), str) and target.startswith(mount["target"].rstrip("/") + "/")]
+if len(mounts) != 1 or not isinstance(mounts[0].get("source"), str):
+    stop(f"CAUCE_HARNESS_DESCRIPTOR_APPROVALS_FILE={target} no esta bajo un unico bind del gateway")
+host = mounts[0]["source"].rstrip("/") + target[len(mounts[0]["target"].rstrip("/")):]
+try:
+    details = os.lstat(host)
+except OSError:
+    stop(f"falta el archivo de aprobaciones de descriptores {host}")
+if not stat.S_ISREG(details.st_mode):
+    stop(f"{host} debe ser un archivo regular, no un enlace ni un directorio")
+try:
+    with open(host, "rb") as stream:
+        approvals = json.loads(stream.read(65537))
+except (OSError, ValueError):
+    stop(f"{host} no es JSON legible")
+if not isinstance(approvals, dict) or any(re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", harness) is None
+        or not isinstance(pin, str) or re.fullmatch(r"[a-f0-9]{64}", pin) is None for harness, pin in approvals.items()):
+    stop(f"{host} debe ser un objeto {{harness: sha256 en hex de 64}}")
+stale = []
+for harness, pin in sorted(approvals.items()):
+    try:
+        with open(os.path.join(sys.argv[1], harness + ".json"), "rb") as stream:
+            current = hashlib.sha256(stream.read()).hexdigest()
+    except OSError:
+        current = None
+    if current != pin:
+        stale.append(harness)
+if stale:
+    stop(f"{host} aprueba descriptores ausentes o distintos en esta release: {", ".join(stale)}")
+names = ", ".join(sorted(approvals)) or "ninguno: toda operacion de cuota de agente quedara rechazada"
+print(f"aprobaciones de descriptores: {len(approvals)} ({names}) desde {host}")
+' "$REPO/packages/adapter-sdk/descriptors" <<< "$COMPOSE_MODEL")" || approvals_rc=$?
+[ "$approvals_rc" != 3 ] || die "$DESCRIPTOR_APPROVALS"
+[ "$approvals_rc" = 0 ] || die "no pude comprobar el archivo de aprobaciones de descriptores del compose"
+[ -z "$DESCRIPTOR_APPROVALS" ] || echo "$DESCRIPTOR_APPROVALS"
 if [ "$FLEET_OVERLAY" = 1 ]; then
   fleet_mounts="$(python3 -c '
 import json, sys
@@ -443,6 +504,7 @@ count_unapplied_migrations() {
 }
 count_pending_migrations() {
   PENDING_MIGRATIONS=0
+  APPLIED_MIGRATIONS=
   MIGRATION_ATTEMPT_PENDING="$(count_unapplied_migrations '')" || die "no pude contar migraciones del bundle"
   local containers volumes pg_running applied rc
   containers="$(docker ps -a --format '{{.Names}}')" \
@@ -470,6 +532,7 @@ count_pending_migrations() {
   PENDING_MIGRATIONS="$(count_unapplied_migrations "$applied")" || die "no pude contar migraciones pendientes"
   [[ $PENDING_MIGRATIONS =~ ^[0-9]+$ ]] || die "recuento de migraciones pendientes invalido"
   MIGRATION_ATTEMPT_PENDING="$PENDING_MIGRATIONS"
+  APPLIED_MIGRATIONS="$applied"
 }
 backup_monitor_accepts() {
   STATUS_FILE="$BACKUP_STATUS_FILE" MAX_AGE_HOURS="$BACKUP_MAX_AGE_HOURS" \
@@ -671,6 +734,10 @@ check_blob_migration_window
 [ "$BLOB_MIGRATION_PENDING" = 0 ] || [ "$REQUIRE_BLOB_BACKUP" = 1 ] \
   || die "043 paso a pendiente despues del backup; repite el deploy con evidencia de tabla y volumen"
 count_pending_migrations
+if [ -n "$APPLIED_MIGRATIONS" ] && grep -Fxq "$ROLE_081_MIGRATION" <<< "$BUNDLED_MIGRATIONS" \
+    && ! grep -Fxq "$ROLE_081_MIGRATION" <<< "$APPLIED_MIGRATIONS"; then
+  ROLE_081_PENDING=1
+fi
 if [ "$PENDING_MIGRATIONS" -gt 0 ]; then
   [ "$MIGRATION_BACKUP_REQUIRED" = 1 ] \
     || die "aparecieron $PENDING_MIGRATIONS migraciones pendientes despues de comprobar el backup; respalda y repite"
@@ -707,9 +774,9 @@ fi
 MIGRATOR_RUNNING=0
 resume_dispatcher
 cp -a "$ENV_FILE" "$ENV_FILE.pre-deploy-$STAMP" \
-  || die "no pude guardar $ENV_FILE.pre-deploy-$STAMP; la BD ya esta en $LAST_MIGRATION y $ENV_FILE sigue con los pins anteriores"
+  || { membership_role_rollback; die "no pude guardar $ENV_FILE.pre-deploy-$STAMP; la BD ya esta en $LAST_MIGRATION y $ENV_FILE sigue con los pins anteriores"; }
 mv -f "$CANDIDATE_ENV_FILE" "$ENV_FILE" \
-  || die "no pude instalar los pins nuevos en $ENV_FILE; la BD ya esta en $LAST_MIGRATION y $ENV_FILE sigue con los pins anteriores"
+  || { membership_role_rollback; die "no pude instalar los pins nuevos en $ENV_FILE; la BD ya esta en $LAST_MIGRATION y $ENV_FILE sigue con los pins anteriores"; }
 "${COMPOSE[@]}" up -d --wait --wait-timeout 300 --remove-orphans || deployment_failed "up fallo; no levantes el gateway anterior con API de blobs=1 si 043 esta aplicada. Para revertir, restaura juntos BD y volumen del snapshot previo a 043, verifica esquema anterior y despues los pins de $ENV_FILE.pre-deploy-$STAMP"
 CAUCE_ENV_FILE="$ENV_FILE" "$REPO/deploy/refresh-observability.sh" \
   || deployment_failed "no se pudieron refrescar los bind mounts de observabilidad"

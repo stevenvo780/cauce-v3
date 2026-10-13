@@ -1,6 +1,8 @@
 import { preparePostgresSuite } from '../../packages/store/test/postgres-suite.js';
 import { randomUUID } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
+import { cp, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import type { ConfigMutation } from '@cauce/protocol';
 import { applyPlatformConfiguration, CauceRepository, lockCompanyAuthority, rollbackPlatformConfiguration,
@@ -148,35 +150,56 @@ describe('atomic configuration CRUD and rollback', () => {
     });
     expect((await pool.query(`SELECT 1 FROM tenants WHERE id='Acme'`)).rowCount).toBe(0);
 
-    let revision = 0;
-    const mutations: ConfigMutation[] = [
-      { resource: 'tenant', action: 'create', id: 'Acme', value: { display_name: 'Acme', is_hub: false, enabled: true } },
-      { resource: 'room', action: 'create', tenant_id: 'Acme', id: 'grp.acme', value: { enabled: true } },
-      { resource: 'membership', action: 'create', tenant_id: 'Acme', room_id: 'grp.acme', alias: 'acmebot', value: { role: 'agent', enabled: true } },
-      { resource: 'acl_edge', action: 'create', from_tenant: 'Steven', to_tenant: 'Acme', value: { enabled: true } },
-      { resource: 'harness', action: 'create', id: 'custom', value: { display_name: 'Custom', command: null, capabilities: ['messages.receive'], enabled: true } },
-      { resource: 'role_policy', action: 'create', role: 'observer', value: { allow_read: true } }
-    ];
-    for (const mutation of mutations) {
-      const catalog = mutation.resource === 'harness' || mutation.resource === 'role_policy';
-      if (catalog) await expect(applyChange(mutation, false, revision)).rejects.toMatchObject({ code: 'forbidden' });
-      const changed = catalog
-        ? await applyPlatformConfiguration(pool, platform(), mutation, false, revision)
-        : await applyChange(mutation, false, revision);
-      revision = changed.revision;
-      expect(changed.applied).toBe(true);
-    }
+    const descriptors = await mkdtemp(join(tmpdir(), 'cauce-catalog-descriptors-'));
+    await cp(new URL('../../packages/adapter-sdk/descriptors/', import.meta.url), descriptors, { recursive: true });
+    await writeFile(join(descriptors, 'custom.json'), JSON.stringify({ schema_version: 1, harness: 'custom',
+      operations: { execute: 'native-execution' }, context: { native_document: 'AGENTS.md', max_bytes: 65536 } }));
+    const previousDirectory = process.env.CAUCE_HARNESS_DESCRIPTOR_DIRECTORY;
+    process.env.CAUCE_HARNESS_DESCRIPTOR_DIRECTORY = descriptors;
+    try {
+      for (const [value, id, message] of [
+        [{ display_name: 'Ghost', capabilities: ['messages.receive'] }, 'ghost', "harness.id: 'ghost': no published descriptor declares this harness"],
+        [{ display_name: 'Custom', command: '/usr/local/bin/custom', capabilities: ['messages.receive'] }, 'custom', 'harness.command:'],
+        [{ display_name: 'Custom', capabilities: ['tools'] }, 'custom', "harness.capabilities: 'tools' is outside the closed vocabulary"],
+      ] as const) {
+        await expect(applyPlatformConfiguration(pool, platform(), { resource: 'harness', action: 'create', id, value }, false, 0))
+          .rejects.toMatchObject({ code: 'invalid_input', message: expect.stringContaining(message) as unknown });
+      }
+      expect((await pool.query(`SELECT 1 FROM harness_definitions WHERE id IN ('ghost','custom')`)).rowCount).toBe(0);
+      let revision = 0;
+      const mutations: ConfigMutation[] = [
+        { resource: 'tenant', action: 'create', id: 'Acme', value: { display_name: 'Acme', is_hub: false, enabled: true } },
+        { resource: 'room', action: 'create', tenant_id: 'Acme', id: 'grp.acme', value: { enabled: true } },
+        { resource: 'membership', action: 'create', tenant_id: 'Acme', room_id: 'grp.acme', alias: 'acmebot', value: { role: 'agent', enabled: true } },
+        { resource: 'acl_edge', action: 'create', from_tenant: 'Steven', to_tenant: 'Acme', value: { enabled: true } },
+        { resource: 'harness', action: 'create', id: 'custom', value: { display_name: 'Custom', command: null, capabilities: ['messages.receive'], enabled: true } },
+        { resource: 'role_policy', action: 'create', role: 'observer', value: { allow_read: true } }
+      ];
+      for (const mutation of mutations) {
+        const catalog = mutation.resource === 'harness' || mutation.resource === 'role_policy';
+        if (catalog) await expect(applyChange(mutation, false, revision)).rejects.toMatchObject({ code: 'forbidden' });
+        const changed = catalog
+          ? await applyPlatformConfiguration(pool, platform(), mutation, false, revision)
+          : await applyChange(mutation, false, revision);
+        revision = changed.revision;
+        expect(changed.applied).toBe(true);
+      }
 
-    const snapshot = await repository.getConfiguration('Steven', 'kant', authority);
-    expect(snapshot.revision).toBe(revision);
-    expect(typeof snapshot.observed_at).toBe('string');
-    expect(snapshot.tenants).toEqual(expect.arrayContaining([expect.objectContaining({ id: 'Acme' })]));
-    expect(snapshot.harness_definitions).toEqual(expect.arrayContaining([expect.objectContaining({ id: 'custom' })]));
-    expect(snapshot.role_policies).toEqual(expect.arrayContaining([expect.objectContaining({ role: 'observer' })]));
-    expect((await pool.query(`SELECT allow_route,allow_read,allow_control FROM acl_edges WHERE from_tenant='Steven' AND to_tenant='Acme'`)).rows[0])
-      .toEqual({ allow_route: false, allow_read: false, allow_control: false });
-    expect((await pool.query(`SELECT count(*)::int AS count FROM audit_events WHERE action='config.change'`)).rows[0])
-      .toEqual({ count: 6 });
+      const snapshot = await repository.getConfiguration('Steven', 'kant', authority);
+      expect(snapshot.revision).toBe(revision);
+      expect(typeof snapshot.observed_at).toBe('string');
+      expect(snapshot.tenants).toEqual(expect.arrayContaining([expect.objectContaining({ id: 'Acme' })]));
+      expect(snapshot.harness_definitions).toEqual(expect.arrayContaining([expect.objectContaining({ id: 'custom' })]));
+      expect(snapshot.role_policies).toEqual(expect.arrayContaining([expect.objectContaining({ role: 'observer' })]));
+      expect((await pool.query(`SELECT allow_route,allow_read,allow_control FROM acl_edges WHERE from_tenant='Steven' AND to_tenant='Acme'`)).rows[0])
+        .toEqual({ allow_route: false, allow_read: false, allow_control: false });
+      expect((await pool.query(`SELECT count(*)::int AS count FROM audit_events WHERE action='config.change'`)).rows[0])
+        .toEqual({ count: 6 });
+    } finally {
+      if (previousDirectory === undefined) delete process.env.CAUCE_HARNESS_DESCRIPTOR_DIRECTORY;
+      else process.env.CAUCE_HARNESS_DESCRIPTOR_DIRECTORY = previousDirectory;
+      await rm(descriptors, { recursive: true, force: true });
+    }
   });
 
   it('rolls an ACL permission back as a new revision and rejects stale writers', async () => {

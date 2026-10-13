@@ -61,7 +61,7 @@ beforeEach(async ({ task }) => {
     VALUES('physical@example.test','physical@example.test',$1,'Fixture','operator','Steven','physical-human') RETURNING id`, ['$scrypt$' + 'x'.repeat(48)])).rows[0];
   if (!human) throw new Error('test human absent');
   actor = { tenant_id: 'Steven', alias: 'physical-human', subject: `console:${human.id}` };
-  await pool.query("INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,role,permissions) VALUES($1,'Steven','physical-human','operator',ARRAY['read','control'])", [human.id]);
+  await pool.query("INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,permissions) VALUES($1,'Steven','physical-human',ARRAY['read','control'])", [human.id]);
   await current.adminPool.query(`INSERT INTO company_admins(company_id,human_id,role,source,granted_by)
     SELECT company_id,id,'admin','import',id FROM console_users WHERE id=$1`, [human.id]);
   await pool.query(`INSERT INTO provider_accounts(id,provider,external_account_id,payer_tenant_id,credential_ref_kind,credential_ref,enabled)

@@ -133,6 +133,6 @@ export async function seedLegacyRoot(alias: string): Promise<string> {
 export async function switchHumanToReader(account: HumanFixture): Promise<void> {
   await databasePool().query("INSERT INTO role_policies(role,allow_route,allow_read,allow_control) VALUES('human-reader',false,true,false) ON CONFLICT(role) DO UPDATE SET allow_route=false,allow_read=true,allow_control=false");
   await databasePool().query("UPDATE memberships SET role='human-reader' WHERE tenant_id='Steven' AND room_id='grp.steven' AND alias=$1", [account.alias]);
+  await databasePool().query("UPDATE human_tenant_memberships SET permissions=ARRAY['read'] WHERE human_id=$1 AND tenant_id='Steven'", [account.humanId]);
   await databasePool().query("UPDATE console_users SET role='reader' WHERE id=$1", [account.humanId]);
-  await databasePool().query("UPDATE human_tenant_memberships SET role='reader',permissions=ARRAY['read'] WHERE human_id=$1 AND tenant_id='Steven'", [account.humanId]);
 }

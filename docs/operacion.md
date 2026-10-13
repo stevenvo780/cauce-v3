@@ -131,6 +131,11 @@ corregir hacia delante o restaurar la BD (paso 3 del rollback). `up`, refresco o
 # 1. Parar todo menos postgres (los servicios de aplicación que el compose declare activos)
 docker compose --env-file /etc/cauce-v3/prod.env -f deploy/compose.yaml -f deploy/compose.postgres.yaml --project-directory deploy \
   stop gateway dispatcher telegram-bridge terminal-relay console outbox-metrics prometheus otel-collector
+# 1b. Si este despliegue aplicó 081_membresia_rol_derivado.sql (deploy.sh imprime el aviso y este comando):
+#     el gateway anterior lee human_tenant_memberships.role, que 081 retiró. Aplicar su down ANTES del paso 2,
+#     salvo que el paso 3 restaure un dump previo a 081. Aborta si hay una migración posterior. Desde la raíz del clon nuevo:
+docker exec -i cauce-v3-prod-postgres-1 psql -X -v ON_ERROR_STOP=1 --single-transaction -U cauce -d cauce \
+  < packages/store/migrations/down/081_membresia_rol_derivado.sql
 # 2. Restaurar el prod.env previo (el snapshot solo existe si el migrator terminó con 0)
 cp -a /etc/cauce-v3/prod.env.pre-deploy-<STAMP> /etc/cauce-v3/prod.env
 # 3. Solo si el esquema ya quedó confirmado y hay que volver atrás: verificar sha256, terminar backends, dropdb/restore
@@ -161,6 +166,14 @@ El primer despliegue de V4 usa el mismo `deploy/deploy.sh`. Respecto de un despl
 - `CAUCE_FRONT_PROXY_CIDR=<cidr del proxy frontal>`. `deploy.sh` lo pasa como build-arg de la imagen de consola (`deploy/Dockerfile`). nginx solo acepta `X-Forwarded-For` de ese CIDR (`set_real_ip_from`). Vacío borra la directiva y no se confía en ningún salto. Un carácter fuera de `0-9a-fA-F:./` falla el build. Si la variable no está en `prod.env`, `deploy.sh` no aborta y la imagen queda sin salto de confianza: hay que declararla antes de construir. El valor de producción está en `docs/parametros.md`.
 - `CAUCE_RESERVED_COMPANY_SLUGS=<id>,<id>`. Identificadores de las empresas que la plataforma va a crear, separados por comas. `deploy.sh` no la lee. Compose la pasa al gateway (`${CAUCE_RESERVED_COMPANY_SLUGS:-}`; vacía si falta). Cada id tiene que cumplir `COMPANY_ID_PATTERN` y se suma a la lista fija de `services/gateway/src/company-slug.ts`. Un valor inválido impide arrancar el gateway. El registro público los rechaza con el mismo 409 que un identificador ocupado. Hay que reservarlos antes de abrir el registro. El valor de producción está en `docs/parametros.md`.
 - `CAUCE_DEPLOY_GATES_RECEIPT`. Ruta absoluta del recibo de `scripts/release-gates.sh` del mismo commit, en el entorno del proceso. Obligatoria, salvo el escape `CAUCE_DEPLOY_SIN_RECIBO`. No va en `prod.env`. El comando de esta sección ya la exporta.
+- `CAUCE_HARNESS_DESCRIPTOR_APPROVALS_DIR` (opcional en `prod.env`; por defecto `/etc/cauce-v3/harness-descriptor-approvals`). Directorio que solo contiene `approvals.json`, el mapa público `{harness: sha256}` que el dueño aprueba. `deploy/compose.yaml` lo monta en solo lectura y fija `CAUCE_HARNESS_DESCRIPTOR_APPROVALS_FILE`; sin él el gateway retira todos los lectores de cuota de agente. `deploy.sh` se niega a construir si falta, no es un objeto de pins hex de 64 o algún pin no coincide con el descriptor de la release. Se genera desde el clon de la release y lo aprueba el dueño, pin a pin (`{}` no aprueba ninguno):
+  ```bash
+  install -d -m 0755 /etc/cauce-v3/harness-descriptor-approvals
+  python3 ops/scripts/harness-descriptor-approvals.py codex claude grok \
+    --output /etc/cauce-v3/harness-descriptor-approvals/approvals.json   # --replace para sustituirlo en otra release
+  ```
+  El script valida cada descriptor con el parser del executor e imprime `approve <harness> <sha256>` para la revisión. Cambiar un descriptor en una release exige regenerar y volver a aprobar.
+- `CAUCE_NATIVE_CONTEXT_REPOSITORY_ROOT` queda sin definir en producción a propósito: la inspección nativa de contextos está apagada hasta que exista una raíz de repositorio independiente del broker (`CAUCE_CONTEXT_REPOSITORY_ROOT`); el gateway rechaza que ambas coincidan.
 
 **Backup.** Con migraciones pendientes, `deploy.sh` baja la ventana a 2 h, no admite confirmación de un backup más viejo y repite el monitor justo antes del migrator. Sin migraciones pendientes sigue `CAUCE_DEPLOY_BACKUP_MAX_AGE_HOURS` (24 h por defecto) y un backup viejo admite confirmación. El detalle está en las precondiciones de esta sección.
 
@@ -170,7 +183,7 @@ El primer despliegue de V4 usa el mismo `deploy/deploy.sh`. Respecto de un despl
 
 **Semilla de autoridad.** Después de aplicar el esquema, desde la raíz del clon del despliegue en el host y como root, con la CLI de la imagen recién desplegada. Los correos se resuelven en la base y no se imprimen ni se versionan. Primero el `platform_admin`, después los owners de la empresa. Comandos y comprobación: [Siembra de autoridad](#siembra-de-autoridad-cauce-platform-admin-semilla).
 
-**Reversión.** Sigue la receta de esta sección: no ejecutar `docker compose down`; restaurar `prod.env.pre-deploy-<STAMP>` y, si el esquema ya quedó confirmado, el dump previo. El `down` de `054_company_admins.sql` aborta con `rollback preserves company authority` si hay un owner, un admin cuyo `source` no es `v4.0-hub-operator`, más de una empresa, filas en `platform_authority_events` o en `agent_role_template_owners`, o principals y roles de agente distintos de las filas de plataforma que esa migración conserva. La semilla deja historial en `platform_authority_events`, así que no se deshace con ese `down`: se restaura el dump previo o se corrige hacia delante.
+**Reversión.** Sigue la receta de esta sección: no ejecutar `docker compose down`; restaurar `prod.env.pre-deploy-<STAMP>` y, si el esquema ya quedó confirmado, el dump previo. Si el despliegue aplicó `081_membresia_rol_derivado.sql`, el down de 081 (paso 1b de la receta) va antes de restaurar los pins: el gateway anterior lee la columna de rol que 081 retiró. El `down` de `054_company_admins.sql` aborta con `rollback preserves company authority` si hay un owner, un admin cuyo `source` no es `v4.0-hub-operator`, más de una empresa, filas en `platform_authority_events` o en `agent_role_template_owners`, o principals y roles de agente distintos de las filas de plataforma que esa migración conserva. La semilla deja historial en `platform_authority_events`, así que no se deshace con ese `down`: se restaura el dump previo o se corrige hacia delante.
 
 **Ciclo del candidato.** Lista para ejecutar de principio a fin con cada candidato `<C>`. Cada paso
 deja un recibo en su hueco y no se pasa al siguiente sin él. Un rojo en cualquier paso devuelve al

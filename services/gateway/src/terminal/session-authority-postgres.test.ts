@@ -50,8 +50,8 @@ async function seed(seconds = 60): Promise<AuthorityContinuityPayload> {
     role,tenant_id,alias,active,password_changed_at)
     VALUES($1,$2,$2,$3,'Fixture','operator','Steven','kant',true,'epoch')`,
   [humanId, `${humanId}@example.invalid`, passwordHash]);
-  await pool.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,role,permissions)
-    VALUES($1,'Steven','kant','operator',ARRAY['read','route','control'])`, [humanId]);
+  await pool.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,permissions)
+    VALUES($1,'Steven','kant',ARRAY['read','route','control'])`, [humanId]);
   users.put({ id: humanId, email: `${humanId}@example.invalid`, display_name: 'Fixture',
     role: 'operator', tenant_id: 'Steven', alias: 'kant', active: true, password_hash: passwordHash, password_changed_at: 0 });
   const now = Math.floor(Date.now() / 1000);
@@ -108,8 +108,8 @@ describe('terminal original authority under PostgreSQL fences', () => {
   it.each([
     ['account', 'UPDATE console_users SET active=false WHERE id=$1'],
     ['membership', "UPDATE human_tenant_memberships SET permissions=ARRAY['read'] WHERE human_id=$1"],
-    ['account role', "UPDATE console_users SET role='reader' WHERE id=$1"],
-    ['member role', "UPDATE human_tenant_memberships SET role='reader',permissions=ARRAY['read'] WHERE human_id=$1"],
+    // The membership role is derived from the account role, and the reader ceiling forces the permissions down in the same statement.
+    ['account role', "WITH m AS (UPDATE human_tenant_memberships SET permissions=ARRAY['read'] WHERE human_id=$1) UPDATE console_users SET role='reader' WHERE id=$1"],
     ['credential', 'UPDATE console_users SET password_hash=$2 WHERE id=$1'],
   ])('serializes %s revocation against the same transaction', async (_name, sql) => {
     const original = await seed(); if (original.origin.kind !== 'human') throw new Error('human expected');

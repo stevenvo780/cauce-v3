@@ -271,8 +271,8 @@ describe('cauce CLI password sessions and spaces with a real PostgreSQL gateway'
       password_hash,display_name,role,tenant_id,alias) VALUES($1,$1,$2,'Second CLI owner','operator',$3,'owner')
       RETURNING id::text`, [secondEmail, passwordHash, tenantA])).rows[0];
     if (!second) throw new Error('second CLI owner unavailable');
-    await current.adminPool.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,role,permissions)
-      VALUES($1,$2,'owner','operator',ARRAY['read','control'])`, [second.id, tenantA]);
+    await current.adminPool.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,permissions)
+      VALUES($1,$2,'owner',ARRAY['read','control'])`, [second.id, tenantA]);
     await current.adminPool.query(`INSERT INTO company_admins(company_id,human_id,role,source,granted_by)
       VALUES($1,$2,'owner','import',$2)`, [companyA, second.id]);
     const firstHuman = (await current.adminPool.query<{ id: string }>('SELECT id::text FROM console_users WHERE email=$1',

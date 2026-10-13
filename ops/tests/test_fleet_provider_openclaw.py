@@ -27,7 +27,10 @@ const mode=fs.existsSync(root+'/mode')?fs.readFileSync(root+'/mode','utf8'):'';
 if(argv.includes('--version')) { console.log(mode==='version'?'2026.1.1':'OpenClaw 2026.6.6 (8c802aa)'); }
 else if(argv.includes('list')) {
  let meta={agentId:'runtime-one',provider:'openai',profiles:[{id:'cauce:account-one',provider:'openai',type:'oauth',email:'observed@fixture.invalid',expiresAt:'2099-01-01T00:00:00Z'}]};
- if(mode==='anthropic') { meta.provider='anthropic'; meta.profiles[0].provider='anthropic'; }
+ if(mode.startsWith('anthropic')) { meta.provider='anthropic'; meta.profiles[0].provider='anthropic'; }
+ if(mode.startsWith('anthropic-token')) { meta.profiles[0].type='token'; delete meta.profiles[0].expiresAt; }
+ if(mode==='anthropic-token-expired') meta.profiles[0].expiresAt='2000-01-01T00:00:00Z';
+ if(mode==='anthropic-token-identity') delete meta.profiles[0].email;
  if(mode==='identity') meta.profiles[0].email='foreign@fixture.invalid';
  if(mode==='account') meta.profiles[0].id='cauce:foreign';
  if(mode==='provider') meta.profiles[0].provider='anthropic';
@@ -284,8 +287,11 @@ class OpenClawProviderTest(unittest.TestCase):
         template['openclaw'] = {**template['openclaw'], 'provider_id': 'anthropic'}
         observed = templates.capabilities(policy)
         self.assertFalse(observed['available'])
+        template['openclaw'] = {**template['openclaw'], 'method_id': 'setup-token'}
+        runtimes = templates.capabilities(policy)['placements'][0]['runtimes']
+        self.assertEqual([(row['harness_id'], row['provider']) for row in runtimes], [('openclaw', 'claude')])
         template['provider'] = 'codex'
-        template['openclaw'] = {**template['openclaw'], 'provider_id': 'openai'}
+        template['openclaw'] = {**template['openclaw'], 'provider_id': 'openai', 'method_id': 'device-code'}
         policy['signer']['key'] = str(self.root / 'missing-capability-key')
         self.assertFalse(templates.capabilities(policy)['available'])
         policy['signer']['key'] = str(key)
@@ -300,40 +306,58 @@ class OpenClawProviderTest(unittest.TestCase):
                 driver.validate_definition(value, 'codex')
         with self.assertRaises(ValueError):
             driver.validate_definition(self.binding['openclaw'], 'claude')
-        anthropic = copy.deepcopy(self.binding['openclaw'])
-        anthropic['provider_id'] = 'anthropic'
-        with self.assertRaisesRegex(ValueError, 'anthropic flow has not been measured yet'):
-            driver.validate_definition(anthropic, 'claude')
-        with self.assertRaises(ValueError):
+        anthropic = {**copy.deepcopy(self.binding['openclaw']), 'provider_id': 'anthropic', 'method_id': 'setup-token'}
+        driver.validate_definition(anthropic, 'claude')
+        with self.assertRaisesRegex(ValueError, 'no measured independent account flow'):
             driver.validate_definition(anthropic, 'codex')
+        for method in ('oauth', 'device-code', 'cli', 'api-key'):
+            with self.subTest(method=method), self.assertRaisesRegex(ValueError, 'no measured independent account flow'):
+                driver.validate_definition({**anthropic, 'method_id': method}, 'claude')
 
-    def test_anthropic_is_refused_until_measured_and_model_must_match_binding(self):
+    def anthropic(self, mode='anthropic-token'):
         self.binding['provider'] = 'claude'
-        self.binding['openclaw'] = {**self.binding['openclaw'], 'provider_id': 'anthropic'}
+        self.binding['openclaw'] = {**self.binding['openclaw'], 'provider_id': 'anthropic', 'method_id': 'setup-token'}
         self.agent['model_id'] = 'anthropic/claude-opus-5'
-        with self.assertRaisesRegex(ValueError, 'anthropic flow has not been measured yet'):
-            driver.prepare(self.binding, self.agent)
-        packet = {**self.packet, 'fleet_module': 'fleet_provider_openclaw'}
-        self.assertFalse(identity.authenticated_provider(packet))
-        native = {'provider': 'claude', 'runtime_user': 'fixture', 'path_root': str(self.root / 'profiles-native'),
-                  'command': str(self.command), 'command_sha256': self.hash(self.command)}
-        claw = {**native, 'path_root': str(self.root / 'profiles-claw'), 'openclaw': self.binding['openclaw']}
-        policy = {'bundles': {}, 'profiles': {}, 'profile_templates': [native, claw]}
-        with self.assertRaises(ValueError):
-            templates.validate_templates(policy)
-        binding = {'provider': 'codex', 'openclaw': copy.deepcopy(self.binding['openclaw'])}
-        binding['openclaw']['provider_id'] = 'openai'
-        with self.assertRaisesRegex(ValueError, 'model provider differs'):
-            driver.validate_binding({**self.binding, 'provider': 'codex', 'openclaw': binding['openclaw']},
-                                    {**self.agent, 'model_id': 'anthropic/claude-opus-5'})
+        (self.profile / 'openclaw.json').unlink()
+        driver.prepare(self.binding, self.agent)
+        (self.profile / 'mode').write_text(mode)
 
-    def test_unmeasured_anthropic_never_inspects_cli_or_mutates_the_profile(self):
+    def test_anthropic_setup_token_authenticates_with_the_controlled_cli(self):
+        self.anthropic()
+        config = json.loads((self.profile / 'openclaw.json').read_bytes())
+        self.assertEqual(config['auth']['order'], {'anthropic': ['cauce:account-one']})
+        self.assertTrue(identity.authenticated_provider(self.packet))
+        argv = json.loads((self.profile / 'observed-args').read_bytes())
+        self.assertEqual(argv[argv.index('--model') + 1], 'anthropic/claude-opus-5')
+        env = json.loads((self.profile / 'observed-env').read_bytes())
+        self.assertEqual(env['CLAUDE_CONFIG_DIR'], str(self.profile / '.external-cli-disabled'))
+        self.assertEqual(env['OPENCLAW_AUTH_STORE_READONLY'], '1')
+
+    def test_anthropic_requires_its_profile_type_identity_expiry_and_model(self):
+        for mode in ('anthropic', 'anthropic-token-expired', 'anthropic-token-identity', 'identity', 'nonce'):
+            with self.subTest(mode=mode):
+                self.anthropic(mode)
+                self.assertFalse(identity.authenticated_provider(self.packet))
+        self.anthropic()
+        self.agent['model_id'] = 'openai/gpt-5.5'
+        self.assertFalse(identity.authenticated_provider(self.packet))
+        with self.assertRaisesRegex(ValueError, 'model provider differs'):
+            driver.validate_binding(self.binding, self.agent)
+
+    def test_binding_provider_without_flow_is_refused_with_reason(self):
+        self.binding['provider'] = 'grok'
+        with self.assertRaisesRegex(ValueError, "no account flow for binding provider 'grok'"):
+            driver.validate_definition(self.binding['openclaw'], 'grok')
+        self.assertFalse(identity.authenticated_provider(self.packet))
+
+    def test_flow_without_measurement_never_inspects_cli_or_mutates_the_profile(self):
         binding = {**self.binding, 'provider': 'claude',
-                   'openclaw': {**self.binding['openclaw'], 'provider_id': 'anthropic'}}
+                   'openclaw': {**self.binding['openclaw'], 'provider_id': 'anthropic', 'method_id': 'setup-token'}}
         agent = {**self.agent, 'model_id': 'anthropic/claude-opus-5'}
         packet = {**self.packet, 'agent': agent, 'profile_binding': binding}
         before = (self.profile / 'openclaw.json').read_bytes()
-        with mock.patch.object(identity, 'command_output', side_effect=AssertionError('unmeasured CLI forbidden')), \
+        with mock.patch.dict(driver.PROVIDER_FLOWS, {'anthropic': None}), \
+                mock.patch.object(identity, 'command_output', side_effect=AssertionError('unmeasured CLI forbidden')), \
                 mock.patch.object(driver, 'owned_directory', side_effect=AssertionError('unmeasured profile forbidden')):
             for operation in (driver.validate_binding, driver.environment, driver.prepare):
                 with self.subTest(operation=operation.__name__), self.assertRaisesRegex(ValueError, 'flow has not been measured'):
@@ -342,11 +366,9 @@ class OpenClawProviderTest(unittest.TestCase):
                 driver.pinned_packet(packet)
             self.assertFalse(driver.measured_definition(binding))
             self.assertFalse(identity.authenticated_provider(packet))
-        self.assertIsNone(driver.PROVIDER_FLOWS['anthropic'])
         self.assertEqual((self.profile / 'openclaw.json').read_bytes(), before)
         self.assertFalse((self.profile / 'observed-env').exists())
         self.assertFalse((self.profile / 'observed-args').exists())
-
 
 if __name__ == '__main__':
     unittest.main()

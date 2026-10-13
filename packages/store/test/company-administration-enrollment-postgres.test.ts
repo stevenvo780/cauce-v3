@@ -30,8 +30,8 @@ async function person(company:RegisteredCompany,alias='owner'):Promise<string> {
   const id=randomUUID(); const email=`${id}@example.test`;
   await admin.query(`INSERT INTO console_users(id,email,email_normalized,password_hash,display_name,role,tenant_id,alias)
     VALUES($1,$2,$2,$3,'New operator','operator',$4,$5)`,[id,email,hash,company.hub.id,alias]);
-  await admin.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,role,permissions)
-    VALUES($1,$2,$3,'operator',ARRAY['read','control'])`,[id,company.hub.id,alias]); return id;
+  await admin.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,permissions)
+    VALUES($1,$2,$3,ARRAY['read','control'])`,[id,company.hub.id,alias]); return id;
 }
 function keys() { const pair=generateKeyPairSync('ed25519'); return {...pair,encoded:pair.publicKey.export({format:'der',type:'spki'}).toString('base64')}; }
 function claim(invitation:HostInvitation,pair:ReturnType<typeof keys>) {
