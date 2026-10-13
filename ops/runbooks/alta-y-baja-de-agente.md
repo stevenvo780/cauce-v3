@@ -19,7 +19,7 @@ La base de datos PostgreSQL (`agents` + `memberships`) es la **ÚNICA fuente de 
    export CAUCE_CLIENT_CA_KEY=/etc/cauce-v3/pki/ca.key
    export CAUCE_PTY_MASTER_FILE=/etc/cauce-v3/secrets/terminal-ticket.key
    ```
-   > El master del plano PTY es el **mismo secreto del gateway** (secreto compose `terminal_ticket_key` en `deploy/compose.yaml`). La ruta canónica sale de `CAUCE_TERMINAL_TICKET_KEY_PATH` en `/etc/cauce-v3/prod.env` — verificarla ahí, no inventarla.
+   > `cauce <alias> aprovisionar` lee `CAUCE_PTY_MASTER_FILE`; si no se define, usa `/etc/cauce-v3/secrets/pty_master.key`. `CAUCE_TERMINAL_TICKET_KEY_PATH` configura el secreto Compose `terminal_ticket_key` del gateway, pero no fija por sí sola la ruta que lee el aprovisionador.
 2. **Acceso a PostgreSQL**: conexión activa con permisos de inserción y actualización sobre las tablas `agents` y `memberships`.
 3. **Herramientas requeridas**: `python3`, `openssl`, `flock`, `systemctl`, `docker`.
 
@@ -47,7 +47,7 @@ INSERT INTO agents (
 ) VALUES (
   '<tenant>',                           -- Tenant ya declarado en la base
   '<alias>',                            -- Alias único del agente
-  'codex',                              -- Harness: claude | codex | openclaw | hermes | opencode
+  'codex',                              -- Harnesses con definición: claude | codex | grok | hermes | muse | openclaw | opencode
   true,                                 -- Habilitado
   '<contenedor>',                       -- Contenedor Docker (o 'host:<hostname>' para agentes host-native)
   '<usuario-runtime>',                  -- Usuario de ejecución dentro del contenedor/host
@@ -66,7 +66,7 @@ INSERT INTO memberships (
   '<tenant>',
   '<alias>',
   '<sala>',                             -- Sala principal del tenant
-  'operator',                           -- Rol: operator | agent | agent_notify | member
+  'operator',                           -- Roles semilla: operator | agent | adapter | agent_notify | context_broker
   true
 );
 
@@ -138,7 +138,7 @@ El aprovisionamiento emite y publica de forma atómica (sin imprimir secretos en
 1. **Certificado y Clave Cliente mTLS (`agent-<alias>.{crt,key}`)**:
    - Emisión vía OpenSSL contra la CA raíz (`CAUCE_CLIENT_CA_CERT` / `CAUCE_CLIENT_CA_KEY`).
    - Extensiones: `extendedKeyUsage = clientAuth`, `basicConstraints = critical,CA:FALSE`.
-   - Permisos en destino: `0444` (cert) y `0400` (key), propiedad `1000:1000`.
+   - Permisos en destino: `0444` (cert) y `0400` (key); la propiedad corresponde al usuario que ejecuta `provision-agent-identity.sh`.
    - Common Name (`CN=agent-<alias>`) validado contra la allowlist derivada de `ops/flota.json`.
 
 2. **Bearer Token y Hash (`token_hashes.json` / `mtls_identities.json`)**:
@@ -148,9 +148,9 @@ El aprovisionamiento emite y publica de forma atómica (sin imprimir secretos en
      registro desde la lectura hasta el rename, por lo que dos altas o revocaciones cooperativas
      no pueden sobrescribirse.
 
-3. **Clave de Terminal PTY (`alias-key.hex`)**:
-   - Derivación HKDF mediante `ops/pty-agent/publish-alias-key.sh` usando el master secret `CAUCE_PTY_MASTER_FILE`.
-   - Publicación en modo `0400` en el directorio PKI del alias para la autenticación en el terminal relay.
+3. **Identidad del canal PTY**:
+   - Gestiona `alias-key.hex` con `ops/pty-agent/publish-alias-key.sh` y `CAUCE_PTY_MASTER_FILE`.
+   - Gestiona el certificado mTLS `CN=pty-<alias>` y su clave RSA 4096, registra la huella en `pty_agent_identities.json` y escribe el entorno del launcher `<alias>.env`.
 
 4. **PKI de Contenedor y Archivo de Entorno (`container-pki/<alias>/` y `<alias>.env`)**:
    - Creación del directorio `/etc/cauce-v3/container-pki/<alias>/` con certificados y token de acceso.
@@ -165,27 +165,9 @@ El aprovisionamiento emite y publica de forma atómica (sin imprimir secretos en
 
 ### Paso 6: Alta del Plano PTY (Terminal)
 
-El aprovisionamiento del Paso 5 solo cubre la pieza 3 (`alias-key.hex`); el resto del plano PTY se completa a mano:
+`cauce <alias> aprovisionar` gestiona `alias-key.hex`, el certificado mTLS `CN=pty-<alias>`, registra su huella en `pty_agent_identities.json` y escribe el entorno `<alias>.env`. Después del aprovisionamiento, solo queda configurar e iniciar manualmente el unit; luego se verifica así:
 
-1. **Certificado mTLS del canal PTY (`CN=pty-<alias>`)**:
-   - Emitir con OpenSSL firmado por la CA raíz (`/etc/cauce-v3/pki/ca.crt` + `ca.key`, con `-CAserial /etc/cauce-v3/pki/ca.srl`).
-   - Parámetros: RSA 4096, validez 365 días, extensiones `extendedKeyUsage = clientAuth`, `basicConstraints = critical,CA:FALSE`, `keyUsage = critical,digitalSignature,keyEncipherment`.
-   - Destino: `~<usuario-manager>/.config/cauce-v3/pty-pki/<alias>/{client.crt,client.key,ca.crt}` en modo `0600` cada uno, propiedad de ese mismo usuario —el que corre las units `--user` del launcher PTY— (el `alias-key.hex` del Paso 5 vive en el mismo directorio en `0400`).
-
-2. **Registrar la identidad en el relay**:
-   - Huella: `openssl x509 -in client.crt -noout -fingerprint -sha256`, sin dos puntos y en MAYÚSCULAS.
-   - Añadir la entrada al array `agents` de `/etc/cauce-v3/terminal/pty_agent_identities.json`: objetos `{ tenant_id, alias, fingerprint_sha256, expires_at }` bajo `{"version": 1, "agents": [...]}`, con `expires_at` en ISO-8601 UTC (`<AAAA-MM-DD>T<hh:mm:ss>Z`).
-   - El relay relee el archivo **por conexión**: no requiere reinicio.
-
-3. **Archivo de entorno del launcher**: crear `~<usuario-manager>/.config/cauce-v3/pty/<alias>.env` en modo `0600`:
-   ```
-   RELAY_HOST=<host-del-relay>
-   RELAY_PORT=8445
-   PKI_DIR=/home/<usuario-manager>/.config/cauce-v3/pty-pki/<alias>
-   ALIAS_KEY_FILE=/home/<usuario-manager>/.config/cauce-v3/pty-pki/<alias>/alias-key.hex
-   ```
-
-4. **Drop-in de release y arranque del unit**:
+1. **Drop-in de release y arranque del unit**:
    - Crear `~<usuario-manager>/.config/systemd/user/cauce-v3-pty@<alias>.service.d/20-cauce-release.conf` con SOLO dos líneas `Environment=` (`CAUCE_PTY_OPS_ROOT` y `CAUCE_PTY_AGENT_VERSION`) apuntando al release vigente content-addressed de `~<usuario-manager>/.local/share/cauce-v3/pty-releases/`.
    - **Prohibido añadir `ExecStart` al drop-in**: la plantilla `cauce-v3-pty@.service` ya pasa `%i` como alias; un `ExecStart` clonado con el alias literal de otro conf arranca el launcher con el alias equivocado (exit 73 `another PTY launcher owns alias X`).
    - Activar:
@@ -195,7 +177,7 @@ El aprovisionamiento del Paso 5 solo cubre la pieza 3 (`alias-key.hex`); el rest
      systemctl --user enable --now cauce-v3-pty@<alias>.service
      ```
 
-5. **Verificación**: el journal del unit (`journalctl --user -u cauce-v3-pty@<alias>.service`) debe decir `relay accepted alias=<alias> modes=shell,harness`.
+2. **Verificación**: el journal del unit (`journalctl --user -u cauce-v3-pty@<alias>.service`) debe decir `relay accepted alias=<alias> modes=shell,harness`.
    - Para harness `openclaw`, el modo `harness` exige además el puntero canónico `openclaw:<alias>:shared:<alias>` en el `sessions.json` del adaptador; lo publica el primer turno humano válido (hasta entonces el journal dirá solo `modes=shell`).
 
 ---
@@ -223,12 +205,7 @@ El aprovisionamiento del Paso 5 solo cubre la pieza 3 (`alias-key.hex`); el rest
    ```
    *Criterio de éxito*: Retorna 1 fila con `lease_activo = true`.
 
-4. **Probar Mensaje Roundtrip en el Bus**:
-   ```sh
-   # [no ejecutable en verificación]
-   ops/cli/cauce probar <alias>
-   ```
-   *Criterio de éxito*: Mensaje entregado y procesado con estado `done` y ACK durable registrado en PostgreSQL.
+4. **Probar mensaje roundtrip en el bus**: generar una entrega desde un emisor real y comprobar que termina en `done` con ACK durable en PostgreSQL. `ops/cli/cauce probar` no existe.
 
 ---
 

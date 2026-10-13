@@ -10,14 +10,11 @@ canónico único desde el repositorio y validar el efecto real contra la flota v
 
 Antes de tocar producción, el árbol local en `main` debe cumplir:
 1. `git status` limpio y sincronizado con `origin/main` (`CAUCE_DEPLOY_EXPECTED_GIT_REF`).
-2. Gate local estricto en verde:
-   ```bash
-   pnpm typecheck && pnpm lint && pnpm test:unit
-   ```
+2. Recibo de `scripts/release-gates.sh` en verde para el mismo commit: incluye `pnpm typecheck`, `pnpm lint`, `pnpm test`, `pnpm coverage:ratchet`, `pnpm qa:testcontainers`, `pnpm qa:layout`, `pnpm qa:runtime-packaging`, `pnpm ops:validate` y `pnpm arch:validate`.
 3. Backup automatizado verificado y reciente en el host.
 
-**CRITERIO DE PARADA 0**: si el gate falla o no hay backup de menos de 24 h, **ABORTAR**. No se
-inicia la ventana.
+**CRITERIO DE PARADA 0**: si algún gate falla o no hay un backup verificado de 2 h o menos cuando
+hay migraciones pendientes, **ABORTAR**. No se inicia la ventana.
 
 ---
 
@@ -103,9 +100,12 @@ Las migraciones del plano de terminal exigen que no existan sesiones abiertas si
 
 ## 5. Paso 4 — Despliegue con `deploy/deploy.sh`
 
-Con el dueño presente, exportar las variables requeridas y lanzar el despliegue canónico:
+El recibo debe haber sido generado por `scripts/release-gates.sh` sobre el mismo commit y su ruta
+absoluta debe conservarse fuera del árbol. Con el dueño presente, exportar las variables requeridas
+y lanzar el despliegue canónico:
 ```bash
 export CAUCE_FASE3_CON_DUENO=si CAUCE_DEPLOY_CONFIRMADO=si   # ya como root; cero interactividad
+export CAUCE_DEPLOY_GATES_RECEIPT=/ruta/absoluta/al/recibo.json
 ./deploy/deploy.sh
 ```
 
@@ -139,10 +139,10 @@ Qué evalúa, con sus umbrales por variable de entorno:
 - gateway `/health/ready` por el probe interno (puerto 8081);
 - un contenedor activo y `healthy` por cada servicio del compose;
 - versión de esquema **igual a la que declara el repo**;
-- flota: agentes habilitados con arriendo vigente y fresco frente a `EXPECTED_AGENTS`;
-- el agente de gobierno declarado (`GOVERNANCE_TENANT`/`GOVERNANCE_ALIAS`) existe y está habilitado;
-- bus: entregas `done` con ACK aplicado o ejecuciones vivas con arriendo, frente a `MIN_ACTIVITY`;
-- relay sin bucle de reconexión, frente a `RELAY_MAX_CONNECTIONS` (o perfil `terminal` inactivo);
+- flota: agentes habilitados con arriendo vigente y fresco frente a `CAUCE_SMOKE_EXPECTED_AGENTS`;
+- el agente de gobierno declarado (`CAUCE_SMOKE_GOVERNANCE_TENANT`/`CAUCE_SMOKE_GOVERNANCE_ALIAS`) existe y está habilitado;
+- bus: entregas `done` con ACK aplicado o ejecuciones vivas con arriendo, frente a `CAUCE_SMOKE_MIN_ACTIVITY`;
+- relay sin bucle de reconexión, frente a `CAUCE_SMOKE_RELAY_MAX_CONNECTIONS` (o perfil `terminal` inactivo);
 - la ruta de documentos de gobierno responde exigiendo autenticación (401/403) a través del proxy de
   consola.
 
@@ -160,8 +160,8 @@ Por cada alias que la instalación declare, y como mínimo por cada arnés disti
    docker logs --tail 30 <contenedor-telegram-bridge>
    ops/cli/cauce <alias> estado
    ```
-2. **Entrega por el bus**: `ops/cli/cauce probar <alias>` — criterio de éxito: entrega `done` con ACK
-   durable en PostgreSQL.
+2. **Entrega por el bus**: provocar una entrega desde un emisor conectado y verificar que queda en
+   `done` con ACK durable en PostgreSQL. `ops/cli/cauce probar` no existe.
 3. **Entregas atascadas antes del despliegue**: comprobar que el dispatcher nuevo las segó (no
    quedan `inflight` vencidos).
 4. **Operación TUI/CLI**: inspección de flota y attach limpio:

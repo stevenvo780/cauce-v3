@@ -78,10 +78,9 @@ descuido:
 | `chats: []` (presente y vacío)       | `scoped`, default-deny: **ningún** grupo de ese alias publica salvo que tenga una entrada `chats[]`. |
 | `chats: [{...}, ...]`                | `scoped`: cada `chat_id` listado se sirve según su entrada; cualquier otro grupo del alias (incluso si está en `allowed_chat_ids`) queda mudo. |
 
-`bot_username` es **obligatorio para todo alias que declare `chats`** (aunque sea
-`[]`): sin él, los demás bots de la flota no pueden reconocer una mención hacia ese
-alias y lo silencian por error. Un alias que nunca declara `chats` puede omitir
-`bot_username` sin problema.
+`bot_username` es **obligatorio para todo alias que declare una lista `chats` no vacía**:
+sin él, los demás bots de la flota no pueden reconocer una mención hacia ese alias y lo
+silencian por error. Se puede omitir si `chats` no está declarado o vale `[]`.
 
 Forma de una entrada `chats[]`:
 
@@ -157,12 +156,13 @@ Un alias ausente de `aliases` en ese archivo no recibe la clave `chats` en la sa
 (ruteo legacy). `validate_config()` en ese mismo script replica
 `parseTelegramBridgeConfig`, incluidas las reglas cruzadas entre alias
 (`assertFleetUsernames`, `assertSingleAmbientHost`): un `chats.json` que dejaría a
-dos alias como host ambiente del mismo chat, o que declare `chats` sin
+dos alias como host ambiente del mismo chat, o que declare una lista `chats` no vacía sin
 `bot_username`, se rechaza antes de escribir el archivo.
 
 `CAUCE_TELEGRAM_ALIASES` permite seleccionar una lista separada por comas; solo los
 alias seleccionados exigen su `token_file` y marcador, lo que habilita un encendido
-incremental. También se requieren `DATABASE_URL` y la migración `005_channel_bridges.sql`.
+incremental. También se requieren `DATABASE_URL` y las migraciones `005_channel_bridges.sql` y
+`006_oidc_sessions_and_telegram_effect_safety.sql` para el esquema de egress.
 `PORT` usa 8084 por defecto (Compose usa 8086 para no colisionar con `outbox-metrics`).
 El servicio no publica puerto al host; escucha en `0.0.0.0` (`health.ts`) porque Prometheus,
 en su contenedor hermano, necesita alcanzarlo por la interfaz interna — el propio healthcheck
@@ -191,29 +191,31 @@ update recibido. Updates denegados avanzan el cursor pero nunca ingresan a Cauce
 Los reintentos de ingress usan una clave estable, por lo que reiniciar antes de
 persistir el cursor no duplica el mensaje.
 
-## Imágenes y documentos entrantes
+## Adjuntos entrantes
 
-Para `photo` y `document`, el bridge resuelve `file_id` con `getFile` y descarga por el
+Para fotos, documentos, vídeos y animaciones, el bridge resuelve `file_id` con `getFile` y descarga por el
 endpoint autenticado de archivos de Telegram. El token sigue existiendo solo en
-`token_file`: no se agrega a bodies, errores, métricas ni logs. Antes de publicar se
-validan nombre, ruta remota, tamaño declarado/real, extensión, MIME y firma del
-contenido. Se admiten:
+`token_file`: no se agrega a bodies, errores, métricas ni logs. Antes de publicar se validan el
+nombre seguro, la ruta remota y el tamaño declarado y real. Los bytes con firma JPEG, PNG, GIF o
+WebP se enrutan como imagen; los demás viajan
+como documento con el MIME declarado o deducido de la extensión, y `application/octet-stream`
+si no se reconoce. No hay una lista de formatos admitidos ni verificación de firma para
+los documentos.
 
-- JPEG (`.jpg`/`.jpeg`), PNG y WebP;
-- PDF, TXT UTF-8 sin NUL y DOCX con estructura OOXML reconocible.
-
-El límite es **10.000.000 bytes por mensaje** y se procesa el tamaño mayor de
-`photo[]` o el único `document`. Un tipo, nombre o tamaño rechazado se convierte en un
-mensaje útil para el usuario y el cursor avanza; fallos transitorios de Telegram se
-reintentan sin avanzar el cursor. No hay variables nuevas de configuración.
+El límite es **10.000.000 bytes por mensaje**: para fotos se procesa el elemento mayor de
+`photo[]`; para documentos, vídeos y animaciones se procesa el archivo único del mensaje. Un nombre
+o tamaño rechazado se convierte en un mensaje útil para el usuario y el cursor avanza; los fallos
+transitorios de Telegram se reintentan sin avanzar el cursor. No hay variables nuevas de configuración.
 
 El contenido validado viaja en el delivery autenticado y el adapter lo materializa en
-un directorio privado de `/tmp` con archivos `0600`. El prompt recibe nombre, MIME,
-tamaño, SHA-256 y una ruta local accesible para las herramientas del harness. El
+un directorio `0700` bajo `CAUCE_AGENT_WORKSPACE` si la ruta es absoluta y existe; si no,
+usa el directorio temporal del sistema. Los archivos quedan en `0600`. El prompt recibe
+nombre, MIME, tamaño, SHA-256 y una ruta local accesible para las herramientas del harness. El
 directorio se elimina al terminar, fallar o cancelar la ejecución; nunca se imprime el
 contenido ni el token en logs.
 
-El binario codificado forma parte del body durable de Cauce: queda sujeto a la misma
+El binario codificado de los adjuntos —incluido el audio que cabe en el límite inline— forma
+parte del body durable de Cauce: queda sujeto a la misma
 retención, controles de acceso y backups que los mensajes. El cleanup anterior elimina
 la copia temporal del harness, no el registro durable. Antes de habilitar adjuntos con
 datos sensibles, la política de retención de mensajes debe estar aprobada para ese
@@ -243,10 +245,11 @@ una línea `telegram_transcription_config` en el log diciendo si quedó activa.
 
 ### Qué se manda y qué se guarda
 
-- El audio **no viaja al bus**: se descarga, se transcribe y se descarta. Una nota de voz de 3 MB
-  serían 4 MB de base64 en cada fila de `messages`, y ningún harness sabe escuchar un `.ogg`.
-- El techo es de 25 MB, más alto que el de los adjuntos inline (10 MB) justamente porque lo único
-  que sobrevive son caracteres.
+- El audio se descarga y se transcribe; si su tamaño no supera el límite inline de 10 MB, también
+  viaja como adjunto dentro del body durable. Por encima de 10 MB puede quedar solo la transcripción.
+- El límite de descarga y transcripción es de 25 MB; no significa que el audio nunca se conserve en
+  el bus. El formato se detecta por los bytes y se incluye como documento cuando cabe en el límite
+  inline.
 - El formato se deduce de los bytes (Ogg, WAV, FLAC, MP3, ISO-BMFF, WebM); el nombre que declara
   quien envía se descarta entero.
 - El texto llega al agente en `body.prompt`, precedido de `[nota de voz transcrita]`. La etiqueta
@@ -289,9 +292,10 @@ motivo no vacío, actor con `allow_control` y alcance de tenant, y confirmación
 una sola vez. Repetir el mismo `requestId` y exactamente la misma decisión no vuelve a programar;
 reutilizarlo con otros argumentos falla cerrado. Nunca admite un efecto `sent` o `sending`. El
 ledger interno conserva las FK exactas de effect/outbox para causalidad, pero ningún body, token ni
-ID de effect/outbox sale en el audit o la evidencia operativa. Al primer uso de egress, el repositorio amplía de forma
-idempotente y bajo advisory lock el esquema original de
-`telegram_egress_effects` con estos estados y campos de diagnóstico.
+ID de effect/outbox sale en el audit o la evidencia operativa. El DDL de `telegram_egress_effects`
+pertenece a las migraciones: `005_channel_bridges.sql` crea la tabla y
+`006_oidc_sessions_and_telegram_effect_safety.sql` añade los campos y estados de diagnóstico.
+Los workers de egress no modifican el esquema en runtime.
 
 La operación manual requiere además que el release haya aplicado
 `030_dlq_causal_reconciliation.sql`: la autorización, el alcance de tenant, el CAS del hash,
