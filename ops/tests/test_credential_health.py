@@ -242,10 +242,11 @@ class TestConsumerWiring(unittest.TestCase):
                 contextlib.redirect_stdout(output),
                 self.assertRaises(SystemExit) as exited,
             ):
-                runpy.run_path(
-                    str(GUARDS / "cauce-cred-guard-kratos.py"),
-                    run_name="credential_test_kratos",
-                )
+                with mock.patch.object(sys, "argv", ["cred-guard.py", "--sonda-remota"]):
+                    runpy.run_path(
+                        str(GUARDS / "cred-guard.py"),
+                        run_name="credential_test_kratos",
+                    )
 
         self.assertEqual(exited.exception.code, 0)
         self.assertGreater(adapter.call_count, 0)
@@ -285,7 +286,6 @@ class TestConsumerWiring(unittest.TestCase):
     def test_all_consumers_use_full_record_classification(self):
         consumers = {
             "cred-guard.py": "classify_fleet_guard_record(d,",
-            "cauce-cred-guard-kratos.py": "classify_fleet_guard_record(d,",
             "cauce-v3-medico-monitor": "classify_doctor_record(d,",
         }
         for filename, adapter_call in consumers.items():
@@ -431,7 +431,7 @@ class TestCredentialProbe(unittest.TestCase):
         self.assertEqual(runner.call_args.kwargs["timeout"], 3)
 
     def test_neither_guard_keeps_its_own_copy_of_the_probe(self):
-        for filename in ("cred-guard.py", "cauce-cred-guard-kratos.py"):
+        for filename in ("cred-guard.py",):
             with self.subTest(filename=filename):
                 source = (GUARDS / filename).read_text(encoding="utf-8")
                 self.assertIn("probe_container(contenedor, ruta)", source)

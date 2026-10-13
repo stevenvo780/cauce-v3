@@ -15,10 +15,19 @@ Que detecta, en orden de gravedad:
 
 La huella es sha256(refreshToken)[:10]: identifica la cuenta sin exponer el secreto.
 Salida: una linea por credencial + codigo de salida 1 si hay algo MUERTO o URGENTE.
+
+Modos: sin argumentos agrega este host y el bloque remoto; con --sonda-remota mide los alias
+de ESTE host y empuja solo huellas al agregador. Con CAUCE_CRED_GUARD_ESTADO=<dir> deja ademas
+cred-guard.txt y una linea de resumen en cred-guard.log.
 """
 import datetime
+import io
 import json
+import os
+import re
+import subprocess
 import sys
+import tempfile
 
 from credential_health import (
     LONG_LIVED,
@@ -50,7 +59,72 @@ OBJETIVOS = [
     ("ctrl-infra",   "/home/dev/.codex/auth.json",  "codex/kant"),
 ]
 
+OBJETIVOS_REMOTOS = [
+    ("ws-isa", "/home/dev/.claude/.credentials.json", "claude/salva"),
+    ("ws-isa", "/home/dev/.codex/auth.json",          "codex/salva"),
+]
+
+DESTINO_REMOTO = "vps:/var/lib/cauce-v3/cred-guard-kratos.json"
+LOCAL = os.path.expanduser("~/.local/state/cauce-v3/cred-guard-kratos.json")
+HOST = os.environ.get("CAUCE_CRED_GUARD_HOST", "kratos")
+
+
+def _sonda_remota() -> None:
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", HOST):
+        raise SystemExit("CAUCE_CRED_GUARD_HOST is invalid")
+    ahora_r = datetime.datetime.now(datetime.UTC)
+    filas_r, problemas_r = [], 0
+    for contenedor, ruta, etiqueta in OBJETIVOS_REMOTOS:
+        d = probe_container(contenedor, ruta)
+        if d.get("falta"):
+            filas_r.append({"huella": "-", "etiqueta": etiqueta, "contenedor": contenedor,
+                            "estado": "NO EXISTE", "detalle": "", "problema": False})
+            continue
+        if d.get("error"):
+            filas_r.append({"huella": "?", "etiqueta": etiqueta, "contenedor": contenedor,
+                            "estado": "ILEGIBLE", "detalle": d["error"], "problema": True})
+            problemas_r += 1
+            continue
+        health = classify_fleet_guard_record(d, now_epoch=ahora_r.timestamp())
+        huella = health.fingerprint
+        horas = health.hours_until_expiry
+        estado, problema = health.operational_state, health.problem
+        if health.state == LONG_LIVED:
+            detalle = f"token largo sin refreshToken (setup-token): vence en {(horas / 24):.0f} dias"
+        elif health.problem:
+            detalle = "sin refreshToken: no puede renovar, muere al vencer el access"
+            problemas_r += 1
+        else:
+            detalle = (f"vence en {horas:.1f} h") if horas is not None else (d.get("last_refresh") or "")
+        filas_r.append({"huella": huella or "SIN-RT", "etiqueta": etiqueta, "contenedor": contenedor,
+                        "estado": estado, "detalle": detalle, "problema": problema})
+    doc = {"host": HOST, "ts": ahora_r.isoformat(), "filas": filas_r, "problemas": problemas_r}
+    os.makedirs(os.path.dirname(LOCAL), exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(LOCAL))
+    with os.fdopen(fd, "w") as fh:
+        json.dump(doc, fh)
+    os.replace(tmp, LOCAL)
+    os.chmod(LOCAL, 0o644)
+    for f in filas_r:
+        print(f"{f['huella']:<9} {f['etiqueta']:<24} {f['contenedor']:<14} {f['estado']:<8} {f['detalle']}")
+    r = subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=15", "vps",
+                        "mkdir -p /var/lib/cauce-v3 && cat > /var/lib/cauce-v3/cred-guard-kratos.json.tmp "
+                        "&& mv /var/lib/cauce-v3/cred-guard-kratos.json.tmp /var/lib/cauce-v3/cred-guard-kratos.json"],
+                       stdin=open(LOCAL, "rb"), capture_output=True, text=True, timeout=60)
+    if r.returncode != 0:
+        print(f"EMPUJE AL VPS FALLO: {(r.stderr or '').strip()[:120]}", file=sys.stderr)
+        sys.exit(1)
+    print(f"empujado a {DESTINO_REMOTO}")
+    sys.exit(0)
+
+
+if "--sonda-remota" in sys.argv:
+    _sonda_remota()
+
 ahora = datetime.datetime.now(datetime.UTC)
+_CAPTURA = io.StringIO() if os.environ.get("CAUCE_CRED_GUARD_ESTADO") else None
+if _CAPTURA is not None:
+    sys.stdout = _CAPTURA
 filas, credential_locations, problemas = [], [], 0
 
 for contenedor, ruta, etiqueta in OBJETIVOS:
@@ -131,4 +205,16 @@ if compartidas:
         print(f"  {huella} -> {', '.join(quienes)}")
 
 print(f"\nproblemas={problemas} compartidas={len(compartidas)}")
+if _CAPTURA is not None:
+    sys.stdout = sys.__stdout__
+    _texto = _CAPTURA.getvalue()
+    print(_texto, end="")
+    _dir = os.environ["CAUCE_CRED_GUARD_ESTADO"]
+    os.makedirs(_dir, exist_ok=True)
+    _tmp = os.path.join(_dir, "cred-guard.txt.tmp")
+    with open(_tmp, "w", encoding="utf-8") as fh:
+        fh.write(_texto)
+    os.replace(_tmp, os.path.join(_dir, "cred-guard.txt"))
+    with open(os.path.join(_dir, "cred-guard.log"), "a", encoding="utf-8") as fh:
+        fh.write(f"{datetime.datetime.now():%Y-%m-%d %H:%M:%S} problemas={problemas}\n")
 sys.exit(1 if problemas else 0)

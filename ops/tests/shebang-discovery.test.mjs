@@ -40,7 +40,6 @@ const PYTHON_ESPERADOS = [
   "ops/guardias/cauce-ai-live",
   "ops/guardias/cauce-attach",
   "ops/guardias/cauce-attach-guard",
-  "ops/guardias/cauce-credenciales",
   "ops/guardias/cauce-esfuerzo",
   "ops/guardias/cauce-estado",
   "ops/guardias/cauce-quien-consume",

@@ -1,6 +1,13 @@
 [Unit]
-Description=Revisa las credenciales de la flota (refreshToken muerto / credencial compartida)
+Description=Guardia de caducidad de credenciales OAuth de los WS de kratos
+Documentation=file:%h/.local/bin/cred-guard.py
+After=network.target
+OnFailure=cauce-v3-backup-alert@%n.service
 
 [Service]
 Type=oneshot
-ExecStart=/home/stev/.local/bin/cred-guard.sh
+Environment=CAUCE_CRED_GUARD_ESTADO=%h/.local/state
+ExecStart=/usr/bin/python3 %h/.local/bin/cred-guard.py
+
+[Install]
+WantedBy=default.target

@@ -19,7 +19,6 @@ de `sha256(refreshToken)`— que identifica una cuenta sin permitir reconstruirl
 | `cauce-attach-guard` | unidad del adaptador | Repone los adaptadores que quedaron parados por un attach mal cerrado | timer 2 min |
 | `cauce-codex-sync` | `auth.json` de codex | Propaga la credencial compartida a los homes que no la montan; idempotente | path unit |
 | `cauce-contexto-colisiones.py` | ficheros de gobierno | ¿Dos alias comparten los ficheros que los gobiernan? Compara por inodo (§ abajo) | manual |
-| `cauce-credenciales` | credenciales OAuth | Audita y renueva; detecta el mismo fichero compartido entre contenedores | manual |
 | `cauce-destrabar-telegram` | cursor de Telegram | Salta el update que dejó sordo a un alias (adjunto no descargable) | manual |
 | `cauce-directo` | sesión del alias | Abre un alias con UN salto de pty en vez de la cadena completa: evita ptys huérfanas | manual |
 | `cauce-esfuerzo` | modelo y nivel de esfuerzo | Ve/cambia por alias, por arnés o por toda la flota; sin el espejo de `ops/` (en `~/.local/share/cauce-v3/ops` o donde apunte `CAUCE_OPS_ROOT`) avisa y no corre | manual |
@@ -33,8 +32,7 @@ de `sha256(refreshToken)`— que identifica una cuenta sin permitir reconstruirl
 | `cauce-v3-medico-monitor` | fallos silenciosos | El MÉDICO: vigila, adjudica y repara sólo lo demostrablemente seguro — 55 iteraciones rescatadas de .bak | timer cada 15 min |
 | `cauce-watch` | transcript del agente | Tail en vivo, sólo lectura y acotado por tiempo | manual |
 | `credential_health.py` | vencimientos y huellas | Autoridad pura compartida: clasifica vencimientos y huellas repetidas | biblioteca |
-| `cred-guard.py` + `cred-guard.sh` | credenciales de la flota | Agrega quién se quedó sin `refreshToken` y qué credenciales están compartidas entre contenedores; corre como unit de sistema (root) | timer 30 min |
-| `cauce-cred-guard-kratos.py` (sonda de credenciales por host) † | credenciales locales | Mide los alias que viven en un host distinto al del agregador y le empuja sólo huellas | timer 15 min |
+| `cred-guard.py` | credenciales de la flota | Un solo script por host: sin argumentos agrega quién se quedó sin `refreshToken` y qué credenciales están compartidas; con `--sonda-remota` mide los alias de ese host y empuja sólo huellas al agregador. Con `CAUCE_CRED_GUARD_ESTADO` deja `cred-guard.txt` y resumen en `cred-guard.log`; el código de salida es real y las units avisan al bus con `OnFailure` | timer 30 min (agregador) · 15 min (sonda) |
 | `polidin-guard.sh` + `contenedor/polidin-fwd.sh` | túnel dentro de un contenedor | El guardia repone el reenvío cuando el puerto deja de escuchar; el `fwd` **es** el túnel y corre dentro del contenedor | timer 2 min |
 | `cauce-envoltorio-local.sh` | CLI dentro del contenedor | Envoltorio `cauce` que salta por `ssh` al host manager | instalado en el contenedor |
 | `cauce-huerfanas.sh` | ptys huérfanas | Envoltorio compatible del comando canónico `ops/cli/cauce-huerfanas` | instalado en el contenedor |
@@ -61,9 +59,12 @@ contrato: lo que importa es la clase de objeto que el guardia mide.
 - **Dentro del contenedor**: sólo el envoltorio del CLI y el reenviador del túnel, que por
   definición corren donde está el proceso que sostienen.
 
-La agregación de credenciales es de dos piezas a propósito: el agregador corre en un host y suma
-las mediciones que las sondas locales de los otros hosts le empujan. Cada host necesita su propia
-copia de `credential_health.py` junto al ejecutable que la importa.
+La agregación de credenciales sigue siendo agregador más sondas por host, pero con un único
+script (`cred-guard.py`): el agregador suma las mediciones que las sondas (`--sonda-remota`) de
+los otros hosts le empujan. Cada host necesita su propia copia de `credential_health.py` junto
+al ejecutable que la importa. La renovación de credenciales vive solo en el CLI `cauce`
+(`ops/cli/cauce` + `cauce-credenciales.lib.sh`); el antiguo script suelto de auditoría/renovación
+se retiró.
 
 ## Tres de estos guardias los instala el CLI, no el bloque de restauración
 
@@ -194,7 +195,8 @@ systemctl enable --now cauce-cred-guard.timer
 # En el host manager, con el repo clonado — units de usuario
 install -d -m755 ~/.local/bin ~/.config/systemd/user
 install -m644 ops/guardias/credential_health.py ~/.local/bin/     # biblioteca, no ejecutable
-install -m755 ops/guardias/cauce-cred-guard-kratos.py \
+install -m755 ops/guardias/cred-guard.py ~/.local/bin/            # agregador local y sonda (--sonda-remota)
+install -m755 \
   ops/guardias/cauce-alertas-al-bus.py \
   ops/guardias/cauce-contexto-colisiones.py \
   ops/guardias/cauce-v3-medico-monitor \
