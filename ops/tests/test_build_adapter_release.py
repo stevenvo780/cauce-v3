@@ -99,7 +99,7 @@ class BuilderIsolation(unittest.TestCase):
                             'PYTHONDONTWRITEBYTECODE': '1'}
         self.git('init', '-q')
         self.git('add', 'ops', 'packages')
-        self.git('-c', 'user.name=tales', '-c', 'user.email=34928585+stevenvo780@users.noreply.github.com',
+        self.git('-c', 'user.name=fixture', '-c', 'user.email=fixture@example.invalid',
                  'commit', '-qm', 'synthetic builder fixture', '--', 'ops', 'packages')
 
     def git(self, *arguments: str) -> None:

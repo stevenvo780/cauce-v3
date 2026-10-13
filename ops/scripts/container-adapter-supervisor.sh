@@ -707,8 +707,8 @@ start_adapter() {
     "CAUCE_RELAY_URL=${CONFIG[RELAY_URL]}"
     "CAUCE_DEFAULT_TIMEOUT_MS=$effective_default_timeout_ms"
     "GIT_AUTHOR_NAME=$alias_name" "GIT_COMMITTER_NAME=$alias_name"
-    "GIT_AUTHOR_EMAIL=${CONFIG[GIT_AUTHOR_EMAIL]:-34928585+stevenvo780@users.noreply.github.com}"
-    "GIT_COMMITTER_EMAIL=${CONFIG[GIT_AUTHOR_EMAIL]:-34928585+stevenvo780@users.noreply.github.com}"
+    "GIT_AUTHOR_EMAIL=${CONFIG[GIT_AUTHOR_EMAIL]:-cauce@example.test}"
+    "GIT_COMMITTER_EMAIL=${CONFIG[GIT_AUTHOR_EMAIL]:-cauce@example.test}"
     "CAUCE_TLS_CERT_FILE=$secret_directory/client.crt" "CAUCE_TLS_KEY_FILE=$secret_directory/client.key" "CAUCE_TLS_CA_FILE=$secret_directory/ca.crt"
   )
   environment+=("CAUCE_SEMBRAR_PERFIL=${CONFIG[CAUCE_SEMBRAR_PERFIL]}")

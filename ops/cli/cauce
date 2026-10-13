@@ -199,11 +199,17 @@ Al entrar con ${c_b}cauce <alias>${c_reset} te dice en la cabecera cual de los t
 EOF
 }
 
+usuario_remoto() {
+  local usuario=${CAUCE_REMOTE_USER:-}
+  [[ $usuario =~ ^[a-z_][a-z0-9_-]{0,31}$ ]] || return 1
+  printf '%s\n' "$usuario"
+}
+
 cmd_flota() {
   [[ ! -v CAUCE_FLEET_RUNTIME_STATE ]] || exec "$BIN/cauce-estado"
   printf "\n  %s%-9s %-22s %-9s %-9s %-9s %s%s\n" "$c_b" ALIAS CONTENEDOR HARNESS ADAPTADOR TUI MODO "$c_reset"
   printf "  %s\n" "$(printf '─%.0s' $(seq 1 76))"
-  local a line ctr cuser state harness ad modo color term
+  local a line ctr cuser state harness ad modo color term remote_user
   local -a sin_gateway=()
   for a in $(todos_los_alias); do
     # Query remote aliases on their host; local Docker and systemd cannot establish remote state.
@@ -236,7 +242,9 @@ cmd_flota() {
   fi
   if [ -r "$MAPA_HOST" ] && awk '$2=="vps"{f=1} END{exit !f}' "$MAPA_HOST"; then
     printf "\n  %s--- en el VPS (100.64.0.11) ---%s\n" "$c_dim" "$c_reset"
-    if ! ssh -n -o BatchMode=yes -o ConnectTimeout=10 vps "U=\$(id -u stev); sudo -u stev XDG_RUNTIME_DIR=/run/user/\$U HOME=/home/stev /home/stev/.local/bin/cauce flota" 2>/dev/null | sed -n '/ALIAS/,/entrar:/p' | grep -v 'entrar:'; then
+    if ! remote_user=$(usuario_remoto); then
+      printf "  %sCAUCE_REMOTE_USER vacio o invalido: se omite el VPS%s\n" "$c_dim" "$c_reset"
+    elif ! ssh -n -o BatchMode=yes -o ConnectTimeout=10 vps "U=\$(id -u ${remote_user}); H=\$(getent passwd ${remote_user} | cut -d: -f6); sudo -u ${remote_user} XDG_RUNTIME_DIR=/run/user/\$U HOME=\$H \$H/.local/bin/cauce flota" 2>/dev/null | sed -n '/ALIAS/,/entrar:/p' | grep -v 'entrar:'; then
       printf "  %sno pude preguntarle al VPS%s\n" "$c_err" "$c_reset"
     fi
   fi
@@ -514,7 +522,7 @@ unit_del_alias() {
   es_host_native "$1" && printf 'cauce-v3-host-%s.service\n' "$1" || printf 'cauce-v3-container-%s.service\n' "$1"
 }
 systemctl_user_o_avisa() {  # $1=verbo(start|stop) $2=unit
-  local verbo=$1 unit=$2 salida candidato; [ -z "${XDG_RUNTIME_DIR:-}" ] && { candidato="/run/user/$(id -u)"; [ -d "$candidato" ] && export XDG_RUNTIME_DIR="$candidato"; }; [ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ] && [ -S "${XDG_RUNTIME_DIR:-}/bus" ] && export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"; salida=$(systemctl --user "$verbo" "$unit" 2>&1) && return 0; printf "  %ssystemctl --user %s %s fallo%s\n" "$c_err" "$verbo" "$unit" "$c_reset">&2; printf "  %s%s%s\n" "$c_dim" "$salida" "$c_reset">&2; printf "  %ssin XDG_RUNTIME_DIR se intento derivar de /run/user/\$(id -u); desde root: systemctl --user -M stev@ %s %s%s\n" "$c_dim" "$verbo" "$unit" "$c_reset">&2; return 1
+  local verbo=$1 unit=$2 salida candidato; [ -z "${XDG_RUNTIME_DIR:-}" ] && { candidato="/run/user/$(id -u)"; [ -d "$candidato" ] && export XDG_RUNTIME_DIR="$candidato"; }; [ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ] && [ -S "${XDG_RUNTIME_DIR:-}/bus" ] && export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"; salida=$(systemctl --user "$verbo" "$unit" 2>&1) && return 0; printf "  %ssystemctl --user %s %s fallo%s\n" "$c_err" "$verbo" "$unit" "$c_reset">&2; printf "  %s%s%s\n" "$c_dim" "$salida" "$c_reset">&2; printf "  %ssin XDG_RUNTIME_DIR se intento derivar de /run/user/\$(id -u); desde root: systemctl --user -M %s@ %s %s%s\n" "$c_dim" "${CAUCE_REMOTE_USER:-<usuario>}" "$verbo" "$unit" "$c_reset">&2; return 1
 }
 
   # shellcheck disable=SC2016  # Expanded by the remote shell through eval or docker exec.
@@ -694,14 +702,15 @@ build_remote_command() {  # $1=fixed script, remaining arguments=argv; returns c
   REPLY=$command
 }
 remoto_cauce() {  # $1=ruta $2=alias, resto=argumentos tal cual
-  local route=$1 alias_name=$2 destination fixed_script; shift 2
+  local route=$1 alias_name=$2 destination fixed_script remote_user; shift 2
   # Detach SSH stdin for non-interactive calls so it cannot consume the caller's input.
   local tty=(-n); [ -t 0 ] && [ -t 1 ] && tty=(-t)
   case "$route" in
     vps)
       destination=vps
+      remote_user=$(usuario_remoto) || { printf 'CAUCE_REMOTE_USER vacio o invalido\n' >&2; return 2; }
       # shellcheck disable=SC2016
-      fixed_script='remote_uid=$(id -u stev) || exit 69; remote_home=$(getent passwd stev | cut -d: -f6) || exit 69; case "$remote_home" in /*) ;; *) exit 69 ;; esac; test -d "$remote_home" && test -x "$remote_home/.local/bin/cauce" || exit 69; cd "$remote_home" || exit 69; exec sudo -u stev env HOME="$remote_home" XDG_RUNTIME_DIR="/run/user/$remote_uid" "$remote_home/.local/bin/cauce" "$@"'
+      fixed_script="remote_uid=\$(id -u ${remote_user}) || exit 69; remote_home=\$(getent passwd ${remote_user} | cut -d: -f6) || exit 69; case \"\$remote_home\" in /*) ;; *) exit 69 ;; esac; test -d \"\$remote_home\" && test -x \"\$remote_home/.local/bin/cauce\" || exit 69; cd \"\$remote_home\" || exit 69; exec sudo -u ${remote_user} env HOME=\"\$remote_home\" XDG_RUNTIME_DIR=\"/run/user/\$remote_uid\" \"\$remote_home/.local/bin/cauce\" \"\$@\""
       ;;
     ssh:*)
       destination=${route#ssh:}

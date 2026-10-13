@@ -5,6 +5,7 @@ from __future__ import annotations
 import csv
 import io
 import json
+import os
 import re
 import shlex
 import stat
@@ -39,6 +40,13 @@ def acceptance_path(config: dict, state) -> Path | None:
     return path
 
 
+def owner_conversation_id(state) -> str:
+    value = os.environ.get("CAUCE_OWNER_TELEGRAM_CHAT_ID", "")
+    if not ID.fullmatch(value):
+        raise state.SupervisionError("owner_conversation_unconfigured")
+    return value
+
+
 def acceptance_receipts(config: dict, goal: str, state) -> dict:
     """Read controller-owned approval metadata; repository names grant no authority."""
     path = acceptance_path(config, state)
@@ -55,7 +63,7 @@ def acceptance_receipts(config: dict, goal: str, state) -> dict:
     if (not isinstance(value, dict) or type(value.get("schema_version")) is not int or value["schema_version"] != 1
             or value.get("goal_sha256") != goal or not isinstance(value.get("receipts"), list) or len(value["receipts"]) > 1000):
         raise state.SupervisionError("invalid_acceptance_receipts")
-    expected_origin = {"kind": "authenticated-owner", "channel": "cauce.trusted-origin", "conversation_id": "6979524541"}
+    expected_origin = {"kind": "authenticated-owner", "channel": "cauce.trusted-origin", "conversation_id": owner_conversation_id(state)}
     result = {}
     for receipt in value["receipts"]:
         if not isinstance(receipt, dict):

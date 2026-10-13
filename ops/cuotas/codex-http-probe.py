@@ -24,8 +24,7 @@ REGLAS QUE NO SE TOCAN (cada una tiene su motivo, no son formalismo):
 
 Uso:
     codex-http-probe.py [CODEX_HOME ...]
-Por defecto mide los dos CODEX_HOME de kratos:
-    /datos/agents/shared/.codex  y  /datos/agents/shared/.codex-200
+Sin argumentos, lee CAUCE_CODEX_HOMES (separada por os.pathsep).
 """
 
 import base64
@@ -48,13 +47,6 @@ class RotadoPerdido(OSError):
 
 
 ESQUEMA = 1
-
-# Los dos CODEX_HOME de kratos. En ils-server son ~/.codex y ~/.codex-200: se pasan
-# por argumento, no se adivinan aqui.
-HOMES_POR_DEFECTO = [
-    "/datos/agents/shared/.codex",
-    "/datos/agents/shared/.codex-200",
-]
 
 # wham/usage es el que usa el cliente de asiento; codex/usage devuelve HOY el MISMO
 # esquema (verificado, byte a byte salvo los `reset_after_seconds`). Se
@@ -536,11 +528,19 @@ def sonda(codex_home, refresh=False):
     return out
 
 
+def homes_efectivos(explicitas):
+    if explicitas:
+        return explicitas
+    return [home for home in os.environ.get("CAUCE_CODEX_HOMES", "").split(os.pathsep) if home]
+
+
 def main():
     explicitas = [argumento for argumento in sys.argv[1:] if argumento != '--refresh-own-session']
-    # Without explicit paths the defaults are fleet CODEX_HOME: never refresh those.
+    # Without explicit paths the homes come from CAUCE_CODEX_HOMES: never refresh those.
     refresh = '--refresh-own-session' in sys.argv[1:] and bool(explicitas)
-    homes = explicitas or HOMES_POR_DEFECTO
+    homes = homes_efectivos(explicitas)
+    if not homes:
+        sys.exit("uso: codex-http-probe.py CODEX_HOME [...]  (o CAUCE_CODEX_HOMES)")
     res = []
     for h in homes:
         try:

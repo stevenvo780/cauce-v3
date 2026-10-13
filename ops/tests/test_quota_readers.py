@@ -431,8 +431,8 @@ class QuotaReadersTest(unittest.TestCase):
 
     def test_codex_refresh_guard_only_allows_the_node_home_codex(self):
         self.assertTrue(probe.refresco_permitido('/home/node/.codex', '/home/node'))
-        self.assertFalse(probe.refresco_permitido('/datos/agents/shared/.codex', '/home/node'))
-        self.assertFalse(probe.refresco_permitido('/home/stev/.codex', '/home/stev'))
+        self.assertFalse(probe.refresco_permitido('/srv/shared/.codex', '/home/node'))
+        self.assertFalse(probe.refresco_permitido('/home/otro/.codex', '/home/otro'))
         self.assertFalse(probe.refresco_permitido('/home/node/.codex-200', '/home/node'))
         with tempfile.TemporaryDirectory() as directory:
             self.codex_home(directory, -3600)
@@ -445,7 +445,7 @@ class QuotaReadersTest(unittest.TestCase):
     def test_codex_cli_without_explicit_paths_never_refreshes_fleet_defaults(self):
         with tempfile.TemporaryDirectory() as directory:
             self.codex_home(directory, -3600)
-            with patch.object(probe, 'HOMES_POR_DEFECTO', [directory]), patch.object(probe, 'pedir_refresco') as refresh, \
+            with patch.dict(os.environ, {'CAUCE_CODEX_HOMES': directory}), patch.object(probe, 'pedir_refresco') as refresh, \
                     patch.object(probe, 'refresco_permitido', return_value=True), \
                     patch.object(sys, 'argv', ['codex-http-probe.py', '--refresh-own-session']), \
                     contextlib.redirect_stdout(io.StringIO()) as output:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import unittest
 import uuid
 from pathlib import Path
@@ -76,7 +77,7 @@ def protected_receipt_fixture(fixture):
     rows = [{"receipt_id": str(uuid.uuid4()), "goal_sha256": fixture.config["goal_sha256"],
              "source_commit": record["source_commit"], "issue_id": issue, "criterion_id": criterion["id"],
              "artifact_sha256": criterion["artifact"]["sha256"],
-             "provenance": {"kind": "authenticated-owner", "channel": "cauce.trusted-origin", "conversation_id": "6979524541"}}
+             "provenance": {"kind": "authenticated-owner", "channel": "cauce.trusted-origin", "conversation_id": "1000000001"}}
             for issue, record in ledger["records"].items() for criterion in record["criteria"]]
     value = {"schema_version": 1, "goal_sha256": fixture.config["goal_sha256"], "receipts": rows}
     path.write_text(json.dumps(value))
@@ -87,6 +88,9 @@ def protected_receipt_fixture(fixture):
 
 class EvidenceContractTests(unittest.TestCase):
     def setUp(self):
+        self.chat = mock.patch.dict(os.environ, {"CAUCE_OWNER_TELEGRAM_CHAT_ID": "1000000001"})
+        self.chat.start()
+        self.addCleanup(self.chat.stop)
         self.fixture = fixtures.PraxisSupervisionTests()
         self.fixture.setUp()
         SUP.STATE.trusted_file.side_effect = self.synthetic_trust
