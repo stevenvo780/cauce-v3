@@ -30,7 +30,7 @@ describe('fleet receipts', () => {
     const receipt = { request_sha256: await fleetRequestHash(room), target: room.target, kind: room.kind,
       expected_revision: 4, steps: ['prepare'], dependencies: [], can_apply: true, resources: [] };
     const { api, request } = client(receipt);
-    expect(await api.previewFleetOperation(room)).toEqual(receipt);
+    expect(await api.previewFleetOperation(room)).toEqual({ ...receipt, resources: [] });
     expect(vi.mocked(request).mock.calls[0]?.[0]).toBe('/v3/console/fleet/operations/preview');
     expect(vi.mocked(request).mock.calls[0]?.[1]?.method).toBe('POST');
     expect(JSON.parse(vi.mocked(request).mock.calls[0]?.[1]?.body as string)).toEqual(room);

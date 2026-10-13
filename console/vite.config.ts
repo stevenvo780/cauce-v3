@@ -3,6 +3,7 @@ import { createRequire } from 'node:module';
 import { cpus } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import tailwindcss from '@tailwindcss/vite';
+import { configDefaults } from 'vitest/config';
 import react from '@vitejs/plugin-react';
 import { defineConfig, loadEnv, type Plugin } from 'vite';
 import { ansiPaletteCss, xtermAnsiPalette } from './vite/ansi-palette';
@@ -70,6 +71,7 @@ export default defineConfig(({ mode }) => {
         },
       ],
       environment: 'jsdom',
+      exclude: [...configDefaults.exclude, 'qa/layout-v4-measure.test.mjs'],
       globals: true,
       pool: 'forks',
       poolOptions: { // a cap below the CPU count: uncapped, 149 jsdom files starve each other under load

@@ -32,6 +32,7 @@ test("cauce routes exact argv to validated SSH destinations", async () => {
       FAKE_REMOTE_HOME: remoteHome,
       FAKE_SSH_LOG: sshLog,
       FAKE_REMOTE_LOG: remoteLog,
+      CAUCE_REMOTE_USER: "zz-canary-remote",
       ...extra,
     };
   }

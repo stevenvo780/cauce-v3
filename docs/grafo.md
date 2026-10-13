@@ -8,24 +8,24 @@ Generado por `pnpm grafo` (determinista — regenerar tras reordenar). Nodo = di
 
 ```mermaid
 graph LR
-  node_services_gateway["services/gateway"] -->|334| node_packages_store["packages/store"]
-  node_packages_store["packages/store"] -->|234| node_packages_protocol["packages/protocol"]
-  node_services_gateway["services/gateway"] -->|189| node_packages_protocol["packages/protocol"]
+  node_services_gateway["services/gateway"] -->|340| node_packages_store["packages/store"]
+  node_packages_store["packages/store"] -->|236| node_packages_protocol["packages/protocol"]
+  node_services_gateway["services/gateway"] -->|190| node_packages_protocol["packages/protocol"]
   node_scripts["scripts"] -->|167| node_packages_adapter_sdk["packages/adapter-sdk"]
-  node_packages_store["packages/store"] -->|158| node_tests_helpers["tests/helpers"]
+  node_packages_store["packages/store"] -->|164| node_tests_helpers["tests/helpers"]
   node_scripts["scripts"] -->|128| node_console["console"]
   node_tests_unit["tests/unit"] -->|111| node_services_gateway["services/gateway"]
+  node_packages_store["packages/store"] -->|109| node_services_gateway["services/gateway"]
   node_scripts["scripts"] -->|108| node_packages_store["packages/store"]
   node_scripts["scripts"] -->|108| node_services_gateway["services/gateway"]
-  node_packages_store["packages/store"] -->|107| node_services_gateway["services/gateway"]
   node_tests_e2e["tests/e2e"] -->|88| node_services_gateway["services/gateway"]
   node_docs["docs"] -->|87| node_tests_e2e["tests/e2e"]
   node_tests_gateway_hardening["tests/gateway-hardening"] -->|81| node_services_gateway["services/gateway"]
-  node_packages_adapter_sdk["packages/adapter-sdk"] -->|75| node_packages_protocol["packages/protocol"]
+  node_packages_adapter_sdk["packages/adapter-sdk"] -->|76| node_packages_protocol["packages/protocol"]
   node_scripts["scripts"] -->|74| node_ops_scripts["ops/scripts"]
   node_scripts["scripts"] -->|58| node_tests_unit["tests/unit"]
   node_scripts["scripts"] -->|54| node_ops_tests["ops/tests"]
-  node_services_gateway["services/gateway"] -->|42| node_tests_helpers["tests/helpers"]
+  node_services_gateway["services/gateway"] -->|43| node_tests_helpers["tests/helpers"]
   node_scripts["scripts"] -->|39| node_services_telegram_bridge["services/telegram-bridge"]
   node_scripts["scripts"] -->|38| node_ops_pty_agent["ops/pty-agent"]
   node_tests_store_hardening["tests/store-hardening"] -->|38| node_packages_store["packages/store"]
@@ -67,7 +67,7 @@ graph LR
   node_tests_integration["tests/integration"] -->|14| node_tests_helpers["tests/helpers"]
   node_ops_tests["ops/tests"] -->|13| node_ops_harness["ops/harness"]
   node_ops_tests["ops/tests"] -->|12| node_ops["ops"]
-  node_ops_tests["ops/tests"] -->|11| node_ops_instances["ops/instances"]
+  node_ops_tests["ops/tests"] -->|12| node_ops_instances["ops/instances"]
   node_tests_store_hardening["tests/store-hardening"] -->|11| node_packages_protocol["packages/protocol"]
   node_tests_unit["tests/unit"] -->|11| node_services_telegram_bridge["services/telegram-bridge"]
   node_tests_unit["tests/unit"] -->|11| node_ops_observability["ops/observability"]
@@ -182,24 +182,24 @@ graph LR
 
 | Desde | Hacia | Refs |
 |---|---|---|
-| services/gateway | packages/store | 334 |
-| packages/store | packages/protocol | 234 |
-| services/gateway | packages/protocol | 189 |
+| services/gateway | packages/store | 340 |
+| packages/store | packages/protocol | 236 |
+| services/gateway | packages/protocol | 190 |
 | scripts | packages/adapter-sdk | 167 |
-| packages/store | tests/helpers | 158 |
+| packages/store | tests/helpers | 164 |
 | scripts | console | 128 |
 | tests/unit | services/gateway | 111 |
+| packages/store | services/gateway | 109 |
 | scripts | packages/store | 108 |
 | scripts | services/gateway | 108 |
-| packages/store | services/gateway | 107 |
 | tests/e2e | services/gateway | 88 |
 | docs | tests/e2e | 87 |
 | tests/gateway-hardening | services/gateway | 81 |
-| packages/adapter-sdk | packages/protocol | 75 |
+| packages/adapter-sdk | packages/protocol | 76 |
 | scripts | ops/scripts | 74 |
 | scripts | tests/unit | 58 |
 | scripts | ops/tests | 54 |
-| services/gateway | tests/helpers | 42 |
+| services/gateway | tests/helpers | 43 |
 | scripts | services/telegram-bridge | 39 |
 | scripts | ops/pty-agent | 38 |
 | tests/store-hardening | packages/store | 38 |
@@ -241,7 +241,7 @@ graph LR
 | tests/integration | tests/helpers | 14 |
 | ops/tests | ops/harness | 13 |
 | ops/tests | ops | 12 |
-| ops/tests | ops/instances | 11 |
+| ops/tests | ops/instances | 12 |
 | tests/store-hardening | packages/protocol | 11 |
 | tests/unit | services/telegram-bridge | 11 |
 | tests/unit | ops/observability | 11 |
@@ -378,6 +378,7 @@ graph LR
 | ops/tests | services/telegram-bridge | 1 |
 | ops/tests | services/terminal-relay | 1 |
 | ops/tests | deploy | 1 |
+| ops/tests | deploy/decisiones | 1 |
 | (raiz) | deploy | 1 |
 | packages/adapter-sdk | packages/store | 1 |
 | packages/mcp-fleet-monitor | tests/integration | 1 |
@@ -413,20 +414,20 @@ graph LR
 
 ## Hubs (los 15 ficheros más referenciados)
 
-- packages/protocol/src/index.ts ← 654
-- packages/store/src/index.ts ← 588
-- tests/helpers/postgres.ts ← 260
+- packages/protocol/src/index.ts ← 659
+- packages/store/src/index.ts ← 598
+- tests/helpers/postgres.ts ← 267
 - console/src/api/types.ts ← 221
-- packages/store/test/postgres-suite.ts ← 199
-- packages/store/src/db.ts ← 168
+- packages/store/test/postgres-suite.ts ← 206
+- packages/store/src/db.ts ← 170
 - packages/adapter-sdk/src/sdk/types.ts ← 167
-- services/gateway/src/auth.ts ← 158
+- services/gateway/src/auth.ts ← 159
 - console/src/test/render.tsx ← 124
 - console/src/mocks/server.ts ← 124
 - console/src/api/context.tsx ← 93
 - console/src/components/kit.tsx ← 90
 - services/gateway/src/password-auth.ts ← 89
-- packages/adapter-sdk/src/sdk/durable-store.ts ← 81
+- packages/adapter-sdk/src/sdk/durable-store.ts ← 82
 - services/gateway/src/app.ts ← 78
 
 ## Candidatos huérfanos (fuente sin UNA referencia entrante detectada — verificar antes de tocar)
@@ -451,7 +452,6 @@ graph LR
 - console/qa/vite-layout.config.mjs
 - console/src/features/terminal/terminal.worker.ts
 - console/src/main.tsx
-- deploy/decisiones/desplegar.sh
 - deploy/mcp/compose.yaml
 - deploy/mcp/generate-oauth-signing-key.sh
 - deploy/mcp/healthcheck.mjs
@@ -526,7 +526,7 @@ graph LR
 - ops/instances/hospital/provision-agents.sh
 - ops/instances/hospital/register-console-identity.py
 - ops/instances/hospital/show-access.sh
-- ops/manifests/*.yaml sin otra arista entrante (uno por alias del snapshot; generados desde `ops/flota.json`)
+- ops/manifests/*.yaml
 - ops/pty-agent/cauce-pty-host-launcher.sh
 - ops/pty-agent/cauce_pty_agent/__init__.py
 - ops/pty-agent/cauce_pty_agent/__main__.py
@@ -609,18 +609,18 @@ graph LR
 | Nodo | Ficheros |
 |---|---|
 | console | 753 |
-| services/gateway | 478 |
-| packages/store | 394 |
-| packages/adapter-sdk | 389 |
-| ops/tests | 182 |
+| services/gateway | 480 |
+| packages/store | 404 |
+| packages/adapter-sdk | 390 |
+| ops/tests | 186 |
 | tests/unit | 122 |
 | ops/scripts | 92 |
 | tests/e2e | 75 |
-| packages/protocol | 73 |
+| packages/protocol | 74 |
 | services/telegram-bridge | 62 |
 | ops/cli | 60 |
 | ops/pty-agent | 60 |
-| services/terminal-relay | 49 |
+| services/terminal-relay | 50 |
 | services/decisiones | 40 |
 | tests/gateway-hardening | 39 |
 | packages/mcp-fleet-monitor | 30 |

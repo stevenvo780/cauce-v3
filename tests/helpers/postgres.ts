@@ -122,20 +122,25 @@ async function unavailableDockerCapability(): Promise<string | undefined> {
 }
 
 export const SUITES_SIN_PLANTILLA: ReadonlySet<string> = new Set([
+  'agent-context-revisions-migration-postgres.test.ts',
+  'agent-profile-migration-postgres.test.ts',
+  'agent-profile-runtime-adoption-migration-postgres.test.ts',
+  'agent-quota-expiry-migration-postgres.test.ts',
+  'agent-quota-operations-migration-postgres.test.ts',
+  'authority-lock-migration-postgres.test.ts',
+  'companies-isolation-migration-postgres.test.ts',
+  'companies-migration-postgres.test.ts',
+  'connection-session-fencing-migration-postgres.test.ts',
+  'console-publish-intent-migration-postgres.test.ts',
+  'dlq-causal-reconciliation-migration-postgres.test.ts',
+  'fleet-lifecycle-migration-postgres.test.ts',
+  'harness-definitions-seed-migration-postgres.test.ts',
+  'host-enrollment-migration-postgres.test.ts',
   'migration-integrity-postgres.test.ts',
   'secret-handoff-migration-postgres.test.ts',
-  'agent-profile-migration-postgres.test.ts',
-  'connection-session-fencing-migration-postgres.test.ts',
-  'dlq-causal-reconciliation-migration-postgres.test.ts',
-  'console-publish-intent-migration-postgres.test.ts',
-  'agent-profile-runtime-adoption-migration-postgres.test.ts',
-  'terminal-session-claim-fencing-migration-postgres.test.ts',
   'terminal-browser-owner-fencing-migration-postgres.test.ts',
   'terminal-relay-instance-fencing-migration-postgres.test.ts',
-  'agent-context-revisions-migration-postgres.test.ts',
-  'fleet-lifecycle-migration-postgres.test.ts',
-  'companies-migration-postgres.test.ts',
-  'companies-isolation-migration-postgres.test.ts',
+  'terminal-session-claim-fencing-migration-postgres.test.ts',
 ]);
 
 const conteoPorFichero = new Map<string, { ejecutados: number; razon: string; saltados: number }>();

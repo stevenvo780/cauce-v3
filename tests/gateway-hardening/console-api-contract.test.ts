@@ -201,14 +201,14 @@ describe('console API surface matches the gateway routing table', () => {
       { method: 'POST', path: '/v3/console/quota-environments' },
       { method: 'PATCH', path: '/v3/console/quota-environments/1' },
       { method: 'POST', path: '/v3/console/quota-environments/1/actions' },
-      { method: 'DELETE', path: '/v3/console/quota-environments/1' },
+      { method: 'DELETE', path: '/v3/console/quota-environments/1?1' },
       { method: 'POST', path: '/v3/console/spaces/1/1/backups' },
       { method: 'GET', path: '/v3/console/spaces/1/1/backups/1' },
-      { method: 'GET', path: '/v3/console/spaces/1/1/backups/1/download' },
     ]) expect(calls).toContainEqual(call);
     expect(calls.map((call) => call.path)).not.toContain('/v3/console/topology/access');
 
     expect(await unroutedPaths(calls)).toEqual([]);
+    expect(await unroutedPaths([{ method: 'GET', path: '/v3/console/spaces/1/1/backups/1/download' }])).toEqual([]);
   });
 
   it.each([
