@@ -76,8 +76,7 @@ compose_recipe() {
   fi
   RECIPE+=("${COMPOSE[@]}")
 }
-# 081 drops human_tenant_memberships.role, which the previous gateway still reads: once this
-# deployment applies it, going back requires its down BEFORE restoring the previous pins.
+# 081 drops the membership role the previous gateway reads: reverting needs its down before the old pins.
 ROLE_081_MIGRATION=081_membresia_rol_derivado.sql
 ROLE_081_PENDING=0
 membership_role_rollback() {
@@ -394,8 +393,6 @@ fi
 [ "$MCP_HUMAN_ENABLED" = 1 ] || prepare_terminal
 COMPOSE_MODEL="$("${COMPOSE[@]}" config --format json)" \
   || die "no pude renderizar el compose con $ENV_FILE para comprobar las fuentes de los bind mounts"
-# The gateway withdraws every agent quota reader without the owner-approved descriptor pins:
-# require the public approvals file the compose mounts, valid and current for this release.
 approvals_rc=0
 DESCRIPTOR_APPROVALS="$(python3 -c '
 import hashlib, json, os, re, stat, sys

@@ -2,10 +2,7 @@ import { isAbsolute } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { ConfigurationError } from './contracts.js';
 
-/**
- * The adapter SDK descriptor module in the source, core build or deployed package layout. Resolved
- * here rather than through the quota model, which would close an import cycle through the repository.
- */
+/** SDK descriptor module per layout (source, core build, deployment); not via the quota model, which closes an import cycle. */
 export function harnessCatalogDescriptorModuleUrl(source: string = import.meta.url): URL {
   const path = new URL(source).pathname;
   if (path.endsWith('.ts')) return new URL('../../../adapter-sdk/src/context/harness-descriptor.ts', source);
@@ -16,9 +13,8 @@ export function harnessCatalogDescriptorModuleUrl(source: string = import.meta.u
 }
 
 /**
- * Closed vocabulary of harness_definitions.capabilities. The strings are rendered into agent
- * profile facts, so a new one is a deliberate edit here; ops/tests/test_harness_parity.py reads
- * this list to check the migration seeds.
+ * Closed vocabulary of harness_definitions.capabilities, rendered into agent profile facts: a new one
+ * is a deliberate edit here. ops/tests/test_harness_parity.py checks the migration seeds against it.
  */
 export const HARNESS_CATALOG_CAPABILITIES: readonly string[] = Object.freeze([
   'messages.receive', 'ack.timeline', 'origin.relay', 'jobs.interactive', 'jobs.batch',

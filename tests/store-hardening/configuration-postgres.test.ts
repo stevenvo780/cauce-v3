@@ -150,7 +150,6 @@ describe('atomic configuration CRUD and rollback', () => {
     });
     expect((await pool.query(`SELECT 1 FROM tenants WHERE id='Acme'`)).rowCount).toBe(0);
 
-    // A catalog harness exists only through a published descriptor: publish one for `custom`.
     const descriptors = await mkdtemp(join(tmpdir(), 'cauce-catalog-descriptors-'));
     await cp(new URL('../../packages/adapter-sdk/descriptors/', import.meta.url), descriptors, { recursive: true });
     await writeFile(join(descriptors, 'custom.json'), JSON.stringify({ schema_version: 1, harness: 'custom',
