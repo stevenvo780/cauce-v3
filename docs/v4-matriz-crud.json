@@ -22,10 +22,6 @@
       "reason": "El simulacro actual incorpora reconciliación de escritores; falta verificar recuperación de Git desde navegador real y sobre el despliegue. La matriz no acredita aceptación de V4."
     },
     {
-      "id": "backup_lifecycle_browser",
-      "reason": "Falta unir solicitud, ejecución física, descarga verificada y restauración de la copia desde navegador real. La cadena HTTP con PostgreSQL y la prueba del componente con stream simulado son evidencia complementaria."
-    },
-    {
       "id": "backup_restore_delete",
       "reason": "La consola no ofrece restauración ni eliminación de copias; la recuperación sigue fuera de este flujo."
     },
@@ -2191,9 +2187,8 @@
       "label": "Copias descargables del espacio persistente",
       "operations": {
         "C": {
-          "status": "pending",
-          "reason": "La cadena HTTP con PostgreSQL prueba solicitud, exportación física, descarga de más de 32 MiB y restauración con hashes iguales; el componente verifica un stream simulado. Falta ejecutar esa cadena desde el panel en navegador real.",
-          "pending_id": "backup_lifecycle_browser",
+          "status": "covered",
+          "reason": "Cobertura versionada de navegador real y PostgreSQL; la matriz enlaza la prueba y no sustituye su ejecución sobre el candidato.",
           "api": [
             {
               "method": "POST",
@@ -2215,13 +2210,16 @@
             {
               "file": "packages/store/test/space-backup-postgres.test.ts",
               "name": "requests, physically exports and streams a copy above 32 MiB to the console, then restores it with equal hashes"
+            },
+            {
+              "file": "tests/e2e/v4-space-backups-real-browser.test.ts",
+              "name": "solicita la copia en el panel, la exporta por el canal firmado, descarga los bytes reales y restaura con hashes iguales"
             }
           ]
         },
         "R": {
-          "status": "pending",
-          "reason": "La cadena HTTP con PostgreSQL prueba solicitud, exportación física, descarga de más de 32 MiB y restauración con hashes iguales; el componente verifica un stream simulado. Falta ejecutar esa cadena desde el panel en navegador real.",
-          "pending_id": "backup_lifecycle_browser",
+          "status": "covered",
+          "reason": "Cobertura versionada de navegador real y PostgreSQL; la matriz enlaza la prueba y no sustituye su ejecución sobre el candidato.",
           "api": [
             {
               "method": "GET",
@@ -2256,6 +2254,10 @@
             {
               "file": "packages/store/test/space-backup-postgres.test.ts",
               "name": "requests, physically exports and streams a copy above 32 MiB to the console, then restores it with equal hashes"
+            },
+            {
+              "file": "tests/e2e/v4-space-backups-real-browser.test.ts",
+              "name": "solicita la copia en el panel, la exporta por el canal firmado, descarga los bytes reales y restaura con hashes iguales"
             }
           ]
         },
