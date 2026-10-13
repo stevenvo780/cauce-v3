@@ -70,6 +70,7 @@ export const migrationLockFootprints: Readonly<Record<string, Readonly<Record<st
   '069_diagnostic_frontier_indexes.sql': { audit_events: 'SHARE', messages: 'SHARE', terminal_sessions: 'SHARE' },
   '070_agent_quota_operations.sql': { agents: SRE, companies: SRE, console_users: SRE, fleet_hosts: SRE, tenants: SRE },
   '073_harness_definitions_seed.sql': {},
+  '078_authority_lock_scope.sql': { platform_admins: SRE },
 };
 
 /** The first migration with a footprint; every bundled migration from it on must have one. */

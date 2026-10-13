@@ -191,22 +191,16 @@ describe('configuration keeps a qualified platform administrator', () => {
     expect((await admin.query("SELECT id FROM audit_events WHERE action='config.rollback'")).rows).toEqual([]);
   });
 
-  it('takes the common guard before holding human authority rows', async () => {
+  it('leaves human authority independent of an unrelated company writer guard', async () => {
     const blocker = await admin.connect();
     await blocker.query('BEGIN');
     await blocker.query("SELECT cauce_lock_owner_guard('praxis')");
-    const attempt = repository.apply('Miguel', 'janus', await loss('membership'), false, undefined, owner())
-      .then(result => result, (error: unknown) => error);
     try {
-      await expect.poll(async () => (await admin.query(`SELECT 1 FROM pg_stat_activity WHERE datname=current_database()
-        AND wait_event_type='Lock' AND query='SELECT cauce_lock_authority_read_guard()'`)).rowCount, { timeout: 5000 }).toBe(1);
-      await blocker.query("SET LOCAL lock_timeout='2s'");
-      await blocker.query("UPDATE human_tenant_memberships SET permissions=ARRAY['read'] WHERE human_id=$1", [actors.miguel]);
-      await blocker.query('COMMIT');
-      expect(await attempt).toMatchObject({ code: 'forbidden' });
+      await expect(repository.apply('Miguel', 'janus', await loss('membership'), false, undefined, owner()))
+        .rejects.toMatchObject({ code: 'forbidden' });
       expect(await authority()).toBe('platform_admin');
       expect((await admin.query('SELECT id FROM config_revisions')).rows).toEqual([]);
-    } finally { await blocker.query('ROLLBACK'); blocker.release(); await attempt; }
+    } finally { await blocker.query('ROLLBACK'); blocker.release(); }
   });
 
   it('serializes losses in two companies and commits only one', async () => {
@@ -270,9 +264,7 @@ describe('configuration keeps a qualified platform administrator', () => {
         }
         return lockCompanyAuthority(client, { tenant: 'Steven', alias: 'kant', humanId: actors.steven, requestedCompany: 'praxis' });
       }).then(result => result.applied);
-      await expect.poll(async () => (await admin.query(`SELECT 1 FROM pg_stat_activity WHERE datname=current_database()
-        AND wait_event_type='Lock' AND (query LIKE 'SELECT home_company,platform_admin,company_role,company_enabled FROM cauce_company_authority%'
-          OR query='SELECT cauce_lock_authority_read_guard()')`)).rowCount, { timeout: 5000 }).toBe(1);
+      expect(await attempt).toBe(true);
       resume();
       const outcomes = await Promise.allSettled([first.then(result => result.applied), attempt]);
       expect(outcomes).toEqual([{ status: 'fulfilled', value: true }, { status: 'fulfilled', value: true }]);
@@ -335,8 +327,8 @@ describe('configuration keeps a qualified platform administrator', () => {
        FROM pg_proc function WHERE function.oid='cauce_lock_authority_read_guard()'::regprocedure`)).rows[0];
     expect(checked).toMatchObject({ definer: true, public_revoked: true, observer: false });
     expect(checked?.config).toEqual(['search_path=pg_catalog, public, pg_temp']);
-    expect(checked?.definition).toContain('public.platform_admins');
-    expect(checked?.definition).toContain('ORDER BY admin.human_id FOR SHARE OF admin');
+    expect(checked?.definition).not.toContain('FOR SHARE');
+    expect(checked?.definition).toContain("set_config('lock_timeout','5s',true)");
     expect((await pool.query('SELECT current_user AS role,rolsuper FROM pg_roles WHERE rolname=current_user')).rows)
       .toEqual([{ role: TEST_RUNTIME_LOGIN, rolsuper: false }]);
     await admin.query('REVOKE EXECUTE ON FUNCTION cauce_lock_authority_read_guard() FROM cauce_runtime');

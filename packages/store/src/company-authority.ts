@@ -1,6 +1,7 @@
 import { withTransaction, type DatabaseClient, type DatabasePool } from './db.js';
 import { lockConsolePerson, type ConsolePersonSnapshot } from './human-identity.js';
 import { StoreError } from './repository/errors.js';
+import { QUALIFIED_PEOPLE_SQL } from './configuration/control-holders.js';
 
 export const COMPANY_ID_PATTERN = /^[a-z][a-z0-9_-]{0,63}$/u;
 
@@ -98,7 +99,7 @@ export async function lockCompanyAuthority(client: DatabaseClient, request: Comp
   const { tenant, alias, humanId, requestedCompany } = request;
   if (typeof tenant !== 'string' || typeof alias !== 'string'
     || (requestedCompany !== undefined && !COMPANY_ID_PATTERN.test(requestedCompany))) unavailable();
-  await client.query('SELECT cauce_lock_authority_read_guard()');
+  await client.query("SELECT set_config('lock_timeout','5000ms',true)");
   const home = (await client.query<{ company_id: string; active: boolean }>(
     `SELECT tenant.company_id,tenant.enabled AND tenant.retired_at IS NULL AND company.enabled
        AND company.retired_at IS NULL AS active FROM tenants tenant JOIN companies company ON company.id=tenant.company_id
@@ -136,32 +137,35 @@ export async function lockCompanyAuthority(client: DatabaseClient, request: Comp
 /**
  * G3 and G4 guard only the person, so every writer of a home membership calls this after the write,
  * in its transaction: an owner or platform administrator who stops qualifying must leave another
- * qualified holder of that role. A concurrent write that strips the other holder deadlocks instead.
+ * qualified holder of that role. The snapshot is read after the writer guard, without locking
+ * another writer's person or membership rows.
  */
 export async function assertKeepsCompanyAuthority(client: DatabaseClient, humanId: string): Promise<void> {
-  const person = (await client.query<{ id: string; company_id: string }>(
-    'SELECT id::text,company_id FROM console_users WHERE id=$1', [humanId])).rows[0];
+  await client.query("SELECT set_config('lock_timeout','5000ms',true)");
+  const holder = async () => (await client.query<{ id: string; company_id: string; owner: boolean; platform: boolean }>(
+    `SELECT id::text,company_id,
+       EXISTS(SELECT 1 FROM company_admins WHERE company_id=person.company_id AND human_id=person.id AND role='owner') AS owner,
+       EXISTS(SELECT 1 FROM platform_admins WHERE human_id=person.id) AS platform
+     FROM console_users person WHERE id=$1`, [humanId])).rows[0];
+  const person = await holder();
   if (person === undefined) return;
   const company = person.company_id;
+  if (person.platform) await client.query('SELECT cauce_lock_platform_owner_guard()');
   await client.query('SELECT cauce_lock_owner_guard($1)', [company]);
-  const holders = (await client.query<{ human_id: string; owner: boolean; platform: boolean }>(
-    `SELECT human_id::text,bool_or(owner) AS owner,bool_or(NOT owner) AS platform FROM (
-       SELECT human_id,true AS owner FROM company_admins WHERE company_id=$1 AND role='owner'
-       UNION ALL SELECT human_id,false FROM platform_admins) holder GROUP BY human_id`, [company],
-  )).rows;
-  const subject = holders.find(holder => holder.human_id === person.id);
-  if (subject === undefined) return;
-  const qualified = new Set<string>();
-  for (const holder of holders) {
-    const person = await lockConsolePerson(client, holder.human_id);
-    if (qualifies(person) && person && (await tenantReach(client, person.account.defaultTenant, person.account.actorAlias)).control) {
-      qualified.add(holder.human_id);
-    }
-  }
-  if (subject.owner && !holders.some(holder => holder.owner && qualified.has(holder.human_id))) {
+  const current = await holder();
+  if (current === undefined) return;
+  if (!person.platform && current.platform) throw new StoreError('conflict', 'platform authority changed; reload and retry');
+  if (!current.owner && !current.platform) return;
+  const kept = (await client.query<{ owner: boolean; platform: boolean }>(
+    `WITH qualified AS (${QUALIFIED_PEOPLE_SQL})
+     SELECT EXISTS(SELECT 1 FROM company_admins holder JOIN qualified person ON person.id=holder.human_id
+       WHERE holder.company_id=$1 AND holder.role='owner') AS owner,
+       EXISTS(SELECT 1 FROM platform_admins holder JOIN qualified person ON person.id=holder.human_id) AS platform`, [company],
+  )).rows[0];
+  if (current.owner && kept?.owner !== true) {
     throw new StoreError('conflict', `company ${company} must keep a qualified owner`);
   }
-  if (subject.platform && !holders.some(holder => holder.platform && qualified.has(holder.human_id))) {
+  if (current.platform && kept?.platform !== true) {
     throw new StoreError('conflict', 'the platform must keep a qualified administrator');
   }
 }
@@ -186,11 +190,13 @@ export function companyScopeSql(tenantColumn: string, companyParameter: string):
  */
 export async function lockCompanyConfiguration(client: DatabaseClient, company: string): Promise<void> {
   if (!COMPANY_ID_PATTERN.test(company)) unavailable();
+  await client.query("SELECT set_config('lock_timeout','5000ms',true)");
   await client.query('SELECT pg_advisory_xact_lock_shared($1::bigint)', [CONFIGURATION_LOCK]);
   await client.query('SELECT pg_advisory_xact_lock($1::integer,hashtext($2))', [CONFIGURATION_LOCK, company]);
 }
 
 export async function lockPlatformConfiguration(client: DatabaseClient): Promise<void> {
+  await client.query("SELECT set_config('lock_timeout','5000ms',true)");
   await client.query('SELECT pg_advisory_xact_lock($1::bigint)', [CONFIGURATION_LOCK]);
 }
 

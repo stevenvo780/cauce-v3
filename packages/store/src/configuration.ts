@@ -387,11 +387,12 @@ export class ConfigurationRepository extends ConfigurationMutations {
     client: DatabaseClient, actor: ConfigurationActor, mutation: ConfigMutation, expected?: number,
     peeked?: CompanyAuthority,
   ): Promise<{ current: CompanyAuthority; revision: number }> {
+    await client.query("SELECT set_config('lock_timeout','5000ms',true)");
     peeked ??= await this.peek(client, actor);
     this.authorizeMutation(mutation, peeked);
     if (isPlatformMutation(mutation)) await lockPlatformConfiguration(client);
     else await lockCompanyConfiguration(client, peeked.actingCompany);
-    await client.query('SELECT cauce_lock_owner_guard($1)', [peeked.actingCompany]);
+    await this.lockAuthorityWriters(client, mutation, peeked.actingCompany);
     const current = await this.authority(client, actor);
     if (current.actingCompany !== peeked.actingCompany) throw new ConfigurationError('conflict', 'the acting company changed');
     this.authorizeMutation(mutation, current);
@@ -403,6 +404,37 @@ export class ConfigurationRepository extends ConfigurationMutations {
       );
     }
     return { current, revision };
+  }
+
+  private async lockAuthorityWriters(client: DatabaseClient, mutation: ConfigMutation, company: string): Promise<void> {
+    const leaves = mutation.resource === 'batch' ? mutation.mutations : [mutation];
+    const authorityChanges = leaves.filter(leaf => {
+      if (!['tenant', 'room', 'membership', 'agent', 'role_policy'].includes(leaf.resource)) return false;
+      if (['delete', 'retire', 'purge'].includes(leaf.action)) return true;
+      if (leaf.action !== 'update') return false;
+      const value = leaf.value;
+      return value !== undefined && ['enabled', 'role', 'allow_control'].some(key => key in value);
+    });
+    const touchesPlatform = async (): Promise<boolean> => {
+      if (authorityChanges.length === 0) return false;
+      const platform = await client.query(`SELECT 1 FROM platform_admins admin
+        JOIN console_users person ON person.id=admin.human_id
+        WHERE EXISTS(SELECT 1 FROM jsonb_array_elements($1::jsonb) operation WHERE
+          operation->>'resource'='role_policy'
+          OR (operation->>'resource'='tenant' AND operation->>'id'=person.tenant_id)
+          OR (operation->>'resource'='agent' AND operation->>'tenant_id'=person.tenant_id AND operation->>'alias'=person.alias)
+          OR (operation->>'resource'='membership' AND operation->>'tenant_id'=person.tenant_id AND operation->>'alias'=person.alias)
+          OR (operation->>'resource'='room' AND operation->>'tenant_id'=person.tenant_id
+            AND EXISTS(SELECT 1 FROM memberships member WHERE member.tenant_id=person.tenant_id
+              AND member.alias=person.alias AND member.room_id=operation->>'id'))) LIMIT 1`, [JSON.stringify(authorityChanges)]);
+      return (platform.rowCount ?? 0) > 0;
+    };
+    const platform = await touchesPlatform();
+    if (platform) await client.query('SELECT cauce_lock_platform_owner_guard()');
+    await client.query('SELECT cauce_lock_owner_guard($1)', [company]);
+    if (!platform && await touchesPlatform()) {
+      throw new ConfigurationError('conflict', 'platform authority changed; reload and retry');
+    }
   }
 
   private async change(

@@ -66,7 +66,7 @@ async function readLockedIdentity(
   expectedHumanId?: string,
 ): Promise<HumanIdentitySnapshot | undefined> {
   if (!validKey(key) || (expectedHumanId !== undefined && !isAnyUuid(expectedHumanId))) return undefined;
-  await client.query('SELECT cauce_lock_authority_read_guard()');
+  await client.query("SELECT set_config('lock_timeout','5000ms',true)");
   const { provider, namespace, subject } = key;
   const values = [provider, namespace, subject];
   const lookup = await client.query<{ human_id: string }>(
@@ -155,7 +155,7 @@ export async function lockConsoleHuman(
       || typeof credentialCheck.verifyCredentialStamp !== 'function')) {
     throw new StoreError('forbidden', 'console human authority is unavailable');
   }
-  await client.query('SELECT cauce_lock_authority_read_guard()');
+  await client.query("SELECT set_config('lock_timeout','5000ms',true)");
   const credentialColumns = credentialCheck === undefined ? '' :
     ', password_hash, (extract(epoch FROM password_changed_at)*1000000)::numeric(20,0)::text AS password_changed_at_us';
   const account = (await client.query<AccountRow & {
@@ -201,7 +201,7 @@ export interface ConsolePersonSnapshot {
 /** Locks a console person and its home membership without judging either; the caller decides. */
 export async function lockConsolePerson(client: DatabaseClient, humanId: string): Promise<ConsolePersonSnapshot | undefined> {
   if (!isAnyUuid(humanId)) return undefined;
-  await client.query('SELECT cauce_lock_authority_read_guard()');
+  await client.query("SELECT set_config('lock_timeout','5000ms',true)");
   const account = (await client.query<AccountRow & { alias: string; company_id: string }>(
     'SELECT id, active, role, tenant_id, alias, company_id FROM console_users WHERE id=$1 FOR SHARE', [humanId],
   )).rows[0];
