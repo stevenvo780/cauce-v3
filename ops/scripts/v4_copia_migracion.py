@@ -243,13 +243,14 @@ class Copier:
                 candidate = os.path.join(base, name)
                 try:
                     info = os.lstat(candidate)
+                    effective = os.stat(candidate) if stat.S_ISLNK(info.st_mode) else info
                 except OSError:
                     return True
                 if stat.S_ISLNK(info.st_mode) and not self.inside_roots(candidate):
                     return True
                 if stat.S_ISLNK(info.st_mode) and name in directories and self.git_store_escapes(os.path.realpath(candidate), seen):
                     return True
-                if stat.S_ISREG(info.st_mode) and info.st_nlink > 1 and self.inode_names(info) < info.st_nlink:
+                if stat.S_ISREG(effective.st_mode) and effective.st_nlink > 1 and self.inode_names(effective) < effective.st_nlink:
                     return True
         return bool(errors)
 
@@ -282,25 +283,30 @@ class Copier:
         paths = (located('--git-common-dir'), located('--git-dir'), located('--git-path', 'objects'))
         if not all(paths) or not all(self.inside_roots(path) for path in paths) or any(self.git_store_escapes(os.path.realpath(path)) for path in paths):
             return True
-        alternates = os.path.join(os.path.realpath(paths[2]), 'info', 'alternates')
-        try:
-            info = os.lstat(alternates)
-            if not stat.S_ISREG(info.st_mode) or info.st_size > 65536:
+        def alternates_escape(objects: str, seen: set[str]) -> bool:
+            real = os.path.realpath(objects)
+            if real in seen:
+                return False
+            seen.add(real)
+            alternates = os.path.join(real, 'info', 'alternates')
+            try:
+                info = os.lstat(alternates)
+                if not stat.S_ISREG(info.st_mode) or info.st_size > 65536:
+                    return True
+                with os.fdopen(os.open(alternates, OPEN_FILE), 'rb') as handle:
+                    raw = handle.read(info.st_size)
+            except FileNotFoundError:
+                return False
+            except OSError:
                 return True
-            with os.fdopen(os.open(alternates, OPEN_FILE), 'rb') as handle:
-                raw = handle.read(info.st_size)
-        except FileNotFoundError:
+            if len(raw) != info.st_size:
+                return True
+            for item in (line.strip() for line in raw.decode('utf-8', 'surrogateescape').splitlines()):
+                candidate = item if not item or os.path.isabs(item) else os.path.join(real, item)
+                if item and not item.startswith('#') and (not self.inside_roots(candidate) or self.git_store_escapes(os.path.realpath(candidate)) or alternates_escape(candidate, seen)):
+                    return True
             return False
-        except OSError:
-            return True
-        if len(raw) != info.st_size:
-            return True
-        database = os.path.dirname(os.path.dirname(alternates))
-        for item in (line.strip() for line in raw.decode('utf-8', 'surrogateescape').splitlines()):
-            candidate = item if not item or os.path.isabs(item) else os.path.join(database, item)
-            if item and not item.startswith('#') and (not self.inside_roots(candidate) or self.git_store_escapes(os.path.realpath(candidate))):
-                return True
-        return False
+        return alternates_escape(paths[2], set())
 
     def omit(self, path: str, reason: str, parent: int, name: str, info: os.stat_result) -> None:
         files, size = (0, 0) if stat.S_ISDIR(info.st_mode) else (1, info.st_size)

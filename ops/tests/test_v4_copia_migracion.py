@@ -553,12 +553,16 @@ class SecurityTests(Scoped):
         def point_at(inside: pathlib.Path, outside: pathlib.Path) -> None:
             git(inside, 'update-ref', 'refs/heads/main', git(outside, 'rev-parse', 'HEAD'))
 
+        def inside_repo(name: str, filename: str = 'local.txt', text: str = 'local\n') -> pathlib.Path:
+            path = self.source / 'proyecto' / name
+            git(self.root, 'init', '-q', '-b', 'main', str(path))
+            write(path / filename, text)
+            git(path, 'add', '-A')
+            git(path, 'commit', '-q', '-m', 'local')
+            return path
+
         nested_out = outside_repo('fuera-anidado', 'SENTINEL-NESTED-9f3a')
-        nested = self.source / 'proyecto' / 'anidado'
-        git(self.root, 'init', '-q', '-b', 'main', str(nested))
-        write(nested / 'local.txt', 'local-anidado\n')
-        git(nested, 'add', '-A')
-        git(nested, 'commit', '-q', '-m', 'local')
+        nested = inside_repo('anidado')
         decoy = self.source / 'proyecto' / 'decoy-pack'
         decoy.mkdir()
         for item in (nested_out / '.git/objects/pack').iterdir():
@@ -569,24 +573,14 @@ class SecurityTests(Scoped):
         point_at(nested, nested_out)
 
         hard_out = outside_repo('fuera-duro', 'SENTINEL-HARD-9f3a')
-        hard = self.source / 'proyecto' / 'duro-fuera'
-        git(self.root, 'init', '-q', '-b', 'main', str(hard))
-        write(hard / 'local.txt', 'local-duro\n')
-        git(hard, 'add', '-A')
-        git(hard, 'commit', '-q', '-m', 'local')
+        hard = inside_repo('duro-fuera')
         hard_pack = hard / '.git/objects/pack'
-        for item in list(hard_pack.iterdir()):
-            item.unlink()
         for item in (hard_out / '.git/objects/pack').iterdir():
             os.link(item, hard_pack / item.name)
         point_at(hard, hard_out)
 
         bridge_out = outside_repo('fuera-puente', 'SENTINEL-BRIDGE-9f3a')
-        bridge_repo = self.source / 'proyecto' / 'puente'
-        git(self.root, 'init', '-q', '-b', 'main', str(bridge_repo))
-        write(bridge_repo / 'local.txt', 'local-puente\n')
-        git(bridge_repo, 'add', '-A')
-        git(bridge_repo, 'commit', '-q', '-m', 'local')
+        bridge_repo = inside_repo('puente')
         objects = bridge_repo / '.git/objects'
         bridge = self.source / 'proyecto' / 'bridge-objects'
         os.rename(objects, bridge)
@@ -596,31 +590,41 @@ class SecurityTests(Scoped):
         objects.symlink_to(bridge)
         point_at(bridge_repo, bridge_out)
 
-        shared = self.source / 'proyecto' / 'duro-dentro'
-        git(self.root, 'init', '-q', '-b', 'main', str(shared))
-        write(shared / 'dentro.txt', 'DENTRO-COMPARTIDO-9f3a\n')
-        git(shared, 'add', '-A')
-        git(shared, 'commit', '-q', '-m', 'dentro')
+        shared = inside_repo('duro-dentro', 'dentro.txt', 'DENTRO-COMPARTIDO-9f3a\n')
         git(shared, 'repack', '-a', '-d', '-q')
-        twin = self.source / 'proyecto' / 'duro-gemelo'
-        git(self.root, 'init', '-q', '-b', 'main', str(twin))
-        write(twin / 'otro.txt', 'gemelo\n')
-        git(twin, 'add', '-A')
-        git(twin, 'commit', '-q', '-m', 'gemelo')
-        (twin / '.git/objects/pack').mkdir(parents=True, exist_ok=True)
+        twin = inside_repo('duro-gemelo', 'otro.txt', 'gemelo\n')
         for item in (shared / '.git/objects/pack').iterdir():
             os.link(item, twin / '.git/objects/pack' / item.name)
+
+        file_out = outside_repo('fuera-fichero', 'SENTINEL-FILELINK-9f3a')
+        file_bridge = self.source / 'proyecto' / 'puente-fichero/.git/objects/pack'
+        file_bridge.mkdir(parents=True)
+        for item in (file_out / '.git/objects/pack').iterdir():
+            os.link(item, file_bridge / item.name)
+        file_in = inside_repo('enlace-fichero')
+        for item in file_bridge.iterdir():
+            (file_in / '.git/objects/pack' / item.name).symlink_to(item)
+        point_at(file_in, file_out)
+
+        alt_out = outside_repo('fuera-alt-encadenado', 'SENTINEL-CHAINED-ALT-9f3a')
+        alt_mid = self.source / 'proyecto' / 'alt-intermedio'
+        write(alt_mid / 'info/alternates', os.path.realpath(alt_out / '.git/objects') + '\n')
+        chain_in = inside_repo('con-alt-encadenado')
+        write(chain_in / '.git/objects/info/alternates', os.path.realpath(alt_mid) + '\n')
+        point_at(chain_in, alt_out)
 
         manifest = self.make_copy()
         repos = {repo['path'] for repo in manifest['repositories']}
         reasons = {item['path']: item['reason'] for item in manifest['omissions']}
-        for path in ('proyecto/anidado/.git', 'proyecto/duro-fuera/.git', 'proyecto/puente/.git'):
+        for path in ('proyecto/anidado/.git', 'proyecto/duro-fuera/.git', 'proyecto/puente/.git',
+                     'proyecto/enlace-fichero/.git', 'proyecto/con-alt-encadenado/.git'):
             self.assertEqual(reasons[path], 'unsafe-git-link', path)
             self.assertNotIn(path.removesuffix('/.git'), repos)
         self.assertIn('proyecto/duro-dentro', repos)
         self.assertIn('proyecto/duro-gemelo', repos)
         stored = self.copied_bytes() + self.bundle_bytes()
-        for sentinel in ('SENTINEL-NESTED-9f3a', 'SENTINEL-HARD-9f3a', 'SENTINEL-BRIDGE-9f3a'):
+        for sentinel in ('SENTINEL-NESTED-9f3a', 'SENTINEL-HARD-9f3a', 'SENTINEL-BRIDGE-9f3a',
+                         'SENTINEL-FILELINK-9f3a', 'SENTINEL-CHAINED-ALT-9f3a'):
             self.assertNotIn(sentinel.encode(), stored, sentinel)
         self.assertIn(b'DENTRO-COMPARTIDO-9f3a', stored)
 
