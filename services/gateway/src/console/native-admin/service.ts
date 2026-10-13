@@ -38,7 +38,7 @@ export function createNativeAdminService(deps: NativeAdminServiceDeps) {
     if (write) {
       const result = await client.query(`SELECT 1 FROM console_users person JOIN human_tenant_memberships human ON human.human_id=person.id
         AND human.tenant_id=person.tenant_id AND human.actor_alias=person.alias WHERE person.id=$1 AND person.active AND person.role='operator'
-        AND human.enabled AND human.revoked_at IS NULL AND human.role='operator' AND 'control'=ANY(human.permissions) FOR SHARE OF person,human`, [verified.humanId]);
+        AND human.enabled AND human.revoked_at IS NULL AND 'control'=ANY(human.permissions) FOR SHARE OF person,human`, [verified.humanId]);
       if (!result.rowCount) throw new NativeAdminError('forbidden');
     }
     actor.signal?.throwIfAborted();
