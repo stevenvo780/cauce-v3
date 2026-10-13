@@ -4,7 +4,7 @@ import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
-import { lockCompanyAuthority, type DatabaseClient, type DatabasePool } from '../src/index.js';
+import { lockCompanyAuthority, settleContextApplications, type ContextVersion, type DatabaseClient, type DatabasePool } from '../src/index.js';
 import { ContextGitBroker } from '../src/context-git.js';
 import { ContextVersionStore } from '../src/context-version.js';
 import { processContextOutbox } from '../src/context-version-worker.js';
@@ -27,11 +27,12 @@ beforeEach(async () => {
     { expected_version: 0, source: 'ui', files: [{ path: 'context/mission.md', content: 'Use company scoped context.' }] });
 });
 afterEach(async () => {
+  if (current) await settleContextApplications(current.pool);
   await current?.close(); current = undefined;
   if (directory) { await rm(directory, { recursive: true, force: true }); directory = undefined; }
 });
 afterAll(async () => { if (database) { await database.pool.end(); await database.container.stop(); } });
-function target() { const value = fixtures[0]; if (!value) throw new Error('fixture absent'); return value; }
+function target(index = 0) { const value = fixtures[index]; if (!value) throw new Error('fixture absent'); return value; }
 function source(client: DatabaseClient) { const value = target(); return lockCompanyAuthority(client,
   { tenant: value.tenant_id, alias: 'owner', humanId: value.human_id }); }
 async function evidence() {
@@ -60,6 +61,26 @@ describe('safe diagnostics for durable context synchronization', () => {
     expect(stored.events).toEqual([{ company_id: 'context_alpha', tenant_id: 'ContextAlpha', actor_alias: 'director', decision: 'info',
       metadata: { component: 'context', host_id: 'zz-canary-context-sync', target_tenant: 'ContextAlpha', target_alias: 'director',
         version: 1, git_commit: 'b'.repeat(40), state: 'error', error_code: expected } }]);
+    expect(JSON.stringify(stored)).not.toContain('fixture-token');
+  });
+  it('audits a repeated sync failure only when its state or sanitized cause changes', async () => {
+    const messages = ['Authentication failed for https://fixture-token@github.invalid/private',
+      'Authentication failed for https://different-fixture-token@github.invalid/private',
+      'Could not resolve host: github.invalid', 'Connection refused'];
+    const causes = ['context_git_authentication_failed', 'context_git_authentication_failed',
+      'context_git_network_failed', 'context_git_network_failed'];
+    for (let index = 0; index < messages.length; index += 1) {
+      await pool.query('UPDATE agent_context_outbox SET retry_at=now(),apply_retry_at=now()');
+      expect(await processContextOutbox(pool, { git: { commit: async () => 'b'.repeat(40),
+        push: async () => { throw new Error(messages[index]); } } }, target()))
+        .toMatchObject({ state: 'error', error: causes[index] });
+      const stored = await evidence();
+      expect(stored.sync[0]).toMatchObject({ state: 'error', last_error: causes[index], attempts: index + 1 });
+      expect(stored.events).toHaveLength(index < 2 ? 1 : 2);
+    }
+    const stored = await evidence();
+    expect(stored.events.map(event => [event.metadata.state, event.metadata.error_code])).toEqual([
+      ['error', 'context_git_authentication_failed'], ['error', 'context_git_network_failed']]);
     expect(JSON.stringify(stored)).not.toContain('fixture-token');
   });
   it.each([
@@ -94,6 +115,7 @@ describe('safe diagnostics for durable context synchronization', () => {
     const recovered = await evidence();
     expect(recovered.sync[0]).toMatchObject({ state: 'synced', last_error: null, git_commit: failed.sync[0]?.git_commit, attempts: 2 });
     expect(recovered.events[1]?.metadata).toMatchObject({ state: 'synced', error_code: null, host_id: 'zz-canary-context-sync', component: 'context' });
+    expect(recovered.events).toHaveLength(2);
     expect((await execute('git', ['--git-dir', remote, 'rev-parse', 'main'])).stdout.trim()).toBe(failed.sync[0]?.git_commit);
   });
   it('rejects an unprotected broker repository before creating a Git commit', async () => {
@@ -102,5 +124,61 @@ describe('safe diagnostics for durable context synchronization', () => {
     expect(await processContextOutbox(pool, { git: new ContextGitBroker(directory) }, target()))
       .toMatchObject({ state: 'error', error: 'context_git_repository_not_private' });
     expect((await evidence()).sync[0]).toMatchObject({ state: 'error', last_error: 'context_git_repository_not_private', git_commit: null });
+  });
+});
+
+describe('bounded dedicated application of the desired version', () => {
+  const git = { commit: async () => 'b'.repeat(40), push: async () => undefined };
+  const unconfirmed = (calls: number[]) => ({ apply: async (version: ContextVersion) => {
+    calls.push(version.version); return { version: version.version, digest: version.digest };
+  } });
+  async function application(index = 0) {
+    const row = (await pool.query<{ apply_error: string | null; leased: boolean; retry_in: number | null }>(`SELECT apply_error,
+      apply_token IS NOT NULL AS leased,CASE WHEN isfinite(apply_retry_at) THEN EXTRACT(EPOCH FROM apply_retry_at-clock_timestamp())::float8 END AS retry_in
+      FROM agent_context_outbox WHERE tenant_id=$1`, [target(index).tenant_id])).rows[0];
+    if (!row) throw new Error('context outbox absent');
+    return row;
+  }
+  it('stops after three unconfirmed attempts with growing waits until an operator asks again', async () => {
+    const calls: number[] = []; const runtime = unconfirmed(calls); const waits: (number | null)[] = [];
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      expect(await processContextOutbox(pool, { git, runtime }, target())).toEqual({ state: 'error', version: 1,
+        error: attempt < 3 ? 'context_runtime_verification_failed' : 'context_runtime_attempts_exhausted' });
+      waits.push((await application()).retry_in);
+      expect(await processContextOutbox(pool, { git, runtime }, target())).toEqual({ state: 'idle' });
+      await pool.query('UPDATE agent_context_outbox SET apply_retry_at=now() WHERE isfinite(apply_retry_at)');
+    }
+    expect(calls).toEqual([1, 1, 1]);
+    expect(waits[0]).toBeGreaterThan(55); expect(waits[0]).toBeLessThanOrEqual(60);
+    expect(waits[1]).toBeGreaterThan(115); expect(waits[1]).toBeLessThanOrEqual(120);
+    expect(waits[2]).toBeNull();
+    expect(await processContextOutbox(pool, { git, runtime })).toEqual({ state: 'idle' });
+    await store.retry(source, target().tenant_id, target().alias);
+    expect(await processContextOutbox(pool, { git, runtime })).toEqual({ state: 'error', version: 1, error: 'context_runtime_verification_failed' });
+    expect(calls).toEqual([1, 1, 1, 1]);
+  });
+  it('ends a row an unbounded worker kept retrying without spending another turn', async () => {
+    await pool.query("UPDATE agent_context_outbox SET apply_error='context_runtime_verification_failed',apply_retry_at=now()");
+    const calls: number[] = [];
+    expect(await processContextOutbox(pool, { git, runtime: unconfirmed(calls) }, target()))
+      .toEqual({ state: 'error', version: 1, error: 'context_runtime_attempts_exhausted' });
+    expect(calls).toEqual([]);
+    expect(await application()).toEqual({ apply_error: 'context_runtime_attempts_exhausted', leased: false, retry_in: null });
+  });
+  it('serves another agent while the first application only awaits its ACK', async () => {
+    const other = target(1);
+    await store.write(client => lockCompanyAuthority(client, { tenant: other.tenant_id, alias: 'owner', humanId: other.human_id }),
+      other.tenant_id, other.alias, { expected_version: 0, source: 'ui', files: [{ path: 'context/mission.md', content: 'Second company.' }] });
+    let release!: () => void; const blocked = new Promise<void>(resolve => { release = resolve; });
+    const runtime = { apply: async (version: ContextVersion, waiting?: () => void) => {
+      if (version.company_id === target().company_id) { waiting?.(); await blocked; }
+      return { version: version.version, digest: version.digest };
+    } };
+    expect(await processContextOutbox(pool, { git, runtime }, target())).toEqual({ state: 'pending', version: 1 });
+    expect(await processContextOutbox(pool, { git, runtime })).toEqual({ state: 'error', version: 1, error: 'context_runtime_verification_failed' });
+    expect(await application(0)).toMatchObject({ apply_error: null, leased: true });
+    expect(await application(1)).toMatchObject({ apply_error: 'context_runtime_verification_failed', leased: false });
+    release(); await settleContextApplications(pool);
+    expect(await application(0)).toMatchObject({ apply_error: 'context_runtime_verification_failed', leased: false });
   });
 });

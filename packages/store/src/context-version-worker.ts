@@ -1,13 +1,41 @@
 import { randomUUID } from 'node:crypto';
 import { withTransaction, type DatabaseClient, type DatabasePool } from './db.js';
 import { contextSnapshot, lockContextTarget, readContextVersion } from './context-version.js';
-import { contextDigest, type ContextGitSink, type ContextRuntimeSink, type ContextTarget, type ContextVersion } from './context-version-model.js';
+import type { ContextGitSink, ContextRuntimeSink, ContextTarget, ContextVersion } from './context-version-model.js';
 
-export interface ContextWorkerOptions { readonly git?: ContextGitSink; readonly runtime?: ContextRuntimeSink }
+/** `offline`: no live lease. `unsupported`: the live agent cannot negotiate the version or witness the turn that consumed it. */
+export type ContextRuntimeReadiness = 'ready' | 'offline' | 'unsupported';
+/**
+ * A runtime that probes the live agent leaves an automatic application to the agent's next natural turn and spends dedicated
+ * turns only on an operator request; without a probe every due application is a dedicated attempt. Both are bounded.
+ */
+export interface ContextApplicationRuntime extends ContextRuntimeSink {
+  /** `waiting` fires once the dedicated turn is queued and only the agent's ACK is awaited. */
+  apply(version: ContextVersion, waiting?: () => void): Promise<{ readonly version: number; readonly digest: string }>;
+  readiness?(target: ContextTarget): Promise<ContextRuntimeReadiness>;
+}
+export class ContextRuntimeUnsupportedError extends Error {
+  constructor() { super('the live agent cannot negotiate versioned context or witness its turn'); this.name = 'ContextRuntimeUnsupportedError'; }
+}
+export interface ContextWorkerOptions { readonly git?: ContextGitSink; readonly runtime?: ContextApplicationRuntime }
 export interface ContextWorkerResult { readonly state: 'idle' | 'busy' | 'synced' | 'pending' | 'error'; readonly version?: number; readonly error?: string }
-interface ReservedApplication { readonly version: ContextVersion; readonly token: string; readonly gitError?: string }
-interface OutboxRow extends ContextTarget { readonly version: string; readonly state: string; readonly git_commit: string | null; readonly git_ready: boolean }
+/** Dedicated turns one request may spend. The retries wait 60 s and 120 s, longer than the delivery sink waits for an ACK. */
+export const CONTEXT_APPLICATION_ATTEMPTS = 3;
+const RETRY_BASE_SECONDS = 60;
+const APPLICATION_CONCURRENCY = 4;
+const VERIFICATION_FAILED = 'context_runtime_verification_failed';
+type ApplicationRefusal = 'context_runtime_unsupported' | 'context_runtime_offline' | 'context_runtime_attempts_exhausted';
+type ApplicationOutcome = { readonly kind: 'park' | 'attempted' } | { readonly kind: 'refused'; readonly code: ApplicationRefusal };
+interface Candidate { readonly target: ContextTarget; readonly version: number; readonly gitError?: string }
+interface ReservedApplication {
+  readonly runtime: ContextApplicationRuntime; readonly version: ContextVersion; readonly token: string;
+  readonly gitError?: string; readonly attempt: number;
+  /** The schedule moved after the version was written: an operator retry or apply, or a dedicated attempt that failed. */
+  readonly rescheduled: boolean;
+}
+interface OutboxRow extends ContextTarget { readonly version: string; readonly state: string; readonly last_error: string | null; readonly git_commit: string | null; readonly git_ready: boolean }
 const scopeOf = (version: ContextVersion) => [version.company_id, version.tenant_id, version.alias, version.version];
+const inFlight = new WeakMap<DatabasePool, Set<Promise<void>>>();
 
 function syncFailureCause(error: unknown, fallback: string): string {
   const fields = error !== null && typeof error === 'object' ? error as Record<string, unknown> : {};
@@ -44,67 +72,151 @@ async function syncGit(client: DatabaseClient, row: OutboxRow, version: ContextV
     SELECT $2,$3,'context.sync','info',$1,jsonb_build_object('component','context','host_id',
       (SELECT host_id FROM agents WHERE company_id=$1 AND tenant_id=$2 AND alias=$3),
       'target_tenant',$2::text,'target_alias',$3::text,'version',version,'git_commit',git_commit,'state',state,'error_code',last_error)
-    FROM agent_context_outbox WHERE company_id=$1 AND tenant_id=$2 AND alias=$3 AND version=$4`, scope);
+    FROM agent_context_outbox WHERE company_id=$1 AND tenant_id=$2 AND alias=$3 AND version=$4
+      AND (state IS DISTINCT FROM $5::text OR last_error IS DISTINCT FROM $6::text)`, [...scope, row.state, row.last_error]);
   return failure;
 }
-async function reserveApplication(pool: DatabasePool, options: ContextWorkerOptions, target?: ContextTarget): Promise<ReservedApplication | ContextWorkerResult> {
+/** The lowest due version of each agent, oldest due first, so one agent never holds the others back. */
+const DUE_VERSIONS = `SELECT * FROM (SELECT DISTINCT ON (outbox.company_id,outbox.tenant_id,outbox.alias) outbox.*,
+    (outbox.state<>'synced' AND outbox.retry_at<=now()) AS git_ready,
+    LEAST(CASE WHEN outbox.state<>'synced' AND outbox.retry_at<=now() THEN outbox.retry_at END,
+      CASE WHEN $4::boolean AND outbox.applied_at IS NULL AND outbox.version=current.desired_version AND outbox.apply_retry_at<=now()
+        THEN outbox.apply_retry_at END) AS due_at
+  FROM agent_context_outbox outbox JOIN agent_context_state current USING(company_id,tenant_id,alias)
+  WHERE ((outbox.state<>'synced' AND outbox.retry_at<=now()) OR ($4::boolean AND outbox.applied_at IS NULL
+      AND outbox.version=current.desired_version AND outbox.apply_retry_at<=now()))
+    AND (outbox.apply_token IS NULL OR outbox.apply_lease_until<=now())
+    AND ($1::text IS NULL OR (outbox.company_id=$1 AND outbox.tenant_id=$2 AND outbox.alias=$3))
+  ORDER BY outbox.company_id,outbox.tenant_id,outbox.alias,outbox.version) due
+  ORDER BY due_at,company_id,tenant_id,alias LIMIT $5`;
+/** Git stays serialized by the shared broker lock; it never holds a target lock, so an adoption ACK cannot deadlock with it. */
+async function syncDueVersions(pool: DatabasePool, git: ContextGitSink | undefined, target: ContextTarget | undefined,
+  applications: boolean, limit: number): Promise<Candidate[] | 'busy'> {
   return withTransaction(pool, async client => {
     const locked = (await client.query<{ locked: boolean }>('SELECT pg_try_advisory_xact_lock(783_003_058) AS locked')).rows[0];
-    if (locked?.locked !== true) return { state: 'busy' };
+    if (locked?.locked !== true) return 'busy';
     await client.query("SET LOCAL statement_timeout='60000ms'; SET LOCAL idle_in_transaction_session_timeout='60000ms'");
-    const row = (await client.query<OutboxRow>(`SELECT outbox.*,(outbox.state<>'synced' AND outbox.retry_at<=now()) AS git_ready
-      FROM agent_context_outbox outbox JOIN agent_context_state current USING(company_id,tenant_id,alias)
-      WHERE ((outbox.state<>'synced' AND outbox.retry_at<=now()) OR
-        (outbox.applied_at IS NULL AND outbox.version=current.desired_version AND outbox.apply_retry_at<=now()))
-        AND (outbox.apply_token IS NULL OR outbox.apply_lease_until<=now())
-        AND ($1::text IS NULL OR (outbox.company_id=$1 AND outbox.tenant_id=$2 AND outbox.alias=$3))
-      ORDER BY outbox.company_id,outbox.tenant_id,outbox.alias,outbox.version LIMIT 1`,
-    [target?.company_id ?? null, target?.tenant_id ?? null, target?.alias ?? null])).rows[0];
-    if (!row) return { state: 'idle' };
-    const identity = { company_id: row.company_id, tenant_id: row.tenant_id, alias: row.alias };
-    const version = await readContextVersion(client, identity, Number(row.version));
-    const gitError = await syncGit(client, row, version, options.git);
-    await lockContextTarget(client, identity);
-    const snapshot = await contextSnapshot(client, identity);
-    if (snapshot.desired_version !== version.version || snapshot.applied_version >= version.version) {
-      return gitError ? { state: 'error', version: version.version, error: gitError } : { state: 'synced', version: version.version };
+    const rows = (await client.query<OutboxRow>(DUE_VERSIONS,
+      [target?.company_id ?? null, target?.tenant_id ?? null, target?.alias ?? null, applications, limit])).rows;
+    const candidates: Candidate[] = [];
+    for (const row of rows) {
+      const identity = { company_id: row.company_id, tenant_id: row.tenant_id, alias: row.alias };
+      const gitError = row.git_ready ? await syncGit(client, row, await readContextVersion(client, identity, Number(row.version)), git) : undefined;
+      candidates.push({ target: identity, version: Number(row.version), ...(gitError ? { gitError } : {}) });
     }
-    if (!options.runtime) {
-      await client.query(`UPDATE agent_context_outbox SET apply_retry_at=clock_timestamp()+interval '30 seconds'
-        WHERE company_id=$1 AND tenant_id=$2 AND alias=$3 AND version=$4`, scopeOf(version));
-      return gitError ? { state: 'error', version: version.version, error: gitError } : { state: 'pending', version: version.version };
+    return candidates;
+  });
+}
+function settled(candidate: { readonly gitError?: string }, version: number, state: 'synced' | 'pending', error?: string): ContextWorkerResult {
+  const code = candidate.gitError ?? error;
+  return code ? { state: 'error', version, error: code } : { state, version };
+}
+/** A failed attempt continues its request; its number lives in the audit ledger. A request without a recent ledger is spent. */
+async function nextAttempt(client: DatabaseClient, target: ContextTarget, version: number, applyError: string | null): Promise<number> {
+  if (applyError !== VERIFICATION_FAILED) return 1;
+  const last = (await client.query<{ attempt: number }>(`SELECT (metadata->>'attempt')::integer AS attempt FROM audit_events
+    WHERE tenant_id=$2 AND actor_alias=$3 AND company_id=$1 AND action='context.apply' AND metadata->>'version'=$4
+      AND jsonb_typeof(metadata->'attempt')='number' AND created_at>now()-interval '1 hour'
+    ORDER BY created_at DESC,id DESC LIMIT 1`, [target.company_id, target.tenant_id, target.alias, String(version)])).rows[0];
+  return (last?.attempt ?? CONTEXT_APPLICATION_ATTEMPTS) + 1;
+}
+async function reserveApplication(pool: DatabasePool, options: ContextWorkerOptions, candidate: Candidate,
+  applications: boolean): Promise<ReservedApplication | ContextWorkerResult> {
+  return withTransaction(pool, async client => {
+    await lockContextTarget(client, candidate.target);
+    const snapshot = await contextSnapshot(client, candidate.target);
+    if (snapshot.desired_version !== candidate.version || snapshot.applied_version >= candidate.version) return settled(candidate, candidate.version, 'synced');
+    const scope = [candidate.target.company_id, candidate.target.tenant_id, candidate.target.alias, candidate.version];
+    const row = (await client.query<{ apply_error: string | null; rescheduled: boolean }>(`SELECT outbox.apply_error,
+      outbox.apply_retry_at>version.created_at AS rescheduled FROM agent_context_outbox outbox
+      JOIN agent_context_versions version USING(company_id,tenant_id,alias,version)
+      WHERE outbox.company_id=$1 AND outbox.tenant_id=$2 AND outbox.alias=$3 AND outbox.version=$4 AND outbox.applied_at IS NULL
+        AND outbox.apply_retry_at<=now() AND (outbox.apply_token IS NULL OR outbox.apply_lease_until<=now())
+      FOR UPDATE OF outbox SKIP LOCKED`, scope)).rows[0];
+    if (!row || !applications) return settled(candidate, candidate.version, 'pending');
+    const runtime = options.runtime;
+    if (!runtime) {
+      await client.query(`UPDATE agent_context_outbox SET apply_retry_at='infinity'
+        WHERE company_id=$1 AND tenant_id=$2 AND alias=$3 AND version=$4`, scope);
+      return settled(candidate, candidate.version, 'pending');
     }
     const token = randomUUID();
     await client.query(`UPDATE agent_context_outbox SET apply_token=$5,apply_lease_until=clock_timestamp()+interval '90 seconds'
-      WHERE company_id=$1 AND tenant_id=$2 AND alias=$3 AND version=$4`, [...scopeOf(version), token]);
-    return { version, token, ...(gitError ? { gitError } : {}) };
+      WHERE company_id=$1 AND tenant_id=$2 AND alias=$3 AND version=$4`, [...scope, token]);
+    return { runtime, version: await readContextVersion(client, candidate.target, candidate.version), token, rescheduled: row.rescheduled,
+      attempt: await nextAttempt(client, candidate.target, candidate.version, row.apply_error),
+      ...(candidate.gitError ? { gitError: candidate.gitError } : {}) };
   });
 }
-async function finishApplication(pool: DatabasePool, reservation: ReservedApplication): Promise<ContextWorkerResult> {
-  const version = reservation.version;
+async function runApplication(pool: DatabasePool, reservation: ReservedApplication, waiting: () => void): Promise<ContextWorkerResult> {
+  const runtime = reservation.runtime;
+  const readiness = runtime.readiness ? await runtime.readiness(reservation.version) : 'ready';
+  const refuse = (code: ApplicationRefusal): ApplicationOutcome => ({ kind: 'refused', code });
+  let outcome: ApplicationOutcome = { kind: 'attempted' };
+  if (readiness === 'unsupported') outcome = refuse('context_runtime_unsupported');
+  else if (!reservation.rescheduled && runtime.readiness) outcome = { kind: 'park' };
+  else if (readiness === 'offline') outcome = refuse('context_runtime_offline');
+  else if (reservation.attempt > CONTEXT_APPLICATION_ATTEMPTS) outcome = refuse('context_runtime_attempts_exhausted');
+  else {
+    try { await runtime.apply(reservation.version, waiting); } catch (error) {
+      /* The durable ACK decides adoption even if the request times out after consumption. */
+      if (error instanceof ContextRuntimeUnsupportedError) outcome = refuse('context_runtime_unsupported');
+    }
+  }
+  return finishApplication(pool, reservation, outcome);
+}
+async function finishApplication(pool: DatabasePool, reservation: ReservedApplication, outcome: ApplicationOutcome): Promise<ContextWorkerResult> {
+  const { version, attempt } = reservation;
   return withTransaction(pool, async client => {
     await lockContextTarget(client, version);
     const fenced = (await client.query<{ applied_at: Date | null }>(`SELECT applied_at FROM agent_context_outbox
       WHERE company_id=$1 AND tenant_id=$2 AND alias=$3 AND version=$4 AND apply_token=$5 AND apply_lease_until>now() FOR UPDATE`,
     [...scopeOf(version), reservation.token])).rows[0];
     if (!fenced) return { state: 'pending', version: version.version };
-    const failed = fenced.applied_at === null;
-    await client.query(`UPDATE agent_context_outbox SET apply_token=NULL,apply_lease_until=NULL,apply_error=$6,
-      apply_retry_at=clock_timestamp()+interval '30 seconds'
+    const failure = fenced.applied_at !== null || outcome.kind === 'park' ? null : outcome.kind === 'refused' ? outcome.code
+      : attempt >= CONTEXT_APPLICATION_ATTEMPTS ? 'context_runtime_attempts_exhausted' : VERIFICATION_FAILED;
+    const retrySeconds = failure === VERIFICATION_FAILED ? RETRY_BASE_SECONDS * 2 ** (attempt - 1) : null;
+    await client.query(`UPDATE agent_context_outbox SET apply_token=NULL,apply_lease_until=NULL,apply_error=COALESCE($6,apply_error),
+      apply_retry_at=CASE WHEN applied_at IS NOT NULL THEN apply_retry_at WHEN $7::integer IS NULL THEN 'infinity'::timestamptz
+        ELSE clock_timestamp()+make_interval(secs=>$7::integer) END
       WHERE company_id=$1 AND tenant_id=$2 AND alias=$3 AND version=$4 AND apply_token=$5`,
-    [...scopeOf(version), reservation.token, failed ? 'context_runtime_verification_failed' : null]);
-    const error = reservation.gitError ?? (failed ? 'context_runtime_verification_failed' : undefined);
-    return error ? { state: 'error', version: version.version, error } : { state: 'synced', version: version.version };
+    [...scopeOf(version), reservation.token, failure, retrySeconds]);
+    if (failure) await client.query(`INSERT INTO audit_events(tenant_id,actor_alias,action,decision,company_id,metadata)
+      VALUES($2,$3,'context.apply',$5,$1,jsonb_build_object('component','context','host_id',
+        (SELECT host_id FROM agents WHERE company_id=$1 AND tenant_id=$2 AND alias=$3),'target_tenant',$2::text,'target_alias',$3::text,
+        'version',$4::bigint,'attempt',$6::integer,'error_code',$7::text))`,
+    [...scopeOf(version), failure === VERIFICATION_FAILED ? 'info' : 'deny', outcome.kind === 'attempted' ? attempt : null, failure]);
+    return settled(reservation, version.version, fenced.applied_at === null ? 'pending' : 'synced', failure ?? undefined);
   });
 }
+function applicationsOf(pool: DatabasePool): Set<Promise<void>> {
+  const known = inFlight.get(pool);
+  if (known) return known;
+  const created = new Set<Promise<void>>(); inFlight.set(pool, created);
+  return created;
+}
+/** Resolves when the application ends or only awaits the agent's ACK; that wait continues without holding the caller. */
+function startApplication(pool: DatabasePool, reservation: ReservedApplication, active: Set<Promise<void>>): Promise<ContextWorkerResult> {
+  return new Promise(resolve => {
+    const waiting = () => { resolve(settled(reservation, reservation.version.version, 'pending')); };
+    const run: Promise<void> = runApplication(pool, reservation, waiting).then(resolve, waiting)
+      .finally(() => { active.delete(run); });
+    active.add(run);
+  });
+}
+/** Waits for the applications this process still awaits, e.g. before its pool closes. */
+export async function settleContextApplications(pool: DatabasePool): Promise<void> {
+  await Promise.all([...applicationsOf(pool)]);
+}
 export async function processContextOutbox(pool: DatabasePool, options: ContextWorkerOptions, target?: ContextTarget): Promise<ContextWorkerResult> {
-  const reservation = await reserveApplication(pool, options, target);
-  if ('state' in reservation) return reservation;
-
-  try {
-    const proof = await options.runtime?.apply(reservation.version);
-    if (proof?.version !== reservation.version.version || proof.digest !== reservation.version.digest
-      || proof.digest !== contextDigest(reservation.version.files)) throw new Error('context runtime proof differs');
-  } catch { /* The durable ACK decides adoption even if the request times out after consumption. */ }
-  return finishApplication(pool, reservation);
+  const active = applicationsOf(pool);
+  const slots = options.runtime ? APPLICATION_CONCURRENCY - active.size : APPLICATION_CONCURRENCY;
+  const applications = slots > 0;
+  const candidates = await syncDueVersions(pool, options.git, target, applications, target ? 1 : applications ? slots : APPLICATION_CONCURRENCY);
+  if (candidates === 'busy') return { state: 'busy' };
+  const results = await Promise.all(candidates.map(async candidate => {
+    const reservation = await reserveApplication(pool, options, candidate, applications);
+    return 'token' in reservation ? startApplication(pool, reservation, active) : reservation;
+  }));
+  return results.find(result => result.state === 'error') ?? results.find(result => result.state === 'pending') ?? results[0] ?? { state: 'idle' };
 }
