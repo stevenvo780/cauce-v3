@@ -9,6 +9,10 @@ import { HostClaimSchema, HostHeartbeatSchema, HostInvitationSchema, HostSetupRe
 
 const INVITATION_TTL_MS = 10 * 60_000;
 const HOST_NAME = /^[a-z0-9_]+$/u;
+const ACTIVE_IDENTITY_KEY = `SELECT identity.public_key FROM fleet_host_identities identity
+  JOIN fleet_hosts host ON host.host_id=identity.host_id JOIN companies company ON company.id=identity.company_id
+  WHERE identity.host_id=$1 AND identity.company_id=$2 AND identity.enabled AND host.enabled AND company.enabled
+    AND company.retired_at IS NULL`;
 interface InvitationRow { id: string; company_id: string; host_id: string; display_name: string; notes: string;
   invited_by: string; token_hash: string; nonce: string; expires_at: Date; state: string }
 function authorize(authority: CompanyAuthority): void {
@@ -145,18 +149,24 @@ export class HostEnrollmentRepository {
       return result;
     });
   }
+  /**
+   * A forged proof is refused from an unlocked read, before any transaction. A verified request locks its
+   * identity, which serializes the computer's own requests, and only shares the host row: that still fences
+   * disabling or deleting the computer, yet admits the KEY SHARE and SHARE reads fleet writers take after the
+   * revision lock that `work` may wait for.
+   */
   async request<T>(host:string,method:string,path:string,value:unknown,
     work:(client:DatabaseClient,identity:{host_id:string;company_id:string})=>Promise<T>):Promise<T> {
     const packet = SignedHostRequestSchema.parse(value);
     if (packet.host_id!==host || Math.abs(Date.now()-packet.issued_at)>120_000) throw new StoreError('forbidden','host request is unavailable');
+    const verified = (await this.pool.query<{ public_key: string }>(ACTIVE_IDENTITY_KEY, [host,packet.company_id])).rows[0]?.public_key;
+    if (verified === undefined || !verifyHostProof(verified,packet.proof,hostRequestMessage(method,path,packet))) {
+      throw new StoreError('forbidden','host identity proof is unavailable');
+    }
     return withTransaction(this.pool, async client => {
-      const identity = (await client.query<{ public_key: string }>(`SELECT identity.public_key FROM fleet_host_identities identity
-        JOIN fleet_hosts host ON host.host_id=identity.host_id JOIN companies company ON company.id=identity.company_id
-        WHERE identity.host_id=$1 AND identity.company_id=$2 AND identity.enabled AND host.enabled AND company.enabled
-          AND company.retired_at IS NULL FOR UPDATE OF identity,host`, [host,packet.company_id])).rows[0];
-      if (!identity || !verifyHostProof(identity.public_key,packet.proof,hostRequestMessage(method,path,packet))) {
-        throw new StoreError('forbidden','host identity proof is unavailable');
-      }
+      const locked = (await client.query<{ public_key: string }>(`${ACTIVE_IDENTITY_KEY} FOR NO KEY UPDATE OF identity FOR SHARE OF host`,
+        [host,packet.company_id])).rows[0];
+      if (locked?.public_key !== verified) throw new StoreError('forbidden','host identity proof is unavailable');
       const company=(await client.query<{available:boolean}>('SELECT cauce_lock_host_company($1) AS available',[packet.company_id])).rows[0];
       if (!company?.available) throw new StoreError('forbidden','host company authority is unavailable');
       await client.query("DELETE FROM fleet_host_request_nonces WHERE host_id=$1 AND created_at<now()-interval '5 minutes'",[host]);
