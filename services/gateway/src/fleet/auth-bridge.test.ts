@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { ProviderAuthManager } from '../console/provider-auth.sessions.js';
-import type { ProviderAuthDependencies, ProviderAuthRequest } from '../console/provider-auth.types.js';
+import type { ProviderAuthActor, ProviderAuthDependencies, ProviderAuthRequest } from '../console/provider-auth.types.js';
 import { HostProviderAuthService } from './auth-bridge-client.js';
 import { startAuthBridge } from './auth-bridge-server.js';
 
@@ -18,9 +18,9 @@ async function fixture() {
   const directory = await mkdtemp(join(tmpdir(), 'fleet-bridge-'));
   cleanup.push(() => rm(directory, { recursive: true, force: true }));
   let output: ((bytes: Uint8Array) => void) | undefined;
-  let stopped = false; let inputBytes = ''; let allowed = true;
+  let stopped = false; let inputBytes = ''; let allowed = true; const seen: ProviderAuthActor[] = [];
   const dependencies: ProviderAuthDependencies = {
-    authorize: async who => { if (!allowed || who.subject !== actor.subject) throw new Error('denied'); },
+    authorize: async who => { seen.push(who); if (!allowed || who.subject !== actor.subject) throw new Error('denied'); },
     audit: async () => undefined,
     reserve: async () => ({
       stopAdapter: async () => ({ stopped: true }),
@@ -38,7 +38,7 @@ async function fixture() {
   const app = await startAuthBridge(socketPath, manager); cleanup.push(() => app.close());
   const client = new HostProviderAuthService(socketPath, { ownerUid: (process.geteuid?.() ?? -1) }); cleanup.push(() => client.shutdown());
   return { client, emit: (value: string) => { output?.(Buffer.from(value)); }, revoke: () => { allowed = false; },
-    state: () => ({ stopped, inputBytes }) };
+    state: () => ({ stopped, inputBytes }), seen };
 }
 describe('private host authentication transport', () => {
   it('rejects writable ancestry before sending the human identity', async () => {
@@ -81,6 +81,18 @@ describe('private host authentication transport', () => {
     await expect(f.client.verify(actor, session.session_id)).rejects.toMatchObject({ code: 'AUTHORITY_REVOKED' });
     await expect.poll(() => f.state().stopped).toBe(true);
     await channel.close();
+  });
+  it('carries the selected company to the host and binds the session to it', async () => {
+    const f = await fixture(); const selected = { ...actor, requestedCompany: 'praxis' };
+    const session = await f.client.start(selected, input);
+    expect(f.seen.length).toBeGreaterThan(0);
+    for (const who of f.seen) expect(who).toEqual(selected);
+    expect((await f.client.get(selected, session.session_id)).session_id).toBe(session.session_id);
+    await expect(f.client.get(actor, session.session_id)).rejects.toMatchObject({ code: 'AUTHORITY_REVOKED' });
+    await expect(f.client.get({ ...actor, requestedCompany: 'acme' }, session.session_id)).rejects.toMatchObject({ code: 'AUTHORITY_REVOKED' });
+    const sent = f.seen.length;
+    await expect(f.client.get({ ...actor, requestedCompany: 'Praxis!' }, session.session_id)).rejects.toThrow();
+    expect(f.seen).toHaveLength(sent);
   });
   it('rejects a different human and reports an unavailable host without leaking payloads', async () => {
     const f = await fixture(); const session = await f.client.start(actor, input);

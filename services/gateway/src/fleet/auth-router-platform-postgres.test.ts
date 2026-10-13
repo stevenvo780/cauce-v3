@@ -1,4 +1,7 @@
 import { randomUUID } from 'node:crypto';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { applyMigrations, createPool, FleetOperationsRepository, lockCompanyAuthority, withTransaction,
@@ -10,6 +13,7 @@ import { createProviderAuthDependencies, loadProviderAuthRoutingScope } from '..
 import { ProviderAuthRequestSchema } from '../console/provider-auth.contracts.js';
 import type { ProviderAuthActor, ProviderAuthDependencies, ProviderAuthRequest, ProviderAuthService, ProviderAuthSnapshot } from '../console/provider-auth.types.js';
 import { AgentProviderAuthBroker } from './agent-provider-auth-broker.js';
+import { startAuthBridge } from './auth-bridge-server.js';
 import { createFleetProviderAuthRouter } from './auth-router.js';
 import { channelCapabilities, channelCompany, channelCreate, channelHost, channelPost } from './host-channel.fixtures.js';
 import { registerHostChannelRoutes } from './host-channel.routes.js';
@@ -18,7 +22,7 @@ let database: TestDatabase | undefined; let current: EmptyTestDatabase | undefin
 let pool: DatabasePool; let app: FastifyInstance | undefined; let broker: AgentProviderAuthBroker | undefined;
 let actor: ProviderAuthActor; let homeCompany: string; let request: ProviderAuthRequest; let snapshot: ProviderAuthSnapshot;
 let dependencies: ProviderAuthDependencies; let router: ReturnType<typeof createFleetProviderAuthRouter>;
-let calls: string[];
+let calls: string[]; let hostService: ProviderAuthService;
 preparePostgresSuite(import.meta.url, async () => {
   if (!process.env.CAUCE_TEST_DATABASE_URL) database = await startTestDatabase();
 }, 120_000);
@@ -87,7 +91,7 @@ beforeEach(async () => {
     profile_id: request.profile_id, harness_id: request.harness_id, host_id: request.host_id, runtime_user: request.runtime_user,
     method: 'terminal', status: 'awaiting_login', expires_at: new Date(Date.now() + 300_000).toISOString(), cleanup_pending: false, error: null };
   const record = (action: string, by: ProviderAuthActor) => { expect(by).toEqual(actor); calls.push(action); };
-  const enrolled: ProviderAuthService = {
+  hostService = {
     resolve,
     start: async (by, input) => { record('start', by); await dependencies.reserve(by, ProviderAuthRequestSchema.parse(input), snapshot.session_id, snapshot.expires_at); return snapshot; },
     get: async by => { record('get', by); return snapshot; }, verify: async by => { record('verify', by); return snapshot; },
@@ -98,7 +102,7 @@ beforeEach(async () => {
       resize: async () => { calls.push('resize'); }, close: async () => { calls.push('close'); } }; },
     revokeOperation: async () => { calls.push('revoke'); }, shutdown: async () => undefined,
   };
-  router = createFleetProviderAuthRouter(pool, { hosts: [], enrolled });
+  router = createFleetProviderAuthRouter(pool, { hosts: [], enrolled: hostService });
 });
 afterEach(async () => { await broker?.shutdown(); broker = undefined; await app?.close(); app = undefined; await current?.close(); current = undefined; });
 afterAll(async () => { if (database) { await database.pool.end(); await database.container.stop(); } });
@@ -124,6 +128,18 @@ describe('platform authentication sessions in the selected company', () => {
     await channel.input(Buffer.from('AUTHORIZED')); await channel.resize(100, 30); await channel.close();
     expect(calls).toEqual(['start', 'get', 'verify', 'cancel', 'ticket', 'consume', 'attach', 'input', 'resize', 'close']);
     expect((await pool.query("SELECT count(*)::int AS n FROM fleet_operation_events WHERE metadata ? 'provider_auth'")).rows).toEqual([{ n: 1 }]);
+  });
+  it('carries the selected company to a computer configured over a private socket', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'auth-platform-socket-'));
+    const socket = join(directory, 'auth.sock'); const policy = { ownerUid: process.geteuid?.() ?? 0 };
+    const bridge = await startAuthBridge(socket, hostService, policy);
+    const routed = createFleetProviderAuthRouter(pool, { hosts: [{ host_id: request.host_id, socket_path: socket, socket_policy: policy }] });
+    try {
+      expect((await routed.resolve(actor, request.operation_id)).host_id).toBe(request.host_id);
+      expect(await routed.start(actor, request)).toEqual(snapshot);
+      expect(await routed.get(actor, snapshot.session_id)).toEqual(snapshot);
+      expect(calls).toEqual(['start', 'get']);
+    } finally { await routed.shutdown(); await bridge.close(); await rm(directory, { recursive: true, force: true }); }
   });
   it('denies a wrong selected company, home fallback and another subject without contacting the host', async () => {
     await reserve();

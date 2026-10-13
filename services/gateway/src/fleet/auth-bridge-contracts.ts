@@ -1,10 +1,12 @@
 import { z } from 'zod';
 import { ProviderAuthRequestSchema } from '../console/provider-auth.contracts.js';
 
+/** `requestedCompany` is the signed company switch; the host resolves it again against its own database. */
 export const HostActorSchema = z.object({
   subject: z.string().regex(/^console:[0-9a-f-]{36}$/u),
   tenant_id: z.string().regex(/^[A-Za-z][A-Za-z0-9_-]{0,63}$/u),
   alias: z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/u),
+  requestedCompany: z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/u).exactOptional(),
 }).strict();
 const actor = { actor: HostActorSchema };
 const session = { ...actor, id: z.uuid() };

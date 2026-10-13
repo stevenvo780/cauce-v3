@@ -32,7 +32,7 @@ const conflict = () => new ProviderAuthError('SESSION_CONFLICT');
 type RoutingScope = Awaited<ReturnType<typeof loadProviderAuthRoutingScope>>;
 interface SessionScope { value: RoutingScope; reservation: z.infer<typeof Reservation> }
 function actorValid(actor: ProviderAuthActor): void {
-  if (!HostActorSchema.extend({ requestedCompany: Identifier.optional() }).safeParse(actor).success) throw denied();
+  if (!HostActorSchema.safeParse(actor).success) throw denied();
 }
 function cohort(value: string) {
   try { return Cohort.parse(JSON.parse(value)); } catch { throw conflict(); }
@@ -77,8 +77,6 @@ export function createFleetProviderAuthRouter(pool: DatabasePool, options: Fleet
     const service = enrolled ? options.enrolled : options.legacySingleHost;
     if (!service) throw new ProviderAuthError('HOST_UNAVAILABLE'); return service;
   };
-  const serviceActor = (service: ProviderAuthService, actor: ProviderAuthActor): ProviderAuthActor => service === options.enrolled
-    ? actor : { tenant_id: actor.tenant_id, alias: actor.alias, subject: actor.subject };
   const operation = async (actor: ProviderAuthActor, id: string): Promise<RoutingScope> => {
     actorValid(actor); if (!ProviderAuthSessionIdSchema.safeParse(id).success) throw new ProviderAuthError('INVALID_REQUEST');
     return withTransaction(pool, async client => {
@@ -113,31 +111,31 @@ export function createFleetProviderAuthRouter(pool: DatabasePool, options: Fleet
   const readSession = async (action: 'get' | 'verify' | 'cancel', actor: ProviderAuthActor, id: string) => {
     const value = await session(actor, id);
     const hostId = value.value.sealed.host_id;
-    const selected = await host(hostId); const response = await selected[action](serviceActor(selected, actor), id);
+    const selected = await host(hostId); const response = await selected[action](actor, id);
     return snapshot(await session(actor, id), id, response);
   };
   return {
     resolve: async (actor, id) => {
       const value = await operation(actor, id); const selected = await host(value.sealed.host_id);
       if (!selected.resolve) throw new ProviderAuthError('HOST_UNAVAILABLE');
-      const response = await selected.resolve(serviceActor(selected, actor), id);
+      const response = await selected.resolve(actor, id);
       matches(await operation(actor, id), response); return response;
     },
     start: async (actor, input) => {
       const request = ProviderAuthRequestSchema.safeParse(input); if (!request.success) throw new ProviderAuthError('INVALID_REQUEST');
       const value = await operation(actor, request.data.operation_id); matches(value, request.data);
-      const selected = await host(value.sealed.host_id); const response = await selected.start(serviceActor(selected, actor), request.data);
+      const selected = await host(value.sealed.host_id); const response = await selected.start(actor, request.data);
       matches(value, response); matches(await operation(actor, request.data.operation_id), response);
       return snapshot(await session(actor, response.session_id), response.session_id, response);
     },
     get: (actor, id) => readSession('get', actor, id), verify: (actor, id) => readSession('verify', actor, id), cancel: (actor, id) => readSession('cancel', actor, id),
     issueSocketTicket: async (actor, id) => { const value = await session(actor, id); const hostId = value.value.sealed.host_id;
-      const selected = await host(hostId); return selected.issueSocketTicket(serviceActor(selected, actor), id); },
+      const selected = await host(hostId); return selected.issueSocketTicket(actor, id); },
     consumeSocketTicket: async (actor, id, ticket) => { const value = await session(actor, id); const hostId = value.value.sealed.host_id;
-      const selected = await host(hostId); await selected.consumeSocketTicket(serviceActor(selected, actor), id, ticket); },
+      const selected = await host(hostId); await selected.consumeSocketTicket(actor, id, ticket); },
     attach: async (actor, id, output) => {
       const value = await session(actor, id); const hostId = value.value.sealed.host_id;
-      const selected = await host(hostId); const channel = await selected.attach(serviceActor(selected, actor), id, output);
+      const selected = await host(hostId); const channel = await selected.attach(actor, id, output);
       const check = async () => {
         try {
           const current = await session(actor, id);
