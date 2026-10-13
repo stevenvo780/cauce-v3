@@ -1,7 +1,9 @@
 import json
 import pathlib
 import re
+import tempfile
 import unittest
+from unittest.mock import patch
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 DESCRIPTORS = ROOT / 'packages/adapter-sdk/descriptors'
@@ -26,18 +28,25 @@ NO_QUOTA_READER = {'openclaw', 'muse', 'hermes', 'opencode', 'fake', 'fake2'}
 SEEDED_CAPABILITIES = {'messages.receive', 'ack.timeline', 'origin.relay', 'jobs.interactive', 'jobs.batch'}
 
 
-def seeded_harness_definitions():
+def seeded_harness_definitions(paths=None):
     rows = {}
-    duplicates = []
-    for path in sorted((ROOT / 'packages/store/migrations').glob('*.sql')):
-        for block in re.finditer(r'INSERT INTO harness_definitions\b.*?;', path.read_text(), re.S):
-            for match in re.finditer(r"\('([^']+)','([^']*)','(\[[^']*\])'::jsonb\)", block.group(0)):
+    checks = []
+    migrations = (ROOT / 'packages/store/migrations').glob('*.sql') if paths is None else paths
+    for path in sorted(migrations):
+        for block in re.finditer(r'INSERT\s+INTO\s+harness_definitions\b.*?;', path.read_text(), re.S | re.I):
+            matches = list(re.finditer(
+                r"\(\s*'([^']+)'\s*,\s*'([^']*)'\s*,\s*'(\[[^']*\])'\s*::\s*jsonb\s*\)",
+                block.group(0), re.I))
+            if not matches:
+                checks.append((f'packages/store/migrations/{path.name}',
+                               'INSERT INTO harness_definitions produced no parsed seed rows'))
+            for match in matches:
                 harness, display_name, capabilities = match.groups()
                 if harness in rows:
-                    duplicates.append((f'packages/store/migrations/{path.name}',
-                                       f"harness '{harness}' is seeded more than once"))
+                    checks.append((f'packages/store/migrations/{path.name}',
+                                   f"harness '{harness}' is seeded more than once"))
                 rows[harness] = (path.name, display_name, json.loads(capabilities))
-    return rows, duplicates
+    return rows, checks
 
 
 def text(path):
@@ -50,6 +59,26 @@ def quoted(segment):
 
 def descriptors():
     return {path.stem: json.loads(path.read_text()) for path in sorted(DESCRIPTORS.glob('*.json'))}
+
+
+def quota_reader_contract_checks():
+    contracts = {
+        'packages/store/src/agent-quota-operations-model.ts': r'\bharness_id\s+IN\s*\(([^)]*)\)',
+        'ops/cli/fleet_executor_agent_quota.py': r'\bPROVIDERS\s*=\s*frozenset\s*\(\s*\{([^}]*)\}\s*\)',
+        'packages/protocol/src/agent-quota.ts':
+            r'\bAgentQuotaReceiptSchema\s*=\s*z\.discriminatedUnion\b.*?\bprovider:\s*z\.enum\(\[([^\]]*)\]\)',
+    }
+    checks = []
+    for path, pattern in contracts.items():
+        matches = re.findall(pattern, text(path), re.S)
+        if not matches:
+            checks.append((path, 'quota reader contract not found'))
+        for match in matches:
+            readers = quoted(match)
+            if readers != QUOTA_READERS:
+                checks.append((path, f'quota readers {sorted(readers)} differ from QUOTA_READERS '
+                               f'{sorted(QUOTA_READERS)} in ops/tests/test_harness_parity.py'))
+    return checks
 
 
 class HarnessParityTest(unittest.TestCase):
@@ -190,6 +219,40 @@ class HarnessParityTest(unittest.TestCase):
                                'declares a quota reader but is classified as an explicit no-reader harness; '
                                'move it to QUOTA_READERS or remove the operation'))
         self.problems(checks)
+
+    def test_quota_readers_match_store_executor_and_receipt(self):
+        self.problems(quota_reader_contract_checks())
+
+    def test_quota_reader_contracts_reject_drift_and_missing_declarations(self):
+        sources = {path: text(path) for path in (
+            'packages/store/src/agent-quota-operations-model.ts',
+            'ops/cli/fleet_executor_agent_quota.py',
+            'packages/protocol/src/agent-quota.ts')}
+        for path, source in sources.items():
+            for altered in (source.replace("'grok'", "'muse'"), ''):
+                with self.subTest(path=path, missing=altered == ''):
+                    with patch(__name__ + '.text', side_effect={**sources, path: altered}.__getitem__):
+                        with self.assertRaisesRegex(AssertionError, re.escape(path)):
+                            self.problems(quota_reader_contract_checks())
+
+    def test_harness_definitions_seed_accepts_whitespace(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory) / 'seed.sql'
+            path.write_text("INSERT\nINTO harness_definitions(id, display_name, capabilities) VALUES\n"
+                            "  ( 'grok' , 'Grok' , '[\"messages.receive\"]' :: jsonb );")
+            rows, checks = seeded_harness_definitions([path])
+        self.problems(checks)
+        self.assertEqual(rows, {'grok': ('seed.sql', 'Grok', ['messages.receive'])})
+
+    def test_harness_definitions_seed_rejects_inserts_without_parsed_rows(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory) / 'seed.sql'
+            path.write_text("INSERT INTO harness_definitions(id,display_name,capabilities) VALUES\n"
+                            "  ('grok','Grok',jsonb_build_array('messages.receive'));")
+            rows, checks = seeded_harness_definitions([path])
+        self.assertEqual(rows, {})
+        with self.assertRaisesRegex(AssertionError, 'INSERT INTO harness_definitions produced no parsed seed rows'):
+            self.problems(checks)
 
     def test_harness_definitions_seed_matches_descriptors(self):
         docs = descriptors()
