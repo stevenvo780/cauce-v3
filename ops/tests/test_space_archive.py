@@ -356,6 +356,7 @@ class SpaceArchiveTests(unittest.TestCase):
             'projects/npm-quoted-template.txt': '_authToken="${NPM_TOKEN}"\n',
             'projects/url-template.txt': 'postgres://${DB_USER}:${DB_PASSWORD}@db/app\n',
             'projects/url-env.txt': 'postgres://process.env.DB_USER:process.env.DB_PASSWORD@db/app\n',
+            'projects/url-password-template.txt': 'postgres://user:${PGPASS}@host\n',
             'projects/mention.txt': 'Document the aws_secret_access_key and _authToken fields.\n',
         }
         omitted = {
@@ -364,6 +365,7 @@ class SpaceArchiveTests(unittest.TestCase):
             'projects/npm-later-template.txt': "fs.writeFileSync('.npmrc', `//npm.corp.example/:_authToken=0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0\\nemail=${email}\\n`)",
             'projects/npm-later-env.txt': '_authToken=TOKEN;x=process.env.X\n',
             'projects/url-literal.txt': 'git clone https://deploy:hunter2@example.test/repo.git\n',
+            'projects/url-user-template.txt': 'postgres://${PGUSER}:S3cr3tLiteralPw@db.internal/app\n',
         }
         for path, content in {**kept, **omitted}.items():
             (self.space / path).write_text(content)

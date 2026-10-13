@@ -164,8 +164,9 @@ def open_relative_directory(root: int, relative: str) -> int:
 
 
 def literal_userinfo(data: bytes) -> bool:
-    for user, password in URL_USERINFO.findall(data):
-        if any(marker in part.lower() for part in (user, password) for marker in (b'${', b'process.env')):
+    for _user, password in URL_USERINFO.findall(data):
+        lowered = password.lower()
+        if lowered.startswith(b'${') or lowered.startswith(b'process.env'):
             continue
         return True
     return False
