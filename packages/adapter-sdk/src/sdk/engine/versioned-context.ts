@@ -35,6 +35,7 @@ export class VersionedContextTurn {
     const degraded = this.degraded; this.degraded = undefined; return degraded;
   }
   get materializedVersion(): number | undefined { return this.materialized?.version; }
+  get materializedDigest(): string | undefined { return this.materialized?.digest; }
   get ignoredPaths(): readonly string[] { return this.ignored; }
   private async acquire(signal: AbortSignal): Promise<void> {
     const root = this.root;

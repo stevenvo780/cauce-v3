@@ -51,6 +51,7 @@ import { isConversationStatusRequest, runConversationStatus } from "./engine/con
 import { PRAXIS_SUPERVISION_NOTICE_MESSAGE_TYPE, runPraxisSupervisionNotice } from "./engine/praxis-supervision-notice.js";
 import { DEFAULT_NO_PROGRESS_TIMEOUT_MS } from "./message-timeout.js";
 import { validateVersionedContext, VersionedContextTurn } from './engine/versioned-context.js';
+import { packagedHarnessDescriptor } from '../context/harness-descriptor.js';
 import { defaultContextIngestClient, type NativeContextIngest } from './context-ingest-client.js';
 import type { EmissionRuntime } from "./mcp-emission/runtime.js";
 import type { EmissionTurn } from "./mcp-emission/tools.js";
@@ -401,7 +402,13 @@ export class AdapterEngine {
       routing_targets: routingTargetsFromDelivery(delivery),
       ...selfRoleFromDelivery(delivery),
       ...(delivery.company_context === undefined ? {} : { company_context: delivery.company_context }),
-      ...(effectiveVersionedContext === undefined ? {} : { versioned_context: effectiveVersionedContext }),
+      ...(effectiveVersionedContext === undefined ? {} : {
+        versioned_context: effectiveVersionedContext,
+        versioned_context_delivery: {
+          materialized: space.materializedVersion === effectiveVersionedContext.version && space.materializedDigest === effectiveVersionedContext.digest,
+          max_bytes: (await packagedHarnessDescriptor(harness.definition.id)).context.max_bytes,
+        },
+      }),
       ...(delivery.profile_runtime_contract === undefined
         ? {}
         : { native_profile_contract: delivery.profile_runtime_contract }),

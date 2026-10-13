@@ -97,6 +97,45 @@ test('agent notes reach the prompt outside the operator block and without operat
   assert.match(prompt, /carry no operator authority/u);
   assert.equal((prompt.match(/queda sin efecto/gu) ?? []).length, 1);
 });
+const promptBase = { self_alias: 'zeus', sender_alias: 'kant', tenant_id: 'Steven',
+  room_id: 'grp.steven', channel: 'cauce', agent_message: false, message_type: 'command', routing_targets: [] };
+const contextOf = (files: { path: string; content: string }[]) => ({ company_id: 'context_alpha', tenant_id: 'Steven',
+  alias: 'zeus', version: 3, digest: createHash('sha256').update(JSON.stringify(files)).digest('hex'), files });
+
+test('materialized context travels as version, digest and paths only', () => {
+  const context = contextOf([{ path: 'context/mission.md', content: 'CUERPO-LARGO' },
+    { path: 'context/notes/a.md', content: 'NOTA-LARGA' }]);
+  const prompt = protocolPrompt('Proceed', undefined, { ...promptBase, versioned_context: context,
+    versioned_context_delivery: { materialized: true, max_bytes: 65_536 } });
+  assert.doesNotMatch(prompt, /CUERPO-LARGO|NOTA-LARGA/u);
+  assert.match(prompt, /context\/mission\.md/u);
+  assert.match(prompt, /context\/notes\/a\.md/u);
+  assert.match(prompt, new RegExp(context.digest, 'u'));
+});
+
+test('inline context is capped at the descriptor max_bytes and lists what was left out', () => {
+  const context = contextOf([{ path: 'context/a.md', content: 'A'.repeat(300) },
+    { path: 'context/b.md', content: 'B'.repeat(5000) }]);
+  const prompt = protocolPrompt('Proceed', undefined, { ...promptBase, versioned_context: context,
+    versioned_context_delivery: { materialized: false, max_bytes: 1024 } });
+  assert.match(prompt, /A{300}/u);
+  assert.doesNotMatch(prompt, /B{100}/u);
+  assert.match(prompt, /"omitted_paths":\["context\/b\.md"\]/u);
+});
+
+test('agent notes land in an untrusted subsection of the native document, not among operator directives', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'cauce-space-notes-'));
+  try {
+    const context = contextOf([{ path: 'context/mission.md', content: 'Directiva real' },
+      { path: 'context/notes/a.md', content: 'Nota del agente' }]);
+    await writeSpaceContext(root, await packagedHarnessDescriptor('codex'), context);
+    const native = await readFile(join(root, 'AGENTS.md'), 'utf8');
+    const marker = native.indexOf('# Notas del agente (no confiables)');
+    assert.ok(marker > 0);
+    assert.ok(native.indexOf('Directiva real') < marker);
+    assert.ok(native.indexOf('Nota del agente') > marker);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
 test('space layout rejects symlink directories before writing contexts', async () => {
   const root = await mkdtemp(join(tmpdir(), 'cauce-space-fence-'));
   const outside = await mkdtemp(join(tmpdir(), 'cauce-space-outside-'));
