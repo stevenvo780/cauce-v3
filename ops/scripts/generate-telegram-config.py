@@ -1,9 +1,7 @@
 #!/usr/bin/env python3
-"""Deterministic production config generator for the Telegram bridge (gap G2).
+"""Deterministic production config generator for the Telegram bridge.
 
-Historically only a test fixture (ops/harness/authentic-fixture-init.mjs) wrote a
-Telegram bridge config, and only for a single alias. This tool productionises that
-gap: it emits a JSON document that validates EXACTLY against the schema enforced by
+It emits a JSON document that validates EXACTLY against the schema enforced by
 `parseTelegramBridgeConfig` in services/telegram-bridge/src/config.ts, built from the
 fleet source of truth (ops/container-aliases.json, cross-checked against
 ops/manifests/*.yaml).
@@ -22,7 +20,7 @@ Mapping (per alias):
   poll_timeout_seconds    <- --poll-timeout-seconds (default 25)
   poll_lease_ms           <- --poll-lease-ms (default 60000)
 
-GROUP ROUTING (gap G4): a bot only knows whether a group message is meant for it if
+GROUP ROUTING: a bot only knows whether a group message is meant for it if
 the config says who serves that chat. `chats[]` carries that, and `bot_username`
 carries the handle each bot answers to. Both are emitted ONLY from --groups-file.
 
@@ -34,20 +32,20 @@ default-deny and goes mute in every group. So regenerating without --groups-file
 safe (it restores legacy routing) while emitting an empty list would silence the
 fleet — which is exactly the failure this generator must be incapable of producing.
 
-RUNTIME PATHS (gap G1): deploy/compose.yaml bind-mounts CAUCE_TELEGRAM_RUNTIME_DIR
+RUNTIME PATHS: deploy/compose.yaml bind-mounts CAUCE_TELEGRAM_RUNTIME_DIR
 (host) onto /run/cauce-telegram (container, read-only) and reads config.json from
 /run/cauce-telegram/config.json. token_file and v2_shutdown_marker_file MUST live
 under that same mount or the container cannot read them, so token_file/marker default
 to /run/cauce-telegram/<tenant>/<alias>.token and /run/cauce-telegram/<alias>.disabled. Override with --runtime-dir (or the
 finer --token-dir/--marker-dir) only if you also mount those directories.
 
-RECIPIENTS (gap G2): a human DMs the <alias> bot expecting <alias> to answer, so the
+RECIPIENTS: a human DMs the <alias> bot expecting <alias> to answer, so the
 only supported policy routes each alias's ingress to its own harness. Delegation and
 fan-out happen afterward through durable Cauce V3 `messages`, where completion can be
 correlated before one final Telegram response. Legacy room/peers ingress fan-out is
 rejected because it cannot provide one deterministic activity/result state.
 
-ALLOWLISTS (gap G3): the schema's `idList` REQUIRES a non-empty array, so a literally
+ALLOWLISTS: the schema's `idList` REQUIRES a non-empty array, so a literally
 empty allowlist cannot validate. With no operational IDs supplied the allowlists
 default to a single, clearly fake sentinel that is IDENTICAL across every alias (a
 real fleet never shares user or chat IDs, so the repetition is an unmistakable

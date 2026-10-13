@@ -21,7 +21,7 @@ while silently dropping every human message or refusing to poll:
   * the host marker file is missing, a symlink, group/other-writable, or its content
     is not exactly `v2-poller-disabled:<alias>` (config.ts assertV2PollerDisabled).
   * the allowlists are still the generator's shared sentinel placeholders, which the
-    poller would treat as "deny everything" (gap G3).
+    poller would treat as "deny everything".
 
 This tool NEVER stops, starts or writes V2; it is read-only and prints no secrets.
 Marker content is an operational sentinel, not a credential, and is only compared.

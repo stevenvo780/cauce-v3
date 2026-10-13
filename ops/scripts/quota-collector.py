@@ -2,20 +2,16 @@
 """
 AI quota collector for Cauce V3.
 
-Why it exists: the local CLI 'ai-usage' is the only one that knows the consumption of the
-subscriptions (claude/codex/antigravity/opencode) (same data the get_ai_quotas MCP tool exposes),
-and it lives in kratos and the agent containers, NEVER in agora-storage where the gateway and
-the console run. Without a collector that samples it and pushes it over HTTP, the quotas panel
-has nothing to read from, and the incident that motivated this work (an agent with 71 in-flight
-deliveries that exhausted a paid subscription without anyone noticing) repeats silently.
+The local CLI 'ai-usage' reads subscription consumption in Kratos and agent containers, but it is
+not available in the gateway and console runtime. This collector forwards those samples so the
+quotas panel can display them.
 
 What it does, in order:
   1. Invokes 'ai-usage --json' (or the command CAUCE_QUOTA_AI_USAGE_CMD points to) and parses
      its output, which carries the shape providers.<name>.windows[] described in the runbook.
   2. Normalizes every window to (host, provider, group_key, window_key): group_key =
      window.limitId (or the equivalent) or 'default', window_key = window.key. Flattening
-     this into one number per provider is the very mistake that makes a panel show balance
-     in an account that has none (today: codex at 100% and codex_bengalfox at 0%).
+     this into one number per provider can show balance from an account with no remaining quota.
   3. Resolves, via a local intent file (CAUCE_QUOTA_ACCOUNT_BINDINGS_FILE), which Cauce
      account_id corresponds to each (provider, group_key). The gateway NEVER guesses this on
      its own: the collector is the only component that sees both the CLI's real session and
@@ -24,7 +20,7 @@ What it does, in order:
      permission). The route lives outside /v3/console/ on purpose: that prefix demands a
      same-origin Origin header a daemon never sends.
 
-Robustness principle, requested explicitly: if ONE provider does not respond (or the whole CLI
+Robustness: if ONE provider does not respond (or the whole CLI
 does not run), publish what did respond and report the failing one as ok=false, instead of
 publishing nothing. The only reason not to publish at all is a local CONFIGURATION error
 (invalid host, missing PKI): that is a deployment bug, not a data bug, and deserves to stop

@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
-"""Existing-`--output` merge / fail-closed helpers for generate-telegram-config.py.
+"""Existing-`--output` merge and fail-closed helpers for generate-telegram-config.py.
 
-Split into its own module to keep both files under the repo's per-file size gate. Not a
-standalone entry point; not meant to be imported anywhere but from that generator.
+Not a standalone entry point; imported only by that generator.
 """
 from __future__ import annotations
 
@@ -54,7 +53,7 @@ def check_no_sentinel_regression(
     destination: pathlib.Path,
     allow_placeholders: bool,
 ) -> None:
-    # Dataloss gap G2/G3: fail closed instead of burying a real allowlist under the sentinel.
+    # Fail closed instead of burying a real allowlist under the sentinel.
     # --allow-placeholders is the one named override; everything else fails before a byte is
     # written, whether or not --aliases narrowed this run to fewer than the whole fleet.
     if allow_placeholders:

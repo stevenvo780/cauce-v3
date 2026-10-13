@@ -2,14 +2,6 @@
 """Digest source families BY DOMAIN, so each evidence artifact is bound to exactly what
 can change its own result.
 
-Why domains exist
------------------
-This script used to emit one whole-tree digest, and every evidence artifact was pinned to it.
-`console` was inside that digest, so any console edit -- a CSS tweak in the terminal panel --
-invalidated runtime-image evidence even though a console stylesheet has no causal path to runtime
-behaviour. Evidence that is expensive to regenerate and trivially invalidated is evidence people
-hand-edit instead of re-running, so each live producer now declares its causal domain.
-
 The rule implemented here
 -------------------------
 The digest backing an evidence artifact must cover EXACTLY the files that can change that

@@ -92,17 +92,6 @@ def load_enabled_tenant(flota_path: pathlib.Path, alias: str) -> str:
     return tenant
 
 
-def build_principal(tenant: str, alias: str) -> dict[str, object]:
-    return {
-        "tenant_id": tenant,
-        "alias": alias,
-        "session_id": f"adapter-{alias}",
-        "channel": "adapter",
-        "roles": ["adapter"],
-        "permissions": ["route", "read"],
-    }
-
-
 def assert_readonly_regular(fd: int, label: str, expected_mode: int) -> os.stat_result:
     details = os.fstat(fd)
     if (
