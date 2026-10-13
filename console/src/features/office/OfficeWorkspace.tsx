@@ -14,7 +14,7 @@ import { quotaReadFailure } from '../accounts/quota-messages';
 import { FatigueIndicator } from '../accounts/FatigueIndicator';
 import { OfficeLayoutEditor } from './OfficeLayoutEditor';
 import { officeFailure, officeVersionConflict, planSaveUnavailableReason } from './office-errors';
-import { officeLayoutProblem, officeRoomKey, officeRooms, rebaseOfficeDraft, reconcileOfficeLayout } from './office-layout';
+import { officeLayoutProblem, officeRoomKey, officeRooms, rebaseOfficeDraft, reconcileOfficeLayout, reconcileOfficeLayoutIncludingSaved } from './office-layout';
 import type { OfficeAgent } from './office-agent';
 
 export function OfficeWorkspace({ campus, topology, agents, onAgent }: {
@@ -35,7 +35,7 @@ export function OfficeWorkspace({ campus, topology, agents, onAgent }: {
   const [error, setError] = useState<Failure>();
   const [notice, setNotice] = useState<{ tone: 'ok' | 'warn'; text: string }>();
   const rooms = officeRooms(topology, layout.data?.available);
-  const shown = reconcileOfficeLayout(rooms, draft?.rooms ?? layout.data?.rooms ?? []);
+  const shown = draft ? reconcileOfficeLayoutIncludingSaved(rooms, draft.rooms) : reconcileOfficeLayout(rooms, layout.data?.rooms ?? []);
   const writable = canManageCompany(authority?.role) && !!layout.data && !layout.error && !layout.loading && !busy;
   const failure = error ?? (layout.error ? officeFailure(layout.error) : undefined);
   const quotaFailure = quotas.error ? quotaReadFailure(quotas.error, 'No se pudieron leer las cuotas de los agentes. Relee el plano y las cuotas.') : undefined;
@@ -108,11 +108,12 @@ export function OfficeWorkspace({ campus, topology, agents, onAgent }: {
         setDraft(undefined);
         setNotice({ tone: 'ok', text: 'Se cargó el plano que guardó la otra persona y se descartó tu borrador.' });
       } else {
-        const theirs = reconcileOfficeLayout(rooms, reread.data.rooms);
+        const freshRooms = officeRooms(topology, reread.data.available);
+        const theirs = reconcileOfficeLayoutIncludingSaved(freshRooms, reread.data.rooms);
         const rebased = rebaseOfficeDraft(draft.base, draft.rooms, theirs);
         setDraft({ version: reread.data.version, base: theirs, rooms: rebased.rooms });
         const labels = rebased.overridden.map(key => {
-          const room = rooms.find(value => officeRoomKey(value.tenant, value.id) === key);
+          const room = freshRooms.find(value => officeRoomKey(value.tenant, value.id) === key);
           return room ? `${room.tenant}/${room.label}` : key;
         });
         setNotice(labels.length

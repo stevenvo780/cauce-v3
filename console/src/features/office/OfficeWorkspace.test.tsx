@@ -132,6 +132,38 @@ it('tras un conflicto reaplica sólo lo que cambió el borrador y conserva lo qu
   expect(writes[1].rooms.find(room => room.tenant_id === 'Two')).toMatchObject({ x: 760, parts: [{ label: 'Nueva parte' }] });
   expect(screen.queryByText('Plano sin guardar')).not.toBeInTheDocument();
 });
+it('tras un conflicto conserva la posición de una sala creada por la otra persona aunque la topología aún no la liste', async () => {
+  const nueva: OfficeRoom = { tenant_id: 'One', room_id: 'nueva', x: 111, y: 222, width: 280, height: 210,
+    parts: [{ id: 'mesa-nueva', label: 'Mesa nueva', x: 5, y: 6, width: 40, height: 50 }] };
+  let version = 0; let rooms: OfficeRoom[] = []; let available: { tenant_id: string; room_id: string }[] | undefined;
+  const writes: { expected_version: number; rooms: OfficeRoom[] }[] = [];
+  server.use(http.get('*/v3/console/office/layout', () => HttpResponse.json({ company_id: 'one', version, rooms, ...(available ? { available } : {}) })),
+    http.put('*/v3/console/office/layout', async ({ request }) => {
+      const input = await request.json() as { expected_version: number; rooms: OfficeRoom[] }; writes.push(input);
+      if (writes.length === 1) {
+        version = 7; rooms = [{ tenant_id: 'One', room_id: 'general', x: 600, y: 300, width: 300, height: 200, parts: [] }, nueva];
+        available = [{ tenant_id: 'One', room_id: 'general' }, { tenant_id: 'One', room_id: 'nueva' }, { tenant_id: 'Two', room_id: 'general' }];
+        return HttpResponse.json({ error: 'conflict', message: 'office layout version changed; reload and retry' }, { status: 409 });
+      }
+      if (input.expected_version !== version) return HttpResponse.json({ error: 'conflict' }, { status: 409 });
+      rooms = input.rooms; version += 1;
+      return HttpResponse.json({ company_id: 'one', version, rooms });
+    }));
+  const user = userEvent.setup(); renderWithApi(workspace());
+  const choice = await conflictedDraft(user);
+  await user.click(choice.getByRole('button', { name: 'Reaplicar mi borrador sobre su versión' }));
+  await waitFor(() => { expect(screen.queryByRole('alert')).not.toBeInTheDocument(); });
+  expect(screen.getByRole('status')).toHaveTextContent('Tu borrador se reaplicó sobre la versión nueva sin tocar lo que cambió la otra persona.');
+  expect(screen.getByRole('region', { name: 'Sala One/nueva' })).toHaveStyle({ left: '111px', top: '222px', width: '280px', height: '210px' });
+  expect(screen.getByLabelText('Parte Mesa nueva')).toBeVisible();
+  expect(screen.getByRole('region', { name: 'Sala One/General' })).toHaveStyle({ left: '600px', top: '300px' });
+  expect(screen.getByRole('region', { name: 'Sala Two/General' })).toHaveStyle({ left: '760px' });
+  await user.click(screen.getByRole('button', { name: 'Guardar plano' }));
+  expect(await screen.findByText('Plano de oficina guardado para esta empresa.')).toBeVisible();
+  expect(writes).toHaveLength(2); expect(writes[1].expected_version).toBe(7);
+  expect(writes[1].rooms.find(room => room.room_id === 'nueva')).toEqual(nueva);
+  expect(writes[1].rooms.find(room => room.tenant_id === 'Two')).toMatchObject({ x: 760, parts: [{ label: 'Nueva parte' }] });
+});
 it('tras un conflicto avisa de las salas donde el borrador sustituye el cambio de la otra persona antes de guardar', async () => {
   const writes = conflictingServer([{ tenant_id: 'Two', room_id: 'general', x: 500, y: 40, width: 300, height: 260, parts: [] }]);
   const user = userEvent.setup(); renderWithApi(workspace());

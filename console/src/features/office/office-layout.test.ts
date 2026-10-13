@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { officeLayoutProblem, officeRoomKey, officeRooms, rebaseOfficeDraft, reconcileOfficeLayout } from './office-layout';
+import { officeLayoutProblem, officeRoomKey, officeRooms, rebaseOfficeDraft, reconcileOfficeLayout, reconcileOfficeLayoutIncludingSaved } from './office-layout';
 
 it('no confunde salas homónimas y elimina del plano los recursos retirados', () => {
   const rooms = officeRooms({ tenants: [{ id: 'One', rooms: [{ id: 'general', label: 'General', members: [{ alias: 'worker', enabled: true }] }] },
@@ -10,6 +10,19 @@ it('no confunde salas homónimas y elimina del plano los recursos retirados', ()
   expect(rooms.map(room => room.agents)).toEqual([['One/worker'], ['Two/worker']]);
   expect(layout).toHaveLength(2); expect(layout[1]).toMatchObject({ tenant_id: 'Two', room_id: 'general', x: 650 });
   expect(layout[0].x).toBe(0); expect(officeLayoutProblem(layout)).toBeUndefined();
+});
+it('conserva con su posición una sala que solo está en el plano releído y no duplica las conocidas', () => {
+  const known = [{ tenant: 'One', id: 'general', label: 'General', agents: [] }, { tenant: 'Two', id: 'general', label: 'General', agents: [] }];
+  const nueva = { tenant_id: 'One', room_id: 'nueva', x: 111, y: 222, width: 280, height: 210, parts: [] };
+  const saved = [{ tenant_id: 'One', room_id: 'general', x: 600, y: 300, width: 300, height: 200, parts: [] }, nueva,
+    { tenant_id: 'Two', room_id: 'general', x: 330, y: 0, width: 300, height: 260, parts: [] }];
+  const layout = reconcileOfficeLayoutIncludingSaved(known, saved);
+  expect(layout).toHaveLength(3); expect(layout.find(room => room.room_id === 'nueva')).toEqual(nueva);
+  expect(layout.filter(room => room.room_id === 'general')).toHaveLength(2);
+  expect(reconcileOfficeLayoutIncludingSaved([...known, { tenant: 'One', id: 'nueva', label: 'Nueva', agents: [] }], saved)).toHaveLength(3);
+  const rebased = rebaseOfficeDraft(known.map(room => ({ tenant_id: room.tenant, room_id: room.id, x: 0, y: 0, width: 300, height: 260, parts: [] })),
+    known.map(room => ({ tenant_id: room.tenant, room_id: room.id, x: 0, y: 0, width: 300, height: 260, parts: [] })), layout);
+  expect(rebased.rooms.find(room => room.room_id === 'nueva')).toEqual(nueva); expect(rebased.overridden).toEqual([]);
 });
 it('rechaza geometrías no finitas y tamaños sin área', () => {
   const room = { tenant_id: 'One', room_id: 'general', x: 0, y: 0, width: 1, height: 1, parts: [] };
