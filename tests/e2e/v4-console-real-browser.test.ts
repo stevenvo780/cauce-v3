@@ -163,7 +163,7 @@ describe('recorrido V4 de la consola en navegador real contra gateway y PostgreS
       errors.expectHttpError('/v3/console/companies', 409);
       await fill({ ...ownerB, company: { ...ownerB.company, slug: ownerA.company.slug } });
       await form.getByRole('button', { name: 'Crear empresa y dueño', exact: true }).click();
-      await platform.getByRole('alert').filter({ hasText: REGISTRATION_IN_USE.message }).waitFor({ timeout: 15_000 });
+      await platform.getByRole('alert').filter({ hasText: 'El correo o el identificador de empresa ya están en uso.' }).waitFor({ timeout: 15_000 });
       expect(await pool().query('SELECT 1 FROM console_users WHERE email=$1', [ownerB.email])).toMatchObject({ rowCount: 0 });
       await fill(ownerB);
       await form.getByRole('button', { name: 'Crear empresa y dueño', exact: true }).click();
@@ -342,7 +342,9 @@ describe('recorrido V4 de la consola en navegador real contra gateway y PostgreS
     await pool().query('INSERT INTO agent_profiles(tenant_id,alias,role_summary) VALUES($1,$2,$3)', [hubA, agentAlias, 'Agente de prueba V4']);
     await step(page, 'agent sheet', async () => {
       await openPlan(page);
-      await page.getByRole('region', { name: officeRoom(), exact: true }).getByRole('button', { name: new RegExp(agentAlias, 'u') }).click();
+      await page.getByRole('region', { name: officeRoom(), exact: true }).getByRole('button').first().click();
+      await page.getByRole('region', { name: `Agentes de sala ${hubA}/office`, exact: true })
+        .getByRole('button', { name: new RegExp(agentAlias, 'u') }).click();
       const sheet = page.getByRole('dialog');
       await sheet.getByText(agentAlias, { exact: true }).first().waitFor({ timeout: 15_000 });
       await sheet.getByText('No hay una cuenta vinculada con cuota disponible para esta sesión.', { exact: true }).waitFor({ timeout: 15_000 });
@@ -389,6 +391,7 @@ describe('recorrido V4 de la consola en navegador real contra gateway y PostgreS
     const page = ownerPage();
     await seedQuotaHost(pool(), { companyId: ownerA.company.slug, ownerEmail: ownerA.email, hostId: quotaHost });
     let accountId = '';
+    let pausedUntil = '';
     const capabilities = await apiGet(page, '/v3/console/quota-environments');
     expect(capabilities.body).toMatchObject({ capabilities: { available: true, providers: ['codex'] } });
     await step(page, 'quota account create', async () => {
@@ -434,22 +437,29 @@ describe('recorrido V4 de la consola en navegador real contra gateway y PostgreS
     await step(page, 'quota account edit', async () => {
       await quotaCard(page, 'Cuenta UI local').getByRole('button', { name: 'Editar cuenta', exact: true }).click();
       const form = page.getByRole('form', { name: 'Editar cuenta de cuotas' });
-      await form.getByLabel('Pausa hasta (fecha con zona horaria)', { exact: true }).fill('mañana por la tarde');
-      await form.getByRole('button', { name: 'Guardar cuenta', exact: true }).click();
-      await form.getByRole('alert').waitFor({ timeout: 15_000 });
-      expect(await form.getByRole('alert').innerText()).toContain('Introduce una fecha de pausa válida, con su zona horaria.');
-      await form.getByLabel('Pausa hasta (fecha con zona horaria)', { exact: true }).fill('');
+      const pause = form.getByLabel('Pausa hasta (hora de tu navegador)', { exact: true });
+      expect(await pause.evaluate(element => { element.value = 'mañana por la tarde'; return { type: element.type, value: element.value }; }))
+        .toEqual({ type: 'datetime-local', value: '' });
+      await pause.fill('2030-12-10T08:30');
+      expect((await validity(pause)).valid).toBe(true);
+      pausedUntil = await pause.evaluate(element => new Date(element.value).toISOString());
+      await form.getByText(/^Se guardará:/u).waitFor({ timeout: 15_000 });
       await form.getByLabel('Nombre de la cuenta', { exact: true }).fill('Cuenta UI editada');
       await form.getByLabel('Cuenta habilitada', { exact: true }).uncheck();
       await form.getByRole('button', { name: 'Guardar cuenta', exact: true }).click();
       await quotaCard(page, 'Cuenta UI editada').waitFor({ timeout: 20_000 });
       await page.reload({ waitUntil: 'domcontentloaded' });
       await quotaCard(page, 'Cuenta UI editada').waitFor({ timeout: 20_000 });
+      await quotaCard(page, 'Cuenta UI editada').getByRole('button', { name: 'Editar cuenta', exact: true }).click();
+      const reread = page.getByRole('form', { name: 'Editar cuenta de cuotas' });
+      expect(await reread.getByLabel('Pausa hasta (hora de tu navegador)', { exact: true }).inputValue()).toBe('2030-12-10T08:30');
+      await reread.getByRole('button', { name: 'Cancelar', exact: true }).click();
     });
-    const edited = ((await apiGet(page, '/v3/console/quota-accounts')).body as { accounts: { id: string; label: string; enabled: boolean; version: number }[] }).accounts.find(item => item.id === accountId);
-    expect(edited).toMatchObject({ label: 'Cuenta UI editada', enabled: false });
+    const edited = ((await apiGet(page, '/v3/console/quota-accounts')).body as { accounts: { id: string; label: string; enabled: boolean; version: number; paused_until: string | null }[] }).accounts.find(item => item.id === accountId);
+    expect(edited).toMatchObject({ label: 'Cuenta UI editada', enabled: false, paused_until: pausedUntil });
     expect(edited?.version).toBeGreaterThan(1);
-    expect((await pool().query<{ label: string; enabled: boolean }>('SELECT label,enabled FROM provider_accounts WHERE id=$1', [accountId])).rows).toEqual([{ label: 'Cuenta UI editada', enabled: false }]);
+    expect((await pool().query<{ label: string; enabled: boolean; paused_until: Date }>('SELECT label,enabled,paused_until FROM provider_accounts WHERE id=$1', [accountId])).rows)
+      .toEqual([{ label: 'Cuenta UI editada', enabled: false, paused_until: new Date(pausedUntil) }]);
 
     await step(page, 'quota account unpin and delete', async () => {
       const card = quotaCard(page, 'Cuenta UI editada');
@@ -477,13 +487,13 @@ describe('recorrido V4 de la consola en navegador real contra gateway y PostgreS
     });
     await step(page, 'quota environment create', async () => {
       const form = page.getByRole('form', { name: 'Crear entorno de cuotas' });
-      await expect.poll(async () => form.locator('select').nth(0).isDisabled(), { timeout: 20_000 }).toBe(false);
+      await expect.poll(async () => form.getByLabel('Cuenta', { exact: true }).isDisabled(), { timeout: 20_000 }).toBe(false);
       expect(await form.getByRole('button', { name: 'Crear entorno', exact: true }).isDisabled()).toBe(true);
-      const unselected = await validity(form.locator('select').nth(0));
+      const unselected = await validity(form.getByLabel('Cuenta', { exact: true }));
       expect(unselected.valid).toBe(false);
       expect(unselected.message).not.toBe('');
-      await form.locator('select').nth(0).selectOption({ label: 'Cuenta de entorno · codex' });
-      await form.locator('select').nth(1).selectOption({ label: 'Ordenador de cuotas V4' });
+      await form.getByLabel('Cuenta', { exact: true }).selectOption({ label: 'Cuenta de entorno · codex' });
+      await form.getByLabel('Computadora', { exact: true }).selectOption({ label: 'Ordenador de cuotas V4' });
       await form.getByLabel('Nombre del entorno', { exact: true }).fill('   ');
       expect(await form.getByRole('button', { name: 'Crear entorno', exact: true }).isDisabled()).toBe(true);
       await form.getByLabel('Nombre del entorno', { exact: true }).fill('Entorno V4');
@@ -544,8 +554,14 @@ describe('recorrido V4 de la consola en navegador real contra gateway y PostgreS
       await openConfig(page, 'general');
       const row = page.getByRole('listitem').filter({ hasText: ownerB.company.name });
       await row.getByRole('button', { name: 'Retirar', exact: true }).click();
+      const confirmation = page.getByRole('region', { name: 'Confirmar estado de empresa', exact: true });
+      const confirm = confirmation.getByRole('button', { name: 'Confirmar cambio de empresa', exact: true });
+      expect(await confirm.isDisabled()).toBe(true);
+      await confirmation.getByLabel('Escribe el identificador').fill(ownerA.company.slug);
+      expect(await confirm.isDisabled()).toBe(true);
+      await confirmation.getByLabel('Escribe el identificador').fill(ownerB.company.slug);
       errors.relaxForbidden('owner-b');
-      await page.getByRole('button', { name: 'Confirmar cambio de empresa', exact: true }).click();
+      await confirm.click();
       await expect.poll(async () => (await pool().query<{ enabled: boolean; retired: boolean }>(
         'SELECT enabled,retired_at IS NOT NULL AS retired FROM companies WHERE id=$1', [ownerB.company.slug])).rows[0],
       { timeout: 20_000 }).toEqual({ enabled: false, retired: true });
