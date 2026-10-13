@@ -115,11 +115,14 @@ D=$(ls -t "$DB_BACKUP_DIR"/*.dump | head -n 1); (cd "$(dirname "$D")" && sha256s
 docker exec cauce-v3-prod-postgres-1 psql -U cauce -d postgres -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='cauce' AND pid<>pg_backend_pid()"
 docker exec cauce-v3-prod-postgres-1 dropdb -U cauce cauce && docker exec cauce-v3-prod-postgres-1 createdb -U cauce cauce
 docker exec -i cauce-v3-prod-postgres-1 pg_restore -U cauce -d cauce --no-owner --no-acl < "$D"
+# 3b. Si el dump es esquema 052 o posterior, --no-acl deja los logins de runtime sin permisos.
+docker exec cauce-v3-prod-postgres-1 psql -U cauce -d cauce -c "SELECT cauce_apply_runtime_grants()"
 # 4. Levantar la versión previa con el compose del RELEASE ANTERIOR y sus overrides (NO el canónico)
 docker compose --env-file /etc/cauce-v3/prod.env -f <PREV_RELEASE>/deploy/compose.yaml -f <PREV_RELEASE>/deploy/compose.postgres.yaml \
   $(printf -- '-f %s ' /etc/cauce-v3/compose-overrides/*.yaml) \
   --project-directory <PREV_RELEASE>/deploy up -d --wait --wait-timeout 300
-# 5. Verificar (el esquema dirá la versión del dump restaurado — esperado)
+# 5. Verificar (el esquema dirá la versión del dump restaurado — esperado).
+#    En los logs de cada servicio, 42501 indica que faltó cauce_apply_runtime_grants().
 ./deploy/smoke.sh
 ```
 Los nombres de contenedor del ejemplo derivan del `COMPOSE_PROJECT_NAME` por defecto (`cauce-v3-prod`); con otro proyecto cambian en consecuencia.
@@ -152,14 +155,14 @@ python3 ops/scripts/fleet-authority-install.py --socket-directory-only --apply
 python3 "$PRIVATE_KIT_ROOT/upgrade-kit/src-$RELEASE_ID/ops/scripts/fleet-authority-install.py"
 python3 "$PRIVATE_KIT_ROOT/upgrade-kit/src-$RELEASE_ID/ops/scripts/fleet-authority-install.py" --apply
 ```
-El preflight no escribe nada. Deriva release, `node`, `/etc/hosts`, entorno TLS y comando del controlador; comprueba los pins, el modo del `database-url` sin leerlo y el `--ready` del emisor; y muestra el diff de cada fichero. `--apply` escribe solo lo que cambia, con respaldo `*.pre-authority-<stamp>`. Hace `daemon-reload` y `restart` solo si algo cambió o el enclave estaba parado. Después verifica `ready`:
+El preflight no escribe nada. Deriva release, `node`, `/etc/hosts`, entorno TLS y comando del controlador; comprueba los pins, el modo del `database-url` sin leerlo y el `--ready` del emisor; y muestra el diff de cada fichero. `--apply` escribe solo lo que cambia, con respaldo `*.pre-authority-<stamp>`. Hace `enable` siempre, y `daemon-reload` más `restart` solo si algo cambió o el enclave estaba parado. Después verifica `ready`:
 - la unidad está activa y sigue activa 3 s después;
 - el directorio es root:1000 `0750` y el socket, recién creado, root:1000 `0660`;
 - `--ready` del emisor: política, registros, `state_root` y par CA/clave;
 - sonda sin firma como uid 1000 para el host `zz-canary-probe`: `403 forbidden` prueba que el enclave llegó a PostgreSQL y rechaza un ordenador no enrolado (`409 AUTHORITY_UNAVAILABLE` indica que no hay BD);
 - la misma sonda como root: `403 AUTHORITY_REVOKED`, porque solo atiende al uid del gateway.
 
-Repetirlo sin cambios solo verifica. Tras cada actualización del controlador, repetir el paso 3 con el export de la release nueva: hasta entonces el enclave sigue en la anterior, que el kit conserva, y el preflight muestra la diferencia. Igual que el controlador, la unidad no se habilita en el arranque: tras reiniciar el host, `systemctl start cauce-fleet-v35-controller cauce-fleet-signed-authority`. Si falla al arrancar, `journalctl -u cauce-fleet-signed-authority` nombra la etapa sin secretos: `configuration`, `database configuration`, `issuer command` o `socket`.
+Repetirlo sin cambios solo verifica y vuelve a habilitar la unidad. Tras cada actualización del controlador, repetir el paso 3 con el export de la release nueva: hasta entonces el enclave sigue en la anterior, que el kit conserva, y el preflight muestra la diferencia. La unidad queda habilitada en el arranque (`WantedBy=multi-user.target`) y unida al controlador (`PartOf`/`After`): si el controlador se detiene, el enclave se detiene con él. Si falla al arrancar, `journalctl -u cauce-fleet-signed-authority` nombra la etapa sin secretos: `configuration`, `database configuration`, `issuer command` o `socket`.
 
 **Aceptación de punta a punta** (la acción `ready` firmada): en server2, como `server`, `python3 <release>/ops/cli/fleet-executor.py --policy <política> --capabilities` devuelve `available: true` solo si `authority_ready` obtuvo `{"ready":true,"host_id":"<host>"}` del gateway y del enclave. El ensayo local con PostgreSQL real está en `services/gateway/src/fleet/authority/signed-main-postgres.test.ts`.
 
@@ -190,15 +193,17 @@ systemctl --user daemon-reload && systemctl --user enable --now cauce-v3-contain
 
 Con `DATABASE_URL` apuntando a la instancia elegida, `pnpm console:user --email persona@example.com`
 pide una contraseña nueva (o lee `CAUCE_CONSOLE_USER_PASSWORD`). No pasar contraseñas por argumentos.
-El comando conserva su comportamiento de alta si el correo no existe y actualización si ya existe:
+No hay tenant ni alias por defecto.
 
-- **Alta:** sin atributos explícitos, nombre = parte local del correo, rol = `operator`, tenant =
-  `Steven`, alias = `kant`; la cuenta se crea activa. `--name`, `--role`, `--tenant` y `--alias`
-  sustituyen esos valores para esta alta.
-- **Cuenta existente:** cambia la contraseña y sólo los atributos indicados explícitamente.
-  Omitir nombre, rol, tenant o alias conserva su valor persistido. El correo normalizado identifica
+- **Alta:** exige `--tenant` y `--alias`. Sin `--update`, omitir cualquiera de los dos falla antes de
+  escribir. El nombre, si se omite, es la parte local del correo; el rol, si se omite, es `operator`;
+  la cuenta se crea activa. `--name` y `--role` sustituyen esos valores.
+- **Rotar la contraseña** de una cuenta que ya existe:
+  `pnpm console:user --email persona@example.com --update`. No crea la cuenta si el correo no existe.
+  Omitir nombre, rol, tenant o alias conserva el valor persistido. El correo normalizado identifica
   la cuenta; no se reescribe su correo de presentación ni se reactiva una cuenta dada de baja.
-- **Mantenimiento sin alta accidental:** añadir `--update`; si el correo no existe, falla sin crear.
+- **Mantenimiento sin alta accidental:** `--update` es obligatorio. Sin él, el comando exige tenant
+  y alias aunque la cuenta ya exista; si el correo no existe, `--update` falla sin crear.
 - **Reactivación explícita:** `--update --activate`; exige cuenta existente y contraseña nueva,
   conserva los demás atributos omitidos. Cambiar contraseña por sí solo no reactiva.
 - **Baja:** `pnpm console:user --email persona@example.com --deactivate`; no pide contraseña,

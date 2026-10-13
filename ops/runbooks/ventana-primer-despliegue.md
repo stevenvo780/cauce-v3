@@ -201,6 +201,10 @@ canónico con imágenes viejas sería un tercer estado jamás probado—.
    docker exec <contenedor-postgres> dropdb -U cauce cauce && docker exec <contenedor-postgres> createdb -U cauce cauce
    docker exec -i <contenedor-postgres> pg_restore -U cauce -d cauce --no-owner --no-acl < "$D"
    ```
+   Si el dump es esquema 052 o posterior, aplicar los permisos de runtime antes de levantar servicios:
+   ```bash
+   docker exec <contenedor-postgres> psql -U cauce -d cauce -c "SELECT cauce_apply_runtime_grants()"
+   ```
 4. Levantar la versión previa **con su compose y sus overrides** (los que corrían antes de la
    ventana, desde la ruta de release anterior y el directorio de overrides del host):
    ```bash
@@ -210,5 +214,6 @@ canónico con imágenes viejas sería un tercer estado jamás probado—.
      --project-directory <release-anterior>/deploy up -d --wait --wait-timeout 300
    ```
 5. Comprobar: `./deploy/smoke.sh` (la sonda de esquema señalará la versión anterior — esperado en
-   rollback) y volver a arrancar los timers parados en el paso 4 de la §4 (watchdog, reconciler y
+   rollback) y los logs de cada servicio. Un `42501` indica que faltó `cauce_apply_runtime_grants()`.
+   Volver a arrancar los timers parados en el paso 4 de la §4 (watchdog, reconciler y
    revividores de colas).
