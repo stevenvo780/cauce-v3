@@ -110,7 +110,10 @@ class InstallFixture(unittest.TestCase):
         self.node = self.file(self.root / 'bin/node', b'#!/bin/sh\n', 0o755)
         self.hosts = self.file(self.controller / 'hosts', b'172.18.0.2 postgres\n', 0o644)
         self.database = self.file(self.controller / 'database-url', SECRET.encode(), 0o400)
-        self.policy = self.file(self.controller / 'authority.v1.json', b'{"version":1}\n')
+        self.issuer_state = self.root / 'issuer-state'
+        self.issuer_state.mkdir(mode=0o700)
+        self.policy = self.file(self.controller / 'authority.v1.json',
+                                json.dumps({'version': 1, 'state_root': str(self.issuer_state)}).encode() + b'\n')
         self.release(OLD)
         self.host = FakeHost(self)
         patcher = mock.patch.object(self.kit, 'run', self.host)
@@ -184,6 +187,10 @@ class PreflightTests(InstallFixture):
         self.assertIn(f'BindReadOnlyPaths={self.hosts}:/etc/hosts\n', unit)
         self.assertIn(f'EnvironmentFile={self.fleet}/signed-authority/authority.env\n', unit)
         self.assertNotIn('@', unit)
+        self.assertIn('ProtectSystem=strict\n', unit)
+        self.assertIn(f'ReadWritePaths={self.issuer_state} {self.socket_directory}\n', unit)
+        self.assertIn('PartOf=cauce-fleet-v35-controller.service\n', unit)
+        self.assertIn('CapabilityBoundingSet=\n', unit)
         self.assertEqual(dict(line.split('=', 1) for line in environment.splitlines()), {
             'CAUCE_FLEET_AUTHORITY_SOCKET': str(self.socket_directory / 'authority.sock'),
             'CAUCE_FLEET_AUTHORITY_OWNER_UID': str(os.geteuid()), 'CAUCE_FLEET_AUTHORITY_PEER_UID': str(os.geteuid()),
@@ -229,11 +236,11 @@ class ApplyTests(InstallFixture):
                  self.root / 'systemd/cauce-fleet-signed-authority.service', self.root / 'tmpfiles.d/cauce-fleet-signed-authority.conf',
                  self.socket_directory, self.socket_directory / 'authority.sock')}
         self.assertEqual(list(modes.values()), [0o700, 0o600, 0o600, 0o644, 0o644, 0o750, 0o660])
-        self.assertEqual(self.host.events, ['tmpfiles', 'daemon-reload', 'restart'])
+        self.assertEqual(self.host.events, ['tmpfiles', 'enable', 'daemon-reload', 'restart'])
         self.assertIn('ready: cauce-fleet-signed-authority.service active', self.output.getvalue())
         before = self.tree()
         self.assertEqual(self.kit.install(self.arguments('--apply')), 'no changes; the running enclave was verified')
-        self.assertEqual(self.host.events, ['tmpfiles', 'daemon-reload', 'restart'])
+        self.assertEqual(self.host.events, ['tmpfiles', 'enable', 'daemon-reload', 'restart', 'enable'])
         self.assertEqual(self.tree(), before)
 
     def test_a_release_change_is_backed_up_and_a_failed_verification_restores_the_running_enclave(self):
@@ -246,7 +253,7 @@ class ApplyTests(InstallFixture):
         with self.assertRaisesRegex(lib.Abort, 'installation reverted: .*PostgreSQL'):
             self.kit.install(self.arguments('--apply'))
         self.assertEqual({path: path.read_bytes() for path in previous}, previous)
-        self.assertEqual(self.host.events[3:], ['daemon-reload', 'restart', 'stop', 'daemon-reload', 'start'])
+        self.assertEqual(self.host.events[4:], ['enable', 'daemon-reload', 'restart', 'stop', 'daemon-reload', 'start'])
         self.assertTrue(self.host.active)
         backups = sorted(item.name.split('.pre-authority-')[0] for item in self.root.rglob('*.pre-authority-*'))
         self.assertEqual(backups, ['cauce-fleet-signed-authority.service', 'command.v1.json'])
@@ -260,7 +267,7 @@ class ApplyTests(InstallFixture):
             self.kit.install(self.arguments('--apply'))
         self.assertFalse((self.fleet / 'signed-authority').exists())
         self.assertFalse((self.root / 'systemd/cauce-fleet-signed-authority.service').exists())
-        self.assertEqual(self.host.events, ['tmpfiles', 'daemon-reload', 'restart', 'stop', 'daemon-reload'])
+        self.assertEqual(self.host.events, ['tmpfiles', 'enable', 'daemon-reload', 'restart', 'stop', 'daemon-reload'])
         self.assertTrue((self.root / 'tmpfiles.d/cauce-fleet-signed-authority.conf').is_file())
 
     def test_socket_directory_only_needs_no_controller_and_touches_no_unit(self):

@@ -193,11 +193,23 @@ def render(name, values):
     return ('\n'.join(lines) + '\n').encode()
 
 
+def issuer_state_root(state) -> str:
+    try:
+        policy = json.loads(safe_read(absolute(state['command']['policy_file']), private=True)[0])
+        root = policy['state_root']
+    except (ValueError, KeyError, TypeError):
+        raise Abort('the issuer policy must name an absolute state_root') from None
+    if not isinstance(root, str) or not root.startswith('/') or os.path.normpath(root) != root:
+        raise Abort('the issuer policy must name an absolute state_root')
+    return root
+
+
 def desired_files(args, state):
     files = {args.tmpfiles: (render(TMPFILES_TEMPLATE, {'SOCKET_DIRECTORY': str(args.socket_directory),
                                                         'GATEWAY_GID': str(args.gateway_gid)}), 0o644)}
     if state is None:
         return files
+    state_root = issuer_state_root(state)
     environment = {
         'CAUCE_FLEET_AUTHORITY_SOCKET': str(args.socket_directory / SOCKET_NAME),
         'CAUCE_FLEET_AUTHORITY_OWNER_UID': str(AUTHORITY_UID),
@@ -210,7 +222,9 @@ def desired_files(args, state):
     files[args.config_directory / 'authority.env'] = (''.join(f'{key}={value}\n' for key, value in environment.items()).encode(), 0o600)
     files[args.unit] = (render(SERVICE_TEMPLATE, {
         'CONFIG_DIRECTORY': str(args.config_directory), 'NODE': str(state['node']), 'RELEASE': str(state['root']),
-        'HOSTS_BIND': f"BindReadOnlyPaths={state['hosts']}:/etc/hosts" if state['hosts'] else ''}), 0o644)
+        'HOSTS_BIND': f"BindReadOnlyPaths={state['hosts']}:/etc/hosts" if state['hosts'] else '',
+        'CONTROLLER_SERVICE': args.controller_service, 'ISSUER_STATE_ROOT': state_root,
+        'SOCKET_DIRECTORY': str(args.socket_directory)}), 0o644)
     return files
 
 
@@ -354,6 +368,7 @@ def apply(args, state, changes):
         os.close(directory_fd(args.config_directory, private=True))
         write_files(changes, stamp, ctx)
         started_ns = 0
+        run(['systemctl', 'enable', unit])
         if changes or not was_active:
             if changes:
                 run(['systemctl', 'daemon-reload'])
