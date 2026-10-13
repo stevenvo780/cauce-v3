@@ -73,6 +73,15 @@ describe('versioned context adoption through the fenced delivery ACK', () => {
     await send(claimed, { ...evidence, context_adoption: { ...evidence.context_adoption, input_sha256: 'c'.repeat(64) } });
     expect((await store.read(source, target().tenant_id, target().alias)).applied_version).toBe(0);
   });
+  it('keeps claiming when a stored version holds text the hardened secret rules would now reject', async () => {
+    await write(); const value = target();
+    if (!current) throw new Error('database unavailable');
+    await current.adminPool.query('ALTER TABLE agent_context_versions DISABLE TRIGGER agent_context_versions_immutable');
+    await current.adminPool.query(`UPDATE agent_context_versions SET files=$4::jsonb WHERE company_id=$1 AND tenant_id=$2 AND alias=$3 AND version=1`,
+      [value.company_id, value.tenant_id, value.alias, JSON.stringify([{ path: 'context/mission.md', content: 'password: xxxxxxx' }])]);
+    const claimed = await claim();
+    expect(claimed.delivery.versioned_context?.files).toEqual([{ path: 'context/mission.md', content: 'password: xxxxxxx' }]);
+  });
   it.each(['digest', 'harness', 'failed', 'late'] as const)('keeps applied unchanged for %s evidence', async kind => {
     await write(); const claimed = await claim(); const evidence = proof(claimed.delivery);
     if (kind === 'digest') evidence.context_adoption.digest = '0'.repeat(64);

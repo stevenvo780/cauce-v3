@@ -1,8 +1,17 @@
 import { ContextAdoptionEvidenceSchema, HarnessConsumptionEvidenceSchema, type VersionedContext } from '@cauce/protocol';
 import type { DatabaseClient } from './db.js';
-import { canonicalContextFiles } from './context-version-model.js';
+import { ZodError } from 'zod';
+import { StoreError } from './repository/errors.js';
+import type { ContextTarget } from './context-version-model.js';
 import { lockContextTarget, readContextVersion } from './context-version.js';
 
+/** Stored files were judged when written: an unreadable version is a typed error the claim absorbs, never a crash. */
+async function readStoredVersion(client: DatabaseClient, target: ContextTarget, version: number) {
+  try { return await readContextVersion(client, target, version); } catch (error) {
+    if (error instanceof ZodError) throw new StoreError('invalid_input', `stored context version ${version} is unreadable`);
+    throw error;
+  }
+}
 export async function versionedContextForDelivery(client: DatabaseClient, tenant: string, alias: string,
   ids: readonly string[]): Promise<VersionedContext | undefined> {
   const row = (await client.query<{ company_id: string; desired_version: string }>(
@@ -10,10 +19,14 @@ export async function versionedContextForDelivery(client: DatabaseClient, tenant
     WHERE current.tenant_id=$1 AND current.alias=$2 AND current.company_id=tenant.company_id AND current.desired_version>0`, [tenant, alias])).rows[0];
   if (!row || ids.length === 0) return undefined;
   const target = { company_id: row.company_id, tenant_id: tenant, alias };
-  const version = await readContextVersion(client, target, Number(row.desired_version));
+  let version;
+  try { version = await readStoredVersion(client, target, Number(row.desired_version)); } catch (error) {
+    if (error instanceof StoreError && error.code === 'invalid_input') return undefined;
+    throw error;
+  }
   await client.query(`UPDATE deliveries SET context_version=$3,context_digest=$4
     WHERE recipient_tenant=$1 AND recipient_alias=$2 AND id=ANY($5::uuid[])`, [tenant, alias, version.version, version.digest, ids]);
-  return { ...target, version: version.version, digest: version.digest, files: canonicalContextFiles(version.files) };
+  return { ...target, version: version.version, digest: version.digest, files: version.files };
 }
 export async function recordContextAdoptionInTransaction(client: DatabaseClient, input: {
   readonly deliveryId: string; readonly tenantId: string; readonly alias: string; readonly result: Record<string, unknown> | undefined;
