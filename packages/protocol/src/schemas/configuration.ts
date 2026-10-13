@@ -148,7 +148,11 @@ export const AgentConfigMutationSchema = z.object({
      */
     max_concurrent_deliveries: z.number().int().min(1).max(100).nullable().optional()
   }).strict().optional()
-}).strict();
+}).strict().superRefine((mutation, context) => {
+  if (mutation.action === 'create' && isReservedAlias(mutation.alias)) {
+    context.addIssue({ code: 'custom', path: ['alias'], message: RESERVED_ALIAS_MESSAGE });
+  }
+});
 
 /**
  * A provider subscription. The id is global — an account is not owned by the tenant that uses

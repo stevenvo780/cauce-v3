@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { RESERVED_ALIAS_MESSAGE, isReservedAlias } from './patterns.js';
 import { AliasSchema, TenantSchema, Sha256HexSchema } from './schemas/core.js';
 import { ConfigurationDependencySchema } from './configuration-identity.js';
 
@@ -48,7 +49,12 @@ const RequestBase = {
   idempotency_key: z.string().min(8).max(128).regex(/^[a-zA-Z0-9_-]+$/),
 };
 export const FleetOperationRequestSchema = z.union([
-  z.object({ ...RequestBase, kind: z.enum(['create', 'update']), target: AgentTargetSchema, parameters: AgentParametersSchema }).strict(),
+  z.object({ ...RequestBase, kind: z.enum(['create', 'update']), target: AgentTargetSchema, parameters: AgentParametersSchema }).strict()
+    .superRefine((request, context) => {
+      if (request.kind !== 'create') return;
+      if (isReservedAlias(request.target.alias)) context.addIssue({ code: 'custom', path: ['target', 'alias'], message: RESERVED_ALIAS_MESSAGE });
+      if (isReservedAlias(request.parameters.runtime_key)) context.addIssue({ code: 'custom', path: ['parameters', 'runtime_key'], message: RESERVED_ALIAS_MESSAGE });
+    }),
   z.object({ ...RequestBase, kind: z.enum(['start', 'stop']), target: AgentTargetSchema, parameters: z.object({}).strict() }).strict(),
   z.object({ ...RequestBase, kind: z.enum(['retire', 'restore', 'purge']), target: FleetTargetSchema, parameters: z.object({}).strict() }).strict(),
 ]);
