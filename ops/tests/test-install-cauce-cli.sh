@@ -33,7 +33,9 @@ fi
 # --- 2) a clean install publishes every binary `cauce` execs ----------------------------------
 DEST="$WORK/bin"
 HOGAR="$WORK/hogar"
-mkdir -p "$HOGAR"
+mkdir -p "$HOGAR/.config/cauce-v3"
+printf '%s\n' '{"destino":"steven_dm"}' > "$HOGAR/.config/cauce-v3/attach-aviso.json"
+chmod 600 "$HOGAR/.config/cauce-v3/attach-aviso.json"
 salida=$(HOME="$HOGAR" "$INSTALADOR" "$DEST" 2>&1); rc=$?
 if [ "$rc" = 0 ]; then ok "install exits 0"; else bad "install exits 0 (rc=$rc): $salida"; fi
 for n in "${ESPERADOS[@]}"; do
@@ -72,12 +74,12 @@ class Handler(BaseHTTPRequestHandler):
 
 
 session = pathlib.Path(sys.argv[2]) / 'diagnose-session.json'
-session.write_text(json.dumps({'cookie': 'cauce_session=synthetic-install-session'}))
-session.chmod(0o600)
 server = HTTPServer(('127.0.0.1', 0), Handler)
 thread = threading.Thread(target=server.serve_forever, daemon=True)
 thread.start()
 origin = 'http://127.0.0.1:' + str(server.server_port)
+session.write_text(json.dumps({'cookie': 'cauce_session=synthetic-install-session', 'gateway': origin, 'origin': origin}))
+session.chmod(0o600)
 try:
     result = subprocess.run([sys.argv[1], 'trace/install', '--gateway', origin, '--origin', origin,
                              '--session-file', str(session)], capture_output=True, text=True, timeout=10)
@@ -160,7 +162,12 @@ done
 if grep -qx "$SIN_LIB=1" "$WORK/resultado" && grep -qx "$CON_LIB=0" "$WORK/resultado"; then ok "sin la lib, retirar/login/aprovisionar se niegan"; else bad "sin la lib, retirar/login/aprovisionar se niegan ($(tr '\n' ' ' < "$WORK/resultado"))"; fi
 
 # --- 3) it writes NOWHERE else: not in $HOME, not as bytecode inside the repo -----------------
-if [ -z "$(find "$HOGAR" -mindepth 1 -print -quit)" ]; then
+# The happy path seeds attach-aviso.json so install can succeed; that seed is not installer output.
+if [ -z "$(find "$HOGAR" -mindepth 1 \
+  ! -path "$HOGAR/.config" \
+  ! -path "$HOGAR/.config/cauce-v3" \
+  ! -path "$HOGAR/.config/cauce-v3/attach-aviso.json" \
+  -print -quit)" ]; then
   ok "no escribe en \$HOME cuando se le da un destino"
 else
   bad "no escribe en \$HOME cuando se le da un destino"
@@ -219,10 +226,13 @@ else
 fi
 HOME="$HOGAR2" CAUCE_DESTINO_AVISO_INICIAL=otro_destino "$INSTALADOR" "$WORK/bin3" >/dev/null 2>&1
 if grep -q steven_dm "$AVISO"; then ok "no pisa un attach-aviso.json existente"; else bad "no pisa un attach-aviso.json existente"; fi
-if HOME="$HOGAR" "$INSTALADOR" "$DEST" 2>&1 | grep -q 'aviso de attach sin destino'; then
-  ok "sin destino lo dice en vez de inventar uno"
+HOGAR_SIN="$WORK/hogar-sin"
+mkdir -p "$HOGAR_SIN"
+err=$(HOME="$HOGAR_SIN" "$INSTALADOR" "$WORK/bin-sin" 2>&1); rc=$?
+if [ "$rc" != 0 ] && grep -q 'aviso de attach sin destino' <<< "$err"; then
+  ok "sin destino falla en vez de inventar uno"
 else
-  bad "sin destino lo dice en vez de inventar uno"
+  bad "sin destino falla en vez de inventar uno (rc=$rc): $err"
 fi
 
 [ "$fail" = 0 ] && echo "ALL OK"
