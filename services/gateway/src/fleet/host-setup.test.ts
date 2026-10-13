@@ -43,6 +43,22 @@ describe('host setup packages', () => {
     expect(policy.container_templates.map(row => row.harness_id)).toEqual(['codex']);
   });
 
+  it('signs the explicitly approved descriptor digest and rejects malformed pins', () => {
+    const base = hostSetupConfig();
+    const bundle = { ...setupBundle(), descriptor_sha256: 'e'.repeat(64) };
+    const signed = packager({ policy: { ...base.policy, bundles: { codex: bundle } } }).build(scope);
+    expect(signed.package.policy).toMatchObject({ bundles: { codex: { descriptor_sha256: bundle.descriptor_sha256 } } });
+    const key = createPublicKey({ key: Buffer.from(signed.signer_public_key, 'base64'), format: 'der', type: 'spki' });
+    expect(verify(null, Buffer.from(stableHostJson(signed.package)), key, Buffer.from(signed.signature, 'base64'))).toBe(true);
+    const tampered = JSON.parse(JSON.stringify(signed.package)) as typeof signed.package;
+    (tampered.policy as { bundles: { codex: { descriptor_sha256: string } } }).bundles.codex.descriptor_sha256 = 'f'.repeat(64);
+    expect(verify(null, Buffer.from(stableHostJson(tampered)), key, Buffer.from(signed.signature, 'base64'))).toBe(false);
+    for (const pin of [null, 'SHA256:' + 'e'.repeat(64), 'e'.repeat(63), 'E'.repeat(64)]) {
+      expect(HostSetupConfigSchema.safeParse(hostSetupConfig({ policy: { ...base.policy,
+        bundles: { codex: { ...bundle, descriptor_sha256: pin } } } })).success).toBe(false);
+    }
+  });
+
   it('keeps identity, roots, native runtimes and foreign identities out of the approved template', () => {
     const base = hostSetupConfig();
     const rejected: Record<string, unknown>[] = [
