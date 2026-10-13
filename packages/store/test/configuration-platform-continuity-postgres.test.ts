@@ -65,8 +65,8 @@ async function exclusiveCase(): Promise<EmptyTestDatabase> {
 beforeEach(async () => {
   current = await exclusiveCase(); pool = current.pool; admin = current.adminPool;
   actors = await seedCompanyIsolation(admin);
-  await admin.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,role,permissions)
-    VALUES($1,'PraxisHub','company_admin','operator',ARRAY['read','control'])`, [actors.leon]);
+  await admin.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,permissions)
+    VALUES($1,'PraxisHub','company_admin',ARRAY['read','control'])`, [actors.leon]);
   await admin.query(`UPDATE memberships SET role='operator' WHERE tenant_id='Miguel' AND alias='janus';
     DELETE FROM acl_edges WHERE from_tenant='Steven' OR to_tenant='Steven';
     UPDATE tenants SET is_hub=false WHERE id='Steven';
@@ -109,8 +109,8 @@ async function secondPlatform(qualified = true): Promise<string> {
   await admin.query(`INSERT INTO console_users(id,email,email_normalized,password_hash,display_name,role,tenant_id,alias)
     VALUES($1,$2,$2,$3,'Second platform operator','operator','PraxisTeam','team_agent')`,
   [id, email, '$scrypt$' + 'x'.repeat(48)]);
-  await admin.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,role,permissions)
-    VALUES($1,'PraxisTeam','team_agent','operator',$2);`, [id, qualified ? ['read', 'control'] : ['read']]);
+  await admin.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,permissions)
+    VALUES($1,'PraxisTeam','team_agent',$2);`, [id, qualified ? ['read', 'control'] : ['read']]);
   await admin.query(`INSERT INTO platform_admins(human_id) VALUES($1)`, [id]);
   return id;
 }
