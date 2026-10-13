@@ -26,7 +26,7 @@ export async function versionedContextForDelivery(client: DatabaseClient, tenant
   }
   await client.query(`UPDATE deliveries SET context_version=$3,context_digest=$4
     WHERE recipient_tenant=$1 AND recipient_alias=$2 AND id=ANY($5::uuid[])`, [tenant, alias, version.version, version.digest, ids]);
-  return { ...target, version: version.version, digest: version.digest, files: version.files };
+  return { ...target, version: version.version, digest: version.digest, files: [...version.files] };
 }
 export async function recordContextAdoptionInTransaction(client: DatabaseClient, input: {
   readonly deliveryId: string; readonly tenantId: string; readonly alias: string; readonly result: Record<string, unknown> | undefined;
