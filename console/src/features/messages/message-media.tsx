@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { Download, FileText, Image, LoaderCircle, Music2, RotateCw, Video, X } from 'lucide-react';
 import { cauceApi, type CauceApi } from '../../api/client';
-import { ApiError } from '../../api/client/core';
 import { messageMediaKind, safeAttachmentName, type AttachmentSummary, type MessageMediaKind } from './message-attachment-list';
 
 interface MediaResource {
@@ -28,13 +27,6 @@ function revoke(resource: MediaResource | undefined, urls: MediaUrlApi): void {
   if (resource) urls.revokeObjectURL(resource.url);
 }
 
-function mediaErrorText(cause: unknown): string {
-  if (cause instanceof ApiError && cause.status === 403) {
-    return 'No se pudo autorizar la lectura del archivo. Renueva tu sesión o pide permiso de lectura a un operador; luego vuelve a intentarlo.';
-  }
-  return 'No se pudo cargar el archivo.';
-}
-
 export function MessageMedia({
   messageId,
   attachment,
@@ -50,7 +42,7 @@ export function MessageMedia({
 }) {
   const [resource, setResource] = useState<MediaResource>();
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string>();
+  const [error, setError] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const controller = useRef<AbortController | undefined>(undefined);
   const liveResource = useRef<MediaResource | undefined>(undefined);
@@ -68,7 +60,7 @@ export function MessageMedia({
     failedAction.current = undefined;
     setResource(undefined);
     setLoading(false);
-    setError(undefined);
+    setError(false);
     setExpanded(false);
   }, [urls]);
 
@@ -105,7 +97,7 @@ export function MessageMedia({
     controller.current?.abort();
     controller.current = abort;
     setLoading(true);
-    setError(undefined);
+    setError(false);
     try {
       const blob = await (replySource
         ? api.getMessageReplyAttachment(messageId, replySource.deliveryId, replySource.attempt, attachment.attachmentIndex, { signal: abort.signal })
@@ -116,8 +108,8 @@ export function MessageMedia({
       failedAction.current = undefined;
       setResource(next);
       return next;
-    } catch (cause) {
-      if (!abort.signal.aborted) setError(mediaErrorText(cause));
+    } catch {
+      if (!abort.signal.aborted) setError(true);
       else if (controller.current === abort) failedAction.current = undefined;
       return undefined;
     } finally {
@@ -207,7 +199,7 @@ export function MessageMedia({
         <RotateCw size={14} aria-hidden="true" /> Reintentar
       </button> : null}
       {loading ? <span className="text-[11px] text-muted" role="status">Cargando archivo…</span> : null}
-      {error ? <span className="text-[11px] text-danger-ink" role="status">{error}</span> : null}
+      {error ? <span className="text-[11px] text-danger-ink" role="status">No se pudo cargar el archivo.</span> : null}
     </div>
     {expanded && resource && canPreviewImage ? <div className="fixed inset-0 z-[1000] grid place-items-center bg-scrim p-4" onClick={closeImage}>
       <div className="relative grid max-h-full w-[min(100%,70rem)] place-items-center outline-none" role="dialog" aria-modal="true" aria-label={`Vista previa: ${attachment.name}`}

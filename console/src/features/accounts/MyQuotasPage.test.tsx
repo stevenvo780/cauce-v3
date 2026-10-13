@@ -18,43 +18,6 @@ const account: QuotaAccount = { id: 'subscription', provider: 'codex', label: 'C
 function owner() { return <CompanySessionProvider state={{ authenticated: true, authority: { role: 'company_owner', scope: 'company',
   home_company: 'one', acting_company: 'one', platform_override: false } }}><MyQuotasPage /></CompanySessionProvider>; }
 
-it('indica pedir acceso cuando la preferencia de oficina de la empresa está denegada', async () => {
-  server.use(
-    http.get('*/v3/console/quota-accounts', () => HttpResponse.json({ company_id: 'one', observed_at: '2026-10-11T00:00:00Z', accounts: [account] })),
-    http.get('*/v3/console/quota-environments', () => HttpResponse.json({ company_id: 'one', environments: [], operations: [],
-      capabilities: { available: false, providers: [], hosts: [], actions: [] } })),
-    http.get('*/v3/console/preferences', () => HttpResponse.json(
-      { error: 'forbidden', message: 'company office authority is required' }, { status: 403 },
-    )),
-  );
-  renderWithApi(owner());
-  const alert = await screen.findByRole('alert');
-  expect(alert).toHaveTextContent(/Pide acceso a un administrador/u);
-  expect(alert.textContent).not.toContain('company office authority is required');
-});
-
-it('explica el 500 de una actualización manual de entornos antes de volver a intentarlo', async () => {
-  let reads = 0;
-  server.use(
-    http.get('*/v3/console/quota-accounts', () => HttpResponse.json({ company_id: 'one', observed_at: '2026-10-11T00:00:00Z', accounts: [account] })),
-    http.get('*/v3/console/quota-environments', () => {
-      reads += 1;
-      return reads === 1
-        ? HttpResponse.json({ company_id: 'one', environments: [], operations: [],
-          capabilities: { available: false, providers: [], hosts: [], actions: [] } })
-        : HttpResponse.json({ error: 'internal', message: 'ENGLISH SERVER ERROR' }, { status: 500 });
-    }),
-    http.get('*/v3/console/preferences', () => HttpResponse.json({ version: 1, pinned_quota_accounts: [] })),
-  );
-  const user = userEvent.setup(); renderWithApi(owner());
-  const refresh = await screen.findByRole('button', { name: 'Actualizar cuotas y entornos' });
-  await waitFor(() => { expect(refresh).toBeEnabled(); });
-  await user.click(refresh);
-  const alert = await screen.findByRole('alert');
-  expect(alert).toHaveTextContent(/El servidor no confirmó el estado del entorno.*actualiza cuotas y entornos/i);
-  expect(alert.textContent).not.toContain('ENGLISH SERVER ERROR');
-});
-
 it('fija una suscripción compartida en el servidor y relee la misma preferencia al volver', async () => {
   let version = 4; let pinned: string[] = []; const writes: unknown[] = [];
   server.use(http.get('*/v3/console/quota-accounts', () => HttpResponse.json({ company_id: 'one', observed_at: '2026-10-11T00:00:00Z', accounts: [account] })),

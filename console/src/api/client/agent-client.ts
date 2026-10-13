@@ -159,10 +159,7 @@ export async function getAgentPerfil(
 ): Promise<AgentPerfil> {
   const ruta = `/v3/console/tenants/${encodeURIComponent(tenantId)}/agents/${encodeURIComponent(alias)}/perfil`;
   return getPublishedResource<Omit<AgentPerfil, 'publicado' | 'motivo'>>(
-    () => request<Omit<AgentPerfil, 'publicado' | 'motivo'>>(ruta, { cache: 'no-store' }, {
-      mapError: (status, body) => status === 404 && errorBody(body).error === 'not_found'
-        ? new ApiError(GOVERNANCE_ERROR_TEXT.not_found, 404, 'not_found') : undefined,
-    }),
+    () => request<Omit<AgentPerfil, 'publicado' | 'motivo'>>(ruta, { cache: 'no-store' }),
     ruta,
     {
       perfil: {
@@ -212,7 +209,8 @@ function contextoContaminado(status: number, body: unknown): ApiError | undefine
   const detalle = errorBody(body);
   if (status !== 409 || detalle.error !== 'context_contaminated') return undefined;
   return new ContextoContaminadoError(
-    'Los documentos del agente contienen cambios fuera del bloque gestionado. Relee la medición y confirma qué contenido externo conservarás antes de reconciliar.',
+    detalle.message
+      ?? 'los ficheros de gobierno de este alias contienen algo que no es suyo.',
     body,
   );
 }
@@ -221,77 +219,9 @@ function entregaEnVuelo(status: number, body: unknown): ApiError | undefined {
   const detalle = errorBody(body);
   if (status !== 409 || detalle.error !== 'delivery_in_flight') return undefined;
   return new EntregaEnVueloError(
-    'La reconciliación se detuvo porque hay entregas en curso para este agente. Espera a que terminen y vuelve a medir.',
+    detalle.message ?? 'hay una entrega en vuelo para este alias.',
     body,
   );
-}
-
-const CONTEXT_SOURCE_INVALID = 'La revisión del perfil Git no es válida o está incompleta. Elige otra revisión y vuelve a preparar el cambio.';
-
-const GOVERNANCE_ERROR_TEXT: Readonly<Record<string, string>> = {
-  agent_disabled: 'El agente está deshabilitado. Habilítalo desde Configuración > Operación y vuelve a guardar el perfil.',
-  profile_revision_conflict: 'El perfil cambió desde que se abrió. Actualízalo y vuelve a aplicar el borrador sobre la revisión vigente.',
-  not_found: 'No se encontró el agente o ya no está visible. Actualiza el inventario y elige un agente disponible.',
-  forbidden: 'Tu sesión ya no tiene permiso para esta operación. Entra con una persona autorizada o pide a un operador que revise el acceso.',
-  scope_unavailable: 'La fuente Git ya no coincide con este perfil. Relee las fuentes del agente y selecciona una disponible.',
-  confirmation_changed: 'La fuente del perfil cambió desde la vista previa. Relee la fuente y vuelve a confirmar antes de guardar.',
-  invalid_confirmation: 'La confirmación de la fuente no es válida o venció. Vuelve a leerla y confirma de nuevo.',
-  deleted_profile: 'El perfil de la fuente ya no existe. Elige una fuente o revisión disponible y prepara el cambio otra vez.',
-  profile_absent: 'La revisión ya no contiene el perfil de este agente. Elige otra revisión donde exista y prepara el cambio otra vez.',
-  repository_not_configured: 'Este agente no tiene una fuente Git configurada. Pide a un administrador que la configure o selecciona otra fuente.',
-  invalid_repository_root: 'No se puede acceder a la ruta raíz de la fuente Git. Revisa su configuración con un administrador.',
-  object_unavailable: 'No se pudo leer la revisión Git solicitada. Elige otra revisión disponible y prepara el cambio otra vez.',
-  invalid_commit: CONTEXT_SOURCE_INVALID,
-  unsupported_object_storage: 'El almacenamiento de la fuente Git no está disponible para esta operación. Revisa la fuente con un administrador.',
-  missing_manifest: CONTEXT_SOURCE_INVALID,
-  missing_file: 'Falta un archivo requerido en la revisión del perfil Git. Elige otra revisión y vuelve a preparar el cambio.',
-  invalid_provenance: CONTEXT_SOURCE_INVALID,
-  unsupported_harness: 'El tipo de agente de esta fuente no es compatible. Elige una fuente o revisión compatible y vuelve a prepararla.',
-  unsupported_schema: 'La fuente usa una versión de esquema no compatible. Pide actualizar el conector antes de importar el perfil.',
-  duplicate_agent: CONTEXT_SOURCE_INVALID,
-  invalid_journal_id: CONTEXT_SOURCE_INVALID,
-  invalid_revision: 'La revisión ya no coincide con el historial disponible. Actualiza el historial y elige otra revisión.',
-  size_limit: 'La revisión supera el límite de lectura del perfil. Elige una revisión más pequeña y vuelve a prepararla.',
-  invalid_path_policy: 'La política de rutas de la fuente no permite esta lectura. Revisa la configuración de la fuente con un administrador.',
-  invalid_object: CONTEXT_SOURCE_INVALID,
-  invalid_tree: CONTEXT_SOURCE_INVALID,
-  unsupported_entry: CONTEXT_SOURCE_INVALID,
-  invalid_blob: CONTEXT_SOURCE_INVALID,
-  invalid_text: 'El perfil de la revisión no es texto válido. Corrige el archivo en Git o elige otra revisión.',
-  invalid_schema: CONTEXT_SOURCE_INVALID,
-  invalid_identifier: CONTEXT_SOURCE_INVALID,
-  forbidden_content: 'El perfil contiene contenido que no se permite importar. Retira ese contenido en Git y vuelve a preparar el cambio.',
-  invalid_json: CONTEXT_SOURCE_INVALID,
-  duplicate_json_key: CONTEXT_SOURCE_INVALID,
-  invalid_profile: CONTEXT_SOURCE_INVALID,
-  context_source_unavailable: 'La fuente de contexto no respondió. Revisa su conexión y vuelve a intentarlo cuando esté disponible.',
-  profile_write_unavailable: 'Esta instalación no puede preparar la escritura del perfil. Conserva el borrador y vuelve a intentarlo cuando el servicio esté disponible.',
-  profile_write_unconfirmed: 'El servidor no confirmó el resultado de la escritura. Relee el perfil para comprobar qué revisión quedó activa antes de repetir el cambio.',
-};
-
-const RECONCILIATION_ERROR_TEXT: Readonly<Record<string, string>> = {
-  context_write_not_applied: 'El lote de reconciliación no se aplicó. Relee el estado del contexto y vuelve a medir antes de reintentar.',
-  agent_disabled: 'El agente está deshabilitado. Habilítalo desde Configuración > Operación y vuelve a medir el contexto.',
-  reconcile_snapshot_conflict: 'El perfil, la generación o los documentos cambiaron desde la medición. Relee el agente y crea una vista previa nueva antes de reconciliar.',
-  runtime_ack_incomplete: 'El runtime no confirmó todos los documentos. Relee el perfil y las huellas; vuelve a medir antes de reintentar.',
-  runtime_unverified: 'No se pudo verificar el runtime de este agente. Revisa la conexión de su computadora y vuelve a medir.',
-  runtime_expectation_absent: 'No hay una expectativa de runtime para reconciliar. Actualiza el agente y confirma que su runtime esté habilitado.',
-  profile_revision_conflict: 'El perfil cambió desde la lectura. Actualízalo y vuelve a medir antes de reconciliar.',
-  runtime_generation_conflict: 'El runtime cambió desde la lectura. Relee el agente y vuelve a medir antes de reconciliar.',
-  document_set_conflict: 'La lista de documentos cambió desde la lectura. Actualiza el agente y vuelve a medir antes de reconciliar.',
-  context_not_reconcilable: 'El contexto no se puede reconciliar en este estado. Revisa el perfil y el runtime antes de intentarlo otra vez.',
-  runtime_measurement_conflict: 'La medición del runtime cambió. Relee el estado y vuelve a medir antes de reconciliar.',
-  external_context_changed: 'El contenido externo cambió desde la medición. Relee los documentos y confirma otra vez qué conservarás.',
-  context_not_drifted: 'El contexto ya no muestra la diferencia que se iba a reparar. Actualiza el agente para confirmar su estado.',
-  context_reconcile_intent_not_recorded: 'No se registró la intención de auditoría y no se escribió nada. Espera a que la auditoría esté disponible y vuelve a medir.',
-  context_reconcile_audit_failed: 'No se pudo registrar la auditoría y la acción se detuvo. Espera a que se recupere y vuelve a medir.',
-  invalid_input: 'Los datos del agente o de la solicitud no son válidos. Actualiza el agente y revisa el motivo antes de medir.',
-};
-
-function errorDeCodigo(status: number, body: unknown, messages: Readonly<Record<string, string>>): ApiError | undefined {
-  const code = errorBody(body).error;
-  const message = code === undefined ? undefined : messages[code];
-  return message === undefined ? undefined : new ApiError(message, status, code);
 }
 
 /** The whole refusal vocabulary of a governance write, in one place for both writing routes. */
@@ -299,12 +229,7 @@ function falloDeGobernanza(status: number, body: unknown): ApiError | undefined 
   return sesionSinPersona(status, body)
     ?? motivoNoAdmitido(status, body)
     ?? contextoContaminado(status, body)
-    ?? entregaEnVuelo(status, body)
-    ?? errorDeCodigo(status, body, GOVERNANCE_ERROR_TEXT);
-}
-
-function falloDeReconciliacion(status: number, body: unknown): ApiError | undefined {
-  return falloDeGobernanza(status, body) ?? errorDeCodigo(status, body, RECONCILIATION_ERROR_TEXT);
+    ?? entregaEnVuelo(status, body);
 }
 
 export function putAgentPerfil(
@@ -355,7 +280,7 @@ function postContextReconciliation(
   return request(
     `/v3/console/tenants/${encodeURIComponent(tenantId)}/agents/${encodeURIComponent(alias)}/context/reconcile/${phase}`,
     { method: 'POST', body: JSON.stringify(body) },
-    { mapError: falloDeReconciliacion },
+    { mapError: falloDeGobernanza },
   );
 }
 
@@ -395,7 +320,7 @@ export async function getTerminalCapability(request: RequestFn): Promise<Termina
     return await request('/v3/console/terminal/capability');
   } catch (error) {
     if (error instanceof ApiError && (error.status === 404 || error.status === 501)) {
-      return { available: false, reason: 'El backend del terminal no está habilitado. Pide a un administrador que configure el servicio PTY para esta instalación.' };
+      return { available: false, reason: 'Backend PTY no disponible' };
     }
     throw error;
   }

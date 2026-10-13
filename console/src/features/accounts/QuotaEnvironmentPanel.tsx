@@ -7,7 +7,7 @@ import { randomUuid } from '../../random-id';
 import { quotaEnvironmentExecutable, quotaHostSupports } from './quota-environment-capabilities';
 import { QuotaAuthPanel } from './QuotaAuthPanel';
 import { QuotaRefreshNotice } from './QuotaAccountCard';
-import { describeOperationError, describeQuotaEnvironmentError } from './quota-messages';
+import { describeOperationError, describeQuotaError } from './quota-messages';
 
 const ACTION_LABEL: Record<QuotaEnvironmentAction, string> = { create: 'Crear entorno', authenticate: 'Autenticar cuenta', query: 'Consultar cuotas', update_cli: 'Actualizar CLI', delete: 'Eliminar entorno' };
 const STATUS_LABEL: Record<QuotaEnvironment['status'], string> = { pending: 'Pendiente', running: 'En ejecución', ready: 'Preparado', awaiting_auth: 'Esperando autenticación', failed: 'Fallido', deleting: 'Eliminación pendiente', deleted: 'Eliminado' };
@@ -38,7 +38,7 @@ export function QuotaEnvironmentPanel({ snapshot, accounts, canWrite, canAuthent
     if (busy) return;
     setBusy(true); setError(''); setNotice('');
     try { await action(); await reload(); if (signature) keys.current.delete(signature); setConfirm(undefined); setEditing(undefined); setNotice(message); }
-    catch (cause) { setError(describeQuotaEnvironmentError(cause, 'No se confirmó la operación del entorno.')); }
+    catch (cause) { setError(describeQuotaError(cause, 'No se confirmó la operación del entorno.')); }
     finally { setBusy(false); }
   }
   function act(environment: QuotaEnvironment, action: QuotaEnvironmentAction) {

@@ -3,7 +3,6 @@ import { useApi } from '../../api/context';
 import { useResource } from '../../api/use-resource';
 import { usePolling } from '../../api/use-polling';
 import { Button, Notice } from '../../components/kit';
-import { ApiError } from '../../api/client/core';
 import type { OfficeRoom } from '../../api/client/company-client';
 import type { TopologySnapshot } from '../../api/types';
 import { onNavClick } from '../../router';
@@ -13,19 +12,6 @@ import { FatigueIndicator } from '../accounts/FatigueIndicator';
 import { OfficeLayoutEditor } from './OfficeLayoutEditor';
 import { officeLayoutProblem, officeRoomKey, officeRooms, reconcileOfficeLayout } from './office-layout';
 import type { OfficeAgent } from './office-agent';
-
-function describeOfficeError(cause: unknown): string {
-  if (cause instanceof ApiError && cause.status === 400 && cause.code === 'invalid_request') {
-    return 'El plano contiene datos que el servidor no acepta. Revisa las posiciones y tamaños de las salas antes de volver a guardarlo.';
-  }
-  if (cause instanceof ApiError && cause.status === 403) {
-    return 'Tu sesión no tiene autoridad para leer o cambiar el plano de esta empresa. Pide acceso a un administrador de la empresa.';
-  }
-  if (cause instanceof ApiError && cause.status === 409) {
-    return 'Otro operador cambió el plano mientras editabas. Relee el plano y vuelve a guardar; se conserva el borrador.';
-  }
-  return cause instanceof Error ? cause.message : 'No se pudo leer o guardar el plano.';
-}
 
 export function OfficeWorkspace({ campus, topology, agents, onAgent }: {
   campus: ReactNode; topology?: TopologySnapshot; agents: readonly OfficeAgent[]; onAgent: (id: string) => void;
@@ -65,9 +51,9 @@ export function OfficeWorkspace({ campus, topology, agents, onAgent }: {
     try {
       await api.saveOfficeLayout({ expected_version: draft.version, rooms: shown });
       setDraft(undefined); setPlanSaves(count => count + 1); const reread = await layout.reload();
-      if (reread.error) throw new Error(`El plano se guardó, pero no se pudo releer: ${describeOfficeError(reread.error)}`);
+      if (reread.error) throw new Error(`El plano se guardó, pero no se pudo releer: ${reread.error.message}`);
       setNotice('Plano de oficina guardado para esta empresa.');
-    } catch (cause) { setError(describeOfficeError(cause)); }
+    } catch (cause) { setError(cause instanceof Error ? cause.message : 'No se confirmó el plano.'); }
     finally { setBusy(false); }
   }
   return <div className="flex h-full min-h-0 flex-col">
@@ -84,7 +70,7 @@ export function OfficeWorkspace({ campus, topology, agents, onAgent }: {
           <Button variant="primary" disabled={!writable || !draft} onClick={() => { void save(); }}>Guardar plano</Button>
           <Button disabled={busy || !draft} onClick={() => { setDraft(undefined); setError(''); }}>Descartar cambios de plano</Button></div></header>
       {layout.loading ? <p role="status">Leyendo plano…</p> : null}
-      {layout.error || quotas.error || error ? <Notice tone="danger" role="alert">{error || (layout.error ? describeOfficeError(layout.error) : quotas.error?.message)}</Notice> : null}
+      {layout.error || quotas.error || error ? <Notice tone="danger" role="alert">{error || (layout.error?.message ?? quotas.error?.message)}</Notice> : null}
       {notice ? <Notice tone="ok" role="status">{notice}</Notice> : null}
       {!rooms.length ? <Notice tone="info">Aún no hay salas. Crea una desde «Gestionar salas y asignaciones».</Notice> : null}
       <p className="m-0 text-xs text-muted">Selecciona una sala para cambiar su posición, tamaño y partes. Los agentes y asignaciones vienen de las salas actuales.</p>
