@@ -134,11 +134,18 @@ describe('bounded migration runner', () => {
       for (const table of oauthTables) expect(await relationExists(historical.pool, table)).toBe(true);
       for (const table of provenanceTables) expect(await relationExists(historical.pool, table)).toBe(true);
       for (const table of preferenceTables) expect(await relationExists(historical.pool, table)).toBe(true);
+      // 081 dropped the stored membership role: the head schema derives it from the account.
+      expect((await historical.pool.query(
+        `SELECT 1 FROM information_schema.columns
+          WHERE table_schema='public' AND table_name='human_tenant_memberships' AND column_name='role'`,
+      )).rowCount).toBe(0);
       const membership = await historical.pool.query<{
         human_id: string; tenant_id: string; actor_alias: string; role: string; permissions: string[];
       }>(
-        `SELECT human_id,tenant_id,actor_alias,role,permissions
-           FROM human_tenant_memberships WHERE human_id=$1`, [humanId],
+        `SELECT membership.human_id,membership.tenant_id,membership.actor_alias,account.role,membership.permissions
+           FROM human_tenant_memberships membership
+           JOIN console_users account ON account.id=membership.human_id AND account.tenant_id=membership.tenant_id
+          WHERE membership.human_id=$1`, [humanId],
       );
       expect(membership.rows).toEqual([{
         human_id: humanId, tenant_id: 'Steven', actor_alias: alias, role: 'operator',

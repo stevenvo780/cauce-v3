@@ -134,6 +134,15 @@ class AgentQuotaProjectionTest(unittest.TestCase):
         self.assertNotIn(PRIVATE_MARKER, json.dumps(result))
 
 
+def release_readable(tree: pathlib.Path) -> None:
+    """Give a checkout tree the read modes of a packaged release (build-adapter-release.sh applies go=rX)."""
+    for item in [tree, *tree.rglob('*')]:
+        if item.is_symlink():
+            continue
+        mode = item.stat().st_mode
+        item.chmod(mode | (0o055 if item.is_dir() or mode & 0o111 else 0o044))
+
+
 class DockerAgentQuotaTest(AgentQuotaPacketTest):
     @classmethod
     def setUpClass(cls):
@@ -141,6 +150,11 @@ class DockerAgentQuotaTest(AgentQuotaPacketTest):
             capture_output=True, text=True, timeout=15)
         if probe.returncode:
             raise unittest.SkipTest('disposable local Python image is unavailable')
+        # The executor bind-mounts this checkout's ops/cli and ops/container-runtime as its release and the reader
+        # runs there as the container's non-root user. A packaged release is go=rX; a clone made under a restrictive
+        # umask (027 in the release-gate clone) is not, and the reader could not even open its own script.
+        for tree in ('cli', 'container-runtime'):
+            release_readable(fixtures.OPS / tree)
         cls.image_tag = 'zz-canary-agent-quota-' + uuid.uuid4().hex[:12]
         with tempfile.TemporaryDirectory(prefix='zz-canary-quota-image-', dir='/var/tmp') as directory:
             root = pathlib.Path(directory)
