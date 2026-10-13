@@ -6,6 +6,7 @@ import {
 import { AgentOrb, OrbView } from '../../components/AgentOrb';
 import { AgentContextMenu, AgentKebab } from '../../components/agent-actions/AgentActionsMenu';
 import { useAgentAppearance, useAgentPreferences, usePreferencesSettled } from '../../components/agent-actions/preferences-context';
+import { Button, Notice } from '../../components/kit';
 import { ErrorState } from '../../components/ui';
 import { cn } from '../../cn';
 import { haceCuanto, plural } from '../../lib';
@@ -401,6 +402,14 @@ export function ChatLauncher({ phone }: { phone: boolean }) {
           <p className="m-0 mt-2 text-xs text-muted">Sin vista previa de mensajes: {messages.error.message}</p>
         ) : null}
       </div>
+      {error && agents.length > 0 ? (
+        <div className={cn('relative mx-auto w-full max-w-[1120px]', phone ? 'px-4 pb-3' : 'px-8 pb-4')}>
+          <Notice tone="danger" role="alert" className="flex flex-wrap items-center gap-2">
+            <span className="min-w-0 flex-1">No se pudo actualizar la lista de agentes: {error.message} Se muestra la última lista conocida.</span>
+            <Button size="sm" onClick={() => { reload(); }}>Reintentar</Button>
+          </Notice>
+        </div>
+      ) : null}
       <div className={cn('relative mx-auto w-full max-w-[1120px]', phone ? 'px-4 pb-6' : 'px-8 pb-12')}>{body}</div>
       <p className="sr-only" role="status" aria-live="polite">{announcement}</p>
     </div>

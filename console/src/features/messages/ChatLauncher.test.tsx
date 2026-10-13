@@ -194,6 +194,17 @@ it('shows skeletons while loading and the error with a retry when the fleet cann
   expect(screen.getByText('Todavía no hay agentes en la flota.')).toBeInTheDocument();
 });
 
+it('una relectura fallida avisa y conserva la lista ya conocida', async () => {
+  const reload = vi.fn();
+  renderLauncher({ data: fleet({ error: new Error('sin red'), reload }) });
+  const aviso = screen.getByRole('alert');
+  expect(aviso).toHaveTextContent(/No se pudo actualizar la lista de agentes: sin red/u);
+  expect(aviso).toHaveTextContent(/Se muestra la última lista conocida/u);
+  expect(screen.getByRole('link', { name: /^argos\b/u })).toBeInTheDocument();
+  await userEvent.setup().click(within(aviso).getByRole('button', { name: /Reintentar/u }));
+  expect(reload).toHaveBeenCalled();
+});
+
 it('names the clicked orb so the view transition can morph it into the chat header', async () => {
   const transition = vi.fn((update: () => void) => { update(); });
   Object.defineProperty(document, 'startViewTransition', { configurable: true, value: transition });
