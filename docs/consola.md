@@ -12,8 +12,7 @@ No utiliza `react-router`. El enrutamiento (`matchRoute`, `ROUTE_TABLE`, `ROUTE_
 
 | Directorio | Función |
 |---|---|
-| `features/landing/` | Dashboard: estado rápido del sistema |
-| `features/live/` | Estado de flota en tiempo real y drawer de agente: una única vista `Contexto` para editar perfil y manual, más `Ficheros` como visor |
+| `features/live/` | Estado de flota en tiempo real y drawer de agente con pestañas Perfil, Ficheros, Directiva, Historial, Git y Versiones y aplicación; el manual se edita en Ficheros |
 | `features/messages/` | Conversaciones y única superficie de publicación durable |
 | `features/deliveries/` | Política canónica de estados y ejecución segura de comandos sobre entregas |
 | `features/queues/` | Colas de salida, DLQ y única superficie de replay/cancelación/resolución |
@@ -25,22 +24,18 @@ No utiliza `react-router`. El enrutamiento (`matchRoute`, `ROUTE_TABLE`, `ROUTE_
 | `features/terminal/` | Terminal interactiva vía xterm.js (ver abajo) |
 | `features/help/` | Ayuda integrada en `/ayuda`: qué contesta cada vista, qué significa cada estado de la flota y los atajos; el índice se deriva de `NAV_ENTRIES`, así que no puede describir una vista que no existe |
 
+La ruta raíz (`/`) redirige a `messages` (Chat); no hay una vista Dashboard.
+
 ## Armazón de página
 
-Ninguna vista inventa su propio contenedor: el ancho, la cabecera y el scroll salen de dos
-primitivas de `components/ui.tsx`.
+`components/ui.tsx` exporta `PageHeader` con antetítulo, título, ayuda y acciones. No existe una
+primitiva `PageShell` ni una propiedad `kind` que clasifique el cuerpo de cada página.
 
-- `PageHeader` es la cabecera única — antetítulo, `h1`, acciones a la derecha y el texto
-  explicativo dentro de `PageHelp`, nunca como párrafo suelto. Ocupa el ancho del contenido, no la
-  medida de lectura, y queda pegada arriba y opaca sobre `--bg` para que el título de la vista siga
-  legible mientras una tabla de tres pantallas hace scroll. Por debajo de 640 px pasa a una sola
-  columna, donde la acción ya no cabe junto al título.
-- `PageShell kind` declara qué clase de página es el cuerpo:
-  - `documento` — se lee línea a línea y se limita a `--measure-prose`: `/config` y `/ayuda`;
-  - `aplicacion` — ocupa una altura de ventana y gestiona su propio scroll: `/terminal`.
+- `PageHeader` ocupa el ancho del contenido y permanece en el flujo normal: no declara posición
+  `sticky` ni un fondo `--bg`. Por debajo de 640 px pasa a una sola columna.
 
-`aplicacion` no lleva alturas mágicas: la vista mide en runtime lo que ocupa lo que tiene encima y
-lo escribe en `--shell-tope`. `/messages` resuelve lo mismo con su propia medida `--messenger-tope`.
+`/messages` mide el viewport en `features/messages/use-conversation-viewport.ts` y establece
+`--messenger-viewport-height`, `--messenger-top` y `--messenger-navigation-height`.
 
 ## Tema de la consola
 
@@ -48,10 +43,10 @@ lo escribe en `--shell-tope`. `/messages` resuelve lo mismo con su propia medida
 **claro** y **oscuro**. `claro` y `oscuro` estampan `data-theme="light"` o `data-theme="dark"` en
 `<html>`; `sistema` **retira** el atributo y devuelve la decisión a `prefers-color-scheme`.
 
-La paleta se declara por tres caminos en `styles/base.css`: la clara en el `:root` desnudo —ningún
+La paleta se declara por tres caminos en `styles/theme.css`: la clara en el `:root` desnudo —ningún
 color tiene su única definición dentro de una media query— y la oscura dos veces con los mismos
 valores, una para la preferencia del sistema (`:root:not([data-theme="light"])`) y otra para el
-atributo forzado (`:root[data-theme="dark"]`). `styles.legibilidad-themes.test.ts` lee los tres
+atributo forzado (`:root[data-theme="dark"]`). `theme-contrast.test.ts` lee los tres
 caminos y exige en todos el mismo juego de tokens y contraste AA.
 
 La elección se recuerda en `localStorage` bajo la clave `cauce.tema`, y cada lectura y cada
@@ -282,10 +277,9 @@ son preferencia personal y no se auditan.
 
 `src/features/terminal/pty-session.ts` gestiona la sesión WebSocket en el mismo origen, que el gateway proxea hacia `terminal-relay`. Véase [terminal-pty.md](terminal-pty.md) y [services/terminal-relay/README.md](../services/terminal-relay/README.md).
 
-La página es una vista de `aplicacion`: la caja de terminal no tiene altura fija ni techo, se estira
-hasta el alto de la ventana menos `--terminal-tope` —con un suelo de 430 px para que nunca quede
-inservible— y ese tope sale de medir en runtime lo que hay encima, no de una constante escrita a
-mano. La columna de flota se pliega a una tira de iconos con un
+El contenedor de `TerminalPageContent` usa `h-dvh`; hasta 760 px de ancho usa
+`h-[calc(100dvh-56px-env(safe-area-inset-bottom))]`. No calcula un techo de altura en runtime ni
+fija un mínimo de 430 px. La columna de flota se pliega a una tira de iconos con un
 botón nombrado que declara `aria-pressed` y `aria-controls` —no `aria-expanded`: plegada la lista
 sigue renderizada y enfocable, y decir que está colapsada sería mentirle al lector de pantalla.
 

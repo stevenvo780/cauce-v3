@@ -27,9 +27,11 @@ Piernas del relay:
 | navegador | 8446 | **no** | sólo el nginx de la consola por la red `edge` | mTLS: cert de cliente `console_gateway_client_cert`, CN exigido en `CAUCE_TERMINAL_RELAY_CONSOLE_CN` |
 | agentes | 8445 | sí, `${CAUCE_PRIVATE_BIND_IP}:8445` | agentes PTY de cualquier host, por el tailnet | mTLS contra `gateway_client_ca` + registro `pty_agent_identities.json` |
 
-El nginx de la consola rutea `/v3/console/terminal/ws` al relay con un `location`
-de **match exacto**, que gana sobre el prefijo `/v3/`. Todo el resto de
-`/v3/console/terminal/*` (capability, targets, sessions) sigue yendo al gateway.
+El nginx de producción declara un `location` de **match exacto** para
+`/v3/console/terminal/relays/${CAUCE_TERMINAL_RELAY_INSTANCE_ID}/ws`, que gana sobre el prefijo
+`/v3/`. La ruta corta `/v3/console/terminal/ws` no se enruta al relay en producción y cae en el
+gateway. Todo el resto de `/v3/console/terminal/*` (capability, targets, sessions) sigue yendo al
+gateway.
 El upstream del relay se resuelve por variable contra el DNS embebido de Docker
 a propósito: con el nombre estático, un `docker stop` del relay haría que el
 nginx **no arranque** en su próximo reinicio y se llevaría puesta la consola
@@ -213,12 +215,13 @@ Verificación de este paso:
 docker ps --filter name=cauce-v3-prod-terminal-relay --format '{{.Names}} {{.Status}}'
 docker inspect --format '{{index .Config.Labels "com.docker.compose.service"}} {{.State.Health.Status}}' cauce-v3-prod-console-1
 curl -sk -o /dev/null -w '%{http_code}\n' https://<ip-privada-consola>:8444/        # 200, la consola sigue entera
-curl -sk -o /dev/null -w '%{http_code}\n' https://<ip-privada-consola>:8444/v3/console/terminal/ws   # 400/426, no 502: el relay contesta
 ```
 
-Un 502 acá significa relay caído o certificado firmado por otra CA. Un 501
-significa que el gateway todavía no tiene el canal habilitado, que es lo
-esperado hasta el paso 3.
+El `curl` a `/v3/console/terminal/ws` no verifica el relay: esa ruta llega al gateway. Verifica el
+transporte abriendo una sesión PTY real desde la consola; el grant entrega la ruta por instancia
+que enruta al relay. Un 502 en ese `location` puede indicar que el relay está caído o que falla
+la validación TLS del upstream. Un 501 en la ruta de capability indica que el gateway todavía no
+tiene habilitado el canal, lo esperado hasta el paso 3.
 
 ### Paso 2 — agente PTY en el host de los agentes
 
@@ -278,13 +281,11 @@ Criterio: una fila en la consulta 1 por cada alias habilitado, con `last_heartbe
 los últimos 90 s, y ningún alias vivo sin ACK `started` en la ventana después de
 recibir tráfico. Un adaptador con un fallo propio se cuenta aparte.
 
-Rollback, por digest pinneado, sin tocar schema ni datos:
-
-```sh
-CAUCE_PREVIOUS_RUNTIME_IMAGE=repo/cauce-runtime@sha256:<digest-anterior> \
-CAUCE_ROLLBACK_CONFIRM=runtime-only:repo/cauce-runtime@sha256:<digest-anterior> \
-CAUCE_ENV_FILE=/etc/cauce-v3/prod.env python3 ops/scripts/pin-container-release.py rollback runtime
-```
+Rollback del bundle de un adapter por alias, mediante compare-and-swap y sin tocar schema ni
+datos: `pin-container-release.py rollback <alias>` requiere `--release`, `--sha256`,
+`--expected-release` y `--expected-sha256`. Sigue el procedimiento [Deshacer del runbook de
+adaptadores](../ops/runbooks/container-adapters.md#deshacer), que también reinicia el servicio del
+alias para aplicar el pin anterior.
 
 Para el canal PTY el rollback barato no es ese: es vaciar `grants.json`
 (§3, kill switch 1), que no reinicia nada.
@@ -444,9 +445,10 @@ Junto a él hay dos ajustes nuevos en el mismo fichero:
 | `CAUCE_TERMINAL_SESSION_MAX_TOTAL_SECONDS` | `3600` | `14400` | Vida total de una sesión desde `consumed_at`, prórrogas incluidas. No puede quedar por debajo de `CAUCE_TERMINAL_SESSION_TTL_SECONDS` o el gateway no arranca. |
 | `CAUCE_TERMINAL_CONTROL_HOLD_SECONDS` | `900` | el valor de la variable anterior | Ventana que pide un arriendo de control. La base la recorta igual (§4.4). |
 
-**Ninguna de las tres está declarada en `deploy/compose.yaml`.** Un despliegue de producción tal
-cual arranca con el modo escribible apagado y sin directorio de grabación —la posición segura—,
-pero encenderlo exige tocar `deploy/`, que requiere autorización explícita.
+**Las tres están declaradas para el servicio `gateway` en `deploy/compose.yaml`** con sustitución
+de entorno y defaults `CAUCE_TERMINAL_RW_ENABLED=0`, `CAUCE_TERMINAL_CONTROL_HOLD_SECONDS=900` y
+`CAUCE_TERMINAL_SESSION_MAX_TOTAL_SECONDS=3600`. La posición segura arranca con el modo escribible
+apagado y sin directorio de grabación; se configura en el env file, sin editar `deploy/`.
 
 Y una corrección a §3, que promete de más: **vaciar `grants.json` no cierra todas las puertas al
 contenedor.** Cierra la del canal PTY de la consola y nada más.
@@ -492,7 +494,7 @@ la identidad, el propietario ni la semántica de una reserva existente.
 La toma vuelve a correr las compuertas 1, 2, 3 y 5 —el `grants.json` se relee del disco sobre toda
 la cohorte, otra vez—, exige que la sesión sea `harness_rw` (`no_recognized_mode`, 409) y devuelve
 `409 control_held` con `held_by` y `expires_at` si otro operador ya lo tiene. La devolución sólo la
-acepta quien lo tomó (`403 control_held` si no), y un arriendo que ya no existe es un **éxito**:
+acepta quien lo tomó (`409 control_held` si no), y un arriendo que ya no existe es un **éxito**:
 la consola la reintenta desde `beforeunload` y fallar ahí no ayudaría a nadie.
 
 `POST /v3/console/terminal/sessions/:sid/extend`
@@ -676,7 +678,8 @@ El nginx de dev (`console/nginx.conf:15`) **no** tiene el mismo `location` que p
 declara el literal viejo `location = /v3/console/terminal/ws` y hace `proxy_pass` en claro a
 `http://terminal-relay:8446`, sin ninguna directiva `proxy_ssl_*`. Producción declara otro
 literal, el de la identidad del relay
-(`deploy/console/nginx-console-tls.conf:28`), con mTLS completo contra la CA interna. Dev no
+(`location = "/v3/console/terminal/relays/${CAUCE_TERMINAL_RELAY_INSTANCE_ID}/ws"` en
+`deploy/console/nginx-console-tls.conf`), con mTLS completo contra la CA interna. Dev no
 acredita producción: la auth es de desarrollo y los grants son de juguete.
 
 ### 6.1 Pendiente abierto: hoy el circuito de dev no cierra
@@ -698,11 +701,11 @@ falla, que no es el orden en que se descubre. Los cuatro puntos, en cascada:
    `location = /v3/console/terminal/ws` (`console/nginx.conf:15`). El upgrade del navegador cae
    entonces en `location /v3/` (`console/nginx.conf:36-40`), que va al gateway y **no** manda
    `Upgrade` ni `Connection`: el WebSocket no llega a nacer.
-3. **El `Origin` es el primer rechazo de la capa de aplicación.** El handler de upgrade comprueba
-   en este orden (`services/terminal-relay/src/browser-leg.ts:203-220`): ruta → `origin_mismatch`
-   (`:210-211`) → `untrusted_client_certificate` (`:217-218`). Y `isSameOrigin` exige
-   `protocol === 'https:'` (`:157-165`), así que un dev servido por HTTP cae ahí **antes** de que
-   se mire ningún certificado.
+3. **El `Origin` es el primer rechazo de la capa de aplicación.** El handler `server.on('upgrade')`
+   de `BrowserLeg` en `services/terminal-relay/src/browser-leg.ts` comprueba en este orden: ruta →
+   `origin_mismatch` (`isSameOrigin`) → `untrusted_client_certificate` (`consoleCommonName`).
+   `isSameOrigin` exige `protocol === 'https:'`, así que un dev servido por HTTP cae ahí **antes**
+   de que se mire ningún certificado.
 4. **Con el proxy en claro el relay no registra nada.** El nginx de dev proxea
    `http://terminal-relay:8446` sin `proxy_ssl_certificate` contra un listener construido con
    `requestCert: true, rejectUnauthorized: true`
@@ -756,11 +759,11 @@ Las cuatro copias que existen hoy:
 - `services/gateway/src/terminal/plugin.ts:51-54` — `COLS_MIN`/`COLS_MAX`/`ROWS_MIN`/`ROWS_MAX`.
 - `services/terminal-relay/src/session-limits.ts:48-51` — `MIN_COLS`/`MAX_COLS`/`MIN_ROWS`/`MAX_ROWS`,
   con `CLOSE_CODES` en `:13-29` y los topes de stdin y de ventana en el mismo módulo.
-- El agente PTY: `ops/pty-agent/cauce_pty_agent/framing.py:67-70` (`MAX_FRAME`,
-  `SESSION_ID_BYTES`, `MAX_DATA`; los tags `TAG_*` están arriba, en `:23-65`, y `DATA_TAGS` en
-  `:71`) y `ops/pty-agent/cauce_pty_agent/session.py:45-61` (plazos y cotas de geometría).
-- `console/src/features/terminal/pty-types.ts:87-90` — `MAX_FILAS_REMOTAS`, `MAX_COLUMNAS_REMOTAS`,
-  `MAX_INPUT_FRAME_BYTES`, `MAX_PENDING_INPUT_BYTES`.
+- El agente PTY: `ops/pty-agent/cauce_pty_agent/framing.py` declara `MAX_FRAME`,
+  `SESSION_ID_BYTES`, `MAX_DATA`, `DATA_TAGS` y los tags `TAG_*`; `session.py:45-61` contiene los
+  plazos y las cotas de geometría.
+- `console/src/features/terminal/pty-types.ts` declara `MAX_FILAS_REMOTAS`, `MAX_COLUMNAS_REMOTAS`,
+  `MAX_INPUT_FRAME_BYTES` y `MAX_PENDING_INPUT_BYTES`.
 
 El agente Python es la referencia de la que salieron los valores, y
 `ops/pty-agent/tests/test_vectors_contract.py` ya falla si el agente y el fichero se separan. La
