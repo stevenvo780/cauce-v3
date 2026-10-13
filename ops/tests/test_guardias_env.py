@@ -236,6 +236,10 @@ class GuardEnvironmentTests(unittest.TestCase):
         self.assertIn("reinstalar", section)
         self.assertIn("1000000001", section)
         self.assertIn("/etc/cauce-v3-hospital/guardias.env", section)
+        self.assertIn("%h/.config/cauce/guardias.env", section)
+        self.assertIn("~/.config/cauce-v3/", section)
+        self.assertIn("0600", section)
+        self.assertIn("usuario que ejecuta la unit", section)
         self.assertNotIn("/home/", section)
         self.assertNotIn("/datos/", section)
 
