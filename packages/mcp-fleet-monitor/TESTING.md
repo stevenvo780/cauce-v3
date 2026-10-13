@@ -226,11 +226,13 @@ Run the test suite:
 pnpm -F @cauce/mcp-fleet-monitor test
 ```
 
-Tests are skipped if DATABASE_URL is not set (they require a real database connection).
+`vitest run` usa un pool simulado (`fleet-read-model.test.ts`) y no se salta por `DATABASE_URL`. La suite de integración (`tests/integration/mcp-fleet-monitor-tools.test.ts`) no la ejecuta ese comando. Si `CAUCE_TEST_DATABASE_URL` no está definida, esa suite llama a `skipIfUnavailable` y se omite solo cuando Docker no está. No mira `DATABASE_URL`.
 
 ## Troubleshooting
 
-### "Cannot connect to database"
+### Fallo de conexión
+
+El servidor no emite «Cannot connect to database». Si falta `DATABASE_URL` sale `Error: DATABASE_URL environment variable is required`. Si `SELECT 1` no devuelve fila, lanza `Database connection test failed`. Cualquier otro fallo de arranque se registra como `[mcp-fleet-monitor] Fatal error:` seguido del error de `pg` (`server.ts`).
 
 - Verify `DATABASE_URL` is set correctly
 - Check that PostgreSQL is running
@@ -251,6 +253,6 @@ Tests are skipped if DATABASE_URL is not set (they require a real database conne
 ## Performance Notes
 
 - All queries use parameterized statements (SQL injection safe)
-- Queries are limited to reasonable result sets (default 100-1000 rows)
+- `deliveries` acota el límite entre 1 y 1000 (por defecto 100). `chain` usa `LIMIT 500` fijo. `fleet_status` no tiene `LIMIT`. El agrupado de `dead_letters` tampoco; sus ejemplos sí, con `LIMIT 3`
 - The server maintains a persistent pool connection (20 max by default)
 - Graceful shutdown on SIGINT/SIGTERM closes the pool
