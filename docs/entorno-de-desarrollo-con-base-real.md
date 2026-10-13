@@ -11,7 +11,7 @@
 | Servidor | PostgreSQL 16.15 local, clúster `16/main`, puerto 5432 |
 | Autenticación | `trust` para `127.0.0.1` y `::1`; **sin contraseña en ninguna URL** |
 | Rol | `cauce` (superusuario del clúster local) |
-| Base de desarrollo | `cauce_dev` — esquema real (37 migraciones en el árbol, que declaran 64 tablas) más una flota sembrada; lo aplicado se lee en `schema_migrations`, no se da por completo |
+| Base de desarrollo | `cauce_dev` — esquema real (69 archivos de migración de subida en el árbol, hasta la versión 079, que declaran 64 tablas) más una flota sembrada; lo aplicado se lee en `schema_migrations`, no se da por completo |
 | Base de pruebas | `cauce_test` — el servidor del que cada suite talla su propia base efímera |
 
 La contraseña se evita a propósito: una URL con credencial dentro acaba copiada en un fichero y el
@@ -38,7 +38,7 @@ CAUCE_TEST_DATABASE_URL="postgresql://cauce@127.0.0.1:5432/cauce_test" \
   npx vitest run packages/store/test tests/store-hardening tests/gateway-hardening tests/integration
 ```
 
-**Cada fichero recibe su propia base efímera** (`cauce_test_e<hex>`), clonada de la plantilla —ver
+**Cada fichero recibe su propia base efímera** (`cauce_test_e_p<pid>_t<timestamp-base36>_<10 hex>`), clonada de la plantilla —ver
 «Plantilla de migraciones»— y tirada al terminar. No hace falta serializar con
 `--no-file-parallelism`.
 
@@ -52,7 +52,7 @@ CAUCE_TEST_DATABASE_URL="postgresql://cauce@127.0.0.1:5432/cauce_test" \
 
 La guardia de nombre sigue en pie: `CAUCE_TEST_DATABASE_URL` sólo acepta bases cuyo nombre empiece
 por `cauce_test`, porque `resetTestDatabase()` **TRUNCA en cascada una lista explícita y cerrada de
-36 tablas** (`tests/helpers/postgres.ts:588-600`), más las de catálogo que `restaurarCatalogo` vuelve
+36 tablas** (`tests/helpers/postgres.ts`, función `resetTestDatabase()`), más las de catálogo que `restaurarCatalogo` vuelve
 a sembrar. No son todas las del esquema —el árbol declara 64—: la lista se mantiene a mano, porque
 hay tablas que CASCADE no alcanza. Apuntarla a otra base se rechaza antes de abrir la conexión.
 
@@ -111,6 +111,10 @@ sin lo que quieren observar:
 - `terminal-session-claim-fencing-migration-postgres.test.ts`
 - `terminal-browser-owner-fencing-migration-postgres.test.ts`
 - `terminal-relay-instance-fencing-migration-postgres.test.ts`
+- `agent-context-revisions-migration-postgres.test.ts`
+- `fleet-lifecycle-migration-postgres.test.ts`
+- `companies-migration-postgres.test.ts`
+- `companies-isolation-migration-postgres.test.ts`
 
 La lista vive en `SUITES_SIN_PLANTILLA`, en `tests/helpers/postgres.ts`, y **no se mantiene a
 mano**: `tests/unit/suites-de-migracion-sin-plantilla.test.ts` la compara contra el disco, de modo
@@ -149,11 +153,14 @@ ella. Son dos vías:
 
 - **Vía `preparePostgresSuite`**: los ficheros de `packages/store/test` y de
   `tests/store-hardening`. El helper le declara al contador el nombre del fichero.
-- **Los que llaman a `dockerTestRequirement` directamente**: los de `tests/integration/`, dos de
-  `tests/e2e/`, los `-postgres.test.ts` de `tests/gateway-hardening/` más
+- **Los que llaman a `dockerTestRequirement` directamente**: los de `tests/integration/`, los seis de
+  `tests/e2e/` (`config-profile-codex-adoption`, `console-login`, `human-profile-codex-isolation`,
+  `real-qa`, `remote-console-terminal` y `web-chat-latency`), los `-postgres.test.ts` de
+  `tests/gateway-hardening/` más
   `publish-redaction-two-phase.test.ts`, `services/dispatcher/test/{index,metrics}.test.ts`,
+  `services/dispatcher/test/context-quarantine-jobs.test.ts`,
   `services/telegram-bridge/test/{ingress-postgres,postgres}.test.ts` y
-  `services/gateway/src/{health-progress,health-schema037.pg,secret-handoff.plugin}.test.ts`. No
+  `services/gateway/src/{health-progress-ready,health-schema037.pg,secret-handoff.plugin}.test.ts`. No
   declaran nada: el fichero se deduce de `expect.getState().testPath`, así que la línea sale **sin
   tocar ninguno de ellos**.
 
@@ -219,8 +226,9 @@ NODE_ENV=development DATABASE_URL="postgresql://cauce@127.0.0.1:5432/cauce_dev" 
   CAUCE_DEV_AUTH=1 CAUCE_DEV_OPERATOR=Steven/kant pnpm dev:gateway
 ```
 
-Levanta en `127.0.0.1:8080`. Desde ahí la consola puede correr **sin `VITE_USE_MOCKS`**, contra
-datos que salen del esquema real.
+El listener de la API escucha en `0.0.0.0:8080`; el de salud/métricas usa `0.0.0.0:8081` por
+defecto. Desde `127.0.0.1:8080` la consola puede correr **sin `VITE_USE_MOCKS`**, contra datos que
+salen del esquema real.
 
 ## Las suites de servicios
 

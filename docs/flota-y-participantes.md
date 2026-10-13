@@ -1,6 +1,6 @@
 # La flota y sus participantes
 
-Fuente de roles por agente: `grupos.json` (raíz). Este doc es el contexto que toda instancia debe tener.
+La flota operativa y el rol de membresía por agente salen de `ops/flota.json`; `grupos.json` define las descripciones del grupo `hospital` para operador, teseo y perseo, no los roles de toda la flota. Este doc es el contexto que toda instancia debe tener.
 
 ## Máquinas
 
@@ -12,21 +12,21 @@ Fuente de roles por agente: `grupos.json` (raíz). Este doc es el contexto que t
 | ILS (Tailscale .5) | sesiones dedicadas de navegador | fuentes de cuota consultadas directamente desde el VPS |
 | Workstation `kratos` (Tailscale .1) | desarrollo personal y respaldo | los runtimes de la flota, audio y acceso de archivos de Salva están retirados; las cuotas ya no se publican desde aquí |
 
-El registro y `ops/flota.json` describen quince agentes. `ops/container-aliases.json` contiene
+La clave `fleet` de `ops/flota.json` describe catorce agentes. `ops/container-aliases.json` contiene
 los doce alias que viven en Docker; los hosts nativos son Astra y Kant. La ubicación no
 se deduce del nombre del harness. Los respaldos conservan las copias anteriores al traslado.
 
 ## Humanos y sus grupos
-- **Steven** (dueño/operador): jarvis (asistente personal OpenClaw), zeus (gestor de Cauce e infra de agentes), argos (director general de desarrollo — **OpenClaw**), socrates (dev personal), kant (DevOps de todos los servidores) y astra (Codex en la VM `pc-agente`).
+- **Steven** (dueño/operador): jarvis (asistente personal OpenClaw), zeus (gestor de Cauce e infra de agentes), argos (director general de desarrollo — **OpenClaw**), socrates (dev personal), kant (DevOps de todos los servidores), astra (Codex en la VM `pc-agente`) y hades (Grok).
 - **Miguel**: janus (asistente multi-empresa), atlas y kratos (devs; kratos suele llevar Demeter y graf), iza (Humanizar), gaia (Finca Directa).
-- **Jhon**: hegel (asistente + ventas; mantiene Xenia), tales y heraclito (devs).
+- **Jhon**: tales y heraclito (devs). La flota canónica sitúa a hegel en el tenant Miguel y la sala `grp.miguel`; `ops/harness/fleet.mjs` y la guardia de ventas de hegel aún usan Jhon/`grp.jhon`, una discrepancia pendiente de resolver.
 - **Isa**: salva (asistente de diseño en ClaudeCode).
 - Pablo: retirado.
 
 ## Los 5 escenarios esenciales (criterio de éxito del despliegue)
 1. Steven→argos por Telegram (nuevo cliente/software/deploy) → argos delega → resultado por Telegram.
 2. Miguel→janus (graf, demeter, recurrentes) → delega → Telegram.
-3. Jhon→hegel (ventas, Xenia) → delega → Telegram.
+3. Miguel→hegel (ventas, Xenia) → delega → Telegram, según `ops/flota.json`; pendiente conciliar la discrepancia con `ops/harness/fleet.mjs` y la guardia de ventas.
 4. Steven→jarvis personal por los canales configurados, sin bloquear el trabajo de OpenClaw.
 5. Operación por TUI/CLI: esfuerzos, destrabar, prioridades, credenciales, rollouts — la vía de rescate cuando las colas se atascan.
 
