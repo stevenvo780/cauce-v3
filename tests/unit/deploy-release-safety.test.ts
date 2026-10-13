@@ -33,6 +33,13 @@ const entry = { command, args, instance: fs.readFileSync(env.CAUCE_ENV_FILE, 'ut
 if (command === 'docker' && args[0] === 'compose') entry.envFile = args[args.indexOf('--env-file') + 1];
 if (command === 'backup-monitor') entry.maxAge = env.MAX_AGE_HOURS;
 fs.appendFileSync(env.MOCK_LOG, JSON.stringify(entry) + '\n');
+if (command === 'stat') {
+  const target = args.at(-1) ?? '';
+  if (target === '/etc/cauce-v3/fleet-v35/gateway') { console.log(env.MOCK_GATEWAY_STAT || '0 755'); process.exit(0); }
+  if (target === '/run/cauce-fleet-signed-authority') { console.log(env.MOCK_ENCLAVE_STAT || '0 0 755'); process.exit(0); }
+  console.log(env.MOCK_FILE_STAT || '0 644');
+  process.exit(0);
+}
 if (command === 'id') { console.log('0'); process.exit(0); }
 if (command === 'date') { console.log(env.MOCK_STAMP); process.exit(0); }
 if (command === 'systemctl') process.exit(0);
@@ -108,7 +115,7 @@ function deploy(options: Options = {}) {
   }
   writeFileSync(join(repository, 'deploy/postgres/postgres-tls-entrypoint.sh'), '');
   for (const name of options.migrations ?? ['001_fixture.sql']) writeFileSync(join(migrations, name), '');
-  for (const name of ['docker', 'git', 'id', 'date', 'systemctl', 'backup-monitor']) writeFileSync(join(binaries, name), mock, { mode: 0o700 });
+  for (const name of ['docker', 'git', 'id', 'date', 'systemctl', 'backup-monitor', 'stat']) writeFileSync(join(binaries, name), mock, { mode: 0o700 });
   for (const name of ['refresh-observability.sh', 'smoke.sh']) writeFileSync(join(repository, 'deploy', name), mock, { mode: 0o700 });
   const instanceFile = join(directory, 'prod.env');
   const initialInstance = `COMPOSE_PROJECT_NAME=release-fixture
@@ -328,6 +335,18 @@ describe('deploy bind sources', () => {
     }
   });
 
+  it('aborts a fleet overlay before the build when the gateway directory mode is wrong', () => {
+    const gateway = '/etc/cauce-v3/fleet-v35/gateway';
+    const result = deploy({
+      instance: 'CAUCE_DEPLOY_FLEET_OVERLAY=1\n',
+      composeModel: { services: {}, secrets: {}, configs: {} },
+      environment: { MOCK_GATEWAY_STAT: '0 755', MOCK_ENCLAVE_STAT: '0 0 755', MOCK_FILE_STAT: '0 644' },
+    });
+    expectStoppedBeforeBuild(result, existsSync(gateway)
+      ? 'debe ser uid 1000 y modo 0700'
+      : `falta ${gateway} antes de construir`);
+  });
+
   it('accepts the real compose when every bind source exists', () => {
     const contexts = temporaryDirectory('cauce-contexts-');
     mkdirSync(join(contexts, 'repository'));
@@ -343,7 +362,8 @@ describe('deploy pins and migrator', () => {
     const result = deploy({ failure: 'run' });
     expect(result.status, result.stderr).toBe(1);
     expect(result.stderr).toContain('migracion fallida');
-    expect(result.stderr).toContain('no hay pins que restaurar');
+    expect(result.stderr).toContain('no pude leer schema_migrations');
+    expect(result.stderr).toContain('sigue con los pins anteriores');
     expect(result.instance()).toBe(result.initialInstance);
     expect(result.leftovers()).toEqual([]);
     expect(result.composeRuns('up')).toEqual([]);
@@ -351,6 +371,20 @@ describe('deploy pins and migrator', () => {
     expect(migrator.envFile).toBe(join(result.directory, `prod.env.candidate-${stamp}`));
     expect(migrator.instance).toBe(result.initialInstance);
     expect(existsSync(result.history)).toBe(false);
+  });
+
+  it('reports applied migrations when the migrator fails after schema_migrations changed', () => {
+    const result = deploy({ failure: 'run', migrations: ['001_fixture.sql'], applied: ['001_fixture.sql'] });
+    expect(result.status, result.stderr).toBe(1);
+    expect(result.stderr).toContain('aplicadas 1, repite deploy.sh para fijar pins');
+    expect(result.instance()).toBe(result.initialInstance);
+  });
+
+  it('reports nothing applied when schema_migrations is empty after a migrator failure', () => {
+    const result = deploy({ failure: 'run', migrations: ['001_fixture.sql'], applied: [''] });
+    expect(result.status, result.stderr).toBe(1);
+    expect(result.stderr).toContain('nada aplicado');
+    expect(result.instance()).toBe(result.initialInstance);
   });
 
   it('writes the new pins only after the migrator succeeds and keeps the rollback snapshot', () => {

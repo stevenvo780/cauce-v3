@@ -394,6 +394,21 @@ for owner, source in sorted(set(sources)):
 [ -z "$MISSING_BIND_SOURCES" ] \
   || die "faltan fuentes de bind mounts del compose; no se construye nada:"$'\n'"$MISSING_BIND_SOURCES"
 
+if [ "$FLEET_OVERLAY" = 1 ]; then
+  fleet_gateway=/etc/cauce-v3/fleet-v35/gateway
+  fleet_enclave=/run/cauce-fleet-signed-authority
+  [ -d "$fleet_gateway" ] || die "falta $fleet_gateway antes de construir"
+  gateway_meta=$(stat -c '%u %a' "$fleet_gateway") || die "no pude leer el modo de $fleet_gateway; no se construye"
+  [ "$gateway_meta" = "1000 700" ] || die "el directorio $fleet_gateway debe ser uid 1000 y modo 0700 (es $gateway_meta); no se construye"
+  while IFS= read -r -d '' fleet_file; do
+    file_meta=$(stat -c '%u %a' "$fleet_file") || die "no pude leer el modo de $fleet_file; no se construye"
+    [ "$file_meta" = "1000 600" ] || die "el fichero $fleet_file debe ser uid 1000 y modo 0600 (es $file_meta); no se construye"
+  done < <(find "$fleet_gateway" -type f -print0)
+  [ -d "$fleet_enclave" ] || die "falta $fleet_enclave antes de construir"
+  enclave_meta=$(stat -c '%u %g %a' "$fleet_enclave") || die "no pude leer el modo de $fleet_enclave; no se construye"
+  [ "$enclave_meta" = "0 1000 750" ] || die "el directorio $fleet_enclave debe ser root:1000 y modo 0750 (es $enclave_meta); no se construye"
+fi
+
 count_pending_migrations() {
   PENDING_MIGRATIONS=0
   local containers volumes pg_running applied
@@ -624,7 +639,18 @@ MIGRATOR_ENV=()
 MIGRATOR_RUNNING=1
 if ! "${CANDIDATE_COMPOSE[@]}" run --rm -T "${MIGRATOR_ENV[@]}" migrator; then
   terminate_migrator
-  die "migracion fallida: PostgreSQL revirtio la transaccion y $ENV_FILE sigue con los pins anteriores; no hay pins que restaurar"
+  if applied_now="$(docker exec "$PG_CONTAINER" psql -XAtq -v ON_ERROR_STOP=1 -U "$PG_USER" -d "$PG_DB" \
+      -c 'SELECT version FROM schema_migrations' 2>/dev/null)"; then
+    applied_count="$(printf '%s\n' "$applied_now" | grep -c . || true)"
+    if [ "$applied_count" = 0 ]; then
+      migration_state="nada aplicado"
+    else
+      migration_state="aplicadas $applied_count, repite deploy.sh para fijar pins"
+    fi
+  else
+    migration_state="no pude leer schema_migrations"
+  fi
+  die "migracion fallida: $ENV_FILE sigue con los pins anteriores; $migration_state"
 fi
 MIGRATOR_RUNNING=0
 resume_dispatcher
