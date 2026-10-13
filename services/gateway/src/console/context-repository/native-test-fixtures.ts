@@ -16,7 +16,7 @@ export const nativeFiles = (harness: NativeContextHarness = 'claude', content = 
   [`${NATIVE_ROOT}/native/${harness}/${harness === 'claude' ? 'CLAUDE.md' : 'AGENTS.md'}`]: content,
 });
 
-export async function writeLooseObject(root: string, type: string, body: Buffer): Promise<string> {
+async function writeLooseObject(root: string, type: string, body: Buffer): Promise<string> {
   const raw = Buffer.concat([Buffer.from(`${type} ${String(body.length)}\0`), body]);
   const oid = createHash('sha1').update(raw).digest('hex');
   const directory = join(root, '.git', 'objects', oid.slice(0, 2));

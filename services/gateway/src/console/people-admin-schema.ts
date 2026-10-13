@@ -8,7 +8,7 @@ const Tenant = z.string().regex(/^[A-Za-z][A-Za-z0-9_-]{0,63}$/u);
 const Name = z.string().trim().min(1).max(120).refine(value => Array.from(value).every(char => char.charCodeAt(0) >= 32 && char.charCodeAt(0) !== 127));
 const Password = z.string().min(MIN_PASSWORD_LENGTH).max(MAX_PASSWORD_LENGTH);
 export const PeopleAdminIdSchema = z.uuid();
-export const PeopleAdminRevisionSchema = z.string().regex(/^[1-9][0-9]{0,19}$/u).refine(value => BigInt(value) <= 9_223_372_036_854_775_807n);
+const PeopleAdminRevisionSchema = z.string().regex(/^[1-9][0-9]{0,19}$/u).refine(value => BigInt(value) <= 9_223_372_036_854_775_807n);
 const Fields = { email: Email, display_name: Name, role: z.enum(['operator', 'reader']), tenant_id: Tenant, alias: Alias, active: z.boolean() };
 export const PeopleAdminCreateSchema = z.object({ ...Fields, password: Password }).strict();
 export const PeopleAdminControlSchema = z.object({ expected_revision: PeopleAdminRevisionSchema }).strict();

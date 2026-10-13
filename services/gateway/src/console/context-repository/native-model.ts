@@ -11,7 +11,7 @@ export interface NativeContextSourceAgent {
   readonly native_manual: { readonly harness: NativeContextHarness };
 }
 
-export interface NativeContextManifest {
+interface NativeContextManifest {
   readonly schema_version: 3;
   readonly instance_id: string;
   readonly agents: readonly NativeContextSourceAgent[];

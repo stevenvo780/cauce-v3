@@ -7,7 +7,7 @@ import {
 } from './model.js';
 import { parseNativeContextManifest, sourceNativeManualPath, type NativeContextSourceAgent } from './native-model.js';
 
-export interface NativeContextSourceSnapshot {
+interface NativeContextSourceSnapshot {
   readonly commit: string;
   readonly tree: string;
   readonly scope: ContextScope;
@@ -17,7 +17,7 @@ export interface NativeContextSourceSnapshot {
   readonly sourceAgent: NativeContextSourceAgent;
 }
 
-export interface NativeContextSourceChange {
+interface NativeContextSourceChange {
   readonly path: string;
   readonly kind: 'modified' | 'added' | 'removed';
   readonly before: ContextSourceFile | null;

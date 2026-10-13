@@ -23,7 +23,7 @@ export interface FleetHostRepository {
   delete(hostId: string, expectedVersion: number, authority: CompanyAuthoritySource): Promise<void>;
 }
 
-export function fleetHostRepository(pool: DatabasePool): FleetHostRepository {
+function fleetHostRepository(pool: DatabasePool): FleetHostRepository {
   return {
     list: (authority, approvedHostIds) => listFleetHosts(pool, { authority, approvedHostIds }),
     create: (input, authority, approvedHostIds) => createFleetHost(pool, input, { authority, approvedHostIds }),

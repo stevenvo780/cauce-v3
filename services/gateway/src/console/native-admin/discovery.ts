@@ -5,7 +5,7 @@ import { canonicalProfileRuntimeContract, readAgentContextWrite, reserveAgentCon
 import type { NativeAdminActor, NativeAdminServiceDeps } from './service.js';
 import { NativeAdminError } from './error.js';
 
-export interface NativeDiscoveryRuntime { identity: NativeRuntimeIdentity; root: string; facts: { harness: string } }
+interface NativeDiscoveryRuntime { identity: NativeRuntimeIdentity; root: string; facts: { harness: string } }
 export async function discoverNativeAdmin(deps: NativeAdminServiceDeps, actor: NativeAdminActor, tenantId: string, alias: string,
   mutation: NativePieceMutation, expectedIdentity: NativeRuntimeIdentity, operationId: string | undefined,
   authority: (client: DatabaseClient) => Promise<void>, runtime: () => Promise<NativeDiscoveryRuntime>,

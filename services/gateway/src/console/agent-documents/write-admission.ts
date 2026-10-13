@@ -13,14 +13,14 @@ export const DOCUMENT_REASON_MAX = 280;
 
 export const SHA256_PATTERN = /^[0-9a-f]{64}$/;
 
-export interface AdmittedWrite {
+interface AdmittedWrite {
   readonly content: string;
   /** Prose the operator typed. Never defaulted, never generated, never derived from the content. */
   readonly reason: string;
   readonly precondition: GovernanceWritePrecondition;
 }
 
-export interface RejectedWrite {
+interface RejectedWrite {
   readonly error: 'invalid_input';
   readonly message: string;
 }

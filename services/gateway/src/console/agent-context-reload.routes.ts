@@ -40,7 +40,7 @@ import {
  * are audited, and the row says which of the two it was.
  */
 
-export interface ContextReloadDocument {
+interface ContextReloadDocument {
   readonly name: string;
   readonly path: string;
   /** Fingerprint measured BEFORE the batch; `null` when the file was absent. */
@@ -49,7 +49,7 @@ export interface ContextReloadDocument {
   readonly bytes: number;
 }
 
-export interface ContextReloadResponse {
+interface ContextReloadResponse {
   readonly ok: true;
   readonly state: ContextApplyState;
   readonly evidence: string;
@@ -67,7 +67,7 @@ export interface ContextReloadResponse {
  * two instants an operator needs to decide whether to wait. Nothing else — no subject, no body, no
  * attachment, no prompt — ever crosses into a refusal that anyone with `control` can trigger.
  */
-export interface InFlightDeliveryView {
+interface InFlightDeliveryView {
   readonly delivery_id: string;
   readonly status: string;
   readonly claimed_at: string | null;

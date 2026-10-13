@@ -14,7 +14,7 @@ export interface ContextSourceFile {
   readonly content: string;
 }
 
-export interface ContextSourceSnapshot {
+interface ContextSourceSnapshot {
   readonly commit: string;
   readonly tree: string;
   readonly scope: ContextScope;
@@ -24,14 +24,14 @@ export interface ContextSourceSnapshot {
   readonly provenanceVerification: 'not_evaluated';
 }
 
-export interface ContextSourceChange {
+interface ContextSourceChange {
   readonly path: string;
   readonly kind: 'modified';
   readonly before: ContextSourceFile;
   readonly after: ContextSourceFile;
 }
 
-export interface ContextRepositoryInspection {
+interface ContextRepositoryInspection {
   readonly desired: ContextSourceSnapshot;
   readonly previous: ContextSourceSnapshot | null;
   readonly changes: readonly ContextSourceChange[] | null;

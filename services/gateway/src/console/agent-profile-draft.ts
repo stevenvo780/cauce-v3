@@ -7,7 +7,7 @@ import { consoleHumanAccess } from '../console-human-authority.js';
 import { admitProfileWrite, isRejectedProfileWrite } from './agent-profile/write-gates.js';
 import type { AgentProfileDeps } from './agent-profile.routes.js';
 
-export interface AgentProfileDraftInput { profile: AgentProfile; expected_revision: number | null; reason: string }
+interface AgentProfileDraftInput { profile: AgentProfile; expected_revision: number | null; reason: string }
 export interface AgentProfileDraftBinding {
   prepareDraft(request: FastifyRequest, reply: FastifyReply, input: AgentProfileDraftInput): Promise<PersistedAgentProfile>;
   canPrepareDraft(request: FastifyRequest, reply: FastifyReply, tenantId: string, alias: string): Promise<boolean>;

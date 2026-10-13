@@ -32,7 +32,7 @@ export const PERFIL_SIN_PERSONA = {
     + 'con nombre, y esta sesión no la tiene, así que su fila de auditoría no acusaría a nadie',
 } as const;
 
-export interface AdmittedProfileWrite {
+interface AdmittedProfileWrite {
   readonly expected_revision: number | null;
   readonly profile: AgentProfile;
   /** Prose the operator typed. Never defaulted, never generated, never derived from the profile. */
@@ -40,7 +40,7 @@ export interface AdmittedProfileWrite {
   readonly context_source?: unknown;
 }
 
-export interface RejectedProfileWrite {
+interface RejectedProfileWrite {
   readonly status: 400 | 422;
   readonly body: {
     readonly error: 'invalid_input';

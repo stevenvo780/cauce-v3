@@ -11,7 +11,7 @@ export const CONTEXT_CONTAMINATION_REASONS = [
   'foreign_managed_block', 'expectation_sha_mismatch',
 ] as const;
 
-export type ContextContaminationReason = typeof CONTEXT_CONTAMINATION_REASONS[number];
+type ContextContaminationReason = typeof CONTEXT_CONTAMINATION_REASONS[number];
 
 export interface MeasuredContextDocument {
   readonly name: string;
@@ -38,7 +38,7 @@ export interface RecordedContextExpectation {
   }[];
 }
 
-export interface ContextContaminationFinding {
+interface ContextContaminationFinding {
   readonly reason: ContextContaminationReason;
   readonly document: string;
   readonly path: string;

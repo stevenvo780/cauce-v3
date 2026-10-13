@@ -48,7 +48,7 @@ export interface DocumentRevisionView {
  * One stretch of a journal. `next_cursor` is a string only when a row OLDER than this page exists;
  * `null` is the end of the diary, and the console stops walking on it.
  */
-export interface RevisionPage<Entry> {
+interface RevisionPage<Entry> {
   readonly entries: readonly Entry[];
   readonly next_cursor: string | null;
 }

@@ -12,9 +12,9 @@ const OID = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u;
 const PROFILE_PATH = /^tenants\/[A-Za-z][A-Za-z0-9_-]{0,63}\/agents\/[a-z][a-z0-9_-]{0,63}\/profile\.json$/u;
 
 const NATIVE_MANUAL_PATH = /^tenants\/[A-Za-z][A-Za-z0-9_-]{0,63}\/agents\/[a-z][a-z0-9_-]{0,63}\/native\/(?:claude\/CLAUDE\.md|(?:codex|openclaw)\/AGENTS\.md)$/u;
-export type ContextGitPathPolicy = 'profiles' | 'native-inspection';
+type ContextGitPathPolicy = 'profiles' | 'native-inspection';
 
-export interface ContextGitEntry {
+interface ContextGitEntry {
   readonly path: string;
   readonly oid: string;
   readonly bytes: number;

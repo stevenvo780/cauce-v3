@@ -49,16 +49,12 @@ const DIRECTIVE_READ_CONCURRENCY = 3;
  */
 
 /**
- * Directive paths for the alias, resolved from environment facts.
- */
-/**
  * Security check: is this path allowed to be read?
  * - Must be in the closed set returned by resolveAgentDocuments()
  * - Must not be a symlink (the pty-agent verifies with realpath)
  * - Must not be a credential (NEVER_SERVE)
  */
 function isPathAllowedForReading(path: string, allowedPaths: string[]): boolean {
-  // The path MUST be in the closed set
   if (!allowedPaths.includes(path)) {
     return false;
   }
@@ -165,7 +161,6 @@ export function registerAgentDirectiveRoutes(app: FastifyInstance, deps: AgentDi
 
       const medido = await deps.probe.factsFor(target.tenant_id, target.alias);
       const degradada = construirRespuestaDegradada(medido?.source);
-      // Degraded responses are marked with measured: false.
       if (!medido || degradada) return degradada;
 
       const { facts } = medido;

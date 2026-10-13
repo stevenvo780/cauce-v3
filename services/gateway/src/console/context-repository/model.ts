@@ -20,7 +20,7 @@ export interface ContextSourceAgent {
   readonly source_journal: { readonly id: string; readonly revision: number } | null;
 }
 
-export interface ContextManifest {
+interface ContextManifest {
   readonly schema_version: 1 | 2;
   readonly instance_id: string;
   readonly agents: readonly ContextSourceAgent[];

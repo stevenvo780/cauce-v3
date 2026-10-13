@@ -5,11 +5,11 @@ import { isLiteralTrue } from '@cauce/protocol';
 import { ProviderAuthError, ProviderAuthRequestSchema } from './provider-auth.contracts.js';
 import type { ProviderAuthActor, ProviderAuthDependencies, ProviderAuthLogin, ProviderAuthRequest } from './provider-auth.types.js';
 
-export type ProviderAuthPolicyScope = Pick<ProviderAuthRequest, 'provider_id' | 'account_id' | 'harness_id' | 'host_id' | 'runtime_user' | 'profile_id'>;
+type ProviderAuthPolicyScope = Pick<ProviderAuthRequest, 'provider_id' | 'account_id' | 'harness_id' | 'host_id' | 'runtime_user' | 'profile_id'>;
 interface Agent extends Record<string, unknown> { tenant_id: string; alias: string; runtime_key: string; harness_id: string; host_id: string;
   runtime_user: string; primary_account_id: string; retired_at: Date | null; purged_at: Date | null; company_id: string }
 interface Account { id: string; provider: string; external_account_id: string; payer_tenant_id: string; shared_with_pool: boolean; enabled: boolean }
-export interface ProviderAuthPolicyContext { actor: ProviderAuthActor; operation: FleetOperationRow; agent: Agent; account: Account }
+interface ProviderAuthPolicyContext { actor: ProviderAuthActor; operation: FleetOperationRow; agent: Agent; account: Account }
 export type ProviderAuthPolicyResolver = (client: DatabaseClient, context: ProviderAuthPolicyContext) => Promise<ProviderAuthPolicyScope>;
 export interface ProviderAuthPhysicalScope extends ProviderAuthPolicyScope {
   operation_id: string; tenant_id: string; alias: string; runtime_key: string; host_scope_sha256: string; expected_external_account_id: string;

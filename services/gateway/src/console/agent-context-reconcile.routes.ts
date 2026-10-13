@@ -88,7 +88,7 @@ export interface AgentContextReconcileDeps {
   recordAudit(entry: TerminalAuditEntry): Promise<void>;
 }
 
-export interface ContextReconcilePreviewResponse {
+interface ContextReconcilePreviewResponse {
   readonly ok: true;
   readonly tenant_id: string;
   readonly alias: string;
@@ -98,7 +98,7 @@ export interface ContextReconcilePreviewResponse {
   readonly documents: readonly ContextReconcileDocumentSnapshot[];
 }
 
-export interface ContextReconcileApplyResponse {
+interface ContextReconcileApplyResponse {
   readonly ok: true;
   readonly state: 'pending_session_refresh';
   readonly tenant_id: string;

@@ -29,11 +29,11 @@ export interface ContextReconcileSnapshot {
   readonly prepared: PreparedProfileRuntime;
 }
 
-export interface ContextReconcilePreviewBody {
+interface ContextReconcilePreviewBody {
   readonly reason: string;
 }
 
-export interface ContextReconcileApplyBody extends ContextReconcilePreviewBody {
+interface ContextReconcileApplyBody extends ContextReconcilePreviewBody {
   readonly expected_revision: number;
   readonly expected_runtime_generation: string;
   readonly preserve_external: true;
