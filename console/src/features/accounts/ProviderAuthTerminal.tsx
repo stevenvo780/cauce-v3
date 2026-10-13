@@ -66,7 +66,12 @@ export function ProviderAuthTerminal({ session, client, onDisconnect }: Props) {
     return () => {
       disposed = true;
       if (socket) { socket.onopen = null; socket.onmessage = null; socket.onclose = null; socket.onerror = null; socket.close(); }
-      observer.disconnect(); input.dispose(); clear(); terminal.dispose();
+      observer.disconnect(); input.dispose(); clear();
+      // xterm 5.5 still has scroll-area syncs queued (a timeout from open(), a frame from each clear or reset)
+      // that read the renderer dispose() drops: disposing now throws in the page. The private bytes are already
+      // wiped, so detach the element at once and dispose once the next frame and those timers have run.
+      terminal.element?.remove();
+      window.requestAnimationFrame(() => { window.setTimeout(() => { terminal.dispose(); }); });
     };
   }, [client, session.session_id]);
   return <div ref={host} className="pty-host provider-auth-terminal" aria-label="Terminal privada de autenticación" />;

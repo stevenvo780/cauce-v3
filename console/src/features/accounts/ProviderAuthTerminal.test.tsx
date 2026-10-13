@@ -46,7 +46,7 @@ describe('sensitive provider terminal lifecycle', () => {
     socket.onopen?.(); expect(socket.sent[0]).toEqual(JSON.stringify({ type: 'auth', ticket: '00000000-0000-4000-8000-000000000052' }));
     socket.onmessage?.({ data: JSON.stringify({ type: 'ready' }) }); terminal.input?.('PRIVATE_PASSWORD');
     expect(socket.sent.some(value => ArrayBuffer.isView(value) && new TextDecoder().decode(value) === 'PRIVATE_PASSWORD')).toBe(true);
-    expect(terminal.options.scrollback).toBe(0); view.unmount(); expect(terminal.disposed).toBe(true);
+    expect(terminal.options.scrollback).toBe(0); view.unmount(); await waitFor(() => { expect(terminal.disposed).toBe(true); });
   });
   it('clears private live bytes on closure and unmount and never replays them into another mount', async () => {
     const disconnected = vi.fn(); const api = client();
@@ -56,8 +56,22 @@ describe('sensitive provider terminal lifecycle', () => {
     new Uint8Array(output).set(bytes); Socket.sockets[0].onmessage?.({ data: output });
     expect(terminal.writes).toHaveLength(1);
     Socket.sockets[0].close(); expect(terminal.writes).toEqual([]); expect(disconnected).toHaveBeenCalledOnce();
-    view.unmount(); expect(terminal.input).toBeUndefined(); expect(terminal.disposed).toBe(true);
+    view.unmount(); expect(terminal.input).toBeUndefined(); expect(terminal.writes).toEqual([]);
+    await waitFor(() => { expect(terminal.disposed).toBe(true); });
     const second = render(<ProviderAuthTerminal session={snapshot} client={api} onDisconnect={disconnected} />);
-    await waitFor(() => { expect(Socket.sockets).toHaveLength(2); }); expect(terminal.writes).toEqual([]); second.unmount();
+    await waitFor(() => { expect(Socket.sockets).toHaveLength(2); }); expect(terminal.writes).toEqual([]);
+    terminal.disposed = false; second.unmount(); await waitFor(() => { expect(terminal.disposed).toBe(true); });
+  });
+  it('wipes the private bytes on unmount but disposes xterm only after its queued frame and timers have run', async () => {
+    const view = render(<ProviderAuthTerminal session={snapshot} client={client()} onDisconnect={() => undefined} />);
+    await waitFor(() => { expect(Socket.sockets).toHaveLength(1); });
+    const bytes = new TextEncoder().encode('PRIVATE_TOKEN'); const output = new ArrayBuffer(bytes.byteLength);
+    new Uint8Array(output).set(bytes); Socket.sockets[0].onmessage?.({ data: output });
+    const resets = terminal.resetCount; const frame = vi.spyOn(window, 'requestAnimationFrame');
+    view.unmount();
+    expect(terminal.writes).toEqual([]); expect(terminal.resetCount).toBe(resets + 1); expect(terminal.input).toBeUndefined();
+    expect(terminal.disposed).toBe(false); expect(frame).toHaveBeenCalledOnce();
+    await waitFor(() => { expect(terminal.disposed).toBe(true); });
+    frame.mockRestore();
   });
 });
