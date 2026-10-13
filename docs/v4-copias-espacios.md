@@ -34,20 +34,20 @@ Estos recibos corresponden al checkout de revisión con HEAD `a896a184ed67703f8b
 
 | Validación | Resultado | Recibo local |
 |---|---|---|
-| PostgreSQL 16 ampliado, rol runtime, firma real, HTTP real, helper Python real y cuotas durables | 15/15 PASS, 23.35 s | `/var/tmp/cauce-v4-space-backup-expanded-postgres.log` |
-| Host worker TS | 5/5 PASS | `/var/tmp/cauce-v4-space-backup-host-unit.log` |
-| Exportador/restaurador: límites y fallo de disco simulado | 10/10 PASS, 0.017 s | `/var/tmp/cauce-v4-space-archive-expanded.log` |
-| Runtime Python ampliado, JSONL mayor de 96 MiB y CLI de restore real | 8/8 PASS, 55.674 s | `/var/tmp/cauce-v4-space-backup-expanded-python.log` |
-| Regresión Python ampliada con SDK native/container reales y replay | 10/10 PASS, 7.887 s | `/var/tmp/cauce-v4-space-backup-python-sdk-final.log` |
-| ESLint normal y estricto focal de la ampliación | exit 0, salida vacía | `/var/tmp/cauce-v4-space-backup-expanded-lint.log`, `/var/tmp/cauce-v4-space-backup-expanded-strict-fixed.log` |
-| Typecheck core del árbol actual | exit 2: tres tipos opcionales de `placement_role` en `repository/fleet-operation-hosts.ts`, sector paralelo | `/var/tmp/cauce-v4-space-backup-expanded-typecheck.log` |
-| Ruff de archivos propios ampliados | exit 0 | `/var/tmp/cauce-v4-space-backup-expanded-ruff.log` |
-| Calidad del árbol ampliado | VERDE, 2761 archivos, sin modificar baseline | `/var/tmp/cauce-v4-space-backup-expanded-calidad.log` |
-| Diffcheck de archivos propios ampliados | exit 0, salida vacía | `/var/tmp/cauce-v4-space-backup-expanded-diffcheck.log` |
+| PostgreSQL 16 ampliado, rol runtime, firma real, HTTP real, helper Python real y cuotas durables | 15/15 PASS, 23.35 s | `directorio temporal compartido/cauce-v4-space-backup-expanded-postgres.log` |
+| Host worker TS | 5/5 PASS | `directorio temporal compartido/cauce-v4-space-backup-host-unit.log` |
+| Exportador/restaurador: límites y fallo de disco simulado | 10/10 PASS, 0.017 s | `directorio temporal compartido/cauce-v4-space-archive-expanded.log` |
+| Runtime Python ampliado, JSONL mayor de 96 MiB y CLI de restore real | 8/8 PASS, 55.674 s | `directorio temporal compartido/cauce-v4-space-backup-expanded-python.log` |
+| Regresión Python ampliada con SDK native/container reales y replay | 10/10 PASS, 7.887 s | `directorio temporal compartido/cauce-v4-space-backup-python-sdk-final.log` |
+| ESLint normal y estricto focal de la ampliación | exit 0, salida vacía | `directorio temporal compartido/cauce-v4-space-backup-expanded-lint.log`, `directorio temporal compartido/cauce-v4-space-backup-expanded-strict-fixed.log` |
+| Typecheck core del árbol actual | exit 2: tres tipos opcionales de `placement_role` en `repository/fleet-operation-hosts.ts`, sector paralelo | `directorio temporal compartido/cauce-v4-space-backup-expanded-typecheck.log` |
+| Ruff de archivos propios ampliados | exit 0 | `directorio temporal compartido/cauce-v4-space-backup-expanded-ruff.log` |
+| Calidad del árbol ampliado | VERDE, 2761 archivos, sin modificar baseline | `directorio temporal compartido/cauce-v4-space-backup-expanded-calidad.log` |
+| Diffcheck de archivos propios ampliados | exit 0, salida vacía | `directorio temporal compartido/cauce-v4-space-backup-expanded-diffcheck.log` |
 
 PostgreSQL cubre CSRF, Origin, autoridad humana, aislamiento de empresa, revocación del solicitante, replay/fence antiguo, retry de chunks y rollback, cambios de placement/política, límite de fuente real, corrupción de bytes/manifiesto, recuperación de rename, expiración de todos los epochs y retención por empresa. La ampliación cubre admisiones concurrentes, capacidad independiente por empresa dentro del límite global, bytes reales de `ready`, parciales de `failed`, liberación por expiración, comprobación de capacidad en `begin`, un recibo de 96 MiB que sigue `running` y un `ENOSPC` simulado después del primer chunk que queda `failed/EXPORT_FAILED`. El primer caso ejecuta `SignedHostChannel`, exporta, descarga, verifica bytes/hashes y restaura con la CLI real en un directorio privado nuevo. La prueba Python del JSONL restaura el contenido real y compara su hash y manifiesto; no simula una restauración productiva.
 
-Se conserva la primera regresión ampliada de Python: 2 fallos reales de 10 en `/var/tmp/cauce-v4-space-backup-python-sdk.log`. La nueva variable `CAUCE_SPACE_ROOT` no estaba en la allowlist de observación de `/proc` para los procesos SDK. La reparación autorizada añadió ese prefijo en los proofs native/container y la regresión final pasó 10/10. El estricto inicial de la nueva ampliación registró tres interpolaciones numéricas inválidas en `/var/tmp/cauce-v4-space-backup-expanded-strict.log`; se corrigieron con conversiones explícitas y el resello salió con exit 0. Se conservan los typechecks fallidos por trabajo paralelo y el pase anterior `/var/tmp/cauce-v4-space-backup-typecheck-resolved.log`; ese pase anterior no acredita el árbol actual. El resello core actual requiere que el integrador cierre los tres errores de su sector.
+Se conserva la primera regresión ampliada de Python: 2 fallos reales de 10 en `directorio temporal compartido/cauce-v4-space-backup-python-sdk.log`. La nueva variable `CAUCE_SPACE_ROOT` no estaba en la allowlist de observación de `/proc` para los procesos SDK. La reparación autorizada añadió ese prefijo en los proofs native/container y la regresión final pasó 10/10. El estricto inicial de la nueva ampliación registró tres interpolaciones numéricas inválidas en `directorio temporal compartido/cauce-v4-space-backup-expanded-strict.log`; se corrigieron con conversiones explícitas y el resello salió con exit 0. Se conservan los typechecks fallidos por trabajo paralelo y el pase anterior `directorio temporal compartido/cauce-v4-space-backup-typecheck-resolved.log`; ese pase anterior no acredita el árbol actual. El resello core actual requiere que el integrador cierre los tres errores de su sector.
 
 ## Orden de despliegue
 

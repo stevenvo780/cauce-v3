@@ -6,9 +6,9 @@ La ejecución autónoma queda **pausada por petición del dueño**. El goal y el
 
 ## Dónde retomar
 
-- Checkout principal aislado R: `/home/stev/.codex/worktrees/cauce-v4-complete/cauce-v3`, rama `codex/v4-complete`.
-- Checkout de reparaciones F: `/home/stev/.codex/worktrees/cauce-v4-gate-fixes/cauce-v3`, rama `codex/v4-gate-fixes`. Aquí se guarda la última reparación de cobertura y este relevo.
-- Estado privado S: `/home/stev/.local/state/cauce-v3/v4-complete-20261011`. Contiene `OBJETIVO.md`, `aceptacion.json`, `checkpoint.json`, recibos, planes y respaldos. No subir este directorio completo a Git.
+- Checkout principal aislado R: `directorio privado de trabajo del operador/worktrees/cauce-v4-complete/cauce-v3`, rama `codex/v4-complete`.
+- Checkout de reparaciones F: `directorio privado de trabajo del operador/worktrees/cauce-v4-gate-fixes/cauce-v3`, rama `codex/v4-gate-fixes`. Aquí se guarda la última reparación de cobertura y este relevo.
+- Estado privado S: `directorio de estado del operador/cauce-v3/v4-complete-20261011`. Contiene `OBJETIVO.md`, `aceptacion.json`, `checkpoint.json`, recibos, planes y respaldos. No subir este directorio completo a Git.
 - Informes de sectores: `R/.superpowers/sdd/v4-ejecucion/`, ignorados por Git. Son evidencia histórica; prevalecen el checkpoint de relevo y los recibos finales.
 - PR de referencia: [151](https://github.com/stevenvo780/cauce-v3/pull/151). Consultar las referencias remotas y el recibo privado de publicación antes de asumir qué SHA está en `main` o `dev`.
 
@@ -36,7 +36,7 @@ La reparación final añade pruebas de render Canvas2D nativo, entrada DOM y cha
 
 La nueva migración aditiva 065 y su down reparan el replay de ACL tras restore sin ACL. Los SQL anteriores permanecieron intactos. El clon `cauce-v4-restore-20261011` está en **064, ledger 37**: cuando exista release e imagen aprobados, aplicar **sólo 065 → ledger 38** y verificar el replay; no reimportar el dump. Los planes privados de restore/export/stage siguen vinculados a 533d y necesitan una nueva vinculación revisada al SHA final.
 
-El respaldo predeploy cerró aprobado: seis artefactos, **250.950.042 bytes**, hashes iguales entre origen y destino y restore real sin red exterior. Evidencia: `S/backup-predeploy-run-20261012T170921Z/`. Destino vigente: `stev@100.64.0.1:/home/stev/cauce-v3-respaldo/offsite/db`; el NAS anterior está lleno. No equivale a un snapshot global de todos los espacios vivos.
+El respaldo predeploy cerró aprobado: seis artefactos, **250.950.042 bytes**, hashes iguales entre origen y destino y restore real sin red exterior. Evidencia: `S/backup-predeploy-run-20261012T170921Z/`. Destino vigente: `stev@100.64.0.1:directorio del operador/cauce-v3-respaldo/offsite/db`; el NAS anterior está lleno. No equivale a un snapshot global de todos los espacios vivos.
 
 El controlador privado R4 recupera únicamente el prefijo de holds propios del esquema baseline antes de migración; revisión independiente de **22 casos del autor + 12 adversariales**. Evidencia: `S/controller-partial-hold-recovery-r4-independent-review/`. No habilita el wiring V2 ni una congelación global; no copiar sus hardcodes como implementación productiva.
 

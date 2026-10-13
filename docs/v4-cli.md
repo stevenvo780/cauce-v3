@@ -12,9 +12,26 @@ Este documento describe los comandos implementados en el checkout V4. Las prueba
 | `cauce hosts` | `host_enrollment.py` | Enrolamiento y heartbeat firmado de un ordenador |
 | `cauce context` | `context_client.py` | Lectura y edición del contexto versionado mediante el gateway |
 | `cauce context-native` | `context_native.py` | Ingesta de una lista explícita de archivos locales |
-| `cauce spaces` | `space_archive.py` | Backup y restauración local del contenido persistente permitido |
+| `cauce spaces` | `cauce-spaces` y `space_archive.py` | Operaciones durables de espacios, backup y restauración local del contenido persistente permitido |
+| `cauce diagnose` | `cauce-diagnose` | Diagnóstico de solo lectura, acotado a la empresa de la sesión |
+| `cauce login` | `cauce-login` | Crear, consultar o renovar la sesión nominal de consola |
 
 La instalación usa `ops/scripts/install-cauce-cli.sh`, que coloca helpers en el área local del usuario. El wrapper de plataforma necesita `CAUCE_PROJECT_ROOT` absoluto, el checkout fuente o el runtime instalado en `$HOME/.local/share/cauce-v3`. Prefiere `services/gateway/dist/platform-cli-main.js`; si sólo existe fuente usa `pnpm exec tsx` desde esa raíz. No instala dependencias automáticamente para suplir un bundle incompleto.
+
+### Comandos de administración y operación
+
+```sh
+cauce platform admin semilla --email "$CORREO_SUPER_ADMIN"
+cauce platform contenedor admin semilla --email "$CORREO_SUPER_ADMIN" --company "$COMPANY_ID" --role owner
+cauce platform contenedor contexto sembrar --empresa "$COMPANY_ID" --nativos "$DIRECTORIO_CONTEXTOS"
+cauce diagnose --help
+cauce login --help
+cauce spaces --help
+cauce hosts setup --help
+cauce hosts status --help
+```
+
+La siembra de administración es idempotente. En producción, los subcomandos `contenedor` usan la imagen de runtime y sus secretos montados; los datos privados de cuenta se suministran desde configuración del operador. `hosts setup` requiere que el ordenador ya esté enrolado; `hosts status` informa si el executor local quedó listo.
 
 En flota dinámica, `CAUCE_FLEET_RUNTIME_STATE` limita el despacho legado a las consultas y paneles admitidos. Las mutaciones físicas pasan por la consola y el coordinador durable. La incorporación de los nuevos comandos no demuestra por sí sola que todas las terminales remotas sigan funcionando en el despliegue: ese recorrido permanece como criterio de aceptación.
 

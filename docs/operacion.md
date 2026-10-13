@@ -146,9 +146,11 @@ python3 ops/scripts/fleet-authority-install.py --socket-directory-only
 python3 ops/scripts/fleet-authority-install.py --socket-directory-only --apply
 # 1. deploy.sh con CAUCE_DEPLOY_FLEET_OVERLAY=1
 # 2. fleet-controller-upgrade.py a la release <R> (preflight y --apply), ver v3.5-controlador-despliegue.md
-# 3. Enclave, con el export de <R> que usó el kit
-python3 /var/tmp/cauce-v35-private-deployment-plan/upgrade-kit/src-<R>/ops/scripts/fleet-authority-install.py
-python3 /var/tmp/cauce-v35-private-deployment-plan/upgrade-kit/src-<R>/ops/scripts/fleet-authority-install.py --apply
+# 3. Enclave, con el export de <R> que usó el kit; PRIVATE_KIT_ROOT viene de la configuración privada
+: "${PRIVATE_KIT_ROOT:?Define el directorio privado del kit autorizado}"
+: "${RELEASE_ID:?Define la release exportada por el kit}"
+python3 "$PRIVATE_KIT_ROOT/upgrade-kit/src-$RELEASE_ID/ops/scripts/fleet-authority-install.py"
+python3 "$PRIVATE_KIT_ROOT/upgrade-kit/src-$RELEASE_ID/ops/scripts/fleet-authority-install.py" --apply
 ```
 El preflight no escribe nada. Deriva release, `node`, `/etc/hosts`, entorno TLS y comando del controlador; comprueba los pins, el modo del `database-url` sin leerlo y el `--ready` del emisor; y muestra el diff de cada fichero. `--apply` escribe solo lo que cambia, con respaldo `*.pre-authority-<stamp>`. Hace `daemon-reload` y `restart` solo si algo cambió o el enclave estaba parado. Después verifica `ready`:
 - la unidad está activa y sigue activa 3 s después;
@@ -236,19 +238,21 @@ cauce platform admin semilla --email persona@example.com --company ID [--role ow
   `platform_admin` activo más antiguo; por eso se siembra primero el `platform_admin`.
 - La persona debe tener su cuenta de consola en esa empresa (regla de `cauce_platform_grant_admin`).
 
-Primer despliegue de V4 en producción (en el clon del despliegue vigente del host, como root):
+Primer despliegue de V4 en producción (en el clon del despliegue vigente del host, como root). Define `CORREO_SUPER_ADMIN` y `CORREO_OWNER` con las cuentas aprobadas por el operador; no se versionan sus valores:
 
 ```bash
 cd /datos/workspaces/zeus/cauce-v3-deploy/<clon del despliegue vigente>
 ops/cli/cauce-platform-contenedor --mostrar     # solo muestra imagen, red y secretos
-ops/cli/cauce-platform-contenedor admin semilla --email steven@elenxos.com
-for correo in steven@elenxos.com miguel@elenxos.com; do
-  ops/cli/cauce-platform-contenedor admin semilla --email "$correo" --company humanizar --role owner
+cauce platform contenedor admin semilla --email "$CORREO_SUPER_ADMIN"
+for correo in "$CORREO_SUPER_ADMIN" "$CORREO_OWNER"; do
+  cauce platform contenedor admin semilla --email "$correo" --company humanizar --role owner
 done
 ```
 
 Repetir el bloque no cambia nada. Verificación: al volver a entrar, `GET /v3/auth/session` muestra
 `role=platform_admin` para Steven y `role=company_owner`, `scope=company` para Miguel.
+
+El perfil versionado `ops/instances/hospital/project-profile.json` publica `conversation_id: "0"` como valor de ejemplo. El ID real de Telegram se suministra únicamente mediante el archivo privado que referencia `project_profile_file` en la configuración del supervisor, validado con `project_profile_sha256`; proviene del origen autenticado del dueño y no se guarda en Git.
 
 ## 3. Diagnóstico y recuperación de un adaptador caído
 

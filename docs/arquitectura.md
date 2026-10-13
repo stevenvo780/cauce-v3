@@ -42,7 +42,7 @@ Todos los servicios de runtime comparten una sola imagen (`CAUCE_RUNTIME_IMAGE`,
 
 ### 2.4 El plano PTY: launcher → agente → relay
 
-- **Launcher**: `ops/pty-agent/cauce-pty-launcher.sh` hace `docker cp` del **paquete** a `/var/tmp/cauce-pty-agent-<alias>/` y lo ejecuta con `docker exec ... python3 -m cauce_pty_agent`, supervisado por unidades user `cauce-v3-pty@<alias>` (`ops/pty-agent/README.md`).
+- **Launcher**: `ops/pty-agent/cauce-pty-launcher.sh` hace `docker cp` del **paquete** a `directorio temporal compartido/cauce-pty-agent-<alias>/` y lo ejecuta con `docker exec ... python3 -m cauce_pty_agent`, supervisado por unidades user `cauce-v3-pty@<alias>` (`ops/pty-agent/README.md`).
 - **Agente**: `ops/pty-agent/cauce_pty_agent/`, paquete Python stdlib con un módulo por responsabilidad (`ops/pty-agent/README.md`), corre dentro del contenedor de cada alias y marca SALIENTE por TLS mutuo hacia el relay — nunca escucha puerto; abre PTYs (`shell`/`harness`) y sirve lectura/escritura de ficheros de gobierno (tags 0x50-0x5E, CAS+rollback).
 - **Relay**: `services/terminal-relay` — pierna agente (`8445`, TLS mutuo por fingerprint, un HELLO nuevo expulsa al anterior) y pierna navegador (`8446`, interna) (`services/terminal-relay/README.md`).
 

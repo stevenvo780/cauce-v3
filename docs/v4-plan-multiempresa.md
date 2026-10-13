@@ -211,9 +211,9 @@ Síntesis de tres trabajos de solo lectura sobre `df8e7a99`, que es la versión 
 **Hechos de producción** (verificados en solo lectura el 2026-10-09):
 - La 051 ya está aplicada. Lo escrito en «Estado V4.0» describe el momento anterior a ese despliegue.
 - Solo existe el rol `cauce`, que es superusuario y dueño de las tablas. Lo usan las 23 conexiones: runtime, controlador de flota del host y `psql`.
-- `companies` = {`humanizar`}. `platform_admins` = {Steven, `78c81e05…`}.
+- `companies` = {`humanizar`}. `platform_admins` = {Steven, `<uuid-persona>`}.
 - `tenants.company_id` conserva su default `cauce_legacy_company_id()`.
-- Hay tres personas activas, las tres `operator`: `steven@elenxos.com` (Steven/kant), `zeus@elenxos.com` (Steven/zeus) y `miguel@elenxos.com` (Miguel/janus).
+- Hay tres personas activas, las tres `operator`: `<correo-super-admin>` (Steven/kant), `<correo-persona>` (Steven/zeus) y `<correo-owner>` (Miguel/janus).
 
 **Entrada nueva del dueño:**
 - Humanizar es de **Steven y Miguel**.
@@ -423,7 +423,7 @@ El migrador aplica todas las pendientes en **una sola transacción** (`db.ts:run
   - `cauce_platform_revoke_admin`, que respeta G3.
 - **Relleno de `company_admins`:**
   - Usa el predicado efectivo de hoy (`people-admin-authority.ts`) con `role='admin'` y `source='v4.0-hub-operator'`.
-  - En producción da kant (`78c81e05`) y zeus (`6cef3d50`), así que nadie pierde acceso.
+  - En producción da kant (`<uuid-persona>`) y zeus (`<uuid-persona>`), así que nadie pierde acceso.
   - No hay dueños hasta la siembra.
 - **Tablas para los literales:**
   - `company_system_principals(company_id, kind, tenant, room, actor, principal_alias, recipient_alias, notify_handle)`, con FK a `tenants(id,company_id)`, `rooms` y `agents`.
@@ -561,11 +561,12 @@ Hoy no es posible: no existe `company_admins`, y meter a Miguel en el hub cambia
 
 ```bash
 ssh root@167.114.118.213
+# Carga las identidades aprobadas en las variables desde la configuración privada del operador.
 docker exec -i cauce-v3-prod-postgres-1 psql -U cauce -d cauce -X -v ON_ERROR_STOP=1 \
-  --set=admin=78c81e05-0c18-427b-b02b-346d7e8c8508 <<'SQL'
+  --set=admin="$PLATFORM_ADMIN_ID" --set=steven_human_id="$SUPER_ADMIN_ID" --set=miguel_human_id="$OWNER_ID" --set=correo_super_admin="$CORREO_SUPER_ADMIN" --set=correo_owner="$CORREO_OWNER" <<'SQL'
 BEGIN;
-SELECT cauce_platform_grant_admin('humanizar','78c81e05-0c18-427b-b02b-346d7e8c8508','steven@elenxos.com','owner',:'admin');
-SELECT cauce_platform_grant_admin('humanizar','836839cc-4768-4214-9170-d535f12a66cd','miguel@elenxos.com','owner',:'admin');
+SELECT cauce_platform_grant_admin('humanizar',:'steven_human_id',:'correo_super_admin','owner',:'admin');
+SELECT cauce_platform_grant_admin('humanizar',:'miguel_human_id',:'correo_owner','owner',:'admin');
 SELECT company_id, human_id, role, source FROM company_admins ORDER BY role, human_id;
 COMMIT;
 SQL
@@ -577,10 +578,10 @@ Con WP-I, la misma siembra es `cauce platform admin otorgar` repitiendo `--id` y
 ssh root@167.114.118.213
 cd /datos/workspaces/zeus/cauce-v3-deploy/<clon del despliegue vigente>   # debe incluir WP-I
 ops/cli/cauce-platform-contenedor --mostrar   # solo muestra imagen, red y rutas de secretos; no ejecuta nada
-CAUCE_PLATFORM_ADMIN_ID=78c81e05-0c18-427b-b02b-346d7e8c8508 \
+CAUCE_PLATFORM_ADMIN_ID="$PLATFORM_ADMIN_ID" \
   ops/cli/cauce-platform-contenedor admin otorgar --empresa humanizar --rol owner \
-  --id 78c81e05-0c18-427b-b02b-346d7e8c8508 --email steven@elenxos.com \
-  --id 836839cc-4768-4214-9170-d535f12a66cd --email miguel@elenxos.com
+  --id "$SUPER_ADMIN_ID" --email "$CORREO_SUPER_ADMIN" \
+  --id "$OWNER_ID" --email "$CORREO_OWNER"
 ```
 
 `ops/cli/cauce-platform-contenedor` lee `/etc/cauce-v3/prod.env` como datos (otro fichero con `CAUCE_ENV_FILE`), y lanza con `docker compose run --rm` el servicio de `ops/cli/cauce-platform.compose.yaml`:
@@ -603,7 +604,7 @@ La URL ni la contraseña se imprimen. `empresa estado --estado disabled|retired`
 
 **Después:**
 - Decidir D1: si zeus@ sigue como `admin`.
-- Reversión: `cauce_platform_revoke_admin('humanizar','836839cc-…',:'admin')`. G3 impide quitar al último dueño.
+- Reversión: `cauce_platform_revoke_admin('humanizar',:'miguel_human_id',:'admin')`. G3 impide quitar al último dueño.
 
 #### 6.2 Leon como dueño de Praxis (en la importación, V4.3 dry-run y V4.4 apply)
 

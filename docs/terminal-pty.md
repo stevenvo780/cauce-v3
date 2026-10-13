@@ -82,14 +82,16 @@ manera de "acomodarlo" bajando la verificación.
 
 ```sh
 umask 077
+temp_dir=$(mktemp -d)
 openssl req -new -newkey rsa:4096 -nodes \
   -keyout /etc/cauce-v3/secrets/terminal-relay.key \
-  -out /tmp/terminal-relay.csr -subj "/CN=terminal-relay"
-printf 'subjectAltName=DNS:terminal-relay\nkeyUsage=critical,digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\n' > /tmp/terminal-relay.ext
-openssl x509 -req -in /tmp/terminal-relay.csr -days 397 \
+  -out "$temp_dir/terminal-relay.csr" -subj "/CN=terminal-relay"
+printf 'subjectAltName=DNS:terminal-relay\nkeyUsage=critical,digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\n' > "$temp_dir/terminal-relay.ext"
+openssl x509 -req -in "$temp_dir/terminal-relay.csr" -days 397 \
   -CA "$CAUCE_INTERNAL_CA_CERT" -CAkey "$CAUCE_INTERNAL_CA_KEY" -CAcreateserial \
-  -extfile /tmp/terminal-relay.ext -out /etc/cauce-v3/secrets/terminal-relay.crt
-rm -f /tmp/terminal-relay.csr /tmp/terminal-relay.ext
+  -extfile "$temp_dir/terminal-relay.ext" -out /etc/cauce-v3/secrets/terminal-relay.crt
+rm -f "$temp_dir/terminal-relay.csr" "$temp_dir/terminal-relay.ext"
+rmdir "$temp_dir"
 chown 1000:1000 /etc/cauce-v3/secrets/terminal-relay.crt /etc/cauce-v3/secrets/terminal-relay.key
 chmod 0444 /etc/cauce-v3/secrets/terminal-relay.crt
 chmod 0400 /etc/cauce-v3/secrets/terminal-relay.key

@@ -47,12 +47,12 @@ El ensayo HTTP real ejecuta Fastify local, identidad Ed25519 privada, SignedHost
 
 Recibos de esta ampliación:
 
-- `/var/tmp/cauce-v4-task1-runtime-channel.log`: canal7, auth-main4, administración/enrolamiento8, 19/19.
-- `/var/tmp/cauce-v4-task1-final-worker-routes.log`: executor8 y rutas15+47, 70/70.
-- `/var/tmp/cauce-v4-task1-final-profile-executor.log`: perfil46, executor8 y ensayo HTTP1, 55/55.
-- `/var/tmp/cauce-v4-task1-final-consolidated.log`: flota PostgreSQL31, canal7, administración/enrolamiento8, hosts15, operaciones47 y configuración4; 6 archivos, 112/112.
-- `/var/tmp/cauce-v4-task1-final-typecheck.log`: `pnpm exec tsc --noEmit -p tsconfig.json`, salida vacía/exit0.
-- `/var/tmp/cauce-v4-task1-final-lint-fixed.log` y `final-strict-fixed.log`: eslint focal y estricto, salida vacía/exit0. Fixtures de perfil tienen recibos separados `final-profile-lint.log` y `final-profile-strict.log`.
+- `directorio temporal compartido/cauce-v4-task1-runtime-channel.log`: canal7, auth-main4, administración/enrolamiento8, 19/19.
+- `directorio temporal compartido/cauce-v4-task1-final-worker-routes.log`: executor8 y rutas15+47, 70/70.
+- `directorio temporal compartido/cauce-v4-task1-final-profile-executor.log`: perfil46, executor8 y ensayo HTTP1, 55/55.
+- `directorio temporal compartido/cauce-v4-task1-final-consolidated.log`: flota PostgreSQL31, canal7, administración/enrolamiento8, hosts15, operaciones47 y configuración4; 6 archivos, 112/112.
+- `directorio temporal compartido/cauce-v4-task1-final-typecheck.log`: `pnpm exec tsc --noEmit -p tsconfig.json`, salida vacía/exit0.
+- `directorio temporal compartido/cauce-v4-task1-final-lint-fixed.log` y `final-strict-fixed.log`: eslint focal y estricto, salida vacía/exit0. Fixtures de perfil tienen recibos separados `final-profile-lint.log` y `final-profile-strict.log`.
 - Corridas previas preservadas: `executor-refactor` conserva 31/31 de flota y el fallo real del parser prepare; `final-routes` conserva los fallos de fixtures que motivaron la corrección. No se sustituyeron sus resultados por PASS.
 
 Revisión independiente de las APIs/store/adopción de contextos: no se encontró un fallo bloqueante confirmado en empresa, CAS, restore, límites de contenido, lease de aplicación y ACK done con hashes coincidentes. Conserva el límite explícito: `native_document:none` proyecta prompt/perfil SQL y no demuestra reescritura física de AGENTS/CLAUDE legacy. La revisión del broker de cuotas detectó fuga de mapping histórico, cohorte retenida al rechazar TTL y exceso de32 eventos; el proceso principal aplicó las reparaciones. Sus recibos y ensayo pertenecen a ese frente.
