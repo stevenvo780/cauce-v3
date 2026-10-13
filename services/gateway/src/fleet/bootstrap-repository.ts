@@ -150,6 +150,11 @@ export class BootstrapRepository {
     return withTransaction(this.pool, async client => {
       const context = await this.context(client, identity, operationId, true);
       if (context.operation.status === 'awaiting_auth' && !context.operation.cancel_requested) return null;
+      // The runtime reads its state and then claims, and settle() may commit in between. The admitted normal runtime has
+      // nothing left to claim: null sends it back to its state read, which reports the admission. A conflict here made
+      // it exit right after its operation succeeded, leaving a ready agent without a runtime.
+      if (phase === 'normal' && runtimeKey === context.agent.runtime_key
+          && this.admitted(context, this.normalVerified(await this.records(client, operationId), context))) return null;
       if (context.operation.status !== 'running' || context.operation.cancel_requested || !context.operation.worker_live
           || !context.operation.worker_id || !context.operation.claim_token || context.agent.enabled) throw conflict();
       if (runtimeKey !== context.agent.runtime_key) throw forbidden();
