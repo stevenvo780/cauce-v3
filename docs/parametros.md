@@ -107,6 +107,9 @@ dice 60K/150K. Manda el árbol; el roadmap se re-verifica en T063.
 |---|---|---|---|---|
 | `CAUCE_CONTEXT_INSTANCE_ID` (`gateway/console/context-repository/binding.ts`) | identidad | sin default; requiere también la raíz, ambas ausentes desactivan la inspección | env del servidor | unit binding + rutas |
 | `CAUCE_CONTEXT_REPOSITORY_ROOT` (`gateway/console/context-repository/binding.ts`) | ruta absoluta | sin default; raíz canónica confiable de un repo con objetos sueltos, sin packs, alternates ni worktrees enlazados | env del servidor, junto con la identidad | unit binding + inspección Git |
+| `MAX_NATIVE_BYTES` (`packages/store/src/context-seed.ts`) | bytes/fichero | 262_144 para cada fichero nativo importado al sembrar contexto | fijo | unit context seed |
+| `MAX_FILE_CHARACTERS` (`packages/store/src/context-version-model.ts`) | caracteres/fichero | 262_144; el contenido que exceda el límite se rechaza | fijo | unit context version |
+| `MAX_TOTAL_BYTES` (`packages/store/src/context-version-model.ts`) | bytes | 1_048_576 para el conjunto de ficheros de una versión de contexto | fijo | unit context version |
 | `CAUCE_CONSOLE_SESSION_TTL_SECONDS` (`DEFAULT_SESSION_TTL_MS`=8 h) | s | 28_800 (8 h), rango 60–86_400 | env | — |
 | Login throttle (`gateway/password-auth.ts`, `LoginThrottle`) | fallos | por correo: 8 fallos / 15 min; por IP real (`rateLimitKey`): 20 fallos / 15 min, que un login correcto no limpia; 10_000 claves por contador | fijo, local al proceso del gateway | unit password-auth |
 | Registro de empresa (`gateway/company-registration.ts`, `MAX_ATTEMPTS`, `MAX_TRACKED_IPS`) | intentos/IP | 5 intentos por IP en 15 min; hasta 10_000 IP activas; rechaza con 429 al alcanzar cualquiera de los topes | fijo, local al proceso del gateway | unit registro de empresa |
@@ -209,6 +212,7 @@ según `CAUCE_MCP_OAUTH_PROVIDER` en `deploy/deploy.sh`.
 | `MAX_DELEGATION_FEEDBACK_ITEMS` (`realtime.ts:231`) | items | 1_000 | fijo | — |
 | `MAX_ITEMS` (`gateway/routes/console/diagnose.ts:8`) | elementos | 500; máximo de nodos del diagnóstico antes de marcar `truncated` | fijo | PG HTTP de diagnose, truncamiento |
 | `MAX_ROUNDS` (`gateway/routes/console/diagnose.ts:9`) | rondas | 8; máximo de expansiones de referencias de la cadena | fijo | PG HTTP de diagnose, expansión acotada |
+| `MAX_CONCURRENT_PER_HUMAN` (`services/gateway/src/routes/console/diagnose.ts:11`) | solicitudes | 2 diagnósticos concurrentes por persona; los siguientes reciben 429 con `Retry-After: 1` | fijo, local al proceso | PG HTTP de diagnose |
 | Gate humano: pregunta ≤8 KiB, gate_id ≤128 | bytes/chars | — | fijo (= CHECK SQL) | — |
 | Rechazo delegación (`MAX_DELEGATION_REJECTION_TARGET_CHARS`=256, `MAX_DELEGATION_REJECTION_REASON_CHARS`=12_000) | chars | target copiado, reason acotada | fijo | — |
 | `failureCoalesceWindowSeconds` | s | clamp 0–86_400 | DB (techo fijo) | — |

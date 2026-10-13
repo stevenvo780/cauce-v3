@@ -183,21 +183,20 @@ describe('recorrido V4 de la consola en navegador real contra gateway y PostgreS
       await panel.getByRole('button', { name: 'Añadir ordenador', exact: true }).click();
       const form = page.getByRole('form', { name: 'Invitar ordenador' });
       await form.getByLabel('Identificador del ordenador').fill('Ordenador Inválido');
-      await form.getByLabel('Nombre del ordenador').fill('');
-      await form.getByRole('button', { name: 'Crear invitación', exact: true }).click();
-      const missingName = await validity(form.getByLabel('Nombre del ordenador'));
-      expect(missingName.valid).toBe(false);
-      expect(missingName.message).not.toBe('');
-      errors.expectHttpError('/v3/console/fleet/hosts/enrollments', 400);
       await form.getByLabel('Nombre del ordenador').fill('Ordenador V4');
-      await form.getByRole('button', { name: 'Crear invitación', exact: true }).click();
-      await panel.getByRole('alert').waitFor({ timeout: 15_000 });
-      expect(await panel.getByRole('alert').innerText()).toContain('invalid host enrollment request');
-      errors.expectHttpError('/v3/console/fleet/hosts/enrollments', 403);
+      const malformedHostId = await validity(form.getByLabel('Identificador del ordenador'));
+      expect(malformedHostId.valid).toBe(false);
+      expect(malformedHostId.message).not.toBe('');
+      errors.expectHttpError('/v3/console/fleet/hosts/enrollments', 400);
+      expect(await apiPost(page, '/v3/console/fleet/hosts/enrollments', { host_id: 'Ordenador Inválido', display_name: 'Ordenador V4' })).toBe(400);
+
       await form.getByLabel('Identificador del ordenador').fill(`v4-${run}`);
-      await form.getByRole('button', { name: 'Crear invitación', exact: true }).click();
-      await expect.poll(async () => panel.getByRole('alert').innerText(), { timeout: 15_000 })
-        .toContain(`host id must be ${ownerA.company.slug}-<name>`);
+      const outOfPartitionHostId = await validity(form.getByLabel('Identificador del ordenador'));
+      expect(outOfPartitionHostId.valid).toBe(false);
+      expect(outOfPartitionHostId.message).not.toBe('');
+      errors.expectHttpError('/v3/console/fleet/hosts/enrollments', 403);
+      expect(await apiPost(page, '/v3/console/fleet/hosts/enrollments', { host_id: `v4-${run}`, display_name: 'Ordenador V4' })).toBe(403);
+
       await form.getByLabel('Identificador del ordenador').fill(hostId);
       await form.getByRole('button', { name: 'Crear invitación', exact: true }).click();
       const invitation = panel.locator('textarea');
