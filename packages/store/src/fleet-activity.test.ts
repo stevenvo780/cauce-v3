@@ -4,11 +4,6 @@ import {
   type FleetActivityWorkStateInput
 } from './fleet-activity.js';
 
-/**
- * The four cases come from the real GET /v3/console/activity contract example (kant, midas,
- * atlas, salva): the regression vector the heuristic was validated against before a line of SQL
- * existed, pinned as-is so a change cannot silently break the diagnosis behind the whole panel.
- */
 describe('agentWorkState', () => {
   it('kant: trabajando sano -- en vuelo, ACKs recientes, sin overdue', () => {
     const row: FleetActivityWorkStateInput = {
