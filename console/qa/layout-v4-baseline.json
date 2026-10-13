@@ -1,0 +1,288 @@
+{
+  "390-light-office-plan": {
+    "contentHeight": 1000,
+    "screenshots": [
+      "390-light-office-plan.png",
+      "390-light-office-plan-detail.png"
+    ]
+  },
+  "390-light-campus": {
+    "contentHeight": 1000,
+    "screenshots": [
+      "390-light-campus.png"
+    ]
+  },
+  "390-light-computers": {
+    "contentHeight": 1712,
+    "screenshots": [
+      "390-light-computers.png"
+    ]
+  },
+  "390-light-companies": {
+    "contentHeight": 1191,
+    "screenshots": [
+      "390-light-companies.png"
+    ]
+  },
+  "390-light-company-admins": {
+    "contentHeight": 1669,
+    "screenshots": [
+      "390-light-company-admins.png"
+    ]
+  },
+  "390-light-people": {
+    "contentHeight": 3710,
+    "screenshots": [
+      "390-light-people.png"
+    ]
+  },
+  "390-light-company-retired": {
+    "contentHeight": 1000,
+    "screenshots": [
+      "390-light-company-retired.png"
+    ]
+  },
+  "390-light-registration": {
+    "contentHeight": 1000,
+    "screenshots": [
+      "390-light-registration.png"
+    ]
+  },
+  "390-dark-my-quotas": {
+    "contentHeight": 1691,
+    "screenshots": [
+      "390-dark-my-quotas.png"
+    ]
+  },
+  "390-dark-office-plan": {
+    "contentHeight": 1000,
+    "screenshots": [
+      "390-dark-office-plan.png",
+      "390-dark-office-plan-detail.png"
+    ]
+  },
+  "390-dark-campus": {
+    "contentHeight": 1000,
+    "screenshots": [
+      "390-dark-campus.png"
+    ]
+  },
+  "390-dark-computers": {
+    "contentHeight": 1712,
+    "screenshots": [
+      "390-dark-computers.png"
+    ]
+  },
+  "390-dark-companies": {
+    "contentHeight": 1191,
+    "screenshots": [
+      "390-dark-companies.png"
+    ]
+  },
+  "390-dark-company-admins": {
+    "contentHeight": 1669,
+    "screenshots": [
+      "390-dark-company-admins.png"
+    ]
+  },
+  "390-dark-people": {
+    "contentHeight": 3710,
+    "screenshots": [
+      "390-dark-people.png"
+    ]
+  },
+  "390-dark-company-retired": {
+    "contentHeight": 1000,
+    "screenshots": [
+      "390-dark-company-retired.png"
+    ]
+  },
+  "390-dark-registration": {
+    "contentHeight": 1000,
+    "screenshots": [
+      "390-dark-registration.png"
+    ]
+  },
+  "1440-light-my-quotas": {
+    "contentHeight": 1000,
+    "screenshots": [
+      "1440-light-my-quotas.png"
+    ]
+  },
+  "1440-light-computers": {
+    "contentHeight": 1012,
+    "screenshots": [
+      "1440-light-computers.png"
+    ]
+  },
+  "1440-light-companies": {
+    "contentHeight": 1000,
+    "screenshots": [
+      "1440-light-companies.png"
+    ]
+  },
+  "1440-light-company-admins": {
+    "contentHeight": 1098,
+    "screenshots": [
+      "1440-light-company-admins.png"
+    ]
+  },
+  "1440-light-people": {
+    "contentHeight": 1872,
+    "screenshots": [
+      "1440-light-people.png"
+    ]
+  },
+  "1440-light-agent-history": {
+    "contentHeight": 1000,
+    "screenshots": [
+      "1440-light-agent-history.png"
+    ]
+  },
+  "1440-light-company-retired": {
+    "contentHeight": 1000,
+    "screenshots": [
+      "1440-light-company-retired.png"
+    ]
+  },
+  "1440-light-registration": {
+    "contentHeight": 1000,
+    "screenshots": [
+      "1440-light-registration.png"
+    ]
+  },
+  "1440-dark-my-quotas": {
+    "contentHeight": 1000,
+    "screenshots": [
+      "1440-dark-my-quotas.png"
+    ]
+  },
+  "1440-dark-computers": {
+    "contentHeight": 1012,
+    "screenshots": [
+      "1440-dark-computers.png"
+    ]
+  },
+  "1440-dark-companies": {
+    "contentHeight": 1000,
+    "screenshots": [
+      "1440-dark-companies.png"
+    ]
+  },
+  "1440-dark-people": {
+    "contentHeight": 1872,
+    "screenshots": [
+      "1440-dark-people.png"
+    ]
+  },
+  "1440-dark-agent-history": {
+    "contentHeight": 1000,
+    "screenshots": [
+      "1440-dark-agent-history.png"
+    ]
+  },
+  "1440-dark-company-retired": {
+    "contentHeight": 1000,
+    "screenshots": [
+      "1440-dark-company-retired.png"
+    ]
+  },
+  "1440-dark-registration": {
+    "contentHeight": 1000,
+    "screenshots": [
+      "1440-dark-registration.png"
+    ]
+  },
+  "390-light-my-quotas": {
+    "contentHeight": 1691,
+    "screenshots": [
+      "390-light-my-quotas.png"
+    ]
+  },
+  "1440-light-campus": {
+    "contentHeight": 1000,
+    "screenshots": [
+      "1440-light-campus.png"
+    ]
+  },
+  "1440-dark-campus": {
+    "contentHeight": 1000,
+    "screenshots": [
+      "1440-dark-campus.png"
+    ]
+  },
+  "1440-dark-company-admins": {
+    "contentHeight": 1098,
+    "screenshots": [
+      "1440-dark-company-admins.png"
+    ]
+  },
+  "390-light-agent-profile": {
+    "contentHeight": 1000,
+    "screenshots": [
+      "390-light-agent-profile.png",
+      "390-light-agent-profile-detail.png"
+    ]
+  },
+  "390-light-agent-history": {
+    "contentHeight": 1000,
+    "screenshots": [
+      "390-light-agent-history.png"
+    ]
+  },
+  "390-light-context-versions": {
+    "contentHeight": 1000,
+    "screenshots": [
+      "390-light-context-versions.png",
+      "390-light-context-versions-detail.png"
+    ]
+  },
+  "390-dark-agent-profile": {
+    "contentHeight": 1000,
+    "screenshots": [
+      "390-dark-agent-profile.png",
+      "390-dark-agent-profile-detail.png"
+    ]
+  },
+  "390-dark-agent-history": {
+    "contentHeight": 1000,
+    "screenshots": [
+      "390-dark-agent-history.png"
+    ]
+  },
+  "390-dark-context-versions": {
+    "contentHeight": 1000,
+    "screenshots": [
+      "390-dark-context-versions.png",
+      "390-dark-context-versions-detail.png"
+    ]
+  },
+  "1440-light-agent-profile": {
+    "contentHeight": 1000,
+    "screenshots": [
+      "1440-light-agent-profile.png",
+      "1440-light-agent-profile-detail.png"
+    ]
+  },
+  "1440-light-context-versions": {
+    "contentHeight": 1000,
+    "screenshots": [
+      "1440-light-context-versions.png",
+      "1440-light-context-versions-detail.png"
+    ]
+  },
+  "1440-dark-agent-profile": {
+    "contentHeight": 1000,
+    "screenshots": [
+      "1440-dark-agent-profile.png",
+      "1440-dark-agent-profile-detail.png"
+    ]
+  },
+  "1440-dark-context-versions": {
+    "contentHeight": 1000,
+    "screenshots": [
+      "1440-dark-context-versions.png",
+      "1440-dark-context-versions-detail.png"
+    ]
+  }
+}
