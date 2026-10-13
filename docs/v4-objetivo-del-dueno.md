@@ -26,7 +26,7 @@ El sistema debe consultar las cuotas en el ordenador o entorno donde se ejecuta 
 
 No impongas las mismas ventanas a todos los proveedores. Muestra la ventana de cinco horas, la semanal o cualquier otra únicamente cuando el proveedor y la cuenta realmente las tengan. Para GPT y los demás proveedores, utiliza lo que reporte el mecanismo de consulta correspondiente, sin asumir ventanas inexistentes.
 
-**Varios agentes pueden compartir una misma cuenta y, por tanto, las mismas cuotas. Esto es válido y no debe tratarse como un error.** Cada agente debe mostrar la cuota de su cuenta asociada, aunque esa misma información aparezca en otros agentes. Cuando corresponda, indica que el consumo es compartido, sin presentarlo como si cada agente tuviera un saldo independiente.
+**Varios agentes pueden compartir una misma cuenta y, por tanto, las mismas cuotas. Esto es válido y no debe tratarse como un error.** Corrige la lógica actual que interpreta esa situación como una duplicidad incorrecta. Cada agente debe poder mostrar la cuota de su cuenta asociada, aunque esa misma información aparezca en otros agentes. Cuando corresponda, indica que el consumo es compartido, sin presentarlo como si cada agente tuviera un saldo independiente.
 
 La información debe incluir su estado y momento de actualización. Si una consulta falla o el proveedor no ofrece determinado dato, muestra esa situación con claridad; no inventes valores ni presentes información antigua como si estuviera actualizada.
 
