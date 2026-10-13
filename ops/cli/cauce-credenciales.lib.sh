@@ -363,8 +363,7 @@ pty_pki_root() {
   printf '%s\n' "${CAUCE_PTY_PKI_ROOT:-${XDG_CONFIG_HOME:-$HOME/.config}/cauce-v3/pty-pki}"
 }
 
-write_pty_launcher_env() {
-  local pty_env=$1 pty_dir=$2 pty_key=$3 dry=$4
+validate_pty_relay_env() {
   local relay_host=${CAUCE_PTY_RELAY_HOST:-} relay_port=${CAUCE_PTY_RELAY_PORT:-8445}
   if [ -z "$relay_host" ]; then
     printf "  [3d] %sfalta CAUCE_PTY_RELAY_HOST: exporta el host del relay PTY antes de aprovisionar%s\n" "$c_err" "$c_reset" >&2
@@ -378,9 +377,17 @@ write_pty_launcher_env() {
     printf "  [3d] %sCAUCE_PTY_RELAY_PORT debe ser un puerto entre 1 y 65535%s\n" "$c_err" "$c_reset" >&2
     return 1
   fi
+}
+
+write_pty_launcher_env() {
+  local pty_env=$1 pty_dir=$2 pty_key=$3 dry=$4
   if [ -e "$pty_env" ]; then
     printf "  [3d] %s ya existe (se salta): %s\n" "$pty_env" "$(estampa_modo "$pty_env")"
-  elif [ "$dry" = 1 ]; then
+    return 0
+  fi
+  validate_pty_relay_env || return 1
+  local relay_host=$CAUCE_PTY_RELAY_HOST relay_port=${CAUCE_PTY_RELAY_PORT:-8445}
+  if [ "$dry" = 1 ]; then
     printf "  [3d] haria: escribir %s (RELAY_HOST=%s RELAY_PORT=%s, PKI_DIR/ALIAS_KEY_FILE, modo 600)\n" "$pty_env" "$relay_host" "$relay_port"
   elif install -d -m 0700 -- "${pty_env%/*}" \
     && ( umask 177; printf 'RELAY_HOST=%s\nRELAY_PORT=%s\nPKI_DIR=%s\nALIAS_KEY_FILE=%s\n' \
@@ -426,6 +433,11 @@ cmd_aprovisionar() {  # $1=alias [--dry-run]
     "") ;;
     *) printf "  no entiendo '%s'\n" "$1"; return 2 ;;
   esac
+
+  local pty_env="${XDG_CONFIG_HOME:-$HOME/.config}/cauce-v3/pty/$a.env"
+  if [ ! -e "$pty_env" ]; then
+    validate_pty_relay_env || return 1
+  fi
 
   printf "\n  %saprovisionar %s%s" "$c_b" "$a" "$c_reset"
   [ "$dry" = 1 ] && printf "  %s(--dry-run: nada se escribe)%s" "$c_dim" "$c_reset"
@@ -616,7 +628,6 @@ PY
   fi
 
   # Keep the launcher environment aligned with pty_pki_root().
-  local pty_env="${XDG_CONFIG_HOME:-$HOME/.config}/cauce-v3/pty/$a.env"
   write_pty_launcher_env "$pty_env" "$pty_dir" "$pty_key" "$dry" || return 1
 
   # Skip existing identity material; update-alias-config.py --init refuses to overwrite it.

@@ -33,6 +33,10 @@ JSON
 openssl req -x509 -newkey rsa:2048 -nodes -subj "/CN=test-ca" -days 2 \
   -keyout "$WORK/ca.key" -out "$WORK/ca.crt" 2>/dev/null || { echo "FAIL: cannot mint test CA" >&2; exit 1; }
 REG="$WORK/reg.json"
+OPS="$OPSDIR"
+c_err='' c_reset='' c_dim='' c_warn='' c_b='' c_ok=''
+# shellcheck source=../cli/cauce-credenciales.lib.sh
+source "$HERE/../cli/cauce-credenciales.lib.sh"
 
 corre_dry() (
   # shellcheck disable=SC2329,SC2317
@@ -61,6 +65,41 @@ if [ "$rc" = 1 ]; then ok "dry-run without relay host exits 1"; else bad "dry-ru
 assert_contains "$salida" "falta CAUCE_PTY_RELAY_HOST" "dry-run names the missing relay host variable"
 assert_missing "$H/.config/cauce-v3/pty" "failed dry-run created no launcher env directory"
 
+cat > "$OPSDIR/scripts/provision-agent-identity.sh" <<'SH'
+#!/usr/bin/env bash
+printf 'called\n' > "$CAUCE_TEST_WRITES"
+exit 1
+SH
+chmod 700 "$OPSDIR/scripts/provision-agent-identity.sh"
+
+provision_invalid_relay() (
+  HOME="$H" XDG_CONFIG_HOME="$H/.config"
+  PKI_ROOT_AGENTE="$WORK/agent-pki"
+  TOKENS_DIR_ALIAS="$WORK/tokens"
+  IDENTIDADES_DIR="$WORK/identities"
+  export CAUCE_TEST_WRITES="$WORK/provision-writes"
+  CAUCE_CLIENT_CA_CERT="$WORK/ca.crt" CAUCE_CLIENT_CA_KEY="$WORK/ca.key" \
+    CAUCE_PTY_RELAY_HOST=$1 CAUCE_PTY_RELAY_PORT=$2 cmd_aprovisionar probe 2>&1
+)
+
+for invalid in missing-host invalid-host invalid-port; do
+  case "$invalid" in
+    missing-host) host='' port=8445 variable=CAUCE_PTY_RELAY_HOST ;;
+    invalid-host) host=$'relay.example.invalid\nRELAY_PORT=1' port=8445 variable=CAUCE_PTY_RELAY_HOST ;;
+    invalid-port) host=relay.example.invalid port=65536 variable=CAUCE_PTY_RELAY_PORT ;;
+  esac
+  salida=$(provision_invalid_relay "$host" "$port"); rc=$?
+  if [ "$rc" = 1 ]; then ok "provision rejects $invalid"; else bad "provision accepted $invalid (rc=$rc)"; fi
+  assert_contains "$salida" "$variable" "provision names $variable before issuing credentials"
+  assert_missing "$WORK/provision-writes" "provision with $invalid called no credential writer"
+  assert_missing "$WORK/agent-pki" "provision with $invalid created no mTLS material"
+  assert_missing "$WORK/tokens" "provision with $invalid created no bearer token"
+  assert_missing "$WORK/identities" "provision with $invalid created no identity registry"
+  assert_missing "$H/.config/cauce-v3/pty-pki" "provision with $invalid created no PTY key or certificate"
+  assert_missing "$REG" "provision with $invalid created no relay registry"
+  rm -f -- "$WORK/provision-writes"
+done
+
 PKI="$H/.config/cauce-v3/pty-pki/probe"
 mkdir -p "$PKI" "$H/.config/cauce-v3/pty"
 openssl rand -hex 32 > "$PKI/alias-key.hex"; chmod 400 "$PKI/alias-key.hex"
@@ -85,16 +124,27 @@ else
   bad "the relay registry was rewritten"
 fi
 
+env_antes=$(sha256sum "$H/.config/cauce-v3/pty/probe.env")
+salida=$(TEST_RELAY_HOST='' corre_dry); rc=$?
+if [ "$rc" = 0 ]; then ok "provisioned alias needs no relay variable"; else bad "provisioned alias failed without relay variable (rc=$rc)"; fi
+assert_contains "$salida" "[3d] $H/.config/cauce-v3/pty/probe.env ya existe (se salta)" "existing launcher env skips relay validation"
+if [ "$env_antes" = "$(sha256sum "$H/.config/cauce-v3/pty/probe.env")" ]; then
+  ok "existing launcher env was preserved without relay variable"
+else
+  bad "existing launcher env changed without relay variable"
+fi
+
 write_fixture_env() (
-  OPS="$OPSDIR" HOME="$H" XDG_CONFIG_HOME="$H/.config"
-  c_err='' c_reset='' c_dim='' c_warn='' c_b='' c_ok=''
-  # shellcheck source=../cli/cauce-credenciales.lib.sh
-  source "$HERE/../cli/cauce-credenciales.lib.sh"
+  HOME="$H" XDG_CONFIG_HOME="$H/.config"
   unset CAUCE_PTY_RELAY_HOST CAUCE_PTY_RELAY_PORT
   [ -z "$2" ] || CAUCE_PTY_RELAY_HOST=$2
   [ -z "$3" ] || CAUCE_PTY_RELAY_PORT=$3
   write_pty_launcher_env "$H/.config/cauce-v3/pty/$1.env" "$PKI" "$PKI/alias-key.hex" 0 2>&1
 )
+
+salida=$(write_fixture_env probe '' ''); rc=$?
+if [ "$rc" = 0 ]; then ok "env writer skips existing env without relay variable"; else bad "env writer failed for existing env (rc=$rc)"; fi
+assert_contains "$salida" "ya existe (se salta)" "env writer reports the preserved env"
 
 for port in '' 9445; do
   alias_name="port-${port:-default}"

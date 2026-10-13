@@ -130,7 +130,7 @@ Crear `~/.config/cauce-v3/pty-host/<alias>.env` como el usuario runtime, modo 06
 ```ini
 TENANT_ID=Steven
 ADAPTER_UNIT=cauce-v3-host-astra.service
-RELAY_HOST=100.64.0.6
+RELAY_HOST=relay.example.invalid
 RELAY_PORT=8445
 PKI_DIR=/home/ubuntu/.config/cauce-v3/pty-pki/astra
 ALIAS_KEY_FILE=/home/ubuntu/.config/cauce-v3/pty-pki/astra/alias-key.hex
