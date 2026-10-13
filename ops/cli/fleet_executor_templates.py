@@ -262,8 +262,8 @@ def runtime_candidates(policy: dict) -> list[dict]:
                 if hasattr(module, 'authentication_supported') and not module.authentication_supported():
                     continue
             if harness == 'openclaw':
-                providers = sorted({row['provider'] for row in policy['profile_templates'] if 'openclaw' in row and row.get('provider')}
-                    | {row['provider'] for row in policy['profiles'].values() if 'openclaw' in row and row.get('provider')}) or ['codex']
+                providers = sorted({row['provider'] for row in policy.get('profile_templates', []) if 'openclaw' in row and row.get('provider')}
+                    | {row['provider'] for row in policy.get('profiles', {}).values() if 'openclaw' in row and row.get('provider')}) or ['codex']
             else:
                 providers = [harness]
             for provider in providers:
@@ -274,7 +274,7 @@ def runtime_candidates(policy: dict) -> list[dict]:
                 templates = [row for row in templates if (not path(row['path_root']).is_relative_to(path(candidate['state_root']))
                     if mode == 'native' else row['path_root'] == candidate.get('profile_root'))
                     and (prefix is None or 'container_name' not in row and prefix.startswith(row.get('container_prefix', prefix)))]
-                profiles = [row for row in policy['profiles'].values() if row.get('provider') == provider
+                profiles = [row for row in policy.get('profiles', {}).values() if row.get('provider') == provider
                     and prefix is None
                     and ('openclaw' in row) == (harness == 'openclaw')
                     and row.get('runtime_user') == candidate['runtime_user'] and row.get('command') and row.get('command_sha256')

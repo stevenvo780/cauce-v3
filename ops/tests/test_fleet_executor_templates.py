@@ -153,6 +153,18 @@ class PlacementTemplateSelectionTest(unittest.TestCase):
         runtimes = self.subject.runtime_candidates(self.policy)
         self.assertEqual([row.get('container_name') for row in runtimes], ['container-three'])
 
+    def test_openclaw_without_profile_templates_does_not_raise(self):
+        directory = pathlib.Path(self.policy['bundles']['codex']['directory'])
+        descriptors = directory / 'packages/adapter-sdk/dist/descriptors'
+        (descriptors / 'openclaw.json').write_text(json.dumps({
+            'schema_version': 1, 'harness': 'openclaw',
+            'operations': {'install': 'runtime-package', 'execute': 'native-execution', 'authenticate': 'provider-login'},
+            'context': {'native_document': 'AGENTS.md', 'max_bytes': 65536},
+            'provider': {'fleet_module': 'fleet_provider_openclaw'}}))
+        policy = {'bundles': {'openclaw': {'directory': str(directory)}}, 'containers': {},
+            'native': [{'runtime_user': 'dev', 'systemd_user': 'stev', 'home_directory': '/home/dev', 'state_root': '/state'}]}
+        self.assertEqual(self.subject.runtime_candidates(policy), [])
+
 
 class NativeTemplateProfileTest(unittest.TestCase):
     setUp = fixtures.PhysicalExecutorTest.setUp
