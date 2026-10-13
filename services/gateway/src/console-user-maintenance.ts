@@ -78,12 +78,15 @@ export async function maintainConsoleUser(
     let row = inserted.rows[0];
     if (row !== undefined) {
       const authority = consoleRoleAuthority(row.role);
-      await client.query(
+      const membership = await client.query(
         `INSERT INTO human_tenant_memberships
-          (human_id,tenant_id,actor_alias,role,permissions,enabled,revoked_at)
-         VALUES ($1,$2,$3,$4,$5,true,NULL)`,
+          (human_id,tenant_id,actor_alias,permissions,enabled,revoked_at)
+         SELECT person.id,person.tenant_id,person.alias,$5,true,NULL
+           FROM console_users person
+          WHERE person.id=$1 AND person.tenant_id=$2 AND person.alias=$3 AND person.role=$4`,
         [row.id, row.tenant_id, row.alias, row.role, [...authority.permissions]],
       );
+      if (membership.rowCount !== 1) throw new Error('la membresía no coincide con el rol de la cuenta');
     } else {
       await assertSameCompany(client, email, options.tenant);
       const updated = await client.query<MaintainedConsoleUser>(
