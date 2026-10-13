@@ -389,7 +389,7 @@ class FleetSnapshotDocumentTest(unittest.TestCase):
         host_agent = agent("kant")
         host_agent["container_name"] = "host:kratos"
         host_agent["runtime_user"] = "stev"
-        host_agent["home_directory"] = "/home/stev"
+        host_agent["home_directory"] = "/home/dev"
         host_agent["state_directory"] = "/var/lib/cauce-v3/aliases/kant"
         for row, alias in ((container_agent, "argos"), (host_agent, "kant")):
             with self.subTest(alias=alias):

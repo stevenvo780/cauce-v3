@@ -4,7 +4,7 @@
       "container": "host:fixture-host",
       "enabled": true,
       "harness": "codex",
-      "home": "/home/stev",
+      "home": "/home/dev",
       "role": "operator",
       "room": "grp.steven",
       "runtimeStateDirectory": "/var/lib/cauce-v3/aliases/fixture-codex",

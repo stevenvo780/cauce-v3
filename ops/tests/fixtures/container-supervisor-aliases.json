@@ -70,7 +70,7 @@
       "dockerHost": "kratos",
       "systemdUser": "stev",
       "user": "stev",
-      "home": "/home/stev",
+      "home": "/home/dev",
       "stateDirectory": "/var/lib/cauce-v3/aliases/kant",
       "harness": "codex",
       "membershipRole": "operator"

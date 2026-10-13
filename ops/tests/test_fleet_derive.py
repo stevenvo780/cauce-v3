@@ -151,7 +151,7 @@ class FleetDeriveTests(unittest.TestCase):
             role="operator",
             container="host:kratos",
             user="stev",
-            home="/home/stev",
+            home="/home/dev",
             runtimeStateDirectory="/var/lib/cauce-v3/aliases/kant",
         )
         placement = {
@@ -170,7 +170,7 @@ class FleetDeriveTests(unittest.TestCase):
             "dockerHost": "kratos",
             "systemdUser": "stev",
             "user": "stev",
-            "home": "/home/stev",
+            "home": "/home/dev",
             "stateDirectory": "/var/lib/cauce-v3/aliases/kant",
             "harness": "codex",
             "membershipRole": "operator",
