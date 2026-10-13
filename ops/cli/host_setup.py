@@ -242,6 +242,59 @@ def verify_bundles(policy: dict, release: pathlib.Path) -> None:
         sys.path.pop(0)
 
 
+# Provider login of an enrolled computer. The console login of an agent runs on this computer through its host process,
+# which serves it only with a private auth policy: the signed profile templates (with their login recipe), the login
+# helper of the verified release pinned by digest, and a private state root. It carries no credential.
+PROVIDER_AUTH_POLICY = 'provider-auth-policy.json'
+PROVIDER_LOGIN_STATE = 'provider-login'
+LOGIN_HELPER_FILES = ('ops/cli/provider-login.py', 'ops/cli/provider_login_state.py', 'ops/cli/provider_login_native.py',
+    'ops/cli/provider_login_container.py', 'ops/cli/fleet_executor_view.py', 'ops/container-runtime/cauce_container_base.py',
+    'ops/container-runtime/cauce_container_proc.py', 'ops/container-runtime/cauce_container_tree.py')
+
+
+def provider_login_approved(policy: dict) -> bool:
+    return any(isinstance(row, dict) and 'login' in row for row in policy.get('profile_templates', []))
+
+
+def provider_auth_policy(policy: dict, release: pathlib.Path, install_root: pathlib.Path) -> dict | None:
+    """The host process compares profiles and templates with the executor policy, so they are copied verbatim."""
+    if not provider_login_approved(policy):
+        return None
+    pins = {}
+    for relative in LOGIN_HELPER_FILES:
+        filename = release / relative
+        if filename.is_symlink() or not filename.is_file() or filename.stat().st_mode & 0o022:
+            raise HostFailure(f'release does not contain a private provider login helper ({relative}); service not started')
+        pins[str(filename)] = hashlib.sha256(filename.read_bytes()).hexdigest()
+    helper = str(release / LOGIN_HELPER_FILES[0])
+    auth = {'schemaVersion': 1, 'host_id': policy['host_id'], 'state_root': str(install_root / PROVIDER_LOGIN_STATE),
+        'helper': {'executable': helper, 'sha256': pins[helper], 'files': pins}, 'profiles': policy['profiles'], 'logins': {}}
+    if 'profile_templates' in policy:
+        auth['profile_templates'] = policy['profile_templates']
+    return auth
+
+
+def install_provider_auth(policy: dict, release: pathlib.Path, install_root: pathlib.Path) -> tuple[pathlib.Path | None, bool]:
+    """Writes (or removes) the auth policy; returns its path when the unit must name it, and whether it changed."""
+    filename = install_root / PROVIDER_AUTH_POLICY
+    auth = provider_auth_policy(policy, release, install_root)
+    if auth is None:
+        if filename.is_file():
+            filename.unlink()
+            return None, True
+        return None, False
+    private_directory(install_root / PROVIDER_LOGIN_STATE).chmod(0o700)
+    return filename, write_if_changed(filename, json.dumps(auth, indent=2, sort_keys=True) + '\n', 0o600)
+
+
+def with_provider_auth(unit: str, auth_file: pathlib.Path | None) -> str:
+    if auth_file is None:
+        return unit
+    anchor = 'Environment=CAUCE_FLEET_POLICY_FILE='
+    return ''.join(line + (f'Environment=CAUCE_FLEET_ENROLLED_AUTH_POLICY_FILE={auth_file}\n' if line.startswith(anchor) else '')
+        for line in unit.splitlines(keepends=True))
+
+
 def render_unit(host_id: str, install_root: pathlib.Path, release: pathlib.Path, identity: pathlib.Path, policy_file: pathlib.Path) -> str:
     node = shutil.which('node')
     if node is None:
@@ -333,7 +386,8 @@ def setup(identity_directory: pathlib.Path, install_base: pathlib.Path, dry_run:
     if dry_run:
         plan['actions'] = [step for step, needed in (
             ('download and extract release', not plan['release_installed']),
-            ('write executor policy', True), ('install user unit ' + paths['unit_name'], True),
+            ('write executor policy', True), ('write provider auth policy', provider_login_approved(package['policy'])),
+            ('install user unit ' + paths['unit_name'], True),
             ('enable linger for ' + user, not plan['linger']), ('enable and start the service', True)) if needed]
         return plan
     for directory in (install_base, install_base / channel.identity['company_id'], root):
@@ -362,7 +416,10 @@ def setup(identity_directory: pathlib.Path, install_base: pathlib.Path, dry_run:
     report = capabilities_report(release, paths['policy'])
     if not report['available'] or report['templates'] == 0:
         raise HostFailure('executor policy was written but the executor rejects it (' + str(report['reason']) + '); service not started')
-    changed |= write_if_changed(paths['unit'], render_unit(host_id, root, release, channel.directory, paths['policy']), 0o644)
+    auth_file, auth_changed = install_provider_auth(policy, release, root)
+    changed |= auth_changed
+    changed |= write_if_changed(paths['unit'], with_provider_auth(render_unit(host_id, root, release, channel.directory, paths['policy']),
+        auth_file), 0o644)
     if not plan['linger']:
         runner(['loginctl', 'enable-linger', user])
         plan['linger'] = linger_enabled(user)
@@ -373,7 +430,7 @@ def setup(identity_directory: pathlib.Path, install_base: pathlib.Path, dry_run:
     if changed:
         systemctl('restart', paths['unit_name'])
     plan.update(release_installed=True, service_active=systemctl('is-active', paths['unit_name']).stdout.strip() == b'active',
-        policy_changed=changed, templates=report['templates'])
+        policy_changed=changed, templates=report['templates'], provider_auth=auth_file is not None)
     if not plan['linger']:
         plan['warning'] = f'enable linger so the service survives logout: sudo loginctl enable-linger {user}'
     return plan
@@ -387,6 +444,7 @@ def status(identity_directory: pathlib.Path, install_base: pathlib.Path) -> dict
         'policy_installed': paths['policy'].is_file(), 'unit_installed': paths['unit'].is_file(),
         'service_active': systemctl('is-active', paths['unit_name']).stdout.strip() == b'active',
         'linger': linger_enabled(user), 'templates': 0, 'executor_ready': False}
+    result['provider_auth'] = result['unit_installed'] and 'CAUCE_FLEET_ENROLLED_AUTH_POLICY_FILE=' in paths['unit'].read_text()
     if result['policy_installed']:
         releases = sorted((paths['install_root'] / 'release').glob('*/.verified'))
         mentioned = [item.parent for item in releases if str(item.parent) in paths['unit'].read_text()] if result['unit_installed'] else []
