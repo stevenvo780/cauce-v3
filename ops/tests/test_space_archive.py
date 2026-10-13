@@ -4,6 +4,7 @@ import io
 import json
 import os
 import pathlib
+import shutil
 import stat
 import sys
 import tempfile
@@ -140,12 +141,14 @@ class SpaceArchiveTests(unittest.TestCase):
     def test_extra_credential_files_and_token_content_are_omitted_while_cookie_sources_stay(self):
         project = self.space / 'projects/app'
         (project / 'src/lib').mkdir(parents=True, mode=0o700)
-        for name in ('.npmrc', '.pypirc', '.htpasswd', 'cookies', 'cookies.txt', 'cookies.json', 'cookies.sqlite', 'Cookies'):
+        names = ('.npmrc', '.pypirc', '.htpasswd', 'cookies', 'cookies.txt', 'cookies.json', 'cookies.sqlite', 'Cookies',
+                 'cookies.sqlite-wal', 'cookies.sqlite-shm', 'cookies.sqlite-journal', 'Cookies-journal')
+        for name in names:
             (project / name).write_text('x')
         for kept in ('src/lib/cookies.ts', 'cookie.js'):
             (project / kept).write_text('export const jar = 1;\n')
         omitted = {item['path'] for item in self.backup()['omissions']}
-        for name in ('.npmrc', '.pypirc', '.htpasswd', 'cookies', 'cookies.txt', 'cookies.json', 'cookies.sqlite', 'Cookies'):
+        for name in names:
             self.assertIn(f'projects/app/{name}', omitted, name)
         restore_space(str(self.archive), str(self.restored), self.identity)
         for kept in ('src/lib/cookies.ts', 'cookie.js'):
@@ -155,8 +158,9 @@ class SpaceArchiveTests(unittest.TestCase):
         samples = {
             'github': 'ghp_' + 'a' * 36, 'github_oauth': 'gho_' + 'b' * 36, 'github_user': 'ghu_' + 'c' * 36,
             'github_server': 'ghs_' + 'd' * 36, 'github_pat': 'github_pat_' + 'e' * 30, 'gitlab': 'glpat-' + 'f' * 20,
-            'slack': 'xoxb-1234567890-abcdef', 'aws_key': 'AKIA' + 'A' * 16, 'aws_secret': 'aws_secret_access_key = wJalrXUtnFEMI',
-            'npm_auth': '//registry.npmjs.org/:_authToken=abc', 'npm_token': 'npm_' + 'g' * 36,
+            'slack': 'xoxb-1234567890-abcdef', 'aws_key': 'AKIA' + 'A' * 16,
+            'aws_secret': 'aws_secret_access_key = ' + 'wJalrXUtnFEMI/K7MDENG',
+            'npm_auth': '//registry.npmjs.org/:_authToken=abcd1234efgh', 'npm_token': 'npm_' + 'g' * 36,
             'url': 'git clone https://deploy:hunter2@example.test/repo.git'}
         for name, content in samples.items():
             (self.space / f'projects/{name}.txt').write_text(content)
@@ -342,6 +346,82 @@ class SpaceArchiveTests(unittest.TestCase):
         self.assertEqual(failure.exception.errno, errno.ENOSPC)
         self.assertFalse(self.archive.exists())
         self.assertEqual((self.space / 'context/mission.md').read_text(), 'Context preserved.\n')
+
+    def test_literal_secrets_are_omitted_and_templates_stay_in_the_archive(self):
+        kept = {
+            'projects/aws-template.txt': 'aws_secret_access_key=${AWS_SECRET_ACCESS_KEY}\n',
+            'projects/aws-env.txt': 'aws_secret_access_key=process.env.AWS_SECRET_ACCESS_KEY\n',
+            'projects/npm-template.txt': '_authToken=${NPM_TOKEN}\n',
+            'projects/npm-env.txt': '_authToken=process.env.NPM_TOKEN\n',
+            'projects/url-template.txt': 'postgres://${DB_USER}:${DB_PASSWORD}@db/app\n',
+            'projects/url-env.txt': 'postgres://process.env.DB_USER:process.env.DB_PASSWORD@db/app\n',
+            'projects/mention.txt': 'Document the aws_secret_access_key and _authToken fields.\n',
+        }
+        omitted = {
+            'projects/aws-literal.txt': 'aws_secret_access_key = ' + 'wJalrXUtnFEMI/K7MDENG+',
+            'projects/npm-literal.txt': '//registry.npmjs.org/:_authToken=abcd1234efgh\n',
+            'projects/url-literal.txt': 'git clone https://deploy:hunter2@example.test/repo.git\n',
+        }
+        for path, content in {**kept, **omitted}.items():
+            (self.space / path).write_text(content)
+        reasons = {item['path']: item['reason'] for item in self.backup()['omissions']}
+        self.assertEqual({path: reasons[path] for path in omitted}, {path: 'sensitive_content' for path in omitted})
+        with zipfile.ZipFile(self.archive) as archived:
+            manifest = json.loads(archived.read('space-manifest.json'))
+            self.assertEqual(manifest['schema_version'], 2)
+            for path, content in kept.items():
+                self.assertEqual(archived.read(path).decode(), content, path)
+                self.assertNotIn(path, reasons)
+        restore_space(str(self.archive), str(self.restored), self.identity)
+        self.assertEqual((self.restored / 'projects/mention.txt').read_text(), kept['projects/mention.txt'])
+
+    def plant_legacy(self, text: str, schema_version: int):
+        encoded = text.encode()
+
+        def plant(item, data):
+            if item.filename == 'projects/legacy.txt':
+                data = encoded
+            if item.filename == 'space-manifest.json':
+                manifest = json.loads(data)
+                manifest['schema_version'] = schema_version
+                for entry in manifest['files']:
+                    if entry['path'] == 'projects/legacy.txt':
+                        entry['bytes'] = len(encoded)
+                        entry['sha256'] = hashlib.sha256(encoded).hexdigest()
+                manifest['bytes'] = sum(entry['bytes'] for entry in manifest['files'])
+                data = json.dumps(manifest, sort_keys=True, separators=(',', ':')).encode()
+            return item, data
+
+        self.rewrite(plant)
+
+    def test_schema_1_restores_literal_secret_texts_and_schema_2_rejects_them(self):
+        literal = 'aws_secret_access_key = ' + ('A' * 20) + '\n_authToken=abcd1234ef\nhttps://deploy:hunter2@example.test/repo.git\n'
+        (self.space / 'projects/legacy.txt').write_text('plain notes\n')
+        self.backup()
+        self.plant_legacy(literal, 1)
+        restore_space(str(self.archive), str(self.restored), self.identity)
+        self.assertEqual((self.restored / 'projects/legacy.txt').read_text(), literal)
+        shutil.rmtree(self.restored)
+        self.archive.unlink()
+        self.backup()
+        self.plant_legacy(literal, 2)
+        with self.assertRaisesRegex(SpaceArchiveFailure, 'digest or content'):
+            restore_space(str(self.archive), str(self.restored), self.identity)
+        self.assertFalse(self.restored.exists())
+
+    def test_missing_external_mount_file_does_not_require_a_private_config_directory(self):
+        self.space.joinpath('config').chmod(0o755)
+        result = self.backup()
+        self.assertFalse(any(item['reason'] == 'external_mount' for item in result['omissions']))
+        restore_space(str(self.archive), str(self.restored), self.identity)
+        self.assertTrue((self.restored / 'config/context-state.json').is_file())
+
+    def test_external_mount_file_still_requires_a_private_config_directory(self):
+        (self.space / 'config/external-mounts.json').write_text(json.dumps({'mounts': []}))
+        self.space.joinpath('config').chmod(0o755)
+        with self.assertRaisesRegex(SpaceArchiveFailure, 'unsafe owner or mode'):
+            self.backup()
+        self.assertFalse(self.archive.exists())
 
 
 if __name__ == '__main__':

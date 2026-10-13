@@ -16,14 +16,21 @@ IDENTIFIER = re.compile(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\Z')
 CREDENTIAL_FILE = re.compile(
     r'(?:auth\.json|\.?credentials(?:[^/]*\.json|\.(?:ya?ml|toml|ini|txt))?|\.git-credentials|\.netrc|\.pgpass|\.npmrc|\.pypirc|\.htpasswd'
     r'|id_(?:rsa|dsa|ecdsa|ed25519)|client_secrets?[^/]*\.json|secrets?\.(?:json|ya?ml|toml)|token\.json|[^/]+\.session'
-    r'|cookies(?:\.(?:txt|json|sqlite))?|\.env(?:\..*)?|.*\.(?:pem|key|p12|pfx|keystore))\Z', re.I)
+    r'|cookies(?:-journal|\.(?:txt|json|sqlite(?:-wal|-shm|-journal)?))?|\.env(?:\..*)?|.*\.(?:pem|key|p12|pfx|keystore))\Z', re.I)
 CREDENTIAL_DIRECTORIES = frozenset({'.codex', '.claude', '.config', '.ssh', '.gnupg', '.aws', '.docker', '.kube', '.gemini'})
 # .git config embeds remote URLs and hooks, and object stores break the entry cap or the hardlink check; the remote is the source of truth.
 VCS_DIRECTORY = '.git'
 OMISSION_REASONS = frozenset({'sensitive_path', 'sensitive_content', 'vcs_metadata', 'external_mount', 'special_file'})
+SCHEMA_VERSION = 2
+RESTORABLE_SCHEMAS = frozenset({1, 2})
 VERIFIED_CREDENTIAL = re.compile(rb'-----BEGIN (?:[A-Z ]+ )?PRIVATE KEY-----|\bsk-[A-Za-z0-9_-]{20,}'
     rb'|(?-i:\bgh[pous]_[A-Za-z0-9]{20,}|\bgithub_pat_[A-Za-z0-9_]{20,}|\bglpat-[A-Za-z0-9_-]{20,}|\bxox[abprs]-[A-Za-z0-9-]{10,}'
-    rb'|\bAKIA[0-9A-Z]{16}\b|\bnpm_[A-Za-z0-9]{36}\b)|aws_secret_access_key|_authToken|://[^\s/:@"\x27]+:[^\s/@"\x27]+@', re.I)
+    rb'|\bAKIA[0-9A-Z]{16}\b|\bnpm_[A-Za-z0-9]{36}\b)', re.I)
+AWS_SECRET_LITERAL = re.compile(
+    rb'aws_secret_access_key["\x27]?\s{0,16}[:=]\s{0,16}["\x27]?(?!\$\{)(?!process\.env\b)[A-Za-z0-9/+]{20,}', re.I)
+NPM_AUTH_LITERAL = re.compile(
+    rb'_authToken["\x27]?\s{0,16}[:=]\s{0,16}["\x27]?(?![^\s"\x27]{0,512}(?:\$\{|process\.env))[^\s"\x27]{8,}', re.I)
+URL_USERINFO = re.compile(rb'://([^\s/:@"\x27]+):([^\s/@"\x27]+)@')
 CONFIG_ASSIGNMENT = re.compile(
     rb'["\x27]?(?:access_token|refresh_token|client_secret|api_key|password)["\x27]?\s*[:=]\s*["\x27]?[^\s"\x27]{6,}', re.I)
 MAX_FILE = 128 * 1024 * 1024
@@ -66,13 +73,18 @@ def external_mount_path(value: str) -> str:
 def external_mounts(root: int, source: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
     """Declared excluded mounts: archive-relative paths inside the space, and absolute paths outside it (recorded as receipts only)."""
     try:
-        parent = open_relative_directory(root, 'config')
+        parent = os.open('config', os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=root)
     except FileNotFoundError:
         return (), ()
     try:
+        try:
+            os.stat('external-mounts.json', dir_fd=parent, follow_symlinks=False)
+        except FileNotFoundError:
+            return (), ()
+        info = os.fstat(parent)
+        if info.st_uid != os.geteuid() or info.st_mode & 0o077:
+            raise SpaceArchiveFailure('restored space directory has an unsafe owner or mode')
         data, _ = read_file(parent, 'external-mounts.json', MAX_MANIFEST)
-    except FileNotFoundError:
-        return (), ()
     finally:
         os.close(parent)
     try:
@@ -151,8 +163,18 @@ def open_relative_directory(root: int, relative: str) -> int:
         raise
 
 
-def sensitive_content(path: str, data: bytes) -> bool:
+def literal_userinfo(data: bytes) -> bool:
+    for user, password in URL_USERINFO.findall(data):
+        if any(marker in part.lower() for part in (user, password) for marker in (b'${', b'process.env')):
+            continue
+        return True
+    return False
+
+
+def sensitive_content(path: str, data: bytes, schema_version: int = SCHEMA_VERSION) -> bool:
     if VERIFIED_CREDENTIAL.search(data):
+        return True
+    if schema_version >= SCHEMA_VERSION and (AWS_SECRET_LITERAL.search(data) or NPM_AUTH_LITERAL.search(data) or literal_userinfo(data)):
         return True
     return path.startswith('config/') and CONFIG_ASSIGNMENT.search(data) is not None
 
@@ -266,7 +288,7 @@ def backup_space(source: str, archive: str, expected_identity: dict) -> dict:
                     os.close(child)
             if fingerprint(os.fstat(root)) != fingerprint(root_before):
                 raise SpaceArchiveFailure('space root changed during backup')
-            manifest = {'schema_version': 1, 'identity': expected, 'directories': directories, 'files': files,
+            manifest = {'schema_version': SCHEMA_VERSION, 'identity': expected, 'directories': directories, 'files': files,
                         'omissions': omissions, 'excluded_roots': ['logs', 'tmp'], 'bytes': size}
             encoded = json.dumps(manifest, sort_keys=True, separators=(',', ':')).encode()
             if len(encoded) > MAX_MANIFEST:
@@ -303,7 +325,7 @@ def validated_archive(zipped: zipfile.ZipFile, expected: dict) -> tuple[dict, by
     except (KeyError, ValueError, UnicodeError):
         raise SpaceArchiveFailure('space manifest is unavailable') from None
     if not isinstance(manifest, dict) or set(manifest) != {'schema_version', 'identity', 'directories', 'files', 'omissions', 'excluded_roots', 'bytes'} \
-            or type(manifest['schema_version']) is not int or manifest['schema_version'] != 1 \
+            or type(manifest['schema_version']) is not int or manifest['schema_version'] not in RESTORABLE_SCHEMAS \
             or identity(manifest['identity']) != expected or manifest['excluded_roots'] != ['logs', 'tmp'] \
             or not all(isinstance(manifest[field], list) for field in ('directories', 'files', 'omissions')):
         raise SpaceArchiveFailure('space archive identity or schema differs')
@@ -354,7 +376,7 @@ def validated_archive(zipped: zipfile.ZipFile, expected: dict) -> tuple[dict, by
         if entry.file_size != item['bytes'] or entry.external_attr >> 16 != stat.S_IFREG | item['mode']:
             raise SpaceArchiveFailure('space archive entry differs from its receipt')
         data = zipped.read(entry)
-        if hashlib.sha256(data).hexdigest() != item['sha256'] or sensitive_content(item['path'], data):
+        if hashlib.sha256(data).hexdigest() != item['sha256'] or sensitive_content(item['path'], data, manifest['schema_version']):
             raise SpaceArchiveFailure('space archive digest or content is invalid')
         if item['path'] == 'config/context-state.json':
             verify_context_identity(data, expected)
@@ -396,7 +418,7 @@ def restore_space(archive: str, destination: str, expected_identity: dict) -> di
                 parent = open_relative_directory(root, str(pathlib.PurePosixPath(item['path']).parent))
                 try:
                     data = zipped.read(item['path'])
-                    if hashlib.sha256(data).hexdigest() != item['sha256'] or sensitive_content(item['path'], data):
+                    if hashlib.sha256(data).hexdigest() != item['sha256'] or sensitive_content(item['path'], data, manifest['schema_version']):
                         raise SpaceArchiveFailure('space archive changed before file restoration')
                     target = os.open(pathlib.PurePosixPath(item['path']).name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, item['mode'], dir_fd=parent)
                     with os.fdopen(target, 'wb') as output:
