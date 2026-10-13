@@ -27,7 +27,7 @@ export function MyQuotasPage() {
   const [notice, setNotice] = useState('');
   const mutating = useRef(false);
   const [pinFailed, setPinFailed] = useState(false);
-  const ready = !!accounts.data && !accounts.error && !busy;
+  const ready = !!accounts.data && !accounts.error && !accounts.loading && !busy;
   const canWrite = canManageCompany(authority?.role) && ready;
   const canWriteAccounts = canManageQuotaAccounts(authority?.role) && ready;
   const canRegisterAccounts = canWriteAccounts && !environments.loading && !environments.error;
