@@ -63,12 +63,16 @@ export async function writeCompanyOffice(pool: DatabasePool, source: CompanyAuth
       const room = input.rooms.find(item => !available.has(JSON.stringify([item.tenant_id, item.room_id])));
       throw new StoreError('forbidden', `La sala ${room?.tenant_id ?? ''}/${room?.room_id ?? ''} no está disponible en la empresa activa (deshabilitada, retirada o de otra empresa).`);
     }
+    // The plan only edits what is available: positions of rooms that are temporarily disabled or retired survive the save.
+    const stored = (await client.query<{ rooms: unknown }>('SELECT rooms FROM company_office_layouts WHERE company_id=$1', [authority.actingCompany])).rows[0];
+    const kept = Rooms.parse(stored?.rooms ?? []).filter(room => !available.has(JSON.stringify([room.tenant_id, room.room_id])));
+    const rooms = JSON.stringify([...input.rooms, ...kept]);
     const written = input.expected_version === 0
       ? await client.query(`INSERT INTO company_office_layouts(company_id,rooms,updated_by) VALUES($1,$2::jsonb,$3)
-          ON CONFLICT (company_id) DO NOTHING RETURNING version`, [authority.actingCompany, JSON.stringify(input.rooms), authority.humanId])
+          ON CONFLICT (company_id) DO NOTHING RETURNING version`, [authority.actingCompany, rooms, authority.humanId])
       : await client.query(`UPDATE company_office_layouts SET rooms=$2::jsonb,updated_by=$3,version=version+1,updated_at=now()
           WHERE company_id=$1 AND version=$4 RETURNING version`,
-        [authority.actingCompany, JSON.stringify(input.rooms), authority.humanId, input.expected_version]);
+        [authority.actingCompany, rooms, authority.humanId, input.expected_version]);
     if (!written.rowCount) throw new StoreError('conflict', 'office layout version changed; reload and retry');
     await client.query(`INSERT INTO audit_events(tenant_id,actor_alias,action,decision,company_id,actor_human_id,metadata)
       VALUES($1,$2,'office.layout.update','allow',$3,$4,$5::jsonb)`, [authority.homeTenant, authority.alias,

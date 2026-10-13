@@ -97,6 +97,18 @@ describe('public registration with durable owner and isolated office', () => {
     expect((await readCompanyOffice(pool, source(first))).rooms).toEqual([]);
   });
 
+  it('keeps the stored position of a room that is temporarily disabled when the plan is saved', async () => {
+    await admin.query("INSERT INTO rooms(tenant_id,id) VALUES($1,'extra')", [first.hub.id]);
+    await admin.query("INSERT INTO memberships(tenant_id,room_id,alias,role) VALUES($1,'extra','owner','operator')", [first.hub.id]);
+    const extra = { ...room(first, 500), room_id: 'extra' };
+    await writeCompanyOffice(pool, source(first), { expected_version: 0, rooms: [room(first), extra] });
+    await admin.query("UPDATE rooms SET enabled=false WHERE tenant_id=$1 AND id='extra'", [first.hub.id]);
+    const saved = await writeCompanyOffice(pool, source(first), { expected_version: 1, rooms: [room(first, 7)] });
+    expect(saved.rooms).toEqual([room(first, 7)]);
+    await admin.query("UPDATE rooms SET enabled=true WHERE tenant_id=$1 AND id='extra'", [first.hub.id]);
+    expect((await readCompanyOffice(pool, source(first))).rooms).toEqual(expect.arrayContaining([room(first, 7), extra]));
+  });
+
   it('revokes durable authority and refuses an owner session after the company is retired', async () => {
     const updated = await withTransaction(pool, async client => updateCompany(client, await source(first)(client), 'north',
       { expected_version: 1, name: 'North edited' }));
