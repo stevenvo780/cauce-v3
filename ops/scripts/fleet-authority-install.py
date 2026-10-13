@@ -222,6 +222,9 @@ def issuer_write_paths(state):
     paths = {root, *(absolute(location).parent for location in registries.values())}
     if any(len(path.parts) < 3 for path in paths):
         raise Abort('the issuer state_root and registry parents must be at least two levels below /')
+    if any(path.is_relative_to(home) for path in paths for home in ('/home', '/root')):
+        raise Abort('the issuer state_root and registries cannot be under /home or /root (ProtectHome=yes); '
+                    'move them outside home directories')
     return {str(path) for path in paths}
 
 

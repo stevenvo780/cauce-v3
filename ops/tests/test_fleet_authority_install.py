@@ -212,6 +212,7 @@ class PreflightTests(InstallFixture):
         self.assertIn(f'EnvironmentFile={self.fleet}/signed-authority/authority.env\n', unit)
         self.assertNotIn('@', unit)
         self.assertIn('ProtectSystem=strict\n', unit)
+        self.assertIn('ProtectHome=yes\n', unit)
         self.assertIn(f'After=network-online.target docker.service {self.arguments().controller_service}\n', unit)
         self.assertEqual(dict(line.split('=', 1) for line in environment.splitlines()), {
             'CAUCE_FLEET_AUTHORITY_SOCKET': str(self.socket_directory / 'authority.sock'),
@@ -270,6 +271,26 @@ class PreflightTests(InstallFixture):
     def test_write_paths_two_levels_below_root_are_allowed(self):
         self.policy.write_bytes(lib.dumps({'state_root': '/var/lib', 'registries': {'base_mtls': '/etc/cauce/mtls_identities.json'}}))
         self.assertEqual(self.kit.issuer_write_paths({'command': self.command}), {'/var/lib', '/etc/cauce'})
+
+    def test_home_state_roots_and_registries_are_rejected_before_any_effect(self):
+        policy = json.loads(self.policy.read_bytes())
+        for field in ('state_root', 'registries'):
+            for directory in ('/home/fixture/state', '/root/state'):
+                with self.subTest(field=field, directory=directory):
+                    value = directory if field == 'state_root' else {'base_mtls': directory + '/mtls_identities.json'}
+                    self.policy.write_bytes(lib.dumps({**policy, field: value}))
+                    self.release(OLD)
+                    before = self.tree()
+                    for extra in ((), ('--apply',)):
+                        with self.assertRaisesRegex(lib.Abort, 'cannot be under /home or /root.*ProtectHome=yes'):
+                            self.kit.install(self.arguments(*extra))
+                        self.assertEqual(self.tree(), before)
+                        self.assertEqual(self.host.events, [])
+
+    def test_home_prefixes_outside_the_protected_directories_are_allowed(self):
+        self.policy.write_bytes(lib.dumps({'state_root': '/homework/state',
+                                          'registries': {'base_mtls': '/rootfs/registry/mtls_identities.json'}}))
+        self.assertEqual(self.kit.issuer_write_paths({'command': self.command}), {'/homework/state', '/rootfs/registry'})
 
     def test_unsafe_or_missing_registries_are_rejected_before_any_effect(self):
         state = self.kit.controller_state(self.arguments())
