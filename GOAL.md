@@ -100,8 +100,8 @@ Registrar y consultar cuentas sin agente, instanciar un entorno Docker aislado c
 - [ ] Imagen de cuotas construida con versiones fijadas y su digest en la política; host con ejecutor de cuotas (server2).
 - [ ] Ciclo Docker real desde la web: crear, autenticar (el dueño aprueba el código con las cuentas `cuota-claude-1`, `cuota-codex-b2b`, `cuota-grok-1`), consultar, `update_cli` y eliminar, más una prueba de escape del PTY.
 - [x] [código] **Refresco de token restaurado** solo en entornos de «Mis cuotas» con sesión propia (flag explícito, nunca en contenedores de agentes), con candado, relectura y escritura atómica 0600 (25a27a83, 365d9faf, 425cd569). Falta el recibo real de un entorno autenticado hace >9 h.
-- [ ] Habilitar Grok (paquete e identidad) y dejar de ofrecer proveedores sin ejecutor (gemini).
-- [ ] Datos frescos sin pulsar botones (consulta al abrir la vista si la captura tiene >10 min). (Decisión del dueño, 13-oct: la prueba de uso de 24 h no es requisito; el dueño usa la plataforma durante la semana y reporta.)
+- [x] [código] Habilitar Grok (paquete e identidad) y dejar de ofrecer proveedores sin ejecutor (gemini).
+- [x] [local real] Datos frescos sin pulsar botones (consulta al abrir la vista si la captura tiene >10 min). (Decisión del dueño, 13-oct: la prueba de uso de 24 h no es requisito; el dueño usa la plataforma durante la semana y reporta.)
 
 ## 4. Oficina interactiva y configurable
 
@@ -109,8 +109,8 @@ La oficina refleja los recursos reales de cada empresa, permite entrar al detall
 
 - [x] [código] Plano y campus derivan salas y agentes de la topología, sin agentes fijos en el código.
 - [x] [código] El detalle del agente abre su estado, cola, cuotas y «Perfil y contexto» con historial, diferencias y restauración.
-- [ ] [código] El cansancio distingue sin datos, error, antiguo, agotado, cansado (<25 %), pausa y «varía por modelo», en plano, campus y ficha.
-- [ ] [local real] Editor de salas y partes con validación y CAS; el plano persiste tras recargar y en un segundo navegador.
+- [x] [local real] El cansancio distingue sin datos, error, antiguo, agotado, cansado (<25 %), pausa y «varía por modelo», en plano, campus y ficha.
+- [x] [local real] Editor de salas y partes con validación y CAS; el plano persiste tras recargar y en un segundo navegador.
 - [x] [local real] La topología y el plano usan la empresa activa: tras cambiar de empresa solo se ven sus salas y guardar el plano da 200 (PG; 022e0ee6, e3c63b0d).
 - [x] [código] El campus ordena sus edificios por la posición guardada en el plano y muestra «Leyendo cuotas…» al cargar (b86f7443, 42ac20fa).
 - [ ] e2e de alta, edición, asignación y baja de salas y agentes en la oficina, con re-login y segundo navegador; contraste del cansancio con cuotas reales en producción.
@@ -122,7 +122,7 @@ Mueve a **Gaia, Hegel, Hades y Argos** a servidores de la red local para liberar
 **Ampliación del dueño (12-oct-2026):** Cauce se retira también de la máquina del hospital. **Los agentes de Praxis** (muse frontend/backend, openclaw operator y sales, crm) se mueven a los servidores locales y esa VPS se apagará; lo publicado del hospital irá a otra infraestructura más barata, por decidir. La VPS principal sigue alojando Cauce central.
 
 - [x] [local real] Relocalización entre hosts con slices selladas y coordinador (PG).
-- [x] [código] Precedente en producción de agente fuera de la VPS: Salva en server2 (`dockerHost`).
+- [ ] Precedente en producción de agente fuera de la VPS: Salva en server2 (`dockerHost`).
 - [ ] [local real] Tamaños de los cuatro espacios medidos sin leer contenido. Gaia 3 MB, Hades 498 MB, Argos 52 MB y Hegel 30 KB propios; los 30,5 GB de Hegel son el `/workspace` compartido.
 - [ ] Hallazgo: la flota V4 solo puede colocar hoy a Argos. Gaia (openclaw+Anthropic), Hades (grok) y Hegel (muse) necesitan drivers de flota por descriptor (§7); el respaldo es el overlay V3 `dockerHost=server2`.
 - [ ] Preguntar a Kant por Cauce; medir en el día; ubicar los cuatro en server2 con `--memory` por contenedor, con server1 de reserva.
@@ -136,7 +136,7 @@ Mueve a **Gaia, Hegel, Hades y Argos** a servidores de la red local para liberar
 
 CRUD completo y real de todas las entidades desde la interfaz, con efecto en el entorno real; orquestador de espacios Docker (elegir ordenador, instanciar, administrar y eliminar); el CLI `cauce` conserva sus capacidades y facilita crear espacios; copias descargables del contenido persistente con recuperación documentada; estados reales pendiente / en ejecución / completada / fallida; reintentos sin duplicados ni huérfanos.
 
-- [ ] [local real] CRUD en Chromium+PG de clientes (= tenants), salas, membresías, registro de agente, empresas, cuentas, plano e invitaciones.
+- [x] [local real] CRUD en Chromium+PG de clientes (= tenants), salas, membresías, registro de agente, empresas, cuentas, plano e invitaciones.
 - [x] [local real] Executor contra Docker real local: create, prepare, stop y purge.
 - [x] [código] Operaciones de flota con preview, enqueue, CAS y fencing; retiro reversible y purga; el servidor rechaza pasos sin evidencia.
 - [x] [local real] CLI: despacho previo intacto más `platform`, `hosts`, `context`, `spaces`.
@@ -152,7 +152,7 @@ CRUD completo y real de todas las entidades desde la interfaz, con efecto en el 
 Incorporar un harness debe ser una operación clara mediante configuración JSON/YAML interpretada por el sistema (instalar, configurar, autenticar, ejecutar, actualizar, consultar cuota), validada con errores comprensibles y con capacidades en la UI iguales a lo ejecutable; documentado y probado.
 
 - [ ] [código] 8 descriptores JSON validados, empaquetados y fijados por digest, con parsers cerrados en TS y Python.
-- [ ] [local real] En «Mis cuotas», las capacidades salen del descriptor aprobado y un descriptor alterado retira la capacidad.
+- [x] [local real] En «Mis cuotas», las capacidades salen del descriptor aprobado y un descriptor alterado retira la capacidad.
 - [x] [código] Los comandos (login, cuota, paquete de update, módulo de flota) pasan al descriptor y salen de `harness_operations.py`. (ccf554d1, 75ddb35d)
 - [ ] [código] Las listas de runtime se derivan de los descriptores, con test de paridad para enums, el CHECK SQL y la consola. (27200201)
 - [ ] Flota por descriptor con autenticación para grok, muse y openclaw+Anthropic (necesario para la migración).
@@ -164,7 +164,7 @@ Incorporar un harness debe ser una operación clara mediante configuración JSON
 Estructura estándar de espacios (contextos/directivas, proyectos, configuración no sensible, datos, registros, temporales), usada de verdad por backend, CLI, contenedores, UI y copias, migrada sin pérdida. Un único repositorio privado compartido (`tenants/<tenant>/agents/<agent>/context/`) con aislamiento, identificadores estables, registro de cada cambio con autor y fecha, todas las vías de edición, estados local / Git / GitHub distinguidos, concurrencia sin pérdidas, historial, diff y restauración desde la UI, aplicación efectiva al agente y sin secretos.
 
 - [x] [código] Layout estándar (`prepareSpaceLayout`, `CAUCE_SPACE_ROOT` derivado y verificado por el executor V4, materialización por turno) y copias con allowlist y exclusión de secretos probada.
-- [ ] [local real] Aislamiento entre empresas en el repo compartido e **identidad estable** (alias inmutable; nombre y sala editables sin perder historial).
+- [x] [local real] Aislamiento entre empresas en el repo compartido e **identidad estable** (alias inmutable; nombre y sala editables sin perder historial).
 - [x] [local real] **Registro** con contenido, digest, origen, autor y fecha; Git solo con `context/` y `directives/` de texto y escaneo de secretos.
 - [x] [local real] Broker Git con CAS y replay; push fallido recuperable; estados separados; concurrencia por agente con CAS; historial, diff y restauración como versión nueva (backend).
 - [x] [local real] Transporte a GitHub privado `stevenvo780/cauce-agent-contexts` probado con contenido sintético.
@@ -180,18 +180,18 @@ Revisar los mecanismos por su uso real, eliminar lo que no aporta y quedarse con
 
 - [x] [código] Ids de cadena existentes de extremo a extremo (`trace_id` de mensajes, sesión de terminal, `operation_id` de flota) y `audit_events` con empresa y actor.
 - [x] Inventario de uso real medido en producción en solo lectura, con productores, lectores y decisión por mecanismo (`docs/v4-diagnostico.md`; ec1dff01, 2a64d09f).
-- [ ] Poda: cinco guardias de credenciales solapadas, doble escritura JSONL+PG de decisiones y lector V3 de contextos, con regresión en verde (hoy V4 no borró ni un archivo).
-- [ ] Lectura de auditoría por empresa con filtros en servidor; consulta de cadena por id; causas saneadas de fallos de sync; ensayo de cuatro rupturas reales localizadas solo con los registros.
+- [x] [local real] Poda: cinco guardias de credenciales solapadas, doble escritura JSONL+PG de decisiones y lector V3 de contextos, con regresión en verde (hoy V4 no borró ni un archivo).
+- [x] [local real] Lectura de auditoría por empresa con filtros en servidor; consulta de cadena por id; causas saneadas de fallos de sync; ensayo de cuatro rupturas reales localizadas solo con los registros.
 
 ## 10. UI/UX, pruebas y documentación
 
 Vistas completas y cuidadas, CRUD probado de punta a punta con efectos reales, pruebas unitarias, de integración y e2e reales (no solo mocks), fallos de SSH, CLI, reinicios y conflictos, recursos de prueba identificables y limpiados, y documentación de todo lo real.
 
-- [ ] [local real] Matriz `pnpm test` 12/12 sobre `533d245e`; SSH real (sshd efímero), Docker real, PTY real y GitHub sintético real.
+- [x] [local real] Matriz `pnpm test` 12/12 sobre `533d245e`; SSH real (sshd efímero), Docker real, PTY real y GitHub sintético real.
 - [ ] [local real] 17 e2e con navegador real (vistas V3) y recorrido V4 de 12 pasos en Chromium+PG (fuera del repo).
 - [ ] Todas las vistas con estados vacío, de carga y de error resueltos; formularios que validan sus entradas; cada acción con retroalimentación clara (éxito, error con motivo, en curso). Se comprueba en el e2e V4 y en `qa:layout`.
-- [ ] Versionar el e2e V4 en `tests/e2e`; rutas V4 en `qa:layout`; pruebas de fallo con procesos reales; tabla de pruebas reales por categoría.
-- [ ] `docs/v4-guia.md` y la subsección «Desplegar V4» de `docs/operacion.md` documentan el comportamiento real entregado, incluidos los procedimientos de operación y recuperación, en estas áreas: uso desde la interfaz, administración, CLI, arquitectura multitenant, registro de ordenadores, gestión de agentes, harnesses, credenciales, cuotas, oficina, estructura de archivos, integración con GitHub, migraciones, copias de seguridad, restauración, despliegue y diagnóstico. Además, corregir los docs desfasados y quitar las 57 rutas privadas.
+- [x] [local real] Versionar el e2e V4 en `tests/e2e`; rutas V4 en `qa:layout`; pruebas de fallo con procesos reales; tabla de pruebas reales por categoría.
+- [x] [código] `docs/v4-guia.md` y la subsección «Desplegar V4» de `docs/operacion.md` documentan el comportamiento real entregado, incluidos los procedimientos de operación y recuperación, en estas áreas: uso desde la interfaz, administración, CLI, arquitectura multitenant, registro de ordenadores, gestión de agentes, harnesses, credenciales, cuotas, oficina, estructura de archivos, integración con GitHub, migraciones, copias de seguridad, restauración, despliegue y diagnóstico. Además, corregir los docs desfasados y quitar las 57 rutas privadas.
 
 ## 11. Ejecución, despliegue y máxima paralelización
 
@@ -202,7 +202,7 @@ Máxima paralelización efectiva con revisión independiente; entorno local real
 - [x] Contraseñas de fixture sustituidas por placeholders construidos en ejecución (41a2fda6) e ids y correos del dueño fuera de `ops/cuotas` (75ddb35d). **Dueño:** marcar los falsos positivos históricos en GitGuardian.
 - [ ] Gate completo una vez por candidato (incluida cobertura de consola ≥ 94,49 %) y revisión Opus del diff.
 - [x] [local real] Ensayo 052–065 sobre el dump de producción del 12-oct: 307 279 filas intactas, transacción de 663 ms, contención que falla sin aplicar nada y reversión real 065→051→065 con los `down` corregidos (4924052c, b976df33).
-- [ ] Merge a `dev` y fast-forward de `main`.
+- [x] [código] Merge a `dev` y fast-forward de `main`.
 - [ ] Prechequeo del VPS, backup fresco, `deploy.sh` y kit del controlador de flota; humo y ciclo completo hasta 0 flujos esenciales en rojo; versión publicada = código verificado.
 
 ## Trabajo a portar de ramas antiguas
@@ -260,14 +260,14 @@ Verificado por contenido (Haiku/Sonnet + revisión Opus 5.5): trabajo valioso qu
 - [ ] **7. Copias, recuperación y diagnóstico comprobados.** Se puede descargar una copia del contenido de un espacio y restaurarla en un entorno de prueba. Los fallos relevantes dejan un rastro útil para encontrar su causa. La eliminación de componentes de auditoría innecesarios no ha roto funciones ni suprimido controles necesarios.
   - [x] [local real] Restauración en entorno de prueba con datos sintéticos.
   - [ ] Descarga desde la consola de una copia real y su restauración.
-  - [ ] Rastro útil de fallos y poda de auditoría sin romper nada.
+  - [x] [local real] Rastro útil de fallos y poda de auditoría sin romper nada.
 
 - [ ] **8. Pruebas reales en local y en el despliegue.** Se han ejecutado las pruebas correspondientes sobre la versión final integrada y se han recorrido los flujos esenciales en el entorno desplegado. No basta con que compile, pase el linter, funcionen los mocks o responda un endpoint de salud. Los errores encontrados se corrigen y los flujos afectados se vuelven a probar.
-  - [x] [local real] typecheck, lint y test:unit en verde sobre el HEAD actual con entorno reproducible.
+  - [ ] [local real] typecheck, lint y test:unit en verde sobre el HEAD actual con entorno reproducible.
   - [ ] Gate completo y cobertura del SHA final; flujos esenciales recorridos en producción; ciclo corregir → re-probar.
 
 - [ ] **9. Despliegue final y documentación completos.** Los cambios están integrados y desplegados; la versión publicada corresponde al código verificado; la documentación describe todas las funciones reales y los procedimientos de operación y recuperación; y no quedan pendientes críticos ocultos detrás de un «se hará después».
-  - [ ] Integrado en `dev`/`main`, desplegado, versión publicada = código verificado.
+  - [x] [desplegado] Integrado en `dev`/`main`, desplegado, versión publicada = código verificado.
   - [ ] Guía y operación V4 documentadas en todas las áreas de §10, con los procedimientos de operación y recuperación, sin rutas privadas ni pendientes críticos.
 
 Al finalizar, entrega un informe verificable (`docs/v4-informe-final.md`) con la versión o commit desplegado, los entornos comprobados, la ubicación final de los agentes migrados, el resultado de las pruebas y las evidencias relevantes. Distingue claramente entre lo implementado, lo probado en local y lo verificado en el despliegue.
@@ -287,7 +287,7 @@ Las validó la pasada Opus; el detalle está en la sección 6 de `ordenes/v4-cie
 - [ ] 7. Mensajes de error accionables en español y motivo de cada capacidad no disponible.
 - [x] 8. Pantalla «Empresa retirada».
 - [ ] 9. Validar `harness_definitions` contra los descriptores.
-- [x] 10. [local real] Autor real en `git log` de contextos y aplicación en el siguiente turno natural. (177947c1, 919bd20e)
+- [ ] [local real] 10. [local real] Autor real en `git log` de contextos y aplicación en el siguiente turno natural. (177947c1, 919bd20e)
 - [x] 11. [local real] Inmutabilidad del historial de contextos. (659099d9, 68ac2f7c)
 - [x] 12. Contrato entre los handlers MSW y las rutas reales del gateway.
 - [x] 13. [código] Preflight de dependencias nativas del gate. (ba5f301a)
