@@ -167,7 +167,7 @@ chain(trace_id="some-trace-id")
       "source_tenant": "<tenant>",
       "target_alias": "<alias-b>",
       "target_tenant": "<tenant>",
-      "status": "delegated",
+      "status": "materialized",
       "created_at": "2026-07-25T13:00:00.000Z"
     }
   ],

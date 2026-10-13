@@ -220,10 +220,10 @@ Activos: `cred-guard.timer` (30 min, último 16:21 hora local, `rc=0 problemas=0
 | Pieza | Dónde corre | Qué produce | Quién consume |
 |---|---|---|---|
 | `credential_health.py` (166 líneas) | biblioteca del repo; **no está en el VPS** (junto a la guardia instalada no hay copia) y en kratos va con su propia copia de la guardia | clasificación pura (vencimiento, huella, compartida) | `cred-guard.py`, `cauce-cred-guard-kratos.py`, `cauce-v3-medico-monitor:49`, `ops/tests/test_credential_health.py` |
-| `cred-guard.py` (134 líneas) | VPS como `cauce-cred-guard` (sistema, 30 min) y kratos como `cred-guard.timer` (usuario, 30 min) | tabla por credencial y `problemas=N compartidas=M`; sale con 1 si hay muertas | solo humanos que lean el journal o `cred-guard.txt`; nadie en código |
+| `cred-guard.py` (134 líneas, medición histórica) | VPS como `cauce-cred-guard` (sistema, 30 min) y kratos como `cred-guard.timer` (usuario, 30 min) | tabla por credencial y `problemas=N compartidas=M`; sale con 1 si hay muertas | solo humanos que lean el journal o `cred-guard.txt`; nadie en código |
 | `cred-guard.sh` (10 líneas) | kratos (envuelve al anterior) | `cred-guard.txt` y línea en `cred-guard.log` (151 kB, sin rotar); **fuerza `exit 0`** | nadie |
 | `cauce-cred-guard-kratos.py` (84 líneas) | hoy lo ejecuta el host server2 (el JSON remoto del VPS se renueva cada 15 min con `host: server2`); el timer de kratos está `disabled` | JSON de huellas y vencimientos en el VPS (`/var/lib/cauce-v3/cred-guard-kratos.json`) | `cred-guard.py` del VPS (lo lee como fila remota; STALE a los 60 min) |
-| `cauce-credenciales` (165 líneas) + `ops/cli/cauce-credenciales.lib.sh` (699 líneas) | manual desde la CLI `cauce` (login, aprovisionar, retirar, renovar) | tabla y acciones de renovación | `ops/cli/cauce` carga la `lib` al iniciar; el script suelto `ops/guardias/cauce-credenciales` solo lo ejecuta un humano |
+| `cauce-credenciales` (165 líneas) + `ops/cli/cauce-credenciales.lib.sh` (699 líneas, medición histórica) | manual desde la CLI `cauce` (login, aprovisionar, retirar, renovar) | tabla y acciones de renovación | `ops/cli/cauce` carga la `lib` al iniciar; el script suelto `ops/guardias/cauce-credenciales` solo lo ejecuta un humano |
 
 ### Problemas detectados
 
