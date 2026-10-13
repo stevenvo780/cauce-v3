@@ -1,8 +1,4 @@
-"""Recoverable pre-cut copy of one alias: git bundles at the same HEAD, other files by sha256.
-
-Credentials are omitted by name and by content and listed with a reason. The walk uses directory
-descriptors and O_NOFOLLOW. Restoration checks the sealed manifest before it writes.
-"""
+"""Recoverable pre-cut copy of one alias: git bundles at the same HEAD and stores other files by sha256. Credentials are omitted by name and content; the walk uses directory fds and O_NOFOLLOW."""
 from __future__ import annotations
 
 import argparse
@@ -30,26 +26,14 @@ CONFIG = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))
 RESTORE_SCHEMA = 'cauce.v4-migracion-restauracion/1'
 NAME_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$')
 OMISSION_RULES = (
-    ('auth', re.compile(r'o?auth(?!or)')),
-    ('session', re.compile(r'session')),
-    ('token', re.compile(r'token')),
-    ('profile', re.compile(r'profile')),
-    ('credential', re.compile(
-        r'(?:\.ssh|\.gnupg|\.aws|\.docker|\.kube|\.password-store|\.netrc|_netrc|\.git-credentials|\.pgpass|\.npmrc'
-        r'|\.pypirc|\.yarnrc(?:\.yml)?|\.boto|\.s3cfg|\.htpasswd|\.env(?:\..*)?|kubeconfig|known_hosts|cookies?.*|id_(?:rsa|dsa|ecdsa|ed25519).*|.*credential.*|.*secret.*|.*passw(?:or)?d.*|.*api[-_]?key.*|.*contrase.*|.*clave.*|.*bearer.*|.*private[-_]?key.*|.*[-_]key\..*|.*\.(?:pem|key|p8|p12|pfx|ppk|jks|keystore|kdbx|gpg|asc|ovpn|hdr))')),
+    ('auth', re.compile(r'o?auth(?!or)')), ('session', re.compile(r'session')), ('token', re.compile(r'token')), ('profile', re.compile(r'profile')),
+    ('credential', re.compile(r'(?:\.ssh|\.gnupg|\.aws|\.docker|\.kube|\.password-store|\.netrc|_netrc|\.git-credentials|\.pgpass|\.npmrc|\.pypirc|\.yarnrc(?:\.yml)?|\.boto|\.s3cfg|\.htpasswd|\.env(?:\..*)?|kubeconfig|known_hosts|cookies?.*|id_(?:rsa|dsa|ecdsa|ed25519).*|.*credential.*|.*secret.*|.*passw(?:or)?d.*|.*api[-_]?key.*|.*contrase.*|.*clave.*|.*bearer.*|.*private[-_]?key.*|.*[-_]key\..*|.*\.(?:pem|key|p8|p12|pfx|ppk|jks|keystore|kdbx|gpg|asc|ovpn|hdr))')),
 )
-REGENERABLE = frozenset({'node_modules', '__pycache__', '.venv', 'venv', '.pytest_cache', '.mypy_cache',
-                         '.ruff_cache', '.cache', '.npm', '.next', '.turbo'})
+REGENERABLE = frozenset({'node_modules', '__pycache__', '.venv', 'venv', '.pytest_cache', '.mypy_cache', '.ruff_cache', '.cache', '.npm', '.next', '.turbo'})
 SENSITIVE_CONTENT = re.compile(
-    rb'-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----|\bsk-(?:ant-|proj-)?[A-Za-z0-9_-]{20,}'
-    rb'|\bgh[pousr]_[A-Za-z0-9]{20,}|\bgithub_pat_[A-Za-z0-9_]{20,}|\bglpat-[A-Za-z0-9_-]{20,}|\bxox[abprs]-[A-Za-z0-9-]{10,}|\b(?:AKIA|ASIA)[0-9A-Z]{16}\b|\bnpm_[A-Za-z0-9]{36}\b|\bAIza[0-9A-Za-z_-]{35}|\bya29\.[0-9A-Za-z_-]{20,}'
-    rb'|\bxai-[A-Za-z0-9]{20,}|\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}|hooks\.slack\.com/services/[A-Za-z0-9/]{10,}|://[^\s/:@"\'<>]+:[^\s/@"\'<>]+@|authorization["\']?\s*[:=]\s*["\']?(?:bearer|basic|token)\s+[A-Za-z0-9._~+/=-]{8,}'
-    rb'|\bbearer(?:\s+|\s*[:=]\s*)["\']?[A-Za-z0-9._~+/=-]{10,}|\bcookie\s*:[^\r\n]{8,}|["\']?[a-z0-9_-]*(?:secret|token|password|passwd|passphrase|contrasena|contrase(?:\xc3\xb1|n)a|clave|credential|api[_-]?key|apikey|private[_-]?key)[a-z0-9_-]*["\']?\s*[:=]\s*["\']?(?!\$\{|process\.env)[^\s"\',;]{8,}',
-    re.I)
+    rb'-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----|\bsk-(?:ant-|proj-)?[A-Za-z0-9_-]{20,}|\bgh[pousr]_[A-Za-z0-9]{20,}|\bgithub_pat_[A-Za-z0-9_]{20,}|\bglpat-[A-Za-z0-9_-]{20,}|\bxox[abprs]-[A-Za-z0-9-]{10,}|\b(?:AKIA|ASIA)[0-9A-Z]{16}\b|\bnpm_[A-Za-z0-9]{36}\b|\bAIza[0-9A-Za-z_-]{35}|\bya29\.[0-9A-Za-z_-]{20,}|\bxai-[A-Za-z0-9]{20,}|\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}|hooks\.slack\.com/services/[A-Za-z0-9/]{10,}|://[^\s/:@"\'<>]+:[^\s/@"\'<>]+@|authorization["\']?\s*[:=]\s*["\']?(?:bearer|basic|token)\s+[A-Za-z0-9._~+/=-]{8,}|\bbearer(?:\s+|\s*[:=]\s*)["\']?[A-Za-z0-9._~+/=-]{10,}|\bcookie\s*:[^\r\n]{8,}|["\']?[a-z0-9_-]*(?:secret|token|password|passwd|passphrase|contrasena|contrase(?:\xc3\xb1|n)a|clave|credential|api[_-]?key|apikey|private[_-]?key)[a-z0-9_-]*["\']?\s*[:=]\s*["\']?(?!\$\{|process\.env)[^\s"\',;]{8,}', re.I)
 CONFUSABLES = str.maketrans({
-    '\u0430': 'a', '\u0432': 'b', '\u0433': 'r', '\u0434': 'd', '\u043a': 'k', '\u043c': 'm', '\u043d': 'h', '\u043f': 'n', '\u0441': 'c', '\u0435': 'e', '\u043e': 'o', '\u0440': 'p', '\u0442': 't', '\u0445': 'x', '\u0443': 'y', '\u044f': 'r',
-    '\u0454': 'e', '\u0455': 's', '\u0456': 'i', '\u0458': 'j', '\u04bb': 'h', '\u04cf': 'l', '\u0397': 'h', '\u039c': 'm', '\u039d': 'n', '\u03a5': 'y',
-    '\u03b1': 'a', '\u03b2': 'b', '\u03b3': 'y', '\u03b4': 'd', '\u03b5': 'e', '\u03b7': 'n', '\u03b8': 'o', '\u03b9': 'i', '\u03ba': 'k', '\u03bc': 'u', '\u03bd': 'v', '\u03bf': 'o', '\u03c0': 'n', '\u03c1': 'p', '\u03c2': 's', '\u03c3': 's', '\u03c4': 't', '\u03c5': 'u', '\u03c7': 'x', '\u03c9': 'w'})
+    '\u0430': 'a', '\u0432': 'b', '\u0433': 'r', '\u0434': 'd', '\u043a': 'k', '\u043c': 'm', '\u043d': 'h', '\u043f': 'n', '\u0441': 'c', '\u0435': 'e', '\u043e': 'o', '\u0440': 'p', '\u0442': 't', '\u0445': 'x', '\u0443': 'y', '\u044f': 'r', '\u0454': 'e', '\u0455': 's', '\u0456': 'i', '\u0458': 'j', '\u04bb': 'h', '\u04cf': 'l', '\u0397': 'h', '\u039c': 'm', '\u039d': 'n', '\u03a5': 'y', '\u03b1': 'a', '\u03b2': 'b', '\u03b3': 'y', '\u03b4': 'd', '\u03b5': 'e', '\u03b7': 'n', '\u03b8': 'o', '\u03b9': 'i', '\u03ba': 'k', '\u03bc': 'u', '\u03bd': 'v', '\u03bf': 'o', '\u03c0': 'n', '\u03c1': 'p', '\u03c2': 's', '\u03c3': 's', '\u03c4': 't', '\u03c5': 'u', '\u03c7': 'x', '\u03c9': 'w'})
 OVERLAP = 4096
 CHUNK = 1 << 20
 OPEN_DIRECTORY = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
@@ -77,8 +61,7 @@ def seal(doc: dict) -> str:
 
 def fold_text(value: str) -> str:
     folded = unicodedata.normalize('NFKD', value).translate(CONFUSABLES).casefold().translate(CONFUSABLES)
-    return ''.join(character for character in folded if character not in '\u115f\u1160\u3164\uffa0'
-                   and unicodedata.category(character) not in ('Cf', 'Mn', 'Me'))
+    return ''.join(character for character in folded if character not in '\u115f\u1160\u3164\uffa0' and unicodedata.category(character) not in ('Cf', 'Mn', 'Me'))
 
 
 def sensitive_bytes(raw: bytes) -> bool:
@@ -87,10 +70,8 @@ def sensitive_bytes(raw: bytes) -> bool:
 
 def omission_reason(name: str, directory: bool) -> str | None:
     folded = fold_text(name)
-    for reason, pattern in OMISSION_RULES:
-        if pattern.search(folded) if reason != 'credential' else pattern.fullmatch(folded):
-            return reason
-    return 'regenerable' if directory and folded in REGENERABLE else None
+    found = next((reason for reason, pattern in OMISSION_RULES if (pattern.fullmatch if reason == 'credential' else pattern.search)(folded)), None)
+    return found or ('regenerable' if directory and folded in REGENERABLE else None)
 
 
 def clean_url(url: str) -> str | None:
@@ -115,8 +96,7 @@ def scrub(text: str) -> str:
 
 def git(repository: str, *arguments: str, check: bool = True, fd: int | None = None) -> str:
     location = f'/proc/self/fd/{fd}' if fd is not None else repository
-    command = ['git', '-c', 'safe.directory=*', '-c', 'core.fsmonitor=false', '-c', 'core.hooksPath=/dev/null',
-               '-c', 'protocol.allow=never', '-c', 'protocol.file.allow=always', '-C', location, *arguments]
+    command = ['git', '-c', 'safe.directory=*', '-c', 'core.fsmonitor=false', '-c', 'core.hooksPath=/dev/null', '-c', 'protocol.allow=never', '-c', 'protocol.file.allow=always', '-C', location, *arguments]
     done = subprocess.run(command, capture_output=True, env={**os.environ, **GIT_ENV}, check=False, timeout=3600, pass_fds=(fd,) if fd is not None else ())
     if check and done.returncode:
         raise Failure(f'git {arguments[0]} failed: {scrub(done.stderr.decode(errors="replace").strip())[:200]}')
@@ -124,8 +104,7 @@ def git(repository: str, *arguments: str, check: bool = True, fd: int | None = N
 
 
 def relative(value) -> str:
-    if not isinstance(value, str) or not value or value.startswith('/') or posixpath.normpath(value) != value \
-            or any(part in ('', '.', '..') for part in value.split('/')) or any(ord(character) < 32 or ord(character) == 127 for character in value):
+    if not isinstance(value, str) or not value or value.startswith('/') or posixpath.normpath(value) != value or any(part in ('', '.', '..') for part in value.split('/')) or any(ord(character) < 32 or ord(character) == 127 for character in value):
         raise Failure(f'unsafe manifest path: {value!r}')
     return value
 
@@ -134,14 +113,46 @@ def under(path: str, prefix: str) -> bool:
     return path == prefix or path.startswith(prefix + '/')
 
 
+def alternate_entries(raw: bytes) -> list[bytes]:
+    """Git 2.56 parse_alternates. A '#' entry is a comment. A C quote consumes one extra byte, the separator."""
+    simple = {97: 7, 98: 8, 102: 12, 110: 10, 114: 13, 116: 9, 118: 11, 92: 92, 34: 34}
+    entries, i, n = [], 0, len(raw)
+
+    def unquote(start: int) -> tuple[bytes, int] | None:
+        out, j = bytearray(), start + 1
+        while j < n and raw[j] != 34:
+            if raw[j] != 92:
+                out.append(raw[j])
+                j += 1
+            elif (esc := raw[j + 1] if j + 1 < n else -1) in simple:
+                out.append(simple[esc])
+                j += 2
+            elif esc in b'0123' and j + 3 < n and raw[j + 2] in b'01234567' and raw[j + 3] in b'01234567':
+                out.append(((esc - 48) << 6) | ((raw[j + 2] - 48) << 3) | (raw[j + 3] - 48))
+                j += 4
+            else:
+                return None
+        return (bytes(out), j + 1) if j < n and raw[j] == 34 else None
+    while i < n:
+        if raw[i] == 35:
+            found = raw.find(b'\n', i)
+            i = n if found < 0 else found + 1
+        elif raw[i] == 34 and (quoted := unquote(i)):
+            entries.append(quoted[0])
+            i = quoted[1] + 1 if quoted[1] < n else n
+        else:
+            found = raw.find(b'\n', i)
+            entries.append(raw[i:] if found < 0 else raw[i:found])
+            i = n if found < 0 else found + 1
+    return [entry for entry in entries if entry]
+
+
 def escapes(path: str, target: str) -> bool:
-    """A link whose target is absolute or climbs above the tree it lives in points outside the copy."""
     landing = posixpath.normpath(posixpath.join(posixpath.dirname(path), target))
     return target.startswith('/') or landing == '..' or landing.startswith('../')
 
 
 def safe_mode(mode: int, directory: bool = False) -> int:
-    """No setuid, setgid, sticky or world-writable bits survive a restore."""
     return (mode & 0o775) | (0o700 if directory else 0)
 
 
@@ -155,7 +166,6 @@ def open_verified(parent: int, name: str, expected: os.stat_result, flags: int) 
 
 
 def scan(descriptor: int, size: int, object_format: str | None) -> tuple[str, str | None, bool]:
-    """One pass over an open file: sha256, git blob id and whether it carries credential material."""
     digest = hashlib.sha256()
     blob = hashlib.new(object_format) if object_format else None
     if blob:
@@ -246,11 +256,8 @@ class Copier:
                     effective = os.stat(candidate) if stat.S_ISLNK(info.st_mode) else info
                 except OSError:
                     return True
-                if stat.S_ISLNK(info.st_mode) and not self.inside_roots(candidate):
-                    return True
-                if stat.S_ISLNK(info.st_mode) and name in directories and self.git_store_escapes(os.path.realpath(candidate), seen):
-                    return True
-                if stat.S_ISREG(effective.st_mode) and effective.st_nlink > 1 and self.inode_names(effective) < effective.st_nlink:
+                if (stat.S_ISLNK(info.st_mode) and (not self.inside_roots(candidate) or name in directories and self.git_store_escapes(os.path.realpath(candidate), seen))
+                        or stat.S_ISREG(effective.st_mode) and effective.st_nlink > 1 and self.inode_names(effective) < effective.st_nlink):
                     return True
         return bool(errors)
 
@@ -279,7 +286,6 @@ class Copier:
         def located(*arguments: str) -> str:
             reported = git('.', 'rev-parse', *arguments, check=False, fd=directory).strip()
             return reported if not reported or os.path.isabs(reported) else os.path.join(host_directory, reported)
-
         paths = (located('--git-common-dir'), located('--git-dir'), located('--git-path', 'objects'))
         if not all(paths) or not all(self.inside_roots(path) for path in paths) or any(self.git_store_escapes(os.path.realpath(path)) for path in paths):
             return True
@@ -301,10 +307,14 @@ class Copier:
                 return True
             if len(raw) != info.st_size:
                 return True
-            # Git keeps every byte of the path; only the LF delimiter is removed.
-            for item in raw.decode('utf-8', 'surrogateescape').split('\n'):
-                candidate = item if os.path.isabs(item) else os.path.join(real, item)
-                if item and not item.startswith('#') and (not self.inside_roots(candidate) or self.git_store_escapes(os.path.realpath(candidate)) or alternates_escape(candidate, seen)):
+            for encoded in alternate_entries(raw):
+                text = encoded.decode('utf-8', 'surrogateescape')
+                candidate = text if os.path.isabs(text) else os.path.join(real, text)
+                try:
+                    resolved = os.path.realpath(candidate)
+                except (OSError, ValueError):
+                    return True
+                if not os.path.isdir(resolved) or not self.inside_roots(resolved) or self.git_store_escapes(resolved) or alternates_escape(resolved, seen):
                     return True
             return False
         return alternates_escape(paths[2], set())
@@ -319,8 +329,7 @@ class Copier:
                         files += 1
                     except OSError:
                         continue
-        kind = 'directory' if stat.S_ISDIR(info.st_mode) else 'file' if stat.S_ISREG(info.st_mode) \
-            else 'symlink' if stat.S_ISLNK(info.st_mode) else 'special'
+        kind = 'directory' if stat.S_ISDIR(info.st_mode) else 'file' if stat.S_ISREG(info.st_mode) else 'symlink' if stat.S_ISLNK(info.st_mode) else 'special'
         self.omissions.append({'path': path, 'reason': reason, 'kind': kind, 'files': files, 'bytes': size})
 
     def repository(self, path: str, directory: int) -> None:
@@ -487,7 +496,6 @@ def copy(alias: str, sources: list[str], output: str, scope: dict) -> dict:
 
 
 def validate(manifest: dict) -> dict:
-    """Everything the restore will turn into a path, a git argument or a mode is checked before any write."""
     if not isinstance(manifest, dict) or manifest.get('schema') != SCHEMA or manifest.get('sha256') != seal(manifest):
         raise Failure('manifest seal does not verify')
     if not NAME_RE.fullmatch(str(manifest.get('alias', ''))) or not NAME_RE.fullmatch(str(manifest.get('tenant', ''))):
@@ -563,17 +571,10 @@ def check(copy_directory: str) -> dict:
 
 
 def mapper(rules: list[str]):
-    pairs = []
-    for rule in rules:
-        old, _, new = rule.partition('=')
-        pairs.append((relative(old), relative(new)))
-    pairs.sort(key=lambda pair: -len(pair[0]))
+    pairs = sorted(((relative(parts[0]), relative(parts[2])) for rule in rules for parts in [rule.partition('=')]), key=lambda pair: -len(pair[0]))
 
     def apply(path: str) -> str:
-        for old, new in pairs:
-            if under(path, old):
-                return new + path[len(old):]
-        return path
+        return next((new + path[len(old):] for old, new in pairs if under(path, old)), path)
     return apply, pairs
 
 
@@ -698,7 +699,6 @@ def restore(copy_directory: str, destination: str, rules: list[str], omit: list[
 
 
 def duplicate(manifest: dict, restorer: Restorer, duplicates: list[str], skipped: set) -> dict:
-    """Second, independent copies of restored files, such as the first version of the context in space/context."""
     files = {e['path']: e for e in manifest['entries'] if e['kind'] == 'file' and e['path'] not in skipped}
     copies = {}
     for rule in duplicates:

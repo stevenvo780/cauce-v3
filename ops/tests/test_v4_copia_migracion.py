@@ -388,7 +388,6 @@ class SecurityTests(Scoped):
             git(path, 'add', '-A')
             git(path, 'commit', '-q', '-m', 'fuera')
             return path
-
         alt_out = outside_repo('fuera-alt', 'SENTINEL-ALTERNATES-9f3a')
         alt_in = self.source / 'proyecto' / 'alt-in'
         git(self.root, 'init', '-q', '-b', 'main', str(alt_in))
@@ -399,7 +398,6 @@ class SecurityTests(Scoped):
         alternates.parent.mkdir(parents=True, exist_ok=True)
         alternates.write_text(os.path.realpath(alt_out / '.git' / 'objects') + '\n')
         git(alt_in, 'update-ref', 'refs/heads/main', git(alt_out, 'rev-parse', 'HEAD'))
-
         obj_out = outside_repo('fuera-obj', 'SENTINEL-OBJLINK-9f3a')
         obj_in = self.source / 'proyecto' / 'obj-in'
         git_dir = obj_in / '.git'
@@ -410,7 +408,6 @@ class SecurityTests(Scoped):
         (git_dir / 'config').write_text('[core]\n\trepositoryformatversion = 0\n\tfilemode = true\n\tbare = false\n')
         (git_dir / 'objects').symlink_to(obj_out / '.git' / 'objects')
         write(obj_in / 'local.txt', 'local-obj\n')
-
         common_out = outside_repo('fuera-common', 'SENTINEL-COMMONDIR-9f3a')
         linked = self.source / 'proyecto' / 'common-in'
         fake = linked / 'fake-git'
@@ -420,7 +417,6 @@ class SecurityTests(Scoped):
         (fake / 'HEAD').write_text('ref: refs/heads/main\n')
         write(linked / 'local.txt', 'local-common\n')
         (linked / '.git').write_text(f'gitdir: {os.path.realpath(fake)}\n')
-
         long_out = outside_repo('fuera-long', 'SENTINEL-LONGGITDIR-9f3a')
         long_in = self.source / 'proyecto' / 'long-in'
         long_in.mkdir()
@@ -446,7 +442,7 @@ class SecurityTests(Scoped):
         git(uses, 'commit', '-q', '-m', 'uses')
         inside = uses / '.git' / 'objects' / 'info' / 'alternates'
         inside.parent.mkdir(parents=True, exist_ok=True)
-        inside.write_text(os.path.realpath(base / '.git' / 'objects') + '\n')
+        inside.write_text('"' + os.path.realpath(base / '.git' / 'objects') + '"\n')
 
         manifest = self.make_copy()
         repos = {repo['path'] for repo in manifest['repositories']}
@@ -566,14 +562,12 @@ class SecurityTests(Scoped):
         shutil.rmtree(pack)
         pack.symlink_to(decoy)
         point_at(nested, nested_out)
-
         hard_out = outside_repo('fuera-duro', 'SENTINEL-HARD-9f3a')
         hard = inside_repo('duro-fuera')
         hard_pack = hard / '.git/objects/pack'
         for item in (hard_out / '.git/objects/pack').iterdir():
             os.link(item, hard_pack / item.name)
         point_at(hard, hard_out)
-
         bridge_out = outside_repo('fuera-puente', 'SENTINEL-BRIDGE-9f3a')
         bridge_repo = inside_repo('puente')
         objects = bridge_repo / '.git/objects'
@@ -584,13 +578,11 @@ class SecurityTests(Scoped):
         bridge_pack.symlink_to(bridge_out / '.git/objects/pack')
         objects.symlink_to(bridge)
         point_at(bridge_repo, bridge_out)
-
         shared = inside_repo('duro-dentro', 'dentro.txt', 'DENTRO-COMPARTIDO-9f3a\n')
         git(shared, 'repack', '-a', '-d', '-q')
         twin = inside_repo('duro-gemelo', 'otro.txt', 'gemelo\n')
         for item in (shared / '.git/objects/pack').iterdir():
             os.link(item, twin / '.git/objects/pack' / item.name)
-
         file_out = outside_repo('fuera-fichero', 'SENTINEL-FILELINK-9f3a')
         file_bridge = self.source / 'proyecto' / 'puente-fichero/.git/objects/pack'
         file_bridge.mkdir(parents=True)
@@ -600,34 +592,42 @@ class SecurityTests(Scoped):
         for item in file_bridge.iterdir():
             (file_in / '.git/objects/pack' / item.name).symlink_to(item)
         point_at(file_in, file_out)
-
         alt_out = outside_repo('fuera-alt-encadenado', 'SENTINEL-CHAINED-ALT-9f3a')
         alt_mid = self.source / 'proyecto' / 'alt-intermedio'
         write(alt_mid / 'info/alternates', os.path.realpath(alt_out / '.git/objects') + '\n')
         chain_in = inside_repo('con-alt-encadenado')
         write(chain_in / '.git/objects/info/alternates', os.path.realpath(alt_mid) + '\n')
         point_at(chain_in, alt_out)
-
-        for suffix, tag, sentinel in ((' ', 'espacio', 'SENTINEL-PADDED-ALT-9f3a'), ('\r', 'cr', 'SENTINEL-CR-ALT-9f3a')):
+        self.assertEqual(copia.alternate_entries(b'"a\\012b\\057c\\240"Xtail\n# c\n'), [b'a\nb/c\xa0', b'tail'])
+        for kind, tag, sentinel in (('pad', 'espacio', 'SENTINEL-PADDED-ALT-9f3a'), ('cr', 'cr', 'SENTINEL-CR-ALT-9f3a'), ('quote', 'comillas', 'SENTINEL-QUOTED-ALT-9f3a'), ('octal', 'octal', 'SENTINEL-OCTAL-ALT-9f3a'), ('tail', 'cola', 'SENTINEL-TAIL-ALT-9f3a')):
             out_x, inn_x = outside_repo(f'fuera-alt-{tag}', sentinel), inside_repo(f'con-alt-{tag}')
-            evil_x = pathlib.Path(f"{self.source / 'proyecto' / ('alt-' + tag)}{suffix}")
-            evil_x.mkdir()
-            pathlib.Path(str(evil_x).removesuffix(suffix)).mkdir()
-            (evil_x / 'pack').symlink_to(out_x / '.git/objects/pack')
-            write(inn_x / '.git/objects/info/alternates', f'{evil_x}\n')
+            objects, info = os.path.realpath(out_x / '.git/objects'), inn_x / '.git/objects/info/alternates'
+            if kind in ('pad', 'cr'):
+                evil_x = pathlib.Path(f"{self.source / 'proyecto' / ('alt-' + tag)}{' ' if kind == 'pad' else chr(13)}")
+                evil_x.mkdir()
+                pathlib.Path(str(evil_x).removesuffix(' ' if kind == 'pad' else '\r')).mkdir()
+                (evil_x / 'pack').symlink_to(out_x / '.git/objects/pack')
+                write(info, f'{evil_x}\n')
+            elif kind in ('quote', 'octal'):
+                quoted = f'"{objects}"' if kind == 'quote' else '"' + ''.join(f'\\{byte:03o}' for byte in os.path.relpath(objects, inn_x / '.git/objects').encode()) + '"'
+                write(info, quoted + '\n')
+                (inn_x / '.git/objects' / quoted).mkdir(parents=True)
+            else:
+                own = os.path.realpath(inn_x / '.git/objects')
+                write(info, f'"{own}"X{os.path.relpath(objects, own)}\n')
             point_at(inn_x, out_x)
         manifest = self.make_copy()
         repos = {repo['path'] for repo in manifest['repositories']}
         reasons = {item['path']: item['reason'] for item in manifest['omissions']}
         for path in ('proyecto/anidado/.git', 'proyecto/duro-fuera/.git', 'proyecto/puente/.git',
-                     'proyecto/enlace-fichero/.git', 'proyecto/con-alt-encadenado/.git', 'proyecto/con-alt-espacio/.git', 'proyecto/con-alt-cr/.git'):
+                     'proyecto/enlace-fichero/.git', 'proyecto/con-alt-encadenado/.git', 'proyecto/con-alt-espacio/.git', 'proyecto/con-alt-cr/.git', 'proyecto/con-alt-comillas/.git', 'proyecto/con-alt-octal/.git', 'proyecto/con-alt-cola/.git'):
             self.assertEqual(reasons[path], 'unsafe-git-link', path)
             self.assertNotIn(path.removesuffix('/.git'), repos)
         self.assertIn('proyecto/duro-dentro', repos)
         self.assertIn('proyecto/duro-gemelo', repos)
         stored = self.copied_bytes() + self.bundle_bytes()
         for sentinel in ('SENTINEL-NESTED-9f3a', 'SENTINEL-HARD-9f3a', 'SENTINEL-BRIDGE-9f3a',
-                         'SENTINEL-FILELINK-9f3a', 'SENTINEL-CHAINED-ALT-9f3a', 'SENTINEL-PADDED-ALT-9f3a', 'SENTINEL-CR-ALT-9f3a'):
+                         'SENTINEL-FILELINK-9f3a', 'SENTINEL-CHAINED-ALT-9f3a', 'SENTINEL-PADDED-ALT-9f3a', 'SENTINEL-CR-ALT-9f3a', 'SENTINEL-QUOTED-ALT-9f3a', 'SENTINEL-OCTAL-ALT-9f3a', 'SENTINEL-TAIL-ALT-9f3a'):
             self.assertNotIn(sentinel.encode(), stored, sentinel)
         self.assertIn(b'DENTRO-COMPARTIDO-9f3a', stored)
 
