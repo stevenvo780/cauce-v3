@@ -7,7 +7,7 @@
  * every declared route at every breakpoint and compares real numbers against a recorded baseline.
  * Semantics match scripts/calidad.mjs: the numbers may only improve, in both directions.
  */
-import { readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { startLayoutDevServer } from './layout-dev-server.mjs';
@@ -195,9 +195,9 @@ function medirEnLaPagina() {
   };
 }
 
-/** Opens the agent sheet of /live. A state that cannot be reached is recorded and the run continues:
+/** Opens the campus agent card of /live. A state that cannot be reached is recorded and the run continues:
     losing it must not cost the other five viewports. */
-async function medirHojaDeLive(pagina, viewport, medidas, sinMedir, origin) {
+async function medirHojaDeLive(pagina, viewport, medidas, sinMedir, origin, repeated = false) {
   try {
     await pagina.goto(`${origin}/live?agente=${encodeURIComponent(ALIAS_MEDIDO)}`, {
       waitUntil: 'domcontentloaded', timeout: 30000,
@@ -207,6 +207,15 @@ async function medirHojaDeLive(pagina, viewport, medidas, sinMedir, origin) {
     await pagina.waitForTimeout(700);
     medidas.push({ ruta: HOJA, viewport, ...(await pagina.evaluate(medirEnLaPagina)) });
   } catch (error) {
+    if (error.name === 'TimeoutError' && !repeated) {
+      const output = resolve(HERE, '.test-state/layout-legacy');
+      try {
+        await mkdir(output, { recursive: true });
+        await pagina.screenshot({ path: resolve(output, `${String(viewport)}-live-card-initial.png`), fullPage: true });
+      } catch (captureError) { console.error(`layout: initial live card screenshot failed: ${captureError.message}`); }
+      console.error(`layout: retrying unmeasured live card at ${String(viewport)}px: ${String(error.message).split('\n')[0]}`);
+      return medirHojaDeLive(pagina, viewport, medidas, sinMedir, origin, true);
+    }
     sinMedir.push(`${String(viewport)}px ${HOJA}: ${String(error.message).split('\n')[0]}`);
   }
 }

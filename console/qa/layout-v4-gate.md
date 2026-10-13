@@ -38,6 +38,8 @@ La ellipsis se acepta si tiene nombre completo explícito. El único título red
 
 La evidencia incremental y el informe JSON quedan en `console/qa/.test-state/layout-v4/`. Un fallo de carga se reintenta una vez; el JSON conserva las causas del primer intento y su captura lleva el sufijo `-initial`. Las referencias PNG sirven para revisión humana; el gate compara geometría, no píxeles. `fullPage` no expande scrollers internos y conserva la posición de barras fijas. Las capturas `-detail` cubren editor, fondo del perfil y fondo de las versiones. La tabla de personas tiene scroll horizontal; su captura móvil inicial muestra solo la posición izquierda.
 
+El estado legacy `/live#hoja` conserva su enlace `/live?agente=Steven/jarvis`: mide la tarjeta del campus, no la ficha completa que exige `ficha=1`. Un timeout de apertura se reintenta una sola vez con el mismo enlace y viewport; quedan el aviso y un PNG inicial en `.test-state/layout-legacy/`. Un segundo fallo deja el estado sin medir y el gate en rojo. Esta recuperación no demuestra la causa del timeout.
+
 Cada servidor del gate reutiliza la configuración de Vite mediante `vite-layout.config.mjs`, con una caché única bajo `.test-state/vite-cache/`. El cierre elimina únicamente esa caché después de confirmar la terminación del proceso. Esto evita compartir dependencias optimizadas entre servidores QA; no demuestra la causa de errores anteriores de red o hooks.
 
 ## Revisión de referencias
