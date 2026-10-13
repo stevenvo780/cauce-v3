@@ -57,8 +57,7 @@ export function deriveAgentEgressState(row: AgentEgressRow): AgentEgressState {
 
 function historicalChannel(value: string | null | undefined): string | undefined {
   if (typeof value !== 'string') return undefined;
-  const channel = value.trim();
-  return channel.length > 0 ? channel : undefined;
+  return value.trim().length > 0 ? value : undefined;
 }
 
 export function toAgentEgressItem(row: AgentEgressRow): AgentEgressItem | undefined {

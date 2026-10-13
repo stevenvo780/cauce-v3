@@ -59,6 +59,9 @@ describe('agent egress receipt state', () => {
     expect(item.destination.adapter).toBe('telegram');
     expect(item.destination.channel).toBe('dm');
   });
+  it('preserves the literal historical channel instead of changing its identity', () => {
+    expect(receipt({ ...base, channel: ' dm ' }).destination.channel).toBe(' dm ');
+  });
   it('omits a receipt when the historical channel is missing', () => {
     expect(toAgentEgressItem({ ...base, channel: null })).toBeUndefined();
     expect(toAgentEgressItem({ ...base, channel: '   ' })).toBeUndefined();
