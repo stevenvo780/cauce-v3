@@ -161,8 +161,7 @@ for dir_cli in "$SIN_LIB" "$CON_LIB"; do
 done
 if grep -qx "$SIN_LIB=1" "$WORK/resultado" && grep -qx "$CON_LIB=0" "$WORK/resultado"; then ok "sin la lib, retirar/login/aprovisionar se niegan"; else bad "sin la lib, retirar/login/aprovisionar se niegan ($(tr '\n' ' ' < "$WORK/resultado"))"; fi
 
-# --- 3) it writes NOWHERE else: not in $HOME, not as bytecode inside the repo -----------------
-# The happy path seeds attach-aviso.json so install can succeed; that seed is not installer output.
+# No writes to $HOME or repo bytecode; attach-aviso.json is fixture input, not installer output.
 if [ -z "$(find "$HOGAR" -mindepth 1 \
   ! -path "$HOGAR/.config" \
   ! -path "$HOGAR/.config/cauce-v3" \
