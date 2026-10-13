@@ -484,6 +484,10 @@ export abstract class QuotasRepository extends DeliveryControlRepository {
     const windowCount = sample.providers.reduce((count, provider) => count + provider.windows.length, 0);
 
     const record = async (client: DatabaseClient): Promise<QuotaSampleIngestResult> => {
+      const collectorLock = await client.query<{ acquired: boolean }>(transactionClient === undefined
+        ? 'SELECT pg_advisory_xact_lock(783_003_013,hashtext($1)),true AS acquired'
+        : 'SELECT pg_try_advisory_xact_lock(783_003_013,hashtext($1)) AS acquired', [JSON.stringify([actorTenant, sample.host])]);
+      if (!collectorLock.rows[0]?.acquired) throw new StoreError('conflict', 'quota collector already has an active ingestion');
       const insertedCollection = await client.query<{ id: string }>(
         `INSERT INTO quota_collections(host,collector_tenant,collector_alias,captured_at,schema_version,app_version,provider_count,window_count)
          VALUES($1,$2,$3,$4,$5,$6,$7,$8)
@@ -596,29 +600,46 @@ export abstract class QuotasRepository extends DeliveryControlRepository {
               finalAccountId, finalBindingNote
             ]
           );
-
-          // Anti-regression guard in the WHERE: a stale run arriving late (network retry,
-          // stuck queue) cannot overwrite a newer state that has already been read.
-          await client.query(
-            `INSERT INTO quota_window_state(collector_tenant,host,provider,group_key,window_key,collection_id,captured_at,label,used_percent,remaining_percent,used_units,limit_units,window_minutes,reset_at,status,family,model,account_id,binding_note)
-             VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
-             ON CONFLICT (collector_tenant,host,provider,group_key,window_key,model_key,account_key) DO UPDATE SET
-               collection_id=EXCLUDED.collection_id, captured_at=EXCLUDED.captured_at, received_at=now(),
-               label=EXCLUDED.label, used_percent=EXCLUDED.used_percent, remaining_percent=EXCLUDED.remaining_percent,
-               used_units=EXCLUDED.used_units, limit_units=EXCLUDED.limit_units, window_minutes=EXCLUDED.window_minutes,
-               reset_at=EXCLUDED.reset_at, status=EXCLUDED.status, family=EXCLUDED.family, model=EXCLUDED.model,
-               account_id=EXCLUDED.account_id, binding_note=EXCLUDED.binding_note
-             WHERE quota_window_state.captured_at < EXCLUDED.captured_at`,
-            [
-              actorTenant, sample.host, provider.provider, window.group_key, window.window_key, collectionId, window.observed_at ?? provider.observed_at ?? sample.captured_at,
-              window.label ?? null, window.used_percent ?? null, window.remaining_percent ?? null,
-              window.used_units ?? null, window.limit_units ?? null, window.window_minutes ?? null,
-              window.reset_at ?? null, window.status ?? null, window.family ?? null, window.model ?? null,
-              finalAccountId, finalBindingNote
-            ]
-          );
         }
       }
+
+      await client.query(
+        `INSERT INTO quota_window_state(collector_tenant,host,provider,group_key,window_key,collection_id,captured_at,label,
+           used_percent,remaining_percent,used_units,limit_units,window_minutes,reset_at,status,family,model,account_id,binding_note)
+         SELECT $2,incoming.host,incoming.provider,incoming.group_key,incoming.window_key,incoming.collection_id,
+           incoming.captured_at,incoming.label,incoming.used_percent,incoming.remaining_percent,incoming.used_units,
+           incoming.limit_units,incoming.window_minutes,incoming.reset_at,incoming.status,incoming.family,incoming.model,
+           incoming.account_id,incoming.binding_note
+         FROM quota_window_samples incoming
+         LEFT JOIN quota_window_state previous ON previous.collector_tenant=$2 AND previous.host=incoming.host
+           AND previous.provider=incoming.provider AND previous.group_key=incoming.group_key
+           AND previous.window_key=incoming.window_key AND previous.model_key=incoming.model_key
+           AND previous.account_key=incoming.account_key
+         WHERE incoming.collection_id=$1 AND (previous.collector_tenant IS NOT NULL OR NOT EXISTS (
+           SELECT 1 FROM quota_window_state current
+           WHERE current.collector_tenant=$2 AND current.host=incoming.host AND current.provider=incoming.provider
+             AND current.group_key=incoming.group_key AND current.window_key=incoming.window_key
+             AND current.captured_at>=incoming.captured_at))
+         ON CONFLICT (collector_tenant,host,provider,group_key,window_key,model_key,account_key) DO UPDATE SET
+           collection_id=EXCLUDED.collection_id,captured_at=EXCLUDED.captured_at,received_at=now(),label=EXCLUDED.label,
+           used_percent=EXCLUDED.used_percent,remaining_percent=EXCLUDED.remaining_percent,used_units=EXCLUDED.used_units,
+           limit_units=EXCLUDED.limit_units,window_minutes=EXCLUDED.window_minutes,reset_at=EXCLUDED.reset_at,
+           status=EXCLUDED.status,family=EXCLUDED.family,model=EXCLUDED.model,account_id=EXCLUDED.account_id,binding_note=EXCLUDED.binding_note
+         WHERE quota_window_state.captured_at<EXCLUDED.captured_at`,
+        [collectionId, actorTenant]
+      );
+      await client.query(
+        `DELETE FROM quota_window_state obsolete USING quota_window_state accepted
+         WHERE accepted.collection_id=$1 AND obsolete.collector_tenant=accepted.collector_tenant
+           AND obsolete.host=accepted.host AND obsolete.provider=accepted.provider
+           AND obsolete.group_key=accepted.group_key AND obsolete.window_key=accepted.window_key
+           AND obsolete.captured_at<accepted.captured_at AND NOT EXISTS (
+             SELECT 1 FROM quota_window_samples incoming WHERE incoming.collection_id=$1
+               AND incoming.provider=obsolete.provider AND incoming.group_key=obsolete.group_key
+               AND incoming.window_key=obsolete.window_key AND incoming.model_key=obsolete.model_key
+               AND incoming.account_key=obsolete.account_key)`,
+        [collectionId]
+      );
 
       // Auto-pause: only BOUND accounts (account_id NOT NULL via the JOIN) and only up to
       // the reported reset -- never indefinite. Bounded to this collection_id: a stale run
