@@ -41,6 +41,13 @@ export function measureV4Layout() {
     }
     return null;
   };
+  const opaque = element => {
+    const color = getComputedStyle(element).backgroundColor;
+    const alphaMatch = color.match(/\/\s*([\d.]+)(%)?/) ?? color.match(/^rgba\([^)]*,\s*([\d.]+)\)$/);
+    let alpha = color === 'transparent' ? 0 : alphaMatch ? Number(alphaMatch[1]) / (alphaMatch[2] ? 100 : 1) : 1;
+    for (let ancestor = element; ancestor; ancestor = ancestor.parentElement) alpha *= Number(getComputedStyle(ancestor).opacity);
+    return alpha >= 0.9;
+  };
   const recordOverlap = (first, second, width, height) => {
     const a = stickyAncestor(first.element);
     const b = stickyAncestor(second.element);
@@ -51,7 +58,7 @@ export function measureV4Layout() {
         && ancestor.scrollHeight > ancestor.clientHeight + 2) { scroller = ancestor; break; }
     }
     const sticky = a ?? b;
-    if (!!a !== !!b && scroller && getComputedStyle(sticky).backgroundColor !== 'rgba(0, 0, 0, 0)') {
+    if (!!a !== !!b && scroller && opaque(sticky)) {
       occlusions.push(detail);
       if (getComputedStyle(sticky).bottom !== 'auto' && scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 2) blockedAtEnd.push(detail);
     } else overlaps.push(detail);
@@ -132,7 +139,7 @@ export function measureV4Layout() {
   }
   for (const sticky of [...root.querySelectorAll('*')].filter(visible)) {
     const style = getComputedStyle(sticky);
-    if (style.position !== 'sticky' || style.backgroundColor === 'rgba(0, 0, 0, 0)') continue;
+    if (style.position !== 'sticky' || !opaque(sticky)) continue;
     const box = paintedBox(sticky, sticky.getBoundingClientRect());
     const targets = [...fragments, ...controls.map(element => ({ element, text: element.getAttribute('aria-label') ?? element.textContent,
       rect: paintedBox(element, element.getBoundingClientRect()) }))];

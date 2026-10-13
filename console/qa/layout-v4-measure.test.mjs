@@ -126,3 +126,13 @@ test('rejects content still covered by a sticky footer at scroll end', async () 
   const metrics = await measure('<h1>Heading</h1><div id="scroll" style="height:100px;overflow:auto"><div style="height:400px;position:relative"><span style="position:absolute;bottom:5px">Last row</span></div><footer style="position:sticky;bottom:0;height:50px;margin-top:-50px;background:white"><button>Action</button></footer></div><script>document.querySelector("#scroll").scrollTop=1000</script>');
   assert.match(absoluteFailures(metrics, 'light').join(), /unreachable under sticky/);
 });
+
+test('translucent sticky chrome cannot exempt overlapping text', async () => {
+  const metrics = await measure('<div style="height:100px;overflow:auto"><p style="margin:0;height:400px;padding-top:58px;box-sizing:border-box">Scrollable text</p><footer style="position:sticky;bottom:0;height:50px;background:rgba(255,0,0,0.01)"><button>Action</button></footer></div>');
+  assert.ok(metrics.overlaps.length > 0);
+});
+
+test('ancestor opacity prevents opaque sticky exemption', async () => {
+  const metrics = await measure('<div style="height:100px;overflow:auto;opacity:0.5"><p style="margin:0;height:400px;padding-top:58px;box-sizing:border-box">Scrollable text</p><footer style="position:sticky;bottom:0;height:50px;background:white"><button>Action</button></footer></div>');
+  assert.ok(metrics.overlaps.length > 0);
+});
