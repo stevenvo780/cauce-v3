@@ -3,6 +3,7 @@ import type { DatabaseClient } from '../db.js';
 import { egressDestinationColumns, type EgressDestinationRow } from '../repository/egress-destinations.js';
 import { ConfigurationError, type ConfigurationLeafMutation } from './contracts.js';
 import { assertConfigurationDeleteAllowed, has, valueRequired } from './shared.js';
+import { assertPublishedHarnessDefinition } from './harness-catalog.js';
 import {
   activeDeliveryStates, aclEdgeMutation, assertUnpurgedConfigurationScope, membershipMutation, roomMutation, tenantMutation
 } from './mutations/tenants.js';
@@ -159,7 +160,7 @@ export abstract class ConfigurationMutations {
       if (old) throw new ConfigurationError('conflict', 'harness definition already exists');
       const value = valueRequired(mutation);
       if (typeof value.display_name !== 'string') throw new ConfigurationError('conflict', 'harness display_name is required');
-      await client.query(
+      await assertPublishedHarnessDefinition(mutation.id, { command: value.command, capabilities: value.capabilities ?? [] });      await client.query(
         `INSERT INTO harness_definitions(id,display_name,command,capabilities,enabled)
          VALUES($1,$2,$3,$4::jsonb,$5)`,
         [mutation.id, value.display_name, value.command ?? null, JSON.stringify(value.capabilities ?? []), value.enabled ?? true]
@@ -174,6 +175,10 @@ export abstract class ConfigurationMutations {
       return { inverse: { resource: 'harness', action: 'create', id: mutation.id, value: oldValue }, summary: `delete harness ${mutation.id}` };
     }
     const value = valueRequired(mutation);
+    await assertPublishedHarnessDefinition(mutation.id, {
+      command: has(value, 'command') ? value.command : undefined,
+      capabilities: has(value, 'capabilities') ? value.capabilities : undefined,
+    });
     await client.query(
       `UPDATE harness_definitions SET display_name=$2,command=$3,capabilities=$4::jsonb,enabled=$5,updated_at=now()
        WHERE id=$1`, [mutation.id,

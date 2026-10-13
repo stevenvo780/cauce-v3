@@ -120,6 +120,10 @@ async function readHarnessDescriptor(directory: URL, harness: string, expectedSh
   if (descriptor.harness !== harness) fail('harness', 'descriptor identity differs from its file name');
   return descriptor;
 }
+/** Reads one published descriptor without an approval pin: it proves the catalog declares the harness, not that the owner approved its runtime operations. */
+export async function publishedHarnessDescriptor(directory: URL, harness: string): Promise<HarnessDescriptor> {
+  return readHarnessDescriptor(directory, harness);
+}
 export async function packagedHarnessDescriptor(harness: HarnessId, expectedSha256?: string): Promise<HarnessDescriptor> {
   return readHarnessDescriptor(new URL('../../descriptors/', import.meta.url), harness, expectedSha256);
 }

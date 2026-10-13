@@ -13,9 +13,36 @@ NON_HARNESS_PROVIDERS = {'gemini', 'minimax', 'feihoa'}
 GATEWAY_OMITTED = {'opencode', 'fake', 'fake2'}
 # Descriptor harnesses the console catalog has not picked up yet; shrink as it aligns.
 CONSOLE_PENDING = {'opencode', 'fake', 'fake2'}
-# Closed vocabulary of harness_definitions.capabilities as seeded by the migrations;
-# the strings are rendered into agent profile facts, so a new one is a deliberate edit here.
-SEEDED_CAPABILITIES = {'messages.receive', 'ack.timeline', 'origin.relay', 'jobs.interactive', 'jobs.batch'}
+HARNESS_CATALOG = 'packages/store/src/configuration/harness-catalog.ts'
+HARNESS_MUTATIONS = 'packages/store/src/configuration/mutations.ts'
+
+
+def catalog_capabilities(source=None):
+    """Closed vocabulary of harness_definitions.capabilities, read from the store module that
+    enforces it on every catalog write; the strings are rendered into agent profile facts."""
+    source = (ROOT / HARNESS_CATALOG).read_text() if source is None else source
+    match = re.search(r'export const HARNESS_CATALOG_CAPABILITIES\b[^=]*=\s*Object\.freeze\(\[([^\]]*)\]\)', source)
+    return quoted(match.group(1)) if match else set()
+
+
+def catalog_write_checks(source=None):
+    """Both catalog writes (create and update) must validate against the published descriptor."""
+    source = (ROOT / HARNESS_MUTATIONS).read_text() if source is None else source
+    match = re.search(r'private async harness\((.*?)\n  private async ', source, re.S)
+    body = re.sub(r'/\*.*?\*/|//[^\n]*', '', match.group(1) if match else '', flags=re.S)
+    checks = []
+    if not match:
+        return [(HARNESS_MUTATIONS, 'harness catalog mutation not found')]
+    for statement in ('INSERT INTO harness_definitions', 'UPDATE harness_definitions'):
+        position = body.find(statement)
+        # The guard must run after the previous query and before the write's own query.
+        own = body.rfind('await client.query', 0, position) if position >= 0 else -1
+        previous = body.rfind('await client.query', 0, own) if own >= 0 else -1
+        if own < 0 or body.find('assertPublishedHarnessDefinition(mutation.id', max(previous, 0), own) < 0:
+            checks.append((HARNESS_MUTATIONS, f'{statement} must be preceded by assertPublishedHarnessDefinition(mutation.id, ...)'))
+    return checks
+
+
 
 
 def seeded_harness_definitions(paths=None):
@@ -45,6 +72,9 @@ def text(path):
 
 def quoted(segment):
     return set(re.findall(r"['\"]([^'\"]*)['\"]", segment))
+
+
+SEEDED_CAPABILITIES = catalog_capabilities()
 
 
 def descriptors():
@@ -484,6 +514,19 @@ class HarnessParityTest(unittest.TestCase):
                 checks.append((f'packages/adapter-sdk/descriptors/{name}.json',
                                'a seeded harness must declare native execution'))
         self.problems(checks)
+
+    def test_catalog_writes_validate_against_published_descriptors(self):
+        self.assertTrue(SEEDED_CAPABILITIES, f'{HARNESS_CATALOG}: HARNESS_CATALOG_CAPABILITIES not found')
+        self.problems(catalog_write_checks())
+        source = text(HARNESS_MUTATIONS)
+        for guard in ('await assertPublishedHarnessDefinition(mutation.id, { command: value.command',
+                      'await assertPublishedHarnessDefinition(mutation.id, {\n      command: has('):
+            with self.subTest(guard=guard.splitlines()[0]):
+                self.assertIn(guard, source)
+                altered = source.replace(guard, '// ' + guard, 1)
+                with self.assertRaisesRegex(AssertionError, 'must be preceded by assertPublishedHarnessDefinition'):
+                    self.problems(catalog_write_checks(altered))
+        self.assertEqual(catalog_capabilities('export const OTHER = Object.freeze([])'), set())
 
     def test_parsers_share_the_provider_fields(self):
         python = text('ops/cli/harness_operations.py')
