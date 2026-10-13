@@ -168,6 +168,10 @@ Repetirlo sin cambios solo verifica y vuelve a habilitar la unidad. Tras cada ac
 
 **Reversión.** Si la verificación de `--apply` falla, el instalador detiene el enclave y restaura los ficheros desde sus respaldos tras verificar su sha256. Después borra lo creado en esa ejecución, hace `daemon-reload` y arranca el enclave anterior si estaba activo. Conserva el directorio del socket y su tmpfiles, porque el gateway los monta. `ROLLBACK INCOMPLETE` deja el enclave parado y conserva todos los ficheros. Para volver a mano a una configuración anterior: copiar el `*.pre-authority-<stamp>` sobre su fichero, `systemctl daemon-reload && systemctl restart cauce-fleet-signed-authority` y repetir el preflight. `systemctl stop cauce-fleet-signed-authority` corta la emisión firmada (fail-closed) sin tocar el controlador ni su emisor.
 
+### Servicio de decisiones
+
+Proyecto compose propio (`deploy/decisiones/`, script `desplegar.sh`): `deploy.sh` nunca lo toca y él nunca toca el bus. Su auditoría es solo PostgreSQL (`audit_events`); el compose ya no declara variable ni volumen de fichero. El JSONL histórico queda en el volumen Docker `cauce-decisiones_decisiones_auditoria` del host, sin montar: se conserva tal cual hasta que el dueño decida su destino, y nadie lo lee. Para inspeccionarlo sin montarlo en el servicio: `docker run --rm -v cauce-decisiones_decisiones_auditoria:/v:ro alpine cat /v/auditoria.jsonl`. No borrar el volumen como parte de un despliegue.
+
 ## 2. Alta y baja de un agente
 
 Única fuente de verdad: BD (`agents` + `memberships`). Cadena declarativa obligatoria — nunca editar a mano `ops/container-aliases.json`, `ops/manifests/*.yaml` ni `ops/generated/**`:

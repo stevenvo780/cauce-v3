@@ -42,7 +42,6 @@ services:
       CAUCE_DECISIONES_TOKENS_DIA: ${CAUCE_DECISIONES_TOKENS_DIA:-2000000}
       CAUCE_DECISIONES_TOKENS_DIA_TOTAL: ${CAUCE_DECISIONES_TOKENS_DIA_TOTAL:-20000000}
       CAUCE_DECISIONES_CONCURRENCIA_ALIAS: ${CAUCE_DECISIONES_CONCURRENCIA_ALIAS:-4}
-      CAUCE_DECISIONES_AUDIT_FILE: /var/lib/cauce-decisiones/auditoria.jsonl
     secrets:
       - decisiones_tls_cert
       - decisiones_tls_key
@@ -57,7 +56,6 @@ services:
         read_only: true
         bind:
           create_host_path: false
-      - decisiones_auditoria:/var/lib/cauce-decisiones
     ports:
       - "${CAUCE_PRIVATE_BIND_IP:?IP del tailnet}:${CAUCE_DECISIONES_TLS_PORT:-8447}:8447"
     networks: [salida, backend]
@@ -80,9 +78,6 @@ secrets:
   # A bind mount pins the inode: rotate in place, or run `desplegar.sh recrear` after replacing it.
   typesafe_jev_key:
     file: ${CAUCE_TYPESAFE_JEV_KEY_PATH:-/dev/null}
-
-volumes:
-  decisiones_auditoria:
 
 networks:
   salida:
