@@ -385,6 +385,7 @@ function PieDeDiario({ diario, alias, leidas, paso, cargando, error, onMas, onRe
       <p className={NOTE}>
         Se ven las {leidas} entradas más nuevas que se pudieron leer.
       </p>
+      {cargando ? <p role="status" className={NOTE}>Leyendo más entradas del diario… Las ya leídas siguen visibles.</p> : null}
       <Button size="sm" disabled={cargando} onClick={onMas}>Ver más</Button>
     </div>
   );

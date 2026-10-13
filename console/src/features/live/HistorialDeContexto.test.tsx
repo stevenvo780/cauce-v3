@@ -424,3 +424,21 @@ it('restaurar un borrado del perfil no se ofrece con las mismas palabras que vol
   expect(borrado).toHaveAttribute('data-destructive', 'true');
   expect(volverAtras).not.toHaveAttribute('data-destructive');
 }, 25_000);
+
+it('un «Ver más» en curso se anuncia junto a las entradas que ya se ven', async () => {
+  const largas = diarioLargo(25);
+  let pedidos = 0;
+  server.use(http.get(RUTA_REVISIONES, async ({ request }) => {
+    pedidos += 1;
+    if (pedidos > 1) await new Promise(resolve => { setTimeout(resolve, 700); });
+    return paginaDelDiario(largas, Number(new URL(request.url).searchParams.get('limit') ?? '20'));
+  }));
+
+  const { user, dialogo } = await abrirHistorialDeKant();
+  await waitFor(() => { expect(dialogo.querySelectorAll('li[data-clase]')).toHaveLength(20); });
+  await user.click(within(dialogo).getByRole('button', { name: /ver más/i }));
+
+  expect(await within(dialogo).findByText(/Leyendo más entradas del diario…/u)).toBeVisible();
+  expect(dialogo.querySelectorAll('li[data-clase]')).toHaveLength(20);
+  await waitFor(() => { expect(dialogo.querySelectorAll('li[data-clase]')).toHaveLength(25); });
+}, 30_000);
