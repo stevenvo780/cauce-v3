@@ -130,16 +130,16 @@ export class HostEnrollmentRepository {
       return { enrollment_id: enrollmentId, state: 'revoked' };
     });
   }
-  async heartbeat(host: string,value: unknown): Promise<{ host_id: string; company_id: string; accepted: true }> {
+  async heartbeat(host: string,value: unknown,admit?: (host: string) => void): Promise<{ host_id: string; company_id: string; accepted: true }> {
     const packet = HostHeartbeatSchema.parse(value);
     return this.request(host,'POST',`/v3/fleet/hosts/${host}/heartbeat`,packet,async (client,identity) => {
       await client.query('UPDATE fleet_host_identities SET report=$2::jsonb,last_seen_at=now() WHERE host_id=$1',[host,JSON.stringify(packet.payload)]);
       await client.query("UPDATE fleet_hosts SET controller_status='reachable',controller_seen_at=now() WHERE host_id=$1",[host]);
       return { ...identity,accepted:true };
-    });
+    },admit);
   }
   /** `build` runs inside the verified transaction: if it throws, the nonce and the audit row roll back. */
-  async setupPackage<T>(host: string, value: unknown, build: (scope: HostSetupScope) => T): Promise<T> {
+  async setupPackage<T>(host: string, value: unknown, build: (scope: HostSetupScope) => T, admit?: (host: string) => void): Promise<T> {
     const packet = HostSetupRequestSchema.parse(value);
     return this.request(host,'POST',`/v3/fleet/hosts/${host}/setup`,packet,async (client,identity) => {
       const harnesses = (await client.query<{ id: string }>('SELECT id FROM harness_definitions WHERE enabled ORDER BY id')).rows.map(row => row.id);
@@ -147,22 +147,24 @@ export class HostEnrollmentRepository {
       await client.query(`INSERT INTO audit_events(action,decision,company_id,metadata) VALUES('fleet_host.setup.package','allow',$1,$2::jsonb)`,
         [identity.company_id,JSON.stringify({ host_id: host, harnesses })]);
       return result;
-    });
+    },admit);
   }
   /**
    * A forged proof is refused from an unlocked read, before any transaction. A verified request locks its
    * identity, which serializes the computer's own requests, and only shares the host row: that still fences
    * disabling or deleting the computer, yet admits the KEY SHARE and SHARE reads fleet writers take after the
-   * revision lock that `work` may wait for.
+   * revision lock that `work` may wait for. `admit` runs between the proof and the transaction, so a quota
+   * per computer counts only requests its own key signed.
    */
   async request<T>(host:string,method:string,path:string,value:unknown,
-    work:(client:DatabaseClient,identity:{host_id:string;company_id:string})=>Promise<T>):Promise<T> {
+    work:(client:DatabaseClient,identity:{host_id:string;company_id:string})=>Promise<T>,admit?:(host:string)=>void):Promise<T> {
     const packet = SignedHostRequestSchema.parse(value);
     if (packet.host_id!==host || Math.abs(Date.now()-packet.issued_at)>120_000) throw new StoreError('forbidden','host request is unavailable');
     const verified = (await this.pool.query<{ public_key: string }>(ACTIVE_IDENTITY_KEY, [host,packet.company_id])).rows[0]?.public_key;
     if (verified === undefined || !verifyHostProof(verified,packet.proof,hostRequestMessage(method,path,packet))) {
       throw new StoreError('forbidden','host identity proof is unavailable');
     }
+    admit?.(host);
     return withTransaction(this.pool, async client => {
       const locked = (await client.query<{ public_key: string }>(`${ACTIVE_IDENTITY_KEY} FOR NO KEY UPDATE OF identity FOR SHARE OF host`,
         [host,packet.company_id])).rows[0];

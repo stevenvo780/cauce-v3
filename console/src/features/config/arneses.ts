@@ -50,6 +50,26 @@ export const ARNESES_REALES: readonly ArnesReal[] = [
       + 'sensible de `openclaw.json` no se edita desde la consola.',
   },
   {
+    id: 'grok',
+    label: 'Grok',
+    directiva: '<WORKSPACE_GROK>/AGENTS.md',
+    detalle: 'El inventario sólo acredita el manual con `grok_workspace` medido en el runtime. '
+      + 'La carpeta de autenticación de Grok no demuestra cuál es el proyecto del agente.',
+    editableDesdeAjustes: false,
+    dondeSeToca: 'En «Perfil y contexto» del agente, sobre el workspace medido. El manual forma '
+      + 'parte del contexto canónico y se aplica como un lote.',
+  },
+  {
+    id: 'muse',
+    label: 'Muse',
+    directiva: '<WORKSPACE_MUSE>/AGENTS.md',
+    detalle: 'El inventario sólo acredita el manual con `muse_workspace` medido en el runtime. '
+      + 'Un proceso Muse en modo puente sin workspace no acredita una ruta de manual.',
+    editableDesdeAjustes: false,
+    dondeSeToca: 'En «Perfil y contexto» del agente, sobre el workspace medido. El manual forma '
+      + 'parte del contexto canónico y se aplica como un lote.',
+  },
+  {
     id: 'hermes',
     label: 'Hermes',
     directiva: '<HOME>/AGENTS.md',

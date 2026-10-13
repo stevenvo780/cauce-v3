@@ -65,6 +65,23 @@ describe('signed host request locks', () => {
     expect((await admin.query('SELECT 1 FROM fleet_host_request_nonces WHERE host_id=$1', [invitation.host_id])).rowCount).toBe(0);
   });
 
+  it('admits a computer only after its proof verifies and before any nonce or report is written', async () => {
+    const { invitation, pair } = await enrolled('north-quota_laptop');
+    const admitted: string[] = []; const admit = (host: string) => { admitted.push(host); };
+    await expect(repository.heartbeat(invitation.host_id, heartbeat(invitation, keys()), admit)).rejects.toMatchObject({ code: 'forbidden' });
+    expect(admitted).toEqual([]);
+    const spent = new Error('quota spent'); const refuse = () => { throw spent; };
+    await expect(repository.heartbeat(invitation.host_id, heartbeat(invitation, pair), refuse)).rejects.toBe(spent);
+    const setup = signed(invitation, pair, `/v3/fleet/hosts/${invitation.host_id}/setup`, { action: 'package' });
+    await expect(repository.setupPackage(invitation.host_id, setup, () => 'built', refuse)).rejects.toBe(spent);
+    expect((await admin.query('SELECT 1 FROM fleet_host_request_nonces WHERE host_id=$1', [invitation.host_id])).rowCount).toBe(0);
+    expect((await admin.query('SELECT last_seen_at FROM fleet_host_identities WHERE host_id=$1', [invitation.host_id])).rows)
+      .toEqual([{ last_seen_at: null }]);
+    expect(await repository.heartbeat(invitation.host_id, heartbeat(invitation, pair), admit)).toMatchObject({ accepted: true });
+    expect(await repository.setupPackage(invitation.host_id, setup, () => 'built', admit)).toBe('built');
+    expect(admitted).toEqual([invitation.host_id, invitation.host_id]);
+  });
+
   it('fences a verified request behind a concurrent key replacement and refuses the proof of the replaced key', async () => {
     const { invitation, pair } = await enrolled('north-rotated_laptop'); const next = keys();
     const holder = await admin.connect();

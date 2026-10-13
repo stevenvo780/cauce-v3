@@ -4,20 +4,8 @@ import {
   DONDE_SE_ESCRIBE_EL_ROL_DECLARADO,
 } from './arneses';
 
-/**
- * **The table of how each harness REALLY works.**
- *
- * It exists because "Settings and enrollments" offered touching `agents.harness_id` as if the
- * program the bot runs came from that column, and it does not (see `campos-inertes.ts`). The
- * question the operator has in front of them —"where is what this bot reads changed?"— can only
- * be answered per harness, and the answer is different for all four.
- *
- * The set is CLOSED and comes from `resolveAgentDocuments()`: Claude, Codex, OpenClaw and Hermes
- * have an inventory strategy. That does not mean every one supports the canonical profile batch.
- * If the gateway learns a new harness, this test turns red and forces an explicit UI decision.
- */
-
-const JUEGO_CERRADO = ['claude', 'codex', 'openclaw', 'hermes'] as const;
+/** Only harnesses with measured document inventory support belong in this catalog. */
+const JUEGO_CERRADO = ['claude', 'codex', 'openclaw', 'hermes', 'grok', 'muse'] as const;
 
 describe('la tabla de arneses reales', () => {
   it('cubre el juego cerrado que el inventario del gateway sabe resolver', () => {
@@ -40,6 +28,16 @@ describe('la tabla de arneses reales', () => {
     expect(hermes?.directiva).toMatch(/AGENTS\.md/);
     expect(hermes?.detalle).toMatch(/no declara soporte para Hermes/i);
     expect(hermes?.dondeSeToca).not.toMatch(/perfil canónico.*aplicado|soportado/i);
+  });
+
+  it.each(['grok', 'muse'])('%s exige su workspace medido y dirige el manual al contexto canónico', (id) => {
+    const arnes = ARNESES_REALES.find((entry) => entry.id === id);
+    expect(arnes?.directiva).toBe(`<WORKSPACE_${id.toUpperCase()}>/AGENTS.md`);
+    expect(arnes?.detalle).toContain(`\`${id}_workspace\``);
+    expect(arnes?.detalle).toMatch(/medido en el runtime/);
+    expect(arnes?.dondeSeToca).toMatch(/«Perfil y contexto».*workspace medido/);
+    expect(arnes?.dondeSeToca).toMatch(/contexto canónico.*lote/);
+    expect(arnes?.directiva).not.toMatch(/<HOME>|\.config|\.grok/);
   });
 
   /**
