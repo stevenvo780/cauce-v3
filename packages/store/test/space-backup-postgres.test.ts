@@ -1,4 +1,4 @@
-import { createHash,randomUUID,sign } from 'node:crypto';
+import { createHash,randomBytes,randomUUID,sign } from 'node:crypto';
 import { chmod,mkdir,mkdtemp,readFile,rm,truncate,writeFile } from 'node:fs/promises';
 import { tmpdir,userInfo } from 'node:os';
 import { join } from 'node:path';
@@ -115,6 +115,32 @@ describe('durable space backup with real PostgreSQL runtime role and signed HTTP
     expect(await readFile(join(restored,'projects/work.txt'))).toEqual(Buffer.alloc(100_000,65));
     await expect(readFile(join(restored,'config/auth.json'))).rejects.toThrow();await expect(readFile(join(restored,'logs/ignored.log'))).rejects.toThrow();
   });
+  it('requests, physically exports and streams a copy above 32 MiB to the console, then restores it with equal hashes',async()=>{
+    const large=randomBytes(33*1024*1024+4097);await writeFile(join(root,'runtime/worker/space/projects/large.bin'),large,{mode:0o600});
+    const created=await post({idempotency_key:'console-large-backup'});expect(created.statusCode).toBe(202);const id=created.json<{id:string}>().id;
+    await app.listen({host:'127.0.0.1',port:0});const address=app.server.address();if(!address||typeof address==='string') throw new Error('HTTP address absent');
+    const origin=`http://127.0.0.1:${String(address.port)}`;const directory=join(root,'host-identity');await mkdir(directory,{mode:0o700});
+    await writeFile(join(directory,'identity.json'),JSON.stringify({enrollment_id:randomUUID(),company_id:host.company_id,host_id:host.host_id,gateway:origin,
+      state:'enrolled',key_fingerprint:digest(host.keys.publicKey.export({type:'spki',format:'der'})),executor_ready:true}),{mode:0o600});
+    await writeFile(join(directory,'private.pem'),host.keys.privateKey.export({type:'pkcs8',format:'pem'}),{mode:0o600});
+    const worker=new SpaceBackupHost(await SignedHostChannel.load(directory),{python:'/usr/bin/python3',projectRoot,policyFile});
+    expect(await worker.runOnce(new AbortController().signal)).toBe(true);
+    const dto=(await app.inject({method:'GET',url:`${base()}/${id}`,headers:{cookie}})).json<{status:string;bytes:number;sha256:string;download_url:string}>();
+    expect(dto.status).toBe('ready');expect(dto.bytes).toBeGreaterThan(32*1024*1024);
+    const response=await fetch(`${origin}${dto.download_url}`,{headers:{cookie}});
+    expect([response.status,response.headers.get('content-length'),response.headers.get('x-cauce-archive-sha256')]).toEqual([200,String(dto.bytes),dto.sha256]);
+    const archive=join(root,'console-download.zip');const hash=createHash('sha256');const parts:Buffer[]=[];let chunks=0;
+    if(!response.body) throw new Error('download body absent');
+    const reader=response.body.getReader();for(let part=await reader.read();!part.done;part=await reader.read()) {hash.update(part.value);parts.push(Buffer.from(part.value));chunks++;}
+    expect(chunks).toBeGreaterThan(1);expect(hash.digest('hex')).toBe(dto.sha256);await writeFile(archive,Buffer.concat(parts),{mode:0o600});
+    const restored=join(root,'restored-large-space');
+    const restoration=await boundedProviderReceipt('/usr/bin/python3',[join(projectRoot,'ops/cli/space_archive.py'),'restore','--archive',archive,
+      '--directory',restored,'--company-id',north.company.id,'--tenant-id',north.hub.id,'--alias','worker','--runtime-key','worker'],'',new AbortController().signal);
+    expect(restoration).toMatchObject({state:'restored',identity:{company_id:north.company.id,tenant_id:north.hub.id,alias:'worker',runtime_key:'worker'}});
+    expect(digest(await readFile(join(restored,'projects/large.bin')))).toBe(digest(large));
+    expect(digest(await readFile(join(restored,'projects/work.txt')))).toBe(digest(Buffer.alloc(100_000,65)));
+    await expect(readFile(join(restored,'config/auth.json'))).rejects.toThrow();
+  },240_000);
   it('requires exact CSRF, human authority and target company on create/read/download',async()=>{
     expect((await post({idempotency_key:'csrf-failed'},{'x-csrf-token':''})).statusCode).toBe(403);
     expect((await post({idempotency_key:'origin-failed'},{origin:'https://foreign.example'})).statusCode).toBe(403);
