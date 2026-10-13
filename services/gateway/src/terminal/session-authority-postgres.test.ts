@@ -238,6 +238,18 @@ async function expectTokenFreeAudits(actions: readonly string[], tokens: readonl
   }
 }
 
+/** Waits on the database clock, not a guessed sleep, until it has left the second of the consumption. */
+async function untilDatabaseSecondAfterConsumption(sessionId: string): Promise<void> {
+  // Every attempt lasts at least 50 ms of real time, so 60 of them always cross a second boundary.
+  for (let attempt = 0; attempt < 60; attempt += 1) {
+    const { rows } = await pool.query<{ later: boolean }>(`SELECT date_trunc('second', clock_timestamp())
+      > date_trunc('second', consumed_at) AS later FROM terminal_sessions WHERE id=$1`, [sessionId]);
+    if (rows[0]?.later === true) return;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error('the database clock never left the consumption second');
+}
+
 describe('HTTP terminal continuity with authenticated cookie and real PostgreSQL', () => {
   it('preserves a legacy admission proof for consume, extend and resume while rejecting a new retry', async () => {
     const original = await seed(60); const fixture = await httpFixture(original, 10);
@@ -270,7 +282,7 @@ describe('HTTP terminal continuity with authenticated cookie and real PostgreSQL
         headers: relayHeaders, payload: { ...identity, ticket: receipt.ticket, claim_token: claimToken, authority_proof: authorityProof } });
       expect(consumed.statusCode).toBe(200);
       const grant = consumed.json<{ resume_token: string; claim_epoch: string }>();
-      await pool.query("UPDATE terminal_sessions SET consumed_at=consumed_at-interval '1 second' WHERE id=$1", [row.id]);
+      await untilDatabaseSecondAfterConsumption(row.id);
       const extended = await fixture.app.inject({ method: 'POST', url: `/v3/console/terminal/sessions/${row.id}/extend`, headers,
         payload: { request_id: body.request_id, owner_generation: '1', owner_token: body.owner_token, authority_proof: authorityProof } });
       expect(extended.statusCode).toBe(200);
@@ -279,6 +291,37 @@ describe('HTTP terminal continuity with authenticated cookie and real PostgreSQL
           authority_proof: authorityProof } });
       expect(resumed.statusCode).toBe(200);
       await expectTokenFreeAudits(['terminal.session.consume', 'terminal.session.extended', 'terminal.session.resume'], [authorityProof]);
+    } finally { await fixture.close(); }
+  });
+
+  it('keeps the consumption resume credential valid after the owner extends the window in a later second', async () => {
+    const original = await seed(3_600); const fixture = await httpFixture(original);
+    const headers = { origin: 'https://console.test', cookie: cookie(original) };
+    const body = { tenant_id: 'Steven', alias: 'argos', mode: 'shell', rows: 24, cols: 80,
+      request_id: randomUUID(), owner_token: randomUUID() };
+    try {
+      const opened = await fixture.app.inject({ method: 'POST', url: '/v3/console/terminal/sessions', headers, payload: body });
+      expect(opened.statusCode, opened.body).toBe(201);
+      const receipt = opened.json<{ session_id: string; authority_proof: string; ticket: string; owner_generation: string }>();
+      const identity = { relay_instance_id: fixture.relayId, relay_boot_id: fixture.boot };
+      const relayHeaders = { authorization: `Bearer ${fixture.relayToken}` }; const claimToken = randomUUID();
+      const consumed = await fixture.app.inject({ method: 'POST', url: `/v3/terminal/relay/sessions/${receipt.session_id}/consume`,
+        headers: relayHeaders, payload: { ...identity, ticket: receipt.ticket, claim_token: claimToken,
+          authority_proof: receipt.authority_proof } });
+      expect(consumed.statusCode, consumed.body).toBe(200);
+      const grant = consumed.json<{ resume_token: string; claim_epoch: string; session_expires_at: string }>();
+      await untilDatabaseSecondAfterConsumption(receipt.session_id);
+      const extended = await fixture.app.inject({ method: 'POST', url: `/v3/console/terminal/sessions/${receipt.session_id}/extend`,
+        headers, payload: { request_id: body.request_id, owner_generation: receipt.owner_generation,
+          owner_token: body.owner_token, authority_proof: receipt.authority_proof } });
+      expect(extended.statusCode, extended.body).toBe(200);
+      const window = extended.json<{ expires_at: string }>().expires_at;
+      expect(Math.floor(Date.parse(window) / 1_000)).toBeGreaterThan(Math.floor(Date.parse(grant.session_expires_at) / 1_000));
+      const resumed = await fixture.app.inject({ method: 'POST', url: `/v3/terminal/relay/sessions/${receipt.session_id}/resume`,
+        headers: relayHeaders, payload: { ...identity, claim_token: claimToken, claim_epoch: grant.claim_epoch,
+          resume_token: grant.resume_token, authority_proof: receipt.authority_proof } });
+      expect(resumed.statusCode, resumed.body).toBe(200);
+      expect(resumed.json()).toMatchObject({ resume_token: grant.resume_token, session_expires_at: window });
     } finally { await fixture.close(); }
   });
 

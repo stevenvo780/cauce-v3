@@ -3,7 +3,7 @@ import { UUID_ANY_PATTERN } from '@cauce/protocol';
 import { terminalAuditMetadata, terminalSessionAuditContext } from '../audit.js';
 import {
   CONTROL_HOLD_COLUMNS, CONTROL_RELEASED, cohortLabels, controlWasReleased, exactObjectKeys,
-  sessionExpiry, sessionWindowExpression, type ControlHoldColumns,
+  resumeCredentialExpiry, sessionExpiry, sessionWindowExpression, type ControlHoldColumns,
 } from '../helpers.js';
 import {
   deriveAliasKey, emitAuthorityResumeToken, ticketDigest, ticketSha256,
@@ -234,14 +234,17 @@ export function registerRelayConsumeRoute(context: RelayProxyContext): void {
       }
       const expiry = new Date(Math.min((sessionExpiry(session, config.sessionTtlSeconds, config.sessionMaxTotalSeconds)
         ?? session.expires_at).getTime(), continuity.origin.expiresAtSeconds * 1000));
-      if (session.consumed_at === null) {
+      const credentialExpiry = resumeCredentialExpiry(
+        session.consumed_at, config.sessionTtlSeconds, config.sessionMaxTotalSeconds, continuity.origin.expiresAtSeconds,
+      );
+      if (session.consumed_at === null || credentialExpiry === undefined) {
         throw new Error('database consumed a terminal session without a consumed_at timestamp');
       }
       if (databaseNow === undefined) throw new Error('database omitted terminal claim clock');
       const resumeToken = emitAuthorityResumeToken(
         session.id,
         session.operator_id,
-        Math.floor(expiry.getTime() / 1_000),
+        credentialExpiry,
         config.ticketKey,
         Math.floor(session.consumed_at.getTime() / 1_000),
         record.authority_proof as string

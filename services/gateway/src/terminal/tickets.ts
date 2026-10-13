@@ -190,8 +190,8 @@ export function ticketDigest(ticket: string): string {
  *
  * It is deliberately a different wire format and HKDF domain from the agent ticket: the
  * pty-agent must never see it, and possessing it cannot mint or open a new PTY.  The gateway
- * re-checks the live database authorization on every resume; the token only proves continuity
- * of this exact browser session while its original TTL is still alive.
+ * re-checks the live database authorization on every resume; the token proves continuity of this
+ * browser session, its `exp` the window fixed at consumption that an owner extension leaves valid.
  */
 interface ResumeTokenPayload {
   readonly v: 1;
