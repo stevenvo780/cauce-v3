@@ -178,7 +178,7 @@ python3 ops/scripts/fleet-authority-install.py --socket-directory-only --apply
 python3 "$PRIVATE_KIT_ROOT/upgrade-kit/src-$RELEASE_ID/ops/scripts/fleet-authority-install.py"
 python3 "$PRIVATE_KIT_ROOT/upgrade-kit/src-$RELEASE_ID/ops/scripts/fleet-authority-install.py" --apply
 ```
-El preflight no escribe nada. Deriva release, `node`, `/etc/hosts`, entorno TLS y comando del controlador; comprueba los pins, el modo del `database-url` sin leerlo y el `--ready` del emisor; y muestra el diff de cada fichero. `--apply` escribe solo lo que cambia, con respaldo `*.pre-authority-<stamp>`. Hace `enable` siempre, y `daemon-reload` más `restart` solo si algo cambió o el enclave estaba parado. Después verifica `ready`:
+El preflight no escribe nada. Deriva release, `node`, `/etc/hosts`, entorno TLS y comando del controlador; comprueba los pins, el modo del `database-url` sin leerlo y el `--ready` del emisor; y muestra el diff de cada fichero. `--apply` escribe solo lo que cambia, con respaldo `*.pre-authority-<stamp>`. Hace `daemon-reload` más `restart` solo si algo cambió o el enclave estaba parado, verifica `ready` y solo entonces hace `enable` (si la verificación falla revierte los ficheros y deshace ese `enable`):
 - la unidad está activa y sigue activa 3 s después;
 - el directorio es root:1000 `0750` y el socket, recién creado, root:1000 `0660`;
 - `--ready` del emisor: política, registros, `state_root` y par CA/clave;
