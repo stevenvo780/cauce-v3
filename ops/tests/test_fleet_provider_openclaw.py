@@ -85,7 +85,7 @@ class OpenClawProviderTest(unittest.TestCase):
     def hash(path):
         return hashlib.sha256(pathlib.Path(path).read_bytes()).hexdigest()
 
-    def test_real_process_observes_identity_and_nonce_with_exact_local_model(self):
+    def test_fixture_cli_process_observes_identity_and_nonce_with_exact_local_model(self):
         self.assertTrue(identity.authenticated_provider(self.packet))
         argv = json.loads((self.profile / 'observed-args').read_bytes())
         for key, expected in [('--agent', 'runtime-one'), ('--model', 'openai/gpt-5.5'), ('--thinking', 'high')]:
@@ -97,6 +97,18 @@ class OpenClawProviderTest(unittest.TestCase):
         self.assertEqual(env['HOME'], str(self.root))
         self.assertEqual(env['OPENCLAW_AUTH_STORE_READONLY'], '1')
         self.assertNotEqual(env['CODEX_HOME'], env['HOME'])
+
+    def test_fixture_cli_uses_a_fresh_runtime_scoped_session_for_each_nonce(self):
+        sessions = []
+        for nonce in ('a' * 64, 'b' * 64):
+            self.packet['nonce'] = nonce
+            self.assertTrue(identity.authenticated_provider(self.packet))
+            argv = json.loads((self.profile / 'observed-args').read_bytes())
+            sessions.append(argv[argv.index('--session-key') + 1])
+            self.assertIn('CAUCE_BOOTSTRAP_' + nonce, argv[argv.index('--message') + 1])
+        self.assertNotEqual(*sessions)
+        for session in sessions:
+            self.assertTrue(session.startswith('agent:runtime-one:cauce-auth-'))
 
     def test_wrong_process_observations_are_never_identity_or_effect(self):
         for mode in ('identity', 'account', 'provider', 'agent', 'expiry', 'cooldown', 'ambiguous', 'type', 'shape', 'profile-shape', 'nonce', 'version'):
@@ -314,6 +326,26 @@ class OpenClawProviderTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'model provider differs'):
             driver.validate_binding({**self.binding, 'provider': 'codex', 'openclaw': binding['openclaw']},
                                     {**self.agent, 'model_id': 'anthropic/claude-opus-5'})
+
+    def test_unmeasured_anthropic_never_inspects_cli_or_mutates_the_profile(self):
+        binding = {**self.binding, 'provider': 'claude',
+                   'openclaw': {**self.binding['openclaw'], 'provider_id': 'anthropic'}}
+        agent = {**self.agent, 'model_id': 'anthropic/claude-opus-5'}
+        packet = {**self.packet, 'agent': agent, 'profile_binding': binding}
+        before = (self.profile / 'openclaw.json').read_bytes()
+        with mock.patch.object(identity, 'command_output', side_effect=AssertionError('unmeasured CLI forbidden')), \
+                mock.patch.object(driver, 'owned_directory', side_effect=AssertionError('unmeasured profile forbidden')):
+            for operation in (driver.validate_binding, driver.environment, driver.prepare):
+                with self.subTest(operation=operation.__name__), self.assertRaisesRegex(ValueError, 'flow has not been measured'):
+                    operation(binding, agent)
+            with self.assertRaisesRegex(ValueError, 'flow has not been measured'):
+                driver.pinned_packet(packet)
+            self.assertFalse(driver.measured_definition(binding))
+            self.assertFalse(identity.authenticated_provider(packet))
+        self.assertIsNone(driver.PROVIDER_FLOWS['anthropic'])
+        self.assertEqual((self.profile / 'openclaw.json').read_bytes(), before)
+        self.assertFalse((self.profile / 'observed-env').exists())
+        self.assertFalse((self.profile / 'observed-args').exists())
 
 
 if __name__ == '__main__':

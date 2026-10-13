@@ -1,6 +1,6 @@
 import { execFile, execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -163,7 +163,41 @@ function testcontainersBindings() {
 }
 
 describe('real external QA harness', () => {
+  it('registers and executes packaged fake2 with its own identity and a correlated final reply', async () => {
+    await resetTestDatabase(database.pool);
+    await declareHarnessFleet();
+    const modulePath = '../../ops/harness/adapter-roundtrip.mjs';
+    const { runAdapterRoundTrip } = await import(modulePath) as {
+      runAdapterRoundTrip: (options: { baseUrl: string; wsBaseUrl: string }) => Promise<{
+        adapters: Record<string, number>;
+        identities: { tenant: string; alias: string; harness: string; descriptorSha256: string; leaseEpoch: number }[];
+        cleanup: { processGroupsStopped: boolean; temporaryRootRemoved: boolean };
+        finalOriginRelaysForRoundTrip: number;
+      }>;
+    };
+    const receipt = await runAdapterRoundTrip({ baseUrl: httpUrl, wsBaseUrl: `${httpUrl.replace('http:', 'ws:')}/v3/ws` });
+    expect(receipt.adapters).toEqual({ opencode: 1, fake: 3, fake2: 1 });
+    const fake2 = receipt.identities.find((identity) => identity.harness === 'fake2');
+    const descriptor = await readFile('packages/adapter-sdk/descriptors/fake2.json');
+    expect(fake2).toMatchObject({ tenant: 'Steven', alias: 'qa-reviewer-b', harness: 'fake2',
+      descriptorSha256: createHash('sha256').update(descriptor).digest('hex') });
+    expect(fake2?.leaseEpoch).toBeGreaterThan(0);
+    const rows = await database.pool.query<{ harness_id: string; status: string }>(
+      `SELECT a.harness_id,d.status FROM agents a JOIN deliveries d
+         ON d.recipient_tenant=a.tenant_id AND d.recipient_alias=a.alias
+       WHERE a.tenant_id='Steven' AND a.alias='qa-reviewer-b'`,
+    );
+    expect(rows.rows).toEqual([{ harness_id: 'fake2', status: 'done' }]);
+    expect(receipt.finalOriginRelaysForRoundTrip).toBe(1);
+    expect(receipt.cleanup).toEqual({ processGroupsStopped: true, temporaryRootRemoved: true });
+    await mkdir('ops/artifacts/real', { recursive: true });
+    await writeFile('ops/artifacts/real/fake2-roundtrip.json', `${JSON.stringify({
+      schemaVersion: 1, ...testcontainersBindings(), ...receipt, durableDeliveries: rows.rows,
+    }, null, 2)}\n`);
+  }, 120_000);
+
   it('passes against Fastify WebSocket and PostgreSQL and emits evidence', async () => {
+    await resetTestDatabase(database.pool);
     await declareHarnessFleet();
     // `execFile` rejects with "Command failed: <argv>" and leaves the real stdout/stderr hanging
     // on error properties that nobody prints. That causeless message is what made this suite
@@ -374,7 +408,7 @@ async function declareHarnessFleet(): Promise<void> {
   for (const [tenant, room, alias, harness] of [
     ['Steven', 'grp.steven', 'qa-opencode', 'opencode'],
     ['Steven', 'grp.steven', 'qa-reviewer-a', 'fake'],
-    ['Steven', 'grp.steven', 'qa-reviewer-b', 'fake'],
+    ['Steven', 'grp.steven', 'qa-reviewer-b', 'fake2'],
     ['Isa', 'grp.isa', 'qa-isolated-source', 'fake'],
     ['Jhon', 'grp.jhon', 'qa-isolated-target', 'fake'],
   ] as const) {

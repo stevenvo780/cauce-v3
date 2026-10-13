@@ -308,7 +308,7 @@ if mode == 'fail':
 args = sys.argv[1:]
 prompt = pathlib.Path(args[args.index('--prompt-file') + 1]).read_text()
 token = re.search(r'CAUCE_BOOTSTRAP_[0-9a-f]+', prompt).group(0)
-text = token if mode == 'ok' else 'wrong'
+text = 'CAUCE_BOOTSTRAP_' + 'a' * 64 if mode == 'replay' else token if mode == 'ok' else 'wrong'
 if '__PROVIDER__' == 'grok':
     print(json.dumps({'text': text, 'stopReason': 'end_turn'}))
 else:
@@ -371,12 +371,23 @@ else:
                 self.assertLess(time.monotonic() - started, 8)
                 self.assertEqual(list(self.state.glob('.cauce-auth-prompt-*')), [])
 
+    def test_fake_cli_cannot_replay_a_response_from_another_nonce(self):
+        for provider in ('grok', 'muse'):
+            with self.subTest(provider=provider):
+                packet = self.install_fake_cli(provider, 'replay')
+                self.assertTrue(identity.authenticated_provider(packet))
+                self.assertFalse(identity.authenticated_provider({**packet, 'nonce': 'b' * 64}))
+                self.assertEqual(list(self.state.glob('.cauce-auth-prompt-*')), [])
+
     def test_forged_id_token_signature_does_not_bind_muse_identity(self):
         packet = self.install_fake_cli('muse', 'ok', signer='foreign')
         self.assertFalse(identity.authenticated_provider(packet))
 
-    def test_muse_id_token_with_wrong_audience_or_future_iat_does_not_bind(self):
-        for claims in ({'aud': '9999999999999999'}, {'iat': int(time.time()) + 3600}):
+    def test_muse_id_token_with_foreign_or_expired_claims_does_not_bind(self):
+        for claims in ({'aud': '9999999999999999'}, {'iat': int(time.time()) + 3600},
+                {'iss': 'https://foreign.fixture.invalid'}, {'exp': int(time.time()) - 1},
+                {'nbf': int(time.time()) + 3600}, {'sub': ''},
+                {'aud': ['1031625952748946', 'foreign'], 'azp': 'foreign'}):
             with self.subTest(claims=claims):
                 packet = self.install_fake_cli('muse', 'ok')
                 auth = pathlib.Path(self.binding['path']) / 'config/muse/auth.json'

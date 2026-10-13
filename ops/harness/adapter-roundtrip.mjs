@@ -257,6 +257,7 @@ export async function runAdapterRoundTrip({ baseUrl, wsBaseUrl, timeoutMs = 30_0
     fake2: path.join(repositoryRoot, 'packages', 'adapter-sdk', 'dist', 'src', 'bin', 'fake2.js'),
   };
   const adapters = [];
+  let identities;
   let outcome;
   let executionError;
   try {
@@ -276,11 +277,27 @@ export async function runAdapterRoundTrip({ baseUrl, wsBaseUrl, timeoutMs = 30_0
       root,
       wsBaseUrl,
     })));
-    await waitFor(async () => {
+    identities = await waitFor(async () => {
       const status = await api(baseUrl, 'GET', '/v3/status');
-      return adapterIdentities.every((identity) => status.presence.some((row) => (
+      const online = adapterIdentities.map((identity) => status.presence.find((row) => (
         row.tenant_id === identity.tenant && row.alias === identity.alias && row.online === true
       )));
+      if (online.some((row) => row === undefined)) return undefined;
+      const activity = await api(baseUrl, 'GET', '/v3/console/activity');
+      return Promise.all(adapterIdentities.map(async (identity, index) => {
+        const presence = online[index];
+        assert.ok(presence.capabilities.includes(`harness.${identity.harness}`));
+        assert.ok(presence.epoch > 0);
+        const registered = activity.agents.find((row) => (
+          row.tenant_id === identity.tenant && row.alias === identity.alias
+        ));
+        assert.equal(registered?.harness_id, identity.harness, 'registered and executing harness differ');
+        const descriptor = await readFile(path.join(repositoryRoot,
+          'packages/adapter-sdk/dist/descriptors', `${identity.harness}.json`));
+        assert.equal(JSON.parse(descriptor.toString('utf8')).harness, identity.harness);
+        return { ...identity, leaseEpoch: presence.epoch,
+          descriptorSha256: crypto.createHash('sha256').update(descriptor).digest('hex') };
+      }));
     }, adapters, timeoutMs);
 
     const publishRequest = {
@@ -389,7 +406,11 @@ export async function runAdapterRoundTrip({ baseUrl, wsBaseUrl, timeoutMs = 30_0
     )), false);
     outcome = {
       evidenceClass: 'adapter-process-roundtrip',
-      adapters: { opencode: 1, fake: 4 },
+      adapters: Object.fromEntries([...new Set(identities.map((identity) => identity.harness))]
+        .map((harness) => [harness, identities.filter((identity) => identity.harness === harness).length])),
+      identities,
+      correlation: relay.payload.correlation,
+      nonceSha256: crypto.createHash('sha256').update(nonce).digest('hex'),
       fanoutBranches: 2,
       concurrentBarrier: true,
       duplicateSuppressed: true,
@@ -417,5 +438,5 @@ export async function runAdapterRoundTrip({ baseUrl, wsBaseUrl, timeoutMs = 30_0
   if (executionError !== undefined) throw executionError;
   if (cleanupErrors.length > 0) throw new AggregateError(cleanupErrors, 'adapter process cleanup failed');
   assert.ok(outcome !== undefined, 'adapter process round-trip produced no outcome');
-  return outcome;
+  return { ...outcome, cleanup: { processGroupsStopped: true, temporaryRootRemoved: true } };
 }
