@@ -8,24 +8,42 @@ import { ContextNativeIngestSchema, ContextRejectedError, ContextRestoreSchema, 
   contextDigest, contextVersionDiff, harnessContextMaxBytes, nativeDocumentContextPath, storedContextFiles, versionableContextFiles,
   type ContextFile, type ContextRejectionReason, type ContextSnapshot, type ContextTarget, type ContextVersion } from './context-version-model.js';
 
-interface VersionRow extends Omit<ContextVersion, 'version' | 'created_at' | 'restored_from'> {
+type ContextVersionEntry = Omit<ContextVersion, 'files'>;
+interface VersionEntryRow extends Omit<ContextVersionEntry, 'version' | 'created_at' | 'restored_from'> {
   version: string; restored_from: string | null; created_at: Date;
 }
-export function contextVersionFromRow(row: VersionRow): ContextVersion {
+const VERSION_ENTRY_COLUMNS = 'company_id,tenant_id,alias,version,digest,source,restored_from,actor_human_id,actor_alias,created_at';
+function versionEntryFromRow(row: VersionEntryRow): ContextVersionEntry {
   return { ...row, version: Number(row.version), restored_from: row.restored_from === null ? null : Number(row.restored_from),
-    files: storedContextFiles(row.files), created_at: row.created_at.toISOString() };
+    created_at: row.created_at.toISOString() };
 }
 async function harnessMaxBytes(client: DatabaseClient, target: ContextTarget): Promise<number> {
   const row = (await client.query<{ harness_id: string | null }>('SELECT harness_id FROM agents WHERE tenant_id=$1 AND alias=$2',
     [target.tenant_id, target.alias])).rows[0];
   return harnessContextMaxBytes(row?.harness_id ?? null);
 }
+/** Throws a ContextRejectedError `context_version_unreadable` when the stored files no longer match their shape or digest. */
 export async function readContextVersion(client: DatabaseClient, target: ContextTarget, version: number): Promise<ContextVersion> {
-  const row = (await client.query<VersionRow>(`SELECT * FROM agent_context_versions
-    WHERE company_id=$1 AND tenant_id=$2 AND alias=$3 AND version=$4`,
+  const row = (await client.query<VersionEntryRow & { files: unknown }>(`SELECT ${VERSION_ENTRY_COLUMNS},files
+    FROM agent_context_versions WHERE company_id=$1 AND tenant_id=$2 AND alias=$3 AND version=$4`,
   [target.company_id, target.tenant_id, target.alias, version])).rows[0];
   if (!row) throw new StoreError('not_found', 'context version not found');
-  return contextVersionFromRow(row);
+  const { files, ...entry } = row;
+  return { ...versionEntryFromRow(entry), files: storedContextFiles(files, row.digest) };
+}
+/** undefined when the stored version is unreadable: its readers report it instead of failing. */
+export async function readableContextVersion(client: DatabaseClient, target: ContextTarget,
+  version: number): Promise<ContextVersion | undefined> {
+  try { return await readContextVersion(client, target, version); } catch (error) {
+    if (error instanceof ContextRejectedError && error.reason === 'context_version_unreadable') return undefined;
+    throw error;
+  }
+}
+/** The history outlives the agent row: a recreated alias starts with an empty state but continues its numbering. */
+async function nextContextVersion(client: DatabaseClient, target: ContextTarget): Promise<number> {
+  const row = (await client.query<{ latest: string }>(`SELECT COALESCE(MAX(version),0) AS latest FROM agent_context_versions
+    WHERE company_id=$1 AND tenant_id=$2 AND alias=$3`, [target.company_id, target.tenant_id, target.alias])).rows[0];
+  return Number(row?.latest ?? 0) + 1;
 }
 export async function lockContextTarget(client: DatabaseClient, target: ContextTarget): Promise<void> {
   await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',
@@ -57,13 +75,15 @@ export async function contextSnapshot(client: DatabaseClient, target: ContextTar
       WHERE current.company_id=$1 AND current.tenant_id=$2 AND current.alias=$3`,
     [target.company_id, target.tenant_id, target.alias])).rows[0];
   const version = Number(row?.desired_version ?? 0);
-  const current = version === 0 ? undefined : await readContextVersion(client, target, version);
+  const current = version === 0 ? undefined : await readableContextVersion(client, target, version);
+  const unreadable = version > 0 && current === undefined;
   return { ...target, version, desired_version: version, applied_version: Number(row?.applied_version ?? 0),
     files: current?.files ?? [], digest: current?.digest ?? null,
     sync: { state: row?.state ?? 'pending', git_commit: row?.git_commit ?? null,
       pushed_at: row?.pushed_at?.toISOString() ?? null, last_error: row?.last_error ?? null, attempts: row?.attempts ?? 0 },
-    application: { state: version > 0 && Number(row?.applied_version ?? 0) === version ? 'applied'
-      : row?.apply_error ? 'error' : 'pending', last_error: row?.apply_error ?? null } };
+    application: unreadable ? { state: 'error', last_error: 'context_version_unreadable' }
+      : { state: version > 0 && Number(row?.applied_version ?? 0) === version ? 'applied'
+        : row?.apply_error ? 'error' : 'pending', last_error: row?.apply_error ?? null } };
 }
 export interface ContextVersionActor { readonly humanId: string | null; readonly homeTenant: string; readonly alias: string }
 export async function persistContextVersionInTransaction(client: DatabaseClient, target: ContextTarget, authority: ContextVersionActor, expected: number,
@@ -71,7 +91,7 @@ export async function persistContextVersionInTransaction(client: DatabaseClient,
     const previous = await contextSnapshot(client, target);
     if (previous.version !== expected) throw new StoreError('conflict', 'context version changed; reload and retry');
     const canonical = versionableContextFiles(await synchronizeContextProfile(client, target, files), await harnessMaxBytes(client, target));
-    const next = expected + 1;
+    const next = await nextContextVersion(client, target);
     const scope = [target.company_id, target.tenant_id, target.alias];
     await client.query(`INSERT INTO agent_context_versions(company_id,tenant_id,alias,version,files,digest,source,
       restored_from,actor_human_id,actor_alias) VALUES($1,$2,$3,$4,$5::jsonb,$6,$7,$8,$9,$10)`,
@@ -140,7 +160,7 @@ export async function ingestNativeContextVersion(pool: DatabasePool, tenant: str
         base_version: input.base_version, reason: error.reason, paths: error.paths, ...error.limit });
       return { state: 'rejected', error };
     }
-    const next = input.base_version + 1;
+    const next = await nextContextVersion(client, target);
     const scope = [target.company_id, tenant, alias];
     await client.query(`INSERT INTO agent_context_versions(company_id,tenant_id,alias,version,files,digest,source,
       restored_from,actor_human_id,actor_alias) VALUES($1,$2,$3,$4,$5::jsonb,$6,'native',NULL,NULL,$7)`,
@@ -227,13 +247,13 @@ export class ContextVersionStore {
     return persistContextVersionInTransaction(client, target, authority, expected, files, source, restored);
   }
   history(source: CompanyAuthoritySource, tenant: string, alias: string, before?: number): Promise<{
-    entries: Omit<ContextVersion, 'files'>[]; next_cursor: number | null;
+    entries: ContextVersionEntry[]; next_cursor: number | null;
   }> {
     return this.scoped(source, tenant, alias, false, async (client, target) => {
-      const rows = (await client.query<VersionRow>(`SELECT * FROM agent_context_versions
+      const rows = (await client.query<VersionEntryRow>(`SELECT ${VERSION_ENTRY_COLUMNS} FROM agent_context_versions
         WHERE company_id=$1 AND tenant_id=$2 AND alias=$3 AND ($4::bigint IS NULL OR version<$4)
         ORDER BY version DESC LIMIT 51`, [target.company_id, tenant, alias, before ?? null])).rows;
-      const entries = rows.slice(0, 50).map(row => { const { files: _files, ...entry } = contextVersionFromRow(row); return entry; });
+      const entries = rows.slice(0, 50).map(versionEntryFromRow);
       return { entries, next_cursor: rows.length > 50 ? entries.at(-1)?.version ?? null : null };
     });
   }

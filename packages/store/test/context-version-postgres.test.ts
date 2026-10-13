@@ -45,6 +45,24 @@ function saveDirective(content: string) {
     return recordNativeContextVersionInTransaction(client, document, content, target().human_id);
   });
 }
+/** Deletes the agent row with what references it and inserts it again: the state cascades away, the versions stay. */
+async function recreateAgent(): Promise<void> {
+  if (!current) throw new Error('database unavailable');
+  const admin = await current.adminPool.connect();
+  const tables = [['agents', 'alias'], ['company_agent_roles', 'alias'], ['company_system_principals', 'principal_alias']] as const;
+  try {
+    await admin.query('BEGIN');
+    for (const [table, alias] of tables) {
+      await admin.query(`CREATE TEMP TABLE kept_${table} ON COMMIT DROP AS SELECT * FROM ${table} WHERE tenant_id=$1 AND ${alias}=$2`,
+        [target().tenant_id, target().alias]);
+    }
+    for (const [table, alias] of [...tables].reverse()) {
+      await admin.query(`DELETE FROM ${table} WHERE tenant_id=$1 AND ${alias}=$2`, [target().tenant_id, target().alias]);
+    }
+    for (const [table] of tables) await admin.query(`INSERT INTO ${table} SELECT * FROM kept_${table}`);
+    await admin.query('COMMIT');
+  } catch (error) { await admin.query('ROLLBACK'); throw error; } finally { admin.release(); }
+}
 async function replacePurpose(purpose: string | null): Promise<void> {
   const profiles = new AgentProfileRepository(pool);
   const profile = await profiles.readWithPresence(target().tenant_id, target().alias);
@@ -198,6 +216,18 @@ describe('durable context versions with real PostgreSQL and Git', () => {
     expect(refused).toBeInstanceOf(ContextRejectedError);
     expect(refused).toMatchObject({ reason: 'context_harness_limit', limit: { max_bytes: 65_536 } });
     expect((await store.read(source(), target().tenant_id, target().alias)).version).toBe(1);
+  });
+  it('continues the numbering of a recreated alias instead of colliding with the history it kept', async () => {
+    expect((await write()).version).toBe(1);
+    expect((await write(1, [{ path: 'directives/new.md', content: 'new' }])).version).toBe(2);
+    await recreateAgent();
+    expect(await store.read(source(), target().tenant_id, target().alias)).toMatchObject({ version: 0, files: [] });
+    const native = await ingestNativeContextVersion(pool, target().tenant_id, target().alias,
+      { base_version: 0, files: [{ path: 'context/notes/after.md', content: 'Recreated note.' }] });
+    expect(native).toMatchObject({ state: 'ingested', snapshot: { version: 3, desired_version: 3 } });
+    await recreateAgent();
+    expect((await write()).version).toBe(4);
+    expect((await store.history(source(), target().tenant_id, target().alias)).entries.map(entry => entry.version)).toEqual([4, 3, 2, 1]);
   });
   it('preserves context identity and Git folder when display name and primary room change', async () => {
     await write();

@@ -75,8 +75,25 @@ describe('versionable context boundary', () => {
     expect(rejection(over)).toMatchObject({ reason: 'context_harness_limit', limit: { bytes: 65_537, max_bytes: 65_536 } });
     expect(rejection(over).message).toContain('65537 bytes for a limit of 65536 bytes');
   });
-  it('reads stored history by shape only, so a stricter rule never makes it unreadable', () => {
-    expect(storedContextFiles(file(`OPENAI=sk-proj-${'Ab3_-'.repeat(8)}`))).toHaveLength(1);
+  it('reads stored history by shape, sizes and digest only, so a stricter rule never makes it unreadable', () => {
+    const secret = file(`OPENAI=sk-proj-${'Ab3_-'.repeat(8)}`);
+    expect(storedContextFiles(secret, contextDigest(secret))).toEqual(secret);
+    const governed = [{ path: 'context/auth.json', content: '{}' }];
+    expect(storedContextFiles(governed, contextDigest(governed))).toEqual(governed);
+  });
+  it.each([
+    ['a digest that differs from its files', file('stored'), contextDigest(file('other'))],
+    ['a path outside the context layout', [{ path: 'context/.env/secret.md', content: 'x' }], undefined],
+    ['a file above the size bound', file('x'.repeat(262_145)), undefined],
+    ['a duplicate path', [...file('a'), ...file('b')], undefined],
+    ['a value that is no file list', { path: 'context/a.md' }, undefined],
+  ])('reports %s as an unreadable version, never a ZodError', (_label, value, digest) => {
+    try { storedContextFiles(value, digest ?? contextDigest(Array.isArray(value) ? value : [])); } catch (error) {
+      expect(error).toBeInstanceOf(ContextRejectedError);
+      expect(error).toMatchObject({ reason: 'context_version_unreadable', paths: [] });
+      return;
+    }
+    throw new Error('stored version was read');
   });
   it('mirrors context.max_bytes of every packaged harness descriptor', async () => {
     const directory = new URL('../../adapter-sdk/descriptors/', import.meta.url);

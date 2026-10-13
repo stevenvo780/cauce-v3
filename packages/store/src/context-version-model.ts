@@ -29,15 +29,23 @@ export function nativeDocumentContextPath(kind: string): string {
   return `directives/native-${kind}.md`;
 }
 
-const FilePath = z.string().max(256).regex(/^(?:context|directives)\/[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)*\.(?:md|txt|json|yaml|yml)$/u)
-  .refine(path => !path.split('/').some(hasGovernanceSensitivePathSegment));
-const ContextFileSchema = z.object({ path: FilePath, content: z.string() }).strict();
-const ContextFileListSchema = z.array(ContextFileSchema).max(100).superRefine((files, context) => {
+const StoredFilePath = z.string().max(256).regex(/^(?:context|directives)\/[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)*\.(?:md|txt|json|yaml|yml)$/u);
+const FilePath = StoredFilePath.refine(path => !path.split('/').some(hasGovernanceSensitivePathSegment));
+function distinctPaths(files: readonly { path: string }[], context: z.RefinementCtx): void {
   if (new Set(files.map(file => file.path)).size !== files.length) context.addIssue({ code: 'custom', message: 'duplicate context path' });
-});
+}
+const ContextFileSchema = z.object({ path: FilePath, content: z.string() }).strict();
+const ContextFileListSchema = z.array(ContextFileSchema).max(100).superRefine(distinctPaths);
+const StoredContextFileListSchema = z.array(z.object({ path: StoredFilePath, content: z.string().max(MAX_FILE_CHARACTERS) }).strict())
+  .max(100).superRefine((files, context) => {
+    distinctPaths(files, context);
+    if (files.reduce((sum, file) => sum + Buffer.byteLength(file.content), 0) > MAX_TOTAL_BYTES) {
+      context.addIssue({ code: 'custom', message: 'stored context exceeds its total size' });
+    }
+  });
 export type ContextFile = z.infer<typeof ContextFileSchema>;
 export type ContextRejectionReason = 'context_invalid_files' | 'context_too_large' | 'context_secret_detected' | 'context_unsafe_text'
-  | 'context_harness_limit' | 'context_governed_path' | 'context_version_failed';
+  | 'context_harness_limit' | 'context_governed_path' | 'context_version_failed' | 'context_version_unreadable';
 const REJECTION_MESSAGES: Readonly<Record<ContextRejectionReason, string>> = {
   context_invalid_files: 'context files have an invalid path, shape or duplicate',
   context_too_large: `context exceeds ${String(MAX_FILE_CHARACTERS)} characters in a file or ${String(MAX_TOTAL_BYTES)} bytes in total`,
@@ -46,6 +54,7 @@ const REJECTION_MESSAGES: Readonly<Record<ContextRejectionReason, string>> = {
   context_harness_limit: 'context exceeds the document limit of the agent harness',
   context_governed_path: `native ingest may only change files under ${NATIVE_CONTEXT_WRITABLE_PREFIX}; profile, directives and operator context are governed`,
   context_version_failed: 'context version could not be recorded',
+  context_version_unreadable: 'stored context version cannot be read; write a new version',
 };
 export interface ContextSizeLimit { readonly bytes: number; readonly max_bytes: number }
 /** A refused version: the reason and the affected paths are safe to show, the content never travels in it. */
@@ -108,9 +117,15 @@ function sortedContextFiles(files: readonly ContextFile[]): ContextFile[] {
 export function canonicalContextFiles(value: unknown): ContextFile[] {
   return sortedContextFiles(ContextFilesSchema.parse(value));
 }
-/** A stored version was judged when written; reading it only checks its shape, so a stricter rule never makes history unreadable. */
-export function storedContextFiles(value: unknown): ContextFile[] {
-  return sortedContextFiles(ContextFileListSchema.parse(value));
+/**
+ * A stored version was judged when written: reading it checks only its shape, sizes and digest, never the content or path
+ * rules, so a stricter rule never makes history unreadable.
+ */
+export function storedContextFiles(value: unknown, digest: string): ContextFile[] {
+  const parsed = StoredContextFileListSchema.safeParse(value);
+  const files = parsed.success ? sortedContextFiles(parsed.data) : undefined;
+  if (files === undefined || contextDigest(files) !== digest) throw new ContextRejectedError('context_version_unreadable');
+  return files;
 }
 export function harnessContextMaxBytes(harness: string | null): number {
   return (harness === null ? undefined : HARNESS_CONTEXT_MAX_BYTES.get(harness)) ?? Math.min(...HARNESS_CONTEXT_MAX_BYTES.values());

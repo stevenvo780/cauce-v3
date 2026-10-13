@@ -1,17 +1,7 @@
 import { ContextAdoptionEvidenceSchema, HarnessConsumptionEvidenceSchema, type VersionedContext } from '@cauce/protocol';
 import type { DatabaseClient } from './db.js';
-import { ZodError } from 'zod';
-import { StoreError } from './repository/errors.js';
-import type { ContextTarget } from './context-version-model.js';
-import { lockContextTarget, readContextVersion } from './context-version.js';
+import { lockContextTarget, readableContextVersion } from './context-version.js';
 
-/** Stored files were judged when written: an unreadable version is a typed error the claim absorbs, never a crash. */
-async function readStoredVersion(client: DatabaseClient, target: ContextTarget, version: number) {
-  try { return await readContextVersion(client, target, version); } catch (error) {
-    if (error instanceof ZodError) throw new StoreError('invalid_input', `stored context version ${version} is unreadable`);
-    throw error;
-  }
-}
 export async function versionedContextForDelivery(client: DatabaseClient, tenant: string, alias: string,
   ids: readonly string[]): Promise<VersionedContext | undefined> {
   const row = (await client.query<{ company_id: string; desired_version: string }>(
@@ -19,9 +9,9 @@ export async function versionedContextForDelivery(client: DatabaseClient, tenant
     WHERE current.tenant_id=$1 AND current.alias=$2 AND current.company_id=tenant.company_id AND current.desired_version>0`, [tenant, alias])).rows[0];
   if (!row || ids.length === 0) return undefined;
   const target = { company_id: row.company_id, tenant_id: tenant, alias };
-  let version;
-  try { version = await readStoredVersion(client, target, Number(row.desired_version)); } catch (error) {
-    if (!(error instanceof StoreError && error.code === 'invalid_input')) throw error;
+  const version = await readableContextVersion(client, target, Number(row.desired_version));
+  if (version === undefined) {
+    // An unreadable version never aborts the claim: the delivery goes without context and the version shows why.
     await client.query(`UPDATE agent_context_outbox SET apply_error='context_version_unreadable'
       WHERE company_id=$1 AND tenant_id=$2 AND alias=$3 AND version=$4 AND applied_at IS NULL`,
     [target.company_id, tenant, alias, Number(row.desired_version)]);
