@@ -49,15 +49,18 @@ export async function prepareQuotaDockerImage(evidenceDir: string): Promise<Quot
   await mkdir(evidenceDir, { recursive: true, mode: 0o700 });
   const output = await command('/usr/bin/python3', [join(repository, 'ops/tests/test_quota_environment_docker.py'),
     '--prepare-image', '--evidence-dir', evidenceDir], undefined, 900_000);
-  const metadata = JSON.parse(output) as QuotaDockerImage;
-  if (!/^sha256:[a-f0-9]{64}$/u.test(metadata.image) || !/^zz-canary-quota-[a-f0-9]{32}:local$/u.test(metadata.tag)
-      || !/^sha256:[a-f0-9]{64}$/u.test(metadata.bundle_digest) || !metadata.versions || !metadata.bundles
-      || ['claude','codex','grok'].some(provider => !metadata.versions[provider] || !metadata.bundles[provider]
-        || metadata.bundles[provider]?.digest !== metadata.bundle_digest)) {
+  const metadata = JSON.parse(output) as Partial<QuotaDockerImage>;
+  const { image, tag, bundle_digest: bundleDigest, versions, bundles } = metadata;
+  const bundleByProvider: Partial<QuotaDockerImage['bundles']> = bundles ?? {};
+  if (image === undefined || tag === undefined || bundleDigest === undefined || !versions || !bundles
+      || !/^sha256:[a-f0-9]{64}$/u.test(image) || !/^zz-canary-quota-[a-f0-9]{32}:local$/u.test(tag)
+      || !/^sha256:[a-f0-9]{64}$/u.test(bundleDigest)
+      || ['claude','codex','grok'].some(provider => !versions[provider]
+        || bundleByProvider[provider]?.digest !== bundleDigest)) {
     await removeQuotaDockerImage(evidenceDir);
     throw new Error('real quota image metadata is incomplete');
   }
-  return metadata;
+  return { ...metadata, image, tag, bundle_digest: bundleDigest, versions, bundles };
 }
 
 export async function removeQuotaDockerImage(evidenceDir: string): Promise<void> {
@@ -70,7 +73,7 @@ async function evidence(directory: string, name: string, value: unknown): Promis
 }
 
 function publicReceipt(receipt: QuotaOperationReceipt): Record<string, unknown> {
-  const input = receipt.result ?? {};
+  const input = receipt.result;
   const fields = ['runtime_verified','container_name','stopped_verified','profile_removed_verified','cli_updated_verified',
     'cli_version','captured_at','observation_status','authenticated_verified','account_id'];
   const result = Object.fromEntries(fields.filter(key => input[key] !== undefined).map(key => [key, input[key]]));
@@ -144,13 +147,13 @@ export async function startQuotaDockerHost(fixture: ConsoleFixture, owner: V4Per
     CAUCE_FLEET_EXECUTABLE: executor, CAUCE_FLEET_POLICY_FILE: policyFile,
     CAUCE_FLEET_POLL_MS: '100', CAUCE_FLEET_LEASE_MS: '120000', CAUCE_FLEET_COMMAND_TIMEOUT_MS: '300000',
   }, stdio: ['ignore', 'pipe', 'pipe'] });
-  let processError = false;
-  child.on('error', () => { processError = true; });
-  child.stdout?.resume(); child.stderr?.resume();
+  const hostFailure = { processError: false };
+  child.on('error', () => { hostFailure.processError = true; });
+  child.stdout.resume(); child.stderr.resume();
   const environment = async (id: string): Promise<QuotaEnvironmentIdentity> => {
     const row = (await pool.query<QuotaEnvironmentIdentity>(`SELECT id,company_id,account_id,host_id,provider,container_name
       FROM quota_environments WHERE id=$1 AND company_id=$2 AND host_id=$3`, [id, person.company_id, hostId])).rows[0];
-    if (!row || row.container_name !== `cauce-quota-${id.replaceAll('-', '')}`) throw new Error('quota environment is outside the owned fixture');
+    if (row?.container_name !== `cauce-quota-${id.replaceAll('-', '')}`) throw new Error('quota environment is outside the owned fixture');
     return row;
   };
   const host = {
@@ -160,7 +163,7 @@ export async function startQuotaDockerHost(fixture: ConsoleFixture, owner: V4Per
       const deadline = Date.now() + (options.timeoutMs ?? 300_000);
       let recorded: string | undefined;
       while (Date.now() < deadline) {
-        if (processError || child.exitCode !== null || child.signalCode !== null) throw new Error('owned enrolled quota host exited');
+        if (hostFailure.processError || child.exitCode !== null || child.signalCode !== null) throw new Error('owned enrolled quota host exited');
         const raw = (await pool.query<Omit<QuotaOperationReceipt, 'result'> & { result: Record<string, unknown> | null }>(`SELECT id,environment_id,action,status,result,error_code,worker_id
           FROM quota_environment_operations WHERE environment_id=$1 AND company_id=$2 AND action=$3
             AND ($4::uuid IS NULL OR created_at>(SELECT created_at FROM quota_environment_operations WHERE id=$4))
@@ -197,7 +200,7 @@ export async function startQuotaDockerHost(fixture: ConsoleFixture, owner: V4Per
             SecurityOpt: string[]; Tmpfs: Record<string, string> }; Mounts: { Destination: string; Source: string; Type: string; RW: boolean }[];
         }[];
         const container = data[0];
-        if (!container || container.Config.Labels['cauce.quota.company'] !== person.company_id
+        if (container?.Config.Labels['cauce.quota.company'] !== person.company_id
           || container.Config.Labels['cauce.quota.host'] !== hostId || container.Config.Labels['cauce.quota.environment'] !== environmentId) {
           throw new Error('quota container ownership differs from its fixture');
         }
@@ -213,7 +216,7 @@ export async function startQuotaDockerHost(fixture: ConsoleFixture, owner: V4Per
     },
     async close(): Promise<void> {
       const failures: unknown[] = [];
-      await stopHost(child).catch(error => { failures.push(error); });
+      await stopHost(child).catch((error: unknown) => { failures.push(error); });
       const rows = (await pool.query<QuotaEnvironmentIdentity>(`SELECT id,company_id,account_id,host_id,provider,container_name
         FROM quota_environments WHERE company_id=$1 AND host_id=$2`, [person.company_id, hostId])).rows;
       for (const row of rows) {
@@ -232,7 +235,7 @@ export async function startQuotaDockerHost(fixture: ConsoleFixture, owner: V4Per
   try {
     const deadline = Date.now() + 30_000;
     while (Date.now() < deadline) {
-      if (processError || child.exitCode !== null || child.signalCode !== null) throw new Error('owned enrolled quota host failed to start');
+      if (hostFailure.processError || child.exitCode !== null || child.signalCode !== null) throw new Error('owned enrolled quota host failed to start');
       const row = (await pool.query<{ capabilities: Record<string, unknown> }>(`SELECT capabilities FROM fleet_host_identities
         WHERE host_id=$1 AND company_id=$2 AND capabilities_seen_at>now()-interval '120 seconds'`, [hostId, person.company_id])).rows[0];
       if (row?.capabilities.quota_executor === true) {

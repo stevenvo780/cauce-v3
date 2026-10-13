@@ -110,7 +110,7 @@ describe('a human edit reaches the agent through Git, the native document and th
     try { await engine.handleDelivery(claimed as Delivery); } finally { engine.stop(); }
 
     expect(documents).toHaveLength(1);
-    expect(documents[0]).toContain(`Version 2; digest ${edited.digest}`);
+    expect(documents[0]).toContain(`Version 2; digest ${String(edited.digest)}`);
     expect(documents[0]).toContain('Mission two: answer with the verified outcome first.');
     expect(documents[0]).not.toContain('Mission one');
     const done = events.find(event => event.phase === 'done');

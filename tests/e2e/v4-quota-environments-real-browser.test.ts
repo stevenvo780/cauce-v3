@@ -25,6 +25,7 @@ let accountId = '';
 let accountVersion = 0;
 let ownerEnvironmentId = '';
 let quotaImage: Awaited<ReturnType<typeof prepareQuotaDockerImage>>;
+let quotaImagePrepared = false;
 let quotaHostRuntime: Awaited<ReturnType<typeof startQuotaDockerHost>> | undefined;
 const evidenceDirectory = join(process.cwd(), 'ops/artifacts/quota-real-browser', run);
 
@@ -131,6 +132,7 @@ beforeAll(async () => {
   if (process.env.CAUCE_TEST_DATABASE_URL) throw new Error('this E2E requires its own Testcontainers PostgreSQL');
   if (process.env.VITE_USE_MOCKS === 'true') throw new Error('mocks=false is required');
   quotaImage = await prepareQuotaDockerImage(evidenceDirectory);
+  quotaImagePrepared = true;
   fixture = await startConsoleFunctionalFixture();
 }, 900_000);
 
@@ -138,7 +140,7 @@ afterAll(async () => {
   try { await quotaHostRuntime?.close(); }
   finally {
     try { await fixture?.close(); }
-    finally { if (quotaImage) await removeQuotaDockerImage(evidenceDirectory); }
+    finally { if (quotaImagePrepared) await removeQuotaDockerImage(evidenceDirectory); }
   }
 }, 180_000);
 

@@ -148,7 +148,7 @@ describe('context broker reconciliation with a remote that advanced', () => {
     const preflight = async () => {
       const script = fileURLToPath(new URL('../../../ops/scripts/context-broker-preflight.py', import.meta.url));
       const run = await execute('python3', [script, '--repository', repository, '--uid', String(process.getuid?.() ?? -1)], { encoding: 'utf8', timeout: 60_000 })
-        .then(result => ({ code: 0, stdout: result.stdout }), (error: { code?: number; stdout?: string }) => ({ code: error.code ?? -1, stdout: error.stdout ?? '' }));
+        .then(result => ({ code: 0, stdout: result.stdout }), (error: unknown) => { const failure = error as { code?: number; stdout?: string }; return { code: failure.code ?? -1, stdout: failure.stdout ?? '' }; });
       const report = JSON.parse(run.stdout) as { checks: { check: string; ok: boolean }[] };
       return { code: run.code, failed: report.checks.filter(check => !check.ok).map(check => check.check) };
     };

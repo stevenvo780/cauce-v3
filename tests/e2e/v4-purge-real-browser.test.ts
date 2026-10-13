@@ -46,7 +46,7 @@ function redact(text: string): string {
 async function stopWorker(): Promise<void> {
   const child = worker;
   worker = undefined;
-  if (!child || child.exitCode !== null || child.signalCode !== null) return;
+  if (child?.exitCode !== null || child.signalCode !== null) return;
   child.kill('SIGTERM');
   await new Promise<void>((resolve) => {
     const timer = setTimeout(() => { child.kill('SIGKILL'); resolve(); }, 5_000);

@@ -354,8 +354,8 @@ describe('real external QA harness', () => {
       const fake2 = scenario.receipt?.identities.find((identity) => identity.harness === 'fake2');
       if (fake2) fake2.harness = 'fake';
     }
-    expect(() => verifyReport(withoutReceipt)).toThrow('adapter roundtrip receipt is missing');
-    expect(() => verifyReport(alteredIdentity)).toThrow();
+    expect(() => { verifyReport(withoutReceipt); }).toThrow('adapter roundtrip receipt is missing');
+    expect(() => { verifyReport(alteredIdentity); }).toThrow();
   }, 180_000);
 
   it('runs two permanent-style fake adapters through async push and terminal ACK', async () => {

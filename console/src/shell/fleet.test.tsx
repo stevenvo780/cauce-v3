@@ -25,7 +25,7 @@ function FleetProbe() {
 }
 
 function snapshot() {
-  return JSON.parse(screen.getByLabelText('Fleet snapshot').textContent ?? '{}') as {
+  return JSON.parse(screen.getByLabelText('Fleet snapshot').textContent) as {
     agents: { alias: string; leaseState: string; presence?: unknown; origenes: string[]; registrado?: boolean }[];
     activity: { agents: FleetActivityAgent[] };
     error?: string;
@@ -44,7 +44,7 @@ it.each([false, true])('retains the registry-only chat after a 503 without stale
     } : {}),
   };
   let reads = 0;
-  let releaseRecovery = () => undefined as void;
+  let releaseRecovery: () => void = () => undefined;
   const recovery = new Promise<void>((resolve) => { releaseRecovery = resolve; });
   onTestFinished(() => { releaseRecovery(); });
   server.use(

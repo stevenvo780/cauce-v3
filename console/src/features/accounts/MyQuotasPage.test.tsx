@@ -337,7 +337,7 @@ it('anuncia la carga inicial de entornos mientras el snapshot viaja', async () =
 });
 
 it('no envía codex si el alta se abre antes de que la oferta llegue solo con grok', async () => {
-  const pending: Array<(response: Response) => void> = [];
+  const pending: ((response: Response) => void)[] = [];
   let offered = false;
   const grokOffer = () => HttpResponse.json({ company_id: 'one', environments: [], operations: [],
     capabilities: { available: true, providers: ['grok'], hosts: [], actions: ['create'] } });
