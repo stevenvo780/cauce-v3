@@ -124,6 +124,15 @@ por eso: `secret-handoff-migration-postgres.test.ts` ya existía y ya se había 
 La rama de testcontainers **no cambia**: allí la base nace vacía con el contenedor y la plantilla no
 ahorraría nada.
 
+Los contenedores de prueba arrancan con `fsync=off` y `full_page_writes=off`
+(`COMANDO_POSTGRES_DE_PRUEBA`, también en los fixtures de OAuth y de procedencia de cliente). Son los
+«ajustes no durables» que PostgreSQL documenta para esto: sólo cambian qué sobrevive a una caída del
+sistema operativo o a un corte de luz, que ninguna prueba provoca. `synchronous_commit` sigue
+encendido, así que una prueba que mata o reinicia el postmaster encuentra todo lo confirmado: el WAL
+ya está en la caché de páginas cuando `COMMIT` vuelve. Con `fsync` encendido cada `TRUNCATE` de
+`resetTestDatabase()` y cada `CREATE DATABASE` esperaban al disco que comparte todo el host: medido
+en el host del gate, 900 ms por reset frente a 122 ms, y 2,3 s frente a 1,0 s por base de caso migrada.
+
 ### Si queda envenenada
 
 ```bash

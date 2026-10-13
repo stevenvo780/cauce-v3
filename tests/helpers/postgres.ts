@@ -537,6 +537,10 @@ export async function startTestCaseDatabase(database: TestDatabase): Promise<Emp
   }
 }
 
+export const COMANDO_POSTGRES_DE_PRUEBA: readonly string[] = [ // non-durable: docs/entorno-de-desarrollo-con-base-real.md
+  'postgres', '-c', 'fsync=off', '-c', 'full_page_writes=off',
+];
+
 async function startTestDatabaseAt(migrationThrough?: string, requireOwnedContainer = false): Promise<TestDatabase> {
   // CAUCE_TEST_DATABASE_URL serves environments where testcontainers has no Docker daemon.
   const externa = process.env.CAUCE_TEST_DATABASE_URL;
@@ -568,6 +572,7 @@ async function startTestDatabaseAt(migrationThrough?: string, requireOwnedContai
   const password = randomUUID();
   const network = process.env.CAUCE_TEST_DOCKER_NETWORK;
   let builder = new GenericContainer('postgres:16-alpine')
+    .withCommand([...COMANDO_POSTGRES_DE_PRUEBA])
     .withEnvironment({
       POSTGRES_DB: 'cauce_test',
       POSTGRES_USER: 'cauce_test',

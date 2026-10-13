@@ -2,6 +2,7 @@ import { createHash, generateKeyPairSync, randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { GenericContainer, Wait, type StartedTestContainer } from 'testcontainers';
 import { afterAll, afterEach, beforeAll } from 'vitest';
+import { COMANDO_POSTGRES_DE_PRUEBA } from '../../../tests/helpers/postgres.js';
 import { applyMigrations, applyMigrationsThrough, createPool, type DatabaseClient, type DatabasePool } from '@cauce/store';
 import { PostgresOAuthStore } from './oauth-authorization-store.js';
 import { hashPassword } from './password.js';
@@ -26,6 +27,7 @@ const upPath = new URL('../../../packages/store/migrations/045_mcp_oauth_authori
 beforeAll(async () => {
   const password = randomUUID();
   container = await new GenericContainer('postgres:16-alpine')
+    .withCommand([...COMANDO_POSTGRES_DE_PRUEBA])
     .withEnvironment({ POSTGRES_DB: 'cauce_test_oauth_template', POSTGRES_USER: 'cauce_test', POSTGRES_PASSWORD: password })
     .withExposedPorts(5432).withWaitStrategy(Wait.forLogMessage('database system is ready to accept connections', 2))
     .withStartupTimeout(60_000).start();
