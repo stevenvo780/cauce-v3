@@ -58,3 +58,20 @@ exit 0
 Recibos privados en el directorio de estado V4: `claude-composition-red.log` conserva 3/3 fallos esperados antes de la reparación; `claude-composition-green.log` conserva 32/32 en verde después. La suite emite un `ResourceWarning` por limpieza de un HTTPError 429 del fixture; no hubo fallo. `claude-composition-offline-shape.log` aplica el lector real a la respuesta sanitizada autorizada con fetch simulado y credenciales sintéticas: devuelve sólo 5 h/0 % y 7 d/93 %, conserva los resets y no interpreta composición, `limits` ni shares. En ese ensayo hubo cero peticiones al proveedor y ninguna lectura de credenciales reales.
 
 La corrección está probada en el checkout. No se repitió la consulta externa ni se declara distribuida al servidor, publicada en la web o aceptada por un gate final integrado. El coordinador revisa y acredita esas fases.
+
+## Imagen de cuotas: construcción, digest y carga en el host
+
+La imagen (`ops/cuotas/Dockerfile`) fija la base `node:22-slim` por digest y cada CLI por versión exacta (`CLAUDE_CODE_VERSION`, `CODEX_VERSION`, `GEMINI_CLI_VERSION`, `GROK_VERSION`); el propio build falla si algún `--version` no coincide con lo fijado. Lleva los lectores (`leer-cuota.mjs`, `leer-cuota-grok.mjs`, `codex-http-probe.py` ejecutable `0555`) y ningún script de refresco aparte: la sonda refresca solo con `--refresh-own-session` dentro de entornos de sesión propia. Subir una versión es deliberado: se cambia el `ARG`, se reconstruye y se registra el digest nuevo; nada flota con `latest`.
+
+Procedimiento (host con Docker; la política espera el digest, no un tag):
+
+```bash
+docker build -t cauce-cuotas-local ops/cuotas
+docker image inspect cauce-cuotas-local --format '{{.Id}}'   # sha256:<digest>
+```
+
+1. Cargar el digest obtenido en `policy.quota_environments.image` del host de cuotas.
+2. Recargar la política del executor (sin reiniciar contenedores ajenos): el executor valida la política sintácticamente al cargarla y solo exige los descriptores al anunciar capacidades o ejecutar una operación.
+3. Los entornos existentes siguen con la imagen anterior hasta recrearse; los nuevos usan el digest registrado. `update_cli` sigue instalando el paquete del descriptor en el perfil, por encima de la versión de la imagen.
+
+Última construcción local acreditada (este checkout): imagen `sha256:58b70c68c0555715b20682a71a093b8a52d4f1335b872da989dee3d7dd907547`, con `validate()` real sobre un contenedor canary desechable (`zz-canary-cuotas`, red `bridge`): creación verificada (`cli_version: codex-cli 0.160.1`), los tres lectores responden `not_authenticated` sin credenciales, las cuatro versiones coinciden con lo fijado y contenedor y volumen quedaron eliminados. Este digest es el candidato a registrar; el registro en la política del host productivo y el despliegue corresponden al dueño o al agente integrador autorizado.
