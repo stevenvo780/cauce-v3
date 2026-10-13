@@ -131,6 +131,11 @@ corregir hacia delante o restaurar la BD (paso 3 del rollback). `up`, refresco o
 # 1. Parar todo menos postgres (los servicios de aplicación que el compose declare activos)
 docker compose --env-file /etc/cauce-v3/prod.env -f deploy/compose.yaml -f deploy/compose.postgres.yaml --project-directory deploy \
   stop gateway dispatcher telegram-bridge terminal-relay console outbox-metrics prometheus otel-collector
+# 1b. Si este despliegue aplicó 081_membresia_rol_derivado.sql (deploy.sh imprime el aviso y este comando):
+#     el gateway anterior lee human_tenant_memberships.role, que 081 retiró. Aplicar su down ANTES del paso 2,
+#     salvo que el paso 3 restaure un dump previo a 081. Aborta si hay una migración posterior. Desde la raíz del clon nuevo:
+docker exec -i cauce-v3-prod-postgres-1 psql -X -v ON_ERROR_STOP=1 --single-transaction -U cauce -d cauce \
+  < packages/store/migrations/down/081_membresia_rol_derivado.sql
 # 2. Restaurar el prod.env previo (el snapshot solo existe si el migrator terminó con 0)
 cp -a /etc/cauce-v3/prod.env.pre-deploy-<STAMP> /etc/cauce-v3/prod.env
 # 3. Solo si el esquema ya quedó confirmado y hay que volver atrás: verificar sha256, terminar backends, dropdb/restore
@@ -161,6 +166,14 @@ El primer despliegue de V4 usa el mismo `deploy/deploy.sh`. Respecto de un despl
 - `CAUCE_FRONT_PROXY_CIDR=<cidr del proxy frontal>`. `deploy.sh` lo pasa como build-arg de la imagen de consola (`deploy/Dockerfile`). nginx solo acepta `X-Forwarded-For` de ese CIDR (`set_real_ip_from`). Vacío borra la directiva y no se confía en ningún salto. Un carácter fuera de `0-9a-fA-F:./` falla el build. Si la variable no está en `prod.env`, `deploy.sh` no aborta y la imagen queda sin salto de confianza: hay que declararla antes de construir. El valor de producción está en `docs/parametros.md`.
 - `CAUCE_RESERVED_COMPANY_SLUGS=<id>,<id>`. Identificadores de las empresas que la plataforma va a crear, separados por comas. `deploy.sh` no la lee. Compose la pasa al gateway (`${CAUCE_RESERVED_COMPANY_SLUGS:-}`; vacía si falta). Cada id tiene que cumplir `COMPANY_ID_PATTERN` y se suma a la lista fija de `services/gateway/src/company-slug.ts`. Un valor inválido impide arrancar el gateway. El registro público los rechaza con el mismo 409 que un identificador ocupado. Hay que reservarlos antes de abrir el registro. El valor de producción está en `docs/parametros.md`.
 - `CAUCE_DEPLOY_GATES_RECEIPT`. Ruta absoluta del recibo de `scripts/release-gates.sh` del mismo commit, en el entorno del proceso. Obligatoria, salvo el escape `CAUCE_DEPLOY_SIN_RECIBO`. No va en `prod.env`. El comando de esta sección ya la exporta.
+- `CAUCE_HARNESS_DESCRIPTOR_APPROVALS_DIR` (opcional en `prod.env`; por defecto `/etc/cauce-v3/harness-descriptor-approvals`). Directorio que solo contiene `approvals.json`, el mapa público `{harness: sha256}` que el dueño aprueba. `deploy/compose.yaml` lo monta en solo lectura y fija `CAUCE_HARNESS_DESCRIPTOR_APPROVALS_FILE`; sin él el gateway retira todos los lectores de cuota de agente. `deploy.sh` se niega a construir si falta, no es un objeto de pins hex de 64 o algún pin no coincide con el descriptor de la release. Se genera desde el clon de la release y lo aprueba el dueño, pin a pin (`{}` no aprueba ninguno):
+  ```bash
+  install -d -m 0755 /etc/cauce-v3/harness-descriptor-approvals
+  python3 ops/scripts/harness-descriptor-approvals.py codex claude grok \
+    --output /etc/cauce-v3/harness-descriptor-approvals/approvals.json   # --replace para sustituirlo en otra release
+  ```
+  El script valida cada descriptor con el parser del executor e imprime `approve <harness> <sha256>` para la revisión. Cambiar un descriptor en una release exige regenerar y volver a aprobar.
+- `CAUCE_NATIVE_CONTEXT_REPOSITORY_ROOT` queda sin definir en producción a propósito: la inspección nativa de contextos está apagada hasta que exista una raíz de repositorio independiente del broker (`CAUCE_CONTEXT_REPOSITORY_ROOT`); el gateway rechaza que ambas coincidan.
 
 **Backup.** Con migraciones pendientes, `deploy.sh` baja la ventana a 2 h, no admite confirmación de un backup más viejo y repite el monitor justo antes del migrator. Sin migraciones pendientes sigue `CAUCE_DEPLOY_BACKUP_MAX_AGE_HOURS` (24 h por defecto) y un backup viejo admite confirmación. El detalle está en las precondiciones de esta sección.
 
@@ -170,7 +183,7 @@ El primer despliegue de V4 usa el mismo `deploy/deploy.sh`. Respecto de un despl
 
 **Semilla de autoridad.** Después de aplicar el esquema, desde la raíz del clon del despliegue en el host y como root, con la CLI de la imagen recién desplegada. Los correos se resuelven en la base y no se imprimen ni se versionan. Primero el `platform_admin`, después los owners de la empresa. Comandos y comprobación: [Siembra de autoridad](#siembra-de-autoridad-cauce-platform-admin-semilla).
 
-**Reversión.** Sigue la receta de esta sección: no ejecutar `docker compose down`; restaurar `prod.env.pre-deploy-<STAMP>` y, si el esquema ya quedó confirmado, el dump previo. El `down` de `054_company_admins.sql` aborta con `rollback preserves company authority` si hay un owner, un admin cuyo `source` no es `v4.0-hub-operator`, más de una empresa, filas en `platform_authority_events` o en `agent_role_template_owners`, o principals y roles de agente distintos de las filas de plataforma que esa migración conserva. La semilla deja historial en `platform_authority_events`, así que no se deshace con ese `down`: se restaura el dump previo o se corrige hacia delante.
+**Reversión.** Sigue la receta de esta sección: no ejecutar `docker compose down`; restaurar `prod.env.pre-deploy-<STAMP>` y, si el esquema ya quedó confirmado, el dump previo. Si el despliegue aplicó `081_membresia_rol_derivado.sql`, el down de 081 (paso 1b de la receta) va antes de restaurar los pins: el gateway anterior lee la columna de rol que 081 retiró. El `down` de `054_company_admins.sql` aborta con `rollback preserves company authority` si hay un owner, un admin cuyo `source` no es `v4.0-hub-operator`, más de una empresa, filas en `platform_authority_events` o en `agent_role_template_owners`, o principals y roles de agente distintos de las filas de plataforma que esa migración conserva. La semilla deja historial en `platform_authority_events`, así que no se deshace con ese `down`: se restaura el dump previo o se corrige hacia delante.
 
 **Ciclo del candidato.** Lista para ejecutar de principio a fin con cada candidato `<C>`. Cada paso
 deja un recibo en su hueco y no se pasa al siguiente sin él. Un rojo en cualquier paso devuelve al
@@ -226,15 +239,72 @@ paso 1 con un candidato nuevo. El despliegue lo ejecuta el orquestador con autor
 12. **Recorrido autenticado sobre lo desplegado.** Un recibo por flujo, verde o rojo, con su evidencia:
     - inicio de sesión del dueño y vistas de empresas, oficina, Mis cuotas, ordenadores y auditoría = ____;
     - registro de una empresa `zz-canary-<run>` desde la página de registro y entrada como owner = ____;
-    - aislamiento: la guardia en modo externo contra el gateway desplegado, con `CAUCE_ISOLATION_BASE_URL`,
-      `CAUCE_ISOLATION_FIXTURE_FILE` y `CAUCE_ISOLATION_CANARY_DATABASE_URL` (ver `docs/parametros.md`):
-      `pnpm --filter @cauce/gateway exec vitest run src/security/route-isolation.postgres.test.ts` = ____;
+    - recorrido externo: registro público, empresa básica y aislamiento A/B contra la URL desplegada,
+      `pnpm verify:external --base-url https://<consola>` desde un clon limpio en `<C>`
+      ([Recorrido externo](#recorrido-externo-pnpm-verifyexternal)). Recibo: ruta del `receipt.json`
+      con `failures=0`, las dos empresas `retired` y `client.sha` = `<C>` sin `+dirty` = ____;
     - entrega real por el bus con ACK, como en la verificación funcional de
       `ops/runbooks/ventana-primer-despliegue.md` = ____.
 13. **Cierre.** Con cero flujos esenciales en rojo: la columna «Resultado» de la fila de HISTORIAL
     refleja el humo real, se actualizan la deuda de `docs/v3.1-pendientes.md` y `docs/version-3.1.md`
     y el [informe final](v4-informe-final.md), y se limpian los recursos `zz-canary-<run>`. Con algún
     rojo: corregir, nuevo `<C>` y volver al paso 1.
+
+#### Recorrido externo (`pnpm verify:external`)
+
+Comprueba desde fuera, contra la URL pública, lo que la guardia local prueba contra PostgreSQL: que una empresa
+nueva se registra y se usa, y que ninguna petición manipulada de una empresa lee, escribe ni enumera recursos de
+otra. Usa solo la API pública: no necesita SSH, credenciales reales ni conexión a la base. Código en
+`services/gateway/src/security/route-isolation-external*.ts`; la matriz de casos es la misma
+`route-isolation-matrix.ts` de la guardia local.
+
+```bash
+pnpm verify:external --base-url https://<consola> --dry-run   # lista lo que hará; ninguna petición
+pnpm verify:external --base-url https://<consola>             # ~1 900 peticiones a 5/s, unos 7 min
+```
+
+1. **Registro y empresa.** Registra `zz-canary-<run>-a` y `zz-canary-<run>-b` por `POST /v3/auth/register`
+   (correos `@canary.example.invalid`, contraseñas aleatorias que no se imprimen), entra con
+   `POST /v3/auth/login` y comprueba `GET /v3/auth/session`. Aborta si la empresa activa de la sesión no es su
+   canario. En B crea sala, agente lector y su membresía, persona lectora, invitación de ordenador, cuenta de
+   cuota, blob, plano de oficina y preferencias; en A, sala y membresía del owner.
+2. **Aislamiento.** Desde la sesión de A contra B: los casos con sonda de la matriz (HEAD además en los GET),
+   cabeceras de tenant (`x-cauce-tenant`, `x-cauce-alias`, `x-company-id`…) y parámetros de empresa ajenos
+   sobre las vistas de A, credenciales cruzadas (CSRF de B, sin CSRF, cookie alterada, cookie de B como
+   bearer) y WebSocket (`hello` de B bajo la cookie de A). Falla si una respuesta contiene un identificador o
+   el contenido privado de B, si el estado no es el esperado o si B, releída con su propia sesión después de
+   cada escritura, cambió fuera de los campos volátiles (los que varían entre dos lecturas seguidas).
+3. **Limpieza.** Plano y preferencias vacíos, persona retirada, configuración revertida con el
+   `inverse_mutation` de cada recibo, cuenta e invitación borradas y `DELETE /v3/console/companies/:id`, que
+   retira la empresa (conserva los datos y deja la sesión sin autoridad), y logout. La purga de la persona no
+   se intenta: la auditoría la nombra y la API solo purga a quien no tiene historial. El agente lector puede
+   quedar (409 «durable dependencies») porque lo referencia la persona retirada; lo cierra la retirada de la
+   empresa.
+
+**Recibo.** `~/.local/state/cauce-v3/verify-external/<run>/receipt.json` (0600; `--receipt` y `--out-dir` lo
+cambian): URL, sha del cliente (`client.sha` y `dirty`), canarios y si quedaron retirados, peticiones, totales y
+cada caso. La salida resume `cases`, `passed`, `failures`, `not_configured` (501: plano apagado),
+`not_mounted` (404 de ruta inexistente: el despliegue no monta ese plano), `inconclusive` y `synthetic`
+(casos cuyo recurso de B no se puede crear por la API pública y usan un id bien formado ausente). Sale 0 solo
+con `failures=0` y ambas empresas retiradas. `findings` anota lo que no es fallo; hoy, que un token copiado
+antes del logout sigue valiendo hasta caducar (sesión sin estado, ver `password-auth.ts`).
+
+**Seguridad de ejecución.** Exige `https` salvo en loopback; ritmo por defecto 5 peticiones/s
+(`--rate`, máximo 10 fuera de loopback), presupuesto `--max-requests` (4 000) y un 429 con `Retry-After` de
+hasta 60 s se reintenta una vez. Solo opera con las sesiones de los dos canarios que acaba de registrar. El
+registro admite 5 intentos por IP cada 15 min y 20 por hora en todo el gateway
+(`CAUCE_REGISTRATION_HOURLY_LIMIT`): cada ejecución gasta 2.
+
+**Si se corta.** Las credenciales de los canarios quedan en `<out-dir>/<run>/canaries.json` (0600) hasta que
+ambos se retiran; la salida indica `pending_cleanup=` y
+`pnpm verify:external --base-url https://<consola> --cleanup <run>` los retira.
+
+**Ensayo local.** `pnpm exec vitest run services/gateway/src/security/route-isolation-external.postgres.test.ts`
+levanta el gateway real con PostgreSQL de Testcontainers en un puerto de loopback, ejecuta el mismo comando,
+comprueba en la base que ambas empresas quedan retiradas y que el detector marca una fuga y una escritura
+inyectadas, y recupera una ejecución cortada con `--cleanup`. En local no se montan terminal, relay,
+repositorio de contexto ni bootstrap mTLS: sus rutas salen `not_mounted`; `--oauth-issuer` apunta las rutas
+OAuth al emisor local, en producción no hace falta.
 
 ### Enclave de autoridad firmada de la flota
 
@@ -402,8 +472,6 @@ done
 
 Repetir el bloque no cambia nada. Verificación: al volver a entrar, `GET /v3/auth/session` muestra
 `role=platform_admin` para Steven y `role=company_owner`, `scope=company` para Miguel.
-
-El perfil versionado `ops/instances/hospital/project-profile.json` publica `conversation_id: "0"` como valor de ejemplo. El ID real de Telegram se suministra únicamente mediante el archivo privado que referencia `project_profile_file` en la configuración del supervisor, validado con `project_profile_sha256`; proviene del origen autenticado del dueño y no se guarda en Git.
 
 ## 3. Diagnóstico y recuperación de un adaptador caído
 

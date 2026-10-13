@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { newTrustedPage, startConsoleFunctionalFixture } from './console-functional-browser.fixtures.js';
+import { newTrustedPage, startConsoleFunctionalFixture, type BrowserResponse } from './console-functional-browser.fixtures.js';
 import {
   asV4Page, bodySnippet, BrowserErrorLog, fillRegistration, HERMETIC_INSTANCE_RULES, openRegistration, syntheticPerson,
   type V4Page, type V4Person,
@@ -14,10 +14,9 @@ import {
 const python = '/home/stev/.venvs/cauce-qa/bin/python';
 const run = randomUUID().replaceAll('-', '').slice(0, 8);
 const alias = `zzpurge${run}`;
-// Every Docker resource of this run starts with RUN_PREFIX; leftovers of other runs never enter its inventory.
-const RUN_PREFIX = `zz-canary-purge-${run}`;
-const runtimeKey = RUN_PREFIX;
-const failKey = `${RUN_PREFIX}-fail`;
+const runtimeKey = `zz-canary-purge-${run}`;
+const failKey = `zz-canary-fail-${run}`;
+const foreignKey = `zz-canary-unrelated-${run}`;
 const owner: V4Person = {
   ...syntheticPerson('purge', run),
   email: `zz-canary-purge-${run}@example.test`,
@@ -30,6 +29,7 @@ let page: V4Page | undefined;
 let hub = '';
 let work: string | undefined;
 let worker: ChildProcess | undefined;
+let foreignVolumeCreated = false;
 
 function active() {
   if (!fixture) throw new Error('purge fixture is not initialized');
@@ -48,7 +48,7 @@ function redact(text: string): string {
 async function stopWorker(): Promise<void> {
   const child = worker;
   worker = undefined;
-  if (!child || child.exitCode !== null || child.signalCode !== null) return;
+  if (child?.exitCode !== null || child.signalCode !== null) return;
   child.kill('SIGTERM');
   await new Promise<void>((resolve) => {
     const timer = setTimeout(() => { child.kill('SIGKILL'); resolve(); }, 5_000);
@@ -56,23 +56,15 @@ async function stopWorker(): Promise<void> {
   });
 }
 
-/** Docker output that fails loudly: an empty listing must mean "nothing there", never "docker failed". */
 function dockerText(args: string[]): string {
-  const result = spawnSync('docker', args, { encoding: 'utf8' });
-  if (result.error !== undefined || result.status !== 0) {
-    throw new Error(`docker ${args[0] ?? ''} failed (${String(result.status)}): ${result.stderr.trim()}`, { cause: result.error });
-  }
+  const result = spawnSync('docker', args, { encoding: 'utf8', timeout: 40_000 });
+  expect(result.status, redact(result.stderr)).toBe(0);
   return result.stdout;
 }
-const owned = (name: string) => name === RUN_PREFIX || name.startsWith(`${RUN_PREFIX}-`);
 
 beforeAll(async () => {
   if (process.env.CAUCE_TEST_DATABASE_URL) throw new Error('this E2E requires its own Testcontainers PostgreSQL');
   if (process.env.VITE_USE_MOCKS === 'true') throw new Error('mocks=false is required');
-  const before = [...dockerText(['ps', '-a', '--format', '{{.Names}}']).split('\n'), ...dockerText(['volume', 'ls', '--format', '{{.Name}}']).split('\n')]
-    .filter(owned);
-  console.info('PURGE_DOCKER_BEFORE', RUN_PREFIX, JSON.stringify(before));
-  if (before.length) throw new Error(`run prefix ${RUN_PREFIX} already has Docker resources: ${JSON.stringify(before)}`);
   fixture = await startConsoleFunctionalFixture();
   page = asV4Page(await newTrustedPage(active(), { width: 1440, height: 1000 }));
   errors.watch(page, 'purge-owner');
@@ -87,25 +79,26 @@ beforeAll(async () => {
 }, 600_000);
 
 afterAll(async () => {
-  await stopWorker();
-  const failures: string[] = [];
-  if (work) {
-    const cleanup = spawnSync(python, [join(process.cwd(), 'tests/e2e/v4-purge-docker.fixture.py'), 'cleanup', '--root', work], { encoding: 'utf8' });
-    if (cleanup.status !== 0) failures.push(`purge fixture cleanup failed (${String(cleanup.status)}): ${redact(cleanup.stderr)}`);
-    await rm(work, { recursive: true, force: true });
+  try {
+    await stopWorker();
+    if (work) {
+      const cleaned = spawnSync(python, [join(process.cwd(), 'tests/e2e/v4-purge-docker.fixture.py'), 'cleanup', '--root', work],
+        { encoding: 'utf8', timeout: 120_000 });
+      expect(cleaned.status, redact(cleaned.stdout + cleaned.stderr)).toBe(0);
+      await rm(work, { recursive: true, force: true });
+    }
+  } finally {
+    try { if (foreignVolumeCreated) dockerText(['volume', 'rm', foreignKey]); }
+    finally { await fixture?.close(); }
   }
-  await fixture?.close();
-  const left = [...dockerText(['ps', '-a', '--format', '{{.Names}}']).split('\n'), ...dockerText(['volume', 'ls', '--format', '{{.Name}}']).split('\n')]
-    .filter(owned);
-  console.info('PURGE_DOCKER_AFTER', RUN_PREFIX, JSON.stringify(left));
-  if (left.length) failures.push(`run resources were left behind: ${JSON.stringify(left)}`);
-  if (failures.length) throw new Error(failures.join('\n'));
 }, 180_000);
 
 describe('purga real de un contenedor desechable', () => {
   it('exige el alias, conserva confirm_alias y no deja contenedor ni volúmenes', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'cauce-purge-e2e-'));
     work = directory;
+    expect(dockerText(['volume', 'create', foreignKey]).trim()).toBe(foreignKey);
+    foreignVolumeCreated = true;
     const prepared = spawnSync(python, [join(process.cwd(), 'tests/e2e/v4-purge-docker.fixture.py'), 'prepare',
       '--root', directory, '--tenant', hub, '--alias', alias, '--runtime-key', runtimeKey, '--fail-key', failKey],
     { encoding: 'utf8', timeout: 120_000 });
@@ -154,16 +147,27 @@ describe('purga real de un contenedor desechable', () => {
     }
     await purge.click();
     const typed = current.getByLabel('Escribe el alias');
-    await typed.fill(alias);
     const preview = current.getByRole('button', { name: 'Previsualizar operación', exact: true });
+    expect(await preview.isDisabled()).toBe(true);
+    await typed.fill(`${alias}-wrong`);
+    expect(await preview.isDisabled()).toBe(true);
+    await typed.fill(alias);
     await preview.click();
     const enqueue = current.getByRole('button', { name: 'Encolar operación', exact: true });
     const queuedAt = Date.now() + 20_000;
     while (await enqueue.isDisabled()) {
-      if (Date.now() > queuedAt) throw new Error(`enqueue stayed disabled: ${await bodySnippet(current)}`);
+      if (Date.now() > queuedAt) {
+        const panel = await typed.evaluate(element => element.closest('.agent-lifecycle-panel')?.textContent);
+        throw new Error(`enqueue stayed disabled: ${panel ?? '<no panel>'}; errors=${errors.unexpected.join('; ')}`);
+      }
       await current.waitForTimeout(200);
     }
+    const enqueued = (current as V4Page & {
+      waitForResponse: (predicate: (response: BrowserResponse) => boolean, options: { timeout: number }) => Promise<BrowserResponse>;
+    }).waitForResponse(response => new URL(response.url()).pathname === '/v3/console/fleet/operations'
+      && response.request().method() === 'POST', { timeout: 20_000 });
     await enqueue.click();
+    expect((await enqueued).status()).toBe(202);
     const stored = await active().database.pool.query<{ id: string; confirm_alias: string | null; status: string }>(
       `SELECT id::text, request->'parameters'->>'confirm_alias' AS confirm_alias, status FROM fleet_operations
        WHERE request->'target'->>'alias'=$1 ORDER BY created_at DESC LIMIT 1`, [alias]);
@@ -199,19 +203,29 @@ describe('purga real de un contenedor desechable', () => {
       await current.waitForTimeout(500);
     }
     await stopWorker();
-    const names = dockerText(['ps', '-a', '--format', '{{.Names}}']).split('\n').filter(owned);
-    const volumes = dockerText(['volume', 'ls', '--format', '{{.Name}}']).split('\n').filter(owned);
+    const owned = [runtimeKey, failKey];
+    const names = dockerText(['ps', '-a', '--format', '{{.Names}}']).split('\n')
+      .filter((name) => owned.some((key) => name === key || name.startsWith(`${key}-`)));
+    const allVolumes = dockerText(['volume', 'ls', '--format', '{{.Name}}']).split('\n');
+    const volumes = allVolumes.filter((name) => owned.some((key) => name.startsWith(`${key}-`)));
     const workerLog = redact(Buffer.concat(log).toString('utf8').slice(-4000));
     const observed = JSON.stringify({ status, detail: redact(detail), names, volumes, worker: workerLog });
     expect(status, observed).toBe('succeeded');
     expect(names, observed).toEqual([]);
     expect(volumes, observed).toEqual([]);
+    expect(allVolumes).toContain(foreignKey);
     const rows = join(directory, 'rows.json');
     await writeFile(rows, '[]', { mode: 0o600 });
-    const swept = spawnSync(manifest.python, [join(process.cwd(), 'ops/cli/fleet_orphan_sweep.py'), '--rows', rows,
-      '--runtime-key-prefix', RUN_PREFIX, '--host-id', manifest.host_id], { encoding: 'utf8' });
-    expect(swept.status, redact(swept.stdout + swept.stderr)).toBe(0);
-    const report = JSON.parse(swept.stdout) as { clean: boolean };
-    expect(report.clean).toBe(true);
+    for (const key of owned) {
+      const swept = spawnSync(manifest.python, [join(process.cwd(), 'ops/cli/fleet_orphan_sweep.py'), '--rows', rows,
+        '--runtime-key-prefix', key, '--host-id', manifest.host_id], { encoding: 'utf8', timeout: 40_000 });
+      expect(swept.status, redact(swept.stdout + swept.stderr)).toBe(0);
+      const report = JSON.parse(swept.stdout) as { clean: boolean };
+      expect(report.clean).toBe(true);
+    }
+    errors.assertClean();
+    console.info('PURGE_DOCKER_RECEIPT ' + JSON.stringify({ operation_id: operationId, status, confirm_alias: alias,
+      runtime_keys: owned, containers: names, volumes, foreign_volume: foreignKey, foreign_volume_preserved: true,
+      failed_create_compensated: manifest.fail_clean }));
   }, 180_000);
 });

@@ -4,11 +4,20 @@ import { ProviderAuthError } from '../console/provider-auth.contracts.js';
 import { LoginPathSchema } from './provider-login.js';
 
 const Hash = z.string().regex(/^[0-9a-f]{64}$/u);
-export const OpenClawDriver = z.object({ provider_id: z.literal('openai'), method_id: z.enum(['oauth', 'device-code']),
-  version: z.literal('2026.6.6'), auth_list_source: LoginPathSchema,
+// Same pinned OpenClaw release and provider-agnostic auth-list source for every flow (ops/cli/fleet_provider_openclaw.py).
+const Pinned = { version: z.literal('2026.6.6'), auth_list_source: LoginPathSchema,
   auth_list_sha256: z.literal('31f4f35423fa6d909eaa448612f06a2030d43f91872f90c07d11e4638bff2c90'),
-  node_command: LoginPathSchema, node_command_sha256: Hash, bridge: LoginPathSchema, bridge_sha256: Hash }).strict();
-export const openClawCompatible = (profile: { provider: string; openclaw?: unknown }): boolean => profile.openclaw === undefined || profile.provider === 'codex';
+  node_command: LoginPathSchema, node_command_sha256: Hash, bridge: LoginPathSchema, bridge_sha256: Hash };
+/** The paying binding decides the OpenClaw provider; a binding provider without a flow here is refused. */
+export const OPENCLAW_PROVIDER_BY_BINDING: Readonly<Record<string, 'openai' | 'anthropic'>> = Object.freeze({ codex: 'openai', claude: 'anthropic' });
+export const OpenClawDriver = z.discriminatedUnion('provider_id', [
+  z.object({ provider_id: z.literal('openai'), method_id: z.enum(['oauth', 'device-code']), ...Pinned }).strict(),
+  // Isolated Anthropic login: a pasted setup-token stored under the account's own profile id, never the external Claude CLI.
+  z.object({ provider_id: z.literal('anthropic'), method_id: z.literal('setup-token'), ...Pinned }).strict(),
+]);
+export const openClawCompatible = (profile: { provider: string; openclaw?: { provider_id: string } | undefined }): boolean =>
+  profile.openclaw === undefined || (Object.hasOwn(OPENCLAW_PROVIDER_BY_BINDING, profile.provider)
+    && OPENCLAW_PROVIDER_BY_BINDING[profile.provider] === profile.openclaw.provider_id);
 export function openClawLogin(profile: { path: string; command?: string | undefined; command_sha256?: string | undefined; command_files?: Record<string, string> | undefined;
   openclaw?: z.infer<typeof OpenClawDriver> | undefined }, agent: { runtime_key: string; state_directory: string; primary_account_id: string },
 login: { command: string[]; sha256: string; files?: Record<string, string> | undefined }) {

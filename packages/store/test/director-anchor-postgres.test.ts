@@ -135,7 +135,7 @@ async function humanVersion(): Promise<{ version: ContextVersion; humanId: strin
   const human = (await admin.query<{ id: string }>(`INSERT INTO console_users(email,email_normalized,password_hash,display_name,role,tenant_id,alias)
     VALUES('target@example.test','target@example.test',$1,'Human target','operator',$2,$3) RETURNING id`, ['$scrypt$' + 'x'.repeat(48), tenant, alias])).rows[0];
   if (!human) throw new Error('human target absent');
-  await admin.query("INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,role,permissions) VALUES($1,$2,$3,'operator',ARRAY['read','control'])",
+  await admin.query("INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,permissions) VALUES($1,$2,$3,ARRAY['read','control'])",
     [human.id, tenant, alias]);
   return { version: await context(alias), humanId: human.id };
 }
@@ -237,9 +237,11 @@ describe('source-only director anchor continuity', () => {
     await expect(anchor(version)).rejects.toMatchObject({ code: '22023' });
     await admin.query('UPDATE human_tenant_memberships SET enabled=true,revoked_at=NULL,actor_alias=$2 WHERE human_id=$1', [humanId, 'owner']);
     await expect(anchor(version)).rejects.toMatchObject({ code: '22023' });
-    await admin.query("UPDATE human_tenant_memberships SET actor_alias=$2,role='reader',permissions=ARRAY['read'] WHERE human_id=$1", [humanId, version.alias]);
+    await admin.query("UPDATE human_tenant_memberships SET actor_alias=$2,permissions=ARRAY['read'] WHERE human_id=$1", [humanId, version.alias]);
+    await admin.query("UPDATE console_users SET role='reader' WHERE id=$1", [humanId]);
     await expect(anchor(version)).rejects.toMatchObject({ code: '22023' });
-    await admin.query("UPDATE human_tenant_memberships SET role='operator',permissions=ARRAY['read','control'] WHERE human_id=$1", [humanId]);
+    await admin.query("UPDATE console_users SET role='operator' WHERE id=$1", [humanId]);
+    await admin.query("UPDATE human_tenant_memberships SET permissions=ARRAY['read','control'] WHERE human_id=$1", [humanId]);
     const foreign = await channelCompany(pool, 'anchor-human-foreign');
     await expect(anchor({ ...version, company_id: foreign.company.id })).rejects.toMatchObject({ code: '22023' });
     expect((await pool.query('SELECT * FROM memberships WHERE tenant_id=$1 AND alias=$2 ORDER BY room_id', [company.hub.id, broker])).rows).toEqual(before);

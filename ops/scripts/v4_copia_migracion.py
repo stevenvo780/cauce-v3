@@ -42,8 +42,9 @@ OMISSION_RULES = (
     ('profile', re.compile(r'profile')),
     ('credential', re.compile(
         r'(?:\.ssh|\.gnupg|\.aws|\.docker|\.kube|\.password-store|\.netrc|_netrc|\.git-credentials|\.pgpass|\.npmrc'
-        r'|\.pypirc|\.yarnrc(?:\.yml)?|\.boto|\.s3cfg|\.htpasswd|\.env(?:\..*)?|kubeconfig|known_hosts|cookies.*'
+        r'|\.pypirc|\.yarnrc(?:\.yml)?|\.boto|\.s3cfg|\.htpasswd|\.env(?:\..*)?|kubeconfig|known_hosts|cookies?.*'
         r'|id_(?:rsa|dsa|ecdsa|ed25519).*|.*credential.*|.*secret.*|.*passw(?:or)?d.*|.*api[-_]?key.*'
+        r'|.*contrase.*|.*clave.*|.*bearer.*|.*private[-_]?key.*|.*[-_]key\..*'
         r'|.*\.(?:pem|key|p8|p12|pfx|ppk|jks|keystore|kdbx|gpg|asc|ovpn|hdr))')),
 )
 REGENERABLE = frozenset({'node_modules', '__pycache__', '.venv', 'venv', '.pytest_cache', '.mypy_cache',
@@ -53,10 +54,16 @@ SENSITIVE_CONTENT = re.compile(
     rb'|\bgh[pousr]_[A-Za-z0-9]{20,}|\bgithub_pat_[A-Za-z0-9_]{20,}|\bglpat-[A-Za-z0-9_-]{20,}|\bxox[abprs]-[A-Za-z0-9-]{10,}'
     rb'|\b(?:AKIA|ASIA)[0-9A-Z]{16}\b|\bnpm_[A-Za-z0-9]{36}\b|\bAIza[0-9A-Za-z_-]{35}|\bya29\.[0-9A-Za-z_-]{20,}'
     rb'|\bxai-[A-Za-z0-9]{20,}|\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}'
+    rb'|hooks\.slack\.com/services/[A-Za-z0-9/]{10,}'
     rb'|://[^\s/:@"\'<>]+:[^\s/@"\'<>]+@|authorization["\']?\s*[:=]\s*["\']?(?:bearer|basic|token)\s+[A-Za-z0-9._~+/=-]{8,}'
-    rb'|["\']?(?:access[_-]?token|refresh[_-]?token|id[_-]?token|auth[_-]?token|client[_-]?secret|api[_-]?key'
-    rb'|secret[_-]?key|private[_-]?key|password|passwd)["\']?\s*[:=]\s*["\']?(?!\$\{|process\.env)[^\s"\',;]{8,}',
+    rb'|\bbearer\s+[A-Za-z0-9._~+/=-]{10,}|\bcookie\s*:\s*[^\s;]{8,}'
+    rb'|["\']?[a-z0-9_-]*(?:secret|token|password|passwd|passphrase|contrasena|contrase(?:\xc3\xb1|n)a|clave|credential'
+    rb'|api[_-]?key|apikey|private[_-]?key)[a-z0-9_-]*["\']?\s*[:=]\s*["\']?(?!\$\{|process\.env)[^\s"\',;]{8,}',
     re.I)
+CONFUSABLES = str.maketrans({'\u0430': 'a', '\u0441': 'c', '\u0435': 'e', '\u043e': 'o', '\u0440': 'p',
+                             '\u0445': 'x', '\u0443': 'y', '\u0455': 's', '\u0456': 'i', '\u0458': 'j',
+                             '\u04bb': 'h', '\u03b1': 'a', '\u03b5': 'e', '\u03b9': 'i', '\u03bf': 'o'})
+ZERO_WIDTH = frozenset('\u200b\u200c\u200d\ufeff')
 OVERLAP = 4096
 CHUNK = 1 << 20
 OPEN_DIRECTORY = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
@@ -83,7 +90,8 @@ def seal(doc: dict) -> str:
 
 
 def omission_reason(name: str, directory: bool) -> str | None:
-    folded = unicodedata.normalize('NFKC', name).casefold()
+    folded = ''.join(character for character in unicodedata.normalize('NFKC', name).casefold()
+                     if character not in ZERO_WIDTH).translate(CONFUSABLES)
     for reason, pattern in OMISSION_RULES:
         if pattern.search(folded) if reason != 'credential' else pattern.fullmatch(folded):
             return reason
@@ -205,6 +213,25 @@ class Copier:
         self.omissions: list[dict] = []
         self.repositories: dict[str, dict] = {}
         self.tracked: dict[str, dict] = {}
+        self.host_roots: list[str] = []
+
+    def git_file_outside(self, directory: int) -> bool:
+        try:
+            descriptor = os.open('.git', OPEN_FILE, dir_fd=directory)
+            try:
+                content = os.read(descriptor, 4096).decode('utf-8', 'surrogateescape').strip()
+            finally:
+                os.close(descriptor)
+            host_directory = os.readlink(f'/proc/self/fd/{directory}')
+        except OSError:
+            return True
+        if not content.startswith('gitdir:'):
+            return True
+        target = content[len('gitdir:'):].strip()
+        if not target:
+            return True
+        resolved = os.path.realpath(target if os.path.isabs(target) else os.path.join(host_directory, target))
+        return not any(under(resolved, root) for root in self.host_roots)
 
     def omit(self, path: str, reason: str, parent: int, name: str, info: os.stat_result) -> None:
         files, size = (0, 0) if stat.S_ISDIR(info.st_mode) else (1, info.st_size)
@@ -312,6 +339,9 @@ class Copier:
         if marker is not None and stat.S_ISLNK(marker.st_mode):
             self.omissions.append({'path': path + '/.git', 'reason': 'unsafe-git-link', 'kind': 'symlink',
                                    'files': 0, 'bytes': 0})
+        elif marker is not None and stat.S_ISREG(marker.st_mode) and self.git_file_outside(directory):
+            self.omissions.append({'path': path + '/.git', 'reason': 'unsafe-git-link', 'kind': 'file',
+                                   'files': 0, 'bytes': 0})
         elif marker is not None:
             self.repository(path, directory)
         self.entries.append({'path': path, 'kind': 'directory', 'mode': stat.S_IMODE(os.fstat(directory).st_mode)})
@@ -365,6 +395,7 @@ def copy(alias: str, sources: list[str], output: str, scope: dict) -> dict:
         raise Failure('the copy cannot live inside a source, nor a source inside the copy')
     os.makedirs(output, mode=0o700, exist_ok=False)
     copier = Copier(output)
+    copier.host_roots = sorted(roots.values())
     for name, location in sorted(roots.items()):
         descriptor = os.open(location, OPEN_DIRECTORY)
         try:

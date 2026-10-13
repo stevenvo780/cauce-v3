@@ -21,8 +21,8 @@ async function person(tenant: string, alias: string, permissions = ['read', 'con
   const id = randomUUID();
   await admin.query(`INSERT INTO console_users(id,email,email_normalized,password_hash,display_name,role,tenant_id,alias)
     VALUES($1,$2,$2,$3,'Fixture','operator',$4,$5)`, [id, `${id}@example.test`, '$scrypt$' + 'x'.repeat(48), tenant, alias]);
-  await admin.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,role,permissions)
-    VALUES($1,$2,$3,'operator',$4)`, [id, tenant, alias, permissions]);
+  await admin.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,permissions)
+    VALUES($1,$2,$3,$4)`, [id, tenant, alias, permissions]);
   return id;
 }
 
@@ -30,8 +30,8 @@ beforeEach(async () => {
   if (!database) throw new Error('test database absent');
   current = await startTestCaseDatabase(database); pool = current.pool; admin = current.adminPool;
   const seeded = await seedCompanyIsolation(admin);
-  await admin.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,role,permissions)
-    VALUES($1,'PraxisHub','company_admin','operator',ARRAY['read','control'])`, [seeded.leon]);
+  await admin.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,permissions)
+    VALUES($1,'PraxisHub','company_admin',ARRAY['read','control'])`, [seeded.leon]);
   await admin.query(`UPDATE memberships SET role='operator' WHERE (tenant_id,alias) IN (('Isa','salva'),('Miguel','janus'))`);
   await admin.query(`INSERT INTO memberships(tenant_id,room_id,alias,role)
     VALUES('Steven','company-humanizar','zeus','operator')`);

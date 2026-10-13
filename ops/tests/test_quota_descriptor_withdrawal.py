@@ -186,3 +186,7 @@ def test_pin_rejection_inside_creation_attempt_does_not_compensate(tmp_path):
     remove.assert_not_called()
     assert inspect.call_count == 1
     assert execute.call_count == 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(pytest.main([__file__, "-q"]))

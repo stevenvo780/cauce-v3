@@ -13,7 +13,7 @@ import { agentFatigue } from '../accounts/quota-availability';
 import { quotaReadFailure } from '../accounts/quota-messages';
 import { FatigueIndicator } from '../accounts/FatigueIndicator';
 import { OfficeLayoutEditor } from './OfficeLayoutEditor';
-import { officeFailure, planSaveUnavailableReason } from './office-errors';
+import { officeFailure, officeVersionConflict, planSaveUnavailableReason } from './office-errors';
 import { officeLayoutProblem, officeRoomKey, officeRooms, reconcileOfficeLayout } from './office-layout';
 import type { OfficeAgent } from './office-agent';
 
@@ -26,7 +26,7 @@ export function OfficeWorkspace({ campus, topology, agents, onAgent }: {
   // Plan, campus strip and agent sheet read the one shared quota snapshot of the fleet provider.
   const quotas = useQuotaAccounts();
   const [mode, setMode] = useState<'campus' | 'plan'>('campus');
-  const [draft, setDraft] = useState<{ version: number; rooms: OfficeRoom[] }>();
+  const [draft, setDraft] = useState<{ version: number; rooms: OfficeRoom[]; conflicted?: boolean }>();
   const [roomKey, setRoomKey] = useState<string>();
   const [busy, setBusy] = useState(false);
   // The campus reads the saved plan once when it mounts: a new key after each save makes it read the new one.
@@ -37,6 +37,7 @@ export function OfficeWorkspace({ campus, topology, agents, onAgent }: {
   const shown = reconcileOfficeLayout(rooms, draft?.rooms ?? layout.data?.rooms ?? []);
   const writable = canManageCompany(authority?.role) && !!layout.data && !layout.error && !layout.loading && !busy;
   const failure = error ?? (layout.error ? officeFailure(layout.error) : undefined);
+  const quotaFailure = quotas.error ? quotaReadFailure(quotas.error, 'No se pudieron leer las cuotas de los agentes. Relee el plano y las cuotas.') : undefined;
   // Rooms are known once the topology arrived and the saved plan answered, with data or with an error.
   const roomsRead = !!topology && (!!layout.data || !!layout.error);
   const unavailable = planSaveUnavailableReason({ role: authority?.role, layoutError: !!layout.error, draft: !!draft });
@@ -57,11 +58,11 @@ export function OfficeWorkspace({ campus, topology, agents, onAgent }: {
   }
   function update(room: OfficeRoom) {
     if (!writable || !layout.data) return;
-    setNotice(''); setDraft({ version: draft?.version ?? layout.data.version, rooms: shown.map(current => officeRoomKey(current.tenant_id, current.room_id)
+    setNotice(''); setDraft({ ...draft, version: draft?.version ?? layout.data.version, rooms: shown.map(current => officeRoomKey(current.tenant_id, current.room_id)
       === officeRoomKey(room.tenant_id, room.room_id) ? room : current) });
   }
   async function save() {
-    if (!writable || !draft) return;
+    if (!writable || !draft || draft.conflicted) return;
     const problem = officeLayoutProblem(shown);
     if (problem) { setError({ message: problem }); return; }
     setBusy(true); setError(undefined); setNotice('');
@@ -69,6 +70,7 @@ export function OfficeWorkspace({ campus, topology, agents, onAgent }: {
       await api.saveOfficeLayout({ expected_version: draft.version, rooms: shown });
     } catch (cause) {
       setError(officeFailure(cause));
+      if (officeVersionConflict(cause)) setDraft(current => current ? { ...current, conflicted: true } : current);
       setBusy(false);
       return;
     }
@@ -82,9 +84,15 @@ export function OfficeWorkspace({ campus, topology, agents, onAgent }: {
     setBusy(false);
   }
   async function rereadPlan() {
+    setBusy(true);
     const plan = layout.reload();
     void quotas.reload();
-    if (!(await plan).error) setError(undefined);
+    const reread = await plan;
+    if (reread.data) {
+      setDraft(current => current ? { ...current, version: reread.data.version, conflicted: false } : current);
+      setError(undefined);
+    }
+    setBusy(false);
   }
   return <div className="flex h-full min-h-0 flex-col">
     <div className="flex flex-wrap items-center gap-2 border-b border-line bg-surface px-3 py-2" aria-label="Vistas de oficina">
@@ -94,6 +102,8 @@ export function OfficeWorkspace({ campus, topology, agents, onAgent }: {
       <a className="ml-auto text-xs text-brand-ink" href="/config?seccion=espacios" onClick={event => { onNavClick(event, '/config?seccion=espacios'); }}>Gestionar salas y asignaciones</a>
     </div>
     <div key={planSaves} className={mode === 'campus' ? 'flex min-h-0 flex-1 flex-col' : 'hidden'}>
+      {mode === 'campus' && quotaFailure ? <div className="shrink-0"><ErrorNotice failure={{ ...quotaFailure,
+        message: `${quotaFailure.message}${quotaFailure.message.includes('Relee el plano y las cuotas.') ? '' : ' Relee el plano y las cuotas.'} Abre «Plano editable» para hacerlo.` }} /></div> : null}
       <section aria-label="Cansancio de agentes del campus" className="flex shrink-0 gap-2 overflow-x-auto border-b border-line bg-subtle p-2">
         {[...new Set(rooms.flatMap(room => room.agents))].map(agentButton)}
       </section>
@@ -101,13 +111,13 @@ export function OfficeWorkspace({ campus, topology, agents, onAgent }: {
     </div>
     {mode === 'plan' ? <div className="grid min-h-0 flex-1 content-start gap-3 overflow-auto p-4">
       <header className="flex flex-wrap items-center justify-between gap-2"><h2 className="m-0 text-lg">Plano de oficina</h2>
-        <div className="flex flex-wrap gap-2"><Button disabled={busy || layout.loading || !!draft} onClick={() => { void rereadPlan(); }}>Releer plano y cuotas</Button>
-          <Button variant="primary" disabled={!writable || !draft} onClick={() => { void save(); }}>Guardar plano</Button>
+        <div className="flex flex-wrap gap-2"><Button disabled={busy || layout.loading || (!!draft && !draft.conflicted)} onClick={() => { void rereadPlan(); }}>Releer plano y cuotas</Button>
+          <Button variant="primary" disabled={!writable || !draft || draft.conflicted} onClick={() => { void save(); }}>Guardar plano</Button>
           <Button disabled={busy || !draft} onClick={() => { setDraft(undefined); setError(undefined); }}>Descartar cambios de plano</Button></div></header>
-      {unavailable || draft ? <p className="m-0 text-xs text-muted">{unavailable ?? 'Guarda o descarta los cambios de plano antes de releerlo.'}</p> : null}
+      {unavailable || (draft && !draft.conflicted) ? <p className="m-0 text-xs text-muted">{unavailable ?? 'Guarda o descarta los cambios de plano antes de releerlo.'}</p> : null}
       {layout.loading ? <p role="status">Leyendo plano…</p> : null}
       {failure ? <ErrorNotice failure={failure} /> : null}
-      {quotas.error ? <ErrorNotice failure={quotaReadFailure(quotas.error, 'No se pudieron leer las cuotas de los agentes. Relee el plano y las cuotas.')} /> : null}
+      {quotaFailure ? <ErrorNotice failure={quotaFailure} /> : null}
       {notice ? <Notice tone="ok" role="status">{notice}</Notice> : null}
       {!topology ? <p role="status" className="m-0 text-xs">Leyendo salas…</p> : null}
       {roomsRead && !rooms.length ? <Notice tone="info">Aún no hay salas. Crea una desde «Gestionar salas y asignaciones».</Notice> : null}

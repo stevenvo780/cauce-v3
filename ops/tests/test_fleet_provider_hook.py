@@ -70,6 +70,27 @@ class ProviderHookTests(unittest.TestCase):
             },
         }
 
+    def test_global_bundle_digest_rejects_changed_fleet_module_without_individual_pin(self):
+        from fleet_executor_runtime import bundle_digest
+        bundle = self.root / "bundle"
+        descriptors = bundle / "packages/adapter-sdk/dist/descriptors"
+        descriptors.mkdir(parents=True)
+        target = descriptors / "grok.json"
+        raw = (pathlib.Path(__file__).resolve().parents[2] / "packages/adapter-sdk/descriptors/grok.json").read_bytes()
+        target.write_bytes(raw)
+        target.chmod(0o600)
+        policy = {"bundles": {"grok": {"directory": str(bundle), "digest": bundle_digest(str(bundle))}}}
+        self.assertEqual(identity.resolve_fleet_module(policy, "grok"), "fleet_provider_grok")
+        changed = json.loads(raw)
+        changed["provider"]["fleet_module"] = None
+        target.write_text(json.dumps(changed))
+        target.chmod(0o600)
+        with self.assertRaisesRegex(ValueError, "bundle digest"):
+            identity.resolve_fleet_module(policy, "grok")
+        policy["bundles"]["grok"]["digest"] = bundle_digest(str(bundle))
+        self.assertIsNone(identity.resolve_fleet_module(policy, "grok"))
+        self.assertEqual(identity.resolve_fleet_module({}, "grok"), "fleet_provider_grok")
+
     def test_absolute_pinned_provider_identity_and_real_process_nonce(self):
         with patch.dict("os.environ", {"PATH": "/usr/bin:/bin"}):
             self.assertTrue(identity.authenticated_provider(self.packet))

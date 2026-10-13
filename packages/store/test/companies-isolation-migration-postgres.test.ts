@@ -291,7 +291,7 @@ describe('company isolation and owner migrations from a production-shaped 051 da
       ORDER BY 1`)).rows).toEqual(['legacy-host', 'placed-host', 'reported-host'].map(host_id => ({ host_id, company_id: 'humanizar' })));
     const person = (await pool.query<{ id: string }>(`INSERT INTO console_users(email,email_normalized,password_hash,display_name,role,tenant_id,alias)
       VALUES('legacy@example.test','legacy@example.test',$1,'Legacy','operator','Isa','salva') RETURNING id::text`, ['$scrypt$' + 'x'.repeat(48)])).rows[0]?.id;
-    await pool.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,role) VALUES($1,'Isa','salva','operator')`, [person]);
+    await pool.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias) VALUES($1,'Isa','salva')`, [person]);
     await pool.query("UPDATE human_tenant_memberships SET permissions=ARRAY['read','control'] WHERE human_id=$1", [person]);
     expect((await pool.query('SELECT company_id,revision FROM human_tenant_memberships WHERE human_id=$1', [person])).rows)
       .toEqual([{ company_id: 'humanizar', revision: '2' }]);

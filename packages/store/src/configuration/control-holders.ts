@@ -9,7 +9,7 @@ export const QUALIFIED_PEOPLE_SQL = `SELECT person.id,person.company_id FROM con
   JOIN companies company ON company.id=tenant.company_id
   WHERE person.active AND person.role='operator' AND company.enabled AND company.retired_at IS NULL
     AND tenant.enabled AND tenant.retired_at IS NULL AND tenant.purged_at IS NULL
-    AND home.enabled AND home.revoked_at IS NULL AND home.role='operator' AND home.actor_alias=person.alias
+    AND home.enabled AND home.revoked_at IS NULL AND home.actor_alias=person.alias
     AND 'control'=ANY(home.permissions) AND EXISTS(
       SELECT 1 FROM memberships membership
       JOIN role_policies role ON role.role=membership.role

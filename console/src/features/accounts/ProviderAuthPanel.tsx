@@ -79,7 +79,7 @@ export function ProviderAuthPanel({ request, client, onAuthenticated, title = 'C
       if (pending) return;
       pending = true;
       void client.get(session.session_id).then(value => { if (!disposed) accept(value); })
-        .catch(cause => { if (!disposed) setError(requestError(cause)); })
+        .catch((cause: unknown) => { if (!disposed) setError(requestError(cause)); })
         .finally(() => { pending = false; });
     }, 1000);
     return () => { disposed = true; clearInterval(timer); };

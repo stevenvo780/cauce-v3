@@ -38,7 +38,7 @@ async function validateResources(check: Check, company: IsolationCompany): Promi
       AND person.active AND person.role='operator' AND person.tenant_id=$3 AND person.alias=$4 AND person.email=$5`,
   [human, id, tenant, company.ownerAlias, company.email]);
   await check('ownerAlias', `SELECT 1 FROM human_tenant_memberships WHERE human_id::text=$1 AND company_id=$2
-    AND tenant_id=$3 AND actor_alias=$4 AND role='operator' AND enabled AND revoked_at IS NULL AND 'control'=ANY(permissions)`,
+    AND tenant_id=$3 AND actor_alias=$4 AND enabled AND revoked_at IS NULL AND 'control'=ANY(permissions)`,
   [human, id, tenant, company.ownerAlias]);
   await check('alias', `SELECT 1 FROM agents WHERE tenant_id=$1 AND alias=$2 AND company_id=$3 AND retired_at IS NULL
     AND host_id=$4 AND home_directory=$5 AND state_directory=$6`,

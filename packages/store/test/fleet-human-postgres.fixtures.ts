@@ -11,8 +11,8 @@ export async function seedFleetHuman(
   const id = randomUUID();
   await pool.query(`INSERT INTO console_users(id,email,email_normalized,password_hash,display_name,role,tenant_id,alias)
     VALUES($1,$2,$2,$3,'Fleet operator','operator',$4,$5)`, [id, `${id}@example.test`, '$scrypt$' + 'x'.repeat(48), tenant, alias]);
-  await pool.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,role,permissions)
-    VALUES($1,$2,$3,'operator',ARRAY['read','control'])`, [id, tenant, alias]);
+  await pool.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,permissions)
+    VALUES($1,$2,$3,ARRAY['read','control'])`, [id, tenant, alias]);
   if (role !== null) {
     await pool.query(`INSERT INTO company_admins(company_id,human_id,role,source,granted_by)
       SELECT company_id,$1,$2,'platform',$1 FROM tenants WHERE id=$3`, [id, role, tenant]);

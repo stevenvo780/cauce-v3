@@ -27,8 +27,8 @@ beforeEach(async () => {
   people = await seedCompanyIsolation(admin);
   await admin.query("UPDATE memberships SET role='operator' WHERE tenant_id='Miguel' AND alias='janus'");
   await admin.query('UPDATE console_users SET password_hash=$1', [hash]);
-  await admin.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,role,permissions)
-    VALUES($1,'PraxisHub','company_admin','operator',ARRAY['read','control'])`, [people.leon]);
+  await admin.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,permissions)
+    VALUES($1,'PraxisHub','company_admin',ARRAY['read','control'])`, [people.leon]);
   const provider = new PasswordAuthProvider({ users: new PostgresConsoleUserStore(pool), signingKey: Buffer.alloc(32, 43) });
   app = await buildTestGateway({ pool, authProvider: provider, repository: new CauceRepository(pool) });
 });

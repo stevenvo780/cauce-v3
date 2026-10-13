@@ -218,3 +218,14 @@ export async function lockConsolePerson(client: DatabaseClient, humanId: string)
       actorAlias: account.alias, company: account.company_id }),
     ...(home === undefined ? {} : { membership: withAccountRole(home, account.role) }) });
 }
+
+/**
+ * Whether the person is an active operator whose own home membership grants `control`. The
+ * membership role is derived from console_users.role (081), so the operator check reads the account.
+ */
+export async function holdsHomeControlAsOperator(client: DatabaseClient, humanId: string): Promise<boolean> {
+  const result = await client.query(`SELECT 1 FROM console_users person JOIN human_tenant_memberships human ON human.human_id=person.id
+    AND human.tenant_id=person.tenant_id AND human.actor_alias=person.alias WHERE person.id=$1 AND person.active AND person.role='operator'
+    AND human.enabled AND human.revoked_at IS NULL AND 'control'=ANY(human.permissions) FOR SHARE OF person,human`, [humanId]);
+  return result.rowCount === 1;
+}

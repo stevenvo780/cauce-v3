@@ -19,7 +19,8 @@ const REQUEST_MS = 30_000;
 const PROGRESS_BYTES = 8 * 1024 * 1024;
 const MIB = (bytes: number) => (bytes / 1024 / 1024).toFixed(2);
 interface SavedFile { write(data: Uint8Array): Promise<void>; close(): Promise<void>; abort(): Promise<void> }
-type SaveFilePicker = (options: { suggestedName: string }) => Promise<{ createWritable(): Promise<SavedFile> }>;
+type SaveFilePicker = (options: { suggestedName: string }) => Promise<{ name: string; createWritable(): Promise<SavedFile> }>;
+const shellArgument = (value: string) => /^[A-Za-z0-9_.-]+$/u.test(value) ? value : `'${value.replaceAll("'", "'\\''")}'`;
 const FAILURES: Record<number, string> = {
   404: 'No se encontró el agente, su ubicación o el backup. Relee el agente: puede haberse movido o retirado.',
   409: 'No se pudo crear el backup ahora: el ordenador del espacio no tiene ejecutor disponible, se alcanzó el límite de copias o de espacio reservado, o cambió la política. Libera copias o recupera el ordenador y vuelve a intentarlo.',
@@ -84,34 +85,40 @@ function BackupPanel({ target, allowed }: { target: SpaceBackupTarget; allowed: 
   }, [enabled, requestIsCurrent]);
   const fileName = (ready: SpaceBackup) => `space-${target.alias.replace(/[^A-Za-z0-9_-]/gu, '_').slice(0, 64)}-${ready.id}.zip`;
   const verifiedDownload = async (ready: SpaceBackup, picker: SaveFilePicker) => {
-    let file: SavedFile;
-    try { file = await (await picker({ suggestedName: fileName(ready) })).createWritable(); } catch { return; }
+    let file: SavedFile | undefined; let reader: ReadableStreamDefaultReader<Uint8Array> | undefined; let saved = false; let name = fileName(ready);
     const request = new AbortController(); const started = generation.current; requests.current.add(request);
     locked.current = true; setBusy('downloading'); setError(''); setNotice(''); setVerified(undefined); setProgress(0);
     const hash = new Sha256Stream(); let received = 0; let shown = 0;
+    const ensureCurrent = () => { if (!requestIsCurrent(request, started)) throw new Error('space backup download invalidated'); };
     try {
-      const reader = (await api.downloadSpaceBackup(ready, request.signal)).getReader();
+      const handle = await picker({ suggestedName: name }); ensureCurrent(); name = handle.name;
+      file = await handle.createWritable(); ensureCurrent();
+      reader = (await api.downloadSpaceBackup(ready, request.signal)).getReader(); ensureCurrent();
       for (let part = await reader.read(); !part.done; part = await reader.read()) {
+        ensureCurrent();
         received += part.value.byteLength;
         if (received > (ready.bytes ?? 0)) throw new Error('space backup download exceeds its receipt');
-        hash.update(part.value); await file.write(part.value);
+        hash.update(part.value); await file.write(part.value); ensureCurrent();
         if (received - shown >= PROGRESS_BYTES && requestIsCurrent(request, started)) { shown = received; setProgress(received); }
       }
+      ensureCurrent();
       const sha256 = hash.hex();
       if (received !== ready.bytes || sha256 !== ready.sha256) {
-        await file.abort();
         if (requestIsCurrent(request, started)) setError(`El archivo descargado no coincide con el backup del servidor (SHA-256 ${sha256}, ${MIB(received)} MiB) y se descartó. Actualiza el estado y vuelve a descargarlo.`);
         return;
       }
-      await file.close();
+      await file.close(); saved = true;
       if (!requestIsCurrent(request, started)) return;
-      setVerified({ sha256, file: fileName(ready) }); setNotice('Descarga verificada: el ZIP guardado tiene el tamaño y el SHA-256 del backup del servidor.');
+      setVerified({ sha256, file: name }); setNotice('Descarga verificada: el ZIP guardado tiene el tamaño y el SHA-256 del backup del servidor.');
     } catch (cause) {
-      await file.abort().catch(() => undefined);
       if (!active.current || started !== generation.current) return;
+      if (cause instanceof DOMException && cause.name === 'AbortError') return;
       if (cause instanceof ApiError && [401, 403].includes(cause.status)) { permitted.current = false; setBackup(undefined); setInvalidated(true); }
       setError((cause instanceof ApiError ? FAILURES[cause.status] : undefined) ?? 'La descarga se interrumpió y no se guardó ningún archivo. Actualiza el estado del backup y vuelve a descargarlo.');
     } finally {
+      request.abort();
+      if (reader) { await reader.cancel().catch(() => undefined); reader.releaseLock(); }
+      if (!saved) await file?.abort().catch(() => undefined);
       requests.current.delete(request);
       if (active.current && started === generation.current) { locked.current = false; setBusy(undefined); setProgress(undefined); }
     }
@@ -148,7 +155,7 @@ function BackupPanel({ target, allowed }: { target: SpaceBackupTarget; allowed: 
       {backup.status === 'ready' && backup.sha256 ? <p className="m-0 break-all text-xs text-muted">SHA-256: <code>{backup.sha256}</code></p> : null}
       {busy === 'downloading' ? <p className="m-0 text-xs" role="status">Descargando y verificando el SHA-256: {MIB(progress ?? 0)} de {MIB(backup.bytes ?? 0)} MiB.</p> : null}
       {verified ? <div className="grid gap-1 text-xs"><p className="m-0 break-all">SHA-256 calculado del archivo guardado: <code>{verified.sha256}</code> (coincide con el del servidor).</p>
-        <p className="m-0 break-all text-muted">Para restaurarlo en un directorio vacío: <code>cauce spaces restore --archive {verified.file} --directory &lt;directorio-vacío&gt; --company-id {backup.company_id} --tenant-id {backup.tenant_id} --alias {backup.alias} --runtime-key &lt;identity.runtime_key de space-manifest.json&gt;</code>. La restauración vuelve a comprobar el SHA-256 de cada archivo contra el manifiesto.</p></div> : null}
+        <p className="m-0 break-all text-muted">Desde el directorio privado que contiene el ZIP (0700, archivo 0600), restaura en una ruta absoluta nueva o vacía, cuyo padre también sea privado: <code>cauce spaces restore --archive {'"$(pwd -P)/"'}{shellArgument(verified.file)} --directory /ruta/absoluta/vacia --company-id {backup.company_id} --tenant-id {backup.tenant_id} --alias {backup.alias} --runtime-key &lt;identity.runtime_key de space-manifest.json&gt;</code>. La restauración vuelve a comprobar el SHA-256 de cada archivo contra el manifiesto.</p></div> : null}
       {backup.status === 'ready' && backup.sha256 ? <p className="m-0 text-xs text-muted">Para comparar el SHA-256 del archivo descargado: <code>sha256sum archivo.zip</code> en Linux, <code>shasum -a 256 archivo.zip</code> en macOS o <code>Get-FileHash archivo.zip -Algorithm SHA256</code> en Windows.</p> : null}</div> : null}
     <div className="flex flex-wrap gap-2">
       <Button disabled={!enabled || !!busy || backup?.status === 'pending' || backup?.status === 'running'} onClick={() => {

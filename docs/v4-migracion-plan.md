@@ -145,7 +145,7 @@ Host: 8 núcleos, 22,9 GiB de RAM (**18,4 GiB disponibles**), sin swap, 172 GB l
 
 ### Aislamiento del runtime y del fallback Muse del operador (requisito V4)
 
-**Runtime confiable.** Lo que el operador ejecuta para producir evidencia de supervisión (`praxis-proof.py`, `praxis-qa-review.py`) y el backend del fallback Muse (`muse-cli-backend.py` y su plugin `openclaw-muse-native/`) ya no viven en `<home-del-contenedor>/clawd/.cauce/runtime`, que el agente (uid 1000) puede reescribir, sino en **`/opt/cauce-hospital/runtime`** del host: `root:root`, directorios `0755`, ficheros `0644`. Lo instala `provision-agents.sh` con `ops/instances/hospital/operator-runtime-guard.py install`, que reemplaza cada fichero dentro del directorio (nunca el directorio: el bind fija su inodo), borra todo lo demás (`__pycache__`, `json.py` o `usercustomize.py` plantados, enlaces) y rechaza ancestros que no sean de root o que otros puedan escribir. Se invoca siempre en modo aislado: `/usr/bin/python3 -I -B /opt/cauce-hospital/runtime/muse-cli-backend.py` (plugin) y `/opt/praxis-qa-venv/bin/python -I -B /opt/cauce-hospital/runtime/praxis-{proof,qa-review}.py` (raíces del supervisor y `project-profile.json`). `-I` ignora `PYTHON*`, el *site* de usuario y el directorio del script; `-B` no escribe `.pyc`.
+**Runtime confiable.** Lo que el operador ejecuta para producir evidencia de supervisión (`praxis-proof.py`, `praxis-qa-review.py`) y el backend del fallback Muse (`muse-cli-backend.py` y su plugin `openclaw-muse-native/`) ya no viven en `<home-del-contenedor>/clawd/.cauce/runtime`, que el agente (uid 1000) puede reescribir, sino en **`/opt/cauce-hospital/runtime`** del host: `root:root`, directorios `0755`, ficheros `0644`. Lo instala `provision-agents.sh` con `ops/instances/hospital/operator-runtime-guard.py install`, que reemplaza cada fichero dentro del directorio (nunca el directorio: el bind fija su inodo), borra todo lo demás (`__pycache__`, `json.py` o `usercustomize.py` plantados, enlaces) y rechaza ancestros que no sean de root o que otros puedan escribir. Se invoca siempre en modo aislado: `/usr/bin/python3 -I -B /opt/cauce-hospital/runtime/muse-cli-backend.py` (plugin) y `/opt/praxis-qa-venv/bin/python -I -B /opt/cauce-hospital/runtime/praxis-{proof,qa-review}.py` (la raíz del supervisor, `ROOT_TEXT` en `praxis-supervision.py`). `-I` ignora `PYTHON*`, el *site* de usuario y el directorio del script; `-B` no escribe `.pyc`.
 
 El compose de `hospital-agent` **no está en este repo** (vive en `/opt/hospital-agent` del host del hospital y sus imágenes salen de `0790d9f5`, que tampoco está aquí). Montaje exacto que hay que añadir al servicio del operador (contenedor `hospital-agent-openclaw-operator-gateway-1`, servicio `openclaw-operator-gateway` del proyecto `hospital-agent`) y recrearlo con `docker compose up -d openclaw-operator-gateway`:
 
@@ -201,6 +201,105 @@ docker exec -u 1000:1000 praxis-muse-operador sh -c \
 **Temporales.** El backend escribe el prompt (`0600`) en `$TMPDIR/muse-openclaw-*` y lo borra al salir. Si lo matan con `SIGKILL`, el siguiente arranque barre los directorios propios con más de `TIMEOUT_SECONDS` + 300 s (45 min), sin seguir enlaces ni tocar los de otro uid. En el contenedor propio, `/tmp` es tmpfs y no sobrevive a un reinicio.
 
 **Retención de `~/.muse/data`.** Es el `XDG_DATA_HOME` de Muse: sesiones y transcripciones, que incluyen las instrucciones de sistema del operador y contenido sintético de Praxis (nunca datos clínicos reales: la raíz lo prohíbe). Política: vive solo en el montaje de estado de su contenedor (nunca en el workspace ni en Git); las sesiones sin actividad en 30 días se purgan por sesión con Muse detenido (una sesión purgada ya no se puede reanudar); entra en la copia cifrada del host con la retención de las copias; y al retirar el fallback se borra junto con su login de Muse. Vale igual para `state-muse-backend` y `state-muse-frontend`. La purga automática (timer) está pendiente.
+
+### Alta e importación de Praxis en la V4 central
+
+Un solo comando, `cauce platform empresa importar`, hace todo en una transacción de la base central:
+
+- **Alta de `praxis` con León de owner** por `cauce_register_company`, la misma vía que `POST /v3/console/companies`: la empresa, su hub, la sala `office`, el actor `owner` de León, su membresía y `company_admins` nacen juntos.
+- **Topología del hospital** desde el inventario versionado `ops/instances/hospital/praxis-v4.json`, aplicada con la transferencia de configuración de la plataforma (`plan-import` + `import`): tenant `Hospital` (no hub), sala `grp.hospital`, agentes `operador`, `perseo` y `teseo` como **borradores inactivos** y sus tres membresías. Añade las aristas hub ↔ `Hospital` con ruta y lectura, sin control.
+- **Verificación de aislamiento** antes de confirmar. Si una comprobación falla, no se confirma nada:
+  - `inventory_tenants_belong_to_company` y `company_has_one_hub`;
+  - `agents_belong_to_their_tenant_company`;
+  - `no_cross_company_routes` y `no_company_links`;
+  - `owner_confined_to_company`: León solo tiene membresías y rol de admin en `praxis`, y no es `platform_admin`;
+  - `owner_acts_only_on_company`: aunque pida `humanizar`, su autoridad resuelve `company_owner` de `praxis`;
+  - `foreign_administrators_excluded`: ningún owner o admin de otra empresa que no sea `platform_admin` actúa sobre `praxis`;
+  - `other_companies_unchanged`: la configuración, las personas y los admins de Humanizar quedan idénticos.
+- **Perfiles**, con `--perfiles`. Cada agente en borrador recibe el perfil vivo del hospital como versión 1 de su contexto (`agent_profiles` y `agent_context_versions`, origen `profile`). Este paso se ejecuta después de confirmar y nunca pisa un perfil que ya exista: si León lo edita, la repetición informa `kept_differs` y lo conserva. Solo prepara borradores; el perfil de un agente ya activo se edita desde la consola o con `cauce context`.
+
+Es idempotente: si se repite, la salida da `owner.state=existing`, `mutations: []` y perfiles `existing`, y no escribe nada. `--dry-run` ejecuta todo, incluida el alta, y lo deshace. Es el ensayo sobre la base real y deja libres los bloqueos de configuración de las empresas en segundos. El correo nunca entra al repositorio: llega por `--email` o por `CAUCE_IMPORT_OWNER_EMAIL`. La contraseña inicial llega por un archivo privado, nunca por argumento.
+
+Antes de conectar, el comando rechaza la deriva: si el hospital tiene un agente vivo que el inventario no declara, o al revés, falla con código 2. No importa:
+
+- `console-proxy`, el actor de consola de la V3: en V4 cada persona actúa con su propia identidad;
+- `praxis-supervisor`, la identidad del servicio de supervisión, que se crea al migrar ese servicio;
+- los alias viejos `backend` y `frontend`, ya deshabilitados;
+- las plantillas de rol, porque su texto viaja en el perfil;
+- contenedores, montajes, cuentas de proveedor, espacios ni credenciales: eso es la migración física (§5).
+
+También se ejecutó dentro de una imagen de runtime local (esquema 079), con usuario 1000, raíz de solo lectura, sin capacidades y con los archivos montados como los monta `cauce platform contenedor`. Contra un PostgreSQL desechable por loopback y sin TLS, dio ensayo, aplicación y repetición sin cambios.
+
+Probado de punta a punta en `ops/tests/empresa-importar.test.mjs`. La prueba levanta dos bases PostgreSQL reales por Testcontainers: la V3 del hospital (esquema 043 con `bootstrap.sql` y `enable-praxis.sql`), de la que exporta los perfiles con el SQL de abajo, y la V4 central con Humanizar. Importa con el owner ficticio `zz-canary` y comprueba el ensayo sin filas, el rechazo sin contraseña, la importación, el login con la contraseña inicial, la autoridad de cada lado, la repetición sin escrituras, la edición conservada, el dueño ajeno, el correo ya usado en Humanizar y el rechazo con una ruta entre empresas.
+
+**Procedimiento cuando llegue el correo de León.**
+
+Requisitos previos:
+
+- el release desplegado contiene estos commits;
+- en la base central ya hay un `platform_admin` activo, que actúa de forma implícita; si no lo hay, primero se ejecuta `ops/cli/cauce platform contenedor admin semilla --email <correo-de-Steven>`.
+
+1. Exportar en solo lectura los perfiles vivos del hospital y dejarlos en un directorio privado del host de producción. Se ejecuta desde donde funciona `ssh hospital`; la transacción del SQL es `READ ONLY`.
+
+   ```sh
+   ssh hospital 'sudo -n docker exec -i hospital-cauce-postgres-1 psql -U cauce_hospital -d cauce_hospital -X -A -t -q -v ON_ERROR_STOP=1' \
+     < ops/instances/hospital/praxis-perfiles-export.sql \
+     | ssh <usuario>@<host-prod> 'umask 077 && mkdir -p ~/.local/state/cauce-praxis && cat > ~/.local/state/cauce-praxis/perfiles.json'
+   ```
+
+2. En el host de producción, desde el checkout del release y con el usuario uid 1000, fijar los datos y generar la contraseña inicial. El contenedor corre como uid 1000 y solo acepta archivos privados de ese uid.
+
+   ```sh
+   cd <checkout-del-release>
+   umask 077
+   PRAXIS=~/.local/state/cauce-praxis
+   read -r CORREO_LEON
+   openssl rand -base64 24 > "$PRAXIS/clave-leon"
+   ```
+
+   `read` lee el correo sin dejarlo en el historial.
+
+3. Ensayo completo, que se deshace:
+
+   ```sh
+   ops/cli/cauce platform contenedor empresa importar --inventario "$PWD/ops/instances/hospital/praxis-v4.json" \
+     --perfiles "$PRAXIS/perfiles.json" --email "$CORREO_LEON" --nombre 'León' --dry-run
+   ```
+
+   Debe dar:
+   - `owner.state=planned` y `password_required=true`;
+   - 10 mutaciones: el tenant, la sala, 3 agentes, 3 membresías y 2 aristas;
+   - los tres perfiles `planned`;
+   - todas las comprobaciones de `isolation` con `ok: true`.
+
+   Un código 1 o 2 no deja nada escrito.
+
+4. Copia previa de la base central: `sudo systemctl start cauce-v3-host-backup.service`, y comprobar `overall == "ok"` en `/var/log/cauce-v3-backup/status.json`.
+
+5. Aplicar: el mismo comando con `--clave-archivo "$PRAXIS/clave-leon" --apply`. Debe dar:
+   - `owner.state=created`;
+   - las mismas mutaciones;
+   - los perfiles `prepared`;
+   - `isolation` en verde.
+
+6. Repetir el paso 3. Debe salir `owner.state=existing`, `mutations: []`, perfiles `existing` e `isolation` en verde.
+
+7. Comprobar por HTTP:
+   - León inicia sesión y `GET /v3/auth/session` da `company_owner` con `acting_company=praxis`;
+   - la consola le muestra `Hospital` con los tres borradores;
+   - con la sesión de Miguel, `GET /v3/console/companies/praxis` responde 403.
+
+8. Entregar la contraseña a León por un canal privado y borrar los archivos: `shred -u "$PRAXIS/clave-leon" "$PRAXIS/perfiles.json"`. Para rotarla, Steven la cambia en «Personas» (`PATCH /v3/console/people/:id` con `password`).
+
+Reversión: `ops/cli/cauce platform contenedor empresa estado --empresa praxis --estado retired --si`. Retira la empresa, revoca la autoridad y conserva los datos. La V3 del hospital no cambia en ningún paso.
+
+**Pendiente tras la importación.** Lo pendiente depende de la migración física y del dueño:
+
+- los agentes siguen en borrador hasta enrolar el servidor de destino y crearlos con la operación de flota (harness, `runtime_key`, colocación y cuenta);
+- el servicio de supervisión de Praxis y su identidad `praxis-supervisor` en V4;
+- el puente Muse aislado del operador;
+- la copia verificada del hospital (riesgo 8 de §5);
+- el corte con la V3 sin escritores y su retirada.
 
 ## 5. Propuesta de ubicación
 

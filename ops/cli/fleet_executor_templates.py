@@ -23,7 +23,7 @@ def descriptor_login_arguments(policy: dict, harness: str):
         return None
     try:
         from harness_operations import read_descriptor
-        descriptor, _ = read_descriptor(directory, harness)
+        descriptor, _ = read_descriptor(directory, harness, expected_sha256=bundle.get('descriptor_sha256'))
     except (OSError, ValueError, KeyError, TypeError):
         return None
     argv = (descriptor.get('provider') or {}).get('authenticate_argv')
@@ -223,6 +223,8 @@ def resolve_profile(policy: dict, agent: dict) -> dict | None:
 def fleet_harnesses(policy: dict) -> dict:
     """Fleet-eligible harnesses derive from each bundle descriptor: a harness is
     eligible only while its descriptor declares install, execute and authenticate."""
+    import fleet_executor_runtime  # noqa: F401  (places the container runtime on sys.path)
+    from cauce_container_base import PermanentError
     from harness_operations import HarnessOperationFailure, fleet_module, resolve_operation
     eligible = {}
     for harness, bundle in policy['bundles'].items():
@@ -230,13 +232,16 @@ def fleet_harnesses(policy: dict) -> dict:
         if not isinstance(directory, str):
             continue
         try:
+            if 'digest' in bundle:
+                from fleet_executor_runtime import approved_bundle
+                approved_bundle(policy, {'harness_id': harness, 'runtime_mode': 'container'})
             for operation in ('install', 'execute', 'authenticate'):
-                resolve_operation(harness, operation, directory)
-            module = fleet_module(harness, directory)
+                resolve_operation(harness, operation, directory, expected_sha256=bundle.get('descriptor_sha256'))
+            module = fleet_module(harness, directory, expected_sha256=bundle.get('descriptor_sha256'))
             if module is not None and not (pathlib.Path(__file__).resolve().parent / f'{module}.py').is_file():
                 continue
             eligible[harness] = module
-        except HarnessOperationFailure:
+        except (HarnessOperationFailure, SafeFailure, OSError, PermanentError):
             continue
     return eligible
 

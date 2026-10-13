@@ -21,7 +21,7 @@ beforeEach(async () => {
   const human = (await pool.query<{ id: string }>(`INSERT INTO console_users(email,email_normalized,password_hash,display_name,role,tenant_id,alias)
     VALUES('draft@example.test','draft@example.test',$1,'Draft','operator','Steven','draft-owner') RETURNING id`, ['$scrypt$' + 'x'.repeat(48)])).rows[0];
   if (!human) throw new Error('fixture human absent');
-  await pool.query("INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,role,permissions) VALUES($1,'Steven','draft-owner','operator',ARRAY['read','control'])", [human.id]);
+  await pool.query("INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,permissions) VALUES($1,'Steven','draft-owner',ARRAY['read','control'])", [human.id]);
   actor = { tenant_id: 'Steven', alias: 'draft-owner', subject: `console:${human.id}`, reason: 'Preparar el agente antes de iniciarlo',
     humanAuthority: async () => ({ humanId: human.id, tenantId: 'Steven', actorAlias: 'draft-owner' }),
     companyAuthority: client => lockCompanyAuthority(client, { tenant: 'Steven', alias: 'draft-owner', humanId: human.id }) };

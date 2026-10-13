@@ -7,7 +7,7 @@ import {
   type NativeAdminCommand, type NativePieceKind, type NativePieceMutation, type NativeRuntimeIdentity,
 } from '@cauce/protocol';
 import {
-  authorizeAgentContextDispatch, reserveAgentContextWrite, resolveAgentContextWrite, canonicalProfileRuntimeContract, StoreError,
+  authorizeAgentContextDispatch, reserveAgentContextWrite, resolveAgentContextWrite, canonicalProfileRuntimeContract, holdsHomeControlAsOperator, StoreError,
   withTransaction, type CauceRepository, type DatabaseClient, type DatabasePool,
 } from '@cauce/store';
 import type { AgentFactsProbe } from '../agent-documents.routes.js';
@@ -35,12 +35,7 @@ export function createNativeAdminService(deps: NativeAdminServiceDeps) {
     const target = await deps.repository.authorizeAgentTarget(TenantSchema.parse(actor.tenant_id), actor.alias,
       TenantSchema.parse(tenantId), AliasSchema.parse(alias), write ? 'control' : 'read', client);
     if (!target) throw new NativeAdminError('forbidden');
-    if (write) {
-      const result = await client.query(`SELECT 1 FROM console_users person JOIN human_tenant_memberships human ON human.human_id=person.id
-        AND human.tenant_id=person.tenant_id AND human.actor_alias=person.alias WHERE person.id=$1 AND person.active AND person.role='operator'
-        AND human.enabled AND human.revoked_at IS NULL AND human.role='operator' AND 'control'=ANY(human.permissions) FOR SHARE OF person,human`, [verified.humanId]);
-      if (!result.rowCount) throw new NativeAdminError('forbidden');
-    }
+    if (write && !await holdsHomeControlAsOperator(client, verified.humanId)) throw new NativeAdminError('forbidden');
     actor.signal?.throwIfAborted();
   }
   async function runtime(tenantId: string, alias: string) {

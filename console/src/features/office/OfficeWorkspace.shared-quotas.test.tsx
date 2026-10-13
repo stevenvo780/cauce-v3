@@ -73,6 +73,42 @@ it('el error de cuotas da la acción en español, conserva el motivo del servido
   }
 });
 
+it('el campus muestra el código y la recuperación cuando falla la lectura compartida de cuotas', async () => {
+  server.use(http.get('*/v3/console/quota-accounts', () => HttpResponse.json(
+    { error: 'forbidden', message: 'La cuenta de cuota pertenece a otra empresa.' }, { status: 403 },
+  )));
+  mount();
+  const alert = await screen.findByRole('alert');
+  expect(alert).toBeVisible();
+  expect(alert).toHaveTextContent('Motivo: La cuenta de cuota pertenece a otra empresa.');
+  expect(alert).toHaveTextContent('Relee el plano y las cuotas.');
+  expect(within(alert).getByText('forbidden', { selector: 'code' })).toBeVisible();
+});
+
+it.each([500, 504])('un error HTTP %s del plano conserva el código sin publicar detalles internos', async status => {
+  server.use(http.get('*/v3/console/office/layout', () => HttpResponse.json(
+    { error: 'office_unavailable', message: 'Private upstream exception at /srv/private' }, { status },
+  )));
+  const user = userEvent.setup(); mount();
+  await user.click(screen.getByRole('button', { name: 'Plano editable' }));
+  const alert = await screen.findByRole('alert');
+  expect(alert).toHaveTextContent('El servidor no pudo leer o guardar el plano. Inténtalo más tarde.');
+  expect(alert.textContent).not.toContain('Private upstream exception');
+  expect(within(alert).getByText('office_unavailable', { selector: 'code' })).toBeVisible();
+});
+
+it('un 504 de cuotas conserva su código y ofrece recuperación sin la frase interna', async () => {
+  server.use(http.get('*/v3/console/quota-accounts', () => HttpResponse.json(
+    { error: 'quota_gateway_timeout', message: 'Private upstream exception at /srv/private' }, { status: 504 },
+  )));
+  const user = userEvent.setup(); mount();
+  await user.click(screen.getByRole('button', { name: 'Plano editable' }));
+  const alert = await screen.findByRole('alert');
+  expect(alert).toHaveTextContent('Relee el plano y las cuotas.');
+  expect(alert.textContent).not.toContain('Private upstream exception');
+  expect(within(alert).getByText('quota_gateway_timeout', { selector: 'code' })).toBeVisible();
+});
+
 it('oculta la frase interna de un 500 pero conserva su código y explica por qué un lector no puede guardar', async () => {
   server.use(http.get('*/v3/console/quota-accounts', () => HttpResponse.json(
     { error: 'internal', message: 'Internal Server Error' }, { status: 500 },

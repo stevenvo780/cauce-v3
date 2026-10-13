@@ -48,8 +48,8 @@ export class TerminalPasswordFixture {
           role,tenant_id,alias,active,password_changed_at)
           VALUES($1,$2,$2,$3,'Terminal fixture','operator','Steven','kant',true,'epoch')`,
         [account.id, account.email, account.passwordHash]);
-        await client.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,role,permissions)
-          VALUES($1,'Steven','kant','operator',ARRAY['read','route','control'])`, [account.id]);
+        await client.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,permissions)
+          VALUES($1,'Steven','kant',ARRAY['read','route','control'])`, [account.id]);
       }
       await client.query(`INSERT INTO rooms(id,tenant_id) VALUES($1,'Steven') ON CONFLICT DO NOTHING`, [this.roomId]);
       await client.query(`INSERT INTO memberships(tenant_id,room_id,alias,role) VALUES

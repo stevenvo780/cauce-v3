@@ -120,7 +120,7 @@ export async function seedForeignSameAlias(account: Account): Promise<HumanRecei
   const pool = databasePool();
   await pool.query("INSERT INTO agents(tenant_id,alias) VALUES('Isa',$1) ON CONFLICT DO NOTHING", [account.alias]);
   await pool.query("INSERT INTO memberships(tenant_id,room_id,alias,role,enabled) VALUES('Isa','grp.isa',$1,'human-reader',true) ON CONFLICT(tenant_id,room_id,alias) DO UPDATE SET role='human-reader',enabled=true", [account.alias]);
-  await pool.query("INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,role,permissions) VALUES($1,'Isa',$2,'reader',ARRAY['read'])", [foreign.humanId, foreign.alias]);
+  await pool.query("INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,permissions) VALUES($1,'Isa',$2,ARRAY['read'])", [foreign.humanId, foreign.alias]);
   await pool.query("UPDATE console_users SET tenant_id='Isa',role='reader' WHERE id=$1", [foreign.humanId]);
   await pool.query("UPDATE acl_edges SET enabled=true,allow_read=true WHERE from_tenant='Steven' AND to_tenant='Isa'");
   await pool.query("INSERT INTO connection_leases(tenant_id,alias,instance_id,epoch,last_heartbeat_at,lease_until) VALUES('Steven',$1,'read-lists-own',1,now(),now()+interval '1 minute'),('Isa',$1,'read-lists-foreign',1,now(),now()+interval '1 minute')", [account.alias]);

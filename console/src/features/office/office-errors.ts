@@ -3,10 +3,21 @@ import { failureCode, spanishWithReason, type Failure } from '../../api/error-me
 import type { ConsoleAuthorityRole } from '../../api/types';
 import { canManageCompany } from '../auth/company-authority';
 
+// The console client raises these 409s before the office write is sent. They share the status with a
+// layout version conflict, but the draft was not rejected by another operator and a reread cannot clear them.
+const SESSION_WRITE_BLOCKED = new Set(['company_switch_in_flight', 'company_scope_unverified', 'session_changed']);
+
+export function officeVersionConflict(cause: unknown): boolean {
+  return cause instanceof ApiError && cause.status === 409 && !SESSION_WRITE_BLOCKED.has(cause.code ?? '');
+}
+
 export function describeOfficeError(cause: unknown): string {
   if (cause instanceof ApiError) {
-    if (cause.status === 504) return cause.message;
+    if (cause.status >= 500) return 'El servidor no pudo leer o guardar el plano. Inténtalo más tarde.';
     const detail = cause.message.trim();
+    if (cause.status === 409 && SESSION_WRITE_BLOCKED.has(cause.code ?? '')) {
+      return detail || 'La sesión cambió o hay otro cambio de empresa en curso. Espera y vuelve a guardar el plano.';
+    }
     if (cause.status === 400 && detail === 'invalid office layout') {
       return 'El plano contiene datos que el servidor no acepta. Revisa las posiciones y tamaños de las salas antes de volver a guardarlo.';
     }
@@ -28,7 +39,6 @@ export function describeOfficeError(cause: unknown): string {
       return spanishWithReason('Otro operador guardó una versión nueva del plano mientras editabas. Relee el plano y vuelve a guardar; se conserva el borrador.', detail);
     }
     if (cause.status === 429) return spanishWithReason('Hay demasiadas solicitudes. Espera un momento e inténtalo de nuevo.', detail);
-    if (cause.status >= 500) return spanishWithReason('El servidor no pudo leer o guardar el plano. Inténtalo más tarde.', detail);
     return spanishWithReason('No se pudo leer o guardar el plano.', detail);
   }
   return cause instanceof Error ? cause.message : 'No se pudo leer o guardar el plano.';

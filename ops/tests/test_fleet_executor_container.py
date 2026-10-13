@@ -3,6 +3,7 @@ from __future__ import annotations
 # cauce:requiere docker
 import ast
 import hashlib
+import importlib.util
 import json
 import os
 import pathlib
@@ -477,7 +478,6 @@ class PurgeRemovalEvidenceTest(unittest.TestCase):
         self.assertIs(executor.journal.get('purged'), True)
 
 
-
 class DockerFailureDiagnosticTest(unittest.TestCase):
     """A failed Docker effect names its cause in the host journal instead of a bare 'unverified'."""
 
@@ -501,6 +501,47 @@ class DockerFailureDiagnosticTest(unittest.TestCase):
     def test_success_returns_stdout(self):
         import fleet_executor_container as container
         self.assertEqual(container.checked_command(['/bin/sh', '-c', 'printf ok']), b'ok')
+
+
+class PurgeBrowserFixtureRecoveryTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        DisposableContainerExecutorTest.setUpClass()
+
+    def test_interrupted_prepare_records_owned_resources_before_creating_them(self):
+        source = fixtures.OPS.parent / 'tests/e2e/v4-purge-docker.fixture.py'
+        spec = importlib.util.spec_from_file_location('purge_browser_fixture', source)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        key = 'zz-canary-recovery-' + uuid.uuid4().hex[:12]
+        fail_key = key + '-fail'
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            create = module.create_container
+            calls = 0
+
+            def interrupt(*args, **kwargs):
+                nonlocal calls
+                calls += 1
+                result = create(*args, **kwargs)
+                if calls == 2:
+                    raise RuntimeError('interrupted after Docker create')
+                return result
+
+            try:
+                with patch.object(sys, 'argv', [str(source), 'prepare', '--root', directory,
+                        '--tenant', 'zz-canary-tenant', '--alias', 'zzrecovery', '--runtime-key', key, '--fail-key', fail_key]), \
+                        patch.object(module, 'create_container', side_effect=interrupt):
+                    with self.assertRaisesRegex(RuntimeError, 'interrupted after Docker create'):
+                        module.main()
+                self.assertTrue((root / 'manifest.json').exists(), 'failed prepare must retain its cleanup manifest')
+                with patch.object(sys, 'argv', [str(source), 'cleanup', '--root', directory]):
+                    self.assertEqual(module.main(), 0)
+                report = sweep_owned_fleet(root / 'recovery-rows.json', [], key, key)
+                self.assertTrue(report['clean'], report)
+            finally:
+                module.remove(key)
+                module.remove(fail_key)
 
 
 if __name__ == '__main__':

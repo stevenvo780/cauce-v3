@@ -21,12 +21,19 @@ function stringParameter(value: unknown): string {
 
 function fixture(initial?: typeof existing) {
   let account = initial === undefined ? undefined : { ...initial };
+  const clamps: unknown[][] = [];
   const query = vi.fn(async (sql: string, params: unknown[] = []) => {
     const schema = schemaBarrierReply(sql, params);
     if (schema) return schema;
     if (['BEGIN', 'COMMIT', 'ROLLBACK'].includes(sql)) return { rows: [], rowCount: 0 };
     if (sql.startsWith('SELECT person.company_id=target.company_id')) {
       return { rows: account === undefined ? [] : [{ same: params[1] !== 'Otra empresa' }], rowCount: account === undefined ? 0 : 1 };
+    }
+    if (sql.startsWith('UPDATE human_tenant_memberships SET permissions=')) {
+      expect(sql).toContain("WHERE permission='read'");
+      expect(sql).toContain("NOT permissions <@ ARRAY['read']::text[]");
+      clamps.push(params);
+      return { rows: [], rowCount: 1 };
     }
     if (sql.startsWith('INSERT INTO human_tenant_memberships')) {
       expect(params).toHaveLength(5);
@@ -81,7 +88,7 @@ function fixture(initial?: typeof existing) {
     query,
     connect: async () => ({ query, release: vi.fn(), on: vi.fn(), off: vi.fn() }),
   } as unknown as DatabasePool;
-  return { pool, query, current: () => account };
+  return { pool, query, clamps, current: () => account };
 }
 
 describe('mantenimiento de usuarios: contrato de persistencia', () => {
@@ -175,6 +182,18 @@ describe('mantenimiento de usuarios: contrato de persistencia', () => {
     await expect(maintainConsoleUser(pool, placed, 'new-fixture-hash'))
       .rejects.toThrow('fixture insert failure');
     expect(release).toHaveBeenCalledWith(true);
+  });
+
+  it.each([true, false])('bajar a lector retira en la misma transacción todo permiso de casa salvo read (update=%s)', async (updateOnly) => {
+    const store = fixture({ ...existing, role: 'operator', active: true });
+    await maintainConsoleUser(store.pool, { ...placed, updateOnly, role: 'reader' }, 'new-fixture-hash');
+    expect(store.current()).toMatchObject({ role: 'reader' });
+    expect(store.clamps).toEqual([['fixture-person', 'Equipo']]);
+    const statements = store.query.mock.calls.map(([sql]) => sql);
+    expect(statements.indexOf('COMMIT')).toBeGreaterThan(statements.findIndex(sql => sql.startsWith('UPDATE human_tenant_memberships')));
+    const unchanged = fixture({ ...existing, role: 'operator', active: true });
+    await maintainConsoleUser(unchanged.pool, { ...placed, updateOnly, name: 'Otra' }, 'new-fixture-hash');
+    expect(unchanged.clamps).toEqual([]);
   });
 
   it('un alta respeta nombre, rol y ámbito explícitos', async () => {

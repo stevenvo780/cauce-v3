@@ -1,6 +1,7 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { FleetOperationRequest } from '@cauce/protocol';
 import { FleetOperationsRepository, type DatabasePool } from '../src/index.js';
+import { withTransaction } from '../src/db.js';
 import { preparePostgresSuite } from './postgres-suite.js';
 import { startTestCaseDatabase, startTestDatabase, type EmptyTestDatabase, type TestDatabase } from '../../../tests/helpers/postgres.js';
 
@@ -35,8 +36,8 @@ function create(): FleetOperationRequest {
         home_directory: '/home/dev', state_directory: '/home/dev/.cauce/human-test' } } };
 }
 async function membership(): Promise<void> {
-  await pool.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,role,permissions)
-    VALUES($1,'Steven','human_fleet_operator','operator',ARRAY['read','control']) ON CONFLICT DO NOTHING`, [humanId]);
+  await pool.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,permissions)
+    VALUES($1,'Steven','human_fleet_operator',ARRAY['read','control']) ON CONFLICT DO NOTHING`, [humanId]);
 }
 describe('durable human fleet provenance', () => {
   it('rejects an absent human membership even when the bus alias retains control', async () => {
@@ -65,6 +66,18 @@ describe('durable human fleet provenance', () => {
     await expect(repo.enqueue('Steven', 'human_fleet_operator', create(), subject)).rejects.toMatchObject({ code: 'forbidden' });
     expect((await pool.query('SELECT 1 FROM fleet_operations')).rowCount).toBe(0);
   });
+  it('rejects another company at preview and enqueue despite current human control', async () => {
+    const repo = repository();
+    const registered = (await pool.query<{ tenant_id: string }>(
+      "SELECT tenant_id FROM cauce_register_company('foreign-fleet@example.test','Foreign human',$1,'foreign-fleet','Foreign fleet')",
+      ['$scrypt$n=32768,r=8,p=1$' + 'A'.repeat(24) + '$' + 'A'.repeat(44)])).rows[0];
+    if (!registered) throw new Error('foreign company absent');
+    const foreign = { ...create(), target: { resource: 'agent' as const, tenant_id: registered.tenant_id, alias: 'human_created' } };
+    await expect(repo.preview('Steven', 'human_fleet_operator', foreign, subject)).rejects.toMatchObject({ code: 'forbidden' });
+    await expect(repo.enqueue('Steven', 'human_fleet_operator', foreign, subject)).rejects.toMatchObject({ code: 'forbidden' });
+    expect((await pool.query('SELECT 1 FROM fleet_operations')).rowCount).toBe(0);
+    expect((await pool.query("SELECT 1 FROM agents WHERE alias='human_created'")).rowCount).toBe(0);
+  });
   it('does not authorize a disabled human at enqueue and records revocation before claiming queued work', async () => {
     const repo = repository(); await pool.query('UPDATE console_users SET active=false WHERE id=$1', [humanId]);
     await expect(repo.enqueue('Steven', 'human_fleet_operator', create(), subject)).rejects.toMatchObject({ code: 'forbidden' });
@@ -75,14 +88,18 @@ describe('durable human fleet provenance', () => {
     expect(await repo.get('Steven', 'human_fleet_operator', queued.id)).toMatchObject({ status: 'failed', error: { code: 'AUTHORITY_REVOKED' } });
     expect((await pool.query("SELECT 1 FROM agents WHERE alias='human_created'")).rowCount).toBe(0);
   });
-  it.each(['account', 'membership', 'role'] as const)('reauthorizes the original %s at renewal and every executor phase after preparation', async (revocation) => {
+  it.each(['account', 'membership', 'role', 'company'] as const)('reauthorizes the original %s at renewal and every executor phase after preparation', async (revocation) => {
     const repo = repository(); await membership();
     await repo.enqueue('Steven', 'human_fleet_operator', create(), subject);
     const claim = await repo.claim('human-worker', 'human-host'); if (!claim) throw new Error('claim absent');
     await repo.prepare(claim); await repo.startStep(claim, 'artifacts');
     const version = (await repo.get('Steven', 'human_fleet_operator', claim.operation.id)).version;
     if (revocation === 'account') await pool.query('UPDATE console_users SET active=false WHERE id=$1', [humanId]);
-    else if (revocation === 'role') await pool.query("UPDATE console_users SET role='reader' WHERE id=$1", [humanId]);
+    else if (revocation === 'role') await withTransaction(pool, async client => {
+      await client.query("UPDATE human_tenant_memberships SET permissions=ARRAY['read'] WHERE human_id=$1", [humanId]);
+      await client.query("UPDATE console_users SET role='reader' WHERE id=$1", [humanId]);
+    });
+    else if (revocation === 'company') await caseDatabase?.adminPool.query('DELETE FROM company_admins WHERE human_id=$1', [humanId]);
     else await pool.query("UPDATE human_tenant_memberships SET permissions=ARRAY['read'],revision=revision+1 WHERE human_id=$1", [humanId]);
     expect(await repo.renew(claim)).toBe(false);
     for (const write of [() => repo.prepare(claim), () => repo.execution(claim), () => repo.startStep(claim, 'artifacts'),
@@ -102,8 +119,8 @@ describe('durable human fleet provenance', () => {
     await pool.query(`INSERT INTO console_users(id,email,email_normalized,password_hash,display_name,role,tenant_id,alias)
       VALUES($1,'other@isolated.test','other@isolated.test',$2,'Other human','operator','Steven','human_fleet_operator')`,
     [otherId, '$scrypt$' + 'x'.repeat(40)]);
-    await pool.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,role,permissions)
-      VALUES($1,'Steven','human_fleet_operator','operator',ARRAY['read','control'])`, [otherId]);
+    await pool.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,permissions)
+      VALUES($1,'Steven','human_fleet_operator',ARRAY['read','control'])`, [otherId]);
     await caseDatabase?.adminPool.query(`INSERT INTO company_admins(company_id,human_id,role,source,granted_by)
       VALUES('humanizar',$1,'admin','platform',$1)`, [otherId]);
     const queued = await repo.enqueue('Steven', 'human_fleet_operator', create(), subject);

@@ -83,8 +83,8 @@ describe('fleet routes bound to the verified selected company', () => {
       .toEqual([{ company_id: 'praxis', actor_tenant: 'Steven', actor_alias: 'kant' }]);
     expect((await pool.query('SELECT metadata FROM fleet_operation_events WHERE operation_id=$1 AND event=\'queued\'', [receipt.operation_id])).rows)
       .toEqual([{ metadata: { acting_company: 'praxis', actor_subject: `console:${people.steven}` } }]);
-    await admin.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,role,permissions)
-      VALUES($1,'PraxisHub','company_admin','operator',ARRAY['read','control'])`, [people.leon]);
+    await admin.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,permissions)
+      VALUES($1,'PraxisHub','company_admin',ARRAY['read','control'])`, [people.leon]);
     await admin.query('INSERT INTO platform_admins(human_id) VALUES($1)', [people.leon]);
     await admin.query('UPDATE console_users SET active=false WHERE id=$1', [people.steven]);
     expect((await post(selected, PATH, request)).statusCode).toBe(401);

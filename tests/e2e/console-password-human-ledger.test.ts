@@ -127,7 +127,8 @@ test('client cancellation removes the physically blocked authority backend', asy
 });
 
 
-test.each(['account', 'role', 'password', 'member-role', 'member-permission'] as const)(
+// The membership role derives from the account (081): a role revocation lowers the permissions in the same transaction.
+test.each(['account', 'role', 'password', 'member-permission'] as const)(
   'fresh locked authority rejects %s revocation after the password snapshot', async (change) => {
     const context = current();
     const a = await context.login(0);
@@ -137,9 +138,11 @@ test.each(['account', 'role', 'password', 'member-role', 'member-permission'] as
     try {
       await blocker.query('BEGIN');
       if (change === 'account') await blocker.query('UPDATE console_users SET active=false WHERE id=$1', [userId]);
-      if (change === 'role') await blocker.query("UPDATE console_users SET role='reader' WHERE id=$1", [userId]);
+      if (change === 'role') {
+        await blocker.query("UPDATE human_tenant_memberships SET permissions=ARRAY['read'],revision=revision+1 WHERE human_id=$1", [userId]);
+        await blocker.query("UPDATE console_users SET role='reader' WHERE id=$1", [userId]);
+      }
       if (change === 'password') await blocker.query("UPDATE console_users SET password_changed_at=clock_timestamp()+interval '5 seconds' WHERE id=$1", [userId]);
-      if (change === 'member-role') await blocker.query("UPDATE human_tenant_memberships SET role='reader',permissions=ARRAY['read'],revision=revision+1 WHERE human_id=$1", [userId]);
       if (change === 'member-permission') await blocker.query("UPDATE human_tenant_memberships SET permissions=ARRAY['read'],revision=revision+1 WHERE human_id=$1", [userId]);
       const pid = (await blocker.query<{ pid: number }>('SELECT pg_backend_pid() AS pid')).rows[0]?.pid;
       if (pid === undefined) throw new Error('Missing blocker PID');
@@ -151,7 +154,7 @@ test.each(['account', 'role', 'password', 'member-role', 'member-permission'] as
     } finally {
       await blocker.query('ROLLBACK'); blocker.release();
       await context.pool.query("UPDATE console_users SET active=true,role='operator',password_changed_at=clock_timestamp()-interval '5 seconds' WHERE id=$1", [userId]);
-      await context.pool.query("UPDATE human_tenant_memberships SET role='operator',permissions=ARRAY['route','read'],revision=revision+1 WHERE human_id=$1", [userId]);
+      await context.pool.query("UPDATE human_tenant_memberships SET permissions=ARRAY['route','read'],revision=revision+1 WHERE human_id=$1", [userId]);
     }
   },
 );

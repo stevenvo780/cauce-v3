@@ -194,6 +194,8 @@ El catálogo reconoce `claude`, `codex`, `hermes`, `opencode`, `openclaw`, `grok
    console/src/features/config/arneses.ts: add '<harness>' to ARNESES_REALES (or to CONSOLE_PENDING in ops/tests/test_harness_parity.py)
    ```
 
+   Si el harness entra en el catálogo de base de datos, la paridad pide además una migración nueva que siembre `harness_definitions` con capacidades del vocabulario cerrado (`HARNESS_CATALOG_CAPABILITIES` en `packages/store/src/configuration/harness-catalog.ts`). Crear o editar ese catálogo desde la configuración exige el descriptor publicado: sin él se rechaza con `harness.id`, un `command` no nulo con `harness.command` y una capacidad desconocida o repetida con `harness.capabilities`.
+
    Si el harness declara `quota`, la paridad exige además los enums de protocolo, gateway y consola, el contrato de recibos y una migración nueva para cambiar el CHECK SQL efectivo (nunca editar las migraciones anteriores). La prueba reconstruye las restricciones vigentes en orden y compara conjuntos en ambos sentidos; también rechaza definiciones SDK y claves de sesión sin descriptor. Si declara `fleet_module`, el módulo `ops/cli/fleet_provider_<harness>.py` debe existir y exponer `environment`, `validate_binding` y `authenticated`.
 3. Crear el manifiesto `packages/adapter-sdk/manifests/<harness>.json` coherente con la definición y el fixture de CLI falso `packages/adapter-sdk/test/fixtures/fake-<harness>.mjs` si los tests parametrizados lo ejercitan.
 4. Empaquetar: `pnpm --filter @cauce/adapter-sdk build` (el descriptor y el bin llegan solos a `dist/`) y construir el bundle con `ops/scripts/build-adapter-release.sh <destino-absoluto> <aprobaciones-absolutas.json>` en un árbol limpio. El segundo archivo es un objeto público `{ "<harness>": "<sha256-aprobado-de-64-hex>" }`, cuyos valores revisa y aprueba el dueño; `{}` no aprueba ningún descriptor. El empaquetador verifica esos valores y los conserva en `packages/adapter-sdk/dist/descriptor-approvals.json`; no deduce aprobación de los bytes presentes. La invocación anterior con un solo argumento conserva compatibilidad y empaqueta el mapa vacío. El digest global del bundle se aprueba por separado en la política del host.
@@ -203,11 +205,23 @@ El alta de `fake2` añadió el descriptor y las ediciones de paridad en 14 archi
 
 El paquete npm local incluye el descriptor, el bin y la definición de `fake2`. La construcción del bundle de release sigue exigiendo un árbol limpio y la aprobación del digest por el host. La autenticación con cuentas reales de Grok/Muse/OpenClaw y las ejecuciones físicas de `quota` y `update_cli` por descriptor en server2 requieren sus propios recibos; el roundtrip de CLI controlado no acredita esas operaciones.
 
+Las operaciones físicas de server2 las ejecuta el orquestador con este mismo mecanismo, sin código nuevo: el host enrolado recibe la política firmada con `descriptor_sha256` por harness, el gateway monta el archivo de aprobaciones y, desde «Mis cuotas», un entorno de cuota del harness recorre crear, autenticar, consultar (`quota`), actualizar el CLI (`update_cli`) y borrar. El recibo debe conservar argv sin secretos, código de salida, versiones antes y después, ventanas leídas, la relectura final y la limpieza del contenedor.
+
 ### Aprobación y adopción por el dueño
 
 El dueño revisa una release concreta y lleva cada valor aprobado a `policy.bundles[<harness>].descriptor_sha256` de la plantilla de enrolamiento y de las políticas executor y authority ya existentes. `HostSetupPackager` conserva esos pins al filtrar harnesses habilitados y los incluye en la firma Ed25519. El instalador conserva el pin al sustituir rutas y comprueba tanto el digest global como cada pin declarado antes de activar el servicio: recalcular solo el digest global no aprueba un descriptor alterado. Las políticas legadas sin pin individual siguen requiriendo su adopción explícita; la compatibilidad de lectura no acredita aprobación por harness.
 
-Store recibe el archivo público aprobado mediante `CAUCE_HARNESS_DESCRIPTOR_APPROVALS_FILE`; `CAUCE_HARNESS_DESCRIPTOR_DIRECTORY` permite seleccionar el directorio publicado de descriptores. Por defecto resuelve el catálogo SDK desde el layout fuente, el build de core o el paquete desplegado (`packages/adapter-sdk/dist/descriptors`). Cada lectura vuelve a validar los pins y deriva los harnesses con `quota` y argv desde el catálogo; añadir o retirar una operación o aprobación cambia la elegibilidad sin editar SQL. Si falta el archivo de aprobación, el paquete, el pin o el descriptor válido, el lector se retira. El despliegue debe montar o instalar ese archivo público y configurar su ruta; la imagen actual no aporta por sí sola valores aprobados.
+Store recibe el archivo público aprobado mediante `CAUCE_HARNESS_DESCRIPTOR_APPROVALS_FILE`; `CAUCE_HARNESS_DESCRIPTOR_DIRECTORY` permite seleccionar el directorio publicado de descriptores. Por defecto resuelve el catálogo SDK desde el layout fuente, el build de core o el paquete desplegado (`packages/adapter-sdk/dist/descriptors`). Cada lectura vuelve a validar los pins y deriva los harnesses con `quota` y argv desde el catálogo; añadir o retirar una operación o aprobación cambia la elegibilidad sin editar SQL. Si falta el archivo de aprobación, el paquete, el pin o el descriptor válido, el lector se retira. En producción `deploy/compose.yaml` monta `/etc/cauce-v3/harness-descriptor-approvals/` en solo lectura y fija la variable a `approvals.json` dentro de ese directorio; `deploy/deploy.sh` no construye si el archivo falta, está mal formado o algún pin no coincide con el descriptor de la release. La imagen no aporta valores aprobados por sí sola.
+
+Paso exacto del dueño en cada release, desde la raíz del clon que se va a desplegar, como root: revisar los descriptores que se aprueban y escribir el archivo con los harnesses que acepta (en el ejemplo, los tres con lector de cuota):
+
+```bash
+install -d -m 0755 /etc/cauce-v3/harness-descriptor-approvals
+python3 ops/scripts/harness-descriptor-approvals.py codex claude grok \
+  --output /etc/cauce-v3/harness-descriptor-approvals/approvals.json   # --replace si ya existe
+```
+
+El script valida cada descriptor con el parser del executor e imprime `approve <harness> <sha256>`; el dueño confirma esos valores. Los mismos pins van a `policy.bundles[<harness>].descriptor_sha256` de las políticas del host.
 
 Después de actualizar sus políticas, el dueño verifica firma, instalación y capacidades, retira una aprobación en un entorno de prueba y comprueba la retirada de elegibilidad y el rechazo de bytes alterados con digest global recalculado. Debe conservar los pins durante las actualizaciones del controlador y repetir la comprobación tras actualizar. Este procedimiento describe el mecanismo y la operación pendiente: las pruebas locales con fixtures no acreditan adopción de políticas privadas ni ejecución en producción.
 
@@ -219,7 +233,7 @@ Después de actualizar sus políticas, el dueño verifica firma, instalación y 
 | `codex` | `codex` | genérico (`CODEX_HOME`) | sí |
 | `grok` | `grok` | `fleet_provider_grok` | sí |
 | `muse` | `muse` | `fleet_provider_muse` | no |
-| `openclaw` | `codex` u `claude` (la cuenta que paga decide; Anthropic sin medir) | `fleet_provider_openclaw` | no |
+| `openclaw` | `codex` (OpenAI, medido con CLI real) o `claude` (Anthropic por `setup-token` aislado; probado con CLI controlado, sin cuenta real); la cuenta que paga decide | `fleet_provider_openclaw` | no |
 | `hermes` | `hermes` | genérico | no |
 | `opencode` | `opencode` | genérico | no |
 | `fake`, `fake2` | ninguno (prueba) | ninguno | no |

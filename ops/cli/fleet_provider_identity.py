@@ -31,7 +31,15 @@ def resolve_fleet_module(policy: dict, harness: str) -> str | None:
     directory = bundle.get('directory') if isinstance(bundle, dict) else None
     if isinstance(directory, str):
         from harness_operations import HarnessOperationFailure, fleet_module
-        module = fleet_module(harness, directory)
+        if 'digest' in bundle:
+            from fleet_executor_runtime import bundle_digest
+            try:
+                actual = bundle_digest(directory)
+            except (OSError, RuntimeError) as error:
+                raise HarnessOperationFailure('bundle digest: approved bundle is unavailable') from error
+            if actual != bundle['digest']:
+                raise HarnessOperationFailure('bundle digest: approved bundle changed')
+        module = fleet_module(harness, directory, expected_sha256=bundle.get('descriptor_sha256'))
         if module is not None and not (pathlib.Path(__file__).resolve().parent / f'{module}.py').is_file():
             raise HarnessOperationFailure(
                 f'provider.fleet_module: module {module} is not present beside the executor')

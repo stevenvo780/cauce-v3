@@ -2203,7 +2203,7 @@
       "operations": {
         "C": {
           "status": "covered",
-          "reason": "Gateway real con PostgreSQL: la consola solicita, el host ejecuta la exportación física por el canal firmado, la descarga HTTP de más de 32 MiB llega por stream con el SHA-256 del recibo y space_archive.py la restaura con hashes iguales; el panel descarga por stream, calcula el SHA-256 y sólo guarda el ZIP si coincide. No acredita un navegador real ni una copia productiva.",
+          "reason": "Cobertura versionada de navegador real y PostgreSQL; la matriz enlaza la prueba y no sustituye su ejecución sobre el candidato.",
           "api": [
             {
               "method": "POST",
@@ -2225,12 +2225,16 @@
             {
               "file": "packages/store/test/space-backup-postgres.test.ts",
               "name": "requests, physically exports and streams a copy above 32 MiB to the console, then restores it with equal hashes"
+            },
+            {
+              "file": "tests/e2e/v4-space-backups-real-browser.test.ts",
+              "name": "solicita la copia en el panel, la exporta por el canal firmado, descarga los bytes reales y restaura con hashes iguales"
             }
           ]
         },
         "R": {
           "status": "covered",
-          "reason": "Gateway real con PostgreSQL: la consola solicita, el host ejecuta la exportación física por el canal firmado, la descarga HTTP de más de 32 MiB llega por stream con el SHA-256 del recibo y space_archive.py la restaura con hashes iguales; el panel descarga por stream, calcula el SHA-256 y sólo guarda el ZIP si coincide. No acredita un navegador real ni una copia productiva.",
+          "reason": "Cobertura versionada de navegador real y PostgreSQL; la matriz enlaza la prueba y no sustituye su ejecución sobre el candidato.",
           "api": [
             {
               "method": "GET",
@@ -2265,6 +2269,10 @@
             {
               "file": "packages/store/test/space-backup-postgres.test.ts",
               "name": "requests, physically exports and streams a copy above 32 MiB to the console, then restores it with equal hashes"
+            },
+            {
+              "file": "tests/e2e/v4-space-backups-real-browser.test.ts",
+              "name": "solicita la copia en el panel, la exporta por el canal firmado, descarga los bytes reales y restaura con hashes iguales"
             }
           ]
         },

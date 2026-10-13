@@ -34,7 +34,7 @@ export function CompanyAdminsPanel({ companyId, canAssignPeople }: { companyId: 
     {canAssignPeople && people.loading ? <p role="status">Leyendo personas elegibles…</p> : null}
     {error || admins.error || people.error ? <Notice tone="danger" role="alert">{error || (admins.error?.message ?? people.error?.message)}</Notice> : null}
     {notice ? <Notice tone="ok" role="status">{notice}</Notice> : null}
-    {admins.data && admins.data.items.length === 0 && !admins.error ? <p className="m-0 text-sm text-muted">Todavía no hay dueños ni administradores asignados a esta empresa.</p> : null}
+    {admins.data?.items.length === 0 && !admins.error ? <p className="m-0 text-sm text-muted">Todavía no hay dueños ni administradores asignados a esta empresa.</p> : null}
     <ul className="m-0 grid list-none gap-2 p-0">{admins.data?.items.map(admin => <li key={admin.user_id} className="flex flex-wrap justify-between gap-2 border-b border-line py-2">
       <span>{admin.display_name} · {admin.email} · {admin.role === 'owner' ? 'Dueño' : 'Administrador'}</span>
       <Button size="sm" variant="danger" disabled={!ready || !admins.data?.capabilities.revoke || admin.role === 'owner' && !admins.data.capabilities.grant_owner}

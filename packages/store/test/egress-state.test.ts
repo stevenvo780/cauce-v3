@@ -14,7 +14,8 @@ const base: AgentEgressRow = {
 function receipt(row: AgentEgressRow = base): AgentEgressItem {
   const item = toAgentEgressItem(row);
   expect(item).toBeDefined();
-  return item as AgentEgressItem;
+  if (item === undefined) throw new Error('agent egress item is missing');
+  return item;
 }
 
 describe('agent egress receipt state', () => {

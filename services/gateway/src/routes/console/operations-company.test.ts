@@ -27,8 +27,8 @@ beforeEach(async () => {
   people = await seedCompanyIsolation(admin);
   await admin.query("UPDATE memberships SET role='operator' WHERE tenant_id='Miguel' AND alias='janus'");
   await admin.query('UPDATE console_users SET password_hash=$1', [hash]);
-  await admin.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,role,permissions)
-    VALUES($1,'PraxisHub','company_admin','operator',ARRAY['read','control'])`, [people.leon]);
+  await admin.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,permissions)
+    VALUES($1,'PraxisHub','company_admin',ARRAY['read','control'])`, [people.leon]);
   const provider = new PasswordAuthProvider({ users: new PostgresConsoleUserStore(pool), signingKey: Buffer.alloc(32, 43) });
   app = await buildTestGateway({ pool, authProvider: provider, repository: new CauceRepository(pool) });
 });
@@ -73,8 +73,8 @@ describe('console configuration under the session company authority', () => {
     await admin.query("UPDATE memberships SET role='operator' WHERE tenant_id='Isa' AND alias='salva'");
     const isa = (await admin.query<{ id: string }>(`INSERT INTO console_users(email,email_normalized,password_hash,display_name,role,tenant_id,alias)
       VALUES('isa@example.test','isa@example.test',$1,'Isa','operator','Isa','salva') RETURNING id::text`, [hash])).rows[0]?.id;
-    await admin.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,role,permissions)
-      VALUES($1,'Isa','salva','operator',ARRAY['read','control'])`, [isa]);
+    await admin.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,permissions)
+      VALUES($1,'Isa','salva',ARRAY['read','control'])`, [isa]);
     await admin.query(`INSERT INTO company_admins(company_id,human_id,role,source,granted_by) VALUES('humanizar',$1,'admin','platform',$2)`,
       [isa, people.steven]);
     const session = await login('isa@example.test');

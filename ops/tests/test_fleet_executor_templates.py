@@ -114,6 +114,93 @@ class PlacementTemplateSelectionTest(unittest.TestCase):
         descriptor.write_text(json.dumps(value))
         self.assertEqual(self.subject.fleet_harnesses(self.policy), {})
 
+    def test_new_descriptor_joins_the_templates_without_code_and_leaves_without_install(self):
+        from fleet_executor_runtime import bundle_digest
+        root = pathlib.Path(self.policy['bundles']['codex']['directory'])
+        descriptor = root / 'packages/adapter-sdk/dist/descriptors/fixture.json'
+        value = {'schema_version': 1, 'harness': 'fixture',
+                 'operations': {'install': 'runtime-package', 'execute': 'native-execution', 'authenticate': 'provider-login'},
+                 'context': {'native_document': 'AGENTS.md', 'max_bytes': 65536},
+                 'provider': {'authenticate_argv': ['/usr/local/bin/fixture', 'login']}}
+        descriptor.write_text(json.dumps(value))
+        descriptor.chmod(0o644)
+        self.policy['bundles']['fixture'] = {'directory': str(root)}
+        self.assertEqual(self.subject.fleet_harnesses(self.policy), {'codex': None, 'fixture': None})
+        self.assertEqual(self.subject.descriptor_login_arguments(self.policy, 'fixture'), ['login'])
+        approved = {'directory': str(root), 'digest': bundle_digest(str(root)), 'executable': '/usr/local/bin/fixture',
+                    'executable_sha256': None, 'argv': [], 'descriptor_sha256': hashlib.sha256(descriptor.read_bytes()).hexdigest()}
+        self.policy['bundles']['fixture'] = approved
+        self.assertIn('fixture', self.subject.fleet_harnesses(self.policy))
+        del value['operations']['install']
+        descriptor.write_text(json.dumps(value))
+        self.assertNotIn('fixture', self.subject.fleet_harnesses(self.policy))
+        approved.update(digest=bundle_digest(str(root)), descriptor_sha256=hashlib.sha256(descriptor.read_bytes()).hexdigest())
+        self.assertNotIn('fixture', self.subject.fleet_harnesses(self.policy))
+        self.assertIn('codex', self.subject.fleet_harnesses(self.policy))
+
+    def test_symlinked_descriptor_withdraws_only_its_harness_and_recovers_with_fresh_cli(self):
+        import pwd
+
+        from fleet_executor_runtime import bundle_digest
+        from harness_operations import HarnessOperationFailure, read_descriptor
+        root = pathlib.Path(self.policy['bundles']['codex']['directory'])
+        descriptors = root / 'packages/adapter-sdk/dist/descriptors'
+        codex_raw = (descriptors / 'codex.json').read_bytes()
+        extra = tempfile.TemporaryDirectory()
+        self.addCleanup(extra.cleanup)
+        base = pathlib.Path(extra.name)
+        claude_bundle = base / 'claude-bundle'
+        claude_descriptors = claude_bundle / 'packages/adapter-sdk/dist/descriptors'
+        claude_descriptors.mkdir(parents=True)
+        claude_target = claude_descriptors / 'claude.json'
+        claude_target.write_bytes((fixtures.OPS.parent / 'packages/adapter-sdk/descriptors/claude.json').read_bytes())
+        claude_target.chmod(0o600)
+
+        def bundle(directory, executable):
+            return {'directory': str(directory), 'digest': bundle_digest(str(directory)),
+                    'executable': executable, 'executable_sha256': None, 'argv': []}
+
+        policy = {'bundles': {'codex': bundle(root, '/usr/local/bin/codex'),
+                              'claude': bundle(claude_bundle, '/usr/local/bin/claude')},
+                  'profiles': {}, 'profile_templates': []}
+        self.assertEqual(self.subject.fleet_harnesses(policy), {'codex': None, 'claude': None})
+        outside = base / 'outside-codex.json'
+        outside.write_bytes(codex_raw)
+        target = descriptors / 'codex.json'
+        mode = target.stat().st_mode & 0o777
+        target.unlink()
+        target.symlink_to(outside)
+        with self.assertRaises(HarnessOperationFailure):
+            read_descriptor(str(root), 'codex')
+        self.assertEqual(self.subject.fleet_harnesses(policy), {'claude': None})
+        roots = {}
+        for name in ('state', 'runtime', 'pki', 'tokens', 'identities'):
+            directory = base / ('cli-' + name)
+            directory.mkdir(mode=0o700)
+            roots[name] = str(directory)
+        cli_policy = {'schemaVersion': 1, 'host_id': 'fixture-host',
+                      'executor_user': pwd.getpwuid(os.geteuid()).pw_name, 'roots': roots, 'native': [],
+                      'containers': {}, 'profiles': {}, 'hooks': {}, 'bundles': policy['bundles'],
+                      'quota_environments': {'image': 'sha256:' + 'a' * 64, 'network': 'fixture',
+                                             'providers': ['codex', 'claude']}}
+        policy_file = base / 'cli-policy.json'
+        policy_file.write_text(json.dumps(cli_policy))
+        policy_file.chmod(0o600)
+
+        def capabilities():
+            result = subprocess.run([sys.executable, '-B', str(fixtures.CLI), '--policy', str(policy_file),
+                                     '--capabilities'], capture_output=True, text=True, timeout=15)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stderr, '')
+            return json.loads(result.stdout)
+
+        self.assertEqual(capabilities()['quota_environments']['providers'], ['claude'])
+        target.unlink()
+        target.write_bytes(codex_raw)
+        target.chmod(mode)
+        self.assertEqual(self.subject.fleet_harnesses(policy), {'codex': None, 'claude': None})
+        self.assertEqual(capabilities()['quota_environments']['providers'], ['codex', 'claude'])
+
     def test_missing_fleet_module_skips_only_its_harness(self):
         directory = pathlib.Path(self.policy['bundles']['codex']['directory'])
         descriptors = directory / 'packages/adapter-sdk/dist/descriptors'

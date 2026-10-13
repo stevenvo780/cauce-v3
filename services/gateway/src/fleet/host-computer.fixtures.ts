@@ -143,11 +143,12 @@ setInterval(()=>{},60000);
 async function signedAuthority(work: string, pool: DatabasePool, owned: Owned) {
   const directory = join(work, 'authority'); const state = join(directory, 'state');
   await mkdir(state, { recursive: true, mode: 0o700 }); await chmod(directory, 0o700);
-  const registries: Record<string, string> = {};
-  for (const name of ['base_mtls', 'base_token', 'fleet_mtls', 'fleet_token']) {
+  const registryFile = (name: string): string => join(directory, name, name.endsWith('mtls') ? 'mtls_identities.json' : 'token_hashes.json');
+  const registries = { base_mtls: registryFile('base_mtls'), base_token: registryFile('base_token'),
+    fleet_mtls: registryFile('fleet_mtls'), fleet_token: registryFile('fleet_token') };
+  for (const [name, file] of Object.entries(registries)) {
     await mkdir(join(directory, name), { mode: 0o700 });
-    registries[name] = join(directory, name, name.endsWith('mtls') ? 'mtls_identities.json' : 'token_hashes.json');
-    await writeFile(registries[name], JSON.stringify({ version: 1, identities: [] }), { mode: 0o600 });
+    await writeFile(file, JSON.stringify({ version: 1, identities: [] }), { mode: 0o600 });
   }
   const certificate = join(directory, 'ca.crt'), key = join(directory, 'ca.key');
   await execute('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '3', '-subj', '/CN=host-setup-e2e-authority',
@@ -166,10 +167,10 @@ async function signedAuthority(work: string, pool: DatabasePool, owned: Owned) {
   await execute('openssl', ['x509', '-req', '-in', join(directory, 'server.csr'), '-CA', certificate, '-CAkey', key,
     '-CAcreateserial', '-days', '1', '-extfile', join(directory, 'extensions'), '-out', join(directory, 'server.crt')]);
   const provider = (namespace: 'bootstrap' | 'normal') => new MtlsAuthProvider(new FleetMtlsIdentityProvider(
-    registries.base_mtls!, registries.fleet_mtls!, namespace, uid));
+    registries.base_mtls, registries.fleet_mtls, namespace, uid));
   owned.bootstrapApp = await buildGateway({ pool, repository: new CauceRepository(pool), logger: false, authProvider: provider('normal'),
     bootstrapProviders: { bootstrap: provider('bootstrap'), normal: provider('normal'),
-      token: new FleetTokenProbeAuthProvider(registries.fleet_token!, uid, registries.base_token) },
+      token: new FleetTokenProbeAuthProvider(registries.fleet_token, uid, registries.base_token) },
     https: { key: await readFile(join(directory, 'server.key')), cert: await readFile(join(directory, 'server.crt')),
       ca: await readFile(certificate), requestCert: true, rejectUnauthorized: true } });
   return { client: new SignedFleetAuthorityClient(socket, { ownerUid: uid, peerUid: uid }), ca: await readFile(certificate) };

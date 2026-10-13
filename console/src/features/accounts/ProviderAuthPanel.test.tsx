@@ -60,7 +60,7 @@ describe('provider auth panel', () => {
     expect(calls[0]?.options).toMatchObject({ requireCsrf: true }); expect(done).not.toHaveBeenCalled();
   });
   it('keeps a concrete forbidden reason and translates a stable operation code', async () => {
-    const forbidden: RequestFn = <T,>() => Promise.reject(new ApiError('operator must be hub', 403, 'forbidden')) as Promise<T>;
+    const forbidden: RequestFn = () => Promise.reject(new ApiError('operator must be hub', 403, 'forbidden'));
     render(<ProviderAuthPanel request={request} client={providerAuthClient(forbidden)} />);
     fireEvent.click(screen.getByRole('button', { name: 'Conectar cuenta' }));
     const hub = await screen.findByRole('alert');
@@ -68,7 +68,7 @@ describe('provider auth panel', () => {
     expect(hub).toHaveTextContent('operator must be hub');
   });
   it('translates a stable host-unavailable code without echoing the server sentence', async () => {
-    const fetcher: RequestFn = <T,>() => Promise.reject(new ApiError('ENGLISH SERVER ERROR', 503, 'HOST_UNAVAILABLE')) as Promise<T>;
+    const fetcher: RequestFn = () => Promise.reject(new ApiError('ENGLISH SERVER ERROR', 503, 'HOST_UNAVAILABLE'));
     render(<ProviderAuthPanel request={request} client={providerAuthClient(fetcher)} />);
     fireEvent.click(screen.getByRole('button', { name: 'Conectar cuenta' }));
     const alert = await screen.findByRole('alert');

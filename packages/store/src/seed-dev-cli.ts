@@ -132,8 +132,8 @@ async function seedPerson(
   if (person === undefined) throw new Error('seed person was not written');
   await client.query('UPDATE memberships SET role=\'operator\' WHERE tenant_id=$1 AND alias=$2', [tenant, alias]);
   await client.query(
-    `INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,role,permissions)
-     VALUES($1,$2,$3,'operator',ARRAY['read','control']) ON CONFLICT DO NOTHING`,
+    `INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,permissions)
+     VALUES($1,$2,$3,ARRAY['read','control']) ON CONFLICT DO NOTHING`,
     [person.id, tenant, alias],
   );
   return person.id;

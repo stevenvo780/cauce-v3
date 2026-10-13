@@ -71,3 +71,19 @@ it('la descarga verificable devuelve el cuerpo sin cargarlo, con sesión y sin C
   await expect(api.downloadSpaceBackup({ ...ready, status: 'running', download_url: null }, new AbortController().signal))
     .rejects.toThrow('No se pudo verificar');
 });
+it('rechaza y cancela el stream de una respuesta tardía cuando cambió la sesión', async () => {
+  let release: () => void = () => undefined;
+  const delayed = new Promise<void>(resolve => { release = resolve; }); const cancel = vi.fn();
+  const api = new CauceApi('https://console.example', async input => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+    if (url.endsWith('/download')) {
+      await delayed;
+      return new Response(new ReadableStream({ cancel }), { headers: { 'content-length': String(bytes.length) } });
+    }
+    return Response.json(auth);
+  });
+  const result = api.downloadSpaceBackup(ready, new AbortController().signal).then(() => ({ code: 'accepted' }),
+    (error: { code: string }) => ({ code: error.code }));
+  await api.login('zz-canary@example.test', 'zz-canary-test-password'); release();
+  expect(await result).toEqual({ code: 'session_changed' }); expect(cancel).toHaveBeenCalledOnce();
+});

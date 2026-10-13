@@ -34,7 +34,7 @@ def binding_for(policy: dict, agent: dict) -> tuple[str, dict]:
         try:
             import_module(module_name).validate_binding(binding, agent)
         except ValueError as error:
-            if 'has not been measured yet' in str(error):
+            if 'has not been measured yet' in str(error) or 'no account flow for binding provider' in str(error):
                 raise SafeFailure(str(error)) from None
             raise SafeFailure('provider driver binding is not approved') from None
         except (ImportError, KeyError, TypeError, AttributeError):

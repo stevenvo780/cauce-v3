@@ -612,7 +612,7 @@ describe('Oficina V4 en navegador Chromium real, gateway y PostgreSQL reales', (
     expect(reads).toBeLessThanOrEqual(cases.length * 2 + polls);
   });
 
-  it('ciclo de un agente nuevo: alta, admisión, edición, asignación y baja en plano, campus, re-login y segundo navegador', async () => {
+  it('ciclo de registro de agente y proyección de su habilitación sembrada en plano, campus, re-login y segundo navegador', async () => {
     const page = ownerPage();
     const reader = readerPage;
     if (!reader) throw new Error('second reader browser was not initialized');
@@ -648,8 +648,8 @@ describe('Oficina V4 en navegador Chromium real, gateway y PostgreSQL reales', (
       await assertAgentInPlan(page, renamedRoomLabel);
     });
 
-    // Admission is a verified fleet operation that provisions a real container on a host. This hermetic fixture
-    // has no host, so it writes that operation's durable effect and checks that every view follows it.
+    // This fixture has no host: runtime_key and host_id stay null. It seeds visibility only;
+    // managed admission and retirement require a separate E2E with a real executor.
     await pool().query(`UPDATE agents SET enabled=true,harness_id='codex',container_name=$3,runtime_user='dev',
         home_directory=$4,state_directory=$5 WHERE tenant_id=$1 AND alias=$2`,
     [hubA, cycleAlias, `zz-canary-cycle-${run}`, `/srv/zz-canary-cycle-${run}`, `/srv/zz-canary-cycle-${run}/state`]);
