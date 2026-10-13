@@ -124,6 +124,11 @@ const SOLO_EXCLUSIVAS =
   && filtros.every((filtro) => !esRapida(filtro) && !alcanzaDatos(filtro) && alcanzaExclusivas(filtro));
 const TRABAJADORES = SOLO_RAPIDAS ? undefined : SOLO_EXCLUSIVAS ? 1 : trabajadoresDeDatos(); // undefined = vitest default
 
+const { maxWorkers: trabajadoresDelTrozo, ...opcionesDelTrozo } = trozos; // a shard lowers the run's workers, never lifts them
+const MAXIMO_DE_TRABAJADORES = typeof trabajadoresDelTrozo !== 'number'
+  ? TRABAJADORES
+  : Math.min(TRABAJADORES ?? trabajadoresDelTrozo, trabajadoresDelTrozo);
+
 const proyectos = [
   {
     extends: true as const,
@@ -164,7 +169,7 @@ export default defineConfig({
   test: {
     globals: true,
     pool: 'forks',
-    ...(TRABAJADORES === undefined ? {} : { maxWorkers: TRABAJADORES }),
+    ...(MAXIMO_DE_TRABAJADORES === undefined ? {} : { maxWorkers: MAXIMO_DE_TRABAJADORES }),
     hookTimeout: 120_000,
     testTimeout: 120_000,
     env: { CAUCE_DEV_OPERATOR: 'Steven/kant' },
@@ -172,7 +177,7 @@ export default defineConfig({
     // once per worktree, against stale code and with the ports and containers of the real run.
     exclude: EXCLUSIONES,
     ...(proyectos.length > 0 ? { projects: proyectos } : {}),
-    ...trozos,
+    ...opcionesDelTrozo,
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json-summary', 'html'],
