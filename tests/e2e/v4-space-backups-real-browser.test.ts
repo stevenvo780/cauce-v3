@@ -105,7 +105,7 @@ type DownloadCapablePage = V4Page & {
   waitForEvent?: (event: 'download', options?: { timeout?: number }) => Promise<PlaywrightDownload>;
 };
 
-function headerValue(headers: { [key: string]: string | string[] | undefined }, name: string): string | null {
+function headerValue(headers: Record<string, string | string[] | undefined>, name: string): string | null {
   const value = headers[name];
   return typeof value === 'string' ? value : null;
 }
