@@ -60,8 +60,8 @@ describe('console human membership onboarding', () => {
     const id = randomUUID();
     await pool().query(`INSERT INTO agents(tenant_id,alias,harness_id,display_name,enabled,
       container_name,runtime_user,home_directory,state_directory)
-      VALUES('Steven',$1,'openclaw',$1,true,$2,'stev','/home/stev',$3)`,
-    [alias, `onboarding-${id}`, `/home/stev/.cauce-onboarding/${id}`]);
+      VALUES('Steven',$1,'openclaw',$1,true,$2,'stev','/home/dev',$3)`,
+    [alias, `onboarding-${id}`, `/home/dev/.cauce-onboarding/${id}`]);
   }
 
   function options(email: string, alias: string, overrides: Partial<{

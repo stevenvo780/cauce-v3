@@ -10,7 +10,7 @@ const temporary: string[] = [];
 afterEach(async () => { for (const directory of temporary.splice(0)) await rm(directory, { recursive: true, force: true }); });
 const target = { tenant_id: 'acme', alias: 'iza' };
 const facts = { source: 'measured', target, runtime_key: 'iza', harness_id: 'codex',
-  placement: { host_id: 'local', mode: 'native', runtime_user: 'stev', home_directory: '/home/stev', state_directory: '/home/stev/state' },
+  placement: { host_id: 'local', mode: 'native', runtime_user: 'stev', home_directory: '/home/dev', state_directory: '/home/dev/state' },
   primary_account_id: null, account_provider: null, account_binding_approved: false,
   physical_identity_sha256: 'a'.repeat(64), supervisor_fenced: true };
 async function fixture(response: unknown = facts) {

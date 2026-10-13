@@ -246,15 +246,15 @@ describe('GET /v3/console/agents/:tenant/:alias/directive', () => {
     vivo = servidor({
       probe: mockProbe({
         'Steven:kant': {
-          facts: { harness: 'codex', home: '/home/stev' },
+          facts: { harness: 'codex', home: '/home/dev' },
           documents: {
-            '/home/stev/.codex/AGENTS.md': {
+            '/home/dev/.codex/AGENTS.md': {
               error: 'not_found',
               reason: 'fichero no existe',
             },
           },
           memory: {
-            root: '/home/stev/.codex/memories',
+            root: '/home/dev/.codex/memories',
             total: 0,
             observed_at_least: 0,
             truncated: false,
