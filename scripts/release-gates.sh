@@ -245,7 +245,7 @@ prepare_lanes() {
       pids+=("$!")
       indexes+=("$index")
     else
-      rm -rf "$dir"
+      git worktree remove --force "$dir" >/dev/null 2>&1 || rm -rf "$dir"
       echo "release-gates: AVISO: el carril $index no quedo listo (log en $log)" >&2
     fi
   done
