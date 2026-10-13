@@ -25,7 +25,7 @@ EVIDENCE = ROOT / "ops/instances/hospital/praxis-supervision-evidence.py"
 DEPLOY = ROOT / "deploy/decisiones/desplegar.sh"
 CLI = ROOT / "ops/cli/cauce"
 USER_ENV = "%h/.config/cauce/guardias.env"
-SYSTEM_ENV = "/etc/cauce-v3/guardias.env"
+HOSPITAL_ENV = "/etc/cauce-v3-hospital/guardias.env"
 
 
 def _unit(path: pathlib.Path) -> configparser.SectionProxy:
@@ -49,7 +49,7 @@ class GuardEnvironmentTests(unittest.TestCase):
         self.assertEqual(kratos["EnvironmentFile"], USER_ENV)
         self.assertEqual(doctor["EnvironmentFile"], "-" + USER_ENV)
         self.assertEqual(live["EnvironmentFile"], "-" + USER_ENV)
-        self.assertEqual(praxis["EnvironmentFile"], SYSTEM_ENV)
+        self.assertEqual(praxis["EnvironmentFile"], HOSPITAL_ENV)
         for service in (cred, kratos, doctor, live, praxis):
             self.assertNotIn("CAUCE_CRED_GUARD_TARGETS=", service.get("Environment", ""))
             self.assertNotIn("CAUCE_OWNER_TELEGRAM_CHAT_ID=", service.get("Environment", ""))
@@ -235,6 +235,7 @@ class GuardEnvironmentTests(unittest.TestCase):
             self.assertIn(name, section)
         self.assertIn("reinstalar", section)
         self.assertIn("1000000001", section)
+        self.assertIn("/etc/cauce-v3-hospital/guardias.env", section)
         self.assertNotIn("/home/", section)
         self.assertNotIn("/datos/", section)
 

@@ -344,8 +344,9 @@ ni existe reinyección automática del trabajo en vuelo.
 
 ### Guardias: variables obligatorias
 
-Las units de usuario leen `%h/.config/cauce/guardias.env`. Las de sistema leen
-`/etc/cauce-v3/guardias.env`. Ese fichero queda fuera del repositorio. Sin el prefijo `-`,
+Las units de usuario leen `%h/.config/cauce/guardias.env`. Las de sistema del
+host principal leen `/etc/cauce-v3/guardias.env`. La supervisión de Praxis lee
+`/etc/cauce-v3-hospital/guardias.env`. Ese fichero queda fuera del repositorio. Sin el prefijo `-`,
 systemd no arranca la unit si el fichero no existe. El monitor médico y `cauce-ai-live` llevan
 el prefijo: pueden arrancar sin él. El monitor, si falta el chat, lo anota en su log y en el
 journal y sigue. `cred-guard` y la supervisión de Praxis no lo llevan: la variable es obligatoria.
