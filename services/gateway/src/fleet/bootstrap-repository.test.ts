@@ -112,6 +112,22 @@ describe('bootstrap durable control on disposable PostgreSQL', () => {
     expect((await repository.state(identity, operationId, 'normal')).normal_admitted).toBe(true);
     expect(await repository.profile(identity, operationId, 'normal')).toMatchObject({ runtime_key: identity.alias });
   });
+  it('lets the admitted runtime read its final state and profile after settling moves the desired revision', async () => {
+    await remoteOperation();
+    expect((await complete()).acknowledged.state).toBe('succeeded');
+    await verifyStep(); await complete('verify');
+    await pool.query(`UPDATE fleet_operations SET steps=$2::jsonb WHERE id=$1`, [operationId,
+      JSON.stringify([{ name: 'verify', status: 'succeeded' }, { name: 'admission', status: 'running' }])]);
+    await complete('verify', 'normal');
+    // What settle() does in one transaction: admit the agent, record a new desired revision and finish the operation.
+    await pool.query("UPDATE agents SET enabled=true,lifecycle_state='ready' WHERE alias='boot-agent'");
+    await pool.query(`UPDATE fleet_operations SET status='succeeded',desired_revision=COALESCE(desired_revision,0)+1,applied_revision=COALESCE(desired_revision,0)+1,
+      steps='[{"name":"admission","status":"succeeded"}]'::jsonb WHERE id=$1`, [operationId]);
+    expect((await repository.state(identity, operationId, 'normal')).normal_admitted).toBe(true);
+    expect(await repository.profile(identity, operationId, 'normal')).toMatchObject({ runtime_key: identity.alias, profile_revision: 1 });
+    await expect(repository.claim(identity, operationId, 'normal', identity.alias)).rejects.toMatchObject({ code: 'conflict' });
+    await expect(repository.create(identity, input('verify', 'normal'))).rejects.toMatchObject({ code: 'conflict' });
+  });
   it('refuses a remote host without a sealed prepared slice', async () => {
     await remoteOperation(false);
     await expect(repository.create(identity, input())).rejects.toMatchObject({ code: 'forbidden' });

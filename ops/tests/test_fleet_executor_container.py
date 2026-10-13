@@ -478,6 +478,31 @@ class PurgeRemovalEvidenceTest(unittest.TestCase):
         self.assertIs(executor.journal.get('purged'), True)
 
 
+class DockerFailureDiagnosticTest(unittest.TestCase):
+    """A failed Docker effect names its cause in the host journal instead of a bare 'unverified'."""
+
+    @classmethod
+    def setUpClass(cls):
+        if str(fixtures.OPS / 'cli') not in sys.path:
+            sys.path.insert(0, str(fixtures.OPS / 'cli'))
+
+    def test_failure_keeps_a_bounded_single_line_stderr_tail(self):
+        import fleet_executor_container as container
+        from fleet_executor_policy import SafeFailure
+        noisy = 'x' * 900 + '\nError response from daemon: delegated Cauce credential effect was not verified\n'
+        with self.assertRaises(SafeFailure) as raised:
+            container.checked_command(['/bin/sh', '-c', 'printf "%s" "$1" >&2; exit 7', 'sh', noisy])
+        message = str(raised.exception)
+        self.assertTrue(message.startswith('runtime effect or observation failed (exit 7): '), message)
+        self.assertTrue(message.endswith('delegated Cauce credential effect was not verified'), message)
+        self.assertNotIn('\n', message)
+        self.assertLessEqual(len(message), len('runtime effect or observation failed (exit 7): ') + container.DIAGNOSTIC_LIMIT)
+
+    def test_success_returns_stdout(self):
+        import fleet_executor_container as container
+        self.assertEqual(container.checked_command(['/bin/sh', '-c', 'printf ok']), b'ok')
+
+
 class PurgeBrowserFixtureRecoveryTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

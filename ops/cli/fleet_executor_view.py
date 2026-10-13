@@ -35,6 +35,9 @@ def open_directory(directory: pathlib.Path, *, create: bool = False) -> int:
 def install(directory: pathlib.Path, payload: dict, uid: int, gid: int) -> dict:
     if uid <= 0 or gid <= 0 or set(payload) != {'files'} or not isinstance(payload['files'], dict):
         raise ValueError('invalid delegated credential view')
+    # A view is only installed for a stopped runtime. The new one replaces the previous view whole: an update or a
+    # start after a stop materializes another inventory generation, and its files must not meet the old ones.
+    remove(directory)
     root = open_directory(directory, create=True)
     try:
         details = os.fstat(root)

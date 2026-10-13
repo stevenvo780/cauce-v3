@@ -2,7 +2,7 @@
 
 Un ordenador nuevo pasa por dos pasos, ambos sin el super-admin de plataforma. La consola («Conectar un ordenador») muestra la invitación y, si el gateway firma la preparación, los comandos de enrolar y de preparar; si no firma, solo el de enrolar. Por cada ordenador enrolado indica si su ejecutor está listo.
 
-Requisitos del ordenador: Cauce CLI, Python 3.12 o superior (filtro `data` de `tarfile`), OpenSSL, Node.js 22, systemd de usuario y, para crear agentes, Docker.
+Requisitos del ordenador: Cauce CLI, Python 3.12 o superior (filtro `data` de `tarfile`) con PyYAML (el executor valida los manifiestos de flota), OpenSSL, Node.js 22, systemd de usuario y, para crear agentes, Docker.
 
 ### Identificador
 
@@ -92,9 +92,9 @@ La única clave de la autoridad de flota es la CA RSA X.509 que emite los certif
 CAUCE_HOST_SETUP_E2E=1 npx vitest run services/gateway/src/fleet/host-setup.e2e-docker.test.ts
 ```
 
-Arranca PostgreSQL de prueba, el gateway en loopback con la autoridad firmada real (issuer y CA de prueba) y un contenedor limpio (systemd como PID 1, usuario `cauce` con linger, Python 3.12, OpenSSL y Node 22, red del host). El release se construye del árbol commiteado (`git archive HEAD`) con el proceso del host empaquetado por esbuild. Un usuario recién registrado crea su empresa e invita el ordenador; en el contenedor, `cauce hosts enroll` y `cauce hosts setup` instalan el servicio de usuario, y el gateway ve `executor_ready=true`, `cauce hosts status` sale 0 y la capacidad de la empresa incluye el ordenador, sin ningún `platform_admins`. Otra empresa no ve el ordenador y una petición firmada por éste hacia el host de la otra empresa recibe 403.
+Arranca PostgreSQL de prueba, el gateway en loopback con la autoridad firmada real (issuer y CA de prueba) y un contenedor limpio (systemd como PID 1, usuario `cauce` con linger, Python 3.12 con PyYAML, OpenSSL, Node 22 y el socket Docker del anfitrión, red del host). El release se construye con los ficheros versionados del árbol de trabajo (`ops/cli`, `ops/scripts`, `ops/container-runtime`, `ops/schemas` y los descriptores) y el proceso del host empaquetado por esbuild; el arnés vive en `services/gateway/src/fleet/host-computer.fixtures.ts`. Un usuario recién registrado crea su empresa e invita el ordenador; en el contenedor, `cauce hosts enroll` y `cauce hosts setup` instalan el servicio de usuario, y el gateway ve `executor_ready=true`, `cauce hosts status` sale 0 y la capacidad de la empresa incluye el ordenador, sin ningún `platform_admins`. Otra empresa no ve el ordenador y una petición firmada por éste hacia el host de la otra empresa recibe 403.
 
-El último tramo (un create de agente `zz-canary-*` que termine `succeeded` con su contenedor en `docker ps`) queda fuera: explorado sobre el mismo montaje, el executor del ordenador reclama la operación y completa `prepare`, y se detiene en `artifacts` porque el contenedor limpio no tiene Docker ni la imagen de runtime aprobada. Falta, además, lo que ya pedía este documento:
+Después, la persona crea un agente desechable `zz-canary-*` y la operación termina `succeeded`: su contenedor aparece en `docker ps` y las sondas de bootstrap y normal devuelven el nonce correlacionado. El usuario de ejecución de la plantilla comparte uid con el executor, porque el pin del CLI del proveedor solo confía en ancestros de root o del propio usuario y el release está bajo la raíz de instalación del executor. El ciclo completo desde la consola (update, contexto, stop, retiro y purga) está en `tests/e2e/v4-fleet-cycle-real-browser.test.ts`. Falta lo que ya pedía este documento:
 
 - el constructor del release distribuible (hoy lo arma la prueba) y su publicación con URL HTTPS;
 - la configuración y la clave de preparación en producción;

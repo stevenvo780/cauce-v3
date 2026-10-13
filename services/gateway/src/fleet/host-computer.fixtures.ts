@@ -1,0 +1,329 @@
+import { execFile, spawn } from 'node:child_process';
+import { createHash, generateKeyPairSync } from 'node:crypto';
+import { chmod, cp, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { createServer, type Server } from 'node:http';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
+import { CauceRepository, FleetOperationsRepository, createPool, type DatabasePool } from '@cauce/store';
+import { startTestCaseDatabase, startTestDatabase, type EmptyTestDatabase, type TestDatabase } from '../../../../tests/helpers/postgres.js';
+import { buildGateway } from '../app.js';
+import { PostgresConsoleUserStore } from '../console-users.js';
+import { PasswordAuthProvider } from '../password-auth.js';
+import { MtlsAuthProvider } from '../auth.js';
+import { FleetMtlsIdentityProvider, FleetTokenProbeAuthProvider } from './mtls-identities.js';
+import { startSignedFleetAuthorityBridge } from './authority/signed-bridge.js';
+import { SignedFleetAuthorityClient } from './authority/signed-client.js';
+import { HostSetupConfigSchema, HostSetupPackager } from './host-setup.js';
+import { inviteSetupHost, type SetupOwnerSession } from './host-setup.fixtures.js';
+
+/**
+ * A clean computer for physical fleet tests: PostgreSQL, the console gateway, the signed authority with its TLS
+ * bootstrap gateway, a release built from the tracked tree and a systemd container that shares the host Docker.
+ * Every Docker resource it creates, including the agents the executor creates later, starts with `prefix`.
+ */
+const execute = promisify(execFile);
+const ROOT = fileURLToPath(new URL('../../../../', import.meta.url));
+const hash = (value: string | Buffer) => createHash('sha256').update(value).digest('hex');
+const COMPUTER_IMAGE = `FROM node:22-bookworm AS node
+FROM docker:29-cli AS docker
+FROM python:3.12-slim
+RUN apt-get update && apt-get install -y --no-install-recommends systemd systemd-sysv dbus dbus-user-session openssl ca-certificates \\
+  && rm -rf /var/lib/apt/lists/* && pip install --no-cache-dir pyyaml==6.0.3
+COPY --from=node /usr/local/bin/node /usr/local/bin/node
+COPY --from=docker /usr/local/bin/docker /usr/bin/docker
+RUN useradd -m -u 1500 -s /bin/bash cauce && useradd -m -u 1000 -s /bin/bash node \\
+  && ln -s /usr/local/bin/python3 /usr/bin/python3
+STOPSIGNAL SIGRTMIN+3
+CMD ["/sbin/init"]
+`;
+/** The account identity the pinned provider CLI fixture reports; provider accounts must use it. */
+export const FIXTURE_PROVIDER_IDENTITY = 'host-setup@example.test';
+const PROVIDER_CLI = `#!/usr/local/bin/python3
+import json,re,sys
+if 'app-server' in sys.argv:
+ for line in sys.stdin:
+  packet=json.loads(line)
+  if 'id' in packet:
+   result={'account':{'type':'chatgpt','email':'${FIXTURE_PROVIDER_IDENTITY}'}} if packet['method']=='account/read' else {}
+   print(json.dumps({'id':packet['id'],'result':result}),flush=True)
+else:
+ prompt=' '.join(sys.argv[1:]) if sys.argv[-1]!='-' else sys.stdin.read()
+ nonce=re.search(r'CAUCE_BOOTSTRAP_[a-f0-9]{64}',prompt)
+ if nonce is None: sys.exit(1)
+ print(json.dumps({'type':'thread.started','thread_id':'host-setup-fixture'}))
+ print(json.dumps({'type':'item.completed','item':{'type':'agent_message','text':nonce.group(0)}}))
+`;
+const AS_USER = ['-u', 'cauce', '-e', 'HOME=/home/cauce', '-e', 'XDG_RUNTIME_DIR=/run/user/1500'];
+const TREE = ['services/gateway/src', 'packages/store/src', 'packages/protocol/src', 'packages/adapter-sdk/descriptors',
+  'ops/cli', 'ops/scripts', 'ops/container-runtime', 'ops/schemas'];
+const RELEASE_PARTS = ['ops/cli', 'ops/scripts', 'ops/container-runtime', 'ops/schemas'];
+
+export interface CommandResult { code: number; stdout: string; stderr: string }
+export interface DockerInventory { containers: string; volumes: string; images: string }
+/** The runtime the computer's single container template approves; the executor derives each agent from it. */
+export const COMPUTER_RUNTIME = { user: 'cauce', home: '/home/cauce', stateRoot: '/home/cauce/.cauce' } as const;
+
+export function command(file: string, args: string[], input?: string): Promise<CommandResult> {
+  return new Promise(resolve => {
+    const child = spawn(file, args, { stdio: ['pipe', 'pipe', 'pipe'] }); let stdout = ''; let stderr = '';
+    child.stdout.on('data', (chunk: Buffer) => { stdout += chunk.toString('utf8'); });
+    child.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString('utf8'); });
+    child.once('error', error => { resolve({ code: 1, stdout, stderr: stderr + error.message }); });
+    child.once('close', code => { resolve({ code: code ?? 1, stdout, stderr }); });
+    child.stdin.end(input ?? '');
+  });
+}
+/** Docker output that fails loudly: an empty listing must mean "nothing there", never "docker failed". */
+export async function docker(args: string[]): Promise<string> {
+  const result = await command('docker', args);
+  if (result.code !== 0) throw new Error(`docker ${args[0] ?? ''} failed (${String(result.code)}): ${result.stderr.trim()}`);
+  return result.stdout.trim();
+}
+export async function dockerInventory(prefix: string): Promise<DockerInventory> {
+  return {
+    containers: await docker(['ps', '-a', '--format', '{{.Names}}', '--filter', `name=^/${prefix}`]),
+    volumes: await docker(['volume', 'ls', '--format', '{{.Name}}', '--filter', `name=^${prefix}`]),
+    images: await docker(['image', 'ls', '--format', '{{.Repository}}:{{.Tag}}', '--filter', `reference=${prefix}:*`]),
+  };
+}
+
+export interface ComputerHarness {
+  readonly prefix: string; readonly installRoot: string; readonly pool: DatabasePool; readonly databaseUrl: string;
+  readonly app: Awaited<ReturnType<typeof buildGateway>>; readonly gatewayUrl: string; readonly packager: HostSetupPackager;
+  /** Name of the computer container; agent containers are `${prefix}-${runtime_key}`. */
+  readonly container: string;
+  readonly onComputer: (args: string[], input?: string) => Promise<CommandResult>;
+  readonly cli: (args: string[], input?: string) => Promise<CommandResult>;
+  /** Stops everything it started and returns the prefix inventory observed after cleanup. */
+  readonly close: () => Promise<DockerInventory>;
+}
+
+interface Owned {
+  work?: string; database?: TestDatabase; current?: EmptyTestDatabase; pool?: DatabasePool; container?: string; image?: string;
+  app?: Awaited<ReturnType<typeof buildGateway>>; bootstrapApp?: Awaited<ReturnType<typeof buildGateway>>;
+  bridge?: Awaited<ReturnType<typeof startSignedFleetAuthorityBridge>>; artifacts?: Server;
+}
+
+async function buildRelease(work: string, tree: string) {
+  const stage = join(work, 'stage');
+  for (const part of RELEASE_PARTS) await cp(join(tree, part), join(stage, part), { recursive: true });
+  await cp(join(tree, 'packages/adapter-sdk/descriptors'), join(stage, 'adapter/packages/adapter-sdk/dist/descriptors'), { recursive: true });
+  await writeFile(join(stage, 'adapter/provider-cli.py'), PROVIDER_CLI, { mode: 0o755 });
+  const runtime = join(work, 'bootstrap-runtime.ts');
+  await writeFile(runtime, `import { bootstrapOnStartup } from ${JSON.stringify(join(ROOT, 'packages/adapter-sdk/src/sdk/bootstrap-runner.ts'))};
+import { SpawnCommandRunner } from ${JSON.stringify(join(ROOT, 'packages/adapter-sdk/src/sdk/process-runner.ts'))};
+import { commandPinsFromEnvironment } from ${JSON.stringify(join(ROOT, 'packages/adapter-sdk/src/sdk/command-pins.ts'))};
+import { codexDefinition } from ${JSON.stringify(join(ROOT, 'packages/adapter-sdk/src/harnesses/codex.ts'))};
+await bootstrapOnStartup({tenant_id:process.env.CAUCE_TENANT_ID!,alias:process.env.CAUCE_ALIAS!,definition:codexDefinition,
+ runner:new SpawnCommandRunner(),commandOverride:{command:process.env.CAUCE_HARNESS_COMMAND!},commandPins:commandPinsFromEnvironment(),
+ tls:{certFile:process.env.CAUCE_CERT_PATH!,keyFile:process.env.CAUCE_KEY_PATH!,caFile:process.env.CAUCE_CA_PATH!}});
+setInterval(()=>{},60000);
+`);
+  await execute(join(ROOT, 'node_modules/.bin/esbuild'), [runtime, '--bundle', '--platform=node', '--format=esm', '--target=node22',
+    '--log-level=error', `--outfile=${join(stage, 'adapter/bootstrap-runtime.mjs')}`, `--alias:@cauce/protocol=${join(tree, 'packages/protocol/src/index.ts')}`]);
+  await mkdir(join(stage, 'services/gateway/dist/fleet'), { recursive: true });
+  await execute(join(ROOT, 'node_modules/.bin/esbuild'), [join(tree, 'services/gateway/src/fleet/main.ts'), '--bundle', '--platform=node',
+    '--format=esm', '--target=node22', '--external:pg-native', '--log-level=error', `--outfile=${join(stage, 'services/gateway/dist/fleet/main.js')}`,
+    `--alias:@cauce/store=${join(tree, 'packages/store/src/index.ts')}`, `--alias:@cauce/protocol=${join(tree, 'packages/protocol/src/index.ts')}`,
+    '--banner:js=import{createRequire as __cauceRequire}from"node:module";const require=__cauceRequire(import.meta.url);'],
+  { env: { ...process.env, NODE_PATH: ['services/gateway', 'packages/store', 'packages/protocol', ''].map(part => join(ROOT, part, 'node_modules')).join(':') } });
+  await execute('chmod', ['-R', 'u=rwX,go=rX', stage]);
+  const archive = join(work, 'release.tar');
+  await execute('tar', ['--sort=name', '--owner=0', '--group=0', '--numeric-owner', '-cf', archive, '-C', stage, '.']);
+  const measure = 'import pathlib,sys\nsys.path[:0]=[sys.argv[1]+"/ops/cli",sys.argv[1]+"/ops/container-runtime"]\nimport host_setup\n'
+    + 'from cauce_container_base import bundle_digest\ntarget=pathlib.Path(sys.argv[3])\ntarget.parent.mkdir(parents=True)\n'
+    + 'host_setup.extract_release(pathlib.Path(sys.argv[2]),target)\nprint(bundle_digest(str(target/"adapter")))\n';
+  const measured = await execute('python3', ['-c', measure, tree, archive, join(work, 'measured/release')]);
+  return { archive: await readFile(archive), bundleDigest: measured.stdout.trim(),
+    hookDigest: hash(await readFile(join(stage, 'ops/cli/fleet-provider-hook.py'))),
+    revision: (await execute('git', ['-C', ROOT, 'rev-parse', 'HEAD'])).stdout.trim() };
+}
+
+async function signedAuthority(work: string, pool: DatabasePool, owned: Owned) {
+  const directory = join(work, 'authority'); const state = join(directory, 'state');
+  await mkdir(state, { recursive: true, mode: 0o700 }); await chmod(directory, 0o700);
+  const registryFile = (name: string): string => join(directory, name, name.endsWith('mtls') ? 'mtls_identities.json' : 'token_hashes.json');
+  const registries = { base_mtls: registryFile('base_mtls'), base_token: registryFile('base_token'),
+    fleet_mtls: registryFile('fleet_mtls'), fleet_token: registryFile('fleet_token') };
+  for (const [name, file] of Object.entries(registries)) {
+    await mkdir(join(directory, name), { mode: 0o700 });
+    await writeFile(file, JSON.stringify({ version: 1, identities: [] }), { mode: 0o600 });
+  }
+  const certificate = join(directory, 'ca.crt'), key = join(directory, 'ca.key');
+  await execute('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '3', '-subj', '/CN=host-setup-e2e-authority',
+    '-keyout', key, '-out', certificate, '-addext', 'basicConstraints=critical,CA:TRUE', '-addext', 'keyUsage=critical,keyCertSign,cRLSign']);
+  await chmod(key, 0o600);
+  const policyFile = join(directory, 'issuer-policy.json');
+  await writeFile(policyFile, JSON.stringify({ version: 1, state_root: state, registries, signer: { certificate, key,
+    certificate_sha256: hash(await readFile(certificate)), key_sha256: hash(await readFile(key)) } }), { mode: 0o600 });
+  const executable = join(ROOT, 'ops/cli/fleet-authority-issuer.py');
+  const socket = join(directory, 'signed.sock'); const uid = process.geteuid?.() ?? 0;
+  owned.bridge = await startSignedFleetAuthorityBridge(socket, pool, { ownerUid: uid, peerUid: uid, command: { python: '/usr/bin/python3', executable,
+    sha256: hash(await readFile(executable)), policy_file: policyFile, policy_sha256: hash(await readFile(policyFile)) } });
+  await writeFile(join(directory, 'extensions'), 'subjectAltName=IP:127.0.0.1\nextendedKeyUsage=serverAuth\n');
+  await execute('openssl', ['req', '-newkey', 'rsa:2048', '-nodes', '-subj', '/CN=host-setup-gateway',
+    '-keyout', join(directory, 'server.key'), '-out', join(directory, 'server.csr')]);
+  await execute('openssl', ['x509', '-req', '-in', join(directory, 'server.csr'), '-CA', certificate, '-CAkey', key,
+    '-CAcreateserial', '-days', '1', '-extfile', join(directory, 'extensions'), '-out', join(directory, 'server.crt')]);
+  const provider = (namespace: 'bootstrap' | 'normal') => new MtlsAuthProvider(new FleetMtlsIdentityProvider(
+    registries.base_mtls, registries.fleet_mtls, namespace, uid));
+  owned.bootstrapApp = await buildGateway({ pool, repository: new CauceRepository(pool), logger: false, authProvider: provider('normal'),
+    bootstrapProviders: { bootstrap: provider('bootstrap'), normal: provider('normal'),
+      token: new FleetTokenProbeAuthProvider(registries.fleet_token, uid, registries.base_token) },
+    https: { key: await readFile(join(directory, 'server.key')), cert: await readFile(join(directory, 'server.crt')),
+      ca: await readFile(certificate), requestCert: true, rejectUnauthorized: true } });
+  return { client: new SignedFleetAuthorityClient(socket, { ownerUid: uid, peerUid: uid }), ca: await readFile(certificate) };
+}
+
+async function serveArtifacts(files: Record<string, Buffer>, owned: Owned): Promise<string> {
+  const server = createServer((request, response) => {
+    const body = files[request.url ?? ''];
+    if (body === undefined) { response.writeHead(404).end(); return; }
+    response.writeHead(200, { 'content-length': body.length }).end(body);
+  });
+  owned.artifacts = server;
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  if (address === null || typeof address === 'string') throw new Error('artifact server address absent');
+  return `http://127.0.0.1:${String(address.port)}`;
+}
+
+async function closeOwned(owned: Owned, prefix: string): Promise<DockerInventory> {
+  const errors: unknown[] = [];
+  const attempt = async (operation: () => Promise<unknown>) => { try { await operation(); } catch (error) { errors.push(error); } };
+  const present = await dockerInventory(prefix);
+  if (owned.container && owned.work && present.containers.split('\n').includes(owned.container)) {
+    // The executor user owns the install root inside the computer; only it can empty that bind mount.
+    const removeInstall = 'import os,pathlib,shutil,sys\np=pathlib.Path(sys.argv[1])\n'
+      + 'for child in p.iterdir():\n shutil.rmtree(child) if child.is_dir() else child.unlink()\n'
+      + 'os.chown(p,int(sys.argv[2]),int(sys.argv[3]));os.chmod(p,448)\n';
+    const work = owned.work;
+    await attempt(() => docker(['exec', owned.container ?? '', '/usr/local/bin/python3', '-c', removeInstall, join(work, 'install'),
+      String(process.getuid?.() ?? 0), String(process.getgid?.() ?? 0)]));
+  }
+  for (const name of present.containers.split('\n').filter(Boolean)) await attempt(() => docker(['rm', '-f', name]));
+  for (const name of present.volumes.split('\n').filter(Boolean)) await attempt(() => docker(['volume', 'rm', name]));
+  await attempt(async () => owned.app?.close());
+  await attempt(async () => owned.bootstrapApp?.close());
+  await attempt(async () => owned.bridge?.close());
+  await attempt(() => new Promise<void>((resolve, reject) => {
+    if (!owned.artifacts) { resolve(); return; }
+    owned.artifacts.close(error => { if (error) reject(error); else resolve(); });
+  }));
+  if (owned.image) await attempt(() => docker(['image', 'rm', owned.image ?? '']));
+  const after = await dockerInventory(prefix);
+  await attempt(async () => owned.pool?.end());
+  await attempt(async () => owned.current?.close());
+  if (owned.database) { const database = owned.database; await attempt(() => database.pool.end()); await attempt(() => database.container.stop()); }
+  if (owned.work) { const work = owned.work; await attempt(() => rm(work, { recursive: true, force: true })); }
+  if (errors.length) throw new AggregateError(errors, `computer harness ${prefix} cleanup was incomplete`);
+  return after;
+}
+
+export async function startComputerHarness(options: { prefix: string; consoleOrigins: string[] }): Promise<ComputerHarness> {
+  const { prefix } = options; const owned: Owned = {};
+  try {
+    const work = await mkdtemp(`/var/tmp/${prefix}-`); owned.work = work;
+    await chmod(work, 0o755); await mkdir(join(work, 'install'));
+    const tree = join(work, 'tree'); await mkdir(tree);
+    const tracked = (await execute('git', ['-C', ROOT, 'ls-files', '-z', '--', ...TREE])).stdout.split('\0').filter(Boolean);
+    const deleted = new Set((await execute('git', ['-C', ROOT, 'ls-files', '--deleted', '-z', '--', ...TREE])).stdout.split('\0'));
+    for (const part of tracked.filter(part => !deleted.has(part))) {
+      await mkdir(dirname(join(tree, part)), { recursive: true }); await cp(join(ROOT, part), join(tree, part));
+    }
+    await execute('chmod', ['-R', 'u=rwX,go=rX', join(tree, 'ops/cli')]);
+    owned.database = await startTestDatabase(); owned.current = await startTestCaseDatabase(owned.database);
+    const pool = createPool(owned.current.url, { max: 8 }); owned.pool = pool;
+    const computerImage = async () => {
+      owned.image = `${prefix}:computer`;
+      const built = await command('docker', ['build', '-q', '-t', owned.image, '-'], COMPUTER_IMAGE);
+      if (built.code !== 0) throw new Error(`computer image build failed: ${built.stderr}`);
+      return owned.image;
+    };
+    const [release, authority, computer] = await Promise.all([buildRelease(work, tree), signedAuthority(work, pool, owned), computerImage()]);
+    if (!owned.bootstrapApp) throw new Error('bootstrap gateway absent');
+    const bootstrapOrigin = await owned.bootstrapApp.listen({ host: '127.0.0.1', port: 0 });
+    console.info('HOST_SETUP_RELEASE', JSON.stringify({ revision: release.revision, source: 'working-tree-tracked',
+      archive_sha256: hash(release.archive), bundle_digest: release.bundleDigest, hook_sha256: release.hookDigest }));
+    const origin = await serveArtifacts({ '/release.tar': release.archive, '/fleet-ca.pem': authority.ca }, owned);
+    const imageId = await docker(['image', 'inspect', '--format', '{{.Id}}', computer]);
+    const hook = { executable: '@release@/ops/cli/fleet-provider-hook.py', sha256: release.hookDigest, argv: [], user: '@user@' };
+    const packager = new HostSetupPackager(HostSetupConfigSchema.parse({ version: 1, signing_key_file: '/etc/cauce/unused.pem',
+      release: { name: 'release', revision: release.revision, url: `${origin}/release.tar`, sha256: hash(release.archive), size: release.archive.length },
+      files: [{ name: 'fleet-ca', url: `${origin}/fleet-ca.pem`, sha256: hash(authority.ca), size: authority.ca.length }],
+      policy: {
+        bundles: { codex: { directory: '@release@/adapter', digest: release.bundleDigest, executable: '/usr/local/bin/node',
+          executable_sha256: null, argv: ['@release@/adapter/bootstrap-runtime.mjs'] } },
+        // The runtime user shares the executor's uid: the provider pin check inside the agent container only trusts
+        // ancestors owned by root or by the checking user, and the release lives under the executor's install root.
+        container_templates: [{ harness_id: 'codex', prefix: `${prefix}-`, image: imageId, runtime_user: COMPUTER_RUNTIME.user, systemd_user: '@user@',
+          home_directory: COMPUTER_RUNTIME.home, state_root: COMPUTER_RUNTIME.stateRoot, profile_root: `${COMPUTER_RUNTIME.home}/.cauce-profiles`,
+          python: '/usr/local/bin/python3.12' }],
+        profile_templates: [{ provider: 'codex', runtime_user: COMPUTER_RUNTIME.user, path_root: `${COMPUTER_RUNTIME.home}/.cauce-profiles`,
+          command: '@release@/adapter/provider-cli.py', command_sha256: hash(PROVIDER_CLI), runtime_mode: 'container', container_prefix: `${prefix}-` }],
+        hooks: { authenticate: hook, profile: hook, verify: hook, revoke: hook },
+        transport: { bootstrap_url: bootstrapOrigin, gateway_url: bootstrapOrigin, ca_certificate: '@install@/files/fleet-ca', network: 'host' },
+        authority: { identity_directory: '@identity@', host_id: '@host@', ca_certificate: '@install@/files/fleet-ca' },
+      } }), generateKeyPairSync('ed25519').privateKey);
+    const app = await buildGateway({ pool, repository: new CauceRepository(pool), consoleOrigins: options.consoleOrigins, logger: false,
+      authProvider: new PasswordAuthProvider({ users: new PostgresConsoleUserStore(pool), signingKey: Buffer.alloc(32, 61) }),
+      hostSetup: packager, signedFleetAuthorityClient: authority.client, fleetOperationsRepository: new FleetOperationsRepository(pool) });
+    owned.app = app;
+    const gatewayUrl = await app.listen({ host: '127.0.0.1', port: 0 });
+    const container = prefix;
+    const started = await command('docker', ['run', '-d', '--name', container, '--privileged', '--cgroupns=private', '--network', 'host',
+      '--tmpfs', '/run', '--tmpfs', '/run/lock', '-v', `${join(tree, 'ops/cli')}:/opt/cauce-cli:ro`,
+      '-v', '/var/run/docker.sock:/var/run/docker.sock', '-v', `${join(work, 'install')}:${join(work, 'install')}`, computer]);
+    if (started.code !== 0) throw new Error(`computer did not start: ${started.stderr}`);
+    owned.container = container;
+    const onComputer = (args: string[], input?: string) => command('docker', ['exec', '-i', ...AS_USER, container, ...args], input);
+    const settle = async (probe: () => Promise<boolean>) => {
+      for (let attempt = 0; attempt < 100 && !await probe(); attempt++) await new Promise(resolve => setTimeout(resolve, 200));
+    };
+    await settle(async () => ['running', 'degraded'].includes(
+      (await command('docker', ['exec', container, 'systemctl', 'is-system-running', '--wait'])).stdout.trim()));
+    const dockerGroup = String((await stat('/var/run/docker.sock')).gid);
+    await docker(['exec', container, 'groupadd', '-g', dockerGroup, 'fixture-docker']);
+    await docker(['exec', container, 'usermod', '-aG', 'fixture-docker', 'cauce']);
+    await docker(['exec', container, 'chown', 'cauce:cauce', join(work, 'install')]);
+    await docker(['exec', container, 'loginctl', 'enable-linger', 'cauce']);
+    await settle(async () => (await onComputer(['systemctl', '--user', 'is-system-running'])).stdout.trim() === 'running');
+    return { prefix, installRoot: join(work, 'install'), pool, databaseUrl: owned.current.url, app, gatewayUrl, packager, container,
+      onComputer, cli: (args, input) => onComputer(['python3', '/opt/cauce-cli/host_enrollment.py', ...args], input),
+      close: () => closeOwned(owned, prefix) };
+  } catch (error) {
+    try { await closeOwned(owned, prefix); }
+    catch (cleanup) { throw new AggregateError([error, cleanup], `computer harness ${prefix} failed and its cleanup was incomplete`); }
+    throw error;
+  }
+}
+
+interface ConsoleSession { cookie: string; origin: string; 'x-csrf-token': string }
+async function readJson<T>(harness: ComputerHarness, session: ConsoleSession, url: string): Promise<T> {
+  const response = await harness.app.inject({ method: 'GET', url, headers: { ...session } });
+  if (response.statusCode !== 200) throw new Error(`${url} answered ${String(response.statusCode)}: ${response.body}`);
+  return response.json<T>();
+}
+export function hostEnrollments(harness: ComputerHarness, session: ConsoleSession) {
+  return readJson<{ enrollments: { host_id: string; executor_ready: boolean }[] }>(harness, session, '/v3/console/fleet/hosts/enrollments');
+}
+export function fleetCapability(harness: ComputerHarness, session: ConsoleSession) {
+  return readJson<{ available: boolean; placements: { host_id: string }[] }>(harness, session, '/v3/console/fleet/capability');
+}
+
+/** The company invites the computer, which enrolls and installs its executor until the gateway sees executor_ready. */
+export async function enrollComputer(harness: ComputerHarness, session: SetupOwnerSession, company: string, hostId: string): Promise<string> {
+  const invitation = await inviteSetupHost(harness.app, session, hostId);
+  const enrolled = await harness.cli(['enroll', '--gateway', harness.gatewayUrl, '--invitation-stdin'], JSON.stringify(invitation));
+  if (enrolled.code !== 0) throw new Error(`enroll failed: ${enrolled.stderr}`);
+  const prepared = await harness.cli(['setup', '--install-root', harness.installRoot]);
+  if (prepared.code !== 0) throw new Error(`setup failed: ${prepared.stderr}`);
+  const unit = `cauce-v3-host-executor-${company}-${hostId}.service`;
+  for (let attempt = 0; attempt < 90; attempt++) {
+    if ((await hostEnrollments(harness, session)).enrollments.some(row => row.host_id === hostId && row.executor_ready)) return unit;
+    await new Promise(resolve => setTimeout(resolve, 1000));
+  }
+  const journal = (await harness.onComputer(['journalctl', '--user', '-u', unit, '--no-pager', '-n', '50'])).stdout;
+  throw new Error(`executor never became ready:\n${journal}`);
+}

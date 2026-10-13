@@ -4,6 +4,7 @@ import hashlib
 import json
 import pathlib
 import re
+import subprocess
 import time
 
 from fleet_executor_policy import SafeFailure, approve_agent, path
@@ -11,7 +12,6 @@ from fleet_executor_runtime import (
     HELPER,
     NamespaceMismatch,
     approved_bundle,
-    checked_command,
     lifecycle_arguments,
     namespace_proof,
     provider_environment,
@@ -27,6 +27,23 @@ HELPER_DESTINATION = '/cauce/lifecycle'
 EXECUTOR_SOURCE = pathlib.Path(__file__).resolve().parent
 EXECUTOR_DESTINATION = '/cauce/executor'
 RELEASE_ROOT = EXECUTOR_SOURCE.parents[1]
+
+
+DIAGNOSTIC_LIMIT = 400
+
+
+def diagnostic(stderr: bytes) -> str:
+    """The tail of a failed command's stderr as one bounded printable line for the host journal."""
+    text = re.sub(r'[\x00-\x1f\x7f]+', ' ', stderr.decode('utf-8', 'replace')).strip()
+    return text[-DIAGNOSTIC_LIMIT:] or 'no stderr'
+
+
+def checked_command(command: list[str], *, environment: dict | None = None, timeout: float = 30, input_data: bytes | None = None) -> bytes:
+    """Run one Docker effect; a failure keeps why it failed (Docker's or the in-container helper's stderr)."""
+    result = subprocess.run(command, input=input_data, capture_output=True, env=environment, timeout=timeout, check=False)
+    if result.returncode:
+        raise SafeFailure(f'runtime effect or observation failed (exit {result.returncode}): {diagnostic(result.stderr)}')
+    return result.stdout
 
 
 def docker(*arguments: str) -> bytes:
