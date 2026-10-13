@@ -109,8 +109,9 @@ def validate_shared_observation(policy: dict, agent: dict, observed: dict):
     if not isinstance(observed, dict) or observed.get('Id') != row['container_id'] or observed.get('Image') != row['image']:
         raise SafeFailure('shared container identity changed')
     configuration = observed['HostConfig']
+    from quota_runtime import normalized_capabilities
     if configuration.get('Privileged') is not False or configuration.get('PidMode') == 'host' \
-            or 'SYS_ADMIN' in (configuration.get('CapAdd') or []):
+            or 'SYS_ADMIN' in normalized_capabilities(configuration.get('CapAdd')):
         raise SafeFailure('shared container isolation changed')
     mounts = [{field: mount[field] for field in ('Destination', 'Source', 'Type', 'RW')} for mount in observed['Mounts']]
     if sorted(mounts, key=lambda mount: mount['Destination']) != sorted(row['mounts'], key=lambda mount: mount['Destination']):
