@@ -24,11 +24,11 @@ async function lockPerson(client: DatabaseClient, id: string, revision: string, 
 async function syncMembership(client: DatabaseClient, value: PeopleAdminPerson): Promise<void> {
   await client.query(`UPDATE human_tenant_memberships SET enabled=false,revoked_at=COALESCE(revoked_at,clock_timestamp())
     WHERE human_id=$1 AND enabled`, [value.id]);
-  await client.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,role,permissions,enabled,revoked_at)
-    VALUES($1,$2,$3,$4,$5,$6,CASE WHEN $6 THEN NULL ELSE clock_timestamp() END)
-    ON CONFLICT(human_id,tenant_id) DO UPDATE SET actor_alias=EXCLUDED.actor_alias,role=EXCLUDED.role,permissions=EXCLUDED.permissions,
+  await client.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,permissions,enabled,revoked_at)
+    VALUES($1,$2,$3,$4,$5,CASE WHEN $5 THEN NULL ELSE clock_timestamp() END)
+    ON CONFLICT(human_id,tenant_id) DO UPDATE SET actor_alias=EXCLUDED.actor_alias,permissions=EXCLUDED.permissions,
       enabled=EXCLUDED.enabled,revoked_at=EXCLUDED.revoked_at`,
-  [value.id, value.tenant_id, value.alias, value.role, [...consoleRoleAuthority(value.role).permissions], value.active]);
+  [value.id, value.tenant_id, value.alias, [...consoleRoleAuthority(value.role).permissions], value.active]);
 }
 async function audit(client: DatabaseClient, actor: PeopleAdminActor, authority: CompanyAuthority, action: string, value: PeopleAdminPerson, fields: string[] = []): Promise<void> {
   await client.query(`INSERT INTO audit_events(tenant_id,actor_alias,action,decision,company_id,actor_human_id,metadata)

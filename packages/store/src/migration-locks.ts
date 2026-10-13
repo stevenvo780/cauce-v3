@@ -74,6 +74,7 @@ export const migrationLockFootprints: Readonly<Record<string, Readonly<Record<st
   '078_authority_lock_scope.sql': { platform_admins: SRE },
   '079_host_enrollment_compatibility.sql': { fleet_host_enrollments: AE },
   '080_agent_alias_immutable.sql': { agents: SRE },
+  '081_membresia_rol_derivado.sql': { console_users: SRE, human_tenant_memberships: AE },
 };
 
 /** The first migration with a footprint; every bundled migration from it on must have one. */

@@ -31,17 +31,19 @@ export interface HumanIdentitySnapshot extends HumanIdentityKey {
 interface AccountRow { id: string; active: boolean; role: string; tenant_id: string; display_name: string }
 interface BindingRow { id: string; human_id: string; revision: string; enabled: boolean; revoked_at: Date | null }
 interface MembershipRow {
-  tenant_id: string; actor_alias: string; role: string; permissions: string[];
+  tenant_id: string; actor_alias: string; permissions: string[];
   enabled: boolean; revision: string; revoked_at: Date | null;
 }
+
+type HomeMembership = Omit<HumanIdentitySnapshot['membership'], 'role'>;
 
 const BINDING_KEY = 'provider=$1 AND namespace=$2 COLLATE "C" AND subject=$3 COLLATE "C"';
 
 async function lockHomeMembership(
   client: DatabaseClient, humanId: string, tenantId: string,
-): Promise<HumanIdentitySnapshot['membership'] | undefined> {
+): Promise<HomeMembership | undefined> {
   const membership = (await client.query<MembershipRow>(
-    `SELECT human.tenant_id, human.actor_alias, human.role, human.permissions, human.enabled, human.revision::text, human.revoked_at
+    `SELECT human.tenant_id, human.actor_alias, human.permissions, human.enabled, human.revision::text, human.revoked_at
      FROM human_tenant_memberships human JOIN tenants tenant ON tenant.id=human.tenant_id
      JOIN companies company ON company.id=tenant.company_id
      WHERE human.human_id=$1 AND human.tenant_id=$2 AND tenant.enabled AND tenant.retired_at IS NULL
@@ -50,8 +52,12 @@ async function lockHomeMembership(
   )).rows[0];
   if (!membership?.enabled || membership.revoked_at !== null) return undefined;
   return Object.freeze({ tenantId: membership.tenant_id, actorAlias: membership.actor_alias,
-    role: membership.role, permissions: Object.freeze([...membership.permissions]),
+    permissions: Object.freeze([...membership.permissions]),
     enabled: membership.enabled, revision: membership.revision });
+}
+
+function withAccountRole(membership: HomeMembership, role: string): HumanIdentitySnapshot['membership'] {
+  return Object.freeze({ ...membership, role });
 }
 
 function validKey(key: { provider: unknown; namespace: unknown; subject: unknown }): boolean {
@@ -83,14 +89,14 @@ async function readLockedIdentity(
   )).rows[0];
   if (!account?.active || !binding?.enabled || binding.revoked_at !== null || binding.human_id !== account.id
       || account.id !== humanId) return undefined;
-  const membership = await lockHomeMembership(client, humanId, account.tenant_id);
-  if (!membership) return undefined;
+  const home = await lockHomeMembership(client, humanId, account.tenant_id);
+  if (!home) return undefined;
   return Object.freeze({
     humanId, bindingId: binding.id, provider, namespace, subject,
     bindingRevision: binding.revision,
     account: Object.freeze({ active: account.active, role: account.role,
       defaultTenant: account.tenant_id, displayName: account.display_name }),
-    membership,
+    membership: withAccountRole(home, account.role),
   });
 }
 
@@ -182,12 +188,12 @@ export async function lockConsoleHuman(
     }
     if (!verified) throw new StoreError('forbidden', 'console human authority is unavailable');
   }
-  const membership = await lockHomeMembership(client, humanId, account.tenant_id);
-  if (!membership) throw new StoreError('forbidden', 'console human authority is unavailable');
+  const home = await lockHomeMembership(client, humanId, account.tenant_id);
+  if (!home) throw new StoreError('forbidden', 'console human authority is unavailable');
   return Object.freeze({ humanId: account.id,
     account: Object.freeze({ active: account.active, role: account.role, defaultTenant: account.tenant_id,
       actorAlias: account.alias, passwordChangedAt: account.password_changed_at.getTime() }),
-    membership,
+    membership: withAccountRole(home, account.role),
   });
 }
 
@@ -206,9 +212,9 @@ export async function lockConsolePerson(client: DatabaseClient, humanId: string)
     'SELECT id, active, role, tenant_id, alias, company_id FROM console_users WHERE id=$1 FOR SHARE', [humanId],
   )).rows[0];
   if (!account) return undefined;
-  const membership = await lockHomeMembership(client, humanId, account.tenant_id);
+  const home = await lockHomeMembership(client, humanId, account.tenant_id);
   return Object.freeze({ humanId: account.id,
     account: Object.freeze({ active: account.active, role: account.role, defaultTenant: account.tenant_id,
       actorAlias: account.alias, company: account.company_id }),
-    ...(membership === undefined ? {} : { membership }) });
+    ...(home === undefined ? {} : { membership: withAccountRole(home, account.role) }) });
 }
