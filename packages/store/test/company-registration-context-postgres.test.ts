@@ -68,10 +68,15 @@ afterAll(async () => { if (database) { await database.pool.end(); await database
 const source = (value = company): CompanyAuthoritySource => client => lockCompanyAuthority(client,
   { tenant: value.hub.id, alias: value.user.username, humanId: value.user.id });
 // Down reverts 063 with the real downs of every later migration in one transaction; up reapplies the bundle.
+// The downs run in their own session, as an operator's psql would: down/081 and 081 both define the
+// session-temporary pg_temp.cauce_081_patch, so the migrator must not reuse the session that ran the down.
 async function migration(down = false): Promise<void> {
   if (!down) { await applyMigrations(admin); return; }
+  if (!current) throw new Error('test case database unavailable');
   const downs = await downsThrough('063_company_registration_director.sql');
-  await withTransaction(admin, async client => { for (const sql of downs) await client.query(sql); });
+  const session = createPool(current.adminUrl, { max: 1 });
+  try { await withTransaction(session, async client => { for (const sql of downs) await client.query(sql); }); }
+  finally { await session.end(); }
 }
 async function context() {
   const store = new ContextVersionStore(pool);
