@@ -301,8 +301,9 @@ class Copier:
                 return True
             if len(raw) != info.st_size:
                 return True
-            for item in (line.strip() for line in raw.decode('utf-8', 'surrogateescape').splitlines()):
-                candidate = item if not item or os.path.isabs(item) else os.path.join(real, item)
+            # Git keeps every byte except one trailing CR. strip() would inspect a different directory.
+            for item in (line.removesuffix('\r') for line in raw.decode('utf-8', 'surrogateescape').split('\n')):
+                candidate = item if os.path.isabs(item) else os.path.join(real, item)
                 if item and not item.startswith('#') and (not self.inside_roots(candidate) or self.git_store_escapes(os.path.realpath(candidate)) or alternates_escape(candidate, seen)):
                     return True
             return False

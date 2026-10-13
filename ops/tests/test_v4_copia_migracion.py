@@ -371,15 +371,13 @@ class SecurityTests(Scoped):
         write(self.source / 'datos/\u03c4oken.txt', 'solo-nombre-griego\n')
         manifest = self.make_copy()
         reasons = {item['path']: item['reason'] for item in manifest['omissions']}
-        for path in ('datos/nota-cookies.txt', 'datos/nota-comillas.txt', 'datos/nota-cirilica.txt',
-                     'datos/nota-zw.txt', 'datos/nota-mayus.txt', 'datos/nota-nfd.txt', 'datos/nota-homoglifo.txt'):
+        for path in ('datos/nota-cookies.txt', 'datos/nota-comillas.txt', 'datos/nota-cirilica.txt', 'datos/nota-zw.txt', 'datos/nota-mayus.txt', 'datos/nota-nfd.txt', 'datos/nota-homoglifo.txt'):
             self.assertEqual(reasons[path], 'sensitive-content', path)
         self.assertEqual(reasons['datos/\u0442oken.txt'], 'token')
         self.assertEqual(reasons['datos/xai-\u043aey.txt'], 'credential')
         self.assertEqual(reasons['datos/\u03c4oken.txt'], 'token')
         stored = self.copied_bytes()
-        for marker in ('abcdefghijklmnopSECRET', 'abcdefgh12345678ijklmnop', secret,
-                       'solo-nombre-token', 'solo-nombre-key', 'solo-nombre-griego'):
+        for marker in ('abcdefghijklmnopSECRET', 'abcdefgh12345678ijklmnop', secret, 'solo-nombre-token', 'solo-nombre-key', 'solo-nombre-griego'):
             self.assertNotIn(marker.encode(), stored, marker)
 
     def test_git_object_stores_outside_the_copy_are_not_bundled(self):
@@ -460,8 +458,7 @@ class SecurityTests(Scoped):
         self.assertIn('proyecto/alt-base', repos)
         self.assertIn('proyecto/uses-inside-alt', repos)
         stored = self.copied_bytes() + self.bundle_bytes()
-        for sentinel in ('SENTINEL-ALTERNATES-9f3a', 'SENTINEL-OBJLINK-9f3a', 'SENTINEL-COMMONDIR-9f3a',
-                         'SENTINEL-LONGGITDIR-9f3a'):
+        for sentinel in ('SENTINEL-ALTERNATES-9f3a', 'SENTINEL-OBJLINK-9f3a', 'SENTINEL-COMMONDIR-9f3a', 'SENTINEL-LONGGITDIR-9f3a'):
             self.assertNotIn(sentinel.encode(), stored, sentinel)
 
     def test_invisible_and_homoglyph_credential_spellings_are_excluded(self):
@@ -479,8 +476,7 @@ class SecurityTests(Scoped):
         write(self.source / 'datos/sess\u2060ion.txt', 'solo-nombre-sesion\n')
         manifest = self.make_copy()
         reasons = {item['path']: item['reason'] for item in manifest['omissions']}
-        for path in ('datos/nota-wj.txt', 'datos/nota-shy.txt', 'datos/nota-rho.txt', 'datos/nota-nu.txt',
-                     'datos/nota-portador-wj.txt', 'datos/nota-cabecera-wj.txt', 'datos/nota-cabecera-muchas.txt'):
+        for path in ('datos/nota-wj.txt', 'datos/nota-shy.txt', 'datos/nota-rho.txt', 'datos/nota-nu.txt', 'datos/nota-portador-wj.txt', 'datos/nota-cabecera-wj.txt', 'datos/nota-cabecera-muchas.txt'):
             self.assertEqual(reasons[path], 'sensitive-content', path)
         self.assertEqual(reasons['datos/\u03c1assword.txt'], 'credential')
         self.assertEqual(reasons['datos/pass\u2060word.txt'], 'credential')
@@ -529,8 +525,7 @@ class SecurityTests(Scoped):
         write(self.source / 'datos/.np\u039crc', 'solo-nombre-npm\n')
         manifest = self.make_copy()
         reasons = {item['path']: item['reason'] for item in manifest['omissions']}
-        for path in ('datos/nota-nu-mayuscula.txt', 'datos/nota-eta.txt', 'datos/nota-upsilon.txt',
-                     'datos/nota-gamma.txt', 'datos/nota-cookie-relleno.txt', 'datos/nota-relleno.txt'):
+        for path in ('datos/nota-nu-mayuscula.txt', 'datos/nota-eta.txt', 'datos/nota-upsilon.txt', 'datos/nota-gamma.txt', 'datos/nota-cookie-relleno.txt', 'datos/nota-relleno.txt'):
             self.assertEqual(reasons[path], 'sensitive-content', path)
         self.assertEqual(reasons['datos/sessio\u039d.txt'], 'session')
         self.assertEqual(reasons['datos/.np\u039crc'], 'credential')
@@ -613,18 +608,26 @@ class SecurityTests(Scoped):
         write(chain_in / '.git/objects/info/alternates', os.path.realpath(alt_mid) + '\n')
         point_at(chain_in, alt_out)
 
+        spaced_out, spaced = outside_repo('fuera-alt-espacio', 'SENTINEL-PADDED-ALT-9f3a'), inside_repo('con-alt-espacio')
+        benign = self.source / 'proyecto' / 'alt-limpio'
+        benign.mkdir()
+        evil = pathlib.Path(f'{benign} ')
+        evil.mkdir()
+        (evil / 'pack').symlink_to(spaced_out / '.git/objects/pack')
+        write(spaced / '.git/objects/info/alternates', f'{evil}\n')
+        point_at(spaced, spaced_out)
         manifest = self.make_copy()
         repos = {repo['path'] for repo in manifest['repositories']}
         reasons = {item['path']: item['reason'] for item in manifest['omissions']}
         for path in ('proyecto/anidado/.git', 'proyecto/duro-fuera/.git', 'proyecto/puente/.git',
-                     'proyecto/enlace-fichero/.git', 'proyecto/con-alt-encadenado/.git'):
+                     'proyecto/enlace-fichero/.git', 'proyecto/con-alt-encadenado/.git', 'proyecto/con-alt-espacio/.git'):
             self.assertEqual(reasons[path], 'unsafe-git-link', path)
             self.assertNotIn(path.removesuffix('/.git'), repos)
         self.assertIn('proyecto/duro-dentro', repos)
         self.assertIn('proyecto/duro-gemelo', repos)
         stored = self.copied_bytes() + self.bundle_bytes()
         for sentinel in ('SENTINEL-NESTED-9f3a', 'SENTINEL-HARD-9f3a', 'SENTINEL-BRIDGE-9f3a',
-                         'SENTINEL-FILELINK-9f3a', 'SENTINEL-CHAINED-ALT-9f3a'):
+                         'SENTINEL-FILELINK-9f3a', 'SENTINEL-CHAINED-ALT-9f3a', 'SENTINEL-PADDED-ALT-9f3a'):
             self.assertNotIn(sentinel.encode(), stored, sentinel)
         self.assertIn(b'DENTRO-COMPARTIDO-9f3a', stored)
 
