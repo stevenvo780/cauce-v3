@@ -180,7 +180,9 @@ describe('inventario de pruebas de V4', () => {
     }).trim().split('\n');
     expect(releaseCommand).toHaveLength(10);
     expect(releaseCommand[0]).toBe('python3 -m pytest ops/tests/test_fleet_orphan_sweep.py ops/tests/test_fleet_executor_container.py -q --tb=line');
-    expect(inventory).toContain('ejecuta diez pasos en secuencia');
+    expect(inventory).toContain('ejecuta diez pasos: primero el barrido acotado de huérfanos');
+    expect(inventory).toContain('nueve gates pnpm en carriles paralelos');
+    expect(inventory).toContain('CAUCE_RELEASE_GATES_JOBS');
   });
 
   test('el pendiente de la matriz CRUD coincide con el límite descrito', () => {

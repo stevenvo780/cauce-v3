@@ -41,11 +41,18 @@ La plataforma lista, crea, edita y retira empresas en `/v3/console/companies`. E
 | `cauce hosts` | enrolar, latido, preparar y consultar el executor |
 | `cauce login` | sesión nominal de consola |
 | `cauce context` | contexto versionado por el gateway |
-| `cauce context-native` | ingesta de una lista explícita de archivos |
+| `cauce context-native` | ingesta, con sesión humana de consola, de una lista explícita de archivos de `context/` o `directives/` |
 | `cauce spaces` | registro durable del agente; `backup` y `restore` archivan el espacio |
 | `cauce diagnose` | cadena de diagnóstico de la empresa de la sesión |
 
 Instalación, permisos de los archivos de sesión y `CAUCE_FLEET_RUNTIME_STATE`: [CLI de Cauce V4](v4-cli.md).
+
+Las ediciones hechas en el espacio del agente entran al historial por dos vías con autoridades distintas:
+
+- **`cauce context-native`, a petición de una persona.** Usa la sesión humana. Lee el snapshot y envía `PUT /v3/console/context/agents/:tenant/:alias` con `source: native`, la versión esperada y los archivos de la lista, que pueden estar en cualquier ruta permitida de `context/` o `directives/`. Código: `ops/cli/context_native.py:12-28` y `services/gateway/src/context-version.routes.ts:70-74`.
+- **El SDK, sin intervención, al preparar el turno siguiente.** Solo registra cambios bajo `context/notes/**`. Usa `POST /v3/context/ingest` con el certificado del propio agente. Código: `packages/adapter-sdk/src/sdk/engine/native-context-ingest.ts:61` y `services/gateway/src/context-version.routes.ts:48-53`. Cualquier otra ruta cambiada se rechaza como `context_governed_path` (`packages/store/src/context-version.ts:134-137`). Esas ediciones no crean versión: el turno sigue con el snapshot autorizado y la divergencia queda apartada o local ([CLI](v4-cli.md#ingesta-de-archivos-locales)).
+
+Una edición local de perfil o directivas solo llega al historial si una persona la ingiere con la CLI o la escribe en la consola.
 
 ## Arquitectura multitenant
 

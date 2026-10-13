@@ -11,7 +11,7 @@ Esta tabla enumera archivos y comandos presentes en el checkout. Los conteos son
 | aislamiento | Adversariales y de aislamiento | 50 | `pnpm test:gateway-hardening && pnpm test:store-hardening && pnpm test:services` | Suites `tests/gateway-hardening`, `tests/store-hardening` y la prueba `services/gateway/src/security/route-isolation.postgres.test.ts`. | GOAL §1.3 mantiene pendiente la guardia P0 que enumera todas las rutas `/v3` y prueba IDs cruzados sin mutaciones, además de los efectos remotos entre empresas. |
 | ops | Ops y Python | 164 | `pnpm test:ops` | Archivos descubiertos por `ops/tests/run-all.mjs`, incluidos casos Python y shell con sus requisitos de ejecución. | No sustituye las suites de servicios, las pruebas de navegador ni la verificación desplegada; el runner puede marcar casos como omitidos si faltan requisitos de host o Docker. |
 | layout | Layout | 12 | `pnpm qa:layout` | Módulos ejecutables `.mjs` de `console/qa`; el gate renderiza rutas en Chromium y compara medidas con sus baselines. | GOAL §10 mantiene pendiente resolver en todas las vistas los estados vacíos, de carga y error con retroalimentación clara. |
-| release | Gate de release | 1 | `scripts/release-gates.sh` | Script que declara y ejecuta diez pasos en secuencia (el barrido acotado de huérfanos de las suites desechables y nueve gates pnpm); `scripts/release-gates.sh --list` imprime sus comandos. | Exige un árbol limpio y herramientas disponibles; no despliega ni comprueba el efecto vivo. El barrido no recorre el Docker compartido: solo `ops/tests/test_fleet_orphan_sweep.py` y `ops/tests/test_fleet_executor_container.py`. GOAL §10 todavía marca documentación y recorridos de aceptación como pendientes. |
+| release | Gate de release | 1 | `scripts/release-gates.sh` | Script que declara y ejecuta diez pasos: primero el barrido acotado de huérfanos de las suites desechables y después nueve gates pnpm en carriles paralelos, cada uno un checkout del mismo commit (`CAUCE_RELEASE_GATES_JOBS`, por defecto según CPU y memoria; `1` los corre en secuencia); `scripts/release-gates.sh --list` imprime sus comandos. | Exige un árbol limpio y herramientas disponibles; no despliega ni comprueba el efecto vivo. El barrido no recorre el Docker compartido: solo `ops/tests/test_fleet_orphan_sweep.py` y `ops/tests/test_fleet_executor_container.py`. GOAL §10 todavía marca documentación y recorridos de aceptación como pendientes. |
 
 ## Conteos reproducibles
 
@@ -32,7 +32,7 @@ Este inventario sustituye la cifra histórica «17 e2e de vistas V3 y un recorri
 
 | Grupo | Archivos | Casos |
 |---|---:|---:|
-| V4 (`v4-*`) | 10 | 56 |
+| V4 (`v4-*`) | 10 | 57 |
 | V3 y V3.5 (resto) | 13 | 21 |
 
 | Archivo V4 | Casos | Recorrido |
@@ -46,7 +46,7 @@ Este inventario sustituye la cifra histórica «17 e2e de vistas V3 y un recorri
 | `tests/e2e/v4-office-real-browser.test.ts` | 13 | Oficina: salas y agentes de alta a baja, re-login, segundo navegador y cansancio en campus, plano y ficha. |
 | `tests/e2e/v4-people-real-browser.test.ts` | 6 | Personas y acceso web. |
 | `tests/e2e/v4-purge-real-browser.test.ts` | 1 | Purga real de un agente. |
-| `tests/e2e/v4-quota-environments-real-browser.test.ts` | 6 | Entornos de cuota. |
+| `tests/e2e/v4-quota-environments-real-browser.test.ts` | 7 | Entornos de cuota. |
 
 Conteo reproducible desde la raíz:
 
