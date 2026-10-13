@@ -526,7 +526,7 @@ graph LR
 - ops/instances/hospital/provision-agents.sh
 - ops/instances/hospital/register-console-identity.py
 - ops/instances/hospital/show-access.sh
-- ops/manifests/*.yaml
+- ops/manifests/*.yaml sin otra arista entrante (uno por alias del snapshot; generados desde `ops/flota.json`)
 - ops/pty-agent/cauce-pty-host-launcher.sh
 - ops/pty-agent/cauce_pty_agent/__init__.py
 - ops/pty-agent/cauce_pty_agent/__main__.py
