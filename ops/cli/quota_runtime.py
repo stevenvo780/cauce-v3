@@ -16,6 +16,7 @@ RETIRED_PROVIDERS = frozenset({'gemini'})
 EXECUTOR_SOURCE = pathlib.Path(__file__).resolve().parent
 LIFECYCLE_SOURCE = (EXECUTOR_SOURCE.parent / 'container-runtime').resolve()
 CAPABILITIES = ('SETUID', 'SETGID', 'CHOWN', 'DAC_OVERRIDE', 'FOWNER', 'SYS_PTRACE')
+TMPFS = {'/tmp': 'rw,nosuid,noexec,size=16m', '/run': 'rw,nosuid,noexec,size=16m'}
 GROK_IDENTITY = re.compile(r'(?:grok|grok-local):[0-9a-f]{64}')
 
 
@@ -170,6 +171,7 @@ def validate(policy: dict, environment: dict, observed: dict) -> None:
             or host.get('ReadonlyRootfs') is not True or host.get('Privileged') is not False \
             or host.get('NetworkMode') != approved['network'] or host.get('PidMode') == 'host' \
             or host.get('Memory') != 512 * 1024 * 1024 or host.get('PidsLimit') != 128 \
+            or host.get('Tmpfs') != TMPFS \
             or normalized_capabilities(host.get('CapDrop')) != {'ALL'} or normalized_capabilities(host.get('CapAdd')) != set(CAPABILITIES) \
             or not any(value.startswith('no-new-privileges') for value in host.get('SecurityOpt') or []) \
             or len(mounts) != 3 or state.get('Type') != 'volume' or state.get('Name') != environment['container_name'] + '-profile' \
@@ -202,10 +204,51 @@ def provider_version(environment: dict, *, updated: bool = False) -> str:
     return version
 
 
+def provider_login_executable(environment: dict) -> str:
+    executable = provider_executable(environment)
+    if environment['provider'] != 'codex':
+        return executable
+    prefix = '/home/node/.local' if executable.startswith('/home/node/.local/') else '/usr/local'
+    script = ('import pathlib,platform,sys;root=pathlib.Path(sys.argv[1]);'
+              'arch={"x86_64":"x64","aarch64":"arm64"}[platform.machine()];'
+              'triple={"x64":"x86_64","arm64":"aarch64"}[arch]+"-unknown-linux-musl";'
+              'package=root/"lib/node_modules/@openai/codex";'
+              'candidates=[package/"node_modules/@openai"/("codex-linux-"+arch)/"vendor"/triple/"bin/codex",'
+              'package/"vendor"/triple/"bin/codex"];'
+              'found=[p.resolve() for p in candidates if p.is_file()];'
+              'valid=[p for p in found if p.is_relative_to(root) and p.read_bytes()[:4]==b"\\x7fELF"];'
+              'sys.exit(2) if len(valid)!=1 else print(valid[0])')
+    native = docker('exec', '--user', '1000:1000', environment['container_name'], '/usr/bin/python3', '-c', script, prefix).decode().strip()
+    pattern = re.escape(prefix) + r'/lib/node_modules/@openai/codex/(?:node_modules/@openai/codex-linux-(?:x64|arm64)/)?vendor/(?:x86_64|aarch64)-unknown-linux-musl/bin/codex'
+    if re.fullmatch(pattern, native) is None:
+        raise SafeFailure('native quota login executable escapes its provider package')
+    return native
+
+
 def create(policy: dict, environment: dict) -> dict:
+    existing = inspect_container(environment['container_name'])
+    if existing is not None:
+        return create_runtime(policy, environment, existing)
+    volume = environment['container_name'] + '-profile'
+    retained_volume = volume in docker('volume', 'ls', '--format', '{{.Name}}').decode().splitlines()
+    try:
+        return create_runtime(policy, environment, None)
+    except Exception:
+        if retained_volume:
+            observed = inspect_container(environment['container_name'])
+            if observed is not None:
+                validate(policy, environment, observed)
+                docker('rm', '-f', environment['container_name'])
+            if inspect_container(environment['container_name']) is not None:
+                raise SafeFailure('failed quota environment removal was not observed') from None
+        else:
+            remove(policy, environment)
+        raise
+
+
+def create_runtime(policy: dict, environment: dict, existing: dict | None) -> dict:
     provider_operation(policy, environment['provider'], 'install')
     approved = configuration(policy)
-    existing = inspect_container(environment['container_name'])
     if existing is not None:
         validate(policy, environment, existing)
     else:
@@ -223,7 +266,7 @@ def create(policy: dict, environment: dict) -> dict:
         docker('create', '--name', environment['container_name'], '--network', approved['network'], '--user', '1000:1000',
                '--read-only', '--cap-drop', 'ALL', *[value for capability in CAPABILITIES for value in ('--cap-add', capability)],
                '--security-opt', 'no-new-privileges', '--pids-limit', '128', '--memory', '512m',
-               '--tmpfs', '/tmp:rw,nosuid,noexec,size=16m', '--tmpfs', '/run:rw,nosuid,noexec,size=16m',
+               *[value for destination, options in TMPFS.items() for value in ('--tmpfs', destination + ':' + options)],
                '--mount', f'type=volume,source={volume},target=/home/node',
                '--mount', f'type=bind,source={EXECUTOR_SOURCE},target=/cauce/executor,readonly',
                '--mount', f'type=bind,source={LIFECYCLE_SOURCE},target=/cauce/lifecycle,readonly',
@@ -275,7 +318,7 @@ def login_plan(policy: dict, document: dict) -> dict:
     command = provider_operation(policy, environment['provider'], 'authenticate', command=True)
     if pathlib.PurePosixPath(command[0]).name != environment['provider']:
         raise SafeFailure('descriptor login executable differs from the quota provider')
-    command[0] = provider_executable(environment)
+    command[0] = provider_login_executable(environment)
     generation = hashlib.sha256((observed['Id'] + '\0' + observed['State']['StartedAt']).encode()).hexdigest()
     return {'operation_id': document['operation_id'], 'command': command, 'runtime_user': 'node',
             'home': '/home/node', 'cwd': '/home/node', 'env': {'PATH': '/home/node/.local/bin:/usr/local/bin:/usr/bin:/bin'},
@@ -344,7 +387,8 @@ def perform(policy: dict, document: dict) -> dict:
     if action == 'query':
         raw = query_observation(policy, environment)
         from quota_snapshot import normalize_cli_snapshot
-        return normalize_cli_snapshot(environment['provider'], raw, environment['account_id'])
+        return {**normalize_cli_snapshot(environment['provider'], raw, environment['account_id']),
+                'cli_version': provider_version(environment)}
     if action == 'update_cli':
         from fleet_executor_runtime import checked_command
         command = ['/usr/bin/docker', 'exec', '--user', '1000:1000', environment['container_name'],

@@ -1,12 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { newTrustedPage, startConsoleFunctionalFixture } from './console-functional-browser.fixtures.js';
-import { seedQuotaHost } from './v4-console-real-browser.quotas.js';
+import { join } from 'node:path';
 import {
   apiGet, asV4Page, bodySnippet, BrowserErrorLog, fillRegistration, HERMETIC_INSTANCE_RULES, login,
   openRegistration, PATTERN_DEFECT_RULE, type V4Page,
 } from './v4-console-real-browser.helpers.js';
-import { finishQuotaOperation, quotaCanaryPerson, seedQuotaCompanyAdmin } from './v4-quota-environments-real-browser.fixtures.js';
+import { prepareQuotaDockerImage, removeQuotaDockerImage, quotaCanaryPerson, seedQuotaCompanyAdmin, startQuotaDockerHost } from './v4-quota-environments-real-browser.fixtures.js';
 
 const run = randomUUID().replaceAll('-', '').slice(0, 8);
 const owner = quotaCanaryPerson('owner', run);
@@ -24,11 +24,34 @@ let ownerPage: V4Page | undefined;
 let accountId = '';
 let accountVersion = 0;
 let ownerEnvironmentId = '';
+let quotaImage: Awaited<ReturnType<typeof prepareQuotaDockerImage>>;
+let quotaHostRuntime: Awaited<ReturnType<typeof startQuotaDockerHost>> | undefined;
+const evidenceDirectory = join(process.cwd(), 'ops/artifacts/quota-real-browser', run);
 
 const active = () => { if (!fixture) throw new Error('quota browser fixture is not initialized'); return fixture; };
 const pool = () => active().database.pool;
 const base = () => active().baseUrl;
 const companyOwnerPage = () => { if (!ownerPage) throw new Error('quota company owner has no page'); return ownerPage; };
+const hostRuntime = () => { if (!quotaHostRuntime) throw new Error('quota Docker host is not initialized'); return quotaHostRuntime; };
+
+async function assertContainerIsolation(environmentId: string): Promise<void> {
+  const observed = await hostRuntime().inspect(environmentId);
+  expect(observed).toMatchObject({ present: true, volume_present: true, image: quotaImage.image,
+    user: '1000:1000', readonly_rootfs: true, privileged: false, memory: 512 * 1024 * 1024, pids_limit: 128 });
+  expect(observed.cap_drop).toEqual(['ALL']);
+  expect(observed.security_opt?.some(value => value.startsWith('no-new-privileges'))).toBe(true);
+  expect(observed.mounts?.map(mount => mount.destination).sort()).toEqual(['/cauce/executor', '/cauce/lifecycle', '/home/node']);
+  expect(observed.mounts?.find(mount => mount.destination === '/home/node')).toMatchObject({ type: 'volume', writable: true });
+  expect(observed.mounts?.find(mount => mount.destination === '/cauce/executor'))
+    .toMatchObject({ type: 'bind', writable: false, source: join(process.cwd(), 'ops/cli') });
+  expect(observed.mounts?.find(mount => mount.destination === '/cauce/lifecycle'))
+    .toMatchObject({ type: 'bind', writable: false, source: join(process.cwd(), 'ops/container-runtime') });
+  for (const path of ['/tmp', '/run']) expect(observed.tmpfs?.[path]).toContain('noexec');
+}
+
+async function assertContainerRemoved(environmentId: string): Promise<void> {
+  expect(await hostRuntime().inspect(environmentId)).toMatchObject({ present: false, volume_present: false });
+}
 
 async function freshPage(label: string): Promise<V4Page> {
   const page = asV4Page(await newTrustedPage(active(), { width: 1440, height: 1000 }));
@@ -107,10 +130,17 @@ async function deleteEnvironment(page: V4Page, label: string): Promise<void> {
 beforeAll(async () => {
   if (process.env.CAUCE_TEST_DATABASE_URL) throw new Error('this E2E requires its own Testcontainers PostgreSQL');
   if (process.env.VITE_USE_MOCKS === 'true') throw new Error('mocks=false is required');
+  quotaImage = await prepareQuotaDockerImage(evidenceDirectory);
   fixture = await startConsoleFunctionalFixture();
-}, 600_000);
+}, 900_000);
 
-afterAll(async () => { await fixture?.close(); }, 180_000);
+afterAll(async () => {
+  try { await quotaHostRuntime?.close(); }
+  finally {
+    try { await fixture?.close(); }
+    finally { if (quotaImage) await removeQuotaDockerImage(evidenceDirectory); }
+  }
+}, 180_000);
 
 describe('entornos de cuota V4 en navegador real contra gateway y PostgreSQL reales', () => {
   it('el dueño crea la cuenta y rechaza un nombre de entorno inválido en español', async () => {
@@ -118,7 +148,7 @@ describe('entornos de cuota V4 en navegador real contra gateway y PostgreSQL rea
     ownerPage = page;
     await step(page, 'registro de empresa y dueño', async () => register(page, owner));
 
-    await seedQuotaHost(pool(), { companyId: owner.company.slug, ownerEmail: owner.email, hostId: quotaHost });
+    quotaHostRuntime = await startQuotaDockerHost(active(), owner, quotaHost, quotaImage, evidenceDirectory);
     await pool().query(`UPDATE fleet_hosts SET display_name=$2 WHERE host_id=$1`, [quotaHost, quotaHostName]);
     await pool().query(`UPDATE fleet_host_enrollments SET display_name=$2 WHERE host_id=$1`, [quotaHost, quotaHostName]);
 
@@ -128,6 +158,12 @@ describe('entornos de cuota V4 en navegador real contra gateway y PostgreSQL rea
       await expect.poll(async () => page.getByRole('button', { name: 'Registrar cuenta', exact: true }).isDisabled(), { timeout: 20_000 }).toBe(false);
       await page.getByRole('button', { name: 'Registrar cuenta', exact: true }).click();
       const form = page.getByRole('form', { name: 'Registrar cuenta de cuotas' });
+      expect(await page.evaluate(() => {
+        const select = document.querySelector<HTMLSelectElement>('form[aria-label="Registrar cuenta de cuotas"] select');
+        if (!select) throw new Error('quota provider selector is unavailable');
+        return Array.from(select.options, option => option.value);
+      }))
+        .not.toContain('gemini');
       await form.getByLabel('Nombre de la cuenta', { exact: true }).fill(accountLabel);
       await form.locator('select').selectOption('codex');
       await form.getByRole('button', { name: 'Registrar cuenta', exact: true }).click();
@@ -192,12 +228,15 @@ describe('entornos de cuota V4 en navegador real contra gateway y PostgreSQL rea
     await step(page, 'crear entorno', async () => createEnvironment(page, ownerEnvironment));
     const created = await quotaSnapshot(page);
     const environment = created.environments.find(item => item.label === ownerEnvironment);
-    expect(environment).toMatchObject({ account_id: accountId, host_id: quotaHost, status: 'pending' });
+    expect(environment).toMatchObject({ account_id: accountId, host_id: quotaHost });
     ownerEnvironmentId = environment?.id ?? '';
     expect(ownerEnvironmentId).not.toBe('');
-    expect(created.operations.find(item => item.environment_id === ownerEnvironmentId)).toMatchObject({ action: 'create', status: 'pending' });
+    expect(created.operations.find(item => item.environment_id === ownerEnvironmentId)).toMatchObject({ action: 'create' });
 
-    expect(await finishQuotaOperation(pool(), run, quotaHost, 'create')).toBe(ownerEnvironmentId);
+    const createReceipt = await hostRuntime().waitOperation(ownerEnvironmentId, 'create');
+    expect(createReceipt.worker_id).toBe(`host-${quotaHost}`);
+    expect(createReceipt.result.cli_version).toBe(quotaImage.versions.codex);
+    await assertContainerIsolation(ownerEnvironmentId);
     await page.reload({ waitUntil: 'domcontentloaded' });
     await page.getByText('Preparado', { exact: true }).waitFor({ timeout: 20_000 });
     await step(page, 'editar entorno y rechazar un nombre vacío tras recortar espacios', async () => {
@@ -225,10 +264,44 @@ describe('entornos de cuota V4 en navegador real contra gateway y PostgreSQL rea
     expect(edited).toMatchObject({ label: ownerEnvironmentEdited, status: 'ready' });
     expect(edited?.version).toBeGreaterThan(environment?.version ?? 0);
 
+    await step(page, 'consulta negativa con el lector real sin una sesión del proveedor', async () => {
+      await page.getByRole('article', { name: `Entorno ${ownerEnvironmentEdited}`, exact: true })
+        .getByRole('button', { name: 'Consultar cuotas', exact: true }).click();
+      await hostRuntime().waitOperation(ownerEnvironmentId, 'query');
+      const result = (await pool().query<{ result: { observation_status: string; provider_report: { ok: boolean; windows: unknown[] } } }>(
+        "SELECT result FROM quota_environment_operations WHERE environment_id=$1 AND action='query' ORDER BY created_at DESC LIMIT 1",
+        [ownerEnvironmentId])).rows[0]?.result;
+      expect(result?.observation_status).toBe('error');
+      expect(result?.provider_report).toMatchObject({ ok: false, windows: [] });
+      expect((await pool().query('SELECT quota_identity_hash FROM provider_accounts WHERE id=$1', [accountId])).rows)
+        .toEqual([{ quota_identity_hash: null }]);
+    });
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await step(page, 'actualizar el CLI real y consultar de nuevo', async () => {
+      await page.getByRole('article', { name: `Entorno ${ownerEnvironmentEdited}`, exact: true })
+        .getByRole('button', { name: 'Actualizar CLI', exact: true }).click();
+      const updated = await hostRuntime().waitOperation(ownerEnvironmentId, 'update_cli');
+      expect(updated.worker_id).toBe(`host-${quotaHost}`);
+      expect(updated.result.cli_version).toMatch(/^codex-cli \d+\.\d+\.\d+/u);
+      await assertContainerIsolation(ownerEnvironmentId);
+      await page.reload({ waitUntil: 'domcontentloaded' });
+      const previous = (await pool().query<{ id: string }>(
+        "SELECT id FROM quota_environment_operations WHERE environment_id=$1 AND action='query' ORDER BY created_at DESC LIMIT 1", [ownerEnvironmentId])).rows[0];
+      if (!previous) throw new Error('quota observation before CLI update is missing');
+      await page.getByRole('article', { name: `Entorno ${ownerEnvironmentEdited}`, exact: true })
+        .getByRole('button', { name: 'Consultar cuotas', exact: true }).click();
+      const afterUpdate = await hostRuntime().waitOperation(ownerEnvironmentId, 'query', { afterId: previous.id });
+      expect(afterUpdate.worker_id).toBe(`host-${quotaHost}`);
+      expect(afterUpdate.result).toMatchObject({ cli_version: updated.result.cli_version,
+        observation_status: 'error', provider_report: { ok: false, windows: [] } });
+    });
+    await page.reload({ waitUntil: 'domcontentloaded' });
+
     await step(page, 'eliminar entorno', async () => deleteEnvironment(page, ownerEnvironmentEdited));
     state = await quotaSnapshot(page);
-    expect(state.operations.find(item => item.environment_id === ownerEnvironmentId)).toMatchObject({ action: 'delete', status: 'pending' });
-    expect(await finishQuotaOperation(pool(), run, quotaHost, 'delete')).toBe(ownerEnvironmentId);
+    expect(state.operations.find(item => item.environment_id === ownerEnvironmentId)).toMatchObject({ action: 'delete' });
+    await hostRuntime().waitOperation(ownerEnvironmentId, 'delete');
+    await assertContainerRemoved(ownerEnvironmentId);
     await page.reload({ waitUntil: 'domcontentloaded' });
     await page.getByRole('article', { name: `Entorno ${ownerEnvironmentEdited}`, exact: true })
       .getByText('Eliminado', { exact: true }).waitFor({ timeout: 20_000 });
@@ -237,7 +310,33 @@ describe('entornos de cuota V4 en navegador real contra gateway y PostgreSQL rea
     expect(persisted.rows).toEqual([{ label: ownerEnvironmentEdited, status: 'deleted' }]);
     expect((await pool().query<{ status: string }>(
       "SELECT status FROM quota_environment_operations WHERE environment_id=$1 AND action='delete'", [ownerEnvironmentId])).rows).toEqual([{ status: 'done' }]);
-  });
+  }, 300_000);
+
+  it('prepara la autenticación web con el CLI real y cancelar conserva la identidad sin verificar', async () => {
+    const page = companyOwnerPage();
+    const label = `zz-canary-login-environment-${run}`;
+    await createEnvironment(page, label);
+    const environment = (await quotaSnapshot(page)).environments.find(item => item.label === label);
+    if (!environment) throw new Error('quota login environment was not created');
+    await hostRuntime().waitOperation(environment.id, 'create');
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    const card = page.getByRole('article', { name: `Entorno ${label}`, exact: true });
+    await card.getByRole('button', { name: 'Autenticar cuenta', exact: true }).click();
+    await page.getByRole('region', { name: 'Confirmar operación del entorno', exact: true })
+      .getByRole('button', { name: 'Confirmar autenticación', exact: true }).click();
+    await hostRuntime().waitOperation(environment.id, 'authenticate', { status: 'awaiting_auth' });
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await card.getByRole('button', { name: 'Conectar cuenta', exact: true }).click();
+    await card.getByLabel('Terminal privada de autenticación', { exact: true }).waitFor({ timeout: 30_000 });
+    await card.getByRole('button', { name: 'Cancelar conexión', exact: true }).click();
+    await hostRuntime().waitOperation(environment.id, 'authenticate', { status: 'failed' });
+    expect((await pool().query('SELECT quota_identity_hash,enabled FROM provider_accounts WHERE id=$1', [accountId])).rows)
+      .toEqual([{ quota_identity_hash: null, enabled: false }]);
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await deleteEnvironment(page, label);
+    await hostRuntime().waitOperation(environment.id, 'delete');
+    await assertContainerRemoved(environment.id);
+  }, 180_000);
 
   it('una empresa distinta no ve ni puede modificar cuentas o entornos por la UI o la API', async () => {
     const page = await freshPage('quota-foreign-company');
@@ -313,16 +412,18 @@ describe('entornos de cuota V4 en navegador real contra gateway y PostgreSQL rea
     await step(page, 'crear entorno con rol company_admin', async () => createEnvironment(page, adminEnvironment));
     const created = await quotaSnapshot(page);
     const environment = created.environments.find(item => item.label === adminEnvironment);
-    expect(environment).toMatchObject({ account_id: accountId, host_id: quotaHost, status: 'pending' });
+    expect(environment).toMatchObject({ account_id: accountId, host_id: quotaHost });
     const environmentId = environment?.id ?? '';
     expect(environmentId).not.toBe('');
-    expect(await finishQuotaOperation(pool(), run, quotaHost, 'create')).toBe(environmentId);
+    await hostRuntime().waitOperation(environmentId, 'create');
+    await assertContainerIsolation(environmentId);
     await page.reload({ waitUntil: 'domcontentloaded' });
     await page.getByText('Preparado', { exact: true }).waitFor({ timeout: 20_000 });
 
     await step(page, 'editar entorno con rol company_admin', async () => editEnvironment(page, adminEnvironment, adminEnvironmentEdited));
     await step(page, 'eliminar entorno con rol company_admin', async () => deleteEnvironment(page, adminEnvironmentEdited));
-    expect(await finishQuotaOperation(pool(), run, quotaHost, 'delete')).toBe(environmentId);
+    await hostRuntime().waitOperation(environmentId, 'delete');
+    await assertContainerRemoved(environmentId);
     await page.reload({ waitUntil: 'domcontentloaded' });
     await page.getByRole('article', { name: `Entorno ${adminEnvironmentEdited}`, exact: true })
       .getByText('Eliminado', { exact: true }).waitFor({ timeout: 20_000 });

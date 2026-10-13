@@ -46,18 +46,29 @@ class QuotaRuntimeTest(unittest.TestCase):
                 runtime.packet(self.policy, document)
 
     def test_login_uses_updated_cli_and_never_runs_a_shell(self):
+        native = '/home/node/.local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex'
         with patch.object(runtime, 'inspect_container', return_value=self.observed), patch.object(runtime, 'validate'), \
+                patch.object(runtime, 'docker', return_value=native.encode()), \
                 patch.object(runtime.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0)) as execute:
             plan = runtime.login_plan(self.policy, self.document)
-        self.assertEqual(plan['command'], ['/home/node/.local/bin/codex', 'login', '--device-auth'])
+        self.assertEqual(plan['command'], [native, 'login', '--device-auth'])
         self.assertEqual(execute.call_args.args[0][-3:], ['/usr/bin/test', '-x', '/home/node/.local/bin/codex'])
         self.assertEqual(plan['account_scope'], 'fixture-account')
         self.assertEqual(plan['container_binding']['container_id'], self.observed['Id'])
 
     def test_login_falls_back_only_when_updated_binary_is_absent(self):
+        native = '/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex'
         with patch.object(runtime, 'inspect_container', return_value=self.observed), patch.object(runtime, 'validate'), \
+                patch.object(runtime, 'docker', return_value=native.encode()), \
                 patch.object(runtime.subprocess, 'run', return_value=subprocess.CompletedProcess([], 1)):
-            self.assertEqual(runtime.login_plan(self.policy, self.document)['command'][0], '/usr/local/bin/codex')
+            self.assertEqual(runtime.login_plan(self.policy, self.document)['command'][0], native)
+
+    def test_native_codex_login_rejects_a_binary_outside_its_selected_installation(self):
+        for path in ('/bin/sh', '/home/node/.local/lib/node_modules/@openai/codex/vendor/x86_64-unknown-linux-musl/bin/codex'):
+            with self.subTest(path=path), patch.object(runtime, 'provider_executable', return_value='/usr/local/bin/codex'), \
+                    patch.object(runtime, 'docker', return_value=path.encode()):
+                with self.assertRaises(runtime.SafeFailure):
+                    runtime.provider_login_executable(self.environment)
 
     def test_ready_requires_a_functional_cli_version_command(self):
         with patch.object(runtime, 'inspect_container', return_value=self.observed), patch.object(runtime, 'validate'), \
@@ -81,11 +92,31 @@ class QuotaRuntimeTest(unittest.TestCase):
             {'Destination': '/cauce/executor', 'Type': 'bind', 'Source': str(runtime.EXECUTOR_SOURCE), 'RW': False},
             {'Destination': '/cauce/lifecycle', 'Type': 'bind', 'Source': str(runtime.LIFECYCLE_SOURCE), 'RW': False}],
             'HostConfig': {'ReadonlyRootfs': True, 'Privileged': False, 'NetworkMode': 'fixture-network', 'Memory': 512 * 1024 * 1024,
-                           'PidsLimit': 128, 'CapDrop': ['ALL'], 'CapAdd': list(runtime.CAPABILITIES), 'SecurityOpt': ['no-new-privileges']}})
+                           'PidsLimit': 128, 'Tmpfs': dict(runtime.TMPFS), 'CapDrop': ['ALL'], 'CapAdd': list(runtime.CAPABILITIES), 'SecurityOpt': ['no-new-privileges']}})
         with patch.object(runtime, 'docker', return_value=json.dumps([{'Labels': {'cauce.quota.company': 'foreign'}}]).encode()) as execute:
             with self.assertRaises(runtime.SafeFailure):
                 runtime.validate(self.policy, self.environment, observed)
         self.assertEqual(execute.call_args.args[0:2], ('volume', 'inspect'))
+
+    def test_failed_new_creation_rolls_back_new_resources(self):
+        for failure in (runtime.SafeFailure('unusable CLI'), subprocess.TimeoutExpired(['docker', 'exec'], 40)):
+            with self.subTest(failure=type(failure)), patch.object(runtime, 'inspect_container', return_value=None), \
+                    patch.object(runtime, 'docker', return_value=b''), patch.object(runtime, 'create_runtime', side_effect=failure), \
+                    patch.object(runtime, 'remove') as remove:
+                with self.assertRaises(type(failure)):
+                    runtime.create(self.policy, self.environment)
+            remove.assert_called_once_with(self.policy, self.environment)
+
+    def test_failed_creation_preserves_a_preexisting_profile(self):
+        volume = self.environment['container_name'] + '-profile'
+        with patch.object(runtime, 'inspect_container', side_effect=[None, self.observed, None]), \
+                patch.object(runtime, 'docker', return_value=volume.encode()) as execute, patch.object(runtime, 'validate'), \
+                patch.object(runtime, 'create_runtime', side_effect=runtime.SafeFailure('unusable CLI')), \
+                patch.object(runtime, 'remove') as remove:
+            with self.assertRaisesRegex(runtime.SafeFailure, 'unusable CLI'):
+                runtime.create(self.policy, self.environment)
+        remove.assert_not_called()
+        self.assertEqual(execute.call_args.args, ('rm', '-f', self.environment['container_name']))
 
     def test_query_failure_is_not_a_successful_effect(self):
         document = {**self.document, 'action': 'query'}
@@ -98,11 +129,14 @@ class QuotaRuntimeTest(unittest.TestCase):
         document = {**self.document, 'action': 'query'}
         body = json.dumps({'error': 'HTTP 429', 'ventanas': []}).encode()
         with patch.object(runtime, 'inspect_container', return_value=self.observed), patch.object(runtime, 'validate'), \
+                patch.object(runtime, 'provider_version', return_value='codex-cli 0.160.1') as version, \
                 patch.object(runtime.subprocess, 'run', return_value=subprocess.CompletedProcess([], 1, stdout=body)) as execute:
             report = runtime.perform(self.policy, document)
         self.assertEqual(report['observation_status'], 'error')
         self.assertFalse(report['provider_report']['ok'])
         self.assertEqual(report['provider_report']['note'], 'rate_limited')
+        self.assertEqual(report['cli_version'], 'codex-cli 0.160.1')
+        version.assert_called_once_with(self.environment)
         self.assertEqual(execute.call_args.args[0][-1], '--refresh-own-session')
 
     def test_grok_keeps_query_without_update_and_reasons_are_reported(self):
@@ -135,7 +169,7 @@ class QuotaRuntimeTest(unittest.TestCase):
                     'cauce.quota.environment': self.environment['id'], 'cauce.quota.company': 'fixture-company',
                     'cauce.quota.host': 'fixture-host', 'cauce.quota.owner': 'fixture-user'}},
                 'HostConfig': {'ReadonlyRootfs': True, 'Privileged': False, 'NetworkMode': 'fixture-network',
-                    'Memory': 512 * 1024 * 1024, 'PidsLimit': 128, 'CapDrop': ['ALL'], 'CapAdd': cap_add,
+                    'Memory': 512 * 1024 * 1024, 'PidsLimit': 128, 'Tmpfs': dict(runtime.TMPFS), 'CapDrop': ['ALL'], 'CapAdd': cap_add,
                     'SecurityOpt': ['no-new-privileges']},
                 'Mounts': [mount('/home/node', Type='volume', Name=self.environment['container_name'] + '-profile', RW=True),
                            mount('/cauce/executor', Type='bind', Source=str(runtime.EXECUTOR_SOURCE), RW=False),
@@ -143,6 +177,11 @@ class QuotaRuntimeTest(unittest.TestCase):
             volume = [{'Labels': observed['Config']['Labels']}]
             with self.subTest(cap_add=cap_add[0]), patch.object(runtime, 'docker', return_value=json.dumps(volume)):
                 runtime.validate(self.policy, self.environment, observed)
+            for tmpfs in (None, {**runtime.TMPFS, '/etc': 'rw'}, {**runtime.TMPFS, '/tmp': 'rw,exec'}):
+                tampered = copy.deepcopy(observed)
+                tampered['HostConfig']['Tmpfs'] = tmpfs
+                with self.subTest(tmpfs=tmpfs), self.assertRaises(runtime.SafeFailure):
+                    runtime.validate(self.policy, self.environment, tampered)
 
     def test_configuration_is_syntactic_and_allowance_is_enforced_later(self):
         policy = {**self.policy, 'bundles': {'codex': {'directory': '/nonexistent-bundle'}},

@@ -1,13 +1,16 @@
+import argparse
 import base64
+import hashlib
 import json
 import os
 import pathlib
 import pwd
+import re
+import selectors
 import shutil
 import subprocess
 import sys
 import tempfile
-import textwrap
 import time
 import unittest
 import uuid
@@ -17,9 +20,13 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 REPO = ROOT.parent
 sys.path.insert(0, str(ROOT / 'cli'))
 bundle_digest = __import__('fleet_executor_runtime').bundle_digest
+runtime = __import__('quota_runtime')
 EXECUTOR = ROOT / 'cli' / 'fleet-executor.py'
 LOGIN = ROOT / 'cli' / 'provider-login.py'
-TAG = 'cauce-quota-cycle-t04:local'
+TASK = '20261013T070408-20261013T065533-r-20261013T051651-t04-mis-cuotas-ciclo-web-real'
+EVIDENCE = REPO / '.delegados/v4/evidencias' / TASK / 'runtime'
+PROVIDERS = {'claude': '@anthropic-ai/claude-code', 'codex': '@openai/codex', 'grok': '@xai-official/grok'}
+SCOPE = 'quota-environments'
 
 
 def run(command, *, input_bytes=None, timeout=90, check=True):
@@ -29,196 +36,270 @@ def run(command, *, input_bytes=None, timeout=90, check=True):
     return result
 
 
+def record(directory, name, value):
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / name).write_text(json.dumps(value, indent=2) + '\n')
+
+
+def remove_image(directory):
+    metadata = json.loads((directory / 'image.json').read_text())
+    tag = metadata['tag']
+    if re.fullmatch(r'zz-canary-quota-[a-f0-9]{32}:local', tag) is None:
+        raise AssertionError('image tag is outside the canary scope')
+    inspected = run(['docker', 'image', 'inspect', tag], check=False)
+    if inspected.returncode == 0:
+        image = json.loads(inspected.stdout)[0]
+        labels = image['Config'].get('Labels') or {}
+        if image['Id'] != metadata['image'] or labels.get('cauce.canary.run') != metadata['run_id'] \
+                or labels.get('cauce.canary.scope') != SCOPE:
+            raise AssertionError('canary image ownership differs')
+        run(['docker', 'image', 'rm', tag])
+    absent = tag not in run(['docker', 'image', 'ls', '--format', '{{.Repository}}:{{.Tag}}']).stdout.decode().splitlines()
+    if not absent:
+        raise AssertionError('canary image removal was not observed')
+    record(directory, 'image-cleanup.json', {'tag': tag, 'image_removed_verified': absent})
+    return {'image_removed_verified': absent}
+
+
+def prepare_image(directory):
+    directory.mkdir(parents=True, exist_ok=True)
+    sources = {name: hashlib.sha256((ROOT / 'cuotas' / name).read_bytes()).hexdigest()
+               for name in ('Dockerfile', 'leer-cuota.mjs', 'leer-cuota-grok.mjs', 'codex-http-probe.py')}
+    metadata_file = directory / 'image.json'
+    if metadata_file.exists():
+        previous = json.loads(metadata_file.read_text())
+        live = run(['docker', 'image', 'inspect', previous['tag']], check=False)
+        if live.returncode == 0:
+            remove_image(directory)
+    identity = uuid.uuid4().hex
+    tag = 'zz-canary-quota-' + identity + ':local'
+    command = ['docker', 'build', '--pull=false', '--label', 'cauce.canary.run=' + identity,
+               '--label', 'cauce.canary.scope=' + SCOPE, '-t', tag, '-f', str(ROOT / 'cuotas/Dockerfile'), str(ROOT / 'cuotas')]
+    built = run(command, timeout=600, check=False)
+    (directory / 'build.log').write_bytes(built.stdout + built.stderr)
+    record(directory, 'build.json', {'command': command, 'exit': built.returncode, 'sources': sources,
+                                   'git_sha': run(['git', '-C', str(REPO), 'rev-parse', 'HEAD']).stdout.decode().strip()})
+    if built.returncode:
+        raise AssertionError('real quota image build failed; see durable build.log')
+    image = json.loads(run(['docker', 'image', 'inspect', tag]).stdout)[0]['Id']
+    metadata = {'image': image, 'tag': tag, 'run_id': identity, 'sources': sources}
+    record(directory, 'image.json', metadata)
+    probe = 'zz-canary-quota-probe-' + identity
+    probe_command = ['docker', 'run', '--rm', '--name', probe, '--label', 'cauce.canary.run=' + identity,
+                     '--label', 'cauce.canary.scope=' + SCOPE, '--network', 'none', image]
+    try:
+        script = 'import pathlib,hashlib,json;print(json.dumps({p:hashlib.sha256(pathlib.Path("/usr/local/bin/"+p).read_bytes()).hexdigest() for p in ["claude","codex","grok"]}))'
+        hashes = json.loads(run([*probe_command, '/usr/bin/python3', '-c', script]).stdout)
+        versions = {provider: run([*probe_command, '/usr/local/bin/' + provider, '--version']).stdout.decode().strip()
+                    for provider in PROVIDERS}
+        packages = json.loads(run([*probe_command, '/usr/local/bin/npm', 'list', '--global', '--depth=0', '--json']).stdout)['dependencies']
+        pins = dict(re.findall(r'^ARG (CLAUDE_CODE|CODEX|GROK)_VERSION=(\S+)$', (ROOT / 'cuotas/Dockerfile').read_text(), re.M))
+        for provider, variable in (('claude', 'CLAUDE_CODE'), ('codex', 'CODEX'), ('grok', 'GROK')):
+            if packages[PROVIDERS[provider]]['version'] != pins[variable] or pins[variable] not in versions[provider]:
+                raise AssertionError('installed provider differs from its Dockerfile pin')
+        absent = run([*probe_command, '/usr/bin/python3', '-c',
+                      'import pathlib,sys;sys.exit(any(pathlib.Path(p).exists() for p in ["/usr/local/bin/gemini","/usr/local/lib/node_modules/@google/gemini-cli"]))']).returncode == 0
+        if not absent or any('gemini' in package for package in packages):
+            raise AssertionError('retired Gemini is installed')
+        bundle = directory / 'bundle'
+        if bundle.exists():
+            shutil.rmtree(bundle)
+        shutil.copytree(REPO / 'packages/adapter-sdk/descriptors', bundle / 'packages/adapter-sdk/dist/descriptors')
+        digest = bundle_digest(str(bundle))
+        bundles = {provider: {'directory': str(bundle.resolve()), 'digest': digest, 'executable': '/usr/local/bin/' + provider,
+                   'executable_sha256': hashes[provider], 'argv': [], 'descriptor_sha256': hashlib.sha256(
+                       (bundle / 'packages/adapter-sdk/dist/descriptors' / (provider + '.json')).read_bytes()).hexdigest()}
+                   for provider in PROVIDERS}
+        metadata.update(versions=versions, pins=pins, gemini_absent=absent, bundle_digest=digest, bundles=bundles)
+        record(directory, 'image.json', metadata)
+        return metadata
+    finally:
+        failed = sys.exc_info()[0] is not None
+        inspected = run(['docker', 'inspect', probe], check=False)
+        if inspected.returncode == 0:
+            observed = json.loads(inspected.stdout)[0]
+            labels = observed['Config'].get('Labels') or {}
+            if observed['Image'] != image or labels.get('cauce.canary.run') != identity \
+                    or labels.get('cauce.canary.scope') != SCOPE:
+                raise AssertionError('canary probe ownership differs')
+            run(['docker', 'rm', '-f', observed['Id']])
+        if probe in run(['docker', 'ps', '-a', '--format', '{{.Names}}']).stdout.decode().splitlines():
+            raise AssertionError('canary probe removal was not observed')
+        if failed:
+            remove_image(directory)
+
+
 class QuotaEnvironmentDockerCycleTest(unittest.TestCase):
-    def test_failed_environment_cycle_removes_its_container_volume_and_image(self):
-        original_run = run
-        created = {}
+    @classmethod
+    def setUpClass(cls):
+        cls.evidence = EVIDENCE / ('unittest-' + uuid.uuid4().hex)
+        cls.metadata = prepare_image(cls.evidence)
+        cls.addClassCleanup(remove_image, cls.evidence)
 
-        def fail_after_creation(command, **options):
-            result = original_run(command, **options)
-            if str(EXECUTOR) in command and '--quota' in command:
-                receipt = json.loads(result.stdout)
-                if receipt.get('runtime_verified'):
-                    created['container'] = receipt['container_name']
-                    self.addCleanup(lambda: subprocess.run(
-                        ['docker', 'volume', 'rm', '-f', created['container'] + '-profile'],
-                        capture_output=True, check=False))
-                    self.addCleanup(lambda: subprocess.run(
-                        ['docker', 'rm', '-f', created['container']], capture_output=True, check=False))
-                    raise AssertionError('forced failure after quota environment creation')
-            return result
-
-        case = QuotaEnvironmentDockerCycleTest('test_disposable_environment_cycles_without_a_real_provider_login')
-        result = unittest.TestResult()
-        with patch(__name__ + '.run', side_effect=fail_after_creation):
-            case.run(result)
-        self.assertEqual(result.testsRun, 1)
-        self.assertFalse(result.errors)
-        self.assertEqual(len(result.failures), 1)
-        self.assertIn('forced failure after quota environment creation', result.failures[0][1])
-        container = created['container']
-        self.assertNotEqual(run(['docker', 'inspect', container], check=False).returncode, 0)
-        self.assertNotEqual(run(['docker', 'volume', 'inspect', container + '-profile'], check=False).returncode, 0)
-        self.assertNotEqual(run(['docker', 'image', 'inspect', TAG], check=False).returncode, 0)
-
-    def test_disposable_environment_cycles_without_a_real_provider_login(self):
-        identity = uuid.uuid4()
-        operation = uuid.uuid4()
-        container = 'cauce-quota-' + identity.hex
-        volume = container + '-profile'
-        self.addCleanup(lambda: subprocess.run(['docker', 'image', 'rm', '-f', TAG], capture_output=True, check=False))
-        self.addCleanup(lambda: subprocess.run(['docker', 'volume', 'rm', '-f', volume], capture_output=True, check=False))
-        self.addCleanup(lambda: subprocess.run(['docker', 'rm', '-f', container], capture_output=True, check=False))
-        context = pathlib.Path(tempfile.mkdtemp(prefix='cauce-quota-image-', dir='/var/tmp'))
-        self.addCleanup(lambda: shutil.rmtree(context, ignore_errors=True))
-        (context / 'codex.c').write_text(textwrap.dedent('''\
-            #include <fcntl.h>
-            #include <stdio.h>
-            #include <string.h>
-            #include <unistd.h>
-            #include <sys/select.h>
-            int main(int argc, char **argv) {
-              if (argc == 2 && strcmp(argv[1], "--version") == 0) { puts("codex-cli 9.9.9-canary"); return 0; }
-              if (argc == 3 && strcmp(argv[1], "login") == 0 && strcmp(argv[2], "--device-auth") == 0) {
-                puts("user code CANARY-CODE"); fflush(stdout);
-                int fd = open("/home/node/pty-input", O_WRONLY | O_CREAT | O_APPEND, 0600);
-                char buf[4096];
-                if (fd < 0) return 2;
-                for (;;) {
-                  fd_set set; struct timeval tv = {20, 0}; FD_ZERO(&set); FD_SET(0, &set);
-                  int ready = select(1, &set, 0, 0, &tv);
-                  if (ready <= 0) break;
-                  ssize_t count = read(0, buf, sizeof buf);
-                  if (count <= 0) break;
-                  if (write(fd, buf, (size_t)count) != count) return 2;
-                }
-                return 0;
-              }
-              return 2;
-            }
-            '''))
-        compiled = run(['gcc', '-O2', '-o', str(context / 'codex'), str(context / 'codex.c')], timeout=30)
-        self.assertEqual(compiled.returncode, 0)
-        (context / 'npm').write_text(textwrap.dedent('''\
-            #!/usr/bin/python3
-            import pathlib, sys
-            expected = ['install', '--global', '--prefix', '/home/node/.local', '--ignore-scripts',
-                        '--no-audit', '--no-fund', '@openai/codex']
-            if sys.argv[1:] != expected:
-                raise SystemExit(2)
-            target = pathlib.Path('/home/node/.local/bin/codex')
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text('#!/usr/bin/python3\\nprint("codex-cli 9.9.10-updated")\\n')
-            target.chmod(0o755)
-            '''))
-        (context / 'probe').write_text(textwrap.dedent('''\
-            #!/usr/bin/python3
-            import json, sys
-            if sys.argv[1:] != ['/home/node/.codex', '--refresh-own-session']:
-                raise SystemExit(2)
-            print(json.dumps({'error': None, 'fuente': 'wham-http', 'extra': {'account_id': 'remote-canary'},
-                'ventanas': [{'clave': '5h', 'key': '5h', 'limitId': 'default', 'usado_pct': 1, 'windowMinutes': 300}]}))
-            '''))
-        (context / 'Dockerfile').write_text(textwrap.dedent('''\
-            FROM python:3.12-slim
-            RUN id -u node >/dev/null 2>&1 || useradd --uid 1000 --home-dir /home/node --create-home --shell /usr/sbin/nologin node \
-             && ln -sf /usr/local/bin/python3 /usr/bin/python3
-            COPY --chmod=0755 codex /usr/local/bin/codex
-            COPY --chmod=0755 npm /usr/local/bin/npm
-            COPY --chmod=0755 probe /usr/local/bin/codex-http-probe.py
-            CMD ["sleep", "infinity"]
-            '''))
-        run(['docker', 'build', '--pull=false', '-t', TAG, str(context)], timeout=180)
-        image = run(['docker', 'image', 'inspect', TAG, '--format', '{{.Id}}']).stdout.decode().strip()
-        self.assertRegex(image, r'^sha256:[a-f0-9]{64}$')
-        temporary = tempfile.TemporaryDirectory(prefix='cauce-quota-cycle-', dir='/var/tmp')
+    def setUp(self):
+        self.evidence = self.evidence / self._testMethodName
+        temporary = tempfile.TemporaryDirectory(prefix='zz-canary-quota-', dir='/var/tmp')
         self.addCleanup(temporary.cleanup)
-        root = pathlib.Path(temporary.name)
-        roots = {name: root / name for name in ('state', 'runtime', 'pki', 'tokens', 'identities')}
+        self.directory = pathlib.Path(temporary.name)
+        roots = {name: self.directory / name for name in ('state', 'runtime', 'pki', 'tokens', 'identities')}
         for directory in roots.values():
             directory.mkdir(mode=0o700)
-            directory.chmod(0o700)
         (roots['runtime'] / 'quota-login').mkdir(mode=0o700)
-        bundle = root / 'bundle'
-        bundle.mkdir(mode=0o700)
-        shutil.copytree(REPO / 'packages/adapter-sdk/descriptors', bundle / 'packages/adapter-sdk/dist/descriptors')
-        policy = {'schemaVersion': 1, 'host_id': 'canaryhost', 'executor_user': pwd.getpwuid(os.geteuid()).pw_name,
-                  'roots': {name: str(path) for name, path in roots.items()}, 'native': [], 'containers': {},
-                  'profiles': {}, 'hooks': {}, 'bundles': {'codex': {'directory': str(bundle),
-                      'digest': bundle_digest(str(bundle)), 'executable': '/usr/local/bin/codex',
-                      'executable_sha256': 'a' * 64, 'argv': []}},
-                  'quota_environments': {'image': image, 'network': 'none', 'providers': ['codex']}}
-        policy_file = root / 'policy.json'
-        policy_file.write_text(json.dumps(policy))
-        policy_file.chmod(0o600)
-        environment = {'id': str(identity), 'company_id': 'humanizar', 'account_id': 'qacanary01',
-                       'host_id': 'canaryhost', 'provider': 'codex', 'container_name': container}
+        self.policy = {'schemaVersion': 1, 'host_id': 'zz-canary-host', 'executor_user': pwd.getpwuid(os.geteuid()).pw_name,
+                       'roots': {name: str(path) for name, path in roots.items()}, 'native': [], 'containers': {},
+                       'profiles': {}, 'hooks': {}, 'bundles': self.metadata['bundles'],
+                       'quota_environments': {'image': self.metadata['image'], 'network': 'bridge', 'providers': list(PROVIDERS)}}
+        self.policy_file = self.directory / 'policy.json'
+        self.policy_file.write_text(json.dumps(self.policy))
+        self.policy_file.chmod(0o600)
 
-        def effect(action, *, consent=False, verify=False):
-            document = {'operation_id': str(operation), 'action': action, 'consent': consent, 'environment': environment}
-            flag = '--quota-auth-verify' if verify else '--quota'
-            result = run([sys.executable, str(EXECUTOR), '--policy', str(policy_file), flag],
-                         input_bytes=json.dumps(document).encode(), timeout=120)
-            return json.loads(result.stdout)
+    def environment(self, provider):
+        identity = uuid.uuid4()
+        environment = {'id': str(identity), 'company_id': 'zz-canary-company', 'account_id': 'zz-canary-account',
+                       'host_id': self.policy['host_id'], 'provider': provider, 'container_name': 'cauce-quota-' + identity.hex}
+        self.addCleanup(runtime.remove, self.policy, environment)
+        return environment
 
-        created = effect('create')
-        self.assertTrue(created['runtime_verified'])
-        self.assertIn('9.9.9-canary', created['cli_version'])
-        observed = json.loads(run(['docker', 'inspect', container]).stdout)[0]
-        mounts = {row['Destination'] for row in observed['Mounts']}
-        self.assertEqual(observed['Config']['User'], '1000:1000')
-        self.assertTrue(observed['HostConfig']['ReadonlyRootfs'])
-        self.assertEqual(observed['HostConfig']['NetworkMode'], 'none')
-        self.assertIn('ALL', observed['HostConfig']['CapDrop'])
-        self.assertEqual(mounts, {'/home/node', '/cauce/executor', '/cauce/lifecycle'})
-        self.assertNotIn('/tmp', mounts)
-        run(['docker', 'exec', '--user', '1000:1000', container, '/usr/bin/python3', '-c',
-             'open("/home/node/writable","w").write("ok")'])
-        authenticated = effect('authenticate', consent=True)
-        plan = authenticated['login_plan']
-        self.assertEqual(plan['command'][0], '/usr/local/bin/codex')
-        self.assertNotIn('sh', plan['command'])
+    def effect(self, environment, action, *, consent=False, verify=False, check=True):
+        document = {'operation_id': str(uuid.uuid4()), 'action': action, 'consent': consent, 'environment': environment}
+        command = [sys.executable, str(EXECUTOR), '--policy', str(self.policy_file), '--quota-auth-verify' if verify else '--quota']
+        result = run(command, input_bytes=json.dumps(document).encode(), timeout=240, check=check)
+        receipt = json.loads(result.stdout) if result.returncode == 0 else {'exit': result.returncode}
+        record(self.evidence, environment['provider'] + '-' + action + ('-verify' if verify else '') + '.json',
+               {'command': command, 'operation_id': document['operation_id'], 'exit': result.returncode, 'receipt': receipt})
+        return receipt
+
+    def assert_removed(self, environment):
+        container = environment['container_name']
+        self.assertNotIn(container, run(['docker', 'ps', '-a', '--format', '{{.Names}}']).stdout.decode().splitlines())
+        self.assertNotIn(container + '-profile', run(['docker', 'volume', 'ls', '--format', '{{.Name}}']).stdout.decode().splitlines())
+
+    def test_declared_digest_matches_docker_inspect_and_excludes_gemini(self):
+        inspected = json.loads(run(['docker', 'image', 'inspect', self.metadata['tag']]).stdout)[0]
+        self.assertEqual(inspected['Id'], self.policy['quota_environments']['image'])
+        self.assertEqual(inspected['Id'], self.metadata['image'])
+        self.assertTrue(self.metadata['gemini_absent'])
+        self.assertNotIn('gemini', json.dumps(inspected['RootFS']))
+        absent = run(['docker', 'run', '--rm', '--network', 'none', self.metadata['image'], '/usr/bin/python3', '-c',
+                      'import pathlib,sys; sys.exit(0 if not any(pathlib.Path(p).exists() for p in '
+                      '["/usr/local/bin/gemini","/usr/local/lib/node_modules/@google/gemini-cli"]) else 1)'])
+        self.assertEqual(absent.returncode, 0)
+
+    def test_real_pinned_providers_and_unauthenticated_readers(self):
+        capability = json.loads(run([sys.executable, str(EXECUTOR), '--policy', str(self.policy_file), '--capabilities']).stdout)
+        self.assertEqual(capability['quota_environments']['providers'], list(PROVIDERS))
+        self.assertNotIn('gemini', capability['quota_environments']['providers'])
+        for provider in PROVIDERS:
+            with self.subTest(provider=provider):
+                environment = self.environment(provider)
+                created = self.effect(environment, 'create')
+                self.assertTrue(created['runtime_verified'])
+                self.assertEqual(created['cli_version'], self.metadata['versions'][provider])
+                observed = json.loads(run(['docker', 'inspect', environment['container_name']]).stdout)[0]
+                security = {'user': observed['Config']['User'], 'image': observed['Image'], 'host': {key: observed['HostConfig'][key]
+                            for key in ('ReadonlyRootfs', 'Privileged', 'CapDrop', 'CapAdd', 'Memory', 'PidsLimit', 'Tmpfs', 'NetworkMode')},
+                            'mounts': [{key: row[key] for key in ('Destination', 'Type', 'RW', 'Source')} for row in observed['Mounts']]}
+                record(self.evidence, provider + '-security.json', security)
+                self.assertEqual(observed['Image'], self.policy['quota_environments']['image'])
+                self.assertEqual(security['user'], '1000:1000')
+                self.assertTrue(security['host']['ReadonlyRootfs'])
+                self.assertEqual(security['host']['CapDrop'], ['ALL'])
+                self.assertEqual(security['host']['Memory'], 512 * 1024 * 1024)
+                self.assertEqual(security['host']['PidsLimit'], 128)
+                self.assertEqual(security['host']['Tmpfs'], runtime.TMPFS)
+                self.assertEqual({row['Destination'] for row in security['mounts']}, {'/home/node', '/cauce/executor', '/cauce/lifecycle'})
+                queried = self.effect(environment, 'query')
+                self.assertEqual(queried['cli_version'], created['cli_version'])
+                self.assertEqual(queried['observation_status'], 'error')
+                self.assertEqual(queried['provider_report']['note'], 'not_authenticated')
+                self.assertEqual(queried['provider_report']['windows'], [])
+                failed_login = self.effect(environment, 'authenticate', consent=True, verify=True, check=False)
+                self.assertNotEqual(failed_login['exit'], 0)
+                if provider == 'codex':
+                    updated = self.effect(environment, 'update_cli')
+                    self.assertTrue(updated['cli_updated_verified'])
+                    self.assertRegex(updated['cli_version'], r'^codex-cli \d+\.\d+\.\d+')
+                    updated_login = self.effect(environment, 'authenticate', consent=True)['login_plan']
+                    self.assertTrue(updated_login['command'][0].startswith('/home/node/.local/lib/node_modules/@openai/codex/'))
+                    after = self.effect(environment, 'query')
+                    self.assertEqual(after['cli_version'], updated['cli_version'])
+                    self.assertEqual(after['provider_report']['note'], 'not_authenticated')
+                removed = self.effect(environment, 'delete')
+                self.assertTrue(removed['stopped_verified'] and removed['profile_removed_verified'])
+                self.assert_removed(environment)
+
+    def test_real_login_pty_does_not_execute_shell_input(self):
+        environment = self.environment('codex')
+        self.effect(environment, 'create')
+        plan = self.effect(environment, 'authenticate', consent=True)['login_plan']
+        self.assertEqual(plan['command'][1:], ['login', '--device-auth'])
+        self.assertTrue(plan['command'][0].endswith('/vendor/x86_64-unknown-linux-musl/bin/codex')
+                        or plan['command'][0].endswith('/vendor/aarch64-unknown-linux-musl/bin/codex'))
         login = subprocess.Popen([sys.executable, str(LOGIN)], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        def close_login():
+            if login.poll() is None:
+                login.terminate()
+            try:
+                login.communicate(timeout=10)
+            except subprocess.TimeoutExpired:
+                login.kill()
+                login.communicate(timeout=5)
+            for stream in (login.stdin, login.stdout, login.stderr):
+                stream.close()
+        self.addCleanup(close_login)
         login.stdin.write(json.dumps(plan).encode() + b'\n')
+        login.stdin.flush()
+        pending = bytearray()
+        frames = []
+        with selectors.DefaultSelector() as poller:
+            poller.register(login.stdout, selectors.EVENT_READ)
+            deadline = time.monotonic() + 20
+            while time.monotonic() < deadline and not any(event.get('type') == 'started' for event in frames):
+                for _key, _events in poller.select(0.2):
+                    data = os.read(login.stdout.fileno(), 65536)
+                    if not data:
+                        self.fail('real provider login ended before its PTY started')
+                    pending.extend(data)
+                    while b'\n' in pending:
+                        line, _, remaining = pending.partition(b'\n')
+                        pending = bytearray(remaining)
+                        frames.append(json.loads(line))
+        self.assertTrue(any(event.get('type') == 'started' for event in frames))
         for text in ('; sh\n', 'id\n', 'touch /home/node/ESCAPED\n'):
             login.stdin.write(json.dumps({'type': 'input', 'data': base64.b64encode(text.encode()).decode()}).encode() + b'\n')
         login.stdin.flush()
-        typed_text = ''
-        deadline = time.monotonic() + 20
-        while time.monotonic() < deadline and '; sh\n' not in typed_text:
-            if login.poll() is not None:
-                stdout, stderr = login.communicate(timeout=5)
-                self.fail(stderr.decode(errors='replace')[-2000:] + stdout.decode(errors='replace')[-500:])
-            typed = run(['docker', 'exec', container, '/usr/bin/python3', '-c',
-                         'print(open("/home/node/pty-input","rb").read().decode(), end="")'], check=False)
-            typed_text = typed.stdout.decode() if typed.returncode == 0 else ''
-            time.sleep(0.2)
-        login.stdin.write(b'{"type":"close"}\n')
-        login.stdin.close()
-        stdout, stderr = login.communicate(timeout=20)
+        time.sleep(0.5)
+        stdout, stderr = login.communicate(input=b'{"type":"close"}\n', timeout=20)
         self.assertEqual(login.returncode, 0, stderr.decode(errors='replace')[-2000:])
-        self.assertNotIn(b'uid=', stdout)
-        self.assertIn('; sh\n', typed_text)
-        self.assertIn('id\n', typed_text)
-        self.assertIn('touch /home/node/ESCAPED\n', typed_text)
-        escaped = run(['docker', 'exec', container, '/usr/bin/python3', '-c',
-                       'import os,sys; sys.exit(0 if not os.path.exists("/home/node/ESCAPED") else 1)'])
+        frames.extend(json.loads(line) for line in (pending + stdout).splitlines())
+        output = b''.join(base64.b64decode(event['data']) for event in frames if event.get('type') == 'output')
+        self.assertFalse(b'uid=' in output, 'provider PTY produced shell identity output')
+        self.assertTrue(any(event.get('type') == 'exited' and event.get('stopped_verified') is True for event in frames))
+        escaped = run(['docker', 'exec', environment['container_name'], '/usr/bin/test', '!', '-e', '/home/node/ESCAPED'])
         self.assertEqual(escaped.returncode, 0)
-        verified = effect('authenticate', consent=True, verify=True)
-        self.assertEqual(verified['account_identity'], 'remote-canary')
-        self.assertTrue(verified['authenticated_verified'])
-        queried = effect('query')
-        self.assertEqual(queried['observation_status'], 'ok')
-        self.assertEqual(queried['provider_report']['account_id'], 'qacanary01')
-        updated = effect('update_cli')
-        self.assertTrue(updated['cli_updated_verified'])
-        self.assertIn('9.9.10-updated', updated['cli_version'])
-        removed = effect('delete')
-        self.assertTrue(removed['stopped_verified'] and removed['profile_removed_verified'])
-        self.assertNotEqual(run(['docker', 'inspect', container], check=False).returncode, 0)
-        names = run(['docker', 'volume', 'ls', '--format', '{{.Name}}']).stdout.decode().splitlines()
-        self.assertNotIn(volume, names)
+        record(self.evidence, 'pty.json', {'command': plan['command'], 'shell_escape_absent': True, 'uid_output_absent': True,
+                                         'stopped_verified': True, 'provider_output_recorded': False, 'authenticated': False})
+        self.effect(environment, 'delete')
+        self.assert_removed(environment)
+
+    def test_failed_creation_removes_only_its_new_container_and_volume(self):
+        environment = self.environment('codex')
+        document = {'operation_id': str(uuid.uuid4()), 'action': 'create', 'consent': False, 'environment': environment}
+        with patch.object(runtime, 'provider_version', side_effect=runtime.SafeFailure('forced CLI readiness failure')):
+            with self.assertRaisesRegex(runtime.SafeFailure, 'forced CLI readiness failure'):
+                runtime.perform(self.policy, document)
+        self.assert_removed(environment)
+        record(self.evidence, 'create-failure-cleanup.json', {'fault': 'CLI readiness verification',
+               'container_name': environment['container_name'], 'container_removed_verified': True, 'profile_removed_verified': True})
 
 
 if __name__ == '__main__':
-    unittest.main()
+    if '--prepare-image' in sys.argv or '--remove-image' in sys.argv:
+        parser = argparse.ArgumentParser()
+        parser.add_argument('--prepare-image', action='store_true')
+        parser.add_argument('--remove-image', action='store_true')
+        parser.add_argument('--evidence-dir', required=True, type=pathlib.Path)
+        args = parser.parse_args()
+        print(json.dumps(prepare_image(args.evidence_dir.resolve()) if args.prepare_image else remove_image(args.evidence_dir.resolve())))
+    else:
+        unittest.main()
