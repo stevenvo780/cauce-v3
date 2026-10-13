@@ -2,8 +2,8 @@
 
 ## Alcance y estado
 
-Esquema aditivo sobre `codex/mcp-dependencies` (`373b7f992f373e955dddf6fda6a7c735eb2b3740`,
-árbol `aea9b1e1a8e2332147039dcede3ee0956f1762b5`): 39 migraciones anteriores,
+Esquema aditivo sobre el commit `373b7f992f373e955dddf6fda6a7c735eb2b3740`
+(árbol `aea9b1e1a8e2332147039dcede3ee0956f1762b5`): 39 migraciones anteriores,
 última numerada 043. No modifica sus fuentes, ni Gateway, resolver, SDK o producción.
 `ExternalSubjectResolver` sigue inyectado: todavía no consume estas tablas.
 Los DTO siguientes describen filas nuevas, no una API que ya esté implementada.

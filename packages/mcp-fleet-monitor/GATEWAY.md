@@ -48,7 +48,7 @@ Variables requeridas, entregadas por el operador mediante su gestor de secretos:
 | `CAUCE_MCP_ACCESS_TOKEN` | Solo en modo `static`: token independiente, de al menos 32 caracteres |
 | `CAUCE_GATEWAY_BEARER_TOKEN` | Bearer existente del gateway, si ese proveedor lo admite |
 | `CAUCE_GATEWAY_CERT_FILE` / `CAUCE_GATEWAY_KEY_FILE` | Rutas absolutas al certificado y clave existentes para mTLS; siempre juntas |
-| `CAUCE_GATEWAY_CA_FILE` | CA privada opcional; sin ella se usa la confianza TLS del sistema |
+| `CAUCE_GATEWAY_CA_FILE` | CA privada opcional; sin ella Node.js usa su almacén de CA incorporado por defecto |
 | `CAUCE_MCP_PORT` | Puerto local; predeterminado 3101, permitido 1024–65535 |
 
 Debe existir al menos bearer o mTLS hacia el gateway. La verificación TLS nunca se

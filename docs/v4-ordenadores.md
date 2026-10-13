@@ -60,7 +60,7 @@ Para que el servicio sobreviva al cierre de sesión (como el usuario `server` de
 ```
 
 - **Autenticación y alcance.** El gateway verifica la prueba del host contra la identidad enrolada de *esa* empresa (`HostEnrollmentRepository.request`): host y empresa del paquete deben coincidir con la ruta y con la identidad, el nonce se consume una vez y una cookie de navegador da 403. El paquete lleva el `company_id`/`host_id` verificados, así que un ordenador de A no obtiene la política de B ni puede hacerse pasar por otro host (403); repetir un paquete da 409. Cada entrega deja `fleet_host.setup.package` en `audit_events` con la empresa.
-- **Sin configuración** responde 404 `not_found`, solo después de verificar al host (un desconocido recibe 403 y no aprende si el gateway prepara ordenadores); el nonce no se consume. La CLI lo traduce a «el administrador de plataforma debe configurar la preparación».
+- **Sin configuración** responde 404 `not_found`, solo después de verificar al host (un desconocido recibe 403 y no aprende si el gateway prepara ordenadores); el nonce no se consume. La CLI muestra el mensaje en inglés: `this gateway does not serve setup packages (HTTP 404); the platform administrator must configure host setup. Nothing was installed`.
 - **Invitación.** `POST` y `GET /v3/console/fleet/hosts/enrollments` añaden `setup_signer_fingerprint` cuando el gateway firma la preparación.
 
 ### De dónde sale la política por defecto

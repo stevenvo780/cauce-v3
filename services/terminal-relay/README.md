@@ -12,6 +12,6 @@ Puente entre el navegador del operador y el pty-agent que corre dentro del conte
 
 **Gobierno:** publica `/v3/terminal/relay/read`, `list`, `write` y `write-batch` (`src/governance-relay.ts`, cableado en `src/main.ts`) para que el gateway lea/escriba ficheros de gobierno vía pty-agent.
 
-**Peligro conocido:** si conviven varios pty-agent del mismo alias (huérfanos de rollouts), se expulsan mutuamente en bucle y ninguna sesión sobrevive — mitigación operativa en `docs/operacion.md` §4. Un tag desconocido mata la conexión entera como error de protocolo (4400); no hay tolerancia parcial, así que cada tag nuevo del agente (0x26 INPUT_REFUSED, 0x27 GEOMETRY) tiene que estar en `src/framing.ts` antes de que ningún agente lo emita.
+**Peligro conocido:** si conviven varios pty-agent del mismo alias (huérfanos de rollouts), se expulsan mutuamente en bucle y ninguna sesión sobrevive — mitigación operativa en `docs/operacion.md` §4. Un tag desconocido del agente mata la conexión con motivo `framing_violation` en el socket TLS; ese rechazo no lleva código de cierre WebSocket 4400. No hay tolerancia parcial, así que cada tag nuevo del agente (0x26 INPUT_REFUSED, 0x27 GEOMETRY) tiene que estar en `src/framing.ts` antes de que ningún agente lo emita.
 
-**Probar:** `pnpm test:terminal-pty` (usa un agente FAKE de Node; la cadena con el agente Python real no tiene test automatizado).
+**Probar:** `pnpm test:terminal-pty` usa un agente FAKE de Node; `tests/e2e/real-pty-agent.test.ts` cubre una integración con el agente Python real mediante `pnpm test:e2e`.

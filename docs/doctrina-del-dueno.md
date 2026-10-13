@@ -18,7 +18,7 @@ La voz del dueño sobre cómo debe ser y funcionar Cauce V3, condensada de sus d
 - **GitHub Actions prohibido.** Dictado del dueño: "Actions PROHIBIDO" — no es servicio pagado. Se retiró `.github/workflows/ci.yml` y lo reemplaza `cauce-v3-ci-local.timer`: gate completo + `validate.sh` cada noche sobre un worktree desechable de `origin/dev`, en el propio host.
 - **Idioma: `.md` en español, código en inglés.** Palabras del dueño: "Documentaciones .md en español, documentaciones en código en inglés". Identificadores y comentarios exportados en inglés; toda la documentación de proyecto en español.
 - **Comentarios sin narrativa, sin fechas, sin nombres.** "Los comentarios-ensayo de este repo llegaron a MENTIR y envenenaron a los modelos que los leían" (`AGENTS.md`). El estándar del dueño para lo que ensucia: funciones sin propósito claro, sin nombre que describa qué hacen, repetidas en varios lugares en vez de reutilizadas, sin patrón de organización consistente, sobre-ingeniería innecesaria — eso se poda, no el comentario que expresa una restricción real.
-- **Linters al máximo.** Cobertura de gate ampliada hasta que ningún fichero editable quede sin analizador: `shellcheck` obligatorio en `validate.sh` (falla si falta), `ruff` para Python encadenado en `pnpm lint`, ESLint extendido a los `.mjs` de `ops/`/`scripts/` que antes no veía nadie.
+- **Linters al máximo.** `validate.sh` exige `shellcheck`; `pnpm lint` encadena `ruff` para Python. `lint:ops` ejecuta ESLint sobre `ops/harness`, `ops/patches`, `ops/scripts` y `ops/tests`; `lint:tooling`, sobre `scripts` y `deploy`.
 
 ## 2. Cómo debe funcionar el producto
 

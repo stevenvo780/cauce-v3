@@ -25,8 +25,8 @@
    {"tenant_id":"<tenant>","alias":"gate-probe","session_id":"gate-probe","channel":"gate","roles":["agent"],"permissions":["route","read"]}
    ```
 
-   El tenant y la sala de origen exactos que exige el gateway están en
-   `services/gateway/src/routes/core/publish.ts`; el resto de los campos es literal.
+   El tenant se deriva del actor autenticado; la sala se compara con la del principal `gate_probe`,
+   consultado desde la base mediante `systemGatePrincipal` en `services/gateway/src/publish-operation.ts`. El resto de los campos del principal es literal.
 
    No crear agent row, membership, lease, cuota ni entrada en `container-aliases.json`. No reutilizar
    el certificado de consola o de un adapter. Ver `runbooks/authentication.md` para permisos del

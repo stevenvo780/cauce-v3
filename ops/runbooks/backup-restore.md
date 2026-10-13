@@ -23,7 +23,7 @@ Ejecutar respaldos regulares u off-site de PostgreSQL (y opcionalmente SQLite de
    juntos en la copia externa. El tar contiene cada digest físico una vez aunque
    varias filas de tenants o grants lo referencien.
 3. Ejecutar ensayo de restauración (drill) en base de datos aislada:
-   - Crear base vacía y marcar el entorno:
+   - Crear base vacía y añadir una etiqueta informativa; la aplicación no la valida ni la usa como barrera de aislamiento:
      ```sql
      -- [no ejecutable en verificación]
      CREATE DATABASE cauce_drill;

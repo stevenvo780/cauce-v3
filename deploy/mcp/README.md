@@ -44,9 +44,8 @@ git archive --format=tar <commit-publico-revisado> | docker build --file deploy/
   --tag <registro>/cauce-v3-mcp-gateway:<release> -
 ```
 
-Calcular `CAUCE_SOURCE_DIGEST` con `ops/scripts/source-digest.py --domain runtime` sobre
-ese mismo archivo extraído; `runtime` cubre todo `deploy/` y `packages/`, incluido el
-Dockerfile, healthcheck y código MCP. Ambos argumentos son obligatorios: el build rechaza
+Calcular `CAUCE_SOURCE_DIGEST` sobre el árbol de `git archive` extraído en `<árbol-extraído>` con
+`ops/scripts/source-digest.py --domain runtime --root <árbol-extraído>`; sin `--root`, usa el árbol de su propio checkout; `runtime` cubre todo `deploy/` y `packages/`, incluido el Dockerfile, healthcheck y código MCP. Ambos argumentos son obligatorios: el build rechaza
 valores ausentes o con formato distinto antes de etiquetar la imagen.
 
 Copiar `env.example` a un archivo privado fuera del repo con modo `0600`; completar sus

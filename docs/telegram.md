@@ -58,8 +58,8 @@ Hoy un álbum entra como **un solo mensaje del bus con hasta 4 adjuntos**:
   antes de filtrar dejaba que un miembro ajeno con pie tirara sin rastro a los permitidos.
 - **Cada miembro pasa por la lista blanca por su cuenta.** `media_group_id` es lo único que agrupa
   estos updates y viene de un payload sin validar, así que un miembro no es prueba sobre sus
-  vecinos: se comprueban su `chat.id`, su `from.id` y su `message_id` contra la misma lista blanca
-  del camino de un solo update, y además que coincidan con el principal del miembro primario. El que
+  vecinos: se comprueban su `chat.id` y su `from.id` contra las listas blancas; `message_id` solo
+  debe ser un entero seguro. Además, el chat, usuario e hilo deben coincidir con los del miembro primario. El que
   no pasa se descarta con su métrica —y con su línea de auditoría salvo que sea un `message` de un
   chat privado, donde no se emite— y no se publica nunca. Sin esto, un miembro ajeno se habría
   publicado bajo el chat, el usuario, la clave de sesión y el origen del primario: su foto cayendo
