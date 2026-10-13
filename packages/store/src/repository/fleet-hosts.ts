@@ -3,6 +3,7 @@ import { assertPlatformAdmin, type CompanyAuthority } from '../company-authority
 import { withTransaction, type DatabaseClient, type DatabasePool } from '../db.js';
 import { StoreError } from './errors.js';
 import { FleetOperationError } from './fleet-operation-contracts.js';
+import { lockFleetRevision } from './fleet-operation-authority.js';
 
 const CONTROLLER_FRESH_SECONDS = 90;
 
@@ -148,6 +149,7 @@ const HOST_DEPENDENCY_MESSAGE = {
 /** Removing a computer is a platform action; its enrolled identity goes with it. */
 export async function deleteFleetHost(pool: DatabasePool, hostId: string, expectedVersion: number, scope: FleetHostScope): Promise<void> {
   await withTransaction(pool, async (client) => {
+    await lockFleetRevision(client);
     const authority = await hostAuthority(client, scope, true);
     const company = authority.actingCompany;
     const row = (await client.query<{ version: string }>('SELECT version::text AS version FROM fleet_hosts WHERE host_id=$1 AND company_id=$2 FOR UPDATE',
