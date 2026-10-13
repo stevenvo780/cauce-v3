@@ -243,7 +243,7 @@ docker run --rm -i --network none --read-only --user 1000:1000 \
 docker volume rm "$restore_blob_volume" >/dev/null
 restore_blob_volume=
 
-IFS=$'\t' read -r migrations tenants rooms agents profiles memberships acl_edges topology core_tables < <(
+IFS=$'\t' read -r migrations tenants rooms agents profiles memberships acl_edges topology core_tables membership_topology < <(
   docker exec "$restore_container" psql -XAtq -F $'\t' -U postgres -d cauce_restore -c \
     "SELECT (SELECT count(*) FROM schema_migrations),
             (SELECT count(*) FROM tenants),
@@ -256,11 +256,20 @@ IFS=$'\t' read -r migrations tenants rooms agents profiles memberships acl_edges
                FROM agents a
                JOIN memberships m ON m.tenant_id=a.tenant_id AND m.alias=a.alias
               WHERE a.tenant_id='Hospital' AND m.room_id='grp.hospital' AND a.enabled AND m.enabled),
-            (SELECT count(*) FROM information_schema.tables WHERE table_schema='public');"
+            (SELECT count(*) FROM information_schema.tables WHERE table_schema='public'),
+            (SELECT string_agg(tenant_id || ':' || room_id || ':' || alias || ':' || role,
+                               ',' ORDER BY tenant_id, room_id, alias)
+               FROM memberships WHERE enabled);"
 )
+expected_memberships='Hospital:grp.hospital:console-proxy:operator,Hospital:grp.hospital:operador:operator,Hospital:grp.hospital:perseo:agent,'
+if [ "$memberships" = 5 ]; then
+  expected_memberships+='Hospital:grp.hospital:praxis-supervisor:operator,'
+fi
+expected_memberships+='Hospital:grp.hospital:teseo:agent'
 if ! [[ "$migrations" =~ ^[1-9][0-9]*$ ]] \
    || [ "$tenants" != 1 ] || [ "$rooms" != 1 ] || [ "$agents" != 3 ] \
-   || [ "$profiles" != 3 ] || [ "$memberships" != 4 ] || [ "$acl_edges" != 0 ] \
+   || [ "$profiles" != 3 ] || { [ "$memberships" != 4 ] && [ "$memberships" != 5 ]; } \
+   || [ "$membership_topology" != "$expected_memberships" ] || [ "$acl_edges" != 0 ] \
    || [ "$topology" != 'operador:hospital-lider:operator,perseo:hospital-praxis-developer:agent,teseo:hospital-praxis-developer:agent' ] \
    || ! [[ "$core_tables" =~ ^[1-9][0-9]*$ ]]; then
   echo "La restauración aislada no conserva la topología Hospital" >&2
@@ -292,7 +301,7 @@ python3 - "$final.restore.json" "$(basename "$final")" "$dump_sha" "$database_im
   "$migrations" "$tenants" "$rooms" "$agents" "$profiles" "$memberships" "$acl_edges" \
   "$topology" "$core_tables" "$verified_at" "$(basename "$final.blobs.tar")" "$blob_sha" \
   "$(basename "$final.blobs.tsv")" "$manifest_sha" "$blob_rows" "$blob_bytes" "$archived_blobs" \
-  "$blob_table_present" "$blob_volume_present" <<'PY'
+  "$blob_table_present" "$blob_volume_present" "$membership_topology" <<'PY'
 from pathlib import Path
 import json
 import os
@@ -312,6 +321,7 @@ document = {
     "agent_count": int(sys.argv[8]),
     "profile_count": int(sys.argv[9]),
     "membership_count": int(sys.argv[10]),
+    "membership_topology": sys.argv[24],
     "acl_edge_count": int(sys.argv[11]),
     "agent_topology": sys.argv[12],
     "public_table_count": int(sys.argv[13]),

@@ -180,6 +180,12 @@ try:
     if evidence_path != Path(f"{dump}.restore.json"):
         raise ValueError("evidencia no corresponde al dump")
     evidence = json.loads(private_file(evidence_path, "evidencia", 16_384).decode("utf-8"))
+    members = ["console-proxy:operator", "operador:operator", "perseo:agent", "teseo:agent"]
+    if evidence.get("membership_count") == 5:
+        members.insert(3, "praxis-supervisor:operator")
+    expected_memberships = ",".join(f"Hospital:grp.hospital:{member}" for member in members)
+    membership_topology = evidence.get("membership_topology")
+    legacy_memberships = "membership_topology" not in evidence and evidence.get("membership_count") == 4
     if (
         evidence.get("schema_version") != 2
         or evidence.get("suite") != "hospital-cauce-backup-restore"
@@ -209,7 +215,8 @@ try:
         or evidence.get("room_count") != 1
         or evidence.get("agent_count") != 3
         or evidence.get("profile_count") != 3
-        or evidence.get("membership_count") != 4
+        or evidence.get("membership_count") != len(members)
+        or (not legacy_memberships and membership_topology != expected_memberships)
         or evidence.get("acl_edge_count") != 0
         or evidence.get("agent_topology") != "operador:hospital-lider:operator,perseo:hospital-praxis-developer:agent,teseo:hospital-praxis-developer:agent"
         or not isinstance(evidence.get("migration_count"), int)

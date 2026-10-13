@@ -637,6 +637,35 @@ class HospitalInstanceTests(unittest.TestCase):
                 evidence.chmod(0o600)
                 self.assertNotEqual(self.run_monitor(status).returncode, 0)
 
+    def test_backup_monitor_accepts_supervisor_and_rejects_membership_drift(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            status = self.backup_fixture(pathlib.Path(temporary))
+            document = json.loads(status.read_text(encoding="utf-8"))
+            evidence = pathlib.Path(document["restore_evidence_file"])
+            proof = json.loads(evidence.read_text(encoding="utf-8"))
+            topology = (
+                "Hospital:grp.hospital:console-proxy:operator,"
+                "Hospital:grp.hospital:operador:operator,"
+                "Hospital:grp.hospital:perseo:agent,"
+                "Hospital:grp.hospital:praxis-supervisor:operator,"
+                "Hospital:grp.hospital:teseo:agent"
+            )
+            proof.update(membership_count=5, membership_topology=topology)
+            evidence.write_text(json.dumps(proof) + "\n", encoding="utf-8")
+            self.assertEqual(self.run_monitor(status).returncode, 0)
+            for field, value in (
+                ("membership_count", 4),
+                ("membership_count", 6),
+                ("membership_topology", None),
+                ("membership_topology", topology.replace("praxis-supervisor:operator", "praxis-supervisor:agent")),
+                ("membership_topology", topology.replace("praxis-supervisor", "unknown-supervisor")),
+                ("membership_topology", topology.replace("Hospital:grp.hospital:praxis-supervisor", "Other:grp.hospital:praxis-supervisor")),
+                ("membership_topology", topology.replace("grp.hospital:praxis-supervisor", "grp.other:praxis-supervisor")),
+                ("membership_topology", topology.replace("console-proxy:operator", "console-proxy:agent")),
+            ):
+                evidence.write_text(json.dumps({**proof, field: value}) + "\n", encoding="utf-8")
+                self.assertNotEqual(self.run_monitor(status).returncode, 0, (field, value))
+
     def test_backup_monitor_rejects_a_dump_outside_its_instance(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)
