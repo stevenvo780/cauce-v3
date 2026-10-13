@@ -53,3 +53,29 @@ it('la ficha muestra la actualización y relee la tarjeta con su poller existent
   await waitFor(() => { expect(card.getByRole('meter')).toHaveAttribute('value', '81'); });
   expect(card.queryByText('Actualizando…')).not.toBeInTheDocument(); expect(reads).toHaveBeenCalledTimes(2);
 });
+
+it('un harness sin lector se anuncia como tal, nunca como error ni como sin datos', async () => {
+  server.use(http.get('*/v3/console/quota-accounts', () => HttpResponse.json({
+    company_id: 'one', observed_at: '2026-10-13T00:00:00Z', accounts: [],
+  })), http.get('*/v3/console/agents/:tenant/:alias/quota', ({ params }) => HttpResponse.json({
+    tenant_id: String(params.tenant), alias: String(params.alias), revision: 1, configuration_revision: 1,
+    reader_available: false, can_query: false, reason: 'quota_reader_unavailable', status: 'unsupported',
+    captured_at: null, binding: null, sample: null, operation: null,
+  })));
+  renderWithApi(<AgentQuotaDetail tenant="One" alias="argos" />);
+  expect(await screen.findByText(/Sin lector de cuota para este harness/u)).toBeVisible();
+  expect(screen.getByText('Sin lector de cuota')).toBeVisible();
+  expect(document.querySelector('[data-fatigue="no_reader"]')).not.toBeNull();
+  expect(screen.queryByText('Sin datos')).not.toBeInTheDocument();
+  expect(screen.queryByText('Error de consulta')).not.toBeInTheDocument();
+  expect(screen.queryByText(/No hay una cuenta vinculada/u)).not.toBeInTheDocument();
+});
+
+it('con lector y sin cuenta vinculada se conserva el aviso de cuenta, sin inventar la ausencia de lector', async () => {
+  server.use(http.get('*/v3/console/quota-accounts', () => HttpResponse.json({
+    company_id: 'one', observed_at: '2026-10-13T00:00:00Z', accounts: [],
+  })));
+  renderWithApi(<AgentQuotaDetail tenant="One" alias="janus" />);
+  expect(await screen.findByText(/No hay una cuenta vinculada/u)).toBeVisible();
+  expect(screen.queryByText(/Sin lector de cuota/u)).not.toBeInTheDocument();
+});
