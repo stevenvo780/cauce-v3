@@ -1,5 +1,6 @@
 import errno
 import hashlib
+import io
 import json
 import os
 import pathlib
@@ -217,17 +218,36 @@ class SpaceArchiveTests(unittest.TestCase):
             self.backup()
         self.assertFalse(self.archive.exists())
 
-    def test_symlinks_and_hardlinks_outside_sensitive_paths_fail_without_leaving_an_archive(self):
+    def test_symlinks_fifos_and_hardlinks_are_typed_omissions_and_the_backup_continues(self):
         linked = self.space / 'projects/link'
         linked.symlink_to(self.root, target_is_directory=True)
-        with self.assertRaises(OSError):
-            self.backup()
-        self.assertFalse(self.archive.exists())
-        linked.unlink()
-        os.link(self.space / 'context/mission.md', linked)
-        with self.assertRaisesRegex(SpaceArchiveFailure, 'links'):
-            self.backup()
-        self.assertFalse(self.archive.exists())
+        fifo = self.space / 'projects/queue'
+        os.mkfifo(fifo)
+        hard = self.space / 'data/mission-link'
+        os.link(self.space / 'context/mission.md', hard)
+        (self.space / 'projects/notes.py').write_text('password = "hunter2"\n')
+        (self.space / 'config/local.json').write_text('{"password":"hunter2xx"}\n')
+        result = self.backup()
+        reasons = {item['path']: item['reason'] for item in result['omissions']}
+        self.assertEqual(reasons['projects/link'], 'special_file')
+        self.assertEqual(reasons['projects/queue'], 'special_file')
+        self.assertEqual(reasons['data/mission-link'], 'special_file')
+        self.assertEqual(reasons['config/local.json'], 'sensitive_content')
+        self.assertNotIn('projects/notes.py', reasons)
+        restore_space(str(self.archive), str(self.restored), self.identity)
+        self.assertEqual((self.restored / 'projects/notes.py').read_text(), 'password = "hunter2"\n')
+        self.assertFalse((self.restored / 'projects/link').exists())
+        self.assertFalse((self.restored / 'config/local.json').exists())
+        buffer = io.StringIO()
+        with patch.object(sys, 'argv', ['space_archive.py', 'backup', '--archive', str(self.root / 'cli.zip'),
+                                         '--directory', str(self.space), '--company-id', self.identity['company_id'],
+                                         '--tenant-id', self.identity['tenant_id'], '--alias', self.identity['alias'],
+                                         '--runtime-key', self.identity['runtime_key']]), \
+                patch('sys.stderr', buffer):
+            self.assertEqual(space_archive.main(), 0)
+        text = buffer.getvalue()
+        self.assertIn('omisiones:', text)
+        self.assertIn('special_file projects/link', text)
 
     def test_foreign_source_or_requested_restore_identity_is_refused_before_writes(self):
         (self.space / 'config/context-state.json').write_text(json.dumps({**self.identity, 'company_id': 'other'}))

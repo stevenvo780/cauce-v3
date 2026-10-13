@@ -20,11 +20,12 @@ CREDENTIAL_FILE = re.compile(
 CREDENTIAL_DIRECTORIES = frozenset({'.codex', '.claude', '.config', '.ssh', '.gnupg', '.aws', '.docker', '.kube', '.gemini'})
 # .git config embeds remote URLs and hooks, and object stores break the entry cap or the hardlink check; the remote is the source of truth.
 VCS_DIRECTORY = '.git'
-OMISSION_REASONS = frozenset({'sensitive_path', 'sensitive_content', 'vcs_metadata', 'external_mount'})
-SENSITIVE_CONTENT = re.compile(rb'-----BEGIN (?:[A-Z ]+ )?PRIVATE KEY-----|\bsk-[A-Za-z0-9_-]{20,}'
+OMISSION_REASONS = frozenset({'sensitive_path', 'sensitive_content', 'vcs_metadata', 'external_mount', 'special_file'})
+VERIFIED_CREDENTIAL = re.compile(rb'-----BEGIN (?:[A-Z ]+ )?PRIVATE KEY-----|\bsk-[A-Za-z0-9_-]{20,}'
     rb'|(?-i:\bgh[pous]_[A-Za-z0-9]{20,}|\bgithub_pat_[A-Za-z0-9_]{20,}|\bglpat-[A-Za-z0-9_-]{20,}|\bxox[abprs]-[A-Za-z0-9-]{10,}'
-    rb'|\bAKIA[0-9A-Z]{16}\b|\bnpm_[A-Za-z0-9]{36}\b)|aws_secret_access_key|_authToken|://[^\s/:@"\x27]+:[^\s/@"\x27]+@'
-    rb'|["\x27]?(?:access_token|refresh_token|client_secret|api_key|password)["\x27]?\s*[:=]\s*["\x27]?[^\s"\x27]{6,}', re.I)
+    rb'|\bAKIA[0-9A-Z]{16}\b|\bnpm_[A-Za-z0-9]{36}\b)|aws_secret_access_key|_authToken|://[^\s/:@"\x27]+:[^\s/@"\x27]+@', re.I)
+CONFIG_ASSIGNMENT = re.compile(
+    rb'["\x27]?(?:access_token|refresh_token|client_secret|api_key|password)["\x27]?\s*[:=]\s*["\x27]?[^\s"\x27]{6,}', re.I)
 MAX_FILE = 128 * 1024 * 1024
 MAX_TOTAL = 1024 * 1024 * 1024
 MAX_ENTRIES = 20_000
@@ -150,6 +151,12 @@ def open_relative_directory(root: int, relative: str) -> int:
         raise
 
 
+def sensitive_content(path: str, data: bytes) -> bool:
+    if VERIFIED_CREDENTIAL.search(data):
+        return True
+    return path.startswith('config/') and CONFIG_ASSIGNMENT.search(data) is not None
+
+
 def fingerprint(info: os.stat_result) -> tuple:
     return info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns
 
@@ -227,18 +234,21 @@ def backup_space(source: str, archive: str, expected_identity: dict) -> dict:
                             walk(child, path)
                         finally:
                             os.close(child)
-                    else:
-                        data, mode = read_file(descriptor, name)
-                        if SENSITIVE_CONTENT.search(data):
-                            omissions.append({'path': path, 'reason': 'sensitive_content'})
-                            continue
-                        if path == 'config/context-state.json':
-                            verify_context_identity(data, expected)
-                        size += len(data)
-                        if size > MAX_TOTAL:
-                            raise SpaceArchiveFailure('space archive exceeds its total byte limit')
-                        files.append({'path': path, 'bytes': len(data), 'sha256': hashlib.sha256(data).hexdigest(), 'mode': mode})
-                        zipped.writestr(zip_entry(path, mode), data)
+                        continue
+                    if not stat.S_ISREG(details.st_mode) or details.st_nlink != 1:
+                        omissions.append({'path': path, 'reason': 'special_file'})
+                        continue
+                    data, mode = read_file(descriptor, name)
+                    if sensitive_content(path, data):
+                        omissions.append({'path': path, 'reason': 'sensitive_content'})
+                        continue
+                    if path == 'config/context-state.json':
+                        verify_context_identity(data, expected)
+                    size += len(data)
+                    if size > MAX_TOTAL:
+                        raise SpaceArchiveFailure('space archive exceeds its total byte limit')
+                    files.append({'path': path, 'bytes': len(data), 'sha256': hashlib.sha256(data).hexdigest(), 'mode': mode})
+                    zipped.writestr(zip_entry(path, mode), data)
                 if fingerprint(os.fstat(descriptor)) != fingerprint(before):
                     raise SpaceArchiveFailure('space directory changed during backup')
             for name in sorted(ROOTS):
@@ -344,7 +354,7 @@ def validated_archive(zipped: zipfile.ZipFile, expected: dict) -> tuple[dict, by
         if entry.file_size != item['bytes'] or entry.external_attr >> 16 != stat.S_IFREG | item['mode']:
             raise SpaceArchiveFailure('space archive entry differs from its receipt')
         data = zipped.read(entry)
-        if hashlib.sha256(data).hexdigest() != item['sha256'] or SENSITIVE_CONTENT.search(data):
+        if hashlib.sha256(data).hexdigest() != item['sha256'] or sensitive_content(item['path'], data):
             raise SpaceArchiveFailure('space archive digest or content is invalid')
         if item['path'] == 'config/context-state.json':
             verify_context_identity(data, expected)
@@ -386,7 +396,7 @@ def restore_space(archive: str, destination: str, expected_identity: dict) -> di
                 parent = open_relative_directory(root, str(pathlib.PurePosixPath(item['path']).parent))
                 try:
                     data = zipped.read(item['path'])
-                    if hashlib.sha256(data).hexdigest() != item['sha256'] or SENSITIVE_CONTENT.search(data):
+                    if hashlib.sha256(data).hexdigest() != item['sha256'] or sensitive_content(item['path'], data):
                         raise SpaceArchiveFailure('space archive changed before file restoration')
                     target = os.open(pathlib.PurePosixPath(item['path']).name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, item['mode'], dir_fd=parent)
                     with os.fdopen(target, 'wb') as output:
@@ -428,6 +438,11 @@ def main() -> int:
         expected = {field: getattr(args, field) for field in IDENTITY_FIELDS}
         operation = backup_space if args.operation == 'backup' else restore_space
         result = operation(args.directory, args.archive, expected) if args.operation == 'backup' else operation(args.archive, args.directory, expected)
+        omissions = result.get('omissions') or []
+        if omissions:
+            print('omisiones:', file=sys.stderr)
+            for item in omissions:
+                print(f"{item['reason']} {item['path']}", file=sys.stderr)
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0
     except (OSError, ValueError, zipfile.BadZipFile, RuntimeError) as error:
