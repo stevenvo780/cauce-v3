@@ -170,7 +170,8 @@ migrate_under_load() {
 loaded_head() { psql_on cauce_load -c 'SELECT max(version) FROM schema_migrations'; }
 reader_deadlocks() { awk -F': ' '/^number of deadlock failures/{split($2,n," "); print n[1]+0; f=1} END{if(!f) print 0}' "$scratch/load"; }
 # Every baseline row must still be there, unchanged in its baseline columns; a new row is accepted only
-# where a migration of the bundle documents it (rehearsal.tolerated).
+# where a migration of the bundle documents it (rehearsal.tolerated), and a baseline column may be gone
+# only where one documents the drop and the schema still derives its value (rehearsal.dropped).
 compare() {
   local output
   output=$(psql_on "$1" -c "SELECT rehearsal.compare('$2')" 2>&1) || die "$3: $output"
@@ -262,6 +263,28 @@ $$;
 CREATE TABLE rehearsal.baseline_rows AS SELECT t.table_name,r.row_hash FROM rehearsal.baseline_tables t
   CROSS JOIN LATERAL rehearsal.legacy_rows(t.table_name) r;
 CREATE INDEX ON rehearsal.baseline_rows(table_name,row_hash);
+-- The baseline columns a migration of the bundle drops on purpose: gone exactly while that version is
+-- applied, back with their type and values once its down ran. Every other column of every baseline row
+-- stays identical, and the schema must still derive the dropped value: derived is an expression over a
+-- baseline row (value) that is NULL for the rows it does not cover and must equal value->>column_name for
+-- every row it covers, at least one.
+CREATE TABLE rehearsal.dropped(table_name text,column_name text,version text NOT NULL,derived text NOT NULL,
+  reason text NOT NULL,PRIMARY KEY(table_name,column_name));
+INSERT INTO rehearsal.dropped VALUES
+  ('human_tenant_memberships','role','081_membresia_rol_derivado.sql',$r$(SELECT person.role FROM public.console_users person
+      WHERE person.id=(value->>'human_id')::uuid AND person.tenant_id=value->>'tenant_id')$r$,
+    '081 derives the role of each home membership from console_users.role');
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM rehearsal.dropped d WHERE NOT EXISTS (SELECT 1 FROM rehearsal.baseline_columns b
+      WHERE b.table_name=d.table_name AND b.column_name=d.column_name)) THEN
+    RAISE EXCEPTION 'rehearsal.dropped names a column the baseline does not have';
+  END IF;
+END
+$$;
+-- The whole baseline rows of the tables that lose a column, to compare the rest and check the derivation.
+CREATE TABLE rehearsal.baseline_values AS SELECT t.table_name,r.value FROM (SELECT DISTINCT table_name FROM rehearsal.dropped) t
+  CROSS JOIN LATERAL rehearsal.legacy_rows(t.table_name) r;
 CREATE TABLE rehearsal.unregistered_hosts AS
   SELECT host_id FROM public.agents WHERE host_id IS NOT NULL EXCEPT SELECT host_id FROM public.fleet_hosts;
 CREATE TABLE rehearsal.backfilled_directors(tenant_id text,alias text,PRIMARY KEY(tenant_id,alias));
@@ -284,6 +307,10 @@ DECLARE
   legacy record;
   rule text;
   reason text;
+  documented record;
+  dropped text[];
+  covered bigint;
+  underived bigint;
   missing bigint;
   added bigint;
   accepted bigint;
@@ -295,19 +322,47 @@ BEGIN
     IF to_regclass(format('public.%I',legacy.table_name)) IS NULL THEN
       failures := failures||format('%s was dropped',legacy.table_name); CONTINUE;
     END IF;
-    IF EXISTS (SELECT 1 FROM rehearsal.baseline_columns b WHERE b.table_name=legacy.table_name AND NOT EXISTS (
-        SELECT 1 FROM pg_attribute a WHERE a.attrelid=format('public.%I',legacy.table_name)::regclass AND a.attnum>0
+    SELECT COALESCE(array_agg(d.column_name ORDER BY d.column_name),'{}') INTO dropped FROM rehearsal.dropped d
+      WHERE d.table_name=legacy.table_name AND EXISTS (SELECT 1 FROM public.schema_migrations m WHERE m.version=d.version);
+    IF EXISTS (SELECT 1 FROM rehearsal.baseline_columns b WHERE b.table_name=legacy.table_name AND b.column_name<>ALL(dropped)
+        AND NOT EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid=format('public.%I',legacy.table_name)::regclass AND a.attnum>0
           AND NOT a.attisdropped AND a.attname=b.column_name AND format_type(a.atttypid,a.atttypmod)=b.column_type)) THEN
       failures := failures||format('%s lost or retyped a baseline column',legacy.table_name);
     END IF;
+    IF EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid=format('public.%I',legacy.table_name)::regclass AND a.attnum>0
+        AND NOT a.attisdropped AND a.attname=ANY(dropped)) THEN
+      failures := failures||format('%s kept a column documented as dropped',legacy.table_name);
+    END IF;
     SELECT t.rule,t.reason INTO rule,reason FROM rehearsal.tolerated t WHERE t.table_name=legacy.table_name AND t.stage=p_stage;
+    -- A documented drop compares the baseline rows without the dropped columns; every other row compares whole.
     EXECUTE format($query$
       WITH current_rows AS (SELECT row_hash,value,row_number() OVER (PARTITION BY row_hash) AS n FROM rehearsal.legacy_rows(%L)),
-        baseline AS (SELECT row_hash,row_number() OVER (PARTITION BY row_hash) AS n FROM rehearsal.baseline_rows WHERE table_name=%L),
+        baseline AS (SELECT row_hash,row_number() OVER (PARTITION BY row_hash) AS n FROM (%s) projected),
         added AS (SELECT current_rows.value FROM current_rows LEFT JOIN baseline USING (row_hash,n) WHERE baseline.row_hash IS NULL)
       SELECT (SELECT count(*) FROM baseline LEFT JOIN current_rows USING (row_hash,n) WHERE current_rows.row_hash IS NULL),
         (SELECT count(*) FROM added),(SELECT count(*) FROM added WHERE %s)$query$,
-      legacy.table_name,legacy.table_name,COALESCE(rule,'false')) INTO missing,added,accepted;
+      legacy.table_name,
+      CASE WHEN cardinality(dropped)=0 THEN format('SELECT row_hash FROM rehearsal.baseline_rows WHERE table_name=%L',legacy.table_name)
+        ELSE format('SELECT md5((value-%L::text[])::text)::uuid AS row_hash FROM rehearsal.baseline_values WHERE table_name=%L',
+          dropped,legacy.table_name) END,
+      COALESCE(rule,'false')) INTO missing,added,accepted;
+    FOR documented IN SELECT d.column_name,d.derived,d.reason FROM rehearsal.dropped d
+        WHERE d.table_name=legacy.table_name AND d.column_name=ANY(dropped) ORDER BY d.column_name LOOP
+      EXECUTE format($query$
+        SELECT count(*) FILTER (WHERE derived IS NOT NULL),count(*) FILTER (WHERE derived IS DISTINCT FROM value->>%L AND derived IS NOT NULL)
+          FROM (SELECT value,(%s)::text AS derived FROM rehearsal.baseline_values WHERE table_name=%L) baseline$query$,
+        documented.column_name,documented.derived,legacy.table_name) INTO covered,underived;
+      IF underived>0 THEN
+        failures := failures||format('%s: %s of %s rows covered by the drop of %s no longer derive their baseline value',
+          legacy.table_name,underived,covered,documented.column_name);
+      ELSIF covered=0 AND legacy.row_count>0 THEN
+        failures := failures||format('%s: no baseline row is covered by the derivation of the dropped %s',
+          legacy.table_name,documented.column_name);
+      ELSE
+        RETURN NEXT format('  %s: -%s, %s of %s baseline rows derive it again (%s)',legacy.table_name,documented.column_name,
+          covered,legacy.row_count,documented.reason);
+      END IF;
+    END LOOP;
     IF missing>0 THEN failures := failures||format('%s: %s baseline rows changed or disappeared',legacy.table_name,missing); END IF;
     IF added>accepted THEN failures := failures||format('%s: %s rows nobody documented',legacy.table_name,added-accepted); END IF;
     IF accepted>0 THEN RETURN NEXT format('  %s: +%s rows (%s)',legacy.table_name,accepted,reason); END IF;
