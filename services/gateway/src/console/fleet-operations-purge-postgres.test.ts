@@ -66,6 +66,36 @@ describe('purge confirmation through the real operation repository', () => {
     expect(changed.statusCode).toBe(400);
     expect((await pool.query('SELECT id FROM fleet_operations')).rowCount).toBe(1);
   });
+  it('rejects another company at preview and enqueue without changing its retired agent', async () => {
+    const gateway = requireValue(app, 'test gateway');
+    const registered = (await pool.query<{ tenant_id: string }>(
+      "SELECT tenant_id FROM cauce_register_company('foreign-purge@example.test','Foreign human',$1,'foreign-purge','Foreign purge')",
+      ['$scrypt$n=32768,r=8,p=1$' + 'A'.repeat(24) + '$' + 'A'.repeat(44)])).rows[0];
+    if (!registered) throw new Error('foreign company absent');
+    await pool.query("INSERT INTO agents(tenant_id,alias,enabled,lifecycle_state,retired_at) VALUES($1,'purge_agent',false,'retired',now())", [registered.tenant_id]);
+    const input = purgeRequest({ resource: 'agent', tenant_id: registered.tenant_id, alias: 'purge_agent' });
+    const query = "SELECT to_jsonb(agent) AS value FROM agents agent WHERE tenant_id=$1 AND alias='purge_agent'";
+    const before = (await pool.query(query, [registered.tenant_id])).rows;
+    for (const url of [`${path}/preview`, path]) {
+      const response = await gateway.inject({ method: 'POST', url, headers, payload: input });
+      expect(response.statusCode).toBe(403);
+    }
+    expect((await pool.query('SELECT id FROM fleet_operations')).rowCount).toBe(0);
+    expect((await pool.query('SELECT id FROM fleet_operation_events')).rowCount).toBe(0);
+    expect((await pool.query(query, [registered.tenant_id])).rows).toEqual(before);
+  });
+  it.each(['control', 'membership'] as const)('rejects lost human %s despite the session and bus role retaining control', async loss => {
+    const gateway = requireValue(app, 'test gateway');
+    const humanId = PURGE_ACTOR_SUBJECT.slice('console:'.length);
+    if (loss === 'control') await pool.query("UPDATE human_tenant_memberships SET permissions=ARRAY['read'] WHERE human_id=$1", [humanId]);
+    else await pool.query('UPDATE human_tenant_memberships SET enabled=false,revoked_at=now() WHERE human_id=$1', [humanId]);
+    for (const url of [`${path}/preview`, path]) {
+      const response = await gateway.inject({ method: 'POST', url, headers, payload: purgeRequest() });
+      expect(response.statusCode).toBe(403);
+    }
+    expect((await pool.query('SELECT id FROM fleet_operations')).rowCount).toBe(0);
+    expect((await pool.query('SELECT id FROM fleet_operation_events')).rowCount).toBe(0);
+  });
 });
 
 describe('purge fixture cleanup', () => {

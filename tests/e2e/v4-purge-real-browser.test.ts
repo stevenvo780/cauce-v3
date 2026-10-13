@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { newTrustedPage, startConsoleFunctionalFixture } from './console-functional-browser.fixtures.js';
+import { newTrustedPage, startConsoleFunctionalFixture, type BrowserResponse } from './console-functional-browser.fixtures.js';
 import {
   asV4Page, bodySnippet, BrowserErrorLog, fillRegistration, HERMETIC_INSTANCE_RULES, openRegistration, syntheticPerson,
   type V4Page, type V4Person,
@@ -162,7 +162,12 @@ describe('purga real de un contenedor desechable', () => {
       }
       await current.waitForTimeout(200);
     }
+    const enqueued = (current as V4Page & {
+      waitForResponse: (predicate: (response: BrowserResponse) => boolean, options: { timeout: number }) => Promise<BrowserResponse>;
+    }).waitForResponse(response => new URL(response.url()).pathname === '/v3/console/fleet/operations'
+      && response.request().method() === 'POST', { timeout: 20_000 });
     await enqueue.click();
+    expect((await enqueued).status()).toBe(202);
     const stored = await active().database.pool.query<{ id: string; confirm_alias: string | null; status: string }>(
       `SELECT id::text, request->'parameters'->>'confirm_alias' AS confirm_alias, status FROM fleet_operations
        WHERE request->'target'->>'alias'=$1 ORDER BY created_at DESC LIMIT 1`, [alias]);
@@ -219,5 +224,8 @@ describe('purga real de un contenedor desechable', () => {
       expect(report.clean).toBe(true);
     }
     errors.assertClean();
+    console.info('PURGE_DOCKER_RECEIPT ' + JSON.stringify({ operation_id: operationId, status, confirm_alias: alias,
+      runtime_keys: owned, containers: names, volumes, foreign_volume: foreignKey, foreign_volume_preserved: true,
+      failed_create_compensated: manifest.fail_clean }));
   }, 180_000);
 });
