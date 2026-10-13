@@ -14,8 +14,10 @@ import {
 const python = '/home/stev/.venvs/cauce-qa/bin/python';
 const run = randomUUID().replaceAll('-', '').slice(0, 8);
 const alias = `zzpurge${run}`;
-const runtimeKey = `zz-canary-purge-${run}`;
-const failKey = `zz-canary-fail-${run}`;
+// Every Docker resource of this run starts with RUN_PREFIX; leftovers of other runs never enter its inventory.
+const RUN_PREFIX = `zz-canary-purge-${run}`;
+const runtimeKey = RUN_PREFIX;
+const failKey = `${RUN_PREFIX}-fail`;
 const owner: V4Person = {
   ...syntheticPerson('purge', run),
   email: `zz-canary-purge-${run}@example.test`,
@@ -54,13 +56,23 @@ async function stopWorker(): Promise<void> {
   });
 }
 
+/** Docker output that fails loudly: an empty listing must mean "nothing there", never "docker failed". */
 function dockerText(args: string[]): string {
-  return spawnSync('docker', args, { encoding: 'utf8' }).stdout;
+  const result = spawnSync('docker', args, { encoding: 'utf8' });
+  if (result.error !== undefined || result.status !== 0) {
+    throw new Error(`docker ${args[0] ?? ''} failed (${String(result.status)}): ${result.stderr.trim()}`, { cause: result.error });
+  }
+  return result.stdout;
 }
+const owned = (name: string) => name === RUN_PREFIX || name.startsWith(`${RUN_PREFIX}-`);
 
 beforeAll(async () => {
   if (process.env.CAUCE_TEST_DATABASE_URL) throw new Error('this E2E requires its own Testcontainers PostgreSQL');
   if (process.env.VITE_USE_MOCKS === 'true') throw new Error('mocks=false is required');
+  const before = [...dockerText(['ps', '-a', '--format', '{{.Names}}']).split('\n'), ...dockerText(['volume', 'ls', '--format', '{{.Name}}']).split('\n')]
+    .filter(owned);
+  console.info('PURGE_DOCKER_BEFORE', RUN_PREFIX, JSON.stringify(before));
+  if (before.length) throw new Error(`run prefix ${RUN_PREFIX} already has Docker resources: ${JSON.stringify(before)}`);
   fixture = await startConsoleFunctionalFixture();
   page = asV4Page(await newTrustedPage(active(), { width: 1440, height: 1000 }));
   errors.watch(page, 'purge-owner');
@@ -76,11 +88,18 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await stopWorker();
+  const failures: string[] = [];
   if (work) {
-    spawnSync(python, [join(process.cwd(), 'tests/e2e/v4-purge-docker.fixture.py'), 'cleanup', '--root', work], { encoding: 'utf8' });
+    const cleanup = spawnSync(python, [join(process.cwd(), 'tests/e2e/v4-purge-docker.fixture.py'), 'cleanup', '--root', work], { encoding: 'utf8' });
+    if (cleanup.status !== 0) failures.push(`purge fixture cleanup failed (${String(cleanup.status)}): ${redact(cleanup.stderr)}`);
     await rm(work, { recursive: true, force: true });
   }
   await fixture?.close();
+  const left = [...dockerText(['ps', '-a', '--format', '{{.Names}}']).split('\n'), ...dockerText(['volume', 'ls', '--format', '{{.Name}}']).split('\n')]
+    .filter(owned);
+  console.info('PURGE_DOCKER_AFTER', RUN_PREFIX, JSON.stringify(left));
+  if (left.length) failures.push(`run resources were left behind: ${JSON.stringify(left)}`);
+  if (failures.length) throw new Error(failures.join('\n'));
 }, 180_000);
 
 describe('purga real de un contenedor desechable', () => {
@@ -180,8 +199,8 @@ describe('purga real de un contenedor desechable', () => {
       await current.waitForTimeout(500);
     }
     await stopWorker();
-    const names = dockerText(['ps', '-a', '--format', '{{.Names}}']).split('\n').filter((name) => name.startsWith('zz-canary-'));
-    const volumes = dockerText(['volume', 'ls', '--format', '{{.Name}}']).split('\n').filter((name) => name.startsWith('zz-canary-'));
+    const names = dockerText(['ps', '-a', '--format', '{{.Names}}']).split('\n').filter(owned);
+    const volumes = dockerText(['volume', 'ls', '--format', '{{.Name}}']).split('\n').filter(owned);
     const workerLog = redact(Buffer.concat(log).toString('utf8').slice(-4000));
     const observed = JSON.stringify({ status, detail: redact(detail), names, volumes, worker: workerLog });
     expect(status, observed).toBe('succeeded');
@@ -190,7 +209,7 @@ describe('purga real de un contenedor desechable', () => {
     const rows = join(directory, 'rows.json');
     await writeFile(rows, '[]', { mode: 0o600 });
     const swept = spawnSync(manifest.python, [join(process.cwd(), 'ops/cli/fleet_orphan_sweep.py'), '--rows', rows,
-      '--runtime-key-prefix', 'zz-canary-', '--host-id', manifest.host_id], { encoding: 'utf8' });
+      '--runtime-key-prefix', RUN_PREFIX, '--host-id', manifest.host_id], { encoding: 'utf8' });
     expect(swept.status, redact(swept.stdout + swept.stderr)).toBe(0);
     const report = JSON.parse(swept.stdout) as { clean: boolean };
     expect(report.clean).toBe(true);

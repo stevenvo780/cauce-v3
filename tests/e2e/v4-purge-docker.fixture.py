@@ -39,9 +39,23 @@ def sweep(rows: pathlib.Path, prefix: str, host: str) -> tuple[dict, int]:
     return report, code
 
 
+def listed(*arguments: str) -> list[str]:
+    result = subprocess.run(['docker', *arguments], capture_output=True, text=True)
+    if result.returncode:
+        raise SystemExit(f'docker {arguments[0]} failed: {result.stderr.strip()}')
+    return [line for line in result.stdout.splitlines() if line]
+
+
 def remove(name: str) -> None:
-    subprocess.run(['docker', 'rm', '-f', name], capture_output=True)
-    subprocess.run(['docker', 'volume', 'rm', name + '-state', name + '-provider-profiles'], capture_output=True)
+    """Remove the run's container and volumes, then prove by listing that none of them is left."""
+    volumes = (name + '-state', name + '-provider-profiles')
+    if listed('ps', '-aq', '--filter', f'name=^/{name}$'):
+        listed('rm', '-f', name)
+    present = [volume for volume in listed('volume', 'ls', '--format', '{{.Name}}') if volume in volumes]
+    if present:
+        listed('volume', 'rm', *present)
+    if listed('ps', '-aq', '--filter', f'name=^/{name}$') or set(listed('volume', 'ls', '--format', '{{.Name}}')) & set(volumes):
+        raise SystemExit(f'disposable purge resources of {name} are still present')
 
 
 def build(root: pathlib.Path, host: str) -> tuple[dict, pathlib.Path, str]:
