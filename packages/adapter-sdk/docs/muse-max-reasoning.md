@@ -42,8 +42,9 @@ Contributor con/sin `max`, y rechazo de `ultra` no anunciado.
 
 ## Instalación y prueba
 
-El binario público local está en `/tmp/hospital-muse-release-20260929/`.
-Instalar su ejecutable versionado en el montaje de Muse requiere la ventana
+No hay una ruta pública del binario en el repositorio. El ejecutable fijado es
+`muse-bin-1.4.1-R4503.1` en el montaje de Muse.
+Instalar ese ejecutable versionado requiere la ventana
 de despliegue del operador; este chequeo no cambia ningún estado existente.
 Hospital conserva `MUSE_EXECUTABLE=/opt/muse-code/muse`, requerido por la guardia
 del supervisor. El aprovisionador instala allí `muse-pinned-launcher.sh`, que
@@ -90,6 +91,12 @@ reinicia el reloj ni vuelve a enviar `turn/start`.
 
 La salida demuestra soporte anunciado y selección configurada; no mide el
 presupuesto interno de razonamiento de una respuesta. La telemetría del runner
-registra ruta, soporte, esfuerzo solicitado y terminal durable de cada turno.
+(`muse-msp-runner.ts`, `muse-msp-session.ts`) registra el host
+(`muse_host_initialized`), el preflight (`muse_preflight_started` /
+`muse_preflight_finished`, este con `outcome`) y la selección
+(`muse_model_selection`: modelo, proveedor, `catalog_source`, esfuerzo solicitado
+y esfuerzos soportados). `muse_turn_admitted` anota `command_id` y `turn_id` al
+admitir el turno y no lleva terminal. `muse_turn_reconciled` solo se emite en la
+reconciliación y solo lleva `turn_id`.
 Un catálogo sin credenciales no demostró soporte: 1.4.1 devolvió lista vacía y
 el chequeo cerró con exit 1. Debe verificarse con cada estado propio instalado.

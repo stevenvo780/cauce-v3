@@ -16,10 +16,13 @@ and never evidence of health.
 
 The pane is still generating, so a merged turn is alive however quiet the transcript is.
 
-`lastActivityAt` only sees the transcript FILE grow, and one uninterrupted extended-thinking or
-tool block writes nothing for longer than the silence window. Silence on disk is not death. An
-unreadable capture returns false, so a dead pane still falls through to the release path: the
-genuinely lost paste must keep coming out as ambiguous.
+`lastActivityAt` advances when the transcript file grows, when a wake enters the pane
+(`wakeTurn` returns `entered` in `harvest.ts`) and when `paneStillGenerating` is still true
+after the silence window. Only the first two also move `lastTranscriptGrowthAt`. One
+uninterrupted extended-thinking or tool block can write nothing for longer than the silence
+window; a live pane resets `lastActivityAt` without the file growing. Silence on disk is not
+death. An unreadable capture returns false, so a dead pane still falls through to the release
+path: the genuinely lost paste must keep coming out as ambiguous.
 
 ## `paneIsIdle`
 
@@ -44,9 +47,11 @@ is never resent from here; the invariant "No degrade — that would execute twic
 delivery's own turn in `harvest` and is untouched. What is released is the pane, for the NEXT
 delivery.
 
-Fail-closed at every step: an unreadable capture, a marker of another generation, a marker that
-cannot be read or times out, a pending this process did not arm, or a tmux clear that does not
-credit its postcondition — each of them preserves the quarantine.
+Fail-closed on an unreadable capture, a marker that cannot be read or times out, a pending this
+process did not arm, or a tmux clear that does not credit its postcondition: each of those
+returns and preserves the quarantine. A held marker whose generation does not match does not.
+`healCurrentQuarantine` continues past it, leaves that held entry in place, and can still lift
+the pane if the later checks pass.
 
 ## `releaseDurableQuarantine`
 
