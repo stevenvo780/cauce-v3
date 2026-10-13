@@ -24,7 +24,8 @@ Docker o testcontainers falla, no se salta). Los nueve gates se reparten en carr
 carril 0 es el propio checkout y los demás son worktrees desechables del mismo commit, cada uno con su
 `pnpm install --frozen-lockfile --prefer-offline`, de modo que ningún gate ve el `dist/`, la cobertura
 ni los artefactos de otro. Se crean en `CAUCE_RELEASE_GATES_LANES_DIR` (por defecto
-`.cauce-release-gates-lanes` junto al checkout; dentro del árbol se rechaza) y se borran al terminar.
+`.cauce-release-gates-lanes` junto al checkout; dentro del árbol se rechaza) y se borran al terminar;
+antes, su `ops/artifacts` se copia a `carril-N-ops-artifacts`, junto a los logs del recibo.
 `CAUCE_RELEASE_GATES_JOBS` fija el número de carriles; por defecto, uno por cada 8 CPU y por cada
 16 GiB disponibles, para no saturar una máquina compartida. Con `1` corre en secuencia, en el orden de
 `--list`, y se detiene en el primer rojo. Con varios carriles arrancan primero `test` y
