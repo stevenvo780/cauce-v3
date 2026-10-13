@@ -212,7 +212,7 @@ systemctl --user daemon-reload && systemctl --user enable --now cauce-v3-contain
 ```
 **La única pieza que pide un humano**: el token del bot de Telegram, generado en BotFather — `aprovisionar` lo solicita interactivamente, lo deja en `/etc/cauce-v3/telegram-runtime/<tenant>/<alias>.token` (0600) y recién entonces reemplaza la fila del alias en `config.json` (`ops/scripts/publish-telegram-token.py`).
 
-**Baja**: `ops/cli/cauce <alias> retirar` (para la unit y revoca token e identidad mTLS) → `UPDATE agents SET enabled=false` → re-exportar snapshot (el alias pasa a `retired`) → `regenerate-fleet.sh` (purga manifest y units huérfanas: `ops/scripts/generate-container-units.py:289-294` y `ops/scripts/generate-units.py:109-113`) → `validate.sh`.
+**Baja**: `ops/cli/cauce <alias> retirar` (para la unit y revoca token e identidad mTLS) → `UPDATE agents SET enabled=false` → re-exportar snapshot (el alias pasa a `retired`) → `regenerate-fleet.sh` (purga manifest y units huérfanas: `ops/scripts/generate-container-units.py:309-310` y `ops/scripts/generate-units.py:122`) → `validate.sh`.
 
 **Aviso de orden**: `enabled=false` en BD saca al agente del enrutado de entregas, pero el `hello`/lease del gateway se autoriza además por certificado mTLS — un agente dado de baja en BD puede seguir conectándose hasta que `retirar` revoca su credencial. No dar el UPDATE por baja completa sin correr `retirar`.
 
@@ -308,7 +308,7 @@ systemctl --user status cauce-v3-container-<alias>.service   # cauce-v3-alias-<a
 **`failed` con exit 78 significa un fallo permanente y cerrado; no diagnostica por sí solo la
 causa.** La unidad no reintenta ese código. Solo el error exacto
 `current-generation adapter PID is absent; metadata was preserved`
-(`ops/container-runtime/cauce-container-runtime.py:1084`) acredita que ese metadato se
+(`ops/container-runtime/cauce_container_tree.py:233`) acredita que ese metadato se
 preservó; otros controles de configuración, identidad o integridad también pueden terminar en 78.
 
 No se recupera automáticamente un metadato abandonado de la misma generación. Comprobar solo PID,
@@ -382,8 +382,8 @@ verificación debe comparar byte a byte ambos argv admitidos y la ruta exacta de
 mismo parser de `/proc` del reaper.
 
 El launcher versionado prepara los artefactos, vuelve a validar la generación y después ejecuta la
-siega inmediatamente antes del nuevo `exec` (`ops/pty-agent/cauce-pty-launcher.sh:786`, invocada en
-`:820`). Reconoce de forma exacta el argv actual y el legado.
+siega (`reap_orphan_agents` en `ops/pty-agent/cauce-pty-launcher.sh`) inmediatamente antes del nuevo
+`exec` en `start_agent`. Reconoce de forma exacta el argv actual y el legado.
 Exige `PID + starttime + argv`, fija cada candidato con `pidfd`, envía `SIGTERM` y escala a
 `SIGKILL` solo si la misma identidad sigue viva. Si no puede demostrar la salida, no lanza el
 reemplazo. No seleccionar un PID por antigüedad ni señalizarlo solo por nombre. Detalle: [agente
@@ -397,7 +397,7 @@ launcher instalada antes de usar la siega como control operativo.
 
 | Timer | Cuándo | Qué hace |
 |---|---|---|
-| `cauce-v3-host-backup.timer` | 03:10 UTC diario | `pg_dump --format=custom` del contenedor de postgres → `$DB_BACKUP_DIR/cauce-<ts>.dump` + `.sha256` (`DB_BACKUP_DIR` por defecto `/opt/_archive/cauce-v3-db-backups`, `ops/scripts/host-backup.sh:71`); valida con un restore AISLADO (postgres efímero sin red) antes de publicar; retención local `DB_RETENTION_DAYS` (14 por defecto, `:72`) tras confirmar copia off-site; sincroniza al destino `OFFSITE_USER@OFFSITE_HOST` (append-only, nunca borra remoto) |
+| `cauce-v3-host-backup.timer` | 03:10 UTC diario | `pg_dump --format=custom` del contenedor de postgres → `$DB_BACKUP_DIR/cauce-<ts>.dump` + `.sha256` (`DB_BACKUP_DIR` por defecto `/opt/_archive/cauce-v3-db-backups`, `ops/scripts/host-backup.sh:206`); valida con un restore AISLADO (postgres efímero sin red) antes de publicar; retención local `DB_RETENTION_DAYS` (14 por defecto, `:208`) tras confirmar copia off-site; sincroniza al destino `OFFSITE_USER@OFFSITE_HOST` (append-only, nunca borra remoto) |
 | `cauce-v3-respaldo-torre.timer` | 04:30 UTC diario | manda los dumps y `/etc/cauce-v3` (tar 0600) al host de respaldo que declara `ops/scripts/backup-a-torre.sh`, y de ahí a almacenamiento externo con `rclone` |
 | `cauce-v3-host-backup-monitor.timer` | 00/06/12/18:45 UTC | verifica que el backup corrió y con éxito reciente (`overall == "ok"` en `$STATUS_FILE`, por defecto `/var/log/cauce-v3-backup/status.json`) |
 | `cauce-v3-watchdog@.timer` / `cauce-v3-reconciler@.timer` | cada 30 s / cada 5 min, por alias | salud y reconciliación de cada adaptador |
@@ -430,7 +430,7 @@ el propio compose declara activos —excluyendo `migrator`— y exige **un** con
 `healthy` por cada uno (`deploy/smoke.sh:103-133`): no hay un número fijo de contenedores, son
 tantos como servicios activos tenga el compose con los perfiles encendidos. El esquema lo deriva del
 repositorio. La cardinalidad de agentes es una entrada independiente y **obligatoria**,
-`CAUCE_SMOKE_EXPECTED_AGENTS` (`deploy/smoke.sh:54`, sin valor por defecto): se compara contra los
+`CAUCE_SMOKE_EXPECTED_AGENTS` (`deploy/smoke.sh:74`, cargada mediante `load_required_setting` en `:50-56`, sin valor por defecto): se compara contra los
 agentes habilitados con lease vivo y heartbeat fresco, así que hay que declararla igual al número de
 alias habilitados de la instalación. Lee ambas salidas del relay y falla si no puede realizar una
 consulta. No sustituirlo por conteos parciales ni usar una conexión sin TLS verificado para
