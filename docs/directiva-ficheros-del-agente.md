@@ -33,6 +33,8 @@ comparten gateway, adaptador y pty-agent: `DOCUMENTOS_DE_GOBIERNO`, en
 | claude | hecho medido `claudeConfigDir`; por defecto `$HOME/.claude` | `CLAUDE.md` |
 | codex | hecho medido `codexHome` (`CODEX_HOME`); por defecto `$HOME/.codex` | `AGENTS.md` |
 | hermes | hecho medido `home` | `AGENTS.md` |
+| muse | hecho medido `museWorkspace` | `AGENTS.md` |
+| grok | hecho medido `grokWorkspace` | `AGENTS.md` |
 | openclaw | hecho medido `openclawWorkspace` | `SOUL.md`, `IDENTITY.md`, `USER.md`, `MEMORY.md`, `HEARTBEAT.md`, `AGENTS.md`, `TOOLS.md` |
 
 Una ruta que el resolutor produce **puede no existir en disco**. Esa ausencia es un hecho del
@@ -168,9 +170,10 @@ Por qué cubre la topología real:
   `requireOperatorPermission(actor, 'control')` para escribir (`'read'` para leer),
   `authorizeAgentTarget` con tenant y alias exactos, el `enabled` del registro, hechos **medidos**
   dentro del contenedor, la política de rutas (`verifyReadableDocument` / `verifyWritablePath`) y
-  el CAS con relectura previa. **No** usa concesión en fichero, **no** exige un pty vivo y **no**
-  tiene control de concurrencia: ésas son puertas del plano PTY y afirmar que las comparte era
-  falso. La auditoría sí escribe permisos y denegaciones.
+  el CAS con relectura previa. **No** usa concesión en fichero ni exige un pty vivo. El PUT también
+  coordina la escritura mediante `coordinateDocumentRequest`, que fija revisión y expectativa del
+  runtime y exige `write_quiescence_v1`; no es una puerta PTY. La auditoría sí escribe permisos y
+  denegaciones.
 - Es estrictamente menos que una shell: sólo admite operaciones tipadas sobre un juego cerrado de
   rutas derivadas de hechos medidos.
 

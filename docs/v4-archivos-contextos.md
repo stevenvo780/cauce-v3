@@ -39,7 +39,7 @@ El supervisor de contenedores (`ops/scripts/container-adapter-supervisor.sh`, la
 
 Los montajes externos se registran en `config/external-mounts.json` con `excluded_from_copy` y el motivo; las copias del espacio los excluyen explícitamente.
 
-`MUSE_WORKSPACE` sigue siendo obligatorio y debe coincidir con el workspace del inventario: el supervisor (`validate_config_values`) y el SDK (`config.ts`, `shared.ts`, que fija `/home/node/clawd`) lo exigen. Relajarlo requiere cambiar el SDK y la librería del supervisor, fuera de este alcance; hasta entonces Muse conserva su workspace fijo.
+Cuando el inventario declara un workspace de Muse, la política de aprovisionamiento exige `MUSE_WORKSPACE` y lo valida contra el inventario; el supervisor rechaza un valor distinto. El SDK no fija `/home/node/clawd`: resuelve el workspace con `CAUCE_MUSE_WORKSPACE ?? CAUCE_AGENT_WORKSPACE ?? process.cwd()` en `packages/adapter-sdk/src/bin/config.ts`.
 
 `logs/` no tiene todavía un productor propio: el log del adaptador va al journal de la unidad (acotado por la configuración de journald), no a `space/logs`. Un log acotado y rotado dentro del espacio requiere un cambio en el SDK o en el helper de ejecución.
 
@@ -107,7 +107,7 @@ Sólo el broker tiene acceso al repositorio completo y su credencial global. Age
 
 `ContextGitBroker` exige raíz privada absoluta canónica y metadata `.git` real. Hace fetch de `origin/main`, integra los cambios por carpeta y publica con CAS de `update-ref`; no comparte un checkout mutable entre escritores. Los commits de contenido se atribuyen al alias con la forma `alias@empresa.cauce.invalid`; el broker figura como committer. El replay es idempotente por identidad/versión/digest y el push comprueba la relación de ancestry con main. Las pruebas locales usan un remoto Git bare real y ensayan concurrencia, fallo de push y recuperación.
 
-El broker filtra variables heredadas `GIT_*`, deshabilita hooks y usa su configuración controlada. `GIT_SSH_COMMAND` externo no es el canal de configuración del transporte. La clave y known_hosts se fijan en `core.sshCommand` local del repositorio.
+El broker filtra variables heredadas `GIT_*`, deshabilita hooks y fija la autoría de los commits. `GIT_SSH_COMMAND` externo no es el canal de configuración del transporte. El código no configura `core.sshCommand`; montar la clave y `known_hosts` no basta para seleccionarlos en Git.
 
 ### Configuración del broker
 
@@ -116,7 +116,7 @@ El broker filtra variables heredadas `GIT_*`, deshabilita hooks y usa su configu
 | `/var/lib/cauce-v3-context-broker/repository` | `/var/lib/cauce-v3/contexts`, escritura | Repositorio privado central |
 | `/var/lib/cauce-v3-context-broker/ssh` | `/run/cauce-context-git`, sólo lectura | `id_ed25519` y `known_hosts` del broker |
 
-El comando SSH local fija `-i /run/cauce-context-git/id_ed25519`, `UserKnownHostsFile=/run/cauce-context-git/known_hosts`, `StrictHostKeyChecking=yes`, `IdentitiesOnly=yes` y `-F /dev/null`.
+El código no pasa al transporte SSH las opciones `-i`, `UserKnownHostsFile`, `StrictHostKeyChecking`, `IdentitiesOnly` ni `-F /dev/null`; Git usa la configuración SSH efectiva del entorno del broker.
 
 Compose prepara `CAUCE_CONTEXT_REPOSITORY_ROOT=/var/lib/cauce-v3/contexts`, `CAUCE_PROJECT_ROOT=/app`, `CAUCE_SPACE_BACKUP_DIRECTORY=/var/lib/cauce-v3/space-backups` y `CAUCE_SPACE_BACKUP_PYTHON=/usr/local/bin/python3`. Las rutas de host pueden elegirse con `CAUCE_CONTEXT_REPOSITORY_DIRECTORY` y `CAUCE_CONTEXT_GIT_KEY_DIRECTORY`. `space_backups_data` persiste las copias durables. Configuración preparada no equivale a imagen publicada ni worker activo demostrado.
 

@@ -17,7 +17,7 @@ gateway, direccionados por su sha256, y el mensaje sólo lleva el digest.
 
 - `PUT /v3/blobs` — cuerpo `application/octet-stream`, cabeceras `X-Cauce-Blob-Name` (obligatoria,
   nombre de fichero seguro), `X-Cauce-Blob-Media-Type` (opcional), `X-Cauce-Blob-Sha256` (opcional;
-  409 si no cuadra). Se escribe en streaming a `CAUCE_BLOB_DIRdirectorio temporal/<uuid>` calculando el sha256 al
+  409 si no cuadra). Se escribe en streaming a `<CAUCE_BLOB_DIR>/tmp/<uuid>` calculando el sha256 al
   vuelo y se renombra a `CAUCE_BLOB_DIR/<sha256>`. Un `Content-Length` por encima del tope se
   rechaza antes de leer (413); un cuerpo chunked se corta en el tope sin dejar fichero parcial.
   Permiso `route` vigente en la base de datos. Responde 201 `{ sha256, bytes, media_type, name,

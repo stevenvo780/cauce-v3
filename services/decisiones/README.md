@@ -217,7 +217,7 @@ hasta que se re-graba el caso contra Jev y se actualiza el hash.
   error. Sin `usage`, o si la respuesta no sirve, cobra la estimación. No probé si TypeSafe factura una
   solicitud abortada: se cuenta como si sí. `_TOKENS_DIA` acota así a unos USD 0,08 por alias y día, y
   `_TOKENS_DIA_TOTAL` a unos USD 0,84 por día para toda la flota. Cada evento de auditoría lleva
-  `tokens_cobrados` en su metadata.
+  `tokens_charged` en su metadata.
 - **Concurrencia.** Un alias no ocupa más de `_CONCURRENCIA_ALIAS` plazas: si un agente se desboca, el
   resto de la flota sigue decidiendo con Jev en vez de recibir `servicio_ocupado`.
 - **Auditoría.** Registra un evento por decisión en `audit_events` (la autoridad única) con alias, tenant, plantilla y versión, ids y tipos
@@ -249,8 +249,8 @@ es una operación explícita que exige recrear el contenedor del servicio.
    ```
    G=<ruta-al-clon-principal>
    git -C "$G" show <commit>:deploy/decisiones/desplegar.sh > /root/desplegar-decisiones.sh
-   CAUCE_DECISIONES_GIT=$G bash /root/desplegar-decisiones.sh plan <commit>      # no cambia nada
-   CAUCE_DECISIONES_GIT=$G bash /root/desplegar-decisiones.sh aplicar <commit>
+   CAUCE_DECISIONES_GIT=$G CAUCE_DECISIONES_SMOKE_PKI=<ruta-al-directorio-PKI> bash /root/desplegar-decisiones.sh plan <commit>      # no cambia nada
+   CAUCE_DECISIONES_GIT=$G CAUCE_DECISIONES_SMOKE_PKI=<ruta-al-directorio-PKI> bash /root/desplegar-decisiones.sh aplicar <commit>
    ```
 
    `aplicar` hace cinco cosas:
@@ -298,7 +298,8 @@ es una operación explícita que exige recrear el contenedor del servicio.
    `cauce-v3-container-<alias>.service`, mirá si hay una entrega en vuelo. En kant, que corre nativo en
    server2, la variable es `CAUCE_DECISIONES_URL` en el entorno de su unidad.
 3. **MCP en cada arnés, sólo en los alias ya habilitados** en `CAUCE_DECISIONES_ALIASES` (a los demás
-   el servicio les responde 403 con el respaldo). Se registra dentro del contenedor, como el usuario
+   el servicio les responde 403 sin respaldo en el cuerpo; el adaptador MCP añade el respaldo en la
+   respuesta que recibe el modelo). Se registra dentro del contenedor, como el usuario
    del arnés y sin turno en vuelo. Primero se simula y después se agrega `--aplicar`:
 
    ```

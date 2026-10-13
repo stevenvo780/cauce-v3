@@ -64,7 +64,7 @@ entregas colgadas renueven su lease indefinidamente, se aplica un límite global
 
 ## Techo de vida total de una entrega
 
-`CAUCE_DELIVERY_LEASE_CAP_MS` (default 43200000, o sea 12 h) es el tiempo máximo
+`CAUCE_DELIVERY_LEASE_CAP_MS` (default 604800000, o sea 7 días) es el tiempo máximo
 que un intento puede sostener su lease, contado desde `execution_started_at` —o
 desde `claimed_at` si el adaptador no informa el arranque— e independiente de
 cuántas veces se renueve. Al superarlo la entrega termina en `dead` con motivo
@@ -122,8 +122,8 @@ are rejected before authentication.
 trusts to resolve `request.ip` (used by the registration and host-claim limiters, grouped by /64 for IPv6).
 Default `127.0.0.1/32,::1/128`; an empty value trusts no proxy. Never include a range that clients can
 reach or that masquerades them (for example a whole Docker pool: tailnet peers arrive NAT-ed inside it).
-Production lists only the edge network addresses of the console nginx
-(`172.16.4.2/31,172.16.4.4/30,...,172.16.4.128/25`, see `ops/config/prod.env.example`). The console nginx in
+Compose uses `CAUCE_TRUSTED_PROXY_CIDRS` when set; otherwise it derives a single `/32` from
+`CAUCE_CONSOLE_EDGE_IP`. `ops/config/prod.env.example` sets `172.16.4.2/32`. The console nginx in
 turn trusts a single front proxy (Caddy) through the build-time `CAUCE_FRONT_PROXY_CIDR`
 (production `100.64.0.11/32`; empty disables realip) and then overwrites `X-Forwarded-For`/`X-Real-IP` with
 the resolved address and strips `X-Forwarded-Host`, `X-Forwarded-Proto` and `Forwarded`.
@@ -131,9 +131,9 @@ the resolved address and strips `X-Forwarded-Host`, `X-Forwarded-Proto` and `For
 `CAUCE_AUTH_PROVIDER=token-file` and `mtls` remain supported. The mTLS data listener always uses
 `requestCert: true` and `rejectUnauthorized: true`; it maps only Node-verified peer certificates
 and ignores forwarded certificate headers. In mTLS mode `/health/*` is removed from that listener.
-A health-only HTTP listener binds exclusively to `127.0.0.1` on `CAUCE_HEALTH_PORT` (default 8081)
-for mTLS and every production provider, so a local orchestrator probe can reach
-liveness/readiness without making any data route public.
+A health-only HTTP listener binds to `0.0.0.0` inside the container networks on `CAUCE_HEALTH_PORT`
+(default 8081). Compose does not publish this port on the host; Prometheus can reach its health and
+metrics endpoints over the container network.
 
 Producción requiere HTTPS para el gateway y PostgreSQL `sslmode=verify-full` con
 `PGSSLROOTCERT` absoluto. Readiness confirma además `pg_stat_ssl.ssl=true`.

@@ -3,8 +3,9 @@
 `terminal-relay` is the data plane of the console terminals: it moves bytes between the
 browser and a PTY agent and holds no authority of its own. Every allow/deny decision — ticket
 validity, continued authorization, session close — is an HTTPS round trip to the gateway. It
-keeps no state on disk, has no database, no `node-pty` and no Docker socket, so restarting it
-kills terminals and touches nothing else in the bus. That separation is the reason it exists:
+can persist a local close-report spool and optional per-session recordings; it has no database,
+`node-pty` or Docker socket, so restarting it terminates its terminals without restarting adapters
+or dispatchers. That separation is the reason it exists:
 restarting the gateway kills adapters with work in flight, restarting this does not.
 
 ## Topology
@@ -21,7 +22,8 @@ outbound**:
   PTY agents inside the containers dial **out** to it. The relay never dials into the agent
   host: no such route exists and creating one would be a privilege escalation.
 - **Gateway client** — HTTPS to `CAUCE_TERMINAL_GATEWAY_URL` with a bearer token read from
-  `TOKEN_FILE` on every call, so rotating the token needs no restart. A gateway behind a
+  `TOKEN_FILE` on every call, so rotating the token needs no restart, and a required mTLS client
+  certificate and key. A gateway behind a
   private CA is trusted through `NODE_EXTRA_CA_CERTS`; the relay adds no CA setting of its own.
 
 ## Settings
@@ -40,12 +42,17 @@ outbound**:
 | `CAUCE_TERMINAL_RELAY_AGENT_REGISTRY_FILE` | `/run/cauce-terminal/pty_agent_identities.json` | Fingerprint registry, re-read on every handshake. |
 | `CAUCE_TERMINAL_GATEWAY_URL` | `https://gateway:8443` | Credential-free HTTPS origin of the gateway. |
 | `CAUCE_TERMINAL_RELAY_TOKEN_FILE` | — | File holding the gateway bearer token. |
+| `CAUCE_TERMINAL_GATEWAY_CLIENT_CERT_FILE` | — | Required mTLS client certificate for the gateway connection. |
+| `CAUCE_TERMINAL_GATEWAY_CLIENT_KEY_FILE` | — | Required private key for the gateway client certificate. |
+| `CAUCE_TERMINAL_RELAY_INSTANCE_ID` | — | Required relay identity: 64 lowercase hexadecimal characters. |
 | `CAUCE_TERMINAL_IDLE_TIMEOUT_SECONDS` | `600` | Shell: no human input. Read-only harness: no browser heartbeat and no PTY output. Closes with 4408. |
 | `CAUCE_TERMINAL_OUTPUT_RATE_BYTES_PER_SEC` | `262144` | Sustained output allowance per session. |
 | `CAUCE_TERMINAL_SCROLLBACK_BYTES` | `20480` | Bounded in-memory output tail per session. It is not, by itself, a reconnect mechanism; see below. |
 | `CAUCE_TERMINAL_MAX_SESSIONS` | `16` | Concurrent terminals in the process. |
 | `CAUCE_TERMINAL_AUTHZ_INTERVAL_SECONDS` | `30` | Revalidation period of a live session. |
 | `CAUCE_TERMINAL_AUTHZ_GRACE_SECONDS` | `90` | How long an unreachable gateway is tolerated. |
+| `CAUCE_TERMINAL_CLAIM_LEASE_SECONDS` | `150` | Expected gateway claim lease; must exceed authorization interval, grace, request timeout and takeover margin. |
+| `CAUCE_TERMINAL_PRESENCE_MAX_STALE_SECONDS` | `30` | Maximum age accepted for terminal presence. |
 | `CAUCE_TERMINAL_RECONNECT_GRACE_SECONDS` | `30` | Maximum browser-loss window in which the same live PTY may be reattached. |
 | `CAUCE_TERMINAL_CLOSE_SPOOL_FILE` | `/tmp/cauce-terminal-close-reports.json` | Atomic local retry spool for close reports; contains only session ids, reasons and counters. |
 | `CAUCE_TERMINAL_RECORDING_DIR` | — | Absolute path of the `0700` directory holding one `0600` asciicast v2 file per session. **Unset means no writable TUI**: `harness_rw` is refused. |
@@ -93,10 +100,9 @@ anything else folds into `code="other"` so a peer cannot mint series.
 The `result` label name comes from `renderCounters` in `@cauce/protocol`, which every service
 in the bus shares; the alert rules in `ops/observability/alerts.yaml` use it as written here.
 
-One deployment detail still stands between the job and the data: in `deploy/compose.yaml` the
-relay is attached to `edge` and Prometheus to `backend`, so the DNS name does not resolve for the
-scraper and the job discovers nothing. Adding `backend` to the relay's `networks` is what turns
-the job on; until then the wiring is correct and silent, which is the intended failure mode.
+In `deploy/compose.yaml`, the relay is attached to `edge` and Prometheus to both `backend` and
+`edge`. They share `edge`, so the relay DNS name resolves from Prometheus and the scrape target
+does not require another network attachment.
 
 ## Agent identity
 

@@ -1,6 +1,6 @@
 # Contexto del repositorio para agentes
 
-Cauce V3: bus de mensajería durable y multi-tenant entre agentes de IA en CLI (Claude Code, Codex, OpenClaw), con consola web de operador y puente Telegram. PostgreSQL es la única fuente durable; el gateway expone HTTP/WS; la entrega es *pull* — el adapter de cada agente reclama sus entregas con fencing (`claim_token`+`epoch`). El `dispatcher` no reparte nada: es el segador de reintentos.
+Cauce V3: bus de mensajería durable y multi-tenant entre agentes de IA en CLI (Claude Code, Codex, OpenClaw), con consola web de operador y puente Telegram. PostgreSQL es la única fuente durable; el gateway expone HTTP/WS; la entrega es *pull* — el adapter de cada agente reclama sus entregas con fencing (`claim_token`+`consumer_epoch`). El `dispatcher` no reparte nada: es el segador de reintentos.
 
 **El árbol de este repo ES material de producción.** Prometheus, OTel y postgres montan ficheros directamente desde aquí. `main` es la línea publicada, el último commit desplegado se consulta en `deploy/HISTORIAL.md` y `dev` es el carril de integración. No es un entorno de desarrollo aislado.
 
@@ -12,7 +12,7 @@ Cauce V3: bus de mensajería durable y multi-tenant entre agentes de IA en CLI (
 | `docs/arquitectura.md` | cómo está construido el sistema hoy — si solo lees un documento, que sea este |
 | `docs/operacion.md` | cómo desplegar, dar de alta/baja un agente, diagnosticar, hacer backup |
 | `docs/roadmap.md` | qué falta, priorizado |
-| `docs/flota-y-participantes.md` | máquinas, humanos, los 15 agentes, los 5 escenarios esenciales |
+| `docs/flota-y-participantes.md` | máquinas, humanos, los 14 agentes, los 5 escenarios esenciales |
 | `ops/flota.json` (+ `docs/arquitectura.md` §4) | la flota como datos: el snapshot canónico del que se generan alias, contenedores y manifests |
 | `ordenes/00-PROTOCOLO.md` | cómo conviven varias instancias en `dev` sin pisarse — LÉELO antes de tocar nada |
 
