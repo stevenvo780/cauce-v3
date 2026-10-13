@@ -1128,7 +1128,7 @@
         },
         "R": {
           "status": "covered",
-          "reason": "Cobertura de componente versionada; no acredita ejecución física ni un recorrido E2E.",
+          "reason": "Cobertura de componente y navegador real con PostgreSQL; la matriz enlaza las pruebas y no sustituye su ejecución sobre el candidato. La lectura del registro no acredita la ejecución física del ordenador.",
           "api": [
             {
               "method": "GET",
