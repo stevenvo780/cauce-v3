@@ -14,13 +14,24 @@ El paquete `cauce_pty_agent/` (Python stdlib, sin dependencias) corre junto al r
 | `governance_paths.py` | listas blancas de gobierno y descriptores de directorio |
 | `governance_read.py` | READ: documento e índice de memoria |
 | `governance_write.py` | WRITE y WRITE_BATCH con CAS y rollback |
+| `governance_write_journal.py` | recibo durable de la escritura (`JournalError`) |
+| `governance_write_transaction.py` | commit de WRITE_BATCH con rollback (`GovernanceWriteTransactionMixin`) |
+| `native_admin.py` | inventario, inspección y mutación nativa (`execute_native_admin`) |
+| `native_admin_dispatch.py` | despacho del tag `NATIVE_ADMIN` (0x62) |
+| `native_admin_paths.py` | rutas y tope de lectura de esa administración |
+| `native_admin_projection.py` | proyección pública: descriptor, markdown y servidores |
+| `native_admin_vendor.py` | reconocimiento del binario del vendor (`recognize`) |
+| `openclaw_input.py` | traducción de Backspace frente al deduplicador de OpenClaw |
+| `contexto-de-gobierno.json` | allowlist generada de documentos de gobierno por arnés |
 | `agent.py` | `PtyAgent`: conexión al relay, bucle principal y despacho |
 
 Alrededor del paquete, en `ops/pty-agent/`, quedan las piezas del **manager** (no se instalan dentro
 del contenedor salvo el propio paquete): `cauce-pty-launcher.sh` (lanzamiento),
 `reap_orphan_agent.py` (siega transmitida por stdin),
 `rollout-pty.py` + `rollout_pty_lib.py` (despliegue y drop-ins), `derive-alias-key.py` y
-`publish-alias-key.sh` (material de ticket por alias), `install-pty-agent.sh`, `systemd/`
+`publish-alias-key.sh` (material de ticket por alias), `launcher_write_journal.py` (diario que
+el launcher de host importa y que `RELEASE_FILES` publica), `cauce-pty-host-launcher.sh` (hosts
+nativos, más abajo), `install-pty-agent.sh`, `systemd/`
 (plantillas de unidad) y `tests/`
 (unittest, sin socket real). Launcher y rollout corren en el host manager —el que tiene el demonio
 Docker de los contenedores y el systemd de usuario que supervisa las unidades—. El rollout obtiene
@@ -30,7 +41,7 @@ declarado. El reaper se ejecuta dentro del contenedor desde stdin y no queda ins
 `flota.json` y sus manifiestos, y usan el launcher nativo descrito abajo. El controlador exige un
 destino por manager, comprueba duplicados y placement y conserva la reversión por transacción.
 
-**Hace:** abre PTYs bajo demanda (`shell`, o `harness` = TUI real vía `tmux attach` de solo lectura o TUI de OpenClaw) y sirve lectura/escritura de ficheros de gobierno (tags 0x50–0x5E: READ/LIST/WRITE/WRITE_BATCH con CAS y rollback; paths validados con realpath + lista NEVER_SERVE).
+**Hace:** abre PTYs bajo demanda (`shell`, o `harness` = TUI real vía `tmux attach` de solo lectura o TUI de OpenClaw) y sirve lectura/escritura de ficheros de gobierno (tags 0x50–0x5E en `framing.py`: READ, WRITE, WRITE_BATCH y `READ_DONE` en 0x5E, con CAS y rollback; paths validados con realpath + lista NEVER_SERVE).
 
 **Los tres modos de sesión.** `shell` es un shell propio; `harness` es la TUI real en modo VISOR
 (`tmux attach -r -f ignore-size`, o la TUI nativa de OpenClaw) y su STDIN se descarta antes de tocar
