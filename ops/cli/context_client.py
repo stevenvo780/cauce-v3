@@ -71,43 +71,105 @@ def private_cookie(location: str) -> str:
     return private_session(location)['cookie']
 
 
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, request, stream, code, message, headers, new_url):
+        return None
+
+
+def trusted_origin(value: str) -> str:
+    try:
+        parsed = urllib.parse.urlsplit(value)
+        port = parsed.port
+        if not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment \
+                or parsed.path not in ('', '/') or any(ord(char) < 33 or ord(char) == 127 for char in value) \
+                or parsed.scheme != 'https' and not (parsed.scheme == 'http' and parsed.hostname in ('localhost', '127.0.0.1', '::1')):
+            raise ValueError()
+        host = parsed.hostname.lower()
+        if ':' in host:
+            host = '[' + host + ']'
+        default_port = 443 if parsed.scheme == 'https' else 80
+        return parsed.scheme + '://' + host + (':' + str(port) if port is not None and port != default_port else '')
+    except (ValueError, AttributeError, TypeError):
+        raise ContextFailure('gateway and origin must use HTTPS or loopback HTTP without credentials or paths') from None
+
+
+def request_json(gateway: str, origin: str, ca_file: str | None, method: str, path: str, body=None, headers=None,
+                 timeout: int = 30, rejected: str = 'console request rejected', unavailable: str = 'console gateway is unavailable'):
+    parsed = urllib.parse.urlsplit(path)
+    if not path.startswith('/') or path.startswith('//') or parsed.scheme or parsed.netloc or parsed.fragment \
+            or '\\' in path or any(ord(char) < 32 or ord(char) == 127 for char in path):
+        raise ContextFailure('console request path must stay on its gateway')
+    payload = None if body is None else json.dumps(body, separators=(',', ':')).encode()
+    request = urllib.request.Request(gateway + path, method=method, data=payload,
+        headers={'Origin': origin, 'Accept': 'application/json', 'Content-Type': 'application/json', **(headers or {})})
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect(),
+        urllib.request.HTTPSHandler(context=ssl.create_default_context(cafile=ca_file)))
+    try:
+        with opener.open(request, timeout=timeout) as response:
+            raw = response.read(2097153)
+            if len(raw) > 2097152:
+                raise ContextFailure('console response exceeds limit')
+            result = json.loads(raw) if raw else None
+            return result, response.headers.get_all('Set-Cookie', [])
+    except urllib.error.HTTPError as error:
+        code = error.code
+        error.close()
+        raise ContextFailure(rejected + ' with HTTP ' + str(code) + '; redirects are disabled') from None
+    except (urllib.error.URLError, TimeoutError, OSError):
+        raise ContextFailure(unavailable) from None
+
+
+class ConsoleSessionClient:
+    def __init__(self, session_file: str, gateway: str | None = None, origin: str | None = None, ca_file: str | None = None):
+        self.session = private_session(session_file)
+        stored_gateway = trusted_origin(self.session.get('gateway'))
+        stored_origin = trusted_origin(self.session.get('origin'))
+        self.gateway = trusted_origin(gateway) if gateway is not None else stored_gateway
+        self.origin = trusted_origin(origin) if origin is not None else stored_origin
+        if self.gateway != stored_gateway or self.origin != stored_origin:
+            raise ContextFailure('console session is bound to a different gateway or origin; log in again')
+        self.cookie = self.session['cookie']
+        self.csrf = self.session.get('csrf_token')
+        self.ca_file = ca_file
+
+    def request(self, method: str, path: str, body=None):
+        method = method.upper()
+        headers = {'Cookie': self.cookie}
+        if method not in ('GET', 'HEAD'):
+            if not isinstance(self.csrf, str) or not re.fullmatch(r'[A-Za-z0-9_-]{32,128}', self.csrf):
+                raise ContextFailure('console session requires a valid csrf_token for mutations')
+            headers['X-CSRF-Token'] = self.csrf
+        return request_json(self.gateway, self.origin, self.ca_file, method, path, body, headers)[0]
+
+
 class ContextClient:
     def __init__(self, gateway: str, origin: str, session_file: str, ca_file: str | None = None):
-        destination = urllib.parse.urlsplit(gateway)
-        browser = urllib.parse.urlsplit(origin)
-        for value in (destination, browser):
-            if value.username or value.password or value.query or value.fragment or value.path not in ('', '/') \
-                    or value.scheme != 'https' and not (value.scheme == 'http' and value.hostname in ('localhost', '127.0.0.1', '::1')):
-                raise ContextFailure('gateway and origin must be trusted absolute origins')
-        self.gateway = gateway.rstrip('/')
-        self.origin = origin.rstrip('/')
-        session = private_session(session_file)
-        self.cookie = session['cookie']
-        self.csrf = session.get('csrf_token')
+        session = ConsoleSessionClient(session_file, gateway, origin, ca_file)
+        self.gateway = session.gateway
+        self.origin = session.origin
+        self.cookie = session.cookie
+        self.csrf = session.csrf
+        self.ca_file = ca_file
         self.tls = ssl.create_default_context(cafile=ca_file)
 
     def request(self, method: str, tenant: str, alias: str, suffix: str = '', body=None):
         if not IDENTITY.fullmatch(tenant) or not IDENTITY.fullmatch(alias):
             raise ContextFailure('context target is unavailable')
         base = '/v3/console/context/agents/' + urllib.parse.quote(tenant, safe='') + '/' + urllib.parse.quote(alias, safe='')
-        payload = None if body is None else json.dumps(body, separators=(',', ':')).encode()
-        headers = {'Cookie': self.cookie, 'Origin': self.origin, 'Content-Type': 'application/json'}
+        headers = {'Cookie': self.cookie}
         if method not in ('GET', 'HEAD'):
             if not isinstance(self.csrf, str) or not re.fullmatch(r'[A-Za-z0-9_-]{32,128}', self.csrf):
                 raise ContextFailure('console session file requires a valid csrf_token for mutations')
             headers['X-CSRF-Token'] = self.csrf
-        request = urllib.request.Request(self.gateway + base + suffix, method=method, data=payload,
-                                         headers=headers)
         try:
-            with urllib.request.urlopen(request, context=self.tls, timeout=65) as response:
-                raw = response.read(2097153)
-                if len(raw) > 2097152:
-                    raise ContextFailure('context response exceeds limit')
-                return json.loads(raw)
-        except urllib.error.HTTPError as error:
-            raise ContextFailure('context request rejected with HTTP ' + str(error.code)) from None
-        except (urllib.error.URLError, TimeoutError):
-            raise ContextFailure('context gateway is unavailable') from None
+            return request_json(self.gateway, self.origin, self.ca_file, method, base + suffix, body, headers, timeout=65,
+                                rejected='context request rejected', unavailable='context gateway is unavailable')[0]
+        except ContextFailure as error:
+            message = str(error)
+            marker = '; redirects are disabled'
+            if message.endswith(marker) and message.startswith('context request rejected'):
+                raise ContextFailure(message[:-len(marker)]) from None
+            raise
 
 
 def arguments(parser: argparse.ArgumentParser) -> None:

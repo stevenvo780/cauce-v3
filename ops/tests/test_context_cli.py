@@ -49,14 +49,15 @@ class ContextCliTests(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory()
         self.root = pathlib.Path(self.temporary.name)
         self.session = self.root / 'console-cookie.json'
-        self.session.write_text(json.dumps({'cookie': 'cauce_session=synthetic-test', 'csrf_token': 'a' * 43}))
-        self.session.chmod(0o600)
         Handler.snapshot = {'company_id': 'alpha', 'tenant_id': 'Alpha', 'alias': 'director', 'version': 0, 'digest': None, 'files': []}
         Handler.observed = []
         self.server = HTTPServer(('127.0.0.1', 0), Handler)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
         self.url = 'http://127.0.0.1:' + str(self.server.server_port)
+        self.session.write_text(json.dumps({'cookie': 'cauce_session=synthetic-test', 'csrf_token': 'a' * 43,
+                                            'gateway': self.url, 'origin': self.url}))
+        self.session.chmod(0o600)
         self.client = ContextClient(self.url, self.url, str(self.session))
 
     def tearDown(self):
@@ -97,7 +98,7 @@ class ContextCliTests(unittest.TestCase):
             ContextClient('http://external.example', 'https://console.example', str(self.session))
 
     def test_mutations_without_session_csrf_are_rejected_before_network_access(self):
-        self.session.write_text(json.dumps({'cookie': 'cauce_session=synthetic-test'}))
+        self.session.write_text(json.dumps({'cookie': 'cauce_session=synthetic-test', 'gateway': self.url, 'origin': self.url}))
         client = ContextClient(self.url, self.url, str(self.session))
         self.assertEqual(client.request('GET', 'Alpha', 'director')['version'], 0)
         before = len(Handler.observed)
@@ -115,6 +116,28 @@ class ContextCliTests(unittest.TestCase):
         self.assertEqual((destination / 'directives' / 'mission.md').read_text(), 'Private context.')
         self.assertEqual(os.stat(destination / 'context-manifest.json').st_mode & 0o777, 0o600)
         self.assertEqual(sorted(path.name for path in destination.iterdir()), ['context-manifest.json', 'directives'])
+
+    def test_redirects_are_not_followed_and_a_foreign_origin_is_rejected_before_network(self):
+        class Redirect(Handler):
+            def do_GET(self):
+                Handler.observed.append((self.path, 'redirect'))
+                self.send_response(302)
+                self.send_header('Location', 'http://127.0.0.1:9/stolen')
+                self.end_headers()
+
+        self.server.RequestHandlerClass = Redirect
+        before = len(Handler.observed)
+        with self.assertRaisesRegex(ContextFailure, 'HTTP 302'):
+            self.client.request('GET', 'Alpha', 'director')
+        self.assertEqual(len(Handler.observed), before + 1)
+        foreign = self.root / 'foreign-session.json'
+        foreign.write_text(json.dumps({'cookie': 'cauce_session=synthetic-test', 'csrf_token': 'a' * 43,
+                                       'gateway': 'http://127.0.0.1:9', 'origin': 'http://127.0.0.1:9'}))
+        foreign.chmod(0o600)
+        seen = len(Handler.observed)
+        with self.assertRaisesRegex(ContextFailure, 'bound to a different gateway'):
+            ContextClient(self.url, self.url, str(foreign))
+        self.assertEqual(len(Handler.observed), seen)
 
 
 if __name__ == '__main__':

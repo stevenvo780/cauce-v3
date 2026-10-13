@@ -27,7 +27,6 @@ async function fixture(t, response) {
   const root = await mkdtemp(path.join(tmpdir(), 'cauce-diagnose-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const session = path.join(root, 'console-session.json');
-  await writeFile(session, JSON.stringify({ cookie }), { mode: 0o600 });
   const requests = [];
   const server = createServer((request, reply) => {
     requests.push({ method: request.method, path: request.url, headers: request.headers });
@@ -36,6 +35,7 @@ async function fixture(t, response) {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   t.after(() => new Promise(resolve => server.close(resolve)));
   const origin = `http://127.0.0.1:${server.address().port}`;
+  await writeFile(session, JSON.stringify({ cookie, gateway: origin, origin }), { mode: 0o600 });
   const options = ['--gateway', origin, '--origin', origin, '--session-file', session];
   return { root, session, origin, options, requests };
 }
@@ -162,12 +162,12 @@ test('invalid session JSON and unreachable gateway are reported without raw erro
   assert.equal(invalid.code, 1);
   assert.equal(invalid.stdout, '');
   assert.ok(!invalid.stderr.includes(secret));
-  await writeFile(context.session, JSON.stringify({ cookie }));
   const closed = createServer();
   await new Promise(resolve => closed.listen(0, '127.0.0.1', resolve));
   const unavailable = `http://127.0.0.1:${closed.address().port}`;
   await new Promise(resolve => closed.close(resolve));
-  const network = await execute(['trace-fixture', '--gateway', unavailable, '--origin', context.origin, '--session-file', context.session]);
+  await writeFile(context.session, JSON.stringify({ cookie, gateway: unavailable, origin: unavailable }), { mode: 0o600 });
+  const network = await execute(['trace-fixture', '--gateway', unavailable, '--origin', unavailable, '--session-file', context.session]);
   assert.equal(network.code, 1);
   assert.equal(network.stdout, '');
   assert.equal(network.stderr.trim(), 'diagnostic gateway is unavailable');
