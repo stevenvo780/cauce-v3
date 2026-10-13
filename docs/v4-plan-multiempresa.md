@@ -108,7 +108,7 @@ No existe export ni import por empresa. Hay que crear:
 |---|---|
 | `rooms.id` global | Prefijo con el slug de empresa, con tabla de mapeo guardada en el bundle (o clave compuesta después de V4.1). |
 | `runtime_key` global (`048:14,55`) | Recalcular con la regla de 048 bajo el tenant destino y comprobar contra `fleet_runtime_identities`. |
-| Id de tenant ya existente o purgado | El dry-run consulta `purged_at` (`mutations/tenants.ts:14,26`); bloquea o remapea. |
+| Id de tenant ya existente o purgado | El dry-run consulta `purged_at` en `assertUnpurgedConfigurationScope` y `tenantMutation` (`packages/store/src/configuration/mutations/tenants.ts`); bloquea o remapea. |
 | `provider_accounts.id` y `UNIQUE(provider, external_account_id)` | Remapear el id. Si la cuenta externa ya existe, vincular y no duplicar. |
 | `role_policies.role`, `harness_definitions.id` | Prefijo por empresa, o reutilizar si el contenido es idéntico. |
 | `console_users.email_normalized` | Enlazar al usuario existente y crear solo la membresía por empresa. |
@@ -227,7 +227,7 @@ Síntesis de tres trabajos de solo lectura sobre `df8e7a99`, que es la versión 
 | 2 | Transición desde «operador del hub = admin» | La migración rellena los admins efectivos de hoy (kant y zeus, `admin`) | «Modo arranque»: rama `legacy_hub` mientras la empresa no tenga dueños | **Relleno** | Habría una sola fuente de autoridad desde el primer despliegue: el propio argumento de autoridad («dos fuentes hacen la revocación incompleta») descarta el modo arranque. No queda rama heredada que borrar y el comportamiento no cambia. De autoridad se conserva la guarda «una empresa con dueños nunca vuelve a cero» y «una empresa nueva nace con dueño». |
 | 3 | Empresa en los datos | `company_id` derivado e inmutable con FK compuestas en unas 12 tablas | Mínimo: triggers G4/G5 y `fleet_host_companies` | **FK compuestas**, más las guardas de autoridad que una FK no expresa: último dueño o SA, escritura de tablas de plataforma, alta de espacio en empresa habilitada | Una FK hace imposible el cruce, también con el superusuario actual. Un trigger solo lo detecta. |
 | 4 | Computadoras | `fleet_hosts.company_id`: dueño único | `fleet_host_companies` n:m, asignada por el SA | **Dueño único** | Una máquina guarda `credential_ref` locales y contenedores de una empresa; permite la FK `agents(host_id,company_id)`. Prestar una máquina queda fuera (D5). |
-| 5 | Numeración | 052 aislamiento, 053 default | 052 roles, 053 dueños, 054 default | **052 roles, 053 aislamiento, 054 propietarios y principales, 055 default** | Los roles van primero y no cambian el comportamiento. Un fichero por tema permite paquetes en paralelo. |
+| 5 | Numeración | 052 aislamiento, 053 default | 052 roles, 053 dueños, 054 default | **052 roles, 053 aislamiento, 054 propietarios. El 055 no quita el default** | Los roles van primero. `055_company_registration.sql` ya ocupa ese número (`pg_advisory_xact_lock(783_003_055)`). `cauce_legacy_company_id()` sigue desde `051_companies.sql`. La última subida es `079_host_enrollment_compatibility.sql`. |
 | 6 | Quitar el default de `tenants.company_id` | Misma ventana | Release aparte, tras una semana | **Release aparte (R2)**, antes del ensayo de importación | Praxis llega en V4.3/V4.4, así que no hay prisa, y R1 queda más pequeño. |
 | 7 | Resolvedor de autoridad | `configuration/authority.ts` | `company-authority.ts` más la función DEFINER `cauce_company_authority` | **Un único `packages/store/src/company-authority.ts`** con la función DEFINER | Lo usan configuración, personas, flota y autenticación de proveedor. El `FOR SHARE` sobre tablas de plataforma sin `UPDATE` exige DEFINER. |
 | 8 | Contador de revisión | `GREATEST(máx. de la empresa, máx. de plataforma)` | Por empresa | **Aislamiento** | Una escritura de catálogo global sí debe invalidar las vistas previas de todas las empresas. |
@@ -436,11 +436,11 @@ El migrador aplica todas las pendientes en **una sola transacción** (`db.ts:run
   - `coordination` = Steven/kant.
 - **Grants:** el runtime tiene `SELECT` sobre todo lo anterior y `EXECUTE` de las dos DEFINER (`cauce_company_authority` y `cauce_lock_owner_guard`, que G4 llama cuando el runtime cambia una persona). No escribe en ninguna de estas tablas ni usa la secuencia de `platform_authority_events`. Los triggers se disparan sin `EXECUTE`, así que las funciones de trigger y las de plataforma solo se conceden a `cauce_platform`. La plataforma escribe como dueña de las tablas; ser miembro de `cauce_platform` solo le abre la guarda de escritura.
 
-#### 4.4 `055_drop_legacy_company_default.sql` (R2)
+#### 4.4 Quitar el default legado (R2) — no es la migración 055
 
-`ALTER TABLE tenants ALTER COLUMN company_id DROP DEFAULT; DROP FUNCTION cauce_legacy_company_id();`
+El plan reservaba `055_drop_legacy_company_default.sql` para `ALTER TABLE tenants ALTER COLUMN company_id DROP DEFAULT` y `DROP FUNCTION cauce_legacy_company_id()`. Ese fichero no existe. `055_company_registration.sql` y `down/055_company_registration.sql` ocupan el 055 y toman el bloqueo `783_003_055`. `cauce_legacy_company_id()` sigue definida en `051_companies.sql`; `066_runtime_hardening.sql` solo fija su `search_path`. La última subida es `079_host_enrollment_compatibility.sql`. Un cierre nuevo usaría el siguiente número libre, no 055.
 
-Antes hay que corregir los fixtures que insertan espacios sin `company_id`:
+Antes de quitar el default habría que corregir los fixtures que insertan espacios sin `company_id`:
 - `tests/e2e/console-functional-browser.fixtures.ts`;
 - `tests/store-hardening/*`;
 - `tests/gateway-hardening/context-write-quiescence.fixtures.ts`.
@@ -449,7 +449,7 @@ Antes hay que corregir los fixtures que insertan espacios sin `company_id`:
 
 #### 4.5 Migraciones `down` (solo en desarrollo o en un clon; en producción se corrige hacia delante)
 
-- **`down/055`:** recrea la función y el default.
+- **`down/055`:** es el reverso de `055_company_registration.sql`. No recrea `cauce_legacy_company_id()` ni el default: esa migración de cierre no existe.
 - **`down/054`:** se niega si hay algún `owner`, alguna fila con `source<>'v4.0-hub-operator'` o más de una empresa.
 - **`down/053`:** se niega si:
   - hay más de una empresa;
@@ -477,7 +477,7 @@ Antes hay que corregir los fixtures que insertan espacios sin `company_id`:
 4. **Adaptadores con `company_context_v1`**, desplegados de forma gradual después del gateway.
    - Si el adaptador no negocia la capacidad, el gateway no envía `company_context`.
    - Los adaptadores viejos conservan sus literales, que son correctos para Humanizar.
-5. **R2 = 055 + WP-J**, tras al menos una semana estable y antes del ensayo de importación de V4.3.
+5. **R2 (quitar el default legado) + WP-J**, tras al menos una semana estable y antes del ensayo de importación de V4.3. No es la migración 055: ese número ya es el registro de empresa y el árbol sigue hasta la 079.
 
 **Rollback del runtime.** Se restauran los pins de imagen **sin** el migrador: el `migrate.mjs` viejo se niega ante una base más nueva. El runtime V4.0 funciona sobre el esquema 054, con dos excepciones aceptadas:
 - no puede dar de alta una computadora una vez exista una segunda empresa, porque entonces el relleno de `fleet_hosts.company_id` exige un valor explícito;
@@ -505,12 +505,13 @@ Antes hay que corregir los fixtures que insertan espacios sin `company_id`:
 | Login | Grupo | Consumidor | Límite de conexiones |
 |---|---|---|---|
 | `cauce_gateway` | `cauce_runtime` | gateway (con overlay de flota) | 30 |
-| `cauce_dispatcher` | `cauce_runtime` | dispatcher | 15 |
-| `cauce_bridge` | `cauce_runtime` | telegram-bridge | 8 |
-| `cauce_fleet` | `cauce_runtime` | `cauce-fleet-v35-controller` (host) | 10 |
+| `cauce_dispatcher` | `cauce_runtime` | dispatcher | 25 |
+| `cauce_bridge` | `cauce_runtime` | telegram-bridge | 25 |
+| `cauce_fleet` | `cauce_runtime` | `cauce-fleet-v35-controller` (host) | 20 |
 | `cauce_observer_login` | `cauce_observer` | outbox-metrics, fleet-watchdog | 5 |
-| `cauce_monitor` | `cauce_observer` | `mcp-fleet-monitor` | 3 |
+| `cauce_monitor` | `cauce_observer` | `mcp-fleet-monitor` | 25 |
 | `cauce_backup` | `pg_read_all_data` | respaldo por TCP | 2 |
+| `cauce_decisiones` | `cauce_decisiones_read` | servicio `decisiones` | 6 |
 | `cauce` (superusuario) | `cauce_platform` | migrador, `cauce platform`, emergencias | — |
 
 **Qué se le niega al runtime:**
@@ -815,7 +816,7 @@ La URL ni la contraseña se imprimen. `empresa estado --estado disabled|retired`
 **WP-J · Cierre (R2)**
 - **Modelo y dependencias:** Opus. Depende de todos los anteriores, y de una semana estable tras R1.
 - **Ficheros:**
-  - `packages/store/migrations/055_drop_legacy_company_default.sql` y su `down/`;
+  - una migración nueva, con su `down/`, que quite el default de `tenants.company_id` y `cauce_legacy_company_id()`; no puede ser 055;
   - `configuration/company-scope.ts` y `index.ts`: se borra `LEGACY_COMPANY`;
   - `tests/unit/no-company-literals.test.ts`: la lista de excepciones queda vacía;
   - los fixtures de §4.4;
