@@ -180,10 +180,10 @@ export async function escenariosA(ctx) {
 
   // SHARED_HUMANS is optional, exported verbatim as CAUCE_SHARED_HUMAN_IDS when every entry is an exact tenant:uuid.
   assert(!timeoutOverrideFinal.argv.some((value) => value.startsWith("CAUCE_SHARED_HUMAN_IDS=")));
-  const steven = "Steven:78c81e05-0c18-427b-b02b-346d7e8c8508";
-  for (const [humans, valid] of [[steven, true], [`${steven},Isa:0b6f1c8e-2a44-4c1b-9f6d-3e1a2b3c4d5e`, true],
-    [steven.toUpperCase(), false], [`${steven},`, false], [`${steven} `, false], ["78c81e05-0c18-427b-b02b-346d7e8c8508", false],
-    ["Steven:78c81e05-0c18-427b-b02b-346d7e8c850", false], [`${steven};Miguel:x`, false]]) {
+  const owner = "Steven:00000000-0000-4000-8000-00000000000a";
+  for (const [humans, valid] of [[owner, true], [`${owner},Isa:0b6f1c8e-2a44-4c1b-9f6d-3e1a2b3c4d5e`, true],
+    [owner.toUpperCase(), false], [`${owner},`, false], [`${owner} `, false], ["00000000-0000-4000-8000-00000000000a", false],
+    ["Steven:00000000-0000-4000-8000-00000000000", false], [`${owner};Miguel:x`, false]]) {
     await writeConfig("atlas", [`SHARED_HUMANS=${humans}`]);
     await clearLog();
     result = runSupervisor("start", "atlas", await dockerState("atlas"));

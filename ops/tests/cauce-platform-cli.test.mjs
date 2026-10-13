@@ -20,8 +20,8 @@ function fixtureDatabaseUrl({ user, password, host, port, database, query }) {
 }
 
 const FIXTURE_PASSWORD = 'fixture-placeholder-password';
-const admin = '78c81e05-0c18-427b-b02b-346d7e8c8508';
-const miguel = '836839cc-4768-4214-9170-d535f12a66cd';
+const admin = '00000000-0000-4000-8000-000000000001';
+const miguel = '00000000-0000-4000-8000-000000000002';
 
 function run(args, environment = {}) {
   return spawnSync(process.execPath, [cli, ...args], {
@@ -66,8 +66,8 @@ test('rejects malformed identities, unknown options and unsupported operations b
 });
 
 test('parses the seed command and rejects malformed input before connecting', () => {
-  assert.deepEqual(parseSeedArguments(['admin', 'semilla', '--email', 'Steven@Elenxos.com']),
-    { email: 'steven@elenxos.com', company: null, role: 'owner', actor: null });
+  assert.deepEqual(parseSeedArguments(['admin', 'semilla', '--email', 'Owner@Example.test']),
+    { email: 'owner@example.test', company: null, role: 'owner', actor: null });
   assert.deepEqual(parseSeedArguments(['admin', 'semilla', '--email', 'a@b.test', '--company', 'humanizar', '--role', 'admin', '--admin', admin.toUpperCase()]),
     { email: 'a@b.test', company: 'humanizar', role: 'admin', actor: admin });
   for (const args of [
@@ -187,8 +187,8 @@ test('refuses connection strings that alter the session or weaken transport befo
 test('only emits parameterized platform calls for every supported mutation', async () => {
   const { planOperation } = await import(new URL('../cli/platform_admin.mjs', import.meta.url));
   const cases = [
-    [['admin', 'otorgar', '--empresa', 'humanizar', '--id', miguel, '--email', 'miguel@elenxos.com', '--rol', 'owner'],
-      'SELECT public.cauce_platform_grant_admin($1,$2,$3,$4,$5)', ['humanizar', miguel, 'miguel@elenxos.com', 'owner', admin]],
+    [['admin', 'otorgar', '--empresa', 'humanizar', '--id', miguel, '--email', 'persona-b@example.test', '--rol', 'owner'],
+      'SELECT public.cauce_platform_grant_admin($1,$2,$3,$4,$5)', ['humanizar', miguel, 'persona-b@example.test', 'owner', admin]],
     [['admin', 'revocar', '--empresa', 'humanizar', '--id', miguel],
       'SELECT public.cauce_platform_revoke_admin($1,$2,$3)', ['humanizar', miguel, admin]],
     [['empresa', 'estado', '--empresa', 'humanizar', '--estado', 'disabled', '--si'],
@@ -225,8 +225,8 @@ test('the CLI repeats the two-owner seed atomically and the database audits and 
   try {
     await applyMigrations(pool);
     await pool.query(`INSERT INTO console_users(id,email,email_normalized,password_hash,display_name,role,tenant_id,alias)
-      VALUES($1,'steven@elenxos.com','steven@elenxos.com',$3,'Steven','operator','Steven','kant'),
-            ($2,'miguel@elenxos.com','miguel@elenxos.com',$3,'Miguel','operator','Miguel','janus')`,
+      VALUES($1,'owner@example.test','owner@example.test',$3,'Owner','operator','Steven','kant'),
+            ($2,'persona-b@example.test','persona-b@example.test',$3,'Persona B','operator','Miguel','janus')`,
     [admin, miguel, '$scrypt$' + 'x'.repeat(48)]);
     await pool.query('INSERT INTO platform_admins(human_id) VALUES($1)', [admin]);
     await writeFile(urlFile, `${url}\n`, { mode: 0o600 });
@@ -234,7 +234,7 @@ test('the CLI repeats the two-owner seed atomically and the database audits and 
       CAUCE_PLATFORM_ADMIN_ID: admin, PGOPTIONS: '-c role=cauce_missing_role', PGHOST: '/nonexistent',
       PGUSER: 'cauce_missing_role', PGAPPNAME: 'spoofed' };
     const seed = ['admin', 'otorgar', '--empresa', 'humanizar', '--rol', 'owner',
-      '--id', admin, '--email', 'steven@elenxos.com', '--id', miguel, '--email', 'miguel@elenxos.com'];
+      '--id', admin, '--email', 'owner@example.test', '--id', miguel, '--email', 'persona-b@example.test'];
     for (let iteration = 0; iteration < 2; iteration++) {
       const result = run(seed, environment);
       assert.equal(result.status, 0, result.stderr);
@@ -249,7 +249,7 @@ test('the CLI repeats the two-owner seed atomically and the database audits and 
     assert.equal((await pool.query("SELECT count(*)::int AS count FROM platform_authority_events WHERE action='admin.grant' AND actor_human_id=$1 AND company_id='humanizar' AND database_role='cauce_test'", [admin])).rows[0].count, 4);
 
     const wrongEmail = run(seed.slice(0, -1).map(value => value === 'owner' ? 'admin' : value)
-      .concat('wrong@elenxos.com'), environment);
+      .concat('wrong@example.test'), environment);
     assert.equal(wrongEmail.status, 1);
     assert.match(wrongEmail.stderr, /22023/u);
     assert.equal(wrongEmail.stdout, '');
@@ -293,14 +293,14 @@ test('the CLI repeats the two-owner seed atomically and the database audits and 
     assert.match(runtime.stderr, /42501/u);
     assert.doesNotMatch(runtime.stderr, /runtime-test-only|postgresql:/u);
 
-    const leon = '1d1d2b49-3535-4518-ab9d-cbc975c4667a';
+    const leon = '00000000-0000-4000-8000-000000000003';
     await pool.query('BEGIN');
     await pool.query("SELECT cauce_platform_create_company('praxis','Praxis',$1)", [admin]);
     await pool.query("INSERT INTO tenants(id,company_id) VALUES('PraxisHub','praxis')");
     await pool.query(`INSERT INTO console_users(id,email,email_normalized,password_hash,display_name,role,tenant_id,alias)
-      VALUES($1,'leon@praxis.test','leon@praxis.test',$2,'Leon','operator','PraxisHub','operador')`,
+      VALUES($1,'persona-c@example.test','persona-c@example.test',$2,'Persona C','operator','PraxisHub','operador')`,
     [leon, '$scrypt$' + 'x'.repeat(48)]);
-    await pool.query("SELECT cauce_platform_grant_admin('praxis',$1,'leon@praxis.test','owner',$2)", [leon, admin]);
+    await pool.query("SELECT cauce_platform_grant_admin('praxis',$1,'persona-c@example.test','owner',$2)", [leon, admin]);
     await pool.query('COMMIT');
     for (const operation of ['crear', 'borrar']) {
       const result = run(['enlace', operation, '--empresa', 'praxis', '--otra-empresa', 'humanizar'], environment);
@@ -381,20 +381,20 @@ test('seeds the platform administrator and company owners idempotently without m
   try {
     await applyMigrations(pool);
     await pool.query(`INSERT INTO console_users(id,email,email_normalized,password_hash,display_name,role,tenant_id,alias)
-      VALUES($1,'steven@elenxos.com','steven@elenxos.com',$3,'Steven','operator','Steven','kant'),
-            ($2,'miguel@elenxos.com','miguel@elenxos.com',$3,'Miguel','operator','Miguel','janus')`,
+      VALUES($1,'owner@example.test','owner@example.test',$3,'Owner','operator','Steven','kant'),
+            ($2,'persona-b@example.test','persona-b@example.test',$3,'Persona B','operator','Miguel','janus')`,
     [admin, miguel, '$scrypt$' + 'x'.repeat(48)]);
 
-    const noActor = run(['admin', 'semilla', '--email', 'steven@elenxos.com', '--company', 'humanizar'], environment);
+    const noActor = run(['admin', 'semilla', '--email', 'owner@example.test', '--company', 'humanizar'], environment);
     assert.equal(noActor.status, 1, noActor.stderr);
     assert.match(noActor.stderr, /platform_admin activo/u);
 
-    const missing = run(['admin', 'semilla', '--email', 'nadie@elenxos.com'], environment);
+    const missing = run(['admin', 'semilla', '--email', 'nadie@example.test'], environment);
     assert.equal(missing.status, 1, missing.stderr);
-    assert.match(missing.stderr, /no existe ninguna persona con el correo nadie@elenxos\.com/u);
+    assert.match(missing.stderr, /no existe ninguna persona con el correo nadie@example\.test/u);
     assert.equal(missing.stdout, '');
 
-    const platform = ['admin', 'semilla', '--email', 'Steven@elenxos.com'];
+    const platform = ['admin', 'semilla', '--email', 'Owner@example.test'];
     const first = run(platform, environment);
     assert.equal(first.status, 0, first.stderr);
     assert.match(first.stdout, /ahora es platform_admin/u);
@@ -404,14 +404,14 @@ test('seeds the platform administrator and company owners idempotently without m
     assert.match(second.stdout, /ya era platform_admin; sin cambios/u);
     assert.equal(await snapshot(), afterFirst);
 
-    for (const email of ['steven@elenxos.com', 'miguel@elenxos.com']) {
+    for (const email of ['owner@example.test', 'persona-b@example.test']) {
       const owner = run(['admin', 'semilla', '--email', email, '--company', 'humanizar', '--role', 'owner'], environment);
       assert.equal(owner.status, 0, owner.stderr);
       assert.match(owner.stdout, /ahora es owner de humanizar/u);
       assert.doesNotMatch(owner.stdout + owner.stderr, /postgresql:|fixture-seed-password/u);
     }
     const afterOwners = await snapshot();
-    for (const email of ['steven@elenxos.com', 'miguel@elenxos.com']) {
+    for (const email of ['owner@example.test', 'persona-b@example.test']) {
       const again = run(['admin', 'semilla', '--email', email, '--company', 'humanizar'], environment);
       assert.equal(again.status, 0, again.stderr);
       assert.match(again.stdout, /ya era owner de humanizar; sin cambios/u);

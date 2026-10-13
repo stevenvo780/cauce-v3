@@ -37,7 +37,7 @@ test('renders the platform CLI as a hardened one-off service on the stack backen
     const envFile = await writeEnvironment(scratch);
     const rendered = spawnSync(wrapper, ['--mostrar'], { encoding: 'utf8', env: {
       PATH: process.env.PATH, HOME: process.env.HOME, CAUCE_ENV_FILE: envFile,
-      CAUCE_PLATFORM_ADMIN_ID: '78c81e05-0c18-427b-b02b-346d7e8c8508' } });
+      CAUCE_PLATFORM_ADMIN_ID: '00000000-0000-4000-8000-000000000001' } });
     assert.equal(rendered.status, 0, rendered.stderr);
     const out = rendered.stdout;
     assert.match(out, /^name: cauce-v3-prod-plataforma$/mu);
