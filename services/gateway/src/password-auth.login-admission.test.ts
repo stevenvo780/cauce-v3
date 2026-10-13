@@ -40,7 +40,7 @@ describe('concurrent login admission', () => {
 
   it('starts the failure window when a slow lookup finishes', async () => {
     const test = await fixture({ user: await makeUser({ email: 'owner@example.test' }), throttle: new LoginThrottle(1, 60_000) });
-    let release = () => {};
+    let release: () => void = () => undefined;
     const held = new Promise<undefined>(resolve => { release = () => { resolve(undefined); }; });
     const lookup = vi.spyOn(test.users, 'findByEmail').mockImplementation(() => held);
     const login = test.login('slow@example.test', 'wrong');
@@ -57,7 +57,7 @@ describe('concurrent login admission', () => {
   it.each(['address', 'email'] as const)('limits pending attempts by %s before looking up users', async (dimension) => {
     const test = await fixture({ user: await makeUser({ email: 'owner@example.test' }),
       throttle: new LoginThrottle(3, 60_000), addressThrottle: new LoginThrottle(3, 60_000) });
-    let release = () => {};
+    let release: () => void = () => undefined;
     const held = new Promise<undefined>(resolve => { release = () => { resolve(undefined); }; });
     const find = test.users.findByEmail.bind(test.users);
     const lookup = vi.spyOn(test.users, 'findByEmail').mockImplementation(email => email === 'owner@example.test' ? find(email) : held);
@@ -78,7 +78,7 @@ describe('concurrent login admission', () => {
 
   it('queues real logins while background derivations fill their own queue', async () => {
     const test = await fixture({ user: await makeUser({ email: 'owner@example.test' }) });
-    let release = () => {};
+    let release: () => void = () => undefined;
     const held = new Promise<void>(resolve => { release = resolve; });
     const registrations = Array.from({ length: 17 }, () => passwordWork.run(() => held));
     try {

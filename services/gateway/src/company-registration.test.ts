@@ -128,7 +128,7 @@ describe('public company registration', () => {
 
   it('returns the hourly reservation when no password work can be admitted', async () => {
     const { register, hashes } = await open({ CAUCE_REGISTRATION_HOURLY_LIMIT: '2' });
-    let release = () => {};
+    let release: () => void = () => undefined;
     const held = new Promise<void>(resolve => { release = resolve; });
     const occupied = Array.from({ length: 17 }, () => passwordWork.run(() => held));
     try {
@@ -146,9 +146,9 @@ describe('public company registration', () => {
     const { register, hashes } = await open({ CAUCE_REGISTRATION_HOURLY_LIMIT: '1' });
     if (!gateway) throw new Error('Gateway fixture is not ready');
     const clock = vi.spyOn(Date, 'now').mockReturnValue(1_000);
-    let releaseWork = () => {};
-    let releaseResponse = () => {};
-    let markSaturated = () => {};
+    let releaseWork: () => void = () => undefined;
+    let releaseResponse: () => void = () => undefined;
+    let markSaturated: () => void = () => undefined;
     const heldWork = new Promise<void>(resolve => { releaseWork = resolve; });
     const heldResponse = new Promise<void>(resolve => { releaseResponse = resolve; });
     const saturated = new Promise<void>(resolve => { markSaturated = resolve; });

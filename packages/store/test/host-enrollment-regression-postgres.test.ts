@@ -153,7 +153,8 @@ describe('host enrollment compatibility and company isolation', () => {
     app = await buildGateway({ pool, repository: new CauceRepository(pool), consoleOrigins: ['http://localhost'], logger: false,
       authProvider: new PasswordAuthProvider({ users: new PostgresConsoleUserStore(pool), signingKey: Buffer.alloc(32, 59) }) });
     const owner = await registerSetupOwner(app, 'enrollment');
-    const invite = (host_id: string, display_name: string, notes = '') => app!.inject({ method: 'POST',
+    const server = app;
+    const invite = (host_id: string, display_name: string, notes = '') => server.inject({ method: 'POST',
       url: '/v3/console/fleet/hosts/enrollments', headers: { ...owner }, payload: { host_id, display_name, notes } });
     for (const [name, notes] of [['n'.repeat(81), ''], ['Valid', 'x'.repeat(501)]] as const) {
       const invalid = await invite('enrollment-invalid', name, notes);

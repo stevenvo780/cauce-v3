@@ -305,7 +305,7 @@ describe('entornos de cuota V4 en navegador real contra gateway y PostgreSQL rea
     });
     expect(deniedAccountEdit.status).toBe(403);
     errors.expectHttpError(`/v3/console/quota-accounts/${accountId}`, 403);
-    const deniedAccountDelete = await apiDelete(page, `/v3/console/quota-accounts/${accountId}?expected_version=${accountVersion}`);
+    const deniedAccountDelete = await apiDelete(page, `/v3/console/quota-accounts/${accountId}?expected_version=${String(accountVersion)}`);
     expect(deniedAccountDelete.status).toBe(403);
     const remainingAccounts = (await apiGet(page, '/v3/console/quota-accounts')).body as unknown as { accounts: { label: string }[] };
     expect(remainingAccounts.accounts.map(item => item.label)).toEqual([accountLabel]);

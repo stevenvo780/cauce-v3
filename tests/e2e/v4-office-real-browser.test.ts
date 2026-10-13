@@ -64,16 +64,16 @@ function watchHttp(page: V4Page, label: string): void {
     if ((status === 501 && path === '/v3/console/terminal/capability')
         || (status === 404 && path === '/v3/console/mcp/client-delegations')) return;
     if (label === 'same-company-reader' && status === 403 && path === '/v3/console/terminal/capability') {
-      observedExpectedHttp.push(`${label} ${status} ${path}`);
+      observedExpectedHttp.push(`${label} ${String(status)} ${path}`);
       return;
     }
     const expected = expectedHttp.findIndex((item) => item.label === label && item.path === path && item.statuses.includes(status));
     if (expected >= 0) {
       expectedHttp.splice(expected, 1);
-      observedExpectedHttp.push(`${label} ${status} ${path}`);
+      observedExpectedHttp.push(`${label} ${String(status)} ${path}`);
       return;
     }
-    unexpectedHttp.push(`${label} ${status} ${path}`);
+    unexpectedHttp.push(`${label} ${String(status)} ${path}`);
   });
 }
 
@@ -240,7 +240,8 @@ describe('Oficina V4 en navegador Chromium real, gateway y PostgreSQL reales', (
     expect(reader.rows).toEqual([{ company_id: ownerA.company.slug, tenant_id: hubA, role: 'reader', enabled: true }]);
 
     pageB = await freshPage('owner-b');
-    await step(pageB, 'foreign company registration', async () => { await registerCompany(pageB!, ownerB); });
+    const foreignPage = pageB;
+    await step(foreignPage, 'foreign company registration', async () => { await registerCompany(foreignPage, ownerB); });
     const registeredB = await pool().query<{ tenant_id: string; company_id: string; role: string }>(
       `SELECT person.tenant_id,person.company_id,admin.role FROM console_users person
         JOIN company_admins admin ON admin.human_id=person.id AND admin.company_id=person.company_id WHERE person.email_normalized=$1`, [ownerB.email]);

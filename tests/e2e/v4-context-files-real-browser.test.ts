@@ -118,7 +118,7 @@ function fileSelect(versions: V4Locator): V4Locator {
 
 async function listedFiles(versions: V4Locator): Promise<string[]> {
   return fileSelect(versions).evaluate((element) =>
-    Array.from(element.querySelectorAll('option')).map((option) => option.textContent?.trim() ?? ''));
+    Array.from(element.querySelectorAll('option')).map((option) => option.textContent.trim()));
 }
 
 function editor(versions: V4Locator): V4Locator {

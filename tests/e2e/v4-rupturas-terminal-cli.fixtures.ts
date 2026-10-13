@@ -52,7 +52,7 @@ export function jsonLogLines(raw: string): Record<string, unknown>[] {
 }
 export async function startCliDrill() {
   const directory = await mkdtemp(join(tmpdir(), 'zz-canary-cli-rupture-'));
-  const database = await startTestDatabase({ requireOwnedContainer: true }).catch(async error => {
+  const database = await startTestDatabase({ requireOwnedContainer: true }).catch(async (error: unknown) => {
     await rm(directory, { recursive: true, force: true });
     throw error;
   });

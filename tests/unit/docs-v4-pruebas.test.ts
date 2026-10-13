@@ -17,12 +17,12 @@ const ignoredDirectories = new Set(['.git', '.claude', '.delegados', '__pycache_
 const testSource = /\.test\.(?:ts|tsx|mjs|js)$/u;
 const postgresTest = /(?:-postgres|\.postgres|\.pg)\.test\.ts$/u;
 
-type Definition = {
+interface Definition {
   id: string;
   countCommand: string;
   execution: string;
   count: () => number;
-};
+}
 
 function filesWithin(roots: string[], maxSubdirectories = Number.POSITIVE_INFINITY): string[] {
   const files: string[] = [];
@@ -110,7 +110,7 @@ const definitions: Definition[] = [
     countCommand: "find tests/integration ops/tests -type d \\( -name '.*' -o -name __pycache__ -o -name coverage -o -name dist -o -name node_modules \\) -prune -o -type f \\( -name 'failure-drill*' -o -name 'test-fault*.sh' \\) -print | wc -l",
     execution: 'pnpm test:integration && pnpm test:ops',
     count: () => filesWithin(['tests/integration', 'ops/tests'])
-      .filter(file => /^failure-drill/u.test(basename(file)) || /^test-fault.*\.sh$/u.test(basename(file))).length,
+      .filter(file => basename(file).startsWith('failure-drill') || /^test-fault.*\.sh$/u.test(basename(file))).length,
   },
   {
     id: 'aislamiento',
@@ -125,7 +125,7 @@ const definitions: Definition[] = [
     countCommand: 'node ops/tests/run-all.mjs --list | wc -l',
     execution: 'pnpm test:ops',
     count: () => filesWithin(['ops/tests'], 0)
-      .filter(file => /\.test\.mjs$/u.test(basename(file)) || /^test[-_].*\.(?:py|sh)$/u.test(basename(file))).length,
+      .filter(file => basename(file).endsWith('.test.mjs') || /^test[-_].*\.(?:py|sh)$/u.test(basename(file))).length,
   },
   {
     id: 'layout',
@@ -175,7 +175,7 @@ describe('inventario de pruebas de V4', () => {
   test('el pendiente de la matriz CRUD coincide con el límite descrito', () => {
     const browserRow = documentRows().get('navegador')?.[5] ?? '';
     expect(crudMatrix.pending.length).toBe(30);
-    expect(browserRow).toContain(`matriz mantiene ${crudMatrix.pending.length} pendientes`);
+    expect(browserRow).toContain(`matriz mantiene ${String(crudMatrix.pending.length)} pendientes`);
   });
 
   test('los comandos de conteo reproducen los números documentados', () => {

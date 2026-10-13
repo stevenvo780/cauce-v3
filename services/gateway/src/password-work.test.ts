@@ -40,8 +40,8 @@ describe('password admission under concurrent load', () => {
   it('reserves a running slot and a separate queue for login', async () => {
     const gate = new PasswordWorkGate(2, 1);
     const started: string[] = [];
-    let releaseBackground = () => {};
-    let releaseLogin = () => {};
+    let releaseBackground: () => void = () => undefined;
+    let releaseLogin: () => void = () => undefined;
     const background = gate.run(async () => {
       started.push('background');
       await new Promise<void>(resolve => { releaseBackground = resolve; });
@@ -53,8 +53,8 @@ describe('password admission under concurrent load', () => {
     }, 'login');
     const queuedLogin = gate.run(async () => { started.push('queued login'); }, 'login');
     try {
-      await expect(gate.run(async () => {}, 'login')).rejects.toBeInstanceOf(PasswordWorkSaturated);
-      await expect(gate.run(async () => {})).rejects.toBeInstanceOf(PasswordWorkSaturated);
+      await expect(gate.run(() => Promise.resolve(), 'login')).rejects.toBeInstanceOf(PasswordWorkSaturated);
+      await expect(gate.run(() => Promise.resolve())).rejects.toBeInstanceOf(PasswordWorkSaturated);
       expect(started).toEqual(['background', 'login']);
       releaseLogin();
       await queuedLogin;
@@ -68,7 +68,7 @@ describe('password admission under concurrent load', () => {
   it('starts queued login before background and releases slots on failures', async () => {
     const gate = new PasswordWorkGate(2, 2);
     const started: string[] = [];
-    let release = () => {};
+    let release: () => void = () => undefined;
     const held = new Promise<void>(resolve => { release = resolve; });
     const running = [gate.run(() => held, 'login'), gate.run(() => held, 'login')];
     const background = gate.run(async () => { started.push('background'); });

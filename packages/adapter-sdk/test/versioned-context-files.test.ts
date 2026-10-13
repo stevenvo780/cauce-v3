@@ -3,7 +3,7 @@ import test from 'node:test';
 import { createHash } from 'node:crypto';
 import { canonicalVersionedContext, deliveredVersionedContext } from '../src/context/versioned-context-files.js';
 
-type File = { path: string; content: string };
+interface File { path: string; content: string }
 function version(files: File[], digestFiles = [...files].sort((a, b) => a.path < b.path ? -1 : 1)) {
   return { company_id: 'context_alpha', tenant_id: 'Steven', alias: 'zeus', version: 2,
     digest: createHash('sha256').update(JSON.stringify(digestFiles)).digest('hex'), files };

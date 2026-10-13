@@ -6,8 +6,8 @@ it.each(['Grok', 'Muse'])('muestra el manual de %s con su workspace medido y el 
   render(<ArnesesPanel />);
 
   const item = screen.getByRole('heading', { name: label }).closest('li');
-  expect(item).not.toBeNull();
-  const row = within(item!);
+  if (!item) throw new Error(`no aparece la fila de ${label}`);
+  const row = within(item);
   expect(row.getByText(`<WORKSPACE_${label.toUpperCase()}>/AGENTS.md`)).toBeInTheDocument();
   expect(row.getByText(/medido en el runtime/)).toBeInTheDocument();
   expect(row.getByText(/«Perfil y contexto».*workspace medido/)).toBeInTheDocument();

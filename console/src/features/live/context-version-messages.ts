@@ -21,7 +21,7 @@ export function applicationNotice(code: string): ApplicationNotice {
   return APPLICATION[code] ?? { pending: false, message: 'No se pudo aplicar la versión al agente. Reintenta; si persiste, revisa el estado del agente.' };
 }
 
-const REQUEST_CODES: Record<string, string> = {
+const REQUEST_CODES: Partial<Record<string, string>> = {
   context_version_conflict: 'Conflicto de versión: el contexto cambió mientras lo editabas. Relee las versiones y vuelve a intentarlo; tu borrador se conserva.',
   invalid_request: 'La solicitud de contexto no es válida. Revisa las rutas y el contenido.',
   context_invalid_files: 'Los archivos tienen una ruta, forma o duplicado no válido.',
@@ -35,7 +35,7 @@ const REQUEST_CODES: Record<string, string> = {
   context_runtime_unavailable: 'El servicio que aplica el contexto al agente no está disponible. La versión quedó pendiente.',
 };
 
-const BY_STATUS: Record<number, string> = {
+const BY_STATUS: Partial<Record<number, string>> = {
   400: 'La solicitud de contexto no es válida.',
   401: 'La sesión expiró. Vuelve a iniciar sesión.',
   403: 'No tienes permiso para esta operación de contexto.',
