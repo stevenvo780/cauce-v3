@@ -23,11 +23,11 @@ No se elimina ningún gate ni test, no se rebajan sus criterios y no se sustituy
 | Comando | Qué ejecuta | Cuándo |
 |---|---|---|
 | `pnpm typecheck` | TypeScript strict (core, adapter, mcp, console) | Cada commit |
-| `pnpm lint` | ESLint por zona + `lint:estricto:zonas` (13 rutas enumeradas a mano en `package.json:30`: `console`, `services/{terminal-relay,telegram-bridge,dispatcher}`, `services/gateway/src`, `tests`, `packages/protocol/{src,test}`, `packages/mcp-fleet-monitor/src`, `packages/adapter-sdk/{src,test}`, `packages/store/{src,test}`) + `ruff check` (Python) + ratchet `scripts/calidad.mjs` | Cada commit |
+| `pnpm lint` | ESLint por zona + `lint:estricto:zonas` (14 rutas declaradas en `package.json` bajo ese script: `console`, `services/{terminal-relay,telegram-bridge,dispatcher,decisiones}`, `services/gateway/src`, `tests`, `packages/protocol/{src,test}`, `packages/mcp-fleet-monitor/src`, `packages/adapter-sdk/{src,test}`, `packages/store/{src,test}`) + `ruff check` (Python) + ratchet `scripts/calidad.mjs` | Cada commit |
 | `pnpm lint:cycles` | AST de imports/reexportaciones runtime, incluidas entradas del workspace; baseline cero de ciclos | Dentro de `pnpm lint` |
 | `pnpm test:unit` | Gate rápido: protocol, adapter-sdk, mcp, console, `tests/unit` | Cada commit |
 | `pnpm test:core` | Escalón de Postgres: preflight de la base + `test:services` + `test:gateway-hardening` | Cada commit que toque `services/**` |
-| `pnpm test` (`scripts/test-all.mjs`) | Gate completo: orquesta 11 suites secuenciales, cuenta tests ejecutados y saltados por suite, y verifica que ningún guion `test:*`/`qa:*`/`coverage:*` quede huérfano | Gate completo |
+| `pnpm test` (`scripts/test-all.mjs`) | Gate completo: orquesta 12 suites secuenciales, cuenta tests ejecutados y saltados por suite, y verifica que ningún guion `test:*`/`qa:*`/`coverage:*` quede huérfano | Gate completo |
 | `pnpm test:ops` | Descubre y ejecuta en serie las pruebas directas de `ops/tests` (`ops/tests/run-all.mjs`, que las enumera del directorio); no abandona al primer rojo | Al tocar ops |
 | `ops/scripts/validate.sh` | Sintaxis de `.sh`/`.mjs` en ops+deploy, ShellCheck obligatorio, YAML/JSON Schema de manifiestos, paridad byte-a-byte G-SNAP | Al tocar fleet/ops |
 | `pnpm qa:layout` (`console/qa/layout-gate.mjs`) | Regresión de maquetado en Chromium a 360/760/1100/1440/1920/2560 px — desperdicio horizontal, accesibilidad de la nav, desperdicio vertical y objetivos de pliegue por ruta (abajo) | Al tocar console |
@@ -55,7 +55,7 @@ Dos cosas hay que decirlas en voz alta:
 
 - **Su verde no sustituye al gate de release.** `test:core` corre por la ruta de la base externa
   (`CAUCE_TEST_DATABASE_URL`), y esa ruta es justamente la que `CAUCE_REQUIRE_TESTCONTAINERS=1`
-  **rechaza** (`tests/helpers/postgres.ts:439-440`). El gate de release aprovisiona con Testcontainers;
+  **rechaza** (función `startTestDatabaseAt` en `tests/helpers/postgres.ts`). El gate de release aprovisiona con Testcontainers;
   son dos caminos distintos y el verde de uno no acredita al otro.
 - **`packages/store/test` se queda fuera por coste**: 277 s medidos, casi cinco minutos metidos en
   casi cualquier commit de código, contra la regla de commits inmediatos de `AGENTS.md`. Quien
@@ -107,9 +107,10 @@ fallan.
 
 Los tests unitarios de la consola corren en jsdom, que no aplica CSS ni calcula geometría, y las
 guardas de hoja leen el CSS como **texto**: ninguna de las dos ve la caja renderizada. Este gate
-levanta la consola con mocks y la recorre con Chromium de verdad: las diez rutas de `ROUTES` —`/`,
-`/live`, `/accounts`, `/messages`, el hilo `/messages/<tenant>/<alias>`, `/queues`,
-`/observability`, `/config`, `/terminal`, `/ayuda`— más los dos estados del cajón de `/live`, a
+levanta la consola con mocks y la recorre con Chromium de verdad: las trece rutas de `ROUTES` —`/`,
+`/live`, `/accounts`, `/messages`, el hilo `/messages/<tenant>/<alias>`, su vista `?view=context`,
+el hilo de un agente inexistente, `/queues`, `/observability`, `/config`, `/terminal`,
+`/terminal/<alias>` y `/ayuda`— más los dos estados del cajón de `/live`, a
 360/760/1100/1440/1920/2560 px sobre una ventana de 1000 px de alto.
 Necesita Chromium, así que no forma parte de `pnpm test`: está declarado en `SEPARATELY_GATED` de
 `scripts/test-all.mjs` y se corre aparte al tocar `console/`.
@@ -175,7 +176,7 @@ reescribía antes todos los viewports de golpe, así que una regresión entraba 
 mejora y se convertía en el suelo nuevo. Una mejora también obliga a actualizar: el gate falla si el
 número mejoró y la línea base sigue tolerando el valor viejo.
 
-## Suites de test (11 suites en `scripts/test-all.mjs`)
+## Suites de test (12 suites en `scripts/test-all.mjs`)
 
 | Suite | Directorio | Qué valida |
 |---|---|---|
@@ -200,7 +201,7 @@ corrida por dominio**:
 
 | Dominio | Qué mide | Cómo |
 |---|---|---|
-| raíz | `packages/**` + `services/**` | vitest (node), las 13 rutas de suite en UNA invocación |
+| raíz | `packages/**` + `services/**` | vitest (node), las 14 rutas de suite en UNA invocación |
 | consola | `console/src/**` | vitest propio de `console/` (jsdom + plugin react) |
 | adapter-sdk | `packages/adapter-sdk/src/**` | `node --test` sobre `dist`, remapeado por source maps |
 

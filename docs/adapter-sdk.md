@@ -191,8 +191,11 @@ tope que se queda atrás y termina admitiendo lo que el puente rechaza.
 | Artifacts por turno | 8 (`MAX_RELAY_ARTIFACTS_TOTAL`, dos sobres) | un abanico de delegaciones no puede multiplicar el cupo del puente |
 | Bytes agregados por turno | 10 MB (`MAX_ATTACHMENTS_TOTAL_BYTES`) | el mismo techo agregado del sobre |
 
-Ese es el presupuesto del **parseo**, y lo gastan sólo los `messages[].artifacts`:
-`output.artifacts` no lo toca. Vive además **fuera** de la contabilidad de texto: los topes de
+El parseo comparte un acumulador de bytes entre `messages[].artifacts` y `output.artifacts`:
+`parseMessages` procesa el primer grupo antes que `parseArtifacts`, que suma al mismo acumulador y
+comprueba sus bytes de salida con `MAX_ARTIFACT_FRAME_BYTES` (ambas funciones están en
+`packages/adapter-sdk/src/sdk/output-parser/contract.ts`). Esto vive además **fuera** de la
+contabilidad de texto: los topes de
 64 KiB por `body` y 256 KiB agregados no se mueven porque un mensaje cuelgue 10 MB. Un artifact mal
 formado —nombre inseguro, `uri` vacía o desmesurada, `media_type` inválido, `sha256` que no es
 hexadecimal de 64— **se descarta y se anota por índice de mensaje**; nunca tira, porque ningún campo
@@ -218,10 +221,11 @@ no comprobó nadie.
 acumulador agregado que el sobre —cupo por mensaje por tope de localizador—. Medir una `uri` contra
 el presupuesto de bytes de un adjunto dejaba volver a entrar por la puerta de las referencias un
 localizador de megabytes justo después de haber recortado el texto. Los `artifacts` de salida del
-turno se acotan igual: el array al cupo de dos sobres, cada `uri` a su tope y el turno entero a un
-presupuesto de caracteres; lo que se pasa se **degrada a `cauce:not-sent`** en vez de contarse
-contra el agregado de salida, porque contarlo ahí convertiría un solo fichero legítimo en un turno
-inválido entero.
+turno se acotan igual: `parseArtifacts` considera las primeras 16 entradas
+(`MAX_ARTIFACTS_CONSIDERED`) y omite las posteriores sin anotación; en las consideradas, cada `uri`
+tiene su tope y el turno entero un presupuesto de caracteres. Lo que no cabe se **degrada a
+`cauce:not-sent`** en vez de contarse contra el agregado de salida, porque contarlo ahí convertiría
+un solo fichero legítimo en un turno inválido entero.
 
 En un `@all` los ficheros se repiten una vez por destino vivo. Si el texto solo cabe en el tope de
 expansión pero el texto más los ficheros no, se **retienen los ficheros** —con su recuento y una

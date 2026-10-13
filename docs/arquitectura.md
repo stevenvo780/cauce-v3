@@ -37,7 +37,7 @@ Todos los servicios de runtime comparten una sola imagen (`CAUCE_RUNTIME_IMAGE`,
 ### 2.3 El adaptador dentro del contenedor: supervisor → runtime → harness
 
 - **Supervisor**: `ops/scripts/container-adapter-supervisor.sh`, invocado por la unit systemd del alias; resuelve config/bundle/PKI por root o rootless, valida el bind del contenedor y ejecuta con lock (`ops/scripts/container-adapter-supervisor.sh:5-33`).
-- **Runtime**: `ops/container-runtime/cauce-container-runtime.py`, corre dentro del contenedor; gestiona generación/PID de metadatos y falla cerrado si el PID de la generación vigente no existe (`ops/container-runtime/cauce-container-runtime.py:1084`).
+- **Runtime**: `ops/container-runtime/cauce-container-runtime.py`, corre dentro del contenedor; gestiona generación/PID de metadatos y falla cerrado si falta el PID de la generación vigente (función `startup_metadata`).
 - **Harness**: `packages/adapter-sdk/src/bin/{claude,codex,openclaw}.ts` → `runCli()` monta `DurableStore` + `HarnessAdapter` sobre el runner correspondiente (spawn o API de OpenClaw) (`packages/adapter-sdk/src/bin/shared.ts:197-233`).
 
 ### 2.4 El plano PTY: launcher → agente → relay
@@ -80,8 +80,8 @@ BD (agents + memberships)
   → ops/container-aliases.json · ops/manifests/*.yaml · units systemd · ops/telegram-runtime/config.json
 ```
 
-`ops/flota.json` describe quince agentes habilitados y sus rutas reales. Los lectores globales
-usan `load_fleet_assignments`; `ops/container-aliases.json` incluye sólo trece alias Docker.
+`ops/flota.json` describe catorce agentes habilitados y sus rutas reales. Los lectores globales
+usan `load_fleet_assignments`; `ops/container-aliases.json` incluye doce alias Docker.
 Astra (`vm:pc-agente`, usuario `ubuntu`) y Kant (`host:server2`, usuario `server`) usan sus
 unidades nativas existentes. `ops/flota-fisica.json` aporta los usuarios de supervisor y
 sitúa el contenedor de Salva en server2. Las rutas de estado observadas se conservan sin
@@ -89,13 +89,13 @@ sustituirlas por las rutas de las plantillas de instalación.
 
 Los generadores son `generate-container-aliases.py`, `generate-manifests.py`, `generate-runtime-fleet.py`, `generate-units.py`, `generate-container-units.py` y `generate-telegram-config.py`, encadenados en ese orden por `ops/scripts/regenerate-fleet.sh:11-43` (primero contra un tmpdir de preflight, luego sobre el árbol). Las fórmulas puras (`env_name`, reglas por harness) viven en una sola casa, `ops/scripts/fleet_derive.py`.
 
-El snapshot no tiene un tamaño fijo: lleva **una entrada por alias que la BD declare habilitado**, y cada entrada define `tenant`, `room`, `role`, `harness`, `enabled`, `container`, `user`, `home` y `runtimeStateDirectory` (los campos que el exportador exige en `AGENT_FIELDS`/`MEMBERSHIP_FIELDS`, `ops/scripts/export-fleet-snapshot.py:30-50`). Junto a `fleet` escribe `systemPrincipals`, `retired` y `placement` (`ops/scripts/export-fleet-snapshot.py:297-303`). `enabled` tiene una sola fuente (`agents.enabled`): deshabilitado va a `retired`, no a bookkeeping manual.
+El snapshot no tiene un tamaño fijo: lleva **una entrada por alias que la BD declare habilitado**, y cada entrada define `tenant`, `room`, `role`, `harness`, `enabled`, `container`, `user`, `home` y `runtimeStateDirectory` (los campos de entrada se exigen en `AGENT_FIELDS`/`MEMBERSHIP_FIELDS`, y el objeto de salida se arma en `document`, en `ops/scripts/export-fleet-snapshot.py`). Junto a `fleet` escribe `systemPrincipals`, `retired` y `placement`. `enabled` tiene una sola fuente (`agents.enabled`): deshabilitado va a `retired`, no a bookkeeping manual.
 
-El único fichero editado a mano de toda la cadena es el overlay físico `ops/flota-fisica.json` (`schemaVersion` + `placement`, y nada más: cualquier otra clave se rechaza al leerlo, `ops/scripts/export-fleet-snapshot.py:158-164`). El exportador lo funde en `placement` del snapshot y lo valida contra la flota: sólo admite las claves `dockerHost`, `registryContainer` y `healthContainer` (`PLACEMENT_KEYS`, `:26`), sólo admite en `dockerHost` los hosts que declara `DOCKER_HOSTS` (`:27`), rechaza el overlay si nombra un alias que no está en la flota (`:292-294`) y rechaza una entrada vacía o que repita el valor por defecto, para que el overlay no acumule filas redundantes (`:133-147`).
+El único fichero editado a mano de toda la cadena es el overlay físico `ops/flota-fisica.json` (`schemaVersion` + `placement`, y nada más: cualquier otra clave se rechaza al cargarlo, en `load_placement`). El exportador lo funde en `placement` del snapshot y lo valida contra la flota: sólo admite las claves `dockerHost`, `registryContainer`, `healthContainer` y `systemdUser` (`PLACEMENT_KEYS`); valida `dockerHost` con el patrón `HOST_NAME` y `systemdUser` con `SYSTEMD_USER_NAME` (`validate_placement`); `snapshot_document` rechaza alias de placement desconocidos y sólo conserva las entradas asociadas a `fleet` o `bootstrap`; `validate_placement_defaults` rechaza una entrada vacía o que repita el valor por defecto.
 
 **Gates G-SNAP**: `ops/scripts/validate.sh` regenera `container-aliases.json` y `manifests/` desde `ops/flota.json` en un tmpdir y exige identidad byte a byte con lo commiteado — es el gate contra edición manual de generados (`ops/scripts/validate.sh:21-55`).
 
-**Alta/baja**: `ops/cli/cauce <alias> aprovisionar` y `... retirar`, subcomandos del dispatcher principal del CLI (`ops/cli/cauce:1439-1440`). `aprovisionar` no escribe en la BD — imprime el SQL para que lo corra el dueño — y encadena las piezas de credenciales: ubicación de `ca.key` documentada a mano; `agent-<alias>.{crt,key}` vía `provision-agent-identity.sh`; bearer token + hash publicados con CAS; `alias-key.hex` de PTY vía `publish-alias-key.sh`; certificado y huella del plano PTY; `container-pki/<alias>/` + `<alias>.env`; y la config de Telegram con el token de BotFather pegado a mano y verificado (`ops/runbooks/alta-y-baja-de-agente.md`). `retirar` primero deshabilita en BD (el gateway deja de autorizar en vivo) y después revoca credenciales.
+**Alta/baja**: `ops/cli/cauce <alias> aprovisionar` y `... retirar`, subcomandos del dispatcher principal del CLI (despacho final de subcomandos en `ops/cli/cauce`). `aprovisionar` no escribe en la BD — imprime el SQL para que lo corra el dueño — y encadena las piezas de credenciales: ubicación de `ca.key` documentada a mano; `agent-<alias>.{crt,key}` vía `provision-agent-identity.sh`; bearer token + hash publicados con CAS; `alias-key.hex` de PTY vía `publish-alias-key.sh`; certificado y huella del plano PTY; `container-pki/<alias>/` + `<alias>.env`; y la config de Telegram con el token de BotFather pegado a mano y verificado (`ops/runbooks/alta-y-baja-de-agente.md`). `retirar` primero deshabilita en BD (el gateway deja de autorizar en vivo) y después revoca credenciales.
 
 ## 5. Despliegue
 
@@ -103,7 +103,7 @@ Fuente única: el compose del propio repo, sin overrides externos — `deploy/de
 
 ## 6. Gates de calidad
 
-`pnpm typecheck` (core+adapter+mcp+console, `package.json:45`) y `pnpm lint` (`package.json:24`: ESLint por zona, gate AST con baseline cero de ciclos runtime, `lint:estricto:zonas` con reglas más duras, `ruff check` sobre Python, `scripts/calidad.mjs` con trinquete de líneas por fichero y de fechas en comentarios) son gate de todo commit (`AGENTS.md`). `pnpm test:unit` (`package.json:47`) corre los paquetes con test propio más `tests/unit` y `packages/protocol/test`; `pnpm test` (`scripts/test-all.mjs`) recorre las once suites de `SUITES` (`scripts/test-all.mjs:8-20`), incluidas las pruebas directas de `ops/tests` que descubre `ops/tests/run-all.mjs`. `ops/scripts/validate.sh` valida sintaxis de todos los `.sh`/`.mjs` de `ops`+`deploy`, exige ShellCheck, valida YAML/JSON Schema y comprueba la identidad byte a byte de generados (§4). La especificación visual se valida con `pnpm arch:validate` y se inspecciona en varios tamaños con `pnpm arch:visual-check`.
+`pnpm typecheck` (core+adapter+mcp+console, `package.json:45`) y `pnpm lint` (`package.json:24`: ESLint por zona, gate AST con baseline cero de ciclos runtime, `lint:estricto:zonas` con reglas más duras, `ruff check` sobre Python, `scripts/calidad.mjs` con trinquete de líneas por fichero y de fechas en comentarios) son gate de todo commit (`AGENTS.md`). `pnpm test:unit` (`package.json:47`) corre los paquetes con test propio más `tests/unit` y `packages/protocol/test`; `pnpm test` (`scripts/test-all.mjs`) recorre las doce suites de `SUITES`, incluidas las pruebas directas de `ops/tests` que descubre `ops/tests/run-all.mjs`. `ops/scripts/validate.sh` valida sintaxis de todos los `.sh`/`.mjs` de `ops`+`deploy`, exige ShellCheck, valida YAML/JSON Schema y comprueba la identidad byte a byte de generados (§4). La especificación visual se valida con `pnpm arch:validate` y se inspecciona en varios tamaños con `pnpm arch:visual-check`.
 
 ## 7. Topología física
 
@@ -119,7 +119,7 @@ Topología de la flota central hoy:
 | ILS (.5) | navegadores dedicados | sesiones de cuenta para medir cuotas; el colector vive en el VPS |
 | Workstation `kratos` (.1) | desarrollo personal y respaldo | sin runtimes de la flota ni dependencia para audio, cuotas o archivos de Salva |
 
-Los trece alias Docker ocupan doce contenedores: Atlas y Kratos comparten `ws-humanizar`.
+Doce alias Docker ocupan diez contenedores: Atlas, Hegel y Kratos comparten `ws-humanizar`.
 Astra y Kant tienen runtimes nativos. Las plantillas generadas no sustituyen sus unidades
 instaladas ni cambian sus usuarios o directorios.
 
