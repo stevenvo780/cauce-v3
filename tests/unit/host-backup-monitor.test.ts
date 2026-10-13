@@ -12,6 +12,10 @@ const monitor = join(repository, 'ops/scripts/host-backup-monitor.sh');
 const backup = join(repository, 'ops/scripts/host-backup.sh');
 const deploy = join(repository, 'deploy/deploy.sh');
 const scratch: string[] = [];
+const inventoryGrep = `grep() {
+  if [ "$1" = -Fxq ] && [ "$2" = "\${MOCK_GREP_TARGET:-}" ]; then return 2; fi
+  command grep "$@"
+}`;
 
 function validStatus() {
   const now = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
@@ -401,12 +405,14 @@ describe('host backup monitor', () => {
     const unrelated = Array.from({ length: 3000 }, (_, index) => `unrelated-${String(index)}`).join('\n');
     const postgres = 'cauce-v3-prod-postgres-1';
     const pgdata = 'cauce-v3-prod_cauce_pgdata';
-    test.each([
+    test.each<{ name: string; containers: string; volumes: string; status: number; grepTarget?: string }>([
       { name: 'counts a pending migration with a short inventory', containers: postgres, volumes: pgdata, status: 0 },
       { name: 'counts a pending migration with postgres before 3000 containers', containers: `${postgres}\n${unrelated}`, volumes: pgdata, status: 0 },
       { name: 'rejects indeterminate migrations with pgdata before 3000 volumes and no postgres', containers: unrelated, volumes: `${pgdata}\n${unrelated}`, status: 1 },
       { name: 'keeps migrations pending with postgres and pgdata before 3000 names', containers: `${postgres}\n${unrelated}`, volumes: `${pgdata}\n${unrelated}`, status: 0 },
-    ])('$name', async ({ containers, volumes, status }) => {
+      { name: 'rejects grep errors while locating postgres', containers: postgres, volumes: pgdata, status: 1, grepTarget: postgres },
+      { name: 'rejects grep errors while locating pgdata', containers: '', volumes: '', status: 1, grepTarget: pgdata },
+    ])('$name', async ({ containers, volumes, status, grepTarget = '' }) => {
       const source = await readFile(deploy, 'utf8');
       const start = source.indexOf('count_unapplied_migrations() {');
       const end = source.indexOf('\nbackup_monitor_accepts() {', start);
@@ -414,6 +420,7 @@ describe('host backup monitor', () => {
       expect(end).toBeGreaterThan(start);
       const script = String.raw`set -euo pipefail
 die() { echo "$*" >&2; exit 1; }
+${inventoryGrep}
 docker() {
   case "$*" in
     'ps -a --format {{.Names}}') printf '%s\n' "$MOCK_CONTAINERS" ;;
@@ -438,6 +445,7 @@ printf 'PENDING=%s\nATTEMPT=%s\n' "$PENDING_MIGRATIONS" "$MIGRATION_ATTEMPT_PEND
           BUNDLED_MIGRATIONS: '001_init.sql\n002_next.sql',
           MOCK_CONTAINERS: containers,
           MOCK_VOLUMES: volumes,
+          MOCK_GREP_TARGET: grepTarget,
         },
       });
       expect(result.status, result.stderr).toBe(status);
@@ -446,7 +454,7 @@ printf 'PENDING=%s\nATTEMPT=%s\n' "$PENDING_MIGRATIONS" "$MIGRATION_ATTEMPT_PEND
         expect(result.stderr).toBe('');
       } else {
         expect(result.stdout).toBe('');
-        expect(result.stderr).toContain('migraciones pendientes indeterminadas');
+        expect(result.stderr).toContain(grepTarget ? 'no pude buscar' : 'migraciones pendientes indeterminadas');
       }
     });
   });
@@ -492,7 +500,7 @@ if (args[0] === 'ps') {
   process.stdout.write((process.env.MOCK_VOLUMES || '') + '\n');
 }
 `, { mode: 0o700 });
-    const script = `set -euo pipefail\ndie() { echo "$*" >&2; exit 1; }\n${guard}\ncheck_blob_migration_window\nprintf '%s\\n' "$BLOB_MIGRATION_PENDING"\n`;
+    const script = `set -euo pipefail\ndie() { echo "$*" >&2; exit 1; }\n${inventoryGrep}\n${guard}\ncheck_blob_migration_window\nprintf '%s\\n' "$BLOB_MIGRATION_PENDING"\n`;
     const base = {
       ...process.env,
       PATH: `${bin}:${process.env.PATH ?? ''}`,
@@ -514,6 +522,12 @@ if (args[0] === 'ps') {
     const check = (overrides: Record<string, string> = {}) => spawnSync('bash', ['-c', script], {
       encoding: 'utf8', env: { ...base, ...overrides },
     });
+    for (const target of [base.PG_CONTAINER, base.GATEWAY_CONTAINER, 'cauce-v3-prod_cauce_pgdata']) {
+      const failed = check({ MOCK_CONTAINERS: '', MOCK_VOLUMES: '', MOCK_GREP_TARGET: target });
+      expect(failed.status).toBe(1);
+      expect(failed.stdout).toBe('');
+      expect(failed.stderr).toContain('no pude buscar');
+    }
     expect(check().stdout).toBe('1\n');
     expect(check({ MOCK_MIGRATION: '1', BLOB_API_ENABLED: '1' }).stdout).toBe('0\n');
     expect(check({ MOCK_MIGRATION: '1', BLOB_API_ENABLED: '1', MOCK_GATEWAY_FLAG: '1' }).stdout).toBe('0\n');
