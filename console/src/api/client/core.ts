@@ -131,7 +131,7 @@ export function rateLimitBody(value: unknown): PreparePublishIntentRateLimited |
 export interface RequestOptions {
   requireCsrf?: boolean;
   mapError?: (status: number, body: unknown) => Error | undefined;
-  responseMode?: 'json' | 'blob';
+  responseMode?: 'json' | 'blob' | 'stream';
   maxResponseBytes?: number;
 }
 

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { act, fireEvent, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { SpaceBackup } from '../../api/client/space-backups-client';
@@ -53,6 +54,56 @@ it('un backup de 100 MiB se muestra y se descarga por enlace', async () => {
   renderWithApi(panel()); fireEvent.click(screen.getByRole('button', { name: 'Crear backup del espacio' }));
   expect(await screen.findByText(/100\.00 MiB/u)).toBeVisible(); fireEvent.click(screen.getByRole('button', { name: 'Descargar backup ZIP' }));
   expect(clicked).toHaveLength(1);
+});
+function savePicker() {
+  const saved = { parts: [] as Uint8Array[], closed: false, aborted: false };
+  const writable = { write: vi.fn(async (part: Uint8Array) => { saved.parts.push(part.slice()); }),
+    close: vi.fn(async () => { saved.closed = true; }), abort: vi.fn(async () => { saved.aborted = true; }) };
+  const picker = vi.fn<(options: { suggestedName: string }) => Promise<{ createWritable: () => Promise<typeof writable> }>>(
+    async () => ({ createWritable: async () => writable }));
+  Object.defineProperty(window, 'showSaveFilePicker', { configurable: true, value: picker });
+  return { saved, picker };
+}
+function zipStream(bytes: Uint8Array, chunk = 1024 * 1024): ReadableStream<Uint8Array> {
+  let offset = 0;
+  return new ReadableStream<Uint8Array>({ pull(controller) {
+    if (offset >= bytes.length) { controller.close(); return; }
+    controller.enqueue(bytes.slice(offset, offset + chunk)); offset += chunk;
+  } });
+}
+const LARGE = 33 * 1024 * 1024 + 17;
+const largeZip = Uint8Array.from({ length: LARGE }, (_, index) => (index * 31 + (index >>> 11)) & 0xff);
+const largeSha = createHash('sha256').update(largeZip).digest('hex');
+it('descarga por stream un ZIP de más de 32 MiB, calcula su SHA-256 visible y guarda sólo si coincide', { timeout: 30_000 }, async () => {
+  const { saved, picker } = savePicker();
+  try {
+    vi.spyOn(testApi, 'createSpaceBackup').mockResolvedValue({ ...ready, bytes: LARGE, sha256: largeSha });
+    const download = vi.spyOn(testApi, 'downloadSpaceBackup').mockImplementation(async () => zipStream(largeZip));
+    renderWithApi(panel()); fireEvent.click(screen.getByRole('button', { name: 'Crear backup del espacio' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Descargar backup ZIP' }));
+    expect(await screen.findByText(/Descarga verificada/u, undefined, { timeout: 25_000 })).toBeVisible();
+    expect(picker).toHaveBeenCalledWith({ suggestedName: `space-agent-${ready.id}.zip` });
+    expect(download).toHaveBeenCalledOnce(); expect(clicked).toHaveLength(0);
+    expect(saved.parts.reduce((total, part) => total + part.byteLength, 0)).toBe(LARGE);
+    const written = createHash('sha256'); for (const part of saved.parts) written.update(part);
+    expect(written.digest('hex')).toBe(largeSha); expect(saved).toMatchObject({ closed: true, aborted: false });
+    expect(screen.getAllByText(largeSha)).toHaveLength(2);
+    expect(screen.getByText(/SHA-256 calculado del archivo guardado/u)).toHaveTextContent('coincide con el del servidor');
+    expect(screen.getByText(/cauce spaces restore --archive space-agent-/u)).toHaveTextContent(
+      `--archive space-agent-${ready.id}.zip --directory <directorio-vacío> --company-id one --tenant-id One --alias agent`);
+  } finally { Reflect.deleteProperty(window, 'showSaveFilePicker'); }
+});
+it('descarta el archivo guardado si el SHA-256 o el tamaño del stream no coinciden con el recibo', { timeout: 30_000 }, async () => {
+  const { saved } = savePicker();
+  try {
+    const altered = largeZip.slice(); altered[LARGE - 1] = (altered[LARGE - 1] ?? 0) ^ 1;
+    vi.spyOn(testApi, 'createSpaceBackup').mockResolvedValue({ ...ready, bytes: LARGE, sha256: largeSha });
+    vi.spyOn(testApi, 'downloadSpaceBackup').mockImplementation(async () => zipStream(altered));
+    renderWithApi(panel()); fireEvent.click(screen.getByRole('button', { name: 'Crear backup del espacio' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Descargar backup ZIP' }));
+    expect(await screen.findByRole('alert', undefined, { timeout: 25_000 })).toHaveTextContent(/no coincide con el backup del servidor .* y se descartó/u);
+    expect(saved).toMatchObject({ closed: false, aborted: true }); expect(screen.queryByText(/Descarga verificada/u)).not.toBeInTheDocument();
+  } finally { Reflect.deleteProperty(window, 'showSaveFilePicker'); }
 });
 it('consulta la operación pendiente y detiene el sondeo al llegar a ready', async () => {
   vi.useFakeTimers(); vi.spyOn(testApi, 'createSpaceBackup').mockResolvedValue(pending); const read = vi.spyOn(testApi, 'getSpaceBackup').mockResolvedValue(ready);

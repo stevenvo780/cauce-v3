@@ -142,6 +142,7 @@ export class CauceApi {
         const contentType = response.headers.get('content-type') ?? '';
         body = response.status === 204
           ? undefined
+          : response.ok && responseMode === 'stream' ? response
           : response.ok && responseMode === 'blob'
             ? await readBoundedBlob(response, maxResponseBytes)
             : contentType.includes('application/json')

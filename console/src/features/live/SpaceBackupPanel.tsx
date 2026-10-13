@@ -7,6 +7,7 @@ import { randomUuid } from '../../random-id';
 import { CompanySession } from '../auth/company-authority';
 import { sessionAuthority } from '../auth/auth-session';
 import { canBackupSpace } from './space-backup-authority';
+import { Sha256Stream } from './sha256-stream';
 
 const STATUS = { pending: 'Backup pendiente', running: 'Preparando backup', ready: 'Backup disponible', failed: 'El backup falló' };
 const ERRORS = { HOST_UNAVAILABLE: 'El ordenador no está disponible. Recupera su conexión antes de crear otro backup.',
@@ -15,6 +16,10 @@ const ERRORS = { HOST_UNAVAILABLE: 'El ordenador no está disponible. Recupera s
   LIMIT_EXCEEDED: 'El espacio supera el límite de tamaño del backup. No se creó una copia incompleta.',
   EXPIRED: 'El backup venció. Crea uno nuevo para descargarlo.' };
 const REQUEST_MS = 30_000;
+const PROGRESS_BYTES = 8 * 1024 * 1024;
+const MIB = (bytes: number) => (bytes / 1024 / 1024).toFixed(2);
+interface SavedFile { write(data: Uint8Array): Promise<void>; close(): Promise<void>; abort(): Promise<void> }
+type SaveFilePicker = (options: { suggestedName: string }) => Promise<{ createWritable(): Promise<SavedFile> }>;
 const FAILURES: Record<number, string> = {
   404: 'No se encontró el agente, su ubicación o el backup. Relee el agente: puede haberse movido o retirado.',
   409: 'No se pudo crear el backup ahora: el ordenador del espacio no tiene ejecutor disponible, se alcanzó el límite de copias o de espacio reservado, o cambió la política. Libera copias o recupera el ordenador y vuelve a intentarlo.',
@@ -29,7 +34,8 @@ export function SpaceBackupPanel({ tenantId, alias }: { tenantId: string; alias:
 function BackupPanel({ target, allowed }: { target: SpaceBackupTarget; allowed: boolean }) {
   const api = useApi();
   const [backup, setBackup] = useState<SpaceBackup>();
-  const [busy, setBusy] = useState<'creating' | 'reading'>();
+  const [busy, setBusy] = useState<'creating' | 'reading' | 'downloading'>();
+  const [progress, setProgress] = useState<number>(); const [verified, setVerified] = useState<{ sha256: string; file: string }>();
   const [error, setError] = useState(''); const [notice, setNotice] = useState('');
   const [invalidated, setInvalidated] = useState(false);
   const permitted = useRef(allowed && !invalidated); permitted.current = allowed && !invalidated;
@@ -76,11 +82,47 @@ function BackupPanel({ target, allowed }: { target: SpaceBackupTarget; allowed: 
       if (active.current && started === generation.current && !background) { locked.current = false; setBusy(undefined); }
     }
   }, [enabled, requestIsCurrent]);
+  const fileName = (ready: SpaceBackup) => `space-${target.alias.replace(/[^A-Za-z0-9_-]/gu, '_').slice(0, 64)}-${ready.id}.zip`;
+  const verifiedDownload = async (ready: SpaceBackup, picker: SaveFilePicker) => {
+    let file: SavedFile;
+    try { file = await (await picker({ suggestedName: fileName(ready) })).createWritable(); } catch { return; }
+    const request = new AbortController(); const started = generation.current; requests.current.add(request);
+    locked.current = true; setBusy('downloading'); setError(''); setNotice(''); setVerified(undefined); setProgress(0);
+    const hash = new Sha256Stream(); let received = 0; let shown = 0;
+    try {
+      const reader = (await api.downloadSpaceBackup(ready, request.signal)).getReader();
+      for (let part = await reader.read(); !part.done; part = await reader.read()) {
+        received += part.value.byteLength;
+        if (received > (ready.bytes ?? 0)) throw new Error('space backup download exceeds its receipt');
+        hash.update(part.value); await file.write(part.value);
+        if (received - shown >= PROGRESS_BYTES && requestIsCurrent(request, started)) { shown = received; setProgress(received); }
+      }
+      const sha256 = hash.hex();
+      if (received !== ready.bytes || sha256 !== ready.sha256) {
+        await file.abort();
+        if (requestIsCurrent(request, started)) setError(`El archivo descargado no coincide con el backup del servidor (SHA-256 ${sha256}, ${MIB(received)} MiB) y se descartó. Actualiza el estado y vuelve a descargarlo.`);
+        return;
+      }
+      await file.close();
+      if (!requestIsCurrent(request, started)) return;
+      setVerified({ sha256, file: fileName(ready) }); setNotice('Descarga verificada: el ZIP guardado tiene el tamaño y el SHA-256 del backup del servidor.');
+    } catch (cause) {
+      await file.abort().catch(() => undefined);
+      if (!active.current || started !== generation.current) return;
+      if (cause instanceof ApiError && [401, 403].includes(cause.status)) { permitted.current = false; setBackup(undefined); setInvalidated(true); }
+      setError((cause instanceof ApiError ? FAILURES[cause.status] : undefined) ?? 'La descarga se interrumpió y no se guardó ningún archivo. Actualiza el estado del backup y vuelve a descargarlo.');
+    } finally {
+      requests.current.delete(request);
+      if (active.current && started === generation.current) { locked.current = false; setBusy(undefined); setProgress(undefined); }
+    }
+  };
   const download = (ready: SpaceBackup) => {
-    if (!enabled) return;
+    if (!enabled || locked.current) return;
+    const picker = (window as { showSaveFilePicker?: SaveFilePicker }).showSaveFilePicker;
+    if (typeof picker === 'function') { void verifiedDownload(ready, picker.bind(window)); return; }
     try {
       const link = document.createElement('a'); link.href = api.spaceBackupDownloadUrl(ready);
-      link.download = `space-${target.alias.replace(/[^A-Za-z0-9_-]/gu, '_').slice(0, 64)}-${ready.id}.zip`;
+      link.download = fileName(ready);
       link.hidden = true; document.body.append(link); link.click(); link.remove();
       setError(''); setNotice('Descarga iniciada en el navegador: si no aparece, la copia pudo vencer o no tienes permiso; vuelve a generarla.');
     } catch { setError('No se pudo preparar la descarga. Relee el estado del backup antes de reintentar.'); }
@@ -104,10 +146,13 @@ function BackupPanel({ target, allowed }: { target: SpaceBackupTarget; allowed: 
       {backup.error ? <Notice tone="danger" role="alert">{ERRORS[backup.error]}</Notice> : null}
       {backup.status === 'ready' ? <p className="m-0 text-xs text-muted">{((backup.bytes ?? 0) / 1024 / 1024).toFixed(2)} MiB · ZIP listo para descargar; el navegador lo guarda sin cargarlo en memoria.</p> : null}
       {backup.status === 'ready' && backup.sha256 ? <p className="m-0 break-all text-xs text-muted">SHA-256: <code>{backup.sha256}</code></p> : null}
+      {busy === 'downloading' ? <p className="m-0 text-xs" role="status">Descargando y verificando el SHA-256: {MIB(progress ?? 0)} de {MIB(backup.bytes ?? 0)} MiB.</p> : null}
+      {verified ? <div className="grid gap-1 text-xs"><p className="m-0 break-all">SHA-256 calculado del archivo guardado: <code>{verified.sha256}</code> (coincide con el del servidor).</p>
+        <p className="m-0 break-all text-muted">Para restaurarlo en un directorio vacío: <code>cauce spaces restore --archive {verified.file} --directory &lt;directorio-vacío&gt; --company-id {backup.company_id} --tenant-id {backup.tenant_id} --alias {backup.alias} --runtime-key &lt;identity.runtime_key de space-manifest.json&gt;</code>. La restauración vuelve a comprobar el SHA-256 de cada archivo contra el manifiesto.</p></div> : null}
       {backup.status === 'ready' && backup.sha256 ? <p className="m-0 text-xs text-muted">Para comparar el SHA-256 del archivo descargado: <code>sha256sum archivo.zip</code> en Linux, <code>shasum -a 256 archivo.zip</code> en macOS o <code>Get-FileHash archivo.zip -Algorithm SHA256</code> en Windows.</p> : null}</div> : null}
     <div className="flex flex-wrap gap-2">
       <Button disabled={!enabled || !!busy || backup?.status === 'pending' || backup?.status === 'running'} onClick={() => {
-        if (backup) idempotency.current = randomUuid(); setBackup(undefined);
+        if (backup) idempotency.current = randomUuid(); setBackup(undefined); setVerified(undefined);
         void perform('creating', signal => api.createSpaceBackup(target, idempotency.current, signal));
       }}>{busy === 'creating' ? 'Solicitando backup…' : backup ? 'Crear otro backup' : 'Crear backup del espacio'}</Button>
       {backup ? <Button disabled={!enabled || !!busy} onClick={refresh}>{busy === 'reading' ? 'Actualizando…' : 'Actualizar estado del backup'}</Button> : null}

@@ -10,6 +10,7 @@ export interface SpaceBackupsClient {
   createSpaceBackup(target: SpaceBackupTarget, idempotencyKey: string, signal?: AbortSignal): Promise<SpaceBackup>;
   getSpaceBackup(target: SpaceBackupTarget, id: string, signal?: AbortSignal): Promise<SpaceBackup>;
   spaceBackupDownloadUrl(backup: SpaceBackup): string;
+  downloadSpaceBackup(backup: SpaceBackup, signal: AbortSignal): Promise<ReadableStream<Uint8Array>>;
 }
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 const HASH = /^[a-f0-9]{64}$/u;
@@ -51,6 +52,14 @@ export function spaceBackupsClient(request: RequestFn, baseUrl: string): SpaceBa
     spaceBackupDownloadUrl: backup => {
       const receipt = spaceBackupReceipt(backup, backup, backup.id); if (receipt.status !== 'ready') invalid();
       return `${baseUrl}${path(receipt)}/${backupId(receipt.id)}/download`;
+    },
+    downloadSpaceBackup: async (backup, signal) => {
+      const receipt = spaceBackupReceipt(backup, backup, backup.id); if (receipt.status !== 'ready') invalid();
+      const response = await request<Response>(`${path(receipt)}/${backupId(receipt.id)}/download`, { cache: 'no-store', signal },
+        { responseMode: 'stream' });
+      const declared = response.headers.get('content-length');
+      if (!response.body || declared !== null && declared !== String(receipt.bytes)) { await response.body?.cancel(); invalid(); }
+      return response.body;
     },
   };
 }
