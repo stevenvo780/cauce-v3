@@ -133,7 +133,7 @@ async function operation(client: DatabaseClient, scope: ProviderAuthPhysicalScop
 async function activeExecution(client: DatabaseClient, scope: ProviderAuthPhysicalScope, snapshotQuery: string): Promise<FleetExecution> {
   await lockFleetRevision(client);
   const row = await operation(client, scope, true);
-  await lockFleetRevision(client, Number(row.desired_revision ?? row.expected_revision));
+  await lockFleetRevision(client, Number(row.desired_revision ?? row.expected_revision), row.company_id);
   await assertFleetOperationAuthority(client, row);
   // This computer logs in accounts only for operations of the company that owns it.
   if (!(await client.query(`SELECT 1 FROM fleet_hosts host JOIN fleet_operations operation ON operation.company_id=host.company_id

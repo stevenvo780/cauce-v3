@@ -6,8 +6,9 @@ import { request as httpRequest } from 'node:http';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { FleetOperationsRepository, createPool, withTransaction, type DatabasePool, type FleetOperationClaim } from '@cauce/store';
+import { FleetOperationsRepository, companyRevision, createPool, withTransaction, type DatabasePool, type FleetOperationClaim } from '@cauce/store';
 import { preparePostgresSuite } from '../../../../../packages/store/test/postgres-suite.js';
+import { seedCompanyActors } from '../../../../../packages/store/test/companies-postgres.fixtures.js';
 import { startTestCaseDatabase, startTestDatabase, type EmptyTestDatabase, type TestDatabase } from '../../../../../tests/helpers/postgres.js';
 import { FleetAuthorityClient } from './client.js';
 import { createFleetAuthorityService } from './service.js';
@@ -124,6 +125,31 @@ describe('central fleet authority through a private host socket and PostgreSQL',
     }
     expect((await client.inventory(scope)).authorities.every(row => row.matching_records.length === 0)).toBe(true);
     await pool.query('UPDATE console_users SET active=false WHERE id=$1', [humanId]);
+    await expect(client.issue(scope, request)).rejects.toMatchObject({ code: 'AUTHORITY_REVOKED' });
+  });
+  it('keeps issuing for its company while another company claims and prepares in parallel', async () => {
+    if (!current) throw new Error('Test database absent');
+    const leon = await seedCompanyActors(current.adminPool);
+    await current.adminPool.query("INSERT INTO fleet_hosts(host_id,display_name,company_id) VALUES('praxis-host','Praxis host','praxis')");
+    await current.adminPool.query(`INSERT INTO provider_accounts(id,provider,external_account_id,payer_tenant_id,credential_ref_kind,credential_ref,shared_with_pool,enabled)
+      VALUES('praxis-account','codex','praxis-external','PraxisHub','env_path','CAUCE_TEST_PRAXIS_PATH',true,true)`);
+    await current.adminPool.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,role,permissions)
+      VALUES($1,'PraxisHub','company_admin','operator',ARRAY['read','control'])`, [leon]);
+    const south = new FleetOperationsRepository(pool);
+    await south.enqueue('PraxisHub', 'company_admin', { kind: 'create', target: { resource: 'agent', tenant_id: 'PraxisTeam', alias: 'south_agent' },
+      expected_revision: await withTransaction(pool, value => companyRevision(value, 'praxis')), idempotency_key: 'authority-south-create',
+      parameters: { runtime_key: 'south-agent', harness_id: 'codex', primary_room_id: 'company-team', primary_account_id: 'praxis-account',
+        memberships: [{ room_id: 'company-team', role: 'agent' }], placement: { host_id: 'praxis-host', mode: 'container', runtime_user: 'dev',
+          container_name: 'cauce-south-agent', home_directory: '/home/dev', state_directory: '/home/dev/.cauce/south-agent' } } }, `console:${leon}`);
+    const southClaim = await south.claim('praxis-worker', 'praxis-host'); if (!southClaim) throw new Error('South claim absent');
+    const southRevision = (await south.prepare(southClaim)).operation.desired_revision;
+    if (southRevision === null) throw new Error('South revision absent');
+    expect(southRevision).toBeGreaterThan(scope.prepared_revision);
+    const issued = await client.issue(scope, request);
+    expect(new X509Certificate(issued.certificate_pem).subject).toBe('CN=agent-runtime-a');
+    expect((await south.startStep(southClaim, 'artifacts')).status).toBe('running');
+    await pool.query(`INSERT INTO config_revisions(actor_tenant,actor_alias,operation,inverse_operation,summary)
+      VALUES('Steven','authority_operator','{}','{}','Own company configuration changed during credentials')`);
     await expect(client.issue(scope, request)).rejects.toMatchObject({ code: 'AUTHORITY_REVOKED' });
   });
   it('recovers the same issuance after claim replacement and denies the expired original claim', async () => {

@@ -24,7 +24,7 @@ async function resolveAuthority(client: DatabaseClient, scope: AuthorityScope, r
   }
   await assertFleetOperationAuthority(client, row);
   if (row.actor_subject === undefined) throw new FleetAuthorityError('AUTHORITY_REVOKED');
-  await lockFleetRevision(client, row.status === 'cancelling' ? undefined : Number(row.desired_revision));
+  await lockFleetRevision(client, row.status === 'cancelling' ? undefined : Number(row.desired_revision), row.company_id);
   const slice = await loadFleetHostScope(client, row, host);
   if (slice.target_sha256 !== scope.scope_sha256) throw new FleetAuthorityError('AUTHORITY_REVOKED');
   const candidates = slice.agents.filter(value => value.runtime_key === scope.runtime_key);

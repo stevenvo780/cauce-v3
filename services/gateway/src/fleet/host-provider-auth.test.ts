@@ -7,6 +7,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createPool, planFleetHostSlices, publicFleetOperation, type DatabasePool, type FleetOperationRow } from '@cauce/store';
 import { FleetOperationRequestSchema } from '@cauce/protocol';
 import { preparePostgresSuite } from '../../../../packages/store/test/postgres-suite.js';
+import { seedCompanyActors } from '../../../../packages/store/test/companies-postgres.fixtures.js';
 import { startTestCaseDatabase, startTestDatabase, type EmptyTestDatabase, type TestDatabase } from '../../../../tests/helpers/postgres.js';
 import type { ProviderAuthActor } from '../console/provider-auth.types.js';
 import { createHostProviderAuthService } from './host-provider-auth.js';
@@ -353,6 +354,20 @@ describe('host provider authentication factory', () => {
     await value.attach(actor, opened.session_id, () => undefined); await writeFile(join(directory, marker), 'synthetic');
     const verified = await value.verify(actor, opened.session_id); expect(verified.status).toBe('failed');
     expect(verified.cleanup_pending).toBe(false);
+  });
+  it('logs in an awaiting_auth operation while another company revises its configuration', async () => {
+    if (!current) throw new Error('test database absent');
+    await seedCompanyActors(current.adminPool);
+    const foreignRevision = async (): Promise<void> => { await current?.adminPool.query(`INSERT INTO config_revisions(actor_tenant,actor_alias,operation,
+      inverse_operation,summary) VALUES('PraxisHub','company_admin','{}','{}','other company revision')`); };
+    const value = await service(); const request = await value.resolve(actor, operationId);
+    await foreignRevision();
+    expect((await pool.query('SELECT company_id FROM config_revisions WHERE id>0 ORDER BY id')).rows).toEqual([{ company_id: 'praxis' }]);
+    const opened = await value.start(actor, request); expect(opened.status).toBe('awaiting_login');
+    await foreignRevision();
+    await value.attach(actor, opened.session_id, () => undefined);
+    expect((await value.verify(actor, opened.session_id)).status).toBe('authenticated');
+    expect(await trace()).toContain('login');
   });
   it('rejects revised configuration before start', async () => {
     const value = await service(); const request = await value.resolve(actor, operationId);
