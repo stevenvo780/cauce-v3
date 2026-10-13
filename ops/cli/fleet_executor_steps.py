@@ -271,7 +271,8 @@ class Executor:
                 or self.journal.get('revocation_complete') is not True:
             raise SafeFailure('purge requires observed stop and credential revocation')
         rows = scoped_agents(self.policy, self.context)
-        removed = self.journal.get('removed') if isinstance(self.journal.get('removed'), list) else []
+        known = self.journal.get('removed')
+        removed = known if isinstance(known, list) else []
         record = self.journal.get('purged') is not True
         for row in rows:
             if 'authority' in self.policy:
@@ -290,8 +291,8 @@ class Executor:
             self.journal['purged'] = True
             self.journal['removed'] = removed
             self.save()
-        elif isinstance(self.journal.get('removed'), list):
-            removed = self.journal['removed']
+        elif not isinstance(known, list):
+            return {'stopped_verified': True, 'revocation_verified': True}
         return {'stopped_verified': True, 'revocation_verified': True, 'removed': removed}
 
     def authenticate(self):

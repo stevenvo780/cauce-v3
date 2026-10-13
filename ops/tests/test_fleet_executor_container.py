@@ -9,6 +9,7 @@ import re
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 import unittest
 import uuid
@@ -368,6 +369,44 @@ class PurgeRemovalEvidenceTest(unittest.TestCase):
                 patch('fleet_executor_legacy.purge_shared') as purge_shared:
             self.assertEqual(container.purge_container({}, agent), {'removed': []})
         purge_shared.assert_called_once()
+
+    def test_prior_purge_without_removed_omits_the_evidence_key(self):
+        sys.path.insert(0, str(fixtures.OPS / 'cli'))
+        import fleet_executor_steps as steps
+        temporary = tempfile.TemporaryDirectory(prefix='cauce-purge-evidence-', dir='/var/tmp')
+        self.addCleanup(temporary.cleanup)
+        state = pathlib.Path(temporary.name)
+        state.chmod(0o700)
+        context = {'operation_id': uuid.uuid4().hex, 'request': {'kind': 'purge', 'target': {'resource': 'agent'}},
+                   'fenced_targets': [], 'previous_agents': [], 'desired_memberships': []}
+        executor = steps.Executor({'roots': {'state': str(state)}, 'host_id': 'fixture-host'}, context)
+        executor.journal.update(stopped=True, revocation_complete=True, purged=True)
+        executor.journal.pop('removed', None)
+        executor.save()
+        observed = {'removed': [{'type': 'container', 'name': 'ws-w'}]}
+        agents = patch.object(steps, 'scoped_agents', return_value=[{'runtime_key': 'w'}])
+        references = patch.object(steps, 'credential_references', return_value={'credentials': {}})
+        with agents, references, patch.object(steps, 'purge_runtime', return_value=observed):
+            prior = executor.purge()
+            self.assertNotIn('removed', prior)
+            fresh_state = state / 'fresh'
+            fresh_state.mkdir(mode=0o700)
+            fresh = steps.Executor({'roots': {'state': str(fresh_state)}, 'host_id': 'fixture-host'},
+                                    {**context, 'operation_id': uuid.uuid4().hex})
+            fresh.journal.update(stopped=True, revocation_complete=True)
+            fresh.save()
+            self.assertEqual(fresh.purge()['removed'], observed['removed'])
+            self.assertEqual(fresh.purge()['removed'], observed['removed'])
+        with agents, references, patch.object(steps, 'purge_runtime', return_value={}):
+            empty_state = state / 'empty'
+            empty_state.mkdir(mode=0o700)
+            empty = steps.Executor({'roots': {'state': str(empty_state)}, 'host_id': 'fixture-host'},
+                                    {**context, 'operation_id': uuid.uuid4().hex})
+            empty.journal.update(stopped=True, revocation_complete=True)
+            empty.save()
+            self.assertEqual(empty.purge()['removed'], [])
+        self.assertNotIn('removed', executor.journal)
+        self.assertIs(executor.journal.get('purged'), True)
 
 
 if __name__ == '__main__':
