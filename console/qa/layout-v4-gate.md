@@ -43,3 +43,5 @@ Cada servidor del gate reutiliza la configuración de Vite mediante `vite-layout
 ## Hallazgo conservado
 
 En el plano de 1440 px, claro y oscuro, la tarjeta de `argos` tapa el inicio de «Mesa de coordinación» en `grp.steven`. Parte y tarjeta comparten el mapa, de modo que desplazar el visor no recupera la etiqueta. El fixture es válido y se conserva: no se crea referencia para esos dos estados. Las capturas del defecto y su medición quedan en `layout-v4-findings/`; corregirlo requiere trabajo en el componente de oficina, fuera del alcance del arnés.
+
+La pasada de cierre también conserva cuatro fallos de altura en Empresas y administradores a 390 px, en ambos temas. Los nuevos botones «Habilitar/Deshabilitar» desplazan «Retirar» a otra fila por empresa: el contenido crece 72 px respecto a las referencias. Las etiquetas siguen completas, pero superan la tolerancia de 64 px. `layout-v4-findings/height-regressions.json` y sus cuatro PNG guardan esa evidencia; las referencias anteriores no se amplían para aceptar el aumento.

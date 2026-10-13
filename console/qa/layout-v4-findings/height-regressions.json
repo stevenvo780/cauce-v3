@@ -1,0 +1,57 @@
+{
+  "description": "Nuevos botones Habilitar/Deshabilitar en Empresas envuelven Retirar en otra fila en móvil y aumentan la altura. Se conserva el fallo de presupuesto sin ampliar la referencia.",
+  "results": [
+    {
+      "key": "390-light-companies",
+      "failures": [
+        "Content grew: 1263 against 1191px"
+      ],
+      "baselineHeight": 1191,
+      "contentHeight": 1263,
+      "screenshot": "390-light-companies.png",
+      "sha256": "1403609faa4bea4859b28c2a4de83120070d398fd420d1b6bb87f9cc454215a3",
+      "overflow": 0,
+      "clipped": [],
+      "overlaps": []
+    },
+    {
+      "key": "390-light-company-admins",
+      "failures": [
+        "Content grew: 1741 against 1669px"
+      ],
+      "baselineHeight": 1669,
+      "contentHeight": 1741,
+      "screenshot": "390-light-company-admins.png",
+      "sha256": "5c7b9855ce9522fde926f09c536541e8e6c84ecd5f16fe01dfaf82856ebb7641",
+      "overflow": 0,
+      "clipped": [],
+      "overlaps": []
+    },
+    {
+      "key": "390-dark-companies",
+      "failures": [
+        "Content grew: 1263 against 1191px"
+      ],
+      "baselineHeight": 1191,
+      "contentHeight": 1263,
+      "screenshot": "390-dark-companies.png",
+      "sha256": "f322a10b8f06eadcc22e32c0aa3bd3f88aa9193cb4754e09df29cdde8e67697d",
+      "overflow": 0,
+      "clipped": [],
+      "overlaps": []
+    },
+    {
+      "key": "390-dark-company-admins",
+      "failures": [
+        "Content grew: 1741 against 1669px"
+      ],
+      "baselineHeight": 1669,
+      "contentHeight": 1741,
+      "screenshot": "390-dark-company-admins.png",
+      "sha256": "ea1523ebd11fc280742b6f8b0a1013943dc8875cbe05fc1f9bece43a8a085ce4",
+      "overflow": 0,
+      "clipped": [],
+      "overlaps": []
+    }
+  ]
+}

@@ -1,0 +1,235 @@
+{
+  "description": "Argos tapa el inicio de Mesa de coordinación en grp.steven; el defecto se conserva fuera de las referencias.",
+  "fixture": {
+    "room": {
+      "width": 300,
+      "height": 260
+    },
+    "part": {
+      "x": 16,
+      "y": 180,
+      "width": 220,
+      "height": 60
+    }
+  },
+  "results": [
+    {
+      "key": "1440-light-office-plan",
+      "width": 1440,
+      "theme": "light",
+      "path": "/live",
+      "failures": [
+        "Content overlaps: 3",
+        "detail: Content overlaps: 3"
+      ],
+      "errors": [],
+      "screenshots": [
+        {
+          "file": "1440-light-office-plan.png",
+          "sha256": "4d403382cf2fcbdb6f5ec7af91c1c9de4e38ab2c50d2e51a057b38252128fc94"
+        },
+        {
+          "file": "1440-light-office-plan-detail.png",
+          "sha256": "7cc92148f04dde1721a39f7b9480b79a7fc3a938451836ac05fd867c76bc4b59"
+        }
+      ],
+      "metrics": {
+        "overflow": 0,
+        "clipped": [],
+        "overlaps": [
+          {
+            "first": {
+              "selector": "div[aria-label=\"Parte Mesa de coordinación\"]",
+              "text": "Mesa de coordinación"
+            },
+            "second": {
+              "selector": "span",
+              "text": "argos"
+            },
+            "width": 32,
+            "height": 7
+          },
+          {
+            "first": {
+              "selector": "div[aria-label=\"Parte Mesa de coordinación\"]",
+              "text": "Mesa de coordinación"
+            },
+            "second": {
+              "selector": "span",
+              "text": "Sin datos"
+            },
+            "width": 52,
+            "height": 3
+          },
+          {
+            "first": {
+              "selector": "button",
+              "text": "argosSin datos"
+            },
+            "second": {
+              "selector": "div[aria-label=\"Parte Mesa de coordinación\"]",
+              "text": "Mesa de coordinación"
+            },
+            "width": 77,
+            "height": 15
+          }
+        ],
+        "theme": "light",
+        "contentHeight": 1000
+      },
+      "detailMetrics": {
+        "overflow": 0,
+        "clipped": [],
+        "overlaps": [
+          {
+            "first": {
+              "selector": "div[aria-label=\"Parte Mesa de coordinación\"]",
+              "text": "Mesa de coordinación"
+            },
+            "second": {
+              "selector": "span",
+              "text": "argos"
+            },
+            "width": 32,
+            "height": 7
+          },
+          {
+            "first": {
+              "selector": "div[aria-label=\"Parte Mesa de coordinación\"]",
+              "text": "Mesa de coordinación"
+            },
+            "second": {
+              "selector": "span",
+              "text": "Sin datos"
+            },
+            "width": 52,
+            "height": 3
+          },
+          {
+            "first": {
+              "selector": "button",
+              "text": "argosSin datos"
+            },
+            "second": {
+              "selector": "div[aria-label=\"Parte Mesa de coordinación\"]",
+              "text": "Mesa de coordinación"
+            },
+            "width": 77,
+            "height": 15
+          }
+        ],
+        "theme": "light",
+        "contentHeight": 1000
+      }
+    },
+    {
+      "key": "1440-dark-office-plan",
+      "width": 1440,
+      "theme": "dark",
+      "path": "/live",
+      "failures": [
+        "Content overlaps: 3",
+        "detail: Content overlaps: 3"
+      ],
+      "errors": [],
+      "screenshots": [
+        {
+          "file": "1440-dark-office-plan.png",
+          "sha256": "dad7b47857a54131d83ba197ddf7623dc560eca89bc555ac44ad4900c955b64d"
+        },
+        {
+          "file": "1440-dark-office-plan-detail.png",
+          "sha256": "2796d5961211a176982b3b90ae52697cc950cedc7dbf1bc6e7d52f3f3c3d4310"
+        }
+      ],
+      "metrics": {
+        "overflow": 0,
+        "clipped": [],
+        "overlaps": [
+          {
+            "first": {
+              "selector": "div[aria-label=\"Parte Mesa de coordinación\"]",
+              "text": "Mesa de coordinación"
+            },
+            "second": {
+              "selector": "span",
+              "text": "argos"
+            },
+            "width": 32,
+            "height": 7
+          },
+          {
+            "first": {
+              "selector": "div[aria-label=\"Parte Mesa de coordinación\"]",
+              "text": "Mesa de coordinación"
+            },
+            "second": {
+              "selector": "span",
+              "text": "Sin datos"
+            },
+            "width": 52,
+            "height": 3
+          },
+          {
+            "first": {
+              "selector": "button",
+              "text": "argosSin datos"
+            },
+            "second": {
+              "selector": "div[aria-label=\"Parte Mesa de coordinación\"]",
+              "text": "Mesa de coordinación"
+            },
+            "width": 77,
+            "height": 15
+          }
+        ],
+        "theme": "dark",
+        "contentHeight": 1000
+      },
+      "detailMetrics": {
+        "overflow": 0,
+        "clipped": [],
+        "overlaps": [
+          {
+            "first": {
+              "selector": "div[aria-label=\"Parte Mesa de coordinación\"]",
+              "text": "Mesa de coordinación"
+            },
+            "second": {
+              "selector": "span",
+              "text": "argos"
+            },
+            "width": 32,
+            "height": 7
+          },
+          {
+            "first": {
+              "selector": "div[aria-label=\"Parte Mesa de coordinación\"]",
+              "text": "Mesa de coordinación"
+            },
+            "second": {
+              "selector": "span",
+              "text": "Sin datos"
+            },
+            "width": 52,
+            "height": 3
+          },
+          {
+            "first": {
+              "selector": "button",
+              "text": "argosSin datos"
+            },
+            "second": {
+              "selector": "div[aria-label=\"Parte Mesa de coordinación\"]",
+              "text": "Mesa de coordinación"
+            },
+            "width": 77,
+            "height": 15
+          }
+        ],
+        "theme": "dark",
+        "contentHeight": 1000
+      }
+    }
+  ]
+}
