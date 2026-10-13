@@ -114,7 +114,7 @@ def validate_provider(operations: dict, provider, harness: str) -> dict:
     return validated
 
 
-def read_descriptor(bundle_directory: str, harness: str) -> tuple[dict, str]:
+def read_descriptor(bundle_directory: str, harness: str, *, expected_sha256: str | None = None) -> tuple[dict, str]:
     if not isinstance(harness, str) or not HARNESS_ID.fullmatch(harness):
         fail('harness', 'must match [a-z][a-z0-9_-]{0,63}')
     descriptor = open_descriptor_directory(bundle_directory)
@@ -138,6 +138,10 @@ def read_descriptor(bundle_directory: str, harness: str) -> tuple[dict, str]:
             os.close(file_fd)
     finally:
         os.close(descriptor)
+    fingerprint = hashlib.sha256(raw).hexdigest()
+    if expected_sha256 is not None and (not isinstance(expected_sha256, str)
+            or re.fullmatch(r'[a-f0-9]{64}', expected_sha256) is None or fingerprint != expected_sha256):
+        fail('descriptor_sha256', 'descriptor differs from its approved digest')
     try:
         value = json.loads(raw)
     except (ValueError, UnicodeError):
@@ -172,13 +176,13 @@ def read_descriptor(bundle_directory: str, harness: str) -> tuple[dict, str]:
         value['provider'] = validate_provider(operations, value['provider'], harness)
     else:
         validate_provider(operations, {}, harness)
-    return value, hashlib.sha256(raw).hexdigest()
+    return value, fingerprint
 
 
-def resolve_operation(harness: str, operation: str, bundle_directory: str) -> dict:
+def resolve_operation(harness: str, operation: str, bundle_directory: str, *, expected_sha256: str | None = None) -> dict:
     if operation not in RECIPES:
         fail(f'operations.{operation}', 'unknown lifecycle operation')
-    descriptor, fingerprint = read_descriptor(bundle_directory, harness)
+    descriptor, fingerprint = read_descriptor(bundle_directory, harness, expected_sha256=expected_sha256)
     if operation not in descriptor['operations']:
         fail(f'operations.{operation}', 'operation is not declared by this harness descriptor')
     return {'harness': harness, 'operation': operation, 'recipe': descriptor['operations'][operation],
@@ -193,8 +197,8 @@ def lifecycle_plan(harness: str, operation: str, bundle_directory: str) -> dict:
     return {**request, 'driver': driver[0], 'action': driver[1]}
 
 
-def provider_command(harness: str, operation: str, bundle_directory: str) -> list[str]:
-    descriptor, _ = read_descriptor(bundle_directory, harness)
+def provider_command(harness: str, operation: str, bundle_directory: str, *, expected_sha256: str | None = None) -> list[str]:
+    descriptor, _ = read_descriptor(bundle_directory, harness, expected_sha256=expected_sha256)
     if operation not in RECIPES:
         fail(f'operations.{operation}', 'unknown lifecycle operation')
     if operation not in descriptor['operations']:
@@ -212,8 +216,8 @@ def provider_command(harness: str, operation: str, bundle_directory: str) -> lis
     fail(f'operations.{operation}', 'operation has no provider command')
 
 
-def fleet_module(harness: str, bundle_directory: str) -> str | None:
-    descriptor, _ = read_descriptor(bundle_directory, harness)
+def fleet_module(harness: str, bundle_directory: str, *, expected_sha256: str | None = None) -> str | None:
+    descriptor, _ = read_descriptor(bundle_directory, harness, expected_sha256=expected_sha256)
     return (descriptor.get('provider') or {}).get('fleet_module')
 
 

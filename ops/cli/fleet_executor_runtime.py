@@ -38,12 +38,20 @@ def checked_command(command: list[str], *, environment: dict | None = None, time
 
 def approved_bundle(policy: dict, agent: dict) -> dict:
     bundle = policy['bundles'][agent['harness_id']]
-    if set(bundle) != {'directory', 'digest', 'executable', 'executable_sha256', 'argv'} \
+    if set(bundle) - {'descriptor_sha256'} != {'directory', 'digest', 'executable', 'executable_sha256', 'argv'} \
             or not isinstance(bundle['argv'], list) or not all(isinstance(value, str) for value in bundle['argv']):
         raise SafeFailure('invalid approved runtime bundle')
     if bundle_digest(str(path(bundle['directory']))) != bundle['digest'] \
             or (agent['runtime_mode'] == 'native' and digest(path(bundle['executable'])) != bundle['executable_sha256']):
         raise SafeFailure('approved runtime bundle or executable changed')
+    if 'descriptor_sha256' in bundle:
+        from harness_operations import HarnessOperationFailure, read_descriptor
+        if not isinstance(bundle['descriptor_sha256'], str) or re.fullmatch(r'[a-f0-9]{64}', bundle['descriptor_sha256']) is None:
+            raise SafeFailure('invalid approved descriptor digest')
+        try:
+            read_descriptor(bundle['directory'], agent['harness_id'], expected_sha256=bundle['descriptor_sha256'])
+        except HarnessOperationFailure as error:
+            raise SafeFailure('approved harness descriptor changed') from error
     return bundle
 
 
