@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { AgentQuotaOperationsRepository, lockCompanyAuthority, withTransaction, type DatabaseClient, type DatabasePool } from '../src/index.js';
 import { readAgentQuotaPlacement } from '../src/agent-quota-operations-model.js';
@@ -19,6 +20,16 @@ beforeEach(async () => {
       container_name='zz-canary-quota-reader',runtime_user='dev',home_directory='/home/dev',
       state_directory='/home/dev/.cauce/dev',systemd_user='stev',runtime_key='zz-canary-quota-reader'
       WHERE tenant_id='ContextAlpha' AND alias='director';`);
+  const host = 'zz-canary-quota-reader';
+  const owner = requireValue(identities[0], 'owner');
+  const enrollment = requireValue((await admin().query<{ id: string }>(`INSERT INTO fleet_host_enrollments
+    (company_id,host_id,display_name,invited_by,token_hash,nonce,expires_at,state)
+    VALUES($1,$2,$2,$3,$4,$4,now()+interval '1 hour','enrolled') RETURNING id`,
+  [owner.company_id, host, owner.human_id, createHash('sha256').update(host).digest('hex')])).rows[0], 'enrollment');
+  await admin().query(`INSERT INTO fleet_host_identities
+    (host_id,company_id,enrollment_id,public_key,key_fingerprint,enabled,capabilities,capabilities_seen_at)
+    VALUES($1,$2,$3,$4,$5,true,'{"fleet_executor":true}',now())`,
+  [host, owner.company_id, enrollment.id, 'x'.repeat(64), createHash('sha256').update(`identity-${host}`).digest('hex')]);
 });
 afterEach(async () => { await current?.close(); current = undefined; });
 afterAll(async () => { if (database) { await database.pool.end(); await database.container.stop(); } });
@@ -61,7 +72,13 @@ describe('agent quota reader availability with real PostgreSQL', () => {
   it('retains the reader for an enabled supported container runtime', async () => {
     expect(await placement()).toMatchObject({ reader: true, reason: null });
     expect(await new AgentQuotaOperationsRepository(pool).snapshot(authority, target))
-      .toMatchObject({ reader_available: true, reason: null, status: 'unknown' });
+      .toMatchObject({ reader_available: true, can_query: true, reason: null, status: 'unknown' });
+  });
+  it('retains the reader but blocks querying a host without a live identity', async () => {
+    await admin().query("DELETE FROM fleet_host_identities WHERE host_id='zz-canary-quota-reader'");
+    expect(await placement()).toMatchObject({ reader: true, reason: null });
+    expect(await new AgentQuotaOperationsRepository(pool).snapshot(authority, target))
+      .toMatchObject({ reader_available: true, can_query: false, reason: 'quota_host_unavailable', status: 'unknown' });
   });
   it('keeps unchanged unsupported observations stable across repeated reads', async () => {
     await admin().query("UPDATE agents SET harness_id='openclaw' WHERE tenant_id=$1 AND alias=$2", [target.tenant_id, target.alias]);
