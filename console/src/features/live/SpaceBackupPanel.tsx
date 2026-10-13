@@ -18,6 +18,7 @@ const REQUEST_MS = 30_000;
 const FAILURES: Record<number, string> = {
   404: 'No se encontró el agente, su ubicación o el backup. Relee el agente: puede haberse movido o retirado.',
   409: 'No se pudo crear el backup ahora: el ordenador del espacio no tiene ejecutor disponible, se alcanzó el límite de copias o de espacio reservado, o cambió la política. Libera copias o recupera el ordenador y vuelve a intentarlo.',
+  503: 'El servicio de backups no está disponible. Espera a que se recupere y actualiza el estado del backup antes de reintentar.',
 };
 export function SpaceBackupPanel({ tenantId, alias }: { tenantId: string; alias: string }) {
   const state = useContext(CompanySession); const authority = sessionAuthority(state);

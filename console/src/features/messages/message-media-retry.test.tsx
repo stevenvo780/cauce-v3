@@ -1,5 +1,6 @@
 import { act, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { ApiError } from '../../api/client/core';
 import { afterEach, expect, it, vi } from 'vitest';
 import type { CauceApi } from '../../api/client';
 import { MessageMedia } from './message-media';
@@ -40,6 +41,19 @@ it('reintenta descargar una imagen cuando falló la descarga', async () => {
   expect(getMessageAttachment).toHaveBeenCalledTimes(2);
   expect(click).toHaveBeenCalledOnce();
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+});
+
+it('indica renovar la sesión o pedir permiso cuando el gateway devuelve 403', async () => {
+  const api = { getMessageAttachment: vi.fn().mockRejectedValue(new ApiError('read permission is required', 403, 'forbidden')) } as unknown as CauceApi;
+  const attachment: AttachmentSummary = { attachmentIndex: 0, name: 'photo.png', mediaKind: 'image', mimeType: 'image/png', image: true, size: 5 };
+  const urls = { createObjectURL: vi.fn(() => 'blob:media'), revokeObjectURL: vi.fn() };
+  const user = userEvent.setup();
+  render(<MessageMedia messageId="message-1" attachment={attachment} api={api} urls={urls} />);
+  await user.click(screen.getByRole('button', { name: 'Descargar' }));
+  const error = await screen.findByRole('status');
+  expect(error).toHaveTextContent(/Renueva tu sesión o pide permiso de lectura/u);
+  expect(error.textContent).not.toContain('read permission is required');
+  expect(screen.getByRole('button', { name: 'Reintentar' })).toBeInTheDocument();
 });
 
 it.each([

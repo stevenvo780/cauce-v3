@@ -114,3 +114,10 @@ it('explica un 404 con un mensaje específico', async () => {
   renderWithApi(panel()); fireEvent.click(screen.getByRole('button', { name: 'Crear backup del espacio' }));
   expect(await screen.findByRole('alert')).toHaveTextContent(/No se encontró el agente, su ubicación/u);
 });
+it('indica esperar y actualizar cuando el servicio de backups no está disponible', async () => {
+  vi.spyOn(testApi, 'createSpaceBackup').mockRejectedValue(new ApiError('space backup service unavailable', 503, 'space_backup_unavailable'));
+  renderWithApi(panel()); fireEvent.click(screen.getByRole('button', { name: 'Crear backup del espacio' }));
+  const alert = await screen.findByRole('alert');
+  expect(alert).toHaveTextContent(/Espera a que se recupere y actualiza el estado/u);
+  expect(alert.textContent).not.toContain('space backup service unavailable');
+});

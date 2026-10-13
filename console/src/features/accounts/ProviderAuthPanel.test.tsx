@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { ProviderAuthPanel } from './ProviderAuthPanel';
 import { providerAuthClient, type ProviderAuthRequest, type ProviderAuthSnapshot } from '../../api/client/provider-auth-client';
+import { ApiError } from '../../api/client/core';
 import type { RequestFn } from '../../api/client/system-client';
 import type { RequestOptions } from '../../api/client/core';
 
@@ -57,6 +58,22 @@ describe('provider auth panel', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Conectar cuenta' }));
     await waitFor(() => { expect(screen.getByRole('alert')).toBeInTheDocument(); });
     expect(calls[0]?.options).toMatchObject({ requireCsrf: true }); expect(done).not.toHaveBeenCalled();
+  });
+  it.each([
+    [403, 'AUTHORITY_REVOKED', 'Repite la operación con un rol vigente'],
+    [409, 'SESSION_CONFLICT', 'Espera a que termine o relee el entorno'],
+    [410, 'SESSION_EXPIRED', 'Inicia la autenticación de nuevo'],
+    [503, 'HOST_UNAVAILABLE', 'Revisa su conexión'],
+    [403, 'forbidden', 'Pide un rol vigente'],
+    [400, 'INVALID_REQUEST', 'Relee la operación'],
+    [503, 'LOGIN_FAILED', 'vuelve a autenticar la cuenta'],
+  ] as const)('indica cómo recuperarse del error %s %s', async (status, code, action) => {
+    const fetcher: RequestFn = <T,>() => Promise.reject(new ApiError('ENGLISH SERVER ERROR', status, code)) as Promise<T>;
+    render(<ProviderAuthPanel request={request} client={providerAuthClient(fetcher)} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Conectar cuenta' }));
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(action);
+    expect(alert.textContent).not.toContain('ENGLISH SERVER ERROR');
   });
   it('cancels and removes the previous sensitive session when its target identity changes', async () => {
     const paths: string[] = [];

@@ -1,4 +1,5 @@
 import { useCallback, useRef, useState } from 'react';
+import { ApiError } from '../../api/client/core';
 import type { QuotaAccount, QuotaProvider } from '../../api/client/my-quotas-client';
 import { useApi } from '../../api/context';
 import { usePolling } from '../../api/use-polling';
@@ -9,7 +10,14 @@ import { randomUuid } from '../../random-id';
 import { QuotaAccountCard } from './QuotaAccountCard';
 import { QuotaEnvironmentPanel } from './QuotaEnvironmentPanel';
 import { failedQuotaRead } from './quota-availability';
-import { automaticPauseWindow, canManageQuotaAccounts, describeQuotaError, pauseReasonText } from './quota-messages';
+import { automaticPauseWindow, canManageQuotaAccounts, describeQuotaEnvironmentError, describeQuotaError, pauseReasonText } from './quota-messages';
+
+function describeQuotaPreferencesError(cause: unknown, fallback: string): string {
+  if (cause instanceof ApiError && cause.status === 403) {
+    return 'No puedes leer o guardar las preferencias de esta empresa. Pide acceso a un administrador y vuelve a intentarlo.';
+  }
+  return describeQuotaError(cause, fallback);
+}
 
 export function MyQuotasPage() {
   const api = useApi();
@@ -29,6 +37,11 @@ export function MyQuotasPage() {
   const ready = !!accounts.data && !accounts.error && !busy;
   const canWrite = canManageCompany(authority?.role) && ready;
   const canWriteAccounts = canManageQuotaAccounts(authority?.role) && ready;
+  const readError = error || (accounts.error
+    ? describeQuotaError(accounts.error, 'No se pudieron leer las cuotas.')
+    : environments.error
+      ? describeQuotaEnvironmentError(environments.error, 'No se pudo leer el estado de los entornos.')
+      : describeQuotaPreferencesError(preferences.error, 'No se pudieron leer las cuotas.'));
   const reloadAccounts = accounts.reload;
   const reloadEnvironments = environments.reload;
   const reload = useCallback(async () => {
@@ -39,11 +52,11 @@ export function MyQuotasPage() {
   }, [reloadAccounts, reloadEnvironments]);
   const poll = useCallback(() => { if (!mutating.current) void reload().catch(() => undefined); }, [reload]);
   usePolling(poll, 15_000);
-  async function write(action: () => Promise<unknown>, message: string) {
+  async function write(action: () => Promise<unknown>, message: string, describeError = describeQuotaError) {
     if (mutating.current) return;
     mutating.current = true; setBusy(true); setError(''); setNotice('');
     try { await action(); setCreating(false); setEditing(undefined); setRemoving(undefined); await reload(); setNotice(message); }
-    catch (cause) { setError(describeQuotaError(cause, 'No se confirmó el cambio de cuenta.')); }
+    catch (cause) { setError(describeError(cause, 'No se confirmó el cambio de cuenta.')); }
     finally { mutating.current = false; setBusy(false); }
   }
   async function pin(account: QuotaAccount) {
@@ -55,7 +68,7 @@ export function MyQuotasPage() {
     await write(async () => {
       try { await api.saveConsolePreferences({ expected_version: settings.version, pinned_quota_accounts: pinned }); }
       catch (cause) { setPinFailed(true); void preferences.reload(); throw cause; }
-      const reread = await preferences.reload(); if (reread.error) throw reread.error; }, 'Tarjetas fijadas guardadas para esta persona y empresa.');
+      const reread = await preferences.reload(); if (reread.error) throw reread.error; }, 'Tarjetas fijadas guardadas para esta persona y empresa.', describeQuotaPreferencesError);
   }
   const executableProviders = environments.data?.capabilities.available ? environments.data.capabilities.providers : [];
   const pinned = preferences.data?.pinned_quota_accounts ?? [];
@@ -66,7 +79,7 @@ export function MyQuotasPage() {
       <p className="m-0 mt-1 max-w-2xl text-sm text-muted">Consulta tus suscripciones, incluso sin agentes. Fija las cuentas que sigues y opera sus entornos de consulta.</p></div>
       <Button disabled={busy || accounts.loading || environments.loading} onClick={() => { void reload().catch((cause: unknown) => { setError(describeQuotaError(cause, 'No se pudo actualizar.')); }); }}>Actualizar cuotas y entornos</Button></header>
     {accounts.loading && !accounts.data ? <p role="status">Leyendo cuentas y ventanas…</p> : null}
-    {accounts.error || environments.error || preferences.error || error ? <Notice tone="danger" role="alert">{error || describeQuotaError(accounts.error ?? environments.error ?? preferences.error, 'No se pudieron leer las cuotas.')}
+    {accounts.error || environments.error || preferences.error || error ? <Notice tone="danger" role="alert">{readError}
       {preferences.error || pinFailed ? <Button size="sm" disabled={preferences.loading} onClick={() => { setPinFailed(false); void preferences.reload(); }}>Releer tarjetas fijadas</Button> : null}</Notice> : null}
     {notice ? <Notice tone="ok" role="status">{notice}</Notice> : null}
     <div className="flex flex-wrap gap-2"><Button aria-pressed={filterPinned} disabled={!preferences.data || !!preferences.error} onClick={() => { setFilterPinned(!filterPinned); }}>{filterPinned ? 'Ver todas las cuentas' : 'Ver sólo cuentas fijadas'}</Button>

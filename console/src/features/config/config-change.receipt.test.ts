@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { configurationMutationSha256, publicConfigurationMutation, type ConfigMutation } from '@cauce/protocol/configuration';
+import { ApiError } from '../../api/client';
 import type { ConfigurationChangeResult } from '../../api/types';
-import { executeConfigurationChange } from './config-change';
+import { describeConfigError, executeConfigurationChange } from './config-change';
 
 const mutation: ConfigMutation = { resource: 'provider_account', action: 'create', id: 'account', value: {
   provider: 'codex', payer_tenant_id: 'Steven', external_account_id: 'one',
@@ -38,4 +39,17 @@ describe('full intent proof before configuration transport', () => {
     expect(change).not.toHaveBeenCalled();
     expect(reload).not.toHaveBeenCalled();
   });
+});
+
+it.each([
+  [400, 'invalid_request', 'formato esperado'],
+  [403, 'forbidden', 'permiso de control'],
+  [404, 'not_found', 'selecciona una revisión disponible'],
+  [422, 'invalid_input', 'corrige el cambio'],
+  [422, 'no_route', 'corrige el cambio'],
+  [422, 'invalid_actor', 'corrige el cambio'],
+] as const)('traduce %s %s a una acción para configuración', (status, code, action) => {
+  const described = describeConfigError(new ApiError('ENGLISH SERVER ERROR', status, code), 'fallback');
+  expect(described.message).toContain(action);
+  expect(described.message).not.toContain('ENGLISH SERVER ERROR');
 });

@@ -41,6 +41,21 @@ export function describeQuotaError(cause: unknown, fallback: string): string {
   return STATUS_MESSAGE[cause.status] ?? fallback;
 }
 
+export function describeQuotaEnvironmentError(cause: unknown, fallback: string): string {
+  if (!(cause instanceof ApiError)) return fallback;
+  if (cause.status === 403 && cause.message === 'quota account or host is unavailable in the acting company') {
+    return 'La cuenta o la computadora no está disponible para esta empresa, o tu sesión no tiene permiso. Comprueba los recursos y tu rol antes de continuar.';
+  }
+  if (cause.status === 409 && (cause.code === 'quota_host_unavailable'
+      || cause.message === 'quota executor is unavailable for this host and provider')) {
+    return 'El ejecutor de cuotas de la computadora no está disponible. Revisa su conexión y el proveedor, actualiza el estado y vuelve a intentarlo.';
+  }
+  if (cause.status === 500) {
+    return 'El servidor no confirmó el estado del entorno. Actualiza cuotas y entornos para comprobar el resultado antes de repetir la operación.';
+  }
+  return describeQuotaError(cause, fallback);
+}
+
 const OPERATION_ERROR: Record<string, string> = {
   AUTH_EXPIRED: 'La autenticación venció. Autentica la cuenta de nuevo.',
   AUTHORITY_REVOKED: 'La persona que lo pidió perdió permiso. Repite la operación con un rol vigente.',

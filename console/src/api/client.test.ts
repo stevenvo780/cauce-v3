@@ -267,7 +267,7 @@ describe('CauceApi', () => {
   it('treats a missing PTY backend as disabled', async () => {
     server.use(http.get('http://localhost/v3/console/terminal/capability', () => new HttpResponse(null, { status: 404 })));
     const capability = await new CauceApi('http://localhost').getTerminalCapability();
-    expect(capability).toEqual({ available: false, reason: 'Backend PTY no disponible' });
+    expect(capability).toEqual({ available: false, reason: 'El backend del terminal no está habilitado. Pide a un administrador que configure el servicio PTY para esta instalación.' });
   });
 
   it('distinguishes an absent agent from an unpublished directive or history endpoint', async () => {
@@ -287,6 +287,16 @@ describe('CauceApi', () => {
         new HttpResponse(null, { status: 404 })),
     );
     await expect(api.getAgentDirective('Steven', 'missing')).resolves.toMatchObject({ publicado: false });
+  });
+
+  it('explains in Spanish when the profile target is missing or no longer visible', async () => {
+    server.use(http.get('http://localhost/v3/console/tenants/Steven/agents/kant/perfil', () => HttpResponse.json(
+      { error: 'not_found', message: 'agent not found or not visible' }, { status: 404 },
+    )));
+    const error = await new CauceApi('http://localhost').getAgentPerfil('Steven', 'kant').catch((cause: unknown) => cause);
+    expect(error).toMatchObject({ status: 404, code: 'not_found' });
+    expect((error as Error).message).toMatch(/No se encontró el agente.*actualiza el inventario/i);
+    expect((error as Error).message).not.toContain('agent not found');
   });
 
   it('passes only a bounded opaque DLQ cursor and rejects malformed pagination locally', async () => {
@@ -454,6 +464,7 @@ describe('CauceApi', () => {
       .catch((error: unknown) => error);
 
     expect(fallo).toBeInstanceOf(ContextoContaminadoError);
+    expect((fallo as Error).message).toMatch(/documentos del agente contienen cambios fuera.*confirma qué contenido externo/i);
     expect((fallo as ContextoContaminadoError).cuerpo).toMatchObject({ contaminacion: veredicto });
   });
 
@@ -472,7 +483,93 @@ describe('CauceApi', () => {
 
     expect(fallo).toBeInstanceOf(EntregaEnVueloError);
     expect(fallo).toMatchObject({ status: 409, code: 'delivery_in_flight' });
+    expect((fallo as Error).message).toMatch(/entregas en curso.*espera.*vuelve a medir/i);
     expect((fallo as EntregaEnVueloError).cuerpo).toMatchObject({ deliveries: ['dlv-71'] });
+  });
+
+  it.each([
+    [409, 'context_write_not_applied', 'no se aplicó'],
+    [409, 'agent_disabled', 'Habilítalo'],
+    [409, 'reconcile_snapshot_conflict', 'crea una vista previa nueva'],
+    [409, 'runtime_ack_incomplete', 'no confirmó todos los documentos'],
+    [409, 'runtime_unverified', 'Revisa la conexión'],
+    [409, 'runtime_expectation_absent', 'No hay una expectativa'],
+    [409, 'profile_revision_conflict', 'El perfil cambió'],
+    [409, 'runtime_generation_conflict', 'El runtime cambió'],
+    [409, 'document_set_conflict', 'La lista de documentos cambió'],
+    [409, 'context_not_reconcilable', 'no se puede reconciliar'],
+    [409, 'runtime_measurement_conflict', 'La medición del runtime cambió'],
+    [409, 'external_context_changed', 'El contenido externo cambió'],
+    [409, 'context_not_drifted', 'ya no muestra la diferencia'],
+    [400, 'invalid_input', 'revisa el motivo'],
+    [503, 'context_reconcile_intent_not_recorded', 'no se escribió nada'],
+    [503, 'context_reconcile_audit_failed', 'Espera a que se recupere'],
+  ] as const)('traduce %s %s antes de mostrarlo en la reconciliación', async (status, code, action) => {
+    server.use(http.post('http://localhost/v3/console/tenants/Steven/agents/kant/context/reconcile/preview',
+      () => HttpResponse.json({ error: code, message: 'ENGLISH SERVER ERROR' }, { status })));
+    const api = new CauceApi('http://localhost');
+    const error = await api.previewContextReconciliation('Steven', 'kant', 'reviso las huellas')
+      .catch((cause: unknown) => cause);
+    expect(error).toMatchObject({ status, code });
+    expect((error as Error).message).toContain(action);
+    expect((error as Error).message).not.toContain('ENGLISH SERVER ERROR');
+  });
+
+  it('da una acción en español cuando el agente de la reconciliación ya no está visible', async () => {
+    server.use(http.post('http://localhost/v3/console/tenants/Steven/agents/kant/context/reconcile/preview', () =>
+      HttpResponse.json({ error: 'not_found', message: 'agent not found or not visible' }, { status: 404 })));
+    const error = await new CauceApi('http://localhost').previewContextReconciliation('Steven', 'kant', 'reviso las huellas')
+      .catch((cause: unknown) => cause);
+    expect(error).toMatchObject({ status: 404, code: 'not_found' });
+    expect((error as Error).message).toMatch(/actualiza el inventario/i);
+    expect((error as Error).message).not.toContain('agent not found');
+  });
+
+  it.each([
+    [409, 'scope_unavailable', 'La fuente Git ya no coincide'],
+    [409, 'confirmation_changed', 'La fuente del perfil cambió'],
+    [409, 'invalid_confirmation', 'La confirmación de la fuente no es válida'],
+    [409, 'deleted_profile', 'El perfil de la fuente ya no existe'],
+    [409, 'profile_absent', 'La revisión ya no contiene el perfil'],
+    [409, 'repository_not_configured', 'no tiene una fuente Git configurada'],
+    [409, 'invalid_repository_root', 'ruta raíz de la fuente Git'],
+    [409, 'object_unavailable', 'No se pudo leer la revisión Git'],
+    [409, 'invalid_commit', 'revisión del perfil Git no es válida'],
+    [409, 'unsupported_object_storage', 'almacenamiento de la fuente Git no está disponible'],
+    [409, 'missing_manifest', 'revisión del perfil Git no es válida'],
+    [409, 'missing_file', 'Falta un archivo requerido'],
+    [409, 'invalid_provenance', 'revisión del perfil Git no es válida'],
+    [409, 'unsupported_harness', 'tipo de agente de esta fuente no es compatible'],
+    [409, 'unsupported_schema', 'versión de esquema no compatible'],
+    [409, 'duplicate_agent', 'revisión del perfil Git no es válida'],
+    [409, 'invalid_journal_id', 'revisión del perfil Git no es válida'],
+    [409, 'invalid_revision', 'historial disponible'],
+    [409, 'size_limit', 'supera el límite de lectura'],
+    [409, 'invalid_path_policy', 'política de rutas de la fuente'],
+    [409, 'invalid_object', 'revisión del perfil Git no es válida'],
+    [409, 'invalid_tree', 'revisión del perfil Git no es válida'],
+    [409, 'unsupported_entry', 'revisión del perfil Git no es válida'],
+    [409, 'invalid_blob', 'revisión del perfil Git no es válida'],
+    [409, 'invalid_text', 'no es texto válido'],
+    [409, 'invalid_schema', 'revisión del perfil Git no es válida'],
+    [409, 'invalid_identifier', 'revisión del perfil Git no es válida'],
+    [409, 'forbidden_content', 'contenido que no se permite importar'],
+    [409, 'invalid_json', 'revisión del perfil Git no es válida'],
+    [409, 'duplicate_json_key', 'revisión del perfil Git no es válida'],
+    [409, 'invalid_profile', 'revisión del perfil Git no es válida'],
+    [403, 'forbidden', 'Tu sesión ya no tiene permiso'],
+    [503, 'context_source_unavailable', 'La fuente de contexto no respondió'],
+    [503, 'profile_write_unavailable', 'Conserva el borrador'],
+    [503, 'profile_write_unconfirmed', 'Relee el perfil'],
+  ] as const)('traduce %s %s al guardar un perfil', async (status, code, action) => {
+    server.use(http.put('http://localhost/v3/console/tenants/Steven/agents/kant/perfil', () =>
+      HttpResponse.json({ error: code, message: 'ENGLISH SERVER ERROR' }, { status })));
+    const api = new CauceApi('http://localhost');
+    const error = await api.putAgentPerfil('Steven', 'kant', PERFIL, 4, 'ajusto el rol declarado')
+      .catch((cause: unknown) => cause);
+    expect(error).toMatchObject({ status, code });
+    expect((error as Error).message).toContain(action);
+    expect((error as Error).message).not.toContain('ENGLISH SERVER ERROR');
   });
 
   it('un 400 que nombra `reason` se separa de un 400 de los campos del perfil', async () => {

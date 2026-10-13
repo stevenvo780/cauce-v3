@@ -115,6 +115,18 @@ export function describeConfigError(
     return { conflict: false, message: `El servidor rechazó el cambio y no se aplicó nada: ${known ?? `hay un conflicto con el estado guardado («${error.message}»)`}. `
       + 'Relee el inventario y vuelve a intentarlo sobre los datos actuales.' };
   }
+  if (error instanceof ApiError && error.status === 400 && error.code === 'invalid_request') {
+    return { conflict: false, message: 'La solicitud de configuración no tiene el formato esperado. Revisa los campos y vuelve a guardar.' };
+  }
+  if (error instanceof ApiError && error.status === 403) {
+    return { conflict: false, message: 'Tu sesión no cumple las condiciones para este cambio. Revisa el permiso de control con un operador y vuelve a consultar antes de enviarlo.' };
+  }
+  if (error instanceof ApiError && error.status === 404 && error.code === 'not_found') {
+    return { conflict: false, message: 'No se encontró esa revisión de configuración. Actualiza el historial y selecciona una revisión disponible antes de revertir.' };
+  }
+  if (error instanceof ApiError && error.status === 422) {
+    return { conflict: false, message: 'El servidor no acepta la combinación de recursos o actor seleccionados. Relee el inventario, revisa las dependencias y corrige el cambio antes de volver a enviarlo.' };
+  }
   return { conflict: false, message: error instanceof Error ? error.message : fallback };
 }
 

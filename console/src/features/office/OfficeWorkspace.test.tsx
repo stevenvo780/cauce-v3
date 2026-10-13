@@ -43,19 +43,46 @@ it('edita sólo la sala compuesta elegida, persiste partes y relee al volver a a
   expect(screen.getByLabelText('Parte Nueva parte')).toBeVisible();
 });
 it('un conflicto conserva el borrador y un lector no puede editar ni guardar', async () => {
-  server.use(http.put('*/v3/console/office/layout', () => HttpResponse.json({ message: 'La versión cambió. Relee y reintenta.' }, { status: 409 })));
+  server.use(http.put('*/v3/console/office/layout', () => HttpResponse.json({ error: 'conflict', message: 'office layout version changed; reload and retry' }, { status: 409 })));
   const user = userEvent.setup(); const view = renderWithApi(workspace());
   await user.click(screen.getByRole('button', { name: 'Plano editable' }));
   await waitFor(() => { expect(screen.getByRole('button', { name: 'General One' })).toBeEnabled(); });
   await user.click(screen.getByRole('button', { name: 'General One' })); await user.click(screen.getByRole('button', { name: 'Añadir parte' }));
   await user.click(screen.getByRole('button', { name: 'Guardar plano' }));
-  expect(await screen.findByRole('alert')).toHaveTextContent('La versión cambió'); expect(screen.getByText('Plano sin guardar')).toBeVisible();
+  expect(await screen.findByRole('alert')).toHaveTextContent(/Otro operador cambió el plano.*relee el plano/i);
+  expect(screen.getByRole('alert').textContent).not.toContain('office layout version changed');
+  expect(screen.getByText('Plano sin guardar')).toBeVisible();
   view.unmount(); const onAgent = vi.fn(); renderWithApi(workspace(onAgent, 'reader')); await user.click(screen.getByRole('button', { name: 'Plano editable' }));
   await user.click(await screen.findByRole('button', { name: 'General One' }));
   expect(screen.getByRole('button', { name: 'General One' })).toBeEnabled(); expect(screen.getByRole('button', { name: 'Guardar plano' })).toBeDisabled();
   expect(screen.queryByRole('region', { name: 'Editar sala One/General' })).not.toBeInTheDocument();
   await user.click(within(screen.getByRole('region', { name: 'Agentes de sala One/General' })).getByRole('button', { name: /worker/u }));
   expect(onAgent).toHaveBeenCalledWith('One/worker');
+});
+
+it('explica en español la falta de autoridad al leer el plano', async () => {
+  server.use(http.get('*/v3/console/office/layout', () => HttpResponse.json(
+    { error: 'forbidden', message: 'company office authority is required' }, { status: 403 },
+  )));
+  const user = userEvent.setup(); renderWithApi(workspace());
+  await user.click(screen.getByRole('button', { name: 'Plano editable' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent(/Pide acceso a un administrador de la empresa/u);
+  expect(screen.getByRole('alert').textContent).not.toContain('company office authority');
+});
+
+it('mapea una solicitud de plano inválida sin mostrar el mensaje inglés del gateway', async () => {
+  server.use(http.put('*/v3/console/office/layout', () => HttpResponse.json(
+    { error: 'invalid_request', message: 'invalid office layout' }, { status: 400 },
+  )));
+  const user = userEvent.setup(); renderWithApi(workspace());
+  await user.click(screen.getByRole('button', { name: 'Plano editable' }));
+  await waitFor(() => { expect(screen.getByRole('button', { name: 'General One' })).toBeEnabled(); });
+  await user.click(screen.getByRole('button', { name: 'General One' }));
+  await user.click(screen.getByRole('button', { name: 'Añadir parte' }));
+  await user.click(screen.getByRole('button', { name: 'Guardar plano' }));
+  const alert = await screen.findByRole('alert');
+  expect(alert).toHaveTextContent(/Revisa las posiciones y tamaños/u);
+  expect(alert.textContent).not.toContain('invalid office layout');
 });
 it('vuelve a montar el campus tras guardar el plano para que lea el plano nuevo', async () => {
   let version = 0;

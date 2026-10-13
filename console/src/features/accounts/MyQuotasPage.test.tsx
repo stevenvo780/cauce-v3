@@ -18,6 +18,21 @@ const account: QuotaAccount = { id: 'subscription', provider: 'codex', label: 'C
 function owner() { return <CompanySessionProvider state={{ authenticated: true, authority: { role: 'company_owner', scope: 'company',
   home_company: 'one', acting_company: 'one', platform_override: false } }}><MyQuotasPage /></CompanySessionProvider>; }
 
+it('indica pedir acceso cuando la preferencia de oficina de la empresa está denegada', async () => {
+  server.use(
+    http.get('*/v3/console/quota-accounts', () => HttpResponse.json({ company_id: 'one', observed_at: '2026-10-11T00:00:00Z', accounts: [account] })),
+    http.get('*/v3/console/quota-environments', () => HttpResponse.json({ company_id: 'one', environments: [], operations: [],
+      capabilities: { available: false, providers: [], hosts: [], actions: [] } })),
+    http.get('*/v3/console/preferences', () => HttpResponse.json(
+      { error: 'forbidden', message: 'company office authority is required' }, { status: 403 },
+    )),
+  );
+  renderWithApi(owner());
+  const alert = await screen.findByRole('alert');
+  expect(alert).toHaveTextContent(/Pide acceso a un administrador/u);
+  expect(alert.textContent).not.toContain('company office authority is required');
+});
+
 it('fija una suscripción compartida en el servidor y relee la misma preferencia al volver', async () => {
   let version = 4; let pinned: string[] = []; const writes: unknown[] = [];
   server.use(http.get('*/v3/console/quota-accounts', () => HttpResponse.json({ company_id: 'one', observed_at: '2026-10-11T00:00:00Z', accounts: [account] })),
