@@ -96,7 +96,7 @@ for (const route of routes) {
 test('every gateway proxy overwrites client IP headers and strips forwarded host and protocol', () => {
   const bodies = [...config.matchAll(/^ {2}location .+ \{([\s\S]*?)^ {2}\}/gmu)]
     .map(match => match[1]).filter(body => body.includes('proxy_pass https://gateway:8443;'));
-  assert.equal(bodies.length, 10);
+  assert.equal(bodies.length, 11);
   for (const body of bodies) {
     expectDirective(body, 'proxy_set_header X-Forwarded-For', '$remote_addr');
     expectDirective(body, 'proxy_set_header X-Real-IP', '$remote_addr');
@@ -152,6 +152,15 @@ test('large ACKs use only the two exact runtime routes with the existing verifie
   }
   assert.deepEqual(values(locationBody('/v3/'), 'client_max_body_size'), []);
   expectDirective(locationBody('~ ^/v3/console/(messages|publish-intents)$'), 'client_max_body_size', '13595484');
+  const context = '~ ^/v3/console/context/agents/';
+  const contextBody = locationBody(context);
+  expectDirective(contextBody, 'client_max_body_size', '1100000');
+  assert.ok(new RegExp(context.slice(2), 'u').test('/v3/console/context/agents/One/director'));
+  assert.ok(!new RegExp(context.slice(2), 'u').test('/v3/console/context'));
+  for (const directive of ['proxy_pass', 'proxy_ssl_server_name', 'proxy_ssl_name', 'proxy_ssl_verify',
+    'proxy_ssl_trusted_certificate', 'proxy_ssl_certificate', 'proxy_ssl_certificate_key', 'proxy_set_header']) {
+    assert.deepEqual(values(contextBody, directive), values(locationBody('/v3/'), directive));
+  }
 });
 
 test('space backup downloads stream unbuffered through the same verified gateway identity as /v3/', () => {
