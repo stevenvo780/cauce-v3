@@ -22,3 +22,4 @@ ignore = ["E501"]  # longitud: la vigila el trinquete humano, no el linter (1.73
 [lint.per-file-ignores]
 # El médico carga sus -lib hermanas con exec() en su propio espacio de nombres: ruff no ve esos nombres.
 "ops/guardias/cauce-v3-medico-monitor" = ["F821"]
+"ops/guardias/libro_tareas.py" = ["UP031"]

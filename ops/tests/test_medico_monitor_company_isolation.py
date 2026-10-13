@@ -79,61 +79,6 @@ insert into audit_events values ('Steven',1,'foreign-explicit-company','{}','out
 """
 
 
-TASK_BOOK_QUERY = """
-with ventana as (
-  select d.id, d.message_id, d.recipient_alias, d.recipient_tenant, d.status, d.attempt,
-         d.terminal_at, d.last_error, d.result, d.late_result_at,
-         m.actor_alias, m.created_at, m.body
-  from deliveries d join messages m on m.id = d.message_id
-  where m.created_at > now() - interval '48 hours'
-    and coalesce(m.body->>'type','') in ('agent.message','telegram.message')
-    and length(coalesce(m.body->>'text','')) >= 120
-),
-cierres as materialized (
-  select d3.recipient_tenant as tenant, d3.recipient_alias as alias,
-         m3.id as mid, m3.created_at as creado,
-         coalesce(m3.body->>'text','') as texto
-  from deliveries d3 join messages m3 on m3.id = d3.message_id
-  where d3.status = 'done'
-    and m3.created_at > (select min(coalesce(v0.terminal_at, v0.created_at)) from ventana v0)
-)
-select json_build_object(
-  'encargo_id', v.id,
-  'message_id', v.message_id,
-  'solicitante', v.actor_alias,
-  'responsable', v.recipient_alias,
-  'tenant', v.recipient_tenant,
-  'tipo_mensaje', coalesce(v.body->>'type',''),
-  'estado_entrega', v.status,
-  'intento_entrega', v.attempt,
-  'pedido_en', to_char(v.created_at at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS+00:00'),
-  'cerrado_en', to_char(v.terminal_at at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS+00:00'),
-  'ultimo_error', left(coalesce(v.last_error,''), 300),
-  'texto', left(coalesce(v.body->>'text',''), 900),
-  'respuesta', left(coalesce(v.result->'output'->>'reply',''), 900),
-  'resultado_tardio', (v.late_result_at is not null),
-  'retomado_por_mensaje_nuevo', exists (
-    select 1 from cierres c
-    where c.tenant = v.recipient_tenant
-      and (c.alias = v.recipient_alias or c.alias = v.actor_alias)
-      and c.mid <> v.message_id
-      and c.creado > coalesce(v.terminal_at, v.created_at)
-      and position(left(v.id::text, 8) in c.texto) > 0
-  ),
-  'reintento_exitoso', exists (
-    select 1
-    from audit_events ae
-    join deliveries d2 on d2.message_id = ae.message_id
-    where ae.action = 'delivery.replay'
-      and (ae.metadata->>'replayed_from_message_id') = v.message_id::text
-      and d2.recipient_tenant = v.recipient_tenant
-      and d2.recipient_alias = v.recipient_alias
-      and d2.status = 'done'
-  )
-)::text
-from ventana v
-order by v.created_at;"""
-
 
 @pytest.fixture(scope="module")
 def pg():
@@ -421,7 +366,7 @@ def test_task_book_query_runs_on_scoped_postgres(transport, pg):
                         "WHERE id IN (1,2,4)")
     assert result.returncode == 0, result.stderr
     try:
-        rows = [json.loads(row[0]) for row in doctor.sql(TASK_BOOK_QUERY, columnas=1)]
+        rows = [json.loads(row[0]) for row in doctor.sql(doctor.libro_tareas.consulta(), columnas=1)]
         assert {row["encargo_id"] for row in rows} == {1, 2}
         assert {row["tenant"] for row in rows} == {"Steven", "LocalB"}
     finally:

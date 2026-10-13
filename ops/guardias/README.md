@@ -208,19 +208,40 @@ systemctl enable --now cauce-cred-guard.timer
 # En el host manager, con el repo clonado — units de usuario
 install -d -m755 ~/.local/bin ~/.config/systemd/user
 install -m644 ops/guardias/credential_health.py ~/.local/bin/     # biblioteca, no ejecutable
+install -m644 ops/guardias/libro_tareas.py ~/.local/bin/
 install -m755 ops/guardias/cred-guard.py ~/.local/bin/            # agregador local y sonda (--sonda-remota)
 install -m755 \
   ops/guardias/cauce-alertas-al-bus.py \
   ops/guardias/cauce-contexto-colisiones.py \
   ops/guardias/cauce-v3-medico-monitor \
+  ops/guardias/cauce-v3-medico-monitor-company-lib.py \
   ops/guardias/cauce-v3-medico-monitor-sondas-lib.py \
-  ops/guardias/cauce-v3-medico-monitor-reparacion-lib.py ~/.local/bin/   # el médico carga sus dos libs de su propio directorio; en general, los guardias que ese host corre
+  ops/guardias/cauce-v3-medico-monitor-reparacion-lib.py ~/.local/bin/   # bibliotecas del médico en el mismo directorio
 install -m755 ops/guardias/polidin-guard.sh ~/.local/bin/
 ./ops/scripts/install-cauce-cli.sh   # cauce + panel/huerfanas/reponer + estado/sesiones/attach
 install -m644 ops/guardias/systemd/<unidad>.{service,timer} ~/.config/systemd/user/
 systemctl --user daemon-reload
 systemctl --user enable --now <timer>...
 ```
+
+El médico carga `libro_tareas.py` y sus tres `*-lib.py` desde el directorio del
+ejecutable, tanto en el repo como en la instalación. Copia siempre el conjunto.
+El libro mantiene la API y las claves persistidas de la versión instalada; las
+referencias específicas del entorno se configuran con variables de entorno:
+
+| Variable | Uso y valor por defecto |
+|---|---|
+| `CAUCE_LIBRO_LOCAL_HOST` | Alias que ejecuta `systemctl --user` con la sesión local; `localhost`. |
+| `CAUCE_LIBRO_SYSTEMD_USER` | Usuario de las sondas systemd remotas; vacío. |
+| `CAUCE_LIBRO_SYSTEMD_UID` | UID remoto para `XDG_RUNTIME_DIR`; vacío. |
+| `CAUCE_LIBRO_OPERATOR_NAME` | Nombre adicional que reconoce una decisión humana; vacío. |
+| `CAUCE_LIBRO_LOCATION` | Ubicación mostrada como evidencia del libro; `libro-tareas.md`. |
+
+Para conservar las referencias de una instalación existente, configura sus valores
+en el entorno del servicio. Sin usuario y UID remotos válidos, una evidencia
+`unidad_activa` remota queda sin verificar. No se concede cumplimiento por ese fallo.
+Las reglas SQL de `evidencia-esperada.json` se ejecutan mediante la misma función
+`sql()` acotada por `CAUCE_GUARD_COMPANY_ID` que utiliza la consulta de encargos.
 
 Los envoltorios `cauce-envoltorio-local.sh` y `cauce-huerfanas.sh` NO van acá: van dentro del
 contenedor, que es donde se los invoca.

@@ -44,15 +44,10 @@ import re
 import subprocess  # noqa: F401
 import sys
 import time  # noqa: F401
+from types import ModuleType
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from credential_health import classify_doctor_record, shared_fingerprints  # noqa: E402, F401
-
-try:
-    import libro_tareas  # noqa: F401
-except Exception as _e_libro:  # noqa: BLE001
-    libro_tareas = None
-    _MOTIVO_SIN_LIBRO = f"{type(_e_libro).__name__}: {_e_libro}"
 
 AGORA = "root@100.64.0.6"
 VPS = "root@100.64.0.11"
@@ -484,13 +479,22 @@ _VOLATIL = [
 # -------------------------------------------------------------------------------- main
 
 
-def _cargar_lib(nombre):
+def _cargar_lib(nombre, namespace=None):
     """Source a sibling -lib file into this module's namespace (like bash `source`)."""
     ruta = os.path.join(os.path.dirname(os.path.abspath(__file__)), nombre)
     with open(ruta, encoding="utf-8") as fh:
         codigo = compile(fh.read(), ruta, "exec")
-    exec(codigo, globals())  # noqa: B102
+    if namespace is not None:
+        namespace["__file__"] = ruta
+    exec(codigo, globals() if namespace is None else namespace)  # noqa: B102
 
+
+try:
+    libro_tareas = ModuleType("libro_tareas")
+    _cargar_lib("libro_tareas.py", libro_tareas.__dict__)
+except Exception as _e_libro:  # noqa: BLE001
+    libro_tareas = None
+    _MOTIVO_SIN_LIBRO = f"{type(_e_libro).__name__}: {_e_libro}"
 
 _cargar_lib("cauce-v3-medico-monitor-company-lib.py")
 ESTADO_DIR = os.path.join(ESTADO_DIR, guard_company_id())
