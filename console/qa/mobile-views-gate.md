@@ -4,16 +4,16 @@ Mide en Chromium real, con datos sintéticos de sólo lectura, que cada vista de
 
 ## Contrato
 
-- 22 estados × 360×800, 390×844, 430×932 y 760×1000 × claro y oscuro (movimiento reducido): 176 mediciones
+- 21 estados × 360×800, 390×844, 430×932 y 760×1000 × claro y oscuro (movimiento reducido): 168 mediciones
 - Cero desborde horizontal del documento
 - Objeto principal pintado, con su borde superior dentro del primer 50 % del área útil y al menos 120 px visibles (o toda su altura, si es menor). Se descuentan la barra inferior y el recorte de los ancestros
 - La oficina de `/live` trae su lienzo pintado al entrar y también tras recargar
 - Un desplazamiento horizontal interno se acepta sólo si el contenedor o alguno de sus controles se alcanza con el teclado. Con un diálogo abierto, la comprobación se limita a él
 - Cualquier excepción de página, fixture ausente, mutación, WebSocket o estado sin medir impide aprobar
 
-Estados: entrada y lista de chats, hilo, perfil y contexto del hilo, resumen, oficina, hoja del agente, las tres pestañas de cuentas, entregas, señales, auditoría, las seis secciones de ajustes, selector de terminal, terminal con un agente abierto y ayuda. Tras cada clic se restablece el scroll antes de medir: el desplazamiento automático de Playwright no convierte contenido bajo el pliegue en un pase.
+Estados: entrada (`/`), lista de chats, hilo, perfil y contexto del hilo, oficina, hoja del agente, las tres pestañas de cuentas, entregas, señales, auditoría, seis de las siete secciones de ajustes (no mide Computadoras), selector de terminal, terminal con un agente abierto y ayuda. Tras cada clic se restablece el scroll antes de medir: el desplazamiento automático de Playwright no convierte contenido bajo el pliegue en un pase.
 
-Los selectores se apoyan en lo que la interfaz promete a un lector de pantalla (regiones con nombre, `role`, `aria-label`) y en los `data-objeto-principal` del armazón, no en clases de estilo. `mobile-views-contract.test.mjs` comprueba que cada uno sigue existiendo en la fuente que lo dibuja.
+Los selectores se apoyan en lo que la interfaz promete a un lector de pantalla (regiones con nombre, `role`, `aria-label`) y en los `data-objeto-principal` del armazón, no en clases de estilo. `mobile-views-contract.test.mjs` comprueba en la fuente un subconjunto: Conversaciones, Agentes, hilo, `data-thread-scroll`, Perfil y contexto, oficina, escenario y los paneles `view-panel-`. No comprueba, en la fuente que los dibuja, el nav «Navegación principal», ni `role="dialog"`, ni `main h2`, ni `main [role="tabpanel"]`. El nav solo se busca como cadena dentro de `mobile-views-gate.mjs`.
 
 Interacciones medidas además de la geometría: el filtro «Pendientes» de entregas estrecha la tabla; el inventario de cuentas y su botón de actualizar se pintan sin recorte.
 

@@ -12,8 +12,11 @@ esa decisión.
 
 ### Nunca en claro
 
-El trail de auditoría escribe directo contra el pool, por la misma razón que documenta
-`services/gateway/src/terminal/audit.ts`. Su unión de acciones (`SecretAuditAction`) es propia:
+`recordSecretAudit` acepta el pool o un cliente. Concesión, lectura y revocación se escriben
+con el cliente, dentro de la transacción. La denegación de ruteo y la del techo usan el pool,
+fuera de ella; la denegación `read_revoked_or_expired` usa el cliente, dentro.
+`services/gateway/src/terminal/audit.ts` no documenta ese reparto: su cabecera solo excluye
+tickets, bytes de PTY y contenidos de documento. Su unión de acciones (`SecretAuditAction`) es propia:
 ampliarla para que coincida con `TerminalAuditAction` dejaría que una consulta pensada para el
 terminal alcanzara una fila de credencial. Nunca se registra un secreto ni los bytes sellados: del
 ciphertext sólo es durable su sha256 truncado a 16 hex — suficiente para atar una fila `secret.read`
@@ -65,7 +68,10 @@ invariantes sostienen cada ruta:
   en vez de ignorarse, para que un mal uso falle ruidoso en vez de reinterpretarse en silencio;
 - ningún campo de petición o respuesta puede llevar un valor en claro: el secreto existe sellado o
   no existe;
-- un desconocido recibe 404, nunca 403: un error de autorización confirmaría que el traspaso existe;
+- quien no tiene el permiso de la ruta recibe 403 antes de buscar el id. Lo mismo el canal consola
+  en el reclamo, y la falta de autoridad de ruteo en `POST /v3/secrets` y en
+  `GET /v3/sealing-keys/:tenant/:alias`. Ese 403 no depende de que el traspaso exista. Quien pasa
+  el permiso y no es parte del traspaso recibe 404, no un 403 atado al id;
 - nada destructivo responde a un GET, y toda mutación confirma junto con su propia fila de auditoría
   o con ninguna de las dos. Un traspaso consumido que nadie puede probar que fue consumido es el
   agujero que este plano evita.
@@ -173,7 +179,8 @@ lo tratan como inseguro, y a un principal del canal consola se le rechaza direct
 traspaso es entre agentes, y una sesión de navegador es exactamente la credencial que una petición
 cross-site puede tomar prestada.
 
-Cualquier otro recibe 404 — un 403 confirmaría que el traspaso existe a alguien sin relación con él.
+Quien no tiene `read`, o llama por el canal consola, recibe 403 antes de buscar el id: ese 403 no
+dice si el traspaso existe. Quien pasa ese permiso y no es el destinatario recibe 404.
 Reclamo y fila de auditoría confirman juntos.
 
 ### Revocación
@@ -239,7 +246,9 @@ dirige a una clave vieja.
 
 Un destinatario nunca recibe una respuesta sin límite: el emisor elige cuántos traspasos existen, así
 que el tamaño de página no puede ser decisión del emisor. Se pagina por conjunto de claves (keyset)
-sobre el mismo orden `(created_at,id)` que ya provee el índice de pendientes — un `OFFSET` saltaría
+sobre `(created_at,id)`. La consulta ordena por esas dos columnas; el índice
+`secret_handoffs_pending_idx` es `(to_tenant, to_alias, created_at, expires_at)` y no incluye `id`,
+así que el desempate por `id` no lo cubre. Un `OFFSET` saltaría
 filas a medida que los reclamos se asientan por debajo. Lo que se le dice al destinatario que existe
 lo nombra; no lleva ninguno de ellos. Se lee y se descarta una fila de más: es lo que distingue una
 página llena que es la ÚLTIMA de una página llena con más detrás, así que el destinatario nunca
@@ -310,10 +319,12 @@ de auditoría.
 Tres escrituras de este plano se dejaron deliberadamente sin techo ni escalera propios:
 
 - **La auditoría de `secret.granted`.** Se escribe una fila por cada concesión aceptada, sin
-  throttle propio — a diferencia de `secret.denied`, que sí lo tiene. No hace falta: el volumen de
-  filas `secret.granted` ya está acotado por `MAX_HANDOFFS_PER_RECIPIENT`, el mismo techo que decide
-  si el `INSERT` se acepta. Un flood de concesiones exitosas no puede superar lo que el techo del
-  buzón del destinatario ya permite.
+  throttle propio — a diferencia de `secret.denied`, que sí lo tiene. `MAX_HANDOFFS_PER_RECIPIENT`
+  cuenta filas del destinatario que siguen existiendo y se crearon dentro de 24 h. `pruneSettledHandoffs`
+  borra las asentadas (leídas, revocadas o caducadas) tras 15 min de gracia y libera esos cupos; la fila
+  `secret.granted` no se borra. Con el TTL mínimo de 30 s el mismo emisor autenticado puede volver
+  a llenar el techo tras cada barrido. El techo acota el buzón por ciclo, no el total histórico de
+  filas de auditoría.
 - **El `UPDATE` de refresco de `publishSealingKey`.** Repetir la misma publicación (mismo `key_id`,
   mismos bytes) dispara un `UPDATE` de `not_after` en cada petición, sin límite de tasa y sin fila de
   auditoría. Es intencional: la fila no cambia lo que el alias anuncia, así que no es un evento que

@@ -53,9 +53,12 @@ Huecos (lo que NO cubre ningún caso):
 - La delegación propia de argos: a quién delega y con qué ramas; el fan-out
   del arnés usa alias QA (`qa-opencode`, `qa-reviewer-a/b`), no argos.
 - El contenido de negocio (nuevo cliente / software / deploy).
-- `Steven/argos` como receptor: ningún caso le entrega un mensaje válido
-  (solo aparece como receptor en el camino negativo de
-  `zero recipient is no_route and identity fields are rejected`).
+- `Steven/argos` como receptor de una entrega confirmada: ningún caso le hace
+  wake, delivery ni ack. Sí es el destinatario (primer alias de Steven) de las
+  publicaciones que `complete Steven/Isa/Jhon/Pablo/Miguel ACL matrix` acepta
+  con 202, y el nombre de destinatario del camino negativo de
+  `zero recipient is no_route and identity fields are rejected` (esa petición
+  manda la lista vacía).
 
 ## Escenario 2 — Miguel→janus (graf, demeter, recurrentes) → delega → Telegram
 
@@ -83,8 +86,9 @@ rechazadas sin escritura de mensaje.
 Huecos (lo que NO cubre ningún caso):
 
 - Telegram (entrada de Miguel y salida del resultado).
-- La delegación propia de janus: janus solo aparece como receptor, nunca como
-  emisor delegante en ningún caso.
+- La delegación propia de janus: ningún caso lo usa como emisor de una
+  delegación (el fan-out usa alias QA). Sí publica en
+  `complete Steven/Isa/Jhon/Pablo/Miguel ACL matrix`, como primer alias de Miguel.
 - Los dominios graf, demeter y recurrentes: ningún caso los nombra ni publica
   cuerpo de negocio.
 - Trabajos recurrentes o programados: sin cobertura.
@@ -112,8 +116,9 @@ Huecos (lo que NO cubre ningún caso):
 
 - Telegram (entrada de Jhon y salida del resultado).
 - Ventas y Xenia: ningún caso los nombra ni publica cuerpo de negocio.
-- hegel como emisor delegante: hegel solo aparece como receptor, nunca delega
-  en ningún caso.
+- hegel como emisor de una delegación: ningún caso lo usa así (el fan-out usa
+  alias QA). Sí publica en `complete Steven/Isa/Jhon/Pablo/Miguel ACL matrix`,
+  como primer alias de Jhon.
 - La delegación hegel→tales/heraclito: `tales` y `heraclito` ni siquiera
   existen en `fleet.mjs`.
 
@@ -135,8 +140,9 @@ Pasos del arnés que lo ejercen:
 - `lane priority and bounded fairness on real dispatcher` — lo más cercano a
   «no bloquear»: prioridades y fairness acotada del dispatcher (ráfaga
   interactiva ≤ 3 antes de servir `batch`), pero sobre jobs de consola.
-- `15 aliases and four harness kinds over real WS` — jarvis conecta por WS
-  real como uno de los alias con presencia `online: true/false`.
+- `15 aliases and four harness kinds over real WS` — el título dice 15; `fleet.mjs`
+  declara 12 identidades y el caso itera solo esas. jarvis conecta por WS real
+  como una de ellas, con presencia `online: true/false`.
 
 Efecto esperado en BD: mensajes publicados por jarvis persistidos con
 idempotencia; jobs con `lane`/`priority` y `claimed_at` ordenado por

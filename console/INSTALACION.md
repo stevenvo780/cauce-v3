@@ -22,7 +22,7 @@ En Safari, usar **Compartir → Añadir a pantalla de inicio**, activar **Abrir 
 - Los enlaces internos, incluidos los de conversaciones y contexto, siguen dentro del ámbito. No se interceptan enlaces ni se reescriben retornos de login. Un proveedor de identidad u otro destino externo puede mostrar controles del navegador por seguridad. Volver a Cauce debe recuperar su experiencia de aplicación cuando el navegador lo permita.
 - No se añade ni registra un service worker de producción. No hay caché de mensajes, API autenticada o credenciales añadida por esta función, ni cola de acciones sin conexión. La consola sigue necesitando red y una sesión válida. El service worker de MSW existente sigue limitado a las compilaciones de demostración con `VITE_USE_MOCKS=true`.
 - La instalación desde el menú de Chrome Android no requiere un service worker. La promoción automática depende del navegador y del uso previo; no se promete que aparezca un aviso de instalación.
-- El manifiesto usa el color claro del arranque; la página conserva sus metadatos de tema claro/oscuro y el control de tema existente.
+- El manifiesto usa `background_color` `#0e0f14` y `theme_color` `#4338ca`. El color claro `#f8f8fb` está solo en el `theme-color` de `index.html` para `prefers-color-scheme: light`. La página conserva sus metadatos de tema claro/oscuro y el control de tema existente.
 
 ## Verificación antes de publicar
 
@@ -32,9 +32,9 @@ En el origen HTTPS de prueba, comprobar el manifiesto con las herramientas del n
 
 ## Marca e iconos
 
-`public/icons/cauce.svg` reutiliza el trazo **Activity** de Lucide que ya usa la marca de la consola, con los colores `--mint-dim` y `--on-mint`. Su licencia se conserva en `public/icons/LICENSE-lucide.txt`. Los PNG son representaciones opacas del mismo vector; la versión adaptable tiene fondo hasta los bordes y la marca dentro del círculo central de radio 40 %.
+`public/icons/cauce.svg` usa trazos propios (tres curvas y cuatro círculos) y colores hex fijos (`#6157F2`, `#4338CA`, `#0E7490`, `#FFFFFF`, `#A5F3FC`). No reutiliza el trazo Activity de Lucide ni los tokens `--mint-dim` y `--on-mint`: no están en la consola. `public/icons/LICENSE-lucide.txt` sigue junto al icono; el SVG no contiene ese trazo. Los PNG `any` son representaciones opacas del mismo vector. El adaptable tiene fondo `#4338ca` hasta los bordes y la marca dentro del círculo central de radio 40 %.
 
-Para regenerarlos con herramientas de gráficos ya disponibles, exportar el SVG con Inkscape a PNG de 1024 × 1024 y reducirlo con ImageMagick a 192, 512 y 180 píxeles. Usar RGB de 8 bits (`-alpha off -strip -define png:color-type=2`) y copiar el de 512 como `cauce-maskable-512.png`. No se requiere una dependencia nueva del proyecto.
+Para regenerarlos con herramientas de gráficos ya disponibles, exportar el SVG con Inkscape a PNG de 1024 × 1024 y reducirlo con ImageMagick a 192, 512 y 180 píxeles. Usar RGB de 8 bits (`-alpha off -strip -define png:color-type=2`). `cauce-maskable-512.png` no es una copia de `cauce-512.png`: ese PNG lleva el degradado hasta las esquinas. El adaptable sale de una exportación aparte, con fondo plano `#4338ca` hasta los bordes y la marca dentro del círculo de radio 40 % del ancho. Si no, falla la prueba del círculo seguro en `src/pwa-manifest.test.ts`. No se requiere una dependencia nueva del proyecto.
 
 ## Referencias
 

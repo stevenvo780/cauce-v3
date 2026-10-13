@@ -19,9 +19,9 @@ Ejecutar y validar las suites de integración E2E, dobles de protocolo y pruebas
 
 ## Verificar efecto
 1. Validar que la ejecución de `pnpm test:e2e` complete con cero errores.
-2. Confirmar que `make -C ops test-doubles` valida contratos y fencing sin fallos.
-3. Verificar que `make -C ops smoke-cli` genera evidencia en `artifacts/cli/` acreditando `--version` y `--help` de los runtimes sin abrir prompts interactivos.
-4. Confirmar que los reportes de Testcontainers validan contra el schema y digest de runtime.
+2. Confirmar que `make -C ops test-doubles` termina sin fallos. Corre el contrato en doble (`ops/harness/contract-runner.mjs --mock`, con el caso `double consumer rejected`) y `smoke-adapters`. No retiene fencing: ese caso es `double consumer rejected and fencing retained` en `ops/harness/runner.mjs` y solo corre con `--live`.
+3. Verificar que `make -C ops smoke-cli` genera evidencia en `ops/artifacts/cli/` acreditando `--version` y `--help` de los runtimes sin abrir prompts interactivos.
+4. El paso 1 no valida reportes de Testcontainers. Eso lo hace `make -C ops test-real` (`ops/scripts/run-testcontainers.sh`): ejecuta `pnpm test:e2e` con `CAUCE_REQUIRE_TESTCONTAINERS=1` y `CAUCE_EVIDENCE_CLASS=testcontainers`, y `ops/scripts/validate-testcontainers-evidence.py` comprueba el schema, el digest de runtime y el digest del harness de Testcontainers.
 
 ## Deshacer
 1. Detener y remover contenedores residuales de Testcontainers:
@@ -30,5 +30,5 @@ Ejecutar y validar las suites de integración E2E, dobles de protocolo y pruebas
    ```
 2. Limpiar reportes y artefactos generados:
    ```sh
-   rm -rf artifacts/cli artifacts/testcontainers
+   rm -rf ops/artifacts/cli ops/artifacts/mock ops/artifacts/testcontainers ops/artifacts/real ops/artifacts/restarts
    ```
