@@ -71,15 +71,31 @@ export interface HostProviderAuthOptions {
 }
 export type HostProviderAuthService = ProviderAuthService & { resolve(actor: ProviderAuthActor, operationId: string): Promise<ProviderAuthRequest> };
 
+/** Names what a host policy rejects (field paths, never values), so the operator can fix it from the startup log. */
+class HostPolicyFault extends Error {}
+async function parsedPolicy<T>(filename: string, schema: z.ZodType<T>, name: string): Promise<T> {
+  let raw: unknown;
+  try { raw = await readPrivateJson(filename); } catch { throw new HostPolicyFault(`${name} is unreadable or not private`); }
+  const parsed = schema.safeParse(raw);
+  if (parsed.success) return parsed.data;
+  const fields = parsed.error.issues.map(issue => [...issue.path, ...(issue.code === 'unrecognized_keys' ? [issue.keys.join('|')] : [])].map(String).join('.'));
+  throw new HostPolicyFault(`${name} rejects ${[...new Set(fields)].map(field => field || '(root)').join(', ')}`);
+}
+async function checkedPolicies(options: HostProviderAuthOptions): Promise<z.infer<typeof Policy>> {
+  const auth = await parsedPolicy(options.authPolicyFile, Policy, 'auth policy');
+  const executor = await parsedPolicy(options.hostConfig.command.policyFile, ExecutorPolicy, 'executor policy');
+  if (auth.host_id !== options.hostConfig.host) throw new HostPolicyFault('auth policy rejects host_id');
+  if (executor.host_id !== auth.host_id) throw new HostPolicyFault('executor policy rejects host_id');
+  if (!isDeepStrictEqual(auth.profiles, executor.profiles)) throw new HostPolicyFault('auth policy rejects profiles: they differ from the executor policy');
+  if (!isDeepStrictEqual(auth.profile_templates, executor.profile_templates)) {
+    throw new HostPolicyFault('auth policy rejects profile_templates: they differ from the executor policy');
+  }
+  try { await assertLoginPins({ ...auth.helper.files, [auth.helper.executable]: auth.helper.sha256 }); }
+  catch { throw new HostPolicyFault('auth policy rejects helper: its pinned files differ'); }
+  return auth;
+}
 async function policies(options: HostProviderAuthOptions): Promise<z.infer<typeof Policy>> {
-  try {
-    const auth = Policy.parse(await readPrivateJson(options.authPolicyFile));
-    const executor = ExecutorPolicy.parse(await readPrivateJson(options.hostConfig.command.policyFile));
-    if (auth.host_id !== options.hostConfig.host || executor.host_id !== auth.host_id || !isDeepStrictEqual(auth.profiles, executor.profiles)
-        || !isDeepStrictEqual(auth.profile_templates, executor.profile_templates)) throw unavailable();
-    await assertLoginPins({ ...auth.helper.files, [auth.helper.executable]: auth.helper.sha256 });
-    return auth;
-  } catch { throw unavailable(); }
+  try { return await checkedPolicies(options); } catch { throw unavailable(); }
 }
 function selected(policy: z.infer<typeof Policy>, accountId: string, provider: string, identity: string, runtimeUser: string,
   placement: { runtime_key: unknown; runtime_mode: unknown; container_name: unknown }, harness: string) {
@@ -198,7 +214,10 @@ export { policies as readHostProviderAuthPolicy, loginConfiguration as hostProvi
 
 export async function createHostProviderAuthService(pool: DatabasePool, options: HostProviderAuthOptions): Promise<HostProviderAuthService> {
   LoginPathSchema.parse(options.projectRoot); Identifier.parse(options.hostConfig.host);
-  await policies(options);
+  try { await checkedPolicies(options); } catch (error) {
+    process.stderr.write(`Host provider authentication policy is unusable: ${error instanceof HostPolicyFault ? error.message : 'unexpected failure'}\n`);
+    throw unavailable();
+  }
   const snapshotQuery = await readFile(join(options.projectRoot, 'ops/scripts/fleet-query.sql'), 'utf8');
   const resolve = resolver(options);
   const logins = new Map<string, ProviderAuthLogin>();

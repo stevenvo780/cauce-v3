@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createPool, planFleetHostSlices, publicFleetOperation, type DatabasePool, type FleetOperationRow } from '@cauce/store';
 import { FleetOperationRequestSchema } from '@cauce/protocol';
 import { preparePostgresSuite } from '../../../../packages/store/test/postgres-suite.js';
@@ -42,6 +42,13 @@ async function saveExecutorPolicy(): Promise<void> {
     ...(policy.profile_templates === undefined ? {} : { profile_templates: policy.profile_templates }) }), { mode: 0o600 });
 }
 async function service() { const value = await createHostProviderAuthService(pool, config); services.push(value); return value; }
+async function refusedStartup(): Promise<string[]> {
+  const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+  try {
+    await expect(service()).rejects.toMatchObject({ code: 'HOST_UNAVAILABLE' });
+    return stderr.mock.calls.map(([chunk]) => String(chunk));
+  } finally { stderr.mockRestore(); }
+}
 async function trace(): Promise<string[]> { try { return (await readFile(join(directory, 'effects.log'), 'utf8')).trim().split('\n'); } catch { return []; } }
 beforeEach(async ({ task }) => {
   if (!database) throw new Error('test database absent');
@@ -279,7 +286,7 @@ describe('host provider authentication factory', () => {
   });
   it('rejects divergent auth and executor profiles before any physical effect', async () => {
     const profile = policy.profiles['physical-account']; if (!profile) throw new Error('profile absent'); profile.path += '-substitute'; await savePolicy();
-    await expect(service()).rejects.toMatchObject({ code: 'HOST_UNAVAILABLE' });
+    expect(await refusedStartup()).toEqual(['Host provider authentication policy is unusable: auth policy rejects profiles: they differ from the executor policy\n']);
     expect(await trace()).toEqual([]);
   });
   it('selects a new durable account through the approved template without exposing its path or identity publicly', async () => {
@@ -395,7 +402,7 @@ describe('host provider authentication factory', () => {
   });
   it('refuses a substituted provider home and requires verified adapter stop before opening login', async () => {
     const login = policy.logins.codex; if (!login) throw new Error('login absent'); login.env = { CODEX_HOME: '/synthetic-substitute' }; await savePolicy();
-    await expect(service()).rejects.toMatchObject({ code: 'HOST_UNAVAILABLE' });
+    expect(await refusedStartup()).toEqual(['Host provider authentication policy is unusable: auth policy rejects logins.codex.env.CODEX_HOME\n']);
     expect(await trace()).toEqual([]);
     delete login.env; await savePolicy(); await writeFile(join(directory, 'unverified-stop'), 'synthetic');
     const retry = await service(); const stopped = await retry.start(actor, await retry.resolve(actor, operationId));
