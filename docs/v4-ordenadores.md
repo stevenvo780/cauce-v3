@@ -1,8 +1,17 @@
 # Ordenadores: enrolar y preparar el executor
 
-Un ordenador nuevo pasa por dos pasos, ambos sin el super-admin de plataforma. La consola («Conectar un ordenador») muestra los dos comandos junto a la invitación y, por cada ordenador enrolado, si su ejecutor está listo.
+Un ordenador nuevo pasa por dos pasos, ambos sin el super-admin de plataforma. La consola («Conectar un ordenador») muestra la invitación y, si el gateway firma la preparación, los comandos de enrolar y de preparar; si no firma, solo el de enrolar. Por cada ordenador enrolado indica si su ejecutor está listo.
 
 Requisitos del ordenador: Cauce CLI, Python 3.12 o superior (filtro `data` de `tarfile`), OpenSSL, Node.js 22, systemd de usuario y, para crear agentes, Docker.
+
+### Identificador
+
+El `host_id` es global y usa el mismo patrón que el id de empresa: `^[a-z][a-z0-9_-]{0,63}$` (1–64 caracteres). Quien no es `platform_admin` solo invita dentro de la partición de su empresa activa. El nombre no lleva guion, así que dos particiones no se solapan (`packages/store/src/host-enrollment.ts`, `assertCompanyHostId`).
+
+- La consola muestra el prefijo `<empresa>-` fijo y el campo solo acepta `[a-z0-9_]+`. El identificador enviado cumple `^<empresa>-[a-z0-9_]+$`. El título del campo es «Solo letras minúsculas, números o guiones bajos; el identificador completo será <empresa>-nombre.» El largo del campo es `64` menos el largo del prefijo.
+- Un 403 al invitar se muestra en español: «Este ordenador debe llamarse <empresa>-nombre, con letras minúsculas, números o guiones bajos en el nombre, o tu rol no permite invitar.» La misma frase cubre el nombre mal formado y la falta de rol. La API responde en inglés (`host id must be <empresa>-<name>, with lowercase letters, digits or underscores in the name`) y la consola no enseña ese texto.
+- El super-admin de plataforma no lleva prefijo y puede usar cualquier `host_id` válido.
+- Un id de empresa de 63 o 64 caracteres no deja sitio para el prefijo más un nombre de al menos un carácter dentro del tope de 64. Esa empresa no puede invitar un ordenador.
 
 ## 1. Enrolar (identidad)
 
