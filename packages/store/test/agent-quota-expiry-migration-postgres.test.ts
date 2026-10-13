@@ -56,6 +56,16 @@ describe('agent quota expiry migration', () => {
     expect(await down()).toContain(source.sourceSha256);
   });
 
+  it.each([false, true])('reverses safely without the operations table when the migration is applied: %s', async applied => {
+    const { adminPool: pool } = applied ? await at077() : requireValue(current, 'case database');
+    await pool.query('DROP TABLE agent_quota_operations');
+    await pool.query(await down());
+    expect((await pool.query("SELECT to_regclass('public.agent_quota_operations') AS operations")).rows)
+      .toEqual([{ operations: null }]);
+    expect((await pool.query(`SELECT version FROM schema_migrations WHERE version=$1
+      UNION ALL SELECT version FROM schema_migration_ledger WHERE version=$1`, [version])).rows).toEqual([]);
+  });
+
   it('refuses later migrations and inconsistent atomic ledgers without changing the schema', async () => {
     const { adminPool: pool } = await at077();
     const rollback = await down(); const client = await pool.connect();
