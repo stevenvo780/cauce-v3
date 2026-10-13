@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Install the Hospital trusted runtime and prove the operator container cannot rewrite it.
+"""Install the Hospital trusted runtime and verify its host-enforced read-only boundary.
 
 The runtime holds what the operator executes to produce supervision evidence (praxis-proof.py,
 praxis-qa-review.py) and the optional Muse fallback (muse-cli-backend.py plus its OpenClaw plugin). It lives
@@ -36,6 +36,8 @@ FALLBACK_MARKERS = (b"muse-cli", b"hospital-muse-native")
 MAX_FILE_BYTES = 4 * 1024 * 1024
 MAX_OUTPUT_BYTES = 4 * 1024 * 1024
 DOCKER_TIMEOUT_SECONDS = 60
+INSTANCE_RUNTIME = "/opt/hospital-agent/runtime"
+DEVELOPER_SIDES = {"teseo": "backend", "perseo": "frontend"}
 PROBE = ('for p in "$@"; do if [ -L "$p" ]; then echo "link $p"; elif [ -w "$p" ]; then echo "writable $p"; '
          'elif [ -r "$p" ]; then echo "readonly $p"; else echo "missing $p"; fi; done')
 EXISTENCE = 'for p in "$@"; do if [ -e "$p" ] || [ -L "$p" ]; then echo "present $p"; else echo "absent $p"; fi; done'
@@ -236,6 +238,130 @@ def fallback_env(info: dict) -> bool:
     return any(item == f"{FALLBACK_FLAG}=1" for item in environment if isinstance(item, str))
 
 
+def boundary_errors(info: dict, alias: str) -> list[str]:
+    config, host, mounts = info.get("Config"), info.get("HostConfig"), info.get("Mounts")
+    network_settings, state = info.get("NetworkSettings"), info.get("State")
+    networks = network_settings.get("Networks") if isinstance(network_settings, dict) else None
+    if (not isinstance(config, dict) or not isinstance(host, dict) or not isinstance(mounts, list)
+            or not isinstance(state, dict) or not isinstance(networks, dict)
+            or alias not in ("operador", *DEVELOPER_SIDES)
+            or any(not isinstance(mount, dict) or not isinstance(mount.get("Source"), str)
+                   or not isinstance(mount.get("Destination"), str) for mount in mounts)):
+        return ["boundary_inspect_invalid"]
+    errors = []
+    if config.get("User") != ACTOR:
+        errors.append("container_user_not_actor")
+    if host.get("Privileged") is not False:
+        errors.append("container_privileged")
+    if host.get("ReadonlyRootfs") is not True:
+        errors.append("container_rootfs_writable")
+    scratch = host.get("Tmpfs")
+    if scratch is not None and (not isinstance(scratch, dict) or set(scratch) - {"/tmp"}
+                                or any(not isinstance(value, str) for value in scratch.values())):
+        errors.append("container_tmpfs_not_allowed")
+    security = host.get("SecurityOpt") or []
+    if not isinstance(security, list) or not any(value in ("no-new-privileges", "no-new-privileges:true")
+                                               for value in security):
+        errors.append("container_can_gain_privileges")
+    added, dropped = host.get("CapAdd") or [], host.get("CapDrop") or []
+    if not isinstance(added, list) or added or not isinstance(dropped, list) or "ALL" not in dropped:
+        errors.append("container_capabilities_unsafe")
+    if (host.get("Devices") or host.get("DeviceRequests") or any(host.get(mode) not in (None, "", "private")
+                                                               for mode in ("PidMode", "IpcMode"))
+            or host.get("NetworkMode") == "host"
+            or str(host.get("NetworkMode", "")).startswith("container:")):
+        errors.append("container_host_access")
+    for mount in mounts:
+        source, destination = mount.get("Source"), mount.get("Destination")
+        if mount.get("Type") == "tmpfs" and source == "" and destination == "/tmp" and mount.get("RW") is True:
+            continue
+        if (not isinstance(source, str) or not isinstance(destination, str)
+                or not PurePosixPath(source).is_absolute() or not PurePosixPath(destination).is_absolute()
+                or ".." in PurePosixPath(source).parts or ".." in PurePosixPath(destination).parts):
+            errors.append("boundary_mount_invalid")
+            continue
+        if (source in ("/", "/proc", "/sys", "/dev")
+                or any(within(socket, source) or within(socket, destination)
+                       for socket in ("/var/run/docker.sock", "/run/docker.sock"))):
+            errors.append("container_host_access")
+        if mount.get("RW") is not False and (within(source, RUNTIME_ROOT) or within(RUNTIME_ROOT, source)):
+            errors.append("runtime_source_has_writable_alias")
+        if mount.get("RW") is not False and within(RUNTIME_ROOT, destination):
+            errors.append("runtime_ancestor_mounted_writable")
+    if alias == "operador":
+        errors.extend(mount_errors(info, RUNTIME_ROOT, False))
+        if any(mount["Source"] and (within(mount["Source"], f"{INSTANCE_RUNTIME}/{name}")
+                                   or within(f"{INSTANCE_RUNTIME}/{name}", mount["Source"]))
+               for mount in mounts for name in ("state-muse-operator", "muse-code-bin")):
+            errors.append("operator_has_muse_runtime")
+        if fallback_env(info):
+            errors.append("operator_env_enables_muse_fallback")
+        if set(networks) != {"hospital-agent_operator", "hospital-agent_browser-control"}:
+            errors.append("operator_networks_unexpected")
+    else:
+        side = DEVELOPER_SIDES[alias]
+        allowed = {
+            "/home/node/.muse": (f"{INSTANCE_RUNTIME}/state-muse-{side}", True),
+            "/opt/muse-code": (f"{INSTANCE_RUNTIME}/muse-code-bin", False),
+            "/home/node/clawd": (f"{INSTANCE_RUNTIME}/developer-workspace/{side}", True),
+            "/home/node/clawd/project": (f"{INSTANCE_RUNTIME}/developer-candidates/{side}/crm", True),
+            "/home/node/clawd/praxis": (f"{INSTANCE_RUNTIME}/praxis/{side}", True),
+            "/home/node/clawd/praxis-upstream": (f"{INSTANCE_RUNTIME}/praxis/operator", False),
+            "/run/hospital-access": (f"/run/hospital-access/{alias}", False),
+        }
+        seen = []
+        for mount in mounts:
+            destination = mount.get("Destination")
+            if mount.get("Type") == "tmpfs" and mount.get("Source") == "" and destination == "/tmp" and mount.get("RW") is True:
+                continue
+            seen.append(destination)
+            if (destination not in allowed or mount.get("Type") != "bind"
+                    or (mount.get("Source"), mount.get("RW")) != allowed.get(destination)):
+                errors.append("developer_mount_not_allowed")
+        if len(seen) != len(allowed) or set(seen) != set(allowed):
+            errors.append("developer_mount_layout_unexpected")
+        if set(networks) != {f"hospital-agent_builder-{side}"}:
+            errors.append("developer_networks_unexpected")
+        if info.get("State", {}).get("Running") is not True:
+            errors.append("container_not_running")
+    return sorted(set(errors))
+
+
+def verify_operator_state(info: dict) -> None:
+    state_root = f"{INSTANCE_RUNTIME}/state-operator"
+    mounted = [mount for mount in info["Mounts"] if mount.get("Destination") == "/home/node/.openclaw"]
+    if (len(mounted) != 1 or mounted[0].get("Type") != "bind" or mounted[0].get("Source") != state_root
+            or any(mount.get("Destination") != "/home/node/.openclaw"
+                   and any(within(path, mount["Destination"]) or within(mount["Destination"], path)
+                           for path in (OPENCLAW_CONFIG, OPENCLAW_EXTENSION)) for mount in info["Mounts"])):
+        raise GuardError("operator_state_mount_untrusted")
+    source = Path(state_root)
+    for parent in (*reversed(source.parents), source):
+        if not stat.S_ISDIR(os.lstat(parent).st_mode):
+            raise GuardError("operator_state_path_untrusted")
+    config = read_regular(source / "openclaw.json")
+    try:
+        decoded = json.loads(config)
+        if not isinstance(decoded, dict):
+            raise ValueError
+    except (ValueError, RecursionError) as error:
+        raise GuardError("operator_config_invalid") from error
+    if any(marker.decode() in json.dumps(decoded, ensure_ascii=False) for marker in FALLBACK_MARKERS):
+        raise GuardError("operator_config_references_muse_fallback")
+    extensions = source / "extensions"
+    if extensions.is_symlink() or os.path.lexists(extensions / "hospital-muse-native"):
+        raise GuardError("operator_has_writable_muse_plugin")
+
+
+def verify_boundary(container: str, alias: str, *, binary: str = "docker") -> None:
+    info = inspect(binary, container)
+    errors = boundary_errors(info, alias)
+    if errors:
+        raise GuardError(*errors)
+    if alias == "operador":
+        verify_operator_state(info)
+
+
 def verify(container: str, root: str = RUNTIME_ROOT, fallback: bool = False, *, binary: str = "docker",
            owner: int = 0) -> None:
     digests = check_local(Path(root), owner)
@@ -249,7 +375,7 @@ def verify(container: str, root: str = RUNTIME_ROOT, fallback: bool = False, *, 
     offending = [path for path in probed if access.get(path) != "readonly"]
     errors.extend(f"runtime_not_read_only_for_actor:{path}" for path in offending)
     if not offending:
-        # sha256sum prints `<hex>  <path>`; the container must see the exact bytes installed on the host.
+        # Container commands are diagnostic; only host ownership and Docker's read-only bind enforce trust.
         listing = actor(binary, container, "sha256sum", *probed[2:]).decode("utf-8", "replace").splitlines()
         seen = {path: value for value, separator, path in (line.partition("  ") for line in listing) if separator}
         errors.extend(f"runtime_digest_mismatch:{relative}" for relative in runtime_entries()
@@ -286,6 +412,9 @@ def main(argv: list[str] | None = None) -> int:
     verify_command = commands.add_parser("verify")
     verify_command.add_argument("--container", required=True)
     verify_command.add_argument("--muse-fallback", required=True, choices=("0", "1"))
+    boundary_command = commands.add_parser("verify-boundary")
+    boundary_command.add_argument("--container", required=True)
+    boundary_command.add_argument("--alias", required=True, choices=("operador", *DEVELOPER_SIDES))
     options = parser.parse_args(argv)
     try:
         if os.geteuid() != 0:
@@ -293,6 +422,10 @@ def main(argv: list[str] | None = None) -> int:
         if options.command == "install":
             install(options.source, Path(RUNTIME_ROOT))
             print(f"Runtime confiable instalado en {RUNTIME_ROOT} (root:root, sin escritura para el agente)")
+        elif options.command == "verify-boundary":
+            verify_boundary(options.container, options.alias)
+            print(f"Montajes y configuración de {options.alias} verificados desde el host; "
+                  "la política de egress requiere comprobación independiente")
         else:
             verify(options.container, RUNTIME_ROOT, options.muse_fallback == "1")
             state = "ACTIVADO" if options.muse_fallback == "1" else "desactivado"

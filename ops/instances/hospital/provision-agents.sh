@@ -19,12 +19,11 @@ LOCK_ROOT=/run/lock/hospital-cauce
 RELAY_URL=wss://172.17.0.1:18443/v3/ws
 ALIASES=(operador teseo perseo)
 RUNTIME_GUARD=$REPO/ops/instances/hospital/operator-runtime-guard.py
-# El fallback Muse del operador corre con el uid del operador dentro de su contenedor (PKI mTLS, ~/.openclaw,
-# socket de hospital-ops, CDP): en V4 queda apagado salvo opt-in explícito. Ver docs/v4-migracion-plan.md §4.
+# The isolated fallback bridge is not implemented; provisioning cannot opt into the operator's credentials.
 OPERATOR_MUSE_FALLBACK=${CAUCE_HOSPITAL_OPERATOR_MUSE_FALLBACK:-0}
 case "$OPERATOR_MUSE_FALLBACK" in
   0) ;;
-  1) echo "AVISO: CAUCE_HOSPITAL_OPERATOR_MUSE_FALLBACK=1: Muse corre dentro del contenedor del operador con acceso a su PKI" >&2 ;;
+  1) echo "El puente Muse aislado no está construido; CAUCE_HOSPITAL_OPERATOR_MUSE_FALLBACK debe seguir en 0" >&2; exit 1 ;;
   *) echo "CAUCE_HOSPITAL_OPERATOR_MUSE_FALLBACK debe ser 0 o 1" >&2; exit 1 ;;
 esac
 
@@ -66,6 +65,13 @@ registered=$(docker exec hospital-cauce-postgres-1 psql -XAtq -U cauce_hospital 
   -c "SELECT string_agg(alias || ':' || harness_id || ':' || container_name, ',' ORDER BY alias) FROM agents WHERE tenant_id='Hospital' AND enabled")
 [ "$registered" = 'operador:openclaw:hospital-agent-openclaw-operator-gateway-1,perseo:muse:hospital-agent-muse-frontend-1,teseo:muse:hospital-agent-muse-backend-1' ] \
   || { echo "El registro Hospital todavía no coincide con la topología Muse; abortando antes de cambiar configs" >&2; exit 1; }
+# Validate host metadata before installing files or changing credentials and bundles.
+for entry in \
+  operador:hospital-agent-openclaw-operator-gateway-1 \
+  teseo:hospital-agent-muse-backend-1 \
+  perseo:hospital-agent-muse-frontend-1; do
+  python3 -I "$RUNTIME_GUARD" verify-boundary --alias "${entry%%:*}" --container "${entry#*:}"
+done
 install -o 1000 -g 1000 -m 0755 "$REPO/ops/instances/hospital/muse-pinned-launcher.sh" \
   /opt/hospital-agent/runtime/muse-code-bin/muse
 # Lo que el operador ejecuta para producir evidencia (y el backend Muse) vive root:root fuera del workspace
