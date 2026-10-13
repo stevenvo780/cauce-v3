@@ -11,6 +11,7 @@ import textwrap
 import time
 import unittest
 import uuid
+from unittest.mock import patch
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 REPO = ROOT.parent
@@ -29,14 +30,45 @@ def run(command, *, input_bytes=None, timeout=90, check=True):
 
 
 class QuotaEnvironmentDockerCycleTest(unittest.TestCase):
+    def test_failed_environment_cycle_removes_its_container_volume_and_image(self):
+        original_run = run
+        created = {}
+
+        def fail_after_creation(command, **options):
+            result = original_run(command, **options)
+            if str(EXECUTOR) in command and '--quota' in command:
+                receipt = json.loads(result.stdout)
+                if receipt.get('runtime_verified'):
+                    created['container'] = receipt['container_name']
+                    self.addCleanup(lambda: subprocess.run(
+                        ['docker', 'volume', 'rm', '-f', created['container'] + '-profile'],
+                        capture_output=True, check=False))
+                    self.addCleanup(lambda: subprocess.run(
+                        ['docker', 'rm', '-f', created['container']], capture_output=True, check=False))
+                    raise AssertionError('forced failure after quota environment creation')
+            return result
+
+        case = QuotaEnvironmentDockerCycleTest('test_disposable_environment_cycles_without_a_real_provider_login')
+        result = unittest.TestResult()
+        with patch(__name__ + '.run', side_effect=fail_after_creation):
+            case.run(result)
+        self.assertEqual(result.testsRun, 1)
+        self.assertFalse(result.errors)
+        self.assertEqual(len(result.failures), 1)
+        self.assertIn('forced failure after quota environment creation', result.failures[0][1])
+        container = created['container']
+        self.assertNotEqual(run(['docker', 'inspect', container], check=False).returncode, 0)
+        self.assertNotEqual(run(['docker', 'volume', 'inspect', container + '-profile'], check=False).returncode, 0)
+        self.assertNotEqual(run(['docker', 'image', 'inspect', TAG], check=False).returncode, 0)
+
     def test_disposable_environment_cycles_without_a_real_provider_login(self):
         identity = uuid.uuid4()
         operation = uuid.uuid4()
         container = 'cauce-quota-' + identity.hex
         volume = container + '-profile'
-        self.addCleanup(lambda: subprocess.run(['docker', 'rm', '-f', container], capture_output=True, check=False))
-        self.addCleanup(lambda: subprocess.run(['docker', 'volume', 'rm', '-f', volume], capture_output=True, check=False))
         self.addCleanup(lambda: subprocess.run(['docker', 'image', 'rm', '-f', TAG], capture_output=True, check=False))
+        self.addCleanup(lambda: subprocess.run(['docker', 'volume', 'rm', '-f', volume], capture_output=True, check=False))
+        self.addCleanup(lambda: subprocess.run(['docker', 'rm', '-f', container], capture_output=True, check=False))
         context = pathlib.Path(tempfile.mkdtemp(prefix='cauce-quota-image-', dir='/var/tmp'))
         self.addCleanup(lambda: shutil.rmtree(context, ignore_errors=True))
         (context / 'codex.c').write_text(textwrap.dedent('''\
