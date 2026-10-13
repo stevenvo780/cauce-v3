@@ -13,7 +13,7 @@ Contexto de lo medido: producción aún está en el esquema V3 (la tabla `audit_
 | Mecanismo | Uso real medido | Decisión |
 |---|---|---|
 | `audit_events` (tabla) | 41 659 filas, 57 MB, desde el 22-jul; ~8 MB/mes | **Conservar sin poda por edad** (es candado de idempotencia y fuente de linaje) |
-| Acciones de `audit_events` sin lector ni productor | 3 acciones sin productor localizado en el código | Conservar las filas; no hay nada que podar por edad. Documentar como histórico |
+| Acciones de `audit_events` sin lector ni productor | 2 acciones sin productor localizado en el código | Conservar las filas; no hay nada que podar por edad. Documentar como histórico |
 | JSONL de decisiones | 1 904 líneas en 1,4 MB; último uso 12-oct; **producción no escribe la tabla** | **Fusionar**: PG es la fuente; el JSONL pasa a ser opcional y nunca escribe si PG falla |
 | Alertas de Prometheus (46 reglas) | 12 reglas distintas dispararon en 15 días; 1 firing ahora; **nadie las lee** | **Conservar reglas; cablear un único consumidor** (`cauce-alertas-al-bus.py` o equivalente) |
 | `cauce-v3-medico-monitor` | Timer **disabled** desde el 8-sep (34 días sin correr) | **Podar** (retirar tras trasladar a V4 lo que aún se necesite) |
@@ -39,8 +39,7 @@ Contexto de lo medido: producción aún está en el esquema V3 (la tabla `audit_
 ### Acciones en 90 días: conteo, último uso, productor y lector
 
 «Lector lógico» = una consulta decide algo con la fila. «Solo listado» = únicamente la vista de
-auditoría (`listAudit`, `packages/store/src/repository/observability.ts:78`, expuesta en
-`services/gateway/src/routes/console.ts:595` y mostrada en `console/src/features/audit/AuditPanel.tsx`).
+auditoría (`ObservabilityRepository.listAudit()` en `packages/store/src/repository/observability.ts`, expuesta por `services/gateway/src/routes/console.ts` y mostrada en `console/src/features/audit/AuditPanel.tsx`).
 
 | Acción | Filas | Último | Productor | Lector lógico |
 |---|---:|---|---|---|
@@ -104,8 +103,8 @@ cadena (§9 P1).
   (origen `jev` 1 903, `prefiltro` 1). **Producción corre una imagen anterior que solo escribe el JSONL**:
   `audit_events` no contiene ninguna fila `decision.resolved` ni `decision.failed` (no aparecen entre las
   acciones de los últimos 90 días). La tabla PG de decisiones es, por tanto, código nuevo sin uso real aún.
-- **Consumidores**: ninguno en el repositorio lee el JSONL (solo `tail` manual en
-  `services/decisiones/README.md:316`). La única lectura de la versión PG es una prueba
+- **Consumidores**: ninguno en el repositorio lee el JSONL; `services/decisiones/README.md` ya no documenta un `tail` manual.
+  La única lectura de la versión PG es una prueba
   (`services/decisiones/test/company-isolation-postgres.test.ts:146`).
 - **Problema**: en el código actual el orden es PG primero y JSONL después; si `PostgresAudit.write`
   lanza, el JSONL no se escribe. Eso es lo deseado como candado, pero hoy es una doble escritura sin que
@@ -193,7 +192,7 @@ Activos: `cred-guard.timer` (30 min, último 16:21 hora local, `rc=0 problemas=0
 
 ## 5. `cauce-v3-medico-monitor`
 
-- **Productores**: script `ops/guardias/cauce-v3-medico-monitor` (≈220 kB) más
+- **Productores**: script `ops/guardias/cauce-v3-medico-monitor` (≈117 kB) más
   `…-sondas-lib.py` y `…-reparacion-lib.py`; reutiliza `credential_health.py`
   (`cauce-v3-medico-monitor:49`).
 - **Último uso medido**: estado y bitácora sin modificar desde el 8-sep (333 MB en el directorio de
@@ -224,7 +223,7 @@ Activos: `cred-guard.timer` (30 min, último 16:21 hora local, `rc=0 problemas=0
 | `cred-guard.py` (134 líneas) | VPS como `cauce-cred-guard` (sistema, 30 min) y kratos como `cred-guard.timer` (usuario, 30 min) | tabla por credencial y `problemas=N compartidas=M`; sale con 1 si hay muertas | solo humanos que lean el journal o `cred-guard.txt`; nadie en código |
 | `cred-guard.sh` (10 líneas) | kratos (envuelve al anterior) | `cred-guard.txt` y línea en `cred-guard.log` (151 kB, sin rotar); **fuerza `exit 0`** | nadie |
 | `cauce-cred-guard-kratos.py` (84 líneas) | hoy lo ejecuta el host server2 (el JSON remoto del VPS se renueva cada 15 min con `host: server2`); el timer de kratos está `disabled` | JSON de huellas y vencimientos en el VPS (`/var/lib/cauce-v3/cred-guard-kratos.json`) | `cred-guard.py` del VPS (lo lee como fila remota; STALE a los 60 min) |
-| `cauce-credenciales` (165 líneas) + `ops/cli/cauce-credenciales.lib.sh` (699 líneas) | manual desde la CLI `cauce` (login, aprovisionar, retirar, renovar) | tabla y acciones de renovación | `ops/cli/cauce:745` carga la `lib`; el script suelto `ops/guardias/cauce-credenciales` solo lo ejecuta un humano |
+| `cauce-credenciales` (165 líneas) + `ops/cli/cauce-credenciales.lib.sh` (699 líneas) | manual desde la CLI `cauce` (login, aprovisionar, retirar, renovar) | tabla y acciones de renovación | `ops/cli/cauce` carga la `lib` al iniciar; el script suelto `ops/guardias/cauce-credenciales` solo lo ejecuta un humano |
 
 ### Problemas detectados
 
@@ -286,15 +285,15 @@ Registro de ejecución; las secciones 1–10 quedan como se midieron.
 
 | Decisión | Estado |
 |---|---|
-| §2 fusionar JSONL de decisiones en `audit_events` | **Aplicada** (`35c9d73f`): `JsonlAudit` borrada; la metadata PG lleva ahora el registro completo (preguntas, redacciones, solicitudes a Jev, usage, certeza, `caer_a_llm`). Queda para el carril de despliegue retirar `CAUCE_DECISIONES_AUDIT_FILE` y el volumen `decisiones_auditoria` de `deploy/decisiones/compose.yaml` (el servicio ya ignora esa variable). Respecto al paso 4 de la sección 10: si PG falla, no existe segunda escritura; el fallo de auditoría se propaga como ya hacía la escritura durable |
+| §2 fusionar JSONL de decisiones en `audit_events` | **Aplicada** (`35c9d73f`): `JsonlAudit` borrada; la metadata PG lleva ahora el registro completo (preguntas, redacciones, solicitudes a Jev, usage, certeza, `caer_a_llm`). El archivo `deploy/decisiones/compose.yaml` ya no declara `CAUCE_DECISIONES_AUDIT_FILE` ni el volumen `decisiones_auditoria`. Respecto al paso 4 de la sección 10: si PG falla, no existe segunda escritura; el fallo de auditoría se propaga como ya hacía la escritura durable |
 | §3 podar revividor, panel-cadenas y mcp-expansion | **Movida**: no hay ningún fichero de esas tres unidades en el repo (verificado); la baja es solo en los hosts, fuera de esta poda |
 | §3 cableado OpenTelemetry retirar o reactivar | **Movida**: vive en `ops/observability/` y `deploy/compose.yaml`, fuera de los archivos de esta tarea; sigue pendiente la decisión del dueño |
 | §3 tablas `_respaldo_` | **Movida**: son objetos de la base de datos productiva; ninguna tarea de repo las toca |
 | §3 filas emitidas por terceros y tokens personales | Sin cambios (recomendaciones sin poda asociada) |
 | §4 consumidor de alertas único | **Aplicada en parte**: `cauce-alertas-al-bus.py` sigue siendo el único consumidor de Prometheus. Las guardias de credenciales no tienen aviso automático al bus: se retiró el receptor `OnFailure` que no funcionaba entre gestores de usuario y sistema. El fallback es consultar el journal de cada unidad; el resto de fallos de units sigue sin consumidor, como ya decía la sección |
 | §4 conservar `audit_events` y crear alertas sobre `deny` | Sin cambios (decisión de conservar; la alerta sigue pendiente de dueño/regla) |
-| §7 podar `cred-guard.sh` y el suelto `cauce-credenciales`; fusionar sondas por host | **Aplicada** (`094c793a`): un solo `cred-guard.py` con modos agregador/`--sonda-remota`, estado y log propios vía `CAUCE_CRED_GUARD_ESTADO`, código de salida real (fuera el `SuccessExitStatus=1`). El aviso `OnFailure` al bus se retiró después: los fallos quedan en journal, sin aviso automático. La clasificación (`credential_health.py`) no se tocó, así que la pregunta abierta sobre la credencial muerta sigue para el dueño sin cambios de comportamiento. Quedan las entradas obsoletas de los tres ficheros borrados en `scripts/calidad-base.json` (inertes; las retira el integrador con `--update`) |
-| §7/§10 contradicciones del README de guardias | **Aplicada** en lo que toca a credenciales (`094c793a`): tabla, párrafo de dos piezas e instalación reconciliados. `guardia-nocturna` no tiene ningún fichero ni mención en el repo (verificado): su contradicción horaria vive solo en el host |
+| §7 podar `cred-guard.sh` y el suelto `cauce-credenciales`; fusionar sondas por host | **Aplicada** (`094c793a`): un solo `cred-guard.py` con modos agregador/`--sonda-remota`, estado y log propios vía `CAUCE_CRED_GUARD_ESTADO`, código de salida real (fuera el `SuccessExitStatus=1`). El aviso `OnFailure` al bus se retiró después: los fallos quedan en journal, sin aviso automático. La clasificación (`credential_health.py`) no se tocó, así que la pregunta abierta sobre la credencial muerta sigue para el dueño sin cambios de comportamiento. No quedan entradas para esos tres ficheros en `scripts/calidad-base.json`; solo aparecen `cred-guard.py` y `credential_health.py`, que existen. |
+| §7/§10 contradicciones del README de guardias | **Aplicada** en lo que toca a credenciales (`094c793a`): tabla, párrafo de dos piezas e instalación reconciliados. `guardia-nocturna` no tiene fichero propio; el timer `ops/guardias/systemd/cauce-v3-medico-monitor.timer` la menciona en un comentario histórico. La contradicción horaria detallada vive en el host |
 | §9 lector V3 de contextos (fuera del inventario) | **Aplicada en consola** (`3127a7d3`): retirados inspección V3 y aplicar-desde-Git de la consola; queda la inspección del manual nativo sobre el layout del broker. Las rutas del gateway (`services/gateway/src/console/context-repository/`) quedan sin consumidor de consola para inspect/preview/apply y su retirada es del carril del gateway |
 
 Verificación de la ola: `rg` sin referencias vivas a `cred-guard.sh`, `cauce-cred-guard-kratos.py`,

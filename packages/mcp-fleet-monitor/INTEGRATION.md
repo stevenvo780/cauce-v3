@@ -190,14 +190,14 @@ Claude: Show the delegation chain for trace abc123.
       "hop": 0,
       "source_alias": "<alias-a>",
       "target_alias": "<alias-b>",
-      "status": "delegated",
+      "status": "materialized",
       "created_at": "2026-07-25T13:00:00Z"
     },
     {
       "hop": 1,
       "source_alias": "<alias-b>",
       "target_alias": "<alias-c>",
-      "status": "delegated",
+      "status": "materialized",
       "created_at": "2026-07-25T13:05:00Z"
     }
   ],
@@ -207,12 +207,12 @@ Claude: Show the delegation chain for trace abc123.
 
 ### 4. dead_letters
 
-Get dead messages grouped by failure cause.
+Get rejected agent outputs grouped by rejection cause.
 
 **Example:**
 
 ```
-Claude: What's causing delivery failures?
+Claude: What's causing rejected agent outputs?
 @fleet-monitor dead_letters()
 ```
 
@@ -226,7 +226,7 @@ Claude: What's causing delivery failures?
       "count": 5,
       "recent_examples": [
         {
-          "delivery_id": "del-123",
+          "delivery_id": "unavailable",
           "alias": "<alias>",
           "created_at": "2026-07-25T12:00:00Z"
         }
@@ -278,7 +278,7 @@ Claude: I want to debug delivery del-12345. Show me what happened.
 
 1. @fleet-monitor deliveries() [to find the delivery]
 2. @fleet-monitor chain(trace_id="...") [to see the chain]
-3. @fleet-monitor dead_letters() [to see error cause]
+3. @fleet-monitor dead_letters() [only for rejected agent outputs with a rejection_code]
 ```
 
 ### Monitoring Specific Agent
@@ -294,7 +294,7 @@ Claude: Monitor <alias> in real-time. Show its status and deliveries.
 
 ### Server won't start
 
-**Error**: `DATABASE_URL not set`
+**Error**: `DATABASE_URL environment variable is required`
 
 **Solution**: Ensure DATABASE_URL is exported before starting:
 ```bash
@@ -324,11 +324,11 @@ psql $DATABASE_URL
 
 **Solution**: Restart Claude Code or refresh the web page
 
-### Tools return empty `available: false`
+### `chain()` returns `available: false`
 
-**Cause**: Query failed or database unavailable
+**Cause**: `chain()` was called without `trace_id` or `root_message_id`.
 
-**Solution**: Check server stderr for error messages and database connectivity
+**Solution**: Provide one of those identifiers. Query failures are returned as MCP tool errors and appear on server stderr.
 
 ## Security Considerations
 
@@ -336,12 +336,12 @@ psql $DATABASE_URL
 - **Tenant-scoped**: Queries are filtered by CAUCE_TENANT_ID. Cross-tenant access is prevented.
 - **No secrets**: Auth sessions, credentials, and message bodies are omitted.
 - **SQL injection safe**: All queries use parameterized statements.
-- **Explicit errors**: If data cannot be fetched, tools return `available: false` rather than null values.
+- **Explicit errors**: Query failures return MCP tool errors; only `chain()` without `trace_id` or `root_message_id` returns `available: false`.
 
 ## Performance
 
 - Average query time: 50-200ms (depending on data size)
-- Max result sets: 1000 rows (configurable per tool)
+- Result limits: `deliveries` accepts `limit` (default 100, maximum 1,000); `chain` is capped at 500 rows; `dead_letters` returns up to 3 examples per cause.
 - Connection pool: 20 concurrent connections (default)
 - Graceful shutdown: All connections closed on SIGINT/SIGTERM
 
@@ -359,7 +359,9 @@ postgresql://cauce@localhost/cauce
 postgresql://cauce:password@db.example.com:5432/cauce
 
 # SSL required (production)
-postgresql://cauce:password@db.example.com:5432/cauce?sslmode=verify-full
+NODE_ENV=production
+PGSSLROOTCERT=/absolute/path/to/root-ca.pem
+DATABASE_URL=postgresql://cauce:password@db.example.com:5432/cauce?sslmode=verify-full
 ```
 
 ### Pool Configuration
@@ -378,7 +380,7 @@ pool = createPool(ensuredDatabaseUrl, {
 To change max result sizes, modify `src/fleet-read-model.ts`:
 
 ```typescript
-const bounded = Math.min(Math.max(Number.isInteger(limit) ? limit : 100, 1), 10000);
+const bounded = Math.min(Math.max(Number.isInteger(limit) ? limit : 100, 1), 1000);
 ```
 
 ## Support

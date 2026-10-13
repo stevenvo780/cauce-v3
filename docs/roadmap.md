@@ -20,13 +20,12 @@ lo que no se comprobó se dice, no se supone. Esto no afirma el estado de ningun
 acredita con las sondas y los censos de [operacion.md](operacion.md), nunca leyéndolo de este `.md`.
 
 - **Rollout del launcher PTY con siega** — *sigue en pie, sólo el despliegue.* El código ya está en el
-  árbol: `ops/pty-agent/cauce-pty-launcher.sh:709` define `reap_orphan_agents` y `:743` la invoca
+  árbol: `ops/pty-agent/cauce-pty-launcher.sh` define `reap_orphan_agents()` y `start_agent()` la invoca
   (commit `0a08de4`; líneas actualizadas 2026-09-27). Lo que falta es llevarlo a los alias; **no comprobé qué release corre hoy la
   flota**, eso es estado de kratos.
-- **Gateway acepta agentes `enabled=false`** — **CERRADO** por `dcdf7a9`. `routes/core.ts:365` y `:367` y
-  `routes/core/http.ts:46` pasan `requireEnabledAgent: true` al `acquireLease`, y
-  `packages/store/src/repository/deliveries/claims.ts:59-61` lo aplica dentro de la transacción del
-  lease (`StoreError('forbidden', 'delivery consumer is disabled')`; líneas actualizadas 2026-09-27).
+- **Gateway acepta agentes `enabled=false`** — **CERRADO** por `dcdf7a9`. `services/gateway/src/routes/core.ts`
+  y `services/gateway/src/routes/core/http.ts` pasan `requireEnabledAgent: true` a `acquireLease()`; `packages/store/src/repository/deliveries/claims.ts`
+  rechaza al agente deshabilitado dentro de la transacción del lease (`StoreError('forbidden', 'delivery consumer is disabled')`).
 - **Contextos nativos por harness** — el flag sigue OFF; de los seis puntos anotados, cuatro
   cerrados y dos sin verificar:
   1. **CERRADO en esta ronda.** El tope dejó de ser una constante de OpenClaw incrustada en el
@@ -51,19 +50,18 @@ acredita con las sondas y los censos de [operacion.md](operacion.md), nunca ley�
      es lo que esta tabla cierra.
   2. **No verificado.** El precipicio de expectativa vencida. El fichero cambió por `6ea006e`,
      `c483075` y `c09c67c`, y hoy tiene un camino `revalidate()` y escritura compare-and-swap
-     (`escribirEnDiscoRealSiCoincide`, `native-profile-context.ts:109`) que no existían cuando se
+     (`packages/adapter-sdk/src/context/siembra-del-perfil.ts::escribirEnDiscoRealSiCoincide()`, llamada desde `native-profile-context.ts`) que no existían cuando se
      anotó. **No ejecuté el escenario de dos entregas seguidas** que produce el precipicio, así que
      no lo doy por cerrado ni por abierto.
-  3. **CERRADO** por `a3a157a`. La allowlist del supervisor sí conoce la clave:
-     `ops/scripts/container-adapter-supervisor.sh:161` la valida (`^[01]$`) y `:885` la propaga al
-     entorno del alias (líneas actualizadas 2026-09-27).
+  3. **CERRADO** por `a3a157a`. La allowlist del supervisor conoce la clave: `ops/scripts/container-adapter-supervisor.sh`
+     valida `CAUCE_NATIVE_PROFILE_CONTEXT` como `0` o `1` y la propaga al entorno del alias si está declarada.
   4. **CERRADO.** El supervisor deriva ahora **las dos** generaciones, no una:
-     `ops/scripts/container-adapter-supervisor.sh:478-483` calcula `container_generation` con el
+     `ops/scripts/container-adapter-supervisor.sh` calcula `container_generation` con el
      sha256 **entero** (64 hex) de `id\0started\0restart\0init_starttime`, y calcula
      `container_presence_generation` = sha256 de `id|started|restart` truncado a 32 hex, que es
-     exactamente la fórmula del launcher (`ops/pty-agent/cauce-pty-launcher.sh:154-159`). El
+     exactamente la fórmula del launcher (`ops/pty-agent/cauce-pty-launcher.sh`). El
      consumidor acepta cualquiera de las dos:
-     `packages/adapter-sdk/src/context/native-profile-context.ts:485-487` compara el contrato contra
+     `packages/adapter-sdk/src/context/native-profile-context.ts` compara el contrato contra
      `runtimeGeneration` **o** `presenceGeneration`. Cada una responde a una pregunta distinta y por
      eso son dos: la larga incluye el arranque del PID 1 y detecta que el **proceso de dentro** se
      reinició aunque el contenedor no (invalida contextos nativos ya sembrados); la corta identifica
@@ -90,7 +88,7 @@ acredita con las sondas y los censos de [operacion.md](operacion.md), nunca ley�
 - **Montaje rw de `ws-zeus` sobre el árbol de producción** — **no verificado**: decisión del dueño
   sobre un montaje del host.
 - **`cauce <alias> on` sin `XDG_RUNTIME_DIR` bajo `su stev`** — **CERRADO** por `5f80ed1`.
-  `ops/cli/cauce:452-453` (`systemctl_user_o_avisa`) deriva `XDG_RUNTIME_DIR` de `/run/user/$(id -u)`
+  `ops/cli/cauce` (`systemctl_user_o_avisa()`) deriva `XDG_RUNTIME_DIR` de `/run/user/$(id -u)`
   y `DBUS_SESSION_BUS_ADDRESS` del socket, y si el `systemctl --user` falla lo imprime con la pista
   (`systemctl --user -M stev@`) y devuelve 1. Ya no hay `|| true` que se lo trague.
 - **Las 2 entregas atascadas de hegel** — **no verificado**: estado de la base de producción.
@@ -104,12 +102,20 @@ acredita con las sondas y los censos de [operacion.md](operacion.md), nunca ley�
   control negativo: una reclamación sana no dispara la alerta), y la consola distingue ese caso de
   `idle` en vez de leerlo como «Libre».
 
-- **Dos generaciones, no una.** El supervisor deriva `container_generation` con el sha256 **entero** (64 hex) de `id\0started\0restart\0init_starttime` (`ops/scripts/container-adapter-supervisor.sh:478-480`) y `container_presence_generation` = sha256 de `id|started|restart` truncado a 32 hex (`:481-483`), que es exactamente la fórmula del launcher (`ops/pty-agent/cauce-pty-launcher.sh:154`). El consumidor acepta cualquiera de las dos (`packages/adapter-sdk/src/context/native-profile-context.ts:485-487`). Cada una responde a una pregunta distinta y por eso son dos: la larga incluye el arranque del PID 1 y detecta que el **proceso de dentro** se reinició aunque el contenedor no (invalida contextos nativos ya sembrados); la corta identifica la **encarnación del contenedor** que el launcher nombra en el ticket firmado, así que un `docker restart` entre emisión y uso caduca los tickets vivos. Fundirlas en una sola vuelve a abrir uno de los dos agujeros.
-- **La allowlist del supervisor conoce la clave**: la valida (`^[01]$`, `:161`), sólo la propaga al entorno del alias si está declarada (`:885`), la rechaza junto a `SHARED_SESSION` y exige arnés claude u openclaw (`:258-262`).
-
+- **Dos generaciones, no una.** El supervisor (`ops/scripts/container-adapter-supervisor.sh`) deriva `container_generation` con el sha256 completo
+  (64 hex) de `id`, `started`, `restart` e `init_starttime` separados por NUL, y `container_presence_generation`
+  con el sha256 de `id|started|restart` truncado a 32 hex. El launcher (`ops/pty-agent/cauce-pty-launcher.sh`) deriva la generación corta;
+  `NativeProfileContext` (`packages/adapter-sdk/src/context/native-profile-context.ts`) acepta cualquiera de las dos. La larga incluye el arranque del PID 1
+  y detecta que el **proceso de dentro** se reinició aunque el contenedor no (invalida contextos nativos ya sembrados); la corta identifica la **encarnación del
+  contenedor** que el launcher nombra en el ticket firmado, así que un `docker restart` entre emisión y uso caduca los tickets vivos. Fundirlas en una
+  sola vuelve a reabrir uno de los dos agujeros.
+- **La allowlist del supervisor conoce la clave**: `ops/scripts/container-adapter-supervisor.sh` acepta solo `0` o `1` y la propaga si está declarada.
+  El adaptador compartido (`packages/adapter-sdk/src/harnesses/shared/adapter.ts`) registra el motivo y fuerza la clave a OFF en aliases con sesión compartida;
+  no aborta el proceso. El constructor de `NativeProfileContext` (`packages/adapter-sdk/src/context/native-profile-context.ts`) solo admite
+  Claude y OpenClaw y requiere un proceso nuevo; el adaptador apaga la función antes de construirlo para una sesión compartida.
 **Lo que falta.**
 
-- **El precipicio de expectativa vencida sigue sin prueba.** El fichero tiene ya un camino `revalidate()` (`packages/adapter-sdk/src/context/native-profile-context.ts:228`) y escritura compare-and-swap (`escribirEnDiscoRealSiCoincide`, `:194`), pero el escenario de **dos entregas seguidas** contra una expectativa vencida no está cubierto por un test que lo fije.
+- **El precipicio de expectativa vencida sigue sin prueba.** El fichero tiene ya el método `NativeProfileContext.revalidate()` (`packages/adapter-sdk/src/context/native-profile-context.ts`) y escritura compare-and-swap (`packages/adapter-sdk/src/context/siembra-del-perfil.ts::escribirEnDiscoRealSiCoincide()`, llamada desde `native-profile-context.ts`), pero el escenario de **dos entregas seguidas** contra una expectativa vencida no está cubierto por un test que lo fije.
 - **El orden de encendido es parte del diseño, no una recomendación.** Abrir el perfil del alias en la consola registra la expectativa; encender `CAUCE_NATIVE_PROFILE_CONTEXT=1` en ese canario va DESPUÉS, jamás antes.
 - **Rollout por canario, no por flota.** El tope por fichero de openclaw vetaba la siembra entera de un alias cuando un fichero no gestionado de su workspace se medía igual; está arreglado en el protocolo (`comprobarTopes` ignora los ficheros que no se escriben) con test. Falta el procedimiento de convergencia: pin del bundle en el canario, verificación, y sólo entonces el resto.
 
@@ -147,7 +153,7 @@ Estado de cada punto de [doctrina-del-dueno.md](doctrina-del-dueno.md) §La visi
 | UI clara multi-socio | **En curso** — consola operativa (`/live`, `/observability`, `/messages`); pendiente el mega-refactor (§4) |
 | Logs de auditoría de comportamiento | **Pendiente** — guardia de contaminación existe (`contaminacion-de-contexto.ts` + endpoint audit); detectar patrones entre instancias sigue pendiente |
 
-**CLI instalable.** Hoy `ops/cli/cauce` (~1.442 líneas) es una única fuente rescatada que asume el host del stack: deriva rutas locales, habla con systemd por `systemctl --user` y con Docker por el socket local, y corre solo desde esta VPS. Falta empaquetarlo como aplicación instalable en cualquier ordenador sin depender de la torre, con autenticación hacia TUIs/máquinas remotas y consumo de cuotas en tiempo real integrado (reemplaza a `quota-collector`). Centro de mando sigue siendo siempre esta VPS; multi-servidor ya tiene precedente (kant).
+**CLI instalable.** Hoy `ops/cli/cauce` (824 líneas) es una única fuente rescatada que asume el host del stack: deriva rutas locales, habla con systemd por `systemctl --user` y con Docker por el socket local, y corre solo desde esta VPS. Falta empaquetarlo como aplicación instalable en cualquier ordenador sin depender de la torre, con autenticación hacia TUIs/máquinas remotas y consumo de cuotas en tiempo real integrado (reemplaza a `quota-collector`). Centro de mando sigue siendo siempre esta VPS; multi-servidor ya tiene precedente (kant).
 
 **Notificaciones recurrentes por agente.** Sustituye a la idea descartada de Alertmanager, que salió del stack entero. Cualquier agente puede tener mensajes tipo cron encolados a su canal por el bus; generaliza el patrón ya probado del revividor de colas, con su salvaguarda de idempotencia. Primer uso, ya versionado en el árbol: `ops/guardias/cauce-alertas-al-bus.py` consulta `/api/v1/alerts` de Prometheus y publica la entrega al bus, con su par systemd `ops/guardias/systemd/cauce-alertas-al-bus.{service,timer}` y cadencia de 5 min (`OnCalendar=*-*-* *:0/5:00 UTC`). Alternativas evaluadas y descartadas: receptor webhook de Alertmanager; registrar `mcp-fleet-monitor` en el arnés de un alias operador para que investigue con tools. **Lo que falta es la generalización**: hoy la ruta es ese guardia dedicado a alertas, no la capacidad de encolar mensajes tipo cron al canal de cualquier agente.
 
@@ -157,7 +163,7 @@ Estado de cada punto de [doctrina-del-dueno.md](doctrina-del-dueno.md) §La visi
 
 - **Molienda estricta por zonas — las cuatro zonas rojas ya están promovidas al gate.** `packages/protocol/src` (20 problemas medidos entonces), `packages/mcp-fleet-monitor/src` (15), `packages/store/src` (136) y `services/gateway/src` (346) cierran hoy en `0 problems` y están dentro de `lint:estricto:zonas` en `package.json`, que además cubre `packages/protocol/test`, `packages/store/test`, `packages/adapter-sdk/src` y `packages/adapter-sdk/test` sobre las zonas que ya tenía (`console`, `services/{terminal-relay,telegram-bridge,dispatcher}`, `tests`). Como `lint` encadena `lint:estricto:zonas`, cualquier regresión en ellas es roja de gate, no deuda anotada. Lo que queda pendiente es fundir la enumeración: `lint:estricto` (árbol entero, sin `--max-warnings 0`) y `lint:estricto:zonas` conviven, y mientras la lista sea manual una zona nueva entra al repo sin gate hasta que alguien la añada.
 - **Traducción de comentarios a inglés**: en curso por zonas (tracking ROTO 2026-09-27: `ordenes/opencode-minimax*.md` borrados de refilón por `79967f29`, no restaurados; `ordenes/` = 1 fichero). Cerradas: `adapter-sdk/src`, `dispatcher`, `deploy`, `scripts`, `pty-agent`, las 18 herramientas de `ops/guardias/`. Pendientes: barrido de restos (~51 comentarios en español medidos en la última ronda) en las zonas ya tocadas; tests de consola/relay/bridge; `packages/adapter-sdk/test/**` (zona exclusiva de minimax-1, en curso con la partición del punto siguiente). Regla que dejó esta deuda: una molienda masiva de comentarios **debe regenerarse sobre `main` fresco** y, tras integrarla, hay que auditar los marcadores de los arreglos recientes antes de desplegar — una ola generada sobre copias viejas ya revirtió una condición de negocio y sólo la cazó el test del contrato.
-- **Particiones >800 líneas**: el trinquete de calidad (`scripts/calidad.mjs`, umbral 800) mantiene una lista de excepciones congeladas en `scripts/calidad-base.json` que solo puede bajar — hoy 19 ficheros en `lineas`, 11 en `fechas`, 1.130 entradas acotadas en `comentarios` (SUBIÓ desde 950: revisar trinquete, 2026-09-27) (recontar con `node -e "const b=require('./scripts/calidad-base.json');console.log(Object.keys(b.lineas).length,Object.keys(b.fechas).length,Object.keys(b.comentarios).length)"` antes de citar cualquier número: la lista baja sola con cada partición). `shared-session.test.ts` (5.444 líneas, el que fue el mayor del repo) **ya está partido** en 18 ficheros por `fd10fea`; verificado el 30-08-2026. `ops/pty-agent/cauce_pty_agent.py` (2.659 líneas, y que el roadmap citaba mal como `ops/pty_agent/…`) **ya no existe**: hoy es el paquete `ops/pty-agent/cauce_pty_agent/` (13 módulos `.py`, máx 785) y ha salido de la lista congelada. Quedan, fuera de la lista o como candidatos futuros: `packages/store/test/agent-output-postgres.test.ts` (2.700), `services/gateway/src/terminal.plugin.test.ts` (2.034), `ops/tests/container-supervisor.test.mjs` (1.703), `ops/container-runtime/cauce-container-runtime.py` (1.648), y varios más entre 800-1.400 líneas (cifras 2026-09-27).
+- **Particiones >800 líneas**: el trinquete de calidad (`scripts/calidad.mjs`, umbral 800) mantiene una lista de excepciones congeladas en `scripts/calidad-base.json` que solo puede bajar — hoy 19 ficheros en `lineas`, 11 en `fechas`, 1.127 entradas acotadas en `comentarios` (SUBIÓ desde 950: revisar trinquete, 2026-09-27) (recontar con `node -e "const b=require('./scripts/calidad-base.json');console.log(Object.keys(b.lineas).length,Object.keys(b.fechas).length,Object.keys(b.comentarios).length)"` antes de citar cualquier número: la lista baja sola con cada partición). `shared-session.test.ts` (5.444 líneas, el que fue el mayor del repo) **ya está partido** en 18 ficheros por `fd10fea`; verificado el 30-08-2026. `ops/pty-agent/cauce_pty_agent.py` (2.659 líneas, y que el roadmap citaba mal como `ops/pty_agent/…`) **ya no existe**: hoy es el paquete `ops/pty-agent/cauce_pty_agent/` (13 módulos `.py`, máx 785) y ha salido de la lista congelada. Quedan, fuera de la lista o como candidatos futuros: `packages/store/test/agent-output-postgres.test.ts` (2.700), `services/gateway/src/terminal.plugin.test.ts` (2.034), `ops/tests/container-supervisor.test.mjs` (1.703), `ops/container-runtime/cauce-container-runtime.py` (1.648), y varios más entre 800-1.400 líneas (cifras 2026-09-27).
 - **Cirugía de dominios** (planificada, sin ronda asignada): mover `flota/` a su propio dominio, subir consola a la raíz del repo, repartir `ops/` — con checklists derivados de `docs/grafo.md` para no romper consumidores.
 - **Mega-refactor de consola**: deudas acumuladas de la revisión de vistas — deep-link en `/terminal` que desbloquearía borrar ~180 LOC más y los casos especiales del router; regenerar `docs/grafo.md`; resolver los 74 asserts-sobre-texto de los tests de consola. Incluye adoptar el patrón "un agente con Chrome revisa legibilidad" en vez de sondas CDP quemadas en código (las 6 sondas de contraste/tipografía/CSP se conservan para ese uso).
 
@@ -165,9 +171,9 @@ Estado de cada punto de [doctrina-del-dueno.md](doctrina-del-dueno.md) §La visi
 
 **Verificada ítem por ítem contra el árbol el 30-08-2026 y re-verificada el 2026-09-27**, con el mismo criterio del §1.
 
-- **CERRADO** por `eeac106`, y la paridad se mantiene hoy: los dos generadores purgan units huérfanas
-  — `ops/scripts/generate-container-units.py:273-274` retira `cauce-v3-container-*.service` y su
-  `.env.example`, `ops/scripts/generate-units.py:108-109` retira `cauce-v3-alias-*.service`. Sigue
+- **CERRADO** por `eeac106`, y la paridad se mantiene hoy: los dos generadores purgan units huérfanas.
+  `ops/scripts/generate-container-units.py` retira los `cauce-v3-container-*.service` obsoletos y sus `.env.example`;
+  `ops/scripts/generate-units.py` hace lo mismo con los `cauce-v3-alias-*.service`. Sigue
   mereciendo vigilancia en cambios futuros, pero hoy no es deuda abierta.
 - **Quedó fuera.** La poda de `attachments_v1` en `messages.body` corre sin índice para su predicado
   (el único sobre `messages(created_at)` es parcial sobre `origin IS NOT NULL`), así que en estado
@@ -180,7 +186,7 @@ Estado de cada punto de [doctrina-del-dueno.md](doctrina-del-dueno.md) §La visi
   Es tolerable mientras tanto porque el barrido tiene cadencia y cota propias: **50 filas cada
   hora** (ver [threat-model.md](threat-model.md)). Lo recogen W5/W3b; OJO 2026-09-27: `041` ya la ocupa el diario W5, siguiente libre `042`.
 - **CERRADO** por `fe6d234c` (cambio de veredicto 2026-09-27). `ops/scripts/register-agent-identity.py`
-  tiene modo de baja (`--revoke`, `revoke()` `:308`) y `cauce retirar` lo encadena (paso 2b, `:1386`).
+  tiene modo de baja (`--revoke`, `revoke()`) y `cauce retirar` lo encadena (paso `[2b]`).
 - **Sigue en pie pero YA CON REFERENTE (2026-09-27).** «Fila NADIE del residuo físico BD↔realidad»:
   tabla de sectores en `ordenes/00-PROTOCOLO.md:34` + `ops/private/credentials/README.md:9`; el
   "residuo BD↔realidad" concreto sigue sin check accionable.
@@ -190,7 +196,7 @@ Estado de cada punto de [doctrina-del-dueno.md](doctrina-del-dueno.md) §La visi
   `generate-telegram-config.py`, `provision-hermes-runtime.sh`, `validate.sh`, …).
 - **Sigue en pie.** `/opt/.../fleet_source.py` y su watchdog no están versionados:
   `git ls-files | grep fleet_source` no devuelve nada.
-- **Sigue en pie.** `cauce alta` no hace el INSERT: `ops/cli/cauce:1083` lo sigue **imprimiendo como
+- **Sigue en pie.** `cauce alta` no hace el INSERT: `ops/cli/cauce-credenciales.lib.sh` lo sigue **imprimiendo como
   instrucción** al operador («alta = 1 INSERT en agents+memberships, luego export-fleet-snapshot.py»).
 - **Sigue en pie.** `ops/tests/gate-collector.test.mjs` y su gemelo `ops/tests/fake-gate-collector.mjs`
   siguen ahí; el resto de los 7 tests de `ops/` que un censo llamó huérfanos siguen siendo la única
