@@ -110,6 +110,8 @@ CONTAINER_FINDING_TYPES = {"bucle_de_cuota", "bucle_de_cuota_barato", "bucle_de_
 
 
 def finding_subject(record):
+    if record.get("tenant") and record.get("alias") not in (None, "-"):
+        return f"{record['tenant']}/{record['alias']}"
     return record.get("cuenta") or record.get("contenedor") or record.get("alias") or "-"
 
 

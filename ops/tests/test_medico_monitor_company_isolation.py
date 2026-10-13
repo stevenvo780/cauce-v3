@@ -483,5 +483,17 @@ def test_credential_dispatch_waits_six_hours(transport, finding_inventory, monke
     assert len(publications) == 2
 
 
+def test_credential_dispatch_names_each_tenant_for_colliding_aliases(transport, finding_inventory, monkeypatch, tmp_path):
+    finding_inventory[("LocalB", "jarvis")] = {"contenedor_db": "fixture-b", "runtime_key": "local-b"}
+    _, publications = prepare_alarm_run(transport, monkeypatch, tmp_path, finding_inventory, "")
+    monkeypatch.setattr(doctor, "sonda_credenciales", lambda _: ([
+        {"tenant": tenant, "alias": "jarvis", "detalle": "expired"} for tenant in ("Steven", "LocalB")], {}))
+    assert doctor.main() == 0
+    assert len(publications) == 1
+    assert "### Steven/jarvis / credencial" in publications[0]
+    assert "### LocalB/jarvis / credencial" in publications[0]
+    assert "### jarvis / credencial" not in publications[0]
+
+
 if __name__ == "__main__":
     sys.exit(pytest.main(["-q", __file__]))
