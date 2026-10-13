@@ -8,7 +8,7 @@ Conecta un agente CLI real a Cauce: consumidor durable + ejecución sobre la ses
 
 **Ejecución:** entregar significa **pegar el texto en la sesión tmux viva** del harness (`paste-runner.ts`, `tmux.ts`: cuarentena de panel, barrera de input) y esperar el turno del modelo. Es la parte cara e inherentemente frágil del diseño: el error típico de producción es del turno del harness (timeouts de ACK, deadline excedido), no del bus.
 
-**Ejecutables (`src/bin/`):** `openclaw`, `claude`, `codex` — los que usa la flota real. `hermes`, `opencode` y `fake` no tienen ningún usuario en producción (candidatos a retiro con `git rm` — git es el archivo; `fake` y `fake-harness` los usan los tests). `grok` es nuevo y todavía no tiene alias (ver abajo). `muse` tiene dos transportes (ver «Arnés `muse`»).
+**Ejecutables (`src/bin/`):** `openclaw`, `claude`, `codex` — los que usa la flota real. `hermes`, `opencode` y `fake` no tienen ningún usuario en producción (candidatos a retiro con `git rm` — git es el archivo; `fake` y `fake-harness` los usan los tests). `grok` tiene el alias `hades` (`ops/container-aliases.json`, harness `grok`; ver abajo). `muse` tiene dos transportes (ver «Arnés `muse`»).
 
 **Despliegue:** la versión activa de cada adaptador se acredita contra la flota viva; no se infiere desde este README.
 
@@ -87,9 +87,11 @@ Sin sesión compartida grok es headless por turno y `cauce <alias>` abre una RAM
   falla REINTENTABLE con `tui_generating` (nunca culpa al dueño de «texto a medio escribir»).
   Cancelar es `C-c` y sólo si el turno correlacionado está localizado y abierto (nunca el del dueño);
   en ociosa `C-c` arma la salida y Escape no cancela.
-- **Pegado:** el cuerpo de una entrega es texto libre de otro alias: ESC, los demás C0 (menos tab y
-  salto de línea), DEL y C1 se vuelven sus símbolos visibles (`pasteSafeText`) antes de
-  `load-buffer`, así un `ESC[201~` no cierra el pegado entre corchetes ni convierte el resto en teclas.
+- **Pegado:** el cuerpo de una entrega es texto libre de otro alias. `pasteSafeText`
+  (`shared-session/tmux/operations.ts`) normaliza CR y CRLF a LF; ESC y los demás C0 (menos tab
+  y salto de línea) y DEL se vuelven símbolos visibles; los C1 (U+0080–U+009F) se sustituyen por
+  U+FFFD. Así un `ESC[201~` no cierra el pegado entre corchetes ni convierte el resto en teclas,
+  antes de `load-buffer`.
 - **Operación:** tmux dentro del contenedor y un workspace en el que grok confíe sin diálogo:
   `SHARED_SESSION_WORKSPACE=$HOME` (el cwd del headless) está permitido aunque `$HOME` no sea un
   montaje persistente, porque la conversación vive en `~/.grok`. Sin tmux el supervisor arranca el
