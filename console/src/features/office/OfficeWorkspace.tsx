@@ -1,51 +1,21 @@
 import { useState, type ReactNode } from 'react';
 import { useApi } from '../../api/context';
 import { useResource } from '../../api/use-resource';
-import { usePolling } from '../../api/use-polling';
 import { Button, Notice } from '../../components/kit';
-import { ApiError } from '../../api/client/core';
-import { spanishWithReason } from '../../api/error-message';
+import { ErrorNotice } from '../../components/ErrorNotice';
+import type { Failure } from '../../api/error-message';
 import type { OfficeRoom } from '../../api/client/company-client';
 import type { TopologySnapshot } from '../../api/types';
 import { onNavClick } from '../../router';
+import { useQuotaAccounts } from '../../shell/fleet-context';
 import { canManageCompany, useCompanyAuthority } from '../auth/company-authority';
 import { agentFatigue } from '../accounts/quota-availability';
-import { describeQuotaError } from '../accounts/quota-messages';
+import { quotaReadFailure } from '../accounts/quota-messages';
 import { FatigueIndicator } from '../accounts/FatigueIndicator';
 import { OfficeLayoutEditor } from './OfficeLayoutEditor';
+import { officeFailure, planSaveUnavailableReason } from './office-errors';
 import { officeLayoutProblem, officeRoomKey, officeRooms, reconcileOfficeLayout } from './office-layout';
 import type { OfficeAgent } from './office-agent';
-
-function describeOfficeError(cause: unknown): string {
-  if (cause instanceof ApiError) {
-    if (cause.status === 504) return cause.message;
-    const detail = cause.message.trim();
-    if (cause.status === 400 && detail === 'invalid office layout') {
-      return 'El plano contiene datos que el servidor no acepta. Revisa las posiciones y tamaños de las salas antes de volver a guardarlo.';
-    }
-    if (cause.status === 403 && (detail === 'company office authority is required' || detail === 'insufficient permissions')) {
-      return 'Tu sesión no tiene autoridad para leer o cambiar el plano de esta empresa. Pide acceso a un administrador de la empresa.';
-    }
-    if (cause.status === 409 && detail === 'office layout version changed; reload and retry') {
-      return 'Otro operador cambió el plano mientras editabas. Relee el plano y vuelve a guardar; se conserva el borrador.';
-    }
-    if (cause.status === 400) {
-      return spanishWithReason('El plano contiene datos que el servidor no acepta. Revisa las posiciones y tamaños de las salas antes de volver a guardarlo.', detail);
-    }
-    if (cause.status === 401) return spanishWithReason('Tu sesión terminó. Vuelve a entrar para continuar.', detail);
-    if (cause.status === 403) {
-      return spanishWithReason('Tu sesión no tiene autoridad para leer o cambiar el plano de esta empresa. Pide acceso a un administrador de la empresa.', detail);
-    }
-    if (cause.status === 404) return spanishWithReason('El plano ya no está disponible. Relee la oficina y vuelve a intentarlo.', detail);
-    if (cause.status === 409) {
-      return spanishWithReason('Otro operador cambió el plano mientras editabas. Relee el plano y vuelve a guardar; se conserva el borrador.', detail);
-    }
-    if (cause.status === 429) return spanishWithReason('Hay demasiadas solicitudes. Espera un momento e inténtalo de nuevo.', detail);
-    if (cause.status >= 500) return spanishWithReason('El servidor no pudo leer o guardar el plano. Inténtalo más tarde.', detail);
-    return spanishWithReason('No se pudo leer o guardar el plano.', detail);
-  }
-  return cause instanceof Error ? cause.message : 'No se pudo leer o guardar el plano.';
-}
 
 export function OfficeWorkspace({ campus, topology, agents, onAgent }: {
   campus: ReactNode; topology?: TopologySnapshot; agents: readonly OfficeAgent[]; onAgent: (id: string) => void;
@@ -53,19 +23,21 @@ export function OfficeWorkspace({ campus, topology, agents, onAgent }: {
   const api = useApi();
   const authority = useCompanyAuthority();
   const layout = useResource('office-layout', () => api.getOfficeLayout());
-  const quotas = useResource('office-quota-accounts', () => api.getQuotaAccounts());
-  usePolling(() => { void quotas.reload(); }, 30_000);
+  // Plan, campus strip and agent sheet read the one shared quota snapshot of the fleet provider.
+  const quotas = useQuotaAccounts();
   const [mode, setMode] = useState<'campus' | 'plan'>('campus');
   const [draft, setDraft] = useState<{ version: number; rooms: OfficeRoom[] }>();
   const [roomKey, setRoomKey] = useState<string>();
   const [busy, setBusy] = useState(false);
   // The campus reads the saved plan once when it mounts: a new key after each save makes it read the new one.
   const [planSaves, setPlanSaves] = useState(0);
-  const [error, setError] = useState('');
+  const [error, setError] = useState<Failure>();
   const [notice, setNotice] = useState('');
   const rooms = officeRooms(topology, layout.data?.available);
   const shown = reconcileOfficeLayout(rooms, draft?.rooms ?? layout.data?.rooms ?? []);
   const writable = canManageCompany(authority?.role) && !!layout.data && !layout.error && !layout.loading && !busy;
+  const failure = error ?? (layout.error ? officeFailure(layout.error) : undefined);
+  const unavailable = planSaveUnavailableReason({ role: authority?.role, layoutError: !!layout.error, draft: !!draft });
   const selected = shown.find(room => officeRoomKey(room.tenant_id, room.room_id) === roomKey);
   const info = rooms.find(room => officeRoomKey(room.tenant, room.id) === roomKey);
   const left = Math.min(0, ...shown.map(room => room.x));
@@ -89,18 +61,21 @@ export function OfficeWorkspace({ campus, topology, agents, onAgent }: {
   async function save() {
     if (!writable || !draft) return;
     const problem = officeLayoutProblem(shown);
-    if (problem) { setError(problem); return; }
-    setBusy(true); setError(''); setNotice('');
+    if (problem) { setError({ message: problem }); return; }
+    setBusy(true); setError(undefined); setNotice('');
     try {
       await api.saveOfficeLayout({ expected_version: draft.version, rooms: shown });
     } catch (cause) {
-      setError(describeOfficeError(cause));
+      setError(officeFailure(cause));
       setBusy(false);
       return;
     }
     setDraft(undefined); setPlanSaves(count => count + 1);
     const reread = await layout.reload();
-    if (reread.error) setError(`El plano se guardó, pero no se pudo releer: ${describeOfficeError(reread.error)}`);
+    if (reread.error) {
+      const failure = officeFailure(reread.error);
+      setError({ ...failure, message: `El plano se guardó, pero no se pudo releer: ${failure.message}` });
+    }
     else setNotice('Plano de oficina guardado para esta empresa.');
     setBusy(false);
   }
@@ -121,9 +96,11 @@ export function OfficeWorkspace({ campus, topology, agents, onAgent }: {
       <header className="flex flex-wrap items-center justify-between gap-2"><h2 className="m-0 text-lg">Plano de oficina</h2>
         <div className="flex flex-wrap gap-2"><Button disabled={busy || layout.loading || !!draft} onClick={() => { void layout.reload(); void quotas.reload(); }}>Releer plano y cuotas</Button>
           <Button variant="primary" disabled={!writable || !draft} onClick={() => { void save(); }}>Guardar plano</Button>
-          <Button disabled={busy || !draft} onClick={() => { setDraft(undefined); setError(''); }}>Descartar cambios de plano</Button></div></header>
+          <Button disabled={busy || !draft} onClick={() => { setDraft(undefined); setError(undefined); }}>Descartar cambios de plano</Button></div></header>
+      {unavailable || draft ? <p className="m-0 text-xs text-muted">{unavailable ?? 'Guarda o descarta los cambios de plano antes de releerlo.'}</p> : null}
       {layout.loading ? <p role="status">Leyendo plano…</p> : null}
-      {layout.error || quotas.error || error ? <Notice tone="danger" role="alert">{error || (layout.error ? describeOfficeError(layout.error) : describeQuotaError(quotas.error, 'No se pudieron leer las cuotas de los agentes.'))}</Notice> : null}
+      {failure ? <ErrorNotice failure={failure} /> : null}
+      {quotas.error ? <ErrorNotice failure={quotaReadFailure(quotas.error, 'No se pudieron leer las cuotas de los agentes. Relee el plano y las cuotas.')} /> : null}
       {notice ? <Notice tone="ok" role="status">{notice}</Notice> : null}
       {!rooms.length ? <Notice tone="info">Aún no hay salas. Crea una desde «Gestionar salas y asignaciones».</Notice> : null}
       <p className="m-0 text-xs text-muted">Selecciona una sala para cambiar su posición, tamaño y partes. Los agentes y asignaciones vienen de las salas actuales.</p>

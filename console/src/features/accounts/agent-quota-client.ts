@@ -2,6 +2,7 @@ import { QuotaProviderReportSchema } from '@cauce/protocol/quotas';
 import type { QuotaProviderReport } from '@cauce/protocol';
 import type { RequestFn } from '../../api/client/system-client';
 import { ApiError } from '../../api/client/core';
+import { failureCode, spanishWithReason, type Failure } from '../../api/error-message';
 import { describeQuotaError } from './quota-messages';
 
 export type AgentQuotaStatus = 'unknown' | 'pending' | 'running' | 'unsupported' | 'ok' | 'error' | 'failed';
@@ -21,15 +22,27 @@ export interface AgentQuotaClient {
   getAgentQuota(tenant: string, alias: string): Promise<AgentQuotaReading>;
   queryAgentQuota(tenant: string, alias: string, input: AgentQuotaQuery): Promise<AgentQuotaQueryReceipt>;
 }
+/** The localized error keeps the server's own sentence, so the sheet can still show the concrete reason. */
+export class AgentQuotaError extends ApiError {
+  constructor(message: string, status: number, code: string | undefined, readonly reason: string) { super(message, status, code); }
+}
 export function describeAgentQuotaError(cause: unknown, action: 'read' | 'query' = 'read'): string {
   const fallback = action === 'read' ? 'No se pudo leer la cuota. Relee antes de consultar.'
     : 'No se confirmó la consulta. Relee su estado antes de reintentar.';
   return describeQuotaError(cause instanceof ApiError && cause.status === 504 ? undefined : cause, fallback);
 }
+/** The Spanish action, the concrete reason of a 4xx refusal and the stable code of a quota read or query failure. */
+export function agentQuotaFailure(cause: unknown, action: 'read' | 'query' = 'read'): Failure {
+  const message = describeAgentQuotaError(cause, action);
+  if (!(cause instanceof ApiError) || cause.status < 400 || cause.status >= 500 || cause.code === 'quota_host_unavailable') {
+    return { message, code: failureCode(cause) };
+  }
+  return { message: spanishWithReason(message, cause instanceof AgentQuotaError ? cause.reason : cause.message), code: failureCode(cause) };
+}
 async function quotaRequest<T>(request: () => Promise<T>, action: 'read' | 'query'): Promise<T> {
   try { return await request(); } catch (cause) {
     const message = describeAgentQuotaError(cause, action);
-    if (cause instanceof ApiError) throw new ApiError(message, cause.status, cause.code);
+    if (cause instanceof ApiError) throw new AgentQuotaError(message, cause.status, cause.code, cause.message);
     throw new Error(message);
   }
 }

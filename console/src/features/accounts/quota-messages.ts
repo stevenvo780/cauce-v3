@@ -1,5 +1,5 @@
 import { ApiError } from '../../api/client/core';
-import { spanishWithReason } from '../../api/error-message';
+import { failureCode, spanishWithReason, type Failure } from '../../api/error-message';
 import type { ConsoleAuthorityRole } from '../../api/types';
 
 /** Provider accounts spend the payer's money: only the owner and the platform manage them. */
@@ -40,6 +40,16 @@ export function describeQuotaError(cause: unknown, fallback: string): string {
   if (cause.status === 409 && cause.code === 'quota_host_unavailable') return QUOTA_HOST_UNAVAILABLE_MESSAGE;
   if (cause.status === 504) return cause.message;
   return STATUS_MESSAGE[cause.status] ?? fallback;
+}
+
+/**
+ * Reading quota accounts in the office and the agent sheet: the Spanish action, the concrete reason of
+ * a 4xx refusal (generic HTTP phrases are dropped) and the stable code. A 5xx sentence stays hidden.
+ */
+export function quotaReadFailure(cause: unknown, fallback: string): Failure {
+  const message = describeQuotaError(cause, fallback);
+  const refusal = cause instanceof ApiError && cause.status >= 400 && cause.status < 500 && cause.code !== 'quota_host_unavailable';
+  return { message: refusal ? spanishWithReason(message, cause.message) : message, code: failureCode(cause) };
 }
 
 export function describeQuotaEnvironmentError(cause: unknown, fallback: string): string {
