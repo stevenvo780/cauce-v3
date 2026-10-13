@@ -210,15 +210,16 @@ def render(name, values):
     return ('\n'.join(lines) + '\n').encode()
 
 
-def issuer_state_root(state) -> str:
+def issuer_write_paths(state):
     try:
         policy = json.loads(safe_read(absolute(state['command']['policy_file']), private=True)[0])
-        root = policy['state_root']
+        root = absolute(policy['state_root'])
+        registries = policy['registries']
     except (ValueError, KeyError, TypeError):
-        raise Abort('the issuer policy must name an absolute state_root') from None
-    if not isinstance(root, str) or not root.startswith('/') or os.path.normpath(root) != root:
-        raise Abort('the issuer policy must name an absolute state_root')
-    return root
+        raise Abort('the issuer policy must name an absolute state_root and registry paths') from None
+    if not isinstance(registries, dict) or not registries:
+        raise Abort('the issuer policy must name registry paths')
+    return {str(root), *(str(absolute(location).parent) for location in registries.values())}
 
 
 def desired_files(args, state):
@@ -226,7 +227,7 @@ def desired_files(args, state):
                                                         'GATEWAY_GID': str(args.gateway_gid)}), 0o644)}
     if state is None:
         return files
-    state_root = issuer_state_root(state)
+    write_paths = sorted(issuer_write_paths(state) | {str(args.socket_directory)})
     environment = {
         'CAUCE_FLEET_AUTHORITY_SOCKET': str(args.socket_directory / SOCKET_NAME),
         'CAUCE_FLEET_AUTHORITY_OWNER_UID': str(AUTHORITY_UID),
@@ -240,8 +241,7 @@ def desired_files(args, state):
     files[args.unit] = (render(SERVICE_TEMPLATE, {
         'CONFIG_DIRECTORY': str(args.config_directory), 'NODE': str(state['node']), 'RELEASE': str(state['root']),
         'HOSTS_BIND': f"BindReadOnlyPaths={state['hosts']}:/etc/hosts" if state['hosts'] else '',
-        'CONTROLLER_SERVICE': args.controller_service, 'ISSUER_STATE_ROOT': state_root,
-        'SOCKET_DIRECTORY': str(args.socket_directory)}), 0o644)
+        'CONTROLLER_SERVICE': args.controller_service, 'READ_WRITE_PATHS': ' '.join(write_paths)}), 0o644)
     return files
 
 
@@ -269,6 +269,16 @@ def plan(files):
 
 def service_active(unit):
     return run(['systemctl', 'is-active', unit], check=False).stdout.strip() == 'active'
+
+
+def service_enabled(unit):
+    result = run(['systemctl', 'is-enabled', unit], check=False)
+    status = result.stdout.strip()
+    if status == 'enabled' and result.returncode == 0:
+        return True
+    if status in ('disabled', 'not-found') and result.returncode != 0:
+        return False
+    raise Abort(f'the enclave has unsupported enablement: {status or "unknown"}')
 
 
 def directory_ok(location, gid):
@@ -362,6 +372,9 @@ def rollback(args, ctx, was_active, failure):
     unit, errors = args.unit.name, []
     if ctx.get('restarted'):
         run(['systemctl', 'stop', unit], check=False)
+    if ctx.get('enable_attempted') and run(['systemctl', 'disable', unit], check=False).returncode != 0:
+        say(f'ROLLBACK INCOMPLETE: the new {unit} enablement was not removed; every file is kept for recovery')
+        return False
     if not restore_configs(ctx):
         say(f'ROLLBACK INCOMPLETE: a backup was not restored; {unit} is left stopped and every file is kept')
         return False
@@ -386,6 +399,7 @@ def rollback(args, ctx, was_active, failure):
 def apply(args, state, changes):
     unit, ctx = args.unit.name, {'rollback': [], 'created': []}
     was_active = state is not None and service_active(unit)
+    was_enabled = state is not None and service_enabled(unit)
     stamp = datetime.datetime.now(datetime.UTC).strftime('%Y%m%dT%H%M%SZ-') + secrets.token_hex(3)
     tmpfiles = changes.pop(args.tmpfiles, None)
     write_files({args.tmpfiles: tmpfiles} if tmpfiles else {}, stamp, {'rollback': [], 'created': []})
@@ -403,7 +417,6 @@ def apply(args, state, changes):
         os.close(directory_fd(args.config_directory, private=True))
         write_files(changes, stamp, ctx)
         started_ns = 0
-        run(['systemctl', 'enable', unit])
         if changes or not was_active:
             if changes:
                 run(['systemctl', 'daemon-reload'])
@@ -411,6 +424,8 @@ def apply(args, state, changes):
             ctx['restarted'] = True
             run(['systemctl', 'restart', unit])
         verify(args, state, started_ns)
+        ctx['enable_attempted'] = not was_enabled
+        run(['systemctl', 'enable', unit])
     except BaseException as error:
         rollback(args, ctx, was_active, str(error))
         raise Abort(f'installation reverted: {error}') from None

@@ -35,6 +35,7 @@ class FakeHost:
         self.gateway_reply = {'status': 403, 'body': {'error': 'forbidden'}}
         self.container_reply = self.gateway_reply
         self.commands = []
+        self.enabled = False
 
     def __call__(self, command, check=True, **options):
         self.commands.append(command)
@@ -45,8 +46,13 @@ class FakeHost:
                       'BindReadOnlyPaths': f'-{self.fixture.hosts}:/etc/hosts:rbind /srv:/srv', 'Environment': 'TZ=UTC'}[command[4]]
         elif command[:2] == ['systemctl', 'is-active']:
             output = 'active' if self.active else 'inactive'
+        elif command[:2] == ['systemctl', 'is-enabled']:
+            return subprocess.CompletedProcess(command, 0 if self.enabled else 1,
+                                               'enabled' if self.enabled else 'disabled', '')
         elif command[0] == 'systemctl':
             self.events.append(command[1])
+            if command[1] in ('enable', 'disable'):
+                self.enabled = command[1] == 'enable'
             if command[1] in ('restart', 'start'):
                 self.listen()
             if command[1] == 'stop':
@@ -123,8 +129,11 @@ class InstallFixture(unittest.TestCase):
         self.database = self.file(self.controller / 'database-url', SECRET.encode(), 0o400)
         self.issuer_state = self.root / 'issuer-state'
         self.issuer_state.mkdir(mode=0o700)
+        self.registries = {f'{scope}_{kind}': str(self.root / 'registries' / scope / filename)
+                           for scope in ('base', 'fleet')
+                           for kind, filename in (('mtls', 'mtls_identities.json'), ('token', 'token_hashes.json'))}
         self.policy = self.file(self.controller / 'authority.v1.json',
-                                json.dumps({'version': 1, 'state_root': str(self.issuer_state)}).encode() + b'\n')
+                                lib.dumps({'version': 1, 'state_root': str(self.issuer_state), 'registries': self.registries}))
         self.release(OLD)
         self.host = FakeHost(self)
         patcher = mock.patch.object(self.kit, 'run', self.host)
@@ -202,9 +211,7 @@ class PreflightTests(InstallFixture):
         self.assertIn(f'EnvironmentFile={self.fleet}/signed-authority/authority.env\n', unit)
         self.assertNotIn('@', unit)
         self.assertIn('ProtectSystem=strict\n', unit)
-        self.assertIn(f'ReadWritePaths={self.issuer_state} {self.socket_directory}\n', unit)
-        self.assertIn('PartOf=cauce-fleet-v35-controller.service\n', unit)
-        self.assertIn('CapabilityBoundingSet=\n', unit)
+        self.assertIn(f'After=network-online.target docker.service {self.arguments().controller_service}\n', unit)
         self.assertEqual(dict(line.split('=', 1) for line in environment.splitlines()), {
             'CAUCE_FLEET_AUTHORITY_SOCKET': str(self.socket_directory / 'authority.sock'),
             'CAUCE_FLEET_AUTHORITY_OWNER_UID': str(self.authority_uid), 'CAUCE_FLEET_AUTHORITY_PEER_UID': str(self.gateway_uid),
@@ -215,6 +222,47 @@ class PreflightTests(InstallFixture):
         self.assertEqual(files[self.root / 'tmpfiles.d/cauce-fleet-signed-authority.conf'][0].decode().splitlines()[-1],
                          f'd {self.socket_directory} 0750 root {self.gateway_gid} -')
         self.assertNotIn('never-printed', self.output.getvalue())
+
+    def rendered_unit(self):
+        args = self.arguments()
+        unit = self.kit.desired_files(args, self.kit.controller_state(args))[args.unit][0].decode()
+        return dict(line.split('=', 1) for line in unit.splitlines() if '=' in line)
+
+    def test_rendered_unit_retains_the_capabilities_for_socket_and_registry_ownership(self):
+        capabilities = self.rendered_unit()['CapabilityBoundingSet'].split()
+        self.assertEqual(set(capabilities), {'CAP_CHOWN', 'CAP_DAC_OVERRIDE', 'CAP_FOWNER'})
+
+    def test_rendered_unit_allows_writes_to_every_registry_parent_without_duplicates(self):
+        paths = self.rendered_unit()['ReadWritePaths'].split()
+        self.assertEqual(paths, [str(self.issuer_state), str(self.root / 'registries/base'),
+                                str(self.root / 'registries/fleet'), str(self.socket_directory)])
+
+    def test_rendered_unit_does_not_stop_with_the_controller(self):
+        self.assertNotIn('PartOf', self.rendered_unit())
+
+    def test_unsafe_state_root_is_rejected_before_any_effect(self):
+        state = self.kit.controller_state(self.arguments())
+        policy = json.loads(self.policy.read_bytes())
+        for root in ('/var/lib/cauce/unsafe path', '/var/lib/cauce/%n', '/var/lib/cauce/\nInjected=value',
+                     '/var/lib/../cauce', 'relative'):
+            with self.subTest(root=root):
+                self.policy.write_bytes(lib.dumps({**policy, 'state_root': root}))
+                with self.assertRaises(lib.Abort):
+                    self.kit.desired_files(self.arguments(), state)
+        self.assertEqual(self.host.events, [])
+
+    def test_unsafe_or_missing_registries_are_rejected_before_any_effect(self):
+        state = self.kit.controller_state(self.arguments())
+        policy = json.loads(self.policy.read_bytes())
+        for registries in (None, {}, [], {'base_mtls': 'relative/file'},
+                           {'base_mtls': '/etc/cauce/../registry/file'},
+                           {'base_mtls': '/etc/cauce/unsafe path/file'},
+                           {'base_mtls': '/etc/cauce/%n/file'}, {'base_mtls': 42}):
+            with self.subTest(registries=registries):
+                self.policy.write_bytes(lib.dumps({**policy, 'registries': registries}))
+                with self.assertRaises(lib.Abort):
+                    self.kit.desired_files(self.arguments(), state)
+        self.assertEqual(self.host.events, [])
 
     def test_preflight_refuses_an_old_release_pin_drift_a_public_database_file_and_a_missing_command(self):
         entry = self.tools / OLD / self.kit.ENTRY
@@ -250,12 +298,13 @@ class ApplyTests(InstallFixture):
                  self.root / 'systemd/cauce-fleet-signed-authority.service', self.root / 'tmpfiles.d/cauce-fleet-signed-authority.conf',
                  self.socket_directory, self.socket_directory / 'authority.sock')}
         self.assertEqual(list(modes.values()), [0o700, 0o600, 0o600, 0o644, 0o644, 0o750, 0o660])
-        self.assertEqual(self.host.events, ['tmpfiles', 'enable', 'daemon-reload', 'restart'])
+        self.assertEqual(self.host.events, ['tmpfiles', 'daemon-reload', 'restart', 'enable'])
+        self.assertTrue(self.host.enabled)
         self.assertTrue(any(command[:2] == ['docker', 'exec'] for command in self.host.commands))
         self.assertIn('ready: cauce-fleet-signed-authority.service active', self.output.getvalue())
         before = self.tree()
         self.assertEqual(self.kit.install(self.arguments('--apply')), 'no changes; the running enclave was verified')
-        self.assertEqual(self.host.events, ['tmpfiles', 'enable', 'daemon-reload', 'restart', 'enable'])
+        self.assertEqual(self.host.events, ['tmpfiles', 'daemon-reload', 'restart', 'enable', 'enable'])
         self.assertEqual(self.tree(), before)
 
     def test_a_release_change_is_backed_up_and_a_failed_verification_restores_the_running_enclave(self):
@@ -268,8 +317,9 @@ class ApplyTests(InstallFixture):
         with self.assertRaisesRegex(lib.Abort, 'installation reverted: .*PostgreSQL'):
             self.kit.install(self.arguments('--apply'))
         self.assertEqual({path: path.read_bytes() for path in previous}, previous)
-        self.assertEqual(self.host.events[4:], ['enable', 'daemon-reload', 'restart', 'stop', 'daemon-reload', 'start'])
+        self.assertEqual(self.host.events[4:], ['daemon-reload', 'restart', 'stop', 'daemon-reload', 'start'])
         self.assertTrue(self.host.active)
+        self.assertTrue(self.host.enabled)
         backups = sorted(item.name.split('.pre-authority-')[0] for item in self.root.rglob('*.pre-authority-*'))
         self.assertEqual(backups, ['cauce-fleet-signed-authority.service', 'command.v1.json'])
         self.host.gateway_reply = {'status': 403, 'body': {'error': 'forbidden'}}
@@ -282,7 +332,8 @@ class ApplyTests(InstallFixture):
             self.kit.install(self.arguments('--apply'))
         self.assertFalse((self.fleet / 'signed-authority').exists())
         self.assertFalse((self.root / 'systemd/cauce-fleet-signed-authority.service').exists())
-        self.assertEqual(self.host.events, ['tmpfiles', 'enable', 'daemon-reload', 'restart', 'stop', 'daemon-reload'])
+        self.assertEqual(self.host.events, ['tmpfiles', 'daemon-reload', 'restart', 'stop', 'daemon-reload'])
+        self.assertFalse(self.host.enabled)
         self.assertTrue((self.root / 'tmpfiles.d/cauce-fleet-signed-authority.conf').is_file())
 
     def test_socket_directory_only_needs_no_controller_and_touches_no_unit(self):
@@ -299,6 +350,77 @@ class ApplyTests(InstallFixture):
         with self.assertRaisesRegex(lib.Abort, 'gateway container'):
             self.kit.install(self.arguments('--apply'))
         self.assertFalse((self.fleet / 'signed-authority').exists())
+        self.assertFalse(self.host.active)
+
+    def test_enable_runs_only_after_successful_verification(self):
+        verify = self.kit.verify
+
+        def verified(*args):
+            verify(*args)
+            self.host.events.append('verify')
+
+        with mock.patch.object(self.kit, 'verify', side_effect=verified):
+            self.kit.install(self.arguments('--apply'))
+        self.assertEqual(self.host.events, ['tmpfiles', 'daemon-reload', 'restart', 'verify', 'enable'])
+        self.assertTrue(self.host.enabled)
+
+    def fail_after_enable(self, command, **options):
+        result = self.host(command, **options)
+        if command[:2] == ['systemctl', 'enable']:
+            raise lib.Abort('injected enable failure')
+        return result
+
+    def test_failed_enable_removes_new_enablement_and_created_configuration(self):
+        with mock.patch.object(self.kit, 'run', side_effect=self.fail_after_enable):
+            with self.assertRaisesRegex(lib.Abort, 'injected enable failure'):
+                self.kit.install(self.arguments('--apply'))
+        self.assertFalse(self.host.enabled)
+        self.assertFalse(self.host.active)
+        self.assertFalse((self.fleet / 'signed-authority').exists())
+        self.assertFalse(self.arguments().unit.exists())
+        self.assertIn('disable', self.host.events)
+
+    def test_failed_enable_preserves_previous_enablement_and_running_configuration(self):
+        self.kit.install(self.arguments('--apply'))
+        unit = self.arguments().unit
+        previous = unit.read_bytes()
+        self.release(NEW)
+        with mock.patch.object(self.kit, 'run', side_effect=self.fail_after_enable):
+            with self.assertRaisesRegex(lib.Abort, 'injected enable failure'):
+                self.kit.install(self.arguments('--apply'))
+        self.assertTrue(self.host.enabled)
+        self.assertTrue(self.host.active)
+        self.assertEqual(unit.read_bytes(), previous)
+        self.assertNotIn('disable', self.host.events)
+
+    def test_unmanaged_enablement_states_are_rejected_before_any_effect(self):
+        before = self.tree()
+
+        def unmanaged(command, **options):
+            if command[:2] == ['systemctl', 'is-enabled']:
+                return subprocess.CompletedProcess(command, 0, status, '')
+            return self.host(command, **options)
+
+        for status in ('enabled-runtime', 'linked', 'linked-runtime', 'masked', 'static'):
+            with self.subTest(status=status), mock.patch.object(self.kit, 'run', side_effect=unmanaged):
+                with self.assertRaisesRegex(lib.Abort, 'enablement'):
+                    self.kit.install(self.arguments('--apply'))
+                self.assertEqual(self.tree(), before)
+                self.assertEqual(self.host.events, [])
+
+    def test_failed_disable_reports_incomplete_rollback(self):
+        def failed_disable(command, **options):
+            if command[:2] == ['systemctl', 'disable']:
+                return subprocess.CompletedProcess(command, 1, '', 'injected disable failure')
+            return self.fail_after_enable(command, **options)
+
+        with mock.patch.object(self.kit, 'run', side_effect=failed_disable):
+            with self.assertRaisesRegex(lib.Abort, 'injected enable failure'):
+                self.kit.install(self.arguments('--apply'))
+        self.assertIn('ROLLBACK INCOMPLETE', self.output.getvalue())
+        self.assertTrue(self.host.enabled)
+        self.assertTrue(self.arguments().unit.exists())
+        self.assertTrue((self.fleet / 'signed-authority/authority.env').exists())
         self.assertFalse(self.host.active)
 
 

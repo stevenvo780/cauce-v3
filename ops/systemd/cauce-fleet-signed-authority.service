@@ -2,7 +2,6 @@
 Description=Cauce enclave de autoridad firmada de la flota
 After=network-online.target docker.service @CONTROLLER_SERVICE@
 Wants=network-online.target
-PartOf=@CONTROLLER_SERVICE@
 
 [Service]
 Type=simple
@@ -15,11 +14,11 @@ Restart=on-failure
 RestartSec=5
 NoNewPrivileges=yes
 ProtectSystem=strict
-ReadWritePaths=@ISSUER_STATE_ROOT@ @SOCKET_DIRECTORY@
+ReadWritePaths=@READ_WRITE_PATHS@
 PrivateTmp=yes
 ProtectHome=read-only
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
-CapabilityBoundingSet=
+CapabilityBoundingSet=CAP_CHOWN CAP_DAC_OVERRIDE CAP_FOWNER
 ProtectKernelTunables=yes
 ProtectKernelModules=yes
 ProtectControlGroups=yes
