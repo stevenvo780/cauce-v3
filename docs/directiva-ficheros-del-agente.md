@@ -7,10 +7,11 @@ las dos usó (`facts_source`).
 
 ## 1. La respuesta corta
 
-La consola tiene **un único lugar para modificar el contexto de un agente**: la pestaña
-**Contexto** de su cajón en «La flota ahora». Allí se editan el perfil canónico y, por separado, el
-texto libre del manual efectivo. La pestaña **Ficheros** sólo lista y abre contenido permitido
-en modo de lectura; no guarda nada.
+El cajón de cada agente en «La flota ahora» abre el panel de contexto, cuyas secciones incluyen
+**Perfil**, **Ficheros** y **Directiva**; no hay una pestaña llamada «Contexto». El perfil canónico
+se modifica en **Perfil**. **Ficheros** lista los documentos gobernados y permite leerlos; también
+edita el manual efectivo (`directive`) cuando la sesión tiene permiso `config.write`. **Directiva**
+es una vista de lectura con enlaces a los editores correspondientes.
 
 La frontera al contenedor ya existe: gateway → terminal-relay → pty-agent. El navegador nunca manda
 un path. Envía el alias y el `kind`; el servidor resuelve la ruta desde hechos medidos y la sonda
@@ -52,11 +53,12 @@ marcador plausible. Un mismo destino aparece una sola vez, en su primera posici�
 | codex | `<CODEX_HOME>/config.toml` | `<CODEX_HOME>/prompts/` — directorio opcional; el inventario sólo lista lo que hay | dentro del mismo `config.toml` |
 | openclaw | `~/.openclaw/openclaw.json` → `tools`, `skills` | mismo fichero → `commands`, `agents` | mismo fichero → `mcp.servers` |
 
-El campo `tools` de **Contexto** es una declaración para orientar al agente y Cauce puede
-materializarla dentro de su perfil. **No concede acceso**: no habilita binarios, no configura MCP y
-no sustituye los permisos del arnés. Las capacidades acreditadas salen del runtime; la autorización
-de Cauce sale de membresías, `role_policies`, ACL y RBAC. En particular, el adaptador de Claude
-arranca con `baseArgs: ["--print","--output-format","json"]` y no traduce esa lista declarada a
+El campo `tools` del perfil canónico, editable en **Perfil**, declara herramientas para orientar al
+agente. Cauce lo proyecta en el documento de gobierno correspondiente cuando el arnés tiene un
+destino para ese campo. **No concede acceso**: no habilita binarios, no configura MCP y no sustituye
+los permisos del arnés. Las capacidades acreditadas salen del runtime; la autorización de Cauce
+sale de membresías, `role_policies`, ACL y RBAC. En particular, el adaptador de Claude arranca con
+`baseArgs: ["--print","--output-format","json"]` y no traduce esa lista declarada a
 `--allowedTools`, `--permission-mode` ni `--mcp-config`.
 
 ## 3. Por qué el resolutor no confía en las columnas del registro
@@ -139,8 +141,8 @@ partir de `agents.harness_id`; cuando no hubo medición, `facts_source` lo decla
   que audita igual el permiso que la denegación.
 
 `agents.role_brief` no es otra fuente editable: es una proyección diagnóstica de sólo lectura. La
-fuente canónica es `agent_profiles.role_summary` y se modifica en **Contexto** mediante el PUT de
-perfil. Ajustes rechaza localmente cualquier mutación JSON de `agents.role_brief`.
+fuente canónica es `agent_profiles.role_summary` y se modifica en la sección **Perfil** mediante el
+PUT de perfil. Ajustes rechaza localmente cualquier mutación JSON de `agents.role_brief`.
 
 El PUT manual tampoco es un atajo al perfil. Conserva los bloques delimitados por los marcadores
 reservados `CAUCE:CONTEXTO-FIJO`, `CAUCE:PERFIL` y `CAUCE:REVISION-PERFIL`, y rechaza modificaciones,
@@ -239,7 +241,10 @@ Reglas que la vía cumple, y por qué:
 - `services/gateway/src/console/context-apply-policy.ts` — vocabulario único de aplicación de
   contexto para los dos canales; `services/gateway/src/terminal/audit.ts` — el único insertador de
   `audit_events` de este plano, compartido con el PTY.
-- `console/src/features/live/` — una vista **Contexto** para las mutaciones y **Ficheros** como visor.
+- `console/src/features/live/` — el panel de contexto del agente, con secciones **Perfil**,
+  **Ficheros**, **Directiva**, **Historial**, **Git** y **Versiones y aplicación**. **Perfil** edita
+  el perfil canónico; **Ficheros** permite editar el manual `directive` con `config.write`, además de
+  leer los documentos gobernados.
 
 Las rutas de documentos y perfil están registradas en `services/gateway/src/routes/console.ts`.
 

@@ -113,7 +113,7 @@ Topología de la flota central hoy:
 
 | Máquina | Papel | Qué corre |
 |---|---|---|
-| VPS `server` (.11) | centro de mando | nueve servicios permanentes de producción, migrador al desplegar y doce alias locales |
+| VPS `server` (.11) | centro de mando | nueve servicios permanentes de producción, migrador al desplegar y once alias locales |
 | server2 (.13) | runtimes permanentes | Kant nativo, Salva en `ws-isa` y acceso público a sus archivos |
 | server1 (.14) | virtualización y audio | VM de Astra en `.15` y transcripción de Telegram en CPU |
 | ILS (.5) | navegadores dedicados | sesiones de cuenta para medir cuotas; el colector vive en el VPS |
