@@ -138,6 +138,48 @@ it('si la lectura de señales falla entera, la pantalla lo dice y el reintento v
   await waitFor(() => { expect(relaysPedidos).toBeGreaterThan(antesRelays); });
 });
 
+it('mientras los relays viajan se dice que se están leyendo, no que no hay ninguno', async () => {
+  observability();
+  server.use(http.get(RELAYS_URL, async () => {
+    await new Promise(resolve => { setTimeout(resolve, 600); });
+    return HttpResponse.json({ items: [relay] });
+  }));
+  renderWithApi(<ObservabilityPage />);
+
+  expect(await screen.findByText(/Leyendo relays al canal de origen…/i)).toBeInTheDocument();
+  expect(screen.queryByText(/no devolvió ningún relay visible/i)).not.toBeInTheDocument();
+  expect(await screen.findByText(/relay-0001/i)).toBeInTheDocument();
+});
+
+it('una relectura fallida avisa en señales y relays y conserva la última lectura buena', async () => {
+  let senales = 0;
+  let listados = 0;
+  server.use(
+    http.get(OBSERVABILITY_URL, () => {
+      senales += 1;
+      return senales === 1
+        ? HttpResponse.json({ observed_at: '2026-08-06T10:00:05.000Z', status: { online: 16, queued: 3, dead_letters: 1, outbox_pending: 0 }, queues: { pending: 3, retrying: 1, dead: 1, items: [] } })
+        : HttpResponse.json({ error: 'boom', message: 'observabilidad caída' }, { status: 500 });
+    }),
+    http.get(RELAYS_URL, () => {
+      listados += 1;
+      return listados === 1
+        ? HttpResponse.json({ items: [relay] })
+        : HttpResponse.json({ error: 'boom', message: 'relays caídos' }, { status: 500 });
+    }),
+  );
+  const user = userEvent.setup();
+  renderWithApi(<ObservabilityPage />);
+  await relayRow('relay-0001');
+
+  await user.click(screen.getByRole('button', { name: /actualizar/i }));
+
+  expect(await screen.findByText(/No se pudieron actualizar las señales: observabilidad caída/i)).toBeInTheDocument();
+  expect(await screen.findByText(/No se pudieron actualizar los relays: relays caídos/i)).toBeInTheDocument();
+  expect(screen.getByText('En línea')).toBeInTheDocument();
+  expect(await relayRow('relay-0001')).toBeInTheDocument();
+});
+
 it('el botón de actualizar vuelve a pedir las dos lecturas, no sólo la que se está mirando', async () => {
   let senales = 0;
   let listados = 0;

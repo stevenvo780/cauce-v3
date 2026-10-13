@@ -64,6 +64,12 @@ export function ObservabilityPage({ initialTab = 'senales' }: { initialTab?: Tab
     <ViewTabs tabs={TABS} active={tab} onSelect={setTab} label="Señales y auditoría" />
 
     {tab === 'senales' ? <ViewTabPanel id="senales">
+      {resource.error ? (
+        <Notice tone="danger" role="alert" className="mb-3 flex flex-wrap items-center gap-2">
+          <span className="min-w-0 flex-1">No se pudieron actualizar las señales: {resource.error.message} Se muestra la última lectura buena.</span>
+          <Button size="sm" onClick={reloadAll}>Reintentar</Button>
+        </Notice>
+      ) : null}
       <KpiGrid label="Indicadores">
         <Kpi label="En línea" value={status.online} tone="positive" detail="leases vigentes" />
         <Kpi label="En cola" value={status.queued} tone="warning" detail="entregas no terminales" />
@@ -75,7 +81,15 @@ export function ObservabilityPage({ initialTab = 'senales' }: { initialTab?: Tab
         Ver el detalle en Colas y DLQ <ArrowRight size={14} aria-hidden="true" />
       </a>
       <SectionCard title="Relays al canal de origen" description="La consola observa; no ejecuta egress ni reintenta relays. Sólo se ven los relays en los que este actor participa.">
-        {relays.error && !relays.data
+        {relays.error && relays.data ? (
+          <Notice tone="danger" role="alert" className="mb-3 flex flex-wrap items-center gap-2">
+            <span className="min-w-0 flex-1">No se pudieron actualizar los relays: {relays.error.message} Se muestra la última lista buena.</span>
+            <Button size="sm" onClick={reloadAll}>Reintentar</Button>
+          </Notice>
+        ) : null}
+        {relays.loading && !relays.data
+          ? <LoadingState label="Leyendo relays al canal de origen…" />
+          : relays.error && !relays.data
           ? <Notice tone="danger" role="alert">No se pudieron leer los origin relays: {relays.error.message}. Las señales de arriba sí llegaron.</Notice>
           : relayItems.length === 0
             ? <EmptyState>El servidor no devolvió ningún relay visible para tu cuenta. No es «no hay relays»: es que no se ve ninguno desde acá.</EmptyState>
