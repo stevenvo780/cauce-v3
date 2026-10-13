@@ -7,16 +7,21 @@ const Identifier=z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/u);
 const Template=FleetRuntimeCapabilitySchema.safeExtend({template_id:Identifier,
   provider:z.enum(['codex','claude','gemini','minimax','grok','feihoa','muse'])});
 const QuotaProvider=z.enum(['codex','claude','gemini','grok']);
-const QuotaActions=z.array(z.enum(['create','authenticate','query','update_cli','delete'])).max(5)
+const QuotaAction=z.enum(['create','authenticate','query','update_cli','delete']);
+const QuotaActions=z.array(QuotaAction).max(5)
   .refine(value=>new Set(value).size===value.length);
 export const HostCapabilitiesSchema=z.object({resource:z.literal('host'),action:z.literal('capabilities'),schemaVersion:z.literal(1),
   executor_version:z.string().min(1).max(128),policy_sha256:z.string().regex(/^[a-f0-9]{64}$/u),
   fleet_executor:z.boolean(),quota_executor:z.boolean(),templates:z.array(Template).max(100),
   quota_providers:z.array(QuotaProvider).max(4).default([]),
   quota_provider_actions:z.partialRecord(QuotaProvider,QuotaActions).default({}),
+  quota_provider_unavailable:z.partialRecord(QuotaProvider,z.partialRecord(QuotaAction,
+    z.string().min(1).max(512).regex(/\S/u).regex(/^[^\p{Cc}]*$/u))).optional(),
 }).strict().refine(value=>new Set(value.templates.map(template=>template.template_id)).size===value.templates.length)
   .refine(value=>new Set(value.quota_providers).size===value.quota_providers.length)
-  .refine(value=>Object.keys(value.quota_provider_actions).every(provider=>value.quota_providers.some(candidate=>candidate===provider)));
+  .refine(value=>Object.keys(value.quota_provider_actions).every(provider=>value.quota_providers.some(candidate=>candidate===provider)))
+  .refine(value=>Object.entries(value.quota_provider_unavailable??{}).every(([provider,reasons])=>
+    Object.keys(reasons).every(action=>!(value.quota_provider_actions[QuotaProvider.parse(provider)]??[]).some(available=>available===action))));
 export type HostCapabilities=z.infer<typeof HostCapabilitiesSchema>;
 interface Identity {host_id:string;company_id:string}
 const unavailable: FleetCapability={available:false,actions:[],placements:[],reason:'executor_unconfigured'};

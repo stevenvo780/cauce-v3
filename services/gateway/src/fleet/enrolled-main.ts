@@ -19,7 +19,8 @@ import { performAgentQuotaHostCommand } from './agent-quota-host-command.js';
 import type { FleetHostConfig } from './main.js';
 
 const QuotaCapabilities = z.object({ providers: z.array(z.enum(['claude','codex','gemini','grok'])),
-  actions: z.record(z.string(), z.array(z.enum(['create','authenticate','query','update_cli','delete']))) }).strict();
+  actions: z.record(z.string(), z.array(z.enum(['create','authenticate','query','update_cli','delete']))),
+  unavailable: HostCapabilitiesSchema.shape.quota_provider_unavailable }).strict();
 
 async function capabilityReport(config: FleetHostConfig, signal: AbortSignal) {
   const file = await open(config.command.policyFile, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
@@ -40,7 +41,8 @@ async function capabilityReport(config: FleetHostConfig, signal: AbortSignal) {
   return HostCapabilitiesSchema.parse({ resource: 'host', action: 'capabilities', schemaVersion: 1,
     executor_version: '4.0.0', policy_sha256: digest, fleet_executor: capabilities.available,
     templates, quota_executor: quotaCapabilities !== undefined,
-    quota_providers: quotaCapabilities?.providers ?? [],quota_provider_actions:quotaCapabilities?.actions ?? {} });
+    quota_providers: quotaCapabilities?.providers ?? [],quota_provider_actions:quotaCapabilities?.actions ?? {},
+    ...(quotaCapabilities?.unavailable === undefined ? {} : { quota_provider_unavailable: quotaCapabilities.unavailable }) });
 }
 
 export async function runEnrolledFleetHost(config: FleetHostConfig): Promise<void> {

@@ -34,6 +34,15 @@ async function fleetClaim():Promise<FleetOperationClaim> {
   return response.json<{claim:FleetOperationClaim}>().claim;
 }
 describe('signed company host channel',()=>{
+  it('persists optional quota action reasons without declaring those actions available',async()=>{
+    const quota_provider_unavailable={codex:{authenticate:'operations.authenticate: command is unavailable'}};
+    const capabilities={...channelCapabilities(),quota_provider_actions:{codex:['query']},quota_provider_unavailable};
+    expect((await channelPost(app,host,capabilities)).statusCode).toBe(200);
+    const [registered]=await new HostCapabilityRegistry(pool).read(north.company.id);
+    expect(registered?.capabilities.quota_provider_unavailable).toEqual(quota_provider_unavailable);
+    expect(registered?.capabilities.quota_provider_actions).toEqual({codex:['query']});
+    expect(registered?.quota_executor_ready).toBe(true);
+  });
   it('registers only a signed closed catalog, keeps it company scoped and expires executor readiness',async()=>{
     const registry=new HostCapabilityRegistry(pool);expect(await registry.read('north')).toEqual([]);
     const capabilities=channelCapabilities();
