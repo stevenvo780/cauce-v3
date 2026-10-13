@@ -313,6 +313,11 @@ class Executor:
         account, binding = binding_for(self.policy, agent)
         if self.journal.get('authenticated') != {'account_id': account, 'binding': binding}:
             raise SafeFailure('provider profile has no current authenticated identity proof')
+        if self.journal.get('login_stopped') is True:
+            # The console login stopped this runtime; the profile and verify probes need it running again.
+            self.journal['runtime'] = start(self.policy, agent, operation_id=self.context['operation_id'])['runtime_digest']
+            del self.journal['login_stopped']
+            self.save()
         observed = invoke(self.policy, self.context, agent, 'profile')
         if observed.get('profile_verified') is not True:
             raise SafeFailure('provider profile was not acknowledged')
@@ -408,6 +413,9 @@ class Executor:
         if step == 'login-stop':
             for row in self.physical_placements():
                 stop(self.policy, row)
+            if 'runtime' in self.journal:
+                self.journal['login_stopped'] = True
+                self.save()
             return {'evidence': {'stopped_verified': True}}
         attempted = self.journal.setdefault('attempted', [])
         if step not in attempted:
