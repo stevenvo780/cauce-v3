@@ -5,18 +5,15 @@ codex_home_de() {  # $1=alias $2=home-del-usuario
   printf '%s\n' "${h:-$2/.codex}"
 }
 
-# El equivalente para claude: DONDE vive su `.credentials.json`, para que el sitio donde se
-# ESCRIBE el token y el que se COMPRUEBA despues sean el MISMO por construccion.
-# Solo se honra `CREDENTIAL_HOME` con arnes `claude` a secas — misma condicion que aplica
-# `credencial_env_de`: una sola clave no puede ser el home de codex y el de claude a la vez.
-# Para el resto devuelve el default `$HOME/.claude`, que es lo que este CLI hacia siempre.
+# CREDENTIAL_HOME applies only to plain Claude aliases, matching credencial_env_de.
+# Other harnesses use the default Claude credential directory.
 claude_home_de() {  # $1=alias $2=home-del-usuario $3=harness
   local h=
   [ "$3" = claude ] && h=$(sed -n 's/^CREDENTIAL_HOME=//p' "$CONFIG/$1.env" 2>/dev/null | head -1)
   printf '%s\n' "${h:-$2/.claude}"
 }
 
-# Leer un fichero DONDE VIVA el alias. kant es host-native: ahi no hay docker que valga.
+# Read credentials on the alias host; host-native aliases have no container.
 leer_en_alias() {  # $1=alias $2=contenedor $3=usuario $4=ruta
   if es_host_native "$1"; then cat "$4" 2>/dev/null
   else docker exec --user "$3" "$2" cat "$4" 2>/dev/null; fi
@@ -26,26 +23,22 @@ existe_en_alias() {  # $1=alias $2=contenedor $3=usuario $4=ruta
   else docker exec --user "$3" "$2" test -f "$4" 2>/dev/null; fi
 }
 
-# El binario del arnes NO viene garantizado en la imagen: `codex` se instala SOLO en los alias
-# que lo usan, y openclaw puede llevar pool de los dos sin tener ambos binarios. La credencial NO
-# es proxy del binario (puede haber auth.json sin el binario); lo que decide si se puede renovar
-# es el BINARIO, porque la renovacion se hace ejecutandolo.
+# Renewal requires the provider CLI in the runtime; a credential file does not prove the binary exists.
+# OpenClaw can declare both providers while its runtime contains only one CLI.
 binario_en_alias() {  # $1=alias $2=contenedor $3=usuario $4=binario
   if es_host_native "$1"; then command -v "$4" >/dev/null 2>&1
   else docker exec --user "$3" "$2" sh -lc "command -v $4" >/dev/null 2>&1; fi
 }
 
-# El docker de ESTA maquina puede no ser el de la flota. Medido: en la torre, `cauce socrates
-# login --ver` pinto "sin fichero legible" porque ws-prizma no existe aca — indistinguible de una
-# credencial vacia. Se comprueba ANTES de leer nada y se dice en voz alta.
+# Verify the alias runtime before reading credentials so a missing remote mount is not reported as empty.
 contenedor_alcanzable() {  # $1=alias $2=contenedor
   es_host_native "$1" && return 0
   [ -n "$2" ] || return 1
   docker inspect -f '{{.State.Running}}' "$2" 2>/dev/null | grep -qx true
 }
 
-# NUNCA imprime un token: tipo, huella corta y —en codex— cuenta y correo. La huella es lo que
-# permite decir "cambio" o "no cambio" despues del login, que es la unica prueba que vale.
+# Report credential type and a short fingerprint without exposing token contents.
+# The fingerprint verifies whether login changed the credential file.
 huella_claude() {  # $1=alias $2=contenedor $3=usuario $4=CONFIG-DIR de claude (el que sale de claude_home_de)
   leer_en_alias "$1" "$2" "$3" "$4/.credentials.json" | python3 -c '
 import json,sys,hashlib
@@ -83,9 +76,7 @@ pinta_credencial() {  # $1=que(claude|codex) $2=alias $3=ctr $4=usu $5=ruta-base
   fi
 }
 
-# ¿Tiene un turno del bus EN VUELO? El adaptador emite delivery_start al tomar la entrega y
-# delivery_end al cerrarla: si el ultimo de los dos es un start, hay un turno corriendo y pararlo
-# ahora lo mata. Un login no vale un turno perdido.
+# An unmatched delivery_start marks a bus turn in progress; do not stop the alias during that turn.
 turno_en_vuelo() {  # $1=alias -> 0 = SI hay turno en vuelo
   local ultimo
   ultimo=$(journalctl --user -u "$(unit_del_alias "$1")" -n 400 --no-pager -o cat 2>/dev/null \
@@ -93,9 +84,8 @@ turno_en_vuelo() {  # $1=alias -> 0 = SI hay turno en vuelo
   [[ $ultimo == *delivery_start* ]]
 }
 
-# Que arnes se le renueva. El harness manda: a un agente de codex no se le pregunta por claude.
-# openclaw lleva un pool y puede necesitar los dos. Esto dice lo que el arnes DECLARA; lo que de
-# verdad se puede renovar se filtra despues con `binario_en_alias`, en cmd_login.
+# Provider choices follow the declared harness; OpenClaw can declare both providers.
+# cmd_login filters those choices by the CLI binaries installed in the runtime.
 objetivos_declarados() {  # $1=harness $2=alias $3=ctr $4=usu $5=cfgdir-claude $6=codexhome
   case "$1" in
     claude) printf 'claude\n' ;;
@@ -108,15 +98,11 @@ objetivos_declarados() {  # $1=harness $2=alias $3=ctr $4=usu $5=cfgdir-claude $
   esac
 }
 
-# `claude setup-token` IMPRIME un token y no escribe ningun fichero: comprobar solo
-# `.credentials.json` lo ve igual que antes de intentar el login, asi que este CLI lo INSTALA en
-# vez de solo avisar. El token entra por STDIN, como en `login_codex` opcion 2, nunca por argumento.
-# Sin `scopes` (con `subscriptionType`) el fichero existe pero `claude auth status --text` dice
-# "Not logged in." igual que sin fichero: un "minimo" cambia un fallo ruidoso por uno silencioso.
+# setup-token prints a token without writing the credential file.
+# Include scopes so Claude's auth status recognizes the credential.
 instala_token_claude() {  # $1=alias $2=ctr $3=usu $4=cfgdir ; el TOKEN entra por STDIN
   local json
-  # El JSON se arma en el HOST (aqui hay python3 seguro: lo usan las huellas). El contenedor solo
-  # necesita `sh`. `expiresAt` a un ano, que es lo que dura un setup-token.
+  # Read the token from stdin so it is not exposed in process arguments.
   json=$(python3 -c '
 import json,sys,time
 t=sys.stdin.read().strip()
@@ -125,8 +111,7 @@ print(json.dumps({"claudeAiOauth":{"accessToken":t,"refreshToken":"",
   "expiresAt":int(time.time()*1000)+31536000000,
   "scopes":["user:inference","user:profile"],"subscriptionType":"max"}}))') || return 9
   [ -n "$json" ] || return 9
-  # Se escribe a un temporal y se mueve encima: un `mv` es atomico, asi que no existe el estado
-  # intermedio "fichero a medio escribir" que ya nos dejo una credencial VACIA en otra rotacion.
+  # Replace the credential atomically so readers cannot observe partial JSON.
   if es_host_native "$1"; then
     ( umask 077; mkdir -p "$4" \
       && printf '%s' "$json" > "$4/.credentials.json.nuevo" \
@@ -141,8 +126,7 @@ print(json.dumps({"claudeAiOauth":{"accessToken":t,"refreshToken":"",
   fi
 }
 
-# La comprobacion por EFECTO: no "existe el fichero", sino que el propio claude se da por logueado.
-# `claude auth status` lee el estado local y sale 0/1; es de solo lectura y no gasta turno.
+# Verify authentication through the provider CLI; file existence alone is insufficient.
 estado_auth_claude() {  # $1=alias $2=ctr $3=usu $4=cfgdir
   if es_host_native "$1"; then
     CLAUDE_CONFIG_DIR="$4" claude auth status --text 2>&1 | head -2
@@ -168,8 +152,7 @@ login_claude() {  # $1=alias $2=ctr $3=usu $4=cfgdir de claude
   fi
   printf "  Pega el token y ENTER %s(no se muestra)%s: " "$c_dim" "$c_reset"
   read -r -s token; printf '\n'
-  # Mejor no tocar nada que dejar la credencial vacia o con basura: una credencial rota se ve igual
-  # que una cuenta agotada, y esa confusion ya costo dias.
+  # Keep the existing credential when a replacement cannot be verified.
   if [ -z "$token" ]; then
     printf "  %stoken vacio: no toco nada%s %s(la credencial anterior sigue como estaba)%s\n" "$c_warn" "$c_reset" "$c_dim" "$c_reset"
     return 1
@@ -193,11 +176,8 @@ login_claude() {  # $1=alias $2=ctr $3=usu $4=cfgdir de claude
   printf "  %stoken instalado en %s/.credentials.json%s %s(modo 600)%s\n" "$c_ok" "$4" "$c_reset" "$c_dim" "$c_reset"
 }
 
-# El flujo por defecto es --device-auth: el login de navegador levanta el callback en localhost
-# DENTRO del contenedor y el navegador del dueno esta en otra maquina — casi nunca cierra.
-# `--device-auth` SI existe (0.144.5 y 0.145.0, comprobado): en `codex login --help` sale con la
-# descripcion VACIA en penultima posicion, por eso alguien lo documento como inexistente.
-# Imprime https://auth.openai.com/codex/device y un codigo de ocho letras que dura 15 minutos.
+# Use device authentication because a browser callback inside the container is not reachable from
+# the operator's machine. The device code expires after 15 minutes.
 login_codex() {  # $1=alias $2=ctr $3=usu $4=codex-home
   local opcion token
   printf "\n  %s1)%s codigo de dispositivo   %s(por defecto: te da una URL y un codigo de 8 letras)%s\n" "$c_b" "$c_reset" "$c_dim" "$c_reset"
@@ -209,7 +189,7 @@ login_codex() {  # $1=alias $2=ctr $3=usu $4=codex-home
     printf "  Pega el access token y ENTER %s(no se muestra)%s: " "$c_dim" "$c_reset"
     read -r -s token; printf '\n'
     [ -n "$token" ] || { printf "  %stoken vacio: no toco nada%s\n" "$c_warn" "$c_reset"; return 1; }
-    # Por stdin, NUNCA como argumento: los argumentos se leen en `ps` desde cualquier proceso.
+    # Pass the token through stdin; process arguments are visible in process listings.
     if es_host_native "$1"; then
       printf '%s' "$token" | CODEX_HOME="$4" codex login --with-access-token
     else
@@ -223,8 +203,7 @@ login_codex() {  # $1=alias $2=ctr $3=usu $4=codex-home
   fi
 }
 
-# Codex admite UNA sola sesion viva por cuenta: dos alias en la misma se invalidan el uno al otro.
-# Por eso, despues de tocar codex, se dice con quien acaba de quedar emparejado.
+# A Codex account session cannot be shared concurrently by multiple aliases.
 choques_de_codex() {  # $1=alias-que-acabo-de-tocar $2=cuenta
   local otro line ctr cuser uhome ch cuenta _r
   [ -n "$2" ] && [ "$2" != '?' ] || return 0
@@ -255,9 +234,6 @@ cmd_login() {  # $1=alias  [claude|codex] [--ver] [--forzar]  (en cualquier orde
   printf "  %s%s%s\n" "$c_dim" "$(printf '─%.0s' $(seq 1 62))" "$c_reset"
 
   if ! contenedor_alcanzable "$a" "$ctr"; then
-    # Antes esto decia SIEMPRE "corre esto donde vivan los contenedores", incluso ejecutandose
-    # EN la maquina donde viven: a Steven le mando a otro host cuando la verdad era que el
-    # contenedor no existia en ninguno. Un mensaje que manda a un sitio equivocado cuesta mas.
     printf "  %sel contenedor %s no aparece en el docker de esta maquina (ni parado)%s\n" "$c_err" "${ctr:-?}" "$c_reset"
     if [ "$(sitio "$a")" = local ]; then
       printf "  %sy esta ES la maquina donde deberia vivir: no esta creado todavia.%s\n" "$c_warn" "$c_reset"
@@ -269,10 +245,7 @@ cmd_login() {  # $1=alias  [claude|codex] [--ver] [--forzar]  (en cualquier orde
     return 3
   fi
 
-  # Los objetivos se calculan AQUI, despues de saber que el contenedor responde: comprobar el
-  # binario exige poder ejecutar algo dentro. Lo que el arnes declara y lo que el contenedor tiene
-  # instalado son dos cosas distintas, y ofrecer la segunda como si fuera la primera es el defecto
-  # que documenta `binario_en_alias`.
+  # Offer only declared providers whose CLI is installed in the reachable runtime.
   local -a declarados=() objetivos=() faltan=()
   if [ -n "$arg" ]; then declarados=("$arg")
   else mapfile -t declarados < <(objetivos_declarados "$harness" "$a" "$ctr" "$cuser" "$cchome" "$chome"); fi
@@ -286,8 +259,7 @@ cmd_login() {  # $1=alias  [claude|codex] [--ver] [--forzar]  (en cualquier orde
     [ "$o" = claude ] && pinta_credencial claude "$a" "$ctr" "$cuser" "$cchome"
     [ "$o" = codex ]  && pinta_credencial codex  "$a" "$ctr" "$cuser" "$chome"
   done
-  # Se dice en voz alta, no se esconde: si el dueno pidio ese arnes a proposito tiene que saber por
-  # que no se lo ofrezco, y con palabras — nunca con el error crudo del runtime.
+  # Explain unsupported providers without exposing raw runtime errors.
   for o in "${faltan[@]}"; do
     case "$o" in
       claude) printf "  Claude : %s%-14s%s %sno hay binario 'claude' en %s%s\n" "$c_warn" "NO INSTALADO" "$c_reset" "$c_dim" "${ctr:-(host-native)}" "$c_reset";;
@@ -313,10 +285,7 @@ cmd_login() {  # $1=alias  [claude|codex] [--ver] [--forzar]  (en cualquier orde
     printf "  %sel login tiene prioridad: sigo.%s\n" "$c_warn" "$c_reset"
   fi
 
-  # El aviso va ANTES de la pregunta: quien confirma tiene que saber que desde ese "si" el alias
-  # queda APAGADO y cuanto puede durar. Medido: el codigo de --device-auth dura 15 minutos, el
-  # humano se demoro y el alias se comio ese cuarto de hora caido — entregas encoladas y el
-  # guardia reportandolo caido con gravedad 95. Nadie tiene que adivinar esto leyendo el codigo.
+  # Warn before confirmation because authentication stops the alias and can take up to 15 minutes.
   local tiene_codex=0 o2
   for o2 in "${objetivos[@]}"; do [ "$o2" = codex ] && tiene_codex=1; done
   printf "\n  %sAVISO — a partir de que confirmes, %s queda APAGADO hasta terminar el login.%s\n" "$c_warn" "$a" "$c_reset"
@@ -337,14 +306,13 @@ cmd_login() {  # $1=alias  [claude|codex] [--ver] [--forzar]  (en cualquier orde
     [[ $q == [sS] ]] || { printf "  no toco nada.\n"; return 0; }
   fi
 
-  # Huella ANTES, para poder decir despues si cambio de verdad o si el login se quedo a medias.
+  # Capture the credential fingerprint before login to verify the effect.
   local antes despues tipo cuenta correo
   if [ "$que" = claude ]; then antes=$(huella_claude "$a" "$ctr" "$cuser" "$cchome")
   else antes=$(huella_codex "$a" "$ctr" "$cuser" "$chome"); fi
 
   printf "\n  %s-- apagando el adaptador de %s --%s\n" "$c_dim" "$a" "$c_reset"
-  # Si algo del adaptador sobrevivio hasta a SIGKILL (proceso en D, casi imposible), el login igual
-  # sigue: tiene prioridad, y abortar aca dejaba al alias APAGADO y sin credencial nueva.
+  # Continue credential renewal if process cleanup fails; otherwise the alias remains off without a replacement.
   cmd_off "$a" || printf "  %sno quedo apagado del todo; el login tiene prioridad: sigo igual%s\n" "$c_warn" "$c_reset"
 
   if [ "$que" = claude ]; then login_claude "$a" "$ctr" "$cuser" "$cchome"
@@ -354,9 +322,7 @@ cmd_login() {  # $1=alias  [claude|codex] [--ver] [--forzar]  (en cualquier orde
   if [ "$que" = claude ]; then
     despues=$(huella_claude "$a" "$ctr" "$cuser" "$cchome")
     pinta_credencial claude "$a" "$ctr" "$cuser" "$cchome"
-    # El fichero puede estar y aun asi no valer: lo que decide es que el propio claude se de por
-    # logueado. Sin `scopes` el fichero existe y claude dice "Not logged in" igual que si no
-    # estuviera — medido. Por eso se pregunta al harness, no al inodo.
+    # Check authentication through Claude; file existence alone does not prove a valid login.
     printf "  %sclaude dice:%s %s\n" "$c_dim" "$c_reset" "$(estado_auth_claude "$a" "$ctr" "$cuser" "$cchome" | head -1)"
   else
     despues=$(huella_codex "$a" "$ctr" "$cuser" "$chome")
@@ -364,7 +330,7 @@ cmd_login() {  # $1=alias  [claude|codex] [--ver] [--forzar]  (en cualquier orde
     IFS='|' read -r tipo cuenta correo <<<"$despues"
     choques_de_codex "$a" "$cuenta"
   fi
-  # El login puede salir con codigo 0 y no haber escrito nada. Lo que se afirma es el EFECTO.
+  # A zero exit status does not prove the credential changed; verify the effect.
   if [ "$antes" = "$despues" ]; then
     printf "  %sla credencial NO cambio%s — quedo la misma de antes. El login no prendio.\n" "$c_err" "$c_reset"
   else
@@ -375,9 +341,7 @@ cmd_login() {  # $1=alias  [claude|codex] [--ver] [--forzar]  (en cualquier orde
   cmd_on "$a"
 }
 
-# ---------- aprovisionar / retirar: alta y baja de credenciales de un alias ----------
-# docs/operacion.md (alta y baja). The pieces run IN ORDER (piece 3 carries the PTY channel as
-# sub-pieces 3b-3d); the first real failure stops the chain — a half-issued identity looks whole.
+# Provision steps are ordered; stop on the first failure to avoid a partial identity.
 FLOTA_JSON=$OPS/flota.json
 PKI_ROOT_AGENTE=/etc/cauce-v3/pki
 TOKENS_DIR_ALIAS=/etc/cauce-v3/aliases
@@ -385,7 +349,7 @@ IDENTIDADES_DIR=/etc/cauce-v3/secrets/identities
 TELEGRAM_RUNTIME_DIR=${CAUCE_TELEGRAM_RUNTIME_DIR:-/etc/cauce-v3/telegram-runtime}
 TELEGRAM_OWNER=${CAUCE_TELEGRAM_OWNER:-1000:1000}
 
-# Owner:mode:size only, never content: the one shape a credential is allowed to take on screen.
+# Expose owner, mode and size only; never display credential contents.
 estampa_modo() {  # $1=path
   if [ -e "$1" ]; then
     stat -c 'owner=%U:%G modo=%a bytes=%s' "$1" 2>/dev/null || printf 'sin stat'
@@ -394,14 +358,12 @@ estampa_modo() {  # $1=path
   fi
 }
 
-# Same default chain as CAUCE_PTY_PKI_ROOT in cauce-pty-launcher.sh/install-pty-agent.sh (the
-# live unit sets it to %h/.config/cauce-v3/pty-pki): whatever lands here is what the PTY unit reads.
+# Keep the default PKI path aligned with the PTY launcher and unit.
 pty_pki_root() {
   printf '%s\n' "${CAUCE_PTY_PKI_ROOT:-${XDG_CONFIG_HOME:-$HOME/.config}/cauce-v3/pty-pki}"
 }
 
-# ops/flota.json is the sole allowlist. Stdout "tenant\trole" on rc 0 (enabled); rc 1 = unknown
-# to the snapshot, rc 2 = present but enabled=false, rc 3 = snapshot unreadable, rc 4 = retired.
+# ops/flota.json is authoritative; stdout and exit statuses form this helper's caller contract.
 flota_estado_alias() {  # $1=alias
   [ -f "$FLOTA_JSON" ] || return 3
   python3 -c '
@@ -438,7 +400,7 @@ cmd_aprovisionar() {  # $1=alias [--dry-run]
   [ "$dry" = 1 ] && printf "  %s(--dry-run: nada se escribe)%s" "$c_dim" "$c_reset"
   printf "\n\n"
 
-  # 0: la unica allowlist (ops/flota.json) y la CA contra la que firma todo lo demas.
+  # Require the fleet snapshot and signing CA before issuing credentials.
   local ap_tenant ap_role salida rc
   salida=$(flota_estado_alias "$a"); rc=$?
   case $rc in
@@ -471,8 +433,7 @@ cmd_aprovisionar() {  # $1=alias [--dry-run]
     return 1
   fi
 
-  # 1: identidad mTLS agent-<alias>. provision-agent-identity.sh ya se niega a sobreescribir,
-  # pero se comprueba antes para no depender de parsear su mensaje de error.
+  # Refuse to overwrite an existing mTLS identity.
   local id_cert="$PKI_ROOT_AGENTE/agent-$a.crt" id_key="$PKI_ROOT_AGENTE/agent-$a.key"
   if [ -e "$id_cert" ] || [ -e "$id_key" ]; then
     printf "  [1] agent-%s ya tiene identidad (se salta):\n" "$a"
@@ -491,8 +452,7 @@ cmd_aprovisionar() {  # $1=alias [--dry-run]
     fi
   fi
 
-  # 1b: registra el fingerprint del cert emitido en 1 dentro de mtls_identities.json.
-  # register-agent-identity.py trae su PROPIO --dry-run (de solo lectura), igual que 1.
+  # Register the fingerprint of the certificate issued in step 1.
   local register_script="$OPS/scripts/register-agent-identity.py"
   if [ ! -f "$register_script" ]; then
     printf "  [1b] %sno encuentro %s%s\n" "$c_err" "$register_script" "$c_reset"
@@ -510,8 +470,7 @@ cmd_aprovisionar() {  # $1=alias [--dry-run]
     fi
   fi
 
-  # 2: bearer token + hash. issue-alias-token.py trae su PROPIO --dry-run (de solo lectura),
-  # asi que aca se usa tal cual en vez de simularlo.
+  # Issue the bearer token and record its hash.
   local issue_script="$OPS/scripts/issue-alias-token.py"
   if [ ! -f "$issue_script" ]; then
     printf "  [2] %sno encuentro %s%s (docs/operacion.md (alta y baja), pieza 2)\n" "$c_err" "$issue_script" "$c_reset"
@@ -532,7 +491,7 @@ cmd_aprovisionar() {  # $1=alias [--dry-run]
     fi
   fi
 
-  # 3: alias-key.hex para el canal PTY. publish-alias-key.sh no tiene --dry-run propio.
+  # The alias key belongs to the PTY channel; preview its write because the publisher has no dry-run flag.
   local pty_dir pty_key
   pty_dir="$(pty_pki_root)/$a"
   pty_key="$pty_dir/alias-key.hex"
@@ -561,7 +520,7 @@ cmd_aprovisionar() {  # $1=alias [--dry-run]
     fi
   fi
 
-  # 3b: PTY channel client cert, CN=pty-<alias>, signed by the SAME client CA as [1].
+  # Sign the PTY client certificate with the same client CA as step 1.
   local pty_crt="$pty_dir/client.crt" pty_ckey="$pty_dir/client.key" fp_pty="" vence_pty=""
   if [ -e "$pty_crt" ] && openssl x509 -in "$pty_crt" -noout -checkend 0 >/dev/null 2>&1; then
     printf "  [3b] %s ya existe y no esta vencido (se salta): %s\n" "$pty_crt" "$(estampa_modo "$pty_crt")"
@@ -590,7 +549,7 @@ cmd_aprovisionar() {  # $1=alias [--dry-run]
     fi
   fi
 
-  # 3c: relay allowlist. The relay re-reads this file on EVERY connection: no restart involved.
+  # The relay reads this allowlist on each new connection.
   local reg=${CAUCE_PTY_RELAY_IDENTITIES:-/etc/cauce-v3/terminal/pty_agent_identities.json}
   if [ -e "$pty_crt" ]; then
     fp_pty=$(openssl x509 -in "$pty_crt" -noout -fingerprint -sha256 2>/dev/null | cut -d= -f2 | tr -d :)
@@ -625,7 +584,7 @@ PY
     return 1
   fi
 
-  # 3d: launcher env for cauce-pty-launcher.sh — same path chain as pty_pki_root().
+  # Keep the launcher environment aligned with pty_pki_root().
   local pty_env="${XDG_CONFIG_HOME:-$HOME/.config}/cauce-v3/pty/$a.env"
   if [ -e "$pty_env" ]; then
     printf "  [3d] %s ya existe (se salta): %s\n" "$pty_env" "$(estampa_modo "$pty_env")"
@@ -643,9 +602,7 @@ PY
     fi
   fi
 
-  # 4: container-pki/<alias>/ + <alias>.env, via el modo --init de update-alias-config.py.
-  # update-alias-config.py se niega a sobreescribir (igual que provision-agent-identity.sh en
-  # [1]), asi que aca tambien se comprueba antes para poder re-correr aprovisionar sin fallar.
+  # Skip existing identity material; update-alias-config.py --init refuses to overwrite it.
   local cp_dir="/etc/cauce-v3/container-pki/$a" cp_env="/etc/cauce-v3/container-aliases/$a.env"
   if [ -e "$cp_dir/ca.crt" ] && [ -e "$cp_dir/client.crt" ] && [ -e "$cp_dir/client.key" ] && [ -e "$cp_env" ]; then
     printf "  [4] container-pki/%s/ y %s.env ya estan inicializados (se salta):\n" "$a" "$a"
@@ -662,9 +619,7 @@ PY
     return 1
   fi
 
-  # 5: fila de config.json y token de Telegram por el mismo escritor (publish-telegram-token.py):
-  # la ruta del token sale de la fila que emite el generador, y config.json solo se reemplaza
-  # cuando el token ya esta en <tenant>/<alias>.token. --aliases toca SOLO esta entrada.
+  # Publish config only after the referenced token exists; update only this alias entry.
   local tg_pub="$OPS/scripts/publish-telegram-token.py"
   local -a tg_args=(--runtime-dir "$TELEGRAM_RUNTIME_DIR" --alias "$a" --reuse-existing-allowlist
                     --owner "$TELEGRAM_OWNER")
@@ -683,7 +638,7 @@ PY
     fi
   fi
 
-  # 6: verificacion final, de solo lectura (equivalente a `cauce <alias> ver`).
+  # Verify the result without mutating the alias.
   printf "\n  [6] verificacion (equivalente a 'cauce %s ver'):\n" "$a"
   local linea; linea=$(alias_info "$a")
   if [ -n "$linea" ]; then

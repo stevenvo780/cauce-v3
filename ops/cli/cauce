@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # shellcheck source-path=SCRIPTDIR
-# Shared terminals use the same native session as their adapter.
+# Shared terminals attach to the adapter's existing session.
 set -uo pipefail
 cli_home=$(getent passwd "$(id -u)" 2>/dev/null | cut -d: -f6)
 [[ -n "$cli_home" && -d "$cli_home" ]] || cli_home=$HOME
@@ -85,8 +85,7 @@ adaptador_activo() {
 }
 compartida_configurada() {
   [ -f "$CONFIG/$1.env" ] && grep -qx 'SHARED_SESSION=1' "$CONFIG/$1.env" && return 0
-  # kant es host-native: no tiene contenedor y su interruptor vive en la UNIT, no en el .env.
-  # Sin esta rama el CLI lo daba por "aparte" teniendo la sesion compartida encendida y andando.
+  # Host-native aliases have no container; their unit controls shared-session state.
   es_host_native "$1" && systemctl --user show "cauce-v3-host-$1.service" -p Environment --value 2>/dev/null \
     | tr ' ' '\n' | grep -qx 'CAUCE_SHARED_SESSION=1'
 }
@@ -147,17 +146,15 @@ sesion() {  # $1=accion $2=alias $3=contenedor $4=usuario $5=harness $6=state
     return $?
   fi
   docker exec --user "$4" "$3" test -f "$helper" || return 3
-  # El `docker exec` NO hereda el entorno del supervisor: sin este `-e` el helper resuelve el home
-  # del harness con el `process.env` de dentro del contenedor y el panel nace en el sitio equivocado.
+  # Pass the supervisor environment explicitly; docker exec does not inherit it.
   cred=$(credencial_env_de "$2" "$5")
   [ -n "$cred" ] && env_cred=(-e "$cred")
   modo=$(modo_permisos_de "$2" "$5")
   [ -n "$modo" ] && env_cred+=(-e "$modo")
-  ws=$(sed -n 's/^SHARED_SESSION_WORKSPACE=//p' "$CONFIG/$2.env" 2>/dev/null | head -1)  # misma fuente que la rama host-native de arriba
+  ws=$(sed -n 's/^SHARED_SESSION_WORKSPACE=//p' "$CONFIG/$2.env" 2>/dev/null | head -1)
   docker exec --user "$4" "${env_cred[@]}" "$3" node "$helper" "$1" --alias "$2" \
     --harness "$5" --workspace "${ws:-/workspace}" --state "$6"
 }
-# Los avisos de caída que quedaron registrados mientras el dueño no estaba mirando.
 avisos() {  # $1=alias $2=contenedor $3=usuario $4=state $5=harness
   local helper
   helper=$(helper_en_contenedor "$1") || return 0
@@ -202,7 +199,6 @@ Al entrar con ${c_b}cauce <alias>${c_reset} te dice en la cabecera cual de los t
 EOF
 }
 
-# ---------- estado de la flota ----------
 cmd_flota() {
   [[ ! -v CAUCE_FLEET_RUNTIME_STATE ]] || exec "$BIN/cauce-estado"
   printf "\n  %s%-9s %-22s %-9s %-9s %-9s %s%s\n" "$c_b" ALIAS CONTENEDOR HARNESS ADAPTADOR TUI MODO "$c_reset"
@@ -210,9 +206,7 @@ cmd_flota() {
   local a line ctr cuser state harness ad modo color term
   local -a sin_gateway=()
   for a in $(todos_los_alias); do
-    # Un alias que vive en el VPS no se puede pintar desde aca: su docker y su systemd son otros.
-    # Mostrarlo igual lo dibujaba como "parado" cuando esta perfectamente vivo del otro lado, que
-    # es peor que no mostrarlo. Va en su propia tabla, mas abajo, preguntada al host que si lo ve.
+    # Query remote aliases on their host; local Docker and systemd cannot establish remote state.
     [ "$(sitio "$a")" = vps ] && continue
     line=$(alias_info "$a") || continue
     IFS=$'\t' read -r _ _ ctr cuser _ state harness _ <<<"$line"
@@ -220,13 +214,10 @@ cmd_flota() {
     if compartida_configurada "$a" && sesion status "$a" "$ctr" "$cuser" "$harness" "$state" >/dev/null 2>&1; then
       modo=compartida; color=$c_ok; term="${c_ok}si${c_reset}"
     elif [[ $harness == openclaw ]] && openclaw_gateway_vivo "$ctr"; then
-      # En openclaw la sesión compartida no tiene interruptor propio: la da el gateway. Si acepta
-      # conexiones, la TUI y el turno del bus son dos clientes de la MISMA conversación.
+      # OpenClaw's gateway owns the shared session; the bus and TUI are clients of it.
       modo=compartida; color=$c_ok; term="${c_ok}si${c_reset}"
     elif [[ $harness == openclaw && $ad == active ]]; then
-      # El caso que no se puede pintar como "aparte" sin mentir: el alias SIGUE contestando el bus,
-      # pero por el camino embebido, dentro del propio puente. El dueño no ve NADA de eso, y hoy
-      # nada se lo dice en el chat. Que al menos se lo diga acá, y en rojo.
+      # Mark the embedded fallback: the bus remains active, but no shared TUI is available.
       modo="SIN GATEWAY"; color=$c_err; term="${c_err}NO${c_reset}"; sin_gateway+=("$a")
     elif [[ $ad == active ]]; then
       modo=aparte; color=$c_warn; term="${c_dim}no${c_reset}"
@@ -259,7 +250,6 @@ alias = sys.argv[1]
 state = sys.argv[2]
 home = os.path.expanduser("~")
 
-# 1) las sesiones que Cauce le abrio a este alias, una por conversacion
 try:
     with open("%s/sessions.json" % state) as fh:
         cauce = json.load(fh)
@@ -287,8 +277,7 @@ for k, v in (cauce.get("sessions") or {}).items():
     if not k.startswith("openclaw:%s:" % alias) or not (v or {}).get("native_id"):
         continue
     d, r = donde_y_rango(v)
-    # El carril de agentes no es una conversacion del dueno: nunca puede quedar primero. El
-    # prefijo va ADELANTE: la columna se trunca y un sufijo se perdia en las filas mas largas.
+    # Prefix agent-to-agent sessions because long rows are truncated at the end.
     if k.endswith(".agent-lane"):
         r = max(r, 5)
         d = "[agentes] %s" % d
@@ -297,7 +286,6 @@ if not mias:
     raise SystemExit(0)
 mias.sort(key=lambda t: t[0])
 
-# 2) lo que sabe el gestor de sesiones de openclaw: edad, tokens, y el id del transcript
 porclave = {}
 try:
     out = subprocess.run(["openclaw", "sessions", "list", "--json", "--limit", "all"],
@@ -319,8 +307,7 @@ def edad(ms):
     if m < 1440: return "%dh" % (m // 60)
     return "%dd" % (m // 1440)
 
-# 3) el ultimo turno del DUEÑO identifica la conversacion mejor que la respuesta. En la del bus
-#    ese turno es el sobre de protocolo entero, asi que se extrae el pedido real de adentro.
+# Unwrap the protocol envelope in the last user turn before displaying the request.
 def adelanto(sid):
     if not sid: return ""
     f = "%s/.openclaw/agents/main/sessions/%s.jsonl" % (home, sid)
@@ -353,8 +340,7 @@ for _r, n, d in mias:
 ' "$1" "$4" 2>/dev/null
 }
 
-# El gateway de openclaw acepta conexiones? Sin el no hay a que engancharse: el alias corre por
-# el fallback embebido dentro del propio puente y la TUI no comparte nada.
+# The shared gateway session is available only while the gateway accepts connections.
 openclaw_gateway_vivo() {  # $1=contenedor
   docker exec "$1" node -e '
 const net=require("net"), fs=require("fs");
@@ -379,13 +365,11 @@ cmd_entrar() {
 
   printf "\n  %s%s%s · %s · %s\n" "$c_b" "$a" "$c_reset" "$harness" "$ctr"
 
-  # 1) sesion compartida: la TUI real, y la misma conversacion que Telegram.
   if compartida_configurada "$a"; then
     if salida=$(sesion ensure "$a" "$ctr" "$cuser" "$harness" "$state" 2>&1); then
       printf "  modo: %s%sCOMPARTIDA%s — la TUI real, y la misma conversacion que Telegram.\n" "$c_ok" "$c_b" "$c_reset"
       printf "  %slo que llegue por el bus aparece aca EN VIVO. salir sin cerrarla: Ctrl-b d%s\n" "$c_dim" "$c_reset"
-      # Lo que se rompio mientras no estabas mirando. Si el bus tuvo que contestar por el camino
-      # de siempre, se dice aca ANTES de entrar: una caida silenciosa es indistinguible del exito.
+      # Display delivery failures before attaching; otherwise a dropped turn can look successful.
       local pendientes
       pendientes=$(avisos "$a" "$ctr" "$cuser" "$state" "$harness")
       if [ -n "$pendientes" ]; then
@@ -402,7 +386,7 @@ for line in sys.stdin:
       fi
       printf "\n"
       if es_host_native "$a"; then
-        # Su tmux es el del HOST: entrar por docker exec no lleva a ninguna parte.
+        # Host-native aliases use the host tmux server.
         exec tmux -L "$TMUX_SOCKET" attach-session -t "cauce-$a:agente"
       fi
       exec docker exec -it --user "$cuser" "$ctr" \
@@ -423,9 +407,7 @@ for line in sys.stdin:
     else
       local donde_oc
       if [[ ${#lineas[@]} -gt 1 ]]; then
-        # openclaw abre una conversacion por canal (Telegram, consola, bus): hilos distintos
-        # de verdad, y el dueño elige a cual entra. Las de Telegram van primeras y marcadas: es
-        # la que el dueño casi siempre quiere y hasta hoy tenia que adivinar.
+        # OpenClaw keeps separate conversations per channel; prioritize Telegram sessions.
         printf "  %s%s conversaciones%s %s— openclaw abre una por canal. Elegi:%s\n\n" "$c_b" "${#lineas[@]}" "$c_reset" "$c_dim" "$c_reset"
         local hay_dm=0
         for i in "${!lineas[@]}"; do
@@ -435,8 +417,7 @@ for line in sys.stdin:
           printf "  %s %s%d)%s %-9s %s%-40s%s %shace %-5s · %-5s%s  %s\n" \
             "$marca" "$c_b" $((i+1)) "$c_reset" "${nid:0:8}" "$color" "${dnd:0:40}" "$c_reset" "$c_dim" "$ed" "$tk" "$c_reset" "${pre:0:38}"
         done
-        # La leyenda sólo si hay algo que señalar. Un ">>" explicado y ausente hace buscar una
-        # marca que no existe, y deja la duda de si la conversacion de Telegram esta o no.
+        # Show the marker legend only when a matching entry is listed.
         if [[ $hay_dm -eq 1 ]]; then
           printf "\n  %s>> = el DM de Telegram del dueño, segun lo que el adaptador anoto al abrirla.%s\n" "$c_dim" "$c_reset"
         else
@@ -454,8 +435,7 @@ for line in sys.stdin:
         n=1
       fi
       IFS=$'\t' read -r clave_oc _ _ _ donde_oc <<<"${lineas[$((n-1))]}"
-      # El cartel dice QUE conversacion es, no solo que "es la misma que el bus". Cuando el
-      # origen no consta, se dice que no consta, en vez de afirmar que es la de Telegram.
+      # Report only the recorded conversation origin; do not infer Telegram when it is missing.
       printf "\n  modo: %s%sCOMPARTIDA%s — la TUI real de openclaw, la MISMA conversacion que el bus.\n" "$c_ok" "$c_b" "$c_reset"
       if [[ $donde_oc == *"sin origen"* || -z $donde_oc ]]; then
         printf "  %sconversacion: NO CONSTA de que canal salio%s%s (entrada anterior al registro de origen).\n" "$c_warn" "$c_reset" "$c_dim"
@@ -502,8 +482,7 @@ for line in sys.stdin:
               printf "  %sgrok: te abro una RAMA de la conversacion del DM; para la misma: SHARED_SESSION=1.%s\n\n" "$c_dim" "$c_reset"
               exec python3 "$BIN/cauce-attach" "$a" --dm --bifurcar ;;
       muse)   # Sin SHARED_SESSION=1: la TUI real de Muse en conversacion NUEVA (APARTE); la del bus corre
-              # por `muse exec`. Con SHARED_SESSION=1 se entra arriba, a la MISMA. El login vive en ~/.local
-              # (montado); el enlace ~/.config/muse se pierde si re-aplanan el contenedor: se repone.
+              # Preserve the mounted Muse login and restore its config link in flattened containers.
               printf "  %smuse: te abro su TUI real (esfuerzo max), conversacion aparte.%s\n\n" "$c_dim" "$c_reset"
               exec docker exec -it --user "$cuser" -w "${wsa:-${chome:-/}}" "$ctr" bash -lc \
                 'd="$HOME/.local/share/cauce-v3/config/'"$a"'/.config/muse"; if [ ! -e "$HOME/.config/muse" ] && [ -d "$d" ]; then mkdir -p "$HOME/.config" && ln -s "$d" "$HOME/.config/muse"; fi; exec "$HOME/.local/bin/muse" --yolo --trust-workspace --reasoning-effort max' ;;
@@ -518,7 +497,6 @@ for line in sys.stdin:
   exec docker exec -it --user "$cuser" -w "${wsa:-${chome:-/}}" "$ctr" bash -l
 }
 
-# ---------- resto ----------
 cmd_ver() {
   local selector key; local -a keys=()
   for selector in "$@"; do key=$(runtime_key_de "$selector") || return $?; keys+=("$key"); done
@@ -539,7 +517,7 @@ systemctl_user_o_avisa() {  # $1=verbo(start|stop) $2=unit
   local verbo=$1 unit=$2 salida candidato; [ -z "${XDG_RUNTIME_DIR:-}" ] && { candidato="/run/user/$(id -u)"; [ -d "$candidato" ] && export XDG_RUNTIME_DIR="$candidato"; }; [ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ] && [ -S "${XDG_RUNTIME_DIR:-}/bus" ] && export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"; salida=$(systemctl --user "$verbo" "$unit" 2>&1) && return 0; printf "  %ssystemctl --user %s %s fallo%s\n" "$c_err" "$verbo" "$unit" "$c_reset">&2; printf "  %s%s%s\n" "$c_dim" "$salida" "$c_reset">&2; printf "  %ssin XDG_RUNTIME_DIR se intento derivar de /run/user/\$(id -u); desde root: systemctl --user -M stev@ %s %s%s\n" "$c_dim" "$verbo" "$unit" "$c_reset">&2; return 1
 }
 
-# shellcheck disable=SC2016  # corre en otro shell (eval / docker exec): sus $ se expanden alla
+  # shellcheck disable=SC2016  # Expanded by the remote shell through eval or docker exec.
 BARRIDO='for p in /proc/[0-9]*; do case "$(sed -n "s/^.*) \(.\).*/\1/p" "$p/stat" 2>/dev/null)" in Z|X) continue;; esac; c=$(tr "\0" " " < "$p/cmdline" 2>/dev/null); set -- $c; case "${1:-}" in *node*|*python*) ;; *) continue;; esac; h=""; v=$(tr "\0" "\n" < "$p/environ" 2>/dev/null); e=$(printf "%s\n" "$v" | sed -n "s/^CAUCE_RUNTIME_KEY=//p" | head -1); [ -n "$e" ] || e=$(printf "%s\n" "$v" | sed -n "s/^CAUCE_ALIAS=//p" | head -1); [ "$e" = "@@A@@" ] && h=1; case "$c" in *cauce-v3-adapter/@@A@@/*-mcp.js*) ;; *cauce-v3-adapter/@@A@@/*) h=1;; esac; [ -n "$h" ] && echo "${p#/proc/}"; done'
 
 pids_del_alias() {  # $1=alias -> un PID por linea (vacio = de verdad no hay nada)
@@ -557,10 +535,7 @@ pids_del_alias() {  # $1=alias -> un PID por linea (vacio = de verdad no hay nad
 cmd_on() {
   local a=$1 u; u=$(unit_del_alias "$a")
   systemctl_user_o_avisa start "$u"
-  # El adaptador hace STAGING del bundle (docker cp + chmod -R + verificacion) ANTES de existir
-  # el proceso real: medido 45-75s. Un `sleep 6` reporta "NO arranco" a mitad de copiar y el
-  # operador le repone el panel, que le BORRA la conversacion. Se sondea la CONDICION (el proceso
-  # vivo en /proc) con reintentos hasta un techo generoso, avisando que sigue.
+  # Bundle staging precedes adapter startup; wait for a live process instead of a fixed short delay.
   local techo=120 paso=5 transcurrido=0 pids
   pids=$(pids_del_alias "$a" | tr '\n' ' ')
   if [ -z "${pids// /}" ]; then
@@ -586,8 +561,7 @@ cmd_on() {
   printf "  %s proceso vivo: %s%s procesos%s %s(PID %s...) tras %ss%s\n" \
     "$a" "$c_ok" "$(printf '%s' "$pids" | wc -w)" "$c_reset" "$c_dim" "$(printf '%s' "$pids" | cut -d" " -f1)" "$transcurrido" "$c_reset"
   if compartida_configurada "$a"; then
-    # Misma logica que arriba: la sesion tmux se crea DESPUES del proceso y puede tardar unos
-    # segundos mas en aparecer. `ensure` es idempotente, asi que reintentarlo no hace dano.
+    # The shared tmux session can appear after the adapter; ensure is idempotent and safe to retry.
     local s_techo=30 s_paso=3 s_transcurrido=0 tui=''
     while :; do
       sesion ensure "$a" "$ctr" "$cuser" "$harness" "$state" >/dev/null 2>&1 || true
@@ -608,20 +582,17 @@ cmd_on() {
   printf "  %sentrar: cauce %s%s\n" "$c_dim" "$a" "$c_reset"
 }
 
-# Senala lo que el barrido reconoce AHORA como del alias. Se re-barre justo antes de senalar (los
-# PIDs se reciclan) y con el MISMO criterio que pids_del_alias: antes se reconfirmaba solo por
-# CAUCE_ALIAS en environ, asi que un hijo reconocido por su cmdline (.../cauce-v3-adapter/<alias>/)
-# sin esa variable nunca recibia la senal y el `off` abortaba con «SIGUE VIVO».
+# Re-scan before signalling because PIDs can be reused; match pids_del_alias criteria.
 senalar_alias() {  # $1=alias $2=senal (TERM|KILL)
   local a=$1 sig=$2 pids line ctr
   pids=$(pids_del_alias "$a" | tr '\n' ' ')
   [ -n "${pids// /}" ] || return 0
   if es_host_native "$a"; then
-    # shellcheck disable=SC2086  # un PID por palabra, a proposito
+    # shellcheck disable=SC2086  # Split the PID list into separate arguments.
     kill "-$sig" $pids 2>/dev/null
   else
     line=$(alias_info "$a") && IFS=$'\t' read -r _ _ ctr _ _ _ _ <<<"$line"
-    # shellcheck disable=SC2086
+    # shellcheck disable=SC2086  # Split the PID list into separate arguments.
     [ -n "$ctr" ] && docker exec "$ctr" kill "-$sig" $pids 2>/dev/null
   fi
   return 0
@@ -649,8 +620,7 @@ cmd_off() {
   local a=$1 u; u=$(unit_del_alias "$a")
   systemctl_user_o_avisa stop "$u"
   sleep 3
-  # No alcanza con parar la unit: hay un caso medido donde el alias siguio contestando el bus con
-  # la unit en "inactive". Si sobrevivio algo, matarlo — "off" quiere decir off.
+  # A stopped unit does not prove adapter processes have exited; verify and stop any survivors.
   local pids
   pids=$(pids_del_alias "$a")
   if [ -n "$pids" ]; then
@@ -662,11 +632,8 @@ cmd_off() {
     printf "  %s%s SIGUE VIVO%s (PID %s) ni con SIGKILL. Mirar a mano: ps -o pid,stat,args -p <pid>.\n" "$c_err" "$a" "$c_reset" "$(echo "$pids" | tr '\n' ' ')"
     return 1
   fi
-  # Su servidor tmux arrastra la generacion del adaptador: si queda en pie, el proximo arranque
-  # muere con 78/CONFIG. Matar la sesion tmux NO basta: el arnes puede sobrevivir sin panel (un
-  # `claude --resume` sobrevivio 51 min a un `off`) reteniendo su session id — justo lo que produce
-  # los dead_letters de "Session ID ... is already in use". El PID del panel se anota ANTES de
-  # matar la sesion, porque despues ya no hay a quien preguntarle.
+  # Stop the harness process tree, not only tmux, to avoid carrying its session into the next generation.
+  # Capture the panel PID before killing tmux so detached harness processes can still be identified.
   local matar_panel; matar_panel="pids=$(tmux -L "$TMUX_SOCKET" list-panes -t "cauce-$a" -F '#{pane_pid}' 2>/dev/null); tmux -L $TMUX_SOCKET kill-session -t cauce-$a 2>/dev/null; for p in \$pids; do kill \$p 2>/dev/null; done; true"
   if es_host_native "$a"; then
     sh -lc "$matar_panel" >/dev/null 2>&1
@@ -675,8 +642,7 @@ cmd_off() {
     [ -n "$ctr2" ] && docker exec "$ctr2" sh -lc "$matar_panel" >/dev/null 2>&1
   fi
   printf "  %s %sadaptador del bus apagado de verdad%s %s(su TUI tambien se fue, si no el proximo \"on\" falla con 78/CONFIG)%s\n" "$a" "$c_ok" "$c_reset" "$c_dim" "$c_reset"
-  # "off" apaga el ADAPTADOR DEL BUS. El canal PTY es otro servicio con su propia unit, y sigue
-  # en pie: el alias mantiene su TLS al relay y su terminal web sigue alcanzable — no es "off" total.
+  # "off" stops the bus adapter only; the separate PTY unit and web terminal stay active.
   if [ "$(systemctl --user is-active "cauce-v3-pty@$a.service" 2>/dev/null)" = active ]; then
     printf "  %sojo:%s su agente PTY sigue vivo y conectado al relay %s(cauce-v3-pty@%s)%s\n" "$c_warn" "$c_reset" "$c_dim" "$a" "$c_reset"
     printf "        %sel terminal web de %s sigue en pie. Para bajarlo tambien:%s\n" "$c_dim" "$a" "$c_reset"
@@ -684,12 +650,7 @@ cmd_off() {
   fi
 }
 
-# --- MULTI-HOST -------------------------------------------------------------------------------
-# 11 alias se mudaron al VPS y este CLI hablaba SIEMPRE con el docker/systemd locales: `cauce
-# argos estado` en la torre contestaba sobre un contenedor apagado — no falla, MIENTE, que es
-# peor. El mapa se genera de la realidad: ~/.config/cauce-v3/alias-host.tsv ->
-# <alias>\t<local|vps|ssh:usuario@host>.
-# Para los remotos no se reimplementa nada: se reenvia el mismo comando al `cauce` del otro host.
+# Resolve host placement before running status or lifecycle commands; remote aliases use that host's CLI.
 MAPA_HOST=$cli_home/.config/cauce-v3/alias-host.tsv
 sitio() {
   local alias_name=$1 route_record route match_count invalid_fields
@@ -734,9 +695,7 @@ build_remote_command() {  # $1=fixed script, remaining arguments=argv; returns c
 }
 remoto_cauce() {  # $1=ruta $2=alias, resto=argumentos tal cual
   local route=$1 alias_name=$2 destination fixed_script; shift 2
-  # Sin -t hay que pasar -n. Sin ninguno de los dos, el ssh se traga el stdin de quien invoco
-  # a cauce: medido, un `cauce <alias> login --ver` dentro de un script se comio el resto del
-  # script y las ordenes siguientes no llegaron a correr nunca.
+  # Detach SSH stdin for non-interactive calls so it cannot consume the caller's input.
   local tty=(-n); [ -t 0 ] && [ -t 1 ] && tty=(-t)
   case "$route" in
     vps)
@@ -768,17 +727,15 @@ cmd_retirar() {  # $1=alias
   local a=$1
   printf "\n  %sretirar %s%s\n\n" "$c_b" "$a" "$c_reset"
 
-  # 1: parar y deshabilitar la unit del alias.
   local u; u=$(unit_del_alias "$a")
   printf "  [1] deteniendo y deshabilitando %s\n" "$u"
   systemctl --user disable --now "$u" >/dev/null 2>&1
-  # `is-active` prints its own state word (including for a unit that never existed) and still
-  # exits non-zero for anything but "active" — capture it directly, no `||` fallback on top.
+  # Capture is-active output directly; it exits nonzero unless the unit is active.
   local estado_unit
   estado_unit=$(systemctl --user is-active "$u" 2>/dev/null)
   printf "      estado: %s\n" "${estado_unit:-desconocido}"
 
-  # 2: revocar el hash del token — solo si issue-alias-token.py implementa --revoke.
+  # Token revocation is optional for compatibility with older issue-alias-token.py versions.
   local issue_script="$OPS/scripts/issue-alias-token.py"
   if [ -f "$issue_script" ] && grep -qE -- '--revoke' "$issue_script" 2>/dev/null; then
     if python3 "$issue_script" --revoke --alias "$a" --tokens-dir "$TOKENS_DIR_ALIAS" --identities-dir "$IDENTIDADES_DIR"; then
@@ -791,7 +748,7 @@ cmd_retirar() {  # $1=alias
     printf "      marcalo a mano: revoked=true para agent-%s en %s/token_hashes.json\n" "$a" "$IDENTIDADES_DIR"
   fi
 
-  # 2b: revocar la identidad mTLS de [1b] — mismo patron que el paso 2, con register-agent-identity.py.
+  # Revoke the mTLS identity from step 1b when register-agent-identity.py supports it.
   local register_script="$OPS/scripts/register-agent-identity.py" ret_tenant; ret_tenant=$(flota_estado_alias "$a" | cut -f1)
   if [ ! -f "$register_script" ] || ! grep -qE -- '--revoke' "$register_script" 2>/dev/null; then
     printf "  [2b] %sregister-agent-identity.py todavia no implementa --revoke%s\n" "$c_warn" "$c_reset"
@@ -801,7 +758,7 @@ cmd_retirar() {  # $1=alias
     printf "  [2b] %sno pude revocar la identidad mTLS de %s (tenant=%s)%s\n" "$c_err" "$a" "${ret_tenant:-?}" "$c_reset"
   fi
 
-  # 3: la BD queda fuera del alcance del CLI a proposito.
+  # Database updates remain outside this CLI's scope.
   printf "\n  %spendiente del dueno%s %s(este CLI NO escribe en la BD):%s\n" "$c_warn" "$c_reset" "$c_dim" "$c_reset"
   printf "    UPDATE agents SET enabled=false WHERE alias='%s';\n" "$a"
   printf "    python3 ops/scripts/export-fleet-snapshot.py --out ops/flota.json\n"

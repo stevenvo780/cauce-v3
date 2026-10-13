@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Existing-`--output` merge and fail-closed helpers for generate-telegram-config.py.
 
+Split into its own module to keep both files under the repo's per-file size gate.
 Not a standalone entry point; imported only by that generator.
 """
 from __future__ import annotations

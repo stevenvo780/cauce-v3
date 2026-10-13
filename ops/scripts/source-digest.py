@@ -118,11 +118,9 @@ SHARED_MANIFESTS = (
     "tsconfig.json",
 )
 
-# `pnpm test` executes operational scripts directly from tests/unit, while
-# The verification suite additionally runs operational gates whose result depends on more than
-# the test files themselves.
-# Keep complete source families here instead of enumerating today's scripts: that is what makes a
-# previously issued `full` report become stale when a new operational helper or schema changes.
+# The unit test runner executes operational scripts from tests/unit.
+# The verification suite runs operational gates whose inputs extend beyond test files.
+# Include complete source families so new operational inputs remain covered.
 VERIFICATION_OPERATIONAL_INPUTS = (
     ".gitignore",
     "ops/.gitignore",

@@ -1,20 +1,6 @@
 #!/usr/bin/env bash
-# cauce-huerfanas — qué le pidió una PERSONA a un agente y se perdió sin respuesta.
-#
-# POR QUÉ EXISTE
-# El fallo más caro de este sistema no es que algo se rompa: es que se rompa en silencio. Una
-# entrega que muere (`dead`/`failed`) deja al humano esperando una respuesta que no va a llegar, y
-# hoy no hay ningún sitio donde eso aparezca. Pablo estuvo NUEVE DÍAS sin una respuesta legible
-# porque sus entregas morían por la forma de un campo accesorio, y nadie lo vio hasta que se contó
-# a mano en la base.
-#
-# Esto lista exactamente eso: entregas terminadas mal que llevaban un mensaje con `origin`, es
-# decir, escrito por una persona y no por otro agente. Es la lista de "lo que falta contestar".
-#
-# Uso:  cauce-huerfanas [dias]        (por defecto 7)
-#
-# La identidad externa no se imprime ni se traduce mediante IDs hardcodeados. El tenant durable
-# ya expresa el dueño operativo y evita convertir este diagnóstico en un inventario de personas.
+# cauce-huerfanas [days] lists failed deliveries that originated from a human message (default: 7).
+# Tenant ownership comes from the durable row; no user identity is printed.
 set -uo pipefail
 DIAS=${1:-7}
 
