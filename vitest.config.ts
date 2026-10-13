@@ -43,6 +43,7 @@ const FICHEROS_DE_DATOS = [
   'services/gateway/src/context-version-runtime-postgres.test.ts',
   'services/gateway/src/context-version.routes-postgres.test.ts',
   'services/gateway/src/security/route-isolation.postgres.test.ts',
+  'services/gateway/src/security/route-isolation-external.postgres.test.ts',
   'services/dispatcher/test/index.test.ts',
   'services/dispatcher/test/metrics.test.ts',
   'services/gateway/src/health-progress.test.ts',
