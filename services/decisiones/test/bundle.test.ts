@@ -124,7 +124,11 @@ describe('bundle de despliegue', () => {
     child = undefined;
     const audited = await current.adminPool.query(
       `SELECT actor_alias,metadata FROM audit_events WHERE action='decision.resolved'`);
-    expect(audited.rows).toEqual([{ actor_alias: 'zeus', metadata: expect.objectContaining({ outcome: expect.anything(), preguntas: expect.any(Array) }) }]);
+    const rows = audited.rows as { actor_alias: string; metadata: Record<string, unknown> }[];
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.actor_alias).toBe('zeus');
+    expect(rows[0]?.metadata.outcome).toBeDefined();
+    expect(Array.isArray(rows[0]?.metadata.preguntas)).toBe(true);
     console.info('DECISIONES_BUNDLE_RUNTIME_IDENTITY', JSON.stringify({ hostUid, uid, gid }));
   });
 });
