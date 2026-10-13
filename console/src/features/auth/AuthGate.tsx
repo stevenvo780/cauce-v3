@@ -164,16 +164,19 @@ function ErrorScreen({ error, onRetry }: { error: Error; onRetry: () => void }) 
   );
 }
 
-/** The server resolved no authority for this session: the company was withdrawn. Nothing else renders. */
-function CompanyRetiredScreen({ onLogout, busy }: { onLogout: () => Promise<void>; busy: boolean }) {
+/** The server resolved no authority for this session; the session does not say which of the possible causes holds. */
+function NoAuthorityScreen({ onLogout, busy }: { onLogout: () => Promise<void>; busy: boolean }) {
   return (
     <AuthScreen role="alert">
       <span className="grid size-10 place-items-center rounded-full bg-warn-soft text-warn-ink" aria-hidden="true"><Building2 size={20} /></span>
-      <h1>Tu empresa fue retirada</h1>
+      <h1>Tu cuenta no tiene acceso vigente</h1>
       <Lede>
-        Esta cuenta ya no tiene acceso a la consola porque su empresa fue retirada de la plataforma.
-        Solo un administrador de plataforma puede restaurarla; contáctalo para recuperar el acceso.
+        Tu cuenta no tiene autoridad vigente en su empresa: la empresa o tu espacio están deshabilitados o retirados, o perdiste la membresía.
       </Lede>
+      <p className="m-0 text-xs text-muted">
+        Pide a un dueño o administrador de tu empresa que revise tu acceso. Si tu empresa fue retirada o deshabilitada,
+        solo un administrador de plataforma puede restaurarla.
+      </p>
       <Button variant="primary" className="min-h-10" disabled={busy} onClick={() => { void onLogout(); }}>Cerrar sesión</Button>
     </AuthScreen>
   );
@@ -210,7 +213,7 @@ export function AuthGate({ children }: { children: (gate: AuthGateState) => Reac
       : <RedirectLoginScreen loginUrl={api.getLoginUrl()} reason={gate.state?.reason} />;
   }
   if (gate.state?.authenticated === true && sessionAuthority(gate.state)?.role === 'none') {
-    return <CompanyRetiredScreen onLogout={gate.logout} busy={gate.busy} />;
+    return <NoAuthorityScreen onLogout={gate.logout} busy={gate.busy} />;
   }
   return <Fragment key={authSessionKey(gate.state)}>{children(gate)}</Fragment>;
 }

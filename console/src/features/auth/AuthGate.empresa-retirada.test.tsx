@@ -17,12 +17,14 @@ const session = (role: string, scope: string) => HttpResponse.json({
   authority: { role, scope, home_company: 'acme', acting_company: 'acme', platform_override: false },
 });
 
-it('con autoridad none muestra «Tu empresa fue retirada» y no renderiza la consola', async () => {
+it('con autoridad none explica las causas posibles sin afirmar que la empresa fue retirada y no renderiza la consola', async () => {
   server.use(http.get(SESSION, () => session('none', 'none')));
   renderWithApi(<App />);
 
-  expect(await screen.findByRole('heading', { name: /tu empresa fue retirada/i })).toBeVisible();
-  expect(screen.getByText(/administrador de plataforma/i)).toBeVisible();
+  expect(await screen.findByRole('heading', { name: 'Tu cuenta no tiene acceso vigente' })).toBeVisible();
+  expect(screen.getByText(/empresa o tu espacio están deshabilitados o retirados, o perdiste la membresía/i)).toBeVisible();
+  expect(screen.getByText(/pide a un dueño o administrador de tu empresa/i)).toBeVisible();
+  expect(screen.getByText(/si tu empresa fue retirada o deshabilitada, solo un administrador de plataforma/i)).toBeVisible();
   expect(screen.queryByRole('navigation', { name: /principal/i })).not.toBeInTheDocument();
 });
 
@@ -43,5 +45,5 @@ it('un lector con autoridad válida entra a la consola', async () => {
   renderWithApi(<App />);
 
   expect(await screen.findByRole('navigation', { name: /principal/i })).toBeInTheDocument();
-  expect(screen.queryByText(/tu empresa fue retirada/i)).not.toBeInTheDocument();
+  expect(screen.queryByText(/no tiene acceso vigente/i)).not.toBeInTheDocument();
 });
