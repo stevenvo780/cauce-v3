@@ -44,14 +44,20 @@ afterEach(() => {
 });
 
 describe('recordTerminalAudit', () => {
-  it('standardizes the component and explicit unknown host for every terminal-plane emitter', async () => {
+  it.each([
+    { action: 'terminal.session.close', component: 'terminal' },
+    { action: 'agent_document.read', component: 'context' },
+    { action: 'agent_document.write', component: 'context' },
+    { action: 'agent_document.denied', component: 'context' },
+    { action: 'agent_profile.write', component: 'context' },
+  ] as const)('standardizes $action as $component with an explicit unknown host', async ({ action, component }) => {
     const query = vi.fn().mockResolvedValue({ rows: [], rowCount: 1 });
     await recordTerminalAudit(poolCon(query), {
-      tenant_id: 'CompanyA', actor_alias: 'owner', action: 'agent_document.denied', decision: 'deny',
+      tenant_id: 'CompanyA', actor_alias: 'owner', action, decision: 'deny',
       metadata: { component: 'backup', host_id: 'invalid/private-host', reason: 'not_readable' },
     });
     const params = exigir(query.mock.calls[0], 'audit insert')[1] as readonly unknown[];
-    expect(JSON.parse(params[5] as string)).toEqual({ component: 'terminal', host_id: null, reason: 'not_readable' });
+    expect(JSON.parse(params[5] as string)).toEqual({ component, host_id: null, reason: 'not_readable' });
   });
 
   it('hace INSERT con todos los campos serializando metadata como jsonb', async () => {
