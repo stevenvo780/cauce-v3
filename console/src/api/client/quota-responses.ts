@@ -69,10 +69,9 @@ export function agentQuotaSnapshot(value: unknown): AgentQuotaSnapshot {
   if (row.reader_available && row.reason !== null) failed();
   if (!row.reader_available && row.reason !== 'quota_reader_unavailable') failed();
   return {
-    tenant_id: String(row.tenant_id), alias: String(row.alias), reader_available: row.reader_available as boolean,
-    can_query: row.can_query as boolean, reason: row.reason as 'quota_reader_unavailable' | null,
-    status: row.status as AgentQuotaSnapshot['status'], revision: row.revision as number,
-  };
+    tenant_id: row.tenant_id, alias: row.alias, reader_available: row.reader_available,
+    can_query: row.can_query, reason: row.reason, status: row.status, revision: row.revision,
+  } as AgentQuotaSnapshot;
 }
 export function verifyQuotaOperation(value: unknown): void {
   const operation = object(value);
