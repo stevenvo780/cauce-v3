@@ -142,6 +142,30 @@ describe('public company registration', () => {
     expect((await register('independent@example.test', 'independent')).statusCode).toBe(201);
   });
 
+  it('returns 429 and the global reservation when a saturated login queue delays registration for ten seconds', async () => {
+    const { register, hashes } = await open({ CAUCE_REGISTRATION_HOURLY_LIMIT: '1' });
+    await gateway?.ready();
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    let release: () => void = () => undefined;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    const occupied = Array.from({ length: 18 }, () => passwordWork.run(() => held, 'login'));
+    const work = vi.spyOn(passwordWork, 'run');
+    let refused: Awaited<ReturnType<typeof register>> | undefined;
+    const waiting = register('waiting@example.test', 'waiting').then(response => { refused = response; });
+    try {
+      await vi.waitFor(() => { expect(work).toHaveBeenCalledTimes(1); });
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(refused?.statusCode).toBe(429);
+      expect(refused?.headers['retry-after']).toBe('5');
+      expect(hashes).toEqual([]);
+    } finally {
+      release(); await Promise.all([...occupied, waiting]);
+      work.mockRestore(); vi.useRealTimers();
+    }
+    expect((await register('independent@example.test', 'independent')).statusCode).toBe(201);
+    expect(hashes).toHaveLength(1);
+  });
+
   it('returns a saturated reservation to its original hour after the next window opens', async () => {
     const { register, hashes } = await open({ CAUCE_REGISTRATION_HOURLY_LIMIT: '1' });
     if (!gateway) throw new Error('Gateway fixture is not ready');

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { LoginThrottle, PasswordWorkGate, PasswordWorkSaturated } from './password-auth.js';
 
 describe('password admission under concurrent load', () => {
@@ -78,5 +78,30 @@ describe('password admission under concurrent load', () => {
     await Promise.all([...running, background, failure]);
     expect(started).toEqual(['login', 'background']);
     await expect(gate.run(async () => 'available', 'login')).resolves.toBe('available');
+  });
+
+  it('expires waiting work and reuses its queue slot without running the expired derivation', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const gate = new PasswordWorkGate(2, 1);
+    const started: string[] = [];
+    let release: () => void = () => undefined;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    const running = [gate.run(() => held, 'login'), gate.run(() => held, 'login')];
+    let outcome: unknown;
+    const expired = gate.run(async () => { started.push('expired'); }).catch((error: unknown) => { outcome = error; });
+    const remaining: Promise<unknown>[] = [];
+    try {
+      await vi.advanceTimersByTimeAsync(9_999);
+      expect(outcome).toBeUndefined();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(outcome).toBeInstanceOf(PasswordWorkSaturated);
+      remaining.push(gate.run(async () => { started.push('replacement'); }));
+      await expect(gate.run(async () => undefined)).rejects.toBeInstanceOf(PasswordWorkSaturated);
+      release();
+      await Promise.all([...running, expired, ...remaining]);
+      expect(started).toEqual(['replacement']);
+      expect(vi.getTimerCount()).toBe(0);
+      await expect(gate.run(async () => 'available', 'login')).resolves.toBe('available');
+    } finally { release(); await Promise.all([...running, expired, ...remaining]); vi.useRealTimers(); }
   });
 });

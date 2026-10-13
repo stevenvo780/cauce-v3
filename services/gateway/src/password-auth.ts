@@ -208,7 +208,17 @@ export class PasswordWorkGate {
     const waiting = kind === 'login' ? this.logins : this.background;
     if (this.running < this.concurrency && (kind === 'login' || this.backgroundAvailable())) this.start(kind);
     else if (waiting.length >= this.maxWaiting) throw new PasswordWorkSaturated();
-    else await new Promise<void>(resolve => { waiting.push(resolve); });
+    else if (kind === 'login') await new Promise<void>(resolve => { waiting.push(resolve); });
+    else await new Promise<void>((resolve, reject) => {
+      const ready = () => { clearTimeout(timeout); resolve(); };
+      const timeout = setTimeout(() => {
+        const index = waiting.indexOf(ready);
+        if (index < 0) return;
+        waiting.splice(index, 1);
+        reject(new PasswordWorkSaturated());
+      }, 10_000);
+      waiting.push(ready);
+    });
     try {
       return await work();
     } finally {
