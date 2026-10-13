@@ -8,6 +8,8 @@ Si una instalación conserva un release anterior fuera del árbol (con su propio
 
 ## 1. Desplegar
 
+El primer despliegue de V4 (overlay de flota, proxy frontal, identificadores reservados, red edge, controlador, enclave, semilla y reversión) está en [Desplegar V4](#desplegar-v4). Lo que sigue es lo que `deploy/deploy.sh` comprueba en cualquier despliegue.
+
 **Recibo de gates del SHA candidato.** `deploy.sh` no corre `pnpm`; exige un recibo verde de
 `scripts/release-gates.sh` del mismo commit. Se genera una vez por candidato, en un checkout limpio
 del SHA, con usuario normal (no root, por `qa:runtime-packaging`), tras `pnpm install --frozen-lockfile`
@@ -127,6 +129,27 @@ docker compose --env-file /etc/cauce-v3/prod.env -f <PREV_RELEASE>/deploy/compos
 ```
 Los nombres de contenedor del ejemplo derivan del `COMPOSE_PROJECT_NAME` por defecto (`cauce-v3-prod`); con otro proyecto cambian en consecuencia.
 
+### Desplegar V4
+
+El primer despliegue de V4 usa el mismo `deploy/deploy.sh`. Respecto de un despliegue sin flota cambian las variables, la red edge, el orden del controlador y del enclave, y la semilla de autoridad.
+
+**Variables.** `CAUCE_DEPLOY_FLEET_OVERLAY` y `CAUCE_FRONT_PROXY_CIDR` van en el archivo de instancia (`prod.env`): `deploy.sh` las lee de ese archivo (`env_value`), no del entorno del proceso. `CAUCE_RESERVED_COMPANY_SLUGS` también va en `prod.env`, pero la consume Compose, no `deploy.sh`. `CAUCE_DEPLOY_GATES_RECEIPT` es del proceso que lanza el script.
+
+- `CAUCE_DEPLOY_FLEET_OVERLAY=1`. Exige `cauce-fleet-v35-controller.service` activo antes de recrear el gateway y añade `deploy/compose.fleet.yaml`. Vacío o `0` despliega sin overlay. Cualquier otro valor aborta.
+- `CAUCE_FRONT_PROXY_CIDR=<cidr del proxy frontal>`. `deploy.sh` lo pasa como build-arg de la imagen de consola (`deploy/Dockerfile`). nginx solo acepta `X-Forwarded-For` de ese CIDR (`set_real_ip_from`). Vacío borra la directiva y no se confía en ningún salto. Un carácter fuera de `0-9a-fA-F:./` falla el build. Si la variable no está en `prod.env`, `deploy.sh` no aborta y la imagen queda sin salto de confianza: hay que declararla antes de construir. El valor de producción está en `docs/parametros.md`.
+- `CAUCE_RESERVED_COMPANY_SLUGS=<id>,<id>`. Identificadores de las empresas que la plataforma va a crear, separados por comas. `deploy.sh` no la lee. Compose la pasa al gateway (`${CAUCE_RESERVED_COMPANY_SLUGS:-}`; vacía si falta). Cada id tiene que cumplir `COMPANY_ID_PATTERN` y se suma a la lista fija de `services/gateway/src/company-slug.ts`. Un valor inválido impide arrancar el gateway. El registro público los rechaza con el mismo 409 que un identificador ocupado. Hay que reservarlos antes de abrir el registro. El valor de producción está en `docs/parametros.md`.
+- `CAUCE_DEPLOY_GATES_RECEIPT`. Ruta absoluta del recibo de `scripts/release-gates.sh` del mismo commit, en el entorno del proceso. Obligatoria, salvo el escape `CAUCE_DEPLOY_SIN_RECIBO`. No va en `prod.env`. El comando de esta sección ya la exporta.
+
+**Backup.** Con migraciones pendientes, `deploy.sh` baja la ventana a 2 h, no admite confirmación de un backup más viejo y repite el monitor justo antes del migrator. Sin migraciones pendientes sigue `CAUCE_DEPLOY_BACKUP_MAX_AGE_HOURS` (24 h por defecto) y un backup viejo admite confirmación. El detalle está en las precondiciones de esta sección.
+
+**Red edge.** La consola tiene la IP fija `CAUCE_CONSOLE_EDGE_IP`, fuera del pool dinámico `CAUCE_EDGE_IP_RANGE`. Los valores por defecto están en `deploy/compose.yaml` y en `docs/parametros.md`. No hace falta declarar `CAUCE_TRUSTED_PROXY_CIDRS`: Compose lo deriva de `CAUCE_CONSOLE_EDGE_IP` más `/32`. Un override tiene que seguir esa misma IP. Cambiar el IPAM puede recrear la red. Tras el `up`, la IP efectiva de la consola tiene que ser `CAUCE_CONSOLE_EDGE_IP`. Si no lo es, recrear solo la consola con el mismo `docker compose` del despliegue (`up -d --no-deps --force-recreate console`) y volver a comprobar.
+
+**Controlador y enclave.** El controlador tiene que estar activo antes de `deploy.sh`. El directorio del socket se crea antes; después del `up` se actualiza el controlador a la release del commit desplegado y solo entonces se instala el enclave desde el export de esa release. Hasta ese paso, un enclave que ya existiera sigue en la release anterior. Orden, preflight y reversión: [Enclave de autoridad firmada de la flota](#enclave-de-autoridad-firmada-de-la-flota).
+
+**Semilla de autoridad.** Después de aplicar el esquema, desde la raíz del clon del despliegue en el host y como root, con la CLI de la imagen recién desplegada. Los correos se resuelven en la base y no se imprimen ni se versionan. Primero el `platform_admin`, después los owners de la empresa. Comandos y comprobación: [Siembra de autoridad](#siembra-de-autoridad-cauce-platform-admin-semilla).
+
+**Reversión.** Sigue la receta de esta sección: no ejecutar `docker compose down`; restaurar `prod.env.pre-deploy-<STAMP>` y, si el esquema ya quedó confirmado, el dump previo. El `down` de `054_company_admins.sql` aborta con `rollback preserves company authority` si hay un owner, un admin cuyo `source` no es `v4.0-hub-operator`, más de una empresa, filas en `platform_authority_events` o en `agent_role_template_owners`, o principals y roles de agente distintos de las filas de plataforma que esa migración conserva. La semilla deja historial en `platform_authority_events`, así que no se deshace con ese `down`: se restaura el dump previo o se corrige hacia delante.
+
 ### Enclave de autoridad firmada de la flota
 
 `cauce-fleet-signed-authority.service` atiende, por un socket Unix, el `POST /v3/fleet/hosts/:host_id/authority` que el gateway recibe de los ordenadores enrolados. Comprueba la firma del ordenador, su empresa, nonce, operación, claim y epoch, y emite con el emisor central del controlador: mismo `fleet-authority-issuer.py`, misma política `authority.v1.json` y misma CA. El lock del emisor en su `state_root` permite que ambos emitan sin pisarse. Corre como root en `server`, desde la release del controlador (`/usr/local/lib/cauce-v35/<sha>/app/services/gateway/dist/fleet/authority/signed-main.js`), con su mismo `node`, su `/etc/hosts` privado y su conexión `database-url` (login `cauce_fleet`; el pool de 4 cabe en su límite de 20). Sin el enclave, el gateway responde `AUTHORITY_UNAVAILABLE` y los ordenadores enrolados no anuncian `create`.
@@ -147,7 +170,7 @@ Los nombres de contenedor del ejemplo derivan del `COMPOSE_PROJECT_NAME` por def
 # 0. Antes de deploy.sh, desde el clon del despliegue: solo el directorio del socket y su tmpfiles
 python3 ops/scripts/fleet-authority-install.py --socket-directory-only
 python3 ops/scripts/fleet-authority-install.py --socket-directory-only --apply
-# 1. deploy.sh con CAUCE_DEPLOY_FLEET_OVERLAY=1
+# 1. deploy.sh; prod.env ya tiene CAUCE_DEPLOY_FLEET_OVERLAY=1 (el script no lo lee del entorno)
 # 2. fleet-controller-upgrade.py a la release <R> (preflight y --apply), ver v3.5-controlador-despliegue.md
 # 3. Enclave, con el export de <R> que usó el kit; PRIVATE_KIT_ROOT viene de la configuración privada
 : "${PRIVATE_KIT_ROOT:?Define el directorio privado del kit autorizado}"
@@ -247,10 +270,9 @@ cauce platform admin semilla --email persona@example.com --company ID [--role ow
   `platform_admin` activo más antiguo; por eso se siembra primero el `platform_admin`.
 - La persona debe tener su cuenta de consola en esa empresa (regla de `cauce_platform_grant_admin`).
 
-Primer despliegue de V4 en producción (en el clon del despliegue vigente del host, como root). Define `CORREO_SUPER_ADMIN` y `CORREO_OWNER` con las cuentas aprobadas por el operador; no se versionan sus valores:
+Primer despliegue de V4 en producción, desde la raíz del clon del despliegue vigente del host, como root. Define `CORREO_SUPER_ADMIN` y `CORREO_OWNER` con las cuentas aprobadas por el operador; no se versionan sus valores:
 
 ```bash
-cd /datos/workspaces/zeus/cauce-v3-deploy/<clon del despliegue vigente>
 ops/cli/cauce-platform-contenedor --mostrar     # solo muestra imagen, red y secretos
 cauce platform contenedor admin semilla --email "$CORREO_SUPER_ADMIN"
 for correo in "$CORREO_SUPER_ADMIN" "$CORREO_OWNER"; do
