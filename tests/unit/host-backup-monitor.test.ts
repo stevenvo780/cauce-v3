@@ -14,6 +14,11 @@ const deploy = join(repository, 'deploy/deploy.sh');
 const scratch: string[] = [];
 const inventoryGrep = `grep() {
   if [ "$1" = -Fxq ] && [ "$2" = "\${MOCK_GREP_TARGET:-}" ]; then return 2; fi
+  case "\${MOCK_DOCKER_FAILURE:-}:$1" in
+    grep-count:-c) return 2 ;;
+    empty-count:-c) return 0 ;;
+    invalid-count:-c) printf '%s\n' invalid; return 0 ;;
+  esac
   command grep "$@"
 }`;
 
@@ -26,30 +31,22 @@ function validStatus() {
     host: 'fixture',
     db: { status: 'ok', file: '/private/backup.dump', detail: '' },
     restore: {
-      status: 'ok',
-      detail: '',
+      status: 'ok', detail: '',
       evidence_file: '/private/backup.dump.restore.json',
-      isolated: true,
-      network: 'none',
+      isolated: true, network: 'none',
     },
     retention: { skip_requested: false, status: 'local-pruned-after-offsite', days: 14 },
     ut_nexus: { enabled: false, status: 'disabled', detail: '' },
     offsite: {
       host: 'fixture',
       strategy: 'append-only-no-delete',
-      db_status: 'ok',
-      db_detail: '',
-      ut_nexus_status: 'disabled',
-      ut_nexus_detail: '',
+      db_status: 'ok', db_detail: '',
+      ut_nexus_status: 'disabled', ut_nexus_detail: '',
     },
     blobs: undefined as undefined | {
-      archive_file: string;
-      archive_sha256: string;
-      manifest_file: string;
-      manifest_sha256: string;
-      volume: string;
-      table_present: boolean;
-      volume_present: boolean;
+      archive_file: string; archive_sha256: string;
+      manifest_file: string; manifest_sha256: string;
+      volume: string; table_present: boolean; volume_present: boolean;
     },
     overall: 'ok',
   };
@@ -60,10 +57,8 @@ interface MonitorPaths { dumpFile: string; evidenceFile: string; statusFile: str
 async function runMonitor(
   status: unknown,
   options: {
-    maxAgeHours?: string;
-    requireRetention?: boolean;
-    requireBlobs?: boolean;
-    blobs?: boolean;
+    maxAgeHours?: string; requireRetention?: boolean;
+    requireBlobs?: boolean; blobs?: boolean;
     mutate?: (paths: MonitorPaths) => Promise<void>;
   } = {},
 ) {
@@ -142,8 +137,7 @@ async function runMonitor(
     env: {
       ...process.env,
       STATUS_FILE: statusFile,
-      MAX_AGE_HOURS: options.maxAgeHours ?? '30',
-      REQUIRE_RETENTION_PRESERVED: options.requireRetention ? '1' : '0',
+      MAX_AGE_HOURS: options.maxAgeHours ?? '30', REQUIRE_RETENTION_PRESERVED: options.requireRetention ? '1' : '0',
       REQUIRE_BLOB_VOLUME: options.requireBlobs ? '1' : '0',
     },
   });
@@ -419,6 +413,10 @@ describe('host backup monitor', () => {
       { name: 'aborts when docker cannot list volumes', containers: '', volumes: '', status: 1, failure: 'volume', error: 'no pude enumerar volumenes' },
       { name: 'aborts when docker cannot inspect postgres', containers: postgres, volumes: pgdata, status: 1, failure: 'inspect', error: 'no pude inspeccionar PostgreSQL' },
       { name: 'aborts when psql cannot read applied migrations', containers: postgres, volumes: pgdata, status: 1, failure: 'exec', error: 'no pude consultar schema_migrations' },
+      { name: 'aborts when comm cannot compare migrations', containers: postgres, volumes: pgdata, status: 1, failure: 'comm', error: 'no pude comparar migraciones' },
+      { name: 'aborts when grep cannot count migrations', containers: postgres, volumes: pgdata, status: 1, failure: 'grep-count', error: 'no pude contar migraciones' },
+      { name: 'aborts when the migration count is empty', containers: postgres, volumes: pgdata, status: 1, failure: 'empty-count', error: 'recuento de migraciones pendientes invalido' },
+      { name: 'aborts when the migration count is nonnumeric', containers: postgres, volumes: pgdata, status: 1, failure: 'invalid-count', error: 'recuento de migraciones pendientes invalido' },
       { name: 'reports no pending migrations when all are applied', containers: postgres, volumes: pgdata, status: 0, applied: '001_init.sql\n002_next.sql', pending: 0 },
       { name: 'matches full migration names despite common prefixes', containers: postgres, volumes: pgdata, status: 0, bundled: '010_a.sql\n010_ab.sql', applied: '010_a.sql.bak\n010_ab.sql' },
     ])('$name', async ({ containers, volumes, status, grepTarget = '', failure = '', applied = '001_init.sql',
@@ -431,6 +429,7 @@ describe('host backup monitor', () => {
       const script = String.raw`set -euo pipefail
 die() { echo "$*" >&2; exit 1; }
 ${inventoryGrep}
+comm() { [ "$MOCK_DOCKER_FAILURE" != comm ] || return 2; command comm "$@"; }
 docker() {
   [ "$MOCK_DOCKER_FAILURE" != "$1" ] || return 2
   case "$*" in

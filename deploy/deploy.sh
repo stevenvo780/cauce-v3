@@ -432,12 +432,18 @@ if [ "$FLEET_OVERLAY" = 1 ]; then
 fi
 
 count_unapplied_migrations() {
-  LC_ALL=C comm -23 <(printf '%s\n' "$BUNDLED_MIGRATIONS") \
-    <(printf '%s\n' "$1" | LC_ALL=C sort) | grep -c . || true
+  local applied unapplied pending rc=0
+  applied="$(printf '%s\n' "$1" | LC_ALL=C sort)" || die "no pude ordenar migraciones aplicadas"
+  unapplied="$(LC_ALL=C comm -23 <(printf '%s\n' "$BUNDLED_MIGRATIONS") \
+    <(printf '%s\n' "$applied"))" || die "no pude comparar migraciones aplicadas con el bundle"
+  pending="$(printf '%s\n' "$unapplied" | grep -c .)" || rc=$?
+  [ "$rc" -le 1 ] || die "no pude contar migraciones pendientes"
+  [[ $pending =~ ^[0-9]+$ ]] || die "recuento de migraciones pendientes invalido"
+  printf '%s\n' "$pending"
 }
 count_pending_migrations() {
   PENDING_MIGRATIONS=0
-  MIGRATION_ATTEMPT_PENDING="$(count_unapplied_migrations '')"
+  MIGRATION_ATTEMPT_PENDING="$(count_unapplied_migrations '')" || die "no pude contar migraciones del bundle"
   local containers volumes pg_running applied rc
   containers="$(docker ps -a --format '{{.Names}}')" \
     || die "no pude enumerar contenedores para contar migraciones pendientes"
@@ -461,7 +467,8 @@ count_pending_migrations() {
   applied="$(docker exec "$PG_CONTAINER" psql -XAtq -v ON_ERROR_STOP=1 -U "$PG_USER" -d "$PG_DB" \
     -c 'SELECT version FROM schema_migrations')" \
     || die "no pude consultar schema_migrations para contar migraciones pendientes"
-  PENDING_MIGRATIONS="$(count_unapplied_migrations "$applied")"
+  PENDING_MIGRATIONS="$(count_unapplied_migrations "$applied")" || die "no pude contar migraciones pendientes"
+  [[ $PENDING_MIGRATIONS =~ ^[0-9]+$ ]] || die "recuento de migraciones pendientes invalido"
   MIGRATION_ATTEMPT_PENDING="$PENDING_MIGRATIONS"
 }
 backup_monitor_accepts() {
