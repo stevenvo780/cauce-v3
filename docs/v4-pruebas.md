@@ -43,10 +43,12 @@ Este inventario sustituye la cifra histórica «17 e2e de vistas V3 y un recorri
 | `tests/e2e/v4-contexts-real-browser.test.ts` | 1 | Contextos y versiones. |
 | `tests/e2e/v4-crud-matriz-real-browser.test.ts` | 9 | Matriz CRUD: ordenadores, cuentas, registro de agente y partes del plano. |
 | `tests/e2e/v4-humanizar-session-real-browser.test.ts` | 4 | Sesión de las personas de Humanizar en un clon. |
-| `tests/e2e/v4-office-real-browser.test.ts` | 13 | Oficina: salas y agentes de alta a baja, re-login, segundo navegador y cansancio en campus, plano y ficha. |
+| `tests/e2e/v4-office-real-browser.test.ts` | 13 | Oficina: CRUD de salas y registro de agente, proyección en oficina, re-login, segundo navegador y cansancio en campus, plano y ficha. |
 | `tests/e2e/v4-people-real-browser.test.ts` | 6 | Personas y acceso web. |
 | `tests/e2e/v4-purge-real-browser.test.ts` | 1 | Purga real de un agente. |
 | `tests/e2e/v4-quota-environments-real-browser.test.ts` | 7 | Entornos de cuota. |
+
+El ciclo de agente de esta suite verifica un registro sin runtime gestionado y su proyección en la oficina. La habilitación se siembra por SQL, sin `runtime_key` ni `host_id`; antes de eliminar el registro se quitan su sala principal y membresía por API. No acredita admisión, retirada ni purga mediante operaciones reales en un ordenador, ni un ciclo íntegro desde la interfaz. Esa aceptación de GOAL §4 y del criterio 5 requiere el E2E físico y el contraste de cuotas en producción.
 
 Conteo reproducible desde la raíz:
 

@@ -37,6 +37,7 @@ export function OfficeWorkspace({ campus, topology, agents, onAgent }: {
   const shown = reconcileOfficeLayout(rooms, draft?.rooms ?? layout.data?.rooms ?? []);
   const writable = canManageCompany(authority?.role) && !!layout.data && !layout.error && !layout.loading && !busy;
   const failure = error ?? (layout.error ? officeFailure(layout.error) : undefined);
+  const quotaFailure = quotas.error ? quotaReadFailure(quotas.error, 'No se pudieron leer las cuotas de los agentes. Relee el plano y las cuotas.') : undefined;
   // Rooms are known once the topology arrived and the saved plan answered, with data or with an error.
   const roomsRead = !!topology && (!!layout.data || !!layout.error);
   const unavailable = planSaveUnavailableReason({ role: authority?.role, layoutError: !!layout.error, draft: !!draft });
@@ -101,6 +102,8 @@ export function OfficeWorkspace({ campus, topology, agents, onAgent }: {
       <a className="ml-auto text-xs text-brand-ink" href="/config?seccion=espacios" onClick={event => { onNavClick(event, '/config?seccion=espacios'); }}>Gestionar salas y asignaciones</a>
     </div>
     <div key={planSaves} className={mode === 'campus' ? 'flex min-h-0 flex-1 flex-col' : 'hidden'}>
+      {mode === 'campus' && quotaFailure ? <div className="shrink-0"><ErrorNotice failure={{ ...quotaFailure,
+        message: `${quotaFailure.message}${quotaFailure.message.includes('Relee el plano y las cuotas.') ? '' : ' Relee el plano y las cuotas.'} Abre «Plano editable» para hacerlo.` }} /></div> : null}
       <section aria-label="Cansancio de agentes del campus" className="flex shrink-0 gap-2 overflow-x-auto border-b border-line bg-subtle p-2">
         {[...new Set(rooms.flatMap(room => room.agents))].map(agentButton)}
       </section>
@@ -114,7 +117,7 @@ export function OfficeWorkspace({ campus, topology, agents, onAgent }: {
       {unavailable || (draft && !draft.conflicted) ? <p className="m-0 text-xs text-muted">{unavailable ?? 'Guarda o descarta los cambios de plano antes de releerlo.'}</p> : null}
       {layout.loading ? <p role="status">Leyendo plano…</p> : null}
       {failure ? <ErrorNotice failure={failure} /> : null}
-      {quotas.error ? <ErrorNotice failure={quotaReadFailure(quotas.error, 'No se pudieron leer las cuotas de los agentes. Relee el plano y las cuotas.')} /> : null}
+      {quotaFailure ? <ErrorNotice failure={quotaFailure} /> : null}
       {notice ? <Notice tone="ok" role="status">{notice}</Notice> : null}
       {!topology ? <p role="status" className="m-0 text-xs">Leyendo salas…</p> : null}
       {roomsRead && !rooms.length ? <Notice tone="info">Aún no hay salas. Crea una desde «Gestionar salas y asignaciones».</Notice> : null}

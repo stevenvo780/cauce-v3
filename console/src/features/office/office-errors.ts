@@ -13,7 +13,7 @@ export function officeVersionConflict(cause: unknown): boolean {
 
 export function describeOfficeError(cause: unknown): string {
   if (cause instanceof ApiError) {
-    if (cause.status === 504) return cause.message;
+    if (cause.status >= 500) return 'El servidor no pudo leer o guardar el plano. Inténtalo más tarde.';
     const detail = cause.message.trim();
     if (cause.status === 409 && SESSION_WRITE_BLOCKED.has(cause.code ?? '')) {
       return detail || 'La sesión cambió o hay otro cambio de empresa en curso. Espera y vuelve a guardar el plano.';
@@ -39,7 +39,6 @@ export function describeOfficeError(cause: unknown): string {
       return spanishWithReason('Otro operador guardó una versión nueva del plano mientras editabas. Relee el plano y vuelve a guardar; se conserva el borrador.', detail);
     }
     if (cause.status === 429) return spanishWithReason('Hay demasiadas solicitudes. Espera un momento e inténtalo de nuevo.', detail);
-    if (cause.status >= 500) return spanishWithReason('El servidor no pudo leer o guardar el plano. Inténtalo más tarde.', detail);
     return spanishWithReason('No se pudo leer o guardar el plano.', detail);
   }
   return cause instanceof Error ? cause.message : 'No se pudo leer o guardar el plano.';

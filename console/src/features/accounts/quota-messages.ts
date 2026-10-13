@@ -47,7 +47,7 @@ export function describeQuotaError(cause: unknown, fallback: string): string {
  * a 4xx refusal (generic HTTP phrases are dropped) and the stable code. A 5xx sentence stays hidden.
  */
 export function quotaReadFailure(cause: unknown, fallback: string): Failure {
-  const message = describeQuotaError(cause, fallback);
+  const message = cause instanceof ApiError && cause.status === 504 ? fallback : describeQuotaError(cause, fallback);
   const refusal = cause instanceof ApiError && cause.status >= 400 && cause.status < 500 && cause.code !== 'quota_host_unavailable';
   return { message: refusal ? spanishWithReason(message, cause.message) : message, code: failureCode(cause) };
 }
