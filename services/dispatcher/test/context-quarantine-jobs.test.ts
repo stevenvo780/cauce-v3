@@ -2,7 +2,7 @@ import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { CauceRepository, CONTEXT_WRITE_QUARANTINE_KIND, type DatabasePool } from '@cauce/store';
 import {
-  dockerTestRequirement, resetTestDatabase, startTestDatabase, type TestDatabase,
+  dockerTestRequirement, resetTestDatabase, startTestDatabase, type TestDatabase, runtimeRoleRequested,
 } from '../../../tests/helpers/postgres.js';
 import { DispatcherMetrics } from '../src/metrics.js';
 import { runDispatcher } from '../src/index.js';
@@ -48,7 +48,7 @@ function value(exposition: string, sample: string): number {
 }
 
 describe('dispatcher context-quarantine accounting', () => {
-  it('keeps external database fallback distinct from explicitly owned Docker containers', async () => {
+  it.skipIf(runtimeRoleRequested())('keeps external database fallback distinct from explicitly owned Docker containers', async () => {
     if (!database) throw new Error('owned dispatcher database unavailable');
     let external: TestDatabase | undefined;
     let owned: TestDatabase | undefined;
