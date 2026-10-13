@@ -475,11 +475,11 @@ check_blob_migration_window() {
   local containers volumes pg_running applied gateway_running gateway_blob_flag gateway_image compatible_through
   containers="$(docker ps -a --format '{{.Names}}')" \
     || die "no pude enumerar contenedores para comprobar la migracion 043"
-  if ! printf '%s\n' "$containers" | grep -Fxq "$PG_CONTAINER"; then
+  if ! grep -Fxq "$PG_CONTAINER" <<< "$containers"; then
     volumes="$(docker volume ls --format '{{.Name}}')" \
       || die "no pude enumerar volumenes para comprobar la migracion 043"
-    if printf '%s\n' "$volumes" | grep -Fxq "${PROJECT_NAME}_cauce_pgdata" \
-       || printf '%s\n' "$containers" | grep -Fxq "$GATEWAY_CONTAINER"; then
+    if grep -Fxq "${PROJECT_NAME}_cauce_pgdata" <<< "$volumes" \
+       || grep -Fxq "$GATEWAY_CONTAINER" <<< "$containers"; then
       die "hay datos o gateway de una instalacion existente sin PostgreSQL inspeccionable; estado de 043 indeterminado"
     fi
     return 0
@@ -499,7 +499,7 @@ check_blob_migration_window() {
     [ "$BLOB_API_ENABLED" = 0 ] \
       || die "la migracion 043 pendiente exige CAUCE_BLOB_API_ENABLED=0 antes del build; desactiva la API en el gateway anterior"
   fi
-  if printf '%s\n' "$containers" | grep -Fxq "$GATEWAY_CONTAINER"; then
+  if grep -Fxq "$GATEWAY_CONTAINER" <<< "$containers"; then
     gateway_running="$(docker inspect -f '{{.State.Running}}' "$GATEWAY_CONTAINER")" \
       || die "no pude inspeccionar el gateway anterior antes de la migracion 043"
     if [ "$gateway_running" = true ]; then

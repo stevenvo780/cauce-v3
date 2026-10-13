@@ -486,6 +486,17 @@ if (args[0] === 'ps') {
     expect(check({ MOCK_MIGRATION: '2' }).stderr).toContain('estado ambiguo');
     expect(check({ MOCK_PSQL_FAIL: '1' }).stderr).toContain('no pude consultar schema_migrations');
     expect(check({ MOCK_PS_FAIL: '1' }).stderr).toContain('no pude enumerar contenedores');
+    const unrelated = Array.from({ length: 3000 }, (_, index) => `unrelated-${String(index)}`).join('\n');
+    const containers = `${base.MOCK_CONTAINERS}\n${unrelated}`;
+    const listed = check({ MOCK_CONTAINERS: containers });
+    expect(listed.status, listed.stderr).toBe(0);
+    expect(listed.stdout).toBe('1\n');
+    expect(check({ MOCK_CONTAINERS: containers, MOCK_PSQL_FAIL: '1' }).stderr)
+      .toContain('no pude consultar schema_migrations');
+    expect(check({ MOCK_CONTAINERS: containers, MOCK_GATEWAY_FLAG: '1' }).stderr)
+      .toContain('gateway anterior sigue');
+    expect(check({ MOCK_CONTAINERS: '', MOCK_VOLUMES: `cauce-v3-prod_cauce_pgdata\n${unrelated}` }).stderr)
+      .toContain('estado de 043 indeterminado');
   });
 
   test('restore directory cleanup ownership begins only after exclusive leaf creation', async () => {
