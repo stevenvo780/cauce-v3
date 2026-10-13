@@ -12,6 +12,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { startLayoutDevServer } from './layout-dev-server.mjs';
 import { chromium } from 'playwright';
+import { runV4Layout } from './layout-v4-gate.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const CONSOLE_ROOT = resolve(HERE, '..');
@@ -516,7 +517,7 @@ async function principal() {
     console.log(`\nlayout: baseline written to ${BASELINE}`);
     // A refused raise means the file just written does not describe this run: exiting 0 here would
     // hand that baseline over as if it did.
-    if (rechazos.length > 0) process.exit(1);
+    if (rechazos.length > 0) process.exitCode = 1;
     return;
   }
 
@@ -541,8 +542,9 @@ async function principal() {
     console.error('\nlayout: these v3.1 objectives are missed and not recorded in PENDIENTES:');
     for (const linea of nuevos) console.error(`  - ${linea}`);
   }
-  if (peores.length + mejores.length + sinMedir.length + nuevos.length + cumplidos.length > 0) process.exit(1);
-  console.log('\nlayout: every measured budget holds.');
+  if (peores.length + mejores.length + sinMedir.length + nuevos.length + cumplidos.length > 0) process.exitCode = 1;
+  else console.log('\nlayout: every measured budget holds.');
 }
 
-await principal();
+if (!process.argv.includes('--v4-only')) await principal();
+if (!process.argv.includes('--legacy-only')) await runV4Layout({ update: escribirBaseline });
