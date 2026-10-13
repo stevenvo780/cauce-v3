@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import datetime
-import re
 import importlib.util
 import pathlib
+import re
 
 # Closed failure codes stored in quota_provider_reports.note: not_authenticated (no usable
 # credential), token_expired (re-authenticate), forbidden_credential_type (credential cannot
