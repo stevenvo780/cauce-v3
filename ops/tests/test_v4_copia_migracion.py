@@ -4,10 +4,15 @@ import json
 import os
 import pathlib
 import subprocess
+import sys
 import tempfile
 import unittest
+from unittest import mock
 
 OPS = pathlib.Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(OPS / 'scripts'))
+import v4_copia_migracion as copia  # noqa: E402
+
 SCRIPT = OPS / 'scripts/v4-medicion-migracion.sh'
 MARKER = 'MATERIAL-QUE-NO-VIAJA'
 GIT_ENV = {'GIT_AUTHOR_NAME': 'fixture', 'GIT_AUTHOR_EMAIL': 'fixture@example.invalid', 'GIT_COMMITTER_NAME': 'fixture',
@@ -45,6 +50,7 @@ class CopyAndRestoreTests(unittest.TestCase):
         write(project / 'AGENTS.md', 'contexto v2 sin commit\n')
         (project / 'borrar.md').unlink()
         write(project / 'nuevo.md', 'sin seguimiento\n')
+        write(project / 'AGENTS.md.bak-2', 'copia vieja\n')
         write(project / 'data/envios.jsonl', '{"n": 1}\n' * 50)
         write(project / 'node_modules/pkg/index.js', 'regenerable\n')
         write(project / 'auth.json', MARKER)
@@ -116,7 +122,8 @@ class CopyAndRestoreTests(unittest.TestCase):
         self.make_copy()
         target = self.root / 'espacio'
         done = self.cli('restaurar', str(self.copy), '--destino', str(target), '--mapa', 'clawd=projects/gaia-clawd',
-                        '--mapa', 'datos=data', '--recibo', str(self.root / 'recibo.json'))
+                        '--mapa', 'datos=data', '--omitir', '*.bak*', '--duplicar', 'clawd/AGENTS.md=context/AGENTS.md',
+                        '--recibo', str(self.root / 'recibo.json'))
         self.assertEqual(done.returncode, 0, done.stderr)
         project = target / 'projects/gaia-clawd'
         self.assertEqual(git(project, 'rev-parse', 'HEAD'), self.head)
@@ -138,6 +145,10 @@ class CopyAndRestoreTests(unittest.TestCase):
         self.assertEqual(moved['clawd/AGENTS.md'], 'projects/gaia-clawd/AGENTS.md')
         self.assertEqual(moved['datos/catalogo.pdf'], 'data/catalogo.pdf')
         self.assertTrue(receipt['verified'])
+        self.assertEqual(receipt['excludedByLayout'], ['clawd/AGENTS.md.bak-2'])
+        self.assertFalse((project / 'AGENTS.md.bak-2').exists())
+        self.assertEqual((target / 'context/AGENTS.md').read_text(), 'contexto v2 sin commit\n')
+        self.assertEqual(moved['clawd/AGENTS.md'], 'projects/gaia-clawd/AGENTS.md')
 
     def test_damage_and_unsafe_requests_fail_closed(self):
         manifest = self.make_copy()
@@ -153,9 +164,183 @@ class CopyAndRestoreTests(unittest.TestCase):
         self.assertEqual(damaged.returncode, 2)
         self.assertIn('not recoverable', damaged.stderr)
         restored = self.cli('restaurar', str(self.copy))
-        self.assertEqual(restored.returncode, 1)
+        self.assertEqual(restored.returncode, 2)
+        self.assertIn('does not match the manifest', restored.stderr)
         (self.copy / 'manifest.json').write_text((self.copy / 'manifest.json').read_text().replace('gaia', 'hades'))
         self.assertEqual(self.cli('comprobar-copia', str(self.copy)).returncode, 2)
+
+
+def private_key() -> str:
+    return '-----BEGIN ' + 'OPENSSH PRIVATE' + ' KEY-----\nAAAAB3Nza\n'
+
+
+def github_token() -> str:
+    return 'gh' + 'p_' + 'Z9' * 18
+
+
+class SecurityTests(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory(prefix='cauce-v4-copia-seg-', dir='/var/tmp')
+        self.addCleanup(temporary.cleanup)
+        self.root = pathlib.Path(temporary.name)
+        self.source = self.root / 'origen'
+        self.outside = self.root / 'fuera'
+        write(self.outside / 'robado.txt', 'CONTENIDO-DE-FUERA')
+        project = self.source / 'proyecto'
+        git(self.root, 'init', '-q', '-b', 'main', str(project))
+        write(project / 'README.md', 'hola\n')
+        write(project / 'fixture.md', 'token de prueba ' + github_token() + '\n')
+        (project / 'salida').symlink_to(self.outside)
+        git(project, 'add', '-A')
+        git(project, 'commit', '-q', '-m', 'inicial')
+        git(project, 'remote', 'add', 'origin', 'https://u:pa/ss@example.invalid/x.git')
+        git(project, 'remote', 'add', 'peligro', 'ext::sh -c touch% /tmp/x')
+        git(project, 'remote', 'add', 'limpio', 'git@example.invalid:owner/x.git')
+        write(project / 'notas.txt', private_key())
+        os.link(project / 'notas.txt', project / 'copia-inocente.txt')
+        write(project / 'config.yaml', 'api_key: ' + 'q' * 24 + '\n')
+        write(project / 'ａｕｔｈ.json', 'oculto')
+        data = self.source / 'datos'
+        write(data / 'ok.txt', 'benigno\n')
+        write(data / 'setuid.sh', '#!/bin/sh\n')
+        os.chmod(data / 'setuid.sh', 0o4755)
+        write(data / 'abierto.txt', 'abierto\n')
+        os.chmod(data / 'abierto.txt', 0o777)
+        (data / 'absoluto').symlink_to('/etc/hostname')
+        (data / 'escapa').symlink_to('../../fuera/robado.txt')
+        (data / 'victima').mkdir()
+        write(data / 'victima/v.txt', 'v\n')
+        self.copy = self.root / 'copia'
+
+    def cli(self, *arguments):
+        return subprocess.run(['bash', str(SCRIPT), *arguments], capture_output=True, text=True, timeout=300,
+                              env={**os.environ, 'PYTHONDONTWRITEBYTECODE': '1'})
+
+    def make_copy(self):
+        done = self.cli('copiar', '--alias', 'hades', '--origen', f'proyecto={self.source / "proyecto"}',
+                        '--origen', f'datos={self.source / "datos"}', '--destino', str(self.copy))
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.streams = done.stdout + done.stderr
+        return json.loads((self.copy / 'manifest.json').read_text())
+
+    def copied_bytes(self) -> bytes:
+        return b''.join(path.read_bytes() for path in self.copy.rglob('*') if path.is_file() and not path.is_symlink())
+
+    def reseal(self, change) -> None:
+        manifest = json.loads(self.original)
+        change(manifest)
+        manifest['sha256'] = copia.seal(manifest)
+        (self.copy / 'manifest.json').write_text(json.dumps(manifest))
+
+    def test_finding1_credentials_are_excluded_by_content_hardlink_and_unicode_name(self):
+        manifest = self.make_copy()
+        reasons = {item['path']: item['reason'] for item in manifest['omissions']}
+        for path in ('proyecto/notas.txt', 'proyecto/copia-inocente.txt', 'proyecto/config.yaml'):
+            self.assertEqual(reasons[path], 'sensitive-content', path)
+        self.assertEqual(reasons['proyecto/ａｕｔｈ.json'], 'auth')
+        repo, = manifest['repositories']
+        self.assertEqual(repo['trackedSensitive'], ['proyecto/fixture.md'])
+        self.assertEqual(repo['remotes'], {'limpio': 'git@example.invalid:owner/x.git'})
+        self.assertEqual(repo['droppedRemotes'], ['origin', 'peligro'])
+
+    def test_finding2_no_credential_reaches_copy_manifest_or_output(self):
+        self.make_copy()
+        stored = self.copied_bytes()
+        for secret in (private_key(), 'q' * 24, 'oculto', 'pa/ss', 'ext::', 'CONTENIDO-DE-FUERA'):
+            self.assertNotIn(secret.encode(), stored, secret)
+            self.assertNotIn(secret, self.streams)
+        manifest_text = (self.copy / 'manifest.json').read_text()
+        self.assertNotIn(str(self.source), manifest_text)
+        self.assertNotIn(str(self.root), manifest_text)
+        for command in (('comprobar-copia', str(self.copy)), ('restaurar', str(self.copy))):
+            output = self.cli(*command)
+            self.assertEqual(output.returncode, 0, output.stderr)
+            self.assertNotIn(github_token(), output.stdout + output.stderr)
+
+    def test_finding3_paths_swapped_for_symlinks_mid_copy_are_refused(self):
+        original = copia.open_verified
+
+        def swap_directory(parent, name, expected, flags):
+            if name == 'victima':
+                os.rename(name, 'victima.old', src_dir_fd=parent, dst_dir_fd=parent)
+                os.symlink(str(self.outside), name, dir_fd=parent)
+            return original(parent, name, expected, flags)
+
+        def swap_file(parent, name, expected, flags):
+            if name == 'ok.txt':
+                os.rename(name, 'ok.old', src_dir_fd=parent, dst_dir_fd=parent)
+                os.symlink(str(self.outside / 'robado.txt'), name, dir_fd=parent)
+            return original(parent, name, expected, flags)
+
+        def replace_file(parent, name, expected, flags):
+            if name == 'abierto.txt':
+                os.rename(name, 'abierto.old', src_dir_fd=parent, dst_dir_fd=parent)
+                os.close(os.open(name, os.O_WRONLY | os.O_CREAT, 0o644, dir_fd=parent))
+            return original(parent, name, expected, flags)
+        for attempt, racer in enumerate((swap_directory, swap_file, replace_file)):
+            with self.subTest(racer=racer.__name__), mock.patch.object(copia, 'open_verified', racer):
+                target = self.root / f'carrera-{attempt}'
+                with self.assertRaises((OSError, copia.Failure)):
+                    copia.copy('hades', [f'datos={self.source / "datos"}'], str(target))
+                stored = b''.join(p.read_bytes() for p in target.rglob('*') if p.is_file())
+                self.assertNotIn(b'CONTENIDO-DE-FUERA', stored)
+            for left, back in (('victima.old', 'victima'), ('ok.old', 'ok.txt'), ('abierto.old', 'abierto.txt')):
+                if (self.source / 'datos' / left).exists():
+                    (self.source / 'datos' / back).unlink()
+                    (self.source / 'datos' / left).rename(self.source / 'datos' / back)
+
+    def test_finding4_restore_validates_manifest_modes_links_and_destinations(self):
+        self.make_copy()
+        self.original = (self.copy / 'manifest.json').read_text()
+        target = self.root / 'restaurado'
+        done = self.cli('restaurar', str(self.copy), '--destino', str(target), '--recibo', str(self.root / 'r.json'))
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual((target / 'datos/setuid.sh').stat().st_mode & 0o7777, 0o755)
+        self.assertEqual((target / 'datos/abierto.txt').stat().st_mode & 0o7777, 0o775)
+        reasons = {item['path']: item['reason'] for item in json.loads(self.original)['omissions']}
+        self.assertEqual((reasons['datos/absoluto'], reasons['datos/escapa']), ('symlink-outside', 'symlink-outside'))
+        self.assertFalse((target / 'datos/escapa').is_symlink())
+        self.assertNotIn(str(self.outside), self.original)
+        self.reseal(lambda m: m['entries'].append({'path': 'datos/plantado', 'kind': 'symlink', 'source': 'data',
+                                                   'target': '../../fuera/robado.txt'}))
+        planted = self.root / 'plantado'
+        done = self.cli('restaurar', str(self.copy), '--destino', str(planted), '--recibo', str(self.root / 'p.json'))
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(json.loads((self.root / 'p.json').read_text())['skippedUnsafeSymlinks'], ['datos/plantado'])
+        self.assertFalse((planted / 'datos/plantado').is_symlink())
+        again = self.cli('restaurar', str(self.copy), '--destino', str(target), '--recibo', str(self.root / 'r.json'))
+        self.assertEqual(again.returncode, 2)
+        linked = self.root / 'enlace-destino'
+        linked.symlink_to(self.outside)
+        self.assertEqual(self.cli('restaurar', str(self.copy), '--destino', str(linked)).returncode, 2)
+        blob = next(e['sha256'] for e in json.loads(self.original)['entries'] if e['path'] == 'datos/ok.txt')
+        tampering = {
+            'traversal': lambda m: m['entries'].append({'path': '../evil', 'kind': 'file', 'mode': 420, 'sha256': blob,
+                                                        'source': 'data', 'bytes': 1}),
+            'digest-path': lambda m: next(e for e in m['entries'] if e['path'] == 'datos/ok.txt').update(
+                sha256='../../../../etc/hostname'),
+            'deletion-outside': lambda m: m['repositories'][0]['deleted'].append('datos/ok.txt'),
+            'command-remote': lambda m: m['repositories'][0]['remotes'].update(x='ext::sh -c id'),
+            'option-branch': lambda m: m['repositories'][0].update(branch='--orphan=x'),
+            'option-head': lambda m: m['repositories'][0].update(head='--detach'),
+            'through-git-symlink': lambda m: m['entries'].append({'path': 'proyecto/salida/plantado.txt', 'kind': 'file',
+                                                                  'mode': 420, 'sha256': blob, 'source': 'data',
+                                                                  'bytes': 1}),
+        }
+        reasons = {'traversal': 'unsafe manifest path', 'digest-path': 'digest is invalid',
+                   'deletion-outside': 'leaves its repository', 'command-remote': 'remote is unsafe',
+                   'option-branch': 'repository is invalid', 'option-head': 'repository is invalid',
+                   'through-git-symlink': 'escapes the destination'}
+        for name, change in tampering.items():
+            with self.subTest(name=name):
+                self.reseal(change)
+                result = self.cli('restaurar', str(self.copy))
+                self.assertEqual(result.returncode, 2, result.stdout)
+                self.assertIn(reasons[name], result.stderr)
+        self.assertEqual(sorted(p.name for p in self.outside.iterdir()), ['robado.txt'])
+        with mock.patch.object(copia.os, 'geteuid', return_value=0), self.assertRaises(copia.Failure):
+            copia.ownership(None)
+        self.assertEqual(copia.ownership('1000:1000'), (1000, 1000))
 
 
 if __name__ == '__main__':

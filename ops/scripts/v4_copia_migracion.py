@@ -1,17 +1,22 @@
 """Recoverable pre-cut copy of an agent's legacy data for the V4 migration, with a sealed manifest.
 
 Projects travel as git bundles and come back at the same HEAD; every other file travels by content with
-sha256. Paths that look like credentials (auth, session, token, profile and key material) are omitted with
-a reason and their content is never read. Restoration rebuilds the tree, optionally under a normalized
-layout (old path -> new path), and proves the result against the manifest.
+sha256. Credentials are excluded by design: paths that look like auth, session, token, profile or key
+material are never opened, and any other file whose content carries credential material is left out
+too. Both are listed with a reason, never with content. The tree is walked through directory descriptors
+with O_NOFOLLOW, so a path swapped for a symlink mid-copy is refused instead of followed.
+
+Restoration validates the whole manifest before touching the disk, rebuilds the tree in an empty
+directory (optionally under a normalized layout, old path -> new path) and proves it against the manifest.
 """
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import hashlib
 import json
 import os
-import pathlib
+import posixpath
 import re
 import shutil
 import socket
@@ -20,24 +25,45 @@ import subprocess
 import sys
 import tempfile
 import time
+import unicodedata
+import urllib.parse
 
 SCHEMA = 'cauce.v4-migracion-copia/1'
 RESTORE_SCHEMA = 'cauce.v4-migracion-restauracion/1'
 NAME_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$')
 OMISSION_RULES = (
-    ('auth', re.compile(r'o?auth(?!or)', re.I)),
-    ('session', re.compile(r'session', re.I)),
-    ('token', re.compile(r'token', re.I)),
-    ('profile', re.compile(r'profile', re.I)),
-    ('credential', re.compile(r'^(?:\.ssh|\.gnupg|\.netrc|\.git-credentials|\.pgpass|\.npmrc|\.pypirc|\.env(?:\..*)?'
-                              r'|cookies.*|id_(?:rsa|dsa|ecdsa|ed25519).*|.*credential.*|.*secret.*'
-                              r'|.*\.(?:pem|key|p12|pfx|hdr))$', re.I)),
+    ('auth', re.compile(r'o?auth(?!or)')),
+    ('session', re.compile(r'session')),
+    ('token', re.compile(r'token')),
+    ('profile', re.compile(r'profile')),
+    ('credential', re.compile(
+        r'(?:\.ssh|\.gnupg|\.aws|\.docker|\.kube|\.password-store|\.netrc|_netrc|\.git-credentials|\.pgpass|\.npmrc'
+        r'|\.pypirc|\.yarnrc(?:\.yml)?|\.boto|\.s3cfg|\.htpasswd|\.env(?:\..*)?|kubeconfig|known_hosts|cookies.*'
+        r'|id_(?:rsa|dsa|ecdsa|ed25519).*|.*credential.*|.*secret.*|.*passw(?:or)?d.*|.*api[-_]?key.*'
+        r'|.*\.(?:pem|key|p8|p12|pfx|ppk|jks|keystore|kdbx|gpg|asc|ovpn|hdr))')),
 )
 REGENERABLE = frozenset({'node_modules', '__pycache__', '.venv', 'venv', '.pytest_cache', '.mypy_cache',
                          '.ruff_cache', '.cache', '.npm', '.next', '.turbo'})
-USERINFO = re.compile(r'(?<=://)[^/@\s]+@')
+SENSITIVE_CONTENT = re.compile(
+    rb'-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----|\bsk-(?:ant-|proj-)?[A-Za-z0-9_-]{20,}'
+    rb'|\bgh[pousr]_[A-Za-z0-9]{20,}|\bgithub_pat_[A-Za-z0-9_]{20,}|\bglpat-[A-Za-z0-9_-]{20,}|\bxox[abprs]-[A-Za-z0-9-]{10,}'
+    rb'|\b(?:AKIA|ASIA)[0-9A-Z]{16}\b|\bnpm_[A-Za-z0-9]{36}\b|\bAIza[0-9A-Za-z_-]{35}|\bya29\.[0-9A-Za-z_-]{20,}'
+    rb'|\bxai-[A-Za-z0-9]{20,}|\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}'
+    rb'|://[^\s/:@"\'<>]+:[^\s/@"\'<>]+@|authorization["\']?\s*[:=]\s*["\']?(?:bearer|basic|token)\s+[A-Za-z0-9._~+/=-]{8,}'
+    rb'|["\']?(?:access[_-]?token|refresh[_-]?token|id[_-]?token|auth[_-]?token|client[_-]?secret|api[_-]?key'
+    rb'|secret[_-]?key|private[_-]?key|password|passwd)["\']?\s*[:=]\s*["\']?(?!\$\{|process\.env)[^\s"\',;]{8,}',
+    re.I)
+OVERLAP = 4096
 CHUNK = 1 << 20
+OPEN_DIRECTORY = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+OPEN_FILE = os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK | getattr(os, 'O_NOCTTY', 0)
+OPEN_NEW = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC
 GIT_ENV = {'GIT_OPTIONAL_LOCKS': '0', 'GIT_TERMINAL_PROMPT': '0', 'LC_ALL': 'C', 'GIT_CONFIG_NOSYSTEM': '1'}
+HEX_RE = re.compile(r'^(?:[0-9a-f]{40}|[0-9a-f]{64})$')
+SHA256_RE = re.compile(r'^[0-9a-f]{64}$')
+BRANCH_RE = re.compile(r'^(?!-)(?!.*\.\.)(?!.*//)[A-Za-z0-9._/-]{1,200}(?<![./])$')
+REMOTE_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$')
+SAFE_URL = re.compile(r'^(?:(?:https?|ssh|git)://[^\s]+|[A-Za-z0-9._-]+@[A-Za-z0-9._-]+:[^\s]+)$')
 
 
 class Failure(ValueError):
@@ -53,25 +79,48 @@ def seal(doc: dict) -> str:
 
 
 def omission_reason(name: str, directory: bool) -> str | None:
+    folded = unicodedata.normalize('NFKC', name).casefold()
     for reason, pattern in OMISSION_RULES:
-        if pattern.search(name) if reason != 'credential' else pattern.fullmatch(name):
+        if pattern.search(folded) if reason != 'credential' else pattern.fullmatch(folded):
             return reason
-    return 'regenerable' if directory and name in REGENERABLE else None
+    return 'regenerable' if directory and folded in REGENERABLE else None
 
 
-def git(repository: str, *arguments: str, check: bool = True) -> str:
+def clean_url(url: str) -> str | None:
+    """Remote without userinfo, query or fragment; schemes that run commands (ext::, fd::) are dropped."""
+    if '::' in url or url.startswith('-'):
+        return None
+    if '://' not in url:
+        return url if SAFE_URL.fullmatch(url) and not SENSITIVE_CONTENT.search(url.encode()) else None
+    try:
+        parts = urllib.parse.urlsplit(url)
+        host, port = parts.hostname or '', parts.port
+    except ValueError:
+        return None
+    netloc = (f'[{host}]' if ':' in host else host) + (f':{port}' if port else '')
+    cleaned = urllib.parse.urlunsplit((parts.scheme, netloc, parts.path, '', ''))
+    return cleaned if SAFE_URL.fullmatch(cleaned) and not SENSITIVE_CONTENT.search(cleaned.encode()) else None
+
+
+def scrub(text: str) -> str:
+    return re.sub(r'://[^\s@]*@', '://', text)
+
+
+def git(repository: str, *arguments: str, check: bool = True, fd: int | None = None) -> str:
+    location = f'/proc/self/fd/{fd}' if fd is not None else repository
     command = ['git', '-c', 'safe.directory=*', '-c', 'core.fsmonitor=false', '-c', 'core.hooksPath=/dev/null',
-               '-C', repository, *arguments]
-    done = subprocess.run(command, capture_output=True, env={**os.environ, **GIT_ENV}, check=False, timeout=3600)
+               '-c', 'protocol.allow=never', '-c', 'protocol.file.allow=always', '-C', location, *arguments]
+    done = subprocess.run(command, capture_output=True, env={**os.environ, **GIT_ENV}, check=False, timeout=3600,
+                          pass_fds=(fd,) if fd is not None else ())
     if check and done.returncode:
-        raise Failure(f'git {arguments[0]} failed in {repository}: {done.stderr.decode(errors="replace").strip()[:200]}')
+        raise Failure(f'git {arguments[0]} failed: {scrub(done.stderr.decode(errors="replace").strip())[:200]}')
     return done.stdout.decode('utf-8', 'surrogateescape') if done.returncode == 0 else ''
 
 
-def relative(value: str) -> str:
-    path = pathlib.PurePosixPath(value)
-    if not value or path.is_absolute() or str(path) != value or any(part in ('', '.', '..') for part in path.parts) \
-            or any(ord(character) < 32 for character in value):
+def relative(value) -> str:
+    if not isinstance(value, str) or not value or value.startswith('/') or posixpath.normpath(value) != value \
+            or any(part in ('', '.', '..') for part in value.split('/')) \
+            or any(ord(character) < 32 or ord(character) == 127 for character in value):
         raise Failure(f'unsafe manifest path: {value!r}')
     return value
 
@@ -80,35 +129,68 @@ def under(path: str, prefix: str) -> bool:
     return path == prefix or path.startswith(prefix + '/')
 
 
-def hash_file(path: str, object_format: str | None, size: int) -> tuple[str, str | None]:
+def escapes(path: str, target: str) -> bool:
+    """A link whose target is absolute or climbs above the tree it lives in points outside the copy."""
+    landing = posixpath.normpath(posixpath.join(posixpath.dirname(path), target))
+    return target.startswith('/') or landing == '..' or landing.startswith('../')
+
+
+def safe_mode(mode: int, directory: bool = False) -> int:
+    """No setuid, setgid, sticky or world-writable bits survive a restore."""
+    return (mode & 0o775) | (0o700 if directory else 0)
+
+
+def open_verified(parent: int, name: str, expected: os.stat_result, flags: int) -> int:
+    descriptor = os.open(name, flags, dir_fd=parent)
+    current = os.fstat(descriptor)
+    if (current.st_dev, current.st_ino) != (expected.st_dev, expected.st_ino) \
+            or stat.S_IFMT(current.st_mode) != stat.S_IFMT(expected.st_mode):
+        os.close(descriptor)
+        raise Failure(f'{name!r} changed while it was copied; stop the agent and retry')
+    return descriptor
+
+
+def scan(descriptor: int, size: int, object_format: str | None) -> tuple[str, str | None, bool]:
+    """One pass over an open file: sha256, git blob id and whether it carries credential material."""
     digest = hashlib.sha256()
     blob = hashlib.new(object_format) if object_format else None
     if blob:
         blob.update(b'blob %d\0' % size)
-    read = 0
-    with open(path, 'rb', opener=lambda p, f: os.open(p, f | os.O_NOFOLLOW)) as handle:
-        while chunk := handle.read(CHUNK):
-            read += len(chunk)
-            digest.update(chunk)
-            if blob:
-                blob.update(chunk)
-    if read != size:
-        raise Failure(f'{path} changed while it was copied; stop the agent and retry')
-    return digest.hexdigest(), blob.hexdigest() if blob else None
+    os.lseek(descriptor, 0, os.SEEK_SET)
+    read, tail, sensitive = 0, b'', False
+    while chunk := os.read(descriptor, CHUNK):
+        read += len(chunk)
+        digest.update(chunk)
+        if blob:
+            blob.update(chunk)
+        sensitive = sensitive or bool(SENSITIVE_CONTENT.search(tail + chunk))
+        tail = chunk[-OVERLAP:]
+    if read != size or os.fstat(descriptor).st_size != size:
+        raise Failure('a file changed while it was copied; stop the agent and retry')
+    return digest.hexdigest(), blob.hexdigest() if blob else None, sensitive
 
 
-def store(source: str, digest: str, output: str) -> None:
+def store(descriptor: int, digest: str, output: str) -> None:
     target = os.path.join(output, 'data', digest[:2], digest)
-    if os.path.exists(target):
+    if os.path.lexists(target):
         return
     os.makedirs(os.path.dirname(target), mode=0o700, exist_ok=True)
     temporary = target + '.part'
-    with open(source, 'rb', opener=lambda p, f: os.open(p, f | os.O_NOFOLLOW)) as reader, \
-            open(temporary, 'xb', opener=lambda p, f: os.open(p, f, 0o600)) as writer:
-        shutil.copyfileobj(reader, writer, CHUNK)
-    if hash_file(temporary, None, os.path.getsize(temporary))[0] != digest:
+    writer = os.open(temporary, OPEN_NEW, 0o600)
+    copied = hashlib.sha256()
+    try:
+        os.lseek(descriptor, 0, os.SEEK_SET)
+        while chunk := os.read(descriptor, CHUNK):
+            copied.update(chunk)
+            view = memoryview(chunk)
+            while view:
+                view = view[os.write(writer, view):]
+        os.fsync(writer)
+    finally:
+        os.close(writer)
+    if copied.hexdigest() != digest:
         os.unlink(temporary)
-        raise Failure(f'{source} changed while it was copied; stop the agent and retry')
+        raise Failure('a file changed while it was copied; stop the agent and retry')
     os.replace(temporary, target)
 
 
@@ -120,107 +202,137 @@ class Copier:
         self.repositories: dict[str, dict] = {}
         self.tracked: dict[str, dict] = {}
 
-    def omit(self, path: str, reason: str, absolute: str, directory: bool) -> None:
-        files, size = 0, 0
-        if directory:
-            for root, dirs, names in os.walk(absolute, followlinks=False):
-                files += len(names)
-                for name in names:
+    def omit(self, path: str, reason: str, parent: int, name: str, info: os.stat_result) -> None:
+        files, size = (0, 0) if stat.S_ISDIR(info.st_mode) else (1, info.st_size)
+        if stat.S_ISDIR(info.st_mode):
+            for _, _, names, root in os.fwalk(name, dir_fd=parent):
+                for item in names:
                     try:
-                        size += os.lstat(os.path.join(root, name)).st_size
+                        size += os.stat(item, dir_fd=root, follow_symlinks=False).st_size
+                        files += 1
                     except OSError:
                         continue
-                dirs.sort()
-        else:
-            files, size = 1, os.lstat(absolute).st_size
-        self.omissions.append({'path': path, 'reason': reason, 'kind': 'directory' if directory else 'file',
-                               'files': files, 'bytes': size})
+        kind = 'directory' if stat.S_ISDIR(info.st_mode) else 'file' if stat.S_ISREG(info.st_mode) \
+            else 'symlink' if stat.S_ISLNK(info.st_mode) else 'special'
+        self.omissions.append({'path': path, 'reason': reason, 'kind': kind, 'files': files, 'bytes': size})
 
-    def repository(self, path: str, absolute: str) -> None:
-        head = git(absolute, 'rev-parse', '--verify', '-q', 'HEAD^{commit}', check=False).strip()
+    def repository(self, path: str, directory: int) -> None:
+        head = git(path, 'rev-parse', '--verify', '-q', 'HEAD^{commit}', check=False, fd=directory).strip()
         if not head:
             self.omissions.append({'path': path + '/.git', 'reason': 'git-without-commits', 'kind': 'directory',
                                    'files': 0, 'bytes': 0})
             return
-        object_format = git(absolute, 'rev-parse', '--show-object-format', check=False).strip() or 'sha1'
-        branch = git(absolute, 'symbolic-ref', '-q', '--short', 'HEAD', check=False).strip() or None
-        remotes = {}
-        for line in git(absolute, 'remote', '-v').splitlines():
+        object_format = git(path, 'rev-parse', '--show-object-format', check=False, fd=directory).strip() or 'sha1'
+        if object_format not in ('sha1', 'sha256'):
+            raise Failure(f'unsupported git object format in {path}')
+        branch = git(path, 'symbolic-ref', '-q', '--short', 'HEAD', check=False, fd=directory).strip() or None
+        remotes, dropped = {}, []
+        for line in git(path, 'remote', '-v', fd=directory).splitlines():
             name, _, rest = line.partition('\t')
-            if rest.endswith(' (fetch)'):
-                remotes[name] = USERINFO.sub('', rest[:-len(' (fetch)')])
+            if rest.endswith(' (fetch)') and REMOTE_RE.fullmatch(name):
+                url = clean_url(rest[:-len(' (fetch)')])
+                if url:
+                    remotes[name] = url
+                else:
+                    dropped.append(name)
         bundle = f'repos/{len(self.repositories):04d}.bundle'
+        bundle_path = os.path.join(self.output, bundle)
         os.makedirs(os.path.join(self.output, 'repos'), mode=0o700, exist_ok=True)
-        git(absolute, 'bundle', 'create', '-q', os.path.join(self.output, bundle), 'HEAD', '--all')
-        git(absolute, 'bundle', 'verify', '-q', os.path.join(self.output, bundle))
+        git(path, 'bundle', 'create', '-q', bundle_path, 'HEAD', '--all', fd=directory)
+        git(path, 'bundle', 'verify', '-q', bundle_path, fd=directory)
         tracked = {}
-        for record in git(absolute, 'ls-files', '-s', '-z').split('\0'):
+        for record in git(path, 'ls-files', '-s', '-z', fd=directory).split('\0'):
             if record:
                 meta, _, name = record.partition('\t')
                 mode, blob, _ = meta.split(' ', 2)
                 tracked[name] = (mode, blob)
-        refs = sorted(git(absolute, 'for-each-ref', '--format=%(refname)').split())
-        bundle_path = os.path.join(self.output, bundle)
-        bundle_digest = hash_file(bundle_path, None, os.path.getsize(bundle_path))[0]
-        self.repositories[path] = {'path': path, 'head': head, 'branch': branch, 'objectFormat': object_format,
-                                   'remotes': remotes, 'refs': len(refs), 'bundle': bundle,
-                                   'bundleSha256': bundle_digest, 'deleted': [], 'worktree': os.path.isfile(
-                                       os.path.join(absolute, '.git'))}
+        refs = git(path, 'for-each-ref', '--format=%(refname)', fd=directory).split()
+        reader = os.open(bundle_path, OPEN_FILE)
+        try:
+            bundle_digest = scan(reader, os.fstat(reader).st_size, None)[0]
+        finally:
+            os.close(reader)
+        self.repositories[path] = {'path': path, 'head': head, 'branch': branch if branch and BRANCH_RE.fullmatch(branch)
+                                   else None, 'objectFormat': object_format, 'remotes': remotes,
+                                   'droppedRemotes': sorted(dropped), 'refs': len(refs), 'bundle': bundle,
+                                   'bundleSha256': bundle_digest, 'deleted': [], 'trackedSensitive': []}
         self.tracked[path] = tracked
 
     def owner(self, path: str) -> str | None:
         holders = [repo for repo in self.repositories if under(path, repo) and path != repo]
         return max(holders, key=len) if holders else None
 
-    def file(self, path: str, absolute: str, info: os.stat_result) -> None:
-        repo = self.owner(path)
-        inner = path[len(repo) + 1:] if repo else None
-        tracked = self.tracked[repo].get(inner) if repo else None
-        object_format = self.repositories[repo]['objectFormat'] if tracked else None
-        entry = {'path': path, 'kind': 'file', 'mode': stat.S_IMODE(info.st_mode), 'bytes': info.st_size}
-        digest, blob = hash_file(absolute, object_format, info.st_size)
-        executable = bool(info.st_mode & 0o111)
-        clean = tracked and tracked[1] == blob and tracked[0] == ('100755' if executable else '100644')
-        entry.update(sha256=digest, source='git' if clean else 'data')
-        if not clean:
-            store(absolute, digest, self.output)
-        self.entries.append(entry)
-
-    def link(self, path: str, absolute: str) -> None:
-        target = os.readlink(absolute)
+    def file(self, path: str, parent: int, name: str, info: os.stat_result) -> None:
         repo = self.owner(path)
         tracked = self.tracked[repo].get(path[len(repo) + 1:]) if repo else None
-        clean = False
-        if tracked and tracked[0] == '120000':
-            raw = target.encode('utf-8', 'surrogateescape')
-            blob = hashlib.new(self.repositories[repo]['objectFormat'], b'blob %d\0' % len(raw) + raw).hexdigest()
-            clean = blob == tracked[1]
-        self.entries.append({'path': path, 'kind': 'symlink', 'target': target, 'source': 'git' if clean else 'data'})
+        object_format = self.repositories[repo]['objectFormat'] if tracked else None
+        descriptor = open_verified(parent, name, info, OPEN_FILE)
+        try:
+            digest, blob, sensitive = scan(descriptor, info.st_size, object_format)
+            clean = bool(tracked) and tracked[1] == blob and tracked[0] == ('100755' if info.st_mode & 0o111 else '100644')
+            if sensitive and clean:
+                self.repositories[repo]['trackedSensitive'].append(path)
+            elif sensitive:
+                self.omissions.append({'path': path, 'reason': 'sensitive-content', 'kind': 'file', 'files': 1,
+                                       'bytes': info.st_size})
+                return
+            if not clean:
+                store(descriptor, digest, self.output)
+        finally:
+            os.close(descriptor)
+        self.entries.append({'path': path, 'kind': 'file', 'mode': stat.S_IMODE(info.st_mode), 'bytes': info.st_size,
+                             'sha256': digest, 'source': 'git' if clean else 'data'})
 
-    def walk(self, path: str, absolute: str) -> None:
-        if os.path.lexists(os.path.join(absolute, '.git')):
-            self.repository(path, absolute)
-        info = os.lstat(absolute)
-        self.entries.append({'path': path, 'kind': 'directory', 'mode': stat.S_IMODE(info.st_mode)})
-        with os.scandir(absolute) as iterator:
-            children = sorted(iterator, key=lambda item: item.name)
-        for child in children:
-            child_path, child_absolute = f'{path}/{child.name}', child.path
-            if child.name == '.git':
+    def link(self, path: str, parent: int, name: str) -> None:
+        target = os.readlink(name, dir_fd=parent)
+        if SENSITIVE_CONTENT.search(target.encode('utf-8', 'surrogateescape')):
+            self.omissions.append({'path': path, 'reason': 'sensitive-content', 'kind': 'symlink', 'files': 1, 'bytes': 0})
+            return
+        repo = self.owner(path)
+        tracked = self.tracked[repo].get(path[len(repo) + 1:]) if repo else None
+        raw = target.encode('utf-8', 'surrogateescape')
+        if tracked and tracked[0] == '120000' and \
+                hashlib.new(self.repositories[repo]['objectFormat'], b'blob %d\0' % len(raw) + raw).hexdigest() == tracked[1]:
+            self.entries.append({'path': path, 'kind': 'symlink', 'source': 'git',
+                                 'targetSha256': hashlib.sha256(raw).hexdigest()})
+        elif escapes(path, target):
+            self.omissions.append({'path': path, 'reason': 'symlink-outside', 'kind': 'symlink', 'files': 1, 'bytes': 0})
+        else:
+            self.entries.append({'path': path, 'kind': 'symlink', 'target': target, 'source': 'data'})
+
+    def walk(self, path: str, directory: int) -> None:
+        try:
+            marker = os.stat('.git', dir_fd=directory, follow_symlinks=False)
+        except FileNotFoundError:
+            marker = None
+        if marker is not None and stat.S_ISLNK(marker.st_mode):
+            self.omissions.append({'path': path + '/.git', 'reason': 'unsafe-git-link', 'kind': 'symlink',
+                                   'files': 0, 'bytes': 0})
+        elif marker is not None:
+            self.repository(path, directory)
+        self.entries.append({'path': path, 'kind': 'directory', 'mode': stat.S_IMODE(os.fstat(directory).st_mode)})
+        with os.scandir(directory) as iterator:
+            names = sorted(item.name for item in iterator)
+        for name in names:
+            if name == '.git':
                 continue
-            info = child.stat(follow_symlinks=False)
-            directory = stat.S_ISDIR(info.st_mode)
-            reason = omission_reason(child.name, directory)
+            child = f'{path}/{name}'
+            info = os.stat(name, dir_fd=directory, follow_symlinks=False)
+            reason = omission_reason(name, stat.S_ISDIR(info.st_mode))
             if reason:
-                self.omit(child_path, reason, child_absolute, directory)
-            elif directory:
-                self.walk(child_path, child_absolute)
+                self.omit(child, reason, directory, name, info)
+            elif stat.S_ISDIR(info.st_mode):
+                descriptor = open_verified(directory, name, info, OPEN_DIRECTORY)
+                try:
+                    self.walk(child, descriptor)
+                finally:
+                    os.close(descriptor)
             elif stat.S_ISREG(info.st_mode):
-                self.file(child_path, child_absolute, info)
+                self.file(child, directory, name, info)
             elif stat.S_ISLNK(info.st_mode):
-                self.link(child_path, child_absolute)
+                self.link(child, directory, name)
             else:
-                self.omissions.append({'path': child_path, 'reason': 'special', 'kind': 'special', 'files': 1, 'bytes': 0})
+                self.omit(child, 'special', directory, name, info)
 
     def deletions(self) -> None:
         present = {entry['path'] for entry in self.entries if entry['kind'] != 'directory'}
@@ -239,9 +351,9 @@ def copy(alias: str, sources: list[str], output: str) -> dict:
     roots = {}
     for item in sources:
         name, _, location = item.partition('=')
-        if not NAME_RE.fullmatch(name) or name in roots or not os.path.isabs(location) or not os.path.isdir(location) \
-                or os.path.islink(location):
-            raise Failure(f'source must be NAME=/absolute/directory: {item!r}')
+        if not NAME_RE.fullmatch(name) or name in roots or not os.path.isabs(location) or os.path.islink(location) \
+                or not os.path.isdir(location):
+            raise Failure(f'source must be NAME=/absolute/directory and not a symlink: {name!r}')
         roots[name] = os.path.realpath(location)
     target = os.path.realpath(output)
     if any(under(target, root) or under(root, target) for root in roots.values()):
@@ -249,13 +361,16 @@ def copy(alias: str, sources: list[str], output: str) -> dict:
     os.makedirs(output, mode=0o700, exist_ok=False)
     copier = Copier(output)
     for name, location in sorted(roots.items()):
-        copier.walk(name, location)
+        descriptor = os.open(location, OPEN_DIRECTORY)
+        try:
+            copier.walk(name, descriptor)
+        finally:
+            os.close(descriptor)
     copier.deletions()
     data = [e for e in copier.entries if e['kind'] == 'file' and e['source'] == 'data']
     manifest = {
         'schema': SCHEMA, 'alias': alias, 'createdAt': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
-        'host': socket.gethostname(), 'sources': {name: {'files': sum(1 for e in copier.entries
-                                                  if e['kind'] == 'file' and under(e['path'], name))} for name in roots},
+        'host': socket.gethostname(), 'sources': sorted(roots),
         'entries': copier.entries, 'repositories': sorted(copier.repositories.values(), key=lambda r: r['path']),
         'omissions': copier.omissions,
         'totals': {'files': sum(1 for e in copier.entries if e['kind'] == 'file'),
@@ -264,23 +379,59 @@ def copy(alias: str, sources: list[str], output: str) -> dict:
                    'repositories': len(copier.repositories), 'omissions': len(copier.omissions),
                    'omittedBytes': sum(o['bytes'] for o in copier.omissions)}}
     manifest['sha256'] = seal(manifest)
-    with open(os.path.join(output, 'manifest.json'), 'x', encoding='utf-8') as handle:
+    writer = os.open(os.path.join(output, 'manifest.json'), OPEN_NEW, 0o600)
+    with os.fdopen(writer, 'w', encoding='utf-8') as handle:
         json.dump(manifest, handle, indent=1, sort_keys=True)
     return manifest
 
 
-def load(copy_directory: str) -> dict:
-    with open(os.path.join(copy_directory, 'manifest.json'), encoding='utf-8') as handle:
-        manifest = json.load(handle)
-    if manifest.get('schema') != SCHEMA or manifest.get('sha256') != seal(manifest):
+def validate(manifest: dict) -> dict:
+    """Everything the restore will turn into a path, a git argument or a mode is checked before any write."""
+    if not isinstance(manifest, dict) or manifest.get('schema') != SCHEMA or manifest.get('sha256') != seal(manifest):
         raise Failure('manifest seal does not verify')
+    if not NAME_RE.fullmatch(str(manifest.get('alias', ''))):
+        raise Failure('manifest alias is invalid')
     for entry in manifest['entries']:
         relative(entry['path'])
+        kind = entry.get('kind')
+        if kind not in ('file', 'directory', 'symlink') or entry.get('source', 'data') not in ('git', 'data'):
+            raise Failure(f'unknown manifest entry: {entry["path"]}')
+        if kind != 'symlink' and not isinstance(entry.get('mode'), int):
+            raise Failure(f'manifest mode missing: {entry["path"]}')
+        if kind == 'file' and not SHA256_RE.fullmatch(str(entry.get('sha256'))):
+            raise Failure(f'manifest digest is invalid: {entry["path"]}')
+        if kind == 'symlink' and not (entry.get('source') == 'git' and SHA256_RE.fullmatch(str(entry.get('targetSha256')))
+                                      or isinstance(entry.get('target'), str) and '\0' not in entry['target']):
+            raise Failure(f'manifest link target is invalid: {entry["path"]}')
+    for item in manifest['omissions']:
+        relative(item['path'])
     for repo in manifest['repositories']:
         relative(repo['path'])
-        if not re.fullmatch(r'repos/\d{4}\.bundle', repo['bundle']):
-            raise Failure('unsafe bundle path')
+        if not re.fullmatch(r'repos/\d{4}\.bundle', str(repo.get('bundle'))) or not HEX_RE.fullmatch(str(repo.get('head'))) \
+                or not SHA256_RE.fullmatch(str(repo.get('bundleSha256'))) \
+                or (repo.get('branch') is not None and not BRANCH_RE.fullmatch(str(repo['branch']))):
+            raise Failure(f'manifest repository is invalid: {repo["path"]}')
+        for name, url in repo.get('remotes', {}).items():
+            if not REMOTE_RE.fullmatch(name) or clean_url(url) != url:
+                raise Failure(f'manifest remote is unsafe: {repo["path"]}')
+        for path in repo.get('deleted', []):
+            if not under(relative(path), repo['path']):
+                raise Failure(f'manifest deletion leaves its repository: {path}')
     return manifest
+
+
+def load(copy_directory: str) -> dict:
+    descriptor = os.open(os.path.join(copy_directory, 'manifest.json'), OPEN_FILE)
+    with os.fdopen(descriptor, encoding='utf-8') as handle:
+        return validate(json.load(handle))
+
+
+def digest_of(path: str) -> str:
+    descriptor = os.open(path, OPEN_FILE)
+    try:
+        return scan(descriptor, os.fstat(descriptor).st_size, None)[0]
+    finally:
+        os.close(descriptor)
 
 
 def check(copy_directory: str) -> dict:
@@ -289,11 +440,11 @@ def check(copy_directory: str) -> dict:
     for entry in manifest['entries']:
         if entry['kind'] == 'file' and entry['source'] == 'data':
             blob = os.path.join(copy_directory, 'data', entry['sha256'][:2], entry['sha256'])
-            if not os.path.isfile(blob) or hash_file(blob, None, os.path.getsize(blob))[0] != entry['sha256']:
+            if not os.path.isfile(blob) or os.path.islink(blob) or digest_of(blob) != entry['sha256']:
                 missing.append(entry['path'])
     for repo in manifest['repositories']:
         bundle = os.path.realpath(os.path.join(copy_directory, repo['bundle']))
-        if not os.path.isfile(bundle) or hash_file(bundle, None, os.path.getsize(bundle))[0] != repo['bundleSha256']:
+        if not os.path.isfile(bundle) or digest_of(bundle) != repo['bundleSha256']:
             missing.append(repo['bundle'])
             continue
         with tempfile.TemporaryDirectory(prefix='cauce-v4-bundle-') as scratch:
@@ -323,30 +474,62 @@ def mapper(rules: list[str]):
     return apply, pairs
 
 
-def restore(copy_directory: str, destination: str, rules: list[str]) -> dict:
-    manifest = load(copy_directory)
-    apply, pairs = mapper(rules)
-    for repo in manifest['repositories']:
-        if any(under(old, repo['path']) and old != repo['path'] for old, _ in pairs):
-            raise Failure(f'mapping splits repository {repo["path"]}')
-    targets = [apply(e['path']) for e in manifest['entries']]
-    if len(set(targets)) != len(targets):
-        raise Failure('mapping sends two manifest paths to the same place')
-    os.makedirs(destination, mode=0o700, exist_ok=True)
-    if os.listdir(destination):
-        raise Failure('restore destination must be empty')
-    base = os.path.realpath(destination)
+def ownership(value: str | None) -> tuple[int, int] | None:
+    if value is None:
+        if os.geteuid() == 0:
+            raise Failure('restoring as root needs --propietario UID:GID so the tree does not stay owned by root')
+        return None
+    match = re.fullmatch(r'(\d{1,10}):(\d{1,10})', value)
+    if not match:
+        raise Failure('--propietario must be UID:GID')
+    return int(match.group(1)), int(match.group(2))
 
-    def place(path: str) -> str:
-        target = os.path.join(base, apply(path))
-        if os.path.commonpath([base, os.path.realpath(os.path.dirname(target))]) != base:
+
+class Restorer:
+    def __init__(self, copy_directory: str, destination: str, apply):
+        self.copy_directory = os.path.realpath(copy_directory)
+        self.apply = apply
+        if os.path.islink(destination):
+            raise Failure('restore destination must not be a symlink')
+        os.makedirs(destination, mode=0o700, exist_ok=True)
+        self.base = os.path.realpath(destination)
+        if os.listdir(self.base) or os.lstat(self.base).st_uid != os.geteuid():
+            raise Failure('restore destination must be an empty directory owned by the restoring user')
+        os.chmod(self.base, 0o700)
+
+    def place(self, path: str, mapped: bool = True) -> str:
+        target = os.path.join(self.base, self.apply(path) if mapped else path)
+        if os.path.commonpath([self.base, os.path.realpath(os.path.dirname(target))]) != self.base:
             raise Failure(f'restore path escapes the destination: {path}')
         return target
-    for repo in sorted(manifest['repositories'], key=lambda r: r['path'].count('/')):
-        target = place(repo['path'])
+
+    def write(self, source: str, target: str, mode: int, digest: str) -> None:
+        os.makedirs(os.path.dirname(target), mode=0o700, exist_ok=True)
+        self.place(os.path.relpath(target, self.base), mapped=False)
+        if os.path.lexists(target):
+            os.unlink(target)
+        reader = os.open(source, OPEN_FILE)
+        writer = os.open(target, OPEN_NEW, 0o600)
+        copied = hashlib.sha256()
+        try:
+            while chunk := os.read(reader, CHUNK):
+                copied.update(chunk)
+                view = memoryview(chunk)
+                while view:
+                    view = view[os.write(writer, view):]
+            os.fchmod(writer, safe_mode(mode))
+        finally:
+            os.close(writer)
+            os.close(reader)
+        if copied.hexdigest() != digest:
+            os.unlink(target)
+            raise Failure(f'stored blob does not match the manifest: {digest[:12]}')
+
+    def repository(self, repo: dict) -> None:
+        target = self.place(repo['path'])
         os.makedirs(target, mode=0o700, exist_ok=True)
         git(target, 'init', '-q')
-        bundle = os.path.join(os.path.realpath(copy_directory), repo['bundle'])
+        bundle = os.path.join(self.copy_directory, repo['bundle'])
         git(target, 'fetch', '-q', '--update-head-ok', bundle, '+refs/*:refs/*')
         git(target, 'fetch', '-q', bundle, 'HEAD')
         branch = repo['branch']
@@ -356,35 +539,82 @@ def restore(copy_directory: str, destination: str, rules: list[str]) -> dict:
         else:
             git(target, 'checkout', '-q', '--detach', repo['head'])
         for name, url in sorted(repo['remotes'].items()):
-            git(target, 'remote', 'add', name, url)
+            git(target, 'remote', 'add', '--', name, url)
+
+
+def restore(copy_directory: str, destination: str, rules: list[str], omit: list[str] = (),
+            duplicates: list[str] = (), owner: str | None = None) -> dict:
+    manifest = load(copy_directory)
+    apply, pairs = mapper(rules)
+    identity = ownership(owner)
+    for repo in manifest['repositories']:
+        if any(under(old, repo['path']) and old != repo['path'] for old, _ in pairs):
+            raise Failure(f'mapping splits repository {repo["path"]}')
+    targets = [apply(e['path']) for e in manifest['entries']]
+    if len(set(targets)) != len(targets):
+        raise Failure('mapping sends two manifest paths to the same place')
+    restorer = Restorer(copy_directory, destination, apply)
+    skipped = {e['path'] for e in manifest['entries'] if e['kind'] != 'directory' and e['source'] == 'data'
+               and any(fnmatch.fnmatchcase(e['path'], glob) or fnmatch.fnmatchcase(e['path'].rsplit('/', 1)[-1], glob)
+                       for glob in omit)}
+    for repo in sorted(manifest['repositories'], key=lambda r: r['path'].count('/')):
+        restorer.repository(repo)
     for entry in manifest['entries']:
-        target = place(entry['path'])
+        target = restorer.place(entry['path'])
         if entry['kind'] == 'directory':
-            os.makedirs(target, exist_ok=True)
-        elif entry['kind'] == 'file' and entry['source'] == 'data':
-            os.makedirs(os.path.dirname(target), exist_ok=True)
-            if os.path.lexists(target):
-                os.unlink(target)
-            shutil.copyfile(os.path.join(copy_directory, 'data', entry['sha256'][:2], entry['sha256']), target)
-            os.chmod(target, entry['mode'])
+            os.makedirs(target, mode=0o700, exist_ok=True)
+        elif entry['kind'] == 'file' and entry['source'] == 'data' and entry['path'] not in skipped:
+            restorer.write(os.path.join(restorer.copy_directory, 'data', entry['sha256'][:2], entry['sha256']),
+                           target, entry['mode'], entry['sha256'])
     for repo in manifest['repositories']:
         for path in repo['deleted']:
-            target = place(path)
-            if os.path.lexists(target):
+            target = restorer.place(path)
+            if os.path.lexists(target) and not os.path.isdir(target):
                 os.unlink(target)
+    unsafe_links = []
     for entry in manifest['entries']:
-        target = place(entry['path'])
-        if entry['kind'] == 'symlink' and entry['source'] == 'data':
+        target = restorer.place(entry['path'])
+        if entry['kind'] == 'symlink' and entry['source'] == 'data' and entry['path'] not in skipped:
+            if escapes(apply(entry['path']), entry['target']):
+                unsafe_links.append(entry['path'])
+                skipped.add(entry['path'])
+                continue
             if os.path.lexists(target):
                 os.unlink(target)
             os.symlink(entry['target'], target)
         elif entry['kind'] == 'directory':
-            os.chmod(target, entry['mode'] | 0o700)
-    return verify_restore(manifest, base, apply, rules)
+            os.chmod(target, safe_mode(entry['mode'], directory=True), follow_symlinks=False)
+    copies = duplicate(manifest, restorer, duplicates, skipped)
+    if identity:
+        for _, dirs, names, descriptor in os.fwalk(restorer.base):
+            os.chown(descriptor, *identity)
+            for name in dirs + names:
+                os.chown(name, *identity, dir_fd=descriptor, follow_symlinks=False)
+    layout_rules = {'mapping': list(rules), 'omit': list(omit), 'duplicates': list(duplicates),
+                    'owner': owner, 'skippedUnsafeSymlinks': unsafe_links}
+    return verify_restore(manifest, restorer.base, apply, layout_rules, skipped, copies)
 
 
-def verify_restore(manifest: dict, base: str, apply, rules: list[str]) -> dict:
-    expected = {apply(e['path']): e for e in manifest['entries'] if e['kind'] != 'directory'}
+def duplicate(manifest: dict, restorer: Restorer, duplicates: list[str], skipped: set) -> dict:
+    """Second, independent copies of restored files, such as the first version of the context in space/context."""
+    files = {e['path']: e for e in manifest['entries'] if e['kind'] == 'file' and e['path'] not in skipped}
+    copies = {}
+    for rule in duplicates:
+        old, _, new = rule.partition('=')
+        new = relative(new)
+        if old not in files:
+            raise Failure(f'--duplicar names a file that is not restored: {old}')
+        target = restorer.place(new, mapped=False)
+        if os.path.lexists(target) or new in copies:
+            raise Failure(f'--duplicar target already exists: {new}')
+        restorer.write(restorer.place(old), target, files[old]['mode'], files[old]['sha256'])
+        copies[new] = {**files[old], 'source': 'duplicate'}
+    return copies
+
+
+def verify_restore(manifest: dict, base: str, apply, layout_rules: dict, skipped: set, copies: dict) -> dict:
+    expected = {apply(e['path']): e for e in manifest['entries'] if e['kind'] != 'directory' and e['path'] not in skipped}
+    expected.update(copies)
     omitted = [apply(o['path']) for o in manifest['omissions']]
     repos = {apply(r['path']): r for r in manifest['repositories']}
     problems, extras, layout = [], [], []
@@ -397,11 +627,12 @@ def verify_restore(manifest: dict, base: str, apply, rules: list[str]) -> dict:
     for path, entry in sorted(expected.items()):
         target = os.path.join(base, path)
         if entry['kind'] == 'symlink':
-            ok = os.path.islink(target) and os.readlink(target) == entry['target']
+            link = os.readlink(target) if os.path.islink(target) else None
+            ok = link is not None and (link == entry['target'] if 'target' in entry else hashlib.sha256(
+                link.encode('utf-8', 'surrogateescape')).hexdigest() == entry['targetSha256'])
         else:
-            ok = os.path.isfile(target) and not os.path.islink(target) \
-                and hash_file(target, None, os.path.getsize(target))[0] == entry['sha256'] \
-                and (entry['source'] == 'git' or stat.S_IMODE(os.lstat(target).st_mode) == entry['mode'])
+            ok = os.path.isfile(target) and not os.path.islink(target) and digest_of(target) == entry['sha256'] \
+                and (entry['source'] == 'git' or stat.S_IMODE(os.lstat(target).st_mode) == safe_mode(entry['mode']))
         if not ok:
             problems.append(path)
         layout.append({'from': entry['path'], 'to': path, 'sha256': entry.get('sha256'), 'source': entry['source']})
@@ -409,9 +640,10 @@ def verify_restore(manifest: dict, base: str, apply, rules: list[str]) -> dict:
         if git(os.path.join(base, path), 'rev-parse', 'HEAD').strip() != repo['head']:
             problems.append(path + ' (HEAD)')
     receipt = {'schema': RESTORE_SCHEMA, 'manifest': manifest['sha256'], 'alias': manifest['alias'],
-               'restoredAt': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()), 'mapping': rules,
+               'restoredAt': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()), **layout_rules,
                'repositories': [{'from': r['path'], 'to': p, 'head': r['head']} for p, r in sorted(repos.items())],
-               'layout': layout, 'extrasUnderOmissions': extras, 'problems': problems, 'verified': not problems}
+               'layout': layout, 'excludedByLayout': sorted(skipped), 'extrasUnderOmissions': extras,
+               'problems': problems, 'verified': not problems}
     receipt['sha256'] = seal(receipt)
     return receipt
 
@@ -428,6 +660,9 @@ def main(argv: list[str]) -> int:
     back.add_argument('copia')
     back.add_argument('--destino')
     back.add_argument('--mapa', action='append', default=[], help='OLD_PREFIX=NEW_PREFIX')
+    back.add_argument('--omitir', action='append', default=[], help='glob of data entries left out of the new layout')
+    back.add_argument('--duplicar', action='append', default=[], help='OLD_FILE=NEW_FILE extra copy, e.g. context')
+    back.add_argument('--propietario', help='UID:GID for the restored tree; required when running as root')
     back.add_argument('--recibo')
     arguments = parser.parse_args(argv)
     try:
@@ -439,19 +674,20 @@ def main(argv: list[str]) -> int:
         else:
             scratch = None if arguments.destino else tempfile.mkdtemp(prefix='cauce-v4-restauracion-')
             try:
-                receipt = restore(arguments.copia, arguments.destino or scratch, arguments.mapa)
+                receipt = restore(arguments.copia, arguments.destino or scratch, arguments.mapa, arguments.omitir,
+                                  arguments.duplicar, arguments.propietario)
             finally:
                 if scratch:
                     shutil.rmtree(scratch, ignore_errors=True)
             text = json.dumps(receipt, indent=1, sort_keys=True)
             if arguments.recibo:
-                with open(arguments.recibo, 'x', encoding='utf-8') as handle:
+                with os.fdopen(os.open(arguments.recibo, OPEN_NEW, 0o600), 'w', encoding='utf-8') as handle:
                     handle.write(text + '\n')
             print(json.dumps({**{k: receipt[k] for k in ('manifest', 'verified', 'sha256')},
                               'problems': len(receipt['problems']), 'files': len(receipt['layout'])}, sort_keys=True))
             return 0 if receipt['verified'] else 1
     except (Failure, OSError, subprocess.SubprocessError, ValueError, KeyError) as error:
-        print(f'v4-medicion-migracion: {error}', file=sys.stderr)
+        print(f'v4-medicion-migracion: {scrub(str(error))}', file=sys.stderr)
         return 2
     return 0
 
