@@ -1,7 +1,10 @@
-import type { QuotaEnvironment, QuotaEnvironmentAction, QuotaEnvironmentsSnapshot, QuotaHostCapabilities } from '../../api/client/my-quotas-client';
+import type { QuotaEnvironment, QuotaEnvironmentAction, QuotaEnvironmentsSnapshot, QuotaHostCapabilities, QuotaProvider } from '../../api/client/my-quotas-client';
+
+export const EXECUTABLE_QUOTA_PROVIDERS = new Set<QuotaProvider>(['claude', 'codex', 'grok']);
 
 export function quotaHostSupports(host: QuotaHostCapabilities, provider: string, action: QuotaEnvironmentAction): boolean {
-  return host.providers.some(value => value === provider)
+  return EXECUTABLE_QUOTA_PROVIDERS.has(provider as QuotaProvider)
+    && host.providers.some(value => value === provider)
     && Object.entries(host.provider_actions).some(([value, actions]) => value === provider && Array.isArray(actions) && actions.includes(action));
 }
 
