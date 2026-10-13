@@ -20,6 +20,9 @@ class ProviderProofError(ValueError):
 ROUNDTRIP_TIMEOUT = 30
 
 
+NON_HARNESS_MODULES = frozenset({'identity', 'probe', 'revoke'})
+
+
 def resolve_fleet_module(policy: dict, harness: str) -> str | None:
     """Fleet module named by provider.fleet_module in the harness descriptor of
     its approved bundle. Policies without a bundle entry (unit contexts) fall
@@ -27,9 +30,13 @@ def resolve_fleet_module(policy: dict, harness: str) -> str | None:
     bundle = (policy.get('bundles') or {}).get(harness)
     directory = bundle.get('directory') if isinstance(bundle, dict) else None
     if isinstance(directory, str):
-        from harness_operations import fleet_module
-        return fleet_module(harness, directory)
-    if re.fullmatch(r'[a-z][a-z0-9_-]{0,63}', harness or '') is None:
+        from harness_operations import HarnessOperationFailure, fleet_module
+        module = fleet_module(harness, directory)
+        if module is not None and not (pathlib.Path(__file__).resolve().parent / f'{module}.py').is_file():
+            raise HarnessOperationFailure(
+                f'provider.fleet_module: module {module} is not present beside the executor')
+        return module
+    if re.fullmatch(r'[a-z][a-z0-9_-]{0,63}', harness or '') is None or harness in NON_HARNESS_MODULES:
         return None
     candidate = f'fleet_provider_{harness}'
     return candidate if (pathlib.Path(__file__).resolve().parent / f'{candidate}.py').is_file() else None
@@ -37,7 +44,11 @@ def resolve_fleet_module(policy: dict, harness: str) -> str | None:
 
 def packet_fleet_module(packet: dict) -> str | None:
     if 'fleet_module' in packet:
-        return packet['fleet_module']
+        module = packet['fleet_module']
+        expected = f"fleet_provider_{packet['agent']['harness_id']}"
+        if module is not None and module != expected:
+            raise ProviderProofError('packet fleet module differs from its harness')
+        return module
     return resolve_fleet_module({}, packet['agent']['harness_id'])
 
 
@@ -56,23 +67,6 @@ def read_profile_json(filename: str):
         return json.loads(raw)
     except (OSError, ValueError):
         return None
-
-
-def profile_values(document, wanted_keys: set) -> list:
-    values = []
-    pending = [document]
-    seen = 0
-    while pending and seen < 256:
-        value = pending.pop()
-        seen += 1
-        if isinstance(value, dict):
-            for key, item in value.items():
-                if key in wanted_keys and isinstance(item, str) and item:
-                    values.append(item)
-                pending.append(item)
-        elif isinstance(value, list):
-            pending.extend(value)
-    return values
 
 
 def profile_jwt_candidates(filename: str) -> list:
@@ -227,7 +221,10 @@ def command_output(command: list[str], packet: dict, timeout: int = 30) -> bytes
     variable = None
     if module_name:
         from importlib import import_module
-        module = import_module(module_name)
+        try:
+            module = import_module(module_name)
+        except ImportError:
+            raise ProviderProofError("fleet provider module is unavailable") from None
         environment.update(module.environment(binding, packet['agent']))
         environment.update(getattr(module, 'INSPECTION_ENV', {}))
         environment['PATH'] = '/usr/bin:/bin'
@@ -339,7 +336,7 @@ def authenticated_provider(packet: dict) -> bool:
         try:
             from importlib import import_module
             return bool(import_module(module_name).authenticated(packet))
-        except (OSError, ValueError, KeyError, subprocess.SubprocessError, AttributeError):
+        except (ImportError, OSError, ValueError, KeyError, subprocess.SubprocessError, AttributeError):
             return False
     provider = packet["profile_binding"]["provider"]
     try:

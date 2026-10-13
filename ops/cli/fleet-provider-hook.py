@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S python3 -s -E
 from __future__ import annotations
 
 import hashlib
@@ -66,7 +66,7 @@ def container(packet: dict) -> dict:
             "HOME=" + agent["home_directory"],
             binding["container_id"],
             "/usr/bin/env", "-i", "PATH=/usr/bin:/bin", "HOME=" + agent["home_directory"], "PYTHONDONTWRITEBYTECODE=1",
-            interpreter,
+            interpreter, "-s", "-E",
             script,
             "--inside",
         ],

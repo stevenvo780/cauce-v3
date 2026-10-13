@@ -33,7 +33,11 @@ def binding_for(policy: dict, agent: dict) -> tuple[str, dict]:
         from importlib import import_module
         try:
             import_module(module_name).validate_binding(binding, agent)
-        except (ValueError, KeyError, TypeError, AttributeError):
+        except ValueError as error:
+            if 'has not been measured yet' in str(error):
+                raise SafeFailure(str(error)) from None
+            raise SafeFailure('provider driver binding is not approved') from None
+        except (ImportError, KeyError, TypeError, AttributeError):
             raise SafeFailure('provider driver binding is not approved') from None
     if not isinstance(binding['identity'], str) or not binding['identity'] or not isinstance(binding['provider'], str):
         raise SafeFailure('invalid provider profile identity')

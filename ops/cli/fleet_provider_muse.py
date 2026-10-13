@@ -17,6 +17,9 @@ from fleet_provider_identity import (
 
 ISSUER = 'https://auth.meta.com'
 JWKS_URI = 'https://auth.meta.com/.well-known/oauth/openid/jwks/'
+# OAuth client id measured from the shipped Muse login flow.
+CLIENT_ID = '1031625952748946'
+CLOCK_SKEW_SECONDS = 60
 SHA256_DIGEST_INFO = bytes.fromhex('3031300d060960864801650304020105000420')
 
 EFFORTS = frozenset({'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'})
@@ -129,33 +132,43 @@ def verify_id_token(token: str, jwks: dict) -> dict:
     claims = json.loads(base64_segment(payload_segment))
     if not isinstance(claims, dict) or claims.get('iss') != ISSUER:
         raise ValueError('id_token issuer differs')
-    if not isinstance(claims.get('exp'), (int, float)) or claims['exp'] <= time.time():
+    audience = claims.get('aud')
+    if isinstance(audience, list):
+        if CLIENT_ID not in audience or claims.get('azp') != CLIENT_ID:
+            raise ValueError('id_token audience differs')
+    elif audience != CLIENT_ID:
+        raise ValueError('id_token audience differs')
+    now = time.time()
+    if not isinstance(claims.get('exp'), (int, float)) or claims['exp'] <= now:
         raise ValueError('id_token is expired')
+    for claim in ('nbf', 'iat'):
+        if claim in claims and (not isinstance(claims[claim], (int, float))
+                                or claims[claim] > now + CLOCK_SKEW_SECONDS):
+            raise ValueError('id_token is not yet valid')
     if not isinstance(claims.get('sub'), str) or not claims['sub']:
         raise ValueError('id_token has no subject')
     return claims
 
 
 def verified_identities(config: str) -> set:
-    tokens = profile_jwt_candidates(str(config) + '/muse/auth.json')
-    if not tokens:
+    # Exactly one active credential may vouch for the identity.
+    tokens = list(dict.fromkeys(profile_jwt_candidates(str(config) + '/muse/auth.json')))
+    if len(tokens) != 1:
         return set()
-    jwks = fetch_jwks()
-    identities = set()
-    for token in tokens:
-        try:
-            identities.add(verify_id_token(token, jwks)['sub'])
-        except Exception:
-            continue
-    return identities
+    try:
+        return {verify_id_token(tokens[0], fetch_jwks())['sub']}
+    except Exception:
+        return set()
 
 
 def authenticated(packet: dict) -> bool:
     try:
         config = environment(packet['profile_binding'], packet['agent'])['XDG_CONFIG_HOME']
-        if packet['identity'] not in verified_identities(config):
+        # Roundtrip first (the CLI may refresh its credential while running),
+        # then verify the stored id_token read back afterwards.
+        if not nonce_roundtrip(packet, lambda prompt: execution_arguments(packet['agent'], prompt), reply_text):
             return False
-        return nonce_roundtrip(packet, lambda prompt: execution_arguments(packet['agent'], prompt), reply_text)
+        return packet['identity'] in verified_identities(config)
     except Exception:
         return False
 

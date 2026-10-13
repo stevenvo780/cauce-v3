@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import pathlib
 import re
 import unicodedata
 
@@ -231,7 +232,10 @@ def fleet_harnesses(policy: dict) -> dict:
         try:
             for operation in ('install', 'execute', 'authenticate'):
                 resolve_operation(harness, operation, directory)
-            eligible[harness] = fleet_module(harness, directory)
+            module = fleet_module(harness, directory)
+            if module is not None and not (pathlib.Path(__file__).resolve().parent / f'{module}.py').is_file():
+                continue
+            eligible[harness] = module
         except HarnessOperationFailure:
             continue
     return eligible
@@ -251,7 +255,10 @@ def runtime_candidates(policy: dict) -> list[dict]:
             module = None
             if eligible[harness]:
                 from importlib import import_module
-                module = import_module(eligible[harness])
+                try:
+                    module = import_module(eligible[harness])
+                except ImportError:
+                    continue
                 if hasattr(module, 'authentication_supported') and not module.authentication_supported():
                     continue
             if harness == 'openclaw':

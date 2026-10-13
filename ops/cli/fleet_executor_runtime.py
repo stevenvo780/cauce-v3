@@ -75,7 +75,10 @@ def provider_environment(policy: dict, agent: dict) -> dict:
     except ValueError:
         raise SafeFailure('fleet descriptor is unavailable') from None
     from importlib import import_module
-    module = import_module(module_name) if module_name else None
+    try:
+        module = import_module(module_name) if module_name else None
+    except ImportError:
+        raise SafeFailure('fleet provider module is unavailable') from None
     if module_name == 'fleet_provider_openclaw':
         values = module.environment(binding, agent)
         driver = binding['openclaw']
@@ -303,7 +306,10 @@ def start(policy: dict, agent: dict, *, bootstrap: bool = True, operation_id: st
         raise SafeFailure('fleet descriptor is unavailable') from None
     if module_name:
         from importlib import import_module
-        module = import_module(module_name)
+        try:
+            module = import_module(module_name)
+        except ImportError:
+            raise SafeFailure('fleet provider module is unavailable') from None
         if hasattr(module, 'validate_execution_selection'):
             module.validate_execution_selection(agent)
     if agent['runtime_mode'] == 'native':

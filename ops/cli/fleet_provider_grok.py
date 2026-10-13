@@ -5,7 +5,6 @@ import urllib.request
 
 from fleet_provider_identity import (
     nonce_roundtrip,
-    profile_values,
     read_profile_json,
     validate_provider_binding,
     validate_provider_selection,
@@ -56,18 +55,24 @@ def fetch_userinfo(access_token: str) -> dict:
 
 
 def verified_identities(root: str) -> set:
+    # Exactly the active credential (the first auth entry, as the quota reader
+    # selects it) may vouch for the identity; no other stored token is tried.
     document = read_profile_json(str(root) + '/auth.json')
-    if document is None:
+    if not isinstance(document, dict) or not document:
+        return set()
+    entry = next(iter(document.values()))
+    token = entry.get('key') if isinstance(entry, dict) else None
+    if not isinstance(token, str) or not token:
+        return set()
+    try:
+        userinfo = fetch_userinfo(token)
+    except Exception:
         return set()
     identities = set()
-    for token in dict.fromkeys(profile_values(document, {'key'})):
-        try:
-            userinfo = fetch_userinfo(token)
-        except Exception:
-            continue
-        for claim in ('email', 'sub'):
-            if isinstance(userinfo.get(claim), str) and userinfo[claim]:
-                identities.add(userinfo[claim])
+    if isinstance(userinfo.get('sub'), str) and userinfo['sub']:
+        identities.add(userinfo['sub'])
+    if userinfo.get('email_verified') is True and isinstance(userinfo.get('email'), str) and userinfo['email']:
+        identities.add(userinfo['email'])
     return identities
 
 

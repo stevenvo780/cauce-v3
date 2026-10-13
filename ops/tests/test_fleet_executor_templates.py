@@ -114,6 +114,18 @@ class PlacementTemplateSelectionTest(unittest.TestCase):
         descriptor.write_text(json.dumps(value))
         self.assertEqual(self.subject.fleet_harnesses(self.policy), {})
 
+    def test_missing_fleet_module_skips_only_its_harness(self):
+        directory = pathlib.Path(self.policy['bundles']['codex']['directory'])
+        descriptors = directory / 'packages/adapter-sdk/dist/descriptors'
+        (descriptors / 'fake2.json').write_text(json.dumps({
+            'schema_version': 1, 'harness': 'fake2',
+            'operations': {'install': 'runtime-package', 'execute': 'native-execution',
+                           'authenticate': 'provider-login'},
+            'context': {'native_document': 'AGENTS.md', 'max_bytes': 65536},
+            'provider': {'fleet_module': 'fleet_provider_fake2'}}))
+        policy = {**self.policy, 'bundles': {**self.policy['bundles'], 'fake2': {'directory': str(directory)}}}
+        self.assertEqual(self.subject.fleet_harnesses(policy), {'codex': None})
+
     def test_capabilities_do_not_project_native_static_profile_to_create_prefix(self):
         self.policy.update(host_id='isolated', native=[], containers={},
             container_templates=[{'harness_id': 'codex', 'prefix': 'approved-', 'runtime_user': 'dev',

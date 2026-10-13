@@ -330,12 +330,13 @@ else:
             auth.write_text(json.dumps({'https://auth.fixture.invalid': {
                 'key': 'fixture-token', 'email': 'local-forged@fixture.invalid'}}))
             patcher = mock.patch.object(driver, 'fetch_userinfo',
-                                        return_value={'email': identity_value, 'sub': 'subject-1'})
+                                        return_value={'email': identity_value, 'email_verified': True, 'sub': 'subject-1'})
         else:
             directory = profile / 'config' / 'muse'
             directory.mkdir(mode=0o700, parents=True, exist_ok=True)
             auth = directory / 'auth.json'
             token = self.signed_id_token(signer, {'iss': 'https://auth.meta.com',
+                'aud': '1031625952748946', 'iat': int(time.time()),
                 'sub': identity_value, 'exp': int(time.time()) + 3600})
             auth.write_text(json.dumps({'token': token}))
             patcher = mock.patch.object(driver, 'fetch_jwks', return_value={'keys': [self.jwk('signing')]})
@@ -372,8 +373,35 @@ else:
 
     def test_forged_id_token_signature_does_not_bind_muse_identity(self):
         packet = self.install_fake_cli('muse', 'ok', signer='foreign')
-        with mock.patch.object(identity, 'command_output', side_effect=AssertionError('model turn forbidden')):
-            self.assertFalse(identity.authenticated_provider(packet))
+        self.assertFalse(identity.authenticated_provider(packet))
+
+    def test_muse_id_token_with_wrong_audience_or_future_iat_does_not_bind(self):
+        for claims in ({'aud': '9999999999999999'}, {'iat': int(time.time()) + 3600}):
+            with self.subTest(claims=claims):
+                packet = self.install_fake_cli('muse', 'ok')
+                auth = pathlib.Path(self.binding['path']) / 'config/muse/auth.json'
+                token = self.signed_id_token('signing', {'iss': 'https://auth.meta.com',
+                    'aud': '1031625952748946', 'iat': int(time.time()), 'sub': 'subject',
+                    'exp': int(time.time()) + 3600, **claims})
+                auth.write_text(json.dumps({'token': token}))
+                self.assertFalse(identity.authenticated_provider(packet))
+
+    def test_grok_unverified_email_and_second_entry_do_not_bind(self):
+        driver = self.driver('grok')
+        profile = pathlib.Path(self.binding['path'])
+        profile.mkdir(mode=0o700, exist_ok=True)
+        (profile / 'auth.json').write_text(json.dumps({
+            'first': {'key': 'fixture-token-active', 'email': 'subject'},
+            'second': {'key': 'fixture-token-other', 'email': 'subject'}}))
+        seen = []
+        def userinfo(token):
+            seen.append(token)
+            return {'email': 'subject', 'email_verified': False, 'sub': 'subject-9'}
+        with mock.patch.object(driver, 'fetch_userinfo', side_effect=userinfo), \
+                mock.patch.object(identity, 'command_output', side_effect=AssertionError('model turn forbidden')):
+            self.assertFalse(identity.authenticated_provider(
+                {**self.packet, 'fleet_module': 'fleet_provider_grok'}))
+        self.assertEqual(seen, ['fixture-token-active'])
 
     def test_local_grok_email_field_does_not_bind_identity_without_userinfo(self):
         driver = self.driver('grok')
@@ -385,6 +413,32 @@ else:
                 mock.patch.object(identity, 'command_output', side_effect=AssertionError('model turn forbidden')):
             self.assertFalse(identity.authenticated_provider(
                 {**self.packet, 'fleet_module': 'fleet_provider_grok'}))
+
+    def test_resolver_rejects_non_harness_modules_and_foreign_packet_modules(self):
+        self.assertIsNone(identity.resolve_fleet_module({}, 'identity'))
+        self.assertIsNone(identity.resolve_fleet_module({}, 'probe'))
+        self.assertIsNone(identity.resolve_fleet_module({}, 'revoke'))
+        packet = {**self.packet, 'fleet_module': 'fleet_provider_identity'}
+        with self.assertRaises(identity.ProviderProofError):
+            identity.packet_fleet_module(packet)
+
+    def test_provider_hook_does_not_load_planted_usercustomize(self):
+        home = self.root / 'agent-home'
+        environment = {'HOME': str(home), 'PATH': '/usr/bin:/bin'}
+        site_packages = subprocess.run(['/usr/bin/python3', '-c', 'import site; print(site.getusersitepackages())'],
+                                       env=environment, capture_output=True, text=True, check=True).stdout.strip()
+        marker = self.root / 'usercustomize-loaded'
+        planted = pathlib.Path(site_packages)
+        planted.mkdir(parents=True)
+        (planted / 'usercustomize.py').write_text(
+            f"import pathlib\npathlib.Path({str(marker)!r}).write_text('loaded')\n")
+        subprocess.run(['/usr/bin/python3', '-c', 'pass'], env=environment, check=True, timeout=15)
+        self.assertTrue(marker.exists(), 'sanity: plain python must load the planted usercustomize')
+        marker.unlink()
+        hook = ROOT / 'ops/cli/fleet-provider-hook.py'
+        result = subprocess.run([str(hook)], input=b'{}', env=environment, capture_output=True, timeout=15)
+        self.assertEqual(result.returncode, 1)
+        self.assertFalse(marker.exists())
 
     def test_template_login_arguments_come_from_the_descriptor(self):
         self.driver('grok')

@@ -112,6 +112,24 @@ def load_policy(filename: pathlib.Path) -> dict:
     return policy
 
 
+def declarative_provider_module(row: dict):
+    """Fleet driver module for declarative selection checks, when the harness
+    descriptor (or executor fallback) names one with execution arguments."""
+    from fleet_provider_identity import resolve_fleet_module
+    try:
+        module_name = resolve_fleet_module({}, row.get('harness_id'))
+    except ValueError:
+        raise SafeFailure('fleet descriptor is unavailable') from None
+    if not module_name:
+        return None
+    from importlib import import_module
+    try:
+        module = import_module(module_name)
+    except ImportError:
+        raise SafeFailure('fleet provider module is unavailable') from None
+    return module if hasattr(module, 'execution_arguments') else None
+
+
 def validate_payload(document) -> dict:
     required = {'operation_id', 'request', 'fenced_targets', 'previous_agents', 'desired_memberships'}
     if not isinstance(document, dict) or set(document) - {'snapshot', 'trusted_accounts', 'fleet_scope', 'global_desired_memberships'} != required:
@@ -185,10 +203,11 @@ def validate_payload(document) -> dict:
             raise SafeFailure('request may only contain declarative agent fields')
         from fleet_provider_openclaw import validate_execution_selection
         validate_execution_selection(parameters)
-        if parameters['harness_id'] in {'grok', 'muse'}:
+        provider_module = declarative_provider_module(parameters)
+        if provider_module is not None:
             from fleet_provider_identity import validate_provider_selection
-            from fleet_provider_muse import EFFORTS
-            validate_provider_selection(parameters, parameters['harness_id'], EFFORTS if parameters['harness_id'] == 'muse' else frozenset())
+            validate_provider_selection(parameters, parameters['harness_id'],
+                                         getattr(provider_module, 'EFFORTS', frozenset()))
         elif parameters.get('reasoning_effort') is not None and parameters['reasoning_effort'] not in {'minimal', 'low', 'medium', 'high', 'xhigh', 'max'}:
             raise SafeFailure('unsupported declarative reasoning effort')
         placement = parameters['placement']
@@ -211,10 +230,11 @@ def validate_payload(document) -> dict:
             if any(row.get('resource') == 'agent' and row.get('tenant_id') == agent.get('tenant_id')
                     and row.get('alias') == agent.get('alias') for row in scoped):
                 validate_execution_selection(agent)
-                if agent.get('harness_id') in {'grok', 'muse'}:
+                provider_module = declarative_provider_module(agent)
+                if provider_module is not None:
                     from fleet_provider_identity import validate_provider_selection
-                    from fleet_provider_muse import EFFORTS
-                    validate_provider_selection(agent, agent['harness_id'], EFFORTS if agent['harness_id'] == 'muse' else frozenset())
+                    validate_provider_selection(agent, agent['harness_id'],
+                                                 getattr(provider_module, 'EFFORTS', frozenset()))
     from fleet_migration import placement_role
     placement_role(document)
     return document
