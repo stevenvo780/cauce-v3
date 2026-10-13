@@ -79,6 +79,11 @@ services:
       CAUCE_PROJECT_ROOT: /app
       CAUCE_CONTEXT_INSTANCE_ID: ${CAUCE_CONTEXT_INSTANCE_ID:-cauce-v3-prod}
       CAUCE_CONTEXT_REPOSITORY_ROOT: /var/lib/cauce-v3/contexts
+      # CAUCE_NATIVE_CONTEXT_REPOSITORY_ROOT stays undefined on purpose: native context inspection
+      # is off in production until a repository root independent of the broker above exists.
+      # Public owner-approved {harness: sha256} map; without it every agent quota reader is withdrawn.
+      # Generate it with ops/scripts/harness-descriptor-approvals.py; deploy.sh refuses to deploy without it.
+      CAUCE_HARNESS_DESCRIPTOR_APPROVALS_FILE: /run/cauce-harness-approvals/approvals.json
       CAUCE_SPACE_BACKUP_DIRECTORY: /var/lib/cauce-v3/space-backups
       CAUCE_SPACE_BACKUP_PYTHON: /usr/local/bin/python3
       CAUCE_ACK_DEADLINE_MS: ${CAUCE_ACK_DEADLINE_MS:-600000}
@@ -218,6 +223,14 @@ services:
       - type: volume
         source: space_backups_data
         target: /var/lib/cauce-v3/space-backups
+      # Directory bind so an atomic replacement of approvals.json is read on the next request.
+      # The directory holds ONLY the public approvals file (no secrets).
+      - type: bind
+        source: ${CAUCE_HARNESS_DESCRIPTOR_APPROVALS_DIR:-/etc/cauce-v3/harness-descriptor-approvals}
+        target: /run/cauce-harness-approvals
+        read_only: true
+        bind:
+          create_host_path: false
     ports:
       - "${CAUCE_PRIVATE_BIND_IP:-127.0.0.1}:${GATEWAY_TLS_PORT:-8443}:8443"
     healthcheck:

@@ -102,6 +102,7 @@ interface Options {
   composeModel?: object;
   realCompose?: boolean;
   sessions?: string;
+  descriptors?: Record<string, string>;
 }
 
 function temporaryDirectory(prefix: string) {
@@ -126,6 +127,10 @@ function deploy(options: Options = {}) {
   }
   writeFileSync(join(repository, 'deploy/postgres/postgres-tls-entrypoint.sh'), '');
   for (const name of options.migrations ?? ['001_fixture.sql']) writeFileSync(join(migrations, name), '');
+  if (options.descriptors) {
+    mkdirSync(join(repository, 'packages/adapter-sdk/descriptors'), { recursive: true });
+    for (const [name, raw] of Object.entries(options.descriptors)) writeFileSync(join(repository, 'packages/adapter-sdk/descriptors', `${name}.json`), raw);
+  }
   for (const name of ['docker', 'git', 'id', 'date', 'systemctl', 'backup-monitor', 'stat']) writeFileSync(join(binaries, name), mock, { mode: 0o700 });
   const countFunctions = join(directory, 'count-functions.sh');
   writeFileSync(countFunctions, String.raw`
@@ -338,8 +343,36 @@ describe('deploy bind sources', () => {
       CAUCE_ROLLBACK_WRITER_SNAPSHOT_FILE: join(fixture, 'writer-snapshot.json'),
       CAUCE_CONTEXT_REPOSITORY_DIRECTORY: join(contexts, 'repository'),
       CAUCE_CONTEXT_GIT_KEY_DIRECTORY: join(contexts, 'ssh'),
+      CAUCE_HARNESS_DESCRIPTOR_APPROVALS_DIR: approvalsDirectory('{}'),
     };
   }
+
+  function approvalsDirectory(body?: string) {
+    const directory = temporaryDirectory('cauce-descriptor-approvals-');
+    if (body !== undefined) writeFileSync(join(directory, 'approvals.json'), body);
+    return directory;
+  }
+
+  it('requires the owner-approved descriptor file that the real compose mounts, current for the release', () => {
+    const descriptor = '{"schema_version":1,"harness":"codex"}\n';
+    const pin = createHash('sha256').update(descriptor).digest('hex');
+    const run = (approvals: string) => deploy({ realCompose: true, descriptors: { codex: descriptor },
+      environment: { ...realComposeEnvironment(temporaryDirectory('cauce-contexts-')), CAUCE_HARNESS_DESCRIPTOR_APPROVALS_DIR: approvals } });
+    const missing = approvalsDirectory();
+    let result = run(missing);
+    expectStoppedBeforeBuild(result, `falta el archivo de aprobaciones de descriptores ${missing}/approvals.json`);
+    expect(result.stderr).toContain('ops/scripts/harness-descriptor-approvals.py');
+    for (const [body, reason] of [['{"codex":"' + 'A'.repeat(64) + '"}', 'debe ser un objeto {harness: sha256 en hex de 64}'],
+      ['[]', 'debe ser un objeto {harness: sha256 en hex de 64}'], ['{', 'no es JSON legible'],
+      ['{"codex":"' + 'a'.repeat(64) + '"}', 'aprueba descriptores ausentes o distintos en esta release: codex'],
+      ['{"grok":"' + pin + '"}', 'aprueba descriptores ausentes o distintos en esta release: grok']] as const) {
+      expectStoppedBeforeBuild(run(approvalsDirectory(body)), reason);
+    }
+    const approved = approvalsDirectory(JSON.stringify({ codex: pin }));
+    result = run(approved);
+    expectStoppedBeforeBuild(result, 'faltan fuentes de bind mounts del compose');
+    expect(result.stdout).toContain(`aprobaciones de descriptores: 1 (codex) desde ${approved}/approvals.json`);
+  });
 
   it('finds the missing context broker and fleet overlay sources in the real compose', () => {
     const contexts = temporaryDirectory('cauce-contexts-');
@@ -542,6 +575,18 @@ describe('deploy pins and migrator', () => {
     expect(up.instance).toContain(`CAUCE_CONSOLE_IMAGE=registry.test/console${newPin}\n`);
     expect(result.leftovers()).toEqual([`prod.env.pre-deploy-${stamp}`]);
     expect(readFileSync(join(result.directory, `prod.env.pre-deploy-${stamp}`), 'utf8')).toBe(result.initialInstance);
+  });
+
+  it('prints the down of 081 before restoring pins when this deployment applied it', () => {
+    const migrations = ['080_fixture.sql', '081_membresia_rol_derivado.sql'];
+    const result = deploy({ failure: 'up', migrations, applied: ['080_fixture.sql'] });
+    expect(result.status, result.stderr).toBe(1);
+    expect(result.stderr).toContain('ANTES de restaurar los pins');
+    expect(result.stderr).toContain('psql -X -v ON_ERROR_STOP=1 --single-transaction -U fixture -d fixture < '
+      + join(result.directory, 'repo/packages/store/migrations/down/081_membresia_rol_derivado.sql'));
+    const already = deploy({ failure: 'up', migrations, applied: migrations });
+    expect(already.status, already.stderr).toBe(1);
+    expect(already.stderr).not.toContain('down/081_membresia_rol_derivado.sql');
   });
 
   it('refuses ambient pins that would override the instance file', () => {
