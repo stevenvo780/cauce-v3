@@ -10,10 +10,6 @@
       "reason": "No existe administración de superadministradores de plataforma desde la consola; la siembra sigue siendo operativa."
     },
     {
-      "id": "agent_runtime_lifecycle_browser",
-      "reason": "El setup Docker real alcanza executor_ready sin super-admin, pero create devuelve HTTP 500: fleet-operation-human.ts consulta human_tenant_memberships.role, eliminada por 081_membresia_rol_derivado.sql. El arreglo pertenece a packages/store/src/repository/fleet-operation-human.ts, fuera del alcance de t21. No se acredita el ciclo Chromium de creación, actualización, contexto con ACK, retirada y purga."
-    },
-    {
       "id": "quota_environment_execution_browser",
       "reason": "Los E2E verifican metadatos y estados con recibos de fixture; faltan contenedor y proveedor reales, autenticación y consulta, limpieza física y ausencia de recursos huérfanos."
     },
@@ -998,9 +994,8 @@
       "label": "Ejecución física de agentes y espacios Docker",
       "operations": {
         "C": {
-          "status": "pending",
-          "reason": "El setup Docker real alcanza executor_ready sin super-admin, pero create devuelve HTTP 500: fleet-operation-human.ts consulta human_tenant_memberships.role, eliminada por 081_membresia_rol_derivado.sql. El arreglo pertenece a packages/store/src/repository/fleet-operation-human.ts, fuera del alcance de t21. No se acredita el ciclo Chromium de creación, actualización, contexto con ACK, retirada y purga.",
-          "pending_id": "agent_runtime_lifecycle_browser",
+          "status": "covered",
+          "reason": "Alta desde «Añadir agente» → «Solo preparar, sin desplegar» hasta succeeded: contenedor, volúmenes, bootstrap y respuesta correlacionada por nonce en ambas fases, admisión y proceso vivo. Chromium, gateway, PostgreSQL y un ordenador enrolado sin superadministrador con su executor real sobre Docker local; la prueba lee el contenedor tras cada paso y el inventario Docker antes y después. El mismo recorrido contra server2 (CAUCE_FLEET_CYCLE_TARGET=server2) está preparado y no se ejecutó. La matriz enlaza la prueba y no sustituye su ejecución sobre el candidato.",
           "api": [
             {
               "method": "POST",
@@ -1009,15 +1004,20 @@
           ],
           "ui": [
             {
+              "file": "console/src/features/config/AgentCreateSteps.tsx",
+              "kind": "text",
+              "value": "Solo preparar, sin desplegar"
+            },
+            {
               "file": "console/src/features/config/AgentLifecyclePanel.tsx",
               "kind": "text",
-              "value": "Preparar"
+              "value": "Encolar operación"
             }
           ],
           "tests": [
             {
-              "file": "console/src/features/config/AgentLifecyclePanel.test.tsx",
-              "name": "prepares an agent without an active runtime and binds exact memberships to an accepted operation"
+              "file": "tests/e2e/v4-fleet-cycle-real-browser.test.ts",
+              "name": "crea, actualiza, detiene, retira y purga un agente con efecto comprobado en Docker"
             },
             {
               "file": "services/gateway/src/fleet/host-setup.e2e-docker.test.ts",
@@ -1026,33 +1026,40 @@
           ]
         },
         "R": {
-          "status": "pending",
-          "reason": "El setup Docker real alcanza executor_ready sin super-admin, pero create devuelve HTTP 500: fleet-operation-human.ts consulta human_tenant_memberships.role, eliminada por 081_membresia_rol_derivado.sql. El arreglo pertenece a packages/store/src/repository/fleet-operation-human.ts, fuera del alcance de t21. No se acredita el ciclo Chromium de creación, actualización, contexto con ACK, retirada y purga.",
-          "pending_id": "agent_runtime_lifecycle_browser",
+          "status": "covered",
+          "reason": "La previsualización y el historial durable de cada operación se leen desde la ficha del agente; la prueba sigue cada operación por la API con la sesión del navegador. Chromium, gateway, PostgreSQL y un ordenador enrolado sin superadministrador con su executor real sobre Docker local; la prueba lee el contenedor tras cada paso y el inventario Docker antes y después. El mismo recorrido contra server2 (CAUCE_FLEET_CYCLE_TARGET=server2) está preparado y no se ejecutó. La matriz enlaza la prueba y no sustituye su ejecución sobre el candidato.",
           "api": [
             {
               "method": "POST",
               "path": "/v3/console/fleet/operations/preview"
+            },
+            {
+              "method": "GET",
+              "path": "/v3/console/fleet/operations"
             }
           ],
           "ui": [
             {
               "file": "console/src/features/config/AgentLifecyclePanel.tsx",
               "kind": "text",
-              "value": "Preparar"
+              "value": "Previsualizar operación"
+            },
+            {
+              "file": "console/src/features/config/AgentLifecyclePanel.tsx",
+              "kind": "text",
+              "value": "Historial operativo durable"
             }
           ],
           "tests": [
             {
-              "file": "console/src/features/config/AgentLifecyclePanel.test.tsx",
-              "name": "prepares an agent without an active runtime and binds exact memberships to an accepted operation"
+              "file": "tests/e2e/v4-fleet-cycle-real-browser.test.ts",
+              "name": "crea, actualiza, detiene, retira y purga un agente con efecto comprobado en Docker"
             }
           ]
         },
         "U": {
-          "status": "pending",
-          "reason": "El setup Docker real alcanza executor_ready sin super-admin, pero create devuelve HTTP 500: fleet-operation-human.ts consulta human_tenant_memberships.role, eliminada por 081_membresia_rol_derivado.sql. El arreglo pertenece a packages/store/src/repository/fleet-operation-human.ts, fuera del alcance de t21. No se acredita el ciclo Chromium de creación, actualización, contexto con ACK, retirada y purga.",
-          "pending_id": "agent_runtime_lifecycle_browser",
+          "status": "covered",
+          "reason": "Update de nombre, modelo, esfuerzo y una segunda membresía, con el proceso reiniciado y la vista de flota del contenedor actualizados; stop, contexto preparado con el agente detenido y start que lo aplica con ACK de los documentos medidos (AGENTS.md en el contenedor). Chromium, gateway, PostgreSQL y un ordenador enrolado sin superadministrador con su executor real sobre Docker local; la prueba lee el contenedor tras cada paso y el inventario Docker antes y después. El mismo recorrido contra server2 (CAUCE_FLEET_CYCLE_TARGET=server2) está preparado y no se ejecutó. La matriz enlaza la prueba y no sustituye su ejecución sobre el candidato.",
           "api": [
             {
               "method": "POST",
@@ -1061,22 +1068,26 @@
           ],
           "ui": [
             {
-              "file": "console/src/features/config/AgentLifecyclePanel.tsx",
+              "file": "console/src/features/config/AgentLifecycleFields.tsx",
               "kind": "text",
-              "value": "Preparar"
+              "value": "Modelo operativo"
+            },
+            {
+              "file": "console/src/features/live/PerfilTab.tsx",
+              "kind": "text",
+              "value": "Preparar perfil para el inicio"
             }
           ],
           "tests": [
             {
-              "file": "console/src/features/config/AgentLifecyclePanel.test.tsx",
-              "name": "prepares an agent without an active runtime and binds exact memberships to an accepted operation"
+              "file": "tests/e2e/v4-fleet-cycle-real-browser.test.ts",
+              "name": "crea, actualiza, detiene, retira y purga un agente con efecto comprobado en Docker"
             }
           ]
         },
         "D": {
-          "status": "pending",
-          "reason": "El setup Docker real alcanza executor_ready sin super-admin, pero create devuelve HTTP 500: fleet-operation-human.ts consulta human_tenant_memberships.role, eliminada por 081_membresia_rol_derivado.sql. El arreglo pertenece a packages/store/src/repository/fleet-operation-human.ts, fuera del alcance de t21. No se acredita el ciclo Chromium de creación, actualización, contexto con ACK, retirada y purga.",
-          "pending_id": "agent_runtime_lifecycle_browser",
+          "status": "covered",
+          "reason": "Retiro con revocación verificada y vista de credenciales fuera del contenedor; purga que exige escribir el alias, nombra el contenedor y los dos volúmenes y no deja recursos del agente ni de la corrida. Chromium, gateway, PostgreSQL y un ordenador enrolado sin superadministrador con su executor real sobre Docker local; la prueba lee el contenedor tras cada paso y el inventario Docker antes y después. El mismo recorrido contra server2 (CAUCE_FLEET_CYCLE_TARGET=server2) está preparado y no se ejecutó. La matriz enlaza la prueba y no sustituye su ejecución sobre el candidato.",
           "api": [
             {
               "method": "POST",
@@ -1087,13 +1098,17 @@
             {
               "file": "console/src/features/config/AgentLifecyclePanel.tsx",
               "kind": "text",
-              "value": "Preparar"
+              "value": "Escribe el alias"
             }
           ],
           "tests": [
             {
-              "file": "console/src/features/config/AgentLifecyclePanel.test.tsx",
-              "name": "prepares an agent without an active runtime and binds exact memberships to an accepted operation"
+              "file": "tests/e2e/v4-fleet-cycle-real-browser.test.ts",
+              "name": "crea, actualiza, detiene, retira y purga un agente con efecto comprobado en Docker"
+            },
+            {
+              "file": "tests/e2e/v4-purge-real-browser.test.ts",
+              "name": "exige el alias, conserva confirm_alias y no deja contenedor ni volúmenes"
             }
           ]
         }
