@@ -1,12 +1,17 @@
-import type { QuotaAccount, QuotaObservationStatus } from '../../api/client/my-quotas-client';
+import type { AgentQuotaSnapshot, QuotaAccount, QuotaObservationStatus } from '../../api/client/my-quotas-client';
 
-export type FatigueState = QuotaObservationStatus | 'available' | 'low' | 'exhausted' | 'paused' | 'model_dependent' | 'pending_auth';
+export type FatigueState = QuotaObservationStatus | 'available' | 'low' | 'exhausted' | 'paused' | 'model_dependent' | 'pending_auth' | 'no_reader';
 export const OBSERVATION_LABEL: Record<QuotaObservationStatus, string> = {
   unknown: 'Sin datos', error: 'Error de consulta', stale: 'Datos antiguos', ok: 'Actualizada',
 };
 export const FATIGUE_LABEL: Record<FatigueState, string> = {
-  ...OBSERVATION_LABEL, available: 'Disponible', low: 'Cansado', exhausted: 'Sin disponibilidad', paused: 'En pausa', model_dependent: 'Varía por modelo', pending_auth: 'Pendiente de autenticación',
+  ...OBSERVATION_LABEL, available: 'Disponible', low: 'Cansado', exhausted: 'Sin disponibilidad', paused: 'En pausa', model_dependent: 'Varía por modelo', pending_auth: 'Pendiente de autenticación', no_reader: 'Sin lector de cuota',
 };
+export const NO_READER_MESSAGE = 'Sin lector de cuota para este harness: el proveedor no expone una ventana de consumo medible.';
+export function readerUnavailableReason(snapshot: AgentQuotaSnapshot | undefined): string | null {
+  if (!snapshot || snapshot.reader_available) return null;
+  return snapshot.reason === 'quota_reader_unavailable' ? NO_READER_MESSAGE : null;
+}
 export function accountFatigue(account: QuotaAccount | undefined, now = Date.now()): FatigueState {
   if (!account) return 'unknown';
   if (!account.enabled && !account.paused_until && account.observation_status !== 'ok' && !account.windows.length) return 'pending_auth';

@@ -11,6 +11,16 @@ NON_HARNESS_PROVIDERS = {'gemini', 'minimax', 'feihoa'}
 GATEWAY_OMITTED = {'opencode', 'fake', 'fake2'}
 # Descriptor harnesses the console catalog has not picked up yet; shrink as it aligns.
 CONSOLE_PENDING = {'grok', 'muse', 'opencode', 'fake', 'fake2'}
+# Harnesses whose provider exposes a measurable quota window with the credential
+# the container already holds; each declares operations.quota with a reader argv.
+QUOTA_READERS = {'claude', 'codex', 'grok'}
+# Harnesses with no quota reader, by provider fact rather than by omission:
+# openclaw proxies an upstream provider account and exposes no window of its own,
+# the muse CLI has no usage command or documented quota endpoint, hermes and
+# opencode declare no provider account to measure, and fake/fake2 are test
+# harnesses. The executor answers quota_reader_unavailable for these and the
+# console renders that closed code as an explicit no-reader state.
+NO_QUOTA_READER = {'openclaw', 'muse', 'hermes', 'opencode', 'fake', 'fake2'}
 
 
 def text(path):
@@ -134,6 +144,34 @@ class HarnessParityTest(unittest.TestCase):
             if (ROOT / f'ops/cli/{expected}.py').exists() and module != expected:
                 checks.append((f'packages/adapter-sdk/descriptors/{name}.json',
                                f"declare provider.fleet_module '{expected}'"))
+        self.problems(checks)
+
+    def test_quota_readers_and_explicit_no_reader_harnesses_cover_every_descriptor(self):
+        docs = descriptors()
+        names = set(docs)
+        checks = []
+        for name in sorted(names - QUOTA_READERS - NO_QUOTA_READER):
+            checks.append(('ops/tests/test_harness_parity.py',
+                           f"classify '{name}' in QUOTA_READERS (declare operations.quota with a reader) "
+                           'or in NO_QUOTA_READER (explicit no-reader harness)'))
+        for name in sorted((QUOTA_READERS | NO_QUOTA_READER) - names):
+            checks.append(('ops/tests/test_harness_parity.py', f"'{name}' is classified but has no descriptor"))
+        for name in sorted(QUOTA_READERS & NO_QUOTA_READER):
+            checks.append(('ops/tests/test_harness_parity.py', f"'{name}' is in both quota classifications"))
+        for name, doc in sorted(docs.items()):
+            operations = doc['operations']
+            provider = doc.get('provider') or {}
+            if name in QUOTA_READERS:
+                if operations.get('quota') != 'quota-collector':
+                    checks.append((f'packages/adapter-sdk/descriptors/{name}.json',
+                                   'declare operations.quota as quota-collector for a measured harness'))
+                if not provider.get('quota_argv'):
+                    checks.append((f'packages/adapter-sdk/descriptors/{name}.json',
+                                   'declare provider.quota_argv for a measured harness'))
+            if name in NO_QUOTA_READER and ('quota' in operations or 'quota_argv' in provider):
+                checks.append((f'packages/adapter-sdk/descriptors/{name}.json',
+                               'declares a quota reader but is classified as an explicit no-reader harness; '
+                               'move it to QUOTA_READERS or remove the operation'))
         self.problems(checks)
 
     def test_parsers_share_the_provider_fields(self):

@@ -1,6 +1,7 @@
 import type { RequestFn } from './system-client';
 import { quotaEnvironmentReceipt } from './v4-responses';
 import { quotaAccounts, quotaEnvironments } from './quota-responses';
+import { agentQuotaClient, type AgentQuotaClient } from '../../features/accounts/agent-quota-client';
 
 export type QuotaObservationStatus = 'unknown' | 'error' | 'stale' | 'ok';
 export type QuotaRefreshStatus = 'fresh' | 'updating' | 'not_authenticated' | 'executor_unavailable' | 'deleted' | 'busy' | 'read_only' | 'failed' | 'stale';
@@ -37,7 +38,12 @@ export interface QuotaHostCapabilities {
   provider_actions: Partial<Record<QuotaProvider, QuotaEnvironmentAction[]>>;
 }
 export interface QuotaEnvironmentReceipt { environment: QuotaEnvironment; operation: QuotaEnvironmentOperation; duplicate?: boolean }
-export interface MyQuotasClient {
+export interface AgentQuotaSnapshot {
+  tenant_id: string; alias: string; reader_available: boolean; can_query: boolean;
+  reason: 'quota_reader_unavailable' | null;
+  status: 'unsupported' | 'pending' | 'running' | 'failed' | 'ok' | 'error' | 'unknown'; revision: number;
+}
+export interface MyQuotasClient extends AgentQuotaClient {
   getQuotaAccounts(): Promise<QuotaAccountsSnapshot>;
   createQuotaAccount(input: { provider: QuotaProvider; label: string; idempotency_key: string }): Promise<{ account_id: string; duplicate: boolean }>;
   updateQuotaAccount(id: string, input: { expected_version: number; label?: string; enabled?: boolean; paused_until?: string | null; paused_reason?: string | null }): Promise<unknown>;
@@ -54,6 +60,7 @@ export function myQuotasClient(request: RequestFn): MyQuotasClient {
   const write = <T>(path: string, method: string, input: unknown) => request<T>(path, { method, body: JSON.stringify(input) });
   const id = encodeURIComponent;
   return {
+    ...agentQuotaClient(request),
     getQuotaAccounts: async () => quotaAccounts(await request(accounts, { cache: 'no-store' })),
     createQuotaAccount: input => write(accounts, 'POST', input),
     updateQuotaAccount: (accountId, input) => write(`${accounts}/${id(accountId)}`, 'PATCH', input),

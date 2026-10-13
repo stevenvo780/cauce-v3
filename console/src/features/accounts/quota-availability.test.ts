@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { QuotaAccount } from '../../api/client/my-quotas-client';
-import { accountFatigue, agentFatigue, agentQuotaAccounts, FATIGUE_LABEL, quotaFailureReason } from './quota-availability';
+import { accountFatigue, agentFatigue, agentQuotaAccounts, FATIGUE_LABEL, NO_READER_MESSAGE, quotaFailureReason, readerUnavailableReason } from './quota-availability';
 
 const account: QuotaAccount = { id: 'subscription', provider: 'codex', label: 'Cuenta compartida', enabled: true, version: 1,
   payer_tenant_id: 'Humanizar', agent_count: 2, shared: true, agents: [{ tenant_id: 'Humanizar', alias: 'kant', enabled: true },
@@ -59,6 +59,15 @@ describe('disponibilidad derivada de suscripciones', () => {
   it('una cuenta nueva con consulta fallida not_authenticated sigue pendiente de autenticación', () => {
     const failed = { ...account, enabled: false, observation_status: 'error' as const, note: 'not_authenticated', remaining_percent: null };
     expect(accountFatigue(failed)).toBe('pending_auth');
+  });
+  it('sin lector es un estado propio con su motivo, ni error ni desconocido', () => {
+    const snapshot = { tenant_id: 'Humanizar', alias: 'argos', reader_available: false, can_query: false,
+      reason: 'quota_reader_unavailable' as const, status: 'unsupported' as const, revision: 1 };
+    expect(readerUnavailableReason(snapshot)).toBe(NO_READER_MESSAGE);
+    expect(NO_READER_MESSAGE).toContain('Sin lector de cuota para este harness');
+    expect(FATIGUE_LABEL.no_reader).toBe('Sin lector de cuota');
+    expect(readerUnavailableReason({ ...snapshot, reader_available: true, reason: null, status: 'unknown' as const })).toBeNull();
+    expect(readerUnavailableReason(undefined)).toBeNull();
   });
   it('traduce el código también cuando el dato ya está antiguo', () => {
     expect(quotaFailureReason({ observation_status: 'stale', note: 'token_expired' })).toBe('Último fallo: Sesión caducada: autenticar de nuevo');
