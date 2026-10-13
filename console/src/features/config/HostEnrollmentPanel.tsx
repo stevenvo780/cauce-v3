@@ -2,10 +2,26 @@ import { useRef, useState } from 'react';
 import type { HostEnrollment, HostInvitation } from '../../api/client/host-enrollment-client';
 import { useApi } from '../../api/context';
 import { useResource } from '../../api/use-resource';
+import { ApiError } from '../../api/client/core';
 import { Button, Notice } from '../../components/kit';
 import { Time } from '../../components/ui';
 import { useCompanyAuthority } from '../auth/company-authority';
-import { companyHostIdPattern, HOST_ID_PATTERN } from './form-patterns';
+import { HOST_ID_PATTERN } from './form-patterns';
+
+const HOST_NAME_PATTERN = '[a-z0-9_]+';
+
+/** The server answers in English; the console maps by status and never shows that text. */
+function inviteFailure(cause: unknown, prefix: string): string {
+  if (cause instanceof ApiError && cause.status === 403) {
+    return prefix ? `Este ordenador debe llamarse ${prefix}nombre, con letras minúsculas, números o guiones bajos en el nombre, o tu rol no permite invitar.` : 'Tu rol no permite invitar ordenadores.';
+  }
+  if (cause instanceof ApiError && cause.status === 409) {
+    return /already registered/u.test(cause.message)
+      ? 'Ese identificador ya pertenece a un ordenador registrado. Elige otro nombre.'
+      : 'Ese ordenador ya tiene una invitación pendiente. Cancélala o espera a que caduque antes de crear otra.';
+  }
+  return cause instanceof Error && !(cause instanceof ApiError) ? cause.message : 'No se confirmó la invitación. Relee antes de reintentar.';
+}
 
 function signerFingerprint(value: string | undefined): string | undefined {
   return typeof value === 'string' && /^[a-f0-9]{64}$/u.test(value) ? value : undefined;
@@ -25,7 +41,7 @@ export function HostEnrollmentPanel({ canEnroll }: { canEnroll: boolean }) {
   const [form, setForm] = useState(false);
   const authority = useCompanyAuthority();
   const prefix = authority && authority.role !== 'platform_admin' ? `${authority.acting_company}-` : '';
-  const [hostId, setHostId] = useState(prefix);
+  const [hostId, setHostId] = useState('');
   const wasReady = useRef(new Set<string>());
   const [name, setName] = useState('');
   const [invitation, setInvitation] = useState<HostInvitation>();
@@ -37,10 +53,10 @@ export function HostEnrollmentPanel({ canEnroll }: { canEnroll: boolean }) {
     if (!ready) return;
     setBusy(true); setError(''); setNotice('');
     try {
-      const receipt = await api.inviteHost({ host_id: hostId, display_name: name });
-      setInvitation(receipt); setForm(false); setHostId(prefix); setName('');
+      const receipt = await api.inviteHost({ host_id: `${prefix}${hostId}`, display_name: name });
+      setInvitation(receipt); setForm(false); setHostId(''); setName('');
       await enrollments.reload();
-    } catch (cause) { setError(cause instanceof Error ? cause.message : 'No se confirmó la invitación. Relee antes de reintentar.'); }
+    } catch (cause) { setError(inviteFailure(cause, prefix)); }
     finally { setBusy(false); }
   }
   async function revoke(id: string) {
@@ -74,7 +90,8 @@ export function HostEnrollmentPanel({ canEnroll }: { canEnroll: boolean }) {
     {notice ? <Notice tone="info" role="status">{notice}</Notice> : null}
     {enrollments.loading ? <p role="status">Leyendo invitaciones…</p> : null}
     {form ? <form aria-label="Invitar ordenador" className="grid gap-3 sm:grid-cols-2" onSubmit={event => { event.preventDefault(); void create(); }}>
-      <label>Identificador del ordenador<input required pattern={prefix ? companyHostIdPattern(authority?.acting_company ?? '') : HOST_ID_PATTERN} title={prefix ? `Debe ser ${prefix}nombre, con letras minúsculas, números o guiones bajos en el nombre.` : undefined} maxLength={64} value={hostId} disabled={!ready} onChange={event => { setHostId(event.target.value); }} /></label>
+      <label>Identificador del ordenador<span className="flex items-center gap-1">{prefix ? <span aria-hidden="true" className="font-mono text-sm">{prefix}</span> : null}
+        <input required pattern={prefix ? HOST_NAME_PATTERN : HOST_ID_PATTERN} title={prefix ? `Solo letras minúsculas, números o guiones bajos; el identificador completo será ${prefix}nombre.` : undefined} maxLength={64 - prefix.length} value={hostId} disabled={!ready} onChange={event => { setHostId(event.target.value); }} /></span></label>
       <label>Nombre del ordenador<input required maxLength={120} value={name} disabled={!ready} onChange={event => { setName(event.target.value); }} /></label>
       <div className="flex gap-2 sm:col-span-2"><Button type="submit" disabled={!ready}>Crear invitación</Button><Button disabled={busy} onClick={() => { setForm(false); }}>Cancelar</Button></div>
     </form> : null}

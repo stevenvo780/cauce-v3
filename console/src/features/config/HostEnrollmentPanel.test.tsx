@@ -97,13 +97,14 @@ it('precarga el prefijo de la empresa y rechaza ids fuera de su partición con u
   await waitFor(() => { expect(screen.getByRole('button', { name: 'Añadir ordenador' })).toBeEnabled(); });
   await user.click(screen.getByRole('button', { name: 'Añadir ordenador' }));
   const id = screen.getByRole('textbox', { name: 'Identificador del ordenador' });
-  expect(id).toHaveValue('one-');
-  expect(id).toHaveAttribute('pattern', 'one-[a-z0-9_]+');
-  expect(new RegExp(`^(?:${id.getAttribute('pattern')})$`, 'v').test('one-torre_2')).toBe(true);
-  expect(new RegExp(`^(?:${id.getAttribute('pattern')})$`, 'v').test('one-torre-2')).toBe(false);
+  expect(id).toHaveValue('');
+  expect(screen.getByText('one-')).toBeVisible();
+  expect(id).toHaveAttribute('pattern', '[a-z0-9_]+');
+  expect(new RegExp(`^(?:${id.getAttribute('pattern')})$`, 'v').test('torre_2')).toBe(true);
+  expect(new RegExp(`^(?:${id.getAttribute('pattern')})$`, 'v').test('torre-2')).toBe(false);
   await user.type(id, 'torre-2'); await user.type(screen.getByRole('textbox', { name: 'Nombre del ordenador' }), 'Torre');
   await user.click(screen.getByRole('button', { name: 'Crear invitación' }));
-  expect(id).toHaveAttribute('title', expect.stringContaining('Debe ser one-nombre'));
+  expect(id).toHaveAttribute('title', expect.stringContaining('será one-nombre'));
   expect((id as HTMLInputElement).validity.patternMismatch).toBe(true);
   expect(writes).toEqual([]);
 });
@@ -150,4 +151,21 @@ it('un ejecutor que estuvo listo y dejó de publicar capacidades se muestra como
   ready = false; await user.click(screen.getByRole('button', { name: 'Releer invitaciones' }));
   expect(await screen.findByText(/el ejecutor no responde/u)).toBeVisible();
   expect(screen.queryByText(/falta preparar/u)).not.toBeInTheDocument();
+});
+it('envía el prefijo de la empresa y traduce los rechazos del servidor sin mostrar el inglés', async () => {
+  const bodies: { host_id: string }[] = []; let status = 403;
+  server.use(http.get(path, () => HttpResponse.json({ enrollments: [] })),
+    http.post(path, async ({ request }) => { bodies.push(await request.json() as { host_id: string });
+      return HttpResponse.json({ message: status === 403 ? 'host id must be one-<name>, with lowercase letters' : 'host is already registered' }, { status }); }));
+  const user = userEvent.setup(); renderWithApi(company('company_owner'));
+  await waitFor(() => { expect(screen.getByRole('button', { name: 'Añadir ordenador' })).toBeEnabled(); });
+  await user.click(screen.getByRole('button', { name: 'Añadir ordenador' }));
+  await user.type(screen.getByRole('textbox', { name: 'Identificador del ordenador' }), 'torre_2');
+  await user.type(screen.getByRole('textbox', { name: 'Nombre del ordenador' }), 'Torre');
+  await user.click(screen.getByRole('button', { name: 'Crear invitación' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent(/debe llamarse one-nombre/u);
+  expect(bodies).toEqual([{ host_id: 'one-torre_2', display_name: 'Torre' }]);
+  status = 409; await user.click(screen.getByRole('button', { name: 'Crear invitación' }));
+  await waitFor(() => { expect(screen.getByRole('alert')).toHaveTextContent(/ya pertenece a un ordenador registrado/u); });
+  expect(screen.queryByText(/host is already registered/u)).not.toBeInTheDocument();
 });
