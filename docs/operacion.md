@@ -29,14 +29,16 @@ ningún gate ve el `dist/`, la cobertura ni los artefactos de otro. Se crean en
 `carril-N-ops-artifacts`, junto a los logs del recibo.
 
 **Carriles y trozos.** `CAUCE_RELEASE_GATES_JOBS` fija el número de carriles; por defecto, uno por cada
-3 CPU y por cada 8 GiB disponibles (10 en kratos): la mayor parte de un trozo son suites PostgreSQL en
-serie, que piden poca CPU. `test` y `coverage:ratchet`, los dos polos largos, se parten en
-`CAUCE_RELEASE_GATES_SHARDS` trozos (4 por defecto con más de un carril, 1 con `JOBS=1`) que corren en
+3 CPU y por cada 8 GiB disponibles (10 en kratos). `test` y `coverage:ratchet`, los dos polos largos,
+se parten en `CAUCE_RELEASE_GATES_SHARDS` trozos (4 por defecto con más de un carril, 1 con `JOBS=1`) que corren en
 carriles distintos con `CAUCE_TEST_SHARD=i/N`; cuando el último trozo de un paso sale verde arranca su
 fusión (`CAUCE_TEST_SHARD_MERGE=N`). Cada corredor de pruebas corre solo su parte de ficheros, con el
 mismo corte que `vitest --shard` (`scripts/trozos.mjs`): vitest en la raíz y en la consola, y los
-`node --test` de adapter-sdk y de la medición de layout. `test:ops`, `test:pty` y los dos guiones de
-contenedor no se parten: cada uno corre entero en un solo trozo. Cada invocación deja en el directorio
+`node --test` de adapter-sdk y de la medición de layout. Cada trozo de vitest se queda con
+`max(2, núcleos/N)` workers, nunca con más de los que pide su corrida (uno para `tests/e2e`,
+`CAUCE_TEST_DATA_WORKERS` para las suites de datos; `docs/calidad-y-gates.md`): con 8 trozos a la vez
+de suites de datos, bajar `CAUCE_TEST_DATA_WORKERS` reparte el host entre ellos. `test:ops`, `test:pty`
+y los dos guiones de contenedor no se parten: cada uno corre entero en un solo trozo. Cada invocación deja en el directorio
 de trozos del recibo su conjunto de ficheros y lo que corrió, y la fusión de `test` exige que los N
 trozos corrieran cada fichero de cada invocación exactamente una vez, que cada suite partible corriera
 en los N y cada entera en uno, y aplica a la suma la misma regla de suite vacía. La fusión de
