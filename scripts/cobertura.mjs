@@ -22,6 +22,8 @@ import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileS
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { asignacionDeDominios, guardarTrozo, leerTrozos } from './cobertura-trozos.mjs';
+import { leerTrozo, sinTrozo, verificarReparto } from './trozos.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -79,7 +81,7 @@ const USO = [
 function ejecutar(comando, argumentos, opciones = {}) {
   const inicio = Date.now();
   const resultado = spawnSync(comando, argumentos, {
-    cwd: opciones.cwd ?? root, encoding: 'utf8', maxBuffer: 256 * 1024 * 1024,
+    cwd: opciones.cwd ?? root, env: opciones.env ?? process.env, encoding: 'utf8', maxBuffer: 256 * 1024 * 1024,
     stdio: opciones.capturar ? ['ignore', 'pipe', 'pipe'] : 'inherit',
   });
   return { ...resultado, ms: Date.now() - inicio };
@@ -126,16 +128,16 @@ function redondear(valor) {
   return Number(valor.toFixed(2));
 }
 
-function dominioRaiz(salida) {
+export function dominioRaiz(salida, suites = SUITES_RAIZ) {
   const argumentos = [
     'vitest', 'run', '--coverage', '--coverage.reporter=json-summary',
     '--coverage.reporter=json', `--coverage.reportsDirectory=${salida}`,
     '--coverage.reportOnFailure=true',
     ...INCLUIR_RAIZ.map((patron) => `--coverage.include=${patron}`),
     ...EXCLUIR_RAIZ.map((patron) => `--coverage.exclude=${patron}`),
-    '--testTimeout=180000', ...SUITES_RAIZ,
+    '--testTimeout=180000', ...suites,
   ];
-  const corrida = ejecutar('npx', argumentos);
+  const corrida = ejecutar('npx', argumentos, { env: { ...process.env, CAUCE_TEST_SUITE: 'coverage:raiz' } });
   return {
     resumen: resumenTrasCorrida('suite raíz', salida, corrida),
     ms: corrida.ms,
@@ -152,7 +154,7 @@ function dominioConsola(salida) {
     '--coverage.exclude=src/test/**', '--coverage.exclude=**/*.test.ts',
     '--coverage.exclude=**/*.test.tsx',
   ];
-  const corrida = ejecutar('npx', argumentos, { cwd: join(root, 'console') });
+  const corrida = ejecutar('npx', argumentos, { cwd: join(root, 'console'), env: sinTrozo() });
   return {
     resumen: resumenTrasCorrida('suite consola', salida, corrida),
     ms: corrida.ms,
@@ -184,7 +186,7 @@ function dominioAdapter() {
     '--test', '--test-concurrency=1', '--experimental-test-coverage',
     '--test-coverage-include=src/**', '--test-coverage-include=dist/src/**',
     'dist/test/*.test.js',
-  ], { cwd: paquete, capturar: true });
+  ], { cwd: paquete, capturar: true, env: sinTrozo() });
   const fallo = falloDeCorrida('suite adapter-sdk', corrida);
   if (fallo) mostrarSalidaCapturada(corrida);
   const tabla = (corrida.stdout ?? '').split('\n');
@@ -489,6 +491,113 @@ function aplicarTrinquete(medido, { actualizar, sembrar }) {
   return comparacion.fallos.map((fallo) => new Error(fallo));
 }
 
+function construir() {
+  limpiarSalidasCompiladas();
+  exigirCorridaVerde('build de protocol', ejecutar('pnpm', ['prepare:runtime'], { capturar: true }));
+  exigirCorridaVerde('build de mcp', ejecutar('pnpm', ['build:mcp'], { capturar: true }));
+  exigirCorridaVerde('build de adapter', ejecutar('pnpm', ['build:adapter'], { capturar: true }));
+}
+
+function medir(salida) {
+  return {
+    resultadoRaiz: intentar(() => dominioRaiz(join(salida, 'raiz'))),
+    resultadoConsola: intentar(() => dominioConsola(join(salida, 'consola'))),
+    resultadoAdapter: intentar(dominioAdapter),
+  };
+}
+
+function directorioDeTrozos() {
+  const directorio = process.env.CAUCE_TEST_SHARD_DIR;
+  if (!directorio) throw new Error('CAUCE_TEST_SHARD_DIR no esta definido: los trozos de cobertura no tienen donde quedar');
+  return directorio;
+}
+
+export function medirTrozo(trozo, salida, medidores = { raiz: dominioRaiz, consola: dominioConsola, adapter: dominioAdapter }) {
+  const asignacion = asignacionDeDominios(trozo.total);
+  const resultados = {
+    raiz: intentar(() => medidores.raiz(join(salida, 'raiz'))),
+    consola: asignacion.consola === trozo.indice ? intentar(() => medidores.consola(join(salida, 'consola'))) : undefined,
+    adapter: asignacion.adapter === trozo.indice ? intentar(medidores.adapter) : undefined,
+  };
+  const huellas = guardarTrozo(directorioDeTrozos(), trozo, root, resultados, join(salida, 'raiz'));
+  console.log(`\ncobertura — trozo ${String(trozo.indice)}/${String(trozo.total)} (el trinquete se aplica en la fusion):`);
+  for (const [nombre, resultado] of Object.entries(resultados)) {
+    if (resultado === undefined) continue;
+    const estado = resultado.error ? `NO DISPONIBLE: ${mensaje(resultado.error)}` : resultado.valor.fallo ? `ROJA: ${mensaje(resultado.valor.fallo)}` : 'medida';
+    console.log(`  ${nombre.padEnd(9)} ${estado}`);
+  }
+  for (const [nombre, huella] of huellas) console.log(`  ${nombre} sha256:${huella}`);
+  return Object.values(resultados).flatMap((resultado) => {
+    if (resultado === undefined) return [];
+    if (resultado.error) return [resultado.error];
+    return resultado.valor.fallo ? [resultado.valor.fallo] : [];
+  });
+}
+
+function leerFusion(valor) {
+  const total = Number(valor);
+  if (!Number.isInteger(total) || total < 1) throw new Error(`CAUCE_TEST_SHARD_MERGE debe ser el numero de trozos (es '${valor}')`);
+  const directorio = directorioDeTrozos();
+  const leidos = leerTrozos(directorio, total, root);
+  const reparto = verificarReparto(directorio, total, ['coverage:raiz']);
+  console.log(`fusion de ${String(total)} trozos de cobertura desde ${directorio}:`);
+  for (const [ruta, huella] of leidos.huellas) console.log(`  ${ruta} sha256:${huella}`);
+  for (const linea of reparto.resumen) console.log(`  reparto ${linea}`);
+  return { ...leidos, problemas: [...leidos.problemas, ...reparto.problemas].map((problema) => new Error(problema)) };
+}
+
+function informar({ resultadoRaiz, resultadoConsola, resultadoAdapter }, cuantos, trozos = 0) {
+  const raiz = resultadoRaiz.valor;
+  const consola = resultadoConsola.valor;
+  const adapter = resultadoAdapter.valor;
+  const lineas = raiz && consola
+    ? ['lines', 'branches'].map((metrica) => {
+      const total = raiz.resumen.total[metrica].total + consola.resumen.total[metrica].total;
+      const cubierto = raiz.resumen.total[metrica].covered + consola.resumen.total[metrica].covered;
+      return { metrica, total, cubierto, pct: porcentaje(cubierto, total) };
+    })
+    : undefined;
+
+  console.log(`\n${'='.repeat(78)}\ncobertura de cauce-v3\n${'='.repeat(78)}`);
+  console.log(trozos > 0
+    ? `\nsuites que produjeron la cifra (raiz en ${String(trozos)} trozos fusionados; consola y adapter enteros):`
+    : `\nsuites que produjeron la cifra (todas en una sola corrida por dominio):`);
+  console.log(`  raiz     ${SUITES_RAIZ.join(' ')}`);
+  console.log(`  consola  console/src (vitest propio: jsdom + plugin react)`);
+  console.log(`\ndominio            lineas              ramas               corrida`);
+  for (const [nombre, dato, resultado] of [
+    ['raiz', raiz, resultadoRaiz], ['consola', consola, resultadoConsola],
+  ]) {
+    if (!dato) {
+      console.log(`  ${nombre.padEnd(16)} NO DISPONIBLE      ${mensaje(resultado.error)}`);
+      continue;
+    }
+    const l = dato.resumen.total.lines, b = dato.resumen.total.branches;
+    console.log(`  ${nombre.padEnd(16)} ${`${l.covered}/${l.total}`.padEnd(14)} ${`${l.pct.toFixed(2)}%`.padEnd(8)} ${`${b.pct.toFixed(2)}%`.padEnd(10)} ${segundos(dato.ms)}`);
+  }
+  if (lineas) {
+    console.log(`\n  CIFRA FUSIONADA  lineas ${lineas[0].cubierto}/${lineas[0].total} = ${lineas[0].pct.toFixed(2)}%   ramas ${lineas[1].pct.toFixed(2)}%${trozos > 0 ? ' (aprox.)' : ''}`);
+    if (trozos > 0) console.log('  las lineas de los trozos se suman exactas; las ramas de v8 no se fusionan rama a rama: el trinquete solo usa lineas');
+  } else {
+    console.log(`\n  CIFRA FUSIONADA  NO DISPONIBLE: falta al menos un dominio medible`);
+  }
+  console.log(`\ndeclarado aparte — packages/adapter-sdk (node --test sobre dist, source-mapped;`);
+  console.log(`  v8 coverage de vitest NO lo alcanza, así que queda fuera de la cifra de arriba)`);
+  if (adapter) {
+    console.log(`  lineas ${adapter.lineas.toFixed(2)}%   ramas ${adapter.ramas.toFixed(2)}%   funciones ${adapter.funciones.toFixed(2)}%   (${adapter.ficheros} ficheros, ${segundos(adapter.ms)})`);
+  } else {
+    console.log(`  NO DISPONIBLE: ${mensaje(resultadoAdapter.error)}`);
+  }
+
+  const resumenes = [raiz?.resumen, consola?.resumen].filter(Boolean);
+  const lista = peores(resumenes, cuantos);
+  console.log(`\n${cuantos} ficheros peor cubiertos (>=40 lineas):`);
+  for (const fila of lista) {
+    console.log(`  ${`${fila.pct.toFixed(1)}%`.padStart(7)}  ${String(fila.total).padStart(5)}  ${fila.ruta}`);
+  }
+  return { raiz, consola, adapter };
+}
+
 function principal(argumentos) {
   if (argumentos.includes('--ayuda') || argumentos.includes('-h')) {
     console.log(USO);
@@ -500,70 +609,31 @@ function principal(argumentos) {
   const sembrar = argumentos.includes('--sembrar');
   if (actualizar && sembrar) throw new Error(`--actualizar y --sembrar se excluyen\n${USO}`);
   if ((actualizar || sembrar) && !trinquete) throw new Error(`--actualizar y --sembrar exigen --trinquete\n${USO}`);
+  const fusion = process.env.CAUCE_TEST_SHARD_MERGE;
+  const trozo = fusion ? undefined : leerTrozo();
   const salida = mkdtempSync(join(tmpdir(), 'cauce-cobertura-'));
   try {
-    limpiarSalidasCompiladas();
-    exigirCorridaVerde(
-      'build de protocol',
-      ejecutar('pnpm', ['prepare:runtime'], { capturar: true }),
-    );
-    exigirCorridaVerde('build de mcp', ejecutar('pnpm', ['build:mcp'], { capturar: true }));
-    exigirCorridaVerde('build de adapter', ejecutar('pnpm', ['build:adapter'], { capturar: true }));
-
-    const resultadoRaiz = intentar(() => dominioRaiz(join(salida, 'raiz')));
-    const resultadoConsola = intentar(() => dominioConsola(join(salida, 'consola')));
-    const resultadoAdapter = intentar(dominioAdapter);
-    const raiz = resultadoRaiz.valor;
-    const consola = resultadoConsola.valor;
-    const adapter = resultadoAdapter.valor;
-
-    const lineas = raiz && consola
-      ? ['lines', 'branches'].map((metrica) => {
-        const total = raiz.resumen.total[metrica].total + consola.resumen.total[metrica].total;
-        const cubierto = raiz.resumen.total[metrica].covered + consola.resumen.total[metrica].covered;
-        return { metrica, total, cubierto, pct: porcentaje(cubierto, total) };
-      })
-      : undefined;
-
-    console.log(`\n${'='.repeat(78)}\ncobertura de cauce-v3\n${'='.repeat(78)}`);
-    console.log(`\nsuites que produjeron la cifra (todas en una sola corrida por dominio):`);
-    console.log(`  raiz     ${SUITES_RAIZ.join(' ')}`);
-    console.log(`  consola  console/src (vitest propio: jsdom + plugin react)`);
-    console.log(`\ndominio            lineas              ramas               corrida`);
-    for (const [nombre, dato, resultado] of [
-      ['raiz', raiz, resultadoRaiz], ['consola', consola, resultadoConsola],
-    ]) {
-      if (!dato) {
-        console.log(`  ${nombre.padEnd(16)} NO DISPONIBLE      ${mensaje(resultado.error)}`);
-        continue;
+    let resultados;
+    const fallos = [];
+    if (fusion) {
+      const leidos = leerFusion(fusion);
+      resultados = leidos;
+      fallos.push(...leidos.problemas);
+    } else {
+      construir();
+      if (trozo) {
+        const rotos = medirTrozo(trozo, salida);
+        if (rotos.length > 0) throw new AggregateError(rotos, `${String(rotos.length)} fallo(s) en el trozo de cobertura`);
+        return;
       }
-      const l = dato.resumen.total.lines, b = dato.resumen.total.branches;
-      console.log(`  ${nombre.padEnd(16)} ${`${l.covered}/${l.total}`.padEnd(14)} ${`${l.pct.toFixed(2)}%`.padEnd(8)} ${`${b.pct.toFixed(2)}%`.padEnd(10)} ${segundos(dato.ms)}`);
+      resultados = medir(salida);
     }
-    if (lineas) {
-      console.log(`\n  CIFRA FUSIONADA  lineas ${lineas[0].cubierto}/${lineas[0].total} = ${lineas[0].pct.toFixed(2)}%   ramas ${lineas[1].pct.toFixed(2)}%`);
-    } else {
-      console.log(`\n  CIFRA FUSIONADA  NO DISPONIBLE: falta al menos un dominio medible`);
-    }
-    console.log(`\ndeclarado aparte — packages/adapter-sdk (node --test sobre dist, source-mapped;`);
-    console.log(`  v8 coverage de vitest NO lo alcanza, así que queda fuera de la cifra de arriba)`);
-    if (adapter) {
-      console.log(`  lineas ${adapter.lineas.toFixed(2)}%   ramas ${adapter.ramas.toFixed(2)}%   funciones ${adapter.funciones.toFixed(2)}%   (${adapter.ficheros} ficheros, ${segundos(adapter.ms)})`);
-    } else {
-      console.log(`  NO DISPONIBLE: ${mensaje(resultadoAdapter.error)}`);
-    }
-
-    const resumenes = [raiz?.resumen, consola?.resumen].filter(Boolean);
-    const lista = peores(resumenes, cuantos);
-    console.log(`\n${cuantos} ficheros peor cubiertos (>=40 lineas):`);
-    for (const fila of lista) {
-      console.log(`  ${`${fila.pct.toFixed(1)}%`.padStart(7)}  ${String(fila.total).padStart(5)}  ${fila.ruta}`);
-    }
-
-    const fallos = [resultadoRaiz, resultadoConsola, resultadoAdapter].flatMap((resultado) => {
+    const { raiz, consola, adapter } = informar(resultados, cuantos, fusion ? Number(fusion) : 0);
+    const { resultadoRaiz, resultadoConsola, resultadoAdapter } = resultados;
+    fallos.push(...[resultadoRaiz, resultadoConsola, resultadoAdapter].flatMap((resultado) => {
       if (resultado.error) return [resultado.error];
       return resultado.valor?.fallo ? [resultado.valor.fallo] : [];
-    });
+    }));
     if (trinquete) {
       const medido = {
         ...medicionDeDominio(raiz, PAQUETES_RAIZ, mensaje(resultadoRaiz.error)),
