@@ -74,7 +74,8 @@ class HarnessOperationsTests(unittest.TestCase):
 
     def test_honest_descriptors_declare_only_implemented_operations(self):
         expected = {'hermes': {'install', 'execute'}, 'opencode': {'install', 'execute'},
-                    'fake': {'install', 'execute'}, 'grok': {'install', 'execute', 'authenticate', 'quota'},
+                    'fake': {'install', 'execute'}, 'fake2': {'install', 'execute'},
+                    'grok': {'install', 'execute', 'authenticate', 'quota'},
                     'muse': {'install', 'execute', 'authenticate'}, 'openclaw': {'install', 'execute', 'authenticate'},
                     'claude': {'install', 'execute', 'authenticate', 'update', 'quota'},
                     'codex': {'install', 'execute', 'authenticate', 'update', 'quota'}}
