@@ -87,9 +87,15 @@ it('running con hashes aún no permite descargar el ZIP', async () => {
 });
 it('avisa de lo que no viaja y cómo comparar el SHA-256 sin decir descargado antes de pulsar', async () => {
   vi.spyOn(testApi, 'createSpaceBackup').mockResolvedValue(ready);
-  renderWithApi(panel()); expect(screen.getByLabelText('Backup del espacio')).toHaveTextContent(/sin \.git: los commits sin publicar no viajan\. Los archivos \.env y de credenciales se omiten/u);
+  renderWithApi(panel());
+  const panelText = screen.getByLabelText('Backup del espacio');
+  expect(panelText).toHaveTextContent(/sin \.git: los commits sin publicar no viajan/u);
+  expect(panelText).toHaveTextContent(/contenido que es un secreto literal/u);
+  expect(panelText).toHaveTextContent(/space-manifest\.json/u);
   fireEvent.click(screen.getByRole('button', { name: 'Crear backup del espacio' }));
   expect(await screen.findByText('sha256sum archivo.zip')).toBeVisible();
+  expect(screen.getByText('shasum -a 256 archivo.zip')).toBeVisible();
+  expect(screen.getByText('Get-FileHash archivo.zip -Algorithm SHA256')).toBeVisible();
   expect(document.body.textContent).not.toContain('ZIP descargado'); expect(screen.queryByText(/Descarga iniciada/u)).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: 'Descargar backup ZIP' }));
   expect(await screen.findByText(/si no aparece, la copia pudo vencer o no tienes permiso; vuelve a generarla/u)).toBeVisible();

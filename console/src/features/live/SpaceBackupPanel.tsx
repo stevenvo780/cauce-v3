@@ -93,7 +93,8 @@ function BackupPanel({ target, allowed }: { target: SpaceBackupTarget; allowed: 
   return <section aria-label="Backup del espacio" className="my-4 grid gap-3 rounded-xl border border-line bg-surface p-4">
     <div><h3 className="m-0 text-base font-semibold">Backup del espacio</h3>
       <p className="m-0 mt-1 text-sm text-muted">Guarda contexto, directivas, proyectos, configuración y datos del espacio. El archivo excluye autenticación, credenciales, logs y temporales.</p>
-      <p className="m-0 mt-1 text-sm text-muted">Los proyectos se copian sin <code>.git</code>: los commits sin publicar no viajan. Los archivos <code>.env</code> y de credenciales se omiten.</p></div>
+      <p className="m-0 mt-1 text-sm text-muted">Los proyectos se copian sin <code>.git</code>: los commits sin publicar no viajan. Se omiten los archivos <code>.env</code> y de credenciales, y también el contenido que es un secreto literal (clave, token o URL con usuario y contraseña). Una plantilla <code>{'${…}'}</code> o <code>process.env</code> no se trata como secreto.</p>
+      <p className="m-0 mt-1 text-sm text-muted">Las omisiones, con su ruta y su motivo, están en <code>space-manifest.json</code> dentro del ZIP.</p></div>
     {!enabled ? <Notice tone="warn">Hace falta autoridad vigente para controlar este espacio y descargar su backup.</Notice> : null}
     {error ? <Notice tone="danger" role="alert">{error}</Notice> : null}
     {notice ? <Notice tone="ok" role="status">{notice}</Notice> : null}
@@ -101,7 +102,7 @@ function BackupPanel({ target, allowed }: { target: SpaceBackupTarget; allowed: 
       {backup.error ? <Notice tone="danger" role="alert">{ERRORS[backup.error]}</Notice> : null}
       {backup.status === 'ready' ? <p className="m-0 text-xs text-muted">{((backup.bytes ?? 0) / 1024 / 1024).toFixed(2)} MiB · ZIP listo para descargar; el navegador lo guarda sin cargarlo en memoria.</p> : null}
       {backup.status === 'ready' && backup.sha256 ? <p className="m-0 break-all text-xs text-muted">SHA-256: <code>{backup.sha256}</code></p> : null}
-      {backup.status === 'ready' && backup.sha256 ? <p className="m-0 text-xs text-muted">Para comparar el SHA-256, ejecuta <code>sha256sum archivo.zip</code> sobre el archivo descargado y verifica que coincida con el valor de arriba.</p> : null}</div> : null}
+      {backup.status === 'ready' && backup.sha256 ? <p className="m-0 text-xs text-muted">Para comparar el SHA-256 del archivo descargado: <code>sha256sum archivo.zip</code> en Linux, <code>shasum -a 256 archivo.zip</code> en macOS o <code>Get-FileHash archivo.zip -Algorithm SHA256</code> en Windows.</p> : null}</div> : null}
     <div className="flex flex-wrap gap-2">
       <Button disabled={!enabled || !!busy || backup?.status === 'pending' || backup?.status === 'running'} onClick={() => {
         if (backup) idempotency.current = randomUuid(); setBackup(undefined);
