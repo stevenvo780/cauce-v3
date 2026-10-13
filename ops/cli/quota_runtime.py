@@ -11,9 +11,12 @@ import uuid
 from fleet_executor_container import docker, inspect_container
 from fleet_executor_policy import SafeFailure
 
-NON_HARNESS_PROVIDERS = frozenset({'gemini'})
+NON_HARNESS_PROVIDERS = frozenset()
+RETIRED_PROVIDERS = frozenset({'gemini'})
 EXECUTOR_SOURCE = pathlib.Path(__file__).resolve().parent
+LIFECYCLE_SOURCE = (EXECUTOR_SOURCE.parent / 'container-runtime').resolve()
 CAPABILITIES = ('SETUID', 'SETGID', 'CHOWN', 'DAC_OVERRIDE', 'FOWNER', 'SYS_PTRACE')
+GROK_IDENTITY = re.compile(r'(?:grok|grok-local):[0-9a-f]{64}')
 
 
 @functools.lru_cache(maxsize=8)
@@ -64,8 +67,9 @@ def provider_operation(policy: dict, provider: str, operation: str, *, command: 
     from harness_operations import HarnessOperationFailure, provider_command, resolve_operation
     try:
         bundle = approved_bundle(policy, {'harness_id': provider, 'runtime_mode': 'container'})
-        result = provider_command(provider, operation, bundle['directory']) if command \
-            else resolve_operation(provider, operation, bundle['directory'])
+        arguments = {'expected_sha256': bundle.get('descriptor_sha256')}
+        result = provider_command(provider, operation, bundle['directory'], **arguments) if command \
+            else resolve_operation(provider, operation, bundle['directory'], **arguments)
         approved_bundle(policy, {'harness_id': provider, 'runtime_mode': 'container'})
         return result
     except (HarnessOperationFailure, PermanentError, OSError, KeyError, TypeError, ValueError) as error:
@@ -104,6 +108,8 @@ def capabilities(policy: dict) -> dict:
     allowed = allowed_providers(policy)
     actions = {}
     for provider in approved['providers']:
+        if provider in RETIRED_PROVIDERS:
+            continue
         if provider not in allowed:
             raise SafeFailure('quota provider has no quota descriptor in its approved bundles')
         available, _unavailable = provider_actions(policy, provider)
@@ -126,6 +132,8 @@ def packet(policy: dict, document: dict) -> dict:
         operation = uuid.UUID(document['operation_id'])
     except (ValueError, TypeError, AttributeError) as error:
         raise SafeFailure('invalid quota operation identity') from error
+    if environment['provider'] in RETIRED_PROVIDERS:
+        raise SafeFailure('quota provider has no executor')
     if str(identity) != environment['id'] or str(operation) != document['operation_id'] \
             or environment['container_name'] != 'cauce-quota-' + identity.hex \
             or re.fullmatch(r'[a-z][a-z0-9_-]{0,63}', environment['company_id']) is None \
@@ -153,6 +161,7 @@ def validate(policy: dict, environment: dict, observed: dict) -> None:
     mounts = {row['Destination']: row for row in observed.get('Mounts', [])}
     state = mounts.get('/home/node') or {}
     helper = mounts.get('/cauce/executor') or {}
+    lifecycle = mounts.get('/cauce/lifecycle') or {}
     host = observed['HostConfig']
     if observed['Image'] != approved['image'] or observed['Config'].get('User') != '1000:1000' \
             or not all((observed['Config'].get('Labels') or {}).get(key) == value for key, value in expected.items()) \
@@ -161,9 +170,10 @@ def validate(policy: dict, environment: dict, observed: dict) -> None:
             or host.get('Memory') != 512 * 1024 * 1024 or host.get('PidsLimit') != 128 \
             or normalized_capabilities(host.get('CapDrop')) != {'ALL'} or normalized_capabilities(host.get('CapAdd')) != set(CAPABILITIES) \
             or not any(value.startswith('no-new-privileges') for value in host.get('SecurityOpt') or []) \
-            or len(mounts) != 2 or state.get('Type') != 'volume' or state.get('Name') != environment['container_name'] + '-profile' \
+            or len(mounts) != 3 or state.get('Type') != 'volume' or state.get('Name') != environment['container_name'] + '-profile' \
             or state.get('RW') is not True or helper.get('Type') != 'bind' or helper.get('Source') != str(EXECUTOR_SOURCE) \
-            or helper.get('RW') is not False:
+            or helper.get('RW') is not False or lifecycle.get('Type') != 'bind' or lifecycle.get('Source') != str(LIFECYCLE_SOURCE) \
+            or lifecycle.get('RW') is not False:
         raise SafeFailure('quota container isolation or ownership differs')
     volume = json.loads(docker('volume', 'inspect', state['Name']))[0]
     if not all((volume.get('Labels') or {}).get(key) == value for key, value in expected.items()):
@@ -214,6 +224,7 @@ def create(policy: dict, environment: dict) -> dict:
                '--tmpfs', '/tmp:rw,nosuid,noexec,size=16m', '--tmpfs', '/run:rw,nosuid,noexec,size=16m',
                '--mount', f'type=volume,source={volume},target=/home/node',
                '--mount', f'type=bind,source={EXECUTOR_SOURCE},target=/cauce/executor,readonly',
+               '--mount', f'type=bind,source={LIFECYCLE_SOURCE},target=/cauce/lifecycle,readonly',
                *[value for key, item in expected.items() for value in ('--label', key + '=' + item)], approved['image'])
         existing = inspect_container(environment['container_name'])
         if existing is None:
@@ -225,6 +236,10 @@ def create(policy: dict, environment: dict) -> dict:
     if observed is None or observed['State']['Running'] is not True:
         raise SafeFailure('quota environment is not observed running')
     validate(policy, environment, observed)
+    try:
+        docker('exec', '--user', '0', environment['container_name'], '/usr/bin/chown', '1000:1000', '/home/node')
+    except SafeFailure as error:
+        raise SafeFailure('quota profile volume is not owned by its runtime user') from error
     return {'runtime_verified': True, 'container_name': environment['container_name'], 'cli_version': provider_version(environment)}
 
 
@@ -302,7 +317,8 @@ def verify_authentication(policy: dict, document: dict) -> dict:
         successful = raw.get('ok') is True
         identity = raw.get('account_id')
     if not successful or not isinstance(identity, str) or not 1 <= len(identity) <= 256 \
-            or any(ord(character) < 32 or ord(character) == 127 for character in identity):
+            or any(ord(character) < 32 or ord(character) == 127 for character in identity) \
+            or environment['provider'] == 'grok' and GROK_IDENTITY.fullmatch(identity) is None:
         raise SafeFailure('quota login lacks a successful provider request and remote account identity')
     return {'authenticated_verified': True, 'account_identity': identity}
 

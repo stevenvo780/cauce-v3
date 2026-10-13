@@ -78,7 +78,8 @@ class QuotaRuntimeTest(unittest.TestCase):
         observed = copy.deepcopy(self.observed)
         observed.update({'Config': {'User': '1000:1000', 'Labels': labels}, 'Mounts': [
             {'Destination': '/home/node', 'Type': 'volume', 'Name': self.environment['container_name'] + '-profile', 'RW': True},
-            {'Destination': '/cauce/executor', 'Type': 'bind', 'Source': str(runtime.EXECUTOR_SOURCE), 'RW': False}],
+            {'Destination': '/cauce/executor', 'Type': 'bind', 'Source': str(runtime.EXECUTOR_SOURCE), 'RW': False},
+            {'Destination': '/cauce/lifecycle', 'Type': 'bind', 'Source': str(runtime.LIFECYCLE_SOURCE), 'RW': False}],
             'HostConfig': {'ReadonlyRootfs': True, 'Privileged': False, 'NetworkMode': 'fixture-network', 'Memory': 512 * 1024 * 1024,
                            'PidsLimit': 128, 'CapDrop': ['ALL'], 'CapAdd': list(runtime.CAPABILITIES), 'SecurityOpt': ['no-new-privileges']}})
         with patch.object(runtime, 'docker', return_value=json.dumps([{'Labels': {'cauce.quota.company': 'foreign'}}]).encode()) as execute:
@@ -116,7 +117,7 @@ class QuotaRuntimeTest(unittest.TestCase):
         self.assertIn('operations.update', unavailable['update_cli'])
 
     def test_allowed_providers_derive_from_bundle_descriptors(self):
-        self.assertEqual(runtime.allowed_providers(self.policy), frozenset({'claude', 'codex', 'gemini', 'grok'}))
+        self.assertEqual(runtime.allowed_providers(self.policy), frozenset({'claude', 'codex', 'grok'}))
         descriptor = pathlib.Path(self.policy['bundles']['codex']['directory']) / 'packages/adapter-sdk/dist/descriptors/fake2.json'
         descriptor.write_text(json.dumps({'schema_version': 1, 'harness': 'fake2',
             'operations': {'install': 'runtime-package', 'execute': 'native-execution', 'quota': 'quota-collector'},
@@ -137,7 +138,8 @@ class QuotaRuntimeTest(unittest.TestCase):
                     'Memory': 512 * 1024 * 1024, 'PidsLimit': 128, 'CapDrop': ['ALL'], 'CapAdd': cap_add,
                     'SecurityOpt': ['no-new-privileges']},
                 'Mounts': [mount('/home/node', Type='volume', Name=self.environment['container_name'] + '-profile', RW=True),
-                           mount('/cauce/executor', Type='bind', Source=str(runtime.EXECUTOR_SOURCE), RW=False)]}
+                           mount('/cauce/executor', Type='bind', Source=str(runtime.EXECUTOR_SOURCE), RW=False),
+                           mount('/cauce/lifecycle', Type='bind', Source=str(runtime.LIFECYCLE_SOURCE), RW=False)]}
             volume = [{'Labels': observed['Config']['Labels']}]
             with self.subTest(cap_add=cap_add[0]), patch.object(runtime, 'docker', return_value=json.dumps(volume)):
                 runtime.validate(self.policy, self.environment, observed)
@@ -192,10 +194,27 @@ class QuotaRuntimeTest(unittest.TestCase):
         grok_policy['quota_environments']['providers'] = ['grok']
         grok_policy['bundles'] = {'grok': dict(self.policy['bundles']['codex'])}
         grok_report = {'ok': True, 'account_id': 'grok:' + 'b' * 64}
+        local_report = {'ok': True, 'account_id': 'grok-local:' + 'c' * 64}
         with patch.object(runtime, 'inspect_container', return_value=self.observed), patch.object(runtime, 'validate'), \
                 patch.object(runtime, 'query_observation', return_value=grok_report):
             self.assertEqual(runtime.verify_authentication(grok_policy, grok_document),
                              {'authenticated_verified': True, 'account_identity': grok_report['account_id']})
+        with patch.object(runtime, 'inspect_container', return_value=self.observed), patch.object(runtime, 'validate'), \
+                patch.object(runtime, 'query_observation', return_value=local_report):
+            self.assertEqual(runtime.verify_authentication(grok_policy, grok_document),
+                             {'authenticated_verified': True, 'account_identity': local_report['account_id']})
+        for identity in ('principal-raw', 'user@example.invalid', 'grok:' + 'b' * 63):
+            with patch.object(runtime, 'inspect_container', return_value=self.observed), patch.object(runtime, 'validate'), \
+                    patch.object(runtime, 'query_observation', return_value={'ok': True, 'account_id': identity}):
+                with self.assertRaises(runtime.SafeFailure):
+                    runtime.verify_authentication(grok_policy, grok_document)
+        retired = copy.deepcopy(self.document)
+        retired['environment']['provider'] = 'gemini'
+        retired_policy = copy.deepcopy(self.policy)
+        retired_policy['quota_environments']['providers'] = ['gemini']
+        with self.assertRaises(runtime.SafeFailure) as caught:
+            runtime.packet(retired_policy, retired)
+        self.assertIn('no executor', str(caught.exception))
         for report in [{'error': 'HTTP 429', 'extra': {'account_id': 'remote-subscription'}},
                        {'ok': True, 'email': 'local-only@fixture.invalid'},
                        {'fuente': 'wham-http', 'error': None, 'extra': {}}]:
