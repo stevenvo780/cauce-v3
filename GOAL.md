@@ -153,10 +153,10 @@ Incorporar un harness debe ser una operación clara mediante configuración JSON
 
 - [x] [código] 8 descriptores JSON validados, empaquetados y fijados por digest, con parsers cerrados en TS y Python.
 - [x] [local real] En «Mis cuotas», las capacidades salen del descriptor aprobado y un descriptor alterado retira la capacidad.
-- [ ] Los comandos (login, cuota, paquete de update, módulo de flota) pasan al descriptor y salen de `harness_operations.py`.
-- [ ] Las listas de runtime se derivan de los descriptores, con test de paridad para enums, el CHECK SQL y la consola.
+- [x] [código] Los comandos (login, cuota, paquete de update, módulo de flota) pasan al descriptor y salen de `harness_operations.py`. (ccf554d1, 75ddb35d)
+- [x] [código] Las listas de runtime se derivan de los descriptores, con test de paridad para enums, el CHECK SQL y la consola. (27200201)
 - [ ] Flota por descriptor con autenticación para grok, muse y openclaw+Anthropic (necesario para la migración).
-- [ ] Descriptores honestos; errores con campo y motivo; capacidades por acción.
+- [x] [código] Descriptores honestos; errores con campo y motivo; capacidades por acción. (ccf554d1, 27200201)
 - [ ] Alta de punta a punta de un harness de prueba (`fake2`) y operaciones físicas de quota y update en server2, con runbook.
 
 ## 8. Reorganización de archivos y versionado de contextos con GitHub
@@ -170,7 +170,7 @@ Estructura estándar de espacios (contextos/directivas, proyectos, configuració
 - [x] [local real] Transporte a GitHub privado `stevenvo780/cauce-agent-contexts` probado con contenido sintético.
 - [ ] `CAUCE_SPACE_ROOT` en el supervisor legacy y `cwd` en `space/projects`; productores de `tmp/` y `logs/`; inventario y migración verificable de los espacios reales: diff de manifiestos sin pérdidas y, por cada agente migrado in situ, un turno real (nonce) que responde leyendo desde la nueva ruta.
 - [ ] Sembrar el historial de los agentes reales y empujarlo a GitHub; preflight del repo del broker en la VPS.
-- [ ] **Versionar las ediciones hechas en el espacio del agente**: hoy no se registran y además bloquean sus turnos.
+- [x] [local real] **Versionar las ediciones hechas en el espacio del agente**: hoy no se registran y además bloquean sus turnos. (0e186764, adc0bf9d, 341d4dbc, 99683b04)
 - [ ] Turno real que adopte la versión; una sola fuente de contexto (`CLAUDE.md`/`AGENTS.md` generados desde la versión aplicada).
 - [ ] Recuperación de divergencia (fetch antes del commit), concurrencia multiagente, autor en el historial, lector V3 desacoplado y fallo de sync ensayado en producción.
 
@@ -287,10 +287,10 @@ Las validó la pasada Opus; el detalle está en la sección 6 de `ordenes/v4-cie
 - [ ] 7. Mensajes de error accionables en español y motivo de cada capacidad no disponible.
 - [x] 8. Pantalla «Empresa retirada».
 - [ ] 9. Validar `harness_definitions` contra los descriptores.
-- [ ] 10. Autor real en `git log` de contextos y aplicación en el siguiente turno natural.
-- [ ] 11. Inmutabilidad del historial de contextos.
+- [x] 10. [local real] Autor real en `git log` de contextos y aplicación en el siguiente turno natural. (177947c1, 919bd20e)
+- [x] 11. [local real] Inmutabilidad del historial de contextos. (659099d9, 68ac2f7c)
 - [ ] 12. Contrato entre los handlers MSW y las rutas reales del gateway.
-- [ ] 13. Preflight de dependencias nativas del gate.
+- [x] 13. [código] Preflight de dependencias nativas del gate. (ba5f301a)
 - [x] 14. Reservar los subcomandos del CLI como alias inválidos.
 - [ ] 15. Inventariar las dependencias de Argos con la VPS antes de moverlo.
 - [ ] 16. Retirar lo legacy (`fleet_adoption_probe_*`, `fleet_executor_legacy*`) tras migrar.
