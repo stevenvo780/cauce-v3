@@ -175,7 +175,7 @@ def literal_userinfo(data: bytes) -> bool:
 def sensitive_content(path: str, data: bytes, schema_version: int = SCHEMA_VERSION) -> bool:
     if VERIFIED_CREDENTIAL.search(data):
         return True
-    if schema_version >= SCHEMA_VERSION and (AWS_SECRET_LITERAL.search(data) or NPM_AUTH_LITERAL.search(data) or literal_userinfo(data)):
+    if schema_version in RESTORABLE_SCHEMAS and (AWS_SECRET_LITERAL.search(data) or NPM_AUTH_LITERAL.search(data) or literal_userinfo(data)):
         return True
     return path.startswith('config/') and CONFIG_ASSIGNMENT.search(data) is not None
 

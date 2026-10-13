@@ -406,20 +406,21 @@ class SpaceArchiveTests(unittest.TestCase):
 
         self.rewrite(plant)
 
-    def test_schema_1_restores_literal_secret_texts_and_schema_2_rejects_them(self):
+    def test_schema_1_restores_plain_text_and_both_schemas_reject_literal_secrets(self):
         literal = 'aws_secret_access_key = ' + ('A' * 20) + '\n_authToken=abcd1234ef\nhttps://deploy:hunter2@example.test/repo.git\n'
         (self.space / 'projects/legacy.txt').write_text('plain notes\n')
         self.backup()
-        self.plant_legacy(literal, 1)
+        self.plant_legacy('plain notes\n', 1)
         restore_space(str(self.archive), str(self.restored), self.identity)
-        self.assertEqual((self.restored / 'projects/legacy.txt').read_text(), literal)
+        self.assertEqual((self.restored / 'projects/legacy.txt').read_text(), 'plain notes\n')
         shutil.rmtree(self.restored)
-        self.archive.unlink()
-        self.backup()
-        self.plant_legacy(literal, 2)
-        with self.assertRaisesRegex(SpaceArchiveFailure, 'digest or content'):
-            restore_space(str(self.archive), str(self.restored), self.identity)
-        self.assertFalse(self.restored.exists())
+        for schema_version in (1, 2):
+            self.archive.unlink()
+            self.backup()
+            self.plant_legacy(literal, schema_version)
+            with self.assertRaisesRegex(SpaceArchiveFailure, 'digest or content'):
+                restore_space(str(self.archive), str(self.restored), self.identity)
+            self.assertFalse(self.restored.exists())
 
     def test_missing_external_mount_file_does_not_require_a_private_config_directory(self):
         self.space.joinpath('config').chmod(0o755)
