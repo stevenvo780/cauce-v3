@@ -61,7 +61,7 @@ async function canary(host: string, tenant: string) {
   helper.stdin.write(JSON.stringify({ host_id: host, tenant_id: tenant }) + '\n');
   return result;
 }
-describe.skipIf(process.env.CAUCE_QUOTA_DOCKER_E2E !== '1')('durable agent quota HTTP -> signed host -> real Docker -> PostgreSQL -> agent card', () => {
+describe('durable agent quota HTTP -> signed host -> real Docker -> PostgreSQL -> agent card', () => {
   it('measures two real containers as one account, persists unsupported and receipts, and isolates companies', async () => {
     if (!current || !directory) throw new Error('fixture missing');
     const company = await channelCompany(pool, 'durablequota'); const foreign = await channelCompany(pool, 'foreignquota');
