@@ -7,7 +7,7 @@ import {
   sweepOldRecordings,
 } from './recording-retention.js';
 
-const DAY_MS = 24 * 3_600_1_000;
+const DAY_MS = 24 * 3_600_000;
 const NOW = new Date('2026-09-28T00:00:00Z').getTime();
 
 function fixture(): string {
@@ -35,7 +35,7 @@ describe('sweepOldRecordings (T014a/FR-012)', () => {
       log: (message) => { logs.push(message); },
     });
 
-    expect(RECORDING_RETENTION_MS).toBe(30 * DAY_MS);
+    expect(RECORDING_RETENTION_MS).toBe(2_592_000_000);
     expect(result.deleted).toHaveLength(2);
     expect([...result.deleted].sort()).toEqual([old1, old2].sort());
     expect(result.kept).toContain(fresh);
