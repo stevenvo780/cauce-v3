@@ -24,7 +24,7 @@ export interface CompanyAuthorityRequest {
   readonly alias: string;
   /** Only a verified console person reaches company or platform authority; an agent never does. */
   readonly humanId?: string;
-  /** A signed company switch, honoured only while the person stays a platform administrator. */
+  /** A signed company switch, honoured only while the person stays a platform administrator; it never falls back home. */
   readonly requestedCompany?: string;
 }
 
@@ -41,6 +41,14 @@ const SQL_PARAMETER = /^\$[1-9][0-9]{0,2}$/u;
 
 function unavailable(): never {
   throw new StoreError('forbidden', 'company authority is unavailable');
+}
+
+/** The signed company switch names a company that is no longer usable; only a new switch leaves it. */
+export class RequestedCompanyUnavailableError extends StoreError {
+  constructor(readonly company: string) {
+    super('forbidden', 'the requested company is unavailable; choose a company again');
+    this.name = 'RequestedCompanyUnavailableError';
+  }
 }
 
 /** Platform tables grant the runtime no UPDATE, so their rows are share-locked by the DEFINER function. */
@@ -108,9 +116,13 @@ export async function lockCompanyAuthority(client: DatabaseClient, request: Comp
     const facts = await companyFacts(client, person.humanId, null);
     if (facts.home_company !== home.company_id) unavailable();
     if (facts.platform_admin) {
-      const foreign = requestedCompany !== undefined && requestedCompany !== home.company_id
-        && (await companyFacts(client, person.humanId, requestedCompany)).company_enabled;
-      return resolved(base, foreign ? requestedCompany : home.company_id, 'platform_admin', 'platform');
+      if (requestedCompany === undefined || requestedCompany === home.company_id) {
+        return resolved(base, home.company_id, 'platform_admin', 'platform');
+      }
+      if (!(await companyFacts(client, person.humanId, requestedCompany)).company_enabled) {
+        throw new RequestedCompanyUnavailableError(requestedCompany);
+      }
+      return resolved(base, requestedCompany, 'platform_admin', 'platform');
     }
     if (facts.company_role !== null && facts.company_enabled) {
       return resolved(base, home.company_id, facts.company_role === 'owner' ? 'company_owner' : 'company_admin', 'company');

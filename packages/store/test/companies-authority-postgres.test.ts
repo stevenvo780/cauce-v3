@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   assertKeepsCompanyAuthority, assertPlatformAdmin, companyRevision, companyScopeSql, lockCompanyAuthority, lockCompanyConfiguration,
-  lockPlatformConfiguration, withCompanyContext, withTransaction,
+  lockPlatformConfiguration, RequestedCompanyUnavailableError, withCompanyContext, withTransaction,
   type CompanyAuthority, type CompanyAuthorityRequest, type DatabaseClient, type DatabasePool,
 } from '../src/index.js';
 import { preparePostgresSuite } from './postgres-suite.js';
@@ -77,15 +77,19 @@ describe('company authority resolver on PostgreSQL', () => {
     expect(agent).toMatchObject({ humanId: null, homeTenant: 'Miguel', alias: 'janus', homeCompany: 'humanizar' });
   });
 
-  it('ignores the company claim once the platform role is revoked or the company is unavailable', async () => {
+  it('refuses an unusable requested company instead of acting at home, and ignores the claim once the platform role is revoked', async () => {
     const steven = { tenant: 'Steven', alias: 'kant', humanId: actors.steven };
     for (const state of ['disabled', 'retired']) {
       await withTransaction(admin, client => client.query('SELECT cauce_platform_set_company_state($1,$2,$3)', ['praxis', state, actors.steven]));
-      expect(summary(await resolve({ ...steven, requestedCompany: 'praxis' }))).toMatchObject({ actingCompany: 'humanizar', platformOverride: false });
+      const refused = resolve({ ...steven, requestedCompany: 'praxis' });
+      await expect(refused).rejects.toBeInstanceOf(RequestedCompanyUnavailableError);
+      await expect(refused).rejects.toMatchObject({ code: 'forbidden', company: 'praxis' });
+      expect(summary(await resolve(steven))).toEqual({ role: 'platform_admin', scope: 'platform', actingCompany: 'humanizar', platformOverride: false });
+      expect(summary(await resolve({ ...steven, requestedCompany: 'humanizar' }))).toMatchObject({ actingCompany: 'humanizar' });
       expect(summary(await resolve({ tenant: 'PraxisHub', alias: 'company_admin', humanId: actors.leon })))
         .toEqual({ role: 'none', scope: 'none', actingCompany: 'praxis', platformOverride: false });
     }
-    expect(summary(await resolve({ ...steven, requestedCompany: 'absent' }))).toMatchObject({ actingCompany: 'humanizar' });
+    await expect(resolve({ ...steven, requestedCompany: 'absent' })).rejects.toBeInstanceOf(RequestedCompanyUnavailableError);
     await admin.query('INSERT INTO platform_admins(human_id) VALUES($1)', [actors.miguel]);
     await admin.query('DELETE FROM platform_admins WHERE human_id=$1', [actors.steven]);
     expect(summary(await resolve({ ...steven, requestedCompany: 'praxis' })))

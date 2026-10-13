@@ -212,16 +212,20 @@ describe('console session company authority', () => {
     expect((await switchTo(praxis, 'praxis')).statusCode).toBe(403);
   });
 
-  it('acts at home once the company of the claim is disabled or retired', async () => {
+  it('refuses the claim of a disabled or retired company instead of acting at home until the session switches back', async () => {
     const steven = await login('steven@example.test');
     const praxis = await switched(steven, 'praxis');
     for (const state of ['disabled', 'retired']) {
       await withTransaction(admin, client => client.query('SELECT cauce_platform_set_company_state($1,$2,$3)', ['praxis', state, people.steven]));
-      expect(await authority(praxis)).toEqual(STEVEN_HOME);
-      expect((await get('/v3/console/companies', praxis)).json()).toMatchObject({ acting_company: 'humanizar',
-        companies: [{ id: 'humanizar', state: 'enabled' }, { id: 'praxis', state }] });
+      expect((await get('/v3/auth/session', praxis)).json()).toEqual({ authenticated: false, login_mode: 'password' });
+      expect((await get('/v3/console/companies', praxis)).statusCode).toBe(403);
       expect((await switchTo(steven, 'praxis')).statusCode).toBe(403);
     }
+    const home = await switchTo(praxis, null);
+    expect(home.statusCode).toBe(200);
+    const returned = session(sessionCookie(home) ?? '', steven.csrf);
+    expect(claims(returned.token).cmp).toBeUndefined();
+    expect(await authority(returned)).toEqual(STEVEN_HOME);
   });
 
   it('scopes a company administrator to its company and refuses a person without authority', async () => {
