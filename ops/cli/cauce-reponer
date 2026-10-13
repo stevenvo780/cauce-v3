@@ -8,13 +8,18 @@ set -euo pipefail
 
 ID=${1:-}
 ORIGIN=${CAUCE_CONSOLE_ORIGIN:-https://consola.elenxos.com}
-GW=${CAUCE_GATEWAY:-https://100.64.0.6:8443}
+GW=${CAUCE_GATEWAY:-}
 
 case "$ID" in
   '' ) echo "uso: cauce-reponer <delivery_id>   (sacalo de: cauce-huerfanas)" >&2; exit 2 ;;
   [0-9a-f]*-[0-9a-f]*-[0-9a-f]*-[0-9a-f]*-[0-9a-f]* ) ;;
   * ) echo "eso no parece un delivery_id (uuid): $ID" >&2; exit 2 ;;
 esac
+
+if [ -z "$GW" ]; then
+  printf 'cauce-reponer: falta CAUCE_GATEWAY; exporta la URL del gateway antes de reponer una entrega.\n' >&2
+  exit 2
+fi
 
 echo "  reponiendo entrega $ID"
 SALIDA=$(ssh -o BatchMode=yes agora-storage "curl -sS -k -o /tmp/cauce-reponer.\$\$ -w '%{http_code}' \

@@ -222,15 +222,33 @@ export CAUCE_PTY_RELAY_PORT=9445
 ops/cli/cauce <alias> aprovisionar --dry-run
 ```
 
-El dry-run muestra ambos valores efectivos sin escribir archivos. Sin host, el paso
-[3d] falla nombrando `CAUCE_PTY_RELAY_HOST` y no escribe el `.env` del launcher.
+El dry-run muestra ambos valores efectivos sin escribir archivos. Si falta el `.env`
+del launcher, el aprovisionamiento valida host y puerto antes de emitir o registrar
+credenciales; sin host falla nombrando `CAUCE_PTY_RELAY_HOST` antes de escribir nada.
 La escritura conserva modo `0600` en `${XDG_CONFIG_HOME:-$HOME/.config}/cauce-v3/pty/<alias>.env`;
-si ese archivo ya existe, se conserva sin reemplazarlo. Las variables deben estar
-disponibles en el host que ejecuta el aprovisionamiento.
+si ese archivo ya existe, se conserva sin reemplazarlo y no exige esas variables.
+Para crear el archivo, las variables deben estar disponibles en el host que ejecuta
+el aprovisionamiento.
 
 **Baja**: `ops/cli/cauce <alias> retirar` (para la unit y revoca token e identidad mTLS) → `UPDATE agents SET enabled=false` → re-exportar snapshot (el alias pasa a `retired`) → `regenerate-fleet.sh` (purga manifest y units huérfanas: `ops/scripts/generate-container-units.py:309-310` y `ops/scripts/generate-units.py:122`) → `validate.sh`.
 
 **Aviso de orden**: `enabled=false` en BD saca al agente del enrutado de entregas, pero el `hello`/lease del gateway se autoriza además por certificado mTLS — un agente dado de baja en BD puede seguir conectándose hasta que `retirar` revoca su credencial. No dar el UPDATE por baja completa sin correr `retirar`.
+
+### Reponer una entrega fallida desde el CLI
+
+`cauce-reponer <delivery_id>` exige `CAUCE_GATEWAY` con la URL del gateway de la
+instalación. Si falta o está vacía, sale con código `2`, nombra la variable y no abre
+SSH. Ejemplo ficticio:
+
+```bash
+CAUCE_GATEWAY=https://gateway.example.invalid:8443 ops/cli/cauce-reponer <delivery_id>
+```
+
+El helper usa el acceso SSH `agora-storage` y el certificado cliente de consola
+disponible allí. La entrega debe tener una fila en `dead_letters`; antes de reponerla,
+comprueba que no haya una conversación más reciente ni trabajo en vuelo. Tras una
+respuesta HTTP `200`, verifica que la entrega nueva termine y su respuesta salga por
+`adapter_outbox` con `status=sent`.
 
 ### CLI de cuentas humanas de consola
 

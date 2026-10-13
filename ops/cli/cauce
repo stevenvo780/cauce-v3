@@ -249,7 +249,7 @@ cmd_flota() {
     printf "  %slevantar:  systemctl --user start cauce-v3-openclaw-gateway@<alias>%s\n" "$c_dim" "$c_reset"
   fi
   if [ -r "$MAPA_HOST" ] && awk '$2=="vps"{f=1} END{exit !f}' "$MAPA_HOST"; then
-    printf "\n  %s--- en el VPS (100.64.0.11) ---%s\n" "$c_dim" "$c_reset"
+    printf "\n  %s--- en el VPS (vps) ---%s\n" "$c_dim" "$c_reset"
     if ! remote_user=$(usuario_remoto); then
       aviso_usuario_remoto
       printf "  %sse omite el VPS%s\n" "$c_dim" "$c_reset"
