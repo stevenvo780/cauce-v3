@@ -322,7 +322,7 @@ export function planExternalVerification(options: Pick<ExternalOptions, 'baseUrl
     canaries: (['a', 'b'] as const).map(side => ({ side, company: states[side].slug, email: states[side].email })),
     matrix: { cases: MATRIX_CASES.length, with_head: gets, mutating, real_targets: MATRIX_CASES.length - synthetic.length,
       synthetic_targets: synthetic.length, routes: MATRIX_CASES.map(entry => `${entry.method} ${entry.url}`) },
-    header_cases: ACTOR_VIEWS.length + 3, parameter_cases: ACTOR_VIEWS.length, credential_cases: 9, websocket_cases: 2,
+    header_cases: ACTOR_VIEWS.length + 3, parameter_cases: ACTOR_VIEWS.length, credential_cases: 8, websocket_cases: 2,
     estimated_requests: estimated, estimated_minutes: Math.ceil(estimated / options.ratePerSecond / 60),
     rate_per_second: options.ratePerSecond, max_requests: options.maxRequests };
 }
