@@ -23,33 +23,27 @@ from credential_health import (
     shared_fingerprints,
 )
 
-# (container, path inside the container, label)
-OBJETIVOS = [
-    # Claude (all fleet containers that live in THIS host, the VPS).
-    # ws-isa/salva lives on kratos and this host has no SSH to it: kratos measures it and
-    # PUSHES it (see REMOTE block below). Don't remove its row: removing it was exactly
-    # what left salva without monitoring and without anyone saying so.
-    ("claw",                   "/home/claw/.claude/.credentials.json", "claude/jarvis"),
-    ("claw-miguel",            "/home/claw/.claude/.credentials.json", "claude/janus"),
-    ("claw-iza",               "/home/claw/.claude/.credentials.json", "claude/iza"),
-    ("ws-zeus",                "/home/dev/.claude/.credentials.json",  "claude/zeus"),
-    # claude/socrates RETIRED from the inventory (28-08-2026): socrates runs codex (DB, reconciliation
-    # b93f087d) and its Claude credential on ws-prizma has been DEAD without refreshToken since before
-    # 21-08; 334 runs in solid red blinded the SHARED alert. If socrates returns to claude,
-    # re-add the row. The credential itself was NOT touched (owner's rule).
-    ("ws-humanizar",           "/home/dev/.claude/.credentials.json",  "claude/kratos+atlas"),
-    ("ctrl-infra",             "/home/dev/.claude/.credentials.json",  "claude/argos+kant"),
-    # Codex
-    ("claw",         "/home/claw/.codex/auth.json", "codex/jarvis"),
-    ("ws-prizma",    "/home/dev/.codex/auth.json",  "codex/socrates"),
-    ("ws-humanizar", "/home/dev/.codex/auth.json",  "codex/atlas"),
-    ("ctrl-infra",   "/home/dev/.codex/auth.json",  "codex/kant"),
-]
 
-OBJETIVOS_REMOTOS = [
-    ("ws-isa", "/home/dev/.claude/.credentials.json", "claude/salva"),
-    ("ws-isa", "/home/dev/.codex/auth.json",          "codex/salva"),
-]
+def _filas_objetivo(clave: str) -> list[tuple[str, str, str]]:
+    ruta = os.environ.get("CAUCE_CRED_GUARD_TARGETS")
+    if not ruta:
+        raise SystemExit("falta CAUCE_CRED_GUARD_TARGETS")
+    try:
+        with open(ruta, encoding="utf-8") as handle:
+            document = json.load(handle)
+    except (OSError, json.JSONDecodeError) as error:
+        raise SystemExit("CAUCE_CRED_GUARD_TARGETS ilegible") from error
+    if not isinstance(document, dict):
+        raise SystemExit("CAUCE_CRED_GUARD_TARGETS no es un objeto")
+    rows = document.get(clave)
+    if not isinstance(rows, list) or not rows:
+        raise SystemExit(f"CAUCE_CRED_GUARD_TARGETS sin {clave}")
+    parsed: list[tuple[str, str, str]] = []
+    for row in rows:
+        if not isinstance(row, list) or len(row) != 3 or not all(isinstance(item, str) and item for item in row):
+            raise SystemExit("CAUCE_CRED_GUARD_TARGETS fila invalida")
+        parsed.append((row[0], row[1], row[2]))
+    return parsed
 
 DESTINO_REMOTO = "vps:/var/lib/cauce-v3/cred-guard-kratos.json"
 LOCAL = os.path.expanduser("~/.local/state/cauce-v3/cred-guard-kratos.json")
@@ -61,7 +55,7 @@ def _sonda_remota() -> tuple[int, int, int]:
         raise SystemExit("CAUCE_CRED_GUARD_HOST is invalid")
     ahora_r = datetime.datetime.now(datetime.UTC)
     filas_r, problemas_r = [], 0
-    for contenedor, ruta, etiqueta in OBJETIVOS_REMOTOS:
+    for contenedor, ruta, etiqueta in _filas_objetivo("remote_targets"):
         d = probe_container(contenedor, ruta)
         if d.get("falta"):
             filas_r.append({"huella": "-", "etiqueta": etiqueta, "contenedor": contenedor,
@@ -124,7 +118,7 @@ def _aggregate() -> tuple[int, int, int]:
     ahora = datetime.datetime.now(datetime.UTC)
     filas, credential_locations, problemas = [], [], 0
 
-    for contenedor, ruta, etiqueta in OBJETIVOS:
+    for contenedor, ruta, etiqueta in _filas_objetivo("targets"):
         d = probe_container(contenedor, ruta)
         if d.get("falta"):
             filas.append(("-", etiqueta, contenedor, "NO EXISTE", ""))

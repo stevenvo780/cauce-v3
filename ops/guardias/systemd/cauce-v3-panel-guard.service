@@ -1,6 +1,6 @@
 [Unit]
 Description=Cauce V3 - repone la sesion compartida (panel) que se murio sola
-Documentation=file:///datos/workspaces/zeus/cauce-v3/ops/guardias/README.md
+Documentation=file:///opt/cauce-v3/ops/guardias/README.md
 
 [Service]
 Type=oneshot

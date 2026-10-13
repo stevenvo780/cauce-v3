@@ -1,6 +1,6 @@
 [Unit]
 Description=Avisa a zeus si un alias atendio a personas desde mas de una conversacion en 24 h
-Documentation=file:///datos/workspaces/zeus/cauce-v3/ops/guardias/README.md
+Documentation=file:///opt/cauce-v3/ops/guardias/README.md
 After=docker.service network-online.target
 Wants=network-online.target
 

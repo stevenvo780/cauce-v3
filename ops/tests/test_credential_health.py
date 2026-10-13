@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-import ast
 import contextlib
 import datetime
 import io
@@ -35,6 +34,17 @@ from credential_health import (  # noqa: E402
 )
 
 NOW = 2_000_000_000.0
+
+SYNTHETIC_TARGETS = {
+    "targets": [
+        ["synthetic-a", "/home/dev/.claude/.credentials.json", "claude/fixture-a"],
+        ["synthetic-b", "/home/dev/.codex/auth.json", "codex/fixture-b"],
+    ],
+    "remote_targets": [
+        ["synthetic-remote-a", "/home/dev/.claude/.credentials.json", "claude/fixture-remote-a"],
+        ["synthetic-remote-b", "/home/dev/.codex/auth.json", "codex/fixture-remote-b"],
+    ],
+}
 
 
 def fleet_record(fingerprint, expiry):
@@ -141,6 +151,13 @@ class TestConsumerWiring(unittest.TestCase):
         self.argv = mock.patch.object(sys, "argv", ["cred-guard.py"])
         self.argv.start()
         self.addCleanup(self.argv.stop)
+        self.targets_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.targets_dir.cleanup)
+        targets = pathlib.Path(self.targets_dir.name) / "targets.json"
+        targets.write_text(json.dumps(SYNTHETIC_TARGETS), encoding="utf-8")
+        self.targets_env = mock.patch.dict(os.environ, {"CAUCE_CRED_GUARD_TARGETS": str(targets)})
+        self.targets_env.start()
+        self.addCleanup(self.targets_env.stop)
 
     @staticmethod
     def result(stdout=""):
@@ -302,6 +319,7 @@ class TestConsumerWiring(unittest.TestCase):
 class TestGuardState(unittest.TestCase):
     def run_guard(self, directory, record, *, arguments=(), push_result=None, push_failure=None):
         output, errors = io.StringIO(), io.StringIO()
+        (directory / "targets.json").write_text(json.dumps(SYNTHETIC_TARGETS), encoding="utf-8")
         remote = json.dumps({"host": "kratos", "ts": datetime.datetime.now(datetime.UTC).isoformat(), "filas": []})
         real_open = open
 
@@ -311,7 +329,11 @@ class TestGuardState(unittest.TestCase):
             return real_open(path, *args, **kwargs)
 
         with (
-            mock.patch.dict(os.environ, {"HOME": str(directory), "CAUCE_CRED_GUARD_ESTADO": str(directory / "state")}),
+            mock.patch.dict(os.environ, {
+                "HOME": str(directory),
+                "CAUCE_CRED_GUARD_ESTADO": str(directory / "state"),
+                "CAUCE_CRED_GUARD_TARGETS": str(directory / "targets.json"),
+            }),
             mock.patch.object(sys, "argv", ["cred-guard.py", *arguments]),
             mock.patch.object(credential_health, "probe_container", side_effect=record),
             mock.patch("subprocess.run", return_value=push_result, side_effect=push_failure),
@@ -351,8 +373,8 @@ class TestGuardState(unittest.TestCase):
             code, output, errors = self.run_guard(directory, lambda *_args: {"error": "synthetic-read-failure"})
             self.assertEqual(code, 1)
             self.assertIn("ILEGIBLE", output)
-            self.assertIn("problemas=10", output)
-            self.assert_state(directory, output, errors, exit_code=1, problems=10, shared=0)
+            self.assertIn("problemas=2", output)
+            self.assert_state(directory, output, errors, exit_code=1, problems=2, shared=0)
 
     def test_remote_unreadable_record_counts_even_without_problem_flag(self):
         remote = json.dumps({
@@ -362,7 +384,15 @@ class TestGuardState(unittest.TestCase):
         })
         with tempfile.TemporaryDirectory() as temporary:
             directory = pathlib.Path(temporary)
-            with mock.patch("json.load", return_value=json.loads(remote)):
+            real_load = json.load
+
+            def load(handle, *args, **kwargs):
+                data = real_load(handle, *args, **kwargs)
+                if isinstance(data, dict) and "filas" in data and "targets" not in data:
+                    return json.loads(remote)
+                return data
+
+            with mock.patch("json.load", side_effect=load):
                 code, output, errors = self.run_guard(directory, lambda *_args: {"falta": True})
             self.assertEqual(code, 1)
             self.assert_state(directory, output, errors, exit_code=1, problems=1, shared=0)
@@ -575,41 +605,29 @@ class TestCredentialProbe(unittest.TestCase):
 
 
 class TestGuardInventory(unittest.TestCase):
-    """OBJETIVOS is hand-written on purpose: its labels carry shared-credential facts the
-    inventory does not model, and deleting a row is what once left an alias unmonitored.
-    This gate does not shrink it, it only catches a container renamed out from under it."""
-
-    def test_every_targeted_container_exists_in_the_alias_inventory(self):
+    def test_targets_come_from_a_private_file(self):
         source = (GUARDS / "cred-guard.py").read_text(encoding="utf-8")
-        targets = None
-        for node in ast.parse(source).body:
-            names = getattr(node, "targets", [])
-            if any(isinstance(name, ast.Name) and name.id == "OBJETIVOS" for name in names):
-                targets = ast.literal_eval(node.value)
-        self.assertIsNotNone(targets, "cred-guard.py no declara OBJETIVOS")
-
-        inventory = json.loads(
-            (GUARDS.parent / "container-aliases.json").read_text(encoding="utf-8")
-        )
+        self.assertIn("CAUCE_CRED_GUARD_TARGETS", source)
+        self.assertNotIn("/home/claw", source)
+        self.assertNotIn("/home/stev", source)
+        example = json.loads((GUARDS / "cred-guard-targets.example.json").read_text(encoding="utf-8"))
+        inventory = json.loads((GUARDS.parent / "container-aliases.json").read_text(encoding="utf-8"))
         known = {
             alias["container"]
             for alias in inventory["aliases"].values()
             if alias.get("container")
         }
-        self.assertGreater(len(targets), 0)
-        tenants = {alias["tenant"] for alias in inventory["aliases"].values()}
-        if tenants == {"Hospital"}:
-            targeted = {container for container, _path, _label in targets}
-            self.assertTrue(known.isdisjoint(targeted))
-            instance_sources = "\n".join(
-                path.read_text(encoding="utf-8")
-                for path in (GUARDS.parent / "instances" / "hospital").glob("*.sh")
-            )
-            self.assertNotIn("cred-guard", instance_sources)
-            return
-        for container, _path, label in targets:
-            with self.subTest(label=label):
-                self.assertIn(container, known)
+        for key in ("targets", "remote_targets"):
+            rows = example[key]
+            self.assertGreater(len(rows), 0)
+            for row in rows:
+                self.assertEqual(len(row), 3)
+                self.assertTrue(all(isinstance(item, str) and item for item in row))
+                container, path, _label = row
+                self.assertTrue(container.startswith("<"))
+                self.assertNotIn("/home/claw", path)
+                self.assertNotIn("/home/stev", path)
+                self.assertNotIn(container, known)
 
 
 if __name__ == "__main__":

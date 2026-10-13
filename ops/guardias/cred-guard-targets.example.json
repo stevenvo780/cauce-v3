@@ -1,0 +1,9 @@
+{
+  "targets": [
+    ["<container>", "/home/dev/.claude/.credentials.json", "claude/<alias>"],
+    ["<container>", "/home/dev/.codex/auth.json", "codex/<alias>"]
+  ],
+  "remote_targets": [
+    ["<container>", "/home/dev/.claude/.credentials.json", "claude/<alias>"]
+  ]
+}

@@ -57,7 +57,6 @@ csv.field_size_limit(16 * 1024 * 1024)
 PUENTE_TELEGRAM = "cauce-v3-prod-telegram-bridge-1"
 TOKEN_DIR = "/etc/cauce-v3/telegram-runtime"
 ALIAS_AVISO = "zeus"
-CHAT_STEVEN = "6979524541"
 MIN_TURNO_COLGADO = 30
 MIN_ENTREGA_TRABADA = 20
 TECHO_TURNO_LARGO = 180
@@ -242,11 +241,14 @@ RE_ERROR_DE_TRANSPORTE = re.compile(
 # ---------------------------------------------------------------------------- reportar
 
 PLANTILLA_AVISO = rf'''
-import glob, json, sys, urllib.parse, urllib.request
+import glob, json, os, sys, urllib.parse, urllib.request
 texto = json.load(sys.stdin)["texto"]
 tenant = json.loads(SCOPED_NOTICE_JSON)[0]
 tok = open("{TOKEN_DIR}/" + tenant + "/{ALIAS_AVISO}.token").read().strip()
-d = urllib.parse.urlencode({{"chat_id": "{CHAT_STEVEN}", "text": texto}}).encode()
+chat = os.environ.get("CAUCE_OWNER_TELEGRAM_CHAT_ID", "")
+if not chat.isdigit():
+    raise SystemExit("falta CAUCE_OWNER_TELEGRAM_CHAT_ID")
+d = urllib.parse.urlencode({{"chat_id": chat, "text": texto}}).encode()
 with urllib.request.urlopen("https://api.telegram.org/bot%s/sendMessage" % tok, d, timeout=25) as r:
     r.read()
 print("enviado")
@@ -362,7 +364,10 @@ MAX_FALLOS_SEGUIDOS = 3   # circuit breaker: a doctor that shouts while broken i
 
 
 # AI accounts: anticipate exhaustion. The data is fresh; the census is hand-measured.
-CUENTAS_LIVE = "/datos/agents/shared/.local/share/ai-usage-live/claude-accounts.json"
+CUENTAS_LIVE = os.environ.get(
+    "CAUCE_CUENTAS_LIVE",
+    os.path.expanduser("~/.local/share/ai-usage-live/claude-accounts.json"),
+)
 UMBRAL_CUENTA_PCT = 10        # below this, the account is about to die
 UMBRAL_RESET_LEJOS_S = 3600   # ...and reset is still far away (WEEKLY window)
 # Not all windows are the same thing. The collector tags each account with its `window`:
@@ -404,7 +409,7 @@ DIAS_CENSO_CADUCA = 3
 
 CENSO_COMANDO = ("la cuenta VIVA la dice `claude auth status` dentro del contenedor, NO el campo "
                  "oauthAccount de ~/.claude.json, que queda rancio. Y si el alias fija "
-                 "CLAUDE_CONFIG_DIR (kant: /home/stev/red-servidores/.claude), hay que exportarlo "
+                 "CLAUDE_CONFIG_DIR (p. ej. <HOME>/.claude), hay que exportarlo "
                  "antes o se lee un config que el alias nunca usa.")
 
 
@@ -640,9 +645,7 @@ def main():
                          "detalle": det, "verificado": efecto})
 
     # --- 3) entregas tomadas y nunca terminadas ----------------------------------------
-    # UN TURNO LARGO NO ES UN TURNO TRABADO. Antes bastaba con la edad, y por eso el guardia
-# A long turn is NOT a stuck turn. The doctor used to report itself every hour with
-    # turns it was actually working on. Now the row must also be STILL (or the lease expired).
+    # Un turno largo no es un turno trabado: la fila debe estar quieta (o con el lease vencido), no solo ser vieja.
     todas_en_vuelo = entregas_trabadas()
     en_vuelo_alias = {(e["tenant"], e["alias"]) for e in todas_en_vuelo}
     por_alias, largos = {}, {}

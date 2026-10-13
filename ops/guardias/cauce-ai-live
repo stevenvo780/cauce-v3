@@ -26,15 +26,20 @@ import subprocess
 import sys
 import time
 
-BASE = "/home/stev/.local/share/cauce-ai-live"
+BASE = os.path.join(os.environ.get("XDG_DATA_HOME", os.path.expanduser("~/.local/share")), "cauce-ai-live")
 sys.path.insert(0, BASE)
 import cdp  # noqa: E402 (needs BASE on sys.path)
+
+
+def _usage_live_dir() -> str:
+    return os.environ.get("CAUCE_AI_USAGE_LIVE_DIR", os.path.expanduser("~/.local/share/ai-usage-live"))
+
 
 # One browser account per CDP port. The label is neutral on purpose: the real email is
 # discovered live and only printed in --json.
 CUENTAS_PATH = os.environ.get(
     "CAUCE_AI_LIVE_CUENTAS",
-    "/datos/agents/shared/.local/share/ai-usage-live/claude-cdp-accounts.json",
+    os.path.join(_usage_live_dir(), "claude-cdp-accounts.json"),
 )
 # Embedded fallback: known Claude accounts. Used only if the shared file is missing or
 # fails to parse, and never silently falls back to a shorter list.
@@ -120,7 +125,7 @@ def sonda_claude(cuenta: dict) -> dict:
 def sonda_codex() -> dict:
     r = {"label": "codex", "provider": "codex", "ok": False}
     try:
-        env = dict(os.environ, CODEX_HOME="/datos/agents/shared/.codex", CODEX_PROBE_TIMEOUT="45")
+        env = dict(os.environ, CODEX_HOME=os.environ.get("CODEX_HOME", os.path.expanduser("~/.codex")), CODEX_PROBE_TIMEOUT="45")
         out = subprocess.run(["python3", BASE.replace("cauce-ai-live", "ai-usage-live") + "/codex-probe.py"],
                              capture_output=True, text=True, timeout=90, env=env)
         d = json.loads(out.stdout.strip().splitlines()[-1]) if out.stdout.strip() else {}
@@ -160,7 +165,7 @@ def tabla(datos: dict) -> str:
 
 def escribe_contexto(datos: dict) -> None:
     """Rewrite the file injected by the hook into each agent, WITH its absolute timestamp."""
-    dst = "/home/stev/.local/share/ai-usage-live/quota-context.txt"
+    dst = os.path.join(_usage_live_dir(), "quota-context.txt")
     lineas = [f'<ai-quotas generado={datos["generado"]} fuente=cauce-ai-live>']
     for c in datos["cuentas"]:
         if c.get("ok") and c["provider"] == "claude":

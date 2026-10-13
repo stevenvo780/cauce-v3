@@ -97,6 +97,7 @@ echo "500 0 https://test.example/app"
       CATALOGO_TIMEOUT: '1',
       CATALOGO_REINTENTO: '0',
       CAUCE_PKI: tmp,
+      CAUCE_AVISO_CONF: join(tmp, 'nonexistent.json'),
       CAUCE_DESTINO_AVISO: 'destino_personalizado',
     };
 

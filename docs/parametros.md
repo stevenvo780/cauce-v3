@@ -256,6 +256,27 @@ según `CAUCE_MCP_OAUTH_PROVIDER` en `deploy/deploy.sh`.
 | `CAUCE_ISOLATION_SYNTHETIC_PATH` (`gateway/security/route-isolation-fixtures.ts`) | nombre de referencia `env_path` de las cuentas fixture de la guardia; no es parámetro del orquestador | guardia de aislamiento |
 | Puerto `127.0.0.1:18080`, postgres tmpfs, red interna | aislamiento | — |
 
+## 13. Rutas privadas de ops (fuera del repo)
+
+El árbol público no fija homes, chats ni inventarios del operador. Cada variable se exporta en el host. El default, cuando existe, es genérico. Las copias ya instaladas en `~/.local/bin` no leen este árbol hasta reinstalar; antes de reinstalar `cauce-ai-live` hay que exportar `CAUCE_AI_USAGE_LIVE_DIR` (o `CAUCE_AI_LIVE_CUENTAS`) y `CODEX_HOME` si el home real no es `~/.codex`.
+
+| Variable | Default | Efecto |
+|---|---|---|
+| `CAUCE_OWNER_TELEGRAM_CHAT_ID` | ninguno | Chat que `praxis-supervision-evidence.py` exige como origen autenticado y que la plantilla de aviso del monitor médico lee al enviar. Vacío o con forma inválida: `owner_conversation_unconfigured` o el aviso no sale. |
+| `CAUCE_CODEX_HOMES` | ninguno | Homes de `codex-http-probe.py`, separados por el separador de rutas del sistema, cuando no hay argumentos. |
+| `GIT_AUTHOR_EMAIL` | `cauce@example.test` | Correo de autor y committer del supervisor de adaptadores si el alias no lo define. |
+| `CAUCE_DECISIONES_SMOKE_PKI` | ninguno; obligatoria | PKI de humo de `deploy/decisiones/desplegar.sh`. |
+| `CAUCE_REMOTE_USER` | ninguno | Usuario remoto de `cauce flota` y de la ruta `vps`. Vacío o inválido: se omite la sección VPS y la ruta `vps` sale 2. Patrón `^[a-z_][a-z0-9_-]{0,31}$`. |
+| `XDG_DATA_HOME` | `~/.local/share` | Base de `cauce-ai-live`. |
+| `CAUCE_AI_USAGE_LIVE_DIR` | `~/.local/share/ai-usage-live` | Directorio de cuentas CDP y de `quota-context.txt` si no está `CAUCE_AI_LIVE_CUENTAS`. |
+| `CAUCE_AI_LIVE_CUENTAS` | `<CAUCE_AI_USAGE_LIVE_DIR>/claude-cdp-accounts.json` | Lista de cuentas del sondeo Claude. |
+| `CODEX_HOME` | `~/.codex` | Home que `cauce-ai-live` pasa a la sonda Codex. |
+| `CAUCE_CRED_GUARD_TARGETS` | ninguno; obligatoria | JSON privado `{targets, remote_targets}` de `cred-guard.py`. Ejemplo: `ops/guardias/cred-guard-targets.example.json`. |
+| `CAUCE_CUENTAS_LIVE` | `~/.local/share/ai-usage-live/claude-accounts.json` | Fichero de cuentas que lee el monitor médico. |
+| `CAUCE_AVISO_CONF` | `$HOME/.config/cauce-v3/attach-aviso.json` | Config de aviso del catálogo. Sin `HOME` ni esta variable, el guion aborta. |
+| `CAUCE_PKI` | `$HOME/.config/cauce-v3/container-pki` | PKI del catálogo. Misma regla de `HOME`. |
+| `CAUCE_DESTINO_AVISO`, `CAUCE_TENANT_AVISO`, `CAUCE_SALA_AVISO` | ninguna | Destino del aviso de catálogo. Van en un drop-in del host; sin ellas el guion sale 2. |
+
 ## Decisiones del dueño (FR-011..FR-015, cerradas 2026-09-27)
 
 | # | Decisión | Efecto |

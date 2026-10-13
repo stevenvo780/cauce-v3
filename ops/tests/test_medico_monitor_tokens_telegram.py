@@ -7,11 +7,14 @@ import importlib.machinery
 import importlib.util
 import io
 import json
+import os
 import pathlib
 import tempfile
 import unittest
 import urllib.parse
 from unittest import mock
+
+os.environ.setdefault("CAUCE_OWNER_TELEGRAM_CHAT_ID", "1000000001")
 
 SCRIPT = pathlib.Path(__file__).resolve().parents[1] / "guardias" / "cauce-v3-medico-monitor"
 _loader = importlib.machinery.SourceFileLoader("medico_monitor_tokens", str(SCRIPT))

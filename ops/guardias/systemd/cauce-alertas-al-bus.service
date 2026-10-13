@@ -1,6 +1,6 @@
 [Unit]
 Description=Publica al bus las alertas firing de Prometheus (la ruta que dejo vacante Alertmanager)
-Documentation=file:///datos/workspaces/zeus/cauce-v3/ops/guardias/README.md
+Documentation=file:///opt/cauce-v3/ops/guardias/README.md
 After=network-online.target
 Wants=network-online.target
 

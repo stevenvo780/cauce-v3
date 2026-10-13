@@ -369,15 +369,7 @@ def hallazgo_cuenta_rota(etiqueta, plan, cuenta, racha_prev, capturado):
 
 
 def pares_de_evidencia(ev):
-    """La evidencia es un campo ACCESORIO del hallazgo: su FORMA no puede tumbar al guardia.
-
-    2026-08-12: el motivo `respuesta_perdida` -- justo el que caza las respuestas que mueren en
-    silencio -- traia una LISTA donde este renderizador hacia `.items()`. Reventaba con
-    AttributeError DESPUES de imprimir los hallazgos y ANTES de despacharlos, asi que el guardia
-    veia los 11 problemas y no avisaba de ninguno. Cuatro corridas seguidas; a la tercera el
-    disyuntor lo dejo mudo del todo. Un guardia que se calla por la forma de un campo decorativo
-    es peor que no tenerlo. Ahora se acepta cualquier forma razonable y lo raro se rinde como texto.
-    """
+    """La evidencia es un campo ACCESORIO del hallazgo: su forma no puede tumbar al guardia; se acepta cualquier forma razonable y lo raro se rinde como texto."""
     if not ev:
         return []
     if isinstance(ev, dict):

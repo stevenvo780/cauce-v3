@@ -3,4 +3,4 @@ Description=Refresca la cuota real por cuenta de la flota y el fichero que leen 
 
 [Service]
 Type=oneshot
-ExecStart=/home/stev/.local/bin/cauce-ai-live --context
+ExecStart=%h/.local/bin/cauce-ai-live --context

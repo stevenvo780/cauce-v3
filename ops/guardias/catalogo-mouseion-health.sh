@@ -7,7 +7,7 @@ set -uo pipefail
 AQUI="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LISTA="${CATALOGO_URLS:-$AQUI/catalogo-mouseion-urls.txt}"
 ALIAS="${CAUCE_ALIAS_AVISO:-zeus}"
-AVISO_CONF="${CAUCE_AVISO_CONF:-${HOME:-/home/stev}/.config/cauce-v3/attach-aviso.json}"
+AVISO_CONF="${CAUCE_AVISO_CONF:-${HOME:?HOME no definido}/.config/cauce-v3/attach-aviso.json}"
 DESTINO="${CAUCE_DESTINO_AVISO:-}"
 
 if [ -z "$DESTINO" ] && [ -r "$AVISO_CONF" ]; then
@@ -30,7 +30,7 @@ except Exception:
 ' "$AVISO_CONF" 2>/dev/null || true)"
 fi
 GATEWAY="${CAUCE_GATEWAY_URL:-https://100.64.0.6:8443}"
-PKI="${CAUCE_PKI:-/home/stev/.config/cauce-v3/container-pki}"
+PKI="${CAUCE_PKI:-${HOME:?HOME no definido}/.config/cauce-v3/container-pki}"
 INFORME="${CATALOGO_INFORME:-/var/log/cauce-catalogo-health.log}"
 ESTADO="${CATALOGO_ESTADO:-${INFORME%.log}.avisadas}"
 SALA_AVISO="${CAUCE_SALA_AVISO:-}"
