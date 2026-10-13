@@ -4,10 +4,11 @@ import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import type { FleetOperation, FleetOperationRequest } from '@cauce/protocol/fleet-operation';
 import { ConsoleAccessBoundary } from '../../api/console-access';
+import { ApiProvider } from '../../api/context';
 import { fleetRequestHash } from '../../api/client/fleet-operations-client';
 import type { ConfigurationSnapshot } from '../../api/types';
 import { server } from '../../mocks/server';
-import { renderWithApi } from '../../test/render';
+import { renderWithApi, testApi } from '../../test/render';
 import { AgentFleetOperation } from './AgentFleetOperation';
 import { AgentLifecyclePanel } from './AgentLifecyclePanel';
 
@@ -17,7 +18,7 @@ const snapshot: ConfigurationSnapshot = { revision: 4, tenants: [{ id: 'A' }], a
 interface Resource { type: string; name: string; action: string; reason: string }
 const target = { resource: 'agent' as const, tenant_id: 'A', alias: 'w' };
 
-async function preview(resources: Resource[]) {
+async function preview(resources: Resource[], embedded = true) {
   server.use(
     http.get('http://localhost/v3/console/access', () => HttpResponse.json({
       subject: 'A:operator', roles: ['operator'], permissions: ['config.read', 'config.write'] })),
@@ -29,32 +30,56 @@ async function preview(resources: Resource[]) {
         request_sha256: await fleetRequestHash(input), steps: ['fence'], can_apply: true, dependencies: [], resources });
     }),
   );
-  renderWithApi(<ConsoleAccessBoundary>
-    <AgentLifecyclePanel snapshot={snapshot} target={target} initialOpen hideTrigger embedded fixedKind initialKind="purge" />
-  </ConsoleAccessBoundary>);
+  const view = (selected = target) => <ConsoleAccessBoundary>
+    <AgentLifecyclePanel snapshot={snapshot} target={selected} initialOpen hideTrigger={embedded} embedded={embedded} fixedKind initialKind="purge" />
+  </ConsoleAccessBoundary>;
+  const result = renderWithApi(view());
   const user = userEvent.setup();
   await screen.findByLabelText('Recursos que se borrarán');
   await waitFor(() => { expect(screen.getByRole('button', { name: 'Previsualizar operación' })).toBeEnabled(); });
   await user.click(screen.getByRole('button', { name: 'Previsualizar operación' }));
-  return { user, plan: await screen.findByLabelText('Recursos físicos del plan') };
+  return { user, plan: await screen.findByLabelText('Recursos físicos del plan'),
+    changeTarget: (selected: typeof target) => { result.rerender(<ApiProvider api={testApi}>{view(selected)}</ApiProvider>); } };
 }
 
 it('lists the server plan, keeps purge disabled until the exact alias is typed and links the backup', async () => {
   const { user, plan } = await preview([
     { type: 'container', name: 'ws-w', action: 'delete', reason: 'Contenedor propio' },
-    { type: 'volume', name: 'ws-w-state', action: 'delete', reason: 'Volumen de estado' }]);
+    { type: 'volume', name: 'ws-w-state', action: 'delete', reason: 'Volumen de estado' },
+    { type: 'volume', name: 'ws-w-provider-profiles', action: 'delete', reason: 'Perfil del proveedor' }]);
+  const enqueued: FleetOperationRequest[] = [];
+  server.use(http.post('http://localhost/v3/console/fleet/operations', async ({ request }) => {
+    const input = await request.json() as FleetOperationRequest;
+    enqueued.push(input);
+    const operation: FleetOperation = { id: '71000000-0000-4000-8000-000000000001', request_sha256: await fleetRequestHash(input),
+      target: input.target, kind: input.kind, expected_revision: input.expected_revision, status: 'queued', version: 0,
+      actor: { tenant_id: 'A', alias: 'op' }, desired_revision: null, applied_revision: null,
+      steps: [{ name: 'purge', status: 'pending' }], error: null, created_at: new Date().toISOString(), updated_at: new Date().toISOString() };
+    return HttpResponse.json({ operation_id: operation.id, status: operation.status, operation }, { status: 202 });
+  }));
   expect(screen.getByLabelText('Recursos que se borrarán')).not.toHaveTextContent('ws-w-state');
   expect(plan).toHaveTextContent('Se borra: Contenedor ws-w');
   expect(plan).toHaveTextContent('Se borra: Volumen ws-w-state');
+  expect(plan).toHaveTextContent('Se borra: Volumen ws-w-provider-profiles');
   expect(plan).toHaveTextContent('este es el plan, no el resultado');
   expect(screen.getByRole('link', { name: 'Descargar copia' })).toHaveAttribute('href', '/messages/A/w?view=context');
   const enqueue = screen.getByRole('button', { name: 'Encolar operación' });
   expect(enqueue).toBeDisabled();
-  await user.type(screen.getByLabelText(/Escribe el alias/), 'W');
-  expect(enqueue).toBeDisabled();
+  await user.click(enqueue);
+  for (const alias of ['W', 'ww', ' w', 'w ']) {
+    await user.clear(screen.getByLabelText(/Escribe el alias/));
+    await user.type(screen.getByLabelText(/Escribe el alias/), alias);
+    expect(enqueue).toBeDisabled();
+    await user.click(enqueue);
+  }
+  expect(enqueued).toEqual([]);
   await user.clear(screen.getByLabelText(/Escribe el alias/));
   await user.type(screen.getByLabelText(/Escribe el alias/), 'w');
   expect(enqueue).toBeEnabled();
+  await user.click(enqueue);
+  expect(await screen.findByLabelText('Operación de flota')).toHaveTextContent('En cola');
+  expect(enqueued).toHaveLength(1);
+  expect(enqueued[0]).toMatchObject({ kind: 'purge', target, expected_revision: 4 });
 });
 
 it('shows a shared container as kept and a native directory as deleted', async () => {
@@ -63,6 +88,27 @@ it('shows a shared container as kept and a native directory as deleted', async (
     { type: 'directory', name: '/srv/agents/w', action: 'delete', reason: 'Estado nativo' }]);
   expect(plan).toHaveTextContent('Se conserva: Contenedor ws-humanizar');
   expect(plan).toHaveTextContent('Se borra: Directorio /srv/agents/w');
+});
+
+it('requires a new alias confirmation after closing and reopening purge', async () => {
+  const { user } = await preview([{ type: 'container', name: 'ws-w', action: 'delete', reason: 'Contenedor propio' }], false);
+  await user.type(screen.getByLabelText(/Escribe el alias/), 'w');
+  expect(screen.getByRole('button', { name: 'Encolar operación' })).toBeEnabled();
+  await user.click(screen.getByRole('button', { name: 'Cerrar operaciones' }));
+  await user.click(screen.getByRole('button', { name: 'Operar agente A/w' }));
+  expect(screen.getByLabelText(/Escribe el alias/)).toHaveValue('');
+  expect(screen.getByRole('button', { name: 'Encolar operación' })).toBeDisabled();
+});
+
+it('does not reuse confirmation for the same alias in another tenant', async () => {
+  const { user, changeTarget } = await preview([{ type: 'container', name: 'ws-w', action: 'delete', reason: 'Contenedor propio' }]);
+  await user.type(screen.getByLabelText(/Escribe el alias/), 'w');
+  expect(screen.getByRole('button', { name: 'Encolar operación' })).toBeEnabled();
+  changeTarget({ ...target, tenant_id: 'B' });
+  expect(screen.getByLabelText(/Escribe el alias/)).toHaveValue('');
+  await user.click(screen.getByRole('button', { name: 'Previsualizar operación' }));
+  await screen.findByLabelText('Previsualización operativa');
+  expect(screen.getByRole('button', { name: 'Encolar operación' })).toBeDisabled();
 });
 
 it('reports the observed purge result when the operation finishes', () => {

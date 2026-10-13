@@ -52,6 +52,8 @@ export function AgentLifecyclePanel({ snapshot, target, onReloaded, initialDraft
   const inProgress = !!flow.operation && ['queued', 'running', 'awaiting_auth', 'cancelling'].includes(flow.operation.status);
   const blocked = !!blockingOperation(flow.operation, kind);
   const aliasConfirmed = kind !== 'purge' || target?.resource !== 'agent' || typedAlias === target.alias;
+  const confirmationTarget = target?.resource === 'agent' ? JSON.stringify([target.tenant_id, target.alias]) : '';
+  useEffect(() => { setTypedAlias(''); }, [open, kind, confirmationTarget]);
   useEffect(() => { if (open) heading.current?.focus({ preventScroll: true }); }, [open]);
   useEffect(() => {
     if (previousRevision.current === snapshot.revision) return;
@@ -87,7 +89,7 @@ export function AgentLifecyclePanel({ snapshot, target, onReloaded, initialDraft
     finally { setSending(false); setPreviewing(false); }
   }
   async function enqueue() {
-    if (!canWrite || !available || busy || inProgress || blocked || !samePreview || !validated.receipt.can_apply) return;
+    if (!canWrite || !available || busy || inProgress || blocked || !samePreview || !validated.receipt.can_apply || !aliasConfirmed) return;
     const sequence = ++generation.current;
     setSending(true); setError(undefined);
     try {
