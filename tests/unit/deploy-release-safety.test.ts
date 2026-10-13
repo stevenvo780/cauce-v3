@@ -330,7 +330,8 @@ describe('deploy bind sources', () => {
     expectStoppedBeforeBuild(result, 'faltan fuentes de bind mounts del compose');
     expect(result.stderr).toContain(`gateway: ${join(contexts, 'repository')}`);
     expect(result.stderr).toContain(`gateway: ${join(contexts, 'ssh')}`);
-    for (const source of ['/etc/cauce-v3/fleet-v35/gateway', '/etc/cauce-v3/fleet-v35/registry-fleet', '/run/cauce-fleet-v35/auth']) {
+    for (const source of ['/etc/cauce-v3/fleet-v35/gateway', '/etc/cauce-v3/fleet-v35/registry-fleet',
+      '/run/cauce-fleet-v35/auth', '/run/cauce-fleet-signed-authority']) {
       expect(result.stderr.includes(`gateway: ${source}\n`)).toBe(!existsSync(source));
     }
   });
