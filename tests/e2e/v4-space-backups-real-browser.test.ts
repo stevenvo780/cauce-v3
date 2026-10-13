@@ -53,6 +53,7 @@ let hostApp: FastifyInstance | undefined;
 let worker: SpaceBackupHost | undefined;
 let refreshTimer: ReturnType<typeof setInterval> | undefined;
 let backupId = '';
+let sourceLargeSha256 = '';
 let receiptBytes = 0;
 let receiptSha256 = '';
 let downloadChannel = 'unstarted';
@@ -190,6 +191,7 @@ describe('copia de espacio desde navegador real con exportación física firmada
       await mkdir(join(space, name), { recursive: true, mode: 0o700 });
     }
     const large = randomBytes(33 * 1024 * 1024 + 4097);
+    sourceLargeSha256 = digest(large);
     await writeFile(join(space, 'projects/large.bin'), large, { mode: 0o600 });
     await writeFile(join(space, 'projects/work.txt'), Buffer.alloc(100_000, 65), { mode: 0o600 });
     await writeFile(join(space, 'context/note.md'), 'canary context note', { mode: 0o600 });
@@ -378,7 +380,9 @@ describe('copia de espacio desde navegador real con exportación física firmada
     ]));
     const largeEntry = manifest.files.find((file) => file.path === 'projects/large.bin');
     if (!largeEntry) throw new Error('large canary file is absent from the manifest');
-    expect(digest(await readFile(join(restored, 'projects/large.bin')))).toBe(largeEntry.sha256);
+    expect(sourceLargeSha256).toMatch(/^[a-f0-9]{64}$/u);
+    expect(largeEntry.sha256).toBe(sourceLargeSha256);
+    expect(digest(await readFile(join(restored, 'projects/large.bin')))).toBe(sourceLargeSha256);
     expect(digest(await readFile(join(restored, 'projects/work.txt')))).toBe(digest(Buffer.alloc(100_000, 65)));
     await expect(readFile(join(restored, 'config/auth.json'))).rejects.toThrow();
     await expect(readFile(join(restored, 'projects/.env'))).rejects.toThrow();
