@@ -30,9 +30,11 @@ const hosts = [
     agents: [{ tenant_id: 'Miguel', alias: 'janus', enabled: true, online: false }] },
 ];
 
+const SCENARIOS = ['company', 'platform', 'retired', 'register', 'reader', 'quota-error', 'empty-office'];
+
 function authority(scenario) {
-  return { role: scenario === 'retired' ? 'none' : scenario === 'platform' ? 'platform_admin' : 'company_owner',
-    scope: scenario === 'platform' ? 'platform' : 'company', home_company: COMPANY,
+  return { role: scenario === 'retired' ? 'none' : scenario === 'platform' ? 'platform_admin' : scenario === 'reader' ? 'reader' : 'company_owner',
+    scope: scenario === 'platform' ? 'platform' : scenario === 'reader' ? 'tenant' : 'company', home_company: COMPANY,
     acting_company: COMPANY, platform_override: scenario === 'platform' };
 }
 
@@ -97,7 +99,7 @@ export async function loadV4Fixtures() {
   return async (url, method = 'GET', scenario = 'company') => {
     const { pathname: path } = new URL(url);
     if (method !== 'GET') throw new Error(`Mutation blocked: ${method} ${path}`);
-    if (!['company', 'platform', 'retired', 'register'].includes(scenario)) throw new Error(`Unknown V4 layout scenario: ${scenario}`);
+    if (!SCENARIOS.includes(scenario)) throw new Error(`Unknown V4 layout scenario: ${scenario}`);
     const access = authority(scenario);
     if (path === '/v3/auth/session') return Response.json(scenario === 'register'
       ? { authenticated: false, login_mode: 'password' }
@@ -119,13 +121,17 @@ export async function loadV4Fixtures() {
         })),
       } });
     }
+    // The error state answers like the gateway does: a stable code and a concrete reason the console must keep.
+    if (path === '/v3/console/quota-accounts' && scenario === 'quota-error') return Response.json(
+      { error: 'forbidden', message: 'La cuenta de cuota pertenece a otra empresa.' }, { status: 403 });
     if (path === '/v3/console/quota-accounts') return Response.json({ company_id: COMPANY, observed_at: OBSERVED_AT, accounts });
     if (path === '/v3/console/preferences') return Response.json({ version: 1, pinned_quota_accounts: ['codex-steven'] });
     if (path === '/v3/console/quota-environments') return Response.json({ company_id: COMPANY, environments, operations: [],
       capabilities: { available: true, providers: ['claude', 'codex'], actions: ACTIONS,
         hosts: [{ host_id: hosts[0].host_id, display_name: hosts[0].display_name, providers: ['claude', 'codex'],
           provider_actions: { claude: ACTIONS, codex: ACTIONS } }] } });
-    if (path === '/v3/console/office/layout') return Response.json(office);
+    if (path === '/v3/console/office/layout') return Response.json(scenario === 'empty-office'
+      ? { company_id: COMPANY, version: 0, available: [], rooms: [] } : office);
     if (path === '/v3/console/fleet/hosts') return Response.json({ hosts });
     if (path === '/v3/console/fleet/hosts/enrollments') return Response.json({ setup_signer_fingerprint: 'c'.repeat(64),
       enrollments: hosts.map((host, index) => ({ enrollment_id: `layout-enrollment-${index + 1}`, company_id: COMPANY,

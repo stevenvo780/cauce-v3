@@ -37,6 +37,8 @@ export function OfficeWorkspace({ campus, topology, agents, onAgent }: {
   const shown = reconcileOfficeLayout(rooms, draft?.rooms ?? layout.data?.rooms ?? []);
   const writable = canManageCompany(authority?.role) && !!layout.data && !layout.error && !layout.loading && !busy;
   const failure = error ?? (layout.error ? officeFailure(layout.error) : undefined);
+  // Rooms are known once the topology arrived and the saved plan answered, with data or with an error.
+  const roomsRead = !!topology && (!!layout.data || !!layout.error);
   const unavailable = planSaveUnavailableReason({ role: authority?.role, layoutError: !!layout.error, draft: !!draft });
   const selected = shown.find(room => officeRoomKey(room.tenant_id, room.room_id) === roomKey);
   const info = rooms.find(room => officeRoomKey(room.tenant, room.id) === roomKey);
@@ -102,8 +104,11 @@ export function OfficeWorkspace({ campus, topology, agents, onAgent }: {
       {failure ? <ErrorNotice failure={failure} /> : null}
       {quotas.error ? <ErrorNotice failure={quotaReadFailure(quotas.error, 'No se pudieron leer las cuotas de los agentes. Relee el plano y las cuotas.')} /> : null}
       {notice ? <Notice tone="ok" role="status">{notice}</Notice> : null}
-      {!rooms.length ? <Notice tone="info">Aún no hay salas. Crea una desde «Gestionar salas y asignaciones».</Notice> : null}
-      <p className="m-0 text-xs text-muted">Selecciona una sala para cambiar su posición, tamaño y partes. Los agentes y asignaciones vienen de las salas actuales.</p>
+      {!topology ? <p role="status" className="m-0 text-xs">Leyendo salas…</p> : null}
+      {roomsRead && !rooms.length ? <Notice tone="info">Aún no hay salas. Crea una desde «Gestionar salas y asignaciones».</Notice> : null}
+      {/* An empty map would only be a blank scroller with nothing to select: the notice above already says what to do. */}
+      {rooms.length ? <><p className="m-0 text-xs text-muted">{authority && !canManageCompany(authority.role) ? 'Selecciona una sala para ver sus agentes y su cansancio.'
+        : 'Selecciona una sala para cambiar su posición, tamaño y partes.'} Los agentes y asignaciones vienen de las salas actuales.</p>
       <div className="min-h-64 max-h-[65dvh] overflow-auto rounded-xl border border-line bg-subtle">
         <div aria-label="Mapa de salas y agentes" className="relative" style={{ width, height }}>{shown.map(room => {
           const identity = officeRoomKey(room.tenant_id, room.room_id);
@@ -116,7 +121,7 @@ export function OfficeWorkspace({ campus, topology, agents, onAgent }: {
               onClick={() => { setRoomKey(identity); }}>{roomInfo?.label ?? room.room_id} <span className="ml-auto text-[10px] text-muted">{room.tenant_id}</span></Button>
           </section>;
         })}</div>
-      </div>
+      </div></> : null}
       {selected && info ? <section aria-label={`Agentes de sala ${info.tenant}/${info.label}`} className="grid gap-2 rounded-xl border border-line bg-surface p-3">
         <h3 className="m-0 min-w-0 wrap-anywhere text-sm">Agentes de {info.label} <span className="text-xs text-muted">{info.tenant}</span></h3>
         <div className="flex flex-wrap gap-2">{info.agents.map(agentButton)}</div>

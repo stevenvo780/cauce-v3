@@ -4,7 +4,8 @@ import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { expect, it, vi } from 'vitest';
 import type { OfficeRoom } from '../../api/client/company-client';
-import { renderWithApi } from '../../test/render';
+import { ApiProvider } from '../../api/context';
+import { renderWithApi, testApi } from '../../test/render';
 import { server } from '../../mocks/server';
 import { CompanySessionProvider } from '../auth/company-session';
 import { OfficeWorkspace } from './OfficeWorkspace';
@@ -149,4 +150,17 @@ it('vuelve a montar el campus tras guardar el plano para que lea el plano nuevo'
   await user.click(screen.getByRole('button', { name: 'Guardar plano' }));
   expect(await screen.findByText('Plano de oficina guardado para esta empresa.')).toBeVisible();
   expect(mounts).toHaveBeenCalledTimes(2);
+});
+it('sin salas explica qué hacer en lugar de un mapa vacío y anuncia la lectura de la topología', async () => {
+  server.use(http.get('*/v3/console/office/layout', () => HttpResponse.json({ company_id: 'one', version: 0, available: [], rooms: [] })));
+  const authority = { role: 'company_owner' as const, scope: 'company' as const, home_company: 'one', acting_company: 'one', platform_override: false };
+  const office = (map?: typeof topology) => <CompanySessionProvider state={{ authenticated: true, authority }}>
+    <OfficeWorkspace campus={<p>Campus actual</p>} topology={map} agents={[]} onAgent={vi.fn()} /></CompanySessionProvider>;
+  const user = userEvent.setup(); const view = renderWithApi(office());
+  await user.click(screen.getByRole('button', { name: 'Plano editable' }));
+  expect(screen.getByText('Leyendo salas…')).toBeVisible();
+  expect(screen.queryByText(/Aún no hay salas/u)).not.toBeInTheDocument();
+  view.rerender(<ApiProvider api={testApi}>{office(topology)}</ApiProvider>);
+  expect(await screen.findByText('Aún no hay salas. Crea una desde «Gestionar salas y asignaciones».')).toBeVisible();
+  expect(screen.queryByLabelText('Mapa de salas y agentes')).not.toBeInTheDocument();
 });
