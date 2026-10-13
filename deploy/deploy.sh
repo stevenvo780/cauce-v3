@@ -398,12 +398,10 @@ for target in ("/run/cauce-fleet/config", "/run/cauce-fleet-signed-authority"):
   fleet_enclave=${CAUCE_DEPLOY_FLEET_ENCLAVE_DIR:-/run/cauce-fleet-signed-authority}
   printf 'flota: compruebo gateway %s (compose: %s)\n' "$fleet_gateway" "${fleet_sources[0]}"
   printf 'flota: compruebo enclave %s (compose: %s)\n' "$fleet_enclave" "${fleet_sources[1]}"
-  if [ "${CAUCE_DEPLOY_TEST_MODE:-0}" != 1 ]; then
-    [ "$fleet_gateway" = "${fleet_sources[0]}" ] \
-      || die "CAUCE_DEPLOY_FLEET_GATEWAY_DIR=$fleet_gateway difiere del montaje de compose ${fleet_sources[0]}"
-    [ "$fleet_enclave" = "${fleet_sources[1]}" ] \
-      || die "CAUCE_DEPLOY_FLEET_ENCLAVE_DIR=$fleet_enclave difiere del montaje de compose ${fleet_sources[1]}"
-  fi
+  [ "$fleet_gateway" = "${fleet_sources[0]}" ] \
+    || die "CAUCE_DEPLOY_FLEET_GATEWAY_DIR=$fleet_gateway difiere del montaje de compose ${fleet_sources[0]}"
+  [ "$fleet_enclave" = "${fleet_sources[1]}" ] \
+    || die "CAUCE_DEPLOY_FLEET_ENCLAVE_DIR=$fleet_enclave difiere del montaje de compose ${fleet_sources[1]}"
 fi
 MISSING_BIND_SOURCES="$(python3 -c '
 import json, os, sys

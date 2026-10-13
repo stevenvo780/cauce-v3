@@ -384,7 +384,7 @@ describe('deploy bind sources', () => {
 
   it.each(['gateway', 'enclave'] as const)('rejects a fleet %s override that differs from the compose mount', kind => {
     const mounted = fleetOverlayEnvironment();
-    const environment = { ...mounted, CAUCE_DEPLOY_TEST_MODE: '0' };
+    const environment = { ...mounted };
     const name = kind === 'gateway' ? 'CAUCE_DEPLOY_FLEET_GATEWAY_DIR' : 'CAUCE_DEPLOY_FLEET_ENCLAVE_DIR';
     const override = fleetOverlayEnvironment()[name];
     environment[name] = override;
@@ -397,12 +397,11 @@ describe('deploy bind sources', () => {
     expect(result.commands().some(entry => entry.command === 'stat')).toBe(false);
   });
 
-  it('allows fleet path overrides only in explicit test mode', () => {
-    const mounted = fleetOverlayEnvironment();
-    const environment = { ...fleetOverlayEnvironment(), CAUCE_DEPLOY_TEST_MODE: '1' };
+  it('accepts fleet path overrides matching the rendered compose mounts', () => {
+    const environment = fleetOverlayEnvironment();
     const result = deploy({
       instance: 'CAUCE_DEPLOY_FLEET_OVERLAY=1\n', environment,
-      composeModel: fleetComposeModel(mounted.CAUCE_DEPLOY_FLEET_GATEWAY_DIR, mounted.CAUCE_DEPLOY_FLEET_ENCLAVE_DIR),
+      composeModel: fleetComposeModel(environment.CAUCE_DEPLOY_FLEET_GATEWAY_DIR, environment.CAUCE_DEPLOY_FLEET_ENCLAVE_DIR),
     });
     expect(result.status, result.stderr).toBe(0);
   });
