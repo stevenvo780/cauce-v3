@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { useApi } from '../../api/context';
 import { useResource } from '../../api/use-resource';
 import { Button, Notice } from '../../components/kit';
@@ -35,6 +35,14 @@ export function OfficeWorkspace({ campus, topology, agents, onAgent }: {
   const [error, setError] = useState<Failure>();
   const [notice, setNotice] = useState<{ tone: 'ok' | 'warn'; text: string }>();
   const rooms = officeRooms(topology, layout.data?.available);
+  // An introduced room is only bridged until the topology lists it: once listed, a later drop must not resurrect it.
+  useEffect(() => {
+    if (!draft?.introduced?.length) return;
+    const known = new Set(rooms.map(room => officeRoomKey(room.tenant, room.id)));
+    if (!draft.introduced.some(key => known.has(key))) return;
+    setDraft(current => current?.introduced
+      ? { ...current, introduced: current.introduced.filter(key => !known.has(key)) } : current);
+  }, [draft?.introduced, rooms]);
   const shown = draft ? reconcileOfficeLayoutIncludingSaved(rooms, draft.rooms, draft.introduced ?? []) : reconcileOfficeLayout(rooms, layout.data?.rooms ?? []);
   const writable = canManageCompany(authority?.role) && !!layout.data && !layout.error && !layout.loading && !busy;
   const failure = error ?? (layout.error ? officeFailure(layout.error) : undefined);
