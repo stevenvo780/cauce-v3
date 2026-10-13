@@ -1,7 +1,6 @@
 import { execFile, spawn } from 'node:child_process';
 import { createHash, generateKeyPairSync } from 'node:crypto';
 import { chmod, cp, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
-import { createServer, type Server } from 'node:http';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
@@ -14,12 +13,14 @@ import { MtlsAuthProvider } from '../auth.js';
 import { FleetMtlsIdentityProvider, FleetTokenProbeAuthProvider } from './mtls-identities.js';
 import { startSignedFleetAuthorityBridge } from './authority/signed-bridge.js';
 import { SignedFleetAuthorityClient } from './authority/signed-client.js';
-import { HostSetupConfigSchema, HostSetupPackager } from './host-setup.js';
+import { HostSetupPackager, resolveHostSetup } from './host-setup.js';
 import { inviteSetupHost, type SetupOwnerSession } from './host-setup.fixtures.js';
 
 /**
  * A clean computer for physical fleet tests: PostgreSQL, the console gateway, the signed authority with its TLS
  * bootstrap gateway, a release built from the tracked tree and a systemd container that shares the host Docker.
+ * The release and the agent image go through `ops/scripts/host-release.py pack` and the gateway serves both; the
+ * agent image is removed before the computer starts, so `setup` has to load it.
  * Every Docker resource it creates, including the agents the executor creates later, starts with `prefix`.
  */
 const execute = promisify(execFile);
@@ -90,6 +91,8 @@ export async function dockerInventory(prefix: string): Promise<DockerInventory> 
 
 export interface ComputerHarness {
   readonly prefix: string; readonly installRoot: string; readonly pool: DatabasePool; readonly databaseUrl: string;
+  /** Id of the agent image the gateway serves; Docker does not have it until `setup` loads it. */
+  readonly agentImage: string;
   readonly app: Awaited<ReturnType<typeof buildGateway>>; readonly gatewayUrl: string; readonly packager: HostSetupPackager;
   /** Name of the computer container; agent containers are `${prefix}-${runtime_key}`. */
   readonly container: string;
@@ -101,11 +104,11 @@ export interface ComputerHarness {
 
 interface Owned {
   work?: string; database?: TestDatabase; current?: EmptyTestDatabase; pool?: DatabasePool; container?: string; image?: string;
-  app?: Awaited<ReturnType<typeof buildGateway>>; bootstrapApp?: Awaited<ReturnType<typeof buildGateway>>;
-  bridge?: Awaited<ReturnType<typeof startSignedFleetAuthorityBridge>>; artifacts?: Server;
+  agentImage?: string; app?: Awaited<ReturnType<typeof buildGateway>>; bootstrapApp?: Awaited<ReturnType<typeof buildGateway>>;
+  bridge?: Awaited<ReturnType<typeof startSignedFleetAuthorityBridge>>;
 }
 
-async function buildRelease(work: string, tree: string) {
+async function buildRelease(work: string, tree: string, agentImage: string) {
   const stage = join(work, 'stage');
   for (const part of RELEASE_PARTS) await cp(join(tree, part), join(stage, part), { recursive: true });
   await cp(join(tree, 'packages/adapter-sdk/descriptors'), join(stage, 'adapter/packages/adapter-sdk/dist/descriptors'), { recursive: true });
@@ -128,16 +131,13 @@ setInterval(()=>{},60000);
     `--alias:@cauce/store=${join(tree, 'packages/store/src/index.ts')}`, `--alias:@cauce/protocol=${join(tree, 'packages/protocol/src/index.ts')}`,
     '--banner:js=import{createRequire as __cauceRequire}from"node:module";const require=__cauceRequire(import.meta.url);'],
   { env: { ...process.env, NODE_PATH: ['services/gateway', 'packages/store', 'packages/protocol', ''].map(part => join(ROOT, part, 'node_modules')).join(':') } });
-  await execute('chmod', ['-R', 'u=rwX,go=rX', stage]);
-  const archive = join(work, 'release.tar');
-  await execute('tar', ['--sort=name', '--owner=0', '--group=0', '--numeric-owner', '-cf', archive, '-C', stage, '.']);
-  const measure = 'import pathlib,sys\nsys.path[:0]=[sys.argv[1]+"/ops/cli",sys.argv[1]+"/ops/container-runtime"]\nimport host_setup\n'
-    + 'from cauce_container_base import bundle_digest\ntarget=pathlib.Path(sys.argv[3])\ntarget.parent.mkdir(parents=True)\n'
-    + 'host_setup.extract_release(pathlib.Path(sys.argv[2]),target)\nprint(bundle_digest(str(target/"adapter")))\n';
-  const measured = await execute('python3', ['-c', measure, tree, archive, join(work, 'measured/release')]);
-  return { archive: await readFile(archive), bundleDigest: measured.stdout.trim(),
-    hookDigest: hash(await readFile(join(stage, 'ops/cli/fleet-provider-hook.py'))),
-    revision: (await execute('git', ['-C', ROOT, 'rev-parse', 'HEAD'])).stdout.trim() };
+  const revision = (await execute('git', ['-C', ROOT, 'rev-parse', 'HEAD'])).stdout.trim();
+  const directory = join(work, 'host-release');
+  const packed = await execute('python3', [join(ROOT, 'ops/scripts/host-release.py'), 'pack', '--stage', stage, '--out', directory,
+    '--revision', revision, '--image', agentImage, '--pin', `provider_cli_sha256=${hash(PROVIDER_CLI)}`], { maxBuffer: 1024 * 1024 });
+  const manifest = JSON.parse(packed.stdout) as { release: { sha256: string }; image: { id: string; sha256: string; size: number };
+    pins: Record<string, string> };
+  return { directory, revision, manifest };
 }
 
 async function signedAuthority(work: string, pool: DatabasePool, owned: Owned) {
@@ -173,20 +173,7 @@ async function signedAuthority(work: string, pool: DatabasePool, owned: Owned) {
       token: new FleetTokenProbeAuthProvider(registries.fleet_token, uid, registries.base_token) },
     https: { key: await readFile(join(directory, 'server.key')), cert: await readFile(join(directory, 'server.crt')),
       ca: await readFile(certificate), requestCert: true, rejectUnauthorized: true } });
-  return { client: new SignedFleetAuthorityClient(socket, { ownerUid: uid, peerUid: uid }), ca: await readFile(certificate) };
-}
-
-async function serveArtifacts(files: Record<string, Buffer>, owned: Owned): Promise<string> {
-  const server = createServer((request, response) => {
-    const body = files[request.url ?? ''];
-    if (body === undefined) { response.writeHead(404).end(); return; }
-    response.writeHead(200, { 'content-length': body.length }).end(body);
-  });
-  owned.artifacts = server;
-  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
-  const address = server.address();
-  if (address === null || typeof address === 'string') throw new Error('artifact server address absent');
-  return `http://127.0.0.1:${String(address.port)}`;
+  return { client: new SignedFleetAuthorityClient(socket, { ownerUid: uid, peerUid: uid }), caFile: certificate };
 }
 
 async function closeOwned(owned: Owned, prefix: string): Promise<DockerInventory> {
@@ -207,10 +194,8 @@ async function closeOwned(owned: Owned, prefix: string): Promise<DockerInventory
   await attempt(async () => owned.app?.close());
   await attempt(async () => owned.bootstrapApp?.close());
   await attempt(async () => owned.bridge?.close());
-  await attempt(() => new Promise<void>((resolve, reject) => {
-    if (!owned.artifacts) { resolve(); return; }
-    owned.artifacts.close(error => { if (error) reject(error); else resolve(); });
-  }));
+  const agentImage = owned.agentImage;
+  if (agentImage && (await command('docker', ['image', 'inspect', agentImage])).code === 0) await attempt(() => docker(['image', 'rm', agentImage]));
   if (owned.image) await attempt(() => docker(['image', 'rm', owned.image ?? '']));
   const after = await dockerInventory(prefix);
   await attempt(async () => owned.pool?.end());
@@ -235,33 +220,38 @@ export async function startComputerHarness(options: { prefix: string; consoleOri
     await execute('chmod', ['-R', 'u=rwX,go=rX', join(tree, 'ops/cli')]);
     owned.database = await startTestDatabase(); owned.current = await startTestCaseDatabase(owned.database);
     const pool = createPool(owned.current.url, { max: 8 }); owned.pool = pool;
-    const computerImage = async () => {
+    const images = async () => {
       owned.image = `${prefix}:computer`;
       const built = await command('docker', ['build', '-q', '-t', owned.image, '-'], COMPUTER_IMAGE);
       if (built.code !== 0) throw new Error(`computer image build failed: ${built.stderr}`);
-      return owned.image;
+      // Its own layer makes `docker load` import data, not only a configuration over layers the computer already has.
+      const agent = await command('docker', ['build', '-q', '-t', `${prefix}:agent`, '-'],
+        `FROM ${owned.image}\nRUN printf '%s\\n' '${prefix}' > /etc/cauce-agent-image\n`);
+      if (agent.code !== 0) throw new Error(`agent image build failed: ${agent.stderr}`);
+      owned.agentImage = agent.stdout.trim();
+      return { computer: owned.image, agent: `${prefix}:agent` };
     };
-    const [release, authority, computer] = await Promise.all([buildRelease(work, tree), signedAuthority(work, pool, owned), computerImage()]);
+    const [built, authority] = await Promise.all([images(), signedAuthority(work, pool, owned)]);
+    const release = await buildRelease(work, tree, built.agent);
+    await docker(['image', 'rm', built.agent]);
     if (!owned.bootstrapApp) throw new Error('bootstrap gateway absent');
     const bootstrapOrigin = await owned.bootstrapApp.listen({ host: '127.0.0.1', port: 0 });
     console.info('HOST_SETUP_RELEASE', JSON.stringify({ revision: release.revision, source: 'working-tree-tracked',
-      archive_sha256: hash(release.archive), bundle_digest: release.bundleDigest, hook_sha256: release.hookDigest }));
-    const origin = await serveArtifacts({ '/release.tar': release.archive, '/fleet-ca.pem': authority.ca }, owned);
-    const imageId = await docker(['image', 'inspect', '--format', '{{.Id}}', computer]);
-    const hook = { executable: '@release@/ops/cli/fleet-provider-hook.py', sha256: release.hookDigest, argv: [], user: '@user@' };
-    const packager = new HostSetupPackager(HostSetupConfigSchema.parse({ version: 1, signing_key_file: '/etc/cauce/unused.pem',
-      release: { name: 'release', revision: release.revision, url: `${origin}/release.tar`, sha256: hash(release.archive), size: release.archive.length },
-      files: [{ name: 'fleet-ca', url: `${origin}/fleet-ca.pem`, sha256: hash(authority.ca), size: authority.ca.length }],
+      archive_sha256: release.manifest.release.sha256, image_id: release.manifest.image.id, image_archive_bytes: release.manifest.image.size,
+      pins: release.manifest.pins }));
+    const hook = { executable: '@release@/ops/cli/fleet-provider-hook.py', sha256: '@pin:hook_sha256@', argv: [], user: '@user@' };
+    const packager = new HostSetupPackager(await resolveHostSetup({ version: 1, signing_key_file: '/etc/cauce/unused.pem',
+      release_directory: release.directory, files: [{ name: 'fleet-ca', path: authority.caFile }],
       policy: {
-        bundles: { codex: { directory: '@release@/adapter', digest: release.bundleDigest, executable: '/usr/local/bin/node',
+        bundles: { codex: { directory: '@release@/adapter', digest: '@pin:adapter_digest@', executable: '/usr/local/bin/node',
           executable_sha256: null, argv: ['@release@/adapter/bootstrap-runtime.mjs'] } },
         // The runtime user shares the executor's uid: the provider pin check inside the agent container only trusts
         // ancestors owned by root or by the checking user, and the release lives under the executor's install root.
-        container_templates: [{ harness_id: 'codex', prefix: `${prefix}-`, image: imageId, runtime_user: COMPUTER_RUNTIME.user, systemd_user: '@user@',
+        container_templates: [{ harness_id: 'codex', prefix: `${prefix}-`, image: '@pin:image@', runtime_user: COMPUTER_RUNTIME.user, systemd_user: '@user@',
           home_directory: COMPUTER_RUNTIME.home, state_root: COMPUTER_RUNTIME.stateRoot, profile_root: `${COMPUTER_RUNTIME.home}/.cauce-profiles`,
           python: '/usr/local/bin/python3.12' }],
         profile_templates: [{ provider: 'codex', runtime_user: COMPUTER_RUNTIME.user, path_root: `${COMPUTER_RUNTIME.home}/.cauce-profiles`,
-          command: '@release@/adapter/provider-cli.py', command_sha256: hash(PROVIDER_CLI), runtime_mode: 'container', container_prefix: `${prefix}-` }],
+          command: '@release@/adapter/provider-cli.py', command_sha256: '@pin:provider_cli_sha256@', runtime_mode: 'container', container_prefix: `${prefix}-` }],
         hooks: { authenticate: hook, profile: hook, verify: hook, revoke: hook },
         transport: { bootstrap_url: bootstrapOrigin, gateway_url: bootstrapOrigin, ca_certificate: '@install@/files/fleet-ca', network: 'host' },
         authority: { identity_directory: '@identity@', host_id: '@host@', ca_certificate: '@install@/files/fleet-ca' },
@@ -274,7 +264,7 @@ export async function startComputerHarness(options: { prefix: string; consoleOri
     const container = prefix;
     const started = await command('docker', ['run', '-d', '--name', container, '--privileged', '--cgroupns=private', '--network', 'host',
       '--tmpfs', '/run', '--tmpfs', '/run/lock', '-v', `${join(tree, 'ops/cli')}:/opt/cauce-cli:ro`,
-      '-v', '/var/run/docker.sock:/var/run/docker.sock', '-v', `${join(work, 'install')}:${join(work, 'install')}`, computer]);
+      '-v', '/var/run/docker.sock:/var/run/docker.sock', '-v', `${join(work, 'install')}:${join(work, 'install')}`, built.computer]);
     if (started.code !== 0) throw new Error(`computer did not start: ${started.stderr}`);
     owned.container = container;
     const onComputer = (args: string[], input?: string) => command('docker', ['exec', '-i', ...AS_USER, container, ...args], input);
@@ -289,7 +279,8 @@ export async function startComputerHarness(options: { prefix: string; consoleOri
     await docker(['exec', container, 'chown', 'cauce:cauce', join(work, 'install')]);
     await docker(['exec', container, 'loginctl', 'enable-linger', 'cauce']);
     await settle(async () => (await onComputer(['systemctl', '--user', 'is-system-running'])).stdout.trim() === 'running');
-    return { prefix, installRoot: join(work, 'install'), pool, databaseUrl: owned.current.url, app, gatewayUrl, packager, container,
+    return { prefix, installRoot: join(work, 'install'), agentImage: release.manifest.image.id, pool, databaseUrl: owned.current.url, app,
+      gatewayUrl, packager, container,
       onComputer, cli: (args, input) => onComputer(['python3', '/opt/cauce-cli/host_enrollment.py', ...args], input),
       close: () => closeOwned(owned, prefix) };
   } catch (error) {
