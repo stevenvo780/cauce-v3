@@ -18,6 +18,7 @@ $$;
 SELECT set_config('cauce.migration_lock_timeout',current_setting('lock_timeout'),true);
 SELECT set_config('lock_timeout','5s',true);
 DELETE FROM harness_definitions WHERE id IN ('grok','muse','fake2')
+  AND created_at=(SELECT applied_at FROM schema_migrations WHERE version='073_harness_definitions_seed.sql')
   AND NOT EXISTS (SELECT 1 FROM agents WHERE harness_id=harness_definitions.id);
 DELETE FROM schema_migration_ledger WHERE version='073_harness_definitions_seed.sql';
 DELETE FROM schema_migrations WHERE version='073_harness_definitions_seed.sql';
