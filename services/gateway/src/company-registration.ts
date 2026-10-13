@@ -6,7 +6,7 @@ import { hashPassword, MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH } from './passwo
 import { normalizeEmail } from './console-users.js';
 import { rateLimitKey } from './client-ip.js';
 import { COMPANY_SLUG_PATTERN, configuredReservedCompanySlugs } from './company-slug.js';
-import { PasswordWorkSaturated, passwordWork } from './password-auth.js';
+import { LoginThrottle, PasswordWorkSaturated, passwordWork } from './password-auth.js';
 
 export const CompanyRegistrationSchema = z.object({
   email: z.email().max(254).transform(normalizeEmail),
@@ -24,7 +24,7 @@ const TOO_MANY = { error: 'too_many_requests', message: 'Demasiados registros. I
 
 const WINDOW_MS = 15 * 60_000;
 const MAX_ATTEMPTS = 5;
-const MAX_TRACKED_IPS = 10_000;
+const MAX_TRACKED_KEYS = 10_000;
 const HOUR_MS = 60 * 60_000;
 
 /** Registrations per hour across every client address; 0 closes public registration. */
@@ -61,6 +61,7 @@ export async function registerCompanyWithOwner(pool: DatabasePool, input: Compan
 export function registerCompanyRegistrationRoute(app: FastifyInstance, pool: DatabasePool,
   hourlyRegistrations = configuredHourlyRegistrations(), reserved = configuredReservedCompanySlugs()): void {
   const attempts = new Map<string, { count: number; until: number }>();
+  const emailAttempts = new LoginThrottle(MAX_ATTEMPTS, WINDOW_MS, MAX_TRACKED_KEYS);
   let hour = { count: 0, until: 0 };
   app.post('/v3/auth/register', { bodyLimit: 8192 }, async (request, reply) => {
     reply.header('Cache-Control', 'no-store');
@@ -68,10 +69,14 @@ export function registerCompanyRegistrationRoute(app: FastifyInstance, pool: Dat
     const key = rateLimitKey(request.ip);
     for (const [ip, entry] of attempts) if (entry.until <= now) attempts.delete(ip);
     const current = attempts.get(key) ?? { count: 0, until: now + WINDOW_MS };
-    if (current.count >= MAX_ATTEMPTS || (attempts.size >= MAX_TRACKED_IPS && !attempts.has(key))) return limited(reply, current.until - now);
+    if (current.count >= MAX_ATTEMPTS || (attempts.size >= MAX_TRACKED_KEYS && !attempts.has(key))) return limited(reply, current.until - now);
     current.count += 1; attempts.set(key, current);
     const input = CompanyRegistrationSchema.safeParse(request.body);
     if (!input.success) return reply.code(400).send(INVALID_REGISTRATION);
+    const emailRetryMs = emailAttempts.retryAfterMs(input.data.email, now);
+    if (emailRetryMs > 0) return limited(reply, emailRetryMs);
+    // Every attempt counts, never only the refused ones, so reaching the limit says nothing about the account.
+    emailAttempts.recordFailure(input.data.email, now);
     if (reserved.has(input.data.company.slug)) return reply.code(409).send(REGISTRATION_IN_USE);
     if (hour.until <= now) hour = { count: 0, until: now + HOUR_MS };
     if (hour.count >= hourlyRegistrations) return limited(reply, hour.until - now);

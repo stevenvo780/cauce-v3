@@ -116,6 +116,20 @@ describe('public company registration', () => {
     for (const hash of hashes) expect(hash).toMatch(/^\$scrypt\$n=32768,r=8,p=1\$/u);
   });
 
+  it('gives each email five attempts across client addresses, whether or not it already has an account', async () => {
+    const { register } = await open();
+    expect((await register('dueno@example.test', 'acme')).statusCode).toBe(201);
+    for (let count = 1; count < 5; count++) expect((await register('dueno@example.test', `acme-${String(count)}`)).statusCode).toBe(409);
+    for (let count = 1; count <= 5; count++) expect((await register('nadie@example.test', 'acme')).statusCode).toBe(409);
+    for (const email of ['dueno@example.test', 'nadie@example.test']) {
+      const limited = await register(email, 'libre');
+      expect(limited.statusCode).toBe(429);
+      expect(limited.body).toBe(JSON.stringify({ error: 'too_many_requests', message: 'Demasiados registros. Intenta más tarde.' }));
+      expect(Number(limited.headers['retry-after'])).toBeGreaterThanOrEqual(899);
+    }
+    expect((await register('otra@example.test', 'libre')).statusCode).toBe(201);
+  });
+
   it('refuses reserved slugs, the platform ones and those the operator holds back, without deriving', async () => {
     const { register, hashes } = await open({ CAUCE_RESERVED_COMPANY_SLUGS: 'praxis,humanizar' });
     for (const slug of ['praxis', 'humanizar', 'admin', 'platform', 'cauce', 'www']) {
