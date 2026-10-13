@@ -99,7 +99,7 @@ export function HostEnrollmentPanel({ canEnroll }: { canEnroll: boolean }) {
       <Notice tone="warn">Esta invitación se entrega una sola vez. Caduca <Time value={currentInvitation.expires_at} />. Conserva su contenido antes de cerrar; podrás cancelar y crear otra si lo pierdes.</Notice>
       <label>Invitación del ordenador<textarea readOnly className="min-h-32 font-mono text-xs" value={JSON.stringify(currentInvitation, null, 2)} /></label>
       {signerFingerprint(currentInvitation.setup_signer_fingerprint) ? <>
-        <p className="m-0 text-xs">En ese ordenador, con Cauce CLI, Docker, Node.js 22 y Python 3.12 instalados, ejecuta el primer comando y pega la invitación por su entrada estándar; después, el segundo instala y arranca el ejecutor como servicio de tu usuario:</p>
+        <p className="m-0 text-xs">En ese ordenador, con Cauce CLI, Docker, Node.js 22, Python 3.12 con PyYAML y OpenSSL instalados, y desde un usuario del sistema dedicado a esta empresa, ejecuta el primer comando y pega la invitación por su entrada estándar; después, el segundo instala y arranca el ejecutor como servicio de tu usuario:</p>
         <code aria-label="Comando de enrolamiento" className="overflow-auto whitespace-pre-wrap break-words rounded-md bg-subtle p-2 text-xs">{enrollCommand}</code>
         <code aria-label="Comando de preparación" className="overflow-auto whitespace-pre-wrap break-words rounded-md bg-subtle p-2 text-xs">cauce hosts setup</code>
         <p className="m-0 text-xs text-muted">La invitación fija la huella del firmante de la política, así que el ordenador rechaza cualquier otra. Comprueba el resultado con <code>cauce hosts status</code>.</p>

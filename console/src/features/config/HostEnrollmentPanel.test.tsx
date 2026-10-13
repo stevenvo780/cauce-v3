@@ -37,6 +37,7 @@ it('invita desde la consola, conserva el token sólo en memoria y cancela con re
   expect((invitation as HTMLTextAreaElement).value).toContain(token);
   expect(screen.getByLabelText('Comando de enrolamiento')).toHaveTextContent('cauce hosts enroll --gateway');
   expect(screen.getByLabelText('Comando de preparación')).toHaveTextContent(/^cauce hosts setup$/u);
+  expect(screen.getByText(/Python 3\.12 con PyYAML y OpenSSL instalados, y desde un usuario del sistema dedicado a esta empresa/u)).toBeVisible();
   expect(writes).toEqual([{ host_id: 'equipo-1', display_name: 'Portátil' }]);
   expect(screen.getByText(/Pendiente de uso/u)).toBeVisible();
   expect(storageWrite).not.toHaveBeenCalled();
