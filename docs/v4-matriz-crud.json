@@ -11,7 +11,7 @@
     },
     {
       "id": "company_admins_lifecycle_browser",
-      "reason": "Falta asignar, cambiar y revocar autoridad desde navegador real y comprobar sus efectos durables."
+      "reason": "El E2E asigna y revoca un administrador de empresa en navegador real. Falta el cambio owner/admin, que la UI del dueño no ofrece, y la revocación de la sesión de contraseña: tras revocar, la persona sigue autenticada como operador."
     },
     {
       "id": "platform_admins_management",
@@ -676,9 +676,8 @@
       "label": "Dueños y administradores de empresa",
       "operations": {
         "C": {
-          "status": "pending",
-          "reason": "Falta asignar, cambiar y revocar autoridad desde navegador real y comprobar sus efectos durables.",
-          "pending_id": "company_admins_lifecycle_browser",
+          "status": "covered",
+          "reason": "Cobertura de navegador real y PostgreSQL: el dueño asigna un administrador, la fila queda durable y un segundo contexto la relee sin poder conceder.",
           "api": [
             {
               "method": "PUT",
@@ -696,12 +695,16 @@
             {
               "file": "console/src/features/config/CompanyAdminsPanel.test.tsx",
               "name": "no proyecta las personas de la empresa actuada como candidatas de una empresa distinta"
+            },
+            {
+              "file": "tests/e2e/v4-company-admins-real-browser.test.ts",
+              "name": "asigna un administrador, rechaza degradar al último dueño y revoca su acceso en un segundo contexto"
             }
           ]
         },
         "R": {
           "status": "covered",
-          "reason": "Cobertura de componente versionada; no acredita ejecución física ni un recorrido E2E.",
+          "reason": "Cobertura de navegador real y PostgreSQL: dueño y administrador releen la lista tras recargar; el componente aísla las candidatas de otra empresa.",
           "api": [
             {
               "method": "GET",
@@ -719,12 +722,16 @@
             {
               "file": "console/src/features/config/CompanyAdminsPanel.test.tsx",
               "name": "no proyecta las personas de la empresa actuada como candidatas de una empresa distinta"
+            },
+            {
+              "file": "tests/e2e/v4-company-admins-real-browser.test.ts",
+              "name": "asigna un administrador, rechaza degradar al último dueño y revoca su acceso en un segundo contexto"
             }
           ]
         },
         "U": {
           "status": "pending",
-          "reason": "Cambiar owner/admin usa PUT y CAS; falta verificar el cambio de autoridad efectivo en navegador real.",
+          "reason": "La UI del dueño solo ofrece Administrador de empresa; no hay cambio a dueño. Guardar al único dueño como administrador lo rechaza el servidor y la fila sigue siendo owner.",
           "pending_id": "company_admins_lifecycle_browser",
           "api": [
             {
@@ -743,12 +750,16 @@
             {
               "file": "console/src/features/config/CompanyAdminsPanel.test.tsx",
               "name": "no proyecta las personas de la empresa actuada como candidatas de una empresa distinta"
+            },
+            {
+              "file": "tests/e2e/v4-company-admins-real-browser.test.ts",
+              "name": "asigna un administrador, rechaza degradar al último dueño y revoca su acceso en un segundo contexto"
             }
           ]
         },
         "D": {
           "status": "pending",
-          "reason": "La revocación usa el mismo PUT con role null; falta demostrar revocación de sesiones y protección del último dueño.",
+          "reason": "El E2E revoca al administrador: desaparece la fila y el segundo contexto pierde las acciones al recargar. La sesión de contraseña sigue autenticada como operador; el botón de revocar al dueño permanece deshabilitado.",
           "pending_id": "company_admins_lifecycle_browser",
           "api": [
             {
@@ -767,6 +778,10 @@
             {
               "file": "console/src/features/config/CompanyAdminsPanel.test.tsx",
               "name": "no proyecta las personas de la empresa actuada como candidatas de una empresa distinta"
+            },
+            {
+              "file": "tests/e2e/v4-company-admins-real-browser.test.ts",
+              "name": "asigna un administrador, rechaza degradar al último dueño y revoca su acceso en un segundo contexto"
             }
           ]
         }
