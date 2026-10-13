@@ -15,14 +15,14 @@ Fuente: `medido` = hecho de runtime por alias; `env` = variable con defecto;
 | claude: unidad | UTF-16 strictest | sin topes (rige techo nativo 4 MiB) | fijo (decisión dueño: solo techo nativo) | — |
 | codex: `TOPE_CODEX_POR_DEFECTO_BYTES` (`:291`, alias gateway `DEFAULT_CODEX_PROJECT_DOC_MAX_BYTES`) | bytes UTF-8 | 32_768 (32 KiB) | fijo (defecto; `measured` de `project_doc_max_bytes` lo sobrescribe) | e2e + unit perfil |
 | codex: `MAX_CODEX_PROJECT_DOC_BYTES` (`governance-documents.ts:23`), `MAX_CODEX_PROJECT_DOC_FALLBACKS`=16 | bytes/n | 16 MiB | fijo (techo absoluto del medido) | — |
-| codex: `CLAVE_DEL_TOPE` = `project_doc_max_bytes` (`:329`) | — | clave TOML raíz del alias | fijo | — |
+| codex: `CLAVE_DEL_TOPE` = `project_doc_max_bytes` (`packages/protocol/src/ficheros-del-arnes.ts`, símbolo `CLAVE_DEL_TOPE`) | — | clave TOML raíz del alias | fijo | — |
 | hermes: unidad | UTF-16 | sin topes | fijo (decisión dueño: solo techo nativo) | — |
 | openclaw: `TOPES_OPENCLAW` (`:276`) | UTF-16 strictest | 90_000/fichero, 200_000 total | fijo (DENTRO del contenedor, sin BD) | e2e + unit perfil |
 | `AGENT_PROFILE_LIMITS.total` (`agent-profile.ts:35`) | strictest | 24_000 | fijo | unit perfil |
 | `AGENT_PROFILE_LIMITS` campos (`:25-33`) | strictest/entradas | purpose 2_000, role_summary 4_000, human_brief 2_000, item 1_000, items 64 | fijo | unit perfil |
 | `ROLE_BRIEF_MAX_CODE_POINTS` (`schemas/core.ts:39`) | code points | 1_200 | fijo | — |
 | Documentos de gobierno por arnés (`:426`) | rutas | claude→CLAUDE.md, codex/hermes→AGENTS.md, openclaw→7 ficheros | fijo | — |
-| `MAX_RUTA_DE_GOBIERNO` (`:445`) | chars | 4_096 | fijo | — |
+| `MAX_RUTA_DE_GOBIERNO` (`packages/protocol/src/ficheros-del-arnes.ts`, símbolo `MAX_RUTA_DE_GOBIERNO`) | chars | 4_096 | fijo | — |
 
 Discrepancia: el árbol dice 90K/200K para openclaw; `docs/roadmap.md` (30-08)
 dice 60K/150K. Manda el árbol; el roadmap se re-verifica en T063.
@@ -35,14 +35,14 @@ dice 60K/150K. Manda el árbol; el roadmap se re-verifica en T063.
 | `leaseTtlMs` (`gateway/config.ts:7`, `DEFAULT_LEASE_TTL_MS`, `MIN_LEASE_TTL_MS`) | ms | 180_000, mín 30_000 | `CAUCE_LEASE_TTL_MS` | e2e |
 | `CAUCE_DELIVERY_LEASE_CAP_GRACE_MS` (`store/delivery-timing.ts:37`) | ms | = gracia 30 min | env | — |
 | `resumeWindowMs` (`gateway/routes/core.ts:363`) | ms | = ackDeadline | fijo (derivado) | e2e |
-| `DEFAULT_DELIVERY_LEASE_CAP_MS` (`store/.../policy.ts:5`) | ms | 43_200_000 (12 h) | fijo + `CAUCE_DELIVERY_LEASE_CAP_MS` | — |
+| `DEFAULT_DELIVERY_LEASE_CAP_MS` (`packages/store/src/repository/observability/policy.ts`, símbolo `DEFAULT_DELIVERY_LEASE_CAP_MS`) | ms | 604_800_000 (7 días) | fijo + `CAUCE_DELIVERY_LEASE_CAP_MS` | — |
 | `DEFAULT_DELIVERY_LEASE_CAP_GRACE_MS` (`:8`) | ms | 1_800_000 (30 min) | fijo + env | — |
 | `DEFAULT_NO_CONSUMER_PARK_MAX_AGE_MS` (`:11`) | ms | 86_400_000 (24 h) | fijo + runtime | e2e (DLQ) |
 | `connection_token` | UUID | rota en cada hello, incluso resume | medido (PG) | e2e (fencing) |
-| `claimDeliveries` limit/deadline/burst (`claims.ts:213`) | filas/ms/racha | 20 / 30_000 / 3 | fijo (caller pisa) | e2e |
-| `maxClaims` (`:222`) | filas | min(100, limit+reserva), rango 1–100 | fijo + runtime | — |
-| `liveDeliveryClaims` (`:512`) | filas | 256 | fijo | — |
-| `lock_timeout` en claims (`:241`) | ms | 85_000 | fijo | — |
+| `claimDeliveries` limit/deadline/burst (`packages/store/src/repository/deliveries/claims.ts`, método `claimDeliveries`) | filas/ms/racha | 20 / 30_000 / 3 | fijo (caller pisa) | e2e |
+| `maxClaims` (`packages/store/src/repository/deliveries/claims.ts`, método `claimDeliveries`) | filas | min(100, limit+reserva), rango 1–100 | fijo + runtime | — |
+| `liveDeliveryClaims` (`packages/store/src/repository/deliveries/claims.ts`, método `liveDeliveryClaims`) | filas | 256 | fijo | — |
+| `lock_timeout` en claims (`packages/store/src/repository/deliveries/claims.ts`, método `claimDeliveries`) | ms | 85_000 | fijo | — |
 | `agents.max_concurrent_deliveries` (DB) | entregas | 1–100 o NULL = sin tope | DB (validado fijo) | e2e |
 | WS cierre | código | 4401 fenced, 4403 no declarado, 4409 takeover, 1011, 1001 | fijo | e2e |
 
@@ -74,7 +74,7 @@ dice 60K/150K. Manda el árbol; el roadmap se re-verifica en T063.
 | `outboxPollMs` / `outboxLeaseMs` / workers (`app.ts:218`, `DEFAULT_WAKE_PUMP_CONCURRENCY`, `DEFAULT_OUTBOX_SHUTDOWN_TIMEOUT_MS`=1_000) | ms/ms/n | 100 / 30_000 / 4 (1–32) | código llamante | — |
 | `pendingSweepMs` (`app.ts`, `DEFAULT_PENDING_SWEEP_MS`) — barrido de pendientes sin wake (hold liberado o caducado, fila saltada, NOTIFY perdido) | ms | 2_000, rango 0–60_000 (0 = apagado) | código llamante | gateway-hardening/pending-sweep + store redrain-pendiente-postgres |
 | `bodyLimit` publish (`publish.ts:43`) | bytes | `MAX_PUBLISH_BODY_BYTES` ≈ 13,6 MB | protocolo (exceder → 413) | e2e |
-| `QueryDeliveries` limit (`realtime.ts:130`) | filas | 1–100, defecto 20 | fijo | — |
+| `QueryDeliveries` limit (`packages/protocol/src/schemas/realtime.ts`, esquema `QueryDeliveriesSchema`) | filas | 1–100, defecto 20 | fijo | — |
 
 ## 5. Terminal, relay y PTY
 
@@ -117,7 +117,8 @@ dice 60K/150K. Manda el árbol; el roadmap se re-verifica en T063.
 | Semáforo de contraseñas (`gateway/password-auth.ts:PasswordWorkGate`, `passwordWork`) | derivaciones scrypt | 2 a la vez y 16 en cola por proceso, compartido por login, registro, alta de empresa y administración de personas; lo que excede la cola recibe 429 con `Retry-After: 5` | fijo | unit password-auth + PG personas |
 | scrypt (`DEFAULT_SCRYPT_COST`, `DEFAULT_SCRYPT_BLOCK_SIZE`, `DEFAULT_SCRYPT_PARALLELISM`, `MAX_MEMORY`=96 MiB) | N/r/p | 32_768 / 8 / 1; clave 32 B, salt 16 B | fijo | — |
 | Contraseña (`MIN_PASSWORD_LENGTH`, `MAX_PASSWORD_LENGTH`) | chars | 12–1_024 | fijo | — |
-| `CAUCE_AUTH_PROVIDER`, `CAUCE_CONSOLE_PASSWORD_FALLBACK` | enum | `mtls` (fallback token-file/none) | env | — |
+| `CAUCE_AUTH_PROVIDER` | enum | `password`, `token-file`, `mtls` u `oidc`; sin valor usa OIDC si issuer, audience, JWKS y la configuración BFF están completos. En desarrollo, sin proveedor seleccionado ni OIDC completo, `CAUCE_DEV_AUTH=1` habilita el proveedor local; en producción sin proveedor válido el arranque falla | env | — |
+| `CAUCE_CONSOLE_PASSWORD_FALLBACK` (solo con `CAUCE_AUTH_PROVIDER=password`) | enum | `mtls` por defecto; `token-file` o `none` | env | — |
 | `CAUCE_PLATFORM_PASSWORD` (`gateway/platform-cli-main.ts`) | secreto | sin default; contraseña actual para autenticar el CLI de plataforma; se elimina de `process.env` al leerla. Ausente o vacía usa prompt sin eco; sin TTY aborta | env del CLI o prompt, nunca argv | — |
 | `CAUCE_FLEET_HOST_SETUP_CONFIG_FILE` (`gateway/fleet/host-setup.ts:configuredHostSetup`) | ruta absoluta | sin default; fichero de configuración del paquete de preparación de ordenadores (release, política, ficheros y clave de firma); ausente deja el servicio de preparación desactivado | env del gateway | unit host-setup |
 | `CAUCE_SPACE_BACKUP_DIRECTORY` (`gateway/app.ts`, `fleet/space-backup.files.ts`) | ruta absoluta | sin default; habilita las rutas de backup de espacio con auth por contraseña. El almacenamiento exige directorio canónico privado del usuario efectivo y crea con modo 0700 | env del gateway u opción `spaceBackups.directory` | unit backup de espacio |
