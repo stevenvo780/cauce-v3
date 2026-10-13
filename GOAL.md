@@ -87,7 +87,7 @@ Espacio para administrar credenciales y cuentas de proveedores, con aislamiento 
 - [ ] Consultar la cuota en el contenedor donde corre el agente y vincular los agentes reales a su cuenta.
 - [x] [local real] Compartir cuenta ya no es error: el guardián y `cred-guard.py` lo anotan como nota informativa y solo escalan fallos reales; `shared` se calcula con todas las asignaciones de la empresa antes del filtro por tenant (PG; 51c9fd37, 6e05b7d8, c25cc0e6).
 - [x] [código] Motivo de cada fallo con seis códigos cerrados de lector a consola, con su acción en español; «Pendiente de autenticación» en cuentas recién creadas (de037ec7, 365d9faf, 6a6ed3ea, 7fc7d7b5).
-- [ ] Lectores para openclaw y muse, o «sin lector» explícito.
+- [x] Lectores para openclaw y muse, o «sin lector» explícito.
 - [ ] Contraste en producción de las ventanas mostradas con `coutas`; auditoría de logs sin secretos.
 
 ## 3. Espacio «Mis cuotas»
@@ -289,8 +289,8 @@ Las validó la pasada Opus; el detalle está en la sección 6 de `ordenes/v4-cie
 - [ ] 9. Validar `harness_definitions` contra los descriptores.
 - [x] 10. [local real] Autor real en `git log` de contextos y aplicación en el siguiente turno natural. (177947c1, 919bd20e)
 - [x] 11. [local real] Inmutabilidad del historial de contextos. (659099d9, 68ac2f7c)
-- [ ] 12. Contrato entre los handlers MSW y las rutas reales del gateway.
+- [x] 12. Contrato entre los handlers MSW y las rutas reales del gateway.
 - [x] 13. [código] Preflight de dependencias nativas del gate. (ba5f301a)
 - [x] 14. Reservar los subcomandos del CLI como alias inválidos.
-- [ ] 15. Inventariar las dependencias de Argos con la VPS antes de moverlo.
+- [x] 15. Inventariar las dependencias de Argos con la VPS antes de moverlo.
 - [ ] 16. Retirar lo legacy (`fleet_adoption_probe_*`, `fleet_executor_legacy*`) tras migrar.
