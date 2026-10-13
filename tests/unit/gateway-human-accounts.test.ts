@@ -15,6 +15,9 @@ function humanAuthorityClient(users: readonly ConsoleUser[]) {
   const query = vi.fn(async (sql: string, values: unknown[] = []) => {
     if (sql === "SELECT set_config('lock_timeout','5000ms',true)" && values.length === 0) return { rows: [], rowCount: 1 };
     if (sql.startsWith("SELECT set_config('statement_timeout'")) return { rows: [], rowCount: 0 };
+    // boundAuthorityTimeouts: shortens lock and statement timeouts to the 5 s authority ceiling.
+    if (sql.includes('FROM pg_settings WHERE name=ANY($2::text[])') && values[0] === 5_000
+        && JSON.stringify(values[1]) === JSON.stringify(['lock_timeout', 'statement_timeout'])) return { rows: [{}, {}], rowCount: 2 };
     const user = users.find((entry) => entry.id === values[0]);
     if (user === undefined) throw new Error('unknown human authority fixture');
     if (sql.includes('FROM console_users')) return { rows: [{ ...user,
