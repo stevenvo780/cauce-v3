@@ -153,8 +153,11 @@ describe('delivery source director stays separate from physical agents', () => {
         .rejects.toMatchObject({ code: 'forbidden', message: 'delivery source principal is not an editable agent' });
     }
     const requests: FleetOperationRequest[] = [channelCreate(company, host, broker),
-      ...(['stop', 'retire', 'purge'] as const).map(kind => ({ kind, target: { resource: 'agent' as const, tenant_id: company.hub.id, alias: broker },
-        parameters: {}, expected_revision: 0, idempotency_key: `direct-broker-${kind}` }))];
+      ...(['stop', 'retire', 'purge'] as const).map((kind): FleetOperationRequest => {
+        const request = { target: { resource: 'agent' as const, tenant_id: company.hub.id, alias: broker },
+          expected_revision: 0, idempotency_key: `direct-broker-${kind}` };
+        return kind === 'purge' ? { ...request, kind, parameters: { confirm_alias: broker } } : { ...request, kind, parameters: {} };
+      })];
     for (const request of requests) {
       await expect(fleet.enqueue(company.hub.id, 'owner', request, subject())).rejects.toMatchObject({ code: 'forbidden' });
     }

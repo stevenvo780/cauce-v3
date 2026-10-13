@@ -100,8 +100,9 @@ async function durable(company: RegisteredCompany, hostId: string, alias = 'work
   [company.hub.id, alias, company.company.id, hostId, `cauce-${alias}`, `/home/dev/.cauce/${alias}`, `${company.company.id}-account`]);
 }
 function lifecycle(kind: typeof kinds[number], company = north, alias = 'worker'): FleetOperationRequest {
-  return { kind, target: { resource: 'agent', tenant_id: company.hub.id, alias },
-    expected_revision: 0, idempotency_key: `transport-${kind}-${alias}`, parameters: {} };
+  const request = { target: { resource: 'agent' as const, tenant_id: company.hub.id, alias },
+    expected_revision: 0, idempotency_key: `transport-${kind}-${alias}` };
+  return kind === 'purge' ? { ...request, kind, parameters: { confirm_alias: alias } } : { ...request, kind, parameters: {} };
 }
 const subject = () => `console:${north.user.id}`;
 async function waitingForFleetRevision(): Promise<void> {
