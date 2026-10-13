@@ -3,6 +3,7 @@ import { execFile } from 'node:child_process';
 import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { lockCompanyAuthority, type DatabaseClient, type DatabasePool } from '../src/index.js';
 import { ContextGitBroker } from '../src/context-git.js';
@@ -139,5 +140,37 @@ describe('context broker reconciliation with a remote that advanced', () => {
     expect(kept).toMatchObject({ state: 'error', last_error: 'context_git_non_fast_forward' });
     expect(await git(repository, ['rev-parse', 'refs/heads/main'])).toBe(kept?.git_commit);
     expect(await git(unrelated, ['rev-parse', 'refs/heads/main'])).toBe(foreign);
+  });
+
+  it('rehearses the sync-failure drill: the preflight detects the failed push and passes again once the retry ends synced', async () => {
+    const key = join(directory, 'deploy-key'); await writeFile(key, 'zz-canary-placeholder-not-a-key\n', { mode: 0o600 });
+    await git(repository, ['config', 'core.sshCommand', `ssh -i ${key} -o IdentitiesOnly=yes`]);
+    const preflight = async () => {
+      const script = fileURLToPath(new URL('../../../ops/scripts/context-broker-preflight.py', import.meta.url));
+      const run = await execute('python3', [script, '--repository', repository, '--uid', String(process.getuid?.() ?? -1)], { encoding: 'utf8', timeout: 60_000 })
+        .then(result => ({ code: 0, stdout: result.stdout }), (error: { code?: number; stdout?: string }) => ({ code: error.code ?? -1, stdout: error.stdout ?? '' }));
+      const report = JSON.parse(run.stdout) as { checks: { check: string; ok: boolean }[] };
+      return { code: run.code, failed: report.checks.filter(check => !check.ok).map(check => check.check) };
+    };
+    await write(0, 'Mission before the drill.'); await sync();
+    expect(await preflight()).toEqual({ code: 0, failed: [] });
+
+    await git(repository, ['remote', 'set-url', 'origin', join(directory, 'unreachable.git')]);
+    await write(1, 'Mission written while the remote is down.');
+    expect(await sync()).toMatchObject({ state: 'error', error: 'context_push_failed' });
+    const retained = await outbox();
+    expect(await preflight()).toMatchObject({ code: 1, failed: ['main_matches_origin', 'push_dry_run'] });
+    await git(repository, ['remote', 'set-url', 'origin', remote]);
+    const outside = await outsiderCommit({ 'notes/drill.md': 'The remote advanced during the outage.' });
+    expect(await preflight()).toMatchObject({ code: 1, failed: ['main_matches_origin', 'push_dry_run'] });
+
+    await store.retry(source, target().tenant_id, target().alias);
+    await sync();
+    const recovered = await outbox();
+    expect(recovered).toMatchObject({ state: 'synced', git_commit: retained?.git_commit, last_error: null });
+    expect(await preflight()).toEqual({ code: 0, failed: [] });
+    expect(await git(repository, ['rev-parse', 'refs/heads/main'])).toBe((await git(repository, ['ls-remote', 'origin', 'refs/heads/main'])).split(/\s/u)[0]);
+    expect(await history()).toEqual(expect.arrayContaining([outside, retained?.git_commit]));
+    expect(await remoteFile(`${contextRepositoryPrefix(target())}/context/mission.md`)).toBe('Mission written while the remote is down.');
   });
 });
