@@ -1,13 +1,7 @@
-"""Recoverable pre-cut copy of an agent's legacy data for the V4 migration, with a sealed manifest.
+"""Recoverable pre-cut copy of one alias: git bundles at the same HEAD, other files by sha256.
 
-Projects travel as git bundles and come back at the same HEAD; every other file travels by content with
-sha256. Credentials are excluded by design: paths that look like auth, session, token, profile or key
-material are never opened, and any other file whose content carries credential material is left out
-too. Both are listed with a reason, never with content. The tree is walked through directory descriptors
-with O_NOFOLLOW, so a path swapped for a symlink mid-copy is refused instead of followed.
-
-Restoration validates the whole manifest before touching the disk, rebuilds the tree in an empty
-directory (optionally under a normalized layout, old path -> new path) and proves it against the manifest.
+Credentials are omitted by name and by content and listed with a reason. The walk uses directory
+descriptors and O_NOFOLLOW. Restoration checks the sealed manifest before it writes.
 """
 from __future__ import annotations
 
@@ -42,28 +36,20 @@ OMISSION_RULES = (
     ('profile', re.compile(r'profile')),
     ('credential', re.compile(
         r'(?:\.ssh|\.gnupg|\.aws|\.docker|\.kube|\.password-store|\.netrc|_netrc|\.git-credentials|\.pgpass|\.npmrc'
-        r'|\.pypirc|\.yarnrc(?:\.yml)?|\.boto|\.s3cfg|\.htpasswd|\.env(?:\..*)?|kubeconfig|known_hosts|cookies?.*'
-        r'|id_(?:rsa|dsa|ecdsa|ed25519).*|.*credential.*|.*secret.*|.*passw(?:or)?d.*|.*api[-_]?key.*'
-        r'|.*contrase.*|.*clave.*|.*bearer.*|.*private[-_]?key.*|.*[-_]key\..*'
-        r'|.*\.(?:pem|key|p8|p12|pfx|ppk|jks|keystore|kdbx|gpg|asc|ovpn|hdr))')),
+        r'|\.pypirc|\.yarnrc(?:\.yml)?|\.boto|\.s3cfg|\.htpasswd|\.env(?:\..*)?|kubeconfig|known_hosts|cookies?.*|id_(?:rsa|dsa|ecdsa|ed25519).*|.*credential.*|.*secret.*|.*passw(?:or)?d.*|.*api[-_]?key.*|.*contrase.*|.*clave.*|.*bearer.*|.*private[-_]?key.*|.*[-_]key\..*|.*\.(?:pem|key|p8|p12|pfx|ppk|jks|keystore|kdbx|gpg|asc|ovpn|hdr))')),
 )
 REGENERABLE = frozenset({'node_modules', '__pycache__', '.venv', 'venv', '.pytest_cache', '.mypy_cache',
                          '.ruff_cache', '.cache', '.npm', '.next', '.turbo'})
 SENSITIVE_CONTENT = re.compile(
     rb'-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----|\bsk-(?:ant-|proj-)?[A-Za-z0-9_-]{20,}'
-    rb'|\bgh[pousr]_[A-Za-z0-9]{20,}|\bgithub_pat_[A-Za-z0-9_]{20,}|\bglpat-[A-Za-z0-9_-]{20,}|\bxox[abprs]-[A-Za-z0-9-]{10,}'
-    rb'|\b(?:AKIA|ASIA)[0-9A-Z]{16}\b|\bnpm_[A-Za-z0-9]{36}\b|\bAIza[0-9A-Za-z_-]{35}|\bya29\.[0-9A-Za-z_-]{20,}'
-    rb'|\bxai-[A-Za-z0-9]{20,}|\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}'
-    rb'|hooks\.slack\.com/services/[A-Za-z0-9/]{10,}'
-    rb'|://[^\s/:@"\'<>]+:[^\s/@"\'<>]+@|authorization["\']?\s*[:=]\s*["\']?(?:bearer|basic|token)\s+[A-Za-z0-9._~+/=-]{8,}'
-    rb'|\bbearer(?:\s+|\s*[:=]\s*)["\']?[A-Za-z0-9._~+/=-]{10,}|\bcookie\s*:[^\r\n]{8,}'
-    rb'|["\']?[a-z0-9_-]*(?:secret|token|password|passwd|passphrase|contrasena|contrase(?:\xc3\xb1|n)a|clave|credential'
-    rb'|api[_-]?key|apikey|private[_-]?key)[a-z0-9_-]*["\']?\s*[:=]\s*["\']?(?!\$\{|process\.env)[^\s"\',;]{8,}',
+    rb'|\bgh[pousr]_[A-Za-z0-9]{20,}|\bgithub_pat_[A-Za-z0-9_]{20,}|\bglpat-[A-Za-z0-9_-]{20,}|\bxox[abprs]-[A-Za-z0-9-]{10,}|\b(?:AKIA|ASIA)[0-9A-Z]{16}\b|\bnpm_[A-Za-z0-9]{36}\b|\bAIza[0-9A-Za-z_-]{35}|\bya29\.[0-9A-Za-z_-]{20,}'
+    rb'|\bxai-[A-Za-z0-9]{20,}|\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}|hooks\.slack\.com/services/[A-Za-z0-9/]{10,}|://[^\s/:@"\'<>]+:[^\s/@"\'<>]+@|authorization["\']?\s*[:=]\s*["\']?(?:bearer|basic|token)\s+[A-Za-z0-9._~+/=-]{8,}'
+    rb'|\bbearer(?:\s+|\s*[:=]\s*)["\']?[A-Za-z0-9._~+/=-]{10,}|\bcookie\s*:[^\r\n]{8,}|["\']?[a-z0-9_-]*(?:secret|token|password|passwd|passphrase|contrasena|contrase(?:\xc3\xb1|n)a|clave|credential|api[_-]?key|apikey|private[_-]?key)[a-z0-9_-]*["\']?\s*[:=]\s*["\']?(?!\$\{|process\.env)[^\s"\',;]{8,}',
     re.I)
 CONFUSABLES = str.maketrans({
     '\u0430': 'a', '\u0432': 'b', '\u0433': 'r', '\u0434': 'd', '\u043a': 'k', '\u043c': 'm', '\u043d': 'h', '\u043f': 'n', '\u0441': 'c', '\u0435': 'e', '\u043e': 'o', '\u0440': 'p', '\u0442': 't', '\u0445': 'x', '\u0443': 'y', '\u044f': 'r',
-    '\u0454': 'e', '\u0455': 's', '\u0456': 'i', '\u0458': 'j', '\u04bb': 'h', '\u04cf': 'l', '\u03b1': 'a', '\u03b2': 'b', '\u03b3': 'r', '\u03b4': 'd', '\u03b5': 'e', '\u03b7': 'n', '\u03b8': 'o', '\u03b9': 'i', '\u03ba': 'k', '\u03bc': 'u',
-    '\u03bd': 'v', '\u03bf': 'o', '\u03c0': 'n', '\u03c1': 'p', '\u03c2': 's', '\u03c3': 's', '\u03c4': 't', '\u03c5': 'u', '\u03c7': 'x', '\u03c9': 'w'})
+    '\u0454': 'e', '\u0455': 's', '\u0456': 'i', '\u0458': 'j', '\u04bb': 'h', '\u04cf': 'l', '\u0397': 'h', '\u039c': 'm', '\u039d': 'n', '\u03a5': 'y',
+    '\u03b1': 'a', '\u03b2': 'b', '\u03b3': 'y', '\u03b4': 'd', '\u03b5': 'e', '\u03b7': 'n', '\u03b8': 'o', '\u03b9': 'i', '\u03ba': 'k', '\u03bc': 'u', '\u03bd': 'v', '\u03bf': 'o', '\u03c0': 'n', '\u03c1': 'p', '\u03c2': 's', '\u03c3': 's', '\u03c4': 't', '\u03c5': 'u', '\u03c7': 'x', '\u03c9': 'w'})
 OVERLAP = 4096
 CHUNK = 1 << 20
 OPEN_DIRECTORY = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
@@ -90,8 +76,9 @@ def seal(doc: dict) -> str:
 
 
 def fold_text(value: str) -> str:
-    folded = unicodedata.normalize('NFKD', value).casefold().translate(CONFUSABLES)
-    return ''.join(character for character in folded if unicodedata.category(character) not in ('Cf', 'Mn', 'Me'))
+    folded = unicodedata.normalize('NFKD', value).translate(CONFUSABLES).casefold().translate(CONFUSABLES)
+    return ''.join(character for character in folded if character not in '\u115f\u1160\u3164\uffa0'
+                   and unicodedata.category(character) not in ('Cf', 'Mn', 'Me'))
 
 
 def sensitive_bytes(raw: bytes) -> bool:
@@ -130,8 +117,7 @@ def git(repository: str, *arguments: str, check: bool = True, fd: int | None = N
     location = f'/proc/self/fd/{fd}' if fd is not None else repository
     command = ['git', '-c', 'safe.directory=*', '-c', 'core.fsmonitor=false', '-c', 'core.hooksPath=/dev/null',
                '-c', 'protocol.allow=never', '-c', 'protocol.file.allow=always', '-C', location, *arguments]
-    done = subprocess.run(command, capture_output=True, env={**os.environ, **GIT_ENV}, check=False, timeout=3600,
-                          pass_fds=(fd,) if fd is not None else ())
+    done = subprocess.run(command, capture_output=True, env={**os.environ, **GIT_ENV}, check=False, timeout=3600, pass_fds=(fd,) if fd is not None else ())
     if check and done.returncode:
         raise Failure(f'git {arguments[0]} failed: {scrub(done.stderr.decode(errors="replace").strip())[:200]}')
     return done.stdout.decode('utf-8', 'surrogateescape') if done.returncode == 0 else ''
@@ -139,8 +125,7 @@ def git(repository: str, *arguments: str, check: bool = True, fd: int | None = N
 
 def relative(value) -> str:
     if not isinstance(value, str) or not value or value.startswith('/') or posixpath.normpath(value) != value \
-            or any(part in ('', '.', '..') for part in value.split('/')) \
-            or any(ord(character) < 32 or ord(character) == 127 for character in value):
+            or any(part in ('', '.', '..') for part in value.split('/')) or any(ord(character) < 32 or ord(character) == 127 for character in value):
         raise Failure(f'unsafe manifest path: {value!r}')
     return value
 
@@ -163,8 +148,7 @@ def safe_mode(mode: int, directory: bool = False) -> int:
 def open_verified(parent: int, name: str, expected: os.stat_result, flags: int) -> int:
     descriptor = os.open(name, flags, dir_fd=parent)
     current = os.fstat(descriptor)
-    if (current.st_dev, current.st_ino) != (expected.st_dev, expected.st_ino) \
-            or stat.S_IFMT(current.st_mode) != stat.S_IFMT(expected.st_mode):
+    if (current.st_dev, current.st_ino) != (expected.st_dev, expected.st_ino) or stat.S_IFMT(current.st_mode) != stat.S_IFMT(expected.st_mode):
         os.close(descriptor)
         raise Failure(f'{name!r} changed while it was copied; stop the agent and retry')
     return descriptor
@@ -229,6 +213,46 @@ class Copier:
         except (OSError, ValueError):
             return False
 
+    def inode_names(self, info: os.stat_result) -> int:
+        if not hasattr(self, 'inode_name_counts'):
+            counts: dict[tuple[int, int], int] = {}
+            for root in self.host_roots:
+                for base, _, files in os.walk(root):
+                    for name in files:
+                        try:
+                            item = os.lstat(os.path.join(base, name))
+                        except OSError:
+                            continue
+                        if stat.S_ISREG(item.st_mode) and item.st_nlink > 1:
+                            counts[(item.st_dev, item.st_ino)] = counts.get((item.st_dev, item.st_ino), 0) + 1
+            self.inode_name_counts = counts
+        return self.inode_name_counts.get((info.st_dev, info.st_ino), 0)
+
+    def git_store_escapes(self, root: str, seen: set[tuple[int, int]] | None = None) -> bool:
+        seen = set() if seen is None else seen
+        try:
+            identity = (os.stat(root).st_dev, os.stat(root).st_ino)
+        except OSError:
+            return True
+        if identity in seen:
+            return False
+        seen.add(identity)
+        errors: list[OSError] = []
+        for base, directories, files in os.walk(root, onerror=errors.append):
+            for name in directories + files:
+                candidate = os.path.join(base, name)
+                try:
+                    info = os.lstat(candidate)
+                except OSError:
+                    return True
+                if stat.S_ISLNK(info.st_mode) and not self.inside_roots(candidate):
+                    return True
+                if stat.S_ISLNK(info.st_mode) and name in directories and self.git_store_escapes(os.path.realpath(candidate), seen):
+                    return True
+                if stat.S_ISREG(info.st_mode) and info.st_nlink > 1 and self.inode_names(info) < info.st_nlink:
+                    return True
+        return bool(errors)
+
     def git_file_outside(self, directory: int) -> bool:
         try:
             descriptor = os.open('.git', OPEN_FILE, dir_fd=directory)
@@ -255,13 +279,8 @@ class Copier:
             reported = git('.', 'rev-parse', *arguments, check=False, fd=directory).strip()
             return reported if not reported or os.path.isabs(reported) else os.path.join(host_directory, reported)
 
-        def linked(root: str) -> bool:
-            return any(not self.inside_roots(os.path.join(base, name)) for base, dirs, files in os.walk(root)
-                       for name in dirs + files if os.path.islink(os.path.join(base, name)))
-
         paths = (located('--git-common-dir'), located('--git-dir'), located('--git-path', 'objects'))
-        if not all(paths) or not all(self.inside_roots(path) for path in paths) \
-                or any(linked(os.path.realpath(path)) for path in paths[:2]):
+        if not all(paths) or not all(self.inside_roots(path) for path in paths) or any(self.git_store_escapes(os.path.realpath(path)) for path in paths):
             return True
         alternates = os.path.join(os.path.realpath(paths[2]), 'info', 'alternates')
         try:
@@ -279,7 +298,7 @@ class Copier:
         database = os.path.dirname(os.path.dirname(alternates))
         for item in (line.strip() for line in raw.decode('utf-8', 'surrogateescape').splitlines()):
             candidate = item if not item or os.path.isabs(item) else os.path.join(database, item)
-            if item and not item.startswith('#') and (not self.inside_roots(candidate) or linked(os.path.realpath(candidate))):
+            if item and not item.startswith('#') and (not self.inside_roots(candidate) or self.git_store_escapes(os.path.realpath(candidate))):
                 return True
         return False
 
@@ -333,10 +352,9 @@ class Copier:
             bundle_digest = scan(reader, os.fstat(reader).st_size, None)[0]
         finally:
             os.close(reader)
-        self.repositories[path] = {'path': path, 'head': head, 'branch': branch if branch and BRANCH_RE.fullmatch(branch)
-                                   else None, 'objectFormat': object_format, 'remotes': remotes,
-                                   'droppedRemotes': sorted(dropped), 'refs': len(refs), 'bundle': bundle,
-                                   'bundleSha256': bundle_digest, 'deleted': [], 'trackedSensitive': []}
+        self.repositories[path] = {'path': path, 'head': head, 'branch': branch if branch and BRANCH_RE.fullmatch(branch) else None,
+                                   'objectFormat': object_format, 'remotes': remotes, 'droppedRemotes': sorted(dropped), 'refs': len(refs),
+                                   'bundle': bundle, 'bundleSha256': bundle_digest, 'deleted': [], 'trackedSensitive': []}
         self.tracked[path] = tracked
 
     def owner(self, path: str) -> str | None:
@@ -354,15 +372,13 @@ class Copier:
             if sensitive and clean:
                 self.repositories[repo]['trackedSensitive'].append(path)
             elif sensitive:
-                self.omissions.append({'path': path, 'reason': 'sensitive-content', 'kind': 'file', 'files': 1,
-                                       'bytes': info.st_size})
+                self.omissions.append({'path': path, 'reason': 'sensitive-content', 'kind': 'file', 'files': 1, 'bytes': info.st_size})
                 return
             if not clean:
                 store(descriptor, digest, self.output)
         finally:
             os.close(descriptor)
-        self.entries.append({'path': path, 'kind': 'file', 'mode': stat.S_IMODE(info.st_mode), 'bytes': info.st_size,
-                             'sha256': digest, 'source': 'git' if clean else 'data'})
+        self.entries.append({'path': path, 'kind': 'file', 'mode': stat.S_IMODE(info.st_mode), 'bytes': info.st_size, 'sha256': digest, 'source': 'git' if clean else 'data'})
 
     def link(self, path: str, parent: int, name: str) -> None:
         target = os.readlink(name, dir_fd=parent)
@@ -372,10 +388,8 @@ class Copier:
         repo = self.owner(path)
         tracked = self.tracked[repo].get(path[len(repo) + 1:]) if repo else None
         raw = target.encode('utf-8', 'surrogateescape')
-        if tracked and tracked[0] == '120000' and \
-                hashlib.new(self.repositories[repo]['objectFormat'], b'blob %d\0' % len(raw) + raw).hexdigest() == tracked[1]:
-            self.entries.append({'path': path, 'kind': 'symlink', 'source': 'git',
-                                 'targetSha256': hashlib.sha256(raw).hexdigest()})
+        if tracked and tracked[0] == '120000' and hashlib.new(self.repositories[repo]['objectFormat'], b'blob %d\0' % len(raw) + raw).hexdigest() == tracked[1]:
+            self.entries.append({'path': path, 'kind': 'symlink', 'source': 'git', 'targetSha256': hashlib.sha256(raw).hexdigest()})
         elif escapes(path, target):
             self.omissions.append({'path': path, 'reason': 'symlink-outside', 'kind': 'symlink', 'files': 1, 'bytes': 0})
         else:
@@ -387,13 +401,10 @@ class Copier:
         except FileNotFoundError:
             marker = None
         if marker is not None and stat.S_ISLNK(marker.st_mode):
-            self.omissions.append({'path': path + '/.git', 'reason': 'unsafe-git-link', 'kind': 'symlink',
-                                   'files': 0, 'bytes': 0})
-        elif marker is not None and ((stat.S_ISREG(marker.st_mode) and self.git_file_outside(directory))
-                                     or self.git_metadata_outside(directory)):
+            self.omissions.append({'path': path + '/.git', 'reason': 'unsafe-git-link', 'kind': 'symlink', 'files': 0, 'bytes': 0})
+        elif marker is not None and ((stat.S_ISREG(marker.st_mode) and self.git_file_outside(directory)) or self.git_metadata_outside(directory)):
             kind = 'directory' if stat.S_ISDIR(marker.st_mode) else 'file' if stat.S_ISREG(marker.st_mode) else 'special'
-            self.omissions.append({'path': path + '/.git', 'reason': 'unsafe-git-link', 'kind': kind,
-                                   'files': 0, 'bytes': 0})
+            self.omissions.append({'path': path + '/.git', 'reason': 'unsafe-git-link', 'kind': kind, 'files': 0, 'bytes': 0})
         elif marker is not None:
             self.repository(path, directory)
         self.entries.append({'path': path, 'kind': 'directory', 'mode': stat.S_IMODE(os.fstat(directory).st_mode)})
@@ -426,8 +437,7 @@ class Copier:
         for repo, tracked in self.tracked.items():
             for name, (mode, _) in sorted(tracked.items()):
                 path = f'{repo}/{name}'
-                if mode != '160000' and path not in present and not any(under(path, o) for o in omitted) \
-                        and self.owner(path) == repo:
+                if mode != '160000' and path not in present and not any(under(path, o) for o in omitted) and self.owner(path) == repo:
                     self.repositories[repo]['deleted'].append(path)
 
 
@@ -437,8 +447,7 @@ def copy(alias: str, sources: list[str], output: str, scope: dict) -> dict:
     roots = {}
     for item in sources:
         name, _, location = item.partition('=')
-        if not NAME_RE.fullmatch(name) or name in roots or not os.path.isabs(location) or os.path.islink(location) \
-                or not os.path.isdir(location):
+        if not NAME_RE.fullmatch(name) or name in roots or not os.path.isabs(location) or os.path.islink(location) or not os.path.isdir(location):
             raise Failure(f'source must be NAME=/absolute/directory and not a symlink: {name!r}')
         roots[name] = os.path.realpath(location)
     check_sources(roots, scope)
@@ -459,13 +468,10 @@ def copy(alias: str, sources: list[str], output: str, scope: dict) -> dict:
     manifest = {
         'schema': SCHEMA, 'alias': alias, 'createdAt': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
         'host': socket.gethostname(), 'sources': sorted(roots), 'tenant': scope['tenant'], 'container': scope['container'],
-        'entries': copier.entries, 'repositories': sorted(copier.repositories.values(), key=lambda r: r['path']),
-        'omissions': copier.omissions,
-        'totals': {'files': sum(1 for e in copier.entries if e['kind'] == 'file'),
-                   'bytes': sum(e['bytes'] for e in copier.entries if e['kind'] == 'file'),
-                   'dataFiles': len(data), 'dataBytes': sum(e['bytes'] for e in data),
-                   'repositories': len(copier.repositories), 'omissions': len(copier.omissions),
-                   'omittedBytes': sum(o['bytes'] for o in copier.omissions)}}
+        'entries': copier.entries, 'repositories': sorted(copier.repositories.values(), key=lambda r: r['path']), 'omissions': copier.omissions,
+        'totals': {'files': sum(1 for e in copier.entries if e['kind'] == 'file'), 'bytes': sum(e['bytes'] for e in copier.entries if e['kind'] == 'file'),
+                   'dataFiles': len(data), 'dataBytes': sum(e['bytes'] for e in data), 'repositories': len(copier.repositories),
+                   'omissions': len(copier.omissions), 'omittedBytes': sum(o['bytes'] for o in copier.omissions)}}
     manifest['sha256'] = seal(manifest)
     writer = os.open(os.path.join(output, 'manifest.json'), OPEN_NEW, 0o600)
     with os.fdopen(writer, 'w', encoding='utf-8') as handle:
@@ -482,8 +488,7 @@ def validate(manifest: dict) -> dict:
     sources = manifest.get('sources')
     if not isinstance(sources, list) or not sources or any(not NAME_RE.fullmatch(str(name)) for name in sources):
         raise Failure('manifest sources are invalid')
-    paths = [e['path'] for e in manifest['entries']] + [o['path'] for o in manifest['omissions']] \
-        + [r['path'] for r in manifest['repositories']] + [d for r in manifest['repositories'] for d in r.get('deleted', [])]
+    paths = [e['path'] for e in manifest['entries']] + [o['path'] for o in manifest['omissions']] + [r['path'] for r in manifest['repositories']] + [d for r in manifest['repositories'] for d in r.get('deleted', [])]
     for path in paths:
         if relative(path).split('/', 1)[0] not in sources:
             raise Failure(f'manifest path outside the copied space: {path}')
@@ -495,16 +500,13 @@ def validate(manifest: dict) -> dict:
             raise Failure(f'manifest mode missing: {entry["path"]}')
         if kind == 'file' and not SHA256_RE.fullmatch(str(entry.get('sha256'))):
             raise Failure(f'manifest digest is invalid: {entry["path"]}')
-        if kind == 'symlink' and not (entry.get('source') == 'git' and SHA256_RE.fullmatch(str(entry.get('targetSha256')))
-                                      or isinstance(entry.get('target'), str) and '\0' not in entry['target']):
+        if kind == 'symlink' and not (entry.get('source') == 'git' and SHA256_RE.fullmatch(str(entry.get('targetSha256'))) or isinstance(entry.get('target'), str) and '\0' not in entry['target']):
             raise Failure(f'manifest link target is invalid: {entry["path"]}')
     for item in manifest['omissions']:
         relative(item['path'])
     for repo in manifest['repositories']:
         relative(repo['path'])
-        if not re.fullmatch(r'repos/\d{4}\.bundle', str(repo.get('bundle'))) or not HEX_RE.fullmatch(str(repo.get('head'))) \
-                or not SHA256_RE.fullmatch(str(repo.get('bundleSha256'))) \
-                or (repo.get('branch') is not None and not BRANCH_RE.fullmatch(str(repo['branch']))):
+        if not re.fullmatch(r'repos/\d{4}\.bundle', str(repo.get('bundle'))) or not HEX_RE.fullmatch(str(repo.get('head'))) or not SHA256_RE.fullmatch(str(repo.get('bundleSha256'))) or (repo.get('branch') is not None and not BRANCH_RE.fullmatch(str(repo['branch']))):
             raise Failure(f'manifest repository is invalid: {repo["path"]}')
         for name, url in repo.get('remotes', {}).items():
             if not REMOTE_RE.fullmatch(name) or clean_url(url) != url:
@@ -550,8 +552,7 @@ def check(copy_directory: str) -> dict:
                 missing.append(repo['bundle'])
     if missing:
         raise Failure(f'copy is not recoverable: {len(missing)} blobs or bundles differ, first {missing[0]}')
-    return {'manifest': manifest['sha256'], 'alias': manifest['alias'], 'dataFiles': manifest['totals']['dataFiles'],
-            'repositories': len(manifest['repositories']), 'verified': True}
+    return {'manifest': manifest['sha256'], 'alias': manifest['alias'], 'dataFiles': manifest['totals']['dataFiles'], 'repositories': len(manifest['repositories']), 'verified': True}
 
 
 def mapper(rules: list[str]):
@@ -637,8 +638,8 @@ class Restorer:
             git(target, 'remote', 'add', '--', name, url)
 
 
-def restore(copy_directory: str, destination: str, rules: list[str], omit: list[str] = (),
-            duplicates: list[str] = (), owner: str | None = None, expected: tuple[str, str] | None = None) -> dict:
+def restore(copy_directory: str, destination: str, rules: list[str], omit: list[str] = (), duplicates: list[str] = (),
+            owner: str | None = None, expected: tuple[str, str] | None = None) -> dict:
     manifest = load(copy_directory)
     if expected is None or (manifest['alias'], manifest['tenant']) != expected:
         raise Failure('the copy belongs to another alias or company than the one being restored')
@@ -652,8 +653,7 @@ def restore(copy_directory: str, destination: str, rules: list[str], omit: list[
         raise Failure('mapping sends two manifest paths to the same place')
     restorer = Restorer(copy_directory, destination, apply)
     skipped = {e['path'] for e in manifest['entries'] if e['kind'] != 'directory' and e['source'] == 'data'
-               and any(fnmatch.fnmatchcase(e['path'], glob) or fnmatch.fnmatchcase(e['path'].rsplit('/', 1)[-1], glob)
-                       for glob in omit)}
+               and any(fnmatch.fnmatchcase(e['path'], glob) or fnmatch.fnmatchcase(e['path'].rsplit('/', 1)[-1], glob) for glob in omit)}
     for repo in sorted(manifest['repositories'], key=lambda r: r['path'].count('/')):
         restorer.repository(repo)
     for entry in manifest['entries']:
@@ -661,8 +661,7 @@ def restore(copy_directory: str, destination: str, rules: list[str], omit: list[
         if entry['kind'] == 'directory':
             os.makedirs(target, mode=0o700, exist_ok=True)
         elif entry['kind'] == 'file' and entry['source'] == 'data' and entry['path'] not in skipped:
-            restorer.write(os.path.join(restorer.copy_directory, 'data', entry['sha256'][:2], entry['sha256']),
-                           target, entry['mode'], entry['sha256'])
+            restorer.write(os.path.join(restorer.copy_directory, 'data', entry['sha256'][:2], entry['sha256']), target, entry['mode'], entry['sha256'])
     for repo in manifest['repositories']:
         for path in repo['deleted']:
             target = restorer.place(path)
@@ -687,8 +686,7 @@ def restore(copy_directory: str, destination: str, rules: list[str], omit: list[
             os.chown(descriptor, *identity)
             for name in dirs + names:
                 os.chown(name, *identity, dir_fd=descriptor, follow_symlinks=False)
-    layout_rules = {'mapping': list(rules), 'omit': list(omit), 'duplicates': list(duplicates),
-                    'owner': owner, 'skippedUnsafeSymlinks': unsafe_links}
+    layout_rules = {'mapping': list(rules), 'omit': list(omit), 'duplicates': list(duplicates), 'owner': owner, 'skippedUnsafeSymlinks': unsafe_links}
     return verify_restore(manifest, restorer.base, apply, layout_rules, skipped, copies)
 
 
@@ -725,11 +723,9 @@ def verify_restore(manifest: dict, base: str, apply, layout_rules: dict, skipped
         target = os.path.join(base, path)
         if entry['kind'] == 'symlink':
             link = os.readlink(target) if os.path.islink(target) else None
-            ok = link is not None and (link == entry['target'] if 'target' in entry else hashlib.sha256(
-                link.encode('utf-8', 'surrogateescape')).hexdigest() == entry['targetSha256'])
+            ok = link is not None and (link == entry['target'] if 'target' in entry else hashlib.sha256(link.encode('utf-8', 'surrogateescape')).hexdigest() == entry['targetSha256'])
         else:
-            ok = os.path.isfile(target) and not os.path.islink(target) and digest_of(target) == entry['sha256'] \
-                and (entry['source'] == 'git' or stat.S_IMODE(os.lstat(target).st_mode) == safe_mode(entry['mode']))
+            ok = os.path.isfile(target) and not os.path.islink(target) and digest_of(target) == entry['sha256'] and (entry['source'] == 'git' or stat.S_IMODE(os.lstat(target).st_mode) == safe_mode(entry['mode']))
         if not ok:
             problems.append(path)
         layout.append({'from': entry['path'], 'to': path, 'sha256': entry.get('sha256'), 'source': entry['source']})
@@ -739,8 +735,7 @@ def verify_restore(manifest: dict, base: str, apply, layout_rules: dict, skipped
     receipt = {'schema': RESTORE_SCHEMA, 'manifest': manifest['sha256'], 'alias': manifest['alias'],
                'restoredAt': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()), **layout_rules,
                'repositories': [{'from': r['path'], 'to': p, 'head': r['head']} for p, r in sorted(repos.items())],
-               'layout': layout, 'excludedByLayout': sorted(skipped), 'extrasUnderOmissions': extras,
-               'problems': problems, 'verified': not problems}
+               'layout': layout, 'excludedByLayout': sorted(skipped), 'extrasUnderOmissions': extras, 'problems': problems, 'verified': not problems}
     receipt['sha256'] = seal(receipt)
     return receipt
 
@@ -777,8 +772,7 @@ def main(argv: list[str]) -> int:
         else:
             scratch = None if arguments.destino else tempfile.mkdtemp(prefix='cauce-v4-restauracion-')
             try:
-                receipt = restore(arguments.copia, arguments.destino or scratch, arguments.mapa, arguments.omitir,
-                                  arguments.duplicar, arguments.propietario, (arguments.alias, arguments.empresa))
+                receipt = restore(arguments.copia, arguments.destino or scratch, arguments.mapa, arguments.omitir, arguments.duplicar, arguments.propietario, (arguments.alias, arguments.empresa))
             finally:
                 if scratch:
                     shutil.rmtree(scratch, ignore_errors=True)
@@ -786,8 +780,7 @@ def main(argv: list[str]) -> int:
             if arguments.recibo:
                 with os.fdopen(os.open(arguments.recibo, OPEN_NEW, 0o600), 'w', encoding='utf-8') as handle:
                     handle.write(text + '\n')
-            print(json.dumps({**{k: receipt[k] for k in ('manifest', 'verified', 'sha256')},
-                              'problems': len(receipt['problems']), 'files': len(receipt['layout'])}, sort_keys=True))
+            print(json.dumps({**{k: receipt[k] for k in ('manifest', 'verified', 'sha256')}, 'problems': len(receipt['problems']), 'files': len(receipt['layout'])}, sort_keys=True))
             return 0 if receipt['verified'] else 1
     except (Failure, OSError, subprocess.SubprocessError, ValueError, KeyError) as error:
         print(f'v4-medicion-migracion: {scrub(str(error))}', file=sys.stderr)

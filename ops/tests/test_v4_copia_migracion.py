@@ -517,6 +517,113 @@ class SecurityTests(Scoped):
         self.assertIn('proyecto', repos)
         self.assertNotIn(b'SENTINEL-PACK-9f3a', self.copied_bytes() + self.bundle_bytes())
 
+    def test_divergent_capital_homoglyphs_and_ignorables_are_excluded(self):
+        secret = 'miClaveSuperSecreta123'
+        write(self.source / 'datos/nota-nu-mayuscula.txt', 'toke\u039d = ' + secret + '\n')
+        write(self.source / 'datos/nota-eta.txt', 'passp\u0397rase = ' + secret + '\n')
+        write(self.source / 'datos/nota-upsilon.txt', 'api_ke\u03a5 = ' + secret + '\n')
+        write(self.source / 'datos/nota-gamma.txt', 'api_ke\u03b3 = ' + secret + '\n')
+        write(self.source / 'datos/nota-cookie-relleno.txt', 'Coo\u3164kie: session=abcdefghijklmnopSECRET\n')
+        write(self.source / 'datos/nota-relleno.txt', 'pass\u3164word = ' + secret + '\n')
+        write(self.source / 'datos/sessio\u039d.txt', 'solo-nombre-sesion-nu\n')
+        write(self.source / 'datos/.np\u039crc', 'solo-nombre-npm\n')
+        manifest = self.make_copy()
+        reasons = {item['path']: item['reason'] for item in manifest['omissions']}
+        for path in ('datos/nota-nu-mayuscula.txt', 'datos/nota-eta.txt', 'datos/nota-upsilon.txt',
+                     'datos/nota-gamma.txt', 'datos/nota-cookie-relleno.txt', 'datos/nota-relleno.txt'):
+            self.assertEqual(reasons[path], 'sensitive-content', path)
+        self.assertEqual(reasons['datos/sessio\u039d.txt'], 'session')
+        self.assertEqual(reasons['datos/.np\u039crc'], 'credential')
+        stored = self.copied_bytes()
+        for marker in (secret, 'abcdefghijklmnopSECRET', 'solo-nombre-sesion-nu', 'solo-nombre-npm'):
+            self.assertNotIn(marker.encode(), stored, marker)
+
+    def test_indirect_git_links_outside_the_copy_are_not_bundled(self):
+        import shutil
+
+        def outside_repo(name: str, sentinel: str) -> pathlib.Path:
+            path = self.root / name
+            git(self.root, 'init', '-q', '-b', 'main', str(path))
+            write(path / 'secreto.txt', sentinel + '\n')
+            git(path, 'add', '-A')
+            git(path, 'commit', '-q', '-m', 'fuera')
+            git(path, 'repack', '-a', '-d', '-q')
+            return path
+
+        def point_at(inside: pathlib.Path, outside: pathlib.Path) -> None:
+            git(inside, 'update-ref', 'refs/heads/main', git(outside, 'rev-parse', 'HEAD'))
+
+        nested_out = outside_repo('fuera-anidado', 'SENTINEL-NESTED-9f3a')
+        nested = self.source / 'proyecto' / 'anidado'
+        git(self.root, 'init', '-q', '-b', 'main', str(nested))
+        write(nested / 'local.txt', 'local-anidado\n')
+        git(nested, 'add', '-A')
+        git(nested, 'commit', '-q', '-m', 'local')
+        decoy = self.source / 'proyecto' / 'decoy-pack'
+        decoy.mkdir()
+        for item in (nested_out / '.git/objects/pack').iterdir():
+            (decoy / item.name).symlink_to(item)
+        pack = nested / '.git/objects/pack'
+        shutil.rmtree(pack)
+        pack.symlink_to(decoy)
+        point_at(nested, nested_out)
+
+        hard_out = outside_repo('fuera-duro', 'SENTINEL-HARD-9f3a')
+        hard = self.source / 'proyecto' / 'duro-fuera'
+        git(self.root, 'init', '-q', '-b', 'main', str(hard))
+        write(hard / 'local.txt', 'local-duro\n')
+        git(hard, 'add', '-A')
+        git(hard, 'commit', '-q', '-m', 'local')
+        hard_pack = hard / '.git/objects/pack'
+        for item in list(hard_pack.iterdir()):
+            item.unlink()
+        for item in (hard_out / '.git/objects/pack').iterdir():
+            os.link(item, hard_pack / item.name)
+        point_at(hard, hard_out)
+
+        bridge_out = outside_repo('fuera-puente', 'SENTINEL-BRIDGE-9f3a')
+        bridge_repo = self.source / 'proyecto' / 'puente'
+        git(self.root, 'init', '-q', '-b', 'main', str(bridge_repo))
+        write(bridge_repo / 'local.txt', 'local-puente\n')
+        git(bridge_repo, 'add', '-A')
+        git(bridge_repo, 'commit', '-q', '-m', 'local')
+        objects = bridge_repo / '.git/objects'
+        bridge = self.source / 'proyecto' / 'bridge-objects'
+        os.rename(objects, bridge)
+        bridge_pack = bridge / 'pack'
+        shutil.rmtree(bridge_pack)
+        bridge_pack.symlink_to(bridge_out / '.git/objects/pack')
+        objects.symlink_to(bridge)
+        point_at(bridge_repo, bridge_out)
+
+        shared = self.source / 'proyecto' / 'duro-dentro'
+        git(self.root, 'init', '-q', '-b', 'main', str(shared))
+        write(shared / 'dentro.txt', 'DENTRO-COMPARTIDO-9f3a\n')
+        git(shared, 'add', '-A')
+        git(shared, 'commit', '-q', '-m', 'dentro')
+        git(shared, 'repack', '-a', '-d', '-q')
+        twin = self.source / 'proyecto' / 'duro-gemelo'
+        git(self.root, 'init', '-q', '-b', 'main', str(twin))
+        write(twin / 'otro.txt', 'gemelo\n')
+        git(twin, 'add', '-A')
+        git(twin, 'commit', '-q', '-m', 'gemelo')
+        (twin / '.git/objects/pack').mkdir(parents=True, exist_ok=True)
+        for item in (shared / '.git/objects/pack').iterdir():
+            os.link(item, twin / '.git/objects/pack' / item.name)
+
+        manifest = self.make_copy()
+        repos = {repo['path'] for repo in manifest['repositories']}
+        reasons = {item['path']: item['reason'] for item in manifest['omissions']}
+        for path in ('proyecto/anidado/.git', 'proyecto/duro-fuera/.git', 'proyecto/puente/.git'):
+            self.assertEqual(reasons[path], 'unsafe-git-link', path)
+            self.assertNotIn(path.removesuffix('/.git'), repos)
+        self.assertIn('proyecto/duro-dentro', repos)
+        self.assertIn('proyecto/duro-gemelo', repos)
+        stored = self.copied_bytes() + self.bundle_bytes()
+        for sentinel in ('SENTINEL-NESTED-9f3a', 'SENTINEL-HARD-9f3a', 'SENTINEL-BRIDGE-9f3a'):
+            self.assertNotIn(sentinel.encode(), stored, sentinel)
+        self.assertIn(b'DENTRO-COMPARTIDO-9f3a', stored)
+
     def test_finding3_paths_swapped_for_symlinks_mid_copy_are_refused(self):
         original = copia.open_verified
 
