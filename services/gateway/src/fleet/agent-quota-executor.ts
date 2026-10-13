@@ -45,11 +45,10 @@ export class AgentQuotaExecutor {
         .catch((error: unknown) => { logFailureClass(error); abort.abort(); }).finally(() => { renewing = undefined; });
     }, Math.max(250, Math.floor(leaseMs / 3)));
     heartbeat.unref();
-    let failure: 'PROVIDER_UNAVAILABLE' | 'RUNTIME_UNAVAILABLE' | 'STEP_FAILED' = 'RUNTIME_UNAVAILABLE';
+    let failure: 'PROVIDER_UNAVAILABLE' | 'RUNTIME_UNAVAILABLE' | 'STEP_FAILED' = 'STEP_FAILED';
     try {
       abort.signal.throwIfAborted();
       const rawExecution = await this.repository.execution(claim);
-      failure = 'STEP_FAILED';
       const execution = AgentQuotaExecutionSchema.parse(rawExecution);
       if (execution.operation_id !== claim.id || execution.agent.tenant_id !== claim.tenant_id
         || execution.agent.alias !== claim.alias || execution.agent.host_id !== this.options.host) {
@@ -61,19 +60,17 @@ export class AgentQuotaExecutor {
       failure = 'STEP_FAILED';
       const receipt = AgentQuotaReceiptSchema.parse(rawReceipt);
       abort.signal.throwIfAborted();
-      failure = 'RUNTIME_UNAVAILABLE';
       const current = await this.repository.execution(claim);
-      failure = 'STEP_FAILED';
       if (!isDeepStrictEqual(current, execution)) {
         throw new Error('Agent quota execution changed while the reader ran');
       }
       await renewing;
       abort.signal.throwIfAborted();
-      failure = 'RUNTIME_UNAVAILABLE';
       await this.repository.finish(claim, receipt);
     } catch (error) {
       logFailureClass(error);
       if (!abort.signal.aborted) {
+        if (error instanceof z.ZodError) failure = 'STEP_FAILED';
         if (error instanceof QuotaHostTransportError || (error instanceof ProviderAuthError && error.code === 'HOST_UNAVAILABLE')) {
           failure = 'RUNTIME_UNAVAILABLE';
         }

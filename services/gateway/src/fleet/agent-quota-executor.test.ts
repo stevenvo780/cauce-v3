@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { z } from 'zod';
 import type { AgentQuotaClaim, AgentQuotaExecution, AgentQuotaReceipt } from '@cauce/protocol';
 import { AgentQuotaExecutor, HostChannelAgentQuotaRepository, type AgentQuotaExecutionRepository } from './agent-quota-executor.js';
 import { QuotaHostTransportError } from './quota-executor.js';
@@ -81,6 +82,7 @@ describe('agent quota executor fenced completion', () => {
     [new ProviderAuthError('HOST_UNAVAILABLE'), 'RUNTIME_UNAVAILABLE', 'ProviderAuthError'],
     [new QuotaHostTransportError(), 'RUNTIME_UNAVAILABLE', 'QuotaHostTransportError'],
     [new ProviderAuthError('FUNCTIONAL_CHECK_FAILED'), 'PROVIDER_UNAVAILABLE', 'ProviderAuthError'],
+    [new z.ZodError([{ code: 'custom', path: [], message: 'sensitive-validation-message' }]), 'STEP_FAILED', 'ZodError'],
     [Object.assign(new Error('sensitive-provider-response'), { name: 'sensitive-error-name' }), 'PROVIDER_UNAVAILABLE', 'Error'],
   ] as const)('classifies reader failures without logging messages: %s', async (error, code, errorClass) => {
     const { claim, source } = fixture();
@@ -90,11 +92,21 @@ describe('agent quota executor fenced completion', () => {
     expect(source.finish).not.toHaveBeenCalled(); expect(source.fail).toHaveBeenCalledWith(claim, code);
     expect(stderr.mock.calls).toEqual([[`${errorClass}\n`]]);
   });
-  it.each(['execution', 'finish'] as const)('classifies repository %s failures as unavailable runtime', async phase => {
-    const { claim, receipt, source } = fixture(); source[phase].mockRejectedValue(new Error('sensitive-storage-message'));
+  it.each(['execution', 'recheck', 'finish'] as const)('classifies repository %s rejections as failed steps', async phase => {
+    const { claim, execution, receipt, source } = fixture(); const rejection = new Error('sensitive-storage-message');
+    if (phase === 'recheck') source.execution.mockResolvedValueOnce(execution).mockRejectedValueOnce(rejection);
+    else source[phase].mockRejectedValue(rejection);
+    expect(await new AgentQuotaExecutor(source, { worker: 'host-canary', host: 'canary', perform: async () => receipt }).runOnce()).toBe(true);
+    expect(source.fail).toHaveBeenCalledWith(claim, 'STEP_FAILED');
+    expect(stderr.mock.calls).toEqual([['Error\n']]);
+  });
+  it.each(['execution', 'recheck', 'finish'] as const)('keeps repository %s transport failures classified as unavailable runtime', async phase => {
+    const { claim, execution, receipt, source } = fixture(); const unavailable = new QuotaHostTransportError();
+    if (phase === 'recheck') source.execution.mockResolvedValueOnce(execution).mockRejectedValueOnce(unavailable);
+    else source[phase].mockRejectedValue(unavailable);
     expect(await new AgentQuotaExecutor(source, { worker: 'host-canary', host: 'canary', perform: async () => receipt }).runOnce()).toBe(true);
     expect(source.fail).toHaveBeenCalledWith(claim, 'RUNTIME_UNAVAILABLE');
-    expect(stderr.mock.calls).toEqual([['Error\n']]);
+    expect(stderr.mock.calls).toEqual([['QuotaHostTransportError\n']]);
   });
   it('reports a rejected failure receipt without disclosing either error message', async () => {
     const { source } = fixture(); source.fail.mockRejectedValue(new QuotaHostTransportError());
