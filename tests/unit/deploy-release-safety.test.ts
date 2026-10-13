@@ -526,9 +526,12 @@ describe('deploy bind sources', () => {
       expect([result.instance(), result.composeRuns('run'), result.leftovers()]).toEqual([result.initialInstance, [], []]);
     });
 
-  it('refuses an ambient computer release pin', () => {
-    expectStoppedBeforeBuild(deploy({ instance: hostInstance, hostReleaseBuild: 'exit 97',
-      environment: { ...fleetOverlayEnvironment(), CAUCE_FLEET_HOST_RELEASE_DIR: '/var/tmp/other' } }), 'no venir del entorno');
+  it.each([
+    ['an ambient computer release pin', hostInstance, { CAUCE_FLEET_HOST_RELEASE_DIR: '/var/tmp/other' }],
+    ['a setup configuration without its release pin', 'CAUCE_DEPLOY_FLEET_OVERLAY=1\nCAUCE_FLEET_HOST_SETUP_CONFIG_FILE=/run/cauce-fleet/config/host-setup.v1.json\n', {}],
+  ])('refuses %s before building', (_case, instance, extra) => {
+    expectStoppedBeforeBuild(deploy({ instance, hostReleaseBuild: 'exit 97', environment: { ...fleetOverlayEnvironment(), ...extra } }),
+      'sin ella el gateway con CAUCE_FLEET_HOST_SETUP_CONFIG_FILE no arranca');
   });
 });
 

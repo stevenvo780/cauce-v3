@@ -246,9 +246,9 @@ if [ "$FLEET_OVERLAY" = 1 ]; then
   "${COMPOSE[@]}" config >/dev/null || die "el compose de flota no renderiza con $ENV_FILE"
 fi
 HOST_RELEASE_ROOT=""; HOST_RELEASE_DIR=""
-if [ "$FLEET_OVERLAY" = 1 ] && [ "$(env_declarations CAUCE_FLEET_HOST_RELEASE_DIR)" != 0 ]; then
+if [ "$FLEET_OVERLAY" = 1 ] && { [ "$(env_declarations CAUCE_FLEET_HOST_RELEASE_DIR)" != 0 ] || [ -n "$(env_value CAUCE_FLEET_HOST_SETUP_CONFIG_FILE)" ]; }; then
   [ "$(env_declarations CAUCE_FLEET_HOST_RELEASE_DIR)" = 1 ] && grep -q '^CAUCE_FLEET_HOST_RELEASE_DIR=' "$ENV_FILE" && [ "${CAUCE_FLEET_HOST_RELEASE_DIR+x}" != x ] \
-    || die "CAUCE_FLEET_HOST_RELEASE_DIR debe declararse una sola vez como CAUCE_FLEET_HOST_RELEASE_DIR=... en $ENV_FILE y no venir del entorno"
+    || die "CAUCE_FLEET_HOST_RELEASE_DIR debe declararse una sola vez como CAUCE_FLEET_HOST_RELEASE_DIR=... en $ENV_FILE (sin ella el gateway con CAUCE_FLEET_HOST_SETUP_CONFIG_FILE no arranca) y no venir del entorno"
   HOST_RELEASE_ROOT="${CAUCE_DEPLOY_HOST_RELEASE_ROOT:-/var/lib/cauce-v3/host-releases}"
 fi
 OWNER_DATABASE_URL="$(env_value CAUCE_DATABASE_URL_SECRET_PATH)"
