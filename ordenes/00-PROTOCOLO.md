@@ -30,7 +30,7 @@ Las instancias que trabajan en el checkout compartido de `dev` mantienen estas r
 | `packages/adapter-sdk/**`, `ops/schemas/**` | Codex | Claude |
 | `services/dispatcher/**`, `ops/runbooks/**` | Gemini | Claude |
 | `services/decisiones/**` (servicio de decisiones Jev y su catálogo de plantillas) | Claude | dueño |
-| `scripts/**` (tooling: calidad, grafo, test-all), `ops/{systemd,generated,manifests,observability,config,guardias,container-runtime,openclaw-gateway,cli,instances,patches,private,telegram-runtime}/**` | Claude (+dueño donde toque flota) | dueño |
+| `scripts/**` (tooling: calidad, grafo, test-all), `ops/{systemd,generated,manifests,observability,config,guardias,container-runtime,openclaw-gateway,cli,instances,patches,private,telegram-runtime,agent-runtime}/**` | Claude (+dueño donde toque flota) | dueño |
 | `ops/cuotas/**` (medidor de cuotas de IA del CLI de cauce) | Claude (+dueño donde toque flota) | dueño |
 | `.specify/**`, `.agents/**`, `specs/**` (SDD con spec-kit: constitución, plantillas, skills y especificaciones) | Claude + dueño | dueño |
 | `ordenes/`, `ordenes-locales/`, documentación (README/CLAUDE.md/AGENTS.md), integración de merges, despliegue/flota/BD | Claude + dueño | dueño |
