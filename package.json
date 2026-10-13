@@ -73,6 +73,7 @@
     "dev:gateway": "pnpm prepare:runtime && tsx services/gateway/src/main.ts",
     "dev:dispatcher": "pnpm prepare:runtime && tsx services/dispatcher/src/main.ts",
     "dev:telegram-bridge": "pnpm prepare:runtime && tsx services/telegram-bridge/src/main.ts",
+    "verify:external": "pnpm prepare:runtime && tsx services/gateway/src/security/route-isolation-external-cli.ts",
     "migrate:dev": "pnpm prepare:runtime && tsx packages/store/src/migrate-cli.ts",
     "console:user": "pnpm prepare:runtime && tsx services/gateway/src/console-user-cli.ts",
     "qa:layout": "node console/qa/layout-gate.mjs",
