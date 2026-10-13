@@ -1,10 +1,13 @@
 import { randomUUID } from 'node:crypto';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AgentQuotaClaim, AgentQuotaExecution, AgentQuotaReceipt } from '@cauce/protocol';
 import { AgentQuotaExecutor, HostChannelAgentQuotaRepository, type AgentQuotaExecutionRepository } from './agent-quota-executor.js';
 import { QuotaHostTransportError } from './quota-executor.js';
+import { ProviderAuthError } from '../console/provider-auth.contracts.js';
 
-afterEach(() => { vi.useRealTimers(); });
+const stderr = vi.fn<typeof process.stderr.write>().mockReturnValue(true);
+beforeEach(() => { stderr.mockClear(); vi.spyOn(process.stderr, 'write').mockImplementation(stderr); });
+afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
 function fixture() {
   const claim: AgentQuotaClaim = { id: randomUUID(), tenant_id: 'Canary', alias: 'agent', worker_id: 'host-canary',
     claim_token: randomUUID(), claim_epoch: 1 };
@@ -73,6 +76,31 @@ describe('agent quota executor fenced completion', () => {
     expect(source.claim).not.toHaveBeenCalled();
     source.claim.mockResolvedValue({ ...claim, alias: 'other' });
     expect(await new AgentQuotaExecutor(source, options).runOnce()).toBe(true); expect(source.finish).not.toHaveBeenCalled();
+  });
+  it.each([
+    [new ProviderAuthError('HOST_UNAVAILABLE'), 'RUNTIME_UNAVAILABLE', 'ProviderAuthError'],
+    [new QuotaHostTransportError(), 'RUNTIME_UNAVAILABLE', 'QuotaHostTransportError'],
+    [new ProviderAuthError('FUNCTIONAL_CHECK_FAILED'), 'PROVIDER_UNAVAILABLE', 'ProviderAuthError'],
+    [Object.assign(new Error('sensitive-provider-response'), { name: 'sensitive-error-name' }), 'PROVIDER_UNAVAILABLE', 'Error'],
+  ] as const)('classifies reader failures without logging messages: %s', async (error, code, errorClass) => {
+    const { claim, source } = fixture();
+    const worker = new AgentQuotaExecutor(source, { worker: 'host-canary', host: 'canary',
+      perform: async () => { throw error; } });
+    expect(await worker.runOnce()).toBe(true);
+    expect(source.finish).not.toHaveBeenCalled(); expect(source.fail).toHaveBeenCalledWith(claim, code);
+    expect(stderr.mock.calls).toEqual([[`${errorClass}\n`]]);
+  });
+  it.each(['execution', 'finish'] as const)('classifies repository %s failures as unavailable runtime', async phase => {
+    const { claim, receipt, source } = fixture(); source[phase].mockRejectedValue(new Error('sensitive-storage-message'));
+    expect(await new AgentQuotaExecutor(source, { worker: 'host-canary', host: 'canary', perform: async () => receipt }).runOnce()).toBe(true);
+    expect(source.fail).toHaveBeenCalledWith(claim, 'RUNTIME_UNAVAILABLE');
+    expect(stderr.mock.calls).toEqual([['Error\n']]);
+  });
+  it('reports a rejected failure receipt without disclosing either error message', async () => {
+    const { source } = fixture(); source.fail.mockRejectedValue(new QuotaHostTransportError());
+    expect(await new AgentQuotaExecutor(source, { worker: 'host-canary', host: 'canary',
+      perform: async () => { throw new Error('sensitive-provider-response'); } }).runOnce()).toBe(true);
+    expect(stderr.mock.calls).toEqual([['Error\n'], ['QuotaHostTransportError\n']]);
   });
 });
 describe('agent quota signed channel completion retry', () => {
