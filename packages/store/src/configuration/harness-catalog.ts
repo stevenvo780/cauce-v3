@@ -1,7 +1,19 @@
 import { isAbsolute } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { agentQuotaDescriptorModuleUrl } from '../agent-quota-operations-model.js';
 import { ConfigurationError } from './contracts.js';
+
+/**
+ * The adapter SDK descriptor module in the source, core build or deployed package layout. Resolved
+ * here rather than through the quota model, which would close an import cycle through the repository.
+ */
+export function harnessCatalogDescriptorModuleUrl(source: string = import.meta.url): URL {
+  const path = new URL(source).pathname;
+  if (path.endsWith('.ts')) return new URL('../../../adapter-sdk/src/context/harness-descriptor.ts', source);
+  if (path.endsWith('/dist/packages/store/src/configuration/harness-catalog.js')) {
+    return new URL('../../../../../packages/adapter-sdk/dist/src/context/harness-descriptor.js', source);
+  }
+  return new URL('../../../adapter-sdk/dist/src/context/harness-descriptor.js', source);
+}
 
 /**
  * Closed vocabulary of harness_definitions.capabilities. The strings are rendered into agent
@@ -29,7 +41,7 @@ async function publishedReader(source?: string): Promise<{ read: PublishedDescri
   if (configured !== undefined && !isAbsolute(configured)) {
     reject('id', 'CAUCE_HARNESS_DESCRIPTOR_DIRECTORY must be an absolute path to the published descriptors');
   }
-  const sdkUrl = agentQuotaDescriptorModuleUrl(source);
+  const sdkUrl = harnessCatalogDescriptorModuleUrl(source);
   let sdk: unknown;
   try { sdk = await import(sdkUrl.href); } catch { sdk = undefined; }
   if (sdk === null || typeof sdk !== 'object' || !('publishedHarnessDescriptor' in sdk)

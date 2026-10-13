@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ConfigurationError } from './contracts.js';
-import { assertPublishedHarnessDefinition, HARNESS_CATALOG_CAPABILITIES } from './harness-catalog.js';
+import { assertPublishedHarnessDefinition, HARNESS_CATALOG_CAPABILITIES, harnessCatalogDescriptorModuleUrl } from './harness-catalog.js';
 
 const PACKAGED = new URL('../../../adapter-sdk/descriptors/', import.meta.url);
 const descriptor = (harness: string, extra: Record<string, unknown> = {}) => JSON.stringify({ schema_version: 1, harness,
@@ -64,6 +64,14 @@ describe('harness catalog validated against published descriptors', () => {
       expect(error.message).toMatch(message);
     }
     await expect(assertPublishedHarnessDefinition('codex', { capabilities: [...HARNESS_CATALOG_CAPABILITIES] })).resolves.toBeUndefined();
+  });
+
+  it.each([
+    ['source', '/repo/packages/store/src/configuration/harness-catalog.ts', '/repo/packages/adapter-sdk/src/context/harness-descriptor.ts'],
+    ['core build', '/repo/dist/packages/store/src/configuration/harness-catalog.js', '/repo/packages/adapter-sdk/dist/src/context/harness-descriptor.js'],
+    ['deployment', '/app/packages/store/dist/configuration/harness-catalog.js', '/app/packages/adapter-sdk/dist/src/context/harness-descriptor.js'],
+  ])('resolves the SDK descriptor module in the %s layout', (_layout, module, sdk) => {
+    expect(harnessCatalogDescriptorModuleUrl(`file://${module}`).pathname).toBe(sdk);
   });
 
   it('keeps the closed vocabulary equal to what the migrations seed', async () => {

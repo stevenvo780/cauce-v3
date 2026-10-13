@@ -41,7 +41,8 @@ describe('measured OpenClaw provider login', () => {
     expect(openClawCompatible({ provider: 'claude', openclaw: anthropic })).toBe(true);
     expect(openClawCompatible({ provider: 'codex', openclaw: anthropic })).toBe(false);
     expect(openClawCompatible({ provider: 'grok', openclaw: anthropic })).toBe(false);
-    const projection = openClawLogin({ ...profile, provider: 'claude', openclaw: anthropic }, agent, login);
+    const claudeProfile = { ...profile, provider: 'claude', openclaw: anthropic };
+    const projection = openClawLogin(claudeProfile, agent, login);
     expect(projection.command).toEqual([...login.command, '--provider', 'anthropic', '--method', 'setup-token', '--profile-id', 'cauce:account-one']);
     expect(projection.env.CLAUDE_CONFIG_DIR).toBe(`${profile.path}/.external-cli-disabled`);
     for (const method of ['oauth', 'device-code', 'cli', 'api-key']) {
