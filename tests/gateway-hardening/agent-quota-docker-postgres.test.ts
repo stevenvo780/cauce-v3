@@ -1,9 +1,10 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { once } from 'node:events';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
-import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { CauceRepository, type DatabasePool } from '@cauce/store';
 import type { AgentQuotaClaim, AgentQuotaReceipt } from '@cauce/protocol';
@@ -44,6 +45,7 @@ afterEach(async () => {
     const code = await exit; expect(code, 'Docker fixture cleanup must succeed').toBe(0); helper = undefined;
   }
   await app?.close(); app = undefined; await current?.close(); current = undefined;
+  vi.unstubAllEnvs();
   if (directory) await rm(directory, { recursive: true, force: true }); directory = undefined;
 });
 afterAll(async () => { if (database) { await database.pool.end(); await database.container.stop(); } });
@@ -81,6 +83,16 @@ describe('durable agent quota HTTP -> signed host -> real Docker -> PostgreSQL -
     const channel = await SignedHostChannel.load(directory);
     await channel.request('POST', `/v3/fleet/hosts/${host.host_id}/channel`, channelCapabilities());
     const fixture = await canary(host.host_id, company.hub.id);
+    const policy = JSON.parse(await readFile(fixture.policy_file, 'utf8')) as { bundles: { codex: { directory: string } } };
+    const descriptors = join(policy.bundles.codex.directory, 'packages/adapter-sdk/dist/descriptors');
+    const approvals: Record<string, string> = {};
+    for (const harness of ['codex', 'openclaw']) {
+      approvals[harness] = createHash('sha256').update(await readFile(join(descriptors, `${harness}.json`))).digest('hex');
+    }
+    const approvalsFile = join(directory, 'approvals.json');
+    await writeFile(approvalsFile, JSON.stringify(approvals), { mode: 0o600 });
+    vi.stubEnv('CAUCE_HARNESS_DESCRIPTOR_APPROVALS_FILE', approvalsFile);
+    vi.stubEnv('CAUCE_HARNESS_DESCRIPTOR_DIRECTORY', descriptors);
     for (const agent of fixture.agents) {
       await current.adminPool.query(`INSERT INTO agents(tenant_id,alias,company_id,harness_id,host_id,runtime_mode,container_name,
         runtime_key,runtime_user,home_directory,state_directory,systemd_user,enabled,lifecycle_state)
@@ -129,7 +141,7 @@ describe('durable agent quota HTTP -> signed host -> real Docker -> PostgreSQL -
         expect(before.reader_available).toBe(false); expect(before.status).toBe('unsupported');
         expect(queued.status).toBe(409); cards.push(await read(agent)); continue;
       }
-      expect(queued.status).toBe(202); const operation = await queued.json() as { operation_id: string };
+      expect(queued.status, await queued.clone().text()).toBe(202); const operation = await queued.json() as { operation_id: string };
       const replay = await enqueue(agent, before.revision, key); expect(replay.status).toBe(202);
       expect(await replay.json()).toMatchObject({ operation_id: operation.operation_id });
       expect(await executor.runOnce()).toBe(true);
