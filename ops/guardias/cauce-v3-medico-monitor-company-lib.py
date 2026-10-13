@@ -9,8 +9,14 @@ def guard_company_id():
     return value
 
 
-def company_scoped_query(query):
+DOCTOR_CONTAINER_SCOPE_QUERY = "SELECT container_name,in_company FROM doctor_container_scopes"
+
+
+def company_scoped_query(query, *, internal=False):
     company = guard_company_id()
+    if re.search(r"\bdoctor_container_scopes\b", query, re.IGNORECASE):
+        if not internal or query != DOCTOR_CONTAINER_SCOPE_QUERY:
+            raise ValueError("container ownership is reserved for the internal doctor reader")
     relations = {
         "tenants": ((), f"company_id='{company}'"),
         "companies": ((), f"id='{company}'"),
@@ -69,6 +75,11 @@ def company_scoped_query(query):
         body = re.sub(r"^with\s+", "", body, count=1, flags=re.IGNORECASE)
         return "WITH " + ", ".join(scoped) + ", " + body
     return "WITH " + ", ".join(scoped) + " " + body
+
+
+def doctor_container_scopes():
+    return {container: belongs == "t" for container, belongs in
+            sql(DOCTOR_CONTAINER_SCOPE_QUERY, columnas=2, internal=True)}
 
 
 def scoped_inventory():

@@ -533,8 +533,7 @@ def main():
     DOCTOR_INVENTORY = inv
     DOCTOR_CONTAINER_SCOPES = {}
     try:
-        DOCTOR_CONTAINER_SCOPES = {container: belongs == "t" for container, belongs in sql(
-            "SELECT container_name,in_company FROM doctor_container_scopes", columnas=2)}
+        DOCTOR_CONTAINER_SCOPES = doctor_container_scopes()
     except Exception as error:  # noqa: BLE001
         escalar.append({"tipo": "sonda_inventario_contenedores", "alias": "-",
                         "detalle": f"no se pudo medir la pertenencia de contenedores: {type(error).__name__}"})

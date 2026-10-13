@@ -356,9 +356,29 @@ def test_pg_audit_scope_excludes_cross_company_events(transport):
         ["local-audit"], ["local-message-audit"], ["local-tenant-audit"]]
 
 
-def test_pg_container_scope_exposes_only_ownership(transport):
-    rows = doctor.sql("SELECT container_name,in_company FROM doctor_container_scopes ORDER BY container_name", columnas=2)
-    assert rows == [["fixture-a", "t"], ["fixture-b", "t"], ["fixture-z", "t"], ["foreign-container", "f"]]
+def test_pg_container_scope_is_reserved_for_internal_reader(transport):
+    assert doctor.doctor_container_scopes() == {
+        "fixture-a": True, "fixture-b": True, "fixture-z": True, "foreign-container": False}
+
+
+@pytest.mark.parametrize("query", [
+    "SELECT container_name,in_company FROM doctor_container_scopes",
+    'SELECT * FROM "doctor_container_scopes"',
+    "SELECT * FROM agents JOIN doctor_container_scopes s ON s.container_name=agents.container_name",
+    "WITH scopes AS (SELECT * FROM doctor_container_scopes) SELECT * FROM scopes",
+])
+def test_rules_cannot_read_container_ownership(query, monkeypatch):
+    monkeypatch.setattr(doctor, "sh", lambda *_args, **_kwargs: pytest.fail("private inventory reached transport"))
+    with pytest.raises(ValueError, match="internal doctor"):
+        doctor.company_scoped_query(query)
+    result = doctor.libro_tareas.verificar({"tipo": "sql_no_vacio", "consulta": query}, {"sql": doctor.sql})
+    assert result["ok"] is None and "internal doctor" in result["detalle"]
+
+
+def test_internal_scope_rejects_any_other_query(monkeypatch):
+    monkeypatch.setattr(doctor, "sh", lambda *_args, **_kwargs: pytest.fail("modified internal query reached transport"))
+    with pytest.raises(ValueError, match="internal doctor"):
+        doctor.sql("SELECT container_name FROM doctor_container_scopes", internal=True)
 
 
 def test_task_book_query_runs_on_scoped_postgres(transport, pg):

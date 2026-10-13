@@ -33,7 +33,7 @@ def sh(host, comando, entrada=None, timeout=90):
         return 1, "", f"{type(e).__name__}: {e}"
 
 
-def sql(consulta, columnas=None):
+def sql(consulta, columnas=None, *, internal=False):
     """Query the database. The query goes via stdin (no shell quoting).
 
     Returns rows; each row is a list of strings with EXACTLY the columns asked for, no matter
@@ -47,7 +47,7 @@ def sql(consulta, columnas=None):
     cuerpo = consulta.strip().rstrip(";").strip()
     if not cuerpo:
         raise RuntimeError("consulta vacia")
-    orden = f"COPY ({company_scoped_query(cuerpo)}) TO STDOUT WITH (FORMAT csv, FORCE_QUOTE *);"
+    orden = f"COPY ({company_scoped_query(cuerpo, internal=internal)}) TO STDOUT WITH (FORMAT csv, FORCE_QUOTE *);"
     rc, out, err = sh("agora", PG, entrada=orden)
     if rc != 0:
         raise RuntimeError(f"psql rc={rc}: stderr_chars={len(err)}")
