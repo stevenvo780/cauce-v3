@@ -141,6 +141,16 @@ const definitions: Definition[] = [
   },
 ];
 
+const browserTest = /real-browser.*\.test\./u;
+
+function browserCases(file: string): number {
+  return readFileSync(join(repository, file), 'utf8').split('\n').filter(line => /^\s*it\(/u.test(line)).length;
+}
+
+function tableRows(prefix: string): string[][] {
+  return inventory.split('\n').filter(line => line.startsWith(prefix)).map(splitTableRow);
+}
+
 describe('inventario de pruebas de V4', () => {
   test('los conteos documentados coinciden con los archivos encontrados por glob', () => {
     const rows = documentRows();
@@ -176,6 +186,20 @@ describe('inventario de pruebas de V4', () => {
   test('el pendiente de la matriz CRUD coincide con el límite descrito', () => {
     const browserRow = documentRows().get('navegador')?.[5] ?? '';
     expect(browserRow).toContain(`matriz mantiene ${String(crudMatrix.pending.length)} pendientes`);
+  });
+
+  test('el inventario de E2E de navegador coincide con los archivos y casos versionados', () => {
+    const files = filesWithin(['tests/e2e'], 0).filter(file => browserTest.test(basename(file)));
+    const v4 = files.filter(file => basename(file).startsWith('v4-'));
+    const documented = new Map(tableRows('| `tests/e2e/').map(cells => [(cells[0] ?? '').replaceAll('`', ''), Number(cells[1])]));
+    expect([...documented.keys()].sort()).toEqual(v4);
+    for (const file of v4) expect(documented.get(file), `casos de ${file}`).toBe(browserCases(file));
+    const groups = new Map(tableRows('| V').map(cells => [cells[0] ?? '', [Number(cells[1]), Number(cells[2])]]));
+    const rest = files.filter(file => !v4.includes(file));
+    expect(groups.get('V4 (`v4-*`)')).toEqual([v4.length, v4.reduce((total, file) => total + browserCases(file), 0)]);
+    expect(groups.get('V3 y V3.5 (resto)')).toEqual([rest.length, rest.reduce((total, file) => total + browserCases(file), 0)]);
+    expect(browserCases('tests/e2e/v4-console-real-browser.test.ts')).toBe(13);
+    expect(inventory).toContain('`tests/e2e/v4-console-real-browser.test.ts`, con 13 casos');
   });
 
   test('los comandos de conteo reproducen los números documentados', () => {
