@@ -5,7 +5,7 @@ import { promisify } from 'node:util';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { lockCompanyAuthority, type DatabasePool, AgentContextRevisionsStore, AgentProfileRepository, withTransaction } from '../src/index.js';
-import { ContextVersionStore } from '../src/context-version.js';
+import { ContextVersionStore, ingestNativeContextVersion } from '../src/context-version.js';
 import { recordNativeContextVersionInTransaction } from '../src/context-version-legacy.js';
 import { ContextRejectedError } from '../src/context-version-model.js';
 import { createHash } from 'node:crypto';
@@ -34,6 +34,22 @@ function source(index = 0) { const value = target(index); return (client: import
 const files = [{ path: 'context/mission.md', content: 'Mission\nUse scoped messages.\n' }];
 const write = (expected = 0, content = files) => store.write(source(), target().tenant_id, target().alias,
   { expected_version: expected, source: 'ui', files: content });
+const owner = () => ({ tenant_id: target().tenant_id, alias: 'owner' });
+const versioning = async () => (await store.read(source(), target().tenant_id, target().alias)).versioning;
+/** A V3 console write of the native directive: its journal revision and its legacy version in one transaction. */
+function saveDirective(content: string) {
+  const document = { tenantId: target().tenant_id, alias: target().alias, kind: 'directive', path: '/scoped/AGENTS.md',
+    sha256: createHash('sha256').update(content).digest('hex'), bytes: Buffer.byteLength(content), actorTenant: target().tenant_id, actorAlias: 'owner' };
+  return withTransaction(pool, async client => {
+    await new AgentContextRevisionsStore(client as unknown as DatabasePool).recordDocumentRevision(document);
+    return recordNativeContextVersionInTransaction(client, document, content, target().human_id);
+  });
+}
+async function replacePurpose(purpose: string | null): Promise<void> {
+  const profiles = new AgentProfileRepository(pool);
+  const profile = await profiles.readWithPresence(target().tenant_id, target().alias);
+  await profiles.replace({ ...profile.perfil, purpose }, profile.revision, owner());
+}
 
 describe('durable context versions with real PostgreSQL and Git', () => {
   it('serializes concurrent writes, preserves restore history and fences the other company', async () => {
@@ -114,35 +130,62 @@ describe('durable context versions with real PostgreSQL and Git', () => {
   });
   it('keeps V3 profile and document writes that the history cannot version and shows the pending reason', async () => {
     await write();
-    const profiles = new AgentProfileRepository(pool);
-    const profile = await profiles.readWithPresence(target().tenant_id, target().alias);
-    const leaked = `Usa sk-proj-${'Ab3_-'.repeat(8)} para el proveedor.`;
-    await profiles.replace({ ...profile.perfil, purpose: leaked }, profile.revision, { tenant_id: target().tenant_id, alias: 'owner' });
-    expect((await profiles.read(target().tenant_id, target().alias)).purpose).toBe(leaked);
-    expect(await store.read(source(), target().tenant_id, target().alias)).toMatchObject({ version: 1,
-      versioning: { state: 'unversioned', reason: 'context_secret_detected', source: 'profile', paths: ['context/profile.json'] } });
     const documents = new AgentContextRevisionsStore(pool);
-    for (const [content, reason] of [['x'.repeat(70_000), 'context_harness_limit'], ['﻿Equipo 👨‍👩‍👧 listo', 'context_unsafe_text']] as const) {
-      const document = { tenantId: target().tenant_id, alias: target().alias, kind: 'directive', path: '/scoped/AGENTS.md',
-        sha256: createHash('sha256').update(content).digest('hex'), bytes: Buffer.byteLength(content), actorTenant: target().tenant_id, actorAlias: 'owner' };
-      const refusal = await withTransaction(pool, async client => {
-        await new AgentContextRevisionsStore(client as unknown as DatabasePool).recordDocumentRevision(document);
-        return recordNativeContextVersionInTransaction(client, document, content, target().human_id);
-      });
+    for (const [content, reason] of [['x'.repeat(70_000), 'context_harness_limit'], ['\uFEFFEquipo 👨‍👩‍👧 listo', 'context_unsafe_text']] as const) {
+      const refusal = await saveDirective(content);
       expect(refusal).toBeInstanceOf(ContextRejectedError);
       expect(refusal?.reason).toBe(reason);
       expect((await documents.listDocumentRevisions(target().tenant_id, target().alias, 'directive', 5)).entries[0])
-        .toMatchObject({ sha256: document.sha256 });
+        .toMatchObject({ sha256: createHash('sha256').update(content).digest('hex') });
     }
-    expect((await store.read(source(), target().tenant_id, target().alias)).versioning)
-      .toMatchObject({ state: 'unversioned', reason: 'context_unsafe_text', source: 'directive', paths: ['directives/native-directive.md'] });
-    expect((await pool.query(`SELECT metadata->>'reason' AS reason FROM audit_events WHERE action='context.unversioned' ORDER BY id`)).rows)
-      .toEqual([{ reason: 'context_secret_detected' }, { reason: 'context_harness_limit' }, { reason: 'context_unsafe_text' }]);
+    expect(await versioning()).toMatchObject({ state: 'unversioned', reason: 'context_unsafe_text', source: 'directive',
+      paths: ['directives/native-directive.md'] });
+    const leaked = `Usa sk-proj-${'Ab3_-'.repeat(8)} para el proveedor.`;
+    await replacePurpose(leaked);
+    expect((await new AgentProfileRepository(pool).read(target().tenant_id, target().alias)).purpose).toBe(leaked);
+    expect(await store.read(source(), target().tenant_id, target().alias)).toMatchObject({ version: 1, versioning: { state: 'unversioned',
+      reason: 'context_secret_detected', source: 'profile', paths: ['context/profile.json', 'directives/native-directive.md'] } });
+    expect((await pool.query(`SELECT metadata->>'reason' AS reason,metadata->>'path' AS path FROM audit_events
+      WHERE action='context.unversioned' ORDER BY id`)).rows).toEqual([
+      { reason: 'context_harness_limit', path: 'directives/native-directive.md' },
+      { reason: 'context_unsafe_text', path: 'directives/native-directive.md' },
+      { reason: 'context_secret_detected', path: 'context/profile.json' }]);
     await expect(write(1, [{ path: 'context/mission.md', content: 'Blocked while the profile holds a secret.' }]))
       .rejects.toMatchObject({ reason: 'context_secret_detected', paths: ['context/profile.json'] });
-    const leakedProfile = await profiles.readWithPresence(target().tenant_id, target().alias);
-    await profiles.replace({ ...leakedProfile.perfil, purpose: 'Clean purpose' }, leakedProfile.revision, { tenant_id: target().tenant_id, alias: 'owner' });
-    expect(await store.read(source(), target().tenant_id, target().alias)).toMatchObject({ version: 2, versioning: { state: 'current' } });
+    await replacePurpose('Clean purpose');
+    expect(await store.read(source(), target().tenant_id, target().alias)).toMatchObject({ version: 2, versioning: { state: 'unversioned',
+      reason: 'context_unsafe_text', paths: ['directives/native-directive.md'] } });
+    expect(await saveDirective('Directiva revisada.')).toBeUndefined();
+    expect(await store.read(source(), target().tenant_id, target().alias)).toMatchObject({ version: 3, versioning: { state: 'current' } });
+  });
+  it('never reverts an unversioned V3 profile edit when a later version records another file', async () => {
+    const initial = await write();
+    const versionedPurpose = (await new AgentProfileRepository(pool).read(target().tenant_id, target().alias)).purpose;
+    const edited = 'Equipo 👨‍👩‍👧 de soporte';
+    await replacePurpose(edited);
+    const purpose = async () => (await new AgentProfileRepository(pool).read(target().tenant_id, target().alias)).purpose;
+    expect(await saveDirective('Directiva limpia.')).toMatchObject({ reason: 'context_unsafe_text', paths: ['context/profile.json'] });
+    expect(await purpose()).toBe(edited);
+    const ingested = await ingestNativeContextVersion(pool, target().tenant_id, target().alias,
+      { base_version: 1, files: [...initial.files, { path: 'context/notes/turno.md', content: 'Nota del agente.' }] });
+    expect(ingested).toMatchObject({ state: 'ingested', snapshot: { version: 2 } });
+    expect(await purpose()).toBe(edited);
+    const snapshot = await store.read(source(), target().tenant_id, target().alias);
+    expect(snapshot.versioning).toMatchObject({ state: 'unversioned', reason: 'context_unsafe_text', source: 'directive',
+      paths: ['context/profile.json', 'directives/native-directive.md'] });
+    const resent = snapshot.files.map(file => file.path === 'context/mission.md' ? { ...file, content: 'Misión revisada.' } : file);
+    expect(resent.some(file => file.path === 'context/profile.json')).toBe(true);
+    await expect(write(2, resent)).rejects.toMatchObject({ reason: 'context_unsafe_text', paths: ['context/profile.json'] });
+    expect(await purpose()).toBe(edited);
+    await replacePurpose(versionedPurpose);
+    expect(await store.read(source(), target().tenant_id, target().alias)).toMatchObject({ version: 2,
+      versioning: { state: 'unversioned', paths: ['directives/native-directive.md'] } });
+    expect(await saveDirective('Directiva limpia.')).toBeUndefined();
+    expect(await store.read(source(), target().tenant_id, target().alias)).toMatchObject({ version: 3, versioning: { state: 'current' } });
+    expect((await store.write(source(), target().tenant_id, target().alias, { expected_version: 3, source: 'ui',
+      files: (await store.read(source(), target().tenant_id, target().alias)).files
+        .map(file => file.path === 'context/mission.md' ? { ...file, content: 'Misión revisada.' } : file) })).version).toBe(4);
+    expect(await purpose()).toBe(versionedPurpose);
   });
   it('blocks secrets and harness overflow as typed refusals that leave no version and roll back the profile', async () => {
     await write();

@@ -1,10 +1,11 @@
+import { createHash } from 'node:crypto';
 import { withTransaction, type DatabaseClient, type DatabasePool } from './db.js';
 import type { CompanyAuthority } from './company-authority.js';
-import { synchronizeContextProfile } from './context-version-profile.js';
+import { CONTEXT_PROFILE_PATH, canonicalProfileContext, synchronizeContextProfile } from './context-version-profile.js';
 import type { CompanyAuthoritySource } from './repository/fleet-hosts.js';
 import { StoreError } from './repository/errors.js';
 import { ContextNativeIngestSchema, ContextRejectedError, ContextRestoreSchema, ContextUpdateSchema, NATIVE_CONTEXT_WRITABLE_PREFIX,
-  contextDigest, contextVersionDiff, harnessContextMaxBytes, storedContextFiles, versionableContextFiles,
+  contextDigest, contextVersionDiff, harnessContextMaxBytes, nativeDocumentContextPath, storedContextFiles, versionableContextFiles,
   type ContextFile, type ContextRejectionReason, type ContextSnapshot, type ContextTarget, type ContextVersion } from './context-version-model.js';
 
 interface VersionRow extends Omit<ContextVersion, 'version' | 'created_at' | 'restored_from'> {
@@ -157,18 +158,37 @@ export type ContextVersioning =
   | { readonly state: 'current' }
   | { readonly state: 'unversioned'; readonly reason: ContextRejectionReason; readonly source: string | null;
     readonly paths: readonly string[]; readonly recorded_at: string };
-/** A V3 write kept without a version since the latest one; the target tenant bounds the scan to its own audit index. */
-async function contextVersioning(client: DatabaseClient, target: ContextTarget): Promise<ContextVersioning> {
-  const row = (await client.query<{ reason: ContextRejectionReason; source: string | null; paths: unknown; created_at: Date }>(
-    `SELECT audit.metadata->>'reason' AS reason,audit.metadata->>'source' AS source,audit.metadata->'paths' AS paths,audit.created_at
-      FROM audit_events audit WHERE audit.tenant_id=$2 AND audit.action='context.unversioned' AND audit.company_id=$1
-        AND audit.metadata->>'target_alias'=$3 AND audit.created_at>COALESCE((SELECT version.created_at
-          FROM agent_context_state current JOIN agent_context_versions version USING(company_id,tenant_id,alias)
-          WHERE current.company_id=$1 AND current.tenant_id=$2 AND current.alias=$3 AND version.version=current.desired_version),'-infinity')
-      ORDER BY audit.created_at DESC LIMIT 1`, [target.company_id, target.tenant_id, target.alias])).rows[0];
-  if (!row) return { state: 'current' };
-  return { state: 'unversioned', reason: row.reason, source: row.source, recorded_at: row.created_at.toISOString(),
-    paths: Array.isArray(row.paths) ? row.paths.filter((path): path is string => typeof path === 'string') : [] };
+function contentDigest(content: string): string {
+  return createHash('sha256').update(content).digest('hex');
+}
+/** What the V3 tables hold now for each file the legacy hooks version, by sha256; null when the V3 side has no such file. */
+async function legacyFileDigests(client: DatabaseClient, target: ContextTarget): Promise<Map<string, string | null>> {
+  const profile = await canonicalProfileContext(client, target);
+  const documents = (await client.query<{ kind: string; sha256: string | null }>(`SELECT DISTINCT ON (kind) kind,sha256
+    FROM agent_document_revisions WHERE tenant_id=$1 AND alias=$2 ORDER BY kind,id DESC`, [target.tenant_id, target.alias])).rows;
+  return new Map([[CONTEXT_PROFILE_PATH, profile === undefined ? null : contentDigest(profile.content)],
+    ...documents.map(row => [nativeDocumentContextPath(row.kind), row.sha256] as const)]);
+}
+/**
+ * A V3 write kept without a version stays pending while its V3 file still differs from the current version: a later version of
+ * another file never hides it, and returning to the versioned content clears it. The target tenant bounds the audit scan.
+ */
+async function contextVersioning(client: DatabaseClient, target: ContextTarget, files: readonly ContextFile[]): Promise<ContextVersioning> {
+  const refusals = (await client.query<{ path: string; reason: ContextRejectionReason; source: string | null; created_at: Date }>(
+    `SELECT DISTINCT ON (audit.metadata->>'path') audit.metadata->>'path' AS path,audit.metadata->>'reason' AS reason,
+      audit.metadata->>'source' AS source,audit.created_at FROM audit_events audit
+      WHERE audit.tenant_id=$2 AND audit.action='context.unversioned' AND audit.company_id=$1
+        AND audit.metadata->>'target_alias'=$3 AND audit.metadata->>'path' IS NOT NULL
+      ORDER BY audit.metadata->>'path',audit.created_at DESC,audit.id DESC`, [target.company_id, target.tenant_id, target.alias])).rows;
+  if (refusals.length === 0) return { state: 'current' };
+  const live = await legacyFileDigests(client, target);
+  const versioned = new Map(files.map(file => [file.path, contentDigest(file.content)]));
+  const pending = refusals.filter(row => live.has(row.path) && live.get(row.path) !== (versioned.get(row.path) ?? null))
+    .sort((a, b) => b.created_at.getTime() - a.created_at.getTime());
+  const latest = pending[0];
+  if (latest === undefined) return { state: 'current' };
+  return { state: 'unversioned', reason: latest.reason, source: latest.source, recorded_at: latest.created_at.toISOString(),
+    paths: pending.map(row => row.path).sort() };
 }
 export class ContextVersionStore {
   constructor(readonly pool: DatabasePool) {}
@@ -181,13 +201,19 @@ export class ContextVersionStore {
     });
   }
   read(source: CompanyAuthoritySource, tenant: string, alias: string): Promise<ContextSnapshot & { versioning: ContextVersioning }> {
-    return this.scoped(source, tenant, alias, false, async (client, target) =>
-      ({ ...await contextSnapshot(client, target), versioning: await contextVersioning(client, target) }));
+    return this.scoped(source, tenant, alias, false, async (client, target) => {
+      const snapshot = await contextSnapshot(client, target);
+      return { ...snapshot, versioning: await contextVersioning(client, target, snapshot.files) };
+    });
   }
   write(source: CompanyAuthoritySource, tenant: string, alias: string, value: unknown): Promise<ContextSnapshot> {
     const input = ContextUpdateSchema.parse(value);
-    return this.scoped(source, tenant, alias, true, (client, target, authority) =>
-      this.persist(client, target, authority, input.expected_version, input.files, input.source, null));
+    return this.scoped(source, tenant, alias, true, async (client, target, authority) => {
+      // Sending back the profile of the snapshot is no edit: the canonical one replaces it, so an unversioned V3 edit is never reverted.
+      const versioned = (await contextSnapshot(client, target)).files.find(file => file.path === CONTEXT_PROFILE_PATH);
+      const files = input.files.filter(file => file.path !== CONTEXT_PROFILE_PATH || file.content !== versioned?.content);
+      return this.persist(client, target, authority, input.expected_version, files, input.source, null);
+    });
   }
   restore(source: CompanyAuthoritySource, tenant: string, alias: string, value: unknown): Promise<ContextSnapshot> {
     const input = ContextRestoreSchema.parse(value);

@@ -1,6 +1,6 @@
 import type { FastifyInstance, LightMyRequestResponse } from 'fastify';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
-import type { DatabasePool } from '@cauce/store';
+import { AgentProfileRepository, type DatabasePool } from '@cauce/store';
 import { seedSyntheticCompanyContexts } from '../../../packages/store/src/seed-dev-cli.js';
 import { preparePostgresSuite } from '../../../packages/store/test/postgres-suite.js';
 import { startTestCaseDatabase, startTestDatabase, type EmptyTestDatabase, type TestDatabase } from '../../../tests/helpers/postgres.js';
@@ -77,6 +77,21 @@ describe('versioned context HTTP authority with real PostgreSQL and signed human
       message: expect.stringContaining('exceeds the document limit of the agent harness') as string });
     expect((await current?.adminPool.query('SELECT count(*)::integer AS count FROM agent_context_versions'))?.rows).toEqual([{ count: 0 }]);
     expect((await request('GET')).json()).toMatchObject({ version: 0, versioning: { state: 'current' } });
+  });
+  it('keeps an unversioned V3 profile edit when the console sends back the profile of its snapshot', async () => {
+    expect((await write()).statusCode).toBe(202);
+    const profiles = new AgentProfileRepository(pool);
+    const profile = await profiles.readWithPresence('ContextAlpha', 'director');
+    const purpose = 'Equipo 👨‍👩‍👧 de soporte';
+    await profiles.replace({ ...profile.perfil, purpose }, profile.revision, { tenant_id: 'ContextAlpha', alias: 'owner' });
+    const snapshot = (await request('GET')).json<{ files: { path: string; content: string }[] }>();
+    expect(snapshot).toMatchObject({ version: 1,
+      versioning: { state: 'unversioned', reason: 'context_unsafe_text', source: 'profile', paths: ['context/profile.json'] } });
+    const resent = await write(1, snapshot.files.map(file => file.path === 'context/mission.md' ? { ...file, content: 'Changed mission.' } : file));
+    expect(resent.statusCode).toBe(422);
+    expect(resent.json()).toMatchObject({ error: 'context_unsafe_text', paths: ['context/profile.json'] });
+    expect((await profiles.read('ContextAlpha', 'director')).purpose).toBe(purpose);
+    expect((await request('GET')).json()).toMatchObject({ version: 1, versioning: { state: 'unversioned', paths: ['context/profile.json'] } });
   });
   it('returns unavailable apply explicitly and never invents applied state without a runtime', async () => {
     await write();

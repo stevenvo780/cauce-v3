@@ -24,6 +24,10 @@ const HARNESS_CONTEXT_MAX_BYTES: ReadonlyMap<string, number> = new Map([
 ]);
 /** The only files an agent may change through native ingest: the rest of a version is governed by its operators. */
 export const NATIVE_CONTEXT_WRITABLE_PREFIX = 'context/notes/';
+/** Where the legacy hook versions the native document of one kind (directive, identity, tools...). */
+export function nativeDocumentContextPath(kind: string): string {
+  return `directives/native-${kind}.md`;
+}
 
 const FilePath = z.string().max(256).regex(/^(?:context|directives)\/[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)*\.(?:md|txt|json|yaml|yml)$/u)
   .refine(path => !path.split('/').some(hasGovernanceSensitivePathSegment));
