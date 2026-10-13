@@ -154,6 +154,15 @@ export async function deleteFleetHost(pool: DatabasePool, hostId: string, expect
       [hostId, company])).rows[0];
     if (!row) throw new FleetOperationError('not_found', 'fleet host was not found');
     if (Number(row.version) !== expectedVersion) throw new FleetOperationError('conflict', 'fleet host version changed; reload and retry');
+    try {
+      await client.query('SELECT host_id FROM fleet_host_identities WHERE host_id=$1 AND company_id=$2 FOR UPDATE NOWAIT', [hostId, company]);
+      await client.query('SELECT id FROM agent_quota_operations WHERE host_id=$1 AND company_id=$2 ORDER BY id FOR UPDATE NOWAIT', [hostId, company]);
+    } catch (error) {
+      if (error !== null && typeof error === 'object' && 'code' in error && error.code === '55P03') {
+        throw new FleetOperationError('conflict', 'La computadora tiene solicitudes u operaciones en curso; vuelve a intentar la baja.');
+      }
+      throw error;
+    }
     await client.query(`UPDATE agent_quota_operations SET status='failed',error_code='EXPIRED',lease_until=NULL,updated_at=now()
       WHERE host_id=$1 AND company_id=$2 AND status IN ('pending','running') AND expires_at<=clock_timestamp()`, [hostId, company]);
     const quota = await client.query(`SELECT 1 FROM agent_quota_operations WHERE host_id=$1 AND company_id=$2
