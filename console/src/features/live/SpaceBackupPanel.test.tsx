@@ -2,6 +2,7 @@ import { act, fireEvent, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { SpaceBackup } from '../../api/client/space-backups-client';
 import type { ConsoleAuthState } from '../../api/types';
+import { ApiError } from '../../api/client/core';
 import { ApiProvider } from '../../api/context';
 import { renderWithApi, testApi } from '../../test/render';
 import { CompanySessionProvider } from '../auth/company-session';
@@ -92,4 +93,18 @@ it('avisa de lo que no viaja y cómo comparar el SHA-256 sin decir descargado an
   expect(document.body.textContent).not.toContain('ZIP descargado'); expect(screen.queryByText(/Descarga iniciada/u)).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: 'Descargar backup ZIP' }));
   expect(await screen.findByText(/si no aparece, la copia pudo vencer o no tienes permiso; vuelve a generarla/u)).toBeVisible();
+});
+it('no depende de AbortSignal.any y explica un 409 del servidor en español', async () => {
+  vi.stubGlobal('AbortSignal', Object.assign(function Signal() { return undefined; }, { timeout: AbortSignal.timeout.bind(AbortSignal) }));
+  try {
+    vi.spyOn(testApi, 'createSpaceBackup').mockRejectedValue(new ApiError('space backup host is unavailable', 409));
+    renderWithApi(panel()); fireEvent.click(screen.getByRole('button', { name: 'Crear backup del espacio' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(/no tiene ejecutor disponible/u);
+    expect(screen.queryByText(/space backup/u)).not.toBeInTheDocument();
+  } finally { vi.unstubAllGlobals(); }
+});
+it('explica un 404 con un mensaje específico', async () => {
+  vi.spyOn(testApi, 'createSpaceBackup').mockRejectedValue(new ApiError('a placed space backup target is required', 404));
+  renderWithApi(panel()); fireEvent.click(screen.getByRole('button', { name: 'Crear backup del espacio' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent(/No se encontró el agente, su ubicación/u);
 });

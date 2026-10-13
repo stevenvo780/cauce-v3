@@ -14,6 +14,11 @@ const ERRORS = { HOST_UNAVAILABLE: 'El ordenador no está disponible. Recupera s
   EXPORT_FAILED: 'No se pudo exportar el espacio. Revisa su estado y vuelve a intentarlo.',
   LIMIT_EXCEEDED: 'El espacio supera el límite de tamaño del backup. No se creó una copia incompleta.',
   EXPIRED: 'El backup venció. Crea uno nuevo para descargarlo.' };
+const REQUEST_MS = 30_000;
+const FAILURES: Record<number, string> = {
+  404: 'No se encontró el agente, su ubicación o el backup. Relee el agente: puede haberse movido o retirado.',
+  409: 'No se pudo crear el backup ahora: el ordenador del espacio no tiene ejecutor disponible, se alcanzó el límite de copias o de espacio reservado, o cambió la política. Libera copias o recupera el ordenador y vuelve a intentarlo.',
+};
 export function SpaceBackupPanel({ tenantId, alias }: { tenantId: string; alias: string }) {
   const state = useContext(CompanySession); const authority = sessionAuthority(state);
   const target = { company_id: authority?.acting_company ?? '', tenant_id: tenantId, alias };
@@ -52,16 +57,20 @@ function BackupPanel({ target, allowed }: { target: SpaceBackupTarget; allowed: 
   const perform = useCallback(async (kind: 'creating' | 'reading', action: (signal: AbortSignal) => Promise<SpaceBackup>, background = false) => {
     if (!enabled || !permitted.current || locked.current && !background) return;
     const request = new AbortController(); const started = generation.current; requests.current.add(request);
+    // Not AbortSignal.any: Safari before 17.4 lacks it. The timeout shares the controller, so both end the request.
+    let timedOut = false;
+    const timeout = window.setTimeout(() => { timedOut = true; request.abort(); }, REQUEST_MS);
     if (!background) { locked.current = true; setBusy(kind); setError(''); setNotice(''); }
     try {
-      const value = await action(AbortSignal.any([request.signal, AbortSignal.timeout(30_000)]));
+      const value = await action(request.signal);
       if (!requestIsCurrent(request, started)) return;
       setBackup(value);
     } catch (cause) {
-      if (!active.current || started !== generation.current || request.signal.aborted) return;
+      if (!active.current || started !== generation.current || request.signal.aborted && !timedOut) return;
       if (cause instanceof ApiError && [401, 403].includes(cause.status)) { permitted.current = false; setBackup(undefined); setInvalidated(true); }
-      setError('No se pudo leer o preparar el backup. Actualiza su estado y comprueba tus permisos.');
+      setError((cause instanceof ApiError ? FAILURES[cause.status] : undefined) ?? 'No se pudo leer o preparar el backup. Actualiza su estado y comprueba tus permisos.');
     } finally {
+      window.clearTimeout(timeout);
       requests.current.delete(request);
       if (active.current && started === generation.current && !background) { locked.current = false; setBusy(undefined); }
     }
