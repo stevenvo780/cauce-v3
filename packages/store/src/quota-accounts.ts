@@ -7,10 +7,14 @@ import { StoreError } from './repository/errors.js';
 import { quotaObservationStatus, quotaRemaining, type QuotaObservationStatus } from './quota-state.js';
 
 export function assertQuotaAuthority(authority: CompanyAuthority, write: boolean): void {
-  if (authority.humanId === null || authority.role === 'none'
-    || (write && (!['company','platform'].includes(authority.scope) || !['company_owner','platform_admin'].includes(authority.role)))) {
+  if (authority.humanId === null || authority.role === 'none' || (write && !['company','platform'].includes(authority.scope))) {
     throw new StoreError('forbidden', 'company quota authority is required');
   }
+}
+
+function assertQuotaAccountWriter(authority: CompanyAuthority): void {
+  assertQuotaAuthority(authority, true);
+  if (!['company_owner','platform_admin'].includes(authority.role)) throw new StoreError('forbidden', 'company quota authority is required');
 }
 
 interface AccountRow {
@@ -99,7 +103,7 @@ export async function listQuotaAccounts(pool: DatabasePool, source: CompanyAutho
 export async function createQuotaAccount(pool: DatabasePool, source: CompanyAuthoritySource, value: unknown) {
   const input = QuotaAccountCreateSchema.parse(value);
   return withTransaction(pool, async client => {
-    const authority = await source(client); assertQuotaAuthority(authority, true);
+    const authority = await source(client); assertQuotaAccountWriter(authority);
     await client.query('SELECT pg_advisory_xact_lock($1::integer,hashtext($2))', [783_003_057, authority.actingCompany]);
     const existing = (await client.query<{ id: string; provider: string; label: string; canonical_account_id: string | null }>(
       'SELECT id,provider,label,canonical_account_id FROM provider_accounts WHERE company_id=$1 AND quota_registration_key=$2',
@@ -125,7 +129,7 @@ async function lockCompanyQuotaAccount(client: DatabaseClient, authority: Compan
 export async function updateQuotaAccount(pool: DatabasePool, source: CompanyAuthoritySource, id: string, value: unknown) {
   const input = QuotaAccountUpdateSchema.parse(value);
   return withTransaction(pool, async client => {
-    const authority = await source(client); assertQuotaAuthority(authority, true);
+    const authority = await source(client); assertQuotaAccountWriter(authority);
     await lockCompanyQuotaAccount(client, authority, id);
     if (input.paused_reason?.startsWith('quota_exhausted:')) throw new StoreError('invalid_input', 'automatic pause reasons are reserved');
     const result = await client.query(`UPDATE provider_accounts SET label=CASE WHEN $3 THEN $4 ELSE label END,
@@ -142,7 +146,7 @@ export async function updateQuotaAccount(pool: DatabasePool, source: CompanyAuth
 }
 export async function deleteQuotaAccount(pool: DatabasePool, source: CompanyAuthoritySource, id: string, version: number) {
   return withTransaction(pool, async client => {
-    const authority = await source(client); assertQuotaAuthority(authority, true);
+    const authority = await source(client); assertQuotaAccountWriter(authority);
     if (await lockCompanyQuotaAccount(client, authority, id) !== version) throw new StoreError('conflict', 'quota account version changed');
     const aliases = await client.query<{ id: string }>('SELECT id FROM provider_accounts WHERE canonical_account_id=$1 AND company_id=$2 FOR UPDATE',
       [id, authority.actingCompany]);

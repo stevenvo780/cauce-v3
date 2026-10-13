@@ -64,6 +64,14 @@ describe('quota accounts and managed environments with PostgreSQL', () => {
     await expect(deleteQuotaAccount(pool, manager, created.account_id, 1)).rejects.toMatchObject({ code: 'forbidden' });
     expect((await listQuotaAccounts(pool, manager)).accounts.some(row => row.id === created.account_id)).toBe(true);
   });
+  it('lets a company administrator manage environments and the worker claims their operation', async () => {
+    await admin.query("UPDATE company_admins SET role='admin' WHERE human_id=$1", [actors.miguel]);
+    const manager = (client: import('../src/db.js').DatabaseClient) => lockCompanyAuthority(client, { tenant: 'Miguel', alias: 'janus', humanId: actors.miguel });
+    const created = await repository().create(manager, { account_id: 'humanizar-account', host_id: 'humanizar-host', label: 'Admin env', idempotency_key: 'admin-env' });
+    const claim = await new QuotaOperationsRepository(pool).claim('worker', 'humanizar-host');
+    expect(claim).toMatchObject({ id: created.operation.id });
+    expect((await admin.query('SELECT error_code FROM quota_environment_operations WHERE id=$1', [created.operation.id])).rows[0]).toEqual({ error_code: null });
+  });
   it('refuses to delete an account that an agent uses as its primary account', async () => {
     const created = await createQuotaAccount(pool, owner('humanizar'), { provider: 'codex', label: 'Primary', idempotency_key: 'primary' });
     await admin.query("UPDATE agents SET primary_account_id=$1 WHERE tenant_id='Steven' AND alias='company_admin'", [created.account_id]);
