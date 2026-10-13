@@ -277,11 +277,14 @@ def service_active(unit):
 def service_enabled(unit):
     result = run(['systemctl', 'is-enabled', unit], check=False)
     status = result.stdout.strip()
+    if not status:
+        raise Abort(f'systemctl is-enabled returned no state; inspect systemctl is-enabled {unit} '
+                    'and its stderr, resolve the systemd error, then retry the installation')
     if status == 'enabled' and result.returncode == 0:
         return True
     if status in ('disabled', 'not-found') and result.returncode != 0:
         return False
-    raise Abort(f'the enclave has unsupported enablement: {status or "unknown"}')
+    raise Abort(f'the enclave has unsupported enablement: {status}')
 
 
 def directory_ok(location, gid):

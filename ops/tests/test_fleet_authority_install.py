@@ -324,7 +324,7 @@ class ApplyTests(InstallFixture):
         for returncode in (0, 1, 4):
             with self.subTest(returncode=returncode):
                 self.host.disabled_enablement = (returncode, '')
-                with self.assertRaisesRegex(lib.Abort, 'unsupported enablement: unknown'):
+                with self.assertRaisesRegex(lib.Abort, 'systemctl is-enabled returned no state;.*inspect.*retry'):
                     self.kit.install(self.arguments('--apply'))
                 self.assertEqual(self.tree(), before)
                 self.assertEqual(self.host.events, [])
