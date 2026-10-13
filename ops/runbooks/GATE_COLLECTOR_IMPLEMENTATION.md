@@ -16,8 +16,9 @@ guards requiere baseline. Escribe snapshot por rename atómico con modo 0600 y n
 IDs de mensaje/delivery/sesión ni valores de entorno. Un fallo SQL expone como máximo SQLSTATE.
 
 La sonda no usa `gate-probe` como alias de flota ni lo registra en memberships, leases o routing.
-Sí existe una fila `company_system_principals` de tipo `gate_probe`, que el gateway consulta desde
-la base en cada publicación. Gateway y adapter validan nuevamente la autoridad y la forma exacta.
+Sí existe una fila `company_system_principals` de tipo `gate_probe`; en `publish-operation.ts`, el
+gateway la consulta en la base al publicar una sonda de gate. Las publicaciones ordinarias no
+consultan `systemGatePrincipal`. Gateway y adapter validan nuevamente la autoridad y la forma exacta.
 El ACK probado conserva attempt, claim token y epoch reales, y debe corresponder a la misma lease
 V3 viva y con heartbeat fresco.
 

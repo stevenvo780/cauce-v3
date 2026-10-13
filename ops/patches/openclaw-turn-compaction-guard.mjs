@@ -10,7 +10,7 @@
  * name is a hash that changes with the version. See ops/patches/README.md.
  *
  * Use: OPENCLAW_DIST=/path/to/bundle.js node openclaw-turn-compaction-guard.mjs
- * Prints a single word on stdout: `applied` or `already-applied`. Anything else is a failure and
+ * Prints a single word on stdout: `aplicado` or `ya-aplicado`. Anything else is a failure and
  * exits non-zero.
  */
 import { execFileSync } from "node:child_process";
