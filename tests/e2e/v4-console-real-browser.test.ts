@@ -347,7 +347,12 @@ describe('recorrido V4 de la consola en navegador real contra gateway y PostgreS
         .getByRole('button', { name: new RegExp(agentAlias, 'u') }).click();
       const sheet = page.getByRole('dialog');
       await sheet.getByText(agentAlias, { exact: true }).first().waitFor({ timeout: 15_000 });
-      await sheet.getByText('No hay una cuenta vinculada con cuota disponible para esta sesión.', { exact: true }).waitFor({ timeout: 15_000 });
+      await sheet.getByText('Sin lector de cuota para este harness: el proveedor no expone una ventana de consumo medible.', { exact: true }).waitFor({ timeout: 15_000 });
+      await sheet.getByText('Todavía no hay una medición persistida.', { exact: true }).waitFor({ timeout: 15_000 });
+      const quota = await apiGet(page, `/v3/console/agents/${hubA}/${agentAlias}/quota`);
+      expect(quota.status).toBe(200);
+      expect(quota.body).toMatchObject({ reader_available: false, can_query: false, reason: 'quota_reader_unavailable',
+        status: 'unsupported', captured_at: null, binding: null, sample: null, operation: null });
       await sheet.getByRole('link', { name: 'Perfil y contexto', exact: true }).click();
       await page.getByRole('heading', { name: `Perfil y contexto de ${agentAlias}`, exact: true }).waitFor({ timeout: 20_000 });
       await page.getByRole('tab', { name: 'Historial', exact: true }).click();
@@ -365,6 +370,8 @@ describe('recorrido V4 de la consola en navegador real contra gateway y PostgreS
     const revisions = await pool().query<{ count: string }>(
       `SELECT count(*)::text FROM agent_profile_revisions WHERE tenant_id=$1 AND alias=$2`, [hubA, agentAlias]);
     expect(Number(revisions.rows[0]?.count)).toBeGreaterThanOrEqual(1);
+    expect((await pool().query('SELECT reader_available,status,captured_at,account_id,sample FROM agent_quota_observations WHERE tenant_id=$1 AND alias=$2',
+      [hubA, agentAlias])).rows).toEqual([{ reader_available: false, status: 'unsupported', captured_at: null, account_id: null, sample: null }]);
   });
 
   it('autoridad de empresa: sin elegir persona no se puede guardar la asignación', async () => {
@@ -487,13 +494,13 @@ describe('recorrido V4 de la consola en navegador real contra gateway y PostgreS
     });
     await step(page, 'quota environment create', async () => {
       const form = page.getByRole('form', { name: 'Crear entorno de cuotas' });
-      await expect.poll(async () => form.getByLabel('Cuenta', { exact: true }).isDisabled(), { timeout: 20_000 }).toBe(false);
+      await expect.poll(async () => form.locator('select').nth(0).isDisabled(), { timeout: 20_000 }).toBe(false);
       expect(await form.getByRole('button', { name: 'Crear entorno', exact: true }).isDisabled()).toBe(true);
-      const unselected = await validity(form.getByLabel('Cuenta', { exact: true }));
+      const unselected = await validity(form.locator('select').nth(0));
       expect(unselected.valid).toBe(false);
       expect(unselected.message).not.toBe('');
-      await form.getByLabel('Cuenta', { exact: true }).selectOption({ label: 'Cuenta de entorno · codex' });
-      await form.getByLabel('Computadora', { exact: true }).selectOption({ label: 'Ordenador de cuotas V4' });
+      await form.locator('select').nth(0).selectOption({ label: 'Cuenta de entorno · codex' });
+      await form.locator('select').nth(1).selectOption({ label: 'Ordenador de cuotas V4' });
       await form.getByLabel('Nombre del entorno', { exact: true }).fill('   ');
       expect(await form.getByRole('button', { name: 'Crear entorno', exact: true }).isDisabled()).toBe(true);
       await form.getByLabel('Nombre del entorno', { exact: true }).fill('Entorno V4');
