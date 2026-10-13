@@ -86,7 +86,8 @@ export class HostSetupPackager {
   }
 }
 
+/** Compose passes the variable through with an empty default, so an empty value means setup is off. */
 export async function configuredHostSetup(environment: NodeJS.ProcessEnv = process.env): Promise<HostSetupPackager | undefined> {
   const filename = environment.CAUCE_FLEET_HOST_SETUP_CONFIG_FILE;
-  return filename === undefined ? undefined : HostSetupPackager.load(filename);
+  return filename === undefined || filename === '' ? undefined : HostSetupPackager.load(filename);
 }

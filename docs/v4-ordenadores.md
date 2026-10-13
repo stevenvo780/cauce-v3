@@ -2,6 +2,8 @@
 
 Un ordenador nuevo pasa por dos pasos, ambos sin el super-admin de plataforma. La consola («Conectar un ordenador») muestra la invitación y, si el gateway firma la preparación, los comandos de enrolar y de preparar; si no firma, solo el de enrolar. Por cada ordenador enrolado indica si su ejecutor está listo.
 
+Procedimiento para el dueño, de los requisitos a la baja: [Dar de alta un servidor de la empresa](v4-alta-servidor.md).
+
 Requisitos del ordenador: Cauce CLI, Python 3.12 o superior (filtro `data` de `tarfile`) con PyYAML (el executor valida los manifiestos de flota), OpenSSL, Node.js 22, systemd de usuario y, para crear agentes, Docker.
 
 ### Identificador
@@ -68,7 +70,7 @@ Para que el servicio sobreviva al cierre de sesión (como el usuario `server` de
 Es la **plantilla aprobada por la plataforma** acotada a lo que la plataforma mantiene habilitado, no configuración de cada empresa: igual que el controlador V3.5 fija su política por `policy_sha256` en un fichero privado aprobado, el gateway lee `CAUCE_FLEET_HOST_SETUP_CONFIG_FILE` (JSON privado, 0600, del uid del gateway, como `api.v1.json`) con el release aprobado y la plantilla de política:
 
 ```json
-{"version":1,"signing_key_file":"/etc/cauce-v3/fleet-v35/gateway/host-setup-signer.pem",
+{"version":1,"signing_key_file":"/run/cauce-fleet/config/host-setup-signer.pem",
  "release":{"name":"release","revision":"<sha de 40 hex>","url":"https://…/release.tar","sha256":"<64 hex>","size":123},
  "files":[{"name":"fleet-ca","url":"https://…/fleet-ca.pem","sha256":"<64 hex>","size":1200}],
  "policy":{"bundles":{"codex":{"directory":"@release@/adapter","digest":"sha256:<64 hex>","executable":"/usr/local/bin/python3.12","executable_sha256":null,"argv":[]}},
@@ -79,6 +81,7 @@ Es la **plantilla aprobada por la plataforma** acotada a lo que la plataforma ma
    "authority":{"identity_directory":"@identity@","host_id":"@host@","ca_certificate":"@install@/files/fleet-ca"}}}
 ```
 
+- En producción las rutas son las de dentro del contenedor: el overlay de flota monta `/etc/cauce-v3/fleet-v35/gateway` (uid 1000, `0700`) en `/run/cauce-fleet/config` y pasa `CAUCE_FLEET_HOST_SETUP_CONFIG_FILE` desde `prod.env` (`CAUCE_FLEET_HOST_SETUP_CONFIG_FILE=/run/cauce-fleet/config/host-setup.v1.json`). Vacía o ausente, el gateway no prepara ordenadores. El gateway lee la configuración y la clave al arrancar: un fichero ausente o con otro dueño o modo impide el arranque, y un cambio exige recrear el gateway.
 - Por cada host, el gateway quita los bundles cuyo harness no está habilitado en `harness_definitions` (tabla de plataforma) y las `container_templates` que dependían de ellos, y sustituye `@host@` y `@company@`.
 - El esquema rechaza claves que el ordenador fija por sí mismo (`executor_user`, `roots`, `native`, `signer`…), bundles fuera de `@release@/`, una autoridad que no sea `@identity@`/`@host@` y URLs con credenciales o sin TLS (HTTP solo hacia loopback, para pruebas). Los bundles exigen los mismos campos que el executor (`directory`, `digest` `sha256:`, `executable`, `executable_sha256`, `argv`).
 
@@ -99,5 +102,6 @@ Después, la persona crea un agente desechable `zz-canary-*` y la operación ter
 - el constructor del release distribuible (hoy lo arma la prueba) y su publicación con URL HTTPS;
 - la configuración y la clave de preparación en producción;
 - Docker en el ordenador y una imagen de runtime (adapter y CLI del proveedor) fijada por digest;
-- un login real del proveedor en el paso `authenticate` y el transporte mTLS del agente hacia el gateway;
+- un login real del proveedor en el paso `authenticate`: la unidad que instala `setup` no fija `CAUCE_FLEET_ENROLLED_AUTH_POLICY_FILE` y el paquete no trae esa política, así que el ordenador no atiende `agent-auth` y un alta con un proveedor real se queda en `awaiting_auth`;
+- el transporte mTLS del agente hacia el gateway, que en producción solo escucha en `CAUCE_PRIVATE_BIND_IP`;
 - la política de autenticación de agentes enrolada (`CAUCE_FLEET_ENROLLED_AUTH_POLICY_FILE`).
