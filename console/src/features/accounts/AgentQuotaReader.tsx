@@ -4,13 +4,15 @@ import { ApiError } from '../../api/client';
 import type { Resource } from '../../api/use-resource';
 import { usePolling } from '../../api/use-polling';
 import { Button, Notice, Pill } from '../../components/kit';
+import { ErrorNotice } from '../../components/ErrorNotice';
+import type { Failure } from '../../api/error-message';
 import { Time } from '../../components/ui';
 import { randomUuid } from '../../random-id';
 import { canManageCompany, useCompanyAuthority } from '../auth/company-authority';
 import { QUOTA_FAILURE_ACTION, quotaTargetUnavailableReason } from './quota-availability';
 import { describeOperationError } from './quota-messages';
 import { formatPercent } from './quotas';
-import { describeAgentQuotaError } from './agent-quota-client';
+import { agentQuotaFailure } from './agent-quota-client';
 import type { AgentQuotaQuery, AgentQuotaReading, AgentQuotaStatus } from './agent-quota-client';
 
 const STATUS_LABEL: Record<AgentQuotaStatus, string> = {
@@ -25,7 +27,7 @@ export function AgentQuotaReader({ tenant, alias, quota }: { tenant: string; ali
   const retry = useRef<AgentQuotaQuery | null>(null);
   const mutating = useRef(false);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
+  const [error, setError] = useState<Failure>();
   const [requested, setRequested] = useState<string | null>(null);
   const [polling, setPolling] = useState<{ id: string | null; attempts: number }>({ id: null, attempts: 0 });
   const [expiredPollId, setExpiredPollId] = useState<string | null>(null);
@@ -55,17 +57,17 @@ export function AgentQuotaReader({ tenant, alias, quota }: { tenant: string; ali
 
   async function query() {
     if (!canQuery || quota.error || quota.loading || pending || mutating.current) return;
-    mutating.current = true; setBusy(true); setError('');
+    mutating.current = true; setBusy(true); setError(undefined);
     retry.current ??= { expected_revision: data.revision, idempotency_key: randomUuid() };
     try {
       const receipt = await api.queryAgentQuota(tenant, alias, retry.current);
       retry.current = null; setRequested(receipt.operation_id);
     } catch (cause) {
       if (cause instanceof ApiError && [400, 401, 403, 404, 409, 422].includes(cause.status)) retry.current = null;
-      setError(describeAgentQuotaError(cause, 'query'));
+      setError(agentQuotaFailure(cause, 'query'));
     } finally {
       const result = await reloadQuota();
-      if (result.error) setError(describeAgentQuotaError(result.error));
+      if (result.error) setError(agentQuotaFailure(result.error));
       mutating.current = false; setBusy(false);
     }
   }
@@ -73,23 +75,28 @@ export function AgentQuotaReader({ tenant, alias, quota }: { tenant: string; ali
     setPolling({ id: pollId, attempts: 0 });
     setExpiredPollId(null); setPollRound(current => current + 1);
     const result = await reloadQuota();
-    setError(result.error ? describeAgentQuotaError(result.error) : '');
+    setError(result.error ? agentQuotaFailure(result.error) : undefined);
   }
   const status = awaitingReceipt ? 'pending' : data?.status;
   const unavailableTarget = quotaTargetUnavailableReason(data);
+  // A missing reader or location is explained by the sheet itself; here only the query's own blockers.
+  const queryUnavailable = !data?.reader_available || canQuery || unavailableTarget ? null
+    : !canManageCompany(authority?.role) ? 'Tu rol permite ver la cuota, pero no consultarla. Pide a un propietario o administrador de la empresa que la consulte.'
+      : 'El servidor no admite ahora una consulta nueva para este agente. Relee la cuota más tarde.';
   return <section aria-label={`Cuota de ${alias}`} className="mt-3 grid gap-3 rounded-lg border border-line p-3">
     <header className="flex flex-wrap items-center justify-between gap-2"><h3 className="m-0 text-sm font-semibold">Cuota del agente</h3>
       {status && (status !== 'unsupported' || unavailableTarget) ? <Pill tone={status === 'error' || status === 'failed' ? 'danger' : 'neutral'}>{unavailableTarget ? 'Sin ubicación operativa' : STATUS_LABEL[status]}</Pill> : null}
     </header>
     {quota.loading && !data ? <p className="m-0 text-xs" role="status">Leyendo la cuota del agente…</p> : null}
-    {error || quota.error ? <Notice tone="danger" role="alert">{error || describeAgentQuotaError(quota.error)}</Notice> : null}
+    {error || quota.error ? <ErrorNotice failure={error ?? agentQuotaFailure(quota.error)} /> : null}
     {unresponsive ? <Notice tone="danger" role="alert">El ordenador no responde. Relee la cuota para comprobar si la consulta terminó.</Notice>
       : pending ? <p className="m-0 text-xs" role="status">La consulta sigue pendiente; la ficha relee el resultado del ordenador.</p> : null}
     {data ? <>
       <p className="m-0 text-xs text-muted">{data.captured_at ? <>Última medición: <Time value={data.captured_at} /></> : 'Todavía no hay una medición persistida.'}</p>
       {data.sample ? <QuotaMeasurement data={data} /> : null}
-      {data.operation?.status === 'failed' ? <Notice tone="danger">{describeOperationError(data.operation.error_code ?? '')}</Notice> : null}
-      {data.reader_available && !canQuery ? <p className="m-0 text-xs text-muted">La consulta requiere permiso de administración y un lector disponible en el ordenador.</p> : null}
+      {data.operation?.status === 'failed' ? <Notice tone="danger" className="wrap-anywhere">{describeOperationError(data.operation.error_code ?? '')}
+        {data.operation.error_code ? <> <span className="text-xs whitespace-nowrap">Código: <code>{data.operation.error_code}</code></span></> : null}</Notice> : null}
+      {queryUnavailable ? <p className="m-0 text-xs text-muted">{queryUnavailable}</p> : null}
     </> : null}
     <div className="flex flex-wrap gap-2">
       {canQuery ? <Button size="sm" disabled={busy || quota.loading || !!quota.error || pending} onClick={() => { void query(); }}>{busy ? 'Encolando…' : retry.current ? 'Reintentar consulta' : 'Consultar'}</Button> : null}

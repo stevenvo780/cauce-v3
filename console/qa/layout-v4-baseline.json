@@ -298,5 +298,77 @@
       "1440-dark-office-plan.png",
       "1440-dark-office-plan-detail.png"
     ]
+  },
+  "390-light-office-plan-quota-error": {
+    "contentHeight": 1000,
+    "screenshots": [
+      "390-light-office-plan-quota-error.png"
+    ]
+  },
+  "390-light-office-plan-reader": {
+    "contentHeight": 1000,
+    "screenshots": [
+      "390-light-office-plan-reader.png"
+    ]
+  },
+  "390-light-office-plan-empty": {
+    "contentHeight": 1000,
+    "screenshots": [
+      "390-light-office-plan-empty.png"
+    ]
+  },
+  "390-dark-office-plan-quota-error": {
+    "contentHeight": 1000,
+    "screenshots": [
+      "390-dark-office-plan-quota-error.png"
+    ]
+  },
+  "390-dark-office-plan-reader": {
+    "contentHeight": 1000,
+    "screenshots": [
+      "390-dark-office-plan-reader.png"
+    ]
+  },
+  "390-dark-office-plan-empty": {
+    "contentHeight": 1000,
+    "screenshots": [
+      "390-dark-office-plan-empty.png"
+    ]
+  },
+  "1440-light-office-plan-quota-error": {
+    "contentHeight": 1000,
+    "screenshots": [
+      "1440-light-office-plan-quota-error.png"
+    ]
+  },
+  "1440-light-office-plan-reader": {
+    "contentHeight": 1000,
+    "screenshots": [
+      "1440-light-office-plan-reader.png"
+    ]
+  },
+  "1440-light-office-plan-empty": {
+    "contentHeight": 1000,
+    "screenshots": [
+      "1440-light-office-plan-empty.png"
+    ]
+  },
+  "1440-dark-office-plan-quota-error": {
+    "contentHeight": 1000,
+    "screenshots": [
+      "1440-dark-office-plan-quota-error.png"
+    ]
+  },
+  "1440-dark-office-plan-reader": {
+    "contentHeight": 1000,
+    "screenshots": [
+      "1440-dark-office-plan-reader.png"
+    ]
+  },
+  "1440-dark-office-plan-empty": {
+    "contentHeight": 1000,
+    "screenshots": [
+      "1440-dark-office-plan-empty.png"
+    ]
   }
 }

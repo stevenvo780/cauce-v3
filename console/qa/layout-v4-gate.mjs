@@ -16,6 +16,12 @@ export const V4_VIEWS = [
     texts: ['Consumo compartido por 2 agentes', 'Claude de coordinación'] },
   { id: 'office-plan', path: '/live', action: 'plan', ready: 'section[aria-label="Editar sala Steven/grp.steven"]',
     detail: 'section[aria-label="Editar sala Steven/grp.steven"]', texts: ['Partes de la sala'] },
+  { id: 'office-plan-quota-error', path: '/live', scenario: 'quota-error', action: 'plan', alert: true, failing: ['/v3/console/quota-accounts'],
+    ready: 'main [role="alert"] code', texts: ['Tu rol no permite esta acción.', 'Motivo: La cuenta de cuota pertenece a otra empresa.'] },
+  { id: 'office-plan-reader', path: '/live', scenario: 'reader', action: 'plan-view', ready: 'section[aria-label="Agentes de sala Steven/grp.steven"]',
+    texts: ['Tu rol permite ver el plano, pero no cambiarlo.'] },
+  { id: 'office-plan-empty', path: '/live', scenario: 'empty-office', action: 'plan-empty', ready: '[aria-label="Vistas de oficina"]',
+    texts: ['Aún no hay salas. Crea una desde «Gestionar salas y asignaciones».'] },
   { id: 'campus', path: '/live', ready: 'main [data-objeto-principal="oficina"] canvas', campus: true },
   { id: 'computers', path: '/config?seccion=computadoras', ready: 'article[aria-labelledby^="computadora-"]', count: 2,
     texts: ['Ejecutor listo', 'Identidad confirmada; falta preparar el ejecutor'] },
@@ -36,10 +42,10 @@ export const V4_VIEWS = [
 ];
 
 async function prepare(page, view) {
-  if (view.action === 'plan') {
+  if (['plan', 'plan-view', 'plan-empty'].includes(view.action)) {
     await page.locator('main [data-objeto-principal="oficina"] canvas').first().waitFor({ state: 'visible' });
     await page.getByRole('button', { name: 'Plano editable', exact: true }).click();
-    await page.locator('section[aria-label="Sala Steven/grp.steven"]').getByRole('button').first().click();
+    if (view.action !== 'plan-empty') await page.locator('section[aria-label="Sala Steven/grp.steven"]').getByRole('button').first().click();
   } else if (view.action === 'admins') {
     await page.locator('li').filter({ hasText: 'Humanizar (demo)' }).getByRole('button', { name: 'Autoridad de empresa', exact: true }).click();
   } else if (view.action === 'people') {
@@ -81,7 +87,15 @@ async function measureState(browser, origin, respond, width, theme, view) {
   page.setDefaultTimeout(30000);
   const result = { key, width, theme, path: view.path, failures: [], errors: [], screenshots: [] };
   page.on('pageerror', error => result.errors.push(error.message));
-  page.on('console', message => { if (message.type() === 'error') result.errors.push(`Console error: ${message.text().split('\n')[0]}`); });
+  // A view that renders an error state receives that failure on purpose; the browser's own log of it is not a defect.
+  const failing = path => (view.failing ?? []).includes(path);
+  page.on('console', message => {
+    if (message.type() !== 'error') return;
+    let source = '';
+    try { source = new URL(message.location()?.url ?? '').pathname; } catch { source = ''; }
+    if (failing(source) && message.text().startsWith('Failed to load resource')) return;
+    result.errors.push(`Console error: ${message.text().split('\n')[0]}`);
+  });
   page.on('requestfailed', request => result.errors.push(`Request failed: ${new URL(request.url()).pathname} (${request.failure()?.errorText})`));
   await context.addInitScript(theme => { localStorage.setItem('cauce.tema', theme === 'light' ? 'claro' : 'oscuro'); }, theme);
   await page.clock.setFixedTime(new Date('2026-10-12T10:00:00.000Z'));
@@ -101,7 +115,7 @@ async function measureState(browser, origin, respond, width, theme, view) {
     if (!target.pathname.startsWith('/v3/')) return route.continue();
     try {
       const response = await respond(request.url(), request.method(), view.scenario ?? 'company');
-      if (!response?.ok) throw new Error(`Fixture missing or failed: ${target.pathname} (${response?.status})`);
+      if (!response?.ok && !(response && failing(target.pathname))) throw new Error(`Fixture missing or failed: ${target.pathname} (${response?.status})`);
       await route.fulfill({ status: response.status, headers: Object.fromEntries(response.headers), body: await response.text() });
     } catch (error) {
       result.errors.push(error.message);
@@ -114,7 +128,7 @@ async function measureState(browser, origin, respond, width, theme, view) {
     await prepare(page, view);
     result.metrics = await page.evaluate(measureV4Layout);
     result.failures.push(...absoluteFailures(result.metrics, theme));
-    if (view.scenario !== 'retired' && await page.locator('main [role="alert"]').count()) {
+    if (view.scenario !== 'retired' && !view.alert && await page.locator('main [role="alert"]').count()) {
       throw new Error(`Unexpected alert: ${await page.locator('main [role="alert"]').first().innerText()}`);
     }
     await page.screenshot({ path: resolve(OUTPUT, `${key}.png`), fullPage: true });
