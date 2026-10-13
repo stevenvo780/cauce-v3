@@ -1,0 +1,9 @@
+# Added by ops/cli/cauce-platform-contenedor only for `empresa importar --perfiles FILE`: that host file,
+# read-only, at the path the wrapper hands to the CLI instead of FILE.
+services:
+  cauce-platform:
+    volumes:
+      - type: bind
+        source: ${CAUCE_PLATAFORMA_PERFILES:?run through ops/cli/cauce-platform-contenedor}
+        target: /run/cauce/perfiles.json
+        read_only: true

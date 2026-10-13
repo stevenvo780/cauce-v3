@@ -12,6 +12,7 @@ const wrapper = fileURLToPath(new URL('../cli/cauce-platform-contenedor', import
 const cliDirectory = fileURLToPath(new URL('../cli/', import.meta.url)).replace(/\/$/u, '');
 const cli = join(cliDirectory, 'platform_admin.mjs');
 const seed = join(cliDirectory, 'context_seed.mjs');
+const importer = join(cliDirectory, 'company_import.mjs');
 const image = '127.0.0.1:5000/cauce-v3-runtime@sha256:' + 'a'.repeat(64);
 
 // Las URLs de fixture se construyen en tiempo de ejecución: ningún literal user:password@host en el repositorio.
@@ -54,7 +55,9 @@ test('renders the platform CLI as a hardened one-off service on the stack backen
     assert.match(out, /- node\n\s+- ops\/cli\/platform_admin\.mjs\n/u);
     assert.ok(out.includes(`source: ${seed}`), 'mounts the seed, which imports platform_admin.mjs');
     assert.match(out, /target: \/app\/ops\/cli\/context_seed\.mjs\n\s+read_only: true/u);
-    assert.doesNotMatch(out, /never-printed|ports:|profiles:|\/run\/cauce\/nativos/u);
+    assert.ok(out.includes(`source: ${importer}`), 'mounts the company import that platform_admin.mjs loads');
+    assert.match(out, /target: \/app\/ops\/cli\/company_import\.mjs\n\s+read_only: true/u);
+    assert.doesNotMatch(out, /never-printed|ports:|profiles:|\/run\/cauce\/(nativos|inventario|perfiles|clave)/u);
 
     const missing = spawnSync(wrapper, ['--mostrar'], { encoding: 'utf8',
       env: { PATH: process.env.PATH, CAUCE_ENV_FILE: join(scratch, 'missing.env') } });
@@ -138,6 +141,65 @@ test('runs contexto in the seed script and hands it the mount point instead of t
     ]) {
       const refused = await run(args);
       assert.equal(refused.status, 2, args.join(' '));
+      assert.match(refused.stderr, message);
+      assert.deepEqual(refused.calls, [''], 'refused before docker runs');
+    }
+  } finally {
+    await rm(scratch, { recursive: true, force: true });
+  }
+});
+
+test('empresa importar binds its inventory, profiles and password files read-only and passes the mount points', async () => {
+  const scratch = await mkdtemp(join(tmpdir(), 'cauce-platform-container-'));
+  try {
+    const envFile = await writeEnvironment(scratch);
+    const inputs = {};
+    for (const name of ['inventario.json', 'perfiles.json', 'clave']) {
+      inputs[name] = join(scratch, name);
+      await writeFile(inputs[name], '{}\n', { mode: 0o600 });
+    }
+    const args = ['empresa', 'importar', '--inventario', inputs['inventario.json'], '--perfiles', inputs['perfiles.json'],
+      '--clave-archivo', inputs.clave, '--email', 'a@b.test', '--nombre', 'Dueño', '--dry-run'];
+    const rendered = spawnSync(wrapper, ['--mostrar', ...args],
+      { encoding: 'utf8', env: { PATH: process.env.PATH, HOME: process.env.HOME, CAUCE_ENV_FILE: envFile } });
+    assert.equal(rendered.status, 0, rendered.stderr);
+    for (const [name, target] of [['inventario.json', '/run/cauce/inventario.json'], ['perfiles.json', '/run/cauce/perfiles.json'],
+      ['clave', '/run/cauce/clave']]) {
+      assert.ok(rendered.stdout.includes(`source: ${await realpath(inputs[name])}\n        target: ${target}\n        read_only: true\n`),
+        `binds ${name} read-only`);
+    }
+    assert.doesNotMatch(rendered.stdout, /never-printed|ports:/u);
+
+    const bin = join(scratch, 'bin');
+    const log = join(scratch, 'docker.log');
+    await mkdir(bin);
+    await writeFile(join(bin, 'docker'), '#!/bin/sh\nprintf \'%s\\n\' "$*" >>"$CAUCE_FAKE_DOCKER_LOG"\n');
+    await chmod(join(bin, 'docker'), 0o755);
+    const run = async extra => {
+      await writeFile(log, '');
+      const result = spawnSync(wrapper, extra, { encoding: 'utf8', env: { PATH: `${bin}:${process.env.PATH}`, HOME: process.env.HOME,
+        CAUCE_ENV_FILE: envFile, CAUCE_FAKE_DOCKER_LOG: log, CAUCE_PLATAFORMA_INVENTARIO: '/inherited' } });
+      return { ...result, calls: (await readFile(log, 'utf8')).trim().split('\n') };
+    };
+    const imported = await run(args);
+    assert.equal(imported.status, 0, imported.stderr);
+    const compose = `compose --env-file ${envFile} -p cauce-v3-prod-plataforma -f ${cliDirectory}/cauce-platform.compose.yaml`;
+    assert.deepEqual(imported.calls, ['network inspect cauce-v3-prod_backend',
+      `${compose} -f ${cliDirectory}/cauce-platform.inventario.compose.yaml -f ${cliDirectory}/cauce-platform.perfiles.compose.yaml `
+        + `-f ${cliDirectory}/cauce-platform.clave.compose.yaml run --rm --no-deps cauce-platform empresa importar `
+        + '--inventario /run/cauce/inventario.json --perfiles /run/cauce/perfiles.json --clave-archivo /run/cauce/clave '
+        + '--email a@b.test --nombre Dueño --dry-run']);
+    const elsewhere = await run(['admin', 'semilla', '--email', 'a@b.test', '--inventario', inputs['inventario.json']]);
+    assert.match(elsewhere.calls.at(-1), new RegExp(`--inventario ${inputs['inventario.json']}$`, 'u'), 'only empresa importar binds files');
+
+    for (const [extra, message] of [
+      [['--inventario', inputs['inventario.json'], '--inventario', inputs['inventario.json']], /--inventario no se puede repetir/u],
+      [['--perfiles', join(scratch, 'missing.json')], /--perfiles no es un archivo legible/u],
+      [['--clave-archivo', bin], /--clave-archivo no es un archivo legible/u],
+      [['--inventario', `${inputs['inventario.json']}\n`], /--inventario contiene caracteres inválidos/u],
+    ]) {
+      const refused = await run(['empresa', 'importar', ...extra, '--dry-run']);
+      assert.equal(refused.status, 2, extra.join(' '));
       assert.match(refused.stderr, message);
       assert.deepEqual(refused.calls, [''], 'refused before docker runs');
     }

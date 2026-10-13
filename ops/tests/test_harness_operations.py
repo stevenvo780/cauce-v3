@@ -1,3 +1,4 @@
+import hashlib
 import json
 import pathlib
 import shutil
@@ -143,6 +144,27 @@ class HarnessOperationsTests(unittest.TestCase):
         path.symlink_to(self.root / 'packages/adapter-sdk/dist/descriptors/claude.json')
         with self.assertRaisesRegex(HarnessOperationFailure, r'descriptors/codex\.json: cannot open'):
             resolve_operation('codex', 'execute', str(self.root))
+
+    def test_descriptor_pin_must_match_the_bytes_read(self):
+        path = self.root / 'packages/adapter-sdk/dist/descriptors/codex.json'
+        pin = hashlib.sha256(path.read_bytes()).hexdigest()
+        descriptor, fingerprint = read_descriptor(str(self.root), 'codex', expected_sha256=pin)
+        self.assertEqual(fingerprint, pin)
+        self.assertEqual(descriptor['harness'], 'codex')
+        self.assertEqual(resolve_operation('codex', 'quota', str(self.root), expected_sha256=pin)['descriptor_sha256'], pin)
+        self.assertEqual(provider_command('codex', 'quota', str(self.root), expected_sha256=pin),
+                         ['/usr/local/bin/codex-http-probe.py', '/home/node/.codex'])
+        for wrong in ('0' * 64, 'A' * 64, 'a' * 63, 'sha256:' + pin):
+            with self.subTest(wrong=wrong), self.assertRaisesRegex(HarnessOperationFailure,
+                    r'^approved harness descriptor changed$'):
+                read_descriptor(str(self.root), 'codex', expected_sha256=wrong)
+        capabilities = operation_capabilities('codex', str(self.root), expected_sha256='0' * 64)
+        self.assertTrue(all(not row['available'] for row in capabilities.values()))
+        path.write_bytes(path.read_bytes() + b'\n')
+        with self.assertRaisesRegex(HarnessOperationFailure, r'^approved harness descriptor changed$'):
+            resolve_operation('codex', 'quota', str(self.root), expected_sha256=pin)
+        with self.assertRaisesRegex(HarnessOperationFailure, r'^approved harness descriptor changed$'):
+            provider_command('codex', 'quota', str(self.root), expected_sha256=pin)
 
     def test_refuses_symlink_or_writable_package_directories(self):
         directory = self.root / 'packages/adapter-sdk/dist'

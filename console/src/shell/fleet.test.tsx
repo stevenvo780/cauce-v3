@@ -104,3 +104,36 @@ it.each([false, true])('retains the registry-only chat after a 503 without stale
   expect(snapshot().salud['Steven:hegel'].enCurso).toBe(1);
   expect(snapshot().error).toBeUndefined();
 });
+
+it('keeps the lease-derived state during a normal activity reload without a prior failure', async () => {
+  const user = userEvent.setup();
+  const future = new Date(Date.now() + 60_000).toISOString();
+  let reads = 0;
+  let releaseReload = () => undefined as void;
+  const reloadGate = new Promise<void>((resolve) => { releaseReload = resolve; });
+  onTestFinished(() => { releaseReload(); });
+  server.use(
+    http.get('*/v3/status', () => HttpResponse.json({
+      presence: [{ tenant_id: 'Steven', alias: 'argos', epoch: 3, lease_expires_at: future }],
+    })),
+    http.get('*/v3/console/topology', () => HttpResponse.json({
+      tenants: [{ id: 'Steven', rooms: [{ id: 'office', members: [{ alias: 'argos', enabled: true }] }] }],
+    })),
+    http.get('*/v3/console/messages', () => HttpResponse.json({ items: [] })),
+    http.get('*/v3/console/queues', () => HttpResponse.json({ items: [] })),
+    http.get('*/v3/console/activity', async () => {
+      reads += 1;
+      if (reads > 1) await reloadGate;
+      return HttpResponse.json({ agents: [] });
+    }),
+  );
+  renderWithApi(<FleetProvider><FleetProbe /><ChatLauncher phone={false} /></FleetProvider>);
+
+  expect(await screen.findByRole('link', { name: /^argos\b/u })).toHaveTextContent('Libre');
+  await user.click(screen.getByRole('button', { name: 'Reload activity' }));
+  await waitFor(() => { expect(reads).toBe(2); });
+  expect(screen.getByRole('link', { name: /^argos\b/u })).toHaveTextContent('Libre');
+  expect(screen.getByRole('link', { name: /^argos\b/u })).not.toHaveTextContent('Desconocido');
+  releaseReload();
+  expect(await screen.findByRole('link', { name: /^argos\b/u })).toHaveTextContent('Libre');
+});

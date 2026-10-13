@@ -1,6 +1,6 @@
-import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { execFile } from 'node:child_process';
-import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
@@ -27,24 +27,13 @@ async function git(directory: string, args: string[]): Promise<string> {
 
 let database: TestDatabase | undefined; let current: EmptyTestDatabase | undefined; let pool: DatabasePool;
 let fixtures: Awaited<ReturnType<typeof seedSyntheticCompanyContexts>>; let store: ContextVersionStore;
-let directory: string; let remote: string; let repository: string; let outsider: string; let broker: ContextGitBroker;
-preparePostgresSuite(import.meta.url, async () => { database = await startTestDatabase(); }, 120_000);
-beforeEach(async () => {
-  if (!database) throw new Error('database unavailable');
-  current = await startTestCaseDatabase(database); pool = current.pool;
-  fixtures = await seedSyntheticCompanyContexts(current.adminUrl); store = new ContextVersionStore(pool);
-  directory = await mkdtemp(join(tmpdir(), 'zz-canary-context-concurrent-')); await chmod(directory, 0o700);
-  remote = join(directory, 'origin.git'); repository = join(directory, 'broker'); outsider = join(directory, 'outsider');
-  await git(directory, ['init', '--quiet', '--bare', '--initial-branch=main', remote]);
-  await git(directory, ['init', '--quiet', '--initial-branch=main', repository]); await chmod(repository, 0o700);
-  await git(repository, ['commit', '--quiet', '--allow-empty', '-m', 'Initialize concurrent fixture']);
-  await git(repository, ['remote', 'add', 'origin', remote]);
-  await git(repository, ['push', '--quiet', 'origin', 'refs/heads/main:refs/heads/main']);
-  await git(directory, ['clone', '--quiet', remote, outsider]);
-  broker = new ContextGitBroker(repository);
-});
-afterEach(async () => { await current?.close(); current = undefined; await rm(directory, { recursive: true, force: true }); });
-afterAll(async () => { if (database) { await database.pool.end(); await database.container.stop(); } });
+let directory: string | undefined; let remote: string; let repository: string; let outsider: string; let broker: ContextGitBroker;
+
+async function closeConcurrentFixture(testDatabase: Pick<EmptyTestDatabase, 'close'> | undefined,
+  path: string | undefined): Promise<void> {
+  try { await testDatabase?.close(); }
+  finally { if (path !== undefined) await rm(path, { recursive: true, force: true }); }
+}
 
 function fixture(index: number) { return requireValue(fixtures[index], 'fixture'); }
 function source(index: number) {
@@ -76,6 +65,27 @@ const outboxOf = async (target: ContextTarget) => requireValue((await pool.query
   [target.company_id, target.tenant_id, target.alias])).rows[0], 'outbox');
 
 describe('shared context broker with concurrent agents', () => {
+  preparePostgresSuite(import.meta.url, async () => { database = await startTestDatabase(); }, 120_000);
+  beforeEach(async () => {
+    if (!database) throw new Error('database unavailable');
+    current = await startTestCaseDatabase(database); pool = current.pool;
+    fixtures = await seedSyntheticCompanyContexts(current.adminUrl); store = new ContextVersionStore(pool);
+    directory = await mkdtemp(join(tmpdir(), 'zz-canary-context-concurrent-')); await chmod(directory, 0o700);
+    remote = join(directory, 'origin.git'); repository = join(directory, 'broker'); outsider = join(directory, 'outsider');
+    await git(directory, ['init', '--quiet', '--bare', '--initial-branch=main', remote]);
+    await git(directory, ['init', '--quiet', '--initial-branch=main', repository]); await chmod(repository, 0o700);
+    await git(repository, ['commit', '--quiet', '--allow-empty', '-m', 'Initialize concurrent fixture']);
+    await git(repository, ['remote', 'add', 'origin', remote]);
+    await git(repository, ['push', '--quiet', 'origin', 'refs/heads/main:refs/heads/main']);
+    await git(directory, ['clone', '--quiet', remote, outsider]);
+    broker = new ContextGitBroker(repository);
+  });
+  afterEach(async () => {
+    const testDatabase = current; const path = directory; current = undefined; directory = undefined;
+    await closeConcurrentFixture(testDatabase, path);
+  });
+  afterAll(async () => { if (database) { await database.pool.end(); await database.container.stop(); } });
+
   it('fences two writers of one agent and syncs three agents of two companies without losing a folder, commit or author', async () => {
     const alpha = fixture(0); const beta = fixture(1);
     if (!current) throw new Error('database unavailable');
@@ -156,5 +166,22 @@ describe('shared context broker with concurrent agents', () => {
     expect(await remoteFile(`${contextRepositoryPrefix(peer)}/context/notes.md`)).toBe('Outsider note in the peer folder.');
     expect(await remoteFile('notes/shared.md')).toBe('Shared outsider note.');
     expect((await git(remote, ['rev-list', 'refs/heads/main'])).split('\n')).toContain(outside);
+  });
+});
+
+describe('concurrent context fixture cleanup', () => {
+  it('closes the database when setup fails before creating a Git directory', async () => {
+    const close = vi.fn(async () => undefined);
+    await closeConcurrentFixture({ close }, undefined);
+    expect(close).toHaveBeenCalledExactlyOnceWith();
+  });
+
+  it('removes the Git directory even when database closing fails', async () => {
+    const path = await mkdtemp(join(tmpdir(), 'zz-canary-context-cleanup-'));
+    const failure = new Error('database close failed');
+    try {
+      await expect(closeConcurrentFixture({ close: async () => { throw failure; } }, path)).rejects.toBe(failure);
+      await expect(stat(path)).rejects.toMatchObject({ code: 'ENOENT' });
+    } finally { await rm(path, { recursive: true, force: true }); }
   });
 });

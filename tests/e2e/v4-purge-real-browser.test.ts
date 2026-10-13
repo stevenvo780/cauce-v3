@@ -16,6 +16,7 @@ const run = randomUUID().replaceAll('-', '').slice(0, 8);
 const alias = `zzpurge${run}`;
 const runtimeKey = `zz-canary-purge-${run}`;
 const failKey = `zz-canary-fail-${run}`;
+const foreignKey = `zz-canary-unrelated-${run}`;
 const owner: V4Person = {
   ...syntheticPerson('purge', run),
   email: `zz-canary-purge-${run}@example.test`,
@@ -28,6 +29,7 @@ let page: V4Page | undefined;
 let hub = '';
 let work: string | undefined;
 let worker: ChildProcess | undefined;
+let foreignVolumeCreated = false;
 
 function active() {
   if (!fixture) throw new Error('purge fixture is not initialized');
@@ -55,7 +57,9 @@ async function stopWorker(): Promise<void> {
 }
 
 function dockerText(args: string[]): string {
-  return spawnSync('docker', args, { encoding: 'utf8' }).stdout;
+  const result = spawnSync('docker', args, { encoding: 'utf8', timeout: 40_000 });
+  expect(result.status, redact(result.stderr)).toBe(0);
+  return result.stdout;
 }
 
 beforeAll(async () => {
@@ -75,18 +79,26 @@ beforeAll(async () => {
 }, 600_000);
 
 afterAll(async () => {
-  await stopWorker();
-  if (work) {
-    spawnSync(python, [join(process.cwd(), 'tests/e2e/v4-purge-docker.fixture.py'), 'cleanup', '--root', work], { encoding: 'utf8' });
-    await rm(work, { recursive: true, force: true });
+  try {
+    await stopWorker();
+    if (work) {
+      const cleaned = spawnSync(python, [join(process.cwd(), 'tests/e2e/v4-purge-docker.fixture.py'), 'cleanup', '--root', work],
+        { encoding: 'utf8', timeout: 120_000 });
+      expect(cleaned.status, redact(cleaned.stdout + cleaned.stderr)).toBe(0);
+      await rm(work, { recursive: true, force: true });
+    }
+  } finally {
+    try { if (foreignVolumeCreated) dockerText(['volume', 'rm', foreignKey]); }
+    finally { await fixture?.close(); }
   }
-  await fixture?.close();
 }, 180_000);
 
 describe('purga real de un contenedor desechable', () => {
   it('exige el alias, conserva confirm_alias y no deja contenedor ni volúmenes', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'cauce-purge-e2e-'));
     work = directory;
+    expect(dockerText(['volume', 'create', foreignKey]).trim()).toBe(foreignKey);
+    foreignVolumeCreated = true;
     const prepared = spawnSync(python, [join(process.cwd(), 'tests/e2e/v4-purge-docker.fixture.py'), 'prepare',
       '--root', directory, '--tenant', hub, '--alias', alias, '--runtime-key', runtimeKey, '--fail-key', failKey],
     { encoding: 'utf8', timeout: 120_000 });
@@ -135,13 +147,19 @@ describe('purga real de un contenedor desechable', () => {
     }
     await purge.click();
     const typed = current.getByLabel('Escribe el alias');
-    await typed.fill(alias);
     const preview = current.getByRole('button', { name: 'Previsualizar operación', exact: true });
+    expect(await preview.isDisabled()).toBe(true);
+    await typed.fill(`${alias}-wrong`);
+    expect(await preview.isDisabled()).toBe(true);
+    await typed.fill(alias);
     await preview.click();
     const enqueue = current.getByRole('button', { name: 'Encolar operación', exact: true });
     const queuedAt = Date.now() + 20_000;
     while (await enqueue.isDisabled()) {
-      if (Date.now() > queuedAt) throw new Error(`enqueue stayed disabled: ${await bodySnippet(current)}`);
+      if (Date.now() > queuedAt) {
+        const panel = await typed.evaluate(element => element.closest('.agent-lifecycle-panel')?.textContent);
+        throw new Error(`enqueue stayed disabled: ${panel}; errors=${errors.unexpected.join('; ')}`);
+      }
       await current.waitForTimeout(200);
     }
     await enqueue.click();
@@ -180,19 +198,26 @@ describe('purga real de un contenedor desechable', () => {
       await current.waitForTimeout(500);
     }
     await stopWorker();
-    const names = dockerText(['ps', '-a', '--format', '{{.Names}}']).split('\n').filter((name) => name.startsWith('zz-canary-'));
-    const volumes = dockerText(['volume', 'ls', '--format', '{{.Name}}']).split('\n').filter((name) => name.startsWith('zz-canary-'));
+    const owned = [runtimeKey, failKey];
+    const names = dockerText(['ps', '-a', '--format', '{{.Names}}']).split('\n')
+      .filter((name) => owned.some((key) => name === key || name.startsWith(`${key}-`)));
+    const allVolumes = dockerText(['volume', 'ls', '--format', '{{.Name}}']).split('\n');
+    const volumes = allVolumes.filter((name) => owned.some((key) => name.startsWith(`${key}-`)));
     const workerLog = redact(Buffer.concat(log).toString('utf8').slice(-4000));
     const observed = JSON.stringify({ status, detail: redact(detail), names, volumes, worker: workerLog });
     expect(status, observed).toBe('succeeded');
     expect(names, observed).toEqual([]);
     expect(volumes, observed).toEqual([]);
+    expect(allVolumes).toContain(foreignKey);
     const rows = join(directory, 'rows.json');
     await writeFile(rows, '[]', { mode: 0o600 });
-    const swept = spawnSync(manifest.python, [join(process.cwd(), 'ops/cli/fleet_orphan_sweep.py'), '--rows', rows,
-      '--runtime-key-prefix', 'zz-canary-', '--host-id', manifest.host_id], { encoding: 'utf8' });
-    expect(swept.status, redact(swept.stdout + swept.stderr)).toBe(0);
-    const report = JSON.parse(swept.stdout) as { clean: boolean };
-    expect(report.clean).toBe(true);
+    for (const key of owned) {
+      const swept = spawnSync(manifest.python, [join(process.cwd(), 'ops/cli/fleet_orphan_sweep.py'), '--rows', rows,
+        '--runtime-key-prefix', key, '--host-id', manifest.host_id], { encoding: 'utf8', timeout: 40_000 });
+      expect(swept.status, redact(swept.stdout + swept.stderr)).toBe(0);
+      const report = JSON.parse(swept.stdout) as { clean: boolean };
+      expect(report.clean).toBe(true);
+    }
+    errors.assertClean();
   }, 180_000);
 });

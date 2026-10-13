@@ -38,8 +38,11 @@ def checked_command(command: list[str], *, environment: dict | None = None, time
 
 def approved_bundle(policy: dict, agent: dict) -> dict:
     bundle = policy['bundles'][agent['harness_id']]
-    if set(bundle) - {'descriptor_sha256'} != {'directory', 'digest', 'executable', 'executable_sha256', 'argv'} \
-            or not isinstance(bundle['argv'], list) or not all(isinstance(value, str) for value in bundle['argv']):
+    if set(bundle) not in ({'directory', 'digest', 'executable', 'executable_sha256', 'argv'},
+                          {'directory', 'digest', 'executable', 'executable_sha256', 'argv', 'descriptor_sha256'}) \
+            or not isinstance(bundle['argv'], list) or not all(isinstance(value, str) for value in bundle['argv']) \
+            or bundle.get('descriptor_sha256') is not None and (not isinstance(bundle['descriptor_sha256'], str)
+                or re.fullmatch(r'[a-f0-9]{64}', bundle['descriptor_sha256']) is None):
         raise SafeFailure('invalid approved runtime bundle')
     if bundle_digest(str(path(bundle['directory']))) != bundle['digest'] \
             or (agent['runtime_mode'] == 'native' and digest(path(bundle['executable'])) != bundle['executable_sha256']):

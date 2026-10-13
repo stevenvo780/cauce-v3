@@ -187,6 +187,12 @@ function SkeletonGrid({ phone }: { phone: boolean }) {
 /** The landing of the Chat section: a quick picker that opens a conversation in one gesture. */
 export function ChatLauncher({ phone }: { phone: boolean }) {
   const { agents, live, salud, activity, messages, loading, error, reload } = useFleet();
+  const [activityReadFailed, setActivityReadFailed] = useState(false);
+  useEffect(() => {
+    if (activity.error) setActivityReadFailed(true);
+    else if (!activity.loading) setActivityReadFailed(false);
+  }, [activity.error, activity.loading]);
+  const activityUnavailable = Boolean(activity.error) || (activityReadFailed && activity.loading);
   const favorites = useAgentPreferences()?.favorites;
   const settled = usePreferencesSettled();
   const reduced = useMediaQuery(REDUCED_MOTION);
@@ -199,9 +205,9 @@ export function ChatLauncher({ phone }: { phone: boolean }) {
   const headingId = useId();
 
   const stateOf = useCallback((agent: AgenteDeMensajeria): LiveState | undefined => (
-    live.get(agent.id)?.state ?? (activity.error || activity.loading || agent.leaseState === 'unknown'
+    live.get(agent.id)?.state ?? (activityUnavailable || agent.leaseState === 'unknown'
       ? undefined : agent.leaseState === 'online' ? 'idle' : 'down')
-  ), [live, activity.error, activity.loading]);
+  ), [live, activityUnavailable]);
   const last = useMemo(() => lastMessages(messages.data, agents), [messages.data, agents]);
   const sections = useMemo(
     () => launcherSections({ agents, stateOf: (agent) => stateOf(agent) ?? 'idle', salud, last, favorites, query }),

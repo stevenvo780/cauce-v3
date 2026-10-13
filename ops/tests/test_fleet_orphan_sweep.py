@@ -2,6 +2,7 @@ from __future__ import annotations
 
 # cauce:requiere docker
 import importlib.util
+import io
 import json
 import os
 import pathlib
@@ -143,6 +144,27 @@ def load_sweep():
 
 
 class DeclaredDockerStateTest(unittest.TestCase):
+    def test_scoped_main_does_not_inspect_an_unrelated_container(self):
+        module = load_sweep()
+        row = self.row(ownership='owned', docker_state='running')
+        observed = {'Name': '/' + row['container_name'], 'Config': {'Labels': self.labels()}, 'State': {'Running': True}}
+
+        def inventory(kind, *listing):
+            if '--filter' not in listing:
+                raise subprocess.CalledProcessError(1, ['docker', kind, 'inspect', 'foreign-container-id'])
+            self.assertIn('name=^/(zz\\-canary\\-state)$', listing)
+            return [observed]
+
+        with tempfile.TemporaryDirectory() as directory:
+            source = pathlib.Path(directory) / 'rows.json'
+            source.write_text(json.dumps([row]))
+            output = io.StringIO()
+            with patch.object(module, 'fleet_resources', return_value=[]), patch.object(module, 'docker_json', side_effect=inventory), \
+                    patch.object(sys, 'stdout', output):
+                result = module.main(['--rows', str(source), '--runtime-key-prefix', 'zz-canary-state', '--host-id', 'host-a'])
+            self.assertEqual(result, 0)
+            self.assertTrue(json.loads(output.getvalue())['clean'])
+
     def report(self, row, observed, resources=None):
         return load_sweep().sweep([row], resources or [], {row['container_name']: observed})
 

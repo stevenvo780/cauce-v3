@@ -14,6 +14,7 @@ ARGV0 = re.compile(r'/usr/local/bin/[A-Za-z0-9][A-Za-z0-9._+@-]{0,127}')
 ARGUMENT = re.compile(r'[A-Za-z0-9][A-Za-z0-9_@%+=:,./-]{0,255}|--[A-Za-z0-9][A-Za-z0-9_-]{0,253}|-[A-Za-z0-9_-]{1,254}|/[A-Za-z0-9_@%+=:,./-]{0,255}')
 NPM_PACKAGE = re.compile(r'(@[a-z0-9][a-z0-9._-]{0,63}/)?[a-z0-9][a-z0-9._-]{0,127}')
 PROVIDER_FIELDS = {'authenticate_argv', 'quota_argv', 'update_package', 'fleet_module'}
+PIN = re.compile(r'[a-f0-9]{64}')
 
 
 class HarnessOperationFailure(ValueError):
@@ -114,7 +115,7 @@ def validate_provider(operations: dict, provider, harness: str) -> dict:
     return validated
 
 
-def read_descriptor(bundle_directory: str, harness: str, *, expected_sha256: str | None = None) -> tuple[dict, str]:
+def read_descriptor(bundle_directory: str, harness: str, expected_sha256: str | None = None) -> tuple[dict, str]:
     if not isinstance(harness, str) or not HARNESS_ID.fullmatch(harness):
         fail('harness', 'must match [a-z][a-z0-9_-]{0,63}')
     descriptor = open_descriptor_directory(bundle_directory)
@@ -140,8 +141,8 @@ def read_descriptor(bundle_directory: str, harness: str, *, expected_sha256: str
         os.close(descriptor)
     fingerprint = hashlib.sha256(raw).hexdigest()
     if expected_sha256 is not None and (not isinstance(expected_sha256, str)
-            or re.fullmatch(r'[a-f0-9]{64}', expected_sha256) is None or fingerprint != expected_sha256):
-        fail('descriptor_sha256', 'descriptor differs from its approved digest')
+            or PIN.fullmatch(expected_sha256) is None or fingerprint != expected_sha256):
+        raise HarnessOperationFailure('approved harness descriptor changed')
     try:
         value = json.loads(raw)
     except (ValueError, UnicodeError):
@@ -179,7 +180,8 @@ def read_descriptor(bundle_directory: str, harness: str, *, expected_sha256: str
     return value, fingerprint
 
 
-def resolve_operation(harness: str, operation: str, bundle_directory: str, *, expected_sha256: str | None = None) -> dict:
+def resolve_operation(harness: str, operation: str, bundle_directory: str,
+                      expected_sha256: str | None = None) -> dict:
     if operation not in RECIPES:
         fail(f'operations.{operation}', 'unknown lifecycle operation')
     descriptor, fingerprint = read_descriptor(bundle_directory, harness, expected_sha256=expected_sha256)
@@ -189,15 +191,17 @@ def resolve_operation(harness: str, operation: str, bundle_directory: str, *, ex
             'descriptor_sha256': fingerprint}
 
 
-def lifecycle_plan(harness: str, operation: str, bundle_directory: str) -> dict:
-    request = resolve_operation(harness, operation, bundle_directory)
+def lifecycle_plan(harness: str, operation: str, bundle_directory: str,
+                   expected_sha256: str | None = None) -> dict:
+    request = resolve_operation(harness, operation, bundle_directory, expected_sha256=expected_sha256)
     driver = {'install': ('fleet-runtime', 'artifacts'), 'execute': ('fleet-runtime', 'runtime'),
               'authenticate': ('fleet-provider-hook', 'authenticate'), 'update': ('quota-runtime', 'update_cli'),
               'quota': ('quota-runtime', 'query')}[operation]
     return {**request, 'driver': driver[0], 'action': driver[1]}
 
 
-def provider_command(harness: str, operation: str, bundle_directory: str, *, expected_sha256: str | None = None) -> list[str]:
+def provider_command(harness: str, operation: str, bundle_directory: str,
+                     expected_sha256: str | None = None) -> list[str]:
     descriptor, _ = read_descriptor(bundle_directory, harness, expected_sha256=expected_sha256)
     if operation not in RECIPES:
         fail(f'operations.{operation}', 'unknown lifecycle operation')
@@ -216,15 +220,16 @@ def provider_command(harness: str, operation: str, bundle_directory: str, *, exp
     fail(f'operations.{operation}', 'operation has no provider command')
 
 
-def fleet_module(harness: str, bundle_directory: str, *, expected_sha256: str | None = None) -> str | None:
+def fleet_module(harness: str, bundle_directory: str, expected_sha256: str | None = None) -> str | None:
     descriptor, _ = read_descriptor(bundle_directory, harness, expected_sha256=expected_sha256)
     return (descriptor.get('provider') or {}).get('fleet_module')
 
 
-def operation_capabilities(harness: str, bundle_directory: str) -> dict:
+def operation_capabilities(harness: str, bundle_directory: str,
+                           expected_sha256: str | None = None) -> dict:
     """Per-operation availability with the field and reason when unavailable."""
     try:
-        descriptor, _ = read_descriptor(bundle_directory, harness)
+        descriptor, _ = read_descriptor(bundle_directory, harness, expected_sha256=expected_sha256)
     except HarnessOperationFailure as error:
         return {operation: {'available': False, 'reason': str(error)} for operation in RECIPES}
     provider = descriptor.get('provider') or {}

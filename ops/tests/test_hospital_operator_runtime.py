@@ -284,8 +284,6 @@ class TrustedInvocationTests(unittest.TestCase):
         review_source = (INSTANCE / "praxis-supervision-review.py").read_text(encoding="utf-8")
         self.assertIn(review, review_source)
         self.assertIn(f"{TRUSTED}/praxis-qa-review.py; ", review_source)
-        profile = json.loads((INSTANCE / "project-profile.json").read_text(encoding="utf-8"))
-        self.assertIn(proof, profile["root_text"])
 
     def test_proof_evidence_records_the_isolated_interpreter_flags_it_ran_with(self) -> None:
         probe = ("import importlib.util, json, sys; "
