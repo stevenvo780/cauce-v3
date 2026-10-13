@@ -54,7 +54,7 @@ UPDATE human_tenant_memberships h SET role=CASE
 ALTER TABLE human_tenant_memberships ENABLE TRIGGER cauce_oauth_membership_revision;
 ALTER TABLE human_tenant_memberships ALTER COLUMN role SET NOT NULL,
   ADD CONSTRAINT human_tenant_memberships_role_check CHECK (role IN ('operator','reader')),
-  ADD CONSTRAINT human_tenant_memberships_reader_permissions_check
+  ADD CONSTRAINT human_tenant_memberships_check
     CHECK (role <> 'reader' OR permissions <@ ARRAY['read']::text[]);
 
 CREATE FUNCTION pg_temp.cauce_081_patch(p_proc regprocedure,p_from text,p_to text) RETURNS void
