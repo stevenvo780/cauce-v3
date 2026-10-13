@@ -137,9 +137,6 @@ class AgentQuotaProjectionTest(unittest.TestCase):
 class DockerAgentQuotaTest(AgentQuotaPacketTest):
     @classmethod
     def setUpClass(cls):
-        # Opt-in: these canaries never passed on the release host (they fail from the commit that added them), see the deploy-2 queue.
-        if os.environ.get('CAUCE_QUOTA_DOCKER_E2E') != '1':
-            raise unittest.SkipTest('set CAUCE_QUOTA_DOCKER_E2E=1 to run the real Docker quota canaries')
         probe = subprocess.run(['docker', 'image', 'inspect', 'python:3.12-slim', '--format', '{{.Id}}'],
             capture_output=True, text=True, timeout=15)
         if probe.returncode:
