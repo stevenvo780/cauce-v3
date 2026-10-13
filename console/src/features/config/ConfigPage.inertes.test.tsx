@@ -167,7 +167,7 @@ describe('las columnas sin efecto quedan marcadas, no escondidas', () => {
 });
 
 describe('la tabla de cómo funciona cada arnés de verdad', () => {
-  it('sale en «Arneses», con los cuatro arneses y dónde lee cada uno', async () => {
+  it('sale en «Arneses», con todos los arneses y dónde lee cada uno', async () => {
     conHarnessReal();
     const user = userEvent.setup();
     renderWithApi(<ConfigPage />);
@@ -175,7 +175,8 @@ describe('la tabla de cómo funciona cada arnés de verdad', () => {
 
     const panel = panelDe(/qué lee cada arnés/i);
     expect(within(panel).getByText(/CLAUDE\.md/)).toBeInTheDocument();
-    expect(within(panel).getAllByText(/AGENTS\.md/)).toHaveLength(3);
+    // Codex, OpenClaw, Grok, Muse and Hermes read AGENTS.md since 0b6bc056 added Grok and Muse to the catalog.
+    expect(within(panel).getAllByText(/AGENTS\.md/)).toHaveLength(5);
     expect(within(panel).getAllByText(/openclaw\.json/)).toHaveLength(2);
     expect(within(panel).getByText(/perfil canónico por lote no declara soporte para Hermes/i))
       .toBeInTheDocument();
