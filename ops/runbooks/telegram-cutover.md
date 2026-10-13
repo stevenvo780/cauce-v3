@@ -1,7 +1,7 @@
 # Runbook: Telegram Bridge Cutover y Rollback
 
 ## Cuándo usar
-Activar, actualizar o revertir el puente Telegram V3 (`telegram-bridge`) por alias de forma acumulativa y reversible sin exponer tokens ni credenciales en logs o Git.
+Activar, actualizar o revertir el puente Telegram V3 (`telegram-bridge`) por alias, sumando el alias a la lista exacta del selector, de forma reversible y sin exponer tokens ni credenciales en logs o Git.
 
 ## Pasos
 1. Publicar la fila del alias y su token con el mismo escritor. `publish-telegram-token.py` genera la
@@ -35,10 +35,23 @@ Activar, actualizar o revertir el puente Telegram V3 (`telegram-bridge`) por ali
      --aliases "$ALIAS" \
      --runtime-dir "$CAUCE_TELEGRAM_RUNTIME_DIR"
    ```
-4. Actualizar el selector acumulativo y recrear la única instancia del puente:
+4. Añadir el alias al selector y recrear la única instancia del puente. `selectTelegramAliases`
+   (`services/telegram-bridge/src/identity.ts`) trata `CAUCE_TELEGRAM_ALIASES` como la lista exacta,
+   separada por comas, de los alias que arrancan. Sustituirla por `"$ALIAS"` deja fuera al resto.
+   Si el selector está vacío, el puente arranca todos los de `config.json`: para sumar uno hay que
+   escribir la lista completa de los que deben seguir, más el nuevo. Con lista ya puesta, el bloque
+   solo añade `$ALIAS` si falta.
    ```sh
    # [no ejecutable en verificación]
-   export CAUCE_TELEGRAM_ALIASES="$ALIAS"
+   if [ -z "${CAUCE_TELEGRAM_ALIASES:-}" ]; then
+     printf 'selector vacío: hoy arrancan todos. Escribe la lista completa más %s\n' "$ALIAS" >&2
+     exit 1
+   fi
+   case ",${CAUCE_TELEGRAM_ALIASES}," in
+     *,"$ALIAS",*) ;;
+     *) CAUCE_TELEGRAM_ALIASES="${CAUCE_TELEGRAM_ALIASES},$ALIAS" ;;
+   esac
+   export CAUCE_TELEGRAM_ALIASES
    docker compose -f deploy/compose.yaml --profile telegram up -d --force-recreate telegram-bridge
    ```
 
@@ -65,9 +78,9 @@ El puente falla cerrado para **todos** los bots si falta un solo token, y `deplo
 3. Reemplazar `config.json` por la versión con rutas por tenant (`generate-telegram-config.py` sin
    `--aliases` con la misma allowlist, o `publish-telegram-token.py` alias por alias) con un
    `mv` atómico, y recrear el puente.
-4. Los nombres planos se pueden borrar solo cuando ninguna configuración, copia `.bak` de vuelta
-   atrás ni guardia los use. `cauce-v3-medico-monitor` ya lee las dos disposiciones y prefiere la de
-   tenant.
+4. Los nombres planos se pueden borrar solo cuando ninguna configuración ni copia `.bak` de vuelta
+   atrás los use. `cauce-v3-medico-monitor` no los lee: la sonda de `getWebhookInfo` y el aviso
+   abren solo `/etc/cauce-v3/telegram-runtime/<tenant>/<alias>.token`, sin respaldo a la ruta plana.
 
 ## Verificar efecto
 1. Comprobar salud y readiness del contenedor:

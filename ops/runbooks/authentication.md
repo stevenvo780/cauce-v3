@@ -10,7 +10,6 @@ Configurar, rotar y verificar identidades mTLS, OIDC y token-hashes para el gate
    ```sh
    # [no ejecutable en verificación]
    install -d -o root -g 1000 -m 0750 /etc/cauce-v3/secrets/identities
-   install -d -o root -g root -m 0700 /var/backups/cauce-v3
    ```
 2. Publicar o actualizar `mtls_identities.json` o `token_hashes.json` mediante rename atómico (para credenciales de agente, usar `cauce <alias> aprovisionar` siguiendo `ops/runbooks/alta-y-baja-de-agente.md`):
    - Archivos modo `0400` y propiedad `1000:1000`.
@@ -18,12 +17,25 @@ Configurar, rotar y verificar identidades mTLS, OIDC y token-hashes para el gate
      el fichero, desde la lectura usada para preparar el reemplazo hasta después del `rename`.
      El rename evita lecturas parciales; el candado evita perder otra alta o revocación concurrente.
      No publicar con un `mv` manual sin ese mismo candado.
+   - Antes del reemplazo, y bajo ese mismo candado, copiar a mano el fichero vigente a un hermano
+     del mismo directorio (`mtls_identities.json.prev` o `token_hashes.json.prev`).
+     `register-agent-identity.py` (`publish_json_document_cas`) no deja copia. No hay un
+     `mtls_identities.json.bak` generado: el único `.bak` de un registro de identidades en el repo
+     es el de `pty_agent_identities.json` en `ops/cli/cauce-credenciales.lib.sh`. Un `mv` desde
+     otro directorio solo es atómico si ambos paths están en el mismo sistema de ficheros.
    - Formato mTLS: `{"version":1,"identities":[{"certificate_sha256":"<64-hex>","expires_at":"...","principal":{...}}]}`.
    - Formato tokens: `{"version":1,"identities":[{"token_sha256":"<64-hex>","expires_at":"...","principal":{...}}]}`.
 3. Fijar `CAUCE_GATEWAY_IDENTITY_DIR=/etc/cauce-v3/secrets/identities` en `prod.env` y recrear gateway si se modifica la estructura del montaje:
    ```sh
    # [no ejecutable en verificación]
-   docker compose -f deploy/compose.yaml up -d gateway
+   # CAUCE_ENV_FILE por defecto es /etc/cauce-v3/prod.env (deploy/deploy.sh).
+   # Sin --env-file, compose.yaml exige CAUCE_GATEWAY_IDENTITY_DIR y aborta.
+   # Sumar -f deploy/compose.mcp-human.yaml o compose.mcp-human-local.yaml si
+   # CAUCE_MCP_HUMAN_ENABLED=1, y -f deploy/compose.fleet.yaml si
+   # CAUCE_DEPLOY_FLEET_OVERLAY=1: son los overlays que añade deploy.sh.
+   docker compose --env-file "${CAUCE_ENV_FILE:-/etc/cauce-v3/prod.env}" \
+     -f deploy/compose.yaml -f deploy/compose.postgres.yaml \
+     --project-directory deploy up -d gateway
    ```
 
 ## Verificar efecto
@@ -42,10 +54,11 @@ Configurar, rotar y verificar identidades mTLS, OIDC y token-hashes para el gate
 3. Probar rechazo con respuesta 401/403 ante certificados o tokens revocados.
 
 ## Deshacer
-1. Restaurar la versión anterior del archivo de identidades mediante rename atómico dentro del directorio montado:
+1. Restaurar el hermano copiado en el paso 2, con rename dentro del mismo directorio:
    ```sh
    # [no ejecutable en verificación]
    flock -x /etc/cauce-v3/secrets/identities/.mtls_identities.json.lock \
-     mv -- /var/backups/cauce-v3/mtls_identities.json.bak /etc/cauce-v3/secrets/identities/mtls_identities.json
+     mv -- /etc/cauce-v3/secrets/identities/mtls_identities.json.prev \
+           /etc/cauce-v3/secrets/identities/mtls_identities.json
    ```
 2. Confirmar que el gateway relee el inodo y restablece la autenticación esperada.
