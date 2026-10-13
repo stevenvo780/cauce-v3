@@ -19,13 +19,13 @@
     ]
   },
   "390-light-companies": {
-    "contentHeight": 1191,
+    "contentHeight": 1263,
     "screenshots": [
       "390-light-companies.png"
     ]
   },
   "390-light-company-admins": {
-    "contentHeight": 1669,
+    "contentHeight": 1741,
     "screenshots": [
       "390-light-company-admins.png"
     ]
@@ -74,13 +74,13 @@
     ]
   },
   "390-dark-companies": {
-    "contentHeight": 1191,
+    "contentHeight": 1263,
     "screenshots": [
       "390-dark-companies.png"
     ]
   },
   "390-dark-company-admins": {
-    "contentHeight": 1669,
+    "contentHeight": 1741,
     "screenshots": [
       "390-dark-company-admins.png"
     ]
@@ -283,6 +283,20 @@
     "screenshots": [
       "1440-dark-context-versions.png",
       "1440-dark-context-versions-detail.png"
+    ]
+  },
+  "1440-light-office-plan": {
+    "contentHeight": 1000,
+    "screenshots": [
+      "1440-light-office-plan.png",
+      "1440-light-office-plan-detail.png"
+    ]
+  },
+  "1440-dark-office-plan": {
+    "contentHeight": 1000,
+    "screenshots": [
+      "1440-dark-office-plan.png",
+      "1440-dark-office-plan-detail.png"
     ]
   }
 }

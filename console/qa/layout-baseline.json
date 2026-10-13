@@ -177,7 +177,7 @@
       },
       "/config": {
         "pantallas": 1,
-        "foldDesaprovechado": 18,
+        "foldDesaprovechado": 0,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
@@ -278,7 +278,7 @@
       },
       "/config": {
         "pantallas": 1,
-        "foldDesaprovechado": 266,
+        "foldDesaprovechado": 242,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
@@ -379,7 +379,7 @@
       },
       "/config": {
         "pantallas": 1,
-        "foldDesaprovechado": 282,
+        "foldDesaprovechado": 258,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
@@ -480,7 +480,7 @@
       },
       "/config": {
         "pantallas": 1,
-        "foldDesaprovechado": 325,
+        "foldDesaprovechado": 301,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
@@ -581,7 +581,7 @@
       },
       "/config": {
         "pantallas": 1,
-        "foldDesaprovechado": 325,
+        "foldDesaprovechado": 301,
         "objetoPrincipalTop": null,
         "objetoPrincipalBajoElPliegue": 0
       },
