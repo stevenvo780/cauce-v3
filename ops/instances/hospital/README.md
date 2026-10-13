@@ -101,6 +101,6 @@ El timer de retención de sesiones sin actividad en `~/.muse/data` a 30 días si
 sin construir. No purgar sesiones activas ni cambiar cuentas para esta revisión.
 
 Pruebas focales adicionales:
-`python3 -m pytest ops/instances/hospital/test_container_boundary.py ops/instances/hospital/test_membership_consistency.py -q`.
-Estas pruebas viven en el sector autorizado; el runner general de `ops/tests`
-no las descubre. El integrador debe incorporarlas al gate del candidato.
+`python3 -m pytest ops/tests/test_container_boundary.py ops/tests/test_membership_consistency.py -q`.
+Estas pruebas están en `ops/tests`; el runner general `ops/tests/run-all.mjs`
+las descubre y las ejecuta dentro de `pnpm test:ops`.
