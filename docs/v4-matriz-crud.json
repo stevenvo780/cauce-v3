@@ -2,10 +2,6 @@
   "schema_version": 1,
   "pending": [
     {
-      "id": "host_crud_browser",
-      "reason": "Falta recorrer alta, edición y eliminación del ordenador desde navegador real y comprobar persistencia y autoridad."
-    },
-    {
       "id": "company_admins_lifecycle_browser",
       "reason": "El E2E asigna y revoca un administrador de empresa en navegador real. Falta el cambio owner/admin, que la UI del dueño no ofrece, y la revocación de la sesión de contraseña: tras revocar, la persona sigue autenticada como operador."
     },
@@ -50,16 +46,8 @@
       "reason": "Hay formulario de destinos de avisos; falta demostrar todo su CRUD desde navegador real y sus efectos."
     },
     {
-      "id": "provider_account_lifecycle_browser",
-      "reason": "Falta verificar todas las mutaciones del registro técnico de cuentas desde su formulario con persistencia real."
-    },
-    {
       "id": "binding_delete_browser",
       "reason": "La creación y lectura del binding tienen recorrido real; falta demostrar su eliminación explícita desde navegador."
-    },
-    {
-      "id": "office_parts_lifecycle_browser",
-      "reason": "El recorrido real crea una parte del plano; falta editarla y quitarla desde UI con relectura durable."
     },
     {
       "id": "jobs_console_ui",
@@ -912,9 +900,8 @@
       "label": "Agentes: identidad y registro canónico",
       "operations": {
         "C": {
-          "status": "pending",
-          "reason": "El navegador crea y relee un registro sin runtime; falta preparar proceso, autenticación y respuesta del nuevo agente.",
-          "pending_id": "agent_runtime_lifecycle_browser",
+          "status": "covered",
+          "reason": "Cobertura versionada de navegador real y PostgreSQL; la matriz enlaza la prueba y no sustituye su ejecución sobre el candidato. Alta del registro sin runtime; la ejecución física se documenta en agent_runtimes.",
           "api": [
             {
               "method": "POST",
@@ -930,8 +917,8 @@
           ],
           "tests": [
             {
-              "file": "tests/e2e/ui-crud-v35-real-browser.test.ts",
-              "name": "crea, relee, edita y elimina espacio, grupo, membresía y registro sin runtime; rechaza dependencias"
+              "file": "tests/e2e/v4-crud-matriz-real-browser.test.ts",
+              "name": "registro de agente: alta desde el asistente con grupo inicial, lectura durable y duplicado rechazado"
             }
           ]
         },
@@ -986,9 +973,8 @@
           ]
         },
         "D": {
-          "status": "pending",
-          "reason": "El navegador elimina el registro sin runtime; retirar o purgar un agente operativo exige demostrar limpieza física.",
-          "pending_id": "agent_runtime_lifecycle_browser",
+          "status": "covered",
+          "reason": "Cobertura versionada de navegador real y PostgreSQL; la matriz enlaza la prueba y no sustituye su ejecución sobre el candidato. La baja con membresía activa devuelve 409 y, tras quitarla, desaparece de UI y PostgreSQL.",
           "api": [
             {
               "method": "POST",
@@ -1004,8 +990,8 @@
           ],
           "tests": [
             {
-              "file": "tests/e2e/ui-crud-v35-real-browser.test.ts",
-              "name": "crea, relee, edita y elimina espacio, grupo, membresía y registro sin runtime; rechaza dependencias"
+              "file": "tests/e2e/v4-crud-matriz-real-browser.test.ts",
+              "name": "registro de agente: la baja con membresía da 409 y tras quitarla el registro desaparece de la UI y de PostgreSQL"
             }
           ]
         }
@@ -1118,9 +1104,8 @@
       "label": "Ordenadores registrados",
       "operations": {
         "C": {
-          "status": "pending",
-          "reason": "Falta recorrer alta, edición y eliminación del ordenador desde navegador real y comprobar persistencia y autoridad.",
-          "pending_id": "host_crud_browser",
+          "status": "covered",
+          "reason": "Cobertura versionada de navegador real y PostgreSQL; la matriz enlaza la prueba y no sustituye su ejecución sobre el candidato. Incluye rechazos por identificador inválido y por duplicado.",
           "api": [
             {
               "method": "POST",
@@ -1136,8 +1121,8 @@
           ],
           "tests": [
             {
-              "file": "console/src/features/config/ComputadorasSection.test.tsx",
-              "name": "registra una computadora nueva con su identificador, nombre y notas"
+              "file": "tests/e2e/v4-crud-matriz-real-browser.test.ts",
+              "name": "ordenadores: registra con rechazos por identificador inválido y duplicado, y relee el alta en PostgreSQL"
             }
           ]
         },
@@ -1161,13 +1146,16 @@
             {
               "file": "console/src/features/config/ComputadorasSection.test.tsx",
               "name": "lista cada computadora con su estado, su fuente, su ejecutor y sus agentes"
+            },
+            {
+              "file": "tests/e2e/v4-crud-matriz-real-browser.test.ts",
+              "name": "ordenadores: registra con rechazos por identificador inválido y duplicado, y relee el alta en PostgreSQL"
             }
           ]
         },
         "U": {
-          "status": "pending",
-          "reason": "La edición usa expected_version en componente; falta comprobar cambio durable y estados reales desde navegador.",
-          "pending_id": "host_crud_browser",
+          "status": "covered",
+          "reason": "Cobertura versionada de navegador real y PostgreSQL; la matriz enlaza la prueba y no sustituye su ejecución sobre el candidato. Incluye rechazo CAS con versión obsoleta y aislamiento entre empresas.",
           "api": [
             {
               "method": "PATCH",
@@ -1183,15 +1171,14 @@
           ],
           "tests": [
             {
-              "file": "console/src/features/config/ComputadorasSection.test.tsx",
-              "name": "el interruptor de habilitada envía la versión esperada"
+              "file": "tests/e2e/v4-crud-matriz-real-browser.test.ts",
+              "name": "ordenadores: edita con versión, otra empresa no lo ve ni lo toca y la baja exige quitar sus agentes"
             }
           ]
         },
         "D": {
-          "status": "pending",
-          "reason": "El borrado del registro no apaga la máquina; falta el recorrido real de dependencia, confirmación y relectura.",
-          "pending_id": "host_crud_browser",
+          "status": "covered",
+          "reason": "Cobertura versionada de navegador real y PostgreSQL; la matriz enlaza la prueba y no sustituye su ejecución sobre el candidato. La baja exige quitar antes los agentes y otra empresa recibe 403 al intentarla.",
           "api": [
             {
               "method": "DELETE",
@@ -1207,8 +1194,8 @@
           ],
           "tests": [
             {
-              "file": "console/src/features/config/ComputadorasSection.test.tsx",
-              "name": "eliminar solo aparece sin agentes y pide confirmación antes de borrar con la versión esperada"
+              "file": "tests/e2e/v4-crud-matriz-real-browser.test.ts",
+              "name": "ordenadores: edita con versión, otra empresa no lo ve ni lo toca y la baja exige quitar sus agentes"
             }
           ]
         }
@@ -1456,9 +1443,8 @@
       "label": "Registro técnico de cuentas y credenciales referenciadas",
       "operations": {
         "C": {
-          "status": "pending",
-          "reason": "Falta verificar todas las mutaciones del registro técnico de cuentas desde su formulario con persistencia real.",
-          "pending_id": "provider_account_lifecycle_browser",
+          "status": "covered",
+          "reason": "Cobertura versionada de navegador real y PostgreSQL; la matriz enlaza la prueba y no sustituye su ejecución sobre el candidato. Incluye locator inválido y duplicado rechazados desde el formulario.",
           "api": [
             {
               "method": "POST",
@@ -1474,15 +1460,14 @@
           ],
           "tests": [
             {
-              "file": "console/src/features/accounts/AccountsPage.test.tsx",
-              "name": "exige dry-run antes de aplicar el alta y manda la mutación de provider_account"
+              "file": "tests/e2e/v4-crud-matriz-real-browser.test.ts",
+              "name": "cuentas de proveedor: alta desde el formulario con locator inválido y duplicado rechazados, y lectura sin credencial"
             }
           ]
         },
         "R": {
-          "status": "pending",
-          "reason": "Falta verificar todas las mutaciones del registro técnico de cuentas desde su formulario con persistencia real.",
-          "pending_id": "provider_account_lifecycle_browser",
+          "status": "covered",
+          "reason": "Cobertura versionada de navegador real y PostgreSQL; la matriz enlaza la prueba y no sustituye su ejecución sobre el candidato. La proyección leída no expone credential_ref ni el locator.",
           "api": [
             {
               "method": "GET",
@@ -1498,15 +1483,14 @@
           ],
           "tests": [
             {
-              "file": "console/src/features/accounts/AccountsPage.test.tsx",
-              "name": "lista el inventario con pagador, publicación al pool y estado"
+              "file": "tests/e2e/v4-crud-matriz-real-browser.test.ts",
+              "name": "cuentas de proveedor: alta desde el formulario con locator inválido y duplicado rechazados, y lectura sin credencial"
             }
           ]
         },
         "U": {
-          "status": "pending",
-          "reason": "Falta verificar todas las mutaciones del registro técnico de cuentas desde su formulario con persistencia real.",
-          "pending_id": "provider_account_lifecycle_browser",
+          "status": "covered",
+          "reason": "Cobertura versionada de navegador real y PostgreSQL; la matriz enlaza la prueba y no sustituye su ejecución sobre el candidato. Otra empresa no ve la cuenta ni tras publicarla al pool de su empresa.",
           "api": [
             {
               "method": "POST",
@@ -1522,15 +1506,14 @@
           ],
           "tests": [
             {
-              "file": "console/src/features/accounts/AccountsPage.test.tsx",
-              "name": "deshabilita sin borrar: la acción abre el update con enabled en false"
+              "file": "tests/e2e/v4-crud-matriz-real-browser.test.ts",
+              "name": "cuentas de proveedor: edita y publica desde el formulario, otra empresa no la ve ni tras publicarla y el borrado exige confirmación exacta"
             }
           ]
         },
         "D": {
-          "status": "pending",
-          "reason": "Falta verificar todas las mutaciones del registro técnico de cuentas desde su formulario con persistencia real.",
-          "pending_id": "provider_account_lifecycle_browser",
+          "status": "covered",
+          "reason": "Cobertura versionada de navegador real y PostgreSQL; la matriz enlaza la prueba y no sustituye su ejecución sobre el candidato. El borrado exige escribir la confirmación exacta y pasa por dry-run.",
           "api": [
             {
               "method": "POST",
@@ -1546,8 +1529,8 @@
           ],
           "tests": [
             {
-              "file": "console/src/features/accounts/AccountsPage.test.tsx",
-              "name": "ofrece el delete necesario para retiro o rotación con confirmación exacta y dry-run"
+              "file": "tests/e2e/v4-crud-matriz-real-browser.test.ts",
+              "name": "cuentas de proveedor: edita y publica desde el formulario, otra empresa no la ve ni tras publicarla y el borrado exige confirmación exacta"
             }
           ]
         }
@@ -1841,9 +1824,8 @@
           ]
         },
         "U": {
-          "status": "pending",
-          "reason": "El recorrido real crea una parte del plano; falta editarla y quitarla desde UI con relectura durable.",
-          "pending_id": "office_parts_lifecycle_browser",
+          "status": "covered",
+          "reason": "Cobertura versionada de navegador real y PostgreSQL; la matriz enlaza la prueba y no sustituye su ejecución sobre el candidato.",
           "api": [
             {
               "method": "PUT",
@@ -1859,15 +1841,14 @@
           ],
           "tests": [
             {
-              "file": "tests/e2e/v4-console-real-browser.test.ts",
-              "name": "plano: rechaza una parte sin nombre, guarda con CAS y persiste tras cerrar sesión y en un segundo contexto"
+              "file": "tests/e2e/v4-crud-matriz-real-browser.test.ts",
+              "name": "plano: crea, edita y quita una parte desde la UI con persistencia tras recarga y en un segundo navegador"
             }
           ]
         },
         "D": {
-          "status": "pending",
-          "reason": "Existe Quitar parte y se guarda el plano completo; falta recorrer el borrado y su persistencia.",
-          "pending_id": "office_parts_lifecycle_browser",
+          "status": "covered",
+          "reason": "Cobertura versionada de navegador real y PostgreSQL; la matriz enlaza la prueba y no sustituye su ejecución sobre el candidato.",
           "api": [
             {
               "method": "PUT",
@@ -1883,8 +1864,8 @@
           ],
           "tests": [
             {
-              "file": "tests/e2e/v4-console-real-browser.test.ts",
-              "name": "plano: rechaza una parte sin nombre, guarda con CAS y persiste tras cerrar sesión y en un segundo contexto"
+              "file": "tests/e2e/v4-crud-matriz-real-browser.test.ts",
+              "name": "plano: crea, edita y quita una parte desde la UI con persistencia tras recarga y en un segundo navegador"
             }
           ]
         }
