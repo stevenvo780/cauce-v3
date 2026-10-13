@@ -26,7 +26,7 @@ const COMPUTER_IMAGE = `FROM node:22-bookworm AS node
 FROM docker:29-cli AS docker
 FROM python:3.12-slim
 RUN apt-get update && apt-get install -y --no-install-recommends systemd systemd-sysv dbus dbus-user-session openssl ca-certificates \\
-  && rm -rf /var/lib/apt/lists/*
+  && rm -rf /var/lib/apt/lists/* && pip install --no-cache-dir pyyaml==6.0.3
 COPY --from=node /usr/local/bin/node /usr/local/bin/node
 COPY --from=docker /usr/local/bin/docker /usr/bin/docker
 RUN useradd -m -u 1500 -s /bin/bash cauce && useradd -m -u 1000 -s /bin/bash node \\
@@ -51,7 +51,7 @@ else:
 `;
 const AS_USER = ['-u', 'cauce', '-e', 'HOME=/home/cauce', '-e', 'XDG_RUNTIME_DIR=/run/user/1500'];
 const TREE = ['services/gateway/src', 'packages/store/src', 'packages/protocol/src', 'packages/adapter-sdk/descriptors',
-  'ops/cli', 'ops/scripts', 'ops/container-runtime'];
+  'ops/cli', 'ops/scripts', 'ops/container-runtime', 'ops/schemas'];
 
 let database: TestDatabase | undefined; let current: EmptyTestDatabase | undefined; let pool: DatabasePool;
 let closePool = () => Promise.resolve();
@@ -75,7 +75,7 @@ const cli = (args: string[], input?: string) => onComputer(['python3', '/opt/cau
 
 async function buildRelease(tree: string): Promise<{ archive: Buffer; bundleDigest: string; hookDigest: string; revision: string }> {
   const stage = join(work, 'stage');
-  for (const part of ['ops/cli', 'ops/scripts', 'ops/container-runtime']) await cp(join(tree, part), join(stage, part), { recursive: true });
+  for (const part of ['ops/cli', 'ops/scripts', 'ops/container-runtime', 'ops/schemas']) await cp(join(tree, part), join(stage, part), { recursive: true });
   await cp(join(tree, 'packages/adapter-sdk/descriptors'), join(stage, 'adapter/packages/adapter-sdk/dist/descriptors'), { recursive: true });
   await writeFile(join(stage, 'adapter/provider-cli.py'), PROVIDER_CLI, { mode: 0o755 });
   const runtime = join(work, 'bootstrap-runtime.ts');
@@ -204,9 +204,11 @@ describe('a clean computer prepares its executor without the platform administra
       policy: {
         bundles: { codex: { directory: '@release@/adapter', digest: release.bundleDigest, executable: '/usr/local/bin/node',
           executable_sha256: null, argv: ['@release@/adapter/bootstrap-runtime.mjs'] } },
-        container_templates: [{ harness_id: 'codex', prefix: `${RESOURCE_PREFIX}-`, image: imageId, runtime_user: 'node', systemd_user: '@user@',
-          home_directory: '/home/node', state_root: '/home/node/.cauce', profile_root: '/home/node/.cauce-profiles', python: '/usr/local/bin/python3.12' }],
-        profile_templates: [{ provider: 'codex', runtime_user: 'node', path_root: '/home/node/.cauce-profiles', command: '@release@/adapter/provider-cli.py',
+        // The runtime user shares the executor's uid: the provider pin check inside the agent container only trusts
+        // ancestors owned by root or by the checking user, and the release lives under the executor's install root.
+        container_templates: [{ harness_id: 'codex', prefix: `${RESOURCE_PREFIX}-`, image: imageId, runtime_user: 'cauce', systemd_user: '@user@',
+          home_directory: '/home/cauce', state_root: '/home/cauce/.cauce', profile_root: '/home/cauce/.cauce-profiles', python: '/usr/local/bin/python3.12' }],
+        profile_templates: [{ provider: 'codex', runtime_user: 'cauce', path_root: '/home/cauce/.cauce-profiles', command: '@release@/adapter/provider-cli.py',
           command_sha256: hash(PROVIDER_CLI), runtime_mode: 'container', container_prefix: `${RESOURCE_PREFIX}-` }],
         hooks: { authenticate: hook, profile: hook, verify: hook, revoke: hook },
         transport: { bootstrap_url: bootstrapOrigin, gateway_url: bootstrapOrigin, ca_certificate: '@install@/files/fleet-ca', network: 'host' },
@@ -224,7 +226,8 @@ describe('a clean computer prepares its executor without the platform administra
     const settle = async (probe: () => Promise<boolean>) => {
       for (let attempt = 0; attempt < 100 && !await probe(); attempt++) await new Promise(resolve => setTimeout(resolve, 200));
     };
-    await settle(async () => (await command('docker', ['exec', container, 'systemctl', 'is-system-running', '--wait'])).stdout.trim() !== '');
+    await settle(async () => ['running', 'degraded'].includes(
+      (await command('docker', ['exec', container, 'systemctl', 'is-system-running', '--wait'])).stdout.trim()));
     const dockerGroup = String((await stat('/var/run/docker.sock')).gid);
     await execute('docker', ['exec', container, 'groupadd', '-g', dockerGroup, 'fixture-docker']);
     await execute('docker', ['exec', container, 'usermod', '-aG', 'fixture-docker', 'cauce']);
@@ -290,13 +293,13 @@ describe('a clean computer prepares its executor without the platform administra
     if (!room) throw new Error('registered company has no room');
     await pool.query(`INSERT INTO provider_accounts(id,provider,external_account_id,payer_tenant_id,credential_ref_kind,credential_ref,enabled)
       VALUES('host-setup-account','codex','host-setup@example.test',$1,'env_path','CAUCE_HOST_SETUP_PROFILE_PATH',true)`, [tenant]);
-    const runtimeKey = `${RESOURCE_PREFIX}-agent`;
+    const runtimeKey = 'setup-agent'; const containerName = `${RESOURCE_PREFIX}-${runtimeKey}`;
     const response = await gateway().inject({ method: 'POST', url: '/v3/console/fleet/operations', headers: { ...ownerA }, payload: {
       kind: 'create', target: { resource: 'agent', tenant_id: tenant, alias: 'setup-worker' }, expected_revision: 0,
       idempotency_key: `${RESOURCE_PREFIX}-create`, parameters: { runtime_key: runtimeKey, harness_id: 'codex',
         primary_room_id: room, primary_account_id: 'host-setup-account', memberships: [{ room_id: room, role: 'agent' }],
-        placement: { host_id: 'setupe2e-laptop', mode: 'container', container_name: runtimeKey, runtime_user: 'node', systemd_user: 'cauce',
-          home_directory: '/home/node', state_directory: `/home/node/.cauce/${runtimeKey}` } } } });
+        placement: { host_id: 'setupe2e-laptop', mode: 'container', container_name: containerName, runtime_user: 'cauce', systemd_user: 'cauce',
+          home_directory: '/home/cauce', state_directory: `/home/cauce/.cauce/${runtimeKey}` } } } });
     expect(response.statusCode, response.body).toBe(202);
     const operationId = response.json<{ operation_id: string }>().operation_id;
     let operation: { status: string; error: unknown } = { status: 'queued', error: null };
@@ -307,8 +310,8 @@ describe('a clean computer prepares its executor without the platform administra
     }
     const operationJournal = operation.status === 'succeeded' ? '' : (await onComputer(['journalctl', '--user', '-u', unit, '--no-pager', '-n', '60'])).stdout;
     expect(operation.status, JSON.stringify(operation.error) + operationJournal).toBe('succeeded');
-    const observed = (await execute('docker', ['ps', '--format', '{{.Names}}', '--filter', `name=^/${runtimeKey}$`])).stdout.trim();
-    expect(observed).toBe(runtimeKey);
+    const observed = (await execute('docker', ['ps', '--format', '{{.Names}}', '--filter', `name=^/${containerName}$`])).stdout.trim();
+    expect(observed).toBe(containerName);
     const probes = await pool.query<{ phase: string; state: string; reply: string | null; nonce: string }>(`SELECT DISTINCT ON (metadata->'bootstrap_probe'->'probe'->>'probe_id')
       metadata->'bootstrap_probe'->'probe'->>'phase' AS phase, metadata->'bootstrap_probe'->>'state' AS state,
       metadata->'bootstrap_probe'->'proof'->>'reply' AS reply, metadata->'bootstrap_probe'->'probe'->>'nonce' AS nonce
