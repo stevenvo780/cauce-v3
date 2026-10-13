@@ -35,4 +35,18 @@ describe('measured OpenClaw provider login', () => {
       expect(OpenClawDriver.safeParse({ ...driver, ...extra }).success).toBe(false);
     }
   });
+  it('projects the isolated Anthropic setup-token login only for a claude binding', () => {
+    const anthropic = { ...driver, provider_id: 'anthropic', method_id: 'setup-token' } as const;
+    expect(OpenClawDriver.safeParse(anthropic).success).toBe(true);
+    expect(openClawCompatible({ provider: 'claude', openclaw: anthropic })).toBe(true);
+    expect(openClawCompatible({ provider: 'codex', openclaw: anthropic })).toBe(false);
+    expect(openClawCompatible({ provider: 'grok', openclaw: anthropic })).toBe(false);
+    const projection = openClawLogin({ ...profile, provider: 'claude', openclaw: anthropic }, agent, login);
+    expect(projection.command).toEqual([...login.command, '--provider', 'anthropic', '--method', 'setup-token', '--profile-id', 'cauce:account-one']);
+    expect(projection.env.CLAUDE_CONFIG_DIR).toBe(`${profile.path}/.external-cli-disabled`);
+    for (const method of ['oauth', 'device-code', 'cli', 'api-key']) {
+      expect(OpenClawDriver.safeParse({ ...anthropic, method_id: method }).success).toBe(false);
+    }
+    expect(OpenClawDriver.safeParse({ ...anthropic, provider_id: 'google' }).success).toBe(false);
+  });
 });
