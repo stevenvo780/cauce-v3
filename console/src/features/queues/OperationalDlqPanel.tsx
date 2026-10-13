@@ -317,6 +317,12 @@ export function OperationalDlqPanel() {
       </Toolbar>
 
       {notice && !draft ? <Notice role="status">{notice}</Notice> : null}
+      {resource.error ? (
+        <Notice tone="danger" role="alert" className="flex flex-wrap items-center gap-2">
+          <span className="min-w-0 flex-1">No se pudo actualizar la lista de incidentes: {resource.error.message} Se muestran los incidentes de la última lectura buena.</span>
+          <Button size="sm" disabled={resource.loading} onClick={() => { void reloadFirstPage(); }}>Reintentar</Button>
+        </Notice>
+      ) : null}
       {paginationError ? <Notice tone="danger" role="alert">{paginationError}</Notice> : null}
 
       <ConfirmDialog

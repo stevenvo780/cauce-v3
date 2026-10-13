@@ -85,6 +85,27 @@ describe('leer la cola', () => {
     await waitFor(() => { expect(lecturas).toBe(2); });
   }, 20_000);
 
+  it('una relectura fallida avisa y conserva las filas del último snapshot', async () => {
+    let lecturas = 0;
+    server.use(http.get('*/v3/console/queues', () => {
+      lecturas += 1;
+      return lecturas === 1
+        ? HttpResponse.json(SNAPSHOT)
+        : HttpResponse.json({ error: 'unavailable', message: 'el store no respondió' }, { status: 503 });
+    }));
+    const user = userEvent.setup();
+    renderWithApi(<FleetProvider><QueuesPage /></FleetProvider>);
+    await screen.findByRole('table', { name: ENTREGAS });
+    expect(filasDeLaTabla()).toHaveLength(3);
+
+    await user.click(screen.getByRole('button', { name: /actualizar/i }));
+
+    const aviso = await screen.findByRole('alert');
+    expect(aviso).toHaveTextContent(/No se pudieron actualizar las entregas: el store no respondió/u);
+    expect(aviso).toHaveTextContent(/Se conservan las filas del último snapshot/u);
+    expect(filasDeLaTabla()).toHaveLength(3);
+  }, 20_000);
+
   it('un estado que la consola no conoce se dice UNKNOWN y no ofrece ninguna acción', async () => {
     // Guessing here is what sends an operator to replay something they cannot identify.
     server.use(http.get('*/v3/console/queues', () => HttpResponse.json({

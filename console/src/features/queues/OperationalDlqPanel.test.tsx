@@ -378,6 +378,26 @@ it('fails closed without crashing when the server returns a prototype-key dispos
   expect(screen.getByText('Requiere evidencia causal')).toBeInTheDocument();
 });
 
+it('una relectura fallida avisa y conserva los incidentes de la última lectura buena', async () => {
+  let lecturas = 0;
+  server.use(http.get('*/v3/console/dlq', () => {
+    lecturas += 1;
+    return lecturas === 1
+      ? HttpResponse.json({ schemaVersion: 1, total: 1, truncated: false, items: [incident] })
+      : HttpResponse.json({ error: 'unavailable', message: 'la reconciliación no respondió' }, { status: 503 });
+  }));
+  const user = userEvent.setup();
+  renderWithApi(<OperationalDlqPanel />);
+  const table = await screen.findByRole('table', { name: /incidentes de dlq/i });
+  expect(within(table).getByText('Steven')).toBeInTheDocument();
+
+  await user.click(screen.getByRole('button', { name: /actualizar/i }));
+
+  const aviso = await screen.findByRole('alert');
+  expect(aviso).toHaveTextContent(/No se pudo actualizar la lista de incidentes: la reconciliación no respondió/u);
+  expect(within(screen.getByRole('table', { name: /incidentes de dlq/i })).getByText('Steven')).toBeInTheDocument();
+});
+
 it('does not even request the operator-only DLQ endpoint when RBAC denies dlq.resolve', async () => {
   let dlqReads = 0;
   server.use(

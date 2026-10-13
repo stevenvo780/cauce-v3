@@ -88,6 +88,13 @@ function QueuesPageContent() {
         actions={<PageFreshness at={snapshot?.observed_at ?? null} loading={resource.loading} onRefresh={resource.reload} />}
       />
 
+      {resource.error ? (
+        <Notice tone="danger" role="alert" className="mb-3 flex flex-wrap items-center gap-2">
+          <span className="min-w-0 flex-1 basis-64">No se pudieron actualizar las entregas: {resource.error.message} Se conservan las filas del último snapshot; pueden estar desactualizadas.</span>
+          <Button size="sm" onClick={() => { void resource.reload(); }}>Reintentar</Button>
+        </Notice>
+      ) : null}
+
       {/* The tiles are BUTTONS, and the figure is the server's TOTAL (`snapshot.totals`, a `COUNT`
           with no `LIMIT`), not what fits on this page: a dead-letter count capped at the page size
           reads as "there are 200" on a queue with thousands and hides exactly the work that has to
