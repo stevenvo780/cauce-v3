@@ -44,9 +44,19 @@ describe('a computer prepared with setup logs its agents into the provider from 
     expect(after).toEqual({ containers: '', volumes: '', images: '' });
   }, 120_000);
 
-  it('setup, create awaiting auth, console login, resume, succeeded and the agent answers its nonce', async () => {
-    const { app, cli, onComputer, pool, gatewayUrl, installRoot } = computer();
+  it('setup loads the served image, create awaits auth, console login, resume, succeeded and the agent answers its nonce', async () => {
+    const { app, cli, onComputer, pool, gatewayUrl, installRoot, agentImage } = computer();
+    expect((await onComputer(['docker', 'image', 'inspect', agentImage])).code).not.toBe(0);
     const unit = await enrollComputer(computer(), owner, COMPANY, HOST);
+    expect(await docker(['image', 'inspect', '--format', '{{.Id}}', agentImage])).toBe(agentImage);
+    const downloads = await pool.query<{ name: string }>(`SELECT metadata->>'name' AS name FROM audit_events
+      WHERE action='fleet_host.setup.artifact' AND company_id=$1 ORDER BY metadata->>'name'`, [COMPANY]);
+    expect(downloads.rows.map(row => row.name)).toEqual(['agent-image', 'fleet-ca', 'release']);
+    const policy = JSON.parse((await onComputer(['cat', `${installRoot}/${COMPANY}/${HOST}/executor-policy.json`])).stdout) as {
+      profile_templates: { command: string; command_sha256: string; login?: unknown }[] };
+    const template = policy.profile_templates[0];
+    expect(template?.command).toMatch(/^\/usr\/local\/bin\//u);
+    expect(template?.login).toEqual({ method: 'device', command: [template?.command, 'login', '--device-auth'], sha256: template?.command_sha256 });
     const status = await cli(['status', '--install-root', installRoot]);
     expect(status.code, status.stdout + status.stderr).toBe(0);
     expect(JSON.parse(status.stdout)).toMatchObject({ executor_ready: true, provider_auth: true });
@@ -129,6 +139,7 @@ describe('a computer prepared with setup logs its agents into the provider from 
     expect(events).toContain('"provider_auth_status"');
     expect(events).not.toContain(FIXTURE_DEVICE_CODE);
     console.info('HOST_AUTH_CREATE', JSON.stringify({ operation_id: operationId, status: 'succeeded', container: containerName,
-      provider_login: 'console-terminal', session_id: session.session_id, bootstrap_nonce_verified: true, normal_nonce_verified: true }));
+      provider_login: 'console-terminal', session_id: session.session_id, bootstrap_nonce_verified: true, normal_nonce_verified: true,
+      agent_image: agentImage, image_source: 'gateway-served docker save, loaded by setup', login_cli: template?.command }));
   }, 420_000);
 });

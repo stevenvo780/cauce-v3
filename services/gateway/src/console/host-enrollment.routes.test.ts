@@ -33,7 +33,7 @@ describe('host enrollment client IP limits', () => {
     for (let count = 0; count < 120; count++) {
       expect((await signedHostRequest('198.51.100.7', `north-host_${String(count % 3)}/heartbeat`)).statusCode).toBe(400);
     }
-    for (const path of ['north-other/heartbeat', 'north-other/setup']) {
+    for (const path of ['north-other/heartbeat', 'north-other/setup', 'north-other/setup/artifact']) {
       const limited = await signedHostRequest('198.51.100.7', path);
       expect(limited.statusCode).toBe(429);
       expect(limited.json()).toMatchObject({ error: 'too_many_requests' });

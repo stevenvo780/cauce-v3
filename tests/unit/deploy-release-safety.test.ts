@@ -1,8 +1,8 @@
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { gatesRepository, greenGatesReceipt, releaseGateCommands, releaseGatesScript, type GatesReceipt } from './deploy-gates-fixtures.js';
 
@@ -103,6 +103,7 @@ interface Options {
   realCompose?: boolean;
   sessions?: string;
   descriptors?: Record<string, string>;
+  hostReleaseBuild?: string;
 }
 
 function temporaryDirectory(prefix: string) {
@@ -130,6 +131,12 @@ function deploy(options: Options = {}) {
   if (options.descriptors) {
     mkdirSync(join(repository, 'packages/adapter-sdk/descriptors'), { recursive: true });
     for (const [name, raw] of Object.entries(options.descriptors)) writeFileSync(join(repository, 'packages/adapter-sdk/descriptors', `${name}.json`), raw);
+  }
+  if (options.hostReleaseBuild !== undefined) {
+    for (const name of ['ops/scripts/host-release.py', 'ops/cli/host_setup.py', 'ops/cli/host_channel_client.py', 'ops/container-runtime/cauce_container_base.py']) {
+      mkdirSync(dirname(join(repository, name)), { recursive: true }); copyFileSync(join(root, name), join(repository, name));
+    }
+    writeFileSync(join(repository, 'ops/scripts/build-host-release.sh'), `#!/bin/sh\n${options.hostReleaseBuild}\n`, { mode: 0o700 });
   }
   for (const name of ['docker', 'git', 'id', 'date', 'systemctl', 'backup-monitor', 'stat']) writeFileSync(join(binaries, name), mock, { mode: 0o700 });
   const countFunctions = join(directory, 'count-functions.sh');
@@ -487,6 +494,44 @@ describe('deploy bind sources', () => {
     const result = deploy({ realCompose: true, environment: realComposeEnvironment(contexts) });
     expect(result.status, result.stderr).toBe(0);
     expect(result.built()).toBe(true);
+  });
+
+  const hostInstance = 'CAUCE_DEPLOY_FLEET_OVERLAY=1\nCAUCE_FLEET_HOST_RELEASE_DIR=\n';
+  function hostRelease(revision: string | null) {
+    const root = temporaryDirectory('cauce-host-releases-'); const directory = join(root, commit);
+    if (revision === null) return { root, directory };
+    mkdirSync(directory); chmodSync(directory, 0o755);
+    const tar = Buffer.from('release bytes'); writeFileSync(join(directory, 'release.tar'), tar, { mode: 0o644 });
+    writeFileSync(join(directory, 'host-release.json'), JSON.stringify({ version: 1, revision, pins: {},
+      release: { file: 'release.tar', size: tar.length, sha256: createHash('sha256').update(tar).digest('hex') } }), { mode: 0o644 });
+    for (const name of ['release.tar', 'host-release.json']) chmodSync(join(directory, name), 0o644);
+    return { root, directory };
+  }
+
+  it('pins the verified release of the enrolled computers of HEAD only in the new instance file', () => {
+    const { root, directory } = hostRelease(commit);
+    const result = deploy({ instance: hostInstance, hostReleaseBuild: 'exit 97',
+      environment: { ...fleetOverlayEnvironment(), CAUCE_DEPLOY_HOST_RELEASE_ROOT: root } });
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain(`ordenadores: paquete ${directory} verificado`);
+    expect(result.instance()).toContain(`\nCAUCE_FLEET_HOST_RELEASE_DIR=${directory}\n`);
+  });
+
+  it.each([['another commit', 'b'.repeat(40), 'not the deployed'], ['a failed build', null, 'no pude construir el paquete de ordenadores']])(
+    'keeps the instance and the database untouched with a computer release of %s', (_case, revision, reason) => {
+      const { root } = hostRelease(revision);
+      const result = deploy({ instance: hostInstance, hostReleaseBuild: 'echo sin pnpm >&2; exit 97',
+        environment: { ...fleetOverlayEnvironment(), CAUCE_DEPLOY_HOST_RELEASE_ROOT: root } });
+      expect([result.status, result.stderr.includes(reason)], result.stderr).toEqual([1, true]);
+      expect([result.instance(), result.composeRuns('run'), result.leftovers()]).toEqual([result.initialInstance, [], []]);
+    });
+
+  it.each([
+    ['an ambient computer release pin', hostInstance, { CAUCE_FLEET_HOST_RELEASE_DIR: '/var/tmp/other' }],
+    ['a setup configuration without its release pin', 'CAUCE_DEPLOY_FLEET_OVERLAY=1\nCAUCE_FLEET_HOST_SETUP_CONFIG_FILE=/run/cauce-fleet/config/host-setup.v1.json\n', {}],
+  ])('refuses %s before building', (_case, instance, extra) => {
+    expectStoppedBeforeBuild(deploy({ instance, hostReleaseBuild: 'exit 97', environment: { ...fleetOverlayEnvironment(), ...extra } }),
+      'sin ella el gateway con CAUCE_FLEET_HOST_SETUP_CONFIG_FILE no arranca');
   });
 });
 

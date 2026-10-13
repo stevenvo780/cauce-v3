@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import http.client
 import json
 import os
 import pathlib
@@ -15,13 +16,11 @@ import tempfile
 import time
 import urllib.error
 import urllib.request
-from urllib.parse import urlsplit
 
 from host_channel_client import (
     HostChannel,
     HostFailure,
     NoRedirect,
-    gateway_url,
     openssl,
     private_directory,
     private_file,
@@ -32,6 +31,11 @@ from host_channel_client import (
 UNIT_PREFIX = 'cauce-v3-host-executor-'
 SAFE_ID = re.compile(r'[A-Za-z0-9_.-]{1,128}')
 MAX_ARTIFACT = 512 * 1024 * 1024
+MAX_IMAGE = 16 * 1024 * 1024 * 1024
+DOCKER = '/usr/bin/docker'
+IMAGE_ID = re.compile(r'sha256:[a-f0-9]{64}')
+DOWNLOAD_RETRY_SECONDS = (2, 5, 10, 20)
+DOCKER_LOAD_SECONDS = 3600
 MAX_PACKAGE_AGE_MS = 3600 * 1000
 NAME = re.compile(r'[a-z][a-z0-9_-]{0,63}')
 HEX = re.compile(r'[a-f0-9]{64}')
@@ -134,34 +138,113 @@ def fetch_package(channel: HostChannel) -> tuple[dict, str]:
         raise HostFailure('setup package must carry one release and a policy')
     names = set()
     for item in artifacts:
-        if not isinstance(item, dict) or set(item) != {'name', 'kind', 'url', 'sha256', 'size'} or not isinstance(item['name'], str) \
-                or NAME.fullmatch(item['name']) is None or item['name'] in names or item['kind'] not in ('release', 'file') \
-                or HEX.fullmatch(str(item['sha256'])) is None or not isinstance(item['size'], int) or not 0 < item['size'] <= MAX_ARTIFACT:
+        image = isinstance(item, dict) and item.get('kind') == 'image'
+        if not isinstance(item, dict) or set(item) != {'name', 'kind', 'sha256', 'size', *(('image_id',) if image else ())} \
+                or not isinstance(item['name'], str) or NAME.fullmatch(item['name']) is None or item['name'] in names \
+                or item['kind'] not in ('release', 'file', 'image') or HEX.fullmatch(str(item['sha256'])) is None \
+                or not isinstance(item['size'], int) or not 0 < item['size'] <= (MAX_IMAGE if image else MAX_ARTIFACT) \
+                or image and IMAGE_ID.fullmatch(str(item['image_id'])) is None:
             raise HostFailure('setup package artifact is invalid')
         names.add(item['name'])
-        parsed = urlsplit(item['url'])
-        if parsed.username or parsed.password or parsed.fragment or not parsed.hostname:
-            raise HostFailure('artifact URL cannot carry credentials')
-        gateway_url(f'{parsed.scheme}://{parsed.netloc}')
+    images = [item['image_id'] for item in artifacts if item['kind'] == 'image']
+    if len(images) > 1:
+        raise HostFailure('setup package must carry at most one agent image')
+    for template in package['policy'].get('container_templates') or []:
+        if images and (not isinstance(template, dict) or template.get('image') != images[0]):
+            harness = template.get('harness_id') if isinstance(template, dict) else None
+            raise HostFailure(f'la plantilla de contenedor {harness} no usa la imagen de agentes que trae el paquete ({images[0]}); '
+                'no se instaló nada')
     return package, reply['signer_public_key']
 
 
-def download(item: dict, destination: pathlib.Path) -> None:
-    request = urllib.request.Request(item['url'], headers={'Accept': 'application/octet-stream'})
-    digest, size = hashlib.sha256(), 0
+class Interrupted(Exception):
+    pass
+
+
+def receive(channel: HostChannel, item: dict, stream, digest) -> None:
+    """One signed request for the bytes of `item` past what `stream` holds; a cut connection raises Interrupted."""
+    path = '/v3/fleet/hosts/' + channel.identity['host_id'] + '/setup/artifact'
+    offset = stream.tell()
+    packet = channel.packet('POST', path, {'action': 'artifact', 'name': item['name'], 'sha256': item['sha256'], 'offset': offset})
+    request = urllib.request.Request(channel.gateway + path, data=stable_json(packet), method='POST',
+        headers={'Content-Type': 'application/json', 'Accept': 'application/octet-stream'})
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
     try:
-        with opener.open(request, timeout=120) as response, open(destination, 'wb') as stream:
+        with opener.open(request, timeout=120) as response:
+            if response.status != (206 if offset else 200) \
+                    or offset and not str(response.headers.get('Content-Range', '')).startswith(f'bytes {offset}-'):
+                raise HostFailure(f'el gateway respondió a la descarga de {item["name"]} desde otra posición; no se instaló nada')
             while chunk := response.read(1024 * 1024):
-                size += len(chunk)
-                if size > item['size']:
-                    raise HostFailure('artifact exceeds its declared size')
+                if stream.tell() + len(chunk) > item['size']:
+                    raise HostFailure(f'{item["name"]} supera el tamaño firmado en el paquete; no se instaló nada')
                 digest.update(chunk)
                 stream.write(chunk)
-    except (urllib.error.URLError, TimeoutError):
-        raise HostFailure('artifact download unavailable; retry is safe') from None
+    except urllib.error.HTTPError as error:
+        if error.code in (429, 503):
+            raise Interrupted() from None
+        reasons = {404: 'el gateway no sirve ese fichero: la plataforma no publicó el paquete de este despliegue',
+            409: 'el paquete cambió durante la descarga porque hubo un despliegue nuevo; repite cauce hosts setup',
+            403: 'revisa la hora del sistema y que el ordenador siga habilitado en la consola'}
+        raise HostFailure(f'el gateway rechazó la descarga de {item["name"]} (HTTP {error.code}): '
+            + reasons.get(error.code, 'repite cauce hosts setup') + '; no se instaló nada') from None
+    except (urllib.error.URLError, http.client.HTTPException, ConnectionError, TimeoutError):
+        raise Interrupted() from None
+    if stream.tell() < item['size']:
+        raise Interrupted()
+
+
+def download(channel: HostChannel, item: dict, destination: pathlib.Path) -> None:
+    """Fetches a signed artifact over the host channel; after a cut connection it resumes where the bytes stopped."""
+    digest = hashlib.sha256()
+    with open(destination, 'wb') as stream:
+        for delay in (*DOWNLOAD_RETRY_SECONDS, None):
+            try:
+                receive(channel, item, stream, digest)
+                break
+            except Interrupted:
+                if delay is None:
+                    raise HostFailure(f'no se pudo descargar {item["name"]} del gateway tras {len(DOWNLOAD_RETRY_SECONDS) + 1} intentos; '
+                        'revisa la conexión y repite cauce hosts setup (es seguro)') from None
+                time.sleep(delay)
+        size = stream.tell()
     if size != item['size'] or digest.hexdigest() != item['sha256']:
-        raise HostFailure('artifact digest differs from the signed package; nothing was installed')
+        raise HostFailure(f'{item["name"]} no coincide con el SHA-256 firmado en el paquete; no se instaló nada')
+
+
+def docker_image(image_id: str) -> str | None:
+    """The Id this Docker reports for `image_id`, or None when it is not loaded."""
+    if not os.access(DOCKER, os.X_OK):
+        raise HostFailure(f'Docker no está en {DOCKER}: instala el paquete docker.io o docker-ce (no el snap) y repite')
+    result = runner([DOCKER, 'image', 'inspect', '--format', '{{.Id}}', image_id], 60)
+    if result.returncode == 0:
+        return result.stdout.decode().strip()
+    detail = result.stderr.decode('utf-8', 'replace').strip()
+    if 'no such image' in detail.lower() or 'not found' in detail.lower():
+        return None
+    raise HostFailure(f'Docker no respondió al consultar la imagen de agentes ({detail[-200:] or "sin detalle"}); '
+        'comprueba que este usuario está en el grupo docker')
+
+
+def ensure_image(channel: HostChannel, item: dict, scratch: pathlib.Path) -> bool:
+    """Loads the signed agent image unless Docker already has it; returns whether it loaded it now."""
+    if docker_image(item['image_id']) == item['image_id']:
+        return False
+    archive = scratch / (item['name'] + '.tar.gz')
+    download(channel, item, archive)
+    try:
+        result = runner([DOCKER, 'load', '--input', str(archive)], DOCKER_LOAD_SECONDS)
+    except subprocess.TimeoutExpired:
+        raise HostFailure(f'docker load no terminó en {DOCKER_LOAD_SECONDS // 60} minutos; repite cauce hosts setup') from None
+    finally:
+        archive.unlink(missing_ok=True)
+    if result.returncode:
+        detail = result.stderr.decode('utf-8', 'replace').strip()[-200:] or 'sin detalle'
+        raise HostFailure(f'docker load rechazó la imagen de agentes ({detail}); revisa el espacio en disco. No se arrancó el servicio')
+    loaded = docker_image(item['image_id'])
+    if loaded != item['image_id']:
+        raise HostFailure(f'la imagen cargada tiene el Id {loaded}, no el {item["image_id"]} que fija la plantilla: este Docker guarda '
+            'las imágenes en otro almacén (containerd o clásico) que la plataforma. No se arrancó el servicio')
+    return True
 
 
 def extract_release(archive: pathlib.Path, target: pathlib.Path) -> None:
@@ -171,7 +254,10 @@ def extract_release(archive: pathlib.Path, target: pathlib.Path) -> None:
         with tarfile.open(archive, 'r:*') as bundle:
             for member in bundle:
                 relative = pathlib.PurePosixPath(member.name)
-                if relative.is_absolute() or '..' in relative.parts or not (member.isfile() or member.isdir()):
+                # The adapter's node_modules links its packages; a link may only point at another entry of the release.
+                landing = os.path.normpath(os.path.join(os.path.dirname(member.name), member.linkname))
+                inside_link = member.issym() and not member.linkname.startswith('/') and landing != '..' and not landing.startswith('../')
+                if relative.is_absolute() or '..' in relative.parts or not (member.isfile() or member.isdir() or inside_link):
                     raise HostFailure('release archive contains an unsafe entry')
                 total += member.size
                 if total > 4 * MAX_ARTIFACT:
@@ -378,14 +464,18 @@ def setup(identity_directory: pathlib.Path, install_base: pathlib.Path, dry_run:
     pin_signer(channel.directory, signer, not dry_run, signer_fingerprint)
     host_id, root = channel.identity['host_id'], paths['install_root']
     release_item = next(item for item in package['artifacts'] if item['kind'] == 'release')
+    image_item = next((item for item in package['artifacts'] if item['kind'] == 'image'), None)
     release = root / 'release' / release_item['sha256']
     user = pwd.getpwuid(os.geteuid()).pw_name
     plan = {'host_id': host_id, 'dry_run': dry_run, 'release': str(release), 'release_installed': (release / '.verified').is_file(),
         'policy_file': str(paths['policy']), 'unit': str(paths['unit']), 'linger': linger_enabled(user),
         'artifacts': [item['name'] for item in package['artifacts']]}
+    if image_item is not None:
+        plan.update(image_id=image_item['image_id'], image_present=docker_image(image_item['image_id']) == image_item['image_id'])
     if dry_run:
         plan['actions'] = [step for step, needed in (
             ('download and extract release', not plan['release_installed']),
+            ('download and load agent image ' + str(plan.get('image_id')), image_item is not None and not plan['image_present']),
             ('write executor policy', True), ('write provider auth policy', provider_login_approved(package['policy'])),
             ('install user unit ' + paths['unit_name'], True),
             ('enable linger for ' + user, not plan['linger']), ('enable and start the service', True)) if needed]
@@ -400,7 +490,7 @@ def setup(identity_directory: pathlib.Path, install_base: pathlib.Path, dry_run:
     with tempfile.TemporaryDirectory(dir=private_directory(root)) as scratch:
         if not plan['release_installed']:
             archive = pathlib.Path(scratch) / 'release.tar'
-            download(release_item, archive)
+            download(channel, release_item, archive)
             extract_release(archive, release)
             (release / '.verified').write_text(release_item['sha256'] + '\n')
         for item in package['artifacts']:
@@ -408,8 +498,10 @@ def setup(identity_directory: pathlib.Path, install_base: pathlib.Path, dry_run:
                 target = root / 'files' / item['name']
                 if not target.is_file() or hashlib.sha256(target.read_bytes()).hexdigest() != item['sha256']:
                     private_directory(target.parent)
-                    download(item, pathlib.Path(scratch) / item['name'])
+                    download(channel, item, pathlib.Path(scratch) / item['name'])
                     os.replace(pathlib.Path(scratch) / item['name'], target)
+        if image_item is not None:
+            plan['image_loaded'] = ensure_image(channel, image_item, pathlib.Path(scratch))
     policy = compose_policy(package, host_id, root, release, channel.directory)
     verify_bundles(policy, release)
     changed = write_if_changed(paths['policy'], json.dumps(policy, indent=2, sort_keys=True) + '\n', 0o600)

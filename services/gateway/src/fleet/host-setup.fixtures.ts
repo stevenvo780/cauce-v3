@@ -8,8 +8,8 @@ export function setupBundle(directory = '@release@/adapter') {
 export function hostSetupConfig(overrides: Record<string, unknown> = {}) {
   return {
     version: 1, signing_key_file: '/etc/cauce/host-setup.pem',
-    release: { name: 'release', revision: 'a'.repeat(40), url: 'https://releases.example.test/executor.tar', sha256: 'b'.repeat(64), size: 4096 },
-    files: [{ name: 'fleet-ca', url: 'https://releases.example.test/ca.pem', sha256: 'c'.repeat(64), size: 1200 }],
+    release: { name: 'release', revision: 'a'.repeat(40), path: '/run/cauce-host-release/release.tar', sha256: 'b'.repeat(64), size: 4096 },
+    files: [{ name: 'fleet-ca', path: '/run/cauce-fleet/config/fleet-ca.pem', sha256: 'c'.repeat(64), size: 1200 }],
     policy: {
       bundles: { codex: setupBundle(), claude: setupBundle() },
       container_templates: [{ harness_id: 'codex', prefix: 'zz-canary-' }, { harness_id: 'claude', prefix: 'zz-claude-' }],
@@ -50,10 +50,11 @@ export async function claimSetupHost(app: FastifyInstance, invitation: HostInvit
   return { host_id: invitation.host_id, company_id: invitation.company_id, keys };
 }
 export function setupPacket(host: { host_id: string; company_id: string; keys: { privateKey: KeyObject } },
-  overrides: { host_id?: string; company_id?: string; path_host?: string } = {}) {
+  overrides: { host_id?: string; company_id?: string; path_host?: string } = {},
+  artifact?: { name: string; sha256: string; offset: number }) {
   const value = { company_id: overrides.company_id ?? host.company_id, host_id: overrides.host_id ?? host.host_id, issued_at: Date.now(),
-    nonce: randomBytes(32).toString('hex'), payload: { action: 'package' }, proof: '' };
-  const path = `/v3/fleet/hosts/${overrides.path_host ?? value.host_id}/setup`;
+    nonce: randomBytes(32).toString('hex'), payload: artifact === undefined ? { action: 'package' } : { action: 'artifact', ...artifact }, proof: '' };
+  const path = `/v3/fleet/hosts/${overrides.path_host ?? value.host_id}/setup${artifact === undefined ? '' : '/artifact'}`;
   value.proof = sign(null, Buffer.from(hostRequestMessage('POST', path, value)), host.keys.privateKey).toString('base64');
   return value;
 }
