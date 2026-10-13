@@ -33,6 +33,8 @@ export function QuotaEnvironmentPanel({ snapshot, loading, accounts, canWrite, c
   const compatibleHosts = selectedAccount ? hosts.filter(host => quotaHostSupports(host, selectedAccount.provider, 'create')) : [];
   const hostId = compatibleHosts.some(host => host.host_id === draft.host_id) ? draft.host_id : '';
   const canCreate = available && creatableAccounts.length > 0;
+  const canEdit = (environment: QuotaEnvironment) => canWrite && !busy && snapshot?.environments.some(current =>
+    current.id === environment.id && current.status !== 'deleted' && current.status !== 'deleting') === true;
   const supports = (environment: QuotaEnvironment, action: QuotaEnvironmentAction) => canWrite && !busy && quotaEnvironmentExecutable(snapshot, environment, action);
   async function perform(action: () => Promise<unknown>, message: string, signature?: string) {
     if (busy) return;
@@ -77,7 +79,7 @@ export function QuotaEnvironmentPanel({ snapshot, loading, accounts, canWrite, c
         <div className="flex flex-wrap gap-2" aria-label={`Comandos permitidos de ${environment.label}`}>
           {(['authenticate', 'query', 'update_cli'] as const).map(action => <Button key={action} size="sm" disabled={!supports(environment, action)}
             onClick={() => { if (action === 'authenticate') setConfirm({ environment, action }); else act(environment, action); }}>{ACTION_LABEL[action]}</Button>)}
-          <Button size="sm" disabled={!canWrite || busy || environment.status === 'deleted' || environment.status === 'deleting'} onClick={() => { setEditing(environment); setLabel(environment.label); }}>Editar entorno</Button>
+          <Button size="sm" disabled={!canEdit(environment)} onClick={() => { setEditing(environment); setLabel(environment.label); }}>Editar entorno</Button>
           <Button size="sm" variant="danger" disabled={!supports(environment, 'delete')} onClick={() => { setConfirm({ environment, action: 'delete' }); }}>Eliminar entorno</Button>
         </div>
         {operation ? <section aria-label={`Resultado de ${environment.label}`} className="grid gap-2"><p className="m-0 text-xs">{ACTION_LABEL[operation.action]} · {OPERATION_LABEL[operation.status]} · <Time value={operation.updated_at} /></p>
@@ -87,9 +89,9 @@ export function QuotaEnvironmentPanel({ snapshot, loading, accounts, canWrite, c
       </article>;
     })}</div>
     {snapshot && !snapshot.environments.length ? <p>No hay entornos de consulta. Registra una cuenta y crea su entorno.</p> : null}
-    {editing ? <form aria-label="Editar entorno de cuotas" className="grid gap-2" onSubmit={event => { event.preventDefault(); void perform(() => api.updateQuotaEnvironment(editing.id, { expected_version: editing.version, label: label.trim() }), 'Configuración del entorno guardada.'); }}>
-      <label>Nombre del entorno<input required maxLength={80} value={label} disabled={busy} onChange={event => { setLabel(event.target.value); }} /></label>
-      <div className="flex gap-2"><Button type="submit" disabled={busy}>Guardar entorno</Button><Button disabled={busy} onClick={() => { setEditing(undefined); }}>Cancelar</Button></div></form> : null}
+    {editing ? <form aria-label="Editar entorno de cuotas" className="grid gap-2" onSubmit={event => { event.preventDefault(); if (!canEdit(editing)) return; void perform(() => api.updateQuotaEnvironment(editing.id, { expected_version: editing.version, label: label.trim() }), 'Configuración del entorno guardada.'); }}>
+      <label>Nombre del entorno<input required maxLength={80} value={label} disabled={!canEdit(editing)} onChange={event => { setLabel(event.target.value); }} /></label>
+      <div className="flex gap-2"><Button type="submit" disabled={!canEdit(editing)}>Guardar entorno</Button><Button disabled={busy} onClick={() => { setEditing(undefined); }}>Cancelar</Button></div></form> : null}
     {confirm ? <section aria-label="Confirmar operación del entorno" className="grid gap-2 rounded-xl border border-line bg-surface p-4"><p>{confirm.action === 'authenticate'
       ? `Autenticar ${confirm.environment.label} inicia una sesión propia del entorno. Completa la autorización del proveedor en el enlace o código que aparezca.`
       : `Eliminar ${confirm.environment.label} retira su entorno y su autenticación. La cuenta y sus agentes vinculados se conservan.`}</p>

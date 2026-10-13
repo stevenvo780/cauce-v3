@@ -1,4 +1,4 @@
-import { screen, within } from '@testing-library/react';
+import { fireEvent, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { expect, it, vi } from 'vitest';
 import type { QuotaAccount, QuotaEnvironment, QuotaEnvironmentsSnapshot } from '../../api/client/my-quotas-client';
@@ -60,6 +60,26 @@ it('revocar capacidad tras el consentimiento bloquea la confirmación sin enviar
   await user.click(screen.getByRole('button', { name: 'Autenticar cuenta' }));
   view.rerender(<ApiProvider api={testApi}><QuotaEnvironmentPanel snapshot={snapshot} accounts={accounts} canWrite reload={vi.fn()} /></ApiProvider>);
   expect(screen.getByRole('button', { name: 'Confirmar autenticación' })).toBeDisabled(); expect(action).not.toHaveBeenCalled();
+});
+
+it.each<[string, QuotaEnvironmentsSnapshot | undefined, boolean]>([
+  ['sin lectura', undefined, true],
+  ['sin permiso', snapshot, false],
+  ['sin entorno', { ...snapshot, environments: [] }, true],
+])('un editor abierto queda bloqueado %s y conserva el borrador', async (_reason, current, canWrite) => {
+  const update = vi.spyOn(testApi, 'updateQuotaEnvironment').mockResolvedValue({ environment });
+  const reload = vi.fn(); const user = userEvent.setup();
+  const view = renderWithApi(<QuotaEnvironmentPanel snapshot={snapshot} accounts={accounts} canWrite reload={reload} />);
+  await user.click(screen.getByRole('button', { name: 'Editar entorno' }));
+  const form = screen.getByRole('form', { name: 'Editar entorno de cuotas' });
+  const name = within(form).getByRole('textbox', { name: 'Nombre del entorno' });
+  await user.clear(name); await user.type(name, 'Mi borrador');
+  view.rerender(<ApiProvider api={testApi}><QuotaEnvironmentPanel snapshot={current} accounts={accounts} canWrite={canWrite} reload={reload} /></ApiProvider>);
+  fireEvent.submit(form);
+  expect(update).not.toHaveBeenCalled();
+  expect(within(form).getByRole('button', { name: 'Guardar entorno' })).toBeDisabled();
+  expect(name).toHaveValue('Mi borrador');
+  expect(name).toBeDisabled();
 });
 
 it('awaiting_auth sin operación devuelta también bloquea comandos nuevos', () => {
