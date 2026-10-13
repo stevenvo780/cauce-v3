@@ -19,7 +19,7 @@ export interface AgentQuotaSnapshot {
 export type AgentQuotaBindingResult =
   | { status: 'measured'; account_id: string; duplicate: boolean; captured_at: string }
   | { status: 'unsupported'; reason: 'quota_reader_unavailable' };
-async function assertAgentQuotaAuthority(client: DatabaseClient, source: CompanyAuthoritySource): Promise<CompanyAuthority> {
+export async function assertAgentQuotaAuthority(client: DatabaseClient, source: CompanyAuthoritySource): Promise<CompanyAuthority> {
   const authority = await source(client); assertQuotaAuthority(authority, true);
   if (authority.humanId === null) throw new StoreError('forbidden', 'agent quota human authority is required');
   const person = await lockConsoleHuman(client, authority.humanId);
@@ -30,7 +30,7 @@ async function assertAgentQuotaAuthority(client: DatabaseClient, source: Company
   }
   return authority;
 }
-async function assertAgentQuotaSnapshot(client: DatabaseClient, authority: CompanyAuthority, snapshot: AgentQuotaSnapshot): Promise<void> {
+export async function assertAgentQuotaSnapshot(client: DatabaseClient, authority: CompanyAuthority, snapshot: AgentQuotaSnapshot): Promise<void> {
   const agent = (await client.query<Omit<AgentQuotaSnapshot, 'operation_id' | 'expected_revision'> & { active: boolean }>(
     `SELECT agent.company_id,agent.tenant_id,agent.alias,agent.harness_id,agent.host_id,agent.runtime_mode,
       agent.container_name,agent.runtime_user,agent.home_directory,agent.state_directory,agent.runtime_key,
@@ -55,7 +55,7 @@ export async function bindAgentQuotaSample(client: DatabaseClient, pool: Databas
     || typeof snapshot.runtime_key !== 'string' || !/^[a-z][a-z0-9-]{0,63}$/u.test(snapshot.runtime_key)) {
     throw new StoreError('invalid_input', 'agent quota snapshot is invalid');
   }
-  await lockFleetRevision(client, snapshot.expected_revision);
+  await lockFleetRevision(client, snapshot.expected_revision, snapshot.company_id);
   const authority = await assertAgentQuotaAuthority(client, source);
   await assertAgentQuotaSnapshot(client, authority, snapshot);
   const receipt = agentQuotaReceipt(snapshot, receiptValue);

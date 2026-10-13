@@ -1,23 +1,10 @@
 import { createHash } from 'node:crypto';
-import { z } from 'zod';
-import { AliasSchema, TenantSchema, QuotaProviderReportSchema } from '@cauce/protocol';
+import { AgentQuotaReceiptSchema, type AgentQuotaReceipt } from '@cauce/protocol';
 import type { DatabaseClient } from './db.js';
 import type { AgentQuotaSnapshot } from './agent-quota-bindings.js';
 import { StoreError } from './repository/errors.js';
 
-const envelope = {
-  operation_id: z.uuid(), tenant: TenantSchema, alias: AliasSchema,
-  host_id: z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/u),
-  container_name: z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/u),
-  harness: z.string().min(1).max(64), captured_at: z.iso.datetime({ offset: true }),
-};
-const ReceiptSchema = z.discriminatedUnion('status', [
-  z.object({ ...envelope, status: z.literal('measured'), provider: z.enum(['claude', 'codex', 'grok']),
-    identity_hash: z.string().regex(/^[a-f0-9]{64}$/u), provider_report: QuotaProviderReportSchema,
-    observation_status: z.enum(['ok', 'error']) }).strict(),
-  z.object({ ...envelope, status: z.literal('unsupported'), reason: z.literal('quota_reader_unavailable') }).strict(),
-]);
-type MeasuredReceipt = Extract<z.infer<typeof ReceiptSchema>, { status: 'measured' }>;
+type MeasuredReceipt = Extract<AgentQuotaReceipt, { status: 'measured' }>;
 const failureCodes = ['not_authenticated', 'token_expired', 'forbidden_credential_type', 'rate_limited', 'network', 'provider_error'];
 function assertSafeReport(receipt: MeasuredReceipt): void {
   const report = receipt.provider_report;
@@ -31,7 +18,7 @@ interface Account { id: string; payer_tenant_id: string; shared_with_pool: boole
 function invalid(): never { throw new StoreError('invalid_input', 'agent quota receipt is invalid'); }
 function conflict(): never { throw new StoreError('conflict', 'agent quota sample identity or contents changed'); }
 export function agentQuotaReceipt(snapshot: AgentQuotaSnapshot, value: unknown) {
-  const parsed = ReceiptSchema.safeParse(value); if (!parsed.success) invalid();
+  const parsed = AgentQuotaReceiptSchema.safeParse(value); if (!parsed.success) invalid();
   const receipt = parsed.data;
   if (receipt.operation_id !== snapshot.operation_id || receipt.tenant !== snapshot.tenant_id || receipt.alias !== snapshot.alias
     || receipt.host_id !== snapshot.host_id || receipt.container_name !== snapshot.container_name || receipt.harness !== snapshot.harness_id) invalid();

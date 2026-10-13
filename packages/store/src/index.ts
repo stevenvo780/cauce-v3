@@ -52,6 +52,8 @@ export * from './quota-accounts.js';
 export * from './quota-environments.js';
 export * from './quota-identity.js';
 export * from './quota-operations.js';
+export * from './agent-quota-operations.js';
+export * from './agent-quota-bindings.js';
 export * from './quota-state.js';
 export * from './context-version-legacy.js';
 export * from './space-backup-contracts.js';
