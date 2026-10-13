@@ -380,7 +380,32 @@ if [ -z "$PG_USER" ] || [ -z "$PG_DB" ]; then
 fi
 
 [ "$MCP_HUMAN_ENABLED" = 1 ] || prepare_terminal
-MISSING_BIND_SOURCES="$("${COMPOSE[@]}" config --format json | python3 -c '
+COMPOSE_MODEL="$("${COMPOSE[@]}" config --format json)" \
+  || die "no pude renderizar el compose con $ENV_FILE para comprobar las fuentes de los bind mounts"
+if [ "$FLEET_OVERLAY" = 1 ]; then
+  fleet_mounts="$(python3 -c '
+import json, sys
+volumes = json.load(sys.stdin).get("services", {}).get("gateway", {}).get("volumes", [])
+for target in ("/run/cauce-fleet/config", "/run/cauce-fleet-signed-authority"):
+    sources = [mount.get("source") for mount in volumes
+               if mount.get("type") == "bind" and mount.get("target") == target]
+    if len(sources) != 1 or not isinstance(sources[0], str) or any(char in sources[0] for char in "\r\n\0"):
+        raise SystemExit(1)
+    print(sources[0])
+' <<< "$COMPOSE_MODEL")" || die "el compose debe montar una unica fuente bind para gateway y enclave de flota"
+  mapfile -t fleet_sources <<< "$fleet_mounts"
+  fleet_gateway=${CAUCE_DEPLOY_FLEET_GATEWAY_DIR:-/etc/cauce-v3/fleet-v35/gateway}
+  fleet_enclave=${CAUCE_DEPLOY_FLEET_ENCLAVE_DIR:-/run/cauce-fleet-signed-authority}
+  printf 'flota: compruebo gateway %s (compose: %s)\n' "$fleet_gateway" "${fleet_sources[0]}"
+  printf 'flota: compruebo enclave %s (compose: %s)\n' "$fleet_enclave" "${fleet_sources[1]}"
+  if [ "${CAUCE_DEPLOY_TEST_MODE:-0}" != 1 ]; then
+    [ "$fleet_gateway" = "${fleet_sources[0]}" ] \
+      || die "CAUCE_DEPLOY_FLEET_GATEWAY_DIR=$fleet_gateway difiere del montaje de compose ${fleet_sources[0]}"
+    [ "$fleet_enclave" = "${fleet_sources[1]}" ] \
+      || die "CAUCE_DEPLOY_FLEET_ENCLAVE_DIR=$fleet_enclave difiere del montaje de compose ${fleet_sources[1]}"
+  fi
+fi
+MISSING_BIND_SOURCES="$(python3 -c '
 import json, os, sys
 model = json.load(sys.stdin)
 sources = [(name, mount["source"]) for name, service in model.get("services", {}).items()
@@ -390,13 +415,11 @@ sources += [(f"{kind}.{name}", item["file"]) for kind in ("secrets", "configs")
 for owner, source in sorted(set(sources)):
     if not os.path.exists(source):
         print(f"{owner}: {source}")
-')" || die "no pude renderizar el compose con $ENV_FILE para comprobar las fuentes de los bind mounts"
+' <<< "$COMPOSE_MODEL")" || die "no pude comprobar las fuentes de los bind mounts del compose con $ENV_FILE"
 [ -z "$MISSING_BIND_SOURCES" ] \
   || die "faltan fuentes de bind mounts del compose; no se construye nada:"$'\n'"$MISSING_BIND_SOURCES"
 
 if [ "$FLEET_OVERLAY" = 1 ]; then
-  fleet_gateway=${CAUCE_DEPLOY_FLEET_GATEWAY_DIR:-/etc/cauce-v3/fleet-v35/gateway}
-  fleet_enclave=${CAUCE_DEPLOY_FLEET_ENCLAVE_DIR:-/run/cauce-fleet-signed-authority}
   [ -d "$fleet_gateway" ] || die "falta $fleet_gateway antes de construir"
   gateway_meta=$(stat -c '%u %a' "$fleet_gateway") || die "no pude leer el modo de $fleet_gateway; no se construye"
   [ "$gateway_meta" = "1000 700" ] || die "el directorio $fleet_gateway debe ser uid 1000 y modo 0700 (es $gateway_meta); no se construye"

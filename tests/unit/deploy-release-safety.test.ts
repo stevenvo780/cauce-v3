@@ -54,7 +54,14 @@ if (command !== 'docker') process.exit(env.MOCK_FAILURE === command ? 17 : 0);
 if (args[0] === 'compose') {
   const operation = args.find(arg => ['config', 'run', 'up'].includes(arg));
   if (operation === 'config' && args.includes('--format')) {
-    if (env.MOCK_REAL_COMPOSE !== '1') { process.stdout.write(env.MOCK_COMPOSE_MODEL || '{"services":{}}'); process.exit(0); }
+    if (env.MOCK_REAL_COMPOSE !== '1') {
+      const volumes = args.some(arg => arg.endsWith('compose.fleet.yaml')) ? [
+        { type: 'bind', source: env.CAUCE_DEPLOY_FLEET_GATEWAY_DIR || '/etc/cauce-v3/fleet-v35/gateway', target: '/run/cauce-fleet/config' },
+        { type: 'bind', source: env.CAUCE_DEPLOY_FLEET_ENCLAVE_DIR || '/run/cauce-fleet-signed-authority', target: '/run/cauce-fleet-signed-authority' },
+      ] : [];
+      process.stdout.write(env.MOCK_COMPOSE_MODEL || JSON.stringify({ services: { gateway: { volumes } } }));
+      process.exit(0);
+    }
     const rendered = spawnSync('docker', args, { encoding: 'utf8', env: { ...env, PATH: env.MOCK_REAL_PATH }, timeout: 15000 });
     fs.writeSync(1, rendered.stdout || '');
     fs.writeSync(2, rendered.stderr || '');
@@ -356,6 +363,50 @@ describe('deploy bind sources', () => {
     };
   }
 
+  function fleetComposeModel(gateway: string, enclave: string) {
+    return { services: { gateway: { volumes: [
+      { type: 'bind', source: gateway, target: '/run/cauce-fleet/config' },
+      { type: 'bind', source: enclave, target: '/run/cauce-fleet-signed-authority' },
+    ] } } };
+  }
+
+  it('checks the default fleet directories mounted by compose', () => {
+    const gateway = '/etc/cauce-v3/fleet-v35/gateway';
+    const enclave = '/run/cauce-fleet-signed-authority';
+    const result = deploy({
+      instance: 'CAUCE_DEPLOY_FLEET_OVERLAY=1\n',
+      composeModel: { ...fleetComposeModel(gateway, enclave), configs: { probe: { file: '/nonexistent/fleet-default-path-probe' } } },
+    });
+    expectStoppedBeforeBuild(result, 'faltan fuentes de bind mounts del compose');
+    expect(result.stdout).toContain(`flota: compruebo gateway ${gateway} (compose: ${gateway})`);
+    expect(result.stdout).toContain(`flota: compruebo enclave ${enclave} (compose: ${enclave})`);
+  });
+
+  it.each(['gateway', 'enclave'] as const)('rejects a fleet %s override that differs from the compose mount', kind => {
+    const mounted = fleetOverlayEnvironment();
+    const environment = { ...mounted, CAUCE_DEPLOY_TEST_MODE: '0' };
+    const name = kind === 'gateway' ? 'CAUCE_DEPLOY_FLEET_GATEWAY_DIR' : 'CAUCE_DEPLOY_FLEET_ENCLAVE_DIR';
+    const override = fleetOverlayEnvironment()[name];
+    environment[name] = override;
+    const result = deploy({
+      instance: 'CAUCE_DEPLOY_FLEET_OVERLAY=1\n', environment,
+      composeModel: fleetComposeModel(mounted.CAUCE_DEPLOY_FLEET_GATEWAY_DIR, mounted.CAUCE_DEPLOY_FLEET_ENCLAVE_DIR),
+    });
+    expectStoppedBeforeBuild(result, `${name}=${override} difiere del montaje de compose ${mounted[name]}`);
+    expect(result.stdout).toContain(`flota: compruebo ${kind} ${override} (compose: ${mounted[name]})`);
+    expect(result.commands().some(entry => entry.command === 'stat')).toBe(false);
+  });
+
+  it('allows fleet path overrides only in explicit test mode', () => {
+    const mounted = fleetOverlayEnvironment();
+    const environment = { ...fleetOverlayEnvironment(), CAUCE_DEPLOY_TEST_MODE: '1' };
+    const result = deploy({
+      instance: 'CAUCE_DEPLOY_FLEET_OVERLAY=1\n', environment,
+      composeModel: fleetComposeModel(mounted.CAUCE_DEPLOY_FLEET_GATEWAY_DIR, mounted.CAUCE_DEPLOY_FLEET_ENCLAVE_DIR),
+    });
+    expect(result.status, result.stderr).toBe(0);
+  });
+
   it.each([
     ['MOCK_GATEWAY_STAT', '0 755', 'debe ser uid 1000 y modo 0700'],
     ['MOCK_FILE_STAT', '0 644', 'debe ser uid 1000 y modo 0600'],
@@ -363,7 +414,6 @@ describe('deploy bind sources', () => {
   ])('aborts the overlay before the build with incorrect %s', (name, mode, reason) => {
     const result = deploy({
       instance: 'CAUCE_DEPLOY_FLEET_OVERLAY=1\n',
-      composeModel: { services: {}, secrets: {}, configs: {} },
       environment: { ...fleetOverlayEnvironment(), [name]: mode },
     });
     expectStoppedBeforeBuild(result, reason);
