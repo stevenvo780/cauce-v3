@@ -23,13 +23,13 @@ const SHA_NUEVO = 'b'.repeat(64);
 
 const CLAUDE_MD = {
   kind: 'directive', category: 'manual', label: 'CLAUDE.md (manual del sitio)',
-  path: '/home/stev/.claude/CLAUDE.md', format: 'markdown', readable: true, editable: true,
+  path: '/home/dev/.claude/CLAUDE.md', format: 'markdown', readable: true, editable: true,
 };
 
 function mapaDeKant(items: unknown[]) {
   server.use(http.get(RUTA_MAPA, () => HttpResponse.json({
     tenant_id: 'Steven', alias: 'kant', facts_source: 'measured',
-    harness: 'claude', home: '/home/stev', items,
+    harness: 'claude', home: '/home/dev', items,
   })));
 }
 
@@ -52,7 +52,7 @@ async function escribirBorrador(user: ReturnType<typeof userEvent.setup>, cajon:
 function contenidoServido(texto: string) {
   return {
     tenant_id: 'Steven', alias: 'kant', kind: 'directive',
-    path: '/home/stev/.claude/CLAUDE.md', format: 'markdown',
+    path: '/home/dev/.claude/CLAUDE.md', format: 'markdown',
     exists: true, content: texto, sha: SHA_VIEJO,
     bytes: new TextEncoder().encode(texto).byteLength,
     editable: true, projected: false, truncated: false,
@@ -62,7 +62,7 @@ function contenidoServido(texto: string) {
 function servidoEditable(extra: Record<string, unknown> = {}) {
   return {
     tenant_id: 'Steven', alias: 'kant', kind: 'directive',
-    path: '/home/stev/.claude/CLAUDE.md', format: 'markdown',
+    path: '/home/dev/.claude/CLAUDE.md', format: 'markdown',
     exists: true, content: '# manual viejo\n', sha: SHA_VIEJO, bytes: 15,
     editable: true, projected: false, truncated: false, ...extra,
   };
@@ -107,7 +107,7 @@ it('el motivo viaja en el cuerpo y el campo se vacía tras el guardado', async (
       recibido = await request.json() as typeof recibido;
       return HttpResponse.json({
         ok: true, state: 'applied', evidence: 'probe_write_ack',
-        path: '/home/stev/.claude/CLAUDE.md', sha: SHA_NUEVO, bytes: 7,
+        path: '/home/dev/.claude/CLAUDE.md', sha: SHA_NUEVO, bytes: 7,
       });
     }),
   );
@@ -137,7 +137,7 @@ it('mientras el guardado está en vuelo, el motivo no se puede tocar', async () 
       await new Promise<void>((resolve) => { soltar = resolve; });
       return HttpResponse.json({
         ok: true, state: 'applied', evidence: 'probe_write_ack',
-        path: '/home/stev/.claude/CLAUDE.md', sha: SHA_NUEVO, bytes: 7,
+        path: '/home/dev/.claude/CLAUDE.md', sha: SHA_NUEVO, bytes: 7,
       });
     }),
   );
@@ -238,7 +238,7 @@ it('un padre que no remonta tampoco reutiliza el motivo del guardado anterior', 
       cuerpos.push(await request.json() as { reason?: string });
       return HttpResponse.json({
         ok: true, state: 'applied', evidence: 'probe_write_ack',
-        path: '/home/stev/.claude/CLAUDE.md', sha: SHA_NUEVO, bytes: 7,
+        path: '/home/dev/.claude/CLAUDE.md', sha: SHA_NUEVO, bytes: 7,
       });
     }),
   );

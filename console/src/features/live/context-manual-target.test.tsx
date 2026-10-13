@@ -7,7 +7,7 @@ import { RUTA_PERFIL, perfilAplicado } from './perfil-fixtures';
 const DOCUMENTS = 'http://localhost/v3/console/tenants/Steven/agents/kant/documents';
 const ORIGINAL_SHA = 'a'.repeat(64);
 const UPDATED_SHA = 'b'.repeat(64);
-const ORIGINAL_PATH = '/home/stev/.claude/CLAUDE.md';
+const ORIGINAL_PATH = '/home/dev/.claude/CLAUDE.md';
 
 function serveManual() {
   const source = { harness: 'claude', path: ORIGINAL_PATH, sha: ORIGINAL_SHA, content: 'manual original' };

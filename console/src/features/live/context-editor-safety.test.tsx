@@ -196,7 +196,7 @@ it('retains panel drafts across close, isolates the operator, and does not claim
 
 it('keeps a manual write locked across accordion unmounts and cannot lose newer typing', async () => {
   const root = 'http://localhost/v3/console/tenants/Steven/agents/kant/documents';
-  const path = '/home/stev/.claude/CLAUDE.md';
+  const path = '/home/dev/.claude/CLAUDE.md';
   let release!: () => void;
   let writes = 0;
   const pending = new Promise<void>((resolve) => { release = resolve; });

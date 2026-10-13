@@ -102,12 +102,12 @@ beforeEach(() => {
     entries: [
       {
         id: '2', tenant_id: 'Steven', alias: 'kant', kind: String(params.kind),
-        path: '/home/stev/.claude/CLAUDE.md', sha256: 'b'.repeat(64), bytes: 300,
+        path: '/home/dev/.claude/CLAUDE.md', sha256: 'b'.repeat(64), bytes: 300,
         actor_tenant: 'Steven', actor_alias: 'zeus', written_at: '2026-08-31T10:00:00.000Z',
       },
       {
         id: '1', tenant_id: 'Steven', alias: 'kant', kind: String(params.kind),
-        path: '/home/stev/.claude/CLAUDE.md', sha256: 'a'.repeat(64), bytes: 240,
+        path: '/home/dev/.claude/CLAUDE.md', sha256: 'a'.repeat(64), bytes: 240,
         actor_tenant: null, actor_alias: null, written_at: '2026-08-30T10:00:00.000Z',
       },
     ],

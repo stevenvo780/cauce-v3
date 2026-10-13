@@ -9,7 +9,7 @@ import type { AgentPerfil } from '../../api/types';
 export const RUTA_PERFIL = 'http://localhost/v3/console/tenants/Steven/agents/kant/perfil';
 const SHA_PERFIL = 'a'.repeat(64);
 
-const DOCUMENTO = { name: 'CLAUDE.md', path: '/home/stev/.claude/CLAUDE.md' };
+const DOCUMENTO = { name: 'CLAUDE.md', path: '/home/dev/.claude/CLAUDE.md' };
 
 export function perfilAplicado(
   revision = 4,

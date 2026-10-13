@@ -338,7 +338,7 @@ describe('CauceApi', () => {
         cuerpos.push(await request.json() as Record<string, unknown>);
         return HttpResponse.json({
           ok: true, state: 'written_pending_session', evidence: 'probe_write_ack',
-          path: '/home/stev/.claude/CLAUDE.md', sha: 'a'.repeat(64), bytes: 7,
+          path: '/home/dev/.claude/CLAUDE.md', sha: 'a'.repeat(64), bytes: 7,
         }, { status: 202 });
       },
     ));
@@ -438,7 +438,7 @@ describe('CauceApi', () => {
       contaminated: true,
       findings: [{
         reason: 'foreign_managed_block', document: 'CLAUDE.md',
-        path: '/home/stev/.claude/CLAUDE.md', owner: 'Miguel/kratos',
+        path: '/home/dev/.claude/CLAUDE.md', owner: 'Miguel/kratos',
       }],
     };
     server.use(http.put(

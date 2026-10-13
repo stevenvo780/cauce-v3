@@ -22,14 +22,14 @@ const SHA_NUEVO = 'b'.repeat(64);
 function mapaDeKant(items: unknown[], extra: Record<string, unknown> = {}) {
   server.use(http.get(RUTA_MAPA, () => HttpResponse.json({
     tenant_id: 'Steven', alias: 'kant', facts_source: 'measured',
-    harness: 'claude', home: '/home/stev', items, ...extra,
+    harness: 'claude', home: '/home/dev', items, ...extra,
   })));
 }
 
 const CLAUDE_MD = {
   kind: 'directive',
   label: 'CLAUDE.md (manual del sitio)',
-  path: '/home/stev/.claude/CLAUDE.md',
+  path: '/home/dev/.claude/CLAUDE.md',
   format: 'markdown',
   readable: true,
   editable: true,
@@ -38,7 +38,7 @@ const CLAUDE_MD = {
 const MCP_CERRADO = {
   kind: 'mcp',
   label: 'Servidores MCP',
-  path: '/home/stev/.claude.json',
+  path: '/home/dev/.claude.json',
   format: 'json',
   readable: false,
   editable: false,
@@ -92,7 +92,7 @@ it('la sección existe en la página y enseña el mapa de ficheros del alias', a
   const { cajon } = await abrirFicheros();
 
   expect(await within(cajon).findByText('CLAUDE.md (manual del sitio)')).toBeInTheDocument();
-  expect(within(cajon).getByText('/home/stev/.claude/CLAUDE.md')).toBeInTheDocument();
+  expect(within(cajon).getByText('/home/dev/.claude/CLAUDE.md')).toBeInTheDocument();
   expect(window.location.pathname).toBe('/live');
 });
 
@@ -103,7 +103,7 @@ it('la sección existe en la página y enseña el mapa de ficheros del alias', a
 it('lo no servido dice por qué y no finge ser desplegable ni hace GET', async () => {
   const PROMPTS_DIRECTORIO = {
     kind: 'prompts', category: 'configuration', label: 'Subagentes (~/.claude/agents)',
-    path: '/home/stev/.claude/agents', format: 'markdown', readable: false, editable: false,
+    path: '/home/dev/.claude/agents', format: 'markdown', readable: false, editable: false,
     reason: 'Es un directorio; sólo se lista, no se sirve como si fuera un fichero.',
   };
   mapaDeKant([CLAUDE_MD, MCP_CERRADO, PROMPTS_DIRECTORIO]);
@@ -207,7 +207,7 @@ it('abre el fichero, lo edita y lo guarda mandando la huella de lo que abrió', 
   server.use(
     http.get(RUTA_CONTENIDO, () => HttpResponse.json({
       tenant_id: 'Steven', alias: 'kant', kind: 'directive',
-      path: '/home/stev/.claude/CLAUDE.md', format: 'markdown',
+      path: '/home/dev/.claude/CLAUDE.md', format: 'markdown',
       exists: true, content: '# manual viejo\n', sha: SHA_VIEJO,
       bytes: 15, editable: true, projected: false, truncated: false,
     })),
@@ -217,7 +217,7 @@ it('abre el fichero, lo edita y lo guarda mandando la huella de lo que abrió', 
         ok: true,
         state: 'applied',
         evidence: 'probe_write_ack',
-        path: '/home/stev/.claude/CLAUDE.md',
+        path: '/home/dev/.claude/CLAUDE.md',
         sha: SHA_NUEVO,
         bytes: 9,
       });
@@ -258,7 +258,7 @@ it('un 202 written_pending_session guarda, lo dice sin fingir aplicación y deja
   server.use(
     http.get(RUTA_CONTENIDO, () => HttpResponse.json({
       tenant_id: 'Steven', alias: 'kant', kind: 'directive',
-      path: '/home/stev/.claude/CLAUDE.md', format: 'markdown',
+      path: '/home/dev/.claude/CLAUDE.md', format: 'markdown',
       exists: true, content: enDisco.texto, sha: enDisco.sha,
       bytes: new TextEncoder().encode(enDisco.texto).byteLength,
       editable: true, projected: false, truncated: false,
@@ -277,7 +277,7 @@ it('un 202 written_pending_session guarda, lo dice sin fingir aplicación y deja
         ok: true,
         state: 'written_pending_session',
         evidence: 'probe_write_ack',
-        path: '/home/stev/.claude/CLAUDE.md',
+        path: '/home/dev/.claude/CLAUDE.md',
         sha: SHA_NUEVO,
         bytes: new TextEncoder().encode(cuerpo.content).byteLength,
       }, { status: 202 });
@@ -338,7 +338,7 @@ it('si el fichero cambió mientras se editaba, lo dice y no finge que guardó', 
   server.use(
     http.get(RUTA_CONTENIDO, () => HttpResponse.json({
       tenant_id: 'Steven', alias: 'kant', kind: 'directive',
-      path: '/home/stev/.claude/CLAUDE.md', format: 'markdown',
+      path: '/home/dev/.claude/CLAUDE.md', format: 'markdown',
       exists: true, content: 'original', sha: SHA_VIEJO, bytes: 8,
       editable: true, projected: false, truncated: false,
     })),
@@ -364,7 +364,7 @@ it('un conflicto con el bloque canónico conserva el borrador y dirige a sus cam
   server.use(
     http.get(RUTA_CONTENIDO, () => HttpResponse.json({
       tenant_id: 'Steven', alias: 'kant', kind: 'directive',
-      path: '/home/stev/.claude/CLAUDE.md', format: 'markdown',
+      path: '/home/dev/.claude/CLAUDE.md', format: 'markdown',
       exists: true, content: 'original', sha: SHA_VIEJO, bytes: 8,
       editable: true, projected: false, truncated: false,
     })),
@@ -394,14 +394,14 @@ it('un fichero ausente se crea con create_if_absent, nunca como reemplazo sin SH
   server.use(
     http.get(RUTA_CONTENIDO, () => HttpResponse.json({
       tenant_id: 'Steven', alias: 'kant', kind: 'directive',
-      path: '/home/stev/.claude/CLAUDE.md', format: 'markdown', exists: false,
+      path: '/home/dev/.claude/CLAUDE.md', format: 'markdown', exists: false,
       content: '', sha: null, bytes: 0, editable: true, projected: false, truncated: false,
     })),
     http.put(RUTA_CONTENIDO, async ({ request }) => {
       recibido = await request.json() as typeof recibido;
       return HttpResponse.json({
         ok: true, state: 'applied', evidence: 'probe_write_ack',
-        path: '/home/stev/.claude/CLAUDE.md', sha: SHA_NUEVO, bytes: 7,
+        path: '/home/dev/.claude/CLAUDE.md', sha: SHA_NUEVO, bytes: 7,
       });
     }),
   );
@@ -422,7 +422,7 @@ it('un contenido truncado se enseña pero nunca queda editable ni guardable', as
   mapaDeKant([CLAUDE_MD]);
   server.use(http.get(RUTA_CONTENIDO, () => HttpResponse.json({
     tenant_id: 'Steven', alias: 'kant', kind: 'directive',
-    path: '/home/stev/.claude/CLAUDE.md', format: 'markdown', exists: true,
+    path: '/home/dev/.claude/CLAUDE.md', format: 'markdown', exists: true,
     content: 'prefijo', sha: SHA_VIEJO, bytes: 900_000,
     editable: false, projected: false, truncated: true,
   })));
@@ -440,11 +440,11 @@ it('un 2xx sin ACK completo conserva el borrador sucio y no afirma aplicado', as
   server.use(
     http.get(RUTA_CONTENIDO, () => HttpResponse.json({
       tenant_id: 'Steven', alias: 'kant', kind: 'directive',
-      path: '/home/stev/.claude/CLAUDE.md', format: 'markdown', exists: true,
+      path: '/home/dev/.claude/CLAUDE.md', format: 'markdown', exists: true,
       content: 'viejo', sha: SHA_VIEJO, bytes: 5,
       editable: true, projected: false, truncated: false,
     })),
-    http.put(RUTA_CONTENIDO, () => HttpResponse.json({ ok: true, path: '/home/stev/.claude/CLAUDE.md' })),
+    http.put(RUTA_CONTENIDO, () => HttpResponse.json({ ok: true, path: '/home/dev/.claude/CLAUDE.md' })),
   );
   const { user, cajon } = await abrirContexto();
   await user.click(await within(cajon).findByText('CLAUDE.md (manual del sitio)'));
@@ -504,7 +504,7 @@ it('sin config.write acreditado deja inspeccionar pero bloquea edición y PUT', 
     http.get('http://localhost/v3/console/access', () => HttpResponse.json({ authenticated: true })),
     http.get(RUTA_CONTENIDO, () => HttpResponse.json({
       tenant_id: 'Steven', alias: 'kant', kind: 'directive',
-      path: '/home/stev/.claude/CLAUDE.md', format: 'markdown',
+      path: '/home/dev/.claude/CLAUDE.md', format: 'markdown',
       exists: true, content: '# visible\n', sha: SHA_VIEJO, bytes: 10,
       editable: true, projected: false, truncated: false,
     })),
@@ -538,7 +538,7 @@ it('un 413 al guardar dice el tope y NO se lleva por delante lo escrito', async 
   server.use(
     http.get(RUTA_CONTENIDO, () => HttpResponse.json({
       tenant_id: 'Steven', alias: 'kant', kind: 'directive',
-      path: '/home/stev/.claude/CLAUDE.md', format: 'markdown',
+      path: '/home/dev/.claude/CLAUDE.md', format: 'markdown',
       exists: true, content: 'corto', sha: SHA_VIEJO, bytes: 5,
       editable: true, projected: false, truncated: false,
     })),
@@ -566,7 +566,7 @@ it('un 403 de la política de rutas se explica como decisión, no como avería',
   server.use(
     http.get(RUTA_CONTENIDO, () => HttpResponse.json({
       tenant_id: 'Steven', alias: 'kant', kind: 'directive',
-      path: '/home/stev/.claude/CLAUDE.md', format: 'markdown',
+      path: '/home/dev/.claude/CLAUDE.md', format: 'markdown',
       exists: true, content: 'corto', sha: SHA_VIEJO, bytes: 5,
       editable: true, projected: false, truncated: false,
     })),
@@ -648,13 +648,13 @@ it('un 202 del manual pinta el mismo aviso de sesión sin adoptar que el perfil'
   server.use(
     http.get(RUTA_CONTENIDO, () => HttpResponse.json({
       tenant_id: 'Steven', alias: 'kant', kind: 'directive',
-      path: '/home/stev/.claude/CLAUDE.md', format: 'markdown',
+      path: '/home/dev/.claude/CLAUDE.md', format: 'markdown',
       exists: true, content: '# manual viejo\n', sha: SHA_VIEJO, bytes: 15,
       editable: true, projected: false, truncated: false,
     })),
     http.put(RUTA_CONTENIDO, () => HttpResponse.json({
       ok: true, state: 'written_pending_session', evidence: 'probe_write_ack',
-      path: '/home/stev/.claude/CLAUDE.md', sha: SHA_NUEVO, bytes: 7,
+      path: '/home/dev/.claude/CLAUDE.md', sha: SHA_NUEVO, bytes: 7,
     }, { status: 202 })),
   );
 
@@ -675,13 +675,13 @@ it('CONTROL NEGATIVO: un guardado aplicado no pinta el aviso de sesión sin adop
   server.use(
     http.get(RUTA_CONTENIDO, () => HttpResponse.json({
       tenant_id: 'Steven', alias: 'kant', kind: 'directive',
-      path: '/home/stev/.claude/CLAUDE.md', format: 'markdown',
+      path: '/home/dev/.claude/CLAUDE.md', format: 'markdown',
       exists: true, content: '# manual viejo\n', sha: SHA_VIEJO, bytes: 15,
       editable: true, projected: false, truncated: false,
     })),
     http.put(RUTA_CONTENIDO, () => HttpResponse.json({
       ok: true, state: 'applied', evidence: 'probe_write_ack',
-      path: '/home/stev/.claude/CLAUDE.md', sha: SHA_NUEVO, bytes: 7,
+      path: '/home/dev/.claude/CLAUDE.md', sha: SHA_NUEVO, bytes: 7,
     })),
   );
 

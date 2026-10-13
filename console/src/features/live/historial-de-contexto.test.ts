@@ -33,7 +33,7 @@ function documento(parcial: Partial<DocumentoRevision> = {}): DocumentoRevision 
     tenant_id: 'Steven',
     alias: 'kant',
     kind: 'directive',
-    path: '/home/stev/.claude/CLAUDE.md',
+    path: '/home/dev/.claude/CLAUDE.md',
     sha256: 'a'.repeat(64),
     bytes: 240,
     actor_tenant: null,

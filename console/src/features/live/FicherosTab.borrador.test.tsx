@@ -24,18 +24,18 @@ const rutaContenido = (alias: string, kind: string) =>
 
 const CLAUDE_MD = {
   kind: 'directive', category: 'manual', label: 'CLAUDE.md (manual del sitio)',
-  path: '/home/stev/.claude/CLAUDE.md', format: 'markdown', readable: true, editable: true,
+  path: '/home/dev/.claude/CLAUDE.md', format: 'markdown', readable: true, editable: true,
 };
 
 const IDENTIDAD = {
   kind: 'identity', category: 'profile', label: 'Identidad (IDENTITY.md)',
-  path: '/home/stev/workspace/IDENTITY.md', format: 'markdown', readable: true, editable: false,
+  path: '/home/dev/workspace/IDENTITY.md', format: 'markdown', readable: true, editable: false,
   reason: 'Es parte de los campos canónicos: se cambia desde Perfil.',
 };
 
 function contenido(alias: string, texto: string) {
   return {
-    tenant_id: 'Steven', alias, kind: 'directive', path: '/home/stev/.claude/CLAUDE.md',
+    tenant_id: 'Steven', alias, kind: 'directive', path: '/home/dev/.claude/CLAUDE.md',
     format: 'markdown', exists: true, content: texto, sha: SHA,
     bytes: new TextEncoder().encode(texto).byteLength,
     editable: true, projected: false, truncated: false,
@@ -45,7 +45,7 @@ function contenido(alias: string, texto: string) {
 function mapaDe(alias: string, items: unknown[]) {
   server.use(http.get(rutaMapa(alias), () => HttpResponse.json({
     tenant_id: 'Steven', alias, facts_source: 'measured', harness: 'claude',
-    home: '/home/stev', items,
+    home: '/home/dev', items,
   })));
 }
 
@@ -99,7 +99,7 @@ it('inspeccionar otro fichero no se lleva por delante el borrador del manual', a
     http.get(rutaContenido('kant', 'directive'), () => HttpResponse.json(contenido('kant', '# viejo\n'))),
     http.get(rutaContenido('kant', 'identity'), () => HttpResponse.json({
       tenant_id: 'Steven', alias: 'kant', kind: 'identity',
-      path: '/home/stev/workspace/IDENTITY.md', format: 'markdown', exists: true,
+      path: '/home/dev/workspace/IDENTITY.md', format: 'markdown', exists: true,
       content: '# identidad\n', sha: 'b'.repeat(64), bytes: 12,
       editable: false, projected: false, truncated: false,
     })),
@@ -161,7 +161,7 @@ it('guardar cierra el borrador: al volver se ve lo aplicado y ningún aviso pend
       guardado = cuerpo.content;
       return HttpResponse.json({
         ok: true, state: 'written_pending_session', evidence: 'probe_write_ack',
-        path: '/home/stev/.claude/CLAUDE.md', sha: 'c'.repeat(64),
+        path: '/home/dev/.claude/CLAUDE.md', sha: 'c'.repeat(64),
         bytes: new TextEncoder().encode(cuerpo.content).byteLength,
       }, { status: 202 });
     }),
