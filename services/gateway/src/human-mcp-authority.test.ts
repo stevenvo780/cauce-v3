@@ -341,14 +341,14 @@ function lockedRows() {
 }
 
 describe('human identity locking query contract', () => {
-  it('takes the authority guard before account, exact binding and default membership locks on the supplied client', async () => {
+  it('sets the lock timeout before account, exact binding and default membership locks on the supplied client', async () => {
     const rows = lockedRows();
     const query = vi.fn(async (_sql: string, _values: unknown[]) => ({ rows: rows.shift() ?? [] }));
     const client = { query } as unknown as DatabaseClient;
     const key = { provider: 'oauth' as const, namespace: ' HTTPS://Issuer.test/ ', subject: ' Subject ' };
     const result = await lockHumanIdentity(client, key, user.id);
     expect(query.mock.calls.map(([sql]) => sql.replace(/\s+/gu, ' ').trim())).toEqual([
-      'SELECT cauce_lock_authority_read_guard()',
+      "SELECT set_config('lock_timeout','5000ms',true)",
       expect.stringMatching(/^SELECT human_id FROM human_external_identities/),
       expect.stringMatching(/FROM console_users WHERE id=\$1 FOR SHARE$/),
       expect.stringMatching(/FROM human_external_identities[\s\S]+FOR SHARE$/),
@@ -498,7 +498,7 @@ describe('durable human read authority', () => {
     await expect(createHumanReadAuthority(identity(), f.pinned, signal())(client)).resolves.toEqual(f.pinned);
     expect(query.mock.calls.map(([sql]) => sql.replace(/\s+/gu, ' ').trim())).toEqual([
       expect.stringContaining("set_config('statement_timeout'"),
-      'SELECT cauce_lock_authority_read_guard()',
+      "SELECT set_config('lock_timeout','5000ms',true)",
       expect.stringMatching(/^SELECT human_id FROM human_external_identities/),
       expect.stringMatching(/FROM console_users WHERE id=\$1 FOR SHARE$/),
       expect.stringMatching(/FROM human_external_identities[\s\S]+FOR SHARE$/),

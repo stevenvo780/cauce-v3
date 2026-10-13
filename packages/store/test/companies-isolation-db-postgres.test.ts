@@ -48,7 +48,7 @@ async function grantWriter(): Promise<void> {
   await pool.query(`GRANT SELECT,INSERT ON config_revisions,secret_handoffs TO ${writer}`);
   await pool.query(`GRANT USAGE ON SEQUENCE config_revisions_id_seq TO ${writer}`);
   await pool.query(`GRANT EXECUTE ON FUNCTION cauce_platform_operator(),cauce_assert_company_reachable(text,text),
-    cauce_config_revision_scope(jsonb),cauce_lock_company_link(text,text),cauce_lock_owner_guard(text) TO ${writer}`);
+    cauce_config_revision_scope(jsonb),cauce_lock_company_link(text,text),cauce_lock_owner_guard(text),cauce_lock_platform_owner_guard() TO ${writer}`);
 }
 /** Runs the statements as the writer and rolls back: the rows of the last one, or the SQLSTATE that stopped them. */
 async function asWriter(...statements: string[]): Promise<unknown> {

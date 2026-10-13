@@ -34,9 +34,10 @@ describe('human client rollback serialization on disposable PostgreSQL', () => {
   it('rejects current human authority on the pure historical prefix without adding dependencies or effects', async () => {
     const pool = await databaseThrough(version); const owner = await seed(pool);
     const before = await durableAuthorityState(pool);
-    expect((await pool.query("SELECT to_regprocedure('cauce_lock_authority_read_guard()') AS guard")).rows).toEqual([{ guard: null }]);
+    expect((await pool.query("SELECT to_regprocedure('cauce_lock_authority_read_guard()') AS guard,to_regclass('companies') AS companies")).rows)
+      .toEqual([{ guard: null, companies: null }]);
     await expect(resolveHumanIdentity(pool, { provider: 'oauth', namespace: issuer, subject: owner.humanId },
-      new AbortController().signal)).rejects.toMatchObject({ code: '42883' });
+      new AbortController().signal)).rejects.toMatchObject({ code: '42P01', message: 'relation "companies" does not exist' });
     expect(await durableAuthorityState(pool)).toEqual(before);
   });
   it.each(['disabled', 'retired'] as const)('denies current publication for a %s company on the hybrid fixture without effects', async change => {
