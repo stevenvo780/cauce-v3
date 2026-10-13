@@ -188,7 +188,8 @@ it('muestra el aviso de contenedor compartido en la propia vista, sin modal ni c
   expect(warning).toHaveTextContent(/Este contenedor lo comparten Miguel:atlas, Miguel:kratos/);
   expect(warning).toHaveTextContent(/no es .la terminal de jarvis./i);
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-  expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
+  // The terminal's own xterm input may already be mounted (timing depends on load); no other text box may exist.
+  expect(screen.queryAllByRole('textbox').filter((box) => !box.classList.contains('xterm-helper-textarea'))).toEqual([]);
   await waitFor(() => { expect(StubWebSocket.instances).toHaveLength(1); });
 });
 
