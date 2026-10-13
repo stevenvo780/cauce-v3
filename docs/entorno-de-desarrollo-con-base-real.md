@@ -121,8 +121,18 @@ mano**: `tests/unit/suites-de-migracion-sin-plantilla.test.ts` la compara contra
 que una suite `*-migration-postgres.test.ts` nueva no puede perder el opt-out en silencio. Se añadió
 por eso: `secret-handoff-migration-postgres.test.ts` ya existía y ya se había quedado fuera.
 
-La rama de testcontainers **no cambia**: allí la base nace vacía con el contenedor y la plantilla no
-ahorraría nada.
+En la rama de testcontainers la base **del fichero** nace vacía con su contenedor y esta plantilla no
+ahorraría nada. Lo que sí se clona allí es la base **por caso** (`startTestCaseDatabase`): cada
+servidor migra una sola plantilla de casos la primera vez que un caso la pide (hasta el corte del
+servidor y con la semilla de catálogo) y cada caso hace `CREATE DATABASE … TEMPLATE` de ella. Antes
+cada caso migraba desde cero: 2,3 s por caso en el host del gate, frente a unos 40 ms del clon. El
+clon no hereda el ACL propio de la base (052 concede CONNECT y 066 retira TEMPORARY sobre
+`current_database()`), así que se reconstruye y se comprueba contra el de la plantilla en cada caso.
+Y migrar no depende sólo de las fuentes: 048, 050 y 051 conceden a `cauce_gateway` sólo si ese rol
+existe, así que la plantilla guarda la huella de `pg_roles` y `pg_auth_members` con la que se migró y
+se rehace cuando una prueba crea, borra o altera un rol. `packages/store/test/case-database-template-postgres.test.ts`
+compara un clon con una base migrada desde cero, ACL y roles incluidos. Las suites de
+`SUITES_SIN_PLANTILLA` siguen migrando cada caso desde cero.
 
 Los contenedores de prueba arrancan con `fsync=off` y `full_page_writes=off`
 (`COMANDO_POSTGRES_DE_PRUEBA`, también en los fixtures de OAuth y de procedencia de cliente). Son los
