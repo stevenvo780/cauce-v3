@@ -22,7 +22,7 @@
   "acceptance_origin": {
     "kind": "authenticated-owner",
     "channel": "cauce.trusted-origin",
-    "conversation_id": "6979524541"
+    "conversation_id": "0"
   },
   "issue_count": 37,
   "roadmap_count": 216,

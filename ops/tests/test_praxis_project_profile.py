@@ -57,6 +57,7 @@ class ProjectProfileTests(unittest.TestCase):
 
     def test_default_profile_validates_and_fingerprint_is_stable(self):
         self.assertEqual(PROFILE.validate(copy.deepcopy(PROFILE.DEFAULT), STATE)["tenant_id"], "Hospital")
+        self.assertEqual(PROFILE.DEFAULT["acceptance_origin"]["conversation_id"], "0")
         self.assertEqual(PROFILE.validate(self.profile, STATE)["tenant_id"], "EmpresaDelta")
         digest = PROFILE.fingerprint(self.profile)
         self.assertEqual(digest, PROFILE.fingerprint(copy.deepcopy(self.profile)))
