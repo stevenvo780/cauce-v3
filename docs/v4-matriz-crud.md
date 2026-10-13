@@ -23,7 +23,7 @@ Casos: `tests/e2e/v4-office-real-browser.test.ts` — “crea dos salas desde la
 
 ## Personas
 
-`tests/e2e/v4-people-real-browser.test.ts` — “crea una persona operadora, aplica su rol, cambia a lector y revoca su acceso al desactivarla” cubre alta, lectura del inventario, cambio durable de rol y revocación al retirar; “una empresa distinta no lista a la persona y su edición directa recibe 404” comprueba aislamiento. `people.C/R` están cubiertas. `people.U` conserva pendiente la restauración desde navegador; `people.D` conserva pendiente la purga y la protección del último administrador.
+`tests/e2e/v4-people-real-browser.test.ts` cubre alta, lectura, cambio de rol, retiro y revocación de sesión, aislamiento entre empresas, restauración y purga de una persona retirada, con relectura durable tras recargar. El escenario del último owner exige elegir el espacio y la identidad habilitada del inventario; al degradarlo o retirarlo, la UI muestra el motivo y el gateway devuelve 409. La base conserva activo al único owner y la UI oculta “Purgar” para esa persona: el E2E envía esa petición desde el navegador autenticado, comprueba 409 y vuelve a leer el estado. `people.C/R/U/D` están cubiertas.
 
 ## Contextos
 
@@ -43,4 +43,4 @@ Casos: `tests/e2e/v4-office-real-browser.test.ts` — “crea dos salas desde la
 
 ## Pendientes conservados
 
-Las razones completas permanecen en el JSON. Entre las filas que estos recorridos no cierran están: `people_crud_browser` (restauración, purga y último administrador), `host_crud_browser` (CRUD del ordenador), `company_admins_lifecycle_browser` (cambio owner/admin y revocación de sesión), `office_parts_lifecycle_browser` (edición y baja de partes), `quota_environment_execution_browser` (efecto físico y proveedor), `context_git_concurrent_recovery` (recuperación Git desde navegador) y `context_application_browser` (adopción confirmada por el agente).
+Las razones completas permanecen en el JSON. Entre las filas que estos recorridos no cierran están: `host_crud_browser` (CRUD del ordenador), `company_admins_lifecycle_browser` (cambio owner/admin y revocación de sesión), `office_parts_lifecycle_browser` (edición y baja de partes), `quota_environment_execution_browser` (efecto físico y proveedor), `context_git_concurrent_recovery` (recuperación Git desde navegador) y `context_application_browser` (adopción confirmada por el agente).

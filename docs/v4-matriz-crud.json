@@ -6,10 +6,6 @@
       "reason": "Falta recorrer alta, edición y eliminación del ordenador desde navegador real y comprobar persistencia y autoridad."
     },
     {
-      "id": "people_crud_browser",
-      "reason": "El E2E cubre alta, lectura, cambio de rol y retiro con revocación; faltan restauración, purga y protección del último administrador desde navegador."
-    },
-    {
       "id": "company_admins_lifecycle_browser",
       "reason": "El E2E asigna y revoca un administrador de empresa en navegador real. Falta el cambio owner/admin, que la UI del dueño no ofrece, y la revocación de la sesión de contraseña: tras revocar, la persona sigue autenticada como operador."
     },
@@ -602,9 +598,8 @@
           ]
         },
         "U": {
-          "status": "pending",
-          "reason": "El E2E verifica el cambio durable de rol y su efecto en la autoridad; la restauración aún solo tiene cobertura de componente.",
-          "pending_id": "people_crud_browser",
+          "status": "covered",
+          "reason": "Cobertura de navegador real y PostgreSQL: actualiza el rol tras elegir espacio e identidad del inventario, restaura una persona retirada y relee el estado tras recargar.",
           "api": [
             {
               "method": "PATCH",
@@ -634,13 +629,20 @@
             {
               "file": "tests/e2e/v4-people-real-browser.test.ts",
               "name": "crea una persona operadora, aplica su rol, cambia a lector y revoca su acceso al desactivarla"
+            },
+            {
+              "file": "tests/e2e/v4-people-real-browser.test.ts",
+              "name": "restaura una persona y purga un registro retirado desde la UI con persistencia durable"
+            },
+            {
+              "file": "tests/e2e/v4-people-real-browser.test.ts",
+              "name": "protege en la consola al último owner contra degradación, retiro y purga"
             }
           ]
         },
         "D": {
-          "status": "pending",
-          "reason": "El E2E verifica el retiro y la revocación de sesión; faltan purga y protección del último administrador en navegador.",
-          "pending_id": "people_crud_browser",
+          "status": "covered",
+          "reason": "El E2E de navegador real y PostgreSQL purga un registro retirado sin referencias y rechaza degradar o retirar al último owner con mensaje en español; la purga del owner activo recibe 409 por petición autenticada porque la UI oculta esa acción, y el estado persiste al recargar.",
           "api": [
             {
               "method": "DELETE",
@@ -666,6 +668,14 @@
             {
               "file": "tests/e2e/v4-people-real-browser.test.ts",
               "name": "crea una persona operadora, aplica su rol, cambia a lector y revoca su acceso al desactivarla"
+            },
+            {
+              "file": "tests/e2e/v4-people-real-browser.test.ts",
+              "name": "restaura una persona y purga un registro retirado desde la UI con persistencia durable"
+            },
+            {
+              "file": "tests/e2e/v4-people-real-browser.test.ts",
+              "name": "protege en la consola al último owner contra degradación, retiro y purga"
             }
           ]
         }

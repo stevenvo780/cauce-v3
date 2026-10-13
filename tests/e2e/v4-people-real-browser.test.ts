@@ -25,6 +25,11 @@ const employee = {
   displayName: `zz-canary-person-${run}`,
   password: syntheticPerson('people-employee', run).password,
 };
+const guardAdmin = {
+  email: `zz-canary-guard-admin-${run}@example.test`,
+  displayName: `zz-canary-guard-admin-${run}`,
+  password: syntheticPerson('people-guard-admin', run).password,
+};
 const personAlias = `zz-canary-agent-${run}`;
 const errors = new BrowserErrorLog([
   ...HERMETIC_INSTANCE_RULES,
@@ -43,9 +48,33 @@ const errors = new BrowserErrorLog([
 let fixture: Awaited<ReturnType<typeof startConsoleFunctionalFixture>> | undefined;
 let ownerPageA: V4Page | undefined;
 let ownerPageB: V4Page | undefined;
+let ownerAId = '';
 let employeeId = '';
 let employeeRevision = '';
 let hubA = '';
+
+interface PeopleInventoryPerson {
+  id: string;
+  email: string;
+  role: 'operator' | 'reader';
+  revision: string;
+  active: boolean;
+}
+
+function isPeopleInventoryPerson(value: unknown): value is PeopleInventoryPerson {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const row = value as Record<string, unknown>;
+  return typeof row.id === 'string' && typeof row.email === 'string'
+    && (row.role === 'operator' || row.role === 'reader')
+    && typeof row.revision === 'string' && typeof row.active === 'boolean';
+}
+
+function peopleItems(body: Record<string, unknown>): PeopleInventoryPerson[] {
+  if (!Array.isArray(body.items)) throw new Error('people inventory did not include an item list');
+  const rows: unknown[] = body.items;
+  if (!rows.every(isPeopleInventoryPerson)) throw new Error('people inventory included an invalid row');
+  return rows;
+}
 
 function active() {
   if (!fixture) throw new Error('V4 people fixture is not initialized');
@@ -109,10 +138,10 @@ async function openPeopleAdmin(page: V4Page): Promise<void> {
   await page.getByRole('region', { name: 'Administración de personas', exact: true }).waitFor({ timeout: 15_000 });
 }
 
-async function fillPersonForm(page: V4Page, email: string, password: string): Promise<void> {
+async function fillPersonForm(page: V4Page, email: string, password: string, displayName = employee.displayName): Promise<void> {
   const form = page.getByRole('form', { name: 'Crear persona', exact: true });
   await form.getByLabel('Correo de acceso', { exact: true }).fill(email);
-  await form.getByLabel('Nombre de persona', { exact: true }).fill(employee.displayName);
+  await form.getByLabel('Nombre de persona', { exact: true }).fill(displayName);
   const selects = form.locator('select');
   await selects.nth(0).selectOption('operator');
   await selects.nth(1).selectOption(hubA);
@@ -129,6 +158,15 @@ async function apiMutation(page: V4Page, path: string, method: 'POST' | 'PATCH',
   }, { target: path, verb: method, body: JSON.stringify(payload) });
 }
 
+async function apiDelete(page: V4Page, path: string, payload: unknown): Promise<{ status: number; body: Record<string, unknown> }> {
+  return page.evaluate(async ({ target, body }: { target: string; body: string }) => {
+    const session = await (await fetch('/v3/auth/session', { credentials: 'include', cache: 'no-store' })).json() as { csrf_token?: string };
+    const response = await fetch(target, { method: 'DELETE', credentials: 'include', body,
+      headers: { 'Content-Type': 'application/json', 'X-Cauce-Console': '1', 'X-CSRF-Token': session.csrf_token ?? '' } });
+    return { status: response.status, body: await response.json().catch(() => ({})) as Record<string, unknown> };
+  }, { target: path, body: JSON.stringify(payload) });
+}
+
 function expectHttpError(path: string, status: number, count = 1): void {
   for (let index = 0; index < count; index += 1) errors.expectHttpError(path, status);
 }
@@ -143,9 +181,11 @@ beforeAll(async () => {
   ownerPageB = await freshPage('owner-b');
   await registerOwner(ownerBView(), ownerB);
 
-  const owner = await active().database.pool.query<{ tenant_id: string }>(
-    'SELECT tenant_id FROM console_users WHERE email=$1', [ownerA.email]);
+  const owner = await active().database.pool.query<{ id: string; tenant_id: string }>(
+    'SELECT id::text,tenant_id FROM console_users WHERE email=$1', [ownerA.email]);
   expect(owner.rows).toHaveLength(1);
+  ownerAId = owner.rows[0]?.id ?? '';
+  expect(ownerAId).toMatch(/^[0-9a-f-]{36}$/u);
   hubA = owner.rows[0]?.tenant_id ?? '';
   expect(hubA).toMatch(/^hub-[a-f0-9]+$/u);
   await active().database.pool.query(`INSERT INTO agents(tenant_id,alias,harness_id,display_name,enabled,container_name,runtime_user,home_directory,state_directory,company_id)
@@ -203,7 +243,7 @@ describe('personas V4 en navegador real contra gateway y PostgreSQL reales', () 
 
     const inventory = await apiGet(owner, '/v3/console/people');
     expect(inventory.status).toBe(200);
-    const people = inventory.body.items as { id: string; email: string; role: string; revision: string }[];
+    const people = peopleItems(inventory.body);
     const created = people.find(person => person.email === employee.email);
     expect(created).toMatchObject({ role: 'operator' });
     if (!created) throw new Error('owner inventory did not return the created person');
@@ -299,7 +339,7 @@ describe('personas V4 en navegador real contra gateway y PostgreSQL reales', () 
       await openPeopleAdmin(page);
       const inventory = await apiGet(page, '/v3/console/people');
       expect(inventory.status).toBe(200);
-      const items = inventory.body.items as { email: string }[];
+      const items = peopleItems(inventory.body);
       expect(items.some(person => person.email === ownerB.email)).toBe(true);
       expect(items.some(person => person.email === employee.email)).toBe(false);
       expect(await page.getByText(employee.email, { exact: true }).count()).toBe(0);
@@ -308,6 +348,155 @@ describe('personas V4 en navegador real contra gateway y PostgreSQL reales', () 
       expect(await apiMutation(page, path, 'PATCH', { expected_revision: employeeRevision, display_name: 'zz-canary-unauthorized-edit' })).toBe(404);
     });
   });
+
+  it('restaura una persona y purga un registro retirado desde la UI con persistencia durable', async () => {
+    const owner = ownerAView();
+    await step(owner, 'restore person from owner UI', async () => {
+      await openPeopleAdmin(owner);
+      const row = owner.getByRole('row').filter({ hasText: employee.email });
+      expect(await row.innerText()).toContain('Retirada');
+      await row.getByRole('button', { name: `Restaurar persona ${employee.email}`, exact: true }).click();
+      const confirmation = owner.getByRole('region', { name: 'Confirmar cambio de acceso', exact: true });
+      expect(await confirmation.innerText()).toContain('La cuenta podrá abrir una nueva sesión.');
+      await confirmation.getByRole('button', { name: 'Confirmar cambio de persona', exact: true }).click();
+      await owner.getByText('Acceso de persona restaurado. Inventario releído.', { exact: true }).waitFor({ timeout: 20_000 });
+      expect(await row.innerText()).toContain('Habilitada');
+      await owner.reload({ waitUntil: 'domcontentloaded' });
+      await openPeopleAdmin(owner);
+      expect(await owner.getByRole('row').filter({ hasText: employee.email }).innerText()).toContain('Habilitada');
+    });
+    const restored = await active().database.pool.query<{ active: boolean; role: string }>(
+      'SELECT active,role FROM console_users WHERE id=$1', [employeeId]);
+    expect(restored.rows).toEqual([{ active: true, role: 'reader' }]);
+
+    const purgeEmail = `zz-canary-purge-${run}@example.test`;
+    const purgeAlias = `zz-purge-${run}`;
+    const seeded = await active().database.adminPool.query<{ id: string }>(`INSERT INTO console_users
+      (email,email_normalized,password_hash,display_name,role,tenant_id,alias,active,company_id)
+      SELECT $1,lower($1),'$scrypt$' || repeat('x',48),$2,'reader',tenant_id,$3,false,company_id
+      FROM console_users WHERE id=$4 RETURNING id::text`,
+    [purgeEmail, `zz-canary-purge-${run}`, purgeAlias, ownerAId]);
+    expect(seeded.rowCount).toBe(1);
+    await step(owner, 'purge retired person from owner UI', async () => {
+      await owner.reload({ waitUntil: 'domcontentloaded' });
+      await openPeopleAdmin(owner);
+      const row = owner.getByRole('row').filter({ hasText: purgeEmail });
+      expect(await row.innerText()).toContain('Retirada');
+      await row.getByRole('button', { name: `Purgar persona ${purgeEmail}`, exact: true }).click();
+      const confirmation = owner.getByRole('region', { name: 'Confirmar cambio de acceso', exact: true });
+      expect(await confirmation.innerText()).toContain('El registro se elimina definitivamente');
+      await confirmation.getByRole('button', { name: 'Confirmar cambio de persona', exact: true }).click();
+      await owner.getByText('Registro de persona purgado. Inventario releído.', { exact: true }).waitFor({ timeout: 20_000 });
+      expect(await owner.getByText(purgeEmail, { exact: true }).count()).toBe(0);
+      await owner.reload({ waitUntil: 'domcontentloaded' });
+      await openPeopleAdmin(owner);
+      expect(await owner.getByText(purgeEmail, { exact: true }).count()).toBe(0);
+    });
+    expect((await active().database.pool.query('SELECT 1 FROM console_users WHERE email=$1', [purgeEmail])).rowCount).toBe(0);
+  }, 180_000);
+
+  it('protege en la consola al último owner contra degradación, retiro y purga', async () => {
+    const owner = ownerAView();
+    await step(owner, 'create a separate platform guard actor inside the company', async () => {
+      await openPeopleAdmin(owner);
+      await owner.getByRole('button', { name: 'Crear persona', exact: true }).click();
+      await fillPersonForm(owner, guardAdmin.email, guardAdmin.password, guardAdmin.displayName);
+      await owner.getByRole('form', { name: 'Crear persona', exact: true })
+        .getByRole('button', { name: 'Crear cuenta de persona', exact: true }).click();
+      await owner.getByText('Persona creada. Inventario releído.', { exact: true }).waitFor({ timeout: 20_000 });
+      expect(await owner.getByRole('row').filter({ hasText: guardAdmin.email }).innerText()).toContain('Operador');
+    });
+    const grant = await active().database.adminPool.query(
+      'INSERT INTO platform_admins(human_id) SELECT id FROM console_users WHERE email=$1', [guardAdmin.email]);
+    expect(grant.rowCount).toBe(1);
+    const platform = await freshPage('platform-owner');
+    await login(platform, base(), { ...guardAdmin, name: guardAdmin.displayName, company: ownerA.company });
+    expect(await apiGet(platform, '/v3/auth/session')).toMatchObject({
+      status: 200, body: { authority: { acting_company: ownerA.company.slug, platform_override: false } },
+    });
+    const configuration = await apiGet(platform, '/v3/console/config');
+    expect(configuration.status).toBe(200);
+    expect(configuration.body.tenants).toEqual(expect.arrayContaining([expect.objectContaining({ id: hubA, enabled: true })]));
+    expect(configuration.body.agents).toEqual(expect.arrayContaining([expect.objectContaining({ tenant_id: hubA, alias: personAlias, enabled: true })]));
+    const companyAdmins = await active().database.pool.query<{ human_id: string; role: string }>(
+      `SELECT human_id::text,role FROM company_admins WHERE company_id=$1 AND role IN ('owner','admin')`, [ownerA.company.slug]);
+    expect(companyAdmins.rows).toEqual([{ human_id: ownerAId, role: 'owner' }]);
+
+    await step(platform, 'deny degrading the last owner from platform UI', async () => {
+      await openPeopleAdmin(platform);
+      const row = platform.getByRole('row').filter({ hasText: ownerA.email });
+      await row.getByRole('button', { name: `Editar persona ${ownerA.email}`, exact: true }).click();
+      const form = platform.getByRole('form', { name: `Editar persona ${ownerA.email}`, exact: true });
+      const selects = form.locator('select');
+      await selects.nth(0).selectOption('reader');
+      const tenantSelect = selects.nth(1);
+      expect(await tenantSelect.innerText()).toContain(hubA);
+      await tenantSelect.selectOption(hubA);
+      const identitySelect = selects.nth(2);
+      expect(await identitySelect.innerText()).toContain(personAlias);
+      await identitySelect.selectOption(personAlias);
+      expectHttpError(`/v3/console/people/${ownerAId}`, 409);
+      await form.getByRole('button', { name: 'Guardar persona', exact: true }).click();
+      const alert = platform.getByRole('alert');
+      await alert.waitFor({ timeout: 15_000 });
+      expect(await alert.innerText()).toContain('último administrador');
+      await platform.reload({ waitUntil: 'domcontentloaded' });
+      await openPeopleAdmin(platform);
+      const afterReload = platform.getByRole('row').filter({ hasText: ownerA.email });
+      expect(await afterReload.innerText()).toContain('Operador');
+      expect(await afterReload.innerText()).toContain('Habilitada');
+    });
+    const afterDegrade = await active().database.pool.query<{ role: string; active: boolean }>(
+      'SELECT role,active FROM console_users WHERE id=$1', [ownerAId]);
+    expect(afterDegrade.rows).toEqual([{ role: 'operator', active: true }]);
+
+    await step(platform, 'deny retiring the last owner from platform UI', async () => {
+      const row = platform.getByRole('row').filter({ hasText: ownerA.email });
+      await row.getByRole('button', { name: `Retirar persona ${ownerA.email}`, exact: true }).click();
+      const confirmation = platform.getByRole('region', { name: 'Confirmar cambio de acceso', exact: true });
+      expect(await confirmation.innerText()).toContain('Se revocan sesiones y accesos anteriores.');
+      expectHttpError(`/v3/console/people/${ownerAId}`, 409);
+      await confirmation.getByRole('button', { name: 'Confirmar cambio de persona', exact: true }).click();
+      const alert = platform.getByRole('alert');
+      await alert.waitFor({ timeout: 15_000 });
+      expect(await alert.innerText()).toContain('último administrador');
+      await platform.reload({ waitUntil: 'domcontentloaded' });
+      await openPeopleAdmin(platform);
+      const afterReload = platform.getByRole('row').filter({ hasText: ownerA.email });
+      expect(await afterReload.innerText()).toContain('Habilitada');
+    });
+    const afterRetire = await active().database.pool.query<{ active: boolean }>(
+      'SELECT active FROM console_users WHERE id=$1', [ownerAId]);
+    expect(afterRetire.rows).toEqual([{ active: true }]);
+
+    await step(platform, 'deny purging the active last owner through the authenticated browser request', async () => {
+      await platform.reload({ waitUntil: 'domcontentloaded' });
+      await openPeopleAdmin(platform);
+      const row = platform.getByRole('row').filter({ hasText: ownerA.email });
+      expect(await row.innerText()).toContain('Habilitada');
+      expect(await row.getByRole('button', { name: `Purgar persona ${ownerA.email}`, exact: true }).count()).toBe(0);
+      const inventory = await apiGet(platform, '/v3/console/people');
+      expect(inventory.status).toBe(200);
+      const lastOwner = peopleItems(inventory.body).find(person => person.id === ownerAId);
+      if (!lastOwner) throw new Error('people inventory omitted the protected owner');
+      expect(lastOwner).toMatchObject({ role: 'operator', active: true });
+      const purgePath = `/v3/console/people/${ownerAId}/purge`;
+      expectHttpError(purgePath, 409);
+      const denied = await apiDelete(platform, purgePath, { expected_revision: lastOwner.revision });
+      expect(denied.status).toBe(409);
+      expect(denied.body.message).toContain('último administrador');
+      await platform.reload({ waitUntil: 'domcontentloaded' });
+      await openPeopleAdmin(platform);
+      const afterReload = platform.getByRole('row').filter({ hasText: ownerA.email });
+      expect(await afterReload.innerText()).toContain('Habilitada');
+    });
+    const protectedOwner = await active().database.pool.query<{ role: string; active: boolean }>(
+      'SELECT role,active FROM console_users WHERE id=$1', [ownerAId]);
+    expect(protectedOwner.rows).toEqual([{ role: 'operator', active: true }]);
+    const retainedAdmin = await active().database.pool.query<{ human_id: string; role: string }>(
+      'SELECT human_id::text,role FROM company_admins WHERE company_id=$1 AND human_id=$2', [ownerA.company.slug, ownerAId]);
+    expect(retainedAdmin.rows).toEqual([{ human_id: ownerAId, role: 'owner' }]);
+  }, 180_000);
 
   it('no quedan errores inesperados del navegador', () => {
     process.stdout.write(`V4 people e2e tolerated console messages: ${JSON.stringify(Object.fromEntries(errors.ignored))}\n`);
