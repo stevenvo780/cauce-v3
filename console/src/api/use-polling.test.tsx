@@ -65,3 +65,19 @@ it('starts polling when the pause is lifted', () => {
 
   expect(reload).toHaveBeenCalledTimes(2);
 });
+
+it('keeps its schedule when the caller passes a new callback on every render', () => {
+  const calls = vi.fn();
+  function Churn({ tick }: { tick: number }) {
+    usePolling(() => { calls(tick); }, 30_000);
+    return null;
+  }
+  const view = render(<Churn tick={0} />);
+  for (let second = 1; second <= 120; second += 1) {
+    act(() => { vi.advanceTimersByTime(1000); });
+    view.rerender(<Churn tick={second} />);
+  }
+
+  expect(calls).toHaveBeenCalledTimes(4);
+  expect(calls).toHaveBeenLastCalledWith(119);
+});
