@@ -504,6 +504,7 @@ count_unapplied_migrations() {
 }
 count_pending_migrations() {
   PENDING_MIGRATIONS=0
+  APPLIED_MIGRATIONS=
   MIGRATION_ATTEMPT_PENDING="$(count_unapplied_migrations '')" || die "no pude contar migraciones del bundle"
   local containers volumes pg_running applied rc
   containers="$(docker ps -a --format '{{.Names}}')" \
@@ -531,10 +532,7 @@ count_pending_migrations() {
   PENDING_MIGRATIONS="$(count_unapplied_migrations "$applied")" || die "no pude contar migraciones pendientes"
   [[ $PENDING_MIGRATIONS =~ ^[0-9]+$ ]] || die "recuento de migraciones pendientes invalido"
   MIGRATION_ATTEMPT_PENDING="$PENDING_MIGRATIONS"
-  ROLE_081_PENDING=0
-  if grep -Fxq "$ROLE_081_MIGRATION" <<< "$BUNDLED_MIGRATIONS" && ! grep -Fxq "$ROLE_081_MIGRATION" <<< "$applied"; then
-    ROLE_081_PENDING=1
-  fi
+  APPLIED_MIGRATIONS="$applied"
 }
 backup_monitor_accepts() {
   STATUS_FILE="$BACKUP_STATUS_FILE" MAX_AGE_HOURS="$BACKUP_MAX_AGE_HOURS" \
@@ -736,6 +734,10 @@ check_blob_migration_window
 [ "$BLOB_MIGRATION_PENDING" = 0 ] || [ "$REQUIRE_BLOB_BACKUP" = 1 ] \
   || die "043 paso a pendiente despues del backup; repite el deploy con evidencia de tabla y volumen"
 count_pending_migrations
+if [ -n "$APPLIED_MIGRATIONS" ] && grep -Fxq "$ROLE_081_MIGRATION" <<< "$BUNDLED_MIGRATIONS" \
+    && ! grep -Fxq "$ROLE_081_MIGRATION" <<< "$APPLIED_MIGRATIONS"; then
+  ROLE_081_PENDING=1
+fi
 if [ "$PENDING_MIGRATIONS" -gt 0 ]; then
   [ "$MIGRATION_BACKUP_REQUIRED" = 1 ] \
     || die "aparecieron $PENDING_MIGRATIONS migraciones pendientes despues de comprobar el backup; respalda y repite"
