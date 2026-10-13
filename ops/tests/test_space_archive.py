@@ -353,6 +353,7 @@ class SpaceArchiveTests(unittest.TestCase):
             'projects/aws-env.txt': 'aws_secret_access_key=process.env.AWS_SECRET_ACCESS_KEY\n',
             'projects/npm-template.txt': '_authToken=${NPM_TOKEN}\n',
             'projects/npm-env.txt': '_authToken=process.env.NPM_TOKEN\n',
+            'projects/npm-quoted-template.txt': '_authToken="${NPM_TOKEN}"\n',
             'projects/url-template.txt': 'postgres://${DB_USER}:${DB_PASSWORD}@db/app\n',
             'projects/url-env.txt': 'postgres://process.env.DB_USER:process.env.DB_PASSWORD@db/app\n',
             'projects/mention.txt': 'Document the aws_secret_access_key and _authToken fields.\n',
@@ -360,6 +361,8 @@ class SpaceArchiveTests(unittest.TestCase):
         omitted = {
             'projects/aws-literal.txt': 'aws_secret_access_key = ' + 'wJalrXUtnFEMI/K7MDENG+',
             'projects/npm-literal.txt': '//registry.npmjs.org/:_authToken=abcd1234efgh\n',
+            'projects/npm-later-template.txt': "fs.writeFileSync('.npmrc', `//npm.corp.example/:_authToken=0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0\\nemail=${email}\\n`)",
+            'projects/npm-later-env.txt': '_authToken=TOKEN;x=process.env.X\n',
             'projects/url-literal.txt': 'git clone https://deploy:hunter2@example.test/repo.git\n',
         }
         for path, content in {**kept, **omitted}.items():
