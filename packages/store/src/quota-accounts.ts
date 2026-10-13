@@ -7,7 +7,8 @@ import { StoreError } from './repository/errors.js';
 import { quotaObservationStatus, quotaRemaining, type QuotaObservationStatus } from './quota-state.js';
 
 export function assertQuotaAuthority(authority: CompanyAuthority, write: boolean): void {
-  if (authority.humanId === null || authority.role === 'none' || (write && !['company','platform'].includes(authority.scope))) {
+  if (authority.humanId === null || authority.role === 'none'
+    || (write && (!['company','platform'].includes(authority.scope) || !['company_owner','platform_admin'].includes(authority.role)))) {
     throw new StoreError('forbidden', 'company quota authority is required');
   }
 }
@@ -148,7 +149,8 @@ export async function deleteQuotaAccount(pool: DatabasePool, source: CompanyAuth
     const ids = [id, ...aliases.rows.map(row => row.id)];
     const dependencies = await client.query(`SELECT 1 FROM agent_account_bindings WHERE account_id=ANY($1::text[])
       UNION ALL SELECT 1 FROM alias_routing_ceiling WHERE account_id=ANY($1::text[])
-      UNION ALL SELECT 1 FROM quota_environments WHERE account_id=ANY($1::text[]) AND status<>'deleted' LIMIT 1`, [ids]);
+      UNION ALL SELECT 1 FROM quota_environments WHERE account_id=ANY($1::text[]) AND status<>'deleted'
+      UNION ALL SELECT 1 FROM agents WHERE primary_account_id=ANY($1::text[]) AND purged_at IS NULL LIMIT 1`, [ids]);
     if (dependencies.rowCount) throw new StoreError('conflict', 'remove account assignments and environments first');
     await client.query('DELETE FROM quota_window_state WHERE account_id=ANY($1::text[])', [ids]);
     await client.query('DELETE FROM quota_window_samples WHERE account_id=ANY($1::text[])', [ids]);

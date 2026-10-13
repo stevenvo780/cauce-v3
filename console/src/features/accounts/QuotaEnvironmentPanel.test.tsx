@@ -88,3 +88,11 @@ it.each([
   expect(within(screen.getByRole('article', { name: 'Entorno GPT' })).getByText(message)).toBeVisible();
   expect(screen.queryByText('Actualizando…')).not.toBeInTheDocument();
 });
+
+it('traduce el código de error de la operación en vez de mostrarlo crudo', () => {
+  renderWithApi(<QuotaEnvironmentPanel snapshot={{ ...snapshot, operations: [{ id: 'auth', environment_id: environment.id,
+    action: 'authenticate', status: 'failed', error_code: 'AUTH_EXPIRED', result: null, created_at: environment.created_at, updated_at: environment.updated_at }] }}
+    accounts={accounts} canWrite reload={vi.fn()} />);
+  expect(screen.getByText('La autenticación venció. Autentica la cuenta de nuevo.')).toBeVisible();
+  expect(screen.queryByText('AUTH_EXPIRED')).not.toBeInTheDocument();
+});

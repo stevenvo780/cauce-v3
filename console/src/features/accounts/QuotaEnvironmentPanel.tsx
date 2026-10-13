@@ -7,6 +7,7 @@ import { randomUuid } from '../../random-id';
 import { quotaEnvironmentExecutable, quotaHostSupports } from './quota-environment-capabilities';
 import { QuotaAuthPanel } from './QuotaAuthPanel';
 import { QuotaRefreshNotice } from './QuotaAccountCard';
+import { describeOperationError, describeQuotaError } from './quota-messages';
 
 const ACTION_LABEL: Record<QuotaEnvironmentAction, string> = { create: 'Crear entorno', authenticate: 'Autenticar cuenta', query: 'Consultar cuotas', update_cli: 'Actualizar CLI', delete: 'Eliminar entorno' };
 const STATUS_LABEL: Record<QuotaEnvironment['status'], string> = { pending: 'Pendiente', running: 'En ejecución', ready: 'Preparado', awaiting_auth: 'Esperando autenticación', failed: 'Fallido', deleting: 'Eliminación pendiente', deleted: 'Eliminado' };
@@ -37,7 +38,7 @@ export function QuotaEnvironmentPanel({ snapshot, accounts, canWrite, canAuthent
     if (busy) return;
     setBusy(true); setError(''); setNotice('');
     try { await action(); await reload(); if (signature) keys.current.delete(signature); setConfirm(undefined); setEditing(undefined); setNotice(message); }
-    catch (cause) { setError(cause instanceof Error ? cause.message : 'No se confirmó la operación del entorno.'); }
+    catch (cause) { setError(describeQuotaError(cause, 'No se confirmó la operación del entorno.')); }
     finally { setBusy(false); }
   }
   function act(environment: QuotaEnvironment, action: QuotaEnvironmentAction) {
@@ -79,7 +80,7 @@ export function QuotaEnvironmentPanel({ snapshot, accounts, canWrite, canAuthent
           <Button size="sm" variant="danger" disabled={!supports(environment, 'delete')} onClick={() => { setConfirm({ environment, action: 'delete' }); }}>Eliminar entorno</Button>
         </div>
         {operation ? <section aria-label={`Resultado de ${environment.label}`} className="grid gap-2"><p className="m-0 text-xs">{ACTION_LABEL[operation.action]} · {OPERATION_LABEL[operation.status]} · <Time value={operation.updated_at} /></p>
-          {operation.error_code ? <Notice tone="danger">{operation.error_code}</Notice> : null}<QuotaCommandResult result={operation.result} /></section> : null}
+          {operation.error_code ? <Notice tone="danger">{describeOperationError(operation.error_code)}</Notice> : null}<QuotaCommandResult result={operation.result} /></section> : null}
         {operation?.status === 'awaiting_auth' && operation.action === 'authenticate' ? <QuotaAuthPanel environment={environment} operation={operation}
           allowed={canAuthenticate && !busy && snapshot.capabilities.available && hosts.some(host => host.host_id === environment.host_id && quotaHostSupports(host, environment.provider, 'authenticate'))} reload={reload} /> : null}
       </article>;

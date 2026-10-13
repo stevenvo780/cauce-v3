@@ -1,4 +1,4 @@
-import { act, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { expect, it, vi } from 'vitest';
 import { http, HttpResponse } from 'msw';
@@ -117,10 +117,10 @@ it('un 409 de operación conserva error y permite relectura sin presentar el efe
   server.use(http.get('*/v3/console/quota-accounts', () => HttpResponse.json({ company_id: 'one', observed_at: '2026-10-11T00:00:00Z', accounts: [account] })),
     http.get('*/v3/console/quota-environments', () => HttpResponse.json({ company_id: 'one', environments: [environment], operations: [],
       capabilities: { available: true, providers: ['codex'], hosts: [{ host_id: 'host', display_name: 'Host', providers: ['codex'], provider_actions: { codex: ['query'] } }], actions: ['query'] } })),
-    http.post('*/v3/console/quota-environments/env-1/actions', () => HttpResponse.json({ message: 'Hay una autenticación activa. Relee el entorno.' }, { status: 409 })));
+    http.post('*/v3/console/quota-environments/env-1/actions', () => HttpResponse.json({ message: 'authentication already active' }, { status: 409 })));
   const user = userEvent.setup(); renderWithApi(owner());
   await user.click(await screen.findByRole('button', { name: 'Consultar cuotas' }));
-  expect(await screen.findByRole('alert')).toHaveTextContent('Hay una autenticación activa.');
+  expect(await screen.findByRole('alert')).toHaveTextContent('Otro cambio llegó antes');
   expect(screen.queryByText(/Consultar cuotas: solicitud registrada/u)).not.toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Actualizar cuotas y entornos' })).toBeEnabled();
 });
@@ -194,4 +194,86 @@ it('el poller existente actualiza la tarjeta cuando acaba la consulta automátic
   expect(accountsRead).toHaveBeenCalledTimes(3); expect(environmentsRead).toHaveBeenCalledTimes(3);
   expect(intervals.mock.calls.filter(([, period]) => period === 15_000)).toHaveLength(1);
   expect(actions).not.toHaveBeenCalled();
+});
+
+const emptyEnvironments = () => HttpResponse.json({ company_id: 'one', environments: [], operations: [], capabilities: { available: true, providers: ['codex'], hosts: [], actions: [] } });
+function adminSession() { return <CompanySessionProvider state={{ authenticated: true, authority: { role: 'company_admin', scope: 'company',
+  home_company: 'one', acting_company: 'one', platform_override: false } }}><MyQuotasPage /></CompanySessionProvider>; }
+
+it('editar una cuenta con pausa automática no reenvía el motivo reservado y lo muestra traducido', async () => {
+  const patches: unknown[] = [];
+  server.use(http.get('*/v3/console/quota-accounts', () => HttpResponse.json({ company_id: 'one', observed_at: '2026-10-11T00:00:00Z',
+      accounts: [{ ...account, paused_until: '2026-10-12T17:00:00Z', paused_reason: 'quota_exhausted:weekly' }] })),
+    http.get('*/v3/console/quota-environments', emptyEnvironments),
+    http.patch('*/v3/console/quota-accounts/subscription', async ({ request }) => { patches.push(await request.json()); return HttpResponse.json({ account_id: 'subscription', version: 4 }); }));
+  const user = userEvent.setup(); renderWithApi(owner());
+  await waitFor(() => { expect(screen.getByRole('button', { name: 'Editar cuenta' })).toBeEnabled(); });
+  await user.click(screen.getByRole('button', { name: 'Editar cuenta' }));
+  const form = within(await screen.findByRole('form', { name: 'Editar cuenta de cuotas' }));
+  expect(form.getByText('Pausada por cuota agotada en weekly')).toBeVisible();
+  expect(form.queryByRole('textbox', { name: 'Motivo de pausa' })).not.toBeInTheDocument();
+  await user.clear(form.getByRole('textbox', { name: 'Nombre de la cuenta' })); await user.type(form.getByRole('textbox', { name: 'Nombre de la cuenta' }), 'Renombrada');
+  await user.click(form.getByRole('button', { name: 'Guardar cuenta' }));
+  expect(await screen.findByText('Cuenta actualizada.')).toBeVisible();
+  expect(patches).toEqual([{ expected_version: 3, label: 'Renombrada', enabled: true }]);
+});
+
+it('reanudar manda pausa y motivo nulos, y una fecha elegida se envía como instante con zona', async () => {
+  const patches: Record<string, unknown>[] = [];
+  server.use(http.get('*/v3/console/quota-accounts', () => HttpResponse.json({ company_id: 'one', observed_at: '2026-10-11T00:00:00Z',
+      accounts: [{ ...account, paused_until: '2026-10-12T17:00:00Z', paused_reason: 'quota_exhausted:weekly' }] })),
+    http.get('*/v3/console/quota-environments', emptyEnvironments),
+    http.patch('*/v3/console/quota-accounts/subscription', async ({ request }) => { patches.push(await request.json() as Record<string, unknown>); return HttpResponse.json({ account_id: 'subscription', version: 4 }); }));
+  const user = userEvent.setup(); renderWithApi(owner());
+  await waitFor(() => { expect(screen.getByRole('button', { name: 'Editar cuenta' })).toBeEnabled(); });
+  await user.click(screen.getByRole('button', { name: 'Editar cuenta' }));
+  let form = within(await screen.findByRole('form', { name: 'Editar cuenta de cuotas' }));
+  fireEvent.change(form.getByLabelText('Pausa hasta (hora de tu navegador)'), { target: { value: '2026-12-10T08:30' } });
+  expect(form.getByText(/Se guardará:/u)).toBeVisible();
+  await user.click(form.getByRole('button', { name: 'Guardar cuenta' }));
+  await screen.findByText('Cuenta actualizada.');
+  expect(patches[0]).toMatchObject({ paused_until: new Date('2026-12-10T08:30').toISOString(), paused_reason: null });
+  await user.click(screen.getByRole('button', { name: 'Editar cuenta' }));
+  form = within(await screen.findByRole('form', { name: 'Editar cuenta de cuotas' }));
+  await user.click(form.getByRole('checkbox', { name: 'Reanudar ahora (quita la pausa)' }));
+  await user.click(form.getByRole('button', { name: 'Guardar cuenta' }));
+  await waitFor(() => { expect(patches).toHaveLength(2); });
+  expect(patches[1]).toMatchObject({ paused_until: null, paused_reason: null });
+});
+
+it('un administrador de empresa lee las cuotas pero no puede registrar, editar ni eliminar cuentas', async () => {
+  server.use(http.get('*/v3/console/quota-accounts', () => HttpResponse.json({ company_id: 'one', observed_at: '2026-10-11T00:00:00Z', accounts: [account] })),
+    http.get('*/v3/console/quota-environments', emptyEnvironments));
+  renderWithApi(adminSession());
+  expect(await screen.findByRole('article', { name: 'Cuotas de Cuenta compartida' })).toBeVisible();
+  await waitFor(() => { expect(screen.getByRole('button', { name: 'Fijar cuenta' })).toBeEnabled(); });
+  expect(screen.getByRole('button', { name: 'Registrar cuenta' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Editar cuenta' })).toBeDisabled();
+});
+
+it('un 503 sin mensaje y un 409 en inglés se muestran traducidos', async () => {
+  server.use(http.get('*/v3/console/quota-accounts', () => HttpResponse.json({ company_id: 'one', observed_at: '2026-10-11T00:00:00Z', accounts: [account] })),
+    http.get('*/v3/console/quota-environments', emptyEnvironments),
+    http.patch('*/v3/console/quota-accounts/subscription', () => HttpResponse.json({ message: 'quota account version changed or the change is not allowed' }, { status: 409 })));
+  const user = userEvent.setup(); renderWithApi(owner());
+  await waitFor(() => { expect(screen.getByRole('button', { name: 'Editar cuenta' })).toBeEnabled(); });
+  await user.click(screen.getByRole('button', { name: 'Editar cuenta' }));
+  await user.click(within(await screen.findByRole('form', { name: 'Editar cuenta de cuotas' })).getByRole('button', { name: 'Guardar cuenta' }));
+  const alert = await screen.findByRole('alert');
+  expect(alert).toHaveTextContent('Otro cambio llegó antes');
+  expect(alert).not.toHaveTextContent('quota account');
+});
+
+it('si fijar una tarjeta da 409 relee las preferencias y ofrece releerlas', async () => {
+  let version = 4; let reads = 0;
+  server.use(http.get('*/v3/console/quota-accounts', () => HttpResponse.json({ company_id: 'one', observed_at: '2026-10-11T00:00:00Z', accounts: [account] })),
+    http.get('*/v3/console/quota-environments', emptyEnvironments),
+    http.get('*/v3/console/preferences', () => { reads += 1; return HttpResponse.json({ version, pinned_quota_accounts: [] }); }),
+    http.put('*/v3/console/preferences', () => { version = 5; return HttpResponse.json({ message: 'stale' }, { status: 409 }); }));
+  const user = userEvent.setup(); renderWithApi(owner());
+  await waitFor(() => { expect(screen.getByRole('button', { name: 'Fijar cuenta' })).toBeEnabled(); });
+  const before = reads;
+  await user.click(screen.getByRole('button', { name: 'Fijar cuenta' }));
+  expect(await screen.findByRole('button', { name: 'Releer tarjetas fijadas' })).toBeVisible();
+  await waitFor(() => { expect(reads).toBeGreaterThan(before); });
 });

@@ -55,6 +55,20 @@ describe('quota accounts and managed environments with PostgreSQL', () => {
     await expect(deleteQuotaAccount(pool, owner('humanizar'), created.account_id, 1)).rejects.toMatchObject({ code: 'conflict' });
     expect(await deleteQuotaAccount(pool, owner('humanizar'), created.account_id, 2)).toMatchObject({ deleted: true });
   });
+  it('refuses a company administrator any write on quota accounts and keeps reads', async () => {
+    const created = await createQuotaAccount(pool, owner('humanizar'), { provider: 'codex', label: 'Owned', idempotency_key: 'owned' });
+    await admin.query("UPDATE company_admins SET role='admin' WHERE human_id=$1", [actors.miguel]);
+    const manager = (client: import('../src/db.js').DatabaseClient) => lockCompanyAuthority(client, { tenant: 'Miguel', alias: 'janus', humanId: actors.miguel });
+    await expect(createQuotaAccount(pool, manager, { provider: 'codex', label: 'Other', idempotency_key: 'other' })).rejects.toMatchObject({ code: 'forbidden' });
+    await expect(updateQuotaAccount(pool, manager, created.account_id, { expected_version: 1, enabled: false })).rejects.toMatchObject({ code: 'forbidden' });
+    await expect(deleteQuotaAccount(pool, manager, created.account_id, 1)).rejects.toMatchObject({ code: 'forbidden' });
+    expect((await listQuotaAccounts(pool, manager)).accounts.some(row => row.id === created.account_id)).toBe(true);
+  });
+  it('refuses to delete an account that an agent uses as its primary account', async () => {
+    const created = await createQuotaAccount(pool, owner('humanizar'), { provider: 'codex', label: 'Primary', idempotency_key: 'primary' });
+    await admin.query("UPDATE agents SET primary_account_id=$1 WHERE tenant_id='Steven' AND alias='company_admin'", [created.account_id]);
+    await expect(deleteQuotaAccount(pool, owner('humanizar'), created.account_id, 1)).rejects.toMatchObject({ code: 'conflict' });
+  });
   it('queues idempotent typed effects and refuses foreign accounts/hosts and shell input', async () => {
     const repo = repository();
     const input = { account_id: 'humanizar-account', host_id: 'humanizar-host', label: 'Quota fixture', idempotency_key: 'environment-fixture' };

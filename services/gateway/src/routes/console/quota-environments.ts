@@ -5,7 +5,7 @@ import { createQuotaAccount, deleteQuotaAccount, listQuotaAccounts, updateQuotaA
   StoreError, type CompanyAuthoritySource, type DatabasePool, type QuotaEnvironmentOptions } from '@cauce/store';
 import { AuthError, AuthorizationError, type AuthProvider } from '../../auth.js';
 import { consoleHumanAccess } from '../../console-human-authority.js';
-import { replyError } from '../shared.js';
+import { driverErrorCode, replyError } from '../shared.js';
 import { HostCapabilityRegistry } from '../../fleet/host-channel.capabilities.js';
 
 const AccountParams = z.object({ id: QuotaAccountIdSchema }).strict();
@@ -53,6 +53,9 @@ export function registerQuotaEnvironmentRoutes(app: FastifyInstance, provider: A
     } catch (error) {
       if (error instanceof z.ZodError) return reply.code(400).send({ error: 'invalid_request', message: 'invalid quota request' });
       if (error instanceof AuthError || error instanceof AuthorizationError || error instanceof StoreError) { replyError(reply, error); return; }
+      if (['23503', '23505', '23514'].includes(driverErrorCode(error) ?? '')) {
+        return reply.code(409).send({ error: 'conflict', message: 'the change conflicts with existing data' });
+      }
       throw error;
     }
   };
