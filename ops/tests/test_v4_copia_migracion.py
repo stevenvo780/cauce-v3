@@ -302,6 +302,49 @@ class SecurityTests(Scoped):
             self.assertEqual(output.returncode, 0, output.stderr)
             self.assertNotIn(github_token(), output.stdout + output.stderr)
 
+    def test_unlisted_credential_variants_are_excluded(self):
+        write(self.source / 'datos/aws-config.txt',
+              'aws_secret_access_key = wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY\n')
+        write(self.source / 'datos/nota-suelta.txt', 'Bearer abcdefgh12345678ijklmnop\n')
+        write(self.source / 'datos/cabecera-suelta.txt', 'Cookie: sessionid=abcdefgh12345678secretvalue\n')
+        write(self.source / 'datos/nota-es.txt', 'contraseña = miClaveSuperSecreta123\n')
+        write(self.source / 'datos/private-key.txt', 'benigno\n')
+        write(self.source / 'datos/xai-key.txt', 'benigno\n')
+        write(self.source / 'datos' / '\u0430uth.json', 'oculto2')
+        project = self.source / 'proyecto'
+        write(project / 'aws-tracked.txt', 'aws_secret_access_key = wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY\n')
+        git(project, 'add', 'aws-tracked.txt')
+        git(project, 'commit', '-q', '-m', 'aws tracked')
+        manifest = self.make_copy()
+        reasons = {item['path']: item['reason'] for item in manifest['omissions']}
+        for path in ('datos/aws-config.txt', 'datos/nota-suelta.txt', 'datos/cabecera-suelta.txt', 'datos/nota-es.txt'):
+            self.assertEqual(reasons[path], 'sensitive-content', path)
+        self.assertEqual(reasons['datos/private-key.txt'], 'credential')
+        self.assertEqual(reasons['datos/xai-key.txt'], 'credential')
+        self.assertEqual(reasons['datos/\u0430uth.json'], 'auth')
+        repo, = manifest['repositories']
+        self.assertIn('proyecto/aws-tracked.txt', repo['trackedSensitive'])
+        stored = self.copied_bytes()
+        for secret in ('wJalrXUtnFEMI', 'abcdefgh12345678ijklmnop', 'sessionid=abcdefgh', 'miClaveSuperSecreta123', 'oculto2'):
+            self.assertNotIn(secret.encode(), stored, secret)
+
+    def test_git_file_pointing_outside_the_copy_is_not_bundled(self):
+        outside = self.root / 'fuera-repo'
+        git(self.root, 'init', '-q', '-b', 'main', str(outside))
+        write(outside / 'secreto.txt', 'CONTENIDO-DE-FUERA-REPO\n')
+        git(outside, 'add', '-A')
+        git(outside, 'commit', '-q', '-m', 'fuera')
+        linked = self.source / 'proyecto/linked'
+        write(linked / 'local.txt', 'local\n')
+        write(linked / '.git', f'gitdir: {outside}/.git\n')
+        manifest = self.make_copy()
+        self.assertEqual([repo['path'] for repo in manifest['repositories']], ['proyecto'])
+        reasons = {item['path']: item['reason'] for item in manifest['omissions']}
+        self.assertEqual(reasons['proyecto/linked/.git'], 'unsafe-git-link')
+        entries = {entry['path']: entry for entry in manifest['entries']}
+        self.assertEqual(entries['proyecto/linked/local.txt']['source'], 'data')
+        self.assertNotIn(b'CONTENIDO-DE-FUERA-REPO', self.copied_bytes())
+
     def test_finding3_paths_swapped_for_symlinks_mid_copy_are_refused(self):
         original = copia.open_verified
 
