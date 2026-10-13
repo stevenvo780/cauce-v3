@@ -80,6 +80,9 @@ describe('release gates in parallel lanes', () => {
     expect(readdirSync(gates.directory)).not.toContain('lanes');
     expect(receipt.cobertura?.paquetes['console/src']).toEqual({ estado: 'SUBE', base: 94.69, medido: 95.41 });
     expect(receipt.cobertura?.lineas_fusionadas_pct).toBe(94.5);
+    const kept = [1, 2].flatMap(lane => readdirSync(join(gates.directory, 'receipts', only(gates.receipts()), `carril-${String(lane)}-ops-artifacts`)));
+    const inLanes = receipt.comandos.filter(command => command.carril !== 0 && command.cmd.startsWith('pnpm '));
+    expect(kept.sort()).toEqual(inLanes.map(command => `${command.cmd.slice(5).replace(':', '-')}.txt`).sort());
   });
 
   it('after a red gate starts nothing new, lets the running gates finish and writes a red receipt', () => {

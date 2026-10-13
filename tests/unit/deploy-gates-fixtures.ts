@@ -69,6 +69,10 @@ const mark = (event) => env.MOCK_TIMELINE && fs.appendFileSync(env.MOCK_TIMELINE
 fs.appendFileSync(env.MOCK_PNPM_LOG, gate + '\n');
 mark('start');
 if (gate === env.MOCK_DIRTY_GATE) fs.writeFileSync('dirty-by-gate.txt', gate);
+if (gate !== 'install') {
+  fs.mkdirSync('ops/artifacts', { recursive: true });
+  fs.writeFileSync('ops/artifacts/' + gate.replace(':', '-') + '.txt', gate);
+}
 if (gate === 'coverage:ratchet') {
   console.log('  CIFRA FUSIONADA  lineas 97210/102869 = 94.50%   ramas 88.98%');
   console.log('\ntrinquete de cobertura (lineas por paquete, base scripts/cobertura-base.json):');
@@ -104,6 +108,7 @@ export function gatesRepository(directory: string) {
   mkdirSync(join(repository, 'scripts'), { recursive: true });
   mkdirSync(binaries);
   copyFileSync(releaseGatesScript, join(repository, 'scripts/release-gates.sh'));
+  writeFileSync(join(repository, '.gitignore'), 'ops/artifacts/\n');
   for (const name of ['pnpm', 'shellcheck', 'ruff']) writeFileSync(join(binaries, name), fakePnpm, { mode: 0o700 });
   writeFileSync(join(binaries, 'python3'), fakePython, { mode: 0o700 });
   const environment = {

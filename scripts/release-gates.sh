@@ -82,9 +82,12 @@ for index in "${!GATES[@]}"; do NUMBER["pnpm ${GATES[$index]}"]="$(printf '%02d'
 FAILED=""
 
 remove_lanes() {
-  local dir
+  local lane dir
   [ -n "$LANES" ] || return 0
-  for dir in "${LANE_DIRS[@]:1}"; do
+  for lane in "${!LANE_DIRS[@]}"; do
+    [ "$lane" != 0 ] || continue
+    dir="${LANE_DIRS[$lane]}"
+    [ ! -d "$dir/ops/artifacts" ] || cp -a "$dir/ops/artifacts" "$OUT/carril-$lane-ops-artifacts" 2>/dev/null || true
     git -C "$REPO" worktree remove --force "$dir" >/dev/null 2>&1 || rm -rf "$dir"
   done
   rm -rf "$LANES"
