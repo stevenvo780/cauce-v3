@@ -9,7 +9,7 @@ const Identifier = z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/u);
 export const QuotaExecutionSchema = z.object({ operation_id: z.uuid(),
   action: z.enum(['create','authenticate','query','update_cli','delete']), consent: z.boolean(),
   environment: z.object({ id: z.uuid(), company_id: Identifier, account_id: Identifier, host_id: Identifier,
-    provider: z.enum(['claude','codex','grok','gemini']), container_name: z.string().regex(/^cauce-quota-[a-f0-9]{32}$/u) }).strict(),
+    provider: z.enum(['claude','codex','grok']), container_name: z.string().regex(/^cauce-quota-[a-f0-9]{32}$/u) }).strict(),
 }).strict().refine(value => value.action !== 'authenticate' || value.consent);
 const LoginPlan = z.object({ operation_id: z.uuid(), command: LoginCommandSchema, runtime_user: z.literal('node'),
   home: z.literal('/home/node'), cwd: z.literal('/home/node'), env: z.object({ PATH: z.string().max(256) }).strict(),

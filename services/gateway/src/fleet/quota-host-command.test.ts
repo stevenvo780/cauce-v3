@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { QuotaOperationExecution } from '@cauce/store';
-import { performQuotaHostCommand, verifyQuotaAuthenticationHostCommand } from './quota-host-command.js';
+import { performQuotaHostCommand, QuotaExecutionSchema, verifyQuotaAuthenticationHostCommand } from './quota-host-command.js';
 const directories: string[] = [];
 afterEach(async () => { await Promise.all(directories.splice(0).map(path => rm(path, { recursive: true, force: true }))); });
 const execution: QuotaOperationExecution = { operation_id: '21000000-0000-4000-8000-000000000001', action: 'delete', consent: false,
@@ -14,6 +14,9 @@ async function helper(body: string) {
   return { python: '/usr/bin/python3', executable, policyFile: join(directory, 'policy.json'), timeoutMs: 1000 };
 }
 describe('quota effect through the fleet executor command', () => {
+  it('rejects a gemini execution before invoking the host', () => {
+    expect(() => QuotaExecutionSchema.parse({ ...execution, environment: { ...execution.environment, provider: 'gemini' } })).toThrow();
+  });
   it('passes only the typed quota payload through stdin and requires both deletion proofs', async () => {
     const config = await helper("import json,sys\nx=json.load(sys.stdin)\nassert sys.argv[-1]=='--quota'\nassert x['action']=='delete'\nprint(json.dumps({'stopped_verified':True,'profile_removed_verified':True}))");
     expect(await performQuotaHostCommand(config,execution,new AbortController().signal)).toEqual({ stopped_verified: true, profile_removed_verified: true });
