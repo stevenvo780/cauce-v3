@@ -32,7 +32,37 @@ export function measureV4Layout() {
   const fragments = [];
   const scrolls = [];
   const ellipses = [];
+  const occlusions = [];
+  const blockedAtEnd = [];
   const fields = [];
+  const stickyAncestor = element => {
+    for (let ancestor = element; ancestor && ancestor !== root; ancestor = ancestor.parentElement) {
+      if (getComputedStyle(ancestor).position === 'sticky') return ancestor;
+    }
+    return null;
+  };
+  const recordOverlap = (first, second, width, height) => {
+    const a = stickyAncestor(first.element);
+    const b = stickyAncestor(second.element);
+    const detail = { first: describe(first.element, first.text), second: describe(second.element, second.text), width, height };
+    let scroller;
+    for (let ancestor = first.element.parentElement; ancestor; ancestor = ancestor.parentElement) {
+      if (ancestor.contains(second.element) && /auto|scroll/.test(getComputedStyle(ancestor).overflowY)
+        && ancestor.scrollHeight > ancestor.clientHeight + 2) { scroller = ancestor; break; }
+    }
+    const sticky = a ?? b;
+    if (!!a !== !!b && scroller && getComputedStyle(sticky).backgroundColor !== 'rgba(0, 0, 0, 0)') {
+      occlusions.push(detail);
+      if (getComputedStyle(sticky).bottom !== 'auto' && scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 2) blockedAtEnd.push(detail);
+    } else overlaps.push(detail);
+  };
+  const redundantAgentHeading = ancestor => {
+    if (!ancestor.matches('h2') || !ancestor.closest('section[aria-label^="Perfil y contexto de "]')) return false;
+    const subtitle = ancestor.nextElementSibling;
+    const alias = ancestor.textContent.replace('Perfil y contexto de ', '').trim();
+    if (!subtitle?.matches('p') || !subtitle.textContent.trim().endsWith(` / ${alias}`)) return false;
+    return subtitle.scrollWidth <= subtitle.clientWidth + 2 && visible(subtitle);
+  };
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
   while (walker.nextNode()) {
     const node = walker.currentNode;
@@ -44,22 +74,24 @@ export function measureV4Layout() {
       if (rect.width < 1 || rect.height < 1) continue;
       const painted = paintedBox(element, rect);
       if (painted.right > painted.left && painted.bottom > painted.top) fragments.push({ element, node, rect: painted, ...describe(element, node.textContent) });
-      let scrollX = false;
-      let scrollY = false;
+      const scrollersX = [];
+      const scrollersY = [];
       for (let ancestor = element; ancestor; ancestor = ancestor.parentElement) {
         const style = getComputedStyle(ancestor);
         const box = ancestor.getBoundingClientRect();
         const outX = rect.left < box.left - 2 || rect.right > box.right + 2;
         const outY = rect.top < box.top - 2 || rect.bottom > box.bottom + 2;
-        if ((outX && !scrollX && /hidden|clip/.test(style.overflowX))
-          || (outY && !scrollY && /hidden|clip/.test(style.overflowY))) {
+        const reachableX = scrollersX.some(scroll => scroll.left < box.right && scroll.right > box.left);
+        const reachableY = scrollersY.some(scroll => scroll.top < box.bottom && scroll.bottom > box.top);
+        if ((outX && !reachableX && /hidden|clip/.test(style.overflowX))
+          || (outY && !reachableY && /hidden|clip/.test(style.overflowY))) {
           const detail = { ...describe(element, node.textContent), ancestor: identify(ancestor) };
-          if (style.textOverflow === 'ellipsis' && (ancestor.title || ancestor.getAttribute('aria-label'))) ellipses.push(detail);
+          if (style.textOverflow === 'ellipsis' && (ancestor.title || ancestor.getAttribute('aria-label') || redundantAgentHeading(ancestor))) ellipses.push(detail);
           else clipped.push(detail);
           break;
         }
-        scrollX ||= /auto|scroll/.test(style.overflowX);
-        scrollY ||= /auto|scroll/.test(style.overflowY);
+        if (/auto|scroll/.test(style.overflowX)) scrollersX.push(box);
+        if (/auto|scroll/.test(style.overflowY)) scrollersY.push(box);
       }
     }
   }
@@ -71,21 +103,44 @@ export function measureV4Layout() {
       if (a.node === b.node) continue;
       const width = Math.min(a.rect.right, b.rect.right) - Math.max(a.rect.left, b.rect.left);
       const height = Math.min(a.rect.bottom, b.rect.bottom) - Math.max(a.rect.top, b.rect.top);
-      if (width > 2 && height > 2) overlaps.push({ first: describe(a.element, a.text), second: describe(b.element, b.text), width, height });
+      if (width > 2 && height > 2) recordOverlap(a, b, width, height);
     }
   }
   const controls = [...root.querySelectorAll('input:not([type="hidden"]), select, textarea, button, a[href]')].filter(visible);
   for (const control of controls) {
     const box = paintedBox(control, control.getBoundingClientRect());
     for (const fragment of fragments) {
-      if (control.contains(fragment.element) || fragment.element.contains(control)) continue;
+      if (control.contains(fragment.element)) continue;
       const width = Math.min(box.right, fragment.rect.right) - Math.max(box.left, fragment.rect.left);
       const height = Math.min(box.bottom, fragment.rect.bottom) - Math.max(box.top, fragment.rect.top);
-      if (width > 2 && height > 2) overlaps.push({ first: describe(control, control.getAttribute('aria-label') ?? control.textContent),
-        second: describe(fragment.element, fragment.text), width, height });
+      if (width > 2 && height > 2) recordOverlap({ element: control, text: control.getAttribute('aria-label') ?? control.textContent }, fragment, width, height);
     }
     if (control.matches('input, textarea, select') && control.scrollWidth > control.clientWidth + 2) {
       fields.push({ selector: identify(control), hiddenWidth: control.scrollWidth - control.clientWidth, keyboard: !control.disabled });
+    }
+  }
+  for (let i = 0; i < controls.length; i += 1) for (let j = i + 1; j < controls.length; j += 1) {
+    const a = controls[i];
+    const b = controls[j];
+    if (a.contains(b) || b.contains(a)) continue;
+    const first = paintedBox(a, a.getBoundingClientRect());
+    const second = paintedBox(b, b.getBoundingClientRect());
+    const width = Math.min(first.right, second.right) - Math.max(first.left, second.left);
+    const height = Math.min(first.bottom, second.bottom) - Math.max(first.top, second.top);
+    if (width > 2 && height > 2) recordOverlap({ element: a, text: a.getAttribute('aria-label') ?? a.textContent },
+      { element: b, text: b.getAttribute('aria-label') ?? b.textContent }, width, height);
+  }
+  for (const sticky of [...root.querySelectorAll('*')].filter(visible)) {
+    const style = getComputedStyle(sticky);
+    if (style.position !== 'sticky' || style.backgroundColor === 'rgba(0, 0, 0, 0)') continue;
+    const box = paintedBox(sticky, sticky.getBoundingClientRect());
+    const targets = [...fragments, ...controls.map(element => ({ element, text: element.getAttribute('aria-label') ?? element.textContent,
+      rect: paintedBox(element, element.getBoundingClientRect()) }))];
+    for (const target of targets) {
+      if (sticky.contains(target.element)) continue;
+      const width = Math.min(box.right, target.rect.right) - Math.max(box.left, target.rect.left);
+      const height = Math.min(box.bottom, target.rect.bottom) - Math.max(box.top, target.rect.top);
+      if (width > 2 && height > 2) recordOverlap({ element: sticky, text: 'Sticky controls' }, target, width, height);
     }
   }
   for (const element of [root, ...root.querySelectorAll('*')].filter(visible)) {
@@ -100,7 +155,7 @@ export function measureV4Layout() {
   const unique = values => [...new Map(values.map(value => [JSON.stringify(value), value])).values()];
   return {
     overflow: Math.max(0, document.documentElement.scrollWidth - window.innerWidth, document.body.scrollWidth - window.innerWidth),
-    clipped: unique(clipped), overlaps: unique(overlaps), scrolls, ellipses: unique(ellipses), fields,
+    clipped: unique(clipped), overlaps: unique(overlaps), occlusions: unique(occlusions), blockedAtEnd: unique(blockedAtEnd), scrolls, ellipses: unique(ellipses), fields,
     theme: getComputedStyle(document.documentElement).colorScheme,
     contentHeight: Math.round(root.scrollHeight), textFragments: fragments.length, controls: controls.length,
   };
@@ -111,7 +166,9 @@ export function absoluteFailures(metrics, theme) {
   if (metrics.overflow > 0) failures.push(`Horizontal overflow: ${metrics.overflow}px`);
   if (metrics.clipped.length) failures.push(`Clipped text: ${metrics.clipped.length}`);
   if (metrics.overlaps.length) failures.push(`Content overlaps: ${metrics.overlaps.length}`);
+  if (metrics.blockedAtEnd?.length) failures.push(`Content unreachable under sticky controls at scroll end: ${metrics.blockedAtEnd.length}`);
   if (metrics.scrolls.some(scroll => scroll.hiddenWidth > 2 && !scroll.keyboard)) failures.push('Horizontal scroller without keyboard access');
+  if (metrics.fields.some(field => field.hiddenWidth > 2 && !field.keyboard)) failures.push('Clipped field without keyboard access');
   if (metrics.theme !== theme) failures.push(`Expected ${theme} theme, received ${metrics.theme}`);
   if (!metrics.textFragments) failures.push('No visible text was measured');
   return failures;

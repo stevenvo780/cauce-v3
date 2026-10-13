@@ -78,3 +78,51 @@ test('offscreen scroll content does not overlap adjacent controls', async () => 
   const metrics = await measure('<div style="height:30px;overflow:auto"><div style="height:300px"><p>Scrollable description</p><p>Offscreen text</p></div></div><input aria-label="Adjacent field">');
   assert.deepEqual(absoluteFailures(metrics, 'light'), []);
 });
+
+test('detects a control covering text in its own label', async () => {
+  const metrics = await measure('<label style="position:relative">Name<input style="position:absolute;left:0;top:0"></label>');
+  assert.ok(metrics.overlaps.length > 0);
+});
+
+test('detects overlapping controls without labels', async () => {
+  const metrics = await measure('<h1>Controls</h1><div style="position:relative"><input style="position:absolute;left:0;top:0"><input style="position:absolute;left:0;top:0"></div>');
+  assert.ok(metrics.overlaps.length > 0);
+});
+
+test('rejects disabled field clipping', () => {
+  const metrics = { overflow: 0, clipped: [], overlaps: [], scrolls: [], theme: 'light', textFragments: 1,
+    fields: [{ hiddenWidth: 20, keyboard: false }] };
+  assert.match(absoluteFailures(metrics, 'light').join(), /Clipped field/);
+});
+
+test('a scroller fully outside its clipping parent is not reachable', async () => {
+  const metrics = await measure('<h1>Heading</h1><div style="height:30px;overflow:hidden"><div style="height:30px;margin-top:50px;overflow:auto"><p>Inaccessible text</p></div></div>');
+  assert.ok(metrics.clipped.length > 0);
+});
+
+test('redundant agent heading ellipsis retains its complete visible identity', async () => {
+  const metrics = await measure('<section aria-label="Perfil y contexto de jarvis"><h2 style="width:150px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Perfil y contexto de jarvis</h2><p>Steven / jarvis</p></section>');
+  assert.equal(metrics.clipped.length, 0);
+  assert.ok(metrics.ellipses.length > 0);
+});
+
+test('agent heading ellipsis fails when its identity is also clipped', async () => {
+  const metrics = await measure('<section aria-label="Perfil y contexto de jarvis"><h2 style="width:150px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Perfil y contexto de jarvis</h2><p style="width:30px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Steven / jarvis</p></section>');
+  assert.ok(metrics.clipped.length > 0);
+});
+
+test('a sticky control without a shared scroll container cannot hide an overlap', async () => {
+  const metrics = await measure('<div style="position:relative"><p style="position:absolute;top:0">Text</p><button style="position:sticky;top:0;background:white">Sticky control</button></div>');
+  assert.ok(metrics.overlaps.length > 0);
+});
+
+test('records opaque sticky chrome over reachable scroll content separately', async () => {
+  const metrics = await measure('<div style="height:100px;overflow:auto"><p style="margin:0;height:400px;padding-top:70px;box-sizing:border-box">Scrollable text</p><footer style="position:sticky;bottom:0;height:50px;background:white"><button>Action</button></footer></div>');
+  assert.ok(metrics.occlusions.length > 0);
+  assert.deepEqual(absoluteFailures(metrics, 'light'), []);
+});
+
+test('rejects content still covered by a sticky footer at scroll end', async () => {
+  const metrics = await measure('<h1>Heading</h1><div id="scroll" style="height:100px;overflow:auto"><div style="height:400px;position:relative"><span style="position:absolute;bottom:5px">Last row</span></div><footer style="position:sticky;bottom:0;height:50px;margin-top:-50px;background:white"><button>Action</button></footer></div><script>document.querySelector("#scroll").scrollTop=1000</script>');
+  assert.match(absoluteFailures(metrics, 'light').join(), /unreachable under sticky/);
+});

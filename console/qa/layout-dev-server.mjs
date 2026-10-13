@@ -100,10 +100,10 @@ function waitUntilReady(child, port, output) {
   });
 }
 
-async function startAtPort(root, viteEntry, port) {
+async function startAtPort(root, viteEntry, port, useMocks) {
   const child = spawn(process.execPath, [viteEntry, '--host', LOOPBACK, '--port', String(port), '--strictPort'], {
     cwd: root,
-    env: { ...process.env, VITE_USE_MOCKS: 'true' },
+    env: { ...process.env, VITE_USE_MOCKS: String(useMocks) },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   const output = outputBuffer(child);
@@ -128,11 +128,11 @@ async function startAtPort(root, viteEntry, port) {
   }
 }
 
-export async function startLayoutDevServer({ root, viteEntry }) {
+export async function startLayoutDevServer({ root, viteEntry, useMocks = true }) {
   for (let attempt = 0; attempt < PORT_ATTEMPTS; attempt += 1) {
     const port = await reservePort();
     try {
-      return await startAtPort(root, viteEntry, port);
+      return await startAtPort(root, viteEntry, port, useMocks);
     } catch (error) {
       if (attempt + 1 === PORT_ATTEMPTS || !String(error).includes(`Port ${String(port)} is already in use`)) {
         throw error;
