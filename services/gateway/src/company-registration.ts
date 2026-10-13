@@ -28,7 +28,7 @@ const MAX_TRACKED_IPS = 10_000;
 const HOUR_MS = 60 * 60_000;
 
 /** Registrations per hour across every client address; 0 closes public registration. */
-export function configuredHourlyRegistrations(value = process.env.CAUCE_REGISTRATION_HOURLY_LIMIT ?? '20'): number {
+export function configuredHourlyRegistrations(value = process.env.CAUCE_REGISTRATION_HOURLY_LIMIT ?? '1000'): number {
   if (!/^(?:0|[1-9][0-9]{0,5})$/u.test(value.trim())) {
     throw new Error('CAUCE_REGISTRATION_HOURLY_LIMIT must be an integer between 0 and 999999');
   }
@@ -60,17 +60,16 @@ export async function registerCompanyWithOwner(pool: DatabasePool, input: Compan
 
 export function registerCompanyRegistrationRoute(app: FastifyInstance, pool: DatabasePool,
   hourlyRegistrations = configuredHourlyRegistrations(), reserved = configuredReservedCompanySlugs()): void {
-  const attempts = new Map<string, { count: number; until: number }>();
+  const attempts = new LoginThrottle(MAX_ATTEMPTS, WINDOW_MS, MAX_TRACKED_IPS);
   const emailAttempts = new LoginThrottle(MAX_ATTEMPTS, WINDOW_MS);
   let hour = { count: 0, until: 0 };
   app.post('/v3/auth/register', { bodyLimit: 8192 }, async (request, reply) => {
     reply.header('Cache-Control', 'no-store');
     const now = Date.now();
     const key = rateLimitKey(request.ip);
-    for (const [ip, entry] of attempts) if (entry.until <= now) attempts.delete(ip);
-    const current = attempts.get(key) ?? { count: 0, until: now + WINDOW_MS };
-    if (current.count >= MAX_ATTEMPTS || (attempts.size >= MAX_TRACKED_IPS && !attempts.has(key))) return limited(reply, current.until - now);
-    current.count += 1; attempts.set(key, current);
+    const addressRetryMs = attempts.retryAfterMs(key, now);
+    if (addressRetryMs > 0) return limited(reply, addressRetryMs);
+    attempts.recordFailure(key, now);
     const input = CompanyRegistrationSchema.safeParse(request.body);
     if (!input.success) return reply.code(400).send(INVALID_REGISTRATION);
     const emailRetryMs = emailAttempts.retryAfterMs(input.data.email, now);
@@ -80,7 +79,9 @@ export function registerCompanyRegistrationRoute(app: FastifyInstance, pool: Dat
     if (reserved.has(input.data.company.slug)) return reply.code(409).send(REGISTRATION_IN_USE);
     if (hour.until <= now) hour = { count: 0, until: now + HOUR_MS };
     if (hour.count >= hourlyRegistrations) return limited(reply, hour.until - now);
-    hour.count += 1;
+    const admittedHour = hour;
+    admittedHour.count += 1;
     await registerCompanyWithOwner(pool, input.data, reply);
+    if (reply.statusCode === 429) admittedHour.count -= 1;
   });
 }

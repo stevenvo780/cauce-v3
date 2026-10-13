@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DatabasePool } from '@cauce/store';
 import { buildGateway } from './app.js';
 import { configuredHourlyRegistrations } from './company-registration.js';
-import { PasswordAuthProvider } from './password-auth.js';
+import { PasswordAuthProvider, passwordWork } from './password-auth.js';
 import { MemoryConsoleUserStore } from './test-support/console-users.js';
 import { fakePool, fakeRepository, noDeliveryWakes } from './test-support/gateway-doubles.js';
 
@@ -86,8 +86,8 @@ describe('public company registration', () => {
     gateway = await buildGateway({ pool: database.pool, repository: fakeRepository(), deliveryWakeSubscriber: noDeliveryWakes,
       authProvider: new PasswordAuthProvider({ users: new MemoryConsoleUserStore(), signingKey: Buffer.alloc(32, 7) }) });
     const app = gateway;
-    const register = (email: string, slug: string) => app.inject({ method: 'POST', url: '/v3/auth/register',
-      remoteAddress: `198.51.100.${String(++address % 250)}`, headers: { origin: 'http://localhost' },
+    const register = (email: string, slug: string, remoteAddress = `198.51.100.${String(++address % 250)}`) => app.inject({ method: 'POST', url: '/v3/auth/register',
+      remoteAddress, headers: { origin: 'http://localhost' },
       payload: { email, name: 'Dueña', password: 'contraseña-larga-1', company: { name: 'Empresa', slug } } });
     return { register, hashes: database.hashes };
   }
@@ -101,6 +101,45 @@ describe('public company registration', () => {
     expect(limited.statusCode).toBe(429);
     expect(limited.json()).toEqual({ error: 'too_many_requests', message: 'Demasiados registros. Intenta más tarde.' });
     expect(Number(limited.headers['retry-after'])).toBeGreaterThan(3_500);
+  });
+
+  it('rejects a concurrent burst by IP before spending another clients global budget', async () => {
+    const { register } = await open({ CAUCE_REGISTRATION_HOURLY_LIMIT: '6' });
+    const flood = await Promise.all(Array.from({ length: 10 }, (_, index) =>
+      register(`burst-${String(index)}@example.test`, `burst-${String(index)}`, '203.0.113.7')));
+    expect(flood.filter(response => response.statusCode === 201)).toHaveLength(5);
+    const refused = flood.filter(response => response.statusCode === 429);
+    expect(refused).toHaveLength(5);
+    for (const response of refused) expect(Number(response.headers['retry-after'])).toBeGreaterThan(0);
+    expect((await register('independent@example.test', 'independent')).statusCode).toBe(201);
+  });
+
+  it('limits concurrent email attempts across IPs before the global budget', async () => {
+    const { register } = await open({ CAUCE_REGISTRATION_HOURLY_LIMIT: '6' });
+    const flood = await Promise.all(Array.from({ length: 10 }, (_, index) =>
+      register('burst@example.test', `burst-${String(index)}`)));
+    expect(flood.filter(response => response.statusCode === 201)).toHaveLength(1);
+    expect(flood.filter(response => response.statusCode === 409)).toHaveLength(4);
+    const refused = flood.filter(response => response.statusCode === 429);
+    expect(refused).toHaveLength(5);
+    for (const response of refused) expect(Number(response.headers['retry-after'])).toBeGreaterThan(0);
+    expect((await register('independent@example.test', 'independent')).statusCode).toBe(201);
+  });
+
+  it('returns the hourly reservation when no password work can be admitted', async () => {
+    const { register, hashes } = await open({ CAUCE_REGISTRATION_HOURLY_LIMIT: '2' });
+    let release = () => {};
+    const held = new Promise<void>(resolve => { release = resolve; });
+    const occupied = Array.from({ length: 17 }, () => passwordWork.run(() => held));
+    try {
+      for (let index = 0; index < 3; index++) {
+        const response = await register(`saturated-${String(index)}@example.test`, `saturated-${String(index)}`);
+        expect(response.statusCode).toBe(429);
+        expect(response.headers['retry-after']).toBe('5');
+      }
+      expect(hashes).toEqual([]);
+    } finally { release(); await Promise.all(occupied); }
+    expect((await register('independent@example.test', 'independent')).statusCode).toBe(201);
   });
 
   it('answers a taken email and a taken slug with one body after the same derivation', async () => {
@@ -152,6 +191,9 @@ describe('public company registration', () => {
   });
 
   it('reads the hourly cap from configuration and fails closed on a malformed value', () => {
+    vi.stubEnv('CAUCE_REGISTRATION_HOURLY_LIMIT', undefined);
+    expect(configuredHourlyRegistrations()).toBe(1000);
+    vi.unstubAllEnvs();
     expect(configuredHourlyRegistrations('0')).toBe(0);
     expect(configuredHourlyRegistrations(' 30 ')).toBe(30);
     for (const value of ['', '-1', '1.5', 'veinte', '1000000']) expect(() => configuredHourlyRegistrations(value)).toThrow(/CAUCE_REGISTRATION_HOURLY_LIMIT/u);

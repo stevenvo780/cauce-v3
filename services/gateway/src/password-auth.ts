@@ -128,6 +128,7 @@ export function verifyConsoleSession(key: Buffer, token: string, nowMs: number):
  */
 export class LoginThrottle {
   private readonly failures = new Map<string, { count: number; blockedUntil: number; seenAt: number }>();
+  private readonly pending = new Map<string, number>();
 
   constructor(
     private readonly maxFailures = 8,
@@ -138,35 +139,52 @@ export class LoginThrottle {
   /** Milliseconds until another attempt is allowed, or 0 if an attempt can be made now. */
   retryAfterMs(key: string, now: number): number {
     const record = this.failures.get(key);
-    if (!record) return 0;
-    if (record.blockedUntil <= now) return 0;
-    return record.blockedUntil - now;
+    const pending = this.pending.get(key) ?? 0;
+    if (!record) return pending >= this.maxFailures ? 1_000 : 0;
+    this.failures.delete(key);
+    this.failures.set(key, record);
+    if (record.blockedUntil > now) return record.blockedUntil - now;
+    const failures = now - record.seenAt >= this.windowMs ? 0 : record.count;
+    return failures + pending >= this.maxFailures ? 1_000 : 0;
   }
 
   recordFailure(key: string, now: number): void {
-    this.prune(now);
-    const record = this.failures.get(key);
-    if (!record || now - record.seenAt > this.windowMs) {
-      this.failures.set(key, { count: 1, blockedUntil: 0, seenAt: now });
-      return;
-    }
+    const record = this.track(key, now);
     record.count += 1;
-    record.seenAt = now;
     if (record.count >= this.maxFailures) record.blockedUntil = now + this.windowMs;
+  }
+
+  reserve(key: string): () => void {
+    this.pending.set(key, (this.pending.get(key) ?? 0) + 1);
+    return () => {
+      const remaining = (this.pending.get(key) ?? 1) - 1;
+      if (remaining === 0) this.pending.delete(key);
+      else this.pending.set(key, remaining);
+    };
   }
 
   recordSuccess(key: string): void {
     this.failures.delete(key);
   }
 
-  private prune(now: number): void {
-    if (this.failures.size < this.maxTracked) return;
-    for (const [key, record] of this.failures) {
-      if (record.blockedUntil <= now && now - record.seenAt > this.windowMs) this.failures.delete(key);
+  private track(key: string, now: number) {
+    let record = this.failures.get(key);
+    if (!record) {
+      this.prune();
+      record = { count: 0, blockedUntil: 0, seenAt: now };
+    } else if (now - record.seenAt >= this.windowMs) {
+      record.count = 0; record.blockedUntil = 0;
     }
-    // If it is still full after that, the whole map is cleared: we prefer losing counters to
-    // growing without a ceiling. An attacker can force this, but it costs 10,000 verifications.
-    if (this.failures.size >= this.maxTracked) this.failures.clear();
+    record.seenAt = now;
+    this.failures.delete(key);
+    this.failures.set(key, record);
+    return record;
+  }
+
+  private prune(): void {
+    if (this.failures.size < this.maxTracked) return;
+    const oldest = this.failures.keys().next().value;
+    if (oldest !== undefined) this.failures.delete(oldest);
   }
 }
 
@@ -176,24 +194,44 @@ export class PasswordWorkSaturated extends Error {
 
 /**
  * Each scrypt derivation holds ~33 MB and a libuv thread (four by default, shared with file and DNS work) for ~100 ms,
- * so password derivations share this one gate per process, and work beyond the queue is refused instead of piling up.
+ * so derivations share a process gate. Background work cannot occupy the reserved login slot or queue.
  */
 export class PasswordWorkGate {
   private running = 0;
-  private readonly waiting: (() => void)[] = [];
+  private runningBackground = 0;
+  private readonly logins: (() => void)[] = [];
+  private readonly background: (() => void)[] = [];
 
   constructor(private readonly concurrency = 2, private readonly maxWaiting = 16) {}
 
-  async run<T>(work: () => Promise<T>): Promise<T> {
-    if (this.running < this.concurrency) this.running += 1;
-    else if (this.waiting.length >= this.maxWaiting) throw new PasswordWorkSaturated();
-    else await new Promise<void>(resolve => { this.waiting.push(resolve); });
+  async run<T>(work: () => Promise<T>, kind: 'login' | 'background' = 'background'): Promise<T> {
+    const waiting = kind === 'login' ? this.logins : this.background;
+    if (this.running < this.concurrency && (kind === 'login' || this.backgroundAvailable())) this.start(kind);
+    else if (waiting.length >= this.maxWaiting) throw new PasswordWorkSaturated();
+    else await new Promise<void>(resolve => { waiting.push(resolve); });
     try {
       return await work();
     } finally {
-      const next = this.waiting.shift();
-      if (next === undefined) this.running -= 1;
-      else next();
+      this.running -= 1;
+      if (kind === 'background') this.runningBackground -= 1;
+      this.drain();
+    }
+  }
+
+  private backgroundAvailable(): boolean { return this.runningBackground < Math.max(1, this.concurrency - 1); }
+
+  private start(kind: 'login' | 'background'): void {
+    this.running += 1;
+    if (kind === 'background') this.runningBackground += 1;
+  }
+
+  private drain(): void {
+    while (this.running < this.concurrency) {
+      const login = this.logins.shift();
+      const next = login ?? (this.backgroundAvailable() ? this.background.shift() : undefined);
+      if (!next) return;
+      this.start(login ? 'login' : 'background');
+      next();
     }
   }
 }
@@ -521,20 +559,26 @@ export class PasswordAuthProvider implements AuthProvider {
         .send({ error: 'too_many_requests', message: 'Demasiados intentos fallidos. Probá de nuevo más tarde.' });
       return;
     }
-    const user = await this.users.findByEmail(email);
-    const hash = user?.password_hash ?? await DECOY_PASSWORD_HASH_PROMISE;
+    const releaseEmail = this.throttle.reserve(throttleKey);
+    const releaseAddress = this.addressThrottle.reserve(addressKey);
+    let user: ConsoleUser | undefined;
     let verified: boolean;
     try {
-      verified = await passwordWork.run(() => verifyPassword(hash, password));
+      user = await this.users.findByEmail(email);
+      const hash = user?.password_hash ?? await DECOY_PASSWORD_HASH_PROMISE;
+      verified = await passwordWork.run(() => verifyPassword(hash, password), 'login');
     } catch (error) {
       if (!(error instanceof PasswordWorkSaturated)) throw error;
       await reply.header('Retry-After', '5').code(429)
         .send({ error: 'too_many_requests', message: 'Hay demasiados inicios de sesión en curso. Probá de nuevo en unos segundos.' });
       return;
+    } finally {
+      releaseEmail(); releaseAddress();
     }
     if (!user || !verified || !user.active) {
-      this.throttle.recordFailure(throttleKey, now);
-      this.addressThrottle.recordFailure(addressKey, now);
+      const failedAt = this.now();
+      this.throttle.recordFailure(throttleKey, failedAt);
+      this.addressThrottle.recordFailure(addressKey, failedAt);
       await reply
         .header('Cache-Control', 'no-store')
         .code(401)
