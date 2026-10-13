@@ -506,3 +506,49 @@ it('un alta abierta se bloquea si la relectura de cuentas falla y conserva el bo
   expect(screen.queryByRole('form', { name: 'Registrar cuenta de cuotas' })).not.toBeInTheDocument();
   expect(writes).toEqual([]);
 });
+
+it('el alta conserva el borrador y no usa la oferta anterior al fallar o reintentar la lectura de entornos', async () => {
+  let state: 'ready' | 'failed' | 'pending' = 'ready';
+  let resolveRetry: ((response: Response) => void) | undefined;
+  const writes: unknown[] = [];
+  const offer = (provider: string) => HttpResponse.json({ company_id: 'one', environments: [], operations: [],
+    capabilities: { available: true, providers: [provider], hosts: [], actions: ['create'] } });
+  const detail = 'El ordenador de cuotas está fuera de la empresa activa.';
+  server.use(
+    http.get('*/v3/console/quota-accounts', () => HttpResponse.json({ company_id: 'one', observed_at: '2026-10-11T00:00:00Z', accounts: [] })),
+    http.get('*/v3/console/quota-environments', () => state === 'ready' ? offer('grok')
+      : state === 'failed' ? HttpResponse.json({ error: 'forbidden', message: detail }, { status: 403 })
+        : new Promise(resolve => { resolveRetry = resolve; })),
+    http.get('*/v3/console/preferences', () => HttpResponse.json({ version: 1, pinned_quota_accounts: [] })),
+    http.post('*/v3/console/quota-accounts', async ({ request }) => { writes.push(await request.json()); return HttpResponse.json({ account_id: 'new-account', duplicate: false }); }),
+  );
+  const user = userEvent.setup(); renderWithApi(owner());
+  await user.click(await screen.findByRole('button', { name: 'Registrar cuenta' }));
+  const element = await screen.findByRole('form', { name: 'Registrar cuenta de cuotas' });
+  const form = within(element);
+  const name = form.getByRole('textbox', { name: 'Nombre de la cuenta' });
+  const submit = form.getByRole('button', { name: 'Registrar cuenta' });
+  const refresh = screen.getByRole('button', { name: 'Actualizar cuotas y entornos' });
+  await waitFor(() => { expect(form.getByRole('combobox', { name: 'Proveedor' })).toHaveValue('grok'); });
+  await user.type(name, 'Borrador con oferta pendiente');
+  expect(submit).toBeEnabled();
+  state = 'failed'; await user.click(refresh);
+  expect(await screen.findByRole('alert')).toHaveTextContent(detail);
+  expect(submit).toBeDisabled();
+  await act(async () => { fireEvent.submit(element); });
+  expect(writes).toEqual([]);
+  expect(name).toHaveValue('Borrador con oferta pendiente');
+  state = 'pending'; await user.click(refresh);
+  await waitFor(() => { expect(resolveRetry).toBeTypeOf('function'); });
+  expect(submit).toBeDisabled();
+  await act(async () => { fireEvent.submit(element); });
+  expect(writes).toEqual([]);
+  act(() => { resolveRetry?.(offer('claude')); });
+  state = 'ready';
+  await waitFor(() => { expect(form.getByRole('combobox', { name: 'Proveedor' })).toHaveValue('claude'); });
+  expect(submit).toBeEnabled();
+  expect(name).toHaveValue('Borrador con oferta pendiente');
+  await user.click(submit);
+  await screen.findByText('Cuenta registrada. Crea su entorno para autenticar y consultar.');
+  expect(writes).toEqual([expect.objectContaining({ provider: 'claude', label: 'Borrador con oferta pendiente' })]);
+});

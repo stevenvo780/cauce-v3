@@ -30,6 +30,7 @@ export function MyQuotasPage() {
   const ready = !!accounts.data && !accounts.error && !busy;
   const canWrite = canManageCompany(authority?.role) && ready;
   const canWriteAccounts = canManageQuotaAccounts(authority?.role) && ready;
+  const canRegisterAccounts = canWriteAccounts && !environments.loading && !environments.error;
   const reloadAccounts = accounts.reload;
   const reloadEnvironments = environments.reload;
   const reload = useCallback(async () => {
@@ -78,8 +79,8 @@ export function MyQuotasPage() {
     {notice ? <Notice tone="ok" role="status">{notice}</Notice> : null}
     <div className="flex flex-wrap gap-2"><Button aria-pressed={filterPinned} disabled={!preferences.data || !!preferences.error} onClick={() => { setFilterPinned(!filterPinned); }}>{filterPinned ? 'Ver todas las cuentas' : 'Ver sólo cuentas fijadas'}</Button>
       <Button variant="primary" disabled={!canWriteAccounts} onClick={() => { setCreating(true); }}>Registrar cuenta</Button></div>
-    {creating ? <QuotaAccountForm providers={executableProviders} busy={busy} canWrite={canWriteAccounts} cancel={() => { setCreating(false); }}
-      save={input => canWriteAccounts ? write(() => api.createQuotaAccount({ provider: input.provider, label: input.label, idempotency_key: input.idempotency_key }), 'Cuenta registrada. Crea su entorno para autenticar y consultar.') : Promise.resolve()} /> : null}
+    {creating ? <QuotaAccountForm providers={executableProviders} busy={busy} canWrite={canRegisterAccounts} cancel={() => { setCreating(false); }}
+      save={input => canRegisterAccounts ? write(() => api.createQuotaAccount({ provider: input.provider, label: input.label, idempotency_key: input.idempotency_key }), 'Cuenta registrada. Crea su entorno para autenticar y consultar.') : Promise.resolve()} /> : null}
     {editing ? <QuotaAccountForm key={editing.id} account={editing} providers={executableProviders} busy={busy} canWrite={canWriteAccounts} cancel={() => { setEditing(undefined); }}
       save={input => canWriteAccounts ? write(() => api.updateQuotaAccount(editing.id, { expected_version: editing.version, label: input.label, enabled: input.enabled,
         ...input.pause }), 'Cuenta actualizada.') : Promise.resolve()} /> : null}
