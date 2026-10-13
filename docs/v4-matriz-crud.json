@@ -11,7 +11,7 @@
     },
     {
       "id": "agent_runtime_lifecycle_browser",
-      "reason": "El CRUD del registro no acredita creación, actualización ni retirada física del runtime con respuesta correlacionada."
+      "reason": "El setup Docker real alcanza executor_ready sin super-admin, pero create devuelve HTTP 500: fleet-operation-human.ts consulta human_tenant_memberships.role, eliminada por 081_membresia_rol_derivado.sql. El arreglo pertenece a packages/store/src/repository/fleet-operation-human.ts, fuera del alcance de t21. No se acredita el ciclo Chromium de creación, actualización, contexto con ACK, retirada y purga."
     },
     {
       "id": "quota_environment_execution_browser",
@@ -999,7 +999,7 @@
       "operations": {
         "C": {
           "status": "pending",
-          "reason": "El CRUD del registro no acredita creación, actualización ni retirada física del runtime con respuesta correlacionada.",
+          "reason": "El setup Docker real alcanza executor_ready sin super-admin, pero create devuelve HTTP 500: fleet-operation-human.ts consulta human_tenant_memberships.role, eliminada por 081_membresia_rol_derivado.sql. El arreglo pertenece a packages/store/src/repository/fleet-operation-human.ts, fuera del alcance de t21. No se acredita el ciclo Chromium de creación, actualización, contexto con ACK, retirada y purga.",
           "pending_id": "agent_runtime_lifecycle_browser",
           "api": [
             {
@@ -1018,12 +1018,16 @@
             {
               "file": "console/src/features/config/AgentLifecyclePanel.test.tsx",
               "name": "prepares an agent without an active runtime and binds exact memberships to an accepted operation"
+            },
+            {
+              "file": "services/gateway/src/fleet/host-setup.e2e-docker.test.ts",
+              "name": "enrolls with the console invitation, installs the user service and reports executor_ready"
             }
           ]
         },
         "R": {
           "status": "pending",
-          "reason": "El CRUD del registro no acredita creación, actualización ni retirada física del runtime con respuesta correlacionada.",
+          "reason": "El setup Docker real alcanza executor_ready sin super-admin, pero create devuelve HTTP 500: fleet-operation-human.ts consulta human_tenant_memberships.role, eliminada por 081_membresia_rol_derivado.sql. El arreglo pertenece a packages/store/src/repository/fleet-operation-human.ts, fuera del alcance de t21. No se acredita el ciclo Chromium de creación, actualización, contexto con ACK, retirada y purga.",
           "pending_id": "agent_runtime_lifecycle_browser",
           "api": [
             {
@@ -1047,7 +1051,7 @@
         },
         "U": {
           "status": "pending",
-          "reason": "El CRUD del registro no acredita creación, actualización ni retirada física del runtime con respuesta correlacionada.",
+          "reason": "El setup Docker real alcanza executor_ready sin super-admin, pero create devuelve HTTP 500: fleet-operation-human.ts consulta human_tenant_memberships.role, eliminada por 081_membresia_rol_derivado.sql. El arreglo pertenece a packages/store/src/repository/fleet-operation-human.ts, fuera del alcance de t21. No se acredita el ciclo Chromium de creación, actualización, contexto con ACK, retirada y purga.",
           "pending_id": "agent_runtime_lifecycle_browser",
           "api": [
             {
@@ -1071,7 +1075,7 @@
         },
         "D": {
           "status": "pending",
-          "reason": "El CRUD del registro no acredita creación, actualización ni retirada física del runtime con respuesta correlacionada.",
+          "reason": "El setup Docker real alcanza executor_ready sin super-admin, pero create devuelve HTTP 500: fleet-operation-human.ts consulta human_tenant_memberships.role, eliminada por 081_membresia_rol_derivado.sql. El arreglo pertenece a packages/store/src/repository/fleet-operation-human.ts, fuera del alcance de t21. No se acredita el ciclo Chromium de creación, actualización, contexto con ACK, retirada y purga.",
           "pending_id": "agent_runtime_lifecycle_browser",
           "api": [
             {
