@@ -57,7 +57,7 @@ Además: `CONNECT` a la base y `USAGE` del esquema `public`; `USAGE` y `SELECT` 
 - quita los triggers, la función de guarda y las dos funciones de permisos, y devuelve a las funciones de 051 su `search_path`;
 - revoca solo los permisos que nombran a los grupos, sin materializar ACL en el resto de objetos;
 - borra cada grupo solo si ninguna otra base del clúster le concede algo. Si alguna lo hace, el grupo queda inerte;
-- se niega a borrar `cauce_runtime` o `cauce_observer` mientras tengan logins miembros: el `DROP ROLE` les quitaría la pertenencia en silencio y volver a aplicar 052 no la devuelve. Primero hay que borrar esos logins (`DROP ROLE cauce_gateway, …`) o revocarles el grupo. Tras volver a aplicar 052, se recrean con `provision-db-roles.py --rotate --apply` y se recrean sus consumidores.
+- se niega a borrar `cauce_runtime` o `cauce_observer` mientras tengan logins miembros: el `DROP ROLE` les quitaría la pertenencia en silencio y volver a aplicar 052 no la devuelve. Primero hay que borrar esos logins (`DROP ROLE cauce_gateway, …`) o revocarles el grupo. Tras volver a aplicar 052, se recrean con `provision-db-roles.py --rotate --apply` y se recrean sus consumidores, incluido el proyecto compose `cauce-decisiones`.
 
 El catálogo tras el `down` es el de una base migrada hasta 051 (permisos efectivos, funciones y triggers), y volver a aplicar 052 da los mismos permisos.
 
@@ -72,6 +72,7 @@ El catálogo tras el `down` es el de una base migrada hasta 051 (permisos efecti
 | `cauce_fleet` | `cauce_runtime` | `cauce-fleet-v35-controller` (host) y `fleet/auth-main` de cada ejecutor | 4 + 1, y 4 por ejecutor | 20 | `database_url_fleet` |
 | `cauce_monitor` | `cauce_observer` | `mcp-fleet-monitor` | 20 por instancia | 25 | `database_url_monitor` |
 | `cauce_backup` | `pg_read_all_data` | `backup.sh` (`pg_dump` por TCP, sin `-j`) | 1 | 2 | `database_url_backup` |
+| `cauce_decisiones` | `cauce_decisiones_read` | proyecto compose `cauce-decisiones` (pool 4). Tras rotar, recrear ese proyecto. El grupo y sus GRANT viven en `provision-db-roles.py`, no en `cauce_apply_runtime_grants()` | 4 | 6 | `CAUCE_DECISIONES_DATABASE_URL_SECRET_PATH` |
 | `cauce` | `cauce_platform` | migrador, `psql` del operador, CLI de plataforma | — | — | `CAUCE_DATABASE_URL_SECRET_PATH` |
 
 **Límites.** Cada límite es la suma de los pools máximos de sus consumidores (`createPool` usa 20 si no se indica) más un margen. Con un límite menor que el pool, una ráfaga falla con 53300 (`too many connections for role`) en vez de esperar en el pool. La suma de los pools máximos, 95 con un ejecutor, cabe en `max_connections=100` (el valor por defecto; `compose.postgres.yaml` no lo cambia) menos las 3 reservadas a superusuarios. La suma de los límites (132) no tiene por qué caber: el límite por login solo corta a un consumidor desbocado. Un login sin superusuario no usa las conexiones reservadas, así que el migrador y el operador siguen entrando aunque el runtime agote el resto. Si hay más de 3 ejecutores, o más de una instancia de `mcp-fleet-monitor` con el mismo login, sube el límite con `ALTER ROLE … CONNECTION LIMIT n`.

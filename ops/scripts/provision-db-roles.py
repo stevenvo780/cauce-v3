@@ -83,7 +83,19 @@ LOGINS = (
     Login("cauce_fleet", "cauce_runtime", 20, "database_url_fleet", None),
     Login("cauce_monitor", "cauce_observer", 25, "database_url_monitor", None),
     Login("cauce_backup", "pg_read_all_data", 2, "database_url_backup", None),
+    Login("cauce_decisiones", "cauce_decisiones_read", 6, "database_url_decisiones", "CAUCE_DECISIONES_DATABASE_URL_SECRET_PATH"),
 )
+
+# The group is created here, not by migration 052. cauce_apply_runtime_grants() does not replay it.
+DECISIONES_GRANTS = """\
+DO $$ BEGIN
+  CREATE ROLE cauce_decisiones_read NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$;
+GRANT USAGE ON SCHEMA public TO cauce_decisiones_read;
+GRANT SELECT ON companies, tenants, agents, memberships, rooms, role_policies TO cauce_decisiones_read;
+GRANT INSERT ON audit_events TO cauce_decisiones_read;
+GRANT USAGE, SELECT ON SEQUENCE audit_events_id_seq TO cauce_decisiones_read;
+"""
 
 
 class ProvisionError(RuntimeError):
@@ -276,7 +288,8 @@ def provision(args: argparse.Namespace, target: Instance) -> None:
             login_template, login_owner = templates[login.name]
             staged[login.name] = stage(target.directory, login_url(login_template, login.name, passwords[login.name]),
                                        login_owner)
-        target.transaction("".join(role_sql(login, scram_verifier(passwords[login.name]), login.name in existing)
+        target.transaction("".join((DECISIONES_GRANTS if login.name == "cauce_decisiones" else "")
+                                   + role_sql(login, scram_verifier(passwords[login.name]), login.name in existing)
                                    for login in selected))
         committed = True
         for login in selected:

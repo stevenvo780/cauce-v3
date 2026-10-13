@@ -14,7 +14,7 @@ function fixtureDatabaseUrl({ user, password, host, port, database, query }) {
   return `postgresql://${user}:${password}@${host}:${port}/${database}${query ? `?${query}` : ''}`;
 }
 const OWNER_URL = `${fixtureDatabaseUrl({ user: "cauce", password: "fixture-owner-password", host: "postgres", port: 5432, database: "cauce", query: "sslmode=verify-full&sslrootcert=/run/secrets/postgres_ca" })}\n`;
-const LOGINS = ["cauce_gateway", "cauce_dispatcher", "cauce_bridge", "cauce_observer_login", "cauce_fleet", "cauce_monitor", "cauce_backup"];
+const LOGINS = ["cauce_gateway", "cauce_dispatcher", "cauce_bridge", "cauce_observer_login", "cauce_fleet", "cauce_monitor", "cauce_backup", "cauce_decisiones"];
 const FAKE_DOCKER = `#!/usr/bin/env bash
 set -u
 input="$(cat)"
@@ -109,7 +109,8 @@ test("apply publishes private URLs atomically, sends only verifiers and never pr
     const result = run(context, ["--apply"]);
     assert.equal(result.status, 0, result.stderr);
     assert.deepEqual((await readdir(context.secretsDir)).sort(), ["database_url_backup", "database_url_bridge",
-      "database_url_dispatcher", "database_url_fleet", "database_url_gateway", "database_url_monitor", "database_url_observer"]);
+      "database_url_decisiones", "database_url_dispatcher", "database_url_fleet", "database_url_gateway",
+      "database_url_monitor", "database_url_observer"]);
     const transaction = await readFile(path.join(context.log, "transaction.sql"), "utf8");
     assert.match(transaction, /^BEGIN;\nSET LOCAL log_statement='none';/u);
     assert.match(transaction, /\nCOMMIT;\n?$/u);
@@ -130,7 +131,11 @@ test("apply publishes private URLs atomically, sends only verifiers and never pr
     assert.match(transaction, /CREATE ROLE cauce_backup WITH .* IN ROLE pg_read_all_data;/u);
     assert.match(transaction, /CREATE ROLE cauce_observer_login WITH .*CONNECTION LIMIT 5 .* IN ROLE cauce_observer;/u);
     assert.match(transaction, /CREATE ROLE cauce_dispatcher WITH .*CONNECTION LIMIT 25 /u);
+    assert.match(transaction, /CREATE ROLE cauce_decisiones_read NOLOGIN NOSUPERUSER/u);
+    assert.match(transaction, /GRANT SELECT ON companies, tenants, agents, memberships, rooms, role_policies TO cauce_decisiones_read;/u);
+    assert.match(transaction, /CREATE ROLE cauce_decisiones WITH .*CONNECTION LIMIT 6 .* IN ROLE cauce_decisiones_read;/u);
     const environment = await readFile(context.env, "utf8");
+    assert.match(environment, new RegExp(`^CAUCE_DECISIONES_DATABASE_URL_SECRET_PATH=${context.secretsDir}/database_url_decisiones$`, "mu"));
     assert.doesNotMatch(environment, /\/stale\/path/u);
     for (const name of ["GATEWAY", "DISPATCHER", "BRIDGE", "OBSERVER"]) {
       assert.match(environment, new RegExp(`^CAUCE_DATABASE_URL_${name}_SECRET_PATH=${context.secretsDir}/database_url_`, "mu"));
@@ -239,7 +244,7 @@ test("a publish failure after the commit keeps the unpublished URLs", async () =
     assert.equal(result.status, 1);
     assert.match(result.stderr, /unpublished URLs stay in cauce_bridge=/u);
     const kept = (await readdir(context.secretsDir)).filter(name => name.startsWith(".provision-"));
-    assert.equal(kept.length, 5);
+    assert.equal(kept.length, 6);
     for (const name of kept) assert.equal((await stat(path.join(context.secretsDir, name))).mode & 0o777, 0o400);
     assert.equal((await stat(path.join(context.secretsDir, "database_url_dispatcher"))).mode & 0o777, 0o400);
     assert.equal(await readFile(context.env, "utf8"), context.environment);

@@ -64,7 +64,7 @@ generar_env() {
   clave=$(valor_de CAUCE_GATEWAY_TLS_KEY_PATH "$PROD_ENV")
   ca=$(valor_de CAUCE_GATEWAY_CLIENT_CA_PATH "$PROD_ENV")
   identidades=$(valor_de CAUCE_GATEWAY_IDENTITY_DIR "$PROD_ENV")
-  database_path=${CAUCE_DECISIONES_DATABASE_URL_SECRET_PATH:-$(valor_de CAUCE_DATABASE_URL_GATEWAY_SECRET_PATH "$PROD_ENV")}
+  database_path=${CAUCE_DECISIONES_DATABASE_URL_SECRET_PATH:-$(valor_de CAUCE_DECISIONES_DATABASE_URL_SECRET_PATH "$PROD_ENV")}
   postgres_ca=$(valor_de CAUCE_POSTGRES_CA_PATH "$PROD_ENV")
   bus_project=$(valor_de COMPOSE_PROJECT_NAME "$PROD_ENV")
   bus_project=${bus_project:-cauce-v3-prod}
@@ -73,6 +73,7 @@ generar_env() {
     "CAUCE_DECISIONES_DATABASE_URL_SECRET_PATH=$database_path" "CAUCE_POSTGRES_CA_PATH=$postgres_ca"; do
     [[ -n ${par#*=} ]] || die "falta ${par%%=*} en $PROD_ENV"
   done
+  [[ -f $database_path ]] || die "no existe el secreto de cauce_decisiones: $database_path"
   [[ -f $identidades/mtls_identities.json ]] || die "no existe $identidades/mtls_identities.json"
   printf '%s\n' \
     "CAUCE_DECISIONES_IMAGE=$imagen" "CAUCE_PRIVATE_BIND_IP=$bind" "CAUCE_DECISIONES_TLS_PORT=$PORT" \
@@ -154,6 +155,14 @@ modo_aplicar() {
   local sha imagen previa
   sha=$(resolver)
   imagen="$PROJECT:${sha:0:12}"
+  local generated name value secret
+  generated=$(generar_env "$imagen")
+  for name in CAUCE_DECISIONES_DATABASE_URL_SECRET_PATH CAUCE_POSTGRES_CA_PATH CAUCE_DECISIONES_BACKEND_NETWORK; do
+    value=$(printf '%s\n' "$generated" | sed -n "s/^$name=//p")
+    [[ -n $value ]] || die "falta $name; no se cambia CAUCE_DECISIONES_IMAGE"
+  done
+  secret=$(printf '%s\n' "$generated" | sed -n 's/^CAUCE_DECISIONES_DATABASE_URL_SECRET_PATH=//p')
+  [[ -f $secret ]] || die "no existe $secret; no se cambia CAUCE_DECISIONES_IMAGE"
   paso "clave de Jev → $SERVICE_USER:$SERVICE_USER 0400 (lo previo queda en $REVERT_FILE)"
   ajustar_clave
   paso "imagen $imagen desde git archive $sha"
@@ -166,8 +175,6 @@ modo_aplicar() {
   else
     (umask 077 && generar_env "$imagen" > "$ENV_FILE")
   fi
-  local generated name value
-  generated=$(generar_env "$imagen")
   for name in CAUCE_DECISIONES_DATABASE_URL_SECRET_PATH CAUCE_POSTGRES_CA_PATH CAUCE_DECISIONES_BACKEND_NETWORK; do
     if [[ -z $(valor_de "$name" "$ENV_FILE") ]]; then
       value=$(printf '%s\n' "$generated" | sed -n "s/^$name=//p")
