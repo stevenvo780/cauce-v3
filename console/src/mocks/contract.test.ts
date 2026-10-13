@@ -4,7 +4,9 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { FleetCapabilitySchema, FleetOperationSchema, QuotaEnvironmentProviderSchema } from '@cauce/protocol';
 import { companyInventory, consolePreferences, officeLayout, versionedContext } from '../api/client/v4-responses';
-import { agentQuotaSnapshot, quotaAccounts, quotaEnvironments } from '../api/client/quota-responses';
+import { quotaAccounts, quotaEnvironments } from '../api/client/quota-responses';
+import { agentQuotaClient } from '../features/accounts/agent-quota-client';
+import type { RequestFn } from '../api/client/system-client';
 import { handlers } from './handlers';
 import { chatDemoHandlers } from './chat-demo';
 import { terminalDemoHandlers } from './terminal-demo';
@@ -45,10 +47,10 @@ function rutaDeLaMatriz(): string {
 function rutasDelGateway(fuente: string): Set<string> {
   const rutas = new Set<string>();
   for (const match of fuente.matchAll(/(?:publicRoute|actor|scoped|host)\(\s*'(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)',\s*'([^']+)'/gu)) {
-    rutas.add(`${match[1]} ${normaliza(match[2] ?? '')}`);
+    rutas.add(`${match[1]} ${normaliza(match[2])}`);
   }
   for (const match of fuente.matchAll(/method:\s*'(GET|POST|PUT|PATCH|DELETE)',\s*url:\s*'([^']+)'/gu)) {
-    rutas.add(`${match[1]} ${normaliza(match[2] ?? '')}`);
+    rutas.add(`${match[1]} ${normaliza(match[2])}`);
   }
   return rutas;
 }
@@ -74,12 +76,22 @@ describe('contrato entre los handlers MSW y el gateway', () => {
     ['/v3/console/quota-accounts', quotaAccounts],
     ['/v3/console/quota-environments', quotaEnvironments],
     ['/v3/console/context/agents/Steven/kant', versionedContext],
-    ['/v3/console/agents/Steven/kant/quota', agentQuotaSnapshot],
   ] as const)('el cuerpo V4 de GET %s pasa el verificador del cliente', async (ruta, verifica) => {
     const respuesta = await fetch(`http://localhost${ruta}`);
     expect(respuesta.ok).toBe(true);
     const cuerpo: unknown = await respuesta.json();
     expect(() => verifica(cuerpo)).not.toThrow();
+  });
+
+  it('la cuota mock pasa el cliente de lectura usado en producción', async () => {
+    const request: RequestFn = async <T,>(ruta: string, init?: RequestInit) => {
+      const response = await fetch(`http://localhost${ruta}`, init);
+      expect(response.ok).toBe(true);
+      return await response.json() as T;
+    };
+    await expect(agentQuotaClient(request).getAgentQuota('Steven', 'kant')).resolves.toMatchObject({
+      tenant_id: 'Steven', alias: 'kant', reader_available: true, reason: null,
+    });
   });
 
   it('los cuerpos de flota de los handlers pasan los esquemas zod del protocolo', async () => {

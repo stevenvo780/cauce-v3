@@ -38,11 +38,6 @@ export interface QuotaHostCapabilities {
   provider_actions: Partial<Record<QuotaProvider, QuotaEnvironmentAction[]>>;
 }
 export interface QuotaEnvironmentReceipt { environment: QuotaEnvironment; operation: QuotaEnvironmentOperation; duplicate?: boolean }
-export interface AgentQuotaSnapshot {
-  tenant_id: string; alias: string; reader_available: boolean; can_query: boolean;
-  reason: 'quota_reader_unavailable' | null;
-  status: 'unsupported' | 'pending' | 'running' | 'failed' | 'ok' | 'error' | 'unknown'; revision: number;
-}
 export interface MyQuotasClient extends AgentQuotaClient {
   getQuotaAccounts(): Promise<QuotaAccountsSnapshot>;
   createQuotaAccount(input: { provider: QuotaProvider; label: string; idempotency_key: string }): Promise<{ account_id: string; duplicate: boolean }>;

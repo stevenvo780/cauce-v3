@@ -1,4 +1,4 @@
-import type { AgentQuotaSnapshot, QuotaAccountsSnapshot, QuotaEnvironmentsSnapshot } from './my-quotas-client';
+import type { QuotaAccountsSnapshot, QuotaEnvironmentsSnapshot } from './my-quotas-client';
 
 function failed(): never { throw new Error('No se pudo verificar la lectura de cuotas. Relee antes de continuar.'); }
 function object(value: unknown): Record<string, unknown> {
@@ -59,19 +59,6 @@ export function verifyQuotaEnvironment(value: unknown): void {
   if (![environment.id, environment.company_id, environment.account_id, environment.host_id, environment.label].every(text) || !provider(environment.provider)
     || !version(environment.version) || ![environment.created_at, environment.updated_at].every(date)
     || !['pending', 'running', 'ready', 'awaiting_auth', 'failed', 'deleting', 'deleted'].includes(String(environment.status)) || !refreshStatus(environment.refresh_status)) failed();
-}
-export function agentQuotaSnapshot(value: unknown): AgentQuotaSnapshot {
-  const row = object(value);
-  if (![row.tenant_id, row.alias].every(text) || typeof row.reader_available !== 'boolean' || typeof row.can_query !== 'boolean'
-    || !(row.reason === null || row.reason === 'quota_reader_unavailable')
-    || !['unsupported', 'pending', 'running', 'failed', 'ok', 'error', 'unknown'].includes(String(row.status))
-    || typeof row.revision !== 'number' || !Number.isSafeInteger(row.revision) || row.revision < 0) failed();
-  if (row.reader_available && row.reason !== null) failed();
-  if (!row.reader_available && row.reason !== 'quota_reader_unavailable') failed();
-  return {
-    tenant_id: row.tenant_id, alias: row.alias, reader_available: row.reader_available,
-    can_query: row.can_query, reason: row.reason, status: row.status, revision: row.revision,
-  } as AgentQuotaSnapshot;
 }
 export function verifyQuotaOperation(value: unknown): void {
   const operation = object(value);
