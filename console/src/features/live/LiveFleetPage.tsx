@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown } from 'lucide-react';
 import { ErrorState, LoadingState } from '../../components/ui';
+import { Button, Notice } from '../../components/kit';
 import { PageHelp } from '../../components/PageHelp';
 import { cn } from '../../cn';
-import { redirect, useRouteSearch } from '../../router';
+import { onNavClick, redirect, useRouteSearch } from '../../router';
 import { useFleet } from '../../shell/fleet-context';
 import { useMediaQuery } from '../../shell/use-media-query';
 import { STATE_TONE, TONE_CLASS } from '../../status-tone';
@@ -159,6 +160,13 @@ export function LiveFleetPage() {
       </div>
     );
   }
+  if (topology.error && !topology.data) {
+    return (
+      <div className="flex-1 overflow-y-auto p-4 sm:p-6">
+        <ErrorState error={topology.error} onRetry={() => { void topology.reload(); }} reintentando={topology.loading} />
+      </div>
+    );
+  }
   if (!snapshot || (!topology.data && !topology.error)) {
     return <div className="flex-1 overflow-y-auto p-4 sm:p-6"><LoadingState label="Leyendo la actividad de la flota…" /></div>;
   }
@@ -240,7 +248,20 @@ export function LiveFleetPage() {
 
   return (
     <div className="relative flex min-h-0 flex-1 flex-col">
-      <section aria-label="Oficina" data-objeto-principal="oficina" className="relative min-h-0 flex-1">
+      <section aria-label="Oficina" data-objeto-principal="oficina" className="relative flex min-h-0 flex-1 flex-col">
+        {topology.error && topology.data ? (
+          <Notice tone="danger" role="alert" className="m-2 flex flex-wrap items-center gap-2">
+            <span className="min-w-0 flex-1">No se pudo actualizar la topología: {topology.error.message} Se muestra la última lectura buena.</span>
+            <Button size="sm" onClick={() => { void topology.reload(); }}>Reintentar</Button>
+          </Notice>
+        ) : null}
+        {views.length === 0 ? (
+          <Notice tone="info" role="status" className="m-2 flex flex-wrap items-center gap-2">
+            <span className="min-w-0 flex-1">Todavía no hay agentes en esta empresa. Registra el primero para verlo en el campus y en el plano.</span>
+            <a href="/config?seccion=agentes" onClick={(event) => { onNavClick(event, '/config?seccion=agentes'); }} className="text-brand-ink underline underline-offset-2">Registrar un agente</a>
+          </Notice>
+        ) : null}
+        <div className="min-h-0 flex-1">
         <OfficeWorkspace topology={topology.data} agents={officeAgents} onAgent={(key) => { redirect(`/live?agente=${encodeURIComponent(key)}&ficha=1`); }} campus={
         <OfficeGame
           agents={officeAgents}
@@ -263,6 +284,7 @@ export function LiveFleetPage() {
           } : null}
         />
         } />
+        </div>
       </section>
       <AgentSheet
         view={selected && sheetWanted ? selected : null}
