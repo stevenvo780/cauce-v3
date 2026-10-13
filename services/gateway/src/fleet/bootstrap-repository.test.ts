@@ -24,7 +24,7 @@ beforeEach(async () => {
     VALUES('boot@example.test','boot@example.test',$1,'Boot','operator','Steven','boot-owner') RETURNING id`, ['$scrypt$' + 'x'.repeat(48)])).rows[0];
   if (!person) throw new Error('person absent');
   await current.adminPool.query("INSERT INTO company_admins(company_id,human_id,role,source) SELECT company_id,id,'admin','v4.0-hub-operator' FROM console_users WHERE id=$1", [person.id]);
-  await pool.query("INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,role,permissions) VALUES($1,'Steven','boot-owner','operator',ARRAY['read','control'])", [person.id]);
+  await pool.query("INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,permissions) VALUES($1,'Steven','boot-owner',ARRAY['read','control'])", [person.id]);
   await pool.query("INSERT INTO agent_profiles(tenant_id,alias,purpose) VALUES('Steven','boot-agent','Boot purpose')");
   operationId = randomUUID();
   await pool.query(`INSERT INTO fleet_operations(id,actor_tenant,actor_alias,target,target_key,cohort_key,executor_host,kind,request,request_hash,
@@ -111,6 +111,22 @@ describe('bootstrap durable control on disposable PostgreSQL', () => {
     await pool.query(`UPDATE fleet_operations SET status='succeeded',steps='[{"name":"admission","status":"succeeded"}]'::jsonb WHERE id=$1`, [operationId]);
     expect((await repository.state(identity, operationId, 'normal')).normal_admitted).toBe(true);
     expect(await repository.profile(identity, operationId, 'normal')).toMatchObject({ runtime_key: identity.alias });
+  });
+  it('lets the admitted runtime read its final state and profile after settling moves the desired revision', async () => {
+    await remoteOperation();
+    expect((await complete()).acknowledged.state).toBe('succeeded');
+    await verifyStep(); await complete('verify');
+    await pool.query(`UPDATE fleet_operations SET steps=$2::jsonb WHERE id=$1`, [operationId,
+      JSON.stringify([{ name: 'verify', status: 'succeeded' }, { name: 'admission', status: 'running' }])]);
+    await complete('verify', 'normal');
+    // What settle() does in one transaction: admit the agent, record a new desired revision and finish the operation.
+    await pool.query("UPDATE agents SET enabled=true,lifecycle_state='ready' WHERE alias='boot-agent'");
+    await pool.query(`UPDATE fleet_operations SET status='succeeded',desired_revision=COALESCE(desired_revision,0)+1,applied_revision=COALESCE(desired_revision,0)+1,
+      steps='[{"name":"admission","status":"succeeded"}]'::jsonb WHERE id=$1`, [operationId]);
+    expect((await repository.state(identity, operationId, 'normal')).normal_admitted).toBe(true);
+    expect(await repository.profile(identity, operationId, 'normal')).toMatchObject({ runtime_key: identity.alias, profile_revision: 1 });
+    await expect(repository.claim(identity, operationId, 'normal', identity.alias)).rejects.toMatchObject({ code: 'conflict' });
+    await expect(repository.create(identity, input('verify', 'normal'))).rejects.toMatchObject({ code: 'conflict' });
   });
   it('refuses a remote host without a sealed prepared slice', async () => {
     await remoteOperation(false);

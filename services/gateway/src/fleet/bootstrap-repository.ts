@@ -44,7 +44,10 @@ export class BootstrapRepository {
         AND harness.enabled AND account.enabled AND ${providerAccountConsentSql('account', 'agent.tenant_id')}
       FOR SHARE OF agent,tenant,harness,account`, [identity.tenant_id, identity.alias])).rows[0];
     if (!agent?.runtime_key || (!state && agent.enabled)) throw forbidden();
-    await this.hostScope(client, operation, agent);
+    // The sealed host scope binds an operation in flight. Settling it records a new desired revision, so the runtime it
+    // just admitted could no longer read its final state and profile and would exit. Only those two reads reach a settled
+    // operation; the request checks below still bind them to the durable agent row.
+    if (!(state && operation.status === 'succeeded')) await this.hostScope(client, operation, agent);
     if (operation.kind === 'create' || operation.kind === 'update') {
       const desired = operation.request.parameters;
       if (!('runtime_key' in desired) || desired.runtime_key !== agent.runtime_key || desired.harness_id !== agent.harness_id
