@@ -170,7 +170,7 @@ function canonicalContextDirectory(value: string): boolean {
  * Closed and ordered set of manuals the process actually applies.
  *
  * The global layer goes first. With a vouched `projectRoot`, all levels from that root up to cwd are added;
- * without a root only the exact file from cwd is added, which was indeed measured, and the code never walks
+ * without a root only the exact file from cwd is added, and the code never walks
  * up looking for `.git` or another plausible marker. OpenClaw keeps exclusively the AGENTS.md of its measured
  * workspace. The same path is returned once, at its first effective position.
  */

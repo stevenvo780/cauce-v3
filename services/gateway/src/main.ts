@@ -81,9 +81,6 @@ async function readSigningKey(path: string): Promise<Buffer> {
   throw new Error('CAUCE_CONSOLE_JWT_KEY_FILE debe contener al menos 32 bytes de clave');
 }
 
-/**
- * Configures the fallback auth provider for requests without a session cookie.
- */
 function configuredFleetToken(): FleetTokenProbeAuthProvider {
   const fleet = process.env.CAUCE_FLEET_TOKEN_HASH_FILE;
   const base = process.env.CAUCE_TOKEN_HASH_FILE;
@@ -210,7 +207,7 @@ async function configuredHttps(authProvider: AuthProvider): Promise<{
  * mTLS can be direct OR behind the password login (which only handles requests with a cookie
  * and delegates the rest). The listener needs `requestCert` in both cases: if only the type
  * above were checked, turning the human login on would silently switch off the client
- * certificate and agents would be locked out. That is exactly the "do not break mTLS" rule.
+ * certificate and agents would be locked out.
  */
 function usesMtls(provider: AuthProvider): boolean {
   if (provider instanceof MtlsAuthProvider) return true;
@@ -252,8 +249,6 @@ const humanMcp = configuredHumanMcp(process.env, await configuredLocalOAuth(pool
 const mtls = usesMtls(authProvider);
 const isolatedHealth = mtls || process.env.NODE_ENV === 'production';
 const https = await configuredHttps(authProvider);
-// --- PTY control plane (module M1-gateway-control-plane) -------------------------------
-// Undefined unless CAUCE_TERMINAL_ENABLED=1; in that case the gateway boots exactly as today.
 const terminal = await loadTerminalConfig();
 const terminalRegistry = terminal === undefined ? undefined : new AgentRegistry();
 const wakePumpTelemetry = new WakePumpTelemetry();
@@ -306,7 +301,6 @@ if (terminal !== undefined && terminalRegistry !== undefined) {
     pool, authProvider, config: terminal, registry: terminalRegistry,
   });
 }
-// --- end PTY control plane -------------------------------------------------------------
 await app.register(registerSecretHandoffPlane, { pool, authProvider });
 const health = isolatedHealth ? await buildLoopbackHealthProbe({
   pool,

@@ -218,10 +218,7 @@ function registerConsoleAgentRoutes(
     } catch (error) { replyError(reply, error); }
   });
 
-  // Cancel is the twin operation of replay and runs with exactly the same lock
-  // (`requireOperatorPermission(actor,'control')` here and `assertReplayAuthorization` in the store).
-  // It is exposed through the same surface on purpose: until today, the only way to cancel was a
-  // hand-issued UPDATE in the database, with no audit, no notice to the origin, no freeing of the parent.
+  // Cancellation shares replay's operator permission and store authorization boundary.
   app.post<{ Params: { deliveryId: string } }>('/v3/console/deliveries/:deliveryId/cancel', async (request, reply) => {
     try {
       const actor = await principal(request, options.authProvider);
@@ -403,15 +400,8 @@ function registerConsoleAgentRoutes(
       authorize: autorizarPerfil,
       authorizeTarget: autorizarDestino,
       /*
-       * The probe is resolved on EACH request through the slot, it is not captured here.
-       *
-       * The one that actually reads the container's disk is built by the terminal plane, which in
-       * `main.ts` registers AFTER `buildGateway`: when these routes mount, it does not exist yet.
-       * Capturing it here would freeze the degraded one forever, and the later deployment of the
-       * plane would change nothing — without an error either. See `console/sonda-compartida.ts`.
-       *
-       * Until someone installs one, the degraded version answers "not measured" and "no channel"
-       * with those exact words, which is what the screen already knows how to render.
+       * Resolve through the shared slot at request time; the terminal plane installs the disk
+       * probe after buildGateway. Until then, the fallback reports "not measured" and "no channel".
        */
       probe: profileProbe,
       readRuntimeExpectation: (tenantId, alias) => expectativaDeRuntime(options.pool, tenantId, alias, true),
