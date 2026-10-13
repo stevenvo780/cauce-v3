@@ -37,6 +37,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   Object.assign(testApi, { getAgentQuota: originalRead, queryAgentQuota: originalQuery });
+  vi.useRealTimers();
   vi.restoreAllMocks();
 });
 function show(authority: ConsoleAuthState | undefined = session) {
@@ -78,6 +79,14 @@ it('también respeta la capacidad de consulta del servidor aunque el lector exis
   expect(screen.queryByRole('button', { name: 'Consultar' })).not.toBeInTheDocument();
 });
 
+it('permite consultar con lector vigente aunque la última observación no tuviera lector', async () => {
+  read.mockResolvedValue({ ...empty, status: 'unsupported' }); show();
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole('button', { name: 'Consultar' }));
+  expect(query).toHaveBeenCalledOnce();
+  expect(screen.queryByText(/Sin lector de cuota para este harness/u)).not.toBeInTheDocument();
+});
+
 it('encola con revisión e idempotencia y relee hasta el resultado durable', async () => {
   let current = empty;
   read.mockImplementation(async () => current);
@@ -104,11 +113,14 @@ it('encola con revisión e idempotencia y relee hasta el resultado durable', asy
   expect(read).toHaveBeenCalledTimes(3);
 });
 
-it.each([new Error('La respuesta no llegó.'), new ApiError('La respuesta no llegó.', 503)])('tras un fallo ambiguo conserva la misma petición idempotente para el reintento', async failure => {
+it.each([
+  [new Error('La respuesta no llegó.'), 'No se confirmó la consulta. Relee su estado antes de reintentar.'],
+  [new ApiError('La respuesta no llegó.', 503), 'Este servidor no puede atender la operación ahora. Inténtalo más tarde.'],
+])('tras un fallo ambiguo conserva la misma petición idempotente para el reintento', async (failure, message) => {
   query.mockRejectedValueOnce(failure);
   const user = userEvent.setup(); show();
   await user.click(await screen.findByRole('button', { name: 'Consultar' }));
-  expect(await screen.findByRole('alert')).toHaveTextContent('La respuesta no llegó.');
+  expect(await screen.findByRole('alert')).toHaveTextContent(message);
   await user.click(screen.getByRole('button', { name: 'Reintentar consulta' }));
   await waitFor(() => { expect(query).toHaveBeenCalledTimes(2); });
   expect(query.mock.calls[1]).toEqual(query.mock.calls[0]);
@@ -119,7 +131,7 @@ it('un conflicto confirmado relee la nueva revisión y permite iniciar otra cons
   query.mockRejectedValueOnce(new ApiError('La revisión cambió.', 409, 'conflict'));
   const user = userEvent.setup(); show();
   await user.click(await screen.findByRole('button', { name: 'Consultar' }));
-  expect(await screen.findByRole('alert')).toHaveTextContent('La revisión cambió.');
+  expect(await screen.findByRole('alert')).toHaveTextContent('Otro cambio llegó antes, o el recurso aún tiene dependencias. Relee y vuelve a intentarlo.');
   await user.click(screen.getByRole('button', { name: 'Consultar' }));
   await waitFor(() => { expect(query).toHaveBeenCalledTimes(2); });
   expect(query.mock.calls[1]?.[2].expected_revision).toBe(10);
@@ -129,7 +141,7 @@ it('un conflicto confirmado relee la nueva revisión y permite iniciar otra cons
 it('un error de lectura bloquea la consulta y la relectura permite recuperarla', async () => {
   read.mockRejectedValueOnce(new Error('No se pudo leer el resultado.'));
   const user = userEvent.setup(); show();
-  expect(await screen.findByRole('alert')).toHaveTextContent('No se pudo leer el resultado.');
+  expect(await screen.findByRole('alert')).toHaveTextContent('No se pudo leer la cuota. Relee antes de consultar.');
   expect(screen.queryByRole('button', { name: 'Consultar' })).not.toBeInTheDocument();
   await user.click(screen.getByRole('button', { name: 'Releer cuota' }));
   expect(await screen.findByRole('button', { name: 'Consultar' })).toBeEnabled();
@@ -142,4 +154,14 @@ it('un error del proveedor conserva la hora y no convierte un saldo antiguo en m
   expect(await screen.findByText('Saldo no acreditado en la última medición.')).toBeVisible();
   expect(screen.queryByText(/61\s*%/u)).not.toBeInTheDocument();
   expect(screen.getByText(/El proveedor limitó la consulta/u)).toBeVisible();
+});
+
+it('avisa del ordenador que no responde aunque la ficha relea periódicamente su estado', async () => {
+  vi.useFakeTimers();
+  read.mockImplementation(() => new Promise<AgentQuotaReading>(resolve => { window.setTimeout(() => { resolve({ ...empty,
+    status: 'pending', operation: { id: 'query-1', status: 'pending', error_code: null, created_at: captured, updated_at: captured },
+  }); }, 100); }));
+  await act(async () => { show(); });
+  for (let second = 0; second < 130; second++) await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
+  expect(screen.getByRole('alert')).toHaveTextContent(/el ordenador no responde/iu);
 });
