@@ -378,12 +378,12 @@ describe('Oficina V4 en navegador Chromium real, gateway y PostgreSQL reales', (
     });
   });
 
-  it('edita una parte en otro navegador, bloquea el guardado tras el CAS 409 y persiste el borrador con la versión relecta', async () => {
+  it('tras el CAS 409 de una edición en otro navegador deja elegir: reaplicar conserva lo ajeno y avisa de lo que pisa; cargar descarta', async () => {
     const page = ownerPage();
     await openPlan(page);
     const staleEditor = await selectRoomEditor(page);
     await staleEditor.getByLabel('Nombre de parte', { exact: true }).fill(draftPartLabel);
-    const before = await savedLayout();
+    const before = await savedLayout(); const originalPart = before.rooms.find(room => room.room_id === roomId)?.parts[0];
     const second = await freshPage('owner-a-concurrent');
     await step(second, 'concurrent part edit', async () => {
       await login(second, base(), ownerA);
@@ -393,59 +393,59 @@ describe('Oficina V4 en navegador Chromium real, gateway y PostgreSQL reales', (
       await editor.getByLabel(`Ancho de ${editedPartLabel}`, { exact: true }).fill('145');
       await savePlan(second);
     });
-    const committed = await savedLayout();
-    expect(committed.version).toBe(before.version + 1);
-    expect(committed.rooms.find(room => room.room_id === roomId)?.parts).toEqual([
-      { ...before.rooms.find(room => room.room_id === roomId)?.parts[0], label: editedPartLabel, width: 145 },
-    ]);
+    const committed = await savedLayout(); expect(committed.version).toBe(before.version + 1);
+    expect(committed.rooms.find(room => room.room_id === roomId)?.parts).toEqual([{ ...originalPart, label: editedPartLabel, width: 145 }]);
     expect(officeWrites.at(-1)).toMatchObject({ label: 'owner-a-concurrent', status: 200, input: { expected_version: before.version } });
     const save = page.getByRole('button', { name: 'Guardar plano', exact: true });
-    const reread = page.getByRole('button', { name: 'Releer plano y cuotas', exact: true });
-    await step(page, 'stale draft conflict rereads the version and saves the same rooms', async () => {
-      allowHttp('owner-a', layoutPath, 409);
-      errors.expectHttpError(layoutPath, 409);
-      await save.click();
-      const alert = page.getByRole('alert');
-      await alert.waitFor();
-      const conflict = await alert.innerText();
-      expect(conflict).toMatch(/versión nueva del plano.*se conserva el borrador/su);
+    const choice = (target: V4Page) => target.getByRole('group', { name: 'Conflicto con otra versión del plano', exact: true });
+    const conflictOn = async (target: V4Page, label: string) => {
+      allowHttp(label, layoutPath, 409); errors.expectHttpError(layoutPath, 409);
+      await target.getByRole('button', { name: 'Guardar plano', exact: true }).click();
+      await choice(target).waitFor({ timeout: 20_000 });
+      expect(await choice(target).innerText()).toContain('Nada se sobrescribe hasta que elijas.');
+      expect(await target.getByRole('button', { name: 'Releer plano y cuotas', exact: true }).isDisabled()).toBe(true);
+    };
+    let persisted = committed;
+    await step(page, 'stale draft conflict waits for a choice and reapplies only what the draft changed', async () => {
+      await conflictOn(page, 'owner-a');
+      const conflict = await page.getByRole('alert').innerText();
+      expect(conflict).toMatch(/Otra persona guardó una versión nueva del plano.*elige si cargas su versión o reaplicas tu borrador/su);
       expect(conflict).toContain('Código: conflict'); expect(conflict).not.toContain('reload and retry');
       expect(await staleEditor.getByLabel('Nombre de parte', { exact: true }).inputValue()).toBe(draftPartLabel);
-      await page.getByLabel(`Parte ${draftPartLabel}`, { exact: true }).waitFor();
-      await page.getByText('Plano sin guardar', { exact: true }).waitFor();
-      await expect.poll(() => save.isDisabled(), { timeout: 20_000 }).toBe(true);
-      await expect.poll(() => reread.isDisabled(), { timeout: 20_000 }).toBe(false);
-      expect(await savedLayout()).toEqual(committed);
-      expect((await apiGet(page, layoutPath)).body).toMatchObject(committed);
-      const conflicted = officeWrites.at(-1);
+      await page.getByText('Plano sin guardar', { exact: true }).waitFor(); expect(await save.isDisabled()).toBe(true);
+      expect(await savedLayout()).toEqual(committed); const conflicted = officeWrites.at(-1);
       expect(conflicted).toMatchObject({ label: 'owner-a', status: 409, input: { expected_version: before.version } });
       expect(conflicted?.input.rooms.find(room => room.room_id === roomId)?.parts[0]?.label).toBe(draftPartLabel);
-      await reread.click();
-      await expect.poll(() => save.isDisabled(), { timeout: 20_000 }).toBe(false);
-      expect(await staleEditor.getByLabel('Nombre de parte', { exact: true }).inputValue()).toBe(draftPartLabel);
-      expect(await page.getByLabel(`Parte ${editedPartLabel}`, { exact: true }).count()).toBe(0);
+      await choice(page).getByRole('button', { name: 'Reaplicar mi borrador sobre su versión', exact: true }).click();
+      const notice = page.getByRole('status').filter({ hasText: 'Tu borrador se reaplicó sobre la versión nueva.' }); await notice.waitFor({ timeout: 20_000 });
+      expect(await notice.innerText()).toContain(`En ${hubA}/${renamedRoomLabel} tu cambio sustituye al de la otra persona`);
+      await expect.poll(() => save.isDisabled(), { timeout: 20_000 }).toBe(false); expect(await choice(page).count()).toBe(0);
+      // Both renamed the part: the draft's name wins and is reported. The width only the other browser changed is kept.
+      expect(await staleEditor.getByLabel(`Ancho de ${draftPartLabel}`, { exact: true }).inputValue()).toBe('145');
       expect(await savedLayout()).toEqual(committed);
       await savePlan(page);
-      expect(officeWrites.at(-1)).toMatchObject({ label: 'owner-a', status: 200, input: { expected_version: committed.version, rooms: conflicted?.input.rooms } });
-      const persisted = await savedLayout();
-      expect(persisted).toMatchObject({ version: committed.version + 1, rooms: conflicted?.input.rooms });
-      await page.reload({ waitUntil: 'domcontentloaded' });
-      await page.getByRole('button', { name: 'Plano editable', exact: true }).click();
-      await page.getByLabel(`Parte ${draftPartLabel}`, { exact: true }).waitFor();
-      expect((await apiGet(page, layoutPath)).body).toMatchObject(persisted);
+      const rebased = conflicted?.input.rooms.map(room => room.room_id === roomId ? { ...room, parts: room.parts.map(part => ({ ...part, width: 145 })) } : room);
+      expect(officeWrites.at(-1)).toMatchObject({ label: 'owner-a', status: 200, input: { expected_version: committed.version, rooms: rebased } });
+      persisted = await savedLayout(); expect(persisted).toMatchObject({ version: committed.version + 1, rooms: rebased });
+      expect(persisted.rooms.find(room => room.room_id === roomId)?.parts).toEqual([{ ...originalPart, label: draftPartLabel, width: 145 }]);
     });
-    await step(second, 'discard local edit and reread the other browser version', async () => {
-      const other = await selectRoomEditor(second);
-      await other.getByLabel('Nombre de parte', { exact: true }).fill(discardedPartLabel);
-      await second.getByText('Plano sin guardar', { exact: true }).waitFor();
+    await step(second, 'stale draft loads the other version and drops the draft without writing, then a plain discard and reread', async () => {
+      await (await selectRoomEditor(second)).getByLabel('Nombre de parte', { exact: true }).fill(discardedPartLabel);
+      const writes = officeWrites.length;
+      await conflictOn(second, 'owner-a-concurrent');
+      expect(officeWrites.slice(writes)).toMatchObject([{ label: 'owner-a-concurrent', status: 409, input: { expected_version: committed.version } }]);
+      await choice(second).getByRole('button', { name: 'Cargar su versión y descartar mi borrador', exact: true }).click();
+      await second.getByRole('status').filter({ hasText: 'Se cargó el plano que guardó la otra persona y se descartó tu borrador.' }).waitFor({ timeout: 20_000 });
+      await second.getByLabel(`Parte ${draftPartLabel}`, { exact: true }).waitFor(); expect(await second.getByLabel(`Parte ${discardedPartLabel}`, { exact: true }).count()).toBe(0);
+      expect(await second.getByText('Plano sin guardar', { exact: true }).count()).toBe(0); expect(officeWrites).toHaveLength(writes + 1);
+      expect(await savedLayout()).toEqual(persisted);
+      await (await selectRoomEditor(second)).getByLabel('Nombre de parte', { exact: true }).fill(discardedPartLabel);
       await second.getByRole('button', { name: 'Descartar cambios de plano', exact: true }).click();
-      await second.getByLabel(`Parte ${editedPartLabel}`, { exact: true }).waitFor(); expect(await second.getByLabel(`Parte ${discardedPartLabel}`, { exact: true }).count()).toBe(0);
+      await second.getByLabel(`Parte ${draftPartLabel}`, { exact: true }).waitFor(); expect(await second.getByLabel(`Parte ${discardedPartLabel}`, { exact: true }).count()).toBe(0);
       await second.getByRole('button', { name: 'Releer plano y cuotas', exact: true }).click();
       await second.getByLabel(`Parte ${draftPartLabel}`, { exact: true }).waitFor(); expect(await second.getByLabel(`Parte ${editedPartLabel}`, { exact: true }).count()).toBe(0);
-      await second.reload({ waitUntil: 'domcontentloaded' });
-      await second.getByRole('button', { name: 'Plano editable', exact: true }).click();
-      await second.getByLabel(`Parte ${draftPartLabel}`, { exact: true }).waitFor();
-      expect((await apiGet(second, layoutPath)).body).toMatchObject(await savedLayout());
+      await second.reload({ waitUntil: 'domcontentloaded' }); await second.getByRole('button', { name: 'Plano editable', exact: true }).click();
+      await second.getByLabel(`Parte ${draftPartLabel}`, { exact: true }).waitFor(); expect((await apiGet(second, layoutPath)).body).toMatchObject(await savedLayout());
     });
   });
 
