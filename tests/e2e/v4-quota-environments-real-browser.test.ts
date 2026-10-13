@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { newTrustedPage, startConsoleFunctionalFixture } from './console-functional-browser.fixtures.js';
+import { newTrustedPage, startConsoleFunctionalFixture, type BrowserSocket } from './console-functional-browser.fixtures.js';
 import { join } from 'node:path';
 import {
   apiGet, asV4Page, bodySnippet, BrowserErrorLog, fillRegistration, HERMETIC_INSTANCE_RULES, login,
@@ -12,7 +12,7 @@ const run = randomUUID().replaceAll('-', '').slice(0, 8);
 const owner = quotaCanaryPerson('owner', run);
 const foreignOwner = quotaCanaryPerson('foreign-owner', run);
 const accountLabel = `zz-canary-account-${run}`;
-const quotaHost = `zz-canary-quota-host-${run}`;
+const quotaHost = `${owner.company.slug}-quota_host_${run}`;
 const quotaHostName = `zz-canary-quota-host-name-${run}`;
 const ownerEnvironment = `zz-canary-owner-environment-${run}`;
 const ownerEnvironmentEdited = `zz-canary-owner-environment-edited-${run}`;
@@ -33,6 +33,52 @@ const pool = () => active().database.pool;
 const base = () => active().baseUrl;
 const companyOwnerPage = () => { if (!ownerPage) throw new Error('quota company owner has no page'); return ownerPage; };
 const hostRuntime = () => { if (!quotaHostRuntime) throw new Error('quota Docker host is not initialized'); return quotaHostRuntime; };
+
+interface QuotaStreamFrame { payload: string | Buffer }
+interface QuotaStreamSocket extends BrowserSocket {
+  on(event: 'close', handler: (socket: BrowserSocket) => void): void;
+  on(event: 'socketerror', handler: () => void): void;
+  on(event: 'framereceived', handler: (frame: QuotaStreamFrame) => void): void;
+  off(event: 'close' | 'socketerror', handler: () => void): void;
+  off(event: 'framereceived', handler: (frame: QuotaStreamFrame) => void): void;
+}
+
+function waitForQuotaAuthenticationStream(page: V4Page): Promise<void> {
+  const expectedHost = new URL(page.url()).host;
+  const watched = page as V4Page & { off(event: 'websocket', handler: (socket: BrowserSocket) => void): void };
+  return new Promise((resolve, reject) => {
+    let socket: QuotaStreamSocket | undefined;
+    let ready = false; let output = false;
+    const finish = (error?: Error) => {
+      clearTimeout(timer); watched.off('websocket', opened);
+      socket?.off('framereceived', received); socket?.off('socketerror', failed); socket?.off('close', closed);
+      if (error) reject(error); else resolve();
+    };
+    const received = ({ payload }: QuotaStreamFrame) => {
+      if (Buffer.isBuffer(payload)) output ||= payload.length > 0;
+      else {
+        try {
+          const control = JSON.parse(payload) as Record<string, unknown>;
+          if (Object.keys(control).length !== 1 || control.type !== 'ready') throw new Error('invalid control');
+          ready = true;
+        } catch { finish(new Error('quota authentication stream sent an invalid control')); return; }
+      }
+      if (ready && output) finish();
+    };
+    const failed = () => { finish(new Error('quota authentication stream failed before readiness and output')); };
+    const closed = () => { finish(new Error('quota authentication stream closed before readiness and output')); };
+    const opened = (candidate: BrowserSocket) => {
+      let url: URL;
+      try { url = new URL(candidate.url()); } catch { return; }
+      if (socket || url.protocol !== 'wss:' || url.host !== expectedHost
+        || !/^\/v3\/console\/provider-auth\/sessions\/[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}\/stream$/u.test(url.pathname)) return;
+      socket = candidate as QuotaStreamSocket;
+      socket.on('framereceived', received); socket.on('socketerror', failed); socket.on('close', closed);
+    };
+    const timer = setTimeout(() => { finish(new Error('quota authentication stream did not become ready with output')); }, 30_000);
+    page.on('websocket', opened);
+  });
+}
 
 async function assertContainerIsolation(environmentId: string): Promise<void> {
   const observed = await hostRuntime().inspect(environmentId);
@@ -326,9 +372,13 @@ describe('entornos de cuota V4 en navegador real contra gateway y PostgreSQL rea
       .getByRole('button', { name: 'Confirmar autenticación', exact: true }).click();
     await hostRuntime().waitOperation(environment.id, 'authenticate', { status: 'awaiting_auth' });
     await page.reload({ waitUntil: 'domcontentloaded' });
-    await card.getByRole('button', { name: 'Conectar cuenta', exact: true }).click();
+    await Promise.all([
+      waitForQuotaAuthenticationStream(page),
+      card.getByRole('button', { name: 'Conectar cuenta', exact: true }).click(),
+    ]);
     await card.getByLabel('Terminal privada de autenticación', { exact: true }).waitFor({ timeout: 30_000 });
     await card.getByRole('button', { name: 'Cancelar conexión', exact: true }).click();
+    await card.getByText('Conexión cancelada', { exact: true }).waitFor({ timeout: 20_000 });
     await hostRuntime().waitOperation(environment.id, 'authenticate', { status: 'failed' });
     expect((await pool().query('SELECT quota_identity_hash,enabled FROM provider_accounts WHERE id=$1', [accountId])).rows)
       .toEqual([{ quota_identity_hash: null, enabled: false }]);
