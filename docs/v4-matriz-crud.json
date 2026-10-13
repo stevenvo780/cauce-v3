@@ -1025,7 +1025,7 @@
             },
             {
               "file": "services/gateway/src/fleet/host-setup-provider-auth.e2e-docker.test.ts",
-              "name": "setup, create awaiting auth, console login, resume, succeeded and the agent answers its nonce"
+              "name": "setup loads the served image, create awaits auth, console login, resume, succeeded and the agent answers its nonce"
             }
           ]
         },
