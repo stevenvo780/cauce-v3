@@ -181,7 +181,8 @@ def host_mounts(errors: list) -> dict[str, list[str]]:
     if not ids:
         return {}
     code, out, err = run(['docker', 'container', 'inspect', *ids], timeout=300)
-    if code:
+    # A container removed between `ps` and `inspect` is not an error: Docker still prints every other one.
+    if code and not out.strip():
         errors.append({'step': 'inspect-all', 'error': err})
         return {}
     return {item['Name'].lstrip('/'): [m.get('Source') or m.get('Name') or '' for m in item.get('Mounts') or []]
