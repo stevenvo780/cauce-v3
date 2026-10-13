@@ -80,7 +80,7 @@ export async function sweepOldRecordings(
       await unlink(path);
       deleted.push(path);
     } catch {
-      // Si otro sweeper o el relay ya lo eliminó, la operación es idempotente.
+      // Si el fichero ya no existe, la operación es idempotente.
     }
   }
   return { deleted, kept };
