@@ -150,15 +150,18 @@ export async function deleteFleetHost(pool: DatabasePool, hostId: string, expect
   await withTransaction(pool, async (client) => {
     const authority = await hostAuthority(client, scope, true);
     const company = authority.actingCompany;
-    const row = (await client.query<{ version: string }>('SELECT version::text AS version FROM fleet_hosts WHERE host_id=$1 AND company_id=$2 FOR UPDATE',
-      [hostId, company])).rows[0];
-    if (!row) throw new FleetOperationError('not_found', 'fleet host was not found');
-    if (Number(row.version) !== expectedVersion) throw new FleetOperationError('conflict', 'fleet host version changed; reload and retry');
     try {
+      const row = (await client.query<{ version: string }>('SELECT version::text AS version FROM fleet_hosts WHERE host_id=$1 AND company_id=$2 FOR UPDATE',
+        [hostId, company])).rows[0];
+      if (!row) throw new FleetOperationError('not_found', 'fleet host was not found');
+      if (Number(row.version) !== expectedVersion) {
+        throw new FleetOperationError('conflict', 'Otro operador cambió esta computadora; relee antes de reintentar.');
+      }
       await client.query('SELECT host_id FROM fleet_host_identities WHERE host_id=$1 AND company_id=$2 FOR UPDATE NOWAIT', [hostId, company]);
       await client.query('SELECT id FROM agent_quota_operations WHERE host_id=$1 AND company_id=$2 ORDER BY id FOR UPDATE NOWAIT', [hostId, company]);
     } catch (error) {
-      if (error !== null && typeof error === 'object' && 'code' in error && error.code === '55P03') {
+      if (error !== null && typeof error === 'object' && 'code' in error
+        && (error.code === '55P03' || error.code === '40P01')) {
         throw new FleetOperationError('conflict', 'La computadora tiene solicitudes u operaciones en curso; vuelve a intentar la baja.');
       }
       throw error;

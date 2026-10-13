@@ -92,6 +92,8 @@ describe('host enrollment revocation locks', () => {
       claim.catch(() => undefined); await waitingForAuthorityReaders(1);
       revoke = repository.revoke(source(), invitation.enrollment_id); revoke.catch(() => undefined);
       await waitingForAuthorityReaders(2); await holder.query("SET LOCAL lock_timeout='1s'");
+      // The holder probes lock retention, rather than modeling production lock order.
+      // Revoke must leave the invitation unlocked while it waits for authority.
       expect((await holder.query('SELECT 1 FROM fleet_host_enrollments WHERE id=$1 FOR UPDATE', [invitation.enrollment_id])).rowCount).toBe(1);
       await holder.query('COMMIT');
       const results = await Promise.allSettled([claim, revoke]);

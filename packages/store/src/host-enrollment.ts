@@ -119,7 +119,7 @@ export class HostEnrollmentRepository {
       const identity = await client.query(`INSERT INTO fleet_host_identities(host_id,company_id,enrollment_id,public_key,key_fingerprint)
         VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING`, [row.host_id,row.company_id,row.id,input.public_key,fingerprint]);
       if (!identity.rowCount) throw new StoreError('conflict', 'host identity is already enrolled');
-      await client.query("UPDATE fleet_host_enrollments SET state='enrolled',enrolled_at=now() WHERE id=$1", [row.id]);
+      await client.query("UPDATE fleet_host_enrollments SET state='enrolled',enrolled_at=now() WHERE id=$1 AND company_id=$2", [row.id, row.company_id]);
       await audit(client,authority,'fleet_host.enrollment.claim',row.host_id,{ host_metadata_preserved: hostMetadataPreserved });
       return { enrollment_id: row.id, company_id: row.company_id, host_id: row.host_id, state: 'enrolled',
         key_fingerprint: fingerprint, executor_ready: this.readyHosts.includes(row.host_id) };
@@ -143,7 +143,7 @@ export class HostEnrollmentRepository {
         [enrollmentId, authority.actingCompany])).rows[0];
       if (!row) throw new StoreError('not_found', 'host invitation is unavailable');
       if (row.state !== 'pending') throw new StoreError('conflict', 'host invitation is no longer pending');
-      await client.query("UPDATE fleet_host_enrollments SET state='revoked' WHERE id=$1", [enrollmentId]);
+      await client.query("UPDATE fleet_host_enrollments SET state='revoked' WHERE id=$1 AND company_id=$2", [enrollmentId, authority.actingCompany]);
       await audit(client, authority, 'fleet_host.enrollment.revoke', row.host_id);
       return { enrollment_id: enrollmentId, state: 'revoked' };
     });

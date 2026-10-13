@@ -57,6 +57,20 @@ describe('host enrollment compatibility and company isolation', () => {
     expect((await admin.query("SELECT 1 FROM fleet_host_enrollments WHERE host_id='north-oversized'")).rowCount).toBe(0);
   });
 
+  it('enrolls a new computer once for two concurrent claims and audits the created metadata', async () => {
+    const invitation = await repository.invite(source(north), { host_id: 'north-new_claims', display_name: 'New computer', notes: 'New metadata' });
+    const signedProof = proof(invitation);
+    expect((await admin.query('SELECT 1 FROM fleet_hosts WHERE host_id=$1', [invitation.host_id])).rowCount).toBe(0);
+    const claims = await Promise.all([1, 2].map(() => repository.claim(invitation.enrollment_id, signedProof)));
+    expect(claims[0]).toEqual(claims[1]);
+    expect(claims[0]).toMatchObject({ enrollment_id: invitation.enrollment_id, host_id: invitation.host_id, state: 'enrolled' });
+    expect((await admin.query('SELECT display_name,notes FROM fleet_hosts WHERE host_id=$1', [invitation.host_id])).rows)
+      .toEqual([{ display_name: 'New computer', notes: 'New metadata' }]);
+    expect((await admin.query('SELECT 1 FROM fleet_host_identities WHERE enrollment_id=$1', [invitation.enrollment_id])).rowCount).toBe(1);
+    expect((await admin.query("SELECT metadata FROM audit_events WHERE action='fleet_host.enrollment.claim' AND metadata->>'host_id'=$1", [invitation.host_id])).rows)
+      .toEqual([{ metadata: { host_id: invitation.host_id, host_metadata_preserved: false } }]);
+  });
+
   it('enrolls a preexisting company computer without replacing its metadata, version or placements', async () => {
     await admin.query(`INSERT INTO fleet_hosts(host_id,company_id,display_name,notes,version,controller_status)
       VALUES('legacy-host','north','Existing computer','Keep these notes',7,'reachable')`);

@@ -64,6 +64,62 @@ async function placedReader() {
 }
 
 describe('fleet host deletion lock concurrency on PostgreSQL', () => {
+  it('returns a Spanish conflict without partial effects when the host version changed', async () => {
+    await expect(deleteFleetHost(pool, HOST, 0, { authority, approvedHostIds: [] })).rejects.toMatchObject({
+      code: 'conflict', message: 'Otro operador cambió esta computadora; relee antes de reintentar.',
+    });
+    expect((await admin().query('SELECT 1 FROM fleet_hosts WHERE host_id=$1', [HOST])).rowCount).toBe(1);
+    expect((await admin().query('SELECT 1 FROM fleet_host_identities WHERE host_id=$1', [HOST])).rowCount).toBe(1);
+    expect((await admin().query("SELECT 1 FROM audit_events WHERE action='fleet_host.delete' AND metadata->>'host_id'=$1", [HOST])).rowCount).toBe(0);
+  });
+
+  it('returns conflict without partial effects when the host row lock times out', async () => {
+    const holder = await admin().connect(); let deletion: Promise<void> | undefined;
+    try {
+      await holder.query('BEGIN');
+      await holder.query('SELECT host_id FROM fleet_hosts WHERE host_id=$1 FOR NO KEY UPDATE', [HOST]);
+      const holderPid = await pid(holder);
+      deletion = remove(); deletion.catch(() => undefined);
+      await expect.poll(() => blockedBy(holderPid), { timeout: 1_500 }).toBe(true);
+      await expect(deletion).rejects.toMatchObject({ code: 'conflict',
+        message: 'La computadora tiene solicitudes u operaciones en curso; vuelve a intentar la baja.' });
+      expect((await admin().query('SELECT 1 FROM fleet_hosts WHERE host_id=$1', [HOST])).rowCount).toBe(1);
+      expect((await admin().query('SELECT 1 FROM fleet_host_identities WHERE host_id=$1', [HOST])).rowCount).toBe(1);
+      expect((await admin().query("SELECT 1 FROM audit_events WHERE action='fleet_host.delete' AND metadata->>'host_id'=$1", [HOST])).rowCount).toBe(0);
+    } finally { await holder.query('ROLLBACK'); holder.release(); await deletion?.catch(() => undefined); }
+    await remove();
+    expect((await admin().query('SELECT 1 FROM fleet_hosts WHERE host_id=$1', [HOST])).rowCount).toBe(0);
+  }, 10_000);
+
+  it('returns conflict without partial effects when the host row lock deadlocks', async () => {
+    const holder = await admin().connect(); let deletion: Promise<void> | undefined;
+    let authorityLock: Promise<unknown> | undefined;
+    try {
+      await holder.query("BEGIN; SET LOCAL deadlock_timeout='10s'");
+      await holder.query('SELECT host_id FROM fleet_hosts WHERE host_id=$1 FOR NO KEY UPDATE', [HOST]);
+      const holderPid = await pid(holder);
+      const started = Date.now();
+      deletion = remove(); deletion.catch(() => undefined);
+      await expect.poll(() => blockedBy(holderPid), { timeout: 1_500 }).toBe(true);
+      // The probe delays its detector so the deletion detects the cycle on the host lock.
+      authorityLock = holder.query('SELECT id FROM tenants WHERE id=$1 FOR UPDATE', [company.hub.id]);
+      authorityLock.catch(() => undefined);
+      const results = await Promise.allSettled([deletion, authorityLock]);
+      expect(results[0]).toMatchObject({ status: 'rejected', reason: { code: 'conflict',
+        message: 'La computadora tiene solicitudes u operaciones en curso; vuelve a intentar la baja.' } });
+      expect(results[1]).toMatchObject({ status: 'fulfilled' });
+      expect(Date.now() - started).toBeLessThan(4_000);
+      expect((await admin().query('SELECT 1 FROM fleet_hosts WHERE host_id=$1', [HOST])).rowCount).toBe(1);
+      expect((await admin().query('SELECT 1 FROM fleet_host_identities WHERE host_id=$1', [HOST])).rowCount).toBe(1);
+      expect((await admin().query("SELECT 1 FROM audit_events WHERE action='fleet_host.delete' AND metadata->>'host_id'=$1", [HOST])).rowCount).toBe(0);
+    } finally {
+      await holder.query('ROLLBACK').catch(() => undefined); holder.release();
+      await Promise.allSettled([deletion, authorityLock]);
+    }
+    await remove();
+    expect((await admin().query('SELECT 1 FROM fleet_hosts WHERE host_id=$1', [HOST])).rowCount).toBe(0);
+  }, 10_000);
+
   it('returns conflict without partial effects when the identity row is occupied', async () => {
     const holder = await admin().connect(); let deletion: Promise<void> | undefined; let outcome: unknown = 'waiting';
     try {
