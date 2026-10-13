@@ -94,7 +94,11 @@ describe('shared context broker with concurrent agents', () => {
     ]);
     expect(raced.filter(result => result.status === 'fulfilled')).toHaveLength(1);
     expect(raced.filter(result => result.status === 'rejected')).toHaveLength(1);
-    expect((await store.read(source(0), alpha.tenant_id, alpha.alias)).version).toBe(2);
+    const rejected = requireValue(raced.find(result => result.status === 'rejected'), 'rejected writer');
+    if (rejected.status !== 'rejected') throw new Error('writer did not reject');
+    expect(rejected.reason).toMatchObject({ code: 'conflict' });
+    const winner = await store.read(source(0), alpha.tenant_id, alpha.alias);
+    expect(winner.version).toBe(2);
 
     await syncAll();
     const targets = [alpha, peer, beta];
@@ -104,14 +108,32 @@ describe('shared context broker with concurrent agents', () => {
       expect(tree).toEqual(expect.arrayContaining([`${prefix}/.cauce-version.json`, `${prefix}/context/mission.md`]));
       expect(await outboxOf(target)).toMatchObject({ state: 'synced' });
     }
+    expect(await remoteFile(`${contextRepositoryPrefix(alpha)}/context/mission.md`)).toBe(
+      requireValue(winner.files.find(file => file.path === 'context/mission.md'), 'winner mission').content);
     expect(await remoteFile(`${contextRepositoryPrefix(peer)}/context/mission.md`)).toBe('Alpha peer mission.');
     expect(await remoteFile(`${contextRepositoryPrefix(beta)}/context/mission.md`)).toBe('Beta director mission.');
-    const authors = await git(remote, ['log', '--format=%an', 'refs/heads/main']);
-    expect(authors.split('\n')).toEqual(expect.arrayContaining(['owner']));
     const entries = (await store.history(source(0), alpha.tenant_id, alpha.alias)).entries;
     expect(entries.map(entry => entry.version)).toEqual([2, 1]);
     expect(entries.every(entry => entry.actor_alias === 'owner')).toBe(true);
-    expect((await git(remote, ['rev-list', '--count', 'refs/heads/main'])).toString()).not.toBe('1');
+    const versions = (await pool.query<ContextTarget & { version: number; state: string; git_commit: string;
+      digest: string; actor_alias: string }>(`SELECT company_id,tenant_id,alias,version::integer,state,git_commit,digest,actor_alias
+      FROM agent_context_outbox JOIN agent_context_versions USING(company_id,tenant_id,alias,version)
+      ORDER BY company_id,tenant_id,alias,version`)).rows;
+    expect(versions).toHaveLength(4);
+    expect(new Set(versions.map(version => version.git_commit)).size).toBe(4);
+    const commits = (await git(remote, ['rev-list', 'refs/heads/main'])).split('\n');
+    expect(commits).toHaveLength(5);
+    for (const version of versions) {
+      expect(version.state).toBe('synced');
+      expect(commits).toContain(version.git_commit);
+      const prefix = contextRepositoryPrefix(version);
+      expect(JSON.parse(await git(remote, ['show', `${version.git_commit}:${prefix}/.cauce-version.json`]))).toMatchObject({
+        company_id: version.company_id, tenant_id: version.tenant_id, alias: version.alias,
+        version: version.version, digest: version.digest, actor_alias: version.actor_alias,
+      });
+      expect(await git(remote, ['log', '-1', '--format=%an|%ae|%cn', version.git_commit]))
+        .toBe(`${version.actor_alias}|${version.actor_alias}@${version.company_id}.cauce.invalid|Cauce context broker`);
+    }
   });
 
   it('keeps every agent folder when the remote advances another folder before the push', async () => {
