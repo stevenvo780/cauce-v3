@@ -137,6 +137,11 @@ class TestCredentialClassification(unittest.TestCase):
 
 
 class TestConsumerWiring(unittest.TestCase):
+    def setUp(self):
+        self.argv = mock.patch.object(sys, "argv", ["cred-guard.py"])
+        self.argv.start()
+        self.addCleanup(self.argv.stop)
+
     @staticmethod
     def result(stdout=""):
         return mock.Mock(returncode=0, stdout=stdout, stderr="")
@@ -203,11 +208,11 @@ class TestConsumerWiring(unittest.TestCase):
         consumer = namespace["sonda_credenciales"]
         consumer.__globals__["sh"] = lambda *_args, **_kwargs: (0, json.dumps(fixture), "")
         problems, shared = consumer({
-            "alpha": {"contenedor": "container-one", "host": "kratos"},
-            "beta": {"contenedor": "container-two", "host": "kratos"},
+            ("t", "alpha"): {"contenedor": "container-one", "host": "kratos"},
+            ("t", "beta"): {"contenedor": "container-two", "host": "kratos"},
         })
         self.assertEqual(problems, [])
-        self.assertEqual(shared, {"shared-fingerprint": ["alpha", "beta"]})
+        self.assertEqual(shared, {"shared-fingerprint": ["t/alpha", "t/beta"]})
         source = (GUARDS / "cauce-v3-medico-monitor").read_text(encoding="utf-8")
         loop = source[source.index("for h, quienes in sorted(compartidas.items())"):source.index("# --- 5) AI account")]
         self.assertIn('apuntes.append({"tipo": "credencial_compartida"', loop)
@@ -292,6 +297,116 @@ class TestConsumerWiring(unittest.TestCase):
             with self.subTest(filename=filename):
                 source = (GUARDS / filename).read_text(encoding="utf-8")
                 self.assertIn(adapter_call, source)
+
+
+class TestGuardState(unittest.TestCase):
+    def run_guard(self, directory, record, *, arguments=(), push_result=None):
+        output, errors = io.StringIO(), io.StringIO()
+        remote = json.dumps({"host": "kratos", "ts": datetime.datetime.now(datetime.UTC).isoformat(), "filas": []})
+        real_open = open
+
+        def synthetic_open(path, *args, **kwargs):
+            if str(path) == "/var/lib/cauce-v3/cred-guard-kratos.json":
+                return io.StringIO(remote)
+            return real_open(path, *args, **kwargs)
+
+        with (
+            mock.patch.dict(os.environ, {"HOME": str(directory), "CAUCE_CRED_GUARD_ESTADO": str(directory / "state")}),
+            mock.patch.object(sys, "argv", ["cred-guard.py", *arguments]),
+            mock.patch.object(credential_health, "probe_container", side_effect=record),
+            mock.patch("subprocess.run", return_value=push_result),
+            mock.patch("builtins.open", side_effect=synthetic_open),
+            contextlib.redirect_stdout(output),
+            contextlib.redirect_stderr(errors),
+            self.assertRaises(SystemExit) as exited,
+        ):
+            runpy.run_path(str(GUARDS / "cred-guard.py"), run_name="credential_test_state")
+        return exited.exception.code, output.getvalue(), errors.getvalue()
+
+    def assert_state(self, directory, output, errors, *, exit_code, problems, shared):
+        state = directory / "state"
+        self.assertEqual((state / "cred-guard.txt").read_text(encoding="utf-8"), output + errors)
+        lines = (state / "cred-guard.log").read_text(encoding="utf-8").splitlines()
+        timestamp, fields = lines[-1].split(" ", 1)
+        self.assertEqual(datetime.datetime.fromisoformat(timestamp).utcoffset(), datetime.timedelta(0))
+        self.assertEqual(fields, f"rc={exit_code} problemas={problems} compartidas={shared}")
+
+    def test_state_keeps_shared_credentials_successful_and_appends_utc_logs(self):
+        def record(*_args):
+            return fleet_record("shared-fingerprint", None)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = pathlib.Path(temporary)
+            for _ in range(2):
+                code, output, errors = self.run_guard(directory, record)
+                self.assertEqual(code, 0)
+                self.assertIn("NOTA: cuentas compartidas", output)
+                self.assertEqual(errors, "")
+                self.assert_state(directory, output, errors, exit_code=0, problems=0, shared=1)
+            self.assertEqual(len((directory / "state" / "cred-guard.log").read_text().splitlines()), 2)
+
+    def test_unreadable_credentials_count_as_problems_with_state_enabled(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = pathlib.Path(temporary)
+            code, output, errors = self.run_guard(directory, lambda *_args: {"error": "synthetic-read-failure"})
+            self.assertEqual(code, 1)
+            self.assertIn("ILEGIBLE", output)
+            self.assertIn("problemas=10", output)
+            self.assert_state(directory, output, errors, exit_code=1, problems=10, shared=0)
+
+    def test_remote_unreadable_record_counts_even_without_problem_flag(self):
+        remote = json.dumps({
+            "host": "kratos", "ts": datetime.datetime.now(datetime.UTC).isoformat(),
+            "filas": [{"huella": "?", "etiqueta": "claude/synthetic", "contenedor": "synthetic",
+                       "estado": "ILEGIBLE", "detalle": "synthetic-read-failure"}],
+        })
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = pathlib.Path(temporary)
+            with mock.patch("json.load", return_value=json.loads(remote)):
+                code, output, errors = self.run_guard(directory, lambda *_args: {"falta": True})
+            self.assertEqual(code, 1)
+            self.assert_state(directory, output, errors, exit_code=1, problems=1, shared=0)
+
+    def test_remote_push_failure_preserves_stderr_and_exit_code(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = pathlib.Path(temporary)
+            code, output, errors = self.run_guard(
+                directory, lambda *_args: {"falta": True}, arguments=("--sonda-remota",),
+                push_result=mock.Mock(returncode=7, stderr="synthetic-push-failure"),
+            )
+            self.assertEqual(code, 1)
+            self.assertIn("synthetic-push-failure", errors)
+            self.assertIn("NO EXISTE", output)
+            self.assert_state(directory, output, errors, exit_code=1, problems=0, shared=0)
+
+    def test_unknown_arguments_are_rejected_in_both_modes(self):
+        for arguments in (("--unknown",), ("--sonda-remota", "--unknown"), ("--sonda",)):
+            with self.subTest(arguments=arguments), tempfile.TemporaryDirectory() as temporary:
+                directory = pathlib.Path(temporary)
+                code, output, errors = self.run_guard(
+                    directory, lambda *_args: self.fail("invalid arguments must not run a probe"), arguments=arguments,
+                )
+                self.assertEqual(code, 2)
+                self.assertIn("unrecognized arguments", errors)
+                self.assert_state(directory, output, errors, exit_code=2, problems=0, shared=0)
+
+    def test_unexpected_failure_preserves_partial_output_and_restores_streams(self):
+        def record(*_args):
+            print("synthetic partial output")
+            print("synthetic diagnostic", file=sys.stderr)
+            raise RuntimeError("synthetic failure")
+
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = pathlib.Path(temporary)
+            original_stdout, original_stderr = sys.stdout, sys.stderr
+            code, output, errors = self.run_guard(directory, record)
+            self.assertEqual(code, 1)
+            self.assertIn("synthetic partial output", output)
+            self.assertIn("synthetic diagnostic", errors)
+            self.assertIn("RuntimeError", errors)
+            self.assertIs(sys.stdout, original_stdout)
+            self.assertIs(sys.stderr, original_stderr)
+            self.assert_state(directory, output, errors, exit_code=1, problems=0, shared=0)
 
 
 class TestSharedFingerprints(unittest.TestCase):
