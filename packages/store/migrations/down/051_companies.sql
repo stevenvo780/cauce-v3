@@ -1,12 +1,23 @@
+SELECT set_config('cauce.migration_lock_timeout',current_setting('lock_timeout'),true);
+SELECT set_config('lock_timeout',(SELECT LEAST(NULLIF(setting::integer,0),5000)::text||'ms'
+  FROM pg_settings WHERE name='lock_timeout'),true);
 SELECT pg_advisory_xact_lock(783_003_003);
 SELECT pg_advisory_xact_lock(783_003_051);
-SELECT set_config('cauce.migration_lock_timeout',current_setting('lock_timeout'),true);
-SELECT set_config('lock_timeout','5s',true);
 LOCK TABLE tenants,acl_edges,deliveries,console_users,companies,platform_admins,company_links IN ACCESS EXCLUSIVE MODE;
 DO $$
 BEGIN
-  IF EXISTS (SELECT 1 FROM schema_migrations WHERE version>'051_companies.sql') THEN
+  IF EXISTS (SELECT version FROM schema_migrations WHERE version>'051_companies.sql'
+    UNION ALL SELECT version FROM schema_migration_ledger WHERE version>'051_companies.sql') THEN
     RAISE EXCEPTION 'cannot downgrade schema 051 while a later migration is present';
+  END IF;
+  IF EXISTS (SELECT 1 FROM schema_migrations WHERE version='051_companies.sql') <>
+      EXISTS (SELECT 1 FROM schema_migration_ledger WHERE version='051_companies.sql')
+    OR (to_regclass('public.companies') IS NOT NULL
+      AND NOT EXISTS (SELECT 1 FROM schema_migrations WHERE version='051_companies.sql'))
+    OR EXISTS (SELECT 1 FROM schema_migration_ledger WHERE version='051_companies.sql'
+      AND (source_origin<>'applied-atomically'
+        OR source_sha256<>'9c0c66e9f8e10359a0da03ca395b2ad87ac2c20432351e7d6e7a5334dca7eda3')) THEN
+    RAISE EXCEPTION 'cannot downgrade schema 051 from an inconsistent atomic ledger state';
   END IF;
   IF EXISTS (SELECT 1 FROM companies WHERE id<>'humanizar' OR name<>'Humanizar' OR NOT enabled
     OR retired_at IS NOT NULL OR version<>1 OR updated_at<>created_at)

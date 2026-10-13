@@ -1,7 +1,8 @@
+SELECT set_config('cauce.migration_lock_timeout',current_setting('lock_timeout'),true);
+SELECT set_config('lock_timeout',(SELECT LEAST(NULLIF(setting::integer,0),5000)::text||'ms'
+  FROM pg_settings WHERE name='lock_timeout'),true);
 SELECT pg_advisory_xact_lock(783_003_003);
 SELECT pg_advisory_xact_lock(783_003_053);
-SELECT set_config('cauce.migration_lock_timeout',current_setting('lock_timeout'),true);
-SELECT set_config('lock_timeout','5s',true);
 LOCK TABLE tenants IN ACCESS EXCLUSIVE MODE;
 LOCK TABLE agent_account_bindings,agents,alias_routing_ceiling,audit_events,config_revisions,console_agent_favorites,
   console_users,fleet_hosts,fleet_operations,human_tenant_memberships,memberships,messages,provider_accounts,
@@ -10,11 +11,25 @@ LOCK TABLE agent_failure_notices,agent_output_materializations,blob_delivery_gra
   platform_admins,quota_collections,quota_window_samples,secret_handoffs IN SHARE ROW EXCLUSIVE MODE;
 DO $$
 BEGIN
-  IF EXISTS (SELECT 1 FROM schema_migrations WHERE version>'053_company_isolation.sql') THEN
+  IF EXISTS (SELECT version FROM schema_migrations WHERE version>'053_company_isolation.sql'
+    UNION ALL SELECT version FROM schema_migration_ledger WHERE version>'053_company_isolation.sql') THEN
     RAISE EXCEPTION 'cannot downgrade schema 053 while a later migration is present';
+  END IF;
+  IF EXISTS (SELECT 1 FROM schema_migrations WHERE version='053_company_isolation.sql') <>
+      EXISTS (SELECT 1 FROM schema_migration_ledger WHERE version='053_company_isolation.sql')
+    OR (to_regprocedure('public.cauce_runtime_grants_053()') IS NOT NULL
+      AND NOT EXISTS (SELECT 1 FROM schema_migrations WHERE version='053_company_isolation.sql'))
+    OR EXISTS (SELECT 1 FROM schema_migration_ledger WHERE version='053_company_isolation.sql'
+      AND (source_origin<>'applied-atomically'
+        OR source_sha256<>'9bdb881c376accc7263f2d4d6c460aaedd6973dd1de59abd192f605dd6472a4e')) THEN
+    RAISE EXCEPTION 'cannot downgrade schema 053 from an inconsistent atomic ledger state';
   END IF;
   IF (SELECT count(*) FROM companies)>1 OR EXISTS (SELECT 1 FROM rooms GROUP BY id HAVING count(*)>1) THEN
     RAISE EXCEPTION 'rollback preserves company isolation; several companies or repeated room ids cannot be merged';
+  END IF;
+  IF EXISTS (SELECT 1 FROM audit_events WHERE actor_human_id IS NOT NULL)
+    OR EXISTS (SELECT 1 FROM config_revisions WHERE actor_human_id IS NOT NULL OR platform_override) THEN
+    RAISE EXCEPTION 'rollback preserves audit attribution; human actors or platform overrides cannot be removed';
   END IF;
 END;
 $$;

@@ -1,12 +1,23 @@
+SELECT set_config('cauce.migration_lock_timeout',current_setting('lock_timeout'),true);
+SELECT set_config('lock_timeout',(SELECT LEAST(NULLIF(setting::integer,0),5000)::text||'ms'
+  FROM pg_settings WHERE name='lock_timeout'),true);
 SELECT pg_advisory_xact_lock(783_003_003);
 SELECT pg_advisory_xact_lock(783_003_052);
-SELECT set_config('cauce.migration_lock_timeout',current_setting('lock_timeout'),true);
-SELECT set_config('lock_timeout','5s',true);
 LOCK TABLE audit_events,harness_definitions,role_policies IN SHARE ROW EXCLUSIVE MODE;
 DO $$
 BEGIN
-  IF EXISTS (SELECT 1 FROM schema_migrations WHERE version>'052_runtime_roles.sql') THEN
+  IF EXISTS (SELECT version FROM schema_migrations WHERE version>'052_runtime_roles.sql'
+    UNION ALL SELECT version FROM schema_migration_ledger WHERE version>'052_runtime_roles.sql') THEN
     RAISE EXCEPTION 'cannot downgrade schema 052 while a later migration is present';
+  END IF;
+  IF EXISTS (SELECT 1 FROM schema_migrations WHERE version='052_runtime_roles.sql') <>
+      EXISTS (SELECT 1 FROM schema_migration_ledger WHERE version='052_runtime_roles.sql')
+    OR (to_regprocedure('public.cauce_runtime_grants_052()') IS NOT NULL
+      AND NOT EXISTS (SELECT 1 FROM schema_migrations WHERE version='052_runtime_roles.sql'))
+    OR EXISTS (SELECT 1 FROM schema_migration_ledger WHERE version='052_runtime_roles.sql'
+      AND (source_origin<>'applied-atomically'
+        OR source_sha256<>'d457e64ba8c2ae13a29e053cfec8a7eac21b5a328bd22367a10aaca1cf1a3114')) THEN
+    RAISE EXCEPTION 'cannot downgrade schema 052 from an inconsistent atomic ledger state';
   END IF;
   IF EXISTS (SELECT 1 FROM pg_stat_activity activity JOIN pg_roles login ON login.oid=activity.usesysid
     WHERE activity.datname=current_database() AND NOT login.rolsuper
