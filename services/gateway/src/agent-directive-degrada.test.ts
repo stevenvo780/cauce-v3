@@ -45,10 +45,9 @@ describe('la respuesta degradada de /directive dice que no midió', () => {
 });
 
 /*
- * Layer 3 had the SAME defect as layer 2, just elsewhere: when the memory listing
- * failed, the route returned `{total: 0, entries: []}`, and that zero reached the screen as
- * "looked and this alias has no written memory". The new contract preserves the reason via
- * the `error` discriminant; `null` only stays as backward compatibility with older gateways.
+ * A failed memory listing must not surface as `{total: 0, entries: []}`: that zero would read as
+ * "looked and this alias has no written memory". The reason is preserved via the `error`
+ * discriminant; `null` only stays as backward compatibility with older gateways.
  */
 describe('la memoria que no se pudo listar es un fallo discriminado, no un índice de cero', () => {
   it('el índice vacío y la ausencia de índice NO son el mismo valor', async () => {

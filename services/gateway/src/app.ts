@@ -93,7 +93,7 @@ export type OutboxLeaseEvent = OutboxEvent & {
 
 export type OutboxLeaseAck = OutboxAckWithConnection<ConnectionSessionFence>;
 
-export interface OutboxLeaseAckResult {
+interface OutboxLeaseAckResult {
   status: 'sent' | 'failed' | 'dead';
   applied: boolean;
 }
@@ -308,10 +308,9 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
   }
   const wakePumpTelemetry = options.wakePumpTelemetry ?? new WakePumpTelemetry();
   const consolePublishTelemetry = options.consolePublishTelemetry ?? new ConsolePublishTelemetry();
-  // Upper bound of a drain. It used to be `undefined` and fall back to the default 20 from
-  // QueryDeliveriesSchema — a 20 nobody chose for this path and nobody could see by reading the
-  // gateway. The real per-agent cap lives in agents.max_concurrent_deliveries and is enforced by
-  // claimDeliveries; this is only the maximum batch size for an agent without a declared cap.
+  // Upper bound of a drain, explicit instead of the QueryDeliveriesSchema default. The real per-agent
+  // cap lives in agents.max_concurrent_deliveries and is enforced by claimDeliveries; this is only the
+  // maximum batch size for an agent without a declared cap.
   const deliveryClaimLimit = options.deliveryClaimLimit ?? DEFAULT_DELIVERY_CLAIM_LIMIT;
   if (!Number.isInteger(deliveryClaimLimit) || deliveryClaimLimit < 1 || deliveryClaimLimit > 100) {
     throw new Error('deliveryClaimLimit must be an integer between 1 and 100');

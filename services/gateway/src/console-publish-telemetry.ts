@@ -1,4 +1,4 @@
-export type ConsolePublishTelemetryEvent =
+type ConsolePublishTelemetryEvent =
   | Readonly<{ operation: 'prepare'; result: 'prepared' | 'committed' | 'reconciliation_required' | 'rate_limited' | 'error' }>
   | Readonly<{ operation: 'publish'; result: 'committed' | 'expired' | 'error' }>
   | Readonly<{ operation: 'confirm'; result: 'confirmed' | 'error' }>;

@@ -148,7 +148,7 @@ export function messageReader(principal: Principal): 'agent' | 'operator' | unde
   return principal.roles.includes('operator') ? 'operator' : undefined;
 }
 
-export function requireOperator(principal: Principal): void {
+function requireOperator(principal: Principal): void {
   if (!principal.roles.includes('operator')) throw new AuthorizationError('operator role is required');
 }
 
@@ -250,7 +250,7 @@ interface JwksDocument {
   keys: JsonWebKey[];
 }
 
-export interface JwksJwtVerifierOptions {
+interface JwksJwtVerifierOptions {
   issuer: string;
   audience: string | readonly string[];
   jwksUrl: string | URL;
@@ -260,7 +260,7 @@ export interface JwksJwtVerifierOptions {
   allowedAlgorithms?: readonly ('RS256' | 'PS256' | 'ES256')[];
 }
 
-export type JwksJwtAuthProviderOptions = JwksJwtVerifierOptions;
+type JwksJwtAuthProviderOptions = JwksJwtVerifierOptions;
 
 interface CachedJwks {
   expiresAt: number;
@@ -605,7 +605,7 @@ async function readIdentityFile(path: string): Promise<HashedIdentityRecord[]> {
   return records;
 }
 
-export interface HashedTokenFileAuthProviderOptions {
+interface HashedTokenFileAuthProviderOptions {
   path: string;
   cookieName?: string;
   allowBearer?: boolean;

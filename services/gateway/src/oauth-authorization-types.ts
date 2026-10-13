@@ -153,7 +153,7 @@ export interface OAuthStore {
   registeredClient(clientId: string, context: OAuthRequestContext): Promise<OAuthClientMetadata | undefined>;
 }
 
-export interface OAuthGrantSummary {
+interface OAuthGrantSummary {
   readonly id: string;
   readonly clientId: string;
   readonly scopes: readonly OAuthScope[];

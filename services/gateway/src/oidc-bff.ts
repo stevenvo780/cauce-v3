@@ -156,7 +156,7 @@ interface TokenResponse extends Record<string, unknown> {
   id_token?: unknown;
 }
 
-export interface OidcBffAuthProviderOptions {
+interface OidcBffAuthProviderOptions {
   issuer: string;
   jwksUrl: string | URL;
   bearerProvider: JwksJwtAuthProvider;

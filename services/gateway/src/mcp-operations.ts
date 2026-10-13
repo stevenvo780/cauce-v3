@@ -24,7 +24,7 @@ export type HumanMcpRepository = Pick<GatewayRepository,
   | 'listPresence' | 'listAgents' | 'getHumanMessage' | 'listHumanInbox'
 > & Partial<Pick<CauceRepository, 'listHumanMailbox'>>;
 
-export interface HumanMcpOperationsOptions extends HumanMcpAuthorityOptions, Pick<PublishOperationInput, 'priorityLog' | 'logRedaction'> {
+interface HumanMcpOperationsOptions extends HumanMcpAuthorityOptions, Pick<PublishOperationInput, 'priorityLog' | 'logRedaction'> {
   readonly repository: HumanMcpRepository;
   readonly telemetry?: ConsolePublishTelemetry;
 }

@@ -23,7 +23,7 @@ export interface HumanMcpAuthorityOptions {
   readonly resolver?: ExternalSubjectResolver;
 }
 
-export type HumanMcpAuthority = Readonly<{
+type HumanMcpAuthority = Readonly<{
   userId: string;
   principal: Principal;
   scopes: readonly string[];

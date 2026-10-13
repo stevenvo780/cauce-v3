@@ -8,7 +8,7 @@ export {
 export const DEFAULT_LEASE_TTL_MS = 180_000;
 export const MIN_LEASE_TTL_MS = 30_000;
 
-export function validateLeaseTtlMs(value: number): number {
+function validateLeaseTtlMs(value: number): number {
   if (!Number.isSafeInteger(value) || value < MIN_LEASE_TTL_MS) {
     throw new Error(`CAUCE_LEASE_TTL_MS must be a safe integer of at least ${String(MIN_LEASE_TTL_MS)}`);
   }
@@ -73,7 +73,7 @@ export function configuredDeliveryAdmission(
 
 export const DEFAULT_BLOB_DIRECTORY = '/var/lib/cauce-v3/blobs';
 
-export interface BlobStoreConfig {
+interface BlobStoreConfig {
   readonly directory: string;
   readonly maxBytes: number;
 }

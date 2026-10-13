@@ -35,7 +35,7 @@ export {
   probeWakePath,
 };
 
-export interface HealthOptions {
+interface HealthOptions {
   pool: DatabasePool;
   logger?: boolean;
   requirePostgresTls?: boolean;
@@ -157,7 +157,7 @@ export function renderConsolePublishMetrics(
   return `${lines.join('\n')}\n`;
 }
 
-export function renderContextContaminationMetrics(): string {
+function renderContextContaminationMetrics(): string {
   const snapshot = contextContamination.snapshot();
   const lines = [
     '# HELP cauce_gateway_context_contamination_total Governance files quarantined by the context guard.',
@@ -178,7 +178,7 @@ const publishRedactionOutcomes = [
   ['schema_broken', 'schema_broken'],
 ] as const;
 
-export function renderPublishRedactionMetrics(): string {
+function renderPublishRedactionMetrics(): string {
   const counters = publishRedactionMetrics();
   const lines = [
     '# HELP cauce_gateway_publish_redaction_total Publish-time redaction outcomes.',

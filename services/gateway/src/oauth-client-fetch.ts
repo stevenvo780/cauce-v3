@@ -22,7 +22,7 @@ export function publicOAuthAddress(address: string): boolean {
   return !denied.check(address, 'ipv6');
 }
 
-export interface OAuthMetadataResponse {
+interface OAuthMetadataResponse {
   readonly body: string;
   readonly cacheControl?: string;
 }

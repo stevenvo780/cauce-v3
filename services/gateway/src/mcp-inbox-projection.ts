@@ -6,7 +6,7 @@ import {
   InboxInputSchema, type HumanMcpInbox, type HumanMcpInboxQuery,
 } from '@cauce/mcp-fleet-monitor/gateway-http';
 
-export const HUMAN_MCP_INBOX_DEFAULT_LIMIT = 20;
+const HUMAN_MCP_INBOX_DEFAULT_LIMIT = 20;
 const MICRO_ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/u;
 const CURSOR_KEYS = new Set(['v', 'm', 't', 'id', 's', 'o', 'h']);
 // A cursor is opaque but not secret: the owner digest only stops one human's page from being replayed by another.

@@ -1,6 +1,6 @@
 import { timingSafeEqual } from 'node:crypto';
 
-export type CookieSameSite = 'Strict' | 'Lax';
+type CookieSameSite = 'Strict' | 'Lax';
 
 const HOST_COOKIE_NAME = /^__Host-[A-Za-z0-9_-]+$/;
 

@@ -1,7 +1,7 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { routedPath, scalarHeaderValue } from './http-auth-primitives.js';
 
-export interface ConsoleSecurityOptions {
+interface ConsoleSecurityOptions {
   /** Exact trusted browser origins. Empty means the request's own scheme+Host. */
   allowedOrigins?: readonly string[];
 }

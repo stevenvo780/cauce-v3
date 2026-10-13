@@ -59,8 +59,8 @@ describe('gateway delivery admission configuration', () => {
   });
 
   it('refuses a configuration where no delivery could ever be claimed', () => {
-    // A connected adapter that never receives anything looks identical to a broken one, and
-    // distinguishing the two cases already cost a week. It must blow up at startup.
+    // A connected adapter that never receives anything looks identical to a broken one,
+    // so this must blow up at startup.
     expect(() => configuredDeliveryAdmission({
       CAUCE_MAX_INFLIGHT_DELIVERIES: '0',
       CAUCE_HUMAN_RESERVED_DELIVERIES: '0',

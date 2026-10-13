@@ -6,7 +6,7 @@ export interface LiveProfilePresence {
   generationFor(tenantId: string, alias: string): string | undefined;
 }
 
-export interface StaleProfileExpectation {
+interface StaleProfileExpectation {
   readonly tenant_id: string;
   readonly alias: string;
   readonly revision: number;
@@ -14,7 +14,7 @@ export interface StaleProfileExpectation {
   readonly live_generation: string;
 }
 
-export interface MalformedProfileExpectation {
+interface MalformedProfileExpectation {
   readonly tenant_id: string | null;
   readonly alias: string | null;
   readonly reason: string;

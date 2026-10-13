@@ -1,7 +1,7 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { createGatewayHttpHandler, type GatewayHttpOptions } from '@cauce/mcp-fleet-monitor/gateway-http';
 
-export type McpIngressOptions = GatewayHttpOptions;
+type McpIngressOptions = GatewayHttpOptions;
 
 const METADATA_PATH = '/.well-known/oauth-protected-resource/mcp';
 

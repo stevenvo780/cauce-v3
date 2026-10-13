@@ -18,7 +18,7 @@ export type ConsolePublishRepository = Pick<GatewayRepository,
   'prepareConsolePublishIntent' | 'confirmConsolePublishIntent'
 >;
 
-export interface PrepareConsolePublishOperationInput extends Pick<PublishOperationInput,
+interface PrepareConsolePublishOperationInput extends Pick<PublishOperationInput,
   'actor' | 'body' | 'priorityLog' | 'logRedaction'
 > {
   readonly interactiveHumanEntry: boolean;
@@ -26,7 +26,7 @@ export interface PrepareConsolePublishOperationInput extends Pick<PublishOperati
   readonly humanAccess?: HumanMessageOptions;
 }
 
-export interface ConfirmConsolePublishOperationInput {
+interface ConfirmConsolePublishOperationInput {
   readonly actor: Principal;
   readonly body: unknown;
   readonly consoleIntentOperatorScope?: string;

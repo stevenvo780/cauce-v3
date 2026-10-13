@@ -12,7 +12,7 @@ export interface ConsoleUserMaintenance {
   activate: boolean;
 }
 
-export interface MaintainedConsoleUser {
+interface MaintainedConsoleUser {
   id: string;
   role: ConsoleUserRole;
   tenant_id: string;
