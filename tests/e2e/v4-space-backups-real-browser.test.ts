@@ -9,7 +9,7 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { newTrustedPage, startConsoleFunctionalFixture } from './console-functional-browser.fixtures.js';
 import {
-  apiGet, asV4Page, bodySnippet, BrowserErrorLog, fillRegistration, HERMETIC_INSTANCE_RULES,
+  asV4Page, bodySnippet, BrowserErrorLog, fillRegistration, HERMETIC_INSTANCE_RULES,
   openRegistration, PATTERN_DEFECT_RULE, syntheticPerson, type V4Page, type V4Person,
 } from './v4-console-real-browser.helpers.js';
 import { registerSpaceBackupHostRoutes } from '../../services/gateway/src/fleet/space-backup.routes.js';
@@ -105,22 +105,28 @@ type DownloadCapablePage = V4Page & {
   waitForEvent?: (event: 'download', options?: { timeout?: number }) => Promise<PlaywrightDownload>;
 };
 
-async function fetchRealArchive(page: V4Page, destination: string): Promise<{ headerSha: string | null; headerLength: string | null }> {
+function headerValue(headers: { [key: string]: string | string[] | undefined }, name: string): string | null {
+  const value = headers[name];
+  return typeof value === 'string' ? value : null;
+}
+
+async function fetchRealArchive(page: V4Page, destination: string): Promise<{ headerSha: string | null; headerManifest: string | null; headerLength: string | null }> {
   const cookies = await page.context().cookies(base());
   const cookieHeader = cookies.map((cookie) => `${cookie.name}=${cookie.value}`).join('; ');
   const ca = await readFile(active().pki.ca.cert);
   const url = new URL(`${base()}${backupPath(backupId)}/download`);
-  const headers = await new Promise<{ headerSha: string | null; headerLength: string | null }>((resolve, reject) => {
+  const headers = await new Promise<{ headerSha: string | null; headerManifest: string | null; headerLength: string | null }>((resolve, reject) => {
     const request = httpsGet({
       hostname: url.hostname, port: url.port, path: url.pathname, ca, rejectUnauthorized: true,
       headers: { Cookie: cookieHeader },
     }, (response) => {
       if (response.statusCode !== 200) { reject(new Error(`real download answered ${String(response.statusCode)}`)); return; }
-      const headerSha = typeof response.headers['x-cauce-archive-sha256'] === 'string' ? response.headers['x-cauce-archive-sha256'] : null;
-      const headerLength = typeof response.headers['content-length'] === 'string' ? response.headers['content-length'] : null;
+      const headerSha = headerValue(response.headers, 'x-cauce-archive-sha256');
+      const headerManifest = headerValue(response.headers, 'x-cauce-manifest-sha256');
+      const headerLength = headerValue(response.headers, 'content-length');
       const output = createWriteStream(destination, { mode: 0o600 });
       response.pipe(output);
-      output.on('finish', () => { resolve({ headerSha, headerLength }); });
+      output.on('finish', () => { resolve({ headerSha, headerManifest, headerLength }); });
       output.on('error', reject);
       response.on('error', reject);
     });
@@ -128,6 +134,39 @@ async function fetchRealArchive(page: V4Page, destination: string): Promise<{ he
   });
   await chmod(destination, 0o600);
   return headers;
+}
+
+interface DeniedArchive {
+  status: number; archiveSha: string | null; manifestSha: string | null;
+  contentType: string | null; contentLength: string | null; text: string;
+}
+
+async function readDenied(page: V4Page, path: string): Promise<DeniedArchive> {
+  return page.evaluate(async (target: string) => {
+    const response = await fetch(target, { credentials: 'include', cache: 'no-store' });
+    return {
+      status: response.status,
+      archiveSha: response.headers.get('x-cauce-archive-sha256'),
+      manifestSha: response.headers.get('x-cauce-manifest-sha256'),
+      contentType: response.headers.get('content-type'),
+      contentLength: response.headers.get('content-length'),
+      text: await response.text(),
+    };
+  }, path);
+}
+
+function expectDeniedArchive(denied: DeniedArchive): void {
+  expect(denied.status).toBe(404);
+  expect(denied.archiveSha).toBeNull();
+  expect(denied.manifestSha).toBeNull();
+  expect(denied.contentType ?? '').toContain('application/json');
+  expect(denied.text.length).toBeLessThan(4_096);
+  expect(denied.contentLength === null || Number(denied.contentLength) < 4_096).toBe(true);
+  expect(denied.text).not.toContain(receiptSha256);
+  expect(denied.text).not.toContain('canary context note');
+  expect(denied.text).not.toContain(credentialSecret);
+  expect(denied.text).not.toContain(foreignMarker);
+  expect(JSON.parse(denied.text)).toMatchObject({ error: 'not_found' });
 }
 
 beforeAll(async () => {
@@ -324,6 +363,7 @@ describe('copia de espacio desde navegador real con exportación física firmada
     await mkdir(downloadDirectory, { mode: 0o700 });
     const archive = join(downloadDirectory, `space-${alias}-${backupId}.zip`);
     let headerSha: string | null = null;
+    let headerManifest: string | null = null;
     let headerLength: string | null = null;
     if (browserDownload) {
       await browserDownload.saveAs(archive);
@@ -332,9 +372,11 @@ describe('copia de espacio desde navegador real con exportación física firmada
     } else {
       const fetched = await fetchRealArchive(page, archive);
       headerSha = fetched.headerSha;
+      headerManifest = fetched.headerManifest;
       headerLength = fetched.headerLength;
       expect(headerLength).toBe(String(receiptBytes));
       expect(headerSha).toBe(receiptSha256);
+      expect(headerManifest).toMatch(/^[a-f0-9]{64}$/u);
       const verifiedText = await panel.getByText(/Descarga verificada/u).count().catch(() => 0);
       if (verifiedText > 0) {
         downloadChannel = 'file-system-access-verified';
@@ -367,12 +409,16 @@ describe('copia de espacio desde navegador real con exportación física firmada
       identity: { company_id: owner.company.slug, tenant_id: hub, alias, runtime_key: runtimeKey },
     });
     const manifestProbe = spawnSync(python, ['-c',
-      'import json,sys,zipfile; z=zipfile.ZipFile(sys.argv[1]); print(z.read("space-manifest.json").decode()); print("\\n".join(sorted(z.namelist())))', archive],
+      'import hashlib,sys,zipfile; z=zipfile.ZipFile(sys.argv[1]); raw=z.read("space-manifest.json"); print(hashlib.sha256(raw).hexdigest()); print(raw.decode()); print("\\n".join(sorted(z.namelist())))', archive],
     { encoding: 'utf8', timeout: 60_000 });
     expect(manifestProbe.status, manifestProbe.stderr).toBe(0);
-    const firstBreak = manifestProbe.stdout.indexOf('\n');
-    const manifestJson = manifestProbe.stdout.slice(0, firstBreak);
-    const namesJoined = manifestProbe.stdout.slice(firstBreak + 1);
+    const manifestLines = manifestProbe.stdout.split('\n');
+    const manifestEntrySha = manifestLines[0] ?? '';
+    const manifestJson = manifestLines[1] ?? '';
+    const namesJoined = manifestLines.slice(2).join('\n');
+    expect(manifestEntrySha).toMatch(/^[a-f0-9]{64}$/u);
+    if (headerManifest === null) expect(downloadChannel).toBe('anchor-download');
+    else expect(headerManifest).toBe(manifestEntrySha);
     const manifest = JSON.parse(manifestJson) as {
       identity: Record<string, string>; files: { path: string; sha256: string }[]; omissions: { path: string; reason: string }[];
     };
@@ -405,7 +451,8 @@ describe('copia de espacio desde navegador real con exportación física firmada
     console.info('SPACE_BACKUP_BROWSER_RECEIPT ' + JSON.stringify({
       backup_id: backupId, tenant_id: hub, alias, runtime_key: runtimeKey, host_id: hostId,
       bytes: receiptBytes, sha256: receiptSha256, download_channel: downloadChannel,
-      picker_limit_declared: pickerLimitDeclared, header_sha256: headerSha, header_length: headerLength,
+      picker_limit_declared: pickerLimitDeclared, header_sha256: headerSha,
+      header_manifest_sha256: headerManifest, header_length: headerLength,
       restored_files: restoredReceipt.files, omissions: restoredReceipt.omissions,
     }));
   }, 240_000);
@@ -414,21 +461,9 @@ describe('copia de espacio desde navegador real con exportación física firmada
     if (!pageB) throw new Error('foreign owner has no page yet');
     const page = pageB;
     errors.expectHttpError(backupPath(backupId), 404);
-    const direct = await apiGet(page, backupPath(backupId));
-    expect(direct.status).toBe(404);
-    expect(JSON.stringify(direct.body)).not.toContain(receiptSha256);
+    expectDeniedArchive(await readDenied(page, backupPath(backupId)));
     errors.expectHttpError(`${backupPath(backupId)}/download`, 404);
-    const download = await page.evaluate(async (target: string) => {
-      const response = await fetch(target, { credentials: 'include', cache: 'no-store' });
-      return {
-        status: response.status,
-        sha: response.headers.get('x-cauce-archive-sha256'),
-        text: response.status === 404 ? await response.text() : '',
-      };
-    }, `${backupPath(backupId)}/download`);
-    expect(download.status).toBe(404);
-    expect(download.sha).not.toBe(receiptSha256);
-    expect(download.text).not.toContain(receiptSha256);
+    expectDeniedArchive(await readDenied(page, `${backupPath(backupId)}/download`));
     await step(page, 'foreign owner cannot open the canary agent', async () => {
       await page.goto(agentUrl(), { waitUntil: 'domcontentloaded' });
       await page.getByText('No encontramos esa conversación', { exact: true }).waitFor({ timeout: 20_000 });
