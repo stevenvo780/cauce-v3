@@ -32,7 +32,7 @@ export class ContextIngestError extends Error {
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 let defaultClient: NativeContextIngest | undefined;
-export function configureDefaultContextIngestClient(client: NativeContextIngest): void { defaultClient = client; }
+export function configureDefaultContextIngestClient(client: NativeContextIngest | undefined): void { defaultClient = client; }
 export function defaultContextIngestClient(): NativeContextIngest | undefined { return defaultClient; }
 
 async function drain(response: IncomingMessage): Promise<string> {
