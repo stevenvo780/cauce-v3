@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 # cauce:requiere docker
+# PostgreSQL restore and membership checks exceed the two-minute default.
+# cauce:timeout-ms 300000
 import contextlib
 import json
 import os
@@ -334,3 +336,7 @@ def test_developer_restore_rolls_back_invalid_legacy_memberships(hospital_pg, su
     assert result.returncode != 0, "The developer restore accepted corrupted legacy memberships"
     assert "hospital developer restore verification failed" in result.stderr, result.stderr
     assert membership_snapshot(hospital_pg) == before
+
+
+if __name__ == "__main__":
+    raise SystemExit(pytest.main([__file__, "-q"]))

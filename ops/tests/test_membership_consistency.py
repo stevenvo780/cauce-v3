@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-ROOT = next(parent for parent in Path(__file__).resolve().parents if parent.name == "ops") / "instances/hospital"
+ROOT = Path(__file__).resolve().parents[1] / "instances/hospital"
 FILES = (
     "bootstrap.sql", "restore-developer-aliases.sql", "rename-developers.sql",
     "backup.sh", "backup-monitor.sh",

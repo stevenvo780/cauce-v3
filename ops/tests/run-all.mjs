@@ -14,6 +14,7 @@ const GRACE_KILL_MS = 10_000;
 const TIMEOUT_MS = Number(process.env.CAUCE_OPS_TEST_TIMEOUT_MS) || DEFAULT_TIMEOUT_MS;
 const releaseValidation = process.env.CAUCE_RELEASE_VALIDATION === '1';
 const declarationPattern = /^\s*(?:#|\/\/)\s*cauce:requiere\s+(\S+)\s*$/u;
+const timeoutDeclarationPattern = /^\s*(?:#|\/\/)\s*cauce:timeout-ms\s+(\S+)\s*$/u;
 const declarationHeaderLines = 20;
 const defaultRequirement = 'none';
 const knownRequirements = new Set(['root', 'non-root', 'docker', 'docker-compose', defaultRequirement]);
@@ -49,6 +50,21 @@ async function requirementFor(name) {
   if (declared.size === 0) return requirementDeclaredOutsideTheFile.get(name) ?? defaultRequirement;
   if (declared.size > 1) return `conflicting declarations: ${[...declared].sort().join(', ')}`;
   return [...declared][0];
+}
+
+async function timeoutFor(name) {
+  const header = (await readFile(join(testsDirectory, name), 'utf8')).split('\n', declarationHeaderLines);
+  const declared = new Set(
+    header.map(line => timeoutDeclarationPattern.exec(line)?.[1]).filter(value => value !== undefined),
+  );
+  if (declared.size === 0) return { timeoutMs: TIMEOUT_MS };
+  if (declared.size > 1) return { error: `conflicting timeout declarations: ${[...declared].sort().join(', ')}` };
+  const value = [...declared][0];
+  const timeoutMs = Number(value);
+  if (!/^[1-9]\d*$/u.test(value) || !Number.isSafeInteger(timeoutMs) || timeoutMs > 2_147_483_647) {
+    return { error: `invalid cauce:timeout-ms ${value}` };
+  }
+  return { timeoutMs };
 }
 
 let dockerDaemonReachable;
@@ -114,7 +130,7 @@ function signalGroup(pid, signal) {
   }
 }
 
-function execute(name, requirement) {
+function execute(name, requirement, timeoutMs) {
   return new Promise(resolveResult => {
     const startedAt = Date.now();
     const command = commandFor(name, requirement);
@@ -129,10 +145,10 @@ function execute(name, requirement) {
     let killTimer = null;
     const deadline = setTimeout(() => {
       timedOut = true;
-      process.stdout.write(`\n=== ops/${name}: exceeded ${duration(TIMEOUT_MS)}, SIGTERM to the process group\n`);
+      process.stdout.write(`\n=== ops/${name}: exceeded ${duration(timeoutMs)}, SIGTERM to the process group\n`);
       signalGroup(child.pid, 'SIGTERM');
       killTimer = setTimeout(() => signalGroup(child.pid, 'SIGKILL'), GRACE_KILL_MS);
-    }, TIMEOUT_MS);
+    }, timeoutMs);
     const settle = (code, signal, error) => {
       clearTimeout(deadline);
       if (killTimer !== null) clearTimeout(killTimer);
@@ -140,7 +156,7 @@ function execute(name, requirement) {
         name,
         verdict: timedOut ? 'TIMEOUT' : code === 0 ? 'PASS' : 'FAIL',
         detail: timedOut
-          ? `killed after ${duration(TIMEOUT_MS)}`
+          ? `killed after ${duration(timeoutMs)}`
           : code === 0
             ? ''
             : (error?.message ?? (signal ? `signal ${signal}` : `exit ${code}`)),
@@ -165,8 +181,10 @@ async function verdictFor(name, ownSuite) {
   if (!knownRequirements.has(requirement)) {
     return { name, verdict: 'FAIL', detail: `cauce:requiere ${requirement}`, elapsedMs: 0 };
   }
+  const { timeoutMs, error } = await timeoutFor(name);
+  if (error) return { name, verdict: 'FAIL', detail: error, elapsedMs: 0 };
   const gate = gateFor(requirement);
-  if (gate.allowed) return execute(name, requirement);
+  if (gate.allowed) return execute(name, requirement, timeoutMs);
   if (releaseValidation) {
     return { name, verdict: 'FAIL', detail: `${gate.reason} (CAUCE_RELEASE_VALIDATION=1 forbids skipping)`, elapsedMs: 0 };
   }

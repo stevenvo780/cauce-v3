@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-ROOT = next(parent for parent in Path(__file__).resolve().parents if parent.name == "ops") / "instances/hospital"
+ROOT = Path(__file__).resolve().parents[1] / "instances/hospital"
 SPEC = importlib.util.spec_from_file_location("hospital_boundary_guard", ROOT / "operator-runtime-guard.py")
 GUARD = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(GUARD)
