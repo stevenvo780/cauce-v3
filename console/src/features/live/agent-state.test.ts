@@ -430,8 +430,7 @@ describe('D3 · una entrega que desaparece no es una entrega cerrada', () => {
   });
 
   it('el estado que produce ese pulso NO es de tono positivo ni dice "respondiendo"', () => {
-    // This was the expensive failure: the worst event in the fleet was announced with the same
-    // green and the same text as the best.
+    // A settled delivery must not be presented as healthy work.
     expect(STATE_TONE.settled).not.toBe(STATE_TONE.thinking);
     expect(LIVE_STATE_META.settled.label).not.toMatch(/respond/i);
     expect(LIVE_STATE_META.settled.hint).toMatch(/no se puede saber/i);
