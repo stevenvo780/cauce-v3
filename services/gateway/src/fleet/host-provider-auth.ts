@@ -94,6 +94,11 @@ async function checkedPolicies(options: HostProviderAuthOptions): Promise<z.infe
   catch { throw new HostPolicyFault('auth policy rejects helper: its pinned files differ'); }
   return auth;
 }
+/** Startup self-check of an enrolled computer: names what its auth policy rejects, so the journal explains failed logins. */
+export async function hostProviderAuthPolicyFault(options: HostProviderAuthOptions): Promise<string | undefined> {
+  try { await checkedPolicies(options); return undefined; }
+  catch (error) { return error instanceof HostPolicyFault ? error.message : 'unexpected failure'; }
+}
 async function policies(options: HostProviderAuthOptions): Promise<z.infer<typeof Policy>> {
   try { return await checkedPolicies(options); } catch { throw unavailable(); }
 }

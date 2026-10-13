@@ -39,6 +39,22 @@ it('publishes unavailable quota actions from the executor receipt on the enrolle
     expect.objectContaining({ quota_provider_unavailable: unavailable, quota_provider_actions: { codex: ['query'] } }));
 });
 
+it('names what the enrolled provider auth policy rejects at startup and keeps the executor running', async () => {
+  directory = await mkdtemp(join(tmpdir(), 'cauce-enrolled-auth-'));
+  const policy = join(directory, 'policy.json'); await writeFile(policy, '{}', { mode: 0o600 });
+  const auth = join(directory, 'auth.json'); await writeFile(auth, JSON.stringify({ schemaVersion: 1, host_id: 'test-host' }), { mode: 0o600 });
+  const request = vi.fn().mockResolvedValue({});
+  vi.spyOn(SignedHostChannel, 'load').mockResolvedValue({ identity: { host_id: 'test-host' }, request } as unknown as SignedHostChannel);
+  vi.mocked(boundedProviderReceipt).mockResolvedValue({ available: false, actions: [], placements: [] });
+  const stderr = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
+  await runEnrolledFleetHost(readFleetHostConfig({ CAUCE_FLEET_PROJECT_ROOT: directory, CAUCE_FLEET_HOST: 'test-host',
+    CAUCE_FLEET_WORKER_ID: 'test-worker', CAUCE_FLEET_PYTHON: '/usr/bin/python3',
+    CAUCE_FLEET_EXECUTABLE: join(directory, 'executor.py'), CAUCE_FLEET_POLICY_FILE: policy,
+    CAUCE_FLEET_IDENTITY_DIRECTORY: join(directory, 'identity'), CAUCE_FLEET_ENROLLED_AUTH_POLICY_FILE: auth }));
+  expect(stderr).toHaveBeenCalledWith('Host provider authentication policy is unusable: auth policy rejects state_root, helper, profiles, logins\n');
+  expect(request).toHaveBeenCalledWith('POST', '/v3/fleet/hosts/test-host/channel', expect.objectContaining({ fleet_executor: false }));
+});
+
 it('accepts optional action reasons including a provider with no available actions', () => {
   expect(HostCapabilitiesSchema.parse({ ...report, quota_provider_unavailable: unavailable }).quota_provider_unavailable).toEqual(unavailable);
   expect(HostCapabilitiesSchema.parse(report).quota_provider_unavailable).toBeUndefined();
