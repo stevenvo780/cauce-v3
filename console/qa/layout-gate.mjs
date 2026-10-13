@@ -216,7 +216,8 @@ async function medirHojaDeLive(pagina, viewport, medidas, sinMedir, origin) {
  * a timer, so the gate would wait for a quiet network that this page never has. Each route waits for
  * what its data paints (`LISTO`); `/live` also fails loudly when it paints an error instead.
  */
-async function medirRuta(pagina, ruta, origin) {
+async function medirRuta(pagina, ruta, origin, repeated = false) {
+  try {
   await pagina.goto(origin + ruta, { waitUntil: 'domcontentloaded', timeout: 30000 });
   const listo = pagina.locator(LISTO[ruta] ?? LISTO_POR_DEFECTO).first();
   await pagina.addStyleTag({ content: SIN_MOVIMIENTO });
@@ -227,6 +228,11 @@ async function medirRuta(pagina, ruta, origin) {
   await pagina.waitForTimeout(700);
   await listo.waitFor({ state: 'visible', timeout: 30000 });
   return pagina.evaluate(medirEnLaPagina);
+  } catch (error) {
+    if (error.name !== 'TimeoutError' || repeated) throw error;
+    console.error(`layout: retrying unmeasured route ${ruta} after readiness timeout`);
+    return medirRuta(pagina, ruta, origin, true);
+  }
 }
 
 async function medirViewport(navegador, viewport, origin) {
@@ -546,5 +552,8 @@ async function principal() {
   else console.log('\nlayout: every measured budget holds.');
 }
 
-if (!process.argv.includes('--v4-only')) await principal();
+if (!process.argv.includes('--v4-only')) {
+  try { await principal(); }
+  catch (error) { console.error(`layout: legacy measurement failed: ${error.message}`); process.exitCode = 1; }
+}
 if (!process.argv.includes('--legacy-only')) await runV4Layout({ update: escribirBaseline });

@@ -58,6 +58,7 @@ async function prepare(page, view) {
     if (!canvas.width || !canvas.height) throw new Error('Campus canvas has no pixels');
   }
   if (view.action === 'plan' && await page.getByLabel('Posición horizontal de grp.steven', { exact: true }).isDisabled()) throw new Error('Office editor is not editable');
+  await page.waitForLoadState('networkidle', { timeout: 10000 });
   await page.evaluate(async () => {
     await document.fonts.ready;
     window.scrollTo(0, 0);
@@ -151,7 +152,8 @@ export async function runV4Layout({ update = false } = {}) {
     browser = await chromium.launch();
     for (const width of [390, 1440]) for (const theme of ['light', 'dark']) for (const view of V4_VIEWS) {
       let result = await measureState(browser, server.origin, respond, width, theme, view);
-      if (!result.metrics && result.failures.some(failure => failure.startsWith('Unmeasured'))) {
+      if ((!result.metrics && result.failures.some(failure => failure.startsWith('Unmeasured')))
+        || result.errors.some(error => error.startsWith('Request failed:') && error.includes('ERR_NETWORK_CHANGED'))) {
         const initial = { failures: result.failures, errors: result.errors };
         await copyFile(resolve(OUTPUT, result.screenshots[0]), resolve(OUTPUT, `${result.key}-initial.png`));
         result = await measureState(browser, server.origin, respond, width, theme, view);
