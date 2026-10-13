@@ -2,6 +2,8 @@
 
 Un ordenador nuevo pasa por dos pasos, ambos sin el super-admin de plataforma. La consola («Conectar un ordenador») muestra la invitación y, si el gateway firma la preparación, los comandos de enrolar y de preparar; si no firma, solo el de enrolar. Por cada ordenador enrolado indica si su ejecutor está listo.
 
+Procedimiento para el dueño, de los requisitos a la baja: [Dar de alta un servidor de la empresa](v4-alta-servidor.md).
+
 Requisitos del ordenador: Cauce CLI, Python 3.12 o superior (filtro `data` de `tarfile`) con PyYAML (el executor valida los manifiestos de flota), OpenSSL, Node.js 22, systemd de usuario y, para crear agentes, Docker.
 
 ### Identificador
@@ -100,5 +102,6 @@ Después, la persona crea un agente desechable `zz-canary-*` y la operación ter
 - el constructor del release distribuible (hoy lo arma la prueba) y su publicación con URL HTTPS;
 - la configuración y la clave de preparación en producción;
 - Docker en el ordenador y una imagen de runtime (adapter y CLI del proveedor) fijada por digest;
-- un login real del proveedor en el paso `authenticate` y el transporte mTLS del agente hacia el gateway;
+- un login real del proveedor en el paso `authenticate`: la unidad que instala `setup` no fija `CAUCE_FLEET_ENROLLED_AUTH_POLICY_FILE` y el paquete no trae esa política, así que el ordenador no atiende `agent-auth` y un alta con un proveedor real se queda en `awaiting_auth`;
+- el transporte mTLS del agente hacia el gateway, que en producción solo escucha en `CAUCE_PRIVATE_BIND_IP`;
 - la política de autenticación de agentes enrolada (`CAUCE_FLEET_ENROLLED_AUTH_POLICY_FILE`).

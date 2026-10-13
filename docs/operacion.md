@@ -353,6 +353,8 @@ Proyecto compose propio (`deploy/decisiones/`, script `desplegar.sh`): `deploy.s
 
 ## 2. Alta y baja de un agente
 
+Un servidor nuevo de una empresa (computadora V4: invitación desde la consola, `cauce hosts enroll` y `cauce hosts setup`, agentes y baja) se da de alta con [Dar de alta un servidor de la empresa](v4-alta-servidor.md). Esta sección cubre la flota declarativa de `ops/flota.json`.
+
 Única fuente de verdad: BD (`agents` + `memberships`). Cadena declarativa obligatoria — nunca editar a mano `ops/container-aliases.json`, `ops/manifests/*.yaml` ni `ops/generated/**`:
 ```
 BD (INSERT/UPDATE) → export-fleet-snapshot.py → ops/flota.json → regenerate-fleet.sh → validate.sh → cauce <alias> aprovisionar/retirar
