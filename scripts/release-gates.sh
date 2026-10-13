@@ -52,10 +52,12 @@ OUT_ROOT="${CAUCE_RELEASE_GATES_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/cauce
 [[ "$OUT_ROOT" = /* ]] || die "CAUCE_RELEASE_GATES_DIR debe ser una ruta absoluta"
 LANES_ROOT="${CAUCE_RELEASE_GATES_LANES_DIR:-$(dirname "$REPO")/.cauce-release-gates-lanes}"
 [[ "$LANES_ROOT" = /* ]] || die "CAUCE_RELEASE_GATES_LANES_DIR debe ser una ruta absoluta"
-case "$LANES_ROOT/" in "$REPO"/*) die "los carriles no pueden vivir dentro del arbol que certifican: $LANES_ROOT" ;; esac
-for tool in pnpm python3 shellcheck ruff git setsid; do
+for tool in pnpm python3 shellcheck ruff git setsid realpath; do
   command -v "$tool" >/dev/null || die "falta $tool en PATH (activa ~/.venvs/cauce-qa); no es un fallo de codigo"
 done
+# '..' and symlinks can land in gitignored paths inside the tree, which status will not show.
+LANES_ROOT="$(realpath -m -- "$LANES_ROOT")" || die "no pude resolver CAUCE_RELEASE_GATES_LANES_DIR"
+case "$LANES_ROOT/" in "$REPO"/*) die "los carriles no pueden vivir dentro del arbol que certifican: $LANES_ROOT" ;; esac
 JOBS="$(wanted_jobs)"
 ORDER=("${GATES[@]}")
 [ "$JOBS" = 1 ] || ORDER=("${LAUNCH_ORDER[@]}")

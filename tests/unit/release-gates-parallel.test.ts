@@ -1,6 +1,6 @@
-import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { gatesRepository, releaseGateCommands, type TimelineEvent } from './deploy-gates-fixtures.js';
 
@@ -130,6 +130,45 @@ describe('release gates in parallel lanes', () => {
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('no pueden vivir dentro del arbol');
     expect(gates.receipts()).toEqual([]);
+  });
+
+  it('rejects a lanes root whose physical path is inside the tree', () => {
+    const gates = repository();
+    const outside = mkdtempSync(join(tmpdir(), 'cauce-lanes-outside-'));
+    directories.push(outside);
+    const ignored = join(gates.repository, 'ops', 'artifacts', 'inside');
+    mkdirSync(ignored, { recursive: true });
+    const link = join(outside, 'lanes');
+    symlinkSync(ignored, link);
+    const viaLink = gates.run({ CAUCE_RELEASE_GATES_JOBS: '2', CAUCE_RELEASE_GATES_LANES_DIR: link });
+    expect(viaLink.status, viaLink.stderr).toBe(1);
+    expect(viaLink.stderr).toContain('no pueden vivir dentro del arbol');
+    const lexical = `${gates.repository}/../${basename(gates.repository)}/ops/artifacts/inside`;
+    const viaDots = gates.run({ CAUCE_RELEASE_GATES_JOBS: '2', CAUCE_RELEASE_GATES_LANES_DIR: lexical });
+    expect(viaDots.status, viaDots.stderr).toBe(1);
+    expect(viaDots.stderr).toContain('no pueden vivir dentro del arbol');
+    const rootLink = join(outside, 'root');
+    symlinkSync(gates.repository, rootLink);
+    const viaRoot = gates.run({ CAUCE_RELEASE_GATES_LANES_DIR: rootLink });
+    expect(viaRoot.status, viaRoot.stderr).toBe(1);
+    expect(viaRoot.stderr).toContain('no pueden vivir dentro del arbol');
+    expect(gates.receipts()).toEqual([]);
+  });
+
+  it('follows a symlink to a lanes root outside the tree', () => {
+    const gates = repository();
+    const outside = mkdtempSync(join(tmpdir(), 'cauce-lanes-outside-'));
+    directories.push(outside);
+    const real = join(outside, 'real');
+    mkdirSync(real);
+    const link = join(outside, 'lanes');
+    symlinkSync(real, link);
+    const result = gates.run({ CAUCE_RELEASE_GATES_JOBS: '2', CAUCE_RELEASE_GATES_LANES_DIR: link });
+    expect(result.status, result.stderr).toBe(0);
+    const receipt = gates.receipt(only(gates.receipts()));
+    expect(receipt.carriles).toBe(2);
+    expect(receipt.comandos.every(command => command.exit === 0)).toBe(true);
+    expect(gates.git('worktree', 'list', '--porcelain').match(/^worktree /gmu)).toHaveLength(1);
   });
 
   it('on SIGTERM ends the running gates with their process groups and emits no receipt', async () => {
