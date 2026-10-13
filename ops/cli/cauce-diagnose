@@ -2,7 +2,7 @@
 set -euo pipefail
 
 cli_directory=$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")
-exec python3 -B - "$cli_directory" "$@" <<'PY'
+exec python3 -I -B - "$cli_directory" "$@" <<'PY'
 import argparse
 import json
 import sys

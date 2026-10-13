@@ -15,7 +15,7 @@ OPS=$HOME/.local/share/cauce-v3/ops
 if [[ -v CAUCE_FLEET_RUNTIME_STATE ]]; then
   if [[ ${2:-} == --attach ]]; then
     # shellcheck disable=SC2016
-    exec python3 -c '
+    exec python3 -I -c '
 import importlib.machinery
 import importlib.util
 import os
