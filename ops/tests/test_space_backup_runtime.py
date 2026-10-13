@@ -109,10 +109,31 @@ class SpaceBackupRuntimeTest(unittest.TestCase):
         self.assertNotEqual(self.invoke('export').returncode, 0)
         self.assertFalse(list(self.state.glob('space-backup-*')))
 
-    def test_symlink_or_group_writable_space_cannot_export(self):
-        (self.space / 'projects/link').symlink_to(self.root)
-        self.assertNotEqual(self.invoke('export').returncode, 0)
-        (self.space / 'projects/link').unlink()
+    def test_symlinks_are_declared_omissions_without_exporting_their_targets(self):
+        outside = self.root / 'outside'
+        outside.mkdir(mode=0o700)
+        payload = b'External target bytes must stay outside the space backup.\n'
+        target = outside / 'outside-only.txt'
+        target.write_bytes(payload)
+        links = {'projects/link': self.root, 'projects/space-link': self.space,
+                 'projects/outside-link': outside, 'data/outside-file-link': target}
+        for path, destination in links.items():
+            (self.space / path).symlink_to(destination)
+        receipt = self.exported()
+        archive = self.state / f"space-backup-{self.claim['id']}-1.zip"
+        with zipfile.ZipFile(archive) as zipped:
+            manifest_raw = zipped.read('space-manifest.json')
+            self.assertEqual(hashlib.sha256(manifest_raw).hexdigest(), receipt['manifest_sha256'])
+            manifest = json.loads(manifest_raw)
+            self.assertEqual({item['path']: item['reason'] for item in manifest['omissions']},
+                             {'config/auth.json': 'sensitive_path', 'data/.env': 'sensitive_path',
+                              **{path: 'special_file' for path in links}})
+            for path in links:
+                self.assertFalse(any(name == path or name.startswith(path + '/') for name in zipped.namelist()), path)
+            self.assertFalse(any(payload in zipped.read(item) for item in zipped.infolist()))
+            self.assertEqual(zipped.read('projects/work.txt'), (self.space / 'projects/work.txt').read_bytes())
+
+    def test_group_writable_space_cannot_export(self):
         self.space.chmod(0o770)
         self.assertNotEqual(self.invoke('export').returncode, 0)
         self.assertFalse(list(self.state.glob('space-backup-*')))
