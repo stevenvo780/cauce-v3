@@ -28,6 +28,7 @@ import './chat-launcher.css';
 const REDUCED_MOTION = '(prefers-reduced-motion: reduce)';
 const ARROWS = new Set<string>(['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight']);
 const WORKING = new Set<LiveState>(['thinking', 'receiving', 'delegating']);
+const UNKNOWN_STATE_META = { label: 'Desconocido', hint: 'La actividad actual del agente no está disponible.' };
 const SECTION_ICON: Record<LauncherSectionId, LucideIcon> = {
   favoritos: Star, recientes: Clock3, atencion: AlertTriangle, todos: Users, resultados: Search,
 };
@@ -53,7 +54,7 @@ function isEditable(target: EventTarget | null): boolean {
 interface CardProps {
   agent: AgenteDeMensajeria;
   index: number;
-  state: LiveState;
+  state?: LiveState;
   /** Why the live view chose that state; the preview falls back to it when there is no message. */
   reason?: string;
   last?: LastMessage;
@@ -68,8 +69,8 @@ function LauncherCard({ agent, index, state, reason, last, salud, layout, highli
   const key = keyOf(agent);
   const appearance = useAgentAppearance(key);
   const [hue] = orbHues(key, appearance?.hue);
-  const meta = LIVE_STATE_META[state];
-  const tone = TONE_CLASS[STATE_TONE[state]];
+  const meta = state ? LIVE_STATE_META[state] : UNKNOWN_STATE_META;
+  const tone = TONE_CLASS[state ? STATE_TONE[state] : 'neutral'];
   const href = agentHref('messages', agent);
   const time = last ? haceCuanto(last.createdAt) : undefined;
   const chips = counters(salud);
@@ -82,13 +83,13 @@ function LauncherCard({ agent, index, state, reason, last, salud, layout, highli
     onOpen(agent, event.currentTarget);
   };
   const pill = (
-    <span className={cn('inline-flex shrink-0 items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-medium', tone.pill)} data-live-state={state}>
+    <span className={cn('inline-flex shrink-0 items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-medium', tone.pill)} data-live-state={state ?? 'unknown'}>
       <span className={cn('size-1.5 rounded-full', tone.dot)} aria-hidden="true" />{meta.label}
     </span>
   );
   const preview = last?.text ? (
     <>{last.from ? <span className="text-fg-2">{last.from}: </span> : null}{last.text}</>
-  ) : <span className="italic">{reason ?? 'Sin mensajes recientes'}</span>;
+  ) : <span className="italic">{reason ?? (state ? 'Sin mensajes recientes' : UNKNOWN_STATE_META.hint)}</span>;
   const badges = (
     <>
       {pill}
@@ -185,7 +186,7 @@ function SkeletonGrid({ phone }: { phone: boolean }) {
 
 /** The landing of the Chat section: a quick picker that opens a conversation in one gesture. */
 export function ChatLauncher({ phone }: { phone: boolean }) {
-  const { agents, live, salud, messages, loading, error, reload } = useFleet();
+  const { agents, live, salud, activity, messages, loading, error, reload } = useFleet();
   const favorites = useAgentPreferences()?.favorites;
   const settled = usePreferencesSettled();
   const reduced = useMediaQuery(REDUCED_MOTION);
@@ -197,18 +198,19 @@ export function ChatLauncher({ phone }: { phone: boolean }) {
   const listRef = useRef<HTMLUListElement | null>(null);
   const headingId = useId();
 
-  const stateOf = useCallback((agent: AgenteDeMensajeria): LiveState => (
-    live.get(agent.id)?.state ?? (agent.leaseState === 'online' ? 'idle' : 'down')
-  ), [live]);
+  const stateOf = useCallback((agent: AgenteDeMensajeria): LiveState | undefined => (
+    live.get(agent.id)?.state ?? (activity.error || activity.loading || agent.leaseState === 'unknown'
+      ? undefined : agent.leaseState === 'online' ? 'idle' : 'down')
+  ), [live, activity.error, activity.loading]);
   const last = useMemo(() => lastMessages(messages.data, agents), [messages.data, agents]);
   const sections = useMemo(
-    () => launcherSections({ agents, stateOf, salud, last, favorites, query }),
+    () => launcherSections({ agents, stateOf: (agent) => stateOf(agent) ?? 'idle', salud, last, favorites, query }),
     [agents, stateOf, salud, last, favorites, query],
   );
   const flat = useMemo(() => sections.flatMap((section) => section.agents), [sections]);
   const current = flat.length === 0 ? -1 : Math.min(active, flat.length - 1);
-  const working = agents.filter((agent) => WORKING.has(stateOf(agent)));
-  const attention = agents.filter((agent) => needsAttention(stateOf(agent), salud[agent.id])).length;
+  const working = agents.filter((agent) => WORKING.has(stateOf(agent) ?? 'idle'));
+  const attention = agents.filter((agent) => needsAttention(stateOf(agent) ?? 'idle', salud[agent.id])).length;
 
   useEffect(() => {
     if (!phone) searchRef.current?.focus({ preventScroll: true });
@@ -273,7 +275,8 @@ export function ChatLauncher({ phone }: { phone: boolean }) {
     if (!target || !agent) return;
     if (fromSearch) (target as Partial<HTMLElement>).scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
     else target.focus();
-    setAnnouncement(`${agent.alias}, ${LIVE_STATE_META[stateOf(agent)].label}. Enter para abrir.`);
+    const state = stateOf(agent);
+    setAnnouncement(`${agent.alias}, ${(state ? LIVE_STATE_META[state] : UNKNOWN_STATE_META).label}. Enter para abrir.`);
   };
 
   let offset = 0;

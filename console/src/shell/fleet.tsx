@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useApi } from '../api/context';
 import { usePolling } from '../api/use-polling';
 import { useResource } from '../api/use-resource';
@@ -27,13 +27,25 @@ export function FleetProvider({ children }: { children: ReactNode }) {
   usePolling(queues.reload, 15_000, { pausedWhile: queues.loading });
   usePolling(topology.reload, 30_000, { pausedWhile: topology.loading });
 
-  const activityData = activity.error ? undefined : activity.data;
-  const agents = useMemo(() => construirRosterDeMensajeria({
-    status: status.data,
-    topology: topology.data,
-    activity: activityData,
-    messages: messages.data,
-  }), [status.data, topology.data, activityData, messages.data]);
+  const [lastActivityReadFailed, setLastActivityReadFailed] = useState(false);
+  useEffect(() => {
+    if (activity.error) setLastActivityReadFailed(true);
+    else if (!activity.loading) setLastActivityReadFailed(false);
+  }, [activity.error, activity.loading]);
+  const activityUnavailable = Boolean(activity.error) || (lastActivityReadFailed && activity.loading);
+  const activityData = activityUnavailable ? undefined : activity.data;
+  const agents = useMemo(() => {
+    const rosterActivity = activityUnavailable && activity.data ? {
+      ...activity.data,
+      agents: activity.data.agents?.map((agent) => ({ ...agent, presence: undefined })),
+    } : activity.data;
+    return construirRosterDeMensajeria({
+      status: status.data,
+      topology: topology.data,
+      activity: rosterActivity,
+      messages: messages.data,
+    });
+  }, [status.data, topology.data, activity.data, activityUnavailable, messages.data]);
 
   const salud = useMemo(
     () => saludDeColaPorAgente(activityData, queues.error ? undefined : queues.data),
