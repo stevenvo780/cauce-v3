@@ -279,3 +279,25 @@ Activos: `cred-guard.timer` (30 min, último 16:21 hora local, `rc=0 problemas=0
 
 Fuera de este inventario: el «lector V3 de contextos» citado en `GOAL.md` §9 no se midió aquí; se
 revisa con la tarea de contextos.
+
+## 11. Aplicación de la poda (ola w4, carril muse1)
+
+Registro de ejecución; las secciones 1–10 quedan como se midieron.
+
+| Decisión | Estado |
+|---|---|
+| §2 fusionar JSONL de decisiones en `audit_events` | **Aplicada** (`35c9d73f`): `JsonlAudit` borrada; la metadata PG lleva ahora el registro completo (preguntas, redacciones, solicitudes a Jev, usage, certeza, `caer_a_llm`). Queda para el carril de despliegue retirar `CAUCE_DECISIONES_AUDIT_FILE` y el volumen `decisiones_auditoria` de `deploy/decisiones/compose.yaml` (el servicio ya ignora esa variable). Respecto al paso 4 de la sección 10: si PG falla, no existe segunda escritura; el fallo de auditoría se propaga como ya hacía la escritura durable |
+| §3 podar revividor, panel-cadenas y mcp-expansion | **Movida**: no hay ningún fichero de esas tres unidades en el repo (verificado); la baja es solo en los hosts, fuera de esta poda |
+| §3 cableado OpenTelemetry retirar o reactivar | **Movida**: vive en `ops/observability/` y `deploy/compose.yml`, fuera de los archivos de esta tarea; sigue pendiente la decisión del dueño |
+| §3 tablas `_respaldo_` | **Movida**: son objetos de la base de datos productiva; ninguna tarea de repo las toca |
+| §3 filas emitidas por terceros y tokens personales | Sin cambios (recomendaciones sin poda asociada) |
+| §4 consumidor de alertas único | **Aplicada en parte**: `cauce-alertas-al-bus.py` sigue siendo el único consumidor y las guardias de credenciales ahora avisan de su propio fallo con `OnFailure=cauce-v3-backup-alert@%n.service` (el publicador genérico existente). El resto de fallos de units sigue sin consumidor, como ya decía la sección |
+| §4 conservar `audit_events` y crear alertas sobre `deny` | Sin cambios (decisión de conservar; la alerta sigue pendiente de dueño/regla) |
+| §7 podar `cred-guard.sh` y el suelto `cauce-credenciales`; fusionar sondas por host | **Aplicada** (`094c793a`): un solo `cred-guard.py` con modos agregador/`--sonda-remota`, estado y log propios vía `CAUCE_CRED_GUARD_ESTADO`, código de salida real (fuera el `SuccessExitStatus=1`) y `OnFailure` al bus. La clasificación (`credential_health.py`) no se tocó, así que la pregunta abierta sobre la credencial muerta sigue para el dueño sin cambios de comportamiento. Quedan las entradas obsoletas de los tres ficheros borrados en `scripts/calidad-base.json` (inertes; las retira el integrador con `--update`) |
+| §7/§10 contradicciones del README de guardias | **Aplicada** en lo que toca a credenciales (`094c793a`): tabla, párrafo de dos piezas e instalación reconciliados. `guardia-nocturna` no tiene ningún fichero ni mención en el repo (verificado): su contradicción horaria vive solo en el host |
+| §9 lector V3 de contextos (fuera del inventario) | **Aplicada en consola** (`3127a7d3`): retirados inspección V3 y aplicar-desde-Git de la consola; queda la inspección del manual nativo sobre el layout del broker. Las rutas del gateway (`services/gateway/src/console/context-repository/`) quedan sin consumidor de consola para inspect/preview/apply y su retirada es del carril del gateway |
+
+Verificación de la ola: `rg` sin referencias vivas a `cred-guard.sh`, `cauce-cred-guard-kratos.py`,
+`guardias/cauce-credenciales`, `JsonlAudit`/`AUDIT_FILE` (salvo las entradas inertes de
+`scripts/calidad-base.json` y el compose de despliegue citados), ni a
+`inspectContextRepository`/`ContextRepositoryApply` en `console/src`.
