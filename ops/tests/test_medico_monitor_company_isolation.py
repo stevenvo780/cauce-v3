@@ -36,6 +36,10 @@ create table outbox_dead_letters(tenant_id text references tenants, resolved_at 
 alter table messages add column created_at timestamptz default now();
 alter table deliveries add column late_result_at timestamptz;
 create table audit_events(tenant_id text, message_id bigint, action text, metadata jsonb, company_id text);
+create table adapter_outbox(id bigint primary key, tenant_id text references tenants,
+  message_id bigint references messages, delivery_id bigint references deliveries, payload jsonb, created_at timestamptz);
+create table telegram_egress_effects(effect_id text primary key, outbox_id bigint references adapter_outbox,
+  tenant_id text references tenants, state text);
 insert into tenants values ('Steven','humanizar'),('LocalB','humanizar'),('ForeignTenant','outside');
 insert into agents values ('Steven','shared','fixture-a','local-a',true),('LocalB','shared','fixture-b','local-b',true),
  ('Steven','zeus','fixture-z','zeus',true),('ForeignTenant','shared','foreign-container','foreign-runtime',true),
@@ -76,6 +80,18 @@ insert into audit_events(tenant_id,message_id,action,metadata) values ('Steven',
  ('ForeignTenant',4,'foreign-audit','{}'),('ForeignTenant',1,'foreign-cross-audit','{}'),
  ('Steven',4,'foreign-cross-message-audit','{}'),(null,null,'unowned-audit','{}');
 insert into audit_events values ('Steven',1,'foreign-explicit-company','{}','outside');
+insert into adapter_outbox values
+ (1,'Steven',1,1,'{"text":"NIT local-a"}',now()),
+ (2,'LocalB',2,2,'{"text":"NIT local-b"}',now()),
+ (3,'ForeignTenant',4,4,'{"text":"NIT foreign-private"}',now()),
+ (4,'Steven',4,1,'{"text":"NIT cross-message"}',now()),
+ (5,'Steven',1,4,'{"text":"NIT cross-delivery"}',now()),
+ (6,'Steven',1,null,'{"text":"NIT no-delivery"}',now());
+insert into telegram_egress_effects values
+ ('local-a',1,'Steven','sent'),('local-b',2,'LocalB','sent'),
+ ('foreign',3,'ForeignTenant','sent'),('cross-message',4,'Steven','sent'),
+ ('cross-delivery',5,'Steven','sent'),('no-delivery',6,'Steven','sent'),
+ ('cross-effect-tenant',1,'ForeignTenant','sent'),('cross-effect-outbox',3,'Steven','sent');
 """
 
 
@@ -379,6 +395,21 @@ def test_internal_scope_rejects_any_other_query(monkeypatch):
     monkeypatch.setattr(doctor, "sh", lambda *_args, **_kwargs: pytest.fail("modified internal query reached transport"))
     with pytest.raises(ValueError, match="internal doctor"):
         doctor.sql("SELECT container_name FROM doctor_container_scopes", internal=True)
+
+
+@pytest.mark.parametrize("company,expected", [
+    ("humanizar", [["1", "local-a"], ["2", "local-b"], ["6", "no-delivery"]]),
+    ("outside", [["3", "foreign"]]),
+])
+def test_pg_egress_evidence_join_is_company_scoped(transport, monkeypatch, company, expected):
+    monkeypatch.setenv("CAUCE_GUARD_COMPANY_ID", company)
+    query = ("FROM adapter_outbox o JOIN telegram_egress_effects t ON t.outbox_id=o.id "
+             r"WHERE t.state='sent' AND o.payload::text ~ '\mNIT\M' "
+             "AND o.created_at > timestamp '2000-01-01 00:00:00'")
+    assert doctor.sql("SELECT o.id,t.effect_id " + query + " ORDER BY o.id,t.effect_id", columnas=2) == expected
+    evidence = {"tipo": "sql_no_vacio", "consulta": "SELECT 1 " + query + " AND o.tenant_id IN ('LocalB','Steven')"}
+    result = doctor.libro_tareas.verificar(evidence, {"sql": doctor.sql})
+    assert result["ok"] is (company == "humanizar")
 
 
 def test_task_book_query_runs_on_scoped_postgres(transport, pg):

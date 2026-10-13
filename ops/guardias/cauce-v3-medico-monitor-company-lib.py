@@ -26,6 +26,12 @@ def company_scoped_query(query, *, internal=False):
         "deliveries": (("tenants", "messages"), "recipient_tenant IN (SELECT id FROM tenants) "
                        "AND message_id IN (SELECT id FROM messages)"),
         "delivery_acks": (("deliveries",), "delivery_id IN (SELECT id FROM deliveries)"),
+        "adapter_outbox": (("tenants", "messages", "deliveries"),
+                           "tenant_id IN (SELECT id FROM tenants) AND message_id IN (SELECT id FROM messages) "
+                           "AND (delivery_id IS NULL OR delivery_id IN (SELECT id FROM deliveries))"),
+        "telegram_egress_effects": (("tenants", "adapter_outbox"),
+                                    "tenant_id IN (SELECT id FROM tenants) "
+                                    "AND outbox_id IN (SELECT id FROM adapter_outbox)"),
         "human_message_initiators": (("messages",), "message_id IN (SELECT id FROM messages)"),
         "channel_bridge_cursors": (("tenants",), "tenant_id IN (SELECT id FROM tenants)"),
         "dead_letters": (("tenants",), "tenant_id IN (SELECT id FROM tenants)"),
