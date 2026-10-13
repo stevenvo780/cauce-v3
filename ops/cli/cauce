@@ -39,7 +39,7 @@ if [[ ${1:-} == login || ${1:-} == context || ${1:-} == context-native || ${1:-}
       login) context_helper=cauce-login ;;
       spaces)
         case "${2:-}" in
-          backup|restore) context_helper=space_archive.py ;;
+          backup|restore|inventory|migrate) context_helper=space_archive.py ;;
           *) context_helper=cauce-spaces ;;
         esac ;;
     esac
@@ -186,7 +186,7 @@ ${c_b}cauce${c_reset} — operar la flota Cauce V3
   ${c_b}cauce login --status|--renew${c_reset}                            consultar o renovar la sesión
   ${c_b}cauce context${c_reset} --help                  historial y edición de contextos
   ${c_b}cauce context-native${c_reset} --help           registrar cambios de archivos nativos
-  ${c_b}cauce spaces backup|restore${c_reset} --help    copia y recuperación de un espacio
+  ${c_b}cauce spaces backup|restore|inventory|migrate${c_reset} --help    copia, inventario y migración de un espacio
   ${c_b}cauce spaces create|list|edit|retire${c_reset} --help    registro y operaciones durables
 
 Con flota dinámica, entrar abre la terminal existente del inventario aplicado.
