@@ -28,7 +28,7 @@ const MAX_TRACKED_IPS = 10_000;
 const HOUR_MS = 60 * 60_000;
 
 /** Registrations per hour across every client address; 0 closes public registration. */
-export function configuredHourlyRegistrations(value = process.env.CAUCE_REGISTRATION_HOURLY_LIMIT ?? '1000'): number {
+export function configuredHourlyRegistrations(value = process.env.CAUCE_REGISTRATION_HOURLY_LIMIT ?? '20'): number {
   if (!/^(?:0|[1-9][0-9]{0,5})$/u.test(value.trim())) {
     throw new Error('CAUCE_REGISTRATION_HOURLY_LIMIT must be an integer between 0 and 999999');
   }

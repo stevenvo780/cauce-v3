@@ -142,6 +142,48 @@ describe('public company registration', () => {
     expect((await register('independent@example.test', 'independent')).statusCode).toBe(201);
   });
 
+  it('returns a saturated reservation to its original hour after the next window opens', async () => {
+    const { register, hashes } = await open({ CAUCE_REGISTRATION_HOURLY_LIMIT: '1' });
+    if (!gateway) throw new Error('Gateway fixture is not ready');
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(1_000);
+    let releaseWork = () => {};
+    let releaseResponse = () => {};
+    let markSaturated = () => {};
+    const heldWork = new Promise<void>(resolve => { releaseWork = resolve; });
+    const heldResponse = new Promise<void>(resolve => { releaseResponse = resolve; });
+    const saturated = new Promise<void>(resolve => { markSaturated = resolve; });
+    gateway.addHook('onSend', async (request, reply, payload) => {
+      if (request.ip === '203.0.113.11' && reply.statusCode === 429) {
+        markSaturated();
+        await heldResponse;
+      }
+      return payload;
+    });
+    const occupied = Array.from({ length: 17 }, () => passwordWork.run(() => heldWork));
+    const previous = register('previous@example.test', 'previous', '203.0.113.11').then(response => response);
+    try {
+      await expect(Promise.race([saturated.then(() => 'held'), previous.then(response => response.statusCode)])).resolves.toBe('held');
+      expect(hashes).toEqual([]);
+      releaseWork();
+      await Promise.all(occupied);
+      clock.mockReturnValue(3_601_000);
+      expect((await register('current@example.test', 'current')).statusCode).toBe(201);
+      releaseResponse();
+      const refused = await previous;
+      expect(refused.statusCode).toBe(429);
+      expect(refused.headers['retry-after']).toBe('5');
+      await new Promise<void>(resolve => { setImmediate(resolve); });
+      const limited = await register('next@example.test', 'next');
+      expect(limited.statusCode).toBe(429);
+      expect(limited.headers['retry-after']).toBe('3600');
+      expect(hashes).toHaveLength(1);
+    } finally {
+      releaseWork(); releaseResponse();
+      try { await Promise.all([...occupied, previous]); }
+      finally { clock.mockRestore(); }
+    }
+  });
+
   it('answers a taken email and a taken slug with one body after the same derivation', async () => {
     const { register, hashes } = await open();
     expect((await register('dueno@example.test', 'acme')).statusCode).toBe(201);
@@ -192,7 +234,7 @@ describe('public company registration', () => {
 
   it('reads the hourly cap from configuration and fails closed on a malformed value', () => {
     vi.stubEnv('CAUCE_REGISTRATION_HOURLY_LIMIT', undefined);
-    expect(configuredHourlyRegistrations()).toBe(1000);
+    expect(configuredHourlyRegistrations()).toBe(20);
     vi.unstubAllEnvs();
     expect(configuredHourlyRegistrations('0')).toBe(0);
     expect(configuredHourlyRegistrations(' 30 ')).toBe(30);
