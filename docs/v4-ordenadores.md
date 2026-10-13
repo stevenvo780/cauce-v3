@@ -85,6 +85,24 @@ Es la **plantilla aprobada por la plataforma** acotada a lo que la plataforma ma
 - Por cada host, el gateway quita los bundles cuyo harness no está habilitado en `harness_definitions` (tabla de plataforma) y las `container_templates` que dependían de ellos, y sustituye `@host@` y `@company@`.
 - El esquema rechaza claves que el ordenador fija por sí mismo (`executor_user`, `roots`, `native`, `signer`…), bundles fuera de `@release@/`, una autoridad que no sea `@identity@`/`@host@` y URLs con credenciales o sin TLS (HTTP solo hacia loopback, para pruebas). Los bundles exigen los mismos campos que el executor (`directory`, `digest` `sha256:`, `executable`, `executable_sha256`, `argv`).
 
+### Login del proveedor desde la consola
+
+Un alta con un proveedor real se para en `authenticate` (`awaiting_auth`) hasta que alguien inicia la sesión del proveedor dentro del contenedor del agente. En un ordenador enrolado lo hace el proceso del host (`AgentProviderAuthHost`), que atiende los comandos del canal firmado `agent-auth`: el terminal de la consola (`/v3/console/provider-auth/…`) habla con el gateway, el gateway encola `stop`, `open`, `start`, `input`, `verify` y `cleanup`, y el host los ejecuta con `provider-login.py`, que entra en el contenedor exacto (`docker exec --user 0 … --container-child`) y lanza el login como el usuario de ejecución con un PTY.
+
+El host solo monta ese servicio si la unidad fija `CAUCE_FLEET_ENROLLED_AUTH_POLICY_FILE`. `setup` lo hace cuando alguna plantilla de perfil firmada trae su receta `login`:
+
+```json
+"profile_templates":[{"provider":"codex","runtime_user":"node","path_root":"/home/node/.cauce-profiles","command":"/usr/local/bin/codex",
+  "command_sha256":"<64 hex>","runtime_mode":"container","container_prefix":"cauce-",
+  "login":{"method":"device","command":["/usr/local/bin/codex","login","--device-auth"],"sha256":"<64 hex>"}}]
+```
+
+- La receta es fija por proveedor y la validan el executor y el host: Codex `login --device-auth` (`device`) o `login` (`terminal`); Claude `auth login` (`terminal`); `command[0]` y `sha256` son los de la plantilla. El ejecutable tiene que ser un binario del root en la imagen de los agentes: el helper comprueba, como root dentro del contenedor, el digest del fichero y que el proceso lanzado sea exactamente ese `argv` (un script con `#!` no lo cumple). Con Codex instalado por npm, `command` es el binario nativo `…/lib/node_modules/@openai/codex/…/vendor/x86_64-unknown-linux-musl/bin/codex` que ya usa el login de Mis cuotas (`ops/cli/quota_runtime.py`), no el atajo `/usr/local/bin/codex`, que es un enlace a un script de Node.
+- Con esa receta, `setup` escribe `<raíz de instalación>/provider-auth-policy.json` (`0600`) con `host_id`, las mismas `profiles` y `profile_templates` que la política del executor (el host exige que coincidan), el helper `@release@/ops/cli/provider-login.py` y sus módulos fijados por sha256 desde el release verificado, y `state_root` `<raíz>/provider-login` (`0700`). No lleva ningún secreto. La unidad añade `Environment=CAUCE_FLEET_ENROLLED_AUTH_POLICY_FILE=…`, y `setup`/`status` informan `"provider_auth": true`. Sin receta no se escribe nada y una política vieja se borra.
+- Al arrancar, el host comprueba la política y, si no casa (perfiles distintos, pines del helper cambiados…), lo dice en el diario: `Host provider authentication policy is unusable: auth policy rejects <campos>`.
+- El login para el runtime del agente (`login-stop`) para que el CLI no se use a la vez; tras verificar la identidad y reanudar, el paso `profile` lo vuelve a arrancar antes de sus sondas.
+- La sesión del proveedor queda en el volumen `<contenedor>-provider-profiles`; la consola no guarda el contenido del terminal.
+
 ### Clave de firma
 
 La única clave de la autoridad de flota es la CA RSA X.509 que emite los certificados mTLS de los agentes; vive en el enclave root de la autoridad central y el gateway (uid 1000) no la lee por diseño ([despliegue del controlador](v3.5-controlador-despliegue.md)). Firmar JSON con ella mezclaría usos y obligaría a exponerla al gateway, y el contrato del ordenador ya exige Ed25519. Por eso la preparación usa **una clave Ed25519 propia del gateway** (`signing_key_file`, PEM PKCS#8 0600 del uid del gateway), cuya huella ancla cada invitación. Rotarla obliga a re-anclar cada ordenador con `cauce hosts setup --signer-fingerprint <huella nueva>`.
@@ -102,6 +120,13 @@ Después, la persona crea un agente desechable `zz-canary-*` y la operación ter
 - el constructor del release distribuible (hoy lo arma la prueba) y su publicación con URL HTTPS;
 - la configuración y la clave de preparación en producción;
 - Docker en el ordenador y una imagen de runtime (adapter y CLI del proveedor) fijada por digest;
-- un login real del proveedor en el paso `authenticate`: la unidad que instala `setup` no fija `CAUCE_FLEET_ENROLLED_AUTH_POLICY_FILE` y el paquete no trae esa política, así que el ordenador no atiende `agent-auth` y un alta con un proveedor real se queda en `awaiting_auth`;
 - el transporte mTLS del agente hacia el gateway, que en producción solo escucha en `CAUCE_PRIVATE_BIND_IP`;
-- la política de autenticación de agentes enrolada (`CAUCE_FLEET_ENROLLED_AUTH_POLICY_FILE`).
+- la receta `login` de cada plantilla de perfil en la configuración de preparación de producción, con el CLI real de la imagen.
+
+El login del proveedor tiene su propia prueba con el mismo arnés (`providerLogin: true`):
+
+```bash
+npx vitest run services/gateway/src/fleet/host-setup-provider-auth.e2e-docker.test.ts
+```
+
+La imagen de los agentes trae un CLI de Codex de fixture (binario estático del root) que arranca sin sesión y pide un código de dispositivo. Tras `enroll` y `setup` (`provider_auth: true`, política `0600`, unidad con `CAUCE_FLEET_ENROLLED_AUTH_POLICY_FILE`), el alta se para en `awaiting_auth`; la prueba recorre las mismas rutas que la consola (ámbito, sesión, ticket y WebSocket del terminal), escribe el código, verifica la identidad, reanuda y la operación termina `succeeded` con las sondas de bootstrap y normal respondidas por el agente. El código del terminal no aparece en los eventos de la operación.

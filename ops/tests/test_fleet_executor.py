@@ -191,6 +191,31 @@ class PhysicalExecutorTest(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertNotIn('untrusted fixture', result.stdout + result.stderr)
 
+    def test_runtime_stopped_for_a_console_login_restarts_once_before_the_profile_probe(self):
+        self.configure_hooks()
+        self.configure_signer()
+        for step in ('artifacts', 'credentials', 'runtime'):
+            result = self.run_step(step)
+            self.assertEqual(result.returncode, 0, f'{step}: {result.stderr}')
+        metadata = self.roots['runtime'] / '.control/physical-one/cauce-v3-adapter.json'
+        before = json.loads(metadata.read_bytes())['pid']
+        stopped = self.run_step('login-stop')
+        self.assertEqual(stopped.returncode, 0, stopped.stderr)
+        self.assertFalse(pathlib.Path(f'/proc/{before}').exists())
+        authenticated = self.run_step('authenticate')
+        self.assertEqual(authenticated.returncode, 0, authenticated.stderr)
+        self.assertFalse(metadata.exists())
+        profile = self.run_step('profile')
+        self.assertEqual(profile.returncode, 0, profile.stderr)
+        restarted = json.loads(metadata.read_bytes())['pid']
+        self.assertNotEqual(restarted, before)
+        self.assertTrue(pathlib.Path(f'/proc/{restarted}').exists())
+        self.assertEqual(self.run_step('profile').returncode, 0)
+        self.assertEqual(json.loads(metadata.read_bytes())['pid'], restarted)
+        journal = next(self.roots['state'].glob('operations/*/effects.json'))
+        self.assertNotIn('login_stopped', json.loads(journal.read_bytes()))
+        self.require_verified_stop = True
+
     def test_admission_requires_full_verify_and_keeps_normal_credentials_separate(self):
         self.configure_hooks()
         self.configure_signer()

@@ -995,7 +995,7 @@
       "operations": {
         "C": {
           "status": "covered",
-          "reason": "Alta desde «Añadir agente» → «Solo preparar, sin desplegar» hasta succeeded: contenedor, volúmenes, bootstrap y respuesta correlacionada por nonce en ambas fases, admisión y proceso vivo. Chromium, gateway, PostgreSQL y un ordenador enrolado sin superadministrador con su executor real sobre Docker local; la prueba lee el contenedor tras cada paso y el inventario Docker antes y después. El mismo recorrido contra server2 (CAUCE_FLEET_CYCLE_TARGET=server2) está preparado y no se ejecutó. La matriz enlaza la prueba y no sustituye su ejecución sobre el candidato.",
+          "reason": "Alta desde «Añadir agente» → «Solo preparar, sin desplegar» hasta succeeded: contenedor, volúmenes, bootstrap y respuesta correlacionada por nonce en ambas fases, admisión y proceso vivo. Chromium, gateway, PostgreSQL y un ordenador enrolado sin superadministrador con su executor real sobre Docker local; la prueba lee el contenedor tras cada paso y el inventario Docker antes y después. El mismo recorrido contra server2 (CAUCE_FLEET_CYCLE_TARGET=server2) está preparado y no se ejecutó. Con un CLI de proveedor sin sesión, el alta en un ordenador preparado con setup se para en awaiting_auth, se autentica por las rutas y el terminal WebSocket de la consola, se reanuda y termina succeeded con ambas sondas respondidas. La matriz enlaza la prueba y no sustituye su ejecución sobre el candidato.",
           "api": [
             {
               "method": "POST",
@@ -1022,6 +1022,10 @@
             {
               "file": "services/gateway/src/fleet/host-setup.e2e-docker.test.ts",
               "name": "enrolls with the console invitation, installs the user service and reports executor_ready"
+            },
+            {
+              "file": "services/gateway/src/fleet/host-setup-provider-auth.e2e-docker.test.ts",
+              "name": "setup, create awaiting auth, console login, resume, succeeded and the agent answers its nonce"
             }
           ]
         },

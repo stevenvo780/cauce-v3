@@ -14,6 +14,7 @@ import { QuotaHostAuthentication } from './quota-auth-host.js';
 import { HostCapabilitiesSchema } from './host-channel.capabilities.js';
 import { SpaceBackupHost } from './space-backup.host.js';
 import { AgentProviderAuthHost } from './agent-provider-auth-host.js';
+import { hostProviderAuthPolicyFault } from './host-provider-auth.js';
 import { AgentQuotaExecutor, HostChannelAgentQuotaRepository } from './agent-quota-executor.js';
 import { performAgentQuotaHostCommand } from './agent-quota-host-command.js';
 import type { FleetHostConfig } from './main.js';
@@ -56,8 +57,11 @@ export async function runEnrolledFleetHost(config: FleetHostConfig): Promise<voi
     worker: `host-${config.host}`, host: config.host, signal: abort.signal, leaseMs: config.leaseMs,
     perform: (execution, signal) => performAgentQuotaHostCommand(config.command, execution, signal),
   });
-  const agentAuthentication = config.enrolledAuthPolicyFile === undefined ? undefined : new AgentProviderAuthHost(channel, {
-    hostConfig: { host: config.host, command: config.command }, authPolicyFile: config.enrolledAuthPolicyFile, projectRoot: config.projectRoot });
+  const authOptions = config.enrolledAuthPolicyFile === undefined ? undefined
+    : { hostConfig: { host: config.host, command: config.command }, authPolicyFile: config.enrolledAuthPolicyFile, projectRoot: config.projectRoot };
+  const agentAuthentication = authOptions === undefined ? undefined : new AgentProviderAuthHost(channel, authOptions);
+  const authFault = authOptions === undefined ? undefined : await hostProviderAuthPolicyFault(authOptions);
+  if (authFault !== undefined) process.stderr.write(`Host provider authentication policy is unusable: ${authFault}\n`);
   const backups = new SpaceBackupHost(channel, { python: config.command.python, policyFile: config.command.policyFile,
     projectRoot: config.projectRoot, ...(config.command.timeoutMs === undefined ? {} : { timeoutMs: config.command.timeoutMs }) });
   const authentication = new QuotaHostAuthentication(channel, quotaSource, { host: config.host, command: config.command,

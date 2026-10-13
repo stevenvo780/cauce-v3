@@ -298,6 +298,73 @@ class HostSetupTests(unittest.TestCase):
             host_setup.setup(self.identity, self.install_base(), True)
         self.assertFalse(self.install_base().exists())
 
+    def login_package(self, *, helper: bool = True, login: bool = True):
+        cli = pathlib.Path(__file__).resolve().parents[1]
+        files = {name: (cli / name.removeprefix('ops/')).read_bytes() for name in host_setup.LOGIN_HELPER_FILES} if helper else {}
+        self.archive = release_tar(files)
+        template = {'provider': 'codex', 'runtime_user': 'node', 'path_root': '/home/node/.cauce-profiles', 'command': '/usr/local/bin/codex',
+            'command_sha256': 'c' * 64, 'runtime_mode': 'container', 'container_prefix': 'zz-'}
+        if login:
+            template['login'] = {'method': 'device', 'command': ['/usr/local/bin/codex', 'login', '--device-auth'], 'sha256': 'c' * 64}
+        self.package_overrides = {'artifacts': [{'name': 'release', 'kind': 'release', 'sha256': hashlib.sha256(self.archive).hexdigest(),
+            'size': len(self.archive), 'url': self.url + '/artifacts/release'}],
+            'policy': {'hooks': {}, 'bundles': {}, 'profile_templates': [template]}}
+
+    def test_signed_login_recipe_installs_a_private_auth_policy_named_by_the_unit(self):
+        self.login_package()
+        self.assertIn('write provider auth policy', host_setup.setup(self.identity, self.install_base(), True)['actions'])
+        receipt = host_setup.setup(self.identity, self.install_base(), False)
+        self.assertTrue(receipt['provider_auth'])
+        root = self.install_base() / 'company-a/local-a'
+        auth_file, executor = root / 'provider-auth-policy.json', json.loads((root / 'executor-policy.json').read_text())
+        self.assertEqual(oct(auth_file.stat().st_mode & 0o777), '0o600')
+        self.assertEqual(oct((root / 'provider-login').stat().st_mode & 0o777), '0o700')
+        auth = json.loads(auth_file.read_text())
+        self.assertEqual(set(auth), {'schemaVersion', 'host_id', 'state_root', 'helper', 'profiles', 'profile_templates', 'logins'})
+        self.assertEqual((auth['host_id'], auth['state_root'], auth['logins']), ('local-a', str(root / 'provider-login'), {}))
+        self.assertEqual((auth['profiles'], auth['profile_templates']), (executor['profiles'], executor['profile_templates']))
+        release = pathlib.Path(receipt['release'])
+        self.assertEqual(auth['helper']['executable'], str(release / 'ops/cli/provider-login.py'))
+        self.assertEqual(auth['helper']['files'], {str(release / name): hashlib.sha256((release / name).read_bytes()).hexdigest()
+            for name in host_setup.LOGIN_HELPER_FILES})
+        self.assertEqual(auth['helper']['sha256'], auth['helper']['files'][auth['helper']['executable']])
+        self.assertNotRegex(auth_file.read_text(), r'(?i)token|secret|password|private')
+        unit = (self.home / '.config/systemd/user' / self.unit_name).read_text()
+        self.assertIn(f'Environment=CAUCE_FLEET_ENROLLED_AUTH_POLICY_FILE={auth_file}\n', unit)
+        self.assertLess(unit.index('CAUCE_FLEET_POLICY_FILE='), unit.index('CAUCE_FLEET_ENROLLED_AUTH_POLICY_FILE='))
+        self.assertTrue(host_setup.status(self.identity, self.install_base())['provider_auth'])
+        self.commands = []
+        self.assertFalse(host_setup.setup(self.identity, self.install_base(), False)['policy_changed'])
+        self.assertNotIn(['systemctl', '--user', 'restart', self.unit_name], self.commands)
+
+    def test_without_a_signed_login_recipe_the_unit_serves_no_provider_login(self):
+        self.login_package(login=False)
+        receipt = host_setup.setup(self.identity, self.install_base(), False)
+        self.assertFalse(receipt['provider_auth'])
+        self.assertFalse((self.install_base() / 'company-a/local-a/provider-auth-policy.json').exists())
+        self.assertNotIn('CAUCE_FLEET_ENROLLED_AUTH_POLICY_FILE', (self.home / '.config/systemd/user' / self.unit_name).read_text())
+        self.assertFalse(host_setup.status(self.identity, self.install_base())['provider_auth'])
+        self.assertNotIn('write provider auth policy', host_setup.setup(self.identity, self.install_base(), True)['actions'])
+
+    def test_withdrawn_login_recipe_removes_the_auth_policy_and_restarts_the_service(self):
+        self.login_package()
+        host_setup.setup(self.identity, self.install_base(), False)
+        self.login_package(login=False)
+        self.commands = []
+        receipt = host_setup.setup(self.identity, self.install_base(), False)
+        self.assertTrue(receipt['policy_changed'])
+        self.assertFalse(receipt['provider_auth'])
+        self.assertFalse((self.install_base() / 'company-a/local-a/provider-auth-policy.json').exists())
+        self.assertNotIn('CAUCE_FLEET_ENROLLED_AUTH_POLICY_FILE', (self.home / '.config/systemd/user' / self.unit_name).read_text())
+        self.assertIn(['systemctl', '--user', 'restart', self.unit_name], self.commands)
+
+    def test_login_recipe_without_the_helper_in_the_release_does_not_start_the_service(self):
+        self.login_package(helper=False)
+        with self.assertRaisesRegex(HostFailure, 'provider login helper'):
+            host_setup.setup(self.identity, self.install_base(), False)
+        self.assertFalse(self.active)
+        self.assertFalse((self.home / '.config/systemd/user' / self.unit_name).exists())
+
     def test_second_host_of_the_same_company_gets_its_own_unit(self):
         host_setup.setup(self.identity, self.install_base(), False)
         other = self.home / 'state/company-a/local-b'
