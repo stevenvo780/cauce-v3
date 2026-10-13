@@ -74,9 +74,15 @@ describe('disponibilidad derivada de suscripciones', () => {
     const snapshot: AgentQuotaReading = { tenant_id: 'One', alias: 'janus', reader_available: false, can_query: false,
       reason: 'quota_target_unplaced', status: 'unsupported', revision: 1, captured_at: null, binding: null, sample: null, operation: null };
     expect(readerUnavailableReason(snapshot)).toBeNull();
-    expect(quotaTargetUnavailableReason(snapshot)).toContain('un entorno de contenedor y un ordenador habilitado');
+    expect(quotaTargetUnavailableReason(snapshot)).toBe('La consulta de cuota requiere un agente y un harness habilitados, un entorno de contenedor y un ordenador habilitado.');
     expect(quotaTargetUnavailableReason({ ...snapshot, reason: 'quota_reader_unavailable' })).toBeNull();
     expect(quotaTargetUnavailableReason(undefined)).toBeNull();
+  });
+  it('explica el ordenador sin respuesta aunque el harness siga teniendo lector', () => {
+    const snapshot: AgentQuotaReading = { tenant_id: 'One', alias: 'janus', reader_available: true, can_query: false,
+      reason: 'quota_host_unavailable', status: 'unknown', revision: 1, captured_at: null, binding: null, sample: null, operation: null };
+    expect(readerUnavailableReason(snapshot)).toBeNull();
+    expect(quotaTargetUnavailableReason(snapshot)).toBe('El ordenador no responde; reintenta cuando vuelva a estar en línea.');
   });
   it('traduce el código también cuando el dato ya está antiguo', () => {
     expect(quotaFailureReason({ observation_status: 'stale', note: 'token_expired' })).toBe('Último fallo: Sesión caducada: autenticar de nuevo');

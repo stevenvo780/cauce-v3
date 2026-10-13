@@ -28,11 +28,22 @@ function operationCard(operation: AgentQuotaOperationRow) {
 export class AgentQuotaInvalidatedError extends StoreError {
   constructor() { super('conflict', 'agent quota execution authority or placement changed'); }
 }
+export class AgentQuotaHostUnavailableError extends StoreError {
+  constructor() { super('conflict', 'agent quota host executor is unavailable'); }
+}
 export class AgentQuotaOperationsRepository {
   constructor(private readonly pool: DatabasePool, private readonly transactionClient?: DatabaseClient) {}
   forTransaction(client: DatabaseClient): AgentQuotaOperationsRepository { return new AgentQuotaOperationsRepository(this.pool, client); }
   private transaction<T>(work: (client: DatabaseClient) => Promise<T>): Promise<T> {
     return this.transactionClient === undefined ? withTransaction(this.pool, work) : work(this.transactionClient);
+  }
+  private async hostAvailable(client: DatabaseClient, placement: AgentQuotaPlacement): Promise<boolean> {
+    const capability = await client.query(`SELECT 1 FROM fleet_host_identities identity JOIN fleet_hosts host
+      ON host.host_id=identity.host_id AND host.company_id=identity.company_id
+      WHERE identity.host_id=$1 AND identity.company_id=$2 AND identity.enabled AND host.enabled
+        AND identity.capabilities_seen_at>now()-interval '120 seconds'
+        AND identity.capabilities->>'fleet_executor'='true'`, [placement.host_id, placement.company_id]);
+    return Boolean(capability.rowCount);
   }
   async snapshot(source: CompanyAuthoritySource, target: { tenant_id: string; alias: string }) {
     return this.transaction(async client => {
@@ -57,7 +68,8 @@ export class AgentQuotaOperationsRepository {
          FROM agent_account_bindings binding WHERE binding.tenant_id=$1 AND binding.agent_alias=$2
            AND binding.company_id=$3 AND binding.account_id=$4`, [target.tenant_id, target.alias, authority.actingCompany, accountId])).rows[0] ?? null;
       const available = reader;
-      let canQuery = available;
+      const hostAvailable = !available || await this.hostAvailable(client, placement);
+      let canQuery = available && hostAvailable;
       if (canQuery) {
         try { await assertAgentQuotaAuthority(client, async () => authority); }
         catch (error) { if (!(error instanceof StoreError)) throw error; canQuery = false; }
@@ -71,7 +83,7 @@ export class AgentQuotaOperationsRepository {
         : activeOperation?.status === 'failed' ? 'failed' as const : observation?.status ?? (sample ? sample.ok ? 'ok' as const : 'error' as const : 'unknown' as const);
       return { tenant_id: target.tenant_id, alias: target.alias, revision, configuration_revision: revision,
         reader_available: available, can_query: canQuery,
-        reason, status,
+        reason: available && !hostAvailable ? 'quota_host_unavailable' as const : reason, status,
         captured_at: observation?.captured_at?.toISOString() ?? legacy?.captured_at.toISOString() ?? null,
         binding, sample, operation: activeOperation ? operationCard(activeOperation) : null };
     });
@@ -117,12 +129,7 @@ export class AgentQuotaOperationsRepository {
       }
       await lockFleetRevision(client, input.expected_revision, authority.actingCompany);
       if (!reader) { await persistAgentQuotaObservation(client, placement, null); return { operation_id: null, id: null, status: 'unsupported' as const, duplicate: false }; }
-      const capability = await client.query(`SELECT 1 FROM fleet_host_identities identity JOIN fleet_hosts host
-        ON host.host_id=identity.host_id AND host.company_id=identity.company_id
-        WHERE identity.host_id=$1 AND identity.company_id=$2 AND identity.enabled AND host.enabled
-          AND identity.capabilities_seen_at>now()-interval '120 seconds'
-          AND identity.capabilities->>'fleet_executor'='true'`, [placement.host_id, authority.actingCompany]);
-      if (!capability.rowCount) throw new StoreError('conflict', 'El ordenador no responde o no tiene un ejecutor de cuota disponible.');
+      if (!await this.hostAvailable(client, placement)) throw new AgentQuotaHostUnavailableError();
       const active = await client.query("SELECT 1 FROM agent_quota_operations WHERE tenant_id=$1 AND alias=$2 AND status IN ('pending','running')",
         [value.tenant_id, value.alias]);
       if (active.rowCount) throw new StoreError('conflict', 'an agent quota operation is already active');

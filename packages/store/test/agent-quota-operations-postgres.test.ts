@@ -186,8 +186,17 @@ describe('durable agent quota operations with real PostgreSQL', () => {
     else if (state === 'stale') await admin().query("UPDATE fleet_host_identities SET capabilities_seen_at=now()-interval '121 seconds' WHERE host_id='zz-canary-alpha'");
     else if (state === 'disabled') await admin().query("UPDATE fleet_host_identities SET enabled=false WHERE host_id='zz-canary-alpha'");
     else await admin().query("UPDATE fleet_host_identities SET capabilities='{}' WHERE host_id='zz-canary-alpha'");
-    await expect(enqueue()).rejects.toMatchObject({ code: 'conflict' });
+    expect(await repository.snapshot(authority(), target)).toMatchObject({
+      reader_available: true, can_query: false, reason: 'quota_host_unavailable', status: 'unknown',
+    });
+    await expect(enqueue()).rejects.toMatchObject({ code: 'conflict', message: 'agent quota host executor is unavailable' });
     expect((await admin().query('SELECT 1 FROM agent_quota_operations')).rowCount).toBe(0);
+    await admin().query(`UPDATE fleet_host_identities SET enabled=true,capabilities='{"fleet_executor":true}',capabilities_seen_at=now()
+      WHERE host_id='zz-canary-alpha'`);
+    if (state !== 'missing') {
+      expect(await repository.snapshot(authority(), target)).toMatchObject({ reader_available: true, can_query: true, reason: null });
+      expect(await enqueue()).toMatchObject({ status: 'pending' });
+    }
   });
   it('does not wait for the configuration lock while the host queue is empty', async () => {
     const holder = await admin().connect();

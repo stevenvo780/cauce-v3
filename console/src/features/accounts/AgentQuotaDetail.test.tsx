@@ -91,9 +91,18 @@ it('explica una sola vez la ubicación no operativa con su etiqueta y sin el avi
   read.mockResolvedValue({ ...empty, status: 'unsupported', reader_available: false, can_query: false, reason: 'quota_target_unplaced' });
   show();
   expect(await screen.findByText('Sin ubicación operativa')).toBeVisible();
-  expect(screen.getAllByText('La consulta de cuota requiere un agente habilitado, un entorno de contenedor y un ordenador habilitado.')).toHaveLength(1);
+  expect(screen.getAllByText('La consulta de cuota requiere un agente y un harness habilitados, un entorno de contenedor y un ordenador habilitado.')).toHaveLength(1);
   expect(screen.queryByText(/Sin lector de cuota/u)).not.toBeInTheDocument();
   expect(screen.queryByRole('button', { name: 'Consultar' })).not.toBeInTheDocument();
+});
+
+it('explica el ordenador sin respuesta y permite releer sin ofrecer una consulta', async () => {
+  read.mockResolvedValue({ ...empty, can_query: false, reason: 'quota_host_unavailable' }); show();
+  await screen.findByText('Sin ubicación operativa');
+  expect(screen.getAllByText('El ordenador no responde; reintenta cuando vuelva a estar en línea.')).toHaveLength(1);
+  expect(screen.queryByText(/Sin lector de cuota/u)).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Consultar' })).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Releer cuota' })).toBeEnabled();
 });
 
 it('encola con revisión e idempotencia y relee hasta el resultado durable', async () => {

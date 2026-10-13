@@ -1,5 +1,6 @@
 import type { QuotaAccount, QuotaObservationStatus } from '../../api/client/my-quotas-client';
 import type { AgentQuotaReading } from './agent-quota-client';
+import { QUOTA_HOST_UNAVAILABLE_MESSAGE } from './quota-messages';
 
 export type FatigueState = QuotaObservationStatus | 'available' | 'low' | 'exhausted' | 'paused' | 'model_dependent' | 'pending_auth' | 'no_reader';
 export const OBSERVATION_LABEL: Record<QuotaObservationStatus, string> = {
@@ -14,8 +15,9 @@ export function readerUnavailableReason(snapshot: AgentQuotaReading | undefined)
   return snapshot.reason === 'quota_reader_unavailable' ? NO_READER_MESSAGE : null;
 }
 export function quotaTargetUnavailableReason(snapshot: AgentQuotaReading | undefined): string | null {
+  if (snapshot?.reason === 'quota_host_unavailable') return QUOTA_HOST_UNAVAILABLE_MESSAGE;
   return snapshot?.reason === 'quota_target_unplaced'
-    ? 'La consulta de cuota requiere un agente habilitado, un entorno de contenedor y un ordenador habilitado.' : null;
+    ? 'La consulta de cuota requiere un agente y un harness habilitados, un entorno de contenedor y un ordenador habilitado.' : null;
 }
 export function accountFatigue(account: QuotaAccount | undefined, now = Date.now()): FatigueState {
   if (!account) return 'unknown';

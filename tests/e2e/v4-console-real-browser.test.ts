@@ -336,7 +336,7 @@ describe('recorrido V4 de la consola en navegador real contra gateway y PostgreS
 
   it('ficha: el agente del plano abre su ficha y desde ella el historial de contexto', async () => {
     const page = ownerPage();
-    const unplacedMessage = 'La consulta de cuota requiere un agente habilitado, un entorno de contenedor y un ordenador habilitado.';
+    const unplacedMessage = 'La consulta de cuota requiere un agente y un harness habilitados, un entorno de contenedor y un ordenador habilitado.';
     const noReaderMessage = 'Sin lector de cuota para este harness: el proveedor no expone una ventana de consumo medible.';
     const revisionMatcher: unknown = expect.any(Number);
     await pool().query(`INSERT INTO agents(tenant_id,alias,harness_id,display_name,enabled,container_name,runtime_user,home_directory,state_directory,company_id)

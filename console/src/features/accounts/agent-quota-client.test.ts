@@ -44,6 +44,12 @@ it('acepta el motivo cerrado de ubicación no operativa sin convertirlo en ausen
   await expect(agentQuotaClient(request as RequestFn).getAgentQuota('One', 'janus')).resolves.toEqual(response);
 });
 
+it('acepta un ordenador sin respuesta conservando el lector y deshabilitando la consulta', async () => {
+  const response = { ...empty, reader_available: true, reason: 'quota_host_unavailable', status: 'unknown' };
+  const request = vi.fn().mockResolvedValue(response);
+  await expect(agentQuotaClient(request as RequestFn).getAgentQuota('One', 'janus')).resolves.toEqual(response);
+});
+
 it('acepta una operación caducada y conserva la posibilidad de volver a consultar', async () => {
   const response = { ...empty, reader_available: true, can_query: true, reason: null, status: 'failed',
     operation: { id: 'query-expired', status: 'failed', error_code: 'EXPIRED',
@@ -55,6 +61,8 @@ it('acepta una operación caducada y conserva la posibilidad de volver a consult
 it.each([
   ['read', 403, 'forbidden', 'Tu rol no permite esta acción.'],
   ['query', 409, 'conflict', 'Otro cambio llegó antes, o el recurso aún tiene dependencias. Relee y vuelve a intentarlo.'],
+  ['read', 409, 'quota_host_unavailable', 'El ordenador no responde; reintenta cuando vuelva a estar en línea.'],
+  ['query', 409, 'quota_host_unavailable', 'El ordenador no responde; reintenta cuando vuelva a estar en línea.'],
   ['read', 504, 'timeout', 'No se pudo leer la cuota. Relee antes de consultar.'],
   ['query', 504, 'timeout', 'No se confirmó la consulta. Relee su estado antes de reintentar.'],
 ])('localiza el error de %s HTTP %s preservando su estado y código', async (action, status, code, message) => {

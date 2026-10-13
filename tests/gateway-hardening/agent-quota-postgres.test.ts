@@ -77,12 +77,18 @@ async function counts() {
 }
 
 describe('durable agent quota through real browser sessions and signed company hosts', () => {
-  it.each(['stale', 'unavailable', 'inactive'])('rejects new quota work for a %s computer without queue effects', async state => {
+  it.each(['missing', 'stale', 'unavailable', 'inactive'])('rejects new quota work for a %s computer without queue effects', async state => {
+    if (state === 'missing') await admin.query('DELETE FROM fleet_host_identities WHERE host_id=$1', [host.host_id]);
     if (state === 'stale') await admin.query("UPDATE fleet_host_identities SET capabilities_seen_at=now()-interval '121 seconds' WHERE host_id=$1", [host.host_id]);
     if (state === 'unavailable') await admin.query("UPDATE fleet_host_identities SET capabilities=jsonb_set(capabilities,'{fleet_executor}','false') WHERE host_id=$1", [host.host_id]);
     if (state === 'inactive') await admin.query('UPDATE fleet_host_identities SET enabled=false WHERE host_id=$1', [host.host_id]);
     const before = await counts();
-    expect((await enqueue(`unavailable-computer-${state}`)).statusCode).toBe(409);
+    const card = await read();
+    expect(card.statusCode).toBe(200);
+    expect(card.json()).toMatchObject({ reader_available: true, can_query: false, reason: 'quota_host_unavailable', status: 'unknown' });
+    const rejected = await enqueue(`unavailable-computer-${state}`);
+    expect(rejected.statusCode).toBe(409);
+    expect(rejected.json()).toMatchObject({ error: 'quota_host_unavailable' });
     expect(await counts()).toEqual(before);
   });
   it('returns unknown for its own agent and identical 404s for foreign and absent targets without queue effects', async () => {

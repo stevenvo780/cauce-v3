@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { AgentQuotaQuerySchema, AliasSchema, TenantSchema } from '@cauce/protocol';
-import { AgentQuotaOperationsRepository, FleetOperationError, StoreError, type CompanyAuthoritySource, type DatabasePool } from '@cauce/store';
+import { AgentQuotaHostUnavailableError, AgentQuotaOperationsRepository, FleetOperationError, StoreError, type CompanyAuthoritySource, type DatabasePool } from '@cauce/store';
 import { AuthError, AuthorizationError, requireOperatorPermission, type AuthProvider } from '../../auth.js';
 import { consoleHumanAccess } from '../../console-human-authority.js';
 import { principal, replyError } from '../shared.js';
@@ -33,6 +33,7 @@ export function registerAgentQuotaRoutes(app: FastifyInstance, provider: AuthPro
       } finally { access.close(); }
     } catch (error) {
       if (error instanceof z.ZodError) return reply.code(400).send({ error: 'invalid_request', message: 'invalid agent quota request' });
+      if (error instanceof AgentQuotaHostUnavailableError) return reply.code(409).send({ error: 'quota_host_unavailable', message: error.message });
       if (error instanceof FleetOperationError) return reply.code({ forbidden: 403, conflict: 409, not_found: 404, invalid_input: 422 }[error.code])
         .send({ error: error.code, message: error.message });
       if (error instanceof AuthError || error instanceof AuthorizationError || error instanceof StoreError) {

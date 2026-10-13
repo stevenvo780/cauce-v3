@@ -11,7 +11,7 @@ export interface AgentQuotaOperation {
 }
 export interface AgentQuotaReading {
   tenant_id: string; alias: string; revision: number; reader_available: boolean; can_query: boolean;
-  reason: 'quota_reader_unavailable' | 'quota_target_unplaced' | null; status: AgentQuotaStatus; captured_at: string | null;
+  reason: 'quota_reader_unavailable' | 'quota_target_unplaced' | 'quota_host_unavailable' | null; status: AgentQuotaStatus; captured_at: string | null;
   binding: null | { account_id: string; enabled: boolean; shared: boolean; agent_count: number };
   sample: QuotaProviderReport | null; operation: AgentQuotaOperation | null;
 }
@@ -47,7 +47,7 @@ function reading(value: unknown, tenant: string, alias: string): AgentQuotaReadi
   const row = record(value);
   if (row.tenant_id !== tenant || row.alias !== alias || typeof row.reader_available !== 'boolean' || typeof row.can_query !== 'boolean'
     || !Number.isSafeInteger(row.revision) || Number(row.revision) < 0
-    || row.reason !== null && row.reason !== 'quota_reader_unavailable' && row.reason !== 'quota_target_unplaced'
+    || row.reason !== null && row.reason !== 'quota_reader_unavailable' && row.reason !== 'quota_target_unplaced' && row.reason !== 'quota_host_unavailable'
     || !['unknown', 'pending', 'running', 'unsupported', 'ok', 'error', 'failed'].includes(String(row.status))
     || row.captured_at !== null && !date(row.captured_at)) invalid();
   if (row.binding !== null) {

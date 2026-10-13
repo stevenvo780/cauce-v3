@@ -31,9 +31,12 @@ const STATUS_MESSAGE: Record<number, string> = {
   503: 'Este servidor no puede atender la operación ahora. Inténtalo más tarde.',
 };
 
-/** Server messages on quota routes are not localized: the console maps by status and never shows them. */
+export const QUOTA_HOST_UNAVAILABLE_MESSAGE = 'El ordenador no responde; reintenta cuando vuelva a estar en línea.';
+
+/** Server messages on quota routes are not localized: the console maps status and codes without showing them. */
 export function describeQuotaError(cause: unknown, fallback: string): string {
   if (!(cause instanceof ApiError)) return fallback;
+  if (cause.status === 409 && cause.code === 'quota_host_unavailable') return QUOTA_HOST_UNAVAILABLE_MESSAGE;
   if (cause.status === 504) return cause.message;
   return STATUS_MESSAGE[cause.status] ?? fallback;
 }
@@ -44,6 +47,8 @@ const OPERATION_ERROR: Record<string, string> = {
   PROVIDER_UNAVAILABLE: 'El proveedor no respondió. Inténtalo más tarde.',
   HOST_UNAVAILABLE: 'La computadora del entorno no está disponible. Revisa su conexión.',
   RUNTIME_UNAVAILABLE: 'El CLI del proveedor no está disponible en esa computadora.',
+  SCOPE_CHANGED: 'El agente cambió de ordenador o de configuración; vuelve a consultar.',
+  EXPIRED: 'La consulta caducó sin respuesta del ordenador; vuelve a consultar.',
   SESSION_CONFLICT: 'Ya hay una sesión de autenticación activa. Espera a que termine o relee el entorno.',
   SESSION_EXPIRED: 'La sesión de autenticación venció. Inicia la autenticación de nuevo.',
   STEP_FAILED: 'Un paso de la operación falló. Revisa la salida e inténtalo de nuevo.',
