@@ -39,6 +39,30 @@ interface DatabaseImageBinding {
 
 let databaseImageBinding: DatabaseImageBinding | undefined;
 
+interface AdapterScenario {
+  name: string;
+  status: string;
+  evidence: string;
+  evidenceClass: string;
+  adapterExecutables: string[];
+  controlledHarnessExecutables: boolean;
+  receipt?: {
+    evidenceClass: string;
+    adapters: Record<string, number>;
+    identities: { tenant: string; room: string; alias: string; harness: string;
+      descriptorSha256: string; leaseEpoch: number }[];
+    correlation: Record<string, string>;
+    nonceSha256: string;
+    fanoutBranches: number;
+    concurrentBarrier: boolean;
+    duplicateSuppressed: boolean;
+    mutatedDuplicateRejected: boolean;
+    crossTenantIsolation: string;
+    finalOriginRelaysForRoundTrip: number;
+    cleanup: { processGroupsStopped: boolean; temporaryRootRemoved: boolean };
+  };
+}
+
 async function setupSuite(): Promise<void> {
   const startedDatabase = await startTestDatabase();
   let startedApp: Awaited<ReturnType<typeof buildGateway>> | undefined;
@@ -245,6 +269,93 @@ describe('real external QA harness', () => {
     expect(stdout).toContain('PASS 15 aliases and four harness kinds over real WS');
     expect(stdout).not.toContain('SKIP ');
     expect(stdout).not.toContain('FAIL ');
+    const report = JSON.parse(await readFile('ops/artifacts/real/report.json', 'utf8')) as {
+      tests: AdapterScenario[];
+      evidenceClass?: string;
+      executionTarget?: Record<string, unknown>;
+      databaseImage?: DatabaseImageBinding;
+    };
+    expect(report.tests.find((test) => test.evidenceClass === 'adapter-process-roundtrip')?.receipt).toBeDefined();
+    const relays = await database.pool.query<{
+      request_id: string; message_id: string; delivery_id: string; trace_id: string;
+      payload: { correlation: Record<string, string>; outcome: string; result: { output: { reply: string } } };
+    }>(`SELECT request_id,message_id,delivery_id,trace_id,payload FROM adapter_outbox
+        WHERE kind='origin_relay' AND payload->'correlation'->>'root_message_id' IN (
+          SELECT id::text FROM messages WHERE body->>'text' LIKE 'CAUCE_ADAPTER_ROUNDTRIP_V1:%'
+        )`);
+    expect(relays.rows).toHaveLength(1);
+    const relay = relays.rows[0];
+    if (!relay) throw new Error('observed adapter relay is missing');
+    const root = await database.pool.query<{ nonce: string; epoch: string }>(
+      `SELECT substring(m.body->>'text' FROM '^CAUCE_ADAPTER_ROUNDTRIP_V1:([a-f0-9]{32})$') AS nonce,
+              d.consumer_epoch::text AS epoch FROM messages m JOIN messages branch ON branch.trace_id=m.trace_id
+           JOIN deliveries d ON d.message_id=branch.id
+             AND d.recipient_tenant='Steven' AND d.recipient_alias='qa-reviewer-b'
+        WHERE m.id=$1 AND d.status='done'`, [relay.payload.correlation.root_message_id],
+    );
+    expect(root.rows).toHaveLength(1);
+    const observed = root.rows[0];
+    if (!observed) throw new Error('observed fake2 delivery is missing');
+    expect(observed.nonce).toMatch(/^[a-f0-9]{32}$/u);
+    const descriptors = Object.fromEntries(await Promise.all(['opencode', 'fake', 'fake2'].map(async (harness): Promise<[string, string]> => [
+      harness, createHash('sha256').update(await readFile(`packages/adapter-sdk/descriptors/${harness}.json`)).digest('hex'),
+    ])));
+    const verifyReport = (candidate: typeof report): void => {
+      const scenarios = candidate.tests.filter((test) =>
+        test.name === 'OpenCode adapter process fan-out, duplicate publish, and tenant isolation');
+      expect(scenarios).toHaveLength(1);
+      const scenario = scenarios[0];
+      if (!scenario?.receipt) throw new Error('adapter roundtrip receipt is missing');
+      expect(scenario).toMatchObject({ status: 'passed', evidence: 'real',
+        evidenceClass: 'adapter-process-roundtrip', controlledHarnessExecutables: true });
+      const receipt = scenario.receipt;
+      expect(scenario.adapterExecutables).toEqual(Object.keys(receipt.adapters));
+      expect(receipt.adapters).toEqual({ opencode: 1, fake: 3, fake2: 1 });
+      expect(receipt.identities.map(({ tenant, room, alias, harness }) => ({ tenant, room, alias, harness })))
+        .toEqual([
+          { tenant: 'Steven', room: 'grp.steven', alias: 'qa-opencode', harness: 'opencode' },
+          { tenant: 'Steven', room: 'grp.steven', alias: 'qa-reviewer-a', harness: 'fake' },
+          { tenant: 'Steven', room: 'grp.steven', alias: 'qa-reviewer-b', harness: 'fake2' },
+          { tenant: 'Isa', room: 'grp.isa', alias: 'qa-isolated-source', harness: 'fake' },
+          { tenant: 'Jhon', room: 'grp.jhon', alias: 'qa-isolated-target', harness: 'fake' },
+        ]);
+      for (const identity of receipt.identities) {
+        expect(Number.isSafeInteger(identity.leaseEpoch)).toBe(true);
+        expect(identity.leaseEpoch).toBeGreaterThan(0);
+        expect(identity.descriptorSha256).toBe(descriptors[identity.harness]);
+      }
+      expect(receipt.identities.find((identity) => identity.harness === 'fake2')?.leaseEpoch).toBe(Number(observed.epoch));
+      expect(relay.payload.outcome).toBe('done');
+      expect(relay.payload.correlation).toEqual({ request_id: relay.request_id, message_id: relay.message_id,
+        delivery_id: relay.delivery_id, trace_id: relay.trace_id, root_message_id: relay.payload.correlation.root_message_id });
+      expect(relay.payload.result.output.reply).toBe(`CAUCE_ADAPTER_ROUNDTRIP_FINAL:${observed.nonce}\n\n`
+        + '[2 locally synthesized branch replies; 2 branch responses in this chain; 0 without local synthesis]');
+      expect(receipt.correlation).toEqual(relay.payload.correlation);
+      expect(receipt.correlation.message_id).not.toBe(receipt.correlation.root_message_id);
+      expect(receipt.nonceSha256).toBe(createHash('sha256').update(observed.nonce).digest('hex'));
+      expect(receipt).toMatchObject({ evidenceClass: 'adapter-process-roundtrip',
+        fanoutBranches: 2, concurrentBarrier: true, duplicateSuppressed: true, mutatedDuplicateRejected: true,
+        crossTenantIsolation: 'online target excluded and undelivered', finalOriginRelaysForRoundTrip: 1 });
+      expect(receipt.cleanup).toEqual({ processGroupsStopped: true, temporaryRootRemoved: true });
+      if (process.env.CAUCE_EVIDENCE_CLASS === 'testcontainers') {
+        expect(candidate.evidenceClass).toBe('testcontainers-source-execution');
+        expect(candidate.databaseImage).toEqual(databaseImageBinding);
+        expect(candidate.executionTarget).toEqual({ application: 'source-tree',
+          database: 'immutable-testcontainer-image', finalCauceImageExecuted: false });
+      }
+    };
+    verifyReport(report);
+    const withoutReceipt = structuredClone(report);
+    const alteredIdentity = structuredClone(report);
+    for (const scenario of withoutReceipt.tests) {
+      if (scenario.evidenceClass === 'adapter-process-roundtrip') delete scenario.receipt;
+    }
+    for (const scenario of alteredIdentity.tests) {
+      const fake2 = scenario.receipt?.identities.find((identity) => identity.harness === 'fake2');
+      if (fake2) fake2.harness = 'fake';
+    }
+    expect(() => verifyReport(withoutReceipt)).toThrow('adapter roundtrip receipt is missing');
+    expect(() => verifyReport(alteredIdentity)).toThrow();
   }, 180_000);
 
   it('runs two permanent-style fake adapters through async push and terminal ACK', async () => {

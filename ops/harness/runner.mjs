@@ -256,9 +256,10 @@ class WsClient {
 }
 
 async function executeWithClientCleanup(execute) {
+  let result;
   let executionError;
   try {
-    await execute();
+    result = await execute();
   } catch (error) {
     executionError = error;
   }
@@ -275,6 +276,7 @@ async function executeWithClientCleanup(execute) {
   }
   if (executionError) throw executionError;
   if (cleanupErrors.length > 0) throw new AggregateError(cleanupErrors, 'QA WebSocket cleanup failed');
+  return result;
 }
 
 function required(name) {
@@ -380,7 +382,6 @@ const tests = [
       async () => runAdapterRoundTrip({ baseUrl, wsBaseUrl, timeoutMs: retryTimeoutMs }),
       {
         evidenceClass: 'adapter-process-roundtrip',
-        adapterExecutables: ['opencode', 'fake'],
         controlledHarnessExecutables: true,
         adversarialCoverage: ['concurrent-fanout', 'idempotent-duplicate', 'cross-tenant-isolation'],
       },
@@ -647,8 +648,9 @@ async function main() {
   for (const [name, execute, metadata = {}] of tests) {
     const started = performance.now();
     try {
-      await executeWithClientCleanup(execute);
-      results.push({ name, status: 'passed', evidence: 'real', durationMs: Math.round(performance.now() - started), ...metadata });
+      const receipt = await executeWithClientCleanup(execute);
+      results.push({ name, status: 'passed', evidence: 'real', durationMs: Math.round(performance.now() - started), ...metadata,
+        ...(metadata.evidenceClass === 'adapter-process-roundtrip' ? { adapterExecutables: Object.keys(receipt.adapters), receipt } : {}) });
       console.log(`PASS ${name}`);
     } catch (error) {
       results.push({
