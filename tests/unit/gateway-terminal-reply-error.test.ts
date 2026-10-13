@@ -19,6 +19,7 @@ function capture(
 ): CapturedReply {
   const captured: CapturedReply = { status: 0, body: undefined };
   const reply = {
+    request: { log: { info: () => undefined } },
     code(value: number) { captured.status = value; return this; },
     send(payload: unknown) { captured.body = payload; return this; },
   } as unknown as FastifyReply;

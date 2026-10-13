@@ -13,7 +13,7 @@ afterEach(async () => {
 
 function humanAuthorityClient(users: readonly ConsoleUser[]) {
   const query = vi.fn(async (sql: string, values: unknown[] = []) => {
-    if (sql === 'SELECT cauce_lock_authority_read_guard()' && values.length === 0) return { rows: [], rowCount: 1 };
+    if (sql === "SELECT set_config('lock_timeout','5000ms',true)" && values.length === 0) return { rows: [], rowCount: 1 };
     if (sql.startsWith("SELECT set_config('statement_timeout'")) return { rows: [], rowCount: 0 };
     const user = users.find((entry) => entry.id === values[0]);
     if (user === undefined) throw new Error('unknown human authority fixture');
@@ -135,7 +135,7 @@ describe('authenticated human accounts through the existing console gateway', ()
     })));
     expect(detailStore).toHaveBeenCalledTimes(2);
     expect(legacyStore).toHaveBeenCalledOnce();
-    expect(query).toHaveBeenCalledWith('SELECT cauce_lock_authority_read_guard()');
+    expect(query).toHaveBeenCalledWith("SELECT set_config('lock_timeout','5000ms',true)");
     expect(test.repository.getMessage).not.toHaveBeenCalled();
   });
 
