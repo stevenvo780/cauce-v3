@@ -294,9 +294,13 @@ def paths_for(channel: HostChannel, install_base: pathlib.Path) -> dict:
         'unit': pathlib.Path.home() / '.config/systemd/user' / name}
 
 
-def reject_other_company(install_base: pathlib.Path, company: str) -> None:
-    others = sorted(item.parent.parent.name for item in install_base.glob('*/*/executor-policy.json') if item.parent.parent.name != company) \
-        if install_base.is_dir() else []
+def reject_other_company(install_base: pathlib.Path, company: str, state_root: pathlib.Path | None = None) -> None:
+    names = []
+    if install_base.is_dir():
+        names.extend(item.parent.parent.name for item in install_base.glob('*/*/executor-policy.json') if item.parent.parent.name != company)
+    if state_root is not None and state_root.is_dir():
+        names.extend(item.parent.parent.name for item in state_root.glob('*/*/identity.json') if item.parent.parent.name != company)
+    others = sorted(set(names))
     if others:
         raise HostFailure(f'this system user already runs the executor of company {others[0]}; companies would share one UID and '
             'could read each other\'s host keys. Use one system user per company')
@@ -305,7 +309,7 @@ def reject_other_company(install_base: pathlib.Path, company: str) -> None:
 def setup(identity_directory: pathlib.Path, install_base: pathlib.Path, dry_run: bool, signer_fingerprint: str | None = None) -> dict:
     channel = HostChannel(identity_directory)
     paths = paths_for(channel, install_base)
-    reject_other_company(install_base, channel.identity['company_id'])
+    reject_other_company(install_base, channel.identity['company_id'], identity_directory.parent.parent)
     package, signer = fetch_package(channel)
     pin_signer(channel.directory, signer, not dry_run, signer_fingerprint)
     host_id, root = channel.identity['host_id'], paths['install_root']

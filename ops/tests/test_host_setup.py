@@ -290,6 +290,14 @@ class HostSetupTests(unittest.TestCase):
         self.assertTrue(host_setup.status(self.identity, self.install_base())['executor_ready'])
         self.assertFalse(host_setup.status(other, self.install_base())['executor_ready'])
 
+    def test_other_company_identity_without_executor_policy_rejects_setup(self):
+        other = self.home / 'state/company-b/local-b'
+        other.mkdir(parents=True)
+        (other / 'identity.json').write_text('{}')
+        with self.assertRaisesRegex(HostFailure, 'one system user per company'):
+            host_setup.setup(self.identity, self.install_base(), True)
+        self.assertFalse(self.install_base().exists())
+
     def test_second_host_of_the_same_company_gets_its_own_unit(self):
         host_setup.setup(self.identity, self.install_base(), False)
         other = self.home / 'state/company-a/local-b'

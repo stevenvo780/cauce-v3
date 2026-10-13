@@ -118,6 +118,14 @@ class HostEnrollmentTests(unittest.TestCase):
             self.assertEqual(json.loads((directory / 'setup-signer.json').read_text()), {'fingerprint': anchor})
             self.assertEqual(len(requests), 1)
 
+    def test_other_company_identity_in_the_same_state_root_is_rejected_before_a_new_key(self):
+        other = self.root / 'company-b' / 'local-b'
+        other.mkdir(parents=True)
+        (other / 'identity.json').write_text('{}')
+        with self.assertRaisesRegex(HostFailure, 'one system user per company'):
+            enroll('http://127.0.0.1:9', self.invitation, self.root)
+        self.assertFalse((self.root / 'company-a').exists())
+
     def test_malformed_signer_anchor_rejects_the_invitation(self):
         cli = pathlib.Path(__file__).resolve().parents[1] / 'cli/host_enrollment.py'
         for anchor in ('A' * 64, 'c' * 63, 7):

@@ -52,6 +52,8 @@ def invitation_from_stdin() -> dict:
 
 def enroll(gateway: str, invitation: dict, state_root: pathlib.Path) -> dict:
     gateway = gateway_url(gateway)
+    from host_setup import reject_other_company
+    reject_other_company(state_root, invitation['company_id'], state_root)
     directory = private_directory(state_root / invitation['company_id'] / invitation['host_id'])
     identity_file = directory / 'identity.json'
     fingerprint = hashlib.sha256(ensure_key(directory)).hexdigest()
