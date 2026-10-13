@@ -8,6 +8,7 @@ import pathlib
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 import uuid
 from unittest.mock import patch
@@ -106,6 +107,33 @@ class OrphanSweepTest(unittest.TestCase):
         self.assertEqual(declared['divergences'][0]['kind'], 'docker_state')
         self.assertEqual(declared['divergences'][0]['actual'], 'stopped')
 
+    def test_health_and_image_declarations_are_compared_to_real_docker(self):
+        subprocess.run(['docker', 'create', '--name', self.key, '--label', 'cauce.fleet.runtime_key=' + self.key,
+                        '--health-cmd', 'false', '--health-interval', '100ms', '--health-retries', '1',
+                        'busybox', 'sleep', '60'], capture_output=True, check=True)
+        subprocess.run(['docker', 'start', self.key], capture_output=True, check=True)
+        deadline = time.monotonic() + 15
+        while True:
+            inspected = subprocess.run(['docker', 'inspect', self.key], capture_output=True, text=True, check=True)
+            actual = json.loads(inspected.stdout)[0]
+            if actual['State']['Health']['Status'] == 'unhealthy':
+                break
+            self.assertLess(time.monotonic(), deadline, 'real Docker healthcheck did not fail')
+            time.sleep(0.1)
+        row = {'runtime_key': self.key, 'container_name': self.key, 'runtime_mode': 'container', 'ownership': 'owned',
+               'docker_state': 'running', 'docker_health': 'healthy', 'image': 'sha256:' + '0' * 64}
+        rejected = self.sweep([row])
+        self.assertEqual(rejected['sweep_exit'], 1, rejected)
+        self.assertEqual([(item['kind'], item['actual']) for item in rejected['divergences']],
+                         [('docker_health', 'unhealthy'), ('image', actual['Image'])])
+        matched = self.sweep([{**row, 'docker_health': 'unhealthy', 'image': actual['Image']}])
+        self.assertEqual(matched['sweep_exit'], 0, matched)
+        print('FLEET_ORPHAN_DOCKER_DIVERGENCE ' + json.dumps(rejected, sort_keys=True), flush=True)
+        subprocess.run(['docker', 'rm', '-f', self.key], capture_output=True, check=True)
+        cleaned = self.sweep([])
+        self.assertEqual(cleaned['sweep_exit'], 0, cleaned)
+        print('FLEET_ORPHAN_DOCKER_CLEANUP ' + json.dumps(cleaned, sort_keys=True), flush=True)
+
 
 def load_sweep():
     spec = importlib.util.spec_from_file_location('fleet_orphan_sweep_under_test', SWEEP)
@@ -177,6 +205,13 @@ class DeclaredDockerStateTest(unittest.TestCase):
         self.assertEqual(report['divergences'][0]['kind'], 'ownership')
         self.assertEqual(report['divergences'][0]['actual'], 'host-b')
 
+    def test_declared_health_and_image_compare_but_omitted_values_do_not(self):
+        observed = {'running': True, 'labels': self.labels(), 'docker_health': 'none', 'image': 'sha256:' + 'a' * 64}
+        row = self.row(ownership='owned', docker_state='running', docker_health='healthy', image='sha256:' + 'b' * 64)
+        self.assertEqual([item['kind'] for item in self.report(row, observed)['divergences']], ['docker_health', 'image'])
+        self.assertEqual(self.report({**row, 'docker_health': 'none', 'image': observed['image']}, observed)['divergences'], [])
+        self.assertEqual(self.report(self.row(ownership='legacy'), observed)['divergences'], [])
+
     def test_invalid_declaration_is_rejected_before_docker_and_is_not_clean(self):
         module = load_sweep()
         with tempfile.TemporaryDirectory() as directory:
@@ -184,6 +219,10 @@ class DeclaredDockerStateTest(unittest.TestCase):
             rows.write_text(json.dumps([self.row(docker_state='paused')]))
             with patch.object(module.subprocess, 'run', side_effect=AssertionError('docker must not be consulted')):
                 self.assertEqual(module.main(['--rows', str(rows)]), 2)
+            for declaration in ({'docker_health': 'unknown'}, {'image': 'busybox'}, {'image': None}):
+                rows.write_text(json.dumps([self.row(**declaration)]))
+                with patch.object(module.subprocess, 'run', side_effect=AssertionError('docker must not be consulted')):
+                    self.assertEqual(module.main(['--rows', str(rows)]), 2)
             rows.write_text(json.dumps([self.row(ownership='borrowed')]))
             with patch.object(module.subprocess, 'run', side_effect=AssertionError('docker must not be consulted')):
                 self.assertEqual(module.main(['--rows', str(rows)]), 2)

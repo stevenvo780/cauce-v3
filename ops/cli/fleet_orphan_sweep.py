@@ -1,18 +1,20 @@
 #!/usr/bin/env python3
 """Report labelled cauce.fleet.* resources without a row, container rows without a container, and declared state or ownership that differs from Docker.
 
-Rows come from a JSON file. A container row is orphaned only when no container of that name exists, labelled or not. docker_state is compared only when the row declares running or stopped. Omitted ownership treats an unlabelled container as shared or legacy and checks existence only. ownership owned, and any cauce.fleet.* label when ownership is omitted, require cauce.fleet.runtime_key to equal the row; cauce.fleet.host must equal host_id when both are present. shared and legacy rows do not require labels, but a fleet runtime_key that names another row is a divergence. Native rows are not compared to a container. Exit 1 when the report is not clean. Exit 2 when docker_state or ownership is outside the admitted values.
+Rows come from a JSON file. A container row is orphaned only when no container of that name exists, labelled or not. Declared docker_state, docker_health and image are compared to Running, Health.Status and the exact image digest. Omitted ownership treats an unlabelled container as shared or legacy. ownership owned, and any cauce.fleet.* label when ownership is omitted, require cauce.fleet.runtime_key to equal the row; cauce.fleet.host must equal host_id when both are present. shared and legacy rows do not require labels, but a fleet runtime_key that names another row is a divergence. Native rows are not compared to a container. Exit 1 when the report is not clean. Exit 2 when a declaration is outside the admitted values.
 """
 from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 
 DOCKER = '/usr/bin/docker'
 PREFIX = 'cauce.fleet.'
 STATES = frozenset({'running', 'stopped'})
+HEALTH = frozenset({'none', 'starting', 'healthy', 'unhealthy'})
 OWNERSHIPS = frozenset({'owned', 'shared', 'legacy'})
 
 
@@ -42,7 +44,9 @@ def container_observations() -> dict[str, dict]:
     observed = {}
     for item in docker_json('container', 'ps', '-a', '-q'):
         labels = (item.get('Config') or {}).get('Labels') or {}
-        observed[item['Name'].lstrip('/')] = {'running': bool((item.get('State') or {}).get('Running')), 'labels': labels}
+        state = item.get('State') or {}
+        observed[item['Name'].lstrip('/')] = {'running': bool(state.get('Running')), 'labels': labels,
+            'docker_health': (state.get('Health') or {}).get('Status') or 'none', 'image': item.get('Image')}
     return observed
 
 
@@ -60,6 +64,9 @@ def row_divergences(row: dict, observed: dict) -> list[dict]:
         actual = 'running' if observed.get('running') else 'stopped'
         if state not in STATES or actual != state:
             found.append(divergence(row, 'docker_state', state, actual if state in STATES else None))
+    for field in ('docker_health', 'image'):
+        if field in row and row[field] != observed.get(field):
+            found.append(divergence(row, field, row[field], observed.get(field)))
     labelled_key = labels.get(PREFIX + 'runtime_key')
     labelled_host = labels.get(PREFIX + 'host')
     fleet = any(key.startswith(PREFIX) for key in labels)
@@ -96,6 +103,10 @@ def rejected_declaration(rows: list[dict]) -> str | None:
     for row in rows:
         if 'docker_state' in row and row.get('docker_state') not in STATES:
             return 'invalid docker_state'
+        if 'docker_health' in row and row.get('docker_health') not in HEALTH:
+            return 'invalid docker_health'
+        if 'image' in row and (not isinstance(row['image'], str) or re.fullmatch(r'sha256:[0-9a-f]{64}', row['image']) is None):
+            return 'invalid image'
         if 'ownership' in row and row.get('ownership') not in OWNERSHIPS:
             return 'invalid ownership'
     return None

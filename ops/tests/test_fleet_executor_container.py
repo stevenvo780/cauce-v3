@@ -138,7 +138,7 @@ class DisposableContainerExecutorTest(unittest.TestCase):
         finally:
             self.temporary.cleanup()
 
-    def configure_container(self, prefix='cauce-fleet-fixture-'):
+    def configure_container(self, prefix='zz-canary-fleet-fixture-'):
         self.container = prefix + uuid.uuid4().hex[:12]
         self.policy['host_id'] = self.container
         self.context['request']['parameters']['placement']['host_id'] = self.container
@@ -368,13 +368,13 @@ class DisposableContainerExecutorTest(unittest.TestCase):
         import test_fleet_executor_lifecycle as lifecycle_fixtures
         module, policy = self.operation_fixture()
         module.create_container(policy, self.agent, operation_id='op-state')
-        running = {**self.agent, 'docker_state': 'running', 'ownership': 'owned'}
+        running = {**self.agent, 'docker_state': 'running', 'docker_health': 'none', 'image': self.image, 'ownership': 'owned'}
         mismatch = sweep_owned_fleet(self.root / 'orphan-rows.json', [running], self.container,
                                       policy['host_id'], self.agent['runtime_key'])
         self.assertEqual(mismatch['sweep_exit'], 1, mismatch)
         self.assertEqual([row['kind'] for row in mismatch['divergences']], ['docker_state'])
         self.assertEqual(mismatch['divergences'][0]['actual'], 'stopped')
-        stopped = {**self.agent, 'docker_state': 'stopped', 'ownership': 'owned'}
+        stopped = {**running, 'docker_state': 'stopped'}
         matched = sweep_owned_fleet(self.root / 'orphan-rows.json', [stopped], self.container,
                                      policy['host_id'], self.agent['runtime_key'])
         self.assertTrue(matched['clean'], matched)
