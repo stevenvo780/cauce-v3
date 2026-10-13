@@ -86,8 +86,8 @@ export async function seed(pool: DatabasePool) {
   [humanId, email, await hashPassword('fixture-only-passphrase', { cost: 1024, blockSize: 8, parallelism: 1 }), alias]);
   await pool.query(`INSERT INTO human_external_identities(human_id,provider,namespace,subject)
     VALUES($1::uuid,'oauth',$2,$1::text)`, [humanId, issuer]);
-  await pool.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,role,permissions)
-    VALUES($1,'Steven',$2,'operator',ARRAY['read','route'])`, [humanId, alias]);
+  await pool.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,permissions)
+    VALUES($1,'Steven',$2,ARRAY['read','route'])`, [humanId, alias]);
   const users = new PostgresConsoleUserStore(pool); const user = await users.findById(humanId);
   if (!user?.password_changed_at_us) throw new Error('missing fixture account');
   const credentialStamp = createConsoleCredentialStamp(key, { userId: humanId, passwordHash: user.password_hash,

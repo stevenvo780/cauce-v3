@@ -67,13 +67,13 @@ describe('durable human detail fallback on PostgreSQL', () => {
     const context = current(); const user = context.users[0]; if (!user) throw new Error('Missing owner');
     const id = await publishLegacy();
     try {
+      await context.pool.query("UPDATE human_tenant_memberships SET permissions=ARRAY['read'] WHERE human_id=$1", [user.id]);
       await context.pool.query("UPDATE console_users SET role='reader' WHERE id=$1", [user.id]);
-      await context.pool.query("UPDATE human_tenant_memberships SET role='reader',permissions=ARRAY['read'] WHERE human_id=$1", [user.id]);
       const session = await context.login(0); const response = await detail(await gateway(), id, session);
       expect(response.statusCode).toBe(200); expect(object(object(response.json()).body).text).toBe('Visible legacy text');
     } finally {
       await context.pool.query("UPDATE console_users SET role='operator' WHERE id=$1", [user.id]);
-      await context.pool.query("UPDATE human_tenant_memberships SET role='operator',permissions=ARRAY['route','read'] WHERE human_id=$1", [user.id]);
+      await context.pool.query("UPDATE human_tenant_memberships SET permissions=ARRAY['route','read'] WHERE human_id=$1", [user.id]);
     }
   });
   it.each(['permission', 'revoked', 'stamp', 'binding'] as const)('preserves %s authority rejection for the legacy fallback', async (condition) => {

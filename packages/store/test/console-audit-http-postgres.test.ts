@@ -83,8 +83,8 @@ async function createReader() {
     VALUES('audit-reader@example.test','audit-reader@example.test',$1,'Reader','reader',$2,'owner') RETURNING id::text`,
   [passwordHash, fixture().tenant_id]);
   const human = requireValue(result.rows[0], 'reader').id;
-  await admin().query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,role,permissions)
-    VALUES($1,$2,'owner','reader',ARRAY['read'])`, [human, fixture().tenant_id]);
+  await admin().query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,permissions)
+    VALUES($1,$2,'owner',ARRAY['read'])`, [human, fixture().tenant_id]);
   await login('audit-reader@example.test');
 }
 

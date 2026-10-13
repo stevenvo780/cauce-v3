@@ -23,8 +23,8 @@ async function person(tenant: string, alias: string): Promise<string> {
   const id = randomUUID();
   await admin.query(`INSERT INTO console_users(id,email,email_normalized,password_hash,display_name,role,tenant_id,alias)
     VALUES($1,$2,$2,$3,'Fixture','operator',$4,$5)`, [id, `${id}@example.test`, '$scrypt$' + 'x'.repeat(48), tenant, alias]);
-  await admin.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,role,permissions)
-    VALUES($1,$2,$3,'operator',ARRAY['read','control'])`, [id, tenant, alias]);
+  await admin.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,permissions)
+    VALUES($1,$2,$3,ARRAY['read','control'])`, [id, tenant, alias]);
   await admin.query(`INSERT INTO company_admins(company_id,human_id,role,source,granted_by) VALUES('humanizar',$1,'admin','platform',$1)`, [id]);
   return id;
 }

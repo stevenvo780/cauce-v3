@@ -270,8 +270,8 @@ export async function startHumanProfileCodexFixture(
         [id, email, passwordHash, `Fixture human ${String(index + 1)}`, TENANT, actor],
       );
       await database.pool.query(
-        `INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,role,permissions,enabled)
-         VALUES($1,$2,$3,'operator',ARRAY['route','read']::text[],true)`,
+        `INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,permissions,enabled)
+         VALUES($1,$2,$3,ARRAY['route','read']::text[],true)`,
         [id, TENANT, actor],
       );
       await database.pool.query(

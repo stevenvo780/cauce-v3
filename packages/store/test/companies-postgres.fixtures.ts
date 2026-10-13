@@ -32,8 +32,8 @@ export async function seedCompanyHuman(pool: DatabasePool, tenant: string): Prom
   const id = randomUUID(); const email = `${id}@example.test`;
   await pool.query(`INSERT INTO console_users(id,email,email_normalized,password_hash,display_name,role,tenant_id,alias)
     VALUES($1,$2,$2,$3,'Company operator','operator',$4,'company_admin')`, [id, email, PASSWORD_HASH, tenant]);
-  await pool.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,role,permissions)
-    VALUES($1,$2,'company_admin','operator',ARRAY['read','control'])`, [id, tenant]);
+  await pool.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,permissions)
+    VALUES($1,$2,'company_admin',ARRAY['read','control'])`, [id, tenant]);
   return id;
 }
 export async function linkCompanies(pool: DatabasePool): Promise<void> {
@@ -67,8 +67,8 @@ export async function seedCompanyIsolation(pool: DatabasePool): Promise<CompanyI
       VALUES('shared-quota','Steven','kant',now(),1),('shared-quota','PraxisHub','company_admin',now(),1)`);
     const steven = await person(client, 'steven@example.test', 'Steven', 'kant');
     const miguel = await person(client, 'miguel@example.test', 'Miguel', 'janus');
-    await client.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,role,permissions)
-      VALUES($1,'Steven','kant','operator',ARRAY['read','control']),($2,'Miguel','janus','operator',ARRAY['read','control'])`, [steven, miguel]);
+    await client.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,permissions)
+      VALUES($1,'Steven','kant',ARRAY['read','control']),($2,'Miguel','janus',ARRAY['read','control'])`, [steven, miguel]);
     await client.query('INSERT INTO platform_admins(human_id) VALUES($1)', [steven]);
     await client.query(`INSERT INTO company_admins(company_id,human_id,role,source,granted_by)
       VALUES('humanizar',$1,'owner','platform',$1),('humanizar',$2,'owner','platform',$1)`, [steven, miguel]);

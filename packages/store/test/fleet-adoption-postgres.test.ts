@@ -28,8 +28,8 @@ beforeEach(async () => {
   await pool.query(`INSERT INTO console_users(id,email,email_normalized,password_hash,display_name,role,tenant_id,alias)
     VALUES($1,'legacy@example.test','legacy@example.test',$2,'Legacy operator','operator','Steven','legacy-operator')`,
   [humanId, '$scrypt$' + 'x'.repeat(48)]);
-  await pool.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,role,permissions)
-    VALUES($1,'Steven','legacy-operator','operator',ARRAY['read','control'])`, [humanId]);
+  await pool.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,permissions)
+    VALUES($1,'Steven','legacy-operator',ARRAY['read','control'])`, [humanId]);
   await pool.query(`INSERT INTO company_admins(company_id,human_id,role,source,granted_by)
     VALUES('humanizar',$1,'owner','import',$1)`, [humanId]);
 });

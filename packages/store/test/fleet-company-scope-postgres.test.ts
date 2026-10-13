@@ -22,8 +22,8 @@ beforeEach(async () => {
   if (!database) throw new Error('test database absent');
   current = await startTestCaseDatabase(database); pool = current.pool; admin = current.adminPool;
   actors = await seedCompanyIsolation(admin);
-  await admin.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,role,permissions)
-    VALUES($1,'PraxisHub','company_admin','operator',ARRAY['read','control'])`, [actors.leon]);
+  await admin.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,permissions)
+    VALUES($1,'PraxisHub','company_admin',ARRAY['read','control'])`, [actors.leon]);
   await admin.query("INSERT INTO rooms(id,tenant_id) VALUES('company-empty','Steven'),('praxis-empty','PraxisHub')");
   await admin.query("INSERT INTO fleet_hosts(host_id,display_name,company_id) VALUES('humanizar-remote','Humanizar remote','humanizar')");
 });

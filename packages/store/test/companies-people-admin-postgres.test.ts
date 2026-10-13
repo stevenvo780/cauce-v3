@@ -38,8 +38,8 @@ async function operator(email: string, tenant: string, room: string, alias: stri
   const id = (await admin.query<{ id: string }>(`INSERT INTO console_users(email,email_normalized,password_hash,display_name,role,tenant_id,alias)
     VALUES($1,$1,$2,$1,'operator',$3,$4) RETURNING id::text`, [email, PASSWORD_HASH, tenant, alias])).rows[0]?.id;
   if (!id) throw new Error('operator absent');
-  await admin.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,role,permissions)
-    VALUES($1,$2,$3,'operator',ARRAY['read','control'])`, [id, tenant, alias]);
+  await admin.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,permissions)
+    VALUES($1,$2,$3,ARRAY['read','control'])`, [id, tenant, alias]);
   return human(id);
 }
 function actor(person: PeopleAdminPerson): PeopleAdminActor {
@@ -60,8 +60,8 @@ beforeEach(async () => {
   current = await startTestCaseDatabase(database); pool = current.pool; admin = current.adminPool;
   ids = await seedCompanyIsolation(admin);
   steven = await human(ids.steven); miguel = await human(ids.miguel); leon = await human(ids.leon);
-  await admin.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,role,permissions)
-    VALUES($1,'PraxisHub','company_admin','operator',ARRAY['read','control'])`, [ids.leon]);
+  await admin.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,permissions)
+    VALUES($1,'PraxisHub','company_admin',ARRAY['read','control'])`, [ids.leon]);
   await admin.query("INSERT INTO rooms(id,tenant_id) VALUES('company-miguel','Miguel')");
   await admin.query(`INSERT INTO memberships(tenant_id,room_id,alias,role)
     VALUES('Steven','company-humanizar','kant','operator'),('Miguel','company-miguel','janus','operator')`);
@@ -194,8 +194,8 @@ describe('people administration by owners and administrators', () => {
   });
 
   it('never lets a person hold a membership in a foreign company', async () => {
-    await expect(admin.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,role,permissions)
-      VALUES($1,'PraxisHub','company_admin','operator',ARRAY['read','control'])`, [zeus.id])).rejects.toMatchObject({ code: '23503' });
+    await expect(admin.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,permissions)
+      VALUES($1,'PraxisHub','company_admin',ARRAY['read','control'])`, [zeus.id])).rejects.toMatchObject({ code: '23503' });
   });
 });
 

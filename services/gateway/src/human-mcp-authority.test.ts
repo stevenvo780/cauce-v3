@@ -321,7 +321,7 @@ describe('durable human MCP authority', () => {
 });
 
 const homeMembershipLockQuery = `
-  SELECT human.tenant_id, human.actor_alias, human.role, human.permissions, human.enabled, human.revision::text, human.revoked_at
+  SELECT human.tenant_id, human.actor_alias, human.permissions, human.enabled, human.revision::text, human.revoked_at
   FROM human_tenant_memberships human JOIN tenants tenant ON tenant.id=human.tenant_id
   JOIN companies company ON company.id=tenant.company_id
   WHERE human.human_id=$1 AND human.tenant_id=$2 AND tenant.enabled AND tenant.retired_at IS NULL

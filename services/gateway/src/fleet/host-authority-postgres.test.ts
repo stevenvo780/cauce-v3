@@ -146,8 +146,8 @@ describe('signed authority for self-service enrolled computers', () => {
       SELECT 'second-owner@example.test','second-owner@example.test',password_hash,'Second owner',role,tenant_id,alias
       FROM console_users WHERE id=$1 RETURNING id`, [company.user.id])).rows[0];
     if (!second) throw new Error('Second owner absent');
-    await pool.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,role,permissions)
-      VALUES($1,$2,'owner','operator',ARRAY['read','control'])`, [second.id,company.hub.id]);
+    await pool.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,permissions)
+      VALUES($1,$2,'owner',ARRAY['read','control'])`, [second.id,company.hub.id]);
     await current?.adminPool.query(`INSERT INTO company_admins(company_id,human_id,role,source)
       VALUES($1,$2,'owner','v4.0-hub-operator')`, [company.company.id,second.id]);
     await pool.query('UPDATE console_users SET active=false WHERE id=$1', [company.user.id]);

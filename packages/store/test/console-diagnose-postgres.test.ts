@@ -288,7 +288,7 @@ describe('company scoped diagnosis through a signed human session and real Postg
       VALUES('diagnose-reader@example.test','diagnose-reader@example.test',$1,'Reader','reader',$2,'owner')`,[passwordHash,home.tenant_id]);
     const reader = (await admin().query<{ id:string }>("SELECT id FROM console_users WHERE email_normalized='diagnose-reader@example.test'")).rows[0]?.id;
     if (!reader) throw new Error('reader unavailable');
-    await admin().query("INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,role,permissions) VALUES($1,$2,'owner','reader',ARRAY['read'])",[reader,home.tenant_id]);
+    await admin().query("INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,permissions) VALUES($1,$2,'owner',ARRAY['read'])",[reader,home.tenant_id]);
     const response = await server().inject({ method:'POST',url:'/v3/auth/login',headers:{origin:ORIGIN},
       payload:{email:'diagnose-reader@example.test',password:PASSWORD} });
     expect(response.statusCode).toBe(200); cookie=sessionCookie(response);

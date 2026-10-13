@@ -27,7 +27,7 @@ beforeEach(async () => {
     VALUES('owner@example.test','owner@example.test',$1,'Owner','operator','Steven','people-owner')
     RETURNING id,email,display_name,role,tenant_id,alias,active,(extract(epoch from updated_at)*1000000)::numeric(20,0)::text AS revision`, ['$scrypt$' + 'x'.repeat(48)])).rows[0];
   if (!row) throw new Error('fixture owner absent'); owner = row;
-  await admin.query("INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,role,permissions) VALUES($1,'Steven','people-owner','operator',ARRAY['read','control'])", [owner.id]);
+  await admin.query("INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,permissions) VALUES($1,'Steven','people-owner',ARRAY['read','control'])", [owner.id]);
   await admin.query("INSERT INTO company_admins(company_id,human_id,role,source,granted_by) VALUES('humanizar',$1,'owner','platform',$1)", [owner.id]);
   actor = { tenant_id: 'Steven', alias: 'people-owner', subject: `console:${owner.id}`,
     humanAuthority: async () => ({ humanId: owner.id, tenantId: 'Steven', actorAlias: 'people-owner' }) };

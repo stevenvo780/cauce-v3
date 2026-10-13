@@ -30,8 +30,8 @@ beforeEach(async () => {
   await admin.query("UPDATE memberships SET role='operator' WHERE tenant_id='Miguel' AND alias='janus'");
   await admin.query(`INSERT INTO memberships(tenant_id,room_id,alias,role)
     VALUES('Steven','company-humanizar','kant','operator') ON CONFLICT(tenant_id,room_id,alias) DO UPDATE SET role='operator'`);
-  await admin.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,role,permissions)
-    VALUES($1,'PraxisHub','company_admin','operator',ARRAY['read','control'])`, [people.leon]);
+  await admin.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,permissions)
+    VALUES($1,'PraxisHub','company_admin',ARRAY['read','control'])`, [people.leon]);
   await admin.query('UPDATE console_users SET password_hash=$1', [hash]);
   const provider = new PasswordAuthProvider({ users: new PostgresConsoleUserStore(pool), signingKey: Buffer.alloc(32, 51) });
   app = await buildGateway({ pool, authProvider: provider, repository: new CauceRepository(pool), consoleOrigins: [ORIGIN] });
@@ -113,8 +113,8 @@ describe('people administration under the signed selected company', () => {
     const id = randomUUID();
     await admin.query(`INSERT INTO console_users(id,email,email_normalized,password_hash,display_name,role,tenant_id,alias)
       VALUES($1,'staff@example.test','staff@example.test',$2,'Staff','operator','PraxisTeam','team_agent')`, [id, hash]);
-    await admin.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,role,permissions)
-      VALUES($1,'PraxisTeam','team_agent','operator',ARRAY['read','control'])`, [id]);
+    await admin.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,permissions)
+      VALUES($1,'PraxisTeam','team_agent',ARRAY['read','control'])`, [id]);
     const session = await login('staff@example.test');
     expect((await app.inject({ method: 'GET', url: '/v3/console/people?company_id=humanizar', headers: headers(session) })).statusCode).toBe(403);
     for (const target of [people.miguel, randomUUID()]) {

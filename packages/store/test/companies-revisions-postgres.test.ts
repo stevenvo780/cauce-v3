@@ -21,14 +21,14 @@ beforeEach(async () => {
   if (!database) throw new Error('test database absent');
   current = await startTestCaseDatabase(database); pool = current.pool; admin = current.adminPool;
   const seeded = await seedCompanyIsolation(admin);
-  await admin.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,role,permissions)
-    VALUES($1,'PraxisHub','company_admin','operator',ARRAY['read','control'])`, [seeded.leon]);
+  await admin.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,permissions)
+    VALUES($1,'PraxisHub','company_admin',ARRAY['read','control'])`, [seeded.leon]);
   await admin.query(`UPDATE memberships SET role='operator' WHERE (tenant_id,alias) IN (('Isa','salva'),('Miguel','janus'))`);
   const isa = randomUUID();
   await admin.query(`INSERT INTO console_users(id,email,email_normalized,password_hash,display_name,role,tenant_id,alias)
     VALUES($1,$2,$2,$3,'Isa','operator','Isa','salva')`, [isa, `${isa}@example.test`, '$scrypt$' + 'x'.repeat(48)]);
-  await admin.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,role,permissions)
-    VALUES($1,'Isa','salva','operator',ARRAY['read','control'])`, [isa]);
+  await admin.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,permissions)
+    VALUES($1,'Isa','salva',ARRAY['read','control'])`, [isa]);
   actors = { ...seeded, isa };
   repository = new ConfigurationRepository(pool);
 });

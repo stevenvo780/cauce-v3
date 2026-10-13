@@ -26,8 +26,8 @@ beforeEach(async () => {
   people = await seedCompanyIsolation(admin);
   await admin.query("UPDATE memberships SET role='operator' WHERE tenant_id='Miguel' AND alias='janus'");
   await admin.query('UPDATE console_users SET password_hash=$1', [hash]);
-  await admin.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,role,permissions)
-    VALUES($1,'PraxisHub','company_admin','operator',ARRAY['read','control'])`, [people.leon]);
+  await admin.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,permissions)
+    VALUES($1,'PraxisHub','company_admin',ARRAY['read','control'])`, [people.leon]);
   const provider = new PasswordAuthProvider({ users: new PostgresConsoleUserStore(pool), signingKey: Buffer.alloc(32, 47) });
   clock = Date.now();
   quotaOptions = { approvedHostIds: ['humanizar-host','praxis-host'], providers: ['codex'], now: () => new Date(clock) };
@@ -163,8 +163,8 @@ describe('quota console routes under a real password session and company authori
     expect(action.statusCode).toBe(400);
   });
   it('allows tenant readers to view their shared account and refuses writes', async () => {
+    await admin.query("UPDATE human_tenant_memberships SET permissions=ARRAY['read'] WHERE human_id=$1", [people.miguel]);
     await admin.query("UPDATE console_users SET role='reader' WHERE id=$1", [people.miguel]);
-    await admin.query("UPDATE human_tenant_memberships SET role='reader',permissions=ARRAY['read'] WHERE human_id=$1", [people.miguel]);
     await admin.query(`INSERT INTO alias_routing_ceiling(tenant_id,alias,account_id,account_payer_tenant,created_by_tenant)
       VALUES('Miguel','janus','humanizar-account','Steven','Steven')`);
     await admin.query("INSERT INTO agent_account_bindings(tenant_id,agent_alias,account_id,priority) VALUES('Miguel','janus','humanizar-account',1)");
@@ -230,8 +230,8 @@ describe('quota console routes under a real password session and company authori
       if (status === 'read_only') {
         await admin.query('DELETE FROM platform_admins WHERE human_id=$1', [people.steven]);
         await admin.query('DELETE FROM company_admins WHERE human_id=$1', [people.steven]);
+        await admin.query("UPDATE human_tenant_memberships SET permissions=ARRAY['read'] WHERE human_id=$1", [people.steven]);
         await admin.query("UPDATE console_users SET role='reader' WHERE id=$1", [people.steven]);
-        await admin.query("UPDATE human_tenant_memberships SET role='reader',permissions=ARRAY['read'] WHERE human_id=$1", [people.steven]);
         session = await login('steven@example.test');
       }
       const accountRead = await read(session, 'quota-accounts');

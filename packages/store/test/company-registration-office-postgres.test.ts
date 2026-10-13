@@ -57,7 +57,8 @@ describe('public registration with durable owner and isolated office', () => {
       .toEqual([{ role: 'cauce_gateway', rolsuper: false }]);
     expect((await pool.query("SELECT pg_has_role(current_user,'cauce_runtime','MEMBER') AS runtime")).rows[0]).toEqual({ runtime: true });
     expect(await withTransaction(pool, source(first))).toMatchObject({ role: 'company_owner', actingCompany: 'north', humanId: first.user.id });
-    expect((await pool.query('SELECT role,permissions FROM human_tenant_memberships WHERE human_id=$1', [first.user.id])).rows)
+    expect((await pool.query(`SELECT u.role,m.permissions FROM human_tenant_memberships m JOIN console_users u ON u.id=m.human_id
+      WHERE m.human_id=$1`, [first.user.id])).rows)
       .toEqual([{ role: 'operator', permissions: ['route','read','control','notify'] }]);
     await expect(pool.query("INSERT INTO companies(id,name) VALUES('forbidden','Forbidden')")).rejects.toMatchObject({ code: '42501' });
     expect(JSON.stringify(first)).not.toContain('$scrypt$');
@@ -160,8 +161,8 @@ describe('public registration with durable owner and isolated office', () => {
     const id = randomUUID();
     await admin.query(`INSERT INTO console_users(id,email,email_normalized,password_hash,display_name,role,tenant_id,alias)
       VALUES($1,$2,$2,$3,'Reader','reader',$4,'owner')`, [id, `${id}@example.test`, hash, first.hub.id]);
-    await admin.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,role,permissions)
-      VALUES($1,$2,'owner','reader',ARRAY['read'])`, [id, first.hub.id]);
+    await admin.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,permissions)
+      VALUES($1,$2,'owner',ARRAY['read'])`, [id, first.hub.id]);
     const reader: CompanyAuthoritySource = client => lockCompanyAuthority(client, { tenant: first.hub.id, alias: 'owner', humanId: id });
     expect(await withTransaction(pool, reader)).toMatchObject({ role: 'reader' });
     await expect(writeCompanyOffice(pool, reader, { expected_version: 0, rooms: [] })).rejects.toMatchObject({ code: 'forbidden' });

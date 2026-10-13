@@ -109,8 +109,8 @@ describe('contextos versionados en navegador real contra gateway y PostgreSQL re
     const teammateId = teammate.rows[0]?.id;
     if (teammateId === undefined) throw new Error('same-company person was not provisioned');
     await pool().query(`INSERT INTO human_tenant_memberships
-      (human_id,tenant_id,actor_alias,role,permissions,enabled,company_id)
-      VALUES($1,$2,$3,'operator',ARRAY['route','read','control','notify']::text[],true,$4)`,
+      (human_id,tenant_id,actor_alias,permissions,enabled,company_id)
+      VALUES($1,$2,$3,ARRAY['route','read','control','notify']::text[],true,$4)`,
     [teammateId, tenant, teammateAlias, owner.company.slug]);
     await pool().query(`INSERT INTO company_admins(company_id,human_id,role,source,granted_by)
       VALUES($1,$2,'admin','import',$3)`, [owner.company.slug, teammateId, ownerId]);

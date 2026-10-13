@@ -47,8 +47,8 @@ beforeEach(async () => {
   ['$scrypt$' + 'x'.repeat(48)])).rows[0];
   if (!human) throw new Error('Test human absent'); humanId = human.id;
   await current.adminPool.query("INSERT INTO company_admins(company_id,human_id,role,source) SELECT company_id,id,'admin','v4.0-hub-operator' FROM console_users WHERE id=$1", [humanId]);
-  await pool.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,role,permissions)
-    VALUES($1,'Steven','authority_operator','operator',ARRAY['read','control'])`, [humanId]);
+  await pool.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,permissions)
+    VALUES($1,'Steven','authority_operator',ARRAY['read','control'])`, [humanId]);
   await pool.query(`INSERT INTO provider_accounts(id,provider,external_account_id,payer_tenant_id,credential_ref_kind,credential_ref,enabled)
     VALUES('authority-account','codex','authority-fixture-account','Steven','env_path','CAUCE_AUTHORITY_FIXTURE_PATH',true)`);
   repo = new FleetOperationsRepository(pool, { controllerHost: 'host-a', coordinatorEnabled: true, coordinatorHosts: ['host-a'] });
@@ -133,8 +133,8 @@ describe('central fleet authority through a private host socket and PostgreSQL',
     await current.adminPool.query("INSERT INTO fleet_hosts(host_id,display_name,company_id) VALUES('praxis-host','Praxis host','praxis')");
     await current.adminPool.query(`INSERT INTO provider_accounts(id,provider,external_account_id,payer_tenant_id,credential_ref_kind,credential_ref,shared_with_pool,enabled)
       VALUES('praxis-account','codex','praxis-external','PraxisHub','env_path','CAUCE_TEST_PRAXIS_PATH',true,true)`);
-    await current.adminPool.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,role,permissions)
-      VALUES($1,'PraxisHub','company_admin','operator',ARRAY['read','control'])`, [leon]);
+    await current.adminPool.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,permissions)
+      VALUES($1,'PraxisHub','company_admin',ARRAY['read','control'])`, [leon]);
     const south = new FleetOperationsRepository(pool);
     await south.enqueue('PraxisHub', 'company_admin', { kind: 'create', target: { resource: 'agent', tenant_id: 'PraxisTeam', alias: 'south_agent' },
       expected_revision: await withTransaction(pool, value => companyRevision(value, 'praxis')), idempotency_key: 'authority-south-create',

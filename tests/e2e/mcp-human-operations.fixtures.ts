@@ -244,8 +244,8 @@ export async function startHumanOperationsFixture(): Promise<HumanOperationsFixt
         [account.tenant, account.alias, `mcp-e2e-human-${account.tenant}`],
       );
       await database.pool.query(
-        `INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,role,permissions,enabled)
-         VALUES($1,$2,$3,'operator',ARRAY['route','read','control','notify']::text[],true)`,
+        `INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,permissions,enabled)
+         VALUES($1,$2,$3,ARRAY['route','read','control','notify']::text[],true)`,
         [account.id, account.tenant, account.alias],
       );
       await database.pool.query(

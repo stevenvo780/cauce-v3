@@ -44,8 +44,8 @@ export async function seedTenantHuman(tenant: Tenant, alias: string): Promise<Te
     [humanId, `${humanId}@example.invalid`, `$scrypt$${'x'.repeat(40)}`, tenant, alias]);
     await client.query(`INSERT INTO human_external_identities(human_id,provider,namespace,subject)
       VALUES($1,$2,$3,$4)`, [humanId, key.provider, key.namespace, key.subject]);
-    await client.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,role,permissions)
-      VALUES($1,$2,$3,'operator',ARRAY['read','route'])`, [humanId, tenant, alias]);
+    await client.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,permissions)
+      VALUES($1,$2,$3,ARRAY['read','route'])`, [humanId, tenant, alias]);
   });
   return { humanId, alias, key, tenant, room: ROOMS[tenant] ?? 'grp.steven' };
 }

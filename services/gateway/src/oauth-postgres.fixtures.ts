@@ -81,12 +81,12 @@ export async function seed(pool: DatabasePool, binding = true) {
   if (binding) {
     await pool.query(`INSERT INTO human_external_identities(id,human_id,provider,namespace,subject)
       VALUES ($1,$2::uuid,'oauth',$3,$2::text)`, [bindingId, userId, issuer]);
-    await pool.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,role,permissions)
-      VALUES ($1,'Steven',$2,'operator',ARRAY['read','route'])`, [userId, alias]);
+    await pool.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,permissions)
+      VALUES ($1,'Steven',$2,ARRAY['read','route'])`, [userId, alias]);
   } else {
     // Match the account backfill without an external binding.
-    await pool.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,role,permissions,enabled,revoked_at)
-      SELECT id,tenant_id,alias,role,CASE WHEN role='operator' THEN ARRAY['route','read','control','notify']::text[]
+    await pool.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,permissions,enabled,revoked_at)
+      SELECT id,tenant_id,alias,CASE WHEN role='operator' THEN ARRAY['route','read','control','notify']::text[]
         ELSE ARRAY['read']::text[] END,active,CASE WHEN active THEN NULL ELSE now() END FROM console_users WHERE id=$1`, [userId]);
   }
   const user = await new PostgresConsoleUserStore(pool).findById(userId);

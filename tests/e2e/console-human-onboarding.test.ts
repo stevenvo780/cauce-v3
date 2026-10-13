@@ -84,8 +84,8 @@ describe('console human membership onboarding', () => {
     const account = await maintainConsoleUser(pool(), options(email, alias), passwordHash());
     const result = await pool().query<{ human_id: string; tenant_id: string; actor_alias: string;
       role: string; permissions: string[]; enabled: boolean; revoked_at: Date | null }>(
-      `SELECT human_id,tenant_id,actor_alias,role,permissions,enabled,revoked_at
-       FROM human_tenant_memberships WHERE human_id=$1`, [account.id]);
+      `SELECT m.human_id,m.tenant_id,m.actor_alias,u.role,m.permissions,m.enabled,m.revoked_at
+       FROM human_tenant_memberships m JOIN console_users u ON u.id=m.human_id WHERE m.human_id=$1`, [account.id]);
 
     expect(result.rows).toEqual([{
       human_id: account.id, tenant_id: 'Steven', actor_alias: alias, role: 'operator',
@@ -98,7 +98,8 @@ describe('console human membership onboarding', () => {
       role: 'reader',
     }), passwordHash());
     const readerGrant = await pool().query<{ role: string; permissions: string[] }>(
-      'SELECT role,permissions FROM human_tenant_memberships WHERE human_id=$1', [reader.id]);
+      `SELECT u.role,m.permissions FROM human_tenant_memberships m JOIN console_users u ON u.id=m.human_id
+       WHERE m.human_id=$1`, [reader.id]);
     expect(readerGrant.rows).toEqual([{ role: 'reader', permissions: ['read'] }]);
   });
 
@@ -139,18 +140,19 @@ describe('console human membership onboarding', () => {
     const existingId = existing.rows[0]?.id;
     if (existingId === undefined) throw new Error('Existing console account was not inserted');
     await pool().query(`INSERT INTO human_tenant_memberships
-      (human_id,tenant_id,actor_alias,role,permissions,enabled,revoked_at)
-      VALUES($1,'Steven',$2,'reader',ARRAY['read']::text[],false,now())`, [existingId, alias]);
+      (human_id,tenant_id,actor_alias,permissions,enabled,revoked_at)
+      VALUES($1,'Steven',$2,ARRAY['read']::text[],false,now())`, [existingId, alias]);
 
     await maintainConsoleUser(pool(), options(existingEmail, alias, {
       role: 'operator', updateOnly: true, activate: true,
     }), passwordHash());
     const preserved = await pool().query<{ role: string; permissions: string[];
       enabled: boolean; revoked_at: Date | null }>(
-      `SELECT role,permissions,enabled,revoked_at FROM human_tenant_memberships
-       WHERE human_id=$1 AND tenant_id='Steven'`, [existingId]);
+      `SELECT u.role,m.permissions,m.enabled,m.revoked_at FROM human_tenant_memberships m
+       JOIN console_users u ON u.id=m.human_id WHERE m.human_id=$1 AND m.tenant_id='Steven'`, [existingId]);
     expect(preserved.rows).toHaveLength(1);
-    expect(preserved.rows[0]).toMatchObject({ role: 'reader', permissions: ['read'], enabled: false });
+    // The role is derived from the account, which the update promoted; the revoked grant itself stays untouched.
+    expect(preserved.rows[0]).toMatchObject({ role: 'operator', permissions: ['read'], enabled: false });
     expect(preserved.rows[0]?.revoked_at).toBeInstanceOf(Date);
 
     const missingEmail = `missing-membership-${suffix}@fixture.invalid`;

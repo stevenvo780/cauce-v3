@@ -331,8 +331,8 @@ describe('durable agent quota operations with real PostgreSQL', () => {
       VALUES($1,'zz-canary-admin@dev.example','zz-canary-admin@dev.example',$2,'Canary admin','operator','ContextAlpha','director')`,
     [person, `$scrypt$${'x'.repeat(48)}`]);
     await admin().query("UPDATE memberships SET role='operator' WHERE tenant_id='ContextAlpha' AND alias='director'");
-    await admin().query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,role,permissions)
-      VALUES($1,'ContextAlpha','director','operator',ARRAY['read','control'])`, [person]);
+    await admin().query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,permissions)
+      VALUES($1,'ContextAlpha','director',ARRAY['read','control'])`, [person]);
     await admin().query("INSERT INTO company_admins(company_id,human_id,role,source,granted_by) VALUES('context_alpha',$1,'admin','import',$1)", [person]);
     const source = (client: DatabaseClient) => lockCompanyAuthority(client, { tenant: 'ContextAlpha', alias: 'director', humanId: person });
     const card = await repository.snapshot(source, target); expect(card).toMatchObject({ reader_available: true, can_query: true });

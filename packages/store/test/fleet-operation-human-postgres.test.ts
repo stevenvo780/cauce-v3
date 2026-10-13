@@ -35,8 +35,8 @@ function create(): FleetOperationRequest {
         home_directory: '/home/dev', state_directory: '/home/dev/.cauce/human-test' } } };
 }
 async function membership(): Promise<void> {
-  await pool.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,role,permissions)
-    VALUES($1,'Steven','human_fleet_operator','operator',ARRAY['read','control']) ON CONFLICT DO NOTHING`, [humanId]);
+  await pool.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,permissions)
+    VALUES($1,'Steven','human_fleet_operator',ARRAY['read','control']) ON CONFLICT DO NOTHING`, [humanId]);
 }
 describe('durable human fleet provenance', () => {
   it('rejects an absent human membership even when the bus alias retains control', async () => {
@@ -82,7 +82,7 @@ describe('durable human fleet provenance', () => {
     await repo.prepare(claim); await repo.startStep(claim, 'artifacts');
     const version = (await repo.get('Steven', 'human_fleet_operator', claim.operation.id)).version;
     if (revocation === 'account') await pool.query('UPDATE console_users SET active=false WHERE id=$1', [humanId]);
-    else if (revocation === 'role') await pool.query("UPDATE console_users SET role='reader' WHERE id=$1", [humanId]);
+    else if (revocation === 'role') await pool.query("WITH m AS (UPDATE human_tenant_memberships SET permissions=ARRAY['read'] WHERE human_id=$1) UPDATE console_users SET role='reader' WHERE id=$1", [humanId]);
     else await pool.query("UPDATE human_tenant_memberships SET permissions=ARRAY['read'],revision=revision+1 WHERE human_id=$1", [humanId]);
     expect(await repo.renew(claim)).toBe(false);
     for (const write of [() => repo.prepare(claim), () => repo.execution(claim), () => repo.startStep(claim, 'artifacts'),
@@ -102,8 +102,8 @@ describe('durable human fleet provenance', () => {
     await pool.query(`INSERT INTO console_users(id,email,email_normalized,password_hash,display_name,role,tenant_id,alias)
       VALUES($1,'other@isolated.test','other@isolated.test',$2,'Other human','operator','Steven','human_fleet_operator')`,
     [otherId, '$scrypt$' + 'x'.repeat(40)]);
-    await pool.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,role,permissions)
-      VALUES($1,'Steven','human_fleet_operator','operator',ARRAY['read','control'])`, [otherId]);
+    await pool.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,permissions)
+      VALUES($1,'Steven','human_fleet_operator',ARRAY['read','control'])`, [otherId]);
     await caseDatabase?.adminPool.query(`INSERT INTO company_admins(company_id,human_id,role,source,granted_by)
       VALUES('humanizar',$1,'admin','platform',$1)`, [otherId]);
     const queued = await repo.enqueue('Steven', 'human_fleet_operator', create(), subject);

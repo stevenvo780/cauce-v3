@@ -13,8 +13,8 @@ export async function purgeFixture(pool: DatabasePool, admin: DatabasePool): Pro
   await pool.query(`INSERT INTO console_users(id,email,email_normalized,password_hash,display_name,role,tenant_id,alias)
     VALUES($1,'purge-human@example.test','purge-human@example.test',$2,'Purge human','operator','Steven','purge_operator')`,
   [humanId, '$scrypt$' + 'x'.repeat(48)]);
-  await pool.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,role,permissions)
-    VALUES($1,'Steven','purge_operator','operator',ARRAY['read','control'])`, [humanId]);
+  await pool.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,permissions)
+    VALUES($1,'Steven','purge_operator',ARRAY['read','control'])`, [humanId]);
   await admin.query(`INSERT INTO company_admins(company_id,human_id,role,source,granted_by)
     SELECT company_id,$1,'owner','platform',$1 FROM tenants WHERE id='Steven'`, [humanId]);
   await pool.query(`INSERT INTO provider_accounts(id,provider,external_account_id,payer_tenant_id,credential_ref_kind,credential_ref,enabled)
