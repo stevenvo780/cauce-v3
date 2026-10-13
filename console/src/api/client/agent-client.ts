@@ -229,6 +229,8 @@ function entregaEnVuelo(status: number, body: unknown): ApiError | undefined {
 const CONTEXT_SOURCE_INVALID = 'La revisión del perfil Git no es válida o está incompleta. Elige otra revisión y vuelve a preparar el cambio.';
 
 const GOVERNANCE_ERROR_TEXT: Readonly<Record<string, string>> = {
+  agent_disabled: 'El agente está deshabilitado. Habilítalo desde Configuración > Operación y vuelve a guardar el perfil.',
+  profile_revision_conflict: 'El perfil cambió desde que se abrió. Actualízalo y vuelve a aplicar el borrador sobre la revisión vigente.',
   not_found: 'No se encontró el agente o ya no está visible. Actualiza el inventario y elige un agente disponible.',
   forbidden: 'Tu sesión ya no tiene permiso para esta operación. Entra con una persona autorizada o pide a un operador que revise el acceso.',
   scope_unavailable: 'La fuente Git ya no coincide con este perfil. Relee las fuentes del agente y selecciona una disponible.',

@@ -526,6 +526,8 @@ describe('CauceApi', () => {
   });
 
   it.each([
+    [409, 'agent_disabled', 'Habilítalo desde Configuración'],
+    [409, 'profile_revision_conflict', 'aplicar el borrador sobre la revisión vigente'],
     [409, 'scope_unavailable', 'La fuente Git ya no coincide'],
     [409, 'confirmation_changed', 'La fuente del perfil cambió'],
     [409, 'invalid_confirmation', 'La confirmación de la fuente no es válida'],
