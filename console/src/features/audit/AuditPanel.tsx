@@ -126,6 +126,12 @@ export function AuditPanel({ query, onQuery }: { query: string; onQuery: (value:
         <SearchField label="Filtrar auditoría" value={query} onChange={onQuery} placeholder="Filtrar por actor, action, trace…" />
         <span className="text-xs text-muted">{String(filtered.length)} visibles de {String(events.length)}</span>
       </Toolbar>
+      {resource.error ? (
+        <Notice tone="danger" role="alert" className="mb-3 flex flex-wrap items-center gap-2">
+          <span className="min-w-0 flex-1 basis-64">No se pudo actualizar la auditoría: {resource.error.message} Se muestran los eventos ya cargados.</span>
+          <Button size="sm" onClick={() => { void resource.reload(); }}>Reintentar</Button>
+        </Notice>
+      ) : null}
       {needle ? (
         <Notice role="status" className="mb-3 flex flex-wrap items-center gap-2">
           <span className="min-w-0 flex-1 basis-64">
