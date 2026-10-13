@@ -24,9 +24,16 @@ def company_scoped_query(query):
         "channel_bridge_cursors": (("tenants",), "tenant_id IN (SELECT id FROM tenants)"),
         "dead_letters": (("tenants",), "tenant_id IN (SELECT id FROM tenants)"),
         "outbox_dead_letters": (("tenants",), "tenant_id IN (SELECT id FROM tenants)"),
+        "audit_events": (("tenants", "messages"),
+                         "(tenant_id IS NULL OR tenant_id IN (SELECT id FROM tenants)) "
+                         "AND (message_id IS NULL OR message_id IN (SELECT id FROM messages)) "
+                         "AND (tenant_id IS NOT NULL OR message_id IS NOT NULL) "
+                         "AND (to_jsonb(audit_events)->>'company_id' IS NULL "
+                         f"OR to_jsonb(audit_events)->>'company_id'='{company}')"),
+        "doctor_container_scopes": ((), None),
     }
     references = re.findall(r"\b(?:from|join)\s+([a-z_][a-z0-9_]*)(\s*\.)?", query, re.IGNORECASE)
-    local_ctes = set(re.findall(r"\b([a-z_][a-z0-9_]*)\s+as\s*\(", query.lower()))
+    local_ctes = set(re.findall(r"\b([a-z_][a-z0-9_]*)\s+as\s*(?:(?:not\s+)?materialized\s*)?\(", query.lower()))
     used = set()
     for name, qualified in references:
         name = name.lower()
@@ -43,7 +50,12 @@ def company_scoped_query(query):
         dependencies, predicate = relations[name]
         for dependency in dependencies:
             append(dependency)
-        scoped.append(f"{name} AS (SELECT * FROM public.{name} WHERE {predicate})")
+        if name == "doctor_container_scopes":
+            scoped.append(f"{name} AS (SELECT a.container_name, bool_or(t.company_id='{company}') in_company "
+                          "FROM public.agents a JOIN public.tenants t ON t.id=a.tenant_id "
+                          "WHERE a.container_name IS NOT NULL AND a.container_name<>'' GROUP BY a.container_name)")
+        else:
+            scoped.append(f"{name} AS (SELECT * FROM public.{name} WHERE {predicate})")
         emitted.add(name)
 
     for name in sorted(used):
@@ -83,6 +95,20 @@ def notice_identity():
     return identity if guard_company_id() == "humanizar" and identity in scoped_inventory() else None
 
 
+CONTAINER_FINDING_TYPES = {"bucle_de_cuota", "bucle_de_cuota_barato", "bucle_de_cuota_adjudicado", "sonda_bucle"}
+
+
+def finding_subject(record):
+    return record.get("cuenta") or record.get("contenedor") or record.get("alias") or "-"
+
+
+def finding_memory_key(record):
+    alias = record.get("alias", "-")
+    if alias == "-" and record.get("tipo") in CONTAINER_FINDING_TYPES | {"cuenta_ia"}:
+        alias = finding_subject(record)
+    return f"{record.get('tipo', '?')}|{record.get('tenant', '-')}|{alias}"
+
+
 def scope_findings(records):
     inventory = scoped_inventory()
     scoped = []
@@ -92,13 +118,31 @@ def scope_findings(records):
         if record.get("tenant") is not None and record["tenant"] not in {key[0] for key in inventory}:
             continue
         alias = record.get("alias")
+        if record.get("tipo") == "cuenta_ia":
+            record = dict(record)
+            record.pop("tenant", None)
+            scoped.append(record)
+            continue
+        if record.get("tipo") in CONTAINER_FINDING_TYPES and (record.get("contenedor") or alias not in (None, "-")):
+            container = record.get("contenedor") or alias
+            matches = [key for key, row in inventory.items() if row.get("contenedor_db") == container]
+            if not matches and (DOCTOR_CONTAINER_SCOPES or {}).get(container) is False:
+                continue
+            record = {**record, "contenedor": container, "alias": "-"}
+            record.pop("tenant", None)
+            if len(matches) == 1:
+                record.update(tenant=matches[0][0], alias=matches[0][1])
+            scoped.append(record)
+            continue
         if not alias or alias == "-":
             scoped.append(record)
             continue
         if isinstance(alias, (list, tuple)) and alias and isinstance(alias[0], (list, tuple)):
             identities = [tuple(key) for key in alias]
             if all(key in inventory for key in identities):
-                scoped.append({**record, "alias": ",".join("/".join(key) for key in identities)})
+                scoped.append({**record, "tenant": identities[0][0],
+                               "alias": identities[0][1] if len(identities) == 1
+                               else ",".join("/".join(key) for key in identities)})
             continue
         identities = []
         for part in str(alias).split(","):
@@ -109,7 +153,8 @@ def scope_findings(records):
             identities.extend(keys)
         else:
             if identities:
-                scoped.append({**record, "tenant": identities[0][0], "alias": alias})
+                scoped.append({**record, "tenant": identities[0][0],
+                               "alias": identities[0][1] if len(identities) == 1 else alias})
     return scoped
 
 
@@ -118,7 +163,11 @@ def scope_finding_memory(records):
     scoped = {}
     for key, value in (records if isinstance(records, dict) else {}).items():
         parts = key.split("|")
-        if len(parts) == 3 and (tuple(parts[1:]) in inventory or parts[1:] == ["-", "-"]):
+        if len(parts) != 3:
+            continue
+        global_subject = parts[1] == "-" and (parts[0] == "cuenta_ia" or
+                         parts[0] in CONTAINER_FINDING_TYPES and (DOCTOR_CONTAINER_SCOPES or {}).get(parts[2]) is not False)
+        if tuple(parts[1:]) in inventory or parts[1:] == ["-", "-"] or global_subject:
             scoped[key] = value
     return scoped
 

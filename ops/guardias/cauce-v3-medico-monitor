@@ -74,6 +74,7 @@ DIGEST_CON_FIX78 = "sha256:4bf530650a579d9ffa70bc40dd49a9e4bc4668701a404b0dc1f6d
 ALIAS_PIERDEN_CONTEXTO = ("zeus", "socrates", "kratos", "atlas", "vulcano", "dedalo", "salva")
 ESTADO_DIR = os.path.expanduser("~/.local/state/cauce-medico")
 DOCTOR_INVENTORY = None
+DOCTOR_CONTAINER_SCOPES = None
 BITACORA_JSONL = os.path.join(ESTADO_DIR, "bitacora.jsonl")
 BITACORA_LOG = os.path.join(ESTADO_DIR, "bitacora.log")
 ESTADO_JSON = os.path.join(ESTADO_DIR, "estado.json")
@@ -200,7 +201,7 @@ def sonda_credenciales(adaptadores):
                 # treating it as such would false-alert a healthy alias.
                 if health.problem:
                     horas = health.hours_until_expiry
-                    problemas.append({"alias": alias, "contenedor": ctr,
+                    problemas.append({"tenant": identity[0], "alias": identity[1], "contenedor": ctr,
                                       "detalle": f"sin refreshToken y el access vence en {horas:.0f} h: "
                                                  "no puede renovar, enmudece"})
             else:
@@ -469,6 +470,7 @@ _RE_ESPACIOS_DE_CONTROL = re.compile(r"\s+")
 
 
 _VOLATIL = [
+    (re.compile(r"vence en\s+-?\d+\s*h"), "vence en N h"),
     (re.compile(r"dentro de\s+\d+\s*min"), "dentro de N min"),
     (re.compile(r"vuelve en\s+\d+\s*min"), "vuelve en N min"),
     (re.compile(r"\"resetInSeconds\":\s*\d+"), '"resetInSeconds": N'),
@@ -498,7 +500,7 @@ BITACORA_JSONL, BITACORA_LOG, ESTADO_JSON, LOCK, LIBRO_JSON, LIBRO_MD, EVIDENCIA
 _cargar_lib("cauce-v3-medico-monitor-sondas-lib.py")
 _cargar_lib("cauce-v3-medico-monitor-reparacion-lib.py")
 def main():
-    global DOCTOR_INVENTORY
+    global DOCTOR_INVENTORY, DOCTOR_CONTAINER_SCOPES
     ap = argparse.ArgumentParser(description="Medico de la flota Cauce V3")
     ap.add_argument("--solo-detectar", action="store_true",
                     help="no repara nada; solo mide y reporta")
@@ -525,6 +527,13 @@ def main():
 
     inv = inventario()
     DOCTOR_INVENTORY = inv
+    DOCTOR_CONTAINER_SCOPES = {}
+    try:
+        DOCTOR_CONTAINER_SCOPES = {container: belongs == "t" for container, belongs in sql(
+            "SELECT container_name,in_company FROM doctor_container_scopes", columnas=2)}
+    except Exception as error:  # noqa: BLE001
+        escalar.append({"tipo": "sonda_inventario_contenedores", "alias": "-",
+                        "detalle": f"no se pudo medir la pertenencia de contenedores: {type(error).__name__}"})
     identities = runtime_identities(inv)
     procs = procesos("kratos") + procesos("vps")
     adaptadores = mapa_adaptadores(procs, inv)
@@ -775,8 +784,8 @@ def main():
     # --- 4) credencial rota que miente -------------------------------------------------
     sin_rt, compartidas = sonda_credenciales(adaptadores)
     for p in sin_rt:
-        hallazgos.append({"modo": 4, "alias": p["alias"], "detalle": p["detalle"]})
-        escalar.append({"tipo": "credencial", "alias": p["alias"], "detalle": p["detalle"]})
+        hallazgos.append({"modo": 4, "tenant": p["tenant"], "alias": p["alias"], "detalle": p["detalle"]})
+        escalar.append({"tipo": "credencial", "tenant": p["tenant"], "alias": p["alias"], "detalle": p["detalle"]})
     # Sharing an account across agents is valid (owner's decision): informational note only.
     # Two containers holding the SAME refresh token can still invalidate each other on rotation.
     for h, quienes in sorted(compartidas.items()):
@@ -1522,6 +1531,10 @@ def main():
     # When a probe fails, what is lost is NOT its line in the report — it's EVERYTHING that
     # probe measures, and nothing else surfaces it. Goes ABOVE everything else, in the log
     # and in the body of the delivery to the target, and cannot be mistaken for one more line.
+    hallazgos = scope_findings(hallazgos)
+    acciones = scope_findings(acciones)
+    escalar = scope_findings(escalar)
+    apuntes = scope_findings(apuntes)
     ciegas = [e for e in escalar if es_sonda_rota(e.get("tipo"))]
     aviso_ciego = ""
     if ciegas:
@@ -1542,11 +1555,6 @@ def main():
                 f"!! GUARDIA CIEGO: {len(ciegas)} sonda(s) reventaron en esta corrida ({_nombres}). Lo que esas "
                 "sondas miden NO ESTA en este informe: no lo leas como 'sin novedad' ni como "
                 "una lista completa. Arreglar la sonda va PRIMERO.")
-
-    hallazgos = scope_findings(hallazgos)
-    acciones = scope_findings(acciones)
-    escalar = scope_findings(escalar)
-    apuntes = scope_findings(apuntes)
 
     # --- bitacora ----------------------------------------------------------------------
     registro = {"ts": t0.isoformat(), "modo": "detectar" if args.solo_detectar else "reparar",
@@ -1585,7 +1593,7 @@ def main():
                                    if k not in ("tipo", "alias")},
                                   ensure_ascii=False, default=str)[:400])
         lineas.append(f"  {('CIEGO!!' if es_sonda_rota(tipo_e) else 'ESCALAR')!s:<9} "
-                      f"{e.get('alias', '-')!s:<11} {tipo_e}: {una_linea(det_e)}")
+                      f"{finding_subject(e)!s:<11} {tipo_e}: {una_linea(det_e)}")
     # Notes were not being written ANYWHERE. The list was filled from 14 sites and the
     # renderer only iterated hallazgos/acciones/escalar, so "lowering something to a note"
     # wasn't degrading it — it was deleting it. Notes go at the end, silently, but EXIST.
@@ -1634,7 +1642,7 @@ def main():
     visto_ahora, a_despachar = {}, []
     for e in escalar:
         tipo = e.get("tipo", "?")
-        clave = f"{tipo}|{e.get('tenant', '-')}|{e.get('alias', '-')}"
+        clave = finding_memory_key(e)
         grav = gravedad(tipo)
         antes = visto_antes.get(clave) or {}
         veces = int(antes.get("veces", 0)) + 1
@@ -1679,7 +1687,7 @@ def main():
         if aviso_ciego:
             partes += [aviso_ciego, ""]
         for grav, _veces, e in elegidos:
-            partes.append(f"### {e.get('alias', '-')} / {e.get('tipo')}  (gravedad {grav})")
+            partes.append(f"### {finding_subject(e)} / {e.get('tipo')}  (gravedad {grav})")
             # una_linea(): `detalle` is free text that may come from a `last_error` in the
             # base or subprocess output (see comment next to `una_linea()`). Without this,
             # an embedded newline is sent as-is to the target — appears as a stray line in the
@@ -1710,7 +1718,7 @@ def main():
             print(det_d)
         else:
             ok_d, det_d = despachar_a_zeus("\n".join(partes),
-                                           "+".join(sorted(e.get("alias", "-")
+                                           "+".join(sorted(finding_subject(e)
                                                            for _, _, e in elegidos)))
             acciones.append({"accion": "despachar_a_zeus", "alias": "zeus", "ok": ok_d,
                              "verificado": f"entrega publicada (202): {det_d[:120]}" if ok_d
@@ -1720,7 +1728,7 @@ def main():
     # The dispatch seal applies to what WENT OUT, not what was meant to.
     if elegidos and ok_d and not args.sin_entrega:
         for _, _, e in elegidos:
-            clave_e = f"{e.get('tipo', '?')}|{e.get('tenant', '-')}|{e.get('alias', '-')}"
+            clave_e = finding_memory_key(e)
             if clave_e in visto_ahora:
                 visto_ahora[clave_e]["ultimo_despacho"] = t0.isoformat()
 

@@ -33,6 +33,9 @@ create table delivery_acks(delivery_id bigint references deliveries, applied boo
 create table channel_bridge_cursors(tenant_id text references tenants, alias text, next_update_id bigint, updated_at timestamptz);
 create table dead_letters(tenant_id text references tenants, resolved_at timestamptz, created_at timestamptz);
 create table outbox_dead_letters(tenant_id text references tenants, resolved_at timestamptz, created_at timestamptz);
+alter table messages add column created_at timestamptz default now();
+alter table deliveries add column late_result_at timestamptz;
+create table audit_events(tenant_id text, message_id bigint, action text, metadata jsonb, company_id text);
 insert into tenants values ('Steven','humanizar'),('LocalB','humanizar'),('ForeignTenant','outside');
 insert into agents values ('Steven','shared','fixture-a','local-a',true),('LocalB','shared','fixture-b','local-b',true),
  ('Steven','zeus','fixture-z','zeus',true),('ForeignTenant','shared','foreign-container','foreign-runtime',true),
@@ -68,7 +71,68 @@ insert into delivery_acks values
  (14,true,'done','{"result":{"harness_consumption_v1":{"native_session_id":"foreign2"}}}');
 insert into dead_letters values ('Steven',null,now()),('ForeignTenant',null,now());
 insert into outbox_dead_letters values ('LocalB',null,now()),('ForeignTenant',null,now());
+insert into audit_events(tenant_id,message_id,action,metadata) values ('Steven',1,'local-audit','{}'),
+ (null,2,'local-message-audit','{}'),('Steven',null,'local-tenant-audit','{}'),
+ ('ForeignTenant',4,'foreign-audit','{}'),('ForeignTenant',1,'foreign-cross-audit','{}'),
+ ('Steven',4,'foreign-cross-message-audit','{}'),(null,null,'unowned-audit','{}');
+insert into audit_events values ('Steven',1,'foreign-explicit-company','{}','outside');
 """
+
+
+TASK_BOOK_QUERY = """
+with ventana as (
+  select d.id, d.message_id, d.recipient_alias, d.recipient_tenant, d.status, d.attempt,
+         d.terminal_at, d.last_error, d.result, d.late_result_at,
+         m.actor_alias, m.created_at, m.body
+  from deliveries d join messages m on m.id = d.message_id
+  where m.created_at > now() - interval '48 hours'
+    and coalesce(m.body->>'type','') in ('agent.message','telegram.message')
+    and length(coalesce(m.body->>'text','')) >= 120
+),
+cierres as materialized (
+  select d3.recipient_tenant as tenant, d3.recipient_alias as alias,
+         m3.id as mid, m3.created_at as creado,
+         coalesce(m3.body->>'text','') as texto
+  from deliveries d3 join messages m3 on m3.id = d3.message_id
+  where d3.status = 'done'
+    and m3.created_at > (select min(coalesce(v0.terminal_at, v0.created_at)) from ventana v0)
+)
+select json_build_object(
+  'encargo_id', v.id,
+  'message_id', v.message_id,
+  'solicitante', v.actor_alias,
+  'responsable', v.recipient_alias,
+  'tenant', v.recipient_tenant,
+  'tipo_mensaje', coalesce(v.body->>'type',''),
+  'estado_entrega', v.status,
+  'intento_entrega', v.attempt,
+  'pedido_en', to_char(v.created_at at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS+00:00'),
+  'cerrado_en', to_char(v.terminal_at at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS+00:00'),
+  'ultimo_error', left(coalesce(v.last_error,''), 300),
+  'texto', left(coalesce(v.body->>'text',''), 900),
+  'respuesta', left(coalesce(v.result->'output'->>'reply',''), 900),
+  'resultado_tardio', (v.late_result_at is not null),
+  'retomado_por_mensaje_nuevo', exists (
+    select 1 from cierres c
+    where c.tenant = v.recipient_tenant
+      and (c.alias = v.recipient_alias or c.alias = v.actor_alias)
+      and c.mid <> v.message_id
+      and c.creado > coalesce(v.terminal_at, v.created_at)
+      and position(left(v.id::text, 8) in c.texto) > 0
+  ),
+  'reintento_exitoso', exists (
+    select 1
+    from audit_events ae
+    join deliveries d2 on d2.message_id = ae.message_id
+    where ae.action = 'delivery.replay'
+      and (ae.metadata->>'replayed_from_message_id') = v.message_id::text
+      and d2.recipient_tenant = v.recipient_tenant
+      and d2.recipient_alias = v.recipient_alias
+      and d2.status = 'done'
+  )
+)::text
+from ventana v
+order by v.created_at;"""
 
 
 @pytest.fixture(scope="module")
@@ -270,6 +334,188 @@ def test_main_with_real_pg_and_mocked_host_probes_has_no_foreign_output_or_memor
     assert "aviso_propio_muerto|Steven|zeus" in state["hallazgos_vistos"]
     assert state["hallazgos_vistos"]["aviso_propio_muerto|Steven|zeus"]["ultimo_despacho"]
     no_private(output, state, logs, publications)
+
+
+@pytest.fixture
+def finding_inventory(monkeypatch):
+    monkeypatch.setenv("CAUCE_GUARD_COMPANY_ID", "humanizar")
+    inventory = {("Steven", "zeus"): {"contenedor_db": "ws-zeus", "runtime_key": "zeus"},
+                 ("Steven", "jarvis"): {"contenedor_db": "ws-jarvis", "runtime_key": "jarvis"}}
+    monkeypatch.setattr(doctor, "DOCTOR_INVENTORY", inventory)
+    monkeypatch.setattr(doctor, "DOCTOR_CONTAINER_SCOPES", {"foreign-container": False}, raising=False)
+    return inventory
+
+
+def test_account_findings_keep_independent_memory(finding_inventory):
+    records = [{"tipo": "cuenta_ia", "alias": label, "detalle": "exhausted"}
+               for label in ("steven", "b2b")]
+    scoped = doctor.scope_findings(records)
+    assert scoped == records
+    now = datetime.datetime.now(datetime.UTC)
+    memory = {f"cuenta_ia|-|{record['alias']}": {"ultimo_visto": now.isoformat()} for record in scoped}
+    assert set(doctor.memoria_hallazgos({}, memory, now)) == {"cuenta_ia|-|steven", "cuenta_ia|-|b2b"}
+
+
+@pytest.mark.parametrize("kind", ["bucle_de_cuota", "bucle_de_cuota_barato",
+                                  "bucle_de_cuota_adjudicado", "sonda_bucle"])
+def test_container_findings_resolve_local_and_preserve_unknown(finding_inventory, kind):
+    scoped = doctor.scope_findings([{"tipo": kind, "alias": container, "detalle": "alarm"}
+                                    for container in ("ws-zeus", "unknown-container", "foreign-container")])
+    assert scoped == [{"tipo": kind, "tenant": "Steven", "alias": "zeus", "contenedor": "ws-zeus", "detalle": "alarm"},
+                      {"tipo": kind, "alias": "-", "contenedor": "unknown-container", "detalle": "alarm"}]
+    now = datetime.datetime.now(datetime.UTC)
+    memory = {doctor.finding_memory_key(record): {"ultimo_visto": now.isoformat()} for record in scoped}
+    assert set(memory) == {f"{kind}|Steven|zeus", f"{kind}|-|unknown-container"}
+    assert doctor.memoria_hallazgos({}, memory, now) == memory
+
+
+def test_credential_scope_round_trip_keeps_memory(finding_inventory):
+    record, = doctor.scope_findings([{"tipo": "credencial", "alias": "Steven/jarvis", "detalle": "expired"}])
+    assert (record["tenant"], record["alias"]) == ("Steven", "jarvis")
+    now = datetime.datetime.now(datetime.UTC)
+    key = f"{record['tipo']}|{record['tenant']}|{record['alias']}"
+    memory = {key: {"ultimo_visto": now.isoformat(), "ultimo_despacho": now.isoformat(), "veces": 1}}
+    assert doctor.memoria_hallazgos({}, memory, now) == memory
+    assert doctor.scope_finding_memory(memory) == memory
+
+
+@pytest.mark.parametrize("kind,subject", [("cuenta_ia", "steven"), ("bucle_de_cuota", "unknown-container")])
+def test_global_fallback_does_not_keep_an_agent_tenant(finding_inventory, kind, subject):
+    record, = doctor.scope_findings([{"tipo": kind, "tenant": "Steven", "alias": subject}])
+    now = datetime.datetime.now(datetime.UTC)
+    memory = {doctor.finding_memory_key(record): {"ultimo_visto": now.isoformat()}}
+    assert set(doctor.memoria_hallazgos({}, memory, now)) == {f"{kind}|-|{subject}"}
+
+
+def test_credential_probe_emits_separate_tenant_and_alias(finding_inventory, monkeypatch):
+    monkeypatch.setattr(doctor, "sh", lambda *_args, **_kwargs: (0, json.dumps({
+        "huella": None, "exp": (doctor.time.time() - 3600) * 1000}), ""))
+    problems, _ = doctor.sonda_credenciales({("Steven", "jarvis"): {"host": "fixture", "contenedor": "ws-jarvis"}})
+    assert len(problems) == 1
+    assert (problems[0]["tenant"], problems[0]["alias"]) == ("Steven", "jarvis")
+
+
+def test_credential_expiry_is_stable_for_dispatch_hash():
+    assert doctor._texto_estable("access vence en -1 h") == doctor._texto_estable("access vence en -2 h")
+
+
+@pytest.mark.parametrize("materialization", ["MATERIALIZED", "NOT MATERIALIZED"])
+def test_pg_materialized_cte_stays_company_scoped(transport, materialization):
+    rows = doctor.sql(f"WITH cierres AS {materialization} (SELECT tenant_id FROM messages) "
+                      "SELECT DISTINCT tenant_id FROM cierres ORDER BY tenant_id", columnas=1)
+    assert rows == [["LocalB"], ["Steven"]]
+
+
+def test_pg_audit_scope_excludes_cross_company_events(transport):
+    assert doctor.sql("SELECT action FROM audit_events ORDER BY action", columnas=1) == [
+        ["local-audit"], ["local-message-audit"], ["local-tenant-audit"]]
+
+
+def test_pg_container_scope_exposes_only_ownership(transport):
+    rows = doctor.sql("SELECT container_name,in_company FROM doctor_container_scopes ORDER BY container_name", columnas=2)
+    assert rows == [["fixture-a", "t"], ["fixture-b", "t"], ["fixture-z", "t"], ["foreign-container", "f"]]
+
+
+def test_task_book_query_runs_on_scoped_postgres(transport, pg):
+    result = pg.run_sql("UPDATE messages SET body=jsonb_build_object('type','agent.message', 'text',repeat('work ',40)) "
+                        "WHERE id IN (1,2,4)")
+    assert result.returncode == 0, result.stderr
+    try:
+        rows = [json.loads(row[0]) for row in doctor.sql(TASK_BOOK_QUERY, columnas=1)]
+        assert {row["encargo_id"] for row in rows} == {1, 2}
+        assert {row["tenant"] for row in rows} == {"Steven", "LocalB"}
+    finally:
+        pg.run_sql("UPDATE messages SET body=jsonb_build_object('type','agent.response','text',repeat('response ',30)) "
+                   "WHERE id IN (1,2,4)")
+
+
+def prepare_alarm_run(transport, monkeypatch, tmp_path, inventory, cron_lines):
+    for variable, name in (("ESTADO_DIR", ""), ("LOCK", "lock"), ("BITACORA_JSONL", "log.jsonl"),
+                           ("BITACORA_LOG", "log.txt"), ("ESTADO_JSON", "state.json"), ("LIBRO_JSON", "book.json"),
+                           ("LIBRO_MD", "book.md"), ("EVIDENCIA_JSON", "evidence.json")):
+        monkeypatch.setattr(doctor, variable, str(tmp_path / name))
+    clock = [datetime.datetime.now(datetime.UTC)]
+    monkeypatch.setattr(doctor, "ahora", lambda: clock[0])
+    monkeypatch.setattr(doctor, "inventario", lambda: inventory)
+    monkeypatch.setattr(sys, "argv", [str(SCRIPT), "--solo-detectar", "--sin-aviso"])
+    for reader in ("entregas_trabadas", "lost_work_rows", "doctor_failed_notices"):
+        monkeypatch.setattr(doctor, reader, lambda: [])
+    monkeypatch.setattr(doctor, "respuestas_perdidas", lambda: ({}, {}))
+    monkeypatch.setattr(doctor, "conversaciones_paralelas", lambda: {})
+    monkeypatch.setattr(doctor, "robo_cpu_agora", lambda: None)
+    monkeypatch.setattr(doctor, "git_commit", lambda _: None)
+    monkeypatch.setattr(doctor, "procesos", lambda host: [
+        {"host": host, "pid": 100+i, "etimes": 10, "pcpu": 0, "rss": 0,
+         "args": f"python cauce-container-runtime.py run --alias {row['runtime_key']} --container-id a{i}"}
+        for i, row in enumerate(inventory.values())])
+    monkeypatch.setattr(doctor, "unidades", lambda host: {
+        row["runtime_key"]: {"host": host, "active": "active", "sub": "running", "unidad": row["runtime_key"]}
+        for row in inventory.values()})
+    summary = {"libro": {}, "hallazgos": [], "reenviados": [], "cuentas": {}, "total": 0, "plan": {"saltados": []}}
+    monkeypatch.setattr(doctor, "libro_tareas", SimpleNamespace(
+        correr=lambda *_args: summary, fusionar_hallazgos=lambda *_args: ([], [])))
+    publications = []
+
+    def host_transport(host, command, entrada=None, **kwargs):
+        if command == doctor.PG:
+            return transport(host, command, entrada, **kwargs)
+        if command.startswith("cat "):
+            return 0, json.dumps({"capturedAt": clock[0].isoformat(), "accounts": [
+                {"label": label, "ok": True, "remainingPercent": 0, "resetInSeconds": 86400, "window": "weekly"}
+                for label in ("steven", "b2b")]}), ""
+        if command.startswith("for C "):
+            return 0, cron_lines, ""
+        if "openclaw cron show" in command:
+            return 1, "", ""
+        if command == "python3 -" and "getWebhookInfo" in entrada:
+            return 0, "[]", ""
+        if command == "python3 -":
+            publications.append(entrada)
+            return 0, "202\n{}", ""
+        pytest.fail(f"Unexpected host operation: {host} {command}")
+
+    monkeypatch.setattr(doctor, "sh", host_transport)
+    return clock, publications
+
+
+def test_account_and_loop_reach_logs_dispatch_and_keep_memory(transport, finding_inventory, monkeypatch, tmp_path):
+    clock, publications = prepare_alarm_run(transport, monkeypatch, tmp_path, finding_inventory,
+        "ws-zeus|alarm every 5m anthropic/claude\nforeign-container|00000000-0000-0000-0000-000000000000 every 5m anthropic/claude")
+    monkeypatch.setattr(doctor, "sonda_credenciales", lambda _: ([], {}))
+    assert doctor.main() == 0
+    record = json.loads(pathlib.Path(doctor.BITACORA_JSONL).read_text().splitlines()[0])
+    assert {item["tipo"] for item in record["escalar"]} == {"cuenta_ia", "bucle_de_cuota"}
+    assert record["sondas_rotas"] == []
+    log = pathlib.Path(doctor.BITACORA_LOG).read_text()
+    assert "steven" in log and "b2b" in log and "ws-zeus" in log
+    assert len(publications) == 1
+    assert all(subject in publications[0] for subject in ("cuenta_ia", "bucle_de_cuota", "steven", "b2b", "ws-zeus"))
+    assert "GUARDIA CIEGO" not in publications[0] and "foreign-container" not in log
+    state = json.loads(pathlib.Path(doctor.ESTADO_JSON).read_text())["hallazgos_vistos"]
+    assert set(state) == {"cuenta_ia|-|steven", "cuenta_ia|-|b2b", "bucle_de_cuota|Steven|zeus"}
+    clock[0] += datetime.timedelta(minutes=15)
+    assert doctor.main() == 0
+    assert len(publications) == 1
+    state = json.loads(pathlib.Path(doctor.ESTADO_JSON).read_text())["hallazgos_vistos"]
+    assert all(item["veces"] == 2 and item["ultimo_despacho"] for item in state.values())
+
+
+def test_credential_dispatch_waits_six_hours(transport, finding_inventory, monkeypatch, tmp_path):
+    clock, publications = prepare_alarm_run(transport, monkeypatch, tmp_path, finding_inventory, "")
+    expiry = [-1]
+    monkeypatch.setattr(doctor, "sonda_credenciales", lambda _: ([{
+        "tenant": "Steven", "alias": "jarvis", "detalle": f"access vence en {expiry[0]} h"}], {}))
+    assert doctor.main() == 0
+    assert "credencial" in publications[0]
+    clock[0] += datetime.timedelta(hours=1)
+    expiry[0] = -2
+    assert doctor.main() == 0
+    assert len(publications) == 1
+    state = json.loads(pathlib.Path(doctor.ESTADO_JSON).read_text())["hallazgos_vistos"]
+    assert state["credencial|Steven|jarvis"]["veces"] == 2
+    clock[0] += datetime.timedelta(hours=5)
+    assert doctor.main() == 0
+    assert len(publications) == 2
 
 
 if __name__ == "__main__":
