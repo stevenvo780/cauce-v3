@@ -1,5 +1,8 @@
-import { generateKeyPairSync, randomBytes, sign } from 'node:crypto';
-import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { createHash, generateKeyPairSync, randomBytes, sign } from 'node:crypto';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   AgentQuotaOperationsRepository, deleteFleetHost, FleetOperationsRepository, HostEnrollmentRepository,
   hostEnrollmentMessage, hostRequestMessage, lockCompanyAuthority, registerCompany,
@@ -10,6 +13,10 @@ import { requireValue } from './helpers.js';
 import { startTestCaseDatabase, startTestDatabase, type EmptyTestDatabase, type TestDatabase } from '../../../tests/helpers/postgres.js';
 
 const HOST = 'zz-canary-locks-host';
+const quotaDescriptor = JSON.stringify({ schema_version: 1, harness: 'codex',
+  operations: { execute: 'native-execution', quota: 'quota-collector' },
+  context: { native_document: 'AGENTS.md', max_bytes: 65_536 },
+  provider: { quota_argv: ['/usr/local/bin/zz-canary-quota-reader'] } });
 let database: TestDatabase | undefined;
 let current: EmptyTestDatabase | undefined;
 let pool: DatabasePool;
@@ -17,8 +24,14 @@ let company: RegisteredCompany;
 let hosts: HostEnrollmentRepository;
 let quota: AgentQuotaOperationsRepository;
 let keys: ReturnType<typeof generateKeyPairSync>;
+let descriptors: string; let approvalsFile: string;
 preparePostgresSuite(import.meta.url, async () => { database = await startTestDatabase(); }, 120_000);
 beforeEach(async () => {
+  descriptors = await mkdtemp(join(tmpdir(), 'zz-canary-locks-descriptors-')); approvalsFile = join(descriptors, 'approvals.json');
+  await writeFile(join(descriptors, 'codex.json'), quotaDescriptor);
+  await writeFile(approvalsFile, JSON.stringify({ codex: createHash('sha256').update(quotaDescriptor).digest('hex') }));
+  vi.stubEnv('CAUCE_HARNESS_DESCRIPTOR_APPROVALS_FILE', approvalsFile);
+  vi.stubEnv('CAUCE_HARNESS_DESCRIPTOR_DIRECTORY', descriptors);
   current = await startTestCaseDatabase(requireValue(database, 'database')); pool = current.pool;
   company = await registerCompany(pool, { email: 'host-locks@example.test', name: 'Host locks',
     passwordHash: '$scrypt$n=32768,r=8,p=1$c2FsdA==$aGFzaA==', company: { slug: 'host_locks', name: 'Host locks' } });
@@ -30,7 +43,12 @@ beforeEach(async () => {
     public_key: keys.publicKey.export({ format: 'der', type: 'spki' }).toString('base64'),
     proof: sign(null, Buffer.from(hostEnrollmentMessage(invitation)), keys.privateKey).toString('base64') });
 });
-afterEach(async () => { await current?.close(); current = undefined; });
+afterEach(async () => {
+  try { await current?.close(); } finally {
+    current = undefined; vi.unstubAllEnvs();
+    if (descriptors) await rm(descriptors, { recursive: true, force: true });
+  }
+});
 afterAll(async () => { if (database) { await database.pool.end(); await database.container.stop(); } });
 function admin() { return requireValue(current, 'case database').adminPool; }
 const authority: CompanyAuthoritySource = client => lockCompanyAuthority(client,
