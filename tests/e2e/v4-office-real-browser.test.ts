@@ -37,6 +37,7 @@ const renamedCycleName = `zz-canary-cycle-renamed-${run}`;
 const partLabel = `zz-canary-part-${run}`;
 const editedPartLabel = `zz-canary-edited-part-${run}`;
 const draftPartLabel = `zz-canary-draft-part-${run}`;
+const discardedPartLabel = `zz-canary-discarded-part-${run}`;
 const layoutPath = '/v3/console/office/layout';
 const readerTerminalCapabilityRule: IgnoredConsoleRule = {
   id: 'reader-terminal-capability-403',
@@ -377,7 +378,7 @@ describe('Oficina V4 en navegador Chromium real, gateway y PostgreSQL reales', (
     });
   });
 
-  it('edita una parte en otro navegador y rechaza el borrador obsoleto con CAS 409 sin sobrescribir SQL', async () => {
+  it('edita una parte en otro navegador, bloquea el guardado tras el CAS 409 y persiste el borrador con la versión relecta', async () => {
     const page = ownerPage();
     await openPlan(page);
     const staleEditor = await selectRoomEditor(page);
@@ -398,28 +399,53 @@ describe('Oficina V4 en navegador Chromium real, gateway y PostgreSQL reales', (
       { ...before.rooms.find(room => room.room_id === roomId)?.parts[0], label: editedPartLabel, width: 145 },
     ]);
     expect(officeWrites.at(-1)).toMatchObject({ label: 'owner-a-concurrent', status: 200, input: { expected_version: before.version } });
-    await step(page, 'stale draft conflict keeps both draft and committed state', async () => {
+    const save = page.getByRole('button', { name: 'Guardar plano', exact: true });
+    const reread = page.getByRole('button', { name: 'Releer plano y cuotas', exact: true });
+    await step(page, 'stale draft conflict rereads the version and saves the same rooms', async () => {
       allowHttp('owner-a', layoutPath, 409);
       errors.expectHttpError(layoutPath, 409);
-      await page.getByRole('button', { name: 'Guardar plano', exact: true }).click();
+      await save.click();
       const alert = page.getByRole('alert');
       await alert.waitFor();
       const conflict = await alert.innerText();
       expect(conflict).toMatch(/versión nueva del plano.*se conserva el borrador/su);
-      expect(conflict).toContain('Código: conflict');
-      expect(conflict).not.toContain('reload and retry');
+      expect(conflict).toContain('Código: conflict'); expect(conflict).not.toContain('reload and retry');
       expect(await staleEditor.getByLabel('Nombre de parte', { exact: true }).inputValue()).toBe(draftPartLabel);
       await page.getByLabel(`Parte ${draftPartLabel}`, { exact: true }).waitFor();
       await page.getByText('Plano sin guardar', { exact: true }).waitFor();
-      expect(await page.getByRole('button', { name: 'Guardar plano', exact: true }).isDisabled()).toBe(false);
+      await expect.poll(() => save.isDisabled(), { timeout: 20_000 }).toBe(true);
+      await expect.poll(() => reread.isDisabled(), { timeout: 20_000 }).toBe(false);
       expect(await savedLayout()).toEqual(committed);
       expect((await apiGet(page, layoutPath)).body).toMatchObject(committed);
-      expect(officeWrites.at(-1)).toMatchObject({ label: 'owner-a', status: 409, input: { expected_version: before.version } });
-      expect(officeWrites.at(-1)?.input.rooms.find(room => room.room_id === roomId)?.parts[0]?.label).toBe(draftPartLabel);
-      await page.getByRole('button', { name: 'Descartar cambios de plano', exact: true }).click();
-      await page.getByRole('button', { name: 'Releer plano y cuotas', exact: true }).click();
-      await page.getByLabel(`Parte ${editedPartLabel}`, { exact: true }).waitFor();
-      expect(await page.getByLabel(`Parte ${draftPartLabel}`, { exact: true }).count()).toBe(0);
+      const conflicted = officeWrites.at(-1);
+      expect(conflicted).toMatchObject({ label: 'owner-a', status: 409, input: { expected_version: before.version } });
+      expect(conflicted?.input.rooms.find(room => room.room_id === roomId)?.parts[0]?.label).toBe(draftPartLabel);
+      await reread.click();
+      await expect.poll(() => save.isDisabled(), { timeout: 20_000 }).toBe(false);
+      expect(await staleEditor.getByLabel('Nombre de parte', { exact: true }).inputValue()).toBe(draftPartLabel);
+      expect(await page.getByLabel(`Parte ${editedPartLabel}`, { exact: true }).count()).toBe(0);
+      expect(await savedLayout()).toEqual(committed);
+      await savePlan(page);
+      expect(officeWrites.at(-1)).toMatchObject({ label: 'owner-a', status: 200, input: { expected_version: committed.version, rooms: conflicted?.input.rooms } });
+      const persisted = await savedLayout();
+      expect(persisted).toMatchObject({ version: committed.version + 1, rooms: conflicted?.input.rooms });
+      await page.reload({ waitUntil: 'domcontentloaded' });
+      await page.getByRole('button', { name: 'Plano editable', exact: true }).click();
+      await page.getByLabel(`Parte ${draftPartLabel}`, { exact: true }).waitFor();
+      expect((await apiGet(page, layoutPath)).body).toMatchObject(persisted);
+    });
+    await step(second, 'discard local edit and reread the other browser version', async () => {
+      const other = await selectRoomEditor(second);
+      await other.getByLabel('Nombre de parte', { exact: true }).fill(discardedPartLabel);
+      await second.getByText('Plano sin guardar', { exact: true }).waitFor();
+      await second.getByRole('button', { name: 'Descartar cambios de plano', exact: true }).click();
+      await second.getByLabel(`Parte ${editedPartLabel}`, { exact: true }).waitFor(); expect(await second.getByLabel(`Parte ${discardedPartLabel}`, { exact: true }).count()).toBe(0);
+      await second.getByRole('button', { name: 'Releer plano y cuotas', exact: true }).click();
+      await second.getByLabel(`Parte ${draftPartLabel}`, { exact: true }).waitFor(); expect(await second.getByLabel(`Parte ${editedPartLabel}`, { exact: true }).count()).toBe(0);
+      await second.reload({ waitUntil: 'domcontentloaded' });
+      await second.getByRole('button', { name: 'Plano editable', exact: true }).click();
+      await second.getByLabel(`Parte ${draftPartLabel}`, { exact: true }).waitFor();
+      expect((await apiGet(second, layoutPath)).body).toMatchObject(await savedLayout());
     });
   });
 
@@ -434,7 +460,7 @@ describe('Oficina V4 en navegador Chromium real, gateway y PostgreSQL reales', (
       await page.getByRole('region', { name: planRoom(renamedRoomLabel), exact: true }).waitFor({ timeout: 20_000 });
       await assertAgentInPlan(page, destinationRoomLabel);
       await page.getByRole('region', { name: planRoom(destinationRoomLabel), exact: true }).waitFor({ timeout: 20_000 });
-      await page.getByLabel(`Parte ${editedPartLabel}`, { exact: true }).waitFor();
+      await page.getByLabel(`Parte ${draftPartLabel}`, { exact: true }).waitFor();
       expect((await apiGet(page, layoutPath)).body).toMatchObject(await savedLayout());
     });
     expect(await apiGet(page, '/v3/auth/session')).toMatchObject({
@@ -451,7 +477,7 @@ describe('Oficina V4 en navegador Chromium real, gateway y PostgreSQL reales', (
       await openPlan(second);
       await second.getByRole('region', { name: planRoom(renamedRoomLabel), exact: true }).waitFor({ timeout: 20_000 });
       await assertAgentInPlan(second, destinationRoomLabel);
-      await second.getByLabel(`Parte ${editedPartLabel}`, { exact: true }).waitFor();
+      await second.getByLabel(`Parte ${draftPartLabel}`, { exact: true }).waitFor();
       expect((await apiGet(second, layoutPath)).body).toMatchObject(await savedLayout());
       expect(await second.getByRole('button', { name: 'Guardar plano', exact: true }).isDisabled()).toBe(true);
       const topology = await apiGet(second, '/v3/console/topology');
@@ -467,8 +493,8 @@ describe('Oficina V4 en navegador Chromium real, gateway y PostgreSQL reales', (
     await step(page, 'room part deletion', async () => {
       await openPlan(page);
       const editor = await selectRoomEditor(page);
-      await editor.getByRole('button', { name: `Quitar parte ${editedPartLabel}`, exact: true }).click();
-      expect(await page.getByLabel(`Parte ${editedPartLabel}`, { exact: true }).count()).toBe(0);
+      await editor.getByRole('button', { name: `Quitar parte ${draftPartLabel}`, exact: true }).click();
+      expect(await page.getByLabel(`Parte ${draftPartLabel}`, { exact: true }).count()).toBe(0);
       await savePlan(page);
     });
     const committed = await savedLayout();
@@ -481,7 +507,7 @@ describe('Oficina V4 en navegador Chromium real, gateway y PostgreSQL reales', (
       await browser.reload({ waitUntil: 'domcontentloaded' });
       await browser.getByRole('button', { name: 'Plano editable', exact: true }).click();
       await browser.getByRole('region', { name: planRoom(renamedRoomLabel), exact: true }).waitFor();
-      expect(await browser.getByLabel(`Parte ${editedPartLabel}`, { exact: true }).count()).toBe(0);
+      expect(await browser.getByLabel(`Parte ${draftPartLabel}`, { exact: true }).count()).toBe(0);
       expect((await apiGet(browser, layoutPath)).body).toMatchObject(committed);
     });
   });
