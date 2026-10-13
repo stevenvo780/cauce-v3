@@ -132,6 +132,32 @@ it('distingue un guardado confirmado cuya relectura falla y no conserva el borra
   expect(screen.queryByText('Plano sin guardar')).not.toBeInTheDocument();
   expect(screen.queryByText('Plano de oficina guardado para esta empresa.')).not.toBeInTheDocument();
 });
+it('retira el aviso cuando una relectura posterior al guardado confirmado llega', async () => {
+  let reads = 0; let saved: { company_id: string; version: number; rooms: OfficeRoom[] } | undefined;
+  server.use(http.get('*/v3/console/office/layout', () => {
+    reads += 1;
+    if (reads === 1) return HttpResponse.json({ company_id: 'one', version: 0, rooms: [] });
+    if (reads === 2 || !saved) return HttpResponse.json({ error: 'internal', message: 'Internal Server Error' }, { status: 500 });
+    return HttpResponse.json(saved);
+  }),
+  http.put('*/v3/console/office/layout', async ({ request }) => {
+    const input = await request.json() as { rooms: OfficeRoom[] };
+    saved = { company_id: 'one', version: 1, rooms: input.rooms };
+    return HttpResponse.json(saved);
+  }));
+  const user = userEvent.setup(); renderWithApi(workspace());
+  await user.click(screen.getByRole('button', { name: 'Plano editable' }));
+  await waitFor(() => { expect(screen.getByRole('button', { name: 'General One' })).toBeEnabled(); });
+  await user.click(screen.getByRole('button', { name: 'General One' })); await user.click(screen.getByRole('button', { name: 'Añadir parte' }));
+  await user.click(screen.getByRole('button', { name: 'Guardar plano' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent(/El plano se guardó, pero no se pudo releer/u);
+  expect(screen.queryByText('Plano sin guardar')).not.toBeInTheDocument();
+  await user.click(screen.getByRole('button', { name: 'Releer plano y cuotas' }));
+  await waitFor(() => { expect(screen.queryByRole('alert')).not.toBeInTheDocument(); });
+  expect(screen.getByLabelText('Parte Nueva parte')).toBeVisible();
+  expect(screen.queryByText('Plano sin guardar')).not.toBeInTheDocument();
+  expect(screen.queryByText('Plano de oficina guardado para esta empresa.')).not.toBeInTheDocument();
+});
 it('vuelve a montar el campus tras guardar el plano para que lea el plano nuevo', async () => {
   let version = 0;
   server.use(http.get('*/v3/console/office/layout', () => HttpResponse.json({ company_id: 'one', version, rooms: [] })),

@@ -81,6 +81,11 @@ export function OfficeWorkspace({ campus, topology, agents, onAgent }: {
     else setNotice('Plano de oficina guardado para esta empresa.');
     setBusy(false);
   }
+  async function rereadPlan() {
+    const plan = layout.reload();
+    void quotas.reload();
+    if (!(await plan).error) setError(undefined);
+  }
   return <div className="flex h-full min-h-0 flex-col">
     <div className="flex flex-wrap items-center gap-2 border-b border-line bg-surface px-3 py-2" aria-label="Vistas de oficina">
       <Button size="sm" aria-pressed={mode === 'campus'} onClick={() => { setMode('campus'); }}>Campus</Button>
@@ -96,7 +101,7 @@ export function OfficeWorkspace({ campus, topology, agents, onAgent }: {
     </div>
     {mode === 'plan' ? <div className="grid min-h-0 flex-1 content-start gap-3 overflow-auto p-4">
       <header className="flex flex-wrap items-center justify-between gap-2"><h2 className="m-0 text-lg">Plano de oficina</h2>
-        <div className="flex flex-wrap gap-2"><Button disabled={busy || layout.loading || !!draft} onClick={() => { void layout.reload(); void quotas.reload(); }}>Releer plano y cuotas</Button>
+        <div className="flex flex-wrap gap-2"><Button disabled={busy || layout.loading || !!draft} onClick={() => { void rereadPlan(); }}>Releer plano y cuotas</Button>
           <Button variant="primary" disabled={!writable || !draft} onClick={() => { void save(); }}>Guardar plano</Button>
           <Button disabled={busy || !draft} onClick={() => { setDraft(undefined); setError(undefined); }}>Descartar cambios de plano</Button></div></header>
       {unavailable || draft ? <p className="m-0 text-xs text-muted">{unavailable ?? 'Guarda o descarta los cambios de plano antes de releerlo.'}</p> : null}
