@@ -2,8 +2,6 @@ import { randomUUID } from 'node:crypto';
 import { canonicalProfileRuntimeContract, persistAgentContextReconcileInTransaction, type DatabaseClient } from '@cauce/store';
 import { coordinateContextRequest } from './agent-context-write-coordinator.js';
 import type { AgentProfileSourceGuard, AgentProfileSourceReceipt } from '@cauce/store';
-import { assertSourceApplication, parseSourceConfirmation, type ContextSourceConfirmation } from './context-repository/apply-preview.js';
-import { ContextRepositoryError } from './context-repository/model.js';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import {
   AGENT_PROFILE_LIMITS, AliasSchema, TenantSchema, agentProfileUnits, canonicallyEqual,
@@ -71,16 +69,6 @@ export interface AgentProfileDeps extends Partial<AgentProfileDraftBinding> {
   ) => ReturnType<NonNullable<AgentProfileDeps['replaceProfile']>>;
   recordAuditInTransaction?: (client: DatabaseClient, entry: TerminalAuditEntry) => Promise<void>;
   readWriteExpectation?: (tenantId: string, alias: string) => Promise<Exclude<import('./agent-context-write-coordinator.js').ContextWriteCoordinateInput<unknown>['expectedExpectation'], null> | undefined>;
-  contextSource?: {
-    instance_id: string | undefined;
-    readReceipt(tenantId: string, alias: string, actor: { tenant_id: string; alias: string }, applicationId: string): Promise<AgentProfileSourceReceipt | undefined>;
-    confirm(input: {
-      source: ContextSourceConfirmation; profile: AgentProfile;
-      current: Awaited<ReturnType<AgentProfileDeps['readContext']>>; preflight: ProfileRuntimePreflight;
-      actor: { tenant_id: string; alias: string }; operator: DocumentOperator;
-      tenantId: string; alias: string; reason: string;
-    }): Promise<AgentProfileSourceGuard>;
-  };
   /** Read-only runtime snapshot that is materialized only after the durable CAS returns a revision. */
   prepareRuntime?(
     tenantId: string, alias: string, contexto: ContextoDeAlias,
@@ -514,6 +502,13 @@ export function registerAgentProfileRoutes(app: FastifyInstance, deps: AgentProf
       return denegar(404, { error: 'not_found', message: 'agent not found or not visible' });
     }
     if (!escritura.operador.attributed) return denegar(403, PERFIL_SIN_PERSONA);
+    if (request.body !== null && typeof request.body === 'object'
+      && Object.hasOwn(request.body, 'context_source')) {
+      return denegar(400, {
+        error: 'context_source_retired',
+        message: 'la fuente V3 se retiró; guarda o restaura el contexto mediante el historial versionado',
+      });
+    }
     if (target.enabled !== true) {
       if (target.enabled === false && deps.prepareDraft !== undefined) return respondDisabledProfileDraft(deps, request, reply, tenantId, alias, denegar);
       return denegar(409, {
@@ -535,26 +530,6 @@ export function registerAgentProfileRoutes(app: FastifyInstance, deps: AgentProf
     const { expected_revision: expectedRevision, profile } = admitido;
     escritura.reason = admitido.reason;
 
-    let source: ContextSourceConfirmation | undefined;
-    const caller = { actor, operator: escritura.operador, tenantId, alias, reason: admitido.reason };
-    const replay = (receipt: AgentProfileSourceReceipt) => reply.code(202).send({
-      ok: true, state: 'effect_unknown', tenant_id: tenantId, alias, source_receipt: receipt,
-      message: 'la revisión durable ya se registró; releé el estado, sin repetir el lote nativo',
-    });
-    if (Object.hasOwn(admitido, 'context_source')) {
-      if (deps.contextSource === undefined) return denegar(503, { error: 'context_source_unavailable' });
-      try {
-        source = parseSourceConfirmation(admitido.context_source);
-        if (source.instance_id !== deps.contextSource.instance_id) throw new ContextRepositoryError('scope_unavailable');
-        assertSourceApplication(source, caller, expectedRevision);
-        const receipt = await deps.contextSource.readReceipt(tenantId, alias, actor, source.application_id);
-        if (receipt !== undefined) return await replay(receipt);
-      } catch (error) {
-        return denegar(error instanceof ContextRepositoryError ? 409 : 503, {
-          error: error instanceof ContextRepositoryError ? error.code : 'context_source_unavailable',
-        });
-      }
-    }
     const current = await deps.readContext(tenantId, alias);
     if (current.contexto.perfil.tenant_id !== tenantId || current.contexto.perfil.alias !== alias) {
       throw new Error('agent profile repository returned a non-canonical identity');
@@ -608,25 +583,6 @@ export function registerAgentProfileRoutes(app: FastifyInstance, deps: AgentProf
       });
     }
 
-    let sourceGuard: AgentProfileSourceGuard | undefined;
-    if (source !== undefined && deps.contextSource !== undefined) {
-      try {
-        sourceGuard = await deps.contextSource.confirm({ ...caller, source, profile, current, preflight });
-        const currentActor = await deps.authorize(request, 'control');
-        const currentOperator = await deps.resolveOperator?.(request);
-        const authorized = await deps.authorizeTarget(currentActor, tenantId, alias, 'control', false);
-        if (currentActor.tenant_id !== actor.tenant_id || currentActor.alias !== actor.alias
-          || currentOperator?.attributed !== true || currentOperator.operator_id !== escritura.operador.operator_id
-          || authorized?.tenant_id !== tenantId || authorized.alias !== alias || authorized.enabled !== true) {
-          return await denegar(403, { error: 'forbidden' });
-        }
-        await fila(escritura, 'allow', { phase: 'intent', context_source: sourceGuard });
-      } catch (error) {
-        return denegar(error instanceof ContextRepositoryError ? 409 : 503, {
-          error: error instanceof ContextRepositoryError ? error.code : 'context_source_unavailable',
-        });
-      }
-    }
     const priorExpectation = await deps.readWriteExpectation(tenantId, alias);
     const newRevision = expectedRevision === null ? 1
       : canonicallyEqual(profile, current.contexto.perfil) ? expectedRevision : expectedRevision + 1;
@@ -644,7 +600,7 @@ export function registerAgentProfileRoutes(app: FastifyInstance, deps: AgentProf
           name: doc.name, path: doc.path, beforeSha: doc.observed_sha, targetSha: doc.expected_sha,
         })),
         updateDesired: async (client) => {
-          const desired = await replaceInTransaction(client, profile, expectedRevision, actor, sourceGuard);
+          const desired = await replaceInTransaction(client, profile, expectedRevision, actor);
           if (desired.revision !== newRevision || desired.source_receipt !== undefined) throw new Error('profile_revision_mismatch');
           await recordAuditInTransaction(client, {
             tenant_id: actor.tenant_id, actor_alias: actor.alias, action: 'agent_profile.write', decision: 'allow',

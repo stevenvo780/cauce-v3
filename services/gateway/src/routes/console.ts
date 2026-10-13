@@ -1,7 +1,6 @@
 import { AgentContextWriteCoordinator } from '../console/agent-context-write-coordinator.js';
 import type { DatabasePool } from '@cauce/store';
 import { registerNativeContextRepositoryRoutes } from '../console/context-repository/native-routes.js';
-import { confirmContextSource, snapshotContextSourceDeps } from '../console/context-repository/apply-preview.js';
 import { registerContextRepositoryRoutes } from '../console/context-repository/routes.js';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import {
@@ -375,18 +374,6 @@ function registerConsoleAgentRoutes(
         ),
       markProfileApplied: (tenantId, alias, revision, actor) =>
         perfiles.markApplied(tenantId, alias, revision, actor),
-    };
-    const sourceDeps = snapshotContextSourceDeps({
-      ...(options.contextRepository === undefined ? {} : { binding: options.contextRepository }),
-      profile: profileDeps,
-      readProfileRevision: (tenantId: string, alias: string, revision: number) =>
-        diario.readProfileRevision(tenantId, alias, revision),
-    });
-    profileDeps.contextSource = {
-      instance_id: sourceDeps.binding?.instance_id,
-      readReceipt: (tenantId, alias, actor, applicationId) => perfiles.readSourceReceipt(tenantId, alias, actor, applicationId),
-      confirm: ({ source, profile, current, preflight, ...caller }) =>
-        confirmContextSource(sourceDeps, caller, source, profile, current, preflight),
     };
     registerAgentProfileRoutes(app, profileDeps);
     registerNativeAdminRoutes(app, options.authProvider, createNativeAdminService({

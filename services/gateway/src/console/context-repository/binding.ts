@@ -22,10 +22,14 @@ export function configuredContextRepository(
   env: Readonly<Record<string, string | undefined>> = process.env,
 ): ContextRepositoryBinding | undefined {
   const instance_id = env.CAUCE_CONTEXT_INSTANCE_ID;
-  const repositoryPath = env.CAUCE_CONTEXT_REPOSITORY_ROOT;
-  if (instance_id === undefined && repositoryPath === undefined) return undefined;
-  if (instance_id === undefined || repositoryPath === undefined) {
+  const repositoryPath = env.CAUCE_NATIVE_CONTEXT_REPOSITORY_ROOT;
+  if (repositoryPath === undefined) return undefined;
+  if (instance_id === undefined) {
     throw new Error('Context repository requires both server instance ID and root');
+  }
+  if (env.CAUCE_CONTEXT_REPOSITORY_ROOT !== undefined
+    && resolve(repositoryPath) === resolve(env.CAUCE_CONTEXT_REPOSITORY_ROOT)) {
+    throw new Error('Native context inspection requires a root independent of the versioned broker');
   }
   return validateContextRepositoryBinding({ instance_id, repositoryPath });
 }

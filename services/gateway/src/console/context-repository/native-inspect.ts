@@ -1,9 +1,8 @@
 import { createHash } from 'node:crypto';
 import type { AgentProfile } from '@cauce/protocol';
 import { assertContextCommit, ContextGitReader } from './git-reader.js';
-import type { ContextSourceFile } from './inspect.js';
 import {
-  admitContextText, parseSourceProfile, requireContext, sourceProfilePath, validateContextScope, type ContextScope,
+  admitContextText, parseSourceProfile, requireContext, sourceProfilePath, validateContextScope, type ContextScope, type ContextSourceFile,
 } from './model.js';
 import { parseNativeContextManifest, sourceNativeManualPath, type NativeContextSourceAgent } from './native-model.js';
 

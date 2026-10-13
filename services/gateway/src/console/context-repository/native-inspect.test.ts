@@ -1,10 +1,8 @@
 import { mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { prepareContextSource, type ContextSourceDeps } from './apply-preview.js';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ContextGitReader } from './git-reader.js';
-import { inspectContextRepository } from './inspect.js';
 import { inspectNativeContextRepository } from './native-inspect.js';
 import { nativeFiles, nativeManifest, NATIVE_ROOT, NATIVE_SCOPE, fixtureDigest, writeNativeFixture } from './native-test-fixtures.js';
 
@@ -25,7 +23,6 @@ describe('read-only native Git manual inspection', () => {
       manualSource: { content, bytes: Buffer.byteLength(content) }, sourceAgent: { native_manual: { harness } } },
     previous: null, changes: null, applySupported: false, application: 'not_evaluated', sourceState: 'not_observed' });
     expect(await fixtureDigest(root)).toBe(before);
-    await expect(inspectContextRepository({ repositoryPath: root, scope: NATIVE_SCOPE, commit })).rejects.toThrow('unexpected_files');
   });
   it('compares text and treats harness changes as removal/addition', async () => {
     const first = await writeNativeFixture(root);
@@ -106,23 +103,24 @@ describe('read-only native Git manual inspection', () => {
     await symlink(join(root, 'missing'), object);
     await expect(inspect(commit)).rejects.toThrow('object_unavailable');
   });
-  it('keeps the reader default closed and rejects v3 in the apply preview before any writer', async () => {
+  it('rejects the broker V4 layout explicitly without changing its objects', async () => {
+    const agent = 'companies/00000000-0000-4000-8000-000000000001/tenants/Steven/agents/helper';
+    const commit = await writeNativeFixture(root, {
+      [`${agent}/context/mission.md`]: '# Synthetic broker mission\n',
+      [`${agent}/directives/AGENTS.md`]: '# Synthetic broker directives\n',
+    });
+    const before = await fixtureDigest(root);
+    await expect(inspect(commit)).rejects.toThrow('context repository: unexpected_files');
+    expect(await fixtureDigest(root)).toBe(before);
+  });
+  it('keeps the reader default closed and requires the declared native manual', async () => {
     const commit = await writeNativeFixture(root);
     await expect((await ContextGitReader.open(root)).tree(commit)).rejects.toThrow('unexpected_files');
-    const readContext = vi.fn();
-    const prepareRuntime = vi.fn();
-    const deps = { binding: { repositoryPath: root, instance_id: 'fixture' },
-      readProfileRevision: vi.fn(), profile: { readContext, prepareRuntime } } as unknown as ContextSourceDeps;
-    const caller = { actor: { tenant_id: 'Steven', alias: 'operator' },
-      operator: { operator_id: 'test' }, tenantId: 'Steven', alias: 'helper', reason: 'Synthetic review' };
-    await expect(prepareContextSource(deps, caller as Parameters<typeof prepareContextSource>[1], commit)).rejects.toThrow('unexpected_files');
-    expect(readContext).not.toHaveBeenCalled();
-    expect(prepareRuntime).not.toHaveBeenCalled();
-    expect(deps.readProfileRevision).not.toHaveBeenCalled();
     const profileOnly = nativeFiles();
     Reflect.deleteProperty(profileOnly, `${NATIVE_ROOT}/native/claude/CLAUDE.md`);
     const profileCommit = await writeNativeFixture(root, profileOnly);
-    await expect(inspectContextRepository({ repositoryPath: root, scope: NATIVE_SCOPE, commit: profileCommit })).rejects.toThrow('unsupported_schema');
-    await expect(prepareContextSource(deps, caller as Parameters<typeof prepareContextSource>[1], profileCommit)).rejects.toThrow('unsupported_schema');
+    expect((await (await ContextGitReader.open(root)).tree(profileCommit)).entries.map(({ path }) => path).sort())
+      .toEqual(['context.json', `${NATIVE_ROOT}/profile.json`]);
+    await expect(inspect(profileCommit)).rejects.toThrow('unexpected_files');
   });
 });

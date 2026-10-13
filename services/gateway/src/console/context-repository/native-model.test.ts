@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import { parseContextManifest } from './model.js';
 import { parseNativeContextManifest, sourceNativeManualPath } from './native-model.js';
 import { nativeManifest } from './native-test-fixtures.js';
 
@@ -11,7 +10,6 @@ describe('native inspection manifest boundary', () => {
     if (agent === undefined) throw new Error('Missing fixture agent');
     expect(sourceNativeManualPath(agent)).toBe(
       `tenants/Steven/agents/helper/native/${harness}/${harness === 'claude' ? 'CLAUDE.md' : 'AGENTS.md'}`);
-    expect(() => parseContextManifest(JSON.stringify(nativeManifest(harness)))).toThrow('unsupported_schema');
   });
   it.each([1, 2, 4, '3', null])('rejects version %s in native inspection', (schema_version) => {
     expect(() => parseNativeContextManifest(JSON.stringify({ ...nativeManifest(), schema_version }))).toThrow('unsupported_schema');
@@ -33,9 +31,9 @@ describe('native inspection manifest boundary', () => {
       expect(() => parseNativeContextManifest(json.replace(from, to))).toThrow('duplicate_json_key');
     }
   });
-  it.each([1, 2] as const)('preserves applicable schema %s', (schema_version) => {
+  it.each([1, 2] as const)('rejects retired profile schema %s', (schema_version) => {
     const manifest = { schema_version, instance_id: 'fixture', agents: [{ tenant_id: 'Steven', alias: 'helper',
       source_journal: schema_version === 1 ? { id: '42', revision: 1 } : null }] };
-    expect(parseContextManifest(JSON.stringify(manifest))).toEqual(manifest);
+    expect(() => parseNativeContextManifest(JSON.stringify(manifest))).toThrow('unsupported_schema');
   });
 });

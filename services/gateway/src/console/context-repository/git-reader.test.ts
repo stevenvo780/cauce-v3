@@ -6,7 +6,7 @@ import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ContextGitReader } from './git-reader.js';
-import { inspectContextRepository, prepareProfileExport } from './inspect.js';
+import { inspectNativeContextRepository } from './native-inspect.js';
 import { CONTEXT_REPOSITORY_LIMITS } from './model.js';
 
 const executeFile = promisify(execFile);
@@ -19,13 +19,13 @@ const profile = {
   responsibilities: [], restrictions: [], tools: [], operating_rules: [],
 };
 const manifest = {
-  schema_version: 1, instance_id: 'fixture', agents: [
-    { tenant_id: 'Steven', alias: 'helper', source_journal: { id: '42', revision: 1 } },
-    { tenant_id: 'tenant-b', alias: 'helper', source_journal: { id: '43', revision: 1 } },
+  schema_version: 3, instance_id: 'fixture', agents: [
+    { tenant_id: 'Steven', alias: 'helper', source_journal: null, native_manual: { harness: 'claude' } },
+    { tenant_id: 'tenant-b', alias: 'helper', source_journal: null, native_manual: { harness: 'codex' } },
   ],
 };
 
-describe('local Git context inspection with synthetic repositories', () => {
+describe('local Git reader with native context repositories', () => {
   let repositoryPath: string;
   let firstCommit: string;
 
@@ -53,7 +53,7 @@ describe('local Git context inspection with synthetic repositories', () => {
   }
 
   function inspect(commit = firstCommit, previousCommit?: string) {
-    return inspectContextRepository({
+    return inspectNativeContextRepository({
       repositoryPath, scope, commit, ...(previousCommit === undefined ? {} : { previousCommit }),
     });
   }
@@ -63,6 +63,8 @@ describe('local Git context inspection with synthetic repositories', () => {
     await git('init', '--template=', '--initial-branch=main');
     await put('context.json', JSON.stringify(manifest));
     await put(profilePath, JSON.stringify(profile));
+    await put(`${root}/native/claude/CLAUDE.md`, '# Synthetic manual\n');
+    await put(`${otherRoot}/native/codex/AGENTS.md`, '# Private other tenant manual\n');
     await put(`${otherRoot}/profile.json`, JSON.stringify({ ...profile, purpose: 'Private other tenant fixture' }));
     firstCommit = await commitFixture();
   });
@@ -82,8 +84,10 @@ describe('local Git context inspection with synthetic repositories', () => {
     expect(result.desired.profile).toEqual({ ...profile, tenant_id: scope.tenant_id, alias: scope.alias });
     expect(result.desired.commit).toBe(firstCommit);
     expect(result.desired.tree).toBe(await git('rev-parse', 'HEAD^{tree}'));
-    expect(result.desired.sourceAgent.source_journal).toEqual({ id: '42', revision: 1 });
-    expect(result.desired.provenanceVerification).toBe('not_evaluated');
+    expect(result.desired.sourceAgent.source_journal).toBeNull();
+    expect(result.desired.sourceAgent.native_manual).toEqual({ harness: 'claude' });
+    expect(result.desired.manualSource.content).toBe('# Synthetic manual\n');
+    expect(result.applySupported).toBe(false);
     const bytes = await readFile(join(repositoryPath, profilePath));
     expect(result.desired.profileSource.content).toBe(bytes.toString('utf8'));
     expect(result.desired.profileSource.sha256).toBe(createHash('sha256').update(bytes).digest('hex'));
@@ -102,8 +106,8 @@ describe('local Git context inspection with synthetic repositories', () => {
       { path: profilePath, kind: 'modified' },
     ]);
     const profileChange = result.changes?.find((change) => change.path === profilePath);
-    expect(profileChange?.before.content).toBe(JSON.stringify(profile));
-    expect(profileChange?.after.content).toContain('Changed fixture');
+    expect(profileChange?.before?.content).toBe(JSON.stringify(profile));
+    expect(profileChange?.after?.content).toContain('Changed fixture');
     expect(result.previous?.commit).toBe(firstCommit);
     expect(JSON.stringify(result)).not.toContain('tenant-b');
     expect(result.application).toBe('not_evaluated');
@@ -113,45 +117,11 @@ describe('local Git context inspection with synthetic repositories', () => {
     expect(await git('rev-parse', 'HEAD')).toBe(second);
   });
 
-  it('round-trips an explicit export proposal and distinguishes repeated revisions by journal id', async () => {
-    const proposal = prepareProfileExport({ scope, snapshot: {
-      ...profile, tenant_id: scope.tenant_id, alias: scope.alias, id: '96', revision: 1,
-      operation: 'insert', actor_tenant: null, actor_alias: null, changed_at: 'synthetic',
-    } });
-    expect(proposal.state).toBe('content_review_required');
-    expect(await git('status', '--porcelain')).toBe('');
-    const changedManifest = structuredClone(manifest);
-    changedManifest.agents[0] = proposal.sourceAgent;
-    await put('context.json', JSON.stringify(changedManifest));
-    await put(proposal.source.path, proposal.source.content);
-    const exportedCommit = await commitFixture();
-    const result = await inspect(exportedCommit, firstCommit);
-    expect(result.desired.profile).toEqual({ ...profile, tenant_id: scope.tenant_id, alias: scope.alias });
-    expect(result.desired.sourceAgent.source_journal).toEqual({ id: '96', revision: 1 });
-    expect(result.previous?.sourceAgent.source_journal).toEqual({ id: '42', revision: 1 });
-    expect(result.provenanceChanged).toBe(true);
-    expect(result.desired.provenanceVerification).toBe('not_evaluated');
-    expect(result.application).toBe('not_evaluated');
-  });
-
-  it('reports journal changes even when the profile bytes are identical', async () => {
-    const changedManifest = structuredClone(manifest);
-    const first = changedManifest.agents[0];
-    expect(first).toBeDefined();
-    if (first === undefined) throw new Error('missing fixture agent');
-    first.source_journal.id = '96';
-    await put('context.json', JSON.stringify(changedManifest));
-    const result = await inspect(await commitFixture(), firstCommit);
-    expect(result.changes).toEqual([]);
-    expect(result.provenanceChanged).toBe(true);
-  });
-
   it('does not invent changes when only another tenant changed', async () => {
     await put(`${otherRoot}/profile.json`, JSON.stringify({ ...profile, purpose: 'Other tenant revised' }));
     const second = await commitFixture();
     const result = await inspect(second, firstCommit);
     expect(result.changes).toEqual([]);
-    expect(result.provenanceChanged).toBe(false);
     expect(result.desired.commit).not.toBe(result.previous?.commit);
   });
 
@@ -160,7 +130,7 @@ describe('local Git context inspection with synthetic repositories', () => {
     { instance_id: 'fixture', tenant_id: 'missing', alias: 'helper' },
     { instance_id: 'fixture', tenant_id: 'Steven', alias: 'missing' },
   ])('rejects a missing exact scope %#', async (requestedScope) => {
-    await expect(inspectContextRepository({ repositoryPath, scope: requestedScope, commit: firstCommit }))
+    await expect(inspectNativeContextRepository({ repositoryPath, scope: requestedScope, commit: firstCommit }))
       .rejects.toThrow('scope_unavailable');
   });
 
@@ -176,7 +146,7 @@ describe('local Git context inspection with synthetic repositories', () => {
   });
 
   it('rejects a nested repository path instead of reading its parent', async () => {
-    await expect(inspectContextRepository({ repositoryPath: join(repositoryPath, 'tenants'), scope, commit: firstCommit }))
+    await expect(inspectNativeContextRepository({ repositoryPath: join(repositoryPath, 'tenants'), scope, commit: firstCommit }))
       .rejects.toThrow('invalid_repository_root');
   });
 
@@ -195,7 +165,7 @@ describe('local Git context inspection with synthetic repositories', () => {
   });
 
   it('keeps working-file observation unavailable during an injected safe write', async () => {
-    const reader = await ContextGitReader.open(repositoryPath);
+    const reader = await ContextGitReader.open(repositoryPath, 'native-inspection');
     const original = reader.blob.bind(reader);
     vi.spyOn(ContextGitReader, 'open').mockResolvedValue(reader);
     let injected = false;
@@ -212,7 +182,7 @@ describe('local Git context inspection with synthetic repositories', () => {
   it.each([
     'MEMORY.md', 'HEARTBEAT.md', 'memory/day.md', '.env', '.claude/settings.json', 'README.md',
     `${root}/instructions/claude/review.md`, `${root}/skills/codex/review/SKILL.md`,
-  ])('rejects tracked memory, manual bodies, skills or other undeclared file %s', async (path) => {
+  ])('rejects tracked memory, undeclared manuals, skills or other file %s', async (path) => {
     await put(path, 'Synthetic excluded fixture');
     await expect(inspect(await commitFixture())).rejects.toThrow('unexpected_files');
   });
@@ -336,17 +306,19 @@ describe('local Git context inspection with synthetic repositories', () => {
     await expect(inspect()).rejects.toThrow('invalid_object');
   });
 
-  it('reads SHA-256 loose objects with the same bounded profile-only contract', async () => {
+  it('reads SHA-256 loose objects with the same bounded native contract', async () => {
     const directory = 'sha256-fixture';
     await mkdir(join(repositoryPath, directory));
     await git('-C', directory, 'init', '--template=', '--initial-branch=main', '--object-format=sha256');
     await put(`${directory}/context.json`, JSON.stringify(manifest));
     await put(`${directory}/${profilePath}`, JSON.stringify(profile));
     await put(`${directory}/${otherRoot}/profile.json`, JSON.stringify(profile));
+    await put(`${directory}/${root}/native/claude/CLAUDE.md`, '# Synthetic SHA-256 manual\n');
+    await put(`${directory}/${otherRoot}/native/codex/AGENTS.md`, '# Synthetic other tenant manual\n');
     await git('-C', directory, 'add', '--all');
     await git('-C', directory, 'commit', '-m', 'Synthetic SHA-256 fixture');
     const commit = await git('-C', directory, 'rev-parse', 'HEAD');
-    const result = await inspectContextRepository({ repositoryPath: join(repositoryPath, directory), scope, commit });
+    const result = await inspectNativeContextRepository({ repositoryPath: join(repositoryPath, directory), scope, commit });
     expect(result.desired.commit).toHaveLength(64);
     expect(result.desired.tree).toHaveLength(64);
     expect(result.desired.profile.purpose).toBe(profile.purpose);

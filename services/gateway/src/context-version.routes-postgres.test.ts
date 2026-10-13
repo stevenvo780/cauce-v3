@@ -1,6 +1,11 @@
 import type { FastifyInstance, LightMyRequestResponse } from 'fastify';
+import { execFile } from 'node:child_process';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { promisify } from 'node:util';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { AgentProfileRepository, type DatabasePool } from '@cauce/store';
+import { AgentProfileRepository, ContextGitBroker, readContextVersion, type ContextSnapshot, type DatabasePool } from '@cauce/store';
 import { seedSyntheticCompanyContexts } from '../../../packages/store/src/seed-dev-cli.js';
 import { preparePostgresSuite } from '../../../packages/store/test/postgres-suite.js';
 import { startTestCaseDatabase, startTestDatabase, type EmptyTestDatabase, type TestDatabase } from '../../../tests/helpers/postgres.js';
@@ -47,6 +52,48 @@ describe('versioned context HTTP authority with real PostgreSQL and signed human
       .concat([(async () => (await pool.query<Record<string, unknown>>("SELECT * FROM audit_events WHERE action LIKE 'context.%' ORDER BY id")).rows)()]));
   }
   const nativePayload = { base_version: 0, files: [{ path: 'context/notes/local.md', content: 'Local agent note.' }] };
+  it('rejects the retired profile source and incompatible native inspection without altering V4 history or adoption', async () => {
+    const saved = await write();
+    expect(saved.statusCode).toBe(202);
+    const snapshot = saved.json<ContextSnapshot>();
+    const root = await mkdtemp(join(tmpdir(), 'cauce-v4-source-boundary-'));
+    try {
+      await promisify(execFile)('git', ['-c', 'core.hooksPath=/dev/null', 'init', '--template=', '--initial-branch=main', root], {
+        env: { PATH: process.env.PATH, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' },
+      });
+      const client = await pool.connect();
+      let commit: string;
+      try { commit = await new ContextGitBroker(root).commit(await readContextVersion(client, snapshot, 1)); }
+      finally { client.release(); }
+      await app.close();
+      app = await buildTestGateway({ pool, authProvider: provider,
+        contextRepository: { instance_id: 'fixture', repositoryPath: root },
+      });
+      const before = await nativeEffects();
+      const history = (await request('GET', '/history')).json<unknown>();
+      const status = (await request('GET', '/status')).json<unknown>();
+      const inspected = await app.inject({ method: 'GET',
+        url: `/v3/console/tenants/ContextAlpha/agents/director/context/repository/native-inspect?commit=${commit}`, headers: { cookie },
+      });
+      expect(inspected.statusCode).toBe(422);
+      expect(inspected.json()).toMatchObject({ error: 'context_snapshot_unavailable', reason: 'unexpected_files' });
+      const profile = await new AgentProfileRepository(pool).readWithPresence('ContextAlpha', 'director');
+      const rejected = await app.inject({ method: 'PUT', url: '/v3/console/tenants/ContextAlpha/agents/director/perfil',
+        headers: { cookie, origin: ORIGIN, 'x-csrf-token': csrf }, payload: {
+          expected_revision: profile.revision, reason: 'Import the reviewed Git profile',
+          profile: { purpose: 'Retired Git source', role_summary: null, human_brief: null,
+            responsibilities: [], restrictions: [], tools: [], operating_rules: [] },
+          context_source: { instance_id: 'fixture', commit },
+        },
+      });
+      expect(rejected.statusCode).toBe(400);
+      expect(rejected.json()).toMatchObject({ error: 'context_source_retired' });
+      expect(await nativeEffects()).toEqual(before);
+      expect((await request('GET', '/history')).json<unknown>()).toEqual(history);
+      expect((await request('GET', '/status')).json<unknown>()).toEqual(status);
+      expect((await request('GET')).json()).toMatchObject({ version: 1, applied_version: 0 });
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
   it('rejects native ingest from a signed human session without version, profile, outbox or audit effects', async () => {
     const before = await nativeEffects();
     const result = await app.inject({ method: 'POST', url: '/v3/context/ingest',
