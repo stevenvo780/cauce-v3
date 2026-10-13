@@ -4,6 +4,7 @@ import datetime
 import json
 import math
 import os
+import pathlib
 import re
 import subprocess
 import sys
@@ -95,7 +96,10 @@ def normalize(data: object, now: float, max_age: float) -> dict:
 
 
 def main() -> int:
-    binary = os.environ.get('CAUCE_AI_LIVE_BIN', '/home/stev/.local/bin/cauce-ai-live')
+    binary = os.environ.get(
+        'CAUCE_AI_LIVE_BIN',
+        str(pathlib.Path.home() / '.local' / 'bin' / 'cauce-ai-live'),
+    )
     timeout = int(os.environ.get('CAUCE_AI_LIVE_TIMEOUT_SECONDS', '60'))
     max_age = float(os.environ.get('CAUCE_AI_LIVE_MAX_AGE_SECONDS', '180'))
     try:

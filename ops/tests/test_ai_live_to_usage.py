@@ -63,6 +63,23 @@ class QuotaBridgeTest(unittest.TestCase):
         self.assertEqual(actual[0]['model'], 'example')
         self.assertNotIn('remainingPercent', actual[0])
 
+    def test_default_binary_follows_the_process_home(self):
+        source = SCRIPT.read_text(encoding='utf-8')
+        self.assertNotIn('/home/', source)
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory) / 'home'
+            home.mkdir()
+            env = os.environ.copy()
+            env.pop('CAUCE_AI_LIVE_BIN', None)
+            env['HOME'] = str(home)
+            result = subprocess.run(
+                [sys.executable, str(SCRIPT)], capture_output=True, text=True, env=env, check=False,
+            )
+            expected = home / '.local' / 'bin' / 'cauce-ai-live'
+            self.assertEqual(result.returncode, 1)
+            self.assertIn(str(expected), result.stderr)
+            self.assertEqual(result.stdout, '')
+
     def test_producer_failure_does_not_echo_private_stderr(self):
         with tempfile.TemporaryDirectory() as directory:
             producer = Path(directory) / 'producer'
