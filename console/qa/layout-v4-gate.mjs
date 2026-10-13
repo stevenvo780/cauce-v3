@@ -146,7 +146,8 @@ export async function runV4Layout({ update = false } = {}) {
   const report = { status: 'running', passed: false, expected: V4_VIEWS.length * 4, results: [] };
   await writeFile(resolve(OUTPUT, 'report.json'), `${JSON.stringify(report, null, 2)}\n`);
   const respond = await loadV4Fixtures();
-  const server = await startLayoutDevServer({ root: resolve(HERE, '..'), viteEntry: resolve(HERE, '../node_modules/vite/bin/vite.js'), useMocks: false });
+  const server = await startLayoutDevServer({ root: resolve(HERE, '..'), viteEntry: resolve(HERE, '../node_modules/vite/bin/vite.js'),
+    useMocks: false, configFile: resolve(HERE, 'vite-layout.config.mjs') });
   let browser;
   try {
     browser = await chromium.launch();
@@ -155,7 +156,11 @@ export async function runV4Layout({ update = false } = {}) {
       if ((!result.metrics && result.failures.some(failure => failure.startsWith('Unmeasured')))
         || result.errors.some(error => error.startsWith('Request failed:') && error.includes('ERR_NETWORK_CHANGED'))) {
         const initial = { failures: result.failures, errors: result.errors };
-        await copyFile(resolve(OUTPUT, result.screenshots[0]), resolve(OUTPUT, `${result.key}-initial.png`));
+        if (result.screenshots.length) {
+          try {
+            await copyFile(resolve(OUTPUT, result.screenshots[0]), resolve(OUTPUT, `${result.key}-initial.png`));
+          } catch (error) { initial.errors.push(`Initial screenshot could not be preserved: ${error.message}`); }
+        }
         result = await measureState(browser, server.origin, respond, width, theme, view);
         result.initialAttempt = initial;
       }

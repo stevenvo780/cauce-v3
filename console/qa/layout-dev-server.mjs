@@ -1,5 +1,7 @@
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:net';
+import { mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { resolve } from 'node:path';
 
 const LOOPBACK = '127.0.0.1';
 const STARTUP_TIMEOUT_MS = 15_000;
@@ -100,10 +102,18 @@ function waitUntilReady(child, port, output) {
   });
 }
 
-async function startAtPort(root, viteEntry, port, useMocks) {
-  const child = spawn(process.execPath, [viteEntry, '--host', LOOPBACK, '--port', String(port), '--strictPort'], {
+async function startAtPort(root, viteEntry, port, useMocks, configFile) {
+  let cacheDir;
+  if (configFile) {
+    const parent = resolve(root, 'qa/.test-state/vite-cache');
+    await mkdir(parent, { recursive: true });
+    cacheDir = await mkdtemp(resolve(parent, 'server-'));
+  }
+  const args = [viteEntry, '--host', LOOPBACK, '--port', String(port), '--strictPort'];
+  if (configFile) args.push('--config', configFile);
+  const child = spawn(process.execPath, args, {
     cwd: root,
-    env: { ...process.env, VITE_USE_MOCKS: String(useMocks) },
+    env: { ...process.env, VITE_USE_MOCKS: String(useMocks), ...(cacheDir ? { CAUCE_QA_VITE_CACHE_DIR: cacheDir } : {}) },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   const output = outputBuffer(child);
@@ -114,13 +124,16 @@ async function startAtPort(root, viteEntry, port, useMocks) {
       origin,
       pid: child.pid,
       close() {
-        closePromise ??= closeChild(child);
+        closePromise ??= closeChild(child).then(async () => {
+          if (cacheDir) await rm(cacheDir, { recursive: true, force: true });
+        });
         return closePromise;
       },
     };
   } catch (startupError) {
     try {
       await closeChild(child);
+      if (cacheDir) await rm(cacheDir, { recursive: true, force: true });
     } catch (closeError) {
       throw new AggregateError([startupError, closeError], 'Vite startup and cleanup both failed');
     }
@@ -128,11 +141,11 @@ async function startAtPort(root, viteEntry, port, useMocks) {
   }
 }
 
-export async function startLayoutDevServer({ root, viteEntry, useMocks = true }) {
+export async function startLayoutDevServer({ root, viteEntry, useMocks = true, configFile }) {
   for (let attempt = 0; attempt < PORT_ATTEMPTS; attempt += 1) {
     const port = await reservePort();
     try {
-      return await startAtPort(root, viteEntry, port, useMocks);
+      return await startAtPort(root, viteEntry, port, useMocks, configFile);
     } catch (error) {
       if (attempt + 1 === PORT_ATTEMPTS || !String(error).includes(`Port ${String(port)} is already in use`)) {
         throw error;

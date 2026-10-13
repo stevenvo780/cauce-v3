@@ -494,7 +494,8 @@ function imprimirTabla(medidas) {
 }
 
 async function principal() {
-  const servidor = await startLayoutDevServer({ root: CONSOLE_ROOT, viteEntry: VITE_ENTRY });
+  const servidor = await startLayoutDevServer({ root: CONSOLE_ROOT, viteEntry: VITE_ENTRY,
+    configFile: resolve(HERE, 'vite-layout.config.mjs') });
   let medidas;
   let sinMedir;
   try {
