@@ -1262,6 +1262,66 @@
       }
     },
     {
+      "id": "agent_quota_operations",
+      "label": "Consulta durable de cuota por agente (ficha)",
+      "operations": {
+        "C": {
+          "status": "covered",
+          "reason": "Cobertura versionada con PostgreSQL real y canal firmado del host; la matriz enlaza la prueba y no sustituye su ejecución sobre el candidato.",
+          "api": [
+            {
+              "method": "POST",
+              "path": "/v3/console/agents/:tenant/:alias/quota"
+            }
+          ],
+          "ui": [
+            {
+              "file": "console/src/features/accounts/AgentQuotaReader.tsx",
+              "kind": "label",
+              "value": "Consulta pendiente"
+            }
+          ],
+          "tests": [
+            {
+              "file": "tests/gateway-hardening/agent-quota-postgres.test.ts",
+              "name": "requires CSRF/control, rejects commands and stale revisions, and enqueues one operation per idempotency key"
+            }
+          ]
+        },
+        "R": {
+          "status": "covered",
+          "reason": "Cobertura versionada con PostgreSQL real y canal firmado del host; la matriz enlaza la prueba y no sustituye su ejecución sobre el candidato.",
+          "api": [
+            {
+              "method": "GET",
+              "path": "/v3/console/agents/:tenant/:alias/quota"
+            }
+          ],
+          "ui": [
+            {
+              "file": "console/src/features/accounts/AgentQuotaReader.tsx",
+              "kind": "label",
+              "value": "Sin medición"
+            }
+          ],
+          "tests": [
+            {
+              "file": "tests/gateway-hardening/agent-quota-postgres.test.ts",
+              "name": "returns unknown for its own agent and identical 404s for foreign and absent targets without queue effects"
+            }
+          ]
+        },
+        "U": {
+          "status": "not_applicable",
+          "reason": "La consulta de cuota por agente es una operación durable sin edición ni borrado desde la consola; caduca o termina sola."
+        },
+        "D": {
+          "status": "not_applicable",
+          "reason": "La consulta de cuota por agente es una operación durable sin edición ni borrado desde la consola; caduca o termina sola."
+        }
+      }
+    },
+    {
       "id": "quota_accounts",
       "label": "Cuentas de cuota en Mis cuotas",
       "operations": {
