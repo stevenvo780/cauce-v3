@@ -9,6 +9,8 @@ export interface AgentEgressRow {
   readonly handle: string;
   readonly kind: string;
   readonly adapter: string;
+  /** Snapshot from `adapter_outbox.origin`. Absent when the outbox has no channel evidence. */
+  readonly channel: string | null;
   readonly conversation_id: string | null;
   readonly decision: string;
   readonly denial_code: string | null;
@@ -53,7 +55,15 @@ export function deriveAgentEgressState(row: AgentEgressRow): AgentEgressState {
   return 'partial';
 }
 
-export function toAgentEgressItem(row: AgentEgressRow): AgentEgressItem {
+function historicalChannel(value: string | null | undefined): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const channel = value.trim();
+  return channel.length > 0 ? channel : undefined;
+}
+
+export function toAgentEgressItem(row: AgentEgressRow): AgentEgressItem | undefined {
+  const channel = historicalChannel(row.channel);
+  if (channel === undefined) return undefined;
   const state = deriveAgentEgressState(row);
   const sent = count(row.chunks_sent);
   const providerIds = (row.provider_message_ids ?? []).filter((id): id is string => typeof id === 'string');
@@ -65,7 +75,7 @@ export function toAgentEgressItem(row: AgentEgressRow): AgentEgressItem {
     notify_index: row.notify_index,
     kind: row.kind,
     destination: {
-      adapter: row.adapter, channel: row.adapter, conversation_id: row.conversation_id, handle: row.handle,
+      adapter: row.adapter, channel, conversation_id: row.conversation_id, handle: row.handle,
     },
     decision: row.decision === 'denied' ? 'denied' : 'allowed',
     denial_code: row.denial_code,

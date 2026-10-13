@@ -31,12 +31,15 @@ export async function seedFixture(pool: DatabasePool, deliveryId = INCIDENT, par
     const conversation = index === 0 ? CONVERSATION : 'other-test-conversation';
     const expected = partial && index === 0 ? 3 : 1;
     await pool.query(`INSERT INTO adapter_outbox
-      (id,tenant_id,adapter,kind,idempotency_key,request_id,message_id,trace_id,payload,status)
-      VALUES($1,'Steven','telegram','origin_relay',$2,$3,$4,$5,'{}'::jsonb,$6)`,
+      (id,tenant_id,adapter,kind,idempotency_key,request_id,message_id,trace_id,payload,status,origin)
+      VALUES($1,'Steven','telegram','origin_relay',$2,$3,$4,$5,'{}'::jsonb,$6,$7::jsonb)`,
     // The 030 fence rejects an effect whose outbox is not 'processing': the real bridge writes its
     // effects while the outbox is live and only settles it once the provider answered. Seeding the
     // final status up front violated that invariant and aborted the whole suite in setup.
-    [outbox, randomUUID(), randomUUID(), produced, randomUUID(), 'processing']);
+    // The human message origin stays null; this snapshot is the historical egress channel.
+    [outbox, randomUUID(), randomUUID(), produced, randomUUID(), 'processing', JSON.stringify({
+      adapter: 'telegram', channel: 'telegram', conversation_id: conversation, relay: [],
+    })]);
     await pool.query(`INSERT INTO egress_notifications
       (id,tenant_id,alias,handle,adapter,conversation_id,kind,source,idempotency_key,decision,
        body_hash,body_bytes,source_delivery_id,source_attempt,notify_index,produced_message_id,

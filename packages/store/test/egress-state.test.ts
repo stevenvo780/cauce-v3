@@ -1,17 +1,25 @@
 import { describe, expect, it } from 'vitest';
+import type { AgentEgressItem } from '@cauce/protocol';
 import { deriveAgentEgressState, toAgentEgressItem, type AgentEgressRow } from '../src/repository/agents/egress-state.js';
 
 const base: AgentEgressRow = {
   notification_id: 'n1', source_delivery_id: 'd1', source_attempt: 1, notify_index: 0,
-  handle: 'steven_dm', kind: 'decision_request', adapter: 'telegram', conversation_id: '6979524541',
+  handle: 'steven_dm', kind: 'decision_request', adapter: 'telegram', channel: 'telegram',
+  conversation_id: '6979524541',
   decision: 'allowed', denial_code: null, produced_outbox_id: 'o1', created_at: '2026-09-08T20:27:19.000Z',
   outbox_status: 'sent', chunk_count: 1, chunks_seen: 1, chunks_sent: 1, states: ['sent'],
   provider_message_ids: ['2703'], effect_ids: ['o1:0'], last_sent_at: '2026-09-08T20:27:20.000Z',
 };
 
+function receipt(row: AgentEgressRow = base): AgentEgressItem {
+  const item = toAgentEgressItem(row);
+  expect(item).toBeDefined();
+  return item as AgentEgressItem;
+}
+
 describe('agent egress receipt state', () => {
   it('confirms sent only from a per-chunk receipt and exposes the provider id', () => {
-    const item = toAgentEgressItem(base);
+    const item = receipt();
     expect(item.state).toBe('sent');
     expect(item.provider_message_id).toBe('2703');
     expect(item.sent_at).toBe('2026-09-08T20:27:20.000Z');
@@ -20,7 +28,7 @@ describe('agent egress receipt state', () => {
   it('never declares a multi-chunk send delivered from one sent chunk', () => {
     const row: AgentEgressRow = { ...base, chunk_count: 3, chunks_seen: 3, chunks_sent: 1,
       states: ['sent', 'prepared', 'prepared'], provider_message_ids: ['2703', null, null] };
-    const item = toAgentEgressItem(row);
+    const item = receipt(row);
     expect(item.state).toBe('partial');
     expect(item.provider_message_id).toBeUndefined();
     expect(item.provider_message_ids).toEqual(['2703']);
@@ -29,7 +37,7 @@ describe('agent egress receipt state', () => {
   it('reports an outbox marked sent without any receipt as unconfirmed, not sent', () => {
     const row: AgentEgressRow = { ...base, chunk_count: null, chunks_seen: 0, chunks_sent: 0, states: null,
       provider_message_ids: null, effect_ids: null, last_sent_at: null };
-    const item = toAgentEgressItem(row);
+    const item = receipt(row);
     expect(item.state).toBe('unconfirmed');
     expect(item.provider_message_id).toBeUndefined();
     expect(item.sent_at).toBeUndefined();
@@ -45,5 +53,14 @@ describe('agent egress receipt state', () => {
   });
   it('accepts count columns as strings from the driver', () => {
     expect(deriveAgentEgressState({ ...base, chunk_count: '1', chunks_seen: '1', chunks_sent: '1' })).toBe('sent');
+  });
+  it('keeps a historical channel that differs from the adapter', () => {
+    const item = receipt({ ...base, adapter: 'telegram', channel: 'dm' });
+    expect(item.destination.adapter).toBe('telegram');
+    expect(item.destination.channel).toBe('dm');
+  });
+  it('omits a receipt when the historical channel is missing', () => {
+    expect(toAgentEgressItem({ ...base, channel: null })).toBeUndefined();
+    expect(toAgentEgressItem({ ...base, channel: '   ' })).toBeUndefined();
   });
 });

@@ -4,13 +4,13 @@
 
 El backend usa `AgentEgressResponse` de `@cauce/protocol`; las pruebas de convergencia del SDK tipan los recibos con el DTO común `AgentEgressItem`. `registerAgentEmissionRoutes` registra el endpoint real y delega su lectura en `CauceRepository.listAgentEgress`. `tests/integration/notify-history-postgres.test.ts` contiene el recorrido PostgreSQL → HTTP → SDK → prompt; la existencia de esa suite no acredita su ejecución en una revisión concreta.
 
-La proyección actual del backend pierde el canal cuando difiere del adaptador. Está reproducido con el mapper del store y el consumidor del SDK sobre datos sintéticos; falta corregir la consulta del store y ejecutar la regresión con PostgreSQL real. Las pruebas que usan `adapter=channel=telegram` no cubren esa diferencia.
+`listAgentEgress` proyecta `NULLIF(outbox.origin->>'channel', '')` y `toAgentEgressItem` copia ese snapshot. Si el canal falta o está vacío, el recibo no sale en `items`. La consulta no lee `egress_destinations` ni sustituye el canal por el adaptador. Un aviso `dm` del adaptador `telegram` sigue en el canal `dm` aunque el destino vigente cambie después.
 
 ## Canal del destino
 
 `destination.adapter` identifica el adaptador de transporte y `destination.channel` el canal de la ruta de salida. Son campos independientes. El SDK compara ambos con `authenticated_context.origin` de la entrega humana, junto con la conversación y el hilo; no utiliza el canal del turno que generó el aviso para atribuirlo a un destinatario.
 
-`notificationOrigin` conserva el canal de salida en `adapter_outbox.origin` al crear la notificación. El historial debe leer ese snapshot, aunque después se edite o elimine el destino. La consulta actual de `listAgentEgress` omite el canal y `toAgentEgressItem` lo sustituye por `row.adapter`: un aviso del canal `dm` del adaptador `telegram` queda fuera del historial `dm` y puede atribuirse al canal `telegram` de la misma conversación. Relajar el filtro del SDK o consultar la configuración vigente no conserva la ruta histórica. Sin evidencia del canal, el cuerpo debe quedar excluido.
+`notificationOrigin` conserva el canal de salida en `adapter_outbox.origin` al crear la notificación. El historial lee ese snapshot, aunque después se edite o elimine el destino. Relajar el filtro del SDK o consultar la configuración vigente no conserva la ruta histórica. Sin evidencia del canal, el cuerpo queda excluido.
 
 ## Recorrido productivo del consumidor
 
@@ -32,8 +32,8 @@ Las búsquedas incluyen los registros archivados para poder encontrar reply_to a
 
 El presupuesto cubre el bloque UTF-8 serializado entero: delimitadores, metadata, JSON escapado y avisos de truncación. Los cuerpos se truncan por puntos de código. El título y las instrucciones del bloque distinguen generado de enviado.
 
-La fixture mantiene el ID c137560e-ca62-46b2-89bb-b59947953547, ausencia de origin, un notify y destino Telegram 6979524541/provider 2703 del incidente comunicado. El cuerpo es sintético: no se leyó el inbox real. Las pruebas ejercitan HTTP de contrato → engine → almacén archivado y reabierto → harness → prompt; además, lotes, identidad, destinatarios múltiples, intentos, estados, fragmentos, ambigüedad y presupuesto.
+La fixture mantiene el ID c137560e-ca62-46b2-89bb-b59947953547, ausencia de origin humano en `messages`, un notify y destino Telegram 6979524541/provider 2703 del incidente comunicado. El snapshot del outbox lleva `channel=telegram`, el canal histórico de esa fixture. El cuerpo es sintético: no se leyó el inbox real. Las pruebas ejercitan HTTP de contrato → engine → almacén archivado y reabierto → harness → prompt; además, lotes, identidad, destinatarios múltiples, intentos, estados, fragmentos, ambigüedad y presupuesto.
 
-Pendiente: proyectar el canal histórico en la consulta del store y ejecutar contra PostgreSQL real los casos de canal distinto, aislamiento entre canales y edición posterior del destino.
+La regresión de canal distinto y de edición posterior del destino vive en el store, contra PostgreSQL real: el recibo conserva `dm` aunque `egress_destinations.channel` pase a `group`, y desaparece si se quita el canal del snapshot.
 
 Reversión: revertir exclusivamente el commit o los cambios de esta entrega. No hay cambio de esquema ni estado externo.

@@ -570,7 +570,9 @@ export abstract class AgentNotificationsRepository extends AgentChainControlRepo
     const result = await this.pool.query<AgentEgressRow>(
       `SELECT notification.id AS notification_id,notification.source_delivery_id,
               notification.source_attempt,notification.notify_index,notification.handle,
-              notification.kind,notification.adapter,notification.conversation_id,
+              notification.kind,notification.adapter,
+              NULLIF(outbox.origin->>'channel', '') AS channel,
+              notification.conversation_id,
               notification.decision,notification.denial_code,notification.produced_outbox_id,
               notification.created_at,
               outbox.status AS outbox_status,
@@ -594,6 +596,10 @@ export abstract class AgentNotificationsRepository extends AgentChainControlRepo
        ORDER BY notification.created_at ASC,notification.source_attempt ASC,notification.notify_index ASC`,
       [actorTenant, actorAlias, requested]
     );
-    return { requested, items: result.rows.map(toAgentEgressItem) };
+    const items = result.rows.flatMap((row) => {
+      const item = toAgentEgressItem(row);
+      return item === undefined ? [] : [item];
+    });
+    return { requested, items };
   }
 }
