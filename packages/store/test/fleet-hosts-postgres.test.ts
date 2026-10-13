@@ -138,6 +138,33 @@ describe('fleet hosts on PostgreSQL', () => {
     await placedAgent('live_one', 'alpha', 'none');
     await expect(deleteFleetHost(pool, 'alpha', 1, scope())).rejects.toThrow(/todavía tiene agentes/u);
   });
+  it.each(['pending', 'running', 'done', 'failed'])('handles %s agent quota operations when removing the previous computer', async status => {
+    if (!current) throw new Error('test database absent');
+    const admin = current.adminPool;
+    await createFleetHost(pool, { host_id: 'alpha', display_name: 'Alfa', notes: '' }, scope());
+    await placedAgent('quota_moved', 'alpha', 'none');
+    await admin.query(`INSERT INTO console_users(id,email,email_normalized,password_hash,display_name,role,tenant_id,alias)
+      VALUES($1,'quota-host@example.test','quota-host@example.test',$2,'Quota host','operator','Steven','kant')`, [HUMAN, '$scrypt$' + 'x'.repeat(48)]);
+    await admin.query(`INSERT INTO agent_quota_operations(company_id,tenant_id,alias,host_id,requested_by,expected_revision,idempotency_key,
+      agent_snapshot,status,claim_token,worker_id,lease_until,receipt,result,error_code)
+      VALUES('humanizar','Steven','quota_moved','alpha',$1,0,'host-quota-'||$2,
+        '{"host_id":"alpha"}',$2,gen_random_uuid(),'zz_worker',now()+interval '1 minute',
+        CASE WHEN $2='done' THEN '{}'::jsonb ELSE NULL END,CASE WHEN $2='done' THEN '{}'::jsonb ELSE NULL END,
+        CASE WHEN $2='failed' THEN 'RUNTIME_UNAVAILABLE' ELSE NULL END)`, [HUMAN, status]);
+    await admin.query("UPDATE agents SET host_id='beta' WHERE tenant_id='Steven' AND alias='quota_moved'");
+    if (status === 'pending' || status === 'running') {
+      const attempt = deleteFleetHost(pool, 'alpha', 1, scope());
+      await expect(attempt).rejects.toMatchObject({ code: 'conflict' });
+      await expect(attempt).rejects.toThrow(/consultas de cuota en curso/u);
+      expect((await admin.query("SELECT 1 FROM fleet_hosts WHERE host_id='alpha'")).rowCount).toBe(1);
+      expect((await admin.query("SELECT status FROM agent_quota_operations WHERE host_id='alpha'")).rows).toEqual([{ status }]);
+    } else {
+      await deleteFleetHost(pool, 'alpha', 1, scope());
+      expect((await admin.query("SELECT 1 FROM fleet_hosts WHERE host_id='alpha'")).rowCount).toBe(0);
+      expect((await admin.query("SELECT 1 FROM agent_quota_operations WHERE host_id='alpha'")).rowCount).toBe(0);
+      expect((await admin.query("SELECT host_id FROM agents WHERE tenant_id='Steven' AND alias='quota_moved'")).rows).toEqual([{ host_id: 'beta' }]);
+    }
+  });
 
   it('lets a company edit its computers but leaves removing one to the platform', async () => {
     await createFleetHost(pool, { host_id: 'alpha', display_name: 'Alfa', notes: '' }, scope());

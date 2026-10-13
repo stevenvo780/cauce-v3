@@ -154,6 +154,9 @@ export async function deleteFleetHost(pool: DatabasePool, hostId: string, expect
       [hostId, company])).rows[0];
     if (!row) throw new FleetOperationError('not_found', 'fleet host was not found');
     if (Number(row.version) !== expectedVersion) throw new FleetOperationError('conflict', 'fleet host version changed; reload and retry');
+    const quota = await client.query(`SELECT 1 FROM agent_quota_operations WHERE host_id=$1 AND company_id=$2
+      AND status IN ('pending','running') LIMIT 1`, [hostId, company]);
+    if (quota.rowCount) throw new FleetOperationError('conflict', 'La computadora tiene consultas de cuota en curso.');
     const blocker = (await client.query<{ kind: keyof typeof HOST_DEPENDENCY_MESSAGE }>(`SELECT kind FROM (
         SELECT 1 AS rank,'agents' AS kind FROM agents WHERE host_id=$1 AND purged_at IS NULL
         UNION ALL SELECT 2,'operations' FROM fleet_operations WHERE executor_host=$1 AND status NOT IN ('succeeded','failed','cancelled')
@@ -168,6 +171,7 @@ export async function deleteFleetHost(pool: DatabasePool, hostId: string, expect
     await client.query(`DELETE FROM quota_environment_operations WHERE company_id=$2
       AND environment_id IN (SELECT id FROM quota_environments WHERE host_id=$1 AND company_id=$2 AND status='deleted')`, [hostId, company]);
     await client.query("DELETE FROM quota_environments WHERE host_id=$1 AND company_id=$2 AND status='deleted'", [hostId, company]);
+    await client.query("DELETE FROM agent_quota_operations WHERE host_id=$1 AND company_id=$2 AND status IN ('done','failed')", [hostId, company]);
     await client.query('DELETE FROM fleet_hosts WHERE host_id=$1 AND company_id=$2', [hostId, company]);
     await auditHost(client, authority, 'fleet_host.delete', hostId);
   });
