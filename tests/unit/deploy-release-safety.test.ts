@@ -234,7 +234,7 @@ describe('deploy gates receipt', () => {
   });
 
   it.each([
-    ['a red gate', (receipt: GatesReceipt) => { gate(receipt, 1).exit = 1; }, 'pnpm lint: exit 1'],
+    ['a red gate', (receipt: GatesReceipt) => { gate(receipt, 2).exit = 1; }, 'pnpm lint: exit 1'],
     ['a boolean exit', (receipt: GatesReceipt) => { gate(receipt, 0).exit = false; }, 'exit False'],
     ['a missing gate', (receipt: GatesReceipt) => { receipt.comandos.pop(); }, 'no son los de scripts/release-gates.sh --list'],
     ['another tree', (receipt: GatesReceipt) => { receipt.tree = '0'.repeat(40); }, 'tree del recibo'],
@@ -633,6 +633,20 @@ fs.appendFileSync(process.env.MOCK_PNPM_LOG, gate + '\n');
 console.log('ran ' + gate);
 process.exit(gate === process.env.MOCK_RED_GATE ? 3 : 0);
 `;
+  const python3 = String.raw`#!/usr/bin/env node
+const fs = require('node:fs');
+const { spawnSync } = require('node:child_process');
+const args = process.argv.slice(2);
+const pytest = args[0] === '-m' && args[1] === 'pytest'
+  && args.includes('ops/tests/test_fleet_orphan_sweep.py')
+  && args.includes('ops/tests/test_fleet_executor_container.py');
+if (pytest) {
+  fs.appendFileSync(process.env.MOCK_PNPM_LOG, 'orphan\n');
+  process.exit(process.env.MOCK_RED_GATE === 'orphan' ? 3 : 0);
+}
+const result = spawnSync('/usr/bin/python3', args, { stdio: 'inherit' });
+process.exit(result.status === null ? 1 : result.status);
+`;
 
   function repositoryWithGates() {
     const directory = temporaryDirectory('cauce-release-gates-');
@@ -642,6 +656,7 @@ process.exit(gate === process.env.MOCK_RED_GATE ? 3 : 0);
     mkdirSync(binaries);
     copyFileSync(releaseGatesScript, join(repository, 'scripts/release-gates.sh'));
     for (const name of ['pnpm', 'shellcheck', 'ruff']) writeFileSync(join(binaries, name), pnpm, { mode: 0o700 });
+    writeFileSync(join(binaries, 'python3'), python3, { mode: 0o700 });
     const environment = {
       ...process.env,
       PATH: `${binaries}:${process.env.PATH ?? ''}`,
@@ -670,8 +685,12 @@ process.exit(gate === process.env.MOCK_RED_GATE ? 3 : 0);
   it('lists only gates that exist in package.json, in order', () => {
     const scripts = (JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')) as { scripts: Record<string, string> }).scripts;
     const commands = releaseGateCommands();
-    expect(commands[0]).toBe('pnpm typecheck');
-    for (const command of commands) expect(scripts[command.replace(/^pnpm /, '')], command).toBeDefined();
+    expect(commands[0]).toBe('python3 -m pytest ops/tests/test_fleet_orphan_sweep.py ops/tests/test_fleet_executor_container.py -q --tb=line');
+    expect(commands[1]).toBe('pnpm typecheck');
+    for (const command of commands) {
+      if (!command.startsWith('pnpm ')) continue;
+      expect(scripts[command.replace(/^pnpm /, '')], command).toBeDefined();
+    }
   });
 
   it('writes a green receipt bound to HEAD that deploy accepts', () => {
@@ -700,10 +719,12 @@ process.exit(gate === process.env.MOCK_RED_GATE ? 3 : 0);
     const result = gates.run({ MOCK_RED_GATE: 'lint' });
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('ROJO en pnpm lint');
-    expect(gates.pnpmLog()).toBe('typecheck\nlint\n');
+    expect(gates.pnpmLog()).toBe('orphan\ntypecheck\nlint\n');
     const run = single(gates.receipts());
     const receipt = JSON.parse(readFileSync(join(gates.directory, 'receipts', run, 'recibo.json'), 'utf8')) as GatesReceipt;
-    expect(receipt.comandos.map(command => [command.cmd, command.exit])).toEqual([['pnpm typecheck', 0], ['pnpm lint', 3]]);
+    expect(receipt.comandos.map(command => [command.cmd, command.exit])).toEqual([
+      ['python3 -m pytest ops/tests/test_fleet_orphan_sweep.py ops/tests/test_fleet_executor_container.py -q --tb=line', 0],
+      ['pnpm typecheck', 0], ['pnpm lint', 3]]);
     const refused = deploy({ receipt, environment: { MOCK_COMMIT: receipt.commit, MOCK_TREE: receipt.tree } });
     expectStoppedBeforeBuild(refused, 'pnpm lint: exit 3');
   });
@@ -716,5 +737,19 @@ process.exit(gate === process.env.MOCK_RED_GATE ? 3 : 0);
     expect(result.stderr).toContain('el arbol no esta limpio');
     expect(gates.receipts()).toEqual([]);
     expect(existsSync(join(gates.directory, 'pnpm.log'))).toBe(false);
+  });
+
+  it('stops when the scoped orphan sweep fails and does not run the pnpm gates', () => {
+    const gates = repositoryWithGates();
+    const result = gates.run({ MOCK_RED_GATE: 'orphan' });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('ROJO en python3 -m pytest ops/tests/test_fleet_orphan_sweep.py ops/tests/test_fleet_executor_container.py -q --tb=line');
+    expect(gates.pnpmLog()).toBe('orphan\n');
+    const run = single(gates.receipts());
+    const receipt = JSON.parse(readFileSync(join(gates.directory, 'receipts', run, 'recibo.json'), 'utf8')) as GatesReceipt;
+    expect(receipt.comandos.map(command => [command.cmd, command.exit])).toEqual([
+      ['python3 -m pytest ops/tests/test_fleet_orphan_sweep.py ops/tests/test_fleet_executor_container.py -q --tb=line', 3]]);
+    const refused = deploy({ receipt, environment: { MOCK_COMMIT: receipt.commit, MOCK_TREE: receipt.tree } });
+    expectStoppedBeforeBuild(refused, 'python3 -m pytest ops/tests/test_fleet_orphan_sweep.py ops/tests/test_fleet_executor_container.py -q --tb=line: exit 3');
   });
 });

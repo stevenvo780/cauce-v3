@@ -4,11 +4,17 @@
 set -euo pipefail
 
 GATES=(typecheck lint test coverage:ratchet qa:testcontainers qa:layout qa:runtime-packaging ops:validate arch:validate)
+ORPHAN_SWEEP=(python3 -m pytest ops/tests/test_fleet_orphan_sweep.py ops/tests/test_fleet_executor_container.py -q --tb=line)
 
 die() { echo "release-gates: $*" >&2; exit 1; }
 
+commands() {
+  printf '%s\n' "${ORPHAN_SWEEP[*]}"
+  printf 'pnpm %s\n' "${GATES[@]}"
+}
+
 case "${1:-}" in
-  --list) printf 'pnpm %s\n' "${GATES[@]}"; exit 0 ;;
+  --list) commands; exit 0 ;;
   "") ;;
   *) echo "uso: scripts/release-gates.sh [--list]" >&2; exit 2 ;;
 esac
@@ -34,21 +40,30 @@ mkdir -m 700 "$OUT" || die "no pude crear $OUT"
 
 RESULTS=()
 FAILED=""
-for index in "${!GATES[@]}"; do
-  gate="${GATES[$index]}"
-  log="$(printf '%02d' $((index + 1)))-${gate//:/-}.log"
+step=0
+record() {
+  local display="$1" slug="$2"
+  shift 2
+  local log began code=0 seconds
+  log="$(printf '%02d' "$step")-${slug}.log"
+  step=$((step + 1))
   began="$(date +%s)"
-  code=0
-  pnpm "$gate" >"$OUT/$log" 2>&1 </dev/null || code=$?
+  "$@" >"$OUT/$log" 2>&1 </dev/null || code=$?
   seconds=$(( $(date +%s) - began ))
-  RESULTS+=("pnpm $gate" "$code" "$(sha256sum "$OUT/$log" | cut -d' ' -f1)" "$seconds" "$log")
-  echo "== pnpm $gate: exit $code (${seconds}s) -> $OUT/$log"
+  RESULTS+=("$display" "$code" "$(sha256sum "$OUT/$log" | cut -d' ' -f1)" "$seconds" "$log")
+  echo "== $display: exit $code (${seconds}s) -> $OUT/$log"
   if [ "$code" != 0 ]; then
     tail -n 40 "$OUT/$log" >&2
-    FAILED="pnpm $gate"
-    break
+    FAILED="$display"
+    return 1
   fi
-done
+}
+record "${ORPHAN_SWEEP[*]}" orphan-sweep "${ORPHAN_SWEEP[@]}" || true
+if [ -z "$FAILED" ]; then
+  for gate in "${GATES[@]}"; do
+    record "pnpm $gate" "${gate//:/-}" pnpm "$gate" || break
+  done
+fi
 FINISHED="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 [ "$(git rev-parse HEAD)" = "$COMMIT" ] || die "HEAD cambio durante el gate; recibo no emitido (logs en $OUT)"

@@ -168,8 +168,9 @@ describe('inventario de pruebas de V4', () => {
       cwd: repository,
       encoding: 'utf8',
     }).trim().split('\n');
-    expect(releaseCommand).toHaveLength(9);
-    expect(inventory).toContain('ejecuta nueve gates en secuencia');
+    expect(releaseCommand).toHaveLength(10);
+    expect(releaseCommand[0]).toBe('python3 -m pytest ops/tests/test_fleet_orphan_sweep.py ops/tests/test_fleet_executor_container.py -q --tb=line');
+    expect(inventory).toContain('ejecuta diez pasos en secuencia');
   });
 
   test('el pendiente de la matriz CRUD coincide con el límite descrito', () => {
