@@ -4,7 +4,7 @@
 # skip the write when already identical so the path unit doesn't feed back.
 set -u
 SRC=/datos/agents/shared/.codex/auth.json
-LOG=/home/stev/.local/state/cauce-codex-sync.log
+LOG=${HOME}/.local/state/cauce-codex-sync.log
 
 [ -r "$SRC" ] || { echo "$(date -Is) FALTA $SRC" >> "$LOG"; exit 1; }
 

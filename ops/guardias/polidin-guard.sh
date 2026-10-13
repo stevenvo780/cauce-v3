@@ -6,8 +6,8 @@
 # Chain it restores: <container> -> relay:12222 -> ssh host -> 10.88.88.31:22
 # The in-VM script already reconnects by itself if the ssh session drops; this covers
 # the OTHER case: the whole process dying.
-LOG=/home/stev/.local/state/polidin-guard.log
-mkdir -p /home/stev/.local/state
+LOG=${HOME}/.local/state/polidin-guard.log
+mkdir -p "${HOME}/.local/state"
 if docker exec ws-zeus sh -c 'ss -lnt 2>/dev/null | grep -q ":12222 "' 2>/dev/null; then
   exit 0
 fi

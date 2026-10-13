@@ -1,7 +1,7 @@
 #!/bin/bash
 # Empuja server2 -> VPS (no al reves: el VPS no tiene llave hacia server2). Solo viajan porcentajes y correos: el token no sale del contenedor.
 set -u
-DEST=/home/stev/.local/share/cauce-quota-http/cuotas-cli.json
+DEST=${HOME}/.local/share/cauce-quota-http/cuotas-cli.json
 TMP=$(mktemp)
 trap 'rm -f "$TMP"' EXIT
 /home/server/cuotas-cli/cuotas-claude-local --json > "$TMP" 2>/dev/null
