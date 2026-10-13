@@ -46,8 +46,13 @@ for c in $(docker ps --filter name='^cuota-' --format '{{.Names}}' | sort); do
     emite "$c" grok "$(timeout 60 docker exec "$c" node /usr/local/bin/leer-cuota-grok.mjs --refresh-own-session 2>/dev/null || echo '{"ok":false,"nota":"el lector de grok no respondio"}')"
   fi
   if docker exec "$c" test -s /home/node/.codex/auth.json 2>/dev/null; then
+    # Una imagen vieja trata cada argumento como CODEX_HOME; el flag solo se pasa si la sonda lo conoce.
+    probe_refresh=()
+    if docker exec "$c" python3 -I -c 'import pathlib,sys; text=pathlib.Path("/usr/local/bin/codex-http-probe.py").read_text(errors="replace"); sys.exit(0 if "--refresh-own-session" in text else 1)'; then
+      probe_refresh=(--refresh-own-session)
+    fi
     # Sin '|| echo': la sonda sale con rc!=0 si informa un error y el respaldo rompia su JSON.
-    r=$(timeout 60 docker exec "$c" python3 /usr/local/bin/codex-http-probe.py /home/node/.codex --refresh-own-session 2>/dev/null)
+    r=$(timeout 60 docker exec "$c" python3 -I /usr/local/bin/codex-http-probe.py /home/node/.codex "${probe_refresh[@]}" 2>/dev/null)
     [ -n "$r" ] || r='{"error":"la sonda no respondio","ventanas":[]}'
     emite "$c" codex "$r"
   fi
