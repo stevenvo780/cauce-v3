@@ -213,3 +213,7 @@ def test_retry_fences_and_failed_publications_keep_the_deployed_limits():
         book.aplicar_reenvio(ledger, pending["encargo_id"], False, now, "fixture publication failed")
     assert pending["reintentos"] == book.MAX_REINTENTOS and pending["estado"] == book.BLOQUEADO
     assert not book.plan_reanudacion(ledger, {"ahora": now, "online": {"worker"}})["reenviar"]
+
+
+if __name__ == "__main__":
+    raise SystemExit(pytest.main([__file__, "-q"]))

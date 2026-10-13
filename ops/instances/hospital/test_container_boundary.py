@@ -5,7 +5,8 @@ from pathlib import Path
 
 import pytest
 
-SPEC = importlib.util.spec_from_file_location("hospital_boundary_guard", Path(__file__).with_name("operator-runtime-guard.py"))
+ROOT = next(parent for parent in Path(__file__).resolve().parents if parent.name == "ops") / "instances/hospital"
+SPEC = importlib.util.spec_from_file_location("hospital_boundary_guard", ROOT / "operator-runtime-guard.py")
 GUARD = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(GUARD)
 
@@ -188,9 +189,13 @@ def test_operator_config_symlinks_and_shadow_mounts_are_rejected(tmp_path, monke
 
 
 def test_provision_disables_fallback_and_checks_host_before_mutating_runtime():
-    script = Path(__file__).with_name("provision-agents.sh").read_text()
+    script = (ROOT / "provision-agents.sh").read_text()
     assert '1) echo "El puente Muse aislado no está construido;' in script
     assert 'debe seguir en 0" >&2; exit 1' in script
     assert script.index('verify-boundary --alias') < script.index('install -o 1000')
     for container in ("openclaw-operator-gateway", "muse-backend", "muse-frontend"):
         assert f"hospital-agent-{container}-1" in script
+
+
+if __name__ == "__main__":
+    raise SystemExit(pytest.main([__file__, "-q"]))

@@ -69,3 +69,7 @@ class FleetRuntimeApplyTests(unittest.TestCase):
                         module.publish_applied(state, 'a' * 64, None)
                     link.unlink()
             self.assertEqual(target.read_bytes(), b'untouched')
+
+
+if __name__ == "__main__":
+    unittest.main()

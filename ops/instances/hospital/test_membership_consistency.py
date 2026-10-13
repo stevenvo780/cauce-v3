@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-ROOT = Path(__file__).parent
+ROOT = next(parent for parent in Path(__file__).resolve().parents if parent.name == "ops") / "instances/hospital"
 FILES = (
     "bootstrap.sql", "restore-developer-aliases.sql", "rename-developers.sql",
     "backup.sh", "backup-monitor.sh",
@@ -239,3 +239,7 @@ def test_fails_closed_when_validation_structure_changes(sources, filename, old, 
     sources[filename] = sources[filename].replace(old, new, 1)
     with pytest.raises(AssertionError, match="membership|memberships"):
         assert_consistent(sources)
+
+
+if __name__ == "__main__":
+    raise SystemExit(pytest.main([__file__, "-q"]))
