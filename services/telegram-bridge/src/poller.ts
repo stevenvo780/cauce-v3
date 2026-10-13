@@ -493,8 +493,7 @@ export class TelegramPoller {
   ): Promise<void> {
     signal?.throwIfAborted();
     const consumed = lastUpdateId(batch);
-    // The primary is chosen among the members that PASS the allowlist, not by whoever carries the caption: a foreign
-    // caption member used to take the whole batch down with it, dragging allowlisted members away with no audit record.
+    // Choose the caption among allowed members so a foreign caption cannot suppress the rest of the batch.
     const screened = new Map<TelegramUpdate, AcceptedMember>();
     for (const update of batch) {
       const member = this.accepted(update);

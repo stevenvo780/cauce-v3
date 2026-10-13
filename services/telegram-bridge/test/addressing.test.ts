@@ -213,17 +213,14 @@ describe('addressing precedence', () => {
   });
 
   it('P3 only suppresses against aliases that actually serve this chat', () => {
-    // The bug this closes: `fleet.byUsername` covers the whole file, so naming an alias that is
-    // not in this group used to silence every alias that IS in it — nobody answered at all.
     const toAbsentPeer = message(mention('', 'socrates_cauce_bot'));
     const present = new Set(['Steven/jarvis', 'Steven/kant']);
     expect(resolve({ message: toAbsentPeer, participants: present, policy: policy({ default_alias: 'jarvis' }) }))
       .toMatchObject({ addressed: true, reason: 'default_alias' });
-    // With no ambient host nobody answers, but the silence is now reported as its own reason
-    // instead of hiding inside the generic `not_addressed` bucket.
+    // Preserve the separate diagnosis for a mention that this chat does not serve.
     expect(resolve({ message: toAbsentPeer, participants: present }))
       .toMatchObject({ addressed: false, reason: 'mention_unserved' });
-    // A peer that does serve the chat still suppresses this bot, which is the whole feature.
+    // A served peer mention still suppresses this bot.
     expect(resolve({ message: message(mention('', 'kant_cauce_bot')), participants: present }))
       .toMatchObject({ addressed: false, reason: 'other_bot_mentioned' });
   });
