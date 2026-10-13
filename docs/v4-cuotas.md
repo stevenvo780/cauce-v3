@@ -19,7 +19,15 @@ docker build -t cauce-cuotas-local ops/cuotas
 docker image inspect cauce-cuotas-local --format '{{.Id}}'
 ```
 
-Actualizar una versión requiere reconstruir la imagen y cambiar `policy.quota_environments.image`. Los entornos existentes conservan su imagen hasta recrearse; `update_cli` actualiza el paquete definido por el descriptor en el perfil del entorno.
+Actualizar una versión requiere reconstruir la imagen y cambiar `policy.quota_environments.image`. Los entornos existentes conservan su imagen hasta recrearse; `update_cli` actualiza el paquete definido por el descriptor en el perfil del entorno. La comprobación local es `docker image inspect <etiqueta> --format '{{.Id}}'` igual al digest declarado en esa política. La imagen no instala Gemini: el build falla si aparece el binario o el paquete, y el repositorio de entornos rechaza el proveedor `gemini`.
+
+## Binding de la credencial del agente
+
+La consulta del agente lee la identidad dentro de su contenedor y no la imprime: solo viaja el hash. `bindAgentQuotaSample` ata ese hash a la cuenta de la empresa. Si la cuenta ya existe y no es un alta sintética `unverified:`, o si `primary_account_id` del agente es esa cuenta, el binding queda habilitado y la ficha deja de mostrar «sin cuenta». Si el agente ya tiene `primary_account_id` y la identidad medida es otra, la operación rechaza el resultado y no crea una cuenta nueva. Una identidad sin cuenta previa sigue pudiendo abrir una cuenta sintética deshabilitada para las pruebas; eso no siembra producción. La siembra real la ejecuta el orquestador con la misma operación de consulta, sin inventar bindings.
+
+## Contraste del mismo instante y auditoría de secretos
+
+`ops/cli/fleet_executor_agent_quota.py` compara, para Claude, Codex y Grok, las ventanas de la web con la salida JSON de `coutas` del mismo instante: mismas claves, el porcentaje dentro de ±1 (restante, o 100 menos el usado) y el mismo reinicio. `contrast_same_instant(web, coutas)` exige los tres proveedores. `audit_quota_logs` cuenta coincidencias de `access_token`, `refresh_token`, `sk-ant-`, `eyJ` y `user_code` en logs de gateway, logs de host y `audit_events`. `redact_secrets` las sustituye; el control positivo es que el secreto sembrado se detecta antes y no queda ninguna coincidencia después. La corrida contra producción la hace el orquestador con los logs vivos; aquí el procedimiento se prueba con fixtures.
 
 ## Evidencia
 

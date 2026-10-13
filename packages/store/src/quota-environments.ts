@@ -54,7 +54,17 @@ async function owned(client: DatabaseClient, authority: CompanyAuthority, id: st
   if (!row) throw new StoreError('not_found', 'quota environment was not found');
   return row;
 }
+function withoutGemini(capabilities: readonly QuotaEnvironmentHostCapability[]): readonly QuotaEnvironmentHostCapability[] {
+  return capabilities.map(host => {
+    const providers = host.providers.filter(provider => provider !== 'gemini');
+    if (providers.length === host.providers.length && host.provider_actions.gemini === undefined) return host;
+    const provider_actions = { ...host.provider_actions };
+    delete provider_actions.gemini;
+    return { ...host, providers, provider_actions };
+  });
+}
 function available(capabilities: readonly QuotaEnvironmentHostCapability[], host: string, provider: string, action: QuotaAction): void {
+  if (provider === 'gemini') throw new StoreError('invalid_input', 'quota provider has no executor');
   const match = capabilities.find(value => value.host_id === host);
   if (!match?.providers.some(value => value === provider)
     || !match.provider_actions[provider as QuotaProvider]?.includes(action)) {
@@ -81,10 +91,12 @@ async function enqueue(client: DatabaseClient, authority: CompanyAuthority, envi
 export class QuotaEnvironmentRepository {
   constructor(private readonly pool: DatabasePool, private readonly options: QuotaEnvironmentOptions = { approvedHostIds: [], providers: [] }) {}
   private capabilities(client: DatabaseClient, companyId: string): Promise<readonly QuotaEnvironmentHostCapability[]> {
-    if (this.options.resolveCapabilities) return this.options.resolveCapabilities(companyId, client);
-    const providers = this.options.providers.filter(provider => provider !== 'gemini');
-    return Promise.resolve(this.options.approvedHostIds.map(host_id => ({ host_id, providers,
-      provider_actions: Object.fromEntries(providers.map(provider => [provider, QUOTA_ENVIRONMENT_ACTIONS])) })));
+    if (!this.options.resolveCapabilities) {
+      const providers = this.options.providers.filter(provider => provider !== 'gemini');
+      return Promise.resolve(this.options.approvedHostIds.map(host_id => ({ host_id, providers,
+        provider_actions: Object.fromEntries(providers.map(provider => [provider, QUOTA_ENVIRONMENT_ACTIONS])) })));
+    }
+    return this.options.resolveCapabilities(companyId, client).then(withoutGemini);
   }
   private async refreshInTransaction(client: DatabaseClient, authority: CompanyAuthority, filter: RefreshFilter): Promise<QuotaEnvironmentRefresh[]> {
     const environments = await client.query<EnvironmentRow>(`SELECT e.* FROM quota_environments e JOIN provider_accounts p ON p.id=e.account_id AND p.company_id=e.company_id

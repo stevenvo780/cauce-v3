@@ -377,5 +377,73 @@ with patch.object(hooks,'container_binding',changed):
         self.assertEqual(response.stdout.strip(), 'quota_container_changed')
 
 
+class AgentQuotaContrastAuditTest(unittest.TestCase):
+    RESET = '2026-10-13T12:00:00Z'
+
+    @classmethod
+    def setUpClass(cls):
+        sys.path.insert(0, str(fixtures.OPS / 'cli'))
+        module = __import__('fleet_executor_agent_quota')
+        cls.contrast = staticmethod(module.contrast_same_instant)
+        cls.audit = staticmethod(module.audit_quota_logs)
+        cls.redact = staticmethod(module.redact_secrets)
+        cls.matches = staticmethod(module.secret_match_count)
+
+    def web(self, rows):
+        return {'windows': [{'window_key': key, 'remaining_percent': percent, 'reset_at': reset} for key, percent, reset in rows]}
+
+    def coutas(self, provider, rows):
+        if provider == 'codex':
+            return {'ventanas': [{'clave': key, 'restante_pct': percent, 'reinicia_en': reset} for key, percent, reset in rows]}
+        return {'windows': [{'key': key, 'remainingPercent': percent, 'resetAt': reset} for key, percent, reset in rows]}
+
+    def pair(self, claude_coutas=None):
+        web = {'claude': self.web([('five_hour', 40, self.RESET), ('seven_day', 70, self.RESET)]),
+               'codex': self.web([('7d', 55, self.RESET)]), 'grok': self.web([('7d', 80, self.RESET)])}
+        coutas = {'claude': claude_coutas or self.coutas('claude', [('five_hour', 41, self.RESET), ('seven_day', 70, self.RESET)]),
+                  'codex': self.coutas('codex', [('7d', 55, self.RESET)]),
+                  'grok': self.coutas('grok', [('7d', 79, self.RESET)])}
+        return web, coutas
+
+    def test_same_instant_windows_match_within_one_percent_for_every_provider(self):
+        web, coutas = self.pair()
+        coutas['claude'] = {'windows': [
+            {'key': 'five_hour', 'usedPercent': 59, 'resetAt': self.RESET},
+            {'key': 'seven_day', 'usedPercent': 30, 'resetAt': self.RESET}]}
+        report = self.contrast(web, coutas)
+        self.assertTrue(report['ok'], report['mismatches'])
+        self.assertEqual(report['tolerance'], 1)
+
+    def test_percent_reset_and_window_set_outside_tolerance_are_mismatches(self):
+        web, coutas = self.pair(self.coutas('claude', [('five_hour', 42, self.RESET), ('seven_day', 70, self.RESET)]))
+        percent = self.contrast(web, coutas)
+        self.assertFalse(percent['ok'])
+        self.assertIn({'provider': 'claude', 'window': 'five_hour', 'reason': 'percent'}, percent['mismatches'])
+        web, coutas = self.pair(self.coutas('claude', [('five_hour', 40, '2026-10-13T13:00:00Z'), ('seven_day', 70, self.RESET)]))
+        reset = self.contrast(web, coutas)
+        self.assertIn({'provider': 'claude', 'window': 'five_hour', 'reason': 'reset'}, reset['mismatches'])
+        web, coutas = self.pair(self.coutas('claude', [('five_hour', 40, self.RESET)]))
+        windows = self.contrast(web, coutas)
+        self.assertEqual(windows['mismatches'][0]['reason'], 'windows')
+        with self.assertRaises(ValueError):
+            self.contrast({'claude': self.web([('five_hour', 40, self.RESET)])}, coutas)
+
+    def test_planted_secret_is_detected_and_absent_after_redaction(self):
+        planted = 'access_token=zz-canary refresh_token=zz sk-ant-zz eyJhbGci user_code=device'
+        gateway = [planted, 'ordinary gateway line']
+        host = ['host log access_token leaked once']
+        events = [{'action': 'authenticate', 'note': 'user_code=abcd eyJabc'}]
+        raw = self.audit(gateway, host, events)
+        self.assertGreater(raw['matches'], 0)
+        self.assertGreater(raw['gateway'], 0)
+        self.assertGreater(raw['host'], 0)
+        self.assertGreater(raw['audit_events'], 0)
+        self.assertEqual(self.matches(planted), 5)
+        self.assertEqual(self.matches(self.redact(planted)), 0)
+        clean_events = json.loads(self.redact(json.dumps(events[0])))
+        clean = self.audit([self.redact(line) for line in gateway], [self.redact(line) for line in host], [clean_events])
+        self.assertEqual(clean, {'matches': 0, 'gateway': 0, 'host': 0, 'audit_events': 0})
+
+
 if __name__ == '__main__':
     unittest.main()

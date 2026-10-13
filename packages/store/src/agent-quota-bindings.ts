@@ -63,6 +63,9 @@ export async function bindAgentQuotaSample(client: DatabaseClient, pool: Databas
   const host = agentQuotaHost(snapshot);
   await client.query('SELECT pg_advisory_xact_lock($1::integer,hashtext($2))', [783_003_057, `${authority.actingCompany}/${receipt.identity_hash}`]);
   const account = await findAgentQuotaAccount(client, authority.actingCompany, receipt);
+  if (snapshot.primary_account_id !== null && account?.id !== snapshot.primary_account_id) {
+    throw new StoreError('conflict', 'measured quota identity does not match the agent credential');
+  }
   const duplicate = await assertAgentQuotaReplay(client, snapshot, host, receipt, account?.id);
   const id = account?.id ?? `qa_${randomUUID().replaceAll('-', '')}`;
   const report = canonicalAgentQuotaReport(receipt, id);
@@ -78,9 +81,11 @@ export async function bindAgentQuotaSample(client: DatabaseClient, pool: Databas
   await client.query(`INSERT INTO alias_routing_ceiling(tenant_id,alias,account_id,account_payer_tenant,created_by_tenant,company_id)
     VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(tenant_id,alias,account_id) DO NOTHING`,
   [snapshot.tenant_id, snapshot.alias, id, account?.payer_tenant_id ?? snapshot.tenant_id, authority.homeTenant, authority.actingCompany]);
+  const credential = account !== undefined && (account.id === snapshot.primary_account_id
+    || !account.external_account_id.startsWith('unverified:'));
   await client.query(`INSERT INTO agent_account_bindings(tenant_id,agent_alias,account_id,enabled,company_id)
-    VALUES($1,$2,$3,false,$4) ON CONFLICT(tenant_id,agent_alias,account_id) DO NOTHING`,
-  [snapshot.tenant_id, snapshot.alias, id, authority.actingCompany]);
+    VALUES($1,$2,$3,$4,$5) ON CONFLICT(tenant_id,agent_alias,account_id) DO NOTHING`,
+  [snapshot.tenant_id, snapshot.alias, id, credential, authority.actingCompany]);
   if (!duplicate) await new CauceRepository(pool).recordQuotaSample(TenantSchema.parse(snapshot.tenant_id), AliasSchema.parse(snapshot.alias), {
     host, captured_at: receipt.captured_at, schema_version: 2, providers: [report],
   }, client);

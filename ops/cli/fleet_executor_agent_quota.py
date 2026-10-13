@@ -14,6 +14,7 @@ import time
 import uuid
 
 PROVIDERS = frozenset({'codex', 'claude', 'grok'})
+SECRET_MARKERS = ('refresh_token', 'access_token', 'user_code', 'sk-ant-', 'eyJ')
 PROFILE_DIRECTORY = {'codex': '.codex', 'claude': '.claude', 'grok': '.grok'}
 IDENTIFIER = re.compile(r'[a-z][a-z0-9_-]{0,63}')
 TENANT = re.compile(r'[A-Za-z][A-Za-z0-9_-]{0,63}')
@@ -160,7 +161,7 @@ def perform(policy: dict, document: dict) -> dict:
     from quota_snapshot import ERROR_CODES, normalize_cli_snapshot
     agent = packet(policy, document)
     bundle = approved_bundle(policy, agent)
-    descriptor, _ = read_descriptor(bundle['directory'], agent['harness_id'])
+    descriptor, _ = read_descriptor(bundle['directory'], agent['harness_id'], expected_sha256=bundle.get('descriptor_sha256'))
     captured_at = datetime.datetime.now(datetime.UTC).isoformat().replace('+00:00', 'Z')
     envelope = {'operation_id': document['operation_id'], 'tenant': agent['tenant_id'], 'alias': agent['alias'],
         'host_id': agent['host_id'], 'container_name': agent['container_name'], 'harness': agent['harness_id'],
@@ -215,6 +216,105 @@ def perform(policy: dict, document: dict) -> dict:
     for window in normalized['provider_report']['windows']:
         window.pop('account_id', None)
     return {**envelope, **normalized, 'status': 'measured', 'provider': provider, 'identity_hash': result['identity_hash']}
+
+
+def _window_key(window: dict) -> str:
+    for field in ('window_key', 'key', 'clave'):
+        value = window.get(field)
+        if isinstance(value, str) and value:
+            return value
+    raise ValueError('quota_window_invalid')
+
+
+def _window_percent(window: dict) -> float:
+    for field in ('remaining_percent', 'remainingPercent', 'restante_pct'):
+        value = window.get(field)
+        if type(value) in (int, float) and value == value:
+            return float(value)
+    for field in ('used_percent', 'usedPercent', 'usado_pct'):
+        value = window.get(field)
+        if type(value) in (int, float) and value == value:
+            return 100.0 - float(value)
+    raise ValueError('quota_window_invalid')
+
+
+def _window_reset(window: dict) -> str | None:
+    value = next((window[field] for field in ('reset_at', 'resetAt', 'reinicia_en') if field in window), None)
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError('quota_window_invalid')
+    instant = datetime.datetime.fromisoformat(value.replace('Z', '+00:00'))
+    if instant.tzinfo is None:
+        raise ValueError('quota_window_invalid')
+    return instant.astimezone(datetime.UTC).isoformat().replace('+00:00', 'Z')
+
+
+def _indexed_windows(document) -> dict:
+    if isinstance(document, list):
+        windows = document
+    elif isinstance(document, dict):
+        windows = document.get('windows', document.get('ventanas'))
+    else:
+        windows = None
+    if not isinstance(windows, list):
+        raise ValueError('quota_window_invalid')
+    indexed = {}
+    for window in windows:
+        if not isinstance(window, dict):
+            raise ValueError('quota_window_invalid')
+        key = _window_key(window)
+        if key in indexed:
+            raise ValueError('quota_window_invalid')
+        indexed[key] = window
+    return indexed
+
+
+def contrast_same_instant(web: dict, coutas: dict, *, tolerance: float = 1) -> dict:
+    if not isinstance(web, dict) or not isinstance(coutas, dict) or set(web) != PROVIDERS or set(coutas) != PROVIDERS \
+            or type(tolerance) not in (int, float) or not 0 <= tolerance <= 100:
+        raise ValueError('quota_contrast_incomplete')
+    mismatches = []
+    for provider in sorted(PROVIDERS):
+        left, right = _indexed_windows(web[provider]), _indexed_windows(coutas[provider])
+        if set(left) != set(right):
+            mismatches.append({'provider': provider, 'reason': 'windows', 'web': sorted(left), 'coutas': sorted(right)})
+            continue
+        for key in sorted(left):
+            if abs(_window_percent(left[key]) - _window_percent(right[key])) > tolerance:
+                mismatches.append({'provider': provider, 'window': key, 'reason': 'percent'})
+            if _window_reset(left[key]) != _window_reset(right[key]):
+                mismatches.append({'provider': provider, 'window': key, 'reason': 'reset'})
+    return {'ok': not mismatches, 'tolerance': tolerance, 'mismatches': mismatches}
+
+
+def secret_match_count(text: str) -> int:
+    if not isinstance(text, str):
+        raise ValueError('quota_audit_invalid')
+    return sum(text.count(marker) for marker in SECRET_MARKERS)
+
+
+def redact_secrets(text: str) -> str:
+    if not isinstance(text, str):
+        raise ValueError('quota_audit_invalid')
+    redacted = text
+    for marker in SECRET_MARKERS:
+        redacted = redacted.replace(marker, '[redacted]')
+    return redacted
+
+
+def audit_quota_logs(gateway: list, host: list, audit_events: list) -> dict:
+    groups = {'gateway': gateway, 'host': host, 'audit_events': audit_events}
+    counts = {}
+    for name, records in groups.items():
+        if not isinstance(records, list):
+            raise ValueError('quota_audit_invalid')
+        total = 0
+        for record in records:
+            raw = record if isinstance(record, str) else json.dumps(record, ensure_ascii=False, default=str)
+            total += secret_match_count(raw)
+        counts[name] = total
+    return {'matches': sum(counts.values()), **counts}
 
 
 if __name__ == '__main__':
