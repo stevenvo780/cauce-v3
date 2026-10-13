@@ -118,6 +118,38 @@ test('an ingest response accepted by the gateway materializes despite a stricter
   assert.equal(await f.stateVersion(), 2);
 });
 
+test('a gateway ingest response with an altered digest is rejected before writing or adopting its files', { timeout: 6000 }, async t => {
+  let tampered = true;
+  const ingest: NativeContextIngest = { ingest: async input => {
+    const context = snapshot(input.base_version + 1, [
+      { path: 'context/mission.md', content: 'Gateway-normalized text.' },
+      { path: 'directives/server.md', content: 'Gateway directive.' },
+    ]);
+    return { state: 'ingested', context: tampered ? { ...context, digest: '0'.repeat(64) } : context };
+  } };
+  const f = await fixture(t, ingest);
+  await f.engine.handleDelivery(claimed('digest-ingest-first', snapshot(1, v1Files)));
+  assert.equal(f.store.getDelivery('digest-ingest-first')?.state, 'done');
+  const localContent = 'Local work that must survive an invalid response.';
+  await writeFile(f.path, localContent);
+  const nativeBefore = await readFile(join(f.space, 'AGENTS.md'), 'utf8');
+  await f.engine.handleDelivery(claimed('digest-ingest-tampered', snapshot(1, v1Files)));
+  assert.equal(f.store.getDelivery('digest-ingest-tampered')?.state, 'failed');
+  assert.equal(await f.stateVersion(), 1);
+  assert.equal(await readFile(f.path, 'utf8'), localContent);
+  assert.equal(await readFile(join(f.space, 'AGENTS.md'), 'utf8'), nativeBefore);
+  await assert.rejects(readFile(join(f.space, 'directives/server.md'), 'utf8'), { code: 'ENOENT' });
+  assert.deepEqual(f.reads, ['Version 1 instructions.']);
+  assert.equal(f.events.some(event => event.context_adoption?.version === 2), false);
+  tampered = false;
+  await f.engine.handleDelivery(claimed('digest-ingest-valid', snapshot(1, v1Files)));
+  assert.equal(f.store.getDelivery('digest-ingest-valid')?.state, 'done');
+  assert.equal(await f.stateVersion(), 2);
+  assert.equal(await readFile(f.path, 'utf8'), 'Gateway-normalized text.');
+  assert.equal(await readFile(join(f.space, 'directives/server.md'), 'utf8'), 'Gateway directive.');
+  assert.equal(f.reads.at(-1), 'Gateway-normalized text.');
+});
+
 test('a locally written invisible character is quarantined before any gateway ingest', { timeout: 6000 }, async t => {
   const calls: NativeContextIngestInput[] = [];
   const f = await fixture(t, accepting(calls));
