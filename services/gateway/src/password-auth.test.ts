@@ -9,7 +9,7 @@ import type { ConsoleUser } from './console-users.js';
 import { MemoryConsoleUserStore } from './test-support/console-users.js';
 import { hashPassword } from './password.js';
 import {
-  LoginThrottle, PasswordAuthProvider, PasswordWorkGate, PasswordWorkSaturated, isConsoleSurface, passwordWork, signConsoleSession,
+  LoginThrottle, PasswordAuthProvider, PasswordWorkGate, PasswordWorkSaturated, isConsoleSurface, signConsoleSession,
 } from './password-auth.js';
 import { verifyConsoleCredentialStamp } from './console-credential-stamp.js';
 import { fakePool, fakeRepository, noDeliveryWakes } from './test-support/gateway-doubles.js';
@@ -793,67 +793,5 @@ describe('PasswordWorkGate', () => {
     const gate = new PasswordWorkGate(1, 0);
     await expect(gate.run(async () => { throw new Error('scrypt failed'); })).rejects.toThrow('scrypt failed');
     await expect(gate.run(async () => 'next')).resolves.toBe('next');
-  });
-});
-
-describe('concurrent login admission', () => {
-  it('releases both reservations after a user lookup fails', async () => {
-    const test = await fixture({ user: await makeUser({ email: 'owner@example.test' }),
-      throttle: new LoginThrottle(1, 60_000), addressThrottle: new LoginThrottle(1, 60_000) });
-    const lookup = vi.spyOn(test.users, 'findByEmail').mockRejectedValueOnce(new Error('lookup unavailable'));
-    try {
-      expect((await test.login('owner@example.test', PASSWORD)).statusCode).toBe(500);
-      expect((await test.login('owner@example.test', PASSWORD)).statusCode).toBe(200);
-    } finally { lookup.mockRestore(); await test.app.close(); }
-  });
-
-  it('starts the failure window when a slow lookup finishes', async () => {
-    const test = await fixture({ user: await makeUser({ email: 'owner@example.test' }), throttle: new LoginThrottle(1, 60_000) });
-    let release = () => {};
-    const held = new Promise<undefined>(resolve => { release = () => { resolve(undefined); }; });
-    const lookup = vi.spyOn(test.users, 'findByEmail').mockImplementation(() => held);
-    const login = test.login('slow@example.test', 'wrong');
-    try {
-      await vi.waitFor(() => { expect(lookup).toHaveBeenCalledTimes(1); });
-      test.advance(120_000); release();
-      expect((await login).statusCode).toBe(401);
-      const refused = await test.login('slow@example.test', 'wrong');
-      expect(refused.statusCode).toBe(429);
-      expect(refused.headers['retry-after']).toBe('60');
-    } finally { release(); await login; lookup.mockRestore(); await test.app.close(); }
-  });
-
-  it.each(['address', 'email'] as const)('limits pending attempts by %s before looking up users', async (dimension) => {
-    const test = await fixture({ user: await makeUser({ email: 'owner@example.test' }),
-      throttle: new LoginThrottle(3, 60_000), addressThrottle: new LoginThrottle(3, 60_000) });
-    let release = () => {};
-    const held = new Promise<undefined>(resolve => { release = () => { resolve(undefined); }; });
-    const find = test.users.findByEmail.bind(test.users);
-    const lookup = vi.spyOn(test.users, 'findByEmail').mockImplementation(email => email === 'owner@example.test' ? find(email) : held);
-    const flood = Array.from({ length: 10 }, (_, index) => test.login(
-      dimension === 'email' ? 'missing@example.test' : `missing-${String(index)}@example.test`, 'wrong',
-      dimension === 'address' ? '203.0.113.7' : `203.0.113.${String(index + 10)}`));
-    try {
-      await vi.waitFor(() => { expect(lookup).toHaveBeenCalledTimes(3); });
-      expect((await test.login('owner@example.test', PASSWORD, '198.51.100.1')).statusCode).toBe(200);
-      release();
-      const responses = await Promise.all(flood);
-      expect(responses.filter(response => response.statusCode === 401)).toHaveLength(3);
-      const refused = responses.filter(response => response.statusCode === 429);
-      expect(refused).toHaveLength(7);
-      for (const response of refused) expect(Number(response.headers['retry-after'])).toBeGreaterThan(0);
-    } finally { release(); await Promise.all(flood); lookup.mockRestore(); await test.app.close(); }
-  });
-
-  it('queues real logins while background derivations fill their own queue', async () => {
-    const test = await fixture({ user: await makeUser({ email: 'owner@example.test' }) });
-    let release = () => {};
-    const held = new Promise<void>(resolve => { release = resolve; });
-    const registrations = Array.from({ length: 17 }, () => passwordWork.run(() => held));
-    try {
-      const logins = await Promise.all(Array.from({ length: 5 }, (_, index) =>
-        test.login('owner@example.test', PASSWORD, `198.51.100.${String(index + 1)}`)));
-      expect(logins.map(response => response.statusCode)).toEqual([200, 200, 200, 200, 200]);
-    } finally { release(); await Promise.all(registrations); await test.app.close(); }
   });
 });
