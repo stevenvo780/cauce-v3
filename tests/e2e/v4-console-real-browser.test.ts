@@ -197,7 +197,8 @@ describe('recorrido V4 de la consola en navegador real contra gateway y PostgreS
       errors.expectHttpError('/v3/console/fleet/hosts/enrollments', 403);
       expect(await apiPost(page, '/v3/console/fleet/hosts/enrollments', { host_id: `v4-${run}`, display_name: 'Ordenador V4' })).toBe(403);
 
-      await form.getByLabel('Identificador del ordenador').fill(hostId);
+      // The company prefix is fixed in the form; only the name part is typed.
+      await form.getByLabel('Identificador del ordenador').fill(hostId.slice(ownerA.company.slug.length + 1));
       await form.getByRole('button', { name: 'Crear invitación', exact: true }).click();
       const invitation = panel.locator('textarea');
       await invitation.waitFor({ timeout: 15_000 });
