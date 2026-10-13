@@ -36,6 +36,20 @@ async function assertSameCompany(client: Pick<DatabaseClient, 'query'>, email: s
   if (row !== undefined && !row.same) throw new Error('una cuenta no cambia de empresa: el tenant pertenece a otra');
 }
 
+/**
+ * 081 derives the membership role from the account and only lets a reader keep `read` in its home
+ * membership (deferred check at commit). An explicit downgrade to reader therefore withdraws every
+ * other home permission in the same transaction; it never adds one, so promoting grants nothing.
+ * An account that already was a reader satisfies the ceiling, which 081 enforces on every change.
+ */
+async function clampReaderHomeMembership(client: Pick<DatabaseClient, 'query'>, row: MaintainedConsoleUser,
+  requested: ConsoleUserRole | undefined): Promise<void> {
+  if (requested !== 'reader' || row.role !== 'reader') return;
+  await client.query(
+    `UPDATE human_tenant_memberships SET permissions=ARRAY(SELECT permission FROM unnest(permissions) permission WHERE permission='read')
+      WHERE human_id=$1 AND tenant_id=$2 AND NOT permissions <@ ARRAY['read']::text[]`, [row.id, row.tenant_id]);
+}
+
 export async function maintainConsoleUser(
   pool: DatabasePool,
   options: ConsoleUserMaintenance,
@@ -54,6 +68,18 @@ export async function maintainConsoleUser(
   const values = [email, passwordHash,
     options.name ?? null, options.role ?? null, options.tenant ?? null, options.alias ?? null,
     options.activate ? true : null];
+  if (options.updateOnly && options.role === 'reader') {
+    return withTransaction(pool, async (client) => {
+      await assertSameCompany(client, email, options.tenant);
+      const row = (await client.query<MaintainedConsoleUser>(
+        `UPDATE console_users SET ${assignments} WHERE email_normalized=$1
+         RETURNING id, role, tenant_id, alias, active`, values,
+      )).rows[0];
+      if (row === undefined) throw new Error(`no existe una cuenta de consola para ${options.email}`);
+      await clampReaderHomeMembership(client, row, options.role);
+      return row;
+    });
+  }
   if (options.updateOnly) {
     await assertSameCompany(pool, email, options.tenant);
     const result = await pool.query<MaintainedConsoleUser>(
@@ -95,6 +121,7 @@ export async function maintainConsoleUser(
       );
       row = updated.rows[0];
       if (row === undefined) throw new Error(`no existe una cuenta de consola para ${options.email}`);
+      await clampReaderHomeMembership(client, row, options.role);
     }
     return row;
   });
