@@ -103,6 +103,7 @@ create table messagesé as select tenant_id from messages;
 @pytest.fixture(scope="module")
 def pg():
     with postgres_fixture() as database:
+        database.command.append("-q")
         result = database.run_sql(SCHEMA)
         assert result.returncode == 0, result.stderr
         yield database
@@ -114,7 +115,8 @@ def transport(pg, monkeypatch):
     monkeypatch.setattr(doctor, "DOCTOR_INVENTORY", None)
 
     def sql_only(host, command, entrada=None, **_kwargs):
-        assert host == "agora" and command == doctor.PG and entrada.startswith("COPY (")
+        assert host == "agora" and command == doctor.PG
+        assert entrada.startswith("BEGIN READ ONLY;\nSET LOCAL search_path = pg_catalog;\nCOPY (")
         result = pg.run_sql(entrada)
         return result.returncode, result.stdout, result.stderr
 
@@ -179,6 +181,28 @@ def test_psql_error_redacts_free_text(transport):
         doctor.sql("select cast('ForeignTenant foreign-last-error' as integer)")
     assert "psql rc=" in str(error.value) and "stderr_chars=" in str(error.value)
     no_private(str(error.value))
+
+
+@pytest.mark.parametrize("query", ["UPDATE messages SET priority=priority RETURNING id",
+                                   "DELETE FROM messages RETURNING id"])
+def test_pg_read_only_transaction_blocks_writes_even_without_the_filter(transport, pg, monkeypatch, query):
+    before = pg.run_sql("SELECT id,priority FROM messages ORDER BY id")
+    assert before.returncode == 0, before.stderr
+    errors = []
+
+    def capture_error(*args, **kwargs):
+        result = transport(*args, **kwargs)
+        errors.append(result[2])
+        return result
+
+    monkeypatch.setattr(doctor, "sh", capture_error)
+    monkeypatch.setattr(doctor, "company_scoped_query", lambda value, **_kwargs: value)
+    with pytest.raises(RuntimeError, match="psql rc="):
+        doctor.sql(query)
+    assert "read-only transaction" in errors[-1]
+    after = pg.run_sql("SELECT id,priority FROM messages ORDER BY id")
+    assert after.returncode == 0, after.stderr
+    assert after.stdout == before.stdout
 
 
 @pytest.mark.parametrize("query,reason", [

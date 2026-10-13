@@ -248,14 +248,35 @@ Las reglas SQL de `evidencia-esperada.json` se ejecutan mediante la misma funci�
 Escribe los identificadores SQL en ASCII, las relaciones sin esquema ni comillas,
 y utiliza `JOIN` explícito, nunca
 listas de relaciones separadas por comas en `FROM`. Se admiten subconsultas de
-`SELECT` y CTE locales (`WITH nombre AS (...)`, también `MATERIALIZED` y
-`NOT MATERIALIZED`), pero no `WITH RECURSIVE` ni relaciones entre paréntesis sin
+`SELECT` y CTE del `WITH` inicial (`WITH nombre AS (...)`, también `MATERIALIZED` y
+`NOT MATERIALIZED`). Cada CTE contiene un `SELECT` y solo puede referenciar CTE
+definidas antes. No se permiten nombres repetidos ni que oculten tablas acotadas,
+`WITH` anidados, `WITH RECURSIVE`, `WINDOW` ni relaciones entre paréntesis sin
 una subconsulta. Las cadenas usan comillas simples y escapan cada apóstrofo
 duplicándolo; su contenido no cuenta como relaciones ni nombres de CTE.
 El lector rechaza antes de ejecutar cualquier SQL con comillas dobles,
 comentarios (`--` o `/*`), punto y coma, `TABLE <relación>`, relaciones calificadas
 con esquema, uniones con coma o cadenas con sintaxis de escape (`E'...'`, `U&'...'`)
 o comillas de dólar (`$$...$$`, `$nombre$...$nombre$`).
+La consulta debe empezar por `SELECT` o `WITH`. Se rechazan los tokens de escritura
+`INSERT`, `UPDATE`, `DELETE`, `MERGE`, `INTO`, `TRUNCATE`, `COPY`, `CALL`, `DO`,
+`GRANT`, `ALTER`, `CREATE` y `DROP`, incluso dentro de una CTE. Cualquier relación
+que no sea una tabla acotable o una CTE anterior válida se rechaza.
+
+La lista cerrada de funciones admitidas es: `array_agg`, `coalesce`, `count`,
+`extract`, `greatest`, `json_build_object`, `left`, `length`, `max`, `min`, `now`,
+`position`, `regexp_replace`, `round`, `string_agg` y `to_char`. Se rechaza cualquier
+otra función y cualquier llamada calificada con esquema. Las conversiones con
+`CAST(... AS ...)` o `::` solo admiten `text` e `integer`; los literales tipados
+admiten `interval` y `timestamp`. No se admite `regclass`.
+
+Hay SQL legítimo que este subconjunto rechaza: `substring(x FROM n)`,
+`trim(... FROM x)`, `IS DISTINCT FROM` y funciones en `FROM` o `JOIN`, como
+`generate_series` y `unnest`. Reescribe la regla utilizando el subconjunto
+admitido; un rechazo queda como evidencia sin verificar, nunca como cumplimiento.
+Cada lectura usa `BEGIN READ ONLY` y `search_path=pg_catalog`, con las tablas
+acotadas referidas explícitamente en `public`. `psql -XqAt` ignora la configuración
+de inicio y suprime los mensajes de control para conservar el formato CSV.
 No añadas `;` al final. Por ejemplo:
 
 ```sql

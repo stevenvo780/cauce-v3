@@ -47,7 +47,9 @@ def sql(consulta, columnas=None, *, internal=False):
     cuerpo = consulta.strip()
     if not cuerpo:
         raise RuntimeError("consulta vacia")
-    orden = f"COPY ({company_scoped_query(cuerpo, internal=internal)}) TO STDOUT WITH (FORMAT csv, FORCE_QUOTE *);"
+    orden = ("BEGIN READ ONLY;\nSET LOCAL search_path = pg_catalog;\n"
+             f"COPY ({company_scoped_query(cuerpo, internal=internal)}) "
+             "TO STDOUT WITH (FORMAT csv, FORCE_QUOTE *);\nCOMMIT;")
     rc, out, err = sh("agora", PG, entrada=orden)
     if rc != 0:
         raise RuntimeError(f"psql rc={rc}: stderr_chars={len(err)}")

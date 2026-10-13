@@ -52,7 +52,7 @@ from credential_health import classify_doctor_record, shared_fingerprints  # noq
 AGORA = "root@100.64.0.6"
 VPS = "root@100.64.0.11"
 PG = ("docker exec -i cauce-v3-prod-postgres-1 psql -U cauce -d cauce "
-      "-At -v ON_ERROR_STOP=1 -f -")
+      "-XqAt -v ON_ERROR_STOP=1 -f -")
 csv.field_size_limit(16 * 1024 * 1024)
 PUENTE_TELEGRAM = "cauce-v3-prod-telegram-bridge-1"
 TOKEN_DIR = "/etc/cauce-v3/telegram-runtime"

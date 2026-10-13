@@ -12,6 +12,70 @@ def guard_company_id():
 DOCTOR_CONTAINER_SCOPE_QUERY = "SELECT container_name,in_company FROM doctor_container_scopes"
 
 
+DOCTOR_SQL_FUNCTIONS = {
+    "array_agg", "coalesce", "count", "extract", "greatest", "json_build_object", "left", "length",
+    "max", "min", "now", "position", "regexp_replace", "round", "string_agg", "to_char",
+}
+DOCTOR_SQL_CAST_TYPES = {"text", "integer"}
+
+
+def doctor_query_casts(tokens, parentheses):
+    for index, token in enumerate(tokens):
+        if tokens[index:index+2] == [":", ":"]:
+            if index+2 >= len(tokens) or tokens[index+2] not in DOCTOR_SQL_CAST_TYPES or (
+                tokens[index+3:index+4] == ["."]
+            ):
+                raise ValueError("doctor query uses an unsupported cast type")
+        if token != "cast" or tokens[index+1:index+2] != ["("]:
+            continue
+        end = parentheses[index+1]
+        cursor = index + 2
+        while cursor < end:
+            if tokens[cursor] == "(":
+                cursor = parentheses[cursor] + 1
+            elif tokens[cursor] == "as":
+                if cursor+2 != end or tokens[cursor+1] not in DOCTOR_SQL_CAST_TYPES:
+                    raise ValueError("doctor query uses an unsupported cast type")
+                break
+            else:
+                cursor += 1
+        else:
+            raise ValueError("doctor query requires CAST AS syntax")
+
+
+def doctor_query_ctes(tokens, parentheses):
+    definitions, openings = {}, set()
+    if tokens[0] != "with":
+        return definitions, openings
+    index = 1
+    while index < len(tokens):
+        name = tokens[index]
+        if not re.fullmatch(r"[a-z_][a-z0-9_]*", name) or name in definitions:
+            raise ValueError("doctor query has an invalid or duplicate CTE")
+        index += 1
+        if tokens[index:index+1] != ["as"]:
+            raise ValueError("doctor query requires CTE AS syntax without column lists")
+        index += 1
+        if tokens[index:index+1] == ["not"]:
+            if tokens[index+1:index+2] != ["materialized"]:
+                raise ValueError("doctor query has invalid CTE materialization")
+            index += 2
+        elif tokens[index:index+1] == ["materialized"]:
+            index += 1
+        if tokens[index:index+2] != ["(", "select"] or index not in parentheses:
+            raise ValueError("doctor query requires SELECT inside each CTE")
+        openings.add(index)
+        definitions[name] = parentheses[index]
+        index = parentheses[index] + 1
+        if tokens[index:index+1] == [","]:
+            index += 1
+            continue
+        if tokens[index:index+1] != ["select"]:
+            raise ValueError("doctor query requires SELECT after the initial CTEs")
+        return definitions, openings
+    raise ValueError("doctor query has incomplete CTE definitions")
+
+
 def doctor_query_structure(query):
     for marker, reason in (("\"", "double quotes"), ("--", "comments"), ("/*", "comments"), (";", "semicolons")):
         if marker in query:
@@ -20,6 +84,15 @@ def doctor_query_structure(query):
     if "\\'" in query or any(re.search(r"\b(?:e|u&)\s*$", query[:literal.start()], re.IGNORECASE)
                               for literal in literals.finditer(query)):
         raise ValueError("doctor query has unsupported string syntax")
+    literal_prefixes = {"select", "where", "having", "on", "and", "or", "not", "in", "when", "then", "else",
+                        "like", "ilike", "interval", "timestamp", "zone"}
+    for literal in literals.finditer(query):
+        before = query[:literal.start()].lower()
+        prefix = re.search(r"\b([a-z_][a-z0-9_]*)\s*$", before)
+        if prefix and (prefix[1] not in literal_prefixes or before[:prefix.start()].rstrip().endswith(".") or (
+            prefix[1] == "zone" and not re.search(r"\bat\s+time\s+zone\s*$", before)
+        )):
+            raise ValueError("doctor query has an unsupported typed literal")
     structure = literals.sub(" ", query).lower()
     if "'" in structure or "$" in structure:
         raise ValueError("doctor query has unsupported string syntax")
@@ -28,13 +101,43 @@ def doctor_query_structure(query):
     if re.search(r"\btable\s+[a-z_]", structure):
         raise ValueError("doctor query does not support TABLE syntax")
     tokens = re.findall(r"[a-z_][a-z0-9_]*|[^\s]", structure)
+    if not tokens or tokens[0] not in {"select", "with"}:
+        raise ValueError("doctor query must begin with SELECT or WITH")
+    forbidden = {"insert", "update", "delete", "merge", "into", "truncate", "copy", "call", "do",
+                 "grant", "alter", "create", "drop", "regclass"}
+    if forbidden.intersection(tokens):
+        raise ValueError("doctor query forbids write and relation lookup tokens")
+    if "recursive" in tokens:
+        raise ValueError("recursive doctor queries are unsupported")
+    if "with" in tokens[1:] or "window" in tokens:
+        raise ValueError("doctor query does not support nested WITH or WINDOW")
+    parentheses, stack = {}, []
+    for index, token in enumerate(tokens):
+        if token == "(":
+            stack.append(index)
+        elif token == ")":
+            if not stack:
+                raise ValueError("doctor query has unbalanced parentheses")
+            parentheses[stack.pop()] = index
+    if stack:
+        raise ValueError("doctor query has unbalanced parentheses")
+    local_ctes, cte_openings = doctor_query_ctes(tokens, parentheses)
+    doctor_query_casts(tokens, parentheses)
     frames = [[False, None]]
     references = []
-    endings = {"where", "group", "having", "order", "limit", "offset", "fetch", "window",
+    group_keywords = {"select", "from", "where", "having", "on", "and", "or", "not", "in", "exists",
+                      "using", "as", "when", "then", "else", "distinct", "cast"}
+    endings = {"where", "group", "having", "order", "limit", "offset", "fetch",
                "union", "intersect", "except", "for"}
     for index, token in enumerate(tokens):
         if token == "(":
-            frames.append([False, tokens[index-1] if index else None])
+            previous = tokens[index-1] if index else None
+            if previous and re.fullmatch(r"[a-z_][a-z0-9_]*", previous):
+                if (index > 1 and tokens[index-2] == ".") or (
+                    previous not in DOCTOR_SQL_FUNCTIONS | group_keywords and index not in cte_openings
+                ):
+                    raise ValueError("doctor query calls an unsupported function")
+            frames.append([False, previous])
         elif token == ")":
             if len(frames) == 1:
                 raise ValueError("doctor query has unbalanced parentheses")
@@ -50,12 +153,14 @@ def doctor_query_structure(query):
                 if len(following) != 2 or following[1] not in {"select", "with"}:
                     raise ValueError("doctor query has an unsupported parenthesized relation")
             elif following and re.fullmatch(r"[a-z_][a-z0-9_]*", following[0]):
-                references.append((following[0], len(following) == 2 and following[1] == "."))
+                if len(following) == 2 and following[1] == "(":
+                    raise ValueError("doctor query does not support functions in FROM or JOIN")
+                references.append((following[0], len(following) == 2 and following[1] == ".", index))
             else:
                 raise ValueError("doctor query references an unscoped relation")
     if len(frames) != 1:
         raise ValueError("doctor query has unbalanced parentheses")
-    return structure, references
+    return structure, references, local_ctes
 
 
 def company_scoped_query(query, *, internal=False):
@@ -63,9 +168,7 @@ def company_scoped_query(query, *, internal=False):
     if re.search(r"\bdoctor_container_scopes\b", query, re.IGNORECASE):
         if not internal or query != DOCTOR_CONTAINER_SCOPE_QUERY:
             raise ValueError("container ownership is reserved for the internal doctor reader")
-    structure, references = doctor_query_structure(query)
-    if re.match(r"\s*with\s+recursive\b", structure):
-        raise ValueError("recursive doctor queries are unsupported")
+    _, references, local_ctes = doctor_query_structure(query)
     relations = {
         "tenants": ((), f"company_id='{company}'"),
         "companies": ((), f"id='{company}'"),
@@ -93,12 +196,14 @@ def company_scoped_query(query, *, internal=False):
                          f"OR to_jsonb(audit_events)->>'company_id'='{company}')"),
         "doctor_container_scopes": ((), None),
     }
-    local_ctes = set(re.findall(r"\b([a-z_][a-z0-9_]*)\s+as\s*(?:(?:not\s+)?materialized\s*)?\(", structure))
+    if local_ctes.keys() & relations.keys():
+        raise ValueError("doctor query CTEs cannot shadow scoped relations")
     used = set()
-    for name, qualified in references:
-        name = name.lower()
+    for name, qualified, index in references:
         if qualified or name not in relations and name not in local_ctes:
             raise ValueError("doctor query references an unscoped relation")
+        if name in local_ctes and local_ctes[name] >= index:
+            raise ValueError("doctor query references a CTE before its definition")
         if name in relations:
             used.add(name)
     scoped = []
