@@ -17,7 +17,7 @@ make dev-up && make dev-health
 CAUCE_ENV_FILE=/etc/cauce-v3/prod.env make prod-health
 ```
 
-Producción publica solo gateway/console sobre `CAUCE_PRIVATE_BIND_IP` (default `127.0.0.1`), con health HTTPS. Gateway, consola y su upstream usan certificados montados; PostgreSQL exige `sslmode=verify-full` y CA explícita. Los adapters generados exigen `wss://`, política `production`, token/cert/CA por PATH, instance ID estable y estado en `/var/lib/cauce-v3/aliases/<alias>`. Runtime, consola y workers son non-root/read-only; los servicios persistentes tienen restart policy.
+Producción publica gateway (`${GATEWAY_TLS_PORT:-8443}`) y consola (`${CONSOLE_TLS_PORT:-8444}`) sobre `CAUCE_PRIVATE_BIND_IP` (default `127.0.0.1`), con health HTTPS. Con el profile `terminal`, `terminal-relay` publica además el puerto de agentes `${TERMINAL_RELAY_AGENT_PORT:-8445}` en esa misma IP; el puerto del navegador (8446) no se publica. Gateway, consola y su upstream usan certificados montados; PostgreSQL exige `sslmode=verify-full` y CA explícita. Los adapters generados exigen `wss://`, política `production`, token/cert/CA por PATH, instance ID estable y estado en `/var/lib/cauce-v3/aliases/<alias>`. Runtime, consola y workers son non-root/read-only; los servicios persistentes tienen restart policy.
 
 Profiles opt-in:
 
@@ -43,7 +43,7 @@ Hermes declara además sólo el nombre operativo `HERMES_INFERENCE_MODEL`; su va
 ```sh
 make manifests
 # salida: generated/systemd/cauce-v3-alias-<alias>.service
-# salida adicional: generated/container-systemd/cauce-v3-container-<alias>.service
+# salida adicional: generated/container-systemd/rootless/cauce-v3-container-<alias>.service
 ```
 
 Los env privados `/etc/cauce-v3/aliases/<alias>.env` resuelven los placeholders. `alias-runner.sh` exige WSS, archivos legibles, wrapper absoluto y `flock` exclusivo. Ver `runbooks/alias-cutover.md`; generar unidades no inicia consumers.
@@ -104,7 +104,7 @@ acredite binarios/imágenes finales; ver `el historial de git (--diff-filter=AD)
   (consola) sin volver el archivo legible para otros usuarios del host.
 - Producción exige PostgreSQL `sslmode=verify-full`; readiness confirma `pg_stat_ssl.ssl=true`.
 - Backup/restore aceptan `DATABASE_URL_FILE`, verifican TLS/checksum y no operan V2.
-- Rollback de schema es restore hacia DB V3 nueva; no hay down migrations.
+- El rollback de schema en producción es un restore hacia una base V3 nueva: `migrationSourcesForApply` solo lee los `.sql` de `packages/store/migrations/` y no entra en `down/`. Los reversos sí existen en ese subdirectorio (no todas las subidas tienen el suyo) y `ops/scripts/rehearse-migrations-clone.sh` exige uno por cada versión pendiente del ensayo, y lo aplica en el clon.
 - CSP permite a xterm solo atributos de estilo inline (`style-src-attr`), sin abrir scripts inline.
 
 ## Límite de la evidencia del bridge Telegram
