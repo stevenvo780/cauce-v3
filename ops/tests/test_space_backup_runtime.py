@@ -138,6 +138,17 @@ class SpaceBackupRuntimeTest(unittest.TestCase):
         self.assertNotEqual(self.invoke('export').returncode, 0)
         self.assertFalse(list(self.state.glob('space-backup-*')))
 
+    def test_top_level_layout_symlink_aborts_export_without_backup_artifacts(self):
+        projects = self.space / 'projects'
+        outside = self.root / 'outside-projects'
+        expected = (projects / 'work.txt').read_bytes()
+        projects.rename(outside)
+        projects.symlink_to(outside, target_is_directory=True)
+        result = self.invoke('export')
+        self.assertNotEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(list(self.state.glob('space-backup-*')))
+        self.assertEqual((outside / 'work.txt').read_bytes(), expected)
+
     def test_file_or_total_size_limit_is_explicit_and_removes_partial_archive(self):
         with (self.space / 'projects/large.txt').open('wb') as output:
             output.truncate(128 * 1024 * 1024 + 1)
