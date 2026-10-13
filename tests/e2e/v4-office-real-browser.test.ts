@@ -8,6 +8,9 @@ import {
   apiGet, asV4Page, BrowserErrorLog, bodySnippet, fillRegistration, HERMETIC_INSTANCE_RULES, login,
   openRegistration, PATTERN_DEFECT_RULE, syntheticPerson, type IgnoredConsoleRule, type V4Page, type V4Person,
 } from './v4-console-real-browser.helpers.js';
+import {
+  apiMutation, applyRegistryChange, configChange, escapeRegex, expectCampusRoom, openRegistry, topologyMember,
+} from './v4-office-real-browser.helpers.js';
 
 const run = randomUUID().replaceAll('-', '').slice(0, 8);
 const canaryPerson = (label: string): V4Person => {
@@ -28,6 +31,9 @@ const roomLabel = `zz-canary-room-${run}`;
 const renamedRoomLabel = `zz-canary-renamed-${run}`;
 const destinationRoomLabel = `zz-canary-destination-${run}`;
 const agentAlias = `zz-canary-agent-${run}`;
+const cycleAlias = `zz-canary-cycle-${run}`;
+const cycleName = `zz-canary-cycle-name-${run}`;
+const renamedCycleName = `zz-canary-cycle-renamed-${run}`;
 const partLabel = `zz-canary-part-${run}`;
 const editedPartLabel = `zz-canary-edited-part-${run}`;
 const draftPartLabel = `zz-canary-draft-part-${run}`;
@@ -45,6 +51,7 @@ const unexpectedHttp: string[] = [];
 const expectedHttp: { label: string; path: string; statuses: number[] }[] = [];
 const observedExpectedHttp: string[] = [];
 const officeWrites: { label: string; status: number; input: { expected_version: number; rooms: CompanyOfficeRoom[] } }[] = [];
+const quotaReads = new Map<string, number>();
 let fixture: Awaited<ReturnType<typeof startConsoleFunctionalFixture>> | undefined;
 let pageA: V4Page | undefined;
 let pageB: V4Page | undefined;
@@ -71,6 +78,7 @@ function watchHttp(page: V4Page, label: string): void {
       const request = response.request() as ReturnType<BrowserResponse['request']> & { postData(): string | null };
       officeWrites.push({ label, status, input: JSON.parse(request.postData() ?? '{}') as typeof officeWrites[number]['input'] });
     }
+    if (path === '/v3/console/quota-accounts' && response.request().method() === 'GET') quotaReads.set(label, (quotaReads.get(label) ?? 0) + 1);
     if (status < 400) return;
     if ((status === 501 && path === '/v3/console/terminal/capability')
         || (status === 404 && path === '/v3/console/mcp/client-delegations')) return;
@@ -100,15 +108,6 @@ async function step<T>(page: V4Page, name: string, action: () => Promise<T>): Pr
   catch (cause) {
     throw new Error(`${name} failed at ${page.url()}: ${await bodySnippet(page)} || console=${JSON.stringify(errors.trace.slice(-12))}`, { cause });
   }
-}
-
-async function apiMutation(page: V4Page, path: string, payload: unknown, method = 'POST'): Promise<number> {
-  return page.evaluate(async ({ target, body, method }: { target: string; body: string; method: string }) => {
-    const session = await (await fetch('/v3/auth/session', { credentials: 'include', cache: 'no-store' })).json() as { csrf_token?: string };
-    const response = await fetch(target, { method, credentials: 'include', body,
-      headers: { 'Content-Type': 'application/json', 'X-Cauce-Console': '1', 'X-CSRF-Token': session.csrf_token ?? '' } });
-    return response.status;
-  }, { target: path, body: JSON.stringify(payload), method });
 }
 
 async function savedLayout(): Promise<Pick<CompanyOfficeLayout, 'version' | 'rooms'>> {
@@ -167,41 +166,26 @@ async function openPlan(page: V4Page): Promise<void> {
   await page.getByRole('heading', { name: 'Plano de oficina', exact: true }).waitFor({ timeout: 20_000 });
 }
 
-function escapeRegex(value: string): string { return value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&'); }
-
-async function expectCampusRoom(page: V4Page, label: string, agents: number): Promise<void> {
-  const accessibleCount = () => page.evaluate((target: string) => {
-    const toolbar = document.querySelector('[role="toolbar"][aria-label="Edificios del campus"]');
-    const button = Array.from(toolbar?.querySelectorAll('button[aria-label]') ?? [])
-      .find((candidate) => candidate.getAttribute('aria-label')?.startsWith(target));
-    if (!(button instanceof HTMLElement) || button.getClientRects().length === 0) return null;
-    const description = button.getAttribute('aria-label')?.split(': ').at(-1);
-    return description?.split(',')[0]?.trim() ?? null;
-  }, label);
-  const expected = `${String(agents)} ${agents === 1 ? 'agente' : 'agentes'}`;
-  await expect.poll(accessibleCount, { timeout: 30_000 }).toBe(expected);
-}
-
 function planRoom(label: string): string { return `Sala ${hubA}/${label}`; }
 
-async function expectAgentRooms(expectedPrimary: string, expectedRooms: string[]): Promise<void> {
+async function expectAgentRooms(expectedPrimary: string, expectedRooms: string[], alias = agentAlias): Promise<void> {
   await expect.poll(async () => {
     const agent = await pool().query<{ primary_room_id: string | null }>(
-      'SELECT primary_room_id FROM agents WHERE tenant_id=$1 AND alias=$2', [hubA, agentAlias]);
+      'SELECT primary_room_id FROM agents WHERE tenant_id=$1 AND alias=$2', [hubA, alias]);
     const memberships = await pool().query<{ room_id: string }>(
-      `SELECT room_id FROM memberships WHERE tenant_id=$1 AND alias=$2 AND enabled AND retired_at IS NULL ORDER BY room_id`, [hubA, agentAlias]);
+      `SELECT room_id FROM memberships WHERE tenant_id=$1 AND alias=$2 AND enabled AND retired_at IS NULL ORDER BY room_id`, [hubA, alias]);
     return { primaryRoomId: agent.rows[0]?.primary_room_id ?? null, rooms: memberships.rows.map((row) => row.room_id) };
   }, { timeout: 20_000 }).toEqual({ primaryRoomId: expectedPrimary, rooms: [...expectedRooms].sort() });
 }
 
-async function moveAgent(page: V4Page, destination: string): Promise<void> {
-  const ref = encodeURIComponent(`${hubA}/${agentAlias}`);
+async function moveAgent(page: V4Page, destination: string, alias = agentAlias): Promise<void> {
+  const ref = encodeURIComponent(`${hubA}/${alias}`);
   await page.goto(`${base()}/config?seccion=agentes&agente=${ref}`, { waitUntil: 'domcontentloaded' });
   const sheet = page.getByRole('dialog');
   await sheet.waitFor({ timeout: 20_000 });
   await sheet.getByRole('tab', { name: 'Grupos', exact: true }).click();
   const move = sheet.getByRole('region', { name: 'Mover a otro grupo', exact: true });
-  await move.getByLabel('Miembro a mover').selectOption(agentAlias);
+  await move.getByLabel('Miembro a mover').selectOption(alias);
   await move.getByLabel('Grupo de destino').selectOption(destination);
   await move.getByRole('button', { name: 'Previsualizar movimiento atómico', exact: true }).click();
   const confirm = move.getByRole('button', { name: 'Confirmar movimiento atómico', exact: true });
@@ -209,20 +193,21 @@ async function moveAgent(page: V4Page, destination: string): Promise<void> {
   await confirm.click();
 }
 
-async function assertAgentInPlan(page: V4Page, label: string): Promise<void> {
+async function assertAgentInPlan(page: V4Page, label: string, alias = agentAlias): Promise<void> {
   const room = page.getByRole('region', { name: planRoom(label), exact: true });
   await room.waitFor({ timeout: 30_000 });
   await room.getByRole('button').click();
   const roster = page.getByRole('region', { name: `Agentes de sala ${hubA}/${label}`, exact: true });
-  await roster.getByRole('button', { name: new RegExp(escapeRegex(agentAlias), 'u') }).waitFor({ timeout: 20_000 });
+  await roster.getByRole('button', { name: new RegExp(escapeRegex(alias), 'u') }).waitFor({ timeout: 20_000 });
 }
 
-async function assertAgentNotInPlan(page: V4Page, label: string): Promise<void> {
+async function assertAgentNotInPlan(page: V4Page, label: string, alias = agentAlias): Promise<void> {
   const room = page.getByRole('region', { name: planRoom(label), exact: true });
   await room.waitFor({ timeout: 30_000 });
   await room.getByRole('button').click();
   const roster = page.getByRole('region', { name: `Agentes de sala ${hubA}/${label}`, exact: true });
-  expect(await roster.getByRole('button', { name: new RegExp(escapeRegex(agentAlias), 'u') }).count()).toBe(0);
+  await roster.waitFor({ timeout: 20_000 });
+  expect(await roster.getByRole('button', { name: new RegExp(escapeRegex(alias), 'u') }).count()).toBe(0);
 }
 
 beforeAll(async () => {
@@ -419,7 +404,10 @@ describe('Oficina V4 en navegador Chromium real, gateway y PostgreSQL reales', (
       await page.getByRole('button', { name: 'Guardar plano', exact: true }).click();
       const alert = page.getByRole('alert');
       await alert.waitFor();
-      expect(await alert.innerText()).toMatch(/versión|version/iu);
+      const conflict = await alert.innerText();
+      expect(conflict).toMatch(/versión nueva del plano.*se conserva el borrador/su);
+      expect(conflict).toContain('Código: conflict');
+      expect(conflict).not.toContain('reload and retry');
       expect(await staleEditor.getByLabel('Nombre de parte', { exact: true }).inputValue()).toBe(draftPartLabel);
       await page.getByLabel(`Parte ${draftPartLabel}`, { exact: true }).waitFor();
       await page.getByText('Plano sin guardar', { exact: true }).waitFor();
@@ -566,6 +554,8 @@ describe('Oficina V4 en navegador Chromium real, gateway y PostgreSQL reales', (
       { state: 'model_dependent', label: 'Varía por modelo', remaining: 0, status: 'ok' },
     ];
     await openOffice(page);
+    const readsBefore = quotaReads.get('owner-a') ?? 0;
+    const loopStarted = Date.now();
     for (const scenario of cases) await step(page, `persisted fatigue ${scenario.state}`, async () => {
       await pool().query('DELETE FROM quota_window_state WHERE account_id=$1', [accountId]);
       await pool().query(`UPDATE provider_accounts SET paused_until=CASE WHEN $2 THEN now()+interval '1 hour' ELSE NULL END,
@@ -609,8 +599,130 @@ describe('Oficina V4 en navegador Chromium real, gateway y PostgreSQL reales', (
       const detail = sheet.getByRole('region', { name: `Disponibilidad de ${agentAlias}`, exact: true });
       await detail.getByText(scenario.label, { exact: true }).first().waitFor();
       await expect.poll(() => detail.locator('[data-fatigue]').first().evaluate(element => element.dataset.fatigue)).toBe(scenario.state);
+      await detail.getByRole('article', { name: `Cuotas de ${accountId}`, exact: true }).waitFor();
       await sheet.getByRole('button', { name: 'Cerrar el detalle', exact: true }).click();
       process.stdout.write(`V4 office fatigue ${scenario.state}: real SQL + HTTP + campus + plan + agent sheet verified\n`);
+    });
+    // Each scenario reads twice on purpose: the direct API check and «Releer plano y cuotas». The agent sheet
+    // reuses the office's shared read, so besides those only the shared 30 s poller may add reads.
+    const polls = Math.floor((Date.now() - loopStarted) / 30_000) + 1;
+    const reads = (quotaReads.get('owner-a') ?? 0) - readsBefore;
+    process.stdout.write(`V4 office quota reads: ${String(reads)} for ${String(cases.length)} scenarios and ${String(polls)} poll windows\n`);
+    expect(reads).toBeGreaterThanOrEqual(cases.length * 2);
+    expect(reads).toBeLessThanOrEqual(cases.length * 2 + polls);
+  });
+
+  it('ciclo de un agente nuevo: alta, admisión, edición, asignación y baja en plano, campus, re-login y segundo navegador', async () => {
+    const page = ownerPage();
+    const reader = readerPage;
+    if (!reader) throw new Error('second reader browser was not initialized');
+    const officeLabel = (await pool().query<{ label: string }>(
+      "SELECT COALESCE(display_name,id) AS label FROM rooms WHERE tenant_id=$1 AND id='office'", [hubA])).rows[0]?.label;
+    if (!officeLabel) throw new Error('default office room is absent');
+    const cycleRooms = async () => (await pool().query<{ room_id: string }>(
+      'SELECT room_id FROM memberships WHERE tenant_id=$1 AND alias=$2 AND enabled ORDER BY room_id', [hubA, cycleAlias])).rows;
+    await step(page, 'new agent registration from the wizard', async () => {
+      await openConfig(page, 'agentes');
+      await page.getByRole('button', { name: 'Añadir agente', exact: true }).click();
+      const dialog = page.getByRole('dialog', { name: 'Añadir agente', exact: true });
+      await dialog.getByLabel('Espacio de trabajo').selectOption(hubA);
+      await dialog.getByLabel('Alias', { exact: true }).fill(cycleAlias);
+      await dialog.getByLabel('Nombre visible').fill(cycleName);
+      await dialog.getByRole('button', { name: 'Siguiente', exact: true }).click();
+      await dialog.getByRole('button', { name: 'Siguiente', exact: true }).click();
+      await dialog.getByLabel('Grupo inicial (opcional)').selectOption(roomId);
+      await dialog.getByRole('button', { name: 'Siguiente', exact: true }).click();
+      await dialog.getByRole('button', { name: 'Previsualizar alta', exact: true }).click();
+      const create = dialog.getByRole('button', { name: 'Crear registro', exact: true });
+      await expect.poll(() => create.isDisabled(), { timeout: 20_000 }).toBe(false);
+      await create.click();
+      await dialog.getByText(`Registro creado: ${hubA}/${cycleAlias}.`, { exact: true }).waitFor({ timeout: 20_000 });
+      await dialog.getByRole('button', { name: 'Terminar', exact: true }).click();
+    });
+    expect((await pool().query('SELECT display_name,enabled FROM agents WHERE tenant_id=$1 AND alias=$2', [hubA, cycleAlias])).rows)
+      .toEqual([{ display_name: cycleName, enabled: false }]);
+    await expect.poll(cycleRooms, { timeout: 20_000 }).toEqual([{ room_id: roomId }]);
+    await step(page, 'an unadmitted registration is not an office agent', async () => {
+      await openPlan(page);
+      await assertAgentNotInPlan(page, renamedRoomLabel, cycleAlias);
+      await assertAgentInPlan(page, renamedRoomLabel);
+    });
+
+    // Admission is a verified fleet operation that provisions a real container on a host. This hermetic fixture
+    // has no host, so it writes that operation's durable effect and checks that every view follows it.
+    await pool().query(`UPDATE agents SET enabled=true,harness_id='codex',container_name=$3,runtime_user='dev',
+        home_directory=$4,state_directory=$5 WHERE tenant_id=$1 AND alias=$2`,
+    [hubA, cycleAlias, `zz-canary-cycle-${run}`, `/srv/zz-canary-cycle-${run}`, `/srv/zz-canary-cycle-${run}/state`]);
+    await step(page, 'admitted agent in plan and campus', async () => {
+      await openPlan(page);
+      await assertAgentInPlan(page, renamedRoomLabel, cycleAlias);
+      await page.getByRole('button', { name: 'Campus', exact: true }).click();
+      await expectCampusRoom(page, renamedRoomLabel, 2);
+    });
+
+    await step(page, 'agent display name edited from its registry', async () => {
+      const { editor } = await openRegistry(page, base(), hubA, cycleAlias);
+      await editor.getByRole('textbox', { name: 'Nombre visible', exact: true }).fill(renamedCycleName);
+      await applyRegistryChange(page);
+    });
+    await expect.poll(async () => (await pool().query<{ display_name: string }>(
+      'SELECT display_name FROM agents WHERE tenant_id=$1 AND alias=$2', [hubA, cycleAlias])).rows[0]?.display_name,
+    { timeout: 20_000 }).toBe(renamedCycleName);
+
+    await step(page, 'assign the new agent to the default room', async () => { await moveAgent(page, 'office', cycleAlias); });
+    await expect.poll(cycleRooms, { timeout: 20_000 }).toEqual([{ room_id: 'office' }]);
+    await step(page, 'owner re-login keeps the new agent in its room', async () => {
+      await openOffice(page);
+      await page.getByRole('button', { name: `Cuenta de ${ownerA.name}`, exact: true }).click();
+      await page.getByRole('button', { name: 'Cerrar sesión', exact: true }).click();
+      await page.getByLabel('Correo', { exact: true }).waitFor({ timeout: 20_000 });
+      await login(page, base(), ownerA);
+      await openPlan(page);
+      await assertAgentInPlan(page, officeLabel, cycleAlias);
+      await assertAgentNotInPlan(page, renamedRoomLabel, cycleAlias);
+      await page.getByRole('button', { name: 'Campus', exact: true }).click();
+      await expectCampusRoom(page, officeLabel, 1);
+      await expectCampusRoom(page, renamedRoomLabel, 1);
+    });
+    await step(reader, 'second browser sees the edited and reassigned agent', async () => {
+      await openPlan(reader);
+      await assertAgentInPlan(reader, officeLabel, cycleAlias);
+      expect(await topologyMember(reader, hubA, cycleAlias)).toMatchObject({
+        room_id: 'office', agent_enabled: true, display_name: renamedCycleName,
+      });
+    });
+
+    await step(page, 'pausing the agent removes it from plan and campus', async () => {
+      const { editor } = await openRegistry(page, base(), hubA, cycleAlias);
+      await editor.getByRole('combobox', { name: 'Estado del registro', exact: true }).selectOption('false');
+      await applyRegistryChange(page);
+      await openPlan(page);
+      await assertAgentNotInPlan(page, officeLabel, cycleAlias);
+      await page.getByRole('button', { name: 'Campus', exact: true }).click();
+      await expectCampusRoom(page, officeLabel, 0);
+    });
+    // The console has no control to detach a primary room or drop a membership; the configuration API it uses does it,
+    // as in the CRUD matrix. The primary room must be cleared first: it is a foreign key to the membership.
+    expect(await configChange(page, { resource: 'agent', action: 'update', tenant_id: hubA, alias: cycleAlias, value: { primary_room_id: null } }))
+      .toBe(201);
+    expect(await configChange(page, { resource: 'membership', action: 'delete', tenant_id: hubA, room_id: 'office', alias: cycleAlias }))
+      .toBe(201);
+    await step(page, 'agent registry deletion from the UI', async () => {
+      const { sheet, editor } = await openRegistry(page, base(), hubA, cycleAlias);
+      await editor.getByRole('button', { name: 'Eliminar registro', exact: true }).click();
+      const form = sheet.getByRole('form', { name: `Eliminar registro de ${hubA}/${cycleAlias}`, exact: true });
+      await form.getByRole('button', { name: 'Previsualizar eliminación', exact: true }).click();
+      const confirm = form.getByRole('button', { name: 'Confirmar eliminación del registro', exact: true });
+      await expect.poll(() => confirm.isDisabled(), { timeout: 20_000 }).toBe(false);
+      await confirm.click();
+      await page.getByText(`Registro de ${hubA}/${cycleAlias} eliminado en revisión`, { exact: false }).waitFor({ timeout: 20_000 });
+    });
+    expect((await pool().query('SELECT 1 FROM agents WHERE tenant_id=$1 AND alias=$2', [hubA, cycleAlias])).rowCount).toBe(0);
+    for (const browser of [page, reader]) await step(browser, 'deleted agent absent after reload in both browsers', async () => {
+      await openPlan(browser);
+      await assertAgentNotInPlan(browser, officeLabel, cycleAlias);
+      await assertAgentInPlan(browser, renamedRoomLabel);
+      expect(await topologyMember(browser, hubA, cycleAlias)).toBeUndefined();
     });
   });
 

@@ -99,7 +99,7 @@ it('el conflicto al guardar muestra la acción, el borrador conservado y el cód
   expect(screen.getByText('Guarda o descarta los cambios de plano antes de releerlo.')).toBeVisible();
   await user.click(screen.getByRole('button', { name: 'Guardar plano' }));
   const alert = await screen.findByRole('alert');
-  expect(alert).toHaveTextContent('Otro operador cambió el plano mientras editabas. Relee el plano y vuelve a guardar; se conserva el borrador.');
+  expect(alert).toHaveTextContent('Otro operador guardó una versión nueva del plano mientras editabas. Relee el plano y vuelve a guardar; se conserva el borrador.');
   expect(alert.textContent).not.toContain('reload and retry');
   expect(within(alert).getByText('conflict', { selector: 'code' })).toBeVisible();
   expect(screen.getByText('Plano sin guardar')).toBeVisible();

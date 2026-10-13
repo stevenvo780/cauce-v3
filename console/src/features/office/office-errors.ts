@@ -14,7 +14,7 @@ export function describeOfficeError(cause: unknown): string {
       return 'Tu sesión no tiene autoridad para leer o cambiar el plano de esta empresa. Pide acceso a un administrador de la empresa.';
     }
     if (cause.status === 409 && detail === 'office layout version changed; reload and retry') {
-      return 'Otro operador cambió el plano mientras editabas. Relee el plano y vuelve a guardar; se conserva el borrador.';
+      return 'Otro operador guardó una versión nueva del plano mientras editabas. Relee el plano y vuelve a guardar; se conserva el borrador.';
     }
     if (cause.status === 400) {
       return spanishWithReason('El plano contiene datos que el servidor no acepta. Revisa las posiciones y tamaños de las salas antes de volver a guardarlo.', detail);
@@ -25,7 +25,7 @@ export function describeOfficeError(cause: unknown): string {
     }
     if (cause.status === 404) return spanishWithReason('El plano ya no está disponible. Relee la oficina y vuelve a intentarlo.', detail);
     if (cause.status === 409) {
-      return spanishWithReason('Otro operador cambió el plano mientras editabas. Relee el plano y vuelve a guardar; se conserva el borrador.', detail);
+      return spanishWithReason('Otro operador guardó una versión nueva del plano mientras editabas. Relee el plano y vuelve a guardar; se conserva el borrador.', detail);
     }
     if (cause.status === 429) return spanishWithReason('Hay demasiadas solicitudes. Espera un momento e inténtalo de nuevo.', detail);
     if (cause.status >= 500) return spanishWithReason('El servidor no pudo leer o guardar el plano. Inténtalo más tarde.', detail);
