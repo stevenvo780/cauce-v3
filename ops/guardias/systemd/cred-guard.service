@@ -2,7 +2,6 @@
 Description=Guardia de caducidad de credenciales OAuth de los WS de kratos
 Documentation=file:%h/.local/bin/cred-guard.py
 After=network.target
-OnFailure=cauce-v3-backup-alert@%n.service
 
 [Service]
 Type=oneshot

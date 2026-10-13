@@ -98,11 +98,21 @@ def _sonda_remota() -> tuple[int, int, int]:
         (row["huella"], row["etiqueta"], row["contenedor"])
         for row in filas_r if row["huella"] not in ("-", "?", "SIN-RT")
     )
-    with open(LOCAL, "rb") as payload:
-        r = subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=15", "vps",
-                            "mkdir -p /var/lib/cauce-v3 && cat > /var/lib/cauce-v3/cred-guard-kratos.json.tmp "
-                            "&& mv /var/lib/cauce-v3/cred-guard-kratos.json.tmp /var/lib/cauce-v3/cred-guard-kratos.json"],
-                           stdin=payload, capture_output=True, text=True, timeout=60)
+    try:
+        with open(LOCAL, "rb") as payload:
+            r = subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=15", "vps",
+                                "mkdir -p /var/lib/cauce-v3 && cat > /var/lib/cauce-v3/cred-guard-kratos.json.tmp "
+                                "&& mv /var/lib/cauce-v3/cred-guard-kratos.json.tmp /var/lib/cauce-v3/cred-guard-kratos.json"],
+                               stdin=payload, capture_output=True, text=True, timeout=60)
+    except subprocess.TimeoutExpired as error:
+        diagnostic = error.stderr or ""
+        if isinstance(diagnostic, bytes):
+            diagnostic = diagnostic.decode("utf-8", errors="replace")
+        print(f"EMPUJE AL VPS FALLO: timeout; {diagnostic.strip()[:120]}", file=sys.stderr)
+        return 1, problemas_r, len(shared)
+    except OSError as error:
+        print(f"EMPUJE AL VPS FALLO: {type(error).__name__}", file=sys.stderr)
+        return 1, problemas_r, len(shared)
     if r.returncode != 0:
         print(f"EMPUJE AL VPS FALLO: {(r.stderr or '').strip()[:120]}", file=sys.stderr)
         return 1, problemas_r, len(shared)

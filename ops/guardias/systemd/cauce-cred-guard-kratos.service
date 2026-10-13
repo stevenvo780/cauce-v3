@@ -1,9 +1,8 @@
 [Unit]
 Description=Cauce V3 - mide las credenciales de los alias que viven en kratos (salva) y las empuja al VPS
-Documentation=file:/home/stev/.local/bin/cred-guard.py
-OnFailure=cauce-v3-backup-alert@%n.service
+Documentation=file:%h/.local/bin/cred-guard.py
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/python3 /home/stev/.local/bin/cred-guard.py --sonda-remota
+ExecStart=/usr/bin/python3 %h/.local/bin/cred-guard.py --sonda-remota
 TimeoutStartSec=120

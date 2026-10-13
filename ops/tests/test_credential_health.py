@@ -300,7 +300,7 @@ class TestConsumerWiring(unittest.TestCase):
 
 
 class TestGuardState(unittest.TestCase):
-    def run_guard(self, directory, record, *, arguments=(), push_result=None):
+    def run_guard(self, directory, record, *, arguments=(), push_result=None, push_failure=None):
         output, errors = io.StringIO(), io.StringIO()
         remote = json.dumps({"host": "kratos", "ts": datetime.datetime.now(datetime.UTC).isoformat(), "filas": []})
         real_open = open
@@ -314,7 +314,7 @@ class TestGuardState(unittest.TestCase):
             mock.patch.dict(os.environ, {"HOME": str(directory), "CAUCE_CRED_GUARD_ESTADO": str(directory / "state")}),
             mock.patch.object(sys, "argv", ["cred-guard.py", *arguments]),
             mock.patch.object(credential_health, "probe_container", side_effect=record),
-            mock.patch("subprocess.run", return_value=push_result),
+            mock.patch("subprocess.run", return_value=push_result, side_effect=push_failure),
             mock.patch("builtins.open", side_effect=synthetic_open),
             contextlib.redirect_stdout(output),
             contextlib.redirect_stderr(errors),
@@ -389,6 +389,27 @@ class TestGuardState(unittest.TestCase):
                 self.assertEqual(code, 2)
                 self.assertIn("unrecognized arguments", errors)
                 self.assert_state(directory, output, errors, exit_code=2, problems=0, shared=0)
+
+    def test_failed_push_preserves_measured_problems_and_timeout_stderr(self):
+        failures = (
+            subprocess.TimeoutExpired("ssh", 60, stderr="synthetic-timeout-diagnostic"),
+            subprocess.TimeoutExpired("ssh", 60, stderr=b"synthetic-timeout-diagnostic"),
+            OSError("synthetic-launch-failure"),
+        )
+        for failure in failures:
+            with self.subTest(failure=type(failure).__name__), tempfile.TemporaryDirectory() as temporary:
+                directory = pathlib.Path(temporary)
+                code, output, errors = self.run_guard(
+                    directory, lambda *_args: fleet_record(None, None), arguments=("--sonda-remota",),
+                    push_failure=failure,
+                )
+                self.assertEqual(code, 1)
+                self.assertIn("MUERTO", output)
+                if isinstance(failure, subprocess.TimeoutExpired):
+                    self.assertIn("synthetic-timeout-diagnostic", errors)
+                else:
+                    self.assertIn("OSError", errors)
+                self.assert_state(directory, output, errors, exit_code=1, problems=2, shared=0)
 
     def test_unexpected_failure_preserves_partial_output_and_restores_streams(self):
         def record(*_args):
