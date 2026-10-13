@@ -24,7 +24,7 @@ const TOO_MANY = { error: 'too_many_requests', message: 'Demasiados registros. I
 
 const WINDOW_MS = 15 * 60_000;
 const MAX_ATTEMPTS = 5;
-const MAX_TRACKED_KEYS = 10_000;
+const MAX_TRACKED_IPS = 10_000;
 const HOUR_MS = 60 * 60_000;
 
 /** Registrations per hour across every client address; 0 closes public registration. */
@@ -61,7 +61,7 @@ export async function registerCompanyWithOwner(pool: DatabasePool, input: Compan
 export function registerCompanyRegistrationRoute(app: FastifyInstance, pool: DatabasePool,
   hourlyRegistrations = configuredHourlyRegistrations(), reserved = configuredReservedCompanySlugs()): void {
   const attempts = new Map<string, { count: number; until: number }>();
-  const emailAttempts = new LoginThrottle(MAX_ATTEMPTS, WINDOW_MS, MAX_TRACKED_KEYS);
+  const emailAttempts = new LoginThrottle(MAX_ATTEMPTS, WINDOW_MS);
   let hour = { count: 0, until: 0 };
   app.post('/v3/auth/register', { bodyLimit: 8192 }, async (request, reply) => {
     reply.header('Cache-Control', 'no-store');
@@ -69,7 +69,7 @@ export function registerCompanyRegistrationRoute(app: FastifyInstance, pool: Dat
     const key = rateLimitKey(request.ip);
     for (const [ip, entry] of attempts) if (entry.until <= now) attempts.delete(ip);
     const current = attempts.get(key) ?? { count: 0, until: now + WINDOW_MS };
-    if (current.count >= MAX_ATTEMPTS || (attempts.size >= MAX_TRACKED_KEYS && !attempts.has(key))) return limited(reply, current.until - now);
+    if (current.count >= MAX_ATTEMPTS || (attempts.size >= MAX_TRACKED_IPS && !attempts.has(key))) return limited(reply, current.until - now);
     current.count += 1; attempts.set(key, current);
     const input = CompanyRegistrationSchema.safeParse(request.body);
     if (!input.success) return reply.code(400).send(INVALID_REGISTRATION);
