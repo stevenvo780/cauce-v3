@@ -364,6 +364,32 @@ class DisposableContainerExecutorTest(unittest.TestCase):
         self.assertEqual(report['sweep_exit'], 0)
         self.assertEqual((self.containers(), self.volumes()), ([], []))
 
+    def test_created_container_diverges_until_the_declared_state_matches_and_purge_leaves_nothing(self):
+        import test_fleet_executor_lifecycle as lifecycle_fixtures
+        module, policy = self.operation_fixture()
+        module.create_container(policy, self.agent, operation_id='op-state')
+        running = {**self.agent, 'docker_state': 'running', 'ownership': 'owned'}
+        mismatch = sweep_owned_fleet(self.root / 'orphan-rows.json', [running], self.container,
+                                      policy['host_id'], self.agent['runtime_key'])
+        self.assertEqual(mismatch['sweep_exit'], 1, mismatch)
+        self.assertEqual([row['kind'] for row in mismatch['divergences']], ['docker_state'])
+        self.assertEqual(mismatch['divergences'][0]['actual'], 'stopped')
+        stopped = {**self.agent, 'docker_state': 'stopped', 'ownership': 'owned'}
+        matched = sweep_owned_fleet(self.root / 'orphan-rows.json', [stopped], self.container,
+                                     policy['host_id'], self.agent['runtime_key'])
+        self.assertTrue(matched['clean'], matched)
+        self.assertEqual(matched['divergences'], [])
+        self.context['request'].update(kind='purge', parameters={'confirm_alias': self.agent['alias']})
+        self.context['previous_agents'] = [self.agent]
+        lifecycle_fixtures.PhysicalLifecycleTest.revoke_hook(self)
+        for step in ('stop', 'revoke', 'purge'):
+            result = self.run_step(step, timeout=40)
+            self.assertEqual(result.returncode, 0, f'{step}: {result.stderr}')
+        report = sweep_owned_fleet(self.root / 'orphan-rows.json', [], self.container,
+                                  policy['host_id'], self.agent['runtime_key'])
+        self.assertTrue(report['clean'], report)
+        self.assertEqual((self.containers(), self.volumes()), ([], []))
+
 
 class PurgeRemovalEvidenceTest(unittest.TestCase):
     def purge(self, inspections, volumes, ownership='dedicated'):

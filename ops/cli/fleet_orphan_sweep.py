@@ -1,9 +1,7 @@
 #!/usr/bin/env python3
-"""Report Docker resources labelled cauce.fleet.* that have no agent row, and rows whose container is missing.
+"""Report labelled cauce.fleet.* resources without a row, container rows without a container, and declared state or ownership that differs from Docker.
 
-Rows come from a JSON file (a list of {"runtime_key", "container_name", "runtime_mode", "host_id"} objects). A row is only orphaned
-when no container with its name exists at all, labelled or not (shared and legacy containers carry no cauce.fleet.* labels).
-Exit 1 when anything is orphaned.
+Rows come from a JSON file. A container row is orphaned only when no container of that name exists, labelled or not. docker_state is compared only when the row declares running or stopped. Omitted ownership treats an unlabelled container as shared or legacy and checks existence only. ownership owned, and any cauce.fleet.* label when ownership is omitted, require cauce.fleet.runtime_key to equal the row; cauce.fleet.host must equal host_id when both are present. shared and legacy rows do not require labels, but a fleet runtime_key that names another row is a divergence. Native rows are not compared to a container. Exit 1 when the report is not clean. Exit 2 when docker_state or ownership is outside the admitted values.
 """
 from __future__ import annotations
 
@@ -14,6 +12,8 @@ import sys
 
 DOCKER = '/usr/bin/docker'
 PREFIX = 'cauce.fleet.'
+STATES = frozenset({'running', 'stopped'})
+OWNERSHIPS = frozenset({'owned', 'shared', 'legacy'})
 
 
 def docker_json(kind: str, *listing: str) -> list[dict]:
@@ -21,10 +21,6 @@ def docker_json(kind: str, *listing: str) -> list[dict]:
     if not names:
         return []
     return json.loads(subprocess.run([DOCKER, kind, 'inspect', *names], capture_output=True, text=True, check=True).stdout)
-
-
-def all_container_names() -> set[str]:
-    return set(subprocess.run([DOCKER, 'ps', '-a', '--format', '{{.Names}}'], capture_output=True, text=True, check=True).stdout.split())
 
 
 def fleet_resources() -> list[dict]:
@@ -42,10 +38,67 @@ def fleet_resources() -> list[dict]:
     return found
 
 
-def sweep(rows: list[dict], resources: list[dict], container_names: set[str]) -> dict:
+def container_observations() -> dict[str, dict]:
+    observed = {}
+    for item in docker_json('container', 'ps', '-a', '-q'):
+        labels = (item.get('Config') or {}).get('Labels') or {}
+        observed[item['Name'].lstrip('/')] = {'running': bool((item.get('State') or {}).get('Running')), 'labels': labels}
+    return observed
+
+
+def divergence(row: dict, kind: str, expected, actual) -> dict:
+    return {'kind': kind, 'expected': expected, 'actual': actual, 'runtime_key': row.get('runtime_key'),
+            'container_name': row.get('container_name'), 'ownership': row.get('ownership') or 'legacy'}
+
+
+def row_divergences(row: dict, observed: dict) -> list[dict]:
+    labels = observed.get('labels') or {}
+    ownership = row.get('ownership')
+    found = []
+    state = row.get('docker_state')
+    if state is not None:
+        actual = 'running' if observed.get('running') else 'stopped'
+        if state not in STATES or actual != state:
+            found.append(divergence(row, 'docker_state', state, actual if state in STATES else None))
+    labelled_key = labels.get(PREFIX + 'runtime_key')
+    labelled_host = labels.get(PREFIX + 'host')
+    fleet = any(key.startswith(PREFIX) for key in labels)
+    if ownership not in (None, *OWNERSHIPS):
+        found.append(divergence(row, 'ownership', ownership, labelled_key))
+    elif ownership in ('shared', 'legacy'):
+        if labelled_key is not None and labelled_key != row['runtime_key']:
+            found.append(divergence(row, 'ownership', row['runtime_key'], labelled_key))
+    elif ownership == 'owned' or fleet:
+        if labelled_key != row['runtime_key']:
+            found.append(divergence(row, 'ownership', row['runtime_key'], labelled_key))
+        elif row.get('host_id') and labelled_host is not None and labelled_host != row['host_id']:
+            found.append(divergence(row, 'ownership', row['host_id'], labelled_host))
+    return found
+
+
+def sweep(rows: list[dict], resources: list[dict], containers: dict[str, dict]) -> dict:
     keys = {row['runtime_key'] for row in rows}
+    orphan_rows = []
+    divergences = []
+    for row in rows:
+        if row.get('runtime_mode') != 'container':
+            continue
+        observed = containers.get(row['container_name'])
+        if observed is None:
+            orphan_rows.append(row)
+            continue
+        divergences.extend(row_divergences(row, observed))
     return {'orphan_resources': [resource for resource in resources if resource['runtime_key'] not in keys],
-            'orphan_rows': [row for row in rows if row.get('runtime_mode') == 'container' and row['container_name'] not in container_names]}
+            'orphan_rows': orphan_rows, 'divergences': divergences}
+
+
+def rejected_declaration(rows: list[dict]) -> str | None:
+    for row in rows:
+        if 'docker_state' in row and row.get('docker_state') not in STATES:
+            return 'invalid docker_state'
+        if 'ownership' in row and row.get('ownership') not in OWNERSHIPS:
+            return 'invalid ownership'
+    return None
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -57,10 +110,14 @@ def main(argv: list[str] | None = None) -> int:
     with open(arguments.rows) as handle:
         rows = [row for row in json.load(handle) if row['runtime_key'].startswith(arguments.runtime_key_prefix)
                 and (not arguments.host_id or row.get('host_id') == arguments.host_id)]
+    problem = rejected_declaration(rows)
+    if problem:
+        print(problem, file=sys.stderr)
+        return 2
     resources = [row for row in fleet_resources() if (row['runtime_key'] or '').startswith(arguments.runtime_key_prefix)
                  and (not arguments.host_id or row['host_id'] == arguments.host_id)]
-    report = sweep(rows, resources, all_container_names())
-    report['clean'] = not report['orphan_resources'] and not report['orphan_rows']
+    report = sweep(rows, resources, container_observations())
+    report['clean'] = not report['orphan_resources'] and not report['orphan_rows'] and not report['divergences']
     print(json.dumps(report, sort_keys=True))
     return 0 if report['clean'] else 1
 
