@@ -1,7 +1,14 @@
 import { createHash } from 'node:crypto';
-import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { execFile } from 'node:child_process';
+import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { promisify } from 'node:util';
+import { build } from 'esbuild';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AgentQuotaOperationsRepository, lockCompanyAuthority, withTransaction, type DatabaseClient, type DatabasePool } from '../src/index.js';
-import { readAgentQuotaPlacement } from '../src/agent-quota-operations-model.js';
+import { agentQuotaDescriptorModuleUrl, readAgentQuotaPlacement } from '../src/agent-quota-operations-model.js';
 import { seedSyntheticCompanyContexts } from '../src/seed-dev-cli.js';
 import { preparePostgresSuite } from './postgres-suite.js';
 import { requireValue } from './helpers.js';
@@ -9,9 +16,15 @@ import { startTestCaseDatabase, startTestDatabase, type EmptyTestDatabase, type 
 
 let database: TestDatabase | undefined; let current: EmptyTestDatabase | undefined; let pool: DatabasePool;
 let identities: Awaited<ReturnType<typeof seedSyntheticCompanyContexts>>;
+let descriptors: string; let approvalsFile: string; let approvals: Record<string, string>;
 const target = { tenant_id: 'ContextAlpha', alias: 'director' };
 preparePostgresSuite(import.meta.url, async () => { database = await startTestDatabase(); }, 120_000);
 beforeEach(async () => {
+  descriptors = await mkdtemp(join(tmpdir(), 'zz-canary-quota-descriptors-'));
+  approvalsFile = join(descriptors, 'approvals.json'); approvals = {};
+  for (const harness of ['codex', 'claude', 'grok']) await approveFixture(harness);
+  vi.stubEnv('CAUCE_HARNESS_DESCRIPTOR_APPROVALS_FILE', approvalsFile);
+  vi.stubEnv('CAUCE_HARNESS_DESCRIPTOR_DIRECTORY', descriptors);
   current = await startTestCaseDatabase(requireValue(database, 'database')); pool = current.pool;
   identities = await seedSyntheticCompanyContexts(current.adminUrl);
   await admin().query(`INSERT INTO fleet_hosts(host_id,display_name,company_id)
@@ -31,7 +44,10 @@ beforeEach(async () => {
     VALUES($1,$2,$3,$4,$5,true,'{"fleet_executor":true}',now())`,
   [host, owner.company_id, enrollment.id, 'x'.repeat(64), createHash('sha256').update(`identity-${host}`).digest('hex')]);
 });
-afterEach(async () => { await current?.close(); current = undefined; });
+afterEach(async () => {
+  await current?.close(); current = undefined;
+  vi.unstubAllEnvs(); if (descriptors) await rm(descriptors, { recursive: true, force: true });
+});
 afterAll(async () => { if (database) { await database.pool.end(); await database.container.stop(); } });
 function admin() { return requireValue(current, 'case database').adminPool; }
 function authority(client: DatabaseClient) {
@@ -40,6 +56,18 @@ function authority(client: DatabaseClient) {
 }
 function placement() {
   return withTransaction(pool, async client => readAgentQuotaPlacement(client, await authority(client), target));
+}
+function descriptorFixture(harness: string, quota = true) {
+  return JSON.stringify({ schema_version: 1, harness,
+    operations: { execute: 'native-execution', ...(quota ? { quota: 'quota-collector' } : {}) },
+    context: { native_document: 'AGENTS.md', max_bytes: 65_536 },
+    ...(quota ? { provider: { quota_argv: ['/usr/local/bin/zz-canary-quota-reader'] } } : {}) });
+}
+async function approveFixture(harness: string, quota = true) {
+  const fixture = descriptorFixture(harness, quota);
+  await writeFile(join(descriptors, `${harness}.json`), fixture);
+  approvals[harness] = createHash('sha256').update(fixture).digest('hex');
+  await writeFile(approvalsFile, JSON.stringify(approvals));
 }
 
 describe('agent quota reader availability with real PostgreSQL', () => {
@@ -87,5 +115,73 @@ describe('agent quota reader availability with real PostgreSQL', () => {
     const before = (await admin().query('SELECT xmin::text,updated_at FROM agent_quota_observations')).rows;
     await repository.snapshot(authority, target);
     expect((await admin().query('SELECT xmin::text,updated_at FROM agent_quota_observations')).rows).toEqual(before);
+  });
+  it('enables a new approved quota descriptor and withdraws a removed operation without a SQL list edit', async () => {
+    const harness = 'zz-canary-descriptor';
+    await admin().query("INSERT INTO harness_definitions(id,display_name,capabilities) VALUES($1,$1,'[]')", [harness]);
+    await admin().query('UPDATE agents SET harness_id=$1 WHERE tenant_id=$2 AND alias=$3', [harness, target.tenant_id, target.alias]);
+    await writeFile(join(descriptors, `${harness}.json`), descriptorFixture(harness));
+    expect(await placement()).toMatchObject({ reader: false, reason: 'quota_reader_unavailable' });
+    await approveFixture(harness);
+    expect(await placement()).toMatchObject({ reader: true, reason: null });
+    await approveFixture(harness, false);
+    expect(await placement()).toMatchObject({ reader: false, reason: 'quota_reader_unavailable' });
+  });
+  it('rereads approvals and descriptor bytes rather than retaining a cached reader', async () => {
+    expect(await placement()).toMatchObject({ reader: true });
+    delete approvals.codex; await writeFile(approvalsFile, JSON.stringify(approvals));
+    expect(await placement()).toMatchObject({ reader: false, reason: 'quota_reader_unavailable' });
+    await approveFixture('codex'); expect(await placement()).toMatchObject({ reader: true });
+    await writeFile(join(descriptors, 'codex.json'), `${descriptorFixture('codex')}\n`);
+    expect(await placement()).toMatchObject({ reader: false, reason: 'quota_reader_unavailable' });
+    await admin().query("UPDATE agents SET harness_id='claude' WHERE tenant_id=$1 AND alias=$2", [target.tenant_id, target.alias]);
+    expect(await placement()).toMatchObject({ reader: true });
+  });
+  it.each(['missing approvals', 'missing file', 'invalid map', 'missing directory'])('fails closed for %s', async failure => {
+    if (failure === 'missing approvals') vi.stubEnv('CAUCE_HARNESS_DESCRIPTOR_APPROVALS_FILE', undefined);
+    if (failure === 'missing file') await rm(approvalsFile);
+    if (failure === 'invalid map') await writeFile(approvalsFile, JSON.stringify({ codex: 7 }));
+    if (failure === 'missing directory') vi.stubEnv('CAUCE_HARNESS_DESCRIPTOR_DIRECTORY', join(descriptors, 'absent'));
+    expect(await placement()).toMatchObject({ reader: false, reason: 'quota_reader_unavailable' });
+  });
+  it.each([
+    ['source', 'packages/store/src/agent-quota-operations-model.ts'],
+    ['deployment', 'packages/store/dist/agent-quota-operations-model.js'],
+    ['core build', 'dist/packages/store/src/agent-quota-operations-model.js'],
+  ])('loads the real SDK catalog in the %s layout with a standalone Node process', async (_name, relative) => {
+    const root = join(descriptors, 'runtime'); const modelPath = join(root, relative);
+    const sdkUrl = agentQuotaDescriptorModuleUrl(pathToFileURL(modelPath).href);
+    const sdkPath = fileURLToPath(sdkUrl);
+    await mkdir(root, { recursive: true });
+    await symlink(fileURLToPath(new URL('../../../node_modules', import.meta.url)), join(root, 'node_modules'));
+    const dependencies = [
+      [new URL('../node_modules/', pathToFileURL(modelPath)), new URL('../node_modules/', import.meta.url)],
+      [new URL(sdkPath.endsWith('.ts') ? '../../node_modules/' : '../../../node_modules/', sdkUrl),
+        new URL('../../adapter-sdk/node_modules/', import.meta.url)],
+    ] as const;
+    for (const [link, source] of dependencies) {
+      const path = fileURLToPath(link).replace(/\/$/u, ''); await mkdir(dirname(path), { recursive: true });
+      await symlink(fileURLToPath(source), path);
+    }
+    await writeFile(join(root, 'package.json'), '{"type":"module"}');
+    for (const [source, outfile] of [
+      [new URL('../src/agent-quota-operations-model.ts', import.meta.url), modelPath],
+      [new URL('../../adapter-sdk/src/context/harness-descriptor.ts', import.meta.url), sdkPath],
+    ] as const) {
+      await build({ entryPoints: [fileURLToPath(source)], outfile, bundle: true, platform: 'node', format: 'esm',
+        packages: 'external', logLevel: 'silent' });
+    }
+    const catalog = fileURLToPath(new URL('../../descriptors/', sdkUrl)); await mkdir(catalog, { recursive: true });
+    for (const harness of Object.keys(approvals)) {
+      await writeFile(join(catalog, `${harness}.json`), await readFile(join(descriptors, `${harness}.json`)));
+    }
+    const env = { ...process.env }; delete env.CAUCE_HARNESS_DESCRIPTOR_DIRECTORY;
+    const run = () => promisify(execFile)(process.execPath, [
+      ...(relative.endsWith('.ts') ? ['--import', 'tsx'] : []), '--input-type=module', '--eval',
+      `const model = await import(${JSON.stringify(pathToFileURL(modelPath).href)}); console.log(JSON.stringify(await model.approvedAgentQuotaHarnesses()));`,
+    ], { cwd: fileURLToPath(new URL('../../../', import.meta.url)), env });
+    expect(JSON.parse((await run()).stdout)).toEqual(['claude', 'codex', 'grok']);
+    await rm(sdkPath);
+    expect(JSON.parse((await run()).stdout)).toEqual([]);
   });
 });

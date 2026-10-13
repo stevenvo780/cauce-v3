@@ -1,5 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AgentQuotaInvalidatedError, AgentQuotaOperationsRepository, lockCompanyAuthority, withTransaction,
   type DatabaseClient, type DatabasePool, type AgentQuotaSnapshot } from '../src/index.js';
 import { seedSyntheticCompanyContexts } from '../src/seed-dev-cli.js';
@@ -10,8 +13,18 @@ import type { AgentQuotaClaim } from '@cauce/protocol';
 
 let database: TestDatabase | undefined; let current: EmptyTestDatabase | undefined; let pool: DatabasePool;
 let identities: Awaited<ReturnType<typeof seedSyntheticCompanyContexts>>; let repository: AgentQuotaOperationsRepository;
+let descriptors: string; let approvalsFile: string;
+const quotaDescriptor = JSON.stringify({ schema_version: 1, harness: 'codex',
+  operations: { execute: 'native-execution', quota: 'quota-collector' },
+  context: { native_document: 'AGENTS.md', max_bytes: 65_536 },
+  provider: { quota_argv: ['/usr/local/bin/zz-canary-quota-reader'] } });
 preparePostgresSuite(import.meta.url, async () => { database = await startTestDatabase(); }, 120_000);
 beforeEach(async () => {
+  descriptors = await mkdtemp(join(tmpdir(), 'zz-canary-quota-operations-')); approvalsFile = join(descriptors, 'approvals.json');
+  await writeFile(join(descriptors, 'codex.json'), quotaDescriptor);
+  await writeFile(approvalsFile, JSON.stringify({ codex: createHash('sha256').update(quotaDescriptor).digest('hex') }));
+  vi.stubEnv('CAUCE_HARNESS_DESCRIPTOR_APPROVALS_FILE', approvalsFile);
+  vi.stubEnv('CAUCE_HARNESS_DESCRIPTOR_DIRECTORY', descriptors);
   current = await startTestCaseDatabase(requireValue(database, 'database')); pool = current.pool;
   identities = await seedSyntheticCompanyContexts(current.adminUrl); repository = new AgentQuotaOperationsRepository(pool);
   await admin().query(`INSERT INTO fleet_hosts(host_id,display_name,company_id) VALUES
@@ -26,7 +39,10 @@ beforeEach(async () => {
     await liveHost(host, owner.company_id, owner.human_id);
   }
 });
-afterEach(async () => { await current?.close(); current = undefined; });
+afterEach(async () => {
+  await current?.close(); current = undefined;
+  vi.unstubAllEnvs(); if (descriptors) await rm(descriptors, { recursive: true, force: true });
+});
 afterAll(async () => { if (database) { await database.pool.end(); await database.container.stop(); } });
 function admin() { return requireValue(current, 'case database').adminPool; }
 async function liveHost(host: string, company: string, human: string) {
@@ -251,6 +267,20 @@ describe('durable agent quota operations with real PostgreSQL', () => {
     else expect(await repository.claim('zz_worker', 'zz-canary-alpha', 30_000, 'context_alpha')).toBeNull();
     expect((await admin().query('SELECT status,error_code FROM agent_quota_operations')).rows)
       .toEqual([{ status: 'failed', error_code: 'SCOPE_CHANGED' }]); expect(await collections()).toBe(0);
+  });
+  it.each(['claim', 'execution', 'finish', 'renew'])('invalidates a withdrawn descriptor approval at %s', async phase => {
+    await enqueue(); const worker = phase === 'claim' ? null : await claim();
+    const receipt = worker ? measured((await repository.execution(worker)).agent) : null;
+    await writeFile(approvalsFile, '{}');
+    if (!worker) expect(await repository.claim('zz_worker', 'zz-canary-alpha', 30_000, 'context_alpha')).toBeNull();
+    else if (phase === 'renew') expect(await repository.renew(worker)).toBe(false);
+    else if (phase === 'execution') await expect(repository.execution(worker)).rejects.toBeInstanceOf(AgentQuotaInvalidatedError);
+    else await expect(repository.finish(worker, receipt)).rejects.toBeInstanceOf(AgentQuotaInvalidatedError);
+    expect((await admin().query('SELECT status,error_code FROM agent_quota_operations')).rows)
+      .toEqual([{ status: 'failed', error_code: 'SCOPE_CHANGED' }]);
+    expect(await collections()).toBe(0);
+    expect(await repository.snapshot(authority(), target)).toMatchObject({ reader_available: false, can_query: false,
+      reason: 'quota_reader_unavailable', status: 'unsupported', sample: null });
   });
   it('accepts the exact terminal receipt beyond the lease and deadline but rejects changed reports or lost authority', async () => {
     await enqueue(); const worker = await claim(); const receipt = measured((await repository.execution(worker)).agent);

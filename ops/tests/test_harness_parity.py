@@ -13,16 +13,6 @@ NON_HARNESS_PROVIDERS = {'gemini', 'minimax', 'feihoa'}
 GATEWAY_OMITTED = {'opencode', 'fake', 'fake2'}
 # Descriptor harnesses the console catalog has not picked up yet; shrink as it aligns.
 CONSOLE_PENDING = {'opencode', 'fake', 'fake2'}
-# Harnesses whose provider exposes a measurable quota window with the credential
-# the container already holds; each declares operations.quota with a reader argv.
-QUOTA_READERS = {'claude', 'codex', 'grok'}
-# Harnesses with no quota reader, by provider fact rather than by omission:
-# openclaw proxies an upstream provider account and exposes no window of its own,
-# the muse CLI has no usage command or documented quota endpoint, hermes and
-# opencode declare no provider account to measure, and fake/fake2 are test
-# harnesses. The executor answers quota_reader_unavailable for these and the
-# console renders that closed code as an explicit no-reader state.
-NO_QUOTA_READER = {'openclaw', 'muse', 'hermes', 'opencode', 'fake', 'fake2'}
 # Closed vocabulary of harness_definitions.capabilities as seeded by the migrations;
 # the strings are rendered into agent profile facts, so a new one is a deliberate edit here.
 SEEDED_CAPABILITIES = {'messages.receive', 'ack.timeline', 'origin.relay', 'jobs.interactive', 'jobs.batch'}
@@ -54,30 +44,110 @@ def text(path):
 
 
 def quoted(segment):
-    return set(re.findall(r"'([a-z][a-z0-9_-]*)'", segment))
+    return set(re.findall(r"['\"]([^'\"]*)['\"]", segment))
 
 
 def descriptors():
     return {path.stem: json.loads(path.read_text()) for path in sorted(DESCRIPTORS.glob('*.json'))}
 
 
+def valid_quota_argv(doc):
+    argv = (doc.get('provider') or {}).get('quota_argv')
+    return isinstance(argv, list) and bool(argv) and all(isinstance(value, str) and value.strip() for value in argv)
+
+
+def quota_readers(docs=None):
+    docs = descriptors() if docs is None else docs
+    return {name for name, doc in docs.items()
+            if doc.get('operations', {}).get('quota') == 'quota-collector' and valid_quota_argv(doc)}
+
+
+def set_parity_checks(path, actual, expected, label):
+    checks = [(path, f"{label} is missing '{name}'") for name in sorted(expected - actual)]
+    return checks + [(path, f"{label} has unexpected '{name}'") for name in sorted(actual - expected)]
+
+
+def effective_quota_provider_check(paths=None):
+    constraints, checks = {}, []
+    migrations = (ROOT / 'packages/store/migrations').glob('*.sql') if paths is None else paths
+    for path in sorted(migrations):
+        source = text(path.relative_to(ROOT).as_posix()) if paths is None else path.read_text()
+        source = re.sub(r'/\*.*?\*/|--[^\n]*', '', source, flags=re.S)
+        for statement in source.split(';'):
+            create = re.search(r'\bCREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?quota_environments\s*\(', statement, re.I)
+            alter = re.search(r'\bALTER\s+TABLE\s+(?:ONLY\s+)?quota_environments\b', statement, re.I)
+            if re.search(r'\bDROP\s+TABLE\s+(?:IF\s+EXISTS\s+)?quota_environments\b', statement, re.I):
+                constraints.clear()
+            if not create and not alter:
+                continue
+            if create:
+                constraints.clear()
+            actions = list(re.finditer(
+                r'\bDROP\s+CONSTRAINT\s+(?:IF\s+EXISTS\s+)?(?P<drop>[a-z_][a-z0-9_]*)'
+                r'|(?:\bCONSTRAINT\s+(?P<name>[a-z_][a-z0-9_]*)\s+)?'
+                r'\bCHECK\s*\(\s*provider\s+IN\s*\((?P<providers>[^)]*)\)\s*\)', statement, re.I))
+            for action in actions:
+                if action.group('drop'):
+                    constraints.pop(action.group('drop').lower(), None)
+                else:
+                    name = (action.group('name') or 'quota_environments_provider_check').lower()
+                    if not re.fullmatch(r"\s*'[^']*'\s*(?:,\s*'[^']*'\s*)*", action.group('providers')):
+                        checks.append((f'packages/store/migrations/{path.name}', 'provider CHECK contains a nonliteral value'))
+                    if action.group('name') and name in constraints:
+                        checks.append((f'packages/store/migrations/{path.name}', f"provider CHECK '{name}' is added without dropping it"))
+                    if not action.group('name'):
+                        suffix = 1
+                        while name in constraints:
+                            name = f'quota_environments_provider_check{suffix}'
+                            suffix += 1
+                    constraints[name] = (path.name, quoted(action.group('providers')))
+            provider_checks = re.findall(r'\bCHECK\s*\(\s*provider\b', statement, re.I)
+            parsed_checks = [action for action in actions if action.group('providers') is not None]
+            if len(provider_checks) != len(parsed_checks):
+                checks.append((f'packages/store/migrations/{path.name}', 'provider CHECK is not a parsed closed IN contract'))
+    if not constraints:
+        checks.append(('packages/store/migrations/', 'effective quota_environments provider CHECK not found'))
+        return set(), checks
+    providers = set.intersection(*(values for _, values in constraints.values()))
+    return providers, checks
+
+
+def store_quota_reader_contract_checks(source):
+    path = 'packages/store/src/agent-quota-operations-model.ts'
+    match = re.search(r'export async function readAgentQuotaPlacement\b(.*?)(?=\nexport |\Z)', source, re.S)
+    body = match.group(1) if match else ''
+    body = re.sub(r'/\*.*?\*/|//[^\n]*', '', body, flags=re.S)
+    query = re.search(r'const row = \(await client\.query[^`]*`([^`]+)`\s*,\s*\[([^\]]+)\]\)\)\.rows\[0\]', body, re.S)
+    if not query:
+        return [(path, 'active quota placement query not found')]
+    sql, parameters = query.groups()
+    checks = []
+    if not re.search(r'const quotaReaders\s*=\s*await approvedAgentQuotaHarnesses\(\)', body):
+        checks.append((path, 'quota placement must load approved descriptor readers for each query'))
+    if re.search(r'\bharness_id\s+IN\s*\(', sql, re.I):
+        checks.append((path, 'active quota placement query contains a literal harness reader list'))
+    slots = re.findall(r'\b(?:agent\.)?harness_id\s*=\s*ANY\s*\(\s*\$(\d+)\s*::\s*text\[\]\s*\)', sql, re.I)
+    args = [value.strip() for value in parameters.split(',')]
+    if len(slots) != 2 or any(int(slot) > len(args) or args[int(slot) - 1] != 'quotaReaders' for slot in slots):
+        checks.append((path, 'both active quota predicates must bind the approved quotaReaders array'))
+    return checks
+
+
 def quota_reader_contract_checks():
     contracts = {
-        'packages/store/src/agent-quota-operations-model.ts': r'\bharness_id\s+IN\s*\(([^)]*)\)',
         'ops/cli/fleet_executor_agent_quota.py': r'\bPROVIDERS\s*=\s*frozenset\s*\(\s*\{([^}]*)\}\s*\)',
         'packages/protocol/src/agent-quota.ts':
             r'\bAgentQuotaReceiptSchema\s*=\s*z\.discriminatedUnion\b.*?\bprovider:\s*z\.enum\(\[([^\]]*)\]\)',
     }
-    checks = []
+    expected = quota_readers()
+    checks = store_quota_reader_contract_checks(text('packages/store/src/agent-quota-operations-model.ts'))
     for path, pattern in contracts.items():
         matches = re.findall(pattern, text(path), re.S)
         if not matches:
             checks.append((path, 'quota reader contract not found'))
         for match in matches:
             readers = quoted(match)
-            if readers != QUOTA_READERS:
-                checks.append((path, f'quota readers {sorted(readers)} differ from QUOTA_READERS '
-                               f'{sorted(QUOTA_READERS)} in ops/tests/test_harness_parity.py'))
+            checks += set_parity_checks(path, readers, expected, 'descriptor quota reader contract')
     return checks
 
 
@@ -96,14 +166,16 @@ class HarnessParityTest(unittest.TestCase):
         for name in sorted(names - ts_ids):
             checks.append(('packages/adapter-sdk/src/sdk/types.ts', f"add '{name}' to the HarnessId union"))
         for name in sorted(ts_ids - names):
-            checks.append(('packages/adapter-sdk/descriptors/', f"add {name}.json or remove '{name}' from HarnessId"))
+            checks.append(('packages/adapter-sdk/src/sdk/types.ts', f"add {name}.json or remove '{name}' from HarnessId"))
         index = text('packages/adapter-sdk/src/harnesses/index.ts')
         block = re.search(r'HARNESS_DEFINITIONS[^=]*= \{([^}]+)\}', index, re.S)
         self.assertIsNotNone(block, 'packages/adapter-sdk/src/harnesses/index.ts: HARNESS_DEFINITIONS not found')
-        defined = set(re.findall(r'^\s{2}([a-z][a-z0-9_-]*):', block.group(1), re.M))
+        defined = set(re.findall(r"^\s*['\"]?([A-Za-z][A-Za-z0-9_-]*)['\"]?\s*:", block.group(1), re.M))
         for name in sorted(names - defined):
             checks.append(('packages/adapter-sdk/src/harnesses/index.ts', f"add the '{name}' harness definition"))
             checks.append((f'packages/adapter-sdk/src/harnesses/{name}.ts', 'create the harness definition module'))
+        checks += set_parity_checks('packages/adapter-sdk/src/harnesses/index.ts', defined - names, set(),
+                                    'HARNESS_DEFINITIONS')
         self.problems(checks)
 
     def test_bins_and_session_file_regex_match_descriptors(self):
@@ -117,12 +189,14 @@ class HarnessParityTest(unittest.TestCase):
         for name in sorted(bins - names):
             checks.append(('packages/adapter-sdk/package.json', f"remove the cauce-adapter-{name} bin or add its descriptor"))
         session = text('packages/adapter-sdk/src/sdk/durable-store/session-file.ts')
-        match = re.search(r'\(\?:([a-z0-9|]+)\):', session)
+        match = re.search(r'\(\?:([a-z0-9_|-]+)\):', session)
         self.assertIsNotNone(match, 'session-file.ts harness alternation not found')
         alternation = set(match.group(1).split('|'))
         for name in sorted(names - alternation):
             checks.append(('packages/adapter-sdk/src/sdk/durable-store/session-file.ts',
                            f"add '{name}' to the session key alternation"))
+        checks += set_parity_checks('packages/adapter-sdk/src/sdk/durable-store/session-file.ts',
+                                    alternation - names, set(), 'session key alternation')
         self.problems(checks)
 
     def test_gateway_harness_kind_covers_descriptors_except_allowlisted(self):
@@ -136,6 +210,8 @@ class HarnessParityTest(unittest.TestCase):
                     for name in sorted(names - kinds - GATEWAY_OMITTED)]
         checks += [('services/gateway/src/console/agent-documents/catalog.ts',
                      f"'{name}' is in HarnessKind but has no descriptor") for name in sorted(kinds - names)]
+        checks += [('ops/tests/test_harness_parity.py', f"GATEWAY_OMITTED has stale '{name}'")
+                   for name in sorted(GATEWAY_OMITTED - (names - kinds))]
         self.problems(checks)
 
     def test_console_catalog_names_only_real_descriptors_and_tracks_pending(self):
@@ -153,30 +229,21 @@ class HarnessParityTest(unittest.TestCase):
         self.problems(checks)
 
     def test_quota_enums_and_sql_check_cover_quota_descriptors(self):
-        quota = {name for name, doc in descriptors().items() if 'quota' in doc['operations']}
-        checks = []
-        sql = text('packages/store/migrations/057_quota_environments.sql')
-        match = re.search(r"provider IN \(([^)]+)\)", sql)
-        self.assertIsNotNone(match, '057 provider CHECK not found')
-        sql_providers = quoted(match.group(1))
-        for name in sorted(quota - sql_providers):
-            checks.append(('packages/store/migrations/ (new migration, never edit 057)',
-                           f"allow quota provider '{name}' from its descriptor"))
-        for name in sorted(sql_providers - quota - NON_HARNESS_PROVIDERS):
-            checks.append(('packages/store/migrations/057_quota_environments.sql',
-                           f"provider '{name}' has no quota descriptor and is not an allowlisted non-harness provider"))
-        protocol = text('packages/protocol/src/schemas/quotas.ts')
-        match = re.search(r'QuotaEnvironmentProviderSchema = z\.enum\(\[([^\]]+)\]\)', protocol)
-        self.assertIsNotNone(match, 'QuotaEnvironmentProviderSchema not found')
-        protocol_providers = quoted(match.group(1))
-        for name in sorted(quota - protocol_providers):
-            checks.append(('packages/protocol/src/schemas/quotas.ts', f"add '{name}' to QuotaEnvironmentProviderSchema"))
-        capabilities = text('services/gateway/src/fleet/host-channel.capabilities.ts')
-        match = re.search(r'QuotaProvider=z\.enum\(\[([^\]]+)\]\)', capabilities)
-        self.assertIsNotNone(match, 'gateway QuotaProvider enum not found')
-        gateway_providers = quoted(match.group(1))
-        for name in sorted(quota - gateway_providers):
-            checks.append(('services/gateway/src/fleet/host-channel.capabilities.ts', f"add '{name}' to the QuotaProvider enum"))
+        sql_providers, checks = effective_quota_provider_check()
+        expected = quota_readers() | (sql_providers & NON_HARNESS_PROVIDERS)
+        checks += set_parity_checks('packages/store/migrations/ (new migration, never edit a published one)',
+                                   sql_providers, expected, 'effective quota provider CHECK')
+        contracts = {
+            'packages/protocol/src/schemas/quotas.ts': r'QuotaEnvironmentProviderSchema\s*=\s*z\.enum\(\[([^\]]+)\]\)',
+            'services/gateway/src/fleet/host-channel.capabilities.ts': r'QuotaProvider\s*=\s*z\.enum\(\[([^\]]+)\]\)',
+            'console/src/api/client/my-quotas-client.ts': r'export type QuotaProvider\s*=\s*([^;]+);',
+        }
+        for path, pattern in contracts.items():
+            match = re.search(pattern, text(path))
+            if not match:
+                checks.append((path, 'quota provider enum or union not found'))
+            else:
+                checks += set_parity_checks(path, quoted(match.group(1)), expected, 'quota provider contract')
         self.problems(checks)
 
     def test_fleet_modules_exist_and_are_declared(self):
@@ -192,32 +259,22 @@ class HarnessParityTest(unittest.TestCase):
                                f"declare provider.fleet_module '{expected}'"))
         self.problems(checks)
 
-    def test_quota_readers_and_explicit_no_reader_harnesses_cover_every_descriptor(self):
+    def test_quota_readers_require_operation_and_valid_argv(self):
         docs = descriptors()
-        names = set(docs)
         checks = []
-        for name in sorted(names - QUOTA_READERS - NO_QUOTA_READER):
-            checks.append(('ops/tests/test_harness_parity.py',
-                           f"classify '{name}' in QUOTA_READERS (declare operations.quota with a reader) "
-                           'or in NO_QUOTA_READER (explicit no-reader harness)'))
-        for name in sorted((QUOTA_READERS | NO_QUOTA_READER) - names):
-            checks.append(('ops/tests/test_harness_parity.py', f"'{name}' is classified but has no descriptor"))
-        for name in sorted(QUOTA_READERS & NO_QUOTA_READER):
-            checks.append(('ops/tests/test_harness_parity.py', f"'{name}' is in both quota classifications"))
         for name, doc in sorted(docs.items()):
             operations = doc['operations']
             provider = doc.get('provider') or {}
-            if name in QUOTA_READERS:
+            if 'quota' in operations:
                 if operations.get('quota') != 'quota-collector':
                     checks.append((f'packages/adapter-sdk/descriptors/{name}.json',
                                    'declare operations.quota as quota-collector for a measured harness'))
-                if not provider.get('quota_argv'):
+                if not valid_quota_argv(doc):
                     checks.append((f'packages/adapter-sdk/descriptors/{name}.json',
                                    'declare provider.quota_argv for a measured harness'))
-            if name in NO_QUOTA_READER and ('quota' in operations or 'quota_argv' in provider):
+            if 'quota_argv' in provider and 'quota' not in operations:
                 checks.append((f'packages/adapter-sdk/descriptors/{name}.json',
-                               'declares a quota reader but is classified as an explicit no-reader harness; '
-                               'move it to QUOTA_READERS or remove the operation'))
+                               'declares provider.quota_argv without operations.quota'))
         self.problems(checks)
 
     def test_quota_readers_match_store_executor_and_receipt(self):
@@ -225,15 +282,165 @@ class HarnessParityTest(unittest.TestCase):
 
     def test_quota_reader_contracts_reject_drift_and_missing_declarations(self):
         sources = {path: text(path) for path in (
-            'packages/store/src/agent-quota-operations-model.ts',
             'ops/cli/fleet_executor_agent_quota.py',
             'packages/protocol/src/agent-quota.ts')}
+        original = text
         for path, source in sources.items():
             for altered in (source.replace("'grok'", "'muse'"), ''):
                 with self.subTest(path=path, missing=altered == ''):
-                    with patch(__name__ + '.text', side_effect={**sources, path: altered}.__getitem__):
+                    with patch(__name__ + '.text', side_effect=lambda requested, altered=altered, path=path:
+                               altered if requested == path else original(requested)):
                         with self.assertRaisesRegex(AssertionError, re.escape(path)):
                             self.problems(quota_reader_contract_checks())
+
+    def assert_source_mutation_rejected(self, path, altered, check, failure_path=None):
+        original = text
+        self.assertNotEqual(altered, original(path), f'{path}: mutation did not alter the source')
+        with patch(__name__ + '.text', side_effect=lambda requested: altered if requested == path else original(requested)):
+            with self.assertRaisesRegex(AssertionError, re.escape(failure_path or path)):
+                check()
+
+    def test_four_reported_mutations_are_rejected(self):
+        index = 'packages/adapter-sdk/src/harnesses/index.ts'
+        session = 'packages/adapter-sdk/src/sdk/durable-store/session-file.ts'
+        console = 'console/src/api/client/my-quotas-client.ts'
+        protocol = 'packages/protocol/src/schemas/quotas.ts'
+        mutations = [
+            (index, text(index).replace('  hermes: hermesDefinition,', '  ghost: hermesDefinition,\n  hermes: hermesDefinition,'),
+             self.test_typescript_harness_id_union_and_definitions_match_descriptors),
+            (session, re.sub(r'\(\?:([a-z0-9_|-]+)\):', r'(?:\1|ghost):', text(session)),
+             self.test_bins_and_session_file_regex_match_descriptors),
+            (console, text(console).replace(" | 'grok'", ''), self.test_quota_enums_and_sql_check_cover_quota_descriptors),
+            (protocol, re.sub(r'(QuotaEnvironmentProviderSchema\s*=\s*z\.enum\(\[)([^\]]+)(\]\))',
+                              lambda match: match[1] + match[2] + ", 'muse'" + match[3], text(protocol)),
+             self.test_quota_enums_and_sql_check_cover_quota_descriptors),
+        ]
+        for path, altered, check in mutations:
+            with self.subTest(path=path):
+                self.assert_source_mutation_rejected(path, altered, check)
+
+    def test_harness_contracts_reject_missing_and_extra_ids(self):
+        types = 'packages/adapter-sdk/src/sdk/types.ts'
+        index = 'packages/adapter-sdk/src/harnesses/index.ts'
+        session = 'packages/adapter-sdk/src/sdk/durable-store/session-file.ts'
+        gateway = 'services/gateway/src/console/agent-documents/catalog.ts'
+        mutations = [
+            (types, text(types).replace('export type HarnessId = ', "export type HarnessId = 'ghost' | "),
+             self.test_typescript_harness_id_union_and_definitions_match_descriptors),
+            (types, text(types).replace("'grok' | ", ''), self.test_typescript_harness_id_union_and_definitions_match_descriptors),
+            (index, text(index).replace('  grok: grokDefinition,', ''), self.test_typescript_harness_id_union_and_definitions_match_descriptors),
+            (session, text(session).replace('|grok|', '|'), self.test_bins_and_session_file_regex_match_descriptors),
+            (gateway, text(gateway).replace('export type HarnessKind = ', "export type HarnessKind = 'ghost' | "),
+             self.test_gateway_harness_kind_covers_descriptors_except_allowlisted),
+        ]
+        for path, altered, check in mutations:
+            with self.subTest(path=path):
+                self.assert_source_mutation_rejected(path, altered, check)
+
+    def test_quota_contracts_reject_missing_extra_and_non_harness_drift(self):
+        paths = ('packages/protocol/src/schemas/quotas.ts', 'services/gateway/src/fleet/host-channel.capabilities.ts',
+                 'console/src/api/client/my-quotas-client.ts')
+        for path in paths:
+            source = text(path)
+            for provider, replacement in (('grok', 'ghost'), ('gemini', 'muse'), ('claude', 'minimax')):
+                with self.subTest(path=path, provider=provider):
+                    self.assert_source_mutation_rejected(path, source.replace(f"'{provider}'", f"'{replacement}'"),
+                                                         self.test_quota_enums_and_sql_check_cover_quota_descriptors)
+        path = 'packages/store/migrations/057_quota_environments.sql'
+        self.assert_source_mutation_rejected(path, text(path).replace("'claude','codex','gemini','grok'", "'claude','codex','gemini'"),
+                                             self.test_quota_enums_and_sql_check_cover_quota_descriptors, 'packages/store/migrations/')
+
+    def test_quota_readers_follow_descriptor_addition_removal_and_argv(self):
+        docs = descriptors()
+        expected = quota_readers(docs)
+        docs['ghost'] = {**docs['grok'], 'harness': 'ghost'}
+        self.assertEqual(quota_readers(docs), expected | {'ghost'})
+        del docs['ghost']
+        self.assertEqual(quota_readers(docs), expected)
+        docs['muse']['operations']['quota'] = 'quota-collector'
+        docs['muse']['provider']['quota_argv'] = ['/usr/bin/read-quota']
+        self.assertEqual(quota_readers(docs), expected | {'muse'})
+        del docs['muse']['operations']['quota']
+        self.assertEqual(quota_readers(docs), expected)
+        del docs['grok']['operations']['quota']
+        self.assertEqual(quota_readers(docs), expected - {'grok'})
+        docs['grok']['operations']['quota'] = 'quota-collector'
+        for argv in ([], 'read-quota', [''], [None]):
+            with self.subTest(argv=argv):
+                docs['grok']['provider']['quota_argv'] = argv
+                self.assertEqual(quota_readers(docs), expected - {'grok'})
+
+    def test_store_quota_contract_rejects_literal_dead_or_unbound_sql(self):
+        path = 'packages/store/src/agent-quota-operations-model.ts'
+        source = text(path)
+        changes = (
+            re.sub(r'agent\.harness_id\s*=\s*ANY\(\$5::text\[\]\)', "agent.harness_id IN ('codex','claude','grok')", source),
+            source.replace('const quotaReaders = await approvedAgentQuotaHarnesses();', "const quotaReaders = ['codex', 'claude', 'grok'];"),
+            source.replace('const quotaReaders = await approvedAgentQuotaHarnesses();',
+                           "// const quotaReaders = await approvedAgentQuotaHarnesses();\nconst quotaReaders = ['codex'];"),
+            source.replace(', quotaReaders]', ', []]'),
+            source.replace('const row = (await client.query', 'const unusedRow = (await client.query'),
+        )
+        for index, altered in enumerate(changes):
+            with self.subTest(mutation=index):
+                self.assertNotEqual(altered, source)
+                with self.assertRaisesRegex(AssertionError, re.escape(path)):
+                    self.problems(store_quota_reader_contract_checks(altered))
+
+    def test_effective_quota_sql_applies_later_migrations_and_combined_actions(self):
+        with tempfile.TemporaryDirectory() as directory:
+            initial = pathlib.Path(directory) / '001.sql'
+            initial.write_text("CREATE TABLE quota_environments (provider text CHECK (provider IN ('codex','gemini')));")
+            updated = pathlib.Path(directory) / '002.sql'
+            updated.write_text('ALTER TABLE quota_environments DROP CONSTRAINT quota_environments_provider_check, '
+                               "ADD CONSTRAINT quota_environments_provider_check CHECK (provider IN ('grok','gemini')); "
+                               "-- CHECK (provider IN ('ghost'))\n")
+            providers, checks = effective_quota_provider_check([updated, initial])
+        self.problems(checks)
+        self.assertEqual(providers, {'grok', 'gemini'})
+
+    def test_effective_quota_sql_intersects_active_checks_and_rejects_missing_contract(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory) / '001.sql'
+            path.write_text("CREATE TABLE quota_environments (provider text CHECK (provider IN ('codex','grok')), "
+                            "CONSTRAINT extra CHECK (provider IN ('grok','gemini')));")
+            providers, checks = effective_quota_provider_check([path])
+            self.problems(checks)
+            self.assertEqual(providers, {'grok'})
+            path.write_text("CREATE TABLE quota_environments (provider text CHECK (provider IN ('codex'))); "
+                            'ALTER TABLE quota_environments DROP CONSTRAINT quota_environments_provider_check;')
+            providers, checks = effective_quota_provider_check([path])
+            self.assertEqual(providers, set())
+            with self.assertRaisesRegex(AssertionError, 'effective quota_environments provider CHECK not found'):
+                self.problems(checks)
+            path.write_text("CREATE TABLE quota_environments (provider text CHECK (provider IN ('codex') OR provider='grok'));")
+            _, checks = effective_quota_provider_check([path])
+            with self.assertRaisesRegex(AssertionError, 'not a parsed closed IN contract'):
+                self.problems(checks)
+
+    def test_parity_rejects_differently_indented_and_invalid_harness_ids(self):
+        index = 'packages/adapter-sdk/src/harnesses/index.ts'
+        self.assert_source_mutation_rejected(index, text(index).replace('  hermes: hermesDefinition,',
+                                                                       '    Ghost: hermesDefinition,\n  hermes: hermesDefinition,'),
+                                             self.test_typescript_harness_id_union_and_definitions_match_descriptors)
+        path = 'packages/protocol/src/schemas/quotas.ts'
+        self.assert_source_mutation_rejected(path, re.sub(r'(QuotaEnvironmentProviderSchema\s*=\s*z\.enum\(\[)',
+                                                         r"\1'Ghost', ", text(path)),
+                                             self.test_quota_enums_and_sql_check_cover_quota_descriptors)
+
+    def test_effective_quota_sql_rejects_dynamic_values_and_duplicate_named_constraints(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory) / '001.sql'
+            for source, failure in (
+                ("CREATE TABLE quota_environments (provider text CHECK (provider IN ('codex', current_user)));", 'nonliteral value'),
+                ("CREATE TABLE quota_environments (provider text CONSTRAINT readers CHECK (provider IN ('codex'))); "
+                 "ALTER TABLE quota_environments ADD CONSTRAINT readers CHECK (provider IN ('grok'));", 'without dropping it'),
+            ):
+                with self.subTest(failure=failure):
+                    path.write_text(source)
+                    _, checks = effective_quota_provider_check([path])
+                    with self.assertRaisesRegex(AssertionError, failure):
+                        self.problems(checks)
 
     def test_harness_definitions_seed_accepts_whitespace(self):
         with tempfile.TemporaryDirectory() as directory:

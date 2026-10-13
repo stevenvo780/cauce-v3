@@ -222,9 +222,18 @@ def verify_bundles(policy: dict, release: pathlib.Path) -> None:
     sys.path.insert(0, str(release / 'ops/container-runtime'))
     try:
         from cauce_container_base import bundle_digest
-        for bundle in policy['bundles'].values():
+        from harness_operations import HarnessOperationFailure, read_descriptor
+        for harness, bundle in policy['bundles'].items():
             if not pathlib.Path(bundle['directory']).resolve().is_relative_to(release.resolve()) or bundle_digest(bundle['directory']) != bundle['digest']:
                 raise HostFailure('approved bundle digest differs from the release; nothing was activated')
+            if 'descriptor_sha256' in bundle:
+                pin = bundle['descriptor_sha256']
+                if not isinstance(pin, str) or not HEX.fullmatch(pin):
+                    raise HostFailure(f'approved descriptor pin is invalid for {harness}; nothing was activated')
+                try:
+                    read_descriptor(bundle['directory'], harness, expected_sha256=pin)
+                except HarnessOperationFailure:
+                    raise HostFailure(f'approved descriptor differs for {harness}; nothing was activated') from None
     except (ImportError, KeyError, TypeError, OSError):
         raise HostFailure('approved bundle cannot be verified in the release') from None
     finally:
