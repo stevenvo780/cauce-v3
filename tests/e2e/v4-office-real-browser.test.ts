@@ -208,7 +208,9 @@ describe('Oficina V4 en navegador Chromium real, gateway y PostgreSQL reales', (
     const registeredA = await pool().query<{ tenant_id: string; company_id: string; role: string }>(
       `SELECT person.tenant_id,person.company_id,admin.role FROM console_users person
         JOIN company_admins admin ON admin.human_id=person.id AND admin.company_id=person.company_id WHERE person.email_normalized=$1`, [ownerA.email]);
-    expect(registeredA.rows).toEqual([{ tenant_id: expect.any(String), company_id: ownerA.company.slug, role: 'owner' }]);
+    expect(registeredA.rows).toHaveLength(1);
+    expect(registeredA.rows[0]).toMatchObject({ company_id: ownerA.company.slug, role: 'owner' });
+    expect(typeof registeredA.rows[0]?.tenant_id).toBe('string');
     hubA = registeredA.rows[0]?.tenant_id ?? '';
     await pool().query(`INSERT INTO agents(tenant_id,alias,harness_id,display_name,enabled,container_name,runtime_user,
         home_directory,state_directory,company_id)
@@ -242,7 +244,9 @@ describe('Oficina V4 en navegador Chromium real, gateway y PostgreSQL reales', (
     const registeredB = await pool().query<{ tenant_id: string; company_id: string; role: string }>(
       `SELECT person.tenant_id,person.company_id,admin.role FROM console_users person
         JOIN company_admins admin ON admin.human_id=person.id AND admin.company_id=person.company_id WHERE person.email_normalized=$1`, [ownerB.email]);
-    expect(registeredB.rows).toEqual([{ tenant_id: expect.any(String), company_id: ownerB.company.slug, role: 'owner' }]);
+    expect(registeredB.rows).toHaveLength(1);
+    expect(registeredB.rows[0]).toMatchObject({ company_id: ownerB.company.slug, role: 'owner' });
+    expect(typeof registeredB.rows[0]?.tenant_id).toBe('string');
     hubB = registeredB.rows[0]?.tenant_id ?? '';
     expect(hubB).not.toBe(hubA);
 
