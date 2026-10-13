@@ -125,8 +125,31 @@ describe('bootstrap durable control on disposable PostgreSQL', () => {
       steps='[{"name":"admission","status":"succeeded"}]'::jsonb WHERE id=$1`, [operationId]);
     expect((await repository.state(identity, operationId, 'normal')).normal_admitted).toBe(true);
     expect(await repository.profile(identity, operationId, 'normal')).toMatchObject({ runtime_key: identity.alias, profile_revision: 1 });
-    await expect(repository.claim(identity, operationId, 'normal', identity.alias)).rejects.toMatchObject({ code: 'conflict' });
+    expect(await repository.claim(identity, operationId, 'normal', identity.alias)).toBeNull();
     await expect(repository.create(identity, input('verify', 'normal'))).rejects.toMatchObject({ code: 'conflict' });
+  });
+  it('keeps the admitted normal runtime alive when settle commits between its state read and its claim', async () => {
+    await remoteOperation();
+    expect((await complete()).acknowledged.state).toBe('succeeded');
+    await verifyStep(); await complete('verify');
+    await pool.query(`UPDATE fleet_operations SET steps=$2::jsonb WHERE id=$1`, [operationId,
+      JSON.stringify([{ name: 'verify', status: 'succeeded' }, { name: 'admission', status: 'running' }])]);
+    await complete('verify', 'normal');
+    // The runtime reads its state while the admission is still in flight, so it goes on to claim...
+    expect(await repository.state(identity, operationId, 'normal')).toMatchObject({ status: 'running', enabled: false, normal_admitted: false });
+    // ...and settle() commits before that claim arrives: it admits the agent, records a revision and releases the worker.
+    await pool.query("UPDATE agents SET enabled=true,lifecycle_state='ready' WHERE alias='boot-agent'");
+    await pool.query(`UPDATE fleet_operations SET status='succeeded',desired_revision=COALESCE(desired_revision,0)+1,
+      applied_revision=COALESCE(desired_revision,0)+1,worker_id=NULL,claim_token=NULL,lease_expires_at=NULL,
+      steps='[{"name":"admission","status":"succeeded"}]'::jsonb WHERE id=$1`, [operationId]);
+    expect(await repository.claim(identity, operationId, 'normal', identity.alias)).toBeNull();
+    expect((await repository.state(identity, operationId, 'normal')).normal_admitted).toBe(true);
+    // Only that admitted normal runtime is told to wait: the bootstrap phase and another runtime still end, and so does a
+    // runtime whose operation did not succeed (an unsettled operation is checked against its sealed host scope again).
+    await expect(repository.claim(identity, operationId, 'bootstrap', identity.alias)).rejects.toMatchObject({ code: 'conflict' });
+    await expect(repository.claim(identity, operationId, 'normal', 'foreign-runtime')).rejects.toMatchObject({ code: 'conflict' });
+    await pool.query("UPDATE fleet_operations SET status='failed' WHERE id=$1", [operationId]);
+    await expect(repository.claim(identity, operationId, 'normal', identity.alias)).rejects.toMatchObject({ code: 'forbidden' });
   });
   it('refuses a remote host without a sealed prepared slice', async () => {
     await remoteOperation(false);
