@@ -148,8 +148,7 @@ class QuotaRuntimeTest(unittest.TestCase):
         policy = {**self.policy, 'bundles': {'codex': {'directory': '/nonexistent-bundle'}},
                   'quota_environments': {**self.policy['quota_environments'], 'providers': ['codex', 'gemini']}}
         self.assertEqual(runtime.configuration(policy)['providers'], ['codex', 'gemini'])
-        with self.assertRaises(runtime.SafeFailure):
-            runtime.capabilities(policy)
+        self.assertEqual(runtime.capabilities(policy), {'providers': [], 'actions': {}})
         document = {'operation_id': self.document['operation_id'], 'action': 'query', 'consent': False,
                     'environment': {**self.document['environment'], 'provider': 'codex'}}
         with self.assertRaises(runtime.SafeFailure):

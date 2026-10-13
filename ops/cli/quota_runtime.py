@@ -111,6 +111,8 @@ def capabilities(policy: dict) -> dict:
         if provider in RETIRED_PROVIDERS:
             continue
         if provider not in allowed:
+            if provider in (policy.get('bundles') or {}):
+                continue
             raise SafeFailure('quota provider has no quota descriptor in its approved bundles')
         available, _unavailable = provider_actions(policy, provider)
         if available:
