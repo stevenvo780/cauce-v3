@@ -405,14 +405,24 @@ describe('host backup monitor', () => {
     const unrelated = Array.from({ length: 3000 }, (_, index) => `unrelated-${String(index)}`).join('\n');
     const postgres = 'cauce-v3-prod-postgres-1';
     const pgdata = 'cauce-v3-prod_cauce_pgdata';
-    test.each<{ name: string; containers: string; volumes: string; status: number; grepTarget?: string }>([
+    test.each<{
+      name: string; containers: string; volumes: string; status: number; grepTarget?: string;
+      failure?: string; applied?: string; bundled?: string; pending?: number; error?: string;
+    }>([
       { name: 'counts a pending migration with a short inventory', containers: postgres, volumes: pgdata, status: 0 },
       { name: 'counts a pending migration with postgres before 3000 containers', containers: `${postgres}\n${unrelated}`, volumes: pgdata, status: 0 },
       { name: 'rejects indeterminate migrations with pgdata before 3000 volumes and no postgres', containers: unrelated, volumes: `${pgdata}\n${unrelated}`, status: 1 },
       { name: 'keeps migrations pending with postgres and pgdata before 3000 names', containers: `${postgres}\n${unrelated}`, volumes: `${pgdata}\n${unrelated}`, status: 0 },
       { name: 'rejects grep errors while locating postgres', containers: postgres, volumes: pgdata, status: 1, grepTarget: postgres },
       { name: 'rejects grep errors while locating pgdata', containers: '', volumes: '', status: 1, grepTarget: pgdata },
-    ])('$name', async ({ containers, volumes, status, grepTarget = '' }) => {
+      { name: 'aborts when docker cannot list containers', containers: postgres, volumes: pgdata, status: 1, failure: 'ps', error: 'no pude enumerar contenedores' },
+      { name: 'aborts when docker cannot list volumes', containers: '', volumes: '', status: 1, failure: 'volume', error: 'no pude enumerar volumenes' },
+      { name: 'aborts when docker cannot inspect postgres', containers: postgres, volumes: pgdata, status: 1, failure: 'inspect', error: 'no pude inspeccionar PostgreSQL' },
+      { name: 'aborts when psql cannot read applied migrations', containers: postgres, volumes: pgdata, status: 1, failure: 'exec', error: 'no pude consultar schema_migrations' },
+      { name: 'reports no pending migrations when all are applied', containers: postgres, volumes: pgdata, status: 0, applied: '001_init.sql\n002_next.sql', pending: 0 },
+      { name: 'matches full migration names despite common prefixes', containers: postgres, volumes: pgdata, status: 0, bundled: '010_a.sql\n010_ab.sql', applied: '010_a.sql.bak\n010_ab.sql' },
+    ])('$name', async ({ containers, volumes, status, grepTarget = '', failure = '', applied = '001_init.sql',
+      bundled = '001_init.sql\n002_next.sql', pending = 1, error = 'migraciones pendientes indeterminadas' }) => {
       const source = await readFile(deploy, 'utf8');
       const start = source.indexOf('count_unapplied_migrations() {');
       const end = source.indexOf('\nbackup_monitor_accepts() {', start);
@@ -422,11 +432,12 @@ describe('host backup monitor', () => {
 die() { echo "$*" >&2; exit 1; }
 ${inventoryGrep}
 docker() {
+  [ "$MOCK_DOCKER_FAILURE" != "$1" ] || return 2
   case "$*" in
     'ps -a --format {{.Names}}') printf '%s\n' "$MOCK_CONTAINERS" ;;
     'volume ls --format {{.Name}}') printf '%s\n' "$MOCK_VOLUMES" ;;
     "inspect -f {{.State.Running}} $PG_CONTAINER") printf '%s\n' true ;;
-    "exec $PG_CONTAINER psql -XAtq -v ON_ERROR_STOP=1 -U $PG_USER -d $PG_DB -c SELECT version FROM schema_migrations") printf '%s\n' '001_init.sql' ;;
+    "exec $PG_CONTAINER psql -XAtq -v ON_ERROR_STOP=1 -U $PG_USER -d $PG_DB -c SELECT version FROM schema_migrations") printf '%s\n' "$MOCK_APPLIED" ;;
     *) return 2 ;;
   esac
 }
@@ -440,21 +451,18 @@ printf 'PENDING=%s\nATTEMPT=%s\n' "$PENDING_MIGRATIONS" "$MIGRATION_ATTEMPT_PEND
           ...process.env,
           PROJECT_NAME: 'cauce-v3-prod',
           PG_CONTAINER: postgres,
-          PG_USER: 'cauce',
-          PG_DB: 'cauce',
-          BUNDLED_MIGRATIONS: '001_init.sql\n002_next.sql',
-          MOCK_CONTAINERS: containers,
-          MOCK_VOLUMES: volumes,
-          MOCK_GREP_TARGET: grepTarget,
+          PG_USER: 'cauce', PG_DB: 'cauce', BUNDLED_MIGRATIONS: bundled,
+          MOCK_CONTAINERS: containers, MOCK_VOLUMES: volumes, MOCK_GREP_TARGET: grepTarget,
+          MOCK_DOCKER_FAILURE: failure, MOCK_APPLIED: applied,
         },
       });
       expect(result.status, result.stderr).toBe(status);
       if (status === 0) {
-        expect(result.stdout).toBe('PENDING=1\nATTEMPT=1\n');
+        expect(result.stdout).toBe(`PENDING=${String(pending)}\nATTEMPT=${String(pending)}\n`);
         expect(result.stderr).toBe('');
       } else {
         expect(result.stdout).toBe('');
-        expect(result.stderr).toContain(grepTarget ? 'no pude buscar' : 'migraciones pendientes indeterminadas');
+        expect(result.stderr).toContain(grepTarget ? 'no pude buscar' : error);
       }
     });
   });
