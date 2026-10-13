@@ -64,6 +64,8 @@ def private_session(location: str) -> dict:
     cookie = raw.get('cookie') if isinstance(raw, dict) else None
     if not isinstance(cookie, str) or not cookie or len(cookie) > 12000 or any(ord(char) < 32 for char in cookie):
         raise ContextFailure('console session file is unavailable')
+    if not raw.get('gateway') or not raw.get('origin'):
+        raise ContextFailure('vuelve a iniciar sesión con cauce login')
     return raw
 
 
@@ -102,7 +104,7 @@ def request_json(gateway: str, origin: str, ca_file: str | None, method: str, pa
     payload = None if body is None else json.dumps(body, separators=(',', ':')).encode()
     request = urllib.request.Request(gateway + path, method=method, data=payload,
         headers={'Origin': origin, 'Accept': 'application/json', 'Content-Type': 'application/json', **(headers or {})})
-    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect(),
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler(), NoRedirect(),
         urllib.request.HTTPSHandler(context=ssl.create_default_context(cafile=ca_file)))
     try:
         with opener.open(request, timeout=timeout) as response:

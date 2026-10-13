@@ -7,9 +7,18 @@ import tempfile
 import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from unittest.mock import patch
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / 'cli'))
-from context_client import ContextClient, ContextFailure, export_context, private_cookie, read_scoped, valid_path
+from context_client import (
+    ContextClient,
+    ContextFailure,
+    export_context,
+    private_cookie,
+    read_scoped,
+    request_json,
+    valid_path,
+)
 from context_native import sync
 
 
@@ -96,6 +105,47 @@ class ContextCliTests(unittest.TestCase):
             private_cookie(str(self.session))
         with self.assertRaises(ContextFailure):
             ContextClient('http://external.example', 'https://console.example', str(self.session))
+
+    def test_incomplete_session_requires_login_before_network_access(self):
+        original = json.loads(self.session.read_text())
+        for field in ('gateway', 'origin'):
+            with self.subTest(field=field):
+                self.session.write_text(json.dumps({key: value for key, value in original.items() if key != field}))
+                with self.assertRaisesRegex(ContextFailure, 'vuelve a iniciar sesión con cauce login'):
+                    ContextClient(self.url, self.url, str(self.session))
+        self.assertEqual(Handler.observed, [])
+
+    def test_https_proxy_from_environment_receives_a_connect_request(self):
+        class Proxy(Handler):
+            def do_CONNECT(self):
+                Handler.observed.append((self.command, self.path, self.headers.get('Cookie')))
+                self.send_response(502)
+                self.end_headers()
+
+        self.server.RequestHandlerClass = Proxy
+        gateway = 'https://console.example.invalid'
+        with patch.dict(os.environ, {'HTTPS_PROXY': self.url}, clear=True):
+            with self.assertRaisesRegex(ContextFailure, 'console gateway is unavailable'):
+                request_json(gateway, gateway, None, 'GET', '/v3/auth/session',
+                             headers={'Cookie': 'cauce_session=synthetic-test'}, timeout=2)
+        self.assertEqual(Handler.observed, [('CONNECT', 'console.example.invalid:443', None)])
+
+    def test_redirects_from_an_environment_proxy_are_not_followed(self):
+        class Proxy(Handler):
+            def do_GET(self):
+                Handler.observed.append((self.path, self.headers.get('Cookie')))
+                self.send_response(302)
+                self.send_header('Location', self.url + '/redirect-target')
+                self.end_headers()
+
+        Proxy.url = self.url
+        self.server.RequestHandlerClass = Proxy
+        gateway = 'http://127.0.0.1:9'
+        with patch.dict(os.environ, {'HTTP_PROXY': self.url}, clear=True):
+            with self.assertRaisesRegex(ContextFailure, 'HTTP 302; redirects are disabled'):
+                request_json(gateway, gateway, None, 'GET', '/v3/auth/session',
+                             headers={'Cookie': 'cauce_session=synthetic-test'}, timeout=2)
+        self.assertEqual(Handler.observed, [(gateway + '/v3/auth/session', 'cauce_session=synthetic-test')])
 
     def test_mutations_without_session_csrf_are_rejected_before_network_access(self):
         self.session.write_text(json.dumps({'cookie': 'cauce_session=synthetic-test', 'gateway': self.url, 'origin': self.url}))

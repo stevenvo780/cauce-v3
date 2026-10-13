@@ -156,6 +156,34 @@ class ConsoleLoginTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertEqual(len(self.server.observed), before)
 
+    def test_incomplete_saved_session_requires_a_new_login_for_status_and_renewal(self):
+        self.authenticate()
+        original = json.loads(self.session.read_text())
+        before = len(self.server.observed)
+        for field in ('gateway', 'origin'):
+            self.session.write_text(json.dumps({key: value for key, value in original.items() if key != field}))
+            for mode in ('--status', '--renew'):
+                with self.subTest(field=field, mode=mode):
+                    result = self.command(mode, '--gateway', self.url, '--origin', self.url)
+                    self.assertEqual(result.returncode, 1)
+                    self.assertIn('vuelve a iniciar sesión con cauce login', result.stderr)
+                    self.assertNotIn('cauce_session=', result.stdout + result.stderr)
+        self.assertEqual(len(self.server.observed), before)
+
+    def test_login_respects_https_proxy(self):
+        class Proxy(Handler):
+            def do_CONNECT(self):
+                self.server.observed.append((self.command, self.path, self.headers.get('Cookie')))
+                self.send_response(502)
+                self.end_headers()
+
+        self.server.RequestHandlerClass = Proxy
+        with patch.dict(os.environ, {'HTTPS_PROXY': self.url}, clear=True):
+            with self.assertRaisesRegex(login_cli.ContextFailure, 'console gateway is unavailable'):
+                login_cli.login('https://console.example.invalid', None, 'owner@example.test', PASSWORD, str(self.session))
+        self.assertEqual(self.server.observed, [('CONNECT', 'console.example.invalid:443', None)])
+        self.assertFalse(self.session.exists())
+
     def test_refuses_public_session_and_foreign_owner(self):
         self.authenticate()
         self.session.chmod(0o644)
