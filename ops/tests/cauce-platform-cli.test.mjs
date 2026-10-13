@@ -429,8 +429,8 @@ test('seeds the platform administrator and company owners idempotently without m
     await pool.query(`INSERT INTO agents(tenant_id,alias,enabled,harness_id,container_name,runtime_user,home_directory,state_directory)
       VALUES('Miguel','janus',true,'codex','seed-fixture','dev','/home/dev','/home/dev/.cauce')`);
     await pool.query("INSERT INTO memberships(tenant_id,room_id,alias,role) VALUES('Miguel','company-humanizar','janus','operator')");
-    await pool.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,role,permissions)
-      VALUES($1,'Miguel','janus','operator',ARRAY['read','control'])`, [miguel]);
+    await pool.query(`INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,permissions)
+      VALUES($1,'Miguel','janus',ARRAY['read','control'])`, [miguel]);
     const authority = await withTransaction(pool, client => lockCompanyAuthority(client,
       { tenant: 'Miguel', alias: 'janus', humanId: miguel }));
     assert.equal(authority.role, 'company_owner');
