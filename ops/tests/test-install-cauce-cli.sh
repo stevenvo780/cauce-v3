@@ -228,11 +228,25 @@ HOME="$HOGAR2" CAUCE_DESTINO_AVISO_INICIAL=otro_destino "$INSTALADOR" "$WORK/bin
 if grep -q steven_dm "$AVISO"; then ok "no pisa un attach-aviso.json existente"; else bad "no pisa un attach-aviso.json existente"; fi
 HOGAR_SIN="$WORK/hogar-sin"
 mkdir -p "$HOGAR_SIN"
-err=$(HOME="$HOGAR_SIN" "$INSTALADOR" "$WORK/bin-sin" 2>&1); rc=$?
+err=$(HOME="$HOGAR_SIN" CAUCE_DESTINO_AVISO_INICIAL='' "$INSTALADOR" "$WORK/bin-sin" 2>&1); rc=$?
 if [ "$rc" != 0 ] && grep -q 'aviso de attach sin destino' <<< "$err"; then
   ok "sin destino falla en vez de inventar uno"
 else
   bad "sin destino falla en vez de inventar uno (rc=$rc): $err"
+fi
+if [ ! -e "$WORK/bin-sin" ]; then
+  ok "sin destino rechaza antes de crear el directorio de binarios"
+else
+  bad "sin destino rechaza antes de crear el directorio de binarios"
+fi
+mkdir -p "$WORK/bin-previo"
+printf 'existing binary\n' > "$WORK/bin-previo/cauce"
+err=$(HOME="$HOGAR_SIN" CAUCE_DESTINO_AVISO_INICIAL='' "$INSTALADOR" "$WORK/bin-previo" 2>&1); rc=$?
+if [ "$rc" = 1 ] && [ "$(cat "$WORK/bin-previo/cauce")" = 'existing binary' ] \
+  && [ "$(find "$WORK/bin-previo" -maxdepth 1 -type f | wc -l)" = 1 ]; then
+  ok "sin destino conserva los binarios existentes sin instalar ni crear respaldos"
+else
+  bad "sin destino conserva los binarios existentes (rc=$rc): $err"
 fi
 
 [ "$fail" = 0 ] && echo "ALL OK"

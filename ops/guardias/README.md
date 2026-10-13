@@ -32,7 +32,7 @@ de `sha256(refreshToken)`— que identifica una cuenta sin permitir reconstruirl
 | `cauce-v3-medico-monitor` | fallos silenciosos | El MÉDICO: vigila, adjudica y repara sólo lo demostrablemente seguro — 55 iteraciones rescatadas de .bak | timer cada 15 min |
 | `cauce-watch` | transcript del agente | Tail en vivo, sólo lectura y acotado por tiempo | manual |
 | `credential_health.py` | vencimientos y huellas | Autoridad pura compartida: clasifica vencimientos y huellas repetidas | biblioteca |
-| `cred-guard.py` | credenciales de la flota | Un solo script por host: sin argumentos agrega quién se quedó sin `refreshToken` y qué credenciales están compartidas; con `--sonda-remota` mide los alias de ese host y empuja sólo huellas al agregador. Con `CAUCE_CRED_GUARD_ESTADO` deja `cred-guard.txt` y resumen en `cred-guard.log`; el código de salida es real y las units avisan al bus con `OnFailure` | timer 30 min (agregador) · 15 min (sonda) |
+| `cred-guard.py` | credenciales de la flota | Un solo script por host: sin argumentos agrega quién se quedó sin `refreshToken` y qué credenciales están compartidas; con `--sonda-remota` mide los alias de ese host y empuja sólo huellas al agregador. Con `CAUCE_CRED_GUARD_ESTADO` deja stdout y stderr en `cred-guard.txt` y resumen UTC ISO con `rc`, `problemas` y `compartidas` en `cred-guard.log`. Los fallos quedan en journal; no hay aviso automático al bus | timer 30 min (agregador) · 15 min (sonda) |
 | `polidin-guard.sh` + `contenedor/polidin-fwd.sh` | túnel dentro de un contenedor | El guardia repone el reenvío cuando el puerto deja de escuchar; el `fwd` **es** el túnel y corre dentro del contenedor | timer 2 min |
 | `cauce-envoltorio-local.sh` | CLI dentro del contenedor | Envoltorio `cauce` que salta por `ssh` al host manager | instalado en el contenedor |
 | `cauce-huerfanas.sh` | ptys huérfanas | Envoltorio compatible del comando canónico `ops/cli/cauce-huerfanas` | instalado en el contenedor |
@@ -93,7 +93,8 @@ El fichero admite también `aliases.<alias>.destino` y, por empresa, `empresas.<
 con `empresa` (o `CAUCE_EMPRESA`); si se nombra una empresa que no figura, no hay aviso.
 `ops/scripts/install-cauce-cli.sh` lo crea con modo `0600` cuando falta y se le pasa el destino:
 `CAUCE_DESTINO_AVISO_INICIAL=steven_dm ./ops/scripts/install-cauce-cli.sh`. Si ya existe, no lo
-toca; si falta y no se le pasa nada, avisa en vez de escribir uno.
+toca; si falta y no se le pasa nada, sale con error antes de crear el directorio de binarios o
+instalar archivos. Configura el destino y vuelve a ejecutar el instalador.
 
 El vigía del catálogo lee el mismo fichero como respaldo, pero su unidad
 (`systemd/cauce-catalogo-health.service`) fija las tres variables: `CAUCE_DESTINO_AVISO=steven_dm`
@@ -174,6 +175,18 @@ los servicios, no hay colector de ficheros de texto. La señal de guardia sigue 
 salida y el informe.
 
 ## Restaurar después de una pérdida de disco
+
+Las plantillas de credenciales no tienen un receptor `OnFailure` de usuario. El template
+`cauce-v3-backup-alert@.service` pertenece al gestor de sistema y no recibe fallos de units
+`--user`; `cauce-alertas-al-bus.service` consulta Prometheus, no el resultado de estas guardias.
+No basta con usar su nombre para publicar el fallo. Consulta `journalctl --user -u cred-guard.service`
+o `journalctl --user -u cauce-cred-guard-kratos.service`; en el agregador de sistema, usa
+`journalctl -u cauce-cred-guard.service`. El agregador retorna 1 por credenciales ilegibles,
+muertas o mediciones remotas ausentes o atrasadas; las cuentas compartidas son informativas.
+La sonda remota conserva su retorno de transporte: 0 si empujó la medición y 1 si falló;
+sus problemas de credenciales viajan en el documento que evalúa el agregador. Ambos modos
+rechazan argumentos desconocidos con retorno 2 y pueden guardar el informe y log mediante
+`CAUCE_CRED_GUARD_ESTADO`.
 
 El agregador de credenciales corre como unidad de **SISTEMA**, no de usuario: `Type=oneshot` como
 root, disparado por su timer. El script se instala con **otro nombre** que el fichero de este repo,
