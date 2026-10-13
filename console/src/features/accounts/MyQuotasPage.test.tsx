@@ -218,6 +218,19 @@ it('editar una cuenta con pausa automática no reenvía el motivo reservado y lo
   expect(patches).toEqual([{ expected_version: 3, label: 'Renombrada', enabled: true }]);
 });
 
+it('el alta de cuenta no ofrece gemini aunque las capacidades lo anuncien', async () => {
+  server.use(http.get('*/v3/console/quota-accounts', () => HttpResponse.json({ company_id: 'one', observed_at: '2026-10-11T00:00:00Z', accounts: [] })),
+    http.get('*/v3/console/quota-environments', () => HttpResponse.json({ company_id: 'one', environments: [], operations: [],
+      capabilities: { available: true, providers: ['codex', 'gemini', 'grok'], hosts: [], actions: ['create'] } })),
+    http.get('*/v3/console/preferences', () => HttpResponse.json({ version: 1, pinned_quota_accounts: [] })));
+  const user = userEvent.setup(); renderWithApi(owner());
+  await user.click(await screen.findByRole('button', { name: 'Registrar cuenta' }));
+  const provider = within(await screen.findByRole('form', { name: 'Registrar cuenta de cuotas' })).getByRole('combobox', { name: 'Proveedor' });
+  expect(within(provider).getByRole('option', { name: 'codex' })).toBeInTheDocument();
+  expect(within(provider).getByRole('option', { name: 'grok' })).toBeInTheDocument();
+  expect(within(provider).queryByRole('option', { name: 'gemini' })).not.toBeInTheDocument();
+});
+
 it('reanudar manda pausa y motivo nulos, y una fecha elegida se envía como instante con zona', async () => {
   const patches: Record<string, unknown>[] = [];
   server.use(http.get('*/v3/console/quota-accounts', () => HttpResponse.json({ company_id: 'one', observed_at: '2026-10-11T00:00:00Z',
@@ -276,4 +289,14 @@ it('si fijar una tarjeta da 409 relee las preferencias y ofrece releerlas', asyn
   await user.click(screen.getByRole('button', { name: 'Fijar cuenta' }));
   expect(await screen.findByRole('button', { name: 'Releer tarjetas fijadas' })).toBeVisible();
   await waitFor(() => { expect(reads).toBeGreaterThan(before); });
+});
+it('anuncia la carga inicial de entornos mientras el snapshot viaja', async () => {
+  server.use(http.get('*/v3/console/quota-environments', async () => {
+    await new Promise(resolve => { setTimeout(resolve, 600); });
+    return HttpResponse.json({ company_id: 'one', environments: [], operations: [],
+      capabilities: { available: false, providers: [], hosts: [], actions: [] } });
+  }));
+  renderWithApi(owner());
+  expect(await screen.findByText(/El formulario se habilita cuando llega la lectura/u)).toBeVisible();
+  expect(await screen.findByText(/No hay entornos de consulta/u)).toBeVisible();
 });

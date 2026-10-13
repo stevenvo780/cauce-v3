@@ -8,6 +8,7 @@ import { canManageCompany, useCompanyAuthority } from '../auth/company-authority
 import { randomUuid } from '../../random-id';
 import { QuotaAccountCard } from './QuotaAccountCard';
 import { QuotaEnvironmentPanel } from './QuotaEnvironmentPanel';
+import { EXECUTABLE_QUOTA_PROVIDERS } from './quota-environment-capabilities';
 import { failedQuotaRead } from './quota-availability';
 import { automaticPauseWindow, canManageQuotaAccounts, describeQuotaError, pauseReasonText } from './quota-messages';
 
@@ -57,7 +58,8 @@ export function MyQuotasPage() {
       catch (cause) { setPinFailed(true); void preferences.reload(); throw cause; }
       const reread = await preferences.reload(); if (reread.error) throw reread.error; }, 'Tarjetas fijadas guardadas para esta persona y empresa.');
   }
-  const executableProviders = environments.data?.capabilities.available ? environments.data.capabilities.providers : [];
+  const executableProviders = environments.data?.capabilities.available
+    ? environments.data.capabilities.providers.filter(provider => EXECUTABLE_QUOTA_PROVIDERS.has(provider)) : [];
   const pinned = preferences.data?.pinned_quota_accounts ?? [];
   const visible = [...accounts.data?.accounts ?? []].filter(account => !filterPinned || pinned.includes(account.id))
     .sort((left, right) => Number(pinned.includes(right.id)) - Number(pinned.includes(left.id)) || left.label.localeCompare(right.label));
@@ -66,6 +68,8 @@ export function MyQuotasPage() {
       <p className="m-0 mt-1 max-w-2xl text-sm text-muted">Consulta tus suscripciones, incluso sin agentes. Fija las cuentas que sigues y opera sus entornos de consulta.</p></div>
       <Button disabled={busy || accounts.loading || environments.loading} onClick={() => { void reload().catch((cause: unknown) => { setError(describeQuotaError(cause, 'No se pudo actualizar.')); }); }}>Actualizar cuotas y entornos</Button></header>
     {accounts.loading && !accounts.data ? <p role="status">Leyendo cuentas y ventanas…</p> : null}
+    {preferences.loading && !preferences.data ? <p role="status">Leyendo tarjetas fijadas…</p> : null}
+    {environments.loading && !environments.data ? <p role="status">Leyendo entornos de consulta…</p> : null}
     {accounts.error || environments.error || preferences.error || error ? <Notice tone="danger" role="alert">{error || describeQuotaError(accounts.error ?? environments.error ?? preferences.error, 'No se pudieron leer las cuotas.')}
       {preferences.error || pinFailed ? <Button size="sm" disabled={preferences.loading} onClick={() => { setPinFailed(false); void preferences.reload(); }}>Releer tarjetas fijadas</Button> : null}</Notice> : null}
     {notice ? <Notice tone="ok" role="status">{notice}</Notice> : null}
@@ -83,7 +87,7 @@ export function MyQuotasPage() {
       pinned={pinned.includes(account.id)} canPin={!!preferences.data && !preferences.error && !preferences.loading && !busy} onPin={() => { void pin(account); }}
       canEdit={canWriteAccounts} onEdit={() => { setEditing(account); }} onRemove={() => { setRemoving(account); }} />)}</section>
     {accounts.data && !visible.length ? <Notice tone="info">{filterPinned ? 'No has fijado ninguna cuenta. Muestra todas y elige las que quieras seguir.' : 'Aún no hay cuentas. Registra una suscripción para empezar.'}</Notice> : null}
-    <QuotaEnvironmentPanel snapshot={environments.error ? undefined : environments.data} accounts={accounts.data?.accounts ?? []} canWrite={canWrite}
+    <QuotaEnvironmentPanel snapshot={environments.error ? undefined : environments.data} loading={environments.loading && !environments.data} accounts={accounts.data?.accounts ?? []} canWrite={canWrite}
       canAuthenticate={canManageCompany(authority?.role) && !!accounts.data && !accounts.error && !busy} reload={reload} />
   </div>;
 }

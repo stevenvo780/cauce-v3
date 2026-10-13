@@ -36,6 +36,14 @@ it('filtra ordenadores por proveedor y create e invalida el host al cambiar de c
   expect(reload).toHaveBeenCalledOnce();
 });
 
+it('no ofrece gemini aunque un host anuncie create', () => {
+  const advertised = { ...snapshot, capabilities: { ...snapshot.capabilities, hosts: [...snapshot.capabilities.hosts,
+    { host_id: 'gemini-host', display_name: 'Gemini Host', providers: ['gemini' as const], provider_actions: { gemini: ['create' as const] } }] } };
+  renderWithApi(<QuotaEnvironmentPanel snapshot={advertised} accounts={accounts} canWrite reload={vi.fn()} />);
+  const account = within(screen.getByRole('form', { name: 'Crear entorno de cuotas' })).getByRole('combobox', { name: 'Cuenta' });
+  expect(within(account).queryByRole('option', { name: /gemini/u })).not.toBeInTheDocument();
+});
+
 it('habilita únicamente acciones del host y proveedor del entorno y bloquea hosts retirados', () => {
   const view = renderWithApi(<QuotaEnvironmentPanel snapshot={snapshot} accounts={accounts} canWrite reload={vi.fn()} />);
   const card = within(screen.getByRole('article', { name: 'Entorno GPT' }));
@@ -87,6 +95,12 @@ it.each([
     accounts={accounts} canWrite reload={vi.fn()} />);
   expect(within(screen.getByRole('article', { name: 'Entorno GPT' })).getByText(message)).toBeVisible();
   expect(screen.queryByText('Actualizando…')).not.toBeInTheDocument();
+});
+
+it('anuncia la carga inicial y mantiene el formulario deshabilitado hasta que llega el snapshot', () => {
+  renderWithApi(<QuotaEnvironmentPanel loading accounts={accounts} canWrite reload={vi.fn()} />);
+  expect(screen.getByRole('status')).toHaveTextContent(/Leyendo entornos de consulta…/u);
+  expect(screen.getByRole('button', { name: 'Crear entorno' })).toBeDisabled();
 });
 
 it('traduce el código de error de la operación en vez de mostrarlo crudo', () => {

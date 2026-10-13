@@ -13,8 +13,8 @@ const ACTION_LABEL: Record<QuotaEnvironmentAction, string> = { create: 'Crear en
 const STATUS_LABEL: Record<QuotaEnvironment['status'], string> = { pending: 'Pendiente', running: 'En ejecución', ready: 'Preparado', awaiting_auth: 'Esperando autenticación', failed: 'Fallido', deleting: 'Eliminación pendiente', deleted: 'Eliminado' };
 const OPERATION_LABEL: Record<QuotaEnvironmentOperation['status'], string> = { pending: 'Pendiente', running: 'En ejecución', awaiting_auth: 'Esperando autenticación', done: 'Completada', failed: 'Fallida' };
 
-export function QuotaEnvironmentPanel({ snapshot, accounts, canWrite, canAuthenticate = canWrite, reload }: {
-  snapshot?: QuotaEnvironmentsSnapshot; accounts: readonly QuotaAccount[]; canWrite: boolean; canAuthenticate?: boolean; reload: () => Promise<void>;
+export function QuotaEnvironmentPanel({ snapshot, loading, accounts, canWrite, canAuthenticate = canWrite, reload }: {
+  snapshot?: QuotaEnvironmentsSnapshot; loading?: boolean; accounts: readonly QuotaAccount[]; canWrite: boolean; canAuthenticate?: boolean; reload: () => Promise<void>;
 }) {
   const api = useApi();
   const [draft, setDraft] = useState({ account_id: '', host_id: '', label: '' });
@@ -51,6 +51,7 @@ export function QuotaEnvironmentPanel({ snapshot, accounts, canWrite, canAuthent
   }
   return <section aria-label="Entornos de Mis cuotas" className="grid gap-4">
     <div><h2 className="m-0 text-lg">Entornos de consulta</h2><p className="text-sm text-muted">Cada entorno aísla el CLI de una cuenta. La terminal admite las operaciones mostradas debajo.</p></div>
+    {loading && !snapshot ? <p role="status">Leyendo entornos de consulta… El formulario se habilita cuando llega la lectura.</p> : null}
     {snapshot && !snapshot.capabilities.available ? <Notice tone="warn">No hay un ejecutor disponible para esta empresa. Los entornos conservan su estado; las operaciones requieren recuperar la conexión.</Notice> : null}
     {error ? <Notice tone="danger" role="alert">{error}</Notice> : null}{notice ? <Notice tone="info" role="status">{notice}</Notice> : null}
     <form aria-label="Crear entorno de cuotas" className="grid items-end gap-2 sm:grid-cols-2 lg:grid-cols-4" onSubmit={event => { event.preventDefault();
