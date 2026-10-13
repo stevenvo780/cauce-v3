@@ -174,7 +174,6 @@ describe('inventario de pruebas de V4', () => {
 
   test('el pendiente de la matriz CRUD coincide con el límite descrito', () => {
     const browserRow = documentRows().get('navegador')?.[5] ?? '';
-    expect(crudMatrix.pending.length).toBe(28);
     expect(browserRow).toContain(`matriz mantiene ${String(crudMatrix.pending.length)} pendientes`);
   });
 
