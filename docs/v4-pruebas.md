@@ -32,7 +32,7 @@ Este inventario sustituye la cifra histórica «17 e2e de vistas V3 y un recorri
 
 | Grupo | Archivos | Casos |
 |---|---:|---:|
-| V4 (`v4-*`) | 10 | 56 |
+| V4 (`v4-*`) | 10 | 57 |
 | V3 y V3.5 (resto) | 13 | 21 |
 
 | Archivo V4 | Casos | Recorrido |
@@ -46,7 +46,7 @@ Este inventario sustituye la cifra histórica «17 e2e de vistas V3 y un recorri
 | `tests/e2e/v4-office-real-browser.test.ts` | 13 | Oficina: salas y agentes de alta a baja, re-login, segundo navegador y cansancio en campus, plano y ficha. |
 | `tests/e2e/v4-people-real-browser.test.ts` | 6 | Personas y acceso web. |
 | `tests/e2e/v4-purge-real-browser.test.ts` | 1 | Purga real de un agente. |
-| `tests/e2e/v4-quota-environments-real-browser.test.ts` | 6 | Entornos de cuota. |
+| `tests/e2e/v4-quota-environments-real-browser.test.ts` | 7 | Entornos de cuota. |
 
 Conteo reproducible desde la raíz:
 
