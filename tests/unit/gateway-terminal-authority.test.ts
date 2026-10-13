@@ -452,12 +452,12 @@ describe('cohortRoutingAuthority: SET RULE sobre containers compartidos', () => 
 describe('resolveOperator: identidad humana del operador', () => {
   it('cuando el auth provider ya nombra al humano, gana sobre el header proxy', () => {
     const config = terminalConfig({ operators: new Set(['steven']) });
-    const logged = consolePrincipal({ operator_id: 'miguel@elenxos.com' });
+    const logged = consolePrincipal({ operator_id: 'operador-prueba@example.test' });
     expect(resolveOperator(request({ 'x-cauce-operator': 'steven' }), logged, config))
-      .toEqual({ operator_id: 'miguel@elenxos.com', attributed: true });
+      .toEqual({ operator_id: 'operador-prueba@example.test', attributed: true });
     // Aunque nadie esté matriculado en operadores, el principal con operator_id sigue atribuido.
     expect(resolveOperator(request({ 'x-cauce-operator': 'steven' }), logged, terminalConfig()))
-      .toEqual({ operator_id: 'miguel@elenxos.com', attributed: true });
+      .toEqual({ operator_id: 'operador-prueba@example.test', attributed: true });
   });
 
   it('el header proxy solo cuenta desde el canal console', () => {

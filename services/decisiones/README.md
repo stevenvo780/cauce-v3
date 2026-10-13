@@ -247,7 +247,7 @@ es una operación explícita que exige recrear el contenedor del servicio.
    `deploy/decisiones`:
 
    ```
-   G=/datos/workspaces/zeus/cauce-v3
+   G=<ruta-al-clon-principal>
    git -C "$G" show <commit>:deploy/decisiones/desplegar.sh > /root/desplegar-decisiones.sh
    CAUCE_DECISIONES_GIT=$G bash /root/desplegar-decisiones.sh plan <commit>      # no cambia nada
    CAUCE_DECISIONES_GIT=$G bash /root/desplegar-decisiones.sh aplicar <commit>
@@ -293,7 +293,7 @@ es una operación explícita que exige recrear el contenedor del servicio.
      tienen `RestartPreventExitStatus=2`: systemd no lo reintenta y el alias queda caído en silencio en
      su próximo reinicio.
 
-   Recién entonces, en `/home/stev/.config/cauce-v3/container-aliases/<alias>.env`, se ponen
+   Recién entonces, en `~/.config/cauce-v3/container-aliases/<alias>.env`, se ponen
    `BUNDLE_RELEASE`, `BUNDLE_SHA256` y `DECISIONES_URL=https://100.64.0.11:8447`. Antes de reiniciar
    `cauce-v3-container-<alias>.service`, mirá si hay una entrega en vuelo. En kant, que corre nativo en
    server2, la variable es `CAUCE_DECISIONES_URL` en el entorno de su unidad.
@@ -374,7 +374,7 @@ y una decisión real con auditoría; un health verde por sí solo no prueba los 
   el adaptador responde `decisiones_no_configurado` con el respaldo (cerrado en las plantillas de
   seguridad).
 - **Volver la release de ops** (los `~/.local/share/cauce-v3/ops-before-*`): antes,
-  `grep -l '^DECISIONES_URL' /home/stev/.config/cauce-v3/container-aliases/*.env` tiene que dar vacío.
+  `grep -l '^DECISIONES_URL' ~/.config/cauce-v3/container-aliases/*.env` tiene que dar vacío.
   El supervisor anterior no conoce la clave, y cada alias que la tenga no arranca en su próximo
   reinicio, sin que systemd lo reintente.
 - **El servicio, a la versión anterior.** `desplegar.sh anterior` vuelve a la imagen que reemplazó el

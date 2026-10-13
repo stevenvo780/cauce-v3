@@ -15,8 +15,8 @@ vi.mock('@cauce/store', async (importOriginal) => ({
 
 const pool = createPool('postgresql://localhost/cauce_test_config_unused', { max: 1 });
 const capability: FleetCapability = { available: true, actions: ['create', 'update', 'retire'],
-  placements: [{ host_id: 'server', modes: ['native'], runtime_users: ['stev'], systemd_users: ['stev'],
-    home_roots: ['/home/stev'], state_roots: ['/home/stev/state'] }] };
+  placements: [{ host_id: 'server', modes: ['native'], runtime_users: ['dev'], systemd_users: ['dev'],
+    home_roots: ['/home/dev'], state_roots: ['/home/dev/state'] }] };
 const directories: string[] = [];
 afterEach(async () => { for (const directory of directories.splice(0)) await rm(directory, { recursive: true, force: true }); });
 afterAll(async () => { await pool.end(); });

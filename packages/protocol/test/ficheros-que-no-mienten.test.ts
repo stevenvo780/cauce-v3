@@ -17,7 +17,7 @@ import { WsOutboundSchema } from "../src/schemas.js";
 
 const HECHOS: HechosDelAlias = {
   permisos: { ruta: true, lectura: true, control: false, notificacion: true },
-  cuotas: [{ proveedor: "claude", cuenta: "saldantia", limite: "2% semanal" }],
+  cuotas: [{ proveedor: "claude", cuenta: "zz-canary-cuenta", limite: "2% semanal" }],
   arnes: { harness: "openclaw", home: "/home/dev", contenedor: "ws-argos", capacidades: ["bash"] },
   destinos: ["kant", "zeus"],
 };
@@ -58,7 +58,7 @@ test.each(["claude", "codex"])("%s retira hechos antiguos sin perder notas, acce
   assert.match(result.texto, /ssh al host autorizado/u);
   assert.match(result.texto, /<!-- alias: Steven\/argos -->/u);
   assert.ok(result.texto.includes(manual));
-  assert.doesNotMatch(result.texto, /saldantia|2% semanal|Alias alcanzables|ws-argos|Permisos y acceso/u);
+  assert.doesNotMatch(result.texto, /zz-canary-cuenta|2% semanal|Alias alcanzables|ws-argos|Permisos y acceso/u);
   assert.equal(revisionDelPerfil(result.texto), harness === "claude" ? 9 : undefined);
   const repeated = de(ficherosDelArnes(harness, ctx, new Map([[name, result.texto]]), { revision: 9 }), name);
   assert.equal(repeated.escribir, false);
@@ -235,7 +235,7 @@ test("CONTROL NEGATIVO: sin herramientas declaradas TOOLS.md no se escribe, con 
   const tools = de(con, "TOOLS.md");
   assert.equal(tools.escribir, true);
   assert.ok(tools.texto.includes("ssh"));
-  assert.ok(!tools.texto.includes("saldantia"), "congeló las cuotas dinámicas");
+  assert.ok(!tools.texto.includes("zz-canary-cuenta"), "congeló las cuotas dinámicas");
 });
 
 // ── 5. Cap measurement over consolidated text ─────────────────────────────────

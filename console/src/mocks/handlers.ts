@@ -260,12 +260,12 @@ export const handlers = [
     alias: String(params.alias),
     facts_source: 'measured',
     harness: 'claude',
-    home: '/home/stev',
+    home: '/home/dev',
     items: [
       {
         kind: 'directive',
         label: 'CLAUDE.md (manual del sitio)',
-        path: '/home/stev/.claude/CLAUDE.md',
+        path: '/home/dev/.claude/CLAUDE.md',
         format: 'markdown',
         readable: true,
         editable: true,
@@ -273,7 +273,7 @@ export const handlers = [
       {
         kind: 'tools',
         label: 'Herramientas y permisos (settings.json)',
-        path: '/home/stev/.claude/settings.json',
+        path: '/home/dev/.claude/settings.json',
         format: 'json',
         readable: false,
         editable: false,
@@ -283,7 +283,7 @@ export const handlers = [
       {
         kind: 'prompts',
         label: 'Subagentes (~/.claude/agents)',
-        path: '/home/stev/.claude/agents',
+        path: '/home/dev/.claude/agents',
         format: 'markdown',
         readable: false,
         editable: false,
@@ -292,7 +292,7 @@ export const handlers = [
       {
         kind: 'mcp',
         label: 'Servidores MCP',
-        path: '/home/stev/.claude.json',
+        path: '/home/dev/.claude.json',
         format: 'json',
         readable: false,
         editable: false,
@@ -313,7 +313,7 @@ export const handlers = [
       : '{\n  "permissions": {\n    "allow": ["Bash(git status)"]\n  }\n}\n';
     return HttpResponse.json({
       tenant_id: String(params.tenantId), alias: 'kant', kind: params.kind,
-      path: esDirectiva ? '/home/stev/.claude/CLAUDE.md' : '/home/stev/.claude/settings.json',
+      path: esDirectiva ? '/home/dev/.claude/CLAUDE.md' : '/home/dev/.claude/settings.json',
       format: esDirectiva ? 'markdown' : 'json',
       exists: true, content: contenido,
       sha: esDirectiva
@@ -338,7 +338,7 @@ export const handlers = [
     const escrito = new TextEncoder().encode(cuerpo.content ?? '');
     return HttpResponse.json({
       ok: true, state: 'applied', evidence: 'probe_write_ack',
-      path: '/home/stev/.claude/CLAUDE.md',
+      path: '/home/dev/.claude/CLAUDE.md',
       sha: 'c'.repeat(64), bytes: escrito.byteLength,
     });
     },

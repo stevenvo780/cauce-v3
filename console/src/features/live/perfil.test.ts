@@ -418,7 +418,7 @@ describe('el vocabulario de aplicación es el del gateway, leído del fichero', 
 describe('el veredicto de contaminación se lee fallando cerrado', () => {
   const HALLAZGO = {
     reason: 'foreign_managed_block', document: 'CLAUDE.md',
-    path: '/home/stev/.claude/CLAUDE.md', owner: 'Miguel/kratos',
+    path: '/home/dev/.claude/CLAUDE.md', owner: 'Operador/host',
   };
 
   it('un veredicto limpio se lee como limpio y uno sucio nombra al dueño', () => {
@@ -462,7 +462,7 @@ describe('cuando conviven dos mediciones del contexto manda la que denuncia', ()
     contaminated: true,
     findings: [{
       reason: 'foreign_managed_block', document: 'CLAUDE.md',
-      path: '/home/stev/.claude/CLAUDE.md', owner: 'Miguel/kratos',
+      path: '/home/dev/.claude/CLAUDE.md', owner: 'Operador/host',
     }],
   } as const;
   const LIMPIO = { contaminated: false, findings: [] } as const;
@@ -510,7 +510,7 @@ describe('una recarga sólo se presenta hecha con el lote entero acreditado', ()
     tenant_id: 'Steven', alias: 'kant', revision: 4,
     runtime_verification: VERIFICACION,
     documents: [{
-      name: 'CLAUDE.md', path: '/home/stev/.claude/CLAUDE.md',
+      name: 'CLAUDE.md', path: '/home/dev/.claude/CLAUDE.md',
       sha_before: 'a'.repeat(64), sha_after: 'b'.repeat(64), bytes: 512,
     }],
     contaminacion: { contaminated: false, findings: [] },

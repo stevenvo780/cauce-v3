@@ -396,12 +396,12 @@ describe('operator attribution', () => {
     // password login the operator comes from the already-verified JWT: the header is not even
     // consulted, and the email does not need to be enrolled in CAUCE_TERMINAL_OPERATORS.
     const config = terminalConfig({ operators: new Set(['steven']) });
-    const logged = consolePrincipal({ operator_id: 'miguel@elenxos.com' });
+    const logged = consolePrincipal({ operator_id: 'operator@example.test' });
     expect(resolveOperator(request({ 'x-cauce-operator': 'steven' }), logged, config))
-      .toEqual({ operator_id: 'miguel@elenxos.com', attributed: true });
+      .toEqual({ operator_id: 'operator@example.test', attributed: true });
     // Without enrolled operators the header attributes nobody, but the session still does.
     expect(resolveOperator(request({ 'x-cauce-operator': 'steven' }), logged, terminalConfig()))
-      .toEqual({ operator_id: 'miguel@elenxos.com', attributed: true });
+      .toEqual({ operator_id: 'operator@example.test', attributed: true });
     // A principal without a human identity behaves exactly as today: the header rules.
     expect(resolveOperator(request({ 'x-cauce-operator': 'steven' }), consolePrincipal(), config))
       .toEqual({ operator_id: 'steven', attributed: true });

@@ -1,8 +1,20 @@
 import { useState } from 'react';
+import { ApiError } from '../../api/client/core';
 import { useApi } from '../../api/context';
 import { useResource } from '../../api/use-resource';
 import { Button, Notice } from '../../components/kit';
 import { COMPANY_ROLE_LABEL, useCompanyAuthority } from './company-authority';
+import { UNREACHABLE_SERVER } from './RegistrationForm';
+
+function selectorErrorText(cause: unknown, request: 'read' | 'switch'): string {
+  if (!(cause instanceof ApiError)) return UNREACHABLE_SERVER;
+  if (cause.status === 401) return 'La sesión venció. Vuelve a iniciar sesión.';
+  if (cause.status === 403) return request === 'read' ? 'Tu sesión no puede ver las empresas.' : 'Tu sesión no tiene autoridad para cambiar de empresa.';
+  if (cause.status === 404) return 'La empresa ya no existe; relee la lista.';
+  if (cause.status === 409) return 'La sesión cambió o hay otro cambio de empresa en curso; relee y vuelve a intentarlo.';
+  if (cause.status === 429) return 'Demasiadas solicitudes. Espera unos segundos y vuelve a intentarlo.';
+  return request === 'read' ? 'No se pudieron leer las empresas. Intenta más tarde.' : 'No se pudo cambiar de empresa. Intenta más tarde.';
+}
 
 export function CompanySelector() {
   const api = useApi();
@@ -14,7 +26,7 @@ export function CompanySelector() {
     if (busy || authority?.role !== 'platform_admin') return;
     setBusy(true); setError('');
     try { await api.switchCompany(companyId === authority.home_company ? null : companyId); }
-    catch (cause) { setError(cause instanceof Error ? cause.message : 'No se pudo cambiar de empresa.'); }
+    catch (cause) { setError(selectorErrorText(cause, 'switch')); }
     finally { setBusy(false); }
   }
   return <section aria-label="Empresa de la sesión" className="grid gap-2 border-t border-line pt-3">
@@ -25,7 +37,7 @@ export function CompanySelector() {
     </select></label>
     <p className="m-0 text-xs text-muted">{authority ? COMPANY_ROLE_LABEL[authority.role] : 'Autoridad no informada por el servidor.'}</p>
     {authority?.platform_override ? <Notice tone="warn">Estás operando otra empresa con autoridad de plataforma.</Notice> : null}
-    {companies.error || error ? <Notice tone="danger" role="alert">{error || companies.error?.message}
+    {companies.error || error ? <Notice tone="danger" role="alert">{error || selectorErrorText(companies.error, 'read')}
       <Button size="sm" disabled={busy || companies.loading} onClick={() => { void companies.reload(); }}>Releer empresas</Button></Notice> : null}
   </section>;
 }

@@ -174,9 +174,9 @@ describe('el hello declara qué sabe hacer el agente', () => {
   it('acepta la proyección Codex sólo como par estricto y no rompe el hello si es inválida', () => {
     const base = {
       v: 1, tenant_id: 'Steven', alias: 'kant', container_id: 'ws-kant', generation: 'a'.repeat(32),
-      image_id: 'sha256:beef', runtime_user: 'stev', runtime_uid: 1000, harness: 'codex',
+      image_id: 'sha256:beef', runtime_user: 'dev', runtime_uid: 1000, harness: 'codex',
       agent_version: '0.6.0', modes: ['harness'], runtime_facts_observed: true,
-      home: '/home/stev', codex_home: '/home/stev/.codex',
+      home: '/home/dev', codex_home: '/home/dev/.codex',
       project_doc_max_bytes: 65_536,
       project_doc_fallback_filenames: ['TEAM.md', 'LOCAL.md'],
     };

@@ -22,7 +22,7 @@ import { AgentRegistry, parseAgentPresence } from '../terminal/registry.js';
  */
 
 const ACTOR = { tenant_id: 'Steven', alias: 'zeus' };
-const OPERADOR = { operator_id: 'steven@elenxos', attributed: true };
+const OPERADOR = { operator_id: 'operator@example.test', attributed: true };
 const MOTIVO = 'reviso el manual del sitio antes de la ola de trabajo';
 
 function sha(text: string): string {
@@ -143,7 +143,7 @@ describe('GET tenant-qualified del mapa de documentos', () => {
   it('sin medición nada es editable y el aviso viaja en el cuerpo', async () => {
     vivo = servidor({
       authorizeTarget: async () => ({
-        tenant_id: 'Steven', alias: 'kant', harness_id: 'codex', home_directory: '/home/stev',
+        tenant_id: 'Steven', alias: 'kant', harness_id: 'codex', home_directory: '/home/dev',
       }),
     });
     const res = await vivo.inject({ method: 'GET', url: rutaMapa('Steven', 'kant') });
@@ -154,7 +154,7 @@ describe('GET tenant-qualified del mapa de documentos', () => {
     expect(body.items.every((d) => !d.readable)).toBe(true);
     expect(body.items.every((d) => !d.editable)).toBe(true);
     // On top of that, the path the DB gives is the wrong one: kant runs claude.js, not codex.
-    expect(body.items.find((d) => d.kind === 'directive')?.path).toBe('/home/stev/.codex/AGENTS.md');
+    expect(body.items.find((d) => d.kind === 'directive')?.path).toBe('/home/dev/.codex/AGENTS.md');
   });
 
   it('un arnés que la BD no reconoce no inventa rutas', async () => {
@@ -194,7 +194,7 @@ describe('GET tenant-qualified del mapa de documentos', () => {
   it('el mismo alias en dos tenants usa únicamente el tenant de la URL', async () => {
     vivo = servidor({
       probe: probe({
-        'Steven:kant': { facts: { harness: 'claude', home: '/home/stev' }, source: 'measured' },
+        'Steven:kant': { facts: { harness: 'claude', home: '/home/dev' }, source: 'measured' },
         'Miguel:kant': { facts: { harness: 'codex', home: '/home/miguel' }, source: 'measured' },
       }),
     });

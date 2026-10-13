@@ -23,6 +23,7 @@ import { fakePool, fakeRepository, noDeliveryWakes } from './test-support/gatewa
 // inside the hash, so lowering it does NOT change the code being tested.
 const TEST_SCRYPT = { cost: 1_024, blockSize: 8, parallelism: 1 };
 const PASSWORD = 'una-frase-de-paso-larga';
+const EMAIL = 'operator@example.test';
 
 function repositoryDouble(): {
   repository: GatewayRepository;
@@ -89,8 +90,8 @@ function repositoryDouble(): {
 async function makeUser(overrides: Partial<ConsoleUser> = {}): Promise<ConsoleUser> {
   return {
     id: '11111111-2222-4333-8444-555555555555',
-    email: 'steven@elenxos.com',
-    display_name: 'Steven',
+    email: EMAIL,
+    display_name: 'Operator',
     role: 'operator',
     tenant_id: 'Steven',
     alias: 'kant',
@@ -210,7 +211,7 @@ describe('login por contraseña de la consola', () => {
   it('reader navega lecturas generales y no puede ejecutar ninguna mutación de consola', async () => {
     const test = await fixture({ user: await makeUser({ role: 'reader' }) });
     try {
-      const login = await test.login('steven@elenxos.com', PASSWORD);
+      const login = await test.login(EMAIL, PASSWORD);
       expect(login.statusCode).toBe(200);
       expect(login.json()).toMatchObject({ roles: [], permissions: ['read'] });
       const cookie = cookieFrom(login.headers);
@@ -304,7 +305,7 @@ describe('login por contraseña de la consola', () => {
   it('una persona con nombre y permiso control pasa la puerta de atribución del PUT de documentos', async () => {
     const test = await fixture();
     try {
-      const login = await test.login('steven@elenxos.com', PASSWORD);
+      const login = await test.login(EMAIL, PASSWORD);
       const response = await test.app.inject({
         method: 'PUT', url: '/v3/console/tenants/Steven/agents/kant/documents/directive/content',
         headers: {
@@ -325,7 +326,7 @@ describe('login por contraseña de la consola', () => {
   it('publica sin fabricar un origin_relay hacia un adapter console inexistente', async () => {
     const test = await fixture();
     try {
-      const login = await test.login('steven@elenxos.com', PASSWORD);
+      const login = await test.login(EMAIL, PASSWORD);
       const cookie = cookieFrom(login.headers);
       const csrf = login.json<{ csrf_token: string }>().csrf_token;
       const response = await test.app.inject({
@@ -353,7 +354,7 @@ describe('login por contraseña de la consola', () => {
   it('entrega la sesión en una cookie HttpOnly+Secure+SameSite y NUNCA en el cuerpo', async () => {
     const test = await fixture();
     try {
-      const login = await test.login('Steven@Elenxos.com', PASSWORD);
+      const login = await test.login('Operator@Example.Test', PASSWORD);
       expect(login.statusCode).toBe(200);
       const rawCookie = String(login.headers['set-cookie']);
       expect(rawCookie).toContain('HttpOnly');
@@ -366,13 +367,13 @@ describe('login por contraseña de la consola', () => {
       if (token === undefined) throw new Error('la cookie de sesión no contiene un token');
       expect(JSON.stringify(login.json())).not.toContain(token.slice(0, 24));
       expect(login.json()).toMatchObject({
-        authenticated: true, login_mode: 'password', subject: 'steven@elenxos.com', name: 'Steven'
+        authenticated: true, login_mode: 'password', subject: EMAIL, name: 'Operator'
       });
 
       const session = await test.app.inject({ method: 'GET', url: '/v3/auth/session', headers: { cookie } });
       expect(session.statusCode).toBe(200);
       expect(session.json()).toMatchObject({
-        authenticated: true, subject: 'steven@elenxos.com', roles: ['operator']
+        authenticated: true, subject: EMAIL, roles: ['operator']
       });
 
       const api = await test.app.inject({ method: 'GET', url: '/v3/status', headers: { cookie } });
@@ -464,11 +465,11 @@ describe('login por contraseña de la consola', () => {
   });
 
   it('contraseña mala, correo inexistente y cuenta apagada contestan EXACTAMENTE lo mismo', async () => {
-    const test = await fixture({ user: await makeUser({ active: false, email: 'apagada@elenxos.com' }) });
+    const test = await fixture({ user: await makeUser({ active: false, email: 'apagada@example.test' }) });
     try {
-      const wrongPassword = await test.login('apagada@elenxos.com', 'no-es-la-contraseña');
-      const unknownEmail = await test.login('nadie@elenxos.com', PASSWORD);
-      const disabled = await test.login('apagada@elenxos.com', PASSWORD);
+      const wrongPassword = await test.login('apagada@example.test', 'no-es-la-contraseña');
+      const unknownEmail = await test.login('nadie@example.test', PASSWORD);
+      const disabled = await test.login('apagada@example.test', PASSWORD);
 
       for (const response of [wrongPassword, unknownEmail, disabled]) {
         expect(response.statusCode).toBe(401);
@@ -489,7 +490,7 @@ describe('login por contraseña de la consola', () => {
   it('el token vence de verdad y la sesión vencida lo dice', async () => {
     const test = await fixture();
     try {
-      const cookie = cookieFrom((await test.login('steven@elenxos.com', PASSWORD)).headers);
+      const cookie = cookieFrom((await test.login(EMAIL, PASSWORD)).headers);
       expect((await test.app.inject({ method: 'GET', url: '/v3/status', headers: { cookie } })).statusCode).toBe(200);
 
       test.advance(61 * 60 * 1_000);
@@ -506,7 +507,7 @@ describe('login por contraseña de la consola', () => {
   it('desactivar la cuenta o cambiar la contraseña corta las sesiones ya abiertas', async () => {
     const test = await fixture();
     try {
-      const cookie = cookieFrom((await test.login('steven@elenxos.com', PASSWORD)).headers);
+      const cookie = cookieFrom((await test.login(EMAIL, PASSWORD)).headers);
       expect((await test.app.inject({ method: 'GET', url: '/v3/status', headers: { cookie } })).statusCode).toBe(200);
 
       test.users.put(await makeUser({ active: false }));
@@ -526,11 +527,11 @@ describe('login por contraseña de la consola', () => {
       .mockRejectedValueOnce(new StoreError('forbidden', 'company authority is unavailable'));
     const test = await fixture({ companyAuthority: { resolve, switchCompany: vi.fn() } });
     try {
-      const cookie = cookieFrom((await test.login('steven@elenxos.com', PASSWORD)).headers);
+      const cookie = cookieFrom((await test.login(EMAIL, PASSWORD)).headers);
       const state = async () => (await test.app.inject({ method: 'GET', url: '/v3/auth/session', headers: { cookie } }))
         .json<Record<string, unknown>>();
       const degraded = await state();
-      expect(degraded).toMatchObject({ authenticated: true, subject: 'steven@elenxos.com' });
+      expect(degraded).toMatchObject({ authenticated: true, subject: EMAIL });
       expect(degraded).not.toHaveProperty('authority');
       expect(await state()).toEqual({ authenticated: false, login_mode: 'password' });
       expect((await test.app.inject({ method: 'GET', url: '/v3/status', headers: { cookie } })).statusCode).toBe(200);
@@ -543,7 +544,7 @@ describe('login por contraseña de la consola', () => {
   it('las escrituras con cookie exigen CSRF y el logout borra la cookie', async () => {
     const test = await fixture();
     try {
-      const login = await test.login('steven@elenxos.com', PASSWORD);
+      const login = await test.login(EMAIL, PASSWORD);
       const cookie = cookieFrom(login.headers);
       const csrf = login.json<{ csrf_token: string }>().csrf_token;
 
@@ -577,7 +578,7 @@ describe('login por contraseña de la consola', () => {
       expect(write.statusCode).toBe(404);
 
       // And with a console cookie, the same POST does pass through the guard.
-      const cookie = cookieFrom((await test.login('steven@elenxos.com', PASSWORD)).headers);
+      const cookie = cookieFrom((await test.login(EMAIL, PASSWORD)).headers);
       const guarded = await test.app.inject({
         method: 'POST', url: '/v3/inexistente', headers: { cookie, origin: 'http://localhost' }
       });
@@ -611,7 +612,7 @@ describe('login por contraseña de la consola', () => {
       expect(session.json()).toMatchObject({ authenticated: false, login_mode: 'password' });
 
       // With a session, the same endpoint answers.
-      const cookie = cookieFrom((await test.login('steven@elenxos.com', PASSWORD)).headers);
+      const cookie = cookieFrom((await test.login(EMAIL, PASSWORD)).headers);
       const authenticated = await test.app.inject({ method: 'GET', url: '/v3/status', headers: { cookie } });
       expect(authenticated.statusCode).toBe(200);
     } finally {
@@ -663,13 +664,13 @@ describe('login por contraseña de la consola', () => {
   it('la identidad del operador sale del usuario, no de la cabecera que inyecta el proxy', async () => {
     const test = await fixture();
     try {
-      const cookie = cookieFrom((await test.login('steven@elenxos.com', PASSWORD)).headers);
+      const cookie = cookieFrom((await test.login(EMAIL, PASSWORD)).headers);
       const principal = await test.provider.authenticateHttp({
         headers: { cookie, 'x-cauce-operator': 'steven' }
       } as unknown as FastifyRequest);
-      expect(principal.operator_id).toBe('steven@elenxos.com');
-      const account = await test.users.findByEmail('steven@elenxos.com');
-      expect(principal.operator_profile).toEqual({ id: `console:${account?.id ?? ''}`, display_name: 'Steven' });
+      expect(principal.operator_id).toBe(EMAIL);
+      const account = await test.users.findByEmail(EMAIL);
+      expect(principal.operator_profile).toEqual({ id: `console:${account?.id ?? ''}`, display_name: 'Operator' });
       expect(principal.channel).toBe('console');
     } finally {
       await test.app.close();
@@ -680,9 +681,9 @@ describe('login por contraseña de la consola', () => {
     const test = await fixture({ throttle: new LoginThrottle(3, 60_000) });
     try {
       for (let attempt = 0; attempt < 3; attempt += 1) {
-        expect((await test.login('steven@elenxos.com', 'mal')).statusCode).toBe(401);
+        expect((await test.login(EMAIL, 'mal')).statusCode).toBe(401);
       }
-      const blocked = await test.login('steven@elenxos.com', PASSWORD);
+      const blocked = await test.login(EMAIL, PASSWORD);
       expect(blocked.statusCode).toBe(429);
       expect(blocked.headers['retry-after']).toBeDefined();
     } finally {
@@ -696,10 +697,10 @@ describe('login por contraseña de la consola', () => {
       for (const email of ['uno@example.test', 'dos@example.test', 'tres@example.test']) {
         expect((await test.login(email, 'mal', '203.0.113.7')).statusCode).toBe(401);
       }
-      const blocked = await test.login('steven@elenxos.com', PASSWORD, '203.0.113.7');
+      const blocked = await test.login(EMAIL, PASSWORD, '203.0.113.7');
       expect([blocked.statusCode, Number(blocked.headers['retry-after']) > 0]).toEqual([429, true]);
       expect((await test.login('cuatro@example.test', 'mal', '203.0.113.8')).statusCode).toBe(401);
-      expect((await test.login('steven@elenxos.com', PASSWORD, '203.0.113.9')).statusCode).toBe(200);
+      expect((await test.login(EMAIL, PASSWORD, '203.0.113.9')).statusCode).toBe(200);
     } finally {
       await test.app.close();
     }
@@ -709,9 +710,9 @@ describe('login por contraseña de la consola', () => {
     const test = await fixture({ addressThrottle: new LoginThrottle(2, 60_000) });
     try {
       expect((await test.login('uno@example.test', 'mal', '203.0.113.7')).statusCode).toBe(401);
-      expect((await test.login('steven@elenxos.com', PASSWORD, '203.0.113.7')).statusCode).toBe(200);
+      expect((await test.login(EMAIL, PASSWORD, '203.0.113.7')).statusCode).toBe(200);
       expect((await test.login('dos@example.test', 'mal', '203.0.113.7')).statusCode).toBe(401);
-      expect((await test.login('steven@elenxos.com', PASSWORD, '203.0.113.7')).statusCode).toBe(429);
+      expect((await test.login(EMAIL, PASSWORD, '203.0.113.7')).statusCode).toBe(429);
     } finally {
       await test.app.close();
     }
@@ -726,7 +727,7 @@ describe('login por contraseña de la consola', () => {
   it('un token firmado con otra clave no vale', async () => {
     const test = await fixture();
     try {
-      const cookie = cookieFrom((await test.login('steven@elenxos.com', PASSWORD)).headers);
+      const cookie = cookieFrom((await test.login(EMAIL, PASSWORD)).headers);
       const forged = new PasswordAuthProvider({
         users: test.users, signingKey: Buffer.alloc(32, 9)
       });
@@ -757,7 +758,7 @@ describe('isConsoleSurface clasifica la ruta como la resuelve el router, nunca p
 it('exposes the original verified login SID and ignores forged terminal identity in the body', async () => {
   const test = await fixture();
   try {
-    const first = await test.login('steven@elenxos.com', PASSWORD);
+    const first = await test.login(EMAIL, PASSWORD);
     const cookie = cookieFrom(first.headers);
     const token = cookie.split('=')[1];
     if (token === undefined) throw new Error('missing session token');
@@ -770,7 +771,7 @@ it('exposes the original verified login SID and ignores forged terminal identity
     expect(verified).toMatchObject({ loginSid: claims.sid,
       humanId: '11111111-2222-4333-8444-555555555555', tenantId: 'Steven', actorAlias: 'kant' });
     expect(JSON.stringify(verified)).not.toContain(PASSWORD);
-    const second = await test.login('steven@elenxos.com', PASSWORD);
+    const second = await test.login(EMAIL, PASSWORD);
     const next = await test.provider.verifiedConsoleSession({ headers: { cookie: cookieFrom(second.headers) } } as unknown as FastifyRequest);
     expect(next?.loginSid).not.toBe(verified?.loginSid);
     await expect(test.provider.verifiedConsoleSession({ headers: { cookie: '__Host-cauce_session=invalid' },

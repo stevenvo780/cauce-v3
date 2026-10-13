@@ -11,8 +11,8 @@ const PATH = '/v3/console/fleet/hosts';
 const HOST_ID = 'server';
 const operator = testPrincipal({ tenant_id: 'Steven', alias: 'kant', roles: ['operator'], permissions: ['read', 'control'] });
 const capability: FleetCapability = { available: true, actions: ['create', 'update', 'start', 'stop', 'retire'],
-  placements: [{ host_id: HOST_ID, modes: ['native'], runtime_users: ['stev'], systemd_users: [],
-    home_roots: ['/home/stev'], state_roots: ['/home/stev/state'] }] };
+  placements: [{ host_id: HOST_ID, modes: ['native'], runtime_users: ['dev'], systemd_users: [],
+    home_roots: ['/home/dev'], state_roots: ['/home/dev/state'] }] };
 const authority: CompanyAuthoritySource = async () => ({ humanId: 'human-id', homeTenant: 'Steven', alias: 'kant',
   homeCompany: 'humanizar', actingCompany: 'humanizar', role: 'company_owner', scope: 'company', platformOverride: false });
 const host: FleetHost = {

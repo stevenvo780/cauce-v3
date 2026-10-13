@@ -5,6 +5,7 @@ import { Notice } from '../../components/kit';
 import { FatigueIndicator } from './FatigueIndicator';
 import { QuotaAccountCard } from './QuotaAccountCard';
 import { AgentQuotaReader } from './AgentQuotaReader';
+import { describeQuotaError } from './quota-messages';
 import { agentFatigue, agentQuotaAccounts, failedQuotaRead, quotaTargetUnavailableReason, readerUnavailableReason } from './quota-availability';
 
 export function AgentQuotaDetail({ tenant, alias, compact = false }: { tenant: string; alias: string; compact?: boolean }) {
@@ -21,7 +22,7 @@ export function AgentQuotaDetail({ tenant, alias, compact = false }: { tenant: s
     {quotas.loading && !quotas.data && noReader === null ? <p className="m-0 text-xs" role="status">Leyendo cuotas de la cuenta…</p> : null}
     {!compact && noReader !== null ? <p className="m-0 text-xs text-muted">{noReader}</p> : null}
     {!compact && unavailableTarget !== null ? <p className="m-0 text-xs text-muted">{unavailableTarget}</p> : null}
-    {!compact && quotas.error ? <Notice tone="danger" role="alert">{quotas.error.message}</Notice> : null}
+    {!compact && quotas.error ? <Notice tone="danger" role="alert">{describeQuotaError(quotas.error, 'No se pudo leer la cuota de la cuenta.')}</Notice> : null}
     {!compact && accounts.map(account => <QuotaAccountCard key={account.id} account={quotas.error ? failedQuotaRead(account) : account} pinned={false} />)}
     {!compact && quotas.data && !quotas.error && !accounts.length && noReader === null ? <p className="m-0 text-xs text-muted">No hay una cuenta vinculada con cuota disponible para esta sesión.</p> : null}
     {!compact ? <AgentQuotaReader key={`${tenant}/${alias}`} tenant={tenant} alias={alias} quota={snapshot} /> : null}
