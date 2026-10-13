@@ -1,5 +1,9 @@
-import { randomUUID } from 'node:crypto';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { createHash, randomUUID } from 'node:crypto';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { INVALID_REGISTRATION, REGISTRATION_IN_USE } from '../../services/gateway/src/company-registration.js';
 import { isaTenant, newTrustedPage, startConsoleFunctionalFixture } from './console-functional-browser.fixtures.js';
 import { seedQuotaHost } from './v4-console-real-browser.quotas.js';
@@ -15,6 +19,8 @@ const errors = new BrowserErrorLog([...HERMETIC_INSTANCE_RULES, PATTERN_DEFECT_R
 let fixture: Awaited<ReturnType<typeof startConsoleFunctionalFixture>> | undefined;
 let pageA: V4Page | undefined;
 let hubA = '';
+let approvals: string | undefined;
+const descriptors = new URL('../../packages/adapter-sdk/descriptors/', import.meta.url);
 
 const active = () => { if (!fixture) throw new Error('V4 fixture is not initialized'); return fixture; };
 const pool = () => active().database.pool;
@@ -53,10 +59,22 @@ async function openConfig(page: V4Page, section: string): Promise<void> {
 beforeAll(async () => {
   if (process.env.CAUCE_TEST_DATABASE_URL) throw new Error('this E2E requires its own Testcontainers PostgreSQL');
   if (process.env.VITE_USE_MOCKS === 'true') throw new Error('mocks=false is required');
+  // Quota readers exist only for owner-approved descriptors: pin the packaged codex descriptor, never openclaw.
+  approvals = await mkdtemp(join(tmpdir(), 'zz-canary-v4-console-approvals-'));
+  const approvalsFile = join(approvals, 'approvals.json');
+  const codex = await readFile(new URL('codex.json', descriptors));
+  await writeFile(approvalsFile, JSON.stringify({ codex: createHash('sha256').update(codex).digest('hex') }), { mode: 0o600 });
+  vi.stubEnv('CAUCE_HARNESS_DESCRIPTOR_APPROVALS_FILE', approvalsFile);
+  vi.stubEnv('CAUCE_HARNESS_DESCRIPTOR_DIRECTORY', fileURLToPath(descriptors).replace(/\/$/u, ''));
   fixture = await startConsoleFunctionalFixture();
 }, 600_000);
 
-afterAll(async () => { await fixture?.close(); }, 180_000);
+afterAll(async () => {
+  try { await fixture?.close(); } finally {
+    vi.unstubAllEnvs();
+    if (approvals) await rm(approvals, { recursive: true, force: true });
+  }
+}, 180_000);
 
 describe('recorrido V4 de la consola en navegador real contra gateway y PostgreSQL reales', () => {
   it('registro: rechaza entradas inválidas con su mensaje, crea la cuenta y la empresa y entra como dueño', async () => {

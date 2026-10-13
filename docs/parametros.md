@@ -281,6 +281,23 @@ El árbol público no fija homes, chats ni inventarios del operador. Cada variab
 | `CAUCE_PKI` | `$HOME/.config/cauce-v3/container-pki` | PKI del catálogo. Misma regla de `HOME`. |
 | `CAUCE_DESTINO_AVISO`, `CAUCE_TENANT_AVISO`, `CAUCE_SALA_AVISO` | ninguna | Destino del aviso de catálogo. Van en un drop-in del host; sin ellas el guion sale 2. |
 
+## 14. Entorno del runtime del agente
+
+Estas variables las fija el executor de flota al arrancar cada runtime de agente:
+- `ops/cli/fleet_executor_runtime.py` y `fleet_executor_container.py`: identidad y comando;
+- `fleet_executor_view.py`: rutas de la vista de credenciales.
+
+El supervisor de adaptadores y las units systemd generadas fijan la identidad con los mismos nombres. El adaptador las lee en `packages/adapter-sdk/src/bin/config.ts` y `sdk/command-pins.ts`. El arnés e2e de flota (`gateway/fleet/host-computer.fixtures.ts`) genera un runtime de bootstrap que las lee igual.
+
+No ajustan el comportamiento del orquestador: identifican al agente y señalan su comando y sus credenciales.
+
+| Parámetro | Unidad | Valor | Fuente | Cubre |
+|---|---|---|---|---|
+| `CAUCE_TENANT_ID` | id de tenant | sin default; tenant dueño del runtime. El executor exporta el mismo valor en `CAUCE_TENANT`, que es el que exige el adaptador. `ops/scripts/alias-runner.sh` lo valida junto a `CAUCE_RUNTIME_KEY` | env del runtime (executor de flota, supervisor) | unit alias-runner + e2e ciclo de flota |
+| `CAUCE_ALIAS` | alias | sin default; obligatorio salvo que `--alias` lo indique. Alias con el que el adaptador se presenta al gateway; `CAUCE_RUNTIME_KEY` lleva la clave física cuando el alias de cable es compartido | env del runtime (executor, supervisor, units generadas) | unit config del adaptador + e2e ciclo de flota |
+| `CAUCE_HARNESS_COMMAND` | ruta absoluta | sin default; sustituye el ejecutable del harness. Con `CAUCE_HARNESS_COMMAND_SHA256` (y `CAUCE_HARNESS_COMMAND_FILES`) queda fijado por pin: el adaptador comprueba el sha256 antes de ejecutarlo. Con `CAUCE_FLEET_OPERATION_ID` se niega a arrancar sin pin | env del runtime (executor de flota) | unit execution-selection + e2e ciclo de flota |
+| `CAUCE_CERT_PATH`, `CAUCE_KEY_PATH`, `CAUCE_CA_PATH` | rutas absolutas | sin default; certificado, clave y CA mTLS del agente dentro de la vista de credenciales (`.cauce-credentials/bootstrap` o `normal`). Equivalen a `CAUCE_TLS_CERT_FILE`, `CAUCE_TLS_KEY_FILE` y `CAUCE_TLS_CA_FILE`: si llegan ambos nombres con rutas distintas, el adaptador aborta (`credential paths conflict`). Los tres van juntos o ninguno | env del runtime (`fleet_executor_view.py`) | e2e ciclo de flota |
+
 ## Decisiones del dueño (FR-011..FR-015, cerradas 2026-09-27)
 
 | # | Decisión | Efecto |

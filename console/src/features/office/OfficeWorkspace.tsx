@@ -14,7 +14,7 @@ import { quotaReadFailure } from '../accounts/quota-messages';
 import { FatigueIndicator } from '../accounts/FatigueIndicator';
 import { OfficeLayoutEditor } from './OfficeLayoutEditor';
 import { officeFailure, officeVersionConflict, planSaveUnavailableReason } from './office-errors';
-import { officeLayoutProblem, officeRoomKey, officeRooms, reconcileOfficeLayout } from './office-layout';
+import { officeLayoutProblem, officeRoomKey, officeRooms, rebaseOfficeDraft, reconcileOfficeLayout } from './office-layout';
 import type { OfficeAgent } from './office-agent';
 
 export function OfficeWorkspace({ campus, topology, agents, onAgent }: {
@@ -26,13 +26,14 @@ export function OfficeWorkspace({ campus, topology, agents, onAgent }: {
   // Plan, campus strip and agent sheet read the one shared quota snapshot of the fleet provider.
   const quotas = useQuotaAccounts();
   const [mode, setMode] = useState<'campus' | 'plan'>('campus');
-  const [draft, setDraft] = useState<{ version: number; rooms: OfficeRoom[]; conflicted?: boolean }>();
+  // `base` is the saved plan the draft started from: after a 409 it tells what the draft changed and what the other person did.
+  const [draft, setDraft] = useState<{ version: number; base: OfficeRoom[]; rooms: OfficeRoom[]; conflicted?: boolean }>();
   const [roomKey, setRoomKey] = useState<string>();
   const [busy, setBusy] = useState(false);
   // The campus reads the saved plan once when it mounts: a new key after each save makes it read the new one.
   const [planSaves, setPlanSaves] = useState(0);
   const [error, setError] = useState<Failure>();
-  const [notice, setNotice] = useState('');
+  const [notice, setNotice] = useState<{ tone: 'ok' | 'warn'; text: string }>();
   const rooms = officeRooms(topology, layout.data?.available);
   const shown = reconcileOfficeLayout(rooms, draft?.rooms ?? layout.data?.rooms ?? []);
   const writable = canManageCompany(authority?.role) && !!layout.data && !layout.error && !layout.loading && !busy;
@@ -58,14 +59,14 @@ export function OfficeWorkspace({ campus, topology, agents, onAgent }: {
   }
   function update(room: OfficeRoom) {
     if (!writable || !layout.data) return;
-    setNotice(''); setDraft({ ...draft, version: draft?.version ?? layout.data.version, rooms: shown.map(current => officeRoomKey(current.tenant_id, current.room_id)
-      === officeRoomKey(room.tenant_id, room.room_id) ? room : current) });
+    setNotice(undefined); setDraft({ ...draft, version: draft?.version ?? layout.data.version, base: draft?.base ?? shown,
+      rooms: shown.map(current => officeRoomKey(current.tenant_id, current.room_id) === officeRoomKey(room.tenant_id, room.room_id) ? room : current) });
   }
   async function save() {
     if (!writable || !draft || draft.conflicted) return;
     const problem = officeLayoutProblem(shown);
     if (problem) { setError({ message: problem }); return; }
-    setBusy(true); setError(undefined); setNotice('');
+    setBusy(true); setError(undefined); setNotice(undefined);
     try {
       await api.saveOfficeLayout({ expected_version: draft.version, rooms: shown });
     } catch (cause) {
@@ -80,7 +81,7 @@ export function OfficeWorkspace({ campus, topology, agents, onAgent }: {
       const failure = officeFailure(reread.error);
       setError({ ...failure, message: `El plano se guardó, pero no se pudo releer: ${failure.message}` });
     }
-    else setNotice('Plano de oficina guardado para esta empresa.');
+    else setNotice({ tone: 'ok', text: 'Plano de oficina guardado para esta empresa.' });
     setBusy(false);
   }
   async function rereadPlan() {
@@ -88,9 +89,36 @@ export function OfficeWorkspace({ campus, topology, agents, onAgent }: {
     const plan = layout.reload();
     void quotas.reload();
     const reread = await plan;
+    if (reread.data) setError(undefined);
+    setBusy(false);
+  }
+  /**
+   * After a 409 nothing is overwritten until the person chooses: load the other person's plan and drop the draft,
+   * or reapply only what the draft changed on top of it and review the result before saving it again.
+   */
+  async function resolveConflict(choice: 'theirs' | 'reapply') {
+    if (!draft?.conflicted) return;
+    setBusy(true); setNotice(undefined);
+    const plan = layout.reload();
+    void quotas.reload();
+    const reread = await plan;
     if (reread.data) {
-      setDraft(current => current ? { ...current, version: reread.data.version, conflicted: false } : current);
       setError(undefined);
+      if (choice === 'theirs') {
+        setDraft(undefined);
+        setNotice({ tone: 'ok', text: 'Se cargó el plano que guardó la otra persona y se descartó tu borrador.' });
+      } else {
+        const theirs = reconcileOfficeLayout(rooms, reread.data.rooms);
+        const rebased = rebaseOfficeDraft(draft.base, draft.rooms, theirs);
+        setDraft({ version: reread.data.version, base: theirs, rooms: rebased.rooms });
+        const labels = rebased.overridden.map(key => {
+          const room = rooms.find(value => officeRoomKey(value.tenant, value.id) === key);
+          return room ? `${room.tenant}/${room.label}` : key;
+        });
+        setNotice(labels.length
+          ? { tone: 'warn', text: `Tu borrador se reaplicó sobre la versión nueva. En ${labels.join(', ')} tu cambio sustituye al de la otra persona; revisa el plano antes de guardarlo.` }
+          : { tone: 'ok', text: 'Tu borrador se reaplicó sobre la versión nueva sin tocar lo que cambió la otra persona. Revisa el plano y guárdalo.' });
+      }
     }
     setBusy(false);
   }
@@ -113,14 +141,21 @@ export function OfficeWorkspace({ campus, topology, agents, onAgent }: {
     </div>
     {mode === 'plan' ? <div className="grid min-h-0 flex-1 content-start gap-3 overflow-auto p-4">
       <header className="flex flex-wrap items-center justify-between gap-2"><h2 className="m-0 text-lg">Plano de oficina</h2>
-        <div className="flex flex-wrap gap-2"><Button disabled={busy || layout.loading || (!!draft && !draft.conflicted)} onClick={() => { void rereadPlan(); }}>Releer plano y cuotas</Button>
+        <div className="flex flex-wrap gap-2"><Button disabled={busy || layout.loading || !!draft} onClick={() => { void rereadPlan(); }}>Releer plano y cuotas</Button>
           <Button variant="primary" disabled={!writable || !draft || draft.conflicted} onClick={() => { void save(); }}>Guardar plano</Button>
           <Button disabled={busy || !draft} onClick={() => { setDraft(undefined); setError(undefined); }}>Descartar cambios de plano</Button></div></header>
       {unavailable || (draft && !draft.conflicted) ? <p className="m-0 text-xs text-muted">{unavailable ?? 'Guarda o descarta los cambios de plano antes de releerlo.'}</p> : null}
       {layout.loading ? <p role="status">Leyendo plano…</p> : null}
       {failure ? <ErrorNotice failure={failure} /> : null}
+      {draft?.conflicted ? <Notice tone="warn" role="group" aria-label="Conflicto con otra versión del plano" className="grid gap-2">
+        <p>Nada se sobrescribe hasta que elijas. Al reaplicar se conserva lo que cambió la otra persona; si ambos cambiaron lo mismo, gana tu borrador y se indica dónde antes de guardar.</p>
+        <div className="flex flex-wrap gap-2">
+          <Button size="sm" disabled={busy || layout.loading} onClick={() => { void resolveConflict('theirs'); }}>Cargar su versión y descartar mi borrador</Button>
+          <Button size="sm" disabled={busy || layout.loading} onClick={() => { void resolveConflict('reapply'); }}>Reaplicar mi borrador sobre su versión</Button>
+        </div>
+      </Notice> : null}
       {quotaFailure ? <ErrorNotice failure={quotaFailure} /> : null}
-      {notice ? <Notice tone="ok" role="status">{notice}</Notice> : null}
+      {notice ? <Notice tone={notice.tone} role="status">{notice.text}</Notice> : null}
       {!topology ? <p role="status" className="m-0 text-xs">Leyendo salas…</p> : null}
       {roomsRead && !rooms.length ? <Notice tone="info">Aún no hay salas. Crea una desde «Gestionar salas y asignaciones».</Notice> : null}
       {/* An empty map would only be a blank scroller with nothing to select: the notice above already says what to do. */}

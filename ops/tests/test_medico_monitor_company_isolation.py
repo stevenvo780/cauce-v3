@@ -183,8 +183,10 @@ def test_psql_error_redacts_free_text(transport):
     no_private(str(error.value))
 
 
-@pytest.mark.parametrize("query", ["UPDATE messages SET priority=priority RETURNING id",
-                                   "DELETE FROM messages RETURNING id"])
+# The order pins search_path to pg_catalog, so the bare write names the schema as the company filter would:
+# what must stop it is the read-only transaction, not an unresolved relation.
+@pytest.mark.parametrize("query", ["UPDATE public.messages SET priority=priority RETURNING id",
+                                   "DELETE FROM public.messages RETURNING id"])
 def test_pg_read_only_transaction_blocks_writes_even_without_the_filter(transport, pg, monkeypatch, query):
     before = pg.run_sql("SELECT id,priority FROM messages ORDER BY id")
     assert before.returncode == 0, before.stderr
