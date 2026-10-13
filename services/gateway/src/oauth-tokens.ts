@@ -1,4 +1,4 @@
-import { randomUUID, sign, verify, createPublicKey, createHmac, createSecretKey, type KeyObject } from 'node:crypto';
+import { randomUUID, sign, verify, createPublicKey, createHmac, createSecretKey, hkdfSync, type KeyObject } from 'node:crypto';
 import { isAnyUuid } from '@cauce/protocol';
 import { oauthOrigin, scopes, type OAuthAccessIdentity, type OAuthIssuedToken, type OAuthTokenInput } from './oauth-authorization-types.js';
 
@@ -31,7 +31,8 @@ export class OAuthTokens {
     }
     this.now = options.now ?? Date.now;
     this.publicKey = createPublicKey(options.signingKey);
-    this.refreshKey = createSecretKey(options.signingKey.export({ format: 'der', type: 'pkcs8' }));
+    this.refreshKey = createSecretKey(Buffer.from(hkdfSync('sha256',
+      options.signingKey.export({ format: 'der', type: 'pkcs8' }), Buffer.alloc(0), 'cauce-oauth-refresh-successor-v1', 32)));
     this.header = Buffer.from(JSON.stringify({ alg: 'ES256', typ: 'at+jwt', kid: options.kid })).toString('base64url');
   }
 

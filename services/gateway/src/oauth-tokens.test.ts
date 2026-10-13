@@ -1,4 +1,4 @@
-import { createHash, generateKeyPairSync, sign } from 'node:crypto';
+import { createHash, createHmac, generateKeyPairSync, sign } from 'node:crypto';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { OAuthTokens } from './oauth-tokens.js';
 
@@ -49,6 +49,16 @@ describe('local OAuth access tokens', () => {
   it('requires an injected P-256 private key and a TTL no larger than five minutes', () => {
     expect(() => new OAuthTokens({ issuer, resource: `${issuer}/mcp`, signingKey: privateKey, kid: 'x', ttlSeconds: 301 })).toThrow();
     expect(() => new OAuthTokens({ issuer, resource: `${issuer}/wrong`, signingKey: privateKey, kid: 'x' })).toThrow();
+  });
+  it('derives a domain-separated successor key with HKDF-SHA256 instead of using the signing key directly', () => {
+    const previous = createHash('sha256').update('synthetic-refresh-secret').digest('hex');
+    const material = privateKey.export({ format: 'der', type: 'pkcs8' });
+    const extracted = createHmac('sha256', Buffer.alloc(32)).update(material).digest();
+    const expanded = createHmac('sha256', extracted).update('cauce-oauth-refresh-successor-v1').update(Buffer.from([1])).digest();
+    const message = JSON.stringify(['cauce-oauth-refresh-v1', issuer, `${issuer}/mcp`, grantId, previous]);
+    const successor = create().refreshSuccessor(previous, grantId);
+    expect(successor).toBe(createHmac('sha256', expanded).update(message).digest('base64url'));
+    expect(successor).not.toBe(createHmac('sha256', material).update(message).digest('base64url'));
   });
   it('recovers refresh successors across signer restarts and separates key, grant and issuer', () => {
     const previous = createHash('sha256').update('synthetic-refresh-secret').digest('hex');

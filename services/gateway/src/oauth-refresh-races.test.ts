@@ -1,7 +1,9 @@
+import { createHmac, generateKeyPairSync } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { waitForBlocked } from '../../../tests/integration/human-identity-resolver-postgres.fixtures.js';
 import { PostgresOAuthStore } from './oauth-authorization-store.js';
 import { secretHash } from './oauth-authorization-types.js';
+import { OAuthTokens } from './oauth-tokens.js';
 import { authorized, context, database, exchangeInput, intercept, issuer, revoked, seed, tokens, verify } from './oauth-postgres.fixtures.js';
 
 function barrier() {
@@ -89,6 +91,31 @@ describe.sequential('OAuth refresh recovery lock boundaries', () => {
     expect((await pool.query<{ seconds: number; bounded: boolean }>(`SELECT ceil(extract(epoch FROM g.expires_at-g.created_at))::int AS seconds,
       bool_and(r.expires_at=g.expires_at) AS bounded FROM cauce_oauth_grants g JOIN cauce_oauth_refresh_tokens r ON r.grant_id=g.id
       WHERE g.id=$1 GROUP BY g.id`, [original.identity.grantId])).rows[0]).toEqual({ seconds: 28_800, bounded: true });
+  });
+
+  it('rejects recovery of a pre-HKDF response but rotates its live successor without changing grant expiry', async () => {
+    const pool = await database(); const f = await authorized(pool);
+    const signingKey = generateKeyPairSync('ec', { namedCurve: 'prime256v1' }).privateKey;
+    const signer = new OAuthTokens({ issuer, resource: tokens.resource, signingKey, kid: 'hkdf-fixture' });
+    const signAccess = (value: Parameters<typeof signer.issue>[0]) => signer.issue(value);
+    const expiresAt = (await pool.query<{ expires_at: string }>('SELECT expires_at::text AS expires_at FROM cauce_oauth_grants WHERE id=$1',
+      [f.issued.identity.grantId])).rows[0]?.expires_at;
+    const legacySuccessor = (hash: string, id: string) => createHmac('sha256', signingKey.export({ format: 'der', type: 'pkcs8' }))
+      .update(JSON.stringify(['cauce-oauth-refresh-v1', issuer, tokens.resource, id, hash])).digest('base64url');
+    const legacy = new PostgresOAuthStore(pool, issuer, verify, { refreshSuccessor: legacySuccessor });
+    const original = await legacy.refresh(input(f.issued.refreshToken, f.request.clientId), signAccess, context());
+    const upgraded = new PostgresOAuthStore(pool, issuer, verify, { refreshSuccessor: (hash, id) => signer.refreshSuccessor(hash, id) });
+    await expect(upgraded.refresh(input(f.issued.refreshToken, f.request.clientId), signAccess, context())).rejects.toThrow('invalid_grant');
+    expect(await revoked(pool, original.identity.grantId)).toBe(false);
+    expect((await pool.query('SELECT 1 FROM cauce_oauth_tokens WHERE grant_id=$1', [original.identity.grantId])).rowCount).toBe(2);
+    const next = await upgraded.refresh(input(original.refreshToken, f.request.clientId), signAccess, context());
+    const recovered = await upgraded.refresh(input(original.refreshToken, f.request.clientId), signAccess, context());
+    expect(recovered.refreshToken).toBe(next.refreshToken);
+    expect(next.refreshToken).not.toBe(legacySuccessor(secretHash(original.refreshToken), original.identity.grantId));
+    expect(await upgraded.validate(next.identity)).toBe(true);
+    expect((await pool.query<{ expires_at: string; bounded: boolean }>(`SELECT g.expires_at::text AS expires_at,bool_and(r.expires_at=g.expires_at) AS bounded
+      FROM cauce_oauth_grants g JOIN cauce_oauth_refresh_tokens r ON r.grant_id=g.id WHERE g.id=$1 GROUP BY g.id`,
+    [original.identity.grantId])).rows[0]).toEqual({ expires_at: expiresAt, bounded: true });
   });
 
   it('keeps an in-flight recovery unusable after nonblocking grant revocation', async () => {
