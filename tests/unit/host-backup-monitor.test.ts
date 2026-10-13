@@ -397,6 +397,60 @@ describe('host backup monitor', () => {
     expect((await check(4, false)).status).toBe(1);
   });
 
+  describe('pending migration inventory', () => {
+    const unrelated = Array.from({ length: 3000 }, (_, index) => `unrelated-${String(index)}`).join('\n');
+    const postgres = 'cauce-v3-prod-postgres-1';
+    const pgdata = 'cauce-v3-prod_cauce_pgdata';
+    test.each([
+      { name: 'counts a pending migration with a short inventory', containers: postgres, volumes: pgdata, status: 0 },
+      { name: 'counts a pending migration with postgres before 3000 containers', containers: `${postgres}\n${unrelated}`, volumes: pgdata, status: 0 },
+      { name: 'rejects indeterminate migrations with pgdata before 3000 volumes and no postgres', containers: unrelated, volumes: `${pgdata}\n${unrelated}`, status: 1 },
+      { name: 'keeps migrations pending with postgres and pgdata before 3000 names', containers: `${postgres}\n${unrelated}`, volumes: `${pgdata}\n${unrelated}`, status: 0 },
+    ])('$name', async ({ containers, volumes, status }) => {
+      const source = await readFile(deploy, 'utf8');
+      const start = source.indexOf('count_unapplied_migrations() {');
+      const end = source.indexOf('\nbackup_monitor_accepts() {', start);
+      expect(start).toBeGreaterThan(-1);
+      expect(end).toBeGreaterThan(start);
+      const script = String.raw`set -euo pipefail
+die() { echo "$*" >&2; exit 1; }
+docker() {
+  case "$*" in
+    'ps -a --format {{.Names}}') printf '%s\n' "$MOCK_CONTAINERS" ;;
+    'volume ls --format {{.Name}}') printf '%s\n' "$MOCK_VOLUMES" ;;
+    "inspect -f {{.State.Running}} $PG_CONTAINER") printf '%s\n' true ;;
+    "exec $PG_CONTAINER psql -XAtq -v ON_ERROR_STOP=1 -U $PG_USER -d $PG_DB -c SELECT version FROM schema_migrations") printf '%s\n' '001_init.sql' ;;
+    *) return 2 ;;
+  esac
+}
+${source.slice(start, end)}
+count_pending_migrations
+printf 'PENDING=%s\nATTEMPT=%s\n' "$PENDING_MIGRATIONS" "$MIGRATION_ATTEMPT_PENDING"
+`;
+      const result = spawnSync('bash', ['-c', script], {
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          PROJECT_NAME: 'cauce-v3-prod',
+          PG_CONTAINER: postgres,
+          PG_USER: 'cauce',
+          PG_DB: 'cauce',
+          BUNDLED_MIGRATIONS: '001_init.sql\n002_next.sql',
+          MOCK_CONTAINERS: containers,
+          MOCK_VOLUMES: volumes,
+        },
+      });
+      expect(result.status, result.stderr).toBe(status);
+      if (status === 0) {
+        expect(result.stdout).toBe('PENDING=1\nATTEMPT=1\n');
+        expect(result.stderr).toBe('');
+      } else {
+        expect(result.stdout).toBe('');
+        expect(result.stderr).toContain('migraciones pendientes indeterminadas');
+      }
+    });
+  });
+
   test('migration 043 pre-build guard rejects active old blob API and indeterminate database state', async () => {
     const source = await readFile(deploy, 'utf8');
     const start = source.indexOf('check_blob_migration_window() {');

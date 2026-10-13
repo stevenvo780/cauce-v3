@@ -420,10 +420,10 @@ count_pending_migrations() {
   local containers volumes pg_running applied
   containers="$(docker ps -a --format '{{.Names}}')" \
     || die "no pude enumerar contenedores para contar migraciones pendientes"
-  if ! printf '%s\n' "$containers" | grep -Fxq "$PG_CONTAINER"; then
+  if ! grep -Fxq "$PG_CONTAINER" <<< "$containers"; then
     volumes="$(docker volume ls --format '{{.Name}}')" \
       || die "no pude enumerar volumenes para contar migraciones pendientes"
-    if printf '%s\n' "$volumes" | grep -Fxq "${PROJECT_NAME}_cauce_pgdata"; then
+    if grep -Fxq "${PROJECT_NAME}_cauce_pgdata" <<< "$volumes"; then
       die "hay datos de PostgreSQL sin contenedor inspeccionable; migraciones pendientes indeterminadas"
     fi
     return 0
