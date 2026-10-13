@@ -18,7 +18,7 @@ export const defaultMigrationLockTimeoutMs = 5_000;
  */
 export const migrationLockOrder: readonly string[] = [
   'tenants', 'agent_account_bindings', 'agents', 'alias_routing_ceiling', 'terminal_sessions', 'audit_events', 'config_revisions',
-  'console_agent_favorites', 'console_users', 'fleet_hosts', 'fleet_operations', 'human_tenant_memberships',
+  'console_agent_favorites', 'console_users', 'fleet_hosts', 'fleet_host_enrollments', 'fleet_operations', 'human_tenant_memberships',
   'memberships', 'connection_leases', 'deliveries', 'messages', 'provider_accounts', 'quota_window_state',
   'quota_provider_reports', 'quota_window_samples', 'rooms', 'agent_failure_notices', 'agent_output_materializations',
   'blob_delivery_grants', 'companies', 'company_links', 'platform_admins', 'quota_collections', 'secret_handoffs',
@@ -72,6 +72,7 @@ export const migrationLockFootprints: Readonly<Record<string, Readonly<Record<st
   '073_harness_definitions_seed.sql': {},
   '077_agent_quota_expiry.sql': { agent_quota_operations: AE },
   '078_authority_lock_scope.sql': { platform_admins: SRE },
+  '079_host_enrollment_compatibility.sql': { fleet_host_enrollments: AE },
 };
 
 /** The first migration with a footprint; every bundled migration from it on must have one. */
