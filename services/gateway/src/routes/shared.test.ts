@@ -169,11 +169,10 @@ describe('consolePublishOperatorScope', () => {
 });
 
 describe('replyError', () => {
-  // What the handler observed travels beside the reply, not on it: `status` on the real
-  // FastifyReply is a method, and reading it as a value trips the unbound-method rule.
-  function reply(): { target: FastifyReply; seen: { status: number; payload: unknown } } {
-    const seen = { status: 0, payload: undefined as unknown };
+  function reply(): { target: FastifyReply; seen: { status: number; payload: unknown; logs: unknown[] } } {
+    const seen = { status: 0, payload: undefined as unknown, logs: [] as unknown[] };
     const target = {
+      request: { log: { info(fields: unknown, message: string) { seen.logs.push({ fields, message }); } } },
       code(status: number) {
         seen.status = status;
         return {
@@ -192,10 +191,12 @@ describe('replyError', () => {
   ] as const)('maps store %s to %d', (code, status) => {
     const { target, seen } = reply();
     replyError(target, new StoreError(code, 'detalle'));
-
     expect(seen.status).toBe(status);
     expect(seen.payload).toEqual({ error: code, message: 'detalle' });
     expect(errorStatus(new StoreError(code, 'detalle'))).toBe(status);
+    expect(seen.logs).toEqual([{ fields: { event: 'console_request_rejected', component: 'gateway', error_code: code },
+      message: 'Console request rejected' }]);
+    expect(JSON.stringify(seen.logs)).not.toContain('detalle');
   });
 
   it('answers 401 on authentication failures and 403 on authorization ones', () => {

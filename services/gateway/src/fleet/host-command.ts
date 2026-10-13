@@ -78,7 +78,9 @@ async function runHostCommand(
     child.stdin.on('error', stop);
     child.once('close', (code) => {
       cleanup();
-      if (code !== 0) logHostCommandFailure(step, code, stderr.text());
+      const hosts = new Set(execution.previous_agents?.map(agent => agent.host_id).filter((host): host is string => typeof host === 'string'));
+      if (code !== 0) logHostCommandFailure(step, code, stderr.text(), execution.operation.id,
+        execution.fleet_scope?.host_id ?? (hosts.size === 1 ? [...hosts][0] ?? null : null));
       if (code !== 0 || failed) { reject(unverified()); return; }
       try {
         const receipt = ReceiptSchema.parse(JSON.parse(Buffer.concat(chunks).toString('utf8')));

@@ -70,6 +70,8 @@ export function replyError(reply: FastifyReply, error: unknown): void {
     return;
   }
   if (error instanceof StoreError) {
+    reply.request.log.info({ event: 'console_request_rejected', component: 'gateway', error_code: error.code },
+      'Console request rejected');
     void reply.code(errorStatus(error)).send({
       error: error.code, message: error.message,
       ...(error.recoveryReason === undefined ? {} : { reason: error.recoveryReason }),

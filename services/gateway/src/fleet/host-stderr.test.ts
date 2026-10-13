@@ -42,6 +42,8 @@ describe('executor stderr diagnostics', () => {
     expect(logged).toHaveBeenCalledTimes(1);
     const line = String(logged.mock.calls[0]?.[0]);
     expect(line).toContain('step=stop'); expect(line).toContain('exit=3'); expect(line).toContain('tls handshake failed');
+    expect(line).toContain(`operation_id=${execution.operation.id}`);
+    expect(line).toContain('component=fleet.executor');
     expect(line).not.toContain('TOPSECRET'); expect(line).not.toContain('\n');
   });
 });

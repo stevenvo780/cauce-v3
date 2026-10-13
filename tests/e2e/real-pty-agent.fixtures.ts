@@ -80,6 +80,7 @@ export interface RealPtyFixture {
   tenant: string;
   nonce: string;
   agentLog: () => string;
+  relayLog: () => string;
   login(): Promise<BrowserSession>;
   request(path: string, options?: { method?: string; headers?: Record<string, string>; body?: unknown }): Promise<HttpResult>;
   connect(ticket: string, sessionId: string, authorityProof: string, cols: number, rows: number): Promise<PtySocket>;
@@ -589,6 +590,7 @@ WORKDIR /home/node
       agentContainer: containerName, agentContainerId, agentImage, agentImageId: imageId,
       operatorEmail: OPERATOR_EMAIL, operatorPassword: OPERATOR_PASSWORD, operatorAlias: OPERATOR_ALIAS, targetAlias: TARGET_ALIAS, tenant: TENANT, nonce: NONCE,
       agentLog: () => agentLog,
+      relayLog: () => relayLog,
       login: async () => {
         const response = await requestGateway(gatewayUrl, proxyAgent, '/v3/auth/login', {
           method: 'POST', headers: { origin: gatewayUrl }, body: { email: OPERATOR_EMAIL, password: OPERATOR_PASSWORD },

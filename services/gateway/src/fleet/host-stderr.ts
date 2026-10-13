@@ -23,6 +23,6 @@ export function redactExecutorStderr(text: string): string {
   return redacted.replace(/[\p{Cc}\s]+/gu, ' ').trim();
 }
 
-export function logHostCommandFailure(step: string, code: number | null, stderr: string): void {
-  console.error(`fleet host command failed step=${step} exit=${code === null ? 'signal' : String(code)} stderr=${redactExecutorStderr(stderr)}`);
+export function logHostCommandFailure(step: string, code: number | null, stderr: string, operationId: string, hostId: string | null): void {
+  console.error(`fleet host command failed component=fleet.executor operation_id=${operationId} host_id=${redactExecutorStderr(hostId ?? 'unknown')} step=${step} exit=${code === null ? 'signal' : String(code)} stderr=${redactExecutorStderr(stderr)}`);
 }
