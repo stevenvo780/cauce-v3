@@ -190,6 +190,23 @@ número mejoró y la línea base sigue tolerando el valor viejo.
 | Package tests | `packages/*/test/` | Por paquete: protocol (unit), store (DB), adapter-sdk (`node:test`), mcp-fleet-monitor |
 | Service tests | `services/*/` | gateway, dispatcher, telegram-bridge, terminal-relay |
 
+### Concurrencia de vitest (`vitest.config.ts`)
+
+Hay un solo pool de workers por corrida, así que el número de workers lo decide lo que la corrida
+alcanza:
+
+- sólo suites rápidas: el valor por defecto de vitest (un worker por núcleo menos uno);
+- alguna suite de datos (PostgreSQL): `CAUCE_TEST_DATA_WORKERS`, por defecto un cuarto de los
+  núcleos y nunca menos de 2. Cada fichero de datos tiene su propio PostgreSQL —contenedor propio o
+  base efímera propia—, así que no comparten estado; lo que comparten es el host;
+- sólo `tests/e2e` o `tests/terminal-pty`: un worker, como siempre.
+
+Las suites de pila completa (`tests/e2e`, `tests/terminal-pty`) forman el proyecto `exclusivo`:
+corren al final (`sequence.groupOrder`) y de a un fichero, en cola sobre un socket del proceso
+principal (`tests/helpers/carril-exclusivo.ts`). Así la corrida de cobertura, que lo incluye todo,
+ya no baja entera a un worker por contener e2e. Antes, cualquier suite de datos ponía la corrida
+completa en serie: 732 ficheros de uno en uno en la cobertura, 202 en `test:store-hardening`.
+
 ## Cobertura (`pnpm test:coverage` → `scripts/cobertura.mjs`)
 
 **Un solo comando, una sola cifra.** No es un gate por commit: cuesta lo que cuesta `pnpm test`

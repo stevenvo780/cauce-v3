@@ -1,3 +1,4 @@
+import { availableParallelism } from 'node:os';
 import { relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vitest/config';
@@ -24,10 +25,10 @@ const DIRECTORIOS_DE_DATOS = [
   'packages/store/test',
   'tests/store-hardening',
   'tests/gateway-hardening',
-  'tests/integration',
-  'tests/e2e',
-  'tests/terminal-pty'
+  'tests/integration'
 ];
+
+const DIRECTORIOS_EXCLUSIVOS = ['tests/e2e', 'tests/terminal-pty']; // whole stack per file: one at a time
 
 const FICHEROS_DE_DATOS = [
   'services/decisiones/test/company-isolation-postgres.test.ts',
@@ -67,6 +68,7 @@ const RAPIDAS = bajoLaRaizDeLaCorrida(SUITES_RAPIDAS);
 const CARPETAS_DE_DATOS = bajoLaRaizDeLaCorrida(DIRECTORIOS_DE_DATOS);
 const SUELTOS_DE_DATOS = bajoLaRaizDeLaCorrida(FICHEROS_DE_DATOS);
 const DE_DATOS = [...CARPETAS_DE_DATOS, ...SUELTOS_DE_DATOS];
+const EXCLUSIVAS = bajoLaRaizDeLaCorrida(DIRECTORIOS_EXCLUSIVOS);
 
 const COMANDOS = new Set(['run', 'watch', 'dev', 'related', 'bench', 'list', 'init']);
 
@@ -84,20 +86,36 @@ const dentroDe = (hijo: string, padre: string): boolean =>
 const esRapida = (filtro: string): boolean =>
   RAPIDAS.some((ruta) => dentroDe(absoluta(filtro), absoluta(ruta)));
 
-const alcanzaDatos = (filtro: string): boolean =>
-  DE_DATOS.some(
+const alcanza = (rutas: readonly string[]) => (filtro: string): boolean =>
+  rutas.some(
     (ruta) =>
       ruta.includes(filtro)
       || dentroDe(absoluta(filtro), absoluta(ruta))
       || dentroDe(absoluta(ruta), absoluta(filtro))
   );
+const alcanzaDatos = alcanza(DE_DATOS);
+const alcanzaExclusivas = alcanza(EXCLUSIVAS);
+
+// One pool per run; its size follows what the filters (path substrings) reach. Why, and the numbers:
+// docs/calidad-y-gates.md, «Concurrencia de vitest».
+const trabajadoresDeDatos = (): number => {
+  const pedido = process.env.CAUCE_TEST_DATA_WORKERS;
+  if (pedido === undefined || pedido === '') return Math.max(2, Math.floor(availableParallelism() / 4));
+  if (!/^[1-9]\d{0,2}$/u.test(pedido)) {
+    throw new Error(`CAUCE_TEST_DATA_WORKERS debe ser un entero entre 1 y 999 (es '${pedido}')`);
+  }
+  return Number(pedido);
+};
 
 const filtros = filtrosDeLaCorrida();
-// One worker pool per run (not per project) and filters match as path substrings: parallel only
-// when no filter can reach a data directory or a data file (`src/health` reaches two), else serial.
-const EN_PARALELO =
-  DE_DATOS.length === 0 ||
-  (filtros.length > 0 && filtros.every((filtro) => esRapida(filtro) && !alcanzaDatos(filtro)));
+const SOLO_RAPIDAS =
+  (DE_DATOS.length === 0 && EXCLUSIVAS.length === 0) ||
+  (filtros.length > 0
+    && filtros.every((filtro) => esRapida(filtro) && !alcanzaDatos(filtro) && !alcanzaExclusivas(filtro)));
+const SOLO_EXCLUSIVAS =
+  filtros.length > 0
+  && filtros.every((filtro) => !esRapida(filtro) && !alcanzaDatos(filtro) && alcanzaExclusivas(filtro));
+const TRABAJADORES = SOLO_RAPIDAS ? undefined : SOLO_EXCLUSIVAS ? 1 : trabajadoresDeDatos(); // undefined = vitest default
 
 const proyectos = [
   {
@@ -111,6 +129,16 @@ const proyectos = [
   {
     extends: true as const,
     test: { name: 'datos', include: [...patrones(CARPETAS_DE_DATOS), ...SUELTOS_DE_DATOS] }
+  },
+  {
+    extends: true as const,
+    test: {
+      name: 'exclusivo',
+      include: patrones(EXCLUSIVAS),
+      globalSetup: [resolve(RAIZ, 'tests/helpers/carril-exclusivo.ts')],
+      setupFiles: [resolve(RAIZ, 'tests/helpers/carril-exclusivo.setup.ts')],
+      sequence: { groupOrder: 1 } // last, so the workers queued on the lane hold no other file
+    }
   }
 ].filter((proyecto) => proyecto.test.include.length > 0);
 
@@ -129,7 +157,7 @@ export default defineConfig({
   test: {
     globals: true,
     pool: 'forks',
-    fileParallelism: EN_PARALELO,
+    ...(TRABAJADORES === undefined ? {} : { maxWorkers: TRABAJADORES }),
     hookTimeout: 120_000,
     testTimeout: 120_000,
     env: { CAUCE_DEV_OPERATOR: 'Steven/kant' },
