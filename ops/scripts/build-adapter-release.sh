@@ -76,9 +76,11 @@ for harness, pin in approvals.items():
     if harness not in harnesses or not isinstance(pin, str) or len(pin) != 64 or any(char not in '0123456789abcdef' for char in pin):
         raise SystemExit(f'invalid explicit descriptor approval: {harness}')
     try:
-        read_descriptor(str(root), harness, expected_sha256=pin)
+        _descriptor, fingerprint = read_descriptor(str(root), harness)
     except HarnessOperationFailure as error:
         raise SystemExit(f'explicit descriptor approval differs: {harness}: {error}') from None
+    if fingerprint != pin:
+        raise SystemExit(f'explicit descriptor approval differs: {harness}')
 (package / 'dist/descriptor-approvals.json').write_text(json.dumps(approvals, sort_keys=True, indent=2) + '\n')
 PY
 chmod -R u=rX,go=rX "$release_target"

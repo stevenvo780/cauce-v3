@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { readFile, readdir } from 'node:fs/promises';
 import { harnessDefinition } from '../harnesses/index.js';
 import type { HarnessDefinition, HarnessId } from '../sdk/types.js';
@@ -114,6 +115,27 @@ export async function packagedHarnessDescriptor(harness: HarnessId): Promise<Har
   const descriptor = parseHarnessDescriptor(value);
   if (descriptor.harness !== harness) fail('harness', 'descriptor identity differs from its file name');
   return descriptor;
+}
+const APPROVED_PIN = /^[a-f0-9]{64}$/u;
+export async function approvedHarnessDescriptors(directory: URL, approvals: Readonly<Record<string, string>>): Promise<readonly HarnessDescriptor[]> {
+  const pins = Object.entries(approvals);
+  if (pins.some(([harness, pin]) => !HARNESS_ID.test(harness) || !APPROVED_PIN.test(pin))) return [];
+  const root = new URL(directory.href);
+  if (!root.pathname.endsWith('/')) root.pathname += '/';
+  const approved: HarnessDescriptor[] = [];
+  for (const [harness, pin] of pins) {
+    const file = new URL(`${harness}.json`, root);
+    if (file.protocol !== root.protocol || !file.pathname.startsWith(root.pathname)) return [];
+    try {
+      const raw = await readFile(file);
+      if (createHash('sha256').update(raw).digest('hex') !== pin) continue;
+      const descriptor = parseHarnessDescriptor(JSON.parse(raw.toString('utf8')));
+      if (descriptor.harness !== harness) continue;
+      approved.push(descriptor);
+    } catch { continue; }
+  }
+  approved.sort((left, right) => (left.harness < right.harness ? -1 : left.harness > right.harness ? 1 : 0));
+  return approved;
 }
 export interface HarnessLifecycleExecutor {
   run(input: { readonly harness: HarnessId; readonly operation: HarnessLifecycleOperation; readonly recipe: HarnessLifecycleRecipe }): Promise<unknown>;

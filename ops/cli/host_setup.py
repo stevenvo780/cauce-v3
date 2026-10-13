@@ -231,9 +231,11 @@ def verify_bundles(policy: dict, release: pathlib.Path) -> None:
                 if not isinstance(pin, str) or not HEX.fullmatch(pin):
                     raise HostFailure(f'approved descriptor pin is invalid for {harness}; nothing was activated')
                 try:
-                    read_descriptor(bundle['directory'], harness, expected_sha256=pin)
+                    _descriptor, fingerprint = read_descriptor(bundle['directory'], harness)
                 except HarnessOperationFailure:
                     raise HostFailure(f'approved descriptor differs for {harness}; nothing was activated') from None
+                if fingerprint != pin:
+                    raise HostFailure(f'approved descriptor differs for {harness}; nothing was activated')
     except (ImportError, KeyError, TypeError, OSError):
         raise HostFailure('approved bundle cannot be verified in the release') from None
     finally:
