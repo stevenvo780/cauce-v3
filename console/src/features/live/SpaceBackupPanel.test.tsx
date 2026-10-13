@@ -114,3 +114,8 @@ it('explica un 404 con un mensaje específico', async () => {
   renderWithApi(panel()); fireEvent.click(screen.getByRole('button', { name: 'Crear backup del espacio' }));
   expect(await screen.findByRole('alert')).toHaveTextContent(/No se encontró el agente, su ubicación/u);
 });
+it('al abrir declara que todavía no hay backup creado, sin afirmar que el servidor no tenga ninguno', () => {
+  renderWithApi(panel());
+  expect(screen.getByRole('status')).toHaveTextContent(/Todavía no se creó un backup desde esta ficha/u);
+  expect(screen.getByRole('button', { name: 'Crear backup del espacio' })).toBeEnabled();
+});

@@ -96,6 +96,7 @@ function BackupPanel({ target, allowed }: { target: SpaceBackupTarget; allowed: 
       <p className="m-0 mt-1 text-sm text-muted">Los proyectos se copian sin <code>.git</code>: los commits sin publicar no viajan. Se omiten los archivos <code>.env</code> y de credenciales, y también el contenido que es un secreto literal (clave, token o URL con usuario y contraseña). Una plantilla <code>{'${…}'}</code> o <code>process.env</code> no se trata como secreto.</p>
       <p className="m-0 mt-1 text-sm text-muted">Las omisiones, con su ruta y su motivo, están en <code>space-manifest.json</code> dentro del ZIP.</p></div>
     {!enabled ? <Notice tone="warn">Hace falta autoridad vigente para controlar este espacio y descargar su backup.</Notice> : null}
+    {!backup && !busy && enabled ? <p className="m-0 text-sm text-muted" role="status">Todavía no se creó un backup desde esta ficha. Crea el primero para poder descargarlo.</p> : null}
     {error ? <Notice tone="danger" role="alert">{error}</Notice> : null}
     {notice ? <Notice tone="ok" role="status">{notice}</Notice> : null}
     {backup ? <div className="grid gap-1"><p className="m-0 text-sm" role="status">{STATUS[backup.status]}</p>
