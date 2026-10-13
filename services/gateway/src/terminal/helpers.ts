@@ -46,7 +46,11 @@ export function cohortLabels(cohort: FleetCohort): string[] {
   return cohort.map(fleetIdentityLabel);
 }
 
-/** Keep relay authorization and control holds on the same session window; extensions are clamped when written. */
+/**
+ * Migration 040 window shared with the relay `/authz` and the store control hold. The store owns
+ * the SQL text this delegates to. The ceiling is optional because an extension is clamped when
+ * written.
+ */
 export function sessionWindowExpression(ttlParameter: number, maxTotalParameter?: number): string {
   return terminalSessionWindowExpression(ttlParameter, maxTotalParameter);
 }
@@ -96,8 +100,9 @@ interface OwnedSessionRequest {
 }
 
 /**
- * A live mutation requires the matching operator, console subject, request, and browser-owner fence.
- * Stale tabs, another subject, and closed or revoked sessions match no row.
+ * The fence every route acting on a live session shares: operator scope, the browser-owner digest
+ * and generation of the tab that opened it, and migration 040's session window. A stale tab, a
+ * second subject, or a closed session matches nothing and can mutate nothing.
  */
 export function ownedLiveSessionQuery(
   input: OwnedSessionRequest,

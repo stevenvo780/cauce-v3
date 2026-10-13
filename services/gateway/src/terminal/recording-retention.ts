@@ -3,6 +3,8 @@
  * Las grabaciones las escribe el terminal-relay en `CAUCE_TERMINAL_RECORDING_DIR` como
  * `<session_id>.cast` (0700/0600, tope por sesión); este sweeper sólo borra dentro de ese
  * directorio los `.cast` regulares de primer nivel con mtime más antiguo que la retención.
+ * Si la variable está vacía, el relay no abre TUI escribibles; este sweeper recibe la ruta
+ * explícitamente y no lee la variable.
  * Es idempotente y fail-closed: si el directorio no existe o no se puede leer, no hace
  * nada y lo registra; jamás sigue symlinks ni baja a subdirectorios.
  */
@@ -78,7 +80,7 @@ export async function sweepOldRecordings(
       await unlink(path);
       deleted.push(path);
     } catch {
-      // A concurrent removal is idempotent.
+      // Si otro sweeper o el relay ya lo eliminó, la operación es idempotente.
     }
   }
   return { deleted, kept };

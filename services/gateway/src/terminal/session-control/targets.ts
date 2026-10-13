@@ -90,7 +90,10 @@ export function registerTerminalTargetRoute(
       };
       const items: TerminalTarget[] = [];
       for (const placement of placements) {
-        // Placements span the physical fleet, so filter them before returning identity or cohort data.
+        // The `agents` table holds the entire physical fleet, not only what is visible to this actor.
+        // Enumerating it before authorization used to leak names, tenants, and cohorts of clients without
+        // an `allow_control` edge. The same canonical identity governing the rest of the console first decides
+        // whether the row may exist in this response.
         if (!(await visibleFor(placement.tenant_id, placement.alias))) continue;
         const cohort = containerCohort(placements, placement.tenant_id, placement.alias);
         // A shared container is one authority surface. Never reveal the names of hidden colocated
