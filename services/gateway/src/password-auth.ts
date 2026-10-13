@@ -137,15 +137,15 @@ export class LoginThrottle {
   ) {}
 
   /** Milliseconds until another attempt is allowed, or 0 if an attempt can be made now. */
-  retryAfterMs(key: string, now: number): number {
+  retryAfterMs(key: string, now: number, maxPending = this.maxFailures): number {
     const record = this.failures.get(key);
     const pending = this.pending.get(key) ?? 0;
-    if (!record) return pending >= this.maxFailures ? 1_000 : 0;
+    if (!record) return pending >= Math.min(this.maxFailures, maxPending) ? 1_000 : 0;
     this.failures.delete(key);
     this.failures.set(key, record);
     if (record.blockedUntil > now) return record.blockedUntil - now;
     const failures = now - record.seenAt >= this.windowMs ? 0 : record.count;
-    return failures + pending >= this.maxFailures ? 1_000 : 0;
+    return pending >= maxPending || failures + pending >= this.maxFailures ? 1_000 : 0;
   }
 
   recordFailure(key: string, now: number): void {
@@ -551,7 +551,7 @@ export class PasswordAuthProvider implements AuthProvider {
     const now = this.now();
     const throttleKey = email.trim().toLowerCase();
     const addressKey = rateLimitKey(request.ip);
-    const retryAfterMs = Math.max(this.throttle.retryAfterMs(throttleKey, now), this.addressThrottle.retryAfterMs(addressKey, now));
+    const retryAfterMs = Math.max(this.throttle.retryAfterMs(throttleKey, now), this.addressThrottle.retryAfterMs(addressKey, now, 4));
     if (retryAfterMs > 0) {
       await reply
         .header('Retry-After', String(Math.ceil(retryAfterMs / 1_000)))

@@ -28,6 +28,39 @@ async function fixture(options: { user?: ConsoleUser; throttle?: LoginThrottle; 
 }
 
 describe('concurrent login admission', () => {
+  it('rejects the fifth login from one IP before the scrypt queue and admits another IP', async () => {
+    const user = await makeUser();
+    const test = await fixture({ user });
+    for (let index = 0; index < 6; index++) {
+      test.users.put({ ...user, id: randomUUID(), email: `owner-${String(index)}@example.test` });
+    }
+    let release: () => void = () => undefined;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    const occupied = [passwordWork.run(() => held, 'login'), passwordWork.run(() => held, 'login')];
+    const work = vi.spyOn(passwordWork, 'run');
+    const logins = Array.from({ length: 4 }, (_, index) =>
+      test.login(`owner-${String(index)}@example.test`, PASSWORD, '203.0.113.7').then(response => response));
+    let refused: Awaited<ReturnType<typeof test.login>> | undefined;
+    const extra: Promise<unknown>[] = [];
+    try {
+      await vi.waitFor(() => { expect(work).toHaveBeenCalledTimes(4); });
+      extra.push(test.login('owner-4@example.test', PASSWORD, '203.0.113.7').then(response => { refused = response; }));
+      await vi.waitFor(() => { expect(refused?.statusCode).toBe(429); });
+      expect(Number(refused?.headers['retry-after'])).toBeGreaterThan(0);
+      expect(work).toHaveBeenCalledTimes(4);
+      const independent = test.login('owner-5@example.test', PASSWORD, '198.51.100.1').then(response => response);
+      extra.push(independent);
+      await vi.waitFor(() => { expect(work).toHaveBeenCalledTimes(5); });
+      release();
+      expect((await independent).statusCode).toBe(200);
+      expect((await Promise.all(logins)).map(response => response.statusCode)).toEqual([200, 200, 200, 200]);
+      expect((await test.login('owner-4@example.test', PASSWORD, '203.0.113.7')).statusCode).toBe(200);
+    } finally {
+      release(); await Promise.all([...occupied, ...logins, ...extra]);
+      work.mockRestore(); await test.app.close();
+    }
+  });
+
   it('releases both reservations after a user lookup fails', async () => {
     const test = await fixture({ user: await makeUser({ email: 'owner@example.test' }),
       throttle: new LoginThrottle(1, 60_000), addressThrottle: new LoginThrottle(1, 60_000) });
