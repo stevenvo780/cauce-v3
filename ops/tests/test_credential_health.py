@@ -340,9 +340,11 @@ class TestGuardState(unittest.TestCase):
             mock.patch("builtins.open", side_effect=synthetic_open),
             contextlib.redirect_stdout(output),
             contextlib.redirect_stderr(errors),
-            self.assertRaises(SystemExit) as exited,
         ):
-            runpy.run_path(str(GUARDS / "cred-guard.py"), run_name="credential_test_state")
+            with self.assertRaises(SystemExit) as exited:
+                runpy.run_path(str(GUARDS / "cred-guard.py"), run_name="credential_test_state")
+            self.assertIs(sys.stdout, output)
+            self.assertIs(sys.stderr, errors)
         return exited.exception.code, output.getvalue(), errors.getvalue()
 
     def assert_state(self, directory, output, errors, *, exit_code, problems, shared):
@@ -449,14 +451,11 @@ class TestGuardState(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as temporary:
             directory = pathlib.Path(temporary)
-            original_stdout, original_stderr = sys.stdout, sys.stderr
             code, output, errors = self.run_guard(directory, record)
             self.assertEqual(code, 1)
             self.assertIn("synthetic partial output", output)
             self.assertIn("synthetic diagnostic", errors)
             self.assertIn("RuntimeError", errors)
-            self.assertIs(sys.stdout, original_stdout)
-            self.assertIs(sys.stderr, original_stderr)
             self.assert_state(directory, output, errors, exit_code=1, problems=0, shared=0)
 
 
