@@ -55,14 +55,14 @@ it('un backup de 100 MiB se muestra y se descarga por enlace', async () => {
   expect(await screen.findByText(/100\.00 MiB/u)).toBeVisible(); fireEvent.click(screen.getByRole('button', { name: 'Descargar backup ZIP' }));
   expect(clicked).toHaveLength(1);
 });
-function savePicker() {
+function savePicker(name = `space-agent-${ready.id}.zip`) {
   const saved = { parts: [] as Uint8Array[], closed: false, aborted: false };
   const writable = { write: vi.fn(async (part: Uint8Array) => { saved.parts.push(part.slice()); }),
     close: vi.fn(async () => { saved.closed = true; }), abort: vi.fn(async () => { saved.aborted = true; }) };
-  const picker = vi.fn<(options: { suggestedName: string }) => Promise<{ createWritable: () => Promise<typeof writable> }>>(
-    async () => ({ createWritable: async () => writable }));
+  const picker = vi.fn<(options: { suggestedName: string }) => Promise<{ name: string; createWritable: () => Promise<typeof writable> }>>(
+    async () => ({ name, createWritable: async () => writable }));
   Object.defineProperty(window, 'showSaveFilePicker', { configurable: true, value: picker });
-  return { saved, picker };
+  return { saved, picker, writable };
 }
 function zipStream(bytes: Uint8Array, chunk = 1024 * 1024): ReadableStream<Uint8Array> {
   let offset = 0;
@@ -74,6 +74,59 @@ function zipStream(bytes: Uint8Array, chunk = 1024 * 1024): ReadableStream<Uint8
 const LARGE = 33 * 1024 * 1024 + 17;
 const largeZip = Uint8Array.from({ length: LARGE }, (_, index) => (index * 31 + (index >>> 11)) & 0xff);
 const largeSha = createHash('sha256').update(largeZip).digest('hex');
+it.each([['picker', 'session'], ['picker', 'unmount'], ['opening', 'unmount'], ['writing', 'session']] as const)(
+  'cancela la descarga pendiente en %s cuando ocurre %s sin guardar el ZIP', async (phase, change) => {
+    const { saved, picker, writable } = savePicker();
+    let release: () => void = () => undefined; let invalidate: () => void = () => undefined;
+    const delayed = new Promise<void>(resolve => { release = resolve; });
+    const open = vi.fn(async () => { if (phase === 'opening') await delayed; return writable; });
+    picker.mockImplementation(async () => { if (phase === 'picker') await delayed; return { name: 'copy.zip', createWritable: open }; });
+    if (phase === 'writing') writable.write.mockImplementation(async () => { await delayed; });
+    vi.spyOn(testApi, 'onAuthGenerationChange').mockImplementation(listener => { invalidate = listener; return () => undefined; });
+    const bytes = new TextEncoder().encode('zz-canary-complete-stream');
+    vi.spyOn(testApi, 'createSpaceBackup').mockResolvedValue({ ...ready, bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') });
+    const download = vi.spyOn(testApi, 'downloadSpaceBackup').mockImplementation(async () => new ReadableStream({ start(controller) {
+      controller.enqueue(bytes); controller.close();
+    } }));
+    try {
+      const view = renderWithApi(panel()); fireEvent.click(screen.getByRole('button', { name: 'Crear backup del espacio' }));
+      fireEvent.click(await screen.findByRole('button', { name: 'Descargar backup ZIP' }));
+      if (phase === 'opening') await waitFor(() => { expect(open).toHaveBeenCalledOnce(); });
+      if (phase === 'writing') await waitFor(() => { expect(writable.write).toHaveBeenCalledOnce(); });
+      await act(async () => { if (change === 'session') invalidate(); else view.unmount(); release(); });
+      expect(saved.closed).toBe(false);
+      if (phase === 'picker') { expect(open).not.toHaveBeenCalled(); expect(download).not.toHaveBeenCalled(); }
+      else expect(saved.aborted).toBe(true);
+      expect(screen.queryByText(/Descarga verificada/u)).not.toBeInTheDocument();
+    } finally { release(); Reflect.deleteProperty(window, 'showSaveFilePicker'); }
+  },
+);
+it('cancela el stream si falla el disco sin guardar un ZIP parcial', async () => {
+  const { saved, writable } = savePicker(); const cancel = vi.fn();
+  writable.write.mockRejectedValue(new Error('zz-canary-disk-failure'));
+  vi.spyOn(testApi, 'createSpaceBackup').mockResolvedValue(ready);
+  vi.spyOn(testApi, 'downloadSpaceBackup').mockResolvedValue(new ReadableStream({ start(controller) {
+    controller.enqueue(new Uint8Array([1]));
+  }, cancel }));
+  try {
+    renderWithApi(panel()); fireEvent.click(screen.getByRole('button', { name: 'Crear backup del espacio' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Descargar backup ZIP' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(/La descarga se interrumpió/u);
+    expect(saved).toMatchObject({ closed: false, aborted: true }); expect(cancel).toHaveBeenCalledOnce();
+    expect(screen.getByRole('button', { name: 'Descargar backup ZIP' })).toBeEnabled();
+  } finally { Reflect.deleteProperty(window, 'showSaveFilePicker'); }
+});
+it('la orden de restauración usa el nombre elegido y escapa sus caracteres de shell', async () => {
+  const { saved } = savePicker("copia 'final'.zip"); const bytes = new TextEncoder().encode('zz-canary-renamed-zip');
+  vi.spyOn(testApi, 'createSpaceBackup').mockResolvedValue({ ...ready, bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') });
+  vi.spyOn(testApi, 'downloadSpaceBackup').mockResolvedValue(zipStream(bytes));
+  try {
+    renderWithApi(panel()); fireEvent.click(screen.getByRole('button', { name: 'Crear backup del espacio' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Descargar backup ZIP' }));
+    await screen.findByText(/Descarga verificada/u); expect(saved.closed).toBe(true);
+    expect(screen.getByText(/cauce spaces restore --archive/u)).toHaveTextContent("--archive \"$(pwd -P)/\"'copia '\\''final'\\''.zip'");
+  } finally { Reflect.deleteProperty(window, 'showSaveFilePicker'); }
+});
 it('descarga por stream un ZIP de más de 32 MiB, calcula su SHA-256 visible y guarda sólo si coincide', { timeout: 30_000 }, async () => {
   const { saved, picker } = savePicker();
   try {
@@ -89,8 +142,8 @@ it('descarga por stream un ZIP de más de 32 MiB, calcula su SHA-256 visible y g
     expect(written.digest('hex')).toBe(largeSha); expect(saved).toMatchObject({ closed: true, aborted: false });
     expect(screen.getAllByText(largeSha)).toHaveLength(2);
     expect(screen.getByText(/SHA-256 calculado del archivo guardado/u)).toHaveTextContent('coincide con el del servidor');
-    expect(screen.getByText(/cauce spaces restore --archive space-agent-/u)).toHaveTextContent(
-      `--archive space-agent-${ready.id}.zip --directory <directorio-vacío> --company-id one --tenant-id One --alias agent`);
+    expect(screen.getByText(/cauce spaces restore --archive/u)).toHaveTextContent(
+      `--archive "$(pwd -P)/"space-agent-${ready.id}.zip --directory /ruta/absoluta/vacia --company-id one --tenant-id One --alias agent`);
   } finally { Reflect.deleteProperty(window, 'showSaveFilePicker'); }
 });
 it('descarta el archivo guardado si el SHA-256 o el tamaño del stream no coinciden con el recibo', { timeout: 30_000 }, async () => {

@@ -179,7 +179,8 @@ export class CauceApi {
       const detail = errorBody(body);
       throw new ApiError(detail.message ?? (response.statusText || 'API request failed'), response.status, detail.error);
     }
-    if (responseMode === 'blob' && requestGeneration !== this.authGeneration) {
+    if ((responseMode === 'blob' || responseMode === 'stream') && requestGeneration !== this.authGeneration) {
+      if (responseMode === 'stream') await response.body?.cancel().catch(() => undefined);
       throw new ApiError('La sesión cambió mientras se recibía el archivo.', 409, 'session_changed');
     }
     return body as T;
