@@ -43,6 +43,7 @@ export CAUCE_FASE3_CON_DUENO=si CAUCE_DEPLOY_CONFIRMADO=si
 | [`docs/arquitectura.md`](docs/arquitectura.md) | cómo está construido el sistema — guía de lectura central |
 | [`docs/operacion.md`](docs/operacion.md) | desplegar, alta/baja de agente, diagnóstico, backups |
 | [`docs/roadmap.md`](docs/roadmap.md) | qué falta, priorizado |
+| [`docs/v4-pruebas.md`](docs/v4-pruebas.md) | inventario verificable de pruebas V4 y límites pendientes |
 | [`docs/adr/`](docs/adr/) | decisiones de diseño aceptadas |
 | [`docs/threat-model.md`](docs/threat-model.md) | amenazas y controles |
 | [`ops/runbooks/`](ops/runbooks/) | procedimientos operativos detallados |
