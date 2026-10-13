@@ -138,8 +138,11 @@ export function registerDownSafetyTests(sourceUrl: string, base: string, targets
       const holder = await pool().connect(); const runner = await pool().connect();
       try {
         await holder.query('BEGIN');
-        if (kind === 'table') await holder.query(`SELECT count(*) FROM ${target.lockTable}`);
-        else await holder.query('SELECT pg_advisory_xact_lock($1::bigint)', [kind === 'global' ? 783_003_003 : Number(`783003${target.version.slice(0, 3)}`)]);
+        const lockTable = target.lockTable;
+        if (kind === 'table') {
+          if (lockTable === undefined) throw new Error('table lock target absent');
+          await holder.query(`SELECT count(*) FROM ${lockTable}`);
+        } else await holder.query('SELECT pg_advisory_xact_lock($1::bigint)', [kind === 'global' ? 783_003_003 : Number(`783003${target.version.slice(0, 3)}`)]);
         await runner.query('BEGIN');
         await runner.query("SET LOCAL lock_timeout='200ms'; SET LOCAL statement_timeout='3000ms'");
         const started = Date.now();

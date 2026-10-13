@@ -23,7 +23,7 @@ beforeEach(async () => {
     authProvider: new FixedAuthProvider(bindHumanPrincipal(testPrincipal({ tenant_id: 'Steven', alias: 'purge_operator',
       roles: ['operator'], permissions: ['read', 'control'] }), PURGE_ACTOR_SUBJECT.slice('console:'.length))) });
 });
-afterEach(async () => { await app?.close(); await current?.close(); current = undefined; });
+afterEach(async () => { await app.close(); await current?.close(); current = undefined; });
 afterAll(async () => { if (database) { await database.pool.end(); await database.container.stop(); } });
 
 describe('purge confirmation through the real operation repository', () => {

@@ -95,7 +95,6 @@ describe('shared context broker with concurrent agents', () => {
     expect(raced.filter(result => result.status === 'fulfilled')).toHaveLength(1);
     expect(raced.filter(result => result.status === 'rejected')).toHaveLength(1);
     const rejected = requireValue(raced.find(result => result.status === 'rejected'), 'rejected writer');
-    if (rejected.status !== 'rejected') throw new Error('writer did not reject');
     expect(rejected.reason).toMatchObject({ code: 'conflict' });
     const winner = await store.read(source(0), alpha.tenant_id, alpha.alias);
     expect(winner.version).toBe(2);
