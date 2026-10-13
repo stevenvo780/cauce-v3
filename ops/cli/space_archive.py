@@ -27,7 +27,7 @@ VERIFIED_CREDENTIAL = re.compile(rb'-----BEGIN (?:[A-Z ]+ )?PRIVATE KEY-----|\bs
     rb'|(?-i:\bgh[pous]_[A-Za-z0-9]{20,}|\bgithub_pat_[A-Za-z0-9_]{20,}|\bglpat-[A-Za-z0-9_-]{20,}|\bxox[abprs]-[A-Za-z0-9-]{10,}'
     rb'|\bAKIA[0-9A-Z]{16}\b|\bnpm_[A-Za-z0-9]{36}\b)', re.I)
 AWS_SECRET_LITERAL = re.compile(
-    rb'aws_secret_access_key["\x27]?\s{0,16}[:=]\s{0,16}["\x27]?(?!\$\{)(?!process\.env\b)[A-Za-z0-9/+]{20,}', re.I)
+    rb'aws_secret_access_key["\x27]?(?:\s{0,16}(?:=>|[:=]|>)|\s{1,16})\s{0,16}["\x27]?(?!\$\{)(?!process\.env\b)[A-Za-z0-9/+]{20,}', re.I)
 NPM_AUTH_LITERAL = re.compile(
     rb'_authToken["\x27]?\s{0,16}[:=]\s{0,16}["\x27]?(?!\$\{|process\.env\b)[^\s"\x27]{8,}', re.I)
 URL_USERINFO = re.compile(rb'://([^\s/:@"\x27]+):([^\s/@"\x27]+)@')
