@@ -395,22 +395,28 @@ for owner, source in sorted(set(sources)):
   || die "faltan fuentes de bind mounts del compose; no se construye nada:"$'\n'"$MISSING_BIND_SOURCES"
 
 if [ "$FLEET_OVERLAY" = 1 ]; then
-  fleet_gateway=/etc/cauce-v3/fleet-v35/gateway
-  fleet_enclave=/run/cauce-fleet-signed-authority
+  fleet_gateway=${CAUCE_DEPLOY_FLEET_GATEWAY_DIR:-/etc/cauce-v3/fleet-v35/gateway}
+  fleet_enclave=${CAUCE_DEPLOY_FLEET_ENCLAVE_DIR:-/run/cauce-fleet-signed-authority}
   [ -d "$fleet_gateway" ] || die "falta $fleet_gateway antes de construir"
   gateway_meta=$(stat -c '%u %a' "$fleet_gateway") || die "no pude leer el modo de $fleet_gateway; no se construye"
   [ "$gateway_meta" = "1000 700" ] || die "el directorio $fleet_gateway debe ser uid 1000 y modo 0700 (es $gateway_meta); no se construye"
-  while IFS= read -r -d '' fleet_file; do
+  for fleet_file in "$fleet_gateway/api.v1.json" "$fleet_gateway/capability.v1.json"; do
+    [ -f "$fleet_file" ] || die "falta $fleet_file antes de construir"
     file_meta=$(stat -c '%u %a' "$fleet_file") || die "no pude leer el modo de $fleet_file; no se construye"
     [ "$file_meta" = "1000 600" ] || die "el fichero $fleet_file debe ser uid 1000 y modo 0600 (es $file_meta); no se construye"
-  done < <(find "$fleet_gateway" -type f -print0)
+  done
   [ -d "$fleet_enclave" ] || die "falta $fleet_enclave antes de construir"
   enclave_meta=$(stat -c '%u %g %a' "$fleet_enclave") || die "no pude leer el modo de $fleet_enclave; no se construye"
   [ "$enclave_meta" = "0 1000 750" ] || die "el directorio $fleet_enclave debe ser root:1000 y modo 0750 (es $enclave_meta); no se construye"
 fi
 
+count_unapplied_migrations() {
+  LC_ALL=C comm -23 <(printf '%s\n' "$BUNDLED_MIGRATIONS") \
+    <(printf '%s\n' "$1" | LC_ALL=C sort) | grep -c . || true
+}
 count_pending_migrations() {
   PENDING_MIGRATIONS=0
+  MIGRATION_ATTEMPT_PENDING="$(count_unapplied_migrations '')"
   local containers volumes pg_running applied
   containers="$(docker ps -a --format '{{.Names}}')" \
     || die "no pude enumerar contenedores para contar migraciones pendientes"
@@ -428,8 +434,8 @@ count_pending_migrations() {
   applied="$(docker exec "$PG_CONTAINER" psql -XAtq -v ON_ERROR_STOP=1 -U "$PG_USER" -d "$PG_DB" \
     -c 'SELECT version FROM schema_migrations')" \
     || die "no pude consultar schema_migrations para contar migraciones pendientes"
-  PENDING_MIGRATIONS="$(LC_ALL=C comm -23 <(printf '%s\n' "$BUNDLED_MIGRATIONS") \
-    <(printf '%s\n' "$applied" | LC_ALL=C sort) | grep -c . || true)"
+  PENDING_MIGRATIONS="$(count_unapplied_migrations "$applied")"
+  MIGRATION_ATTEMPT_PENDING="$PENDING_MIGRATIONS"
 }
 backup_monitor_accepts() {
   STATUS_FILE="$BACKUP_STATUS_FILE" MAX_AGE_HOURS="$BACKUP_MAX_AGE_HOURS" \
@@ -641,11 +647,13 @@ if ! "${CANDIDATE_COMPOSE[@]}" run --rm -T "${MIGRATOR_ENV[@]}" migrator; then
   terminate_migrator
   if applied_now="$(docker exec "$PG_CONTAINER" psql -XAtq -v ON_ERROR_STOP=1 -U "$PG_USER" -d "$PG_DB" \
       -c 'SELECT version FROM schema_migrations' 2>/dev/null)"; then
-    applied_count="$(printf '%s\n' "$applied_now" | grep -c . || true)"
-    if [ "$applied_count" = 0 ]; then
+    pending_now="$(count_unapplied_migrations "$applied_now")"
+    if [ "$pending_now" = 0 ]; then
+      migration_state="todas aplicadas; repite deploy.sh para fijar pins"
+    elif [ "$pending_now" = "$MIGRATION_ATTEMPT_PENDING" ]; then
       migration_state="nada aplicado"
     else
-      migration_state="aplicadas $applied_count, repite deploy.sh para fijar pins"
+      migration_state="parcial: aplicadas $((MIGRATION_ATTEMPT_PENDING - pending_now)) de $MIGRATION_ATTEMPT_PENDING"
     fi
   else
     migration_state="no pude leer schema_migrations"

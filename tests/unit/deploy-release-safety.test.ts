@@ -35,8 +35,8 @@ if (command === 'backup-monitor') entry.maxAge = env.MAX_AGE_HOURS;
 fs.appendFileSync(env.MOCK_LOG, JSON.stringify(entry) + '\n');
 if (command === 'stat') {
   const target = args.at(-1) ?? '';
-  if (target === '/etc/cauce-v3/fleet-v35/gateway') { console.log(env.MOCK_GATEWAY_STAT || '0 755'); process.exit(0); }
-  if (target === '/run/cauce-fleet-signed-authority') { console.log(env.MOCK_ENCLAVE_STAT || '0 0 755'); process.exit(0); }
+  if (target === (env.CAUCE_DEPLOY_FLEET_GATEWAY_DIR || '/etc/cauce-v3/fleet-v35/gateway')) { console.log(env.MOCK_GATEWAY_STAT || '0 755'); process.exit(0); }
+  if (target === (env.CAUCE_DEPLOY_FLEET_ENCLAVE_DIR || '/run/cauce-fleet-signed-authority')) { console.log(env.MOCK_ENCLAVE_STAT || '0 0 755'); process.exit(0); }
   console.log(env.MOCK_FILE_STAT || '0 644');
   process.exit(0);
 }
@@ -60,6 +60,7 @@ if (args[0] === 'compose') {
     fs.writeSync(2, rendered.stderr || '');
     process.exit(rendered.status ?? 96);
   }
+  if (operation === 'run') fs.writeFileSync(env.MOCK_LOG + '.migrator', '');
   process.exit(env.MOCK_FAILURE === operation ? 19 : 0);
 }
 if (args[0] === 'ps') { if (env.MOCK_APPLIED !== undefined) console.log(env.MOCK_PG_CONTAINER); process.exit(0); }
@@ -68,7 +69,8 @@ if (args[0] === 'exec') {
   const sql = args.join(' ');
   if (sql.includes('pg_terminate_backend')) process.exit(0);
   if (sql.includes('pg_stat_activity')) { if (env.MOCK_SESSIONS) console.log(env.MOCK_SESSIONS); process.exit(0); }
-  console.log(env.MOCK_APPLIED.split(',').join('\n')); process.exit(0);
+  const applied = fs.existsSync(env.MOCK_LOG + '.migrator') && env.MOCK_APPLIED_AFTER !== undefined ? env.MOCK_APPLIED_AFTER : env.MOCK_APPLIED;
+  console.log(applied.split(',').join('\n')); process.exit(0);
 }
 if (['stop', 'start'].includes(args[0])) process.exit(env.MOCK_FAILURE === args[0] ? 18 : 0);
 if (args[0] === 'inspect') {
@@ -86,6 +88,7 @@ interface Options {
   instance?: string;
   migrations?: string[];
   applied?: string[];
+  appliedAfter?: string[];
   backupAgeHours?: number;
   failure?: string;
   composeModel?: object;
@@ -159,6 +162,7 @@ ${options.instance ?? ''}`;
       MOCK_REAL_COMPOSE: options.realCompose ? '1' : '0',
       MOCK_REAL_PATH: process.env.PATH ?? '',
       ...(options.applied ? { MOCK_APPLIED: options.applied.join(',') } : {}),
+      ...(options.appliedAfter ? { MOCK_APPLIED_AFTER: options.appliedAfter.join(',') } : {}),
       ...(options.sessions ? { MOCK_SESSIONS: options.sessions } : {}),
       ...(options.composeModel ? { MOCK_COMPOSE_MODEL: JSON.stringify(options.composeModel) } : {}),
       ...options.environment,
@@ -336,16 +340,54 @@ describe('deploy bind sources', () => {
     }
   });
 
-  it('aborts a fleet overlay before the build when the gateway directory mode is wrong', () => {
-    const gateway = '/etc/cauce-v3/fleet-v35/gateway';
+  function fleetOverlayEnvironment() {
+    const fixture = temporaryDirectory('cauce-fleet-modes-');
+    const gateway = join(fixture, 'gateway');
+    const enclave = join(fixture, 'enclave');
+    mkdirSync(gateway);
+    mkdirSync(enclave);
+    for (const name of ['api.v1.json', 'capability.v1.json', 'api.v1.json.pre-upgrade-fixture']) {
+      writeFileSync(join(gateway, name), '{}', { mode: 0o644 });
+    }
+    return {
+      CAUCE_DEPLOY_FLEET_GATEWAY_DIR: gateway,
+      CAUCE_DEPLOY_FLEET_ENCLAVE_DIR: enclave,
+      MOCK_GATEWAY_STAT: '1000 700', MOCK_ENCLAVE_STAT: '0 1000 750', MOCK_FILE_STAT: '1000 600',
+    };
+  }
+
+  it.each([
+    ['MOCK_GATEWAY_STAT', '0 755', 'debe ser uid 1000 y modo 0700'],
+    ['MOCK_FILE_STAT', '0 644', 'debe ser uid 1000 y modo 0600'],
+    ['MOCK_ENCLAVE_STAT', '0 0 755', 'debe ser root:1000 y modo 0750'],
+  ])('aborts the overlay before the build with incorrect %s', (name, mode, reason) => {
     const result = deploy({
       instance: 'CAUCE_DEPLOY_FLEET_OVERLAY=1\n',
       composeModel: { services: {}, secrets: {}, configs: {} },
-      environment: { MOCK_GATEWAY_STAT: '0 755', MOCK_ENCLAVE_STAT: '0 0 755', MOCK_FILE_STAT: '0 644' },
+      environment: { ...fleetOverlayEnvironment(), [name]: mode },
     });
-    expectStoppedBeforeBuild(result, existsSync(gateway)
-      ? 'debe ser uid 1000 y modo 0700'
-      : `falta ${gateway} antes de construir`);
+    expectStoppedBeforeBuild(result, reason);
+  });
+
+  it('accepts correct overlay modes and ignores upgrade backups', () => {
+    const environment = fleetOverlayEnvironment();
+    const result = deploy({ instance: 'CAUCE_DEPLOY_FLEET_OVERLAY=1\n', environment });
+    expect(result.status, result.stderr).toBe(0);
+    const inspected = result.commands().filter(entry => entry.command === 'stat').map(entry => entry.args.at(-1));
+    expect(inspected).toEqual([
+      environment.CAUCE_DEPLOY_FLEET_GATEWAY_DIR,
+      join(environment.CAUCE_DEPLOY_FLEET_GATEWAY_DIR, 'api.v1.json'),
+      join(environment.CAUCE_DEPLOY_FLEET_GATEWAY_DIR, 'capability.v1.json'),
+      environment.CAUCE_DEPLOY_FLEET_ENCLAVE_DIR,
+    ]);
+  });
+
+  it('refuses an overlay with a missing active configuration', () => {
+    const environment = fleetOverlayEnvironment();
+    const missing = join(environment.CAUCE_DEPLOY_FLEET_GATEWAY_DIR, 'capability.v1.json');
+    rmSync(missing);
+    expectStoppedBeforeBuild(deploy({ instance: 'CAUCE_DEPLOY_FLEET_OVERLAY=1\n', environment }),
+      `falta ${missing} antes de construir`);
   });
 
   it('accepts the real compose when every bind source exists', () => {
@@ -374,10 +416,28 @@ describe('deploy pins and migrator', () => {
     expect(existsSync(result.history)).toBe(false);
   });
 
-  it('reports applied migrations when the migrator fails after schema_migrations changed', () => {
-    const result = deploy({ failure: 'run', migrations: ['001_fixture.sql'], applied: ['001_fixture.sql'] });
+  it('reports all applied when the migrator fails after the last pending migration was applied', () => {
+    const result = deploy({ failure: 'run', migrations: ['001_fixture.sql', '002_fixture.sql'],
+      applied: ['001_fixture.sql'], appliedAfter: ['001_fixture.sql', '002_fixture.sql'] });
     expect(result.status, result.stderr).toBe(1);
-    expect(result.stderr).toContain('aplicadas 1, repite deploy.sh para fijar pins');
+    expect(result.stderr).toContain('todas aplicadas; repite deploy.sh para fijar pins');
+    expect(result.instance()).toBe(result.initialInstance);
+  });
+
+  it('does not count historical rows as progress after a rolled back migration', () => {
+    const result = deploy({ failure: 'run', migrations: ['001_fixture.sql', '002_fixture.sql'],
+      applied: ['001_fixture.sql', '000_historical.sql'] });
+    expect(result.status, result.stderr).toBe(1);
+    expect(result.stderr).toContain('nada aplicado');
+    expect(result.stderr).not.toContain('parcial:');
+    expect(result.instance()).toBe(result.initialInstance);
+  });
+
+  it('reports only progress from this attempt after a partial migration failure', () => {
+    const result = deploy({ failure: 'run', migrations: ['001_fixture.sql', '002_fixture.sql', '003_fixture.sql'],
+      applied: ['001_fixture.sql', '000_historical.sql'], appliedAfter: ['002_fixture.sql', '000_historical.sql', '001_fixture.sql'] });
+    expect(result.status, result.stderr).toBe(1);
+    expect(result.stderr).toContain('parcial: aplicadas 1 de 2');
     expect(result.instance()).toBe(result.initialInstance);
   });
 
@@ -386,6 +446,18 @@ describe('deploy pins and migrator', () => {
     expect(result.status, result.stderr).toBe(1);
     expect(result.stderr).toContain('nada aplicado');
     expect(result.instance()).toBe(result.initialInstance);
+  });
+
+  it.each([
+    { appliedAfter: [], state: 'nada aplicado' },
+    { appliedAfter: ['001_fixture.sql'], state: 'parcial: aplicadas 1 de 2' },
+  ])('reports progress without a preexisting PostgreSQL container ($state)', ({ appliedAfter, state }) => {
+    const result = deploy({ failure: 'run', migrations: ['001_fixture.sql', '002_fixture.sql'], appliedAfter });
+    expect(result.status, result.stderr).toBe(1);
+    expect(result.stderr).toContain(state);
+    expect(result.stderr).not.toContain('aplicadas -');
+    expect(result.instance()).toBe(result.initialInstance);
+    expect(result.composeRuns('up')).toEqual([]);
   });
 
   it('writes the new pins only after the migrator succeeds and keeps the rollback snapshot', () => {
