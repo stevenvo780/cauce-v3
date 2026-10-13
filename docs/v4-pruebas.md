@@ -5,7 +5,7 @@ Esta tabla enumera archivos y comandos presentes en el checkout. Los conteos son
 | ID | Categoría | Archivos | Ejecución | Cubre | No cubre todavía |
 |---|---|---:|---|---|---|
 | unitarias | Pruebas unitarias | 652 | `pnpm test:unit` | Código y contratos aislados; incluye las suites unitarias de paquetes y consola declaradas en el script. | No demuestra por sí sola efectos persistentes de extremo a extremo, runtime remoto ni comportamiento desplegado. |
-| postgres | PostgreSQL real con Testcontainers | 226 | `pnpm test` | Pruebas con sufijos `-postgres.test.ts`, `.postgres.test.ts` y `.pg.test.ts`, distribuidas entre servicios, store, integración y e2e. No hay un runner único exclusivo para PostgreSQL. | No acredita todos los recorridos de navegador, autenticación real de proveedores ni comportamiento en producción. |
+| postgres | PostgreSQL real con Testcontainers | 227 | `pnpm test` | Pruebas con sufijos `-postgres.test.ts`, `.postgres.test.ts` y `.pg.test.ts`, distribuidas entre servicios, store, integración y e2e. No hay un runner único exclusivo para PostgreSQL. | No acredita todos los recorridos de navegador, autenticación real de proveedores ni comportamiento en producción. |
 | navegador | E2E de navegador real | 23 | `pnpm test:e2e` | Archivos `tests/e2e/*real-browser*.test.*`; el runner ejecuta la carpeta completa, incluidos los recorridos V4 presentes en el checkout. El inventario por archivo y caso está en la sección «E2E de navegador real». | La matriz mantiene 24 pendientes, entre ellos ciclos completos de ordenadores, personas, runtime físico, contextos y copias. GOAL §10 aún marca pendiente cerrar estados y mejorar la retroalimentación de todas las vistas. |
 | fallos | Simulacros de fallo y auxiliares | 10 | `pnpm test:integration && pnpm test:ops` | Archivos con prefijo `failure-drill` bajo `tests/integration` y `ops/tests`, más `test-fault*.sh`. | GOAL §10 mantiene pendientes pruebas de fallo con procesos reales; la matriz deja pendiente `context_git_concurrent_recovery` en navegador y despliegue. Estos simulacros no acreditan por sí solos recuperación en producción. |
 | aislamiento | Adversariales y de aislamiento | 50 | `pnpm test:gateway-hardening && pnpm test:store-hardening && pnpm test:services` | Suites `tests/gateway-hardening`, `tests/store-hardening` y la prueba `services/gateway/src/security/route-isolation.postgres.test.ts`. | GOAL §1.3 mantiene pendiente la guardia P0 que enumera todas las rutas `/v3` y prueba IDs cruzados sin mutaciones, además de los efectos remotos entre empresas. |
@@ -43,12 +43,10 @@ Este inventario sustituye la cifra histórica «17 e2e de vistas V3 y un recorri
 | `tests/e2e/v4-contexts-real-browser.test.ts` | 1 | Contextos y versiones. |
 | `tests/e2e/v4-crud-matriz-real-browser.test.ts` | 9 | Matriz CRUD: ordenadores, cuentas, registro de agente y partes del plano. |
 | `tests/e2e/v4-humanizar-session-real-browser.test.ts` | 4 | Sesión de las personas de Humanizar en un clon. |
-| `tests/e2e/v4-office-real-browser.test.ts` | 13 | Oficina: CRUD de salas y registro de agente, proyección en oficina, re-login, segundo navegador y cansancio en campus, plano y ficha. |
+| `tests/e2e/v4-office-real-browser.test.ts` | 13 | Oficina: salas y agentes de alta a baja, re-login, segundo navegador y cansancio en campus, plano y ficha. |
 | `tests/e2e/v4-people-real-browser.test.ts` | 6 | Personas y acceso web. |
 | `tests/e2e/v4-purge-real-browser.test.ts` | 1 | Purga real de un agente. |
 | `tests/e2e/v4-quota-environments-real-browser.test.ts` | 7 | Entornos de cuota. |
-
-El ciclo de agente de esta suite verifica un registro sin runtime gestionado y su proyección en la oficina. La habilitación se siembra por SQL, sin `runtime_key` ni `host_id`; antes de eliminar el registro se quitan su sala principal y membresía por API. No acredita admisión, retirada ni purga mediante operaciones reales en un ordenador, ni un ciclo íntegro desde la interfaz. Esa aceptación de GOAL §4 y del criterio 5 requiere el E2E físico y el contraste de cuotas en producción.
 
 Conteo reproducible desde la raíz:
 

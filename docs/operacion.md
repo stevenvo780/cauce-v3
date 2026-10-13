@@ -226,15 +226,72 @@ paso 1 con un candidato nuevo. El despliegue lo ejecuta el orquestador con autor
 12. **Recorrido autenticado sobre lo desplegado.** Un recibo por flujo, verde o rojo, con su evidencia:
     - inicio de sesión del dueño y vistas de empresas, oficina, Mis cuotas, ordenadores y auditoría = ____;
     - registro de una empresa `zz-canary-<run>` desde la página de registro y entrada como owner = ____;
-    - aislamiento: la guardia en modo externo contra el gateway desplegado, con `CAUCE_ISOLATION_BASE_URL`,
-      `CAUCE_ISOLATION_FIXTURE_FILE` y `CAUCE_ISOLATION_CANARY_DATABASE_URL` (ver `docs/parametros.md`):
-      `pnpm --filter @cauce/gateway exec vitest run src/security/route-isolation.postgres.test.ts` = ____;
+    - recorrido externo: registro público, empresa básica y aislamiento A/B contra la URL desplegada,
+      `pnpm verify:external --base-url https://<consola>` desde un clon limpio en `<C>`
+      ([Recorrido externo](#recorrido-externo-pnpm-verifyexternal)). Recibo: ruta del `receipt.json`
+      con `failures=0`, las dos empresas `retired` y `client.sha` = `<C>` sin `+dirty` = ____;
     - entrega real por el bus con ACK, como en la verificación funcional de
       `ops/runbooks/ventana-primer-despliegue.md` = ____.
 13. **Cierre.** Con cero flujos esenciales en rojo: la columna «Resultado» de la fila de HISTORIAL
     refleja el humo real, se actualizan la deuda de `docs/v3.1-pendientes.md` y `docs/version-3.1.md`
     y el [informe final](v4-informe-final.md), y se limpian los recursos `zz-canary-<run>`. Con algún
     rojo: corregir, nuevo `<C>` y volver al paso 1.
+
+#### Recorrido externo (`pnpm verify:external`)
+
+Comprueba desde fuera, contra la URL pública, lo que la guardia local prueba contra PostgreSQL: que una empresa
+nueva se registra y se usa, y que ninguna petición manipulada de una empresa lee, escribe ni enumera recursos de
+otra. Usa solo la API pública: no necesita SSH, credenciales reales ni conexión a la base. Código en
+`services/gateway/src/security/route-isolation-external*.ts`; la matriz de casos es la misma
+`route-isolation-matrix.ts` de la guardia local.
+
+```bash
+pnpm verify:external --base-url https://<consola> --dry-run   # lista lo que hará; ninguna petición
+pnpm verify:external --base-url https://<consola>             # ~1 900 peticiones a 5/s, unos 7 min
+```
+
+1. **Registro y empresa.** Registra `zz-canary-<run>-a` y `zz-canary-<run>-b` por `POST /v3/auth/register`
+   (correos `@canary.example.invalid`, contraseñas aleatorias que no se imprimen), entra con
+   `POST /v3/auth/login` y comprueba `GET /v3/auth/session`. Aborta si la empresa activa de la sesión no es su
+   canario. En B crea sala, agente lector y su membresía, persona lectora, invitación de ordenador, cuenta de
+   cuota, blob, plano de oficina y preferencias; en A, sala y membresía del owner.
+2. **Aislamiento.** Desde la sesión de A contra B: los casos con sonda de la matriz (HEAD además en los GET),
+   cabeceras de tenant (`x-cauce-tenant`, `x-cauce-alias`, `x-company-id`…) y parámetros de empresa ajenos
+   sobre las vistas de A, credenciales cruzadas (CSRF de B, sin CSRF, cookie alterada, cookie de B como
+   bearer) y WebSocket (`hello` de B bajo la cookie de A). Falla si una respuesta contiene un identificador o
+   el contenido privado de B, si el estado no es el esperado o si B, releída con su propia sesión después de
+   cada escritura, cambió fuera de los campos volátiles (los que varían entre dos lecturas seguidas).
+3. **Limpieza.** Plano y preferencias vacíos, persona retirada, configuración revertida con el
+   `inverse_mutation` de cada recibo, cuenta e invitación borradas y `DELETE /v3/console/companies/:id`, que
+   retira la empresa (conserva los datos y deja la sesión sin autoridad), y logout. La purga de la persona no
+   se intenta: la auditoría la nombra y la API solo purga a quien no tiene historial. El agente lector puede
+   quedar (409 «durable dependencies») porque lo referencia la persona retirada; lo cierra la retirada de la
+   empresa.
+
+**Recibo.** `~/.local/state/cauce-v3/verify-external/<run>/receipt.json` (0600; `--receipt` y `--out-dir` lo
+cambian): URL, sha del cliente (`client.sha` y `dirty`), canarios y si quedaron retirados, peticiones, totales y
+cada caso. La salida resume `cases`, `passed`, `failures`, `not_configured` (501: plano apagado),
+`not_mounted` (404 de ruta inexistente: el despliegue no monta ese plano), `inconclusive` y `synthetic`
+(casos cuyo recurso de B no se puede crear por la API pública y usan un id bien formado ausente). Sale 0 solo
+con `failures=0` y ambas empresas retiradas. `findings` anota lo que no es fallo; hoy, que un token copiado
+antes del logout sigue valiendo hasta caducar (sesión sin estado, ver `password-auth.ts`).
+
+**Seguridad de ejecución.** Exige `https` salvo en loopback; ritmo por defecto 5 peticiones/s
+(`--rate`, máximo 10 fuera de loopback), presupuesto `--max-requests` (4 000) y un 429 con `Retry-After` de
+hasta 60 s se reintenta una vez. Solo opera con las sesiones de los dos canarios que acaba de registrar. El
+registro admite 5 intentos por IP cada 15 min y 20 por hora en todo el gateway
+(`CAUCE_REGISTRATION_HOURLY_LIMIT`): cada ejecución gasta 2.
+
+**Si se corta.** Las credenciales de los canarios quedan en `<out-dir>/<run>/canaries.json` (0600) hasta que
+ambos se retiran; la salida indica `pending_cleanup=` y
+`pnpm verify:external --base-url https://<consola> --cleanup <run>` los retira.
+
+**Ensayo local.** `pnpm exec vitest run services/gateway/src/security/route-isolation-external.postgres.test.ts`
+levanta el gateway real con PostgreSQL de Testcontainers en un puerto de loopback, ejecuta el mismo comando,
+comprueba en la base que ambas empresas quedan retiradas y que el detector marca una fuga y una escritura
+inyectadas, y recupera una ejecución cortada con `--cleanup`. En local no se montan terminal, relay,
+repositorio de contexto ni bootstrap mTLS: sus rutas salen `not_mounted`; `--oauth-issuer` apunta las rutas
+OAuth al emisor local, en producción no hace falta.
 
 ### Enclave de autoridad firmada de la flota
 

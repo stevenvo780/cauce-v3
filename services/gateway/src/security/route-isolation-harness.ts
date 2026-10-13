@@ -24,14 +24,15 @@ import { HostLegacyAdoptionProbe } from '../fleet/adoption-bridge-client.js';
 import { buildLoopbackHealthProbe } from '../health.js';
 import { WakePumpTelemetry } from '../wake-pump-telemetry.js';
 import { PostgresConsoleUserStore } from '../console-users.js';
-import { ROUTE_ISOLATION_MATRIX, type RouteIsolationEntry } from './route-isolation-matrix.js';
+import { ROUTE_ISOLATION_MATRIX } from './route-isolation-matrix.js';
 import { seedIsolationFixtures, type IsolationCompany } from './route-isolation-fixtures.js';
 import { mountIsolationTerminal } from './route-isolation-sockets.js';
 import type { RouteIsolationMethod } from './route-isolation-matrix.js';
 import { providerAuthService } from './route-isolation-provider.js';
 import { validateCanaryFixtures } from './route-isolation-canary.js';
+import { ISOLATION_OAUTH_ISSUER, routeKey } from './route-isolation-probe.js';
 
-export const ISOLATION_OAUTH_ISSUER = 'https://isolation.example.test';
+export { ISOLATION_OAUTH_ISSUER, expandProbe, routeKey } from './route-isolation-probe.js';
 
 const isolationLegacyProbe: LegacyAdoptionProbe = {
   withSupervisorFence: async (_targets, work) => work({
@@ -43,7 +44,6 @@ const isolationLegacyProbe: LegacyAdoptionProbe = {
 export interface RegisteredRoute { method: string; url: string }
 export interface IsolationResponse { status: number; body: string; headers: Record<string, string | string[] | undefined> }
 export type IsolationSession = Record<'cookie' | 'origin' | 'x-csrf-token', string>;
-export function routeKey(method: string, url: string): string { return `${method === 'HEAD' ? 'GET' : method} ${url}`; }
 
 export function assertRouteCoverage(routes: readonly RegisteredRoute[]): void {
   const declared = new Map(ROUTE_ISOLATION_MATRIX.map(entry => [routeKey(entry.method, entry.url), entry]));
@@ -58,37 +58,6 @@ export function assertRouteCoverage(routes: readonly RegisteredRoute[]): void {
     if (!entry?.reason) throw new Error(`route requires an explicit reason: ${routeKey(route.method, route.url)}`);
     if (entry.kind === 'scoped' && !entry.probe) throw new Error(`scoped route requires an adversarial probe: ${entry.url}`);
   }
-}
-
-export function expandProbe(entry: RouteIsolationEntry, fixture: IsolationCompany, own: IsolationCompany): { url: string; payload?: unknown; headers?: Record<string, string> } {
-  const values: Record<string, unknown> = { ...fixture, director: fixture.alias, tenantId: fixture.tenant,
-    ownRoom: own.room, ownTenant: own.tenant, ownAlias: own.ownerAlias, issuer: ISOLATION_OAUTH_ISSUER };
-  const expand = (text: string): string => text.replace(/\{(\w+)\}/gu, (_match, name: string) => {
-    const value = values[name];
-    if (value === undefined) throw new Error(`missing real fixture ${name} for ${entry.method} ${entry.url}`);
-    if (typeof value !== 'string' && typeof value !== 'number' && typeof value !== 'boolean') throw new Error(`non-scalar path fixture ${name}`);
-    return String(value);
-  });
-  const probe = entry.probe;
-  if (!probe) return { url: entry.url };
-  const expandPayload = (value: unknown): unknown => {
-    if (typeof value === 'string') {
-      const exact = /^\{(\w+)\}$/u.exec(value)?.[1];
-      if (exact !== undefined) {
-        if (exact === 'csrf') return value;
-        if (values[exact] === undefined) throw new Error(`missing real fixture ${exact} for ${entry.url}`);
-        return values[exact];
-      }
-      return expand(value);
-    }
-    if (Array.isArray(value)) return value.map(expandPayload);
-    if (value !== null && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([key, field]) => [key, expandPayload(field)]));
-    return value;
-  };
-  const headers = probe.headers === undefined ? undefined
-    : Object.fromEntries(Object.entries(probe.headers).map(([key, value]) => [key, expand(value)]));
-  return { url: expand(probe.url), ...(probe.payload === undefined ? {} : { payload: expandPayload(probe.payload) }),
-    ...(headers === undefined ? {} : { headers }) };
 }
 
 export class IsolationHarness {
