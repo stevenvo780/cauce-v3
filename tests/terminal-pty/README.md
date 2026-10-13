@@ -233,9 +233,9 @@ Standalone HTTPS server (or HTTP with `GATEWAY_PLAINTEXT=1`) that implements:
 | Endpoint | Behaviour |
 |---|---|
 | `POST /v3/terminal/relay/agents` | 200 if the alias is in grants, 403 `not_granted` if not |
-| `POST /v3/terminal/relay/sessions/:sid/consume` | single-use atomic redemption: **200 the first time, 409 `ticket_already_consumed` the second**; 401 `ticket_invalid` with the reason; 403 `attribution_required` if an `unattributed:*` ticket points to another tenant |
-| `POST /v3/terminal/relay/sessions/:sid/resume` | revalidates continuity after a relay reconnect: body carries `resume_token` plus the relay's own `claim_token`/`claim_epoch`; 401 `resume_invalid`, 403 `revoked`, 409 `claim_conflict` if another relay instance still holds a live claim, else 200 with a fresh claim lease |
-| `POST /v3/terminal/relay/sessions/:sid/authz` | body carries `claim_token`/`claim_epoch`; 200 while that claim is live and matches the requesting relay instance; 403 with `reason` = `revoked` / `ttl_expired` / `unknown_session` / `closed` / `claim_fenced` |
+| `POST /v3/terminal/relay/sessions/:sid/consume` | atomic redemption: **200** for the first claim and for its live retry (`receipt_recovered: true`); **409 `claim_conflict`** if another live claim owns the session; 401 `ticket_invalid` with the reason; 403 `attribution_required` if an `unattributed:*` ticket points to another tenant |
+| `POST /v3/terminal/relay/sessions/:sid/resume` | revalidates continuity after a relay reconnect: body carries `resume_token`, `authority_proof` and the relay's own `claim_token`/`claim_epoch`; 401 `resume_invalid` if the token or authority proof is invalid; 403 `revoked`, 409 `claim_conflict` if another relay instance still holds a live claim, else 200 with a fresh claim lease |
+| `POST /v3/terminal/relay/sessions/:sid/authz` | body carries `authority_proof`, `claim_token` and `claim_epoch`; 200 while the authority and claim are valid and the claim matches the requesting relay instance; 403 with `reason` = `authority_invalid` / `revoked` / `ttl_expired` / `unknown_session` / `closed` / `claim_fenced` / `control_released` |
 | `POST /v3/terminal/relay/sessions/:sid/close` | 200 and `terminal.session.close` audit row |
 
 All require `Authorization: Bearer <RELAY_TOKEN>`. Writes the audit rows that
@@ -293,11 +293,12 @@ below; if none exists the end-to-end describe is skipped and the exact reason is
 CAUCE_TERMINAL_RELAY_ENTRY=services/terminal-relay/src/main.ts pnpm vitest run tests/terminal-pty
 ```
 
-The environment the suite hands the relay is what the relay's own loader requires
-(`services/terminal-relay/src/config.ts`). All but three are published in
-`services/terminal-relay/CONFIGURATION.md`; `CAUCE_TERMINAL_RELAY_INSTANCE_ID`,
+The environment the suite hands the relay is loaded by
+`services/terminal-relay/src/config.ts`. All but four are published in
+`services/terminal-relay/CONFIGURATION.md`: `CAUCE_TERMINAL_RELAY_INSTANCE_ID`,
 `CAUCE_TERMINAL_GATEWAY_CLIENT_CERT_FILE` and `CAUCE_TERMINAL_GATEWAY_CLIENT_KEY_FILE` are
-required by the loader and documented nowhere in that file:
+required by the loader and undocumented there; `CAUCE_TERMINAL_CLAIM_LEASE_SECONDS` is also
+undocumented and uses the loader's fallback of 150 seconds. Variables handed to the relay include:
 `CAUCE_TERMINAL_RELAY_BROWSER_PORT`, `CAUCE_TERMINAL_RELAY_AGENT_PORT`,
 `CAUCE_TERMINAL_RELAY_HEALTH_PORT`, `CAUCE_TERMINAL_RELAY_INSTANCE_ID`,
 `CAUCE_TERMINAL_RELAY_TLS_CERT_FILE`, `CAUCE_TERMINAL_RELAY_TLS_KEY_FILE`,
@@ -306,7 +307,8 @@ required by the loader and documented nowhere in that file:
 `CAUCE_TERMINAL_RELAY_TOKEN_FILE`, `CAUCE_TERMINAL_GATEWAY_URL`,
 `CAUCE_TERMINAL_GATEWAY_CLIENT_CERT_FILE`, `CAUCE_TERMINAL_GATEWAY_CLIENT_KEY_FILE`,
 `CAUCE_TERMINAL_OUTPUT_RATE_BYTES_PER_SEC`, `CAUCE_TERMINAL_AUTHZ_INTERVAL_SECONDS`,
-`CAUCE_TERMINAL_AUTHZ_GRACE_SECONDS`, `CAUCE_TERMINAL_CLOSE_SPOOL_FILE`.
+`CAUCE_TERMINAL_AUTHZ_GRACE_SECONDS`, `CAUCE_TERMINAL_CLOSE_SPOOL_FILE`,
+`CAUCE_TERMINAL_CLAIM_LEASE_SECONDS`.
 
 ## Contract reminder
 
@@ -347,12 +349,18 @@ required by the loader and documented nowhere in that file:
 | `0x5C` | WRITE_BATCH_ERR | agent -> relay | JSON `{request_id, error, reason}` |
 | `0x5D` | WRITE_BATCH_CANCEL | relay -> agent | JSON `{request_id}` |
 | `0x5E` | READ_DONE | agent -> relay | JSON `{request_id}` |
+| `0x5F` | WRITE_STATUS | relay -> agent | JSON con el descriptor de la operación |
+| `0x60` | WRITE_STATUS_OK | agent -> relay | JSON con el estado de escritura para `request_id` |
+| `0x61` | WRITE_STATUS_ERR | agent -> relay | JSON `{request_id, error, reason}` |
+| `0x62` | NATIVE_ADMIN | relay -> agent | JSON con el comando administrativo |
+| `0x63` | NATIVE_ADMIN_RESULT | agent -> relay | JSON `{request_id, outcome}` |
 
 DATA = 36 ASCII bytes of `session_id` (UUID with dashes) + raw bytes. TERMINAL_RESPONSE is a data
 frame too, prefixed like STDIN/STDOUT. The three governance data tags use the same 36-byte prefix,
 carrying the `request_id` instead of a session, so both legs reuse one decoder;
-`framing.prefixed_tags` in `vectors.json` is that list, and it names all six. The `0x50`-`0x5E`
-family is only sent to an agent whose hello advertised the matching feature. An
+`framing.prefixed_tags` in `vectors.json` is that list, and it names all six. The `0x50`-`0x5E`,
+`0x5F`-`0x61` and `0x62`-`0x63` families are sent only when the agent's hello advertises the
+matching feature. An
 unknown tag is not ignored: the connection is closed as protocol error (4400).
 The version is bumped, never guessed.
 
@@ -391,7 +399,8 @@ frames, the control is **always** in JSON text (`ready` / `notice` / `closed`).
 Close codes: `4400` protocol_error, `4401` ticket_invalid, `4403` revoked,
 `4404` agent_offline, `4408` idle_timeout, `4409` session_conflict, `4410`
 control_released (the operator's control hold on a `harness_rw` session was released or
-expired), `4413` output_flood, `4423` ttl_expired, `1011` internal_error.
+expired), `4413` output_flood, `4414` input_flood, `4415` slow_consumer, `4423`
+ttl_expired, `1011` internal_error.
 
 ## Rules for this directory
 

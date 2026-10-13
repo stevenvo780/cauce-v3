@@ -116,7 +116,7 @@ listener aparte para la consola.
 1. Aplicar la migración `023_console_users.sql`. Es aditiva e inerte: nadie la lee hasta que el
    gateway corra con `CAUCE_AUTH_PROVIDER=password`.
 2. Generar el secreto de firma (≥32 bytes) en el host, modo `0400`, en la ruta canónica
-   `/etc/cauce-v3/secrets/console_jwt_key` (es la que el propio `deploy/compose.yaml:566` documenta
+   `/etc/cauce-v3/secrets/console_jwt_key` (es la que el propio `deploy/compose.yaml:611` documenta
    como ubicación de producción, y la que el paso 4 pone en `CAUCE_CONSOLE_JWT_KEY_PATH`).
 3. Desplegar la imagen del gateway que trae el proveedor.
 4. Fijar el entorno privado:
@@ -177,7 +177,7 @@ listener aparte para la consola.
 
    🔴 **Y arrastra las concesiones del PTY.** Con la cabecera fija, el `operator_id` era esa cadena, y
    así están escritas las concesiones de `/etc/cauce-v3/terminal/grants.json`. Con el login,
-   `operator_id` pasa a ser el **correo** de `console_users` (`principalFor` → `operator_id: user.email`),
+   `operator_id` pasa a ser el **correo** de `console_users` (`consoleUserPrincipal` → `operator_id: user.email`),
    así que ninguna concesión casa y **todos los destinos contestan `authorized:false`** aunque la
    sesión sea válida. Hay que duplicar cada concesión con el correo de la cuenta —una entrada por
    destino que la cuenta deba alcanzar—; las viejas quedan inertes y permiten volver atrás si se
@@ -197,8 +197,8 @@ sin cookie y sin ninguna otra credencial:
 
 | sonda | resultado exigido |
 |---|---|
-| todas las rutas `GET` de datos (`/v3/status`, `/v3/accounts/selection`, cada `/v3/console/*`, incluida `/v3/console/terminal/*`) | **401** `se requiere la cookie de sesión de la consola` |
-| `POST /v3/deliveries/query`, `/v3/query`, `/v3/messages`, `/v3/heartbeat`, `/v3/ack`, `/v3/quotas/samples` | **401** (o **404** del borde, §7) |
+| `GET /v3/status` y las rutas `/v3/console/*`, incluida `/v3/console/terminal/*` | **401** `se requiere la cookie de sesión de la consola` |
+| `GET /v3/accounts/selection` y las rutas de bus (`POST /v3/deliveries/query`, `/v3/query`, `/v3/messages`, `/v3/heartbeat`, `/v3/ack`, `/v3/quotas/samples`) | No tienen esta guarda de sesión: si llegan al gateway, pasan por la autenticación mTLS de máquina; el borde del §7 debe responder **404** |
 | `POST /v3/connections/hello` con cuerpo **válido** y una identidad que no casa con el certificado del proxy | **401**. Es la sonda que discrimina: si la auth hubiera pasado, el `hello` moriría más adelante en `403 authenticated identity does not match hello` |
 | `POST /v3/console/messages`, `/v3/console/jobs`, `/v3/console/config/changes` con `Origin` same-origin | **401** (sin `Origin` dan `403` por CSRF, que tapa la señal: hay que mandarlo para medir la auth) |
 | `/v3/terminal/relay/*` | **401** |
@@ -206,13 +206,14 @@ sin cookie y sin ninguna otra credencial:
 | `WWW-Authenticate` en cualquier respuesta | **ninguno**: ya no hay contraseña de navegador |
 
 Con sesión, la misma cuenta ve las vistas de datos; después de `POST /v3/auth/logout` (`204`),
-`/v3/console/activity` vuelve a **401** y `/v3/auth/session` a `{"authenticated":false}`.
+`/v3/console/activity` vuelve a **401** y `/v3/auth/session` a `{"authenticated":false,"login_mode":"password"}`.
 
 Lo que hace que esto sea estructural y no una lista de rutas está en
-`PasswordAuthProvider.viaFallback()`: todo lo que no trae cookie se resuelve con la identidad de
-**máquina** del `fallback` mTLS, y si esa máquina es del canal `console` —que es el certificado que
-presenta el proxy en TODO lo que proxea— el request muere en 401 en la superficie de consola. Por eso
-cubre también las rutas que todavía no existen.
+`PasswordAuthProvider.viaFallback()`: lo que no trae cookie se resuelve con la identidad de
+**máquina** del `fallback` mTLS. `isConsoleSurface` exige sesión solo para `/v3/console/*` y
+`/v3/status` cuando la máquina pertenece al canal `console`; las rutas de bus siguen la autorización
+mTLS de máquina, incluso si las presenta el proxy. Una ruta nueva no queda protegida por esta guarda
+salvo que pertenezca a esa superficie.
 
 🔴 **Si `CAUCE_AUTH_PROVIDER` deja de ser `password`**, o el `fallback` deja de ser `mtls`, o el
 certificado del proxy cambia de canal, esta medición deja de valer y la consola queda **abierta a
@@ -229,8 +230,8 @@ inyectar entregas con identidad de operador.
 El arreglo no toca ni el gateway ni el contenedor de la consola: el dominio público no tiene por qué
 proxear la superficie de bus en absoluto. La SPA sólo usa `/v3/auth/*`, `/v3/status` y
 `/v3/console/*` (enumerado en `console/src/api/client.ts` y `console/src/features/terminal/api.ts`;
-`/v3/ws` es el bus de los agentes, y la propia SPA lo dice en
-`console/src/features/live/LiveFleetPage.tsx`). En el borde, **lista blanca** —una lista negra se
+`/v3/ws` es la ruta WebSocket del bus, definida en `services/gateway/src/routes/core.ts`, no una ruta
+de la SPA). En el borde, **lista blanca** —una lista negra se
 queda vieja con la próxima ruta que alguien agregue al gateway—:
 
 ```
@@ -297,9 +298,9 @@ sesión**, no del certificado. Es defensa en profundidad de la misma cosa.
 Secuencia sin recrear nada:
 
 1. Emitir los dos pares cert/key con la CA de cliente del gateway y registrar sus huellas en
-   `/etc/cauce-v3/secrets/identities/mtls_identities.json`. El gateway **relee ese archivo por
-   request** (`HashedMtlsIdentityFileProvider.resolve` → `readIdentityFile`, caché de 1 s): no hay que
-   reiniciarlo ni recrearlo.
+   `/etc/cauce-v3/secrets/identities/mtls_identities.json`. El gateway **relee ese archivo en cada
+   request** (`HashedMtlsIdentityFileProvider.resolveFingerprintAuthority` → `readIdentityFile`), sin
+   caché: no hay que reiniciarlo ni recrearlo.
 2. Apuntar los guardias y herramientas al principal de operación **antes** de tocar nada más, y
    probar `cauce probar <alias>` de punta a punta.
 3. Poner los bytes de `console-proxy` **encima** del cert/key que monta el contenedor y

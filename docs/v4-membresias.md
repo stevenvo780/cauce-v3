@@ -14,7 +14,7 @@ Las referencias `file:line` describen la auditoría original y deben cotejarse c
 | `console_users.company_id` | **Conservar** | Lo leen ≥10 consultas y lo exigen 3 FKs compuestas (`company_admins`, favoritos, `human_tenant_memberships`). Quitarlo debilita el aislamiento. |
 | `human_tenant_memberships.company_id` | **Conservar** | Su único lector SQL es 064, pero sus dos FKs compuestas son el control «la membresía vive en la empresa de la persona». |
 | `console_users.tenant_id` / `alias` | **Conservar** (no tocar) | Sin sustituto. Lectores listados abajo. |
-| `console_users.active` frente a `human_tenant_memberships.enabled` | **Conservar ambos ahora**; candidato a 067 | Misma duplicación que el rol, pero `enabled`/`revoked_at`/`revision` alimentan la invalidación de grants OAuth. |
+| `console_users.active` frente a `human_tenant_memberships.enabled` | **Conservar ambos ahora**; candidato a 068 | Misma duplicación que el rol, pero `enabled`/`revoked_at`/`revision` alimentan la invalidación de grants OAuth. |
 | `company_admins`, `company_admin_versions` | **Conservar** | Fuente de los roles de empresa (owner/admin). |
 | `platform_admins` | **Conservar** | Única autoridad por encima de una empresa. |
 | `memberships` (sala), `role_policies` | **Conservar** | Fuente del alcance de enrutado/lectura/control de cada agente. |
@@ -59,7 +59,7 @@ Escritores
 - `M/044_human_mcp_identity.sql` (siembra inicial de membresías copiando este rol).
 
 Lectores
-- Login y sesión: `console-users.ts:68-70,85,95` (COLUMNS), `:52` (valida el valor), `password-auth.ts:356` (techo `consoleRoleAuthority`).
+- Login y sesión: `console-users.ts:68-70,85,95` (COLUMNS), `:52` (valida el valor), `password-auth.ts:sessionState` (techo `consoleRoleAuthority`).
 - Instantánea de autoridad: `packages/store/src/human-identity.ts:78` y `:91`, `:164` y `:188`, `:206` y `:211`.
 - Techos de permiso: `services/gateway/src/oauth-grant-authority.ts:27`, `console-human-authority.ts:63`, `human-mcp-authority.ts:130`, `terminal/session-authority.ts:114`, `console-user-authority.ts:19-27`.
 - Calificación de propietario/plataforma: `packages/store/src/company-authority.ts:73`, `packages/store/src/configuration.ts:452`, `native-admin/service.ts:40`, `fleet-operation-human.ts:13-14`.
@@ -178,7 +178,7 @@ Decisión: **conservar** como dato inicial de registro; no es un concepto de esq
 
 ### 3.11 Hallazgo: divergencia por `console-user-maintenance --update`
 
-`console-user-maintenance.ts:57-65` (y `:89-95` en la rama de conflicto) actualiza `role`, `tenant_id`, `alias` y `active` de `console_users` sin sincronizar `human_tenant_memberships`, a diferencia de `people-admin-store.ts:122-130`, que sí llama a `syncMembership`. El resultado es una membresía con rol/alias/estado antiguos. Con 068 el rol deja de divergir; `tenant_id`/`alias`/`active` siguen pudiendo divergir. Corrección propuesta (código, fuera de 068): hacer que `maintainConsoleUser` use el mismo `syncMembership` extraído a un módulo común.
+`console-user-maintenance.ts:57-65` (y `:89-95` en la rama de conflicto) actualiza `role`, `tenant_id`, `alias` y `active` de `console_users` sin sincronizar `human_tenant_memberships`, a diferencia de `people-admin-store.ts:119` (alta) y `:143` (actualización si cambia la autoridad), que sí llaman a `syncMembership`. El resultado es una membresía con rol/alias/estado antiguos. Con 068 el rol deja de divergir; `tenant_id`/`alias`/`active` siguen pudiendo divergir. Corrección propuesta (código, fuera de 068): hacer que `maintainConsoleUser` use el mismo `syncMembership` extraído a un módulo común.
 
 ## 4. Qué se elimina y qué se mantiene tras 068
 
@@ -189,7 +189,7 @@ Decisión: **conservar** como dato inicial de registro; no es un concepto de esq
 
 ## 5. Propuesta de migración 068
 
-Archivos futuros: `packages/store/migrations/068_membership_single_role.sql` y `packages/store/migrations/down/068_membership_single_role.sql`. El runner calcula el SHA del archivo (`packages/store/src/db.ts:130-143`); el `down` debe incrustar el SHA real del `up` una vez creado (marcador `<SHA256_DEL_UP>`).
+Archivos futuros: `packages/store/migrations/068_membership_single_role.sql` y `packages/store/migrations/down/068_membership_single_role.sql`. `migrationSourcesForApply` calcula el SHA de cada fuente (`packages/store/src/migration-integrity.ts`), que `db.ts` registra en el ledger; el `down` debe incrustar el SHA real del `up` una vez creado (marcador `<SHA256_DEL_UP>`).
 
 ### 5.1 up
 
@@ -245,7 +245,7 @@ SELECT pg_temp.cauce_068_patch('cauce_ensure_context_director_anchor(text,text,t
   ' AND identity.role=human.role','');
 
 -- 045: la revisión ya no mira el rol de la membresía.
-CREATE OR REPLACE FUNCTION cauce_oauth_advance_identity_revision() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION cauce_oauth_advance_identity_revision() RETURNS trigger LANGUAGE plpgsql SET search_path=pg_catalog,public,pg_temp AS $$
 DECLARE changed boolean;
 BEGIN
   IF NEW.revision < OLD.revision THEN
@@ -326,7 +326,7 @@ DROP FUNCTION cauce_human_reader_ceiling();
 DROP FUNCTION cauce_console_user_role_revision();
 
 -- Función de revisión original (M/045:131-145), antes de repoblar la columna.
-CREATE OR REPLACE FUNCTION cauce_oauth_advance_identity_revision() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION cauce_oauth_advance_identity_revision() RETURNS trigger LANGUAGE plpgsql SET search_path=pg_catalog,public,pg_temp AS $$
 DECLARE changed boolean;
 BEGIN
   IF NEW.revision < OLD.revision THEN
