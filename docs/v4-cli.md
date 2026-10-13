@@ -82,7 +82,9 @@ cauce context --gateway https://cauce.example.invalid --origin https://cauce.exa
 
 HTTPS es obligatorio salvo loopback local. `--ca-file /ruta/ca.pem` permite elegir una CA. Las mutaciones transmiten Origin y CSRF; una sesión con permiso de lectura no obtiene permiso de edición. El cliente tiene timeout de 65 segundos y límite de respuesta de 2 MiB.
 
-Si hay un proxy en el entorno, configura `NO_PROXY=<ip del gateway>` para acceder directamente al gateway; si lo llamas por nombre, incluye también ese nombre, separado por coma. `urllib` no admite rangos CIDR en `NO_PROXY`: enumera las IP o nombres concretos. Los clientes de sesión usados por `login`, `context`, `context-native` y `spaces` omiten automáticamente el proxy para `localhost`, `127.0.0.0/8` y `::1`, incluso sin `NO_PROXY`. Para gateways remotos sólo usan `HTTPS_PROXY` mediante CONNECT; rechazan HTTP remoto y las redirecciones.
+Si hay un proxy en el entorno, configura `NO_PROXY=<ip del gateway>` para acceder directamente al gateway; si lo llamas por nombre, incluye también ese nombre, separado por coma. También se leen `https_proxy` y `no_proxy` en minúsculas. `urllib` no admite rangos CIDR en `NO_PROXY`: enumera las IP o nombres concretos. Los clientes de sesión usados por `login`, `context`, `context-native` y `spaces` omiten automáticamente el proxy para `localhost`, `127.0.0.0/8` y `::1`, incluso sin `NO_PROXY`. Para gateways remotos sólo usan `HTTPS_PROXY` o `https_proxy` mediante CONNECT; rechazan HTTP remoto y las redirecciones.
+
+Un gateway HTTPS alcanzado mediante un alias que resuelve a loopback, por ejemplo a través de un túnel SSH, necesita incluir ese alias en `NO_PROXY` o `no_proxy`. La omisión automática del proxy reconoce las direcciones de loopback y `localhost`, pero no resuelve otros nombres para identificarlas.
 
 | Subcomando | Argumentos propios | Resultado |
 |---|---|---|
