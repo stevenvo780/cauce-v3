@@ -4,9 +4,9 @@ import { lockCompanyAuthority, type CompanyAuthority } from './company-authority
 import { withTransaction, type DatabaseClient, type DatabasePool } from './db.js';
 import { StoreError } from './repository/errors.js';
 import type { CompanyAuthoritySource } from './repository/fleet-hosts.js';
-import { HostClaimSchema, HostHeartbeatSchema, HostInvitationSchema, HostSetupRequestSchema, SignedHostRequestSchema, hostEnrollmentMessage,
-  hostKeyFingerprint, hostRequestMessage, verifyHostProof, type HostEnrollmentReceipt, type HostInvitation,
-  type HostSetupScope } from './host-enrollment-contracts.js';
+import { HostClaimSchema, HostHeartbeatSchema, HostInvitationSchema, HostSetupArtifactRequestSchema, HostSetupRequestSchema, SignedHostRequestSchema,
+  hostEnrollmentMessage, hostKeyFingerprint, hostRequestMessage, verifyHostProof, type HostEnrollmentReceipt, type HostInvitation,
+  type HostSetupArtifactRequest, type HostSetupScope } from './host-enrollment-contracts.js';
 
 const INVITATION_TTL_MS = 10 * 60_000;
 const HOST_NAME = /^[a-z0-9_]+$/u;
@@ -164,6 +164,19 @@ export class HostEnrollmentRepository {
       const result = build({ ...identity, harnesses });
       await client.query(`INSERT INTO audit_events(action,decision,company_id,metadata) VALUES('fleet_host.setup.package','allow',$1,$2::jsonb)`,
         [identity.company_id,JSON.stringify({ host_id: host, harnesses })]);
+      return result;
+    },admit);
+  }
+  /**
+   * Admits one artifact download of the setup package. `check` runs inside the verified transaction, so an artifact
+   * the gateway does not serve rolls back the nonce and the audit row; the bytes are sent after the commit.
+   */
+  async setupArtifact<T>(host: string, value: unknown, check: (wanted: HostSetupArtifactRequest) => T, admit?: (host: string) => void): Promise<T> {
+    const packet = HostSetupArtifactRequestSchema.parse(value);
+    return this.request(host,'POST',`/v3/fleet/hosts/${host}/setup/artifact`,packet,async (client,identity) => {
+      const result = check(packet.payload);
+      await client.query(`INSERT INTO audit_events(action,decision,company_id,metadata) VALUES('fleet_host.setup.artifact','allow',$1,$2::jsonb)`,
+        [identity.company_id,JSON.stringify({ host_id: host, name: packet.payload.name, sha256: packet.payload.sha256, offset: packet.payload.offset })]);
       return result;
     },admit);
   }
