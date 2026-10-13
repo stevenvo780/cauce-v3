@@ -15,39 +15,74 @@ El primer despliegue de V4 (overlay de flota, proxy frontal, identificadores res
 del SHA, con usuario normal (no root, por `qa:runtime-packaging`), tras `pnpm install --frozen-lockfile`
 y con `~/.venvs/cauce-qa/bin` en `PATH`:
 ```bash
-scripts/release-gates.sh            # --list muestra los comandos; --concurrencia, los carriles que usará
+scripts/release-gates.sh   # --list: los comandos; --concurrencia: los carriles; --trozos: los trozos de test y cobertura
 ```
 Primero corre el barrido acotado de huérfanos y, con él en verde, `pnpm typecheck`, `lint`, `test`,
 `coverage:ratchet`, `qa:testcontainers`, `qa:layout`, `qa:runtime-packaging`, `ops:validate` y
 `arch:validate`, en modo release (`CAUCE_RELEASE_VALIDATION=1`, `CAUCE_REQUIRE_TESTCONTAINERS=1`: sin
 Docker o testcontainers falla, no se salta). Los nueve gates se reparten en carriles paralelos: el
 carril 0 es el propio checkout y los demás son worktrees desechables del mismo commit, cada uno con su
-`pnpm install --frozen-lockfile --prefer-offline`, de modo que ningún gate ve el `dist/`, la cobertura
-ni los artefactos de otro. Se crean en `CAUCE_RELEASE_GATES_LANES_DIR` (por defecto
-`.cauce-release-gates-lanes` junto al checkout; dentro del árbol se rechaza) y se borran al terminar;
-antes, su `ops/artifacts` se copia a `carril-N-ops-artifacts`, junto a los logs del recibo.
-`CAUCE_RELEASE_GATES_JOBS` fija el número de carriles; por defecto, uno por cada 8 CPU y por cada
-16 GiB disponibles, para no saturar una máquina compartida. Con `1` corre en secuencia, en el orden de
-`--list`, y se detiene en el primer rojo. Con varios carriles arrancan primero `test` y
-`coverage:ratchet`, los dos más largos, y después el resto de menor a mayor duración. Un carril que no
-se puede preparar reduce la concurrencia sin saltarse ningún gate. Tras un rojo no arranca ningún gate
-más, espera a los que ya corren y emite el recibo rojo. Ctrl-C, `TERM` o `HUP` terminan los grupos de
-proceso en curso y no emiten recibo. Escribe un log por comando y `recibo.json` con `{commit, tree,
-comandos: [{cmd, exit, log_sha256, duracion, log, carril, inicio}], inicio, fin, concurrencia,
-carriles, cobertura}` en `~/.local/state/cauce-v3/release-gates/<commit>-<STAMP>/`
-(`CAUCE_RELEASE_GATES_DIR` lo cambia; nunca `/tmp`). `cobertura` copia la tabla del trinquete por
-paquete, con `console/src` incluido: base, medido y estado, con la tolerancia de 0,20 puntos de
-`scripts/cobertura.mjs`. Se niega con el árbol sucio y no emite recibo si algún gate cambia `HEAD` o
-el árbol de cualquier carril. El recibo no puede ir dentro del commit que certifica: se copia junto
-al bundle en el VPS, fuera del clon (dentro ensuciaría el árbol), y se pasa por ruta absoluta en
+`pnpm install --frozen-lockfile --prefer-offline` (los de todos los carriles a la vez), de modo que
+ningún gate ve el `dist/`, la cobertura ni los artefactos de otro. Se crean en
+`CAUCE_RELEASE_GATES_LANES_DIR` (por defecto `.cauce-release-gates-lanes` junto al checkout; dentro del
+árbol se rechaza) y se borran al terminar; antes, su `ops/artifacts` se copia a
+`carril-N-ops-artifacts`, junto a los logs del recibo.
+
+**Carriles y trozos.** `CAUCE_RELEASE_GATES_JOBS` fija el número de carriles; por defecto, uno por cada
+3 CPU y por cada 8 GiB disponibles (10 en kratos). `test` y `coverage:ratchet`, los dos polos largos,
+se parten en `CAUCE_RELEASE_GATES_SHARDS` trozos (4 por defecto con más de un carril, 1 con `JOBS=1`) que corren en
+carriles distintos con `CAUCE_TEST_SHARD=i/N`; cuando el último trozo de un paso sale verde arranca su
+fusión (`CAUCE_TEST_SHARD_MERGE=N`). Cada corredor de pruebas corre solo su parte de ficheros, con el
+mismo corte que `vitest --shard` (`scripts/trozos.mjs`): vitest en la raíz y en la consola, y los
+`node --test` de adapter-sdk y de la medición de layout. Cada trozo de vitest se queda con
+`max(2, núcleos/N)` workers, nunca con más de los que pide su corrida (uno para `tests/e2e`,
+`CAUCE_TEST_DATA_WORKERS` para las suites de datos; `docs/calidad-y-gates.md`): con 8 trozos a la vez
+de suites de datos, bajar `CAUCE_TEST_DATA_WORKERS` reparte el host entre ellos. `test:ops`, `test:pty`
+y los dos guiones de contenedor no se parten: cada uno corre entero en un solo trozo. Cada invocación deja en el directorio
+de trozos del recibo su conjunto de ficheros y lo que corrió, y la fusión de `test` exige que los N
+trozos corrieran cada fichero de cada invocación exactamente una vez, que cada suite partible corriera
+en los N y cada entera en uno, y aplica a la suma la misma regla de suite vacía. La fusión de
+`coverage:ratchet` hace la misma comprobación del reparto, une los mapas istanbul de la raíz (consola
+y adapter-sdk se miden enteros en un trozo) y aplica el mismo trinquete con la misma base y tolerancia.
+Con `CAUCE_RELEASE_GATES_SHARDS=1` todo corre como antes, sin trozos ni fusiones.
+
+**Orden y fallo rápido.** Con varios carriles arrancan primero los trozos de `test` y
+`coverage:ratchet` y `qa:testcontainers`, y después el resto de menor a mayor duración; con `JOBS=1`
+corre en secuencia, en el orden de `--list`. Un carril que no se puede preparar reduce la concurrencia
+sin saltarse ningún gate. Con `CAUCE_RELEASE_GATES_FAIL_FAST=1` (por defecto), al primer rojo no
+arranca nada más y termina los pasos en curso: `TERM` a su grupo de procesos y a todo proceso que
+heredó su token `CAUCE_RELEASE_GATES_PASO` (también los que salieron del grupo, como cada suite de
+`test-all.mjs`), `CAUCE_RELEASE_GATES_GRACE_SECONDS` de gracia (20), `KILL`, y retira los contenedores
+etiquetados `io.cauce.gate.paso=<token>` (los PostgreSQL de testcontainers que levantan las suites;
+los `docker run` propios de algunos E2E no llevan esa etiqueta y dependen de su `afterAll`). Después
+escribe el recibo rojo, con los pasos cortados marcados `interrumpido`. Con
+`CAUCE_RELEASE_GATES_FAIL_FAST=0`, tras un rojo espera a los que ya corren. La misma limpieza de
+procesos y contenedores del token corre al acabar cada paso, verde o rojo. Ctrl-C, `TERM` o `HUP`
+terminan los pasos en curso igual y no emiten recibo.
+
+**Recibo.** Un log por paso y por trozo y `recibo.json` con `{commit, tree, comandos: [{cmd, exit,
+log_sha256, duracion, log, carril, inicio}], inicio, fin, concurrencia, carriles, trozos,
+fallo_rapido, cobertura}` en `~/.local/state/cauce-v3/release-gates/<commit>-<STAMP>/`
+(`CAUCE_RELEASE_GATES_DIR` lo cambia; nunca `/tmp`). `comandos` sigue teniendo una fila por paso de
+`--list`, en orden: la de un paso en trozos lleva el `exit` y el log de su fusión y, además,
+`trozos: [{trozo, exit, log, log_sha256, duracion, carril, inicio}]` y `fusion`; si un trozo salió
+rojo, lleva su `exit`, su log y `sin_fusion`. `cobertura` copia la tabla del trinquete por paquete,
+con `console/src` incluido: base, medido y estado, con la tolerancia de 0,20 puntos de
+`scripts/cobertura.mjs`. Se niega con el árbol sucio y no emite recibo verde si algún gate cambia
+`HEAD` o el árbol de cualquier carril; un recibo rojo sí se escribe aunque un paso cortado deje su
+carril sucio (`carriles_sucios`). El recibo no puede ir dentro del commit que certifica: se copia
+junto al bundle en el VPS, fuera del clon (dentro ensuciaría el árbol), y se pasa por ruta absoluta en
 `CAUCE_DEPLOY_GATES_RECEIPT`.
 
 `coverage:ratchet` vuelve a ejecutar, instrumentadas, buena parte de las suites de `test`, y no
-reutiliza su corrida. La matriz corre cada suite con su propia configuración y plazo, sin
-instrumentar. El trinquete compara contra una base medida con una sola invocación instrumentada por
-dominio (`scripts/cobertura.mjs`): fusionar corridas cambiaría la cifra que la base exige, y relajar los
-plazos de la matriz debilitaría `test`. Por eso los dos corren a la vez en carriles distintos y no
-comparten resultados.
+reutiliza su corrida: la matriz corre cada suite con su propia configuración y plazo, sin instrumentar,
+y relajar sus plazos debilitaría `test`. El trinquete solo mira líneas por paquete, y las líneas sí se
+fusionan sin error: v8 construye el mapa de sentencias de un fichero a partir del fuente, así que es
+el mismo en todos los trozos y una línea queda cubierta si la cubrió cualquiera. Una corrida reducida
+real (protocol, decisiones y gateway-hardening en 3 trozos) dio las mismas líneas cubiertas y totales
+en los 573 ficheros fuente que la corrida entera. Las ramas y funciones de v8 se construyen con lo que
+se ejecutó y no se fusionan rama a rama: en la fusión la cifra de ramas sale marcada como aproximada y
+el trinquete no la usa.
 
 **Precondiciones que `deploy/deploy.sh` verifica y aborta si fallan (todas antes del build):**
 - `git status` limpio y `HEAD == origin/main` (`CAUCE_DEPLOY_EXPECTED_GIT_REF`).

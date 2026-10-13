@@ -5,14 +5,21 @@ import { expect } from 'vitest';
 
 export const releaseGatesScript = resolve(import.meta.dirname, '../../scripts/release-gates.sh');
 
-export interface GateCommand {
-  cmd: string;
+export interface GateUnit {
   exit: unknown;
   log_sha256: string;
   duracion: number;
   log: string;
   carril?: number;
   inicio?: string;
+  interrumpido?: boolean;
+}
+
+export interface GateCommand extends GateUnit {
+  cmd: string;
+  trozos?: (GateUnit & { trozo: string })[];
+  fusion?: GateUnit | null;
+  sin_fusion?: boolean;
 }
 
 export interface CoverageRow {
@@ -29,15 +36,22 @@ export interface GatesReceipt {
   fin: string;
   concurrencia?: number;
   carriles?: number;
+  trozos?: number;
+  fallo_rapido?: boolean;
+  carriles_sucios?: string[];
   cobertura?: { paquetes: Record<string, CoverageRow>; lineas_fusionadas_pct: number | null } | null;
 }
 
 export interface TimelineEvent {
   event: 'start' | 'end';
   gate: string;
+  unit: string;
   cwd: string;
   pid: number;
   at: number;
+  paso: string;
+  trozo: string | null;
+  dir: string | null;
 }
 
 export function releaseGateCommands(): string[] {
@@ -59,30 +73,58 @@ export function greenGatesReceipt(commit: string, tree: string): GatesReceipt {
 }
 
 /* Every gate is a fake pnpm: it logs, can pause, go red or dirty its checkout, and prints the
-   ratchet table that the receipt parses for coverage:ratchet. */
+   ratchet table that the receipt parses for coverage:ratchet. A unit is the gate, gate#i for shard i
+   or gate#fusion; MOCK_* selectors match the unit or the plain gate. It can also leave a process
+   outside its group and a container labelled with its step token, as real suites do. */
 const fakePnpm = String.raw`#!/usr/bin/env node
 const fs = require('node:fs');
+const { spawn } = require('node:child_process');
 const env = process.env;
 const gate = process.argv[2];
-const mark = (event) => env.MOCK_TIMELINE && fs.appendFileSync(env.MOCK_TIMELINE,
-  JSON.stringify({ event, gate, cwd: process.cwd(), pid: process.pid, at: Date.now() }) + '\n');
-fs.appendFileSync(env.MOCK_PNPM_LOG, gate + '\n');
+const shard = env.CAUCE_TEST_SHARD ? env.CAUCE_TEST_SHARD.split('/')[0] : null;
+const unit = gate + (shard ? '#' + shard : env.CAUCE_TEST_SHARD_MERGE ? '#fusion' : '');
+const selected = (names) => (names || '').split(',').some((name) => name === unit || name === gate);
+const mark = (event) => env.MOCK_TIMELINE && fs.appendFileSync(env.MOCK_TIMELINE, JSON.stringify({
+  event, gate, unit, cwd: process.cwd(), pid: process.pid, at: Date.now(), paso: env.CAUCE_RELEASE_GATES_PASO || '',
+  trozo: env.CAUCE_TEST_SHARD || null, dir: env.CAUCE_TEST_SHARD_DIR || null,
+}) + '\n');
+fs.appendFileSync(env.MOCK_PNPM_LOG, unit + '\n');
 mark('start');
-if (gate === env.MOCK_DIRTY_GATE) fs.writeFileSync('dirty-by-gate.txt', gate);
+if (selected(env.MOCK_DIRTY_GATE)) fs.writeFileSync('dirty-by-gate.txt', gate);
 if (gate !== 'install') {
   fs.mkdirSync('ops/artifacts', { recursive: true });
-  fs.writeFileSync('ops/artifacts/' + gate.replace(':', '-') + '.txt', gate);
+  fs.writeFileSync('ops/artifacts/' + unit.replace(':', '-').replace('#', '-') + '.txt', gate);
 }
-if (gate === 'coverage:ratchet') {
+if (selected(env.MOCK_ESCAPE_GATES)) {
+  const escaped = spawn(process.execPath, ['-e', "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000)"],
+    { detached: true, stdio: 'ignore' });
+  escaped.unref();
+  fs.appendFileSync(env.MOCK_ESCAPED_LOG, JSON.stringify({ unit, pid: escaped.pid }) + '\n');
+}
+if (selected(env.MOCK_CONTAINER_GATES)) fs.writeFileSync(env.MOCK_DOCKER_DIR + '/cid-' + env.CAUCE_RELEASE_GATES_PASO, unit);
+if (gate === 'coverage:ratchet' && !shard) {
   console.log('  CIFRA FUSIONADA  lineas 97210/102869 = 94.50%   ramas 88.98%');
   console.log('\ntrinquete de cobertura (lineas por paquete, base scripts/cobertura-base.json):');
   console.log('  console/src                      SUBE    base 94.69%  medido 95.41%  +0.72');
   console.log('  services/gateway/src             SUBE    base 92.07%  medido 94.12%  +2.05');
   console.log('  VERDE: ningun paquete cae mas de 0.20 puntos');
 }
-console.log('ran ' + gate);
-const pause = JSON.parse(env.MOCK_GATE_PAUSE_MS || '{}')[gate] || 0;
-setTimeout(() => { mark('end'); process.exit(gate === env.MOCK_RED_GATE ? 3 : 0); }, pause);
+console.log('ran ' + unit);
+const pauses = JSON.parse(env.MOCK_GATE_PAUSE_MS || '{}');
+const pause = pauses[unit] ?? (env.CAUCE_TEST_SHARD_MERGE ? 0 : pauses[gate]) ?? 0;
+setTimeout(() => { mark('end'); process.exit(selected(env.MOCK_RED_GATE) ? 3 : 0); }, pause);
+`;
+
+/* A container is a file named cid-<step token>: ps answers the one whose label it is asked for, rm deletes it. */
+const fakeDocker = String.raw`#!/usr/bin/env node
+const fs = require('node:fs');
+const args = process.argv.slice(2);
+fs.appendFileSync(process.env.MOCK_DOCKER_LOG, JSON.stringify(args) + '\n');
+if (args[0] === 'ps') {
+  const token = (args[args.indexOf('--filter') + 1] || '').replace(/^label=io\.cauce\.gate\.paso=/, '');
+  if (fs.existsSync(process.env.MOCK_DOCKER_DIR + '/cid-' + token)) console.log('cid-' + token);
+}
+if (args[0] === 'rm') for (const id of args.slice(2)) fs.rmSync(process.env.MOCK_DOCKER_DIR + '/' + id, { force: true });
 `;
 
 const fakePython = String.raw`#!/usr/bin/env node
@@ -111,6 +153,8 @@ export function gatesRepository(directory: string) {
   writeFileSync(join(repository, '.gitignore'), 'ops/artifacts/\n');
   for (const name of ['pnpm', 'shellcheck', 'ruff']) writeFileSync(join(binaries, name), fakePnpm, { mode: 0o700 });
   writeFileSync(join(binaries, 'python3'), fakePython, { mode: 0o700 });
+  writeFileSync(join(binaries, 'docker'), fakeDocker, { mode: 0o700 });
+  mkdirSync(join(directory, 'docker'));
   const environment = {
     ...process.env,
     PATH: `${binaries}:${process.env.PATH ?? ''}`,
@@ -120,6 +164,9 @@ export function gatesRepository(directory: string) {
     CAUCE_RELEASE_GATES_LANES_DIR: lanes,
     MOCK_PNPM_LOG: join(directory, 'pnpm.log'),
     MOCK_TIMELINE: join(directory, 'timeline.jsonl'),
+    MOCK_ESCAPED_LOG: join(directory, 'escaped.jsonl'),
+    MOCK_DOCKER_LOG: join(directory, 'docker.jsonl'),
+    MOCK_DOCKER_DIR: join(directory, 'docker'),
   };
   const git = (...args: string[]) => {
     const output = spawnSync('git', ['-c', 'user.email=gates@example.test', '-c', 'user.name=gates', ...args], {
@@ -145,5 +192,9 @@ export function gatesRepository(directory: string) {
     ? readFileSync(environment.MOCK_TIMELINE, 'utf8').trim().split('\n').map(line => JSON.parse(line) as TimelineEvent)
     : [];
   const pnpmLog = () => readFileSync(environment.MOCK_PNPM_LOG, 'utf8');
-  return { directory, repository, lanes, git, run, start, receipts, receipt, timeline, pnpmLog };
+  const lines = (file: string) => existsSync(file) ? readFileSync(file, 'utf8').trim().split('\n').filter(Boolean) : [];
+  const escaped = () => lines(environment.MOCK_ESCAPED_LOG).map(line => JSON.parse(line) as { unit: string; pid: number });
+  const dockerCalls = () => lines(environment.MOCK_DOCKER_LOG).map(line => JSON.parse(line) as string[]);
+  const containers = () => readdirSync(environment.MOCK_DOCKER_DIR);
+  return { directory, repository, lanes, git, run, start, receipts, receipt, timeline, pnpmLog, escaped, dockerCalls, containers };
 }

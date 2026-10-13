@@ -201,6 +201,10 @@ alcanza:
   base efímera propia—, así que no comparten estado; lo que comparten es el host;
 - sólo `tests/e2e` o `tests/terminal-pty`: un worker, como siempre.
 
+Con `CAUCE_TEST_SHARD=i/N` cada trozo se queda con `max(2, núcleos/N)` workers, pero nunca con más
+de lo que pide la propia corrida: un trozo de `tests/e2e` sigue con uno, y uno de datos con
+`CAUCE_TEST_DATA_WORKERS` si es menor.
+
 Las suites de pila completa (`tests/e2e`, `tests/terminal-pty`) forman el proyecto `exclusivo`:
 corren al final (`sequence.groupOrder`) y de a un fichero, en cola sobre un socket del proceso
 principal (`tests/helpers/carril-exclusivo.ts`). Así la corrida de cobertura, que lo incluye todo,

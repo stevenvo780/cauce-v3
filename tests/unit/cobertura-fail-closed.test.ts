@@ -61,6 +61,7 @@ async function fixture(): Promise<Fixture> {
     ...staleOutputs.map((path) => mkdir(dirname(path), { recursive: true })),
   ]);
   await copyFile(coverageScript, script);
+  await Promise.all(['trozos.mjs', 'cobertura-trozos.mjs'].map((helper) => copyFile(join(repository, 'scripts', helper), join(root, 'scripts', helper))));
   await Promise.all(staleOutputs.map((path) => writeFile(path, 'stale output\n')));
 
   await executable(join(bin, 'pnpm'), [

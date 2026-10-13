@@ -1,9 +1,12 @@
 #!/usr/bin/env node
 /** Runs the whole test matrix to completion; non-zero exit if any suite fails or times out. */
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
-import { dirname, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { leerTrozo, sinTrozo, verificarReparto } from './trozos.mjs';
 
 export const SUITES = [
   'test:unit',
@@ -34,6 +37,13 @@ export const SEPARATELY_GATED = new Map([
   ['qa:layout', 'Playwright/Chromium: renders the console in a real browser at fixed viewports'],
   ['qa:layout:update', 'Playwright/Chromium: same renderer as qa:layout, writing the baseline instead of checking it'],
   ['qa:audit', 'the npm advisory feed: turns red on a new CVE with no code change, so the nightly runs it as its own step'],
+]);
+
+export const ENTERAS = new Map([
+  ['test:ops', { segundos: 463, motivo: 'ops/tests/run-all.mjs corre .mjs, .sh y .py sin partirlos' }],
+  ['test:container-supervisor', { segundos: 227, motivo: 'un unico guion node' }],
+  ['test:pty', { segundos: 14, motivo: 'python unittest no conoce CAUCE_TEST_SHARD' }],
+  ['test:container-cutover', { segundos: 1, motivo: 'un unico guion node' }],
 ]);
 
 const DEFAULT_TIMEOUT_MS = 20 * 60_000;
@@ -92,6 +102,8 @@ export function comprobarMatriz(manifest, paquetes) {
   }
   const absent = SUITES.filter((name) => !scripts.includes(name));
   if (absent.length > 0) throw new Error(`the matrix names missing scripts: ${absent.join(', ')}`);
+  const enterasAjenas = [...ENTERAS.keys()].filter((name) => !SUITES.includes(name));
+  if (enterasAjenas.length > 0) throw new Error(`whole-shard suites outside the matrix: ${enterasAjenas.join(', ')}`);
 
   const comandos = Object.entries(manifest.scripts ?? {}).filter(([name]) => esSuiteDeclarada(name));
   const conocidos = new Set(paquetes.flatMap((paquete) => [paquete.nombre, dirname(paquete.ruta)]));
@@ -180,14 +192,14 @@ export function cuentaDe(result) {
     : `(${String(result.conteo.ejecutados)} ejecutados, ${String(result.conteo.saltados)} saltados)`;
 }
 
-function runSuite(name) {
+function runSuite(name, env = process.env) {
   return new Promise((settle, fail) => {
     const startedAt = Date.now();
     const timeoutMs = TIMEOUTS.get(name) ?? DEFAULT_TIMEOUT_MS;
     process.stdout.write(`\n${'='.repeat(72)}\n=== ${name}\n${'='.repeat(72)}\n`);
     // Own process group so a wedged suite dies with its grandchildren, not just its pnpm wrapper.
     // Piped and re-emitted live instead of inherited: the counter reads each tally on the way out.
-    const child = spawn('pnpm', ['run', name], { cwd: root, stdio: ['inherit', 'pipe', 'pipe'], detached: true });
+    const child = spawn('pnpm', ['run', name], { cwd: root, env, stdio: ['inherit', 'pipe', 'pipe'], detached: true });
     const contador = contadorDeSuite(name);
     for (const flujo of [child.stdout, child.stderr]) {
       flujo.setEncoding('utf8');
@@ -222,11 +234,7 @@ function seconds(ms) {
   return `${(ms / 1_000).toFixed(1)}s`;
 }
 
-async function main() {
-  await assertMatrixIsComplete();
-  const results = [];
-  for (const name of SUITES) results.push(await runSuite(name));
-
+function informar(results) {
   const vaciaEsRoja = process.env.CAUCE_REQUIRE_TESTCONTAINERS === '1';
   const failed = results.filter(
     (result) => result.timedOut || result.code !== 0 || (vaciaEsRoja && verdictFor(result) === 'VACIA'),
@@ -254,10 +262,123 @@ async function main() {
         + `${vaciaEsRoja ? '' : ' — rojas sólo con CAUCE_REQUIRE_TESTCONTAINERS=1'}\n`,
     );
   }
-  if (failed.length > 0) {
-    process.stdout.write(`failed suites: ${failed.map((result) => result.name).join(' ')}\n`);
-    process.exitCode = 1;
+  if (failed.length === 0) return 0;
+  process.stdout.write(`failed suites: ${failed.map((result) => result.name).join(' ')}\n`);
+  return 1;
+}
+
+export function repartoDeEnteras(total) {
+  const carga = Array.from({ length: total }, () => 0);
+  const reparto = new Map();
+  for (const [name, { segundos }] of [...ENTERAS].sort((una, otra) => otra[1].segundos - una[1].segundos)) {
+    const destino = carga.indexOf(Math.min(...carga));
+    carga[destino] += segundos;
+    reparto.set(name, destino + 1);
   }
+  return reparto;
+}
+
+function directorioDeTrozos() {
+  const directorio = process.env.CAUCE_TEST_SHARD_DIR;
+  if (!directorio) throw new Error('CAUCE_TEST_SHARD_DIR no esta definido: la fusion no sabe donde leer los trozos');
+  return directorio;
+}
+
+function cerrarTrozo(trozo, results) {
+  const corridas = results.filter((result) => !result.omitida);
+  const rotas = corridas.filter((result) => result.timedOut || result.code !== 0);
+  process.stdout.write(`\n=== trozo ${trozo.indice}/${trozo.total}: ${corridas.length} suites corridas, ${rotas.length} rojas\n`);
+  for (const result of corridas) process.stdout.write(`${verdictFor(result).padEnd(7)}  ${result.name}  ${cuentaDe(result)}\n`);
+  if (process.env.CAUCE_TEST_SHARD_DIR) {
+    const directorio = directorioDeTrozos();
+    mkdirSync(directorio, { recursive: true });
+    const ruta = join(directorio, `test-trozo-${trozo.indice}.json`);
+    const contenido = `${JSON.stringify({ trozo: `${trozo.indice}/${trozo.total}`, suites: results })}\n`;
+    writeFileSync(ruta, contenido);
+    process.stdout.write(`resumen del trozo: ${ruta} sha256:${createHash('sha256').update(contenido).digest('hex')}\n`);
+  }
+  return rotas.length === 0 ? 0 : 1;
+}
+
+function sumar(corridas, campo) {
+  return corridas.reduce((suma, corrida) => suma + corrida.conteo[campo], 0);
+}
+
+export function fusionarResultados(resumenes, total) {
+  const problemas = [];
+  const indices = resumenes.map((resumen) => resumen.trozo).sort();
+  const esperados = Array.from({ length: total }, (_, posicion) => `${posicion + 1}/${total}`).sort();
+  if (indices.join(' ') !== esperados.join(' ')) problemas.push(`los resumenes son de [${indices.join(' ')}] y la fusion espera [${esperados.join(' ')}]`);
+  const results = SUITES.map((name) => {
+    const vistas = resumenes.map((resumen) => resumen.suites.find((suite) => suite.name === name));
+    if (vistas.includes(undefined)) problemas.push(`${name}: algun trozo no la menciona`);
+    const hechas = vistas.filter((suite) => suite !== undefined && !suite.omitida);
+    const esperadas = ENTERAS.has(name) ? 1 : total;
+    if (hechas.length !== esperadas) problemas.push(`${name}: corrio en ${hechas.length} trozo(s) y debia correr en ${esperadas}`);
+    const contadas = hechas.filter((suite) => suite.conteo !== undefined);
+    return {
+      name,
+      code: hechas.length === 0 ? 1 : hechas.find((suite) => suite.code !== 0)?.code ?? 0,
+      signal: hechas.find((suite) => suite.signal)?.signal ?? null,
+      timedOut: hechas.some((suite) => suite.timedOut),
+      timeoutMs: Math.max(0, ...hechas.map((suite) => suite.timeoutMs ?? 0)),
+      elapsedMs: Math.max(0, ...hechas.map((suite) => suite.elapsedMs ?? 0)),
+      conteo: contadas.length === 0 ? undefined : { ejecutados: sumar(contadas, 'ejecutados'), saltados: sumar(contadas, 'saltados') },
+    };
+  });
+  return { results, problemas };
+}
+
+function fusionar(total) {
+  if (!Number.isInteger(total) || total < 1) throw new Error(`CAUCE_TEST_SHARD_MERGE debe ser el numero de trozos (es '${process.env.CAUCE_TEST_SHARD_MERGE}')`);
+  const directorio = directorioDeTrozos();
+  const resumenes = [];
+  const faltan = [];
+  process.stdout.write(`=== fusion de ${total} trozos de la matriz desde ${directorio}\n`);
+  for (let indice = 1; indice <= total; indice += 1) {
+    const ruta = join(directorio, `test-trozo-${indice}.json`);
+    if (!existsSync(ruta)) {
+      faltan.push(`falta el resumen del trozo ${indice}/${total} (${ruta})`);
+      continue;
+    }
+    const contenido = readFileSync(ruta);
+    process.stdout.write(`  ${ruta} sha256:${createHash('sha256').update(contenido).digest('hex')}\n`);
+    resumenes.push(JSON.parse(contenido.toString('utf8')));
+  }
+  const { results, problemas } = fusionarResultados(resumenes, total);
+  const reparto = verificarReparto(directorio, total, SUITES.filter((name) => !ENTERAS.has(name)));
+  process.stdout.write(`\nreparto de ficheros entre ${total} trozos (cada invocacion, entera y sin repetir):\n`);
+  for (const linea of reparto.resumen) process.stdout.write(`  ${linea}\n`);
+  const roja = informar(results);
+  const todos = [...faltan, ...problemas, ...reparto.problemas];
+  if (todos.length === 0) return roja;
+  process.stdout.write(`\nFUSION ROJA: los trozos no acreditan la matriz entera\n${todos.map((problema) => `  - ${problema}`).join('\n')}\n`);
+  return 1;
+}
+
+async function main() {
+  const fusion = process.env.CAUCE_TEST_SHARD_MERGE;
+  if (fusion !== undefined && fusion !== '') {
+    process.exitCode = fusionar(Number(fusion));
+    return;
+  }
+  await assertMatrixIsComplete();
+  const trozo = leerTrozo();
+  const destino = trozo === undefined ? undefined : repartoDeEnteras(trozo.total);
+  const results = [];
+  for (const name of SUITES) {
+    if (trozo === undefined) {
+      results.push(await runSuite(name));
+      continue;
+    }
+    if (ENTERAS.has(name) && destino.get(name) !== trozo.indice) {
+      process.stdout.write(`\n=== ${name}: entera en el trozo ${destino.get(name)}/${trozo.total}\n`);
+      results.push({ name, omitida: true });
+      continue;
+    }
+    results.push(await runSuite(name, ENTERAS.has(name) ? sinTrozo() : { ...process.env, CAUCE_TEST_SUITE: name }));
+  }
+  process.exitCode = trozo === undefined ? informar(results) : cerrarTrozo(trozo, results);
 }
 
 const invokedDirectly = process.argv[1] !== undefined

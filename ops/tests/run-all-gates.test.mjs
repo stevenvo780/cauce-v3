@@ -29,6 +29,7 @@ async function plantTree(files) {
   await mkdir(path.join(root, 'bin'), { recursive: true });
   await copyFile(runner, path.join(tests, 'run-all.mjs'));
   await copyFile(matrix, path.join(root, 'scripts/test-all.mjs'));
+  await copyFile(path.join(repositoryRoot, 'scripts/trozos.mjs'), path.join(root, 'scripts/trozos.mjs'));
   await writeFile(path.join(root, 'package.json'), JSON.stringify(manifest), 'utf8');
   const probes = path.join(root, 'docker-probes');
   await writeFile(
