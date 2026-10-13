@@ -10,7 +10,7 @@ NON_HARNESS_PROVIDERS = {'gemini', 'minimax', 'feihoa'}
 # Descriptor harnesses the gateway document catalog does not classify today.
 GATEWAY_OMITTED = {'opencode', 'fake', 'fake2'}
 # Descriptor harnesses the console catalog has not picked up yet; shrink as it aligns.
-CONSOLE_PENDING = {'grok', 'muse', 'opencode', 'fake', 'fake2'}
+CONSOLE_PENDING = {'opencode', 'fake', 'fake2'}
 # Harnesses whose provider exposes a measurable quota window with the credential
 # the container already holds; each declares operations.quota with a reader argv.
 QUOTA_READERS = {'claude', 'codex', 'grok'}
