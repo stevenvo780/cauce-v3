@@ -261,6 +261,31 @@ class QuotaReadersTest(unittest.TestCase):
         self.assertEqual(second['account_id'], expected)
         self.assertNotIn('fixture-token-old', json.dumps(first))
 
+    def test_grok_email_identity_ignores_raw_principal_and_local_seed_does_not_merge(self):
+        import hashlib as _hashlib
+        stub = ('globalThis.fetch=async(url,options={})=>{'
+            'if(options.headers.authorization!=="Bearer " + "fixture-token-old")return new Response("{}",{status:401});'
+            'return new Response(JSON.stringify({config:{creditUsagePercent:20,currentPeriod:{type:"weekly",'
+            'start:"2026-10-01T00:00:00Z",end:"2026-10-08T00:00:00Z"}}}),{status:200});};')
+        with tempfile.TemporaryDirectory() as directory:
+            home = pathlib.Path(directory)
+            (home / '.grok').mkdir()
+            auth = home / '.grok' / 'auth.json'
+            auth.write_text(json.dumps({'fixture': {'key': 'fixture-token-old', 'email': 'Fixture@Example.invalid',
+                                                     'principal_id': 'raw-principal'}}))
+            auth.chmod(0o600)
+            emailed = json.loads(self.run_reader(home, 'leer-cuota-grok.mjs', stub).stdout)
+            auth.write_text(json.dumps({'fixture': {'key': 'fixture-token-old', 'principal_id': 'raw-principal'}}))
+            auth.chmod(0o600)
+            local = json.loads(self.run_reader(home, 'leer-cuota-grok.mjs', stub).stdout)
+        email_id = 'grok:' + _hashlib.sha256(b'fixture@example.invalid').hexdigest()
+        local_id = 'grok-local:' + _hashlib.sha256(b'raw-principal').hexdigest()
+        self.assertEqual(emailed['account_id'], email_id)
+        self.assertNotEqual(emailed['account_id'], 'raw-principal')
+        self.assertEqual(local['account_id'], local_id)
+        self.assertNotEqual(local['account_id'], email_id)
+        self.assertNotEqual(local['account_id'], 'raw-principal')
+
     def test_claude_three_concurrent_readers_refresh_once_and_leave_no_orphans(self):
         stub = (
             'import {appendFileSync} from "node:fs";'

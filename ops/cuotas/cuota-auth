@@ -2,7 +2,7 @@
 # cuota-auth — entrar a cada espacio y autenticar el cliente que sea.
 #   cuota-auth                         lista los espacios y como esta cada cliente
 #   cuota-auth <espacio>               autentica Claude (lo mas comun)
-#   cuota-auth <espacio> claude|gemini|codex   autentica ese cliente
+#   cuota-auth <espacio> claude|codex|grok     autentica ese cliente
 #   cuota-auth <espacio> shell         terminal dentro del espacio
 #   cuota-auth nuevo <nombre>          crea un espacio mas (vacio, sin sesiones)
 #   cuota-auth borrar <nombre>         lo elimina con sus sesiones (pide confirmar)
@@ -28,8 +28,6 @@ resuelve() {
 estado_cliente() {   # $1 contenedor  $2 cliente -> imprime autenticado/sin sesion
   case "$2" in
     claude) docker exec "$1" test -s /home/node/.claude/.credentials.json 2>/dev/null ;;
-    # google_accounts.json existe tambien tras cerrar sesion ("active": null): solo cuenta la credencial OAuth real.
-    gemini) docker exec "$1" test -s /home/node/.gemini/oauth_creds.json 2>/dev/null ;;
     codex)  docker exec "$1" test -s /home/node/.codex/auth.json 2>/dev/null ;;
     grok)   docker exec "$1" sh -c 'ls /home/node/.grok/*.json /home/node/.config/grok/* 2>/dev/null | grep -q .' 2>/dev/null ;;
   esac && verde "autenticado" || echo "sin sesión"
@@ -37,11 +35,11 @@ estado_cliente() {   # $1 contenedor  $2 cliente -> imprime autenticado/sin sesi
 
 listar() {
   echo
-  printf '  %-18s %-8s %-14s %-14s %-14s %-14s\n' ESPACIO ESTADO CLAUDE GEMINI CODEX GROK
+  printf '  %-18s %-8s %-14s %-14s %-14s\n' ESPACIO ESTADO CLAUDE CODEX GROK
   for c in $(docker ps -a --filter name='^cuota-' --format '{{.Names}}' | sort); do
     st=$(docker inspect -f '{{.State.Status}}' "$c")
     if [ "$st" = running ]; then
-      printf '  %-18s %-8s %-23s %-23s %-23s %-23s\n' "$c" "$st" "$(estado_cliente "$c" claude)" "$(estado_cliente "$c" gemini)" "$(estado_cliente "$c" codex)" "$(estado_cliente "$c" grok)"
+      printf '  %-18s %-8s %-23s %-23s %-23s\n' "$c" "$st" "$(estado_cliente "$c" claude)" "$(estado_cliente "$c" codex)" "$(estado_cliente "$c" grok)"
     else
       printf '  %-18s %-8s (parado)\n' "$c" "$st"
     fi
@@ -54,8 +52,8 @@ listar() {
   if [ ! -r "$lista" ]; then
     echo "    (sin checklist privada: $lista)"
     echo
-    echo "  Para entrar:  cuota-auth <espacio> [claude|gemini|codex|grok|shell]"
-    echo "  Ej.: cuota-auth 2  ·  cuota-auth claude-2 gemini  ·  cuota-auth nuevo cuota-isa"
+    echo "  Para entrar:  cuota-auth <espacio> [claude|codex|grok|shell]"
+    echo "  Ej.: cuota-auth 2  ·  cuota-auth claude-2 grok  ·  cuota-auth nuevo cuota-isa"
     return
   fi
   falta=0
@@ -70,8 +68,8 @@ listar() {
   done < "$lista"
   [ "$falta" = 0 ] && verde "    todo autenticado" || echo "    faltan: $falta"
   echo
-  echo "  Para entrar:  cuota-auth <espacio> [claude|gemini|codex|grok|shell]"
-  echo "  Ej.: cuota-auth 2  ·  cuota-auth claude-2 gemini  ·  cuota-auth nuevo cuota-isa"
+  echo "  Para entrar:  cuota-auth <espacio> [claude|codex|grok|shell]"
+  echo "  Ej.: cuota-auth 2  ·  cuota-auth claude-2 grok  ·  cuota-auth nuevo cuota-isa"
 }
 
 [ $# -eq 0 ] && { listar; exit 0; }
@@ -100,16 +98,15 @@ c=$(resuelve "$1") || { rojo "no existe el espacio '$1'"; listar; exit 1; }
 
 cliente="${2:-claude}"
 case "$cliente" in
-  # Los tres logins van SIN navegador local (el callback a localhost falla siempre en el contenedor):
-  # claude imprime URL+codigo solo, codex usa --device-auth, gemini usa NO_BROWSER=true.
+  # Los logins van SIN navegador local (el callback a localhost falla siempre en el contenedor):
+  # claude imprime URL+codigo solo; codex y grok usan --device-auth.
   claude) echo "  → $c · Claude. Abre la URL donde quieras y pega el codigo. Verifica con: cuota-auth"
           exec docker exec -it "$c" claude auth login ;;
-  gemini) echo "  → $c · Gemini. Elige 'Login with Google': te dara una URL y te pedira el codigo."
-          exec docker exec -it -e NO_BROWSER=true "$c" gemini ;;
+  gemini) rojo "gemini no tiene ejecutor de cuotas"; exit 1 ;;
   codex)  echo "  → $c · Codex por device auth: abre la URL en cualquier navegador y escribe el codigo."
           exec docker exec -it "$c" codex login --device-auth ;;
   grok)   echo "  → $c · Grok por device auth: abre la URL en cualquier navegador y escribe el codigo."
           exec docker exec -it "$c" grok login --device-auth ;;
   shell|bash) exec docker exec -it "$c" bash ;;
-  *) rojo "cliente desconocido: $cliente (claude | gemini | codex | grok | shell)"; exit 1 ;;
+  *) rojo "cliente desconocido: $cliente (claude | codex | grok | shell)"; exit 1 ;;
 esac

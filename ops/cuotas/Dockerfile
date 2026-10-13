@@ -14,26 +14,21 @@ FROM node:22-slim@sha256:c3de60bf2f9dd0ac6370e6117950ff62d6e339527e7472301c9c78a
 # drift between builds. Bump deliberately and rebuild instead.
 ARG CLAUDE_CODE_VERSION=2.1.296
 ARG CODEX_VERSION=0.160.1
-ARG GEMINI_CLI_VERSION=0.63.0
 ARG GROK_VERSION=1.0.41
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates git ripgrep python3 \
  && rm -rf /var/lib/apt/lists/*
 
-# Los tres clientes que Steven puede querer autenticar en un espacio: Claude, Gemini y
-# Codex. Van los tres en la misma imagen para que "cualquier cliente" sea verdad y no haya
-# que rehacer la imagen cuando cambie de opinion. Ojo: esto INSTALA el CLI de codex; no lo
-# ejecuta. Quien lo autentica es Steven por terminal, dentro de su propio contenedor, con
-# su propia sesion. Ningun agente lo invoca.
+# Claude, Codex y Grok. Gemini no tiene ejecutor de cuotas y no se instala.
+# Esto INSTALA el CLI; no lo ejecuta. Quien lo autentica es la persona, dentro
+# de su contenedor. Ningún agente lo invoca.
 RUN npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
-      "@google/gemini-cli@${GEMINI_CLI_VERSION}" \
       "@openai/codex@${CODEX_VERSION}" \
       "@xai-official/grok@${GROK_VERSION}" \
  && npm cache clean --force \
  && claude --version | grep -q "${CLAUDE_CODE_VERSION}" \
  && codex --version | grep -q "${CODEX_VERSION}" \
- && gemini --version | grep -q "${GEMINI_CLI_VERSION}" \
  && grok --version | grep -q "${GROK_VERSION}"
 
 # Usuario sin privilegios. La imagen de node ya trae uno con uid 1000 ("node"): reutilizo

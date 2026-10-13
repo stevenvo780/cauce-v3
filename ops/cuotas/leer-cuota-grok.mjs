@@ -55,12 +55,15 @@ let doc, clave, entry;
 try { doc = JSON.parse(readFileSync(CRED, "utf8")); clave = Object.keys(doc)[0]; entry = doc[clave]; }
 catch (e) { salir(`credencial ilegible: ${e.name}`, "not_authenticated"); }
 if (!entry?.key) salir("la credencial no trae key", "not_authenticated");
-// Stable non-secret account identity: explicit account id when present, else a
-// hash of the stored account email; never token material.
-const accountSeed = entry.principal_id ?? entry.user_id ?? entry.id ?? entry.sub;
-const account_id = typeof accountSeed === "string" && accountSeed ? accountSeed
-  : typeof entry.email === "string" && entry.email
-    ? "grok:" + createHash("sha256").update(entry.email.toLowerCase()).digest("hex") : null;
+// Email always hashes to grok:<sha256>. A local seed without email hashes to
+// grok-local:<sha256> so it cannot merge with an email identity.
+const email = typeof entry.email === "string" && entry.email ? entry.email : "";
+const localSeed = [entry.principal_id, entry.user_id, entry.id, entry.sub].find(value => typeof value === "string" && value);
+const account_id = email
+  ? "grok:" + createHash("sha256").update(email.toLowerCase()).digest("hex")
+  : typeof localSeed === "string"
+    ? "grok-local:" + createHash("sha256").update(localSeed).digest("hex")
+    : null;
 
 const pide = async (tok) => {
   const r = await fetch(USAGE, {
