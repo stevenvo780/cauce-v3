@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { readFile, readdir } from 'node:fs/promises';
 import { harnessDefinition } from '../harnesses/index.js';
 import type { HarnessDefinition, HarnessId } from '../sdk/types.js';
@@ -109,11 +110,30 @@ export async function packagedHarnessIds(): Promise<string[]> {
   return entries.filter(entry => entry.endsWith('.json')).map(entry => entry.slice(0, -5))
     .filter(name => HARNESS_ID.test(name)).sort();
 }
-export async function packagedHarnessDescriptor(harness: HarnessId): Promise<HarnessDescriptor> {
-  const value: unknown = JSON.parse(await readFile(new URL(`../../descriptors/${harness}.json`, import.meta.url), 'utf8'));
+async function readHarnessDescriptor(directory: URL, harness: string, expectedSha256?: string): Promise<HarnessDescriptor> {
+  if (!HARNESS_ID.test(harness)) fail('harness', 'invalid descriptor file name');
+  const raw = await readFile(new URL(`${harness}.json`, directory));
+  if (expectedSha256 !== undefined && (!/^[a-f0-9]{64}$/u.test(expectedSha256)
+    || createHash('sha256').update(raw).digest('hex') !== expectedSha256)) fail('descriptor_sha256', 'descriptor differs from its approved digest');
+  const value: unknown = JSON.parse(raw.toString('utf8'));
   const descriptor = parseHarnessDescriptor(value);
   if (descriptor.harness !== harness) fail('harness', 'descriptor identity differs from its file name');
   return descriptor;
+}
+export async function packagedHarnessDescriptor(harness: HarnessId, expectedSha256?: string): Promise<HarnessDescriptor> {
+  return readHarnessDescriptor(new URL('../../descriptors/', import.meta.url), harness, expectedSha256);
+}
+export async function approvedHarnessDescriptors(directory: URL,
+  approvals: Readonly<Record<string, string>>): Promise<HarnessDescriptor[]> {
+  const approved: HarnessDescriptor[] = [];
+  for (const entry of (await readdir(directory)).sort()) {
+    if (!entry.endsWith('.json')) continue;
+    const harness = entry.slice(0, -5);
+    if (!HARNESS_ID.test(harness) || !Object.hasOwn(approvals, harness) || !/^[a-f0-9]{64}$/u.test(approvals[harness] ?? '')) continue;
+    try { approved.push(await readHarnessDescriptor(directory, harness, approvals[harness])); }
+    catch { continue; }
+  }
+  return approved;
 }
 export interface HarnessLifecycleExecutor {
   run(input: { readonly harness: HarnessId; readonly operation: HarnessLifecycleOperation; readonly recipe: HarnessLifecycleRecipe }): Promise<unknown>;
