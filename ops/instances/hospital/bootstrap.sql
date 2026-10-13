@@ -5,10 +5,15 @@ BEGIN;
 DO $$
 DECLARE
   hospital_exists boolean;
+  active_memberships text[];
 BEGIN
   SELECT EXISTS (SELECT 1 FROM tenants WHERE id = 'Hospital') INTO hospital_exists;
 
   IF hospital_exists THEN
+    SELECT array_agg(tenant_id || ':' || room_id || ':' || alias || ':' || role
+                     ORDER BY tenant_id, room_id, alias)
+      INTO active_memberships FROM memberships WHERE enabled;
+
     IF (SELECT count(*) FROM tenants) <> 1
        OR (SELECT count(*) FROM rooms) <> 1
        OR NOT EXISTS (
@@ -20,7 +25,15 @@ BEGIN
           WHERE id = 'grp.hospital' AND tenant_id = 'Hospital' AND enabled = true
        )
        OR (SELECT count(*) FROM agents WHERE tenant_id = 'Hospital' AND enabled) <> 3
-       OR (SELECT count(*) FROM memberships WHERE tenant_id = 'Hospital' AND enabled) <> 4
+       OR (active_memberships IS DISTINCT FROM ARRAY[
+             'Hospital:grp.hospital:console-proxy:operator', 'Hospital:grp.hospital:operador:operator',
+             'Hospital:grp.hospital:perseo:agent', 'Hospital:grp.hospital:teseo:agent'
+           ]::text[]
+           AND active_memberships IS DISTINCT FROM ARRAY[
+             'Hospital:grp.hospital:console-proxy:operator', 'Hospital:grp.hospital:operador:operator',
+             'Hospital:grp.hospital:perseo:agent', 'Hospital:grp.hospital:praxis-supervisor:operator',
+             'Hospital:grp.hospital:teseo:agent'
+           ]::text[])
        OR EXISTS (SELECT 1 FROM acl_edges)
     THEN
       RAISE EXCEPTION 'hospital topology drifted; bootstrap refuses to rewrite it';
@@ -224,7 +237,13 @@ ON CONFLICT (tenant_id, alias) DO UPDATE SET
 WHERE agent_profiles.purpose IS NULL;
 
 DO $$
+DECLARE
+  active_memberships text[];
 BEGIN
+  SELECT array_agg(tenant_id || ':' || room_id || ':' || alias || ':' || role
+                   ORDER BY tenant_id, room_id, alias)
+    INTO active_memberships FROM memberships WHERE enabled;
+
   IF (SELECT count(*) FROM tenants) <> 1
      OR (SELECT count(*) FROM rooms WHERE tenant_id = 'Hospital') <> 1
      OR (SELECT count(*) FROM agents WHERE tenant_id = 'Hospital' AND enabled) <> 3
@@ -242,13 +261,15 @@ BEGIN
            ]::text[])
      OR (SELECT count(*) FROM agent_profiles p JOIN agents a USING (tenant_id, alias)
           WHERE p.tenant_id = 'Hospital' AND a.enabled) <> 3
-     OR (SELECT count(*) FROM memberships WHERE tenant_id = 'Hospital' AND enabled) <> 4
-     OR (SELECT array_agg(alias || ':' || role ORDER BY alias)
-           FROM memberships WHERE tenant_id = 'Hospital' AND enabled) IS DISTINCT FROM ARRAY[
-         'console-proxy:operator', 'operador:operator', 'perseo:agent', 'teseo:agent'
-       ]::text[]
-     OR (SELECT count(*) FROM memberships WHERE tenant_id = 'Hospital' AND role = 'operator' AND enabled) <> 2
-     OR (SELECT count(*) FROM memberships WHERE tenant_id = 'Hospital' AND role = 'agent' AND enabled) <> 2
+     OR (active_memberships IS DISTINCT FROM ARRAY[
+           'Hospital:grp.hospital:console-proxy:operator', 'Hospital:grp.hospital:operador:operator',
+           'Hospital:grp.hospital:perseo:agent', 'Hospital:grp.hospital:teseo:agent'
+         ]::text[]
+         AND active_memberships IS DISTINCT FROM ARRAY[
+           'Hospital:grp.hospital:console-proxy:operator', 'Hospital:grp.hospital:operador:operator',
+           'Hospital:grp.hospital:perseo:agent', 'Hospital:grp.hospital:praxis-supervisor:operator',
+           'Hospital:grp.hospital:teseo:agent'
+         ]::text[])
      OR NOT EXISTS (
        SELECT 1 FROM agent_role_templates
         WHERE slug = 'hospital-lider' AND enabled = true

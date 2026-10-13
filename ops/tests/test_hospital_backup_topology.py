@@ -16,6 +16,8 @@ import pytest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 BACKUP = ROOT / "ops/instances/hospital/backup.sh"
+BOOTSTRAP = ROOT / "ops/instances/hospital/bootstrap.sql"
+RESTORE_ALIASES = ROOT / "ops/instances/hospital/restore-developer-aliases.sql"
 CONTAINER_SCRIPT = """
 import { GenericContainer, Wait } from 'testcontainers';
 const container = await new GenericContainer('postgres:16-alpine')
@@ -58,19 +60,23 @@ INSERT INTO memberships VALUES
   ('Hospital', 'grp.hospital', 'perseo', 'agent', true),
   ('Hospital', 'grp.hospital', 'teseo', 'agent', true);
 """
-SUPERVISOR = "INSERT INTO memberships VALUES ('Hospital', 'grp.hospital', 'praxis-supervisor', 'operator', true);"
+SUPERVISOR = ("INSERT INTO memberships(tenant_id, room_id, alias, role, enabled) "
+              "VALUES ('Hospital', 'grp.hospital', 'praxis-supervisor', 'operator', true);")
 
 
 class PostgresFixture:
     def __init__(self, identifier: str):
         self.id = identifier
 
-    def sql(self, query: str, database: str = "cauce_source") -> None:
-        result = subprocess.run(
-            ["docker", "exec", "-i", self.id, "psql", "-X", "-q", "-v", "ON_ERROR_STOP=1",
+    def execute(self, query: str, database: str = "cauce_source") -> subprocess.CompletedProcess:
+        return subprocess.run(
+            ["docker", "exec", "-i", self.id, "psql", "-X", "-Atq", "-v", "ON_ERROR_STOP=1",
              "-U", "postgres", "-d", database],
             input=query, text=True, capture_output=True, timeout=60, check=False,
         )
+
+    def sql(self, query: str, database: str = "cauce_source") -> None:
+        result = self.execute(query, database)
         assert result.returncode == 0, result.stderr
 
     def restore_and_check(self) -> subprocess.CompletedProcess:
@@ -212,3 +218,119 @@ def test_restored_invalid_topology_is_rejected(pg, mutation):
     result = pg.restore_and_check()
     assert result.returncode != 0, "The restore gate accepted a corrupted Hospital topology"
     assert "La restauración aislada no conserva la topología Hospital" in result.stderr
+
+
+@pytest.fixture
+def hospital_pg(database):
+    migrations = sorted(path for path in (ROOT / "packages/store/migrations").glob("*.sql")
+                        if int(path.name.split("_", 1)[0]) <= 43)
+    database.sql("BEGIN; DROP SCHEMA public CASCADE; CREATE SCHEMA public;" +
+                 "\n".join(path.read_text(encoding="utf-8") for path in migrations) + "COMMIT;")
+    database.sql(BOOTSTRAP.read_text(encoding="utf-8"))
+    return database
+
+
+def membership_snapshot(pg, alias=None):
+    result = pg.execute("SELECT row_to_json(m) FROM memberships m ORDER BY tenant_id, room_id, alias;")
+    assert result.returncode == 0, result.stderr
+    if alias is None:
+        return result.stdout
+    return [json.loads(line) for line in result.stdout.splitlines() if json.loads(line)["alias"] == alias]
+
+
+def prepare_restore(pg, topology):
+    for table in ("agents", "memberships"):
+        pg.sql(f"""
+          INSERT INTO {table}
+          SELECT (jsonb_populate_record(NULL::{table}, to_jsonb(source) || jsonb_build_object(
+            'alias', CASE alias WHEN 'teseo' THEN 'backend' ELSE 'frontend' END, 'enabled', false))).*
+            FROM {table} source WHERE tenant_id='Hospital' AND alias IN ('teseo', 'perseo');
+        """)
+    if topology == "old":
+        for table in ("agents", "memberships"):
+            pg.sql(f"UPDATE {table} SET enabled = alias NOT IN ('teseo', 'perseo') WHERE tenant_id='Hospital';")
+
+
+@pytest.mark.parametrize("supervisor", [False, True], ids=["four-members", "five-members"])
+@pytest.mark.parametrize("legacy_developers", [False, True], ids=["fresh", "disabled-legacy"])
+def test_bootstrap_preserves_exact_memberships_on_rerun(hospital_pg, supervisor, legacy_developers):
+    if legacy_developers:
+        prepare_restore(hospital_pg, "new")
+    if supervisor:
+        hospital_pg.sql(SUPERVISOR)
+    before = membership_snapshot(hospital_pg)
+    for _ in range(2):
+        result = hospital_pg.execute(BOOTSTRAP.read_text(encoding="utf-8"))
+        assert result.returncode == 0, result.stderr
+        assert membership_snapshot(hospital_pg) == before
+
+
+@pytest.mark.parametrize("topology", ["new", "old"])
+@pytest.mark.parametrize("supervisor", [False, True], ids=["four-members", "five-members"])
+def test_developer_restore_preserves_optional_supervisor(hospital_pg, topology, supervisor):
+    prepare_restore(hospital_pg, topology)
+    if supervisor:
+        hospital_pg.sql(SUPERVISOR)
+    supervisor_before = membership_snapshot(hospital_pg, "praxis-supervisor")
+    for _ in range(2):
+        result = hospital_pg.execute(RESTORE_ALIASES.read_text(encoding="utf-8"))
+        assert result.returncode == 0, result.stderr
+        aliases = hospital_pg.execute("SELECT string_agg(alias, ',' ORDER BY alias) FROM agents WHERE enabled;")
+        assert aliases.stdout.strip() == "backend,frontend,operador"
+        members = hospital_pg.execute("SELECT string_agg(alias || ':' || role, ',' ORDER BY alias) "
+                                      "FROM memberships WHERE enabled;")
+        expected = "backend:agent,console-proxy:operator,frontend:agent,operador:operator"
+        if supervisor:
+            expected += ",praxis-supervisor:operator"
+        assert members.stdout.strip() == expected
+        assert membership_snapshot(hospital_pg, "praxis-supervisor") == supervisor_before
+
+
+@pytest.mark.parametrize("topology", ["bootstrap", "new", "old"])
+@pytest.mark.parametrize("mutation", [
+    "INSERT INTO memberships(tenant_id, room_id, alias, role) VALUES ('Hospital','grp.hospital','unknown','operator');",
+    "INSERT INTO memberships(tenant_id, room_id, alias, role) VALUES ('Hospital','grp.hospital','praxis-supervisor','agent');",
+    "INSERT INTO memberships(tenant_id, room_id, alias, role) VALUES ('Hospital','grp.hospital','praxis-supervisor','operator'), ('Hospital','grp.hospital','extra','operator');",
+    "UPDATE memberships SET role='agent' WHERE alias='console-proxy';",
+    "UPDATE memberships SET role='operator' WHERE alias IN ('perseo', 'frontend') AND enabled;",
+    "DELETE FROM memberships WHERE alias='console-proxy';",
+    "UPDATE memberships SET alias='unknown' WHERE alias='console-proxy';",
+    "UPDATE memberships SET enabled=false WHERE alias IN ('perseo', 'frontend') AND enabled;",
+    "INSERT INTO rooms(id, tenant_id) VALUES ('grp.other', 'Hospital'); "
+    "INSERT INTO memberships(tenant_id, room_id, alias, role) VALUES ('Hospital','grp.other','praxis-supervisor','operator');",
+    "INSERT INTO tenants(id) VALUES ('ForeignTenant'); INSERT INTO rooms(id, tenant_id) VALUES ('grp.foreign', 'ForeignTenant'); "
+    "INSERT INTO memberships(tenant_id, room_id, alias, role) VALUES ('ForeignTenant','grp.foreign','praxis-supervisor','operator');",
+], ids=["unknown-fifth", "supervisor-role", "sixth-member", "console-role", "developer-role",
+        "missing-console", "replaced-console", "disabled-developer",
+        "supervisor-room", "supervisor-tenant"])
+def test_hospital_sql_rejects_membership_drift_without_rewriting(hospital_pg, topology, mutation):
+    if topology != "bootstrap":
+        prepare_restore(hospital_pg, topology)
+    hospital_pg.sql(mutation)
+    before = membership_snapshot(hospital_pg)
+    script = BOOTSTRAP if topology == "bootstrap" else RESTORE_ALIASES
+    result = hospital_pg.execute(script.read_text(encoding="utf-8"))
+    assert result.returncode != 0, "The Hospital SQL accepted a corrupted membership topology"
+    expected_error = ("hospital topology drifted; bootstrap refuses to rewrite it" if topology == "bootstrap"
+                      else "hospital developer restore requires an exact membership topology")
+    assert expected_error in result.stderr, result.stderr
+    assert membership_snapshot(hospital_pg) == before
+
+
+@pytest.mark.parametrize("supervisor", [False, True], ids=["four-members", "five-members"])
+@pytest.mark.parametrize("mutation", [
+    "UPDATE memberships SET role='operator' WHERE alias='frontend';",
+    "DELETE FROM memberships WHERE alias='frontend';",
+    "INSERT INTO rooms(id, tenant_id) VALUES ('grp.other', 'Hospital'); "
+    "UPDATE memberships SET room_id='grp.other' WHERE alias='frontend';",
+], ids=["legacy-role", "missing-legacy", "legacy-room"])
+def test_developer_restore_rolls_back_invalid_legacy_memberships(hospital_pg, supervisor, mutation):
+    prepare_restore(hospital_pg, "new")
+    if supervisor:
+        hospital_pg.sql(SUPERVISOR)
+    hospital_pg.sql(mutation)
+    before = membership_snapshot(hospital_pg)
+    result = hospital_pg.execute(RESTORE_ALIASES.read_text(encoding="utf-8"))
+    assert result.returncode != 0, "The developer restore accepted corrupted legacy memberships"
+    assert "hospital developer restore verification failed" in result.stderr, result.stderr
+    assert membership_snapshot(hospital_pg) == before

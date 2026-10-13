@@ -8,6 +8,8 @@ LOCK TABLE agents, memberships, agent_profiles, connection_leases, delivery_lane
 DO $guard$
 DECLARE
   active_aliases text[];
+  active_memberships text[];
+  expected_memberships text[];
 BEGIN
   SELECT array_agg(alias ORDER BY alias)
     INTO active_aliases
@@ -19,6 +21,25 @@ BEGIN
   THEN
     RAISE EXCEPTION 'hospital developer restore requires an exact new or old active topology: %',
       active_aliases;
+  END IF;
+
+  SELECT array_agg(tenant_id || ':' || room_id || ':' || alias || ':' || role
+                   ORDER BY tenant_id, room_id, alias)
+    INTO active_memberships FROM memberships WHERE enabled;
+  SELECT array_agg('Hospital:grp.hospital:' || alias || ':' ||
+                   CASE WHEN alias IN ('console-proxy', 'operador') THEN 'operator' ELSE 'agent' END
+                   ORDER BY alias)
+    INTO expected_memberships
+    FROM unnest(active_aliases || ARRAY['console-proxy']::text[]) AS members(alias);
+
+  IF active_memberships IS DISTINCT FROM expected_memberships
+     AND active_memberships IS DISTINCT FROM (
+       SELECT array_agg(member ORDER BY member)
+         FROM unnest(expected_memberships || ARRAY['Hospital:grp.hospital:praxis-supervisor:operator']::text[])
+           AS members(member)
+     )
+  THEN
+    RAISE EXCEPTION 'hospital developer restore requires an exact membership topology';
   END IF;
 
   IF EXISTS (
@@ -105,13 +126,27 @@ UPDATE agent_profiles
  WHERE tenant_id = 'Hospital' AND alias = 'operador';
 
 DO $verify$
+DECLARE
+  active_memberships text[];
 BEGIN
+  SELECT array_agg(tenant_id || ':' || room_id || ':' || alias || ':' || role
+                   ORDER BY tenant_id, room_id, alias)
+    INTO active_memberships FROM memberships WHERE enabled;
+
   IF (SELECT array_agg(alias ORDER BY alias) FROM agents
        WHERE tenant_id = 'Hospital' AND enabled)
        IS DISTINCT FROM ARRAY['backend', 'frontend', 'operador']::text[]
      OR (SELECT count(*) FROM agents WHERE tenant_id = 'Hospital') <> 3
      OR (SELECT count(*) FROM agent_profiles WHERE tenant_id = 'Hospital') <> 3
-     OR (SELECT count(*) FROM memberships WHERE tenant_id = 'Hospital') <> 4
+     OR (active_memberships IS DISTINCT FROM ARRAY[
+           'Hospital:grp.hospital:backend:agent', 'Hospital:grp.hospital:console-proxy:operator',
+           'Hospital:grp.hospital:frontend:agent', 'Hospital:grp.hospital:operador:operator'
+         ]::text[]
+         AND active_memberships IS DISTINCT FROM ARRAY[
+           'Hospital:grp.hospital:backend:agent', 'Hospital:grp.hospital:console-proxy:operator',
+           'Hospital:grp.hospital:frontend:agent', 'Hospital:grp.hospital:operador:operator',
+           'Hospital:grp.hospital:praxis-supervisor:operator'
+         ]::text[])
      OR EXISTS (
        SELECT 1 FROM connection_leases
         WHERE tenant_id = 'Hospital' AND alias IN ('backend', 'frontend', 'teseo', 'perseo')
