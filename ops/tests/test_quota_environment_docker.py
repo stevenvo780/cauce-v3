@@ -180,10 +180,14 @@ class QuotaEnvironmentDockerCycleTest(unittest.TestCase):
         self.assertEqual(inspected['Id'], self.metadata['image'])
         self.assertTrue(self.metadata['gemini_absent'])
         self.assertNotIn('gemini', json.dumps(inspected['RootFS']))
-        absent = run(['docker', 'run', '--rm', '--network', 'none', self.metadata['image'], '/usr/bin/python3', '-c',
+        environment = self.environment('grok')
+        self.effect(environment, 'create')
+        absent = run(['docker', 'exec', environment['container_name'], '/usr/bin/python3', '-c',
                       'import pathlib,sys; sys.exit(0 if not any(pathlib.Path(p).exists() for p in '
                       '["/usr/local/bin/gemini","/usr/local/lib/node_modules/@google/gemini-cli"]) else 1)'])
         self.assertEqual(absent.returncode, 0)
+        self.effect(environment, 'delete')
+        self.assert_removed(environment)
 
     def test_real_pinned_providers_and_unauthenticated_readers(self):
         capability = json.loads(run([sys.executable, str(EXECUTOR), '--policy', str(self.policy_file), '--capabilities']).stdout)
