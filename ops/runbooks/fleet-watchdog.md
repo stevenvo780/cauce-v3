@@ -1,7 +1,7 @@
 # Runbook: Fleet Watchdog
 
 ## Cuándo usar
-Monitorear de forma periódica y en modo solo lectura la salud integral de la flota de Cauce V3 (leases de conexión, entregas muertas o fallidas, profundidad de DLQ y anomalías de reconexión).
+Monitorear de forma periódica la salud de la flota (leases de conexión, entregas muertas o fallidas, profundidad de DLQ y anomalías de reconexión). Lee la base y no la modifica. Cada corrida que supera la comprobación de `CAUCE_DATABASE_URL` escribe el archivo de estado (`save_state`; por defecto `/tmp/cauce-watchdog.state`, o `CAUCE_WATCHDOG_STATE_FILE`).
 
 ## Pasos
 1. Ejecutar verificación puntual de la flota:
@@ -24,12 +24,12 @@ Monitorear de forma periódica y en modo solo lectura la salud integral de la fl
 
 ## Verificar efecto
 1. Comprobar el código de salida del script:
-   - `0`: Verificación completada (`healthy`, `warning` o `critical`).
-   - `2`: Error fatal (base de datos inaccesible o falta de permisos).
-2. Revisar el reporte JSON generado en `/tmp/watchdog-report.json`:
-   - `connection_leases`: Verificar que no existan aliases offline o con heartbeat vencido (>30 min).
-   - `dead_letters`: Monitorear que el conteo no supere el umbral.
-   - `epochs`: Detectar bucles de reconexión con épocas anómalas.
+   - `0`: el script terminó. `status` puede ser `healthy`, `warning`, `critical` o `unknown`. Un fallo de `psql` o de la base queda como `read-error` en el check y `status` `unknown`; no cambia el código de salida.
+   - `2`: falta `CAUCE_DATABASE_URL`. No indica base inaccesible ni falta de permisos.
+2. Revisar el reporte JSON generado en `/tmp/watchdog-report.json`. Esas tres claves están dentro de `checks`, no en la raíz:
+   - `checks.connection_leases`: Verificar que no existan aliases offline o con heartbeat vencido (>30 min).
+   - `checks.dead_letters`: Monitorear que el conteo no supere el umbral.
+   - `checks.epochs`: Detectar bucles de reconexión con épocas anómalas.
 3. Revisar el resumen textual en `/tmp/watchdog-report.txt`.
 
 ## Deshacer
