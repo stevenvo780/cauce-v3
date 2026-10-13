@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 # cauce:requiere docker
+import ast
 import datetime
 import importlib.machinery
 import importlib.util
@@ -34,6 +35,7 @@ create table channel_bridge_cursors(tenant_id text references tenants, alias tex
 create table dead_letters(tenant_id text references tenants, resolved_at timestamptz, created_at timestamptz);
 create table outbox_dead_letters(tenant_id text references tenants, resolved_at timestamptz, created_at timestamptz);
 alter table messages add column created_at timestamptz default now();
+alter table messages add column "offset" integer default 1;
 alter table deliveries add column late_result_at timestamptz;
 create table audit_events(tenant_id text, message_id bigint, action text, metadata jsonb, company_id text);
 create table adapter_outbox(id bigint primary key, tenant_id text references tenants,
@@ -92,6 +94,8 @@ insert into telegram_egress_effects values
  ('foreign',3,'ForeignTenant','sent'),('cross-message',4,'Steven','sent'),
  ('cross-delivery',5,'Steven','sent'),('no-delivery',6,'Steven','sent'),
  ('cross-effect-tenant',1,'ForeignTenant','sent'),('cross-effect-outbox',3,'Steven','sent');
+create table private_rows as select tenant_id from messages;
+create table messagesé as select tenant_id from messages;
 """
 
 
@@ -175,6 +179,94 @@ def test_psql_error_redacts_free_text(transport):
         doctor.sql("select cast('ForeignTenant foreign-last-error' as integer)")
     assert "psql rc=" in str(error.value) and "stderr_chars=" in str(error.value)
     no_private(str(error.value))
+
+
+@pytest.mark.parametrize("query,reason", [
+    ("SELECT m.tenant_id FROM tenants t, messages m WHERE t.company_id='humanizar'", "comma joins"),
+    ("SELECT m.tenant_id FROM (SELECT id FROM tenants) t, messages m", "comma joins"),
+    ("WITH own AS (SELECT id FROM tenants) SELECT m.tenant_id FROM own, messages m", "comma joins"),
+    ("SELECT p.tenant_id FROM tenants t JOIN messages own ON own.tenant_id=t.id AND own.offset=1, private_rows p",
+     "comma joins"),
+    ('SELECT tenant_id FROM "messages"', "double quotes"),
+    ('SELECT tenant_id FROM public."messages"', "double quotes"),
+    ("SELECT tenant_id FROM public.messages", "unscoped relation"),
+    ("SELECT tenant_id FROM public . messages", "unscoped relation"),
+    ("TABLE messages", "TABLE syntax"),
+    ("SELECT id FROM tenants UNION ALL SELECT tenant_id FROM (TABLE messages) m", "TABLE syntax"),
+    ("WITH stolen AS (TABLE messages) SELECT * FROM stolen", "TABLE syntax"),
+    ("-- private_rows as (\nSELECT tenant_id FROM private_rows", "comments"),
+    ("/* private_rows as ( */ SELECT tenant_id FROM private_rows", "comments"),
+    ("SELECT tenant_id, 'private_rows as (' FROM private_rows", "unscoped relation"),
+    ("SELECT tenant_id, 'private_rows as '' (' FROM private_rows", "unscoped relation"),
+    ("SELECT tenant_id FROM messages;", "semicolons"),
+    ("SELECT 1; SELECT tenant_id FROM messages", "semicolons"),
+    ("SELECT m.tenant_id FROM (messages m CROSS JOIN tenants t)", "parenthesized relation"),
+    ("SELECT tenant_id, $$private_rows as ($$ FROM private_rows", "string syntax"),
+    ("SELECT tenant_id, E'private_rows as (' FROM private_rows", "string syntax"),
+    ("SELECT tenant_id FROM messagesé", "non-ASCII identifiers"),
+    ("SELECT tenant_id, '\"' FROM messages", "double quotes"),
+    ("SELECT tenant_id, '--' FROM messages", "comments"),
+    ("SELECT tenant_id, ';' FROM messages", "semicolons"),
+])
+def test_pg_unsafe_sql_fails_before_transport(transport, pg, monkeypatch, query, reason):
+    raw = pg.run_sql(query)
+    assert raw.returncode == 0, raw.stderr
+    assert "ForeignTenant" in raw.stdout
+    monkeypatch.setattr(doctor, "sh", lambda *_args, **_kwargs: pytest.fail("unsafe SQL reached PostgreSQL"))
+    with pytest.raises(ValueError, match=reason):
+        doctor.company_scoped_query(query)
+    with pytest.raises(ValueError, match=reason):
+        doctor.sql(query)
+
+
+@pytest.mark.parametrize("query", [
+    "SELECT tenant_id, 'private_rows as (' FROM messages ORDER BY tenant_id",
+    "SELECT tenant_id, 'JOIN private_rows, TABLE private_rows' FROM messages ORDER BY tenant_id",
+    "SELECT tenant_id, 'escaped '' as (' FROM messages ORDER BY tenant_id",
+    "SELECT tenant_id, 'e', 'u&', ', as (' FROM messages ORDER BY tenant_id",
+    "SELECT tenant_id, 'información de la empresa', '$value' FROM messages ORDER BY tenant_id",
+    "SELECT m.tenant_id FROM messages m JOIN tenants t ON t.id=m.tenant_id ORDER BY m.tenant_id",
+    "SELECT tenant_id FROM (SELECT tenant_id FROM messages) m ORDER BY tenant_id",
+    "WITH owned AS (SELECT tenant_id FROM messages) SELECT tenant_id FROM owned ORDER BY tenant_id",
+    "SELECT m.tenant_id FROM messages m CROSS JOIN tenants t ORDER BY m.tenant_id",
+])
+def test_pg_supported_sql_keeps_literals_and_company_scope(transport, query):
+    rows = doctor.sql(query)
+    assert {row[0] for row in rows} == {"Steven", "LocalB"}
+    assert "ForeignTenant" not in repr(rows)
+
+
+def test_every_doctor_sql_call_runs_through_scoped_postgres(transport, monkeypatch):
+    monkeypatch.setattr(doctor, "DOCTOR_INVENTORY", doctor.inventario())
+    context = {**vars(doctor), "tenant": "Steven", "alias": "shared", "horas": 24}
+    sources = [SCRIPT, *SCRIPT.parent.glob("cauce-v3-medico-monitor-*-lib.py")]
+    count = 0
+    for source in sources:
+        for node in ast.walk(ast.parse(source.read_text())):
+            if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name) or node.func.id != "sql":
+                continue
+            query = eval(compile(ast.Expression(node.args[0]), str(source), "eval"), context)
+            kwargs = {keyword.arg: eval(compile(ast.Expression(keyword.value), str(source), "eval"), context)
+                      for keyword in node.keywords}
+            rows = doctor.sql(query, **kwargs)
+            if not kwargs.get("internal"):
+                assert "ForeignTenant" not in repr(rows) and "foreign-" not in repr(rows)
+            count += 1
+    assert count == 11, "Update coverage for new doctor SQL calls"
+
+
+@pytest.mark.parametrize("alias,expected", [
+    ("shared", "Steven/shared"), ("Steven/shared", "Steven/shared"),
+    ("Steven/shared,LocalB/shared", "Steven/shared,LocalB/shared"),
+])
+def test_finding_subject_prefixes_only_single_unqualified_aliases(alias, expected):
+    assert doctor.finding_subject({"tenant": "Steven", "alias": alias}) == expected
+
+
+def test_recursive_query_without_data_relations_fails_before_transport(monkeypatch):
+    monkeypatch.setattr(doctor, "sh", lambda *_args, **_kwargs: pytest.fail("recursive query reached PostgreSQL"))
+    with pytest.raises(ValueError, match="recursive"):
+        doctor.sql("WITH RECURSIVE c AS (SELECT 1) SELECT * FROM c")
 
 
 @pytest.mark.parametrize("response", [(1, "500\nForeignTenant foreign-last-error", "foreign-stderr"),

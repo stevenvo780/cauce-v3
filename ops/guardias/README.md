@@ -245,6 +245,27 @@ en el entorno del servicio. Sin usuario y UID remotos válidos, una evidencia
 `unidad_activa` remota queda sin verificar. No se concede cumplimiento por ese fallo.
 Las reglas SQL de `evidencia-esperada.json` se ejecutan mediante la misma función
 `sql()` acotada por `CAUCE_GUARD_COMPANY_ID` que utiliza la consulta de encargos.
+Escribe los identificadores SQL en ASCII, las relaciones sin esquema ni comillas,
+y utiliza `JOIN` explícito, nunca
+listas de relaciones separadas por comas en `FROM`. Se admiten subconsultas de
+`SELECT` y CTE locales (`WITH nombre AS (...)`, también `MATERIALIZED` y
+`NOT MATERIALIZED`), pero no `WITH RECURSIVE` ni relaciones entre paréntesis sin
+una subconsulta. Las cadenas usan comillas simples y escapan cada apóstrofo
+duplicándolo; su contenido no cuenta como relaciones ni nombres de CTE.
+El lector rechaza antes de ejecutar cualquier SQL con comillas dobles,
+comentarios (`--` o `/*`), punto y coma, `TABLE <relación>`, relaciones calificadas
+con esquema, uniones con coma o cadenas con sintaxis de escape (`E'...'`, `U&'...'`)
+o comillas de dólar (`$$...$$`, `$nombre$...$nombre$`).
+No añadas `;` al final. Por ejemplo:
+
+```sql
+SELECT d.id FROM deliveries d JOIN messages m ON m.id=d.message_id
+WHERE m.body->>'type'='agent.message'
+```
+
+El filtro acota también las subconsultas y dependencias de las relaciones.
+Las reglas persistidas en `evidencia-esperada.json` son configuración del
+operador: revisa su sintaxis con estas restricciones al actualizar el médico.
 
 Los envoltorios `cauce-envoltorio-local.sh` y `cauce-huerfanas.sh` NO van acá: van dentro del
 contenedor, que es donde se los invoca.

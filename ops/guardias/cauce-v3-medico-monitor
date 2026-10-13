@@ -1309,7 +1309,7 @@ def main():
                  "   and created_at <= now() - interval '24 hours')::text, "
                  "(select count(*) from outbox_dead_letters where resolved_at is null)::text, "
                  "(select count(*) from outbox_dead_letters "
-                 " where created_at > now() - interval '24 hours')::text;", columnas=5)
+                 " where created_at > now() - interval '24 hours')::text", columnas=5)
         if dl:
             bus_abiertas, bus_dia, bus_base, salida_abiertas, salida_dia = dl[0]
             for tipo, etiqueta, abiertas, dia, tabla in (

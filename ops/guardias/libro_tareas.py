@@ -160,8 +160,10 @@ select json_build_object(
   'tipo_mensaje', coalesce(v.body->>'type',''),
   'estado_entrega', v.status,
   'intento_entrega', v.attempt,
-  'pedido_en', to_char(v.created_at at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS+00:00'),
-  'cerrado_en', to_char(v.terminal_at at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS+00:00'),
+  'pedido_en', to_char(v.created_at at time zone 'UTC','YYYY-MM-DD') || 'T' ||
+               to_char(v.created_at at time zone 'UTC','HH24:MI:SS+00:00'),
+  'cerrado_en', to_char(v.terminal_at at time zone 'UTC','YYYY-MM-DD') || 'T' ||
+                to_char(v.terminal_at at time zone 'UTC','HH24:MI:SS+00:00'),
   'ultimo_error', left(coalesce(v.last_error,''), 300),
   'texto', left(coalesce(v.body->>'text',''), %(largo_texto)d),
   'respuesta', left(coalesce(v.result->'output'->>'reply',''), %(largo_respuesta)d),
@@ -186,7 +188,7 @@ select json_build_object(
   )
 )::text
 from ventana v
-order by v.created_at;
+order by v.created_at
 """
 
 def consulta(ventana_h=VENTANA_DERIVACION_H):
@@ -362,7 +364,7 @@ def verificar(esperada, io):
             ok = estado == "active" and vivo
             return {"tipo": tipo, "ok": ok, "detalle": "%s: is-active=%s MainPID=%s" % (unidad, estado or "?", pid or "?")}
         if tipo == "sql_no_vacio":
-            filas = io["sql"](esperada.get("consulta") or "select 1 where false;")
+            filas = io["sql"](esperada.get("consulta") or "select 1 where false")
             ok = bool([f for f in filas if any(str(x).strip() for x in f)])
             return {"tipo": tipo, "ok": ok, "detalle": "la consulta devolvio %d fila(s)" % len(filas)}
         return {"tipo": tipo or "?", "ok": None, "detalle": "tipo de evidencia desconocido"}

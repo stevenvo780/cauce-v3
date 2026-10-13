@@ -69,7 +69,7 @@ def scoped_sql(pg, monkeypatch):
     monkeypatch.setenv("CAUCE_GUARD_COMPANY_ID", "alpha")
 
     def read(query):
-        scoped = doctor.company_scoped_query(query.rstrip().rstrip(";"))
+        scoped = doctor.company_scoped_query(query)
         result = pg.run_sql(scoped)
         assert result.returncode == 0, result.stderr
         return [line.split("\t") for line in result.stdout.splitlines()]
@@ -103,6 +103,9 @@ def test_real_book_query_isolates_both_sides_and_correlated_evidence(scoped_sql,
     assert {row["encargo_id"] for row in rows} == ids
     assert {row["tenant"] for row in rows} == tenants
     assert all(not row["reintento_exitoso"] and not row["retomado_por_mensaje_nuevo"] for row in rows)
+    for row in rows:
+        for field in ("pedido_en", "cerrado_en"):
+            assert datetime.datetime.fromisoformat(row[field]).utcoffset() == datetime.timedelta(0)
 
 
 def test_own_replay_and_own_closure_remain_visible(scoped_sql, pg):

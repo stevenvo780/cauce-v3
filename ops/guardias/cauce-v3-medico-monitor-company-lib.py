@@ -12,11 +12,60 @@ def guard_company_id():
 DOCTOR_CONTAINER_SCOPE_QUERY = "SELECT container_name,in_company FROM doctor_container_scopes"
 
 
+def doctor_query_structure(query):
+    for marker, reason in (("\"", "double quotes"), ("--", "comments"), ("/*", "comments"), (";", "semicolons")):
+        if marker in query:
+            raise ValueError(f"doctor query does not support {reason}")
+    literals = re.compile(r"'(?:[^']|'')*'")
+    if "\\'" in query or any(re.search(r"\b(?:e|u&)\s*$", query[:literal.start()], re.IGNORECASE)
+                              for literal in literals.finditer(query)):
+        raise ValueError("doctor query has unsupported string syntax")
+    structure = literals.sub(" ", query).lower()
+    if "'" in structure or "$" in structure:
+        raise ValueError("doctor query has unsupported string syntax")
+    if not structure.isascii():
+        raise ValueError("doctor query has unsupported non-ASCII identifiers")
+    if re.search(r"\btable\s+[a-z_]", structure):
+        raise ValueError("doctor query does not support TABLE syntax")
+    tokens = re.findall(r"[a-z_][a-z0-9_]*|[^\s]", structure)
+    frames = [[False, None]]
+    references = []
+    endings = {"where", "group", "having", "order", "limit", "offset", "fetch", "window",
+               "union", "intersect", "except", "for"}
+    for index, token in enumerate(tokens):
+        if token == "(":
+            frames.append([False, tokens[index-1] if index else None])
+        elif token == ")":
+            if len(frames) == 1:
+                raise ValueError("doctor query has unbalanced parentheses")
+            frames.pop()
+        elif token in endings and (not index or tokens[index-1] != "."):
+            frames[-1][0] = False
+        elif token == "," and frames[-1][0]:
+            raise ValueError("doctor query does not support comma joins; use explicit JOIN")
+        elif token in {"from", "join"} and frames[-1][1] != "extract":
+            frames[-1][0] = True
+            following = tokens[index+1:index+3]
+            if following and following[0] == "(":
+                if len(following) != 2 or following[1] not in {"select", "with"}:
+                    raise ValueError("doctor query has an unsupported parenthesized relation")
+            elif following and re.fullmatch(r"[a-z_][a-z0-9_]*", following[0]):
+                references.append((following[0], len(following) == 2 and following[1] == "."))
+            else:
+                raise ValueError("doctor query references an unscoped relation")
+    if len(frames) != 1:
+        raise ValueError("doctor query has unbalanced parentheses")
+    return structure, references
+
+
 def company_scoped_query(query, *, internal=False):
     company = guard_company_id()
     if re.search(r"\bdoctor_container_scopes\b", query, re.IGNORECASE):
         if not internal or query != DOCTOR_CONTAINER_SCOPE_QUERY:
             raise ValueError("container ownership is reserved for the internal doctor reader")
+    structure, references = doctor_query_structure(query)
+    if re.match(r"\s*with\s+recursive\b", structure):
+        raise ValueError("recursive doctor queries are unsupported")
     relations = {
         "tenants": ((), f"company_id='{company}'"),
         "companies": ((), f"id='{company}'"),
@@ -44,8 +93,7 @@ def company_scoped_query(query, *, internal=False):
                          f"OR to_jsonb(audit_events)->>'company_id'='{company}')"),
         "doctor_container_scopes": ((), None),
     }
-    references = re.findall(r"\b(?:from|join)\s+([a-z_][a-z0-9_]*)(\s*\.)?", query, re.IGNORECASE)
-    local_ctes = set(re.findall(r"\b([a-z_][a-z0-9_]*)\s+as\s*(?:(?:not\s+)?materialized\s*)?\(", query.lower()))
+    local_ctes = set(re.findall(r"\b([a-z_][a-z0-9_]*)\s+as\s*(?:(?:not\s+)?materialized\s*)?\(", structure))
     used = set()
     for name, qualified in references:
         name = name.lower()
@@ -75,8 +123,6 @@ def company_scoped_query(query, *, internal=False):
     if not scoped:
         return query
     body = query.lstrip()
-    if re.match(r"with\s+recursive\b", body, re.IGNORECASE):
-        raise ValueError("recursive doctor queries are unsupported")
     if re.match(r"with\s", body, re.IGNORECASE):
         body = re.sub(r"^with\s+", "", body, count=1, flags=re.IGNORECASE)
         return "WITH " + ", ".join(scoped) + ", " + body
@@ -116,8 +162,9 @@ CONTAINER_FINDING_TYPES = {"bucle_de_cuota", "bucle_de_cuota_barato", "bucle_de_
 
 
 def finding_subject(record):
-    if record.get("tenant") and record.get("alias") not in (None, "-"):
-        return f"{record['tenant']}/{record['alias']}"
+    alias = record.get("alias")
+    if record.get("tenant") and alias not in (None, "-") and "," not in str(alias) and "/" not in str(alias):
+        return f"{record['tenant']}/{alias}"
     return record.get("cuenta") or record.get("contenedor") or record.get("alias") or "-"
 
 

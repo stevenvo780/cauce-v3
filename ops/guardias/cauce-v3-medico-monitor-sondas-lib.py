@@ -44,7 +44,7 @@ def sql(consulta, columnas=None, *, internal=False):
     `columnas` is an optional contract: if the base returns a different width, we fail with a
     message naming the actual width instead of a generic unpack error far away.
     """
-    cuerpo = consulta.strip().rstrip(";").strip()
+    cuerpo = consulta.strip()
     if not cuerpo:
         raise RuntimeError("consulta vacia")
     orden = f"COPY ({company_scoped_query(cuerpo, internal=internal)}) TO STDOUT WITH (FORMAT csv, FORCE_QUOTE *);"
@@ -232,7 +232,7 @@ def reset_del_panel(texto):
 def inventario():
     """The aliases that exist, per the database. Source of truth for WHO exists."""
     filas = sql("select a.tenant_id,a.alias,coalesce(a.container_name,''),coalesce(a.runtime_key,''),t.company_id "
-                "from agents a join tenants t on t.id=a.tenant_id where a.enabled order by a.tenant_id,a.alias;", columnas=5)
+                "from agents a join tenants t on t.id=a.tenant_id where a.enabled order by a.tenant_id,a.alias", columnas=5)
     company = guard_company_id()
     return {(t, a): {"tenant": t, "contenedor_db": c, "runtime_key": runtime_key}
             for t, a, c, runtime_key, owner in filas if owner == company}
@@ -430,7 +430,7 @@ def turnos_muertos_de_zeus(lista):
 def cursores():
     filas = sql("select tenant_id, alias, next_update_id, "
                 "round(extract(epoch from (now()-updated_at))/60) "
-                "from channel_bridge_cursors;", columnas=4)
+                "from channel_bridge_cursors", columnas=4)
     inventory = scoped_inventory()
     return {(t, a): {"cursor": int(c), "quieto_min": int(float(m))} for t, a, c, m in filas if (t, a) in inventory}
 
@@ -453,7 +453,7 @@ def entregas_trabadas():
         "  execution_started_at, updated_at)))/60), "
         "coalesce(round(extract(epoch from (claim_expires_at-now()))/60)::text,'') "
         "from deliveries where status in ('leased','accepted','started') "
-        "order by created_at;", columnas=8)
+        "order by created_at", columnas=8)
     salida = []
     inventory = scoped_inventory()
     for f in filas:
@@ -524,7 +524,7 @@ def respuestas_perdidas(horas=24):
         "where d.status in ('dead','failed') "
         f"  and d.terminal_at > now() - interval '{int(horas)} hours' "
         "  and coalesce(m.body->>'type','') = 'agent.response' "
-        "order by d.terminal_at desc;", columnas=7)
+        "order by d.terminal_at desc", columnas=7)
     perdidas, rechazadas = {}, {}
     inventory = scoped_inventory()
     for f in filas:
@@ -558,7 +558,7 @@ def conversaciones_paralelas(horas=24):
         "v as (select tenant, alias from s group by 1, 2 having count(*) > 1) "
         "select s.tenant, s.alias, left(s.sesion, 8), s.turnos::text, s.canales, "
         "  to_char(s.ultimo at time zone 'UTC', 'MM-DD HH24:MI') "
-        "from s join v using (tenant, alias) order by s.alias, s.turnos desc;", columnas=6)
+        "from s join v using (tenant, alias) order by s.alias, s.turnos desc", columnas=6)
     paralelas = {}
     inventory = scoped_inventory()
     for tenant, alias, sesion, turnos, canales, ultimo in filas:
@@ -581,7 +581,7 @@ def captura_en_vuelo(alias, tenant=None):
         "m.priority, m.request_id "
         "from deliveries d join messages m on m.id = d.message_id "
         "where d.recipient_tenant = '{}' and d.recipient_alias = '{}' "
-        "and d.status in ('leased','accepted','started');".format(tenant.replace("'", "''"), alias.replace("'", "''")),
+        "and d.status in ('leased','accepted','started')".format(tenant.replace("'", "''"), alias.replace("'", "''")),
         columnas=8)
     return [{"delivery": f[0], "message": f[1], "actor": f[2], "tenant": f[3],
              "room": f[4], "lane": f[5], "priority": f[6], "request_id": f[7]}
