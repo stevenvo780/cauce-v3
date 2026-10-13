@@ -15,14 +15,16 @@ export interface AgentQuotaOperationRow {
   created_at: Date; updated_at: Date; claim_token: string | null; claim_epoch: number; worker_id: string | null; live: boolean;
 }
 export type AgentQuotaPlacement = Omit<AgentQuotaSnapshot, 'operation_id' | 'expected_revision'>;
+export type AgentQuotaUnavailableReason = 'quota_reader_unavailable' | 'quota_target_unplaced';
 export async function readAgentQuotaPlacement(client: DatabaseClient, authority: CompanyAuthority,
-  target: { tenant_id: string; alias: string }): Promise<{ placement: AgentQuotaPlacement; reader: boolean }> {
+  target: { tenant_id: string; alias: string }): Promise<{ placement: AgentQuotaPlacement; reader: boolean; reason: AgentQuotaUnavailableReason | null }> {
   const tenant = TenantSchema.parse(target.tenant_id); const alias = AliasSchema.parse(target.alias);
-  const row = (await client.query<AgentQuotaPlacement & { reader: boolean }>(`SELECT agent.company_id,agent.tenant_id,agent.alias,
+  const row = (await client.query<AgentQuotaPlacement & { reader: boolean; harness_reader: boolean }>(`SELECT agent.company_id,agent.tenant_id,agent.alias,
     agent.harness_id,agent.host_id,agent.runtime_mode,agent.container_name,agent.runtime_user,agent.home_directory,
     agent.state_directory,agent.runtime_key,agent.systemd_user,agent.primary_account_id,
+    COALESCE(agent.harness_id IN ('codex','claude','grok'),false) AS harness_reader,
     COALESCE(agent.runtime_mode='container' AND agent.harness_id IN ('codex','claude','grok') AND harness.enabled
-      AND host.enabled AND tenant.enabled AND tenant.retired_at IS NULL AND tenant.purged_at IS NULL
+      AND host.enabled AND agent.enabled AND tenant.enabled AND tenant.retired_at IS NULL AND tenant.purged_at IS NULL
       AND agent.retired_at IS NULL AND agent.purged_at IS NULL,false) AS reader
     FROM agents agent JOIN tenants tenant ON tenant.id=agent.tenant_id
     LEFT JOIN harness_definitions harness ON harness.id=agent.harness_id
@@ -31,8 +33,8 @@ export async function readAgentQuotaPlacement(client: DatabaseClient, authority:
       AND ($4::text IS NULL OR agent.tenant_id=$4) FOR SHARE OF agent,tenant`,
   [tenant, alias, authority.actingCompany, authority.scope === 'tenant' ? authority.homeTenant : null])).rows[0];
   if (!row) throw new StoreError('not_found', 'agent quota target was not found');
-  const { reader, ...placement } = row;
-  return { placement, reader };
+  const { reader, harness_reader: harnessReader, ...placement } = row;
+  return { placement, reader, reason: !harnessReader ? 'quota_reader_unavailable' : !reader ? 'quota_target_unplaced' : null };
 }
 export async function quotaOperationAuthority(client: DatabaseClient, operation: AgentQuotaOperationRow, checkRevision = true) {
   if (checkRevision) await lockFleetRevision(client, Number(operation.expected_revision), operation.company_id);
@@ -60,7 +62,11 @@ export async function persistAgentQuotaObservation(client: DatabaseClient, snaps
   await client.query(`INSERT INTO agent_quota_observations(company_id,tenant_id,alias,agent_snapshot,reader_available,status,captured_at,account_id,sample)
     VALUES($1,$2,$3,$4::jsonb,$5,$6,$7,$8,$9::jsonb) ON CONFLICT(tenant_id,alias) DO UPDATE
     SET agent_snapshot=EXCLUDED.agent_snapshot,reader_available=EXCLUDED.reader_available,status=EXCLUDED.status,
-      captured_at=EXCLUDED.captured_at,account_id=EXCLUDED.account_id,sample=EXCLUDED.sample,updated_at=now()`,
+      captured_at=EXCLUDED.captured_at,account_id=EXCLUDED.account_id,sample=EXCLUDED.sample,updated_at=now()
+    WHERE (agent_quota_observations.agent_snapshot,agent_quota_observations.reader_available,agent_quota_observations.status,
+      agent_quota_observations.captured_at,agent_quota_observations.account_id,agent_quota_observations.sample)
+      IS DISTINCT FROM (EXCLUDED.agent_snapshot,EXCLUDED.reader_available,EXCLUDED.status,
+        EXCLUDED.captured_at,EXCLUDED.account_id,EXCLUDED.sample)`,
   [snapshot.company_id, snapshot.tenant_id, snapshot.alias, JSON.stringify(placement), !unsupported,
     unsupported ? 'unsupported' : receipt.observation_status, receipt?.captured_at ?? null, accountId ?? null, sample === null ? null : JSON.stringify(sample)]);
 }
