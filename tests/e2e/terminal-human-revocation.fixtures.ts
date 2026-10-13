@@ -226,7 +226,8 @@ export class TerminalHumanFixture {
     }
     const statements = {
       disabled: 'UPDATE console_users SET active=false WHERE id=$1::uuid',
-      reader: "UPDATE console_users SET role='reader' WHERE id=$1::uuid",
+      // Since 081 the membership role is the account's: the reader ceiling needs its permissions lowered in the same statement.
+      reader: "WITH lowered AS (UPDATE human_tenant_memberships SET permissions=ARRAY['read'] WHERE human_id=$1::uuid) UPDATE console_users SET role='reader' WHERE id=$1::uuid",
       password: "UPDATE console_users SET password_changed_at=now()+interval '2 seconds' WHERE id=$1::uuid",
     };
     await this.requiredDatabase().pool.query(statements[kind], [terminal.userId]);
