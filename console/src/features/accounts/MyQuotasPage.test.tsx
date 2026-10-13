@@ -413,3 +413,83 @@ it('edita etiqueta y pausa de una cuenta cuyo proveedor ya no se ofrece', async 
   expect(patches).toEqual([{ expected_version: 3, label: 'Sigue editable', enabled: true,
     paused_until: new Date('2026-12-10T08:30').toISOString(), paused_reason: 'mantenimiento' }]);
 });
+
+function accountsThenUnavailable() {
+  let reads = 0;
+  return () => {
+    reads += 1;
+    return reads === 1
+      ? HttpResponse.json({ company_id: 'one', observed_at: '2026-10-11T00:00:00Z', accounts: [account] })
+      : HttpResponse.json({ message: 'unavailable' }, { status: 503 });
+  };
+}
+
+it('un editor de cuenta abierto se bloquea si la relectura falla y conserva el borrador', async () => {
+  const patches: unknown[] = [];
+  server.use(
+    http.get('*/v3/console/quota-accounts', accountsThenUnavailable()),
+    http.get('*/v3/console/quota-environments', emptyEnvironments),
+    http.get('*/v3/console/preferences', () => HttpResponse.json({ version: 1, pinned_quota_accounts: [] })),
+    http.patch('*/v3/console/quota-accounts/subscription', async ({ request }) => {
+      patches.push(await request.json());
+      return HttpResponse.json({ account_id: 'subscription', version: 4 });
+    }),
+  );
+  const user = userEvent.setup();
+  renderWithApi(owner());
+  await waitFor(() => { expect(screen.getByRole('button', { name: 'Editar cuenta' })).toBeEnabled(); });
+  await user.click(screen.getByRole('button', { name: 'Editar cuenta' }));
+  const form = within(await screen.findByRole('form', { name: 'Editar cuenta de cuotas' }));
+  const name = form.getByRole('textbox', { name: 'Nombre de la cuenta' });
+  await user.clear(name);
+  await user.type(name, 'Borrador pendiente');
+  await user.click(screen.getByRole('button', { name: 'Actualizar cuotas y entornos' }));
+  const alert = await screen.findByRole('alert');
+  expect(alert).toHaveTextContent('Este servidor no puede atender la operación ahora');
+  await waitFor(() => { expect(screen.getByRole('button', { name: 'Editar cuenta' })).toBeDisabled(); });
+  expect(form.getByRole('button', { name: 'Guardar cuenta' })).toBeDisabled();
+  fireEvent.submit(screen.getByRole('form', { name: 'Editar cuenta de cuotas' }));
+  await act(async () => { await new Promise(resolve => { setTimeout(resolve, 50); }); });
+  expect(patches).toEqual([]);
+  expect(screen.queryByText('Cuenta actualizada.')).not.toBeInTheDocument();
+  expect(name).toHaveValue('Borrador pendiente');
+  expect(name).toBeDisabled();
+  expect(form.getByRole('button', { name: 'Cancelar' })).toBeEnabled();
+  await user.click(form.getByRole('button', { name: 'Cancelar' }));
+  expect(screen.queryByRole('form', { name: 'Editar cuenta de cuotas' })).not.toBeInTheDocument();
+  expect(patches).toEqual([]);
+});
+
+it('un alta abierta se bloquea si la relectura de cuentas falla y conserva el borrador', async () => {
+  const writes: unknown[] = [];
+  server.use(
+    http.get('*/v3/console/quota-accounts', accountsThenUnavailable()),
+    http.get('*/v3/console/quota-environments', emptyEnvironments),
+    http.get('*/v3/console/preferences', () => HttpResponse.json({ version: 1, pinned_quota_accounts: [] })),
+    http.post('*/v3/console/quota-accounts', async ({ request }) => {
+      writes.push(await request.json());
+      return HttpResponse.json({ account_id: 'new-account', duplicate: false });
+    }),
+  );
+  const user = userEvent.setup();
+  renderWithApi(owner());
+  await waitFor(() => { expect(screen.getByRole('button', { name: 'Registrar cuenta' })).toBeEnabled(); });
+  await user.click(screen.getByRole('button', { name: 'Registrar cuenta' }));
+  const form = within(await screen.findByRole('form', { name: 'Registrar cuenta de cuotas' }));
+  const name = form.getByRole('textbox', { name: 'Nombre de la cuenta' });
+  await user.type(name, 'Borrador de alta');
+  await user.click(screen.getByRole('button', { name: 'Actualizar cuotas y entornos' }));
+  await screen.findByRole('alert');
+  await waitFor(() => { expect(screen.getAllByRole('button', { name: 'Registrar cuenta' })[0]).toBeDisabled(); });
+  expect(form.getByRole('button', { name: 'Registrar cuenta' })).toBeDisabled();
+  fireEvent.submit(screen.getByRole('form', { name: 'Registrar cuenta de cuotas' }));
+  await act(async () => { await new Promise(resolve => { setTimeout(resolve, 50); }); });
+  expect(writes).toEqual([]);
+  expect(screen.queryByText('Cuenta registrada. Crea su entorno para autenticar y consultar.')).not.toBeInTheDocument();
+  expect(name).toHaveValue('Borrador de alta');
+  expect(name).toBeDisabled();
+  expect(form.getByRole('button', { name: 'Cancelar' })).toBeEnabled();
+  await user.click(form.getByRole('button', { name: 'Cancelar' }));
+  expect(screen.queryByRole('form', { name: 'Registrar cuenta de cuotas' })).not.toBeInTheDocument();
+  expect(writes).toEqual([]);
+});
