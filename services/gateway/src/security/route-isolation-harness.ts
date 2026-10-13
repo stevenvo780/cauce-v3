@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Pool } from 'pg';
 import type { FastifyInstance } from 'fastify';
-import { CauceRepository, FleetOperationsRepository, type DatabasePool } from '@cauce/store';
+import { CauceRepository, FleetOperationsRepository, type DatabasePool, type LegacyAdoptionProbe } from '@cauce/store';
 import { startTestCaseDatabase, startTestDatabase, type EmptyTestDatabase, type TestDatabase } from '../../../../tests/helpers/postgres.js';
 import { buildGateway } from '../app.js';
 import { PasswordAuthProvider } from '../password-auth.js';
@@ -31,6 +31,15 @@ import type { RouteIsolationMethod } from './route-isolation-matrix.js';
 import { providerAuthService } from './route-isolation-provider.js';
 import { validateCanaryFixtures } from './route-isolation-canary.js';
 
+export const ISOLATION_OAUTH_ISSUER = 'https://isolation.example.test';
+
+const isolationLegacyProbe: LegacyAdoptionProbe = {
+  withSupervisorFence: async (_targets, work) => work({
+    measure: async () => { throw new Error('isolation legacy measurement unavailable'); },
+    assertHeld: async () => undefined,
+  }),
+};
+
 export interface RegisteredRoute { method: string; url: string }
 export interface IsolationResponse { status: number; body: string; headers: Record<string, string | string[] | undefined> }
 export type IsolationSession = Record<'cookie' | 'origin' | 'x-csrf-token', string>;
@@ -51,9 +60,9 @@ export function assertRouteCoverage(routes: readonly RegisteredRoute[]): void {
   }
 }
 
-export function expandProbe(entry: RouteIsolationEntry, fixture: IsolationCompany, own: IsolationCompany): { url: string; payload?: unknown } {
+export function expandProbe(entry: RouteIsolationEntry, fixture: IsolationCompany, own: IsolationCompany): { url: string; payload?: unknown; headers?: Record<string, string> } {
   const values: Record<string, unknown> = { ...fixture, director: fixture.alias, tenantId: fixture.tenant,
-    ownRoom: own.room, ownTenant: own.tenant, ownAlias: own.ownerAlias };
+    ownRoom: own.room, ownTenant: own.tenant, ownAlias: own.ownerAlias, issuer: ISOLATION_OAUTH_ISSUER };
   const expand = (text: string): string => text.replace(/\{(\w+)\}/gu, (_match, name: string) => {
     const value = values[name];
     if (value === undefined) throw new Error(`missing real fixture ${name} for ${entry.method} ${entry.url}`);
@@ -66,6 +75,7 @@ export function expandProbe(entry: RouteIsolationEntry, fixture: IsolationCompan
     if (typeof value === 'string') {
       const exact = /^\{(\w+)\}$/u.exec(value)?.[1];
       if (exact !== undefined) {
+        if (exact === 'csrf') return value;
         if (values[exact] === undefined) throw new Error(`missing real fixture ${exact} for ${entry.url}`);
         return values[exact];
       }
@@ -75,7 +85,10 @@ export function expandProbe(entry: RouteIsolationEntry, fixture: IsolationCompan
     if (value !== null && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([key, field]) => [key, expandPayload(field)]));
     return value;
   };
-  return { url: expand(probe.url), ...(probe.payload === undefined ? {} : { payload: expandPayload(probe.payload) }) };
+  const headers = probe.headers === undefined ? undefined
+    : Object.fromEntries(Object.entries(probe.headers).map(([key, value]) => [key, expand(value)]));
+  return { url: expand(probe.url), ...(probe.payload === undefined ? {} : { payload: expandPayload(probe.payload) }),
+    ...(headers === undefined ? {} : { headers }) };
 }
 
 export class IsolationHarness {
@@ -88,6 +101,8 @@ export class IsolationHarness {
   fixtures!: { a: IsolationCompany; b: IsolationCompany };
   routes: RegisteredRoute[] = [];
   catalogRoutes: RegisteredRoute[] = [];
+  oauthIssuer = ISOLATION_OAUTH_ISSUER;
+  oauthResource = `${ISOLATION_OAUTH_ISSUER}/mcp`;
   baseUrl = process.env.CAUCE_ISOLATION_BASE_URL;
   terminalCleanup: (() => Promise<void>) | undefined;
 
@@ -111,6 +126,9 @@ export class IsolationHarness {
     };
     initialization.subscribe(listener);
     try {
+      const directory = this.directory;
+      const bootstrapProvider = (namespace: 'bootstrap' | 'normal') => new MtlsAuthProvider(new FleetMtlsIdentityProvider(
+        join(directory, 'base-identities.json'), join(directory, 'fleet-identities.json'), namespace));
       const app = await buildGateway({ pool: this.current.pool, repository: new CauceRepository(this.current.pool), authProvider: provider,
         consoleOrigins: [origin], logger: false, exposeHealthRoutes: true,
         providerAuthService: providerAuthService(this.current.pool),
@@ -118,7 +136,17 @@ export class IsolationHarness {
         contextRepository: { instance_id: 'isolation', repositoryPath: localFixtures.a.contextRepositoryPath },
         fleetOperationsRepository: new FleetOperationsRepository(this.current.pool),
         spaceBackups: { directory: this.directory, projectRoot, python: '/usr/bin/python3' },
-        blobs: { directory: join(this.directory, 'blobs'), maxBytes: 1_048_576 } });
+        blobs: { directory: join(this.directory, 'blobs'), maxBytes: 1_048_576 },
+        bootstrapProviders: { bootstrap: bootstrapProvider('bootstrap'), normal: bootstrapProvider('normal') },
+        signedFleetAuthorityClient: new SignedFleetAuthorityClient(join(directory, 'authority.sock'), { ownerUid: 0, peerUid: 0 }),
+        legacyFleetAdoptionService: createLegacyFleetAdoptionService(this.current.pool, isolationLegacyProbe) });
+      const tokens = new OAuthTokens({ issuer: ISOLATION_OAUTH_ISSUER, resource: `${ISOLATION_OAUTH_ISSUER}/mcp`, kid: 'isolation',
+        signingKey: generateKeyPairSync('ec', { namedCurve: 'prime256v1' }).privateKey });
+      const store = new PostgresOAuthStore(this.current.pool, ISOLATION_OAUTH_ISSUER, provider.verifyCredentialStamp.bind(provider));
+      await registerOAuthAuthorizationServer(app, { tokens, store, clients: new OAuthClients(), passwordAuth: provider,
+        session: createOAuthPasswordSession({ provider }) });
+      registerClientDelegationRoutes(app, this.current.pool, provider, { issuer: ISOLATION_OAUTH_ISSUER,
+        resource: tokens.resource, verifyCredentialStamp: provider.verifyCredentialStamp.bind(provider) });
       this.app = app;
       const terminal = await mountIsolationTerminal(app, this.current.pool, provider, origin, localFixtures);
       this.terminalCleanup = terminal.cleanup;

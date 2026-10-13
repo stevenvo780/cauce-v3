@@ -1,5 +1,7 @@
 import { afterAll, describe, expect, it } from 'vitest';
 import { randomUUID } from 'node:crypto';
+import { clientConnectionReference } from '@cauce/store';
+import { sha256Hex } from '@cauce/protocol';
 import { preparePostgresSuite } from '../../../../packages/store/test/postgres-suite.js';
 import { IsolationHarness, assertRouteCoverage, expandProbe, routeKey, type IsolationSession } from './route-isolation-harness.js';
 import { ROUTE_ISOLATION_MATRIX, type RouteIsolationEntry } from './route-isolation-matrix.js';
@@ -34,14 +36,45 @@ preparePostgresSuite(import.meta.url, async () => {
   if (hello.status !== 200) throw new Error(`own B lease issuance failed (${String(hello.status)})`);
   const lease = JSON.parse(hello.body) as { epoch: number; connection_token: string };
   Object.assign(harness.fixtures.b, { connectionInstance, connectionEpoch: lease.epoch, connectionToken: lease.connection_token });
+  const admin = harness.current.adminPool;
+  const issuer = harness.oauthIssuer;
+  const resource = harness.oauthResource;
+  for (const side of [harness.fixtures.a, harness.fixtures.b]) {
+    await admin.query(`INSERT INTO human_external_identities(human_id,provider,namespace,subject)
+      VALUES($1::uuid,'oauth',$2,$3) ON CONFLICT (provider,namespace,subject) DO NOTHING`, [side.human, issuer, side.human]);
+  }
+  const bindingRow = (await admin.query<{ id: string; revision: string }>(
+    `SELECT id::text,revision::text FROM human_external_identities
+     WHERE human_id=$1::uuid AND provider='oauth' AND namespace=$2 AND subject=$3`,
+    [harness.fixtures.b.human, issuer, harness.fixtures.b.human])).rows[0];
+  const membershipRow = (await admin.query<{ revision: string }>(
+    'SELECT revision::text FROM human_tenant_memberships WHERE human_id=$1 AND tenant_id=$2',
+    [harness.fixtures.b.human, harness.fixtures.b.tenant])).rows[0];
+  if (!bindingRow || !membershipRow) throw new Error('isolation OAuth fixture requires a B binding and membership');
+  const grant = randomUUID();
+  await admin.query(`INSERT INTO cauce_oauth_grants(id,human_id,issuer,resource,client_id,redirect_uri,scopes,
+      binding_id,binding_revision,membership_revision,tenant_id,actor_alias,credential_stamp,expires_at)
+    VALUES($1,$2,$3,$4,'isolation-b-client','http://127.0.0.1:8911/callback',ARRAY['cauce.read'],
+      $5,$6,$7,$8,$9,$10,clock_timestamp()+interval '1 day')`,
+  [grant, harness.fixtures.b.human, issuer, resource, bindingRow.id, bindingRow.revision, membershipRow.revision,
+    harness.fixtures.b.tenant, harness.fixtures.b.ownerAlias, 'a'.repeat(43)]);
+  const binding = randomUUID();
+  await admin.query(`INSERT INTO human_oauth_client_delegations(id,local_oauth_grant_id,human_id,tenant_id,declared_by_human_id,label)
+    VALUES($1,$2,$3,$4,$3,'isolation-b')`, [binding, grant, harness.fixtures.b.human, harness.fixtures.b.tenant]);
+  Object.assign(harness.fixtures.b, { bootstrapProbe: randomUUID(), binding, grant,
+    connectionRef: clientConnectionReference(issuer, resource, harness.fixtures.b.human, harness.fixtures.b.tenant, grant) });
 }, 120_000);
 afterAll(async () => { await harness.close(); });
 
 function foreignData(body: string, entry: RouteIsolationEntry): boolean {
   const fixture = harness.fixtures.b;
+  const optional = fixture as unknown as Record<string, unknown>;
+  const extra = ['binding', 'grant', 'bootstrapProbe', 'connectionRef']
+    .map((field) => optional[field]).filter((value): value is string => typeof value === 'string');
   const markers = [fixture.company, fixture.tenant, fixture.alias, fixture.human, fixture.host,
     fixture.account, fixture.environment, fixture.backup, fixture.message, fixture.delivery, fixture.blob, fixture.operation,
     fixture.invitation, fixture.quotaOperation, fixture.trace, fixture.gate, fixture.session, fixture.nativeOperation,
+    ...extra,
     ...(fixture.providerOperation === undefined ? [] : [fixture.providerOperation]), ...fixture.privateSentinels];
   let content = body;
   if (entry.errorMessageEcho !== undefined && body.startsWith('{')) {
@@ -231,18 +264,39 @@ describe('real gateway exhaustive route isolation under signed owner sessions', 
   });
 
   for (const entry of ROUTE_ISOLATION_MATRIX.filter(route => route.probe !== undefined && route.kind !== 'websocket' && route.kind !== 'public')) {
-    it(`${entry.method} ${entry.url} denies or filters company B without changing its rows`, async context => {
+    it(`${entry.method} ${entry.url} denies or filters company B without changing its rows`, async () => {
       if (!harness.routes.some(route => routeKey(route.method, route.url) === routeKey(entry.method, entry.url))) {
-        context.skip();
-        return;
+        throw new Error(`route not served by the isolation gateway: ${entry.method} ${entry.url}`);
       }
       const probe = expandProbe(entry, harness.fixtures.b, harness.fixtures.a);
+      const headers: Record<string, string> = { ...ownerA, ...(probe.headers ?? {}) };
+      if (harness.baseUrl !== undefined && headers.origin === harness.oauthIssuer) {
+        headers.origin = new URL(harness.baseUrl).origin;
+      }
+      let payload = probe.payload;
+      const withCsrf = (value: unknown): unknown => {
+        if (value === '{csrf}') return ownerA['x-csrf-token'];
+        if (Array.isArray(value)) return value.map(withCsrf);
+        if (value !== null && typeof value === 'object') {
+          return Object.fromEntries(Object.entries(value).map(([key, field]) => [key, withCsrf(field)]));
+        }
+        return value;
+      };
+      payload = withCsrf(payload);
+      if (entry.url === '/v3/console/fleet/legacy-adoption/apply' && payload !== null && typeof payload === 'object') {
+        const revision = Number((await harness.snapshotPool.query<{ revision: string }>(
+          'SELECT COALESCE(max(id),0)::text AS revision FROM config_revisions')).rows[0]?.revision ?? 0);
+        const preview = (payload as { preview: Record<string, unknown> }).preview;
+        preview.revision = revision;
+        const { plan_sha256: _plan, ...body } = preview;
+        preview.plan_sha256 = sha256Hex(body);
+      }
       const before = await snapshotCompany(harness.snapshotPool, harness.fixtures.b);
       try {
-        const response = await harness.request(entry.method, probe.url, ownerA, probe.payload);
+        const response = await harness.request(entry.method, probe.url, headers, payload);
         assertIsolationResponse(entry, response.status, response.body);
         if (entry.method === 'GET') {
-          const head = await harness.request('HEAD', probe.url, ownerA);
+          const head = await harness.request('HEAD', probe.url, headers);
           assertIsolationResponse(entry, head.status, '');
         }
       } finally {

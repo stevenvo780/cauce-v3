@@ -4,6 +4,7 @@ export type RouteIsolationKind = 'public' | 'scoped' | 'actor' | 'host' | 'webso
 export interface RouteIsolationProbe {
   readonly url: string;
   readonly payload?: unknown;
+  readonly headers?: Readonly<Record<string, string>>;
   readonly expectedStatus?: readonly number[];
 }
 
@@ -36,6 +37,11 @@ function host(method: RouteIsolationMethod, url: string, target: string): RouteI
   return { method, url, kind: 'host', reason: HOST_SCOPE, probe: { url: target, payload: {}, expectedStatus: DENIED } };
 }
 
+function hostProbe(method: RouteIsolationMethod, url: string, probe: RouteIsolationProbe): RouteIsolationEntry {
+  return { method, url, kind: 'host', reason: HOST_SCOPE,
+    probe: { ...probe, expectedStatus: probe.expectedStatus ?? DENIED } };
+}
+
 function publicRoute(method: RouteIsolationMethod, url: string, reason: string): RouteIsolationEntry {
   return { method, url, kind: 'public', reason };
 }
@@ -56,6 +62,20 @@ const DOCUMENT_WRITE = { content: '# Aislamiento\n', create_if_absent: true, rea
 const PROFILE_WRITE = { expected_revision: 1, reason: GOVERNANCE_REASON,
   profile: { purpose: 'isolation', role_summary: 'isolation', human_brief: '', responsibilities: [],
     restrictions: [], tools: [], operating_rules: [] } };
+const LEGACY_TARGETS = [{ tenant_id: '{tenant}', alias: '{alias}' }];
+const LEGACY_APPLY = { preview: { revision: 0, targets: LEGACY_TARGETS, rows: [], blockers: [],
+  can_apply: true, plan_sha256: '{blob}' } };
+const BOOTSTRAP_PHASE = { 'x-cauce-bootstrap-phase': 'bootstrap' } as const;
+const BOOTSTRAP_CREATE = { operation_id: '{operation}', phase: 'bootstrap', action: 'verify',
+  nonce: '{blob}', account_id: '{account}', profile_revision: '{revision}' };
+const BOOTSTRAP_CLAIM = { operation_id: '{operation}', phase: 'bootstrap', runtime_key: '{alias}' };
+const BOOTSTRAP_ACK = { operation_id: '{operation}', phase: 'bootstrap', runtime_key: '{alias}',
+  nonce: '{blob}', claim_token: '{blob}', account_id: '{account}', profile_revision: '{revision}',
+  harness_id: 'codex', model_id: null, documents: [{ name: 'AGENTS.md', sha256: '{blob}', native_revision: null }],
+  reply: null, harness_started: false };
+const DELEGATION_CREATE_ID = '22222222-2222-4222-8222-222222222222';
+const DELEGATION_RENAME_ID = '33333333-3333-4333-8333-333333333333';
+const DELEGATION_REVOKE_ID = '44444444-4444-4444-8444-444444444444';
 
 // Optional planes remain explicit so enabling one cannot silently bypass route coverage.
 export const ROUTE_ISOLATION_MATRIX: readonly RouteIsolationEntry[] = [
@@ -300,19 +320,22 @@ export const ROUTE_ISOLATION_MATRIX: readonly RouteIsolationEntry[] = [
   { method: 'POST', url: '/v3/terminal/relay/sessions/:sid/close', kind: 'host',
     reason: 'El relay exige certificado mTLS; el rechazo 401 demuestra admisión de identidad, sin ejecutar acceso por tenant.',
     probe: { url: '/v3/terminal/relay/sessions/{session}/close', payload: {}, expectedStatus: [401] } },
-  scoped('POST', '/v3/console/fleet/legacy-adoption/preview', '/v3/console/fleet/legacy-adoption/preview'),
-  scoped('POST', '/v3/console/fleet/legacy-adoption/apply', '/v3/console/fleet/legacy-adoption/apply'),
-  host('POST', '/v3/bootstrap/probes', '/v3/bootstrap/probes'),
-  host('GET', '/v3/bootstrap/probes/:probe_id', '/v3/bootstrap/probes/{bootstrapProbe}'),
-  host('POST', '/v3/bootstrap/claim', '/v3/bootstrap/claim'),
-  host('POST', '/v3/bootstrap/probes/:probe_id/ack', '/v3/bootstrap/probes/{bootstrapProbe}/ack'),
-  host('GET', '/v3/bootstrap/profile', '/v3/bootstrap/profile'),
-  host('GET', '/v3/bootstrap/state', '/v3/bootstrap/state'),
-  host('GET', '/v3/bootstrap/credentials/:kind', '/v3/bootstrap/credentials/codex'),
-  actor('GET', '/v3/console/mcp/client-delegations'),
-  scoped('POST', '/v3/console/mcp/client-delegations', '/v3/console/mcp/client-delegations'),
-  scoped('POST', '/v3/console/mcp/client-delegations/:binding_id/rename', '/v3/console/mcp/client-delegations/{binding}/rename'),
-  scoped('POST', '/v3/console/mcp/client-delegations/:binding_id/revoke', '/v3/console/mcp/client-delegations/{binding}/revoke'),
+  scoped('POST', '/v3/console/fleet/legacy-adoption/preview', '/v3/console/fleet/legacy-adoption/preview', { targets: LEGACY_TARGETS }),
+  scoped('POST', '/v3/console/fleet/legacy-adoption/apply', '/v3/console/fleet/legacy-adoption/apply', LEGACY_APPLY),
+  hostProbe('POST', '/v3/bootstrap/probes', { url: '/v3/bootstrap/probes', payload: BOOTSTRAP_CREATE }),
+  hostProbe('GET', '/v3/bootstrap/probes/:probe_id', { url: '/v3/bootstrap/probes/{bootstrapProbe}', headers: BOOTSTRAP_PHASE }),
+  hostProbe('POST', '/v3/bootstrap/claim', { url: '/v3/bootstrap/claim', payload: BOOTSTRAP_CLAIM }),
+  hostProbe('POST', '/v3/bootstrap/probes/:probe_id/ack', { url: '/v3/bootstrap/probes/{bootstrapProbe}/ack', payload: BOOTSTRAP_ACK }),
+  hostProbe('GET', '/v3/bootstrap/profile', { url: '/v3/bootstrap/profile?operation_id={operation}', headers: BOOTSTRAP_PHASE }),
+  hostProbe('GET', '/v3/bootstrap/state', { url: '/v3/bootstrap/state?operation_id={operation}', headers: BOOTSTRAP_PHASE }),
+  hostProbe('GET', '/v3/bootstrap/credentials/:kind', { url: '/v3/bootstrap/credentials/mtls', headers: BOOTSTRAP_PHASE }),
+  actor('GET', '/v3/console/mcp/client-delegations', ACTOR_SCOPE, { url: '/v3/console/mcp/client-delegations', expectedStatus: [200] }),
+  scoped('POST', '/v3/console/mcp/client-delegations', '/v3/console/mcp/client-delegations',
+    { connection_ref: '{connectionRef}', label: 'isolation', request_id: DELEGATION_CREATE_ID }),
+  scoped('POST', '/v3/console/mcp/client-delegations/:binding_id/rename', '/v3/console/mcp/client-delegations/{binding}/rename',
+    { label: 'isolation', request_id: DELEGATION_RENAME_ID }),
+  scoped('POST', '/v3/console/mcp/client-delegations/:binding_id/revoke', '/v3/console/mcp/client-delegations/{binding}/revoke',
+    { request_id: DELEGATION_REVOKE_ID }),
   publicRoute('GET', '/.well-known/oauth-authorization-server', 'Metadatos públicos del servidor OAuth.'),
   publicRoute('GET', '/oauth/jwks', 'Claves públicas de verificación OAuth.'),
   publicRoute('OPTIONS', '/.well-known/oauth-authorization-server', 'Preflight público de los metadatos OAuth.'),
@@ -325,6 +348,10 @@ export const ROUTE_ISOLATION_MATRIX: readonly RouteIsolationEntry[] = [
   publicRoute('POST', '/oauth/login', 'Login del flujo OAuth; no acepta seleccionar una empresa ajena.'),
   actor('POST', '/oauth/consent', 'Consentimiento ligado al humano autenticado, solicitud y CSRF.'),
   publicRoute('POST', '/oauth/token', 'Intercambio OAuth protegido por autorización de cliente, código y PKCE.'),
-  actor('GET', '/oauth/grants', 'Solo lista las autorizaciones OAuth del humano autenticado.'),
-  scoped('POST', '/oauth/grants/:id/revoke', '/oauth/grants/{grant}/revoke'),
+  actor('GET', '/oauth/grants', 'Solo lista las autorizaciones OAuth del humano autenticado.',
+    { url: '/oauth/grants', expectedStatus: [200], headers: { origin: '{issuer}' } }),
+  { method: 'POST', url: '/oauth/grants/:id/revoke', kind: 'scoped',
+    reason: 'Revocar la autorización de B no inserta revocación alguna; la huella de B lo verifica.',
+    probe: { url: '/oauth/grants/{grant}/revoke', payload: { csrf: '{csrf}' },
+      headers: { origin: '{issuer}' }, expectedStatus: [303] } },
 ];
