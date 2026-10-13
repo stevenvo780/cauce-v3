@@ -1,3 +1,6 @@
+SELECT set_config('cauce.migration_lock_timeout',current_setting('lock_timeout'),true);
+SELECT set_config('lock_timeout',(SELECT LEAST(NULLIF(setting::integer,0),5000)::text||'ms'
+  FROM pg_settings WHERE name='lock_timeout'),true);
 SELECT pg_advisory_xact_lock(783_003_003);
 SELECT pg_advisory_xact_lock(783_003_063);
 -- The source-only directors are exactly the agents 063 registered, by its backfill or by a registration;
@@ -9,6 +12,15 @@ BEGIN
   IF EXISTS (SELECT version FROM schema_migrations WHERE version>'063_company_registration_director.sql'
     UNION ALL SELECT version FROM schema_migration_ledger WHERE version>'063_company_registration_director.sql') THEN
     RAISE EXCEPTION 'cannot downgrade schema 063 while a later migration is present';
+  END IF;
+  IF EXISTS (SELECT 1 FROM schema_migrations WHERE version='063_company_registration_director.sql') <>
+      EXISTS (SELECT 1 FROM schema_migration_ledger WHERE version='063_company_registration_director.sql')
+    OR (to_regprocedure('public.cauce_runtime_grants_063()') IS NOT NULL
+      AND NOT EXISTS (SELECT 1 FROM schema_migrations WHERE version='063_company_registration_director.sql'))
+    OR EXISTS (SELECT 1 FROM schema_migration_ledger WHERE version='063_company_registration_director.sql'
+      AND (source_origin<>'applied-atomically'
+        OR source_sha256<>'125a6ec8754595d72f73cb2804dd51173a1f3d6be1fddf49dca28f4fc1aba2be')) THEN
+    RAISE EXCEPTION 'cannot downgrade schema 063 from an inconsistent atomic ledger state';
   END IF;
   IF EXISTS (SELECT 1 FROM company_system_principals principal JOIN agents agent
       ON agent.tenant_id=principal.tenant_id AND agent.alias=principal.principal_alias
@@ -39,3 +51,4 @@ DROP FUNCTION cauce_runtime_grants_063();
 SELECT cauce_runtime_grants_055();
 DELETE FROM schema_migration_ledger WHERE version='063_company_registration_director.sql';
 DELETE FROM schema_migrations WHERE version='063_company_registration_director.sql';
+SELECT set_config('lock_timeout',current_setting('cauce.migration_lock_timeout'),true);

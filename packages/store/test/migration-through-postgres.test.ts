@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { readdir } from 'node:fs/promises';
 import { afterAll, describe, expect, it } from 'vitest';
 import {
   applyMigrations, applyMigrationsThrough, migrationSourcesForApply, type DatabasePool,
@@ -12,12 +13,6 @@ const version043 = '043_blob_tenant_entitlements.sql';
 const version044 = '044_human_mcp_identity.sql';
 const version045 = '045_mcp_oauth_authorization.sql';
 const version046 = '046_human_client_provenance.sql';
-const laterVersions = ['047_agent_preferences.sql', '048_ui_fleet_lifecycle.sql', '049_ui_execution_preferences.sql', '050_fleet_hosts.sql',
-  '051_companies.sql', '052_runtime_roles.sql', '053_company_isolation.sql', '054_company_admins.sql',
-  '055_company_registration.sql', '056_company_office.sql', '057_quota_environments.sql', '058_context_versions.sql',
-  '059_host_enrollment.sql', '060_space_backups.sql', '061_people_admin_history.sql', '062_authority_read_guard.sql',
-  '063_company_registration_director.sql', '064_company_context_anchor.sql', '065_runtime_grants_replay.sql',
-  '066_runtime_hardening.sql', '067_context_history_immutable.sql'];
 const preferenceTables = ['console_agent_favorites', 'agent_appearances'];
 const provenanceTables = [
   'human_oauth_client_delegations',
@@ -55,8 +50,9 @@ describe('bounded migration runner', () => {
         ORDER BY migration.version`,
     );
     const sources = await migrationSourcesForApply();
-    expect(before.rows.map((row) => row.version)).toEqual(sources.map((source) => source.version));
-    expect(before.rows.at(-1)?.version).toBe(laterVersions.at(-1));
+    const expectedVersions = await bundledVersions();
+    expect(before.rows.map((row) => row.version)).toEqual(expectedVersions);
+    expect(sources.map((source) => source.version)).toEqual(expectedVersions);
     const tablesBefore = await pool.query<{ name: string }>(
       `SELECT tablename AS name FROM pg_tables WHERE schemaname='public' ORDER BY tablename`,
     );
@@ -96,6 +92,7 @@ describe('bounded migration runner', () => {
     try {
       await applyMigrationsThrough(historical.pool, version043);
       const sources = await migrationSourcesForApply();
+      const laterVersions = (await bundledVersions()).filter((version) => version > version046);
       const cutoffIndex = sources.findIndex((migration) => migration.version === version043);
       expect(cutoffIndex).toBeGreaterThanOrEqual(0);
       const prefix = sources.slice(0, cutoffIndex + 1);
@@ -167,6 +164,12 @@ describe('bounded migration runner', () => {
     }
   });
 });
+
+async function bundledVersions(): Promise<string[]> {
+  return (await readdir(new URL('../migrations/', import.meta.url)))
+    .filter((name) => /^\d{3}_[a-z0-9_]+[.]sql$/u.test(name))
+    .sort();
+}
 
 async function relationExists(targetPool: DatabasePool, name: string): Promise<boolean> {
   const result = await targetPool.query<{ exists: boolean }>(

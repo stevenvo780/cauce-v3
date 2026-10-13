@@ -1,3 +1,6 @@
+SELECT set_config('cauce.migration_lock_timeout',current_setting('lock_timeout'),true);
+SELECT set_config('lock_timeout',(SELECT LEAST(NULLIF(setting::integer,0),5000)::text||'ms'
+  FROM pg_settings WHERE name='lock_timeout'),true);
 SELECT pg_advisory_xact_lock(783_003_003);
 SELECT pg_advisory_xact_lock(783_003_065);
 DO $$
@@ -20,3 +23,4 @@ $$;
 DROP FUNCTION IF EXISTS cauce_runtime_grants_065();
 DELETE FROM schema_migration_ledger WHERE version='065_runtime_grants_replay.sql';
 DELETE FROM schema_migrations WHERE version='065_runtime_grants_replay.sql';
+SELECT set_config('lock_timeout',current_setting('cauce.migration_lock_timeout'),true);
