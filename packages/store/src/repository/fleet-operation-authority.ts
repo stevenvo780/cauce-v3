@@ -43,16 +43,23 @@ export async function resolveFleetAuthority(
   return authority;
 }
 
-/** A selected company needs durable platform authority; a tenant operator controls only its rooms. */
+/** A company role reaches only the existing tenants of its acting company; a tenant operator controls only its rooms. */
+export async function assertFleetTargetAuthority(
+  client: DatabaseClient, authority: CompanyAuthority, tenant: string, target: FleetTarget, control = true,
+): Promise<void> {
+  if (authority.scope === 'company' || authority.scope === 'platform') {
+    const owner = (await client.query<{ company_id: string }>('SELECT company_id FROM tenants WHERE id=$1', [target.tenant_id])).rows[0];
+    if (owner?.company_id !== authority.actingCompany) outsideAuthority();
+  } else if (target.tenant_id !== tenant || authority.scope !== 'tenant'
+      || (control && (authority.role !== 'tenant_operator' || target.resource !== 'room'))) outsideAuthority();
+}
+
+/** A selected company needs durable platform authority. */
 export async function assertFleetAuthority(
   client: DatabaseClient, tenant: string, alias: string, target: FleetTarget, control = true, subject?: string, scope?: FleetAuthorityScope,
 ): Promise<CompanyAuthority> {
   const authority = await resolveFleetAuthority(client, tenant, alias, subject, scope);
-  if (authority.scope === 'company' || authority.scope === 'platform') {
-    const owner = (await client.query<{ company_id: string }>('SELECT company_id FROM tenants WHERE id=$1', [target.tenant_id])).rows[0];
-    if (owner !== undefined && owner.company_id !== authority.actingCompany) outsideAuthority();
-  } else if (target.tenant_id !== tenant || authority.scope !== 'tenant'
-      || (control && (authority.role !== 'tenant_operator' || target.resource !== 'room'))) outsideAuthority();
+  await assertFleetTargetAuthority(client, authority, tenant, target, control);
   return authority;
 }
 /**

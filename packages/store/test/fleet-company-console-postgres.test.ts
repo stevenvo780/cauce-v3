@@ -74,7 +74,7 @@ describe('fleet routes bound to the verified selected company', () => {
     expect(own.statusCode).toBe(202);
     const read = (session: Session, url: string) => app.inject({ method: 'GET', url, headers: { cookie: session.cookie } });
     expect((await read(selected, `${PATH}/${receipt.operation_id}`)).statusCode).toBe(200);
-    expect((await read(home, `${PATH}/${receipt.operation_id}`)).statusCode).toBe(403);
+    expect((await read(home, `${PATH}/${receipt.operation_id}`)).statusCode).toBe(404);
     expect((await read(selected, `${PATH}/recent`)).json<{ operations: { id: string }[] }>().operations.map(row => row.id))
       .toEqual([receipt.operation_id]);
     expect((await read(selected, `${PATH}?resource=room&tenant_id=PraxisHub&room_id=fleet-praxis`)).statusCode).toBe(200);

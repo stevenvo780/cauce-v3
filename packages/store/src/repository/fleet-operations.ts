@@ -1,6 +1,7 @@
 import { sha256Hex, type FleetOperation, type FleetOperationPreview, type FleetOperationRequest, type FleetTarget } from '@cauce/protocol';
 import type { DatabaseClient, DatabasePool } from '../db.js';
-import { assertFleetAuthority, fleetRequest, lockFleetRevision, recordFleetEvent, resolveFleetAuthority, validateFleetTarget, type FleetAuthorityScope } from './fleet-operation-authority.js';
+import { assertFleetAuthority, assertFleetTargetAuthority, fleetRequest, lockFleetRevision, recordFleetEvent, resolveFleetAuthority,
+  validateFleetTarget, type FleetAuthorityScope } from './fleet-operation-authority.js';
 import { FleetOperationError, publicFleetOperation, type FleetOperationRow } from './fleet-operation-contracts.js';
 import { FleetOperationExecution } from './fleet-operation-execution.js';
 import { assertFleetHumanAuthority, assertFleetOperationAuthority, loadFleetOrigin } from './fleet-operation-human.js';
@@ -75,21 +76,24 @@ export class FleetOperationsRepository extends FleetOperationExecution {
       throw error;
     }
   }
+  /** An operation of another company reads as absent, even when its target tenant has since moved here. */
   async get(tenant: string, alias: string, id: string, actorSubject?: string): Promise<FleetOperation> {
     return this.transaction(async (client) => {
-      const row = (await client.query<FleetOperationRow>('SELECT * FROM fleet_operations WHERE id=$1', [id])).rows[0];
-      if (!row) throw new FleetOperationError('not_found', 'fleet operation was not found');
       await assertFleetHumanAuthority(client, tenant, alias, actorSubject, false);
-      await assertFleetAuthority(client, tenant, alias, row.target, false, actorSubject, this.options.authorityScope);
+      const authority = await resolveFleetAuthority(client, tenant, alias, actorSubject, this.options.authorityScope);
+      const row = (await client.query<FleetOperationRow>('SELECT * FROM fleet_operations WHERE id=$1 AND company_id=$2',
+        [id, authority.actingCompany])).rows[0];
+      if (!row) throw new FleetOperationError('not_found', 'fleet operation was not found');
+      await assertFleetTargetAuthority(client, authority, tenant, row.target, false);
       return publicFleetOperation(await loadFleetOrigin(client, row));
     });
   }
   async list(tenant: string, alias: string, target: FleetTarget, actorSubject?: string): Promise<FleetOperation[]> {
     return this.transaction(async (client) => {
       await assertFleetHumanAuthority(client, tenant, alias, actorSubject, false);
-      await assertFleetAuthority(client, tenant, alias, target, false, actorSubject, this.options.authorityScope);
-      const rows = await client.query<FleetOperationRow>(`SELECT * FROM fleet_operations WHERE target_key=$1
-        ORDER BY created_at DESC,id DESC LIMIT 100`, [sha256Hex(target)]);
+      const authority = await assertFleetAuthority(client, tenant, alias, target, false, actorSubject, this.options.authorityScope);
+      const rows = await client.query<FleetOperationRow>(`SELECT * FROM fleet_operations WHERE target_key=$1 AND company_id=$2
+        ORDER BY created_at DESC,id DESC LIMIT 100`, [sha256Hex(target), authority.actingCompany]);
       const operations: FleetOperation[] = [];
       for (const row of rows.rows) operations.push(publicFleetOperation(await loadFleetOrigin(client, row)));
       return operations;
@@ -123,7 +127,9 @@ export class FleetOperationsRepository extends FleetOperationExecution {
       const row = (await client.query<FleetOperationRow>('SELECT * FROM fleet_operations WHERE id=$1 FOR UPDATE', [id])).rows[0];
       if (!row) throw new FleetOperationError('not_found', 'fleet operation was not found');
       await assertFleetHumanAuthority(client, tenant, alias, actorSubject);
-      await assertFleetAuthority(client, tenant, alias, row.target, true, actorSubject, this.options.authorityScope);
+      const authority = await resolveFleetAuthority(client, tenant, alias, actorSubject, this.options.authorityScope);
+      if (row.company_id !== authority.actingCompany) throw new FleetOperationError('not_found', 'fleet operation was not found');
+      await assertFleetTargetAuthority(client, authority, tenant, row.target, true);
       await assertFleetOperationAuthority(client, row);
       if (Number(row.version) !== expected) throw new FleetOperationError('conflict', 'operation version changed');
       if (row.status === 'cancelled' || row.status === 'succeeded') throw new FleetOperationError('conflict', 'operation is terminal');

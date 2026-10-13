@@ -82,6 +82,9 @@ describe('fleet authority decided by the company role of a verified person', () 
     }
     expect(await allowed('PraxisHub', 'company_admin', praxis, true, actors.leon)).toBe(true);
     expect(await allowed('Steven', 'kant', praxis, false, actors.steven)).toBe(false);
+    for (const [tenant, alias, human] of [['Steven', 'kant', actors.steven], ['Miguel', 'janus', actors.miguel]] as const) {
+      expect(await allowed(tenant, alias, { resource: 'tenant', tenant_id: 'Absent' }, false, human)).toBe(false);
+    }
     // Without a verified person the hub alias, and the agent Miguel/janus, stay at tenant authority.
     expect(await allowed('Steven', 'company_admin', { resource: 'agent', tenant_id: 'Steven', alias: 'kant' }, true)).toBe(false);
     expect(await allowed('Steven', 'company_admin', { resource: 'room', tenant_id: 'Steven', room_id: 'company-empty' }, true)).toBe(true);
@@ -165,12 +168,27 @@ describe('fleet authority decided by the company role of a verified person', () 
     expect((await selected.get('Steven', 'kant', foreign.id, origin)).id).toBe(foreign.id);
     expect((await selected.list('Steven', 'kant', praxis.target, origin)).map(row => row.id)).toEqual([foreign.id]);
     await expect(repository.enqueue('Steven', 'kant', praxis, origin)).rejects.toMatchObject({ code: 'forbidden' });
-    await expect(selected.get('Steven', 'kant', home.id, origin)).rejects.toMatchObject({ code: 'forbidden' });
+    await expect(selected.get('Steven', 'kant', home.id, origin)).rejects.toMatchObject({ code: 'not_found' });
     await expect(repository.forCompany('praxis').preview('Miguel', 'janus', praxis, subject(actors.miguel)))
       .rejects.toMatchObject({ code: 'forbidden' });
     await expect(repository.forCompany('praxis').preview('Steven', 'kant', praxis)).rejects.toMatchObject({ code: 'forbidden' });
     await expect(selected.listRecent('Miguel', 'janus', 50, subject(actors.miguel))).rejects.toMatchObject({ code: 'forbidden' });
     await expect(selected.cancel('Steven', 'kant', foreign.id, 0, origin)).resolves.toMatchObject({ status: 'cancelled' });
+  });
+
+  it('reads and controls only the operations recorded in the acting company, whatever company owns the target now', async () => {
+    const repository = new FleetOperationsRepository(pool, { controllerHost: 'praxis-host' });
+    const request = retire({ resource: 'room', tenant_id: 'Steven', room_id: 'company-empty' }, 'moved-room');
+    const id = (await admin.query<{ id: string }>(
+      `INSERT INTO fleet_operations(actor_tenant,actor_alias,target,target_key,cohort_key,executor_host,kind,request,request_hash,
+        idempotency_key,expected_revision,steps,company_id)
+       VALUES('PraxisHub','company_admin',$1::jsonb,$2,$2,'praxis-host','retire',$3::jsonb,$4,$5,0,'[]'::jsonb,'praxis') RETURNING id`,
+      [JSON.stringify(request.target), sha256Hex(request.target), JSON.stringify(request), sha256Hex(request), request.idempotency_key])).rows[0]?.id ?? '';
+    const miguel = subject(actors.miguel);
+    await expect(repository.get('Miguel', 'janus', id, miguel)).rejects.toMatchObject({ code: 'not_found' });
+    expect(await repository.list('Miguel', 'janus', request.target, miguel)).toEqual([]);
+    await expect(repository.cancel('Miguel', 'janus', id, 0, miguel)).rejects.toMatchObject({ code: 'not_found' });
+    expect((await pool.query('SELECT status FROM fleet_operations WHERE id=$1', [id])).rows).toEqual([{ status: 'queued' }]);
   });
 
   it('lists recent operations of the actor company, or of its tenant below company authority', async () => {
