@@ -4,7 +4,7 @@ import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdir
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { greenGatesReceipt, releaseGateCommands, releaseGatesScript, type GatesReceipt } from './deploy-gates-fixtures.js';
+import { gatesRepository, greenGatesReceipt, releaseGateCommands, releaseGatesScript, type GatesReceipt } from './deploy-gates-fixtures.js';
 
 const root = resolve(import.meta.dirname, '../..');
 const commit = '0123456789abcdef0123456789abcdef01234567';
@@ -626,61 +626,7 @@ describe('deploy migrator under live traffic', () => {
 });
 
 describe('release gates receipt', () => {
-  const pnpm = String.raw`#!/usr/bin/env node
-const fs = require('node:fs');
-const gate = process.argv[2];
-fs.appendFileSync(process.env.MOCK_PNPM_LOG, gate + '\n');
-console.log('ran ' + gate);
-process.exit(gate === process.env.MOCK_RED_GATE ? 3 : 0);
-`;
-  const python3 = String.raw`#!/usr/bin/env node
-const fs = require('node:fs');
-const { spawnSync } = require('node:child_process');
-const args = process.argv.slice(2);
-const pytest = args[0] === '-m' && args[1] === 'pytest'
-  && args.includes('ops/tests/test_fleet_orphan_sweep.py')
-  && args.includes('ops/tests/test_fleet_executor_container.py');
-if (pytest) {
-  fs.appendFileSync(process.env.MOCK_PNPM_LOG, 'orphan\n');
-  process.exit(process.env.MOCK_RED_GATE === 'orphan' ? 3 : 0);
-}
-const result = spawnSync('/usr/bin/python3', args, { stdio: 'inherit' });
-process.exit(result.status === null ? 1 : result.status);
-`;
-
-  function repositoryWithGates() {
-    const directory = temporaryDirectory('cauce-release-gates-');
-    const repository = join(directory, 'repo');
-    const binaries = join(directory, 'bin');
-    mkdirSync(join(repository, 'scripts'), { recursive: true });
-    mkdirSync(binaries);
-    copyFileSync(releaseGatesScript, join(repository, 'scripts/release-gates.sh'));
-    for (const name of ['pnpm', 'shellcheck', 'ruff']) writeFileSync(join(binaries, name), pnpm, { mode: 0o700 });
-    writeFileSync(join(binaries, 'python3'), python3, { mode: 0o700 });
-    const environment = {
-      ...process.env,
-      PATH: `${binaries}:${process.env.PATH ?? ''}`,
-      GIT_CONFIG_GLOBAL: '/dev/null',
-      GIT_CONFIG_NOSYSTEM: '1',
-      CAUCE_RELEASE_GATES_DIR: join(directory, 'receipts'),
-      MOCK_PNPM_LOG: join(directory, 'pnpm.log'),
-    };
-    const git = (...args: string[]) => {
-      const output = spawnSync('git', ['-c', 'user.email=gates@example.test', '-c', 'user.name=gates', ...args], {
-        cwd: repository, encoding: 'utf8', env: environment,
-      });
-      expect(output.status, output.stderr).toBe(0);
-      return output.stdout.trim();
-    };
-    git('init', '-q');
-    git('add', '.');
-    git('commit', '-qm', 'fixture');
-    const run = (extra: Record<string, string> = {}) => spawnSync('bash', [join(repository, 'scripts/release-gates.sh')], {
-      cwd: repository, encoding: 'utf8', env: { ...environment, ...extra }, timeout: 30_000,
-    });
-    const receipts = () => existsSync(join(directory, 'receipts')) ? readdirSync(join(directory, 'receipts')) : [];
-    return { directory, repository, git, run, receipts, pnpmLog: () => readFileSync(environment.MOCK_PNPM_LOG, 'utf8') };
-  }
+  const repositoryWithGates = () => gatesRepository(temporaryDirectory('cauce-release-gates-'));
 
   it('lists only gates that exist in package.json, in order', () => {
     const scripts = (JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')) as { scripts: Record<string, string> }).scripts;
@@ -693,14 +639,15 @@ process.exit(result.status === null ? 1 : result.status);
     }
   });
 
-  it('writes a green receipt bound to HEAD that deploy accepts', () => {
+  it('writes a green receipt bound to HEAD from parallel lanes that deploy accepts', () => {
     const gates = repositoryWithGates();
-    const result = gates.run();
+    const result = gates.run({ CAUCE_RELEASE_GATES_JOBS: '3' });
     expect(result.status, result.stderr).toBe(0);
     const run = single(gates.receipts());
     const head = gates.git('rev-parse', 'HEAD');
     expect(run.startsWith(`${head}-`)).toBe(true);
-    const receipt = JSON.parse(readFileSync(join(gates.directory, 'receipts', run, 'recibo.json'), 'utf8')) as GatesReceipt;
+    const receipt = gates.receipt(run);
+    expect(receipt.concurrencia).toBe(3);
     expect(receipt.commit).toBe(head);
     expect(receipt.tree).toBe(gates.git('rev-parse', 'HEAD^{tree}'));
     expect(receipt.comandos.map(command => command.cmd)).toEqual(releaseGateCommands());
@@ -714,14 +661,13 @@ process.exit(result.status === null ? 1 : result.status);
     expect(accepted.status, accepted.stderr).toBe(0);
   });
 
-  it('stops at the first red gate and writes a red receipt that deploy refuses', () => {
+  it('in one lane runs in list order, stops at the first red gate and deploy refuses its receipt', () => {
     const gates = repositoryWithGates();
-    const result = gates.run({ MOCK_RED_GATE: 'lint' });
+    const result = gates.run({ MOCK_RED_GATE: 'lint', CAUCE_RELEASE_GATES_JOBS: '1' });
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('ROJO en pnpm lint');
     expect(gates.pnpmLog()).toBe('orphan\ntypecheck\nlint\n');
-    const run = single(gates.receipts());
-    const receipt = JSON.parse(readFileSync(join(gates.directory, 'receipts', run, 'recibo.json'), 'utf8')) as GatesReceipt;
+    const receipt = gates.receipt(single(gates.receipts()));
     expect(receipt.comandos.map(command => [command.cmd, command.exit])).toEqual([
       ['python3 -m pytest ops/tests/test_fleet_orphan_sweep.py ops/tests/test_fleet_executor_container.py -q --tb=line', 0],
       ['pnpm typecheck', 0], ['pnpm lint', 3]]);
@@ -745,8 +691,7 @@ process.exit(result.status === null ? 1 : result.status);
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('ROJO en python3 -m pytest ops/tests/test_fleet_orphan_sweep.py ops/tests/test_fleet_executor_container.py -q --tb=line');
     expect(gates.pnpmLog()).toBe('orphan\n');
-    const run = single(gates.receipts());
-    const receipt = JSON.parse(readFileSync(join(gates.directory, 'receipts', run, 'recibo.json'), 'utf8')) as GatesReceipt;
+    const receipt = gates.receipt(single(gates.receipts()));
     expect(receipt.comandos.map(command => [command.cmd, command.exit])).toEqual([
       ['python3 -m pytest ops/tests/test_fleet_orphan_sweep.py ops/tests/test_fleet_executor_container.py -q --tb=line', 3]]);
     const refused = deploy({ receipt, environment: { MOCK_COMMIT: receipt.commit, MOCK_TREE: receipt.tree } });
