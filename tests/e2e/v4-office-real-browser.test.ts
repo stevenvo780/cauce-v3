@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import type { CompanyOfficeLayout, CompanyOfficeRoom } from '@cauce/store';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   newTrustedPage, startConsoleFunctionalFixture, type BrowserResponse,
@@ -27,6 +28,10 @@ const roomLabel = `zz-canary-room-${run}`;
 const renamedRoomLabel = `zz-canary-renamed-${run}`;
 const destinationRoomLabel = `zz-canary-destination-${run}`;
 const agentAlias = `zz-canary-agent-${run}`;
+const partLabel = `zz-canary-part-${run}`;
+const editedPartLabel = `zz-canary-edited-part-${run}`;
+const draftPartLabel = `zz-canary-draft-part-${run}`;
+const layoutPath = '/v3/console/office/layout';
 const readerTerminalCapabilityRule: IgnoredConsoleRule = {
   id: 'reader-terminal-capability-403',
   reason: 'reader role has no terminal capability access',
@@ -39,9 +44,11 @@ const errors = new BrowserErrorLog([...HERMETIC_INSTANCE_RULES, readerTerminalCa
 const unexpectedHttp: string[] = [];
 const expectedHttp: { label: string; path: string; statuses: number[] }[] = [];
 const observedExpectedHttp: string[] = [];
+const officeWrites: { label: string; status: number; input: { expected_version: number; rooms: CompanyOfficeRoom[] } }[] = [];
 let fixture: Awaited<ReturnType<typeof startConsoleFunctionalFixture>> | undefined;
 let pageA: V4Page | undefined;
 let pageB: V4Page | undefined;
+let readerPage: V4Page | undefined;
 let hubA = '';
 let hubB = '';
 
@@ -58,9 +65,13 @@ function watchHttp(page: V4Page, label: string): void {
   page.on('response', (value: unknown) => {
     const response = value as BrowserResponse;
     const status = response.status();
-    if (status < 400) return;
     let path: string;
     try { path = new URL(response.url()).pathname; } catch { path = response.url(); }
+    if (path === layoutPath && response.request().method() === 'PUT') {
+      const request = response.request() as ReturnType<BrowserResponse['request']> & { postData(): string | null };
+      officeWrites.push({ label, status, input: JSON.parse(request.postData() ?? '{}') as typeof officeWrites[number]['input'] });
+    }
+    if (status < 400) return;
     if ((status === 501 && path === '/v3/console/terminal/capability')
         || (status === 404 && path === '/v3/console/mcp/client-delegations')) return;
     if (label === 'same-company-reader' && status === 403 && path === '/v3/console/terminal/capability') {
@@ -91,13 +102,34 @@ async function step<T>(page: V4Page, name: string, action: () => Promise<T>): Pr
   }
 }
 
-async function apiPost(page: V4Page, path: string, payload: unknown): Promise<number> {
-  return page.evaluate(async ({ target, body }: { target: string; body: string }) => {
+async function apiMutation(page: V4Page, path: string, payload: unknown, method = 'POST'): Promise<number> {
+  return page.evaluate(async ({ target, body, method }: { target: string; body: string; method: string }) => {
     const session = await (await fetch('/v3/auth/session', { credentials: 'include', cache: 'no-store' })).json() as { csrf_token?: string };
-    const response = await fetch(target, { method: 'POST', credentials: 'include', body,
+    const response = await fetch(target, { method, credentials: 'include', body,
       headers: { 'Content-Type': 'application/json', 'X-Cauce-Console': '1', 'X-CSRF-Token': session.csrf_token ?? '' } });
     return response.status;
-  }, { target: path, body: JSON.stringify(payload) });
+  }, { target: path, body: JSON.stringify(payload), method });
+}
+
+async function savedLayout(): Promise<Pick<CompanyOfficeLayout, 'version' | 'rooms'>> {
+  const result = await pool().query<Pick<CompanyOfficeLayout, 'version' | 'rooms'>>(
+    'SELECT version::int,rooms FROM company_office_layouts WHERE company_id=$1', [ownerA.company.slug]);
+  expect(result.rows).toHaveLength(1);
+  const stored = result.rows[0];
+  if (!stored) throw new Error('company office layout is absent');
+  return stored;
+}
+
+async function selectRoomEditor(page: V4Page) {
+  await page.getByRole('region', { name: planRoom(renamedRoomLabel), exact: true }).getByRole('button').click();
+  const editor = page.getByRole('region', { name: `Editar sala ${hubA}/${renamedRoomLabel}`, exact: true });
+  await editor.waitFor({ timeout: 20_000 });
+  return editor;
+}
+
+async function savePlan(page: V4Page): Promise<void> {
+  await page.getByRole('button', { name: 'Guardar plano', exact: true }).click();
+  await page.getByRole('status').filter({ hasText: 'Plano de oficina guardado para esta empresa.' }).waitFor({ timeout: 20_000 });
 }
 
 async function registerCompany(page: V4Page, person: V4Person): Promise<void> {
@@ -316,6 +348,93 @@ describe('Oficina V4 en navegador Chromium real, gateway y PostgreSQL reales', (
     });
   });
 
+  it('valida y crea una parte desde la UI, la persiste en SQL y la rehidrata tras recarga', async () => {
+    const page = ownerPage();
+    await step(page, 'room part validation and creation', async () => {
+      await openPlan(page);
+      const editor = await selectRoomEditor(page);
+      await editor.getByRole('button', { name: 'Añadir parte', exact: true }).click();
+      await editor.getByLabel('Nombre de parte', { exact: true }).fill('   ');
+      const writesBefore = officeWrites.length;
+      await page.getByRole('button', { name: 'Guardar plano', exact: true }).click();
+      await page.getByRole('alert').filter({ hasText: 'Cada parte necesita un nombre de 1 a 120 caracteres.' }).waitFor();
+      expect(officeWrites).toHaveLength(writesBefore);
+      expect((await pool().query('SELECT 1 FROM company_office_layouts WHERE company_id=$1', [ownerA.company.slug])).rowCount).toBe(0);
+      await editor.getByLabel('Nombre de parte', { exact: true }).fill(partLabel);
+      await editor.getByLabel(`Ancho de ${partLabel}`, { exact: true }).fill('0');
+      await page.getByRole('button', { name: 'Guardar plano', exact: true }).click();
+      await page.getByRole('alert').filter({ hasText: 'Las posiciones deben ser números finitos y los tamaños mayores que cero.' }).waitFor();
+      expect(officeWrites).toHaveLength(writesBefore);
+      for (const [field, value] of [['Posición horizontal', '18'], ['Posición vertical', '56'], ['Ancho', '110'], ['Alto', '70']] as const) {
+        await editor.getByLabel(`${field} de ${partLabel}`, { exact: true }).fill(value);
+      }
+      await savePlan(page);
+    });
+    const stored = await savedLayout();
+    expect(stored.version).toBe(1);
+    const partId = stored.rooms.find(room => room.room_id === roomId)?.parts[0]?.id;
+    expect(partId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u);
+    expect(stored.rooms.find(room => room.room_id === roomId)?.parts).toEqual([
+      { id: partId, label: partLabel, x: 18, y: 56, width: 110, height: 70 },
+    ]);
+    expect(officeWrites.at(-1)).toMatchObject({ label: 'owner-a', status: 200, input: { expected_version: 0, rooms: stored.rooms } });
+    await step(page, 'saved part after reload and server validation', async () => {
+      await page.reload({ waitUntil: 'domcontentloaded' });
+      await page.getByRole('button', { name: 'Plano editable', exact: true }).click();
+      await page.getByLabel(`Parte ${partLabel}`, { exact: true }).waitFor();
+      expect((await apiGet(page, layoutPath)).body).toMatchObject(stored);
+      const invalidRooms = stored.rooms.map(room => room.room_id === roomId
+        ? { ...room, parts: room.parts.map(part => ({ ...part, label: '   ' })) } : room);
+      allowHttp('owner-a', layoutPath, 400);
+      errors.expectHttpError(layoutPath, 400);
+      expect(await apiMutation(page, layoutPath, { expected_version: stored.version, rooms: invalidRooms }, 'PUT')).toBe(400);
+      expect(await savedLayout()).toEqual(stored);
+    });
+  });
+
+  it('edita una parte en otro navegador y rechaza el borrador obsoleto con CAS 409 sin sobrescribir SQL', async () => {
+    const page = ownerPage();
+    await openPlan(page);
+    const staleEditor = await selectRoomEditor(page);
+    await staleEditor.getByLabel('Nombre de parte', { exact: true }).fill(draftPartLabel);
+    const before = await savedLayout();
+    const second = await freshPage('owner-a-concurrent');
+    await step(second, 'concurrent part edit', async () => {
+      await login(second, base(), ownerA);
+      await openPlan(second);
+      const editor = await selectRoomEditor(second);
+      await editor.getByLabel('Nombre de parte', { exact: true }).fill(editedPartLabel);
+      await editor.getByLabel(`Ancho de ${editedPartLabel}`, { exact: true }).fill('145');
+      await savePlan(second);
+    });
+    const committed = await savedLayout();
+    expect(committed.version).toBe(before.version + 1);
+    expect(committed.rooms.find(room => room.room_id === roomId)?.parts).toEqual([
+      { ...before.rooms.find(room => room.room_id === roomId)?.parts[0], label: editedPartLabel, width: 145 },
+    ]);
+    expect(officeWrites.at(-1)).toMatchObject({ label: 'owner-a-concurrent', status: 200, input: { expected_version: before.version } });
+    await step(page, 'stale draft conflict keeps both draft and committed state', async () => {
+      allowHttp('owner-a', layoutPath, 409);
+      errors.expectHttpError(layoutPath, 409);
+      await page.getByRole('button', { name: 'Guardar plano', exact: true }).click();
+      const alert = page.getByRole('alert');
+      await alert.waitFor();
+      expect(await alert.innerText()).toMatch(/versión|version/iu);
+      expect(await staleEditor.getByLabel('Nombre de parte', { exact: true }).inputValue()).toBe(draftPartLabel);
+      await page.getByLabel(`Parte ${draftPartLabel}`, { exact: true }).waitFor();
+      await page.getByText('Plano sin guardar', { exact: true }).waitFor();
+      expect(await page.getByRole('button', { name: 'Guardar plano', exact: true }).isDisabled()).toBe(false);
+      expect(await savedLayout()).toEqual(committed);
+      expect((await apiGet(page, layoutPath)).body).toMatchObject(committed);
+      expect(officeWrites.at(-1)).toMatchObject({ label: 'owner-a', status: 409, input: { expected_version: before.version } });
+      expect(officeWrites.at(-1)?.input.rooms.find(room => room.room_id === roomId)?.parts[0]?.label).toBe(draftPartLabel);
+      await page.getByRole('button', { name: 'Descartar cambios de plano', exact: true }).click();
+      await page.getByRole('button', { name: 'Releer plano y cuotas', exact: true }).click();
+      await page.getByLabel(`Parte ${editedPartLabel}`, { exact: true }).waitFor();
+      expect(await page.getByLabel(`Parte ${draftPartLabel}`, { exact: true }).count()).toBe(0);
+    });
+  });
+
   it('mantiene la sala y asignación tras re-login, y las comparte con otra persona de la empresa', async () => {
     const page = ownerPage();
     await step(page, 'owner re-login', async () => {
@@ -327,6 +446,8 @@ describe('Oficina V4 en navegador Chromium real, gateway y PostgreSQL reales', (
       await page.getByRole('region', { name: planRoom(renamedRoomLabel), exact: true }).waitFor({ timeout: 20_000 });
       await assertAgentInPlan(page, destinationRoomLabel);
       await page.getByRole('region', { name: planRoom(destinationRoomLabel), exact: true }).waitFor({ timeout: 20_000 });
+      await page.getByLabel(`Parte ${editedPartLabel}`, { exact: true }).waitFor();
+      expect((await apiGet(page, layoutPath)).body).toMatchObject(await savedLayout());
     });
     expect(await apiGet(page, '/v3/auth/session')).toMatchObject({
       status: 200, body: { authenticated: true, authority: { role: 'company_owner', acting_company: ownerA.company.slug } },
@@ -334,6 +455,7 @@ describe('Oficina V4 en navegador Chromium real, gateway y PostgreSQL reales', (
     await expectAgentRooms(destinationRoomId, [destinationRoomId]);
 
     const second = await freshPage('same-company-reader');
+    readerPage = second;
     await step(second, 'same-company second browser context', async () => {
       await login(second, base(), readerA);
       const session = await apiGet(second, '/v3/auth/session');
@@ -341,10 +463,38 @@ describe('Oficina V4 en navegador Chromium real, gateway y PostgreSQL reales', (
       await openPlan(second);
       await second.getByRole('region', { name: planRoom(renamedRoomLabel), exact: true }).waitFor({ timeout: 20_000 });
       await assertAgentInPlan(second, destinationRoomLabel);
+      await second.getByLabel(`Parte ${editedPartLabel}`, { exact: true }).waitFor();
+      expect((await apiGet(second, layoutPath)).body).toMatchObject(await savedLayout());
+      expect(await second.getByRole('button', { name: 'Guardar plano', exact: true }).isDisabled()).toBe(true);
       const topology = await apiGet(second, '/v3/console/topology');
       expect(topology.status).toBe(200);
       expect(JSON.stringify(topology.body)).toContain(agentAlias);
       expect(JSON.stringify(topology.body)).toContain(roomId);
+    });
+  });
+
+  it('quita la parte desde la UI y conserva la baja tras recarga y en el segundo navegador', async () => {
+    const page = ownerPage();
+    const before = await savedLayout();
+    await step(page, 'room part deletion', async () => {
+      await openPlan(page);
+      const editor = await selectRoomEditor(page);
+      await editor.getByRole('button', { name: `Quitar parte ${editedPartLabel}`, exact: true }).click();
+      expect(await page.getByLabel(`Parte ${editedPartLabel}`, { exact: true }).count()).toBe(0);
+      await savePlan(page);
+    });
+    const committed = await savedLayout();
+    expect(committed.version).toBe(before.version + 1);
+    expect(committed.rooms).toEqual(before.rooms.map(room => room.room_id === roomId ? { ...room, parts: [] } : room));
+    expect(officeWrites.at(-1)).toMatchObject({ label: 'owner-a', status: 200, input: { expected_version: before.version } });
+    const second = readerPage;
+    if (!second) throw new Error('second reader browser was not initialized');
+    for (const browser of [page, second]) await step(browser, 'deleted part after reload', async () => {
+      await browser.reload({ waitUntil: 'domcontentloaded' });
+      await browser.getByRole('button', { name: 'Plano editable', exact: true }).click();
+      await browser.getByRole('region', { name: planRoom(renamedRoomLabel), exact: true }).waitFor();
+      expect(await browser.getByLabel(`Parte ${editedPartLabel}`, { exact: true }).count()).toBe(0);
+      expect((await apiGet(browser, layoutPath)).body).toMatchObject(committed);
     });
   });
 
@@ -394,6 +544,76 @@ describe('Oficina V4 en navegador Chromium real, gateway y PostgreSQL reales', (
     });
   });
 
+  it('muestra los estados de cansancio persistidos en campus, plano y ficha sin simular HTTP', async () => {
+    const page = ownerPage();
+    const accountId = `zz-canary-quota-${run}`;
+    await pool().query(`INSERT INTO provider_accounts(id,provider,external_account_id,payer_tenant_id,label,
+        credential_ref_kind,credential_ref,enabled,company_id)
+      VALUES($1,'codex',$1,$2,$1,'secret_manager',$3,true,$4)`,
+    [accountId, hubA, `op:zz-canary/${run}`, ownerA.company.slug]);
+    await pool().query(`INSERT INTO alias_routing_ceiling(tenant_id,alias,account_id,account_payer_tenant,created_by_tenant)
+      VALUES($1,$2,$3,$1,$1)`, [hubA, agentAlias, accountId]);
+    await pool().query('INSERT INTO agent_account_bindings(tenant_id,agent_alias,account_id,priority,enabled) VALUES($1,$2,$3,1,true)',
+      [hubA, agentAlias, accountId]);
+    const cases = [
+      { state: 'unknown', label: 'Sin datos', remaining: null, status: 'unknown' },
+      { state: 'error', label: 'Error de consulta', remaining: 0, status: 'error' },
+      { state: 'stale', label: 'Datos antiguos', remaining: 0, status: 'ok' },
+      { state: 'exhausted', label: 'Sin disponibilidad', remaining: 0, status: 'ok' },
+      { state: 'low', label: 'Cansado', remaining: 24, status: 'ok' },
+      { state: 'available', label: 'Disponible', remaining: 25, status: 'ok' },
+      { state: 'paused', label: 'En pausa', remaining: 60, status: 'ok' },
+      { state: 'model_dependent', label: 'Varía por modelo', remaining: 0, status: 'ok' },
+    ];
+    await openOffice(page);
+    for (const scenario of cases) await step(page, `persisted fatigue ${scenario.state}`, async () => {
+      await pool().query('DELETE FROM quota_window_state WHERE account_id=$1', [accountId]);
+      await pool().query(`UPDATE provider_accounts SET paused_until=CASE WHEN $2 THEN now()+interval '1 hour' ELSE NULL END,
+        paused_reason=CASE WHEN $2 THEN 'manual' ELSE NULL END WHERE id=$1`, [accountId, scenario.state === 'paused']);
+      if (scenario.state !== 'unknown') for (const [model, remaining] of scenario.state === 'model_dependent'
+        ? [['model-a', 0], ['model-b', 80]] as const : [[null, scenario.remaining]] as const) {
+        const observed = new Date(Date.now() - (scenario.state === 'stale' ? 901_000 : 0)).toISOString();
+        await pool().query(`INSERT INTO quota_window_state(collector_tenant,host,provider,group_key,window_key,
+            captured_at,received_at,remaining_percent,reset_at,status,model,account_id,company_id)
+          VALUES($1,$2,'codex','default','week',$3,$3,$4,now()+interval '1 hour',$5,$6,$7,$8)`,
+        [hubA, `zz-canary-host-${run}`, observed, remaining, scenario.status, model, accountId, ownerA.company.slug]);
+      }
+      const response = await apiGet(page, '/v3/console/quota-accounts');
+      expect(response.status).toBe(200);
+      const accounts = response.body.accounts as { id: string; observation_status: string; remaining_percent: number | null }[];
+      expect(accounts.find(account => account.id === accountId)).toMatchObject({
+        observation_status: scenario.state === 'stale' ? 'stale' : scenario.status,
+        remaining_percent: ['unknown', 'error', 'stale'].includes(scenario.state) ? null : scenario.remaining,
+        agents: [{ tenant_id: hubA, alias: agentAlias, enabled: true }],
+      });
+      await page.getByRole('button', { name: 'Plano editable', exact: true }).click();
+      const refreshed = (page as V4Page & {
+        waitForResponse: (predicate: (response: BrowserResponse) => boolean) => Promise<BrowserResponse>;
+      }).waitForResponse(response => new URL(response.url()).pathname === '/v3/console/quota-accounts'
+        && response.request().method() === 'GET');
+      await page.getByRole('button', { name: 'Releer plano y cuotas', exact: true }).click();
+      expect((await refreshed).status()).toBe(200);
+      await page.getByRole('button', { name: 'Campus', exact: true }).click();
+      const campus = page.getByRole('region', { name: 'Cansancio de agentes del campus', exact: true });
+      const campusAgent = campus.getByRole('button', { name: new RegExp(escapeRegex(agentAlias), 'u') });
+      await campusAgent.getByText(scenario.label, { exact: true }).waitFor();
+      expect(await campusAgent.locator(`[data-fatigue="${scenario.state}"]`).count()).toBe(1);
+      await page.getByRole('button', { name: 'Plano editable', exact: true }).click();
+      await assertAgentInPlan(page, renamedRoomLabel);
+      const roster = page.getByRole('region', { name: `Agentes de sala ${hubA}/${renamedRoomLabel}`, exact: true });
+      const planAgent = roster.getByRole('button', { name: new RegExp(escapeRegex(agentAlias), 'u') });
+      await planAgent.getByText(scenario.label, { exact: true }).waitFor();
+      expect(await planAgent.locator(`[data-fatigue="${scenario.state}"]`).count()).toBe(1);
+      await planAgent.click();
+      const sheet = page.getByRole('dialog');
+      const detail = sheet.getByRole('region', { name: `Disponibilidad de ${agentAlias}`, exact: true });
+      await detail.getByText(scenario.label, { exact: true }).first().waitFor();
+      await expect.poll(() => detail.locator('[data-fatigue]').first().evaluate(element => element.dataset.fatigue)).toBe(scenario.state);
+      await sheet.getByRole('button', { name: 'Cerrar el detalle', exact: true }).click();
+      process.stdout.write(`V4 office fatigue ${scenario.state}: real SQL + HTTP + campus + plan + agent sheet verified\n`);
+    });
+  });
+
   it('una empresa distinta no ve la oficina ni accede al recurso por una petición directa', async () => {
     const page = pageB;
     if (!page) throw new Error('foreign company page was not initialized');
@@ -417,7 +637,7 @@ describe('Oficina V4 en navegador Chromium real, gateway y PostgreSQL reales', (
       expect(typeof revision).toBe('number');
       allowHttp('owner-b', '/v3/console/config/changes', 403, 404);
       errors.expectHttpError('/v3/console/config/changes', 403);
-      const status = await apiPost(page, '/v3/console/config/changes', {
+      const status = await apiMutation(page, '/v3/console/config/changes', {
         dry_run: true,
         expected_revision: revision,
         mutation: { resource: 'room', action: 'update', tenant_id: hubA, id: roomId, value: { display_name: 'zz-canary-foreign-edit' } },
