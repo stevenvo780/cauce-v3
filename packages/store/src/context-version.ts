@@ -90,6 +90,8 @@ export async function persistContextVersionInTransaction(client: DatabaseClient,
   files: ContextVersion['files'], source: ContextVersion['source'], restored: number | null = null): Promise<ContextSnapshot> {
     const previous = await contextSnapshot(client, target);
     if (previous.version !== expected) throw new StoreError('conflict', 'context version changed; reload and retry');
+    const unreadable = previous.version > 0 && previous.digest === null;
+    if (unreadable && (source !== 'restore' || restored === null)) throw new ContextRejectedError('context_version_unreadable');
     const canonical = versionableContextFiles(await synchronizeContextProfile(client, target, files), await harnessMaxBytes(client, target));
     const next = await nextContextVersion(client, target);
     const scope = [target.company_id, target.tenant_id, target.alias];
@@ -101,7 +103,8 @@ export async function persistContextVersionInTransaction(client: DatabaseClient,
     await client.query(`INSERT INTO agent_context_outbox(company_id,tenant_id,alias,version) VALUES($1,$2,$3,$4)`, [...scope, next]);
     await client.query(`INSERT INTO audit_events(tenant_id,actor_alias,action,decision,company_id,actor_human_id,metadata)
       VALUES($1,$2,'context.version','allow',$3,$4,$5::jsonb)`, [authority.homeTenant, authority.alias, target.company_id,
-      authority.humanId, JSON.stringify({ target_tenant: target.tenant_id, target_alias: target.alias, version: next, source, restored_from: restored })]);
+      authority.humanId, JSON.stringify({ target_tenant: target.tenant_id, target_alias: target.alias, version: next, source, restored_from: restored,
+        ...(unreadable ? { recovery_reason: 'context_version_unreadable', recovered_unreadable_version: previous.version } : {}) })]);
     return contextSnapshot(client, target);
 }
 export type NativeContextIngestResult =

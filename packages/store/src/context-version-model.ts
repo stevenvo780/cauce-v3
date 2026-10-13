@@ -54,7 +54,7 @@ const REJECTION_MESSAGES: Readonly<Record<ContextRejectionReason, string>> = {
   context_harness_limit: 'context exceeds the document limit of the agent harness',
   context_governed_path: `native ingest may only change files under ${NATIVE_CONTEXT_WRITABLE_PREFIX}; profile, directives and operator context are governed`,
   context_version_failed: 'context version could not be recorded',
-  context_version_unreadable: 'stored context version cannot be read; write a new version',
+  context_version_unreadable: 'la versión actual no se puede leer; restaura una versión anterior desde el historial',
 };
 export interface ContextSizeLimit { readonly bytes: number; readonly max_bytes: number }
 /** A refused version: the reason and the affected paths are safe to show, the content never travels in it. */

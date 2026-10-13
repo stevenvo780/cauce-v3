@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { lockCompanyAuthority, type DatabasePool, AgentContextRevisionsStore, AgentProfileRepository, withTransaction } from '../src/index.js';
 import { ContextVersionStore, ingestNativeContextVersion } from '../src/context-version.js';
 import { recordNativeContextVersionInTransaction } from '../src/context-version-legacy.js';
-import { ContextRejectedError } from '../src/context-version-model.js';
+import { ContextRejectedError, type ContextSnapshot } from '../src/context-version-model.js';
 import { createHash } from 'node:crypto';
 import { ContextGitBroker } from '../src/context-git.js';
 import { processContextOutbox } from '../src/context-version-worker.js';
@@ -67,6 +67,21 @@ async function replacePurpose(purpose: string | null): Promise<void> {
   const profiles = new AgentProfileRepository(pool);
   const profile = await profiles.readWithPresence(target().tenant_id, target().alias);
   await profiles.replace({ ...profile.perfil, purpose }, profile.revision, owner());
+}
+async function corruptVersion(snapshot: ContextSnapshot, corruption: 'shape' | 'digest') {
+  if (!current) throw new Error('database unavailable');
+  const stored = corruption === 'shape' ? [...snapshot.files, { path: 'context/.invalid/kept.md', content: 'Keep these bytes too.' }]
+    : snapshot.files;
+  const digest = corruption === 'digest' ? '0'.repeat(64) : snapshot.digest;
+  await current.adminPool.query('ALTER TABLE agent_context_versions DISABLE TRIGGER agent_context_versions_immutable');
+  try {
+    await current.adminPool.query(`UPDATE agent_context_versions SET files=$5::jsonb,digest=$6
+      WHERE company_id=$1 AND tenant_id=$2 AND alias=$3 AND version=$4`,
+    [target().company_id, target().tenant_id, target().alias, snapshot.version, JSON.stringify(stored), digest]);
+  } finally {
+    await current.adminPool.query('ALTER TABLE agent_context_versions ENABLE TRIGGER agent_context_versions_immutable');
+  }
+  return { stored, digest };
 }
 
 describe('durable context versions with real PostgreSQL and Git', () => {
@@ -145,6 +160,99 @@ describe('durable context versions with real PostgreSQL and Git', () => {
       { tenantId: target().tenant_id, alias: target().alias, kind: 'directive', path: '/scoped/AGENTS.md', sha256: 'a'.repeat(64), bytes: 1,
         actorTenant: target().tenant_id, actorAlias: 'owner' }, 'different'))).rejects.toMatchObject({ code: 'invalid_input' });
     expect((await store.read(source(), target().tenant_id, target().alias)).version).toBe(1);
+  });
+  it.each(['shape', 'digest'] as const)('preserves every stored file when legacy edits encounter an unreadable %s', async corruption => {
+    const initial = await write(0, [...files, { path: 'directives/kept.md', content: 'Keep this directive.' }]);
+    const scope = [target().company_id, target().tenant_id, target().alias];
+    const { stored, digest } = await corruptVersion(initial, corruption);
+    expect(await store.read(source(), target().tenant_id, target().alias)).toMatchObject({ version: 1,
+      application: { state: 'error', last_error: 'context_version_unreadable' } });
+    const content = 'The V3 directive stays durable.';
+    expect(await saveDirective(content)).toMatchObject({ reason: 'context_version_unreadable',
+      message: 'la versión actual no se puede leer; restaura una versión anterior desde el historial' });
+    await replacePurpose('The V3 profile stays durable.');
+    expect((await new AgentProfileRepository(pool).read(target().tenant_id, target().alias)).purpose)
+      .toBe('The V3 profile stays durable.');
+    expect((await new AgentContextRevisionsStore(pool).listDocumentRevisions(target().tenant_id, target().alias, 'directive', 5)).entries[0])
+      .toMatchObject({ sha256: createHash('sha256').update(content).digest('hex') });
+    expect((await pool.query(`SELECT version::integer,files,digest FROM agent_context_versions
+      WHERE company_id=$1 AND tenant_id=$2 AND alias=$3 ORDER BY version`, scope)).rows)
+      .toEqual([{ version: 1, files: stored, digest }]);
+    expect((await pool.query(`SELECT desired_version::integer,applied_version::integer FROM agent_context_state
+      WHERE company_id=$1 AND tenant_id=$2 AND alias=$3`, scope)).rows)
+      .toEqual([{ desired_version: 1, applied_version: 0 }]);
+    expect((await pool.query(`SELECT version::integer FROM agent_context_outbox
+      WHERE company_id=$1 AND tenant_id=$2 AND alias=$3 ORDER BY version`, scope)).rows).toEqual([{ version: 1 }]);
+    expect((await pool.query(`SELECT metadata->>'reason' AS reason,metadata->>'source' AS source,metadata->>'path' AS path
+      FROM audit_events WHERE action='context.unversioned' AND company_id=$1 AND metadata->>'target_alias'=$3
+        AND metadata->>'target_tenant'=$2 ORDER BY id`, scope)).rows).toEqual([
+      { reason: 'context_version_unreadable', source: 'directive', path: 'directives/native-directive.md' },
+      { reason: 'context_version_unreadable', source: 'profile', path: 'context/profile.json' },
+    ]);
+    expect(await versioning()).toMatchObject({ state: 'unversioned', reason: 'context_version_unreadable',
+      paths: ['context/profile.json', 'directives/native-directive.md'] });
+  });
+  it.each(['shape', 'digest'] as const)('recovers an unreadable current %s only through a verified audited restore', async corruption => {
+    const initial = await write(0, [...files, { path: 'directives/kept.md', content: 'Original directive.' }]);
+    await replacePurpose('Recent purpose');
+    const latest = await store.read(source(), target().tenant_id, target().alias);
+    const scope = [target().company_id, target().tenant_id, target().alias];
+    const { stored, digest } = await corruptVersion(latest, corruption);
+    for (const inputSource of ['ui', 'cli'] as const) {
+      await expect(store.write(source(), target().tenant_id, target().alias, { expected_version: 2, source: inputSource,
+        files: [{ path: 'context/profile.json', content: JSON.stringify({ tenant_id: target().tenant_id,
+          alias: target().alias, purpose: 'Rejected purpose' }) }] })).rejects.toMatchObject({
+        reason: 'context_version_unreadable',
+        message: 'la versión actual no se puede leer; restaura una versión anterior desde el historial',
+      });
+    }
+    expect((await new AgentProfileRepository(pool).read(target().tenant_id, target().alias)).purpose).toBe('Recent purpose');
+    expect((await store.history(source(), target().tenant_id, target().alias)).entries.map(entry => entry.version)).toEqual([2, 1]);
+    expect((await pool.query(`SELECT version::integer FROM agent_context_outbox
+      WHERE company_id=$1 AND tenant_id=$2 AND alias=$3 ORDER BY version`, scope)).rows).toEqual([{ version: 1 }, { version: 2 }]);
+    await expect(store.restore(source(), target().tenant_id, target().alias, { expected_version: 1, version: 1 }))
+      .rejects.toMatchObject({ code: 'conflict' });
+    const recovered = await store.restore(source(), target().tenant_id, target().alias, { expected_version: 2, version: 1 });
+    expect(recovered).toMatchObject({ version: 3, files: initial.files, digest: initial.digest,
+      application: { state: 'pending', last_error: null } });
+    expect((await new AgentProfileRepository(pool).read(target().tenant_id, target().alias)).purpose).toBeNull();
+    expect((await store.history(source(), target().tenant_id, target().alias)).entries[0])
+      .toMatchObject({ version: 3, source: 'restore', restored_from: 1 });
+    expect((await pool.query(`SELECT version::integer,files,digest FROM agent_context_versions
+      WHERE company_id=$1 AND tenant_id=$2 AND alias=$3 AND version=2`, scope)).rows).toEqual([{ version: 2, files: stored, digest }]);
+    expect((await pool.query(`SELECT metadata FROM audit_events WHERE action='context.version'
+      AND company_id=$1 AND metadata->>'target_tenant'=$2 AND metadata->>'target_alias'=$3 AND metadata->>'version'='3'`, scope)).rows)
+      .toEqual([{ metadata: { target_tenant: target().tenant_id, target_alias: target().alias, version: 3, source: 'restore',
+        restored_from: 1, recovery_reason: 'context_version_unreadable', recovered_unreadable_version: 2 } }]);
+    expect((await pool.query(`SELECT desired_version::integer,applied_version::integer FROM agent_context_state
+      WHERE company_id=$1 AND tenant_id=$2 AND alias=$3`, scope)).rows).toEqual([{ desired_version: 3, applied_version: 0 }]);
+    expect((await pool.query(`SELECT version::integer FROM agent_context_outbox
+      WHERE company_id=$1 AND tenant_id=$2 AND alias=$3 ORDER BY version`, scope)).rows)
+      .toEqual([{ version: 1 }, { version: 2 }, { version: 3 }]);
+    expect((await write(3)).version).toBe(4);
+  });
+  it.each(['shape', 'digest'] as const)('refuses an unreadable restore destination %s without changing a readable current version', async corruption => {
+    const initial = await write();
+    const latest = await write(1, [{ path: 'context/mission.md', content: 'Latest mission.' }]);
+    await corruptVersion(initial, corruption);
+    await expect(store.restore(source(), target().tenant_id, target().alias, { expected_version: 2, version: 1 }))
+      .rejects.toMatchObject({ reason: 'context_version_unreadable' });
+    expect(await store.read(source(), target().tenant_id, target().alias)).toMatchObject({ version: 2, files: latest.files, digest: latest.digest });
+    expect((await store.history(source(), target().tenant_id, target().alias)).entries.map(entry => entry.version)).toEqual([2, 1]);
+    expect((await pool.query("SELECT count(*)::integer AS count FROM audit_events WHERE action='context.version' AND metadata->>'source'='restore'"))
+      .rows).toEqual([{ count: 0 }]);
+    expect((await pool.query('SELECT version::integer FROM agent_context_outbox ORDER BY version')).rows)
+      .toEqual([{ version: 1 }, { version: 2 }]);
+  });
+  it('allows a new version of readable files despite an obsolete unreadable application error', async () => {
+    const initial = await write();
+    await pool.query(`UPDATE agent_context_outbox SET apply_error='context_version_unreadable'
+      WHERE company_id=$1 AND tenant_id=$2 AND alias=$3 AND version=1`,
+    [target().company_id, target().tenant_id, target().alias]);
+    expect(await store.read(source(), target().tenant_id, target().alias)).toMatchObject({ version: 1, digest: initial.digest,
+      files: initial.files, application: { state: 'error', last_error: 'context_version_unreadable' } });
+    await expect(write(1)).resolves.toMatchObject({ version: 2, files: initial.files,
+      application: { state: 'pending', last_error: null } });
   });
   it('keeps V3 profile and document writes that the history cannot version and shows the pending reason', async () => {
     await write();

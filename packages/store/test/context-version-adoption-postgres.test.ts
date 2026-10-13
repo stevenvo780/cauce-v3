@@ -85,7 +85,7 @@ describe('versioned context adoption through the fenced delivery ACK', () => {
     const claimed = await claim();
     expect(claimed.delivery.versioned_context?.files).toEqual(stored);
   });
-  it('keeps claiming and marks apply_error when the stored version is unreadable', async () => {
+  it('keeps claiming and refuses replacement when the stored version is unreadable', async () => {
     await write(); const value = target();
     if (!current) throw new Error('database unavailable');
     await current.adminPool.query('ALTER TABLE agent_context_versions DISABLE TRIGGER agent_context_versions_immutable');
@@ -103,10 +103,13 @@ describe('versioned context adoption through the fenced delivery ACK', () => {
       'SELECT apply_error FROM agent_context_outbox WHERE company_id=$1 AND tenant_id=$2 AND alias=$3 AND version=1', [value.company_id, value.tenant_id, value.alias]);
     expect(outbox.rows[0]?.apply_error).toBe('context_version_unreadable');
     await send(claimed, {});
-    expect((await write(1)).version).toBe(2);
-    const recovered = (await claim()).delivery.versioned_context;
-    expect(recovered?.version).toBe(2);
-    expect(recovered?.files).toEqual(expect.arrayContaining(files));
+    await expect(write(1)).rejects.toMatchObject({ reason: 'context_version_unreadable' });
+    expect((await store.read(source, value.tenant_id, value.alias)).desired_version).toBe(1);
+    expect((await store.history(source, value.tenant_id, value.alias)).entries).toMatchObject([{ version: 1, source: 'ui' }]);
+    expect((await claim()).delivery.versioned_context).toBeUndefined();
+    expect((await pool.query(`SELECT version::integer,files FROM agent_context_versions
+      WHERE company_id=$1 AND tenant_id=$2 AND alias=$3 ORDER BY version`, [value.company_id, value.tenant_id, value.alias])).rows)
+      .toEqual([{ version: 1, files: [{ path: 'context/.env/secret.md', content: 'x' }] }]);
   });
   it('treats a stored version whose files no longer match its digest as unreadable', async () => {
     await write(); const value = target();
