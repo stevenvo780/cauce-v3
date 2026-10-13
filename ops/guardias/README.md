@@ -66,6 +66,21 @@ al ejecutable que la importa. La renovación de credenciales vive solo en el CLI
 (`ops/cli/cauce` + `cauce-credenciales.lib.sh`); el antiguo script suelto de auditoría/renovación
 se retiró.
 
+## Guardias de credenciales: fallos y fallback
+
+Las plantillas de credenciales no tienen un receptor `OnFailure` de usuario. El template
+`cauce-v3-backup-alert@.service` pertenece al gestor de sistema y no recibe fallos de units
+`--user`; `cauce-alertas-al-bus.service` consulta Prometheus, no el resultado de estas guardias.
+No basta con usar su nombre para publicar el fallo. Consulta `journalctl --user -u cred-guard.service`
+o `journalctl --user -u cauce-cred-guard-kratos.service`; en el agregador de sistema, usa
+`journalctl -u cauce-cred-guard.service`. El agregador retorna 1 por credenciales ilegibles,
+muertas o mediciones remotas ausentes o atrasadas; las cuentas compartidas son informativas.
+La sonda remota conserva su retorno de transporte: 0 si empujó la medición y 1 si falló;
+sus problemas de credenciales viajan en el documento que evalúa el agregador. Ambos modos
+rechazan argumentos desconocidos con retorno 2 y pueden guardar el informe y log mediante
+`CAUCE_CRED_GUARD_ESTADO`.
+
+
 ## Tres de estos guardias los instala el CLI, no el bloque de restauración
 
 `cauce-estado`, `cauce-sesiones` y `cauce-attach` no son herramientas sueltas: `cauce` las
@@ -175,18 +190,6 @@ los servicios, no hay colector de ficheros de texto. La señal de guardia sigue 
 salida y el informe.
 
 ## Restaurar después de una pérdida de disco
-
-Las plantillas de credenciales no tienen un receptor `OnFailure` de usuario. El template
-`cauce-v3-backup-alert@.service` pertenece al gestor de sistema y no recibe fallos de units
-`--user`; `cauce-alertas-al-bus.service` consulta Prometheus, no el resultado de estas guardias.
-No basta con usar su nombre para publicar el fallo. Consulta `journalctl --user -u cred-guard.service`
-o `journalctl --user -u cauce-cred-guard-kratos.service`; en el agregador de sistema, usa
-`journalctl -u cauce-cred-guard.service`. El agregador retorna 1 por credenciales ilegibles,
-muertas o mediciones remotas ausentes o atrasadas; las cuentas compartidas son informativas.
-La sonda remota conserva su retorno de transporte: 0 si empujó la medición y 1 si falló;
-sus problemas de credenciales viajan en el documento que evalúa el agregador. Ambos modos
-rechazan argumentos desconocidos con retorno 2 y pueden guardar el informe y log mediante
-`CAUCE_CRED_GUARD_ESTADO`.
 
 El agregador de credenciales corre como unidad de **SISTEMA**, no de usuario: `Type=oneshot` como
 root, disparado por su timer. El script se instala con **otro nombre** que el fichero de este repo,
