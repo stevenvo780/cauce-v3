@@ -82,6 +82,18 @@ describe('versioned context adoption through the fenced delivery ACK', () => {
     const claimed = await claim();
     expect(claimed.delivery.versioned_context?.files).toEqual([{ path: 'context/mission.md', content: 'password: xxxxxxx' }]);
   });
+  it('keeps claiming and marks apply_error when the stored version is unreadable', async () => {
+    await write(); const value = target();
+    if (!current) throw new Error('database unavailable');
+    await current.adminPool.query('ALTER TABLE agent_context_versions DISABLE TRIGGER agent_context_versions_immutable');
+    await current.adminPool.query(`UPDATE agent_context_versions SET files=$4::jsonb WHERE company_id=$1 AND tenant_id=$2 AND alias=$3 AND version=1`,
+      [value.company_id, value.tenant_id, value.alias, JSON.stringify([{ path: 'context/.env/secret.md', content: 'x' }])]);
+    const claimed = await claim();
+    expect(claimed.delivery.versioned_context).toBeUndefined();
+    const outbox = await current.adminPool.query<{ apply_error: string | null }>(
+      'SELECT apply_error FROM agent_context_outbox WHERE company_id=$1 AND tenant_id=$2 AND alias=$3 AND version=1', [value.company_id, value.tenant_id, value.alias]);
+    expect(outbox.rows[0]?.apply_error).toBe('context_version_unreadable');
+  });
   it.each(['digest', 'harness', 'failed', 'late'] as const)('keeps applied unchanged for %s evidence', async kind => {
     await write(); const claimed = await claim(); const evidence = proof(claimed.delivery);
     if (kind === 'digest') evidence.context_adoption.digest = '0'.repeat(64);

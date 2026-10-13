@@ -21,8 +21,11 @@ export async function versionedContextForDelivery(client: DatabaseClient, tenant
   const target = { company_id: row.company_id, tenant_id: tenant, alias };
   let version;
   try { version = await readStoredVersion(client, target, Number(row.desired_version)); } catch (error) {
-    if (error instanceof StoreError && error.code === 'invalid_input') return undefined;
-    throw error;
+    if (!(error instanceof StoreError && error.code === 'invalid_input')) throw error;
+    await client.query(`UPDATE agent_context_outbox SET apply_error='context_version_unreadable'
+      WHERE company_id=$1 AND tenant_id=$2 AND alias=$3 AND version=$4 AND applied_at IS NULL`,
+    [target.company_id, tenant, alias, Number(row.desired_version)]);
+    return undefined;
   }
   await client.query(`UPDATE deliveries SET context_version=$3,context_digest=$4
     WHERE recipient_tenant=$1 AND recipient_alias=$2 AND id=ANY($5::uuid[])`, [tenant, alias, version.version, version.digest, ids]);
