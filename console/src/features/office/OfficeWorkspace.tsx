@@ -82,20 +82,24 @@ export function OfficeWorkspace({ campus, topology, agents, onAgent }: {
             className="absolute overflow-hidden rounded-lg border-2 border-line-strong bg-surface p-2" style={{ left: room.x - left, top: room.y - top, width: room.width, height: room.height }}>
             {room.parts.map(part => <div key={part.id} aria-label={`Parte ${part.label}`} className="pointer-events-none absolute rounded-md border border-dashed border-brand/50 bg-brand-soft p-1 text-xs text-brand-ink"
               style={{ left: part.x, top: part.y, width: part.width, height: part.height }}>{part.label}</div>)}
-            <Button size="sm" className="relative z-10 w-full justify-start" aria-pressed={identity === roomKey} disabled={!writable}
+            <Button size="sm" className="relative z-10 w-full justify-start" aria-pressed={identity === roomKey}
               onClick={() => { setRoomKey(identity); }}>{roomInfo?.label ?? room.room_id} <span className="ml-auto text-[10px] text-muted">{room.tenant_id}</span></Button>
-            <div className="relative z-10 mt-2 flex flex-wrap gap-2">{roomInfo?.agents.map(id => {
-              const agent = agents.find(value => value.id === id);
-              const cut = id.indexOf('/');
-              const reading = quotas.loading && !quotas.data && !quotas.error;
-              const fatigue = quotas.error ? 'error' : agentFatigue(quotas.data?.accounts ?? [], id.slice(0, cut), id.slice(cut + 1));
-              return <Button key={id} size="sm" onClick={() => { onAgent(id); }} className="grid h-auto gap-1 bg-surface p-2" title={agent?.reason}>
-                <span>{agent?.name ?? id.slice(cut + 1)}</span>{reading ? <span role="status" className="text-xs text-muted">Leyendo cuotas…</span> : <FatigueIndicator state={fatigue} />}
-              </Button>;
-            })}</div>
           </section>;
         })}</div>
       </div>
+      {selected && info ? <section aria-label={`Agentes de sala ${info.tenant}/${info.label}`} className="grid gap-2 rounded-xl border border-line bg-surface p-3">
+        <h3 className="m-0 min-w-0 wrap-anywhere text-sm">Agentes de {info.label} <span className="text-xs text-muted">{info.tenant}</span></h3>
+        <div className="flex flex-wrap gap-2">{info.agents.map(id => {
+          const agent = agents.find(value => value.id === id);
+          const cut = id.indexOf('/');
+          const reading = quotas.loading && !quotas.data && !quotas.error;
+          const fatigue = quotas.error ? 'error' : agentFatigue(quotas.data?.accounts ?? [], id.slice(0, cut), id.slice(cut + 1));
+          return <Button key={id} size="sm" onClick={() => { onAgent(id); }} className="grid h-auto min-w-0 max-w-full gap-1 whitespace-normal bg-surface p-2" title={agent?.reason}>
+            <span className="min-w-0 wrap-anywhere">{agent?.name ?? id.slice(cut + 1)}</span>{reading ? <span role="status" className="text-xs text-muted">Leyendo cuotas…</span> : <FatigueIndicator state={fatigue} />}
+          </Button>;
+        })}</div>
+        {!info.agents.length ? <p className="m-0 text-xs text-muted">Esta sala no tiene agentes asignados.</p> : null}
+      </section> : null}
       {selected && info && writable ? <OfficeLayoutEditor room={selected} info={info} busy={busy} update={update} /> : null}
     </div> : null}
   </div>;

@@ -35,7 +35,9 @@ it('edita sólo la sala compuesta elegida, persiste partes y relee al volver a a
   expect(await screen.findByText('Plano de oficina guardado para esta empresa.')).toBeVisible();
   expect(writes[0].rooms.find(value => value.tenant_id === 'Two')).toMatchObject({ room_id: 'general', x: 760, parts: [{ label: 'Nueva parte' }] });
   expect(writes[0].rooms.find(value => value.tenant_id === 'One')?.x).toBe(0);
-  await user.click(room.getByRole('button', { name: /worker/u })); expect(onAgent).toHaveBeenCalledWith('Two/worker');
+  const roster = within(screen.getByRole('region', { name: 'Agentes de sala Two/General' }));
+  expect(room.queryByRole('button', { name: /worker/u })).not.toBeInTheDocument();
+  await user.click(roster.getByRole('button', { name: /worker/u })); expect(onAgent).toHaveBeenCalledWith('Two/worker');
   view.unmount(); renderWithApi(workspace()); await user.click(screen.getByRole('button', { name: 'Plano editable' }));
   await waitFor(() => { expect(screen.getByRole('region', { name: 'Sala Two/General' })).toHaveStyle({ left: '760px' }); });
   expect(screen.getByLabelText('Parte Nueva parte')).toBeVisible();
@@ -48,8 +50,12 @@ it('un conflicto conserva el borrador y un lector no puede editar ni guardar', a
   await user.click(screen.getByRole('button', { name: 'General One' })); await user.click(screen.getByRole('button', { name: 'Añadir parte' }));
   await user.click(screen.getByRole('button', { name: 'Guardar plano' }));
   expect(await screen.findByRole('alert')).toHaveTextContent('La versión cambió'); expect(screen.getByText('Plano sin guardar')).toBeVisible();
-  view.unmount(); renderWithApi(workspace(vi.fn(), 'reader')); await user.click(screen.getByRole('button', { name: 'Plano editable' }));
-  expect(await screen.findByRole('button', { name: 'General One' })).toBeDisabled(); expect(screen.getByRole('button', { name: 'Guardar plano' })).toBeDisabled();
+  view.unmount(); const onAgent = vi.fn(); renderWithApi(workspace(onAgent, 'reader')); await user.click(screen.getByRole('button', { name: 'Plano editable' }));
+  await user.click(await screen.findByRole('button', { name: 'General One' }));
+  expect(screen.getByRole('button', { name: 'General One' })).toBeEnabled(); expect(screen.getByRole('button', { name: 'Guardar plano' })).toBeDisabled();
+  expect(screen.queryByRole('region', { name: 'Editar sala One/General' })).not.toBeInTheDocument();
+  await user.click(within(screen.getByRole('region', { name: 'Agentes de sala One/General' })).getByRole('button', { name: /worker/u }));
+  expect(onAgent).toHaveBeenCalledWith('One/worker');
 });
 it('vuelve a montar el campus tras guardar el plano para que lea el plano nuevo', async () => {
   let version = 0;

@@ -30,7 +30,7 @@ export const V4_VIEWS = [
     texts: ['Steven/kant', 'Steven/zeus'] },
   { id: 'context-versions', path: `${CONTEXT}&tab=versiones`, ready: 'section[aria-label="Historial de versiones"] li', count: 2,
     detail: 'section[aria-label="Historial de versiones"]', bottom: true, texts: ['Steven (QA)', 'jarvis'] },
-  { id: 'company-retired', path: '/messages', scenario: 'retired', ready: 'main [role="alert"]', texts: ['Tu empresa fue retirada'] },
+  { id: 'company-retired', path: '/messages', scenario: 'retired', ready: 'main [role="alert"]', heading: 'Tu cuenta no tiene acceso vigente' },
   { id: 'registration', path: '/messages', scenario: 'register', action: 'register',
     ready: 'form[aria-label="Registro de persona y empresa"]', texts: ['Crea tu empresa en Cauce'] },
 ];
@@ -50,6 +50,7 @@ async function prepare(page, view) {
   const ready = page.locator(view.ready);
   await ready.first().waitFor({ state: 'visible' });
   if (view.count && await ready.count() !== view.count) throw new Error(`Expected ${view.count} populated entries for ${view.id}`);
+  if (view.heading) await page.getByRole('heading', { name: view.heading, exact: true }).waitFor({ state: 'visible' });
   for (const text of view.texts ?? []) await page.getByText(text, { exact: false }).first().waitFor({ state: 'visible' });
   if (view.id === 'agent-profile' && !(await ready.first().inputValue()).trim()) throw new Error('Agent profile is empty');
   if (view.campus) {
