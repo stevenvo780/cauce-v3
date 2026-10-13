@@ -1,7 +1,6 @@
 import { useEffect, useRef } from 'react';
 
-// A pause or a non-positive period registers NO interval: a poller nobody watches keeps no timer.
-// The callback lives in a ref so a caller passing a fresh arrow each render never resets the interval.
+// The callback lives in a ref so a fresh arrow per render never resets the interval; a pause or ms <= 0 registers no timer.
 export function usePolling(reload: () => void, ms: number, options?: { pausedWhile?: boolean }): void {
   const latest = useRef(reload);
   latest.current = reload;

@@ -58,15 +58,15 @@ function BackupPanel({ target, allowed }: { target: SpaceBackupTarget; allowed: 
     if (!enabled || !permitted.current || locked.current && !background) return;
     const request = new AbortController(); const started = generation.current; requests.current.add(request);
     // Not AbortSignal.any: Safari before 17.4 lacks it. The timeout shares the controller, so both end the request.
-    let timedOut = false;
-    const timeout = window.setTimeout(() => { timedOut = true; request.abort(); }, REQUEST_MS);
+    const timedOut = { current: false };
+    const timeout = window.setTimeout(() => { timedOut.current = true; request.abort(); }, REQUEST_MS);
     if (!background) { locked.current = true; setBusy(kind); setError(''); setNotice(''); }
     try {
       const value = await action(request.signal);
       if (!requestIsCurrent(request, started)) return;
       setBackup(value);
     } catch (cause) {
-      if (!active.current || started !== generation.current || request.signal.aborted && !timedOut) return;
+      if (!active.current || started !== generation.current || request.signal.aborted && !timedOut.current) return;
       if (cause instanceof ApiError && [401, 403].includes(cause.status)) { permitted.current = false; setBackup(undefined); setInvalidated(true); }
       setError((cause instanceof ApiError ? FAILURES[cause.status] : undefined) ?? 'No se pudo leer o preparar el backup. Actualiza su estado y comprueba tus permisos.');
     } finally {

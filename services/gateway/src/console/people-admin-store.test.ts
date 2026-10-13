@@ -42,8 +42,9 @@ async function runtimePool(): Promise<DatabasePool> {
   runtime ??= createPool(await provisionTestLogin(admin, current.adminUrl, TEST_RUNTIME_LOGIN, 'cauce_runtime'));
   return runtime;
 }
+function noop(): void { /* sin efecto: se reemplaza al crear la compuerta */ }
 async function withSaturatedPasswordGate(work: () => Promise<void>): Promise<void> {
-  let release = () => {};
+  let release: () => void = noop;
   const held = new Promise<void>(resolve => { release = resolve; });
   const slots = Array.from({ length: 64 }, () => passwordWork.run(() => held).catch((error: unknown) => error));
   try { await work(); } finally { release(); await Promise.all(slots); }

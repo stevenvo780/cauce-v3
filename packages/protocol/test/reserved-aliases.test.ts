@@ -4,13 +4,18 @@ import { ConfigMutationSchema, FleetOperationRequestSchema, RESERVED_CLI_ALIASES
 
 const script = readFileSync(new URL('../../../ops/cli/cauce', import.meta.url), 'utf8');
 
+function requireCapture(value: string | undefined): string {
+  if (value === undefined) throw new Error('el patrón del script cauce no capturó el subcomando esperado');
+  return value;
+}
+
 function dispatchedSubcommands(): string[] {
   const names = new Set<string>();
-  for (const match of script.matchAll(/\$\{1:-\} == ([a-z][a-z-]*)/gu)) names.add(match[1]!);
+  for (const match of script.matchAll(/\$\{1:-\} == ([a-z][a-z-]*)/gu)) names.add(requireCapture(match[1]));
   const start = script.indexOf('case "${1:-}" in\n  ""|flota|estado)');
   const block = script.slice(start, script.indexOf('\n  *)', start));
   for (const arm of block.matchAll(/^ {2}([a-z"|-]+)\)/gmu)) {
-    for (const name of arm[1]!.split('|')) if (/^[a-z]/u.test(name)) names.add(name);
+    for (const name of requireCapture(arm[1]).split('|')) if (/^[a-z]/u.test(name)) names.add(name);
   }
   return [...names];
 }

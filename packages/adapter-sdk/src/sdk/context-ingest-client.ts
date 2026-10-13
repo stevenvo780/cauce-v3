@@ -88,8 +88,8 @@ export class ContextIngestClient implements NativeContextIngest {
       const outgoing = request(url, {
         method: "POST", headers,
         ...(agent === undefined ? {} : { agent }), timeout: this.options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-      }, incoming => resolve(incoming));
-      outgoing.on("error", error => reject(new ContextIngestError("TRANSPORT", `context ingest gateway unreachable: ${error.message}`)));
+      }, incoming => { resolve(incoming); });
+      outgoing.on("error", error => { reject(new ContextIngestError("TRANSPORT", `context ingest gateway unreachable: ${error.message}`)); });
       outgoing.on("timeout", () => outgoing.destroy(new Error("context ingest timed out")));
       outgoing.end(body);
     });

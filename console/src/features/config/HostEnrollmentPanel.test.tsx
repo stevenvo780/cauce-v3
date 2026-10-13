@@ -100,8 +100,8 @@ it('precarga el prefijo de la empresa y rechaza ids fuera de su partición con u
   expect(id).toHaveValue('');
   expect(screen.getByText('one-')).toBeVisible();
   expect(id).toHaveAttribute('pattern', '[a-z0-9_]+');
-  expect(new RegExp(`^(?:${id.getAttribute('pattern')})$`, 'v').test('torre_2')).toBe(true);
-  expect(new RegExp(`^(?:${id.getAttribute('pattern')})$`, 'v').test('torre-2')).toBe(false);
+  expect(new RegExp(`^(?:${String(id.getAttribute('pattern'))})$`, 'v').test('torre_2')).toBe(true);
+  expect(new RegExp(`^(?:${String(id.getAttribute('pattern'))})$`, 'v').test('torre-2')).toBe(false);
   await user.type(id, 'torre-2'); await user.type(screen.getByRole('textbox', { name: 'Nombre del ordenador' }), 'Torre');
   await user.click(screen.getByRole('button', { name: 'Crear invitación' }));
   expect(id).toHaveAttribute('title', expect.stringContaining('será one-nombre'));

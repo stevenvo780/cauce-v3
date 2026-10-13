@@ -56,7 +56,7 @@ function chain(index=0) { return requireValue(chains[index],'chain'); }
 function observeClient(client: DatabaseClient): void {
   if (readers.has(client)) return;
   const spy = vi.spyOn(client,'query');
-  readers.set(client,{ calls:()=>spy.mock.calls,offset:0,restore:()=>spy.mockRestore() });
+  readers.set(client,{ calls:()=>spy.mock.calls,offset:0,restore:()=>{ spy.mockRestore(); } });
 }
 function takeRounds(): CapturedQuery[] {
   const captured: CapturedQuery[]=[];
@@ -73,7 +73,7 @@ function takeRounds(): CapturedQuery[] {
   return captured;
 }
 async function seedChain(index: number,trace: string): Promise<Chain> {
-  const value=identity(index); const host=`zz-canary-indexed-${index}`;
+  const value=identity(index); const host=`zz-canary-indexed-${String(index)}`;
   const ids={ trace,message:randomUUID(),delivery:randomUUID(),session:randomUUID(),operation:randomUUID(),backup:randomUUID() };
   await admin().query('INSERT INTO fleet_hosts(host_id,display_name,company_id) VALUES($1,$1,$2)',[host,value.company_id]);
   await admin().query(`INSERT INTO agent_context_versions(company_id,tenant_id,alias,version,files,digest,source,actor_human_id,actor_alias,created_at)
@@ -107,7 +107,7 @@ async function seedChain(index: number,trace: string): Promise<Chain> {
   return ids;
 }
 async function growHistory(start: number,count: number): Promise<void> {
-  const value=identity(); const prefix=`zz-canary-history-${start}-`; const host='zz-canary-indexed-0';
+  const value=identity(); const prefix=`zz-canary-history-${String(start)}-`; const host='zz-canary-indexed-0';
   await admin().query(`INSERT INTO messages(request_id,trace_id,tenant_id,room_id,actor_alias,body,lane,created_at)
     SELECT gen_random_uuid(),$1||n,$2,'context-room','owner','{}'::jsonb,'interactive',
       $3::timestamptz+CASE WHEN n%2=0 THEN interval '1 day' ELSE interval '-1 day' END FROM generate_series(1,$4::int) n`,
