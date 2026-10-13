@@ -1,11 +1,18 @@
 import { availableParallelism } from 'node:os';
 import { relative, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { defineConfig } from 'vitest/config';
+import type { InlineConfig } from 'vitest/node';
 
 const RAIZ = fileURLToPath(new URL('.', import.meta.url));
 
 const paquete = (nombre: string): string => resolve(RAIZ, `packages/${nombre}/src/index.ts`);
+
+interface ModuloDeTrozos { opcionesDeTrozo: (opciones: { repartirTrabajadores: boolean }) => InlineConfig }
+const trozos: InlineConfig = process.env.CAUCE_TEST_SHARD
+  ? ((await import(pathToFileURL(resolve(RAIZ, 'scripts/trozos-vitest.mjs')).href)) as ModuloDeTrozos)
+    .opcionesDeTrozo({ repartirTrabajadores: true })
+  : {};
 
 const EXCLUSIONES = ['**/node_modules/**', '**/dist/**', '.claude/**'];
 
@@ -165,6 +172,7 @@ export default defineConfig({
     // once per worktree, against stale code and with the ports and containers of the real run.
     exclude: EXCLUSIONES,
     ...(proyectos.length > 0 ? { projects: proyectos } : {}),
+    ...trozos,
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json-summary', 'html'],

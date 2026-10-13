@@ -13,7 +13,7 @@
     "preview": "vite preview",
     "lint": "eslint . --max-warnings 0",
     "typecheck": "tsc -b --pretty false",
-    "test": "vitest run && node --test qa/layout-v4-measure.test.mjs",
+    "test": "vitest run && node ../scripts/trozos.mjs ejecutar node --test qa/layout-v4-measure.test.mjs",
     "test:watch": "vitest"
   },
   "dependencies": {

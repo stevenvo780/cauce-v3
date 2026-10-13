@@ -135,7 +135,9 @@ compara un clon con una base migrada desde cero, ACL y roles incluidos. Las suit
 `SUITES_SIN_PLANTILLA` siguen migrando cada caso desde cero.
 
 Los contenedores de prueba arrancan con `fsync=off` y `full_page_writes=off`
-(`COMANDO_POSTGRES_DE_PRUEBA`, también en los fixtures de OAuth y de procedencia de cliente). Son los
+(`COMANDO_POSTGRES_DE_PRUEBA` en `tests/helpers/contenedor-de-prueba.ts`, también en los fixtures de
+OAuth y de procedencia de cliente), y con la etiqueta `io.cauce.gate.paso` del paso del gate que los
+lanzó, por la que el fallo rápido los retira (`etiquetasDelPasoDelGate`). Son los
 «ajustes no durables» que PostgreSQL documenta para esto: sólo cambian qué sobrevive a una caída del
 sistema operativo o a un corte de luz, que ninguna prueba provoca. `synchronous_commit` sigue
 encendido, así que una prueba que mata o reinicia el postmaster encuentra todo lo confirmado: el WAL
