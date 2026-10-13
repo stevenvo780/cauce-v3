@@ -95,7 +95,7 @@ describe('office chat and real dialog with unit HTTP fixtures', () => {
     const sent = publishFixture();
     mountChat();
     const input = await composer();
-    expect(input).toHaveFocus();
+    await waitFor(() => { expect(input).toHaveFocus(); });
     expect(screen.getByRole('button', { name: 'Enviar' })).toBeDisabled();
     fireEvent.change(input, { target: { value: '  hola oficina  ' } });
     fireEvent.click(screen.getByRole('button', { name: 'Talk to other' }));

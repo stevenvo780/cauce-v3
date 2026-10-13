@@ -1,6 +1,6 @@
 import { channel } from 'node:diagnostics_channel';
 import { generateKeyPairSync } from 'node:crypto';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Pool } from 'pg';
@@ -95,7 +95,8 @@ export class IsolationHarness {
     this.database = await startTestDatabase();
     this.current = await startTestCaseDatabase(this.database);
     const projectRoot = fileURLToPath(new URL('../../../../', import.meta.url));
-    this.directory = await mkdtemp(join(projectRoot, '.delegados/v4/route-isolation-'));
+    await mkdir(join(projectRoot, '.test-state'), { recursive: true });
+    this.directory = await mkdtemp(join(projectRoot, '.test-state/route-isolation-'));
     const localFixtures = await seedIsolationFixtures(this.current, this.directory);
     this.fixtures = localFixtures;
     this.snapshotPool = this.current.adminPool;

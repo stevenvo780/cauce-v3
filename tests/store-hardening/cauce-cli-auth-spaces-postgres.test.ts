@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
-import { chmod, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { FastifyInstance } from 'fastify';
@@ -55,7 +55,8 @@ beforeEach(async () => {
   await current.adminPool.query(`INSERT INTO memberships(tenant_id,room_id,alias,role)
     VALUES($1,'context-room','cli_worker','agent')`, [tenantA]);
   await current.adminPool.query("UPDATE agents SET primary_room_id='context-room' WHERE tenant_id=$1 AND alias='cli_worker'", [tenantA]);
-  directory = await mkdtemp(join(root, '.delegados/v4/cauce-cli-fixture-'));
+  await mkdir(join(root, '.test-state'), { recursive: true });
+  directory = await mkdtemp(join(root, '.test-state/cauce-cli-fixture-'));
   await chmod(directory, 0o700);
   sessionA = join(directory, 'a.session'); sessionB = join(directory, 'b.session');
   now = Date.now();
