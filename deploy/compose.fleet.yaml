@@ -18,6 +18,9 @@ services:
       CAUCE_FLEET_AUTHORITY_OWNER_UID: "0"
       CAUCE_FLEET_AUTHORITY_PEER_UID: "1000"
       CAUCE_FLEET_AUTHORITY_GROUP_GID: "1000"
+      # Setup package for enrolled computers: a path under /run/cauce-fleet/config (the gateway directory below).
+      # Empty keeps setup off; the file and its signing key must be uid 1000 0600 before the gateway starts.
+      CAUCE_FLEET_HOST_SETUP_CONFIG_FILE: ${CAUCE_FLEET_HOST_SETUP_CONFIG_FILE:-}
     volumes:
       - type: bind
         source: /etc/cauce-v3/fleet-v35/gateway

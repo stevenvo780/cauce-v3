@@ -68,7 +68,7 @@ Para que el servicio sobreviva al cierre de sesión (como el usuario `server` de
 Es la **plantilla aprobada por la plataforma** acotada a lo que la plataforma mantiene habilitado, no configuración de cada empresa: igual que el controlador V3.5 fija su política por `policy_sha256` en un fichero privado aprobado, el gateway lee `CAUCE_FLEET_HOST_SETUP_CONFIG_FILE` (JSON privado, 0600, del uid del gateway, como `api.v1.json`) con el release aprobado y la plantilla de política:
 
 ```json
-{"version":1,"signing_key_file":"/etc/cauce-v3/fleet-v35/gateway/host-setup-signer.pem",
+{"version":1,"signing_key_file":"/run/cauce-fleet/config/host-setup-signer.pem",
  "release":{"name":"release","revision":"<sha de 40 hex>","url":"https://…/release.tar","sha256":"<64 hex>","size":123},
  "files":[{"name":"fleet-ca","url":"https://…/fleet-ca.pem","sha256":"<64 hex>","size":1200}],
  "policy":{"bundles":{"codex":{"directory":"@release@/adapter","digest":"sha256:<64 hex>","executable":"/usr/local/bin/python3.12","executable_sha256":null,"argv":[]}},
@@ -79,6 +79,7 @@ Es la **plantilla aprobada por la plataforma** acotada a lo que la plataforma ma
    "authority":{"identity_directory":"@identity@","host_id":"@host@","ca_certificate":"@install@/files/fleet-ca"}}}
 ```
 
+- En producción las rutas son las de dentro del contenedor: el overlay de flota monta `/etc/cauce-v3/fleet-v35/gateway` (uid 1000, `0700`) en `/run/cauce-fleet/config` y pasa `CAUCE_FLEET_HOST_SETUP_CONFIG_FILE` desde `prod.env` (`CAUCE_FLEET_HOST_SETUP_CONFIG_FILE=/run/cauce-fleet/config/host-setup.v1.json`). Vacía o ausente, el gateway no prepara ordenadores. El gateway lee la configuración y la clave al arrancar: un fichero ausente o con otro dueño o modo impide el arranque, y un cambio exige recrear el gateway.
 - Por cada host, el gateway quita los bundles cuyo harness no está habilitado en `harness_definitions` (tabla de plataforma) y las `container_templates` que dependían de ellos, y sustituye `@host@` y `@company@`.
 - El esquema rechaza claves que el ordenador fija por sí mismo (`executor_user`, `roots`, `native`, `signer`…), bundles fuera de `@release@/`, una autoridad que no sea `@identity@`/`@host@` y URLs con credenciales o sin TLS (HTTP solo hacia loopback, para pruebas). Los bundles exigen los mismos campos que el executor (`directory`, `digest` `sha256:`, `executable`, `executable_sha256`, `argv`).
 

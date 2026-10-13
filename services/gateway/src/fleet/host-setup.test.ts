@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { createHash, createPublicKey, generateKeyPairSync, verify } from 'node:crypto';
-import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -103,5 +103,13 @@ describe('host setup packages', () => {
     await writeFile(keyFile, generateKeyPairSync('ec', { namedCurve: 'prime256v1' }).privateKey.export({ type: 'pkcs8', format: 'pem' }), { mode: 0o600 });
     await chmod(keyFile, 0o600);
     await expect(HostSetupPackager.load(configFile)).rejects.toThrow('Ed25519');
+  });
+
+  it('reaches the production gateway through the fleet overlay, and its empty default keeps setup off', async () => {
+    const overlay = await readFile(fileURLToPath(new URL('../../../../deploy/compose.fleet.yaml', import.meta.url)), 'utf8');
+    expect(overlay).toMatch(/^ {6}CAUCE_FLEET_HOST_SETUP_CONFIG_FILE: \$\{CAUCE_FLEET_HOST_SETUP_CONFIG_FILE:-\}$/mu);
+    expect(overlay).toContain('target: /run/cauce-fleet/config');
+    expect(await configuredHostSetup({ CAUCE_FLEET_HOST_SETUP_CONFIG_FILE: '' })).toBeUndefined();
+    await expect(configuredHostSetup({ CAUCE_FLEET_HOST_SETUP_CONFIG_FILE: '/run/cauce-fleet/config/absent.json' })).rejects.toThrow();
   });
 });
