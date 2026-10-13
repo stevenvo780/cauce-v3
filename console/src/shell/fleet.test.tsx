@@ -109,7 +109,7 @@ it('keeps the lease-derived state during a normal activity reload without a prio
   const user = userEvent.setup();
   const future = new Date(Date.now() + 60_000).toISOString();
   let reads = 0;
-  let releaseReload = () => undefined as void;
+  let releaseReload: () => void = () => undefined;
   const reloadGate = new Promise<void>((resolve) => { releaseReload = resolve; });
   onTestFinished(() => { releaseReload(); });
   server.use(
