@@ -36,6 +36,7 @@ class FakeHost:
         self.container_reply = self.gateway_reply
         self.commands = []
         self.enabled = False
+        self.disabled_enablement = (1, 'disabled')
 
     def __call__(self, command, check=True, **options):
         self.commands.append(command)
@@ -47,8 +48,8 @@ class FakeHost:
         elif command[:2] == ['systemctl', 'is-active']:
             output = 'active' if self.active else 'inactive'
         elif command[:2] == ['systemctl', 'is-enabled']:
-            return subprocess.CompletedProcess(command, 0 if self.enabled else 1,
-                                               'enabled' if self.enabled else 'disabled', '')
+            returncode, status = (0, 'enabled') if self.enabled else self.disabled_enablement
+            return subprocess.CompletedProcess(command, returncode, status, '')
         elif command[0] == 'systemctl':
             self.events.append(command[1])
             if command[1] in ('enable', 'disable'):
@@ -310,6 +311,26 @@ class PreflightTests(InstallFixture):
 
 
 class ApplyTests(InstallFixture):
+    def test_a_not_found_unit_can_be_installed_and_enabled(self):
+        self.host.disabled_enablement = (4, 'not-found')
+        self.assertEqual(self.kit.install(self.arguments('--apply')), 'apply OK')
+        self.assertEqual(self.host.events, ['tmpfiles', 'daemon-reload', 'restart', 'enable'])
+        self.assertTrue(self.host.enabled)
+        self.assertTrue(self.host.active)
+        self.assertTrue(self.arguments().unit.is_file())
+
+    def test_empty_enablement_output_is_rejected_before_any_effect(self):
+        before = self.tree()
+        for returncode in (0, 1, 4):
+            with self.subTest(returncode=returncode):
+                self.host.disabled_enablement = (returncode, '')
+                with self.assertRaisesRegex(lib.Abort, 'unsupported enablement: unknown'):
+                    self.kit.install(self.arguments('--apply'))
+                self.assertEqual(self.tree(), before)
+                self.assertEqual(self.host.events, [])
+                self.assertFalse(self.host.enabled)
+                self.assertFalse(self.host.active)
+
     def test_apply_installs_private_files_starts_verifies_and_a_second_run_changes_nothing(self):
         self.assertEqual(self.kit.install(self.arguments('--apply')), 'apply OK')
         config = self.fleet / 'signed-authority'
