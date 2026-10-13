@@ -5,7 +5,7 @@ import { startHealthServer } from '@cauce/protocol';
 import { createPool } from '@cauce/store';
 import type { FastifyInstance } from 'fastify';
 import { buildApp } from './app.js';
-import { JsonlAudit, PostgresAudit, type AuditSink } from './audit.js';
+import { PostgresAudit, type AuditSink } from './audit.js';
 import { loadCatalog } from './catalog.js';
 import type { ServiceConfig } from './config.js';
 import { DecisionService } from './decide.js';
@@ -45,16 +45,13 @@ export async function startService(
     ? createPool(config.databaseUrl, { max: 4, applicationName: 'cauce-decisiones' }) : undefined;
   const resolveCompany = dependencies?.resolveCompany ?? (pool === undefined
     ? (() => { throw new Error('decision company resolver is unavailable'); }) : durableCompanyResolver(pool));
-  const durableAudit = dependencies?.audit ?? (pool === undefined ? undefined : new PostgresAudit(pool));
-  const jsonl = new JsonlAudit(config.auditFile, config.auditMaxBytes);
+  const audit: AuditSink = dependencies?.audit ?? (pool === undefined
+    ? { write: async () => { throw new Error('decision audit sink is unavailable'); } } : new PostgresAudit(pool));
   const service = new DecisionService({
     catalog,
     jev,
     limits: new Limits(config.limits),
-    audit: { write: async (record) => {
-      await durableAudit?.write(record);
-      await jsonl.write(record);
-    } },
+    audit,
     redact: config.redact,
     enabledTemplates: config.enabledTemplates,
   });

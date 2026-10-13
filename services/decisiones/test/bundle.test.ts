@@ -1,5 +1,5 @@
 import { execFileSync, spawn, spawnSync, type ChildProcess } from 'node:child_process';
-import { chmodSync, chownSync, copyFileSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, chownSync, copyFileSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { request } from 'node:https';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -80,7 +80,6 @@ describe('bundle de despliegue', () => {
     }
     chmodSync(directory, 0o700);
     if (asRoot) chownSync(directory, uid, gid);
-    const auditFile = join(directory, 'auditoria.jsonl');
     const [port, healthPort] = [await freePort(), await freePort()];
     child = spawn(process.execPath, [bundle], {
       ...(asRoot ? { uid, gid } : {}),
@@ -91,7 +90,6 @@ describe('bundle de despliegue', () => {
         CAUCE_DECISIONES_TLS_CERT_FILE: serverCert, CAUCE_DECISIONES_TLS_KEY_FILE: serverKey,
         CAUCE_DECISIONES_CLIENT_CA_FILE: caCert, CAUCE_DECISIONES_IDENTITY_FILE: identities,
         CAUCE_DECISIONES_JEV_URL: jev.url, CAUCE_DECISIONES_JEV_KEY_FILE: keyFile,
-        CAUCE_DECISIONES_AUDIT_FILE: auditFile,
         CAUCE_DECISIONES_ALIASES: 'zeus', CAUCE_DECISIONES_TENANTS: 'Steven',
       },
       stdio: ['ignore', 'ignore', 'pipe'],
@@ -118,12 +116,15 @@ describe('bundle de despliegue', () => {
       outgoing.end(JSON.stringify({ plantilla: 'requiere_respuesta', state: { mensaje: 'gracias' } }));
     });
     expect(answer).toMatchObject({ plantilla: 'requiere_respuesta', origen: 'jev' });
+    const identity = readFileSync(`/proc/${String(child.pid)}/status`, 'utf8');
+    expect(identity).toMatch(new RegExp(`^Uid:\\s+${String(uid)}\\s+${String(uid)}\\s+${String(uid)}\\s+${String(uid)}$`, 'mu'));
+    expect(identity).toMatch(new RegExp(`^Gid:\\s+${String(gid)}\\s+${String(gid)}\\s+${String(gid)}\\s+${String(gid)}$`, 'mu'));
     child.kill('SIGTERM');
     expect(await exited).toBe(0);
     child = undefined;
-    const audit = statSync(auditFile);
-    expect(audit.uid).toBe(uid); expect(audit.gid).toBe(gid);
-    expect(audit.mode & 0o777).toBe(0o600);
-    console.info('DECISIONES_BUNDLE_RUNTIME_IDENTITY', JSON.stringify({ hostUid, uid: audit.uid, gid: audit.gid }));
+    const audited = await current.adminPool.query(
+      `SELECT actor_alias,metadata FROM audit_events WHERE action='decision.resolved'`);
+    expect(audited.rows).toEqual([{ actor_alias: 'zeus', metadata: expect.objectContaining({ outcome: expect.anything(), preguntas: expect.any(Array) }) }]);
+    console.info('DECISIONES_BUNDLE_RUNTIME_IDENTITY', JSON.stringify({ hostUid, uid, gid }));
   });
 });

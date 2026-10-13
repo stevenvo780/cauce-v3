@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+
 import type { AddressInfo } from 'node:net';
 import { loadConfig } from '../src/config.js';
 import { defaultAnswers } from './support/fake-jev.js';
@@ -28,7 +28,7 @@ const zeus = () => h.pki.client('zeus');
 const jarvis = () => h.pki.client('jarvis');
 
 function auditLines(): Record<string, unknown>[] {
-  return readFileSync(h.auditFile, 'utf8').trim().split('\n').map((line) => JSON.parse(line) as Record<string, unknown>);
+  return h.auditRecords as unknown as Record<string, unknown>[];
 }
 
 describe('servicio de decisiones sobre mTLS', () => {
@@ -127,7 +127,7 @@ describe('servicio de decisiones sobre mTLS', () => {
       expect(rechazo.body.mensaje).toContain('secreto');
     }
     expect(h.jev.seen).toHaveLength(enviadas);
-    expect(readFileSync(h.auditFile, 'utf8')).not.toContain(secreto);
+    expect(JSON.stringify(h.auditRecords)).not.toContain(secreto);
   });
 
   it('todo rechazo de una decisión trae el respaldo de su plantilla, también los 400 y 413', async () => {
@@ -164,10 +164,10 @@ describe('servicio de decisiones sobre mTLS', () => {
     expect(JSON.stringify(key.body)).not.toContain(TEST_KEY);
   });
 
-  it('la auditoría JSONL guarda alias, preguntas, latencia y certeza, nunca el state ni la clave', async () => {
+  it('la auditoría durable guarda alias, preguntas, latencia y certeza, nunca el state ni la clave', async () => {
     const lines = auditLines();
     expect(lines.length).toBeGreaterThan(5);
-    const text = readFileSync(h.auditFile, 'utf8');
+    const text = JSON.stringify(h.auditRecords);
     for (const forbidden of [TEST_KEY, 'docker compose', 'rm -rf', 'se cayó el VPS', 'abcdefghijklmnopqrstuvwxyz']) expect(text).not.toContain(forbidden);
     const decided = lines.find((line) => line.plantilla === 'aprobacion_humana' && line.origen === 'jev' && line.alias === 'jarvis');
     expect(decided).toMatchObject({ tenant: 'Steven', decision: 'exige_aprobacion', estado: 'ok', usage: { input_tokens: 875 } });

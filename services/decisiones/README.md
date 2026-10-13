@@ -206,7 +206,6 @@ hasta que se re-graba el caso contra Jev y se actualiza el hash.
 | `CAUCE_DECISIONES_HABILITAR_PLANTILLAS` | vacío; claves `empresa/id` (por ejemplo `humanizar/guardia_privacidad_jarvis`) |
 | `CAUCE_DECISIONES_POR_MINUTO` / `_RAFAGA` / `_TOKENS_DIA` / `_TOKENS_DIA_TOTAL` | 60 / 20 / 2000000 por identidad `(empresa, tenant, alias)` / 20000000 globales |
 | `CAUCE_DECISIONES_CONCURRENCIA` / `_CONCURRENCIA_ALIAS` | 16 en total / 4 por identidad `(empresa, tenant, alias)` |
-| `CAUCE_DECISIONES_AUDIT_FILE` / `_AUDIT_MAX_BYTES` | `/var/lib/cauce-decisiones/auditoria.jsonl` / 50 MiB (rota a `.1`) |
 | `CAUCE_DECISIONES_PORT` / `_HEALTH_PORT` / `_REDACTAR` | 8447 / 8088 (sólo 127.0.0.1) / `1` |
 
 - **Límites.** Viven en memoria: al reiniciar se pierde, como mucho, una ráfaga y el cupo de un día.
@@ -217,13 +216,13 @@ hasta que se re-graba el caso contra Jev y se actualiza el hash.
   aunque se aborte y los intentos que expiraron. No cobra las que Jev rechazó con un código HTTP de
   error. Sin `usage`, o si la respuesta no sirve, cobra la estimación. No probé si TypeSafe factura una
   solicitud abortada: se cuenta como si sí. `_TOKENS_DIA` acota así a unos USD 0,08 por alias y día, y
-  `_TOKENS_DIA_TOTAL` a unos USD 0,84 por día para toda la flota. Cada línea de auditoría lleva
-  `tokens_cobrados`.
+  `_TOKENS_DIA_TOTAL` a unos USD 0,84 por día para toda la flota. Cada evento de auditoría lleva
+  `tokens_cobrados` en su metadata.
 - **Concurrencia.** Un alias no ocupa más de `_CONCURRENCIA_ALIAS` plazas: si un agente se desboca, el
   resto de la flota sigue decidiendo con Jev en vez de recibir `servicio_ocupado`.
-- **Auditoría.** Registra una línea por decisión con alias, tenant, plantilla y versión, ids y tipos
+- **Auditoría.** Registra un evento por decisión en `audit_events` (la autoridad única) con alias, tenant, plantilla y versión, ids y tipos
   de las preguntas, SHA-256 y longitud del `state`, latencia, solicitudes a Jev, tokens cobrados al
-  cupo, modelo, request id, usage, certeza por pregunta, decisión y `caer_a_llm`. **Nunca** guarda el `state`, las instrucciones
+  cupo, modelo, request id, usage, certeza por pregunta, decisión y `caer_a_llm` en la metadata. **Nunca** guarda el `state`, las instrucciones
   ni la clave.
 
 ## Despliegue (preparado, no aplicado)
@@ -312,8 +311,9 @@ hasta que se re-graba el caso contra Jev y se actualiza el hash.
 4. **Piloto.** Primero sólo zeus (`CAUCE_DECISIONES_ALIASES=zeus` y `CAUCE_DECISIONES_TENANTS=Steven` en
    `decisiones.env`). Después se agregan alias de a uno y se reinicia sólo este servicio. Un tenant
    cliente entra sólo si Steven lo decide: su `state` sale a un tercero y lo paga la clave de Steven.
-5. **Efecto.** Una decisión desde el arnés y su línea en la auditoría, que se lee con
-   `docker exec cauce-decisiones-decisiones-1 tail -n 5 /var/lib/cauce-decisiones/auditoria.jsonl`.
+5. **Efecto.** Una decisión desde el arnés y su evento en `audit_events`
+   (`action in ('decision.resolved','decision.failed')`), que se lee con `psql`/la consola;
+   la metadata lleva preguntas, certeza, usage y huella del state, nunca el state.
 
 ## Rotar la clave de Jev
 

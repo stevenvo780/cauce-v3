@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+
 import { DecisionError } from '../src/errors.js';
 import { Limits, type LimitOptions } from '../src/limits.js';
 import { startHarness } from './support/servicio.js';
@@ -80,7 +80,7 @@ describe('gasto real contra Jev', () => {
       expect(h.jev.seen.length).toBe(32);
       const cobrado = results.reduce((total, result) => total + (result.body.solicitudes_jev as number), 0);
       expect(cobrado).toBe(32);
-      const auditado = readFileSync(h.auditFile, 'utf8').trim().split('\n').map((line) => (JSON.parse(line) as { tokens_cobrados: number }).tokens_cobrados);
+      const auditado = h.auditRecords.map((linea) => linea.tokens_cobrados);
       expect(auditado.reduce((total, tokens) => total + tokens, 0)).toBe(32 * 875);
     } finally { await h.stop(); }
   });
@@ -98,7 +98,7 @@ describe('gasto real contra Jev', () => {
       expect(aceptadas).toBeGreaterThan(0);
       expect(aceptadas).toBeLessThan(16);
       expect(results.filter((result) => result.status === 429).every((result) => result.body.error === 'cupo_diario_agotado')).toBe(true);
-      const auditado = readFileSync(h.auditFile, 'utf8').trim().split('\n').map((line) => JSON.parse(line) as { origen: string; estado: string; tokens_cobrados: number });
+      const auditado = h.auditRecords;
       expect(auditado.filter((linea) => linea.origen === 'jev')).toHaveLength(aceptadas);
       expect(auditado.filter((linea) => linea.origen === 'jev').every((linea) => linea.tokens_cobrados > 0)).toBe(true);
       expect(auditado.filter((linea) => linea.origen === 'fallo').every((linea) => linea.estado === 'cupo_diario_agotado' && linea.tokens_cobrados === 0)).toBe(true);

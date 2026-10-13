@@ -18,8 +18,6 @@ export interface ServiceConfig {
   readonly allowedTenants: ReadonlySet<string>;
   readonly enabledTemplates: ReadonlySet<string>;
   readonly catalogDir: string;
-  readonly auditFile: string;
-  readonly auditMaxBytes: number;
   readonly redact: boolean;
   readonly jev: {
     readonly url: string;
@@ -117,8 +115,6 @@ export function loadConfig(env: Env = process.env): ServiceConfig {
     allowedTenants: tenants(env),
     enabledTemplates: enabledTemplates(env),
     catalogDir: env[`${PREFIX}CATALOGO_DIR`] ?? fileURLToPath(new URL('../catalogo/', import.meta.url)),
-    auditFile: env[`${PREFIX}AUDIT_FILE`] ?? '/var/lib/cauce-decisiones/auditoria.jsonl',
-    auditMaxBytes: integer(env, 'AUDIT_MAX_BYTES', 50 * 1024 * 1024, 1024, 1024 * 1024 * 1024),
     redact: env[`${PREFIX}REDACTAR`] !== '0',
     jev: {
       url,

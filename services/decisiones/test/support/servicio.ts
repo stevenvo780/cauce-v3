@@ -3,6 +3,7 @@ import { request } from 'node:https';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import type { AuditRecord } from '../../src/audit.js';
 import type { ServiceConfig } from '../../src/config.js';
 import { startService, type RunningService, type ServiceDependencies } from '../../src/server.js';
 import { FakeJev } from './fake-jev.js';
@@ -15,7 +16,7 @@ export interface Harness {
   readonly jev: FakeJev;
   readonly service: RunningService;
   readonly directory: string;
-  readonly auditFile: string;
+  readonly auditRecords: AuditRecord[];
   readonly keyFile: string;
   readonly identitiesFile: string;
   call(client: { cert: string; key: string; ca?: string } | undefined, method: 'GET' | 'POST', path: string, body?: unknown):
@@ -41,21 +42,25 @@ export async function startHarness(options: HarnessOptions = {}): Promise<Harnes
   writeFileSync(keyFile, `${TEST_KEY}\n`, { mode: 0o600 });
   const identitiesFile = join(directory, 'mtls_identities.json');
   writeIdentities(identitiesFile, options.identities?.(pki) ?? [{ fingerprint: pki.client('zeus').fingerprint, alias: 'zeus' }]);
-  const auditFile = join(directory, 'auditoria', 'auditoria.jsonl');
+  const auditRecords: AuditRecord[] = [];
   const config: ServiceConfig = {
     databaseUrl: 'postgresql://unused-in-unit-fixture',
     host: '127.0.0.1', port: 0, healthPort: 0,
     tlsCertFile: pki.serverCert, tlsKeyFile: pki.serverKey, clientCaFile: pki.caCert,
     identitiesFile, allowedAliases: new Set(['*']), allowedTenants: new Set(['Steven']), enabledTemplates: new Set(),
     catalogDir: fileURLToPath(new URL('../../catalogo/', import.meta.url)),
-    auditFile, auditMaxBytes: 10 * 1024 * 1024, redact: true,
+    redact: true,
     jev: { url: jev.url, keyFile, model: 'jev-latest', totalTimeoutMs: 3_000, attemptTimeoutMs: 1_000, maxRounds: 2, hedgeAfterMs: 0, ...(options.jev ?? {}) },
     limits: { perMinute: 600, burst: 100, dailyInputTokens: 1_000_000, dailyInputTokensTotal: 10_000_000, concurrency: 8, concurrencyPerAlias: 8, ...(options.limits ?? {}) },
     ...(options.config ?? {}),
   };
-  const service = await startService(config, undefined, options.dependencies ?? { resolveCompany: async () => ({ company: 'humanizar' }) });
+  const service = await startService(config, undefined, {
+    resolveCompany: async () => ({ company: 'humanizar' }),
+    audit: { write: async (record) => { auditRecords.push(record); } },
+    ...(options.dependencies ?? {}),
+  });
   return {
-    pki, jev, service, directory, auditFile, keyFile, identitiesFile,
+    pki, jev, service, directory, auditRecords, keyFile, identitiesFile,
     call(client, method, path, body) {
       return new Promise((resolve, reject) => {
         const outgoing = request({
