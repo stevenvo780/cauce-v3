@@ -165,6 +165,41 @@ describe('fleet hosts on PostgreSQL', () => {
       expect((await admin.query("SELECT host_id FROM agents WHERE tenant_id='Steven' AND alias='quota_moved'")).rows).toEqual([{ host_id: 'beta' }]);
     }
   });
+  it.each(['pending', 'running'])('expires a %s quota operation before removing an unavailable previous computer', async status => {
+    if (!current) throw new Error('test database absent');
+    const admin = current.adminPool;
+    await createFleetHost(pool, { host_id: 'alpha', display_name: 'Alfa', notes: '' }, scope());
+    await createFleetHost(pool, { host_id: 'beta', display_name: 'Beta', notes: '' }, scope());
+    await placedAgent('quota_moved', 'alpha', 'none');
+    await recordFleetHostStatus(pool, 'alpha', 'unreachable');
+    await updateFleetHost(pool, 'alpha', { expected_version: 1, enabled: false }, scope());
+    await admin.query(`INSERT INTO console_users(id,email,email_normalized,password_hash,display_name,role,tenant_id,alias)
+      VALUES($1,'quota-host@example.test','quota-host@example.test',$2,'Quota host','operator','Steven','kant')`,
+    [HUMAN, '$scrypt$' + 'x'.repeat(48)]);
+    await admin.query(`INSERT INTO agent_quota_operations(company_id,tenant_id,alias,host_id,requested_by,expected_revision,
+      idempotency_key,agent_snapshot,status,claim_token,worker_id,lease_until,expires_at)
+      VALUES('humanizar','Steven','quota_moved','alpha',$1,0,'host-quota-expired','{"host_id":"alpha"}',$2,
+        gen_random_uuid(),'zz_worker',now()+interval '1 minute',clock_timestamp()-interval '1 second')`, [HUMAN, status]);
+    await admin.query("UPDATE agents SET host_id='beta' WHERE tenant_id='Steven' AND alias='quota_moved'");
+    await admin.query(`CREATE FUNCTION assert_expired_host_quota_delete() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN
+        IF OLD.idempotency_key='host-quota-expired' AND
+          (OLD.status<>'failed' OR OLD.error_code IS DISTINCT FROM 'EXPIRED' OR OLD.lease_until IS NOT NULL) THEN
+          RAISE EXCEPTION 'expire the agent quota operation before deleting it';
+        END IF;
+        RETURN OLD;
+      END
+      $$;
+      CREATE TRIGGER assert_expired_host_quota_delete BEFORE DELETE ON agent_quota_operations
+        FOR EACH ROW EXECUTE FUNCTION assert_expired_host_quota_delete()`);
+    await deleteFleetHost(pool, 'alpha', 2, scope());
+    expect((await admin.query("SELECT 1 FROM agent_quota_operations WHERE host_id='alpha'")).rowCount).toBe(0);
+    expect((await admin.query("SELECT 1 FROM fleet_hosts WHERE host_id='alpha'")).rowCount).toBe(0);
+    expect((await admin.query("SELECT host_id,enabled FROM agents WHERE tenant_id='Steven' AND alias='quota_moved'")).rows)
+      .toEqual([{ host_id: 'beta', enabled: true }]);
+    expect((await admin.query("SELECT host_id,enabled FROM fleet_hosts WHERE host_id='beta'")).rows)
+      .toEqual([{ host_id: 'beta', enabled: true }]);
+  });
 
   it('lets a company edit its computers but leaves removing one to the platform', async () => {
     await createFleetHost(pool, { host_id: 'alpha', display_name: 'Alfa', notes: '' }, scope());

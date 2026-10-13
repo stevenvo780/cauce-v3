@@ -109,6 +109,78 @@ describe('durable agent quota operations with real PostgreSQL', () => {
     expect(next.id).toBe(second.id);
     if (worker) expect(await repository.renew(worker)).toBe(false);
   });
+  it.each(['pending', 'running'])('enqueues a fresh query after a %s operation expires in the same placement', async phase => {
+    const key = randomUUID(); const first = await enqueue(key); const worker = phase === 'running' ? await claim() : null;
+    await admin().query("UPDATE agent_quota_operations SET expires_at=now()-interval '1 second' WHERE id=$1", [first.id]);
+    expect(await repository.snapshot(authority(), target)).toMatchObject({ status: 'failed', can_query: true,
+      operation: { id: first.id, status: 'failed', error_code: 'EXPIRED' } });
+    expect((await admin().query('SELECT status,error_code FROM agent_quota_operations WHERE id=$1', [first.id])).rows)
+      .toEqual([{ status: phase, error_code: null }]);
+    const second = await enqueue();
+    expect(second).toMatchObject({ status: 'pending', duplicate: false }); expect(second.id).not.toBe(first.id);
+    expect((await admin().query('SELECT status,error_code,lease_until FROM agent_quota_operations WHERE id=$1', [first.id])).rows)
+      .toEqual([{ status: 'failed', error_code: 'EXPIRED', lease_until: null }]);
+    expect((await admin().query('SELECT expires_at>now() AS live FROM agent_quota_operations WHERE id=$1', [second.id])).rows)
+      .toEqual([{ live: true }]);
+    expect(await enqueue(key)).toMatchObject({ id: first.id, status: 'failed', duplicate: true });
+    expect((await admin().query('SELECT status,error_code FROM agent_quota_operations WHERE id=$1', [first.id])).rows)
+      .toEqual([{ status: 'failed', error_code: 'EXPIRED' }]);
+    const next = await claim(); expect(next.id).toBe(second.id);
+    if (worker) expect(await repository.renew(worker)).toBe(false);
+  });
+  it.each(['pending', 'running'])('does not claim an expired %s operation or wait for the configuration lock', async phase => {
+    const request = await enqueue(); if (phase === 'running') await claim();
+    await admin().query(`UPDATE agent_quota_operations SET expires_at=now()-interval '1 second',
+      lease_until=CASE WHEN status='running' THEN now()-interval '1 second' ELSE NULL END WHERE id=$1`, [request.id]);
+    const before = (await admin().query('SELECT status,claim_token,claim_epoch,worker_id,lease_until FROM agent_quota_operations WHERE id=$1', [request.id])).rows;
+    const holder = await admin().connect();
+    try {
+      await holder.query('BEGIN'); await holder.query('SELECT pg_advisory_xact_lock(783_003_004)');
+      const next = withTransaction(pool, async client => {
+        await client.query("SET LOCAL lock_timeout='200ms'");
+        return repository.forTransaction(client).claim('zz_expired', 'zz-canary-alpha', 30_000, 'context_alpha');
+      });
+      await expect(next).resolves.toBeNull();
+    } finally { await holder.query('ROLLBACK'); holder.release(); }
+    expect((await admin().query('SELECT status,claim_token,claim_epoch,worker_id,lease_until FROM agent_quota_operations WHERE id=$1', [request.id])).rows).toEqual(before);
+    expect(await collections()).toBe(0);
+  });
+  it('rejects a running claim after its deadline even while its lease is live', async () => {
+    await enqueue(); const worker = await claim(); const receipt = measured((await repository.execution(worker)).agent);
+    await admin().query("UPDATE agent_quota_operations SET expires_at=now()-interval '1 second' WHERE id=$1", [worker.id]);
+    expect((await admin().query('SELECT lease_until>now() AS live FROM agent_quota_operations WHERE id=$1', [worker.id])).rows)
+      .toEqual([{ live: true }]);
+    expect(await repository.renew(worker)).toBe(false);
+    await expect(repository.execution(worker)).rejects.toMatchObject({ code: 'conflict' });
+    await expect(repository.finish(worker, receipt)).rejects.toMatchObject({ code: 'conflict' });
+    await expect(withTransaction(pool, client => repository.assertHostScopeInTransaction(client, worker,
+      { host_id: 'zz-canary-alpha', company_id: 'context_alpha' }))).rejects.toMatchObject({ code: 'forbidden' });
+    expect(await collections()).toBe(0);
+  });
+  it('does not claim a pending operation that expires while waiting for the configuration lock', async () => {
+    const request = await enqueue(); const holder = await admin().connect(); const claimant = await pool.connect();
+    let next: Promise<AgentQuotaClaim | null> | undefined;
+    try {
+      const holderPid = requireValue((await holder.query<{ pid: number }>('SELECT pg_backend_pid() AS pid')).rows[0], 'holder').pid;
+      const claimantPid = requireValue((await claimant.query<{ pid: number }>('SELECT pg_backend_pid() AS pid')).rows[0], 'claimant').pid;
+      await holder.query('BEGIN'); await holder.query('SELECT pg_advisory_xact_lock(783_003_004)');
+      await admin().query("UPDATE agent_quota_operations SET expires_at=clock_timestamp()+interval '3 seconds' WHERE id=$1", [request.id]);
+      const before = (await admin().query('SELECT * FROM agent_quota_operations WHERE id=$1', [request.id])).rows;
+      await claimant.query('BEGIN');
+      next = repository.forTransaction(claimant).claim('zz_waiting', 'zz-canary-alpha', 30_000, 'context_alpha');
+      await expect.poll(async () => (await admin().query<{ waiting: boolean }>(
+        'SELECT $1=ANY(pg_blocking_pids($2)) AS waiting', [holderPid, claimantPid])).rows[0]?.waiting,
+      { timeout: 2_000, interval: 10 }).toBe(true);
+      await expect.poll(async () => (await admin().query<{ expired: boolean }>(
+        'SELECT expires_at<=clock_timestamp() AS expired FROM agent_quota_operations WHERE id=$1', [request.id])).rows[0]?.expired,
+      { timeout: 5_000, interval: 25 }).toBe(true);
+      await holder.query('ROLLBACK'); expect(await next).toBeNull(); await claimant.query('COMMIT');
+      expect((await admin().query('SELECT * FROM agent_quota_operations WHERE id=$1', [request.id])).rows).toEqual(before);
+    } finally {
+      await holder.query('ROLLBACK'); await next?.catch(() => undefined); await claimant.query('ROLLBACK');
+      holder.release(); claimant.release();
+    }
+  });
   it.each(['missing', 'stale', 'disabled', 'without-executor'])('rejects a query when the host identity is %s', async state => {
     if (state === 'missing') await admin().query("DELETE FROM fleet_host_identities WHERE host_id='zz-canary-alpha'");
     else if (state === 'stale') await admin().query("UPDATE fleet_host_identities SET capabilities_seen_at=now()-interval '121 seconds' WHERE host_id='zz-canary-alpha'");
@@ -171,10 +243,11 @@ describe('durable agent quota operations with real PostgreSQL', () => {
     expect((await admin().query('SELECT status,error_code FROM agent_quota_operations')).rows)
       .toEqual([{ status: 'failed', error_code: 'SCOPE_CHANGED' }]); expect(await collections()).toBe(0);
   });
-  it('accepts the exact terminal receipt beyond the lease but rejects changed reports or lost authority', async () => {
+  it('accepts the exact terminal receipt beyond the lease and deadline but rejects changed reports or lost authority', async () => {
     await enqueue(); const worker = await claim(); const receipt = measured((await repository.execution(worker)).agent);
     await repository.finish(worker, receipt);
-    await admin().query("UPDATE agent_quota_operations SET lease_until=now()-interval '1 hour' WHERE id=$1", [worker.id]);
+    await admin().query(`UPDATE agent_quota_operations SET lease_until=now()-interval '1 hour',
+      expires_at=clock_timestamp()-interval '1 second' WHERE id=$1`, [worker.id]);
     await repository.finish(worker, receipt);
     await expect(repository.finish(worker, { ...receipt, identity_hash: 'a'.repeat(64) })).rejects.toMatchObject({ code: 'conflict' });
     await admin().query('UPDATE human_tenant_memberships SET enabled=false,revoked_at=now() WHERE human_id=$1',
@@ -229,7 +302,11 @@ describe('durable agent quota operations with real PostgreSQL', () => {
   });
   it('records bounded terminal failures idempotently and rejects a changed error', async () => {
     await enqueue(); const worker = await claim();
-    await repository.fail(worker, 'RUNTIME_UNAVAILABLE'); await repository.fail(worker, 'RUNTIME_UNAVAILABLE');
+    await repository.fail(worker, 'RUNTIME_UNAVAILABLE');
+    await admin().query("UPDATE agent_quota_operations SET expires_at=clock_timestamp()-interval '1 second' WHERE id=$1", [worker.id]);
+    const before = (await admin().query('SELECT * FROM agent_quota_operations WHERE id=$1', [worker.id])).rows;
+    await repository.fail(worker, 'RUNTIME_UNAVAILABLE');
+    expect((await admin().query('SELECT * FROM agent_quota_operations WHERE id=$1', [worker.id])).rows).toEqual(before);
     await expect(repository.fail(worker, 'STEP_FAILED')).rejects.toMatchObject({ code: 'conflict' });
     expect(await repository.snapshot(authority(), target)).toMatchObject({ status: 'failed', operation: { status: 'failed', error_code: 'RUNTIME_UNAVAILABLE' } });
   });

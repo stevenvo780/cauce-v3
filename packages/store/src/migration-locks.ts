@@ -23,7 +23,7 @@ export const migrationLockOrder: readonly string[] = [
   'quota_provider_reports', 'quota_window_samples', 'rooms', 'agent_failure_notices', 'agent_output_materializations',
   'blob_delivery_grants', 'companies', 'company_links', 'platform_admins', 'quota_collections', 'secret_handoffs',
   'harness_definitions', 'role_policies', 'agent_role_templates', 'egress_destinations', 'company_admins',
-  'company_system_principals', 'agent_chain_policies', 'agent_context_versions',
+  'company_system_principals', 'agent_chain_policies', 'agent_context_versions', 'agent_quota_operations',
 ];
 
 const AE = 'ACCESS EXCLUSIVE';
@@ -70,6 +70,7 @@ export const migrationLockFootprints: Readonly<Record<string, Readonly<Record<st
   '069_diagnostic_frontier_indexes.sql': { audit_events: 'SHARE', messages: 'SHARE', terminal_sessions: 'SHARE' },
   '070_agent_quota_operations.sql': { agents: SRE, companies: SRE, console_users: SRE, fleet_hosts: SRE, tenants: SRE },
   '073_harness_definitions_seed.sql': {},
+  '077_agent_quota_expiry.sql': { agent_quota_operations: AE },
   '078_authority_lock_scope.sql': { platform_admins: SRE },
 };
 

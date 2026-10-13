@@ -44,6 +44,14 @@ it('acepta el motivo cerrado de ubicación no operativa sin convertirlo en ausen
   await expect(agentQuotaClient(request as RequestFn).getAgentQuota('One', 'janus')).resolves.toEqual(response);
 });
 
+it('acepta una operación caducada y conserva la posibilidad de volver a consultar', async () => {
+  const response = { ...empty, reader_available: true, can_query: true, reason: null, status: 'failed',
+    operation: { id: 'query-expired', status: 'failed', error_code: 'EXPIRED',
+      created_at: '2026-10-12T19:00:00Z', updated_at: '2026-10-12T19:05:00Z' } };
+  const request = vi.fn().mockResolvedValue(response);
+  await expect(agentQuotaClient(request as RequestFn).getAgentQuota('One', 'janus')).resolves.toEqual(response);
+});
+
 it.each([
   ['read', 403, 'forbidden', 'Tu rol no permite esta acción.'],
   ['query', 409, 'conflict', 'Otro cambio llegó antes, o el recurso aún tiene dependencias. Relee y vuelve a intentarlo.'],
