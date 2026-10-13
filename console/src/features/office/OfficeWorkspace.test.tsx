@@ -12,9 +12,9 @@ import { OfficeWorkspace } from './OfficeWorkspace';
 
 const topology = { tenants: [{ id: 'One', rooms: [{ id: 'general', label: 'General', members: [{ alias: 'worker', enabled: true }] }] },
   { id: 'Two', rooms: [{ id: 'general', label: 'General', members: [{ alias: 'worker', enabled: true }] }] }] };
-function workspace(onAgent = vi.fn(), role: 'company_owner' | 'reader' = 'company_owner') {
+function workspace(onAgent = vi.fn(), role: 'company_owner' | 'reader' = 'company_owner', map: typeof topology = topology) {
   return <CompanySessionProvider state={{ authenticated: true, authority: { role, scope: role === 'reader' ? 'tenant' : 'company', home_company: 'one', acting_company: 'one', platform_override: false } }}>
-    <OfficeWorkspace campus={<p>Campus actual</p>} topology={topology} agents={[]} onAgent={onAgent} /></CompanySessionProvider>;
+    <OfficeWorkspace campus={<p>Campus actual</p>} topology={map} agents={[]} onAgent={onAgent} /></CompanySessionProvider>;
 }
 it('edita sólo la sala compuesta elegida, persiste partes y relee al volver a abrir', async () => {
   let version = 0; let rooms: OfficeRoom[] = []; const writes: { expected_version: number; rooms: OfficeRoom[] }[] = [];
@@ -163,6 +163,35 @@ it('tras un conflicto conserva la posición de una sala creada por la otra perso
   expect(writes).toHaveLength(2); expect(writes[1].expected_version).toBe(7);
   expect(writes[1].rooms.find(room => room.room_id === 'nueva')).toEqual(nueva);
   expect(writes[1].rooms.find(room => room.tenant_id === 'Two')).toMatchObject({ x: 760, parts: [{ label: 'Nueva parte' }] });
+});
+it('un borrador no vuelve a guardar una sala que la topología ya retiró', async () => {
+  let version = 0; let stored: OfficeRoom[] = [];
+  const writes: { expected_version: number; rooms: OfficeRoom[] }[] = [];
+  const available = [{ tenant_id: 'One', room_id: 'general' }, { tenant_id: 'Two', room_id: 'general' }];
+  server.use(http.get('*/v3/console/office/layout', () => HttpResponse.json({ company_id: 'one', version, rooms: stored, available })),
+    http.put('*/v3/console/office/layout', async ({ request }) => {
+      const input = await request.json() as { expected_version: number; rooms: OfficeRoom[] }; writes.push(input);
+      if (input.expected_version !== version) return HttpResponse.json({ error: 'conflict' }, { status: 409 });
+      stored = input.rooms; version += 1;
+      return HttpResponse.json({ company_id: 'one', version, rooms: stored, available });
+    }));
+  const user = userEvent.setup();
+  const view = renderWithApi(workspace());
+  await user.click(screen.getByRole('button', { name: 'Plano editable' }));
+  await waitFor(() => { expect(screen.getByRole('button', { name: 'General Two' })).toBeEnabled(); });
+  await user.click(screen.getByRole('button', { name: 'General Two' }));
+  const editor = within(screen.getByRole('region', { name: 'Editar sala Two/General' }));
+  await user.clear(editor.getByRole('spinbutton', { name: 'Posición horizontal de General' }));
+  await user.type(editor.getByRole('spinbutton', { name: 'Posición horizontal de General' }), '760');
+  const retired = { tenants: [{ id: 'Two', rooms: [{ id: 'general', label: 'General', members: [{ alias: 'worker', enabled: true }] }] }] };
+  view.rerender(<ApiProvider api={testApi}>{workspace(vi.fn(), 'company_owner', retired)}</ApiProvider>);
+  expect(screen.queryByRole('region', { name: 'Sala One/General' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('region', { name: 'Sala One/general' })).not.toBeInTheDocument();
+  expect(screen.getByRole('region', { name: 'Sala Two/General' })).toHaveStyle({ left: '760px' });
+  await user.click(screen.getByRole('button', { name: 'Guardar plano' }));
+  expect(await screen.findByText('Plano de oficina guardado para esta empresa.')).toBeVisible();
+  expect(writes).toHaveLength(1);
+  expect(writes[0].rooms.map(room => `${room.tenant_id}/${room.room_id}`)).toEqual(['Two/general']);
 });
 it('tras un conflicto avisa de las salas donde el borrador sustituye el cambio de la otra persona antes de guardar', async () => {
   const writes = conflictingServer([{ tenant_id: 'Two', room_id: 'general', x: 500, y: 40, width: 300, height: 260, parts: [] }]);

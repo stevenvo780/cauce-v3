@@ -18,11 +18,14 @@ export function reconcileOfficeLayout(rooms: readonly OfficeRoomInfo[], saved: r
     width: 300, height: 260, parts: [],
   });
 }
-/** Reconciled rooms plus every saved room the known list does not name yet, with its saved geometry. */
-export function reconcileOfficeLayoutIncludingSaved(rooms: readonly OfficeRoomInfo[], saved: readonly OfficeRoom[]): OfficeRoom[] {
+/** Reconciled rooms plus saved rooms the known list does not name. `introduced` keeps only those keys. */
+export function reconcileOfficeLayoutIncludingSaved(rooms: readonly OfficeRoomInfo[], saved: readonly OfficeRoom[], introduced?: readonly string[]): OfficeRoom[] {
   const known = new Set(rooms.map(room => officeRoomKey(room.tenant, room.id)));
-  return [...reconcileOfficeLayout(rooms, saved),
-    ...saved.filter(room => !known.has(officeRoomKey(room.tenant_id, room.room_id)))];
+  const extras = introduced && new Set(introduced);
+  return [...reconcileOfficeLayout(rooms, saved), ...saved.filter(room => {
+    const key = officeRoomKey(room.tenant_id, room.room_id);
+    return !known.has(key) && (!extras || extras.has(key));
+  })];
 }
 
 /** Rooms of a draft rebuilt on a newer saved plan, and the rooms where the draft overrides a change of that plan. */

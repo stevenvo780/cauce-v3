@@ -27,7 +27,7 @@ export function OfficeWorkspace({ campus, topology, agents, onAgent }: {
   const quotas = useQuotaAccounts();
   const [mode, setMode] = useState<'campus' | 'plan'>('campus');
   // `base` is the saved plan the draft started from: after a 409 it tells what the draft changed and what the other person did.
-  const [draft, setDraft] = useState<{ version: number; base: OfficeRoom[]; rooms: OfficeRoom[]; conflicted?: boolean }>();
+  const [draft, setDraft] = useState<{ version: number; base: OfficeRoom[]; rooms: OfficeRoom[]; conflicted?: boolean; introduced?: readonly string[] }>();
   const [roomKey, setRoomKey] = useState<string>();
   const [busy, setBusy] = useState(false);
   // The campus reads the saved plan once when it mounts: a new key after each save makes it read the new one.
@@ -35,7 +35,7 @@ export function OfficeWorkspace({ campus, topology, agents, onAgent }: {
   const [error, setError] = useState<Failure>();
   const [notice, setNotice] = useState<{ tone: 'ok' | 'warn'; text: string }>();
   const rooms = officeRooms(topology, layout.data?.available);
-  const shown = draft ? reconcileOfficeLayoutIncludingSaved(rooms, draft.rooms) : reconcileOfficeLayout(rooms, layout.data?.rooms ?? []);
+  const shown = draft ? reconcileOfficeLayoutIncludingSaved(rooms, draft.rooms, draft.introduced ?? []) : reconcileOfficeLayout(rooms, layout.data?.rooms ?? []);
   const writable = canManageCompany(authority?.role) && !!layout.data && !layout.error && !layout.loading && !busy;
   const failure = error ?? (layout.error ? officeFailure(layout.error) : undefined);
   const quotaFailure = quotas.error ? quotaReadFailure(quotas.error, 'No se pudieron leer las cuotas de los agentes. Relee el plano y las cuotas.') : undefined;
@@ -110,8 +110,14 @@ export function OfficeWorkspace({ campus, topology, agents, onAgent }: {
       } else {
         const freshRooms = officeRooms(topology, reread.data.available);
         const theirs = reconcileOfficeLayoutIncludingSaved(freshRooms, reread.data.rooms);
+        const known = new Set(freshRooms.map(room => officeRoomKey(room.tenant, room.id)));
+        const savable = reread.data.available && new Set(reread.data.available.map(room => officeRoomKey(room.tenant_id, room.room_id)));
+        const introduced = theirs.flatMap(room => {
+          const key = officeRoomKey(room.tenant_id, room.room_id);
+          return known.has(key) || (savable && !savable.has(key)) ? [] : [key];
+        });
         const rebased = rebaseOfficeDraft(draft.base, draft.rooms, theirs);
-        setDraft({ version: reread.data.version, base: theirs, rooms: rebased.rooms });
+        setDraft({ version: reread.data.version, base: theirs, rooms: rebased.rooms, introduced });
         const labels = rebased.overridden.map(key => {
           const room = freshRooms.find(value => officeRoomKey(value.tenant, value.id) === key);
           return room ? `${room.tenant}/${room.label}` : key;

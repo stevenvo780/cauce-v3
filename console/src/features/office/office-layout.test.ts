@@ -23,6 +23,11 @@ it('conserva con su posición una sala que solo está en el plano releído y no 
   const rebased = rebaseOfficeDraft(known.map(room => ({ tenant_id: room.tenant, room_id: room.id, x: 0, y: 0, width: 300, height: 260, parts: [] })),
     known.map(room => ({ tenant_id: room.tenant, room_id: room.id, x: 0, y: 0, width: 300, height: 260, parts: [] })), layout);
   expect(rebased.rooms.find(room => room.room_id === 'nueva')).toEqual(nueva); expect(rebased.overridden).toEqual([]);
+  const knownOnly = [known[0]];
+  const dropped = saved[2];
+  expect(reconcileOfficeLayoutIncludingSaved(knownOnly, saved, [])).toEqual([saved[0]]);
+  expect(reconcileOfficeLayoutIncludingSaved(knownOnly, saved, [officeRoomKey(dropped.tenant_id, dropped.room_id)])).toEqual([saved[0], dropped]);
+  expect(reconcileOfficeLayoutIncludingSaved(known, saved, [officeRoomKey('One', 'nueva')])).toHaveLength(3);
 });
 it('rechaza geometrías no finitas y tamaños sin área', () => {
   const room = { tenant_id: 'One', room_id: 'general', x: 0, y: 0, width: 1, height: 1, parts: [] };
