@@ -34,6 +34,8 @@ TRANSIENT_OBSERVATION_CODES = {"pass_timeout", "observation_unavailable", "chain
 HEX = re.compile(r"[a-f0-9]{64}\Z")
 HEAD = re.compile(r"[a-f0-9]{40,64}\Z")
 ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,95}\Z")
+if not hasattr(dt, "UTC"):
+    raise SystemExit("praxis-supervision requires Python 3.11+ (datetime.UTC)")
 ROOT_TEXT = (
     "Continuá el GOAL autorizado de Praxis con ingeniería y datos sintéticos. "
     "Primero reconciliá el estado real, commits y evidencia; una entrega anterior "

@@ -31,6 +31,8 @@ esac
 for command in docker openssl python3 systemctl flock git; do
   command -v "$command" >/dev/null || { echo "Falta $command" >&2; exit 1; }
 done
+python3 -c 'import datetime; datetime.UTC' \
+  || { echo "praxis-supervision y el runtime de Hospital requieren Python 3.11+ (datetime.UTC). No se instala." >&2; exit 1; }
 [ -r "$ENV_FILE" ] || { echo "Falta $ENV_FILE" >&2; exit 1; }
 [ -r "$HOSPITAL_ENV" ] || { echo "Falta $HOSPITAL_ENV" >&2; exit 1; }
 [ -x /opt/hospital-agent/runtime/muse-code-bin/muse-bin-1.4.1-R4503.1 ] \
