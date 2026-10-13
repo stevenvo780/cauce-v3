@@ -13,7 +13,7 @@ const input = {
 };
 
 function valid(value: unknown): boolean {
-  const schema = Reflect.get(protocol, 'FleetOperationRequestSchema') as { safeParse(value: unknown): { success: boolean } } | undefined;
+  const schema = Reflect.get(protocol, 'FleetOperationSubmissionSchema') as { safeParse(value: unknown): { success: boolean } } | undefined;
   return schema?.safeParse(value).success ?? false;
 }
 
@@ -23,7 +23,7 @@ describe('fleet operation request authority', () => {
   });
   it('accepts lifecycle actions without mutable configuration or credentials', () => {
     for (const kind of ['start', 'stop', 'retire', 'restore', 'purge']) {
-      expect(valid({ ...input, kind, parameters: {} })).toBe(true);
+      expect(valid({ ...input, kind, parameters: kind === 'purge' ? { confirm_alias: 'worker_1' } : {} })).toBe(true);
     }
   });
   it('rejects arbitrary commands, provider secrets, relative paths and unsupported target actions', () => {

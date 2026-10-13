@@ -193,7 +193,7 @@ describe('durable exact fleet host barriers', () => {
   it.each(['room', 'agent'] as const)('resumes only artifacts after a sealed %s purge without repeating deletion', async resource => {
     const repo = repository(); const target = resource === 'room' ? { resource: 'room' as const, tenant_id: 'Isa', room_id: 'host-group' }
       : { resource: 'agent' as const, tenant_id: 'Isa', alias: 'host_a' };
-    const claim = await claimed(repo, { kind: 'purge', target, parameters: {}, expected_revision: 0, idempotency_key: `sealed-${resource}-purge` }); await repo.prepare(claim);
+    const claim = await claimed(repo, { kind: 'purge', target, parameters: target.resource === 'agent' ? { confirm_alias: target.alias } : {}, expected_revision: 0, idempotency_key: `sealed-${resource}-purge` }); await repo.prepare(claim);
     await completed(repo, claim, 'stop', { stopped_verified: true }); await completed(repo, claim, 'revoke', { revocation_verified: true });
     await completed(repo, claim, 'purge', { stopped_verified: true, revocation_verified: true });
     await repo.startStep(claim, 'artifacts'); const failed = await repo.fail(claim, { code: 'HOST_UNAVAILABLE', step: 'artifacts', retryable: true });

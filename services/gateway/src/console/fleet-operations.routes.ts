@@ -2,7 +2,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import {
   FleetCapabilitySchema, FleetTargetSchema, FleetOperationControlSchema, FleetOperationPreviewSchema,
-  FleetOperationRecentQuerySchema, FleetOperationRequestSchema, FleetOperationSchema, sha256Hex,
+  FleetOperationRecentQuerySchema, FleetOperationRequestSchema, FleetOperationSubmissionSchema, FleetOperationSchema, sha256Hex,
   type FleetCapability, type FleetOperation, type FleetOperationRequest, type FleetTarget, type Tenant,
 } from '@cauce/protocol';
 import { FleetOperationError, StoreError, type CompanyAuthoritySource } from '@cauce/store';
@@ -24,7 +24,7 @@ export interface FleetOperationsRepositoryBinding {
 export type FleetCapabilitySource=(request:FastifyRequest,reply:FastifyReply)=>Promise<FleetCapability>;
 
 const OperationIdSchema = z.uuid();
-const ERROR_STATUS = { forbidden: 403, conflict: 409, not_found: 404, invalid_input: 422 } as const;
+const ERROR_STATUS = { forbidden: 403, conflict: 409, not_found: 404, invalid_input: 400 } as const;
 
 function sameTarget(left: FleetTarget, right: FleetTarget): boolean {
   if (left.resource !== right.resource || left.tenant_id !== right.tenant_id) return false;
@@ -143,7 +143,7 @@ export function registerFleetOperationRoutes(
   app.post(path, async (request, reply) => {
     try {
       return await withAccess(request, reply, async (active, actor) => {
-        const input = FleetOperationRequestSchema.parse(request.body);
+        const input = FleetOperationSubmissionSchema.parse(request.body);
         const operation = enqueueReceipt(await active.enqueue(actor.tenant_id, actor.alias, input, humanSubject(actor)), actor, input);
         return await reply.code(202).send({ operation_id: operation.id, status: operation.status, operation });
       });

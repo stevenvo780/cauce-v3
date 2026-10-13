@@ -1,4 +1,4 @@
-import { sha256Hex, type FleetOperation, type FleetOperationPreview, type FleetOperationRequest, type FleetTarget } from '@cauce/protocol';
+import { FleetOperationSubmissionSchema, sha256Hex, type FleetOperation, type FleetOperationPreview, type FleetOperationRequest, type FleetTarget } from '@cauce/protocol';
 import type { DatabaseClient, DatabasePool } from '../db.js';
 import { assertFleetAuthority, assertFleetTargetAuthority, fleetRequest, lockFleetRevision, recordFleetEvent, resolveFleetAuthority,
   validateFleetTarget, type FleetAuthorityScope } from './fleet-operation-authority.js';
@@ -36,7 +36,9 @@ export class FleetOperationsRepository extends FleetOperationExecution {
     });
   }
   async enqueue(tenant: string, alias: string, input: FleetOperationRequest, actorSubject?: string): Promise<FleetOperation> {
-    const request = fleetRequest(input); const hash = sha256Hex(request);
+    const parsed = FleetOperationSubmissionSchema.safeParse(input);
+    if (!parsed.success) throw new FleetOperationError('invalid_input', 'fleet operation submission is invalid');
+    const request = parsed.data; const hash = sha256Hex(request);
     try {
       return await this.transaction(async (client) => {
         await lockFleetRevision(client);

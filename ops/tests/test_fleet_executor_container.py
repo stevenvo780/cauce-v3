@@ -342,12 +342,19 @@ class DisposableContainerExecutorTest(unittest.TestCase):
         self.assertEqual((self.containers(), self.volumes()), ([], []))
 
     def test_real_purge_removes_container_and_provider_volumes_before_the_sweep(self):
+        import test_fleet_executor_lifecycle as lifecycle_fixtures
         module, policy = self.operation_fixture()
         module.create_container(policy, self.agent, operation_id='op-purge')
         report = sweep_owned_fleet(self.root / 'orphan-rows.json', [self.agent], self.container,
                                   policy['host_id'], self.agent['runtime_key'])
         self.assertTrue(report['clean'], report)
-        removed = module.purge_container(policy, self.agent)
+        self.context['request'].update(kind='purge', parameters={'confirm_alias': self.agent['alias']})
+        self.context['previous_agents'] = [self.agent]
+        lifecycle_fixtures.PhysicalLifecycleTest.revoke_hook(self)
+        for step in ('stop', 'revoke', 'purge'):
+            result = self.run_step(step, timeout=40)
+            self.assertEqual(result.returncode, 0, f'{step}: {result.stderr}')
+        removed = json.loads(result.stdout)['evidence']
         self.assertEqual({(row['type'], row['name']) for row in removed['removed']}, {
             ('container', self.container), ('volume', self.container + '-state'),
             ('volume', self.container + '-provider-profiles')})

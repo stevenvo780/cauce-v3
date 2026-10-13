@@ -89,11 +89,12 @@ async function verifyCreation(repo: Repository, claim: FleetOperationClaim): Pro
   }
 }
 async function transition(repo: Repository, kind: 'start' | 'stop' | 'retire' | 'restore' | 'purge', target: FleetTarget, revision: number, host: string): Promise<FleetOperationClaim> {
-  const base = { expected_revision: revision, idempotency_key: `${kind}-${String(revision)}-operation`, parameters: {} };
+  const base = { expected_revision: revision, idempotency_key: `${kind}-${String(revision)}-operation`,
+    parameters: kind === 'purge' && target.resource === 'agent' ? { confirm_alias: target.alias } : {} };
   let request: FleetOperationRequest;
   if (kind === 'start' || kind === 'stop') {
     if (target.resource !== 'agent') throw new Error('runtime fixture requires an agent');
-    request = { ...base, kind, target };
+    request = { ...base, kind, target, parameters: {} };
   } else request = { ...base, kind, target };
   await repo.enqueue('Steven', 'fleet_operator', request);
   const claim = await repo.claim('transition-worker', host); if (!claim) throw new Error('transition claim absent');

@@ -97,7 +97,7 @@ describe('durable fleet operation routes', () => {
 
   it('passes the planned purge resources through the validated preview', async () => {
     const resources = [{ type: 'container', name: 'ws-humanizar', action: 'keep', reason: 'compartido' }];
-    const purge: FleetOperationRequest = { ...input, kind: 'purge' };
+    const purge: FleetOperationRequest = { ...input, kind: 'purge', parameters: { confirm_alias: target.alias } };
     const { app, repository } = await fixture();
     repository.preview.mockResolvedValueOnce({ ...preview, kind: 'purge', request_sha256: sha256Hex(purge), resources });
     const response = await app.inject({ method: 'POST', url: `${PATH}/preview`, headers: HEADERS, payload: purge });
@@ -276,7 +276,7 @@ describe('durable fleet operation routes', () => {
   });
 
   it.each([
-    ['forbidden', 403], ['conflict', 409], ['not_found', 404], ['invalid_input', 422],
+    ['forbidden', 403], ['conflict', 409], ['not_found', 404], ['invalid_input', 400],
   ] as const)('maps durable %s failures without reporting an acceptance', async (code, status) => {
     const { app, repository } = await fixture();
     repository.enqueue.mockRejectedValue(new FleetOperationError(code, 'operation rejected'));

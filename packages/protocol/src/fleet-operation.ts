@@ -56,7 +56,21 @@ export const FleetOperationRequestSchema = z.union([
       if (isReservedAlias(request.parameters.runtime_key)) context.addIssue({ code: 'custom', path: ['parameters', 'runtime_key'], message: RESERVED_ALIAS_MESSAGE });
     }),
   z.object({ ...RequestBase, kind: z.enum(['start', 'stop']), target: AgentTargetSchema, parameters: z.object({}).strict() }).strict(),
-  z.object({ ...RequestBase, kind: z.enum(['retire', 'restore', 'purge']), target: FleetTargetSchema, parameters: z.object({}).strict() }).strict(),
+  z.object({ ...RequestBase, kind: z.enum(['retire', 'restore', 'purge']), target: FleetTargetSchema,
+    parameters: z.object({ confirm_alias: z.string().optional() }).strict() }).strict(),
+]);
+// Persisted requests keep their original shape and hash; only new submissions require confirmation.
+export const FleetOperationSubmissionSchema = z.union([
+  FleetOperationRequestSchema.options[0], FleetOperationRequestSchema.options[1],
+  FleetOperationRequestSchema.options[2].extend({ kind: z.enum(['retire', 'restore']), parameters: z.object({}).strict() }),
+  FleetOperationRequestSchema.options[2].extend({ kind: z.literal('purge'), target: AgentTargetSchema,
+    parameters: z.object({ confirm_alias: z.string() }).strict() }).superRefine((request, context) => {
+    if (request.parameters.confirm_alias !== request.target.alias) {
+      context.addIssue({ code: 'custom', path: ['parameters', 'confirm_alias'], message: 'confirm_alias must exactly match target.alias' });
+    }
+  }),
+  FleetOperationRequestSchema.options[2].extend({ kind: z.literal('purge'),
+    target: z.union([FleetTargetSchema.options[1], FleetTargetSchema.options[2]]), parameters: z.object({}).strict() }),
 ]);
 export const FleetOperationControlSchema = z.object({ expected_version: z.number().int().nonnegative() }).strict();
 export const FleetOperationRecentQuerySchema = z.object({ limit: z.coerce.number().int().min(1).max(200).default(50) }).strict();

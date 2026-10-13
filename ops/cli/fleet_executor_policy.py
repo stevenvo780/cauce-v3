@@ -221,6 +221,12 @@ def validate_payload(document) -> dict:
         rooms = [row['room_id'] for row in memberships]
         if len(rooms) != len(set(rooms)) or parameters['primary_room_id'] not in rooms:
             raise SafeFailure('membership intent must include an unambiguous primary room')
+    elif request['kind'] == 'purge' and target['resource'] == 'agent':
+        if set(parameters) - {'confirm_alias'}:
+            raise SafeFailure('agent purge may only contain alias confirmation')
+        if 'confirm_alias' in parameters and (not isinstance(parameters['confirm_alias'], str)
+                or parameters['confirm_alias'] != target['alias']):
+            raise SafeFailure('purge confirmation must exactly match target alias')
     elif parameters:
         raise SafeFailure('request parameters must be empty')
     if request['kind'] in {'start', 'restore'}:

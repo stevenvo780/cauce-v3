@@ -30,16 +30,18 @@ async function preview(resources: Resource[], embedded = true) {
         request_sha256: await fleetRequestHash(input), steps: ['fence'], can_apply: true, dependencies: [], resources });
     }),
   );
-  const view = (selected = target) => <ConsoleAccessBoundary>
-    <AgentLifecyclePanel snapshot={snapshot} target={selected} initialOpen hideTrigger={embedded} embedded={embedded} fixedKind initialKind="purge" />
+  const view = (selected = target, currentSnapshot = snapshot) => <ConsoleAccessBoundary>
+    <AgentLifecyclePanel snapshot={currentSnapshot} target={selected} initialOpen hideTrigger={embedded} embedded={embedded} fixedKind initialKind="purge" />
   </ConsoleAccessBoundary>;
   const result = renderWithApi(view());
   const user = userEvent.setup();
   await screen.findByLabelText('Recursos que se borrarán');
+  await user.type(screen.getByLabelText(/Escribe el alias/), 'w');
   await waitFor(() => { expect(screen.getByRole('button', { name: 'Previsualizar operación' })).toBeEnabled(); });
   await user.click(screen.getByRole('button', { name: 'Previsualizar operación' }));
   return { user, plan: await screen.findByLabelText('Recursos físicos del plan'),
-    changeTarget: (selected: typeof target) => { result.rerender(<ApiProvider api={testApi}>{view(selected)}</ApiProvider>); } };
+    changeTarget: (selected: typeof target) => { result.rerender(<ApiProvider api={testApi}>{view(selected)}</ApiProvider>); },
+    changeRevision: (revision: number) => { result.rerender(<ApiProvider api={testApi}>{view(target, { ...snapshot, revision })}</ApiProvider>); } };
 }
 
 it('lists the server plan, keeps purge disabled until the exact alias is typed and links the backup', async () => {
@@ -64,6 +66,7 @@ it('lists the server plan, keeps purge disabled until the exact alias is typed a
   expect(plan).toHaveTextContent('este es el plan, no el resultado');
   expect(screen.getByRole('link', { name: 'Descargar copia' })).toHaveAttribute('href', '/messages/A/w?view=context');
   const enqueue = screen.getByRole('button', { name: 'Encolar operación' });
+  await user.clear(screen.getByLabelText(/Escribe el alias/));
   expect(enqueue).toBeDisabled();
   await user.click(enqueue);
   for (const alias of ['W', 'ww', ' w', 'w ']) {
@@ -79,7 +82,8 @@ it('lists the server plan, keeps purge disabled until the exact alias is typed a
   await user.click(enqueue);
   expect(await screen.findByLabelText('Operación de flota')).toHaveTextContent('En cola');
   expect(enqueued).toHaveLength(1);
-  expect(enqueued[0]).toMatchObject({ kind: 'purge', target, expected_revision: 4 });
+  expect(enqueued[0]).toMatchObject({ kind: 'purge', target, expected_revision: 4, parameters: { confirm_alias: 'w' } });
+  expect(screen.getByLabelText(/Escribe el alias/)).toHaveValue('');
 });
 
 it('shows a shared container as kept and a native directory as deleted', async () => {
@@ -92,6 +96,7 @@ it('shows a shared container as kept and a native directory as deleted', async (
 
 it('requires a new alias confirmation after closing and reopening purge', async () => {
   const { user } = await preview([{ type: 'container', name: 'ws-w', action: 'delete', reason: 'Contenedor propio' }], false);
+  await user.clear(screen.getByLabelText(/Escribe el alias/));
   await user.type(screen.getByLabelText(/Escribe el alias/), 'w');
   expect(screen.getByRole('button', { name: 'Encolar operación' })).toBeEnabled();
   await user.click(screen.getByRole('button', { name: 'Cerrar operaciones' }));
@@ -102,12 +107,12 @@ it('requires a new alias confirmation after closing and reopening purge', async 
 
 it('does not reuse confirmation for the same alias in another tenant', async () => {
   const { user, changeTarget } = await preview([{ type: 'container', name: 'ws-w', action: 'delete', reason: 'Contenedor propio' }]);
+  await user.clear(screen.getByLabelText(/Escribe el alias/));
   await user.type(screen.getByLabelText(/Escribe el alias/), 'w');
   expect(screen.getByRole('button', { name: 'Encolar operación' })).toBeEnabled();
   changeTarget({ ...target, tenant_id: 'B' });
   expect(screen.getByLabelText(/Escribe el alias/)).toHaveValue('');
-  await user.click(screen.getByRole('button', { name: 'Previsualizar operación' }));
-  await screen.findByLabelText('Previsualización operativa');
+  expect(screen.getByRole('button', { name: 'Previsualizar operación' })).toBeDisabled();
   expect(screen.getByRole('button', { name: 'Encolar operación' })).toBeDisabled();
 });
 
@@ -136,4 +141,13 @@ it('says when the executor finished without deleting a container or volume', () 
     created_at: '2026-10-12T10:00:00.000Z', updated_at: '2026-10-12T10:00:00.000Z' };
   render(<AgentFleetOperation operation={operation} busy={false} current control={() => undefined} />);
   expect(screen.getByLabelText('Resultado de la purga')).toHaveTextContent('no borró contenedores ni volúmenes propios');
+});
+
+it('clears confirmation and requires a new preview after the inventory revision changes', async () => {
+  const { changeRevision } = await preview([{ type: 'container', name: 'ws-w', action: 'delete', reason: 'Contenedor propio' }]);
+  expect(screen.getByLabelText(/Escribe el alias/)).toHaveValue('w');
+  changeRevision(5);
+  expect(screen.getByLabelText(/Escribe el alias/)).toHaveValue('');
+  expect(screen.getByRole('button', { name: 'Previsualizar operación' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Encolar operación' })).toBeDisabled();
 });

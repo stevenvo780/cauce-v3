@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { FleetOperationRequestSchema, type FleetOperationPreview, type FleetOperationRequest, type FleetTarget } from '@cauce/protocol/fleet-operation';
+import { FleetOperationSubmissionSchema, type FleetOperationPreview, type FleetOperationRequest, type FleetTarget } from '@cauce/protocol/fleet-operation';
 import { useApi } from '../../api/context';
 import { useConsoleAccess } from '../../api/console-access';
 import type { ConfigurationSnapshot } from '../../api/types';
@@ -57,7 +57,7 @@ export function AgentLifecyclePanel({ snapshot, target, onReloaded, initialDraft
   useEffect(() => { if (open) heading.current?.focus({ preventScroll: true }); }, [open]);
   useEffect(() => {
     if (previousRevision.current === snapshot.revision) return;
-    previousRevision.current = snapshot.revision; generation.current += 1; setValidated(undefined); setKey(newKey());
+    previousRevision.current = snapshot.revision; generation.current += 1; setValidated(undefined); setKey(newKey()); setTypedAlias('');
     const keepDraft = dirty.current;
     if (target && !keepDraft) setDraft(agentLifecycleDraft(snapshot, target));
     setInventoryNotice(target && !keepDraft ? 'El inventario cambió. Se cargaron los datos actuales; revisa la intención antes de previsualizar otra operación.'
@@ -69,7 +69,8 @@ export function AgentLifecyclePanel({ snapshot, target, onReloaded, initialDraft
 
   function simpleRequest(): { request?: FleetOperationRequest; error?: string } {
     if (!target || !available) return { error: 'El servidor no acredita esta acción para el agente seleccionado.' };
-    const result = FleetOperationRequestSchema.safeParse({ kind, target, parameters: {}, expected_revision: snapshot.revision, idempotency_key: key });
+    const parameters = kind === 'purge' && target.resource === 'agent' ? { confirm_alias: typedAlias } : {};
+    const result = FleetOperationSubmissionSchema.safeParse({ kind, target, parameters, expected_revision: snapshot.revision, idempotency_key: key });
     return result.success ? { request: result.data } : { error: 'Falta una identidad o revisión durable válida.' };
   }
   function edit(patch: Partial<AgentLifecycleDraft>) {
@@ -94,7 +95,7 @@ export function AgentLifecyclePanel({ snapshot, target, onReloaded, initialDraft
     setSending(true); setError(undefined);
     try {
       const operation = await api.enqueueFleetOperation(validated.input);
-      if (sequence === generation.current) { flow.accept(operation); setValidated(undefined); setKey(newKey()); onDirtyChange?.(false); }
+      if (sequence === generation.current) { flow.accept(operation); setValidated(undefined); setKey(newKey()); setTypedAlias(''); onDirtyChange?.(false); }
     } catch (cause) {
       if (sequence === generation.current) setError(cause instanceof Error ? fleetErrorText(cause.message, flow.operation, kind) : 'No se pudo confirmar el encolado. Reintenta con la misma solicitud.');
     } finally { setSending(false); }
@@ -138,13 +139,13 @@ export function AgentLifecyclePanel({ snapshot, target, onReloaded, initialDraft
         disabled={busy || inProgress || !canWrite || !available} edit={edit} /> : null}
       {kind === 'purge' ? <p className="notice">La purga elimina el registro retirado. El servidor exige ausencia de dependencias antes de aplicar.</p> : null}
       {kind === 'purge' && target?.resource === 'agent' ? <section aria-label="Recursos que se borrarán" className="grid gap-2">
-        <p className="m-0">Previsualiza la operación: el servidor lista los recursos físicos que la purga va a tocar. No se puede deshacer.</p>
+        <p className="m-0">Escribe el alias y previsualiza la operación: el servidor lista los recursos físicos que la purga va a tocar. No se puede deshacer.</p>
         <p className="m-0"><a href={`/messages/${encodeURIComponent(target.tenant_id)}/${encodeURIComponent(target.alias)}?view=context`}>Descargar copia</a>
           {' '}del espacio antes de purgar.</p>
         <label>Escribe el alias <code>{target.alias}</code> para confirmar
           <input value={typedAlias} autoComplete="off" onChange={(event) => { setTypedAlias(event.target.value); }} /></label>
       </section> : null}
-      <div className="acciones"><button type="button" className="button secondary" disabled={busy || inProgress || blocked || !canWrite || !available}
+      <div className="acciones"><button type="button" className="button secondary" disabled={busy || inProgress || blocked || !canWrite || !available || !aliasConfirmed}
         aria-busy={previewing} onClick={() => { void preview(); }}>{previewing ? 'Previsualizando…' : 'Previsualizar operación'}</button>
         <button type="button" className="button" disabled={busy || inProgress || blocked || !canWrite || !available || !samePreview || !validated.receipt.can_apply || !aliasConfirmed}
           onClick={() => { void enqueue(); }}>Encolar operación</button></div>

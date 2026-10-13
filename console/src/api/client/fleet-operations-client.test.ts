@@ -28,7 +28,7 @@ describe('fleet receipts', () => {
   it('accepts only a preview for the exact request and keeps room identity spaces', async () => {
     const room: FleetOperationRequest = { ...input, kind: 'retire', target: { resource: 'room', tenant_id: 'A', room_id: ' Sala ' } };
     const receipt = { request_sha256: await fleetRequestHash(room), target: room.target, kind: room.kind,
-      expected_revision: 4, steps: ['prepare'], dependencies: [], can_apply: true };
+      expected_revision: 4, steps: ['prepare'], dependencies: [], can_apply: true, resources: [] };
     const { api, request } = client(receipt);
     expect(await api.previewFleetOperation(room)).toEqual(receipt);
     expect(vi.mocked(request).mock.calls[0]?.[0]).toBe('/v3/console/fleet/operations/preview');

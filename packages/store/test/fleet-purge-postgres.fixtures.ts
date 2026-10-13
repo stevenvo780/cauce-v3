@@ -60,8 +60,8 @@ export async function profileAdoptionFixture(pool: DatabasePool, message: string
     SELECT 'Steven','purge_agent',1,'purge-generation',$1::jsonb,id,1,'purge-instance',1 FROM deliveries WHERE message_id=$2`, [documents, message]);
 }
 
-export function purgeRequest(target: FleetTarget = { resource: 'agent', tenant_id: 'Steven', alias: 'purge_agent' }): FleetOperationRequest {
-  return { kind: 'purge', target, expected_revision: 0, idempotency_key: 'purge-owned-agent', parameters: {} };
+export function purgeRequest(target: FleetTarget = { resource: 'agent', tenant_id: 'Steven', alias: 'purge_agent' }): FleetOperationRequest & { kind: 'purge' } {
+  return { kind: 'purge', target, expected_revision: 0, idempotency_key: 'purge-owned-agent', parameters: target.resource === 'agent' ? { confirm_alias: target.alias } : {} };
 }
 
 export async function preparePurge(pool: DatabasePool, target?: FleetTarget): Promise<{ repo: FleetOperationsRepository; claim: FleetOperationClaim }> {
