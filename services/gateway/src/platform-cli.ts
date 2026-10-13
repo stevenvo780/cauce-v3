@@ -10,7 +10,7 @@ export type PlatformCliCommand =
   | { kind: 'rollback'; revision: number; dryRun: boolean; expectedRevision: number }
   | { kind: 'plan-import'; bundle: unknown; expectedRevision: number }
   | { kind: 'import'; bundle: unknown; plan: unknown; dryRun: boolean };
-export interface PlatformCliRequest { email: string; password: string; companyId: string; command: PlatformCliCommand }
+interface PlatformCliRequest { email: string; password: string; companyId: string; command: PlatformCliCommand }
 
 export async function runPlatformCli(pool: DatabasePool, request: PlatformCliRequest, options: CompanyTransferOptions = {}): Promise<unknown> {
   if (!/^[a-z][a-z0-9_-]{0,63}$/u.test(request.companyId)) throw new Error('acting company is required');

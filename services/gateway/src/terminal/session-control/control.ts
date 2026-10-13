@@ -107,7 +107,7 @@ export function registerTerminalControlRoute(app: FastifyInstance, options: Term
   });
 }
 
-export interface TerminalControlTeardown {
+interface TerminalControlTeardown {
   readonly client: DatabaseClient;
   readonly row: TeardownSessionRow;
   readonly reason: string;
@@ -115,12 +115,7 @@ export interface TerminalControlTeardown {
   readonly recordAudit: (client: DatabaseClient, entry: TerminalAuditEntry) => Promise<void>;
 }
 
-/**
- * Teardown path: closing or revoking a session gives the alias its queue back at once, in the SAME
- * transaction that settles the session. The hold expiry is only the net under this, never the
- * mechanism. A release that fails takes the close down with it — the relay respools and retries —
- * instead of leaving the alias muted with nothing in the log.
- */
+/** Keep hold release and session settlement atomic; a failed release must make the relay retry. */
 export async function releaseHeldControl(teardown: TerminalControlTeardown): Promise<void> {
   const { client, row, reason, log, recordAudit } = teardown;
   if (row.mode !== 'harness_rw') return;

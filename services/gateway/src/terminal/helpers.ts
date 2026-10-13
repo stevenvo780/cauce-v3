@@ -23,8 +23,8 @@ export interface TerminalControlRepository extends AgentTargetRepository {
 
 export type FleetCohort = ReturnType<typeof containerCohort>;
 
-/** `window_extended_to` arrives with `SELECT *` before `TerminalSessionRow` declares it. */
-export interface SessionWindowRow {
+/** SQL includes this field before TerminalSessionRow models it. */
+interface SessionWindowRow {
   readonly consumed_at: Date | null;
   readonly window_extended_to?: Date | null;
 }
@@ -46,7 +46,7 @@ export function cohortLabels(cohort: FleetCohort): string[] {
   return cohort.map(fleetIdentityLabel);
 }
 
-/** Migration 040 window shared with the relay `/authz` and with the control hold of the store, which owns the one text this delegates to. The ceiling parameter is optional because an extension is already clamped when it is WRITTEN. */
+/** Keep relay authorization and control holds on the same session window; extensions are clamped when written. */
 export function sessionWindowExpression(ttlParameter: number, maxTotalParameter?: number): string {
   return terminalSessionWindowExpression(ttlParameter, maxTotalParameter);
 }
@@ -82,7 +82,7 @@ export interface OwnedTerminalSession extends TerminalSessionRow {
   session_expires_at: Date;
 }
 
-export interface OwnedSessionRequest {
+interface OwnedSessionRequest {
   readonly sessionId: string;
   readonly body: {
     readonly request_id: string;
@@ -96,9 +96,8 @@ export interface OwnedSessionRequest {
 }
 
 /**
- * The fence every route that acts on a LIVE session shares: the operator scope, the browser owner
- * digest and generation of the tab that opened it, and the migration 040 window. A stale tab, a
- * second subject or a session already closed matches nothing and can mutate nothing.
+ * A live mutation requires the matching operator, console subject, request, and browser-owner fence.
+ * Stale tabs, another subject, and closed or revoked sessions match no row.
  */
 export function ownedLiveSessionQuery(
   input: OwnedSessionRequest,

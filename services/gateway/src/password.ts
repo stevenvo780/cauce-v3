@@ -28,7 +28,7 @@ const MAX_MEMORY = 96 * 1024 * 1024;
 export const MAX_PASSWORD_LENGTH = 1_024;
 export const MIN_PASSWORD_LENGTH = 12;
 
-export interface ScryptParameters {
+interface ScryptParameters {
   readonly cost: number;
   readonly blockSize: number;
   readonly parallelism: number;

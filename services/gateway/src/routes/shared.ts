@@ -177,19 +177,6 @@ export function trustedPublishSemanticsForContext(
   };
 }
 
-export function trustedPublishSemantics(
-  actor: Principal,
-  command: Pick<ConsolePublishIntentPrepare, 'room_id' | 'recipients' | 'body' | 'lane' | 'priority'>,
-  request: FastifyRequest,
-  actorAlias = actor.alias,
-): Omit<TrustedPublishCommand, 'idempotency_key'> {
-  return trustedPublishSemanticsForContext(actor, command, {
-    interactiveHumanEntry: request.routeOptions.url === '/v3/console/messages'
-      || request.routeOptions.url === '/v3/console/publish-intents',
-    log: request.log,
-  }, actorAlias);
-}
-
 export function consolePublishOperatorScope(actor: Principal): string {
   const authority = actor.operator_id === undefined
     ? `principal:${actor.tenant_id}:${actor.alias}:${actor.channel}`

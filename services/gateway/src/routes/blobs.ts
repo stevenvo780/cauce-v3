@@ -33,7 +33,7 @@ function headerValue(request: FastifyRequest, name: string): string | undefined 
   return typeof value === 'string' ? value : undefined;
 }
 
-export function validateBlobStoreOptions(options: BlobStoreOptions): BlobStoreOptions {
+function validateBlobStoreOptions(options: BlobStoreOptions): BlobStoreOptions {
   if (!Number.isSafeInteger(options.maxBytes) || options.maxBytes < 1 || options.maxBytes > MAX_BLOB_BYTES) {
     throw new Error(`blob maxBytes must be an integer between 1 and ${String(MAX_BLOB_BYTES)}`);
   }

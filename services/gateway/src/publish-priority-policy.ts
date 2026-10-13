@@ -3,14 +3,14 @@ import {
 } from '@cauce/protocol';
 import type { Principal } from './auth.js';
 
-export type PublishPriorityReason = 'unchanged' | 'agent_ceiling' | 'human_entry_floor';
+type PublishPriorityReason = 'unchanged' | 'agent_ceiling' | 'human_entry_floor';
 
-export interface PublishPriorityDecision {
+interface PublishPriorityDecision {
   readonly applied: number;
   readonly reason: PublishPriorityReason;
 }
 
-export interface PublishPriorityContext {
+interface PublishPriorityContext {
   /** True only for the interactive compose surface, never for batch or adapter ingress. */
   readonly interactiveHumanEntry: boolean;
 }

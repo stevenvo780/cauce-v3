@@ -7,13 +7,13 @@ import type { DatabaseClient, DatabasePool } from '@cauce/store';
 
 type Database = DatabasePool | DatabaseClient;
 
-export interface SealingKeyRow {
+interface SealingKeyRow {
   readonly key_id: string;
   readonly public_key: Buffer;
   readonly not_after: Date | null;
 }
 
-export interface SealingKeyPublicationRow {
+interface SealingKeyPublicationRow {
   readonly tenant_id: string;
   readonly alias: string;
   readonly key_id: string;
@@ -49,7 +49,7 @@ export interface HandoffPayloadRow extends HandoffRefRow {
   readonly created_at: Date;
 }
 
-export interface HandoffInsert {
+interface HandoffInsert {
   readonly id: string;
   readonly from_tenant: string;
   readonly from_alias: string;
@@ -63,7 +63,7 @@ export interface HandoffInsert {
   readonly expires_at: Date;
 }
 
-export interface RevokedHandoffRow {
+interface RevokedHandoffRow {
   readonly label: string;
   readonly to_tenant: string;
   readonly to_alias: string;
@@ -72,13 +72,13 @@ export interface RevokedHandoffRow {
 }
 
 /** `visible` answers "is the caller the recipient of an existing hand-off", nothing more. */
-export interface ClaimOutcome {
+interface ClaimOutcome {
   readonly visible: boolean;
   readonly payload?: HandoffPayloadRow;
 }
 
 /** A read hand-off is no longer revocable. `already_read` separates that from not visible at all. */
-export type RevokeOutcome =
+type RevokeOutcome =
   | { readonly kind: 'revoked'; readonly row: RevokedHandoffRow }
   | { readonly kind: 'already_read' }
   | { readonly kind: 'absent' };
@@ -88,7 +88,7 @@ export type RevokeScope =
   | { readonly kind: 'sender'; readonly tenant: string; readonly alias: string }
   | { readonly kind: 'operator'; readonly tenant: string };
 
-export type SealingKeyPublicationOutcome =
+type SealingKeyPublicationOutcome =
   | 'published'
   | 'refreshed'
   | 'rebind_refused'
@@ -167,7 +167,7 @@ export async function activeSealingKey(
 export const MAX_PENDING_HANDOFF_PAGE = 20;
 
 /** What the recipient is told exists: names each hand-off, carries none. Full rationale: ./README.md */
-export interface PendingHandoffPage {
+interface PendingHandoffPage {
   readonly rows: PendingHandoffRow[];
   readonly more: boolean;
 }

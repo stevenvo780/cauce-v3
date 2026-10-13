@@ -15,7 +15,7 @@ export type SecretAuditAction =
 
 export type SecretAuditDecision = 'allow' | 'deny';
 
-export interface SecretAuditEntry {
+interface SecretAuditEntry {
   readonly tenant_id: string;
   readonly actor_alias: string;
   readonly action: SecretAuditAction;
@@ -70,12 +70,12 @@ interface DenialWindow {
   reasons: Set<string>;
 }
 
-export interface DenialTally {
+interface DenialTally {
   readonly record: boolean;
   readonly count: number;
 }
 
-export type DenialThrottle = (sender: string, reason: string, now?: number) => DenialTally;
+type DenialThrottle = (sender: string, reason: string, now?: number) => DenialTally;
 
 function evictIfFull(windows: Map<string, DenialWindow>, now: number): void {
   if (windows.size < MAX_TRACKED_SENDERS) return;

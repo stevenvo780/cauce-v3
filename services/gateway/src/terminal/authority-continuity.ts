@@ -3,7 +3,7 @@ import { AliasSchema, TenantSchema, isCanonicalUuidV4, isRfcUuid } from '@cauce/
 import type { Principal } from '../auth.js';
 import type { VerifiedConsoleSession } from '../password-auth.js';
 
-export interface AuthorityActor { readonly tenantId: string; readonly alias: string }
+interface AuthorityActor { readonly tenantId: string; readonly alias: string }
 interface OriginClock {
   readonly issuedAtSeconds: number; readonly expiresAtSeconds: number; readonly actor: AuthorityActor;
 }
@@ -24,7 +24,7 @@ export interface AuthorityContinuityPayload {
   readonly version: 2; readonly sessionId: string; readonly requestId: string;
   readonly semanticDigest: string; readonly origin: TerminalAuthorityOrigin;
 }
-export type TerminalSubjectIdentity =
+type TerminalSubjectIdentity =
   | { readonly kind: 'human'; readonly humanId: string; readonly actor: AuthorityActor }
   | { readonly kind: 'machine'; readonly certificateSha256: string;
     readonly principalChannel: string; readonly principalSessionId: string; readonly actor: AuthorityActor };
@@ -32,7 +32,7 @@ export type TerminalSubjectIdentity =
 const DOMAIN = 'cauce-v3/terminal-authority-continuity/v2';
 const KEY_INFO = 'gateway-only/authority-continuity';
 const ADMISSION_DOMAIN = 'cauce-v3/terminal-admission-authority/v2';
-export const TERMINAL_SUBJECT_MAX_BYTES = 2048;
+const TERMINAL_SUBJECT_MAX_BYTES = 2048;
 export const AUTHORITY_CONTINUITY_MAX_BYTES = 4096;
 const MAX_SECONDS = 8_640_000_000_000;
 const HEX = /^[0-9a-f]{64}$/u;

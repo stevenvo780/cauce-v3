@@ -1,7 +1,10 @@
 /**
- * Poda de grabaciones TUI según T014a/FR-012: retención decidida por el dueño de 30 días.
- * Si el directorio no se puede leer, falla cerrada. Solo borra archivos `.cast` regulares de
- * primer nivel; no sigue symlinks ni recorre subdirectorios.
+ * Poda automática de grabaciones TUI (T014a/FR-012, decisión del dueño: 30 días).
+ * Las grabaciones las escribe el terminal-relay en `CAUCE_TERMINAL_RECORDING_DIR` como
+ * `<session_id>.cast` (0700/0600, tope por sesión); este sweeper sólo borra dentro de ese
+ * directorio los `.cast` regulares de primer nivel con mtime más antiguo que la retención.
+ * Es idempotente y fail-closed: si el directorio no existe o no se puede leer, no hace
+ * nada y lo registra; jamás sigue symlinks ni baja a subdirectorios.
  */
 import { lstat, readdir, stat, unlink } from 'node:fs/promises';
 import { join } from 'node:path';

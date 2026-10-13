@@ -35,7 +35,7 @@ interface ClaimStateRow {
   readonly database_now: Date;
 }
 
-export interface RelayClaimState {
+interface RelayClaimState {
   readonly exact: boolean;
   readonly live: boolean;
   readonly retryAfterMs: number | undefined;
@@ -115,7 +115,7 @@ export async function renewRelayClaim(
   return result.rows[0];
 }
 
-export interface TakenOverRelayClaim extends TerminalSessionRow {
+interface TakenOverRelayClaim extends TerminalSessionRow {
   readonly database_now: Date;
 }
 

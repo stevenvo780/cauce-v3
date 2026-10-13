@@ -23,7 +23,7 @@ export interface PublishRedaction {
   readonly schemaBroken: boolean;
 }
 
-export interface PublishRedactionActor {
+interface PublishRedactionActor {
   readonly tenant_id: string;
   readonly alias: string;
   readonly channel: string;
