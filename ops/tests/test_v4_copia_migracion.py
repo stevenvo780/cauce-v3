@@ -598,7 +598,7 @@ class SecurityTests(Scoped):
         chain_in = inside_repo('con-alt-encadenado')
         write(chain_in / '.git/objects/info/alternates', os.path.realpath(alt_mid) + '\n')
         point_at(chain_in, alt_out)
-        self.assertEqual(copia.alternate_entries(b'"a\\012b\\057c\\240"Xtail\n# c\n'), [b'a\nb/c\xa0', b'tail'])
+        self.assertEqual((copia.alternate_entries(b'"a\\012b\\057c\\240"Xtail\n# c\n'), copia.alternate_entries(b'"abc\\')), ([b'a\nb/c\xa0', b'tail'], [b'"abc\\']))
         for kind, tag, sentinel in (('pad', 'espacio', 'SENTINEL-PADDED-ALT-9f3a'), ('cr', 'cr', 'SENTINEL-CR-ALT-9f3a'), ('quote', 'comillas', 'SENTINEL-QUOTED-ALT-9f3a'), ('octal', 'octal', 'SENTINEL-OCTAL-ALT-9f3a'), ('tail', 'cola', 'SENTINEL-TAIL-ALT-9f3a')):
             out_x, inn_x = outside_repo(f'fuera-alt-{tag}', sentinel), inside_repo(f'con-alt-{tag}')
             objects, info = os.path.realpath(out_x / '.git/objects'), inn_x / '.git/objects/info/alternates'

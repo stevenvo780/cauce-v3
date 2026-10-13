@@ -127,7 +127,7 @@ def alternate_entries(raw: bytes) -> list[bytes]:
             elif (esc := raw[j + 1] if j + 1 < n else -1) in simple:
                 out.append(simple[esc])
                 j += 2
-            elif esc in b'0123' and j + 3 < n and raw[j + 2] in b'01234567' and raw[j + 3] in b'01234567':
+            elif 48 <= esc <= 51 and j + 3 < n and raw[j + 2] in b'01234567' and raw[j + 3] in b'01234567':
                 out.append(((esc - 48) << 6) | ((raw[j + 2] - 48) << 3) | (raw[j + 3] - 48))
                 j += 4
             else:
