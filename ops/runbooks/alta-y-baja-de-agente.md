@@ -19,7 +19,7 @@ La base de datos PostgreSQL (`agents` + `memberships`) es la **ÚNICA fuente de 
    export CAUCE_CLIENT_CA_KEY=/etc/cauce-v3/pki/ca.key
    export CAUCE_PTY_MASTER_FILE=/etc/cauce-v3/secrets/terminal-ticket.key
    ```
-   > `cauce <alias> aprovisionar` lee `CAUCE_PTY_MASTER_FILE`; si no se define, usa `/etc/cauce-v3/secrets/pty_master.key`. `CAUCE_TERMINAL_TICKET_KEY_PATH` configura el secreto Compose `terminal_ticket_key` del gateway, pero no fija por sí sola la ruta que lee el aprovisionador.
+   > El ejemplo elige explícitamente `CAUCE_PTY_MASTER_FILE`; si no se define `CAUCE_PTY_MASTER_FILE`, `CAUCE_PTY_MASTER_ENV` ni `CAUCE_PTY_MASTER`, `cauce <alias> aprovisionar` usa `/etc/cauce-v3/secrets/pty_master.key`. `CAUCE_TERMINAL_TICKET_KEY_PATH` configura el secreto Compose `terminal_ticket_key` del gateway, pero no fija por sí sola la ruta que lee el aprovisionador.
 2. **Acceso a PostgreSQL**: conexión activa con permisos de inserción y actualización sobre las tablas `agents` y `memberships`.
 3. **Herramientas requeridas**: `python3`, `openssl`, `flock`, `systemctl`, `docker`.
 
@@ -151,6 +151,7 @@ El aprovisionamiento emite y publica de forma atómica (sin imprimir secretos en
 3. **Identidad del canal PTY**:
    - Gestiona `alias-key.hex` con `ops/pty-agent/publish-alias-key.sh` y `CAUCE_PTY_MASTER_FILE`.
    - Gestiona el certificado mTLS `CN=pty-<alias>` y su clave RSA 4096, registra la huella en `pty_agent_identities.json` y escribe el entorno del launcher `<alias>.env`.
+   - Ese `.env` fija `RELAY_HOST` y `RELAY_PORT`; si el alias usa otro relay, revisa y edita ambas variables en el archivo generado antes de iniciar el unit.
 
 4. **PKI de Contenedor y Archivo de Entorno (`container-pki/<alias>/` y `<alias>.env`)**:
    - Creación del directorio `/etc/cauce-v3/container-pki/<alias>/` con certificados y token de acceso.

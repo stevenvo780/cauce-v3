@@ -13,8 +13,10 @@ Antes de tocar producción, el árbol local en `main` debe cumplir:
 2. Recibo de `scripts/release-gates.sh` en verde para el mismo commit: incluye `pnpm typecheck`, `pnpm lint`, `pnpm test`, `pnpm coverage:ratchet`, `pnpm qa:testcontainers`, `pnpm qa:layout`, `pnpm qa:runtime-packaging`, `pnpm ops:validate` y `pnpm arch:validate`.
 3. Backup automatizado verificado y reciente en el host.
 
-**CRITERIO DE PARADA 0**: si algún gate falla o no hay un backup verificado de 2 h o menos cuando
-hay migraciones pendientes, **ABORTAR**. No se inicia la ventana.
+**CRITERIO DE PARADA 0**: si algún gate falla o no hay un backup verificado de 24 h o menos, o de
+2 h o menos con migraciones pendientes, **ABORTAR**. Si la API de blobs está activa o la migración
+043 está pendiente, el backup verificado de 24 h o menos es obligatorio y no se puede omitir este
+control. No se inicia la ventana.
 
 ---
 

@@ -23,7 +23,7 @@ Supervisar, desplegar, actualizar y hacer rollback de adapters V3 que se ejecuta
    systemctl --user daemon-reload
    ```
 3. Construir el bundle desde un worktree limpio, como usuario normal. Para una unidad rootless,
-   usar el mismo usuario propietario del servicio y el `BUNDLE_ROOT` configurado en la unidad
+   usar el mismo usuario propietario del servicio y el `CAUCE_CONTAINER_BUNDLE_ROOT` configurado en la unidad
    (por defecto `~/.local/share/cauce-v3-adapter`). Las releases viven directamente bajo
    `$BUNDLE_ROOT/releases/<release>`; no hay un directorio intermedio por alias. Ejecutar desde la
    raíz del checkout limpio cuyo código se va a liberar:
