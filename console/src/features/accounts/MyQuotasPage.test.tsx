@@ -322,3 +322,94 @@ it('anuncia la carga inicial de entornos mientras el snapshot viaja', async () =
   expect(await screen.findByText(/El formulario se habilita cuando llega la lectura/u)).toBeVisible();
   expect(await screen.findByText(/No hay entornos de consulta/u)).toBeVisible();
 });
+
+it('no envía codex si el alta se abre antes de que la oferta llegue solo con grok', async () => {
+  const pending: Array<(response: Response) => void> = [];
+  let offered = false;
+  const grokOffer = () => HttpResponse.json({ company_id: 'one', environments: [], operations: [],
+    capabilities: { available: true, providers: ['grok'], hosts: [], actions: ['create'] } });
+  const writes: unknown[] = [];
+  server.use(
+    http.get('*/v3/console/quota-accounts', () => HttpResponse.json({ company_id: 'one', observed_at: '2026-10-11T00:00:00Z', accounts: [] })),
+    http.get('*/v3/console/quota-environments', () => offered ? grokOffer() : new Promise(resolve => { pending.push(resolve); })),
+    http.get('*/v3/console/preferences', () => HttpResponse.json({ version: 1, pinned_quota_accounts: [] })),
+    http.post('*/v3/console/quota-accounts', async ({ request }) => { writes.push(await request.json()); return HttpResponse.json({ account_id: 'new-account', duplicate: false }); }),
+  );
+  const user = userEvent.setup(); renderWithApi(owner());
+  await waitFor(() => { expect(screen.getByRole('button', { name: 'Registrar cuenta' })).toBeEnabled(); });
+  await user.click(screen.getByRole('button', { name: 'Registrar cuenta' }));
+  const form = within(await screen.findByRole('form', { name: 'Registrar cuenta de cuotas' }));
+  expect(form.getByText(/Ningún host puede ejecutar consultas de cuota todavía/u)).toBeVisible();
+  expect(form.getByRole('button', { name: 'Registrar cuenta' })).toBeDisabled();
+  await waitFor(() => { expect(pending.length).toBeGreaterThan(0); });
+  offered = true;
+  act(() => { for (const resolve of pending.splice(0)) resolve(grokOffer()); });
+  await waitFor(() => { expect(form.getByRole('combobox', { name: 'Proveedor' })).toHaveValue('grok'); });
+  expect(within(form.getByRole('combobox', { name: 'Proveedor' })).queryByRole('option', { name: 'codex' })).not.toBeInTheDocument();
+  await user.type(form.getByRole('textbox', { name: 'Nombre de la cuenta' }), 'Tardía');
+  await user.click(form.getByRole('button', { name: 'Registrar cuenta' }));
+  expect(await screen.findByText('Cuenta registrada. Crea su entorno para autenticar y consultar.')).toBeVisible();
+  expect(writes).toHaveLength(1);
+  expect(writes[0]).toMatchObject({ provider: 'grok', label: 'Tardía' });
+});
+
+it('no envía un proveedor retirado de la oferta con el formulario de alta abierto', async () => {
+  let offer = ['codex', 'grok']; const writes: unknown[] = [];
+  server.use(
+    http.get('*/v3/console/quota-accounts', () => HttpResponse.json({ company_id: 'one', observed_at: '2026-10-11T00:00:00Z', accounts: [] })),
+    http.get('*/v3/console/quota-environments', () => HttpResponse.json({ company_id: 'one', environments: [], operations: [],
+      capabilities: { available: true, providers: offer, hosts: [], actions: ['create'] } })),
+    http.get('*/v3/console/preferences', () => HttpResponse.json({ version: 1, pinned_quota_accounts: [] })),
+    http.post('*/v3/console/quota-accounts', async ({ request }) => { writes.push(await request.json()); return HttpResponse.json({ account_id: 'new-account', duplicate: false }); }),
+  );
+  const intervals = vi.spyOn(window, 'setInterval'); const user = userEvent.setup(); renderWithApi(owner());
+  await user.click(await screen.findByRole('button', { name: 'Registrar cuenta' }));
+  const form = within(await screen.findByRole('form', { name: 'Registrar cuenta de cuotas' }));
+  const provider = form.getByRole('combobox', { name: 'Proveedor' });
+  expect(provider).toHaveValue('codex');
+  await user.selectOptions(provider, 'grok');
+  await user.type(form.getByRole('textbox', { name: 'Nombre de la cuenta' }), 'Tras el cambio');
+  const tick = intervals.mock.calls.find(([, period]) => period === 15_000)?.[0];
+  if (typeof tick !== 'function') throw new Error('No se registró el poller existente.');
+  offer = []; act(() => { tick(); });
+  await waitFor(() => { expect(form.getByRole('button', { name: 'Registrar cuenta' })).toBeDisabled(); });
+  fireEvent.submit(screen.getByRole('form', { name: 'Registrar cuenta de cuotas' }));
+  expect(form.getByRole('alert')).toHaveTextContent('Elige un proveedor que los hosts puedan ejecutar ahora.');
+  expect(writes).toEqual([]);
+  offer = ['claude']; act(() => { tick(); });
+  await waitFor(() => { expect(form.getByRole('combobox', { name: 'Proveedor' })).toHaveValue('claude'); });
+  expect(within(form.getByRole('combobox', { name: 'Proveedor' })).queryByRole('option', { name: 'grok' })).not.toBeInTheDocument();
+  expect(within(form.getByRole('combobox', { name: 'Proveedor' })).queryByRole('option', { name: 'codex' })).not.toBeInTheDocument();
+  await user.click(form.getByRole('button', { name: 'Registrar cuenta' }));
+  expect(await screen.findByText('Cuenta registrada. Crea su entorno para autenticar y consultar.')).toBeVisible();
+  expect(writes).toHaveLength(1);
+  expect(writes[0]).toMatchObject({ provider: 'claude', label: 'Tras el cambio' });
+});
+
+it('edita etiqueta y pausa de una cuenta cuyo proveedor ya no se ofrece', async () => {
+  const patches: unknown[] = [];
+  server.use(
+    http.get('*/v3/console/quota-accounts', () => HttpResponse.json({ company_id: 'one', observed_at: '2026-10-11T00:00:00Z', accounts: [account] })),
+    http.get('*/v3/console/quota-environments', () => HttpResponse.json({ company_id: 'one', environments: [], operations: [],
+      capabilities: { available: true, providers: ['grok'], hosts: [], actions: [] } })),
+    http.get('*/v3/console/preferences', () => HttpResponse.json({ version: 1, pinned_quota_accounts: [] })),
+    http.patch('*/v3/console/quota-accounts/subscription', async ({ request }) => { patches.push(await request.json()); return HttpResponse.json({ account_id: 'subscription', version: 4 }); }),
+  );
+  const user = userEvent.setup(); renderWithApi(owner());
+  await waitFor(() => { expect(screen.getByRole('button', { name: 'Editar cuenta' })).toBeEnabled(); });
+  await user.click(screen.getByRole('button', { name: 'Editar cuenta' }));
+  const form = within(await screen.findByRole('form', { name: 'Editar cuenta de cuotas' }));
+  const provider = form.getByRole('combobox', { name: 'Proveedor' });
+  expect(provider).toBeDisabled();
+  expect(provider).toHaveValue('codex');
+  expect(within(provider).getByRole('option', { name: 'codex' })).toBeInTheDocument();
+  expect(within(provider).getByRole('option', { name: 'grok' })).toBeInTheDocument();
+  await user.clear(form.getByRole('textbox', { name: 'Nombre de la cuenta' }));
+  await user.type(form.getByRole('textbox', { name: 'Nombre de la cuenta' }), 'Sigue editable');
+  fireEvent.change(form.getByLabelText('Pausa hasta (hora de tu navegador)'), { target: { value: '2026-12-10T08:30' } });
+  await user.type(form.getByRole('textbox', { name: 'Motivo de pausa' }), 'mantenimiento');
+  await user.click(form.getByRole('button', { name: 'Guardar cuenta' }));
+  expect(await screen.findByText('Cuenta actualizada.')).toBeVisible();
+  expect(patches).toEqual([{ expected_version: 3, label: 'Sigue editable', enabled: true,
+    paused_until: new Date('2026-12-10T08:30').toISOString(), paused_reason: 'mantenimiento' }]);
+});

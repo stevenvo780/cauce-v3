@@ -101,6 +101,14 @@ function toLocalInput(iso: string | null): string {
 }
 const formatLocal = (date: Date) => new Intl.DateTimeFormat('es', { day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit', timeZoneName: 'short' }).format(date);
 
+function isOfferedProvider(choice: string, providers: readonly QuotaProvider[]): boolean {
+  return providers.some(provider => provider === choice);
+}
+
+function offeredProvider(choice: string, providers: readonly QuotaProvider[]): string {
+  return isOfferedProvider(choice, providers) ? choice : providers[0] ?? '';
+}
+
 function QuotaAccountForm({ account, providers, busy, save, cancel }: {
   account?: QuotaAccount; providers: readonly QuotaProvider[]; busy: boolean; save: (input: AccountFormValues) => Promise<void>; cancel: () => void;
 }) {
@@ -108,7 +116,8 @@ function QuotaAccountForm({ account, providers, busy, save, cancel }: {
   const initialPause = toLocalInput(account?.paused_until ?? null);
   const initialReason = automatic ? '' : account?.paused_reason ?? '';
   const [label, setLabel] = useState(account?.label ?? '');
-  const [provider, setProvider] = useState<string>(account?.provider ?? providers.at(0) ?? 'codex');
+  const [providerChoice, setProviderChoice] = useState(account?.provider ?? '');
+  const provider = account ? account.provider : offeredProvider(providerChoice, providers);
   const [enabled, setEnabled] = useState(account?.enabled ?? true);
   const [paused, setPaused] = useState(initialPause);
   const [reason, setReason] = useState(initialReason);
@@ -119,6 +128,8 @@ function QuotaAccountForm({ account, providers, busy, save, cancel }: {
   const hasPause = !!account?.paused_until || !!account?.paused_reason;
   return <form aria-label={account ? 'Editar cuenta de cuotas' : 'Registrar cuenta de cuotas'} className="grid gap-2 rounded-xl border border-line bg-surface p-4" onSubmit={event => { event.preventDefault();
     if (pausedDate && Number.isNaN(pausedDate.getTime())) { setError('Introduce una fecha de pausa válida.'); return; }
+    if (!account && !isOfferedProvider(provider, providers)) { setError('Elige un proveedor que los hosts puedan ejecutar ahora.'); return; }
+    setError('');
     const pause: AccountFormValues['pause'] = {};
     if (resume) { pause.paused_until = null; pause.paused_reason = null; }
     else {
@@ -129,7 +140,7 @@ function QuotaAccountForm({ account, providers, busy, save, cancel }: {
     }
     void save({ provider: provider as QuotaProvider, label: label.trim(), enabled, pause, idempotency_key: idempotencyKey }); }}>
     <label>Nombre de la cuenta<input required maxLength={80} value={label} disabled={busy} onChange={event => { setLabel(event.target.value); }} /></label>
-    <label>Proveedor<select value={provider} disabled={busy || !!account} onChange={event => { setProvider(event.target.value); }}>
+    <label>Proveedor<select value={provider} disabled={busy || !!account} onChange={event => { setProviderChoice(event.target.value); }}>
       {[...new Set([...providers, ...account ? [account.provider] : []])].map(value => <option key={value}>{value}</option>)}</select></label>
     {!account && !providers.length ? <Notice tone="warn">Ningún host puede ejecutar consultas de cuota todavía. Relee los entornos.</Notice> : null}
     {account ? <><label className="flex items-center gap-2"><input type="checkbox" checked={enabled} disabled={busy} onChange={event => { setEnabled(event.target.checked); }} />Cuenta habilitada</label>
@@ -139,7 +150,7 @@ function QuotaAccountForm({ account, providers, busy, save, cancel }: {
       {automatic ? null : <label>Motivo de pausa<input maxLength={128} value={reason} disabled={busy || resume} onChange={event => { setReason(event.target.value); }} /></label>}
       {hasPause ? <label className="flex items-center gap-2"><input type="checkbox" checked={resume} disabled={busy} onChange={event => { setResume(event.target.checked); }} />Reanudar ahora (quita la pausa)</label> : null}</> : null}
     {error ? <Notice tone="danger" role="alert">{error}</Notice> : null}
-    <div className="flex gap-2"><Button type="submit" disabled={busy || !label.trim() || !account && !providers.length}>{account ? 'Guardar cuenta' : 'Registrar cuenta'}</Button>
+    <div className="flex gap-2"><Button type="submit" disabled={busy || !label.trim() || (!account && !isOfferedProvider(provider, providers))}>{account ? 'Guardar cuenta' : 'Registrar cuenta'}</Button>
       <Button type="button" disabled={busy} onClick={cancel}>Cancelar</Button></div>
   </form>;
 }
