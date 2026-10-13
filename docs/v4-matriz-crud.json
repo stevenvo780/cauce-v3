@@ -347,6 +347,10 @@
             {
               "file": "tests/e2e/ui-crud-v35-real-browser.test.ts",
               "name": "crea, relee, edita y elimina espacio, grupo, membresía y registro sin runtime; rechaza dependencias"
+            },
+            {
+              "file": "tests/e2e/v4-office-real-browser.test.ts",
+              "name": "crea dos salas desde la UI y las refleja en el plano editable y el campus"
             }
           ]
         },
@@ -370,6 +374,10 @@
             {
               "file": "tests/e2e/ui-crud-v35-real-browser.test.ts",
               "name": "crea, relee, edita y elimina espacio, grupo, membresía y registro sin runtime; rechaza dependencias"
+            },
+            {
+              "file": "tests/e2e/v4-office-real-browser.test.ts",
+              "name": "crea dos salas desde la UI y las refleja en el plano editable y el campus"
             }
           ]
         },
@@ -393,6 +401,10 @@
             {
               "file": "tests/e2e/ui-crud-v35-real-browser.test.ts",
               "name": "crea, relee, edita y elimina espacio, grupo, membresía y registro sin runtime; rechaza dependencias"
+            },
+            {
+              "file": "tests/e2e/v4-office-real-browser.test.ts",
+              "name": "renombra la sala y asigna el agente allí antes de moverlo a otra sala"
             }
           ]
         },
@@ -416,6 +428,10 @@
             {
               "file": "tests/e2e/ui-crud-v35-real-browser.test.ts",
               "name": "crea, relee, edita y elimina espacio, grupo, membresía y registro sin runtime; rechaza dependencias"
+            },
+            {
+              "file": "tests/e2e/v4-office-real-browser.test.ts",
+              "name": "reasigna el agente desde la UI, elimina la sala vacía y conserva la asignación válida"
             }
           ]
         }
@@ -445,6 +461,10 @@
             {
               "file": "tests/e2e/ui-crud-v35-real-browser.test.ts",
               "name": "crea, relee, edita y elimina espacio, grupo, membresía y registro sin runtime; rechaza dependencias"
+            },
+            {
+              "file": "tests/e2e/v4-office-real-browser.test.ts",
+              "name": "renombra la sala y asigna el agente allí antes de moverlo a otra sala"
             }
           ]
         },
@@ -468,6 +488,10 @@
             {
               "file": "tests/e2e/ui-crud-v35-real-browser.test.ts",
               "name": "crea, relee, edita y elimina espacio, grupo, membresía y registro sin runtime; rechaza dependencias"
+            },
+            {
+              "file": "tests/e2e/v4-office-real-browser.test.ts",
+              "name": "mantiene la sala y asignación tras re-login, y las comparte con otra persona de la empresa"
             }
           ]
         },
@@ -491,6 +515,10 @@
             {
               "file": "tests/e2e/ui-crud-v35-real-browser.test.ts",
               "name": "crea, relee, edita y elimina espacio, grupo, membresía y registro sin runtime; rechaza dependencias"
+            },
+            {
+              "file": "tests/e2e/v4-office-real-browser.test.ts",
+              "name": "renombra la sala y asigna el agente allí antes de moverlo a otra sala"
             }
           ]
         },
@@ -514,6 +542,10 @@
             {
               "file": "tests/e2e/ui-crud-v35-real-browser.test.ts",
               "name": "crea, relee, edita y elimina espacio, grupo, membresía y registro sin runtime; rechaza dependencias"
+            },
+            {
+              "file": "tests/e2e/v4-office-real-browser.test.ts",
+              "name": "la baja de una sala ocupada explica sus dependencias y no deja un agente huérfano"
             }
           ]
         }
@@ -4152,19 +4184,11 @@
         },
         "R": {
           "status": "covered",
-          "reason": "Cobertura de componente versionada; no acredita ejecución física ni un recorrido E2E. La consola lee la capacidad Git y la inspección del manual nativo; las rutas legacy inspect/preview del gateway siguen registradas sin consumidor de consola a la espera de su retirada en el carril del gateway.",
+          "reason": "Cobertura de componente versionada; no acredita ejecución física ni un recorrido E2E. La consola lee la capacidad Git y limita la inspección al manual nativo; el lector V3 del repositorio fue retirado.",
           "api": [
             {
               "method": "GET",
               "path": "/v3/console/tenants/:tenantId/agents/:alias/context/repository"
-            },
-            {
-              "method": "POST",
-              "path": "/v3/console/tenants/:tenantId/agents/:alias/context/repository/preview"
-            },
-            {
-              "method": "GET",
-              "path": "/v3/console/tenants/:tenantId/agents/:alias/context/repository/inspect"
             }
           ],
           "ui": [
