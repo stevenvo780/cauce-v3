@@ -56,13 +56,14 @@ SENSITIVE_CONTENT = re.compile(
     rb'|\bxai-[A-Za-z0-9]{20,}|\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}'
     rb'|hooks\.slack\.com/services/[A-Za-z0-9/]{10,}'
     rb'|://[^\s/:@"\'<>]+:[^\s/@"\'<>]+@|authorization["\']?\s*[:=]\s*["\']?(?:bearer|basic|token)\s+[A-Za-z0-9._~+/=-]{8,}'
-    rb'|\bbearer\s+[A-Za-z0-9._~+/=-]{10,}|\bcookie\s*:\s*[^\s;]{8,}'
+    rb'|\bbearer(?:\s+|\s*[:=]\s*)["\']?[A-Za-z0-9._~+/=-]{10,}|\bcookie\s*:(?:\s*[^\s;]{1,7}\s*;\s*){0,40}\s*[^\s;]{8,}'
     rb'|["\']?[a-z0-9_-]*(?:secret|token|password|passwd|passphrase|contrasena|contrase(?:\xc3\xb1|n)a|clave|credential'
     rb'|api[_-]?key|apikey|private[_-]?key)[a-z0-9_-]*["\']?\s*[:=]\s*["\']?(?!\$\{|process\.env)[^\s"\',;]{8,}',
     re.I)
-CONFUSABLES = str.maketrans({'\u0430': 'a', '\u0441': 'c', '\u0435': 'e', '\u043e': 'o', '\u0440': 'p',
-                             '\u0445': 'x', '\u0443': 'y', '\u0455': 's', '\u0456': 'i', '\u0458': 'j',
-                             '\u04bb': 'h', '\u03b1': 'a', '\u03b5': 'e', '\u03b9': 'i', '\u03bf': 'o'})
+CONFUSABLES = str.maketrans({
+    '\u0430': 'a', '\u0432': 'b', '\u043a': 'k', '\u0441': 'c', '\u0435': 'e', '\u043e': 'o', '\u0440': 'p', '\u0442': 't',
+    '\u0445': 'x', '\u0443': 'y', '\u0455': 's', '\u0456': 'i', '\u0458': 'j', '\u04bb': 'h',
+    '\u03b1': 'a', '\u03b5': 'e', '\u03b9': 'i', '\u03ba': 'k', '\u03bf': 'o', '\u03c4': 't'})
 ZERO_WIDTH = frozenset('\u200b\u200c\u200d\ufeff')
 OVERLAP = 4096
 CHUNK = 1 << 20
@@ -89,9 +90,17 @@ def seal(doc: dict) -> str:
     return hashlib.sha256(canonical({k: v for k, v in doc.items() if k != 'sha256'})).hexdigest()
 
 
+def fold_text(value: str) -> str:
+    folded = unicodedata.normalize('NFKC', value).casefold().translate(CONFUSABLES)
+    return ''.join(character for character in folded if character not in ZERO_WIDTH)
+
+
+def sensitive_bytes(raw: bytes) -> bool:
+    return bool(SENSITIVE_CONTENT.search(fold_text(raw.decode('utf-8', 'surrogateescape')).encode('utf-8', 'surrogateescape')))
+
+
 def omission_reason(name: str, directory: bool) -> str | None:
-    folded = ''.join(character for character in unicodedata.normalize('NFKC', name).casefold()
-                     if character not in ZERO_WIDTH).translate(CONFUSABLES)
+    folded = fold_text(name)
     for reason, pattern in OMISSION_RULES:
         if pattern.search(folded) if reason != 'credential' else pattern.fullmatch(folded):
             return reason
@@ -103,7 +112,7 @@ def clean_url(url: str) -> str | None:
     if '::' in url or url.startswith('-'):
         return None
     if '://' not in url:
-        return url if SAFE_URL.fullmatch(url) and not SENSITIVE_CONTENT.search(url.encode()) else None
+        return url if SAFE_URL.fullmatch(url) and not sensitive_bytes(url.encode()) else None
     try:
         parts = urllib.parse.urlsplit(url)
         host, port = parts.hostname or '', parts.port
@@ -111,7 +120,7 @@ def clean_url(url: str) -> str | None:
         return None
     netloc = (f'[{host}]' if ':' in host else host) + (f':{port}' if port else '')
     cleaned = urllib.parse.urlunsplit((parts.scheme, netloc, parts.path, '', ''))
-    return cleaned if SAFE_URL.fullmatch(cleaned) and not SENSITIVE_CONTENT.search(cleaned.encode()) else None
+    return cleaned if SAFE_URL.fullmatch(cleaned) and not sensitive_bytes(cleaned.encode()) else None
 
 
 def scrub(text: str) -> str:
@@ -175,7 +184,7 @@ def scan(descriptor: int, size: int, object_format: str | None) -> tuple[str, st
         digest.update(chunk)
         if blob:
             blob.update(chunk)
-        sensitive = sensitive or bool(SENSITIVE_CONTENT.search(tail + chunk))
+        sensitive = sensitive or sensitive_bytes(tail + chunk)
         tail = chunk[-OVERLAP:]
     if read != size or os.fstat(descriptor).st_size != size:
         raise Failure('a file changed while it was copied; stop the agent and retry')
@@ -215,23 +224,64 @@ class Copier:
         self.tracked: dict[str, dict] = {}
         self.host_roots: list[str] = []
 
+    def inside_roots(self, path: str) -> bool:
+        try:
+            return any(under(os.path.realpath(path), root) for root in self.host_roots)
+        except (OSError, ValueError):
+            return False
+
     def git_file_outside(self, directory: int) -> bool:
         try:
             descriptor = os.open('.git', OPEN_FILE, dir_fd=directory)
             try:
-                content = os.read(descriptor, 4096).decode('utf-8', 'surrogateescape').strip()
+                size = os.fstat(descriptor).st_size
+                content = os.read(descriptor, size if 0 < size <= 65536 else 0)
             finally:
                 os.close(descriptor)
             host_directory = os.readlink(f'/proc/self/fd/{directory}')
         except OSError:
             return True
-        if not content.startswith('gitdir:'):
+        text = content.decode('utf-8', 'surrogateescape').rstrip('\r\n')
+        target = text[len('gitdir:'):].lstrip(' \t') if text.startswith('gitdir:') else ''
+        if target and not os.path.isabs(target):
+            target = os.path.join(host_directory, target)
+        return len(content) != size or not target or '\x00' in target or not self.inside_roots(target)
+
+    def git_metadata_outside(self, directory: int) -> bool:
+        try:
+            host_directory = os.readlink(f'/proc/self/fd/{directory}')
+        except OSError:
             return True
-        target = content[len('gitdir:'):].strip()
-        if not target:
+
+        def located(*arguments: str) -> str:
+            reported = git('.', 'rev-parse', *arguments, check=False, fd=directory).strip()
+            return reported if not reported or os.path.isabs(reported) else os.path.join(host_directory, reported)
+
+        paths = (located('--git-common-dir'), located('--git-dir'), located('--git-path', 'objects'))
+        if not all(paths) or not all(self.inside_roots(path) for path in paths):
             return True
-        resolved = os.path.realpath(target if os.path.isabs(target) else os.path.join(host_directory, target))
-        return not any(under(resolved, root) for root in self.host_roots)
+        alternates = os.path.join(os.path.realpath(paths[2]), 'info', 'alternates')
+        try:
+            info = os.lstat(alternates)
+            if not stat.S_ISREG(info.st_mode) or info.st_size > 65536:
+                return True
+            descriptor = os.open(alternates, OPEN_FILE)
+            try:
+                raw = os.read(descriptor, info.st_size)
+            finally:
+                os.close(descriptor)
+        except FileNotFoundError:
+            return False
+        except OSError:
+            return True
+        if len(raw) != info.st_size:
+            return True
+        database = os.path.dirname(os.path.dirname(alternates))
+        for item in (line.strip() for line in raw.decode('utf-8', 'surrogateescape').splitlines()):
+            candidate = item if not item or os.path.isabs(item) else os.path.join(database, item)
+            if item and not item.startswith('#') and not self.inside_roots(candidate):
+                return True
+        return False
 
     def omit(self, path: str, reason: str, parent: int, name: str, info: os.stat_result) -> None:
         files, size = (0, 0) if stat.S_ISDIR(info.st_mode) else (1, info.st_size)
@@ -316,7 +366,7 @@ class Copier:
 
     def link(self, path: str, parent: int, name: str) -> None:
         target = os.readlink(name, dir_fd=parent)
-        if SENSITIVE_CONTENT.search(target.encode('utf-8', 'surrogateescape')):
+        if sensitive_bytes(target.encode('utf-8', 'surrogateescape')):
             self.omissions.append({'path': path, 'reason': 'sensitive-content', 'kind': 'symlink', 'files': 1, 'bytes': 0})
             return
         repo = self.owner(path)
@@ -339,8 +389,10 @@ class Copier:
         if marker is not None and stat.S_ISLNK(marker.st_mode):
             self.omissions.append({'path': path + '/.git', 'reason': 'unsafe-git-link', 'kind': 'symlink',
                                    'files': 0, 'bytes': 0})
-        elif marker is not None and stat.S_ISREG(marker.st_mode) and self.git_file_outside(directory):
-            self.omissions.append({'path': path + '/.git', 'reason': 'unsafe-git-link', 'kind': 'file',
+        elif marker is not None and ((stat.S_ISREG(marker.st_mode) and self.git_file_outside(directory))
+                                     or self.git_metadata_outside(directory)):
+            kind = 'directory' if stat.S_ISDIR(marker.st_mode) else 'file' if stat.S_ISREG(marker.st_mode) else 'special'
+            self.omissions.append({'path': path + '/.git', 'reason': 'unsafe-git-link', 'kind': kind,
                                    'files': 0, 'bytes': 0})
         elif marker is not None:
             self.repository(path, directory)

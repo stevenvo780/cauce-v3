@@ -271,6 +271,18 @@ class SecurityTests(Scoped):
     def copied_bytes(self) -> bytes:
         return b''.join(path.read_bytes() for path in self.copy.rglob('*') if path.is_file() and not path.is_symlink())
 
+    def bundle_bytes(self) -> bytes:
+        blob = bytearray()
+        for bundle in sorted(self.copy.rglob('*.bundle')):
+            dest = self.root / f'clon-{bundle.stem}'
+            done = subprocess.run(['git', 'clone', '-q', str(bundle), str(dest)], capture_output=True, text=True,
+                                  env={**os.environ, **GIT_ENV})
+            self.assertEqual(done.returncode, 0, done.stderr)
+            for path in dest.rglob('*'):
+                if path.is_file() and '.git' not in path.parts:
+                    blob += path.read_bytes()
+        return bytes(blob)
+
     def reseal(self, change) -> None:
         manifest = json.loads(self.original)
         change(manifest)
@@ -344,6 +356,113 @@ class SecurityTests(Scoped):
         entries = {entry['path']: entry for entry in manifest['entries']}
         self.assertEqual(entries['proyecto/linked/local.txt']['source'], 'data')
         self.assertNotIn(b'CONTENIDO-DE-FUERA-REPO', self.copied_bytes())
+
+    def test_folded_credential_spellings_and_multipart_cookies_are_excluded(self):
+        secret = 'miClaveSuperSecreta123'
+        write(self.source / 'datos/nota-cookies.txt', 'Cookie: a=b; session=abcdefghijklmnopSECRET\n')
+        write(self.source / 'datos/nota-comillas.txt', 'Bearer "abcdefgh12345678ijklmnop"\n')
+        write(self.source / 'datos/nota-cirilica.txt', '\u0412earer abcdefgh12345678ijklmnop\n')
+        write(self.source / 'datos/nota-zw.txt', 'pass\u200bword = ' + secret + '\n')
+        write(self.source / 'datos/nota-mayus.txt', 'CONTRASE\u00d1A = ' + secret + '\n')
+        write(self.source / 'datos/nota-nfd.txt', 'contrasen\u0303a = ' + secret + '\n')
+        write(self.source / 'datos/nota-homoglifo.txt', 'p\u0430ssword = ' + secret + '\n')
+        write(self.source / 'datos/\u0442oken.txt', 'solo-nombre-token\n')
+        write(self.source / 'datos/xai-\u043aey.txt', 'solo-nombre-key\n')
+        write(self.source / 'datos/\u03c4oken.txt', 'solo-nombre-griego\n')
+        manifest = self.make_copy()
+        reasons = {item['path']: item['reason'] for item in manifest['omissions']}
+        for path in ('datos/nota-cookies.txt', 'datos/nota-comillas.txt', 'datos/nota-cirilica.txt',
+                     'datos/nota-zw.txt', 'datos/nota-mayus.txt', 'datos/nota-nfd.txt', 'datos/nota-homoglifo.txt'):
+            self.assertEqual(reasons[path], 'sensitive-content', path)
+        self.assertEqual(reasons['datos/\u0442oken.txt'], 'token')
+        self.assertEqual(reasons['datos/xai-\u043aey.txt'], 'credential')
+        self.assertEqual(reasons['datos/\u03c4oken.txt'], 'token')
+        stored = self.copied_bytes()
+        for marker in ('abcdefghijklmnopSECRET', 'abcdefgh12345678ijklmnop', secret,
+                       'solo-nombre-token', 'solo-nombre-key', 'solo-nombre-griego'):
+            self.assertNotIn(marker.encode(), stored, marker)
+
+    def test_git_object_stores_outside_the_copy_are_not_bundled(self):
+        def outside_repo(name: str, sentinel: str) -> pathlib.Path:
+            path = self.root / name
+            git(self.root, 'init', '-q', '-b', 'main', str(path))
+            write(path / 'secreto.txt', sentinel + '\n')
+            git(path, 'add', '-A')
+            git(path, 'commit', '-q', '-m', 'fuera')
+            return path
+
+        alt_out = outside_repo('fuera-alt', 'SENTINEL-ALTERNATES-9f3a')
+        alt_in = self.source / 'proyecto' / 'alt-in'
+        git(self.root, 'init', '-q', '-b', 'main', str(alt_in))
+        write(alt_in / 'readme.txt', 'local-alt\n')
+        git(alt_in, 'add', '-A')
+        git(alt_in, 'commit', '-q', '-m', 'in')
+        alternates = alt_in / '.git' / 'objects' / 'info' / 'alternates'
+        alternates.parent.mkdir(parents=True, exist_ok=True)
+        alternates.write_text(os.path.realpath(alt_out / '.git' / 'objects') + '\n')
+        git(alt_in, 'update-ref', 'refs/heads/main', git(alt_out, 'rev-parse', 'HEAD'))
+
+        obj_out = outside_repo('fuera-obj', 'SENTINEL-OBJLINK-9f3a')
+        obj_in = self.source / 'proyecto' / 'obj-in'
+        git_dir = obj_in / '.git'
+        git_dir.mkdir(parents=True)
+        (git_dir / 'HEAD').write_text('ref: refs/heads/main\n')
+        (git_dir / 'refs' / 'heads').mkdir(parents=True)
+        (git_dir / 'refs' / 'heads' / 'main').write_text(git(obj_out, 'rev-parse', 'HEAD') + '\n')
+        (git_dir / 'config').write_text('[core]\n\trepositoryformatversion = 0\n\tfilemode = true\n\tbare = false\n')
+        (git_dir / 'objects').symlink_to(obj_out / '.git' / 'objects')
+        write(obj_in / 'local.txt', 'local-obj\n')
+
+        common_out = outside_repo('fuera-common', 'SENTINEL-COMMONDIR-9f3a')
+        linked = self.source / 'proyecto' / 'common-in'
+        fake = linked / 'fake-git'
+        fake.mkdir(parents=True)
+        (fake / 'commondir').write_text(os.path.realpath(common_out / '.git') + '\n')
+        (fake / 'gitdir').write_text(os.path.realpath(linked / '.git') + '\n')
+        (fake / 'HEAD').write_text('ref: refs/heads/main\n')
+        write(linked / 'local.txt', 'local-common\n')
+        (linked / '.git').write_text(f'gitdir: {os.path.realpath(fake)}\n')
+
+        long_out = outside_repo('fuera-long', 'SENTINEL-LONGGITDIR-9f3a')
+        long_in = self.source / 'proyecto' / 'long-in'
+        long_in.mkdir()
+        real_in = os.path.realpath(long_in)
+        target = os.path.realpath(long_out / '.git')
+        raw_target = f'{real_in}/{"B" * 4500}/{"../" * len(pathlib.Path(real_in).parts)}{target.lstrip("/")}'
+        self.assertEqual(os.path.realpath(raw_target), target)
+        content = f'gitdir: {raw_target}\n'
+        self.assertGreater(len(content), 4096)
+        self.assertNotIn('..', content[:4096])
+        (long_in / '.git').write_text(content)
+        write(long_in / 'local.txt', 'local-long\n')
+
+        base = self.source / 'proyecto' / 'alt-base'
+        git(self.root, 'init', '-q', '-b', 'main', str(base))
+        write(base / 'dentro.txt', 'DENTRO-DEL-ESPACIO\n')
+        git(base, 'add', '-A')
+        git(base, 'commit', '-q', '-m', 'dentro')
+        uses = self.source / 'proyecto' / 'uses-inside-alt'
+        git(self.root, 'init', '-q', '-b', 'main', str(uses))
+        write(uses / 'readme.txt', 'uses-alt\n')
+        git(uses, 'add', '-A')
+        git(uses, 'commit', '-q', '-m', 'uses')
+        inside = uses / '.git' / 'objects' / 'info' / 'alternates'
+        inside.parent.mkdir(parents=True, exist_ok=True)
+        inside.write_text(os.path.realpath(base / '.git' / 'objects') + '\n')
+
+        manifest = self.make_copy()
+        repos = {repo['path'] for repo in manifest['repositories']}
+        reasons = {item['path']: item['reason'] for item in manifest['omissions']}
+        for path in ('proyecto/alt-in/.git', 'proyecto/obj-in/.git', 'proyecto/common-in/.git', 'proyecto/long-in/.git'):
+            self.assertEqual(reasons[path], 'unsafe-git-link', path)
+            self.assertNotIn(path.removesuffix('/.git'), repos)
+        self.assertIn('proyecto', repos)
+        self.assertIn('proyecto/alt-base', repos)
+        self.assertIn('proyecto/uses-inside-alt', repos)
+        stored = self.copied_bytes() + self.bundle_bytes()
+        for sentinel in ('SENTINEL-ALTERNATES-9f3a', 'SENTINEL-OBJLINK-9f3a', 'SENTINEL-COMMONDIR-9f3a',
+                         'SENTINEL-LONGGITDIR-9f3a'):
+            self.assertNotIn(sentinel.encode(), stored, sentinel)
 
     def test_finding3_paths_swapped_for_symlinks_mid_copy_are_refused(self):
         original = copia.open_verified
