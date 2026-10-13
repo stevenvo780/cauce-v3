@@ -65,6 +65,14 @@ describe('OAuth Nginx source contract', () => {
     expect(lines(body)).toEqual(lines(api));
   });
 
+  it('streams the host setup artifacts unbuffered with a small signed body and the same mTLS as /v3/', () => {
+    const body = block('~ ^/v3/fleet/hosts/[^/]+/setup/artifact$');
+    const api = block('/v3/');
+    for (const directive of ['proxy_buffering off;', 'client_max_body_size 8k;', 'proxy_read_timeout 300s;']) expect(body).toContain(directive);
+    const lines = (text: string) => text.split('\n').map(line => line.trim()).filter(line => /^proxy_(pass|set_header|ssl_|http_version)/u.test(line));
+    expect(lines(body)).toEqual(lines(api));
+  });
+
   it('keeps the single listener and existing MCP cookie boundary', () => {
     expect(source.match(/^\s*listen /gmu)).toHaveLength(1);
     for (const selector of ['= /mcp', '= /.well-known/oauth-protected-resource/mcp']) {

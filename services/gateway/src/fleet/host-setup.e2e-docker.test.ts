@@ -24,7 +24,8 @@ describe('a clean computer prepares its executor without the platform administra
   }, 120_000);
 
   it('enrolls with the console invitation, installs the user service and reports executor_ready', async () => {
-    const { app, cli, onComputer, pool, packager, container, gatewayUrl, installRoot } = computer();
+    const { app, cli, onComputer, pool, packager, container, gatewayUrl, installRoot, agentImage } = computer();
+    expect((await onComputer(['docker', 'image', 'inspect', agentImage])).code).not.toBe(0);
     const invitation = await inviteSetupHost(app, ownerA, 'setupe2e-laptop');
     expect(invitation.setup_signer_fingerprint).toBe(packager.signerFingerprint);
     const enrolled = await cli(['enroll', '--gateway', gatewayUrl, '--invitation-stdin'], JSON.stringify(invitation));
@@ -32,7 +33,15 @@ describe('a clean computer prepares its executor without the platform administra
     expect(JSON.parse(enrolled.stdout)).toMatchObject({ host_id: 'setupe2e-laptop', state: 'enrolled', executor_ready: false });
     const prepared = await cli(['setup', '--install-root', installRoot]);
     expect(prepared.code, prepared.stderr).toBe(0);
-    expect(JSON.parse(prepared.stdout)).toMatchObject({ host_id: 'setupe2e-laptop', service_active: true, linger: true, templates: 1 });
+    expect(JSON.parse(prepared.stdout)).toMatchObject({ host_id: 'setupe2e-laptop', service_active: true, linger: true, templates: 1,
+      image_id: agentImage, image_present: false, image_loaded: true });
+    expect(await docker(['image', 'inspect', '--format', '{{.Id}}', agentImage])).toBe(agentImage);
+    const repeated = await cli(['setup', '--install-root', installRoot]);
+    expect(repeated.code, repeated.stderr).toBe(0);
+    expect(JSON.parse(repeated.stdout)).toMatchObject({ image_present: true, image_loaded: false, policy_changed: false });
+    const downloads = await pool.query<{ name: string; offset: string }>(`SELECT metadata->>'name' AS name,metadata->>'offset' AS offset
+      FROM audit_events WHERE action='fleet_host.setup.artifact' AND company_id='setupe2e' ORDER BY metadata->>'name'`);
+    expect(downloads.rows).toEqual([{ name: 'agent-image', offset: '0' }, { name: 'fleet-ca', offset: '0' }, { name: 'release', offset: '0' }]);
     const unit = 'cauce-v3-host-executor-setupe2e-setupe2e-laptop.service';
     let ready = false;
     for (let attempt = 0; attempt < 90 && !ready; attempt++) {
@@ -81,7 +90,8 @@ describe('a clean computer prepares its executor without the platform administra
     for (const phase of ['bootstrap', 'normal']) expect(probes.rows.some(probe => probe.phase === phase && probe.state === 'succeeded'
       && probe.reply === `CAUCE_BOOTSTRAP_${probe.nonce}`)).toBe(true);
     console.info('HOST_SETUP_CREATE', JSON.stringify({ operation_id: operationId, status: operation.status, container: observed,
-      bootstrap_nonce_verified: true, normal_nonce_verified: true, provider: 'pinned-fixture-cli', runtime: 'real-sdk-bootstrap' }));
+      bootstrap_nonce_verified: true, normal_nonce_verified: true, provider: 'pinned-fixture-cli', runtime: 'real-sdk-bootstrap',
+      agent_image: agentImage, image_source: 'gateway-served docker save, loaded by setup' }));
   }, 300_000);
 
   it('another company neither sees that computer nor lets it ask for its setup package', async () => {

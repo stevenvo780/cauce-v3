@@ -5,7 +5,7 @@ import { AuthError, AuthorizationError, type AuthProvider } from '../auth.js';
 import { rateLimitKey } from '../client-ip.js';
 import { consoleHumanAccess } from '../console-human-authority.js';
 import { replyError } from '../routes/shared.js';
-import type { HostSetupPackager } from '../fleet/host-setup.js';
+import { openHostSetupArtifact, type HostSetupArtifact, type HostSetupPackager } from '../fleet/host-setup.js';
 
 const EnrollmentParams = z.object({ enrollment_id: z.uuid() }).strict();
 const HostParams = z.object({ host_id: HostId }).strict();
@@ -50,6 +50,8 @@ export function registerHostEnrollmentRoutes(app: FastifyInstance, provider: Aut
   // Checked once the proof verifies, so only the computer's own key spends its quota; it reports every 30 s.
   const heartbeats = windowLimiter(10, 'host request rate exceeded');
   const setups = windowLimiter(10, 'host request rate exceeded');
+  // Release, agent image and small files, plus resumed downloads of the image after a cut connection.
+  const downloads = windowLimiter(30, 'host request rate exceeded');
   const path = '/v3/console/fleet/hosts/enrollments';
   for (const method of ['GET','POST'] as const) app.route({ method,url:path,bodyLimit:8192,handler:async (request,reply) => {
     reply.header('Cache-Control','no-store');
@@ -102,5 +104,25 @@ export function registerHostEnrollmentRoutes(app: FastifyInstance, provider: Aut
         return setup.build(scope);
       },setups);
     } catch (error) { return errorResponse(error,reply); }
+  });
+  app.post('/v3/fleet/hosts/:host_id/setup/artifact', { bodyLimit:4096 }, async (request,reply) => {
+    reply.header('Cache-Control','no-store');
+    let artifact: HostSetupArtifact;
+    try {
+      if (request.headers.cookie !== undefined) throw new AuthorizationError('host identity requests cannot use a browser session');
+      hostClients(rateLimitKey(request.ip));
+      const { host_id } = HostParams.parse(request.params);
+      artifact = await repository.setupArtifact(host_id,request.body,wanted => {
+        if (!setup) throw new StoreError('not_found', 'this gateway does not serve host setup packages');
+        return setup.artifact(wanted);
+      },downloads);
+    } catch (error) { return errorResponse(error,reply); }
+    let opened: Awaited<ReturnType<typeof openHostSetupArtifact>>;
+    try { opened = await openHostSetupArtifact(artifact); }
+    catch { return reply.code(503).send({ error: 'host_setup_artifact_unavailable', message: 'setup artifact is unavailable; retry is safe' }); }
+    reply.code(artifact.offset === 0 ? 200 : 206).header('Content-Type','application/octet-stream')
+      .header('Content-Length',String(opened.length)).header('X-Cauce-Artifact-Sha256',artifact.sha256);
+    if (artifact.offset !== 0) reply.header('Content-Range',`bytes ${String(artifact.offset)}-${String(artifact.size - 1)}/${String(artifact.size)}`);
+    return reply.send(opened.stream);
   });
 }

@@ -44,3 +44,10 @@ services:
         target: /run/cauce-fleet-signed-authority
         read_only: true
         bind: {create_host_path: false}
+      # Release and agent image the gateway serves to enrolled computers (ops/scripts/build-host-release.sh). deploy.sh
+      # pins the candidate directory in prod.env; the host setup config names it as release_directory. Unset, nothing is mounted.
+      - type: bind
+        source: ${CAUCE_FLEET_HOST_RELEASE_DIR:-/dev/null}
+        target: /run/cauce-host-release
+        read_only: true
+        bind: {create_host_path: false}

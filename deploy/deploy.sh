@@ -245,6 +245,12 @@ if [ "$FLEET_OVERLAY" = 1 ]; then
   COMPOSE+=(-f "$REPO/deploy/compose.fleet.yaml")
   "${COMPOSE[@]}" config >/dev/null || die "el compose de flota no renderiza con $ENV_FILE"
 fi
+HOST_RELEASE_ROOT=""; HOST_RELEASE_DIR=""
+if [ "$FLEET_OVERLAY" = 1 ] && { [ "$(env_declarations CAUCE_FLEET_HOST_RELEASE_DIR)" != 0 ] || [ -n "$(env_value CAUCE_FLEET_HOST_SETUP_CONFIG_FILE)" ]; }; then
+  [ "$(env_declarations CAUCE_FLEET_HOST_RELEASE_DIR)" = 1 ] && grep -q '^CAUCE_FLEET_HOST_RELEASE_DIR=' "$ENV_FILE" && [ "${CAUCE_FLEET_HOST_RELEASE_DIR+x}" != x ] \
+    || die "CAUCE_FLEET_HOST_RELEASE_DIR debe declararse una sola vez como CAUCE_FLEET_HOST_RELEASE_DIR=... en $ENV_FILE (sin ella el gateway con CAUCE_FLEET_HOST_SETUP_CONFIG_FILE no arranca) y no venir del entorno"
+  HOST_RELEASE_ROOT="${CAUCE_DEPLOY_HOST_RELEASE_ROOT:-/var/lib/cauce-v3/host-releases}"
+fi
 OWNER_DATABASE_URL="$(env_value CAUCE_DATABASE_URL_SECRET_PATH)"
 for service in GATEWAY DISPATCHER BRIDGE OBSERVER; do
   name="CAUCE_DATABASE_URL_${service}_SECRET_PATH"
@@ -719,12 +725,18 @@ RUNTIME_DIGEST="$(docker inspect --format '{{index .RepoDigests 0}}' "$RUNTIME_T
 CONSOLE_DIGEST="$(docker inspect --format '{{index .RepoDigests 0}}' "$CONSOLE_TAG")"
 echo "runtime: $RUNTIME_DIGEST"
 echo "console: $CONSOLE_DIGEST"
+if [ -n "$HOST_RELEASE_ROOT" ]; then
+  HOST_RELEASE_DIR="$(python3 "$REPO/ops/scripts/host-release.py" deploy "$HOST_RELEASE_ROOT" --revision "$RELEASE_COMMIT")" \
+    || die "el paquete de ordenadores de $RELEASE_COMMIT no esta listo en $HOST_RELEASE_ROOT (detalle arriba); $ENV_FILE sigue intacto"
+  echo "ordenadores: paquete $HOST_RELEASE_DIR verificado"
+fi
 
 CANDIDATE_ENV_FILE="$ENV_FILE.candidate-$STAMP"
 trap '[ "$MIGRATOR_RUNNING" = 0 ] || terminate_migrator; resume_dispatcher; rm -f -- "$CANDIDATE_ENV_FILE"' EXIT
 cp -a "$ENV_FILE" "$CANDIDATE_ENV_FILE"
 sed -i "s|^CAUCE_RUNTIME_IMAGE=.*|CAUCE_RUNTIME_IMAGE=$RUNTIME_DIGEST|" "$CANDIDATE_ENV_FILE"
 sed -i "s|^CAUCE_CONSOLE_IMAGE=.*|CAUCE_CONSOLE_IMAGE=$CONSOLE_DIGEST|" "$CANDIDATE_ENV_FILE"
+[ -z "$HOST_RELEASE_DIR" ] || sed -i "s|^CAUCE_FLEET_HOST_RELEASE_DIR=.*|CAUCE_FLEET_HOST_RELEASE_DIR=$HOST_RELEASE_DIR|" "$CANDIDATE_ENV_FILE"
 CANDIDATE_COMPOSE=(docker compose --env-file "$CANDIDATE_ENV_FILE" "${COMPOSE[@]:4}")
 
 "${CANDIDATE_COMPOSE[@]}" config >/dev/null || die "el compose con los pins nuevos no renderiza; $ENV_FILE sigue intacto"

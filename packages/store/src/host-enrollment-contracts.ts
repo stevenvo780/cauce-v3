@@ -15,6 +15,10 @@ export const SignedHostRequestSchema = z.object({ company_id: HostId, host_id: H
   issued_at: z.number().int().positive(), nonce: Hex, payload: z.record(z.string(),z.unknown()), proof: Base64 }).strict();
 export const HostHeartbeatSchema = SignedHostRequestSchema.extend({payload:HostReportSchema});
 export const HostSetupRequestSchema = SignedHostRequestSchema.extend({payload:z.object({action:z.literal('package')}).strict()});
+/** One artifact of the signed package, from `offset` on: a resumed download signs where it continues. */
+export const HostSetupArtifactRequestSchema = SignedHostRequestSchema.extend({payload:z.object({action:z.literal('artifact'),
+  name:z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/u),sha256:Hex,offset:z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER)}).strict()});
+export type HostSetupArtifactRequest = z.infer<typeof HostSetupArtifactRequestSchema>['payload'];
 export type SignedHostRequest = z.infer<typeof SignedHostRequestSchema>;
 /** What a verified computer may receive at setup: its own company and host, and the harnesses the platform keeps enabled. */
 export interface HostSetupScope { host_id: string; company_id: string; harnesses: string[] }

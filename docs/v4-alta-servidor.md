@@ -22,13 +22,32 @@ En la consola, abre **Ajustes → Computadoras → Conectar un ordenador** y mir
 | Node.js 22 o superior | `node --version` |
 | git, para traer la CLI | `git --version` |
 | Reloj sincronizado: el gateway rechaza peticiones con más de 2 minutos de desfase | `timedatectl show -p NTPSynchronized --value` → `yes` |
-| Salida HTTPS (443) directa hacia `<consola>` y hacia la URL de descarga del paquete, **sin proxy**: la CLI ignora las variables de proxy a propósito | `curl -sS -o /dev/null -w '%{http_code}\n' https://<consola>/` → `200` |
-| Ruta de los contenedores de agentes hacia el gateway (ver [Límites actuales](#límites-actuales)) | la indica la plataforma |
-| Disco: el paquete puede ocupar hasta 2 GB descomprimido, más la imagen de los agentes | `df -h /` |
+| Salida HTTPS (443) directa hacia `<consola>`, **sin proxy**: la CLI ignora las variables de proxy a propósito. El paquete y la imagen de los agentes también salen de ahí | `curl -sS -o /dev/null -w '%{http_code}\n' https://<consola>/` → `200` |
+| Tailscale, para entrar en la red privada de la plataforma: por ella hablan los agentes con el gateway (paso 2.1) | `tailscale version` |
+| Disco: unos 100 MB para el ejecutor y, en Docker, unos 2 GB para la imagen de los agentes; la primera preparación necesita además 700 MB temporales en el HOME del usuario | `df -h / /var/lib/docker` |
 
 No hace falta abrir puertos de entrada: la máquina siempre llama hacia fuera.
 
 ## 2. Preparar la máquina (una sola vez, como administrador de la máquina)
+
+### 2.1 Unirla a la red privada de la plataforma
+
+Los agentes que corran en esta máquina hablan con el gateway por mTLS en el puerto 8443, que la plataforma solo publica en su tailnet. El dueño de la plataforma te da una **clave de autenticación** de Tailscale para esta máquina.
+
+```bash
+curl -fsSL https://tailscale.com/install.sh | sh            # instala tailscale y su servicio
+sudo install -m 600 /dev/stdin /root/tailscale.key          # pega la clave, Intro y Ctrl-D
+sudo tailscale up --auth-key=file:/root/tailscale.key --hostname=<empresa>-<nombre>
+sudo rm /root/tailscale.key
+tailscale status                                            # aparece esta máquina y el servidor de la plataforma
+timeout 5 bash -c '</dev/tcp/<IP de la tailnet del servidor>/8443' && echo gateway-alcanzable
+```
+
+- La clave pasa por un fichero `0600` que se borra enseguida: así no queda en el historial ni en la lista de procesos.
+- La IP del servidor de la plataforma en la tailnet te la da el dueño junto a la clave. Si la última orden no imprime `gateway-alcanzable`, la máquina no está en la tailnet o la plataforma no le abrió el puerto: no sigas, los agentes no arrancarían.
+- La máquina sigue en la tailnet tras reiniciar: el servicio `tailscaled` queda habilitado.
+
+### 2.2 Usuario dedicado de la empresa
 
 Cada empresa necesita **su propio usuario del sistema**: si dos empresas compartieran usuario, cada una podría leer la clave privada de la otra, y `cauce hosts setup` lo rechaza. Ese usuario entra en el grupo `docker`, que en la práctica da control de root sobre la máquina: usa máquinas o usuarios dedicados, nunca tu usuario personal.
 
@@ -93,7 +112,11 @@ cauce hosts setup --dry-run   # qué va a hacer, sin escribir nada
 cauce hosts setup             # descarga el paquete firmado, escribe la política e instala el servicio
 ```
 
-`setup` comprueba que el paquete lo firmó la plataforma que anclaste con la invitación, descarga y verifica cada fichero, valida la política con el ejecutor e instala y arranca el servicio de usuario `cauce-v3-host-executor-<empresa>-<empresa>-<nombre>.service`. Repetirlo no cambia nada si no hay novedades.
+`setup` comprueba que el paquete lo firmó la plataforma que anclaste con la invitación y descarga del propio gateway el ejecutor (unos 35 MB) y la imagen de los agentes (unos 700 MB), verificando el SHA-256 firmado de cada fichero. Carga la imagen en Docker y comprueba que su `Id` es el de la plantilla. Después valida la política con el ejecutor e instala y arranca el servicio de usuario `cauce-v3-host-executor-<empresa>-<empresa>-<nombre>.service`. Si la plataforma aprobó la receta de login del proveedor, instala también la política que deja autenticar el proveedor de cada agente desde la consola (paso 5 de [Asignar agentes](#5-asignar-agentes)).
+
+- La primera vez tarda unos minutos y la salida dice `"image_loaded": true`. Si la conexión se corta, la descarga se reanuda sola desde donde iba, hasta cinco intentos.
+- Repetirlo no cambia nada si no hay novedades: no vuelve a descargar ni a cargar la imagen (`"image_present": true`).
+- Tras un despliegue de la plataforma con otro ejecutor o otra imagen, repetir `cauce hosts setup` instala la nueva versión.
 
 ## 4. Comprobación
 
@@ -132,7 +155,7 @@ En la máquina, `docker ps --filter label=cauce.fleet.host=<empresa>-<nombre>` m
 
 ## 6. Si algo falla
 
-Los mensajes de `cauce hosts setup` y `status` salen en inglés, con el prefijo `cauce:`. `enroll` y `heartbeat` dan siempre el mismo mensaje en español; la causa suele ser una de las primeras filas.
+Los mensajes de `cauce hosts setup` y `status` salen con el prefijo `cauce:`; los de la descarga y la imagen de los agentes, en español, y el resto en inglés. `enroll` y `heartbeat` dan siempre el mismo mensaje en español; la causa suele ser una de las primeras filas.
 
 | Síntoma | Causa probable | Arreglo |
 |---|---|---|
@@ -143,8 +166,15 @@ Los mensajes de `cauce hosts setup` y `status` salen en inglés, con el prefijo 
 | `host request rejected (HTTP 403)` | reloj desfasado más de 2 minutos, computadora deshabilitada o eliminada, o empresa retirada | sincroniza la hora (`timedatectl`); revisa la tarjeta en Computadoras |
 | `host request rejected (HTTP 429)` | demasiados intentos seguidos | espera un minuto |
 | `setup package is stale or belongs to another computer` | reloj desfasado más de una hora | sincroniza la hora |
-| `artifact download unavailable; retry is safe` | la máquina no llega a la URL del paquete | revisa salida HTTPS, DNS y que no dependa de un proxy |
-| `artifact digest differs from the signed package` | el paquete publicado no es el aprobado | avisa a la plataforma; no se instaló nada |
+| `no se pudo descargar <fichero> del gateway tras 5 intentos` | la conexión con `<consola>` se corta una y otra vez | revisa la salida HTTPS y que no dependa de un proxy; repetir es seguro |
+| `<fichero> no coincide con el SHA-256 firmado en el paquete` | lo que sirve la plataforma no es lo aprobado | avisa a la plataforma; no se instaló nada |
+| `el gateway rechazó la descarga de <fichero> (HTTP 404)` | la plataforma no publicó el paquete de ordenadores de su despliegue | avisa a la plataforma |
+| `el gateway rechazó la descarga de <fichero> (HTTP 409)` | la plataforma desplegó una versión nueva durante la descarga | repite `cauce hosts setup` |
+| `Docker no está en /usr/bin/docker` | falta Docker o es el snap | instala `docker.io` o `docker-ce` y repite |
+| `Docker no respondió al consultar la imagen de agentes` | el usuario no está en `docker`, o su gestor arrancó antes de añadirlo | `sudo usermod -aG docker cauce-<empresa>` y `sudo systemctl restart user@$(id -u cauce-<empresa>).service` |
+| `docker load rechazó la imagen de agentes` | sin espacio para Docker | `df -h /var/lib/docker`; libera espacio y repite |
+| `la imagen cargada tiene el Id …, no el … que fija la plantilla` | este Docker guarda las imágenes en otro almacén que la plataforma (containerd o clásico) | avisa a la plataforma; en una máquina nueva, Docker 29 o superior usa containerd, como la plataforma |
+| `la plantilla de contenedor … no usa la imagen de agentes que trae el paquete` | la configuración de la plataforma es incoherente | avisa a la plataforma; no se instaló nada |
 | `executor policy was written but the executor rejects it (executor_unconfigured)` | la plataforma no tiene lista la autoridad firmada o la plantilla | avisa a la plataforma; el servicio no se arrancó |
 | `Node.js 22 or newer is required` | falta `node` en el PATH | instala Node.js 22 y repite |
 | `could not start the user service; check XDG_RUNTIME_DIR` | entraste con `sudo -iu` o `su` | entra con `sudo machinectl shell cauce-<empresa>@` o por SSH |
@@ -153,7 +183,8 @@ Los mensajes de `cauce hosts setup` y `status` salen en inglés, con el prefijo 
 | `host identity directory cannot contain symlinks` | el HOME está bajo un enlace simbólico | usa un HOME sin enlaces |
 | aviso `enable linger so the service survives logout` | no se activó el linger | `sudo loginctl enable-linger cauce-<empresa>` |
 | `cauce hosts status` sale con 3, `reason: service_inactive` | el servicio está parado | `journalctl --user -u cauce-v3-host-executor-<empresa>-<empresa>-<nombre>.service -n 50` |
-| al crear un agente: `approved image digest is unavailable` | la imagen de los agentes no está cargada en esta máquina | la plataforma indica cómo cargarla (ver Límites) |
+| al crear un agente: `approved image digest is unavailable` | alguien borró la imagen de los agentes de Docker | repite `cauce hosts setup`: la vuelve a cargar |
+| el agente se crea pero no conecta (bootstrap sin respuesta) | la máquina salió de la tailnet o no llega al puerto 8443 del gateway | `tailscale status` y la prueba de `gateway-alcanzable` del paso 2.1 |
 | al crear un agente: permiso denegado en Docker | el usuario no está en `docker`, o su gestor arrancó antes de añadirlo | `sudo usermod -aG docker cauce-<empresa>` y `sudo systemctl restart user@$(id -u cauce-<empresa>).service` |
 | la operación queda en «Esperando autenticación» | el proveedor aún no tiene sesión en el contenedor del agente | autentícalo desde la consola (paso 5 de [Asignar agentes](#5-asignar-agentes)); si no vas a hacerlo, **Cancelar operación** |
 | **Conectar cuenta** falla («La conexión no se pudo verificar») o no aparece el terminal | la máquina no sirve el login (`cauce hosts status` da `"provider_auth": false`) o su política de login no casa con la del ejecutor | repite `cauce hosts setup`; el diario lo explica: `journalctl --user -u cauce-v3-host-executor-<empresa>-<empresa>-<nombre>.service \| grep 'provider authentication'` |
@@ -176,14 +207,13 @@ Los mensajes de `cauce hosts setup` y `status` salen en inglés, con el prefijo 
    docker ps -a --filter label=cauce.fleet.host=<empresa>-<nombre>        # vacío
    docker volume ls --filter label=cauce.fleet.host=<empresa>-<nombre>    # vacío
    ```
-   Si la máquina deja de usarse para Cauce, como administrador: `sudo loginctl disable-linger cauce-<empresa>`, `sudo userdel -r cauce-<empresa>` y `sudo docker image rm <imagen>` de la imagen de agentes.
+   Si la máquina deja de usarse para Cauce, como administrador: `sudo loginctl disable-linger cauce-<empresa>`, `sudo userdel -r cauce-<empresa>`, `sudo docker image rm <image_id>` con el `image_id` que mostró `cauce hosts setup`, y `sudo tailscale logout` para sacarla de la tailnet.
 
 ## Límites actuales
 
 Hasta que la plataforma resuelva estos puntos, una computadora nueva se puede **enrolar** y confirmar su identidad con un latido firmado (`cauce hosts heartbeat`), pero **no puede ejecutar agentes**:
 
-- **Preparación activada en producción.** El gateway necesita su configuración y su clave de firma (`CAUCE_FLEET_HOST_SETUP_CONFIG_FILE`, [parámetros](parametros.md)). Sin ellas, la consola solo muestra el comando de enrolamiento.
-- **Paquete publicado.** Falta construir y publicar en una URL HTTPS el paquete que descarga `setup`; hoy solo lo construye la prueba automática.
-- **Imagen de los agentes.** El ejecutor usa una imagen fijada por su digest y no la descarga: hay que cargarla en cada máquina.
-- **Receta de login del proveedor.** `setup` solo habilita el login desde la consola si cada plantilla de perfil de la configuración de preparación trae su receta `login` (ver [ordenadores](v4-ordenadores.md#login-del-proveedor-desde-la-consola)); sin ella, `cauce hosts status` da `"provider_auth": false` y el alta se queda esperando autenticación. La imagen de los agentes tiene que traer el CLI del proveedor fijado por su digest.
-- **Ruta de los agentes hacia el gateway.** Los agentes se conectan con mTLS al gateway, que solo escucha en la red privada de la plataforma; la máquina tiene que estar en esa red o la plataforma tiene que publicar otra ruta.
+- **Preparación activada en producción.** El gateway necesita su configuración, su clave de firma y el paquete de ordenadores del despliegue (`CAUCE_FLEET_HOST_SETUP_CONFIG_FILE` y `CAUCE_FLEET_HOST_RELEASE_DIR`, [parámetros](parametros.md); cómo se publica, en [ordenadores](v4-ordenadores.md#paquete-de-ordenadores-construcción-y-publicación)). Sin ellas, la consola solo muestra el comando de enrolamiento.
+- **Receta de login del proveedor.** `setup` solo habilita el login desde la consola si cada plantilla de perfil de la configuración de preparación trae su receta `login` (ver [ordenadores](v4-ordenadores.md#login-del-proveedor-desde-la-consola)); sin ella, `cauce hosts status` da `"provider_auth": false` y el alta se queda esperando autenticación. La receta fija el CLI nativo del proveedor dentro de la imagen de los agentes, por su ruta y su SHA-256.
+
+El paquete del ejecutor y la imagen de los agentes ya no son un límite: `cauce hosts setup` los descarga del gateway y carga la imagen. La ruta de los agentes hacia el gateway la da la tailnet del paso 2.1.

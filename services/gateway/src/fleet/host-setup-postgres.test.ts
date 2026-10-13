@@ -1,4 +1,7 @@
-import { createPublicKey, generateKeyPairSync, verify } from 'node:crypto';
+import { createHash, createPublicKey, generateKeyPairSync, randomBytes, verify } from 'node:crypto';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { CauceRepository, createPool, stableHostJson, type DatabasePool } from '@cauce/store';
 import { preparePostgresSuite } from '../../../../packages/store/test/postgres-suite.js';
@@ -24,6 +27,12 @@ async function enrolledComputer(slug: string, name = 'laptop') {
   const owner = await registerSetupOwner(app, slug);
   const invitation = await inviteSetupHost(app, owner, `${slug}-${name}`);
   return { owner, invitation, host: await claimSetupHost(app, invitation) };
+}
+function artifact(host: Parameters<typeof setupPacket>[0], wanted: { name: string; sha256: string; offset: number },
+  overrides: Parameters<typeof setupPacket>[1] = {}, headers: Record<string, string> = {}) {
+  if (!app) throw new Error('gateway absent');
+  return app.inject({ method: 'POST', url: `/v3/fleet/hosts/${overrides.path_host ?? overrides.host_id ?? host.host_id}/setup/artifact`,
+    headers, payload: setupPacket(host, overrides, wanted) });
 }
 function setup(host: Parameters<typeof setupPacket>[0], overrides: Parameters<typeof setupPacket>[1] = {}, headers: Record<string, string> = {}) {
   if (!app) throw new Error('gateway absent');
@@ -95,5 +104,35 @@ describe('self-service computer setup', () => {
     expect((await setup({ ...host, keys: generateKeyPairSync('ed25519') })).statusCode).toBe(403);
     const audit = await pool.query("SELECT 1 FROM audit_events WHERE action='fleet_host.setup.package'");
     expect(audit.rowCount).toBe(1);
+  });
+
+  it('streams the signed release to its own computer from the signed offset, audits each request and refuses everyone else', async () => {
+    const files = await mkdtemp(join(tmpdir(), 'cauce-setup-artifacts-'));
+    try {
+      const tar = randomBytes(300_000); const path = join(files, 'release.tar'); await writeFile(path, tar, { mode: 0o644 });
+      const sha256 = createHash('sha256').update(tar).digest('hex'); const base = hostSetupConfig();
+      await gateway(new HostSetupPackager(HostSetupConfigSchema.parse({ ...base, release: { ...base.release, path, sha256, size: tar.length } }),
+        generateKeyPairSync('ed25519').privateKey));
+      const a = await enrolledComputer('setupd'); const b = await enrolledComputer('setupe');
+      const wanted = { name: 'release', sha256, offset: 0 };
+      const whole = await artifact(a.host, wanted);
+      expect([whole.statusCode, whole.headers['content-length'], whole.headers['content-type']]).toEqual([200, String(tar.length), 'application/octet-stream']);
+      expect(whole.rawPayload.equals(tar)).toBe(true);
+      const rest = await artifact(a.host, { ...wanted, offset: 1000 });
+      expect([rest.statusCode, rest.headers['content-range']]).toEqual([206, `bytes 1000-${String(tar.length - 1)}/${String(tar.length)}`]);
+      expect(rest.rawPayload.equals(tar.subarray(1000))).toBe(true);
+      expect((await artifact(a.host, { ...wanted, sha256: 'f'.repeat(64) })).statusCode).toBe(409);
+      expect((await artifact(a.host, { ...wanted, name: 'agent-image' })).statusCode).toBe(404);
+      expect((await artifact(a.host, { ...wanted, offset: tar.length })).statusCode).toBe(422);
+      for (const refused of [await artifact(a.host, wanted, { path_host: b.host.host_id }), await artifact({ ...b.host, keys: a.host.keys }, wanted),
+        await artifact(a.host, wanted, {}, { cookie: a.owner.cookie })]) {
+        expect(refused.statusCode).toBe(403); expect(refused.rawPayload.includes(tar.subarray(0, 64))).toBe(false);
+      }
+      const audit = await pool.query<{ company_id: string; offset: string }>(`SELECT company_id,metadata->>'offset' AS offset FROM audit_events
+        WHERE action='fleet_host.setup.artifact' ORDER BY (metadata->>'offset')::bigint`);
+      expect(audit.rows).toEqual([{ company_id: 'setupd', offset: '0' }, { company_id: 'setupd', offset: '1000' }]);
+      await gateway(undefined);
+      expect((await artifact(a.host, wanted)).statusCode).toBe(404);
+    } finally { await rm(files, { recursive: true, force: true }); }
   });
 });
