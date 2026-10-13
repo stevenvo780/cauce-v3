@@ -120,13 +120,15 @@ sobre él, y sólo eso:
 si el humo sale rojo parcial, la columna «Resultado» se corrige a mano en el mismo commit que
 registra la fila, y ese commit es también el que actualiza estos documentos.
 
-La última fila de [HISTORIAL](../deploy/HISTORIAL.md) registra `34cd5ea0`, el 9 de octubre a las
-00:42, hora de Colombia: el controlador de flota actualizado tras el `deploy.sh` completo del mismo
-árbol (V4.0 con la migración 051 y el listado de operaciones recientes). Los nueve servicios quedaron
-sanos y los 14 agentes con arriendo fresco; el smoke cerró ROJO parcial sólo por falta de tráfico en
-el bus. El runtime usa la imagen
-`sha256:92ff01e58f884ca31ed1daeaac5ae86778383d48ae390bfb48e276ae030e01fc` y la consola
-`sha256:edd4ded107c488df2d007a69b25a0e91dc1e220e6ee580239510debdf9db1b8a`.
+La última fila de [HISTORIAL](../deploy/HISTORIAL.md) registra `87c7eece`, el 13 de octubre a las
+05:34, hora de Colombia: el controlador de flota actualizado con el kit de la misma versión (145
+pines, ningún contenedor que migrar) y el enclave de autoridad firmada instalado, tras el `deploy.sh`
+completo del mismo árbol a las 04:29, el primer despliegue de V4. Ese despliegue llevaba un recibo de
+gates 9/9 verde del SHA y aplicó 22 migraciones (058→079) en una transacción tras un backup fresco.
+Los nueve servicios quedaron sanos y la flota 14/14; el único rojo del humo fue el bus, sin tráfico
+entre agentes de madrugada. El runtime usa la imagen
+`sha256:4b8a957d3cfe281bff47183197ceffd5f48342ebd0c6a0dfa54b7ae1c205060c` y la consola
+`sha256:05fcc0d2c6e8d9a80fcd5d5099d61128f0571b5b9f7f6181340206c974b0ed78`.
 
 La sesión Steven recargada mostró el grafo primero y la lista cerrada al final. Se comprobó un
 ping canónico de Zeus y su shell; el control se devolvió y la shell se cerró. El journal de Main
