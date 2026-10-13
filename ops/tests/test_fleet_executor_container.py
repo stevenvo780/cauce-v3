@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+# cauce:requiere docker
 import ast
 import hashlib
 import json
@@ -120,6 +121,8 @@ class DisposableContainerExecutorTest(unittest.TestCase):
     def setUpClass(cls):
         result = subprocess.run(['docker', 'image', 'inspect', 'python:3.12-slim', '--format', '{{.Id}}'], capture_output=True, text=True)
         if result.returncode:
+            if os.environ.get('CAUCE_RELEASE_VALIDATION') == '1':
+                raise RuntimeError('disposable local Python image is unavailable for the release orphan gate')
             raise unittest.SkipTest('disposable local Python image is unavailable')
         cls.image = result.stdout.strip()
 
@@ -135,8 +138,8 @@ class DisposableContainerExecutorTest(unittest.TestCase):
         finally:
             self.temporary.cleanup()
 
-    def configure_container(self):
-        self.container = 'cauce-fleet-fixture-' + uuid.uuid4().hex[:12]
+    def configure_container(self, prefix='cauce-fleet-fixture-'):
+        self.container = prefix + uuid.uuid4().hex[:12]
         self.policy['host_id'] = self.container
         self.context['request']['parameters']['placement']['host_id'] = self.container
         self.agent['host_id'] = self.container
@@ -295,7 +298,9 @@ class DisposableContainerExecutorTest(unittest.TestCase):
         return subprocess.run(['docker', 'ps', '-aq', '--filter', 'name=' + self.container], capture_output=True, text=True).stdout.split()
 
     def operation_fixture(self):
-        self.configure_container()
+        self.configure_container(prefix='zz-canary-fleet-')
+        self.policy['containers'][self.container]['profile_root'] = '/tmp/provider-profiles'
+        self.save_policy()
         sys.path.insert(0, str(fixtures.OPS / 'cli'))
         import fleet_executor_container as module
         from fleet_executor_policy import approve_agent, load_policy
@@ -308,18 +313,48 @@ class DisposableContainerExecutorTest(unittest.TestCase):
         operation = str(uuid.uuid4())
         with self.assertRaises(module.SafeFailure):
             module.create_container(policy, self.agent, {'/cauce/missing': '/nonexistent/zz-canary'}, operation_id=operation)
-        self.assertEqual(self.volumes(), [self.container + '-state'])
+        expected = {self.container + '-state', self.container + '-provider-profiles'}
+        self.assertEqual(set(self.volumes()), expected)
+        report = sweep_owned_fleet(self.root / 'orphan-rows.json', [], self.container,
+                                  policy['host_id'], self.agent['runtime_key'])
+        self.assertFalse(report['clean'], report)
+        self.assertEqual(report['sweep_exit'], 1)
+        self.assertEqual({row['name'] for row in report['orphan_resources']}, expected)
         module.discard_operation(policy, self.agent, str(uuid.uuid4()))
-        self.assertEqual(self.volumes(), [self.container + '-state'])
+        self.assertEqual(set(self.volumes()), expected)
         module.discard_operation(policy, self.agent, operation)
+        report = sweep_owned_fleet(self.root / 'orphan-rows.json', [], self.container,
+                                  policy['host_id'], self.agent['runtime_key'])
+        self.assertTrue(report['clean'], report)
+        self.assertEqual(report['sweep_exit'], 0)
         self.assertEqual((self.containers(), self.volumes()), ([], []))
 
     def test_compensation_removes_created_container_but_never_another_operations_resources(self):
         module, policy = self.operation_fixture()
         module.create_container(policy, self.agent, operation_id='op-one')
         module.discard_operation(policy, self.agent, 'op-two')
-        self.assertEqual((len(self.containers()), self.volumes()), (1, [self.container + '-state']))
+        self.assertEqual(len(self.containers()), 1)
+        self.assertEqual(set(self.volumes()), {self.container + '-state', self.container + '-provider-profiles'})
         module.discard_operation(policy, self.agent, 'op-one')
+        report = sweep_owned_fleet(self.root / 'orphan-rows.json', [], self.container,
+                                  policy['host_id'], self.agent['runtime_key'])
+        self.assertTrue(report['clean'], report)
+        self.assertEqual((self.containers(), self.volumes()), ([], []))
+
+    def test_real_purge_removes_container_and_provider_volumes_before_the_sweep(self):
+        module, policy = self.operation_fixture()
+        module.create_container(policy, self.agent, operation_id='op-purge')
+        report = sweep_owned_fleet(self.root / 'orphan-rows.json', [self.agent], self.container,
+                                  policy['host_id'], self.agent['runtime_key'])
+        self.assertTrue(report['clean'], report)
+        removed = module.purge_container(policy, self.agent)
+        self.assertEqual({(row['type'], row['name']) for row in removed['removed']}, {
+            ('container', self.container), ('volume', self.container + '-state'),
+            ('volume', self.container + '-provider-profiles')})
+        report = sweep_owned_fleet(self.root / 'orphan-rows.json', [], self.container,
+                                  policy['host_id'], self.agent['runtime_key'])
+        self.assertTrue(report['clean'], report)
+        self.assertEqual(report['sweep_exit'], 0)
         self.assertEqual((self.containers(), self.volumes()), ([], []))
 
 
