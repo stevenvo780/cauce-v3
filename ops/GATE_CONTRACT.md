@@ -38,17 +38,22 @@ La identidad es exclusivamente un principal mTLS:
 ```
 
 No lleva `origin`. `gate-probe` no es alias de flota, agent row, membership, lease ni destino. El
-gateway exige provider `mtls`, principal y payload exactos —incluidos el tenant y la sala de origen
-que fija `services/gateway/src/routes/core/publish.ts`, más `lane` `interactive`, `priority` `-100`
-y una `idempotency_key` `gate:<tenant>:<alias>:<nonce>`—. Como `gate-probe` no tiene agent row, la
-fila durable reutiliza como actor FK un alias de agente ya declarado (el mismo fichero fija cuál) y
-conserva `auth_session_id=gate-probe` / `auth_channel=gate` como prueba de autoridad. El SDK
+gateway exige provider `mtls`, principal y payload exactos en `publishOperation`
+(`services/gateway/src/publish-operation.ts`). `routes/core/publish.ts` solo llama a esa función.
+La sala, el alias del principal y el actor de la fila salen de `systemGatePrincipal`: `room_id`
+tiene que coincidir con el del principal, el alias y la sesión con `principal_alias`, `lane` es
+`interactive`, `priority` es `-100` y la `idempotency_key` es `gate:<tenant>:<alias>:<nonce>`.
+Como el principal de probe no tiene agent row, la fila durable usa como actor FK el
+`actor_alias` de ese principal y conserva `auth_session_id=gate-probe` /
+`auth_channel=gate` como prueba de autoridad. El SDK
 reconoce el tipo antes de reservar sesión: ACK `accepted` y `done` del claim real, sin prompt,
 harness, modelo, reply, messages, notify ni egress. La request se elimina del inbox
 durable al terminalizar; queda sólo el resultado mínimo del ACK y el audit de transporte.
 
-El probe usa HTTPS con CA/cert/key por paths, timeouts acotados y evidencia efímera 0600. Canary y
-cutover borran su directorio temporal al salir. `CAUCE_ROUNDTRIP_MARKER` está prohibido.
+El probe usa HTTPS con CA/cert/key por paths, timeouts acotados y evidencia efímera 0600. Canary
+borra su directorio temporal al salir (`mktemp -d` y `rm -rf` en `ops/scripts/canary.sh`). Cutover
+no crea un directorio: crea dos ficheros con `mktemp` y los borra con `rm -f` en el trap `EXIT`
+de `ops/scripts/cutover.sh`. `CAUCE_ROUNDTRIP_MARKER` está prohibido.
 
 Si falta esta identidad, el dueño debe autorizar su emisión local con
 `ops/scripts/provision-gate-identity.py --output-dir <directorio-nuevo> --ca-cert <CA-publica>
