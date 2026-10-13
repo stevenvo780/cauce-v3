@@ -7,6 +7,9 @@ import {
   applyMigrations, applyMigrationsThrough, createPool, migrationSourcesForApply,
   type DatabaseClient, type DatabasePool
 } from '@cauce/store';
+import {
+  clonarCaso, plantillaVigente, type ConPlantillaDeCasos, type PlantillaDeCasos,
+} from './plantilla-de-casos.js';
 
 export interface TestDatabase {
   container: StartedTestContainer;
@@ -370,10 +373,10 @@ async function clonarPlantilla(
 export async function crearBaseEfimera(
   servidor: string,
   abrirAdmin: (servidor: string) => DatabasePool = createPool,
-  opciones: { plantilla?: boolean; pruneExpired?: boolean } = {},
+  opciones: { plantilla?: boolean; pruneExpired?: boolean; desde?: PlantillaDeCasos } = {},
 ): Promise<{ url: string; soltar: () => Promise<void>; tirarConexiones: () => Promise<void> }> {
   assertTestDatabaseUrl(servidor);
-  const conPlantilla = opciones.plantilla ?? false; // decidido por quien conoce la suite
+  const conPlantilla = opciones.desde === undefined && (opciones.plantilla ?? false); // quien conoce la suite
   if (conPlantilla) await asegurarPlantilla(servidor, abrirAdmin);
   const nombre = nombreEfimero();
   const admin = abrirAdmin(servidor);
@@ -391,7 +394,9 @@ export async function crearBaseEfimera(
         await admin.query(`DROP DATABASE IF EXISTS ${vieja} WITH (FORCE)`).catch(() => undefined);
       }
     }
-    if (conPlantilla) {
+    if (opciones.desde !== undefined) {
+      await clonarCaso(admin, nombre, opciones.desde);
+    } else if (conPlantilla) {
       await clonarPlantilla(admin, nombre, () => asegurarPlantilla(servidor, abrirAdmin));
     } else {
       await admin.query(`CREATE DATABASE ${nombre}`);
@@ -502,20 +507,53 @@ async function closePools(database: { pool: DatabasePool; adminPool: DatabasePoo
   await Promise.all([...new Set([database.pool, database.adminPool])].map((pool) => pool.end().catch(() => undefined)));
 }
 
-const ownedTestServers = new WeakMap<DatabasePool, { url: string; adminUrl: string; migrationThrough: string | undefined }>();
-function ownTestServer(database: TestDatabase, migrationThrough?: string): TestDatabase {
-  ownedTestServers.set(database.pool, { url: database.url, adminUrl: database.adminUrl, migrationThrough });
+interface ServidorDePrueba extends ConPlantillaDeCasos {
+  url: string;
+  adminUrl: string;
+  migrationThrough: string | undefined;
+  alDetener: (() => Promise<void>)[]; // DROPs an external server owes at stop; a container takes them along
+}
+
+const ownedTestServers = new WeakMap<DatabasePool, ServidorDePrueba>();
+function ownTestServer(
+  database: TestDatabase, migrationThrough?: string, alDetener: (() => Promise<void>)[] = [],
+): TestDatabase {
+  ownedTestServers.set(database.pool, { url: database.url, adminUrl: database.adminUrl, migrationThrough, alDetener });
   return database;
 }
 
-export async function startTestCaseDatabase(database: TestDatabase): Promise<EmptyTestDatabase> {
+async function migrarPlantillaDeCasos(servidor: ServidorDePrueba): Promise<string> {
+  const { url, soltar } = await crearBaseEfimera(servidor.adminUrl, createPool, { pruneExpired: false });
+  servidor.alDetener.push(soltar);
+  const pool = createPool(url, { max: 1 });
+  try {
+    await waitForDatabase(pool);
+    if (servidor.migrationThrough === undefined) await applyMigrations(pool);
+    else await applyMigrationsThrough(pool, servidor.migrationThrough);
+    await guardarSemillaDeCatalogo(pool);
+  } finally {
+    await pool.end();
+  }
+  return nombreDeBase(url);
+}
+
+export async function startTestCaseDatabase(
+  database: TestDatabase, opciones: { plantilla?: boolean } = {},
+): Promise<EmptyTestDatabase> {
   const server = ownedTestServers.get(database.pool);
   if (server?.url !== database.url) {
     throw new Error('case database requires an unchanged server created by startTestDatabase');
   }
   const serverUrl = server.adminUrl;
   assertTestDatabaseUrl(serverUrl);
-  const { url, soltar } = await crearBaseEfimera(serverUrl, createPool, { pruneExpired: false });
+  const fichero = ficheroDeLaSuite(); // SUITES_SIN_PLANTILLA observe the migration: they migrate every case
+  const conPlantilla = opciones.plantilla ?? (fichero === undefined || !SUITES_SIN_PLANTILLA.has(fichero));
+  const desde = conPlantilla
+    ? await plantillaVigente(server, () => createPool(serverUrl, { max: 1 }), () => migrarPlantillaDeCasos(server))
+    : undefined;
+  const { url, soltar } = await crearBaseEfimera(serverUrl, createPool, {
+    pruneExpired: false, ...(desde === undefined ? {} : { desde }),
+  });
   const adminPool = createPool(url);
   let pools: { pool: DatabasePool; adminPool: DatabasePool } = { pool: adminPool, adminPool };
   let closing: Promise<void> | undefined;
@@ -525,9 +563,11 @@ export async function startTestCaseDatabase(database: TestDatabase): Promise<Emp
   };
   try {
     await waitForDatabase(adminPool);
-    if (server.migrationThrough === undefined) await applyMigrations(adminPool);
-    else await applyMigrationsThrough(adminPool, server.migrationThrough);
-    await guardarSemillaDeCatalogo(adminPool);
+    if (desde === undefined) {
+      if (server.migrationThrough === undefined) await applyMigrations(adminPool);
+      else await applyMigrationsThrough(adminPool, server.migrationThrough);
+    }
+    await guardarSemillaDeCatalogo(adminPool); // on a clone it only checks the seed's fingerprint
     const runtime = await withRuntimePool(adminPool, url, server.migrationThrough);
     pools = runtime;
     return { ...runtime, close };
@@ -536,6 +576,10 @@ export async function startTestCaseDatabase(database: TestDatabase): Promise<Emp
     throw error;
   }
 }
+
+export const COMANDO_POSTGRES_DE_PRUEBA: readonly string[] = [ // non-durable: docs/entorno-de-desarrollo-con-base-real.md
+  'postgres', '-c', 'fsync=off', '-c', 'full_page_writes=off',
+];
 
 async function startTestDatabaseAt(migrationThrough?: string, requireOwnedContainer = false): Promise<TestDatabase> {
   // CAUCE_TEST_DATABASE_URL serves environments where testcontainers has no Docker daemon.
@@ -551,13 +595,20 @@ async function startTestDatabaseAt(migrationThrough?: string, requireOwnedContai
         && (fichero === undefined || !SUITES_SIN_PLANTILLA.has(fichero)),
     });
     const pool = createPool(url);
+    const alDetener: (() => Promise<void>)[] = [];
+    const detener = async (): Promise<void> => {
+      for (const soltarOtra of alDetener.splice(0)) await soltarOtra();
+      await soltar();
+    };
     try {
       await waitForDatabase(pool);
       if (migrationThrough === undefined) await applyMigrations(pool);
       else await applyMigrationsThrough(pool, migrationThrough);
       await guardarSemillaDeCatalogo(pool);
       const runtime = await withRuntimePool(pool, url, migrationThrough);
-      return ownTestServer({ container: contenedorDesacoplado(soltar, tirarConexiones), ...runtime }, migrationThrough);
+      return ownTestServer(
+        { container: contenedorDesacoplado(detener, tirarConexiones), ...runtime }, migrationThrough, alDetener,
+      );
     } catch (error) {
       await pool.end();
       await soltar();
@@ -568,6 +619,7 @@ async function startTestDatabaseAt(migrationThrough?: string, requireOwnedContai
   const password = randomUUID();
   const network = process.env.CAUCE_TEST_DOCKER_NETWORK;
   let builder = new GenericContainer('postgres:16-alpine')
+    .withCommand([...COMANDO_POSTGRES_DE_PRUEBA])
     .withEnvironment({
       POSTGRES_DB: 'cauce_test',
       POSTGRES_USER: 'cauce_test',

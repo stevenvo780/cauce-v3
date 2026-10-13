@@ -3,6 +3,7 @@ import { lockClientDeclarationOwner } from '../../../services/gateway/src/client
 import { generateKeyPairSync, randomUUID } from 'node:crypto';
 import { GenericContainer, Wait, type StartedTestContainer } from 'testcontainers';
 import { afterAll, afterEach, beforeAll } from 'vitest';
+import { COMANDO_POSTGRES_DE_PRUEBA } from '../../../tests/helpers/postgres.js';
 import { applyMigrations, applyMigrationsThrough, createPool, CauceRepository, lockHumanIdentity, resolveHumanIdentity,
   type DatabasePool, type DatabaseClient } from '@cauce/store';
 import Fastify, { type FastifyInstance } from 'fastify';
@@ -38,6 +39,7 @@ beforeAll(async () => {
   }
   const password = randomUUID();
   container = await new GenericContainer('postgres:16-alpine')
+    .withCommand([...COMANDO_POSTGRES_DE_PRUEBA])
     .withLabels({ 'cauce.test.owner': randomUUID(), 'cauce.test.suite': 'human-client-provenance' })
     .withEnvironment({ POSTGRES_DB: 'cauce_test_client_template', POSTGRES_USER: 'cauce_test', POSTGRES_PASSWORD: password })
     .withExposedPorts(5432).withWaitStrategy(Wait.forLogMessage('database system is ready to accept connections', 2))
