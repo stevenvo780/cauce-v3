@@ -13,7 +13,7 @@ El ejecutor terminó a las `2026-10-07T01:20:46.932512Z` (6 de octubre, 20:20:46
 | Bundle candidato | `cronos-mailbox-20261006-r4`, digest `sha256:aaa4fdd12e6a0b320676fa25710b8a37750b500d2cd0f532f32efd01a58cc04c`; instalado, sin activación aceptada |
 | SDK conservado en Jarvis y Zeus | `cronos-410c0d5c`, digest `sha256:090da1336a57f52ee1e289516a4b59b5cd688cbdaffc9a556775970387463b09` |
 
-El runtime y la consola mantienen el ancla Compose en `/datos/workspaces/zeus/cauce-v3-deploy/71df5bc9/deploy`; la infraestructura mantiene la suya en `/datos/releases/cauce-v3/pr1-release-20261001/deploy`.
+El runtime y la consola mantienen el ancla Compose en `<workspace>/cauce-v3-deploy/<sha>/deploy`; la infraestructura mantiene la suya en `<releases>/cauce-v3/<release>/deploy`.
 
 ## Evidencia
 

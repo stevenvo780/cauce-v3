@@ -560,7 +560,7 @@ Antes hay que corregir los fixtures que insertan espacios sin `company_id`:
 Hoy no es posible: no existe `company_admins`, y meter a Miguel en el hub cambiaría su identidad de chat, porque la sesión toma un solo espacio. Steven confirma personalmente los UUID y los correos, y ejecuta con su conexión de operador **en una sola transacción**:
 
 ```bash
-ssh root@167.114.118.213
+ssh <usuario>@<host-prod>
 # Carga las identidades aprobadas en las variables desde la configuración privada del operador.
 docker exec -i cauce-v3-prod-postgres-1 psql -U cauce -d cauce -X -v ON_ERROR_STOP=1 \
   --set=admin="$PLATFORM_ADMIN_ID" --set=steven_human_id="$SUPER_ADMIN_ID" --set=miguel_human_id="$OWNER_ID" --set=correo_super_admin="$CORREO_SUPER_ADMIN" --set=correo_owner="$CORREO_OWNER" <<'SQL'
@@ -575,8 +575,8 @@ SQL
 Con WP-I, la misma siembra es `cauce platform admin otorgar` repitiendo `--id` y `--email` en una sola transacción. En producción la CLI no corre en el host: `tsx` es una dependencia de desarrollo, `/opt/cauce-v3` no tiene `node_modules`, PostgreSQL no publica puerto en el host y la URL apunta a `postgres` con `verify-full`. Se ejecuta dentro de la imagen de runtime del despliegue vigente, en la red `backend` de la pila, con la URL de dueño (la del `migrator`) y la CA de PostgreSQL como secretos de fichero:
 
 ```bash
-ssh root@167.114.118.213
-cd /datos/workspaces/zeus/cauce-v3-deploy/<clon del despliegue vigente>   # debe incluir WP-I
+ssh <usuario>@<host-prod>
+cd <datos>/cauce-v3-deploy/<clon del despliegue vigente>   # debe incluir WP-I
 ops/cli/cauce-platform-contenedor --mostrar   # solo muestra imagen, red y rutas de secretos; no ejecuta nada
 CAUCE_PLATFORM_ADMIN_ID="$PLATFORM_ADMIN_ID" \
   ops/cli/cauce-platform-contenedor admin otorgar --empresa humanizar --rol owner \

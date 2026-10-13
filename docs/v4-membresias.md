@@ -122,7 +122,7 @@ Decisión: **conservar**.
 
 Definición: `M/053:249`, backfill `:272`, `NOT NULL` + FKs `M/053:335-339`, relleno `human_tenant_memberships_company_fill` (`M/053:389`, función `cauce_fill_company_from_human`), inmutable (`M/053:417`).
 
-Lectores SQL: solo `M/064:32` (`identity.company_id=p_company`). En TS ninguno; solo las comprobaciones de esquema (`health/schema-companies.ts:27-28,46`) y `ops/scripts/rehearse-v41-clone.sh:119-120`.
+Lectores SQL: solo `M/064:32` (`identity.company_id=p_company`). En TS ninguno; solo las comprobaciones de esquema (`health/schema-companies.ts:27-28,46`) y `ops/scripts/rehearse-migrations-clone.sh`.
 
 Valor: las dos FKs (`(tenant_id, company_id)` y `(human_id, company_id)`) obligan a que la membresía pertenezca a la empresa de la persona y del tenant, sin trigger. Es una columna casi sin lectores pero con función puramente de restricción.
 
@@ -425,6 +425,6 @@ Ejecutado en PostgreSQL 16 (001–065, cada archivo en su transacción, con una 
 
 Pendiente:
 
-- [ ] Probar 068 up/down en PostgreSQL real con la secuencia completa de migraciones del bundle y con `ops/scripts/rehearse-v41-clone.sh`.
+- [ ] Probar 068 up/down en PostgreSQL real con la secuencia completa de migraciones del bundle y con `ops/scripts/rehearse-migrations-clone.sh`.
 - [ ] Comprobar con `pg_get_functiondef` que los cinco parches coinciden y que `down` restaura los cuerpos originales.
 - [ ] Matriz completa en verde tras el cambio de código (typecheck, lint, unit, PG, e2e de autoridad humana y terminal).

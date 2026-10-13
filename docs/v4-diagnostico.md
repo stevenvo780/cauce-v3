@@ -288,7 +288,7 @@ Registro de ejecución; las secciones 1–10 quedan como se midieron.
 |---|---|
 | §2 fusionar JSONL de decisiones en `audit_events` | **Aplicada** (`35c9d73f`): `JsonlAudit` borrada; la metadata PG lleva ahora el registro completo (preguntas, redacciones, solicitudes a Jev, usage, certeza, `caer_a_llm`). Queda para el carril de despliegue retirar `CAUCE_DECISIONES_AUDIT_FILE` y el volumen `decisiones_auditoria` de `deploy/decisiones/compose.yaml` (el servicio ya ignora esa variable). Respecto al paso 4 de la sección 10: si PG falla, no existe segunda escritura; el fallo de auditoría se propaga como ya hacía la escritura durable |
 | §3 podar revividor, panel-cadenas y mcp-expansion | **Movida**: no hay ningún fichero de esas tres unidades en el repo (verificado); la baja es solo en los hosts, fuera de esta poda |
-| §3 cableado OpenTelemetry retirar o reactivar | **Movida**: vive en `ops/observability/` y `deploy/compose.yml`, fuera de los archivos de esta tarea; sigue pendiente la decisión del dueño |
+| §3 cableado OpenTelemetry retirar o reactivar | **Movida**: vive en `ops/observability/` y `deploy/compose.yaml`, fuera de los archivos de esta tarea; sigue pendiente la decisión del dueño |
 | §3 tablas `_respaldo_` | **Movida**: son objetos de la base de datos productiva; ninguna tarea de repo las toca |
 | §3 filas emitidas por terceros y tokens personales | Sin cambios (recomendaciones sin poda asociada) |
 | §4 consumidor de alertas único | **Aplicada en parte**: `cauce-alertas-al-bus.py` sigue siendo el único consumidor y las guardias de credenciales ahora avisan de su propio fallo con `OnFailure=cauce-v3-backup-alert@%n.service` (el publicador genérico existente). El resto de fallos de units sigue sin consumidor, como ya decía la sección |

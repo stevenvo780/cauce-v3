@@ -61,7 +61,7 @@ Mueve a **Gaia, Hegel, Hades y Argos** a servidores de mi red local para liberar
 La VPS principal es:
 
 ```bash
-ssh root@167.114.118.213
+ssh <usuario>@<host-prod>
 ```
 
 **Kant conoce la infraestructura local. Utiliza Cauce para preguntarle por los servidores, sus accesos, su disponibilidad y cualquier requisito relevante para la migración.** También están registrados los accesos SSH de los servidores 1, 2 y 3. Identifica cuáles pertenecen realmente a mi red local: los destinos de esta migración deben ser servidores locales, no otras VPS.
