@@ -336,6 +336,9 @@ describe('recorrido V4 de la consola en navegador real contra gateway y PostgreS
 
   it('ficha: el agente del plano abre su ficha y desde ella el historial de contexto', async () => {
     const page = ownerPage();
+    const unplacedMessage = 'La consulta de cuota requiere un agente habilitado, un entorno de contenedor y un ordenador habilitado.';
+    const noReaderMessage = 'Sin lector de cuota para este harness: el proveedor no expone una ventana de consumo medible.';
+    const revisionMatcher: unknown = expect.any(Number);
     await pool().query(`INSERT INTO agents(tenant_id,alias,harness_id,display_name,enabled,container_name,runtime_user,home_directory,state_directory,company_id)
       VALUES($1,$2,'codex',$2,true,$3,'stev',$4,$5,$6)`, [hubA, agentAlias, `cauce-v4-${run}`, `/srv/v4/${run}`, `/srv/v4/${run}/state`, ownerA.company.slug]);
     await pool().query("INSERT INTO memberships(tenant_id,room_id,alias,role) VALUES($1,'office',$2,'agent')", [hubA, agentAlias]);
@@ -347,11 +350,13 @@ describe('recorrido V4 de la consola en navegador real contra gateway y PostgreS
         .getByRole('button', { name: new RegExp(agentAlias, 'u') }).click();
       const sheet = page.getByRole('dialog');
       await sheet.getByText(agentAlias, { exact: true }).first().waitFor({ timeout: 15_000 });
-      await sheet.getByText('Sin lector de cuota para este harness: el proveedor no expone una ventana de consumo medible.', { exact: true }).waitFor({ timeout: 15_000 });
+      await sheet.getByText(unplacedMessage, { exact: true }).waitFor({ timeout: 15_000 });
+      expect(await sheet.getByText(noReaderMessage, { exact: true }).count()).toBe(0);
       await sheet.getByText('Todavía no hay una medición persistida.', { exact: true }).waitFor({ timeout: 15_000 });
       const quota = await apiGet(page, `/v3/console/agents/${hubA}/${agentAlias}/quota`);
       expect(quota.status).toBe(200);
-      expect(quota.body).toMatchObject({ reader_available: false, can_query: false, reason: 'quota_reader_unavailable',
+      expect(quota.body).toEqual({ tenant_id: hubA, alias: agentAlias, revision: revisionMatcher, configuration_revision: revisionMatcher,
+        reader_available: false, can_query: false, reason: 'quota_target_unplaced',
         status: 'unsupported', captured_at: null, binding: null, sample: null, operation: null });
       await sheet.getByRole('link', { name: 'Perfil y contexto', exact: true }).click();
       await page.getByRole('heading', { name: `Perfil y contexto de ${agentAlias}`, exact: true }).waitFor({ timeout: 20_000 });
@@ -372,6 +377,30 @@ describe('recorrido V4 de la consola en navegador real contra gateway y PostgreS
     expect(Number(revisions.rows[0]?.count)).toBeGreaterThanOrEqual(1);
     expect((await pool().query('SELECT reader_available,status,captured_at,account_id,sample FROM agent_quota_observations WHERE tenant_id=$1 AND alias=$2',
       [hubA, agentAlias])).rows).toEqual([{ reader_available: false, status: 'unsupported', captured_at: null, account_id: null, sample: null }]);
+    const noReaderAlias = `sin-lector-${run}`;
+    await pool().query(`INSERT INTO agents(tenant_id,alias,harness_id,display_name,enabled,container_name,runtime_user,home_directory,state_directory,company_id)
+      VALUES($1,$2,'openclaw',$2,true,$3,'stev',$4,$5,$6)`,
+    [hubA, noReaderAlias, `cauce-v4-no-reader-${run}`, `/srv/v4/${run}/no-reader`, `/srv/v4/${run}/no-reader/state`, ownerA.company.slug]);
+    await pool().query("INSERT INTO memberships(tenant_id,room_id,alias,role) VALUES($1,'office',$2,'agent')", [hubA, noReaderAlias]);
+    await step(page, 'agent sheet without quota reader', async () => {
+      await openPlan(page);
+      await page.getByRole('region', { name: officeRoom(), exact: true }).getByRole('button').first().click();
+      await page.getByRole('region', { name: `Agentes de sala ${hubA}/office`, exact: true })
+        .getByRole('button', { name: new RegExp(noReaderAlias, 'u') }).click();
+      const sheet = page.getByRole('dialog');
+      await sheet.getByText(noReaderAlias, { exact: true }).first().waitFor({ timeout: 15_000 });
+      await sheet.getByText(noReaderMessage, { exact: true }).waitFor({ timeout: 15_000 });
+      expect(await sheet.getByText(unplacedMessage, { exact: true }).count()).toBe(0);
+      await sheet.getByText('Todavía no hay una medición persistida.', { exact: true }).waitFor({ timeout: 15_000 });
+      const quota = await apiGet(page, `/v3/console/agents/${hubA}/${noReaderAlias}/quota`);
+      expect(quota.status).toBe(200);
+      expect(quota.body).toEqual({ tenant_id: hubA, alias: noReaderAlias, revision: revisionMatcher, configuration_revision: revisionMatcher,
+        reader_available: false, can_query: false, reason: 'quota_reader_unavailable',
+        status: 'unsupported', captured_at: null, binding: null, sample: null, operation: null });
+      await sheet.getByRole('button', { name: 'Cerrar el detalle', exact: true }).click();
+    });
+    expect((await pool().query('SELECT reader_available,status,captured_at,account_id,sample FROM agent_quota_observations WHERE tenant_id=$1 AND alias=$2',
+      [hubA, noReaderAlias])).rows).toEqual([{ reader_available: false, status: 'unsupported', captured_at: null, account_id: null, sample: null }]);
   });
 
   it('autoridad de empresa: sin elegir persona no se puede guardar la asignación', async () => {
