@@ -27,7 +27,7 @@ Casos: `tests/e2e/v4-office-real-browser.test.ts` — “crea dos salas desde la
 
 ## Contextos
 
-`tests/e2e/v4-contexts-real-browser.test.ts` — “edita, rechaza secretos, restaura y aplica aislamiento entre personas y empresas” añade y edita un archivo, relee el historial durable, restaura una versión como otra nueva y comprueba aislamiento. También intenta aplicar la versión y recibe `503`, dejándola pendiente; no acredita adopción por el agente. `context_versions.C`, `context_files.C/R/U` y `context_restore.U` están cubiertas. Siguen pendientes quitar un archivo desde navegador (`context_files.D`), recuperar sincronización Git (`context_sync.U`) y un recibo de aplicación correlacionado (`context_application.U`).
+`tests/e2e/v4-contexts-real-browser.test.ts` — “edita, rechaza secretos, restaura y aplica aislamiento entre personas y empresas” añade y edita un archivo, relee el historial durable, restaura una versión como otra nueva y comprueba aislamiento. También intenta aplicar la versión y recibe `503`, dejándola pendiente; no acredita adopción por el agente. `tests/e2e/v4-context-files-real-browser.test.ts` — “desde la ficha retira un archivo del contexto y lo recupera al restaurar” quita un archivo desde la ficha del agente, comprueba la versión nueva en el historial, la relee tras recargar y por la API, y restaura la versión anterior con el archivo. `context_versions.C`, `context_files.C/R/U/D` y `context_restore.U` están cubiertas. Siguen pendientes recuperar sincronización Git (`context_sync.U`) y un recibo de aplicación correlacionado (`context_application.U`).
 
 ## Entornos de cuota
 
@@ -39,4 +39,4 @@ Casos: `tests/e2e/v4-office-real-browser.test.ts` — “crea dos salas desde la
 
 ## Pendientes conservados
 
-Las razones completas permanecen en el JSON. Entre las filas que estos recorridos no cierran están: `people_crud_browser` (restauración, purga y último administrador), `host_crud_browser` (CRUD del ordenador), `company_admins_lifecycle_browser` (ciclo positivo de autoridad), `office_parts_lifecycle_browser` (edición y baja de partes), `quota_environment_execution_browser` (efecto físico y proveedor), `context_versions_lifecycle_browser` (quitar un archivo), `context_git_concurrent_recovery` (recuperación Git desde navegador) y `context_application_browser` (adopción confirmada por el agente).
+Las razones completas permanecen en el JSON. Entre las filas que estos recorridos no cierran están: `people_crud_browser` (restauración, purga y último administrador), `host_crud_browser` (CRUD del ordenador), `company_admins_lifecycle_browser` (ciclo positivo de autoridad), `office_parts_lifecycle_browser` (edición y baja de partes), `quota_environment_execution_browser` (efecto físico y proveedor), `context_git_concurrent_recovery` (recuperación Git desde navegador) y `context_application_browser` (adopción confirmada por el agente).

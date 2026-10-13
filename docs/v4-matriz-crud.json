@@ -26,10 +26,6 @@
       "reason": "Los E2E verifican metadatos y estados con recibos de fixture; faltan contenedor y proveedor reales, autenticación y consulta, limpieza física y ausencia de recursos huérfanos."
     },
     {
-      "id": "context_versions_lifecycle_browser",
-      "reason": "Falta retirar un archivo del contexto desde navegador y verificar la versión durable; la aplicación al agente se controla en context_application_browser."
-    },
-    {
       "id": "context_git_concurrent_recovery",
       "reason": "El simulacro actual incorpora reconciliación de escritores; falta verificar recuperación de Git desde navegador real y sobre el despliegue. La matriz no acredita aceptación de V4."
     },
@@ -2023,9 +2019,8 @@
           ]
         },
         "D": {
-          "status": "pending",
-          "reason": "Falta retirar un archivo del borrador desde navegador y releer la versión resultante; la aplicación al runtime tiene su propia fila pendiente.",
-          "pending_id": "context_versions_lifecycle_browser",
+          "status": "covered",
+          "reason": "Cobertura versionada de navegador real y PostgreSQL: retira un archivo desde la ficha, confirma la versión durable sin ese archivo tras recargar y por la API, y lo recupera al restaurar la versión anterior.",
           "api": [
             {
               "method": "PUT",
@@ -2041,8 +2036,8 @@
           ],
           "tests": [
             {
-              "file": "console/src/features/live/ContextVersionsPanel.test.tsx",
-              "name": "un conflicto conserva el texto y versión del borrador; lectores sólo consultan"
+              "file": "tests/e2e/v4-context-files-real-browser.test.ts",
+              "name": "desde la ficha retira un archivo del contexto y lo recupera al restaurar"
             }
           ]
         }
