@@ -131,6 +131,23 @@ class ContextCliTests(unittest.TestCase):
                              headers={'Cookie': 'cauce_session=synthetic-test', 'X-CSRF-Token': 'a' * 43}, timeout=2)
         self.assertEqual(Handler.observed, [('CONNECT', 'console.example.invalid:443', None, None)])
 
+    def test_redirect_from_https_proxy_connect_is_rejected_without_following_location(self):
+        class Proxy(Handler):
+            def do_CONNECT(self):
+                Handler.observed.append((self.command, self.path, self.headers.get('Cookie'), self.headers.get('X-CSRF-Token')))
+                self.send_response(302)
+                self.send_header('Location', self.url + '/redirect-target')
+                self.end_headers()
+
+        Proxy.url = self.url
+        self.server.RequestHandlerClass = Proxy
+        gateway = 'https://console.example.invalid'
+        with patch.dict(os.environ, {'HTTPS_PROXY': self.url}, clear=True):
+            with self.assertRaisesRegex(ContextFailure, 'console gateway is unavailable'):
+                request_json(gateway, gateway, None, 'POST', '/v3/auth/login', {'password': 'synthetic-password'},
+                             headers={'Cookie': 'cauce_session=synthetic-test', 'X-CSRF-Token': 'a' * 43}, timeout=2)
+        self.assertEqual(Handler.observed, [('CONNECT', 'console.example.invalid:443', None, None)])
+
     def test_remote_plaintext_is_rejected_before_proxy_network_access(self):
         gateway = 'http://console.example.invalid'
         with patch.dict(os.environ, {'HTTP_PROXY': self.url, 'HTTPS_PROXY': self.url}, clear=True):
