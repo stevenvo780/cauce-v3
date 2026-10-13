@@ -22,6 +22,7 @@ export async function seedQuotaCompanyAdmin(pool: DatabasePool, owner: V4Person,
 
   const admin = quotaCanaryPerson('admin', run, owner.password);
   const alias = `zz-canary-admin-${run}`;
+  const runtimeUser = `zz-canary-${run}`;
   const adminRow = (await pool.query<{ id: string }>(`INSERT INTO console_users
     (email,email_normalized,password_hash,display_name,role,tenant_id,alias,company_id)
     SELECT $1,lower($1),owner.password_hash,$2,'operator',owner.tenant_id,$3,owner.company_id
@@ -31,8 +32,8 @@ export async function seedQuotaCompanyAdmin(pool: DatabasePool, owner: V4Person,
 
   await pool.query(`INSERT INTO agents
     (tenant_id,alias,harness_id,display_name,enabled,container_name,runtime_user,home_directory,state_directory,company_id)
-    SELECT tenant_id,$2,'codex',$2,true,$3,'stev',$4,$5,company_id FROM console_users WHERE id=$1`,
-  [adminRow.id, alias, `zz-canary-agent-${run}`, `/srv/zz-canary-${run}`, `/srv/zz-canary-${run}/state`]);
+    SELECT tenant_id,$2,'codex',$2,true,$3,$4,$5,$6,company_id FROM console_users WHERE id=$1`,
+  [adminRow.id, alias, `zz-canary-agent-${run}`, runtimeUser, `/srv/zz-canary-${run}`, `/srv/zz-canary-${run}/state`]);
   await pool.query("INSERT INTO memberships(tenant_id,room_id,alias,role) VALUES($1,'office',$2,'operator')", [ownerRow.tenant_id, alias]);
   await pool.query(`INSERT INTO human_tenant_memberships
     (human_id,tenant_id,actor_alias,role,permissions,enabled,company_id)

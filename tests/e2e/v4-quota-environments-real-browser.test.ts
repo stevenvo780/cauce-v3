@@ -140,7 +140,8 @@ describe('entornos de cuota V4 en navegador real contra gateway y PostgreSQL rea
     accountId = account?.id ?? '';
     accountVersion = account?.version ?? 0;
     expect(accountId).not.toBe('');
-    expect(account).toMatchObject({ provider: 'codex', version: expect.any(Number) });
+    expect(account?.provider).toBe('codex');
+    expect(typeof account?.version).toBe('number');
 
     await step(page, 'el servidor rechaza un nombre de entorno de más de 80 caracteres', async () => {
       const form = page.getByRole('form', { name: 'Crear entorno de cuotas' });
@@ -148,10 +149,10 @@ describe('entornos de cuota V4 en navegador real contra gateway y PostgreSQL rea
       await form.locator('select').nth(1).selectOption(quotaHost);
       const invalidLabel = 'x'.repeat(81);
       await page.evaluate((value: string) => {
-        const input = document.querySelector('form[aria-label="Crear entorno de cuotas"] input') as HTMLInputElement | null;
-        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
-        if (!input || !setter) throw new Error('quota environment label input is unavailable');
-        setter.call(input, value);
+        const input = document.querySelector<HTMLInputElement>('form[aria-label="Crear entorno de cuotas"] input');
+        if (!input || !Reflect.set(HTMLInputElement.prototype, 'value', value, input)) {
+          throw new Error('quota environment label input is unavailable');
+        }
         input.dispatchEvent(new Event('input', { bubbles: true }));
       }, invalidLabel);
       expect(await form.getByLabel('Nombre del entorno', { exact: true }).inputValue()).toBe(invalidLabel);
@@ -161,7 +162,28 @@ describe('entornos de cuota V4 en navegador real contra gateway y PostgreSQL rea
       await alert.waitFor({ timeout: 20_000 });
       expect(await alert.innerText()).toBe('El servidor rechazó los datos enviados. Revísalos e inténtalo de nuevo.');
       expect((await quotaSnapshot(page)).environments.some(item => item.label === invalidLabel)).toBe(false);
-      await form.getByLabel('Nombre del entorno', { exact: true }).fill('');
+
+      errors.expectHttpError('/v3/console/quota-environments', 400);
+      const invalidHost = await apiMutation(page, 'POST', '/v3/console/quota-environments', {
+        account_id: accountId, host_id: 'host inválido', label: `zz-canary-invalid-host-${run}`,
+        idempotency_key: `zz-canary-invalid-host-${run}`,
+      });
+      expect(invalidHost.status).toBe(400);
+      expect(invalidHost.body).toMatchObject({ error: 'invalid_request' });
+
+      errors.expectHttpError('/v3/console/quota-environments', 400);
+      const emptyName = await apiMutation(page, 'POST', '/v3/console/quota-environments', {
+        account_id: accountId, host_id: quotaHost, label: '', idempotency_key: `zz-canary-empty-name-${run}`,
+      });
+      expect(emptyName.status).toBe(400);
+      expect(emptyName.body).toMatchObject({ error: 'invalid_request' });
+
+      const nameInput = form.getByLabel('Nombre del entorno', { exact: true });
+      await nameInput.fill('');
+      expect(await nameInput.evaluate(input => ({ required: input.required, valueMissing: input.validity.valueMissing })))
+        .toEqual({ required: true, valueMissing: true });
+      expect(await form.getByRole('button', { name: 'Crear entorno', exact: true }).isDisabled()).toBe(true);
+      expect((await quotaSnapshot(page)).environments).toEqual([]);
     });
   });
 
@@ -178,7 +200,26 @@ describe('entornos de cuota V4 en navegador real contra gateway y PostgreSQL rea
     expect(await finishQuotaOperation(pool(), run, quotaHost, 'create')).toBe(ownerEnvironmentId);
     await page.reload({ waitUntil: 'domcontentloaded' });
     await page.getByText('Preparado', { exact: true }).waitFor({ timeout: 20_000 });
-    await step(page, 'editar entorno', async () => editEnvironment(page, ownerEnvironment, ownerEnvironmentEdited));
+    await step(page, 'editar entorno y rechazar un nombre vacío tras recortar espacios', async () => {
+      const card = page.getByRole('article', { name: `Entorno ${ownerEnvironment}`, exact: true });
+      await card.getByRole('button', { name: 'Editar entorno', exact: true }).click();
+      const form = page.getByRole('form', { name: 'Editar entorno de cuotas' });
+      const nameInput = form.getByLabel('Nombre del entorno', { exact: true });
+      await nameInput.fill('   ');
+      expect(await nameInput.inputValue()).toBe('   ');
+      errors.expectHttpError(`/v3/console/quota-environments/${ownerEnvironmentId}`, 400);
+      await form.getByRole('button', { name: 'Guardar entorno', exact: true }).click();
+      const alert = page.getByRole('alert');
+      await alert.waitFor({ timeout: 20_000 });
+      expect(await alert.innerText()).toBe('El servidor rechazó los datos enviados. Revísalos e inténtalo de nuevo.');
+      expect((await quotaSnapshot(page)).environments.find(item => item.id === ownerEnvironmentId))
+        .toMatchObject({ label: ownerEnvironment, status: 'ready' });
+
+      await nameInput.fill(ownerEnvironmentEdited);
+      await form.getByRole('button', { name: 'Guardar entorno', exact: true }).click();
+      await page.getByText('Configuración del entorno guardada.', { exact: true }).waitFor({ timeout: 20_000 });
+      await page.getByRole('article', { name: `Entorno ${ownerEnvironmentEdited}`, exact: true }).waitFor({ timeout: 20_000 });
+    });
     let state = await quotaSnapshot(page);
     const edited = state.environments.find(item => item.id === ownerEnvironmentId);
     expect(edited).toMatchObject({ label: ownerEnvironmentEdited, status: 'ready' });
@@ -213,11 +254,22 @@ describe('entornos de cuota V4 en navegador real contra gateway y PostgreSQL rea
     expect(accounts.status).toBe(200);
     expect((accounts.body as unknown as { accounts: { id: string }[] }).accounts).toEqual([]);
     expect(environments.environments).toEqual([]);
-    errors.expectHttpError(`/v3/console/quota-environments/${ownerEnvironmentId}`, 404);
+    const foreignEnvironmentPath = `/v3/console/quota-environments/${ownerEnvironmentId}`;
+    errors.expectHttpError(foreignEnvironmentPath, 404);
+    const directRead = await apiGet(page, foreignEnvironmentPath);
+    expect(directRead.status).toBe(404);
+    errors.expectHttpError(foreignEnvironmentPath, 404);
     const directMutation = await apiMutation(page, 'PATCH', `/v3/console/quota-environments/${ownerEnvironmentId}`, {
       expected_version: 3, label: `zz-canary-foreign-takeover-${run}`,
     });
     expect(directMutation.status).toBe(404);
+    errors.expectHttpError(foreignEnvironmentPath, 404);
+    const directDelete = await apiDelete(page,
+      `${foreignEnvironmentPath}?expected_version=1&idempotency_key=zz-canary-foreign-delete-${run}`);
+    expect(directDelete.status).toBe(404);
+    expect((await pool().query<{ label: string; status: string }>(
+      'SELECT label,status FROM quota_environments WHERE id=$1 AND company_id=$2', [ownerEnvironmentId, owner.company.slug])).rows)
+      .toEqual([{ label: ownerEnvironmentEdited, status: 'deleted' }]);
     errors.expectHttpError(`/v3/console/quota-accounts/${accountId}`, 404);
     const foreignAccountMutation = await apiMutation(page, 'PATCH', `/v3/console/quota-accounts/${accountId}`, {
       expected_version: accountVersion, label: `zz-canary-foreign-account-${run}`,
@@ -255,8 +307,8 @@ describe('entornos de cuota V4 en navegador real contra gateway y PostgreSQL rea
     errors.expectHttpError(`/v3/console/quota-accounts/${accountId}`, 403);
     const deniedAccountDelete = await apiDelete(page, `/v3/console/quota-accounts/${accountId}?expected_version=${accountVersion}`);
     expect(deniedAccountDelete.status).toBe(403);
-    expect((await apiGet(page, '/v3/console/quota-accounts')).body as unknown as { accounts: { label: string }[] })
-      .toMatchObject({ accounts: [{ label: accountLabel }] });
+    const remainingAccounts = (await apiGet(page, '/v3/console/quota-accounts')).body as unknown as { accounts: { label: string }[] };
+    expect(remainingAccounts.accounts.map(item => item.label)).toEqual([accountLabel]);
 
     await step(page, 'crear entorno con rol company_admin', async () => createEnvironment(page, adminEnvironment));
     const created = await quotaSnapshot(page);
