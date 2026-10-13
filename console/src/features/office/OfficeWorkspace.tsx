@@ -38,6 +38,15 @@ export function OfficeWorkspace({ campus, topology, agents, onAgent }: {
   const top = Math.min(0, ...shown.map(room => room.y));
   const width = Math.max(800, ...shown.map(room => room.x - left + room.width + 24));
   const height = Math.max(500, ...shown.map(room => room.y - top + room.height + 24));
+  function agentButton(id: string) {
+    const agent = agents.find(value => value.id === id);
+    const cut = id.indexOf('/');
+    const reading = quotas.loading && !quotas.data && !quotas.error;
+    const fatigue = quotas.error ? 'error' : agentFatigue(quotas.data?.accounts ?? [], id.slice(0, cut), id.slice(cut + 1));
+    return <Button key={id} size="sm" onClick={() => { onAgent(id); }} className="grid h-auto min-w-0 max-w-full shrink-0 gap-1 whitespace-normal bg-surface p-2" title={agent?.reason}>
+      <span className="min-w-0 wrap-anywhere">{agent?.name ?? id.slice(cut + 1)}</span>{reading ? <span role="status" className="text-xs text-muted">Leyendo cuotas…</span> : <FatigueIndicator state={fatigue} />}
+    </Button>;
+  }
   function update(room: OfficeRoom) {
     if (!writable || !layout.data) return;
     setNotice(''); setDraft({ version: draft?.version ?? layout.data.version, rooms: shown.map(current => officeRoomKey(current.tenant_id, current.room_id)
@@ -63,7 +72,12 @@ export function OfficeWorkspace({ campus, topology, agents, onAgent }: {
       {draft ? <span className="text-xs text-warn-ink">Plano sin guardar</span> : null}
       <a className="ml-auto text-xs text-brand-ink" href="/config?seccion=espacios" onClick={event => { onNavClick(event, '/config?seccion=espacios'); }}>Gestionar salas y asignaciones</a>
     </div>
-    <div key={planSaves} className={mode === 'campus' ? 'min-h-0 flex-1' : 'hidden'}>{campus}</div>
+    <div key={planSaves} className={mode === 'campus' ? 'flex min-h-0 flex-1 flex-col' : 'hidden'}>
+      <section aria-label="Cansancio de agentes del campus" className="flex shrink-0 gap-2 overflow-x-auto border-b border-line bg-subtle p-2">
+        {[...new Set(rooms.flatMap(room => room.agents))].map(agentButton)}
+      </section>
+      <div className="min-h-0 flex-1">{campus}</div>
+    </div>
     {mode === 'plan' ? <div className="grid min-h-0 flex-1 content-start gap-3 overflow-auto p-4">
       <header className="flex flex-wrap items-center justify-between gap-2"><h2 className="m-0 text-lg">Plano de oficina</h2>
         <div className="flex flex-wrap gap-2"><Button disabled={busy || layout.loading || !!draft} onClick={() => { void layout.reload(); void quotas.reload(); }}>Releer plano y cuotas</Button>
@@ -89,15 +103,7 @@ export function OfficeWorkspace({ campus, topology, agents, onAgent }: {
       </div>
       {selected && info ? <section aria-label={`Agentes de sala ${info.tenant}/${info.label}`} className="grid gap-2 rounded-xl border border-line bg-surface p-3">
         <h3 className="m-0 min-w-0 wrap-anywhere text-sm">Agentes de {info.label} <span className="text-xs text-muted">{info.tenant}</span></h3>
-        <div className="flex flex-wrap gap-2">{info.agents.map(id => {
-          const agent = agents.find(value => value.id === id);
-          const cut = id.indexOf('/');
-          const reading = quotas.loading && !quotas.data && !quotas.error;
-          const fatigue = quotas.error ? 'error' : agentFatigue(quotas.data?.accounts ?? [], id.slice(0, cut), id.slice(cut + 1));
-          return <Button key={id} size="sm" onClick={() => { onAgent(id); }} className="grid h-auto min-w-0 max-w-full gap-1 whitespace-normal bg-surface p-2" title={agent?.reason}>
-            <span className="min-w-0 wrap-anywhere">{agent?.name ?? id.slice(cut + 1)}</span>{reading ? <span role="status" className="text-xs text-muted">Leyendo cuotas…</span> : <FatigueIndicator state={fatigue} />}
-          </Button>;
-        })}</div>
+        <div className="flex flex-wrap gap-2">{info.agents.map(agentButton)}</div>
         {!info.agents.length ? <p className="m-0 text-xs text-muted">Esta sala no tiene agentes asignados.</p> : null}
       </section> : null}
       {selected && info && writable ? <OfficeLayoutEditor room={selected} info={info} busy={busy} update={update} /> : null}
