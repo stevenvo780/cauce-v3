@@ -61,6 +61,21 @@ export function sessionExpiry(
   return new Date(Math.min(Math.max(consumedAt + sessionTtlSeconds * 1_000, extended), ceiling));
 }
 
+/**
+ * The `exp` a resume credential is bound to: the consumption window clamped by the original authority,
+ * never the owner's extension. `consumed_at` never moves, so `resume` recomputes what `consume` minted
+ * even after `window_extended_to` crossed a second; liveness stays the database window's call.
+ */
+export function resumeCredentialExpiry(
+  consumedAt: Date | null, sessionTtlSeconds: number, sessionMaxTotalSeconds: number | undefined,
+  authorityExpiresAtSeconds: number,
+): number | undefined {
+  const window = sessionExpiry({ consumed_at: consumedAt }, sessionTtlSeconds, sessionMaxTotalSeconds);
+  return window === undefined
+    ? undefined
+    : Math.min(Math.floor(window.getTime() / 1_000), authorityExpiresAtSeconds);
+}
+
 export function subjectFor(actor: Pick<Principal, 'tenant_id' | 'alias'>): string {
   return `${actor.tenant_id}:${actor.alias}`;
 }

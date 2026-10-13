@@ -3,7 +3,7 @@ import { UUID_ANY_PATTERN } from '@cauce/protocol';
 import { terminalAuditMetadata, terminalSessionAuditContext } from '../audit.js';
 import {
   CONTROL_HOLD_COLUMNS, CONTROL_RELEASED, cohortLabels, controlWasReleased, exactObjectKeys,
-  sessionExpiry, sessionWindowExpression, type ControlHoldColumns,
+  resumeCredentialExpiry, sessionExpiry, sessionWindowExpression, type ControlHoldColumns,
 } from '../helpers.js';
 import {
   ticketSha256, verifyAuthorityResumeToken, TicketError,
@@ -86,9 +86,11 @@ export function registerRelayResumeRoute(context: RelayProxyContext): void {
           } catch (error) {
             if (!(error instanceof TicketError)) throw error;
           }
-          const expiry = sessionExpiry(row, config.sessionTtlSeconds, config.sessionMaxTotalSeconds);
+          const credentialExpiry = resumeCredentialExpiry(
+            row.consumed_at, config.sessionTtlSeconds, config.sessionMaxTotalSeconds, continuity.origin.expiresAtSeconds,
+          );
           if (credential?.sid !== sid || credential.op !== row.operator_id
-              || expiry === undefined || credential.exp !== Math.min(Math.floor(expiry.getTime() / 1_000), continuity.origin.expiresAtSeconds)) {
+              || credentialExpiry === undefined || credential.exp !== credentialExpiry) {
             refusal = { status: 401, reason: 'resume_invalid' };
           } else if (row.consumed_at === null) {
             refusal = { status: 403, reason: 'not_consumed' };
