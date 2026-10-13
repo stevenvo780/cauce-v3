@@ -54,6 +54,8 @@ let worker: SpaceBackupHost | undefined;
 let refreshTimer: ReturnType<typeof setInterval> | undefined;
 let backupId = '';
 let sourceLargeSha256 = '';
+let sourceNoteSha256 = '';
+let sourceContextStateSha256 = '';
 let receiptBytes = 0;
 let receiptSha256 = '';
 let downloadChannel = 'unstarted';
@@ -194,10 +196,14 @@ describe('copia de espacio desde navegador real con exportación física firmada
     sourceLargeSha256 = digest(large);
     await writeFile(join(space, 'projects/large.bin'), large, { mode: 0o600 });
     await writeFile(join(space, 'projects/work.txt'), Buffer.alloc(100_000, 65), { mode: 0o600 });
-    await writeFile(join(space, 'context/note.md'), 'canary context note', { mode: 0o600 });
-    await writeFile(join(space, 'config/context-state.json'), JSON.stringify({
+    const noteBytes = Buffer.from('canary context note');
+    sourceNoteSha256 = digest(noteBytes);
+    await writeFile(join(space, 'context/note.md'), noteBytes, { mode: 0o600 });
+    const contextStateBytes = Buffer.from(JSON.stringify({
       company_id: owner.company.slug, tenant_id: hub, alias, runtime_key: runtimeKey,
-    }), { mode: 0o600 });
+    }));
+    sourceContextStateSha256 = digest(contextStateBytes);
+    await writeFile(join(space, 'config/context-state.json'), contextStateBytes, { mode: 0o600 });
     await writeFile(join(space, 'config/auth.json'), credentialSecret, { mode: 0o600 });
     await writeFile(join(space, 'projects/.env'), `TOKEN=${credentialSecret}`, { mode: 0o600 });
     await writeFile(join(space, 'logs/ignored.log'), 'unexported', { mode: 0o600 });
@@ -378,12 +384,21 @@ describe('copia de espacio desde navegador real con exportación física firmada
       { path: 'config/auth.json', reason: 'sensitive_path' },
       { path: 'projects/.env', reason: 'sensitive_path' },
     ]));
-    const largeEntry = manifest.files.find((file) => file.path === 'projects/large.bin');
-    if (!largeEntry) throw new Error('large canary file is absent from the manifest');
-    expect(sourceLargeSha256).toMatch(/^[a-f0-9]{64}$/u);
-    expect(largeEntry.sha256).toBe(sourceLargeSha256);
-    expect(digest(await readFile(join(restored, 'projects/large.bin')))).toBe(sourceLargeSha256);
-    expect(digest(await readFile(join(restored, 'projects/work.txt')))).toBe(digest(Buffer.alloc(100_000, 65)));
+    const expectedHashes: Record<string, string> = {
+      'projects/large.bin': sourceLargeSha256,
+      'projects/work.txt': digest(Buffer.alloc(100_000, 65)),
+      'context/note.md': sourceNoteSha256,
+      'config/context-state.json': sourceContextStateSha256,
+    };
+    for (const value of Object.values(expectedHashes)) expect(value).toMatch(/^[a-f0-9]{64}$/u);
+    expect(restoredReceipt.files).toBe(4);
+    expect(manifest.files.map((file) => file.path).sort()).toEqual(Object.keys(expectedHashes).sort());
+    for (const [relative, sha256] of Object.entries(expectedHashes)) {
+      const entry = manifest.files.find((file) => file.path === relative);
+      if (!entry) throw new Error(`canary file is absent from the manifest: ${relative}`);
+      expect(entry.sha256).toBe(sha256);
+      expect(digest(await readFile(join(restored, relative)))).toBe(sha256);
+    }
     await expect(readFile(join(restored, 'config/auth.json'))).rejects.toThrow();
     await expect(readFile(join(restored, 'projects/.env'))).rejects.toThrow();
     await expect(readFile(join(restored, 'logs/ignored.log'))).rejects.toThrow();
@@ -402,6 +417,18 @@ describe('copia de espacio desde navegador real con exportación física firmada
     const direct = await apiGet(page, backupPath(backupId));
     expect(direct.status).toBe(404);
     expect(JSON.stringify(direct.body)).not.toContain(receiptSha256);
+    errors.expectHttpError(`${backupPath(backupId)}/download`, 404);
+    const download = await page.evaluate(async (target: string) => {
+      const response = await fetch(target, { credentials: 'include', cache: 'no-store' });
+      return {
+        status: response.status,
+        sha: response.headers.get('x-cauce-archive-sha256'),
+        text: response.status === 404 ? await response.text() : '',
+      };
+    }, `${backupPath(backupId)}/download`);
+    expect(download.status).toBe(404);
+    expect(download.sha).not.toBe(receiptSha256);
+    expect(download.text).not.toContain(receiptSha256);
     await step(page, 'foreign owner cannot open the canary agent', async () => {
       await page.goto(agentUrl(), { waitUntil: 'domcontentloaded' });
       await page.getByText('No encontramos esa conversación', { exact: true }).waitFor({ timeout: 20_000 });
