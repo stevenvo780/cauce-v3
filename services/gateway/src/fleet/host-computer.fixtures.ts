@@ -54,6 +54,46 @@ else:
  print(json.dumps({'type':'thread.started','thread_id':'host-setup-fixture'}))
  print(json.dumps({'type':'item.completed','item':{'type':'agent_message','text':nonce.group(0)}}))
 `;
+/**
+ * A provider CLI that starts logged out, for the console login. The provider login checks that the exact pinned
+ * executable runs, so the login is a static binary baked root-owned into the agent image, as a real CLI would be.
+ * It asks for a device code on its terminal and then writes its account into CODEX_HOME; every other command
+ * goes to the Python fixture, whose account/read answers only once that file exists.
+ */
+export const FIXTURE_DEVICE_CODE = 'FIXTURE-DEVICE-CODE';
+export const FIXTURE_LOGIN_DONE = 'FIXTURE_LOGIN_SUCCEEDED';
+const LOGIN_CLI = '/usr/local/bin/cauce-fixture-codex';
+const LOGIN_CLI_SCRIPT = '/usr/local/lib/cauce-fixture/provider-cli.py';
+const LOGIN_PROVIDER_CLI = PROVIDER_CLI.replace(`result={'account':{'type':'chatgpt','email':'${FIXTURE_PROVIDER_IDENTITY}'}}`,
+  `import os\n   home=os.environ.get('CODEX_HOME','')\n   logged=home.startswith('/') and os.path.isfile(os.path.join(home,'auth.json'))\n`
+  + `   result={'account':{'type':'chatgpt','email':'${FIXTURE_PROVIDER_IDENTITY}'} if logged else None}`);
+const LOGIN_CLI_SOURCE = `#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+int main(int argc, char **argv) {
+  if (argc == 3 && !strcmp(argv[1], "login") && !strcmp(argv[2], "--device-auth")) {
+    const char *home = getenv("CODEX_HOME"); char line[256], path[4096];
+    if (!home || home[0] != '/') return 2;
+    printf("Open https://auth.example.test/device and enter the code ${FIXTURE_DEVICE_CODE}\\n"); fflush(stdout);
+    if (!fgets(line, sizeof line, stdin)) return 3;
+    line[strcspn(line, "\\r\\n")] = 0;
+    if (strcmp(line, "${FIXTURE_DEVICE_CODE}")) { printf("FIXTURE_LOGIN_REJECTED\\n"); return 4; }
+    if (snprintf(path, sizeof path, "%s/auth.json", home) >= (int)sizeof path) return 5;
+    FILE *file = fopen(path, "w"); if (!file) return 6;
+    fprintf(file, "{\\"email\\":\\"${FIXTURE_PROVIDER_IDENTITY}\\"}\\n"); if (fclose(file)) return 7;
+    printf("${FIXTURE_LOGIN_DONE} ${FIXTURE_PROVIDER_IDENTITY}\\n"); fflush(stdout); return 0;
+  }
+  if (argc > 60) return 8;
+  char *forward[64] = { "/usr/local/bin/python3", "${LOGIN_CLI_SCRIPT}" };
+  for (int index = 1; index < argc; index++) forward[index + 1] = argv[index];
+  forward[argc + 1] = NULL; execv(forward[0], forward); return 127;
+}
+`;
+const LOGIN_IMAGE_LAYER = `COPY cauce-fixture-codex ${LOGIN_CLI}
+COPY provider-cli.py ${LOGIN_CLI_SCRIPT}
+RUN chmod 0755 ${LOGIN_CLI} && chmod 0644 ${LOGIN_CLI_SCRIPT}
+`;
 const AS_USER = ['-u', 'cauce', '-e', 'HOME=/home/cauce', '-e', 'XDG_RUNTIME_DIR=/run/user/1500'];
 const TREE = ['services/gateway/src', 'packages/store/src', 'packages/protocol/src', 'packages/adapter-sdk/descriptors',
   'ops/cli', 'ops/scripts', 'ops/container-runtime', 'ops/schemas'];
@@ -221,7 +261,24 @@ async function closeOwned(owned: Owned, prefix: string): Promise<DockerInventory
   return after;
 }
 
-export async function startComputerHarness(options: { prefix: string; consoleOrigins: string[] }): Promise<ComputerHarness> {
+/** Builds the computer image; with the login fixture, its context carries the logged-out provider CLI. */
+async function buildComputerImage(work: string, image: string, providerLogin: boolean): Promise<string | undefined> {
+  if (!providerLogin) {
+    const built = await command('docker', ['build', '-q', '-t', image, '-'], COMPUTER_IMAGE);
+    if (built.code !== 0) throw new Error(`computer image build failed: ${built.stderr}`);
+    return undefined;
+  }
+  const context = join(work, 'computer-image'); await mkdir(context);
+  await writeFile(join(context, 'Dockerfile'), COMPUTER_IMAGE + LOGIN_IMAGE_LAYER);
+  await writeFile(join(context, 'provider-cli.py'), LOGIN_PROVIDER_CLI);
+  await writeFile(join(context, 'login.c'), LOGIN_CLI_SOURCE);
+  await execute('/usr/bin/cc', ['-static', '-O2', '-o', join(context, 'cauce-fixture-codex'), join(context, 'login.c')], { timeout: 60_000 });
+  const built = await command('docker', ['build', '-q', '-t', image, context]);
+  if (built.code !== 0) throw new Error(`computer image build failed: ${built.stderr}`);
+  return hash(await readFile(join(context, 'cauce-fixture-codex')));
+}
+
+export async function startComputerHarness(options: { prefix: string; consoleOrigins: string[]; providerLogin?: boolean }): Promise<ComputerHarness> {
   const { prefix } = options; const owned: Owned = {};
   try {
     const work = await mkdtemp(`/var/tmp/${prefix}-`); owned.work = work;
@@ -235,13 +292,16 @@ export async function startComputerHarness(options: { prefix: string; consoleOri
     await execute('chmod', ['-R', 'u=rwX,go=rX', join(tree, 'ops/cli')]);
     owned.database = await startTestDatabase(); owned.current = await startTestCaseDatabase(owned.database);
     const pool = createPool(owned.current.url, { max: 8 }); owned.pool = pool;
+    let loginCli: string | undefined;
     const computerImage = async () => {
       owned.image = `${prefix}:computer`;
-      const built = await command('docker', ['build', '-q', '-t', owned.image, '-'], COMPUTER_IMAGE);
-      if (built.code !== 0) throw new Error(`computer image build failed: ${built.stderr}`);
+      loginCli = await buildComputerImage(work, owned.image, options.providerLogin === true);
       return owned.image;
     };
     const [release, authority, computer] = await Promise.all([buildRelease(work, tree), signedAuthority(work, pool, owned), computerImage()]);
+    const provider = loginCli === undefined ? { command: '@release@/adapter/provider-cli.py', command_sha256: hash(PROVIDER_CLI) }
+      : { command: LOGIN_CLI, command_sha256: loginCli,
+        login: { method: 'device', command: [LOGIN_CLI, 'login', '--device-auth'], sha256: loginCli } };
     if (!owned.bootstrapApp) throw new Error('bootstrap gateway absent');
     const bootstrapOrigin = await owned.bootstrapApp.listen({ host: '127.0.0.1', port: 0 });
     console.info('HOST_SETUP_RELEASE', JSON.stringify({ revision: release.revision, source: 'working-tree-tracked',
@@ -261,7 +321,7 @@ export async function startComputerHarness(options: { prefix: string; consoleOri
           home_directory: COMPUTER_RUNTIME.home, state_root: COMPUTER_RUNTIME.stateRoot, profile_root: `${COMPUTER_RUNTIME.home}/.cauce-profiles`,
           python: '/usr/local/bin/python3.12' }],
         profile_templates: [{ provider: 'codex', runtime_user: COMPUTER_RUNTIME.user, path_root: `${COMPUTER_RUNTIME.home}/.cauce-profiles`,
-          command: '@release@/adapter/provider-cli.py', command_sha256: hash(PROVIDER_CLI), runtime_mode: 'container', container_prefix: `${prefix}-` }],
+          ...provider, runtime_mode: 'container', container_prefix: `${prefix}-` }],
         hooks: { authenticate: hook, profile: hook, verify: hook, revoke: hook },
         transport: { bootstrap_url: bootstrapOrigin, gateway_url: bootstrapOrigin, ca_certificate: '@install@/files/fleet-ca', network: 'host' },
         authority: { identity_directory: '@identity@', host_id: '@host@', ca_certificate: '@install@/files/fleet-ca' },
