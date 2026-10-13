@@ -14,6 +14,8 @@ import { QuotaHostAuthentication } from './quota-auth-host.js';
 import { HostCapabilitiesSchema } from './host-channel.capabilities.js';
 import { SpaceBackupHost } from './space-backup.host.js';
 import { AgentProviderAuthHost } from './agent-provider-auth-host.js';
+import { AgentQuotaExecutor, HostChannelAgentQuotaRepository } from './agent-quota-executor.js';
+import { performAgentQuotaHostCommand } from './agent-quota-host-command.js';
 import type { FleetHostConfig } from './main.js';
 
 const QuotaCapabilities = z.object({ providers: z.array(z.enum(['claude','codex','gemini','grok'])),
@@ -48,6 +50,10 @@ export async function runEnrolledFleetHost(config: FleetHostConfig): Promise<voi
   const abort = new AbortController();
   const source = new HostChannelFleetSource(channel);
   const quotaSource = new HostChannelQuotaRepository(channel, config.host);
+  const agentQuota = new AgentQuotaExecutor(new HostChannelAgentQuotaRepository(channel, config.host), {
+    worker: `host-${config.host}`, host: config.host, signal: abort.signal, leaseMs: config.leaseMs,
+    perform: (execution, signal) => performAgentQuotaHostCommand(config.command, execution, signal),
+  });
   const agentAuthentication = config.enrolledAuthPolicyFile === undefined ? undefined : new AgentProviderAuthHost(channel, {
     hostConfig: { host: config.host, command: config.command }, authPolicyFile: config.enrolledAuthPolicyFile, projectRoot: config.projectRoot });
   const backups = new SpaceBackupHost(channel, { python: config.command.python, policyFile: config.command.policyFile,
@@ -62,16 +68,19 @@ export async function runEnrolledFleetHost(config: FleetHostConfig): Promise<voi
     perform: (execution, signal) => performQuotaHostCommand(config.command, execution, signal),
     beginAuthentication: (execution, plan, claim, signal) => authentication.begin(execution, plan, claim, signal),
   });
-  let auxiliaryQuotaTurn = false;
+  let auxiliaryTurn = 0;
   const worker = new FleetHostWorker(source, { worker: `host-${config.host}`, host: config.host,
     pollMs: config.pollMs, leaseMs: config.leaseMs,
     perform: (step, execution, signal) => performHostCommand(config.command, step, execution, signal),
     compensate: (execution, signal) => performHostCompensation(config.command, execution, signal),
     runQuotaOnce: async signal => {
-      auxiliaryQuotaTurn = !auxiliaryQuotaTurn;
-      if (auxiliaryQuotaTurn && await quota?.runOnce()) return true;
-      if (await backups.runOnce(signal)) return true;
-      return !signal.aborted && !auxiliaryQuotaTurn && quota !== undefined ? quota.runOnce() : false;
+      const tasks = [() => quota?.runOnce() ?? Promise.resolve(false),
+        () => agentQuota.runOnce(), () => backups.runOnce(signal)];
+      const start = auxiliaryTurn++ % tasks.length;
+      for (let offset = 0; offset < tasks.length && !signal.aborted; offset++) {
+        if (await tasks[(start + offset) % tasks.length]?.()) return true;
+      }
+      return false;
     },
     onError: () => { process.stderr.write('Enrolled host could not verify its typed work\n'); },
   });

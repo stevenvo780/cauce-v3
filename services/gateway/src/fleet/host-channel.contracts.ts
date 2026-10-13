@@ -1,5 +1,6 @@
 import { z } from 'zod';
-import { FleetEvidenceSchema, FleetErrorSchema, FleetStepNameSchema } from '@cauce/protocol';
+import { AgentQuotaClaimSchema, AgentQuotaFailureCodeSchema, AgentQuotaReceiptSchema,
+  FleetEvidenceSchema, FleetErrorSchema, FleetStepNameSchema } from '@cauce/protocol';
 import { HostCapabilitiesSchema } from './host-channel.capabilities.js';
 
 const Lease = z.number().int().min(1000).max(300_000).default(30_000);
@@ -9,6 +10,7 @@ const QuotaFence = z.object({ id:z.uuid(),environment_id:z.uuid(),claim_token:z.
 const HostStep = z.union([FleetStepNameSchema,z.literal('compensate')]);
 const Fleet = {resource:z.literal('fleet_operation')};
 const Quota = {resource:z.literal('quota_environment')};
+const AgentQuota = {resource:z.literal('agent_quota')};
 export const HostFleetCommandSchema = z.discriminatedUnion('action',[
   z.object({...Fleet,action:z.literal('claim'),lease_ms:Lease}).strict(),
   z.object({...Fleet,action:z.literal('renew'),claim:FleetFence,lease_ms:Lease}).strict(),
@@ -28,7 +30,16 @@ export const HostQuotaCommandSchema = z.discriminatedUnion('action',[
   z.object({...Quota,action:z.literal('finish'),claim:QuotaFence,result:z.record(z.string(),z.unknown()),awaiting_auth:z.boolean().default(false)}).strict(),
   z.object({...Quota,action:z.literal('fail'),claim:QuotaFence,code:z.enum(['PROVIDER_UNAVAILABLE','RUNTIME_UNAVAILABLE','STEP_FAILED'])}).strict(),
 ]);
-export const HostChannelCommandSchema = z.discriminatedUnion('resource',[HostFleetCommandSchema,HostQuotaCommandSchema,HostCapabilitiesSchema]);
+export const HostAgentQuotaCommandSchema = z.discriminatedUnion('action',[
+  z.object({...AgentQuota,action:z.literal('claim'),lease_ms:Lease}).strict(),
+  z.object({...AgentQuota,action:z.literal('renew'),claim:AgentQuotaClaimSchema,lease_ms:Lease}).strict(),
+  z.object({...AgentQuota,action:z.literal('execution'),claim:AgentQuotaClaimSchema}).strict(),
+  z.object({...AgentQuota,action:z.literal('finish'),claim:AgentQuotaClaimSchema,receipt:AgentQuotaReceiptSchema}).strict(),
+  z.object({...AgentQuota,action:z.literal('fail'),claim:AgentQuotaClaimSchema,code:AgentQuotaFailureCodeSchema}).strict(),
+]);
+export const HostChannelCommandSchema = z.discriminatedUnion('resource',[
+  HostFleetCommandSchema,HostQuotaCommandSchema,HostAgentQuotaCommandSchema,HostCapabilitiesSchema]);
 export type HostChannelCommand = z.infer<typeof HostChannelCommandSchema>;
 export type HostFleetCommand = z.infer<typeof HostFleetCommandSchema>;
 export type HostQuotaCommand = z.infer<typeof HostQuotaCommandSchema>;
+export type HostAgentQuotaCommand = z.infer<typeof HostAgentQuotaCommandSchema>;

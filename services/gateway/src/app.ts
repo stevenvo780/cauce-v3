@@ -48,6 +48,7 @@ import { registerCompanyRegistrationRoute } from './company-registration.js';
 import { registerCompanyOfficeRoutes } from './console/company-office.routes.js';
 import { registerCompanyAdminRoutes } from './routes/console/company-admins.js';
 import { registerQuotaEnvironmentRoutes } from './routes/console/quota-environments.js';
+import { registerAgentQuotaRoutes } from './routes/console/agent-quota.js';
 import { registerCompanyRoutes } from './routes/console/companies.js';
 import { registerDiagnoseRoute } from './routes/console/diagnose.js';
 import { WakePumpTelemetry } from './wake-pump-telemetry.js';
@@ -387,6 +388,7 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
     registerCompanyRoutes(app, options.authProvider, options.pool);
     registerCompanyAdminRoutes(app, options.authProvider, options.pool);
     registerQuotaEnvironmentRoutes(app, options.authProvider, options.pool, options.quotaEnvironments);
+    registerAgentQuotaRoutes(app, options.authProvider, options.pool);
   }
   if (providerAuthentication !== undefined) {
     if (!(options.authProvider instanceof PasswordAuthProvider)) throw new Error('provider authentication requires password authority');

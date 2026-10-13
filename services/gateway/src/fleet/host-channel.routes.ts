@@ -1,10 +1,10 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { FleetOperationError, FleetOperationsRepository, HostEnrollmentRepository, HostId, QuotaOperationsRepository, StoreError,
+import { AgentQuotaInvalidatedError, AgentQuotaOperationsRepository, FleetOperationError, FleetOperationsRepository, HostEnrollmentRepository, HostId, QuotaOperationsRepository, StoreError,
   lockFleetRevision, publicFleetOperation, type DatabaseClient, type DatabasePool, type FleetOperationClaim, type FleetOperationRow } from '@cauce/store';
 import { AuthError, AuthorizationError } from '../auth.js';
 import { replyError } from '../routes/shared.js';
-import { HostChannelCommandSchema, type HostFleetCommand, type HostQuotaCommand } from './host-channel.contracts.js';
+import { HostChannelCommandSchema, type HostAgentQuotaCommand, type HostFleetCommand, type HostQuotaCommand } from './host-channel.contracts.js';
 import { hostFleetExecution } from './host-channel.execution.js';
 import { recordHostCapabilities } from './host-channel.capabilities.js';
 
@@ -61,16 +61,25 @@ async function quotaCommand(repository:QuotaOperationsRepository,client:Database
 }
 export function registerHostChannelRoutes(app:FastifyInstance,pool:DatabasePool,options:HostChannelOptions={}):void {
   const identity=new HostEnrollmentRepository(pool); const fleet=new FleetOperationsRepository(pool,options); const quota=new QuotaOperationsRepository(pool);
+  const agentQuota=new AgentQuotaOperationsRepository(pool);
   app.post('/v3/fleet/hosts/:host_id/channel',{bodyLimit:262_144},async(request,reply)=>{
     reply.header('Cache-Control','no-store');
     try {
       if (request.headers.cookie!==undefined) throw new AuthorizationError('host channels cannot use a browser session');
       const {host_id}=Params.parse(request.params);
-      return await identity.request(host_id,'POST',`/v3/fleet/hosts/${host_id}/channel`,request.body,async(client,verified)=>{
+      const result=await identity.request(host_id,'POST',`/v3/fleet/hosts/${host_id}/channel`,request.body,async(client,verified)=>{
         const packet=request.body as {payload:unknown}; const command=HostChannelCommandSchema.parse(packet.payload);
         if (command.resource==='host') return recordHostCapabilities(client,verified,command);
+        if (command.resource==='agent_quota') {
+          try { return await agentQuotaCommand(agentQuota,client,verified,command); }
+          catch(error) { if (error instanceof AgentQuotaInvalidatedError) return {agent_quota_invalidated:true}; throw error; }
+        }
         return command.resource==='fleet_operation'?fleetCommand(fleet,client,verified,command):quotaCommand(quota,client,verified,command);
       });
+      if (result && typeof result==='object' && 'agent_quota_invalidated' in result && result.agent_quota_invalidated===true) {
+        throw new StoreError('conflict','agent quota execution authority or placement changed');
+      }
+      return result;
     } catch(error) {
       if (error instanceof z.ZodError) return reply.code(400).send({error:'invalid_request',message:'invalid typed host channel command'});
       if (error instanceof FleetOperationError) return reply.code({forbidden:403,conflict:409,not_found:404,invalid_input:422}[error.code])
@@ -79,4 +88,21 @@ export function registerHostChannelRoutes(app:FastifyInstance,pool:DatabasePool,
       return reply.code(503).send({error:'host_channel_unavailable',message:'host operation could not be verified'});
     }
   });
+}
+
+async function agentQuotaCommand(repository:AgentQuotaOperationsRepository,client:DatabaseClient,
+  identity:HostIdentity,command:HostAgentQuotaCommand):Promise<unknown> {
+  const quota=repository.forTransaction(client);
+  if (command.action==='claim') {
+    const claim=await quota.claim(`host-${identity.host_id}`,identity.host_id,command.lease_ms,identity.company_id);
+    if (claim) await quota.assertHostScopeInTransaction(client,claim,identity);
+    return {claim};
+  }
+  await quota.assertHostScopeInTransaction(client,command.claim,{...identity,allowTerminal:command.action==='finish'||command.action==='fail'});
+  switch(command.action) {
+    case 'renew':return {renewed:await quota.renew(command.claim,command.lease_ms)};
+    case 'execution':return quota.execution(command.claim);
+    case 'finish':return quota.finish(command.claim,command.receipt);
+    case 'fail':await quota.fail(command.claim,command.code);return {operation_id:command.claim.id,status:'failed'};
+  }
 }
