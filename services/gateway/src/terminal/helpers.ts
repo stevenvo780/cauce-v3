@@ -7,16 +7,12 @@ import type { TerminalConfig } from './config.js';
 import { ticketSha256 } from './tickets.js';
 import { isWritableMode, type TerminalMode, type TerminalSessionRow } from './types.js';
 
-/**
- * The canonical cross-tenant authorizer, derived from the gateway contract so no caller in this
- * plane restates the predicate.
- */
+/** The canonical cross-tenant authorizer, derived from the gateway contract so no caller in this plane
+ *  restates the predicate. */
 export type AgentTargetRepository = Required<Pick<GatewayRepository, 'authorizeAgentTarget'>>;
 
-/**
- * Deriving `assertPermission` from the gateway contract would widen `permission` to the whole
- * union and let this plane assert one it must never assert, so the literal stays hand written.
- */
+/** Deriving `assertPermission` from the gateway contract would widen `permission` to the whole union and
+ *  let this plane assert one it must never assert, so the literal stays hand written. */
 export interface TerminalControlRepository extends AgentTargetRepository {
   assertPermission(tenantId: Tenant, alias: string, permission: 'control', client?: DatabaseClient, lockAuthority?: boolean): Promise<void>;
 }
@@ -46,11 +42,8 @@ export function cohortLabels(cohort: FleetCohort): string[] {
   return cohort.map(fleetIdentityLabel);
 }
 
-/**
- * Migration 040 window shared with the relay `/authz` and the store control hold. The store owns
- * the SQL text this delegates to. The ceiling is optional because an extension is clamped when
- * written.
- */
+/** Migration 040 window shared with the relay `/authz` and the store control hold; the store owns the SQL
+ *  text this delegates to. The ceiling is optional because an extension is clamped when written. */
 export function sessionWindowExpression(ttlParameter: number, maxTotalParameter?: number): string {
   return terminalSessionWindowExpression(ttlParameter, maxTotalParameter);
 }
@@ -99,11 +92,9 @@ interface OwnedSessionRequest {
   readonly lock?: boolean;
 }
 
-/**
- * The fence every route acting on a live session shares: operator scope, the browser-owner digest
- * and generation of the tab that opened it, and migration 040's session window. A stale tab, a
- * second subject, or a closed session matches nothing and can mutate nothing.
- */
+/** The fence every route acting on a live session shares: operator scope, the browser-owner digest and
+ *  generation of the tab that opened it, and migration 040's session window. A stale tab, a second
+ *  subject, or a closed session matches nothing and can mutate nothing. */
 export function ownedLiveSessionQuery(
   input: OwnedSessionRequest,
 ): { text: string; values: unknown[] } {
