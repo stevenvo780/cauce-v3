@@ -24,12 +24,15 @@ La instalación usa `ops/scripts/install-cauce-cli.sh`, que coloca helpers en el
 cauce platform admin semilla --email "$CORREO_SUPER_ADMIN"
 cauce platform contenedor admin semilla --email "$CORREO_SUPER_ADMIN" --company "$COMPANY_ID" --role owner
 cauce platform contenedor contexto sembrar --empresa "$COMPANY_ID" --nativos "$DIRECTORIO_CONTEXTOS"
+cauce platform contenedor empresa importar --inventario "$INVENTARIO" --perfiles "$PERFILES" --email "$CORREO_DUENO" --nombre "$NOMBRE_DUENO" --dry-run
 cauce diagnose --help
 cauce login --help
 cauce spaces --help
 cauce hosts setup --help
 cauce hosts status --help
 ```
+
+`empresa importar` da de alta una empresa con su dueño, le importa la topología de un inventario (tenants, salas, agentes en borrador, membresías y aristas con su hub) y verifica su aislamiento en la misma transacción. Con `--perfiles`, además prepara los perfiles. `--dry-run` lo ejecuta todo y lo deshace; `--apply` lo confirma, y crear al dueño exige `--clave-archivo` con su contraseña inicial. En `contenedor`, el inventario, los perfiles y la clave se montan en solo lectura; los dos últimos deben ser `0600` del uid 1000. Procedimiento de Praxis: [plan de migración, §4](v4-migracion-plan.md#alta-e-importación-de-praxis-en-la-v4-central).
 
 La siembra de administración es idempotente. En producción, los subcomandos `contenedor` usan la imagen de runtime y sus secretos montados; los datos privados de cuenta se suministran desde configuración del operador. `hosts setup` requiere que el ordenador ya esté enrolado; `hosts status` informa si el executor local quedó listo.
 
