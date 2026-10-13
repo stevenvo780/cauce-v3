@@ -48,6 +48,23 @@ connection=http.client.HTTPConnection('localhost',timeout=15);connection.sock=en
 connection.request('POST','/signed-authority',body=sys.argv[2],headers={'Content-Type':'application/json'})
 response=connection.getresponse();print(json.dumps({'status':response.status,'body':json.loads(response.read(4097))}))
 '''
+GATEWAY_PROBE = '''const http = require('node:http');
+const [socket, uid, gid, body] = process.argv.slice(1);
+if (process.getuid() !== Number(uid) || process.getgid() !== Number(gid)
+    || process.env.CAUCE_FLEET_AUTHORITY_SOCKET !== socket) process.exit(2);
+const request = http.request({socketPath: socket, path: '/signed-authority', method: 'POST',
+  headers: {'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body)}}, response => {
+  let data = '';
+  response.on('data', chunk => {data += chunk; if (Buffer.byteLength(data) > 4096) request.destroy();});
+  response.on('end', () => {
+    try {console.log(JSON.stringify({status: response.statusCode, body: JSON.parse(data)}));}
+    catch {process.exitCode = 2;}
+  });
+});
+request.on('error', () => {process.exitCode = 2;});
+request.setTimeout(15000, () => request.destroy());
+request.end(body);
+'''
 
 
 def absolute(value):
@@ -272,17 +289,33 @@ def socket_ok(location, gid, after_ns):
         and stat.S_IMODE(details.st_mode) == 0o660 and details.st_ctime_ns >= after_ns
 
 
-def probe(location, uid=None, gid=None):
+def probe_body():
     packet = {'company_id': PROBE_HOST, 'host_id': PROBE_HOST, 'issued_at': time.time_ns() // 1_000_000,
               'nonce': secrets.token_hex(32), 'payload': {'action': 'ready'}, 'proof': 'AAAA'}
-    identity = {} if uid is None else {'user': uid, 'group': gid, 'extra_groups': []}
-    result = run([sys.executable, '-I', '-c', PROBE, str(location), json.dumps({'host_id': PROBE_HOST, 'packet': packet})],
-                 check=False, cwd='/', env={'PATH': '/usr/bin:/bin'}, timeout=30, **identity)
+    return json.dumps({'host_id': PROBE_HOST, 'packet': packet})
+
+
+def probe_reply(result):
+    if result.returncode != 0:
+        return None, None
     try:
         reply = json.loads(result.stdout)
         return reply['status'], reply['body']
     except (ValueError, KeyError, TypeError):
         return None, None
+
+
+def probe(location, uid=None, gid=None):
+    identity = {} if uid is None else {'user': uid, 'group': gid, 'extra_groups': []}
+    result = run([sys.executable, '-I', '-c', PROBE, str(location), probe_body()],
+                 check=False, cwd='/', env={'PATH': '/usr/bin:/bin'}, timeout=30, **identity)
+    return probe_reply(result)
+
+
+def gateway_probe(args, location):
+    result = run(['docker', 'exec', '--workdir', '/', args.gateway_container, 'node', '-e', GATEWAY_PROBE,
+                  str(location), str(args.gateway_uid), str(args.gateway_gid), probe_body()], check=False, timeout=30)
+    return probe_reply(result)
 
 
 def verify(args, state, started_ns):
@@ -304,8 +337,10 @@ def verify(args, state, started_ns):
         raise Abort(f'the gateway uid did not get the expected refusal for an unenrolled host: {gateway}')
     if probe(socket) != (403, {'error': 'AUTHORITY_REVOKED'}):
         raise Abort('the enclave did not refuse a process that is not the gateway uid')
+    if gateway_probe(args, socket) != (403, {'error': 'forbidden'}):
+        raise Abort('the gateway container cannot reach the enclave with its configured socket, uid and gid')
     say(f'  ready: {unit} active, socket root:{args.gateway_gid} 0660, issuer ready, PostgreSQL reached '
-        f'(unenrolled {PROBE_HOST} refused), other uids refused')
+        f'(unenrolled {PROBE_HOST} refused), other uids refused, gateway container {args.gateway_container} verified')
 
 
 def write_files(changes, stamp, ctx):
@@ -414,6 +449,8 @@ def parse_arguments(argv=None):
     parser.add_argument('--socket-directory', type=pathlib.Path, default=pathlib.Path('/run/cauce-fleet-signed-authority'))
     parser.add_argument('--gateway-uid', type=int, default=1000, help='uid of the gateway process (must match deploy/compose.fleet.yaml)')
     parser.add_argument('--gateway-gid', type=int, default=1000, help='gid of the gateway process (must match deploy/compose.fleet.yaml)')
+    parser.add_argument('--gateway-container', default='cauce-v3-prod-gateway-1',
+                        help='running gateway container used to verify the socket through its actual mount and user')
     args = parser.parse_args(argv)
     for name in ('fleet_config', 'tools_base', 'unit', 'tmpfiles', 'socket_directory'):
         value = str(getattr(args, name))
@@ -423,6 +460,8 @@ def parse_arguments(argv=None):
         parser.error('--controller-service and --unit must name .service units')
     if not 1 <= args.gateway_uid < 2 ** 31 or not 1 <= args.gateway_gid < 2 ** 31:
         parser.error('--gateway-uid and --gateway-gid must be non-root ids')
+    if re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,199}', args.gateway_container) is None:
+        parser.error('--gateway-container must be a container name or id')
     args.controller, args.config_directory = args.fleet_config / 'controller', args.fleet_config / 'signed-authority'
     return args
 
@@ -436,7 +475,7 @@ def main(argv=None):
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
-            raise Abort('another run of the authority installer is in progress') from None
+            raise Abort('another controller upgrade or authority install is in progress') from None
         say('\nRESULT: ' + install(args))
         return 0
     except Abort as error:

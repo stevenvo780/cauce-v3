@@ -537,38 +537,44 @@ def main(argv=None):
     require_root()
     os.umask(0o077)
     os.environ.update(CLEAN_ENV)
-    if not args.in_namespace:
-        os.close(directory_fd(args.work_root, private=True))
-        lock = os.open(args.work_root / '.lock', os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
-        try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            raise Abort('another run of the upgrade kit is in progress') from None
-        work = pathlib.Path(tempfile.mkdtemp(prefix=f'work-{args.release[:8]}-', dir=args.work_root))
-        if not args.apply:
-            child = ['unshare', '--mount', '--propagation', 'private', '--', sys.executable, '-B', str(pathlib.Path(__file__).resolve()),
-                     *(argv if argv is not None else sys.argv[1:]), '--_namespace', str(work)]
-            try:
-                return subprocess.run(child, check=False).returncode
-            finally:
-                if not args.keep_work:
-                    shutil.rmtree(work, ignore_errors=True)
-    else:
-        work = args.in_namespace
-        mount_overlays(args, work)
+    fleet_lock, lock, work = None, None, None
     try:
-        ctx = upgrade(args, work)
-        report(ctx)
-        outcome = 'apply OK' if ctx.get('ok') else 'simulated apply OK' if ctx.get('simulated') else \
-            'no changes (already on the release)' if ctx.get('noop') else 'preflight OK; nothing was written outside the kit'
-        say('\nRESULT: ' + outcome)
-        return 0
-    except Abort as error:
-        say(f'\nRESULT: FAILED: {error}')
-        return 2
+        if not args.in_namespace:
+            fleet_lock = directory_fd(args.fleet_config)
+            try:
+                fcntl.flock(fleet_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                raise Abort('another controller upgrade or authority install is in progress') from None
+            os.close(directory_fd(args.work_root, private=True))
+            lock = os.open(args.work_root / '.lock', os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                raise Abort('another run of the upgrade kit is in progress') from None
+            work = pathlib.Path(tempfile.mkdtemp(prefix=f'work-{args.release[:8]}-', dir=args.work_root))
+            if not args.apply:
+                child = ['unshare', '--mount', '--propagation', 'private', '--', sys.executable, '-B', str(pathlib.Path(__file__).resolve()),
+                         *(argv if argv is not None else sys.argv[1:]), '--_namespace', str(work)]
+                return subprocess.run(child, check=False).returncode
+        else:
+            work = args.in_namespace
+            mount_overlays(args, work)
+        try:
+            ctx = upgrade(args, work)
+            report(ctx)
+            outcome = 'apply OK' if ctx.get('ok') else 'simulated apply OK' if ctx.get('simulated') else \
+                'no changes (already on the release)' if ctx.get('noop') else 'preflight OK; nothing was written outside the kit'
+            say('\nRESULT: ' + outcome)
+            return 0
+        except Abort as error:
+            say(f'\nRESULT: FAILED: {error}')
+            return 2
     finally:
-        if not args.in_namespace and not args.keep_work:
+        if work is not None and not args.in_namespace and not args.keep_work:
             shutil.rmtree(work, ignore_errors=True)
+        for descriptor in (lock, fleet_lock):
+            if descriptor is not None:
+                os.close(descriptor)
 
 
 if __name__ == '__main__':

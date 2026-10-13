@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import importlib.util
 import io
@@ -15,6 +16,7 @@ import sys
 import tempfile
 import threading
 import time
+import types
 import unittest
 from contextlib import redirect_stdout
 from unittest import mock
@@ -31,8 +33,11 @@ class FakeHost:
     def __init__(self, fixture):
         self.fixture, self.active, self.events, self.endpoint = fixture, False, [], None
         self.gateway_reply = {'status': 403, 'body': {'error': 'forbidden'}}
+        self.container_reply = self.gateway_reply
+        self.commands = []
 
     def __call__(self, command, check=True, **options):
+        self.commands.append(command)
         output = ''
         if command[:2] == ['systemctl', 'show']:
             main = self.fixture.current / 'app/services/gateway/dist/fleet/main.js'
@@ -50,10 +55,13 @@ class FakeHost:
             self.events.append('tmpfiles')
             self.fixture.socket_directory.mkdir(exist_ok=True)
             self.fixture.socket_directory.chmod(0o750)
+            os.chown(self.fixture.socket_directory, -1, self.fixture.gateway_gid)
         elif command[-1] == '--ready':
             output = '{"ready":true}'
         elif command[:3] == [sys.executable, '-I', '-c']:
             output = json.dumps(self.gateway_reply if 'user' in options else {'status': 403, 'body': {'error': 'AUTHORITY_REVOKED'}})
+        elif command[:2] == ['docker', 'exec']:
+            output = json.dumps(self.container_reply)
         else:
             raise AssertionError(command)
         return subprocess.CompletedProcess(command, 0, output, '')
@@ -65,6 +73,7 @@ class FakeHost:
         self.endpoint = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         self.endpoint.bind(str(location))
         location.chmod(0o660)
+        os.chown(location, -1, self.fixture.gateway_gid)
         self.active = True
 
     def close(self):
@@ -82,6 +91,8 @@ class InstallFixture(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory(prefix='authority-install-', dir='/var/tmp')
         self.addCleanup(self.temporary.cleanup)
         self.root = pathlib.Path(self.temporary.name)
+        self.authority_uid = self.root.stat().st_uid
+        self.gateway_uid, self.gateway_gid = self.authority_uid or 1000, self.root.stat().st_gid or 1000
         real_fstat = os.fstat
 
         def root_stat(descriptor):
@@ -90,7 +101,7 @@ class InstallFixture(unittest.TestCase):
             return os.stat_result(values)
 
         for target, replacement in ((lib.os, {'fstat': mock.Mock(side_effect=root_stat), 'fchown': mock.Mock()}),
-                                    (self.kit, {'AUTHORITY_UID': os.geteuid(), 'wait_until': lambda predicate, *_: predicate()})):
+                                    (self.kit, {'AUTHORITY_UID': self.authority_uid, 'wait_until': lambda predicate, *_: predicate()})):
             for name, value in replacement.items():
                 patcher = mock.patch.object(target, name, value)
                 patcher.start()
@@ -143,7 +154,7 @@ class InstallFixture(unittest.TestCase):
             '--unit', str(self.root / 'systemd/cauce-fleet-signed-authority.service'),
             '--tmpfiles', str(self.root / 'tmpfiles.d/cauce-fleet-signed-authority.conf'),
             '--socket-directory', str(self.socket_directory),
-            '--gateway-uid', str(os.geteuid()), '--gateway-gid', str(os.getegid()), *extra])
+            '--gateway-uid', str(self.gateway_uid), '--gateway-gid', str(self.gateway_gid), *extra])
 
     def tree(self):
         return {str(item): item.read_bytes() if item.is_file() else None for item in sorted(self.root.rglob('*'))
@@ -156,6 +167,7 @@ class ArgumentTests(InstallFixture):
         self.assertEqual(args.config_directory, pathlib.Path('/etc/cauce-v3/fleet-v35/signed-authority'))
         self.assertEqual(args.socket_directory / self.kit.SOCKET_NAME, pathlib.Path('/run/cauce-fleet-signed-authority/authority.sock'))
         self.assertEqual((args.gateway_uid, args.gateway_gid), (1000, 1000))
+        self.assertEqual(args.gateway_container, 'cauce-v3-prod-gateway-1')
         overlay = (pathlib.Path(__file__).resolve().parents[2] / 'deploy/compose.fleet.yaml').read_text()
         for line in ('CAUCE_FLEET_AUTHORITY_SOCKET: /run/cauce-fleet-signed-authority/authority.sock',
                      'CAUCE_FLEET_AUTHORITY_OWNER_UID: "0"', 'CAUCE_FLEET_AUTHORITY_PEER_UID: "1000"',
@@ -163,7 +175,9 @@ class ArgumentTests(InstallFixture):
             self.assertIn(line, overlay)
 
     def test_unsafe_values_and_non_root_are_rejected_before_any_effect(self):
-        for extra in (['--unit', 'relative.service'], ['--gateway-uid', '0'], ['--controller-service', 'x; rm -rf /'],
+        for extra in (['--unit', 'relative.service'], ['--gateway-uid', '0'], ['--gateway-gid', '0'],
+                      ['--gateway-container', '-dangerous'], ['--gateway-container', 'gateway; exit'],
+                      ['--controller-service', 'x; rm -rf /'],
                       ['--socket-directory', '/run/../tmp']):
             with self.assertRaises(SystemExit), mock.patch('sys.stderr'):
                 self.arguments(*extra)
@@ -193,13 +207,13 @@ class PreflightTests(InstallFixture):
         self.assertIn('CapabilityBoundingSet=\n', unit)
         self.assertEqual(dict(line.split('=', 1) for line in environment.splitlines()), {
             'CAUCE_FLEET_AUTHORITY_SOCKET': str(self.socket_directory / 'authority.sock'),
-            'CAUCE_FLEET_AUTHORITY_OWNER_UID': str(os.geteuid()), 'CAUCE_FLEET_AUTHORITY_PEER_UID': str(os.geteuid()),
-            'CAUCE_FLEET_AUTHORITY_GROUP_GID': str(os.getegid()),
+            'CAUCE_FLEET_AUTHORITY_OWNER_UID': str(self.authority_uid), 'CAUCE_FLEET_AUTHORITY_PEER_UID': str(self.gateway_uid),
+            'CAUCE_FLEET_AUTHORITY_GROUP_GID': str(self.gateway_gid),
             'CAUCE_FLEET_AUTHORITY_COMMAND_FILE': str(self.fleet / 'signed-authority/command.v1.json'),
             'CAUCE_FLEET_AUTHORITY_DATABASE_URL_FILE': str(self.database), 'NODE_ENV': 'production'})
         self.assertEqual(json.loads(files[self.fleet / 'signed-authority/command.v1.json'][0]), self.command)
         self.assertEqual(files[self.root / 'tmpfiles.d/cauce-fleet-signed-authority.conf'][0].decode().splitlines()[-1],
-                         f'd {self.socket_directory} 0750 root {os.getegid()} -')
+                         f'd {self.socket_directory} 0750 root {self.gateway_gid} -')
         self.assertNotIn('never-printed', self.output.getvalue())
 
     def test_preflight_refuses_an_old_release_pin_drift_a_public_database_file_and_a_missing_command(self):
@@ -237,6 +251,7 @@ class ApplyTests(InstallFixture):
                  self.socket_directory, self.socket_directory / 'authority.sock')}
         self.assertEqual(list(modes.values()), [0o700, 0o600, 0o600, 0o644, 0o644, 0o750, 0o660])
         self.assertEqual(self.host.events, ['tmpfiles', 'enable', 'daemon-reload', 'restart'])
+        self.assertTrue(any(command[:2] == ['docker', 'exec'] for command in self.host.commands))
         self.assertIn('ready: cauce-fleet-signed-authority.service active', self.output.getvalue())
         before = self.tree()
         self.assertEqual(self.kit.install(self.arguments('--apply')), 'no changes; the running enclave was verified')
@@ -275,11 +290,138 @@ class ApplyTests(InstallFixture):
             item.unlink()
         self.assertEqual(self.kit.install(self.arguments('--socket-directory-only', '--apply')), 'socket directory ready')
         self.assertEqual(self.host.events, ['tmpfiles'])
-        self.assertTrue(self.kit.directory_ok(self.socket_directory, os.getegid()))
+        self.assertTrue(self.kit.directory_ok(self.socket_directory, self.gateway_gid))
         self.assertFalse((self.root / 'systemd/cauce-fleet-signed-authority.service').exists())
+        self.assertFalse(any(command[0] == 'docker' for command in self.host.commands))
+
+    def test_container_probe_failure_rolls_back_even_when_the_host_probe_succeeds(self):
+        self.host.container_reply = {'status': None, 'body': None}
+        with self.assertRaisesRegex(lib.Abort, 'gateway container'):
+            self.kit.install(self.arguments('--apply'))
+        self.assertFalse((self.fleet / 'signed-authority').exists())
+        self.assertFalse(self.host.active)
+
+
+class LockTests(InstallFixture):
+    def upgrade_kit(self):
+        spec = importlib.util.spec_from_file_location('fleet_controller_upgrade', SCRIPT.with_name('fleet-controller-upgrade.py'))
+        kit = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(kit)
+        return kit
+
+    def upgrade_arguments(self):
+        return ['--release', NEW, '--runtime-image-from', str(self.root / 'runtime.env'),
+                '--ops-source', str(self.root / 'src'), '--adapter-bundle', str(self.root / 'adapter'),
+                '--fleet-config', str(self.fleet), '--work-root', str(self.root / 'work')]
+
+    def test_installer_and_upgrade_refuse_the_same_locked_configuration(self):
+        descriptor = lib.directory_fd(self.fleet)
+        self.addCleanup(os.close, descriptor)
+        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        upgrade = self.upgrade_kit()
+        with mock.patch.object(self.kit, 'require_root'), mock.patch.object(self.kit, 'install') as install:
+            self.assertEqual(self.kit.main(['--fleet-config', str(self.fleet)]), 2)
+        install.assert_not_called()
+        with mock.patch.object(upgrade, 'require_root'), mock.patch.dict(os.environ), \
+                mock.patch.object(upgrade.subprocess, 'run') as command:
+            with self.assertRaisesRegex(lib.Abort, 'authority install'):
+                upgrade.main(self.upgrade_arguments())
+        command.assert_not_called()
+        self.assertFalse((self.root / 'work').exists())
+
+    def test_upgrade_holds_the_shared_lock_while_the_namespace_child_runs_and_releases_it(self):
+        upgrade = self.upgrade_kit()
+        (self.root / 'work').mkdir(mode=0o700)
+        observed = []
+
+        def child(command, **_options):
+            with mock.patch.object(self.kit, 'require_root'), mock.patch.object(self.kit, 'install') as install:
+                observed.append(self.kit.main(['--fleet-config', str(self.fleet)]))
+            install.assert_not_called()
+            return subprocess.CompletedProcess(command, 0)
+
+        with mock.patch.object(upgrade, 'require_root'), mock.patch.dict(os.environ), \
+                mock.patch.object(upgrade.subprocess, 'run', side_effect=child):
+            self.assertEqual(upgrade.main(self.upgrade_arguments()), 0)
+        self.assertEqual(observed, [2])
+        with mock.patch.object(self.kit, 'require_root'), mock.patch.object(self.kit, 'install', return_value='verified') as install:
+            self.assertEqual(self.kit.main(['--fleet-config', str(self.fleet)]), 0)
+        install.assert_called_once()
+
+    def test_installer_holds_the_lock_while_installing_and_releases_it_after_failure(self):
+        def fail(_args):
+            descriptor = lib.directory_fd(self.fleet)
+            try:
+                with self.assertRaises(BlockingIOError):
+                    fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            finally:
+                os.close(descriptor)
+            raise lib.Abort('injected failure')
+
+        with mock.patch.object(self.kit, 'require_root'), mock.patch.object(self.kit, 'install', side_effect=fail):
+            self.assertEqual(self.kit.main(['--fleet-config', str(self.fleet)]), 2)
+        with mock.patch.object(self.kit, 'require_root'), mock.patch.object(self.kit, 'install', return_value='verified'):
+            self.assertEqual(self.kit.main(['--fleet-config', str(self.fleet)]), 0)
 
 
 class ProbeTests(unittest.TestCase):
+    def test_gateway_probe_uses_its_container_identity_and_configured_socket(self):
+        spec = importlib.util.spec_from_file_location('fleet_authority_install', SCRIPT)
+        kit = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(kit)
+        with tempfile.TemporaryDirectory(prefix='gateway-authority-probe-', dir='/var/tmp') as directory:
+            location = str(pathlib.Path(directory) / 'authority.sock')
+            server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            server.bind(location)
+            server.listen(1)
+            server.settimeout(10)
+            received = {}
+
+            def serve():
+                connection, _ = server.accept()
+                with connection:
+                    data = b''
+                    while b'\r\n\r\n' not in data:
+                        data += connection.recv(4096)
+                    head, _, body = data.partition(b'\r\n\r\n')
+                    length = int(re.search(rb'(?i)content-length: (\d+)', head)[1])
+                    while len(body) < length:
+                        body += connection.recv(4096)
+                    received.update(head=head.decode(), body=json.loads(body))
+                    reply = b'{"error":"forbidden"}'
+                    connection.sendall(b'HTTP/1.1 403 Forbidden\r\nContent-Length: '
+                                       + str(len(reply)).encode() + b'\r\nConnection: close\r\n\r\n' + reply)
+
+            args = types.SimpleNamespace(gateway_container='gateway-fixture', gateway_uid=os.getuid(), gateway_gid=os.getgid())
+
+            def execute(command, **_options):
+                self.assertEqual(command[:6], ['docker', 'exec', '--workdir', '/', 'gateway-fixture', 'node'])
+                return subprocess.run(command[5:], capture_output=True, text=True, timeout=15,
+                                      env={**os.environ, 'CAUCE_FLEET_AUTHORITY_SOCKET': location})
+
+            thread = threading.Thread(target=serve)
+            thread.start()
+            try:
+                with mock.patch.object(kit, 'run', side_effect=execute):
+                    self.assertEqual(kit.gateway_probe(args, location), (403, {'error': 'forbidden'}))
+                    args.gateway_uid += 1
+                    self.assertEqual(kit.gateway_probe(args, location), (None, None))
+                    args.gateway_uid -= 1
+                    self.assertEqual(kit.gateway_probe(args, location + '.absent'), (None, None))
+            finally:
+                thread.join(10)
+                server.close()
+        self.assertTrue(received['head'].startswith('POST /signed-authority HTTP/1.1'))
+        self.assertEqual(received['body']['packet']['payload'], {'action': 'ready'})
+        self.assertEqual(received['body']['host_id'], 'zz-canary-probe')
+
+    def test_a_nonzero_probe_exit_cannot_be_accepted_from_stdout(self):
+        spec = importlib.util.spec_from_file_location('fleet_authority_install', SCRIPT)
+        kit = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(kit)
+        result = subprocess.CompletedProcess([], 2, '{"status":403,"body":{"error":"forbidden"}}', '')
+        self.assertEqual(kit.probe_reply(result), (None, None))
+
     def test_probe_posts_an_unsigned_ready_for_the_canary_host_over_the_unix_socket(self):
         spec = importlib.util.spec_from_file_location('fleet_authority_install', SCRIPT)
         kit = importlib.util.module_from_spec(spec)
