@@ -117,9 +117,11 @@ El JSON de `edit` es una lista, sin wrapper:
 cauce context-native --gateway https://cauce.example.invalid --origin https://cauce.example.invalid --session-file /ruta/privada/session.json --tenant TENANT_ID --alias AGENT_ALIAS --root /ruta/privada/space --expected-version 7 context/objetivo.md directives/operacion.md
 ```
 
-Sólo lee la lista explícita bajo una raíz real y los paths permitidos. Conserva los demás archivos del snapshot remoto. `--remove directives/retirada.md` retira una ruta concreta; se puede repetir. No recorre el home, perfiles, sesiones o repositorios para descubrir documentos.
+`cauce context-native` usa la sesión humana, Origin y CSRF, sujetos a la autoridad durable de escritura de la empresa sobre el agente elegido. Sólo lee la lista explícita bajo una raíz real y los paths permitidos de `context/` o `directives/`. Lee el snapshot con `GET` y envía los cambios por `PUT /v3/console/context/agents/:tenant/:alias`, con `expected_version`, `source:native` y `files`. Conserva los demás archivos del snapshot remoto. `--remove directives/retirada.md` retira una ruta concreta; se puede repetir. No recorre el home, perfiles, sesiones o repositorios para descubrir documentos.
 
-`--watch` vuelve a comprobar cada dos segundos. Tras un éxito avanza su versión esperada; ante edición concurrente se detiene y conserva el archivo local para reconciliarlo. Un archivo local modificado sin pasar por esta ingesta no queda automáticamente en el historial.
+`--watch` vuelve a comprobar cada dos segundos. Tras un éxito avanza su versión esperada; ante edición concurrente se detiene y conserva el archivo local para reconciliarlo.
+
+La ingesta automática de notas del SDK es otra vía: con raíz de espacio, contexto versionado y cliente de ingesta configurados, ocurre al preparar el siguiente turno y también en su verificación final. Usa `POST /v3/context/ingest`, certificado mTLS y autoridad del propio agente, con `base_version` y `files`; sólo autoriza modificaciones bajo `context/notes/**`. Las ediciones autónomas de perfil, directivas u otras rutas no generan una versión autorizada. Ante conflicto o rechazo, continúa con el snapshot autorizado recibido y conserva las divergencias: aparta los archivos conocidos por el snapshot o receipt que puede mover con seguridad a `config/conflicts/`; los archivos nuevos no rastreados permanecen locales. Un fallo de transporte hace fallar el turno. Los límites y estados de esta vía están en [archivos y contextos](v4-archivos-contextos.md#vías-de-edición-y-proyección-al-agente).
 
 ## Backup y restauración del espacio
 
