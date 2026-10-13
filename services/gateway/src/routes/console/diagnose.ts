@@ -13,7 +13,7 @@ const UUID_ID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/
 const UUID_REFERENCE_TYPES = new Set(['message', 'delivery', 'session', 'operation', 'backup']);
 const SYNC_ERRORS = ['context_git_unavailable', 'context_git_commit_failed', 'context_push_failed',
   'context_git_authentication_failed', 'context_git_network_failed', 'context_git_non_fast_forward',
-  'context_git_timeout', 'context_git_repository_not_private'];
+  'context_git_timeout', 'context_git_repository_not_private', 'context_version_unreadable'];
 const APPLICATION_ERRORS = ['context_runtime_verification_failed', 'context_runtime_unsupported', 'context_runtime_offline',
   'context_runtime_attempts_exhausted', 'context_version_unreadable', 'native_context_conflict', 'native_context_invalid_files',
   'native_context_too_large', 'native_context_secret_detected', 'native_context_unsafe_text', 'native_context_harness_limit',

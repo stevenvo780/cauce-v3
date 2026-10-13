@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { withTransaction, type DatabaseClient, type DatabasePool } from './db.js';
-import { contextSnapshot, lockContextTarget, readContextVersion } from './context-version.js';
+import { contextSnapshot, lockContextTarget, readableContextVersion } from './context-version.js';
 import type { ContextGitSink, ContextRuntimeSink, ContextTarget, ContextVersion } from './context-version-model.js';
 
 /** `offline`: no live lease. `unsupported`: the live agent cannot negotiate the version or witness the turn that consumed it. */
@@ -27,6 +27,7 @@ const PARK_REVIEW_SECONDS = 300;
 /** Applications one process runs at once, the ones only awaiting an ACK included. */
 export const CONTEXT_APPLICATION_CONCURRENCY = 4;
 const VERIFICATION_FAILED = 'context_runtime_verification_failed';
+const UNREADABLE = 'context_version_unreadable';
 const COMMIT = /^[a-f0-9]{40,64}$/u;
 type ApplicationRefusal = 'context_runtime_unsupported' | 'context_runtime_offline' | 'context_runtime_attempts_exhausted';
 type ApplicationOutcome = { readonly kind: 'park' | 'attempted' } | { readonly kind: 'refused'; readonly code: ApplicationRefusal };
@@ -55,10 +56,15 @@ function syncFailureCause(error: unknown, fallback: string): string {
   if (/could not resolve|connection (?:refused|reset|closed)|network is unreachable|failed to connect|ECONN(?:REFUSED|RESET)|ENOTFOUND|EAI_AGAIN|EHOSTUNREACH|ENETUNREACH/iu.test(details)) return 'context_git_network_failed';
   return fallback;
 }
-/** Git I/O runs outside any transaction; its outcome is stored after it, taking the target lock before the row as every writer does. */
-async function syncGit(pool: DatabasePool, row: OutboxRow, version: ContextVersion, git: ContextGitSink | undefined): Promise<string | undefined> {
+/**
+ * Git I/O runs outside any transaction; its outcome is stored after it, taking the target lock before the row as every writer
+ * does. An unreadable version is never committed.
+ */
+async function syncGit(pool: DatabasePool, row: OutboxRow, version: ContextVersion | undefined,
+  git: ContextGitSink | undefined): Promise<string | undefined> {
   let stage = 'context_git_unavailable'; let failure: string | undefined; let commit = row.git_commit;
-  try {
+  if (!version) failure = UNREADABLE;
+  else try {
     if (!git) throw new Error('context git is unavailable');
     stage = 'context_git_commit_failed';
     commit ??= await git.commit(version);
@@ -68,9 +74,9 @@ async function syncGit(pool: DatabasePool, row: OutboxRow, version: ContextVersi
   } catch (error) {
     failure = syncFailureCause(error, stage);
   }
-  const scope = scopeOf(version);
+  const scope = [row.company_id, row.tenant_id, row.alias, Number(row.version)];
   await withTransaction(pool, async client => {
-    await lockContextTarget(client, version);
+    await lockContextTarget(client, row);
     await client.query(`UPDATE agent_context_outbox SET git_commit=COALESCE($5,git_commit),attempts=attempts+1,last_error=$6,
       state=CASE WHEN $6::text IS NULL THEN 'synced' ELSE 'error' END,
       pushed_at=CASE WHEN $6::text IS NULL THEN clock_timestamp() ELSE pushed_at END,
@@ -125,16 +131,16 @@ async function syncDueVersions(pool: DatabasePool, git: ContextGitSink | undefin
     const due = await withTransaction(pool, async client => {
       const rows = (await client.query<OutboxRow>(DUE_VERSIONS,
         [target?.company_id ?? null, target?.tenant_id ?? null, target?.alias ?? null, applications, limit])).rows;
-      const read: { row: OutboxRow; target: ContextTarget; version?: ContextVersion }[] = [];
+      const read: { row: OutboxRow; target: ContextTarget; version: ContextVersion | undefined }[] = [];
       for (const row of rows) {
         const identity = { company_id: row.company_id, tenant_id: row.tenant_id, alias: row.alias };
-        read.push({ row, target: identity, ...(row.git_ready ? { version: await readContextVersion(client, identity, Number(row.version)) } : {}) });
+        read.push({ row, target: identity, version: row.git_ready ? await readableContextVersion(client, identity, Number(row.version)) : undefined });
       }
       return read;
     });
     const candidates: Candidate[] = [];
     for (const { row, target: identity, version } of due) {
-      const gitError = version ? await syncGit(pool, row, version, git) : undefined;
+      const gitError = row.git_ready ? await syncGit(pool, row, version, git) : undefined;
       candidates.push({ target: identity, version: Number(row.version), ...(gitError ? { gitError } : {}) });
     }
     return candidates;
@@ -166,6 +172,12 @@ async function reserveApplication(pool: DatabasePool, options: ContextWorkerOpti
         AND apply_retry_at<=now() AND (apply_token IS NULL OR apply_lease_until<=now())
       FOR UPDATE SKIP LOCKED`, scope)).rows[0];
     if (!row || !applications) return settled(candidate, candidate.version, 'pending');
+    const version = await readableContextVersion(client, candidate.target, candidate.version);
+    if (!version) {
+      await client.query(`UPDATE agent_context_outbox SET apply_error=$5,apply_retry_at='infinity'
+        WHERE company_id=$1 AND tenant_id=$2 AND alias=$3 AND version=$4`, [...scope, UNREADABLE]);
+      return settled(candidate, candidate.version, 'pending', UNREADABLE);
+    }
     const runtime = options.runtime;
     if (!runtime) {
       await client.query(`UPDATE agent_context_outbox SET apply_retry_at='infinity'
@@ -175,7 +187,7 @@ async function reserveApplication(pool: DatabasePool, options: ContextWorkerOpti
     const token = randomUUID();
     await client.query(`UPDATE agent_context_outbox SET apply_token=$5,apply_lease_until=clock_timestamp()+interval '90 seconds'
       WHERE company_id=$1 AND tenant_id=$2 AND alias=$3 AND version=$4`, [...scope, token]);
-    return { runtime, version: await readContextVersion(client, candidate.target, candidate.version), token, requested: row.requested,
+    return { runtime, version, token, requested: row.requested,
       dedicated: row.requested || row.apply_error === VERIFICATION_FAILED, attempt: await nextAttempt(client, candidate.target, candidate.version, row.apply_error),
       ...(candidate.gitError ? { gitError: candidate.gitError } : {}) };
   });

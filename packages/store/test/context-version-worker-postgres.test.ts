@@ -222,6 +222,27 @@ describe('bounded dedicated application of the desired version', () => {
     await settleContextApplications(pool);
     expect(await leased()).toEqual([]);
   });
+  it('sets an unreadable stored version aside without stopping the other agents', async () => {
+    if (!current) throw new Error('database unavailable');
+    const alpha = target(); const beta = target(1);
+    await store.write(client => lockCompanyAuthority(client, { tenant: beta.tenant_id, alias: 'owner', humanId: beta.human_id }),
+      beta.tenant_id, beta.alias, { expected_version: 0, source: 'ui', files: [{ path: 'context/mission.md', content: 'Second company.' }] });
+    const scope = [alpha.company_id, alpha.tenant_id, alpha.alias];
+    await current.adminPool.query(`INSERT INTO agent_context_versions(company_id,tenant_id,alias,version,files,digest,source,actor_human_id,
+      actor_alias) VALUES($1,$2,$3,2,'[]'::jsonb,$4,'ui',$5,'owner')`, [...scope, 'c'.repeat(64), alpha.human_id]);
+    await current.adminPool.query('UPDATE agent_context_state SET desired_version=2 WHERE company_id=$1 AND tenant_id=$2 AND alias=$3', scope);
+    await current.adminPool.query('INSERT INTO agent_context_outbox(company_id,tenant_id,alias,version) VALUES($1,$2,$3,2)', scope);
+    const calls: number[] = [];
+    for (let run = 0; run < 3; run++) await processContextOutbox(pool, { git, runtime: unconfirmed(calls) });
+    await settleContextApplications(pool);
+    expect(calls).toEqual([1]);
+    expect((await pool.query(`SELECT tenant_id,version::integer,state,last_error,apply_error FROM agent_context_outbox
+      ORDER BY tenant_id,version`)).rows).toEqual([
+      { tenant_id: 'ContextAlpha', version: 1, state: 'synced', last_error: null, apply_error: null },
+      { tenant_id: 'ContextAlpha', version: 2, state: 'error', last_error: 'context_version_unreadable', apply_error: 'context_version_unreadable' },
+      { tenant_id: 'ContextBeta', version: 1, state: 'synced', last_error: null, apply_error: 'context_runtime_verification_failed' },
+    ]);
+  });
   it('serves another agent while the first application only awaits its ACK', async () => {
     const other = target(1);
     await store.write(client => lockCompanyAuthority(client, { tenant: other.tenant_id, alias: 'owner', humanId: other.human_id }),
