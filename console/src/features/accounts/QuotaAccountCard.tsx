@@ -1,8 +1,24 @@
-import type { QuotaAccount } from '../../api/client/my-quotas-client';
+import type { QuotaAccount, QuotaRefreshStatus } from '../../api/client/my-quotas-client';
 import { Button, Notice, Pill } from '../../components/kit';
 import { Time } from '../../components/ui';
 import { accountFatigue, FATIGUE_LABEL, OBSERVATION_LABEL, quotaFailureReason } from './quota-availability';
 import { formatPercent } from './quotas';
+
+const REFRESH_LABEL: Partial<Record<QuotaRefreshStatus, string>> = {
+  not_authenticated: 'Cuenta sin autenticar: autentícala desde su entorno.',
+  executor_unavailable: 'No hay un ejecutor disponible para actualizar esta cuenta.',
+  deleted: 'El entorno de consulta fue eliminado.',
+  busy: 'El entorno está ocupado. La cuota se consultará cuando termine su operación.',
+  read_only: 'La consulta automática requiere permiso para operar el entorno.',
+  failed: 'La consulta automática falló. Relee el entorno para revisar su resultado.',
+  stale: 'La consulta terminó y la captura sigue antigua. Se consultará de nuevo en la próxima ventana.',
+};
+
+export function QuotaRefreshNotice({ status }: { status?: QuotaRefreshStatus }) {
+  if (status === 'updating') return <p className="m-0 text-sm text-muted" role="status">Actualizando…</p>;
+  const message = status ? REFRESH_LABEL[status] : undefined;
+  return message ? <Notice tone={status === 'failed' ? 'danger' : 'warn'}>{message}</Notice> : null;
+}
 
 function sharedAgents({ agent_count: total, agents }: QuotaAccount): string {
   const label = `${String(total)} ${total === 1 ? 'agente' : 'agentes'}`;
@@ -20,6 +36,7 @@ export function QuotaAccountCard({ account, pinned, canPin, onPin, canEdit, onEd
   return <article aria-label={`Cuotas de ${account.label}`} className="grid content-start gap-3 rounded-xl border border-line bg-surface p-4">
     <header className="flex flex-wrap items-start justify-between gap-2"><div><h3 className="m-0 text-base">{account.label}</h3>
       <p className="m-0 text-xs text-muted">{account.provider}</p></div><Pill tone={tone}>{FATIGUE_LABEL[fatigue]}</Pill></header>
+    <QuotaRefreshNotice status={account.refresh_status} />
     {onPin ? <Button size="sm" aria-pressed={pinned} disabled={!canPin} onClick={onPin}>{pinned ? 'Desfijar cuenta' : 'Fijar cuenta'}</Button> : null}
     <p className="m-0 text-sm">{account.shared || account.agent_count > 1
       ? `Consumo compartido por ${sharedAgents(account)}. Cada tarjeta muestra la misma suscripción.` : 'Cuota de esta suscripción.'}</p>

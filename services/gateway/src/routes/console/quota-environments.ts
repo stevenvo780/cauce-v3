@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
-import { QuotaAccountCreateSchema, QuotaAccountIdSchema } from '@cauce/protocol';
+import { QuotaAccountCreateSchema, QuotaAccountIdSchema, QuotaEnvironmentActionSchema } from '@cauce/protocol';
 import { createQuotaAccount, deleteQuotaAccount, listQuotaAccounts, updateQuotaAccount, QuotaEnvironmentRepository,
   StoreError, type CompanyAuthoritySource, type DatabasePool, type QuotaEnvironmentOptions } from '@cauce/store';
 import { AuthError, AuthorizationError, type AuthProvider } from '../../auth.js';
@@ -13,6 +13,14 @@ const AccountCreate = QuotaAccountCreateSchema.extend({ provider: z.enum(['claud
 const EnvironmentParams = z.object({ id: z.uuid() }).strict();
 const DeleteVersion = z.object({ expected_version: z.string().regex(/^[1-9][0-9]{0,15}$/u).transform(Number)
   .pipe(z.number().int().positive().max(Number.MAX_SAFE_INTEGER)) }).strict();
+const DeleteEnvironment = DeleteVersion.extend({ idempotency_key: QuotaEnvironmentActionSchema.shape.idempotency_key }).strict();
+type QuotaRefresh = Awaited<ReturnType<QuotaEnvironmentRepository['refreshStale']>>['refreshes'][number];
+
+function accountRefreshStatus(refreshes: readonly QuotaRefresh[], accountId: string): QuotaRefresh['status'] | undefined {
+  const statuses = new Set(refreshes.filter(refresh => refresh.account_id === accountId).map(refresh => refresh.status));
+  return (['updating', 'fresh', 'busy', 'failed', 'stale', 'executor_unavailable', 'not_authenticated', 'read_only', 'deleted'] as const)
+    .find(status => statuses.has(status));
+}
 
 export function registerQuotaEnvironmentRoutes(app: FastifyInstance, provider: AuthProvider, pool: DatabasePool,
   options?: QuotaEnvironmentOptions): void {
@@ -48,15 +56,24 @@ export function registerQuotaEnvironmentRoutes(app: FastifyInstance, provider: A
       throw error;
     }
   };
-  app.get('/v3/console/quota-accounts', handler(source => listQuotaAccounts(pool, source)));
+  app.get('/v3/console/quota-accounts', handler(async source => {
+    const refresh = await environments.refreshStale(source);
+    const snapshot = await listQuotaAccounts(pool, source);
+    if (refresh.company_id !== snapshot.company_id) throw new StoreError('conflict', 'quota company authority changed');
+    return { ...snapshot, accounts: snapshot.accounts.map(account => ({ ...account,
+      refresh_status: accountRefreshStatus(refresh.refreshes, account.id) })) };
+  }));
   app.post('/v3/console/quota-accounts', handler((source, request) => createQuotaAccount(pool, source, AccountCreate.parse(request.body))));
   app.patch('/v3/console/quota-accounts/:id', handler((source, request) => updateQuotaAccount(pool, source, AccountParams.parse(request.params).id, request.body)));
   app.delete('/v3/console/quota-accounts/:id', handler((source, request) => deleteQuotaAccount(pool, source, AccountParams.parse(request.params).id,
     DeleteVersion.parse(request.query).expected_version)));
-  app.get('/v3/console/quota-environments', handler(source => environments.list(source)));
+  app.get('/v3/console/quota-environments', handler(source => environments.list(source, { refresh: true })));
   app.post('/v3/console/quota-environments', handler((source, request) => environments.create(source, request.body)));
   app.patch('/v3/console/quota-environments/:id', handler((source, request) => environments.update(source, EnvironmentParams.parse(request.params).id, request.body)));
   app.post('/v3/console/quota-environments/:id/actions', handler((source, request) => environments.action(source, EnvironmentParams.parse(request.params).id, request.body)));
-  app.delete('/v3/console/quota-environments/:id', handler((source, request) => environments.action(source, EnvironmentParams.parse(request.params).id,
-    { ...(request.body as Record<string, unknown>), action: 'delete' })));
+  app.delete('/v3/console/quota-environments/:id', handler((source, request) => {
+    z.undefined().parse(request.body);
+    return environments.action(source, EnvironmentParams.parse(request.params).id,
+      { ...DeleteEnvironment.parse(request.query), action: 'delete' });
+  }));
 }

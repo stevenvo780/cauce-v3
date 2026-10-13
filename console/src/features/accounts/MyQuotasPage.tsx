@@ -28,11 +28,13 @@ export function MyQuotasPage() {
   const reloadAccounts = accounts.reload;
   const reloadEnvironments = environments.reload;
   const reload = useCallback(async () => {
-    const [a, e] = await Promise.all([reloadAccounts(), reloadEnvironments()]);
+    const e = await reloadEnvironments();
+    const a = await reloadAccounts();
     if (a.error) throw a.error;
     if (e.error) throw e.error;
   }, [reloadAccounts, reloadEnvironments]);
-  usePolling(() => { if (!mutating.current) void reload().catch(() => undefined); }, 15_000);
+  const poll = useCallback(() => { if (!mutating.current) void reload().catch(() => undefined); }, [reload]);
+  usePolling(poll, 15_000);
   async function write(action: () => Promise<unknown>, message: string) {
     if (mutating.current) return;
     mutating.current = true; setBusy(true); setError(''); setNotice('');

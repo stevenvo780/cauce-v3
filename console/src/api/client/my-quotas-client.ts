@@ -3,6 +3,7 @@ import { quotaEnvironmentReceipt } from './v4-responses';
 import { quotaAccounts, quotaEnvironments } from './quota-responses';
 
 export type QuotaObservationStatus = 'unknown' | 'error' | 'stale' | 'ok';
+export type QuotaRefreshStatus = 'fresh' | 'updating' | 'not_authenticated' | 'executor_unavailable' | 'deleted' | 'busy' | 'read_only' | 'failed' | 'stale';
 export type QuotaProvider = 'claude' | 'codex' | 'gemini' | 'grok';
 export interface AccountQuotaWindow {
   group_key: string; window_key: string; model: string | null; label: string | null; host: string;
@@ -13,14 +14,14 @@ export interface QuotaAccount {
   id: string; provider: string; label: string; enabled: boolean; version: number; payer_tenant_id: string;
   shared: boolean; agent_count: number; agents: { tenant_id: string; alias: string; enabled: boolean }[];
   paused_until: string | null; paused_reason: string | null; observation_status: QuotaObservationStatus;
-  remaining_percent: number | null; note: string | null; windows: AccountQuotaWindow[];
+  remaining_percent: number | null; note: string | null; windows: AccountQuotaWindow[]; refresh_status?: QuotaRefreshStatus;
 }
 export interface QuotaAccountsSnapshot { company_id: string; observed_at: string; accounts: QuotaAccount[] }
 export type QuotaEnvironmentAction = 'create' | 'authenticate' | 'query' | 'update_cli' | 'delete';
 export interface QuotaEnvironment {
   id: string; company_id: string; account_id: string; host_id: string; provider: QuotaProvider; label: string;
   status: 'pending' | 'running' | 'ready' | 'awaiting_auth' | 'failed' | 'deleting' | 'deleted';
-  version: number; created_at: string; updated_at: string;
+  version: number; created_at: string; updated_at: string; refresh_status?: QuotaRefreshStatus;
 }
 export interface QuotaEnvironmentOperation {
   id: string; environment_id: string; action: QuotaEnvironmentAction;
@@ -61,6 +62,6 @@ export function myQuotasClient(request: RequestFn): MyQuotasClient {
     createQuotaEnvironment: async input => quotaEnvironmentReceipt(await write(environments, 'POST', input)),
     updateQuotaEnvironment: (environmentId, input) => write(`${environments}/${id(environmentId)}`, 'PATCH', input),
     actQuotaEnvironment: async (environmentId, input) => quotaEnvironmentReceipt(await write(`${environments}/${id(environmentId)}/actions`, 'POST', input)),
-    deleteQuotaEnvironment: async (environmentId, input) => quotaEnvironmentReceipt(await write(`${environments}/${id(environmentId)}`, 'DELETE', input)),
+    deleteQuotaEnvironment: async (environmentId, input) => quotaEnvironmentReceipt(await request(`${environments}/${id(environmentId)}?${new URLSearchParams({ expected_version: String(input.expected_version), idempotency_key: input.idempotency_key })}`, { method: 'DELETE' })),
   };
 }

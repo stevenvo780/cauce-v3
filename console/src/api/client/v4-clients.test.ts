@@ -49,3 +49,22 @@ it('contextos compuestos, paginación y operaciones tipadas no envían shell', a
   await api.actQuotaEnvironment('env-1', { action: 'query', expected_version: 7, idempotency_key: 'repeat-key' });
   expect(requests[0]).toEqual({ path: '/v3/console/quota-environments/env-1/actions', body: { action: 'query', expected_version: 7, idempotency_key: 'repeat-key' } });
 });
+it('DELETE de entornos conserva versión y clave en query string, sin body y con CSRF, también al repetir', async () => {
+  const requests: { version: string | null; key: string | null; csrf: string | null; body: string }[] = [];
+  const date = '2026-10-11T00:00:00Z';
+  server.use(http.delete('*/v3/console/quota-environments/:id', async ({ request }) => {
+    const url = new URL(request.url);
+    requests.push({ version: url.searchParams.get('expected_version'), key: url.searchParams.get('idempotency_key'),
+      csrf: request.headers.get('X-CSRF-Token'), body: await request.text() });
+    return HttpResponse.json({ environment: { id: 'env-1', version: 7, company_id: 'one', account_id: 'subscription', host_id: 'host',
+      provider: 'codex', label: 'Entorno', status: 'ready', created_at: date, updated_at: date },
+      operation: { id: 'delete-op', environment_id: 'env-1', action: 'delete', status: 'pending', error_code: null, result: null,
+        created_at: date, updated_at: date } });
+  }));
+  const api = new CauceApi('http://localhost');
+  const input = { expected_version: 7, idempotency_key: 'delete:key-01.valid' };
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    expect((await api.deleteQuotaEnvironment('env-1', input)).operation).toMatchObject({ id: 'delete-op', action: 'delete' });
+  }
+  expect(requests).toEqual(Array.from({ length: 2 }, () => ({ version: '7', key: input.idempotency_key, csrf: 'mock-csrf-token', body: '' })));
+});

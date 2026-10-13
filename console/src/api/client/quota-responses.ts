@@ -15,6 +15,9 @@ function date(value: unknown): boolean { return typeof value === 'string' && /^\
 function nullableDate(value: unknown): boolean { return value === null || date(value); }
 function provider(value: unknown): boolean { return ['claude', 'codex', 'gemini', 'grok'].includes(String(value)); }
 function action(value: unknown): boolean { return ['create', 'authenticate', 'query', 'update_cli', 'delete'].includes(String(value)); }
+function refreshStatus(value: unknown): boolean {
+  return value === undefined || typeof value === 'string' && ['fresh', 'updating', 'not_authenticated', 'executor_unavailable', 'deleted', 'busy', 'read_only', 'failed', 'stale'].includes(value);
+}
 export function quotaAccounts(value: unknown): QuotaAccountsSnapshot {
   const row = object(value);
   if (!text(row.company_id) || !date(row.observed_at)) failed();
@@ -23,7 +26,7 @@ export function quotaAccounts(value: unknown): QuotaAccountsSnapshot {
     if (![account.id, account.provider, account.payer_tenant_id].every(text) || (account.label !== null && !text(account.label))
       || typeof account.enabled !== 'boolean' || typeof account.shared !== 'boolean' || !version(account.version)
       || !status(account.observation_status) || !percent(account.remaining_percent) || !nullableDate(account.paused_until)
-      || !nullableText(account.paused_reason) || !nullableText(account.note)) failed();
+      || !nullableText(account.paused_reason) || !nullableText(account.note) || !refreshStatus(account.refresh_status)) failed();
     for (const item of array(account.agents)) { const agent = object(item);
       if (![agent.tenant_id, agent.alias].every(text) || typeof agent.enabled !== 'boolean') failed(); }
     if (typeof account.agent_count !== 'number' || !Number.isSafeInteger(account.agent_count) || account.agent_count < array(account.agents).length) failed();
@@ -55,7 +58,7 @@ export function verifyQuotaEnvironment(value: unknown): void {
   const environment = object(value);
   if (![environment.id, environment.company_id, environment.account_id, environment.host_id, environment.label].every(text) || !provider(environment.provider)
     || !version(environment.version) || ![environment.created_at, environment.updated_at].every(date)
-    || !['pending', 'running', 'ready', 'awaiting_auth', 'failed', 'deleting', 'deleted'].includes(String(environment.status))) failed();
+    || !['pending', 'running', 'ready', 'awaiting_auth', 'failed', 'deleting', 'deleted'].includes(String(environment.status)) || !refreshStatus(environment.refresh_status)) failed();
 }
 export function verifyQuotaOperation(value: unknown): void {
   const operation = object(value);

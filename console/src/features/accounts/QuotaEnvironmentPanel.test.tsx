@@ -58,3 +58,33 @@ it('awaiting_auth sin operación devuelta también bloquea comandos nuevos', () 
   renderWithApi(<QuotaEnvironmentPanel snapshot={{ ...snapshot, environments: [{ ...environment, status: 'awaiting_auth' }] }} accounts={accounts} canWrite reload={vi.fn()} />);
   expect(screen.getByRole('button', { name: 'Consultar cuotas' })).toBeDisabled();
 });
+
+it.each(['pending', 'running'] as const)('muestra Actualizando… para una consulta %s', status => {
+  renderWithApi(<QuotaEnvironmentPanel snapshot={{ ...snapshot, operations: [{ id: 'query', environment_id: environment.id,
+    action: 'query', status, error_code: null, result: null, created_at: environment.created_at, updated_at: environment.updated_at }] }}
+    accounts={accounts} canWrite reload={vi.fn()} />);
+  expect(within(screen.getByRole('article', { name: 'Entorno GPT' })).getByRole('status')).toHaveTextContent('Actualizando…');
+});
+
+it('una operación ajena a query no presenta la cuota como actualizándose', () => {
+  renderWithApi(<QuotaEnvironmentPanel snapshot={{ ...snapshot, operations: [{ id: 'update', environment_id: environment.id,
+    action: 'update_cli', status: 'pending', error_code: null, result: null, created_at: environment.created_at, updated_at: environment.updated_at }] }}
+    accounts={accounts} canWrite reload={vi.fn()} />);
+  expect(screen.queryByText('Actualizando…')).not.toBeInTheDocument();
+});
+
+it('muestra el estado de refresco del servidor aunque la operación no esté en la página', () => {
+  renderWithApi(<QuotaEnvironmentPanel snapshot={{ ...snapshot, environments: [{ ...environment, refresh_status: 'updating' }] }}
+    accounts={accounts} canWrite reload={vi.fn()} />);
+  expect(within(screen.getByRole('article', { name: 'Entorno GPT' })).getByRole('status')).toHaveTextContent('Actualizando…');
+});
+
+it.each([
+  ['executor_unavailable', 'No hay un ejecutor disponible para actualizar esta cuenta.'],
+  ['not_authenticated', 'Cuenta sin autenticar: autentícala desde su entorno.'],
+] as const)('muestra %s para el entorno incluso si otro ejecutor sigue disponible', (refresh_status, message) => {
+  renderWithApi(<QuotaEnvironmentPanel snapshot={{ ...snapshot, environments: [{ ...environment, refresh_status }] }}
+    accounts={accounts} canWrite reload={vi.fn()} />);
+  expect(within(screen.getByRole('article', { name: 'Entorno GPT' })).getByText(message)).toBeVisible();
+  expect(screen.queryByText('Actualizando…')).not.toBeInTheDocument();
+});

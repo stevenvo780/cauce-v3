@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from '@testing-library/react';
+import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { expect, it, vi } from 'vitest';
 import { http, HttpResponse } from 'msw';
@@ -141,13 +141,14 @@ it('releer cuentas conserva la sesión de autenticación del entorno mientras la
     http.get(`*/v3/console/provider-auth/operations/${id}/scope`, () => { scopes(); return HttpResponse.json(scope); }),
     http.post('*/v3/console/provider-auth/sessions', () => HttpResponse.json(session)),
     http.post(`*/v3/console/provider-auth/sessions/${sessionId}/cancel`, () => { cancelled(); return HttpResponse.json({ ...session, status: 'cancelled' }); }));
-  const user = userEvent.setup(); renderWithApi(owner());
+  const user = userEvent.setup(); const view = renderWithApi(owner());
   await user.click(await screen.findByRole('button', { name: 'Conectar cuenta' }));
   await screen.findByRole('button', { name: 'Verificar conexión' });
   await user.click(screen.getByRole('button', { name: 'Actualizar cuotas y entornos' }));
   await waitFor(() => { expect(screen.getByRole('button', { name: 'Actualizar cuotas y entornos' })).toBeEnabled(); });
   expect(screen.getByRole('button', { name: 'Verificar conexión' })).toBeVisible();
   expect(cancelled).not.toHaveBeenCalled(); expect(scopes).toHaveBeenCalledOnce();
+  view.unmount(); await waitFor(() => { expect(cancelled).toHaveBeenCalledOnce(); });
 });
 
 it('muestra el motivo del fallo con su acción y la hora de medición', async () => {
@@ -158,4 +159,39 @@ it('muestra el motivo del fallo con su acción y la hora de medición', async ()
   const card = within(await screen.findByRole('article', { name: 'Cuotas de Cuenta compartida' }));
   expect(card.getByText('Sesión caducada: autenticar de nuevo')).toBeVisible();
   expect(card.getByText(/Medida/u)).toBeVisible();
+});
+
+it('el poller existente actualiza la tarjeta cuando acaba la consulta automática, sin pulsar botones', async () => {
+  let phase: 'pending' | 'running' | 'done' = 'pending';
+  const environment = { id: 'env-query', company_id: 'one', account_id: account.id, host_id: 'host', provider: 'codex', label: 'Consulta GPT',
+    status: 'ready', version: 2, created_at: '2026-10-11T00:00:00Z', updated_at: '2026-10-11T00:00:00Z' };
+  const accountsRead = vi.fn(); const environmentsRead = vi.fn(); const actions = vi.fn();
+  server.use(http.get('*/v3/console/quota-accounts', () => {
+    accountsRead(); const observation_status = phase === 'done' ? 'ok' : 'stale';
+    return HttpResponse.json({ company_id: 'one', observed_at: environment.updated_at, accounts: [{ ...account,
+      refresh_status: phase === 'done' ? 'fresh' : 'updating', observation_status, remaining_percent: phase === 'done' ? 72 : 56,
+      windows: [{ ...account.windows[0], observation_status, remaining_percent: phase === 'done' ? 72 : 56 }] }] });
+  }), http.get('*/v3/console/quota-environments', () => {
+    environmentsRead(); return HttpResponse.json({ company_id: 'one', environments: [{ ...environment, refresh_status: phase === 'done' ? 'fresh' : 'updating' }],
+      operations: [{ id: 'query', environment_id: environment.id, action: 'query', status: phase, error_code: null, result: null,
+        created_at: environment.created_at, updated_at: environment.updated_at }],
+      capabilities: { available: true, providers: ['codex'], hosts: [], actions: ['query'] } });
+  }), http.post('*/v3/console/quota-environments/:id/actions', () => { actions(); return HttpResponse.json({}, { status: 500 }); }));
+  const intervals = vi.spyOn(window, 'setInterval'); renderWithApi(owner());
+  const card = within(await screen.findByRole('article', { name: 'Cuotas de Cuenta compartida' }));
+  expect(card.getByRole('status')).toHaveTextContent('Actualizando…');
+  expect(card.queryByRole('meter')).not.toBeInTheDocument();
+  await screen.findByRole('article', { name: 'Entorno Consulta GPT' });
+  const tick = intervals.mock.calls.find(([, period]) => period === 15_000)?.[0];
+  if (typeof tick !== 'function') throw new Error('No se registró el poller existente.');
+  phase = 'running'; act(() => { tick(); });
+  await waitFor(() => { expect(accountsRead).toHaveBeenCalledTimes(2); });
+  await screen.findByText(/Consultar cuotas · En ejecución/u);
+  expect(card.getByRole('status')).toHaveTextContent('Actualizando…');
+  phase = 'done'; act(() => { tick(); });
+  await waitFor(() => { expect(card.getByRole('meter')).toHaveAttribute('value', '72'); });
+  expect(screen.queryByText('Actualizando…')).not.toBeInTheDocument();
+  expect(accountsRead).toHaveBeenCalledTimes(3); expect(environmentsRead).toHaveBeenCalledTimes(3);
+  expect(intervals.mock.calls.filter(([, period]) => period === 15_000)).toHaveLength(1);
+  expect(actions).not.toHaveBeenCalled();
 });

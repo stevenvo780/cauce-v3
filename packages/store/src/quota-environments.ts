@@ -18,8 +18,15 @@ export interface QuotaEnvironmentOptions {
   readonly approvedHostIds: readonly string[];
   readonly providers: readonly QuotaProvider[];
   readonly resolveCapabilities?: (companyId: string, client: DatabaseClient) => Promise<readonly QuotaEnvironmentHostCapability[]>;
+  readonly now?: () => Date;
 }
 export const QUOTA_ENVIRONMENT_ACTIONS: readonly QuotaAction[] = ['create','authenticate','query','update_cli','delete'];
+export type QuotaEnvironmentRefreshStatus = 'fresh' | 'updating' | 'not_authenticated' | 'executor_unavailable' | 'deleted' | 'busy' | 'read_only' | 'failed' | 'stale';
+export interface QuotaEnvironmentRefresh {
+  environment_id: string; account_id: string; status: QuotaEnvironmentRefreshStatus;
+  captured_at: string | null; operation_id: string | null;
+}
+interface RefreshFilter { environmentId?: string; accountIds?: readonly string[] }
 export interface QuotaEnvironment {
   id: string; company_id: string; account_id: string; host_id: string; provider: string; label: string;
   status: string; version: number; created_at: string; updated_at: string;
@@ -44,7 +51,7 @@ function operationView(row: OperationRow): QuotaEnvironmentOperation {
 async function owned(client: DatabaseClient, authority: CompanyAuthority, id: string): Promise<EnvironmentRow> {
   const row = (await client.query<EnvironmentRow>(`SELECT * FROM quota_environments WHERE id=$1 AND company_id=$2 FOR UPDATE`,
     [id, authority.actingCompany])).rows[0];
-  if (!row) throw new StoreError('forbidden', 'quota environment is unavailable');
+  if (!row) throw new StoreError('not_found', 'quota environment was not found');
   return row;
 }
 function available(capabilities: readonly QuotaEnvironmentHostCapability[], host: string, provider: string, action: QuotaAction): void {
@@ -79,10 +86,70 @@ export class QuotaEnvironmentRepository {
     return Promise.resolve(this.options.approvedHostIds.map(host_id => ({ host_id, providers,
       provider_actions: Object.fromEntries(providers.map(provider => [provider, QUOTA_ENVIRONMENT_ACTIONS])) })));
   }
-  async list(source: CompanyAuthoritySource) {
+  private async refreshInTransaction(client: DatabaseClient, authority: CompanyAuthority, filter: RefreshFilter): Promise<QuotaEnvironmentRefresh[]> {
+    const environments = await client.query<EnvironmentRow>(`SELECT e.* FROM quota_environments e JOIN provider_accounts p ON p.id=e.account_id AND p.company_id=e.company_id
+      WHERE e.company_id=$1 AND ($2::uuid IS NULL OR e.id=$2) AND ($3::text[] IS NULL OR e.account_id=ANY($3))
+        AND ($4::text IS NULL OR p.payer_tenant_id=$4) ORDER BY e.id FOR UPDATE OF e`,
+    [authority.actingCompany, filter.environmentId ?? null, filter.accountIds ?? null, authority.scope === 'tenant' ? authority.homeTenant : null]);
+    if (filter.environmentId !== undefined && environments.rows.length === 0) throw new StoreError('not_found', 'quota environment was not found');
+    if (environments.rows.length === 0) return [];
+    const captures = await client.query<{ account_id: string; captured_at: Date }>(`SELECT account_id,max(captured_at) AS captured_at FROM (
+      SELECT account_id,captured_at FROM quota_window_state WHERE company_id=$1 AND account_id=ANY($2::text[])
+      UNION ALL SELECT pr.account_id,COALESCE((SELECT max(s.captured_at) FROM quota_window_samples s
+        WHERE s.collection_id=pr.collection_id AND s.provider=pr.provider AND s.account_id=pr.account_id),pr.observed_at,qc.captured_at)
+      FROM quota_provider_reports pr JOIN quota_collections qc ON qc.id=pr.collection_id JOIN tenants t ON t.id=qc.collector_tenant
+      WHERE t.company_id=$1 AND pr.account_id=ANY($2::text[])) observation GROUP BY account_id`,
+    [authority.actingCompany, [...new Set(environments.rows.map(row => row.account_id))]]);
+    const accountCaptures = new Map(captures.rows.map(row => [row.account_id, row.captured_at]));
+    const capabilities = await this.capabilities(client, authority.actingCompany);
+    const now = this.options.now?.() ?? new Date();
+    if (!Number.isFinite(now.getTime())) throw new StoreError('invalid_input', 'quota refresh clock is invalid');
+    const refreshes: QuotaEnvironmentRefresh[] = [];
+    for (const environment of environments.rows) {
+      const captured = accountCaptures.get(environment.account_id) ?? null;
+      const refresh: QuotaEnvironmentRefresh = { environment_id: environment.id, account_id: environment.account_id,
+        status: 'failed', captured_at: captured?.toISOString() ?? null, operation_id: null };
+      refreshes.push(refresh);
+      if (environment.status === 'deleted' || environment.status === 'deleting') { refresh.status = 'deleted'; continue; }
+      const authentication = (await client.query<OperationRow>(`SELECT * FROM quota_environment_operations
+        WHERE company_id=$1 AND environment_id=$2 AND action='authenticate' ORDER BY created_at DESC,id DESC LIMIT 1`,
+      [authority.actingCompany, environment.id])).rows[0];
+      if (authentication?.status !== 'done' || authentication.result?.authenticated_verified !== true
+        || authentication.result.account_id !== environment.account_id) { refresh.status = 'not_authenticated'; continue; }
+      const active = (await client.query<OperationRow>(`SELECT * FROM quota_environment_operations
+        WHERE company_id=$1 AND environment_id=$2 AND status IN ('pending','running','awaiting_auth')`,
+      [authority.actingCompany, environment.id])).rows[0];
+      if (active) { refresh.status = active.action === 'query' ? 'updating' : 'busy'; refresh.operation_id = active.id; continue; }
+      if (captured !== null && now.getTime() - captured.getTime() <= 600_000 && captured.getTime() <= now.getTime() + 60_000) {
+        refresh.status = 'fresh'; continue;
+      }
+      if (!['company','platform'].includes(authority.scope)) { refresh.status = 'read_only'; continue; }
+      const host = await client.query('SELECT 1 FROM fleet_hosts WHERE host_id=$1 AND company_id=$2 AND enabled FOR SHARE',
+        [environment.host_id, authority.actingCompany]);
+      const capability = capabilities.find(value => value.host_id === environment.host_id);
+      if (!host.rowCount || !capability?.providers.includes(environment.provider as QuotaProvider)
+        || !capability.provider_actions[environment.provider as QuotaProvider]?.includes('query')) {
+        refresh.status = 'executor_unavailable'; continue;
+      }
+      const operation = await enqueue(client, authority, environment, 'query',
+        `auto-query:${environment.id}:${String(Math.floor(now.getTime() / 600_000))}`, false);
+      refresh.operation_id = operation.id;
+      refresh.status = operation.status === 'pending' || operation.status === 'running' ? 'updating' : operation.status === 'done' ? 'stale' : 'failed';
+    }
+    return refreshes;
+  }
+  async refreshStale(source: CompanyAuthoritySource, filter: RefreshFilter = {}) {
     return withTransaction(this.pool, async client => {
       const authority = await source(client); assertQuotaAuthority(authority, false);
       await expireQuotaAuthentication(client, { companyId: authority.actingCompany });
+      return { company_id: authority.actingCompany, refreshes: await this.refreshInTransaction(client, authority, filter) };
+    });
+  }
+  async list(source: CompanyAuthoritySource, options: { refresh?: boolean } = {}) {
+    return withTransaction(this.pool, async client => {
+      const authority = await source(client); assertQuotaAuthority(authority, false);
+      await expireQuotaAuthentication(client, { companyId: authority.actingCompany });
+      const refreshes = options.refresh === true ? await this.refreshInTransaction(client, authority, {}) : [];
       const environments = await client.query<EnvironmentRow>(`SELECT e.* FROM quota_environments e JOIN provider_accounts p ON p.id=e.account_id
         WHERE e.company_id=$1 AND ($2::text IS NULL OR p.payer_tenant_id=$2) ORDER BY e.created_at,e.id`,
       [authority.actingCompany, authority.scope === 'tenant' ? authority.homeTenant : null]);
@@ -96,7 +163,8 @@ export class QuotaEnvironmentRepository {
         const capability = capabilities.find(value => value.host_id === host.host_id);
         return capability && capability.providers.length > 0 ? [{ ...host, providers: capability.providers, provider_actions: capability.provider_actions }] : [];
       });
-      return { company_id: authority.actingCompany, environments: environments.rows.map(view), operations: operations.rows.map(operationView),
+      return { company_id: authority.actingCompany, environments: environments.rows.map(row => ({ ...view(row),
+        refresh_status: refreshes.find(refresh => refresh.environment_id === row.id)?.status })), operations: operations.rows.map(operationView), refreshes,
         capabilities: { available: availableHosts.length > 0, providers: [...new Set(availableHosts.flatMap(host => host.providers))],
           hosts: availableHosts, actions: [...new Set(availableHosts.flatMap(host => Object.values(host.provider_actions).flat()))] } };
     });
@@ -143,6 +211,7 @@ export class QuotaEnvironmentRepository {
   }
   async action(source: CompanyAuthoritySource, id: string, value: unknown) {
     const input = QuotaEnvironmentActionSchema.parse(value);
+    if (input.idempotency_key.startsWith('auto-query:')) throw new StoreError('invalid_input', 'automatic quota refresh keys are reserved');
     return withTransaction(this.pool, async client => {
       const authority = await source(client); assertQuotaAuthority(authority, true);
       await expireQuotaAuthentication(client, { companyId: authority.actingCompany });

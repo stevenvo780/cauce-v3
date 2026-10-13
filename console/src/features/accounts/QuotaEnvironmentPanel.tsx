@@ -6,6 +6,7 @@ import { Time } from '../../components/ui';
 import { randomUuid } from '../../random-id';
 import { quotaEnvironmentExecutable, quotaHostSupports } from './quota-environment-capabilities';
 import { QuotaAuthPanel } from './QuotaAuthPanel';
+import { QuotaRefreshNotice } from './QuotaAccountCard';
 
 const ACTION_LABEL: Record<QuotaEnvironmentAction, string> = { create: 'Crear entorno', authenticate: 'Autenticar cuenta', query: 'Consultar cuotas', update_cli: 'Actualizar CLI', delete: 'Eliminar entorno' };
 const STATUS_LABEL: Record<QuotaEnvironment['status'], string> = { pending: 'Pendiente', running: 'En ejecución', ready: 'Preparado', awaiting_auth: 'Esperando autenticación', failed: 'Fallido', deleting: 'Eliminación pendiente', deleted: 'Eliminado' };
@@ -65,9 +66,12 @@ export function QuotaEnvironmentPanel({ snapshot, accounts, canWrite, canAuthent
     </form>
     <div className="grid gap-3 md:grid-cols-2">{snapshot?.environments.map(environment => {
       const operation = snapshot.operations.find(item => item.environment_id === environment.id);
+      const updating = environment.refresh_status === 'updating' || snapshot.operations.some(item => item.environment_id === environment.id
+        && item.action === 'query' && (item.status === 'pending' || item.status === 'running'));
       return <article key={environment.id} aria-label={`Entorno ${environment.label}`} className="grid content-start gap-3 rounded-xl border border-line bg-surface p-4">
         <header><h3 className="m-0 text-base">{environment.label}</h3><p className="m-0 text-sm">{STATUS_LABEL[environment.status]}</p>
           <p className="m-0 text-xs text-muted">{environment.provider} · {environment.host_id} · {accounts.find(account => account.id === environment.account_id)?.label ?? 'Cuenta no disponible'}</p></header>
+        <QuotaRefreshNotice status={updating ? 'updating' : environment.refresh_status} />
         <div className="flex flex-wrap gap-2" aria-label={`Comandos permitidos de ${environment.label}`}>
           {(['authenticate', 'query', 'update_cli'] as const).map(action => <Button key={action} size="sm" disabled={!supports(environment, action)}
             onClick={() => { if (action === 'authenticate') setConfirm({ environment, action }); else act(environment, action); }}>{ACTION_LABEL[action]}</Button>)}
