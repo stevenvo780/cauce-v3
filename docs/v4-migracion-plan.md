@@ -79,6 +79,8 @@ Kant corre nativo en server2 (`cauce-v3-host-kant.service`, `cauce-v3-tmux-kant.
 
 ### Argos → `ctrl-infra` (openclaw con OpenAI, tenant Steven)
 
+Inventario previo al traslado: [dependencias de Argos con la VPS](v4-argos-dependencias.md).
+
 - **Imagen**: `cauce-sep/ctrl-infra:20260730T180341Z` (3,63 GB). CMD: `sshd`, *worker* de terminal remota y `sleep infinity`; el gateway openclaw (`index.js gateway --bind loopback --port 18789`) lo mantiene vivo el `cauce-openclaw-gateway-guard` de root.
 - **Volúmenes** (`/datos/agents/ctrl-infra-config`, 16,25 GB en total): `clawd` 1,97 GB (de ellos `work` 1,79 GB de repos), `.openclaw` 6,69 GB (`agents` con las sesiones 4,1 GB, `npm` 1,1 GB, `memory` 0,5 GB, `codex-cli` y su `.bak` 0,8 GB, `gateway.log` 3 MB), `.local` 2,39 GB, `.codex` 2,89 GB, `.claude` 1,39 GB, `.gemini` 0,92 GB; además `/datos/workspaces` → `/workspace` (todos los workspaces, rw), ficheros sueltos compartidos `/datos/agents/shared/{.claude/.credentials.json,.codex/auth.json,.netrc,.gitconfig,.bashrc,.npm,.cache/pip}`, claves `ws-keys` y configuración de `gh` y Bitwarden CLI.
 - **Unidades**: `cauce-v3-container-argos.service`, `cauce-v3-pty@argos.service`, `cauce-v3-profile-expectation@argos.service` (fallida). De root: `cauce-openclaw-gateway-guard` (solo `ctrl-infra`: arranca el gateway y reaplica un parche de esfuerzo en `dist` de openclaw), `cauce-openclaw-fallback-guard` (`claw` y `ctrl-infra`: suelta fallbacks pegados y parchea el pensamiento de gpt-6) y `cauce-cred-guard`.
