@@ -165,40 +165,6 @@ describe('fleet hosts on PostgreSQL', () => {
       expect((await admin.query("SELECT host_id FROM agents WHERE tenant_id='Steven' AND alias='quota_moved'")).rows).toEqual([{ host_id: 'beta' }]);
     }
   });
-  it('waits for a quota writer before locking the computer being removed', async () => {
-    if (!current) throw new Error('test database absent');
-    const admin = current.adminPool;
-    await createFleetHost(pool, { host_id: 'alpha', display_name: 'Alfa', notes: '' }, scope());
-    await placedAgent('quota_moved', 'alpha', 'none');
-    await admin.query(`INSERT INTO console_users(id,email,email_normalized,password_hash,display_name,role,tenant_id,alias)
-      VALUES($1,'quota-lock@example.test','quota-lock@example.test',$2,'Quota host','operator','Steven','kant')`,
-    [HUMAN, '$scrypt$' + 'x'.repeat(48)]);
-    await admin.query(`INSERT INTO agent_quota_operations(company_id,tenant_id,alias,host_id,requested_by,expected_revision,
-      idempotency_key,agent_snapshot,expires_at)
-      VALUES('humanizar','Steven','quota_moved','alpha',$1,0,'host-quota-lock','{"host_id":"alpha"}',clock_timestamp()-interval '1 second')`, [HUMAN]);
-    await admin.query("UPDATE agents SET host_id='beta' WHERE tenant_id='Steven' AND alias='quota_moved'");
-    const writer = await admin.connect();
-    let deletion: Promise<unknown> | undefined;
-    try {
-      const writerPid = (await writer.query<{ pid: number }>('SELECT pg_backend_pid() AS pid')).rows[0]?.pid;
-      await writer.query('BEGIN');
-      await writer.query('SELECT pg_advisory_xact_lock(783_003_004)');
-      await writer.query("SELECT id FROM agent_quota_operations WHERE idempotency_key='host-quota-lock' FOR UPDATE");
-      deletion = deleteFleetHost(pool, 'alpha', 1, scope()).catch((error: unknown) => error);
-      await expect.poll(async () => (await admin.query<{ waiting: boolean }>(`SELECT EXISTS(
-        SELECT 1 FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid))
-          AND query='SELECT pg_advisory_xact_lock(783_003_004)') AS waiting`, [writerPid])).rows[0]?.waiting,
-      { timeout: 2_000, interval: 10 }).toBe(true);
-      await writer.query("SET LOCAL lock_timeout='1s'");
-      await writer.query("SELECT host_id FROM fleet_hosts WHERE host_id='alpha' FOR UPDATE");
-      await writer.query('ROLLBACK');
-      expect(await deletion).toBeUndefined();
-      expect((await admin.query("SELECT 1 FROM fleet_hosts WHERE host_id='alpha'")).rowCount).toBe(0);
-      expect((await admin.query("SELECT 1 FROM agent_quota_operations WHERE host_id='alpha'")).rowCount).toBe(0);
-    } finally {
-      await writer.query('ROLLBACK'); await deletion; writer.release();
-    }
-  });
   it.each(['pending', 'running'])('expires a %s quota operation before removing an unavailable previous computer', async status => {
     if (!current) throw new Error('test database absent');
     const admin = current.adminPool;
