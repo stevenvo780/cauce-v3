@@ -1,20 +1,33 @@
 import { createHash } from 'node:crypto';
-import { CauceRepository, type DatabasePool } from '@cauce/store';
-import type { ContextRuntimeSink, ContextVersion } from '@cauce/store';
+import { HarnessConsumptionEvidenceSchema, VERSIONED_CONTEXT_CAPABILITY } from '@cauce/protocol';
+import { CauceRepository, ContextRuntimeUnsupportedError, type ContextApplicationRuntime, type ContextRuntimeReadiness,
+  type ContextTarget, type ContextVersion, type DatabasePool } from '@cauce/store';
 
+/** A lease names its harness as `harness.<id>`; only these harnesses emit the consumption witness that proves adoption. */
+const WITNESS_HARNESSES = new Set<unknown>(HarnessConsumptionEvidenceSchema.shape.harness_id.options.map(id => `harness.${id}`));
 function requestUuid(hash: string): string {
   return `${hash.slice(0,8)}-${hash.slice(8,12)}-4${hash.slice(13,16)}-8${hash.slice(17,20)}-${hash.slice(20,32)}`;
 }
-export class DeliveryContextRuntimeSink implements ContextRuntimeSink {
+/** Publishes at most one outstanding dedicated turn per version; the outbox worker bounds and schedules those turns. */
+export class DeliveryContextRuntimeSink implements ContextApplicationRuntime {
   private readonly repository: CauceRepository;
   constructor(private readonly pool: DatabasePool, private readonly timeoutMs = 55_000) {
     if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 60_000) throw new Error('invalid context application deadline');
     this.repository = new CauceRepository(pool);
   }
-  async apply(version: ContextVersion): Promise<{ version: number; digest: string }> {
+  async readiness(target: ContextTarget): Promise<ContextRuntimeReadiness> {
+    const lease = (await this.pool.query<{ capabilities: unknown }>(`SELECT capabilities FROM connection_leases
+      WHERE tenant_id=$1 AND alias=$2 AND lease_until>clock_timestamp()`, [target.tenant_id, target.alias])).rows[0];
+    if (!lease) return 'offline';
+    const capabilities: readonly unknown[] = Array.isArray(lease.capabilities) ? lease.capabilities : [];
+    return capabilities.includes(VERSIONED_CONTEXT_CAPABILITY) && capabilities.some(capability => WITNESS_HARNESSES.has(capability))
+      ? 'ready' : 'unsupported';
+  }
+  async apply(version: ContextVersion, waiting?: () => void): Promise<{ version: number; digest: string }> {
     const evidence = () => this.pool.query<{ applied_at: Date | null }>(`SELECT applied_at FROM agent_context_outbox
       WHERE company_id=$1 AND tenant_id=$2 AND alias=$3 AND version=$4`, [version.company_id, version.tenant_id, version.alias, version.version]);
     if ((await evidence()).rows[0]?.applied_at) return { version: version.version, digest: version.digest };
+    if (await this.readiness(version) === 'unsupported') throw new ContextRuntimeUnsupportedError();
     const sourceOnly = (await this.pool.query(`SELECT 1 FROM company_system_principals
       WHERE company_id=$1 AND kind='director' AND delivery_source_only`, [version.company_id])).rowCount !== 0;
     const principal = (await this.pool.query<{ tenant_id: string; alias: string; room_id: string }>(sourceOnly
@@ -62,6 +75,7 @@ export class DeliveryContextRuntimeSink implements ContextRuntimeSink {
           metadata: { company_id: version.company_id, context_version: version.version, digest: version.digest } },
       });
     }
+    waiting?.();
     const deadline = Date.now() + this.timeoutMs;
     while (Date.now() < deadline) {
       const row = (await this.pool.query<{ applied_at: Date | null; digest: string; desired_version: string }>(`SELECT outbox.applied_at,version.digest,current.desired_version
