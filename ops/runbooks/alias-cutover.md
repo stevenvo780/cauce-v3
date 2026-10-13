@@ -27,19 +27,25 @@ Ejecutar la transición (cutover) de un alias hacia Cauce V3 (modo `host-native`
    ops/scripts/canary.sh <alias> /ruta/baseline-cutover.json
    ```
 2. Verificar que exista exactamente un consumer, poller y lease owner V3 sin DLQ nuevo.
-3. Confirmar que la unidad systemd está activa:
+3. Confirmar que está activa solo la unidad de la familia elegida. `cutover.sh` usa `cauce-v3-alias-<alias>.service` en `host-native` y `cauce-v3-container-<alias>.service` en `container`; la otra queda inactiva.
    ```sh
    # [no ejecutable en verificación]
+   # host-native
    systemctl is-active cauce-v3-alias-<alias>.service
+   # container
+   systemctl is-active cauce-v3-container-<alias>.service
    ```
 4. Verificar ausencia de overlap o leases duplicadas en base de datos.
 
 ## Deshacer
-1. Drenar el consumer V3 hasta que `inflight`, unsettled y ACK pending queden en cero.
-2. Detener y deshabilitar la unidad V3 para impedir auto-resurrección:
+1. Drenar el consumer V3 hasta que `drain.inflight` quede en cero. El snapshot no tiene `unsettled` ni `ACK pending`. La fase `rollback-drain` de `migration-gate.mjs` exige ese inflight en cero y un consumer V3. En todas las fases exige cero en `drain.overdueInflight`, `drain.ownershipMismatch`, `acks.rejectedRecent` y `acks.staleAccepted`.
+2. Detener y deshabilitar la unidad de la familia que se activó, para que no resucite. En `container` no es la unidad host-native:
    ```sh
    # [no ejecutable en verificación]
+   # host-native
    systemctl disable --now cauce-v3-alias-<alias>.service
+   # container
+   systemctl disable --now cauce-v3-container-<alias>.service
    ```
 3. Para modo container, verificar ausencia de procesos con el supervisor:
    ```sh
