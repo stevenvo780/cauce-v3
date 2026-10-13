@@ -9,6 +9,7 @@ import { PostgresConsoleUserStore } from './console-users.js';
 import { createConsoleCredentialStamp, verifyConsoleCredentialStamp } from './console-credential-stamp.js';
 import { secretHash, type OAuthAuthorizationRequest, type OAuthPasswordSession } from './oauth-authorization-types.js';
 import { OAuthTokens } from './oauth-tokens.js';
+import { etiquetasDelPasoDelGate } from '../../../tests/helpers/postgres.js';
 
 export const issuer = 'https://cauce.example';
 const previousVersion = '044_human_mcp_identity.sql';
@@ -25,7 +26,7 @@ const upPath = new URL('../../../packages/store/migrations/045_mcp_oauth_authori
 
 beforeAll(async () => {
   const password = randomUUID();
-  container = await new GenericContainer('postgres:16-alpine')
+  container = await new GenericContainer('postgres:16-alpine').withLabels(etiquetasDelPasoDelGate())
     .withEnvironment({ POSTGRES_DB: 'cauce_test_oauth_template', POSTGRES_USER: 'cauce_test', POSTGRES_PASSWORD: password })
     .withExposedPorts(5432).withWaitStrategy(Wait.forLogMessage('database system is ready to accept connections', 2))
     .withStartupTimeout(60_000).start();

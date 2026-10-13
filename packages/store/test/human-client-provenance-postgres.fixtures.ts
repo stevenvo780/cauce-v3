@@ -17,6 +17,7 @@ import { secretHash, type OAuthPasswordSession } from '../../../services/gateway
 import { OAuthTokens } from '../../../services/gateway/src/oauth-tokens.js';
 import { createHumanMcpOperationsFactory } from '../../../services/gateway/src/mcp-operations.js';
 import { buildTestGateway } from '../../../services/gateway/src/test-support/gateway-doubles.js';
+import { etiquetasDelPasoDelGate } from '../../../tests/helpers/postgres.js';
 
 export const issuer = 'https://cauce.example';
 const key = Buffer.alloc(32, 27);
@@ -38,7 +39,7 @@ beforeAll(async () => {
   }
   const password = randomUUID();
   container = await new GenericContainer('postgres:16-alpine')
-    .withLabels({ 'cauce.test.owner': randomUUID(), 'cauce.test.suite': 'human-client-provenance' })
+    .withLabels({ 'cauce.test.owner': randomUUID(), 'cauce.test.suite': 'human-client-provenance', ...etiquetasDelPasoDelGate() })
     .withEnvironment({ POSTGRES_DB: 'cauce_test_client_template', POSTGRES_USER: 'cauce_test', POSTGRES_PASSWORD: password })
     .withExposedPorts(5432).withWaitStrategy(Wait.forLogMessage('database system is ready to accept connections', 2))
     .withStartupTimeout(60000).start();

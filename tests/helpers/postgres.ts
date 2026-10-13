@@ -245,6 +245,11 @@ const PREFIJO_EFIMERA = `${PREFIJO_BASE_DE_PRUEBAS}_e`;
 const EDAD_MAXIMA_EFIMERA_MS = 6 * 3_600_000;
 const NOMBRE_EFIMERO = new RegExp(`^${PREFIJO_EFIMERA}_p(\\d+)_t([0-9a-z]+)_[0-9a-f]+$`);
 
+export function etiquetasDelPasoDelGate(entorno: NodeJS.ProcessEnv = process.env): Record<string, string> {
+  const paso = entorno.CAUCE_RELEASE_GATES_PASO; // el gate retira por esta etiqueta lo que un paso cortado deja
+  return paso ? { 'io.cauce.gate.paso': paso } : {};
+}
+
 export function nombreEfimero(pid: number = process.pid, ahora: number = Date.now()): string {
   const sufijo = randomUUID().replaceAll('-', '').slice(0, 10);
   return `${PREFIJO_EFIMERA}_p${String(pid)}_t${ahora.toString(36)}_${sufijo}`;
@@ -568,6 +573,7 @@ async function startTestDatabaseAt(migrationThrough?: string, requireOwnedContai
   const password = randomUUID();
   const network = process.env.CAUCE_TEST_DOCKER_NETWORK;
   let builder = new GenericContainer('postgres:16-alpine')
+    .withLabels(etiquetasDelPasoDelGate())
     .withEnvironment({
       POSTGRES_DB: 'cauce_test',
       POSTGRES_USER: 'cauce_test',
