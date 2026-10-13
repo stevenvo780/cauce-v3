@@ -403,8 +403,6 @@ done
 Repetir el bloque no cambia nada. Verificación: al volver a entrar, `GET /v3/auth/session` muestra
 `role=platform_admin` para Steven y `role=company_owner`, `scope=company` para Miguel.
 
-El perfil versionado `ops/instances/hospital/project-profile.json` publica `conversation_id: "0"` como valor de ejemplo. El ID real de Telegram se suministra únicamente mediante el archivo privado que referencia `project_profile_file` en la configuración del supervisor, validado con `project_profile_sha256`; proviene del origen autenticado del dueño y no se guarda en Git.
-
 ## 3. Diagnóstico y recuperación de un adaptador caído
 
 `cauce <alias>` resuelve primero `~/.config/cauce-v3/alias-host.tsv` del usuario real de la

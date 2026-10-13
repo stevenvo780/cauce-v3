@@ -6,6 +6,11 @@ de código o una sonda dentro del contenedor no acredita el aislamiento desplega
 Los agentes Muse conservan `--yolo`: la frontera es el contenedor y la política del
 host, no la aprobación de herramientas del arnés.
 
+La importación de Praxis en la V4 central es otro procedimiento. `praxis-v4.json` es su inventario y
+`praxis-perfiles-export.sql` la exportación de solo lectura de los perfiles vivos.
+`cauce platform empresa importar` los consume. Los pasos están en
+`docs/v4-migracion-plan.md`, §4, «Alta e importación de Praxis en la V4 central».
+
 ## Retirar el fallback del operador
 
 Antes del aprovisionamiento, conservar una copia privada recuperable del estado y
