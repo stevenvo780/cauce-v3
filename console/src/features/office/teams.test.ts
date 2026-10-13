@@ -18,9 +18,11 @@ const agent = (roomIds: string[], off: string[] = []) => ({
 
 describe('team derivation', () => {
   it('prefers a grp.* room over an operational one that comes first', () => {
-    const { team, groups } = membershipOf(agent(['ops.miguel', 'grp.miguel']), directory);
+    const membership = membershipOf(agent(['ops.miguel', 'grp.miguel']), directory);
+    const { team, groups } = membership;
     expect(team).toMatchObject({ id: officeRoomKey('Miguel', 'grp.miguel'), label: 'Miguel' });
     expect(groups).toEqual([officeRoomKey('Miguel', 'ops.miguel')]);
+    expect(membership.groupLabels).toEqual(['ops.miguel']);
   });
 
   it('takes the first enabled membership in topology order, not in the agent order', () => {
@@ -34,7 +36,7 @@ describe('team derivation', () => {
   });
 
   it('puts agents without an enabled group in «Sin grupo»', () => {
-    expect(membershipOf(agent([]), directory)).toEqual({ team: NO_TEAM, groups: [] });
+    expect(membershipOf(agent([]), directory)).toEqual({ team: NO_TEAM, groups: [], groupLabels: [] });
     expect(membershipOf(agent(['grp.miguel'], ['grp.miguel']), directory).team).toEqual(NO_TEAM);
   });
   it('keeps same room names in different tenants as separate buildings', () => {

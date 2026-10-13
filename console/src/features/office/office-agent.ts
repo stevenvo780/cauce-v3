@@ -21,4 +21,6 @@ export interface OfficeAgent {
   visitor?: boolean;
   team?: OfficeTeam;
   groups?: readonly string[];
+  /** Readable names of `groups`, in the same order. */
+  groupLabels?: readonly string[];
 }

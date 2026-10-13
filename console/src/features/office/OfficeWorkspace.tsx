@@ -25,6 +25,8 @@ export function OfficeWorkspace({ campus, topology, agents, onAgent }: {
   const [draft, setDraft] = useState<{ version: number; rooms: OfficeRoom[] }>();
   const [roomKey, setRoomKey] = useState<string>();
   const [busy, setBusy] = useState(false);
+  // The campus reads the saved plan once when it mounts: a new key after each save makes it read the new one.
+  const [planSaves, setPlanSaves] = useState(0);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const rooms = officeRooms(topology, layout.data?.available);
@@ -48,7 +50,7 @@ export function OfficeWorkspace({ campus, topology, agents, onAgent }: {
     setBusy(true); setError(''); setNotice('');
     try {
       await api.saveOfficeLayout({ expected_version: draft.version, rooms: shown });
-      setDraft(undefined); const reread = await layout.reload();
+      setDraft(undefined); setPlanSaves(count => count + 1); const reread = await layout.reload();
       if (reread.error) throw new Error(`El plano se guardó, pero no se pudo releer: ${reread.error.message}`);
       setNotice('Plano de oficina guardado para esta empresa.');
     } catch (cause) { setError(cause instanceof Error ? cause.message : 'No se confirmó el plano.'); }
@@ -61,7 +63,7 @@ export function OfficeWorkspace({ campus, topology, agents, onAgent }: {
       {draft ? <span className="text-xs text-warn-ink">Plano sin guardar</span> : null}
       <a className="ml-auto text-xs text-brand-ink" href="/config?seccion=espacios" onClick={event => { onNavClick(event, '/config?seccion=espacios'); }}>Gestionar salas y asignaciones</a>
     </div>
-    <div className={mode === 'campus' ? 'min-h-0 flex-1' : 'hidden'}>{campus}</div>
+    <div key={planSaves} className={mode === 'campus' ? 'min-h-0 flex-1' : 'hidden'}>{campus}</div>
     {mode === 'plan' ? <div className="grid min-h-0 flex-1 content-start gap-3 overflow-auto p-4">
       <header className="flex flex-wrap items-center justify-between gap-2"><h2 className="m-0 text-lg">Plano de oficina</h2>
         <div className="flex flex-wrap gap-2"><Button disabled={busy || layout.loading || !!draft} onClick={() => { void layout.reload(); void quotas.reload(); }}>Releer plano y cuotas</Button>

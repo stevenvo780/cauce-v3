@@ -6,7 +6,7 @@ import type { OfficeAgent } from './office-agent';
 /** Hover card of an agent: name, state, why, and the group it sits with. */
 export function AgentTip({ agent }: { agent: OfficeAgent }) {
   const tone = TONE_CLASS[STATE_TONE[agent.state]];
-  const others = agent.groups ?? [];
+  const others = agent.groupLabels ?? [];
   return (
     <>
       <strong>{agent.name}</strong>

@@ -10,7 +10,7 @@ const PRIMARY_PREFIX = 'grp.';
 /** Dots shown next to a name tag before the rest collapse into «+N». */
 export const MAX_DOTS = 3;
 
-export interface Membership { team: OfficeTeam; groups: readonly string[] }
+export interface Membership { team: OfficeTeam; groups: readonly string[]; groupLabels: readonly string[] }
 
 interface RosterAgent {
   tenantId: string;
@@ -80,11 +80,13 @@ export function membershipOf(agent: RosterAgent, directory: GroupDirectory): Mem
     .filter((id) => agent.roomMembership[id] !== false && directory.order.has(keyOf(id)))
     .sort((a, b) => rank(a) - rank(b));
   const primary = enabled.find((id) => id.startsWith(PRIMARY_PREFIX)) ?? enabled.at(0);
-  if (!primary) return { team: NO_TEAM, groups: [] };
+  if (!primary) return { team: NO_TEAM, groups: [], groupLabels: [] };
   const key = keyOf(primary);
+  const others = enabled.filter((id) => id !== primary);
   return {
     team: { id: key, label: directory.labels.get(key) ?? primary, hue: directory.hues.get(key) },
-    groups: enabled.filter((id) => id !== primary).map(keyOf),
+    groups: others.map(keyOf),
+    groupLabels: others.map((id) => directory.labels.get(keyOf(id)) ?? id),
   };
 }
 

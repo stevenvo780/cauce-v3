@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
@@ -49,4 +50,23 @@ it('un conflicto conserva el borrador y un lector no puede editar ni guardar', a
   expect(await screen.findByRole('alert')).toHaveTextContent('La versión cambió'); expect(screen.getByText('Plano sin guardar')).toBeVisible();
   view.unmount(); renderWithApi(workspace(vi.fn(), 'reader')); await user.click(screen.getByRole('button', { name: 'Plano editable' }));
   expect(await screen.findByRole('button', { name: 'General One' })).toBeDisabled(); expect(screen.getByRole('button', { name: 'Guardar plano' })).toBeDisabled();
+});
+it('vuelve a montar el campus tras guardar el plano para que lea el plano nuevo', async () => {
+  let version = 0;
+  server.use(http.get('*/v3/console/office/layout', () => HttpResponse.json({ company_id: 'one', version, rooms: [] })),
+    http.put('*/v3/console/office/layout', async ({ request }) => {
+      const input = await request.json() as { rooms: OfficeRoom[] }; version += 1;
+      return HttpResponse.json({ company_id: 'one', version, rooms: input.rooms }); }));
+  const mounts = vi.fn();
+  function Campus() { useEffect(() => { mounts(); }, []); return <p>Campus actual</p>; }
+  const user = userEvent.setup();
+  renderWithApi(<CompanySessionProvider state={{ authenticated: true, authority: { role: 'company_owner', scope: 'company', home_company: 'one', acting_company: 'one', platform_override: false } }}>
+    <OfficeWorkspace campus={<Campus />} topology={topology} agents={[]} onAgent={vi.fn()} /></CompanySessionProvider>);
+  await user.click(screen.getByRole('button', { name: 'Plano editable' }));
+  await waitFor(() => { expect(screen.getByRole('button', { name: 'General One' })).toBeEnabled(); });
+  await user.click(screen.getByRole('button', { name: 'General One' })); await user.click(screen.getByRole('button', { name: 'Añadir parte' }));
+  expect(mounts).toHaveBeenCalledTimes(1);
+  await user.click(screen.getByRole('button', { name: 'Guardar plano' }));
+  expect(await screen.findByText('Plano de oficina guardado para esta empresa.')).toBeVisible();
+  expect(mounts).toHaveBeenCalledTimes(2);
 });
