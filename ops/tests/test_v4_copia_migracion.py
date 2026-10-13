@@ -464,6 +464,59 @@ class SecurityTests(Scoped):
                          'SENTINEL-LONGGITDIR-9f3a'):
             self.assertNotIn(sentinel.encode(), stored, sentinel)
 
+    def test_invisible_and_homoglyph_credential_spellings_are_excluded(self):
+        secret = 'miClaveSuperSecreta123'
+        write(self.source / 'datos/nota-wj.txt', 'pass\u2060word = ' + secret + '\n')
+        write(self.source / 'datos/nota-shy.txt', 'pass\u00adword = ' + secret + '\n')
+        write(self.source / 'datos/nota-rho.txt', '\u03c1assword = ' + secret + '\n')
+        write(self.source / 'datos/nota-nu.txt', 'cla\u03bde = ' + secret + '\n')
+        write(self.source / 'datos/nota-portador-wj.txt', 'Bea\u2060rer abcdefgh12345678ijklmnop\n')
+        write(self.source / 'datos/nota-cabecera-wj.txt', 'Coo\u2060kie: session=abcdefgh12345678secretvalue\n')
+        write(self.source / 'datos/nota-cabecera-muchas.txt',
+              'Cookie: ' + '; '.join(['a=b'] * 50) + '; session=abcdefghijklmnopSECRET\n')
+        write(self.source / 'datos/\u03c1assword.txt', 'solo-nombre-rho\n')
+        write(self.source / 'datos/pass\u2060word.txt', 'solo-nombre-wj\n')
+        write(self.source / 'datos/sess\u2060ion.txt', 'solo-nombre-sesion\n')
+        manifest = self.make_copy()
+        reasons = {item['path']: item['reason'] for item in manifest['omissions']}
+        for path in ('datos/nota-wj.txt', 'datos/nota-shy.txt', 'datos/nota-rho.txt', 'datos/nota-nu.txt',
+                     'datos/nota-portador-wj.txt', 'datos/nota-cabecera-wj.txt', 'datos/nota-cabecera-muchas.txt'):
+            self.assertEqual(reasons[path], 'sensitive-content', path)
+        self.assertEqual(reasons['datos/\u03c1assword.txt'], 'credential')
+        self.assertEqual(reasons['datos/pass\u2060word.txt'], 'credential')
+        self.assertEqual(reasons['datos/sess\u2060ion.txt'], 'session')
+        stored = self.copied_bytes()
+        for marker in (secret, 'abcdefgh12345678ijklmnop', 'abcdefgh12345678secretvalue',
+                       'abcdefghijklmnopSECRET', 'solo-nombre-rho', 'solo-nombre-wj', 'solo-nombre-sesion'):
+            self.assertNotIn(marker.encode(), stored, marker)
+
+    def test_git_pack_symlink_outside_the_copy_is_not_bundled(self):
+        import shutil
+
+        outside = self.root / 'fuera-pack'
+        git(self.root, 'init', '-q', '-b', 'main', str(outside))
+        write(outside / 'secreto.txt', 'SENTINEL-PACK-9f3a\n')
+        git(outside, 'add', '-A')
+        git(outside, 'commit', '-q', '-m', 'fuera')
+        git(outside, 'repack', '-a', '-d', '-q')
+        inside = self.source / 'proyecto/pack-in'
+        git(self.root, 'init', '-q', '-b', 'main', str(inside))
+        write(inside / 'local.txt', 'local-pack\n')
+        git(inside, 'add', '-A')
+        git(inside, 'commit', '-q', '-m', 'local')
+        pack = inside / '.git/objects/pack'
+        if pack.is_symlink() or pack.exists():
+            shutil.rmtree(pack)
+        pack.symlink_to(outside / '.git/objects/pack')
+        git(inside, 'update-ref', 'refs/heads/main', git(outside, 'rev-parse', 'HEAD'))
+        manifest = self.make_copy()
+        repos = {repo['path'] for repo in manifest['repositories']}
+        reasons = {item['path']: item['reason'] for item in manifest['omissions']}
+        self.assertEqual(reasons['proyecto/pack-in/.git'], 'unsafe-git-link')
+        self.assertNotIn('proyecto/pack-in', repos)
+        self.assertIn('proyecto', repos)
+        self.assertNotIn(b'SENTINEL-PACK-9f3a', self.copied_bytes() + self.bundle_bytes())
+
     def test_finding3_paths_swapped_for_symlinks_mid_copy_are_refused(self):
         original = copia.open_verified
 

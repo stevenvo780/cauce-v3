@@ -56,15 +56,14 @@ SENSITIVE_CONTENT = re.compile(
     rb'|\bxai-[A-Za-z0-9]{20,}|\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}'
     rb'|hooks\.slack\.com/services/[A-Za-z0-9/]{10,}'
     rb'|://[^\s/:@"\'<>]+:[^\s/@"\'<>]+@|authorization["\']?\s*[:=]\s*["\']?(?:bearer|basic|token)\s+[A-Za-z0-9._~+/=-]{8,}'
-    rb'|\bbearer(?:\s+|\s*[:=]\s*)["\']?[A-Za-z0-9._~+/=-]{10,}|\bcookie\s*:(?:\s*[^\s;]{1,7}\s*;\s*){0,40}\s*[^\s;]{8,}'
+    rb'|\bbearer(?:\s+|\s*[:=]\s*)["\']?[A-Za-z0-9._~+/=-]{10,}|\bcookie\s*:[^\r\n]{8,}'
     rb'|["\']?[a-z0-9_-]*(?:secret|token|password|passwd|passphrase|contrasena|contrase(?:\xc3\xb1|n)a|clave|credential'
     rb'|api[_-]?key|apikey|private[_-]?key)[a-z0-9_-]*["\']?\s*[:=]\s*["\']?(?!\$\{|process\.env)[^\s"\',;]{8,}',
     re.I)
 CONFUSABLES = str.maketrans({
-    '\u0430': 'a', '\u0432': 'b', '\u043a': 'k', '\u0441': 'c', '\u0435': 'e', '\u043e': 'o', '\u0440': 'p', '\u0442': 't',
-    '\u0445': 'x', '\u0443': 'y', '\u0455': 's', '\u0456': 'i', '\u0458': 'j', '\u04bb': 'h',
-    '\u03b1': 'a', '\u03b5': 'e', '\u03b9': 'i', '\u03ba': 'k', '\u03bf': 'o', '\u03c4': 't'})
-ZERO_WIDTH = frozenset('\u200b\u200c\u200d\ufeff')
+    '\u0430': 'a', '\u0432': 'b', '\u0433': 'r', '\u0434': 'd', '\u043a': 'k', '\u043c': 'm', '\u043d': 'h', '\u043f': 'n', '\u0441': 'c', '\u0435': 'e', '\u043e': 'o', '\u0440': 'p', '\u0442': 't', '\u0445': 'x', '\u0443': 'y', '\u044f': 'r',
+    '\u0454': 'e', '\u0455': 's', '\u0456': 'i', '\u0458': 'j', '\u04bb': 'h', '\u04cf': 'l', '\u03b1': 'a', '\u03b2': 'b', '\u03b3': 'r', '\u03b4': 'd', '\u03b5': 'e', '\u03b7': 'n', '\u03b8': 'o', '\u03b9': 'i', '\u03ba': 'k', '\u03bc': 'u',
+    '\u03bd': 'v', '\u03bf': 'o', '\u03c0': 'n', '\u03c1': 'p', '\u03c2': 's', '\u03c3': 's', '\u03c4': 't', '\u03c5': 'u', '\u03c7': 'x', '\u03c9': 'w'})
 OVERLAP = 4096
 CHUNK = 1 << 20
 OPEN_DIRECTORY = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
@@ -91,8 +90,8 @@ def seal(doc: dict) -> str:
 
 
 def fold_text(value: str) -> str:
-    folded = unicodedata.normalize('NFKC', value).casefold().translate(CONFUSABLES)
-    return ''.join(character for character in folded if character not in ZERO_WIDTH)
+    folded = unicodedata.normalize('NFKD', value).casefold().translate(CONFUSABLES)
+    return ''.join(character for character in folded if unicodedata.category(character) not in ('Cf', 'Mn', 'Me'))
 
 
 def sensitive_bytes(raw: bytes) -> bool:
@@ -243,8 +242,7 @@ class Copier:
             return True
         text = content.decode('utf-8', 'surrogateescape').rstrip('\r\n')
         target = text[len('gitdir:'):].lstrip(' \t') if text.startswith('gitdir:') else ''
-        if target and not os.path.isabs(target):
-            target = os.path.join(host_directory, target)
+        target = os.path.join(host_directory, target) if target and not os.path.isabs(target) else target
         return len(content) != size or not target or '\x00' in target or not self.inside_roots(target)
 
     def git_metadata_outside(self, directory: int) -> bool:
@@ -257,19 +255,21 @@ class Copier:
             reported = git('.', 'rev-parse', *arguments, check=False, fd=directory).strip()
             return reported if not reported or os.path.isabs(reported) else os.path.join(host_directory, reported)
 
+        def linked(root: str) -> bool:
+            return any(not self.inside_roots(os.path.join(base, name)) for base, dirs, files in os.walk(root)
+                       for name in dirs + files if os.path.islink(os.path.join(base, name)))
+
         paths = (located('--git-common-dir'), located('--git-dir'), located('--git-path', 'objects'))
-        if not all(paths) or not all(self.inside_roots(path) for path in paths):
+        if not all(paths) or not all(self.inside_roots(path) for path in paths) \
+                or any(linked(os.path.realpath(path)) for path in paths[:2]):
             return True
         alternates = os.path.join(os.path.realpath(paths[2]), 'info', 'alternates')
         try:
             info = os.lstat(alternates)
             if not stat.S_ISREG(info.st_mode) or info.st_size > 65536:
                 return True
-            descriptor = os.open(alternates, OPEN_FILE)
-            try:
-                raw = os.read(descriptor, info.st_size)
-            finally:
-                os.close(descriptor)
+            with os.fdopen(os.open(alternates, OPEN_FILE), 'rb') as handle:
+                raw = handle.read(info.st_size)
         except FileNotFoundError:
             return False
         except OSError:
@@ -279,7 +279,7 @@ class Copier:
         database = os.path.dirname(os.path.dirname(alternates))
         for item in (line.strip() for line in raw.decode('utf-8', 'surrogateescape').splitlines()):
             candidate = item if not item or os.path.isabs(item) else os.path.join(database, item)
-            if item and not item.startswith('#') and not self.inside_roots(candidate):
+            if item and not item.startswith('#') and (not self.inside_roots(candidate) or linked(os.path.realpath(candidate))):
                 return True
         return False
 
