@@ -201,8 +201,7 @@ function ConsoleShell({ gate }: { gate: AuthGateState }) {
     redirect(`/${routeId}${detalle ? `/${detalle}` : ''}`);
   }, [aliasedFrom, params, routeId]);
 
-  /* The rewrite of `/audit` to `/observability` used to take the requested tab with it. The intent
-     survives it —the view is still loading— and is dropped on leaving the route. */
+  /* Preserve the audit tab requested by the `/audit` alias until navigation leaves observability. */
   const auditoriaPedida = useRef(false);
   if (aliasedFrom === 'audit') auditoriaPedida.current = true;
   else if (routeId !== 'observability') auditoriaPedida.current = false;
