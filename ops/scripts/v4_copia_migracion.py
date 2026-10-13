@@ -289,9 +289,9 @@ class Copier:
         paths = (located('--git-common-dir'), located('--git-dir'), located('--git-path', 'objects'))
         if not all(paths) or not all(self.inside_roots(path) for path in paths) or any(self.git_store_escapes(os.path.realpath(path)) for path in paths):
             return True
-        def alternates_escape(objects: str, seen: set[str]) -> bool:
+        def alternates_escape(objects: str, seen: set[str], depth: int = 0) -> bool:
             real = os.path.realpath(objects)
-            if real in seen:
+            if depth > 5 or real in seen:
                 return False
             seen.add(real)
             alternates = os.path.join(real, 'info', 'alternates')
@@ -314,7 +314,7 @@ class Copier:
                     resolved = os.path.realpath(candidate)
                 except (OSError, ValueError):
                     return True
-                if not os.path.isdir(resolved) or not self.inside_roots(resolved) or self.git_store_escapes(resolved) or alternates_escape(resolved, seen):
+                if not os.path.isdir(resolved) or not self.inside_roots(resolved) or self.git_store_escapes(resolved) or alternates_escape(resolved, seen, depth + 1):
                     return True
             return False
         return alternates_escape(paths[2], set())

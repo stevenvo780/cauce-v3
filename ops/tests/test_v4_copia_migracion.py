@@ -616,6 +616,7 @@ class SecurityTests(Scoped):
                 own = os.path.realpath(inn_x / '.git/objects')
                 write(info, f'"{own}"X{os.path.relpath(objects, own)}\n')
             point_at(inn_x, out_x)
+        write(inside_repo('con-alt-hondo') / '.git/objects/info/alternates', f'{(lambda hold: (hold.append(self.source / "proyecto" / "alt-ancla"), hold[0].mkdir(), [hold.append(write((n := self.source / "proyecto" / "alt-hondo" / str(i)) / "info/alternates", f"{hold[-1]}\n") or n) for i in range(1200)], hold[-1])[-1])([])}\n')
         manifest = self.make_copy()
         repos = {repo['path'] for repo in manifest['repositories']}
         reasons = {item['path']: item['reason'] for item in manifest['omissions']}
@@ -623,8 +624,7 @@ class SecurityTests(Scoped):
                      'proyecto/enlace-fichero/.git', 'proyecto/con-alt-encadenado/.git', 'proyecto/con-alt-espacio/.git', 'proyecto/con-alt-cr/.git', 'proyecto/con-alt-comillas/.git', 'proyecto/con-alt-octal/.git', 'proyecto/con-alt-cola/.git'):
             self.assertEqual(reasons[path], 'unsafe-git-link', path)
             self.assertNotIn(path.removesuffix('/.git'), repos)
-        self.assertIn('proyecto/duro-dentro', repos)
-        self.assertIn('proyecto/duro-gemelo', repos)
+        self.assertTrue({'proyecto/duro-dentro', 'proyecto/duro-gemelo', 'proyecto/con-alt-hondo'} <= repos)
         stored = self.copied_bytes() + self.bundle_bytes()
         for sentinel in ('SENTINEL-NESTED-9f3a', 'SENTINEL-HARD-9f3a', 'SENTINEL-BRIDGE-9f3a',
                          'SENTINEL-FILELINK-9f3a', 'SENTINEL-CHAINED-ALT-9f3a', 'SENTINEL-PADDED-ALT-9f3a', 'SENTINEL-CR-ALT-9f3a', 'SENTINEL-QUOTED-ALT-9f3a', 'SENTINEL-OCTAL-ALT-9f3a', 'SENTINEL-TAIL-ALT-9f3a'):
