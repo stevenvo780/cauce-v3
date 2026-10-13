@@ -35,6 +35,25 @@ describe('harness definitions seed migration', () => {
       .toEqual([{ id: 'fake2' }, { id: 'muse' }]);
   }, 120_000);
 
+  it('preserves a seeded harness edited by the operator when reversing and reapplying', async () => {
+    const pool = requireValue(current, 'case database').adminPool;
+    await applyMigrationsThrough(pool, version);
+    expect((await pool.query("SELECT updated_at=created_at AS unedited FROM harness_definitions WHERE id='muse'")).rows)
+      .toEqual([{ unedited: true }]);
+    const edited = (await pool.query(`UPDATE harness_definitions SET display_name='Operator Muse',
+      command='operator-muse',capabilities='["messages.receive"]'::jsonb,enabled=false,updated_at=now()
+      WHERE id='muse' RETURNING *`)).rows;
+    expect((await pool.query("SELECT updated_at>created_at AS edited FROM harness_definitions WHERE id='muse'")).rows)
+      .toEqual([{ edited: true }]);
+    await pool.query(await readFile(new URL(`../migrations/down/${version}`, import.meta.url), 'utf8'));
+    expect((await pool.query("SELECT * FROM harness_definitions WHERE id='muse'")).rows).toEqual(edited);
+    expect((await pool.query("SELECT id FROM harness_definitions WHERE id IN ('grok','fake2')")).rows).toEqual([]);
+    await applyMigrationsThrough(pool, version);
+    expect((await pool.query("SELECT * FROM harness_definitions WHERE id='muse'")).rows).toEqual(edited);
+    expect((await pool.query("SELECT id FROM harness_definitions WHERE id IN ('grok','fake2') ORDER BY id")).rows)
+      .toEqual([{ id: 'fake2' }, { id: 'grok' }]);
+  }, 120_000);
+
   it('seeds the descriptor harnesses without a reader row missing, reverses and reapplies', async () => {
     const pool = requireValue(current, 'case database').adminPool;
     expect((await pool.query("SELECT id FROM harness_definitions WHERE id IN ('grok','muse','fake2')")).rows).toEqual([]);
