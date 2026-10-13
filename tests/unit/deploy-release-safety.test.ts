@@ -98,6 +98,7 @@ interface Options {
   appliedAfter?: string[];
   backupAgeHours?: number;
   failure?: string;
+  countFailure?: 'comm' | 'grep';
   composeModel?: object;
   realCompose?: boolean;
   sessions?: string;
@@ -126,6 +127,11 @@ function deploy(options: Options = {}) {
   writeFileSync(join(repository, 'deploy/postgres/postgres-tls-entrypoint.sh'), '');
   for (const name of options.migrations ?? ['001_fixture.sql']) writeFileSync(join(migrations, name), '');
   for (const name of ['docker', 'git', 'id', 'date', 'systemctl', 'backup-monitor', 'stat']) writeFileSync(join(binaries, name), mock, { mode: 0o700 });
+  const countFunctions = join(directory, 'count-functions.sh');
+  writeFileSync(countFunctions, String.raw`
+comm() { if [ -f "$MOCK_LOG.migrator" ] && [ "$MOCK_COUNT_FAILURE" = comm ]; then echo 'simulated comm failure' >&2; return 2; fi; command comm "$@"; }
+grep() { if [ -f "$MOCK_LOG.migrator" ] && [ "$MOCK_COUNT_FAILURE" = grep ]; then echo 'simulated grep failure' >&2; return 2; fi; command grep "$@"; }
+`);
   for (const name of ['refresh-observability.sh', 'smoke.sh']) writeFileSync(join(repository, 'deploy', name), mock, { mode: 0o700 });
   const instanceFile = join(directory, 'prod.env');
   const initialInstance = `COMPOSE_PROJECT_NAME=release-fixture
@@ -149,6 +155,7 @@ ${options.instance ?? ''}`;
     cwd: directory, encoding: 'utf8', input: 'no\n', timeout: 30_000,
     env: {
       ...inherited,
+      BASH_ENV: countFunctions,
       PATH: `${binaries}:${process.env.PATH ?? ''}`,
       DOCKER_CONFIG: dockerConfig,
       CAUCE_ENV_FILE: instanceFile,
@@ -166,6 +173,7 @@ ${options.instance ?? ''}`;
       MOCK_PG_CONTAINER: 'release-fixture-postgres-1',
       MOCK_BACKUP_AGE_HOURS: String(options.backupAgeHours ?? 1),
       MOCK_FAILURE: options.failure ?? '',
+      MOCK_COUNT_FAILURE: options.countFailure ?? '',
       MOCK_REAL_COMPOSE: options.realCompose ? '1' : '0',
       MOCK_REAL_PATH: process.env.PATH ?? '',
       ...(options.applied ? { MOCK_APPLIED: options.applied.join(',') } : {}),
@@ -450,6 +458,21 @@ describe('deploy bind sources', () => {
 });
 
 describe('deploy pins and migrator', () => {
+  it.each(['comm', 'grep'] as const)('preserves the failure context and previous pins when %s fails after the migrator', countFailure => {
+    const result = deploy({ failure: 'run', countFailure, migrations: ['001_fixture.sql', '002_fixture.sql'],
+      applied: ['001_fixture.sql'], appliedAfter: ['001_fixture.sql', '002_fixture.sql'] });
+    expect(result.status, result.stderr).toBe(1);
+    expect(result.composeRuns('run')).toHaveLength(1);
+    expect(result.stderr).toContain('migracion fallida');
+    expect(result.stderr).toContain('sigue con los pins anteriores');
+    expect(result.stderr).toContain('indeterminado');
+    expect(result.stderr).toContain('no pude contar migraciones pendientes tras el fallo');
+    expect(result.instance()).toBe(result.initialInstance);
+    expect(result.composeRuns('up')).toEqual([]);
+    expect(result.leftovers()).toEqual([]);
+    expect(existsSync(result.history)).toBe(false);
+  });
+
   it('leaves prod.env untouched when the migrator fails', () => {
     const result = deploy({ failure: 'run' });
     expect(result.status, result.stderr).toBe(1);

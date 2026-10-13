@@ -689,8 +689,10 @@ if ! "${CANDIDATE_COMPOSE[@]}" run --rm -T "${MIGRATOR_ENV[@]}" migrator; then
   terminate_migrator
   if applied_now="$(docker exec "$PG_CONTAINER" psql -XAtq -v ON_ERROR_STOP=1 -U "$PG_USER" -d "$PG_DB" \
       -c 'SELECT version FROM schema_migrations' 2>/dev/null)"; then
-    pending_now="$(count_unapplied_migrations "$applied_now")"
-    if [ "$pending_now" = 0 ]; then
+    pending_now="$(count_unapplied_migrations "$applied_now")" || pending_now=indeterminado
+    if [ "$pending_now" = indeterminado ]; then
+      migration_state="indeterminado: no pude contar migraciones pendientes tras el fallo"
+    elif [ "$pending_now" = 0 ]; then
       migration_state="todas aplicadas; repite deploy.sh para fijar pins"
     elif [ "$pending_now" = "$MIGRATION_ATTEMPT_PENDING" ]; then
       migration_state="nada aplicado"
