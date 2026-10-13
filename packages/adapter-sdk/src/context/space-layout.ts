@@ -1,6 +1,5 @@
 import { createHash } from 'node:crypto';
-import { hasGovernanceSensitivePathSegment } from '@cauce/protocol';
-import { canonicalVersionedContext } from './versioned-context-files.js';
+import { deliveredVersionedContext } from './versioned-context-files.js';
 import { retireSpaceFile } from './space-retire.js';
 import { lstat, mkdir, realpath } from 'node:fs/promises';
 import { isAbsolute, join, resolve } from 'node:path';
@@ -30,7 +29,7 @@ export interface SpaceContextWriteResult {
   readonly documents: readonly { readonly path: string; readonly sha256: string }[];
 }
 export async function writeSpaceContext(root: string, descriptor: HarnessDescriptor, version: SpaceContextVersion): Promise<SpaceContextWriteResult> {
-  const valid = parseHarnessDescriptor(descriptor); const files = canonicalVersionedContext(version).files;
+  const valid = parseHarnessDescriptor(descriptor); const files = deliveredVersionedContext(version).files;
   await prepareSpaceLayout(root);
   const statePath = join(root, 'config', 'context-state.json');
   const previousState = discoReal.leer(statePath, 262_144);
@@ -49,7 +48,6 @@ export async function writeSpaceContext(root: string, descriptor: HarnessDescrip
       if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('invalid context retirement proof');
       const file = raw as Record<string, unknown>;
       if (typeof file.path !== 'string' || !/^(?:context|directives)\/[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)*\.(?:md|txt|json|yaml|yml)$/u.test(file.path)
-        || file.path.split('/').some(hasGovernanceSensitivePathSegment)
         || typeof file.sha256 !== 'string' || !/^[a-f0-9]{64}$/u.test(file.sha256)) throw new Error('invalid context retirement proof');
       previousHashes.set(file.path, file.sha256);
       if (!files.some(current => current.path === file.path) && !retired.some(current => current.path === file.path)) retired.push({ path: file.path, sha256: file.sha256 });

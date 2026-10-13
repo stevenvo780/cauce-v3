@@ -4,7 +4,7 @@ import { dirname, join, relative, sep } from 'node:path';
 
 const VERSIONABLE_PATH = /^(?:context|directives)\/[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)*\.(?:md|txt|json|yaml|yml)$/u;
 import type { VersionedContext } from '@cauce/protocol';
-import { canonicalVersionedContext } from '../../context/versioned-context-files.js';
+import { canonicalVersionedContext, deliveredVersionedContext } from '../../context/versioned-context-files.js';
 import { discoReal } from '../../context/siembra-del-perfil.js';
 import { ContextIngestError, type NativeContextIngest } from '../context-ingest-client.js';
 import { AdapterError } from '../errors.js';
@@ -112,7 +112,7 @@ export async function ingestLocalContextEdits(root: string, base: VersionedConte
     throw new AdapterError('VERSIONED_CONTEXT_CONFLICT',
       `Server context version ${String(result.desired_version)} advanced beyond the locally applied version ${String(baseVersion)}; local edits were preserved`, false);
   }
-  const effective = canonicalVersionedContext(result.context);
+  const effective = deliveredVersionedContext(result.context);
   if (effective.company_id !== base.company_id || effective.tenant_id !== base.tenant_id || effective.alias !== base.alias) {
     throw new AdapterError('INVALID_VERSIONED_CONTEXT', 'Ingested context scope differs', false);
   }

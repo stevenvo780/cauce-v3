@@ -6,7 +6,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { definitionFromDescriptor, executeHarnessOperation, packagedHarnessDescriptor, packagedHarnessIds, parseHarnessDescriptor } from '../src/context/harness-descriptor.js';
 import { prepareSpaceLayout, SPACE_DIRECTORIES, writeSpaceContext } from '../src/context/space-layout.js';
-import { contextSentKey, validateVersionedContext, versionedContextDelivery } from '../src/sdk/engine/versioned-context.js';
+import { contextSentKey, validateVersionedContext, versionedContextDelivery, VersionedContextTurn } from '../src/sdk/engine/versioned-context.js';
+import { canonicalVersionedContext } from '../src/context/versioned-context-files.js';
 import { protocolPrompt } from '../src/harnesses/shared/prompt.js';
 import { delivery } from './engine-fixtures.js';
 
@@ -101,6 +102,42 @@ const promptBase = { self_alias: 'zeus', sender_alias: 'kant', tenant_id: 'Steve
   room_id: 'grp.steven', channel: 'cauce', agent_message: false, message_type: 'command', routing_targets: [] };
 const contextOf = (files: { path: string; content: string }[]) => ({ company_id: 'context_alpha', tenant_id: 'Steven',
   alias: 'zeus', version: 3, digest: createHash('sha256').update(JSON.stringify(files)).digest('hex'), files });
+
+test('gateway-approved content materializes even when the local write scanner would reject it', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'cauce-space-delivered-'));
+  const context = contextOf([{ path: 'context/mission.md', content: 'Approved\u200b gateway instructions.' }]);
+  assert.throws(() => canonicalVersionedContext(context), /content is unsafe/u);
+  try {
+    const directRoot = join(root, 'direct');
+    const written = await writeSpaceContext(directRoot, await packagedHarnessDescriptor('codex'), context);
+    assert.equal(written.digest, context.digest);
+    assert.equal(await readFile(join(directRoot, 'context/mission.md'), 'utf8'), context.files[0]?.content);
+    const turnRoot = join(root, 'turn');
+    const turn = new VersionedContextTurn(turnRoot);
+    await turn.materialize({ ...delivery('delivered'), recipient_alias: 'zeus', versioned_context: context }, 'Steven', 'codex');
+    assert.equal(turn.materializedVersion, 3);
+    assert.equal(turn.materializedDigest, context.digest);
+    assert.equal(await readFile(join(turnRoot, 'context/mission.md'), 'utf8'), context.files[0]?.content);
+    assert.ok((await readFile(join(turnRoot, 'AGENTS.md'), 'utf8')).includes(context.files[0]?.content ?? ''));
+    await turn.verify();
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('gateway-approved paths preserve their receipts across repeated materialization and retirement', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'cauce-space-delivered-path-'));
+  const context = contextOf([{ path: 'context/auth.json', content: '{}' }]);
+  const descriptor = await packagedHarnessDescriptor('codex');
+  assert.throws(() => canonicalVersionedContext(context), /content is unsafe/u);
+  try {
+    await writeSpaceContext(root, descriptor, context);
+    await writeSpaceContext(root, descriptor, context);
+    assert.equal(await readFile(join(root, 'context/auth.json'), 'utf8'), '{}');
+    const next = { ...contextOf([{ path: 'context/mission.md', content: 'Updated instructions.' }]), version: 4 };
+    await writeSpaceContext(root, descriptor, next);
+    await assert.rejects(() => readFile(join(root, 'context/auth.json')), { code: 'ENOENT' });
+    assert.equal(await readFile(join(root, 'context/mission.md'), 'utf8'), 'Updated instructions.');
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
 
 test('materialized context travels as version, digest and paths only', () => {
   const context = contextOf([{ path: 'context/mission.md', content: 'CUERPO-LARGO' },

@@ -9,6 +9,7 @@ import { HarnessAdapter, fakeDefinition } from '../src/harnesses/index.js';
 import type { NativeContextIngest, NativeContextIngestInput, NativeContextIngestResult } from '../src/sdk/context-ingest-client.js';
 import { DurableStore } from '../src/sdk/durable-store.js';
 import { AdapterEngine } from '../src/sdk/engine.js';
+import { canonicalVersionedContext } from '../src/context/versioned-context-files.js';
 import type { AdapterLog, CommandRunner, DeliveryEvent } from '../src/sdk/types.js';
 import { conversation, delivery, SUCCESS } from './engine-fixtures.js';
 
@@ -94,6 +95,41 @@ test('files added or normalized by the server snapshot are materialized after in
   assert.equal(f.store.getDelivery('ingest-profile-second')?.state, 'done');
   assert.equal(await readFile(join(f.space, 'context/profile.json'), 'utf8'), '{"role":"helper"}\n');
   assert.equal(await f.stateVersion(), 2);
+});
+
+test('an ingest response accepted by the gateway materializes despite a stricter local scanner', { timeout: 6000 }, async t => {
+  const content = 'Gateway-approved\u200b annotation.';
+  const calls: NativeContextIngestInput[] = [];
+  const ingest: NativeContextIngest = { ingest: async input => {
+    calls.push(input);
+    const context = snapshot(2, [...input.files, { path: 'directives/server.md', content }]);
+    assert.throws(() => canonicalVersionedContext(context), /content is unsafe/u);
+    return { state: 'ingested', context };
+  } };
+  const f = await fixture(t, ingest);
+  await f.engine.handleDelivery(claimed('delivered-ingest-first', snapshot(1, v1Files)));
+  await writeFile(f.path, 'Safe local edit.');
+  await f.engine.handleDelivery(claimed('delivered-ingest-second', snapshot(1, v1Files)));
+  assert.equal(f.store.getDelivery('delivered-ingest-second')?.state, 'done');
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0]?.files, [{ path: 'context/mission.md', content: 'Safe local edit.' }]);
+  assert.equal(await readFile(join(f.space, 'directives/server.md'), 'utf8'), content);
+  assert.ok((await readFile(join(f.space, 'AGENTS.md'), 'utf8')).includes(content));
+  assert.equal(await f.stateVersion(), 2);
+});
+
+test('a locally written invisible character is quarantined before any gateway ingest', { timeout: 6000 }, async t => {
+  const calls: NativeContextIngestInput[] = [];
+  const f = await fixture(t, accepting(calls));
+  await f.engine.handleDelivery(claimed('unsafe-ingest-first', snapshot(1, v1Files)));
+  const localContent = 'Unsafe\u200b local edit.';
+  await writeFile(f.path, localContent);
+  await f.engine.handleDelivery(claimed('unsafe-ingest-second', snapshot(1, v1Files)));
+  assert.equal(f.store.getDelivery('unsafe-ingest-second')?.state, 'done');
+  assert.equal(calls.length, 0);
+  assert.equal(await readFile(f.path, 'utf8'), 'Version 1 instructions.');
+  assert.equal(await readFile(join(f.space, 'config/conflicts/context/mission.md.conflict'), 'utf8'), localContent);
+  assert.equal(await f.stateVersion(), 1);
 });
 
 test('a server version that already contains the local edit reconciles without ingesting', { timeout: 6000 }, async t => {

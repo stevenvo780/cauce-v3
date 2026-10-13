@@ -1,4 +1,4 @@
-import { canonicalVersionedContext } from '../../context/versioned-context-files.js';
+import { deliveredVersionedContext } from '../../context/versioned-context-files.js';
 import { packagedHarnessDescriptor } from '../../context/harness-descriptor.js';
 import { writeSpaceContext, type SpaceContextWriteResult } from '../../context/space-layout.js';
 import type { Delivery, HarnessId } from '../types.js';
@@ -60,7 +60,7 @@ export class VersionedContextTurn {
     await this.acquire(signal ?? new AbortController().signal);
     try {
       validateVersionedContext(delivery, tenant);
-      const base = canonicalVersionedContext(delivery.versioned_context);
+      const base = deliveredVersionedContext(delivery.versioned_context);
       const stateVersion = await readSpaceContextStateVersion(this.root);
       if (stateVersion !== undefined && stateVersion > base.version) {
         this.degraded = { code: 'context_superseded', paths: [] };
@@ -157,7 +157,7 @@ export class VersionedContextTurn {
 export function validateVersionedContext(delivery: Delivery, tenant: string | undefined): void {
   const raw = delivery.versioned_context;
   if (raw === undefined) return;
-  const context = canonicalVersionedContext(raw);
+  const context = deliveredVersionedContext(raw);
   if (context.tenant_id !== (tenant ?? delivery.tenant_id) || context.alias !== delivery.recipient_alias
     || (delivery.company_context !== undefined && delivery.company_context.company_id !== context.company_id)) throw new AdapterError('INVALID_VERSIONED_CONTEXT', 'Versioned context scope or digest differs', false);
 }
