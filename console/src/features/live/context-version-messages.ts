@@ -2,13 +2,15 @@ import { ApiError } from '../../api/client/core';
 
 export interface ApplicationNotice { readonly message: string; readonly pending: boolean }
 
+const UNREADABLE_VERSION_MESSAGE = 'La versión actual no se puede leer. Restaura una versión anterior desde el historial.';
+
 /** Server application codes. `pending` = the version will be adopted without operator action. */
 const APPLICATION: Record<string, ApplicationNotice> = {
   context_runtime_unsupported: { pending: false, message: 'El agente usa un adaptador sin contexto versionado: actualiza su paquete y vuelve a aplicar.' },
   context_runtime_offline: { pending: true, message: 'El agente está desconectado: la versión se aplicará cuando vuelva.' },
   context_runtime_verification_failed: { pending: true, message: 'Aún no se pudo comprobar que el agente use esta versión: se reintentará y la adoptará en su próximo turno.' },
   context_runtime_attempts_exhausted: { pending: false, message: 'Se agotaron los reintentos sin comprobar que el agente use esta versión: revisa que esté en línea y pulsa «Aplicar al agente».' },
-  context_version_unreadable: { pending: false, message: 'No se pudo leer la versión guardada para aplicarla: guarda una nueva versión del contexto y vuelve a aplicar.' },
+  context_version_unreadable: { pending: false, message: UNREADABLE_VERSION_MESSAGE },
   native_context_governed_path: { pending: false, message: 'El agente intentó cambiar archivos gobernados desde su espacio; solo puede editar context/notes/. Nada de esa edición se guardó.' },
   native_context_secret_detected: { pending: false, message: 'La edición del agente en su espacio se rechazó porque el contenido parece un secreto.' },
   native_context_too_large: { pending: false, message: 'La edición del agente en su espacio se rechazó porque supera el tamaño máximo del contexto.' },
@@ -22,6 +24,7 @@ export function applicationNotice(code: string): ApplicationNotice {
 }
 
 const REQUEST_CODES: Partial<Record<string, string>> = {
+  context_version_unreadable: UNREADABLE_VERSION_MESSAGE,
   context_version_conflict: 'Conflicto de versión: el contexto cambió mientras lo editabas. Relee las versiones y vuelve a intentarlo; tu borrador se conserva.',
   invalid_request: 'La solicitud de contexto no es válida. Revisa las rutas y el contenido.',
   context_invalid_files: 'Los archivos tienen una ruta, forma o duplicado no válido.',

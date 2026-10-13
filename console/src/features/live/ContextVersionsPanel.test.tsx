@@ -73,7 +73,7 @@ it('un conflicto de ingesta nativa se explica en español y se resuelve creando 
 it.each([
   ['context_runtime_unsupported', /adaptador sin contexto versionado: actualiza su paquete/u, 'Error de aplicación'],
   ['context_runtime_attempts_exhausted', /Se agotaron los reintentos/u, 'Error de aplicación'],
-  ['context_version_unreadable', /No se pudo leer la versión guardada/u, 'Error de aplicación'],
+  ['context_version_unreadable', /La versión actual no se puede leer\. Restaura una versión anterior desde el historial\./u, 'Error de aplicación'],
   ['context_runtime_offline', /desconectado: la versión se aplicará cuando vuelva/u, 'Aplicación pendiente'],
   ['context_runtime_verification_failed', /próximo turno/u, 'Aplicación pendiente'],
 ])('traduce %s a español y sólo lo marca como error si exige acción', async (code, text, state) => {
@@ -90,4 +90,15 @@ it('un error del servidor se muestra por código, no con su mensaje en inglés',
   await user.click(await screen.findByRole('button', { name: 'Aplicar al agente' }));
   expect(await screen.findByRole('alert')).toHaveTextContent('no está disponible');
   expect(screen.queryByText(/runtime sink missing/u)).not.toBeInTheDocument();
+});
+it('una petición con versión ilegible indica restaurar y conserva la acción del historial', async () => {
+  handlers(snapshot);
+  server.use(http.post(base + '/apply', () => HttpResponse.json({ error: 'context_version_unreadable', message: 'stored version is unreadable' }, { status: 422 })));
+  const user = userEvent.setup(); renderWithApi(<ContextVersionsPanel tenantId="One" alias="worker" canWrite />);
+  await user.click(await screen.findByRole('button', { name: 'Aplicar al agente' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent('La versión actual no se puede leer. Restaura una versión anterior desde el historial.');
+  const history = within(screen.getByRole('region', { name: 'Historial de versiones' }));
+  await user.click(history.getByRole('button', { name: 'Restaurar versión 1' }));
+  expect(screen.getByRole('button', { name: 'Confirmar restauración' })).toBeEnabled();
+  expect(screen.queryByText(/stored version is unreadable/u)).not.toBeInTheDocument();
 });
