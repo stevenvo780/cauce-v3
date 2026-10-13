@@ -1,6 +1,6 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import {
-  lockCompanyAuthority, lockConsoleHuman, StoreError,
+  boundAuthorityTimeouts, lockCompanyAuthority, lockConsoleHuman, StoreError,
   type CompanyAuthority, type ConsoleCredentialSnapshot, type ConsoleCredentialStampCheck, type ConsoleHumanSnapshot,
   type DatabaseClient, type HumanMessageOptions,
 } from '@cauce/store';
@@ -39,8 +39,8 @@ export async function consoleHumanAccess(
   const verified = async (client: DatabaseClient): Promise<ConsoleHumanSnapshot> => {
     signal.throwIfAborted();
     if (session.expiresAtMs <= Date.now()) throw new AuthorizationError();
-    const timeout = String(Math.max(1, Math.min(5000, session.expiresAtMs - Date.now())));
-    await client.query("SELECT set_config('statement_timeout', $1, true), set_config('lock_timeout', $1, true)", [timeout]);
+    const timeout = Math.max(1, Math.min(5000, session.expiresAtMs - Date.now()));
+    await boundAuthorityTimeouts(client, timeout, true);
     const credentialCheck: Readonly<ConsoleCredentialStampCheck> = Object.freeze({
       credentialStamp,
       verifyCredentialStamp: (stamp: string, current: Readonly<ConsoleCredentialSnapshot>) =>

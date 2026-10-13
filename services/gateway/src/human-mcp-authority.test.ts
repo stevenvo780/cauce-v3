@@ -486,7 +486,8 @@ describe('durable human read authority', () => {
     const f = durableFixture();
     await createHumanReadAuthority(identity({ expiresAt: (Date.now() + remaining) / 1000 }), f.pinned, signal(), f.identityStore)(f.client);
     expect(f.query).toHaveBeenCalledExactlyOnceWith(
-      "SELECT set_config('statement_timeout', $1, true), set_config('lock_timeout', $1, true)", [String(Math.min(5000, remaining))]);
+      expect.stringContaining('LEAST(COALESCE(NULLIF(setting::bigint,0),$1::bigint),$1::bigint)'),
+      [Math.min(5000, remaining), ['lock_timeout', 'statement_timeout']]);
     expect(f.query.mock.invocationCallOrder[0]).toBeLessThan(f.identityStore.lock.mock.invocationCallOrder[0] ?? 0);
   });
 
@@ -497,7 +498,7 @@ describe('durable human read authority', () => {
     const client = { query } as unknown as DatabaseClient;
     await expect(createHumanReadAuthority(identity(), f.pinned, signal())(client)).resolves.toEqual(f.pinned);
     expect(query.mock.calls.map(([sql]) => sql.replace(/\s+/gu, ' ').trim())).toEqual([
-      expect.stringContaining("set_config('statement_timeout'"),
+      expect.stringContaining('LEAST(COALESCE(NULLIF(setting::bigint,0),$1::bigint),$1::bigint)'),
       "SELECT set_config('lock_timeout','5000ms',true)",
       expect.stringMatching(/^SELECT human_id FROM human_external_identities/),
       expect.stringMatching(/FROM console_users WHERE id=\$1 FOR SHARE$/),

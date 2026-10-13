@@ -1,5 +1,5 @@
 import type { FleetOperation, FleetOperationRequest } from '@cauce/protocol';
-import { companyRevision, lockPlatformConfiguration } from './company-authority.js';
+import { companyRevision, lockCompanyConfiguration } from './company-authority.js';
 import { ConfigurationRepository } from './configuration.js';
 import { ConfigurationError } from './configuration/contracts.js';
 import { withBoundConfigurationTransaction } from './configuration/transaction.js';
@@ -19,7 +19,7 @@ export interface CompanyTransferReceipt {
 class TransferPreview<T> extends Error { constructor(readonly result: T) { super('company transfer preview'); } }
 
 async function lockTransfer(client: DatabaseClient, actor: PlatformActor): Promise<void> {
-  await lockPlatformConfiguration(client);
+  await lockCompanyConfiguration(client, actor.companyId);
   await lockPlatformActor(client, actor);
 }
 async function assertOwnedTenants(client: DatabaseClient, company: string, bundle: CompanyTransferBundle): Promise<void> {

@@ -5,6 +5,7 @@ import {
 } from './company-authority.js';
 import type { DatabaseClient, DatabasePool } from './db.js';
 import { withBoundConfigurationTransaction } from './configuration/transaction.js';
+import { boundAuthorityTimeouts } from './configuration/timeouts.js';
 import {
   ConfigurationError,
   type ConfigurationAuthorityResolver,
@@ -387,7 +388,7 @@ export class ConfigurationRepository extends ConfigurationMutations {
     client: DatabaseClient, actor: ConfigurationActor, mutation: ConfigMutation, expected?: number,
     peeked?: CompanyAuthority,
   ): Promise<{ current: CompanyAuthority; revision: number }> {
-    await client.query("SELECT set_config('lock_timeout','5000ms',true)");
+    await boundAuthorityTimeouts(client);
     peeked ??= await this.peek(client, actor);
     this.authorizeMutation(mutation, peeked);
     if (isPlatformMutation(mutation)) await lockPlatformConfiguration(client);

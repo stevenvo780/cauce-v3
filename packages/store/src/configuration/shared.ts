@@ -16,6 +16,9 @@ export function valueRequired(mutation: ValuedConfigMutation): Record<string, un
 
 export function databaseError(error: unknown): never {
   const code = error && typeof error === 'object' && 'code' in error ? String(error.code) : '';
+  if (['55P03', '40001', '40P01'].includes(code)) {
+    throw new ConfigurationError('conflict', 'authority is busy; reload and retry');
+  }
   if (['23503', '23505', '23514', '23P01'].includes(code)) {
     throw new ConfigurationError('conflict', 'configuration change violates a durable constraint');
   }

@@ -2,7 +2,7 @@ import { lockOAuthAccess } from './oauth-grant-authority.js';
 import { scopes as oauthScopes } from './oauth-authorization-types.js';
 import { randomUUID } from 'node:crypto';
 import { isAnyUuid, TenantSchema, type Tenant } from '@cauce/protocol';
-import { activeClientDelegation, lockHumanIdentity, resolveHumanIdentity, StoreError, type HumanPublishProvenance, type HumanClientProvenance,
+import { activeClientDelegation, boundAuthorityTimeouts, lockHumanIdentity, resolveHumanIdentity, StoreError, type HumanPublishProvenance, type HumanClientProvenance,
   type ConsoleCredentialStampVerifier, type DatabaseClient, type DatabasePool, type HumanIdentityKey, type HumanIdentitySnapshot } from '@cauce/store';
 import type { VerifiedOAuthIdentity } from '@cauce/mcp-fleet-monitor/gateway-http';
 import { AuthError, AuthorizationError, validatePrincipal, type Principal } from './auth.js';
@@ -164,8 +164,8 @@ function createHumanMessageAuthority(
   return async (client) => {
     signal.throwIfAborted();
     requireUnexpiredIdentity(verified);
-    const timeout = String(Math.max(1, Math.min(5000, Math.floor(verified.expiresAt * 1000 - Date.now()))));
-    await client.query("SELECT set_config('statement_timeout', $1, true), set_config('lock_timeout', $1, true)", [timeout]);
+    const timeout = Math.max(1, Math.min(5000, Math.floor(verified.expiresAt * 1000 - Date.now())));
+    await boundAuthorityTimeouts(client, timeout, true);
     const snapshot = await lock(client, key, pinned.humanId);
     let clientProvenance: HumanClientProvenance = Object.freeze({ kind: 'unknown' });
     if (verified.authorizationServer === 'local') {

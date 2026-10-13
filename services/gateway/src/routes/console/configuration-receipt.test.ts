@@ -6,6 +6,7 @@ import { DevOnlyAuthProvider } from '../../auth.js';
 import { fakePool } from '../../test-support/gateway-doubles.js';
 import type { ConsoleRouteRepository } from './contracts.js';
 import { registerConsoleOperationsRoutes } from './operations.js';
+import { databaseError } from '../../../../../packages/store/src/configuration/shared.js';
 
 const mutation: ConfigMutation = { resource: 'provider_account', action: 'create', id: 'one', value: {
   provider: 'codex', external_account_id: 'acct', payer_tenant_id: 'A', credential_ref_kind: 'env_path', credential_ref: 'PRIVATE_LOCATOR', enabled: false } };
@@ -57,6 +58,15 @@ describe('public configuration receipt validation', () => {
 });
 
 describe('public configuration receipt transport', () => {
+  it.each(['55P03', '40001', '40P01'])('returns HTTP 409 for mapped SQL contention %s', async code => {
+    const f = route(receipt);
+    f.repository.applyConfigurationChange.mockImplementation(async () => databaseError({ code, message: 'private driver details' }));
+    const response = await f.app.inject({ method: 'POST', url: '/v3/console/config/changes', headers,
+      payload: { mutation, dry_run: false, expected_revision: 6 } });
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toMatchObject({ error: 'conflict', message: 'authority is busy; reload and retry' });
+    expect(response.body).not.toContain('private driver details');
+  });
   it.each([true, false])('returns a redacted exact account receipt over HTTP with dry_run=%s', async (dry_run) => {
     const { app, repository } = route({ ...receipt, applied: !dry_run, dry_run });
     const response = await app.inject({ method: 'POST', url: '/v3/console/config/changes', headers,

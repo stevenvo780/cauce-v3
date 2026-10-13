@@ -5,6 +5,8 @@ import { PasswordAuthProvider, PasswordWorkSaturated, signConsoleSession } from 
 import { MemoryConsoleUserStore } from '../test-support/console-users.js';
 import { createConsoleCredentialStamp } from '../console-credential-stamp.js';
 import { PeopleAdminError } from './people-admin-schema.js';
+import type { DatabasePool } from '@cauce/store';
+import { PeopleAdminRepository } from './people-admin-store.js';
 
 const id = '00000000-0000-4000-8000-000000000061';
 const row = { id, email: 'fixture@example.test', display_name: 'Fixture', role: 'reader', tenant_id: 'Steven', alias: 'fixture-user', active: true, revision: '1791432000000000' };
@@ -30,6 +32,22 @@ async function fixture(options: { reader?: boolean; error?: Error; privateReceip
   return { app, headers: { cookie: `__Host-cauce_session=${token}`, 'x-csrf-token': Buffer.alloc(32, 1).toString('base64url') }, writes: () => writes };
 }
 describe('human administration routes', () => {
+  it.each(['55P03', '40001', '40P01'])('returns HTTP 409 for mapped SQL contention %s', async code => {
+    const pool = { connect: async () => { throw Object.assign(new Error('private driver details'), { code }); } } as unknown as DatabasePool;
+    const repository = new PeopleAdminRepository(pool);
+    const failure: unknown = await repository.list({ tenant_id: 'Steven', alias: 'fixture-user', subject: `console:${id}`,
+      humanAuthority: async () => ({ humanId: id, tenantId: 'Steven', actorAlias: 'fixture-user' }) }).catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(PeopleAdminError);
+    if (!(failure instanceof PeopleAdminError)) throw new Error('typed contention error absent');
+    const f = await fixture({ error: failure });
+    try {
+      const response = await f.app.inject({ method: 'PATCH', url: `/v3/console/people/${id}`, headers: f.headers,
+        payload: { expected_revision: row.revision, display_name: 'Changed' } });
+      expect(response.statusCode).toBe(409);
+      expect(response.json()).toMatchObject({ error: 'conflict' });
+      expect(response.body).not.toContain('private driver details');
+    } finally { await f.app.close(); }
+  });
   it('normalizes mixed-case create and update emails before writing and validating receipts', async () => {
     const f = await fixture(); try {
       const created = await f.app.inject({ method: 'POST', url: '/v3/console/people', headers: f.headers,

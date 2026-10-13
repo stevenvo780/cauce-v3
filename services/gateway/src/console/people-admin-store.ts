@@ -45,6 +45,7 @@ function mapped(error: unknown): never {
   }
   const code = error && typeof error === 'object' && 'code' in error ? String(error.code) : '';
   if (code === '42501') throw new PeopleAdminError('forbidden');
+  if (['55P03', '40001', '40P01'].includes(code)) throw new PeopleAdminError('conflict');
   if (['23505', '23503', '23514', 'P0001'].includes(code)) throw new PeopleAdminError('conflict');
   throw new PeopleAdminError('unverified');
 }
@@ -76,7 +77,7 @@ async function assertNoHistory(client: DatabaseClient, value: PeopleAdminPerson)
 
 export class PeopleAdminRepository {
   constructor(private readonly pool: DatabasePool) {}
-  private async transaction<T>(actor: PeopleAdminActor, action: (client: DatabaseClient, authority: CompanyAuthority) => Promise<T>): Promise<T> {
+  private async transaction<T>(actor: PeopleAdminActor, action: (client: DatabaseClient, authority: CompanyAuthority) => Promise<T>, targetId?: string): Promise<T> {
     try {
       return await withTransaction(this.pool, async client => {
         await client.query('SAVEPOINT people_authority');
@@ -84,7 +85,13 @@ export class PeopleAdminRepository {
         try { peeked = await assertPeopleAuthority(client, actor); }
         finally { await client.query('ROLLBACK TO SAVEPOINT people_authority'); }
         await lockCompanyConfiguration(client, peeked.actingCompany);
+        const touchesPlatform = async () => targetId !== undefined && (await client.query(`SELECT 1 FROM platform_admins admin
+          JOIN console_users person ON person.id=admin.human_id WHERE person.id=$1 AND person.company_id=$2`,
+        [targetId, peeked.actingCompany])).rowCount === 1;
+        const platform = await touchesPlatform();
+        if (platform) await client.query('SELECT cauce_lock_platform_owner_guard()');
         await client.query('SELECT cauce_lock_owner_guard($1)', [peeked.actingCompany]);
+        if (!platform && await touchesPlatform()) throw new PeopleAdminError('conflict');
         const authority = await assertPeopleAuthority(client, actor);
         if (authority.actingCompany !== peeked.actingCompany) throw new PeopleAdminError('conflict');
         const result = await action(client, authority); actor.signal?.throwIfAborted(); return result;
@@ -100,8 +107,8 @@ export class PeopleAdminRepository {
     });
   }
   /** A derivation holds a slot of the process-wide password gate, so it runs only once the checks the write repeats have passed. */
-  private async derive(actor: PeopleAdminActor, password: string, checks: (client: DatabaseClient, authority: CompanyAuthority) => Promise<unknown>): Promise<string> {
-    await this.transaction(actor, checks);
+  private async derive(actor: PeopleAdminActor, password: string, checks: (client: DatabaseClient, authority: CompanyAuthority) => Promise<unknown>, targetId?: string): Promise<string> {
+    await this.transaction(actor, checks, targetId);
     return passwordWork.run(() => hashPassword(password));
   }
   async create(actor: PeopleAdminActor, input: unknown): Promise<PeopleAdminPerson> {
@@ -129,7 +136,7 @@ export class PeopleAdminRepository {
       if (next.active) await assertPeopleAlias(client, next);
       return { previous, next, holder };
     };
-    const passwordHash = patch.password === undefined ? undefined : await this.derive(actor, patch.password, prepare);
+    const passwordHash = patch.password === undefined ? undefined : await this.derive(actor, patch.password, prepare, id);
     return this.transaction(actor, async (client, authority) => {
       const { previous, next, holder } = await prepare(client, authority);
       const authorityChanged = previous.role !== next.role || previous.tenant_id !== next.tenant_id || previous.alias !== next.alias || previous.active !== next.active;
@@ -142,7 +149,7 @@ export class PeopleAdminRepository {
       const result = person(row);
       if (authorityChanged) { await syncMembership(client, result); if (holder) await assertKeepsCompanyAuthority(client, id); }
       await audit(client, actor, authority, 'update', result, Object.keys(patch).filter(key => key !== 'expected_revision')); return result;
-    });
+    }, id);
   }
   async retire(actor: PeopleAdminActor, id: string, input: unknown): Promise<PeopleAdminPerson> {
     let control; try { control = PeopleAdminControlSchema.parse(input); } catch (error) { mapped(error); }
@@ -162,6 +169,6 @@ export class PeopleAdminRepository {
       const removed = await client.query('DELETE FROM console_users WHERE id=$1 RETURNING id', [id]);
       if (!removed.rowCount) throw new PeopleAdminError('conflict');
       await audit(client, actor, authority, 'purge', previous); return { id, revision: previous.revision, purged: true as const };
-    });
+    }, id);
   }
 }

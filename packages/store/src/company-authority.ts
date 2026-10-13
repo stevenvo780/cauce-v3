@@ -2,6 +2,9 @@ import { withTransaction, type DatabaseClient, type DatabasePool } from './db.js
 import { lockConsolePerson, type ConsolePersonSnapshot } from './human-identity.js';
 import { StoreError } from './repository/errors.js';
 import { QUALIFIED_PEOPLE_SQL } from './configuration/control-holders.js';
+import { boundAuthorityTimeouts } from './configuration/timeouts.js';
+
+export { boundAuthorityTimeouts };
 
 export const COMPANY_ID_PATTERN = /^[a-z][a-z0-9_-]{0,63}$/u;
 
@@ -99,7 +102,7 @@ export async function lockCompanyAuthority(client: DatabaseClient, request: Comp
   const { tenant, alias, humanId, requestedCompany } = request;
   if (typeof tenant !== 'string' || typeof alias !== 'string'
     || (requestedCompany !== undefined && !COMPANY_ID_PATTERN.test(requestedCompany))) unavailable();
-  await client.query("SELECT set_config('lock_timeout','5000ms',true)");
+  await boundAuthorityTimeouts(client);
   const home = (await client.query<{ company_id: string; active: boolean }>(
     `SELECT tenant.company_id,tenant.enabled AND tenant.retired_at IS NULL AND company.enabled
        AND company.retired_at IS NULL AS active FROM tenants tenant JOIN companies company ON company.id=tenant.company_id
@@ -141,7 +144,7 @@ export async function lockCompanyAuthority(client: DatabaseClient, request: Comp
  * another writer's person or membership rows.
  */
 export async function assertKeepsCompanyAuthority(client: DatabaseClient, humanId: string): Promise<void> {
-  await client.query("SELECT set_config('lock_timeout','5000ms',true)");
+  await boundAuthorityTimeouts(client);
   const holder = async () => (await client.query<{ id: string; company_id: string; owner: boolean; platform: boolean }>(
     `SELECT id::text,company_id,
        EXISTS(SELECT 1 FROM company_admins WHERE company_id=person.company_id AND human_id=person.id AND role='owner') AS owner,
@@ -190,13 +193,13 @@ export function companyScopeSql(tenantColumn: string, companyParameter: string):
  */
 export async function lockCompanyConfiguration(client: DatabaseClient, company: string): Promise<void> {
   if (!COMPANY_ID_PATTERN.test(company)) unavailable();
-  await client.query("SELECT set_config('lock_timeout','5000ms',true)");
+  await boundAuthorityTimeouts(client);
   await client.query('SELECT pg_advisory_xact_lock_shared($1::bigint)', [CONFIGURATION_LOCK]);
   await client.query('SELECT pg_advisory_xact_lock($1::integer,hashtext($2))', [CONFIGURATION_LOCK, company]);
 }
 
 export async function lockPlatformConfiguration(client: DatabaseClient): Promise<void> {
-  await client.query("SELECT set_config('lock_timeout','5000ms',true)");
+  await boundAuthorityTimeouts(client);
   await client.query('SELECT pg_advisory_xact_lock($1::bigint)', [CONFIGURATION_LOCK]);
 }
 
