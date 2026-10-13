@@ -4,15 +4,19 @@
 Instalar, operar y verificar el recolector periódico de cuotas de consumo de IA (`quota-collector.py`) que muestrea `ai-usage`, normaliza el formato y publica muestras vía mTLS en `POST /v3/quotas/samples`.
 
 ## Pasos
-1. Desplegar script y credenciales mTLS (`client.crt`, `client.key` `0600`, `ca.crt`):
+1. Instalar el ejecutable que arranca la unidad y preparar directorios. `ExecStart` llama a `quota-collector.py` sin intérprete. En git el fichero es modo `100644`, así que hay que dejarlo ejecutable en la ruta de la unidad. Estos comandos no copian `client.crt`, `client.key` ni `ca.crt`:
    ```sh
    # [no ejecutable en verificación]
+   install -d -m 0700 ~/.local/share/cauce-v3/ops/scripts
+   install -m 0755 ops/scripts/quota-collector.py \
+     ~/.local/share/cauce-v3/ops/scripts/quota-collector.py
    install -d -m 0700 ~/.config/cauce-v3/container-pki/quota-collector
    install -d -m 0700 ~/.config/cauce-v3/quota-collector
    install -m 0600 ops/config/quota-collector.env.example ~/.config/cauce-v3/quota-collector.env
    install -m 0600 ops/config/quota-collector-account-bindings.json.example \
      ~/.config/cauce-v3/quota-collector/account-bindings.json
    ```
+   `client.crt`, `client.key` (modo `0600`) y `ca.crt` tienen que estar ya en el directorio PKI antes de publicar. Si falta uno, `build_ssl_context` sale con código 2 (`falta <fichero> en <directorio>`). El dry-run del paso 3 vuelve antes de `post_samples` y no lo detecta.
 2. Instalar y habilitar las unidades systemd de usuario:
    ```sh
    # [no ejecutable en verificación]
