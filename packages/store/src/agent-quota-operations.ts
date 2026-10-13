@@ -37,7 +37,7 @@ export class AgentQuotaOperationsRepository {
   async snapshot(source: CompanyAuthoritySource, target: { tenant_id: string; alias: string }) {
     return this.transaction(async client => {
       const authority = await source(client); assertQuotaAuthority(authority, false);
-      const { placement, reader } = await readAgentQuotaPlacement(client, authority, target);
+      const { placement, reader, reason } = await readAgentQuotaPlacement(client, authority, target);
       const revision = await companyRevision(client, authority.actingCompany);
       if (!reader) await persistAgentQuotaObservation(client, placement, null);
       const stored = (await client.query<Observation>('SELECT * FROM agent_quota_observations WHERE tenant_id=$1 AND alias=$2 AND company_id=$3',
@@ -56,7 +56,7 @@ export class AgentQuotaOperationsRepository {
             AND peer.company_id=binding.company_id) AS agent_count
          FROM agent_account_bindings binding WHERE binding.tenant_id=$1 AND binding.agent_alias=$2
            AND binding.company_id=$3 AND binding.account_id=$4`, [target.tenant_id, target.alias, authority.actingCompany, accountId])).rows[0] ?? null;
-      const available = reader && observation?.reader_available !== false;
+      const available = reader;
       let canQuery = available;
       if (canQuery) {
         try { await assertAgentQuotaAuthority(client, async () => authority); }
@@ -68,7 +68,7 @@ export class AgentQuotaOperationsRepository {
         : activeOperation?.status === 'failed' ? 'failed' as const : observation?.status ?? (sample ? sample.ok ? 'ok' as const : 'error' as const : 'unknown' as const);
       return { tenant_id: target.tenant_id, alias: target.alias, revision, configuration_revision: revision,
         reader_available: available, can_query: canQuery,
-        reason: available ? null : 'quota_reader_unavailable' as const, status,
+        reason, status,
         captured_at: observation?.captured_at?.toISOString() ?? legacy?.captured_at.toISOString() ?? null,
         binding, sample, operation: activeOperation ? operationCard(activeOperation) : null };
     });
@@ -96,6 +96,14 @@ export class AgentQuotaOperationsRepository {
       const authority = await assertAgentQuotaAuthority(client, source);
       const { placement, reader } = await readAgentQuotaPlacement(client, authority, value);
       await client.query('SELECT pg_advisory_xact_lock($1::integer,hashtext($2))', [783_003_070, authority.actingCompany]);
+      const operations = (await client.query<AgentQuotaOperationRow>(`SELECT * FROM agent_quota_operations
+        WHERE tenant_id=$1 AND alias=$2 AND company_id=$3 AND status IN ('pending','running') FOR UPDATE`,
+      [value.tenant_id, value.alias, authority.actingCompany])).rows;
+      for (const operation of operations) {
+        if (!sameQuotaPlacement(placement, operation.agent_snapshot)) {
+          await client.query("UPDATE agent_quota_operations SET status='failed',error_code='SCOPE_CHANGED',lease_until=NULL,updated_at=now() WHERE id=$1", [operation.id]);
+        }
+      }
       const previous = (await client.query<AgentQuotaOperationRow>('SELECT * FROM agent_quota_operations WHERE company_id=$1 AND idempotency_key=$2',
         [authority.actingCompany, input.idempotency_key])).rows[0];
       if (previous) {
@@ -105,6 +113,12 @@ export class AgentQuotaOperationsRepository {
       }
       await lockFleetRevision(client, input.expected_revision, authority.actingCompany);
       if (!reader) { await persistAgentQuotaObservation(client, placement, null); return { operation_id: null, id: null, status: 'unsupported' as const, duplicate: false }; }
+      const capability = await client.query(`SELECT 1 FROM fleet_host_identities identity JOIN fleet_hosts host
+        ON host.host_id=identity.host_id AND host.company_id=identity.company_id
+        WHERE identity.host_id=$1 AND identity.company_id=$2 AND identity.enabled AND host.enabled
+          AND identity.capabilities_seen_at>now()-interval '120 seconds'
+          AND identity.capabilities->>'fleet_executor'='true'`, [placement.host_id, authority.actingCompany]);
+      if (!capability.rowCount) throw new StoreError('conflict', 'El ordenador no responde o no tiene un ejecutor de cuota disponible.');
       const active = await client.query("SELECT 1 FROM agent_quota_operations WHERE tenant_id=$1 AND alias=$2 AND status IN ('pending','running')",
         [value.tenant_id, value.alias]);
       if (active.rowCount) throw new StoreError('conflict', 'an agent quota operation is already active');
@@ -139,6 +153,9 @@ export class AgentQuotaOperationsRepository {
     leaseValid(leaseMs);
     if (!/^[A-Za-z0-9_-]{1,128}$/u.test(worker) || !/^[a-z][a-z0-9_-]{0,63}$/u.test(host)) throw new StoreError('invalid_input', 'agent quota worker is invalid');
     return this.transaction(async client => {
+      const candidate = await client.query(`SELECT 1 FROM agent_quota_operations WHERE host_id=$1
+        AND ($2::text IS NULL OR company_id=$2) AND (status='pending' OR status='running' AND lease_until<now()) LIMIT 1`, [host, company ?? null]);
+      if (!candidate.rowCount) return null;
       await lockFleetRevision(client);
       const row = (await client.query<AgentQuotaOperationRow>(`SELECT * FROM agent_quota_operations WHERE host_id=$1
         AND ($2::text IS NULL OR company_id=$2) AND (status='pending' OR status='running' AND lease_until<now())

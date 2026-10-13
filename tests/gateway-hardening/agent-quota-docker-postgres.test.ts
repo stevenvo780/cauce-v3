@@ -9,7 +9,7 @@ import { CauceRepository, type DatabasePool } from '@cauce/store';
 import type { AgentQuotaClaim, AgentQuotaReceipt } from '@cauce/protocol';
 import { preparePostgresSuite } from '../../packages/store/test/postgres-suite.js';
 import { startTestDatabase, startTestCaseDatabase, type TestDatabase, type EmptyTestDatabase } from '../helpers/postgres.js';
-import { channelCompany, channelHost } from '../../services/gateway/src/fleet/host-channel.fixtures.js';
+import { channelCapabilities, channelCompany, channelHost } from '../../services/gateway/src/fleet/host-channel.fixtures.js';
 import { PasswordAuthProvider } from '../../services/gateway/src/password-auth.js';
 import { PostgresConsoleUserStore } from '../../services/gateway/src/console-users.js';
 import { hashPassword } from '../../services/gateway/src/password.js';
@@ -79,6 +79,7 @@ describe('durable agent quota HTTP -> signed host -> real Docker -> PostgreSQL -
       gateway, state: 'enrolled', executor_ready: false }), { mode: 0o600 });
     await writeFile(join(directory, 'private.pem'), host.keys.privateKey.export({ type: 'pkcs8', format: 'pem' }), { mode: 0o600 });
     const channel = await SignedHostChannel.load(directory);
+    await channel.request('POST', `/v3/fleet/hosts/${host.host_id}/channel`, channelCapabilities());
     const fixture = await canary(host.host_id, company.hub.id);
     for (const agent of fixture.agents) {
       await current.adminPool.query(`INSERT INTO agents(tenant_id,alias,company_id,harness_id,host_id,runtime_mode,container_name,

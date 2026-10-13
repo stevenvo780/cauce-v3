@@ -21,10 +21,23 @@ beforeEach(async () => {
       container_name='zz-canary-'||lower(tenant_id)||'-'||alias,runtime_user='dev',home_directory='/home/dev',
       state_directory='/home/dev/.cauce/dev',systemd_user='stev',runtime_key=COALESCE(runtime_key,'zz-canary-'||lower(tenant_id)||'-'||alias)
       WHERE company_id IN ('context_alpha','context_beta');`);
+  for (const [index, host] of ['zz-canary-alpha', 'zz-canary-beta'].entries()) {
+    const owner = requireValue(identities[index], 'owner');
+    await liveHost(host, owner.company_id, owner.human_id);
+  }
 });
 afterEach(async () => { await current?.close(); current = undefined; });
 afterAll(async () => { if (database) { await database.pool.end(); await database.container.stop(); } });
 function admin() { return requireValue(current, 'case database').adminPool; }
+async function liveHost(host: string, company: string, human: string) {
+  const enrollment = requireValue((await admin().query<{ id: string }>(`INSERT INTO fleet_host_enrollments
+    (company_id,host_id,display_name,invited_by,token_hash,nonce,expires_at,state)
+    VALUES($1,$2,$2,$3,$4,$4,now()+interval '1 hour','enrolled') RETURNING id`,
+  [company, host, human, createHash('sha256').update(host).digest('hex')])).rows[0], 'enrollment');
+  await admin().query(`INSERT INTO fleet_host_identities(host_id,company_id,enrollment_id,public_key,key_fingerprint,capabilities,capabilities_seen_at)
+    VALUES($1,$2,$3,$4,$5,'{"fleet_executor":true}',now())`,
+  [host, company, enrollment.id, 'x'.repeat(64), createHash('sha256').update(`identity-${host}`).digest('hex')]);
+}
 function authority(index = 0) {
   const person = requireValue(identities[index], 'company');
   return (client: DatabaseClient) => lockCompanyAuthority(client, { tenant: person.tenant_id, alias: 'owner', humanId: person.human_id });
@@ -82,6 +95,51 @@ describe('durable agent quota operations with real PostgreSQL', () => {
     await expect(enqueue('zz-canary-reused', 'owner')).rejects.toMatchObject({ code: 'conflict' });
     await expect(enqueue('zz-canary-second')).rejects.toMatchObject({ code: 'conflict' });
   });
+  it.each(['pending', 'running'])('allows a new query after relocating a %s operation', async phase => {
+    const first = await enqueue(); const worker = phase === 'running' ? await claim() : null;
+    await admin().query("INSERT INTO fleet_hosts(host_id,display_name,company_id) VALUES('zz-canary-destination','Destination','context_alpha')");
+    await liveHost('zz-canary-destination', 'context_alpha', requireValue(identities[0], 'owner').human_id);
+    await admin().query("UPDATE agents SET host_id='zz-canary-destination' WHERE tenant_id=$1 AND alias=$2", [target.tenant_id, target.alias]);
+    const second = await enqueue();
+    expect(second).toMatchObject({ status: 'pending', duplicate: false }); expect(second.id).not.toBe(first.id);
+    expect((await admin().query('SELECT status,error_code,lease_until FROM agent_quota_operations WHERE id=$1', [first.id])).rows)
+      .toEqual([{ status: 'failed', error_code: 'SCOPE_CHANGED', lease_until: null }]);
+    expect(await repository.claim('zz_old', 'zz-canary-alpha', 30_000, 'context_alpha')).toBeNull();
+    const next = requireValue(await repository.claim('zz_next', 'zz-canary-destination', 30_000, 'context_alpha'), 'relocated claim');
+    expect(next.id).toBe(second.id);
+    if (worker) expect(await repository.renew(worker)).toBe(false);
+  });
+  it.each(['missing', 'stale', 'disabled', 'without-executor'])('rejects a query when the host identity is %s', async state => {
+    if (state === 'missing') await admin().query("DELETE FROM fleet_host_identities WHERE host_id='zz-canary-alpha'");
+    else if (state === 'stale') await admin().query("UPDATE fleet_host_identities SET capabilities_seen_at=now()-interval '121 seconds' WHERE host_id='zz-canary-alpha'");
+    else if (state === 'disabled') await admin().query("UPDATE fleet_host_identities SET enabled=false WHERE host_id='zz-canary-alpha'");
+    else await admin().query("UPDATE fleet_host_identities SET capabilities='{}' WHERE host_id='zz-canary-alpha'");
+    await expect(enqueue()).rejects.toMatchObject({ code: 'conflict' });
+    expect((await admin().query('SELECT 1 FROM agent_quota_operations')).rowCount).toBe(0);
+  });
+  it('does not wait for the configuration lock while the host queue is empty', async () => {
+    const holder = await admin().connect();
+    try {
+      await holder.query('BEGIN'); await holder.query('SELECT pg_advisory_xact_lock(783_003_004)');
+      const next = withTransaction(pool, async client => {
+        await client.query("SET LOCAL lock_timeout='200ms'");
+        return repository.forTransaction(client).claim('zz_idle', 'zz-canary-alpha', 30_000, 'context_alpha');
+      });
+      await expect(next).resolves.toBeNull();
+    } finally { await holder.query('ROLLBACK'); holder.release(); }
+  });
+  it('does not invert the signed host identity lock while enqueuing a query', async () => {
+    const card = await repository.snapshot(authority(), target); const holder = await admin().connect();
+    try {
+      await holder.query('BEGIN');
+      await holder.query("SELECT 1 FROM fleet_host_identities WHERE host_id='zz-canary-alpha' FOR NO KEY UPDATE");
+      const next = withTransaction(pool, async client => {
+        await client.query("SET LOCAL lock_timeout='200ms'");
+        return repository.forTransaction(client).enqueue(authority(), { ...target, expected_revision: card.revision, idempotency_key: 'zz-canary-lock-order' });
+      });
+      await expect(next).resolves.toMatchObject({ status: 'pending' });
+    } finally { await holder.query('ROLLBACK'); holder.release(); }
+  });
   it('fences old tokens, epochs, workers and expired leases after recovery', async () => {
     await enqueue(); const first = await claim(); const receipt = measured((await repository.execution(first)).agent);
     for (const changed of [{ claim_token: randomUUID() }, { claim_epoch: first.claim_epoch + 1 }, { worker_id: 'zz_other' }, { alias: 'owner' }]) {
@@ -129,7 +187,8 @@ describe('durable agent quota operations with real PostgreSQL', () => {
       host_id: agent.host_id, container_name: agent.container_name, harness: agent.harness_id, captured_at: new Date().toISOString(),
       status: 'unsupported', reason: 'quota_reader_unavailable' });
     expect(await new AgentQuotaOperationsRepository(pool).snapshot(authority(), target)).toMatchObject({ status: 'unsupported',
-      reader_available: false, can_query: false, reason: 'quota_reader_unavailable', binding: null, sample: null, operation: { status: 'done' } });
+      reader_available: true, can_query: true, reason: null, binding: null, sample: null, operation: { status: 'done' } });
+    expect(await enqueue()).toMatchObject({ status: 'pending' });
     expect(await collections()).toBe(0);
     expect((await admin().query('SELECT reader_available,status FROM agent_quota_observations')).rows)
       .toEqual([{ reader_available: false, status: 'unsupported' }]);
@@ -139,6 +198,13 @@ describe('durable agent quota operations with real PostgreSQL', () => {
     expect(await repository.snapshot(authority(), target)).toMatchObject({ status: 'unsupported', reader_available: false, sample: null });
     expect((await admin().query('SELECT status FROM agent_quota_observations')).rows).toEqual([{ status: 'unsupported' }]);
     expect(await enqueue()).toMatchObject({ status: 'unsupported', operation_id: null });
+  });
+  it('does not rewrite an unchanged unsupported observation during repeated reads', async () => {
+    await admin().query("UPDATE agents SET harness_id='openclaw' WHERE tenant_id=$1 AND alias=$2", [target.tenant_id, target.alias]);
+    await repository.snapshot(authority(), target);
+    const before = (await admin().query('SELECT xmin::text AS transaction,updated_at FROM agent_quota_observations')).rows;
+    await repository.snapshot(authority(), target); await repository.snapshot(authority(), target);
+    expect((await admin().query('SELECT xmin::text AS transaction,updated_at FROM agent_quota_observations')).rows).toEqual(before);
   });
   it('recovers the query capability when an unavailable harness is re-enabled', async () => {
     await admin().query("UPDATE harness_definitions SET enabled=false WHERE id='codex'");

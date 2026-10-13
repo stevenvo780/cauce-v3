@@ -5,7 +5,7 @@ import { CauceRepository, type DatabasePool, type RegisteredCompany } from '@cau
 import { AgentQuotaClaimSchema, AgentQuotaExecutionSchema, type AgentQuotaClaim } from '@cauce/protocol';
 import { preparePostgresSuite } from '../../packages/store/test/postgres-suite.js';
 import { startTestCaseDatabase, startTestDatabase, type EmptyTestDatabase, type TestDatabase } from '../helpers/postgres.js';
-import { channelCompany, channelHost, channelPacket, channelPost, type ChannelHost } from '../../services/gateway/src/fleet/host-channel.fixtures.js';
+import { channelCapabilities, channelCompany, channelHost, channelPacket, channelPost, type ChannelHost } from '../../services/gateway/src/fleet/host-channel.fixtures.js';
 import { PasswordAuthProvider } from '../../services/gateway/src/password-auth.js';
 import { PostgresConsoleUserStore } from '../../services/gateway/src/console-users.js';
 import { hashPassword } from '../../services/gateway/src/password.js';
@@ -34,6 +34,9 @@ beforeEach(async () => {
   app = await buildTestGateway({ pool, repository: new CauceRepository(pool), authProvider: new PasswordAuthProvider({
     users: new PostgresConsoleUserStore(pool), signingKey: Buffer.alloc(32, 47),
   }) });
+  for (const enrolled of [host, other]) {
+    expect((await channelPost(app, enrolled, channelCapabilities())).statusCode).toBe(200);
+  }
   const login = await app.inject({ method: 'POST', url: '/v3/auth/login', headers: { origin: ORIGIN },
     payload: { email: north.user.email, password: PASSWORD } });
   expect(login.statusCode).toBe(200);
@@ -74,6 +77,14 @@ async function counts() {
 }
 
 describe('durable agent quota through real browser sessions and signed company hosts', () => {
+  it.each(['stale', 'unavailable', 'inactive'])('rejects new quota work for a %s computer without queue effects', async state => {
+    if (state === 'stale') await admin.query("UPDATE fleet_host_identities SET capabilities_seen_at=now()-interval '121 seconds' WHERE host_id=$1", [host.host_id]);
+    if (state === 'unavailable') await admin.query("UPDATE fleet_host_identities SET capabilities=jsonb_set(capabilities,'{fleet_executor}','false') WHERE host_id=$1", [host.host_id]);
+    if (state === 'inactive') await admin.query('UPDATE fleet_host_identities SET enabled=false WHERE host_id=$1', [host.host_id]);
+    const before = await counts();
+    expect((await enqueue(`unavailable-computer-${state}`)).statusCode).toBe(409);
+    expect(await counts()).toEqual(before);
+  });
   it('returns unknown for its own agent and identical 404s for foreign and absent targets without queue effects', async () => {
     expect((await read()).json()).toMatchObject({ tenant_id: north.hub.id, alias: 'worker', status: 'unknown', reader_available: true });
     const before = await counts();
