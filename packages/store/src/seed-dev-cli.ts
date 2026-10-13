@@ -131,9 +131,15 @@ async function seedPerson(
   )).rows[0];
   if (person === undefined) throw new Error('seed person was not written');
   await client.query('UPDATE memberships SET role=\'operator\' WHERE tenant_id=$1 AND alias=$2', [tenant, alias]);
+  // Schemas before 081 still require the membership role that 081 derives from console_users.
+  const storedRole = (await client.query(`SELECT 1 FROM information_schema.columns
+    WHERE table_schema=current_schema() AND table_name='human_tenant_memberships' AND column_name='role'`)).rowCount === 1;
   await client.query(
-    `INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,permissions)
-     VALUES($1,$2,$3,ARRAY['read','control']) ON CONFLICT DO NOTHING`,
+    storedRole
+      ? `INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,role,permissions)
+         VALUES($1,$2,$3,'operator',ARRAY['read','control']) ON CONFLICT DO NOTHING`
+      : `INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,permissions)
+         VALUES($1,$2,$3,ARRAY['read','control']) ON CONFLICT DO NOTHING`,
     [person.id, tenant, alias],
   );
   return person.id;
