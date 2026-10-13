@@ -47,6 +47,10 @@ describe('host enrollment compatibility and company isolation', () => {
   it('accepts exactly the fleet host metadata limits and rejects larger invitations before persisting them', async () => {
     const invitation = await repository.invite(source(north), { host_id: 'north-boundary', display_name: 'n'.repeat(80), notes: 'x'.repeat(500) });
     await expect(repository.claim(invitation.enrollment_id, proof(invitation))).resolves.toMatchObject({ state: 'enrolled' });
+    expect((await admin.query("SELECT display_name,notes FROM fleet_hosts WHERE host_id='north-boundary'")).rows)
+      .toEqual([{ display_name: 'n'.repeat(80), notes: 'x'.repeat(500) }]);
+    expect((await admin.query("SELECT metadata FROM audit_events WHERE action='fleet_host.enrollment.claim' AND metadata->>'host_id'='north-boundary'")).rows)
+      .toEqual([{ metadata: { host_id: 'north-boundary', host_metadata_preserved: false } }]);
     for (const metadata of [{ display_name: 'n'.repeat(81) }, { display_name: 'Valid', notes: 'x'.repeat(501) }]) {
       await expect(repository.invite(source(north), { host_id: 'north-oversized', ...metadata })).rejects.toMatchObject({ name: 'ZodError' });
     }
@@ -64,6 +68,8 @@ describe('host enrollment compatibility and company isolation', () => {
     expect((await admin.query("SELECT * FROM fleet_hosts WHERE host_id='legacy-host'")).rows).toEqual(before);
     expect((await admin.query("SELECT host_id FROM agents WHERE tenant_id=$1 AND alias='owner'", [north.hub.id])).rows)
       .toEqual([{ host_id: 'legacy-host' }]);
+    expect((await admin.query("SELECT metadata FROM audit_events WHERE action='fleet_host.enrollment.claim' AND metadata->>'host_id'='legacy-host'")).rows)
+      .toEqual([{ metadata: { host_id: 'legacy-host', host_metadata_preserved: true } }]);
     await expect(repository.invite(source(north), { host_id: 'legacy-host', display_name: 'Replacement' })).rejects.toMatchObject({ code: 'conflict' });
     expect((await admin.query("SELECT count(*)::int AS n FROM fleet_host_identities WHERE host_id='legacy-host'")).rows).toEqual([{ n: 1 }]);
   });
@@ -150,11 +156,10 @@ describe('host enrollment compatibility and company isolation', () => {
   });
 
   it('returns HTTP 400 for invalid metadata and HTTP 201 for a legacy computer owned by the session company', async () => {
-    app = await buildGateway({ pool, repository: new CauceRepository(pool), consoleOrigins: ['http://localhost'], logger: false,
+    const gateway = await buildGateway({ pool, repository: new CauceRepository(pool), consoleOrigins: ['http://localhost'], logger: false,
       authProvider: new PasswordAuthProvider({ users: new PostgresConsoleUserStore(pool), signingKey: Buffer.alloc(32, 59) }) });
-    const owner = await registerSetupOwner(app, 'enrollment');
-    const server = app;
-    const invite = (host_id: string, display_name: string, notes = '') => server.inject({ method: 'POST',
+    app = gateway; const owner = await registerSetupOwner(gateway, 'enrollment');
+    const invite = (host_id: string, display_name: string, notes = '') => gateway.inject({ method: 'POST',
       url: '/v3/console/fleet/hosts/enrollments', headers: { ...owner }, payload: { host_id, display_name, notes } });
     for (const [name, notes] of [['n'.repeat(81), ''], ['Valid', 'x'.repeat(501)]] as const) {
       const invalid = await invite('enrollment-invalid', name, notes);

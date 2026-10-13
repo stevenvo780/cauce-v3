@@ -32,10 +32,11 @@ function assertCompanyHostId(authority: CompanyAuthority, hostId: string): void 
     throw new StoreError('forbidden', `host id must be ${prefix}<name>, with lowercase letters, digits or underscores in the name`);
   }
 }
-async function audit(client: DatabaseClient, authority: CompanyAuthority, action: string, host: string): Promise<void> {
+async function audit(client: DatabaseClient, authority: CompanyAuthority, action: string, host: string,
+  metadata: { host_metadata_preserved?: boolean } = {}): Promise<void> {
   await client.query(`INSERT INTO audit_events(tenant_id,actor_alias,action,decision,company_id,actor_human_id,metadata)
     VALUES($1,$2,$3,'allow',$4,$5,$6::jsonb)`, [authority.homeTenant, authority.alias, action,
-    authority.actingCompany, authority.humanId, JSON.stringify({ host_id: host })]);
+    authority.actingCompany, authority.humanId, JSON.stringify({ host_id: host, ...metadata })]);
 }
 async function inviterAuthority(client: DatabaseClient, row: InvitationRow): Promise<CompanyAuthority> {
   const person = (await client.query<{ tenant_id: string; alias: string }>('SELECT tenant_id,alias FROM console_users WHERE id=$1', [row.invited_by])).rows[0];
@@ -89,8 +90,12 @@ export class HostEnrollmentRepository {
     return withTransaction(this.pool, async client => {
       const initial = verifiedInvitation((await client.query<InvitationRow>('SELECT * FROM fleet_host_enrollments WHERE id=$1', [enrollmentId])).rows[0], input);
       const authority = await inviterAuthority(client,initial);
-      if (initial.state === 'pending') await client.query(`INSERT INTO fleet_hosts(host_id,company_id,display_name,notes)
-        VALUES($1,$2,$3,$4) ON CONFLICT (host_id) DO NOTHING`, [initial.host_id,initial.company_id,initial.display_name,initial.notes]);
+      let hostMetadataPreserved = false;
+      if (initial.state === 'pending') {
+        const created = await client.query(`INSERT INTO fleet_hosts(host_id,company_id,display_name,notes)
+          VALUES($1,$2,$3,$4) ON CONFLICT (host_id) DO NOTHING`, [initial.host_id,initial.company_id,initial.display_name,initial.notes]);
+        hostMetadataPreserved = created.rowCount === 0;
+      }
       // Host removal also locks the computer before its invitations.
       const host = await client.query('SELECT 1 FROM fleet_hosts WHERE host_id=$1 AND company_id=$2 AND enabled FOR SHARE', [initial.host_id,initial.company_id]);
       if (!host.rowCount) throw new StoreError('forbidden', 'host invitation is unavailable');
@@ -115,7 +120,7 @@ export class HostEnrollmentRepository {
         VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING`, [row.host_id,row.company_id,row.id,input.public_key,fingerprint]);
       if (!identity.rowCount) throw new StoreError('conflict', 'host identity is already enrolled');
       await client.query("UPDATE fleet_host_enrollments SET state='enrolled',enrolled_at=now() WHERE id=$1", [row.id]);
-      await audit(client,authority,'fleet_host.enrollment.claim',row.host_id);
+      await audit(client,authority,'fleet_host.enrollment.claim',row.host_id,{ host_metadata_preserved: hostMetadataPreserved });
       return { enrollment_id: row.id, company_id: row.company_id, host_id: row.host_id, state: 'enrolled',
         key_fingerprint: fingerprint, executor_ready: this.readyHosts.includes(row.host_id) };
     });
@@ -133,9 +138,10 @@ export class HostEnrollmentRepository {
   }
   async revoke(source: CompanyAuthoritySource, enrollmentId: string): Promise<{ enrollment_id: string; state: 'revoked' }> {
     return withTransaction(this.pool, async client => {
-      const row = (await client.query<InvitationRow>('SELECT * FROM fleet_host_enrollments WHERE id=$1 FOR UPDATE', [enrollmentId])).rows[0];
       const authority = await source(client); authorize(authority);
-      if (row?.company_id !== authority.actingCompany) throw new StoreError('not_found', 'host invitation is unavailable');
+      const row = (await client.query<InvitationRow>('SELECT * FROM fleet_host_enrollments WHERE id=$1 AND company_id=$2 FOR UPDATE',
+        [enrollmentId, authority.actingCompany])).rows[0];
+      if (!row) throw new StoreError('not_found', 'host invitation is unavailable');
       if (row.state !== 'pending') throw new StoreError('conflict', 'host invitation is no longer pending');
       await client.query("UPDATE fleet_host_enrollments SET state='revoked' WHERE id=$1", [enrollmentId]);
       await audit(client, authority, 'fleet_host.enrollment.revoke', row.host_id);

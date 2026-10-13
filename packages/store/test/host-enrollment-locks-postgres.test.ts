@@ -1,4 +1,4 @@
-import { generateKeyPairSync, randomBytes, sign } from 'node:crypto';
+import { generateKeyPairSync, randomBytes, randomUUID, sign } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { HostEnrollmentRepository, hostEnrollmentMessage, hostKeyFingerprint, hostRequestMessage, lockCompanyAuthority, lockFleetRevision,
@@ -51,6 +51,60 @@ async function waitingForFleetRevision(): Promise<void> {
   }
   throw new Error('the signed request never waited for the fleet revision lock');
 }
+async function waitingForAuthorityReaders(count: number): Promise<void> {
+  for (let attempt = 0; attempt < 200; attempt++) {
+    const waiting = (await admin.query<{ n: number }>(`SELECT count(*)::int AS n FROM pg_stat_activity
+      WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE '%FROM console_users%'`)).rows[0]?.n;
+    if (waiting !== undefined && waiting >= count) return;
+    await delay(25);
+  }
+  throw new Error('the enrollment requests never waited for the authority row');
+}
+
+describe('host enrollment revocation locks', () => {
+  it('answers a locked foreign invitation exactly like an absent invitation without waiting for its row', async () => {
+    const south = await registerCompany(pool, { email: 'foreign-locks@example.test', name: 'Foreign locks',
+      passwordHash: '$scrypt$n=32768,r=8,p=1$c2FsdA==$aGFzaA==', company: { slug: 'south', name: 'South' } });
+    const foreign = await repository.invite(client => lockCompanyAuthority(client,
+      { tenant: south.hub.id, alias: 'owner', humanId: south.user.id }), { host_id: 'south-locked', display_name: 'Foreign' });
+    const absent = await repository.revoke(source(), randomUUID()).catch((error: unknown) => error);
+    expect(absent).toMatchObject({ code: 'not_found', message: 'host invitation is unavailable' });
+    const holder = await admin.connect(); let pending: ReturnType<HostEnrollmentRepository['revoke']> | undefined;
+    try {
+      await holder.query('BEGIN');
+      await holder.query('SELECT 1 FROM fleet_host_enrollments WHERE id=$1 FOR UPDATE', [foreign.enrollment_id]);
+      pending = repository.revoke(source(), foreign.enrollment_id); pending.catch(() => undefined);
+      expect(await settled(pending, 1_000)).toMatchObject({ code: 'not_found', message: (absent as Error).message });
+    } finally { await holder.query('ROLLBACK').catch(() => undefined); holder.release(); await pending?.catch(() => undefined); }
+    expect((await admin.query('SELECT state FROM fleet_host_enrollments WHERE id=$1', [foreign.enrollment_id])).rows).toEqual([{ state: 'pending' }]);
+    expect((await admin.query("SELECT 1 FROM audit_events WHERE action='fleet_host.enrollment.revoke'")).rowCount).toBe(0);
+  });
+
+  it('keeps the invitation unlocked while claim and revoke wait for authority and finishes without a deadlock', async () => {
+    const invitation = await repository.invite(source(), { host_id: 'north-authority_locked', display_name: 'Computer' });
+    const pair = keys(); const holder = await admin.connect();
+    let claim: ReturnType<HostEnrollmentRepository['claim']> | undefined;
+    let revoke: ReturnType<HostEnrollmentRepository['revoke']> | undefined;
+    try {
+      await holder.query('BEGIN'); await holder.query('SELECT 1 FROM console_users WHERE id=$1 FOR UPDATE', [north.user.id]);
+      claim = repository.claim(invitation.enrollment_id, { invitation_token: invitation.invitation_token, public_key: pair.encoded,
+        proof: sign(null, Buffer.from(hostEnrollmentMessage(invitation)), pair.privateKey).toString('base64') });
+      claim.catch(() => undefined); await waitingForAuthorityReaders(1);
+      revoke = repository.revoke(source(), invitation.enrollment_id); revoke.catch(() => undefined);
+      await waitingForAuthorityReaders(2); await holder.query("SET LOCAL lock_timeout='1s'");
+      expect((await holder.query('SELECT 1 FROM fleet_host_enrollments WHERE id=$1 FOR UPDATE', [invitation.enrollment_id])).rowCount).toBe(1);
+      await holder.query('COMMIT');
+      const results = await Promise.allSettled([claim, revoke]);
+      expect(results.filter(result => result.status === 'fulfilled')).toHaveLength(1);
+      expect(results.find(result => result.status === 'rejected')).toMatchObject({ reason: { code: 'conflict' } });
+      expect((await admin.query('SELECT state FROM fleet_host_enrollments WHERE id=$1', [invitation.enrollment_id])).rows)
+        .toEqual([{ state: results[0].status === 'fulfilled' ? 'enrolled' : 'revoked' }]);
+    } finally {
+      await holder.query('ROLLBACK').catch(() => undefined); holder.release();
+      await Promise.allSettled([claim, revoke].filter(request => request !== undefined));
+    }
+  });
+});
 
 describe('signed host request locks', () => {
   it('rejects a forged proof before waiting for the computer row locks', async () => {
