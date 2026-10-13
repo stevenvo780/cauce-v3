@@ -11,8 +11,9 @@ export class FleetOperationsRepository extends FleetOperationExecution {
   protected readonly controllerHost: string | undefined;
   protected readonly coordinatorEnabled: boolean;
   protected readonly coordinatorHosts: readonly string[] | undefined;
-  constructor(pool: DatabasePool, private readonly options: { controllerHost?: string; coordinatorEnabled?: boolean; coordinatorHosts?: readonly string[]; transactionClient?: DatabaseClient; authorityScope?: FleetAuthorityScope } = {}) {
-    super(pool, options.transactionClient); this.controllerHost = options.controllerHost; this.coordinatorEnabled = options.coordinatorEnabled === true;
+  constructor(pool: DatabasePool, private readonly options: { controllerHost?: string; coordinatorEnabled?: boolean; coordinatorHosts?: readonly string[];
+    transactionClient?: DatabaseClient; authorityScope?: FleetAuthorityScope; stepMaxMs?: number } = {}) {
+    super(pool, options.transactionClient, options.stepMaxMs); this.controllerHost = options.controllerHost; this.coordinatorEnabled = options.coordinatorEnabled === true;
     this.coordinatorHosts = options.coordinatorHosts === undefined ? undefined : Object.freeze([...options.coordinatorHosts]);
   }
   forTransaction(client: DatabaseClient): FleetOperationsRepository {
@@ -28,8 +29,8 @@ export class FleetOperationsRepository extends FleetOperationExecution {
     const request = fleetRequest(input);
     return this.transaction(async (client) => {
       await assertFleetHumanAuthority(client, tenant, alias, actorSubject);
-      await assertFleetAuthority(client, tenant, alias, request.target, true, actorSubject, this.options.authorityScope);
-      await lockFleetRevision(client, request.expected_revision);
+      const authority = await assertFleetAuthority(client, tenant, alias, request.target, true, actorSubject, this.options.authorityScope);
+      await lockFleetRevision(client, request.expected_revision, authority.actingCompany);
       return (await validateFleetTarget(client, request, this.options.controllerHost, false, this.coordinatorEnabled, this.coordinatorHosts)).preview;
     });
   }
@@ -51,16 +52,17 @@ export class FleetOperationsRepository extends FleetOperationExecution {
           }
           return publicFleetOperation(prior);
         }
-        await lockFleetRevision(client, request.expected_revision);
+        await lockFleetRevision(client, request.expected_revision, authority.actingCompany);
         const { host, preview } = await validateFleetTarget(client, request, this.options.controllerHost, false, this.coordinatorEnabled, this.coordinatorHosts);
         if (!preview.can_apply) throw new FleetOperationError('conflict', 'target has durable dependencies; retire it instead');
         const inserted = (await client.query<FleetOperationRow>(
           `INSERT INTO fleet_operations(actor_tenant,actor_alias,target,target_key,cohort_key,executor_host,kind,request,
             request_hash,idempotency_key,expected_revision,steps,company_id)
-           VALUES($1,$2,$3::jsonb,$4,'fleet',$5,$6,$7::jsonb,$8,$9,$10,$11::jsonb,$12) RETURNING *`,
+           VALUES($1,$2,$3::jsonb,$4,$13,$5,$6,$7::jsonb,$8,$9,$10,$11::jsonb,$12) RETURNING *`,
           [tenant, alias, JSON.stringify(request.target), sha256Hex(request.target), host, request.kind, JSON.stringify(request),
             hash, request.idempotency_key, request.expected_revision,
-            JSON.stringify(preview.steps.map((name) => ({ name, status: 'pending' }))), authority.actingCompany])).rows[0];
+            JSON.stringify(preview.steps.map((name) => ({ name, status: 'pending' }))), authority.actingCompany,
+            `fleet:${authority.actingCompany}:${host}`])).rows[0];
         if (!inserted) throw new Error('fleet operation insert returned no row');
         await recordFleetEvent(client, inserted.id, 0, 'queued', { acting_company: authority.actingCompany,
           ...(actorSubject === undefined ? {} : { actor_subject: actorSubject }) });
@@ -134,7 +136,7 @@ export class FleetOperationsRepository extends FleetOperationExecution {
             await assertFleetSealedHostBarrier(client, row, step.name, step.evidence ?? {});
           }
         } else await validateFleetTarget(client, row.request, this.options.controllerHost, row.desired_revision !== null, this.coordinatorEnabled, this.coordinatorHosts);
-        await lockFleetRevision(client, Number(row.desired_revision ?? row.expected_revision));
+        await lockFleetRevision(client, Number(row.desired_revision ?? row.expected_revision), row.company_id);
         status = 'queued';
       } else status = row.status === 'queued' && row.steps.every((step) => step.status === 'pending') ? 'cancelled' : 'cancelling';
       const next = (await client.query<FleetOperationRow>(

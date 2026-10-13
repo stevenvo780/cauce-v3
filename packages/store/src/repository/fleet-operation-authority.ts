@@ -1,6 +1,6 @@
 import { FleetOperationRequestSchema, sha256Hex, type FleetOperationPreview, type FleetOperationRequest, type FleetTarget } from '@cauce/protocol';
 import type { DatabaseClient } from '../db.js';
-import { lockCompanyAuthority, type CompanyAuthority } from '../company-authority.js';
+import { companyRevision, lockCompanyAuthority, type CompanyAuthority } from '../company-authority.js';
 import { providerAccountConsentSql } from '../configuration/company-scope.js';
 import { StoreError } from './errors.js';
 import { fleetPurgeDependencies } from './fleet-operation-lifecycle.js';
@@ -55,10 +55,15 @@ export async function assertFleetAuthority(
       || (control && (authority.role !== 'tenant_operator' || target.resource !== 'room'))) outsideAuthority();
   return authority;
 }
-export async function lockFleetRevision(client: DatabaseClient, expected?: number): Promise<number> {
+/**
+ * Holds the installation configuration lock and compares the revision of the target company, the one the console
+ * previews against, so that another company's writes never invalidate this company's fleet work.
+ */
+export async function lockFleetRevision(client: DatabaseClient, expected?: number, company?: string): Promise<number> {
   await client.query('SELECT pg_advisory_xact_lock(783_003_004)');
-  const result = await client.query<{ revision: string }>('SELECT COALESCE(max(id),0)::text AS revision FROM config_revisions');
-  const revision = Number(result.rows[0]?.revision ?? 0);
+  const revision = company === undefined
+    ? Number((await client.query<{ revision: string }>('SELECT COALESCE(max(id),0)::text AS revision FROM config_revisions')).rows[0]?.revision ?? 0)
+    : await companyRevision(client, company);
   if (expected !== undefined && expected !== revision) {
     throw new FleetOperationError('conflict', 'configuration revision changed; preview the operation again');
   }

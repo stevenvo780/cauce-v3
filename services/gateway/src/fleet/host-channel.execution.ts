@@ -9,7 +9,7 @@ interface Identity { host_id:string;company_id:string }
 interface Agent extends Record<string,unknown> {tenant_id:string;alias:string;host_id:string;runtime_key:string|null}
 export async function hostFleetExecution(client:DatabaseClient,identity:Identity,claim:FleetOperationClaim):Promise<FleetExecution> {
   const row=await lockFleetClaim(client,claim,true);
-  await lockFleetRevision(client,row.status==='cancelling'?undefined:Number(row.desired_revision??row.expected_revision));
+  await lockFleetRevision(client,row.status==='cancelling'?undefined:Number(row.desired_revision??row.expected_revision),row.company_id);
   const prepared=await preparedState(client,row.id);
   const agents=(await client.query<Agent>(`SELECT tenant_id,alias,harness_id,enabled,container_name,runtime_user,home_directory,
     state_directory,runtime_key,primary_room_id,lifecycle_state,host_id,runtime_mode,systemd_user,primary_account_id,model_id,reasoning_effort

@@ -77,7 +77,7 @@ export abstract class FleetOperationExecution extends FleetOperationClaims {
   async prepare(claim: FleetOperationClaim): Promise<Omit<FleetExecutionState, 'request'>> {
     return this.transaction(async (client) => {
       const row = await lockFleetClaim(client, claim);
-      await lockFleetRevision(client, Number(row.desired_revision ?? row.expected_revision));
+      await lockFleetRevision(client, Number(row.desired_revision ?? row.expected_revision), row.company_id);
       if (row.desired_revision !== null) {
         return { operation: publicFleetOperation(row), ...await preparedState(client, row.id) };
       }
@@ -223,7 +223,7 @@ export abstract class FleetOperationExecution extends FleetOperationClaims {
   private async current(client: DatabaseClient, claim: FleetOperationClaim): Promise<FleetOperationRow> {
     const row = await lockFleetClaim(client, claim);
     if (row.desired_revision === null) throw new FleetOperationError('conflict', 'fleet operation has not been prepared');
-    await lockFleetRevision(client, Number(row.desired_revision));
+    await lockFleetRevision(client, Number(row.desired_revision), row.company_id);
     return row;
   }
 }

@@ -25,21 +25,21 @@ export class FleetHostSource extends FleetOperationsRepository {
   override async execution(claim: FleetOperationClaim): Promise<FleetHostExecution> {
     return withTransaction(this.pool, async (client) => {
       const row = await lockFleetClaim(client, claim, true);
-      const revision = await lockFleetRevision(client, row.status === 'cancelling' ? undefined : Number(row.desired_revision ?? row.expected_revision));
+      const revision = await lockFleetRevision(client, row.status === 'cancelling' ? undefined : Number(row.desired_revision ?? row.expected_revision),
+        row.company_id);
       const prepared = await preparedState(client, row.id);
       const result = await client.query<{ jsonb_build_object: unknown }>(this.hostOptions.snapshotQuery);
       if (result.rows.length !== 1) throw new Error('Fleet host snapshot is unavailable');
       const snapshot = SnapshotSchema.parse(result.rows[0]?.jsonb_build_object);
-      const company=(await client.query<{company_id:string}>('SELECT company_id FROM tenants WHERE id=$1',[row.target.tenant_id])).rows[0];
-      if (!company) throw new Error('Fleet company snapshot is unavailable');
-      const tenants=new Set((await client.query<{id:string}>('SELECT id FROM tenants WHERE company_id=$1',[company.company_id])).rows.map(tenant=>tenant.id));
-      const local=row.target.resource==='agent';
-      snapshot.agents=snapshot.agents.filter(agent=>tenants.has(String(agent.tenant_id))&&(!local||agent.host_id===row.executor_host));
+      const tenants=new Set((await client.query<{id:string}>('SELECT id FROM tenants WHERE company_id=$1',[row.company_id])).rows.map(tenant=>tenant.id));
+      if (!tenants.has(row.target.tenant_id)) throw new Error('Fleet company snapshot is unavailable');
+      // Every host materializes the whole company fleet it receives, so the snapshot keeps the agents of every host.
+      snapshot.agents=snapshot.agents.filter(agent=>tenants.has(String(agent.tenant_id)));
       const identities=new Set(snapshot.agents.map(agent=>JSON.stringify([agent.tenant_id,agent.alias])));
       snapshot.memberships=snapshot.memberships.filter(member=>identities.has(JSON.stringify([member.tenant_id,member.alias])));
       snapshot.purgedRuntimeKeys=(await client.query<{runtime_key:string}>(`SELECT DISTINCT runtime_key FROM agents
-        WHERE company_id=$1 AND ($2::text IS NULL OR host_id=$2) AND purged_at IS NOT NULL AND runtime_key IS NOT NULL ORDER BY runtime_key`,
-      [company.company_id,local?row.executor_host:null])).rows.map(agent=>agent.runtime_key);
+        WHERE company_id=$1 AND purged_at IS NOT NULL AND runtime_key IS NOT NULL ORDER BY runtime_key`,
+      [row.company_id])).rows.map(agent=>agent.runtime_key);
       if (prepared.previous_agents.some(agent=>!tenants.has(String(agent.tenant_id)))||prepared.fenced_targets.some(target=>!tenants.has(target.tenant_id))) {
         throw new Error('Fleet prepared scope is outside the company');
       }

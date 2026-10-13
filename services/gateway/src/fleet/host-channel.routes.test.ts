@@ -99,6 +99,24 @@ describe('signed company host channel',()=>{
     expect((await channelPost(app,host,{resource:'fleet_operation',action:'renew',claim:fence(claim)})).statusCode).toBe(403);
     expect((await channelPost(app,host,{resource:'fleet_operation',action:'renew',claim:fence(replacement)})).json()).toEqual({renewed:true});
   });
+  it('claims both companies in parallel and keeps each execution barrier on its own company revision',async()=>{
+    const repository=new FleetOperationsRepository(pool);
+    await repository.enqueue(north.hub.id,'owner',channelCreate(north,host,'north-worker'),`console:${north.user.id}`);
+    await repository.enqueue(south.hub.id,'owner',channelCreate(south,other,'south-worker'),`console:${south.user.id}`);
+    const [northClaim,southClaim]=(await Promise.all([host,other].map(async signed=>
+      (await channelPost(app,signed,{resource:'fleet_operation',action:'claim'})).json<{claim:FleetOperationClaim|null}>().claim)));
+    if (!northClaim||!southClaim) throw new Error('parallel company claims absent');
+    expect((await pool.query('SELECT cohort_key FROM fleet_operations ORDER BY cohort_key')).rows)
+      .toEqual([{cohort_key:`fleet:north:${host.host_id}`},{cohort_key:`fleet:south:${other.host_id}`}]);
+    expect((await channelPost(app,host,{resource:'fleet_operation',action:'prepare',claim:fence(northClaim)})).statusCode).toBe(200);
+    await pool.query(`INSERT INTO config_revisions(actor_tenant,actor_alias,operation,inverse_operation,summary)
+      VALUES($1,'owner','{"resource":"room"}','{}','south configuration write')`,[south.hub.id]);
+    expect((await channelPost(app,host,{resource:'fleet_operation',action:'execution',claim:fence(northClaim)})).statusCode).toBe(200);
+    expect((await channelPost(app,other,{resource:'fleet_operation',action:'prepare',claim:fence(southClaim)})).statusCode).toBe(409);
+    await pool.query(`INSERT INTO config_revisions(actor_tenant,actor_alias,operation,inverse_operation,summary)
+      VALUES($1,'owner','{"resource":"room"}','{}','north configuration write')`,[north.hub.id]);
+    expect((await channelPost(app,host,{resource:'fleet_operation',action:'execution',claim:fence(northClaim)})).statusCode).toBe(409);
+  });
   it('does not touch another company lease when the signed host claims its own queue',async()=>{
     const claim=await fleetClaim();await admin.query("UPDATE fleet_operations SET lease_expires_at=now()-interval '1 second' WHERE id=$1",[claim.operation.id]);
     expect((await channelPost(app,other,{resource:'fleet_operation',action:'claim'})).json()).toEqual({claim:null});

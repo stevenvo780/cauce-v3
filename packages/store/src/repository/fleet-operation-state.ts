@@ -1,6 +1,6 @@
 import type { FleetStepName } from '@cauce/protocol';
 import type { DatabaseClient } from '../db.js';
-import { lockFleetRevision, recordFleetEvent } from './fleet-operation-authority.js';
+import { fleetHumanId, lockFleetRevision, recordFleetEvent } from './fleet-operation-authority.js';
 import { FleetOperationError, type FleetOperationClaim, type FleetOperationRow, type FencedFleetTarget } from './fleet-operation-contracts.js';
 import type { FleetMembershipIntent } from './fleet-operation-lifecycle.js';
 import { assertFleetOperationAuthority, loadFleetOrigin } from './fleet-operation-human.js';
@@ -48,13 +48,16 @@ export function assertPrecedingSteps(row: FleetOperationRow, name: FleetStepName
   }
 }
 
+/** The revision belongs to the target company; a platform administrator acting from another company records an override. */
 export async function recordFleetRevision(client: DatabaseClient, row: FleetOperationRow, phase: string): Promise<string> {
   const operation = { resource: 'fleet_operation', action: phase, operation_id: row.id, target: row.target };
   const inverse = { resource: 'fleet_operation', action: 'compensate', operation_id: row.id, target: row.target };
   const revision = (await client.query<{ id: string }>(
-    `INSERT INTO config_revisions(actor_tenant,actor_alias,operation,inverse_operation,summary)
-      VALUES($1,$2,$3::jsonb,$4::jsonb,$5) RETURNING id::text`,
-    [row.actor_tenant, row.actor_alias, JSON.stringify(operation), JSON.stringify(inverse), `fleet ${row.kind} ${phase}`])).rows[0];
+    `INSERT INTO config_revisions(actor_tenant,actor_alias,operation,inverse_operation,summary,company_id,actor_human_id,platform_override)
+      SELECT $1,$2,$3::jsonb,$4::jsonb,$5,$6,$7::uuid,actor.company_id IS DISTINCT FROM $6 FROM tenants actor WHERE actor.id=$1
+      RETURNING id::text`,
+    [row.actor_tenant, row.actor_alias, JSON.stringify(operation), JSON.stringify(inverse), `fleet ${row.kind} ${phase}`,
+      row.company_id, fleetHumanId(row.actor_subject) ?? null])).rows[0];
   if (!revision) throw new Error('fleet desired revision insert returned no row');
   return revision.id;
 }

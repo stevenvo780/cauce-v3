@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import type { FleetError, FleetOperation } from '@cauce/protocol';
 import { withTransaction, type DatabaseClient, type DatabasePool } from '../db.js';
 import { lockFleetRevision, recordFleetEvent } from './fleet-operation-authority.js';
 import { FleetOperationError, publicFleetOperation, type FleetOperationClaim, type FleetOperationRow } from './fleet-operation-contracts.js';
@@ -14,8 +15,17 @@ function leaseParameters(worker: string, host: string, leaseMs: number): void {
 // claimable set); cancel, resume and any completed step are markers that make the operation claimable at once.
 export const FLEET_COMPENSATION_BACKOFF_BASE_MS = 5_000;
 export const FLEET_COMPENSATION_BACKOFF_CAP_MS = 300_000;
+/** A claim renews its lease at most this long after its last durable progress (claim, step start or step receipt). */
+export const FLEET_STEP_MAX_MS = 30 * 60_000;
 export abstract class FleetOperationClaims {
-  constructor(protected readonly pool: DatabasePool, private readonly transactionClient?: DatabaseClient) {}
+  private readonly stepMaxMs: number;
+  constructor(protected readonly pool: DatabasePool, private readonly transactionClient?: DatabaseClient, stepMaxMs = FLEET_STEP_MAX_MS) {
+    if (!Number.isSafeInteger(stepMaxMs) || stepMaxMs < 1000 || stepMaxMs > 86_400_000) {
+      throw new FleetOperationError('invalid_input', 'fleet step duration bound is invalid');
+    }
+    this.stepMaxMs = stepMaxMs;
+  }
+  abstract fail(claim: FleetOperationClaim, input: FleetError): Promise<FleetOperation>;
   protected transaction<T>(work: (client: DatabaseClient) => Promise<T>): Promise<T> {
     return this.transactionClient === undefined ? withTransaction(this.pool, work) : work(this.transactionClient);
   }
@@ -26,13 +36,14 @@ export abstract class FleetOperationClaims {
       await client.query(`UPDATE fleet_operations SET worker_id=NULL,claim_token=NULL,lease_expires_at=NULL,
         version=version+1,updated_at=clock_timestamp() WHERE worker_id IS NOT NULL AND lease_expires_at<=clock_timestamp()
           AND ($1::text IS NULL OR company_id=$1)`, [companyId ?? null]);
+      // One claimed operation per company: prepare and settle advance the company revision its in-flight steps re-check.
       const row = (await client.query<FleetOperationRow>(
         `SELECT operation.* FROM fleet_operations operation
           WHERE operation.executor_host=$1 AND operation.status IN ('queued','running','cancelling')
             AND ($4::text IS NULL OR operation.company_id=$4)
             AND (operation.lease_expires_at IS NULL OR operation.lease_expires_at<=now())
             AND NOT EXISTS (SELECT 1 FROM fleet_operations other WHERE other.id<>operation.id
-              AND other.cohort_key=operation.cohort_key AND other.worker_id IS NOT NULL)
+              AND other.company_id=operation.company_id AND other.worker_id IS NOT NULL)
             AND NOT EXISTS (SELECT 1 FROM (
               SELECT count(*) AS failures, max(failure.created_at) AS last_failure FROM fleet_operation_events failure
                WHERE failure.operation_id=operation.id AND failure.event='failed' AND failure.metadata->>'compensation'='true'
@@ -64,19 +75,33 @@ export abstract class FleetOperationClaims {
       return { operation: publicFleetOperation(await loadFleetOrigin(client, next)), request: next.request, worker_id: worker, claim_token: token, epoch: Number(next.epoch) };
     });
   }
+  /** A renewal past the step bound fails the operation, so a stalled host releases its company's fleet. */
   async renew(claim: FleetOperationClaim, leaseMs = 30_000): Promise<boolean> {
     leaseParameters(claim.worker_id, 'renew', leaseMs);
-    return this.transaction(async (client) => {
+    const outcome = await this.transaction(async (client): Promise<{ renewed: boolean; overdue?: FleetError }> => {
       const row = (await client.query<FleetOperationRow>(
         `SELECT * FROM fleet_operations WHERE id=$1 AND worker_id=$2 AND claim_token=$3 AND epoch=$4
           AND lease_expires_at>clock_timestamp() AND status IN ('running','cancelling') FOR UPDATE`,
         [claim.operation.id, claim.worker_id, claim.claim_token, claim.epoch])).rows[0];
-      if (!row) return false;
+      if (!row) return { renewed: false };
       try { await assertFleetOperationAuthority(client, row); }
-      catch (error) { if (error instanceof FleetOperationError && error.code === 'forbidden') return false; throw error; }
+      catch (error) { if (error instanceof FleetOperationError && error.code === 'forbidden') return { renewed: false }; throw error; }
+      const overdue = (await client.query<{ overdue: boolean }>(
+        `SELECT clock_timestamp()+$2::integer*interval '1 millisecond'>max(created_at)+$3::integer*interval '1 millisecond' AS overdue
+          FROM fleet_operation_events WHERE operation_id=$1 AND event IN ('claimed','step_started','step_completed')`,
+        [row.id, leaseMs, this.stepMaxMs])).rows[0]?.overdue !== false;
+      if (overdue) {
+        const step = row.steps.find(candidate => candidate.status === 'running')?.name;
+        return { renewed: false, overdue: { code: 'HOST_UNAVAILABLE', retryable: true, ...(step === undefined ? {} : { step }) } };
+      }
       const renewed = await client.query(`UPDATE fleet_operations SET lease_expires_at=clock_timestamp()+$2::integer*interval '1 millisecond'
         WHERE id=$1 AND lease_expires_at>clock_timestamp()`, [row.id, leaseMs]);
-      return renewed.rowCount === 1;
+      return { renewed: renewed.rowCount === 1 };
     });
+    if (outcome.overdue !== undefined) {
+      try { await this.fail(claim, outcome.overdue); }
+      catch (error) { if (!(error instanceof FleetOperationError)) throw error; }
+    }
+    return outcome.renewed;
   }
 }
