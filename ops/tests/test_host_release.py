@@ -79,6 +79,12 @@ class HostReleaseTests(unittest.TestCase):
         with self.assertRaisesRegex(host_release.ReleaseError, 'differs from host-release.json'):
             host_release.verify_directory(out)
 
+    def test_deploy_runs_the_builder_it_ships(self):
+        for name in ('build-host-release.sh', 'host-release.py'):
+            self.assertTrue(os.access(OPS / 'scripts' / name, os.X_OK), name)
+        with self.assertRaisesRegex(host_release.ReleaseError, 'absolute'):
+            host_release.deploy(pathlib.Path('relative'), REVISION)
+
     def test_escaping_links_and_incomplete_stages_are_refused(self):
         with self.assertRaisesRegex(host_release.ReleaseError, 'absent or empty'):
             (self.root / 'busy').mkdir()

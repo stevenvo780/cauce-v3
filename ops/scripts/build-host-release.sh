@@ -31,7 +31,9 @@ NODE_PATH="$repo_root/services/gateway/node_modules:$repo_root/packages/store/no
   '--banner:js=import{createRequire as __cauceRequire}from"node:module";const require=__cauceRequire(import.meta.url);'
 ops/scripts/build-adapter-release.sh "$stage/adapter" ${approvals:+"$approvals"}
 image="cauce-agent-runtime:$(sha256sum ops/agent-runtime/Dockerfile | cut -c1-16)"
-docker build -q -t "$image" ops/agent-runtime >/dev/null
+# Without attestations and with a fixed creation time, a cached rebuild keeps the Id and computers skip the download.
+docker build -q --provenance=false --build-arg "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct -- ops/agent-runtime/Dockerfile)" \
+  -t "$image" ops/agent-runtime >/dev/null
 docker run --rm --network none -v "$stage/ops/container-runtime:/cauce/lifecycle:ro" --entrypoint python3 "$image" \
   /cauce/lifecycle/cauce-container-runtime.py bundle-digest /cauce/lifecycle >/dev/null
 python3 ops/scripts/host-release.py pack --stage "$stage" --out "$target" --revision "$revision" --epoch "$epoch" \
