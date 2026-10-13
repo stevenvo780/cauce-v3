@@ -2,7 +2,15 @@
 
 ## Estado de integración
 
-El SDK consume el contrato comunicado del backend d374e476ce1bb6a07386b8fccf3fc6880e56a791, de Zeus. Ese commit no está en el remoto accesible desde este checkout: `git fetch origin d374e476ce1bb6a07386b8fccf3fc6880e56a791` devuelve `not our ref`; la API de GitHub devuelve HTTP 422 y vpstn no resuelve. No se ha transferido, importado su exportación común ni probado su handler real. No se escribió backend ni un DTO alternativo en protocol. La prueba HTTP local verifica el contrato comunicado y el pipeline del SDK; no sustituye el E2E con el código de Zeus.
+El backend usa `AgentEgressResponse` de `@cauce/protocol`; las pruebas de convergencia del SDK tipan los recibos con el DTO común `AgentEgressItem`. `registerAgentEmissionRoutes` registra el endpoint real y delega su lectura en `CauceRepository.listAgentEgress`. `tests/integration/notify-history-postgres.test.ts` contiene el recorrido PostgreSQL → HTTP → SDK → prompt; la existencia de esa suite no acredita su ejecución en una revisión concreta.
+
+La proyección actual del backend pierde el canal cuando difiere del adaptador. Está reproducido con el mapper del store y el consumidor del SDK sobre datos sintéticos; falta corregir la consulta del store y ejecutar la regresión con PostgreSQL real. Las pruebas que usan `adapter=channel=telegram` no cubren esa diferencia.
+
+## Canal del destino
+
+`destination.adapter` identifica el adaptador de transporte y `destination.channel` el canal de la ruta de salida. Son campos independientes. El SDK compara ambos con `authenticated_context.origin` de la entrega humana, junto con la conversación y el hilo; no utiliza el canal del turno que generó el aviso para atribuirlo a un destinatario.
+
+`notificationOrigin` conserva el canal de salida en `adapter_outbox.origin` al crear la notificación. El historial debe leer ese snapshot, aunque después se edite o elimine el destino. La consulta actual de `listAgentEgress` omite el canal y `toAgentEgressItem` lo sustituye por `row.adapter`: un aviso del canal `dm` del adaptador `telegram` queda fuera del historial `dm` y puede atribuirse al canal `telegram` de la misma conversación. Relajar el filtro del SDK o consultar la configuración vigente no conserva la ruta histórica. Sin evidencia del canal, el cuerpo debe quedar excluido.
 
 ## Recorrido productivo del consumidor
 
@@ -26,6 +34,6 @@ El presupuesto cubre el bloque UTF-8 serializado entero: delimitadores, metadata
 
 La fixture mantiene el ID c137560e-ca62-46b2-89bb-b59947953547, ausencia de origin, un notify y destino Telegram 6979524541/provider 2703 del incidente comunicado. El cuerpo es sintético: no se leyó el inbox real. Las pruebas ejercitan HTTP de contrato → engine → almacén archivado y reabierto → harness → prompt; además, lotes, identidad, destinatarios múltiples, intentos, estados, fragmentos, ambigüedad y presupuesto.
 
-Pendiente: transferir el commit original sin alterarlo, reconciliar con el DTO común exportado y ejecutar estos controles contra su handler real. La entrega previa b810dae4 tampoco fue recuperable; esta implementación del SDK es independiente.
+Pendiente: proyectar el canal histórico en la consulta del store y ejecutar contra PostgreSQL real los casos de canal distinto, aislamiento entre canales y edición posterior del destino.
 
 Reversión: revertir exclusivamente el commit o los cambios de esta entrega. No hay cambio de esquema ni estado externo.
