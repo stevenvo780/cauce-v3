@@ -1,7 +1,7 @@
 import { normalize } from 'node:path';
 import { z } from 'zod';
 import type { FleetCapability, FleetOperationRequest } from '@cauce/protocol';
-import { FleetOperationError, FleetOperationsRepository, assertFleetAuthority, fleetHostAvailability, withTransaction, type CompanyAuthoritySource, type DatabaseClient, type DatabasePool } from '@cauce/store';
+import { FleetOperationError, FleetOperationsRepository, assertFleetAuthority, fleetHostAvailability, lockFleetRevision, withTransaction, type CompanyAuthoritySource, type DatabaseClient, type DatabasePool } from '@cauce/store';
 import { assertFleetPlacement, assertFleetProviderAccount } from '../console/fleet-capability.js';
 import { readPrivateJson } from './provider-login.js';
 import { HostProviderAuthService } from './auth-bridge-client.js';
@@ -52,15 +52,15 @@ export class FleetHostUnavailableError extends Error {
   }
 }
 
-async function assertFleetHostOperable(pool: DatabasePool, request: FleetOperationRequest): Promise<void> {
+async function assertFleetHostOperable(client: DatabaseClient, request: FleetOperationRequest): Promise<void> {
   if (request.kind !== 'create' && request.kind !== 'update' && request.kind !== 'start') return;
-  const hostId = request.kind === 'start' ? await placedHostId(pool, request.target) : request.parameters.placement.host_id;
+  const hostId = request.kind === 'start' ? await placedHostId(client, request.target) : request.parameters.placement.host_id;
   if (hostId === null) return;
-  if (!(await fleetHostAvailability(pool, hostId)).usable) throw new FleetHostUnavailableError(hostId);
+  if (!(await fleetHostAvailability(client, hostId)).usable) throw new FleetHostUnavailableError(hostId);
 }
 
-async function placedHostId(pool: DatabasePool | DatabaseClient, target: { tenant_id: string; alias: string }): Promise<string | null> {
-  const result = await pool.query<{ host_id: string | null }>(
+async function placedHostId(client: DatabaseClient, target: { tenant_id: string; alias: string }): Promise<string | null> {
+  const result = await client.query<{ host_id: string | null }>(
     'SELECT host_id FROM agents WHERE tenant_id=$1 AND alias=$2 AND purged_at IS NULL FOR SHARE', [target.tenant_id, target.alias]);
   return result.rows[0]?.host_id ?? null;
 }
@@ -83,11 +83,13 @@ export async function configuredFleetGateway(pool: DatabasePool, capability: Fle
         ...(host.socket_policy.groupGid === undefined ? {} : { groupGid: host.socket_policy.groupGid }) } }) })),
       ...(enrolled === undefined ? {} : { enrolled }) });
   const repository = !capability.available && options.hostCapabilityRegistry===undefined ? undefined : fleetRepository(pool, environment, config);
+  // Workers take the fleet revision lock and then update agents: any row lock taken before it here would deadlock them.
   const approved=async(client:DatabaseClient,tenant:string,alias:string,input:FleetOperationRequest,subject?:string,source?:CompanyAuthoritySource)=>{
+    await lockFleetRevision(client);
     const registry=options.hostCapabilityRegistry;
     const authority=await assertFleetAuthority(client,tenant,alias,input.target,true,subject,source);
     const current=registry===undefined?capability:await registry.fleet(authority.actingCompany,capability);
-    assertFleetPlacement(current,input);await assertFleetProviderAccount(pool,current,input);await assertFleetHostOperable(pool,input);
+    assertFleetPlacement(current,input);await assertFleetProviderAccount(pool,current,input);await assertFleetHostOperable(client,input);
     if (!repository) throw new Error('fleet repository is unavailable');
     const hostId=registry===undefined||config===undefined?null:input.kind==='create'||input.kind==='update'?input.parameters.placement.host_id
       :input.target.resource==='agent'?await placedHostId(client,input.target):null;
@@ -103,6 +105,7 @@ export async function configuredFleetGateway(pool: DatabasePool, capability: Fle
       list: scoped.list.bind(scoped), listRecent: scoped.listRecent.bind(scoped), get: scoped.get.bind(scoped),
       cancel: scoped.cancel.bind(scoped),
       resume: async (tenant,alias,id,expected,subject)=>withTransaction(pool,async client=>{
+        await lockFleetRevision(client);
         const operation=await scoped.forTransaction(client).get(tenant,alias,id,subject);
         const stored=(await client.query<{request:FleetOperationRequest}>('SELECT request FROM fleet_operations WHERE id=$1',[operation.id])).rows[0];
         if (!stored) throw new FleetOperationError('not_found','fleet operation was not found');

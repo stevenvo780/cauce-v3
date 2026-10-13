@@ -1,10 +1,11 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { setTimeout as delay } from 'node:timers/promises';
 import { join } from 'node:path';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { FleetOperationSchema, type FleetCapability, type FleetOperationRequest } from '@cauce/protocol';
-import { applyMigrations, createPool, type DatabasePool, type FleetOperationClaim, type RegisteredCompany } from '@cauce/store';
+import { applyMigrations, createPool, lockFleetRevision, type DatabasePool, type FleetOperationClaim, type RegisteredCompany } from '@cauce/store';
 import { preparePostgresSuite } from '../../../../packages/store/test/postgres-suite.js';
 import { esBaseDePruebas, provisionTestLogin, startTestCaseDatabase, startTestDatabase, TEST_RUNTIME_LOGIN,
   type EmptyTestDatabase, type TestDatabase } from '../../../../tests/helpers/postgres.js';
@@ -103,6 +104,15 @@ function lifecycle(kind: typeof kinds[number], company = north, alias = 'worker'
     expected_revision: 0, idempotency_key: `transport-${kind}-${alias}`, parameters: {} };
 }
 const subject = () => `console:${north.user.id}`;
+async function waitingForFleetRevision(): Promise<void> {
+  for (let attempt = 0; attempt < 400; attempt++) {
+    const waiting = (await current?.adminPool.query<{ n: number }>(`SELECT count(*)::int AS n FROM pg_locks
+      WHERE locktype='advisory' AND classid=0 AND objid=783003004 AND NOT granted`))?.rows[0]?.n;
+    if (waiting) return;
+    await delay(25);
+  }
+  throw new Error('the console operation never waited for the fleet revision lock');
+}
 
 describe('mixed legacy and signed host lifecycle transport', () => {
   it.each(kinds)('routes %s from the durable enrolled placement through its signed host', async kind => {
@@ -173,6 +183,21 @@ describe('mixed legacy and signed host lifecycle transport', () => {
     else await pool.query('UPDATE fleet_host_identities SET enabled=false WHERE host_id=$1', [host.host_id]);
     await expect(repository.resume(north.hub.id, 'owner', failed.id, failed.version, subject())).rejects.toMatchObject({ code: 'forbidden' });
     expect((await pool.query<{ status: string }>('SELECT status FROM fleet_operations WHERE id=$1', [failed.id])).rows[0]?.status).toBe('failed');
+  });
+  it.each(['preview', 'enqueue'] as const)('%s takes the fleet revision lock before the agent row a worker is updating', async call => {
+    await durable(north, host.host_id);
+    const repository = await binding();
+    const worker = await pool.connect();
+    try {
+      await worker.query('BEGIN'); await lockFleetRevision(worker);
+      const pending = repository[call](north.hub.id, 'owner', lifecycle('start'), subject());
+      pending.catch(() => undefined);
+      await waitingForFleetRevision();
+      await worker.query("SET LOCAL lock_timeout='5s'");
+      await worker.query("UPDATE agents SET lifecycle_state='draft' WHERE tenant_id=$1 AND alias='worker'", [north.hub.id]);
+      await worker.query('COMMIT');
+      expect(await pending).toMatchObject(call === 'preview' ? { can_apply: true } : { status: 'queued' });
+    } finally { await worker.query('ROLLBACK').catch(() => undefined); worker.release(); }
   });
   it('keeps a resumed legacy operation on its approved coordinator', async () => {
     await durable(north, 'legacy');
