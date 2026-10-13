@@ -608,26 +608,26 @@ class SecurityTests(Scoped):
         write(chain_in / '.git/objects/info/alternates', os.path.realpath(alt_mid) + '\n')
         point_at(chain_in, alt_out)
 
-        spaced_out, spaced = outside_repo('fuera-alt-espacio', 'SENTINEL-PADDED-ALT-9f3a'), inside_repo('con-alt-espacio')
-        benign = self.source / 'proyecto' / 'alt-limpio'
-        benign.mkdir()
-        evil = pathlib.Path(f'{benign} ')
-        evil.mkdir()
-        (evil / 'pack').symlink_to(spaced_out / '.git/objects/pack')
-        write(spaced / '.git/objects/info/alternates', f'{evil}\n')
-        point_at(spaced, spaced_out)
+        for suffix, tag, sentinel in ((' ', 'espacio', 'SENTINEL-PADDED-ALT-9f3a'), ('\r', 'cr', 'SENTINEL-CR-ALT-9f3a')):
+            out_x, inn_x = outside_repo(f'fuera-alt-{tag}', sentinel), inside_repo(f'con-alt-{tag}')
+            evil_x = pathlib.Path(f"{self.source / 'proyecto' / ('alt-' + tag)}{suffix}")
+            evil_x.mkdir()
+            pathlib.Path(str(evil_x).removesuffix(suffix)).mkdir()
+            (evil_x / 'pack').symlink_to(out_x / '.git/objects/pack')
+            write(inn_x / '.git/objects/info/alternates', f'{evil_x}\n')
+            point_at(inn_x, out_x)
         manifest = self.make_copy()
         repos = {repo['path'] for repo in manifest['repositories']}
         reasons = {item['path']: item['reason'] for item in manifest['omissions']}
         for path in ('proyecto/anidado/.git', 'proyecto/duro-fuera/.git', 'proyecto/puente/.git',
-                     'proyecto/enlace-fichero/.git', 'proyecto/con-alt-encadenado/.git', 'proyecto/con-alt-espacio/.git'):
+                     'proyecto/enlace-fichero/.git', 'proyecto/con-alt-encadenado/.git', 'proyecto/con-alt-espacio/.git', 'proyecto/con-alt-cr/.git'):
             self.assertEqual(reasons[path], 'unsafe-git-link', path)
             self.assertNotIn(path.removesuffix('/.git'), repos)
         self.assertIn('proyecto/duro-dentro', repos)
         self.assertIn('proyecto/duro-gemelo', repos)
         stored = self.copied_bytes() + self.bundle_bytes()
         for sentinel in ('SENTINEL-NESTED-9f3a', 'SENTINEL-HARD-9f3a', 'SENTINEL-BRIDGE-9f3a',
-                         'SENTINEL-FILELINK-9f3a', 'SENTINEL-CHAINED-ALT-9f3a', 'SENTINEL-PADDED-ALT-9f3a'):
+                         'SENTINEL-FILELINK-9f3a', 'SENTINEL-CHAINED-ALT-9f3a', 'SENTINEL-PADDED-ALT-9f3a', 'SENTINEL-CR-ALT-9f3a'):
             self.assertNotIn(sentinel.encode(), stored, sentinel)
         self.assertIn(b'DENTRO-COMPARTIDO-9f3a', stored)
 
