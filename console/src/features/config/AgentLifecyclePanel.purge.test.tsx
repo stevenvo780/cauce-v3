@@ -19,6 +19,7 @@ interface Resource { type: string; name: string; action: string; reason: string 
 const target = { resource: 'agent' as const, tenant_id: 'A', alias: 'w' };
 
 async function preview(resources: Resource[], embedded = true) {
+  const requests: FleetOperationRequest[] = [];
   server.use(
     http.get('http://localhost/v3/console/access', () => HttpResponse.json({
       subject: 'A:operator', roles: ['operator'], permissions: ['config.read', 'config.write'] })),
@@ -26,6 +27,7 @@ async function preview(resources: Resource[], embedded = true) {
     http.get('http://localhost/v3/console/fleet/operations', () => HttpResponse.json({ operations: [] })),
     http.post('http://localhost/v3/console/fleet/operations/preview', async ({ request }) => {
       const input = await request.json() as FleetOperationRequest;
+      requests.push(input);
       return HttpResponse.json({ kind: input.kind, target: input.target, expected_revision: input.expected_revision,
         request_sha256: await fleetRequestHash(input), steps: ['fence'], can_apply: true, dependencies: [], resources });
     }),
@@ -39,7 +41,7 @@ async function preview(resources: Resource[], embedded = true) {
   await user.type(screen.getByLabelText(/Escribe el alias/), 'w');
   await waitFor(() => { expect(screen.getByRole('button', { name: 'Previsualizar operación' })).toBeEnabled(); });
   await user.click(screen.getByRole('button', { name: 'Previsualizar operación' }));
-  return { user, plan: await screen.findByLabelText('Recursos físicos del plan'),
+  return { user, requests, plan: await screen.findByLabelText('Recursos físicos del plan'),
     changeTarget: (selected: typeof target) => { result.rerender(<ApiProvider api={testApi}>{view(selected)}</ApiProvider>); },
     changeRevision: (revision: number) => { result.rerender(<ApiProvider api={testApi}>{view(target, { ...snapshot, revision })}</ApiProvider>); } };
 }
@@ -78,6 +80,9 @@ it('lists the server plan, keeps purge disabled until the exact alias is typed a
   expect(enqueued).toEqual([]);
   await user.clear(screen.getByLabelText(/Escribe el alias/));
   await user.type(screen.getByLabelText(/Escribe el alias/), 'w');
+  expect(enqueue).toBeDisabled();
+  await user.click(screen.getByRole('button', { name: 'Previsualizar operación' }));
+  await screen.findByLabelText('Recursos físicos del plan');
   expect(enqueue).toBeEnabled();
   await user.click(enqueue);
   expect(await screen.findByLabelText('Operación de flota')).toHaveTextContent('En cola');
@@ -94,26 +99,50 @@ it('shows a shared container as kept and a native directory as deleted', async (
   expect(plan).toHaveTextContent('Se borra: Directorio /srv/agents/w');
 });
 
-it('requires a new alias confirmation after closing and reopening purge', async () => {
-  const { user } = await preview([{ type: 'container', name: 'ws-w', action: 'delete', reason: 'Contenedor propio' }], false);
-  await user.clear(screen.getByLabelText(/Escribe el alias/));
-  await user.type(screen.getByLabelText(/Escribe el alias/), 'w');
+it('requires a new preview after closing, reopening and confirming the same alias', async () => {
+  const { user, requests } = await preview([{ type: 'container', name: 'ws-w', action: 'delete', reason: 'Contenedor propio' }], false);
   expect(screen.getByRole('button', { name: 'Encolar operación' })).toBeEnabled();
   await user.click(screen.getByRole('button', { name: 'Cerrar operaciones' }));
   await user.click(screen.getByRole('button', { name: 'Operar agente A/w' }));
   expect(screen.getByLabelText(/Escribe el alias/)).toHaveValue('');
   expect(screen.getByRole('button', { name: 'Encolar operación' })).toBeDisabled();
+  await user.type(screen.getByLabelText(/Escribe el alias/), 'w');
+  expect(screen.getByRole('button', { name: 'Encolar operación' })).toBeDisabled();
+  expect(screen.queryByLabelText('Recursos físicos del plan')).not.toBeInTheDocument();
+  await user.click(screen.getByRole('button', { name: 'Previsualizar operación' }));
+  await screen.findByLabelText('Recursos físicos del plan');
+  expect(screen.getByRole('button', { name: 'Encolar operación' })).toBeEnabled();
+  expect(requests).toHaveLength(2);
+  expect(requests[1]?.idempotency_key).not.toBe(requests[0]?.idempotency_key);
+});
+
+it('does not revive a preview when an edited confirmation returns to the original alias', async () => {
+  const { user, requests } = await preview([{ type: 'container', name: 'ws-w', action: 'delete', reason: 'Contenedor propio' }]);
+  await user.type(screen.getByLabelText(/Escribe el alias/), 'rong');
+  expect(screen.getByRole('button', { name: 'Encolar operación' })).toBeDisabled();
+  await user.clear(screen.getByLabelText(/Escribe el alias/));
+  await user.type(screen.getByLabelText(/Escribe el alias/), 'w');
+  expect(screen.getByRole('button', { name: 'Encolar operación' })).toBeDisabled();
+  expect(screen.queryByLabelText('Recursos físicos del plan')).not.toBeInTheDocument();
+  await user.click(screen.getByRole('button', { name: 'Previsualizar operación' }));
+  await screen.findByLabelText('Recursos físicos del plan');
+  expect(screen.getByLabelText(/Escribe el alias/)).toHaveValue('w');
+  expect(screen.getByRole('button', { name: 'Encolar operación' })).toBeEnabled();
+  expect(requests).toHaveLength(2);
+  expect(requests[1]?.idempotency_key).not.toBe(requests[0]?.idempotency_key);
 });
 
 it('does not reuse confirmation for the same alias in another tenant', async () => {
   const { user, changeTarget } = await preview([{ type: 'container', name: 'ws-w', action: 'delete', reason: 'Contenedor propio' }]);
-  await user.clear(screen.getByLabelText(/Escribe el alias/));
-  await user.type(screen.getByLabelText(/Escribe el alias/), 'w');
   expect(screen.getByRole('button', { name: 'Encolar operación' })).toBeEnabled();
   changeTarget({ ...target, tenant_id: 'B' });
   expect(screen.getByLabelText(/Escribe el alias/)).toHaveValue('');
   expect(screen.getByRole('button', { name: 'Previsualizar operación' })).toBeDisabled();
   expect(screen.getByRole('button', { name: 'Encolar operación' })).toBeDisabled();
+  changeTarget(target);
+  await user.type(screen.getByLabelText(/Escribe el alias/), 'w');
+  expect(screen.getByRole('button', { name: 'Encolar operación' })).toBeDisabled();
+  expect(screen.queryByLabelText('Recursos físicos del plan')).not.toBeInTheDocument();
 });
 
 it('reports the observed purge result when the operation finishes', () => {
@@ -144,10 +173,17 @@ it('says when the executor finished without deleting a container or volume', () 
 });
 
 it('clears confirmation and requires a new preview after the inventory revision changes', async () => {
-  const { changeRevision } = await preview([{ type: 'container', name: 'ws-w', action: 'delete', reason: 'Contenedor propio' }]);
+  const { user, requests, changeRevision } = await preview([{ type: 'container', name: 'ws-w', action: 'delete', reason: 'Contenedor propio' }]);
   expect(screen.getByLabelText(/Escribe el alias/)).toHaveValue('w');
   changeRevision(5);
   expect(screen.getByLabelText(/Escribe el alias/)).toHaveValue('');
   expect(screen.getByRole('button', { name: 'Previsualizar operación' })).toBeDisabled();
   expect(screen.getByRole('button', { name: 'Encolar operación' })).toBeDisabled();
+  await user.type(screen.getByLabelText(/Escribe el alias/), 'w');
+  expect(screen.getByRole('button', { name: 'Encolar operación' })).toBeDisabled();
+  await user.click(screen.getByRole('button', { name: 'Previsualizar operación' }));
+  await screen.findByLabelText('Recursos físicos del plan');
+  expect(screen.getByRole('button', { name: 'Encolar operación' })).toBeEnabled();
+  expect(requests[1]).toMatchObject({ expected_revision: 5, parameters: { confirm_alias: 'w' } });
+  expect(requests[1]?.idempotency_key).not.toBe(requests[0]?.idempotency_key);
 });

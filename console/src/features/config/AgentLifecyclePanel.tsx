@@ -53,7 +53,9 @@ export function AgentLifecyclePanel({ snapshot, target, onReloaded, initialDraft
   const blocked = !!blockingOperation(flow.operation, kind);
   const aliasConfirmed = kind !== 'purge' || target?.resource !== 'agent' || typedAlias === target.alias;
   const confirmationTarget = target?.resource === 'agent' ? JSON.stringify([target.tenant_id, target.alias]) : '';
-  useEffect(() => { setTypedAlias(''); }, [open, kind, confirmationTarget]);
+  useEffect(() => {
+    generation.current += 1; setValidated(undefined); setKey(newKey()); setTypedAlias('');
+  }, [open, kind, confirmationTarget]);
   useEffect(() => { if (open) heading.current?.focus({ preventScroll: true }); }, [open]);
   useEffect(() => {
     if (previousRevision.current === snapshot.revision) return;
@@ -143,7 +145,9 @@ export function AgentLifecyclePanel({ snapshot, target, onReloaded, initialDraft
         <p className="m-0"><a href={`/messages/${encodeURIComponent(target.tenant_id)}/${encodeURIComponent(target.alias)}?view=context`}>Descargar copia</a>
           {' '}del espacio antes de purgar.</p>
         <label>Escribe el alias <code>{target.alias}</code> para confirmar
-          <input value={typedAlias} autoComplete="off" onChange={(event) => { setTypedAlias(event.target.value); }} /></label>
+          <input value={typedAlias} autoComplete="off" onChange={(event) => {
+            generation.current += 1; setValidated(undefined); setKey(newKey()); setTypedAlias(event.target.value);
+          }} /></label>
       </section> : null}
       <div className="acciones"><button type="button" className="button secondary" disabled={busy || inProgress || blocked || !canWrite || !available || !aliasConfirmed}
         aria-busy={previewing} onClick={() => { void preview(); }}>{previewing ? 'Previsualizando…' : 'Previsualizar operación'}</button>
