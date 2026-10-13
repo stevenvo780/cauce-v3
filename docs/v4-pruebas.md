@@ -6,10 +6,10 @@ Esta tabla enumera archivos y comandos presentes en el checkout. Los conteos son
 |---|---|---:|---|---|---|
 | unitarias | Pruebas unitarias | 654 | `pnpm test:unit` | Código y contratos aislados; incluye las suites unitarias de paquetes y consola declaradas en el script. | No demuestra por sí sola efectos persistentes de extremo a extremo, runtime remoto ni comportamiento desplegado. |
 | postgres | PostgreSQL real con Testcontainers | 228 | `pnpm test` | Pruebas con sufijos `-postgres.test.ts`, `.postgres.test.ts` y `.pg.test.ts`, distribuidas entre servicios, store, integración y e2e. No hay un runner único exclusivo para PostgreSQL. | No acredita todos los recorridos de navegador, autenticación real de proveedores ni comportamiento en producción. |
-| navegador | E2E de navegador real | 25 | `pnpm test:e2e` | Archivos `tests/e2e/*real-browser*.test.*`; el runner ejecuta la carpeta completa, incluidos los recorridos V4 presentes en el checkout. El inventario por archivo y caso está en la sección «E2E de navegador real». | La matriz mantiene 24 pendientes, entre ellos ciclos completos de ordenadores, personas, runtime físico y contextos. GOAL §10 aún marca pendiente cerrar estados y mejorar la retroalimentación de todas las vistas. |
+| navegador | E2E de navegador real | 26 | `pnpm test:e2e` | Archivos `tests/e2e/*real-browser*.test.*`; el runner ejecuta la carpeta completa, incluidos los recorridos V4 presentes en el checkout. El inventario por archivo y caso está en la sección «E2E de navegador real». | La matriz mantiene 23 pendientes, entre ellos ciclos completos de ordenadores, personas y contextos; el runtime físico en Docker local ya tiene su ciclo y falta repetirlo en server2. GOAL §10 aún marca pendiente cerrar estados y mejorar la retroalimentación de todas las vistas. |
 | fallos | Simulacros de fallo y auxiliares | 10 | `pnpm test:integration && pnpm test:ops` | Archivos con prefijo `failure-drill` bajo `tests/integration` y `ops/tests`, más `test-fault*.sh`. | GOAL §10 mantiene pendientes pruebas de fallo con procesos reales; la matriz deja pendiente `context_git_concurrent_recovery` en navegador y despliegue. Estos simulacros no acreditan por sí solos recuperación en producción. |
 | aislamiento | Adversariales y de aislamiento | 50 | `pnpm test:gateway-hardening && pnpm test:store-hardening && pnpm test:services` | Suites `tests/gateway-hardening`, `tests/store-hardening` y la prueba `services/gateway/src/security/route-isolation.postgres.test.ts`. | GOAL §1.3 mantiene pendiente la guardia P0 que enumera todas las rutas `/v3` y prueba IDs cruzados sin mutaciones, además de los efectos remotos entre empresas. |
-| ops | Ops y Python | 167 | `pnpm test:ops` | Archivos descubiertos por `ops/tests/run-all.mjs`, incluidos casos Python y shell con sus requisitos de ejecución. | No sustituye las suites de servicios, las pruebas de navegador ni la verificación desplegada; el runner puede marcar casos como omitidos si faltan requisitos de host o Docker. |
+| ops | Ops y Python | 168 | `pnpm test:ops` | Archivos descubiertos por `ops/tests/run-all.mjs`, incluidos casos Python y shell con sus requisitos de ejecución. | No sustituye las suites de servicios, las pruebas de navegador ni la verificación desplegada; el runner puede marcar casos como omitidos si faltan requisitos de host o Docker. |
 | layout | Layout | 12 | `pnpm qa:layout` | Módulos ejecutables `.mjs` de `console/qa`; el gate renderiza rutas en Chromium y compara medidas con sus baselines. | GOAL §10 mantiene pendiente resolver en todas las vistas los estados vacíos, de carga y error con retroalimentación clara. |
 | release | Gate de release | 1 | `scripts/release-gates.sh` | Script que declara y ejecuta diez pasos: primero el barrido acotado de huérfanos de las suites desechables y después nueve gates pnpm en carriles paralelos, cada uno un checkout del mismo commit (`CAUCE_RELEASE_GATES_JOBS`, por defecto según CPU y memoria; `1` los corre en secuencia); `scripts/release-gates.sh --list` imprime sus comandos. | Exige un árbol limpio y herramientas disponibles; no despliega ni comprueba el efecto vivo. El barrido no recorre el Docker compartido: solo `ops/tests/test_fleet_orphan_sweep.py` y `ops/tests/test_fleet_executor_container.py`. GOAL §10 todavía marca documentación y recorridos de aceptación como pendientes. |
 
@@ -32,7 +32,7 @@ Este inventario sustituye la cifra histórica «17 e2e de vistas V3 y un recorri
 
 | Grupo | Archivos | Casos |
 |---|---:|---:|
-| V4 (`v4-*`) | 12 | 61 |
+| V4 (`v4-*`) | 13 | 62 |
 | V3 y V3.5 (resto) | 13 | 21 |
 
 | Archivo V4 | Casos | Recorrido |
@@ -42,6 +42,7 @@ Este inventario sustituye la cifra histórica «17 e2e de vistas V3 y un recorri
 | `tests/e2e/v4-context-files-real-browser.test.ts` | 1 | Archivos de contexto. |
 | `tests/e2e/v4-contexts-real-browser.test.ts` | 1 | Contextos y versiones. |
 | `tests/e2e/v4-crud-matriz-real-browser.test.ts` | 9 | Matriz CRUD: ordenadores, cuentas, registro de agente y partes del plano. |
+| `tests/e2e/v4-fleet-cycle-real-browser.test.ts` | 1 | Ciclo físico de un agente desde la web sobre un ordenador enrolado sin superadministrador y Docker local: alta, update de configuración y asignaciones, stop, contexto aplicado al iniciar con ACK, retiro y purga, con el contenedor leído tras cada paso y cero recursos al final. `CAUCE_FLEET_CYCLE_TARGET=server2` deja preparado el mismo recorrido. |
 | `tests/e2e/v4-humanizar-session-real-browser.test.ts` | 4 | Sesión de las personas de Humanizar en un clon. |
 | `tests/e2e/v4-office-real-browser.test.ts` | 13 | Oficina: salas y agentes de alta a baja, re-login, segundo navegador y cansancio en campus, plano y ficha. |
 | `tests/e2e/v4-people-real-browser.test.ts` | 6 | Personas y acceso web. |
@@ -60,5 +61,5 @@ grep -cE '^\s*it\(' tests/e2e/*real-browser*.test.ts
 ## Límites de aceptación que siguen abiertos
 
 - GOAL §10 deja pendientes los estados vacíos, de carga y error con retroalimentación en todas las vistas, los fallos con procesos reales y la documentación operativa completa.
-- La matriz CRUD mantiene 24 elementos pendientes. Incluye recorridos de navegador para ordenadores, personas, autoridad, runtime, contextos, harnesses, cuotas y oficina; el detalle verificable está en `docs/v4-matriz-crud.json`.
+- La matriz CRUD mantiene 23 elementos pendientes. Incluye recorridos de navegador para ordenadores, personas, autoridad, runtime, contextos, harnesses, cuotas y oficina; el detalle verificable está en `docs/v4-matriz-crud.json`.
 - Los conteos reflejan archivos presentes, no ejecución de comandos ni evidencia de aceptación local o desplegada.
