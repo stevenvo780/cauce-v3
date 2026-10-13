@@ -1,6 +1,4 @@
-# Tarea 1 — Núcleo, autoridad y canal firmado de Cauce V4
-
-Estado: núcleo y canal implementados y registrados en la rama aislada; validación focal con PostgreSQL hermético y rol SQL runtime real. La integración, el despliegue y la aceptación completa siguen pendientes. Este informe acredita el alcance indicado; el gate completo y la aceptación de V4 corresponden al integrador.
+# Núcleo, autoridad y canal firmado de Cauce V4
 
 ## Cambios e interfaces
 
@@ -18,43 +16,6 @@ Estado: núcleo y canal implementados y registrados en la rama aislada; validaci
 - Integración de exports/rutas de cuotas y contextos; selector `/v3/accounts/selection` admite `model` opcional limitado a128 caracteres. Hooks legacy de perfil/documentos sincronizan versiones. ACK de `recordContextAdoptionInTransaction` se ejecuta sólo tras fencing y transición done, con evidencia de consumo validada.
 - Executor de flota: comprueba abort después de lecturas/mutaciones asíncronas y antes de settle; espera la renovación SQL pendiente al apagar. Pruebas diferidas independientes de cronometraje acreditan ambas carreras.
 
-## Evidencia
+## Verificación
 
-PostgreSQL16 hermético proporcionado por el proceso principal. Antes de Vitest se carga el entorno privado de prueba; `CAUCE_TEST_RUNTIME_ROLE=1` mantiene las pruebas de negocio bajo los permisos reales de aplicación. Triggers de fallo intencional y preparación de políticas SQL usan la conexión administrativa del fixture, sin ampliar permisos runtime.
-
-```text
-company-registration-office: 8 passed
-company-administration-enrollment: 8 passed
-companies-configuration: 12 passed
-companies-fleet: 10 passed
-companies-people-admin: 14 passed
-companies-revisions: 5 passed
-fleet-hosts: 12 passed
-password-auth-company: 16 passed
-people-admin-store: 13 passed
-operations-company: 2 passed
-auth-main: 4 passed
-host-channel.routes: 7 passed
-fleet-operations-postgres: 31 passed
-executor: 8 passed
-fleet-hosts.routes: 15 passed
-fleet-operations.routes: 47 passed
-agent-profile-postgres: 46 passed
-host-channel.executor: 1 passed
-```
-
-El ensayo HTTP real ejecuta Fastify local, identidad Ed25519 privada, SignedHostChannel, FleetExecutor y helper Python cerrado: detiene por SIGTERM un proceso Node creado exclusivamente por el test, escribe y relee un artefacto con SHA256 real, confirma `succeeded` y agente disabled/draft en PostgreSQL y verifica que un segundo ciclo no repite stop ni escritura. Demuestra transporte y efecto físico local; no acredita alta/auth de un proveedor externo.
-
-Recibos de esta ampliación:
-
-- `directorio temporal compartido/cauce-v4-task1-runtime-channel.log`: canal7, auth-main4, administración/enrolamiento8, 19/19.
-- `directorio temporal compartido/cauce-v4-task1-final-worker-routes.log`: executor8 y rutas15+47, 70/70.
-- `directorio temporal compartido/cauce-v4-task1-final-profile-executor.log`: perfil46, executor8 y ensayo HTTP1, 55/55.
-- `directorio temporal compartido/cauce-v4-task1-final-consolidated.log`: flota PostgreSQL31, canal7, administración/enrolamiento8, hosts15, operaciones47 y configuración4; 6 archivos, 112/112.
-- `directorio temporal compartido/cauce-v4-task1-final-typecheck.log`: `pnpm exec tsc --noEmit -p tsconfig.json`, salida vacía/exit0.
-- `directorio temporal compartido/cauce-v4-task1-final-lint-fixed.log` y `final-strict-fixed.log`: eslint focal y estricto, salida vacía/exit0. Fixtures de perfil tienen recibos separados `final-profile-lint.log` y `final-profile-strict.log`.
-- Corridas previas preservadas: `executor-refactor` conserva 31/31 de flota y el fallo real del parser prepare; `final-routes` conserva los fallos de fixtures que motivaron la corrección. No se sustituyeron sus resultados por PASS.
-
-Revisión independiente de las APIs/store/adopción de contextos: no se encontró un fallo bloqueante confirmado en empresa, CAS, restore, límites de contenido, lease de aplicación y ACK done con hashes coincidentes. Conserva el límite explícito: `native_document:none` proyecta prompt/perfil SQL y no demuestra reescritura física de AGENTS/CLAUDE legacy. La revisión del broker de cuotas detectó fuga de mapping histórico, cohorte retenida al rechazar TTL y exceso de32 eventos; el proceso principal aplicó las reparaciones. Sus recibos y ensayo pertenecen a ese frente.
-
-Quedan fuera de esta evidencia el gate global, la aceptación de proveedores externos, la creación Docker de una computadora nueva, una respuesta de proveedor publicada y cualquier despliegue. La revisión final, los commits y la publicación corresponden al proceso principal.
+Los recibos locales y sus límites están en la [matriz de verificación](v4-matriz-local.md).

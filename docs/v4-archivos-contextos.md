@@ -109,39 +109,20 @@ Sólo el broker tiene acceso al repositorio completo y su credencial global. Age
 
 El broker filtra variables heredadas `GIT_*`, deshabilita hooks y usa su configuración controlada. `GIT_SSH_COMMAND` externo no es el canal de configuración del transporte. La clave y known_hosts se fijan en `core.sshCommand` local del repositorio.
 
-### Preparación comprobada de GitHub y VPS
-
-El repositorio [stevenvo780/cauce-agent-contexts](https://github.com/stevenvo780/cauce-agent-contexts) es privado. Un ensayo sintético registró y envió el mismo commit `6b542f583ea19747d4c3f196ce1a279ed8344ff2`; la repetición conservó ese commit. Se limpió el recurso sintético con `73cc58f6fcc195263ff8ff0e935bb57d173f481d`. El `ls-remote` desde el broker preparado de VPS mostró ese último SHA en main. Son pruebas de transporte con contenido sintético, sin contextos productivos migrados.
-
-Metadatos de configuración confirmados por el coordinador:
+### Configuración del broker
 
 | Ruta de host | Mount del gateway | Uso |
 |---|---|---|
 | `/var/lib/cauce-v3-context-broker/repository` | `/var/lib/cauce-v3/contexts`, escritura | Repositorio privado central |
 | `/var/lib/cauce-v3-context-broker/ssh` | `/run/cauce-context-git`, sólo lectura | `id_ed25519` y `known_hosts` del broker |
 
-La deploy key de escritura tiene id `166116310`. No se documenta su contenido. El comando SSH local fija `-i /run/cauce-context-git/id_ed25519`, `UserKnownHostsFile=/run/cauce-context-git/known_hosts`, `StrictHostKeyChecking=yes`, `IdentitiesOnly=yes` y `-F /dev/null`. El setup inicial conserva un fallo real de ownership de Git; el recibo posterior acredita que se corrigió el acceso, sin acreditar despliegue del gateway.
+El comando SSH local fija `-i /run/cauce-context-git/id_ed25519`, `UserKnownHostsFile=/run/cauce-context-git/known_hosts`, `StrictHostKeyChecking=yes`, `IdentitiesOnly=yes` y `-F /dev/null`.
 
 Compose prepara `CAUCE_CONTEXT_REPOSITORY_ROOT=/var/lib/cauce-v3/contexts`, `CAUCE_PROJECT_ROOT=/app`, `CAUCE_SPACE_BACKUP_DIRECTORY=/var/lib/cauce-v3/space-backups` y `CAUCE_SPACE_BACKUP_PYTHON=/usr/local/bin/python3`. Las rutas de host pueden elegirse con `CAUCE_CONTEXT_REPOSITORY_DIRECTORY` y `CAUCE_CONTEXT_GIT_KEY_DIRECTORY`. `space_backups_data` persiste las copias durables. Configuración preparada no equivale a imagen publicada ni worker activo demostrado.
 
 ## Copias durables y recuperación
 
-El backend deriva la fuente `state_directory/space` de la fila del agente y la política del ordenador. El navegador no aporta rutas. Las API son:
-
-```text
-POST /v3/console/spaces/:tenant_id/:alias/backups
-GET  /v3/console/spaces/:tenant_id/:alias/backups/:id
-GET  /v3/console/spaces/:tenant_id/:alias/backups/:id/download
-POST /v3/fleet/hosts/:host_id/space-backups
-```
-
-El UUID liga empresa/target/host/humano/placement y hash de política. El canal firmado y el worker usan token/epoch, lease de 60 segundos renovado cada 15 y revalidación de autoridad y placement. Reclaim invalida el fence anterior; upload exige offset y bytes exactos en retries. Finish verifica identidad, manifiesto, bytes y SHA-256, con recuperación de rename seguido de rollback SQL. Download calcula la integridad del mismo descriptor de archivo que entrega.
-
-`pending/running/ready/failed` se conserva durable. URL sólo para ready; expiración `EXPIRED` sin URL. TTL de 24 horas, máximo 20 solicitudes activas por empresa y 200 globales, directorios `0700` y archivos `0600`. ZIP y total tienen límite de 1 GiB; archivo individual de 128 MiB; máximo 20 000 entradas y manifiesto de 8 MiB. Los chunks son de 64 KiB y el helper tiene deadline de 110 segundos. `LIMIT_EXCEEDED` acredita un fallo explícito, no una copia parcial suficiente.
-
-La CLI local comparte los límites de 1 GiB total y 128 MiB por archivo, con los mismos filtros base; restore exige destino nuevo/vacío e identidad exacta. No hay botón web de restore. El ZIP incluye contenido permitido de context/directives/projects/config/data; Git sólo versiona context/directives. Ninguno sustituye un plan de recuperación de credenciales ni una copia consistente de otros sistemas durables.
-
-Se probó con PostgreSQL runtime, HTTP TCP, Ed25519, Python y filesystem reales: un proyecto sintético de 100 000 bytes fue exportado, descargado y restaurado sin `config/auth.json` ni logs. Las pruebas de descarga UI usan un ZIP fixture vacío de 22 bytes y prueban su mecánica e integridad, sin demostrar contenido productivo. Se verificó además un JSONL sintético mayor de 96 MiB con hashes exactos y límites de entradas. Los espacios reales de varios GiB requieren una copia consistente adicional; esas pruebas locales no acreditan su recuperación productiva.
+El backend deriva la fuente `state_directory/space` de la fila del agente y la política del ordenador; el navegador no aporta rutas. El contrato, los filtros, los límites, los estados y la recuperación están descritos en [copias durables](v4-copias-espacios.md). La CLI local se documenta en [Cauce V4 CLI](v4-cli.md).
 
 ## Descriptores de harnesses
 
@@ -199,8 +180,8 @@ Proveedores que no son harness y solo existen para cuotas: `gemini`, `minimax`, 
 
 Para un conflicto de contexto se releen versión e historial, se preserva el borrador y se reconcilian cambios; para Git pendiente se consulta status y se usa retry, conservando el snapshot durable; para applied pendiente se comprueba director de la empresa, delivery, lease y ACK/witness exactos. Para backup fallido se conserva UUID/error/fence y se investiga placement, política, integridad o límites. No se imprimen contenido sensible, DSN ni sesiones para diagnosticar.
 
-La evidencia local incluye 16 pruebas PostgreSQL/Git, 5 API PostgreSQL, 10 adapter/espacio, 6 CLI con HTTP fixture y las pruebas de backup durable y SDK. Los recibos, su procedencia y los negativos están en [la matriz local](v4-matriz-local.md). La migración física, contexto productivo en GitHub, turnos reales de proveedor, gate final integrado y E2E publicado siguen pendientes y no se deducen de esos resultados.
+Los recibos, su procedencia y los negativos están en la [matriz local](v4-matriz-local.md). La adopción de contexto por proveedores reales y la aceptación publicada siguen pendientes.
 
 ## Exclusión durante el consumo de contexto
 
-El SDK serializa turnos que comparten `CAUCE_SPACE_ROOT` entre sesiones y engines del mismo proceso. Adquiere el espacio después del lock de sesión, materializa el contexto y verifica SHA, ruta y metadatos antes de acreditar adopción. Conserva el lock hasta persistir el resultado; un cambio externo falla sin marcar done ni applied. Se probaron 38 casos locales, incluidos 10 de exclusión, cancelación, timeout y persistencia. La operación debe garantizar un único consumidor por espacio: este lock no coordina procesos distintos.
+El SDK serializa turnos que comparten `CAUCE_SPACE_ROOT` entre sesiones y engines del mismo proceso. Adquiere el espacio después del lock de sesión, materializa el contexto y verifica SHA, ruta y metadatos antes de acreditar adopción. Conserva el lock hasta persistir el resultado; un cambio externo falla sin marcar done ni applied. Este lock no coordina procesos distintos.

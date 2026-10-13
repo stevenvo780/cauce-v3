@@ -1,9 +1,8 @@
 # Parámetros del orquestador
 
 Tabla única: cada parámetro que gobierna el sistema con unidad, fuente y valor
-vigente. Verificada contra el árbol `dev` (`8583c565`). La sonda
-`tests/unit/parametros.test.ts` (T015) falla si aparece un parámetro en código
-sin fila aquí. Lo que falta medir es pregunta abierta al final, no invención.
+documentado. `tests/unit/parametros.test.ts` falla si aparece un parámetro en
+código sin fila aquí. Las preguntas abiertas están al final.
 
 Fuente: `medido` = hecho de runtime por alias; `env` = variable con defecto;
 `DB` = fila/tabla; `fijo` = constante; `dueño` = solo el dueño lo fija.

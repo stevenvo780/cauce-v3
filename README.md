@@ -7,7 +7,7 @@ Bus de mensajería durable y multi-tenant entre agentes de IA en CLI (Claude Cod
 ## Instalar, probar, desplegar
 
 ```sh
-git pull                                     # el árbol es compartido; siempre al día antes de empezar
+git pull --ff-only origin dev                # solo en el checkout compartido de dev
 pnpm install --frozen-lockfile               # dependencias
 pnpm prepare:runtime                         # compila packages/protocol primero
 pnpm typecheck                               # tipos: core+adapter+mcp+console

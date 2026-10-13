@@ -1,6 +1,6 @@
 # CLI de Cauce V4
 
-Este documento describe los comandos implementados en el checkout V4. Las pruebas locales y sus límites están en [la matriz local](v4-matriz-local.md). La instalación comprobada en un destino temporal no acredita instalación en todos los ordenadores ni despliegue de esta versión.
+Las pruebas locales y sus límites están en [la matriz local](v4-matriz-local.md). La instalación comprobada en un destino temporal no acredita instalación en todos los ordenadores ni despliegue de esta versión.
 
 ## Entrada e instalación
 
@@ -124,28 +124,8 @@ cauce spaces backup --archive /ruta/privada/nueva-copia.zip --directory /ruta/pr
 cauce spaces restore --archive /ruta/privada/copia.zip --directory /ruta/privada/nuevo-space --company-id COMPANY_ID --tenant-id TENANT_ID --alias AGENT_ALIAS --runtime-key RUNTIME_KEY
 ```
 
-La identidad exacta del manifiesto es `(company_id, tenant_id, alias, runtime_key)`. El runtime key procede del destino que eligió el operador; el helper no lo descubre recorriendo homes. Si existe `config/context-state.json`, su empresa/tenant/alias deben coincidir. Raíz y parent del ZIP deben ser privados y del UID actual; la copia es `0600`.
+La restauración exige un destino nuevo o vacío y no restaura autenticación ni reactiva procesos. Los filtros, manifiesto, límites y estados de backup durable están en [copias de espacios](v4-copias-espacios.md). La consola sólo ofrece descarga cuando el recibo está `ready`; la restauración se ejecuta con esta CLI.
 
-Se exportan `context`, `directives`, `projects`, `config` y `data`, incluidas carpetas vacías y perfil canónico `context/profile.json`. El manifiesto registra hashes, modos permitidos y exclusiones. `logs`, `tmp` y paths/contenido sensible conocido quedan fuera, cada uno declarado en el manifiesto con su motivo: `sensitive_path` (`.env*`, claves, `auth.json`, `credentials*`, `.npmrc`, `.pypirc`, `.htpasswd`, ficheros de cookies de datos), `sensitive_content` (claves privadas y tokens de GitHub, GitLab, Slack, AWS, npm o URLs con usuario y contraseña), `vcs_metadata` (`.git`) y `external_mount` (montajes de `config/external-mounts.json` con `excluded_from_copy`; los que quedan dentro del espacio se omiten, y los que quedan fuera, como `/workspace`, se registran en el manifiesto con su ruta absoluta sin copiar nada). Este filtro no detecta todo secreto arbitrario embebido en archivos de trabajo.
+## Evidencia
 
-Restore exige un destino nuevo o vacío, valida el ZIP completo antes de crearlo y relee el contenido antes del recibo final. Usa directorios `0700` y archivos `0600`, o `0700` cuando corresponde al bit de ejecución del dueño. No hace `chown`, restaura autenticación ni reactiva procesos. Un fallo parcial no recibe recibo de éxito. El restore de archivos no acredita por sí solo que el agente en ejecución haya adoptado una versión.
-
-| Límite | CLI local | Backup durable de consola |
-|---|---:|---:|
-| Entradas | 20 000 | 20 000 |
-| Archivo individual | 128 MiB (`MAX_FILE`) | 128 MiB |
-| Contenido total | 1 GiB (`MAX_TOTAL`) | 1 GiB |
-| ZIP | Validado por el helper | 1 GiB |
-| Manifiesto | 8 MiB | 8 MiB |
-
-No es una instantánea transaccional del runtime. El helper cerca lecturas mediante fingerprints y falla si cambia el archivo observado; antes de migrar se debe obtener una copia consistente y demostrar su recuperación. Los espacios de varios GiB exceden el límite durable actual y no están cubiertos por una descarga completa demostrada.
-
-La consola ofrece solicitud, sondeo y descarga del ZIP; la restauración usa esta CLI. Los estados durables son `pending`, `running`, `ready` y `failed`. Sólo `ready` tiene URL. Una copia excesiva falla con `LIMIT_EXCEEDED`; una expirada devuelve `EXPIRED` sin URL. La UI verifica MIME, tamaño y SHA-256 antes de entregar el archivo. Véanse [estructura y aplicación de contextos](v4-archivos-contextos.md), [consola](v4-consola.md) y [autenticación runtime](v4-autenticacion-runtime.md).
-
-## Evidencia y límites de esta guía
-
-La CLI de plataforma pasó 10 pruebas unitarias y 13 PostgreSQL; la última ejecutó el entrypoint real con credenciales sintéticas actuales, export `0600`, plan, import y replay. El installer vigente pasó con `ALL OK` en un destino temporal. Enrolamiento Python pasó 9 pruebas. Context CLI pasó 6 pruebas con servidor HTTP fixture; la autoridad real está comprobada por 5 pruebas API con PostgreSQL. Backup durable pasó 16 pruebas PostgreSQL/HTTP/Ed25519/Python, incluida descarga y restauración real de un proyecto sintético de 100 000 bytes. La regresión Python/SDK pasó 10 pruebas.
-
-Estos resultados acreditan sus alcances locales. No acreditan altas de proveedores actuales, terminales de todos los agentes, migraciones físicas ni recorridos publicados. Los recibos exactos y las pruebas fallidas conservadas figuran en [la matriz](v4-matriz-local.md).
-
-Límites del ZIP: 20 000 entradas de contenido, 128 MiB por archivo y 1 GiB total. El manifiesto adicional tiene su propio límite. El backup durable reserva hasta 1 GiB por operación, con cuotas de 4 GiB por empresa y 16 GiB global. Un límite excedido produce fallo y ningún recibo completo. Las pruebas de copia mayores de 96 MiB y sus límites están en `v4-copias-espacios.md`; ninguna es aceptación productiva.
+Las pruebas locales de los comandos y sus límites están en la [matriz de verificación](v4-matriz-local.md).
