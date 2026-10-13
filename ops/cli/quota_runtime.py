@@ -226,6 +226,7 @@ def provider_login_executable(environment: dict) -> str:
 
 
 def create(policy: dict, environment: dict) -> dict:
+    provider_operation(policy, environment['provider'], 'install')
     existing = inspect_container(environment['container_name'])
     if existing is not None:
         return create_runtime(policy, environment, existing)
@@ -233,7 +234,9 @@ def create(policy: dict, environment: dict) -> dict:
     retained_volume = volume in docker('volume', 'ls', '--format', '{{.Name}}').decode().splitlines()
     try:
         return create_runtime(policy, environment, None)
-    except Exception:
+    except Exception as error:
+        if isinstance(error, SafeFailure) and str(error) == 'quota provider operation or pinned descriptor is unavailable':
+            raise
         if retained_volume:
             observed = inspect_container(environment['container_name'])
             if observed is not None:
