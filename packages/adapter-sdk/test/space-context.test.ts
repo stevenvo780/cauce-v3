@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { definitionFromDescriptor, executeHarnessOperation, packagedHarnessDescriptor, packagedHarnessIds, parseHarnessDescriptor } from '../src/context/harness-descriptor.js';
 import { prepareSpaceLayout, SPACE_DIRECTORIES, writeSpaceContext } from '../src/context/space-layout.js';
-import { validateVersionedContext } from '../src/sdk/engine/versioned-context.js';
+import { contextSentKey, validateVersionedContext, versionedContextDelivery } from '../src/sdk/engine/versioned-context.js';
 import { protocolPrompt } from '../src/harnesses/shared/prompt.js';
 import { delivery } from './engine-fixtures.js';
 
@@ -106,10 +106,11 @@ test('materialized context travels as version, digest and paths only', () => {
   const context = contextOf([{ path: 'context/mission.md', content: 'CUERPO-LARGO' },
     { path: 'context/notes/a.md', content: 'NOTA-LARGA' }]);
   const prompt = protocolPrompt('Proceed', undefined, { ...promptBase, versioned_context: context,
-    versioned_context_delivery: { materialized: true, max_bytes: 65_536 } });
+    versioned_context_delivery: { materialized: true, max_bytes: 65_536, space_root: '/srv/space', native_document: 'AGENTS.md' } });
   assert.doesNotMatch(prompt, /CUERPO-LARGO|NOTA-LARGA/u);
-  assert.match(prompt, /context\/mission\.md/u);
-  assert.match(prompt, /context\/notes\/a\.md/u);
+  assert.match(prompt, /"\/srv\/space\/context\/mission\.md"/u);
+  assert.match(prompt, /"\/srv\/space\/context\/notes\/a\.md"/u);
+  assert.match(prompt, /"native_document":"\/srv\/space\/AGENTS\.md"/u);
   assert.match(prompt, new RegExp(context.digest, 'u'));
 });
 
@@ -161,4 +162,18 @@ test('retired context files are removed by their byte receipt and local edits pr
     assert.equal(await readFile(join(root, 'context/new.md'), 'utf8'), 'Edited locally');
     await assert.rejects(() => writeSpaceContext(root, descriptor, { ...version(4, []), company_id: 'foreign' }), /another context target/u);
   } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('versioned_context_delivery only claims materialized with proof the session holds the content', () => {
+  const context = contextOf([{ path: 'context/mission.md', content: 'x' }]);
+  const base = { spaceRoot: '/srv/space', materializedVersion: context.version, materializedDigest: context.digest,
+    degraded: false, context, maxBytes: 65_536, nativeDocument: 'AGENTS.md', sessionHasContent: true };
+  assert.deepEqual(versionedContextDelivery(base), { materialized: true, max_bytes: 65_536, space_root: '/srv/space', native_document: 'AGENTS.md' });
+  assert.equal(versionedContextDelivery({ ...base, sessionHasContent: false }).materialized, false);
+  assert.equal(versionedContextDelivery({ ...base, spaceRoot: undefined }).materialized, false);
+  assert.equal(versionedContextDelivery({ ...base, degraded: true }).materialized, false);
+  assert.equal(versionedContextDelivery({ ...base, materializedDigest: 'other' }).materialized, false);
+  assert.equal(versionedContextDelivery({ ...base, materializedVersion: undefined }).materialized, false);
+  assert.equal(versionedContextDelivery({ ...base, maxBytes: 1024 }).max_bytes, 1024);
+  assert.notEqual(contextSentKey('a', 'zeus', context), contextSentKey(undefined, 'zeus', context));
 });

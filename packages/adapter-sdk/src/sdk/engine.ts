@@ -50,7 +50,7 @@ import { runSystemGateProbe } from "./engine/system-gate-probe.js";
 import { isConversationStatusRequest, runConversationStatus } from "./engine/conversation-status.js";
 import { PRAXIS_SUPERVISION_NOTICE_MESSAGE_TYPE, runPraxisSupervisionNotice } from "./engine/praxis-supervision-notice.js";
 import { DEFAULT_NO_PROGRESS_TIMEOUT_MS } from "./message-timeout.js";
-import { validateVersionedContext, VersionedContextTurn } from './engine/versioned-context.js';
+import { validateVersionedContext, VersionedContextTurn, versionedContextDelivery, contextSentKey } from './engine/versioned-context.js';
 import { packagedHarnessDescriptor } from '../context/harness-descriptor.js';
 import { defaultContextIngestClient, type NativeContextIngest } from './context-ingest-client.js';
 import type { EmissionRuntime } from "./mcp-emission/runtime.js";
@@ -64,6 +64,7 @@ export class AdapterEngine {
   private readonly emission: EmissionRuntime | undefined;
   private readonly contextIngest: NativeContextIngest | undefined;
   private readonly store: DurableStore;
+  private readonly contextSent = new Set<string>();
   private readonly harness: HarnessAdapter;
   private readonly harnessForDelivery: AdapterEngineOptions["harnessForDelivery"];
   private readonly publishEvent: EventPublisher;
@@ -384,6 +385,7 @@ export class AdapterEngine {
       ? delivery.body.type
       : "request";
     const effectiveVersionedContext = space.effectiveContext ?? delivery.versioned_context;
+    const contextDescriptor = await packagedHarnessDescriptor(harness.definition.id);
     const rawRequestContext: HarnessRequestContext = {
       ...(this.emission === undefined ? {} : { mcp_emit: true }),
       ...(humanInitiator === undefined ? {} : { human_initiator: humanInitiator }),
@@ -404,10 +406,12 @@ export class AdapterEngine {
       ...(delivery.company_context === undefined ? {} : { company_context: delivery.company_context }),
       ...(effectiveVersionedContext === undefined ? {} : {
         versioned_context: effectiveVersionedContext,
-        versioned_context_delivery: {
-          materialized: space.materializedVersion === effectiveVersionedContext.version && space.materializedDigest === effectiveVersionedContext.digest,
-          max_bytes: (await packagedHarnessDescriptor(harness.definition.id)).context.max_bytes,
-        },
+        versioned_context_delivery: versionedContextDelivery({
+          spaceRoot: space.root, materializedVersion: space.materializedVersion, materializedDigest: space.materializedDigest,
+          degraded: materializationDegraded !== undefined, context: effectiveVersionedContext,
+          maxBytes: contextDescriptor.context.max_bytes, nativeDocument: contextDescriptor.context.native_document,
+          sessionHasContent: this.contextSent.has(contextSentKey(session.sessionKey, delivery.recipient_alias, effectiveVersionedContext)),
+        }),
       }),
       ...(delivery.profile_runtime_contract === undefined
         ? {}
@@ -594,6 +598,12 @@ export class AdapterEngine {
           reason: `${space.ignoredPaths.slice(0, 5).join(",")}${space.ignoredPaths.length > 5 ? ` (+${String(space.ignoredPaths.length - 5)})` : ""}` });
       }
 
+      const sentContext = requestContext.versioned_context;
+      const sentDelivery = requestContext.versioned_context_delivery;
+      if (sentContext !== undefined && sentDelivery !== undefined && session.sessionKey !== undefined
+        && Buffer.byteLength(JSON.stringify(sentContext.files)) <= sentDelivery.max_bytes) {
+        this.contextSent.add(contextSentKey(session.sessionKey, delivery.recipient_alias, sentContext));
+      }
       const profileAdoption = profileAdoptionFor(delivery, consumedProfile);
       const done = await this.store.transitionAndEnqueue(
         delivery.delivery_id,

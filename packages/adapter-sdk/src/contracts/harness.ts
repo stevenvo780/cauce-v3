@@ -43,11 +43,14 @@ export interface HarnessRequestContext {
   readonly versioned_context?: VersionedContext;
   /**
    * How the prompt carries `versioned_context`: `materialized` = the same version and digest are
-   * already written in the space, so only version, digest and paths are sent; otherwise the files
-   * go inline up to `max_bytes` (the harness descriptor's document limit).
+   * written in the space AND this session already received the content inline, so only version,
+   * digest and absolute paths are sent; otherwise the files go inline up to `max_bytes` (the
+   * harness descriptor's document limit). `space_root` and `native_document` make the paths absolute.
    */
-  readonly versioned_context_delivery?: { readonly materialized: boolean; readonly max_bytes: number };
-  /**
+  readonly versioned_context_delivery?: {
+    readonly materialized: boolean; readonly max_bytes: number;
+    readonly space_root?: string; readonly native_document?: string;
+  };  /**
    * Summary of the fixed text as it is written TODAY in the harness's instructions file inside
    * the container, measured by whoever can look at it. When it matches the text this adapter
    * would emit, the fixed block is NOT repeated in the envelope.

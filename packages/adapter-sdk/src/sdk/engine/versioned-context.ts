@@ -8,6 +8,7 @@ import { lstat, readFile, realpath } from 'node:fs/promises';
 import { isAbsolute, resolve } from 'node:path';
 import { SessionReservation } from '../../harnesses/shared/session-reservation.js';
 import type { VersionedContext } from '@cauce/protocol';
+import type { HarnessRequestContext } from '../../contracts/harness.js';
 import type { NativeContextIngest } from '../context-ingest-client.js';
 import { ingestLocalContextEdits, quarantineDivergedContextFiles, readSpaceContextStateVersion } from './native-context-ingest.js';
 
@@ -167,4 +168,33 @@ export async function materializeVersionedContext(delivery: Delivery, tenant: st
   if (context === undefined || root === undefined) return;
   const descriptor = await packagedHarnessDescriptor(harness);
   return writeSpaceContext(root, descriptor, context);
+}
+
+export interface VersionedContextDeliveryInput {
+  readonly spaceRoot: string | undefined;
+  readonly materializedVersion: number | undefined;
+  readonly materializedDigest: string | undefined;
+  readonly degraded: boolean;
+  readonly context: VersionedContext;
+  readonly maxBytes: number;
+  readonly nativeDocument: string;
+  /** Session already received this version and digest inline. Without a session key it is never true. */
+  readonly sessionHasContent: boolean;
+}
+
+/**
+ * References replace content only with proof the agent already holds it: the space has the same
+ * version and digest, the harness got the content inline earlier in this session, and nothing
+ * degraded. The harness cwd is not necessarily the space root, so relative paths prove nothing.
+ */
+export function versionedContextDelivery(input: VersionedContextDeliveryInput): NonNullable<HarnessRequestContext['versioned_context_delivery']> {
+  const materialized = input.spaceRoot !== undefined && !input.degraded && input.sessionHasContent
+    && input.materializedVersion === input.context.version && input.materializedDigest === input.context.digest;
+  return { materialized, max_bytes: input.maxBytes,
+    ...(input.spaceRoot === undefined ? {} : { space_root: input.spaceRoot }),
+    ...(input.nativeDocument === 'none' ? {} : { native_document: input.nativeDocument }) };
+}
+
+export function contextSentKey(sessionKey: string | undefined, alias: string, context: VersionedContext): string {
+  return `${sessionKey ?? ''}|${alias}|${String(context.version)}|${context.digest}`;
 }
