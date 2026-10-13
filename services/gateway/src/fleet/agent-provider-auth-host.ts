@@ -18,6 +18,9 @@ const Execution = z.object({ operation: FleetOperationSchema, request: FleetOper
   snapshot: z.object({ agents: Records, memberships: Records, rolePolicies: Records }).strict(), trusted_accounts: FleetProviderAccountsSchema,
 }).strict();
 const Context = z.object({ physical: AgentAuthPhysicalSchema, execution: Execution.optional() }).strict();
+const ACTIVE_POLL_MS = 100;
+const IDLE_POLL_MIN_MS = 1000;
+const IDLE_POLL_MAX_MS = 5000;
 interface Login { fence: AgentAuthCommand['fence']; login: ProviderAuthLogin; config: ProviderLoginConfig; unsubscribe(): void }
 export interface AgentProviderAuthHostOptions extends HostProviderAuthOptions {
   createLogin?(config: ProviderLoginConfig, signal: AbortSignal): Promise<ProviderAuthLogin>;
@@ -109,10 +112,12 @@ export class AgentProviderAuthHost {
     if (this.completed.size > 4096) this.abort.abort();
     return result;
   }
+  /** Every exchange is a signed write on the gateway: an idle host backs off from 1 s to 5 s and polls fast only during a login. */
   private async poll(): Promise<void> {
     try {
+      let idle = 0;
       while (!this.abort.signal.aborted) {
-        let delay = 100;
+        let busy = false;
         try {
           const sent = this.events.splice(0, 32);
           const response = AgentAuthExchangeSchema.parse(await this.channel.request('POST', `/v3/fleet/hosts/${this.options.hostConfig.host}/agent-auth`,
@@ -121,9 +126,12 @@ export class AgentProviderAuthHost {
             session.unsubscribe(); await session.login.close(); this.logins.delete(id); this.sequences.delete(id);
           }
           for (const packet of response.commands) this.events.push(await this.dispatch(packet));
+          busy = response.commands.length > 0 || response.active_sessions.length > 0 || this.logins.size > 0 || this.events.length > 0;
         } catch {
-          await this.stopLocal(); this.events.length = 0; this.completed.clear(); delay = 1000;
+          await this.stopLocal(); this.events.length = 0; this.completed.clear();
         }
+        idle = busy ? 0 : Math.min(idle + 1, 4);
+        const delay = busy ? ACTIVE_POLL_MS : Math.min(IDLE_POLL_MAX_MS, IDLE_POLL_MIN_MS * 2 ** (idle - 1));
         await new Promise<void>(resolve => {
           const done = () => { clearTimeout(timer); this.abort.signal.removeEventListener('abort', done); resolve(); };
           const timer = setTimeout(done, delay); this.abort.signal.addEventListener('abort', done, { once: true });
