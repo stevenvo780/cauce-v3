@@ -2,7 +2,7 @@ export const ALIAS_PATTERN = /^[a-z][a-z0-9_-]{0,63}$/u;
 /** Top-level subcommands of the `cauce` CLI; an agent alias equal to one would be unreachable (`cauce <alias>`). */
 export const RESERVED_CLI_ALIASES: readonly string[] = [
   'platform', 'hosts', 'context', 'context-native', 'spaces', 'flota', 'estado', 'ver',
-  'cuotas', 'coutas', 'pila-test', 'help', 'ayuda',
+  'cuotas', 'coutas', 'pila-test', 'help', 'ayuda', 'diagnose', 'login',
 ];
 export const RESERVED_ALIAS_MESSAGE =
   'Ese alias está reservado: coincide con un subcomando del CLI cauce. Elige otro.';
