@@ -30,7 +30,54 @@ def write(path: pathlib.Path, text: str, mode: int = 0o644) -> None:
     path.chmod(mode)
 
 
-class CopyAndRestoreTests(unittest.TestCase):
+FAKE_DOCKER = '''#!/usr/bin/env python3
+import json, os, sys
+layout = json.load(open(os.environ['CAUCE_TEST_DOCKER']))
+if sys.argv[1:3] == ['ps', '-aq']:
+    print('\\n'.join(layout))
+elif sys.argv[1:3] == ['container', 'inspect']:
+    print(json.dumps([{'Name': '/' + name, 'Mounts': [{'Source': s, 'Destination': d} for s, d in layout[name]]}
+                      for name in sys.argv[3:]]))
+else:
+    sys.exit(1)
+'''
+
+
+def agent(tenant: str, container: str, home: str, workspace: str | None = None) -> dict:
+    entry = {'tenant': tenant, 'container': container, 'home': home, 'user': 'dev', 'systemdUser': 'stev',
+             'room': 'grp.x', 'harness': 'codex', 'membershipRole': 'agent',
+             'stateDirectory': f'{home}/.local/state/cauce-v3/{container}'}
+    return {**entry, 'workspace': workspace} if workspace else entry
+
+
+class Scoped(unittest.TestCase):
+    """Copies are scoped to one alias and company; Docker answers from a fixed layout so the suite stays hermetic."""
+
+    def scoped(self, aliases: dict, containers: dict, alias: str, tenant: str) -> None:
+        self.alias, self.tenant = alias, tenant
+        self.config = self.root / 'container-aliases.json'
+        self.config.write_text(json.dumps({'schemaVersion': 1, 'aliases': aliases}))
+        self.containers = {name: [(os.path.realpath(source), destination) for source, destination in mounts]
+                           for name, mounts in containers.items()}
+        layout = self.root / 'docker-layout.json'
+        layout.write_text(json.dumps(self.containers))
+        fake = self.root / 'bin'
+        fake.mkdir(exist_ok=True)
+        write(fake / 'docker', FAKE_DOCKER, 0o700)
+        self.env = {**os.environ, 'PYTHONDONTWRITEBYTECODE': '1', 'PATH': f'{fake}:{os.environ["PATH"]}',
+                    'CAUCE_TEST_DOCKER': str(layout)}
+
+    def cli(self, *arguments):
+        arguments = [str(item) for item in arguments]
+        if arguments[0] == 'copiar' and '--empresa' not in arguments:
+            arguments[1:1] = ['--empresa', self.tenant, '--config', str(self.config)]
+        if arguments[0] == 'restaurar' and '--alias' not in arguments:
+            arguments += ['--alias', self.alias, '--empresa', self.tenant]
+        return subprocess.run(['bash', str(SCRIPT), *arguments], capture_output=True, text=True, timeout=300,
+                              env=self.env)
+
+
+class CopyAndRestoreTests(Scoped):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory(prefix='cauce-v4-copia-', dir='/var/tmp')
         self.addCleanup(temporary.cleanup)
@@ -73,10 +120,8 @@ class CopyAndRestoreTests(unittest.TestCase):
         write(data / 'cabecera.hdr', MARKER)
         os.mkfifo(data / 'tuberia')
         self.copy = self.root / 'copia'
-
-    def cli(self, *arguments):
-        return subprocess.run(['bash', str(SCRIPT), *arguments], capture_output=True, text=True, timeout=300,
-                              env={**os.environ, 'PYTHONDONTWRITEBYTECODE': '1'})
+        self.scoped({'gaia': agent('Miguel', 'c-gaia', '/home/claw', '/home/claw/clawd')},
+                    {'c-gaia': [(project, '/home/claw/clawd'), (data, '/home/claw/datos')]}, 'gaia', 'Miguel')
 
     def make_copy(self):
         done = self.cli('copiar', '--alias', 'gaia', '--origen', f'clawd={self.source / "clawd"}',
@@ -178,7 +223,7 @@ def github_token() -> str:
     return 'gh' + 'p_' + 'Z9' * 18
 
 
-class SecurityTests(unittest.TestCase):
+class SecurityTests(Scoped):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory(prefix='cauce-v4-copia-seg-', dir='/var/tmp')
         self.addCleanup(temporary.cleanup)
@@ -211,10 +256,10 @@ class SecurityTests(unittest.TestCase):
         (data / 'victima').mkdir()
         write(data / 'victima/v.txt', 'v\n')
         self.copy = self.root / 'copia'
-
-    def cli(self, *arguments):
-        return subprocess.run(['bash', str(SCRIPT), *arguments], capture_output=True, text=True, timeout=300,
-                              env={**os.environ, 'PYTHONDONTWRITEBYTECODE': '1'})
+        aliases = {'hades': agent('Steven', 'c-hades', '/home/claw')}
+        self.scoped(aliases, {'c-hades': [(project, '/home/claw/proyecto'), (data, '/home/claw/datos')]},
+                    'hades', 'Steven')
+        self.scope = copia.tenant_scope({'aliases': aliases}, 'hades', 'Steven', self.containers)
 
     def make_copy(self):
         done = self.cli('copiar', '--alias', 'hades', '--origen', f'proyecto={self.source / "proyecto"}',
@@ -281,7 +326,7 @@ class SecurityTests(unittest.TestCase):
             with self.subTest(racer=racer.__name__), mock.patch.object(copia, 'open_verified', racer):
                 target = self.root / f'carrera-{attempt}'
                 with self.assertRaises((OSError, copia.Failure)):
-                    copia.copy('hades', [f'datos={self.source / "datos"}'], str(target))
+                    copia.copy('hades', [f'datos={self.source / "datos"}'], str(target), self.scope)
                 stored = b''.join(p.read_bytes() for p in target.rglob('*') if p.is_file())
                 self.assertNotIn(b'CONTENIDO-DE-FUERA', stored)
             for left, back in (('victima.old', 'victima'), ('ok.old', 'ok.txt'), ('abierto.old', 'abierto.txt')):
@@ -341,6 +386,84 @@ class SecurityTests(unittest.TestCase):
         with mock.patch.object(copia.os, 'geteuid', return_value=0), self.assertRaises(copia.Failure):
             copia.ownership(None)
         self.assertEqual(copia.ownership('1000:1000'), (1000, 1000))
+
+
+class CompanyIsolationTests(Scoped):
+    """Two companies on one host: copying an agent of one never carries anything of the other."""
+
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory(prefix='cauce-v4-copia-empresas-', dir='/var/tmp')
+        self.addCleanup(temporary.cleanup)
+        self.root = pathlib.Path(temporary.name)
+        tenants = self.root / 'tenants'
+        write(tenants / 'uno/ana/clawd/notas.md', 'datos de ana\n')
+        write(tenants / 'dos/bea/clawd/cliente.md', 'CLIENTE-DE-LA-EMPRESA-DOS\n')
+        write(tenants / 'compartido/comun.md', 'COMUN-A-AMBAS\n')
+        config = self.root / 'humanizar-config/cauce-v3/config'
+        write(config / 'carla/settings.json', '{"empresa": "uno"}\n')
+        write(config / 'dario/settings.json', '{"empresa": "DOS-PRIVADO"}\n')
+        self.aliases = {
+            'ana': agent('Uno', 'c-ana', '/home/a', '/home/a/clawd'),
+            'bea': agent('Dos', 'c-bea', '/home/b', '/home/b/clawd'),
+            'carla': agent('Uno', 'c-ws', '/home/dev'),
+            'dario': agent('Dos', 'c-ws', '/home/dev'),
+        }
+        self.scoped(self.aliases, {
+            'c-ana': [(tenants / 'uno/ana/clawd', '/home/a/clawd'), (tenants / 'compartido', '/srv/compartido')],
+            'c-bea': [(tenants / 'dos/bea/clawd', '/home/b/clawd'), (tenants / 'compartido', '/srv/compartido')],
+            'c-ws': [(self.root / 'humanizar-config', '/home/dev/.local/share')],
+        }, 'ana', 'Uno')
+        self.tenants, self.config_root = tenants, config
+
+    def copy_of(self, alias, tenant, **sources):
+        target = self.root / f'copia-{alias}-{len(list(self.root.glob("copia-*")))}'
+        origins = [item for name, path in sources.items() for item in ('--origen', f'{name}={path}')]
+        return target, self.cli('copiar', '--alias', alias, '--empresa', tenant, '--config', self.config, *origins,
+                                '--destino', target)
+
+    def test_copy_of_one_company_carries_nothing_of_the_other(self):
+        target, done = self.copy_of('ana', 'Uno', clawd=self.tenants / 'uno/ana/clawd')
+        self.assertEqual(done.returncode, 0, done.stderr)
+        manifest = json.loads((target / 'manifest.json').read_text())
+        self.assertEqual((manifest['alias'], manifest['tenant'], manifest['container']), ('ana', 'Uno', 'c-ana'))
+        self.assertEqual([e['path'] for e in manifest['entries'] if e['kind'] == 'file'], ['clawd/notas.md'])
+        stored = b''.join(p.read_bytes() for p in target.rglob('*') if p.is_file())
+        for foreign in (b'CLIENTE-DE-LA-EMPRESA-DOS', b'COMUN-A-AMBAS', b'DOS-PRIVADO', b'cliente.md', b'bea'):
+            self.assertNotIn(foreign, stored)
+        _, carla = self.copy_of('carla', 'Uno', config=self.config_root / 'carla')
+        self.assertEqual(carla.returncode, 0, carla.stderr)
+
+    def test_sources_outside_the_alias_space_or_company_are_refused(self):
+        refused = {
+            'other company volume': ('ana', 'Uno', {'clawd': self.tenants / 'dos/bea/clawd'}, 'outside the space'),
+            'volume shared by both': ('ana', 'Uno', {'comun': self.tenants / 'compartido'}, 'outside the space'),
+            'parent of both agents': ('ana', 'Uno', {'todo': self.tenants}, 'outside the space'),
+            'wrong company': ('ana', 'Dos', {'clawd': self.tenants / 'uno/ana/clawd'}, 'does not belong'),
+            'whole shared config': ('carla', 'Uno', {'cfg': self.root / 'humanizar-config'}, 'outside the space'),
+            'sibling of other company': ('carla', 'Uno', {'cfg': self.config_root / 'dario'}, 'outside the space'),
+            'config of both': ('carla', 'Uno', {'cfg': self.config_root}, 'outside the space'),
+        }
+        for name, (alias, tenant, sources, reason) in refused.items():
+            with self.subTest(name=name):
+                target, done = self.copy_of(alias, tenant, **sources)
+                self.assertEqual(done.returncode, 2, done.stdout)
+                self.assertIn(reason, done.stderr)
+                self.assertFalse(target.exists())
+
+    def test_restore_refuses_a_copy_of_another_alias_company_or_space(self):
+        target, done = self.copy_of('ana', 'Uno', clawd=self.tenants / 'uno/ana/clawd')
+        self.assertEqual(done.returncode, 0, done.stderr)
+        for alias, tenant in (('bea', 'Dos'), ('ana', 'Dos'), ('bea', 'Uno')):
+            result = self.cli('restaurar', target, '--alias', alias, '--empresa', tenant)
+            self.assertEqual(result.returncode, 2)
+            self.assertIn('another alias or company', result.stderr)
+        manifest = json.loads((target / 'manifest.json').read_text())
+        manifest['entries'].append({'path': 'otro-espacio/x.md', 'kind': 'directory', 'mode': 493})
+        manifest['sha256'] = copia.seal(manifest)
+        (target / 'manifest.json').write_text(json.dumps(manifest))
+        tampered = self.cli('restaurar', target)
+        self.assertEqual(tampered.returncode, 2)
+        self.assertIn('outside the copied space', tampered.stderr)
 
 
 if __name__ == '__main__':

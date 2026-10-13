@@ -28,7 +28,11 @@ import time
 import unicodedata
 import urllib.parse
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from v4_alcance_copia import check_sources, host_containers, tenant_scope  # noqa: E402
+
 SCHEMA = 'cauce.v4-migracion-copia/1'
+CONFIG = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'container-aliases.json')
 RESTORE_SCHEMA = 'cauce.v4-migracion-restauracion/1'
 NAME_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$')
 OMISSION_RULES = (
@@ -345,9 +349,9 @@ class Copier:
                     self.repositories[repo]['deleted'].append(path)
 
 
-def copy(alias: str, sources: list[str], output: str) -> dict:
-    if not NAME_RE.fullmatch(alias):
-        raise Failure('invalid alias')
+def copy(alias: str, sources: list[str], output: str, scope: dict) -> dict:
+    if not NAME_RE.fullmatch(alias) or scope.get('alias') != alias:
+        raise Failure('invalid alias or a scope computed for another alias')
     roots = {}
     for item in sources:
         name, _, location = item.partition('=')
@@ -355,6 +359,7 @@ def copy(alias: str, sources: list[str], output: str) -> dict:
                 or not os.path.isdir(location):
             raise Failure(f'source must be NAME=/absolute/directory and not a symlink: {name!r}')
         roots[name] = os.path.realpath(location)
+    check_sources(roots, scope)
     target = os.path.realpath(output)
     if any(under(target, root) or under(root, target) for root in roots.values()):
         raise Failure('the copy cannot live inside a source, nor a source inside the copy')
@@ -370,7 +375,7 @@ def copy(alias: str, sources: list[str], output: str) -> dict:
     data = [e for e in copier.entries if e['kind'] == 'file' and e['source'] == 'data']
     manifest = {
         'schema': SCHEMA, 'alias': alias, 'createdAt': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
-        'host': socket.gethostname(), 'sources': sorted(roots),
+        'host': socket.gethostname(), 'sources': sorted(roots), 'tenant': scope['tenant'], 'container': scope['container'],
         'entries': copier.entries, 'repositories': sorted(copier.repositories.values(), key=lambda r: r['path']),
         'omissions': copier.omissions,
         'totals': {'files': sum(1 for e in copier.entries if e['kind'] == 'file'),
@@ -389,10 +394,17 @@ def validate(manifest: dict) -> dict:
     """Everything the restore will turn into a path, a git argument or a mode is checked before any write."""
     if not isinstance(manifest, dict) or manifest.get('schema') != SCHEMA or manifest.get('sha256') != seal(manifest):
         raise Failure('manifest seal does not verify')
-    if not NAME_RE.fullmatch(str(manifest.get('alias', ''))):
-        raise Failure('manifest alias is invalid')
+    if not NAME_RE.fullmatch(str(manifest.get('alias', ''))) or not NAME_RE.fullmatch(str(manifest.get('tenant', ''))):
+        raise Failure('manifest alias or company is invalid')
+    sources = manifest.get('sources')
+    if not isinstance(sources, list) or not sources or any(not NAME_RE.fullmatch(str(name)) for name in sources):
+        raise Failure('manifest sources are invalid')
+    paths = [e['path'] for e in manifest['entries']] + [o['path'] for o in manifest['omissions']] \
+        + [r['path'] for r in manifest['repositories']] + [d for r in manifest['repositories'] for d in r.get('deleted', [])]
+    for path in paths:
+        if relative(path).split('/', 1)[0] not in sources:
+            raise Failure(f'manifest path outside the copied space: {path}')
     for entry in manifest['entries']:
-        relative(entry['path'])
         kind = entry.get('kind')
         if kind not in ('file', 'directory', 'symlink') or entry.get('source', 'data') not in ('git', 'data'):
             raise Failure(f'unknown manifest entry: {entry["path"]}')
@@ -543,8 +555,10 @@ class Restorer:
 
 
 def restore(copy_directory: str, destination: str, rules: list[str], omit: list[str] = (),
-            duplicates: list[str] = (), owner: str | None = None) -> dict:
+            duplicates: list[str] = (), owner: str | None = None, expected: tuple[str, str] | None = None) -> dict:
     manifest = load(copy_directory)
+    if expected is None or (manifest['alias'], manifest['tenant']) != expected:
+        raise Failure('the copy belongs to another alias or company than the one being restored')
     apply, pairs = mapper(rules)
     identity = ownership(owner)
     for repo in manifest['repositories']:
@@ -653,11 +667,15 @@ def main(argv: list[str]) -> int:
     commands = parser.add_subparsers(dest='command', required=True)
     make = commands.add_parser('copiar')
     make.add_argument('--alias', required=True)
+    make.add_argument('--empresa', required=True, help='company (tenant) the alias must belong to in the config')
+    make.add_argument('--config', default=CONFIG, help='versioned alias config with container, company and paths')
     make.add_argument('--origen', action='append', required=True, help='NAME=/absolute/directory')
     make.add_argument('--destino', required=True)
     commands.add_parser('comprobar-copia').add_argument('copia')
     back = commands.add_parser('restaurar')
     back.add_argument('copia')
+    back.add_argument('--alias', required=True)
+    back.add_argument('--empresa', required=True)
     back.add_argument('--destino')
     back.add_argument('--mapa', action='append', default=[], help='OLD_PREFIX=NEW_PREFIX')
     back.add_argument('--omitir', action='append', default=[], help='glob of data entries left out of the new layout')
@@ -667,7 +685,9 @@ def main(argv: list[str]) -> int:
     arguments = parser.parse_args(argv)
     try:
         if arguments.command == 'copiar':
-            manifest = copy(arguments.alias, arguments.origen, arguments.destino)
+            with open(arguments.config, encoding='utf-8') as handle:
+                scope = tenant_scope(json.load(handle), arguments.alias, arguments.empresa, host_containers())
+            manifest = copy(arguments.alias, arguments.origen, arguments.destino, scope)
             print(json.dumps({'manifest': manifest['sha256'], **manifest['totals']}, sort_keys=True))
         elif arguments.command == 'comprobar-copia':
             print(json.dumps(check(arguments.copia), sort_keys=True))
@@ -675,7 +695,7 @@ def main(argv: list[str]) -> int:
             scratch = None if arguments.destino else tempfile.mkdtemp(prefix='cauce-v4-restauracion-')
             try:
                 receipt = restore(arguments.copia, arguments.destino or scratch, arguments.mapa, arguments.omitir,
-                                  arguments.duplicar, arguments.propietario)
+                                  arguments.duplicar, arguments.propietario, (arguments.alias, arguments.empresa))
             finally:
                 if scratch:
                     shutil.rmtree(scratch, ignore_errors=True)

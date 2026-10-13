@@ -156,6 +156,19 @@ class MeasurementTests(unittest.TestCase):
         self.assertTrue(correlation['uno']['correlated'] and correlation['dos']['correlated'])
         self.assertFalse(correlation['tres']['correlated'])
 
+    def test_copy_scope_follows_the_real_docker_mounts_and_company(self):
+        def copy(tenant, name, path):
+            return self.cli('copiar', '--alias', 'uno', '--empresa', tenant, '--config', str(self.config),
+                            '--origen', f'{name}={path}', '--destino', str(self.root / f'copia-{name}-{tenant}'))
+        own = copy('T', 'own', self.root / 'own')
+        self.assertEqual(own.returncode, 0, own.stderr)
+        shared = copy('T', 'shared', self.root / 'shared')
+        self.assertEqual(shared.returncode, 2)
+        self.assertIn('outside the space', shared.stderr)
+        other = copy('Otra', 'own', self.root / 'own')
+        self.assertEqual(other.returncode, 2)
+        self.assertIn('does not belong', other.stderr)
+
     def test_declared_route_drives_the_measurement_of_a_placed_alias(self):
         fake = self.root / 'bin'
         fake.mkdir(exist_ok=True)

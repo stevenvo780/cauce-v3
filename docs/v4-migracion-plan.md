@@ -281,13 +281,15 @@ Con `correlated: true` el precedente queda probado en solo lectura.
 ### 6.3 Copia recuperable y restauración de prueba
 
 ```sh
-# en el host de origen, con el agente detenido para el corte
-ops/scripts/v4-medicion-migracion.sh copiar --alias gaia \
-  --origen clawd=<home-del-agente>/clawd --origen openclaw=<home-del-agente>/.openclaw --destino <copia-gaia>
+# en el host de origen, con el agente detenido; los orígenes son rutas del host (origen de cada montaje)
+ops/scripts/v4-medicion-migracion.sh copiar --alias gaia --empresa Miguel \
+  --origen clawd=<datos>/tenants/<tenant>/agents/gaia/oc/clawd \
+  --origen openclaw=<datos>/tenants/<tenant>/agents/gaia/oc/.openclaw --destino <copia-gaia>
 ops/scripts/v4-medicion-migracion.sh comprobar-copia <copia-gaia>
-ops/scripts/v4-medicion-migracion.sh restaurar <copia-gaia> --recibo <restauracion-prueba.json>
+ops/scripts/v4-medicion-migracion.sh restaurar <copia-gaia> --alias gaia --empresa Miguel --recibo <restauracion-prueba.json>
 # traslado con normalización al espacio de destino
-ops/scripts/v4-medicion-migracion.sh restaurar <copia-gaia> --destino <espacio> --propietario <uid>:<gid> \
+ops/scripts/v4-medicion-migracion.sh restaurar <copia-gaia> --alias gaia --empresa Miguel \
+  --destino <espacio> --propietario <uid>:<gid> \
   --mapa clawd=projects/gaia-clawd --mapa openclaw=data/openclaw --omitir '*.bak*' \
   --duplicar clawd/AGENTS.md=context/AGENTS.md --recibo <restauracion-gaia.json>
 ```
@@ -301,6 +303,13 @@ ops/scripts/v4-medicion-migracion.sh restaurar <copia-gaia> --destino <espacio> 
   - `symlink-outside`: enlaces con destino absoluto o fuera del árbol.
 
   Además, `sensitive-content` deja fuera cualquier otro fichero cuyo contenido lleve material de credenciales: claves privadas, tokens conocidos, JWT, userinfo en una URL o asignaciones de secretos. Así se cubre también un enlace duro con nombre inocente. Lo ya commiteado viaja en el bundle igual que está en el remoto y queda listado en `trackedSensitive`. Las credenciales de cada alias se trasladan en privado por decisión del dueño (§3), nunca por esta copia.
+- **Acotada al alias y a su empresa**: `copiar` lee de `ops/container-aliases.json` el contenedor, la empresa y las rutas del alias, y de `docker inspect` dónde viven en el host. Rechaza:
+  - un `--empresa` que no sea la del alias;
+  - un origen fuera del espacio del alias. El espacio son sus rutas de estado, configuración y espacio y, si el contenedor solo lo sirve a él, sus montajes no compartidos;
+  - un origen que contenga un volumen de otro contenedor;
+  - un origen que se solape con las rutas de otro alias del mismo contenedor (`ws-humanizar`: Hegel no puede llevarse nada de Atlas ni de Kratos).
+
+  El manifiesto registra `tenant` y `container`. Además, `restaurar` exige `--alias` y `--empresa` iguales a los de la copia y rechaza cualquier ruta del manifiesto fuera de los orígenes copiados.
 - **Seguridad del recorrido**: se recorre por descriptores con `O_NOFOLLOW`, se verifican dispositivo, inodo y tipo, y se hashea y copia desde el mismo descriptor. Si un fichero cambia o se sustituye por un enlace a mitad de la copia, la copia aborta: hay que detener el agente y repetirla.
 - **Restauración**: valida el manifiesto entero antes de escribir y exige un destino vacío y propio que no sea un enlace. No escribe a través de enlaces, quita setuid, setgid, sticky y la escritura global, y como root exige `--propietario`. Sin `--destino` restaura en un temporal y lo borra al terminar. El recibo lista cada ruta vieja → nueva con su sha256, los HEAD comprobados, lo excluido por el layout y los problemas; `verified: true` significa que el árbol restaurado coincide con el manifiesto.
 - La copia es un directorio 0700. Cifrarla y llevarla a kratos y a Drive corresponde a la canalización de copias existente.

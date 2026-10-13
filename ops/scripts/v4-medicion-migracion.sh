@@ -15,9 +15,11 @@ usage: v4-medicion-migracion.sh medir (--ssh DEST | --local | --ruta-declarada) 
                                       (--alcance FILE | --alcance-de RECEIPT | [--config FILE] ALIAS...)
        v4-medicion-migracion.sh verificar RECEIPT
        v4-medicion-migracion.sh comparar BEFORE AFTER
-       v4-medicion-migracion.sh copiar --alias ALIAS --origen NAME=/dir [--origen ...] --destino DIR
+       v4-medicion-migracion.sh copiar --alias ALIAS --empresa TENANT [--config FILE]
+                                       --origen NAME=/dir [--origen ...] --destino DIR
        v4-medicion-migracion.sh comprobar-copia DIR
-       v4-medicion-migracion.sh restaurar DIR [--destino DIR] [--mapa OLD=NEW ...] [--recibo FILE]
+       v4-medicion-migracion.sh restaurar DIR --alias ALIAS --empresa TENANT [--destino DIR] [--propietario UID:GID]
+                                          [--mapa OLD=NEW ...] [--omitir GLOB ...] [--duplicar OLD=NEW ...] [--recibo FILE]
 EOF
   exit 2
 }
