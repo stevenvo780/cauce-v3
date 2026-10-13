@@ -1,6 +1,5 @@
 import { useState, type ReactNode } from 'react';
 import { useApi } from '../../api/context';
-import { ApiError } from '../../api/client/core';
 import { useResource } from '../../api/use-resource';
 import { Button, Notice } from '../../components/kit';
 import { ErrorNotice } from '../../components/ErrorNotice';
@@ -14,7 +13,7 @@ import { agentFatigue } from '../accounts/quota-availability';
 import { quotaReadFailure } from '../accounts/quota-messages';
 import { FatigueIndicator } from '../accounts/FatigueIndicator';
 import { OfficeLayoutEditor } from './OfficeLayoutEditor';
-import { officeFailure, planSaveUnavailableReason } from './office-errors';
+import { officeFailure, officeVersionConflict, planSaveUnavailableReason } from './office-errors';
 import { officeLayoutProblem, officeRoomKey, officeRooms, reconcileOfficeLayout } from './office-layout';
 import type { OfficeAgent } from './office-agent';
 
@@ -70,7 +69,7 @@ export function OfficeWorkspace({ campus, topology, agents, onAgent }: {
       await api.saveOfficeLayout({ expected_version: draft.version, rooms: shown });
     } catch (cause) {
       setError(officeFailure(cause));
-      if (cause instanceof ApiError && cause.status === 409) setDraft(current => current ? { ...current, conflicted: true } : current);
+      if (officeVersionConflict(cause)) setDraft(current => current ? { ...current, conflicted: true } : current);
       setBusy(false);
       return;
     }

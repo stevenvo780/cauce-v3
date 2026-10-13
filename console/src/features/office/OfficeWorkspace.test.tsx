@@ -58,6 +58,26 @@ it('un conflicto conserva el borrador y un lector no puede editar ni guardar', a
   await user.click(within(screen.getByRole('region', { name: 'Agentes de sala One/General' })).getByRole('button', { name: /worker/u }));
   expect(onAgent).toHaveBeenCalledWith('One/worker');
 });
+it.each([
+  ['company_switch_in_flight', 'Hay un cambio de empresa en curso. Espera su confirmación antes de otra operación.'],
+  ['company_scope_unverified', 'No se pudo verificar la empresa de la sesión. Relee la sesión antes de escribir.'],
+  ['session_changed', 'La sesión cambió antes de enviar la operación. Reintentá desde la cuenta actual.'],
+])('un 409 de sesión %s no se presenta como conflicto de versión y deja reintentar el guardado', async (code, message) => {
+  server.use(http.put('*/v3/console/office/layout', () => HttpResponse.json({ error: code, message }, { status: 409 })));
+  const user = userEvent.setup(); renderWithApi(workspace());
+  await user.click(screen.getByRole('button', { name: 'Plano editable' }));
+  await waitFor(() => { expect(screen.getByRole('button', { name: 'General One' })).toBeEnabled(); });
+  await user.click(screen.getByRole('button', { name: 'General One' })); await user.click(screen.getByRole('button', { name: 'Añadir parte' }));
+  await user.click(screen.getByRole('button', { name: 'Guardar plano' }));
+  const alert = await screen.findByRole('alert');
+  expect(alert).toHaveTextContent(message);
+  expect(alert.textContent).not.toMatch(/Otro operador/u);
+  expect(within(alert).getByText(code, { selector: 'code' })).toBeVisible();
+  expect(screen.getByText('Plano sin guardar')).toBeVisible();
+  expect(screen.getByText('Guarda o descarta los cambios de plano antes de releerlo.')).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Guardar plano' })).toBeEnabled();
+  expect(screen.getByRole('button', { name: 'Releer plano y cuotas' })).toBeDisabled();
+});
 it('tras un conflicto relee la versión y guarda las salas del borrador sin sustituirlas por las del servidor', async () => {
   let version = 0; let rooms: OfficeRoom[] = []; const writes: { expected_version: number; rooms: OfficeRoom[] }[] = [];
   server.use(http.get('*/v3/console/office/layout', () => HttpResponse.json({ company_id: 'one', version, rooms })),
