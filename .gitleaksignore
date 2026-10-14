@@ -1,0 +1,4 @@
+# Fake 'abcdefghijklmnop…' markers used by the secret-redaction tests of the pre-cutover copy (not credentials).
+ca3e7525f28a5c75aae6f53441ae0532268f0794:ops/tests/test_v4_copia_migracion.py:generic-api-key:380
+8512b76030a49061ae81f8e585dfe558e15681af:ops/tests/test_v4_copia_migracion.py:generic-api-key:489
+01cf85ac65e9384d3630d815fb46cf5512cd38b1:ops/tests/test_v4_copia_migracion.py:generic-api-key:381
