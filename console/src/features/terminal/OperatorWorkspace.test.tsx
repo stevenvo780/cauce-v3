@@ -55,7 +55,7 @@ it.each([761, 1440])('a %ipx conserva la selección desde el sidebar sin otro se
 it('no ofrece un agente ficticio cuando la flota está vacía', () => {
   viewport(390);
   renderWorkspace({ agents: [] });
-  expect(screen.getByText('La flota no tiene agentes todavía.')).toBeInTheDocument();
+  expect(screen.getByText(/La flota no tiene agentes todavía\. Registra el primero en Ajustes/)).toBeInTheDocument();
   expect(screen.queryByRole('link', { name: 'Elegir agente' })).not.toBeInTheDocument();
 });
 

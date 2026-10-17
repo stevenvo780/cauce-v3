@@ -390,7 +390,7 @@ export function OperatorWorkspace({ agents, agentId, live, summary, access, term
             <LinkButton href="/messages" onClick={(event) => { onNavClick(event, '/messages'); }}>Elegir agente</LinkButton>
           </div>
         ) : (
-          <TerminalHome agentCount={agents.length} loading={fleetLoading} error={fleetError} />
+          <TerminalHome agentCount={agents.length} loading={fleetLoading} error={fleetError} onRefresh={onRefresh} />
         )}
       </div>
     </>
