@@ -94,6 +94,1182 @@
       "reason": "La creación durable de apariencia tiene prueba PostgreSQL; la prueba UI disponible actualiza una revisión existente. Falta demostrar la creación inicial desde navegador."
     }
   ],
+  "entidades": {
+    "agentes": {
+      "label": "Agentes: registro canónico y ejecución física en Docker",
+      "operaciones": {
+        "crear": {
+          "consola": {
+            "tests": [
+              {
+                "file": "tests/e2e/v4-crud-matriz-real-browser.test.ts",
+                "name": "registro de agente: alta desde el asistente con grupo inicial, lectura durable y duplicado rechazado"
+              },
+              {
+                "file": "tests/e2e/v4-fleet-cycle-real-browser.test.ts",
+                "name": "crea, actualiza, detiene, retira y purga un agente con efecto comprobado en Docker"
+              }
+            ]
+          },
+          "api": {
+            "tests": [
+              {
+                "file": "tests/store-hardening/agent-registry-postgres.test.ts",
+                "name": "previews without side effects and CRUDs inactive drafts and provider routing configuration"
+              },
+              {
+                "file": "packages/store/test/fleet-operations-postgres.test.ts",
+                "name": "adopts a console registry draft on create but refuses an agent that already has a runtime"
+              },
+              {
+                "file": "services/gateway/src/fleet/host-setup-provider-auth.e2e-docker.test.ts",
+                "name": "setup loads the served image, create awaits auth, console login, resume, succeeded and the agent answers its nonce"
+              }
+            ]
+          },
+          "cli": {
+            "tests": [
+              {
+                "file": "tests/store-hardening/cauce-cli-auth-spaces-postgres.test.ts",
+                "name": "previews, creates, lists and edits only a disabled registry row with real configuration CAS receipts"
+              },
+              {
+                "file": "tests/store-hardening/cauce-cli-auth-spaces-postgres.test.ts",
+                "name": "previews and queues real create and edit requests with exact hashes while physical state remains unchanged"
+              },
+              {
+                "file": "ops/tests/cauce-cli-spaces.py",
+                "name": "test_apply_uses_exact_preview_request_and_keeps_queued_state"
+              }
+            ]
+          }
+        },
+        "consultar": {
+          "consola": {
+            "tests": [
+              {
+                "file": "tests/e2e/ui-crud-v35-real-browser.test.ts",
+                "name": "crea, relee, edita y elimina espacio, grupo, membresía y registro sin runtime; rechaza dependencias"
+              },
+              {
+                "file": "tests/e2e/v4-fleet-cycle-real-browser.test.ts",
+                "name": "crea, actualiza, detiene, retira y purga un agente con efecto comprobado en Docker"
+              }
+            ]
+          },
+          "api": {
+            "tests": [
+              {
+                "file": "tests/gateway-hardening/console-agent-routes.test.ts",
+                "name": "answers the tenant-qualified agent detail from its own handler"
+              },
+              {
+                "file": "tests/store-hardening/agent-registry-postgres.test.ts",
+                "name": "scopes listAgents/getAgent to the actor tenant plus ACL-readable tenants"
+              }
+            ]
+          },
+          "cli": {
+            "tests": [
+              {
+                "file": "tests/store-hardening/cauce-cli-auth-spaces-postgres.test.ts",
+                "name": "previews, creates, lists and edits only a disabled registry row with real configuration CAS receipts"
+              },
+              {
+                "file": "ops/tests/cauce-cli-spaces.py",
+                "name": "test_list_projects_authorized_agent_state_without_private_details"
+              }
+            ]
+          }
+        },
+        "editar": {
+          "consola": {
+            "tests": [
+              {
+                "file": "tests/e2e/agent-registry-editor-real-browser.test.ts",
+                "name": "actualiza por fila a 1440 y 360; el control no-hub recibe 403 en su tenant y en el hub"
+              },
+              {
+                "file": "tests/e2e/v4-fleet-cycle-real-browser.test.ts",
+                "name": "crea, actualiza, detiene, retira y purga un agente con efecto comprobado en Docker"
+              }
+            ]
+          },
+          "api": {
+            "tests": [
+              {
+                "file": "tests/store-hardening/agent-registry-postgres.test.ts",
+                "name": "rolls an agent update back as a new revision"
+              },
+              {
+                "file": "packages/store/test/fleet-operations-postgres.test.ts",
+                "name": "updates desired placement while preserving source runtime facts and disabled membership intent"
+              }
+            ]
+          },
+          "cli": {
+            "tests": [
+              {
+                "file": "tests/store-hardening/cauce-cli-auth-spaces-postgres.test.ts",
+                "name": "previews, creates, lists and edits only a disabled registry row with real configuration CAS receipts"
+              },
+              {
+                "file": "ops/tests/cauce-cli-spaces.py",
+                "name": "test_edit_uses_update_and_retire_never_sends_runtime_parameters"
+              }
+            ]
+          }
+        },
+        "eliminar": {
+          "consola": {
+            "tests": [
+              {
+                "file": "tests/e2e/v4-crud-matriz-real-browser.test.ts",
+                "name": "registro de agente: la baja con membresía da 409 y tras quitarla el registro desaparece de la UI y de PostgreSQL"
+              },
+              {
+                "file": "tests/e2e/v4-fleet-cycle-real-browser.test.ts",
+                "name": "crea, actualiza, detiene, retira y purga un agente con efecto comprobado en Docker"
+              },
+              {
+                "file": "tests/e2e/v4-purge-real-browser.test.ts",
+                "name": "exige el alias, conserva confirm_alias y no deja contenedor ni volúmenes"
+              }
+            ]
+          },
+          "api": {
+            "tests": [
+              {
+                "file": "tests/store-hardening/agent-registry-postgres.test.ts",
+                "name": "blocks agent delete while a delivery is active or a lease is live"
+              },
+              {
+                "file": "packages/store/test/fleet-operations-postgres.test.ts",
+                "name": "retires an agent with durable lease and ticket fencing while preserving history"
+              },
+              {
+                "file": "packages/store/test/fleet-purge-postgres.test.ts",
+                "name": "requires verified stop and revoke before deleting any owned configuration"
+              }
+            ]
+          },
+          "cli": {
+            "tests": [
+              {
+                "file": "tests/store-hardening/cauce-cli-auth-spaces-postgres.test.ts",
+                "name": "queues a physical retirement once and reports its pending receipt without certifying runtime effects"
+              },
+              {
+                "file": "ops/tests/cauce-cli-spaces.py",
+                "name": "test_edit_uses_update_and_retire_never_sends_runtime_parameters"
+              }
+            ]
+          }
+        }
+      }
+    },
+    "ordenadores": {
+      "label": "Ordenadores registrados e invitaciones de enrolamiento",
+      "operaciones": {
+        "crear": {
+          "consola": {
+            "tests": [
+              {
+                "file": "tests/e2e/v4-crud-matriz-real-browser.test.ts",
+                "name": "ordenadores: registra con rechazos por identificador inválido y duplicado, y relee el alta en PostgreSQL"
+              },
+              {
+                "file": "tests/e2e/v4-console-real-browser.test.ts",
+                "name": "ordenadores: rechaza una invitación inválida o fuera de la partición de su empresa, entrega la válida una sola vez y la cancela"
+              }
+            ]
+          },
+          "api": {
+            "tests": [
+              {
+                "file": "services/gateway/src/console/fleet-hosts.routes.test.ts",
+                "name": "passes the human company resolver to creation and validates the durable receipt"
+              },
+              {
+                "file": "packages/store/test/fleet-hosts-postgres.test.ts",
+                "name": "creates, updates and deletes with compare-and-set semantics"
+              },
+              {
+                "file": "packages/store/test/company-administration-enrollment-postgres.test.ts",
+                "name": "enrols an uncatalogued computer using a new legitimate key and accepts a signed outbound heartbeat"
+              }
+            ]
+          },
+          "cli": {
+            "tests": [
+              {
+                "file": "ops/tests/test_host_enrollment.py",
+                "name": "test_enrollment_receipt_retains_identity_without_invitation_and_retries_once"
+              },
+              {
+                "file": "ops/tests/test_host_setup.py",
+                "name": "test_setup_installs_release_policy_unit_and_starts_service"
+              },
+              {
+                "file": "services/gateway/src/fleet/host-setup.e2e-docker.test.ts",
+                "name": "enrolls with the console invitation, installs the user service and reports executor_ready"
+              }
+            ]
+          }
+        },
+        "consultar": {
+          "consola": {
+            "tests": [
+              {
+                "file": "tests/e2e/v4-crud-matriz-real-browser.test.ts",
+                "name": "ordenadores: registra con rechazos por identificador inválido y duplicado, y relee el alta en PostgreSQL"
+              },
+              {
+                "file": "console/src/features/config/ComputadorasSection.test.tsx",
+                "name": "lista cada computadora con su estado, su fuente, su ejecutor y sus agentes"
+              }
+            ]
+          },
+          "api": {
+            "tests": [
+              {
+                "file": "services/gateway/src/console/fleet-hosts.routes.test.ts",
+                "name": "lists hosts with approval derived from the configured fleet placements"
+              },
+              {
+                "file": "packages/store/test/fleet-hosts-postgres.test.ts",
+                "name": "unions registered and approved hosts, registering a host on its first placement, with the lease rule"
+              }
+            ]
+          },
+          "cli": {
+            "tests": [
+              {
+                "file": "ops/tests/test_host_setup.py",
+                "name": "test_status_reports_executor_ready_only_after_setup"
+              }
+            ]
+          }
+        },
+        "editar": {
+          "consola": {
+            "tests": [
+              {
+                "file": "tests/e2e/v4-crud-matriz-real-browser.test.ts",
+                "name": "ordenadores: edita con versión, otra empresa no lo ve ni lo toca y la baja exige quitar sus agentes"
+              }
+            ]
+          },
+          "api": {
+            "tests": [
+              {
+                "file": "services/gateway/src/console/fleet-hosts.routes.test.ts",
+                "name": "updates a host with the expected version and maps version conflicts and missing hosts"
+              },
+              {
+                "file": "packages/store/test/fleet-hosts-postgres.test.ts",
+                "name": "creates, updates and deletes with compare-and-set semantics"
+              }
+            ]
+          },
+          "cli": {
+            "pendiente": "El CLI cauce hosts actualiza presencia firmada (heartbeat) y el servicio ejecutor local (setup), pero la edición de metadatos del ordenador (PATCH /v3/console/fleet/hosts/:host_id) se realiza por consola y API sin subcomando CLI específico.",
+            "tests": [
+              {
+                "file": "ops/tests/test_host_setup.py",
+                "name": "test_withdrawn_login_recipe_removes_the_auth_policy_and_restarts_the_service"
+              }
+            ]
+          }
+        },
+        "eliminar": {
+          "consola": {
+            "tests": [
+              {
+                "file": "tests/e2e/v4-crud-matriz-real-browser.test.ts",
+                "name": "ordenadores: edita con versión, otra empresa no lo ve ni lo toca y la baja exige quitar sus agentes"
+              },
+              {
+                "file": "tests/e2e/v4-console-real-browser.test.ts",
+                "name": "ordenadores: rechaza una invitación inválida o fuera de la partición de su empresa, entrega la válida una sola vez y la cancela"
+              }
+            ]
+          },
+          "api": {
+            "tests": [
+              {
+                "file": "services/gateway/src/console/fleet-hosts.routes.test.ts",
+                "name": "deletes with the expected version and returns 204"
+              },
+              {
+                "file": "services/gateway/src/console/fleet-hosts.routes.test.ts",
+                "name": "maps a computer that still has agents to 409 and a missing computer to 404 on delete"
+              },
+              {
+                "file": "packages/store/test/fleet-hosts-postgres.test.ts",
+                "name": "refuses to delete a computer that still has agents"
+              }
+            ]
+          },
+          "cli": {
+            "pendiente": "La baja de un ordenador registrado y la cancelación de invitaciones se ejecutan desde la consola y la API; el CLI cauce hosts no expone subcomando de eliminación."
+          }
+        }
+      }
+    },
+    "personas": {
+      "label": "Personas, acceso web y administradores de empresa",
+      "operaciones": {
+        "crear": {
+          "consola": {
+            "tests": [
+              {
+                "file": "tests/e2e/v4-people-real-browser.test.ts",
+                "name": "crea una persona operadora, aplica su rol, cambia a lector y revoca su acceso al desactivarla"
+              },
+              {
+                "file": "tests/e2e/v4-company-admins-real-browser.test.ts",
+                "name": "asigna un administrador, rechaza degradar al último dueño y revoca su acceso en un segundo contexto"
+              }
+            ]
+          },
+          "api": {
+            "tests": [
+              {
+                "file": "services/gateway/src/console/people-admin-routes.test.ts",
+                "name": "checks every create, retirement, restoration and purge receipt"
+              },
+              {
+                "file": "packages/store/test/company-administration-enrollment-postgres.test.ts",
+                "name": "grants and revokes a company administrator with version control and denies cross-company escalation"
+              }
+            ]
+          },
+          "cli": {
+            "tests": [
+              {
+                "file": "tests/unit/gateway-console-user-cli.test.ts",
+                "name": "happy path con todos los flags: emite INSERT con email crudo + email_normalizado"
+              },
+              {
+                "file": "ops/tests/cauce-platform-cli.test.mjs",
+                "name": "seeds the platform administrator and company owners idempotently without manual SQL"
+              }
+            ]
+          }
+        },
+        "consultar": {
+          "consola": {
+            "tests": [
+              {
+                "file": "tests/e2e/v4-people-real-browser.test.ts",
+                "name": "crea una persona operadora, aplica su rol, cambia a lector y revoca su acceso al desactivarla"
+              },
+              {
+                "file": "tests/e2e/v4-people-real-browser.test.ts",
+                "name": "una empresa distinta no lista a la persona y su edición directa recibe 404"
+              }
+            ]
+          },
+          "api": {
+            "tests": [
+              {
+                "file": "services/gateway/src/console/people-admin-routes.test.ts",
+                "name": "requires a signed human cookie and control permission before exposing any people metadata"
+              }
+            ]
+          },
+          "cli": {
+            "tests": [
+              {
+                "file": "tests/store-hardening/cauce-cli-auth-spaces-postgres.test.ts",
+                "name": "stores a private reusable session and reports authenticated status without password or cookies"
+              }
+            ]
+          }
+        },
+        "editar": {
+          "consola": {
+            "tests": [
+              {
+                "file": "tests/e2e/v4-people-real-browser.test.ts",
+                "name": "crea una persona operadora, aplica su rol, cambia a lector y revoca su acceso al desactivarla"
+              },
+              {
+                "file": "tests/e2e/v4-people-real-browser.test.ts",
+                "name": "restaura una persona y purga un registro retirado desde la UI con persistencia durable"
+              },
+              {
+                "file": "tests/e2e/v4-people-real-browser.test.ts",
+                "name": "protege en la consola al último owner contra degradación, retiro y purga"
+              }
+            ]
+          },
+          "api": {
+            "tests": [
+              {
+                "file": "services/gateway/src/console/people-admin-routes.test.ts",
+                "name": "checks the receipt identity, advancing revision and exact requested fields"
+              },
+              {
+                "file": "services/gateway/src/console/people-admin-routes.test.ts",
+                "name": "checks every create, retirement, restoration and purge receipt"
+              }
+            ]
+          },
+          "cli": {
+            "tests": [
+              {
+                "file": "tests/unit/gateway-console-user-cli.test.ts",
+                "name": "--update --activate pide reactivación explícita y muestra la fila persistida"
+              },
+              {
+                "file": "tests/store-hardening/cauce-cli-auth-spaces-postgres.test.ts",
+                "name": "renews through real reauthentication and preserves the prior session after incorrect credentials"
+              }
+            ]
+          }
+        },
+        "eliminar": {
+          "consola": {
+            "tests": [
+              {
+                "file": "tests/e2e/v4-people-real-browser.test.ts",
+                "name": "crea una persona operadora, aplica su rol, cambia a lector y revoca su acceso al desactivarla"
+              },
+              {
+                "file": "tests/e2e/v4-people-real-browser.test.ts",
+                "name": "restaura una persona y purga un registro retirado desde la UI con persistencia durable"
+              }
+            ]
+          },
+          "api": {
+            "tests": [
+              {
+                "file": "services/gateway/src/console/people-admin-routes.test.ts",
+                "name": "checks every create, retirement, restoration and purge receipt"
+              },
+              {
+                "file": "packages/store/test/company-administration-enrollment-postgres.test.ts",
+                "name": "refuses removing the last qualified owner while another owner lacks durable room control"
+              }
+            ]
+          },
+          "cli": {
+            "tests": [
+              {
+                "file": "tests/unit/gateway-console-user-cli.test.ts",
+                "name": "--deactivate con email conocido: emite UPDATE con email_normalizado y termina"
+              }
+            ]
+          }
+        }
+      }
+    },
+    "entornos_de_cuota": {
+      "label": "Entornos de cuota y cuentas en Mis cuotas",
+      "operaciones": {
+        "crear": {
+          "consola": {
+            "pendiente": "El E2E en navegador real crea el entorno y persiste metadatos con recibo de fixture, pero falta verificar la creación física del contenedor Docker real y autenticación del proveedor desde navegador (quota_environment_execution_browser).",
+            "tests": [
+              {
+                "file": "tests/e2e/v4-quota-environments-real-browser.test.ts",
+                "name": "el dueño crea, edita y elimina su entorno con confirmación persistida"
+              },
+              {
+                "file": "tests/e2e/v4-console-real-browser.test.ts",
+                "name": "entornos de cuotas: crear y editar rechazan entradas inválidas y aceptan las válidas"
+              }
+            ]
+          },
+          "api": {
+            "tests": [
+              {
+                "file": "services/gateway/src/routes/console/quota-environments.test.ts",
+                "name": "lets an owner outside the hub register an account without an agent and queue only its own host"
+              },
+              {
+                "file": "packages/store/test/quota-environments-postgres.test.ts",
+                "name": "lets a company administrator manage environments and the worker claims their operation"
+              }
+            ]
+          },
+          "cli": {
+            "pendiente": "Los entornos de Mis cuotas se administran desde la consola y la API (/v3/console/quota-environments) y los ejecuta el worker del host; no existe subcomando de usuario en el CLI cauce para crear entornos de cuota."
+          }
+        },
+        "consultar": {
+          "consola": {
+            "tests": [
+              {
+                "file": "tests/e2e/v4-quota-environments-real-browser.test.ts",
+                "name": "el dueño crea, edita y elimina su entorno con confirmación persistida"
+              },
+              {
+                "file": "tests/e2e/v4-console-real-browser.test.ts",
+                "name": "entornos de cuotas: crear y editar rechazan entradas inválidas y aceptan las válidas"
+              }
+            ]
+          },
+          "api": {
+            "tests": [
+              {
+                "file": "services/gateway/src/routes/console/quota-environments.test.ts",
+                "name": "refreshes account and environment reads once across concurrent tabs and preserves native observation age"
+              },
+              {
+                "file": "packages/store/test/quota-environments-postgres.test.ts",
+                "name": "fences durable worker receipts and publishes query observations to the common snapshot atomically"
+              }
+            ]
+          },
+          "cli": {
+            "pendiente": "La consulta de entornos de Mis cuotas se realiza desde la consola y la API sin abrir terminal; el CLI no expone subcomando de listado de entornos de cuota."
+          }
+        },
+        "editar": {
+          "consola": {
+            "tests": [
+              {
+                "file": "tests/e2e/v4-quota-environments-real-browser.test.ts",
+                "name": "el dueño crea, edita y elimina su entorno con confirmación persistida"
+              },
+              {
+                "file": "tests/e2e/v4-console-real-browser.test.ts",
+                "name": "entornos de cuotas: crear y editar rechazan entradas inválidas y aceptan las válidas"
+              }
+            ]
+          },
+          "api": {
+            "tests": [
+              {
+                "file": "packages/store/test/quota-environments-postgres.test.ts",
+                "name": "lets a company administrator manage environments and the worker claims their operation"
+              },
+              {
+                "file": "packages/store/test/quota-environments-postgres.test.ts",
+                "name": "queues idempotent typed effects and refuses foreign accounts/hosts and shell input"
+              }
+            ]
+          },
+          "cli": {
+            "pendiente": "La edición de etiqueta y las acciones de mantenimiento (authenticate, query, update_cli) del entorno de cuota se encolan desde la consola y la API; no existe subcomando CLI para editarlos."
+          }
+        },
+        "eliminar": {
+          "consola": {
+            "pendiente": "El E2E en navegador real elimina el entorno con confirmación y relee su retiro en PostgreSQL con recibo de fixture, pero falta verificar la eliminación física del contenedor y volumen Docker sin huérfanos en el host (quota_environment_execution_browser).",
+            "tests": [
+              {
+                "file": "tests/e2e/v4-quota-environments-real-browser.test.ts",
+                "name": "el dueño crea, edita y elimina su entorno con confirmación persistida"
+              }
+            ]
+          },
+          "api": {
+            "tests": [
+              {
+                "file": "services/gateway/src/routes/console/quota-environments.test.ts",
+                "name": "deletes using query parameters with CSRF, version checks, replay and foreign-or-missing 404"
+              },
+              {
+                "file": "packages/store/test/quota-environments-postgres.test.ts",
+                "name": "lets a company administrator manage environments and the worker claims their operation"
+              }
+            ]
+          },
+          "cli": {
+            "pendiente": "La eliminación de entornos de cuota se solicita desde la consola y la API (DELETE /v3/console/quota-environments/:id); no existe subcomando en el CLI cauce."
+          }
+        }
+      }
+    },
+    "contextos": {
+      "label": "Contextos y archivos versionados de agentes",
+      "operaciones": {
+        "crear": {
+          "consola": {
+            "tests": [
+              {
+                "file": "tests/e2e/v4-contexts-real-browser.test.ts",
+                "name": "edita, rechaza secretos, restaura y aplica aislamiento entre personas y empresas"
+              }
+            ]
+          },
+          "api": {
+            "tests": [
+              {
+                "file": "services/gateway/src/context-version.routes-postgres.test.ts",
+                "name": "persists CAS history, paginated reads, diffs and restore through the real human writer"
+              },
+              {
+                "file": "packages/store/test/context-version-postgres.test.ts",
+                "name": "serializes concurrent writes, preserves restore history and fences the other company"
+              }
+            ]
+          },
+          "cli": {
+            "tests": [
+              {
+                "file": "ops/tests/test_context_cli.py",
+                "name": "test_real_http_read_and_native_cas_preserve_scope"
+              },
+              {
+                "file": "ops/tests/cauce-context-seed.test.mjs",
+                "name": "cauce platform routes contexto to the seed command"
+              }
+            ]
+          }
+        },
+        "consultar": {
+          "consola": {
+            "tests": [
+              {
+                "file": "tests/e2e/v4-contexts-real-browser.test.ts",
+                "name": "edita, rechaza secretos, restaura y aplica aislamiento entre personas y empresas"
+              }
+            ]
+          },
+          "api": {
+            "tests": [
+              {
+                "file": "services/gateway/src/context-version.routes-postgres.test.ts",
+                "name": "persists CAS history, paginated reads, diffs and restore through the real human writer"
+              },
+              {
+                "file": "services/gateway/src/context-version.routes-postgres.test.ts",
+                "name": "isolates the other company and revalidates revoked human authority on every request"
+              }
+            ]
+          },
+          "cli": {
+            "tests": [
+              {
+                "file": "ops/tests/test_context_cli.py",
+                "name": "test_real_http_read_and_native_cas_preserve_scope"
+              },
+              {
+                "file": "ops/tests/test_context_cli.py",
+                "name": "test_export_only_writes_scoped_context_and_private_metadata"
+              }
+            ]
+          }
+        },
+        "editar": {
+          "consola": {
+            "tests": [
+              {
+                "file": "tests/e2e/v4-contexts-real-browser.test.ts",
+                "name": "edita, rechaza secretos, restaura y aplica aislamiento entre personas y empresas"
+              }
+            ]
+          },
+          "api": {
+            "tests": [
+              {
+                "file": "services/gateway/src/context-version.routes-postgres.test.ts",
+                "name": "persists CAS history, paginated reads, diffs and restore through the real human writer"
+              },
+              {
+                "file": "packages/store/test/context-version-postgres.test.ts",
+                "name": "serializes concurrent writes, preserves restore history and fences the other company"
+              },
+              {
+                "file": "services/gateway/src/context-native-ingest.routes-postgres.test.ts",
+                "name": "registers a local note edit as version N+1 with native origin and alias author, and syncs it to the bare remote"
+              }
+            ]
+          },
+          "cli": {
+            "tests": [
+              {
+                "file": "ops/tests/test_context_cli.py",
+                "name": "test_real_http_read_and_native_cas_preserve_scope"
+              }
+            ]
+          }
+        },
+        "eliminar": {
+          "consola": {
+            "tests": [
+              {
+                "file": "tests/e2e/v4-context-files-real-browser.test.ts",
+                "name": "desde la ficha retira un archivo del contexto y lo recupera al restaurar"
+              }
+            ]
+          },
+          "api": {
+            "tests": [
+              {
+                "file": "services/gateway/src/context-version.routes-postgres.test.ts",
+                "name": "persists CAS history, paginated reads, diffs and restore through the real human writer"
+              },
+              {
+                "file": "packages/store/test/context-history-immutable-postgres.test.ts",
+                "name": "refuses UPDATE and DELETE of written versions to the owner while new versions and restores still append"
+              }
+            ]
+          },
+          "cli": {
+            "tests": [
+              {
+                "file": "ops/tests/test_context_cli.py",
+                "name": "test_real_http_read_and_native_cas_preserve_scope"
+              }
+            ]
+          }
+        }
+      }
+    },
+    "salas": {
+      "label": "Salas, grupos y plano de oficina",
+      "operaciones": {
+        "crear": {
+          "consola": {
+            "tests": [
+              {
+                "file": "tests/e2e/ui-crud-v35-real-browser.test.ts",
+                "name": "crea, relee, edita y elimina espacio, grupo, membresía y registro sin runtime; rechaza dependencias"
+              },
+              {
+                "file": "tests/e2e/v4-office-real-browser.test.ts",
+                "name": "crea dos salas desde la UI y las refleja en el plano editable y el campus"
+              }
+            ]
+          },
+          "api": {
+            "tests": [
+              {
+                "file": "packages/store/test/company-registration-office-postgres.test.ts",
+                "name": "persists homonymous rooms independently and rejects foreign rooms without changing the version"
+              },
+              {
+                "file": "packages/store/test/fleet-operations-postgres.test.ts",
+                "name": "restores a room declaratively while leaving its affected agents disabled"
+              }
+            ]
+          },
+          "cli": {
+            "tests": [
+              {
+                "file": "packages/store/test/platform-company-transfer-postgres.test.ts",
+                "name": "executes the real local CLI source with a private DSN file and current password environment"
+              },
+              {
+                "file": "ops/tests/empresa-importar.test.mjs",
+                "name": "imports Praxis with its owner once, isolated from Humanizar, and a re-run changes nothing"
+              }
+            ]
+          }
+        },
+        "consultar": {
+          "consola": {
+            "tests": [
+              {
+                "file": "tests/e2e/ui-crud-v35-real-browser.test.ts",
+                "name": "crea, relee, edita y elimina espacio, grupo, membresía y registro sin runtime; rechaza dependencias"
+              },
+              {
+                "file": "tests/e2e/v4-office-real-browser.test.ts",
+                "name": "crea dos salas desde la UI y las refleja en el plano editable y el campus"
+              }
+            ]
+          },
+          "api": {
+            "tests": [
+              {
+                "file": "services/gateway/src/routes/console/topology-company.test.ts",
+                "name": "follows the platform switch and never shows the other company to its owner"
+              },
+              {
+                "file": "packages/store/test/company-registration-office-postgres.test.ts",
+                "name": "uses optimistic concurrency and removes purged rooms when the saved office is reread"
+              }
+            ]
+          },
+          "cli": {
+            "tests": [
+              {
+                "file": "packages/store/test/platform-company-transfer-postgres.test.ts",
+                "name": "executes the real local CLI source with a private DSN file and current password environment"
+              }
+            ]
+          }
+        },
+        "editar": {
+          "consola": {
+            "tests": [
+              {
+                "file": "tests/e2e/ui-crud-v35-real-browser.test.ts",
+                "name": "crea, relee, edita y elimina espacio, grupo, membresía y registro sin runtime; rechaza dependencias"
+              },
+              {
+                "file": "tests/e2e/v4-office-real-browser.test.ts",
+                "name": "renombra la sala y asigna el agente allí antes de moverlo a otra sala"
+              },
+              {
+                "file": "tests/e2e/v4-crud-matriz-real-browser.test.ts",
+                "name": "plano: crea, edita y quita una parte desde la UI con persistencia tras recarga y en un segundo navegador"
+              }
+            ]
+          },
+          "api": {
+            "tests": [
+              {
+                "file": "packages/store/test/company-registration-office-postgres.test.ts",
+                "name": "keeps the stored position of a room that is temporarily disabled when the plan is saved"
+              },
+              {
+                "file": "packages/store/test/fleet-operations-postgres.test.ts",
+                "name": "restores a room declaratively while leaving its affected agents disabled"
+              }
+            ]
+          },
+          "cli": {
+            "tests": [
+              {
+                "file": "packages/store/test/platform-company-transfer-postgres.test.ts",
+                "name": "applies exact plans with scoped history and replays the receipt without overwriting later edits"
+              },
+              {
+                "file": "packages/store/test/platform-company-transfer-postgres.test.ts",
+                "name": "executes the real local CLI source with a private DSN file and current password environment"
+              }
+            ]
+          }
+        },
+        "eliminar": {
+          "consola": {
+            "tests": [
+              {
+                "file": "tests/e2e/ui-crud-v35-real-browser.test.ts",
+                "name": "crea, relee, edita y elimina espacio, grupo, membresía y registro sin runtime; rechaza dependencias"
+              },
+              {
+                "file": "tests/e2e/v4-office-real-browser.test.ts",
+                "name": "reasigna el agente desde la UI, elimina la sala vacía y conserva la asignación válida"
+              },
+              {
+                "file": "tests/e2e/v4-office-real-browser.test.ts",
+                "name": "la baja de una sala ocupada explica sus dependencias y no deja un agente huérfano"
+              }
+            ]
+          },
+          "api": {
+            "tests": [
+              {
+                "file": "packages/store/test/fleet-operations-postgres.test.ts",
+                "name": "purges an unused room and preserves message anchors when purging a used room"
+              },
+              {
+                "file": "packages/store/test/fleet-purge-postgres.test.ts",
+                "name": "purges a used room without deleting its agent or message anchors"
+              }
+            ]
+          },
+          "cli": {
+            "tests": [
+              {
+                "file": "packages/store/test/platform-company-transfer-postgres.test.ts",
+                "name": "executes the real local CLI source with a private DSN file and current password environment"
+              }
+            ]
+          }
+        }
+      }
+    },
+    "espacios": {
+      "label": "Espacios de trabajo (tenants) y espacios persistentes de agentes",
+      "operaciones": {
+        "crear": {
+          "consola": {
+            "tests": [
+              {
+                "file": "tests/e2e/ui-crud-v35-real-browser.test.ts",
+                "name": "crea, relee, edita y elimina espacio, grupo, membresía y registro sin runtime; rechaza dependencias"
+              },
+              {
+                "file": "tests/e2e/v4-space-backups-real-browser.test.ts",
+                "name": "solicita la copia en el panel, la exporta por el canal firmado, descarga los bytes reales y restaura con hashes iguales"
+              }
+            ]
+          },
+          "api": {
+            "tests": [
+              {
+                "file": "packages/store/test/space-backup-postgres.test.ts",
+                "name": "requests, physically exports and streams a copy above 32 MiB to the console, then restores it with equal hashes"
+              },
+              {
+                "file": "packages/store/test/fleet-operations-postgres.test.ts",
+                "name": "restores a tenant without restoring a room that had already been retired independently"
+              }
+            ]
+          },
+          "cli": {
+            "tests": [
+              {
+                "file": "tests/store-hardening/cauce-cli-auth-spaces-postgres.test.ts",
+                "name": "previews and queues real create and edit requests with exact hashes while physical state remains unchanged"
+              },
+              {
+                "file": "ops/tests/cauce-cli-spaces.py",
+                "name": "test_create_defaults_to_preview_and_sends_cookie_csrf_scope"
+              },
+              {
+                "file": "ops/tests/test_space_archive.py",
+                "name": "test_full_allowlisted_space_roundtrip_preserves_bytes_identity_empty_directories_and_modes"
+              }
+            ]
+          }
+        },
+        "consultar": {
+          "consola": {
+            "tests": [
+              {
+                "file": "tests/e2e/ui-crud-v35-real-browser.test.ts",
+                "name": "crea, relee, edita y elimina espacio, grupo, membresía y registro sin runtime; rechaza dependencias"
+              },
+              {
+                "file": "tests/e2e/v4-space-backups-real-browser.test.ts",
+                "name": "solicita la copia en el panel, la exporta por el canal firmado, descarga los bytes reales y restaura con hashes iguales"
+              }
+            ]
+          },
+          "api": {
+            "tests": [
+              {
+                "file": "packages/store/test/space-backup-postgres.test.ts",
+                "name": "requests, physically exports and streams a copy above 32 MiB to the console, then restores it with equal hashes"
+              },
+              {
+                "file": "packages/store/test/companies-revisions-postgres.test.ts",
+                "name": "answers not_found for a revision of another company, another tenant or the platform"
+              }
+            ]
+          },
+          "cli": {
+            "tests": [
+              {
+                "file": "tests/store-hardening/cauce-cli-auth-spaces-postgres.test.ts",
+                "name": "uses separate signed CLI sessions to list each company and rejects a foreign edit without changing B"
+              },
+              {
+                "file": "ops/tests/cauce-cli-spaces.py",
+                "name": "test_list_keeps_scope_and_reports_pending_without_invented_runtime"
+              },
+              {
+                "file": "ops/tests/test_space_archive.py",
+                "name": "test_inventory_dry_run_classifies_every_path_and_backup_exclusion_without_content_or_writes"
+              }
+            ]
+          }
+        },
+        "editar": {
+          "consola": {
+            "tests": [
+              {
+                "file": "tests/e2e/ui-crud-v35-real-browser.test.ts",
+                "name": "crea, relee, edita y elimina espacio, grupo, membresía y registro sin runtime; rechaza dependencias"
+              }
+            ]
+          },
+          "api": {
+            "tests": [
+              {
+                "file": "packages/store/test/fleet-operations-postgres.test.ts",
+                "name": "restores a tenant without restoring a room that had already been retired independently"
+              },
+              {
+                "file": "packages/store/test/configuration-lifecycle-postgres.test.ts",
+                "name": "preserves an inverse larger than the public request limit and restores all cascaded bindings"
+              }
+            ]
+          },
+          "cli": {
+            "tests": [
+              {
+                "file": "tests/store-hardening/cauce-cli-auth-spaces-postgres.test.ts",
+                "name": "previews and queues real create and edit requests with exact hashes while physical state remains unchanged"
+              },
+              {
+                "file": "ops/tests/cauce-cli-spaces.py",
+                "name": "test_edit_uses_update_and_retire_never_sends_runtime_parameters"
+              },
+              {
+                "file": "ops/tests/test_space_archive.py",
+                "name": "test_full_allowlisted_space_roundtrip_preserves_bytes_identity_empty_directories_and_modes"
+              }
+            ]
+          }
+        },
+        "eliminar": {
+          "consola": {
+            "tests": [
+              {
+                "file": "tests/e2e/ui-crud-v35-real-browser.test.ts",
+                "name": "crea, relee, edita y elimina espacio, grupo, membresía y registro sin runtime; rechaza dependencias"
+              }
+            ]
+          },
+          "api": {
+            "tests": [
+              {
+                "file": "packages/store/test/fleet-purge-postgres.test.ts",
+                "name": "purges a tenant and its owned runtime configuration while preserving historical routing anchors"
+              }
+            ]
+          },
+          "cli": {
+            "tests": [
+              {
+                "file": "tests/store-hardening/cauce-cli-auth-spaces-postgres.test.ts",
+                "name": "queues a physical retirement once and reports its pending receipt without certifying runtime effects"
+              },
+              {
+                "file": "ops/tests/cauce-cli-spaces.py",
+                "name": "test_edit_uses_update_and_retire_never_sends_runtime_parameters"
+              }
+            ]
+          }
+        }
+      }
+    },
+    "empresas": {
+      "label": "Empresas y registro multiempresa",
+      "operaciones": {
+        "crear": {
+          "consola": {
+            "tests": [
+              {
+                "file": "tests/e2e/v4-console-real-browser.test.ts",
+                "name": "empresa: renombra la propia, crea otra con su dueño y rechaza entradas inválidas"
+              }
+            ]
+          },
+          "api": {
+            "tests": [
+              {
+                "file": "services/gateway/src/routes/console/companies.test.ts",
+                "name": "lets the platform create a company with a slug public registration reserves, and answers in Spanish"
+              },
+              {
+                "file": "packages/store/test/company-registration-office-postgres.test.ts",
+                "name": "registers from the runtime role atomically and resolves the human as a company owner"
+              },
+              {
+                "file": "packages/store/test/company-registration-office-postgres.test.ts",
+                "name": "registers through HTTP, logs in using the existing password flow, then saves and reloads the office"
+              }
+            ]
+          },
+          "cli": {
+            "tests": [
+              {
+                "file": "ops/tests/empresa-importar.test.mjs",
+                "name": "imports Praxis with its owner once, isolated from Humanizar, and a re-run changes nothing"
+              }
+            ]
+          }
+        },
+        "consultar": {
+          "consola": {
+            "tests": [
+              {
+                "file": "tests/e2e/v4-console-real-browser.test.ts",
+                "name": "empresa: renombra la propia, crea otra con su dueño y rechaza entradas inválidas"
+              }
+            ]
+          },
+          "api": {
+            "tests": [
+              {
+                "file": "packages/store/test/companies-revisions-postgres.test.ts",
+                "name": "records a platform switch in the affected company, where its owners see and undo it"
+              },
+              {
+                "file": "services/gateway/src/routes/console/topology-company.test.ts",
+                "name": "follows the platform switch and never shows the other company to its owner"
+              }
+            ]
+          },
+          "cli": {
+            "tests": [
+              {
+                "file": "packages/store/test/platform-company-transfer-postgres.test.ts",
+                "name": "exports Praxis with a strict allowlist and no provider, human or session material"
+              },
+              {
+                "file": "ops/tests/cauce-platform-cli.test.mjs",
+                "name": "shows platform operations without connecting to a database"
+              }
+            ]
+          }
+        },
+        "editar": {
+          "consola": {
+            "tests": [
+              {
+                "file": "tests/e2e/v4-console-real-browser.test.ts",
+                "name": "empresa: renombra la propia, crea otra con su dueño y rechaza entradas inválidas"
+              }
+            ]
+          },
+          "api": {
+            "tests": [
+              {
+                "file": "packages/store/test/companies-revisions-postgres.test.ts",
+                "name": "serializes writers of one company and never blocks another company"
+              },
+              {
+                "file": "packages/store/test/company-registration-office-postgres.test.ts",
+                "name": "revokes durable authority and refuses an owner session after the company is retired"
+              }
+            ]
+          },
+          "cli": {
+            "tests": [
+              {
+                "file": "ops/tests/cauce-platform-cli.test.mjs",
+                "name": "the CLI repeats the two-owner seed atomically and the database audits and enforces its guards"
+              },
+              {
+                "file": "packages/store/test/platform-company-transfer-postgres.test.ts",
+                "name": "applies exact plans with scoped history and replays the receipt without overwriting later edits"
+              }
+            ]
+          }
+        },
+        "eliminar": {
+          "consola": {
+            "tests": [
+              {
+                "file": "tests/e2e/v4-console-real-browser.test.ts",
+                "name": "retiro: B retira su empresa, se conserva el dato y su autoridad queda en none con 403 en lo protegido"
+              }
+            ]
+          },
+          "api": {
+            "tests": [
+              {
+                "file": "packages/store/test/company-registration-office-postgres.test.ts",
+                "name": "revokes durable authority and refuses an owner session after the company is retired"
+              }
+            ]
+          },
+          "cli": {
+            "tests": [
+              {
+                "file": "ops/tests/cauce-platform-cli.test.mjs",
+                "name": "asks before disabling or retiring a company unless --si confirms it in writing"
+              }
+            ]
+          }
+        }
+      }
+    }
+  },
   "entities": [
     {
       "id": "companies",

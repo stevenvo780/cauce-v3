@@ -61,5 +61,5 @@ grep -cE '^\s*it\(' tests/e2e/*real-browser*.test.ts
 ## Límites de aceptación que siguen abiertos
 
 - GOAL §10 deja pendientes los estados vacíos, de carga y error con retroalimentación en todas las vistas, los fallos con procesos reales y la documentación operativa completa.
-- La matriz CRUD mantiene 23 elementos pendientes. Incluye recorridos de navegador para ordenadores, personas, autoridad, runtime, contextos, harnesses, cuotas y oficina; el detalle verificable está en `docs/v4-matriz-crud.json`.
+- La matriz CRUD mantiene 23 elementos pendientes. Incluye recorridos de navegador para ordenadores, personas, autoridad, runtime, contextos, harnesses, cuotas y oficina; el detalle verificable está en `docs/v4-matriz-crud.json` (validado por `tests/unit/crud-matrix.test.ts` y `tests/unit/v4-matriz-crud.test.ts`).
 - Los conteos reflejan archivos presentes, no ejecución de comandos ni evidencia de aceptación local o desplegada.

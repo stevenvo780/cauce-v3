@@ -11,6 +11,7 @@ const manifest = JSON.parse(readFileSync(join(repository, 'package.json'), 'utf8
 };
 const crudMatrix = JSON.parse(readFileSync(join(repository, 'docs/v4-matriz-crud.json'), 'utf8')) as {
   pending: unknown[];
+  entidades: Record<string, unknown>;
 };
 
 const ignoredDirectories = new Set(['.git', '.claude', '.delegados', '__pycache__', 'coverage', 'dist', 'node_modules']);
@@ -189,6 +190,17 @@ describe('inventario de pruebas de V4', () => {
     const browserRow = documentRows().get('navegador')?.[5] ?? '';
     expect(browserRow).toContain(`matriz mantiene ${String(crudMatrix.pending.length)} pendientes`);
     expect(inventory).toContain(`La matriz CRUD mantiene ${String(crudMatrix.pending.length)} elementos pendientes.`);
+    expect(inventory).toContain('tests/unit/v4-matriz-crud.test.ts');
+    expect(Object.keys(crudMatrix.entidades).sort()).toEqual([
+      'agentes',
+      'contextos',
+      'empresas',
+      'entornos_de_cuota',
+      'espacios',
+      'ordenadores',
+      'personas',
+      'salas',
+    ]);
   });
 
   test('el inventario de E2E de navegador coincide con los archivos y casos versionados', () => {
