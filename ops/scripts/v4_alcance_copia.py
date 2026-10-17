@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 
 ALIAS_PATHS = ('stateDirectory', 'workspace')
@@ -23,15 +24,24 @@ def under(path: str, prefix: str) -> bool:
 
 def host_containers() -> dict[str, list[tuple[str, str]]]:
     """Host source -> container destination of every mount of every container on this Docker host."""
-    def docker(*arguments: str) -> str:
-        return subprocess.run(['docker', *arguments], capture_output=True, text=True, timeout=300, check=True).stdout
-    ids = docker('ps', '-aq').split()
+    def docker(*arguments: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(['docker', *arguments], capture_output=True, text=True, timeout=300, check=False)
+    listed = docker('ps', '-aq')
+    if listed.returncode:
+        raise subprocess.CalledProcessError(listed.returncode, listed.args, listed.stdout, listed.stderr)
+    ids = listed.stdout.split()
     if not ids:
         return {}
+    inspected = docker('container', 'inspect', *ids)
+    # A container removed between `ps` and `inspect` holds no mount any more; Docker still prints every other one.
+    vanished = all(re.match(r'Error(?: response from daemon)?: No such (?:object|container): ', line)
+                   for line in inspected.stderr.splitlines() if line.strip())
+    if inspected.returncode and not (vanished and inspected.stdout.strip()):
+        raise subprocess.CalledProcessError(inspected.returncode, inspected.args, inspected.stdout, inspected.stderr)
     return {item['Name'].lstrip('/'): [(os.path.realpath(mount['Source']), mount['Destination'].rstrip('/') or '/')
                                        for mount in item.get('Mounts') or []
                                        if mount.get('Source') and mount.get('Destination')]
-            for item in json.loads(docker('container', 'inspect', *ids))}
+            for item in json.loads(inspected.stdout)}
 
 
 def alias_paths(alias: str, entry: dict) -> list[str]:
