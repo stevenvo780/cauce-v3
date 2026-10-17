@@ -65,6 +65,221 @@
       "file": "invalid-schema-version-two.json",
       "python": "schema_version",
       "node": "schema_version"
+    },
+    {
+      "file": "valid-max-bytes-min.json",
+      "python": "ok",
+      "node": "ok"
+    },
+    {
+      "file": "valid-max-bytes-max.json",
+      "python": "ok",
+      "node": "ok"
+    },
+    {
+      "file": "invalid-unknown-top-level.json",
+      "python": "evil",
+      "node": "evil"
+    },
+    {
+      "file": "invalid-unknown-provider-field.json",
+      "python": "provider.evil",
+      "node": "provider.evil"
+    },
+    {
+      "file": "invalid-unknown-operation.json",
+      "python": "operations.evil",
+      "node": "operations.evil"
+    },
+    {
+      "file": "invalid-context-extra-field.json",
+      "python": "context",
+      "node": "context"
+    },
+    {
+      "file": "invalid-context-missing-max-bytes.json",
+      "python": "context",
+      "node": "context"
+    },
+    {
+      "file": "invalid-context-missing.json",
+      "python": "context",
+      "node": "context"
+    },
+    {
+      "file": "invalid-schema-version-string.json",
+      "python": "schema_version",
+      "node": "schema_version"
+    },
+    {
+      "file": "invalid-schema-version-bool.json",
+      "python": "schema_version",
+      "node": "schema_version"
+    },
+    {
+      "file": "invalid-schema-version-missing.json",
+      "python": "schema_version",
+      "node": "schema_version"
+    },
+    {
+      "file": "invalid-harness-number.json",
+      "python": "harness",
+      "node": "harness"
+    },
+    {
+      "file": "invalid-harness-uppercase.json",
+      "python": "harness",
+      "node": "harness"
+    },
+    {
+      "file": "invalid-harness-missing.json",
+      "python": "harness",
+      "node": "harness"
+    },
+    {
+      "file": "invalid-operations-list.json",
+      "python": "operations",
+      "node": "operations"
+    },
+    {
+      "file": "invalid-operations-missing.json",
+      "python": "operations",
+      "node": "operations"
+    },
+    {
+      "file": "invalid-operations-missing-execute.json",
+      "python": "operations.execute",
+      "node": "operations.execute"
+    },
+    {
+      "file": "invalid-operations-recipe-mismatch.json",
+      "python": "operations.execute",
+      "node": "operations.execute"
+    },
+    {
+      "file": "invalid-context-list.json",
+      "python": "context",
+      "node": "context"
+    },
+    {
+      "file": "invalid-native-document-invalid.json",
+      "python": "context.native_document",
+      "node": "context.native_document"
+    },
+    {
+      "file": "invalid-max-bytes-string.json",
+      "python": "context.max_bytes",
+      "node": "context.max_bytes"
+    },
+    {
+      "file": "invalid-max-bytes-bool.json",
+      "python": "context.max_bytes",
+      "node": "context.max_bytes"
+    },
+    {
+      "file": "invalid-max-bytes-too-small.json",
+      "python": "context.max_bytes",
+      "node": "context.max_bytes"
+    },
+    {
+      "file": "invalid-max-bytes-too-large.json",
+      "python": "context.max_bytes",
+      "node": "context.max_bytes"
+    },
+    {
+      "file": "invalid-max-bytes-fraction.json",
+      "python": "context.max_bytes",
+      "node": "context.max_bytes"
+    },
+    {
+      "file": "invalid-provider-string.json",
+      "python": "provider",
+      "node": "provider"
+    },
+    {
+      "file": "invalid-provider-list.json",
+      "python": "provider",
+      "node": "provider"
+    },
+    {
+      "file": "invalid-provider-missing.json",
+      "python": "provider.authenticate_argv",
+      "node": "provider.authenticate_argv"
+    },
+    {
+      "file": "invalid-argv-not-list.json",
+      "python": "provider.quota_argv",
+      "node": "provider.quota_argv"
+    },
+    {
+      "file": "invalid-argv-empty.json",
+      "python": "provider.quota_argv",
+      "node": "provider.quota_argv"
+    },
+    {
+      "file": "invalid-argv-too-many.json",
+      "python": "provider.quota_argv",
+      "node": "provider.quota_argv"
+    },
+    {
+      "file": "invalid-argv-nonstring.json",
+      "python": "provider.quota_argv[1]",
+      "node": "provider.quota_argv[1]"
+    },
+    {
+      "file": "invalid-argv-zero-relative.json",
+      "python": "provider.quota_argv[0]",
+      "node": "provider.quota_argv[0]"
+    },
+    {
+      "file": "invalid-argv-shell-metachar.json",
+      "python": "provider.authenticate_argv[1]",
+      "node": "provider.authenticate_argv[1]"
+    },
+    {
+      "file": "invalid-argv-space.json",
+      "python": "provider.quota_argv[1]",
+      "node": "provider.quota_argv[1]"
+    },
+    {
+      "file": "invalid-update-package-number.json",
+      "python": "provider.update_package",
+      "node": "provider.update_package"
+    },
+    {
+      "file": "invalid-update-package-uppercase.json",
+      "python": "provider.update_package",
+      "node": "provider.update_package"
+    },
+    {
+      "file": "invalid-fleet-module-number.json",
+      "python": "provider.fleet_module",
+      "node": "provider.fleet_module"
+    },
+    {
+      "file": "invalid-quota-argv-without-quota-operation.json",
+      "python": "provider.quota_argv",
+      "node": "provider.quota_argv"
+    },
+    {
+      "file": "invalid-top-level-list.json",
+      "python": "$",
+      "node": "$"
+    },
+    {
+      "file": "invalid-top-level-null.json",
+      "python": "$",
+      "node": "$"
+    },
+    {
+      "file": "valid-fleet-authenticate.json",
+      "python": "ok",
+      "node": "ok"
+    },
+    {
+      "file": "invalid-authenticate-without-argv-or-fleet.json",
+      "python": "provider.authenticate_argv",
+      "node": "provider.authenticate_argv"
     }
   ]
 }
