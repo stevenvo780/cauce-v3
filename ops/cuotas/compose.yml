@@ -2,9 +2,9 @@
 # asi las sesiones no se mezclan. Ninguno publica puertos: no hay nada que exponer.
 #
 # Como se autentica cada uno (una sola vez, por terminal):
-#   docker exec -it cuota-claude-1 claude auth login
+#   docker exec -it "$QUOTA_CONTAINER" claude auth login
 # Como se lee una cuota:
-#   docker exec cuota-claude-1 node /usr/local/bin/leer-cuota.mjs
+#   docker exec "$QUOTA_CONTAINER" node /usr/local/bin/leer-cuota.mjs
 #
 # Consumo: ~5 MB de RAM por contenedor en reposo (solo un `sleep`). La imagen (806 MB)
 # es una sola para todos.

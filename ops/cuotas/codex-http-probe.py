@@ -106,7 +106,7 @@ def host_actual():
     h = socket.gethostname().split(".")[0]
     if h.startswith("srv") or h.startswith("vps"):
         return "vps"
-    return h  # kratos / ils-server / server1 se llaman igual que su alias
+    return h
 
 
 def claims(jwt):

@@ -68,7 +68,7 @@ secrets:
   postgres_ca:
     file: ${CAUCE_POSTGRES_CA_PATH:?CA para PostgreSQL verify-full}
   decisiones_tls_cert:
-    file: ${CAUCE_GATEWAY_TLS_CERT_PATH:?certificado de servidor con SAN 100.64.0.11}
+    file: ${CAUCE_GATEWAY_TLS_CERT_PATH:?certificado de servidor con SAN del gateway}
   decisiones_tls_key:
     file: ${CAUCE_GATEWAY_TLS_KEY_PATH:?clave del certificado de servidor}
   decisiones_client_ca:
