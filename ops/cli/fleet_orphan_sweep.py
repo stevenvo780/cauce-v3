@@ -18,21 +18,42 @@ HEALTH = frozenset({'none', 'starting', 'healthy', 'unhealthy'})
 OWNERSHIPS = frozenset({'owned', 'shared', 'legacy'})
 
 
+def vanished(kind: str, stderr: str, names: list[str]) -> bool:
+    """A listed resource removed before its inspection is absent, which is what a sweep wants to see."""
+    pattern = (r'Error(?: response from daemon)?: No such (?:object|container): (.+)' if kind == 'container'
+               else r'Error(?: response from daemon)?: get (.+): no such volume')
+    missing = [re.fullmatch(pattern, line, re.IGNORECASE) for line in stderr.strip().splitlines()]
+    return bool(missing) and all(match is not None and match.group(1) in names for match in missing)
+
+
 def docker_json(kind: str, *listing: str) -> list[dict]:
     names = subprocess.run([DOCKER, *listing], capture_output=True, text=True, check=True).stdout.split()
     if not names:
         return []
-    return json.loads(subprocess.run([DOCKER, kind, 'inspect', *names], capture_output=True, text=True, check=True).stdout)
+    inspected = subprocess.run([DOCKER, kind, 'inspect', *names], capture_output=True, text=True)
+    if inspected.returncode and not (inspected.returncode == 1 and vanished(kind, inspected.stderr, names)):
+        raise subprocess.CalledProcessError(inspected.returncode, inspected.args, inspected.stdout, inspected.stderr)
+    return json.loads(inspected.stdout or '[]')
 
 
-def fleet_resources() -> list[dict]:
+def label_filters(runtime_key_prefix: str, host_id: str) -> list[str]:
+    """Daemon-side filters equivalent to the scope, so a scoped sweep never inspects the whole host."""
+    filters = []
+    if runtime_key_prefix:
+        filters += ['--filter', 'label=' + PREFIX + 'runtime_key']
+    if host_id:
+        filters += ['--filter', 'label=' + PREFIX + 'host=' + host_id]
+    return filters
+
+
+def fleet_resources(filters: list[str]) -> list[dict]:
     found = []
-    for item in docker_json('container', 'ps', '-a', '-q'):
+    for item in docker_json('container', 'ps', '-a', '-q', *filters):
         labels = item['Config'].get('Labels') or {}
         if any(key.startswith(PREFIX) for key in labels):
             found.append({'kind': 'container', 'name': item['Name'].lstrip('/'), 'runtime_key': labels.get(PREFIX + 'runtime_key'),
                           'host_id': labels.get(PREFIX + 'host')})
-    for item in docker_json('volume', 'volume', 'ls', '-q'):
+    for item in docker_json('volume', 'volume', 'ls', '-q', *filters):
         labels = item.get('Labels') or {}
         if any(key.startswith(PREFIX) for key in labels):
             found.append({'kind': 'volume', 'name': item['Name'], 'runtime_key': labels.get(PREFIX + 'runtime_key'),
@@ -128,7 +149,8 @@ def main(argv: list[str] | None = None) -> int:
     if problem:
         print(problem, file=sys.stderr)
         return 2
-    resources = [row for row in fleet_resources() if (row['runtime_key'] or '').startswith(arguments.runtime_key_prefix)
+    scope = label_filters(arguments.runtime_key_prefix, arguments.host_id)
+    resources = [row for row in fleet_resources(scope) if (row['runtime_key'] or '').startswith(arguments.runtime_key_prefix)
                  and (not arguments.host_id or row['host_id'] == arguments.host_id)]
     names = {row['container_name'] for row in rows if row.get('runtime_mode') == 'container'}
     report = sweep(rows, resources, container_observations(names))

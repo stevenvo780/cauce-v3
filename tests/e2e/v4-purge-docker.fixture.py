@@ -35,8 +35,7 @@ def image_id() -> str:
 
 
 def sweep(rows: pathlib.Path, prefix: str, host: str) -> tuple[dict, int]:
-    report, code, _attempts = reports.sweep_report(rows, prefix, host)
-    return report, code
+    return reports.sweep_report(rows, prefix, host)
 
 
 def remove(name: str) -> None:

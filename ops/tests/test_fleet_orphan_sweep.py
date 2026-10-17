@@ -46,8 +46,8 @@ class OrphanSweepTest(unittest.TestCase):
 
     def sweep(self, rows, host_id=''):
         self.rows.write_text(json.dumps(rows))
-        report, code, attempts = containers.sweep_report(self.rows, self.key, host_id)
-        return {**report, 'sweep_exit': code, 'inventory_attempts': attempts}
+        report, code = containers.sweep_report(self.rows, self.key, host_id)
+        return {**report, 'sweep_exit': code}
 
     def seed(self):
         subprocess.run(['docker', 'volume', 'create', '--label', 'cauce.fleet.runtime_key=' + self.key, self.volume],
@@ -164,6 +164,48 @@ class DeclaredDockerStateTest(unittest.TestCase):
                 result = module.main(['--rows', str(source), '--runtime-key-prefix', 'zz-canary-state', '--host-id', 'host-a'])
             self.assertEqual(result, 0)
             self.assertTrue(json.loads(output.getvalue())['clean'])
+
+    def test_scoped_main_lists_only_resources_carrying_the_scope_labels(self):
+        module = load_sweep()
+        listings = []
+
+        def run(command, **_options):
+            listings.append(command[1:])
+            return subprocess.CompletedProcess(command, 0, '', '')
+
+        with tempfile.TemporaryDirectory() as directory:
+            source = pathlib.Path(directory) / 'rows.json'
+            source.write_text('[]')
+            with patch.object(module.subprocess, 'run', side_effect=run), patch.object(sys, 'stdout', io.StringIO()):
+                self.assertEqual(module.main(['--rows', str(source), '--runtime-key-prefix', 'zz-canary-state', '--host-id', 'host-a']), 0)
+                scope = ['--filter', 'label=cauce.fleet.runtime_key', '--filter', 'label=cauce.fleet.host=host-a']
+                self.assertEqual(listings, [['ps', '-a', '-q', *scope], ['volume', 'ls', '-q', *scope]])
+                listings.clear()
+                self.assertEqual(module.main(['--rows', str(source)]), 0)
+                self.assertEqual(listings, [['ps', '-a', '-q'], ['volume', 'ls', '-q']])
+
+    def test_a_listed_resource_gone_before_inspection_is_absent_but_any_other_inspect_error_fails(self):
+        module = load_sweep()
+        present = {'Name': '/zz-canary-present', 'Config': {'Labels': {}}}
+
+        def daemon(stderr):
+            def run(command, **_options):
+                if command[2] == 'inspect':
+                    return subprocess.CompletedProcess(command, 1, json.dumps([present]), stderr)
+                return subprocess.CompletedProcess(command, 0, 'gone1 present1\n', '')
+            return run
+
+        with patch.object(module.subprocess, 'run', side_effect=daemon('Error response from daemon: No such container: gone1\n')):
+            self.assertEqual(module.docker_json('container', 'ps', '-a', '-q'), [present])
+        with patch.object(module.subprocess, 'run', side_effect=daemon('Error response from daemon: No such container: other\n')), \
+                self.assertRaises(subprocess.CalledProcessError):
+            module.docker_json('container', 'ps', '-a', '-q')
+        with patch.object(module.subprocess, 'run', side_effect=daemon('Error response from daemon: No such container: gone1\n'
+                                                                       'Error response from daemon: permission denied\n')), \
+                self.assertRaises(subprocess.CalledProcessError):
+            module.docker_json('container', 'ps', '-a', '-q')
+        with patch.object(module.subprocess, 'run', side_effect=daemon('Error response from daemon: get gone1: no such volume\n')):
+            self.assertEqual(module.docker_json('volume', 'volume', 'ls', '-q'), [present])
 
     def report(self, row, observed, resources=None):
         return load_sweep().sweep([row], resources or [], {row['container_name']: observed})
