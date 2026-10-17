@@ -75,7 +75,12 @@ function RoleProjection({ tenantId, alias, configuration }: Pick<DirectivaPanelP
     return <p className="m-0 text-muted">Leyendo la proyección del rol desde el registro…</p>;
   }
   if (configuration.error && !configuration.data) {
-    return <EmptyState>No se pudo leer la proyección del rol; no se interpreta como un rol vacío: {configuration.error.message}</EmptyState>;
+    return (
+      <Notice tone="danger" role="alert" className="flex flex-wrap items-center gap-2">
+        <span className="min-w-0 flex-1">No se pudo leer la proyección del rol; no se interpreta como un rol vacío: {configuration.error.message}</span>
+        <Button size="sm" disabled={configuration.loading} onClick={() => { void configuration.reload(); }}>Reintentar</Button>
+      </Notice>
+    );
   }
   if (entry.state === 'registry-unavailable') {
     return <EmptyState>Este gateway no publica el registro de agentes, así que no hay una proyección del rol que mostrar.</EmptyState>;

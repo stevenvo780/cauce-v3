@@ -1,9 +1,14 @@
-import { within } from '@testing-library/react';
+import { screen, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
-import { beforeEach, expect, it } from 'vitest';
+import { beforeEach, expect, it, vi } from 'vitest';
+import type { Resource } from '../../api/use-resource';
+import type { ConfigurationSnapshot } from '../../api/types';
 import { server } from '../../mocks/server';
+import { renderWithApi } from '../../test/render';
 import { configConBrief } from './agent-state-fixtures';
 import { abrirContexto } from './context-test-utils';
+import { DirectivaPanel } from './DirectivaPanel';
 
 /**
  * THE THREE LAYERS of the Directiva section.
@@ -271,3 +276,18 @@ it('el caso gaia: el servidor MIRÓ y no hay manual, y eso sí se puede afirmar'
   expect(within(capa2).getByText(/el servidor miró/i).closest('[data-medicion]'))
     .toHaveAttribute('data-medicion', 'medida-vacia');
 }, 25_000);
+
+it('una lectura fallida del rol se anuncia como error con reintento, no como un rol vacío', async () => {
+  const user = userEvent.setup();
+  const reload = vi.fn(() => Promise.resolve({ error: new Error('config caída') }));
+  const configuration: Resource<ConfigurationSnapshot> = {
+    data: undefined, error: new Error('config caída'), loading: false, reload,
+  };
+  renderWithApi(<DirectivaPanel tenantId="Steven" alias="kant" configuration={configuration}
+    onEditProfile={() => undefined} onEditManual={() => undefined} />);
+
+  const alerta = await screen.findByRole('alert');
+  expect(alerta).toHaveTextContent('No se pudo leer la proyección del rol; no se interpreta como un rol vacío: config caída');
+  await user.click(within(alerta).getByRole('button', { name: 'Reintentar' }));
+  expect(reload).toHaveBeenCalledTimes(1);
+});
