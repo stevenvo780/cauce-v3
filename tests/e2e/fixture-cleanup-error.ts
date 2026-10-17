@@ -1,3 +1,5 @@
+import { cleanupAggregate } from '../helpers/cleanup-failure.js';
+
 const CLEANUP_STEPS = [
   'browser context',
   'owned browser runtime',
@@ -44,5 +46,5 @@ export function cleanupLabelsForFailure(step: CleanupStep, error: unknown): Clea
 export function createCleanupAggregate(errors: readonly Error[], labels: readonly CleanupStep[]): AggregateError {
   const safeLabels = [...new Set(labels.filter((label) => CLEANUP_STEPS.includes(label)))];
   const details = safeLabels.length > 0 ? `; failed steps: ${safeLabels.join(', ')}` : '';
-  return new AggregateError([...errors], `real PTY fixture cleanup incomplete${details}`);
+  return cleanupAggregate(errors, `real PTY fixture cleanup incomplete${details}`);
 }

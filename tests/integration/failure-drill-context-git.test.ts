@@ -3,6 +3,7 @@ import { basename, join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { ContextSnapshot } from '@cauce/store';
 import { contextRepositoryPrefix } from '../../packages/store/src/context-version-model.js';
+import { cleanupAggregate } from '../helpers/cleanup-failure.js';
 import { startTestDatabase, type TestDatabase } from '../helpers/postgres.js';
 import { createDrill, git, type ContextGitDrill, type OutboxEvidence } from './failure-drill-context-git.fixtures.js';
 import { sweepDatabaseFleet } from './failure-drill-ssh.fixtures.js';
@@ -38,7 +39,7 @@ afterAll(async () => {
     try { await database.container.stop(); }
     catch (error) { failures.push(error); }
   }
-  if (failures.length > 0) throw new AggregateError(failures, 'owned Git drill cleanup failed');
+  if (failures.length > 0) throw cleanupAggregate(failures, 'owned Git drill cleanup failed');
 });
 
 async function fixture(): Promise<ContextGitDrill> {
