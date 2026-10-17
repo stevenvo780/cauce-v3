@@ -195,7 +195,7 @@ describe('GET tenant-qualified del mapa de documentos', () => {
     vivo = servidor({
       probe: probe({
         'Steven:kant': { facts: { harness: 'claude', home: '/home/dev' }, source: 'measured' },
-        'Miguel:kant': { facts: { harness: 'codex', home: '/home/miguel' }, source: 'measured' },
+        'Miguel:kant': { facts: { harness: 'codex', home: '/home/zz-canary-operator' }, source: 'measured' },
       }),
     });
 
@@ -204,7 +204,7 @@ describe('GET tenant-qualified del mapa de documentos', () => {
 
     expect(body).toMatchObject({ tenant_id: 'Miguel', alias: 'kant', harness: 'codex' });
     expect(body.items.find((item) => item.kind === 'directive')?.path)
-      .toBe('/home/miguel/.codex/AGENTS.md');
+      .toBe('/home/zz-canary-operator/.codex/AGENTS.md');
   });
 
   it('un destino denegado no llega ni a la sonda', async () => {

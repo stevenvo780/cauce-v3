@@ -24,7 +24,7 @@ const MEDIDO = {
   heraclito: { harness: 'claude',   harness_bd: 'openclaw', contenedor: 'agv2-jhon-heraclito-oc', home: '/home/claw', cwd: '/home/claw' },
   tales:     { harness: 'codex',    harness_bd: 'codex',    contenedor: 'agv2-jhon-tales-oc',     home: '/home/claw', cwd: '/home/claw' },
   salva:     { harness: 'claude',   harness_bd: 'codex',    contenedor: 'ws-isa',                 home: '/home/dev',  cwd: '/workspace' },
-  kant:      { harness: 'claude',   harness_bd: 'codex',    contenedor: 'host:kratos',            home: '/home/stev', cwd: '/home/stev' }
+  kant:      { harness: 'claude',   harness_bd: 'codex',    contenedor: 'host:kratos',            home: '/home/zz-canary-operator', cwd: '/home/zz-canary-operator' }
 } satisfies Record<string, RuntimeFacts & { harness_bd: string; contenedor: string }>;
 
 function directivePath(facts: RuntimeFacts): string | undefined {
@@ -37,7 +37,7 @@ describe('resolveAgentDocuments — la ruta sale de lo medido, no de la base', (
     expect(directivePath(MEDIDO.socrates)).toBe('/home/dev/.codex/AGENTS.md');
     expect(directivePath(MEDIDO.jarvis)).toBe('/home/claw/workspace/AGENTS.md');
     expect(directivePath(MEDIDO.tales)).toBe('/home/claw/.codex/AGENTS.md');
-    expect(directivePath(MEDIDO.kant)).toBe('/home/stev/.claude/CLAUDE.md');
+    expect(directivePath(MEDIDO.kant)).toBe('/home/zz-canary-operator/.claude/CLAUDE.md');
     expect(directivePath(MEDIDO.salva)).toBe('/home/dev/.claude/CLAUDE.md');
   });
 
