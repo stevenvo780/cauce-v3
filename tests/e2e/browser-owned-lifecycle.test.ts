@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createServer, type Server } from 'node:net';
 import { afterEach, beforeEach, expect, it } from 'vitest';
-import { ownedBrowserLifecycle, browserResourcesRetained, type BrowserDescriptor } from './browser-owned-lifecycle.js';
+import { BROWSER_CLEANUP_TIMEOUT_MS, ownedBrowserLifecycle, browserResourcesRetained, type BrowserDescriptor } from './browser-owned-lifecycle.js';
 
 const cid = 'a'.repeat(64);
 let descriptor: BrowserDescriptor;
@@ -39,6 +39,9 @@ function daemon() {
   let stopBehavior = 'normal';
   let stopFailure: Error | undefined;
   let inspectFailureAfterStop = false;
+  let stopDuration = 0;
+  let removalDuration = 0;
+  let removalStartedAt = 0;
   let ticks = 0;
   const commands: string[][] = [];
   const view = () => ({ id: cid, name: `/${descriptor.name}`, image: descriptor.imageId, owner, cohort: 'ui-functional',
@@ -47,7 +50,7 @@ function daemon() {
   const docker = async (args: string[], options?: { timeout: number }) => {
     commands.push(args);
     expect(options?.timeout).toBeGreaterThan(0);
-    expect(options?.timeout).toBeLessThanOrEqual(15_000);
+    expect(options?.timeout).toBeLessThanOrEqual(BROWSER_CLEANUP_TIMEOUT_MS);
     if (args[0] === 'network' && args[1] === 'inspect') return { stdout: JSON.stringify({ id: foreignNetwork ? 'foreign-network-id' : descriptor.networkId, name: descriptor.networkName, internal: true, owner: descriptor.networkOwner }) };
     if (args[0] === 'inspect') {
       if (inspectFailureAfterStop) {
@@ -82,18 +85,24 @@ function daemon() {
         if (stopBehavior === 'not-found-present') state = 'running';
         throw stopFailure;
       }
-      state = exitedBeforeRemoval ? 'exited' : 'removing'; removing = true; return { stdout: cid };
+      if (stopDuration > (options?.timeout ?? 0)) {
+        ticks += options?.timeout ?? 0;
+        throw Object.assign(new Error('subprocess docker failed'), { cause: new Error(`timed out after ${String(options?.timeout)}ms`) });
+      }
+      ticks += stopDuration;
+      state = exitedBeforeRemoval ? 'exited' : 'removing'; removing = true; removalStartedAt = ticks; return { stdout: cid };
     }
     if (args[0] === 'rm') { visible = false; return { stdout: cid }; }
     throw new Error('unexpected Docker operation');
   };
-  return { docker, commands, timing: { now: () => ticks, wait: async (ms: number) => { ticks += ms; if (removing && !linger) visible = false; } },
+  return { docker, commands, timing: { now: () => ticks, wait: async (ms: number) => { ticks += ms; if (removing && !linger && ticks - removalStartedAt >= removalDuration) visible = false; } },
     failCreate: () => { createError = true; }, failStart: () => { startError = true; },
     lateCreate: () => { visible = true; }, foreign: () => { owner = 'foreign'; }, visible: () => visible,
     stayRemoving: () => { linger = true; }, elapsed: () => ticks,
     foreignNetworkAfterCreate: () => { changeNetworkAfterCreate = true; }, foreignNetworkNow: () => { foreignNetwork = true; },
     exitBeforeAutoRemove: () => { exitedBeforeRemoval = true; },
-    stopWith: (behavior: string) => { stopBehavior = behavior; }, stopFailure: () => stopFailure };
+    stopWith: (behavior: string) => { stopBehavior = behavior; }, stopFailure: () => stopFailure,
+    stopTakes: (ms: number) => { stopDuration = ms; }, removalTakes: (ms: number) => { removalDuration = ms; } };
 }
 
 it('retains an absent namespace when the daemon creates after CLI cancellation and first cleanup inspection', async () => {
@@ -139,6 +148,7 @@ it('waits for auto-removal instead of sending rm against the removing container'
   expect(owned.retained()).toBe(false);
   const create = fake.commands.find((args) => args[0] === 'create');
   expect(create).toContain('--pull=never');
+  expect(create).toContain('--init');
   expect(create).toContain(descriptor.imageId);
 });
 
@@ -167,7 +177,7 @@ it('bounds automatic removal verification and retains a namespace whose removal 
   const owned = ownedBrowserLifecycle(fake.docker, descriptor, fake.timing);
   await owned.start();
   await expect(owned.close()).rejects.toMatchObject({ cause: { message: 'Owned browser removal remains unresolved' } });
-  expect(fake.elapsed()).toBe(15_000);
+  expect(fake.elapsed()).toBe(BROWSER_CLEANUP_TIMEOUT_MS);
   expect(fake.commands.filter((args) => args[0] === 'rm')).toEqual([]);
   expect(owned.retained()).toBe(true);
 });
@@ -235,4 +245,29 @@ it.each([
   expect((error as Error).cause).toBe(fake.stopFailure());
   expect(owned.retained()).toBe(true);
   expect(fake.commands.filter((args) => args[0] === 'stop')).toEqual([['stop', '--time', '5', cid]]);
+});
+
+it('lets a stop slower than the earlier 15 s client budget finish instead of retaining a removable browser', async () => {
+  const fake = daemon(); fake.stopTakes(20_000);
+  const owned = ownedBrowserLifecycle(fake.docker, descriptor, fake.timing);
+  await owned.start();
+  await owned.close();
+  expect(fake.visible()).toBe(false);
+  expect(owned.retained()).toBe(false);
+});
+
+it('waits out an auto-removal slower than 15 s and still retains one beyond the cleanup budget', async () => {
+  const slow = daemon(); slow.removalTakes(20_000);
+  const owned = ownedBrowserLifecycle(slow.docker, descriptor, slow.timing);
+  await owned.start();
+  await owned.close();
+  expect(slow.visible()).toBe(false);
+  expect(owned.retained()).toBe(false);
+
+  const stuck = daemon(); stuck.stopTakes(BROWSER_CLEANUP_TIMEOUT_MS + 1);
+  const retained = ownedBrowserLifecycle(stuck.docker, descriptor, stuck.timing);
+  await retained.start();
+  await expect(retained.close()).rejects.toMatchObject({ cause: { message: 'subprocess docker failed' } });
+  expect(retained.retained()).toBe(true);
+  expect(stuck.visible()).toBe(true);
 });

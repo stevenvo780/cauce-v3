@@ -90,6 +90,9 @@ function absentContainer(error: unknown, reference: string): boolean {
   return code === 1 && absent;
 }
 
+/** Cleanup outlasts the daemon's own stop path: a SIGKILL may wait 10 s for a task in uninterruptible I/O before forcing it. */
+export const BROWSER_CLEANUP_TIMEOUT_MS = 30_000;
+
 export function ownedBrowserLifecycle(docker: Docker, descriptor: BrowserDescriptor, timing = {
   now: () => performance.now(), wait: (ms: number) => new Promise<void>((resolve) => { setTimeout(resolve, ms); }),
 }) {
@@ -133,7 +136,7 @@ export function ownedBrowserLifecycle(docker: Docker, descriptor: BrowserDescrip
     }
   };
   const waitAbsent = async () => {
-    const deadline = timing.now() + 15_000;
+    const deadline = timing.now() + BROWSER_CLEANUP_TIMEOUT_MS;
     while (timing.now() < deadline) {
       const current = await inspect(Math.max(1, Math.floor(deadline - timing.now())));
       if (current === undefined) return;
@@ -155,7 +158,7 @@ export function ownedBrowserLifecycle(docker: Docker, descriptor: BrowserDescrip
         await verifyNetwork();
         if (current.state.Status === 'running') {
           try {
-            await docker(['stop', '--time', '5', cid], { timeout: 15_000 });
+            await docker(['stop', '--time', '5', cid], { timeout: BROWSER_CLEANUP_TIMEOUT_MS });
           } catch (error) {
             if (!absentContainer(error, cid)) throw error;
             let remaining: Container | undefined;
@@ -168,7 +171,7 @@ export function ownedBrowserLifecycle(docker: Docker, descriptor: BrowserDescrip
           }
         }
         if (current.state.Status === 'created' && current.state.Pid === 0) {
-          try { await docker(['rm', cid], { timeout: 15_000 }); }
+          try { await docker(['rm', cid], { timeout: BROWSER_CLEANUP_TIMEOUT_MS }); }
           catch (error) {
             const pending = await inspect();
             if (pending === undefined) return;
@@ -190,7 +193,8 @@ export function ownedBrowserLifecycle(docker: Docker, descriptor: BrowserDescrip
     if (await inspect() !== undefined) throw new Error('Owned browser name already exists');
     process.stdout.write(`E2E browser descriptor: ${JSON.stringify(expected)}\n`);
     createIssued = true;
-    const receipt = (await docker(['create', '--pull=never', '--rm', '--network', expected.networkName,
+    // A shell as PID 1 ignores SIGTERM, so without an init every stop would spend its whole grace period.
+    const receipt = (await docker(['create', '--pull=never', '--rm', '--init', '--network', expected.networkName,
       '--mount', `type=bind,source=${expected.directory},target=/qa-browser-transport,readonly`, '--name', expected.name,
       '--label', 'cauce.e2e.owner=ui-functional', '--label', `io.cauce.qa.browser=${expected.owner}`,
       '--entrypoint', 'sh', expected.imageId, '-lc', 'sleep 600'], { timeout: 15_000 })).stdout.trim();
