@@ -168,7 +168,7 @@ export async function escenariosA(ctx) {
 
   // DECISIONES_URL is optional, exported verbatim when valid and rejected before Docker otherwise.
   assert(!timeoutOverrideFinal.argv.some((value) => value.startsWith("CAUCE_DECISIONES_URL=")));
-  for (const [url, valid] of [["https://100.64.0.11:8447", true], ["http://100.64.0.11:8447", false], ["https://h:8447/v1", false], ["https://u@h:8447", false]]) {
+  for (const [url, valid] of [["https://192.0.2.10:8447", true], ["http://192.0.2.10:8447", false], ["https://h:8447/v1", false], ["https://u@h:8447", false]]) {
     await writeConfig("atlas", [`DECISIONES_URL=${url}`]);
     await clearLog();
     result = runSupervisor("start", "atlas", await dockerState("atlas"));
@@ -317,7 +317,7 @@ export async function escenariosA(ctx) {
   // grok: the shared TUI needs tmux inside the container. Without it the alias keeps serving the
   // bus headless and says so (it used to die with 78, never restarted, and Telegram went mute).
   // SHARED_SESSION_NATIVE_ID names the conversation the adapter seeds with its own release.
-  const hadesId = "01a0cedb-d05a-7e81-b400-1d58836be1cc";
+  const hadesId = "00000000-0000-4000-8000-521650f4f1d6";
   const grokShared = ["SHARED_SESSION=1", "SHARED_SESSION_WORKSPACE=/home/claw", `SHARED_SESSION_NATIVE_ID=${hadesId}`];
   await writeConfig("hades", grokShared);
   await clearLog();

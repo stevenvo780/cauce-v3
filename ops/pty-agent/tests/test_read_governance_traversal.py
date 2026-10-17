@@ -80,7 +80,7 @@ class ReadGovernanceTraversalTests(ReadGovernanceBase):
             body = self.expect_error(
                 instance,
                 "permission_denied",
-                request_id="88888888-8888-8888-8888-888888888888",
+                request_id="00000000-0000-4000-8000-80fc914a0956",
                 kind="file",
                 path=path,
             )
@@ -217,4 +217,3 @@ class ReadGovernanceTraversalTests(ReadGovernanceBase):
 
 if __name__ == "__main__":
     unittest.main()
-

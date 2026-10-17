@@ -143,25 +143,26 @@ sesion ensure zeus ws-zeus dev ${harness} /state/zeus
 const native = await fixture("codex");
 try {
   const releaseRoot = path.join(native.directory, "release");
+  const credentialHome = path.join(native.home, ".codex");
   const helper = path.join(releaseRoot, "packages/adapter-sdk/dist/src/bin/shared-session.js");
   await mkdir(path.dirname(helper), { recursive: true });
   await writeFile(helper, "");
   await executable(path.join(native.directory, "bin/systemctl"), `#!/usr/bin/env bash
 case " $* " in
   *" cat cauce-v3-host-kant.service"*) printf 'ExecStart=node ${releaseRoot}/packages/adapter-sdk/dist/src/bin/adapter.js\\n'; exit 0 ;;
-  *" show cauce-v3-host-kant.service -p Environment"*) printf 'CAUCE_SHARED_SESSION_WORKSPACE=/workspace/cauce-v3 CODEX_HOME=/home/stev/.codex\\n'; exit 0 ;;
+  *" show cauce-v3-host-kant.service -p Environment"*) printf 'CAUCE_SHARED_SESSION_WORKSPACE=/workspace/cauce-v3 CODEX_HOME=${credentialHome}\\n'; exit 0 ;;
 esac
 exit 1
 `);
   const source = `source <(sed '/^uso()/,$d' ${JSON.stringify(cli)})
-sesion status kant '' stev codex /state/kant
-sesion ensure kant '' stev codex /state/kant
+sesion status kant '' test codex /state/kant
+sesion ensure kant '' test codex /state/kant
 `;
   const result = spawnSync("bash", ["-c", source], { encoding: "utf8", env: native.environment });
   assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
   const calls = await readFile(native.log, "utf8");
-  assertInvocation(calls, "status", "codex", "CODEX_HOME", "/home/stev/.codex", "/state/kant");
-  assertInvocation(calls, "ensure", "codex", "CODEX_HOME", "/home/stev/.codex", "/state/kant");
+  assertInvocation(calls, "status", "codex", "CODEX_HOME", credentialHome, "/state/kant");
+  assertInvocation(calls, "ensure", "codex", "CODEX_HOME", credentialHome, "/state/kant");
 } finally {
   await rm(native.directory, { recursive: true, force: true });
 }

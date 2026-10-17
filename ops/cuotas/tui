@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# cuotas — TUI de cuotas de IA (ai-usage-tui.mjs). Vive en server2 (decision de Steven).
+# cuotas — TUI de cuotas de IA (ai-usage-tui.mjs).
 # Uso: cuotas [daily|weekly|monthly|session|blocks | --tabla | --json | tokens [30d] [--recolectar]]
 # Si la TUI no puede arrancar, cae a la tabla en vez de dejarte sin nada.
 set -uo pipefail
-S=/home/server/.local/share/ai-usage-live
-BIN=/home/server/.local/bin
+S="$HOME/.local/share/ai-usage-live"
+BIN="$HOME/.local/bin"
 TABLA="$BIN/cuotas-tabla"
 case "${1:-}" in
   login) shift
@@ -12,7 +12,7 @@ case "${1:-}" in
     exec "$BIN/cuota-auth" "$@" ;;
   --tabla|--simple) shift; exec "$TABLA" "$@" ;;
   --json) exec "$TABLA" --json ;;
-  tokens) shift; exec python3 /home/server/cuotas-cli/tokens/tokens-ver.py "$@" ;;
+  tokens) shift; exec python3 "$HOME/cuotas-cli/tokens/tokens-ver.py" "$@" ;;
 esac
 "$BIN/cuotas-sync-tui" >/dev/null 2>&1 || true
 # node por ruta ABSOLUTA: por ssh no interactivo el PATH no trae ~/.local/bin y command -v caia a la tabla en silencio.
@@ -24,5 +24,5 @@ done
 if [ -n "$NODE" ] && [ -r "$S/ai-usage-tui.mjs" ]; then
   cd "$S" && exec "$NODE" ai-usage-tui.mjs "$@" 2>>"$S/tui-stderr.log"
 fi
-echo "cuotas: no encuentro node en server2; muestro la tabla." >&2
+echo "cuotas: no encuentro node en el host de cuotas; muestro la tabla." >&2
 exec "$TABLA" "$@"

@@ -37,7 +37,7 @@ def _bundle(**overrides: object) -> dict:
         "image_id": "sha256:deadbeef", "runtime_user": "claw", "runtime_uid": 1000,
         "runtime_gid": 1000, "home": "/home/claw",
         "shell_candidates": [["/bin/bash", "-l"], ["/bin/sh", "-l"]],
-        "harness_command": None, "harness": "claude", "relay_host": "100.64.0.6",
+        "harness_command": None, "harness": "claude", "relay_host": "192.0.2.10",
         "relay_port": 8445, "alias_key_hex": ALIAS_KEY_HEX,
         "client_cert_pem": "-----BEGIN CERTIFICATE-----\n",
         "client_key_pem": "-----BEGIN PRIVATE KEY-----\n",

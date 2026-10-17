@@ -6,7 +6,7 @@
 #   cuota-auth <espacio> shell         terminal dentro del espacio
 #   cuota-auth nuevo <nombre>          crea un espacio mas (vacio, sin sesiones)
 #   cuota-auth borrar <nombre>         lo elimina con sus sesiones (pide confirmar)
-# <espacio> puede ser el nombre completo (cuota-claude-2), el sufijo (claude-2) o el numero (2).
+# <espacio> puede ser el nombre completo del contenedor, el sufijo (claude-2) o el numero (2).
 #
 # Cada espacio es un contenedor con su volumen (sesiones no compartidas); el login lo hace la persona.
 set -u

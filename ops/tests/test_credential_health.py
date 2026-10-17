@@ -607,10 +607,11 @@ class TestGuardInventory(unittest.TestCase):
     def test_targets_come_from_a_private_file(self):
         source = (GUARDS / "cred-guard.py").read_text(encoding="utf-8")
         self.assertIn("CAUCE_CRED_GUARD_TARGETS", source)
-        self.assertNotIn("/home/claw", source)
-        self.assertNotIn("/home/stev", source)
         example = json.loads((GUARDS / "cred-guard-targets.example.json").read_text(encoding="utf-8"))
         inventory = json.loads((GUARDS.parent / "container-aliases.json").read_text(encoding="utf-8"))
+        known_homes = {alias["home"] for alias in inventory["aliases"].values() if alias.get("home")}
+        for home in known_homes:
+            self.assertNotIn(home, source)
         known = {
             alias["container"]
             for alias in inventory["aliases"].values()
@@ -624,8 +625,7 @@ class TestGuardInventory(unittest.TestCase):
                 self.assertTrue(all(isinstance(item, str) and item for item in row))
                 container, path, _label = row
                 self.assertTrue(container.startswith("<"))
-                self.assertNotIn("/home/claw", path)
-                self.assertNotIn("/home/stev", path)
+                self.assertTrue(path.startswith("/home/dev/"))
                 self.assertNotIn(container, known)
 
 

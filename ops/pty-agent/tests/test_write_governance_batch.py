@@ -273,7 +273,7 @@ class WriteGovernanceBatchTests(unittest.TestCase):
         listing = f"31 30 0:35 / {soul} rw,relatime shared:1 - tmpfs tmpfs rw\n"
 
         with mock.patch.object(agent, "_read_mountinfo", return_value=listing):
-            tag, body = run_batch(self.instance, "88888888-8888-8888-8888-888888888888", [
+            tag, body = run_batch(self.instance, "00000000-0000-4000-8000-80fc914a0956", [
                 write_entry(soul, b"new soul", "replace", sha(b"old soul")),
             ])
 

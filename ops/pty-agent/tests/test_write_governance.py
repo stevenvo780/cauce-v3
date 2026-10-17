@@ -226,7 +226,7 @@ class WriteGovernanceTests(unittest.TestCase):
 
         os.symlink(victim, self.path)
         tag, _ = write(
-            self.instance, "88888888-8888-8888-8888-888888888881",
+            self.instance, "00000000-0000-4000-8000-07db8aaddc25",
             self.path, b"attack", "replace", sha(b"secret"),
         )
         self.assertEqual(tag, agent.TAG_WRITE_ERR)
@@ -236,7 +236,7 @@ class WriteGovernanceTests(unittest.TestCase):
         os.rmdir(self.config)
         os.symlink(outside, self.config)
         tag, _ = write(
-            self.instance, "88888888-8888-8888-8888-888888888882",
+            self.instance, "00000000-0000-4000-8000-5d33aeed0842",
             self.path, b"attack", "replace", sha(b"secret"),
         )
         self.assertEqual(tag, agent.TAG_WRITE_ERR)

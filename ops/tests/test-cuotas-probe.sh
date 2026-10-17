@@ -15,7 +15,7 @@ run_case() {  # $1 probe body  $2 expected extra arg or empty  $3 detection mode
 #!/usr/bin/env bash
 set -u
 printf '%s\n' "$*" >> "$CUOTAS_LOG"
-if [ "$1" = ps ]; then printf 'cuota-codex-fixture\n'; exit 0; fi
+if [ "$1" = ps ]; then printf 'zz-canary-codex-sample\n'; exit 0; fi
 if [ "$1" = exec ]; then
   if [ "$3" = test ]; then exit 0; fi
   if [[ "$*" == *'python3 -I -c'* ]]; then

@@ -575,10 +575,10 @@ test("grok acepta la sesion compartida y rechaza el aislamiento de config que no
     assert.match(badId.stderr, /UUID canonico/u);
     const seeded = output(run(context, "apply", [
       "--alias", "hades", "--expected-old-digest", shared.newDigest,
-      "--set", "SHARED_SESSION_NATIVE_ID=01a0cedb-d05a-7e81-b400-1d58836be1cc",
+      "--set", "SHARED_SESSION_NATIVE_ID=00000000-0000-4000-8000-521650f4f1d6",
     ]));
     assert.equal(seeded.status, "updated");
-    assert.match(await readFile(file, "utf8"), /^SHARED_SESSION_NATIVE_ID=01a0cedb-d05a-7e81-b400-1d58836be1cc$/mu);
+    assert.match(await readFile(file, "utf8"), /^SHARED_SESSION_NATIVE_ID=00000000-0000-4000-8000-521650f4f1d6$/mu);
   } finally {
     await rm(context.root, { recursive: true, force: true });
   }

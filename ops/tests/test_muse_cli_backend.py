@@ -22,8 +22,8 @@ assert SPEC is not None and SPEC.loader is not None
 BACKEND = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = BACKEND
 SPEC.loader.exec_module(BACKEND)
-SESSION = "01a0e53f-1799-71d0-8531-21ed64d15827"
-RUN_ID = "e4d2761d-26c6-41f9-a190-370fdcd2fa92"
+SESSION = "00000000-0000-4000-8000-f30219022182"
+RUN_ID = "00000000-0000-4000-8000-a2ac7545efdc"
 
 
 def envelope(payload: dict[str, object], session_id: str = SESSION) -> dict[str, object]:
@@ -69,7 +69,7 @@ def record(payload):
         payload.setdefault('run_stream', {{'kind': 'run', 'id': RUN_ID}})
     print(json.dumps({{'schema_version': 1, 'stream': {{'kind': 'session', 'id': SESSION}}, 'payload': payload}}), flush=True)
 if MODE == 'wrong-session':
-    SESSION = '01a0e53f-1799-71d0-8531-21ed64d15828'
+    SESSION = '00000000-0000-4000-8000-20c42b51800b'
 if MODE in ('hang', 'closed-pipes'):
     signal.signal(signal.SIGTERM, signal.SIG_IGN)
     descendant = subprocess.Popen([sys.executable, '-c', 'import signal,time;signal.signal(signal.SIGTERM,signal.SIG_IGN);time.sleep(60)'],
@@ -272,7 +272,7 @@ raise SystemExit(module.main())
                                "run_stream": {"kind": "run", "id": RUN_ID}}))
         with self.assertRaises(BACKEND.BackendError) as raised:
             state.record(envelope({"kind": "run_terminal", "terminal": "completed", "text": "answer",
-                                   "command_id": "e4d2761d-26c6-41f9-a190-370fdcd2fa93",
+                                   "command_id": "00000000-0000-4000-8000-0ee9e0933576",
                                    "run_stream": {"kind": "run", "id": RUN_ID}}))
         self.assertEqual(raised.exception.code, "MUSE_RUN_CHANGED")
 
@@ -393,12 +393,12 @@ raise SystemExit(module.main())
                  "command_id": RUN_ID, "run_stream": {"kind": "run", "id": RUN_ID}}
         without_command = {key: value for key, value in valid.items() if key != "command_id"}
         without_stream = {key: value for key, value in valid.items() if key != "run_stream"}
-        foreign_run = "e4d2761d-26c6-41f9-a190-370fdcd2fa93"
+        foreign_run = "00000000-0000-4000-8000-0ee9e0933576"
         invalid_events = [
             envelope(without_command), envelope(without_stream),
             envelope({**valid, "run_stream": {"kind": "run", "id": foreign_run}}),
             envelope({**valid, "command_id": foreign_run}),
-            envelope(valid, "01a0e53f-1799-71d0-8531-21ed64d15828"),
+            envelope(valid, "00000000-0000-4000-8000-20c42b51800b"),
             {**envelope(valid), "stream": {"kind": "run", "id": foreign_run}},
             {**envelope(valid), "payload_schema_version": 999},
         ]

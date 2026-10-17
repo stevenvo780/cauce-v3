@@ -34,7 +34,7 @@ def _loadable_bundle(**overrides: object) -> dict:
         "tenant_id": "Steven", "alias": "zeus", "container_id": "claw", "generation": "gen-1",
         "image_id": "sha256:deadbeef", "runtime_user": "claw", "runtime_uid": 1000,
         "runtime_gid": 1000, "home": "/home/claw", "shell_candidates": [["/bin/bash", "-l"]],
-        "harness_command": None, "harness": "claude", "relay_host": "100.64.0.6",
+        "harness_command": None, "harness": "claude", "relay_host": "192.0.2.10",
         "relay_port": 8445, "alias_key_hex": "ab" * 32,
         "client_cert_pem": "-----BEGIN CERTIFICATE-----\n",
         "client_key_pem": "-----BEGIN PRIVATE KEY-----\n",
