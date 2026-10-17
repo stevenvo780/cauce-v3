@@ -12,7 +12,7 @@ decide con su propio LLM, que es lo que hace hoy.
 modelo ─ MCP stdio «cauce-decisiones» (sin credenciales)
        ─ socket 0600 del alias: POST /decisiones (sin turno y fuera de la cola de emisión)
        ─ adaptador: certificado mTLS del alias (el mismo con el que habla con el gateway)
-       ─ servicio «decisiones» en vpstn: https://100.64.0.11:8447 (proyecto compose propio)
+       ─ servicio «decisiones» en <host-servicio>: https://<ip-host-configurada>:8447 (proyecto compose propio)
        ─ https://api.typesafe.ai/v1/systemone con la clave leída de un fichero
 ```
 
@@ -31,7 +31,7 @@ modelo ─ MCP stdio «cauce-decisiones» (sin credenciales)
 - **Políticas por empresa.** Cada identidad ve las plantillas comunes y únicamente las definiciones
   de su empresa. Un homónimo de otra empresa no hereda las excepciones de aprobación ni los destinos
   de ruteo. Si su empresa carece de una definición, la respuesta es `plantilla_desconocida`.
-- **La clave de Jev** sólo existe en vpstn. Se monta en este contenedor y en ningún otro, se lee en
+- **La clave de Jev** sólo existe en <host-servicio>. Se monta en este contenedor y en ningún otro, se lee en
   cada llamada (rotarla in-place no pide reinicio; ver «Rotar la clave de Jev») y no aparece en logs,
   errores, auditoría ni respuestas. En
   producción sólo se acepta el origen `https://api.typesafe.ai`, para que ningún error de configuración
@@ -51,10 +51,10 @@ motivos:
    no puede ocupar al gateway.
 4. **La clave se monta en un solo contenedor.**
 
-A cambio abre un puerto nuevo (8447 en 100.64.0.11). Los adaptadores lo alcanzan directamente, sin
-pasar por la regla temporal de agora: el mapa midió que llegan a 100.64.0.11 desde ws-zeus, claw,
+A cambio abre un puerto nuevo (8447 en <ip-host-configurada>). Los adaptadores lo alcanzan directamente, sin
+pasar por la regla temporal de agora: el mapa midió que llegan a <ip-host-configurada> desde ws-zeus, claw,
 ctrl-infra, agv2-steven-hades-oc y server2. El servicio reutiliza el certificado de servidor del
-gateway, cuyos SAN incluyen 100.64.0.11 (verificado), y también su registro de identidades. No
+gateway, cuyos SAN incluyen <ip-host-configurada> (verificado), y también su registro de identidades. No
 aparecen secretos nuevos.
 
 El pool PostgreSQL usa como máximo cuatro conexiones, con usuario runtime y la validación TLS de
@@ -240,8 +240,8 @@ inserta auditoría. El script publica `database_url_decisiones` y su ruta en
 Si el login ya existe, no se rota durante un despliegue: `--rotate --login cauce_decisiones --apply`
 es una operación explícita que exige recrear el contenedor del servicio.
 
-1. **Servicio, en vpstn como root.** El script, el compose y la imagen salen del commit, no del árbol
-   de trabajo: sirve cualquier clon que tenga el commit, esté en la rama que esté. En vpstn el worktree
+1. **Servicio, en <host-servicio> como root.** El script, el compose y la imagen salen del commit, no del árbol
+   de trabajo: sirve cualquier clon que tenga el commit, esté en la rama que esté. En <host-servicio> el worktree
    de ws-zeus no sirve (su `.git` apunta a una ruta que sólo existe dentro del contenedor) y
    `/opt/cauce-v3` no es un repositorio. El clon principal sí tiene el commit, aunque su rama no traiga
    `deploy/decisiones`:
@@ -294,7 +294,7 @@ es una operación explícita que exige recrear el contenedor del servicio.
      su próximo reinicio.
 
    Recién entonces, en `~/.config/cauce-v3/container-aliases/<alias>.env`, se ponen
-   `BUNDLE_RELEASE`, `BUNDLE_SHA256` y `DECISIONES_URL=https://100.64.0.11:8447`. Antes de reiniciar
+   `BUNDLE_RELEASE`, `BUNDLE_SHA256` y `DECISIONES_URL=https://<ip-host-configurada>:8447`. Antes de reiniciar
    `cauce-v3-container-<alias>.service`, mirá si hay una entrega en vuelo. En kant, que corre nativo en
    server2, la variable es `CAUCE_DECISIONES_URL` en el entorno de su unidad.
 3. **MCP en cada arnés, sólo en los alias ya habilitados** en `CAUCE_DECISIONES_ALIASES` (a los demás

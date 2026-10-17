@@ -125,7 +125,7 @@ reach or that masquerades them (for example a whole Docker pool: tailnet peers a
 Compose uses `CAUCE_TRUSTED_PROXY_CIDRS` when set; otherwise it derives a single `/32` from
 `CAUCE_CONSOLE_EDGE_IP`. `ops/config/prod.env.example` sets `172.16.4.2/32`. The console nginx in
 turn trusts a single front proxy (Caddy) through the build-time `CAUCE_FRONT_PROXY_CIDR`
-(production `100.64.0.11/32`; empty disables realip) and then overwrites `X-Forwarded-For`/`X-Real-IP` with
+(production `<ip-host-configurada>/32`; empty disables realip) and then overwrites `X-Forwarded-For`/`X-Real-IP` with
 the resolved address and strips `X-Forwarded-Host`, `X-Forwarded-Proto` and `Forwarded`.
 
 `CAUCE_AUTH_PROVIDER=token-file` and `mtls` remain supported. The mTLS data listener always uses
