@@ -15,7 +15,8 @@ import { startTestDatabase, type TestDatabase } from '../helpers/postgres.js';
 import { observeUiBootstrap } from './ui-bootstrap-diagnostics.js';
 import { ChatLatencyCapture } from './browser-delivery-diagnostics.js';
 import { isolatedBrowserNetwork, publishBrowserCdp } from './ui-bootstrap-network.js';
-import { browserExec as exec, browserDocker as docker, browserErrorStderr as errorStderr, browserErrorStdout as errorStdout, ownedBrowserLifecycle, browserResourcesRetained, BrowserResourcesRetained } from './browser-owned-lifecycle.js';
+import { browserExec as exec, browserDocker as docker, browserErrorStderr as errorStderr, browserErrorStdout as errorStdout, ownedBrowserLifecycle, browserResourcesRetained, BrowserResourcesRetained, BROWSER_DOCKER_TIMEOUT_MS } from './browser-owned-lifecycle.js';
+import { plazo } from '../helpers/plazos.js';
 
 const require = createRequire(join(process.cwd(), 'console/package.json'));
 export interface Locator { fill(value: string): Promise<void>; type(value: string): Promise<void>; press(key: string): Promise<void>; click(): Promise<void>; count(): Promise<number>; waitFor(options?: { state?: 'visible' | 'hidden' | 'attached'; timeout?: number }): Promise<void>; selectOption(value: string): Promise<void>; filter(options: { hasText: string }): Locator; locator(selector: string): Locator; getByRole(role: string, options?: { name?: string | RegExp; exact?: boolean }): Locator; getByText(text: string | RegExp, options?: { exact?: boolean }): Locator; innerText(): Promise<string>; boundingBox(): Promise<{ x: number; y: number; width: number; height: number } | null> }
@@ -176,7 +177,7 @@ async function startIsolatedBrowser(caCertPath: string, runtime: BrowserRuntime,
     const initializeNss = 'if [ -d "$HOME/.pki/nssdb" ]; then nssdb="$HOME/.pki/nssdb"; else nssdb="${XDG_DATA_HOME:-$HOME/.local/share}/pki/nssdb"; fi; install -d -m 700 "$nssdb" && certutil -N --empty-password -d "sql:$nssdb" && printf "%s\\n" "$nssdb"';
     const nssdb = (await docker(['exec', container, 'sh', '-lc', initializeNss])).stdout.trim();
     if (!nssdb.startsWith('/root/') || nssdb.includes(' ')) throw new Error(`isolated browser selected an unexpected NSS database path: ${JSON.stringify(nssdb)}`);
-    await docker(['exec', container, 'certutil', '-A', '-f', '/dev/null', '-d', `sql:${nssdb}`, '-n', 'Cauce E2E private CA', '-t', 'C,,', '-i', containerCa], { timeout: 5_000 });
+    await docker(['exec', container, 'certutil', '-A', '-f', '/dev/null', '-d', `sql:${nssdb}`, '-n', 'Cauce E2E private CA', '-t', 'C,,', '-i', containerCa], { timeout: plazo(5_000) });
     const browserPath = (await docker(['exec', container, 'sh', '-lc', chromePathCommand])).stdout.trim();
     if (!browserPath.startsWith('/') || !browserPath.endsWith('/chrome')) {
       throw new Error(`la imagen browser no tiene un ejecutable Chrome compatible: ${JSON.stringify(browserPath)}`);
@@ -190,39 +191,29 @@ async function startIsolatedBrowser(caCertPath: string, runtime: BrowserRuntime,
     if (!socket.socket || socket.mode !== 0o600 || socket.uid !== network.socketIdentity.uid || socket.ino !== network.socketIdentity.ino || socket.dev !== network.socketIdentity.dev) throw new Error('Browser daemon mounted a different private socket');
     const proxyForward = "const net=require('node:net'),fs=require('node:fs');net.createServer(s=>{const u=net.connect('/qa-browser-transport/proxy.sock');s.on('error',()=>u.destroy());u.on('error',()=>s.destroy());s.on('close',()=>u.destroy());u.on('close',()=>s.destroy());s.pipe(u);u.pipe(s)}).listen(1080,'127.0.0.1',()=>fs.writeFileSync('/tmp/cauce-proxy-forward-ready','ready',{mode:384,flag:'wx'}));";
     await docker(['exec', '--detach', container, 'node', '-e', proxyForward]);
-    await docker(['exec', container, 'node', '-e', "const net=require('node:net');const s=net.connect('/qa-browser-transport/proxy.sock');s.setTimeout(3000,()=>{s.destroy();process.exitCode=1});s.on('connect',()=>{s.destroy()});s.on('error',()=>{process.exitCode=1})"], { timeout: 5_000 });
+    await docker(['exec', container, 'node', '-e', "const net=require('node:net');const s=net.connect('/qa-browser-transport/proxy.sock');s.setTimeout(3000,()=>{s.destroy();process.exitCode=1});s.on('connect',()=>{s.destroy()});s.on('error',()=>{process.exitCode=1})"], { timeout: plazo(5_000) });
     const proxyReady = await docker(['exec', container, 'cat', '/tmp/cauce-proxy-forward-ready']);
     if (proxyReady.stdout.trim() !== 'ready') throw new Error('Private proxy forwarder is not ready');
     await docker(['exec', '--detach', container, browserPath, '--no-sandbox', '--headless=new', '--disable-dev-shm-usage', '--no-first-run', '--no-default-browser-check', `--proxy-server=${network.proxyUrl}`, '--proxy-bypass-list=<-loopback>', '--remote-debugging-address=127.0.0.1', '--remote-debugging-port=0', '--user-data-dir=/tmp/cauce-ui-functional-chrome', 'about:blank']);
-    const profile = '/tmp/cauce-ui-functional-chrome/DevToolsActivePort';
-    const deadline = Date.now() + 15_000;
-    let port = 0;
-    while (Date.now() < deadline) {
-      const activePort = await docker(['exec', container, 'cat', profile], { timeout: 2_000 }).catch(() => undefined);
-      const parsedPort = activePort?.stdout.split(/\s+/u)[0];
-      if (parsedPort && /^\d+$/u.test(parsedPort)) { port = Number(parsedPort); break; }
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
+    const activePort = await fileInContainer(container, '/tmp/cauce-ui-functional-chrome/DevToolsActivePort', '/devtools/browser/');
+    const parsedPort = activePort?.split(/\s+/u)[0];
+    const port = parsedPort && /^\d+$/u.test(parsedPort) ? Number(parsedPort) : 0;
     if (!port) throw new Error('Chrome aislado no publicó un puerto CDP efímero en el plazo previsto');
     if (port === 9223) throw new Error('Chromium CDP port conflicts with its private forwarder');
     const forward = `const net=require('node:net'),fs=require('node:fs');net.createServer(s=>{const u=net.connect(${String(port)},'127.0.0.1');s.on('error',()=>u.destroy());u.on('error',()=>s.destroy());s.on('close',()=>u.destroy());u.on('close',()=>s.destroy());s.pipe(u);u.pipe(s)}).listen(9223,'0.0.0.0',()=>fs.writeFileSync('/tmp/cauce-cdp-forward-ready','ready',{mode:384,flag:'wx'}));`;
     await docker(['exec', '--detach', container, 'node', '-e', forward]);
-    let ready = false;
-    while (Date.now() < deadline) {
-      ready = (await docker(['exec', container, 'cat', '/tmp/cauce-cdp-forward-ready'], { timeout: 2_000 }).catch(() => undefined))?.stdout.trim() === 'ready';
-      if (ready) break;
-      await new Promise((resolve) => setTimeout(resolve, 100));
+    if ((await fileInContainer(container, '/tmp/cauce-cdp-forward-ready', 'ready'))?.trim() !== 'ready') {
+      throw new Error('Private CDP forwarder did not become ready within browser startup budget');
     }
-    if (!ready) throw new Error('Private CDP forwarder did not become ready within browser startup budget');
     const networks = JSON.parse((await docker(['inspect', '--format', '{{json .NetworkSettings.Networks}}', container])).stdout) as Record<string, { NetworkID: string; IPAddress: string }>;
     const attachment = networks[network.name];
     if (Object.keys(networks).length !== 1 || attachment?.NetworkID !== network.id || !/^\d+\.\d+\.\d+\.\d+$/u.test(attachment.IPAddress)) throw new Error('Browser network attachment differs from its owned namespace');
     cdp = await publishBrowserCdp(attachment.IPAddress);
     const endpoint = `http://127.0.0.1:${String(cdp.port)}`;
-    const version = await fetch(`${endpoint}/json/version`, { signal: AbortSignal.timeout(10_000) }).then(async (response) => response.json() as Promise<{ webSocketDebuggerUrl: string }>);
+    const version = await fetch(`${endpoint}/json/version`, { signal: AbortSignal.timeout(plazo(10_000)) }).then(async (response) => response.json() as Promise<{ webSocketDebuggerUrl: string }>);
     const websocket = new URL(version.webSocketDebuggerUrl);
     if (websocket.hostname !== '127.0.0.1' || websocket.port !== String(cdp.port)) throw new Error('Published CDP websocket address differs from its private host binding');
-    const browser = await chromium.connectOverCDP(endpoint, { timeout: 10_000 });
+    const browser = await chromium.connectOverCDP(endpoint, { timeout: plazo(10_000) });
     return { browser, container, containerId, closeContainer: lifecycle.close, closeNetwork: async () => {
       const errors: Error[] = [];
       await attemptCleanup(errors, 'private CDP publication', () => cdp?.close() ?? Promise.resolve());
@@ -237,6 +228,17 @@ async function startIsolatedBrowser(caCertPath: string, runtime: BrowserRuntime,
     if (errors.length > 0) throw new AggregateError([error, ...errors], 'Browser setup failed with incomplete cleanup');
     throw error;
   }
+}
+
+/*
+ * One daemon round trip that returns as soon as the file holds its marker: polling with `docker exec` from here
+ * spent the startup budget on daemon latency under load instead of on the browser starting.
+ */
+async function fileInContainer(container: string, path: string, marker: string): Promise<string | undefined> {
+  const budget = plazo(15_000);
+  const wait = `n=0; until grep -qsF -- "$2" "$1"; do n=$((n+1)); [ "$n" -le ${String(Math.ceil(budget / 100))} ] || exit 3; sleep 0.1; done; cat -- "$1"`;
+  const read = await docker(['exec', container, 'sh', '-c', wait, 'sh', path, marker], { timeout: budget + BROWSER_DOCKER_TIMEOUT_MS }).catch(() => undefined);
+  return read?.stdout;
 }
 
 export interface TrustedBrowser {
@@ -370,7 +372,7 @@ export async function startConsoleFunctionalFixture(): Promise<Fixture> {
       const provision = await exec(join(process.cwd(), 'node_modules/.bin/tsx'), [
         'services/gateway/src/console-user-cli.ts', '--email', user.email, '--name', `${user.tenant} E2E operator`,
         '--role', 'operator', '--tenant', user.tenant, '--alias', user.operator,
-      ], { cwd: process.cwd(), env: { PATH: process.env.PATH ?? '/usr/bin:/bin', NODE_ENV: 'test', DATABASE_URL: database.url, CAUCE_CONSOLE_USER_PASSWORD: user.password }, timeout: 15_000 });
+      ], { cwd: process.cwd(), env: { PATH: process.env.PATH ?? '/usr/bin:/bin', NODE_ENV: 'test', DATABASE_URL: database.url, CAUCE_CONSOLE_USER_PASSWORD: user.password }, timeout: plazo(15_000) });
       if (!provision.stdout.includes('cuenta guardada') || provision.stdout.includes(user.password)) {
         throw new Error(`la CLI de cuentas no confirmó creación limpia; stdout sin contraseña=${JSON.stringify(provision.stdout.replaceAll(user.password, '[REDACTED]'))}`);
       }

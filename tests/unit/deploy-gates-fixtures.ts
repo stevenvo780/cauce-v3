@@ -158,7 +158,7 @@ export function gatesRepository(directory: string) {
   // The release gate that runs this suite exports its own knobs; the scripted gate under test must not inherit them.
   const inherited = Object.fromEntries(Object.entries(process.env)
     .filter(([name]) => !name.startsWith('CAUCE_RELEASE_GATES_') && !name.startsWith('CAUCE_CARRIL_EXCLUSIVO_')
-      && !name.startsWith('CAUCE_ARRANQUES_POSTGRES_')));
+      && !name.startsWith('CAUCE_ARRANQUES_POSTGRES_') && name !== 'CAUCE_PLAZOS_FACTOR'));
   const environment = {
     ...inherited,
     PATH: `${binaries}:${process.env.PATH ?? ''}`,

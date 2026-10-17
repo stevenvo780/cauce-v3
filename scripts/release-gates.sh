@@ -113,6 +113,8 @@ mkdir -m 700 "$OUT" || die "no pude crear $OUT"
 export CAUCE_CARRIL_EXCLUSIVO_HOST="$OUT/carril-exclusivo" CAUCE_CARRIL_EXCLUSIVO_PLAZAS="${CAUCE_CARRIL_EXCLUSIVO_PLAZAS:-2}"
 # Every shard worker boots its own PostgreSQL; at most one boot per CPU at once host-wide (tests/helpers/contenedor-de-prueba.ts).
 export CAUCE_ARRANQUES_POSTGRES_HOST="$OUT/arranques-postgres" CAUCE_ARRANQUES_POSTGRES_PLAZAS="${CAUCE_ARRANQUES_POSTGRES_PLAZAS:-$(nproc)}"
+# The shards share one Docker daemon: a burst of boots took docker create/start/rm to ~30 s, twice the fixtures' 15 s budget.
+export CAUCE_PLAZOS_FACTOR="${CAUCE_PLAZOS_FACTOR:-3}"
 RUN_TOKEN="$(od -An -N8 -tx8 /dev/urandom | tr -d ' \n')"
 
 LANE_DIRS=("$REPO")

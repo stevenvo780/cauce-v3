@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process';
 import { lstat } from 'node:fs/promises';
+import { plazo } from '../helpers/plazos.js';
 
 interface ExecOptions { cwd?: string; env?: NodeJS.ProcessEnv; timeout?: number; maxBuffer?: number }
 class SubprocessError extends Error {
@@ -13,7 +14,7 @@ class SubprocessError extends Error {
 }
 export function browserExec(command: string, args: string[], options: ExecOptions = {}): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
-    const timeoutMs = options.timeout ?? 60_000;
+    const timeoutMs = options.timeout ?? plazo(60_000);
     const { timeout: _timeout, maxBuffer, ...execOptions } = options;
     let timedOut = false;
     let escalation: NodeJS.Timeout | undefined;
@@ -30,8 +31,9 @@ export function browserExec(command: string, args: string[], options: ExecOption
     }, timeoutMs);
   });
 }
+export const BROWSER_DOCKER_TIMEOUT_MS = plazo(15_000);
 export function browserDocker(args: string[], options: ExecOptions = {}) {
-  return browserExec('docker', args, { timeout: 15_000, maxBuffer: 64 * 1024, ...options });
+  return browserExec('docker', args, { timeout: BROWSER_DOCKER_TIMEOUT_MS, maxBuffer: 64 * 1024, ...options });
 }
 
 export function browserErrorStderr(error: unknown): string {
@@ -91,7 +93,7 @@ function absentContainer(error: unknown, reference: string): boolean {
 }
 
 /** Cleanup outlasts the daemon's own stop path: a SIGKILL may wait 10 s for a task in uninterruptible I/O before forcing it. */
-export const BROWSER_CLEANUP_TIMEOUT_MS = 30_000;
+export const BROWSER_CLEANUP_TIMEOUT_MS = plazo(30_000);
 
 export function ownedBrowserLifecycle(docker: Docker, descriptor: BrowserDescriptor, timing = {
   now: () => performance.now(), wait: (ms: number) => new Promise<void>((resolve) => { setTimeout(resolve, ms); }),
@@ -110,13 +112,13 @@ export function ownedBrowserLifecycle(docker: Docker, descriptor: BrowserDescrip
   };
   const verifyNetwork = async () => {
     const format = '{"id":{{json .Id}},"name":{{json .Name}},"internal":{{json .Internal}},"owner":{{json (index .Labels "cauce.e2e.owner")}}}';
-    const network = JSON.parse((await docker(['network', 'inspect', '--format', format, expected.networkId], { timeout: 15_000 })).stdout) as {
+    const network = JSON.parse((await docker(['network', 'inspect', '--format', format, expected.networkId], { timeout: BROWSER_DOCKER_TIMEOUT_MS })).stdout) as {
       id: string; name: string; internal: unknown; owner: string;
     };
     if (network.id !== expected.networkId || network.name !== expected.networkName || network.internal !== true
       || network.owner !== expected.networkOwner) throw new Error('Owned browser network identity changed');
   };
-  const inspect = async (timeout = 15_000): Promise<Container | undefined> => {
+  const inspect = async (timeout = BROWSER_DOCKER_TIMEOUT_MS): Promise<Container | undefined> => {
     const reference = cid ?? expected.name;
     const format = '{"id":{{json .Id}},"name":{{json .Name}},"image":{{json .Image}},"owner":{{json (index .Config.Labels "io.cauce.qa.browser")}},"cohort":{{json (index .Config.Labels "cauce.e2e.owner")}},"networkMode":{{json .HostConfig.NetworkMode}},"mounts":{{json .Mounts}},"state":{{json .State}},"networks":{{json .NetworkSettings.Networks}}}';
     try {
@@ -197,13 +199,13 @@ export function ownedBrowserLifecycle(docker: Docker, descriptor: BrowserDescrip
     const receipt = (await docker(['create', '--pull=never', '--rm', '--init', '--network', expected.networkName,
       '--mount', `type=bind,source=${expected.directory},target=/qa-browser-transport,readonly`, '--name', expected.name,
       '--label', 'cauce.e2e.owner=ui-functional', '--label', `io.cauce.qa.browser=${expected.owner}`,
-      '--entrypoint', 'sh', expected.imageId, '-lc', 'sleep 600'], { timeout: 15_000 })).stdout.trim();
+      '--entrypoint', 'sh', expected.imageId, '-lc', 'sleep 600'], { timeout: BROWSER_DOCKER_TIMEOUT_MS })).stdout.trim();
     if (!/^[a-f0-9]{64}$/u.test(receipt)) throw new Error('Owned browser create receipt lacks an exact CID');
     cid = receipt;
     const created = await inspect();
     if (created?.state.Status !== 'created' || created.state.Pid !== 0) throw new Error('Owned browser create receipt cannot be verified');
     await verifyNetwork();
-    await docker(['start', cid], { timeout: 15_000 });
+    await docker(['start', cid], { timeout: BROWSER_DOCKER_TIMEOUT_MS });
     const running = await inspect();
     if (running?.state.Status !== 'running' || running.state.Pid <= 0) throw new Error('Owned browser start not observed running');
     return cid;

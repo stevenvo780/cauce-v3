@@ -14,6 +14,7 @@ import uuid
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import test_fleet_executor as fixtures
 from cauce_container_base import bundle_digest
+from plazos import plazo
 
 IDENTITY = 'SYNTHETIC_ACCOUNT_SHARED_ñ_🧪'
 IDENTITY_HASH = 'cdec757647de138bf5c817110c408b6c8d7e995789a328b37527fb058416cf18'
@@ -37,7 +38,7 @@ class AgentQuotaPacketTest(unittest.TestCase):
     def query(self, packet=None):
         return subprocess.run([sys.executable, '-B', str(fixtures.CLI), '--policy', str(self.policy_file), '--quota'],
             input=json.dumps(self.quota_packet() if packet is None else packet), text=True,
-            capture_output=True, timeout=75)
+            capture_output=True, timeout=plazo(75))
 
     def unsupported_agent(self, harness='openclaw'):
         self.policy['bundles'][harness] = copy.deepcopy(self.policy['bundles']['codex'])
@@ -147,7 +148,7 @@ class DockerAgentQuotaTest(AgentQuotaPacketTest):
     @classmethod
     def setUpClass(cls):
         probe = subprocess.run(['docker', 'image', 'inspect', 'python:3.12-slim', '--format', '{{.Id}}'],
-            capture_output=True, text=True, timeout=15)
+            capture_output=True, text=True, timeout=plazo(15))
         if probe.returncode:
             raise unittest.SkipTest('disposable local Python image is unavailable')
         # The executor bind-mounts this checkout's ops/cli and ops/container-runtime as its release and the reader
@@ -177,15 +178,15 @@ print(json.dumps(document,ensure_ascii=False))
 ''')
             (root / 'Dockerfile').write_text('FROM python:3.12-slim\nCOPY --chmod=0755 reader.py /usr/local/bin/fake-quota-reader\n')
             built = subprocess.run(['docker', 'build', '--pull=false', '--network', 'none', '--tag', cls.image_tag, directory],
-                capture_output=True, text=True, timeout=90)
+                capture_output=True, text=True, timeout=plazo(90))
             if built.returncode:
                 raise AssertionError('disposable quota image failed to build: ' + built.stderr)
         cls.image = subprocess.run(['docker', 'image', 'inspect', cls.image_tag, '--format', '{{.Id}}'],
-            capture_output=True, text=True, timeout=15, check=True).stdout.strip()
+            capture_output=True, text=True, timeout=plazo(15), check=True).stdout.strip()
 
     @classmethod
     def tearDownClass(cls):
-        result = subprocess.run(['docker', 'image', 'rm', cls.image_tag], capture_output=True, timeout=20)
+        result = subprocess.run(['docker', 'image', 'rm', cls.image_tag], capture_output=True, timeout=plazo(20))
         if result.returncode:
             raise AssertionError('disposable quota image cleanup failed')
 
@@ -202,13 +203,13 @@ print(json.dumps(document,ensure_ascii=False))
     def tearDown(self):
         try:
             for name in self.resources:
-                subprocess.run(['docker', 'rm', '-f', name], capture_output=True, timeout=20)
+                subprocess.run(['docker', 'rm', '-f', name], capture_output=True, timeout=plazo(20))
                 subprocess.run(['docker', 'volume', 'rm', name + '-state', name + '-provider-profiles'],
-                    capture_output=True, timeout=20)
+                    capture_output=True, timeout=plazo(20))
                 containers = subprocess.run(['docker', 'ps', '-aq', '--filter', 'name=' + name],
-                    capture_output=True, text=True, timeout=15, check=True).stdout.strip()
+                    capture_output=True, text=True, timeout=plazo(15), check=True).stdout.strip()
                 volumes = subprocess.run(['docker', 'volume', 'ls', '-q', '--filter', 'name=' + name],
-                    capture_output=True, text=True, timeout=15, check=True).stdout.strip()
+                    capture_output=True, text=True, timeout=plazo(15), check=True).stdout.strip()
                 self.assertEqual((containers, volumes), ('', ''), 'canary cleanup left resources')
         finally:
             super().tearDown()
@@ -230,7 +231,7 @@ print(json.dumps(document,ensure_ascii=False))
         self.policy['bundles'][harness] = copy.deepcopy(self.policy['bundles']['codex'])
         self.save_policy()
         create_container(self.policy, approve_agent(self.policy, self.agent))
-        subprocess.run(['docker', 'start', name], capture_output=True, timeout=15, check=True)
+        subprocess.run(['docker', 'start', name], capture_output=True, timeout=plazo(15), check=True)
         observation = {'error': None, 'fuente': 'wham-http', 'extra': {'account_id': IDENTITY},
             'provider': 'codex', 'email': 'private@fixture.invalid', 'tokens': PRIVATE_MARKER,
             'plan': PRIVATE_MARKER, 'source': IDENTITY, 'private': PRIVATE_MARKER,
@@ -242,7 +243,7 @@ print(json.dumps(document,ensure_ascii=False))
             'p.chmod(448);os.chown(p,65534,65534);f=p/"fixture.json";'
             'f.write_text(sys.stdin.read());f.chmod(384);os.chown(f,65534,65534)')
         subprocess.run(['docker', 'exec', '-i', '--user', '0', name, '/usr/local/bin/python3.12', '-B', '-c', program],
-            input=json.dumps(observation), capture_output=True, text=True, timeout=15, check=True)
+            input=json.dumps(observation), capture_output=True, text=True, timeout=plazo(15), check=True)
         return self.quota_packet()
 
     def measured(self, packet):
@@ -330,14 +331,14 @@ print(json.dumps(document,ensure_ascii=False))
     def test_foreign_container_is_not_read_or_modified(self):
         packet = self.configure_canary()
         name = packet['agent']['container_name']
-        subprocess.run(['docker', 'rm', '-f', name], capture_output=True, timeout=15, check=True)
+        subprocess.run(['docker', 'rm', '-f', name], capture_output=True, timeout=plazo(15), check=True)
         subprocess.run(['docker', 'run', '-d', '--name', name, '--network', 'none', '--entrypoint', '/bin/sleep',
-            self.image, 'infinity'], capture_output=True, timeout=15, check=True)
+            self.image, 'infinity'], capture_output=True, timeout=plazo(15), check=True)
         identity = subprocess.run(['docker', 'inspect', name, '--format', '{{.Id}}'],
-            capture_output=True, text=True, timeout=15, check=True).stdout.strip()
+            capture_output=True, text=True, timeout=plazo(15), check=True).stdout.strip()
         self.assertNotEqual(self.query(packet).returncode, 0)
         observed = json.loads(subprocess.run(['docker', 'inspect', name], capture_output=True,
-            text=True, timeout=15, check=True).stdout)[0]
+            text=True, timeout=plazo(15), check=True).stdout)[0]
         self.assertEqual(observed['Id'], identity)
         self.assertTrue(observed['State']['Running'])
 
@@ -348,18 +349,18 @@ print(json.dumps(document,ensure_ascii=False))
             process.stdin.write(json.dumps(packet))
             process.stdin.close()
             process.stdin = None
-            deadline = time.monotonic() + 8
+            deadline = time.monotonic() + plazo(8)
             while time.monotonic() < deadline:
                 started = subprocess.run(['docker', 'exec', packet['agent']['container_name'], '/usr/bin/test',
-                    '-e', '/nonexistent/.codex/started'], capture_output=True, timeout=10)
+                    '-e', '/nonexistent/.codex/started'], capture_output=True, timeout=plazo(10))
                 if started.returncode == 0:
                     break
                 time.sleep(0.05)
             else:
                 self.fail('canary reader did not start')
             subprocess.run(['docker', 'restart', '--time', '0', packet['agent']['container_name']],
-                capture_output=True, timeout=15, check=True)
-            stdout, stderr = process.communicate(timeout=15)
+                capture_output=True, timeout=plazo(15), check=True)
+            stdout, stderr = process.communicate(timeout=plazo(15))
             self.assertNotEqual(process.returncode, 0)
             self.assertNotIn(IDENTITY, stdout + stderr)
             self.assertNotIn(PRIVATE_MARKER, stdout + stderr)
@@ -386,7 +387,7 @@ with patch.object(hooks,'container_binding',changed):
 '''
         response = subprocess.run([sys.executable, '-B', '-c', program], input=json.dumps([self.policy, packet]),
             env={'PATH': '/usr/bin:/bin', 'HOME': str(self.root), 'PYTHONPATH': str(fixtures.OPS / 'cli')},
-            text=True, capture_output=True, timeout=15)
+            text=True, capture_output=True, timeout=plazo(15))
         self.assertEqual(response.returncode, 2, response.stderr)
         self.assertEqual(response.stdout.strip(), 'quota_container_changed')
 

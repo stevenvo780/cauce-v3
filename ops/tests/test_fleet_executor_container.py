@@ -20,6 +20,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import test_fleet_executor as fixtures
 from cauce_container_base import bundle_digest
+from plazos import plazo
 
 SWEEP = fixtures.OPS / 'cli/fleet_orphan_sweep.py'
 
@@ -34,7 +35,7 @@ def sweep_failure(stderr):
 def sweep_report(rows_file, runtime_prefix, host_id):
     result = subprocess.run([sys.executable, str(SWEEP), '--rows', str(rows_file),
         '--runtime-key-prefix', runtime_prefix, '--host-id', host_id],
-        capture_output=True, text=True, timeout=30)
+        capture_output=True, text=True, timeout=plazo(30))
     try:
         report = json.loads(result.stdout)
     except json.JSONDecodeError as error:
@@ -58,7 +59,7 @@ def sweep_owned_fleet(rows_file, rows, name_prefix, host_id, runtime_prefix=None
     for kind, arguments, approved in (
             ('container', ['ps', '-a', '--format', '{{.Names}}', '--filter', 'name=^/' + re.escape(name_prefix)], names),
             ('volume', ['volume', 'ls', '--format', '{{.Name}}', '--filter', 'name=^' + re.escape(name_prefix)], expected_volumes)):
-        found = subprocess.run(['/usr/bin/docker', *arguments], capture_output=True, text=True, check=True, timeout=15)
+        found = subprocess.run(['/usr/bin/docker', *arguments], capture_output=True, text=True, check=True, timeout=plazo(15))
         named.extend({'kind': kind, 'name': name} for name in found.stdout.split()
                      if name.startswith(name_prefix) and name not in approved)
     report['orphan_named_resources'] = named
@@ -89,9 +90,9 @@ class DisposableContainerExecutorTest(unittest.TestCase):
     def tearDown(self):
         try:
             if getattr(self, 'container', None):
-                subprocess.run(['docker', 'rm', '-f', self.container], capture_output=True, timeout=40)
+                subprocess.run(['docker', 'rm', '-f', self.container], capture_output=True, timeout=plazo(40))
                 subprocess.run(['docker', 'volume', 'rm', self.container + '-state', self.container + '-provider-profiles'],
-                               capture_output=True, timeout=40)
+                               capture_output=True, timeout=plazo(40))
                 report = sweep_owned_fleet(self.root / 'orphan-rows.json', [], self.container,
                                           self.policy['host_id'], self.agent['runtime_key'])
                 self.assertTrue(report['clean'], report)
@@ -146,7 +147,7 @@ class DisposableContainerExecutorTest(unittest.TestCase):
                     paused = json.loads(checkpoint.read_text())['pid']
                     subprocess.run(['/usr/bin/docker', kind, 'rm', owned], capture_output=True, check=True)
                     os.kill(paused, signal.SIGCONT)
-                    report = future.result(timeout=25)
+                    report = future.result(timeout=plazo(25))
                     self.assertTrue(report['clean'], report)
                     print(f'FLEET_ORPHAN_INVENTORY_RACE kind={kind} clean=true', flush=True)
                 finally:
@@ -187,7 +188,7 @@ class DisposableContainerExecutorTest(unittest.TestCase):
         self.configure_container()
         self.configure_signer()
         for step in ('artifacts', 'credentials', 'runtime'):
-            result = self.run_step(step, timeout=40)
+            result = self.run_step(step, timeout=plazo(40))
             self.assertEqual(result.returncode, 0, f'{step}: {result.stderr}')
         inspect = subprocess.run(['docker', 'inspect', self.container], capture_output=True, text=True, check=True)
         observed = json.loads(inspect.stdout)[0]
@@ -199,7 +200,7 @@ class DisposableContainerExecutorTest(unittest.TestCase):
         metadata = json.loads(identity.stdout)
         self.assertEqual(metadata['runtimeUid'], 65534)
         self.assertEqual(metadata['wireAlias'], 'shared_alias')
-        stopped = self.run_step('stop', timeout=40)
+        stopped = self.run_step('stop', timeout=plazo(40))
         self.assertEqual(stopped.returncode, 0, stopped.stderr)
         self.assertTrue(json.loads(stopped.stdout)['evidence']['stopped_verified'])
         gone = subprocess.run(['docker', 'exec', self.container, 'test', '-e', '/proc/' + str(metadata['pid'])], capture_output=True)
@@ -212,7 +213,7 @@ class DisposableContainerExecutorTest(unittest.TestCase):
         self.configure_container()
         self.configure_signer()
         for step in ('artifacts', 'credentials', 'runtime'):
-            result = self.run_step(step, timeout=40)
+            result = self.run_step(step, timeout=plazo(40))
             self.assertEqual(result.returncode, 0, result.stderr)
         credential = '/run/cauce-credentials/physical-one/bootstrap/agent.key'
         result = subprocess.run(['docker', 'exec', '--user', '65534:65534', self.container,
@@ -233,7 +234,7 @@ class DisposableContainerExecutorTest(unittest.TestCase):
         self.save_policy()
         self.assertFalse(pathlib.Path(self.agent['state_directory']).exists())
         for step in ('artifacts', 'credentials', 'runtime', 'authenticate'):
-            result = self.run_step(step, timeout=40)
+            result = self.run_step(step, timeout=plazo(40))
             self.assertEqual(result.returncode, 0, f'{step}: {result.stderr}')
         self.assertTrue(json.loads(result.stdout)['evidence']['provider_verified'])
 
@@ -244,7 +245,7 @@ class DisposableContainerExecutorTest(unittest.TestCase):
         subprocess.run(['docker', 'start', self.container], capture_output=True, check=True)
         original = json.loads(subprocess.run(['docker', 'inspect', self.container], capture_output=True, text=True, check=True).stdout)[0]['Id']
         self.assertEqual(self.run_step('artifacts').returncode, 0)
-        rejected = self.run_step('runtime', timeout=40)
+        rejected = self.run_step('runtime', timeout=plazo(40))
         self.assertNotEqual(rejected.returncode, 0)
         still = json.loads(subprocess.run(['docker', 'inspect', self.container], capture_output=True, text=True, check=True).stdout)[0]
         self.assertEqual(still['Id'], original)
@@ -311,7 +312,7 @@ class DisposableContainerExecutorTest(unittest.TestCase):
         self.context['previous_agents'] = [self.agent]
         lifecycle_fixtures.PhysicalLifecycleTest.revoke_hook(self)
         for step in ('stop', 'revoke', 'purge'):
-            result = self.run_step(step, timeout=40)
+            result = self.run_step(step, timeout=plazo(40))
             self.assertEqual(result.returncode, 0, f'{step}: {result.stderr}')
         removed = json.loads(result.stdout)['evidence']
         self.assertEqual({(row['type'], row['name']) for row in removed['removed']}, {
@@ -342,7 +343,7 @@ class DisposableContainerExecutorTest(unittest.TestCase):
         self.context['previous_agents'] = [self.agent]
         lifecycle_fixtures.PhysicalLifecycleTest.revoke_hook(self)
         for step in ('stop', 'revoke', 'purge'):
-            result = self.run_step(step, timeout=40)
+            result = self.run_step(step, timeout=plazo(40))
             self.assertEqual(result.returncode, 0, f'{step}: {result.stderr}')
         report = sweep_owned_fleet(self.root / 'orphan-rows.json', [], self.container,
                                   policy['host_id'], self.agent['runtime_key'])
