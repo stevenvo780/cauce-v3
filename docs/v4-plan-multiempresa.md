@@ -156,7 +156,7 @@ Archivos centrales a tocar: `packages/store/migrations/` (nueva 051+), `packages
 
 ## Estado V4.0
 
-Implementado en el worktree `claude/v4-0-empresas`, pendiente de revisión final, integración y despliegue. Producción sigue en la migración 050: nada multiempresa está desplegado y V4.0 no añade pantallas (el selector de empresa, la administración de empresas y las personas, hosts y cuentas por empresa son V4.2).
+Integrado en el árbol actual (`packages/store/migrations/051_companies.sql`–`081_membresia_rol_derivado.sql`), pendiente del despliegue en producción por el dueño. Producción sigue en la migración 050 hasta que se ejecute `deploy/deploy.sh` con el candidato V4.
 
 `051_companies.sql` crea Humanizar y asigna todos los espacios existentes a `humanizar`, sin modificar sus datos previos; el `down` devuelve los datos y el esquema de 050 (funciones, triggers, índices, restricciones y columnas; sólo queda el rastro interno e inocuo de la columna borrada). Cada empresa puede tener un hub; la estrella local y los enlaces explícitos entre dos hubs se comprueban en PostgreSQL y en los predicados de rutas. Las lecturas y escrituras de configuración y la administración de personas quedan acotadas a la empresa del actor. Se conserva el contrato de capacidades `scope:'hub'` hasta V4.1. Praxis sólo existe en las pruebas; llegará con la importación posterior. El dominio continúa siendo único.
 
@@ -315,7 +315,7 @@ En la tabla, «emp.» es la empresa activa: la de origen, o la elegida por el SA
 **Quién queda en cada rol tras R1 y la siembra (§6.1):**
 - Steven es SA y DE de Humanizar.
 - Miguel es DE de Humanizar.
-- zeus@ es AE (relleno; decisión D1).
+- <admin-legado>@ es AE (relleno; decisión D1).
 - El resto de agentes y personas no cambian.
 - El tráfico entre empresas exige un enlace creado por el SA y aristas hub↔hub configuradas por los dueños de cada lado.
 
@@ -604,7 +604,7 @@ La URL ni la contraseña se imprimen. `empresa estado --estado disabled|retired`
 - Su arista `Miguel→Steven` con `allow_control` no cambia. Es control operativo por ACL, independiente de ser dueño.
 
 **Después:**
-- Decidir D1: si zeus@ sigue como `admin`.
+- Decidir D1: si <admin-legado>@ sigue como `admin`.
 - Reversión: `cauce_platform_revoke_admin('humanizar',:'miguel_human_id',:'admin')`. G3 impide quitar al último dueño.
 
 #### 6.2 Leon como dueño de Praxis (en la importación, V4.3 dry-run y V4.4 apply)
@@ -843,7 +843,7 @@ La URL ni la contraseña se imprimen. `empresa estado --estado disabled|retired`
 8. **Cambios de comportamiento:**
    - Miguel administra las cuentas que paga Steven (D2);
    - los arneses dejan de editarse en la consola (D3);
-   - zeus@ sigue como admin por el relleno, salvo que el dueño decida revocarlo (D1).
+   - <admin-legado>@ sigue como admin por el relleno, salvo que el dueño decida revocarlo (D1).
 9. **Poder real del SA en otra empresa.** Mitigación: queda auditado en la empresa afectada y se revalida en cada petición.
 10. **Sin RLS, un runtime comprometido ve todas las empresas.** Queda aceptado hasta V4.5.
 11. **Consumidores fuera de compose que siguen como `cauce`.** Mitigación: el inventario (§5, paso 1) y la alerta.
@@ -877,7 +877,7 @@ WP-K (2 días) va en paralelo, antes de V4.4. V4.2 (consola) y V4.3 (importador)
 
 ### 10. Decisiones del dueño pendientes (con valor por defecto)
 
-- **D1.** ¿zeus@ sigue como `admin` de Humanizar? *Por defecto sí*: así no cambia nada. Se revoca con la CLI.
+- **D1.** ¿<admin-legado>@ sigue como `admin` de Humanizar? *Por defecto sí*: así no cambia nada. Se revoca con la CLI.
 - **D2.** ¿Un `admin` (no dueño) gestiona cuentas de proveedor? *Por defecto no.* Los dueños sí, así que Miguel podrá editar cuentas pagadas por el espacio Steven.
 - **D3.** ¿Arneses y políticas de rol solo por la CLI de plataforma? *Por defecto sí.*
 - **D4.** ¿A quién llegan los avisos de supervisión de Praxis? *Por defecto a Leon,* con un destino de Praxis. A Steven solo con enlace y aristas.

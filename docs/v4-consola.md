@@ -15,12 +15,18 @@
 - Lecturas de cuotas/contextos validadas antes de proyectar tarjetas; cuentas legadas conservan proveedor y usan id si el nombre es nulo. Personas de una empresa diferente no se proyectan como candidatas para asignar autoridad.
 - Backup del espacio: Perfil solicita y consulta la copia; solo `ready` ofrece descarga autenticada. Cambio de empresa o de alcance limpia el recibo. `running` no ofrece URL y `LIMIT_EXCEEDED` se muestra como fallo. El contrato completo está en [copias durables](v4-copias-espacios.md).
 
+## Operación y recuperación
+
+- **Operación:** autenticarse en `/login` (`POST /v3/auth/login`), seleccionar la empresa activa cuando corresponda (`POST /v3/auth/session/company`), operar desde las vistas del menú (`console/src/nav.ts:53-112`) con previsualización o confirmación antes de mutar, y consultar el estado de cada operación durable o recibo antes de darla por terminada.
+- **Recuperación:** ante errores de red, fallos `503` de relectura o conflictos `409` de revisión (CAS), la consola conserva el borrador abierto en memoria, bloquea el envío para impedir escrituras sobre datos obsoletos y muestra el botón de reintentar o recargar la versión vigente desde PostgreSQL ([estados de la consola](v4-consola-estados.md)). Si una operación de cuota o agente queda en `awaiting_auth`, completar el login del proveedor y reanudar la operación (`POST /v3/console/fleet/operations/:id/resume`).
+
 ## Evidencia
 
-Los resultados de UI con mocks, sus recibos y límites están en la [matriz de verificación](v4-matriz-local.md).
+Las 13 suites E2E de navegador real V4 (`tests/e2e/v4-*-real-browser.test.ts`) ejecutan Chromium contra el gateway y PostgreSQL reales ([inventario de pruebas](v4-pruebas.md) y [matriz CRUD](v4-matriz-crud.md)). Los recibos adicionales y sus límites están en la [matriz de verificación](v4-matriz-local.md).
 
 ## Límites
 
-- La autenticación de un proveedor real desde la UI no está acreditada. `awaiting_auth` sigue siendo un estado pendiente, no una identidad verificada.
-- El navegador local usa API simulada; no demuestra persistencia PostgreSQL ni efecto publicado. La matriz distingue esa evidencia.
-- La identidad y presencia de un ordenador no demuestran que su executor esté preparado. El claim/heartbeat y el efecto físico requieren un host real.
+- La autenticación de un proveedor externo comercial desde la UI requiere la cuenta real del proveedor en el host; `awaiting_auth` sigue siendo un estado pendiente, no una identidad verificada.
+- Las suites locales de navegador acreditan persistencia en PostgreSQL efímero y gateway real, pero no sustituyen el humo autenticado tras publicar en producción.
+- La identidad y presencia de un ordenador no demuestran que su executor esté preparado. El claim/heartbeat y el efecto físico requieren un host con `executor_ready: true`.
+

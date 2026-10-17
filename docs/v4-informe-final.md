@@ -126,7 +126,7 @@ Ejemplos:
 | 6. Contextos | Espacios reales en la estructura estándar; historial real en GitHub; turno real que aplique la versión; recuperación ensayada en producción | Sin uso real del versionado |
 | 7. Copias | Descarga de una copia real desde la consola y su restauración | Recuperación no demostrada con datos reales |
 | 8. Pruebas | `typecheck`, `lint` y `test:unit` sobre el HEAD final; gate y cobertura del SHA final; flujos esenciales en producción | El candidato final no está certificado |
-| 9. Despliegue y documentación | Guía y operación completas en todas las áreas de §10, sin pendientes críticos | La documentación aún no cubre todo lo exigido |
+| 9. Despliegue y documentación | Ejecutar el ciclo del candidato V4 en producción y verificar el humo autenticado | La guía y operación de §10 están documentadas en el árbol; falta la ventana de despliegue vivo |
 
 ## Cómo se mantiene este informe
 

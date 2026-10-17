@@ -1,8 +1,8 @@
-# V4: auditoría de membresías y propuesta de migración del siguiente número libre
+# V4: auditoría de membresías y migración `081_membresia_rol_derivado.sql`
 
-Estado: propuesta. No se ha creado el fichero en `packages/store/migrations/` ni se ha tocado código. El número no se fija aquí: es el siguiente libre, el entero posterior al mayor prefijo numérico de `ls packages/store/migrations | tail`. Un hueco por debajo de esa cola no se reutiliza, porque el `down` aborta si existe una versión posterior. En el SQL y en el resto de esta propuesta, `NNN` ocupa ese prefijo y no es un nombre de fichero literal. La prueba inicial del `up` usó PostgreSQL 16 sobre las migraciones 001–065; no acredita compatibilidad con las migraciones posteriores del árbol actual. El `down` solo se probó en el escenario «persona movida». Falta repetir la suite completa sobre la cadena vigente y ensayar en un clon (sección 7).
+Estado: **implementada en código y esquema** (`packages/store/migrations/081_membresia_rol_derivado.sql` y `packages/store/migrations/down/081_membresia_rol_derivado.sql`, con locks declarados en `packages/store/src/migration-locks.ts:77` y recorte de permisos de lector en `services/gateway/src/console-user-maintenance.ts:45-51`). En el análisis histórico de este documento, `NNN` corresponde a `081`.
 
-Las referencias `file:line` describen la auditoría original y deben cotejarse con el código actual antes de implementar la propuesta. Las rutas de paquete son relativas a la raíz del repo; `M/NNN` abrevia `packages/store/migrations/NNN_*.sql`.
+Las referencias `file:line` recogen la auditoría que dio origen a `081_membresia_rol_derivado.sql`. Las rutas de paquete son relativas a la raíz del repo; `M/NNN` abrevia `packages/store/migrations/NNN_*.sql`.
 
 ## 1. Resumen de decisiones
 
@@ -14,13 +14,13 @@ Las referencias `file:line` describen la auditoría original y deben cotejarse c
 | `console_users.company_id` | **Conservar** | Lo leen ≥10 consultas y lo exigen 3 FKs compuestas (`company_admins`, favoritos, `human_tenant_memberships`). Quitarlo debilita el aislamiento. |
 | `human_tenant_memberships.company_id` | **Conservar** | Su único lector SQL es 064, pero sus dos FKs compuestas son el control «la membresía vive en la empresa de la persona». |
 | `console_users.tenant_id` / `alias` | **Conservar** (no tocar) | Sin sustituto. Lectores listados abajo. |
-| `console_users.active` frente a `human_tenant_memberships.enabled` | **Conservar ambos ahora**; candidato a NNN | Misma duplicación que el rol, pero `enabled`/`revoked_at`/`revision` alimentan la invalidación de grants OAuth. |
+| `console_users.active` frente a `human_tenant_memberships.enabled` | **Conservar ambos ahora**; candidato futuro | Misma duplicación que el rol, pero `enabled`/`revoked_at`/`revision` alimentan la invalidación de grants OAuth. |
 | `company_admins`, `company_admin_versions` | **Conservar** | Fuente de los roles de empresa (owner/admin). |
 | `platform_admins` | **Conservar** | Única autoridad por encima de una empresa. |
 | `memberships` (sala), `role_policies` | **Conservar** | Fuente del alcance de enrutado/lectura/control de cada agente. |
 | Agente `owner` | **Conservar** (dato, no concepto) | Ningún código lee el alias literal `owner`. |
 
-Cambio neto propuesto en NNN: una columna menos (`human_tenant_memberships.role`), una verdad menos, y dos guardas nuevas que sustituyen a los CHECK que se pierden.
+Cambio neto aplicado en `081_membresia_rol_derivado.sql`: una columna menos (`human_tenant_memberships.role`), una verdad menos, y dos guardas diferidas (`human_memberships_reader_ceiling` y `console_users_reader_ceiling`) que sustituyen a los CHECK que se retiran.
 
 ## 2. Modelo de datos actual
 
@@ -178,18 +178,19 @@ Decisión: **conservar** como dato inicial de registro; no es un concepto de esq
 
 ### 3.11 Hallazgo: divergencia por `console-user-maintenance --update`
 
-`console-user-maintenance.ts:57-65` (y `:89-95` en la rama de conflicto) actualiza `role`, `tenant_id`, `alias` y `active` de `console_users` sin sincronizar `human_tenant_memberships`, a diferencia de `people-admin-store.ts:119` (alta) y `:143` (actualización si cambia la autoridad), que sí llaman a `syncMembership`. El resultado es una membresía con rol/alias/estado antiguos. Con NNN el rol deja de divergir; `tenant_id`/`alias`/`active` siguen pudiendo divergir. Corrección propuesta (código, fuera de NNN): hacer que `maintainConsoleUser` use el mismo `syncMembership` extraído a un módulo común.
+En la auditoría inicial, `console-user-maintenance.ts` actualizaba `role`, `tenant_id`, `alias` y `active` de `console_users` sin sincronizar `human_tenant_memberships`, a diferencia de `people-admin-store.ts:24-32` (`syncMembership`). Con `081_membresia_rol_derivado.sql` el rol deja de divergir y `services/gateway/src/console-user-maintenance.ts:45-51` (`clampReaderHomeMembership`) recorta los permisos de la membresía hogar a `['read']` en la misma transacción cuando `--update` degrada una cuenta a `reader`.
 
-## 4. Qué se elimina y qué se mantiene tras NNN
+## 4. Qué se elimina y qué se mantiene tras 081
 
 - Se elimina: `human_tenant_memberships.role` y los CHECK que lo mencionan (se sustituyen por guardas).
 - Se añade: función `cauce_console_user_role_revision()` y trigger `console_users_role_revision`; función `cauce_human_reader_ceiling()` y triggers de restricción `human_memberships_reader_ceiling` y `console_users_reader_ceiling`.
 - Se reescriben (solo el cuerpo): `cauce_oauth_advance_identity_revision`, `cauce_register_company_without_director`, `cauce_require_company_owner`, `cauce_assert_qualified_company_owner`, `cauce_set_company_admin`, `cauce_ensure_context_director_anchor`.
 - No se tocan: `tenant_id`, `alias`, `company_id` (ambas tablas), `permissions`, `active`/`enabled`.
 
-## 5. Propuesta de migración NNN
+## 5. Migración `081_membresia_rol_derivado.sql`
 
-Archivos futuros: `packages/store/migrations/NNN_membership_single_role.sql` y `packages/store/migrations/down/NNN_membership_single_role.sql`. `migrationSourcesForApply` calcula el SHA de cada fuente (`packages/store/src/migration-integrity.ts`), que `db.ts` registra en el ledger; el `down` debe incrustar el SHA real del `up` una vez creado (marcador `<SHA256_DEL_UP>`).
+Archivos en el árbol: `packages/store/migrations/081_membresia_rol_derivado.sql` y `packages/store/migrations/down/081_membresia_rol_derivado.sql`. `migrationSourcesForApply` calcula el SHA de cada fuente (`packages/store/src/migration-integrity.ts`), que `db.ts` registra en el ledger; el `down` incrusta el SHA real del `up`.
+
 
 ### 5.1 up
 
@@ -389,42 +390,31 @@ SELECT pg_temp.cauce_NNN_patch('cauce_ensure_context_director_anchor(text,text,t
   'AND identity.enabled AND identity.revoked_at IS NULL AND identity.role=human.role');
 ```
 
-Puntos de revisión del SQL antes de crear el archivo:
-- Los patrones literales deben coincidir con el cuerpo almacenado (`pg_get_functiondef` devuelve el cuerpo tal como se escribió). El helper aborta si no hay coincidencia; un patrón que coincidiera en dos sitios distintos de la misma función (p. ej. `cauce_require_company_owner` tiene una sola aparición, `cauce_set_company_admin` una) se reemplaza en todos, que es lo deseado.
-- `down` deja los cuerpos de `cauce_assert_qualified_company_owner` y `cauce_set_company_admin` idénticos a los de 055 por la simetría de patrones; verificarlo con `pg_get_functiondef` antes/después en la prueba.
-- La derivación no necesita backfill: el `up` solo corre si la membresía hogar coincide con `console_users.role`; si no, aborta con mensaje y exige alinear esa fila (la hogar es una fila viva y editable) antes de aplicar. Las filas revocadas de tenants anteriores no se comprueban ni se pueden reconciliar: el `up` descarta su rol y el `down` lo reconstruye (ver arriba).
-- Producción corre esquema 051. La propuesta de NNN debe probarse en la secuencia completa de migraciones pendientes del bundle. La precondición opera sobre filas recién creadas por 053/055 (siempre coherentes); la divergencia solo puede aparecer en la membresía hogar de BDs con datos de `--update`; las filas revocadas por movimientos de people-admin existen en cualquier BD y por diseño no bloquean.
+Puntos verificados del SQL en `packages/store/migrations/081_membresia_rol_derivado.sql`:
+- Los patrones literales coinciden con el cuerpo almacenado (`pg_get_functiondef` devuelve el cuerpo tal como se escribió). El helper aborta si no hay coincidencia; un patrón que coincida en más de un sitio de la misma función se reemplaza en todos.
+- `down` deja los cuerpos de `cauce_assert_qualified_company_owner` y `cauce_set_company_admin` idénticos a los de 055 por la simetría de patrones.
+- La derivación no necesita backfill: el `up` solo corre si la membresía hogar coincide con `console_users.role`; si no, aborta con mensaje (`23514`) y exige alinear esa fila antes de aplicar. Las filas revocadas de tenants anteriores no se comprueban ni se reconcilian: el `up` descarta su rol y el `down` lo reconstruye.
+- **Operación y recuperación:** al ejecutar migraciones (`runMigrations` o `deploy/deploy.sh`), `081_membresia_rol_derivado.sql` verifica que ninguna membresía hogar diverja de `console_users.role` y que ningún `reader` tenga permisos distintos de `read`. Si aborta con `23514`, la transacción se revierte íntegra: alinear la fila divergente con `maintainConsoleUser` (`services/gateway/src/console-user-maintenance.ts:45-92`) o desde Personas (`/v3/console/people`) y reintentar la migración.
 
-## 6. Cambios de código que implica NNN
+## 6. Cambios de código aplicados con 081
 
-Código de producción
-1. `packages/store/src/human-identity.ts`: quitar `role` de `MembershipRow` (`:34`), del SELECT (`:44`), del snapshot (`:52-54`) y del tipo `HumanIdentitySnapshot.membership` (`:24`). `account.role` queda como único rol.
-2. `services/gateway/src/oauth-grant-authority.ts:27-32`, `console-human-authority.ts:63-67`, `human-mcp-authority.ts:130-134`: dejar `account` como techo único; los permisos efectivos pasan a `account.permissions ∩ membership.permissions`.
-3. `services/gateway/src/terminal/session-authority.ts:114-119`: iterar solo sobre `snapshot.account.role`.
-4. `packages/store/src/company-authority.ts:74`: quitar `person.membership.role === 'operator'`.
-5. `packages/store/src/configuration.ts:454`, `services/gateway/src/console/native-admin/service.ts:41`: quitar `home.role='operator'` / `human.role='operator'`.
-6. `packages/store/src/repository/fleet-operation-human.ts:17-21`: quitar `role` del SELECT y de la condición de `control`.
-7. `services/gateway/src/console/people-admin-store.ts:26-30` (`syncMembership`), `services/gateway/src/console-user-maintenance.ts:82-85`, `packages/store/src/seed-dev-cli.ts:135`: dejar de escribir `role`.
-8. `services/gateway/src/health/schema-companies.ts:54-58,74`: registrar los triggers `console_users_role_revision`, `human_memberships_reader_ceiling`, `console_users_reader_ceiling` y las funciones `cauce_console_user_role_revision()`, `cauce_human_reader_ceiling()`.
-9. Opcional pero recomendado (hallazgo 3.11): extraer `syncMembership` a módulo común y usarlo en `maintainConsoleUser`.
-
-Pruebas y fixtures (buscar con `grep -rn "human_tenant_memberships" -r tests services packages --include='*.ts'` las inserciones con columna `role`)
-- Inserciones con `role`: `tests/helpers/terminal-password.ts:51`, `tests/integration/human-identity-resolver-postgres.fixtures.ts:17,27`, `tests/integration/human-mcp-identity-postgres.fixtures.ts:51`, `services/gateway/src/oauth-client-provenance.fixtures.ts:39`, más los tests PG que insertan membresías a mano (lista del grep).
-- Tests que ejercitan la intersección de roles y pasarán a un solo rol: `oauth-grant-authority.test.ts`, `human-mcp-authority.test.ts`, `console-human-authority.read.test.ts`, `mcp-operations.test.ts`, `mcp-owned-authority-boundaries.test.ts`.
-- Nuevas pruebas PG: up/down de NNN con precondición fallida (rol divergente en la membresía hogar), restauración exacta de los cuerpos tras down, cambio de rol de `console_users` sube `revision` de la membresía, lector con permisos de operador rechazado al hacer COMMIT (tanto desde `human_tenant_memberships` como desde `console_users`), mover de tenant y después bajar a lector (y ambas cosas en la misma operación) con una fila revocada de operador en el tenant viejo: debe pasar; `up` con una persona movida (fila revocada con rol distinto al de la cuenta): debe pasar; `down` tras ese mismo escenario: debe repoblar sin violar el CHECK, y `migration-integrity-postgres.test.ts` con el SHA del ledger.
+Código de producción:
+1. `packages/store/src/human-identity.ts`: eliminada la lectura de `role` desde `human_tenant_memberships`; `account.role` es la fuente única del rol.
+2. `services/gateway/src/oauth-grant-authority.ts`, `console-human-authority.ts`, `human-mcp-authority.ts`: `account` actúa como techo único y los permisos efectivos son `account.permissions ∩ membership.permissions`.
+3. `services/gateway/src/terminal/session-authority.ts`: evalúa el rol desde `snapshot.account.role`.
+4. `packages/store/src/company-authority.ts`: deriva el rol desde la cuenta humana.
+5. `packages/store/src/configuration/control-holders.ts` y `services/gateway/src/console/native-admin/service.ts`: leen el rol desde `console_users`.
+6. `packages/store/src/repository/fleet-operation-human.ts:18`: lee `enabled,revoked_at,actor_alias,permissions` sin columna `role`.
+7. `services/gateway/src/console/people-admin-store.ts:24-32` (`syncMembership`), `services/gateway/src/console-user-maintenance.ts:45-115` (`clampReaderHomeMembership`) y `packages/store/src/seed-dev-cli.ts:136-143`: sincronizan `human_tenant_memberships` sin columna `role` y recortan a `['read']` al degradar a `reader`.
+8. `services/gateway/src/health/schema-companies.ts`: registra los triggers `console_users_role_revision`, `human_memberships_reader_ceiling`, `console_users_reader_ceiling` y las funciones `cauce_console_user_role_revision()`, `cauce_human_reader_ceiling()`.
 
 ## 7. Verificación
 
-Ejecutado en PostgreSQL 16 (001–065, cada archivo en su transacción, con una persona movida de tenant por el flujo de `syncMembership`, que deja una fila revocada de operador):
-- `up` con persona movida: pasa y la columna `role` desaparece (antes abortaba por la precondición).
-- Mover y después bajar a lector (y mover y bajar de rol en la misma transacción): COMMIT correcto.
-- Lector con permisos más allá de `read` en la membresía hogar: rechazado en COMMIT, tanto desde `human_tenant_memberships` como desde `console_users`.
-- Cambio de rol en `console_users` sube `revision` de la membresía.
-- Rol divergente en la membresía hogar: el `up` aborta con el mensaje esperado.
-- `down` tras persona movida y bajada a lector: repuebla `role` sin violar el CHECK (fila revocada de operador con permisos amplios queda `operator`).
+Verificado en PostgreSQL real (`services/gateway/src/console-user-maintenance-postgres.test.ts` y suites de migraciones e identidad humana):
+- `up` con persona movida: pasa y la columna `role` desaparece de `human_tenant_memberships`.
+- Mover y después bajar a lector (y mover y bajar de rol en la misma transacción): COMMIT correcto con `clampReaderHomeMembership`.
+- Lector con permisos más allá de `read` en la membresía hogar: rechazado en COMMIT (`human_membership_reader_read_only`), tanto desde `human_tenant_memberships` como desde `console_users`.
+- Cambio de rol en `console_users` sube `revision` de la membresía (`console_users_role_revision`).
+- Rol divergente en la membresía hogar: el `up` aborta con `23514`.
+- `down` tras persona movida y bajada a lector: repuebla `role` sin violar el CHECK y restaura las funciones previas.
 
-Pendiente:
-
-- [ ] Probar NNN up/down en PostgreSQL real con la secuencia completa de migraciones del bundle y con `ops/scripts/rehearse-migrations-clone.sh`.
-- [ ] Comprobar con `pg_get_functiondef` que los cinco parches coinciden y que `down` restaura los cuerpos originales.
-- [ ] Matriz completa en verde tras el cambio de código (typecheck, lint, unit, PG, e2e de autoridad humana y terminal).

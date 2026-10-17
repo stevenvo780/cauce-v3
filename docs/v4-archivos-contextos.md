@@ -124,7 +124,7 @@ Sólo el broker tiene acceso al repositorio completo y su credencial global. Age
 
 `ContextGitBroker` exige raíz privada absoluta canónica y metadata `.git` real. Hace fetch de `origin/main`, integra los cambios por carpeta y publica con CAS de `update-ref`; no comparte un checkout mutable entre escritores. Los commits de contenido se atribuyen al alias con la forma `alias@empresa.cauce.invalid`; el broker figura como committer. El replay es idempotente por identidad/versión/digest y el push comprueba la relación de ancestry con main. Las pruebas locales usan un remoto Git bare real y ensayan concurrencia, fallo de push y recuperación.
 
-El broker filtra variables heredadas `GIT_*`, deshabilita hooks y fija la autoría de los commits. `GIT_SSH_COMMAND` externo no es el canal de configuración del transporte. El código no configura `core.sshCommand`; montar la clave y `known_hosts` no basta para seleccionarlos en Git.
+El broker filtra variables heredadas `GIT_*` (`packages/store/src/context-git.ts:40-46`), deshabilita hooks y fija la autoría de los commits. `GIT_SSH_COMMAND` externo no es el canal de configuración del transporte: el operador configura `core.sshCommand` localmente en el repositorio del broker (`git -C /var/lib/cauce-v3/contexts config --local core.sshCommand 'ssh -i /run/cauce-context-git/id_ed25519 -o IdentitiesOnly=yes -o UserKnownHostsFile=/run/cauce-context-git/known_hosts -o StrictHostKeyChecking=yes -F /dev/null'`) y lo verifica con `ops/scripts/context-broker-preflight.py:42-52`.
 
 ### Configuración del broker
 
@@ -133,7 +133,7 @@ El broker filtra variables heredadas `GIT_*`, deshabilita hooks y fija la autor�
 | `/var/lib/cauce-v3-context-broker/repository` | `/var/lib/cauce-v3/contexts`, escritura | Repositorio privado central |
 | `/var/lib/cauce-v3-context-broker/ssh` | `/run/cauce-context-git`, sólo lectura | `id_ed25519` y `known_hosts` del broker |
 
-El código no pasa al transporte SSH las opciones `-i`, `UserKnownHostsFile`, `StrictHostKeyChecking`, `IdentitiesOnly` ni `-F /dev/null`; Git usa la configuración SSH efectiva del entorno del broker.
+El código TypeScript del broker no inyecta por argumento las opciones `-i`, `UserKnownHostsFile`, `StrictHostKeyChecking`, `IdentitiesOnly` ni `-F /dev/null`; Git toma esas opciones del `core.sshCommand` local del repositorio verificado por el preflight.
 
 Compose prepara `CAUCE_CONTEXT_REPOSITORY_ROOT=/var/lib/cauce-v3/contexts`, `CAUCE_PROJECT_ROOT=/app`, `CAUCE_SPACE_BACKUP_DIRECTORY=/var/lib/cauce-v3/space-backups` y `CAUCE_SPACE_BACKUP_PYTHON=/usr/local/bin/python3`. Las rutas de host pueden elegirse con `CAUCE_CONTEXT_REPOSITORY_DIRECTORY` y `CAUCE_CONTEXT_GIT_KEY_DIRECTORY`. `space_backups_data` persiste las copias durables. Configuración preparada no equivale a imagen publicada ni worker activo demostrado.
 
