@@ -226,7 +226,7 @@ async function medirHojaDeLive(pagina, viewport, medidas, sinMedir, origin, repe
  * a timer, so the gate would wait for a quiet network that this page never has. Each route waits for
  * what its data paints (`LISTO`); `/live` also fails loudly when it paints an error instead.
  */
-async function medirRuta(pagina, ruta, origin, repeated = 0) {
+async function medirRuta(pagina, ruta, origin, repeated = false) {
   try {
   await pagina.goto(origin + ruta, { waitUntil: 'domcontentloaded', timeout: 30000 });
   const listo = pagina.locator(LISTO[ruta] ?? LISTO_POR_DEFECTO).first();
@@ -239,9 +239,9 @@ async function medirRuta(pagina, ruta, origin, repeated = 0) {
   await listo.waitFor({ state: 'visible', timeout: 30000 });
   return pagina.evaluate(medirEnLaPagina);
   } catch (error) {
-    if (error.name !== 'TimeoutError' || repeated >= 4) throw error;
+    if (error.name !== 'TimeoutError' || repeated) throw error;
     console.error(`layout: retrying unmeasured route ${ruta} after readiness timeout`);
-    return medirRuta(pagina, ruta, origin, repeated + 1);
+    return medirRuta(pagina, ruta, origin, true);
   }
 }
 
@@ -271,16 +271,8 @@ async function precalentar(navegador, origin) {
     pagina.on('console', mensaje => { if (mensaje.type() === 'error') consola.push(mensaje.text().slice(0, 300)); });
     pagina.on('pageerror', error => { consola.push(`pageerror: ${String(error.message).slice(0, 300)}`); });
     try {
-      for (let intento = 1; ; intento += 1) {
-        consola.length = 0;
-        await pagina.goto(origin + ROUTES[0], { waitUntil: 'domcontentloaded', timeout: 180000 });
-        try {
-          await pagina.locator(LISTO[ROUTES[0]] ?? LISTO_POR_DEFECTO).first().waitFor({ state: 'visible', timeout: 60000 });
-          break;
-        } catch (error) {
-          if (intento >= 5 || !consola.some(texto => texto.includes('ERR_NETWORK_CHANGED'))) throw error;
-        }
-      }
+      await pagina.goto(origin + ROUTES[0], { waitUntil: 'domcontentloaded', timeout: 180000 });
+      await pagina.locator(LISTO[ROUTES[0]] ?? LISTO_POR_DEFECTO).first().waitFor({ state: 'visible', timeout: 180000 });
     } catch (error) {
       const texto = await pagina.locator('body').innerText({ timeout: 5000 }).catch(() => '(sin body)');
       throw new Error(`precarga de ${pagina.url()} sin ${LISTO[ROUTES[0]] ?? LISTO_POR_DEFECTO}: ${String(error.message).split('\n')[0]}; `
