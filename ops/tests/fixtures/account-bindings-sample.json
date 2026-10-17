@@ -1,8 +1,8 @@
 {
   "bindings": [
-    { "provider": "claude", "group_key": "default", "account_id": "claude-steven-max" },
-    { "provider": "codex", "group_key": "codex", "account_id": "codex-pro-steven" },
-    { "provider": "antigravity", "group_key": "default", "account_id": "antigravity-steven" },
-    { "provider": "opencode", "group_key": "default", "account_id": "minimax-pool" }
+    { "provider": "claude", "group_key": "default", "account_id": "zz-canary-claude-max" },
+    { "provider": "codex", "group_key": "codex", "account_id": "zz-canary-codex-pro" },
+    { "provider": "antigravity", "group_key": "default", "account_id": "zz-canary-antigravity" },
+    { "provider": "opencode", "group_key": "default", "account_id": "zz-canary-minimax-pool" }
   ]
 }

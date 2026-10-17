@@ -2,7 +2,7 @@
 """
 AI quota collector for Cauce V3.
 
-The local CLI 'ai-usage' reads subscription consumption in Kratos and agent containers, but it is
+The local CLI 'ai-usage' reads subscription consumption on the host and in agent containers, but it is
 not available in the gateway and console runtime. This collector forwards those samples so the
 quotas panel can display them.
 
@@ -36,7 +36,7 @@ Usage:
                       [--host HOST] [--account-bindings-file PATH]
 
 Environment variables (see ops/config/quota-collector.env.example):
-  CAUCE_QUOTA_GATEWAY_URL              default https://100.64.0.6:8443/v3/quotas/samples
+  CAUCE_QUOTA_GATEWAY_URL              required when publishing samples
   CAUCE_QUOTA_GATEWAY_SERVER_NAME      optional: name to verify against the gateway's cert if
                                         it does NOT carry the IP from CAUCE_QUOTA_GATEWAY_URL
                                         as a SAN (same escape hatch as RELAY_SERVER_NAME in
@@ -91,7 +91,6 @@ from urllib.parse import urlsplit
 # unknown major with 422 (not this script: it has no visibility into what exactly changed).
 COLLECTOR_SCHEMA_VERSION = 2
 
-DEFAULT_GATEWAY_URL = 'https://100.64.0.6:8443/v3/quotas/samples'
 DEFAULT_AI_USAGE_CMD = 'ai-usage --json'
 DEFAULT_PROVIDERS = ['claude', 'codex', 'antigravity', 'opencode']
 
@@ -504,7 +503,7 @@ def build_ssl_context(pki_dir: str) -> ssl.SSLContext:
         raise QuotaCollectionError(f'PKI invalida en {pki_dir}: {exc}') from exc
     ctx.verify_mode = ssl.CERT_REQUIRED
     # Name verification stays ALWAYS on (check_hostname is never turned off): the connection
-    # is by tailnet IP (100.64.0.6), and Python validates literal IPs against IP-type SANs the
+    # can use a literal IP, and Python validates literal IPs against IP-type SANs the
     # same way it validates DNS names. Same pattern already used by
     # ops/pty-agent/cauce_pty_agent/agent.py (_tls_context/_connect): if the gateway's cert ever
     # stopped carrying that IP as a SAN, the escape hatch is CAUCE_QUOTA_GATEWAY_SERVER_NAME
@@ -521,7 +520,7 @@ def build_ssl_context(pki_dir: str) -> ssl.SSLContext:
 
 class PinnedHTTPSConnection(http.client.HTTPSConnection):
     """http.client connects and verifies the certificate against the SAME string by default;
-    this collector connects by IP (100.64.0.6, tailnet) and wants to be able to verify against
+    this collector connects by IP and wants to be able to verify against
     a different server_hostname if ever needed (gateway cert without an IP SAN). It is the
     same decoupling ops/pty-agent already solves with RELAY_SERVER_NAME, here applied to an
     HTTP connection instead of the raw socket of the PTY relay."""
@@ -630,7 +629,7 @@ def load_config(args: argparse.Namespace) -> dict[str, Any]:
     home = os.path.expanduser('~')
     providers_csv = env('CAUCE_QUOTA_PROVIDERS', ','.join(DEFAULT_PROVIDERS)) or ''
     return {
-        'gateway_url': args.gateway_url or env('CAUCE_QUOTA_GATEWAY_URL', DEFAULT_GATEWAY_URL),
+        'gateway_url': args.gateway_url or env('CAUCE_QUOTA_GATEWAY_URL'),
         'gateway_server_name': args.gateway_server_name or env('CAUCE_QUOTA_GATEWAY_SERVER_NAME'),
         'pki_dir': args.pki_dir or env('CAUCE_QUOTA_PKI_DIR', os.path.join(home, '.config', 'cauce-v3', 'container-pki', 'quota-collector')),
         'host': sanitize_host(args.host or env('CAUCE_QUOTA_HOST', socket.gethostname())),
@@ -650,6 +649,8 @@ def load_config(args: argparse.Namespace) -> dict[str, Any]:
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     cfg = load_config(args)
+    if not cfg['dry_run'] and not cfg['gateway_url']:
+        raise QuotaCollectionError('CAUCE_QUOTA_GATEWAY_URL o --gateway-url es obligatorio para publicar')
     captured_at = iso_now()
     bindings = AccountBindings(cfg['account_bindings_file'])
 

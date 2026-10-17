@@ -63,6 +63,12 @@ def test_script_exists_and_shebang():
     print('✓ el script existe con shebang correcto')
 
 
+def test_publish_requires_explicit_gateway_url():
+    result = run_cli(['--host', 'zz-canary-quota-host'])
+    assert result.returncode == 2
+    assert 'CAUCE_QUOTA_GATEWAY_URL o --gateway-url es obligatorio' in result.stderr
+
+
 # --------------------------------------------------------------------------------------------
 # 2. Normalizacion del fixture realista (shape real de ai-usage descrito en el pedido).
 # --------------------------------------------------------------------------------------------
@@ -72,11 +78,11 @@ def test_dry_run_normalizes_realistic_fixture():
         '--dry-run',
         '--input-file', str(FIXTURES / 'ai-usage-sample.json'),
         '--account-bindings-file', str(FIXTURES / 'account-bindings-sample.json'),
-        '--host', 'kratos',
+        '--host', 'zz-canary-quota-host',
     ])
     assert result.returncode == 0, result.stderr
     payload = json.loads(result.stdout)
-    assert payload['host'] == 'kratos'
+    assert payload['host'] == 'zz-canary-quota-host'
     assert payload['schema_version'] == 2
     assert payload['app_version'] == '0.12.0'
 
@@ -87,7 +93,7 @@ def test_dry_run_normalizes_realistic_fixture():
     # aplastarse a un numero (uno esta agotado, el otro libre). El grupo viaja por ventana.
     codex_windows = {w['group_key']: w for w in providers['codex']['windows']}
     assert set(codex_windows) == {'codex', 'codex_bengalfox'}
-    assert codex_windows['codex']['account_id'] == 'codex-pro-steven'
+    assert codex_windows['codex']['account_id'] == 'zz-canary-codex-pro'
     assert codex_windows['codex']['used_percent'] == 100.0
     assert codex_windows['codex']['status'] == 'rate-limited'
     assert codex_windows['codex_bengalfox']['account_id'] is None, 'grupo sin entrada en bindings queda sin atar'
@@ -96,7 +102,7 @@ def test_dry_run_normalizes_realistic_fixture():
     claude_windows = providers['claude']['windows']
     assert {w['group_key'] for w in claude_windows} == {'default'}
     assert len(claude_windows) == 2
-    assert claude_windows[0]['account_id'] == 'claude-steven-max'
+    assert claude_windows[0]['account_id'] == 'zz-canary-claude-max'
 
     opencode_window = providers['opencode']['windows'][0]
     assert opencode_window['used_units'] == 0
@@ -119,7 +125,7 @@ def test_malformed_provider_and_windows_without_numbers_dont_crash():
         }, fh)
         path = fh.name
     try:
-        result = run_cli(['--dry-run', '--input-file', path, '--host', 'kratos'])
+        result = run_cli(['--dry-run', '--input-file', path, '--host', 'zz-canary-quota-host'])
         assert result.returncode == 0, result.stderr
         payload = json.loads(result.stdout)
         providers = {p['provider']: p for p in payload['providers']}
@@ -138,7 +144,7 @@ def test_missing_providers_key_falls_back_to_configured_list():
         json.dump({'algo': 'inesperado'}, fh)
         path = fh.name
     try:
-        result = run_cli(['--dry-run', '--input-file', path, '--host', 'kratos'],
+        result = run_cli(['--dry-run', '--input-file', path, '--host', 'zz-canary-quota-host'],
                           env={'CAUCE_QUOTA_PROVIDERS': 'claude,codex'})
         assert result.returncode == 0, result.stderr
         payload = json.loads(result.stdout)
@@ -151,7 +157,7 @@ def test_missing_providers_key_falls_back_to_configured_list():
 
 
 def test_ai_usage_binary_missing_publishes_failure_report():
-    result = run_cli(['--dry-run', '--host', 'kratos'], env={
+    result = run_cli(['--dry-run', '--host', 'zz-canary-quota-host'], env={
         'CAUCE_QUOTA_AI_USAGE_CMD': 'ai-usage-que-no-existe-en-este-host --json',
         'CAUCE_QUOTA_PROVIDERS': 'claude,codex,antigravity,opencode',
     })
@@ -201,7 +207,7 @@ def test_malformed_pki_fails_clean_not_with_traceback():
         for name in ('client.crt', 'client.key', 'ca.crt'):
             pathlib.Path(pki_dir, name).write_text('esto no es un PEM valido\n')
         result = run_cli([
-            '--input-file', str(FIXTURES / 'ai-usage-sample.json'), '--host', 'kratos',
+            '--input-file', str(FIXTURES / 'ai-usage-sample.json'), '--host', 'zz-canary-quota-host',
             '--pki-dir', pki_dir, '--gateway-url', 'https://127.0.0.1:1/v3/quotas/samples',
         ])
         assert result.returncode == 2, result.stderr
@@ -396,7 +402,7 @@ def test_mtls_round_trip_with_ip_san_succeeds():
             result = run_cli([
                 '--input-file', str(FIXTURES / 'ai-usage-sample.json'),
                 '--account-bindings-file', str(FIXTURES / 'account-bindings-sample.json'),
-                '--host', 'kratos', '--pki-dir', tmp_dir,
+                '--host', 'zz-canary-quota-host', '--pki-dir', tmp_dir,
                 '--gateway-url', f'https://127.0.0.1:{port}/v3/quotas/samples',
             ])
             assert result.returncode == 0, result.stderr
@@ -422,14 +428,14 @@ def test_hostname_verification_is_enforced_and_override_works():
         server, port = _start_fake_server(tmp_dir)
         try:
             without_override = run_cli([
-                '--input-file', str(FIXTURES / 'ai-usage-sample.json'), '--host', 'kratos',
+                '--input-file', str(FIXTURES / 'ai-usage-sample.json'), '--host', 'zz-canary-quota-host',
                 '--pki-dir', tmp_dir, '--gateway-url', f'https://127.0.0.1:{port}/v3/quotas/samples',
             ])
             assert without_override.returncode == 1, without_override.stderr
             assert 'CERTIFICATE_VERIFY_FAILED' in without_override.stderr or 'IP address mismatch' in without_override.stderr
 
             with_override = run_cli([
-                '--input-file', str(FIXTURES / 'ai-usage-sample.json'), '--host', 'kratos',
+                '--input-file', str(FIXTURES / 'ai-usage-sample.json'), '--host', 'zz-canary-quota-host',
                 '--pki-dir', tmp_dir, '--gateway-url', f'https://127.0.0.1:{port}/v3/quotas/samples',
                 '--gateway-server-name', 'quota-gateway.internal',
             ])
@@ -452,9 +458,9 @@ def test_network_failure_never_leaks_credential_content():
         marker = [line for line in key_body.splitlines() if line and 'BEGIN' not in line and 'END' not in line][0][:40]
 
         result = run_cli([
-            '--input-file', str(FIXTURES / 'ai-usage-sample.json'), '--host', 'kratos',
+            '--input-file', str(FIXTURES / 'ai-usage-sample.json'), '--host', 'zz-canary-quota-host',
             '--pki-dir', tmp_dir, '--gateway-url', 'https://127.0.0.1:1/v3/quotas/samples',
-            '--host', 'kratos',
+            '--host', 'zz-canary-quota-host',
         ], env={'CAUCE_QUOTA_HTTP_RETRIES': '0'})
         assert result.returncode == 1
         assert marker not in result.stdout
@@ -486,6 +492,7 @@ TESTS = [
     test_fake_server_startup_failure_reaps_process,
     test_fake_server_cleanup_attempts_all_terminations_before_waits,
     test_script_exists_and_shebang,
+    test_publish_requires_explicit_gateway_url,
     test_dry_run_normalizes_realistic_fixture,
     test_malformed_provider_and_windows_without_numbers_dont_crash,
     test_missing_providers_key_falls_back_to_configured_list,

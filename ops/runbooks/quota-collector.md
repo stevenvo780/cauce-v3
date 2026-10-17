@@ -17,6 +17,7 @@ Instalar, operar y verificar el recolector periódico de cuotas de consumo de IA
      ~/.config/cauce-v3/quota-collector/account-bindings.json
    ```
    `client.crt`, `client.key` (modo `0600`) y `ca.crt` tienen que estar ya en el directorio PKI antes de publicar. Si falta uno, `build_ssl_context` sale con código 2 (`falta <fichero> en <directorio>`). El dry-run del paso 3 vuelve antes de `post_samples` y no lo detecta.
+   Antes de habilitar el servicio, sustituir los valores de ejemplo del fichero privado: `CAUCE_QUOTA_GATEWAY_URL` debe apuntar al gateway real y `CAUCE_QUOTA_HOST` al identificador del ordenador. La URL es obligatoria para publicar; `--gateway-url` permite indicarla en una corrida manual. El modo dry-run no necesita destino. Ajustar también los identificadores `zz-canary-*` de `account-bindings.json` a las cuentas registradas; el repositorio público solo contiene datos ficticios.
 2. Instalar y habilitar las unidades systemd de usuario:
    ```sh
    # [no ejecutable en verificación]
