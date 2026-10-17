@@ -41,6 +41,7 @@ export function describeOfficeError(cause: unknown): string {
     if (cause.status === 429) return spanishWithReason('Hay demasiadas solicitudes. Espera un momento e inténtalo de nuevo.', detail);
     return spanishWithReason('No se pudo leer o guardar el plano.', detail);
   }
+  if (cause instanceof TypeError) return 'No se pudo contactar con el servidor. Revisa la conexión y vuelve a intentarlo.';
   return cause instanceof Error ? cause.message : 'No se pudo leer o guardar el plano.';
 }
 
