@@ -176,8 +176,8 @@ export abstract class ConfigurationMutations {
     }
     const value = valueRequired(mutation);
     await assertPublishedHarnessDefinition(mutation.id, {
-      command: has(value, 'command') ? value.command : undefined,
-      capabilities: has(value, 'capabilities') ? value.capabilities : undefined,
+      command: has(value, 'command') ? value.command : old.command,
+      capabilities: has(value, 'capabilities') ? value.capabilities : old.capabilities,
     });
     await client.query(
       `UPDATE harness_definitions SET display_name=$2,command=$3,capabilities=$4::jsonb,enabled=$5,updated_at=now()

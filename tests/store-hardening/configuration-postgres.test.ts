@@ -371,4 +371,49 @@ describe('atomic configuration CRUD and rollback', () => {
     expect(ids[ids.length - 1]).toBe(22);
     expect(new Set(ids).size).toBe(100);
   });
+
+  it('rejects a partial harness update whose merged row breaks the published catalog', async () => {
+    const descriptors = await mkdtemp(join(tmpdir(), 'cauce-catalog-descriptors-'));
+    await cp(new URL('../../packages/adapter-sdk/descriptors/', import.meta.url), descriptors, { recursive: true });
+    await writeFile(join(descriptors, 'custom.json'), JSON.stringify({ schema_version: 1, harness: 'custom',
+      operations: { execute: 'native-execution' }, context: { native_document: 'AGENTS.md', max_bytes: 65536 } }));
+    const previousDirectory = process.env.CAUCE_HARNESS_DESCRIPTOR_DIRECTORY;
+    process.env.CAUCE_HARNESS_DESCRIPTOR_DIRECTORY = descriptors;
+    try {
+      const created = await applyPlatformConfiguration(pool, platform(), {
+        resource: 'harness', action: 'create', id: 'custom',
+        value: { display_name: 'Custom', command: null, capabilities: ['messages.receive'], enabled: true }
+      }, false, 0);
+      expect(created.applied).toBe(true);
+
+      await pool.query(`UPDATE harness_definitions SET command='/usr/local/bin/custom' WHERE id='custom'`);
+      await expect(applyPlatformConfiguration(pool, platform(), {
+        resource: 'harness', action: 'update', id: 'custom', value: { display_name: 'Renamed' }
+      }, false, created.revision)).rejects.toMatchObject({
+        code: 'invalid_input', message: expect.stringContaining('harness.command:') as unknown,
+      });
+      expect((await pool.query(`SELECT display_name FROM harness_definitions WHERE id='custom'`)).rows)
+        .toEqual([{ display_name: 'Custom' }]);
+
+      const repaired = await applyPlatformConfiguration(pool, platform(), {
+        resource: 'harness', action: 'update', id: 'custom', value: { command: null }
+      }, false, created.revision);
+      expect(repaired.applied).toBe(true);
+
+      await pool.query(`UPDATE harness_definitions
+        SET capabilities='["messages.receive","messages.receive"]'::jsonb WHERE id='custom'`);
+      await expect(applyPlatformConfiguration(pool, platform(), {
+        resource: 'harness', action: 'update', id: 'custom', value: { enabled: false }
+      }, false, repaired.revision)).rejects.toMatchObject({
+        code: 'invalid_input',
+        message: expect.stringContaining("harness.capabilities: 'messages.receive' is repeated") as unknown,
+      });
+      expect((await pool.query(`SELECT enabled FROM harness_definitions WHERE id='custom'`)).rows)
+        .toEqual([{ enabled: true }]);
+    } finally {
+      if (previousDirectory === undefined) delete process.env.CAUCE_HARNESS_DESCRIPTOR_DIRECTORY;
+      else process.env.CAUCE_HARNESS_DESCRIPTOR_DIRECTORY = previousDirectory;
+      await rm(descriptors, { recursive: true, force: true });
+    }
+  });
 });
