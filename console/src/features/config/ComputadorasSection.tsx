@@ -5,7 +5,7 @@ import type { ConfigurationSnapshot } from '../../api/types';
 import { Plus } from 'lucide-react';
 import { Button, Notice } from '../../components/kit';
 import { ConfirmDialog } from '../../components/dialogs';
-import { EmptyState } from '../../components/ui';
+import { EmptyState, LoadingState } from '../../components/ui';
 import { CONFIG_SIN_CONTROL_REASON } from '../../router';
 import { ConfigSectionHeader } from './ConfigSectionHeader';
 import { ComputadoraCard } from './ComputadoraCard';
@@ -107,7 +107,10 @@ export function ComputadorasSection({ snapshot, soloLectura }: { snapshot?: Conf
     </p>
     {motivo ? <Notice tone="warn" role="note">Las acciones de esta sección están apagadas: {motivo}</Notice> : null}
     {flota.forbidden ? <Notice tone="info" role="note">Esta sesión no puede consultar las computadoras de esta empresa.</Notice>
-      : flota.error ? <Notice tone="danger" role="alert">{flota.error}</Notice> : null}
+      : flota.error ? <Notice tone="danger" role="alert" className="flex flex-wrap items-center gap-2">
+        <span className="min-w-0 flex-1">{flota.error}</span>
+        <Button size="sm" disabled={flota.loading} onClick={() => { void flota.reload(); }}>Reintentar</Button>
+      </Notice> : null}
     {error && !editor ? <Notice tone="danger" role="alert">{error}</Notice> : null}
 
     {flota.hosts ? <ul aria-label="Resumen de la flota"
@@ -124,8 +127,8 @@ export function ComputadorasSection({ snapshot, soloLectura }: { snapshot?: Conf
       </li>)}
     </ul> : null}
 
-    {flota.loading && !flota.hosts ? <p role="status" className="m-0 text-[13px] text-muted">Leyendo computadoras…</p> : null}
-    {flota.hosts && hosts.length === 0 ? <EmptyState>No hay computadoras registradas ni conocidas todavía.</EmptyState> : null}
+    {flota.loading && !flota.hosts ? <LoadingState label="Leyendo computadoras…" /> : null}
+    {flota.hosts && hosts.length === 0 ? <EmptyState>No hay computadoras registradas ni conocidas todavía. Registra la primera con «Registrar computadora» o conecta una desde «Añadir ordenador».</EmptyState> : null}
 
     <section aria-labelledby="computadoras-registradas" className="grid gap-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -134,7 +137,7 @@ export function ComputadorasSection({ snapshot, soloLectura }: { snapshot?: Conf
           <Plus size={14} aria-hidden="true" />Registrar computadora
         </Button>
       </div>
-      {registradas.length ? <ul className={GRID_TARJETAS}>{registradas.map(tarjeta)}</ul> : hosts.length ? <EmptyState>Ninguna computadora registrada todavía.</EmptyState> : null}
+      {registradas.length ? <ul className={GRID_TARJETAS}>{registradas.map(tarjeta)}</ul> : hosts.length ? <EmptyState>Ninguna computadora registrada todavía. Registra la primera con «Registrar computadora».</EmptyState> : null}
     </section>
 
     {detectadas.length ? <section aria-labelledby="computadoras-detectadas" className="grid gap-3">

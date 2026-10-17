@@ -208,6 +208,32 @@ it('mientras se edita una computadora, su interruptor y su eliminación quedan b
   expect(within(tarjeta).getByRole('button', { name: 'Eliminar', hidden: true })).toBeDisabled();
 });
 
+it('una lectura fallida de computadoras ofrece reintentar y la relectura muestra la lista', async () => {
+  const user = userEvent.setup();
+  let lecturas = 0;
+  server.use(http.get('*/v3/console/fleet/hosts', () => {
+    lecturas += 1;
+    return lecturas === 1
+      ? HttpResponse.json({ error: 'unavailable' }, { status: 500 })
+      : HttpResponse.json({ hosts: [computadora('uno')] });
+  }));
+  renderWithApi(<ComputadorasSection snapshot={HUB_SNAPSHOT} soloLectura={false} />);
+
+  expect(await screen.findByRole('alert')).toHaveTextContent('No se pudo leer el registro de computadoras.');
+  await user.click(screen.getByRole('button', { name: 'Reintentar' }));
+
+  expect(await screen.findByRole('article', { name: 'Equipo uno' })).toBeInTheDocument();
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  expect(lecturas).toBe(2);
+});
+
+it('el vacío de computadoras dice cómo registrar la primera', async () => {
+  flota([]);
+  renderWithApi(<ComputadorasSection snapshot={HUB_SNAPSHOT} soloLectura={false} />);
+
+  expect(await screen.findByText(/Registra la primera con «Registrar computadora»/)).toBeInTheDocument();
+});
+
 it('una computadora deshabilitada muestra una sola insignia y muchos agentes se pliegan', async () => {
   const user = userEvent.setup();
   const agentes = Array.from({ length: 9 }, (_, i) => ({ tenant_id: 'A', alias: `ag${String(i)}`, enabled: true, online: i % 2 === 0 }));
