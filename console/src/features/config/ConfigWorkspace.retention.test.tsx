@@ -25,7 +25,8 @@ it('conserva el JSON editado y su pestaña al salir de administración y volver'
   await user.click(screen.getByRole('tab', { name: 'Avanzado' }));
   const draft = '{"resource":"tenant","action":"update","id":"Steven","value":{"enabled":false}}';
   await user.clear(screen.getByLabelText('Mutación JSON'));
-  await user.type(screen.getByLabelText('Mutación JSON'), draft.replaceAll('{', '{{'));
+  // Pasted, not typed: the test is about keeping the draft, and typing 80 characters one by one under coverage nears the timeout.
+  await user.paste(draft);
   await roundtrip(user);
   expect(screen.getByRole('tab', { name: 'Avanzado' })).toHaveAttribute('aria-selected', 'true');
   expect(screen.getByLabelText('Mutación JSON')).toHaveValue(draft);
