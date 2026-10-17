@@ -6,12 +6,18 @@ import json
 import os
 import pathlib
 import re
+import runpy
+import select
+import shutil
+import signal
 import ssl
 import stat
+import subprocess
 import sys
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
 
 PATH = re.compile(r'(?:context|directives)/[A-Za-z0-9_-]+(?:/[A-Za-z0-9_-]+)*\.(?:md|txt|json|yaml|yml)\Z')
 IDENTITY = re.compile(r'[A-Za-z][A-Za-z0-9_-]{0,63}\Z')
@@ -268,5 +274,263 @@ def main() -> int:
         return 1
 
 
+TERMINAL_WIRE = r'''
+import { closeSync, createReadStream, existsSync, readFileSync, writeSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
+const config = JSON.parse(readFileSync(Number(process.argv[1]), 'utf8'));
+let WebSocket, limits;
+for (const root of config.roots) {
+  try { WebSocket = createRequire(join(root, 'package.json'))('ws'); break; } catch {}
+}
+for (const root of config.roots) {
+  const source = join(root, 'services/terminal-relay/src/session-limits.ts');
+  try {
+    if (existsSync(source)) {
+      const { tsImport } = createRequire(join(root, 'package.json'))('tsx/esm/api');
+      limits = await tsImport(source, import.meta.url); break;
+    }
+  } catch {}
+  try { limits = await import(pathToFileURL(join(root, 'dist/services/terminal-relay/src/session-limits.js'))); break; } catch {}
+}
+if (!WebSocket || !limits) {
+  process.stderr.write('Falta el runtime Cauce compilado; configura CAUCE_PROJECT_ROOT o instala el runtime.\n');
+  process.exit(1);
+}
+const socket = new WebSocket(config.url, {
+  origin: config.origin, headers: { Cookie: config.cookie },
+  ...(config.ca_file ? { ca: readFileSync(config.ca_file) } : {}),
+  rejectUnauthorized: true, handshakeTimeout: 15000, closeTimeout: 2000, followRedirects: false, maxPayload: 1048576,
+});
+let ready = false, detached = false, exitCode = 0, heartbeat;
+const wasRaw = process.stdin.isRaw ?? false;
+const send = (value) => {
+  const encoded = JSON.stringify(value);
+  if (value.type !== 'attach' && !limits.parseClientMessage(Buffer.from(encoded), false)) {
+    fail('Entrada de terminal fuera del contrato del relay.'); return;
+  }
+  if (socket.readyState === WebSocket.OPEN) socket.send(encoded);
+};
+const restore = () => {
+  if (process.stdin.isTTY) process.stdin.setRawMode(wasRaw);
+  process.stdin.pause();
+};
+const close = () => { detached = true; socket.close(1000); };
+const fail = (message) => { process.stderr.write(message + '\n'); exitCode = 1; socket.terminate(); };
+const timer = setTimeout(() => fail('El relay no confirmó la conexión al terminal.'), 20000);
+socket.on('open', () => send({ type: 'attach', ...config.attach }));
+socket.on('message', (data, binary) => {
+  if (binary) {
+    if (!process.stdout.write(data)) socket.pause();
+    return;
+  }
+  let frame;
+  try { frame = JSON.parse(data.toString()); } catch { fail('Control de terminal inválido.'); return; }
+  if (frame.type === 'ready') {
+    if (ready || frame.session_id !== config.attach.session_id || frame.mode !== config.mode) {
+      fail('El relay devolvió una sesión distinta.'); return;
+    }
+    ready = true;
+    writeSync(Number(process.argv[2]), 'ready');
+    closeSync(Number(process.argv[2]));
+    const authorization = createReadStream('', { fd: Number(process.argv[3]), autoClose: true });
+    let authorized = false;
+    authorization.on('end', () => { if (!authorized) fail('No se acreditó el control del terminal.'); });
+    authorization.once('data', (value) => {
+      if (value.toString() !== '1') { fail('No se acreditó el control del terminal.'); return; }
+      authorized = true;
+      clearTimeout(timer);
+      if (config.mode === 'harness') heartbeat = setInterval(() => send({ type: 'ping' }), 30000);
+      process.stderr.write('Terminal conectado; salir sin cerrar el agente: Ctrl-].\n');
+      if (process.stdin.isTTY) process.stdin.setRawMode(true);
+      process.stdin.setEncoding('utf8');
+      process.stdin.on('data', (chunk) => {
+        const detachAt = chunk.indexOf('\x1d');
+        const input = detachAt < 0 ? chunk : chunk.slice(0, detachAt);
+        if (config.mode !== 'shell' && limits.isTerminalEmulatorResponse(input)) {
+          send({ type: 'terminal_response', data: input });
+        } else if (config.mode !== 'harness') {
+          let batch = '';
+          for (const character of input) {
+            if (Buffer.byteLength(batch + character) > limits.MAX_INPUT_MESSAGE_BYTES) { send({ type: 'input', data: batch }); batch = ''; }
+            batch += character;
+          }
+          if (batch) send({ type: 'input', data: batch });
+        }
+        if (detachAt >= 0) close();
+      });
+      process.stdin.on('end', () => {
+        if (config.mode === 'shell') send({ type: 'input', data: '\x04' });
+        else close();
+      });
+      process.stdin.resume();
+    });
+    return;
+  }
+  if (frame.type === 'input_refused') fail('El servidor rechazó la entrada; revisa el control y los permisos del agente.');
+  if (frame.type === 'closed' && Number.isInteger(frame.exit_code)) exitCode = frame.exit_code === 0 ? 0 : 1;
+});
+process.stdout.on('drain', () => socket.resume());
+process.stdout.on('resize', () => send({ type: 'resize',
+  cols: Math.max(20, Math.min(500, process.stdout.columns || 100)),
+  rows: Math.max(5, Math.min(200, process.stdout.rows || 30)),
+}));
+process.stdout.on('error', () => { exitCode = 1; close(); });
+for (const signal of ['SIGTERM', 'SIGHUP', 'SIGINT']) process.on(signal, close);
+socket.on('error', () => fail('No se pudo abrir el WebSocket; revisa el gateway, TLS y la sesión.'));
+socket.on('close', (code) => {
+  clearTimeout(timer);
+  clearInterval(heartbeat);
+  restore();
+  if (!detached && code !== 1000) {
+    process.stderr.write('Terminal cerrado por el servidor (código ' + code + ').\n');
+    exitCode = 1;
+  }
+  process.exitCode = exitCode;
+});
+process.on('exit', restore);
+'''
+
+
+def terminal_target(snapshot: object, alias: str, tenant: str | None, mode: str | None) -> tuple[dict, str]:
+    if '/' in alias:
+        qualified_tenant, alias = alias.split('/', 1)
+        if tenant is not None and tenant != qualified_tenant:
+            raise ContextFailure('El tenant no coincide con el alias elegido.')
+        tenant = qualified_tenant
+    if not IDENTITY.fullmatch(alias) or tenant is not None and not IDENTITY.fullmatch(tenant):
+        raise ContextFailure('Indica un alias válido y, si se repite, --tenant o tenant/alias.')
+    items = snapshot.get('items') if isinstance(snapshot, dict) else None
+    if not isinstance(items, list):
+        raise ContextFailure('El gateway no publica el inventario de terminales.')
+    matches = [item for item in items if isinstance(item, dict) and item.get('alias') == alias
+               and (tenant is None or item.get('tenant_id') == tenant)]
+    if len(matches) != 1:
+        raise ContextFailure('Destino inexistente, no autorizado o ambiguo; comprueba --tenant y los permisos.')
+    target = matches[0]
+    if target.get('authorized') is not True or target.get('pty_state') != 'online':
+        raise ContextFailure('Terminal no autorizado o sin agente PTY conectado; revisa la consola.')
+    if not isinstance(target.get('tenant_id'), str) or not IDENTITY.fullmatch(target['tenant_id']):
+        raise ContextFailure('La identidad del destino es inválida.')
+    modes = target.get('modes')
+    writable = target.get('writable_modes')
+    if not isinstance(modes, list) or not isinstance(writable, list):
+        raise ContextFailure('El gateway no acredita los modos de terminal disponibles.')
+    selected = mode or next((item for item in ('harness_rw', 'shell', 'harness') if item in modes), None)
+    if selected not in modes or selected not in ('shell', 'harness', 'harness_rw') \
+            or selected != 'harness' and selected not in writable:
+        raise ContextFailure('El servidor no autoriza el modo de terminal solicitado.')
+    return target, selected
+
+
+def terminal_websocket(gateway: str, path: object) -> str:
+    if not isinstance(path, str) or not re.fullmatch(r'/v3/(?:console/terminal|ws/terminal)(?:/[A-Za-z0-9_-]+)*', path):
+        raise ContextFailure('El endpoint WebSocket debe permanecer en las rutas de terminal del gateway, sin query.')
+    return ('wss' if gateway.startswith('https:') else 'ws') + gateway[gateway.index(':'):] + path
+
+
+def terminal_transport(client: ConsoleSessionClient, grant: dict, mode: str, cols: int, rows: int) -> int:
+    roots = [os.environ.get('CAUCE_PROJECT_ROOT'), str(pathlib.Path(__file__).resolve().parents[2]),
+             str(pathlib.Path.home() / '.local/share/cauce-v3')]
+    config = {'url': terminal_websocket(client.gateway, grant.get('websocket_path')),
+              'origin': client.origin, 'cookie': client.cookie, 'ca_file': client.ca_file, 'mode': mode,
+              'roots': [str(pathlib.Path(root).absolute()) for root in roots if root],
+              'attach': {key: grant[key] for key in ('session_id', 'ticket', 'authority_proof')}}
+    config['attach'].update(cols=cols, rows=rows)
+    reader, writer = os.pipe()
+    ready_reader, ready_writer = os.pipe()
+    start_reader, start_writer = os.pipe()
+    descriptors = {reader, writer, ready_reader, ready_writer, start_reader, start_writer}
+    process = None
+    previous_signals = {}
+    try:
+        process = subprocess.Popen(['node', '--input-type=module', '--eval', TERMINAL_WIRE,
+                                    str(reader), str(ready_writer), str(start_reader)],
+                                   pass_fds=(reader, ready_writer, start_reader))
+        for number in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
+            previous_signals[number] = signal.signal(number, lambda number, _frame: process.send_signal(number))
+        for descriptor in (reader, ready_writer, start_reader):
+            os.close(descriptor)
+            descriptors.remove(descriptor)
+        with os.fdopen(writer, 'w') as stream:
+            descriptors.remove(writer)
+            json.dump(config, stream)
+        if not select.select([ready_reader], [], [], 25)[0] or os.read(ready_reader, 16) != b'ready':
+            raise ContextFailure('El relay no acreditó la conexión del terminal.')
+        if mode == 'harness_rw':
+            owner = {key: grant[key] for key in ('request_id', 'owner_generation', 'owner_token', 'authority_proof')}
+            receipt = client.request('POST', '/v3/console/terminal/sessions/' + grant['session_id'] + '/control',
+                                     {'action': 'take', **owner})
+            if not isinstance(receipt, dict) or receipt.get('session_id') != grant['session_id'] \
+                    or not isinstance(receipt.get('hold_id'), str) or not receipt['hold_id']:
+                raise ContextFailure('El gateway no acreditó el control de la TUI.')
+        os.write(start_writer, b'1')
+        os.close(start_writer)
+        descriptors.remove(start_writer)
+        return process.wait()
+    finally:
+        for descriptor in descriptors:
+            os.close(descriptor)
+        if process is not None and process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
+        for number, handler in previous_signals.items():
+            signal.signal(number, handler)
+
+
+def terminal_main() -> int:
+    parser = argparse.ArgumentParser(prog='cauce <alias>', allow_abbrev=False,
+                                    description='Terminal remoto con la sesión nominal de cauce login')
+    parser.add_argument('alias')
+    parser.add_argument('--tenant')
+    parser.add_argument('--gateway', default=os.environ.get('CAUCE_GATEWAY_URL'))
+    parser.add_argument('--origin')
+    parser.add_argument('--session-file')
+    parser.add_argument('--ca-file')
+    parser.add_argument('--mode', choices=('shell', 'harness', 'harness_rw'))
+    args = parser.parse_args(sys.argv[2:])
+    try:
+        module = runpy.run_path(str(pathlib.Path(__file__).resolve().with_name('cauce-login')),
+                                run_name='cauce_console_session')
+        client = ConsoleSessionClient(args.session_file or module['default_session_file'](),
+                                      args.gateway, args.origin, args.ca_file)
+        target, mode = terminal_target(client.request('GET', '/v3/console/terminal/targets'),
+                                       args.alias, args.tenant, args.mode)
+        if shutil.which('node') is None:
+            raise ContextFailure('Instala Node.js y el runtime Cauce para abrir el terminal.')
+        size = shutil.get_terminal_size((100, 30))
+        cols, rows = max(20, min(500, size.columns)), max(5, min(200, size.lines))
+        request = {key: target[key] for key in ('tenant_id', 'alias')}
+        request.update(mode=mode, cols=cols, rows=rows, request_id=str(uuid.uuid4()), owner_token=str(uuid.uuid4()))
+        grant = client.request('POST', '/v3/console/terminal/sessions', request)
+        if not isinstance(grant, dict) or not isinstance(grant.get('session_id'), str) \
+                or not re.fullmatch(r'[0-9a-f-]{36}', grant['session_id']) \
+                or grant.get('request_id') != request['request_id'] \
+                or not isinstance(grant.get('owner_generation'), str) or not grant['owner_generation'].isdigit():
+            raise ContextFailure('El gateway no acreditó la sesión solicitada.')
+        grant['owner_token'] = request['owner_token']
+        owner = {key: grant[key] for key in ('request_id', 'owner_generation', 'owner_token')}
+        try:
+            if not isinstance(grant.get('ticket'), str) or not grant['ticket'] \
+                    or not isinstance(grant.get('authority_proof'), str) or not grant['authority_proof'].startswith('ac2.') \
+                    or not isinstance(grant.get('target'), dict) \
+                    or any(grant['target'].get(key) != request[key] for key in ('tenant_id', 'alias', 'mode')):
+                raise ContextFailure('El gateway devolvió otro destino o una autorización inválida.')
+            terminal_websocket(client.gateway, grant.get('websocket_path'))
+            return terminal_transport(client, grant, mode, cols, rows)
+        finally:
+            client.request('DELETE', '/v3/console/terminal/sessions/' + grant['session_id'], owner)
+    except ContextFailure as error:
+        print(str(error), file=sys.stderr)
+    except (OSError, ValueError, TypeError, KeyError):
+        print('No se pudo abrir el terminal; inicia sesión con cauce login y revisa destino y permisos.', file=sys.stderr)
+    return 1
+
+
 if __name__ == '__main__':
-    raise SystemExit(main())
+    raise SystemExit(terminal_main() if sys.argv[1:2] == ['--terminal'] else main())

@@ -15,6 +15,7 @@ Las pruebas locales y sus límites están en [la matriz local](v4-matriz-local.m
 | `cauce spaces` | `cauce-spaces` y `space_archive.py` | Operaciones durables de espacios, backup y restauración local del contenido persistente permitido |
 | `cauce diagnose` | `cauce-diagnose` | Diagnóstico de solo lectura, acotado a la empresa de la sesión |
 | `cauce login` | `cauce-login` | Crear, consultar o renovar la sesión nominal de consola |
+| `cauce <alias>` con sesión nominal | `context_client.py --terminal` | Resolver el destino dinámico y conectar por gateway y terminal-relay |
 
 La instalación usa `ops/scripts/install-cauce-cli.sh`, que coloca helpers en el área local del usuario. El wrapper de plataforma necesita `CAUCE_PROJECT_ROOT` absoluto, el checkout fuente o el runtime instalado en `$HOME/.local/share/cauce-v3`. Prefiere `services/gateway/dist/platform-cli-main.js`; si sólo existe fuente usa `pnpm exec tsx` desde esa raíz. No instala dependencias automáticamente para suplir un bundle incompleto.
 
@@ -37,6 +38,40 @@ cauce hosts status --help
 La siembra de administración es idempotente. En producción, los subcomandos `contenedor` usan la imagen de runtime y sus secretos montados; los datos privados de cuenta se suministran desde configuración del operador. `hosts setup` requiere que el ordenador ya esté enrolado; `hosts status` informa si el executor local quedó listo.
 
 En flota dinámica, `CAUCE_FLEET_RUNTIME_STATE` limita el despacho legado a las consultas y paneles admitidos. Las mutaciones físicas pasan por la consola y el coordinador durable. La incorporación de los nuevos comandos no demuestra por sí sola que todas las terminales remotas sigan funcionando en el despliegue: ese recorrido permanece como criterio de aceptación.
+
+## Sesión nominal y terminal de la flota dinámica
+
+```sh
+cauce login --gateway https://cauce.example.invalid --email usuario@example.invalid
+cauce login --status
+cauce AGENT_ALIAS
+cauce TENANT_ID/AGENT_ALIAS
+cauce AGENT_ALIAS --tenant TENANT_ID --mode shell
+cauce AGENT_ALIAS --tenant TENANT_ID --mode harness
+```
+
+La contraseña se pide sin eco; para automatización, `cauce login --password-stdin` la recibe por stdin. `--renew` renueva la sesión guardada. El archivo queda privado (`0600`), ligado al gateway y al origen. Su ruta predeterminada es `$XDG_STATE_HOME/cauce-v3/console-session.json`, o `$HOME/.local/state/cauce-v3/console-session.json` si no existe esa variable. `CAUCE_CONSOLE_SESSION_FILE` y `--session-file` permiten elegir otro archivo; no hace falta copiar cookies del navegador.
+
+Después del login, `cauce <alias>` consulta `/v3/console/terminal/targets`, solicita la sesión y su ticket de un solo uso en `/v3/console/terminal/sessions` y conecta al WebSocket publicado por el gateway. El relay llega al agente PTY del ordenador o contenedor; el cliente no necesita inventario local, acceso Docker ni SSH al destino. Un alias repetido exige `--tenant` o `tenant/alias`. El gateway decide visibilidad, permisos, modos y disponibilidad. Una sesión caducada, un destino sin autorización o un agente PTY desconectado producen un error.
+
+El modo predeterminado elige `harness_rw`, después `shell` y finalmente `harness`, según los modos publicados y autorizados. `harness_rw` conecta la TUI existente y toma su control mediante la concesión del gateway antes de transmitir teclado; mientras dura ese control, el bus mantiene pendientes las entregas del agente. `harness` permite observar la TUI sin escribir; `shell` abre una shell del usuario de ejecución. `Ctrl-]` desconecta el cliente. Al salir se libera su sesión y el control asociado; la TUI compartida del agente sigue disponible. Si se interrumpe la red, el comando informa el cierre: vuelve a ejecutarlo para solicitar una sesión nueva.
+
+Este acceso necesita Node.js y el runtime Cauce con su dependencia `ws`. Reutiliza el contrato y los validadores de mensajes de `terminal-relay`, desde su código fuente mediante `tsx` en un checkout de desarrollo o desde el runtime compilado instalado. `CAUCE_PROJECT_ROOT` puede señalar esa raíz, además de la ubicación habitual `$HOME/.local/share/cauce-v3`. `--ca-file` admite una CA privada para HTTP y WebSocket. La conexión WebSocket es directa al gateway; no utiliza el proxy HTTP del entorno. HTTPS es obligatorio salvo loopback local, y no se siguen redirecciones ni se ponen tickets en la URL.
+
+Sin una sesión guardada ni una configuración nominal explícita, sigue disponible el despacho anterior por inventario. La presencia de `CAUCE_CONSOLE_SESSION_FILE`, `CAUCE_GATEWAY_URL` o argumentos como `--session-file` selecciona el gateway; un fallo de autenticación en ese recorrido se devuelve al usuario. Los subcomandos existentes conservan su precedencia sobre los alias.
+
+## Registro y operaciones de espacios
+
+```sh
+cauce spaces list --tenant TENANT_ID
+cauce spaces create --tenant TENANT_ID --alias AGENT_ALIAS --expected-revision 7 --idempotency-key crear-agente-001 --input /ruta/privada/parameters.json
+cauce spaces edit --tenant TENANT_ID --alias AGENT_ALIAS --expected-revision 7 --idempotency-key editar-agente-001 --input /ruta/privada/parameters.json
+cauce spaces retire --tenant TENANT_ID --alias AGENT_ALIAS --expected-revision 7 --idempotency-key retirar-agente-001
+```
+
+Estos comandos reutilizan la sesión de `cauce login`; cada subcomando admite `--session-file`, `--gateway`, `--origin` y `--ca-file`. `list` devuelve la revisión, los agentes y las operaciones durables del tenant elegido. `create`, `edit` y `retire` previsualizan por defecto; `--apply` solicita su aplicación con la revisión esperada y la misma clave de idempotencia. El JSON contiene los parámetros de ejecución: identidad del runtime, harness, sala, membresías y ubicación. La previsualización y las capacidades del gateway determinan si puede aplicarse.
+
+`create` y `edit` admiten `--registry-only` para cambiar únicamente el registro. En ese modo el JSON contiene los campos del registro y un agente nuevo queda deshabilitado; no acredita creación del runtime. Una operación `queued`, `running` o `awaiting_auth` requiere consultar su recibo con `list`: la aceptación no significa que el efecto físico esté completado.
 
 ## Administración de plataforma
 
@@ -76,7 +111,7 @@ La identidad enrolada y el executor preparado son estados distintos. Un heartbea
 
 ## Contextos mediante el gateway
 
-Los argumentos comunes van antes del subcomando. El archivo de sesión privada contiene los campos `cookie` y `csrf_token` de una sesión humana autorizada. No existe en estos helpers un login autónomo ni un exportador de sesión del navegador. El archivo debe pertenecer al UID actual y conservar permisos privados.
+Los argumentos comunes van antes del subcomando. `cauce login` genera el archivo de sesión privada con los campos `cookie` y `csrf_token` de una sesión humana autorizada. El archivo debe pertenecer al UID actual y conservar permisos privados; estos comandos de contexto reciben su ruta explícitamente.
 
 ```text
 cauce context --gateway https://cauce.example.invalid --origin https://cauce.example.invalid --session-file /ruta/privada/session.json --tenant TENANT_ID --alias AGENT_ALIAS read
@@ -138,3 +173,5 @@ La restauración exige un destino nuevo o vacío y no restaura autenticación ni
 ## Evidencia
 
 Las pruebas locales de los comandos y sus límites están en la [matriz de verificación](v4-matriz-local.md).
+
+`tests/e2e/v4-cli-dynamic-terminal.test.ts` ejecuta `cauce login` y `cauce <alias>` contra PostgreSQL efímero, gateway, terminal-relay y agente Python PTY reales. Comprueba la respuesta de una shell en un destino `zz-canary-`, la identidad humana durable y los rechazos sin sesión o sin permiso sobre el agente. También verifica el control de una sesión tmux compartida con shell real, su grabación, la devolución del control y la continuidad de esa sesión al desconectar el CLI. La prueba se ejecuta localmente, sin proveedor de IA, y no acredita un recorrido en producción.
