@@ -179,11 +179,9 @@ describe('inventario de pruebas de V4', () => {
       cwd: repository,
       encoding: 'utf8',
     }).trim().split('\n');
-    expect(releaseCommand).toHaveLength(10);
-    expect(releaseCommand[0]).toBe('python3 -m pytest ops/tests/test_fleet_orphan_sweep.py ops/tests/test_fleet_executor_container.py -q --tb=line');
-    expect(inventory).toContain('ejecuta diez pasos: primero el barrido acotado de huérfanos');
-    expect(inventory).toContain('nueve gates pnpm en carriles paralelos');
-    expect(inventory).toContain('CAUCE_RELEASE_GATES_JOBS');
+    expect(releaseCommand).toEqual(['pnpm typecheck', 'pnpm lint', 'pnpm test:unit', 'pnpm qa:runtime-packaging']);
+    expect(inventory).toContain('cuatro gates pnpm sin Docker ni navegadores');
+    expect(inventory).toContain('CAUCE_RELEASE_GATES_NIVEL=completo');
   });
 
   test('el pendiente de la matriz CRUD coincide con el límite descrito', () => {
