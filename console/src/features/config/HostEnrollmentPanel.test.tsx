@@ -170,3 +170,16 @@ it('envía el prefijo de la empresa y traduce los rechazos del servidor sin most
   await waitFor(() => { expect(screen.getByRole('alert')).toHaveTextContent(/ya pertenece a un ordenador registrado/u); });
   expect(screen.queryByText(/host is already registered/u)).not.toBeInTheDocument();
 });
+it('un nombre solo con espacios no crea la invitación y lo explica en español', async () => {
+  const writes: unknown[] = [];
+  server.use(http.get(path, () => HttpResponse.json({ enrollments: [] })),
+    http.post(path, async ({ request }) => { writes.push(await request.json()); return HttpResponse.json({}, { status: 201 }); }));
+  const user = userEvent.setup(); renderWithApi(<HostEnrollmentPanel canEnroll />);
+  await waitFor(() => { expect(screen.getByRole('button', { name: 'Añadir ordenador' })).toBeEnabled(); });
+  await user.click(screen.getByRole('button', { name: 'Añadir ordenador' }));
+  await user.type(screen.getByRole('textbox', { name: 'Identificador del ordenador' }), 'equipo-1');
+  await user.type(screen.getByRole('textbox', { name: 'Nombre del ordenador' }), '   ');
+  await user.click(screen.getByRole('button', { name: 'Crear invitación' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent('Escribe el identificador y el nombre del ordenador.');
+  expect(writes).toEqual([]);
+});

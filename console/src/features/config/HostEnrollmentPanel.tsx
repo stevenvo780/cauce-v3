@@ -51,9 +51,10 @@ export function HostEnrollmentPanel({ canEnroll }: { canEnroll: boolean }) {
   const ready = canEnroll && !busy && !enrollments.loading && !enrollments.error;
   async function create() {
     if (!ready) return;
+    if (!hostId.trim() || !name.trim()) { setError('Escribe el identificador y el nombre del ordenador.'); return; }
     setBusy(true); setError(''); setNotice('');
     try {
-      const receipt = await api.inviteHost({ host_id: `${prefix}${hostId}`, display_name: name });
+      const receipt = await api.inviteHost({ host_id: `${prefix}${hostId.trim()}`, display_name: name.trim() });
       setInvitation(receipt); setForm(false); setHostId(''); setName('');
       await enrollments.reload();
     } catch (cause) { setError(inviteFailure(cause, prefix)); }
