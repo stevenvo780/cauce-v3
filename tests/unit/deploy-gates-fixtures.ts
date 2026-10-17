@@ -155,8 +155,11 @@ export function gatesRepository(directory: string) {
   writeFileSync(join(binaries, 'python3'), fakePython, { mode: 0o700 });
   writeFileSync(join(binaries, 'docker'), fakeDocker, { mode: 0o700 });
   mkdirSync(join(directory, 'docker'));
+  // The release gate that runs this suite exports its own knobs; the scripted gate under test must not inherit them.
+  const inherited = Object.fromEntries(Object.entries(process.env)
+    .filter(([name]) => !name.startsWith('CAUCE_RELEASE_GATES_') && !name.startsWith('CAUCE_CARRIL_EXCLUSIVO_')));
   const environment = {
-    ...process.env,
+    ...inherited,
     PATH: `${binaries}:${process.env.PATH ?? ''}`,
     GIT_CONFIG_GLOBAL: '/dev/null',
     GIT_CONFIG_NOSYSTEM: '1',
