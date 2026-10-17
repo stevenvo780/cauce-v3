@@ -39,5 +39,11 @@ docker build -q --provenance=false --build-arg "SOURCE_DATE_EPOCH=$(git log -1 -
   -t "$image" ops/agent-runtime >/dev/null
 docker run --rm --network none -v "$stage/ops/container-runtime:/cauce/lifecycle:ro" --entrypoint python3 "$image" \
   /cauce/lifecycle/cauce-container-runtime.py bundle-digest /cauce/lifecycle >/dev/null
+# `codex` on PATH is a Node launcher; the provider login pins its argv[0] with O_NOFOLLOW, so the pin names the native binary.
+codex_native=$(docker run --rm --network none --entrypoint sh "$image" -c \
+  'find /usr/local/lib/node_modules/@openai/codex -path "*/vendor/*-unknown-linux-musl/bin/codex" -type f')
+[[ $codex_native == /usr/local/lib/node_modules/@openai/codex/*/bin/codex && $codex_native != *$'\n'* ]] || {
+  echo "expected one native Codex binary in $image, found: ${codex_native:-none}" >&2; exit 1;
+}
 python3 ops/scripts/host-release.py pack --stage "$stage" --out "$target" --revision "$revision" --epoch "$epoch" \
-  --image "$image" --provider codex=codex --provider claude=claude --provider grok=grok
+  --image "$image" --provider "codex=$codex_native" --provider claude=claude --provider grok=grok
