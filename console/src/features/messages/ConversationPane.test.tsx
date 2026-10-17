@@ -168,3 +168,24 @@ describe('publicación visible antes de la respuesta de red', () => {
     expect(test.preparePublishIntent).not.toHaveBeenCalled();
   });
 });
+
+describe('error de lectura del feed', () => {
+  it('se muestra como error con reintento, no como una conversación vacía', () => {
+    const api = new CauceApi('http://localhost');
+    const onReload = vi.fn();
+    render(
+      <ApiProvider api={api}>
+        <ConversationPane
+          agent={agent} loading={false} error={new Error('feed caído')} canPublish
+          publisherSubject="Empresa:operador" publisherHumanSubject={`human:${'a'.repeat(64)}`}
+          route={{ allowed: true, sourceRoomIds: ['sala'], membership: true, reason: '' }}
+          onReload={onReload} onQueueReload={vi.fn()}
+        />
+      </ApiProvider>,
+    );
+
+    expect(screen.getByRole('alert')).toHaveTextContent('feed caído');
+    fireEvent.click(screen.getByRole('button', { name: /reintentar/i }));
+    expect(onReload).toHaveBeenCalledTimes(1);
+  });
+});

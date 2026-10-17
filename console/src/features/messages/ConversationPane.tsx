@@ -4,7 +4,7 @@ import { useApi } from '../../api/context';
 import { ApiError } from '../../api/client';
 import type { MessagePage } from '../../api/types';
 import { Button } from '../../components/kit';
-import { EmptyState, LoadingState } from '../../components/ui';
+import { ErrorState, LoadingState } from '../../components/ui';
 import { compactId } from '../../lib';
 import { useRouteSearch } from '../../router';
 import type { LiveAgentView } from '../live/agent-state';
@@ -392,7 +392,7 @@ function ConversationPaneContent({
                 </p>
               ) : null}
               {error && !page ? (
-                <div role="alert"><EmptyState>No se pudo leer el feed de mensajes: {error.message}</EmptyState></div>
+                <ErrorState error={error} onRetry={onReload} />
               ) : loading && !page ? (
                 <LoadingState label="Abriendo la conversación…" />
               ) : (
