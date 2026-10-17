@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "harness": "fake2",
+  "operations": {
+    "install": "runtime-package",
+    "execute": "native-execution",
+    "authenticate": "provider-login",
+    "update": "provider-update",
+    "quota": "quota-collector"
+  },
+  "context": {
+    "native_document": "AGENTS.md",
+    "max_bytes": 65536
+  }
+}
