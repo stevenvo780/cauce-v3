@@ -106,7 +106,9 @@ it('keeps protected last-admin failures visible and blocks writes when capabilit
   await user.click(screen.getByRole('button', { name: 'Releer personas y permisos' }));
   await waitFor(() => { expect(screen.getByRole('button', { name: 'Editar persona one@example.test' })).toBeEnabled(); });
   expect(screen.getByRole('button', { name: 'Crear persona' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Crear persona' })).toHaveAttribute('title', expect.stringContaining('no habilitó esta acción'));
   expect(screen.getByRole('button', { name: 'Retirar persona one@example.test' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Retirar persona one@example.test' })).toHaveAttribute('title', expect.stringContaining('no habilitó esta acción'));
   server.use(http.post('http://localhost/v3/auth/login', () => HttpResponse.json({ authenticated: true, subject: 'changed', csrf_token: 'changed' })));
   await act(async () => { await testApi.login('changed@example.test', 'test-password'); });
   expect(screen.getByRole('alert')).toHaveTextContent('La sesión cambió');

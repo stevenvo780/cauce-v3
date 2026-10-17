@@ -46,8 +46,8 @@ function AgentChips({ host }: { host: FleetHost }) {
   </section>;
 }
 
-function Interruptor({ host, disabled, onChange }: { host: FleetHost; disabled: boolean; onChange: () => void }) {
-  return <label className={cn('inline-flex items-center gap-2 text-[13px] font-normal', disabled ? 'cursor-not-allowed opacity-60' : 'cursor-pointer')}>
+function Interruptor({ host, disabled, title, onChange }: { host: FleetHost; disabled: boolean; title?: string; onChange: () => void }) {
+  return <label title={title} className={cn('inline-flex items-center gap-2 text-[13px] font-normal', disabled ? 'cursor-not-allowed opacity-60' : 'cursor-pointer')}>
     <input type="checkbox" className="peer sr-only" checked={host.enabled} disabled={disabled} onChange={onChange} />
     <span aria-hidden="true"
       className="relative h-5 w-9 shrink-0 rounded-full bg-line-strong transition-colors after:absolute after:top-0.5 after:left-0.5 after:size-4 after:rounded-full after:bg-surface after:shadow-sm after:transition-transform after:content-[''] peer-checked:bg-ok peer-checked:after:translate-x-4 peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-brand" />
@@ -60,6 +60,12 @@ export function ComputadoraCard({ host, escribe, crea = escribe, borra = escribe
   const insignia = insigniaDeEstado(host);
   const idTitulo = `computadora-${host.host_id}`;
   const inactiva = host.registered && !host.enabled;
+  const bloqueadaText = 'Cierra primero el editor de esta computadora.';
+  const esperaText = 'Espera a que termine la operación en curso.';
+  const interruptorBlock = !escribe ? 'Tu autoridad de empresa no permite cambiar computadoras.' : busy ? esperaText : bloqueada ? bloqueadaText : undefined;
+  const editarBlock = !escribe ? 'Tu autoridad de empresa no permite cambiar computadoras.' : busy ? esperaText : undefined;
+  const eliminarBlock = !borra ? 'Tu autoridad de empresa no permite eliminar computadoras.' : busy ? esperaText : bloqueada ? bloqueadaText : undefined;
+  const registrarBlock = !crea ? 'Tu autoridad de empresa no permite registrar computadoras.' : busy ? esperaText : undefined;
   return <article aria-labelledby={idTitulo}
     className={cn('grid h-full content-start gap-3 rounded-xl border border-line bg-surface p-4', inactiva && 'bg-subtle')}>
     <header className="flex items-start gap-3">
@@ -100,15 +106,15 @@ export function ComputadoraCard({ host, escribe, crea = escribe, borra = escribe
 
     <footer className="mt-auto flex flex-wrap items-center gap-2 border-t border-line pt-3">
       {host.registered ? <>
-        <Interruptor host={host} disabled={!escribe || busy || bloqueada} onChange={() => { onAlternar(host); }} />
+        <Interruptor host={host} disabled={!escribe || busy || bloqueada} title={interruptorBlock} onChange={() => { onAlternar(host); }} />
         <span className="ml-auto flex flex-wrap items-center justify-end gap-2">
-          <Button size="sm" disabled={!escribe || busy} onClick={() => { onEditar(host); }}>Editar</Button>
+          <Button size="sm" disabled={!escribe || busy} title={editarBlock} onClick={() => { onEditar(host); }}>Editar</Button>
           {sePuedeEliminar(host)
-            ? <Button size="sm" variant="danger" disabled={!borra || busy || bloqueada} onClick={() => { onEliminar(host); }}>Eliminar</Button>
+            ? <Button size="sm" variant="danger" disabled={!borra || busy || bloqueada} title={eliminarBlock} onClick={() => { onEliminar(host); }}>Eliminar</Button>
             : null}
         </span>
         {sePuedeEliminar(host) ? null : <p className="m-0 basis-full text-xs text-muted">Para eliminarla, quita antes sus agentes.</p>}
-      </> : <Button size="sm" variant="primary" className="ml-auto" disabled={!crea || busy} onClick={() => { onRegistrar(host); }}>Registrar</Button>}
+      </> : <Button size="sm" variant="primary" className="ml-auto" disabled={!crea || busy} title={registrarBlock} onClick={() => { onRegistrar(host); }}>Registrar</Button>}
     </footer>
   </article>;
 }

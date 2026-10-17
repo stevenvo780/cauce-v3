@@ -36,6 +36,13 @@ export function PeopleAdminPanel() {
     setNotice(''); setError('La sesión cambió. Relee personas y permisos desde la cuenta actual.');
   }), [api]);
   const canUse = !!inventory && !!snapshot && !loading && !busy && !stale && !error;
+  function blockFor(allowed: boolean): string | undefined {
+    if (canUse && allowed) return undefined;
+    if (loading) return 'Espera a que termine la lectura de personas y permisos.';
+    if (busy) return 'Espera a que termine la operación en curso.';
+    if (!inventory || stale || error) return 'La última lectura no es vigente. Relee personas y permisos antes de cambiar nada.';
+    return 'El servidor no habilitó esta acción para tu rol.';
+  }
   async function perform(action: () => Promise<unknown>, text: string) {
     if (!canUse || sending.current) return;
     sending.current = true; setBusy(true); setError(''); setNotice('');
@@ -79,18 +86,18 @@ export function PeopleAdminPanel() {
     {loading ? <p role="status">Leyendo personas y permisos…</p> : null}
     {error ? <p className="notice" role="alert">{error}</p> : null}
     {notice ? <p className="notice" role="status">{notice}</p> : null}
-    <button type="button" className="button" disabled={!canUse || !inventory.capabilities.create}
+    <button type="button" className="button" disabled={!canUse || !inventory.capabilities.create} title={blockFor(inventory?.capabilities.create ?? false)}
       onClick={() => { setEditing({}); setConfirmation(undefined); setNotice(''); }}>Crear persona</button>
     {inventory ? <div className="people-admin-table"><table><caption>Cuentas de personas</caption>
       <thead><tr><th>Persona</th><th>Identidad</th><th>Permiso</th><th>Estado</th><th>Acciones</th></tr></thead>
       <tbody>{inventory.items.map(person => <tr key={person.id}><td><strong>{person.display_name}</strong><br />{person.email}</td>
         <td><code>{person.tenant_id}/{person.alias}</code></td><td>{person.role === 'operator' ? 'Operador' : 'Lector'}</td>
         <td>{person.active ? 'Habilitada' : 'Retirada'}</td><td><div className="acciones">
-          <button type="button" className="button secondary" disabled={!canUse || !inventory.capabilities.update}
+          <button type="button" className="button secondary" disabled={!canUse || !inventory.capabilities.update} title={blockFor(inventory.capabilities.update)}
             onClick={() => { setEditing({ person }); setConfirmation(undefined); setNotice(''); }} aria-label={`Editar persona ${person.email}`}>Editar</button>
-          <button type="button" className="button secondary" disabled={!canUse || !inventory.capabilities[person.active ? 'retire' : 'restore']}
+          <button type="button" className="button secondary" disabled={!canUse || !inventory.capabilities[person.active ? 'retire' : 'restore']} title={blockFor(inventory.capabilities[person.active ? 'retire' : 'restore'])}
             onClick={() => { ask(person, person.active ? 'retire' : 'restore'); }} aria-label={`${person.active ? 'Retirar' : 'Restaurar'} persona ${person.email}`}>{person.active ? 'Retirar' : 'Restaurar'}</button>
-          {!person.active ? <button type="button" className="button secondary" disabled={!canUse || !inventory.capabilities.purge}
+          {!person.active ? <button type="button" className="button secondary" disabled={!canUse || !inventory.capabilities.purge} title={blockFor(inventory.capabilities.purge)}
             onClick={() => { ask(person, 'purge'); }} aria-label={`Purgar persona ${person.email}`}>Purgar</button> : null}
         </div></td></tr>)}</tbody></table>{!inventory.items.length ? <p>No hay personas en este inventario.</p> : null}</div> : null}
     {editing && snapshot ? <PeopleAdminForm key={editing.person?.id ?? 'create'} person={editing.person} snapshot={snapshot}
@@ -101,7 +108,7 @@ export function PeopleAdminPanel() {
       <p>{confirmation.action === 'retire' ? 'Se revocan sesiones y accesos anteriores. La autoría de sus mensajes se conserva.'
         : confirmation.action === 'restore' ? 'La cuenta podrá abrir una nueva sesión. Los accesos revocados no se recuperan.'
         : 'El registro se elimina definitivamente si el servidor acredita que no tiene históricos ni dependencias.'}</p>
-      <div className="acciones"><button type="button" className="button" disabled={!canUse}
+      <div className="acciones"><button type="button" className="button" disabled={!canUse} title={blockFor(inventory?.capabilities[confirmation.action] ?? false)}
         onClick={() => { void confirm(); }}>Confirmar cambio de persona</button><button type="button" className="button secondary" disabled={busy}
           onClick={() => { setConfirmation(undefined); }}>Cancelar cambio de persona</button></div>
     </section> : null}

@@ -130,7 +130,7 @@ export function ComputadorasSection({ snapshot, soloLectura }: { snapshot?: Conf
     <section aria-labelledby="computadoras-registradas" className="grid gap-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h3 id="computadoras-registradas" className="m-0 text-sm font-semibold">Registradas{flota.hosts ? ` (${String(registradas.length)})` : ''}</h3>
-        <Button variant="primary" size="sm" disabled={!crea || busy} onClick={() => { abrirAlta(); }}>
+        <Button variant="primary" size="sm" disabled={!crea || busy} title={!crea ? (soloLectura ? CONFIG_SIN_CONTROL_REASON : 'Tu autoridad de empresa no permite registrar computadoras.') : busy ? 'Espera a que termine la operación en curso.' : undefined} onClick={() => { abrirAlta(); }}>
           <Plus size={14} aria-hidden="true" />Registrar computadora
         </Button>
       </div>

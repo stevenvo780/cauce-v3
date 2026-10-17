@@ -172,8 +172,10 @@ it.each([
   flota([computadora('uno')]);
   renderWithApi(<ComputadorasSection snapshot={snapshot} soloLectura={false} />);
   expect(await screen.findByRole('button', { name: 'Registrar computadora' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Registrar computadora' })).toHaveAttribute('title', expect.stringContaining('no permite registrar computadoras'));
   expect(screen.getByText(/Tu autoridad de empresa no permite cambiar computadoras/)).toBeInTheDocument();
   expect(within(screen.getByRole('article', { name: 'Equipo uno' })).getByRole('button', { name: 'Editar' })).toBeDisabled();
+  expect(within(screen.getByRole('article', { name: 'Equipo uno' })).getByRole('button', { name: 'Editar' })).toHaveAttribute('title', expect.stringContaining('no permite cambiar computadoras'));
   expect(within(screen.getByRole('article', { name: 'Equipo uno' })).getByRole('checkbox', { name: 'Habilitada' })).toBeDisabled();
 });
 
