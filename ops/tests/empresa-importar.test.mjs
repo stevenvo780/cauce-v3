@@ -69,13 +69,14 @@ async function psql(database, sql) {
 }
 
 before(async () => {
+  const { arrancarPostgresDePrueba, saludDePostgresDePrueba } = await tsImport('../../tests/helpers/contenedor-de-prueba.ts', import.meta.url);
   const network = process.env.CAUCE_TEST_DOCKER_NETWORK;
   const builder = new GenericContainer('postgres:16-alpine')
     .withEnvironment({ POSTGRES_DB: 'cauce_test_import', POSTGRES_USER: 'cauce_test', POSTGRES_PASSWORD: DB_PASSWORD })
     .withLabels({ 'cauce.test': 'empresa-importar' })
-    .withHealthCheck({ test: ['CMD-SHELL', 'pg_isready -U cauce_test -d cauce_test_import'], interval: 1_000, timeout: 3_000, retries: 60, startPeriod: 1_000 })
+    .withHealthCheck(saludDePostgresDePrueba('cauce_test', 'cauce_test_import'))
     .withWaitStrategy(Wait.forHealthCheck());
-  container = await (network ? builder.withNetworkMode(network) : builder.withExposedPorts(5432)).start();
+  container = await arrancarPostgresDePrueba(() => (network ? builder.withNetworkMode(network) : builder.withExposedPorts(5432)).start());
   // Built at run time: no user:password@host literal in the repository.
   const address = new URL('postgresql://placeholder/cauce_test_import');
   Object.assign(address, { username: 'cauce_test', password: DB_PASSWORD, hostname: network ? container.getIpAddress(network) : container.getHost(),

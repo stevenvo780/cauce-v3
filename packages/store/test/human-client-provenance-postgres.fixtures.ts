@@ -3,7 +3,7 @@ import { lockClientDeclarationOwner } from '../../../services/gateway/src/client
 import { generateKeyPairSync, randomUUID } from 'node:crypto';
 import { GenericContainer, Wait, type StartedTestContainer } from 'testcontainers';
 import { afterAll, afterEach, beforeAll } from 'vitest';
-import { COMANDO_POSTGRES_DE_PRUEBA, etiquetasDelPasoDelGate } from '../../../tests/helpers/contenedor-de-prueba.js';
+import { arrancarPostgresDePrueba, COMANDO_POSTGRES_DE_PRUEBA, etiquetasDelPasoDelGate } from '../../../tests/helpers/contenedor-de-prueba.js';
 import { applyMigrations, applyMigrationsThrough, createPool, CauceRepository, lockHumanIdentity, resolveHumanIdentity,
   type DatabasePool, type DatabaseClient } from '@cauce/store';
 import Fastify, { type FastifyInstance } from 'fastify';
@@ -38,12 +38,12 @@ beforeAll(async () => {
     throw new Error('client provenance tests require their own local disposable PostgreSQL');
   }
   const password = randomUUID();
-  container = await new GenericContainer('postgres:16-alpine')
+  container = await arrancarPostgresDePrueba(() => new GenericContainer('postgres:16-alpine')
     .withCommand([...COMANDO_POSTGRES_DE_PRUEBA])
     .withLabels({ 'cauce.test.owner': randomUUID(), 'cauce.test.suite': 'human-client-provenance', ...etiquetasDelPasoDelGate() })
     .withEnvironment({ POSTGRES_DB: 'cauce_test_client_template', POSTGRES_USER: 'cauce_test', POSTGRES_PASSWORD: password })
     .withExposedPorts(5432).withWaitStrategy(Wait.forLogMessage('database system is ready to accept connections', 2))
-    .withStartupTimeout(60000).start();
+    .withStartupTimeout(60000).start());
   serverUrl = `postgresql://cauce_test:${password}@${container.getHost()}:${String(container.getMappedPort(5432))}/cauce_test_client_template`;
   admin = createPool(serverUrl);
   await applyMigrations(admin);

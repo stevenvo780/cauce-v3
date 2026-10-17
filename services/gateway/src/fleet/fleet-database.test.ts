@@ -7,7 +7,7 @@ import { GenericContainer, Wait, type StartedTestContainer } from 'testcontainer
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createPool } from '@cauce/store';
 import { createFleetAuthDatabasePool } from './fleet-database.js';
-import { etiquetasDelPasoDelGate } from '../../../../tests/helpers/contenedor-de-prueba.js';
+import { arrancarPostgresDePrueba, etiquetasDelPasoDelGate } from '../../../../tests/helpers/contenedor-de-prueba.js';
 
 const execute = promisify(execFile);
 let directory: string; let container: StartedTestContainer | undefined; let connectionString: string; let environment: NodeJS.ProcessEnv;
@@ -22,12 +22,12 @@ beforeAll(async () => {
   await execute('/usr/bin/openssl', ['x509', '-req', '-in', join(directory, 'server.csr'), '-CA', join(directory, 'ca.crt'),
     '-CAkey', join(directory, 'ca.key'), '-CAcreateserial', '-out', join(directory, 'server.crt'), '-days', '1', '-extfile', join(directory, 'extensions')]);
   const fixtureLogs: string[] = [];
-  container = await new GenericContainer('postgres:16-alpine').withLabels(etiquetasDelPasoDelGate()).withEnvironment({ POSTGRES_USER: 'fleet_tls_fixture',
+  container = await arrancarPostgresDePrueba(() => new GenericContainer('postgres:16-alpine').withLabels(etiquetasDelPasoDelGate()).withEnvironment({ POSTGRES_USER: 'fleet_tls_fixture',
     POSTGRES_PASSWORD: 'isolated_tls_fixture', POSTGRES_DB: 'cauce_test_fleet_tls' }).withExposedPorts(5432)
     .withCopyFilesToContainer(['server.key', 'server.crt'].map(name => ({ source: join(directory, name), target: `/tls/${name}` })))
     .withEntrypoint(['/bin/sh']).withCommand(['-c', 'chown -R postgres:postgres /tls && chmod 700 /tls && chmod 600 /tls/server.key && chmod 644 /tls/server.crt && exec docker-entrypoint.sh postgres -c ssl=on -c ssl_cert_file=/tls/server.crt -c ssl_key_file=/tls/server.key'])
     .withLogConsumer(stream => { stream.on('data', chunk => fixtureLogs.push(String(chunk))); stream.on('err', chunk => fixtureLogs.push(String(chunk))); })
-    .withWaitStrategy(Wait.forLogMessage('database system is ready to accept connections', 2)).start()
+    .withWaitStrategy(Wait.forLogMessage('database system is ready to accept connections', 2)).start())
     .catch((error: unknown) => { throw new Error(`PostgreSQL TLS fixture failed: ${fixtureLogs.join('')}`, { cause: error }); });
   connectionString = `postgresql://fleet_tls_fixture:isolated_tls_fixture@127.0.0.1:${String(container.getMappedPort(5432))}/cauce_test_fleet_tls`;
   environment = { NODE_ENV: 'production', PGSSLMODE: 'verify-full', PGSSLROOTCERT: join(directory, 'ca.crt'), CAUCE_FLEET_DATABASE_TLS_SERVERNAME: 'postgres' };

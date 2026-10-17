@@ -10,7 +10,7 @@ import {
 import {
   clonarCaso, plantillaVigente, type ConPlantillaDeCasos, type PlantillaDeCasos,
 } from './plantilla-de-casos.js';
-import { COMANDO_POSTGRES_DE_PRUEBA, etiquetasDelPasoDelGate } from './contenedor-de-prueba.js';
+import { arrancarPostgresDePrueba, COMANDO_POSTGRES_DE_PRUEBA, etiquetasDelPasoDelGate, saludDePostgresDePrueba } from './contenedor-de-prueba.js';
 
 export interface TestDatabase {
   container: StartedTestContainer;
@@ -623,13 +623,7 @@ async function startTestDatabaseAt(migrationThrough?: string, requireOwnedContai
       POSTGRES_USER: 'cauce_test',
       POSTGRES_PASSWORD: password
     })
-    .withHealthCheck({
-      test: ['CMD-SHELL', 'pg_isready -U cauce_test -d cauce_test'],
-      interval: 1_000,
-      timeout: 3_000,
-      retries: 60,
-      startPeriod: 1_000
-    })
+    .withHealthCheck(saludDePostgresDePrueba('cauce_test', 'cauce_test'))
     .withWaitStrategy(Wait.forHealthCheck());
   /*
    * On a shared network the container is reached by its address, so publishing is not just
@@ -637,15 +631,21 @@ async function startTestDatabaseAt(migrationThrough?: string, requireOwnedContai
    * a binding that never arrives, and the suite dies before the healthy container is ever used.
    */
   builder = network ? builder.withNetworkMode(network) : builder.withExposedPorts(5432);
-  const container = await builder.start();
-  const host = network ? container.getIpAddress(network) : container.getHost();
-  const port = network ? 5432 : container.getMappedPort(5432);
-  const url = `postgresql://cauce_test:${encodeURIComponent(password)}@${host}:${String(port)}/cauce_test`;
-  const pool = createPool(url);
+  const { container, pool, url } = await arrancarPostgresDePrueba(async () => {
+    const started = await builder.start();
+    const host = network ? started.getIpAddress(network) : started.getHost();
+    const port = network ? 5432 : started.getMappedPort(5432);
+    const address = `postgresql://cauce_test:${encodeURIComponent(password)}@${host}:${String(port)}/cauce_test`;
+    const opened = createPool(address);
+    // A healthy container can become visible a few milliseconds before its address is routable on a shared network.
+    await waitForDatabase(opened).catch(async (error: unknown) => {
+      await opened.end();
+      await started.stop();
+      throw error;
+    });
+    return { container: started, pool: opened, url: address };
+  });
   try {
-    // A healthy container can become visible a few milliseconds before its
-    // address is routable on an existing shared Docker network.
-    await waitForDatabase(pool);
     if (migrationThrough === undefined) await applyMigrations(pool);
     else await applyMigrationsThrough(pool, migrationThrough);
     await guardarSemillaDeCatalogo(pool);

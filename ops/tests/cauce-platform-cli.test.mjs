@@ -209,14 +209,14 @@ test('only emits parameterized platform calls for every supported mutation', asy
 
 test('the CLI repeats the two-owner seed atomically and the database audits and enforces its guards', async () => {
   const { createPool, applyMigrations } = await tsImport('../../packages/store/src/db.ts', import.meta.url);
+  const { arrancarPostgresDePrueba, saludDePostgresDePrueba } = await tsImport('../../tests/helpers/contenedor-de-prueba.ts', import.meta.url);
   const network = process.env.CAUCE_TEST_DOCKER_NETWORK;
   let builder = new GenericContainer('postgres:16-alpine')
     .withEnvironment({ POSTGRES_DB: 'cauce_test_platform', POSTGRES_USER: 'cauce_test', POSTGRES_PASSWORD: 'fixture-platform-password' })
-    .withHealthCheck({ test: ['CMD-SHELL', 'pg_isready -U cauce_test -d cauce_test_platform'],
-      interval: 1_000, timeout: 3_000, retries: 60, startPeriod: 1_000 })
+    .withHealthCheck(saludDePostgresDePrueba('cauce_test', 'cauce_test_platform'))
     .withWaitStrategy(Wait.forHealthCheck());
   builder = network ? builder.withNetworkMode(network) : builder.withExposedPorts(5432);
-  const container = await builder.start();
+  const container = await arrancarPostgresDePrueba(() => builder.start());
   const host = network ? container.getIpAddress(network) : container.getHost();
   const port = network ? 5432 : container.getMappedPort(5432);
   const url = fixtureDatabaseUrl({ user: 'cauce_test', password: 'fixture-platform-password', host, port, database: 'cauce_test_platform' });
@@ -360,14 +360,14 @@ test('the CLI repeats the two-owner seed atomically and the database audits and 
 
 test('seeds the platform administrator and company owners idempotently without manual SQL', async () => {
   const { createPool, applyMigrations } = await tsImport('../../packages/store/src/db.ts', import.meta.url);
+  const { arrancarPostgresDePrueba, saludDePostgresDePrueba } = await tsImport('../../tests/helpers/contenedor-de-prueba.ts', import.meta.url);
   const network = process.env.CAUCE_TEST_DOCKER_NETWORK;
   let builder = new GenericContainer('postgres:16-alpine')
     .withEnvironment({ POSTGRES_DB: 'cauce_test_seed', POSTGRES_USER: 'cauce_test', POSTGRES_PASSWORD: 'fixture-seed-password' })
-    .withHealthCheck({ test: ['CMD-SHELL', 'pg_isready -U cauce_test -d cauce_test_seed'],
-      interval: 1_000, timeout: 3_000, retries: 60, startPeriod: 1_000 })
+    .withHealthCheck(saludDePostgresDePrueba('cauce_test', 'cauce_test_seed'))
     .withWaitStrategy(Wait.forHealthCheck());
   builder = network ? builder.withNetworkMode(network) : builder.withExposedPorts(5432);
-  const container = await builder.start();
+  const container = await arrancarPostgresDePrueba(() => builder.start());
   const host = network ? container.getIpAddress(network) : container.getHost();
   const port = network ? 5432 : container.getMappedPort(5432);
   const url = fixtureDatabaseUrl({ user: 'cauce_test', password: 'fixture-seed-password', host, port, database: 'cauce_test_seed' });
