@@ -135,7 +135,7 @@ ping canónico de Zeus y su shell; el control se devolvió y la shell se cerró.
 `f3e5bf6e` cambia sólo documentación y no supone otra promoción. El candidato posterior sigue
 sin desplegar; sus gates deben corresponder a su fuente exacta.
 
-La promoción anterior `71df5bc9` registró OAuth local en `https://consola.humanizar.tech/mcp`
+La promoción anterior `71df5bc9` registró OAuth local en `https://<host-prod>/mcp`
 y el SDK con `human_message_initiator_v1` activado sólo en Zeus. La conexión y el consentimiento
 de cada cliente externo y la adopción del SDK requieren evidencia propia. La aceptación global
 de flota sigue pendiente, con Astra excluida por instrucción del dueño.

@@ -32,7 +32,7 @@ Las búsquedas incluyen los registros archivados para poder encontrar reply_to a
 
 El presupuesto cubre el bloque UTF-8 serializado entero: delimitadores, metadata, JSON escapado y avisos de truncación. Los cuerpos se truncan por puntos de código. El título y las instrucciones del bloque distinguen generado de enviado.
 
-La fixture mantiene el ID c137560e-ca62-46b2-89bb-b59947953547, ausencia de origin humano en `messages`, un notify y destino Telegram 6979524541/provider 2703 del incidente comunicado. El snapshot del outbox lleva `channel=telegram`, el canal histórico de esa fixture. El cuerpo es sintético: no se leyó el inbox real. Las pruebas ejercitan HTTP de contrato → engine → almacén archivado y reabierto → harness → prompt; además, lotes, identidad, destinatarios múltiples, intentos, estados, fragmentos, ambigüedad y presupuesto.
+La fixture usa identificadores sintéticos: entrega `00000000-0000-4000-8000-000000000301`, destino Telegram `42` y mensajes de proveedor ficticios. Mantiene la ausencia de origin humano en `messages` y un notify. El snapshot del outbox lleva `channel=telegram`, el canal histórico de esa fixture. Las pruebas ejercitan HTTP de contrato → engine → almacén archivado y reabierto → harness → prompt; además, lotes, identidad, destinatarios múltiples, intentos, estados, fragmentos, ambigüedad y presupuesto.
 
 La regresión de canal distinto y de edición posterior del destino vive en el store, contra PostgreSQL real: el recibo conserva `dm` aunque `egress_destinations.channel` pase a `group`, y desaparece si se quita el canal del snapshot.
 

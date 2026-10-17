@@ -49,7 +49,7 @@ server2 por contenedor:
 |---|---|---|
 | `rpg-dos-almas` (Minecraft) | 9,22 GiB | 12 GiB (77 %) |
 | `ws-isa` (Salva) | 859 MiB | 6 GiB, 2 CPU |
-| `cuota-claude-1`, `cuota-claude-3`, `cuota-codex-b2b`, `cuota-grok-1` | 108 MiB, 0,5 MiB, 1,2 MiB, 9,8 MiB | 512 MiB cada uno |
+| `<cuenta-claude-1>`, `<cuenta-claude-2>`, `<cuenta-codex-1>`, `<cuenta-grok-1>` | 108 MiB, 0,5 MiB, 1,2 MiB, 9,8 MiB | 512 MiB cada uno |
 | `isa-files`, `isa-tunnel`, `nav-lan` | 12, 2 y 11 MiB | sin límite |
 
 Kant corre nativo en server2 (`cauce-v3-host-kant.service`, `cauce-v3-tmux-kant.service`, `cauce-v3-pty-host@kant`): dos `claude` (~0,8 GB) y su `codex app-server`. Los límites ya comprometidos en server2 suman **20 GiB** (Minecraft 12, Salva 6, cuotas 2) sobre 22,8 GiB físicos; el `systemd --user` de `server` está `degraded` solo por `cauce-v3-profile-expectation@salva` (fallo previo, igual que en la VPS). Imágenes en server2: 22 GB (`ws-isa` 18,2 GB, `cuota-cli` 2,1 GB).
@@ -67,7 +67,7 @@ Kant corre nativo en server2 (`cauce-v3-host-kant.service`, `cauce-v3-tmux-kant.
 - **Unidades** (usuario `stev`, `systemd --user`, linger): `cauce-v3-container-gaia.service` (`container-adapter-supervisor.sh start gaia`), `cauce-v3-pty@gaia.service`, `cauce-v3-profile-expectation@gaia.service` (fallida). De root: `cauce-bootstrap-guard` (vigila `claw*` y `agv2-*`). El gateway es el CMD: no depende del `cauce-openclaw-gateway-guard`.
 - **Layout legado**: `<home-del-agente>/clawd` es un repo Git (`gaia-clawd` del GitHub del dueño, rama `web-humanizar-catalogo`, HEAD `87ddc8f`) que mezcla contexto (`AGENTS.md`, `IDENTITY.md`, `SOUL.md`, `USER.md`, `TOOLS.md`, `HEARTBEAT.md`, `MEMORY.md` vacío, `00-CONTEXTO-ACTUAL.md`), documentos de negocio (`CATALOGO`, `EMPRESA`, `ESTRATEGIA`, `NEGOCIO`, `PLAN`), catálogo PDF/JPG, `AGENTS.md.bak-*` y carpetas `clientes`, `entregas`, `pedidos`, `memory`, `tools`, `gravitatoria*`, `web-enlaces`, `web-humanizar*`. Estado Cauce en `~/.openclaw/cauce-v3/gaia`; `~/.openclaw` guarda además 20 copias `openclaw.json.bak*` y `codex-cli.bak-*`.
 - **Binding**: primario `anthropic/claude-opus-5`; fallbacks `codex/gpt-6-astra`, `anthropic/claude-sonnet-5`, `antigravity/gemini-3.8-flash-high`; `thinkingDefault max`. Claude por el perfil `claude-cli` (OAuth del CLI): **setup-token sin refreshToken**; `claude auth status`: `loggedIn`, suscripción `max`, sin email ni organización, así que **el titular no se puede leer sin abrir la credencial** (titular previsto: Miguel, pregunta 2 del §3). Fallback Codex: **cuenta de proveedor del operador**, la misma que usa Argos. `cauce-cred-guard` no cubre los `agv2-*`.
-- **Depende de la VPS**: el proveedor `antigravity` apunta a `http://ctrl-infra:18799/v1` (shim de Argos); fuera de la VPS ese fallback queda roto y Gemini está fuera del pool: se elimina del destino.
+- **Depende de la VPS**: el proveedor `antigravity` apunta a `http://<host-shim-legado>/v1` (shim de Argos); fuera de la VPS ese fallback queda roto y Gemini está fuera del pool: se elimina del destino.
 
 ### Hades → `agv2-steven-hades-oc` (grok, tenant Steven)
 
@@ -119,7 +119,7 @@ No se pueden determinar en solo lectura. Su único directorio de trabajo es `/wo
 
 Todos son del GitHub del dueño. Los otros 33 directorios con Git son *worktrees* de esos repos y no se clonan.
 
-## 4. Praxis en el hospital (`ssh hospital`, `vps-990525f1`)
+## 4. Praxis en el hospital (`ssh hospital`, `<host-hospital>`)
 
 Host: 8 núcleos, 22,9 GiB de RAM (**18,4 GiB disponibles**), sin swap, 172 GB libres de 207 GB. Docker: 141 imágenes (21,5 GB, 4,6 GB recuperables) y 2,7 GB de caché de build.
 

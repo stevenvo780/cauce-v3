@@ -583,7 +583,7 @@ journal y sigue. `cred-guard` y la supervisión de Praxis no lo llevan: la varia
 | Variable | Quién la exige | Significado | Ejemplo ficticio |
 |---|---|---|---|
 | `CAUCE_CRED_GUARD_TARGETS` | `cred-guard.py` | Ruta de un JSON privado con `targets` y `remote_targets` | `/etc/cauce-v3/cred-guard-targets.json` |
-| `CAUCE_OWNER_TELEGRAM_CHAT_ID` | aviso del médico y `praxis-supervision-evidence.py` | Chat del operador. El médico sigue si falta. Praxis rechaza el origen (`owner_conversation_unconfigured`) tras escribir el nombre de la variable. | `1000000001` |
+| `CAUCE_OWNER_TELEGRAM_CHAT_ID` | aviso del médico y `praxis-supervision-evidence.py` | Chat del operador. El médico sigue si falta. Praxis rechaza el origen (`owner_conversation_unconfigured`) tras escribir el nombre de la variable. | `<id-chat-operador>` |
 | `CAUCE_DECISIONES_SMOKE_PKI` | `deploy/decisiones/desplegar.sh` | Directorio de la PKI de humo. Sin ella el despliegue sale 1. | `/etc/cauce-v3/pki/smoke` |
 | `CAUCE_REMOTE_USER` | `cauce` cuando la ruta es `vps` | Usuario remoto. Si falta, esa ruta sale 2 y `cauce flota` omite el VPS. | `ops` |
 
