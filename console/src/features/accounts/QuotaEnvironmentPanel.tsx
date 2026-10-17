@@ -99,9 +99,9 @@ export function QuotaEnvironmentPanel({ snapshot, loading, accounts, canWrite, c
       </article>;
     })}</div>
     {snapshot && !snapshot.environments.length ? <p>No hay entornos de consulta. Registra una cuenta y crea su entorno.</p> : null}
-    {editing ? <form aria-label="Editar entorno de cuotas" className="grid gap-2" onSubmit={event => { event.preventDefault(); if (!canEdit(editing)) return; void perform(() => api.updateQuotaEnvironment(editing.id, { expected_version: editing.version, label: label.trim() }), 'Configuración del entorno guardada.'); }}>
+    {editing ? <form aria-label="Editar entorno de cuotas" className="grid gap-2" onSubmit={event => { event.preventDefault(); if (!canEdit(editing) || !label.trim()) return; void perform(() => api.updateQuotaEnvironment(editing.id, { expected_version: editing.version, label: label.trim() }), 'Configuración del entorno guardada.'); }}>
       <label>Nombre del entorno<input required maxLength={80} value={label} disabled={!canEdit(editing)} onChange={event => { setLabel(event.target.value); }} /></label>
-      <div className="flex gap-2"><Button type="submit" disabled={!canEdit(editing)} title={editBlock(editing)}>Guardar entorno</Button><Button disabled={busy} onClick={() => { setEditing(undefined); }}>Cancelar</Button></div></form> : null}
+      <div className="flex gap-2"><Button type="submit" disabled={!canEdit(editing) || !label.trim()} title={!canEdit(editing) ? editBlock(editing) : !label.trim() ? 'Escribe el nombre del entorno.' : undefined}>Guardar entorno</Button><Button disabled={busy} onClick={() => { setEditing(undefined); }}>Cancelar</Button></div></form> : null}
     {confirm ? <section aria-label="Confirmar operación del entorno" className="grid gap-2 rounded-xl border border-line bg-surface p-4"><p>{confirm.action === 'authenticate'
       ? `Autenticar ${confirm.environment.label} inicia una sesión propia del entorno. Completa la autorización del proveedor en el enlace o código que aparezca.`
       : `Eliminar ${confirm.environment.label} retira su entorno y su autenticación. La cuenta y sus agentes vinculados se conservan.`}</p>

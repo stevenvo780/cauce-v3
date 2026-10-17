@@ -83,6 +83,26 @@ it.each<[string, QuotaEnvironmentsSnapshot | undefined, boolean]>([
   expect(name).toBeDisabled();
 });
 
+it('editar entorno con nombre vacío o de espacios deshabilita Guardar y no envía', async () => {
+  const update = vi.spyOn(testApi, 'updateQuotaEnvironment').mockResolvedValue({ environment });
+  const user = userEvent.setup();
+  renderWithApi(<QuotaEnvironmentPanel snapshot={snapshot} accounts={accounts} canWrite reload={vi.fn()} />);
+  await user.click(screen.getByRole('button', { name: 'Editar entorno' }));
+  const form = screen.getByRole('form', { name: 'Editar entorno de cuotas' });
+  const name = within(form).getByRole('textbox', { name: 'Nombre del entorno' });
+  const save = within(form).getByRole('button', { name: 'Guardar entorno' });
+  expect(save).toBeEnabled();
+  await user.clear(name);
+  expect(save).toBeDisabled();
+  expect(save).toHaveAttribute('title', 'Escribe el nombre del entorno.');
+  await user.type(name, '   ');
+  expect(save).toBeDisabled();
+  fireEvent.submit(form);
+  expect(update).not.toHaveBeenCalled();
+  await user.type(name, 'Renombrado');
+  expect(save).toBeEnabled();
+});
+
 it('awaiting_auth sin operación devuelta también bloquea comandos nuevos', () => {
   renderWithApi(<QuotaEnvironmentPanel snapshot={{ ...snapshot, environments: [{ ...environment, status: 'awaiting_auth' }] }} accounts={accounts} canWrite reload={vi.fn()} />);
   expect(screen.getByRole('button', { name: 'Consultar cuotas' })).toBeDisabled();
