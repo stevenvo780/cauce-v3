@@ -25,7 +25,7 @@ El Fastify real escucha en 127.0.0.1 y puerto efímero. registerAgentEmissionRou
 
 La autenticación usa DevOnlyAuthProvider.forTests y los memberships sembrados por las migraciones en la base recién creada. El harness del modelo es ControlledRunner: sólo registra el prompt y devuelve una salida inocua; no ejecuta LLM, herramientas, notificaciones ni sesiones reales. Estos dos sustitutos de prueba NO reemplazan Fastify, SQL, la derivación ni el lector HTTP.
 
-Los fixtures insertan filas sintéticas representativas de fuente, notificación, outbox y efectos. El caso c137560e-ca62-46b2-89bb-b59947953547 tiene un aviso, origin SQL NULL y recibo completo hacia conversación6979524541/provider2703. No son filas extraídas de producción ni prueba del evento histórico original. El parcial tiene un fragmento enviado de tres y otra notificación con destino distinto.
+Los fixtures insertan filas sintéticas representativas de fuente, notificación, outbox y efectos. El caso 00000000-0000-4000-8000-000000000301 tiene un aviso, origin SQL NULL y recibo completo hacia conversación42/provider101. No son filas extraídas de producción ni prueba del evento histórico original. El parcial tiene un fragmento enviado de tres y otra notificación con destino distinto.
 
 Se comprueban: completo sin origen humano; partial/1-de-3 sin atribuir sent; separación de notificaciones/destinos; aislamiento alias, tenant y conversación; otro intento del inbox; historial como datos y no autorización. El caso completo recupera el historial local tras archivo y reinicio. La salida NOTIFY_E2E_RUNTIME identifica driver, ruta, store y sustitutos de prueba sólo cuando hubo conexión real y registro de la ruta.
 

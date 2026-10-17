@@ -5,10 +5,10 @@ import { deriveAgentEgressState, toAgentEgressItem, type AgentEgressRow } from '
 const base: AgentEgressRow = {
   notification_id: 'n1', source_delivery_id: 'd1', source_attempt: 1, notify_index: 0,
   handle: 'steven_dm', kind: 'decision_request', adapter: 'telegram', channel: 'telegram',
-  conversation_id: '6979524541',
+  conversation_id: '42',
   decision: 'allowed', denial_code: null, produced_outbox_id: 'o1', created_at: '2026-09-08T20:27:19.000Z',
   outbox_status: 'sent', chunk_count: 1, chunks_seen: 1, chunks_sent: 1, states: ['sent'],
-  provider_message_ids: ['2703'], effect_ids: ['o1:0'], last_sent_at: '2026-09-08T20:27:20.000Z',
+  provider_message_ids: ['101'], effect_ids: ['o1:0'], last_sent_at: '2026-09-08T20:27:20.000Z',
 };
 
 function receipt(row: AgentEgressRow = base): AgentEgressItem {
@@ -22,17 +22,17 @@ describe('agent egress receipt state', () => {
   it('confirms sent only from a per-chunk receipt and exposes the provider id', () => {
     const item = receipt();
     expect(item.state).toBe('sent');
-    expect(item.provider_message_id).toBe('2703');
+    expect(item.provider_message_id).toBe('101');
     expect(item.sent_at).toBe('2026-09-08T20:27:20.000Z');
-    expect(item.destination).toEqual({ adapter: 'telegram', channel: 'telegram', conversation_id: '6979524541', handle: 'steven_dm' });
+    expect(item.destination).toEqual({ adapter: 'telegram', channel: 'telegram', conversation_id: '42', handle: 'steven_dm' });
   });
   it('never declares a multi-chunk send delivered from one sent chunk', () => {
     const row: AgentEgressRow = { ...base, chunk_count: 3, chunks_seen: 3, chunks_sent: 1,
-      states: ['sent', 'prepared', 'prepared'], provider_message_ids: ['2703', null, null] };
+      states: ['sent', 'prepared', 'prepared'], provider_message_ids: ['101', null, null] };
     const item = receipt(row);
     expect(item.state).toBe('partial');
     expect(item.provider_message_id).toBeUndefined();
-    expect(item.provider_message_ids).toEqual(['2703']);
+    expect(item.provider_message_ids).toEqual(['101']);
     expect(item.chunks).toEqual({ expected: 3, sent: 1 });
   });
   it('reports an outbox marked sent without any receipt as unconfirmed, not sent', () => {

@@ -1,8 +1,8 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { spawn, type ChildProcess } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, statSync } from 'node:fs';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
-import { homedir } from 'node:os';
+import { homedir, userInfo } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { VerifiedOAuthIdentity } from '@cauce/mcp-fleet-monitor/gateway-http';
 import { createHumanGatewayAuthorization } from '../../packages/mcp-fleet-monitor/src/gateway-http.js';
@@ -171,7 +171,7 @@ function bwrapArgs(
     '--uid', String(process.getuid?.() ?? 1000), '--gid', String(process.getgid?.() ?? 1000),
     '--proc', '/proc', '--dev', '/dev', '--ro-bind', '/usr', '/usr', '--ro-bind', '/lib', '/lib',
     '--ro-bind-try', '/lib64', '/lib64', '--ro-bind', '/etc', '/etc', '--symlink', '/usr/bin', '/bin',
-    '--dir', '/home', '--dir', '/home/stev', '--ro-bind', '/home/stev/.local', '/home/stev/.local',
+    '--dir', '/home', '--dir', homedir(), '--ro-bind', join(homedir(), '.local'), join(homedir(), '.local'),
   ];
   let current = '';
   for (const part of dirname(executable).split('/').filter(Boolean)) {
@@ -201,7 +201,7 @@ export async function startHumanProfileCodexFixture(
       || process.env.CAUCE_REQUIRE_TESTCONTAINERS !== '1') {
     throw new Error('human-profile E2E requires its own native Testcontainers database');
   }
-  if (process.env.HOME !== '/home/stev' || process.getuid?.() !== 1000) {
+  if (process.env.HOME !== userInfo().homedir || process.getuid?.() === 0 || process.getuid?.() !== statSync(process.cwd()).uid) {
     throw new Error('human-profile Codex E2E must use the normal workspace owner');
   }
   const root = process.cwd();
@@ -458,8 +458,8 @@ export async function startHumanProfileCodexFixture(
         await writeFile(wrapper, wrapperSource(codexExecutable), { mode: 0o700 });
         const child = spawn(executableOnPath('bwrap'), [
           ...bwrapArgs(root, scratch, codexExecutable, generatedProfilePath, hostProfilePath, codexHome),
-          '--setenv', 'HOME', '/home/stev', '--setenv', 'CODEX_HOME', codexHome,
-          '--setenv', 'PATH', '/usr/bin:/bin:/home/stev/.local/bin',
+          '--setenv', 'HOME', homedir(), '--setenv', 'CODEX_HOME', codexHome,
+          '--setenv', 'PATH', `/usr/bin:/bin:${join(homedir(), '.local/bin')}`,
           '--setenv', 'LANG', process.env.LANG ?? 'C.UTF-8',
           '--setenv', 'CAUCE_TENANT', TENANT,
           '--setenv', 'CAUCE_ROOM', room,

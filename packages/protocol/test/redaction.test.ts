@@ -112,8 +112,8 @@ describe('redaction rules: every family has a positive case', () => {
 
 describe('redaction rules: a false positive is worse than a miss', () => {
   it.each([
-    'mirá https://demeter-dev.vercel.app/empresa/configuracion-clientes',
-    'el panel está en http://100.64.0.6:8443/v3/messages',
+    'mirá https://preview.example.invalid/empresa/configuracion-clientes',
+    'el panel está en http://192.0.2.44:8443/v3/messages',
     'https://github.com/anomalyco/opencode/issues',
     'la ruta es file:///workspace/clases/video/Guion.docx',
     'nos vemos 15:30 en la oficina',

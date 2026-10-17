@@ -11,7 +11,7 @@ import {
   type V4Page, type V4Person,
 } from './v4-console-real-browser.helpers.js';
 
-const python = '/home/stev/.venvs/cauce-qa/bin/python';
+const python = 'python3';
 const run = randomUUID().replaceAll('-', '').slice(0, 8);
 const alias = `zzpurge${run}`;
 const runtimeKey = `zz-canary-purge-${run}`;

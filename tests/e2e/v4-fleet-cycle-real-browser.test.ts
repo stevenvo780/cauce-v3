@@ -23,7 +23,7 @@ import {
  * CAUCE_FLEET_CYCLE_TARGET selects where the computer lives:
  * - `local` (default): a clean computer is built here (systemd container, enrolled executor, signed authority) and the
  *   company is registered through the console. Every Docker resource of the run starts with `zz-canary-cycle-<run>`.
- * - `server2`: the same walkthrough against a deployed gateway. The console served here proxies `/v3` to
+ * - `deployed`: the same walkthrough against a deployed gateway. The console served here proxies `/v3` to
  *   CAUCE_FLEET_CYCLE_GATEWAY_URL (Origin rewritten to CAUCE_FLEET_CYCLE_GATEWAY_ORIGIN, trusting CAUCE_FLEET_CYCLE_CA_FILE
  *   when set), signs in with CAUCE_FLEET_CYCLE_EMAIL/CAUCE_FLEET_CYCLE_PASSWORD and uses an already enrolled computer:
  *   CAUCE_FLEET_CYCLE_TENANT, CAUCE_FLEET_CYCLE_HOST_ID, CAUCE_FLEET_CYCLE_ACCOUNT_ID and two rooms in

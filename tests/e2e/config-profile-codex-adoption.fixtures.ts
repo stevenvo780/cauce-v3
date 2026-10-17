@@ -2,7 +2,7 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { execFile, spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { accessSync, constants, existsSync, realpathSync, readdirSync, statSync } from 'node:fs';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
-import { homedir, tmpdir } from 'node:os';
+import { homedir, tmpdir, userInfo } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
 import type { AddressInfo } from 'node:net';
 import { promisify } from 'node:util';
@@ -202,8 +202,8 @@ function bwrapArgs(
     '--proc', '/proc', '--dev', '/dev',
     '--ro-bind', '/usr', '/usr', '--ro-bind', '/lib', '/lib', '--ro-bind', '/lib64', '/lib64',
     '--ro-bind', '/etc', '/etc', '--symlink', '/usr/bin', '/bin',
-    '--dir', '/home', '--dir', '/home/stev',
-    '--ro-bind', '/home/stev/.local', '/home/stev/.local',
+    '--dir', '/home', '--dir', homedir(),
+    '--ro-bind', join(homedir(), '.local'), join(homedir(), '.local'),
   ];
   const realParent = dirname(codexExecutable);
   const segments = realParent.split('/').filter(Boolean);
@@ -420,7 +420,7 @@ export async function probeCodexNamespace(
   const probe = await new Promise<{ code: number | null; stdout: string; stderr: string }>((resolveProbe) => {
     const child = spawn('/usr/bin/bwrap', [
       ...bwrapArgs(root, scratch, codexExecutable, generatedProfilePath, profilePath, codexHome),
-      '--setenv', 'HOME', '/home/stev', '--setenv', 'CODEX_HOME', codexHome,
+      '--setenv', 'HOME', homedir(), '--setenv', 'CODEX_HOME', codexHome,
       '--setenv', 'CAUCE_READONLY_PATHS', JSON.stringify(readonlyPaths.map(({ name, path }) => ({ name, target: path }))),
       '--', '/usr/bin/node', '/tmp/cauce-profile-adoption/namespace-probe.cjs',
     ], { cwd: root, env: {}, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -514,8 +514,8 @@ export async function startCodexProfileAdoptionFixture(
       || process.env.CAUCE_TEST_DOCKER_NETWORK_OWNER !== undefined) {
     throw new Error('Codex adoption E2E requires an independently owned native Testcontainers network');
   }
-  if (process.env.HOME !== '/home/stev' || process.getuid?.() !== 1000) {
-    throw new Error('Codex adoption E2E must run as the normal /home/stev owner');
+  if (process.env.HOME !== userInfo().homedir || process.getuid?.() === 0 || process.getuid?.() !== statSync(root).uid) {
+    throw new Error('Codex adoption E2E must run as the normal workspace owner');
   }
   const codexHome = process.env.CODEX_HOME ?? join(homedir(), '.codex');
   if (codexHome !== join(homedir(), '.codex')) {
@@ -603,7 +603,7 @@ export async function startCodexProfileAdoptionFixture(
     const wrapper = join(scratch, 'codex-qa-wrapper.cjs');
     await writeFile(wrapper, budgetedCodexWrapperSource(codexExecutable), { mode: 0o700 });
     const env: Record<string, string | undefined> = {
-      PATH: '/usr/bin:/bin:/home/stev/.local/bin',
+      PATH: `/usr/bin:/bin:${join(homedir(), '.local/bin')}`,
       LANG: process.env.LANG,
       LC_ALL: process.env.LC_ALL,
       CAUCE_TENANT: tenant,
@@ -617,7 +617,7 @@ export async function startCodexProfileAdoptionFixture(
       CAUCE_NO_PROGRESS_TIMEOUT_MS: '240000',
       CAUCE_DEV_AUTH: '1',
       CAUCE_HARNESS_COMMAND: '/tmp/cauce-profile-adoption/codex-qa-wrapper.cjs',
-      HOME: '/home/stev',
+      HOME: homedir(),
       CODEX_HOME: codexHome,
       NODE_ENV: 'test',
     };
