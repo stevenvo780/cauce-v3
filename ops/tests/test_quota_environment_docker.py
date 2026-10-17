@@ -24,7 +24,7 @@ runtime = __import__('quota_runtime')
 EXECUTOR = ROOT / 'cli' / 'fleet-executor.py'
 LOGIN = ROOT / 'cli' / 'provider-login.py'
 TASK = '20261013T070408-20261013T065533-r-20261013T051651-t04-mis-cuotas-ciclo-web-real'
-EVIDENCE = REPO / '.delegados/v4/evidencias' / TASK / 'runtime'
+EVIDENCE = REPO / '.test-state/quota-environments' / TASK / 'runtime'
 PROVIDERS = {'claude': '@anthropic-ai/claude-code', 'codex': '@openai/codex', 'grok': '@xai-official/grok'}
 SCOPE = 'quota-environments'
 
