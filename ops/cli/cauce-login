@@ -115,7 +115,7 @@ def safe_status(result: dict) -> dict:
     keys = ('authenticated', 'login_mode', 'subject', 'home_tenant', 'name', 'roles', 'permissions', 'expires_at')
     safe = {key: result[key] for key in keys if key in result}
     if isinstance(result.get('authority'), dict):
-        safe['authority'] = {key: result['authority'][key] for key in ('home_company', 'acting_company', 'platform_override', 'company_role')
+        safe['authority'] = {key: result['authority'][key] for key in ('role', 'scope', 'home_company', 'acting_company', 'platform_override')
                              if key in result['authority']}
     return safe
 
