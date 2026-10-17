@@ -246,7 +246,7 @@ describe('deploy gates receipt', () => {
   });
 
   it.each([
-    ['a red gate', (receipt: GatesReceipt) => { gate(receipt, 2).exit = 1; }, 'pnpm lint: exit 1'],
+    ['a red gate', (receipt: GatesReceipt) => { gate(receipt, 1).exit = 1; }, 'pnpm lint: exit 1'],
     ['a boolean exit', (receipt: GatesReceipt) => { gate(receipt, 0).exit = false; }, 'exit False'],
     ['a missing gate', (receipt: GatesReceipt) => { receipt.comandos.pop(); }, 'no son los de scripts/release-gates.sh --list'],
     ['another tree', (receipt: GatesReceipt) => { receipt.tree = '0'.repeat(40); }, 'tree del recibo'],
@@ -721,8 +721,7 @@ describe('release gates receipt', () => {
   it('lists only gates that exist in package.json, in order', () => {
     const scripts = (JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')) as { scripts: Record<string, string> }).scripts;
     const commands = releaseGateCommands();
-    expect(commands[0]).toBe('python3 -m pytest ops/tests/test_fleet_orphan_sweep.py ops/tests/test_fleet_executor_container.py -q --tb=line');
-    expect(commands[1]).toBe('pnpm typecheck');
+    expect(commands[0]).toBe('pnpm typecheck');
     for (const command of commands) {
       if (!command.startsWith('pnpm ')) continue;
       expect(scripts[command.replace(/^pnpm /, '')], command).toBeDefined();
@@ -756,11 +755,9 @@ describe('release gates receipt', () => {
     const result = gates.run({ MOCK_RED_GATE: 'lint', CAUCE_RELEASE_GATES_JOBS: '1' });
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('ROJO en pnpm lint');
-    expect(gates.pnpmLog()).toBe('orphan\ntypecheck\nlint\n');
+    expect(gates.pnpmLog()).toBe('typecheck\nlint\n');
     const receipt = gates.receipt(single(gates.receipts()));
-    expect(receipt.comandos.map(command => [command.cmd, command.exit])).toEqual([
-      ['python3 -m pytest ops/tests/test_fleet_orphan_sweep.py ops/tests/test_fleet_executor_container.py -q --tb=line', 0],
-      ['pnpm typecheck', 0], ['pnpm lint', 3]]);
+    expect(receipt.comandos.map(command => [command.cmd, command.exit])).toEqual([['pnpm typecheck', 0], ['pnpm lint', 3]]);
     const refused = deploy({ receipt, environment: { MOCK_COMMIT: receipt.commit, MOCK_TREE: receipt.tree } });
     expectStoppedBeforeBuild(refused, 'pnpm lint: exit 3');
   });
@@ -773,18 +770,5 @@ describe('release gates receipt', () => {
     expect(result.stderr).toContain('el arbol no esta limpio');
     expect(gates.receipts()).toEqual([]);
     expect(existsSync(join(gates.directory, 'pnpm.log'))).toBe(false);
-  });
-
-  it('stops when the scoped orphan sweep fails and does not run the pnpm gates', () => {
-    const gates = repositoryWithGates();
-    const result = gates.run({ MOCK_RED_GATE: 'orphan' });
-    expect(result.status).toBe(1);
-    expect(result.stderr).toContain('ROJO en python3 -m pytest ops/tests/test_fleet_orphan_sweep.py ops/tests/test_fleet_executor_container.py -q --tb=line');
-    expect(gates.pnpmLog()).toBe('orphan\n');
-    const receipt = gates.receipt(single(gates.receipts()));
-    expect(receipt.comandos.map(command => [command.cmd, command.exit])).toEqual([
-      ['python3 -m pytest ops/tests/test_fleet_orphan_sweep.py ops/tests/test_fleet_executor_container.py -q --tb=line', 3]]);
-    const refused = deploy({ receipt, environment: { MOCK_COMMIT: receipt.commit, MOCK_TREE: receipt.tree } });
-    expectStoppedBeforeBuild(refused, 'python3 -m pytest ops/tests/test_fleet_orphan_sweep.py ops/tests/test_fleet_executor_container.py -q --tb=line: exit 3');
   });
 });

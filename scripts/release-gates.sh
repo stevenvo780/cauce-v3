@@ -348,8 +348,12 @@ if [ "$JOBS" = 1 ]; then
 else
   echo "release-gates: $COMMIT con hasta $JOBS carriles y $SHARDS trozo(s) para ${SHARDED[*]}; los extra son worktrees desechables en $LANES_ROOT"
 fi
-[ ${#ORPHAN_SWEEP[@]} -eq 0 ] || launch "${ORPHAN_SWEEP[*]}" orphan-sweep 0 "${ORPHAN_SWEEP[@]}"
-reap
+if [ ${#ORPHAN_SWEEP[@]} -gt 0 ]; then
+  launch "${ORPHAN_SWEEP[*]}" orphan-sweep 0 "${ORPHAN_SWEEP[@]}"
+  reap
+else
+  FREE_LANES=(0)
+fi
 PENDING=()
 if [ -z "$FAILED" ]; then
   for gate in "${ORDER[@]}"; do
