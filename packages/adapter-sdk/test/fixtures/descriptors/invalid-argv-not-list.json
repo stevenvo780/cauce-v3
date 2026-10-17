@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "harness": "fake2",
+  "operations": {
+    "install": "runtime-package",
+    "execute": "native-execution",
+    "authenticate": "provider-login",
+    "update": "provider-update",
+    "quota": "quota-collector"
+  },
+  "context": {
+    "native_document": "AGENTS.md",
+    "max_bytes": 65536
+  },
+  "provider": {
+    "authenticate_argv": [
+      "/usr/local/bin/fake2",
+      "login"
+    ],
+    "quota_argv": "/usr/local/bin/node",
+    "update_package": "@fixture/fake2",
+    "fleet_module": "fleet_provider_fake2"
+  }
+}
