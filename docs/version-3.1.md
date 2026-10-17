@@ -120,15 +120,12 @@ sobre él, y sólo eso:
 si el humo sale rojo parcial, la columna «Resultado» se corrige a mano en el mismo commit que
 registra la fila, y ese commit es también el que actualiza estos documentos.
 
-La última fila de [HISTORIAL](../deploy/HISTORIAL.md) registra `87c7eece`, el 13 de octubre a las
-05:34, hora de Colombia: el controlador de flota actualizado con el kit de la misma versión (145
-pines, ningún contenedor que migrar) y el enclave de autoridad firmada instalado, tras el `deploy.sh`
-completo del mismo árbol a las 04:29, el primer despliegue de V4. Ese despliegue llevaba un recibo de
-gates 9/9 verde del SHA y aplicó 22 migraciones (058→079) en una transacción tras un backup fresco.
-Los nueve servicios quedaron sanos y la flota 14/14; el único rojo del humo fue el bus, sin tráfico
-entre agentes de madrugada. El runtime usa la imagen
-`sha256:4b8a957d3cfe281bff47183197ceffd5f48342ebd0c6a0dfa54b7ae1c205060c` y la consola
-`sha256:05fcc0d2c6e8d9a80fcd5d5099d61128f0571b5b9f7f6181340206c974b0ed78`.
+La última fila de [HISTORIAL](../deploy/HISTORIAL.md) registra `01f2089a`, el 17 de octubre a las
+17:48, hora de Colombia: el segundo `deploy.sh` del mismo árbol, que encendió la preparación de
+ordenadores (`CAUCE_FLEET_HOST_SETUP_CONFIG_FILE`) sin migraciones, tras el despliegue 2 de V4 a las
+17:34, que aplicó 2 migraciones tras un backup fresco. Los dos se hicieron sin recibo de gates, por
+decisión del dueño, con el motivo en la fila. Los nueve servicios quedaron sanos, la flota 14/14 y el
+humo en verde; el controlador de flota y el enclave se actualizaron al mismo commit.
 
 La sesión Steven recargada mostró el grafo primero y la lista cerrada al final. Se comprobó un
 ping canónico de Zeus y su shell; el control se devolvió y la shell se cerró. El journal de Main
