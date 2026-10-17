@@ -99,6 +99,18 @@ it('agotado el libro, la búsqueda vacía SÍ es una afirmación sobre todo el l
   expect(screen.queryByRole('button', { name: /cargar anteriores/i })).not.toBeInTheDocument();
 });
 
+it('sin búsqueda, una auditoría vacía no se presenta como un filtro sin coincidencias', async () => {
+  server.use(http.get('*/v3/console/audit', () => HttpResponse.json({
+    items: [],
+    next_cursor: null,
+  })));
+  renderWithApi(<PanelConBusqueda />);
+
+  expect(await screen.findByText(/Todavía no hay eventos de auditoría en esta lectura/)).toBeInTheDocument();
+  expect(screen.queryByText('No hay eventos que coincidan.')).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Releer auditoría' })).toBeInTheDocument();
+});
+
 it('dice hasta dónde llegó la búsqueda incluso cuando encontró algo', async () => {
   server.use(http.get('*/v3/console/audit', () => HttpResponse.json({
     items: [evento('9'), evento('8')],

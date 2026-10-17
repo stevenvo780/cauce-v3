@@ -125,6 +125,7 @@ export function AuditPanel({ query, onQuery }: { query: string; onQuery: (value:
       <Toolbar className="mb-3">
         <SearchField label="Filtrar auditoría" value={query} onChange={onQuery} placeholder="Filtrar por actor, action, trace…" />
         <span className="text-xs text-muted">{String(filtered.length)} visibles de {String(events.length)}</span>
+        <Button size="sm" disabled={resource.loading} onClick={() => { void resource.reload(); }}>Releer auditoría</Button>
       </Toolbar>
       {resource.error ? (
         <Notice tone="danger" role="alert" className="mb-3 flex flex-wrap items-center gap-2">
@@ -148,7 +149,9 @@ export function AuditPanel({ query, onQuery }: { query: string; onQuery: (value:
             ? `Ninguno de los ${String(events.length)} eventos cargados coincide. NO quiere decir que no exista: `
               + 'la búsqueda sólo cubre lo cargado y quedan eventos anteriores sin leer — seguí con '
               + '«Cargar anteriores».'
-            : 'No hay eventos que coincidan.'}
+            : needle
+              ? 'No hay eventos que coincidan.'
+              : 'Todavía no hay eventos de auditoría en esta lectura. Cuando el gateway registre decisiones, aparecerán aquí; si esperabas eventos, pulsa «Releer auditoría».'}
         </EmptyState>
       ) : (
         <ul className="m-0 grid list-none divide-y divide-line overflow-hidden rounded-lg border border-line bg-surface p-0" aria-label="Eventos de auditoría">
