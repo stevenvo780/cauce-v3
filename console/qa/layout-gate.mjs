@@ -262,7 +262,6 @@ async function medirViewport(navegador, viewport, origin) {
   return { medidas, sinMedir };
 }
 
-/** The first load makes Vite optimize its dependencies, which on a loaded machine outlasts a route's readiness budget. */
 async function precalentar(navegador, origin) {
   const contexto = await navegador.newContext({ viewport: { width: VIEWPORTS[0], height: ALTO } });
   try {
