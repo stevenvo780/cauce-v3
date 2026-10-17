@@ -266,8 +266,17 @@ async function precalentar(navegador, origin) {
   const contexto = await navegador.newContext({ viewport: { width: VIEWPORTS[0], height: ALTO } });
   try {
     const pagina = await contexto.newPage();
-    await pagina.goto(origin + ROUTES[0], { waitUntil: 'domcontentloaded', timeout: 180000 });
-    await pagina.locator(LISTO[ROUTES[0]] ?? LISTO_POR_DEFECTO).first().waitFor({ state: 'visible', timeout: 180000 });
+    const consola = [];
+    pagina.on('console', mensaje => { if (mensaje.type() === 'error') consola.push(mensaje.text().slice(0, 300)); });
+    pagina.on('pageerror', error => { consola.push(`pageerror: ${String(error.message).slice(0, 300)}`); });
+    try {
+      await pagina.goto(origin + ROUTES[0], { waitUntil: 'domcontentloaded', timeout: 180000 });
+      await pagina.locator(LISTO[ROUTES[0]] ?? LISTO_POR_DEFECTO).first().waitFor({ state: 'visible', timeout: 180000 });
+    } catch (error) {
+      const texto = await pagina.locator('body').innerText({ timeout: 5000 }).catch(() => '(sin body)');
+      throw new Error(`precarga de ${pagina.url()} sin ${LISTO[ROUTES[0]] ?? LISTO_POR_DEFECTO}: ${String(error.message).split('\n')[0]}; `
+        + `texto=${JSON.stringify(texto.slice(0, 600))}; consola=${JSON.stringify(consola.slice(-10))}`, { cause: error });
+    }
   } finally {
     await contexto.close();
   }
