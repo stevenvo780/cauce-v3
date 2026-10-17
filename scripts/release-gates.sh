@@ -108,6 +108,10 @@ STARTED="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 OUT="$OUT_ROOT/$COMMIT-$(date -u +%Y%m%dT%H%M%SZ)"
 mkdir -p "$OUT_ROOT"
 mkdir -m 700 "$OUT" || die "no pude crear $OUT"
+# The whole-stack suites queue per vitest process; with shards there are many processes, so they also share
+# host-wide seats (tests/helpers/carril-exclusivo.setup.ts). Two seats: test and coverage, as the serial gate ran them.
+export CAUCE_CARRIL_EXCLUSIVO_HOST="$OUT/carril-exclusivo" CAUCE_CARRIL_EXCLUSIVO_PLAZAS="${CAUCE_CARRIL_EXCLUSIVO_PLAZAS:-2}"
+mkdir -m 700 "$CAUCE_CARRIL_EXCLUSIVO_HOST"
 RUN_TOKEN="$(od -An -N8 -tx8 /dev/urandom | tr -d ' \n')"
 
 LANE_DIRS=("$REPO")

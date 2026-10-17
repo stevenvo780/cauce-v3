@@ -1,4 +1,6 @@
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { connect } from 'node:net';
+import { join } from 'node:path';
 import { afterAll, inject } from 'vitest';
 import { TURNO } from './carril-exclusivo.js';
 
@@ -28,6 +30,39 @@ await new Promise<void>((resolve, reject) => {
   });
 });
 
+/*
+ * Under the sharded release gate several vitest processes each have their own lane, so the file also
+ * takes one of the gate's host-wide seats: a directory created atomically, holding the owner pid so a
+ * seat whose process died is reclaimed. Without CAUCE_CARRIL_EXCLUSIVO_HOST nothing changes.
+ */
+const anfitrion = process.env.CAUCE_CARRIL_EXCLUSIVO_HOST;
+let plaza: string | undefined;
+if (anfitrion) {
+  const plazas = Number(process.env.CAUCE_CARRIL_EXCLUSIVO_PLAZAS ?? '2');
+  if (!Number.isInteger(plazas) || plazas < 1) throw new Error(`CAUCE_CARRIL_EXCLUSIVO_PLAZAS inválido: ${String(process.env.CAUCE_CARRIL_EXCLUSIVO_PLAZAS)}`);
+  const vivo = (pid: number): boolean => {
+    try { process.kill(pid, 0); return true; } catch (error) { return (error as NodeJS.ErrnoException).code === 'EPERM'; }
+  };
+  for (;;) {
+    for (let indice = 0; indice < plazas && plaza === undefined; indice += 1) {
+      const candidata = join(anfitrion, `plaza-${String(indice)}`);
+      try {
+        mkdirSync(candidata);
+        writeFileSync(join(candidata, 'pid'), String(process.pid));
+        plaza = candidata;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+        let titular = Number.NaN;
+        try { titular = Number(readFileSync(join(candidata, 'pid'), 'utf8')); } catch { /* being written or released */ }
+        if (Number.isInteger(titular) && titular > 0 && !vivo(titular)) rmSync(candidata, { recursive: true, force: true });
+      }
+    }
+    if (plaza !== undefined) break;
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+}
+
 afterAll(() => {
+  if (plaza !== undefined) rmSync(plaza, { recursive: true, force: true });
   turno.destroy();
 });
