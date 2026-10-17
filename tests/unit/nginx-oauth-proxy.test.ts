@@ -10,6 +10,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { promisify } from 'node:util';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { WebSocket, WebSocketServer } from 'ws';
+import { plazo } from '../helpers/plazos.js';
 
 const runFile = promisify(execFile);
 const source = await readFile(new URL('../../deploy/console/nginx-console-tls.conf', import.meta.url), 'utf8');
@@ -85,7 +86,7 @@ describe('OAuth Nginx source contract', () => {
 });
 
 async function docker(args: string[]): Promise<string> {
-  const result = await runFile('docker', args, { timeout: 20_000, maxBuffer: 512 * 1024 });
+  const result = await runFile('docker', args, { timeout: plazo(20_000), maxBuffer: 512 * 1024 });
   return result.stdout.trim();
 }
 
@@ -321,7 +322,7 @@ describe.sequential('OAuth through real pinned Nginx with fixture mTLS', () => {
     trustedOrigin = await startProxy(image, root, address.port, false, '127.0.0.1/32');
     console.info('OAUTH_NGINX_FIXTURE', JSON.stringify({ sourceSha256: createHash('sha256').update(source).digest('hex'),
       owner, image, containers, syntaxExit: 0, adaptations: ['loopback ports', 'fixture certificate paths', 'fixture SPA root', 'fixture relay pin'] }));
-  }, 60_000);
+  }, plazo(60_000));
 
   afterAll(async () => {
     const failures: unknown[] = [];
@@ -332,7 +333,7 @@ describe.sequential('OAuth through real pinned Nginx with fixture mTLS', () => {
     if (root) try { await rm(root, { recursive: true }); } catch (error) { failures.push(error); }
     if (failures.length) throw new AggregateError(failures, 'OAuth Nginx fixture cleanup failed');
     console.info('OAUTH_NGINX_CLEANUP', 'owned containers removed');
-  });
+  }, plazo(120_000));
 
   it.each([metadata, '/oauth/authorize?state=FIXTURE_QUERY&client_id=https%3A%2F%2Fclient.example%2Fdoc',
     '/oauth/continue?request_id=fixture', '/oauth/login', '/oauth/consent', '/oauth/token', '/oauth/jwks',
