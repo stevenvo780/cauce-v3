@@ -262,9 +262,22 @@ async function medirViewport(navegador, viewport, origin) {
   return { medidas, sinMedir };
 }
 
+/** The first load makes Vite optimize its dependencies, which on a loaded machine outlasts a route's readiness budget. */
+async function precalentar(navegador, origin) {
+  const contexto = await navegador.newContext({ viewport: { width: VIEWPORTS[0], height: ALTO } });
+  try {
+    const pagina = await contexto.newPage();
+    await pagina.goto(origin + ROUTES[0], { waitUntil: 'domcontentloaded', timeout: 180000 });
+    await pagina.locator(LISTO[ROUTES[0]] ?? LISTO_POR_DEFECTO).first().waitFor({ state: 'visible', timeout: 180000 });
+  } finally {
+    await contexto.close();
+  }
+}
+
 async function medirTodo(origin) {
   const navegador = await chromium.launch();
   try {
+    await precalentar(navegador, origin);
     const pasadas = [];
     for (const viewport of VIEWPORTS) {
       pasadas.push(await medirViewport(navegador, viewport, origin));
