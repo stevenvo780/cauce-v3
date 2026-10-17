@@ -59,6 +59,11 @@ export function MyQuotasPage() {
       catch (cause) { setPinFailed(true); void preferences.reload(); throw cause; }
       const reread = await preferences.reload(); if (reread.error) throw reread.error; }, 'Tarjetas fijadas guardadas para esta persona y empresa.');
   }
+  const registerBlock = canWriteAccounts ? undefined : !canManageQuotaAccounts(authority?.role)
+    ? 'Solo el dueño o un administrador de la empresa registra cuentas de cuotas. Pide a uno de ellos que la registre.'
+    : busy ? 'Espera a que termine la operación en curso.'
+      : accounts.loading || environments.loading ? 'Espera a que termine la lectura de cuentas y entornos.'
+        : 'No hay una lectura vigente de cuentas. Actualiza cuotas y entornos y vuelve a intentarlo.';
   const executableProviders = environments.data?.capabilities.available
     ? environments.data.capabilities.providers.filter(provider => EXECUTABLE_QUOTA_PROVIDERS.has(provider)) : [];
   const pinned = preferences.data?.pinned_quota_accounts ?? [];
@@ -78,7 +83,7 @@ export function MyQuotasPage() {
       {preferences.error || pinFailed ? <Button size="sm" disabled={preferences.loading} onClick={() => { setPinFailed(false); void preferences.reload(); }}>Releer tarjetas fijadas</Button> : null}</Notice> : null}
     {notice ? <Notice tone="ok" role="status">{notice}</Notice> : null}
     <div className="flex flex-wrap gap-2"><Button aria-pressed={filterPinned} disabled={!preferences.data || !!preferences.error} onClick={() => { setFilterPinned(!filterPinned); }}>{filterPinned ? 'Ver todas las cuentas' : 'Ver sólo cuentas fijadas'}</Button>
-      <Button variant="primary" disabled={!canWriteAccounts} onClick={() => { setCreating(true); }}>Registrar cuenta</Button></div>
+      <Button variant="primary" disabled={!canWriteAccounts} title={registerBlock} onClick={() => { setCreating(true); }}>Registrar cuenta</Button></div>
     {creating ? <QuotaAccountForm providers={executableProviders} busy={busy} canWrite={canRegisterAccounts} cancel={() => { setCreating(false); }}
       save={input => canRegisterAccounts ? write(() => api.createQuotaAccount({ provider: input.provider, label: input.label, idempotency_key: input.idempotency_key }), 'Cuenta registrada. Crea su entorno para autenticar y consultar.') : Promise.resolve()} /> : null}
     {editing ? <QuotaAccountForm key={editing.id} account={editing} providers={executableProviders} busy={busy} canWrite={canWriteAccounts} cancel={() => { setEditing(undefined); }}
@@ -156,7 +161,7 @@ function QuotaAccountForm({ account, providers, busy, canWrite, save, cancel }: 
       {automatic ? null : <label>Motivo de pausa<input maxLength={128} value={reason} disabled={locked || resume} onChange={event => { setReason(event.target.value); }} /></label>}
       {hasPause ? <label className="flex items-center gap-2"><input type="checkbox" checked={resume} disabled={locked} onChange={event => { setResume(event.target.checked); }} />Reanudar ahora (quita la pausa)</label> : null}</> : null}
     {error ? <Notice tone="danger" role="alert">{error}</Notice> : null}
-    <div className="flex gap-2"><Button type="submit" disabled={locked || !label.trim() || (!account && !isOfferedProvider(provider, providers))}>{account ? 'Guardar cuenta' : 'Registrar cuenta'}</Button>
+    <div className="flex gap-2"><Button type="submit" disabled={locked || !label.trim() || (!account && !isOfferedProvider(provider, providers))} title={locked ? (!canWrite ? 'Tu rol no permite guardar cuentas de cuotas. Pide a un dueño o administrador de la empresa que lo haga.' : 'Espera a que termine la operación en curso.') : !label.trim() ? 'Escribe el nombre de la cuenta.' : !account && !isOfferedProvider(provider, providers) ? 'Elige un proveedor que los hosts puedan ejecutar ahora.' : undefined}>{account ? 'Guardar cuenta' : 'Registrar cuenta'}</Button>
       <Button type="button" disabled={busy} onClick={cancel}>Cancelar</Button></div>
   </form>;
 }

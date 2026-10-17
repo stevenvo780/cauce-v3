@@ -49,6 +49,7 @@ it('habilita únicamente acciones del host y proveedor del entorno y bloquea hos
   const card = within(screen.getByRole('article', { name: 'Entorno GPT' }));
   expect(card.getByRole('button', { name: 'Consultar cuotas' })).toBeEnabled();
   for (const name of ['Autenticar cuenta', 'Actualizar CLI', 'Eliminar entorno']) expect(card.getByRole('button', { name })).toBeDisabled();
+  expect(card.getByRole('button', { name: 'Actualizar CLI' })).toHaveAttribute('title', expect.stringContaining('no puede ejecutar esta acción'));
   view.rerender(<ApiProvider api={testApi}><QuotaEnvironmentPanel snapshot={{ ...snapshot, capabilities: { ...snapshot.capabilities, hosts: snapshot.capabilities.hosts.slice(1) } }} accounts={accounts} canWrite reload={vi.fn()} /></ApiProvider>);
   expect(card.getByRole('button', { name: 'Consultar cuotas' })).toBeDisabled();
 });
