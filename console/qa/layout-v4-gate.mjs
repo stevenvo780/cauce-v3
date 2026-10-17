@@ -171,8 +171,11 @@ export async function runV4Layout({ update = false } = {}) {
     browser = await chromium.launch();
     for (const width of [390, 1440]) for (const theme of ['light', 'dark']) for (const view of V4_VIEWS) {
       let result = await measureState(browser, server.origin, respond, width, theme, view);
-      if ((!result.metrics && result.failures.some(failure => failure.startsWith('Unmeasured')))
-        || result.errors.some(error => error.startsWith('Request failed:') && error.includes('ERR_NETWORK_CHANGED'))) {
+      // Docker creating or removing networks on the host makes Chromium abort loads with ERR_NETWORK_CHANGED; a
+      // concurrent test run can do that several times in a row, so such a state is measured again, up to three times.
+      for (let retry = 1; retry <= 3 && ((!result.metrics && result.failures.some(failure => failure.startsWith('Unmeasured')))
+        || result.errors.some(error => error.startsWith('Request failed:') && error.includes('ERR_NETWORK_CHANGED'))); retry += 1) {
+        await new Promise(done => { setTimeout(done, 2_000 * retry); });
         const initial = { failures: result.failures, errors: result.errors };
         if (result.screenshots.length) {
           try {
