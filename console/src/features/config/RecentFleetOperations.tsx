@@ -25,9 +25,10 @@ export function RecentFleetOperations() {
   const [load, setLoad] = useState<Load>({ state: 'loading' });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
+  const [notice, setNotice] = useState<string>();
 
   const read = useCallback(async (isCurrent: () => boolean) => {
-    setBusy(true); setError(undefined);
+    setBusy(true); setError(undefined); setNotice(undefined);
     try {
       const operations = await api.listRecentFleetOperations(LIMIT);
       if (isCurrent()) setLoad(operations ? { state: 'ready', operations } : { state: 'unavailable' });
@@ -45,12 +46,15 @@ export function RecentFleetOperations() {
   }, [read]);
 
   const control = async (operation: FleetOperation, action: 'cancel' | 'resume') => {
-    setBusy(true); setError(undefined);
+    setBusy(true); setError(undefined); setNotice(undefined);
     try {
       const next = action === 'cancel' ? await api.cancelFleetOperation(operation.id, operation.version)
         : await api.resumeFleetOperation(operation.id, operation.version);
       setLoad((previous) => previous.state === 'ready'
         ? { state: 'ready', operations: previous.operations.map((row) => row.id === next.id ? next : row) } : previous);
+      setNotice(action === 'cancel'
+        ? `Operación de ${fleetTargetText(operation.target)} cancelada. La lista muestra su estado actualizado.`
+        : `Operación de ${fleetTargetText(operation.target)} reanudada. La lista muestra su estado actualizado.`);
     } catch (failure) {
       const fresh = await api.listRecentFleetOperations(LIMIT).catch(() => undefined);
       if (fresh) setLoad({ state: 'ready', operations: fresh });
@@ -68,8 +72,9 @@ export function RecentFleetOperations() {
     description="Las últimas operaciones sobre agentes, grupos y espacios, de la más nueva a la más vieja."
     actions={<Button size="sm" disabled={busy} onClick={() => { void read(() => true); }}><RefreshCw size={14} aria-hidden="true" />Releer</Button>}>
     {error ? <Notice tone="danger" role="alert">{error}</Notice> : null}
-    {load.state === 'loading' ? <p className="m-0 text-xs text-muted">Leyendo…</p>
-      : !operations.length ? (error ? null : <p className="m-0 text-xs text-muted">No hay operaciones recientes.</p>)
+    {notice ? <Notice tone="ok" role="status">{notice}</Notice> : null}
+    {load.state === 'loading' ? <p className="m-0 text-xs text-muted">Leyendo operaciones…</p>
+      : !operations.length ? (error ? null : <p className="m-0 text-xs text-muted">No hay operaciones recientes. Cuando se cree, detenga o reanude un agente, grupo o espacio, la operación aparecerá aquí.</p>)
         : <ul className="m-0 grid list-none gap-2 p-0">
           {operations.map((operation) => <li key={operation.id}
             className="grid gap-2 rounded-lg border border-line p-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">

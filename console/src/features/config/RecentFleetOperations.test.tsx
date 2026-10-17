@@ -42,7 +42,14 @@ it('cancels a failed operation with its version and replaces the row', async () 
   const user = userEvent.setup();
   await user.click(await screen.findByRole('button', { name: 'Cancelar A/sala (grupo)' }));
   await waitFor(() => { expect(screen.getByText(/Cancelada/u)).toBeInTheDocument(); });
+  expect(screen.getByRole('status')).toHaveTextContent('Operación de A/sala (grupo) cancelada.');
   expect(body).toEqual({ expected_version: 2 });
+});
+
+it('sin operaciones, el vacío dice cuándo aparecerá la primera', async () => {
+  serve(['config.write'], []);
+  view();
+  expect(await screen.findByText(/Cuando se cree, detenga o reanude un agente, grupo o espacio/)).toBeInTheDocument();
 });
 
 it('offers Reanudar only for resumable operations', async () => {
