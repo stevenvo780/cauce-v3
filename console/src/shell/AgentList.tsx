@@ -59,9 +59,9 @@ function AgentRow({ agent, routeId, active, rail }: { agent: AgenteDeMensajeria;
           </span>
           {rail ? null : (
             <span className="min-w-0 flex-1">
-              <span className="flex items-baseline justify-between gap-2">
-                <span className="truncate text-[13px] font-medium">{agent.alias}</span>
-                <span className="shrink-0 truncate text-[11px] text-muted">{agent.tenantId}</span>
+              <span className="flex min-w-0 items-baseline justify-between gap-2">
+                <span className="min-w-0 max-w-[60%] shrink-0 truncate text-[13px] font-medium">{agent.alias}</span>
+                <span className="min-w-0 flex-1 truncate text-[11px] text-muted">{agent.tenantId}</span>
               </span>
               <span className={cn('block truncate text-xs', alert ? 'text-danger-ink' : 'text-muted')}>
                 {LIVE_STATE_META[state].label}{hint ? ` · ${hint}` : ''}

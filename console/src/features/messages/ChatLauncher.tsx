@@ -136,8 +136,8 @@ function LauncherCard({ agent, index, state, reason, last, salud, layout, highli
         </span>
         <span className="grid min-w-0 flex-1 gap-1">
           <span className="flex min-w-0 items-baseline gap-2">
-            <span className="cl-alias truncate text-[15px] font-semibold text-fg">{agent.alias}</span>
-            <span className="truncate text-xs text-muted">{agent.tenantId}</span>
+            <span className="cl-alias min-w-0 max-w-[60%] truncate text-[15px] font-semibold text-fg">{agent.alias}</span>
+            <span className="min-w-0 flex-1 truncate text-xs text-muted">{agent.tenantId}</span>
             {time ? <time dateTime={last?.createdAt} className="ml-auto shrink-0 text-[11px] text-muted">{time}</time> : null}
           </span>
           <span className="truncate text-[13px] text-muted">{preview}</span>
