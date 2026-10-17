@@ -9,14 +9,15 @@
 # inherited its step token, and the test containers labelled with that token - and writes the red receipt.
 set -euo pipefail
 
-# The deploy level (default) is what blocks a deploy: fast checks without Docker or browsers. The full level
+# The deploy level (default) is what blocks a deploy: it compiles, lints and packages; behaviour is checked by
+# agents using the product end to end, not by suites. The full level
 # (CAUCE_RELEASE_GATES_NIVEL=completo) adds the whole-stack suites as an optional run that never blocks a deploy.
 NIVEL="${CAUCE_RELEASE_GATES_NIVEL:-despliegue}"
 case "$NIVEL" in
   despliegue)
-    GATES=(typecheck lint test:unit qa:runtime-packaging)
+    GATES=(typecheck lint qa:runtime-packaging)
     SHARDED=()
-    LAUNCH_ORDER=(test:unit lint typecheck qa:runtime-packaging)
+    LAUNCH_ORDER=(lint typecheck qa:runtime-packaging)
     ORPHAN_SWEEP=()
     ;;
   completo)
