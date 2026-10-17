@@ -1,6 +1,7 @@
-import { readFile } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { applyMigrationsThrough } from '../src/index.js';
+import { assertPublishedHarnessDefinition } from '../src/configuration/harness-catalog.js';
 import { preparePostgresSuite } from './postgres-suite.js';
 import { closeTestDatabase, startTestCaseDatabase, startTestDatabaseThrough, type EmptyTestDatabase,
   type TestDatabase } from '../../../tests/helpers/postgres.js';
@@ -9,6 +10,7 @@ import { requireValue } from './helpers.js';
 let database: TestDatabase | undefined;
 let current: EmptyTestDatabase | undefined;
 const version = '073_harness_definitions_seed.sql';
+const PACKAGED = new URL('../../adapter-sdk/descriptors/', import.meta.url);
 const seeded = [
   { id: 'fake2', display_name: 'Fake QA 2', capabilities: ['messages.receive', 'ack.timeline'] },
   { id: 'grok', display_name: 'Grok', capabilities: ['messages.receive', 'jobs.interactive', 'jobs.batch'] },
@@ -71,5 +73,18 @@ describe('harness definitions seed migration', () => {
     expect((await pool.query("SELECT id FROM harness_definitions WHERE id IN ('grok','muse','fake2') ORDER BY id")).rows)
       .toEqual([{ id: 'fake2' }, { id: 'grok' }, { id: 'muse' }]);
     expect((await pool.query('SELECT version FROM schema_migrations WHERE version=$1', [version])).rows).toEqual([{ version }]);
+  }, 120_000);
+
+  it('seeds exactly the published harnesses and every stored row passes the catalog validation', async () => {
+    const pool = requireValue(current, 'case database').adminPool;
+    await applyMigrationsThrough(pool, version);
+    const rows = (await pool.query<{ id: string; command: string | null; capabilities: string[] }>(
+      'SELECT id,command,capabilities FROM harness_definitions ORDER BY id')).rows;
+    const published = (await readdir(PACKAGED)).filter(entry => entry.endsWith('.json'))
+      .map(entry => entry.slice(0, -'.json'.length)).sort();
+    expect(rows.map(row => row.id)).toEqual(published);
+    for (const row of rows) {
+      await assertPublishedHarnessDefinition(row.id, { command: row.command, capabilities: row.capabilities });
+    }
   }, 120_000);
 });
