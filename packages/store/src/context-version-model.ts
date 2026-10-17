@@ -19,7 +19,7 @@ const SECRET_PATTERNS: readonly RegExp[] = [
 ];
 /** `context.max_bytes` of each packaged descriptor in packages/adapter-sdk/descriptors; a test fails when they drift. */
 const HARNESS_CONTEXT_MAX_BYTES: ReadonlyMap<string, number> = new Map([
-  ['claude', 65_536], ['codex', 65_536], ['fake', 65_536], ['grok', 65_536],
+  ['claude', 65_536], ['codex', 65_536], ['fake', 65_536], ['fake2', 65_536], ['grok', 65_536],
   ['hermes', 65_536], ['muse', 65_536], ['openclaw', 65_536], ['opencode', 65_536],
 ]);
 /** The only files an agent may change through native ingest: the rest of a version is governed by its operators. */
@@ -129,6 +129,9 @@ export function storedContextFiles(value: unknown, digest: string): ContextFile[
 }
 export function harnessContextMaxBytes(harness: string | null): number {
   return (harness === null ? undefined : HARNESS_CONTEXT_MAX_BYTES.get(harness)) ?? Math.min(...HARNESS_CONTEXT_MAX_BYTES.values());
+}
+export function harnessContextLimits(): ReadonlyMap<string, number> {
+  return new Map(HARNESS_CONTEXT_MAX_BYTES);
 }
 /** The adapter measures this same projection before materializing a version (adapter-sdk context/space-layout.ts). */
 export function contextProjectionBytes(files: readonly ContextFile[]): number {

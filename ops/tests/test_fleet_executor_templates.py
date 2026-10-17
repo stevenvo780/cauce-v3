@@ -125,8 +125,18 @@ class PlacementTemplateSelectionTest(unittest.TestCase):
         descriptor.write_text(json.dumps(value))
         descriptor.chmod(0o644)
         self.policy['bundles']['fixture'] = {'directory': str(root)}
+        template = dict(self.template, provider='fixture', command='/usr/bin/fixture',
+            runtime_mode='container', container_prefix='approved-',
+            login={'method': 'device', 'command': ['/usr/bin/fixture', 'login'], 'sha256': 'a' * 64})
+        self.policy.update(native=[], containers={}, profile_templates=[template],
+            container_templates=[{'harness_id': 'fixture', 'prefix': 'approved-', 'image': 'sha256:' + 'a' * 64,
+                'runtime_user': 'dev', 'systemd_user': 'stev', 'home_directory': '/home/dev',
+                'state_root': '/state', 'profile_root': '/profiles', 'python': '/usr/bin/python3'}])
+        self.subject.validate_templates(self.policy)
         self.assertEqual(self.subject.fleet_harnesses(self.policy), {'codex': None, 'fixture': None})
         self.assertEqual(self.subject.descriptor_login_arguments(self.policy, 'fixture'), ['login'])
+        self.assertEqual([(row['harness_id'], row['provider']) for row in self.subject.runtime_candidates(self.policy)],
+                         [('fixture', 'fixture')])
         approved = {'directory': str(root), 'digest': bundle_digest(str(root)), 'executable': '/usr/local/bin/fixture',
                     'executable_sha256': None, 'argv': [], 'descriptor_sha256': hashlib.sha256(descriptor.read_bytes()).hexdigest()}
         self.policy['bundles']['fixture'] = approved
@@ -134,9 +144,21 @@ class PlacementTemplateSelectionTest(unittest.TestCase):
         del value['operations']['install']
         descriptor.write_text(json.dumps(value))
         self.assertNotIn('fixture', self.subject.fleet_harnesses(self.policy))
+        self.assertEqual(self.subject.runtime_candidates(self.policy), [])
         approved.update(digest=bundle_digest(str(root)), descriptor_sha256=hashlib.sha256(descriptor.read_bytes()).hexdigest())
         self.assertNotIn('fixture', self.subject.fleet_harnesses(self.policy))
         self.assertIn('codex', self.subject.fleet_harnesses(self.policy))
+
+    def test_profile_provider_is_syntactic_and_only_descriptors_enable_runtimes(self):
+        self.policy.update(native=[{'runtime_user': 'dev', 'systemd_user': 'stev',
+            'home_directory': '/home/dev', 'state_root': '/state'}], containers={},
+            profile_templates=[dict(self.template, provider='missing')])
+        self.subject.validate_templates(self.policy)
+        self.assertEqual(self.subject.runtime_candidates(self.policy), [])
+        for provider in (None, [], 'NOT VALID', '../codex'):
+            self.policy['profile_templates'][0]['provider'] = provider
+            with self.subTest(provider=provider), self.assertRaisesRegex(ValueError, 'profile template'):
+                self.subject.validate_templates(self.policy)
 
     def test_symlinked_descriptor_withdraws_only_its_harness_and_recovers_with_fresh_cli(self):
         import pwd

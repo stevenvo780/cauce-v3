@@ -168,6 +168,8 @@ def quota_reader_contract_checks():
         'ops/cli/fleet_executor_agent_quota.py': r'\bPROVIDERS\s*=\s*frozenset\s*\(\s*\{([^}]*)\}\s*\)',
         'packages/protocol/src/agent-quota.ts':
             r'\bAgentQuotaReceiptSchema\s*=\s*z\.discriminatedUnion\b.*?\bprovider:\s*z\.enum\(\[([^\]]*)\]\)',
+        'services/gateway/src/routes/console/quota-environments.ts':
+            r'\bAccountCreate\s*=\s*QuotaAccountCreateSchema\.extend\(\{\s*provider:\s*z\.enum\(\[([^\]]*)\]\)',
     }
     expected = quota_readers()
     checks = store_quota_reader_contract_checks(text('packages/store/src/agent-quota-operations-model.ts'))
@@ -267,6 +269,9 @@ class HarnessParityTest(unittest.TestCase):
             'packages/protocol/src/schemas/quotas.ts': r'QuotaEnvironmentProviderSchema\s*=\s*z\.enum\(\[([^\]]+)\]\)',
             'services/gateway/src/fleet/host-channel.capabilities.ts': r'QuotaProvider\s*=\s*z\.enum\(\[([^\]]+)\]\)',
             'console/src/api/client/my-quotas-client.ts': r'export type QuotaProvider\s*=\s*([^;]+);',
+            'packages/store/src/quota-environments.ts': r'\btype QuotaProvider\s*=\s*([^;]+);',
+            'services/gateway/src/fleet/enrolled-main.ts':
+                r'\bQuotaCapabilities\s*=\s*z\.object\(\{\s*providers:\s*z\.array\(z\.enum\(\[([^\]]+)\]\)',
         }
         for path, pattern in contracts.items():
             match = re.search(pattern, text(path))
@@ -399,6 +404,28 @@ class HarnessParityTest(unittest.TestCase):
             with self.subTest(argv=argv):
                 docs['grok']['provider']['quota_argv'] = argv
                 self.assertEqual(quota_readers(docs), expected - {'grok'})
+
+    def test_quota_store_enrollment_and_account_contracts_reject_missing_and_extra_ids(self):
+        contracts = (
+            ('packages/store/src/quota-environments.ts', r'\btype QuotaProvider\s*=\s*([^;]+);', '|',
+             self.test_quota_enums_and_sql_check_cover_quota_descriptors),
+            ('services/gateway/src/fleet/enrolled-main.ts',
+             r'\bQuotaCapabilities\s*=\s*z\.object\(\{\s*providers:\s*z\.array\(z\.enum\(\[([^\]]+)\]\)', ',',
+             self.test_quota_enums_and_sql_check_cover_quota_descriptors),
+            ('services/gateway/src/routes/console/quota-environments.ts',
+             r'\bAccountCreate\s*=\s*QuotaAccountCreateSchema\.extend\(\{\s*provider:\s*z\.enum\(\[([^\]]*)\]\)', ',',
+             self.test_quota_readers_match_store_executor_and_receipt),
+        )
+        for path, pattern, separator, check in contracts:
+            source = text(path)
+            match = re.search(pattern, source)
+            self.assertIsNotNone(match, f'{path}: quota contract not found')
+            values = match.group(1)
+            missing = re.sub(r"['\"]grok['\"]\s*[,|]\s*|[,|]\s*['\"]grok['\"]", '', values)
+            for altered in (missing, values + f" {separator} 'ghost'"):
+                with self.subTest(path=path, values=altered):
+                    mutation = source[:match.start(1)] + altered + source[match.end(1):]
+                    self.assert_source_mutation_rejected(path, mutation, check)
 
     def test_store_quota_contract_rejects_literal_dead_or_unbound_sql(self):
         path = 'packages/store/src/agent-quota-operations-model.ts'

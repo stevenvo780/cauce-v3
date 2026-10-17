@@ -3,17 +3,11 @@ import {
 } from '../console/agent-documents.js';
 import type { FactsSource } from '../console/agent-documents.routes.js';
 import type { AgentRegistry } from './registry.js';
+import { isDocumentHarness } from '../console/agent-documents/catalog.js';
 
 /**
  * Adapter to extract measured environment facts from the presence reported by agents.
  */
-
-/** Harnesses whose governing files this path knows how to resolve. */
-const ARNESES_CONOCIDOS = ['claude', 'codex', 'openclaw', 'hermes', 'muse', 'grok'] as const;
-
-function arnesConocido(valor: string): valor is RuntimeFacts['harness'] {
-  return (ARNESES_CONOCIDOS as readonly string[]).includes(valor);
-}
 
 function rutaCanonica(valor: unknown): valor is string {
   if (typeof valor !== 'string' || !valor.startsWith('/') || valor === '/'
@@ -43,7 +37,7 @@ export function hechosDelRegistro(registry: AgentRegistry): MeasuredFactsSource 
       } = observacion.presence;
       // Validates presence of environment facts, recognized harness, and canonical paths.
       if (runtimeFactsObserved !== true) return undefined;
-      if (!arnesConocido(harness)) return undefined;
+      if (!isDocumentHarness(harness)) return undefined;
       if (!rutaCanonica(home)) return undefined;
       if ((cwd !== undefined && !rutaCanonica(cwd))
           || (workspaceRoot !== undefined && (!rutaCanonica(workspaceRoot) || cwd === undefined

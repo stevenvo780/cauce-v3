@@ -1,4 +1,3 @@
-import { readFile, readdir } from 'node:fs/promises';
 import { describe, expect, it } from 'vitest';
 import { ZodError } from 'zod';
 import { ContextFilesSchema, ContextRejectedError, ContextUpdateSchema, canonicalContextFiles, contextDigest, contextProjectionBytes,
@@ -95,14 +94,7 @@ describe('versionable context boundary', () => {
     }
     throw new Error('stored version was read');
   });
-  it('mirrors context.max_bytes of every packaged harness descriptor', async () => {
-    const directory = new URL('../../adapter-sdk/descriptors/', import.meta.url);
-    const names = (await readdir(directory)).filter(name => name.endsWith('.json'));
-    expect(names.length).toBeGreaterThan(0);
-    for (const name of names) {
-      const descriptor = JSON.parse(await readFile(new URL(name, directory), 'utf8')) as { harness: string; context: { max_bytes: number } };
-      expect(harnessContextMaxBytes(descriptor.harness)).toBe(descriptor.context.max_bytes);
-    }
+  it('uses the conservative context limit for an unknown harness', () => {
     expect(harnessContextMaxBytes(null)).toBe(65_536);
     expect(harnessContextMaxBytes('constructor')).toBe(65_536);
   });

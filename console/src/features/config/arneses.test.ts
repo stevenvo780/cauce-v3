@@ -1,15 +1,13 @@
 import { describe, expect, it } from 'vitest';
+import { DOCUMENTOS_DE_GOBIERNO } from '@cauce/protocol';
 import {
   ARNESES_REALES, DISTINCION_HERRAMIENTAS_Y_PERMISOS,
   DONDE_SE_ESCRIBE_EL_ROL_DECLARADO,
 } from './arneses';
 
-/** Only harnesses with measured document inventory support belong in this catalog. */
-const JUEGO_CERRADO = ['claude', 'codex', 'openclaw', 'hermes', 'grok', 'muse'] as const;
-
 describe('la tabla de arneses reales', () => {
   it('cubre el juego cerrado que el inventario del gateway sabe resolver', () => {
-    expect(ARNESES_REALES.map((arnes) => arnes.id).sort()).toEqual([...JUEGO_CERRADO].sort());
+    expect(ARNESES_REALES.map((arnes) => arnes.id).sort()).toEqual(Object.keys(DOCUMENTOS_DE_GOBIERNO).sort());
   });
 
   it('el que lee algo dice DÓNDE, y ninguno repite la ruta de otro', () => {

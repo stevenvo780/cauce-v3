@@ -1,4 +1,5 @@
 import {
+  DOCUMENTOS_DE_GOBIERNO,
   GOVERNANCE_NEVER_SERVE_BASENAMES,
   TOPE_CODEX_POR_DEFECTO_BYTES,
   harnessDocumentPaths,
@@ -8,6 +9,10 @@ import {
 
 /** Running harness inferred from the measured environment. */
 export type HarnessKind = 'claude' | 'codex' | 'openclaw' | 'hermes' | 'muse' | 'grok' | 'unknown';
+
+export function isDocumentHarness(value: string): value is Exclude<HarnessKind, 'unknown'> {
+  return Object.hasOwn(DOCUMENTOS_DE_GOBIERNO, value);
+}
 
 export type DocumentKind =
   | 'directive' | 'tools' | 'prompts' | 'mcp' | 'identity' | 'human'
@@ -488,8 +493,10 @@ export function documentForKind(facts: RuntimeFacts, kind: DocumentKind): AgentD
 }
 
 export function harnessFromCommand(cmdline: string): HarnessKind {
-  const match = /\bbin\/(claude|codex|openclaw|hermes|muse|grok)\.js\b/.exec(cmdline);
-  return match ? (match[1] as HarnessKind) : 'unknown';
+  for (const match of cmdline.matchAll(/\bbin\/([a-z][a-z0-9_-]{0,63})\.js\b/gu)) {
+    if (match[1] !== undefined && isDocumentHarness(match[1])) return match[1];
+  }
+  return 'unknown';
 }
 
 /**
@@ -498,12 +505,8 @@ export function harnessFromCommand(cmdline: string): HarnessKind {
  */
 export function harnessFromCapabilities(capabilities: readonly string[]): HarnessKind {
   for (const capability of capabilities) {
-    if (capability === 'harness.claude') return 'claude';
-    if (capability === 'harness.codex') return 'codex';
-    if (capability === 'harness.openclaw') return 'openclaw';
-    if (capability === 'harness.hermes') return 'hermes';
-    if (capability === 'harness.muse') return 'muse';
-    if (capability === 'harness.grok') return 'grok';
+    const harness = capability.startsWith('harness.') ? capability.slice('harness.'.length) : '';
+    if (isDocumentHarness(harness)) return harness;
   }
   return 'unknown';
 }

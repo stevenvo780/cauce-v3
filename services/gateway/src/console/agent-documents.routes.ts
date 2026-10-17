@@ -16,6 +16,7 @@ import {
   contextContamination, evaluarContaminacion, type ContextContaminationTelemetry,
 } from './contaminacion-de-contexto.js';
 import { CONTEXT_APPLY_POLICY, type ContextApplyState } from './context-apply-policy.js';
+import { isDocumentHarness } from './agent-documents/catalog.js';
 import type { TerminalAuditEntry } from '../terminal/audit.js';
 import { UNATTRIBUTED_OPERATOR } from '../terminal/types.js';
 export type { TerminalAuditEntry, GovernanceWritePrecondition };
@@ -289,8 +290,7 @@ const MANAGED_CONTEXT_CONFLICT_MESSAGES: Record<ManagedContextEditConflict, stri
 };
 
 function harnessFromRegistry(value: string | null | undefined): HarnessKind {
-  return value === 'claude' || value === 'codex' || value === 'openclaw' || value === 'hermes' || value === 'muse' || value === 'grok'
-    ? value : 'unknown';
+  return typeof value === 'string' && isDocumentHarness(value) ? value : 'unknown';
 }
 
 function buildDocumentsResponse(

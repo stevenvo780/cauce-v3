@@ -10,7 +10,6 @@ from fleet_executor_policy import SafeFailure, bounded_text, path
 
 USER = re.compile(r'[A-Za-z_][A-Za-z0-9_-]{0,63}')
 HASH = re.compile(r'[0-9a-f]{64}')
-PROVIDERS = {'codex', 'claude', 'gemini', 'grok', 'muse'}
 CONTAINER = re.compile(r'[a-z][a-z0-9-]{0,127}')
 PREFIX = re.compile(r'[a-z][a-z0-9-]{0,47}-')
 
@@ -63,7 +62,7 @@ def validate_login(row: dict, policy: dict | None = None):
             ['login'] if row['provider'] == 'codex' else ['auth', 'login'] if row['provider'] == 'claude' and login['method'] == 'terminal' else None
         declared = descriptor_login_arguments(policy, row['provider']) if policy else None
         arguments = declared if declared is not None and login['method'] == 'device' else legacy
-        valid = legacy is not None and command[0] == row['command'] and login['sha256'] == row['command_sha256'] and command[1:] == arguments
+        valid = arguments is not None and command[0] == row['command'] and login['sha256'] == row['command_sha256'] and command[1:] == arguments
     else:
         valid = command[0] == driver['node_command'] and login['sha256'] == driver['node_command_sha256'] \
             and command[1:] == [row['command'], 'models', 'auth', 'login'] and login['method'] == 'device' \
@@ -142,7 +141,8 @@ def validate_templates(policy: dict):
         raise SafeFailure('invalid bounded provider profile templates')
     identities = set()
     for row in profiles:
-        if not isinstance(row, dict) or set(row) - {'command_files', 'openclaw', 'muse', 'runtime_mode', 'container_name', 'container_prefix', 'login'} != fields or row['provider'] not in PROVIDERS \
+        if not isinstance(row, dict) or set(row) - {'command_files', 'openclaw', 'muse', 'runtime_mode', 'container_name', 'container_prefix', 'login'} != fields \
+                or not isinstance(row['provider'], str) or re.fullmatch(r'[a-z][a-z0-9_-]{0,63}', row['provider']) is None \
                 or not isinstance(row['runtime_user'], str) or USER.fullmatch(row['runtime_user']) is None \
                 or not isinstance(row['command_sha256'], str) or HASH.fullmatch(row['command_sha256']) is None:
             raise SafeFailure('invalid approved provider profile template')
