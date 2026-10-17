@@ -369,7 +369,7 @@ class SpaceArchiveTests(unittest.TestCase):
             'projects/aws-xml.txt': '<aws_secret_access_key>' + 'wJalrXUtnFEMI/K7MDENG+' + '</aws_secret_access_key>\n',
             'projects/aws-spaces.txt': 'aws_secret_access_key ' + 'wJalrXUtnFEMI/K7MDENG+\n',
             'projects/npm-literal.txt': '//registry.npmjs.org/:_authToken=abcd1234efgh\n',
-            'projects/npm-later-template.txt': "fs.writeFileSync('.npmrc', `//npm.corp.example/:_authToken=00000000-0000-4000-8000-40ed71cc50fb\\nemail=${email}\\n`)",
+            'projects/npm-later-template.txt': "fs.writeFileSync('.npmrc', `//npm.corp.example/:_authToken=abcd1234efgh5678\\nemail=${email}\\n`)",
             'projects/npm-later-env.txt': '_authToken=TOKEN;x=process.env.X\n',
             'projects/url-literal.txt': 'git clone https://deploy:hunter2@example.test/repo.git\n',
             'projects/url-user-template.txt': 'postgres://${PGUSER}:S3cr3tLiteralPw@db.internal/app\n',
