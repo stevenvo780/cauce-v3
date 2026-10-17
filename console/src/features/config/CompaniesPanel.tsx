@@ -18,6 +18,11 @@ const STATE_CHANGES: Record<CompanyRecord['state'], readonly StateChange[]> = {
 const CHANGE_LABEL: Record<StateChange, string> = { disable: 'Deshabilitar', enable: 'Habilitar', retire: 'Retirar', restore: 'Restaurar' };
 const STATE_LABEL: Record<CompanyRecord['state'], string> = { enabled: 'Activa', disabled: 'Deshabilitada', retired: 'Retirada' };
 
+/** Losing the home company ends this document: the shell would keep painting the previous read. */
+function leaveRetiredCompany(): void {
+  window.location.assign('/');
+}
+
 function changeText({ company, change }: PendingChange): string {
   if (change === 'disable') return `Deshabilitar ${company.name} detiene su operación y conserva sus datos.`;
   if (change === 'retire') return `Retirar ${company.name} revoca su operación y conserva sus datos. Las dependencias serán comprobadas por el servidor.`;
@@ -61,17 +66,11 @@ export function CompaniesPanel() {
     try {
       await action(); setEditing(undefined); setPending(undefined); setCreating(false);
       setNotice(message);
-      if (recheckAccess) {
-        try {
-          let session = await api.getAuthSession();
-          // An in-flight session read may predate the company mutation.
-          if (session.authenticated !== false && session.authority?.role !== 'none') session = await api.getAuthSession();
-          if (session.authenticated !== false && session.authority?.role !== 'none') throw new Error();
-        }
-        catch { setError('El cambio se guardó, pero no se pudo verificar tu acceso. Recarga la consola.'); }
-        return;
-      }
+      if (recheckAccess) { leaveRetiredCompany(); return; }
       const reread = await resource.reload();
+      if (reread.error instanceof ApiError && (reread.error.status === 401 || reread.error.status === 403)) {
+        leaveRetiredCompany(); return;
+      }
       if (reread.error) setError(`El cambio se guardó, pero no se pudo releer: ${companyErrorText(reread.error, 'read')}`);
     } catch (cause) { setError(companyErrorText(cause, request)); }
     finally { setBusy(false); }

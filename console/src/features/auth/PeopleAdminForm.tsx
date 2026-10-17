@@ -50,6 +50,7 @@ export function PeopleAdminForm({ person, snapshot, busy, save, cancel }: {
       {person?.tenant_id === values.tenant_id && !aliases.some(row => row.alias === person.alias)
         ? <option value={person.alias} disabled>{person.alias} · no habilitada</option> : null}
     </select></label>
+    {!person && values.tenant_id && aliases.length === 0 ? <p className="notice" role="status">Este espacio no tiene un agente habilitado. Sin uno no se puede crear otra persona: el agente del alta sigue deshabilitado hasta tener arnés y computadora.</p> : null}
     <label>{person ? 'Nueva contraseña (opcional)' : 'Contraseña inicial'}<input type="password" autoComplete="new-password"
       value={values.password} disabled={busy} maxLength={1024} onChange={event => { edit({ password: event.target.value }); }} /></label>
     <p>La contraseña se escribe una sola vez; no aparece en el inventario. {person ? 'Déjala vacía para conservarla.' : 'Usa entre 12 y 1024 caracteres.'}</p>
