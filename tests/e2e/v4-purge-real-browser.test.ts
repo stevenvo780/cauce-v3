@@ -197,16 +197,16 @@ describe('purga real de un contenedor desechable', () => {
       status = polled.rows[0]?.status ?? status;
       detail = JSON.stringify(polled.rows[0]?.error ?? {});
       const gone = dockerText(['ps', '-aq', '--filter', `name=^/${runtimeKey}`]).trim() === ''
-        && !dockerText(['volume', 'ls', '--format', '{{.Name}}']).split('\n').some((name) => name.startsWith(`${runtimeKey}-`));
+        && !dockerText(['volume', 'ls', '--filter', `name=^${runtimeKey}-`, '--format', '{{.Name}}']).split('\n').some((name) => name.startsWith(`${runtimeKey}-`));
       if (status === 'succeeded' && gone) break;
       if (status === 'failed' || status === 'cancelled') break;
       await current.waitForTimeout(500);
     }
     await stopWorker();
     const owned = [runtimeKey, failKey];
-    const names = dockerText(['ps', '-a', '--format', '{{.Names}}']).split('\n')
+    const names = dockerText(['ps', '-a', '--filter', `name=^/(${owned.join('|')})`, '--format', '{{.Names}}']).split('\n')
       .filter((name) => owned.some((key) => name === key || name.startsWith(`${key}-`)));
-    const allVolumes = dockerText(['volume', 'ls', '--format', '{{.Name}}']).split('\n');
+    const allVolumes = dockerText(['volume', 'ls', '--filter', `name=^(${[...owned, foreignKey].join('|')})`, '--format', '{{.Name}}']).split('\n');
     const volumes = allVolumes.filter((name) => owned.some((key) => name.startsWith(`${key}-`)));
     const workerLog = redact(Buffer.concat(log).toString('utf8').slice(-4000));
     const observed = JSON.stringify({ status, detail: redact(detail), names, volumes, worker: workerLog });

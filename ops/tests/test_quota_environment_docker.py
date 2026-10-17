@@ -123,7 +123,7 @@ def prepare_image(directory):
                     or labels.get('cauce.canary.scope') != SCOPE:
                 raise AssertionError('canary probe ownership differs')
             run(['docker', 'rm', '-f', observed['Id']])
-        if probe in run(['docker', 'ps', '-a', '--format', '{{.Names}}']).stdout.decode().splitlines():
+        if probe in run(['docker', 'ps', '-a', '--filter', f'name=^/{re.escape(probe)}$', '--format', '{{.Names}}']).stdout.decode().splitlines():
             raise AssertionError('canary probe removal was not observed')
         if failed:
             remove_image(directory)
@@ -171,8 +171,10 @@ class QuotaEnvironmentDockerCycleTest(unittest.TestCase):
 
     def assert_removed(self, environment):
         container = environment['container_name']
-        self.assertNotIn(container, run(['docker', 'ps', '-a', '--format', '{{.Names}}']).stdout.decode().splitlines())
-        self.assertNotIn(container + '-profile', run(['docker', 'volume', 'ls', '--format', '{{.Name}}']).stdout.decode().splitlines())
+        self.assertNotIn(container, run(['docker', 'ps', '-a', '--filter', f'name=^/{re.escape(container)}$',
+                                         '--format', '{{.Names}}']).stdout.decode().splitlines())
+        self.assertNotIn(container + '-profile', run(['docker', 'volume', 'ls', '--filter', f'name=^{re.escape(container)}-profile$',
+                                                      '--format', '{{.Name}}']).stdout.decode().splitlines())
 
     def test_declared_digest_matches_docker_inspect_and_excludes_gemini(self):
         inspected = json.loads(run(['docker', 'image', 'inspect', self.metadata['tag']]).stdout)[0]

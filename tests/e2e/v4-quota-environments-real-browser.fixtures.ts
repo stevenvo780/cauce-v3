@@ -189,8 +189,8 @@ export async function startQuotaDockerHost(fixture: ConsoleFixture, owner: V4Per
     },
     async inspect(environmentId: string): Promise<QuotaContainerObservation> {
       const row = await environment(environmentId);
-      const names = (await command('/usr/bin/docker', ['ps', '-a', '--format', '{{.Names}}'])).split('\n');
-      const volumes = (await command('/usr/bin/docker', ['volume', 'ls', '--format', '{{.Name}}'])).split('\n');
+      const names = (await command('/usr/bin/docker', ['ps', '-a', '--filter', `name=^/${row.container_name}$`, '--format', '{{.Names}}'])).split('\n');
+      const volumes = (await command('/usr/bin/docker', ['volume', 'ls', '--filter', `name=^${row.container_name}-profile$`, '--format', '{{.Name}}'])).split('\n');
       let observed: QuotaContainerObservation = { present: names.includes(row.container_name), container_name: row.container_name,
         volume_present: volumes.includes(`${row.container_name}-profile`) };
       if (observed.present) {

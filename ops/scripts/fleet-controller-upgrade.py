@@ -363,7 +363,15 @@ def restart_and_verify(args, ctx, systemd):
 
 def referenced(root):
     identities = run(['docker', 'ps', '-aq', '--no-trunc']).stdout.split()
-    rows = json.loads(run(['docker', 'inspect', *identities]).stdout) if identities else []
+    if not identities:
+        return False
+    inspected = run(['docker', 'container', 'inspect', *identities], check=False)
+    # A container removed between `ps` and `inspect` mounts nothing any more; Docker still prints every other one.
+    vanished = all(re.match(r'Error(?: response from daemon)?: No such (?:object|container): ', line)
+                   for line in inspected.stderr.splitlines() if line.strip())
+    if inspected.returncode and not (vanished and inspected.stdout.strip()):
+        raise Abort('command failed: docker (exit ' + str(inspected.returncode) + ')')
+    rows = json.loads(inspected.stdout)
     return any(str(mount.get('Source', '')).startswith(str(root) + '/') for row in rows for mount in row.get('Mounts') or [])
 
 

@@ -56,7 +56,7 @@ def expected_labels(policy: dict, agent: dict) -> dict:
 
 
 def inspect_container(name: str) -> dict | None:
-    names = docker('ps', '-a', '--format', '{{.Names}}').decode().splitlines()
+    names = docker('ps', '-a', '--filter', 'name=^/' + re.escape(name) + '$', '--format', '{{.Names}}').decode().splitlines()
     if name not in names:
         return None
     items = json.loads(docker('inspect', name))
