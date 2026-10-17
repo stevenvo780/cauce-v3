@@ -58,6 +58,17 @@ export function blockingText(operation: FleetOperation | undefined, intended: Op
   return `Hay una operación${operation ? ` de ${KIND_NOUNS[operation.kind]}` : ' de flota'} sin terminar; cancélala para poder ${KIND_VERBS[intended]}.`;
 }
 
+const CAPABILITY_REASON: Record<string, string> = {
+  executor_unconfigured: 'el ejecutor de flota no está configurado en el servidor. Pide a un administrador que lo configure y vuelve a leer las capacidades',
+  unsupported_schema: 'el ejecutor de flota publicado usa un esquema que esta consola no admite. Actualiza la consola o el ejecutor y vuelve a leer las capacidades',
+};
+
+/** Why the fleet capability denies an action, in Spanish; an unknown code stays visible for support. */
+export function fleetCapabilityReasonText(reason: string | undefined): string {
+  if (!reason) return 'el servidor no detalló el motivo. Vuelve a leer las capacidades; si persiste, pide revisar la configuración del ejecutor';
+  return CAPABILITY_REASON[reason] ?? `el servidor informó un motivo que esta consola no reconoce. Vuelve a leer las capacidades; si persiste, pide revisar la configuración del ejecutor. Código: ${reason}`;
+}
+
 export const STALE_RESUME_TEXT = 'La configuración cambió desde que se lanzó; cancélala y vuelve a lanzarla.';
 export const isStaleResume = (message: string) => /revision changed;?\s*preview the operation again/iu.test(message);
 

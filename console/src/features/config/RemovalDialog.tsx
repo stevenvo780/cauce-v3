@@ -4,7 +4,7 @@ import { useApi } from '../../api/context';
 import { useConsoleAccess } from '../../api/console-access';
 import { FormDialog } from '../../components/dialogs';
 import { AgentFleetOperation, AgentFleetPreview } from './AgentFleetOperation';
-import { blockingOperation, fleetErrorText, operationSummary } from './fleet-operation-text';
+import { blockingOperation, blockingText, fleetCapabilityReasonText, fleetErrorText, operationSummary } from './fleet-operation-text';
 import { useAgentLifecycle } from './use-agent-lifecycle';
 import './agent-lifecycle.css';
 
@@ -66,6 +66,14 @@ export function RemovalDialog({ target, kind: initialKind, revision, onClose, re
     } catch (cause) { if (read === sequence.current) setError(cause instanceof Error ? fleetErrorText(cause.message, flow.operation, kind) : 'No se confirmó el encolado. El reintento conserva su clave.'); }
     finally { setSending(false); }
   }
+  const previewBlock = !canWrite ? 'No se acreditó autoridad actual para operar este grupo o espacio.'
+    : !available ? `El servidor no acredita esta acción: ${fleetCapabilityReasonText(flow.capability?.reason)}.`
+      : !request ? 'Falta una revisión o identidad válida para esta operación.'
+        : blocked ? blockingText(flow.operation, kind)
+          : inProgress ? 'Hay una operación en ejecución. Espera a que termine o cancélala desde el panel de la operación.'
+            : busy ? 'Espera a que termine la operación en curso.' : undefined;
+  const enqueueBlock = previewBlock ?? (!valid ? 'Previsualiza la operación para poder encolarla.'
+    : !validated.preview.can_apply ? 'La previsualización no permite aplicar esta operación. Revisa los motivos de la previsualización.' : undefined);
   return <FormDialog open wide anchorTop busy={sending} onClose={onClose}
     title={`Retirar o eliminar ${target.resource === 'tenant' ? 'espacio' : 'grupo'}`}>
     <div className="config-modal-cuerpo agent-lifecycle-panel">
@@ -80,11 +88,11 @@ export function RemovalDialog({ target, kind: initialKind, revision, onClose, re
       {kind === 'purge' ? <p className="notice">Exige que el retiro haya terminado. La previsualización muestra qué se borra y qué se conserva.</p> : null}
       {!canWrite ? <p className="notice">No se acreditó autoridad actual para operar este grupo o espacio.</p> : null}
       {flow.capabilityError ? <p className="notice">{flow.capabilityError}</p> : !flow.capability ? <p role="status">Leyendo capacidades operativas…</p>
-        : !available ? <p className="notice">El servidor no acredita esta acción{flow.capability.reason ? ` (${flow.capability.reason})` : ''}.</p> : null}
+        : !available ? <p className="notice">El servidor no acredita esta acción: {fleetCapabilityReasonText(flow.capability.reason)}.</p> : null}
       {!request ? <p className="notice">Falta una revisión o identidad válida para esta operación.</p> : null}
-      <div className="config-actions"><button type="button" className="button secondary" disabled={!canWrite || !available || !request || busy || inProgress || blocked}
+      <div className="config-actions"><button type="button" className="button secondary" disabled={!canWrite || !available || !request || busy || inProgress || blocked} title={previewBlock}
         aria-busy={previewing} onClick={() => { void preview(); }}>{previewing ? 'Previsualizando…' : `Previsualizar ${LABELS[kind]}`}</button>
-        <button type="button" className="button primary" disabled={!canWrite || !available || busy || inProgress || blocked || !valid || !validated.preview.can_apply}
+        <button type="button" className="button primary" disabled={!canWrite || !available || busy || inProgress || blocked || !valid || !validated.preview.can_apply} title={enqueueBlock}
           onClick={() => { void enqueue(); }}>Encolar {LABELS[kind]}</button></div>
       {!valid && !blocked && !previewing ? <p className="m-0 text-xs text-muted">Previsualiza la operación para poder encolarla.</p> : null}
       {error ? <p className="notice" role="alert">{error}</p> : null}

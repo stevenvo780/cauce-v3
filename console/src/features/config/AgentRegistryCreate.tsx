@@ -12,6 +12,7 @@ import {
 import { Button, Notice, PREVIEW } from '../../components/kit';
 import { useConfigMutation, useRevisionEncadenada } from './use-config-mutation';
 import { hostById, hostUnavailableReason, useFleetHosts } from './use-fleet-hosts';
+import { fleetCapabilityReasonText } from './fleet-operation-text';
 import { useAgentLifecycle } from './use-agent-lifecycle';
 import { agentLifecycleDraft } from './agent-lifecycle-model';
 import { AgentLifecyclePanel } from './AgentLifecyclePanel';
@@ -29,11 +30,6 @@ interface RoomStep { mutation: ConfigMutation; stage: 'queued' | 'checking' | 'r
 const ROOM_STATUS: Record<RoomStep['stage'], string> = {
   queued: 'pendiente', checking: 'pendiente', ready: 'pendiente', applying: 'pendiente', done: 'creada', failed: 'no creada',
 };
-const FLEET_REASON: Record<string, string> = {
-  executor_unconfigured: 'El ejecutor de flota no está configurado en el servidor.',
-  unsupported_schema: 'El ejecutor de flota publicado usa un esquema que esta consola no admite.',
-};
-
 export function AgentRegistryCreate({ snapshot, open, onOpenChange, onReloaded, focusReturnRef, onOpenAgent }: {
   snapshot: ConfigurationSnapshot;
   open: boolean;
@@ -91,7 +87,7 @@ export function AgentRegistryCreate({ snapshot, open, onOpenChange, onReloaded, 
   const fleetReason = lifecycle.capabilityError
     ?? (lifecycle.capability === undefined ? 'Leyendo capacidades de flota…'
       : lifecycle.capability.available ? undefined
-        : FLEET_REASON[lifecycle.capability.reason ?? ''] ?? 'La preparación en computadora no está disponible en este servidor.');
+        : `La preparación en computadora no está disponible: ${fleetCapabilityReasonText(lifecycle.capability.reason)}.`);
 
   useEffect(() => {
     if (open && clearNoticeOnNextOpen.current) {

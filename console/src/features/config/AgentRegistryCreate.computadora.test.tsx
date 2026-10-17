@@ -150,7 +150,8 @@ it('explains in Spanish why preparing on the computer is unavailable after the r
   await user.click(screen.getByRole('button', { name: 'Previsualizar alta' }));
   await screen.findByLabelText('Preview del alta de agente');
   await user.click(screen.getByRole('button', { name: 'Crear registro' }));
-  expect(await screen.findByText('El ejecutor de flota no está configurado en el servidor.')).toBeInTheDocument();
+  expect(await screen.findByText(/La preparación en computadora no está disponible: el ejecutor de flota no está configurado en el servidor/)).toBeInTheDocument();
+  expect(screen.queryByText(/executor_unconfigured/)).not.toBeInTheDocument();
   expect(screen.queryByRole('button', { name: 'Preparar en la computadora' })).not.toBeInTheDocument();
 });
 

@@ -103,6 +103,18 @@ it('fails closed when the capability is absent and does not infer it from config
   expect(await screen.findByText(/El servidor no acredita capacidades operativas/)).toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Previsualizar operación' })).toBeDisabled();
 });
+it('explains an unavailable executor in Spanish on the notice and the disabled action', async () => {
+  renderPanel();
+  server.use(http.get('http://localhost/v3/console/fleet/capability', () => HttpResponse.json({
+    available: false, actions: [], placements: [], reason: 'executor_unconfigured',
+  })));
+  const user = userEvent.setup();
+  await user.click(screen.getByRole('button', { name: 'Preparar agente' }));
+  expect(await screen.findByText(/no está configurado en el servidor/)).toBeInTheDocument();
+  expect(screen.queryByText(/executor_unconfigured/)).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Previsualizar operación' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Previsualizar operación' })).toHaveAttribute('title', expect.stringContaining('no está configurado en el servidor'));
+});
 it('reads durable history and performs cancel/resume using the latest operation version', async () => {
   const target = { resource: 'agent' as const, tenant_id: 'A', alias: 'one' };
   const input: FleetOperationRequest = { kind: 'stop', target, parameters: {}, expected_revision: 4, idempotency_key: 'request_key' };
