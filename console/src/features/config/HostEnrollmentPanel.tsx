@@ -6,9 +6,15 @@ import { ApiError } from '../../api/client/core';
 import { Button, Notice } from '../../components/kit';
 import { Time } from '../../components/ui';
 import { useCompanyAuthority } from '../auth/company-authority';
+import { UNREACHABLE_SERVER } from '../auth/RegistrationForm';
 import { HOST_ID_PATTERN } from './form-patterns';
 
 const HOST_NAME_PATTERN = '[a-z0-9_]+';
+
+function enrollmentFailure(cause: unknown, fallback: string): string {
+  if (cause instanceof TypeError) return UNREACHABLE_SERVER;
+  return cause instanceof Error && !(cause instanceof ApiError) ? cause.message : fallback;
+}
 
 /** The server answers in English; the console maps by status and never shows that text. */
 function inviteFailure(cause: unknown, prefix: string): string {
@@ -20,7 +26,7 @@ function inviteFailure(cause: unknown, prefix: string): string {
       ? 'Ese identificador ya pertenece a un ordenador registrado. Elige otro nombre.'
       : 'Ese ordenador ya tiene una invitación pendiente. Cancélala o espera a que caduque antes de crear otra.';
   }
-  return cause instanceof Error && !(cause instanceof ApiError) ? cause.message : 'No se confirmó la invitación. Relee antes de reintentar.';
+  return enrollmentFailure(cause, 'No se confirmó la invitación. Relee antes de reintentar.');
 }
 
 function signerFingerprint(value: string | undefined): string | undefined {
@@ -69,7 +75,7 @@ export function HostEnrollmentPanel({ canEnroll }: { canEnroll: boolean }) {
       const result = await enrollments.reload();
       if (result.error) throw new Error('La cancelación respondió; falta releer el estado.');
       setNotice('Invitación cancelada.');
-    } catch (cause) { setError(cause instanceof Error ? cause.message : 'No se confirmó la cancelación.'); }
+    } catch (cause) { setError(enrollmentFailure(cause, 'No se confirmó la cancelación. Relee el estado.')); }
     finally { setBusy(false); }
   }
   async function copy() {
@@ -87,7 +93,7 @@ export function HostEnrollmentPanel({ canEnroll }: { canEnroll: boolean }) {
       <div className="flex flex-wrap gap-2"><Button size="sm" disabled={busy || enrollments.loading} onClick={() => { void enrollments.reload(); }}>Releer invitaciones</Button>
         <Button variant="primary" size="sm" disabled={!ready || !!currentInvitation} onClick={() => { setForm(true); }}>Añadir ordenador</Button></div></div>
     <p className="m-0 text-xs text-muted">Crea una invitación y úsala en el ordenador que vas a conectar. Allí se confirma su identidad y después se prepara el ejecutor con la política de tu empresa, sin pasar por la plataforma.</p>
-    {error || enrollments.error ? <Notice tone="danger" role="alert">{error || enrollments.error?.message}</Notice> : null}
+    {error || enrollments.error ? <Notice tone="danger" role="alert">{error || enrollmentFailure(enrollments.error, 'No se pudieron leer las invitaciones. Relee el estado.')}</Notice> : null}
     {notice ? <Notice tone="info" role="status">{notice}</Notice> : null}
     {enrollments.loading ? <p role="status">Leyendo invitaciones…</p> : null}
     {form ? <form aria-label="Invitar ordenador" className="grid gap-3 sm:grid-cols-2" onSubmit={event => { event.preventDefault(); void create(); }}>

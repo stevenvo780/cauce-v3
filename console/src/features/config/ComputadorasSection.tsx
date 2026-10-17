@@ -103,7 +103,7 @@ export function ComputadorasSection({ snapshot, soloLectura }: { snapshot?: Conf
     <HostEnrollmentPanel canEnroll={!soloLectura && canManageCompany(snapshot?.capabilities?.actor.role)} />
     <p className="m-0 text-xs leading-relaxed text-muted">
       Si una computadora está apagada o deshabilitada, solo sus agentes dejan de estar disponibles; el resto del sistema sigue funcionando.
-      Instalar el ejecutor (acceso SSH, usuarios y aprobación) sigue siendo un paso del operador en cada computadora: registrarla aquí no lo instala.
+      Registrarla aquí no instala el ejecutor. Para conectarla y prepararlo, sigue las instrucciones de «Conectar un ordenador» en esa computadora.
     </p>
     {motivo ? <Notice tone="warn" role="note">Las acciones de esta sección están apagadas: {motivo}</Notice> : null}
     {flota.forbidden ? <Notice tone="info" role="note">Esta sesión no puede consultar las computadoras de esta empresa.</Notice>

@@ -48,8 +48,8 @@ export const CONFIG_SECTIONS: readonly ConfigSection[] = [
     label: 'Computadoras',
     proposito: 'Las máquinas donde corren los agentes: cuáles están conectadas, habilitadas y aprobadas para crear agentes.',
     detalle: 'El estado combina el controlador de flota con los latidos de los agentes. Deshabilitar una computadora '
-      + 'corta solo a sus agentes; el resto de la flota sigue igual. Instalar el ejecutor no se hace desde acá: es un '
-      + 'paso del operador en cada máquina.',
+      + 'corta solo a sus agentes; el resto de la flota sigue igual. Para instalar el ejecutor en esa computadora, '
+      + 'sigue las instrucciones de «Conectar un ordenador».',
   },
   {
     id: 'arneses',
