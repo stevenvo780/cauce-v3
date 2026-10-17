@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 // cauce:requiere docker
+// cauce:timeout-ms 600000
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { copyFile, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
