@@ -9,17 +9,31 @@
 # inherited its step token, and the test containers labelled with that token - and writes the red receipt.
 set -euo pipefail
 
-GATES=(typecheck lint test coverage:ratchet qa:testcontainers qa:layout qa:runtime-packaging ops:validate arch:validate)
-SHARDED=(test coverage:ratchet)
-# With more than one lane the long poles start first and the rest cheapest first.
-LAUNCH_ORDER=(test coverage:ratchet qa:testcontainers arch:validate typecheck qa:runtime-packaging lint qa:layout ops:validate)
-ORPHAN_SWEEP=(python3 -m pytest ops/tests/test_fleet_orphan_sweep.py ops/tests/test_fleet_executor_container.py -q --tb=line)
+# The deploy level (default) is what blocks a deploy: fast checks without Docker or browsers. The full level
+# (CAUCE_RELEASE_GATES_NIVEL=completo) adds the whole-stack suites as an optional run that never blocks a deploy.
+NIVEL="${CAUCE_RELEASE_GATES_NIVEL:-despliegue}"
+case "$NIVEL" in
+  despliegue)
+    GATES=(typecheck lint test:unit qa:runtime-packaging)
+    SHARDED=()
+    LAUNCH_ORDER=(test:unit lint typecheck qa:runtime-packaging)
+    ORPHAN_SWEEP=()
+    ;;
+  completo)
+    GATES=(typecheck lint test coverage:ratchet qa:testcontainers qa:layout qa:runtime-packaging ops:validate arch:validate)
+    SHARDED=(test coverage:ratchet)
+    # With more than one lane the long poles start first and the rest cheapest first.
+    LAUNCH_ORDER=(test coverage:ratchet qa:testcontainers arch:validate typecheck qa:runtime-packaging lint qa:layout ops:validate)
+    ORPHAN_SWEEP=(python3 -m pytest ops/tests/test_fleet_orphan_sweep.py ops/tests/test_fleet_executor_container.py -q --tb=line)
+    ;;
+  *) echo "release-gates: CAUCE_RELEASE_GATES_NIVEL debe ser despliegue o completo (es '$NIVEL')" >&2; exit 1 ;;
+esac
 STEP_LABEL=io.cauce.gate.paso
 
 die() { echo "release-gates: $*" >&2; exit 1; }
 
 commands() {
-  printf '%s\n' "${ORPHAN_SWEEP[*]}"
+  [ ${#ORPHAN_SWEEP[@]} -eq 0 ] || printf '%s\n' "${ORPHAN_SWEEP[*]}"
   printf 'pnpm %s\n' "${GATES[@]}"
 }
 
@@ -124,7 +138,7 @@ LANES_ROOT_CREATED=""
 UNITS_LAUNCHED=0
 LAST_DISPLAY=""
 declare -A NUMBER=() LOG_OF=() STARTED_AT=() RESULT=() RUN_DISPLAY=() RUN_LANE=() RUN_BEGAN=() RUN_TOKEN_OF=() SHARDS_GREEN=()
-NUMBER["${ORPHAN_SWEEP[*]}"]=00
+[ ${#ORPHAN_SWEEP[@]} -eq 0 ] || NUMBER["${ORPHAN_SWEEP[*]}"]=00
 for index in "${!GATES[@]}"; do NUMBER["pnpm ${GATES[$index]}"]="$(printf '%02d' $((index + 1)))"; done
 FAILED=""
 
@@ -334,7 +348,7 @@ if [ "$JOBS" = 1 ]; then
 else
   echo "release-gates: $COMMIT con hasta $JOBS carriles y $SHARDS trozo(s) para ${SHARDED[*]}; los extra son worktrees desechables en $LANES_ROOT"
 fi
-launch "${ORPHAN_SWEEP[*]}" orphan-sweep 0 "${ORPHAN_SWEEP[@]}"
+[ ${#ORPHAN_SWEEP[@]} -eq 0 ] || launch "${ORPHAN_SWEEP[*]}" orphan-sweep 0 "${ORPHAN_SWEEP[@]}"
 reap
 PENDING=()
 if [ -z "$FAILED" ]; then
