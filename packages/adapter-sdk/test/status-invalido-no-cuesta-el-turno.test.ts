@@ -4,7 +4,7 @@ import { validateStructuredOutput } from "../src/sdk/output-parser.js";
 
 test("un 'status' fuera del contrato no destruye el trabajo del turno", () => {
   const salida = validateStructuredOutput({
-    reply: "publique pos-estado.vercel.app y restaure catalogo.humanizar.tech",
+    reply: "publique preview.example.invalid y restaure catalogo.humanizar.tech",
     messages: [
       { to: "heraclito", body: "tu fichero llego intacto y ya esta publicado" },
       { to: "argos", body: "tumbe catalogo.humanizar.tech unos minutos y lo restaure" },

@@ -294,12 +294,12 @@ test("grok: un turno cortado por stop_reason distinto de end_turn es un fallo de
 
 test("grok: el lector sólo lista updates.jsonl de carpetas de sesión, de todos los cwd y en orden temporal", async () => {
   const { grokHome, log, sessionLog } = await grokWorkspace("grok-listado");
-  const older = await sessionLog("01a0cc55-12cc-71f0-884c-f9032608d0fd", "%2Fhome%2Fclaw%2Fclawd");
+  const older = await sessionLog("00000000-0000-4000-8000-36ca2d9fce2a", "%2Fhome%2Fclaw%2Fclawd");
   await older.append(older.user("vieja"));
   const files = await grokTranscript(grokHome).files();
 
   assert.deepEqual(files.map((file) => file.slice(grokHome.length)), [
-    "/sessions/%2Fhome%2Fclaw%2Fclawd/01a0cc55-12cc-71f0-884c-f9032608d0fd/updates.jsonl",
+    "/sessions/%2Fhome%2Fclaw%2Fclawd/00000000-0000-4000-8000-36ca2d9fce2a/updates.jsonl",
     `/sessions/%2Fhome%2Fclaw/${log.sessionId}/updates.jsonl`,
   ]);
 });

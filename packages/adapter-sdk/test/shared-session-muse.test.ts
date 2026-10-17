@@ -105,7 +105,7 @@ test("muse: SHARED_SESSION=1 usa un XDG_DATA_HOME propio del alias, esfuerzo max
 test("muse: el comando del panel se reconoce como muse y no como otro arnés", () => {
   const spec = { alias: "hegel", harness: "muse" as const, workspace: "/workspace" };
   const command = "bash -lc exec env XDG_DATA_HOME='/home/dev/.local/share/cauce-v3/config/hegel/.local/share'"
-    + " muse --yolo --trust-workspace --reasoning-effort max resume 01a0e56c-52cc-71a2-afe1-2ffabe9a4e2b";
+    + " muse --yolo --trust-workspace --reasoning-effort max resume 00000000-0000-4000-8000-111c36818d31";
   assert.equal(paneCommandMatches(spec, command), true);
   assert.equal(paneCommandMatches({ ...spec, harness: "claude" }, command), false);
 });

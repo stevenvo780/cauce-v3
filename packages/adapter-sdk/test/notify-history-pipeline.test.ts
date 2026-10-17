@@ -61,7 +61,7 @@ for (const mode of ["ok", "unavailable", "foreign"] as const) {
       const input = delivery(`human-${mode}`);
       await engine.handleDelivery({ ...input, authenticated_context: { session_id: "human-thread", channel: "telegram",
         origin: { adapter: scope.adapter, channel: scope.channel, conversation_id: scope.conversation_id,
-          relay: [], metadata: { reply_to: { message_id: "2703", is_fleet_bot: true } } } } });
+          relay: [], metadata: { reply_to: { message_id: "101", is_fleet_bot: true } } } } });
       assert.equal(calls, 1); assert.equal(runner.calls, 1);
       const prompt = runner.requests[0]?.stdin ?? "";
       assert.ok(prompt.includes("NOTIFICATION HISTORY DATA"));

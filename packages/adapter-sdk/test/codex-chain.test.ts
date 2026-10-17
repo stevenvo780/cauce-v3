@@ -15,8 +15,8 @@ import { codexTranscript, type RolloutLine } from "../src/shared-session/rollout
  */
 const FIXTURE: readonly RolloutLine[] = readFileSync(resolve("test/fixtures/codex-rollout-delegacion-socrates.jsonl"), "utf8")
   .trim().split("\n").map((line) => JSON.parse(line) as RolloutLine);
-const STEVEN = "01a0f27d-4fa4-7810-9be3-6b17b1e2a45b";
-const ZEUS = "01a0f2af-f3bc-7502-a0e5-743d39549913";
+const STEVEN = "00000000-0000-4000-8000-8b5c7ec23508";
+const ZEUS = "00000000-0000-4000-8000-59e70d90f331";
 const port = codexTranscript("/nonexistent");
 const upTo = (stamp: string): RolloutLine[] => FIXTURE.filter((line) => String(line.timestamp) <= stamp);
 const failure = (outcome: ReturnType<typeof port.findAnswer>): string => (outcome?.kind === "failed" ? outcome.detail : "");
@@ -42,7 +42,7 @@ const call = (name: string, args: Record<string, unknown>, id: string): CodexLin
 const output = (id: string, text: string): CodexLine =>
   ({ type: "response_item", payload: { type: "function_call_output", call_id: id, output: text } });
 
-test("codex: la raíz que delegó y cerró muda NO es el final: hay que despertarla (zeus 39549913)", () => {
+test("codex: la raíz que delegó y cerró muda NO es el final: hay que despertarla (zz-canary-turn)", () => {
   const atClose = upTo("2026-09-30T14:25:45.9");
   assert.equal(port.findAnswer(atClose, ZEUS), undefined, "se dio por muerto el turno que esperaba a finish_muse");
   const wake = port.wakePrompt?.(atClose, ZEUS);
@@ -66,7 +66,7 @@ test("codex: un turno ya arrancado pero todavía sin clasificar es la raíz ocup
   assert.equal(port.findAnswer(starting, ZEUS), undefined);
 });
 
-test("codex: la raíz que delegó, recibió la respuesta DENTRO del turno y cerró muda también se despierta (Steven b1e2a45b)", () => {
+test("codex: la raíz que delegó, recibió la respuesta DENTRO del turno y cerró muda también se despierta (zz-canary-turn)", () => {
   const atClose = upTo("2026-09-30T14:20:10.7");
   assert.equal(port.findAnswer(atClose, STEVEN), undefined);
   assert.equal(port.wakePrompt?.(atClose, STEVEN)?.wakes, 0);

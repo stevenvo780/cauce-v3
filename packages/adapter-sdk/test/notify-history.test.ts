@@ -24,7 +24,7 @@ test("multiple receipts keep destinations and provider ids separate", () => {
     effect_ids: ["effect-2"], provider_message_ids: ["other-provider"] });
   const result = pertinentNotices([multi], scope, [other, receipt()], now);
   assert.equal(result.records.length, 1);
-  assert.deepEqual(result.records[0]?.provider_message_ids, ["2703"]);
+  assert.deepEqual(result.records[0]?.provider_message_ids, ["101"]);
   const destination = pertinentNotices([multi], { ...scope, conversation_id: "other-chat" }, [receipt(), other], now);
   assert.equal(destination.records[0]?.body, "Different recipient");
   assert.deepEqual(destination.records[0].provider_message_ids, ["other-provider"]);
@@ -79,7 +79,7 @@ test("timestamps determine recency, not array order", () => {
 test("an exact reply selects an old notice outside recency", () => {
   const old = receipt({ updated_at: new Date(now - 365 * 86400_000).toISOString() });
   assert.equal(pertinentNotices([record()], scope, [old], now).records.length, 0);
-  const result = pertinentNotices([record()], { ...scope, reply_to_message_id: "2703" }, [old], now);
+  const result = pertinentNotices([record()], { ...scope, reply_to_message_id: "101" }, [old], now);
   assert.equal(result.selection, "exact_reply"); assert.equal(result.records.length, 1);
 });
 test("unknown replies never fall back to a recent notice", () => {
@@ -87,7 +87,7 @@ test("unknown replies never fall back to a recent notice", () => {
   assert.equal(r.selection, "reply_not_found"); assert.equal(r.records.length, 0);
 });
 test("ambiguous reply ids do not select the last notice", () => {
-  const result = pertinentNotices([record(), record("second")], { ...scope, reply_to_message_id: "2703" },
+  const result = pertinentNotices([record(), record("second")], { ...scope, reply_to_message_id: "101" },
     [receipt(), receipt({ delivery_id: "second" })], now);
   assert.equal(result.selection, "ambiguous_reply"); assert.equal(result.records.length, 0);
 });
@@ -110,7 +110,7 @@ test("history is serialized as data, with delimiter-like content escaped", () =>
 });
 
 test("reply_to resolves every chunk of a fully sent notification", () => {
-  const r = receipt({ expected_chunks: 2, sent_chunks: 2, provider_message_ids: ["2703", "2704"] });
+  const r = receipt({ expected_chunks: 2, sent_chunks: 2, provider_message_ids: ["101", "2704"] });
   for (const id of r.provider_message_ids) {
     const selection = pertinentNotices([record()], { ...scope, reply_to_message_id: id }, [r], now);
     assert.equal(selection.selection, "exact_reply"); assert.equal(selection.records[0]?.status, "sent");
@@ -118,7 +118,7 @@ test("reply_to resolves every chunk of a fully sent notification", () => {
 });
 test("reply_to identifies a partial notice without claiming full delivery", () => {
   const r = receipt({ status: "partial", expected_chunks: 2, sent_chunks: 1 });
-  const selection = pertinentNotices([record()], { ...scope, reply_to_message_id: "2703" }, [r], now);
+  const selection = pertinentNotices([record()], { ...scope, reply_to_message_id: "101" }, [r], now);
   assert.equal(selection.selection, "exact_reply"); assert.equal(selection.records[0]?.status, "partial");
 });
 test("unknown chunk totals cannot confirm full delivery", () => {

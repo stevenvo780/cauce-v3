@@ -6,7 +6,7 @@ test("two authenticated conversations never share a session, whatever the untrus
   const context = await setup("engine-tenant-session");
   const steven: Delivery = {
     ...delivery("tenant-session-a"),
-    ...conversation({ conversationId: "6979524541" }),
+    ...conversation({ conversationId: "42" }),
     body: { prompt: "perform the task", session_key: "same-label" },
   };
   const miguel: Delivery = {
@@ -93,7 +93,7 @@ test("recipient tenant scopes the session and is taken from local configuration"
   const miguel = await setup("engine-recipient-tenant-miguel", new ControlledRunner(), {
     ownTenantId: "Miguel",
   });
-  const shared = { ...delivery("recipient-tenant"), ...conversation({ conversationId: "6979524541" }) };
+  const shared = { ...delivery("recipient-tenant"), ...conversation({ conversationId: "42" }) };
   await steven.engine.handleDelivery(shared);
   await miguel.engine.handleDelivery(shared);
   assert.notEqual(sessionOf(steven.runner, 0), sessionOf(miguel.runner, 0));
@@ -108,12 +108,12 @@ test("bridge tenant no longer splits one conversation in two", async () => {
   const context = await setup("engine-bridge-tenant-merge");
   const legacy: Delivery = {
     ...delivery("bridge-tenant-legacy"),
-    ...conversation({ conversationId: "6979524541", metadata: {} }),
+    ...conversation({ conversationId: "42", metadata: {} }),
   };
   const current: Delivery = {
     ...delivery("bridge-tenant-current"),
     ...conversation({
-      conversationId: "6979524541",
+      conversationId: "42",
       metadata: { bridge_alias: "zeus", bridge_tenant: "Steven", chat_type: "private" },
     }),
   };
@@ -279,7 +279,7 @@ test("the next message of the same conversation lands in the session the retry u
     artifacts: [],
   });
   const context = await setup("engine-session-retry-continuity", runner);
-  const chat = conversation({ conversationId: "6979524541" });
+  const chat = conversation({ conversationId: "42" });
   await context.engine.handleDelivery({ ...delivery("retry-continuity-a", 1, 1), ...chat });
   runner.stdout = SUCCESS;
   await context.engine.handleDelivery({ ...delivery("retry-continuity-a", 1, 2), ...chat });

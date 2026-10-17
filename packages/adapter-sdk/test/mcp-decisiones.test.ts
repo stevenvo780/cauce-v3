@@ -101,8 +101,8 @@ test("CAUCE_DECISIONES_URL and decisiones_url accept only a bare https origin", 
       } } }));
       return loadCliRuntimeConfig("claude", ["--config", path, "--alias", "zeus"]);
     };
-    assert.equal((await write("https://100.64.0.11:8447")).decisionesUrl, "https://100.64.0.11:8447");
-    for (const bad of ["http://100.64.0.11:8447", "https://user:pw@host:8447", "https://host:8447/v1", "https://host:8447?x=1"]) {
+    assert.equal((await write("https://192.0.2.44:8447")).decisionesUrl, "https://192.0.2.44:8447");
+    for (const bad of ["http://192.0.2.44:8447", "https://user:pw@host:8447", "https://host:8447/v1", "https://host:8447?x=1"]) {
       await assert.rejects(write(bad), /https origin/u, bad);
     }
   } finally { await rm(root, { recursive: true, force: true }); }

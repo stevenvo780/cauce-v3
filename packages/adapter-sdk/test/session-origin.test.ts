@@ -75,7 +75,7 @@ function telegramDelivery(id: string): Delivery {
   const origin = () => ({
     adapter: "telegram",
     channel: "telegram",
-    conversation_id: "8981434475",
+    conversation_id: "43",
     external_message_id: `message-${id}`,
     relay: [],
     metadata: { chat_type: "private", bridge_alias: "jarvis", bridge_tenant: "Steven" },
@@ -139,7 +139,7 @@ test("un DM de Telegram queda etiquetado con su canal y su chat", async () => {
   assert.deepEqual((sesiones[primeraClave] as Record<string, unknown>).origin, {
     adapter: "telegram",
     channel: "telegram",
-    conversation_id: "8981434475",
+    conversation_id: "43",
   });
 });
 
@@ -205,7 +205,7 @@ test("OpenClaw conserva el pointer manual y registra la conversación humana ais
     .filter(([key]) => key !== pointerKey)
     .map(([, value]) => value as { native_id?: string; origin?: unknown });
   assert.deepEqual(sources.map((source) => source.origin), [
-    { adapter: "telegram", channel: "telegram", conversation_id: "8981434475" },
+    { adapter: "telegram", channel: "telegram", conversation_id: "43" },
     { adapter: "console", channel: "console", conversation_id: CONSOLE_HUMAN_CONVERSATION },
   ]);
   const humanRecord = sources[1];

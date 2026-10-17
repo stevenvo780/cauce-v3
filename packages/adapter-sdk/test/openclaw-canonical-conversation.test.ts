@@ -74,7 +74,7 @@ test("OpenClaw: dueño y SHARED_HUMANS, por consola, human-mcp o DM de Telegram,
     CAUCE_OWNER_HUMAN_ID: OWNER, CAUCE_SHARED_HUMAN_IDS: `Miguel:${LISTED}` });
   assert.equal(await session(console_("owner-console", OWNER)), CANONICAL);
   assert.equal(await session(humanDelivery({ id: "listed-mcp", humanId: LISTED, tenantId: "Miguel" })), CANONICAL);
-  assert.equal(await session(telegram("dm", "6979524541")), CANONICAL);
+  assert.equal(await session(telegram("dm", "42")), CANONICAL);
   const continuation = { ...humanDelivery({ id: "owner-chain", humanId: OWNER }),
     body: { type: "agent.response", text: "resultado de otro agente" } };
   assert.equal(await session(continuation), CANONICAL, "la continuación de su cadena vuelve a la misma conversación");
@@ -90,7 +90,7 @@ test("OpenClaw: dueño y SHARED_HUMANS, por consola, human-mcp o DM de Telegram,
 test("control negativo: sin dueño ni SHARED_HUMANS el alias OpenClaw conserva el comportamiento anterior", async (t) => {
   const { store, session } = await scenario(t, "legacy", {});
   assert.notEqual(await session(console_("owner-console", OWNER)), CANONICAL, "sin dueño declarado la consola sigue aislada");
-  const dm = await session(telegram("dm", "6979524541"));
+  const dm = await session(telegram("dm", "42"));
   assert.notEqual(dm, CANONICAL);
   assert.equal(store.getSession(POINTER)?.native_id, dm, "sin la regla, el último turno humano del arnés principal mueve el puntero");
 });
@@ -110,7 +110,7 @@ test("alias OpenClaw nuevo: el primer turno del dueño crea la conversación can
   const minted = runner.requests[0]?.sessionId;
   assert.equal(typeof minted, "string");
   assert.deepEqual(context.store.getSession(POINTER), { native_id: minted, initialized: true });
-  await context.engine.handleDelivery(telegram("next-dm", "6979524541"));
+  await context.engine.handleDelivery(telegram("next-dm", "42"));
   assert.equal(runner.requests[1]?.sessionId, minted);
 });
 

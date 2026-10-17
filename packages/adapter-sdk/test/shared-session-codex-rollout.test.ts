@@ -106,7 +106,7 @@ test("el turno del bus entra por la caja de codex y el sobre sale de su rollout"
   const tmux = new FakeTmux();
   // The codex box is drawn with `›`, not with `❯`.
   tmux.paneContent = "› ";
-  const turnId = "019fb910-ddd9-7d80-af14-8cb69357d917";
+  const turnId = "00000000-0000-4000-8000-1314e84b23a2";
   tmux.onSubmit = async (text) => {
     await appendFile(rollout, `${[
       codexStarted(turnId),
@@ -172,7 +172,7 @@ test("codex recorta el salto final al enviar y aun así se reconoce el turno", a
   const { state, codexHome, rollout } = await codexWorkspace("codex-recorte");
   const tmux = new FakeTmux();
   tmux.paneContent = "› ";
-  const turnId = "019fb92d-2577-7c12-a243-7152c7e05bce";
+  const turnId = "00000000-0000-4000-8000-7f2d76d99db5";
   tmux.onSubmit = async (text) => {
     // Exactly what the codex box does: trims the trailing whitespace.
     assert.ok(/\s$/u.test(text), "el prompt de protocolo tiene que llegar con blanco al final");
@@ -363,7 +363,7 @@ test("codex pensando («Dismiss and keep waiting») se espera y el turno del bus
     "  No action is required. Codex will keep waiting, and this menu will close when the response is ready.",
   ].join("\n");
   setTimeout(() => { tmux.paneContent = "› "; }, 200); // ~7× the 30 ms the box would otherwise get
-  const turnId = "019fb910-ddd9-7d80-af14-8cb69357d918";
+  const turnId = "00000000-0000-4000-8000-cd9a45a5846c";
   tmux.onSubmit = async (text) => {
     await appendFile(rollout, `${[codexStarted(turnId), codexUser(text, turnId),
       codexComplete(turnId, envelopeText("tras pensar"))].join("\n")}\n`);
@@ -381,7 +381,7 @@ test("codex no pega sobre un turno en vuelo del dueño: lo espera (socrates 2026
   tmux.paneContent = "◦ Working (1h 19m 21s • esc to interrupt)\n» Ask Codex to do anything\n";
   let submittedWhileWorking = false;
   setTimeout(() => { tmux.paneContent = "› "; }, 200);
-  const turnId = "019fb910-ddd9-7d80-af14-8cb69357d919";
+  const turnId = "00000000-0000-4000-8000-e4474ea64f32";
   tmux.onSubmit = async (text) => {
     submittedWhileWorking = tmux.paneContent.includes("esc to interrupt");
     await appendFile(rollout, `${[codexStarted(turnId), codexUser(text, turnId),

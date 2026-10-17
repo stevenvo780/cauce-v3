@@ -1,17 +1,4 @@
-/**
- * A merged turn that goes silent ON DISK is not a dead turn.
- *
- * `lastActivityAt` only sees the transcript file grow. One uninterrupted block —extended thinking,
- * a single long tool call— writes nothing for longer than the silence window, so the give-up guard
- * fired on a turn that was perfectly alive, released the delivery as EXECUTION_TIMEOUT_AMBIGUOUS
- * and quarantined the generation. Measured on heraclito with the fixed 55 min ceiling already
- * removed: delivery `0129e78b-24ca-4b54-b174-0301e508921c` still died at 03:28:22 UTC while the
- * person on the other side was still waiting for its reply.
- *
- * What decides now is the PANE: while it paints its "esc to interrupt" band the harness is alive
- * and the wait continues, bounded by the turn budget. And a pane that cannot be captured is never
- * evidence of life, so the genuinely lost paste keeps coming out as ambiguous.
- */
+/** Merged child turns keep their parent delivery alive until the terminal event. */
 import assert from "node:assert/strict";
 import { appendFile } from "node:fs/promises";
 import { join } from "node:path";

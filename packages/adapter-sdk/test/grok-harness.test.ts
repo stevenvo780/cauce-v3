@@ -26,7 +26,7 @@ const fixture = resolve("test/fixtures/fake-grok.mjs");
 const GROK_ARGS = ["--prompt-file", "/dev/stdin", "--output-format", "json", "--always-approve", "--verbatim"];
 /** Real stderr of `grok --resume <id>` for an id neither local nor remote knows (exit 1, stdout empty). */
 const DEAD_SESSION_STDERR = [
-  'Session "00000000-0000-7000-8000-00000000dead" not found locally, restoring conversation from remote...',
+  'Session "00000000-0000-4000-8000-8abcd5039394" not found locally, restoring conversation from remote...',
   "  [0.000s] 🔎 Fetching session record — Loading restore metadata from the registry",
   "Error: Failed to restore session from remote: fetching session record: session get failed: 404 Not Found",
   "",
@@ -84,7 +84,7 @@ test("Grok 1.0.41 captured JSON: envelope in text, observed sessionId, exact arg
     ...SUCCESS,
     reply: "Guardé la palabra clave de esta conversación: GIRASOL.",
   });
-  assert.equal(parsed.nativeSessionId, "01a0cc7c-0000-7000-8000-000000001041");
+  assert.equal(parsed.nativeSessionId, "00000000-0000-4000-8000-0a5f423422b7");
   // `thought` is private reasoning: it never becomes part of the result.
   assert.equal(JSON.stringify(parsed).includes("keyword"), false);
 
@@ -97,7 +97,7 @@ test("Grok 1.0.41 captured JSON: envelope in text, observed sessionId, exact arg
   assert.deepEqual(grokDefinition.sessionArgs({ sessionId: "stale-id", resume: false }), []);
   assert.deepEqual(
     grokDefinition.sessionArgs({ sessionId: parsed.nativeSessionId, resume: true }),
-    ["--resume", "01a0cc7c-0000-7000-8000-000000001041"],
+    ["--resume", "00000000-0000-4000-8000-0a5f423422b7"],
   );
   assert.equal(HARNESS_DEFINITIONS.grok, grokDefinition);
 });
@@ -218,7 +218,7 @@ test("Grok with a cauce_reply deposit: the deposit wins and the session id still
 test("Grok: a dead session is a retryable preflight failure with the raw cause, and is forgotten", async () => {
   const store = await freshStore("grok-dead-session");
   const key = "grok:conversation-dead";
-  await store.setSession(key, { native_id: "00000000-0000-7000-8000-00000000dead", initialized: true });
+  await store.setSession(key, { native_id: "00000000-0000-4000-8000-8abcd5039394", initialized: true });
   const runner = new RecordingRunner(fixedRunner({ exitCode: 1, stderr: DEAD_SESSION_STDERR }));
   const adapter = new HarnessAdapter({ definition: grokDefinition, runner, store });
 
@@ -237,14 +237,14 @@ test("Grok: a dead session is a retryable preflight failure with the raw cause, 
       return true;
     },
   );
-  assert.deepEqual(runner.requests[0]?.args.slice(-2), ["--resume", "00000000-0000-7000-8000-00000000dead"]);
+  assert.deepEqual(runner.requests[0]?.args.slice(-2), ["--resume", "00000000-0000-4000-8000-8abcd5039394"]);
   assert.equal(store.getSession(key), undefined, "the dead pointer survived");
 });
 
 test("Grok: a restore that fails on the network is retried WITHOUT forgetting the conversation", async () => {
   const store = await freshStore("grok-restore-network");
   const key = "grok:conversation-network";
-  const saved = { native_id: "01a0cc7c-0000-7000-8000-0000000000ff", initialized: true };
+  const saved = { native_id: "00000000-0000-4000-8000-60eb591df69f", initialized: true };
   await store.setSession(key, saved);
   const networkStderr = "Error: Failed to restore session from remote: fetching session record: "
     + "error sending request: connection refused\n";

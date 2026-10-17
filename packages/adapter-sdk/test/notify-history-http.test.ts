@@ -79,7 +79,7 @@ test("HTTP projection correlates separate notifications and destinations", async
   const rows = await source.read(scope, [incidentId], signal());
   const selected = pertinentNotices([{ ...r, output: { ...r.output, notify: [...r.output.notify, second] } }], scope, rows, now);
   assert.equal(selected.records.length, 1);
-  assert.deepEqual(selected.records[0]?.provider_message_ids, ["2703"]);
+  assert.deepEqual(selected.records[0]?.provider_message_ids, ["101"]);
 });
 
 test("an older attempt cannot attach its receipt to a newer inbox body", async () => {
@@ -93,7 +93,7 @@ test("legacy singular provider evidence is usable only for completely sent outpu
   const source = new HttpEgressReceiptSource(async () => ({ requested: [incidentId],
     items: [wireReceipt({ provider_message_ids: undefined })] }), scope);
   const rows = await source.read(scope, [incidentId], signal());
-  assert.deepEqual(rows[0]?.provider_message_ids, ["2703"]);
+  assert.deepEqual(rows[0]?.provider_message_ids, ["101"]);
 });
 
 test("an aborted lookup does not issue HTTP requests", async () => {
