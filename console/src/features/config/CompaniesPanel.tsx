@@ -55,13 +55,23 @@ export function CompaniesPanel() {
   const canSeeAdmins = canManageCompany(authority?.role);
   const canEdit = (company: CompanyRecord) => authority?.role === 'platform_admin'
     || authority?.role === 'company_owner' && company.id === authority.acting_company;
-  async function perform(action: () => Promise<unknown>, message: string, request: 'create' | 'update') {
+  async function perform(action: () => Promise<unknown>, message: string, request: 'create' | 'update', recheckAccess = false) {
     if (busy) return;
     setBusy(true); setError(''); setNotice('');
     try {
       await action(); setEditing(undefined); setPending(undefined); setCreating(false);
-      const reread = await resource.reload();
       setNotice(message);
+      if (recheckAccess) {
+        try {
+          let session = await api.getAuthSession();
+          // An in-flight session read may predate the company mutation.
+          if (session.authenticated !== false && session.authority?.role !== 'none') session = await api.getAuthSession();
+          if (session.authenticated !== false && session.authority?.role !== 'none') throw new Error();
+        }
+        catch { setError('El cambio se guardó, pero no se pudo verificar tu acceso. Recarga la consola.'); }
+        return;
+      }
+      const reread = await resource.reload();
       if (reread.error) setError(`El cambio se guardó, pero no se pudo releer: ${companyErrorText(reread.error, 'read')}`);
     } catch (cause) { setError(companyErrorText(cause, request)); }
     finally { setBusy(false); }
@@ -69,7 +79,7 @@ export function CompaniesPanel() {
   function applyChange({ company, change }: PendingChange) {
     void perform(() => change === 'retire' ? api.retireCompany(company.id, company.version)
       : api.updateCompany(company.id, { expected_version: company.version, state: change === 'disable' ? 'disabled' : 'enabled' }),
-    'Estado de empresa actualizado.', 'update');
+    'Estado de empresa actualizado.', 'update', company.id === authority?.home_company && (change === 'disable' || change === 'retire'));
   }
   return <SectionCard level={3} title="Empresas" className="gap-2 p-3">
     {authority ? <p className="text-xs text-muted">{COMPANY_ROLE_LABEL[authority.role]} · {authority.acting_company}</p> : null}
