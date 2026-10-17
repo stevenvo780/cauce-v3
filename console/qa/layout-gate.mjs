@@ -13,6 +13,7 @@ import { fileURLToPath } from 'node:url';
 import { startLayoutDevServer } from './layout-dev-server.mjs';
 import { chromium } from 'playwright';
 import { runV4Layout } from './layout-v4-gate.mjs';
+import { enRedAislada } from './red-aislada.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const CONSOLE_ROOT = resolve(HERE, '..');
@@ -591,6 +592,7 @@ async function principal() {
   else console.log('\nlayout: every measured budget holds.');
 }
 
+enRedAislada();
 if (!process.argv.includes('--v4-only')) {
   try { await principal(); }
   catch (error) { console.error(`layout: legacy measurement failed: ${error.message}`); process.exitCode = 1; }
