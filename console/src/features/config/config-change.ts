@@ -40,7 +40,7 @@ interface ConfigurationChangeTransport {
 export function textoRecarga(recarga: EstadoRecarga | undefined): string {
   if (!recarga) return '';
   return recarga.releido
-    ? ` Releído del servidor: las tablas de abajo están en la revisión ${String(recarga.revision ?? 'UNKNOWN')}.`
+    ? ` Releído del servidor: las tablas de abajo están en la revisión ${String(recarga.revision ?? 'desconocida')}.`
     : ` PERO la relectura del snapshot NO llegó (${recarga.motivo}): las tablas de abajo pueden estar`
       + ' vencidas, usá «Actualizar» antes de seguir tocando.';
 }
@@ -140,6 +140,39 @@ export function describeConfigError(
       error.message,
     ) };
   }
+  if (error instanceof ApiError && error.status === 401) {
+    return { conflict: false, message: spanishWithReason(
+      'Tu sesión terminó. Vuelve a entrar y reintenta el cambio.',
+      error.message,
+    ) };
+  }
+  if (error instanceof ApiError && error.status === 400) {
+    return { conflict: false, message: spanishWithReason(
+      'El servidor rechazó los datos del cambio. Revisa los campos y vuelve a guardar.',
+      error.message,
+    ) };
+  }
+  if (error instanceof ApiError && error.status === 404) {
+    return { conflict: false, message: spanishWithReason(
+      'El recurso ya no existe. Relee el inventario y vuelve a intentarlo sobre los datos actuales.',
+      error.message,
+    ) };
+  }
+  if (error instanceof ApiError && error.status === 429) {
+    return { conflict: false, message: spanishWithReason(
+      'Hay demasiadas solicitudes. Espera un momento y vuelve a intentarlo.',
+      error.message,
+    ) };
+  }
+  if (error instanceof ApiError && error.status >= 500) {
+    return { conflict: false, message: 'El servidor no pudo completar el cambio. No se aplicó nada que la consola pueda acreditar: relee el inventario para comprobar el estado antes de reintentar.' };
+  }
+  if (error instanceof ApiError) {
+    return { conflict: false, message: spanishWithReason(
+      'El servidor rechazó el cambio y no se aplicó nada. Relee el inventario y vuelve a intentarlo.',
+      error.message,
+    ) };
+  }
   return { conflict: false, message: error instanceof Error ? error.message : fallback };
 }
 
@@ -175,7 +208,7 @@ export async function executeConfigurationChange(
     return { ok: true, result, recarga: await reload() };
   } catch (error) {
     const described = options.describeError?.(error)
-      ?? describeConfigError(error, options.fallback ?? 'Cambio rechazado: UNKNOWN', options.camino);
+      ?? describeConfigError(error, options.fallback ?? 'Cambio rechazado sin detalle del servidor', options.camino);
     return described.conflict
       ? { ok: false, ...described, recarga: await reload() }
       : { ok: false, ...described };

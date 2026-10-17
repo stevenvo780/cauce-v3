@@ -350,7 +350,8 @@ it('FAMILIA 1: un rollback que FALLA no se ve igual que uno que funciona', async
 
   await user.click(await screen.findByRole('button', { name: /^Rollback$/ }));
 
-  const aviso = await screen.findByText(/rollback store caído/i);
+  const aviso = await screen.findByText(/El servidor no pudo completar el cambio/i);
+  expect(aviso).not.toHaveTextContent('rollback store caído');
   expect(aviso.closest('details')).toBeNull();
   expect(aviso).toHaveClass('bg-danger-soft');
   expect(screen.queryByText(/rollback atómico de la revisión 1 aplicado/i)).not.toBeInTheDocument();

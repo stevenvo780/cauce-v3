@@ -110,7 +110,7 @@ export function useInterruptores(
         // exactly the lie this module exists to prevent. It reverts anyway.
       desenlace = {
         ok: false, conflict: false,
-        message: error instanceof Error ? error.message : 'Cambio rechazado: UNKNOWN',
+        message: error instanceof Error ? error.message : 'Cambio rechazado sin detalle del servidor',
       };
     }
     setVolando((actual) => sinClave(actual, clave));
@@ -137,7 +137,7 @@ export function useInterruptores(
       setAviso({
         coleccion: interruptor.coleccion, tone: 'parcial', revision,
         text: `${interruptor.descripcion}: el servidor lo aplicó en la revisión `
-          + `${String(desenlace.result.revision ?? 'UNKNOWN')}.${textoRecarga(desenlace.recarga)}`,
+          + `${String(desenlace.result.revision ?? 'desconocida')}.${textoRecarga(desenlace.recarga)}`,
       });
       return;
     }
@@ -146,7 +146,7 @@ export function useInterruptores(
     setAviso({
       coleccion: interruptor.coleccion, tone: 'success', revision,
       text: `${interruptor.descripcion}: aplicado en la revisión `
-        + `${String(desenlace.result.revision ?? 'UNKNOWN')} (${desenlace.result.summary ?? 'sin resumen del servidor'}).`
+        + `${String(desenlace.result.revision ?? 'desconocida')} (${desenlace.result.summary ?? 'sin resumen del servidor'}).`
         + textoRecarga(desenlace.recarga),
     });
   }

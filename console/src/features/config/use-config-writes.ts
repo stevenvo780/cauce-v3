@@ -63,7 +63,7 @@ export function useConfigWrites() {
     config,
     access,
     encadenado,
-    fallback: 'Cambio rechazado: UNKNOWN',
+    fallback: 'Cambio rechazado sin detalle del servidor',
     ...(motivoDeSoloLectura === undefined ? {} : { bloqueo: `Cambio bloqueado. ${motivoDeSoloLectura}` }),
   };
   /** One channel per writing control; all share one write path and one chained revision. */
@@ -144,7 +144,7 @@ export function useConfigWrites() {
     try {
       mutation = parseMutation(editor);
     } catch (error) {
-      canalEditor.informar({ text: error instanceof Error ? error.message : 'Mutación rechazada: UNKNOWN', tone: 'error' });
+      canalEditor.informar({ text: error instanceof Error ? error.message : 'Mutación rechazada sin detalle del servidor', tone: 'error' });
       return;
     }
     const outcome = await canalEditor.change(mutation, dryRun);
@@ -160,8 +160,8 @@ export function useConfigWrites() {
     canalEditor.mostrar(undefined);
     canalEditor.informar({
       tone: outcome.recarga && !outcome.recarga.releido ? 'parcial' : 'success',
-      text: `Cambio atómico aplicado en revisión ${String(outcome.result.revision ?? 'UNKNOWN')}: `
-        + `${outcome.result.summary ?? 'UNKNOWN'}.${textoRecarga(outcome.recarga)}`,
+      text: `Cambio atómico aplicado en revisión ${String(outcome.result.revision ?? 'desconocida')}: `
+        + `${outcome.result.summary ?? 'sin resumen del servidor'}.${textoRecarga(outcome.recarga)}`,
     });
   }
 
@@ -198,7 +198,7 @@ export function useConfigWrites() {
     canalAccion.informar({
       alcance,
       tone: outcome.recarga && !outcome.recarga.releido ? 'parcial' : 'success',
-      text: `${accion.descripcion}: aplicado en la revisión ${String(outcome.result.revision ?? 'UNKNOWN')} `
+      text: `${accion.descripcion}: aplicado en la revisión ${String(outcome.result.revision ?? 'desconocida')} `
         + `(${outcome.result.summary ?? 'sin resumen del servidor'}).${textoRecarga(outcome.recarga)}`,
     });
   }
@@ -251,11 +251,11 @@ export function useConfigWrites() {
         canalRollback.informar({
           tone: recarga.releido ? 'success' : 'parcial',
           text: `Rollback atómico de la revisión ${revisionId} aplicado: revisión `
-            + `${String(result.revision ?? 'UNKNOWN')}.${textoRecarga(recarga)}`,
+            + `${String(result.revision ?? 'desconocida')}.${textoRecarga(recarga)}`,
         });
       } catch (error) {
         // `rollback`: this path does not preview before applying, so a 409 cannot redirect to "back to preview"—it redirects to picking the revision again over the new state.
-        const described = describeConfigError(error, 'Rollback rechazado: UNKNOWN', 'rollback');
+        const described = describeConfigError(error, 'Rollback rechazado sin detalle del servidor', 'rollback');
         if (!described.conflict) {
           canalRollback.informar({ text: described.message, tone: 'error' });
           return;

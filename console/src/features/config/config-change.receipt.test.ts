@@ -46,4 +46,29 @@ describe('full intent proof before configuration transport', () => {
     const generic = describeConfigError(new ApiError('Forbidden', 403, 'forbidden'), 'fallback');
     expect(generic.message).not.toContain('Forbidden');
   });
+  it('maps an expired session to re-entering instead of echoing the server sentence', () => {
+    const described = describeConfigError(new ApiError('Unauthorized', 401, 'unauthorized'), 'fallback');
+    expect(described.message).toContain('Tu sesión terminó');
+    expect(described.message).not.toContain('Unauthorized');
+  });
+  it('maps rate limiting to waiting instead of echoing the server sentence', () => {
+    const described = describeConfigError(new ApiError('Too Many Requests', 429, 'rate_limited'), 'fallback');
+    expect(described.message).toContain('demasiadas solicitudes');
+    expect(described.message).not.toContain('Too Many Requests');
+  });
+  it('maps invalid data to reviewing the fields instead of echoing the server sentence', () => {
+    const described = describeConfigError(new ApiError('Bad Request', 400, 'bad_request'), 'fallback');
+    expect(described.message).toContain('Revisa los campos');
+    expect(described.message).not.toContain('Bad Request');
+  });
+  it('maps a missing resource to rereading instead of echoing the server sentence', () => {
+    const described = describeConfigError(new ApiError('Not Found', 404, 'gone'), 'fallback');
+    expect(described.message).toContain('ya no existe');
+    expect(described.message).not.toContain('Not Found');
+  });
+  it('hides a 5xx server sentence behind the reread instruction', () => {
+    const described = describeConfigError(new ApiError('English server error', 500, 'internal'), 'fallback');
+    expect(described.message).toContain('relee el inventario');
+    expect(described.message).not.toContain('English server error');
+  });
 });

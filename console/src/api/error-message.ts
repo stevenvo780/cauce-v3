@@ -9,6 +9,7 @@ const GENERIC_HTTP = new Set([
   'unauthorized',
   'internal server error',
   'service unavailable',
+  'too many requests',
 ]);
 
 /** Keeps a concrete server reason beside the Spanish action. Generic HTTP phrases add nothing. */
