@@ -7,7 +7,7 @@ import { FORM_GRID } from './config-ui';
 import { ConfigSectionHeader } from './ConfigSectionHeader';
 import { TablasDeSeccion } from './ConfigTables';
 import { RecentFleetOperations } from './RecentFleetOperations';
-import { actionsFor, rollbackPolicy, templates } from './mutation-editor';
+import { actionsFor, mutationResourceReason, PLATFORM_CLI_REASON, rollbackPolicy, templates } from './mutation-editor';
 import type { ConfigWrites } from './use-config-writes';
 import type { ConfigResource, ConfigAction } from '../../api/types';
 
@@ -15,6 +15,14 @@ import type { ConfigResource, ConfigAction } from '../../api/types';
 export function AvanzadoSection({ ctx }: { ctx: ConfigWrites }) {
   const { config, canalRollback, canalEditor, soloLectura, busy } = ctx;
   const revisions = config.data?.revisions;
+  const chainReason = mutationResourceReason('chain_policy', config.data);
+  let editorReason = mutationResourceReason(ctx.resource, config.data);
+  try {
+    const mutation: unknown = JSON.parse(ctx.editor);
+    if (mutation && typeof mutation === 'object' && 'resource' in mutation && typeof mutation.resource === 'string') {
+      editorReason = mutationResourceReason(mutation.resource, config.data);
+    }
+  } catch { /* Invalid JSON is reported by the existing submit path. */ }
   return <div className="grid gap-4">
     <ConfigSectionHeader seccion="avanzado" />
 
@@ -36,7 +44,7 @@ export function AvanzadoSection({ ctx }: { ctx: ConfigWrites }) {
       {!revisions?.length ? <EmptyState>No hay revisiones.</EmptyState> : <Desplazable etiqueta="Historial de revisiones de configuración" className={SCROLL}>
         <table className={CARD_TABLE}><thead><tr><th>Rev</th><th>Actor</th><th>Resumen</th><th>Fecha</th><th>Rollback</th></tr></thead><tbody>
           {revisions.map((revision, index) => {
-            const policy = rollbackPolicy(revision.operation);
+            const policy = rollbackPolicy(revision.operation, config.data);
             const id = revision.id;
             return <tr key={id ?? index}>
               <td data-label="Rev"><Badge tone="info"><Unknown value={id} /></Badge></td>
@@ -65,16 +73,19 @@ export function AvanzadoSection({ ctx }: { ctx: ConfigWrites }) {
       </summary>
       <section className="grid gap-3 border-t border-line p-4">
         <h3 className="m-0 text-sm font-semibold">Editor de mutaciones</h3>
+        <Notice role="note">{PLATFORM_CLI_REASON}</Notice>
+        {chainReason ? <Notice role="note">Política de cadena: {chainReason}</Notice> : null}
+        {editorReason ? <Notice role="note">{editorReason}</Notice> : null}
         <p className="m-0 text-xs text-muted">Revisión esperada: {String(canalEditor.expectedRevision ?? 'UNKNOWN')}</p>
         <form className="grid gap-3" onSubmit={(event) => { event.preventDefault(); }}>
           <div className={FORM_GRID}>
-            <label>Resource<select disabled={soloLectura || busy} value={ctx.resource} onChange={(event) => { ctx.selectTemplate(event.target.value as ConfigResource, ctx.action); }}>{Object.keys(templates).map((item) => <option key={item}>{item}</option>)}</select></label>
+            <label>Resource<select disabled={soloLectura || busy} value={ctx.resource} onChange={(event) => { ctx.selectTemplate(event.target.value as ConfigResource, ctx.action); }}>{Object.keys(templates).map((item) => <option key={item} disabled={Boolean(mutationResourceReason(item, config.data))}>{item}</option>)}</select></label>
             <label>Action<select disabled={soloLectura || busy} value={ctx.action} onChange={(event) => { ctx.selectTemplate(ctx.resource, event.target.value as ConfigAction); }}>{actionsFor(ctx.resource).map((item) => <option key={item}>{item}</option>)}</select></label>
           </div>
           <label>Mutación JSON<textarea aria-label="Mutación JSON" className="font-mono text-xs" disabled={soloLectura || busy} rows={12} value={ctx.editor} onChange={(event) => { ctx.editarMutacion(event.target.value); }} spellCheck={false} /></label>
           <div className="flex flex-wrap gap-2">
-            <ActionButton label="Preview / dry-run" pendingLabel="Previsualizando…" done={false} announceError={false} disabled={soloLectura || busy} icon={<SearchCheck size={16} aria-hidden="true" />} action={(event) => ctx.submit(event, true)} />
-            <ActionButton variant="primary" label="Aplicar atómico" pendingLabel="Aplicando…" done={false} announceError={false} disabled={soloLectura || busy} icon={<Save size={16} aria-hidden="true" />} action={(event) => ctx.submit(event, false)} />
+            <ActionButton label="Preview / dry-run" pendingLabel="Previsualizando…" done={false} announceError={false} disabled={soloLectura || busy || Boolean(editorReason)} icon={<SearchCheck size={16} aria-hidden="true" />} action={(event) => ctx.submit(event, true)} />
+            <ActionButton variant="primary" label="Aplicar atómico" pendingLabel="Aplicando…" done={false} announceError={false} disabled={soloLectura || busy || Boolean(editorReason)} icon={<Save size={16} aria-hidden="true" />} action={(event) => ctx.submit(event, false)} />
           </div>
         </form>
         {canalEditor.preview ? <pre className={PREVIEW} aria-label="Resultado de preview">{canalEditor.preview}</pre> : null}

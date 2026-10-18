@@ -10,6 +10,7 @@ beforeEach(() => { window.history.replaceState({}, '', '/config?seccion=espacios
 
 async function openAdministration() {
   await screen.findByRole('tablist', { name: 'Secciones de ajustes' });
+  await screen.findByLabelText('Alias');
 }
 async function roundtrip(user: ReturnType<typeof userEvent.setup>) {
   const active = screen.getByRole('tablist', { name: 'Secciones de ajustes' }).querySelector('[aria-selected="true"]');
@@ -24,7 +25,7 @@ it('conserva el JSON editado y su pestaña al salir de administración y volver'
   await openAdministration();
   await user.click(screen.getByRole('tab', { name: 'Avanzado' }));
   const draft = '{"resource":"tenant","action":"update","id":"Steven","value":{"enabled":false}}';
-  await user.clear(screen.getByLabelText('Mutación JSON'));
+  await user.clear(await screen.findByLabelText('Mutación JSON'));
   // Pasted, not typed: the test is about keeping the draft, and typing 80 characters one by one under coverage nears the timeout.
   await user.paste(draft);
   await roundtrip(user);

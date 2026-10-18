@@ -7,49 +7,29 @@ import { CONFIG_SIN_CONTROL_REASON } from '../../router';
 import { textoRecarga, type ConfigChangeOutcome } from './config-change';
 import { CHECK_LABEL, FORM_GRID, HINT } from './config-ui';
 
-type SpaceStep = 'tenant' | 'room' | 'membership' | 'harness';
+type SpaceStep = 'tenant' | 'room' | 'membership';
 type WizardStep = SpaceStep | 'review';
 
-const wizardSteps: WizardStep[] = ['tenant', 'room', 'membership', 'harness', 'review'];
+const wizardSteps: WizardStep[] = ['tenant', 'room', 'membership', 'review'];
 const stepTitles: Record<WizardStep, string> = {
-  tenant: 'Tenant', room: 'Room', membership: 'Membership', harness: 'Harness', review: 'Dry-run y aplicar',
+  tenant: 'Tenant', room: 'Room', membership: 'Membership', review: 'Dry-run y aplicar',
 };
 
 // Same expressions as TenantSchema and AliasSchema in packages/protocol/src/schemas.ts.
 const TENANT_ID = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
 const SLUG = /^[a-z][a-z0-9_-]{0,63}$/;
 
-/**
- * `harnessCommand` NO LONGER EXISTS, and its absence is the change.
- *
- * `harness_definitions.command` was being saved, audited, and undoable… and nobody reads it:
- * `listAdapters` does not even select it (packages/store/src/repository/agents.ts:278), and the
- * adapter takes the command it runs from its own compiled table
- * (packages/adapter-sdk/src/harnesses/index.ts:12) or from its local config file's
- * `harness_command` (packages/adapter-sdk/src/bin/config.ts:179). A create field that writes a
- * column nobody obeys is exactly the false promise this change withdraws.
- *
- * No capability is lost: `HarnessConfigMutationSchema` still admits it
- * (packages/protocol/src/schemas/configuration.ts:31) and the raw-mutation editor can send it.
- * What disappears is the invitation to fill it in.
- */
 interface SpaceDraft {
   tenantId: string; tenantLabel: string; tenantIsHub: boolean; withTenant: boolean;
   roomId: string; roomLabel: string; withRoom: boolean;
   alias: string; role: string; withMembership: boolean;
-  harnessId: string; harnessLabel: string; harnessCapabilities: string; withHarness: boolean;
 }
 
 const emptyDraft: SpaceDraft = {
   tenantId: 'Acme', tenantLabel: 'Acme', tenantIsHub: false, withTenant: true,
   roomId: 'grp.acme', roomLabel: 'Acme room', withRoom: true,
   alias: 'agent', role: 'agent', withMembership: true,
-  harnessId: 'custom', harnessLabel: 'Custom harness', harnessCapabilities: '', withHarness: true,
 };
-
-function capabilityList(value: string): string[] {
-  return value.split(',').map((item) => item.trim()).filter((item) => item.length > 0);
-}
 
 interface PlanEntry { step: SpaceStep; mutation: ConfigMutation }
 
@@ -85,18 +65,6 @@ function planFor(draft: SpaceDraft): PlanEntry[] {
       value: { role: draft.role.trim(), enabled: true },
     } });
   }
-  if (draft.withHarness) {
-    plan.push({ step: 'harness', mutation: {
-      resource: 'harness', action: 'create', id: draft.harnessId.trim(),
-      // Without `command`: the key is not sent, and no `null` is sent "just in case". Sending
-      // `null` would let a create overwrite with NULL the value another operator set through the
-      // raw editor, which is writing a field this form no longer claims to govern.
-      value: {
-        display_name: draft.harnessLabel.trim(),
-        capabilities: capabilityList(draft.harnessCapabilities), enabled: true,
-      },
-    } });
-  }
   return plan;
 }
 
@@ -117,12 +85,6 @@ function stepError(step: WizardStep, draft: SpaceDraft): string | undefined {
     if (!SLUG.test(draft.alias.trim())) return 'El alias debe ser minúsculas, empezar con letra y usar sólo letras, números, guion o guion bajo.';
     return SLUG.test(draft.role.trim()) ? undefined : 'El rol de permisos debe ser minúsculas, empezar con letra y usar sólo letras, números, guion o guion bajo.';
   }
-  if (step === 'harness') {
-    if (!draft.withHarness) return undefined;
-    if (!SLUG.test(draft.harnessId.trim())) return 'El id de harness debe ser minúsculas y empezar con letra.';
-    const label = draft.harnessLabel.trim();
-    return label.length >= 1 && label.length <= 128 ? undefined : 'El harness necesita un display name de 1 a 128 caracteres.';
-  }
   if (!planFor(draft).length) return 'El plan quedó vacío: incluí al menos un recurso.';
   for (const previous of wizardSteps) {
     if (previous === 'review') break;
@@ -133,7 +95,7 @@ function stepError(step: WizardStep, draft: SpaceDraft): string | undefined {
 }
 
 /**
- * Guides tenant -> room -> membership -> harness over the same POST /v3/console/config/changes
+ * Guides tenant -> room -> membership over the same POST /v3/console/config/changes
  * that the raw editor uses. The endpoint applies ONE atomic mutation per call and each step
  * depends on the rows the previous one created, so the plan is previewed and applied one step
  * at a time: there is no possible dry-run of the room before the tenant exists.
@@ -245,20 +207,6 @@ export function SpaceWizard({ canWrite, busy, onChange }: {
       <label className={`${CHECK_LABEL} md:col-span-2`}><input {...writeControls} type="checkbox" checked={draft.withMembership} onChange={(event) => { edit({ withMembership: event.target.checked }); }} /> Crear la membership</label>
       <label>Alias<input {...writeControls} value={draft.alias} onChange={(event) => { edit({ alias: event.target.value }); }} /></label>
       <label>Rol de permisos <span className={HINT}>route/read/control salen de role_policies; no cambia el contexto</span><input {...writeControls} value={draft.role} onChange={(event) => { edit({ role: event.target.value }); }} /></label>
-    </div> : null}
-
-    {step === 'harness' ? <div className={FORM_GRID}>
-      <label className={`${CHECK_LABEL} md:col-span-2`}><input {...writeControls} type="checkbox" checked={draft.withHarness} onChange={(event) => { edit({ withHarness: event.target.checked }); }} /> Registrar el harness</label>
-      <label>Harness id<input {...writeControls} value={draft.harnessId} onChange={(event) => { edit({ harnessId: event.target.value }); }} /></label>
-      <label>Display name<input {...writeControls} value={draft.harnessLabel} onChange={(event) => { edit({ harnessLabel: event.target.value }); }} /></label>
-      <label>Capabilities <span className={HINT}>separadas por coma</span><input {...writeControls} value={draft.harnessCapabilities} onChange={(event) => { edit({ harnessCapabilities: event.target.value }); }} /></label>
-      {/* Where did "Command" go. Removing a field without saying so leaves the operator hunting for
-          it and thinking the screen broke; saying nobody reads it answers the question at once. */}
-      <p className={`${HINT} md:col-span-2`}>
-        «Command» ya no se pide: esa columna se guarda pero no la lee ningún camino de ejecución —el
-        adaptador toma su orden de su propio paquete o de su fichero local—. Sigue admitida por el
-        editor de mutaciones JSON de «Avanzado» para quien la necesite.
-      </p>
     </div> : null}
 
     {step === 'review' ? <>

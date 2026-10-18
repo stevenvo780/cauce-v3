@@ -38,14 +38,14 @@ function accept({ dryRun }: Call): ConfigChangeOutcome {
   return { ok: true, result: { applied: !dryRun, dry_run: dryRun, revision: dryRun ? 1 : 2, summary: 'mock' } };
 }
 
-const review = /5\. dry-run y aplicar/i;
+const review = /4\. dry-run y aplicar/i;
 
-it('encadena tenant, room, membership y harness con las formas exactas del protocolo', async () => {
+it('encadena tenant, room y membership con las formas exactas del protocolo', async () => {
   const user = userEvent.setup();
   const calls = renderWizard();
   await user.click(screen.getByRole('button', { name: review }));
 
-  for (let step = 0; step < 4; step += 1) {
+  for (let step = 0; step < 3; step += 1) {
     await user.click(screen.getByRole('button', { name: /previsualizar paso/i }));
     await user.click(await screen.findByRole('button', { name: /aplicar paso/i }));
   }
@@ -54,9 +54,8 @@ it('encadena tenant, room, membership y harness con las formas exactas del proto
     { resource: 'tenant', action: 'create', id: 'Acme', value: { display_name: 'Acme', is_hub: false, enabled: true } },
     { resource: 'room', action: 'create', tenant_id: 'Acme', id: 'grp.acme', value: { display_name: 'Acme room', enabled: true } },
     { resource: 'membership', action: 'create', tenant_id: 'Acme', room_id: 'grp.acme', alias: 'agent', value: { role: 'agent', enabled: true } },
-    { resource: 'harness', action: 'create', id: 'custom', value: { display_name: 'Custom harness', capabilities: [], enabled: true } },
   ]);
-  expect(calls).toHaveLength(8);
+  expect(calls).toHaveLength(6);
   expect(await screen.findByText(/espacio completo/i)).toBeInTheDocument();
 });
 
@@ -71,7 +70,7 @@ it('devuelve a pendiente los pasos cuyo contenido cambió después de aplicar el
   const user = userEvent.setup();
   const calls = renderWizard();
   await user.click(screen.getByRole('button', { name: review }));
-  await applyEveryStep(user, 4);
+  await applyEveryStep(user, 3);
   expect(await screen.findByText(/espacio completo/i)).toBeInTheDocument();
 
   await user.click(screen.getByRole('button', { name: /1\. tenant/i }));
@@ -85,8 +84,6 @@ it('devuelve a pendiente los pasos cuyo contenido cambió después de aplicar el
   expect(entries[0]).toHaveTextContent('"id":"Beta"');
   expect(entries[1]).toHaveTextContent(/^en cola/);
   expect(entries[2]).toHaveTextContent(/^en cola/);
-  // The harness does not depend on the tenant: its mutation stays the one the server accepted.
-  expect(entries[3]).toHaveTextContent(/^aplicado/);
   expect(screen.getByLabelText(/mutación pendiente del wizard/i)).toHaveTextContent('"id": "Beta"');
   expect(screen.getByRole('button', { name: /previsualizar paso/i })).toBeEnabled();
   expect(screen.getByRole('button', { name: /aplicar paso/i })).toBeDisabled();
@@ -96,7 +93,6 @@ it('devuelve a pendiente los pasos cuyo contenido cambió después de aplicar el
     { resource: 'tenant', action: 'create', id: 'Acme', value: { display_name: 'Acme', is_hub: false, enabled: true } },
     { resource: 'room', action: 'create', tenant_id: 'Acme', id: 'grp.acme', value: { display_name: 'Acme room', enabled: true } },
     { resource: 'membership', action: 'create', tenant_id: 'Acme', room_id: 'grp.acme', alias: 'agent', value: { role: 'agent', enabled: true } },
-    { resource: 'harness', action: 'create', id: 'custom', value: { display_name: 'Custom harness', capabilities: [], enabled: true } },
     { resource: 'tenant', action: 'create', id: 'Beta', value: { display_name: 'Acme', is_hub: false, enabled: true } },
     { resource: 'room', action: 'create', tenant_id: 'Beta', id: 'grp.acme', value: { display_name: 'Acme room', enabled: true } },
     { resource: 'membership', action: 'create', tenant_id: 'Beta', room_id: 'grp.acme', alias: 'agent', value: { role: 'agent', enabled: true } },
@@ -154,20 +150,18 @@ it('FAMILIA 4: no dice «aplicado» a secas cuando la relectura del snapshot NO 
   expect(aviso).toHaveClass('bg-warn-soft');
 });
 
-it('la mutación del harness no lleva la clave `command`', async () => {
+it('el asistente no ofrece ni envía la mutación global del harness', async () => {
   const user = userEvent.setup();
   const calls = renderWizard();
   await user.click(screen.getByRole('button', { name: review }));
-  await applyEveryStep(user, 4);
+  await applyEveryStep(user, 3);
 
-  const harness = calls.filter((call) => !call.dryRun).at(-1)?.mutation;
-  expect(harness?.resource).toBe('harness');
-  const value = (harness as { value?: Record<string, unknown> }).value ?? {};
+  expect(screen.queryByRole('button', { name: /harness/i })).not.toBeInTheDocument();
+  expect(calls.some((call) => call.mutation.resource === 'harness')).toBe(false);
+  const membership = calls.filter((call) => !call.dryRun).at(-1)?.mutation;
+  expect(membership?.resource).toBe('membership');
+  const value = (membership as { value?: Record<string, unknown> }).value ?? {};
   expect(Object.hasOwn(value, 'command'), 'la clave inerte volvió a viajar').toBe(false);
-  // NEGATIVE CONTROL: the keys that DO have a reader keep travelling. `listAdapters` reads
-  // `capabilities` and `enabled` (packages/store/src/repository/agents.ts:278) to decide the
-  // harness state; deleting them along the way would have been losing real capability.
-  expect(Object.hasOwn(value, 'display_name')).toBe(true);
-  expect(Object.hasOwn(value, 'capabilities')).toBe(true);
+  expect(Object.hasOwn(value, 'role')).toBe(true);
   expect(Object.hasOwn(value, 'enabled')).toBe(true);
 });

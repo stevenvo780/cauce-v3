@@ -142,7 +142,7 @@ export function useConfigWrites() {
     canalEditor.informar(undefined);
     let mutation: ConfigMutation;
     try {
-      mutation = parseMutation(editor);
+      mutation = parseMutation(editor, config.data);
     } catch (error) {
       canalEditor.informar({ text: error instanceof Error ? error.message : 'Mutación rechazada sin detalle del servidor', tone: 'error' });
       return;
@@ -205,7 +205,7 @@ export function useConfigWrites() {
 
   /** Revert a revision from the audit trail. Its own channel: an outcome read inside the raw editor's `<details>` is an outcome nobody reads. */
   async function rollback(revisionId: string, operation: unknown, dryRun: boolean) {
-    const policy = rollbackPolicy(operation);
+    const policy = rollbackPolicy(operation, config.data);
     if (!policy.allowed) {
       canalRollback.mostrar(undefined);
       canalRollback.informar({ tone: 'error', text: policy.message });

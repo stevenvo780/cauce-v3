@@ -22,7 +22,7 @@ const MODOS: readonly { id: ModoDeAlta; label: string; nota: string }[] = [
   {
     id: 'guiada',
     label: 'Espacio completo, paso a paso',
-    nota: 'Un cliente de cero: cliente → sala → membresía → harness, con dry-run por paso.',
+    nota: 'Un cliente de cero: cliente → sala → membresía, con dry-run por paso.',
   },
 ];
 

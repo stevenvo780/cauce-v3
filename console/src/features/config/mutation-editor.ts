@@ -1,16 +1,13 @@
-import type { AnyConfigResource, ConfigAction, ConfigMutation, ConfigResource } from '../../api/types';
+import type { AnyConfigResource, ConfigAction, ConfigMutation, ConfigResource, ConfigurationSnapshot } from '../../api/types';
+import { platformCatalogReason } from './config-form-access';
 
-export const templates: Record<ConfigResource, ConfigMutation> = {
+export const PLATFORM_CLI_REASON = 'Las definiciones de arnés y las políticas de rol se cambian con la CLI de plataforma, no desde esta consola.';
+
+export const templates: Partial<Record<ConfigResource, ConfigMutation>> = {
   tenant: { resource: 'tenant', action: 'create', id: 'Acme', value: { display_name: 'Acme', is_hub: false, enabled: true } },
   room: { resource: 'room', action: 'create', tenant_id: 'Acme', id: 'grp.acme', value: { display_name: 'Acme room', enabled: true } },
   membership: { resource: 'membership', action: 'create', tenant_id: 'Acme', room_id: 'grp.acme', alias: 'agent', value: { role: 'agent', enabled: true } },
   acl_edge: { resource: 'acl_edge', action: 'create', from_tenant: 'Acme', to_tenant: 'Partner', value: { enabled: true, allow_route: false, allow_read: false, allow_control: false } },
-  // No `command`, same as the harness step of the wizard: the column is stored and no execution path reads it (see
-  // `campos-inertes.ts`). The schema still accepts it—whoever needs it writes it by hand right here, that is what
-  // the escape hatch is for—, but the template no longer offers it pre-filled: a template is a suggestion, and we
-  // don't suggest what does nothing.
-  harness: { resource: 'harness', action: 'create', id: 'custom', value: { display_name: 'Custom harness', capabilities: [], enabled: true } },
-  role_policy: { resource: 'role_policy', action: 'create', role: 'observer', value: { allow_route: false, allow_read: false, allow_control: false } },
   chain_policy: { resource: 'chain_policy', action: 'update', id: 'default', value: { progress_relay_enabled: true, progress_relay_max_events: 8, cycle_cut_enabled: true } },
   egress_destination: {
     resource: 'egress_destination', action: 'create', tenant_id: 'Acme', alias: 'agent', handle: 'owner_dm',
@@ -36,6 +33,11 @@ export function actionsFor(resource: ConfigResource): readonly ConfigAction[] {
   return actionsByResource[resource] ?? allActions;
 }
 
+export function mutationResourceReason(resource: string, snapshot?: ConfigurationSnapshot): string | undefined {
+  if (resource === 'harness' || resource === 'role_policy') return PLATFORM_CLI_REASON;
+  return platformCatalogReason(snapshot, resource);
+}
+
 /**
  * Everything `ConfigMutationSchema` accepts on the server. `parseMutation` deliberately rejects the three account
  * registry resources after recognizing them: their typed and confirmed authority is `/accounts`, while `agent`
@@ -55,7 +57,7 @@ type RollbackPolicy =
   | { allowed: true }
   | { allowed: false; accountResource: boolean; message: string };
 
-function rollbackLeafPolicy(operation: unknown): RollbackPolicy {
+function rollbackLeafPolicy(operation: unknown, snapshot?: ConfigurationSnapshot): RollbackPolicy {
   if (!operation || typeof operation !== 'object' || Array.isArray(operation)) {
     return {
       allowed: false,
@@ -65,6 +67,8 @@ function rollbackLeafPolicy(operation: unknown): RollbackPolicy {
   }
   const candidate = operation as Record<string, unknown>;
   const resource = typeof candidate.resource === 'string' ? candidate.resource : undefined;
+  const reason = resource ? mutationResourceReason(resource, snapshot) : undefined;
+  if (reason) return { allowed: false, accountResource: false, message: reason };
   if (resource && ACCOUNT_RESOURCES.has(resource as AnyConfigResource)) {
     return {
       allowed: false,
@@ -92,35 +96,39 @@ function rollbackLeafPolicy(operation: unknown): RollbackPolicy {
   return { allowed: true };
 }
 
-export function rollbackPolicy(operation: unknown): RollbackPolicy {
+export function rollbackPolicy(operation: unknown, snapshot?: ConfigurationSnapshot): RollbackPolicy {
   if (operation && typeof operation === 'object' && !Array.isArray(operation)) {
     const candidate = operation as Record<string, unknown>;
     if (candidate.resource === 'batch' && candidate.action === 'apply'
       && Array.isArray(candidate.mutations) && candidate.mutations.length >= 1 && candidate.mutations.length <= 200) {
       for (const mutation of candidate.mutations) {
-        const policy = rollbackLeafPolicy(mutation);
+        const policy = rollbackLeafPolicy(mutation, snapshot);
         if (!policy.allowed) return policy;
       }
       return { allowed: true };
     }
   }
-  return rollbackLeafPolicy(operation);
+  return rollbackLeafPolicy(operation, snapshot);
 }
 
 export function mutationText(resource: ConfigResource, action: ConfigAction): string {
-  const mutation = structuredClone(templates[resource]);
+  const template = templates[resource];
+  if (!template) throw new Error(mutationResourceReason(resource) ?? 'resource no reconocido.');
+  const mutation = structuredClone(template);
   mutation.action = action;
   if (action === 'delete') delete mutation.value;
   return JSON.stringify(mutation, null, 2);
 }
 
-export function parseMutation(text: string): ConfigMutation {
+export function parseMutation(text: string, snapshot?: ConfigurationSnapshot): ConfigMutation {
   const value: unknown = JSON.parse(text);
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('La mutación debe ser un objeto JSON.');
   const mutation = value as Partial<ConfigMutation>;
   if (!RESOURCES.includes(String(mutation.resource) as AnyConfigResource)) {
     throw new Error('resource no reconocido.');
   }
+  const reason = mutationResourceReason(String(mutation.resource), snapshot);
+  if (reason) throw new Error(reason);
   if (ACCOUNT_RESOURCES.has(String(mutation.resource) as AnyConfigResource)) {
     throw new Error(
       'Las cuentas, sus techos y sus bindings se modifican únicamente en «Cuentas». '
