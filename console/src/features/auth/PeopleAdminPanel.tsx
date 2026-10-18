@@ -25,7 +25,7 @@ export function PeopleAdminPanel({ startCreating = false }: { startCreating?: bo
   const [confirmation, setConfirmation] = useState<{ person: ManagedPerson; action: Action }>();
   const [conflictDiffs, setConflictDiffs] = useState<ConflictFieldDiff[]>();
   const [formEpoch, setFormEpoch] = useState(0);
-  const lastValues = useRef<PersonValues | undefined>(undefined);
+  const personForm = useRef<HTMLFormElement>(null);
   const [stale, setStale] = useState(false);
   const generation = useRef(0);
   const sending = useRef(false);
@@ -80,14 +80,24 @@ export function PeopleAdminPanel({ startCreating = false }: { startCreating?: bo
     if (!editing || !inventory) return;
     const person = editing.person;
     if (person && !inventory.capabilities.update || !person && !inventory.capabilities.create) return;
-    lastValues.current = values;
     await performSave(person, values);
   }
   async function performSave(person: ManagedPerson | undefined, values: PersonValues) {
     if (!canUse || sending.current) return;
     sending.current = true; setBusy(true); setError(''); setNotice('');
     const current = generation.current;
+    const personId = person?.id;
     try {
+      if (conflictDiffs && person) {
+        const freshInventory = await api.listPeople();
+        if (current !== generation.current) return;
+        setInventory(freshInventory);
+        const fresh = freshInventory.items.find((item) => item.id === personId);
+        if (!fresh) throw new Error('La persona ya no está disponible. Relee el inventario.');
+        if (!freshInventory.capabilities.update) throw new Error('Esta cuenta no tiene autoridad para administrar personas.');
+        person = fresh;
+        setEditing({ person: fresh });
+      }
       if (!person) await api.createPerson(values);
       else {
         const { email, display_name, role, tenant_id, alias, password } = values;
@@ -107,7 +117,7 @@ export function PeopleAdminPanel({ startCreating = false }: { startCreating?: bo
           const freshInventory = await api.listPeople();
           if (current !== generation.current) return;
           setInventory(freshInventory);
-          const fresh = freshInventory.items.find((item) => item.id === person.id);
+          const fresh = freshInventory.items.find((item) => item.id === personId);
           if (fresh) {
             setEditing({ person: fresh });
             setConflictDiffs(diffConflictFields(
@@ -124,20 +134,6 @@ export function PeopleAdminPanel({ startCreating = false }: { startCreating?: bo
         setError(cause instanceof Error ? cause.message : 'No se confirmó el cambio. Relee antes de reintentar.');
       }
     } finally { sending.current = false; setBusy(false); }
-  }
-  async function retryConflict() {
-    const values = lastValues.current;
-    const person = editing?.person;
-    if (!values) return;
-    setConflictDiffs(undefined);
-    if (!person) { await save(values); return; }
-    try {
-      const freshInventory = await api.listPeople();
-      setInventory(freshInventory);
-      const fresh = freshInventory.items.find((item) => item.id === person.id);
-      if (fresh) { setEditing({ person: fresh }); await performSave(fresh, values); return; }
-    } catch { /* the stale revision below is retried as-is */ }
-    await performSave(person, values);
   }
   function discardConflict() {
     setConflictDiffs(undefined);
@@ -180,9 +176,9 @@ export function PeopleAdminPanel({ startCreating = false }: { startCreating?: bo
             onClick={() => { ask(person, 'purge'); }} aria-label={`Purgar persona ${person.email}`}>Purgar</button> : null}</>}
         </div></td></tr>)}</tbody></table>{!inventory.items.length ? <p>No hay personas en este inventario.</p> : null}</div> : null}
     {editing && conflictDiffs ? <ConflictNotice diffs={conflictDiffs} busy={busy}
-      onRetry={() => { void retryConflict(); }} onDiscard={discardConflict} /> : null}
+      onRetry={() => { personForm.current?.requestSubmit(); }} onDiscard={discardConflict} /> : null}
     {editing && snapshot ? <PeopleAdminForm key={`${editing.person?.id ?? 'create'}:${String(formEpoch)}`} person={editing.person} snapshot={snapshot}
-      occupied={inventory?.items ?? []} busy={!canUse} save={save} cancel={() => { setEditing(undefined); setConflictDiffs(undefined); }} /> : null}
+      formRef={personForm} occupied={inventory?.items ?? []} busy={!canUse} save={save} cancel={() => { setEditing(undefined); setConflictDiffs(undefined); }} /> : null}
     {confirmation ? <section className="people-admin-confirm" aria-label="Confirmar cambio de acceso">
       <h3>{confirmation.action === 'retire' ? 'Retirar acceso' : confirmation.action === 'restore' ? 'Restaurar acceso' : 'Purgar definitivamente'}</h3>
       <p>{confirmation.person.email} · revisión <code>{confirmation.person.revision}</code></p>

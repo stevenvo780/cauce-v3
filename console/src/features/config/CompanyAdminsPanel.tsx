@@ -31,8 +31,18 @@ export function CompanyAdminsPanel({ companyId, canAssignPeople }: { companyId: 
       if (reread.error) throw reread.error;
       setNotice(nextRole === null ? 'Autoridad de empresa revocada.' : 'Autoridad de empresa guardada.');
     } catch (cause) {
+      const message = cause instanceof Error ? cause.message : 'No se confirmó la autoridad de empresa.';
+      const explanation = message === 'company must retain a qualified owner'
+        ? 'La empresa necesita al menos un dueño activo. Asigna otro dueño antes de revocar esta autoridad.'
+        : message;
       if (isCasConflict(cause)) {
-        const fresh = (await admins.reload()).data?.items.find(admin => admin.user_id === userId);
+        const reread = await admins.reload();
+        const fresh = reread.data?.items.find(admin => admin.user_id === userId);
+        if (reread.error || (fresh?.version ?? 0) === version) {
+          setAdminConflict(undefined);
+          setError(explanation);
+          return;
+        }
         setAdminConflict({
           userId, nextRole,
           diffs: diffConflictFields(
@@ -41,7 +51,7 @@ export function CompanyAdminsPanel({ companyId, canAssignPeople }: { companyId: 
             { autoridad: 'Autoridad de empresa' },
           ),
         });
-      } else setError(cause instanceof Error ? cause.message : 'No se confirmó la autoridad de empresa.');
+      } else { setAdminConflict(undefined); setError(explanation); }
     }
     finally { setBusy(false); }
   }

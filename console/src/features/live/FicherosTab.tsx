@@ -404,7 +404,7 @@ function Editor({
       const status = error instanceof ApiError ? error.status : undefined;
       const codigo = error instanceof ApiError ? error.code : undefined;
       const mensaje = error instanceof Error ? error.message : undefined;
-      if (isCasConflict(error) && codigo !== 'managed_context_conflict') {
+      if (isCasConflict(error) && (codigo === 'conflict' || codigo === 'stale')) {
         setFallo(undefined);
         try {
           const fresh = await api.getAgentDocumentContent(tenantId, alias, item.kind);
@@ -419,6 +419,7 @@ function Editor({
         } catch { setConflicto({ diffs: [] }); }
         return;
       }
+      setConflicto(undefined);
       const explicado = error instanceof ApiError && status === 409
         && error.code === 'managed_context_conflict'
         ? {
@@ -427,8 +428,8 @@ function Editor({
         }
         : status === 409
         ? {
-          titulo: 'Alguien lo cambió mientras lo editabas',
-          detalle: error instanceof Error ? error.message : 'Vuelve a abrirlo antes de guardar.',
+          titulo: 'El servidor bloqueó el guardado',
+          detalle: mensaje ?? 'Revisa el estado del agente y del fichero antes de guardar.',
         }
         : explicarFalloDeMotivo(status, codigo, mensaje) ?? explicarFallo(status, mensaje);
       setFallo(explicado);

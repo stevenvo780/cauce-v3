@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, type RefObject } from 'react';
 import { isReservedAlias } from '@cauce/protocol/configuration';
 import type { ManagedPerson, PersonValues } from '../../api/client/people-admin-client';
 import type { ConfigurationSnapshot } from '../../api/types';
@@ -21,9 +21,10 @@ function aliasFromEmail(email: string, taken: ReadonlySet<string>): string {
   return candidate;
 }
 
-export function PeopleAdminForm({ person, snapshot, occupied = [], busy, save, cancel }: {
+export function PeopleAdminForm({ person, snapshot, occupied = [], busy, save, cancel, formRef }: {
   person?: ManagedPerson; snapshot: ConfigurationSnapshot; occupied?: readonly Pick<ManagedPerson, 'tenant_id' | 'alias'>[];
   busy: boolean; save: (values: PersonValues) => Promise<void>; cancel: () => void;
+  formRef?: RefObject<HTMLFormElement | null>;
 }) {
   const [values, setValues] = useState<PersonValues>({ email: person?.email ?? '', display_name: person?.display_name ?? '',
     role: person?.role ?? 'reader', tenant_id: person?.tenant_id ?? '', alias: person?.alias ?? '',
@@ -62,9 +63,8 @@ export function PeopleAdminForm({ person, snapshot, occupied = [], busy, save, c
       setError('La contraseña debe tener entre 12 y 1024 caracteres.'); return;
     }
     await save({ ...values, email, display_name: values.display_name.trim(), alias });
-    setValues(previous => ({ ...previous, password: '' }));
   }
-  return <form className="people-admin-form" aria-label={person ? `Editar persona ${person.email}` : 'Invitar persona'}
+  return <form ref={formRef} className="people-admin-form" aria-label={person ? `Editar persona ${person.email}` : 'Invitar persona'}
     onSubmit={event => { event.preventDefault(); if (!busy) void submit(); }}>
     <h3>{person ? 'Editar persona' : 'Invitar persona'}</h3>
     {person ? <p>Revisión visible: <code>{person.revision}</code>. Cambiar identidad, rol o contraseña revoca las sesiones y accesos anteriores.</p> : null}

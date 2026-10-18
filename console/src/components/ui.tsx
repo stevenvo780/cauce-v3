@@ -186,7 +186,7 @@ export function EmptyState({ children }: { children: ReactNode }) {
 }
 
 export function RefreshButton({ onClick, loading = false, compact = false }: {
-  onClick: () => void;
+  onClick: () => unknown;
   loading?: boolean;
   compact?: boolean;
 }) {
@@ -197,7 +197,7 @@ export function RefreshButton({ onClick, loading = false, compact = false }: {
       size={compact ? 'sm' : 'md'}
       busy={loading}
       icon={<RefreshCw size={16} aria-hidden="true" />}
-      action={() => { onClick(); }}
+      action={onClick}
     />
   );
 }

@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useRef, useState, type RefObject } from 'react';
 import { QUOTA_ACCOUNT_PROVIDERS, type QuotaAccount, type QuotaAccountProvider } from '../../api/client/my-quotas-client';
 import { useApi } from '../../api/context';
 import { usePolling } from '../../api/use-polling';
@@ -32,8 +32,9 @@ export function MyQuotasPage() {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const mutating = useRef(false);
+  const accountForm = useRef<HTMLFormElement>(null);
   const [pinFailed, setPinFailed] = useState(false);
-  const [accountConflict, setAccountConflict] = useState<{ diffs: ConflictFieldDiff[]; fresh: QuotaAccount; input: AccountFormValues }>();
+  const [accountConflict, setAccountConflict] = useState<{ diffs: ConflictFieldDiff[]; fresh: QuotaAccount }>();
   const [accountFormEpoch, setAccountFormEpoch] = useState(0);
   const ready = !!accounts.data && !accounts.error && !accounts.loading && !busy;
   const canWrite = canManageCompany(authority?.role) && ready;
@@ -58,6 +59,14 @@ export function MyQuotasPage() {
     if (mutating.current) return;
     mutating.current = true; setBusy(true); setError(''); setNotice('');
     try {
+      if (accountConflict) {
+        const reread = await accounts.reload();
+        if (reread.error) throw reread.error;
+        const fresh = reread.data.accounts.find((candidate) => candidate.id === account.id);
+        if (!fresh) throw new Error('La cuenta ya no está disponible. Actualiza cuotas y entornos.');
+        account = fresh;
+        setEditing(fresh);
+      }
       await api.updateQuotaAccount(account.id, { expected_version: account.version, label: input.label, enabled: input.enabled, ...input.pause });
       setEditing(undefined); setAccountConflict(undefined); await reload(); setNotice('Cuenta actualizada.');
     } catch (cause) {
@@ -67,14 +76,14 @@ export function MyQuotasPage() {
         if (fresh) {
           setEditing(fresh);
           setAccountConflict({
-            fresh, input,
+            fresh,
             diffs: diffConflictFields(
               { label: input.label, enabled: input.enabled },
               { label: fresh.label, enabled: fresh.enabled },
               { label: 'Nombre de la cuenta', enabled: 'Cuenta habilitada' },
             ),
           });
-        } else setAccountConflict({ fresh: account, input, diffs: [] });
+        } else setAccountConflict({ fresh: account, diffs: [] });
       } else setError(describeQuotaError(cause, 'No se confirmó el cambio de cuenta.'));
     } finally { mutating.current = false; setBusy(false); }
   }
@@ -122,16 +131,10 @@ export function MyQuotasPage() {
       <Button variant="primary" disabled={!canWriteAccounts} title={registerBlock} onClick={() => { setCreating(true); }}>Registrar cuenta</Button></div>
     {creating ? <QuotaAccountForm executable={executableProviders} busy={busy} canWrite={canWriteAccounts} cancel={() => { setCreating(false); }}
       save={input => canWriteAccounts ? write(() => api.createQuotaAccount({ provider: input.provider, label: input.label, idempotency_key: input.idempotency_key }), 'Cuenta registrada. Crea su entorno para autenticar y consultar.') : Promise.resolve()} /> : null}
-    {editing ? <QuotaAccountForm key={`${editing.id}:${String(accountFormEpoch)}`} account={editing} executable={executableProviders} busy={busy} canWrite={canWriteAccounts} cancel={() => { setEditing(undefined); setAccountConflict(undefined); }}
+    {editing ? <QuotaAccountForm key={`${editing.id}:${String(accountFormEpoch)}`} formRef={accountForm} account={editing} executable={executableProviders} busy={busy} canWrite={canWriteAccounts} cancel={() => { setEditing(undefined); setAccountConflict(undefined); }}
       save={input => canWriteAccounts ? saveAccountEdit(input, editing) : Promise.resolve()} /> : null}
     {editing && accountConflict ? <ConflictNotice diffs={accountConflict.diffs} busy={busy}
-      onRetry={() => {
-        void (async () => {
-          const fresh = (await accounts.reload()).data?.accounts.find((candidate) => candidate.id === editing.id) ?? accountConflict.fresh;
-          setEditing(fresh);
-          await saveAccountEdit(accountConflict.input, fresh);
-        })();
-      }}
+      onRetry={() => { accountForm.current?.requestSubmit(); }}
       onDiscard={() => { setEditing(accountConflict.fresh); setAccountFormEpoch((epoch) => epoch + 1); setAccountConflict(undefined); }} /> : null}
     {removing ? <section aria-label="Confirmar eliminación de cuenta" className="grid gap-2 rounded-xl border border-line p-4"><p>Eliminar {removing.label} exige retirar antes sus entornos y asignaciones. El servidor comprobará esas dependencias.</p>
       <div className="flex gap-2"><Button variant="danger" disabled={!canWriteAccounts} onClick={() => { void write(() => api.deleteQuotaAccount(removing.id, removing.version), 'Cuenta eliminada.'); }}>Confirmar eliminación de cuenta</Button>
@@ -159,8 +162,9 @@ function isAccountProvider(choice: string): choice is QuotaAccountProvider {
   return QUOTA_ACCOUNT_PROVIDERS.some(provider => provider === choice);
 }
 
-function QuotaAccountForm({ account, executable, busy, canWrite, save, cancel }: {
+function QuotaAccountForm({ account, executable, busy, canWrite, save, cancel, formRef }: {
   account?: QuotaAccount; executable: readonly string[]; busy: boolean; canWrite: boolean; save: (input: AccountFormValues) => Promise<void>; cancel: () => void;
+  formRef?: RefObject<HTMLFormElement | null>;
 }) {
   const automatic = automaticPauseWindow(account?.paused_reason ?? null) !== undefined;
   const initialPause = toLocalInput(account?.paused_until ?? null);
@@ -177,7 +181,7 @@ function QuotaAccountForm({ account, executable, busy, canWrite, save, cancel }:
   const pausedDate = paused ? new Date(paused) : undefined;
   const hasPause = !!account?.paused_until || !!account?.paused_reason;
   const locked = busy || !canWrite;
-  return <form aria-label={account ? 'Editar cuenta de cuotas' : 'Registrar cuenta de cuotas'} className="grid gap-2 rounded-xl border border-line bg-surface p-4" onSubmit={event => { event.preventDefault();
+  return <form ref={formRef} aria-label={account ? 'Editar cuenta de cuotas' : 'Registrar cuenta de cuotas'} className="grid gap-2 rounded-xl border border-line bg-surface p-4" onSubmit={event => { event.preventDefault();
     if (locked) return;
     if (pausedDate && Number.isNaN(pausedDate.getTime())) { setError('Introduce una fecha de pausa válida.'); return; }
     if (!account && !isAccountProvider(provider)) { setError('Elige un proveedor de la lista.'); return; }

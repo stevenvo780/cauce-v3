@@ -98,7 +98,7 @@ function ContextPanelContent({ tenantId, alias, initialSection = 'perfil' }: Pan
           { id: 'versiones', label: 'Versiones y aplicación' },
         ]} />
         <ActionButton variant="ghost" size="sm" className="mb-1.5" label="Actualizar" name="Actualizar estado del contexto"
-          disabled={state.busy} title="Actualizar estado del contexto" icon={<RefreshCw size={14} aria-hidden="true" />}
+          disabled={state.busy} done={false} title="Actualizar estado del contexto" icon={<RefreshCw size={14} aria-hidden="true" />}
           action={() => { refresh(); }} />
       </div>
       {dirty ? <Notice tone="warn" role="status" className="mt-4">
