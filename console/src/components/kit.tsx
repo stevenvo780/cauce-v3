@@ -164,7 +164,7 @@ export function Kpi({ label, value, detail, tone = 'neutral', onPress, pressed, 
   const body = <>
     <span className="text-xs text-muted">{label}</span>
     <strong className={cn('text-2xl leading-tight font-semibold tabular-nums', KPI_INK[tone])}>{display(value)}</strong>
-    {detail ? <span className="text-xs leading-snug text-muted">{detail}</span> : null}
+    {detail ? <span className="w-full min-w-0 wrap-anywhere text-xs leading-snug text-muted">{detail}</span> : null}
   </>;
   const box = 'flex min-w-0 flex-col items-start gap-0.5 rounded-lg border border-line bg-surface px-3 py-3.5 text-left';
   if (!onPress) return <article data-tone={tone} className={box}>{body}</article>;

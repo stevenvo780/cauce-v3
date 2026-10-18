@@ -210,9 +210,9 @@ export function AssignmentMatrix({ config, access, registry }: {
       {matrix.length === 0 ? <EmptyState>Sin agentes registrados.</EmptyState> : <ul className="m-0 grid list-none gap-2 p-0" aria-label="Orden de fallback por agente">
         {matrix.map((row) => <li key={agentKeyOf(row.agent.tenantId, row.agent.alias)}
           className="flex flex-wrap items-start gap-x-3 gap-y-1.5 rounded-lg border border-line bg-surface px-3 py-2.5 text-[13px]">
-          <span className="flex min-w-36 items-center gap-2">
+          <span className="flex min-w-0 max-w-full items-center gap-2">
             <AgentOrb seed={agentKeyOf(row.agent.tenantId, row.agent.alias)} size={18} />
-            <strong>{row.agent.tenantId}/{row.agent.alias}</strong>
+            <strong className="min-w-0 wrap-anywhere">{row.agent.tenantId}/{row.agent.alias}</strong>
           </span>
           <div className="min-w-0 flex-1 basis-60">
             {row.fallback.length === 0
