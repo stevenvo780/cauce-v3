@@ -132,11 +132,11 @@ def migration_parameters(fleet, row, plan):
         raise ValueError('el traslado heredado requiere un contenedor propio en destino')
     values = dict(row)
     overrides = plan.get('agent', {})
-    if not isinstance(overrides, dict) or set(overrides) - {'runtime_key', 'primary_account_id', 'model_id', 'primary_room_id'}:
-        raise ValueError('agent solo admite identidad de runtime, cuenta, modelo y sala primaria')
+    if not isinstance(overrides, dict) or set(overrides) - {'runtime_key', 'harness_id', 'primary_account_id', 'model_id', 'primary_room_id'}:
+        raise ValueError('agent solo admite identidad de runtime, harness, cuenta, modelo y sala primaria')
     for key, value in overrides.items():
         if row.get(key) is not None and row[key] != value:
-            raise ValueError('el plan no puede sustituir la cuenta, modelo o identidad existentes')
+            raise ValueError('el plan no puede sustituir el harness, cuenta, modelo o identidad existentes')
         values[key] = value
     if values.get('primary_room_id') is None:
         rooms = [member['room_id'] for member in row['memberships'] if member.get('enabled', True)]

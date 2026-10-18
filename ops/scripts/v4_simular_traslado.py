@@ -108,10 +108,11 @@ def simulate(args, plan_path, load_plan, target_parameters):
             fleet = InventoryFleet(evidence, tenant)
             row = fleet.agent(args.alias)
             checks['agent'] = {key: row.get(key) for key in ('tenant_id', 'alias', 'harness_id', 'host_id', 'container_name',
-                                                           'runtime_mode', 'lifecycle_state', 'primary_account_id', 'model_id')}
-            if row.get('enabled') is not True:
-                blockers.append('source_agent_not_enabled')
+                                                           'runtime_mode', 'lifecycle_state', 'enabled', 'primary_account_id', 'model_id')}
             legacy = row.get('runtime_mode') is None
+            legacy_draft = legacy and row.get('lifecycle_state') == 'draft' and row.get('enabled') is False
+            if row.get('enabled') is not True and not legacy_draft:
+                blockers.append('source_agent_not_enabled')
             if row.get('lifecycle_state') != 'ready' and not (legacy and row.get('lifecycle_state') in {'verifying', 'draft'}):
                 blockers.append('source_agent_not_ready')
             if row.get('runtime_mode') not in (None, 'native', 'container'):
@@ -119,7 +120,7 @@ def simulate(args, plan_path, load_plan, target_parameters):
             selected = {**(plan.get('agent', {}) if plan else {}), **{key: value for key, value in row.items() if value is not None}}
             if not selected.get('primary_account_id'):
                 blockers.append('original_account_not_bound')
-            if row.get('harness_id') == 'openclaw' and not selected.get('model_id'):
+            if selected.get('harness_id') == 'openclaw' and not selected.get('model_id'):
                 blockers.append('openclaw_model_not_selected')
             if legacy:
                 checks['legacy_create'] = True
@@ -133,12 +134,12 @@ def simulate(args, plan_path, load_plan, target_parameters):
                                                   for item in runtimes]}
             if evidence['capability'].get('available') is not True:
                 blockers.append('executor_capability_unavailable')
-            if not any(item['harness_id'] == row['harness_id'] for item in runtimes):
+            if not any(item['harness_id'] == selected.get('harness_id') for item in runtimes):
                 blockers.append('destination_harness_template_missing')
             if selected.get('primary_account_id'):
                 provider = fleet.account_provider(selected['primary_account_id'])
                 checks['account_provider'] = provider
-                if not any(item['harness_id'] == row['harness_id'] and item['provider'] == provider for item in runtimes):
+                if not any(item['harness_id'] == selected.get('harness_id') and item['provider'] == provider for item in runtimes):
                     blockers.append('destination_provider_template_missing')
             if plan:
                 try:
