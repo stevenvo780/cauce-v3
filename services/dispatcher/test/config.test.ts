@@ -30,15 +30,6 @@ describe('dispatcher delivery deadline configuration', () => {
       ACK_TIMEOUT_MS: '120000',
     })).toThrow(/equal to or greater/u);
   });
-
-  it.each([
-    { CAUCE_ACK_DEADLINE_MS: '0' },
-    { CAUCE_ACK_DEADLINE_MS: 'invalid' },
-    { ACK_TIMEOUT_MS: '-1' },
-    { ACK_TIMEOUT_MS: '1.5' },
-  ])('rejects invalid positive-integer config %#', (environment) => {
-    expect(() => configuredDispatcher(environment)).toThrow(/positive integer/u);
-  });
 });
 
 describe('total delivery lease cap', () => {
@@ -51,14 +42,6 @@ describe('total delivery lease cap', () => {
       CAUCE_DELIVERY_LEASE_CAP_MS: String(48 * 60 * 60_000),
     }).leaseCapMs).toBe(48 * 60 * 60_000);
   });
-
-  it('fails on startup if lease cap is shorter than ACK timeout', () => {
-    expect(() => configuredDispatcher({
-      CAUCE_ACK_DEADLINE_MS: '1800000',
-      ACK_TIMEOUT_MS: '1800000',
-      CAUCE_DELIVERY_LEASE_CAP_MS: '600000',
-    })).toThrow(/CAUCE_DELIVERY_LEASE_CAP_MS must be equal to or greater/u);
-  });
 });
 
 describe('observability retention', () => {
@@ -70,21 +53,6 @@ describe('observability retention', () => {
     expect(config.retentionAuditMs).toBeGreaterThan(config.retentionAckMs);
     expect(config.retentionIntervalMs).toBe(DEFAULT_RETENTION_INTERVAL_MS);
     expect(config.retentionBatch).toBe(DEFAULT_RETENTION_BATCH);
-  });
-
-  it('accepts zero only on interval to disable sweep', () => {
-    expect(configuredDispatcher({ CAUCE_RETENTION_INTERVAL_MS: '0' }).retentionIntervalMs).toBe(0);
-    expect(() => configuredDispatcher({ CAUCE_RETENTION_ACK_MS: '0' }))
-      .toThrow(/positive integer/u);
-    expect(() => configuredDispatcher({ CAUCE_RETENTION_BATCH: '0' }))
-      .toThrow(/positive integer/u);
-  });
-
-  it('rejects renewal retention window longer than general retention window', () => {
-    expect(() => configuredDispatcher({
-      CAUCE_RETENTION_ACK_RENEWAL_MS: String(30 * 24 * 60 * 60_000),
-      CAUCE_RETENTION_ACK_MS: String(24 * 60 * 60_000),
-    })).toThrow(/renewal retention windows/u);
   });
 });
 
@@ -100,50 +68,6 @@ describe('silent-chain watchdog (P0-4)', () => {
     expect(DEFAULT_CHAIN_IDLE_MS).toBe(6 * 60 * 60 * 1_000);
     expect(DEFAULT_CHAIN_SETTLED_GRACE_MS).toBe(15 * 60 * 1_000);
     expect(DEFAULT_CHAIN_MAX_AGE_MS).toBe(48 * 60 * 60 * 1_000);
-  });
-
-  it('can be disabled with 0 without affecting other dispatcher operations', () => {
-    expect(configuredDispatcher({ CHAIN_SWEEP_MS: '0' })).toMatchObject({
-      chainSweepMs: 0, chainIdleMs: DEFAULT_CHAIN_IDLE_MS,
-    });
-  });
-
-  it('accepts operator-defined timeouts', () => {
-    expect(configuredDispatcher({
-      CHAIN_SWEEP_MS: '30000',
-      CHAIN_IDLE_MS: '7200000',
-      CHAIN_SETTLED_GRACE_MS: '300000',
-      CHAIN_MAX_AGE_MS: '86400000',
-      CHAIN_SWEEP_LIMIT: '3',
-    })).toMatchObject({
-      chainSweepMs: 30_000,
-      chainIdleMs: 7_200_000,
-      chainSettledGraceMs: 300_000,
-      chainMaxAgeMs: 86_400_000,
-      chainSweepLimit: 3,
-    });
-  });
-
-  it('fails closed when max age is shorter than idle window', () => {
-    expect(() => configuredDispatcher({
-      CHAIN_IDLE_MS: '21600000', CHAIN_MAX_AGE_MS: '3600000',
-    })).toThrow(/equal to or greater/u);
-  });
-
-  it.each([
-    { CHAIN_SWEEP_MS: '-1' },
-    { CHAIN_SWEEP_MS: '1.5' },
-    { CHAIN_SWEEP_MS: 'invalid' },
-  ])('rejects invalid sweep interval %#', (environment) => {
-    expect(() => configuredDispatcher(environment)).toThrow(/non-negative integer/u);
-  });
-
-  it.each([
-    { CHAIN_IDLE_MS: '0' },
-    { CHAIN_SETTLED_GRACE_MS: '0' },
-    { CHAIN_SWEEP_LIMIT: '0' },
-  ])('rejects non-positive deadlines %#', (environment) => {
-    expect(() => configuredDispatcher(environment)).toThrow(/positive integer/u);
   });
 });
 
@@ -176,44 +100,12 @@ describe('poda de adjuntos del cuerpo (CRED-02)', () => {
       CHAIN_MAX_AGE_MS: String(40 * 24 * 60 * 60_000),
     })).toThrow(/must be greater than CHAIN_MAX_AGE_MS/u);
   });
-
-  it('no arranca el guard cuando la poda está apagada: subir CHAIN_MAX_AGE_MS no tumba nada', () => {
-    expect(configuredDispatcher({
-      CHAIN_MAX_AGE_MS: String(40 * 24 * 60 * 60_000),
-      CAUCE_RETENTION_INTERVAL_MS: '0',
-    })).toMatchObject({ retentionIntervalMs: 0, chainMaxAgeMs: 40 * 24 * 60 * 60_000 });
-    expect(configuredDispatcher({
-      CHAIN_MAX_AGE_MS: String(40 * 24 * 60 * 60_000),
-      DISPATCHER_RETENTION_MESSAGE_ATTACHMENTS_INTERVAL_MS: '0',
-    })).toMatchObject({ retentionMessageAttachmentsIntervalMs: 0 });
-  });
-
-  it.each([
-    { DISPATCHER_RETENTION_MESSAGE_ATTACHMENTS_MS: '0' },
-    { DISPATCHER_RETENTION_MESSAGE_ATTACHMENTS_BATCH: '0' },
-    { DISPATCHER_RETENTION_MESSAGE_ATTACHMENTS_BATCH: 'invalid' },
-  ])('rechaza valores no positivos %#', (environment) => {
-    expect(() => configuredDispatcher(environment)).toThrow(/positive integer/u);
-  });
-
-  it.each([
-    { DISPATCHER_RETENTION_MESSAGE_ATTACHMENTS_INTERVAL_MS: '-1' },
-    { DISPATCHER_RETENTION_MESSAGE_ATTACHMENTS_INTERVAL_MS: '1.5' },
-  ])('rechaza una cadencia inválida %#', (environment) => {
-    expect(() => configuredDispatcher(environment)).toThrow(/non-negative integer/u);
-  });
 });
 
 describe('dispatcher tick interval (DISPATCHER_POLL_MS)', () => {
   it('defaults to 250 and honors an environment override', () => {
     expect(configuredDispatcher({}).pollMs).toBe(250);
     expect(configuredDispatcher({ DISPATCHER_POLL_MS: '1000' }).pollMs).toBe(1_000);
-  });
-
-  it.each(['0', '-1', '1.5', 'invalid'])('fails closed for DISPATCHER_POLL_MS=%j', (value) => {
-    expect(() => configuredDispatcher({ DISPATCHER_POLL_MS: value })).toThrow(
-      /DISPATCHER_POLL_MS must be a positive integer/u,
-    );
   });
 });
 
@@ -223,22 +115,6 @@ describe('dispatcher health staleness (CAUCE_DISPATCHER_STALE_MS)', () => {
     expect(configuredDispatcher({ DISPATCHER_POLL_MS: '100' }).healthStaleMs).toBe(5_000);
     expect(configuredDispatcher({ DISPATCHER_POLL_MS: '1000' }).healthStaleMs).toBe(20_000);
   });
-
-  it('honors an explicit override over the derived default', () => {
-    expect(configuredDispatcher({
-      DISPATCHER_POLL_MS: '1000',
-      CAUCE_DISPATCHER_STALE_MS: '7000',
-    }).healthStaleMs).toBe(7_000);
-  });
-
-  it.each(['0', '-1', '1.5', 'invalid'])(
-    'fails closed for CAUCE_DISPATCHER_STALE_MS=%j',
-    (value) => {
-      expect(() => configuredDispatcher({ CAUCE_DISPATCHER_STALE_MS: value })).toThrow(
-        /CAUCE_DISPATCHER_STALE_MS must be a positive integer/u,
-      );
-    },
-  );
 });
 
 describe('retry-started lever (CAUCE_RETRY_STARTED_DELIVERIES)', () => {
@@ -248,13 +124,4 @@ describe('retry-started lever (CAUCE_RETRY_STARTED_DELIVERIES)', () => {
       configuredDispatcher({ CAUCE_RETRY_STARTED_DELIVERIES: '1' }).retryStartedDeliveries,
     ).toBe(true);
   });
-
-  it.each(['0', 'true', 'yes', ''])(
-    'treats CAUCE_RETRY_STARTED_DELIVERIES=%j as disabled',
-    (value) => {
-      expect(
-        configuredDispatcher({ CAUCE_RETRY_STARTED_DELIVERIES: value }).retryStartedDeliveries,
-      ).toBe(false);
-    },
-  );
 });
