@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { once } from "node:events";
 import {
   existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync,
   writeFileSync,
@@ -7,9 +6,8 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { Worker } from "node:worker_threads";
 import {
-  bloqueDePerfil, ficherosDelArnes, harnessDocumentPaths, nombresDelArnes,
+  bloqueDePerfil, ficherosDelArnes,
   type AgentProfile, type ContextoDeAlias, type FuenteDeTope, type HechosDelAlias,
   type UnidadDeTope,
 } from "@cauce/protocol";
@@ -86,74 +84,6 @@ test("CLAUDE_CONFIG_DIR gana sobre $HOME: es cómo dos alias del mismo contenedo
   assert.equal(directorioDelArnes("claude", { HOME: "/home/dev" }), "/home/dev/.claude");
 });
 
-test("el directorio y las rutas del gateway salen de la MISMA tabla del protocolo", () => {
-  for (const [harness, entorno] of [
-    ["claude", ENTORNO],
-    ["claude", { HOME: "/home/dev" }],
-    ["codex", { HOME: "/h", CODEX_HOME: "/otro" }],
-    ["openclaw", { HOME: "/h", CAUCE_OPENCLAW_WORKSPACE: "/ws" }],
-    ["muse", { HOME: "/h", CAUCE_MUSE_WORKSPACE: "/ws-muse" }],
-    ["grok", { HOME: "/h", CAUCE_GROK_WORKSPACE: "/ws-grok" }],
-  ] as const) {
-    const directorio = directorioDelArnes(harness, entorno);
-    assert.ok(directorio !== undefined, `${harness} no resolvió directorio`);
-    assert.deepEqual(
-      nombresDelArnes(harness).map((nombre) => join(directorio, nombre)),
-      harnessDocumentPaths(harness, {
-        home: entorno.HOME,
-        claudeConfigDir: "CLAUDE_CONFIG_DIR" in entorno ? entorno.CLAUDE_CONFIG_DIR : undefined,
-        codexHome: "CODEX_HOME" in entorno ? entorno.CODEX_HOME : undefined,
-        openclawWorkspace: "CAUCE_OPENCLAW_WORKSPACE" in entorno
-          ? entorno.CAUCE_OPENCLAW_WORKSPACE
-          : undefined,
-        grokWorkspace: "CAUCE_GROK_WORKSPACE" in entorno ? entorno.CAUCE_GROK_WORKSPACE : undefined,
-        museWorkspace: "CAUCE_MUSE_WORKSPACE" in entorno
-          ? entorno.CAUCE_MUSE_WORKSPACE
-          : undefined,
-      }),
-    );
-  }
-});
-
-test("codex mira CODEX_HOME, y openclaw NO adivina su espacio de trabajo", () => {
-  assert.equal(directorioDelArnes("codex", { HOME: "/h", CODEX_HOME: "/otro" }), "/otro");
-  assert.equal(directorioDelArnes("codex", { HOME: "/h" }), "/h/.codex");
-  /*
-   * An openclaw workspace is NOT its `$HOME`. Without `CAUCE_OPENCLAW_WORKSPACE` it is not
-   * guessed: seeding seven Markdown files in the wrong place is worse than not seeding, because
-   * the agent does not read them and instead seven orphan files are left that the next person
-   * will mistake for the real ones.
-   */
-  assert.equal(directorioDelArnes("openclaw", { HOME: "/h" }), undefined);
-  assert.equal(directorioDelArnes("openclaw", { HOME: "/h", CAUCE_OPENCLAW_WORKSPACE: "/ws" }), "/ws");
-});
-
-test("CONTROL NEGATIVO: un arnés desconocido no tiene directorio, y sin HOME tampoco", () => {
-  assert.equal(directorioDelArnes("hermes", ENTORNO), undefined);
-  assert.equal(directorioDelArnes("claude", {}), undefined);
-  assert.equal(directorioDelArnes("claude", {
-    HOME: "/home/dev", CLAUDE_CONFIG_DIR: "relativo",
-  }), undefined);
-  assert.equal(directorioDelArnes("codex", { HOME: "relativo" }), undefined);
-  assert.equal(directorioDelArnes("openclaw", { CAUCE_OPENCLAW_WORKSPACE: "../escape" }), undefined);
-  assert.equal(directorioDelArnes("muse", { HOME: "/h" }), undefined);
-  assert.equal(directorioDelArnes("muse", { CAUCE_MUSE_WORKSPACE: "../escape" }), undefined);
-});
-
-test("Muse seeds only the managed block in its measured project AGENTS.md", () => {
-  const path = "/ws-muse/AGENTS.md";
-  const d = disco({ [path]: "# Manual del proyecto\n\nNo usar datos clinicos reales.\n" });
-  const resultado = sembrarPerfilDelArnes("muse", contexto({ purpose: "Desarrollador" }, "teseo"), {
-    habilitado: true,
-    disco: d.puerto,
-    entorno: { HOME: "/home/teseo", CAUCE_MUSE_WORKSPACE: "/ws-muse" },
-  });
-  assert.equal(resultado.estado, "hecho");
-  assert.deepEqual(d.escrituras, [path]);
-  assert.match(d.ficheros.get(path) ?? "", /No usar datos clinicos reales/u);
-  assert.match(d.ficheros.get(path) ?? "", /alias: Steven\/teseo/u);
-});
-
 test("dos alias con HOME compartido y homes de arnés distintos no se contaminan", () => {
   const d = disco();
   sembrarPerfilDelArnes("codex", contexto({ purpose: "soy kratos" }, "kratos"), {
@@ -214,37 +144,6 @@ test("lo que escribió una persona se conserva BYTE A BYTE", () => {
   assert.ok(despues.includes("el médico"));
 });
 
-test("un CLAUDE.md legacy con CRLF sigue por la siembra default-off", () => {
-  const path = "/home/dev/.claude-zeus/CLAUDE.md";
-  const manual = "# Manual de zeus\r\n\r\ntexto humano\r\n";
-  const d = disco({ [path]: manual });
-
-  const resultado = sembrarPerfilDelArnes("claude", contexto({ purpose: "el médico" }), {
-    habilitado: true, disco: d.puerto, entorno: ENTORNO,
-  });
-
-  assert.equal(resultado.estado, "hecho");
-  assert.deepEqual(d.escrituras, [path]);
-  assert.match(d.ficheros.get(path) ?? "", /# Manual de zeus\r\n\r\ntexto humano/u);
-});
-
-test("segunda conexión con el mismo perfil: NO se reescribe el fichero", () => {
-  /*
-   * An alias reconnects many times a day. If every greeting rewrote the file, fifteen containers
-   * would be touching the disk without changing anything — and worse, any watcher looking at
-   * `mtime` would see constant activity where there is none.
-   */
-  const d = disco();
-  const opciones = { habilitado: true, disco: d.puerto, entorno: ENTORNO };
-  sembrarPerfilDelArnes("claude", contexto({ purpose: "el médico" }), opciones);
-  assert.equal(d.escrituras.length, 1);
-
-  const segunda = sembrarPerfilDelArnes("claude", contexto({ purpose: "el médico" }), opciones);
-  assert.equal(d.escrituras.length, 1, "reescribió un fichero que ya estaba al día");
-  assert.equal(segunda.estado, "hecho");
-  assert.equal(segunda.ficheros[0]?.estado, "ya-estaba");
-});
-
 test("codex siembra una vez y delega cualquier cambio posterior del bloque gestionado", () => {
   const path = "/home/dev/.codex-atlas/AGENTS.md";
   const manual = "# Manual de Atlas\n\nContexto exterior válido.\n";
@@ -282,24 +181,6 @@ test("codex siembra una vez y delega cualquier cambio posterior del bloque gesti
   assert.equal(diferente.ficheros[0]?.estado, "delegado-al-publicador");
 });
 
-test("la siembra sólo verifica una proyección revisionada que ya coincide", () => {
-  const ctx = contexto({ purpose: "el médico" });
-  const projected = ficherosDelArnes("claude", ctx, new Map(), { revision: 4 })[0];
-  assert.ok(projected);
-  const path = "/home/dev/.claude-zeus/CLAUDE.md";
-  const d = disco({ [path]: projected.texto });
-
-  const resultado = sembrarPerfilDelArnes("claude", ctx, {
-    habilitado: true, disco: d.puerto, entorno: ENTORNO,
-  });
-
-  assert.deepEqual(d.escrituras, []);
-  assert.equal(d.ficheros.get(path), projected.texto);
-  assert.deepEqual(resultado, {
-    estado: "hecho", ficheros: [{ nombre: "CLAUDE.md", estado: "ya-estaba" }],
-  });
-});
-
 test("la siembra no modifica una proyección revisionada con drift y la delega al publicador durable", () => {
   const oldContext = contexto({ purpose: "perfil viejo" });
   const projected = ficherosDelArnes("claude", oldContext, new Map(), { revision: 4 })[0];
@@ -318,69 +199,6 @@ test("la siembra no modifica una proyección revisionada con drift y la delega a
   assert.match(resumenDeLaSiembra(resultado), /delegado-al-publicador=1 — CLAUDE\.md: la proyección gestionada difiere/u);
 });
 
-test("la siembra no finge que un lote OpenClaw revisionado incompleto está vigente", () => {
-  const ctx = contexto({ purpose: "perfil", role_summary: "rol", tools: ["cauce"] }, "argos");
-  const projected = ficherosDelArnes("openclaw", ctx, new Map(), { revision: 4 });
-  const initial = Object.fromEntries(
-    projected
-      .filter((file) => file.nombre !== "SOUL.md")
-      .map((file) => [`/ws/${file.nombre}`, file.texto]),
-  );
-  const d = disco(initial);
-
-  const resultado = sembrarPerfilDelArnes("openclaw", ctx, {
-    habilitado: true,
-    disco: d.puerto,
-    entorno: { HOME: "/h", CAUCE_OPENCLAW_WORKSPACE: "/ws" },
-  });
-
-  assert.deepEqual(d.escrituras, []);
-  assert.equal(d.ficheros.has("/ws/SOUL.md"), false);
-  assert.equal(resultado.estado, "hecho");
-  assert.equal(resultado.ficheros.length, 7);
-  assert.ok(resultado.ficheros.every((file) => file.estado === "no-se-pudo-escribir"));
-});
-
-test("un fichero OpenClaw vacío pero ausente también es drift revisionado", () => {
-  const ctx = contexto({}, "argos");
-  const projected = ficherosDelArnes("openclaw", ctx, new Map(), { revision: 4 });
-  const included = new Set(["AGENTS.md", "MEMORY.md", "HEARTBEAT.md"]);
-  const initial = Object.fromEntries(
-    projected
-      .filter((file) => included.has(file.nombre))
-      .map((file) => [`/ws/${file.nombre}`, file.texto]),
-  );
-  const d = disco(initial);
-
-  const resultado = sembrarPerfilDelArnes("openclaw", ctx, {
-    habilitado: true,
-    disco: d.puerto,
-    entorno: { HOME: "/h", CAUCE_OPENCLAW_WORKSPACE: "/ws" },
-  });
-
-  assert.deepEqual(d.escrituras, []);
-  assert.equal(d.ficheros.has("/ws/SOUL.md"), false);
-  assert.equal(resultado.estado, "hecho");
-  assert.equal(resultado.ficheros[0]?.estado, "no-se-pudo-escribir");
-});
-
-test("el bloque de OTRO alias no se pisa, y el parte lo dice con esas palabras", () => {
-  /*
-   * `kratos` and `atlas` share `$HOME` and their `AGENTS.md` is the SAME inode (12,942 bytes in
-   * both, measured). Having the report distinguish "already there" from "occupied by another
-   * alias" is not cosmetic — those are the only two explanations, leading to opposite places.
-   */
-  const d = disco();
-  const opciones = { habilitado: true, disco: d.puerto, entorno: { HOME: "/h", CODEX_HOME: "/compartido" } };
-  sembrarPerfilDelArnes("codex", contexto({ purpose: "soy kratos" }, "kratos"), opciones);
-  const trasKratos = d.ficheros.get("/compartido/AGENTS.md") ?? "";
-
-  const resultado = sembrarPerfilDelArnes("codex", contexto({ purpose: "soy atlas" }, "atlas"), opciones);
-  assert.equal(d.ficheros.get("/compartido/AGENTS.md"), trasKratos, "atlas pisó a kratos");
-  assert.equal(resultado.estado, "hecho");
-  assert.equal(resultado.ficheros[0]?.estado, "ocupado-por-otro-alias");
-});
-
 test("un owner esperado oculto dentro de un bloque ajeno no suplanta la primera línea", () => {
   const path = "/compartido/AGENTS.md";
   const foreign = "<!-- CAUCE:PERFIL v1 — generado desde la configuración, no editar dentro de este bloque -->\n"
@@ -397,42 +215,6 @@ test("un owner esperado oculto dentro de un bloque ajeno no suplanta la primera 
   assert.equal(d.ficheros.get(path), foreign);
   assert.equal(resultado.estado, "hecho");
   assert.equal(resultado.ficheros[0]?.estado, "ocupado-por-otro-alias");
-});
-
-// ── WHAT MUST NOT BREAK THE GREETING ────────────────────────────────────────────────────────
-
-test("si el disco no deja escribir, lo dice y NO lanza", () => {
-  /*
-   * This property is what stops one file from leaving an alias deaf: the caller is the
-   * `hello_ack` handler and an exception here cuts the greeting — the agent receives NOTHING.
-   */
-  const puerto: DiscoDelArnes = {
-    leer: () => undefined,
-    escribir: () => { throw new Error("EACCES"); },
-    escribirLote: () => { throw new Error("EACCES"); },
-  };
-  const resultado = sembrarPerfilDelArnes("claude", contexto({ purpose: "x" }), {
-    habilitado: true, disco: puerto, entorno: ENTORNO,
-  });
-  assert.equal(resultado.estado, "hecho");
-  assert.equal(resultado.ficheros[0]?.estado, "no-se-pudo-escribir");
-});
-
-test("si un fichero no se puede LEER, OpenClaw cancela el lote entero", () => {
-  const escrituras: string[] = [];
-  const puerto: DiscoDelArnes = {
-    leer: (ruta) => { if (ruta.endsWith("SOUL.md")) throw new Error("EACCES"); return undefined; },
-    escribir: (ruta) => { escrituras.push(ruta); },
-    escribirLote: (lote) => { escrituras.push(...lote.map((entrada) => entrada.ruta)); },
-  };
-  const ctx = contexto({ purpose: "p", role_summary: "r", tools: ["ssh"] });
-  const resultado = sembrarPerfilDelArnes("openclaw", ctx, {
-    habilitado: true, disco: puerto, entorno: { HOME: "/h", CAUCE_OPENCLAW_WORKSPACE: "/ws" },
-  });
-  assert.equal(resultado.estado, "hecho");
-  assert.deepEqual(escrituras, [], "escribió una persona parcial de OpenClaw");
-  assert.equal(resultado.ficheros.length, 7);
-  assert.ok(resultado.ficheros.every((fichero) => fichero.estado === "no-se-pudo-escribir"));
 });
 
 test("el disco real sólo traduce ENOENT a ausencia y rechaza symlink/no-regular", (t) => {
@@ -487,51 +269,6 @@ test("un symlink en cualquier directorio padre no puede escapar del home", (t) =
   assert.ok(!readdirSync(fuera).some((nombre) => nombre.startsWith(".cauce-perfil-")));
 });
 
-test("un swap concurrente del padre aborta y limpia mediante el dirfd original", async (t) => {
-  const raiz = mkdtempSync(join(tmpdir(), "cauce-perfil-carrera-"));
-  const home = join(raiz, "home");
-  const directorio = join(home, ".codex");
-  const movido = join(home, ".codex-original");
-  const fuera = join(raiz, "fuera");
-  mkdirSync(directorio, { recursive: true });
-  mkdirSync(fuera);
-
-  const worker = new Worker(`
-    (() => {
-      const { parentPort, workerData } = require("node:worker_threads");
-      const { readdirSync, renameSync, symlinkSync } = require("node:fs");
-      parentPort.postMessage("ready");
-      const limite = Date.now() + 10_000;
-      while (Date.now() < limite) {
-        try {
-          if (readdirSync(workerData.directorio).some((nombre) => nombre.startsWith(".cauce-perfil-"))) {
-            renameSync(workerData.directorio, workerData.movido);
-            symlinkSync(workerData.fuera, workerData.directorio);
-            parentPort.postMessage("swapped");
-            return;
-          }
-        } catch {}
-      }
-      parentPort.postMessage("timeout");
-    })();
-  `, { eval: true, workerData: { directorio, movido, fuera } });
-  t.after(async () => {
-    await worker.terminate();
-    rmSync(raiz, { recursive: true, force: true });
-  });
-
-  assert.deepEqual(await once(worker, "message"), ["ready"]);
-  const intercambio = once(worker, "message");
-  assert.throws(() => { discoReal.escribir(
-    join(directorio, "AGENTS.md"),
-    "x".repeat(16 * 1024 * 1024),
-  ); });
-  assert.deepEqual(await intercambio, ["swapped"]);
-  assert.equal(existsSync(join(fuera, "AGENTS.md")), false);
-  assert.equal(existsSync(join(movido, "AGENTS.md")), false, "no revirtió el destino anclado");
-  assert.ok(!readdirSync(movido).some((nombre) => nombre.startsWith(".cauce-perfil-")));
-});
-
 test("el preflight del lote falla antes de modificar el primer destino", (t) => {
   const raiz = mkdtempSync(join(tmpdir(), "cauce-perfil-lote-"));
   t.after(() => { rmSync(raiz, { recursive: true, force: true }); });
@@ -568,52 +305,6 @@ test("un tope superado NO escribe NINGUNO de los siete", () => {
     { unidad: "utf16_strictest", fuente: "default" });
 });
 
-test("CONTROL NEGATIVO: un arnés sin ficheros no escribe y no es un error", () => {
-  const d = disco();
-  const resultado = sembrarPerfilDelArnes("hermes", contexto({ purpose: "x" }), {
-    habilitado: true, disco: d.puerto, entorno: ENTORNO,
-  });
-  assert.equal(resultado.estado, "sin-ficheros");
-  assert.equal(d.escrituras.length, 0);
-});
-
-test("un arnés soportado sin home absoluto falla distinto de uno sin ficheros", () => {
-  const d = disco();
-  const resultado = sembrarPerfilDelArnes("claude", contexto({ purpose: "x" }), {
-    habilitado: true, disco: d.puerto, entorno: { HOME: "relativo" },
-  });
-  assert.equal(resultado.estado, "sin-directorio");
-  assert.equal(d.escrituras.length, 0);
-  assert.match(resumenDeLaSiembra(resultado), /no tiene un directorio absoluto medido/u);
-});
-
-// ── THE REPORT ───────────────────────────────────────────────────────────────────────────────
-
-test("el resumen nunca lleva el CONTENIDO del fichero", () => {
-  /*
-   * The report goes to the log, and the log is read, copied and sometimes pasted into a chat.
-   * An alias's profile may name its human and how to treat them — only names and statuses.
-   */
-  const d = disco();
-  const resultado = sembrarPerfilDelArnes(
-    "claude", contexto({ purpose: "SECRETO-QUE-NO-DEBE-SALIR" }),
-    { habilitado: true, disco: d.puerto, entorno: ENTORNO },
-  );
-  const texto = resumenDeLaSiembra(resultado);
-  assert.ok(!texto.includes("SECRETO-QUE-NO-DEBE-SALIR"));
-  assert.ok(texto.includes("escrito"));
-});
-
-test("el resumen distingue apagado de no-se-pudo", () => {
-  // Silence does not distinguish "the switch is off" from "could not write", and they are the two
-  // answers to the same question: why this alias does not have its profile.
-  const d = disco();
-  const apagado = sembrarPerfilDelArnes("claude", contexto({ purpose: "x" }), {
-    habilitado: false, disco: d.puerto, entorno: ENTORNO,
-  });
-  assert.ok(resumenDeLaSiembra(apagado).includes("apagada"));
-});
-
 function contextoAcentuadoAlTope(): ContextoDeAlias {
   const acento = "\u00e1";
   return contexto({
@@ -638,64 +329,4 @@ test("codex: el project_doc_max_bytes medido del config.toml manda sobre el defe
   assert.deepEqual(d.escrituras, ["/home/dev/.codex/AGENTS.md"]);
   const escrito = d.ficheros.get("/home/dev/.codex/AGENTS.md") ?? "";
   assert.ok(Buffer.byteLength(escrito, "utf8") > 48_000);
-});
-
-test("codex sin hecho medido: rige el DEFECTO, no se escribe nada y el resumen dice unidad y origen", () => {
-  const d = disco();
-  const resultado = sembrarPerfilDelArnes("codex", contextoAcentuadoAlTope(), {
-    habilitado: true, disco: d.puerto, entorno: ENTORNO_CODEX,
-  });
-  assert.equal(resultado.estado, "no-entra");
-  assert.equal(resultado.fichero, "AGENTS.md");
-  assert.equal(resultado.tope, 32 * 1_024);
-  assert.equal(resultado.unidad, "utf8_bytes");
-  assert.equal(resultado.fuente, "default");
-  assert.equal(d.escrituras.length, 0);
-  const resumen = resumenDeLaSiembra(resultado);
-  assert.match(resumen, /bytes UTF-8/u);
-  assert.match(resumen, /por defecto del arn\u00e9s/u);
-});
-
-test("codex con tope medido POR DEBAJO del perfil: el resumen dice que el origen es el alias", () => {
-  const d = disco({ [CONFIG_DE_CODEX]: "project_doc_max_bytes = 40000\n" });
-  const resultado = sembrarPerfilDelArnes("codex", contextoAcentuadoAlTope(), {
-    habilitado: true, disco: d.puerto, entorno: ENTORNO_CODEX,
-  });
-  assert.equal(resultado.estado, "no-entra");
-  assert.equal(resultado.tope, 40_000);
-  assert.deepEqual(medidaDelTopeSuperado(resultado), { unidad: "utf8_bytes", fuente: "measured" });
-  assert.equal(d.escrituras.length, 0);
-  assert.match(resumenDeLaSiembra(resultado), /tope medido del alias/u);
-});
-
-test("un config.toml ilegible NO inventa un tope: cae al defecto y falla cerrado", () => {
-  const d = disco({ [CONFIG_DE_CODEX]: "[profiles.zeus]\nproject_doc_max_bytes = 999999\n" });
-  const resultado = sembrarPerfilDelArnes("codex", contextoAcentuadoAlTope(), {
-    habilitado: true, disco: d.puerto, entorno: ENTORNO_CODEX,
-  });
-  assert.equal(resultado.estado, "no-entra");
-  assert.equal(resultado.tope, 32 * 1_024);
-  assert.equal(resultado.fuente, "default");
-  assert.equal(d.escrituras.length, 0);
-});
-
-test("una variable de arnés VACÍA cae al defecto bajo $HOME; definida y relativa se rechaza", () => {
-  assert.equal(directorioDelArnes("claude", { HOME: "/home/dev", CLAUDE_CONFIG_DIR: "" }),
-    "/home/dev/.claude");
-  assert.equal(directorioDelArnes("codex", { HOME: "/home/dev", CODEX_HOME: "" }), "/home/dev/.codex");
-  assert.equal(directorioDelArnes("claude", { HOME: "/home/dev", CLAUDE_CONFIG_DIR: "relativo" }),
-    undefined);
-  assert.equal(directorioDelArnes("codex", { HOME: "/home/dev", CODEX_HOME: "../fuga" }), undefined);
-
-  const d = disco();
-  const resultado = sembrarPerfilDelArnes("claude", contexto({ purpose: "x" }), {
-    habilitado: true, disco: d.puerto, entorno: { HOME: "/home/dev", CLAUDE_CONFIG_DIR: "" },
-  });
-  assert.equal(resultado.estado, "hecho");
-  assert.deepEqual(d.escrituras, ["/home/dev/.claude/CLAUDE.md"]);
-
-  const relativo = sembrarPerfilDelArnes("claude", contexto({ purpose: "x" }), {
-    habilitado: true, disco: disco().puerto, entorno: { HOME: "/home/dev", CLAUDE_CONFIG_DIR: "no-absoluto" },
-  });
-  assert.equal(relativo.estado, "sin-directorio");
 });

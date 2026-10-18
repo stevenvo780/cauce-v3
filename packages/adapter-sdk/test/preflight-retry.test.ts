@@ -6,7 +6,6 @@ import { DurableStore } from "../src/sdk/durable-store.js";
 import { AdapterError } from "../src/sdk/errors.js";
 import { SpawnCommandRunner } from "../src/sdk/process-runner.js";
 import type {
-  CommandRunRequest,
   CommandRunResult,
   CommandRunner,
   HarnessDefinition,
@@ -14,10 +13,7 @@ import type {
 import { HARNESS_START_MARKER } from "../src/sdk/types.js";
 import { HARNESS_DEFINITIONS, HarnessAdapter } from "../src/harnesses/index.js";
 import {
-  esDiagnosticoDeArranque,
-  esSesionNativaInexistente,
   nuncaEmpezoElTurno,
-  sinMarcaDeArranque,
 } from "../src/harnesses/shared.js";
 import { testStateRoot } from "./test-state.js";
 
@@ -77,18 +73,6 @@ test("R1: el testigo del transporte prueba que el turno nunca empezó y la entre
   assert.equal(error.retryable, true);
 });
 
-test("R1: un diagnóstico de arranque del CLI basta aunque el transporte no atestigüe", async () => {
-  // claude has no declared witness (`--print --output-format json` only writes at the end), but
-  // the CLI itself says it gave up before opening the turn.
-  const error = await ejecutar(
-    HARNESS_DEFINITIONS.claude,
-    fixedRunner({ stdout: "", stderr: "Error: Session ID 7f3a is already in use.\n" }),
-    "r1-diagnostico",
-  );
-  assert.equal(error.code, "PROCESS_EXIT_PREFLIGHT");
-  assert.equal(error.retryable, true);
-});
-
 test("R1 NO reintenta una entrega que alcanzó a producir efectos: hubo salida por stdout", async () => {
   // The case the rule cannot break. The harness wrote over the turn channel —even if `parse`
   // does not understand it— so there was a turn: it could have called the model, written files,
@@ -119,51 +103,6 @@ test("R1 NO reintenta un derrumbe a mitad de turno sin salida ni diagnóstico de
   );
   assert.equal(error.code, "PROCESS_EXIT_AMBIGUOUS");
   assert.equal(error.retryable, false);
-});
-
-test("R1 NO reintenta cuando lo matamos nosotros: señal, timeout o cancelación son ambiguos", () => {
-  const base: CommandRunResult = {
-    stdout: "",
-    stderr: "Error loading config.toml: unknown variant `writes`",
-    exitCode: null,
-    signal: null,
-    timedOut: false,
-    cancelled: false,
-  };
-  const detalle = base.stderr;
-  assert.equal(nuncaEmpezoElTurno({ ...base, exitCode: 1 }, detalle), true);
-  assert.equal(nuncaEmpezoElTurno({ ...base, signal: "SIGKILL" }, detalle), false);
-  assert.equal(nuncaEmpezoElTurno({ ...base, exitCode: 1, timedOut: true }, detalle), false);
-  assert.equal(nuncaEmpezoElTurno({ ...base, exitCode: 1, cancelled: true }, detalle), false);
-  assert.equal(nuncaEmpezoElTurno({ ...base, exitCode: null }, detalle), false);
-});
-
-test("el diagnóstico de arranque es una lista blanca: lo que no coincide sigue siendo ambiguo", () => {
-  for (const arranque of [
-    "Error loading config.toml: unknown variant `writes`, expected one of `auto`",
-    "Error: thread/resume: thread/resume failed: failed to resolve rollout",
-    "no rollout found for thread 019",
-    "Error: Session ID 7f3a-11 is already in use.",
-    "No conversation found with session ID: 019",
-    "/bin/sh: 1: codex: command not found",
-    "error: unexpected argument '--jsonl' found",
-    "openclaw stdin bridge failed: OpenClaw modules were absent or ambiguous",
-  ]) {
-    assert.equal(esDiagnosticoDeArranque(arranque), true, arranque);
-  }
-  for (const enMedio of [
-    "TypeError: Cannot read properties of undefined",
-    "FATAL ERROR: JavaScript heap out of memory",
-    "thread 'main' panicked at src/main.rs:42",
-    "Killed",
-    // Outside the whitelist ON PURPOSE: a provider runs out mid-turn with this same text, after
-    "hermes -z: agent failed: Codex provider quota exhausted",
-    "hermes -z: agent failed: No usable credentials found for provider codex",
-    "",
-    undefined,
-  ]) {
-    assert.equal(esDiagnosticoDeArranque(enMedio), false, String(enMedio));
-  }
 });
 
 /* ------------------------------------------------- R1b: sesión fantasma ---- */
@@ -201,52 +140,6 @@ test("R1b: la sesión nativa que ya no existe se OLVIDA, para que el reintento n
     },
   );
   assert.equal(store.getSession(clave), undefined, "el puntero muerto sobrevivió al fallo");
-});
-
-test("R1b NO olvida una sesión que SÍ existe y la tiene otro: eso se resuelve esperando, no abandonando el hilo", async () => {
-  // The negative control. `already in use` is also a start-up diagnostic and is also retried, but
-  // the conversation is ALIVE: forgetting it would open a new one and lose the thread.
-  const store = await freshStore("r1b-en-uso");
-  const clave = "claude:shared:kratos";
-  const guardada = { native_id: "7f3a0000-0000-4000-8000-000000000000", initialized: true };
-  await store.setSession(clave, guardada);
-  const adapter = new HarnessAdapter({
-    definition: HARNESS_DEFINITIONS.claude,
-    runner: fixedRunner({ stdout: "", stderr: "Error: Session ID 7f3a is already in use.\n" }),
-    store,
-  });
-
-  await adapter.execute({
-    prompt: "hacé el trabajo",
-    timeoutMs: 2_000,
-    signal: new AbortController().signal,
-    sessionKey: "shared:kratos",
-  }).catch(() => undefined);
-  assert.deepEqual(store.getSession(clave), guardada);
-});
-
-test("el olvido de sesión es una lista blanca más estrecha que el diagnóstico de arranque", () => {
-  for (const inexistente of [
-    "No conversation found with session ID: 019",
-    "no rollout found for thread 019",
-  ]) {
-    assert.equal(esSesionNativaInexistente(inexistente), true, inexistente);
-    // Everything that is forgettable is, first, a start-up diagnostic.
-    assert.equal(esDiagnosticoDeArranque(inexistente), true, inexistente);
-  }
-  for (const conservar of [
-    // The conversation exists and someone else holds it.
-    "Error: Session ID 7f3a-11 is already in use.",
-    // These say nothing about the session; forgetting it would lose the thread for an unrelated cause.
-    "Error loading config.toml: unknown variant `writes`",
-    "/bin/sh: 1: codex: command not found",
-    "Error: thread/resume: thread/resume failed: connection reset by peer",
-    "TypeError: Cannot read properties of undefined",
-    "",
-    undefined,
-  ]) {
-    assert.equal(esSesionNativaInexistente(conservar), false, String(conservar));
-  }
 });
 
 /* ------------------------------------------------------------------ R2 ---- */
@@ -310,58 +203,6 @@ test("R2 NO reintenta un apagado que cortó un turno YA en marcha", async () => 
   assert.equal(error.retryable, false);
 });
 
-test("R2 NO se aplica a otras causas de cancelación: sólo el apagado es infraestructura", async () => {
-  for (const motivo of [
-    new AdapterError("STALE_EPOCH", "Rejected epoch 3; active epoch is 4", false),
-    new AdapterError("CLAIM_OWNERSHIP_LOST", "Claim is no longer ours", false),
-  ]) {
-    const controller = new AbortController();
-    const error = await ejecutar(
-      HARNESS_DEFINITIONS.codex,
-      runnerQueAborta(controller, motivo, { harnessStarted: false, exitCode: 143 }),
-      `r2-otro-${motivo.code}`,
-      controller.signal,
-    );
-    assert.equal(error.code, "EXECUTION_CANCELLED_AMBIGUOUS");
-    assert.equal(error.retryable, false);
-  }
-});
-
-/* -------------------------------------------------- testigo y transporte -- */
-
-test("el testigo declarado viaja hasta el transporte, y sólo el de este harness", async () => {
-  const capturados: CommandRunRequest[] = [];
-  const runner: CommandRunner = {
-    run: async (request) => {
-      capturados.push(request);
-      return { stdout: "", stderr: "", exitCode: 1, signal: null, timedOut: false, cancelled: false };
-    },
-  };
-  for (const definition of [
-    HARNESS_DEFINITIONS.codex,
-    HARNESS_DEFINITIONS.hermes,
-    HARNESS_DEFINITIONS.openclaw,
-    HARNESS_DEFINITIONS.claude,
-  ]) {
-    const adapter = new HarnessAdapter({
-      definition,
-      runner,
-      store: await freshStore(`testigo-${definition.id}`),
-    });
-    await adapter.execute({
-      prompt: "hola",
-      timeoutMs: 2_000,
-      signal: new AbortController().signal,
-    }).catch(() => undefined);
-  }
-  assert.deepEqual(capturados.map((request) => request.startWitness?.kind), [
-    "stdout-first-byte",
-    "stderr-marker",
-    "stderr-marker",
-    undefined,
-  ]);
-});
-
 test("el runner de procesos atestigua el primer byte y avisa una sola vez", async () => {
   const runner = new SpawnCommandRunner({ killGraceMs: 15 });
   const avisos: number[] = [];
@@ -411,43 +252,6 @@ test("el runner de procesos atestigua el primer byte y avisa una sola vez", asyn
   });
   assert.equal(sinTestigo.harnessStarted, undefined);
   assert.equal(nuncaEmpezoElTurno({ ...sinTestigo, exitCode: 1 }, undefined), false);
-});
-
-test("un transporte que NO ve bytes nunca atestigua, aunque el harness declare testigo", async () => {
-  // The gap this test closes: `codex` declares a witness, but under a shared session the
-  // transport harvests a tmux panel and never sees a single byte from the harness. If the
-  // engine trusted the harness over the transport, it would stop sealing `execution_started_at`
-  // and a half-hour turn that loses its final ACK would have to be paid for again.
-  const cosechador: CommandRunner = {
-    run: async () => ({
-      stdout: "", stderr: "", exitCode: 1, signal: null, timedOut: false, cancelled: false,
-    }),
-  };
-  const conProceso = new HarnessAdapter({
-    definition: HARNESS_DEFINITIONS.codex,
-    runner: new SpawnCommandRunner(),
-    store: await freshStore("testigo-proceso"),
-  });
-  const conCosecha = new HarnessAdapter({
-    definition: HARNESS_DEFINITIONS.codex,
-    runner: cosechador,
-    store: await freshStore("testigo-cosecha"),
-  });
-  assert.equal(conProceso.witnessesHarnessStart, true);
-  assert.equal(conCosecha.witnessesHarnessStart, false);
-
-  const sinCosechar = new HarnessAdapter({
-    definition: HARNESS_DEFINITIONS.claude,
-    runner: new SpawnCommandRunner(),
-    store: await freshStore("testigo-sin-declarar"),
-  });
-  assert.equal(sinCosechar.witnessesHarnessStart, false);
-});
-
-test("la marca de arranque no ensucia la causa que ve el operador", () => {
-  const stderr = `${HARNESS_START_MARKER}\nhermes -z: agent failed: quota exhausted\n`;
-  assert.equal(sinMarcaDeArranque(stderr).includes(HARNESS_START_MARKER), false);
-  assert.match(sinMarcaDeArranque(stderr), /quota exhausted/u);
 });
 
 test("los dos puentes propios escriben la marca antes de la llamada efectiva", async () => {

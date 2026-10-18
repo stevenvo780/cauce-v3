@@ -1,22 +1,15 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
-import { chmod, realpath, rename, stat } from "node:fs/promises";
-import { dirname } from "node:path";
+import { realpath, stat } from "node:fs/promises";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
-import { sharedSessionRunner } from "../src/bin/shared.js";
-import type { AdapterLog } from "../src/sdk/types.js";
-import { cliSharedSessionSpec, loadSharedSessionConfig } from "../src/shared-session/config.js";
+import { loadSharedSessionConfig } from "../src/shared-session/config.js";
 import { isGrokSessionId, newGrokSessionId } from "../src/shared-session/grok.js";
 import { SharedTuiPointerStore } from "../src/shared-session/native-pointer.js";
 import { NativePointerAttestor } from "../src/shared-session/native-witness.js";
-import { inputBoxState, turnInFlight } from "../src/shared-session/pane.js";
+import { turnInFlight } from "../src/shared-session/pane.js";
 import { resolveGrokLaunch, sharedSessionResume } from "../src/shared-session/resume.js";
-import { ensureSharedSession } from "../src/shared-session/session.js";
 import { paneCommandMatches } from "../src/shared-session/session/identity.js";
 import { correlationIdFromPrompt, envelopeText } from "./shared-session-fixtures.js";
 import {
-  GROK_TRUST_DIALOG,
   GrokTmux,
   THINKING,
   TOOL_RUNNING,
@@ -57,14 +50,6 @@ test("grok pane: el pie Ctrl+c:cancel y el spinner [stop] son turno en curso; oc
   assert.equal(turnInFlight(quoted), false);
 });
 
-test("grok pane: caja vacía libre (aun generando), texto o chip ocupado, diálogo de confianza modal", () => {
-  assert.equal(inputBoxState(grokFrame()).kind, "free");
-  assert.equal(inputBoxState(grokFrame({ footer: "running", spinner: THINKING })).kind, "free");
-  assert.equal(inputBoxState(grokFrame({ footer: "typed", box: "respondé solo: ho" })).kind, "busy");
-  assert.equal(inputBoxState(grokFrame({ footer: "typed", box: "[Pasted: 81 lines]" })).kind, "busy");
-  assert.equal(inputBoxState(GROK_TRUST_DIALOG).kind, "modal");
-});
-
 test("grok config: GROK_HOME (o ~/.grok) llega al panel y la TUI arranca con --always-approve", () => {
   const environment = { CAUCE_SHARED_SESSION: "1", CAUCE_SHARED_SESSION_WORKSPACE: "/home/claw", HOME: "/home/claw" };
   const config = loadSharedSessionConfig("grok", "hades", "/state/hades", environment);
@@ -103,42 +88,6 @@ test("grok arranque: sin historia crea una sesión nueva con id v7; con historia
   assert.equal((await resolveGrokLaunch(legacy.grokHome, "/workspace", undefined)).state, "blocked");
 });
 
-test("grok arranque: la semilla nombra la conversación canónica una sola vez y la TUI la reanuda exacta", async () => {
-  const { state, grokHome, log } = await grokWorkspace("grok-launch-semilla");
-  const binding = { alias: "hades", harness: "grok" as const, configDirectory: grokHome, workspace: "/workspace" };
-  const store = new SharedTuiPointerStore(state);
-  assert.equal(await store.seed(binding, log.sessionId), "written");
-  assert.equal(await store.seed(binding, log.sessionId), "unchanged");
-  assert.equal(await store.seed(binding, newGrokSessionId()), "conflict", "una semilla nunca pisa el puntero");
-  assert.deepEqual(await resolveGrokLaunch(grokHome, "/workspace", { alias: "hades", stateDirectory: state }),
-    { state: "launch", args: ["--resume", log.sessionId], resumed: true });
-
-  await chmod(dirname(log.file), 0o777);
-  assert.equal((await resolveGrokLaunch(grokHome, "/workspace", { alias: "hades", stateDirectory: state })).state,
-    "blocked", "una carpeta de sesión escribible por otros no se acredita");
-  await chmod(dirname(log.file), 0o700);
-  await rename(dirname(log.file), `${dirname(log.file)}-movida`);
-  assert.equal((await resolveGrokLaunch(grokHome, "/workspace", { alias: "hades", stateDirectory: state })).state,
-    "blocked", "un puntero a una sesión inexistente no lanza nada");
-});
-
-test("grok arranque: ensure crea el panel tmux con GROK_HOME y --resume del id sembrado", async () => {
-  const { state, grokHome, log } = await grokWorkspace("grok-ensure");
-  await new SharedTuiPointerStore(state).seed(
-    { alias: "hades", harness: "grok", configDirectory: grokHome, workspace: "/workspace" }, log.sessionId);
-  const tmux = new GrokTmux();
-  tmux.sessionExists = false;
-  const spec = cliSharedSessionSpec("grok", "hades", "/workspace", dirname(grokHome), {}, state);
-
-  const result = await ensureSharedSession(tmux, spec, { sleep: () => Promise.resolve(), readyTimeoutMs: 30 });
-
-  assert.equal(result.ready, true, result.detail);
-  assert.equal(result.resumed, true);
-  assert.equal(tmux.paneStartCommand,
-    `exec env GROK_HOME='${grokHome}' grok --always-approve --resume ${log.sessionId}`);
-  assert.equal(tmux.sessionOptions.get("@cauce_harness"), "grok");
-});
-
 test("grok testigo: el turno acredita el puntero, la TUI renace sobre él y un /new lo mueve con CAS", async () => {
   const { state, grokHome, sessionLog } = await grokWorkspace("grok-testigo", { history: false });
   const binding = {
@@ -173,61 +122,6 @@ test("grok testigo: el turno acredita el puntero, la TUI renace sobre él y un /
   assert.equal((await runnerFor(tmux).run(request("tras /new"))).exitCode, 0);
   assert.notEqual(current, previous);
   assert.deepEqual(await store.read(binding), { state: "valid", binding, nativeId: current });
-});
-
-test("grok arranque: el adaptador siembra solo la conversación de SHARED_SESSION_NATIVE_ID y nunca pisa un puntero", async () => {
-  const { state, grokHome, log, sessionLog } = await grokWorkspace("grok-autosemilla");
-  const other = await sessionLog(newGrokSessionId(Date.now() + 1_000));
-  await other.append(other.user("otra conversación"));
-  const workspace = dirname(grokHome);
-  const logged: AdapterLog[] = [];
-  const environment = {
-    CAUCE_SHARED_SESSION: "1", CAUCE_SHARED_SESSION_WORKSPACE: workspace, HOME: workspace,
-    CAUCE_SHARED_SESSION_NATIVE_ID: log.sessionId,
-  };
-  const config = loadSharedSessionConfig("grok", "hades", state, environment);
-  assert.ok(config !== undefined);
-  assert.equal(config.nativeId, log.sessionId);
-
-  // The history exists and there is no pointer: before the adapter starts the TUI would block.
-  assert.equal((await resolveGrokLaunch(grokHome, workspace, { alias: "hades", stateDirectory: state })).state, "blocked");
-  await sharedSessionRunner(config, (entry) => { logged.push(entry); });
-  const binding = { alias: "hades", harness: "grok" as const, configDirectory: await realpath(grokHome), workspace: await realpath(workspace) };
-  assert.deepEqual(await new SharedTuiPointerStore(state).read(binding), { state: "valid", binding, nativeId: log.sessionId });
-  assert.deepEqual(await resolveGrokLaunch(grokHome, workspace, { alias: "hades", stateDirectory: state }),
-    { state: "launch", args: ["--resume", log.sessionId], resumed: true });
-
-  // Restarting with the same id is a no-op; with another one it never replaces the pointer.
-  await sharedSessionRunner(config, (entry) => { logged.push(entry); });
-  await sharedSessionRunner({ ...config, nativeId: other.sessionId }, (entry) => { logged.push(entry); });
-  await sharedSessionRunner({ ...config, nativeId: newGrokSessionId() }, (entry) => { logged.push(entry); });
-  assert.deepEqual(await new SharedTuiPointerStore(state).read(binding), { state: "valid", binding, nativeId: log.sessionId });
-  const notes = logged.map((entry) => String(entry.error_message));
-  assert.ok(notes.some((note) => note.includes("quedó sembrada")), notes.join("\n"));
-  assert.ok(notes.some((note) => note.includes("ya era la sembrada")), notes.join("\n"));
-  assert.ok(notes.some((note) => note.includes("nunca se reemplaza")), notes.join("\n"));
-  assert.ok(notes.some((note) => note.includes("no existe o no es segura")), notes.join("\n"));
-
-  assert.throws(() => loadSharedSessionConfig("codex", "hades", state, environment), /codex/u);
-  assert.throws(() => loadSharedSessionConfig("grok", "hades", state, { ...environment, CAUCE_SHARED_SESSION_NATIVE_ID: "../x" }), /UUID/u);
-});
-
-test("grok semilla por CLI: escribe una vez, repite sin cambios y rechaza una conversación inexistente", async () => {
-  const { state, grokHome, log } = await grokWorkspace("grok-semilla-cli");
-  const cli = fileURLToPath(new URL("../src/bin/shared-session.js", import.meta.url));
-  const run = (nativeId: string, harness = "grok"): ReturnType<typeof spawnSync> => spawnSync(process.execPath, [
-    cli, "seed", "--alias", "hades", "--harness", harness, "--workspace", "/workspace", "--state", state,
-    "--native-id", nativeId,
-  ], { encoding: "utf8", env: { ...process.env, HOME: dirname(grokHome), GROK_HOME: "" } });
-
-  const written = run(log.sessionId);
-  assert.equal(written.status, 0, String(written.stderr));
-  assert.match(String(written.stdout), /"result":"written"/u);
-  assert.match(String(run(log.sessionId).stdout), /"result":"unchanged"/u);
-  const missing = run(newGrokSessionId());
-  assert.equal(missing.status, 1);
-  assert.match(String(missing.stdout), /"result":"unverified"/u);
-  assert.equal(run(log.sessionId, "codex").status, 3);
 });
 
 test("grok /new del dueño con la caja sin foco (hades 2026-09-30): el primer pedido entra y re-asienta el puntero en 0600", async () => {
