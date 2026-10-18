@@ -256,6 +256,37 @@ async function profile(pool: DatabasePool, tenant: string, alias: string) {
     } };
 }
 
+async function migrationMessageAccess(pool: DatabasePool, source: CompanyAuthoritySource) {
+  const resolve = async (client: DatabaseClient) => {
+    const authority = await source(client); assertPlatformAdmin(authority);
+    const actor = (await client.query<{ tenant_id: string; alias: string; room_id: string }>(`SELECT member.tenant_id,member.alias,member.room_id
+      FROM memberships member JOIN role_policies policy ON policy.role=member.role
+      JOIN tenants tenant ON tenant.id=member.tenant_id
+      JOIN rooms room ON room.tenant_id=member.tenant_id AND room.id=member.room_id
+      JOIN agents agent ON agent.tenant_id=member.tenant_id AND agent.alias=member.alias
+      WHERE tenant.company_id=$1 AND tenant.enabled AND tenant.retired_at IS NULL AND tenant.purged_at IS NULL
+        AND (($2::boolean AND tenant.id=$3 AND member.alias=$4) OR (NOT $2::boolean AND tenant.is_hub))
+        AND member.enabled AND member.retired_at IS NULL AND policy.allow_route AND policy.allow_read
+        AND room.enabled AND room.retired_at IS NULL AND room.purged_at IS NULL
+        AND agent.enabled AND agent.retired_at IS NULL AND agent.purged_at IS NULL
+      ORDER BY member.tenant_id,member.alias,member.room_id LIMIT 1 FOR SHARE OF member,policy,tenant,room,agent`,
+    [authority.actingCompany, authority.homeCompany === authority.actingCompany, authority.homeTenant, authority.alias])).rows[0];
+    if (!actor) conflict('the selected company has no active migration routing actor');
+    return actor;
+  };
+  const routing = await withTransaction(pool, resolve);
+  const humanAccess = { signal: AbortSignal.timeout(30_000), humanAuthority: async (client: DatabaseClient) => {
+    const current = await resolve(client);
+    if (current.tenant_id !== routing.tenant_id || current.alias !== routing.alias || current.room_id !== routing.room_id) {
+      conflict('migration routing authority changed');
+    }
+    const authority = await source(client);
+    if (authority.humanId === null) throw new StoreError('forbidden', 'migration human authority is unavailable');
+    return { humanId: authority.humanId, tenantId: routing.tenant_id, actorAlias: routing.alias };
+  } };
+  return { routing, humanAccess };
+}
+
 export async function migrationPlatformRequest(pool: DatabasePool, raw: unknown): Promise<unknown> {
   const packet = Packet.parse(raw);
   let selectedIdentity: ReturnType<typeof identity> | undefined;
@@ -322,19 +353,14 @@ export async function migrationPlatformRequest(pool: DatabasePool, raw: unknown)
   }
   if (method === 'POST' && path === '/internal/migration/nonce') {
     const input = record(payload); const target = identity(input, packet.tenant);
+    selectedIdentity = target;
     await new ContextVersionStore(pool).read(source, target.tenant_id, target.alias);
     const nonce = z.string().regex(/^CAUCE_MOVE_[a-f0-9]{32}$/u).parse(input.nonce);
-    const room = (await pool.query<{ room_id: string }>(`SELECT member.room_id FROM memberships member JOIN role_policies policy ON policy.role=member.role
-      WHERE member.tenant_id=$1 AND member.alias=$2 AND member.enabled AND policy.allow_route ORDER BY member.room_id LIMIT 1`,
-    [account.tenant_id, account.alias])).rows[0];
-    if (!room) conflict('platform administrator has no routing room');
-    const humanAccess = { signal: AbortSignal.timeout(30_000), humanAuthority: async (client: DatabaseClient) => {
-        await source(client); return { humanId: packet.human_id, tenantId: account.tenant_id, actorAlias: account.alias };
-      } };
-    const actor = bindHumanPrincipal({ tenant_id: account.tenant_id, alias: account.alias, session_id: 'platform-migration',
+    const { routing, humanAccess } = await migrationMessageAccess(pool, source);
+    const actor = bindHumanPrincipal({ tenant_id: routing.tenant_id, alias: routing.alias, session_id: 'platform-migration',
       channel: 'console', roles: ['operator'], permissions: ['route', 'read', 'control'], operator_id: `console:${packet.human_id}`,
       operator_profile: { id: `console:${packet.human_id}`, display_name: account.alias } }, packet.human_id);
-    const command = { room_id: room.room_id, recipients: [target], body: { text: `Reply with exactly this nonce and no other text: ${nonce}` },
+    const command = { room_id: routing.room_id, recipients: [target], body: { text: `Reply with exactly this nonce and no other text: ${nonce}` },
       lane: 'interactive', priority: 0 };
     const repository = new CauceRepository(pool); const telemetry = new ConsolePublishTelemetry();
     const common = { actor, humanAccess, priorityLog: { info: () => undefined, warn: () => undefined }, logRedaction: () => undefined };
@@ -348,9 +374,8 @@ export async function migrationPlatformRequest(pool: DatabasePool, raw: unknown)
   }
   const message = /^\/v3\/console\/messages\/([a-f0-9-]{36})$/u.exec(path);
   if (method === 'GET' && message?.[1]) {
-    return new CauceRepository(pool).getHumanMessage(message[1], { signal: AbortSignal.timeout(10_000), humanAuthority: async client => {
-      await source(client); return { humanId: packet.human_id, tenantId: account.tenant_id, actorAlias: account.alias };
-    } });
+    const { humanAccess } = await migrationMessageAccess(pool, source);
+    return new CauceRepository(pool).getHumanMessage(message[1], humanAccess);
   }
   throw new StoreError('not_found', 'internal migration command is unavailable');
 }
