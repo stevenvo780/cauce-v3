@@ -154,7 +154,7 @@ Incorporar un harness debe ser una operación clara mediante configuración JSON
 - [x] [prod] 8 descriptores JSON + fake2 validados, empaquetados y fijados por digest con parsers cerrados en TS y Python: 9/9 válidos dentro del gateway productivo, digests alterados rechazados, 7 harnesses reales con pins aprobados. (auditoría 17-oct, E2)
 - [x] [local real] En «Mis cuotas», las capacidades salen del descriptor aprobado y un descriptor alterado retira la capacidad.
 - [x] [código] Los comandos (login, cuota, paquete de update, módulo de flota) pasan al descriptor y salen de `harness_operations.py`. (ccf554d1, 75ddb35d)
-- [ ] El dueño incorpora un harness con su descriptor y plantilla de runtime sin que una lista fija de proveedores lo rechace. La corrección `f1985f46` está en la rama y sale con el próximo despliegue; sin test de paridad nuevo.
+- [x] [prod] Un harness nuevo entra con su descriptor y plantilla de runtime, sin lista fija de proveedores (f1985f46, desplegado desde 85c3fc71).
 - [ ] Gaia (OpenClaw+Anthropic), Hades (Grok) y Hegel (Muse) corren en server2 con su cuenta, responden por Cauce y conservan terminal y contexto. Los drivers existen (fleet_provider_grok/muse/openclaw); hoy están en `server`.
 - [x] [código] Descriptores honestos; errores con campo y motivo; capacidades por acción. (ccf554d1, 27200201)
 - [ ] El dueño consulta cuotas y actualiza el CLI de una cuenta Claude/Codex desde «Mis cuotas» en server2 y vuelve a consultar sin perder la sesión. fake2 y su runbook ya existen (1ff5c418, docs/v4-archivos-contextos.md).
@@ -169,7 +169,7 @@ Estructura estándar de espacios (contextos/directivas, proyectos, configuració
 - [x] [local real] Broker Git con CAS y replay; push fallido recuperable; estados separados; concurrencia por agente con CAS; historial, diff y restauración como versión nueva (backend).
 - [x] [local real] Transporte a GitHub privado `stevenvo780/cauce-agent-contexts` probado con contenido sintético.
 - [ ] El dueño trabaja y descarga una copia completa de cada espacio migrado, con proyectos y contextos conservados. El agente responde leyendo desde la ruta nueva y queda una copia recuperable del origen. El supervisor ya exporta `CAUCE_SPACE_ROOT`/`TMPDIR` (93f193fc).
-- [ ] El dueño consulta en GitHub el historial inicial de los agentes reales de Humanizar y Praxis con sus documentos actuales y la sincronización confirmada. La siembra y el preflight existen (a6f14b47, 171866dd); hay 0 versiones de contexto en producción.
+- [x] [prod] El dueño consulta en GitHub el historial inicial de los 14 agentes reales de Humanizar con sus documentos actuales: siembra del 18-oct (seeded=14) y la cola de contexto quedó en `synced` (17/17). Los `TOOLS.md` con secretos quedaron fuera de Git; Praxis, cuando exista. (a7407e52, 09f7beac, 015ffd01)
 - [x] [local real] **Versionar las ediciones hechas en el espacio del agente**: hoy no se registran y además bloquean sus turnos. (0e186764, adc0bf9d, 341d4dbc, 99683b04)
 - [ ] El dueño cambia una directiva y Claude y Codex la usan en su siguiente turno, con la versión aplicada visible y sin instrucciones antiguas contradictorias (adopción implementada en 4273c1da).
 - [ ] El dueño guarda cambios de varios agentes y recupera una sincronización fallida sin perder versiones, viendo autor, pendiente y causa; al reintentar, GitHub recibe los cambios (fetch previo, CAS y autor ya en 177947c1).
