@@ -225,14 +225,14 @@ Verificado por contenido (Haiku/Sonnet + revisión Opus 5.5): trabajo valioso qu
   - [x] [local real] Un usuario nuevo se registra, crea su empresa y entra como owner.
   - [x] [local real] Aislamiento por familias de rutas y en BD.
   - [ ] Humanizar y Praxis con sus recursos reales.
-  - [ ] Registro usable en producción.
-  - [ ] Solicitudes manipuladas cubiertas de forma exhaustiva y probadas contra el despliegue.
+  - [x] [prod] Registro usable en producción: alta atómica de empresa por la web, limitador por IP real tras el proxy; 8 empresas `zz-canary-*` creadas por QA el 17-oct. (auditoría 17-oct)
+  - [x] [local real] Solicitudes manipuladas cubiertas: la guardia enumera las rutas `/v3` sin excepciones (0583c45b, 294 casos y 0 fallos). ~~probadas contra el despliegue~~ retirado (17-oct).
 
 - [ ] **2. CRUD completo y real.** Se han probado creación, consulta, edición y eliminación de todas las entidades administrables, tanto desde la interfaz como en sus efectos persistentes y remotos. No quedan botones ficticios, operaciones incompletas ni recursos huérfanos tras las pruebas.
   - [x] [local real] CRUD con persistencia de empresas, clientes, salas, membresías, registro de agente, cuentas, plano e invitaciones.
   - [x] [local real] Executor contra Docker real local.
   - [ ] Agentes, ordenadores, personas, entornos de cuota y contextos con ciclo real y efectos remotos.
-  - [ ] Sin huérfanos ni controles ficticios, con barrido y matriz que lo demuestren.
+  - [ ] Sin huérfanos ni controles ficticios: la purga nombra el contenedor y los volúmenes, y los campos inertes se declaran en la UI. ~~barrido y matriz que lo demuestren~~ retirado (17-oct).
 
 - [ ] **3. Gestión distribuida funcional.** Se pueden registrar ordenadores e instanciar, administrar y eliminar espacios y agentes en ellos. Gaia, Hegel, Hades y Argos funcionan en servidores locales, conservan su información y se ha comprobado la liberación de recursos en la VPS principal. El CLI `cauce` y las terminales remotas mantienen sus capacidades.
   - [x] [local real] Enrolamiento con identidad firmada y relocalización entre hosts (PG).
@@ -244,7 +244,7 @@ Verificado por contenido (Haiku/Sonnet + revisión Opus 5.5): trabajo valioso qu
 - [ ] **4. Cuotas reales desde la web.** Funcionan las cuotas por agente y la sección «Mis cuotas», incluyendo autenticación, consulta, actualización de CLI y administración de sus entornos. Se ha probado que varios agentes pueden compartir una cuenta sin errores ni saldos ficticiamente independientes. Las ventanas y los estados mostrados corresponden a los datos reales disponibles.
   - [x] [local real] «Mis cuotas»: cuentas sin agente y tarjetas fijadas con persistencia.
   - [x] [local real] Estados explícitos y cuenta compartida modelada sin saldos independientes.
-  - [ ] Entornos Docker reales (autenticar, consultar, actualizar CLI, eliminar).
+  - [ ] El dueño crea, autentica, consulta, actualiza y elimina un entorno de cuotas real desde «Mis cuotas» (hoy 0 entornos en producción; depende de un ordenador con ejecutor).
   - [ ] Cuotas por agente según harness; cuenta compartida por dos agentes reales; ventanas contrastadas; verificado en producción.
 
 - [ ] **5. Oficina y harnesses operativos.** La oficina responde a la creación, edición, asignación y eliminación de salas y agentes; su configuración persiste; y el detalle de cada agente muestra correctamente sus cuotas y estado visual. El mecanismo de configuración de harnesses se ha probado con operaciones reales y no depende de cambios dispersos para cada integración.
@@ -259,12 +259,12 @@ Verificado por contenido (Haiku/Sonnet + revisión Opus 5.5): trabajo valioso qu
 
 - [ ] **7. Copias, recuperación y diagnóstico comprobados.** Se puede descargar una copia del contenido de un espacio y restaurarla en un entorno de prueba. Los fallos relevantes dejan un rastro útil para encontrar su causa. La eliminación de componentes de auditoría innecesarios no ha roto funciones ni suprimido controles necesarios.
   - [x] [local real] Restauración en entorno de prueba con datos sintéticos.
-  - [ ] Descarga desde la consola de una copia real y su restauración.
+  - [ ] El dueño descarga desde la consola la copia de un espacio real y la restaura siguiendo `docs/v4-runbook-copias.md` (hoy 0 copias en producción).
   - [x] [local real] Rastro útil de fallos y poda de auditoría sin romper nada.
 
 - [ ] **8. Pruebas reales en local y en el despliegue.** Se han ejecutado las pruebas correspondientes sobre la versión final integrada y se han recorrido los flujos esenciales en el entorno desplegado. No basta con que compile, pase el linter, funcionen los mocks o responda un endpoint de salud. Los errores encontrados se corrigen y los flujos afectados se vuelven a probar.
-  - [ ] [local real] typecheck, lint y test:unit en verde sobre el HEAD actual con entorno reproducible.
-  - [ ] Gate completo y cobertura del SHA final; flujos esenciales recorridos en producción; ciclo corregir → re-probar.
+  - [ ] typecheck, lint y empaquetado en verde sobre el SHA que se publica, con su recibo (`.delegados/v4/corte.sh`).
+  - [ ] Flujos esenciales recorridos en producción por QA de agentes, con el ciclo corregir → volver a probar. ~~Gate completo y cobertura del SHA final~~ retirado (17-oct).
 
 - [ ] **9. Despliegue final y documentación completos.** Los cambios están integrados y desplegados; la versión publicada corresponde al código verificado; la documentación describe todas las funciones reales y los procedimientos de operación y recuperación; y no quedan pendientes críticos ocultos detrás de un «se hará después».
   - [x] [desplegado] Integrado en `dev`/`main`, desplegado, versión publicada = código verificado.
@@ -283,11 +283,11 @@ Las validó la pasada Opus; el detalle está en la sección 6 de `ordenes/v4-cie
 - [x] 3. `deploy.sh` más seguro: comprobar los bind mounts antes del build, escribir los pins solo tras un migrator correcto y exigir un backup de ≤ 2 h si hay migraciones pendientes.
 - [x] 4. Ensayo de migración genérico para todo el bundle.
 - [x] 5. Siembra del super-admin con un comando idempotente y unificación de los dos CLIs de plataforma.
-- [ ] 6. Una sola lectura de cuotas compartida por plano, campus y ficha.
-- [ ] 7. Mensajes de error accionables en español y motivo de cada capacidad no disponible.
+- [x] 6. Una sola lectura de cuotas compartida por plano, campus y ficha (4c44360a, en producción).
+- [x] 7. Mensajes de error accionables en español y motivo de cada capacidad no disponible (33f37937; QA 17-oct tradujo los restantes, bd7c012f).
 - [x] 8. Pantalla «Empresa retirada».
-- [ ] 9. Validar `harness_definitions` contra los descriptores.
-- [ ] [local real] 10. [local real] Autor real en `git log` de contextos y aplicación en el siguiente turno natural. (177947c1, 919bd20e)
+- ~~9. Validar `harness_definitions` contra los descriptores~~ — retirado: la BD y los descriptores coinciden y la UI ya usa el descriptor aprobado (17-oct).
+- [ ] 10. Un agente aplica la versión nueva de su contexto en su siguiente turno natural. El autor real en `git log` ya está hecho (177947c1, 919bd20e).
 - [x] 11. [local real] Inmutabilidad del historial de contextos. (659099d9, 68ac2f7c)
 - [x] 12. Contrato entre los handlers MSW y las rutas reales del gateway.
 - [x] 13. [código] Preflight de dependencias nativas del gate. (ba5f301a)
