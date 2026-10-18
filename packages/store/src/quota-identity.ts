@@ -1,6 +1,25 @@
 import { createHash } from 'node:crypto';
-import type { DatabaseClient } from './db.js';
+import type { DatabaseClient, DatabasePool } from './db.js';
+import { withTransaction } from './db.js';
 import { StoreError } from './repository/errors.js';
+
+/** A quota registration that still has no authenticated provider identity. */
+export const PENDING_QUOTA_ACCOUNT_SQL = 'quota_registration_key IS NOT NULL AND quota_identity_hash IS NULL';
+
+/**
+ * A provider session proven inside an agent (fleet login) enables its pending quota
+ * registration: the account stays without a quota identity hash, which is only bound
+ * by a quota-environment login, but it may now back fleet operations.
+ */
+export async function enableProviderAccountAfterAgentAuth(pool: DatabasePool, accountId: string): Promise<boolean> {
+  return withTransaction(pool, async client => {
+    const updated = await client.query(
+      `UPDATE provider_accounts SET enabled=true,quota_version=quota_version+1,updated_at=now()
+       WHERE id=$1 AND enabled=false AND canonical_account_id IS NULL AND ${PENDING_QUOTA_ACCOUNT_SQL}`,
+      [accountId]);
+    return (updated.rowCount ?? 0) > 0;
+  });
+}
 
 function providerIdentityHash(provider: string, identity: string): string {
   if (typeof identity !== 'string' || identity.length < 1 || identity.length > 256 || /[\p{Cc}]/u.test(identity)) {

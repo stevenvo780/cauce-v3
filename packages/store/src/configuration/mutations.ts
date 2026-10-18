@@ -510,9 +510,10 @@ export abstract class ConfigurationMutations {
       provider: string; external_account_id: string; payer_tenant_id: Tenant; label: string | null;
       credential_ref_kind: 'env_path' | 'file' | 'secret_manager'; credential_ref: string;
       shared_with_pool: boolean; enabled: boolean;
+      quota_registration_key: string | null; quota_identity_hash: string | null;
     }>(
       `SELECT provider,external_account_id,payer_tenant_id,label,credential_ref_kind,credential_ref,
-              shared_with_pool,enabled
+              shared_with_pool,enabled,quota_registration_key,quota_identity_hash
        FROM provider_accounts WHERE id=$1 FOR UPDATE`, [mutation.id]
     );
     const old = selected.rows[0];
@@ -559,6 +560,11 @@ export abstract class ConfigurationMutations {
         has(value, 'credential_ref_kind') || has(value, 'credential_ref')) {
       throw new ConfigurationError(
         'conflict', 'provider_account identity and credential rotation require delete and create, not update'
+      );
+    }
+    if (value.enabled === true && !old.enabled && old.quota_registration_key != null && old.quota_identity_hash == null) {
+      throw new ConfigurationError(
+        'conflict', 'quota account must be authenticated before it can be enabled'
       );
     }
     const next = {

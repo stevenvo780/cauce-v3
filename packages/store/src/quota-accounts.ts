@@ -134,6 +134,14 @@ export async function updateQuotaAccount(pool: DatabasePool, source: CompanyAuth
   return withTransaction(pool, async client => {
     const authority = await source(client); assertQuotaAccountWriter(authority);
     await lockCompanyQuotaAccount(client, authority, id);
+    if (input.enabled === true) {
+      const flags = (await client.query<{ quota_registration_key: string | null; quota_identity_hash: string | null }>(
+        'SELECT quota_registration_key,quota_identity_hash FROM provider_accounts WHERE id=$1 AND company_id=$2',
+        [id, authority.actingCompany])).rows[0];
+      if (flags?.quota_registration_key != null && flags.quota_identity_hash == null) {
+        throw new StoreError('conflict', 'quota account must be authenticated before it can be enabled');
+      }
+    }
     if (input.paused_reason?.startsWith('quota_exhausted:')) throw new StoreError('invalid_input', 'automatic pause reasons are reserved');
     const result = await client.query(`UPDATE provider_accounts SET label=CASE WHEN $3 THEN $4 ELSE label END,
       enabled=COALESCE($5,enabled),paused_until=CASE WHEN $6 THEN $7::timestamptz ELSE paused_until END,
