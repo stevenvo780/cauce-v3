@@ -13,7 +13,7 @@ HARNESS_ID = re.compile(r'[a-z][a-z0-9_-]{0,63}')
 ARGV0 = re.compile(r'/usr/local/bin/[A-Za-z0-9][A-Za-z0-9._+@-]{0,127}')
 ARGUMENT = re.compile(r'[A-Za-z0-9][A-Za-z0-9_@%+=:,./-]{0,255}|--[A-Za-z0-9][A-Za-z0-9_-]{0,253}|-[A-Za-z0-9_-]{1,254}|/[A-Za-z0-9_@%+=:,./-]{0,255}')
 NPM_PACKAGE = re.compile(r'(@[a-z0-9][a-z0-9._-]{0,63}/)?[a-z0-9][a-z0-9._-]{0,127}')
-PROVIDER_FIELDS = {'authenticate_argv', 'quota_argv', 'update_package', 'fleet_module'}
+PROVIDER_FIELDS = {'authenticate_argv', 'quota_argv', 'verify_argv', 'update_package', 'fleet_module'}
 PIN = re.compile(r'[a-f0-9]{64}')
 
 
@@ -90,6 +90,8 @@ def validate_provider(operations: dict, provider, harness: str) -> dict:
         validated['authenticate_argv'] = validate_argv('provider.authenticate_argv', provider['authenticate_argv'])
     if 'quota_argv' in provider:
         validated['quota_argv'] = validate_argv('provider.quota_argv', provider['quota_argv'])
+    if 'verify_argv' in provider:
+        validated['verify_argv'] = validate_argv('provider.verify_argv', provider['verify_argv'])
     if 'update_package' in provider:
         package = provider['update_package']
         if not isinstance(package, str) or not NPM_PACKAGE.fullmatch(package) or package.endswith('.tgz'):
@@ -110,6 +112,8 @@ def validate_provider(operations: dict, provider, harness: str) -> dict:
         fail('provider.authenticate_argv', 'declared without operations.authenticate')
     if 'quota_argv' in validated and 'quota' not in operations:
         fail('provider.quota_argv', 'declared without operations.quota')
+    if 'verify_argv' in validated and 'authenticate' not in operations:
+        fail('provider.verify_argv', 'declared without operations.authenticate')
     if 'update_package' in validated and 'update' not in operations:
         fail('provider.update_package', 'declared without operations.update')
     return validated
@@ -218,6 +222,15 @@ def provider_command(harness: str, operation: str, bundle_directory: str,
         return ['/usr/local/bin/npm', 'install', '--global', '--prefix', '/home/node/.local',
                 '--ignore-scripts', '--no-audit', '--no-fund', provider['update_package']]
     fail(f'operations.{operation}', 'operation has no provider command')
+
+
+def provider_verify_command(harness: str, bundle_directory: str,
+                            expected_sha256: str | None = None) -> list[str] | None:
+    descriptor, _ = read_descriptor(bundle_directory, harness, expected_sha256=expected_sha256)
+    if 'authenticate' not in descriptor['operations']:
+        fail('operations.authenticate', 'operation is not declared by this harness descriptor')
+    command = (descriptor.get('provider') or {}).get('verify_argv')
+    return list(command) if command is not None else None
 
 
 def fleet_module(harness: str, bundle_directory: str, expected_sha256: str | None = None) -> str | None:

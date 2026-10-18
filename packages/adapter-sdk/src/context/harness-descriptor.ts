@@ -8,6 +8,7 @@ export type HarnessLifecycleRecipe = 'runtime-package' | 'provider-login' | 'nat
 export interface HarnessProviderDescriptor {
   readonly authenticate_argv?: readonly string[];
   readonly quota_argv?: readonly string[];
+  readonly verify_argv?: readonly string[];
   readonly update_package?: string;
   readonly fleet_module?: string | null;
 }
@@ -25,7 +26,7 @@ const HARNESS_ID = /^[a-z][a-z0-9_-]{0,63}$/u;
 const ARGV0 = /^\/usr\/local\/bin\/[A-Za-z0-9][A-Za-z0-9._+@-]{0,127}$/u;
 const ARGUMENT = /^(?:[A-Za-z0-9][A-Za-z0-9_@%+=:,./-]{0,255}|--[A-Za-z0-9][A-Za-z0-9_-]{0,253}|-[A-Za-z0-9_-]{1,254}|\/[A-Za-z0-9_@%+=:,./-]{0,255})$/u;
 const NPM_PACKAGE = /^(?:@[a-z0-9][a-z0-9._-]{0,63}\/)?[a-z0-9][a-z0-9._-]{0,127}$/u;
-const PROVIDER_FIELDS = ['authenticate_argv', 'quota_argv', 'update_package', 'fleet_module'];
+const PROVIDER_FIELDS = ['authenticate_argv', 'quota_argv', 'verify_argv', 'update_package', 'fleet_module'];
 function fail(field: string, reason: string): never { throw new Error(`${field}: ${reason}`); }
 function object(value: unknown, field: string): Record<string, unknown> {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) fail(field, 'must be an object');
@@ -53,6 +54,7 @@ function validateProvider(operations: Record<string, unknown>, value: unknown, h
   const validated: { -readonly [K in keyof HarnessProviderDescriptor]: HarnessProviderDescriptor[K] } = {};
   if ('authenticate_argv' in provider) validated.authenticate_argv = validateArgv('provider.authenticate_argv', provider.authenticate_argv);
   if ('quota_argv' in provider) validated.quota_argv = validateArgv('provider.quota_argv', provider.quota_argv);
+  if ('verify_argv' in provider) validated.verify_argv = validateArgv('provider.verify_argv', provider.verify_argv);
   if ('update_package' in provider) {
     if (typeof provider.update_package !== 'string' || !NPM_PACKAGE.test(provider.update_package)
       || provider.update_package.endsWith('.tgz')) {
@@ -74,6 +76,7 @@ function validateProvider(operations: Record<string, unknown>, value: unknown, h
   if ('update' in operations && validated.update_package === undefined) fail('provider.update_package', 'required when operations.update is declared');
   if (validated.authenticate_argv !== undefined && !('authenticate' in operations)) fail('provider.authenticate_argv', 'declared without operations.authenticate');
   if (validated.quota_argv !== undefined && !('quota' in operations)) fail('provider.quota_argv', 'declared without operations.quota');
+  if (validated.verify_argv !== undefined && !('authenticate' in operations)) fail('provider.verify_argv', 'declared without operations.authenticate');
   if (validated.update_package !== undefined && !('update' in operations)) fail('provider.update_package', 'declared without operations.update');
   return Object.freeze(validated);
 }

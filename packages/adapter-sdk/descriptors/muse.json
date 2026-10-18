@@ -15,6 +15,9 @@
       "/usr/local/bin/muse",
       "login"
     ],
+    "verify_argv": [
+      "/usr/local/bin/verificar-muse.py"
+    ],
     "fleet_module": "fleet_provider_muse"
   }
 }

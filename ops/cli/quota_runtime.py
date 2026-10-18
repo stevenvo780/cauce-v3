@@ -30,18 +30,21 @@ def _allowed_for_directories(directories: tuple) -> frozenset:
         except (HarnessOperationFailure, OSError):
             continue
         for name in names:
-            try:
-                resolve_operation(name, 'quota', directory)
-            except HarnessOperationFailure:
-                continue
-            allowed.add(name)
+            for operation in ('authenticate', 'quota'):
+                try:
+                    resolve_operation(name, operation, directory)
+                except HarnessOperationFailure:
+                    continue
+                allowed.add(name)
+                break
     return frozenset(allowed)
 
 
 def allowed_providers(policy: dict) -> frozenset:
     """Quota providers derive from the descriptors inside the approved bundles
-    (those declaring the quota operation) plus non-harness providers. Computed
-    once per bundle directory set; never called while loading the policy."""
+    (those declaring the authenticate or quota operation) plus non-harness
+    providers. Computed once per bundle directory set; never called while
+    loading the policy."""
     directories = tuple(sorted({bundle['directory'] for bundle in (policy.get('bundles') or {}).values()
                                  if isinstance(bundle, dict) and isinstance(bundle.get('directory'), str)}))
     return _allowed_for_directories(directories)
@@ -71,6 +74,20 @@ def provider_operation(policy: dict, provider: str, operation: str, *, command: 
         arguments = {'expected_sha256': bundle.get('descriptor_sha256')}
         result = provider_command(provider, operation, bundle['directory'], **arguments) if command \
             else resolve_operation(provider, operation, bundle['directory'], **arguments)
+        approved_bundle(policy, {'harness_id': provider, 'runtime_mode': 'container'})
+        return result
+    except (HarnessOperationFailure, PermanentError, OSError, KeyError, TypeError, ValueError) as error:
+        raise SafeFailure('quota provider operation or pinned descriptor is unavailable') from error
+
+
+def descriptor_verify_command(policy: dict, provider: str):
+    from cauce_container_base import PermanentError
+    from fleet_executor_runtime import approved_bundle
+    from harness_operations import HarnessOperationFailure, provider_verify_command
+    try:
+        bundle = approved_bundle(policy, {'harness_id': provider, 'runtime_mode': 'container'})
+        result = provider_verify_command(provider, bundle['directory'],
+                                         expected_sha256=bundle.get('descriptor_sha256'))
         approved_bundle(policy, {'harness_id': provider, 'runtime_mode': 'container'})
         return result
     except (HarnessOperationFailure, PermanentError, OSError, KeyError, TypeError, ValueError) as error:
@@ -348,6 +365,14 @@ def query_observation(policy: dict, environment: dict) -> dict:
     return raw
 
 
+def verify_command_observation(policy: dict, environment: dict, command: list) -> tuple:
+    response = subprocess.run(['/usr/bin/docker', 'exec', '--user', '1000:1000', environment['container_name'],
+                               *command], capture_output=True, timeout=60, check=False)
+    if len(response.stdout) > 65536:
+        raise SafeFailure('quota verification exceeds its output limit')
+    return response.returncode, response.stdout
+
+
 def verify_authentication(policy: dict, document: dict) -> dict:
     environment = packet(policy, document)
     if document['action'] != 'authenticate':
@@ -356,6 +381,25 @@ def verify_authentication(policy: dict, document: dict) -> dict:
     if observed is None or observed['State']['Running'] is not True:
         raise SafeFailure('quota environment is not running')
     validate(policy, environment, observed)
+    verify = descriptor_verify_command(policy, environment['provider'])
+    if verify is not None:
+        code, stdout = verify_command_observation(policy, environment, verify)
+        identity = None
+        try:
+            parsed = json.loads(stdout)
+        except (ValueError, UnicodeError):
+            parsed = None
+        if isinstance(parsed, dict):
+            if parsed.get('ok') is True and isinstance(parsed.get('account_id'), str):
+                identity = parsed['account_id']
+        elif code == 0 and stdout.strip():
+            # Cheap liveness proof without a remote identity (agy models): bind a
+            # local identity that never merges two Cauce accounts.
+            identity = environment['provider'] + '-local:' + hashlib.sha256(environment['account_id'].encode()).hexdigest()
+        if not isinstance(identity, str) or not 1 <= len(identity) <= 256 \
+                or any(ord(character) < 32 or ord(character) == 127 for character in identity):
+            raise SafeFailure('quota login lacks a successful provider request and remote account identity')
+        return {'authenticated_verified': True, 'account_identity': identity}
     raw = query_observation(policy, environment)
     if environment['provider'] == 'codex':
         successful = raw.get('error') is None and raw.get('fuente') == 'wham-http'

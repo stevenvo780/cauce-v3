@@ -25,7 +25,7 @@ test('packaged descriptors guide native execution and refuse arbitrary lifecycle
 });
 test('descriptor provider data is validated with field paths and ids derive from the directory', async () => {
   assert.deepEqual(await packagedHarnessIds(),
-    ['claude', 'codex', 'fake', 'fake2', 'grok', 'hermes', 'muse', 'openclaw', 'opencode']);
+    ['agy', 'claude', 'codex', 'fake', 'fake2', 'grok', 'hermes', 'muse', 'openclaw', 'opencode']);
   const codex = await packagedHarnessDescriptor('codex');
   assert.deepEqual(codex.provider?.authenticate_argv, ['/usr/local/bin/codex', 'login', '--device-auth']);
   assert.equal(codex.provider.update_package, '@openai/codex');
