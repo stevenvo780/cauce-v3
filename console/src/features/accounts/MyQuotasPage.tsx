@@ -1,4 +1,5 @@
 import { useCallback, useRef, useState, type RefObject } from 'react';
+import { Plus } from 'lucide-react';
 import { QUOTA_ACCOUNT_PROVIDERS, type QuotaAccount, type QuotaAccountProvider } from '../../api/client/my-quotas-client';
 import { useApi } from '../../api/context';
 import { usePolling } from '../../api/use-polling';
@@ -111,15 +112,20 @@ export function MyQuotasPage() {
   const visible = [...accounts.data?.accounts ?? []].filter(account => !filterPinned || pinned.includes(account.id))
     .sort((left, right) => Number(pinned.includes(right.id)) - Number(pinned.includes(left.id)) || left.label.localeCompare(right.label));
   return <div className="grid gap-6">
-    <header className="flex flex-wrap items-end justify-between gap-3"><div><h1 className="m-0 text-2xl font-semibold">Mis cuotas</h1>
-      <p className="m-0 mt-1 max-w-2xl text-sm text-muted">Consulta tus suscripciones, incluso sin agentes. Fija las cuentas que sigues y opera sus entornos de consulta.</p></div>
-      <ActionButton label="Actualizar cuotas y entornos" disabled={busy || accounts.loading || environments.loading} announceError={false} action={async () => {
-        try { await reload(); }
-        catch (cause: unknown) {
-          setError(describeQuotaEnvironmentError(cause, 'No se pudo actualizar.'));
-          return { error: cause instanceof Error ? cause : new Error('No se pudo actualizar.') };
-        }
-      }} /></header>
+    <header className="flex flex-wrap items-start justify-between gap-x-4 gap-y-3"><div className="min-w-0 flex-1 basis-72"><h1 className="m-0 text-2xl font-semibold">Mis cuotas</h1>
+      <p className="m-0 mt-1 max-w-2xl text-sm text-muted">Consulta tus suscripciones, incluso sin agentes. Fija las cuentas que sigues y opera sus entornos de consulta.</p>
+      <p className="m-0 mt-1 max-w-2xl text-sm text-muted">«Registrar cuenta» añade una suscripción (Claude, Codex…) para consultar su cuota, aunque ningún agente la use todavía.</p></div>
+      <div className="flex flex-wrap items-center gap-2">
+        <ActionButton label="Actualizar cuotas y entornos" disabled={busy || accounts.loading || environments.loading} announceError={false} action={async () => {
+          try { await reload(); }
+          catch (cause: unknown) {
+            setError(describeQuotaEnvironmentError(cause, 'No se pudo actualizar.'));
+            return { error: cause instanceof Error ? cause : new Error('No se pudo actualizar.') };
+          }
+        }} />
+        <Button variant="primary" disabled={!canWriteAccounts} title={registerBlock} onClick={() => { setCreating(true); }}>
+          <Plus size={14} aria-hidden="true" />Registrar cuenta</Button>
+      </div></header>
     {accounts.loading && !accounts.data ? <p role="status">Leyendo cuentas y ventanas…</p> : null}
     {preferences.loading && !preferences.data ? <p role="status">Leyendo tarjetas fijadas…</p> : null}
     {environments.loading && !environments.data ? <p role="status">Leyendo entornos de consulta…</p> : null}
@@ -129,8 +135,7 @@ export function MyQuotasPage() {
         : describeQuotaError(preferences.error, 'No se pudieron leer las cuotas.'))}
       {preferences.error || pinFailed ? <ActionButton size="sm" label="Releer tarjetas fijadas" busy={preferences.loading} done={false} announceError={false} action={() => { setPinFailed(false); return preferences.reload(); }} /> : null}</Notice> : null}
     {notice ? <Notice tone="ok" role="status">{notice}</Notice> : null}
-    <div className="flex flex-wrap gap-2"><Button aria-pressed={filterPinned} disabled={!preferences.data || !!preferences.error} onClick={() => { setFilterPinned(!filterPinned); }}>{filterPinned ? 'Ver todas las cuentas' : 'Ver sólo cuentas fijadas'}</Button>
-      <Button variant="primary" disabled={!canWriteAccounts} title={registerBlock} onClick={() => { setCreating(true); }}>Registrar cuenta</Button></div>
+    <div className="flex flex-wrap items-center gap-2"><Button aria-pressed={filterPinned} disabled={!preferences.data || !!preferences.error} onClick={() => { setFilterPinned(!filterPinned); }}>{filterPinned ? 'Ver todas las cuentas' : 'Ver sólo cuentas fijadas'}</Button></div>
     {creating ? <QuotaAccountForm executable={executableProviders} busy={busy} canWrite={canWriteAccounts} cancel={() => { setCreating(false); }}
       save={input => canWriteAccounts ? write(() => api.createQuotaAccount({ provider: input.provider, label: input.label, idempotency_key: input.idempotency_key }), 'Cuenta registrada. Crea su entorno para autenticar y consultar.') : Promise.resolve()} /> : null}
     {editing ? <QuotaAccountForm key={`${editing.id}:${String(accountFormEpoch)}`} formRef={accountForm} account={editing} executable={executableProviders} busy={busy} canWrite={canWriteAccounts} cancel={() => { setEditing(undefined); setAccountConflict(undefined); }}
@@ -138,8 +143,8 @@ export function MyQuotasPage() {
     {editing && accountConflict ? <ConflictNotice diffs={accountConflict.diffs} busy={busy}
       onRetry={() => { accountForm.current?.requestSubmit(); }}
       onDiscard={() => { setEditing(accountConflict.fresh); setAccountFormEpoch((epoch) => epoch + 1); setAccountConflict(undefined); }} /> : null}
-    {removing ? <section aria-label="Confirmar eliminación de cuenta" className="grid gap-2 rounded-xl border border-line p-4"><p>Eliminar {removing.label} exige retirar antes sus entornos y asignaciones. El servidor comprobará esas dependencias.</p>
-      <div className="flex gap-2"><Button variant="danger" disabled={!canWriteAccounts} onClick={() => { void write(() => api.deleteQuotaAccount(removing.id, removing.version), 'Cuenta eliminada.'); }}>Confirmar eliminación de cuenta</Button>
+    {removing ? <section aria-label="Confirmar eliminación de cuenta" className="grid gap-3 rounded-xl border border-line p-4"><p className="m-0">Eliminar {removing.label} exige retirar antes sus entornos y asignaciones. El servidor comprobará esas dependencias.</p>
+      <div className="flex flex-wrap items-center gap-2"><Button variant="danger" disabled={!canWriteAccounts} onClick={() => { void write(() => api.deleteQuotaAccount(removing.id, removing.version), 'Cuenta eliminada.'); }}>Confirmar eliminación de cuenta</Button>
         <Button disabled={busy} onClick={() => { setRemoving(undefined); }}>Cancelar</Button></div></section> : null}
     <section aria-label="Tarjetas de Mis cuotas" className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{visible.map(account => <QuotaAccountCard key={account.id} account={accounts.error ? failedQuotaRead(account) : account}
       pinned={pinned.includes(account.id)} canPin={!!preferences.data && !preferences.error && !preferences.loading && !busy} onPin={() => { void pin(account); }}
@@ -183,7 +188,7 @@ function QuotaAccountForm({ account, executable, busy, canWrite, save, cancel, f
   const pausedDate = paused ? new Date(paused) : undefined;
   const hasPause = !!account?.paused_until || !!account?.paused_reason;
   const locked = busy || !canWrite;
-  return <form ref={formRef} aria-label={account ? 'Editar cuenta de cuotas' : 'Registrar cuenta de cuotas'} className="grid gap-2 rounded-xl border border-line bg-surface p-4" onSubmit={event => { event.preventDefault();
+  return <form ref={formRef} aria-label={account ? 'Editar cuenta de cuotas' : 'Registrar cuenta de cuotas'} className="grid gap-3 rounded-xl border border-line bg-surface p-4" onSubmit={event => { event.preventDefault();
     if (locked) return;
     if (pausedDate && Number.isNaN(pausedDate.getTime())) { setError('Introduce una fecha de pausa válida.'); return; }
     if (!account && !isAccountProvider(provider)) { setError('Elige un proveedor de la lista.'); return; }
@@ -209,7 +214,7 @@ function QuotaAccountForm({ account, executable, busy, canWrite, save, cancel, f
       {automatic ? null : <label>Motivo de pausa<input maxLength={128} value={reason} disabled={locked || resume} onChange={event => { setReason(event.target.value); }} /></label>}
       {hasPause ? <label className="flex items-center gap-2"><input type="checkbox" checked={resume} disabled={locked} onChange={event => { setResume(event.target.checked); }} />Reanudar ahora (quita la pausa)</label> : null}</> : null}
     {error ? <Notice tone="danger" role="alert">{error}</Notice> : null}
-    <div className="flex gap-2"><Button type="submit" disabled={locked || !label.trim()} title={locked ? (!canWrite ? 'Tu rol no permite guardar cuentas de cuotas. Pide a un dueño o administrador de la empresa que lo haga.' : 'Espera a que termine la operación en curso.') : !label.trim() ? 'Escribe el nombre de la cuenta.' : undefined}>{account ? 'Guardar cuenta' : 'Registrar cuenta'}</Button>
+    <div className="flex flex-wrap items-center gap-2"><Button type="submit" disabled={locked || !label.trim()} title={locked ? (!canWrite ? 'Tu rol no permite guardar cuentas de cuotas. Pide a un dueño o administrador de la empresa que lo haga.' : 'Espera a que termine la operación en curso.') : !label.trim() ? 'Escribe el nombre de la cuenta.' : undefined}>{account ? 'Guardar cuenta' : 'Registrar cuenta'}</Button>
       <Button type="button" disabled={busy} onClick={cancel}>Cancelar</Button></div>
   </form>;
 }

@@ -85,8 +85,8 @@ export function AgentQuotaReader({ tenant, alias, quota, notRunning = false }: {
   const queryUnavailable = !data?.reader_available || canQuery || unavailableTarget ? null
     : !canManageCompany(authority?.role) ? 'Tu rol permite ver la cuota, pero no consultarla. Pide a un propietario o administrador de la empresa que la consulte.'
       : 'El servidor no admite ahora una consulta nueva para este agente. Relee la cuota más tarde.';
-  return <section aria-label={`Cuota de ${alias}`} className="mt-3 grid gap-3 rounded-lg border border-line p-3">
-    <header className="flex flex-wrap items-center justify-between gap-2"><h3 className="m-0 text-sm font-semibold">Cuota del agente</h3>
+  return <section aria-label={`Cuota de ${alias}`} className="mt-4 grid gap-3 rounded-lg border border-line p-4">
+    <header className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2"><h3 className="m-0 text-sm font-semibold">Cuota del agente</h3>
       {status && (status !== 'unsupported' || unavailableTarget) ? <Pill tone={status === 'error' || status === 'failed' ? 'danger' : 'neutral'}>{unavailableTarget ? 'Sin ubicación operativa' : STATUS_LABEL[status]}</Pill> : null}
     </header>
     {quota.loading && !data ? <p className="m-0 text-xs" role="status">Leyendo la cuota del agente…</p> : null}
@@ -104,7 +104,7 @@ export function AgentQuotaReader({ tenant, alias, quota, notRunning = false }: {
       </div> : null}
       {queryUnavailable ? <p className="m-0 text-xs text-muted">{queryUnavailable}</p> : null}
     </> : null}
-    <div className="flex flex-wrap gap-2">
+    <div className="flex flex-wrap items-center gap-2">
       {canQuery ? <Button size="sm" disabled={busy || quota.loading || !!quota.error || pending} onClick={() => { void query(); }}>{busy ? 'Encolando…' : retry.current ? 'Reintentar consulta' : 'Consultar'}</Button> : null}
       <ActionButton size="sm" label="Releer cuota" disabled={busy} busy={quota.loading} announceError={false} action={() => reread()} />
     </div>

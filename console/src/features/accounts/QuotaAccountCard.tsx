@@ -76,7 +76,7 @@ export function QuotaAccountCard({ account, pinned, canPin, onPin, canEdit, onEd
     : fatigue === 'exhausted' || fatigue === 'error' ? 'danger' : 'neutral';
   const measured = account.windows.map(window => window.captured_at).filter((value): value is string => value !== null).sort().at(-1);
   return <article aria-label={`Cuotas de ${account.label}`} className="grid content-start gap-3 rounded-xl border border-line bg-surface p-4">
-    <header className="flex flex-wrap items-start justify-between gap-2"><div><h3 className="m-0 text-base">{account.label}</h3>
+    <header className="flex flex-wrap items-start justify-between gap-x-3 gap-y-2"><div className="min-w-0"><h3 className="m-0 text-base">{account.label}</h3>
       <p className="m-0 text-xs text-muted">{PROVIDER_LABEL[account.provider] ?? account.provider}</p></div><Pill tone={tone}>{FATIGUE_LABEL[fatigue]}</Pill></header>
     <QuotaRefreshNotice status={account.refresh_status} />
     {login}
@@ -89,7 +89,7 @@ export function QuotaAccountCard({ account, pinned, canPin, onPin, canEdit, onEd
       <WindowRow key={`${window.group_key}:${window.window_key}:${window.model ?? ''}:${window.host}`} window={window} now={now} />)}</div>
     {!account.windows.length ? <Notice tone="info">{OBSERVATION_LABEL[account.observation_status]}. No hay ventanas informadas para esta cuenta.</Notice> : null}
     <p className="m-0 text-xs text-muted">{measured ? <>Medido <Time value={measured} relativo /></> : 'Sin medición'}</p>
-    <footer className="flex flex-wrap gap-2 border-t border-line pt-3">
+    <footer className="flex flex-wrap items-center gap-2 border-t border-line pt-3">
       {onPin ? <Button size="sm" aria-pressed={pinned} disabled={!canPin} onClick={onPin}>{pinned ? 'Desfijar cuenta' : 'Fijar cuenta'}</Button> : null}
       {onEdit ? <Button size="sm" disabled={!canEdit} onClick={onEdit}>Editar cuenta</Button> : null}
       {onRemove ? <Button size="sm" variant="danger" disabled={!canEdit} onClick={onRemove}>Eliminar cuenta</Button> : null}
