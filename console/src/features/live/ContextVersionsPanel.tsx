@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import type { ContextVersionDiff, ContextVersions, VersionedContextFile } from '../../api/client/context-versions-client';
 import { useApi } from '../../api/context';
 import { useResource } from '../../api/use-resource';
+import { ActionButton } from '../../components/action-button';
 import { Button, Notice } from '../../components/kit';
 import { Time } from '../../components/ui';
 import { diffConflictFields, isCasConflict, type ConflictFieldDiff } from '../../components/conflict';
@@ -90,7 +91,7 @@ export function ContextVersionsPanel({ tenantId, alias, canWrite }: { tenantId: 
   }
   return <section aria-label="Versiones de contexto" className="grid gap-4">
     <div className="flex flex-wrap justify-between gap-2"><h3 className="m-0">Contexto versionado</h3>
-      <Button disabled={busy || context.loading || !!draft} onClick={() => { void operation(async () => undefined, 'Estado releído.'); }}>Releer versiones</Button></div>
+      <ActionButton label="Releer versiones" disabled={busy || !!draft} busy={context.loading} done={false} announceError={false} action={() => operation(async () => undefined, 'Estado releído.')} /></div>
     {context.loading && !snapshot ? <p role="status">Leyendo el contexto…</p> : null}
     {context.error || history.error || error ? <Notice tone="danger" role="alert">{error || contextRequestMessage(context.error ?? history.error, 'No se pudo leer el contexto. Reintenta la consulta.')}</Notice> : null}
     {notice ? <Notice tone="info" role="status">{notice}</Notice> : null}
@@ -107,7 +108,7 @@ export function ContextVersionsPanel({ tenantId, alias, canWrite }: { tenantId: 
       </Notice> : appliedNotice ? <Notice tone={appliedNotice.pending ? 'warn' : 'danger'}>{appliedNotice.message}</Notice> : null}
       {snapshot.sync.git_commit ? <p className="m-0 text-xs break-all">Commit: <code>{snapshot.sync.git_commit}</code>{snapshot.sync.pushed_at ? <> · publicado <Time value={snapshot.sync.pushed_at} /></> : null}</p> : null}
       <div className="flex flex-wrap gap-2"><Button disabled={!writable || !!draft} onClick={() => { void operation(() => api.applyVersionedContext(tenantId, alias), 'Aplicación solicitada. El estado usado por el agente se muestra arriba.'); }}>Aplicar al agente</Button>
-        <Button disabled={!writable || !!draft} onClick={() => { void operation(() => api.retryContextSync(tenantId, alias), 'Sincronización solicitada.'); }}>Reintentar sincronización</Button></div>
+        <ActionButton label="Reintentar sincronización" pendingLabel="Reintentando…" disabled={!writable || !!draft} done={false} announceError={false} action={() => operation(() => api.retryContextSync(tenantId, alias), 'Sincronización solicitada.')} /></div>
       <label>Archivo<select value={current?.path ?? ''} disabled={busy} onChange={event => { setSelected(event.target.value); }}>
         {!files.length ? <option value="">Sin archivos</option> : null}{files.map(file => <option key={file.path}>{file.path}</option>)}</select></label>
       {current ? <><label>Contenido de {current.path}<textarea className="min-h-64 font-mono text-xs" value={current.content} disabled={!writable}

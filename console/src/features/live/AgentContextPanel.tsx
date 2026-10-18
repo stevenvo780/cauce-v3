@@ -5,7 +5,8 @@ import { ConsoleAccessBoundary, useConsoleAccess } from '../../api/console-acces
 import { useApi } from '../../api/context';
 import type { AgentPerfilCampos } from '../../api/types';
 import { useResource } from '../../api/use-resource';
-import { Button, Notice } from '../../components/kit';
+import { ActionButton } from '../../components/action-button';
+import { Notice } from '../../components/kit';
 import { permissionState } from '../../lib';
 import { ContextRepositoryPanel } from './ContextRepositoryPanel';
 import { DirectivaPanel } from './DirectivaPanel';
@@ -96,10 +97,9 @@ function ContextPanelContent({ tenantId, alias, initialSection = 'perfil' }: Pan
           { id: 'git', label: 'Git' },
           { id: 'versiones', label: 'Versiones y aplicación' },
         ]} />
-        <Button variant="ghost" size="sm" className="mb-1.5" disabled={state.busy} onClick={refresh}
-          aria-label="Actualizar estado del contexto" title="Actualizar estado del contexto">
-          <RefreshCw size={14} aria-hidden="true" /><span className="max-sm:sr-only">Actualizar</span>
-        </Button>
+        <ActionButton variant="ghost" size="sm" className="mb-1.5" label="Actualizar" name="Actualizar estado del contexto"
+          disabled={state.busy} title="Actualizar estado del contexto" icon={<RefreshCw size={14} aria-hidden="true" />}
+          action={() => { refresh(); }} />
       </div>
       {dirty ? <Notice tone="warn" role="status" className="mt-4">
         Borrador sin guardar. Cerrar este panel lo conserva en esta pestaña; recargar la página lo pierde.

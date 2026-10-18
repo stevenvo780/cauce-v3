@@ -1,7 +1,8 @@
 import { useId, useState } from 'react';
 import { useApi } from '../../api/context';
 import { useResource } from '../../api/use-resource';
-import { Button, Notice, SectionCard } from '../../components/kit';
+import { ActionButton } from '../../components/action-button';
+import { Notice, SectionCard } from '../../components/kit';
 import { NativeContextRepositoryPanel } from './NativeContextRepositoryPanel';
 
 interface Props { tenantId: string; alias: string; canApply?: boolean; blocked?: boolean; refreshRevision?: number;
@@ -23,7 +24,7 @@ function RepositoryContent({ tenantId, alias }: Props) {
   if (capability.loading) return <p role="status" className="m-0 text-muted">Consultando la vinculación Git…</p>;
   if (capability.error) return <Notice tone="danger" role="alert" className="flex flex-wrap items-center justify-between gap-2">
     <p>No se pudo consultar la vinculación Git de este agente.</p>
-    <Button size="sm" onClick={() => { void capability.reload(); }}>Reintentar</Button>
+    <ActionButton size="sm" label="Reintentar" pendingLabel="Reintentando…" done={false} announceError={false} action={() => capability.reload()} />
   </Notice>;
   if (capability.data?.state === 'not_published') return <p className="m-0 text-muted">Este gateway todavía no publica la inspección Git.</p>;
   if (capability.data?.state !== 'configured') return <p className="m-0 text-muted">Esta instancia todavía no tiene un repositorio Git vinculado por el servidor.</p>;

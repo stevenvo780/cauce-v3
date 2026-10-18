@@ -8,6 +8,7 @@ import { useApi } from '../../api/context';
 import type { AgentPerfil } from '../../api/types';
 import { useResource, type RecargaResultado } from '../../api/use-resource';
 import { cn } from '../../cn';
+import { ActionButton } from '../../components/action-button';
 import { Button, Notice, SectionCard, type NoticeTone } from '../../components/kit';
 import { EmptyState } from '../../components/ui';
 import type { PermissionState } from '../../lib';
@@ -461,15 +462,15 @@ export function PerfilTab({
           disabled={soloLectura || busy || enCuarentena || !editable}
           placeholder="Motivo del cambio, escrito a mano…" />
         <div className="flex flex-wrap items-center justify-end gap-2">
-          <Button size="sm"
+          <ActionButton size="sm" label="Descartar borrador de perfil y releer" pendingLabel="Releyendo…" done={false} announceError={false}
             disabled={busy || blockedByManualDraft || (!borrador && !perfil.error)}
-            onClick={() => {
+            action={() => {
               onBorrador(undefined);
               setMotivo('');
               setAviso(undefined);
-              void perfil.reload();
+              return perfil.reload();
             }}
-          >Descartar borrador de perfil y releer</Button>
+          />
           <Button size="sm" variant="primary" disabled={!puedeGuardar} onClick={() => { void guardar(); }}>
             <Save size={14} aria-hidden />
             {busy

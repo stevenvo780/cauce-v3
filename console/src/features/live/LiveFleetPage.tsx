@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown } from 'lucide-react';
 import { ErrorState, LoadingState } from '../../components/ui';
+import { ActionButton } from '../../components/action-button';
 import { Button, Notice } from '../../components/kit';
 import { PageHelp } from '../../components/PageHelp';
 import { cn } from '../../cn';
@@ -295,7 +296,7 @@ export function LiveFleetPage() {
         {topology.error && topology.data ? (
           <Notice tone="danger" role="alert" className="m-2 flex flex-wrap items-center gap-2">
             <span className="min-w-0 flex-1">No se pudo actualizar la topología: {topology.error.message} Se muestra la última lectura buena.</span>
-            <Button size="sm" onClick={() => { void topology.reload(); }}>Reintentar</Button>
+            <ActionButton size="sm" label="Reintentar" pendingLabel="Reintentando…" done={false} announceError={false} action={() => topology.reload()} />
           </Notice>
         ) : null}
         {views.length === 0 && topologyMembers.size === 0 ? (

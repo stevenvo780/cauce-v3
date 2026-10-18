@@ -3,6 +3,7 @@ import { ChevronUp, LogOut, ShieldAlert, UserRound, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { ConsoleAccessBoundary, useConsoleAccess } from '../../api/console-access';
 import { cn } from '../../cn';
+import { ActionButton } from '../../components/action-button';
 import { Button, Notice } from '../../components/kit';
 import { ThemeControl } from '../../components/ThemeControl';
 import { Time } from '../../components/ui';
@@ -105,7 +106,7 @@ function AccountPopover({ gate, routeKey }: { gate: AuthGateState; routeKey: str
                 {access.error ? (
                   <>
                     <p role="status">No se pudo verificar la identidad técnica.</p>
-                    <Button size="sm" className="justify-self-start" disabled={access.loading} onClick={() => { void access.reload(); }}>Reintentar identidad</Button>
+                    <ActionButton size="sm" className="justify-self-start" label="Reintentar identidad" pendingLabel="Reintentando…" busy={access.loading} announceError={false} action={() => access.reload()} />
                   </>
                 ) : access.loading ? <p role="status">Verificando identidad técnica…</p> : (
                   <>

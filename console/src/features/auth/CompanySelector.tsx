@@ -2,7 +2,8 @@ import { useState } from 'react';
 import { ApiError } from '../../api/client/core';
 import { useApi } from '../../api/context';
 import { useResource } from '../../api/use-resource';
-import { Button, Notice } from '../../components/kit';
+import { ActionButton } from '../../components/action-button';
+import { Notice } from '../../components/kit';
 import { COMPANY_ROLE_LABEL, useCompanyAuthority } from './company-authority';
 import { UNREACHABLE_SERVER } from './RegistrationForm';
 
@@ -38,6 +39,6 @@ export function CompanySelector() {
     <p className="m-0 text-xs text-muted">{authority ? COMPANY_ROLE_LABEL[authority.role] : 'Autoridad no informada por el servidor.'}</p>
     {authority?.platform_override ? <Notice tone="warn">Estás operando otra empresa con autoridad de plataforma.</Notice> : null}
     {companies.error || error ? <Notice tone="danger" role="alert">{error || selectorErrorText(companies.error, 'read')}
-      <Button size="sm" disabled={busy || companies.loading} onClick={() => { void companies.reload(); }}>Releer empresas</Button></Notice> : null}
+      <ActionButton size="sm" label="Releer empresas" disabled={busy} busy={companies.loading} announceError={false} action={() => companies.reload()} /></Notice> : null}
   </section>;
 }

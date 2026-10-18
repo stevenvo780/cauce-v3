@@ -5,6 +5,7 @@ import { useApi } from '../../api/context';
 import type { AgentDocumentKind, AgentDocumentsMap, AgentPerfilCampos } from '../../api/types';
 import { useResource, type Resource } from '../../api/use-resource';
 import { cn } from '../../cn';
+import { ActionButton } from '../../components/action-button';
 import { Button, Notice } from '../../components/kit';
 import { EmptyState, Time } from '../../components/ui';
 import { TabStrip } from './context-ui';
@@ -366,7 +367,7 @@ function PieDeDiario({ diario, alias, leidas, paso, cargando, error, onMas, onRe
           No se pudo leer el resto del diario {diario} de {alias}: {error.message}. Siguen a la
           vista las {leidas} entradas ya leídas; que no aparezcan más NO significa que no las haya.
         </p>
-        <Button size="sm" disabled={cargando} onClick={onReintentar}>Reintentar</Button>
+        <ActionButton size="sm" label="Reintentar" pendingLabel="Reintentando…" busy={cargando} done={false} announceError={false} action={() => { onReintentar(); }} />
       </Notice>
     );
   }

@@ -2,6 +2,7 @@ import { PageFreshness } from '../../components/PageFreshness';
 import { useMemo, useState, useSyncExternalStore } from 'react';
 import { cn } from '../../cn';
 import { ConsoleAccessBoundary, useConsoleAccess } from '../../api/console-access';
+import { ActionButton } from '../../components/action-button';
 import { Button, Notice, SearchField, SectionCard, Toolbar } from '../../components/kit';
 import {
   ErrorState, LoadingState, PageHeader, PermissionBadge, ViewTabPanel, ViewTabs,
@@ -91,7 +92,7 @@ function QueuesPageContent() {
       {resource.error ? (
         <Notice tone="danger" role="alert" className="mb-3 flex flex-wrap items-center gap-2">
           <span className="min-w-0 flex-1 basis-64">No se pudieron actualizar las entregas: {resource.error.message} Se conservan las filas del último snapshot; pueden estar desactualizadas.</span>
-          <Button size="sm" onClick={() => { void resource.reload(); }}>Reintentar</Button>
+          <ActionButton size="sm" label="Reintentar" pendingLabel="Reintentando…" done={false} announceError={false} action={() => resource.reload()} />
         </Notice>
       ) : null}
 

@@ -3,6 +3,7 @@ import { ArrowRight, RadioTower, Search } from 'lucide-react';
 import { useState } from 'react';
 import { useApi } from '../../api/context';
 import { useResource } from '../../api/use-resource';
+import { ActionButton } from '../../components/action-button';
 import { Button, CARD_TABLE, Kpi, KpiGrid, Notice, SCROLL, SectionCard } from '../../components/kit';
 import {
   Badge, Desplazable, EmptyState, ErrorState, LoadingState, PageHeader, Time,
@@ -36,9 +37,9 @@ export function ObservabilityPage({ initialTab = 'senales' }: { initialTab?: Tab
   const [tab, setTab] = useState<Tab>(initialTab);
   const [auditQuery, setAuditQuery] = useState('');
 
-  function reloadAll() {
-    void resource.reload();
-    void relays.reload();
+  async function reloadAll() {
+    const [signals, relay] = await Promise.all([resource.reload(), relays.reload()]);
+    return signals.error ? signals : relay;
   }
 
   function investigate(traceId: string) {
@@ -67,7 +68,7 @@ export function ObservabilityPage({ initialTab = 'senales' }: { initialTab?: Tab
       {resource.error ? (
         <Notice tone="danger" role="alert" className="mb-3 flex flex-wrap items-center gap-2">
           <span className="min-w-0 flex-1">No se pudieron actualizar las señales: {resource.error.message} Se muestra la última lectura buena.</span>
-          <Button size="sm" onClick={reloadAll}>Reintentar</Button>
+          <ActionButton size="sm" label="Reintentar" pendingLabel="Reintentando…" done={false} announceError={false} action={() => reloadAll()} />
         </Notice>
       ) : null}
       <KpiGrid label="Indicadores">
@@ -84,7 +85,7 @@ export function ObservabilityPage({ initialTab = 'senales' }: { initialTab?: Tab
         {relays.error && relays.data ? (
           <Notice tone="danger" role="alert" className="mb-3 flex flex-wrap items-center gap-2">
             <span className="min-w-0 flex-1">No se pudieron actualizar los relays: {relays.error.message} Se muestra la última lista buena.</span>
-            <Button size="sm" onClick={reloadAll}>Reintentar</Button>
+            <ActionButton size="sm" label="Reintentar" pendingLabel="Reintentando…" done={false} announceError={false} action={() => reloadAll()} />
           </Notice>
         ) : null}
         {relays.loading && !relays.data

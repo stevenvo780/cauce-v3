@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { useApi } from '../../api/context';
 import { useResource } from '../../api/use-resource';
+import { ActionButton } from '../../components/action-button';
 import { Button, Notice } from '../../components/kit';
 import { ErrorNotice } from '../../components/ErrorNotice';
 import type { Failure } from '../../api/error-message';
@@ -98,7 +99,9 @@ export function OfficeWorkspace({ campus, topology, agents, onAgent }: {
     void quotas.reload();
     const reread = await plan;
     if (reread.data) setError(undefined);
+    else setError(officeFailure(reread.error));
     setBusy(false);
+    return reread;
   }
   /**
    * After a 409 nothing is overwritten until the person chooses: load the other person's plan and drop the draft,
@@ -156,7 +159,7 @@ export function OfficeWorkspace({ campus, topology, agents, onAgent }: {
     </div>
     {mode === 'plan' ? <div className="grid min-h-0 flex-1 content-start gap-3 overflow-auto p-4">
       <header className="flex flex-wrap items-center justify-between gap-2"><h2 className="m-0 text-lg">Plano de oficina</h2>
-        <div className="flex flex-wrap gap-2"><Button disabled={busy || layout.loading || !!draft} onClick={() => { void rereadPlan(); }}>Releer plano y cuotas</Button>
+        <div className="flex flex-wrap gap-2"><ActionButton label="Releer plano y cuotas" disabled={busy || !!draft} busy={layout.loading} announceError={false} action={() => rereadPlan()} />
           <Button variant="primary" disabled={!writable || !draft || draft.conflicted} onClick={() => { void save(); }}>Guardar plano</Button>
           <Button disabled={busy || !draft} onClick={() => { setDraft(undefined); setError(undefined); }}>Descartar cambios de plano</Button></div></header>
       {unavailable || (draft && !draft.conflicted) ? <p className="m-0 text-xs text-muted">{unavailable ?? 'Guarda o descarta los cambios de plano antes de releerlo.'}</p> : null}

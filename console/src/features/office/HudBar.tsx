@@ -2,6 +2,8 @@ import { Menu } from '@base-ui/react/menu';
 import { Check, ChevronDown, Pause, RefreshCw, Timer } from 'lucide-react';
 import { cn } from '../../cn';
 import { MENU_ITEM, MENU_POPUP } from '../../components/kit';
+import { ActionStatus } from '../../components/action-button';
+import { useActionRun } from '../../components/action-run';
 import { Time } from '../../components/ui';
 import { LIVE_STATE_META, type LiveState } from '../live/agent-state';
 import { HUD_BUTTON, HUD_ON, HUD_PANEL, HUD_TEXT, STATE_PIXEL } from './hud-style';
@@ -15,9 +17,10 @@ export function HudFreshness({ at, loading, onRefresh, interval }: {
   onRefresh: () => void;
   interval: { value: number; onChange: (ms: number) => void; options: readonly RefreshOption[] };
 }) {
+  const feedback = useActionRun(onRefresh);
+  const pending = feedback.phase === 'pending' || loading;
   const current = interval.options.find((option) => option.ms === interval.value);
   const text = current ? (current.ms === 0 ? current.label : `Cada ${current.label}`) : `Cada ${String(interval.value / 1000)} s`;
-  const label = loading ? 'Actualizando…' : 'Actualizar';
   return (
     <div className="flex items-center gap-1">
       <span className={cn(HUD_TEXT, 'hidden px-1 text-[10px] text-[#94b0c2] tabular-nums normal-case sm:inline')}>{at ? <>Leído <Time value={at} relativo /></> : 'Sin lectura'}</span>
@@ -51,9 +54,10 @@ export function HudFreshness({ at, loading, onRefresh, interval }: {
           </Menu.Positioner>
         </Menu.Portal>
       </Menu.Root>
-      <button type="button" onClick={onRefresh} disabled={loading} aria-label={label} title={label} className={cn(HUD_BUTTON, 'size-8')}>
-        <RefreshCw size={13} aria-hidden="true" className={loading ? 'animate-spin' : undefined} />
+      <button type="button" onClick={(event) => { void feedback.run(event); }} disabled={pending} aria-label="Actualizar" title="Actualizar" className={cn(HUD_BUTTON, 'size-8')} {...(pending ? { 'aria-busy': true } : {})}>
+        <RefreshCw size={13} aria-hidden="true" className={pending ? 'animate-spin' : undefined} />
       </button>
+      <ActionStatus doneText={feedback.doneText} errorText={feedback.errorText} />
     </div>
   );
 }

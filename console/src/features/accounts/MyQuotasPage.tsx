@@ -3,6 +3,7 @@ import { QUOTA_ACCOUNT_PROVIDERS, type QuotaAccount, type QuotaAccountProvider }
 import { useApi } from '../../api/context';
 import { usePolling } from '../../api/use-polling';
 import { useResource } from '../../api/use-resource';
+import { ActionButton } from '../../components/action-button';
 import { Button, Notice } from '../../components/kit';
 import { onNavClick } from '../../router';
 import { canManageCompany, useCompanyAuthority } from '../auth/company-authority';
@@ -101,7 +102,13 @@ export function MyQuotasPage() {
   return <div className="grid gap-6">
     <header className="flex flex-wrap items-end justify-between gap-3"><div><h1 className="m-0 text-2xl font-semibold">Mis cuotas</h1>
       <p className="m-0 mt-1 max-w-2xl text-sm text-muted">Consulta tus suscripciones, incluso sin agentes. Fija las cuentas que sigues y opera sus entornos de consulta.</p></div>
-      <Button disabled={busy || accounts.loading || environments.loading} onClick={() => { void reload().catch((cause: unknown) => { setError(describeQuotaEnvironmentError(cause, 'No se pudo actualizar.')); }); }}>Actualizar cuotas y entornos</Button></header>
+      <ActionButton label="Actualizar cuotas y entornos" disabled={busy || accounts.loading || environments.loading} announceError={false} action={async () => {
+        try { await reload(); }
+        catch (cause: unknown) {
+          setError(describeQuotaEnvironmentError(cause, 'No se pudo actualizar.'));
+          return { error: cause instanceof Error ? cause : new Error('No se pudo actualizar.') };
+        }
+      }} /></header>
     {accounts.loading && !accounts.data ? <p role="status">Leyendo cuentas y ventanas…</p> : null}
     {preferences.loading && !preferences.data ? <p role="status">Leyendo tarjetas fijadas…</p> : null}
     {environments.loading && !environments.data ? <p role="status">Leyendo entornos de consulta…</p> : null}
@@ -109,7 +116,7 @@ export function MyQuotasPage() {
       ? describeQuotaError(accounts.error, 'No se pudieron leer las cuotas.')
       : environments.error ? describeQuotaEnvironmentError(environments.error, 'No se pudieron leer los entornos.')
         : describeQuotaError(preferences.error, 'No se pudieron leer las cuotas.'))}
-      {preferences.error || pinFailed ? <Button size="sm" disabled={preferences.loading} onClick={() => { setPinFailed(false); void preferences.reload(); }}>Releer tarjetas fijadas</Button> : null}</Notice> : null}
+      {preferences.error || pinFailed ? <ActionButton size="sm" label="Releer tarjetas fijadas" busy={preferences.loading} done={false} announceError={false} action={() => { setPinFailed(false); return preferences.reload(); }} /> : null}</Notice> : null}
     {notice ? <Notice tone="ok" role="status">{notice}</Notice> : null}
     <div className="flex flex-wrap gap-2"><Button aria-pressed={filterPinned} disabled={!preferences.data || !!preferences.error} onClick={() => { setFilterPinned(!filterPinned); }}>{filterPinned ? 'Ver todas las cuentas' : 'Ver sólo cuentas fijadas'}</Button>
       <Button variant="primary" disabled={!canWriteAccounts} title={registerBlock} onClick={() => { setCreating(true); }}>Registrar cuenta</Button></div>

@@ -3,6 +3,7 @@ import { useApi } from '../../api/context';
 import { ApiError } from '../../api/client';
 import type { Resource } from '../../api/use-resource';
 import { usePolling } from '../../api/use-polling';
+import { ActionButton } from '../../components/action-button';
 import { Button, Notice, Pill } from '../../components/kit';
 import { ErrorNotice } from '../../components/ErrorNotice';
 import type { Failure } from '../../api/error-message';
@@ -76,6 +77,7 @@ export function AgentQuotaReader({ tenant, alias, quota }: { tenant: string; ali
     setExpiredPollId(null); setPollRound(current => current + 1);
     const result = await reloadQuota();
     setError(result.error ? agentQuotaFailure(result.error) : undefined);
+    return result;
   }
   const status = awaitingReceipt ? 'pending' : data?.status;
   const unavailableTarget = quotaTargetUnavailableReason(data);
@@ -100,7 +102,7 @@ export function AgentQuotaReader({ tenant, alias, quota }: { tenant: string; ali
     </> : null}
     <div className="flex flex-wrap gap-2">
       {canQuery ? <Button size="sm" disabled={busy || quota.loading || !!quota.error || pending} onClick={() => { void query(); }}>{busy ? 'Encolando…' : retry.current ? 'Reintentar consulta' : 'Consultar'}</Button> : null}
-      <Button size="sm" disabled={busy || quota.loading} onClick={() => { void reread(); }}>Releer cuota</Button>
+      <ActionButton size="sm" label="Releer cuota" disabled={busy} busy={quota.loading} announceError={false} action={() => reread()} />
     </div>
   </section>;
 }

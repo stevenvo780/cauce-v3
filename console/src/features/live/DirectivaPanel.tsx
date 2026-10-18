@@ -3,6 +3,7 @@ import { useApi } from '../../api/context';
 import type { ConfigurationSnapshot } from '../../api/types';
 import { useResource, type Resource } from '../../api/use-resource';
 import { cn } from '../../cn';
+import { ActionButton } from '../../components/action-button';
 import { Button, Notice } from '../../components/kit';
 import { EmptyState } from '../../components/ui';
 import { selectAgentRegistryEntry } from './agent-registry-entry';
@@ -78,7 +79,7 @@ function RoleProjection({ tenantId, alias, configuration }: Pick<DirectivaPanelP
     return (
       <Notice tone="danger" role="alert" className="flex flex-wrap items-center gap-2">
         <span className="min-w-0 flex-1">No se pudo leer la proyección del rol; no se interpreta como un rol vacío: {configuration.error.message}</span>
-        <Button size="sm" disabled={configuration.loading} onClick={() => { void configuration.reload(); }}>Reintentar</Button>
+        <ActionButton size="sm" label="Reintentar" pendingLabel="Reintentando…" busy={configuration.loading} done={false} announceError={false} action={() => configuration.reload()} />
       </Notice>
     );
   }

@@ -6,6 +6,7 @@ import type {
 } from '../../api/types';
 import { isLowercaseSha256, isUuidV1ToV8 } from '../../api/contract-guards';
 import { useResource } from '../../api/use-resource';
+import { ActionButton } from '../../components/action-button';
 import { Button, CARD_TABLE, Notice, SCROLL, SectionCard, Toolbar } from '../../components/kit';
 import { ConfirmDialog } from '../../components/dialogs';
 import { Badge, Desplazable, EmptyState, ErrorState, LoadingState, RefreshButton, Time, Unknown } from '../../components/ui';
@@ -320,7 +321,7 @@ export function OperationalDlqPanel() {
       {resource.error ? (
         <Notice tone="danger" role="alert" className="flex flex-wrap items-center gap-2">
           <span className="min-w-0 flex-1">No se pudo actualizar la lista de incidentes: {resource.error.message} Se muestran los incidentes de la última lectura buena.</span>
-          <Button size="sm" disabled={resource.loading} onClick={() => { void reloadFirstPage(); }}>Reintentar</Button>
+          <ActionButton size="sm" label="Reintentar" pendingLabel="Reintentando…" busy={resource.loading} done={false} announceError={false} action={() => reloadFirstPage()} />
         </Notice>
       ) : null}
       {paginationError ? <Notice tone="danger" role="alert">{paginationError}</Notice> : null}

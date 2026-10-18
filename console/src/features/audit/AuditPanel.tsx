@@ -4,6 +4,7 @@ import { useApi } from '../../api/context';
 import { useResource } from '../../api/use-resource';
 import type { AuditEvent, AuditPage } from '../../api/types';
 import { cn } from '../../cn';
+import { ActionButton } from '../../components/action-button';
 import { Button, Notice, SearchField, Toolbar } from '../../components/kit';
 import { Badge, EmptyState, ErrorState, LoadingState, Time, Unknown } from '../../components/ui';
 import { TONE_CLASS, type Tone } from '../../status-tone';
@@ -103,11 +104,13 @@ export function AuditPanel({ query, onQuery }: { query: string; onQuery: (value:
       });
     } catch (cause: unknown) {
       if (!mounted.current || requestId !== requestSerial.current || sourceRef.current !== source) return;
+      const error = cause instanceof Error ? cause : new Error('No se pudo leer la página anterior');
       setPagination((current) => current?.source === source && current.requestId === requestId ? {
         ...current,
         olderLoading: false,
-        olderError: cause instanceof Error ? cause : new Error('No se pudo leer la página anterior'),
+        olderError: error,
       } : current);
+      return { error };
     }
   };
   const needle = query.trim().toLocaleLowerCase();
@@ -125,12 +128,12 @@ export function AuditPanel({ query, onQuery }: { query: string; onQuery: (value:
       <Toolbar className="mb-3">
         <SearchField label="Filtrar auditoría" value={query} onChange={onQuery} placeholder="Filtrar por actor, action, trace…" />
         <span className="text-xs text-muted">{String(filtered.length)} visibles de {String(events.length)}</span>
-        <Button size="sm" disabled={resource.loading} onClick={() => { void resource.reload(); }}>Releer auditoría</Button>
+        <ActionButton size="sm" label="Releer auditoría" busy={resource.loading} announceError={false} action={() => resource.reload()} />
       </Toolbar>
       {resource.error ? (
         <Notice tone="danger" role="alert" className="mb-3 flex flex-wrap items-center gap-2">
           <span className="min-w-0 flex-1 basis-64">No se pudo actualizar la auditoría: {resource.error.message} Se muestran los eventos ya cargados.</span>
-          <Button size="sm" onClick={() => { void resource.reload(); }}>Reintentar</Button>
+          <ActionButton size="sm" label="Reintentar" pendingLabel="Reintentando…" done={false} announceError={false} action={() => resource.reload()} />
         </Notice>
       ) : null}
       {needle ? (
@@ -182,14 +185,12 @@ export function AuditPanel({ query, onQuery }: { query: string; onQuery: (value:
       {olderError ? (
         <Notice tone="danger" role="alert" className="mt-3 flex flex-wrap items-center gap-2">
           <span className="min-w-0 flex-1 basis-64">No se pudieron cargar eventos anteriores: {olderError.message}.</span>
-          <Button size="sm" onClick={() => void loadOlder()}>Reintentar</Button>
+          <ActionButton size="sm" label="Reintentar" pendingLabel="Reintentando…" done={false} announceError={false} action={() => loadOlder()} />
         </Notice>
       ) : null}
       {nextCursor !== null ? (
         <div className="mt-3 flex justify-center">
-          <Button disabled={olderLoading} onClick={() => void loadOlder()}>
-            {olderLoading ? 'Cargando anteriores…' : 'Cargar anteriores'}
-          </Button>
+          <ActionButton label="Cargar anteriores" pendingLabel="Cargando anteriores…" busy={olderLoading} done={false} announceError={false} action={() => loadOlder()} />
         </div>
       ) : null}
     </>
