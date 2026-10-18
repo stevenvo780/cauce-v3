@@ -224,6 +224,7 @@ export function AgentRegistryCreate({ snapshot, open, onOpenChange, onReloaded, 
               {step === 'grupos' ? <GroupsStep {...stepFields} rooms={rooms} /> : null}
               {step === 'revision' ? <>
                 <ReviewSummary draft={draft} tenantLabel={tenantLabel} hostLabel={hostLabel} roomLabel={roomLabel} />
+                {!draft.hostId ? <Notice tone="warn" role="note">Sin computadora, el agente quedará registrado pero no responderá: asígnale una en Editar registro y prepáralo para que admita entregas.</Notice> : null}
                 <p className="m-0 text-xs text-muted">Revisión esperada: {String(runner.expectedRevision ?? 'desconocida')}. Previsualiza el alta para que el servidor la valide antes de crearla.</p>
                 {runner.preview ? <pre className={PREVIEW} aria-label="Preview del alta de agente">{runner.preview}</pre> : null}
               </> : null}

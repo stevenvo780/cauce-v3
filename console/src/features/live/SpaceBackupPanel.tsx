@@ -18,6 +18,9 @@ const ERRORS = { HOST_UNAVAILABLE: 'El ordenador no está disponible. Recupera s
 const REQUEST_MS = 30_000;
 const PROGRESS_BYTES = 8 * 1024 * 1024;
 const MIB = (bytes: number) => (bytes / 1024 / 1024).toFixed(2);
+const backupSize = (bytes: number): string => (bytes < 1024 ? `${String(bytes)} B`
+  : bytes < 1024 * 1024 ? `${(bytes / 1024).toLocaleString('es-CO', { maximumFractionDigits: 2 })} KB`
+    : `${MIB(bytes)} MiB`);
 interface SavedFile { write(data: Uint8Array): Promise<void>; close(): Promise<void>; abort(): Promise<void> }
 type SaveFilePicker = (options: { suggestedName: string }) => Promise<{ name: string; createWritable(): Promise<SavedFile> }>;
 const shellArgument = (value: string) => /^[A-Za-z0-9_.-]+$/u.test(value) ? value : `'${value.replaceAll("'", "'\\''")}'`;
@@ -104,7 +107,7 @@ function BackupPanel({ target, allowed }: { target: SpaceBackupTarget; allowed: 
       ensureCurrent();
       const sha256 = hash.hex();
       if (received !== ready.bytes || sha256 !== ready.sha256) {
-        if (requestIsCurrent(request, started)) setError(`El archivo descargado no coincide con el backup del servidor (SHA-256 ${sha256}, ${MIB(received)} MiB) y se descartó. Actualiza el estado y vuelve a descargarlo.`);
+        if (requestIsCurrent(request, started)) setError(`El archivo descargado no coincide con el backup del servidor (SHA-256 ${sha256}, ${backupSize(received)}) y se descartó. Actualiza el estado y vuelve a descargarlo.`);
         return;
       }
       await file.close(); saved = true;
@@ -151,9 +154,9 @@ function BackupPanel({ target, allowed }: { target: SpaceBackupTarget; allowed: 
     {notice ? <Notice tone="ok" role="status">{notice}</Notice> : null}
     {backup ? <div className="grid gap-1"><p className="m-0 text-sm" role="status">{STATUS[backup.status]}</p>
       {backup.error ? <Notice tone="danger" role="alert">{ERRORS[backup.error]}</Notice> : null}
-      {backup.status === 'ready' ? <p className="m-0 text-xs text-muted">{((backup.bytes ?? 0) / 1024 / 1024).toFixed(2)} MiB · ZIP listo para descargar; el navegador lo guarda sin cargarlo en memoria.</p> : null}
+      {backup.status === 'ready' ? <p className="m-0 text-xs text-muted">{backupSize(backup.bytes ?? 0)} · ZIP listo para descargar; el navegador lo guarda sin cargarlo en memoria.</p> : null}
       {backup.status === 'ready' && backup.sha256 ? <p className="m-0 break-all text-xs text-muted">SHA-256: <code>{backup.sha256}</code></p> : null}
-      {busy === 'downloading' ? <p className="m-0 text-xs" role="status">Descargando y verificando el SHA-256: {MIB(progress ?? 0)} de {MIB(backup.bytes ?? 0)} MiB.</p> : null}
+      {busy === 'downloading' ? <p className="m-0 text-xs" role="status">Descargando y verificando el SHA-256: {backupSize(progress ?? 0)} de {backupSize(backup.bytes ?? 0)}.</p> : null}
       {verified ? <div className="grid gap-1 text-xs"><p className="m-0 break-all">SHA-256 calculado del archivo guardado: <code>{verified.sha256}</code> (coincide con el del servidor).</p>
         <p className="m-0 break-all text-muted">Desde el directorio privado que contiene el ZIP (0700, archivo 0600), restaura en una ruta absoluta nueva o vacía, cuyo padre también sea privado: <code>cauce spaces restore --archive {'"$(pwd -P)/"'}{shellArgument(verified.file)} --directory /ruta/absoluta/vacia --company-id {backup.company_id} --tenant-id {backup.tenant_id} --alias {backup.alias} --runtime-key &lt;identity.runtime_key de space-manifest.json&gt;</code>. La restauración vuelve a comprobar el SHA-256 de cada archivo contra el manifiesto.</p></div> : null}
       {backup.status === 'ready' && backup.sha256 ? <p className="m-0 text-xs text-muted">Para comparar el SHA-256 del archivo descargado: <code>sha256sum archivo.zip</code> en Linux, <code>shasum -a 256 archivo.zip</code> en macOS o <code>Get-FileHash archivo.zip -Algorithm SHA256</code> en Windows.</p> : null}</div> : null}
