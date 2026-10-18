@@ -136,17 +136,16 @@ def adapter_stopped(agent: dict, observed: dict) -> bool:
 def rebind_all(policy: dict, release: pathlib.Path, *, include_running: bool = False, dry_run: bool = False) -> dict:
     receipt = {'release': release.name, 'rebound': [], 'deferred': [], 'current': [], 'refused': [], 'shared': []}
     names = docker('ps', '-a', '--filter', 'label=cauce.fleet.owner=' + policy['executor_user'],
-                   '--filter', 'label=cauce.fleet.host=' + policy['host_id'], '--filter', 'label!=cauce.fleet.sidecar',
-                   '--format', '{{.Names}}').decode().split()
+                   '--filter', 'label=cauce.fleet.host=' + policy['host_id'], '--format', '{{.Names}}').decode().split()
     planned = []
     for name in sorted(set(names)):
-        if name in policy.get('shared_containers', {}):
-            receipt['shared'].append(name)
-            continue
         observed = None
         try:
             observed = inspect_container(name)
-            if observed is None:
+            if observed is None or 'cauce.fleet.sidecar' in (observed['Config'].get('Labels') or {}):
+                continue
+            if name in policy.get('shared_containers', {}):
+                receipt['shared'].append(name)
                 continue
             previous = bound_release(observed, release)
             agent = owned_agent(policy, name, observed, previous or release, release)
