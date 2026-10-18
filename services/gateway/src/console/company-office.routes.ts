@@ -4,8 +4,10 @@ import { StoreError, readCompanyOffice, readSavableOfficeRooms, writeCompanyOffi
 import { AuthError, AuthorizationError, type AuthProvider } from '../auth.js';
 import { consoleHumanAccess } from '../console-human-authority.js';
 import { replyError } from '../routes/shared.js';
+import { registerCompanyPurgeRoutes } from './company-purge.routes.js';
 
 export function registerCompanyOfficeRoutes(app: FastifyInstance, provider: AuthProvider, pool: DatabasePool): void {
+  registerCompanyPurgeRoutes(app, provider, pool);
   for (const resource of ['office/layout', 'preferences'] as const) for (const method of ['GET', 'PUT'] as const) {
     app.route({ method, url: `/v3/console/${resource}`, bodyLimit: 262_144, handler: async (request, reply) => {
       reply.header('Cache-Control', 'no-store');

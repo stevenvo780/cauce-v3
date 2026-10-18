@@ -40,6 +40,7 @@ export * from './client-mailbox-read.js';
 export { registerCompany, type CompanyRegistration, type RegisteredCompany } from './company-registration.js';
 export { CompanyOfficeUpdateSchema, readCompanyOffice, readSavableOfficeRooms, writeCompanyOffice, type CompanyOfficeLayout, type CompanyOfficeRoom } from './company-office.js';
 export { updateCompany, setCompanyAdmin, type CompanySummary } from './company-administration.js';
+export * from './company-purge.js';
 export { CompanyPreferencesUpdateSchema, readCompanyPreferences, writeCompanyPreferences, type CompanyPreferences } from './company-preferences.js';
 export * from './host-enrollment-contracts.js';
 export * from './host-enrollment.js';

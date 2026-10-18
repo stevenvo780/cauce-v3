@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { createPool, lockCompanyAuthority, readCompanyOffice, registerCompany, updateCompany, withTransaction, writeCompanyOffice,
-  type CompanyAuthoritySource, type DatabasePool, type RegisteredCompany } from '../src/index.js';
+import { CompanyPurgeBlockedError, createPool, lockCompanyAuthority, purgeCompany, readCompanyOffice, registerCompany, updateCompany, withTransaction, writeCompanyOffice,
+  type CompanyAuthoritySource, type CompanyPurgeSnapshot, type DatabasePool, type RegisteredCompany } from '../src/index.js';
 import { provisionTestLogin, startTestCaseDatabase, startTestDatabase, type EmptyTestDatabase, type TestDatabase } from '../../../tests/helpers/postgres.js';
 import { preparePostgresSuite } from './postgres-suite.js';
 import { hashPassword } from '../../../services/gateway/src/password.js';
@@ -123,6 +123,58 @@ describe('public registration with durable owner and isolated office', () => {
     await expect(writeCompanyOffice(pool, source(first), { expected_version: 0, rooms: [] })).rejects.toMatchObject({ code: 'forbidden' });
     await admin.query('DELETE FROM company_admins WHERE company_id=$1 AND human_id=$2', ['south', second.user.id])
       .then(() => { throw new Error('last owner removed'); }, (error: unknown) => { expect(error).toMatchObject({ code: '23514' }); });
+  });
+
+  it('purges a retired company with its backed-up dependants while protecting physical resources and foreign records', async () => {
+    const backups: CompanyPurgeSnapshot[] = [];
+    const serializedBackups: string[] = [];
+    const backup = async (snapshot: CompanyPurgeSnapshot, serialized?: string) => {
+      backups.push(snapshot); if (serialized !== undefined) serializedBackups.push(serialized); return '/backups/north.json';
+    };
+    await expect(withTransaction(pool, async client => purgeCompany(client, await source(first)(client), 'north',
+      { confirmation: 'north' }, backup))).rejects.toMatchObject({ code: 'forbidden' });
+    await admin.query('INSERT INTO platform_admins(human_id) VALUES($1)', [second.user.id]);
+    const purge = (confirmation = 'north', save = backup) => withTransaction(pool, async client =>
+      purgeCompany(client, await source(second)(client), 'north', { confirmation }, save));
+    const blockedBy = async (kind: string) => {
+      const result: unknown = await purge().catch((error: unknown) => error);
+      expect(result).toBeInstanceOf(CompanyPurgeBlockedError);
+      if (result instanceof CompanyPurgeBlockedError) expect(result.blockers.map(blocker => blocker.kind)).toContain(kind);
+    };
+    await expect(purge('wrong')).rejects.toMatchObject({ code: 'invalid_input' });
+    await expect(purge()).rejects.toMatchObject({ code: 'conflict' });
+    await withTransaction(pool, async client => updateCompany(client, await source(second)(client), 'north',
+      { expected_version: 1, state: 'retired' }));
+    await admin.query("INSERT INTO agents(tenant_id,alias,runtime_mode,enabled) VALUES($1,'physical','native',false)", [first.hub.id]);
+    await blockedBy('agent');
+    expect(backups).toHaveLength(0);
+    await admin.query("UPDATE agents SET runtime_mode=NULL WHERE tenant_id=$1 AND alias='physical'", [first.hub.id]);
+    await admin.query("INSERT INTO agent_role_templates(slug,display_name,brief) VALUES('north-template','North template','Template brief')");
+    await admin.query("INSERT INTO agent_role_template_owners(slug,company_id) VALUES('north-template','north')");
+    await admin.query("UPDATE agents SET role_template_slug='north-template',role_brief='Template brief' WHERE tenant_id=$1 AND alias='physical'", [first.hub.id]);
+    const collection = randomUUID();
+    await admin.query(`INSERT INTO quota_collections(id,host,collector_tenant,collector_alias,captured_at,schema_version)
+      VALUES($1,'north-quota',$2,'owner',now(),1)`, [collection, first.hub.id]);
+    await admin.query(`INSERT INTO quota_window_state(collector_tenant,host,provider,group_key,window_key,collection_id,captured_at,used_units)
+      VALUES($1,'north-quota','codex','default','session',$2,now(),9223372036854775807)`, [first.hub.id, collection]);
+    await admin.query("INSERT INTO company_office_layouts(company_id,updated_by) VALUES('south',$1)", [first.user.id]);
+    await blockedBy('foreign_reference');
+    await admin.query('UPDATE company_office_layouts SET updated_by=$1 WHERE company_id=$2', [second.user.id, 'south']);
+    await expect(purge('north', async () => { throw new Error('backup unavailable'); })).rejects.toThrow('backup unavailable');
+    expect((await admin.query("SELECT id FROM companies WHERE id='north'")).rowCount).toBe(1);
+    expect(await purge()).toMatchObject({ company_id: 'north', deletion: 'purged', backup_path: '/backups/north.json' });
+    expect(backups).toHaveLength(1);
+    expect(serializedBackups[0]).toMatch(/"used_units":\s*9223372036854775807/u);
+    expect(backups[0]?.records.console_users).toEqual(expect.arrayContaining([expect.objectContaining({ id: first.user.id })]));
+    for (const table of ['tenants', 'agents', 'rooms', 'company_admins', 'human_tenant_memberships']) {
+      expect((await admin.query(`SELECT 1 FROM ${table} WHERE company_id=$1`, ['north'])).rowCount).toBe(0);
+    }
+    expect((await admin.query('SELECT id FROM console_users WHERE id=$1', [first.user.id])).rowCount).toBe(0);
+    expect((await admin.query('SELECT id FROM console_users WHERE id=$1', [second.user.id])).rowCount).toBe(1);
+    expect((await admin.query('SELECT id FROM quota_collections WHERE id=$1', [collection])).rowCount).toBe(0);
+    expect((await admin.query('SELECT 1 FROM quota_window_state WHERE collector_tenant=$1', [first.hub.id])).rowCount).toBe(0);
+    expect((await admin.query("SELECT 1 FROM agent_role_templates WHERE slug='north-template'")).rowCount).toBe(0);
+    expect((await admin.query("SELECT 1 FROM company_office_layouts WHERE company_id='south'")).rowCount).toBe(1);
   });
 
   it('registers through HTTP, logs in using the existing password flow, then saves and reloads the office', async () => {
