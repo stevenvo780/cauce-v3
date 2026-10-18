@@ -1,4 +1,4 @@
-"""Private stopped-agent snapshots with clean Git bundles, work sessions and SQLite companions."""
+"""Private stopped-agent snapshots preserving raw Git, work sessions and SQLite companions."""
 from __future__ import annotations
 
 import argparse
@@ -19,23 +19,26 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from v4_alcance_copia import check_sources, host_containers, tenant_scope  # noqa: E402
 from v4_copia_migracion import (  # noqa: E402
     CHUNK,
+    CREDENTIAL,
     NAME_RE,
     OPEN_DIRECTORY,
     OPEN_FILE,
     OPEN_NEW,
-    REGENERABLE,
     SHA256_RE,
     VERIFIED_CREDENTIAL,
     Copier,
     Failure,
+    GitObjects,
     Restorer,
     canonical,
     credential_name,
     fold_text,
+    git,
     open_verified,
     relative,
     safe_mode,
     seal,
+    sensitive_bytes,
     under,
 )
 from v4_copia_migracion import (
@@ -45,8 +48,17 @@ from v4_copia_migracion import (
     validate as validate_copy,
 )
 
-SCHEMA = 'cauce.v4-migracion-integral/1'
+SCHEMA = 'cauce.v4-migracion-integral/2'
+LEGACY_SCHEMA = 'cauce.v4-migracion-integral/1'
 SPACE = ('context', 'directives', 'projects', 'config', 'data', 'logs', 'tmp')
+BROWSER_PLUGIN_TARGETS = (
+    '/usr/lib/node_modules/openclaw/dist/extensions/browser/skills/browser-automation',
+    '/usr/local/lib/node_modules/openclaw/dist/extensions/browser/skills/browser-automation',
+)
+
+
+def bundled_plugin(path: str, target: str) -> bool:
+    return path.split('/')[1:] == ['plugin-skills', 'browser-automation'] and target in BROWSER_PLUGIN_TARGETS
 
 
 def absolute(value: str) -> str:
@@ -101,16 +113,35 @@ def digest_stream(read, private: bool = False) -> str:
     return digest.hexdigest()
 
 
-def regenerable_plugin_link(parent: int, name: str, source: int, info: os.stat_result) -> bool:
-    if name != 'browser-automation' or not stat.S_ISLNK(info.st_mode):
-        return False
-    root = os.readlink(f'/proc/self/fd/{source}')
-    if os.path.basename(root) != '.openclaw' or os.readlink(f'/proc/self/fd/{parent}') != os.path.join(root, 'plugin-skills'):
-        return False
-    return os.readlink(name, dir_fd=parent) in (
-        '/usr/lib/node_modules/openclaw/dist/extensions/browser/skills/browser-automation',
-        '/usr/local/lib/node_modules/openclaw/dist/extensions/browser/skills/browser-automation',
-    )
+def snapshot_credential(name: str) -> bool:
+    return bool(CREDENTIAL.fullmatch(fold_text(name)))
+
+
+def verify_git(directory: int, source: int) -> None:
+    checker = Copier('')
+    checker.host_roots = [os.readlink(f'/proc/self/fd/{source}')]
+    if checker.git_metadata_outside(directory):
+        raise Failure('external Git storage cannot be included in a self-contained snapshot')
+    for path in ('objects/info/alternates', 'objects/info/http-alternates', 'commondir'):
+        try:
+            holder = descend(directory, os.path.dirname(path))
+        except FileNotFoundError:
+            continue
+        try:
+            if os.stat(os.path.basename(path), dir_fd=holder, follow_symlinks=False).st_size:
+                raise Failure('Git storage indirection requires a self-contained repository before copying')
+        except FileNotFoundError:
+            pass
+        finally:
+            os.close(holder)
+    object_format = git('.', 'rev-parse', '--show-object-format', fd=directory).strip()
+    objects = GitObjects(directory, object_format, [])
+    try:
+        for oid in git('.', 'cat-file', '--batch-all-objects', '--batch-check=%(objectname)', fd=directory).splitlines():
+            if sensitive_bytes(objects.read(oid)[1]):
+                raise Failure('credential material detected in Git history; arrange private recovery with the owner')
+    finally:
+        objects.close()
 
 
 def inventory(roots: dict[str, int]) -> tuple[list[dict], list[dict], dict]:
@@ -120,10 +151,11 @@ def inventory(roots: dict[str, int]) -> tuple[list[dict], list[dict], dict]:
         info = os.stat(name, dir_fd=parent, follow_symlinks=False)
         identities[path] = fingerprint(info)
         folded = fold_text(name)
-        reason = 'git-metadata' if folded == '.git' else 'credential' if credential_name(name) else 'regenerable' if regenerable_plugin_link(parent, name, source, info) or stat.S_ISDIR(info.st_mode) and folded in REGENERABLE else None
-        if reason:
-            omissions.append({'path': path, 'reason': reason})
+        if snapshot_credential(name):
+            omissions.append({'path': path, 'reason': 'credential'})
             return
+        if folded == '.git' and not stat.S_ISDIR(info.st_mode):
+            raise Failure('a Git file or symlink cannot form a self-contained snapshot')
         entry = {'path': path, 'mode': stat.S_IMODE(info.st_mode)}
         if stat.S_ISDIR(info.st_mode):
             entries.append({**entry, 'kind': 'directory'})
@@ -131,7 +163,7 @@ def inventory(roots: dict[str, int]) -> tuple[list[dict], list[dict], dict]:
             try:
                 names = sorted(os.listdir(child))
                 if 'HEAD' in names and 'objects' in names:
-                    raise Failure('a bare Git directory must be exported as a clean bundle separately')
+                    verify_git(child, source)
                 for item in names:
                     relative(item)
                     visit(child, item, path + '/' + item, source)
@@ -143,6 +175,10 @@ def inventory(roots: dict[str, int]) -> tuple[list[dict], list[dict], dict]:
             child = open_verified(parent, name, info, OPEN_FILE)
             try:
                 digest = digest_stream(lambda size: os.read(child, size), private=True)
+                if folded in ('config', 'config.worktree'):
+                    os.lseek(child, 0, os.SEEK_SET)
+                    if sensitive_bytes(os.read(child, info.st_size)):
+                        raise Failure('credential material detected in configuration; arrange private recovery with the owner')
                 if fingerprint(os.fstat(child)) != identities[path]:
                     raise Failure('a file changed; stop the agent before copying')
                 entries.append({**entry, 'kind': 'file', 'size': info.st_size, 'sha256': digest})
@@ -150,13 +186,11 @@ def inventory(roots: dict[str, int]) -> tuple[list[dict], list[dict], dict]:
                 os.close(child)
         elif stat.S_ISLNK(info.st_mode):
             target = os.readlink(name, dir_fd=parent)
-            if target.startswith('/') or not under(os.path.realpath(os.path.join(os.readlink(f'/proc/self/fd/{parent}'), target)), os.readlink(f'/proc/self/fd/{source}')):
+            if not bundled_plugin(path, target) and (target.startswith('/') or not under(os.path.realpath(os.path.join(os.readlink(f'/proc/self/fd/{parent}'), target)), os.readlink(f'/proc/self/fd/{source}'))):
                 raise Failure('a symlink leaves its source root')
             entries.append({**entry, 'kind': 'symlink', 'target': target, 'sha256': hashlib.sha256(os.fsencode(target)).hexdigest()})
-        elif stat.S_ISSOCK(info.st_mode):
-            omissions.append({'path': path, 'reason': 'regenerable-socket'})
         else:
-            raise Failure('a device or FIFO cannot be included')
+            raise Failure('a socket, device or FIFO cannot form a stopped persistent snapshot')
 
     for name, root in sorted(roots.items()):
         visit(root, '.', name, root)
@@ -180,25 +214,6 @@ def counts(entries: list[dict], omissions: list[dict]) -> dict:
     return {**dict(collections.Counter(e['kind'] for e in entries)), 'bytes': sum(e.get('size', 0) for e in entries), 'omitted': len(omissions)}
 
 
-def repositories(roots: dict[str, int], omissions: list[dict], output: str) -> Copier:
-    copier = Copier(output)
-    copier.host_roots = [os.readlink(f'/proc/self/fd/{root}') for root in roots.values()]
-    for item in omissions:
-        if item['reason'] != 'git-metadata':
-            continue
-        path = item['path'].rsplit('/', 1)[0]
-        source, _, suffix = path.partition('/')
-        holder = descend(roots[source], suffix)
-        try:
-            marker = os.stat('.git', dir_fd=holder, follow_symlinks=False)
-            if stat.S_ISLNK(marker.st_mode) or copier.git_metadata_outside(holder):
-                raise Failure('external Git storage cannot be exported as a private snapshot')
-            copier.repository(path, holder)
-        finally:
-            os.close(holder)
-    return copier
-
-
 def pack(args: argparse.Namespace) -> dict:
     roots = {}
     for rule in args.origen:
@@ -206,7 +221,7 @@ def pack(args: argparse.Namespace) -> dict:
         if not separator or not NAME_RE.fullmatch(name) or name in roots:
             raise Failure('--origen requires unique NAME=/absolute/path entries')
         roots[name] = absolute(path)
-        if any(fold_text(part) == '.git' or credential_name(part) for part in path.split('/')):
+        if any(snapshot_credential(part) for part in path.split('/')):
             raise Failure('an explicit source must not be a credential path')
     if any(under(path, other) for name, path in roots.items() for key, other in roots.items() if name != key):
         raise Failure('source roots must not overlap')
@@ -217,14 +232,12 @@ def pack(args: argparse.Namespace) -> dict:
     if any(under(destination, path) for path in roots.values()):
         raise Failure('the archive must be outside every source')
     handles, parent, temporary, created = {}, directory(os.path.dirname(destination)), '.' + uuid.uuid4().hex + '.tar', False
-    scratch = tempfile.TemporaryDirectory(prefix='cauce-v4-clean-git-')
     try:
         for name, path in roots.items():
             handles[name] = directory(path)
         before = inventory(handles)
-        copier = repositories(handles, before[1], scratch.name)
-        omitted = [*before[1], *copier.omissions]
-        manifest = {'schema': SCHEMA, 'alias': args.alias, 'tenant': args.empresa, 'container': scope['container'], 'roots': sorted(roots), 'entries': before[0], 'omissions': omitted, 'repositories': list(copier.repositories.values())}
+        omitted = before[1]
+        manifest = {'schema': SCHEMA, 'alias': args.alias, 'tenant': args.empresa, 'container': scope['container'], 'roots': sorted(roots), 'entries': before[0], 'omissions': omitted, 'repositories': []}
         manifest['sha256'] = seal(manifest)
         validate(manifest, args)
         descriptor = os.open(temporary, OPEN_NEW, 0o600, dir_fd=parent)
@@ -254,11 +267,6 @@ def pack(args: argparse.Namespace) -> dict:
                         raise Failure('a file changed while the archive was written')
                 finally:
                     os.close(reader)
-            for repo in manifest['repositories']:
-                with open(os.path.join(scratch.name, repo['bundle']), 'rb') as incoming:
-                    member = tarfile.TarInfo(repo['bundle'])
-                    member.size, member.mode = os.fstat(incoming.fileno()).st_size, 0o600
-                    archive.addfile(member, incoming)
         if inventory(handles) != before:
             raise Failure('source inventory changed; the archive was rejected')
         for name, path in roots.items():
@@ -284,11 +292,10 @@ def pack(args: argparse.Namespace) -> dict:
         os.close(parent)
         for handle in handles.values():
             os.close(handle)
-        scratch.cleanup()
 
 
 def validate(manifest: dict, args: argparse.Namespace) -> dict[str, dict]:
-    if not isinstance(manifest, dict) or manifest.get('schema') != SCHEMA or manifest.get('sha256') != seal(manifest) or (manifest.get('alias'), manifest.get('tenant')) != (args.alias, args.empresa):
+    if not isinstance(manifest, dict) or manifest.get('schema') not in (SCHEMA, LEGACY_SCHEMA) or manifest.get('sha256') != seal(manifest) or (manifest.get('alias'), manifest.get('tenant')) != (args.alias, args.empresa):
         raise Failure('invalid manifest seal, alias or company')
     if VERIFIED_CREDENTIAL.search(canonical(manifest)):
         raise Failure('credential material detected in copy metadata')
@@ -296,9 +303,10 @@ def validate(manifest: dict, args: argparse.Namespace) -> dict[str, dict]:
     if not isinstance(roots, list) or not roots or len(set(roots)) != len(roots) or any(not isinstance(name, str) or not NAME_RE.fullmatch(name) for name in roots):
         raise Failure('invalid manifest roots')
     entries = {}
+    legacy = manifest['schema'] == LEGACY_SCHEMA
     for entry in manifest['entries']:
         path = relative(entry['path'])
-        if any(fold_text(part) == '.git' or credential_name(part) for part in path.split('/')):
+        if any((fold_text(part) == '.git' or credential_name(part)) if legacy else snapshot_credential(part) for part in path.split('/')):
             raise Failure('raw Git metadata and credential paths cannot be restored')
         if path in entries or path.split('/')[0] not in roots or type(entry.get('mode')) is not int or not 0 <= entry['mode'] <= 0o7777 or entry['kind'] not in ('directory', 'file', 'symlink'):
             raise Failure('invalid manifest entry')
@@ -310,8 +318,10 @@ def validate(manifest: dict, args: argparse.Namespace) -> dict[str, dict]:
             raise Failure('manifest has a missing directory or symlink ancestor')
         if entry['kind'] == 'symlink':
             target = entry.get('target')
-            if not isinstance(target, str) or not target or target.startswith('/') or '\x00' in target or hashlib.sha256(os.fsencode(target)).hexdigest() != entry.get('sha256'):
+            if not isinstance(target, str) or not target or target.startswith('/') and not bundled_plugin(path, target) or '\x00' in target or hashlib.sha256(os.fsencode(target)).hexdigest() != entry.get('sha256'):
                 raise Failure('invalid symlink')
+            if bundled_plugin(path, target):
+                continue
             stack, pending, hops = path.split('/')[:-1], collections.deque(target.split('/')), 0
             while pending:
                 item = pending.popleft()
@@ -336,6 +346,8 @@ def validate(manifest: dict, args: argparse.Namespace) -> dict[str, dict]:
         raise Failure('missing manifest root')
     if not isinstance(manifest.get('omissions'), list) or any(relative(item['path']).split('/')[0] not in roots or item['path'] in entries or item.get('reason') not in ('credential', 'regenerable', 'regenerable-socket', 'git-metadata', 'git-sensitive-history', 'git-state-not-exported', 'git-no-clean-refs', 'git-without-commits') for item in manifest['omissions']):
         raise Failure('invalid manifest omissions')
+    if not legacy and (manifest.get('repositories') or any(item['reason'] != 'credential' or not any(snapshot_credential(part) for part in item['path'].split('/')) for item in manifest['omissions'])):
+        raise Failure('an integral snapshot may omit only credential paths and must retain raw Git')
     repos = manifest.get('repositories', [])
     if not isinstance(repos, list) or len({repo['path'] for repo in repos}) != len(repos) or len({repo['bundle'] for repo in repos}) != len(repos) or any(entries.get(repo['path'], {}).get('kind') != 'directory' for repo in repos):
         raise Failure('invalid manifest repositories')
@@ -425,6 +437,8 @@ def unpack(args: argparse.Namespace) -> dict:
                             if digest_stream(output.read) != entry['sha256']:
                                 raise Failure('restored digest mismatch')
                     elif entry['kind'] == 'symlink':
+                        if bundled_plugin(path, entry['target']) and not os.path.isdir(entry['target']):
+                            raise Failure('the bundled OpenClaw browser plugin must be installed before restoration')
                         os.symlink(entry['target'], os.path.basename(target), dir_fd=holder)
                     layout.append({'from': path, 'to': target, 'sha256': entry.get('sha256'), 'kind': entry['kind']})
                 finally:
@@ -435,6 +449,15 @@ def unpack(args: argparse.Namespace) -> dict:
                     holder = descend(root, mapping[source] + ('/' + suffix if suffix else ''))
                     os.fchmod(holder, safe_mode(entry['mode'], directory=True))
                     os.close(holder)
+            if manifest['schema'] == SCHEMA:
+                restored = {}
+                try:
+                    for source, target in mapping.items():
+                        restored[source] = descend(root, target)
+                    inventory(restored)
+                finally:
+                    for handle in restored.values():
+                        os.close(handle)
             if fingerprint(os.fstat(stream.fileno())) != archive_identity:
                 raise Failure('archive changed during restoration')
             return {'verified': True, 'manifestSha256': manifest['sha256'], 'alias': args.alias, 'tenant': args.empresa, 'counts': counts(list(entries.values()), manifest['omissions']), 'omissions': manifest['omissions'], 'layout': layout}

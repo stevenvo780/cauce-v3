@@ -46,9 +46,11 @@ def legacy_unit(request, action):
     expected = 'inactive' if action == 'stop' else 'active'
     if state != expected:
         raise ValueError('legacy unit did not reach ' + expected)
-    if action != 'stop' and json.loads(docker('inspect', pin))[0]['State']['Running'] is not True:
-        raise ValueError('legacy container did not start')
-    return {'verified': True, 'unit': unit, 'systemd_user': user, 'active_state': state, 'container_id': pin}
+    running = json.loads(docker('inspect', pin))[0]['State']['Running']
+    if running is not (action != 'stop'):
+        raise ValueError('legacy container did not reach the requested running state')
+    return {'verified': True, 'unit': unit, 'systemd_user': user, 'active_state': state, 'container_id': pin,
+            'container_running': running}
 
 
 def cleanup_destination(request):
