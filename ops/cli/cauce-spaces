@@ -188,10 +188,7 @@ def registry_receipt(value: dict, mutation: dict, revision: int, dry_run: bool) 
     return value
 
 
-def registry_change(client, args) -> dict:
-    current = snapshot(client, args.tenant)
-    if current['revision'] != args.expected_revision:
-        raise ContextFailure('La revisión cambió; relee spaces list antes de editar el registro.')
+def registry_value(args) -> dict:
     value = input_document(args.input)
     require_object(value, REGISTRY_KEYS if args.command == 'create' else REGISTRY_EDIT_KEYS, 'Registro')
     if not value:
@@ -207,16 +204,32 @@ def registry_change(client, args) -> dict:
             value[key] = item.strip()
     if args.command == 'create':
         value['enabled'] = False
-    mutation = {'resource': 'agent', 'action': 'create' if args.command == 'create' else 'update',
-                'tenant_id': args.tenant, 'alias': args.alias, 'value': value}
+    return value
+
+
+def registry_change(client, args) -> dict:
+    current = snapshot(client, args.tenant)
+    if current['revision'] != args.expected_revision:
+        raise ContextFailure('La revisión cambió; relee spaces list antes de cambiar el registro.')
+    mutation = {'resource': 'agent', 'action': {'create': 'create', 'edit': 'update', 'retire': 'delete'}[args.command],
+                'tenant_id': args.tenant, 'alias': args.alias}
+    if args.command == 'retire':
+        agents = current.get('agents', []) + current.get('retired', {}).get('agents', [])
+        agent = next((row for row in agents
+                      if row.get('tenant_id') == args.tenant and row.get('alias') == args.alias), None)
+        if agent is not None and agent.get('runtime_key') is not None:
+            raise ContextFailure('Este agente tiene ejecución; retíralo sin --registry-only mediante una operación de flota.')
+    else:
+        mutation['value'] = registry_value(args)
     body = {'dry_run': True, 'expected_revision': args.expected_revision, 'mutation': mutation}
     preview = registry_receipt(client.request('POST', CONFIG + '/changes', body), mutation, args.expected_revision, True)
     if not args.apply:
         return {'state': 'preview', 'registry_only': True, 'receipt': preview}
     body['dry_run'] = False
     receipt = registry_receipt(client.request('POST', CONFIG + '/changes', body), mutation, args.expected_revision, False)
-    return {'state': 'registry_applied', 'registry_only': True,
-            'message': 'Registro actualizado. Este recibo no acredita un runtime operativo.', 'receipt': receipt}
+    message = 'Registro eliminado. No se ejecutó ninguna operación física.' if args.command == 'retire' \
+        else 'Registro actualizado. Este recibo no acredita un runtime operativo.'
+    return {'state': 'registry_applied', 'registry_only': True, 'message': message, 'receipt': receipt}
 
 
 def list_spaces(client, args) -> dict:
@@ -259,9 +272,10 @@ def parser() -> argparse.ArgumentParser:
         command.add_argument('--expected-revision', type=int, required=True)
         command.add_argument('--idempotency-key')
         command.add_argument('--apply', action='store_true', help='Aplica después de previsualizar; sin esta opción solo muestra el plan.')
+        command.add_argument('--registry-only', action='store_true',
+                             help='Solo cambia el registro; retire elimina un borrador sin ejecución.')
         if name != 'retire':
             command.add_argument('--input', required=True, help='JSON de parameters de flota, o value del registro con --registry-only.')
-            command.add_argument('--registry-only', action='store_true', help='Solo cambia el registro; no crea ni inicia un runtime.')
     return result
 
 
