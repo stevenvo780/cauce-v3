@@ -2,7 +2,7 @@ import { Braces, Plus, SearchCheck } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import type { ConfigMutation } from '../../api/types';
 import { CONFIG_SIN_CONTROL_REASON } from '../../router';
-import { Button, Outcome, PREVIEW } from '../../components/kit';
+import { Button, Notice, Outcome, PREVIEW } from '../../components/kit';
 import {
   BORRADOR_VACIO, errorDeAlta, mutacionDeAlta, RECURSOS_ALTA, TITULOS_ALTA,
   type BorradorAlta, type RecursoAlta,
@@ -77,7 +77,8 @@ export function AltaRapida({ soloLectura, busy, onChange }: {
     setAviso({
       tone: fallo ? 'parcial' : 'success',
       text: `${TITULOS_ALTA[recurso]} creado en la revisión ${String(desenlace.result.revision ?? 'UNKNOWN')}`
-        + ` (${desenlace.result.summary ?? 'sin resumen del servidor'}).${textoRecarga(desenlace.recarga)}`,
+        + ` (${desenlace.result.summary ?? 'sin resumen del servidor'}).${textoRecarga(desenlace.recarga)}`
+        + (recurso === 'membership' ? ' Es solo miembro: registralo en Agentes si necesita ficha, perfil o contexto.' : ''),
     });
     // The resource ALREADY exists: leaving the fields filled reassembles "Create" on top of it
     // and the second click earns a 409 for a duplicate row. The form returns to empty with no
@@ -151,6 +152,12 @@ export function AltaRapida({ soloLectura, busy, onChange }: {
       <summary className="flex cursor-pointer items-center gap-1.5 text-muted"><Braces size={13} aria-hidden="true" /> Ver la mutación que se va a enviar</summary>
       <pre className={`${PREVIEW} mt-2`} aria-label="Mutación del alta">{JSON.stringify(mutation, null, 2)}</pre>
     </details>
+
+    {recurso === 'membership' ? <Notice tone="warn" role="note">
+      Solo membresía, sin registro de agente: este alta añade el alias a la sala, pero no crea su registro.
+      Sin registro no tendrá ficha en la oficina, ni perfil, ni contexto. Si tiene que trabajar, registralo
+      desde Agentes → «Añadir agente» eligiendo esta misma sala como grupo inicial.
+    </Notice> : null}
 
     <div className="flex flex-wrap gap-2">
       <Button disabled={soloLectura || busy || Boolean(invalido)}

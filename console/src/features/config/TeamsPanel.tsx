@@ -14,8 +14,22 @@ function teamLabel(row: Row): string {
   return typeof row.display_name === 'string' && row.display_name.trim() ? row.display_name.trim() : String(row.id);
 }
 
+function registeredKeys(snapshot: ConfigurationSnapshot): Set<string> {
+  return new Set((snapshot.agents ?? []).flatMap((agent) => typeof agent.tenant_id === 'string' && typeof agent.alias === 'string'
+    ? [JSON.stringify([agent.tenant_id, agent.alias])] : []));
+}
+
 function members(snapshot: ConfigurationSnapshot, room: Row): string[] {
-  return (snapshot.memberships ?? []).filter((member) => member.tenant_id === room.tenant_id && member.room_id === room.id)
+  const registered = registeredKeys(snapshot);
+  return (snapshot.memberships ?? []).filter((member) => member.tenant_id === room.tenant_id && member.room_id === room.id
+    && member.enabled !== false && registered.has(JSON.stringify([member.tenant_id, member.alias])))
+    .map((member) => String(member.alias));
+}
+
+function soloMembers(snapshot: ConfigurationSnapshot, room: Row): string[] {
+  const registered = registeredKeys(snapshot);
+  return (snapshot.memberships ?? []).filter((member) => member.tenant_id === room.tenant_id && member.room_id === room.id
+    && member.enabled !== false && !registered.has(JSON.stringify([member.tenant_id, member.alias])))
     .map((member) => String(member.alias));
 }
 
@@ -41,6 +55,7 @@ export function TeamsPanel({ snapshot, ctx }: { snapshot: ConfigurationSnapshot;
           {rooms.map((room) => {
             const id = `${String(room.tenant_id)}/${String(room.id)}`;
             const names = members(snapshot, room);
+            const solos = soloMembers(snapshot, room);
             const fleetTarget = groupOperationTarget('rooms', room);
             const runtime = Boolean(fleetTarget && groupHasRuntime(snapshot, fleetTarget));
             const edit: ConfigFormTarget = { collection: 'rooms', action: 'update', row: room };
@@ -57,10 +72,11 @@ export function TeamsPanel({ snapshot, ctx }: { snapshot: ConfigurationSnapshot;
                     <strong className="truncate text-[13px]" title={teamLabel(room)}>{teamLabel(room)}</strong>
                     {room.enabled === false ? <Pill tone="warn">Deshabilitado</Pill> : null}
                   </span>
-                  <span className="truncate text-xs text-muted" title={`${id} · ${names.join(', ')}`}>
+                  <span className="truncate text-xs text-muted" title={`${id} · ${[...names, ...solos].join(', ')}`}>
                     <span className="font-mono">{String(room.id)}</span>{' · '}
                     {!snapshot.memberships ? 'miembros desconocidos'
-                      : `${String(names.length)} ${names.length === 1 ? 'miembro' : 'miembros'}`}
+                      : `${String(names.length)} ${names.length === 1 ? 'miembro' : 'miembros'}`
+                        + (solos.length ? ` · ${String(solos.length)} solo ${solos.length === 1 ? 'miembro' : 'miembros'} sin registro` : '')}
                   </span>
                 </span>
               </div>
