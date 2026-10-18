@@ -464,22 +464,12 @@ def start_container(policy: dict, raw_agent: dict, *, bootstrap: bool = True, op
         raise
 
 
-def stop_container(policy: dict, raw_agent: dict) -> dict:
-    agent = approve_agent(policy, raw_agent)
-    try:
-        approve_extensions(policy, agent)
-    except SafeFailure:
-        observed = inspect_container(agent['container_name'])
-    else:
-        observed = observe_container(policy, agent)
-    if agent['_placement'].get('ownership') == 'shared' and observed is None:
-        raise SafeFailure('approved shared container is not observed')
-    if observed is None:
-        return {'stopped_verified': True}
-    from fleet_executor_rebind import bound_release
-    previous = bound_release(observed, RELEASE_ROOT)
-    binds = runtime_mounts(policy, agent, previous, RELEASE_ROOT) if previous is not None else None
-    validate_container(policy, agent, observed, binds, teardown=True)
+def ownership_labels_match(policy: dict, agent: dict, observed: dict) -> bool:
+    labels = (observed.get('Config') or {}).get('Labels') or {}
+    return all(labels.get(key) == value for key, value in expected_labels(policy, agent).items())
+
+
+def stop_running_adapter(agent: dict, observed: dict) -> dict:
     if not observed['State']['Running'] and observed['State']['Pid'] == 0:
         return {'stopped_verified': True}
     identity = identity_for(agent, observed)
@@ -487,6 +477,38 @@ def stop_container(policy: dict, raw_agent: dict) -> dict:
     helper(agent, identity, 'stop', *lifecycle_arguments(agent, identity))
     helper(agent, identity, 'stopped', *lifecycle_arguments(agent, identity))
     return {'stopped_verified': True}
+
+
+def stop_container(policy: dict, raw_agent: dict) -> dict:
+    agent = approve_agent(policy, raw_agent)
+    extensions_approved = True
+    try:
+        approve_extensions(policy, agent)
+    except SafeFailure:
+        extensions_approved = False
+    observed = inspect_container(agent['container_name'])
+    if agent['_placement'].get('ownership') == 'shared' and observed is None:
+        raise SafeFailure('approved shared container is not observed')
+    if observed is None:
+        return {'stopped_verified': True}
+    placement = agent['_placement']
+    if placement.get('ownership') != 'shared' and observed.get('Image') != placement['image']:
+        # Rebind refuses a drifted image before any Docker call and would replace the container.
+        # The profile login execs into this container, so the adapter stops where it already runs.
+        if not ownership_labels_match(policy, agent, observed):
+            raise SafeFailure('container image or ownership labels differ')
+        return stop_running_adapter(agent, observed)
+    if extensions_approved:
+        observed = observe_container(policy, agent)
+        if agent['_placement'].get('ownership') == 'shared' and observed is None:
+            raise SafeFailure('approved shared container is not observed')
+        if observed is None:
+            return {'stopped_verified': True}
+    from fleet_executor_rebind import bound_release
+    previous = bound_release(observed, RELEASE_ROOT)
+    binds = runtime_mounts(policy, agent, previous, RELEASE_ROOT) if previous is not None else None
+    validate_container(policy, agent, observed, binds, teardown=True)
+    return stop_running_adapter(agent, observed)
 
 
 def purge_container(policy: dict, raw_agent: dict) -> dict:
