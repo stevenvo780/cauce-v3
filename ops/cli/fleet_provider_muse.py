@@ -4,9 +4,13 @@ import base64
 import hashlib
 import hmac
 import json
+import os
+import pathlib
 import re
+import subprocess
 import time
 import urllib.request
+import uuid
 
 from fleet_provider_identity import (
     nonce_roundtrip,
@@ -23,6 +27,8 @@ CLOCK_SKEW_SECONDS = 60
 SHA256_DIGEST_INFO = bytes.fromhex('3031300d060960864801650304020105000420')
 
 EFFORTS = frozenset({'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'})
+VERSION = '1.4.10-R6427.1'
+BRIDGE = '/usr/local/bin/muse-cauce'
 
 
 def validate_definition(value: dict, provider: str) -> None:
@@ -61,6 +67,66 @@ def execution_arguments(agent: dict, prompt_file: str) -> list[str]:
 
 def authentication_supported() -> bool:
     return True
+
+
+def direct_login(binding: dict) -> bool:
+    login = binding.get('login')
+    command = login.get('command') if isinstance(login, dict) else None
+    try:
+        validate_definition(binding.get('muse'), binding.get('provider'))
+    except (ValueError, TypeError):
+        return False
+    return binding.get('provider') == 'muse' and 'openclaw' not in binding and isinstance(login, dict) \
+        and login.get('method') == 'device' and isinstance(command, list) \
+        and command[1:] == ['login'] and command[0] == binding.get('command') \
+        and login.get('sha256') == binding.get('command_sha256') \
+        and binding['muse']['bridge'] == BRIDGE
+
+
+def measured_definition(binding: dict) -> bool:
+    import tempfile
+
+    from fleet_provider_identity import command_output, provider_command
+    try:
+        if not direct_login(binding):
+            return False
+        with tempfile.TemporaryDirectory(prefix='cauce-muse-capability-') as directory:
+            home, state, profile = (directory + suffix for suffix in ('/home', '/state', '/profile'))
+            for folder in (home, state, profile):
+                os.mkdir(folder, 0o700)
+            packet = {'profile_binding': {**binding, 'path': profile}, 'agent': {
+                'harness_id': 'muse', 'runtime_user': binding['runtime_user'], 'runtime_key': 'capability-probe',
+                'state_directory': state, 'home_directory': home, 'model_id': None}}
+            version = command_output([provider_command(packet), '--version'], packet, timeout=20).decode().strip()
+            return VERSION in version
+    except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError, UnicodeError):
+        return False
+
+
+def measured_container_definition(binding: dict, placement: dict) -> bool:
+    name = 'cauce-muse-probe-' + uuid.uuid4().hex
+    try:
+        if not direct_login(binding) or re.fullmatch(r'sha256:[a-f0-9]{64}', placement.get('image', '')) is None:
+            return False
+        if ':' in str(pathlib.Path(__file__).resolve().parent):
+            return False
+        program = ('import json,sys;sys.path.insert(0,"/cauce/executor");'
+                   'from fleet_provider_muse import measured_definition;'
+                   'sys.exit(0 if measured_definition(json.load(sys.stdin)) else 1)')
+        result = subprocess.run(['/usr/bin/docker', 'run', '--rm', '--pull=never', '--name', name, '-i',
+            '--network', 'none', '--read-only', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges',
+            '--tmpfs', '/tmp:rw,nosuid,nodev,size=64m', '--user', placement['runtime_user'],
+            '--volume', f'{pathlib.Path(__file__).resolve().parent}:/cauce/executor:ro,z',
+            '--entrypoint', placement['python'], placement['image'], '-I', '-B', '-c', program],
+            input=json.dumps(binding).encode(), capture_output=True, timeout=40, check=False)
+        return result.returncode == 0
+    except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
+        return False
+    finally:
+        try:
+            subprocess.run(['/usr/bin/docker', 'rm', '-f', name], capture_output=True, timeout=5, check=False)
+        except (OSError, subprocess.SubprocessError):
+            pass
 
 
 def reply_text(output: bytes):
