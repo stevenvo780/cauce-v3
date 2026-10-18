@@ -53,7 +53,7 @@ export function AccountLogin({ account, snapshot, allowed, reload }: {
             : brokenEnvironment ? 'No se pudo crear el entorno de esta cuenta. Elimínalo en «Entornos de consulta» y vuelve a intentarlo.' : undefined;
   const refresh = useCallback(() => { void reload().catch(() => undefined); }, [reload]);
   useEffect(() => { if (requested && block && snapshot) { setRequested(false); setLaunched(undefined); setError(block); } }, [requested, block, snapshot]);
-  usePolling(refresh, 1500, { pausedWhile: !requested || awaitingLogin });
+  usePolling(refresh, 1500, { pausedWhile: !requested || (awaitingLogin && !!scope?.request) });
 
   const step = useRef(false);
   useEffect(() => {
@@ -115,6 +115,13 @@ export function AccountLogin({ account, snapshot, allowed, reload }: {
     setVerified(true); setRequested(false);
     void reload().catch(() => { setError('La sesión quedó verificada, pero no se pudo releer la cuenta. Pulsa «Actualizar cuotas y entornos».'); });
   }, [reload]);
+  // The page polls slowly: start from a fresh read so an expired login is not resumed.
+  const begin = async () => {
+    keys.current.clear(); setVerified(false); setError(''); setLaunched(undefined); setScope(undefined); setBusy(true);
+    try { await reload(); setRequested(true); }
+    catch (cause) { setError(describeQuotaEnvironmentError(cause, 'No se pudieron leer los entornos de la cuenta.')); }
+    finally { setBusy(false); }
+  };
   const close = () => { setRequested(false); setLaunched(undefined); setScope(undefined); refresh(); };
   const activeScope = requested ? scope : undefined;
   const progress = !requested || activeScope ? undefined
@@ -125,7 +132,7 @@ export function AccountLogin({ account, snapshot, allowed, reload }: {
   return <section aria-label={`Inicio de sesión de ${account.label}`} className="grid gap-2">
     <div className="flex flex-wrap items-center gap-2">
       <Button size="sm" variant="primary" disabled={!!block || busy || requested} title={block}
-        onClick={() => { keys.current.clear(); setVerified(false); setError(''); setLaunched(undefined); setScope(undefined); setRequested(true); }}>Iniciar sesión</Button>
+        onClick={() => { void begin(); }}>Iniciar sesión</Button>
       {!environment && hosts.length > 1 ? <label className="text-sm">Ordenador <select value={hostId} disabled={busy || requested}
         onChange={event => { setHostChoice(event.target.value); }}>{hosts.map(host => <option key={host.host_id} value={host.host_id}>{host.display_name}</option>)}</select></label> : null}
     </div>

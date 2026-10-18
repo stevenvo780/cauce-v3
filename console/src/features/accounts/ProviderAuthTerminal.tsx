@@ -43,26 +43,33 @@ export function ProviderAuthTerminal({ session, client, onDisconnect }: Props) {
     });
     try { terminal.open(host.current); resize(); } catch { fail(); }
     const observer = new ResizeObserver(resize); observer.observe(host.current);
-    void client.ticket(session.session_id).then(ticket => {
-      if (disposed || ended) return;
-      if (Date.parse(ticket.expires_at) <= Date.now()) { fail(); return; }
-      socket = new WebSocket(providerAuthStreamUrl(session.session_id)); socket.binaryType = 'arraybuffer';
-      socket.onopen = () => { if (disposed) { socket?.close(); return; } socket?.send(JSON.stringify({ type: 'auth', ticket: ticket.ticket })); };
-      socket.onmessage = event => {
-        if (disposed) return;
-        if (event.data instanceof ArrayBuffer) {
-          if (event.data.byteLength > 65_536) { fail(); return; }
-          terminal.write(new Uint8Array(event.data));
-        } else {
-          try {
-            const control = JSON.parse(String(event.data)) as Record<string, unknown>;
-            if (Object.keys(control).length !== 1 || control.type !== 'ready') { fail(); return; }
-            ready = true; terminal.options.disableStdin = false; terminal.options.cursorBlink = true; resize(); terminal.focus();
-          } catch { fail(); }
-        }
-      };
-      socket.onclose = fail; socket.onerror = fail;
-    }).catch(fail);
+    // A stream that closes before any frame never attached to the login: the session still accepts a fresh ticket.
+    let attached = false;
+    const connect = (retries: number) => {
+      const retry = () => { if (!attached && retries > 0 && !disposed && !ended) { socket = undefined; connect(retries - 1); } else fail(); };
+      void client.ticket(session.session_id).then(ticket => {
+        if (disposed || ended) return;
+        if (Date.parse(ticket.expires_at) <= Date.now()) { retry(); return; }
+        const current = new WebSocket(providerAuthStreamUrl(session.session_id)); current.binaryType = 'arraybuffer'; socket = current;
+        current.onopen = () => { if (disposed) { current.close(); return; } current.send(JSON.stringify({ type: 'auth', ticket: ticket.ticket })); };
+        current.onmessage = event => {
+          if (disposed) return;
+          attached = true;
+          if (event.data instanceof ArrayBuffer) {
+            if (event.data.byteLength > 65_536) { fail(); return; }
+            terminal.write(new Uint8Array(event.data));
+          } else {
+            try {
+              const control = JSON.parse(String(event.data)) as Record<string, unknown>;
+              if (Object.keys(control).length !== 1 || control.type !== 'ready') { fail(); return; }
+              ready = true; terminal.options.disableStdin = false; terminal.options.cursorBlink = true; resize(); terminal.focus();
+            } catch { fail(); }
+          }
+        };
+        current.onclose = () => { current.onerror = null; retry(); }; current.onerror = () => { current.onclose = null; retry(); };
+      }).catch(() => { retry(); });
+    };
+    connect(2);
     return () => {
       disposed = true;
       if (socket) { socket.onopen = null; socket.onmessage = null; socket.onclose = null; socket.onerror = null; socket.close(); }
