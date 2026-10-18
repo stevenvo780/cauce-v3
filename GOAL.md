@@ -113,7 +113,7 @@ La oficina refleja los recursos reales de cada empresa, permite entrar al detall
 - [x] [local real] Editor de salas y partes con validación y CAS; el plano persiste tras recargar y en un segundo navegador.
 - [x] [local real] La topología y el plano usan la empresa activa: tras cambiar de empresa solo se ven sus salas y guardar el plano da 200 (PG; 022e0ee6, e3c63b0d).
 - [x] [código] El campus ordena sus edificios por la posición guardada en el plano y muestra «Leyendo cuotas…» al cargar (b86f7443, 42ac20fa).
-- [ ] e2e de alta, edición, asignación y baja de salas y agentes en la oficina, con re-login y segundo navegador; contraste del cansancio con cuotas reales en producción.
+- [ ] El dueño ve en la oficina el cansancio de cada agente calculado con las cuotas reales de su cuenta. Hoy hay 0/14 agentes con binding y las cuotas están `unsupported`. El e2e de oficina ya existe (`tests/e2e/v4-office-real-browser.test.ts`). (auditoría 17-oct)
 
 ## 5. Migración de agentes a servidores locales
 
@@ -122,15 +122,15 @@ Mueve a **Gaia, Hegel, Hades y Argos** a servidores de la red local para liberar
 **Ampliación del dueño (12-oct-2026):** Cauce se retira también de la máquina del hospital. **Los agentes de Praxis** (muse frontend/backend, openclaw operator y sales, crm) se mueven a los servidores locales y esa VPS se apagará; lo publicado del hospital irá a otra infraestructura más barata, por decidir. La VPS principal sigue alojando Cauce central.
 
 - [x] [local real] Relocalización entre hosts con slices selladas y coordinador (PG).
-- [ ] Precedente en producción de agente fuera de la VPS: Salva en server2 (`dockerHost`).
-- [ ] [local real] Tamaños de los cuatro espacios medidos sin leer contenido. Gaia 3 MB, Hades 498 MB, Argos 52 MB y Hegel 30 KB propios; los 30,5 GB de Hegel son el `/workspace` compartido.
-- [ ] Hallazgo: la flota V4 solo puede colocar hoy a Argos. Gaia (openclaw+Anthropic), Hades (grok) y Hegel (muse) necesitan drivers de flota por descriptor (§7); el respaldo es el overlay V3 `dockerHost=server2`.
-- [ ] Preguntar a Kant por Cauce; medir en el día; ubicar los cuatro en server2 con `--memory` por contenedor, con server1 de reserva.
-- [ ] Registrar bindings reales (cuenta, modelo, pagador) sin cambiar de cuenta; **copiar en privado** las sesiones a server2 (SSH, 0600, sin copias, Git ni logs), decisión del dueño.
-- [ ] Copia recuperable y ensayo de reversión antes de cada corte; proyectos por git y datos con manifiesto; normalizar el layout durante el traslado.
-- [ ] Canario Gaia, luego Hades, Argos y Hegel (Hegel con espacio propio y sus repos, sin tocar `ws-humanizar`). Por alias: nonce por Cauce, terminal por CLI y web, cuota, contexto aplicado y host en la UI. Tras el traslado, además: una edición de contexto desde la UI crea la versión N+1, sincronizada y ligada al mismo historial del alias, y una operación de la UI (detener y arrancar) se aplica en el host nuevo.
-- [ ] Medición VPS antes y después de migrar con un único script. La liberación del origen 7 días después la hace el dueño como seguimiento y no cuenta para el cierre funcional (13-oct).
-- [ ] Praxis: portar a V4 los arreglos del hospital (`socrates/hospital-supervision-1699`), inventariar sus agentes y servicios, migrarlos a los servidores locales con el mismo procedimiento, verificar y retirar Cauce del hospital antes de apagar la VPS.
+- [x] [prod] Precedente de agente fuera de la VPS: Salva corre en server2 (`agents.host_id=server2`, `ops/flota-fisica.json`). (auditoría 17-oct)
+- [x] [local real] Medición de los cuatro espacios sin leer contenido, recibo `.delegados/v4/recibos/vps-antes-20261012.json` (RSS: Gaia 305 MB, Hades 224 MB, Argos 1,48 GB, Hegel 151 MB). Las cifras antiguas no tenían recibo.
+- [x] [código] Drivers de flota por descriptor para Gaia (openclaw+Anthropic), Hades (grok) y Hegel (muse): `fleet_module` en sus descriptores y `ops/cli/fleet_provider_*.py`. El canario real es la línea de Gaia.
+- [ ] Los cuatro agentes (Gaia 1 GiB, Hades 1 GiB, Argos 3 GiB, Hegel 2 GiB) tienen su sitio decidido en server2 con server1 de reserva (`docs/v4-migracion-plan.md` §5); falta confirmarlo con la medición del día del corte.
+- [ ] El dueño ve en cada agente su cuenta, modelo y pagador reales (bindings registrados en producción sin cambiar de cuenta) y la sesión del proveedor está en server2 en privado (0600, sin Git ni logs). Los bindings leídos están en `docs/v4-migracion-plan.md` §2.
+- [ ] Antes de mover cada agente queda una copia recuperable de su espacio y se ensaya la vuelta atrás. El mecanismo existe (`v4-medicion-migracion.sh copiar|comprobar-copia|restaurar`); falta usarlo con un agente real.
+- [ ] Gaia, después Hades, Argos y Hegel, responden por Cauce desde server2 con su terminal (CLI y web), su cuota, su contexto aplicado y el host visible en la UI. El dueño edita el contexto y detiene o arranca el agente en el host nuevo. Hegel tiene espacio propio sin tocar `ws-humanizar`. Requiere server2 enrolado.
+- [ ] Medición de la VPS antes y después de migrar con `ops/scripts/v4-medicion-migracion.sh medir|comparar` (el «antes» del 12-oct está caducado: se rehace el día del corte). La liberación del origen 7 días después la hace el dueño.
+- [ ] León usa Praxis en V4: la empresa existe en producción con sus agentes y servicios del hospital, que corren en servidores locales y responden por Cauce; luego se retira Cauce del hospital. El port del código ya está hecho; falta crear la empresa y mover los agentes.
 
 ## 6. Gestión de recursos, Docker y CLI de Cauce
 
@@ -141,23 +141,23 @@ CRUD completo y real de todas las entidades desde la interfaz, con efecto en el 
 - [x] [código] Operaciones de flota con preview, enqueue, CAS y fencing; retiro reversible y purga; el servidor rechaza pasos sin evidencia.
 - [x] [local real] CLI: despacho previo intacto más `platform`, `hosts`, `context`, `spaces`.
 - [x] [local real] Copias con sha256, identidad y omisiones (PG 16/16; restauración CLI de >96 MiB).
-- [ ] Ciclo físico desde la web en Docker local y en server2: crear, editar la configuración, los componentes y las asignaciones del agente (operación update) con efecto comprobado en el contenedor, aplicar contexto, detener, retirar y purgar. Instalar en el VPS el enclave de autoridad firmado.
+- [ ] El dueño elige su ordenador en la web (también server2), crea y actualiza un agente con su configuración y contexto efectivos, lo detiene, lo retira y lo purga, y el agente responde desde ese host. Hoy la capacidad publicada solo ofrece `server`; falta activar server2 como destino. (auditoría 17-oct)
 - [x] [código] Copias de hasta 1 GiB descargadas por enlace sin buffering con su SHA-256 visible; el filtro omite solo credenciales reales (archivos, directorios y tokens por contenido) e incluye el código con `auth|session|token` en el nombre; `.git` se omite con motivo `vcs_metadata` en el manifiesto (feda39de, 4a3a5a00, 08ea438f, 22b98c0d, 9f0a61d3).
-- [ ] Purga honesta (nombra contenedor y volúmenes, confirma con el alias) y sin huérfanos (`-provider-profiles`, create fallido); barrido de huérfanos como paso del gate, en ambos sentidos: recursos `cauce.fleet.*` sin fila y filas de agente o placement sin recurso real o con un estado distinto del de Docker.
-- [ ] Terminal por CLI (`cauce <alias>`) para agentes en flota dinámica; `cauce login` y `cauce spaces create|list|edit|retire`.
-- [ ] e2e real para ordenadores, personas, entornos de cuota y contextos; matriz CRUD verificable por máquina; runbook de recuperación de copias; pruebas físicas de interrupción.
+- [ ] El dueño ve los nombres del contenedor y los volúmenes antes de purgar, confirma con el alias y recibe el resultado físico; un create fallido se puede reanudar o cancelar limpiando sus recursos. El código existe (AgentLifecyclePanel, fleet_executor_steps); falta recorrerlo en producción con un canario. Sin barrido de huérfanos como paso del gate.
+- [ ] El dueño instala el CLI vigente en su ordenador y en server2, entra con `cauce login`, abre `cauce <alias>` de un agente dinámico y usa `cauce spaces create|list|edit|retire`. El código está (a5f74bcf, 8afaafe2); el CLI instalado en kratos es el antiguo. (en curso: codex-1)
+- ~~e2e real, matriz CRUD por máquina y pruebas físicas de interrupción~~ — retirado por sobreingeniería (17-oct). El runbook de recuperación ya existe en `docs/v4-runbook-copias.md` (08f29d7a). Lo que queda como función: el dueño descarga la copia de un espacio y la restaura.
 
 ## 7. Sistema extensible de harnesses
 
 Incorporar un harness debe ser una operación clara mediante configuración JSON/YAML interpretada por el sistema (instalar, configurar, autenticar, ejecutar, actualizar, consultar cuota), validada con errores comprensibles y con capacidades en la UI iguales a lo ejecutable; documentado y probado.
 
-- [ ] [código] 8 descriptores JSON validados, empaquetados y fijados por digest, con parsers cerrados en TS y Python.
+- [x] [prod] 8 descriptores JSON + fake2 validados, empaquetados y fijados por digest con parsers cerrados en TS y Python: 9/9 válidos dentro del gateway productivo, digests alterados rechazados, 7 harnesses reales con pins aprobados. (auditoría 17-oct, E2)
 - [x] [local real] En «Mis cuotas», las capacidades salen del descriptor aprobado y un descriptor alterado retira la capacidad.
 - [x] [código] Los comandos (login, cuota, paquete de update, módulo de flota) pasan al descriptor y salen de `harness_operations.py`. (ccf554d1, 75ddb35d)
-- [ ] [código] Las listas de runtime se derivan de los descriptores, con test de paridad para enums, el CHECK SQL y la consola. (27200201)
-- [ ] Flota por descriptor con autenticación para grok, muse y openclaw+Anthropic (necesario para la migración).
+- [ ] El dueño incorpora un harness con su descriptor y plantilla de runtime sin que una lista fija de proveedores lo rechace. La corrección `f1985f46` está en la rama y sale con el próximo despliegue; sin test de paridad nuevo.
+- [ ] Gaia (OpenClaw+Anthropic), Hades (Grok) y Hegel (Muse) corren en server2 con su cuenta, responden por Cauce y conservan terminal y contexto. Los drivers existen (fleet_provider_grok/muse/openclaw); hoy están en `server`.
 - [x] [código] Descriptores honestos; errores con campo y motivo; capacidades por acción. (ccf554d1, 27200201)
-- [ ] Alta de punta a punta de un harness de prueba (`fake2`) y operaciones físicas de quota y update en server2, con runbook.
+- [ ] El dueño consulta cuotas y actualiza el CLI de una cuenta Claude/Codex desde «Mis cuotas» en server2 y vuelve a consultar sin perder la sesión. fake2 y su runbook ya existen (1ff5c418, docs/v4-archivos-contextos.md).
 
 ## 8. Reorganización de archivos y versionado de contextos con GitHub
 
@@ -168,11 +168,11 @@ Estructura estándar de espacios (contextos/directivas, proyectos, configuració
 - [x] [local real] **Registro** con contenido, digest, origen, autor y fecha; Git solo con `context/` y `directives/` de texto y escaneo de secretos.
 - [x] [local real] Broker Git con CAS y replay; push fallido recuperable; estados separados; concurrencia por agente con CAS; historial, diff y restauración como versión nueva (backend).
 - [x] [local real] Transporte a GitHub privado `stevenvo780/cauce-agent-contexts` probado con contenido sintético.
-- [ ] `CAUCE_SPACE_ROOT` en el supervisor legacy y `cwd` en `space/projects`; productores de `tmp/` y `logs/`; inventario y migración verificable de los espacios reales: diff de manifiestos sin pérdidas y, por cada agente migrado in situ, un turno real (nonce) que responde leyendo desde la nueva ruta.
-- [ ] Sembrar el historial de los agentes reales y empujarlo a GitHub; preflight del repo del broker en la VPS.
+- [ ] El dueño trabaja y descarga una copia completa de cada espacio migrado, con proyectos y contextos conservados. El agente responde leyendo desde la ruta nueva y queda una copia recuperable del origen. El supervisor ya exporta `CAUCE_SPACE_ROOT`/`TMPDIR` (93f193fc).
+- [ ] El dueño consulta en GitHub el historial inicial de los agentes reales de Humanizar y Praxis con sus documentos actuales y la sincronización confirmada. La siembra y el preflight existen (a6f14b47, 171866dd); hay 0 versiones de contexto en producción.
 - [x] [local real] **Versionar las ediciones hechas en el espacio del agente**: hoy no se registran y además bloquean sus turnos. (0e186764, adc0bf9d, 341d4dbc, 99683b04)
-- [ ] Turno real que adopte la versión; una sola fuente de contexto (`CLAUDE.md`/`AGENTS.md` generados desde la versión aplicada).
-- [ ] Recuperación de divergencia (fetch antes del commit), concurrencia multiagente, autor en el historial, lector V3 desacoplado y fallo de sync ensayado en producción.
+- [ ] El dueño cambia una directiva y Claude y Codex la usan en su siguiente turno, con la versión aplicada visible y sin instrucciones antiguas contradictorias (adopción implementada en 4273c1da).
+- [ ] El dueño guarda cambios de varios agentes y recupera una sincronización fallida sin perder versiones, viendo autor, pendiente y causa; al reintentar, GitHub recibe los cambios (fetch previo, CAS y autor ya en 177947c1).
 
 ## 9. Auditoría, diagnóstico y eliminación de código innecesario
 
@@ -188,8 +188,8 @@ Revisar los mecanismos por su uso real, eliminar lo que no aporta y quedarse con
 Vistas completas y cuidadas, CRUD probado de punta a punta con efectos reales, pruebas unitarias, de integración y e2e reales (no solo mocks), fallos de SSH, CLI, reinicios y conflictos, recursos de prueba identificables y limpiados, y documentación de todo lo real.
 
 - [x] [local real] Matriz `pnpm test` 12/12 sobre `533d245e`; SSH real (sshd efímero), Docker real, PTY real y GitHub sintético real.
-- [ ] [local real] 17 e2e con navegador real (vistas V3) y recorrido V4 de 12 pasos en Chromium+PG (fuera del repo).
-- [ ] Todas las vistas con estados vacío, de carga y de error resueltos; formularios que validan sus entradas; cada acción con retroalimentación clara (éxito, error con motivo, en curso). Se comprueba en el e2e V4 y en `qa:layout`.
+- ~~17 e2e con navegador y recorrido V4 de 12 pasos como entregable~~ — retirado por sobreingeniería (17-oct); el recorrido existe en `tests/e2e/v4-console-real-browser.test.ts` y la QA se hace usando el producto.
+- [ ] El dueño completa las acciones principales de su empresa desde el móvil y el escritorio, entiende si están en curso o fallaron, conserva el borrador ante un conflicto y puede reintentar. Se comprueba con QA de agentes en producción (17-oct: Mis cuotas, ordenadores, mensajes, registro, oficina).
 - [x] [local real] Versionar el e2e V4 en `tests/e2e`; rutas V4 en `qa:layout`; pruebas de fallo con procesos reales; tabla de pruebas reales por categoría.
 - [x] [código] `docs/v4-guia.md` y la subsección «Desplegar V4» de `docs/operacion.md` documentan el comportamiento real entregado, incluidos los procedimientos de operación y recuperación, en estas áreas: uso desde la interfaz, administración, CLI, arquitectura multitenant, registro de ordenadores, gestión de agentes, harnesses, credenciales, cuotas, oficina, estructura de archivos, integración con GitHub, migraciones, copias de seguridad, restauración, despliegue y diagnóstico. Además, corregir los docs desfasados y quitar las 57 rutas privadas.
 
@@ -197,13 +197,13 @@ Vistas completas y cuidadas, CRUD probado de punta a punta con efectos reales, p
 
 Máxima paralelización efectiva con revisión independiente; entorno local real; ciclos **implementar → probar en local → desplegar → probar lo desplegado → corregir → volver a desplegar y verificar**; copias y reversión antes de tocar datos. El despliegue forma parte de la tarea y está autorizado dentro de los entornos de Cauce y los accesos disponibles, respetando su configuración de acceso y privacidad: no se para en «listo para desplegar» ni se evita desplegar por cautela genérica. La paralelización acelera la entrega sin saturar los servidores, sin agotar los recursos que necesitan los agentes operativos (la VPS ya tiene la swap llena; server2 aloja a Kant, Salva y los `cuota-cli`) y sin comprometer la integridad de los datos. La revisión independiente, de un revisor distinto del autor, cubre seguridad, regresiones, casos límite y experiencia de usuario.
 
-- [ ] Equipo de modelos y 4 carriles tmux listos (ver tiers); entorno local reproducible; git limpio y respaldado.
+- ~~Equipo de modelos y 4 carriles tmux~~ — retirado: es organización del trabajo, no función del producto (17-oct).
 - [x] [local real] Backup predeploy del 12-oct aprobado (ya caducado para la ventana real); restore aislado de producción con 052–064 y datos intactos.
 - [x] Contraseñas de fixture sustituidas por placeholders construidos en ejecución (41a2fda6) e ids y correos del dueño fuera de `ops/cuotas` (75ddb35d). **Dueño:** marcar los falsos positivos históricos en GitGuardian.
-- [ ] Gate completo una vez por candidato (incluida cobertura de consola ≥ 94,49 %) y revisión Opus del diff.
+- ~~Gate completo por candidato con cobertura ≥ 94,49 %~~ — retirado por sobreingeniería (decisión del dueño 17-oct): el gate de despliegue es typecheck + lint + empaquetado (698e33a6) y la verificación es funcional.
 - [x] [local real] Ensayo 052–065 sobre el dump de producción del 12-oct: 307 279 filas intactas, transacción de 663 ms, contención que falla sin aplicar nada y reversión real 065→051→065 con los `down` corregidos (4924052c, b976df33).
 - [x] [código] Merge a `dev` y fast-forward de `main`.
-- [ ] Prechequeo del VPS, backup fresco, `deploy.sh` y kit del controlador de flota; humo y ciclo completo hasta 0 flujos esenciales en rojo; versión publicada = código verificado.
+- [ ] El dueño usa en producción los flujos corregidos y recupera sus datos si falla una actualización; la versión publicada es la del código comprobado. Despliegues continuos con `.delegados/v4/corte.sh` + `deploy1-*.sh` (17-oct: 01f2089a y 85c3fc71).
 
 ## Trabajo a portar de ramas antiguas
 
@@ -213,9 +213,9 @@ Verificado por contenido (Haiku/Sonnet + revisión Opus 5.5): trabajo valioso qu
 - [x] [local real] (P0) **Hospital, revisión QA y continuidad** (49b34d1a, a7f544eb, 8478d526, 40e6f520, f50c8014, 8fcd3280, d403c98f, 8eb47a82): de `origin/kant/rc2-hospital-praxis-20261007`, los commits `1eeca7d9`, `ef4e1fb0`, `caac19b6`, `bc4c60de` y `9cff3b73` entran sin conflictos; `6e3bc3ff` choca en `tests/unit`. Incluye un arreglo del store que V4 no tiene: rechazar con `no_route` un publish human-mcp hacia un consumidor vivo sin la capacidad.
 - [x] [código] (P1) **Renovación OAuth** (`b4cd9265`, PR #149; portada en 92112fc8): recuperación del refresh, consentimiento más claro y corrección de `ui_locales` → `invalid_request`. Las otras cuatro variantes eran copias.
 - [x] [código] (P1) **Consola** (f088e262): reintentar un adjunto repite la acción que falló. Patch `08c69433` en `portar/consola-reintento-adjuntos/`; hay que ajustar `clearResource` y espiar `HTMLAnchorElement.click` en `MessageAttachments.test.tsx`.
-- [ ] (P1) **Hospital, perfil de proyecto**: `ops/instances/hospital/project-profile.{py,json}` de `origin/codex/company-instances-20261006` (PR #131). El resto de esa rama (instalaciones por empresa) es una arquitectura descartada (`docs/v4-plan-multiempresa.md:41`): conservar solo su documento de diseño como referencia y cerrar el PR.
+- ~~(P1) Hospital, perfil de proyecto~~ — retirado: el perfil portado (65408377) no tiene consumidor; la supervisión actual de Praxis sigue sin él (17-oct).
 - [x] (P2) **Registros de Cronos** (836c6eec, e603d474): 6 filas de `deploy/HISTORIAL.md` y el runbook del buzón (PRs #130 y #134), ordenados por fecha.
-- [ ] (P2) **Pruebas y documentos sin commitear** (4c2cc25e, 93dcc8de): dos tests de regresión de `mcp-emission-outside-delivery` (`portar/tests-mcp-emission-outside-delivery.patch`), `docs/v3.5-unir-computadoras.md` (estado medido de V3.5) y los e2e en curso `context-multiuser-continuity` (adaptarlos a la autenticación por empresa o descartarlos con motivo).
+- ~~(P2) Pruebas y documentos V3.5 sin commitear~~ — retirado: ya están en 4c2cc25e y 93dcc8de; no es requisito de cierre (17-oct).
 
 ## 12. Criterios obligatorios para dar por terminada la tarea
 
