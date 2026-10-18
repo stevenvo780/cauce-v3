@@ -62,10 +62,10 @@ it('lists the server plan, keeps purge disabled until the exact alias is typed a
     return HttpResponse.json({ operation_id: operation.id, status: operation.status, operation }, { status: 202 });
   }));
   expect(screen.getByLabelText('Recursos que se borrarán')).not.toHaveTextContent('ws-w-state');
-  expect(plan).toHaveTextContent('Se borra: Contenedor ws-w');
-  expect(plan).toHaveTextContent('Se borra: Volumen ws-w-state');
-  expect(plan).toHaveTextContent('Se borra: Volumen ws-w-provider-profiles');
-  expect(plan).toHaveTextContent('este es el plan, no el resultado');
+  expect(plan).toHaveTextContent('Se borrará: contenedor ws-w');
+  expect(plan).toHaveTextContent('volumen ws-w-state');
+  expect(plan).toHaveTextContent('volumen ws-w-provider-profiles');
+  expect(screen.getByLabelText('Previsualización operativa')).toHaveTextContent('Esto es el plan');
   expect(screen.getByRole('link', { name: 'Descargar copia' })).toHaveAttribute('href', '/messages/A/w?view=context');
   const enqueue = screen.getByRole('button', { name: 'Encolar operación' });
   await user.clear(screen.getByLabelText(/Escribe el alias/));
@@ -95,8 +95,8 @@ it('shows a shared container as kept and a native directory as deleted', async (
   const { plan } = await preview([
     { type: 'container', name: 'ws-humanizar', action: 'keep', reason: 'Contenedor compartido' },
     { type: 'directory', name: '/srv/agents/w', action: 'delete', reason: 'Estado nativo' }]);
-  expect(plan).toHaveTextContent('Se conserva: Contenedor ws-humanizar');
-  expect(plan).toHaveTextContent('Se borra: Directorio /srv/agents/w');
+  expect(plan).toHaveTextContent('Se conservará: contenedor ws-humanizar');
+  expect(plan).toHaveTextContent('Se borrará: directorio /srv/agents/w');
 });
 
 it('requires a new preview after closing, reopening and confirming the same alias', async () => {
@@ -150,7 +150,7 @@ it('reports the observed purge result when the operation finishes', () => {
     target, kind: 'purge', actor: { tenant_id: 'A', alias: 'op' }, expected_revision: 4, desired_revision: null, applied_revision: null,
     steps: [{ name: 'purge', status: 'succeeded' }], error: null, created_at: '2026-10-12T10:00:00.000Z', updated_at: '2026-10-12T10:00:00.000Z' };
   render(<AgentFleetOperation operation={operation} busy={false} current control={() => undefined} />);
-  expect(screen.getByLabelText('Resultado de la purga')).toHaveTextContent('aún no detalla qué recursos físicos se borraron');
+  expect(screen.getByLabelText('Resultado de la purga')).toHaveTextContent('Terminó sin detallar qué recursos borró');
 });
 
 it('shows the resources the executor actually deleted', () => {
@@ -160,7 +160,7 @@ it('shows the resources the executor actually deleted', () => {
       { type: 'container', name: 'ws-w' }, { type: 'volume', name: 'ws-w-state' }, { type: 'directory', name: '/srv/agents/w' }] } }],
     error: null, created_at: '2026-10-12T10:00:00.000Z', updated_at: '2026-10-12T10:00:00.000Z' };
   render(<AgentFleetOperation operation={operation} busy={false} current control={() => undefined} />);
-  expect(screen.getByLabelText('Resultado de la purga')).toHaveTextContent('El ejecutor borró: Contenedor ws-w, Volumen ws-w-state, Directorio /srv/agents/w');
+  expect(screen.getByLabelText('Resultado de la purga')).toHaveTextContent('Borró el contenedor ws-w, el volumen ws-w-state y el directorio /srv/agents/w');
 });
 
 it('says when the executor finished without deleting a container or volume', () => {
@@ -169,7 +169,7 @@ it('says when the executor finished without deleting a container or volume', () 
     steps: [{ name: 'purge', status: 'succeeded', evidence: { removed: [] } }], error: null,
     created_at: '2026-10-12T10:00:00.000Z', updated_at: '2026-10-12T10:00:00.000Z' };
   render(<AgentFleetOperation operation={operation} busy={false} current control={() => undefined} />);
-  expect(screen.getByLabelText('Resultado de la purga')).toHaveTextContent('no borró contenedores ni volúmenes propios');
+  expect(screen.getByLabelText('Resultado de la purga')).toHaveTextContent('No borró contenedores ni volúmenes');
 });
 
 it('clears confirmation and requires a new preview after the inventory revision changes', async () => {

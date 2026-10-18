@@ -29,12 +29,12 @@ export function AuthOperationPanel({ operation, allowed, onRefreshed }: Props) {
     void api.resolveProviderAuthOperation(operation.id).then(request => {
       if (!alive || current.current !== key) return;
       if (request.operation_id !== operation.id || request.expected_operation_version !== currentOperation.current.version) {
-        setScope({ key, error: 'La autorización corresponde a otra operación o versión. Relee el estado antes de conectar.' });
+        setScope({ key, error: 'La autorización corresponde a otra operación. Cierra y vuelve a abrir el inicio de sesión.' });
         return;
       }
       setScope({ key, request });
     }).catch(() => {
-      if (alive && current.current === key) setScope({ key, error: 'No se pudo acreditar el ámbito de autenticación de esta operación. Relee permisos y estado.' });
+      if (alive && current.current === key) setScope({ key, error: 'No se pudo preparar el inicio de sesión de esta operación. Inténtalo de nuevo.' });
     });
     return () => { alive = false; };
   }, [api, permitted, operation.id, key, retry]);
@@ -53,25 +53,24 @@ export function AuthOperationPanel({ operation, allowed, onRefreshed }: Props) {
       setVerified({ identity, version: value.version });
     } catch {
       if (current.current === expectedKey) setScope(previous => ({ ...previous, key: expectedKey,
-        error: 'La cuenta se verificó, pero no se pudo releer la operación exacta. Relee el estado antes de reanudar.' }));
+        error: 'La cuenta se verificó, pero no pudimos actualizar la operación. Pulsa «Releer operación» y después «Reanudar».' }));
     } finally { if (current.current === expectedKey) setReading(false); }
   }, [api, permitted, reading, key, operation, identity, onRefreshed]);
   const request = permitted && scope?.key === key ? scope.request : undefined;
   const error = scope?.key === key ? scope.error : undefined;
-  return <section aria-label="Autenticación de la operación">
-    <h4>Autenticar la cuenta principal</h4>
-    {!allowed ? <p>No se acreditó permiso para conectar la cuenta de esta operación.</p> : null}
-    {permitted && !scope ? <p role="status">Leyendo autorización de la operación…</p> : null}
-    {error ? <><p role="alert">{error}</p>
-      <ActionButton label="Releer autorización de conexión" disabled={!permitted || reading} done={false} announceError={false}
+  return <section aria-label="Autenticación de la operación" className="grid gap-2">
+    <p className="m-0 text-sm">Falta iniciar sesión para que la operación pueda seguir.</p>
+    {!allowed ? <p className="m-0 text-sm">Tu permiso no permite conectar la cuenta de esta operación.</p> : null}
+    {permitted && !scope ? <p role="status" className="m-0 text-sm text-muted">Preparando el inicio de sesión…</p> : null}
+    {error ? <><p role="alert" className="m-0 text-sm">{error}</p>
+      <ActionButton label="Reintentar" disabled={!permitted || reading} done={false} announceError={false}
         action={() => { setRetry(value => value + 1); }} /></> : null}
-    {request ? <Button size="sm" variant="primary" disabled={open} onClick={() => { setOpen(true); }}>Iniciar sesión</Button> : null}
-    <ProviderSignInDialog open={open && !!request} providerId={request?.provider_id} description={request ? `${request.host_id} · ${request.account_id}` : undefined}
+    {request ? <Button variant="primary" disabled={open} onClick={() => { setOpen(true); }}>Iniciar sesión</Button> : null}
+    <ProviderSignInDialog open={open && !!request} providerId={request?.provider_id}
       onClose={() => { setOpen(false); }}>
       {request ? <ProviderAuthPanel request={request} client={api} autoStart onAuthenticated={() => { setOpen(false); void reread(); }} /> : null}
     </ProviderSignInDialog>
-    {reading ? <p role="status">Releyendo la operación después de verificar la cuenta…</p> : null}
-    {allowed && verified?.identity === identity ? <p role="status">Cuenta verificada. Operación releída en versión {verified.version}.
-      Revisa los pasos y usa «Reanudar operación» con su lectura actual.</p> : null}
+    {reading ? <p role="status" className="m-0 text-sm text-muted">Verificamos la cuenta y actualizamos la operación…</p> : null}
+    {allowed && verified?.identity === identity ? <p role="status" className="m-0 text-sm">Cuenta verificada. Ya puedes pulsar «Reanudar» para que la operación siga.</p> : null}
   </section>;
 }

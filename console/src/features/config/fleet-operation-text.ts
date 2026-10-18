@@ -1,5 +1,4 @@
 import type { FleetOperation, FleetOperationPreview } from '@cauce/protocol/fleet-operation';
-import { FLEET_ACTION_LABELS } from './agent-lifecycle-model';
 
 export const STATUS = { queued: 'En cola', running: 'En ejecución', awaiting_auth: 'Esperando autenticación',
   cancelling: 'Cancelación en curso', cancelled: 'Cancelada', failed: 'Fallida', succeeded: 'Completada' };
@@ -29,11 +28,163 @@ const TABLES: Record<string, string> = { agent_profiles: 'perfil del agente', ag
   terminal_sessions: 'sesiones de terminal', connection_leases: 'conexiones activas', terminal_control_holds: 'controles de terminal',
   agent_profiles_history: 'historial del equipo' };
 
-/** One line per operation for history lists: action, status and, when it failed, where and why. */
+export type OperationTone = 'ok' | 'info' | 'warn' | 'danger' | 'neutral';
+
+export interface OperationStatusMeta { label: string; tone: OperationTone; attention: boolean; finished: boolean }
+
+export const OPERATION_STATUS_META: Record<FleetOperation['status'], OperationStatusMeta> = {
+  queued: { label: 'En cola', tone: 'neutral', attention: true, finished: false },
+  running: { label: 'En curso', tone: 'info', attention: true, finished: false },
+  awaiting_auth: { label: 'Esperando tu acción', tone: 'warn', attention: true, finished: false },
+  cancelling: { label: 'Cancelando', tone: 'warn', attention: true, finished: false },
+  failed: { label: 'Falló', tone: 'danger', attention: true, finished: true },
+  cancelled: { label: 'Cancelada', tone: 'neutral', attention: false, finished: true },
+  succeeded: { label: 'Terminada', tone: 'ok', attention: false, finished: true },
+};
+
+export function operationStatusMeta(operation: FleetOperation): OperationStatusMeta {
+  return OPERATION_STATUS_META[operation.status];
+}
+
+export function operationTargetName(operation: FleetOperation): string {
+  const target = operation.target;
+  if (target.resource === 'agent') return target.alias;
+  if (target.resource === 'room') return target.room_id;
+  return target.tenant_id;
+}
+
+const AGENT_VERB: Record<FleetOperation['kind'], string> = {
+  create: 'Preparar a', update: 'Actualizar a', start: 'Iniciar a', stop: 'Detener a',
+  retire: 'Retirar a', restore: 'Restaurar a', purge: 'Eliminar definitivamente a',
+};
+const GROUP_VERB: Record<FleetOperation['kind'], string> = {
+  create: 'Preparar el grupo', update: 'Actualizar el grupo', start: 'Iniciar el grupo', stop: 'Detener el grupo',
+  retire: 'Retirar el grupo', restore: 'Restaurar el grupo', purge: 'Eliminar definitivamente el grupo',
+};
+const SPACE_VERB: Record<FleetOperation['kind'], string> = {
+  create: 'Preparar el espacio', update: 'Actualizar el espacio', start: 'Iniciar el espacio', stop: 'Detener el espacio',
+  retire: 'Retirar el espacio', restore: 'Restaurar el espacio', purge: 'Eliminar definitivamente el espacio',
+};
+
+/** Human title of an operation: «Preparar a Hades en server2», «Retirar a Teseo». */
+export function operationTitle(operation: FleetOperation, hostId?: string): string {
+  const target = operation.target;
+  const name = operationTargetName(operation);
+  const base = target.resource === 'agent' ? `${AGENT_VERB[operation.kind]} ${name}`
+    : target.resource === 'room' ? `${GROUP_VERB[operation.kind]} ${name}`
+      : `${SPACE_VERB[operation.kind]} ${name}`;
+  return hostId ? `${base} en ${hostId}` : base;
+}
+
+export interface OperationErrorHuman { message: string; next: string }
+
+const ERROR_NEXT: Record<NonNullable<FleetOperation['error']>['code'], string> = {
+  PROVIDER_AUTH_REQUIRED: 'Inicia sesión para continuar.',
+  STEP_FAILED: 'Reintenta desde el paso que falló; si se repite, cancela y revisa la computadora.',
+  HOST_UNAVAILABLE: 'Espera a que la computadora vuelva y reintenta, o cancela.',
+  AUTHORITY_REVOKED: 'Cancela y vuelve a lanzarla con un permiso vigente.',
+  REVISION_CONFLICT: 'Cancela y vuelve a lanzarla con la configuración actual.',
+  DEPENDENCIES_PRESENT: 'Resuelve las dependencias que quedan y reintenta.',
+  UNSUPPORTED_RUNTIME: 'Cancela: este agente no admite esta operación por esta vía.',
+  VERIFICATION_FAILED: 'Reintenta; si se repite, revisa la computadora del agente.',
+  CANCELLED: '',
+};
+
+/** Human message and next action for an operation error. The raw code never belongs here. */
+export function operationErrorHuman(error: NonNullable<FleetOperation['error']>): OperationErrorHuman {
+  const fallback = ERRORS[error.code];
+  if (error.code === 'STEP_FAILED' && !error.retryable) {
+    return { message: fallback, next: 'No se puede reintentar: cancela y lanza una operación nueva.' };
+  }
+  return { message: fallback, next: ERROR_NEXT[error.code] };
+}
+
+export function stepProgress(operation: FleetOperation): { current: number; total: number; label?: string } {
+  const total = operation.steps.length;
+  const active = operation.steps.find((step) => step.status === 'running' || step.status === 'waiting' || step.status === 'failed');
+  const done = operation.steps.filter((step) => step.status === 'succeeded' || step.status === 'compensated').length;
+  const current = active ? operation.steps.indexOf(active) + 1 : Math.min(done + 1, Math.max(total, 1));
+  return { current: total ? current : 0, total, label: active ? STEPS[active.name] : undefined };
+}
+
+const REMOVED_NOUN: Record<string, { one: string; many: string }> = {
+  container: { one: 'el contenedor', many: 'contenedores' },
+  volume: { one: 'el volumen', many: 'volúmenes' },
+  directory: { one: 'el directorio', many: 'directorios' },
+  network: { one: 'la red', many: 'redes' },
+};
+
+/** Physical outcome in words: «Borró el contenedor cauce-x y 2 volúmenes». */
+export function physicalResult(operation: FleetOperation): string | undefined {
+  const removed = operation.steps.flatMap((step) => step.evidence?.removed ?? []);
+  const purgeStep = operation.steps.find((step) => step.name === 'purge');
+  if (!removed.length) {
+    if (operation.kind === 'purge' && operation.status === 'succeeded') {
+      return purgeStep?.evidence?.removed
+        ? 'No borró contenedores ni volúmenes.'
+        : 'Terminó sin detallar qué recursos borró.';
+    }
+    return undefined;
+  }
+  const byType = new Map<string, string[]>();
+  for (const item of removed) byType.set(item.type, [...(byType.get(item.type) ?? []), item.name]);
+  const parts = [...byType.entries()].map(([type, names]) => {
+    const noun = REMOVED_NOUN[type] ?? { one: 'el recurso', many: 'recursos' };
+    return names.length === 1 ? `${noun.one} ${names[0]}` : `${String(names.length)} ${noun.many}`;
+  });
+  const joined = parts.length > 1 ? `${parts.slice(0, -1).join(', ')} y ${parts.at(-1) ?? ''}` : parts[0];
+  return `Borró ${joined}.`;
+}
+
+/** One sentence that says what happened or what is missing. */
+export function operationHeadline(operation: FleetOperation, hostId?: string): string {
+  const title = operationTitle(operation, hostId);
+  const progress = stepProgress(operation);
+  if (operation.status === 'awaiting_auth') {
+    return operation.target.resource === 'agent'
+      ? `${operationTargetName(operation)} está esperando que inicies sesión en su proveedor.`
+      : 'Está esperando que inicies sesión en el proveedor.';
+  }
+  if (operation.status === 'queued') return `${title} está en cola. Empezará en cuanto el ejecutor tenga turno.`;
+  if (operation.status === 'running') {
+    return progress.total
+      ? `${title} está en curso: paso ${String(progress.current)} de ${String(progress.total)}${progress.label ? ` · ${progress.label}` : ''}.`
+      : `${title} está en curso.`;
+  }
+  if (operation.status === 'cancelling') return `Cancelando: ${title.charAt(0).toLowerCase()}${title.slice(1)}.`;
+  if (operation.status === 'cancelled') return `${title} se canceló. No se siguieron aplicando pasos.`;
+  if (operation.status === 'succeeded') {
+    const physical = physicalResult(operation);
+    return physical ? `${title} terminó bien. ${physical}` : `${title} terminó bien.`;
+  }
+  const error = operation.error;
+  if (error) {
+    const human = operationErrorHuman(error);
+    return `Falló${error.step ? ` en ${STEPS[error.step]}` : ''}: ${human.message} ${human.next}`.trim();
+  }
+  return `${title}: ${OPERATION_STATUS_META[operation.status].label}.`;
+}
+
+export function needsAttention(operation: FleetOperation): boolean {
+  return OPERATION_STATUS_META[operation.status].attention;
+}
+
+export function isFinished(operation: FleetOperation): boolean {
+  return operation.status === 'succeeded' || operation.status === 'cancelled';
+}
+
+export function partitionOperations(operations: readonly FleetOperation[]): { attention: FleetOperation[]; finished: FleetOperation[] } {
+  return {
+    attention: operations.filter((operation) => needsAttention(operation)),
+    finished: operations.filter((operation) => isFinished(operation)),
+  };
+}
+
+/** One line per operation for history lists: human title, state and, when it failed, why. */
 export function operationSummary(operation: FleetOperation): string {
   const error = operation.error;
-  return `${FLEET_ACTION_LABELS[operation.kind]} · ${STATUS[operation.status]}`
-    + (error && operation.status === 'failed' ? ` · ${error.step ? `${STEPS[error.step]}: ` : ''}${ERRORS[error.code]}` : '');
+  return `${operationTitle(operation)} · ${OPERATION_STATUS_META[operation.status].label}`
+    + (error && operation.status === 'failed' ? ` · ${operationErrorHuman(error).message}` : '');
 }
 
 export function purgeEntries(preview: FleetOperationPreview, action: 'delete' | 'preserve' | 'blocked'): string[] {

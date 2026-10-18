@@ -40,7 +40,7 @@ describe('operation-scoped provider authentication', () => {
     http.post(`${operationPath}/resume`, () => { resume(); return HttpResponse.json({}); }));
     renderWithApi(<AuthOperationPanel operation={operation} allowed onRefreshed={refreshed} />);
     await authenticate();
-    expect(await screen.findByText(/Operación releída en versión 3/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Cuenta verificada\. Ya puedes pulsar «Reanudar»/i)).toBeInTheDocument();
     expect(posted).toEqual(scope);
     expect(refreshed).toHaveBeenCalledWith({ ...operation, version: 3 });
     expect(resume).not.toHaveBeenCalled();
@@ -65,9 +65,9 @@ describe('operation-scoped provider authentication', () => {
       login(); const refreshed = vi.fn(); server.use(http.get(operationPath, () => HttpResponse.json({ ...operation, ...patch })));
       renderWithApi(<AuthOperationPanel operation={operation} allowed onRefreshed={refreshed} />);
       await authenticate();
-      expect(await screen.findByRole('alert')).toHaveTextContent(/no se pudo releer la operación exacta/i);
+      expect(await screen.findByRole('alert')).toHaveTextContent(/no pudimos actualizar la operación/i);
       expect(refreshed).not.toHaveBeenCalled();
-      expect(screen.queryByText(/Operación releída en versión/i)).toBeNull();
+      expect(screen.queryByText(/Cuenta verificada/i)).toBeNull();
     });
   it('ignores a delayed scope from the previous version and sanitizes backend denial', async () => {
     let release: (() => void) | undefined;
@@ -81,9 +81,9 @@ describe('operation-scoped provider authentication', () => {
     await waitFor(() => { expect(reads).toBe(1); });
     view.rerender(<ApiProvider api={testApi}><AuthOperationPanel operation={{ ...operation, version: 3 }} allowed onRefreshed={vi.fn()} /></ApiProvider>);
     release?.();
-    expect(await screen.findByRole('alert')).toHaveTextContent(/otra operación o versión/i);
-    fireEvent.click(screen.getByRole('button', { name: 'Releer autorización de conexión' }));
-    expect(await screen.findByRole('alert')).toHaveTextContent(/No se pudo acreditar el ámbito/i);
+    expect(await screen.findByRole('alert')).toHaveTextContent(/corresponde a otra operación/i);
+    fireEvent.click(screen.getByRole('button', { name: 'Reintentar' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(/No se pudo preparar el inicio de sesión/i);
     await waitFor(() => { expect(screen.queryByRole('button', { name: 'Iniciar sesión' })).toBeNull(); });
     expect(document.body.textContent).not.toContain('PRIVATE_PROFILE_LOCATOR');
   });
@@ -101,7 +101,7 @@ describe('operation-scoped provider authentication', () => {
     expect(await screen.findByRole('button', { name: 'Verificar conexión' })).toBeEnabled();
     expect(cancelled).not.toHaveBeenCalled(); expect(scopes).toHaveBeenCalledOnce();
     fireEvent.click(screen.getByRole('button', { name: 'Verificar conexión' }));
-    await screen.findByText(/Operación releída en versión 4/i);
+    await screen.findByText(/Cuenta verificada\. Ya puedes pulsar «Reanudar»/i);
     expect(refreshed).toHaveBeenCalledWith({ ...operation, version: 4 });
   });
 });
