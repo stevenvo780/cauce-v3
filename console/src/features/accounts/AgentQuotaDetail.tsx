@@ -26,7 +26,9 @@ export function AgentQuotaDetail({ tenant, alias, compact = false }: { tenant: s
     {!compact && unavailableTarget !== null ? <p className="m-0 text-xs text-muted">{unavailableTarget}</p> : null}
     {!compact && quotas.error ? <ErrorNotice failure={quotaReadFailure(quotas.error, 'No se pudo leer la cuota de la cuenta. Relee la cuota del agente.')} /> : null}
     {!compact && accounts.map(account => <QuotaAccountCard key={account.id} account={quotas.error ? failedQuotaRead(account) : account} pinned={false} />)}
-    {!compact && quotas.data && !quotas.error && !accounts.length && noReader === null ? <p className="m-0 text-xs text-muted">No hay una cuenta vinculada con cuota disponible para esta sesión.</p> : null}
+    {!compact && quotas.data && !quotas.error && !accounts.length && noReader === null && snapshot.data ? <p className="m-0 text-xs text-muted">{snapshot.data.binding
+      ? `Cuenta ${snapshot.data.binding.account_id} vinculada, sin datos de cuota disponibles para esta sesión.`
+      : 'No hay una cuenta vinculada con cuota disponible para esta sesión.'}</p> : null}
     {!compact ? <AgentQuotaReader key={`${tenant}/${alias}`} tenant={tenant} alias={alias} quota={snapshot} /> : null}
   </section>;
 }
