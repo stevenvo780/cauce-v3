@@ -1,14 +1,16 @@
 import { useEffect, useMemo, useState } from 'react';
 import { KeyRound, Plus, Trash2 } from 'lucide-react';
-import type { ConfigMutation, ConfigurationSnapshot } from '../../api/types';
+import type { ConfigurationSnapshot } from '../../api/types';
 import { Button, Notice, Pill, PREVIEW } from '../../components/kit';
 import { HINT } from './config-ui';
 import {
-  buildAgentExtensionsMutation, catalogEntry, EXTENSION_CATALOG, extensionRisk, extensionSummary,
-  readAgentExtensions, readHostAllowed, RISK_LABEL, RISK_TONE, sshPublicInfo, validateDraft,
+  catalogEntry, EXTENSION_CATALOG, extensionRisk, extensionSummary,
+  readAgentExtensions, readHostAllowed, RISK_LABEL, RISK_TONE, validateDraft,
   type AgentExtension, type ExtensionType,
 } from './ampliaciones';
-import { useSnapshotRunner } from './use-snapshot-runner';
+import { AgentFleetPreview, AgentFleetOperation } from './AgentFleetOperation';
+import { useAgentExtensions } from './use-agent-extensions';
+import './agent-lifecycle.css';
 
 const EMPTY_FIELDS: Record<string, string> = {};
 
@@ -59,10 +61,9 @@ export function AmpliacionesTab({ tenantId, alias, snapshot, hostId, onReloaded,
   tenantId: string; alias: string; snapshot: ConfigurationSnapshot; hostId?: string | undefined;
   onReloaded: (snapshot: ConfigurationSnapshot) => void; onDirtyChange?: (dirty: boolean) => void;
 }) {
-  const { runner, current } = useSnapshotRunner(snapshot, onReloaded, `agent-extensions:${tenantId}/${alias}`);
-  const { known, published } = readAgentExtensions(current, tenantId, alias);
-  const row = current.agents?.find((item) => item.tenant_id === tenantId && item.alias === alias);
-  const allowed = readHostAllowed(current, hostId);
+  const { known, published } = readAgentExtensions(snapshot, tenantId, alias);
+  const allowed = readHostAllowed(snapshot, hostId);
+  const target = useMemo(() => ({ resource: 'agent' as const, tenant_id: tenantId, alias }), [tenantId, alias]);
   const [draft, setDraft] = useState<AgentExtension[] | undefined>();
   const [adding, setAdding] = useState<ExtensionType | undefined>();
   const [fields, setFields] = useState<Partial<Record<string, string>>>(EMPTY_FIELDS);
@@ -75,13 +76,20 @@ export function AmpliacionesTab({ tenantId, alias, snapshot, hostId, onReloaded,
 
   const hasFullControl = extensions.some((ext) => ext.type === 'full_control');
   const aliasOk = !hasFullControl || typedAlias === alias;
-  const mutation: ConfigMutation | undefined = useMemo(
-    () => (dirty ? buildAgentExtensionsMutation(tenantId, alias, extensions) : undefined),
-    [dirty, tenantId, alias, extensions]);
-  const disabled = !runner.canWrite || runner.busy;
+  const operational = useAgentExtensions({ snapshot, target, extensions, known, dirty,
+    fullControlConfirmed: aliasOk, onReloaded,
+    onApplied: () => {
+      setDraft(undefined); setTypedAlias(''); setAdding(undefined); setFields({}); setFormError(undefined);
+    },
+  });
+  const { flow } = operational;
+  const operation = flow.operation?.target.resource === 'agent'
+    && flow.operation.target.tenant_id === tenantId && flow.operation.target.alias === alias ? flow.operation : undefined;
+  const disabled = !operational.canWrite || operational.busy;
+  const controlsBusy = operational.sending || operational.previewing || operational.reloading || flow.busy;
 
-  function edit(next: AgentExtension[]) { setDraft(next); runner.clear(); }
-  function startAdd(type: ExtensionType) { setAdding(type); setFields({}); setFormError(undefined); runner.clear(); }
+  function edit(next: AgentExtension[]) { setDraft(next); operational.clear(); }
+  function startAdd(type: ExtensionType) { setAdding(type); setFields({}); setFormError(undefined); operational.clear(); }
   function confirmAdd() {
     if (!adding) return;
     const result = validateDraft(adding, fields);
@@ -100,7 +108,7 @@ export function AmpliacionesTab({ tenantId, alias, snapshot, hostId, onReloaded,
     setAdding(undefined); setFields({}); setFormError(undefined);
   }
 
-  return <div className="grid gap-4">
+  return <div className="agent-lifecycle-panel grid gap-4">
     <p className="m-0 text-[13px] leading-relaxed text-fg-2">
       Sin ampliaciones, el contenedor nace con el perfil más seguro: raíz de solo lectura, capacidades mínimas,
       una sola red y 128 procesos. Cada ampliación añade un permiso con nombre a este agente.
@@ -111,7 +119,7 @@ export function AmpliacionesTab({ tenantId, alias, snapshot, hostId, onReloaded,
     </Notice>
     {!published ? <Notice tone="info" role="note">
       El servidor aún no publica las ampliaciones de este agente en esta lectura. Puedes preparar el borrador;
-      la vista previa la aceptará el gateway cuando la mutación <code>agent_extensions</code> esté disponible.
+      relee el inventario antes de previsualizar y aplicar la operación de flota.
     </Notice> : null}
     {allowed.published && hostId ? <p className={HINT}>
       El ordenador admite: {allowed.allowed.types.length ? allowed.allowed.types.join(', ') : 'ningún tipo por ahora'}.
@@ -119,12 +127,12 @@ export function AmpliacionesTab({ tenantId, alias, snapshot, hostId, onReloaded,
     </p> : hostId ? <p className={HINT}>El ordenador aún no publica qué ampliaciones admite; la vista previa del servidor lo decide.</p> : null}
 
     <section aria-label={`Ampliaciones de ${tenantId}/${alias}`} className="grid gap-2">
-      <h3 className="m-0 text-sm font-semibold">Ampliaciones activas ({extensions.length})</h3>
+      <h3 className="m-0 text-sm font-semibold">{dirty ? 'Borrador de ampliaciones' : 'Ampliaciones activas'} ({extensions.length})</h3>
       {extensions.length ? <ul className="m-0 grid list-none gap-2 p-0">
         {extensions.map((ext, index) => {
           const entry = catalogEntry(ext.type);
           const risk = extensionRisk(ext);
-          const ssh = ext.type === 'ssh' ? sshPublicInfo(ext, row) : undefined;
+          const ssh = ext.type === 'ssh' ? operational.sshPublic : undefined;
           return <li key={`${ext.type}-${String(index)}`} className="grid gap-2 rounded-lg border border-line bg-surface px-3 py-2.5">
             <div className="flex flex-wrap items-center gap-2">
               <strong className="text-[13px]">{entry.label}</strong>
@@ -135,17 +143,19 @@ export function AmpliacionesTab({ tenantId, alias, snapshot, hostId, onReloaded,
                 <Trash2 size={12} aria-hidden="true" />Quitar</Button>
             </div>
             <p className="m-0 text-xs text-fg-2">{entry.allows}.</p>
-            {ssh ? <div className="grid gap-1 rounded-md bg-subtle px-2.5 py-2 text-xs">
+            {ext.type === 'ssh' ? <div className="grid gap-1 rounded-md bg-subtle px-2.5 py-2 text-xs">
               <span className="inline-flex items-center gap-1.5 font-medium"><KeyRound size={12} aria-hidden="true" />Clave pública SSH</span>
-              {ssh.publicKey ? <>
-                <code className="block break-all whitespace-pre-wrap">{ssh.publicKey}</code>
-                {ssh.fingerprint ? <span>Huella: <code className="break-all">{ssh.fingerprint}</code></span> : null}
+              {ssh ? <>
+                <code className="block break-all whitespace-pre-wrap">{ssh.public_key}</code>
+                <span>Huella: <code className="break-all">{ssh.fingerprint}</code></span>
                 <span className="text-muted">Añade la clave pública al <code>authorized_keys</code> del destino. La privada nunca sale del volumen de perfil.</span>
-              </> : <span className="text-muted">La clave pública y su huella aparecerán aquí cuando <code>prepare</code> genere la clave en el volumen de perfil.</span>}
+              </> : <span className="text-muted">La clave pública y su huella aparecerán aquí cuando una operación completada acredite estas ampliaciones.</span>}
             </div> : null}
           </li>;
         })}
-      </ul> : <p className="m-0 text-[13px] text-muted">Este agente no tiene ampliaciones: su contenedor queda exactamente con el perfil seguro por defecto.</p>}
+      </ul> : <p className="m-0 text-[13px] text-muted">{dirty
+        ? 'Al aplicar este borrador se retirarán todas las ampliaciones y se recreará el contenedor con el perfil seguro por defecto.'
+        : 'No hay ampliaciones guardadas para este agente.'}</p>}
     </section>
 
     <section aria-label="Añadir ampliación" className="grid gap-3 rounded-lg border border-line bg-subtle p-3">
@@ -164,7 +174,7 @@ export function AmpliacionesTab({ tenantId, alias, snapshot, hostId, onReloaded,
       {adding ? <div className="grid gap-3 rounded-lg border border-line bg-surface p-3" aria-label={`Formulario de ${catalogEntry(adding).label}`}>
         <h4 className="m-0 text-[13px] font-semibold">{catalogEntry(adding).label} · {catalogEntry(adding).riskLabel}</h4>
         <DraftFields type={adding} fields={fields} disabled={disabled}
-          onChange={(patch) => { setFields((previous) => ({ ...previous, ...patch })); runner.clear(); }} />
+          onChange={(patch) => { setFields((previous) => ({ ...previous, ...patch })); operational.clear(); }} />
         {adding === 'full_control' ? <Notice tone="danger" role="alert">
           Control total: raíz escribible y sin cap-drop. Solo para agentes de infraestructura.
         </Notice> : null}
@@ -178,23 +188,37 @@ export function AmpliacionesTab({ tenantId, alias, snapshot, hostId, onReloaded,
 
     {hasFullControl ? <label className="grid gap-1 text-[13px]">Escribe el alias <code>{alias}</code> para confirmar el control total
       <input value={typedAlias} autoComplete="off" disabled={disabled}
-        onChange={(event) => { setTypedAlias(event.target.value); runner.clear(); }} /></label> : null}
+        onChange={(event) => { setTypedAlias(event.target.value); operational.clear(); }} /></label> : null}
     {!aliasOk ? <p className={HINT}>Escribe exactamente el alias para habilitar la vista previa con control total.</p> : null}
 
-    {runner.notice ? <Notice role={runner.notice.tone === 'error' ? 'alert' : 'status'}
-      tone={runner.notice.tone === 'error' ? 'danger' : 'info'}>{runner.notice.text}</Notice> : null}
+    {operational.error ? <Notice role="alert" tone="danger">{operational.error}</Notice> : null}
     <div className="flex flex-wrap items-center justify-between gap-3">
-      <span className="text-xs text-muted">Revisión esperada: {String(runner.expectedRevision ?? 'desconocida')}</span>
+      <span className="text-xs text-muted">Revisión esperada: {String(snapshot.revision ?? 'desconocida')}</span>
       <div className="flex flex-wrap gap-2">
-        {dirty ? <Button disabled={disabled} onClick={() => { setDraft(undefined); setTypedAlias(''); runner.clear(); }}>Descartar borrador</Button> : null}
-        <Button disabled={disabled || !mutation || !aliasOk}
-          onClick={() => { if (mutation) void runner.run(mutation, true); }}>Vista previa</Button>
-        <Button variant="primary" disabled={disabled || !mutation || !aliasOk || !runner.isValidated(mutation)}
-          onClick={() => { if (mutation) void runner.run(mutation, false); }}>Aplicar y recrear</Button>
+        {dirty ? <Button disabled={disabled} onClick={() => { setDraft(undefined); setTypedAlias(''); operational.clear(); }}>Descartar borrador</Button> : null}
+        <Button disabled={!published || !operational.canPreview} aria-busy={operational.previewing}
+          title={published ? operational.previewBlock : 'Relee las ampliaciones guardadas antes de continuar.'}
+          onClick={() => { if (published) void operational.preview(); }}>Vista previa</Button>
+        <Button variant="primary" disabled={!published || !operational.canEnqueue} aria-busy={operational.sending}
+          title={published ? operational.enqueueBlock : 'Relee las ampliaciones guardadas antes de continuar.'}
+          onClick={() => { if (published) void operational.enqueue(); }}>{operational.canRetry ? 'Reintentar envío' : 'Aplicar y recrear'}</Button>
       </div>
     </div>
-    {!runner.canWrite ? <Notice role="note">Edición de ampliaciones en solo lectura: falta permiso acreditado de configuración.</Notice> : null}
-    {runner.preview ? <pre className={PREVIEW} aria-label="Vista previa de ampliaciones">{runner.preview}</pre> : null}
+    {!operational.canWrite ? <Notice role="note">Edición de ampliaciones en solo lectura: falta permiso acreditado de configuración.</Notice> : null}
+    {operational.previewReceipt ? <AgentFleetPreview preview={operational.previewReceipt} /> : null}
+    {operational.request ? <details><summary>Solicitud de ampliaciones previsualizada</summary>
+      <pre className={PREVIEW} aria-label="Solicitud de ampliaciones">{JSON.stringify(operational.request, null, 2)}</pre>
+    </details> : operational.submittedRequest ? <details><summary>Solicitud de ampliaciones enviada</summary>
+      <pre className={PREVIEW} aria-label="Solicitud de ampliaciones enviada">{JSON.stringify(operational.submittedRequest, null, 2)}</pre>
+    </details> : null}
+    {operation ? <>
+      <AgentFleetOperation operation={operation} busy={controlsBusy} intended="update" stale={flow.stale}
+        current={operational.canWrite && operational.available && !flow.readError}
+        control={(action) => { void flow.control(action); }} onAuthRefreshed={(value) => { flow.accept(value); }} />
+      <div><Button disabled={controlsBusy} onClick={() => { void flow.refresh(); }}>Releer operación</Button></div>
+    </> : null}
+    <div><Button disabled={controlsBusy} aria-busy={operational.reloading}
+      onClick={() => { void operational.reload(); }}>Releer inventario</Button></div>
     <p className={HINT}>Quitar una ampliación también recrea el contenedor al aplicar.</p>
   </div>;
 }

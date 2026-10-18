@@ -1,7 +1,8 @@
+import { AgentExtensionsSchema, ExtensionsAllowedSchema, type ExtensionsAllowed, type ExtensionType } from '@cauce/protocol/agent-extensions';
 import type { ConfigMutation, ConfigurationSnapshot } from '../../api/types';
 import type { Tone } from '../../status-tone';
 
-export type ExtensionType = 'mount' | 'network' | 'resources' | 'gpu' | 'ssh' | 'docker' | 'browser' | 'mcp' | 'tools' | 'full_control';
+export type { ExtensionType };
 export type RiskLevel = 'bajo' | 'medio' | 'alto' | 'maximo';
 
 export interface AgentExtension {
@@ -21,17 +22,9 @@ export interface AgentExtension {
   args?: string[];
   env?: string[];
   packages?: string[];
-  public_key?: string;
-  fingerprint?: string;
-  ssh_public_key?: string;
-  ssh_fingerprint?: string;
 }
 
-export interface HostExtensionsAllowed {
-  types: ExtensionType[];
-  mount_roots: string[];
-  networks: string[];
-}
+export type HostExtensionsAllowed = ExtensionsAllowed;
 
 export interface CatalogEntry {
   type: ExtensionType;
@@ -61,7 +54,7 @@ export const EXTENSION_CATALOG: CatalogEntry[] = [
   { type: 'resources', label: 'Recursos', allows: 'Más memoria, CPU o procesos que el perfil base', riskLabel: 'Bajo', tone: 'ok' },
   { type: 'gpu', label: 'GPU', allows: 'Acceso a todas las GPU del ordenador (--gpus all)', riskLabel: 'Medio', tone: 'warn' },
   { type: 'ssh', label: 'SSH saliente', allows: 'Clave propia del agente para entrar en otros equipos; la privada nunca sale del perfil', riskLabel: 'Alto', tone: 'danger' },
-  { type: 'docker', label: 'Docker', allows: 'Consultar o controlar Docker del ordenador mediante un proxy propio con lista permitida', riskLabel: 'Alto (control equivale a root en el host)', tone: 'danger' },
+  { type: 'docker', label: 'Docker', allows: 'Leer los metadatos y el entorno de todos los contenedores del ordenador; con control, operar Docker mediante un proxy propio', riskLabel: 'Alto (control equivale a root en el host)', tone: 'danger' },
   { type: 'browser', label: 'Navegador', allows: 'Navegador Chromium propio o túnel SSH a un navegador remoto (CDP)', riskLabel: 'Medio', tone: 'warn' },
   { type: 'mcp', label: 'Servidor MCP', allows: 'Registrar un servidor MCP en la configuración del arnés, dentro del perfil', riskLabel: 'Según el MCP', tone: 'warn' },
   { type: 'tools', label: 'Herramientas', allows: 'Instalar paquetes npm o pip con versión fija, sin root, en el volumen de estado', riskLabel: 'Medio', tone: 'warn' },
@@ -73,17 +66,9 @@ export function catalogEntry(type: ExtensionType): CatalogEntry {
     ?? { type: 'mount', label: 'Montaje', allows: 'Montar una carpeta del ordenador dentro del contenedor', riskLabel: 'Medio', tone: 'warn' };
 }
 
-const KNOWN_TYPES = new Set<string>(EXTENSION_CATALOG.map((entry) => entry.type));
-
-function isExtension(item: unknown): item is AgentExtension {
-  if (typeof item !== 'object' || item === null) return false;
-  const type = (item as { type?: unknown }).type;
-  return typeof type === 'string' && KNOWN_TYPES.has(type);
-}
-
 export function parseExtensions(raw: unknown): { known: AgentExtension[]; published: boolean } {
-  if (!Array.isArray(raw)) return { known: [], published: false };
-  return { known: raw.filter(isExtension), published: true };
+  const result = AgentExtensionsSchema.safeParse(raw);
+  return result.success ? { known: result.data, published: true } : { known: [], published: false };
 }
 
 export function readAgentExtensions(snapshot: ConfigurationSnapshot, tenantId: string, alias: string): { known: AgentExtension[]; published: boolean } {
@@ -117,39 +102,9 @@ export function extensionSummary(ext: AgentExtension): string {
   }
 }
 
-function rowText(row: Record<string, unknown> | undefined, key: string): string | undefined {
-  const value = row?.[key];
-  return typeof value === 'string' ? value : undefined;
-}
-
-export function sshPublicInfo(ext: AgentExtension, row?: Record<string, unknown>): { publicKey?: string; fingerprint?: string } {
-  const publicKey = ext.public_key ?? ext.ssh_public_key ?? rowText(row, 'ssh_public_key') ?? rowText(row, 'sshPublicKey');
-  const fingerprint = ext.fingerprint ?? ext.ssh_fingerprint ?? rowText(row, 'ssh_fingerprint') ?? rowText(row, 'sshFingerprint');
-  return {
-    ...(publicKey ? { publicKey } : {}),
-    ...(fingerprint ? { fingerprint } : {}),
-  };
-}
-
-export function buildAgentExtensionsMutation(tenantId: string, alias: string, extensions: AgentExtension[]): ConfigMutation {
-  const mutation: ConfigMutation = { resource: 'agent_extensions', action: 'set', tenant_id: tenantId, alias, extensions };
-  return mutation;
-}
-
-function stringList(value: unknown): string[] {
-  return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
-}
-
 export function parseHostAllowed(raw: unknown): HostExtensionsAllowed {
-  if (typeof raw !== 'object' || raw === null) return { types: [], mount_roots: [], networks: [] };
-  const record = raw as Record<string, unknown>;
-  const typesRaw = record.types ?? record.allowed_types ?? record.extensions;
-  return {
-    types: Array.isArray(typesRaw)
-      ? typesRaw.filter((item): item is ExtensionType => typeof item === 'string' && KNOWN_TYPES.has(item)) : [],
-    mount_roots: stringList(record.mount_roots ?? record.mountRoots ?? record.roots),
-    networks: stringList(record.networks ?? record.allowed_networks ?? record.network_names),
-  };
+  const result = ExtensionsAllowedSchema.safeParse(raw);
+  return result.success ? result.data : { types: [], mount_roots: [], networks: [] };
 }
 
 export function readHostAllowed(snapshot: ConfigurationSnapshot, hostId: string | undefined, hostRaw?: unknown): { allowed: HostExtensionsAllowed; published: boolean } {
@@ -176,7 +131,7 @@ export function readHostAllowed(snapshot: ConfigurationSnapshot, hostId: string 
 export function buildHostExtensionsMutation(hostId: string, allowed: HostExtensionsAllowed): ConfigMutation {
   const mutation: ConfigMutation = {
     resource: 'host_extensions_allowed', action: 'set', host_id: hostId,
-    extensions_allowed: { types: allowed.types, mount_roots: allowed.mount_roots, networks: allowed.networks },
+    extensions_allowed: { ...allowed },
   };
   return mutation;
 }

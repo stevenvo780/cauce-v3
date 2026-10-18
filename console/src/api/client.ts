@@ -82,7 +82,7 @@ export class CauceApi {
       this.request<T>(path, init, options);
     Object.assign(this, systemClient(request), messagingClient(request), agentClient(request), contextRepositoryClient(request), nativeContextRepositoryClient(request));
     Object.assign(this, nativeAdminClient(request, () => this.authGeneration));
-    Object.assign(this, clientDelegationsClient(request), fleetOperationsClient(request), fleetHostsClient(request), providerAuthClient(request), peopleAdminClient(request), agentPreferencesClient(request));
+    Object.assign(this, clientDelegationsClient(request), fleetOperationsClient(request, () => this.authGeneration), fleetHostsClient(request), providerAuthClient(request), peopleAdminClient(request), agentPreferencesClient(request));
     Object.assign(this, companyClient(request), contextVersionsClient(request), myQuotasClient(request));
     Object.assign(this, hostEnrollmentClient(request), spaceBackupsClient(request, this.baseUrl));
   }

@@ -51,8 +51,13 @@ function exactReceipt(input: FleetOperationRequest, value: unknown, preview: boo
   return parsed.data;
 }
 
-export function fleetOperationsClient(request: RequestFn): FleetOperationsClient {
+export function fleetOperationsClient(request: RequestFn, authGeneration: () => number = () => 0): FleetOperationsClient {
   const path = '/v3/console/fleet/operations';
+  const verifyGeneration = (expected: number) => {
+    if (expected !== authGeneration()) {
+      throw new ApiError('La sesión cambió antes de enviar la operación. Reintentá desde la cuenta actual.', 409, 'session_changed');
+    }
+  };
   const control = async (action: 'cancel' | 'resume', id: string, version: number) => {
     const input = FleetOperationControlSchema.parse({ expected_version: version });
     return operationReceipt(await request(`${path}/${operationId(id)}/${action}`, { method: 'POST', body: JSON.stringify(input) }), id, version + 1);
@@ -85,13 +90,17 @@ export function fleetOperationsClient(request: RequestFn): FleetOperationsClient
       }
     },
     previewFleetOperation: async (input) => {
+      const generation = authGeneration();
       const validated = FleetOperationRequestSchema.parse(input);
       const hash = await fleetRequestHash(validated);
+      verifyGeneration(generation);
       return exactReceipt(validated, await request(`${path}/preview`, { method: 'POST', body: JSON.stringify(validated) }), true, hash) as FleetOperationPreview;
     },
     enqueueFleetOperation: async (input) => {
+      const generation = authGeneration();
       const validated = FleetOperationRequestSchema.parse(input);
       const hash = await fleetRequestHash(validated);
+      verifyGeneration(generation);
       const value = await request<unknown>(path, { method: 'POST', body: JSON.stringify(validated) });
       if (!value || typeof value !== 'object' || Array.isArray(value)) invalidReceipt();
       const envelope = value as Record<string, unknown>;

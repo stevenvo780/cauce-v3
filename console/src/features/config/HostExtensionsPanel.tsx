@@ -49,6 +49,12 @@ export function HostExtensionsPanel({ snapshot, hosts, onReloaded }: {
     setDraft({ ...allowed, [key]: linesToList(text) });
     runner.clear();
   }
+  function setDockerAccess(value: string) {
+    const policy = { ...allowed };
+    delete policy.docker_access;
+    setDraft(value === 'denied' ? policy : { ...policy, docker_access: value === 'control' ? ['read', 'control'] : ['read'] });
+    runner.clear();
+  }
 
   return <section aria-labelledby="permisos-ordenador" className="grid gap-3 rounded-xl border border-line bg-surface p-4">
     <div className="grid gap-0.5">
@@ -78,6 +84,26 @@ export function HostExtensionsPanel({ snapshot, hosts, onReloaded }: {
             <span className="inline-flex flex-wrap items-center gap-1.5">{entry.label} <Pill tone={entry.tone}>{entry.riskLabel}</Pill></span>
           </label>)}
         </div>
+      </fieldset>
+      <fieldset className="grid gap-2 rounded-lg border border-line p-3">
+        <legend className="text-[13px] font-medium">Permisos Docker</legend>
+        <label className="grid max-w-sm gap-1 text-[13px]">Acceso Docker permitido
+          <select value={allowed.docker_access?.includes('control') ? 'control' : allowed.docker_access?.includes('read') ? 'read' : 'denied'}
+            disabled={disabled} onChange={(event) => { setDockerAccess(event.target.value); }}>
+            <option value="denied">Sin acceso Docker</option>
+            <option value="read">Solo lectura</option>
+            <option value="control">Lectura y control</option>
+          </select>
+          <span className={HINT}>También debe estar admitido el tipo Docker. La lectura expone metadatos y entorno de todos los contenedores; el control equivale a root en el ordenador.</span>
+        </label>
+        <label className={CHECK_LABEL}>
+          <input type="checkbox" checked={allowed.docker_daemon_dedicated === true} disabled={disabled}
+            onChange={(event) => {
+              setDraft({ ...allowed, docker_daemon_dedicated: event.target.checked }); runner.clear();
+            }} />
+          El daemon Docker es exclusivo de esta empresa
+        </label>
+        <span className={HINT}>Márcalo solo si ese aislamiento existe realmente. En un daemon compartido se comprueban las empresas de los contenedores; para control se recomienda un daemon propio.</span>
       </fieldset>
       <div className="grid gap-3 sm:grid-cols-2">
         <label className="grid gap-1 text-[13px]">Raíces de montaje permitidas (una por línea)

@@ -21,6 +21,10 @@
       "types": "./src/configuration.ts",
       "import": "./dist/configuration.js"
     },
+    "./agent-extensions": {
+      "types": "./src/agent-extensions.ts",
+      "import": "./dist/agent-extensions.js"
+    },
     "./native-admin": {
       "types": "./src/native-admin.ts",
       "import": "./dist/native-admin.js"
