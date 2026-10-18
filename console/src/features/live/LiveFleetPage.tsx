@@ -81,7 +81,9 @@ export function LiveFleetPage() {
   const [filter, setFilter] = useState<ReadonlySet<LiveState>>(new Set());
   const [talkKey, setTalkKey] = useState<string | null>(null);
   const [moreOpen, setMoreOpen] = useState(false);
+  const [panelOpen, setPanelOpen] = useState(false);
   const narrow = useMediaQuery('(max-width: 760px)');
+  const showPanel = !narrow || panelOpen;
   const visitors = useMcpVisitors();
   const chat = useOfficeChat(talkKey, visitors);
 
@@ -214,7 +216,12 @@ export function LiveFleetPage() {
     <HudFreshness at={observedAt ?? null} loading={activity.loading} onRefresh={fleet.reload}
       interval={{ value: activityIntervalMs, onChange: fleet.setActivityIntervalMs, options: REFRESH_OPTIONS }} />
   );
-  const hud = (
+  const panelToggle = narrow ? (
+    <button type="button" aria-expanded={showPanel} onClick={() => { setPanelOpen((open) => !open); }} className={cn(HUD_BUTTON, HUD_TEXT, 'h-8 px-2 text-[10px]')}>
+      {showPanel ? 'Ocultar panel' : 'Mostrar panel'}
+    </button>
+  ) : null;
+  const hud = showPanel ? (
     <>
       <header className={cn(HUD_PANEL, 'pointer-events-auto flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1.5 p-1.5')}>
         <div className="flex items-center gap-1 [&_button]:text-[#94b0c2] [&_button:hover]:bg-[#333c57] [&_button:hover]:text-[#f4f4f4]">
@@ -254,9 +261,12 @@ export function LiveFleetPage() {
           )}
         </p>
         {narrow ? (
-          <button type="button" aria-expanded={moreOpen} onClick={() => { setMoreOpen(!moreOpen); }} className={cn(HUD_BUTTON, HUD_TEXT, 'ml-auto h-8 px-2 text-[10px]')}>
-            Estados <ChevronDown size={11} aria-hidden="true" className={moreOpen ? 'rotate-180' : undefined} />
-          </button>
+          <div className="ml-auto flex items-center gap-1">
+            <button type="button" aria-expanded={moreOpen} onClick={() => { setMoreOpen(!moreOpen); }} className={cn(HUD_BUTTON, HUD_TEXT, 'h-8 px-2 text-[10px]')}>
+              Estados <ChevronDown size={11} aria-hidden="true" className={moreOpen ? 'rotate-180' : undefined} />
+            </button>
+            {panelToggle}
+          </div>
         ) : (
           <>
             <div className="min-w-min flex-1">{states}</div>
@@ -272,6 +282,11 @@ export function LiveFleetPage() {
       </header>
       <HudAlerts items={urgent} selectedKey={selected?.key ?? null} onOpen={select} />
     </>
+  ) : (
+    <header className={cn(HUD_PANEL, 'pointer-events-auto flex min-w-0 items-center gap-2 p-1.5')}>
+      <h1 className={cn(HUD_TEXT, 'm-0 pl-1 text-[14px] text-[#ffcd75]')}>Oficina</h1>
+      <div className="ml-auto">{panelToggle}</div>
+    </header>
   );
 
   return (
@@ -317,6 +332,7 @@ export function LiveFleetPage() {
           speech={chat.speech}
           hues={directory.hues}
           hud={hud}
+          chrome={showPanel}
           now={now}
           talk={talkKey && chat.dialog && talking ? {
             id: talkKey,

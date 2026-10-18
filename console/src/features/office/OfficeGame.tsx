@@ -52,6 +52,8 @@ interface OfficeGameProps {
   hues?: ReadonlyMap<string, number>;
   /** The page's own bar: title, verdict, state counters; it rides on top of the game. */
   hud: ReactNode;
+  /** Map, controls, hint and hotbar. The phone page collapses them so the campus stays visible. */
+  chrome?: boolean;
   /** The page's wall clock, ms: it paces the campus plan as well as the relative times. */
   now: number;
 }
@@ -62,7 +64,7 @@ const PANEL_RESERVE = 224;
 const CONTROLS_RESERVE = 60;
 const optionId = (id: string) => `office-agent-${id.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
 
-export function OfficeGame({ agents, groups, selectedId, sheetOpen, highlight, onSelect, onDeselect, onSheet, label, onTalk, talk = null, speech, hues, hud, now }: OfficeGameProps) {
+export function OfficeGame({ agents, groups, selectedId, sheetOpen, highlight, onSelect, onDeselect, onSheet, label, onTalk, talk = null, speech, hues, hud, chrome = true, now }: OfficeGameProps) {
   const frameRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
@@ -332,7 +334,7 @@ export function OfficeGame({ agents, groups, selectedId, sheetOpen, highlight, o
 
       <p className="sr-only" aria-live="polite">{campus ? 'Estás en el campus.' : `Estás en ${slots.find((slot) => slot.id === level)?.name ?? 'un edificio'}.`}</p>
       <div ref={topRef} className="pointer-events-none absolute inset-x-2 top-2 z-10 flex flex-col items-stretch gap-1.5">{hud}</div>
-      <div className="pointer-events-none absolute right-2 z-10 flex flex-col items-end gap-1.5" style={{ top: topHeight + 12, bottom: bottomHeight + 12 }}>
+      {chrome ? <div className="pointer-events-none absolute right-2 z-10 flex flex-col items-end gap-1.5" style={{ top: topHeight + 12, bottom: bottomHeight + 12 }}>
         <CampusMap canvasRef={mapRef} open={showMap} engine={engine} level={level} stats={stats} onGo={go} kick={kick} />
         {narrow && !showTubes ? null : (
           <TubeFeed feed={feed} names={names} open={showTubes} now={now} onToggle={() => { setTubesOpen(!showTubes); }} onPick={(id) => { onSelect(id); }} />
@@ -356,16 +358,16 @@ export function OfficeGame({ agents, groups, selectedId, sheetOpen, highlight, o
             onToggleMaximized={toggleMaximized}
           />
         </div>
-      </div>
+      </div> : null}
       <div className="pointer-events-none absolute left-2 z-10 flex max-w-[calc(100%-4.5rem)] flex-col items-start gap-1.5" style={{ top: topHeight + 12 }}>
-        {hint && !talk ? <OfficeHint touch={coarse} onClose={dismissHint} /> : null}
+        {chrome && hint && !talk ? <OfficeHint touch={coarse} onClose={dismissHint} /> : null}
         {agents.length === 0 ? (
           <p className="pointer-events-auto m-0 max-w-xs border-2 border-[#0e0f17] bg-[#1a1c2c]/95 p-2.5 text-[12px] leading-snug text-[#c5d3dc]">
             No hay ningún agente en la oficina: ni configurado, ni con entregas abiertas, ni con lease reciente. Los edificios de cada grupo ya están en pie.
           </p>
         ) : null}
       </div>
-      {coarse && paseo ? (
+      {chrome && coarse && paseo ? (
         <div className="absolute left-2 z-10" style={{ bottom: bottomHeight + 12 }}>
           <DirectionPad onHold={(dir, held) => {
             if (held) engine.pad.add(dir); else engine.pad.delete(dir);
@@ -390,7 +392,7 @@ export function OfficeGame({ agents, groups, selectedId, sheetOpen, highlight, o
         </div>
       ) : null}
       <div ref={bottomRef} className="pointer-events-none absolute inset-x-2 bottom-2 z-10 flex justify-center">
-        {talk ? null : <Hotbar slots={slots} current={level} onGo={go} compact={narrow} />}
+        {talk || !chrome ? null : <Hotbar slots={slots} current={level} onGo={go} compact={narrow} />}
       </div>
       {talk ? <div className="contents">{talk.panel}</div> : null}
       <TalkPrompt buttonRef={promptRef} name={talkTo?.name ?? null} coarse={coarse} onTalk={() => { if (talkTo) (onTalk ?? onSelect)(talkTo.id); }} />
