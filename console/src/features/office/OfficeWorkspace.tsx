@@ -180,12 +180,22 @@ export function OfficeWorkspace({ campus, topology, agents, onAgent }: {
         <div aria-label="Mapa de salas y agentes" className="relative" style={{ width, height }}>{shown.map(room => {
           const identity = officeRoomKey(room.tenant_id, room.room_id);
           const roomInfo = rooms.find(value => officeRoomKey(value.tenant, value.id) === identity);
+          const roomAgents = roomInfo?.agents ?? [];
           return <section key={identity} aria-label={`Sala ${room.tenant_id}/${roomInfo?.label ?? room.room_id}`}
-            className="absolute overflow-hidden rounded-lg border-2 border-line-strong bg-surface p-2" style={{ left: room.x - left, top: room.y - top, width: room.width, height: room.height }}>
+            onClick={() => { setRoomKey(identity); }}
+            className={`absolute cursor-pointer overflow-hidden rounded-lg border-2 bg-surface p-2 ${identity === roomKey ? 'border-brand' : 'border-line-strong'}`} style={{ left: room.x - left, top: room.y - top, width: room.width, height: room.height }}>
             {room.parts.map(part => <div key={part.id} aria-label={`Parte ${part.label}`} className="pointer-events-none absolute rounded-md border border-dashed border-brand/50 bg-brand-soft p-1 text-xs text-brand-ink"
               style={{ left: part.x, top: part.y, width: part.width, height: part.height }}>{part.label}</div>)}
-            <Button size="sm" className="relative z-10 w-full justify-start" aria-pressed={identity === roomKey}
-              onClick={() => { setRoomKey(identity); }}>{roomInfo?.label ?? room.room_id} <span className="ml-auto text-[10px] text-muted">{room.tenant_id}</span></Button>
+            <Button size="sm" className="relative z-10 w-full min-w-0 justify-start" aria-pressed={identity === roomKey}
+              onClick={(event) => { event.stopPropagation(); setRoomKey(identity); }}>
+              <span className="min-w-0 truncate">{roomInfo?.label ?? room.room_id}</span>
+              <span title={room.tenant_id} className="ml-auto max-w-[45%] shrink truncate text-[10px] text-muted">{room.tenant_id}</span>
+            </Button>
+            <div className="relative z-10 mt-2 flex max-h-[calc(100%-2.75rem)] flex-wrap content-start gap-1 overflow-y-auto"
+              onClick={(event) => { event.stopPropagation(); }}>
+              {roomAgents.map(agentButton)}
+              {!roomAgents.length ? <p className="m-0 text-[11px] text-muted">Sin agentes en esta sala.</p> : null}
+            </div>
           </section>;
         })}</div>
       </div></> : null}

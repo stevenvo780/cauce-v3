@@ -37,7 +37,7 @@ it('edita sólo la sala compuesta elegida, persiste partes y relee al volver a a
   expect(writes[0].rooms.find(value => value.tenant_id === 'Two')).toMatchObject({ room_id: 'general', x: 760, parts: [{ label: 'Nueva parte' }] });
   expect(writes[0].rooms.find(value => value.tenant_id === 'One')?.x).toBe(0);
   const roster = within(screen.getByRole('region', { name: 'Agentes de sala Two/General' }));
-  expect(room.queryByRole('button', { name: /worker/u })).not.toBeInTheDocument();
+  expect(room.getByRole('button', { name: /worker/u })).toBeInTheDocument();
   await user.click(roster.getByRole('button', { name: /worker/u })); expect(onAgent).toHaveBeenCalledWith('Two/worker');
   view.unmount(); renderWithApi(workspace()); await user.click(screen.getByRole('button', { name: 'Plano editable' }));
   await waitFor(() => { expect(screen.getByRole('region', { name: 'Sala Two/General' })).toHaveStyle({ left: '760px' }); });

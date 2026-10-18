@@ -3,7 +3,7 @@ import { officeLayoutProblem, officeRoomKey, officeRooms, rebaseOfficeDraft, rec
 
 it('no confunde salas homónimas y elimina del plano los recursos retirados', () => {
   const rooms = officeRooms({ tenants: [{ id: 'One', rooms: [{ id: 'general', label: 'General', members: [{ alias: 'worker', enabled: true }] }] },
-    { id: 'Two', rooms: [{ id: 'general', label: 'General', members: [{ alias: 'worker', enabled: true }, { alias: 'off', enabled: false }] }] }] });
+    { id: 'Two', rooms: [{ id: 'general', label: 'General', members: [{ alias: 'worker', enabled: true }, { alias: 'off', enabled: false }, { alias: 'solo', enabled: true, registered: false }] }] }] });
   const layout = reconcileOfficeLayout(rooms, [{ tenant_id: 'Two', room_id: 'general', x: 650, y: 90, width: 240, height: 300,
     parts: [{ id: 'desk', label: 'Escritorio', x: 20, y: 30, width: 40, height: 60 }] },
   { tenant_id: 'OtherCompany', room_id: 'old', x: 0, y: 0, width: 1, height: 1, parts: [] }]);
