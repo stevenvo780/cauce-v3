@@ -23,7 +23,7 @@ export const migrationLockOrder: readonly string[] = [
   'quota_provider_reports', 'quota_window_samples', 'rooms', 'agent_failure_notices', 'agent_output_materializations',
   'blob_delivery_grants', 'companies', 'company_links', 'platform_admins', 'quota_collections', 'secret_handoffs',
   'harness_definitions', 'role_policies', 'agent_role_templates', 'egress_destinations', 'company_admins',
-  'company_system_principals', 'agent_chain_policies', 'agent_context_versions', 'agent_quota_operations',
+  'company_system_principals', 'agent_chain_policies', 'agent_context_versions', 'agent_quota_operations', 'quota_environments',
 ];
 
 const AE = 'ACCESS EXCLUSIVE';
@@ -75,6 +75,8 @@ export const migrationLockFootprints: Readonly<Record<string, Readonly<Record<st
   '079_host_enrollment_compatibility.sql': { fleet_host_enrollments: AE },
   '080_agent_alias_immutable.sql': { agents: SRE },
   '081_membresia_rol_derivado.sql': { console_users: SRE, human_tenant_memberships: AE },
+  '082_company_purge.sql': {},
+  '083_quota_providers_muse_agy.sql': { quota_environments: AE },
 };
 
 /** The first migration with a footprint; every bundled migration from it on must have one. */
