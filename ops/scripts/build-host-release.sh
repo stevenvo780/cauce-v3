@@ -35,7 +35,8 @@ chmod -R u+w "$stage/adapter"
 find "$stage/adapter" \( -name .modules.yaml -o -path '*/node_modules/.bin' \) -prune -exec rm -rf {} +
 image="cauce-agent-runtime:$(sha256sum ops/agent-runtime/Dockerfile | cut -c1-16)"
 # Without attestations and with a fixed creation time, cached rebuilds preserve the portable config digest pinned from docker save.
-docker build -q --provenance=false --build-arg "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct -- ops/agent-runtime/Dockerfile)" \
+docker build -q --provenance=false --build-context "musebridge=ops/container-runtime" \
+  --build-arg "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct -- ops/agent-runtime/Dockerfile)" \
   -t "$image" ops/agent-runtime >/dev/null
 agy_version=$(sed -n 's/^ARG AGY_VERSION=//p' ops/cuotas/Dockerfile)
 agy_sha=$(sed -n 's/^ARG AGY_X86_64_SHA256=//p' ops/cuotas/Dockerfile)
@@ -63,8 +64,10 @@ codex_native=$(docker run --rm --network none --entrypoint sh "$image" -c \
 }
 openclaw_auth_list=/usr/local/lib/node_modules/openclaw/dist/auth-list-oJF2Bhcx.js
 openclaw_auth_list_sha=$(docker run --rm --network none --entrypoint sha256sum "$image" "$openclaw_auth_list" | cut -d' ' -f1)
+muse_bridge_sha=$(docker run --rm --network none --entrypoint sha256sum "$image" /usr/local/bin/muse-cauce | cut -d' ' -f1)
 python3 ops/scripts/host-release.py pack --stage "$stage" --out "$target" --revision "$revision" --epoch "$epoch" \
   --image "$image" --quota-image "$quota_image" --provider "codex=$codex_native" --provider claude=claude --provider grok=grok \
-  --provider openclaw=openclaw --provider node=node \
+  --provider muse=muse --provider openclaw=openclaw --provider node=node \
   --pin "openclaw_auth_list_source=$openclaw_auth_list" --pin "openclaw_auth_list_sha256=$openclaw_auth_list_sha" \
-  --pin "openclaw_bridge_sha256=$(sha256sum "$stage/adapter/packages/adapter-sdk/dist/bridge/openclaw-stdin-bridge.mjs" | cut -d' ' -f1)"
+  --pin "openclaw_bridge_sha256=$(sha256sum "$stage/adapter/packages/adapter-sdk/dist/bridge/openclaw-stdin-bridge.mjs" | cut -d' ' -f1)" \
+  --pin "muse_bridge_sha256=$muse_bridge_sha"
