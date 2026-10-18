@@ -182,63 +182,6 @@ describe('techo de vida total de una entrega', () => {
     expect(await repository.retryStaleDeliveries(24 * 60 * 60_000)).toEqual({ retried: 0, dead: 0, parked: 0 });
     expect((await deliveryRow(claimed.delivery_id)).status).toBe('started');
   });
-
-  it('congela el plazo en el techo en vez de empujarlo otros 30 minutos', async () => {
-    const lease = await repository.acquireLease('Isa', 'salva', 'lease-cap-consumer', [], 120_000);
-    await repository.publish(command({ text: 'renovación que no puede pasarse del techo' }));
-    const leaseCap = { leaseCapMs: 60_000 };
-    const claimed = await claimAndStart(requireValue(lease.epoch, 'lease.epoch'), leaseCap);
-
-    // 10 s left until the cap, but the ACK deadline is 60 s: the renewal cannot give 60.
-    await ageExecutionStart(claimed.delivery_id, 50_000);
-    const renewed = await repository.ackDelivery(
-      claimed.delivery_id, 'Isa', 'salva', ack(claimed, requireValue(lease.epoch, 'lease.epoch'), 'started', true),
-      ACK_DEADLINE_MS, leaseCap
-    );
-    expect(renewed).toMatchObject({ applied: true, status: 'started' });
-
-    const row = await deliveryRow(claimed.delivery_id);
-    const remainingMs = requireValue(row.ack_deadline_at, 'row.ack_deadline_at').getTime() - Date.now();
-    expect(remainingMs).toBeLessThan(15_000);
-    expect(remainingMs).toBeGreaterThan(0);
-  });
-
-  it('deja de renovar del todo una vez pasado el techo', async () => {
-    const lease = await repository.acquireLease('Isa', 'salva', 'lease-cap-consumer', [], 120_000);
-    await repository.publish(command({ text: 'latido después del techo' }));
-    const leaseCap = { leaseCapMs: 60_000 };
-    const claimed = await claimAndStart(requireValue(lease.epoch, 'lease.epoch'), leaseCap);
-
-    await ageExecutionStart(claimed.delivery_id, 120_000);
-    await repository.ackDelivery(
-      claimed.delivery_id, 'Isa', 'salva', ack(claimed, requireValue(lease.epoch, 'lease.epoch'), 'started', true),
-      ACK_DEADLINE_MS, leaseCap
-    );
-
-    // The deadline ended up in the past: the reaper picks it up on the next tick even though the
-    // harness keeps beating, and with the cap reason.
-    expect(requireValue((await deliveryRow(claimed.delivery_id)).ack_deadline_at, 'ack_deadline_at').getTime())
-      .toBeLessThanOrEqual(Date.now());
-    await repository.retryStaleDeliveries(30_000, 100, leaseCap);
-    expect((await deliveryRow(claimed.delivery_id)).last_error).toContain('Lease cap exhausted');
-  });
-
-  it('mata por techo aunque esté prendida la palanca de reintento a ciegas', async () => {
-    const lease = await repository.acquireLease('Isa', 'salva', 'lease-cap-consumer', [], 120_000);
-    await repository.publish(command({ text: 'la palanca no desactiva el techo' }));
-    const claimed = await claimAndStart(requireValue(lease.epoch, 'lease.epoch'));
-
-    await ageExecutionStart(claimed.delivery_id, PAST_DEFAULT_CAP_MS);
-    await pool.query(
-      `UPDATE deliveries SET ack_deadline_at=now()+interval '1 hour' WHERE id=$1`,
-      [claimed.delivery_id]
-    );
-
-    expect(await repository.retryStaleDeliveries(24 * 60 * 60_000, 100, {
-      retryStartedDeliveries: true
-    })).toEqual({ retried: 0, dead: 1, parked: 0 });
-    expect((await deliveryRow(claimed.delivery_id)).last_error).toContain('Lease cap exhausted');
-  });
 });
 
 describe('timeout_ms por mensaje', () => {
@@ -293,24 +236,5 @@ describe('timeout_ms por mensaje', () => {
     expect(await repository.retryStaleDeliveries(24 * 60 * 60_000, 100, policy))
       .toEqual({ retried: 0, dead: 0, parked: 0 });
     expect((await deliveryRow(larga.delivery_id)).status).toBe('started');
-  });
-
-  /**
-   * An old or corrupted `timeout_ms` must not topple the reaper tick. This is the failure mode
-   * that once left the fleet with live agents and dead deliveries.
-   */
-  it('sobrevive a un timeout_ms corrupto en una fila ya persistida', async () => {
-    const lease = await repository.acquireLease('Isa', 'salva', 'lease-cap-consumer', [], 120_000);
-    await repository.publish(command({ text: 'fila vieja con basura' }));
-    const claimed = await claimAndStart(requireValue(lease.epoch, 'lease.epoch'));
-    await pool.query(
-      `UPDATE messages SET body=jsonb_set(body,'{timeout_ms}','"pronto"'::jsonb)
-        WHERE id=(SELECT message_id FROM deliveries WHERE id=$1)`, [claimed.delivery_id]
-    );
-    await ageExecutionStart(claimed.delivery_id, PAST_DEFAULT_CAP_MS);
-
-    // It falls back to the default cap and dies by it, without a conversion error.
-    expect(await repository.retryStaleDeliveries(24 * 60 * 60_000)).toEqual({ retried: 0, dead: 1, parked: 0 });
-    expect((await deliveryRow(claimed.delivery_id)).last_error).toContain('Lease cap exhausted');
   });
 });

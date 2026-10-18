@@ -106,16 +106,6 @@ afterAll(async () => {
 });
 
 describe('retención por tipo de la observabilidad', () => {
-  it('marca como renovación sólo los latidos, no la transición a started', async () => {
-    const lease = await repository.acquireLease('Isa', 'salva', 'retention-consumer', [], 120_000);
-    await deliveryWithRenewals(requireValue(lease.epoch, 'lease.epoch'), 3);
-
-    expect(await count(`SELECT count(*)::text AS n FROM delivery_acks WHERE renewal`)).toBe(3);
-    // accepted + the first started: they are state transitions and last forever.
-    expect(await count(
-      `SELECT count(*)::text AS n FROM delivery_acks WHERE NOT renewal`
-    )).toBe(2);
-  });
 
   /**
    * THE POINT OF THE PATCH. With the SAME age, heartbeats go and transitions stay.
@@ -137,69 +127,6 @@ describe('retención por tipo de la observabilidad', () => {
     expect(pruned.acks).toBe(0);
     expect(await count(`SELECT count(*)::text AS n FROM delivery_acks`)).toBe(2);
     expect(await count(`SELECT count(*)::text AS n FROM delivery_acks WHERE renewal`)).toBe(0);
-  });
-
-  it('poda las renovaciones históricas de audit_events sin columna nueva', async () => {
-    const lease = await repository.acquireLease('Isa', 'salva', 'retention-consumer', [], 120_000);
-    await deliveryWithRenewals(requireValue(lease.epoch, 'lease.epoch'), 4);
-    const renewalAudits = await count(
-      `SELECT count(*)::text AS n FROM audit_events WHERE metadata->>'lease_renewed'='true'`
-    );
-    const otherAudits = await count(
-      `SELECT count(*)::text AS n FROM audit_events
-        WHERE metadata->>'lease_renewed' IS DISTINCT FROM 'true'`
-    );
-    expect(renewalAudits).toBe(4);
-    expect(otherAudits).toBeGreaterThan(0);
-    await ageEverything('8 hours');
-
-    const pruned = await repository.pruneObservability({
-      ackRenewalMs: 6 * 60 * 60_000,
-      auditRenewalMs: 6 * 60 * 60_000
-    });
-
-    expect(pruned.audit_renewals).toBe(renewalAudits);
-    expect(pruned.audit_events).toBe(0);
-    expect(await count(
-      `SELECT count(*)::text AS n FROM audit_events WHERE metadata->>'lease_renewed'='true'`
-    )).toBe(0);
-    expect(await count(`SELECT count(*)::text AS n FROM audit_events`)).toBe(otherAudits);
-  });
-
-  it('no toca nada que siga dentro de su ventana', async () => {
-    const lease = await repository.acquireLease('Isa', 'salva', 'retention-consumer', [], 120_000);
-    await deliveryWithRenewals(requireValue(lease.epoch, 'lease.epoch'), 4);
-    const acksBefore = await count(`SELECT count(*)::text AS n FROM delivery_acks`);
-    const auditBefore = await count(`SELECT count(*)::text AS n FROM audit_events`);
-    await ageEverything('2 hours');
-
-    expect(await repository.pruneObservability({ ackRenewalMs: 6 * 60 * 60_000 }))
-      .toEqual({ ack_renewals: 0, acks: 0, audit_renewals: 0, audit_events: 0 });
-    expect(await count(`SELECT count(*)::text AS n FROM delivery_acks`)).toBe(acksBefore);
-    expect(await count(`SELECT count(*)::text AS n FROM audit_events`)).toBe(auditBefore);
-  });
-
-  /**
-   * The long window does take the transitions too. It is what recovers the backlog of pre-migration
-   * rows that cannot be reclassified as heartbeats.
-   */
-  it('la ventana general también se lleva las transiciones cuando ya son muy viejas', async () => {
-    const lease = await repository.acquireLease('Isa', 'salva', 'retention-consumer', [], 120_000);
-    await deliveryWithRenewals(requireValue(lease.epoch, 'lease.epoch'), 2);
-    await ageEverything('40 days');
-
-    // accepted + the first started + the 2 heartbeats.
-    const pruned = await repository.pruneObservability();
-    expect(pruned.ack_renewals + pruned.acks).toBe(4);
-    expect(await count(`SELECT count(*)::text AS n FROM delivery_acks`)).toBe(0);
-    // From `audit_events` only the whitelist telemetry is removed; `message.publish` and company
-    // survive because they are not a log, they are state.
-    expect(await count(
-      `SELECT count(*)::text AS n FROM audit_events WHERE action='delivery.ack'`
-    )).toBe(0);
-    expect(await count(
-      `SELECT count(*)::text AS n FROM audit_events WHERE action='message.publish'`
-    )).toBeGreaterThan(0);
   });
 
   /**

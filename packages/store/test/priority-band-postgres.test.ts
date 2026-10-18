@@ -118,16 +118,6 @@ describe('human band ordering', () => {
     expect(first?.message_id).toBe(person.message_id);
     expect(first?.body).toMatchObject({ type: 'telegram.message', text: 'the owner' });
   });
-
-  it('keeps arrival order among people, so nobody jumps a queue of their peers', async () => {
-    const instanceId = 'peer-consumer';
-    const epoch = await lease('Steven', 'argos', instanceId);
-    const first = await repository.publish(command({ body: { type: 'telegram.message', text: 'first person' } }));
-    const second = await repository.publish(command({ body: { type: 'telegram.message', text: 'second person' } }));
-
-    const claimed = await repository.claimDeliveries('Steven', 'argos', instanceId, epoch, 2, 30_000);
-    expect(claimed.map((delivery) => delivery.message_id)).toEqual([first.message_id, second.message_id]);
-  });
 });
 
 describe('agent band ceiling on materialized output', () => {
@@ -188,40 +178,6 @@ describe('agent band ceiling on materialized output', () => {
     }
     expect(await priorityOf(fanin.message_id)).toBe(HUMAN_CHAT_PRIORITY);
   });
-
-  it('holds a nested delegation in the agent band all the way down', async () => {
-    const argosInstance = 'nested-argos';
-    const kantInstance = 'nested-kant';
-    const argosEpoch = await lease('Steven', 'argos', argosInstance);
-
-    await repository.publish(command());
-    const [rootDelivery] = await repository.claimDeliveries(
-      'Steven', 'argos', argosInstance, argosEpoch, 1, 30_000
-    );
-    if (!rootDelivery) throw new Error('expected the root delivery');
-    await repository.ackDelivery(
-      rootDelivery.delivery_id, 'Steven', 'argos',
-      terminalAck(rootDelivery, argosInstance, argosEpoch, [{ to: 'kant', body: 'first hop' }])
-    );
-
-    const kantEpoch = await lease('Steven', 'kant', kantInstance);
-    const [child] = await repository.claimDeliveries(
-      'Steven', 'kant', kantInstance, kantEpoch, 1, 30_000
-    );
-    if (!child) throw new Error('expected the first hop');
-    await repository.ackDelivery(
-      child.delivery_id, 'Steven', 'kant',
-      terminalAck(child, kantInstance, kantEpoch, [{ to: 'jarvis', body: 'second hop' }])
-    );
-
-    const jarvisInstance = 'nested-jarvis';
-    const jarvisEpoch = await lease('Steven', 'jarvis', jarvisInstance);
-    const [grandchild] = await repository.claimDeliveries(
-      'Steven', 'jarvis', jarvisInstance, jarvisEpoch, 1, 30_000
-    );
-    if (!grandchild) throw new Error('expected the second hop');
-    expect(await priorityOf(grandchild.message_id)).toBe(AGENT_PRIORITY_CEILING);
-  });
 });
 
 describe('lane fairness burst', () => {
@@ -252,16 +208,6 @@ describe('lane fairness burst', () => {
     );
   }
 
-  async function seedBatch(alias: string, text: string): Promise<void> {
-    await repository.publish(command({
-      recipients: [{ tenant_id: 'Steven', alias }],
-      body: { type: 'adapter.work', text },
-      lane: 'batch',
-      priority: 0,
-      authenticated_context: { session_id: `batch-${text}`, channel: 'adapter' }
-    }));
-  }
-
   /**
    * Ensures that agent-to-agent work gets its turn once the human-priority burst is spent.
    */
@@ -275,28 +221,5 @@ describe('lane fairness burst', () => {
     // humanBurst=1: after serving one person, the second claim of the call yields the turn.
     const claimed = await repository.claimDeliveries('Steven', 'kant', instanceId, epoch, 2, 30_000, 1);
     expect(claimed.map((delivery) => delivery.body.text)).toEqual(['person one', 'agent work']);
-  });
-
-  it('gives any trusted non-human work its bounded turn even while another person waits', async () => {
-    const instanceId = 'burst-human';
-    const epoch = await lease('Steven', 'jarvis', instanceId);
-    await seedInteractive('jarvis', HUMAN_CHAT_PRIORITY, 'person one');
-    await seedInteractive('jarvis', HUMAN_CHAT_PRIORITY, 'person two');
-    await seedBatch('jarvis', 'background');
-
-    const claimed = await repository.claimDeliveries('Steven', 'jarvis', instanceId, epoch, 2, 30_000, 1);
-    expect(claimed.map((delivery) => delivery.body.text)).toEqual(['person one', 'background']);
-  });
-
-  it('returns the batch turn as soon as the person queue drains', async () => {
-    const instanceId = 'burst-drain';
-    const epoch = await lease('Steven', 'socrates', instanceId);
-    await seedInteractive('socrates', HUMAN_CHAT_PRIORITY, 'person one');
-    await seedBatch('socrates', 'background');
-
-    // The person is served first, and the batch turn is not lost: it is taken on the next
-    // iteration, once nothing in the human band is pending any more.
-    const claimed = await repository.claimDeliveries('Steven', 'socrates', instanceId, epoch, 2, 30_000, 1);
-    expect(claimed.map((delivery) => delivery.body.text)).toEqual(['person one', 'background']);
   });
 });

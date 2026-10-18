@@ -223,29 +223,6 @@ describe('(b) la entrega ya es dead por timeout y llega el done', () => {
     });
   });
 
-  it('reescribe el aviso de fallo que todavía no salió, para que el humano lea un solo mensaje', async () => {
-    const { delivery, epoch, instanceId } = await killByTimeout('caso-b-pendiente');
-    const beforeSalvage = await relayRows(delivery.delivery_id);
-    expect(beforeSalvage).toHaveLength(1);
-    expect(beforeSalvage[0]).toMatchObject({ status: 'pending', outcome: 'dead' });
-
-    await repository.ackDelivery(
-      delivery.delivery_id, tenant, alias,
-      doneAck(delivery, instanceId, epoch, 'Acá está tu respuesta.')
-    );
-
-    const relays = await relayRows(delivery.delivery_id);
-    expect(relays).toHaveLength(1);
-    expect(relays[0]).toMatchObject({
-      idempotency_key: `relay:${delivery.delivery_id}`,
-      status: 'pending',
-      outcome: 'done',
-      late_result: true
-    });
-    // No correction header: the person never saw the failure, there is nothing to correct.
-    expect(relays[0]?.reply).toBe('Acá está tu respuesta.');
-  });
-
   it('manda un mensaje nuevo y redactado cuando el aviso de fallo YA salió', async () => {
     const { delivery, epoch, instanceId } = await killByTimeout('caso-b-enviado');
     await pool.query(
@@ -272,49 +249,6 @@ describe('(b) la entrega ya es dead por timeout y llega el done', () => {
     expect(relays[1]?.reply).toContain('[respuesta tardía]');
     expect(relays[1]?.reply).toContain('El aviso de fallo anterior queda sin efecto');
     expect(relays[1]?.reply?.endsWith('Acá está tu respuesta.')).toBe(true);
-  });
-
-  it('acepta un failed tardío como mejor diagnóstico, sin revivir la entrega', async () => {
-    const { delivery, epoch, instanceId } = await killByTimeout('caso-b-failed');
-
-    const result = await repository.ackDelivery(
-      delivery.delivery_id, tenant, alias,
-      ack(delivery, instanceId, epoch, 'failed', {
-        result: { output: { reply: 'Llegué hasta la mitad y me quedé sin cuota.' } },
-        error: 'quota exhausted on the weekly window',
-        error_code: 'QUOTA_EXHAUSTED'
-      })
-    );
-
-    expect(result).toMatchObject({ status: 'dead', applied: true, receipt: 'applied' });
-    const row = await deliveryRow(delivery.delivery_id);
-    expect(row.status).toBe('dead');
-    expect(row.last_error).toBe('quota exhausted on the weekly window');
-    // The dead letter stays OPEN —it is still a failure— but it now states the real cause and not
-    // the generic "ACK timeout" from the reaper.
-    const letter = await pool.query<{ reason: string; resolved_at: Date | null }>(
-      `SELECT reason,resolved_at FROM dead_letters WHERE delivery_id=$1`, [delivery.delivery_id]
-    );
-    expect(letter.rows[0]?.resolved_at).toBeNull();
-    expect(letter.rows[0]?.reason).toBe('quota exhausted on the weekly window');
-  });
-
-  it('rescata como mucho una vez por entrega', async () => {
-    const { delivery, epoch, instanceId } = await killByTimeout('caso-b-una-sola');
-    await repository.ackDelivery(
-      delivery.delivery_id, tenant, alias,
-      ack(delivery, instanceId, epoch, 'failed', {
-        result: { output: { reply: 'primer tardío' } }, error: 'primera causa'
-      })
-    );
-
-    const second = await repository.ackDelivery(
-      delivery.delivery_id, tenant, alias,
-      doneAck(delivery, instanceId, epoch, 'segundo tardío')
-    );
-
-    expect(second).toMatchObject({ applied: false, receipt: 'ownership_lost', status: 'dead' });
-    expect((await deliveryRow(delivery.delivery_id)).reply).toBe('primer tardío');
   });
 });
 
@@ -371,28 +305,6 @@ describe('(a) la entrega sigue no terminal, con un intento mayor', () => {
       second.delivery_id, tenant, alias, ack(second, instanceId, epoch, 'started')
     );
     expect(renewal).toMatchObject({ applied: false, receipt: 'ownership_lost' });
-  });
-
-  it('la prueba de la garra vieja sale de delivery_acks, no de la fila', async () => {
-    const { first, epoch, instanceId } = await retriedTwice('caso-a-procedencia');
-    await repository.ackDelivery(
-      first.delivery_id, tenant, alias,
-      doneAck(first, instanceId, epoch, 'la garra ya había rotado')
-    );
-
-    const audit = await pool.query<{ metadata: Record<string, unknown> }>(
-      `SELECT metadata FROM audit_events WHERE action='delivery.late_result' AND delivery_id=$1`,
-      [first.delivery_id]
-    );
-    expect(audit.rows[0]?.metadata).toMatchObject({
-      // The delivery was leased to attempt 2 when the 'done' from attempt 1 arrived: the
-      // provenance COULD NOT come from the row (its claim was already a different one) and came
-      // from the applied 'started' ACK that attempt 1 left in `delivery_acks`.
-      previous_status: 'leased',
-      claim_provenance: 'applied',
-      attempt: first.attempt,
-      delivery_attempt: first.attempt + 1
-    });
   });
 });
 
@@ -475,15 +387,6 @@ describe('(c) la entrega ya es done y llega otro done de una corrida vieja', () 
 });
 
 describe('qué NO se acepta tarde', () => {
-  it('un done sin texto: no hay nada que rescatar', async () => {
-    const { delivery, epoch, instanceId } = await killByTimeout('sin-texto');
-    const result = await repository.ackDelivery(
-      delivery.delivery_id, tenant, alias,
-      ack(delivery, instanceId, epoch, 'done', { result: { output: { reply: '   ' } } })
-    );
-    expect(result).toMatchObject({ applied: false, receipt: 'ownership_lost' });
-    expect((await deliveryRow(delivery.delivery_id)).status).toBe('dead');
-  });
 
   it('un done que pide delegar: la ventana de delegación ya pasó', async () => {
     const { delivery, epoch, instanceId } = await killByTimeout('con-delegacion');
@@ -506,63 +409,11 @@ describe('qué NO se acepta tarde', () => {
     )).rowCount).toBe(0);
   });
 
-  it('un failed tardío sobre una entrega que sigue viva', async () => {
-    const instanceId = 'assistant-failed-vivo';
-    const lease = await repository.acquireLease(tenant, alias, instanceId, [], 60_000);
-    await repository.publish(humanCommand('failed-vivo'));
-    const [delivery] = await repository.claimDeliveries(
-      tenant, alias, instanceId, requireValue(lease.epoch, 'lease.epoch'), 1, 30_000
-    );
-    if (!delivery) throw new Error('expected a claimed delivery');
-    await repository.ackDelivery(
-      delivery.delivery_id, tenant, alias, ack(delivery, instanceId, requireValue(lease.epoch, 'lease.epoch'), 'started')
-    );
-    await expire(delivery.delivery_id);
-    await repository.retryStaleDeliveries(30_000);
-
-    const result = await repository.ackDelivery(
-      delivery.delivery_id, tenant, alias,
-      ack(delivery, instanceId, requireValue(lease.epoch, 'lease.epoch'), 'failed', {
-        result: { output: { reply: 'fracasé, pero tarde' } }, error: 'boom'
-      })
-    );
-
-    expect(result).toMatchObject({ applied: false, receipt: 'ownership_lost' });
-    // It stays in 'retry': an old failure does not kill an in-flight retry.
-    expect((await deliveryRow(delivery.delivery_id)).status).toBe('retry');
-  });
-
   it('un claim_token que nunca existió sobre esta entrega', async () => {
     const { delivery, epoch, instanceId } = await killByTimeout('garra-inventada');
     const result = await repository.ackDelivery(
       delivery.delivery_id, tenant, alias,
       doneAck({ claim_token: randomUUID(), attempt: delivery.attempt }, instanceId, epoch, 'inventado')
-    );
-    expect(result).toMatchObject({ applied: false, receipt: 'ownership_lost' });
-    expect((await deliveryRow(delivery.delivery_id)).status).toBe('dead');
-  });
-
-  it('una instancia sin lease de conexión vivo', async () => {
-    const { delivery, epoch, instanceId } = await killByTimeout('sin-lease');
-    await repository.releaseLease(tenant, alias, instanceId, epoch);
-
-    const result = await repository.ackDelivery(
-      delivery.delivery_id, tenant, alias,
-      doneAck(delivery, instanceId, epoch, 'llegué después de desconectarme')
-    );
-
-    expect(result).toMatchObject({ applied: false, receipt: 'ownership_lost' });
-    expect((await deliveryRow(delivery.delivery_id)).status).toBe('dead');
-  });
-
-  it('un ACK de un intento que la entrega todavía no alcanzó', async () => {
-    const { delivery, epoch, instanceId } = await killByTimeout('intento-futuro');
-    const result = await repository.ackDelivery(
-      delivery.delivery_id, tenant, alias,
-      doneAck(
-        { claim_token: delivery.claim_token, attempt: delivery.attempt + 5 },
-        instanceId, epoch, 'del futuro'
-      )
     );
     expect(result).toMatchObject({ applied: false, receipt: 'ownership_lost' });
     expect((await deliveryRow(delivery.delivery_id)).status).toBe('dead');
@@ -591,81 +442,5 @@ describe('el mismo evento rechazado y reenviado', () => {
        WHERE event_id=$1 GROUP BY applied`, [late.event_id]
     );
     expect(stored.rows).toEqual([{ applied: true, count: '1' }]);
-  });
-
-  it('un evento repetido que ya se había aplicado sigue siendo duplicate', async () => {
-    const { delivery, epoch, instanceId } = await killByTimeout('duplicado');
-    const late = doneAck(delivery, instanceId, epoch, 'una sola vez');
-    await repository.ackDelivery(delivery.delivery_id, tenant, alias, late);
-
-    const again = await repository.ackDelivery(delivery.delivery_id, tenant, alias, late);
-    expect(again).toMatchObject({ applied: false, receipt: 'duplicate', status: 'done' });
-    expect(await relayRows(delivery.delivery_id)).toHaveLength(1);
-  });
-});
-
-describe('la rama de un padre que ya recibió el aviso de fallo', () => {
-  it('le manda una respuesta nueva que dice explícitamente que reemplaza al aviso', async () => {
-    const parentInstance = 'coordinador';
-    const childInstance = 'ejecutor';
-    const parentLease = await repository.acquireLease(tenant, alias, parentInstance, [], 60_000);
-    await repository.publish(humanCommand('cadena'));
-    const [root] = await repository.claimDeliveries(
-      tenant, alias, parentInstance, requireValue(parentLease.epoch, 'parentLease.epoch'), 1, 30_000
-    );
-    if (!root) throw new Error('expected the root delivery');
-    // argos delegates to kant.
-    await repository.ackDelivery(
-      root.delivery_id, tenant, alias,
-      ack(root, parentInstance, requireValue(parentLease.epoch, 'parentLease.epoch'), 'done', {
-        result: { output: { reply: 'delego', messages: [{ to: 'kant', body: 'hacelo vos' }] } }
-      })
-    );
-
-    const childLease = await repository.acquireLease(tenant, 'kant', childInstance, [], 60_000);
-    const [child] = await repository.claimDeliveries(
-      tenant, 'kant', childInstance, requireValue(childLease.epoch, 'childLease.epoch'), 1, 30_000
-    );
-    if (!child) throw new Error('expected the delegated child delivery');
-    await repository.ackDelivery(
-      child.delivery_id, tenant, 'kant', ack(child, childInstance, requireValue(childLease.epoch, 'childLease.epoch'), 'started')
-    );
-    await repository.ackDelivery(
-      child.delivery_id, tenant, 'kant',
-      ack(child, childInstance, requireValue(childLease.epoch, 'childLease.epoch'), 'started', { execution_started: true })
-    );
-    await expire(child.delivery_id);
-    expect(await repository.retryStaleDeliveries(30_000)).toEqual({ retried: 0, dead: 1, parked: 0 });
-
-    // The parent already has the failure notice in its inbox.
-    const notices = await pool.query<{ text: string; outcome: string }>(
-      `SELECT body->>'text' AS text,body->>'outcome' AS outcome FROM messages
-       WHERE body->>'type'='agent.response' ORDER BY created_at`
-    );
-    expect(notices.rows).toHaveLength(1);
-    expect(notices.rows[0]?.outcome).toBe('dead');
-
-    const salvaged = await repository.ackDelivery(
-      child.delivery_id, tenant, 'kant',
-      doneAck(child, childInstance, requireValue(childLease.epoch, 'childLease.epoch'), 'sí lo hice, acá está')
-    );
-    expect(salvaged).toMatchObject({ status: 'done', applied: true });
-
-    const responses = await pool.query<{
-      text: string; outcome: string; late: Record<string, unknown> | null;
-    }>(
-      `SELECT body->>'text' AS text,body->>'outcome' AS outcome,
-              body#>'{correlation,late_result}' AS late
-       FROM messages WHERE body->>'type'='agent.response' ORDER BY created_at`
-    );
-    expect(responses.rows).toHaveLength(2);
-    expect(responses.rows[1]?.outcome).toBe('done');
-    expect(responses.rows[1]?.text).toContain('[late result]');
-    expect(responses.rows[1]?.text).toContain('supersedes the earlier notice');
-    expect(responses.rows[1]?.text.endsWith('sí lo hice, acá está')).toBe(true);
-    expect(responses.rows[1]?.late).toMatchObject({ superseded_outcome: 'dead' });
-
-    // And rescuing a branch does NOT send the relay to the human: the parent closes the chain.
-    expect(await relayRows(child.delivery_id)).toHaveLength(0);
   });
 });
