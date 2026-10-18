@@ -46,15 +46,18 @@ let base = { lineas: {}, fechas: {}, comentarios: {} };
 try { base = JSON.parse(readFileSync(BASE_PATH, 'utf8')); } catch { /* sin baseline: todo estricto */ }
 
 const fallos = [];
+// Size, date and comment budgets warn instead of blocking a deploy (owner decision 17-oct: no style gates).
+const presupuesto = [];
 for (const [f, v] of Object.entries(estado)) {
   const tope = base.lineas[f] ?? MAX;
-  if (v.lineas > tope) fallos.push(`${f}: ${v.lineas} lineas (tope ${tope}${base.lineas[f] ? ', trinquete' : ''})`);
+  if (v.lineas > tope) presupuesto.push(`${f}: ${v.lineas} lineas (tope ${tope}${base.lineas[f] ? ', trinquete' : ''})`);
   const topeF = base.fechas[f] ?? 0;
-  if (v.fechas > topeF) fallos.push(`${f}: ${v.fechas} fechas en comentarios (tope ${topeF})`);
+  if (v.fechas > topeF) presupuesto.push(`${f}: ${v.fechas} fechas en comentarios (tope ${topeF})`);
   // Comments: existing counts can only GO DOWN; new files tolerate up to 15% density.
   const topeC = base.comentarios?.[f] ?? Math.ceil(v.lineas * 0.15);
-  if (v.comentarios > topeC) fallos.push(`${f}: ${v.comentarios} lineas de comentario (tope ${topeC}${f in (base.comentarios ?? {}) ? ', trinquete' : ', 15% para nuevos'})`);
+  if (v.comentarios > topeC) presupuesto.push(`${f}: ${v.comentarios} lineas de comentario (tope ${topeC}${f in (base.comentarios ?? {}) ? ', trinquete' : ', 15% para nuevos'})`);
 }
+if (presupuesto.length) console.error('calidad: AVISO presupuesto de tamaño o comentarios\n' + presupuesto.map(x => '  ~ ' + x).join('\n'));
 for (const f of Object.keys(base.lineas)) if (!(f in estado)) delete base.lineas[f];
 const rancias = [];
 for (const [f, tope] of Object.entries(base.lineas)) {
