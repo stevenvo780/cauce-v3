@@ -72,7 +72,14 @@ function registrationPool() {
       return { rows: [{ human_id: '00000000-0000-4000-8000-000000000001', tenant_id: `hub-${slug ?? ''}`, actor_alias: 'owner' }] };
     },
   };
-  return { pool: Object.assign(fakePool(), { connect: async () => client }) as unknown as DatabasePool, hashes };
+  const query = async (sql: string, values: unknown[] = []) => {
+    if (sql.includes('AS in_use')) {
+      const [email, slug] = values as string[];
+      return { rows: [{ in_use: emails.has(email ?? '') || slugs.has(slug ?? '') }] };
+    }
+    return { rows: [{ '?column?': 1 }] };
+  };
+  return { pool: Object.assign(fakePool(), { connect: async () => client, query }) as unknown as DatabasePool, hashes };
 }
 
 describe('public company registration', () => {
@@ -208,7 +215,7 @@ describe('public company registration', () => {
     }
   });
 
-  it('answers a taken email and a taken slug with one body after the same derivation', async () => {
+  it('answers a taken email and a taken slug with one body without another derivation', async () => {
     const { register, hashes } = await open();
     expect((await register('dueno@example.test', 'acme')).statusCode).toBe(201);
     const email = await register('dueno@example.test', 'otra-empresa');
@@ -217,21 +224,21 @@ describe('public company registration', () => {
     expect(email.body).toBe(slug.body);
     expect(email.json()).toEqual({ error: 'conflict',
       message: 'No se pudo completar el registro: el correo o el identificador de empresa ya están en uso.' });
-    expect(hashes).toHaveLength(3);
+    expect(hashes).toHaveLength(1);
     for (const hash of hashes) expect(hash).toMatch(/^\$scrypt\$n=32768,r=8,p=1\$/u);
   });
 
-  it('gives each email five attempts across client addresses, whether or not it already has an account', async () => {
+  it('answers a persisted duplicate before limiting new registrations from a repeated email', async () => {
     const { register } = await open();
     expect((await register('dueno@example.test', 'acme')).statusCode).toBe(201);
     for (let count = 1; count < 5; count++) expect((await register('dueno@example.test', `acme-${String(count)}`)).statusCode).toBe(409);
     for (let count = 1; count <= 5; count++) expect((await register('nadie@example.test', 'acme')).statusCode).toBe(409);
-    for (const email of ['dueno@example.test', 'nadie@example.test']) {
-      const limited = await register(email, 'libre');
-      expect(limited.statusCode).toBe(429);
-      expect(limited.body).toBe(JSON.stringify({ error: 'too_many_requests', message: 'Demasiados registros. Intenta más tarde.' }));
-      expect(Number(limited.headers['retry-after'])).toBeGreaterThanOrEqual(899);
-    }
+    expect((await register('dueno@example.test', 'libre')).statusCode).toBe(409);
+    const limited = await register('nadie@example.test', 'libre');
+    expect(limited.statusCode).toBe(429);
+    expect(limited.body).toBe(JSON.stringify({ error: 'too_many_requests', message: 'Demasiados registros. Intenta más tarde.' }));
+    expect(Number(limited.headers['retry-after'])).toBeGreaterThanOrEqual(899);
+    expect((await register('nadie@example.test', 'acme')).statusCode).toBe(409);
     expect((await register('otra@example.test', 'libre')).statusCode).toBe(201);
   });
 

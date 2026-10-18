@@ -25,6 +25,7 @@ const TOO_MANY = { error: 'too_many_requests', message: 'Demasiados registros. I
 const WINDOW_MS = 15 * 60_000;
 const MAX_ATTEMPTS = 5;
 const MAX_TRACKED_IPS = 10_000;
+const MAX_DUPLICATE_LOOKUPS = 16;
 const HOUR_MS = 60 * 60_000;
 
 /** Registrations per hour across every client address; 0 closes public registration. */
@@ -39,6 +40,11 @@ function limited(reply: FastifyReply, retryAfterMs: number): FastifyReply {
   return reply.header('Retry-After', String(Math.max(1, Math.ceil(retryAfterMs / 1_000)))).code(429).send(TOO_MANY);
 }
 
+function unavailable(reply: FastifyReply, error: unknown): FastifyReply {
+  reply.log.warn({ event: 'company_registration_failed', reason: errorLabel(error) }, 'company registration failed');
+  return reply.code(503).send({ error: 'registration_unavailable', message: 'No se pudo completar el registro. Intenta más tarde.' });
+}
+
 /** Creates company, hub and owner account and answers; a taken email and a taken slug reach the same derivation and reply. */
 export async function registerCompanyWithOwner(pool: DatabasePool, input: CompanyRegistrationInput, reply: FastifyReply): Promise<boolean> {
   const { password, ...data } = input;
@@ -50,10 +56,7 @@ export async function registerCompanyWithOwner(pool: DatabasePool, input: Compan
     if (error instanceof PasswordWorkSaturated) await limited(reply, 5_000);
     else if (error instanceof StoreError && error.code === 'conflict') await reply.code(409).send(REGISTRATION_IN_USE);
     else if (error instanceof StoreError && error.code === 'invalid_input') await reply.code(400).send(INVALID_REGISTRATION);
-    else {
-      reply.log.warn({ event: 'company_registration_failed', reason: errorLabel(error) }, 'company registration failed');
-      await reply.code(503).send({ error: 'registration_unavailable', message: 'No se pudo completar el registro. Intenta más tarde.' });
-    }
+    else await unavailable(reply, error);
     return false;
   }
 }
@@ -62,21 +65,31 @@ export function registerCompanyRegistrationRoute(app: FastifyInstance, pool: Dat
   hourlyRegistrations = configuredHourlyRegistrations(), reserved = configuredReservedCompanySlugs()): void {
   const attempts = new LoginThrottle(MAX_ATTEMPTS, WINDOW_MS, MAX_TRACKED_IPS);
   const emailAttempts = new LoginThrottle(MAX_ATTEMPTS, WINDOW_MS);
+  let duplicateLookups = 0;
   let hour = { count: 0, until: 0 };
   app.post('/v3/auth/register', { bodyLimit: 8192 }, async (request, reply) => {
     reply.header('Cache-Control', 'no-store');
     const now = Date.now();
     const key = rateLimitKey(request.ip);
     const addressRetryMs = attempts.retryAfterMs(key, now);
-    if (addressRetryMs > 0) return limited(reply, addressRetryMs);
-    attempts.recordFailure(key, now);
+    // Reserve admission before the lookup so concurrent requests cannot overrun the limits.
+    if (addressRetryMs === 0) attempts.recordFailure(key, now);
     const input = CompanyRegistrationSchema.safeParse(request.body);
-    if (!input.success) return reply.code(400).send(INVALID_REGISTRATION);
+    if (!input.success) return addressRetryMs > 0 ? limited(reply, addressRetryMs) : reply.code(400).send(INVALID_REGISTRATION);
     const emailRetryMs = emailAttempts.retryAfterMs(input.data.email, now);
-    if (emailRetryMs > 0) return limited(reply, emailRetryMs);
-    // Every attempt counts, never only the refused ones, so reaching the limit says nothing about the account.
-    emailAttempts.recordFailure(input.data.email, now);
+    if (addressRetryMs === 0 && emailRetryMs === 0) emailAttempts.recordFailure(input.data.email, now);
     if (reserved.has(input.data.company.slug)) return reply.code(409).send(REGISTRATION_IN_USE);
+    if (duplicateLookups >= MAX_DUPLICATE_LOOKUPS) return limited(reply, 5_000);
+    duplicateLookups += 1;
+    try {
+      const existing = await pool.query<{ in_use: boolean }>(
+        `SELECT EXISTS(SELECT 1 FROM console_users WHERE email_normalized=$1)
+          OR EXISTS(SELECT 1 FROM companies WHERE id=$2) AS in_use`, [input.data.email, input.data.company.slug]);
+      if (existing.rows[0]?.in_use) return await reply.code(409).send(REGISTRATION_IN_USE);
+    } catch (error) { return await unavailable(reply, error); }
+    finally { duplicateLookups -= 1; }
+    if (addressRetryMs > 0) return limited(reply, addressRetryMs);
+    if (emailRetryMs > 0) return limited(reply, emailRetryMs);
     if (hour.until <= now) hour = { count: 0, until: now + HOUR_MS };
     if (hour.count >= hourlyRegistrations) return limited(reply, hour.until - now);
     const admittedHour = hour;
