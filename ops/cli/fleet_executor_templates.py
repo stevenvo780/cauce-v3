@@ -198,7 +198,9 @@ def resolve_profile(policy: dict, agent: dict) -> dict | None:
     matches = [row for row in agent.get('_trusted_accounts', []) if row['id'] == account]
     if account in policy['profiles'] and not agent.get('_trusted_accounts_present'):
         return policy['profiles'][account]
-    if len(matches) != 1 or matches[0]['enabled'] is not True or not (
+    # Binding derivation needs payer consent, not an enabled account: a pending registration
+    # must mount its profile so preparation can pause at authenticate.
+    if len(matches) != 1 or not (
             matches[0]['payer_tenant_id'] == agent['tenant_id'] or matches[0]['shared_with_pool'] is True):
         raise SafeFailure('provider account has no current authorized durable binding')
     trusted = matches[0]
