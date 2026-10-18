@@ -123,7 +123,10 @@ export class AgentProviderAuthBroker {
     if (reservation?.session_id !== binding.fence.session_id || reservation.state !== 'reserved') throw denied();
     const prepared = await preparedState(client, value.operation.id);
     const agents = await trustedFleetBaseline(client, value.sealed.agents);
-    return { operation: publicFleetOperation(value.operation), request: value.operation.request, ...fleetHostInputs(value.sealed.targets, prepared),
+    const previous_agents = await trustedFleetBaseline(client,
+      prepared.previous_agents.filter(agent => agent.host_id === value.sealed.host_id));
+    return { operation: publicFleetOperation(value.operation), request: value.operation.request,
+      ...fleetHostInputs(value.sealed.targets, { ...prepared, previous_agents }),
       snapshot: { agents, memberships: [], rolePolicies: [] }, trusted_accounts: await readFleetProviderAccounts(client, agents) };
   }
   private command(binding: AgentAuthBinding, command: AgentAuthCommand['command']): Promise<AgentAuthResult> {

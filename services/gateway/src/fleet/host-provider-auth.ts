@@ -177,7 +177,8 @@ async function activeExecution(client: DatabaseClient, scope: ProviderAuthPhysic
   snapshot.purgedRuntimeKeys = (await client.query<{ runtime_key: string }>(`SELECT DISTINCT runtime_key FROM agents
     WHERE company_id=$1 AND purged_at IS NOT NULL AND runtime_key IS NOT NULL ORDER BY runtime_key`, [row.company_id])).rows.map(agent => agent.runtime_key);
   snapshot.agents = await desiredFleetExtensions(client, await trustedFleetBaseline(client, snapshot.agents));
-  prepared.previous_agents = await trustedFleetBaseline(client, prepared.previous_agents);
+  prepared.previous_agents = (await trustedFleetBaseline(client, prepared.previous_agents))
+    .filter(agent => agent.host_id === scope.host_id);
   const matches = snapshot.agents.filter(value => value.tenant_id === scope.tenant_id && value.alias === scope.alias);
   const agent = Agent.parse(matches.length === 1 ? matches[0] : undefined);
   if (agent.harness_id !== scope.harness_id || agent.host_id !== scope.host_id || agent.runtime_user !== scope.runtime_user
@@ -280,8 +281,10 @@ export async function createHostProviderAuthService(pool: DatabasePool, options:
               || selected.primary_account_id !== scope.account_id || scope.profile_id !== scope.account_id) throw denied();
           await assertProviderAuthSealedScope(client, row, selected);
           const agents = await trustedFleetBaseline(client, sealed.agents);
+          const previous_agents = (await trustedFleetBaseline(client, prepared.previous_agents))
+            .filter(agent => agent.host_id === sealed.host_id);
           execution = { operation: publicFleetOperation(row), request: FleetOperationRequestSchema.parse(row.request),
-            ...fleetHostInputs(sealed.targets, prepared),
+            ...fleetHostInputs(sealed.targets, { ...prepared, previous_agents }),
             snapshot: { agents, memberships: [], rolePolicies: [] }, trusted_accounts: await readFleetProviderAccounts(client, agents) };
         } finally { if (!borrowedClient) client.release(); }
         const stopped = await cleanupProviderLogin({ python: options.hostConfig.command.python, helper: policy.helper,
