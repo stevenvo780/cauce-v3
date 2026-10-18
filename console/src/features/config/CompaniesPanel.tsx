@@ -10,6 +10,8 @@ import { REGISTRATION_INPUT_HINT, UNREACHABLE_SERVER } from '../auth/Registratio
 import { CompanyAdminsPanel } from './CompanyAdminsPanel';
 import { CompanyPurgeBlockers, CompanyPurgeResult } from './CompanyPurgeResult';
 import { COMPANY_SLUG_PATTERN } from './form-patterns';
+import { diffConflictFields, isCasConflict, type ConflictFieldDiff } from '../../components/conflict';
+import { ConflictNotice } from '../../components/ConflictNotice';
 
 type StateChange = 'disable' | 'enable' | 'retire' | 'restore' | 'purge';
 interface PendingChange { company: CompanyRecord; change: StateChange }
@@ -63,6 +65,7 @@ export function CompaniesPanel() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [conflictDiffs, setConflictDiffs] = useState<ConflictFieldDiff[]>();
   const [purged, setPurged] = useState<CompanyPurgeReceipt>();
   const [blockers, setBlockers] = useState<CompanyPurgeBlocker[]>([]);
   const canCreate = authority?.role === 'platform_admin';
@@ -84,6 +87,25 @@ export function CompaniesPanel() {
       if (reread.error) setError(`El cambio se guardó, pero no se pudo releer: ${companyErrorText(reread.error, 'read')}`);
     } catch (cause) { if (cause instanceof CompanyPurgeBlockedError) setBlockers(cause.blockers); else setError(companyErrorText(cause, request)); }
     finally { setBusy(false); }
+  }
+  async function saveCompanyName() {
+    if (!editing || busy) return;
+    setBusy(true); setError(''); setNotice(''); setPurged(undefined); setBlockers([]);
+    try {
+      await api.updateCompany(editing.id, { expected_version: editing.version, name: name.trim() });
+      setEditing(undefined); setConflictDiffs(undefined); setNotice('Empresa actualizada.');
+      const reread = await resource.reload();
+      if (reread.error) setError(`El cambio se guardó, pero no se pudo releer: ${companyErrorText(reread.error, 'read')}`);
+    } catch (cause) {
+      if (isCasConflict(cause)) {
+        setError(companyErrorText(cause, 'update'));
+        const fresh = (await resource.reload()).data?.companies.find((company) => company.id === editing.id);
+        if (fresh) {
+          setEditing(fresh);
+          setConflictDiffs(diffConflictFields({ name: name.trim() }, { name: fresh.name }, { name: 'Nombre de empresa' }));
+        } else setConflictDiffs([]);
+      } else setError(companyErrorText(cause, 'update'));
+    } finally { setBusy(false); }
   }
   function applyChange({ company, change }: PendingChange, confirmation: string) {
     if (change === 'purge') {
@@ -107,7 +129,7 @@ export function CompaniesPanel() {
     {!canSeeAdmins && resource.data ? <p className="m-0 text-xs text-muted">Solo dueños, administradores de empresa y la plataforma ven y asignan la autoridad de empresa.</p> : null}
     <ul className="m-0 grid list-none gap-2 p-0">{resource.data?.companies.map(company => <li key={company.id} className="flex flex-wrap items-center justify-between gap-2 border-b border-line py-2">
       <div><strong>{company.name}</strong><p className="m-0 text-xs text-muted">{STATE_LABEL[company.state]} · versión {company.version}</p></div>
-      <div className="flex flex-wrap gap-2"><Button size="sm" disabled={!canEdit(company) || busy || !!resource.error} onClick={() => { setName(company.name); setEditing(company); }}>Editar</Button>
+      <div className="flex flex-wrap gap-2"><Button size="sm" disabled={!canEdit(company) || busy || !!resource.error} onClick={() => { setName(company.name); setEditing(company); setConflictDiffs(undefined); }}>Editar</Button>
         <Button size="sm" disabled={!canSeeAdmins || busy || !!resource.error} onClick={() => { setAdminsCompany(current => current === company.id ? undefined : company.id); }}>Autoridad de empresa</Button>
         {STATE_CHANGES[company.state].map(change => <Button key={change} size="sm" disabled={!canEdit(company) || busy || !!resource.error}
           onClick={() => { setPending({ company, change }); }}>{CHANGE_LABEL[change]}</Button>)}
@@ -115,10 +137,13 @@ export function CompaniesPanel() {
           onClick={() => { setPending({ company, change: 'purge' }); }}>Purgar definitivamente</Button> : null}</div>
     </li>)}</ul>
     {resource.data && !resource.data.companies.length ? <p>No hay empresas disponibles para esta sesión.</p> : null}
-    {editing ? <form className="grid gap-2" onSubmit={event => { event.preventDefault(); void perform(() => api.updateCompany(editing.id, { expected_version: editing.version, name: name.trim() }), 'Empresa actualizada.', 'update'); }}>
+    {editing ? <form className="grid gap-2" onSubmit={event => { event.preventDefault(); void saveCompanyName(); }}>
       <label>Nombre de empresa<input required maxLength={80} value={name} disabled={busy} onChange={event => { setName(event.target.value); }} /></label>
-      <div className="flex gap-2"><Button type="submit" disabled={busy || !name.trim()}>Guardar empresa</Button><Button type="button" disabled={busy} onClick={() => { setEditing(undefined); }}>Cancelar</Button></div>
+      <div className="flex gap-2"><Button type="submit" disabled={busy || !name.trim()}>Guardar empresa</Button><Button type="button" disabled={busy} onClick={() => { setEditing(undefined); setConflictDiffs(undefined); }}>Cancelar</Button></div>
     </form> : null}
+    {editing && conflictDiffs ? <ConflictNotice diffs={conflictDiffs} busy={busy}
+      onRetry={() => { void saveCompanyName(); }}
+      onDiscard={() => { setName(editing.name); setConflictDiffs(undefined); }} /> : null}
     {pending && (pending.change !== 'purge' || canCreate) ? <StateChangeConfirmation key={`${pending.company.id}:${pending.change}`} pending={pending} busy={busy}
       ownHome={pending.company.id === authority?.home_company} confirm={confirmation => { applyChange(pending, confirmation); }} cancel={() => { setPending(undefined); }} /> : null}
     {creating && canCreate ? <CompanyCreateForm busy={busy} cancel={() => { setCreating(false); }} save={input => perform(() => api.createCompany(input), 'Empresa y cuenta de dueño creadas.', 'create')} /> : null}

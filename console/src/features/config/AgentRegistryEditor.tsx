@@ -11,6 +11,8 @@ import { fleetHostUsable } from '@cauce/protocol/fleet-hosts';
 import { agentHostIdOf, agentWriteBlock } from './agent-registry-create';
 import { hostUnavailableReason } from './use-fleet-hosts';
 import { AgentQuotaBinding } from './AgentQuotaBinding';
+import { diffConflictFields, type ConflictFieldDiff } from '../../components/conflict';
+import { ConflictNotice } from '../../components/ConflictNotice';
 
 type AgentRow = Record<string, unknown> & { tenant_id: string; alias: string };
 
@@ -41,35 +43,38 @@ function hostEditable(agent: AgentRow): boolean {
   return !hasRuntime(agent) || agentHostIdOf(agent) === undefined;
 }
 
-function buildMutation(agent: AgentRow, draft: Draft): { mutation?: ConfigMutation; error?: string } {
+function buildMutation(agent: AgentRow, draft: Draft, baseline: Draft): { mutation?: ConfigMutation; error?: string } {
   const value: Record<string, unknown> = {};
   const originalName = typeof agent.display_name === 'string' ? agent.display_name : '';
-  if (draft.displayName !== originalName) {
+  // Only what the draft changed against its own base is sent: a concurrent save of another field
+  // is never reverted by resending the stale value this form happened to be showing.
+  if (draft.displayName !== baseline.displayName && draft.displayName !== originalName) {
     const normalized = draft.displayName.trim();
     if (normalized.length > 128) return { error: 'El nombre visible admite hasta 128 caracteres.' };
     value.display_name = normalized || null;
   }
 
-  if (hostEditable(agent) && draft.hostId !== (agentHostIdOf(agent) ?? '')) {
+  if (hostEditable(agent) && draft.hostId !== baseline.hostId && draft.hostId !== (agentHostIdOf(agent) ?? '')) {
     value.host_id = draft.hostId || null;
   }
 
-  if (draft.enabled !== '' && draft.enabled !== String(agent.enabled)) {
+  if (draft.enabled !== baseline.enabled && draft.enabled !== '' && draft.enabled !== String(agent.enabled)) {
     if (draft.enabled !== 'false') return { error: 'La habilitación requiere una operación verificada desde «Operar agente».' };
     value.enabled = false;
   }
 
   const originalCapacity = agent.max_concurrent_deliveries;
-  if (draft.noCapacityLimit) {
+  const capacityTouched = draft.noCapacityLimit !== baseline.noCapacityLimit || draft.capacity !== baseline.capacity;
+  if (capacityTouched && draft.noCapacityLimit) {
     if (originalCapacity !== null) value.max_concurrent_deliveries = null;
-  } else if (draft.capacity !== '') {
+  } else if (capacityTouched && draft.capacity !== '') {
     if (!/^[0-9]+$/u.test(draft.capacity)) return { error: 'La capacidad debe ser un entero entre 1 y 100.' };
     const capacity = Number(draft.capacity);
     if (!Number.isSafeInteger(capacity) || capacity < 1 || capacity > 100) {
       return { error: 'La capacidad debe ser un entero entre 1 y 100.' };
     }
     if (capacity !== originalCapacity) value.max_concurrent_deliveries = capacity;
-  } else if (typeof originalCapacity === 'number') {
+  } else if (capacityTouched && typeof originalCapacity === 'number') {
     return { error: 'Indica una capacidad o marca «Sin límite» para enviar null.' };
   }
 
@@ -147,7 +152,7 @@ function AgentRegistryForm({
 }) {
   const [draft, setDraft] = useState(() => initialDraft(agent));
   const [formError, setFormError] = useState<string>();
-  const [serverRefreshNotice, setServerRefreshNotice] = useState<string>();
+  const [conflictDiffs, setConflictDiffs] = useState<ConflictFieldDiff[]>();
   const [deleting, setDeleting] = useState(false);
   const agentVersion = JSON.stringify([
     agent.harness_id, agent.display_name, agent.enabled, agent.max_concurrent_deliveries,
@@ -163,7 +168,7 @@ function AgentRegistryForm({
   reportDirty.current = onDirtyChange;
   useEffect(() => { reportDirty.current?.(dirty); }, [dirty]);
   useEffect(() => () => { reportDirty.current?.(false); }, []);
-  const built = useMemo(() => buildMutation(agent, draft), [agent, draft]);
+  const built = useMemo(() => buildMutation(agent, draft, baseline.current), [agent, draft]);
   const mutation = built.mutation;
   const disabled = !runner.canWrite || runner.busy;
   const editDisabled = disabled || deleting;
@@ -176,14 +181,31 @@ function AgentRegistryForm({
   useEffect(() => {
     if (previousAgentVersion.current === agentVersion) return;
     previousAgentVersion.current = agentVersion;
-    const edited = JSON.stringify(draftRef.current) !== JSON.stringify(baseline.current);
-    baseline.current = initialDraft(agent);
-    setDraft(baseline.current);
+    const fresh = initialDraft(agent);
+    const mine = draftRef.current;
+    const edited = JSON.stringify(mine) !== JSON.stringify(baseline.current);
     setFormError(undefined);
     setDeleting(false);
-    setServerRefreshNotice(edited
-      ? 'El registro cambió en el servidor. Se descartó el borrador y se cargaron los valores actuales; revísalos antes de previsualizar.'
-      : undefined);
+    const changedKeys = (Object.keys(fresh) as (keyof Draft)[]).filter((key) => mine[key] !== baseline.current[key]);
+    const landed = changedKeys.every((key) => mine[key] === fresh[key]);
+    if (!edited || landed || JSON.stringify(mine) === JSON.stringify(fresh)) {
+      baseline.current = fresh;
+      setDraft(fresh);
+      setConflictDiffs(undefined);
+      return;
+    }
+    // The draft survives a concurrent save: only the panel below may settle it.
+    setConflictDiffs(diffConflictFields(
+      { display_name: mine.displayName, host_id: mine.hostId, enabled: mine.enabled, capacity: mine.noCapacityLimit ? null : mine.capacity },
+      {
+        display_name: fresh.displayName, host_id: fresh.hostId, enabled: fresh.enabled,
+        capacity: fresh.noCapacityLimit ? null : fresh.capacity,
+      },
+      {
+        display_name: 'Nombre visible', host_id: 'Computadora', enabled: 'Estado del registro',
+        capacity: 'Máximo de entregas concurrentes',
+      },
+    ));
   }, [agent, agentVersion]);
 
   function update(patch: Partial<Draft>) {
@@ -237,7 +259,15 @@ function AgentRegistryForm({
     </div>}
     <p className={HINT}>Identidad fija desde la fila seleccionada. Los permisos se vuelven a decidir en el servidor.</p>
     {runner.canWrite ? null : <Notice role="note">Edición de registro en solo lectura: falta permiso acreditado de configuración.</Notice>}
-    {serverRefreshNotice ? <Notice role="note">{serverRefreshNotice}</Notice> : null}
+    {conflictDiffs ? <ConflictNotice diffs={conflictDiffs} busy={runner.busy}
+      onRetry={() => { setConflictDiffs(undefined); void preview(); }}
+      onDiscard={() => {
+        const fresh = initialDraft(agent);
+        baseline.current = fresh;
+        setDraft(fresh);
+        setConflictDiffs(undefined);
+        runner.clear();
+      }} /> : null}
     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
       <label>Nombre visible
         <input maxLength={128} value={draft.displayName}

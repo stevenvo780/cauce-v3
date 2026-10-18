@@ -1,4 +1,4 @@
-import type { SyntheticEvent } from 'react';
+import type { ReactNode, SyntheticEvent } from 'react';
 import { Button, Notice } from '../../components/kit';
 import { FormDialog } from '../../components/dialogs';
 import { FORM_GRID } from './config-ui';
@@ -12,10 +12,11 @@ export interface Editor {
 }
 
 /** Create and edit share one modal; the error stays inside it because the page behind is inert while it is open. */
-export function ComputadoraFormDialog({ editor, busy, error, onChange, onSubmit, onClose }: {
+export function ComputadoraFormDialog({ editor, busy, error, conflict, onChange, onSubmit, onClose }: {
   editor: Editor | undefined;
   busy: boolean;
   error: string | undefined;
+  conflict?: ReactNode;
   onChange: (editor: Editor) => void;
   onSubmit: (event: SyntheticEvent<HTMLFormElement>) => void;
   onClose: () => void;
@@ -41,6 +42,7 @@ export function ComputadoraFormDialog({ editor, busy, error, onChange, onSubmit,
         <textarea maxLength={500} rows={3} value={editor.notes} disabled={busy}
           onChange={(event) => { onChange({ ...editor, notes: event.target.value }); }} />
       </label>
+      {conflict}
       <div className="flex flex-wrap justify-end gap-2">
         <Button size="sm" disabled={busy} onClick={onClose}>Cancelar</Button>
         <Button size="sm" variant="primary" type="submit" disabled={busy}>Guardar</Button>

@@ -1,5 +1,5 @@
 import { FleetHostCreateSchema, FleetHostUpdateSchema, type FleetHost } from '@cauce/protocol/fleet-hosts';
-import { useState, type SyntheticEvent } from 'react';
+import { useRef, useState, type SyntheticEvent } from 'react';
 import { useApi } from '../../api/context';
 import type { ConfigurationSnapshot } from '../../api/types';
 import { Plus } from 'lucide-react';
@@ -12,6 +12,8 @@ import { ComputadoraCard } from './ComputadoraCard';
 import { ComputadoraFormDialog, type Editor } from './ComputadoraFormDialog';
 import { mensajeDeEscritura, resumenDeFlota, type AccionDeEscritura } from './fleet-host-model';
 import { useFleetHosts } from './use-fleet-hosts';
+import { diffConflictFields, isCasConflict, type ConflictFieldDiff } from '../../components/conflict';
+import { ConflictNotice } from '../../components/ConflictNotice';
 import { HostEnrollmentPanel } from './HostEnrollmentPanel';
 import { canManageCompany } from '../auth/company-authority';
 
@@ -34,15 +36,19 @@ export function ComputadorasSection({ snapshot, soloLectura }: { snapshot?: Conf
   const [borrar, setBorrar] = useState<FleetHost>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
+  const [conflictDiffs, setConflictDiffs] = useState<ConflictFieldDiff[]>();
+  const [conflictFresh, setConflictFresh] = useState<FleetHost>();
+  const writeCause = useRef<unknown>(undefined);
   const hosts = flota.hosts ?? [];
 
   async function escribir(operacion: () => Promise<unknown>, accion: AccionDeEscritura = 'edicion') {
-    setBusy(true); setError(undefined);
+    setBusy(true); setError(undefined); writeCause.current = undefined;
     try {
       await operacion();
       await flota.reload();
       return true;
     } catch (cause) {
+      writeCause.current = cause;
       setError(mensajeDeEscritura(cause, accion));
       return false;
     } finally {
@@ -51,12 +57,12 @@ export function ComputadorasSection({ snapshot, soloLectura }: { snapshot?: Conf
   }
 
   function abrirAlta(host?: FleetHost) {
-    setError(undefined);
+    setError(undefined); setConflictDiffs(undefined); setConflictFresh(undefined);
     setEditor({ modo: 'alta', hostId: host?.host_id ?? '', displayName: host?.display_name ?? '', notes: '', version: 0 });
   }
 
   function abrirEdicion(host: FleetHost) {
-    setError(undefined);
+    setError(undefined); setConflictDiffs(undefined); setConflictFresh(undefined);
     setEditor({ modo: 'editar', hostId: host.host_id, displayName: host.display_name, notes: host.notes, version: host.version });
   }
 
@@ -74,8 +80,30 @@ export function ComputadorasSection({ snapshot, soloLectura }: { snapshot?: Conf
       const cambio = FleetHostUpdateSchema.safeParse({ expected_version: editor.version, display_name: displayName, notes });
       if (!cambio.success) { setError(invalido); return; }
       ok = await escribir(() => api.updateFleetHost(hostId, cambio.data));
+      if (!ok && isCasConflict(writeCause.current)) {
+        const fresh = (await api.listFleetHosts().catch(() => undefined))?.find((host) => host.host_id === hostId);
+        if (fresh) {
+          setConflictFresh(fresh);
+          setConflictDiffs(diffConflictFields(
+            { display_name: displayName, notes },
+            { display_name: fresh.display_name, notes: fresh.notes },
+            { display_name: 'Nombre visible', notes: 'Notas' },
+          ));
+        } else setConflictDiffs([]);
+      }
     }
-    if (ok) setEditor(undefined);
+    if (ok) { setEditor(undefined); setConflictDiffs(undefined); setConflictFresh(undefined); }
+  }
+
+  async function reintentarComputadora() {
+    if (editor?.modo !== 'editar') return;
+    const fresh = (await api.listFleetHosts().catch(() => undefined))?.find((host) => host.host_id === editor.hostId) ?? conflictFresh;
+    if (!fresh) return;
+    setConflictFresh(fresh);
+    const cambio = FleetHostUpdateSchema.safeParse({ expected_version: fresh.version, display_name: editor.displayName, notes: editor.notes });
+    if (!cambio.success) { setError('Revisa el identificador (minúsculas, números, guion o guion bajo) y el nombre visible.'); return; }
+    const ok = await escribir(() => api.updateFleetHost(editor.hostId, cambio.data));
+    if (ok) { setEditor(undefined); setConflictDiffs(undefined); setConflictFresh(undefined); }
   }
 
   function alternar(host: FleetHost) {
@@ -148,8 +176,14 @@ export function ComputadorasSection({ snapshot, soloLectura }: { snapshot?: Conf
       <ul className={GRID_TARJETAS}>{detectadas.map(tarjeta)}</ul>
     </section> : null}
 
-    <ComputadoraFormDialog editor={editor} busy={busy} error={error}
-      onChange={setEditor} onSubmit={(event) => { void guardar(event); }} onClose={() => { setEditor(undefined); }} />
+    <ComputadoraFormDialog editor={editor} busy={busy} error={conflictDiffs ? undefined : error}
+      conflict={editor && conflictDiffs ? <ConflictNotice diffs={conflictDiffs} busy={busy}
+        onRetry={() => { void reintentarComputadora(); }}
+        onDiscard={() => {
+          if (conflictFresh) setEditor({ modo: 'editar', hostId: conflictFresh.host_id, displayName: conflictFresh.display_name, notes: conflictFresh.notes, version: conflictFresh.version });
+          setConflictDiffs(undefined); setConflictFresh(undefined); setError(undefined);
+        }} /> : undefined}
+      onChange={setEditor} onSubmit={(event) => { void guardar(event); }} onClose={() => { setEditor(undefined); setConflictDiffs(undefined); setConflictFresh(undefined); }} />
 
     <ConfirmDialog open={!!borrar} tone="danger" busy={busy}
       title={borrar ? `Eliminar la computadora ${borrar.display_name}` : ''}

@@ -1,5 +1,7 @@
 import { useEffect, useId, useState } from 'react';
 import type { ConfigMutation, ConfigurationSnapshot } from '../../api/types';
+import { diffConflictFields } from '../../components/conflict';
+import { ConflictNotice } from '../../components/ConflictNotice';
 import { buildFormMutation, configFormValues, type ConfigFormDefinition, type ConfigFormField, type ConfigFormTarget } from './config-form-model';
 import type { ConfigMutationRunner } from './use-config-mutation';
 import { canUseConfigForm, scopedFormIdentity } from './config-form-access';
@@ -42,7 +44,7 @@ export function ConfigCollectionForm({ definition, target, snapshot, runner, bus
 }) {
   const formId = useId();
   const scopedIdentity = scopedFormIdentity(snapshot, definition);
-  const [initial] = useState(() => ({ ...configFormValues(definition, target.action, target.row), ...(target.action === 'create' ? scopedIdentity : {}) }));
+  const [initial, setInitial] = useState(() => ({ ...configFormValues(definition, target.action, target.row), ...(target.action === 'create' ? scopedIdentity : {}) }));
   const [values, setValues] = useState(initial);
   const [validationError, setValidationError] = useState<string>();
   const title = `${ACTION_LABEL[target.action]} ${definition.label}`;
@@ -74,6 +76,17 @@ export function ConfigCollectionForm({ definition, target, snapshot, runner, bus
   const members = definition.resource === 'room'
     ? (snapshot.memberships ?? []).filter((row) => row.tenant_id === values.tenant_id && row.room_id === values.id)
     : [];
+
+  const identityKeys = definition.fields.filter((field) => field.identity).map((field) => field.key);
+  const identityText = (value: unknown): string => typeof value === 'string' ? value : typeof value === 'number' ? String(value) : '';
+  const freshRow = target.action === 'update'
+    ? ((snapshot as unknown as Record<string, unknown>)[target.collection] as Record<string, unknown>[] | undefined)
+      ?.find((row) => identityKeys.every((key) => identityText(row[key]) === (initial[key] ?? '')))
+    : undefined;
+  const freshValues = freshRow ? configFormValues(definition, target.action, freshRow) : undefined;
+  const fieldLabels = Object.fromEntries(definition.fields.map((field) => [field.key, field.label]));
+  const conflictDiffs = runner.conflicted && freshValues
+    ? diffConflictFields(values, freshValues, fieldLabels) : [];
 
   return <form className="config-form config-collection-form" aria-label={title}
     onSubmit={(event) => { event.preventDefault(); void submit(true); }}>
@@ -116,6 +129,12 @@ export function ConfigCollectionForm({ definition, target, snapshot, runner, bus
       })}
     </div>
     {validationError ? <p className="notice error" role="alert">{validationError}</p> : null}
+    {runner.conflicted && target.action === 'update' ? <ConflictNotice diffs={conflictDiffs} busy={busy}
+      onRetry={() => { void submit(true); }}
+      onDiscard={() => {
+        if (freshValues) { setValues(freshValues); setInitial(freshValues); }
+        runner.clear();
+      }} /> : null}
     {mutation ? <details className="config-raw"><summary>Ver los datos del cambio</summary>
       <pre className="config-preview" aria-label="Mutación propuesta">{JSON.stringify(mutation, null, 2)}</pre>
     </details> : null}

@@ -10,6 +10,7 @@ import {
   type AgentRegistryCreateDraft,
 } from './agent-registry-create';
 import { Button, Notice, PREVIEW } from '../../components/kit';
+import { ConflictNotice } from '../../components/ConflictNotice';
 import { useConfigMutation, useRevisionEncadenada } from './use-config-mutation';
 import { hostById, hostUnavailableReason, useFleetHosts } from './use-fleet-hosts';
 import { fleetCapabilityReasonText } from './fleet-operation-text';
@@ -227,6 +228,9 @@ export function AgentRegistryCreate({ snapshot, open, onOpenChange, onReloaded, 
                 {!draft.hostId ? <Notice tone="warn" role="note">Sin computadora, el agente quedará registrado pero no responderá: asígnale una en Editar registro y prepáralo para que admita entregas.</Notice> : null}
                 <p className="m-0 text-xs text-muted">Revisión esperada: {String(runner.expectedRevision ?? 'desconocida')}. Previsualiza el alta para que el servidor la valide antes de crearla.</p>
                 {runner.preview ? <pre className={PREVIEW} aria-label="Preview del alta de agente">{runner.preview}</pre> : null}
+                {runner.conflicted ? <ConflictNotice busy={busy}
+                  onRetry={() => { void preview(); }}
+                  onDiscard={() => { setDraft(EMPTY_AGENT_REGISTRY_DRAFT); setStep('identidad'); runner.clear(); }} /> : null}
               </> : null}
               {notices}
             </>}

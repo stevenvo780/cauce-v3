@@ -155,12 +155,13 @@ it('reconciles a stale-revision conflict and does not retain its preview', async
   expect(await screen.findByRole('alert')).toHaveTextContent(/Conflicto de revisión/);
   expect(screen.queryByLabelText('Preview del registro de agente')).not.toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Aplicar cambio' })).toBeDisabled();
-  expect(await screen.findByRole('note')).toHaveTextContent(/Se descartó el borrador y se cargaron los valores actuales/);
-  expect(screen.getByRole('textbox', { name: 'Nombre visible' })).toHaveValue('Cambio concurrente');
-  expect(screen.getByRole('spinbutton', { name: 'Máximo de entregas concurrentes' })).toHaveValue(2);
+  const conflicto = await screen.findByRole('group', { name: 'Conflicto de versión' });
+  expect(conflicto).toHaveTextContent('Cambio concurrente');
+  expect(screen.getByRole('textbox', { name: 'Nombre visible' })).toHaveValue('Agente uno');
+  expect(screen.getByRole('spinbutton', { name: 'Máximo de entregas concurrentes' })).toHaveValue(1);
+  expect(screen.getByRole('combobox', { name: 'Estado del registro' })).toHaveValue('false');
   expect(screen.queryByRole('textbox', { name: 'Nombre del contenedor' })).not.toBeInTheDocument();
-  await user.selectOptions(screen.getByRole('combobox', { name: 'Estado del registro' }), 'false');
-  await user.click(screen.getByRole('button', { name: 'Previsualizar cambio' }));
+  await user.click(screen.getByRole('button', { name: 'Releer y reintentar con mis cambios' }));
   await screen.findByLabelText('Preview del registro de agente');
   expect(changes).toHaveLength(3);
   expect(changes[2]).toMatchObject({ expected_revision: 5, dry_run: true,
