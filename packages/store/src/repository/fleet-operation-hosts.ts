@@ -95,7 +95,10 @@ export async function assertFleetHostAccess(
       && !registered.has(request.parameters.placement.host_id)) conflict('desired fleet placement has no registered host transport');
   const agents = await readFleetGroupAgents(client, request);
   if (agents.length > 1000) conflict('fleet host scope exceeds its bound');
+  const groupLifecycle = request.target.resource !== 'agent' && ['retire', 'purge', 'restore'].includes(request.kind);
   for (const agent of agents) {
+    // A team member registered without a fleet runtime has no host effect to verify: retiring the group disables it by configuration.
+    if (groupLifecycle && !agent.runtime_key && !agent.host_id) continue;
     if (request.kind === 'create' && isRegistryDraft({ runtime_key: agent.runtime_key as string | null,
       runtime_mode: agent.runtime_mode as string | null, primary_room_id: agent.primary_room_id as string | null, retired_at: null,
       enabled: agent.enabled === true, lifecycle_state: String(agent.lifecycle_state) })) continue;
@@ -128,7 +131,9 @@ export function planFleetHostSlices(row: FleetOperationRow, agents: Record<strin
   }
   const hosts = new Map<string, Record<string, unknown>[]>();
   const seen = new Set<string>();
+  const groupLifecycle = row.target.resource !== 'agent' && ['retire', 'purge', 'restore'].includes(row.kind);
   for (const agent of agents) {
+    if (groupLifecycle && !agent.runtime_key && !agent.host_id) continue;
     assertPlacement(agent, row.request);
     if (seen.has(identity(agent))) conflict('fleet host scope repeats a durable agent identity');
     seen.add(identity(agent));
@@ -161,19 +166,27 @@ export async function loadFleetHostSlices(client: DatabaseClient, row: FleetOper
   if (!metadata.success) conflict('fleet operation has no sealed host scope');
   const slices = metadata.data.host_slices;
   const create = row.request.kind === 'create';
-  for (const agent of metadata.data.previous_agents) if (!(create && adoptedDraft(agent))) assertPlacement(agent, row.request);
+  const groupLifecycle = row.request.target.resource !== 'agent' && ['retire', 'purge', 'restore'].includes(row.request.kind);
+  for (const agent of metadata.data.previous_agents) {
+    if (groupLifecycle && !agent.runtime_key && !agent.host_id) continue;
+    if (!(create && adoptedDraft(agent))) assertPlacement(agent, row.request);
+  }
   const expected = planFleetHostSlices({ ...row, desired_revision: String(metadata.data.prepared_revision) },
     slices.filter(slice => slice.placement_role !== 'source').flatMap(slice => slice.agents), metadata.data.previous_agents);
   if (sha256Hex(expected) !== sha256Hex(slices)) conflict('fleet host scope digest differs from its prepared placements');
   const identities = [...new Set(slices.flatMap(slice => slice.targets).map(identity))].sort();
   const fenced = metadata.data.fenced_targets.map(identity).sort();
+  const previousByIdentity = new Map(metadata.data.previous_agents.map(agent => [identity(agent), agent]));
+  const placedFenced = groupLifecycle
+    ? fenced.filter(id => { const agent = previousByIdentity.get(id); return agent !== undefined && typeof agent.runtime_key === 'string' && agent.runtime_key !== ''; })
+    : fenced;
   const targetIdentity = identity(row.request.target);
   const previous = metadata.data.previous_agents;
   const adopting = previous.length === 1 && previous[0] !== undefined && adoptedDraft(previous[0])
     && identity(previous[0]) === targetIdentity && fenced.length === 1 && fenced[0] === targetIdentity;
   const creation = create && (fenced.length === 0 || adopting)
     && identities.length === 1 && identities[0] === targetIdentity;
-  if ((row.request.kind === 'create' ? !creation : sha256Hex(identities) !== sha256Hex(fenced))
+  if ((row.request.kind === 'create' ? !creation : sha256Hex(identities) !== sha256Hex(placedFenced))
       || sha256Hex(metadata.data.previous_agents.map(identity).sort()) !== sha256Hex(fenced)) {
     conflict('fleet host scope differs from its exact durable fence');
   }

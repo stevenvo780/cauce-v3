@@ -12,6 +12,10 @@ const AGENT_PAIRS = [['tenant_id', 'alias'], ['tenant_id', 'agent_alias'], ['ten
   ['tenant_id', 'asked_by_alias'], ['tenant_id', 'bridge_alias'], ['tenant_id', 'created_by'],
   ['source_tenant_id', 'source_alias'], ['target_tenant_id', 'target_alias']];
 export interface PurgeTable { table_name: string; columns: string[]; }
+/** Historical backup dumps are evidence, not live configuration: they never block or count as preserved history. */
+export function isHistoricalBackupTable(tableName: string): boolean {
+  return tableName.includes('_bak_') || tableName.startsWith('respaldo_');
+}
 export function sqlIdentifier(value: string): string {
   if (!/^[a-z][a-z0-9_]*$/u.test(value)) throw new Error('invalid purge identifier');
   return `"${value}"`;
@@ -37,10 +41,11 @@ export function purgePredicate(table: PurgeTable, target: FleetTarget, own = fal
   return fields.length ? `(${fields.map(column => `entry.${sqlIdentifier(column)}=$1`).join(' OR ')}) AND $2::text IS NULL` : undefined;
 }
 export async function purgeTables(client: DatabaseClient): Promise<PurgeTable[]> {
-  return (await client.query<PurgeTable>(`SELECT source.relname AS table_name,array_agg(attribute.attname::text ORDER BY attribute.attnum) AS columns
+  const tables = (await client.query<PurgeTable>(`SELECT source.relname AS table_name,array_agg(attribute.attname::text ORDER BY attribute.attnum) AS columns
     FROM pg_class source JOIN pg_namespace namespace ON namespace.oid=source.relnamespace
     JOIN pg_attribute attribute ON attribute.attrelid=source.oid AND attribute.attnum>0 AND NOT attribute.attisdropped
     WHERE namespace.nspname=current_schema() AND source.relkind IN ('r','p') GROUP BY source.relname ORDER BY source.relname`)).rows;
+  return tables.filter(table => !isHistoricalBackupTable(table.table_name));
 }
 export const HISTORICAL_MEMBERSHIP = `EXISTS(SELECT 1 FROM messages message WHERE message.tenant_id=entry.tenant_id
   AND message.room_id=entry.room_id AND message.actor_alias=entry.alias)`;

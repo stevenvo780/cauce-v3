@@ -63,10 +63,36 @@ export async function fleetMembershipIntent(client: DatabaseClient, row: FleetOp
     ORDER BY room_id,alias FOR UPDATE`, stamp === undefined ? scope.params : [...scope.params, stamp])).rows;
 }
 
+const ACTIVE_DELIVERIES = "('pending','retry','leased','accepted','started')";
+
+/** Retirement ends the scope's live work instead of leaving it to block the purge: deliveries become terminal and, for a tenant, its ACL edges are revoked. Sessions, holds and leases are already revoked or expired by the agent fence. */
+async function terminateScopeWork(client: DatabaseClient, target: FleetTarget): Promise<void> {
+  const deliveryScope = target.resource === 'agent'
+    ? '(delivery.recipient_tenant=$1 AND delivery.recipient_alias=$2) OR (message.tenant_id=$1 AND message.actor_alias=$2)'
+    : target.resource === 'tenant'
+      ? '(delivery.recipient_tenant=$1 OR message.tenant_id=$1) AND $2::text IS NULL'
+      : `(message.tenant_id=$1 AND message.room_id=$2) OR (delivery.recipient_tenant=$1 AND EXISTS (
+          SELECT 1 FROM memberships member WHERE member.tenant_id=delivery.recipient_tenant
+            AND member.alias=delivery.recipient_alias AND member.room_id=$2))`;
+  await client.query(`UPDATE deliveries delivery SET status='dead',terminal_at=COALESCE(terminal_at,clock_timestamp()),
+      claim_token=NULL,claim_expires_at=NULL,ack_deadline_at=NULL,consumer_instance_id=NULL,consumer_epoch=NULL,
+      last_error='Entrega terminada al retirar el equipo',updated_at=clock_timestamp()
+    FROM messages message WHERE message.id=delivery.message_id AND delivery.status IN ${ACTIVE_DELIVERIES}
+      AND (${deliveryScope})`, purgeParamsForTarget(target));
+  if (target.resource === 'tenant') {
+    await client.query('UPDATE acl_edges SET enabled=false WHERE from_tenant=$1 OR to_tenant=$1', [target.tenant_id]);
+  }
+}
+
+function purgeParamsForTarget(target: FleetTarget): (string | null)[] {
+  return [target.tenant_id, target.resource === 'agent' ? target.alias : target.resource === 'room' ? target.room_id : null];
+}
+
 export async function prepareFleetTransition(client: DatabaseClient, row: FleetOperationRow): Promise<void> {
   const { target, kind } = row;
   const scope = targetPredicate(target);
   if (kind === 'retire' || kind === 'purge') {
+    await terminateScopeWork(client, target);
     await prepareGroupAgents(client, row, 'retiring');
     if (target.resource === 'agent') {
       await client.query(`UPDATE agents SET retired_at=COALESCE(retired_at,now()),lifecycle_state='retiring'

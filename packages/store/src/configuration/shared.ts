@@ -81,6 +81,11 @@ interface ReferenceDefinition {
   identity_columns: string[];
 }
 
+/** Historical backup dumps are evidence, not live configuration: they never block a delete. */
+export function isHistoricalBackupTable(tableName: string): boolean {
+  return tableName.includes('_bak_') || tableName.startsWith('respaldo_');
+}
+
 function safeIdentity(value: Record<string, unknown>): Record<string, string> {
   return Object.fromEntries(Object.entries(value).filter(([key, field]) =>
     identityKeys.has(key) && (typeof field === 'string' || typeof field === 'number'))
@@ -151,6 +156,7 @@ export async function configurationDependencies(
   }
   const dependencies: ConfigurationDependency[] = [];
   for (const reference of references) {
+    if (isHistoricalBackupTable(reference.table_name)) continue;
     const restorableBinding = mutation.resource === 'alias_routing_ceiling' && reference.table_name === 'agent_account_bindings';
     const matchedColumns = reference.columns.map((column, index) => ({ column, target: reference.target_columns[index] }))
       .filter((pair): pair is { column: string; target: string } => pair.target !== undefined && identity[pair.target] !== undefined);
