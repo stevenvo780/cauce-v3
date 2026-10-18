@@ -6,7 +6,6 @@ import type {
   ConfigMutation,
   ConsoleAccess,
   ObservabilitySnapshot,
-  QuotaSnapshot,
   SystemStatus,
   TopologySnapshot,
 } from '../types';
@@ -96,10 +95,6 @@ export function getObservability(request: RequestFn): Promise<ObservabilitySnaps
   return request('/v3/console/observability');
 }
 
-export function getQuotas(request: RequestFn): Promise<QuotaSnapshot> {
-  return request('/v3/console/quotas');
-}
-
 export interface SystemClient {
   getStatus(): Promise<SystemStatus>;
   getConsoleAccess(): Promise<ConsoleAccess>;
@@ -116,7 +111,6 @@ export interface SystemClient {
     options: { dryRun: boolean; expectedRevision?: number },
   ): Promise<ConfigurationChangeResult>;
   getObservability(): Promise<ObservabilitySnapshot>;
-  getQuotas(): Promise<QuotaSnapshot>;
 }
 
 export function systemClient(request: RequestFn): SystemClient {
@@ -130,6 +124,5 @@ export function systemClient(request: RequestFn): SystemClient {
     changeConfiguration: (mutation, options) => changeConfiguration(request, mutation, options),
     rollbackConfiguration: (revisionId, options) => rollbackConfiguration(request, revisionId, options),
     getObservability: () => getObservability(request),
-    getQuotas: () => getQuotas(request),
   };
 }

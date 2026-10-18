@@ -168,7 +168,7 @@ it('centraliza cuentas, techos y bindings en /accounts: no repite tablas ni acep
   await screen.findByRole('heading', { level: 1, name: /ajustes/i });
 
   await irA(user, /^agentes$/i);
-  expect(screen.getByRole('link', { name: /ir a cuentas y cuotas/i })).toHaveAttribute('href', '/accounts');
+  expect(screen.getByRole('link', { name: /ir a cuentas/i })).toHaveAttribute('href', '/accounts');
   expect(screen.queryByRole('heading', { name: /provider accounts/i })).not.toBeInTheDocument();
   expect(screen.queryByRole('heading', { name: /alias routing ceiling/i })).not.toBeInTheDocument();
   expect(screen.queryByRole('heading', { name: /account bindings/i })).not.toBeInTheDocument();
@@ -178,7 +178,7 @@ it('centraliza cuentas, techos y bindings en /accounts: no repite tablas ni acep
     resource: 'provider_account', action: 'delete', id: 'codex-steven',
   }) } });
   await user.click(screen.getByRole('button', { name: /preview \/ dry-run/i }));
-  expect(await screen.findByRole('alert')).toHaveTextContent(/únicamente en «Cuentas y cuotas»/i);
+  expect(await screen.findByRole('alert')).toHaveTextContent(/únicamente en «Cuentas»/i);
   expect(screen.getByRole('alert')).toHaveTextContent(/\/accounts/);
   await user.click(screen.getByRole('button', { name: /aplicar atómico/i }));
   expect(changes).toEqual([]);
@@ -235,8 +235,8 @@ it('bloquea fail-closed el rollback de cuentas y sólo ejecuta una revisión no-
     expect(row).not.toBeNull();
     if (row) expect(within(row).queryByRole('button')).not.toBeInTheDocument();
   }
-  expect(audit.getAllByText(/su única autoridad es Cuentas y cuotas/i)).toHaveLength(3);
-  expect(audit.getAllByRole('link', { name: /abrir cuentas y cuotas/i })).toHaveLength(3);
+  expect(audit.getAllByText(/su única autoridad es Cuentas/i)).toHaveLength(3);
+  expect(audit.getAllByRole('link', { name: /abrir cuentas/i })).toHaveLength(3);
   expect(audit.getByText(/no publica una operación reconocible/i)).toBeInTheDocument();
 
   const allowedRow = audit.getByText('cambio de tenant permitido').closest('tr');

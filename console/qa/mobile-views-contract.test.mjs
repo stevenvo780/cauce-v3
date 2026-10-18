@@ -26,7 +26,7 @@ test('the office must be painted on arrival', () => {
 test('matrix covers mobile widths, unique states and every nested tab', () => {
   assert.deepEqual(VIEWPORTS.map(({ width }) => width), [360, 390, 430, 760]);
   assert.equal(new Set(VIEWS.map(({ id }) => id)).size, VIEWS.length);
-  for (const [path, count] of [['/accounts', 3], ['/config', 6], ['/observability', 2]]) assert.equal(VIEWS.filter((view) => view.path === path).length, count);
+  for (const [path, count] of [['/accounts', 2], ['/config', 6], ['/observability', 2]]) assert.equal(VIEWS.filter((view) => view.path === path).length, count);
   assert.equal(VIEWS.filter((view) => view.id.startsWith('live')).length, 2);
   assert.ok(VIEWS.every(({ primary }) => primary && primary !== '[data-objeto-principal]'));
 });
@@ -57,7 +57,7 @@ test('structural selectors still exist in the source that draws them', async () 
 });
 test('reused GET fixtures cover subviews and reject mutations/undeclared endpoints', async () => {
   const respond = await loadFixtures();
-  for (const path of ['auth/session', 'console/access', 'status', 'console/topology', 'console/activity', 'console/messages', 'console/queues', 'console/dlq', 'console/quotas', 'console/config', 'console/observability', 'console/origin-relays', 'console/audit', 'console/tenants/Steven/agents/kant/perfil', 'console/tenants/Steven/agents/kant/documents']) {
+  for (const path of ['auth/session', 'console/access', 'status', 'console/topology', 'console/activity', 'console/messages', 'console/queues', 'console/dlq', 'console/config', 'console/observability', 'console/origin-relays', 'console/audit', 'console/tenants/Steven/agents/kant/perfil', 'console/tenants/Steven/agents/kant/documents']) {
     const response = await respond(`https://fixture.invalid/v3/${path}`);
     assert.equal(response?.status, 200, path);
     assert.ok(await response.json());

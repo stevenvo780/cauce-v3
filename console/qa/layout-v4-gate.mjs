@@ -13,7 +13,7 @@ const OUTPUT = resolve(HERE, '.test-state/layout-v4');
 const CONTEXT = '/messages/Steven/jarvis?view=context';
 export const V4_VIEWS = [
   { id: 'my-quotas', path: '/my-quotas', ready: 'section[aria-label="Tarjetas de Mis cuotas"] article', count: 2,
-    texts: ['Consumo compartido por 2 agentes', 'Claude de coordinación'] },
+    texts: ['Usada por Steven/kant, Steven/jarvis', 'Claude de coordinación'] },
   { id: 'office-plan', path: '/live', action: 'plan', ready: 'section[aria-label="Editar sala Steven/grp.steven"]',
     detail: 'section[aria-label="Editar sala Steven/grp.steven"]', texts: ['Partes de la sala'] },
   { id: 'office-plan-quota-error', path: '/live', scenario: 'quota-error', action: 'plan', alert: true, failing: ['/v3/console/quota-accounts'],

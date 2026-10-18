@@ -33,7 +33,7 @@ it('bloquea rollback de batch con autoridad de cuentas y de batches anidados', a
   const audit = screen.getByRole('heading', { name: 'Historial de revisiones' }).closest('section');
   if (!audit) throw new Error('Audit panel missing');
   expect(within(audit).queryByRole('button', { name: /^Rollback$/ })).not.toBeInTheDocument();
-  expect(within(audit).getByRole('link', { name: /abrir cuentas y cuotas/i })).toBeInTheDocument();
+  expect(within(audit).getByRole('link', { name: /abrir cuentas/i })).toBeInTheDocument();
 });
 
 it('previsualiza un rollback de 200 cambios del historial con recibo completo', async () => {
@@ -64,7 +64,7 @@ it('conserva el bloqueo de cuentas dentro de una revisión de 200 cambios', asyn
   const audit = screen.getByRole('heading', { name: 'Historial de revisiones' }).closest('section');
   if (!audit) throw new Error('Audit panel missing');
   expect(within(audit).queryByRole('button', { name: /^Rollback$/ })).not.toBeInTheDocument();
-  expect(within(audit).getByRole('link', { name: /abrir cuentas y cuotas/i })).toBeInTheDocument();
+  expect(within(audit).getByRole('link', { name: /abrir cuentas/i })).toBeInTheDocument();
 });
 
 beforeEach(() => { window.history.replaceState({}, '', '/config?seccion=espacios'); });

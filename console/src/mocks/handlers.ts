@@ -1,7 +1,7 @@
 import { delay, http, HttpResponse } from 'msw';
 import {
   adapters, agentAccountBindings, audit, configAclEdges, configMemberships, configRooms,
-  configTenants, mockActivity, mockMessages, mockQueues, mockDlq, mockChain, mockQuotas,
+  configTenants, mockActivity, mockMessages, mockQueues, mockDlq, mockChain,
   mockStatus, originRelays, providerAccounts, registryAgents, routingCeiling,
   topology,
 } from './data';
@@ -64,7 +64,6 @@ export const handlers = [
   })),
   http.get('*/v3/console/topology', () => HttpResponse.json(topology)),
   http.get('*/v3/console/activity', () => HttpResponse.json(mockActivity())),
-  http.get('*/v3/console/quotas', () => HttpResponse.json(mockQuotas())),
   http.get('*/v3/console/fleet/capability', () => HttpResponse.json({ available: false, actions: [], placements: [], reason: 'executor_unconfigured' })),
   http.get('*/v3/console/fleet/operations/recent', () => HttpResponse.json({ operations: mockFleetOperations() })),
   http.get('*/v3/console/fleet/hosts', () => HttpResponse.json({ hosts: mockFleetHosts() })),

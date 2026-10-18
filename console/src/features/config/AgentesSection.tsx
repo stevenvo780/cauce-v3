@@ -153,9 +153,9 @@ export function AgentesSection({ snapshot: leido, onReload, tablaCompleta, ctx }
     </details> : null}
     <SectionCard level={3} title="Cuentas y ruteo de suscripciones"
       description="El inventario de provider_account, los techos y los bindings tienen una única autoridad de lectura y escritura.">
-      <p className="m-0 text-[13px] text-fg-2">Se administran junto con su consumo y su orden de fallback en «Cuentas y cuotas»; estas tablas no se repiten en Ajustes.</p>
+      <p className="m-0 text-[13px] text-fg-2">Se administran junto con su orden de fallback en «Cuentas»; su saldo está en «Mis cuotas». Estas tablas no se repiten en Ajustes.</p>
       <div>
-        <LinkButton href="/accounts" onClick={(event) => { onNavClick(event, '/accounts'); }}>Ir a Cuentas y cuotas</LinkButton>
+        <LinkButton href="/accounts" onClick={(event) => { onNavClick(event, '/accounts'); }}>Ir a Cuentas</LinkButton>
       </div>
     </SectionCard>
     {shown && sheetRef ? <AgentSheet key={sheetRef} agent={shown} retired={shown === sheetRetired} snapshot={snapshot} hosts={fleet.hosts}

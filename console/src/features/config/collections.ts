@@ -7,7 +7,7 @@ import type { ConfigurationSnapshot } from '../../api/types';
  *
  * The effective-data panel had six hardcoded entries while the snapshot carried more; deriving
  * from it keeps new general collections visible without duplicating the account registry owned
- * by Cuentas y cuotas.
+ * by Cuentas.
  */
 const COLLECTION_TITLES: Record<string, string> = {
   tenants: 'Clientes',

@@ -5,5 +5,4 @@ export * from './types/deliveries';
 export * from './types/dlq';
 export * from './types/config';
 export * from './types/activity';
-export * from './types/quotas';
 export * from './types/agent-directives';

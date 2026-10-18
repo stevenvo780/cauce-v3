@@ -25,7 +25,3 @@ export {
   audit,
   originRelays,
 } from './fixtures/messaging-fixtures';
-
-export {
-  mockQuotas,
-} from './fixtures/quotas-fixtures';

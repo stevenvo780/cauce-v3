@@ -24,7 +24,7 @@ it('publica las colecciones que el snapshot trae, no una lista fija de seis', ()
     .toBe('Destinos de aviso proactivo');
 });
 
-it('deja provider_accounts, techos y bindings exclusivamente en Cuentas y cuotas', () => {
+it('deja provider_accounts, techos y bindings exclusivamente en Cuentas', () => {
   const collections = configCollections({
     revision: 1,
     provider_accounts: [{ id: 'codex-steven' }],

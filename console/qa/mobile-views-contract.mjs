@@ -20,7 +20,7 @@ export const VIEWS = [
   { ...view('live', '/live', '[data-objeto-principal="oficina"]'), office: true },
   { ...view('live-sheet', '/live?agente=Steven%2Fkant', '[role="dialog"]'),
     ready: ['[role="dialog"] h2'] },
-  ...[['Consumo', 'consumo'], ['Inventario', 'inventario'], ['Asignaciones', 'asignaciones']].map(([name, id]) =>
+  ...[['Inventario', 'inventario'], ['Asignaciones', 'asignaciones']].map(([name, id]) =>
     view(`accounts-${id}`, '/accounts', `#view-panel-${id}`, [tab(name)])),
   view('queues', '/queues', '#view-panel-entregas tbody tr'),
   view('observability-signals', '/observability', '#view-panel-senales', [tab('Señales y relays')]),

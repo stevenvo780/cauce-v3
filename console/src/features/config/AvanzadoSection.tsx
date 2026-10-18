@@ -48,7 +48,7 @@ export function AvanzadoSection({ ctx }: { ctx: ConfigWrites }) {
                   <Button size="sm" disabled={soloLectura || busy} onClick={() => { void ctx.rollback(id, revision.operation, false); }}><RotateCcw size={14} />Rollback</Button>
                 </span>
                 : id && !policy.allowed
-                  ? <span className="text-xs text-muted">{policy.message}{policy.accountResource ? <> <a href="/accounts" onClick={(event) => { onNavClick(event, '/accounts'); }}>Abrir Cuentas y cuotas</a>.</> : null}</span>
+                  ? <span className="text-xs text-muted">{policy.message}{policy.accountResource ? <> <a href="/accounts" onClick={(event) => { onNavClick(event, '/accounts'); }}>Abrir Cuentas</a>.</> : null}</span>
                   : <Unknown value={null} />}</td>
             </tr>;
           })}

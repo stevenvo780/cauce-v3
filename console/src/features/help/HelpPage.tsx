@@ -16,7 +16,7 @@ const DETALLE: Record<string, string> = {
   queues: 'Reinyectar, cancelar o resolver entregas, con confirmación y recibo exacto.',
   observability: 'Eventos auditables del bus, métricas del gateway, egress y trazas de auditoría firmadas.',
   config: 'Topología (tenants, salas, membresías, roles y ACL) con historial de revisiones y reversión. '
-    + 'No edita contextos ni cuentas: eso vive en Contexto y Cuentas y cuotas.',
+    + 'No edita contextos ni cuentas: eso vive en Contexto y Cuentas.',
   terminal: 'TUI en vivo del agente y shell nueva en su espacio, con permisos y control auditado.',
   ayuda: 'Esta página: mapa de la consola, estados y atajos.',
 };

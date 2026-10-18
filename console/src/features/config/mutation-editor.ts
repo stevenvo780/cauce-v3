@@ -69,7 +69,7 @@ function rollbackLeafPolicy(operation: unknown): RollbackPolicy {
     return {
       allowed: false,
       accountResource: true,
-      message: `Bloqueado: esta revisión modifica ${resource}; su única autoridad es Cuentas y cuotas.`,
+      message: `Bloqueado: esta revisión modifica ${resource}; su única autoridad es Cuentas.`,
     };
   }
   if (!resource || !RESOURCES.includes(resource as AnyConfigResource)
@@ -116,7 +116,7 @@ export function parseMutation(text: string): ConfigMutation {
   }
   if (ACCOUNT_RESOURCES.has(String(mutation.resource) as AnyConfigResource)) {
     throw new Error(
-      'Las cuentas, sus techos y sus bindings se modifican únicamente en «Cuentas y cuotas». '
+      'Las cuentas, sus techos y sus bindings se modifican únicamente en «Cuentas». '
       + 'Abrí /accounts para usar formularios tipados, confirmación y dry-run.',
     );
   }
