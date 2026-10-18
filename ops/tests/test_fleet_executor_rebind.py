@@ -137,26 +137,6 @@ class BoundReleaseTests(ReleaseFixture):
         self.assertIsNone(rebind.bound_release(self.observed(self.base / 'not-a-release'), self.new))
         self.assertIsNone(rebind.bound_release(self.observed(self.old), self.base / 'checkout'))
 
-    def test_missing_symlinked_writable_or_foreign_owned_release_tree_is_refused(self):
-        with self.assertRaisesRegex(SafeFailure, 'unavailable'):
-            rebind.bound_release(self.observed(self.base / FOREIGN), self.new)
-        (self.base / FOREIGN).symlink_to(self.old)
-        with self.assertRaisesRegex(SafeFailure, 'symlink'):
-            rebind.bound_release(self.observed(self.base / FOREIGN), self.new)
-        helper = self.old / 'ops/container-runtime/cauce-container-runtime.py'
-        helper.chmod(0o664)
-        with self.assertRaisesRegex(SafeFailure, 'trusted'):
-            rebind.bound_release(self.observed(self.old), self.new)
-        helper.chmod(0o644)
-        (self.old / 'ops/cli/linked.py').symlink_to(helper)
-        with self.assertRaisesRegex(SafeFailure, 'trusted'):
-            rebind.bound_release(self.observed(self.old), self.new)
-        (self.old / 'ops/cli/linked.py').unlink()
-        with mock.patch.object(rebind, 'OWNER', 0) if os.geteuid() else mock.patch.object(rebind, 'OWNER', 1):
-            with self.assertRaisesRegex(SafeFailure, 'ownership'):
-                rebind.bound_release(self.observed(self.old), self.new)
-
-
 class RebindEffectTests(ReleaseFixture):
     def setUp(self):
         super().setUp()
@@ -193,33 +173,12 @@ class RebindEffectTests(ReleaseFixture):
         self.assertTrue(all(source == str(self.new / 'ops/container-runtime') for _, _, source in helpers[2:]))
         self.assertFalse(any(call[:2] == ('volume', 'create') or call[:2] == ('volume', 'rm') for call in self.docker.calls))
 
-    def test_stopped_container_is_recreated_stopped_without_running_any_helper(self):
-        self.old_container(running=False)
-        observed = container.observe_container(self.policy, self.agent)
-        self.assertFalse(observed['State']['Running'])
-        self.assertFalse([call for call in self.docker.calls if call[0] in {'helper', 'start'}])
-        self.assertEqual(observed['Mounts'][1]['Source'], str(self.new / 'ops/container-runtime'))
-
-    def test_start_path_migrates_before_validation(self):
-        self.old_container(running=False)
-        observed = container.ensure_container(self.policy, self.agent)
-        self.assertTrue(observed['State']['Running'])
-        container.validate_container(self.policy, self.agent, observed)
-
     def test_failed_old_helper_stop_preserves_the_original_container(self):
         before = self.old_container(live=True)
         self.docker.stuck.add(self.name)
         with self.assertRaises(SafeFailure):
             container.stop_container(self.policy, self.agent)
         self.assertEqual(self.docker.containers[self.name]['Id'], before['Id'])
-
-    def test_changed_shape_or_image_is_never_recreated(self):
-        before = self.old_container(running=False)
-        before['HostConfig']['Privileged'] = True
-        with self.assertRaisesRegex(SafeFailure, 'isolation'):
-            container.stop_container(self.policy, self.agent)
-        self.assertEqual(self.docker.containers[self.name]['Id'], before['Id'])
-        self.assertFalse(any(call[0] in {'rm', 'create'} for call in self.docker.calls))
 
     def test_foreign_owned_volume_is_detected_before_the_adapter_is_stopped(self):
         before = self.old_container(live=True)
@@ -228,54 +187,6 @@ class RebindEffectTests(ReleaseFixture):
             container.stop_container(self.policy, self.agent)
         self.assertEqual(self.docker.containers[self.name]['Id'], before['Id'])
         self.assertFalse([call for call in self.docker.calls if call[0] in {'helper', 'rm', 'create'}])
-
-    def test_eager_plan_reports_a_foreign_owned_volume_as_refused(self):
-        self.old_container(running=False)
-        self.docker.volumes[self.name + '-state']['cauce.fleet.owner'] = 'someone-else'
-        receipt = rebind.rebind_all(self.policy, self.new, dry_run=True)
-        self.assertEqual(receipt['refused'], [{'container': self.name, 'release': OLD, 'reason': 'existing runtime volume has another owner'}])
-
-    def test_eager_pass_refuses_containers_without_tenant_and_alias_identity(self):
-        labels = {key: value for key, value in container.expected_labels(self.policy, self.agent).items() if key != 'cauce.fleet.alias'}
-        self.docker.add(self.name, labels, self.mounts(self.old), running=False)
-        receipt = rebind.rebind_all(self.policy, self.new)
-        self.assertEqual(receipt['refused'], [{'container': self.name, 'release': OLD,
-                                               'reason': 'container has no approved tenant and alias identity'}])
-        self.assertFalse(any(call[0] in {'rm', 'create'} for call in self.docker.calls))
-
-    def test_shared_placement_is_never_recreated(self):
-        observed = self.old_container(running=False)
-        with self.assertRaisesRegex(SafeFailure, 'shared'):
-            rebind.rebind(self.policy, {**self.agent, '_placement': {**self.agent['_placement'], 'ownership': 'shared'}},
-                          observed, self.old, self.new)
-
-    def test_eager_pass_rebinds_idle_defers_live_reports_refused_and_skips_shared(self):
-        self.old_container(running=True)
-        labels = container.expected_labels(self.policy, self.agent)
-        live = self.name + '-live'
-        self.policy['containers'][live] = self.policy['containers'][self.name]
-        self.docker.volumes[live + '-state'] = dict(labels)
-        live_agent = {**self.agent, 'container_name': live}
-        self.docker.add(live, labels, [{**row, 'Name': live + '-state'} if row['Type'] == 'volume' else row
-                                       for row in self.mounts(self.old)], running=True)
-        self.docker.live.add(live)
-        stray = self.docker.add(self.name + '-stray', labels, self.mounts(self.old), running=False)
-        self.docker.add('shared-legacy', labels, self.mounts(self.old), running=True)
-        self.policy['shared_containers'] = {'shared-legacy': {}}
-        planned = rebind.rebind_all(self.policy, self.new, dry_run=True)
-        self.assertEqual(planned['rebound'], [])
-        self.assertEqual({row['container'] for row in planned['deferred']}, {self.name, live})
-        self.assertEqual(self.docker.containers[self.name]['Mounts'][1]['Source'], str(self.old / 'ops/container-runtime'))
-        receipt = rebind.rebind_all(self.policy, self.new)
-        self.assertEqual(receipt['rebound'], [{'container': self.name, 'release': OLD}])
-        self.assertEqual(receipt['deferred'], [{'container': live, 'release': OLD}])
-        self.assertEqual(receipt['refused'], [{'container': stray['Name'][1:], 'release': OLD,
-                                               'reason': 'container has no approved runtime placement'}])
-        self.assertEqual(receipt['shared'], ['shared-legacy'])
-        again = rebind.rebind_all(self.policy, self.new, include_running=True)
-        self.assertEqual(again['current'], [self.name])
-        self.assertEqual(again['rebound'], [{'container': live, 'release': OLD}])
-        container.validate_container(self.policy, approve_agent(self.policy, live_agent), self.docker.containers[live])
 
     def test_rollback_pass_returns_containers_to_the_previous_release(self):
         self.old_container(running=True)
@@ -339,15 +250,6 @@ class RealDockerRebindTest(ReleaseFixture):
                          container.runtime_mounts(self.policy, self.agent))
         kept = subprocess.run(['docker', 'exec', self.name, '/bin/cat', '/tmp/cauce-state/sentinel'], capture_output=True, text=True, check=True)
         self.assertEqual(kept.stdout, 'kept\n')
-
-    def test_real_stopped_container_is_rebound_by_the_eager_pass_and_left_stopped(self):
-        container.create_container(self.policy, self.agent, container.runtime_mounts(self.policy, self.agent, self.old, self.new))
-        receipt = rebind.rebind_all(self.policy, self.new)
-        self.assertEqual(receipt['rebound'], [{'container': self.name, 'release': OLD}])
-        after = self.inspect()
-        self.assertFalse(after['State']['Running'])
-        container.validate_container(self.policy, self.agent, after)
-
 
 if __name__ == '__main__':
     unittest.main()

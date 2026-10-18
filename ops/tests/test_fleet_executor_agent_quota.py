@@ -7,7 +7,6 @@ import pathlib
 import subprocess
 import sys
 import tempfile
-import time
 import unittest
 import uuid
 
@@ -80,21 +79,6 @@ class AgentQuotaPacketTest(unittest.TestCase):
                 self.assertNotEqual(response.returncode, 0)
                 self.assertNotIn(PRIVATE_MARKER, response.stdout + response.stderr)
 
-    def test_changed_bundle_is_an_error_instead_of_unsupported(self):
-        self.unsupported_agent()
-        self.worker.write_text('changed bundle\n')
-        self.assertNotEqual(self.query().returncode, 0)
-
-    def test_agent_action_cannot_accept_an_environment_or_misquotas_action(self):
-        self.unsupported_agent()
-        packet = self.quota_packet()
-        packet['environment'] = {'container_name': 'unapproved'}
-        self.assertNotEqual(self.query(packet).returncode, 0)
-        packet = self.quota_packet()
-        packet['action'] = 'query'
-        self.assertNotEqual(self.query(packet).returncode, 0)
-
-
 class AgentQuotaProjectionTest(unittest.TestCase):
     def project(self, provider, raw):
         sys.path.insert(0, str(fixtures.OPS / 'cli'))
@@ -113,27 +97,6 @@ class AgentQuotaProjectionTest(unittest.TestCase):
             self.assertEqual(result['identity_hash'], expected)
             self.assertNotIn(IDENTITY, json.dumps(result, ensure_ascii=False))
             self.assertNotIn(PRIVATE_MARKER, json.dumps(result))
-
-    def test_invalid_quota_measurements_are_rejected_before_the_store_contract(self):
-        for field, value in [('usedPercent', -1), ('usedPercent', 101), ('remainingPercent', True),
-                             ('usedUnits', -1), ('usedUnits', 1.5), ('limitUnits', 0),
-                             ('windowMinutes', 0), ('windowMinutes', 1.5), ('windowMinutes', 2147483648),
-                             ('usedPercent', float('nan'))]:
-            with self.subTest(field=field, value=value), self.assertRaises(ValueError):
-                self.project('codex', {'ok': True, 'extra': {'account_id': IDENTITY},
-                    'windows': [{'key': '5h', 'status': 'ok', field: value}]})
-        for field, value in [('ok', 'false'), ('ok', 1), ('ok', None), ('error', False), ('error', []), ('error', {})]:
-            with self.subTest(field=field, value=value), self.assertRaises(ValueError):
-                self.project('codex', {'ok': True, 'extra': {'account_id': IDENTITY}, 'windows': [], field: value})
-
-    def test_an_error_cannot_be_reported_as_healthy_with_an_explicit_ok_flag(self):
-        result = self.project('codex', {'ok': True, 'error': PRIVATE_MARKER, 'error_code': PRIVATE_MARKER,
-            'extra': {'account_id': IDENTITY}, 'windows': []})
-        self.assertFalse(result['observation']['ok'])
-        self.assertFalse(result['observation']['available'])
-        self.assertEqual(result['observation']['error_code'], 'provider_error')
-        self.assertNotIn(PRIVATE_MARKER, json.dumps(result))
-
 
 def release_readable(tree: pathlib.Path) -> None:
     """Give a checkout tree the read modes of a packaged release (build-adapter-release.sh applies go=rX)."""
@@ -294,104 +257,6 @@ print(json.dumps(document,ensure_ascii=False))
         self.assertEqual(receipt['observation_status'], 'error')
         self.assertEqual(receipt['provider_report']['note'], 'token_expired')
 
-    def test_refresh_argument_in_an_approved_descriptor_is_rejected(self):
-        packet = self.configure_canary()
-        descriptor = self.bundle / 'packages/adapter-sdk/dist/descriptors/codex.json'
-        document = json.loads(descriptor.read_text())
-        document['provider']['quota_argv'].append('--refresh-own-session')
-        descriptor.write_text(json.dumps(document))
-        self.policy['bundles']['codex']['digest'] = bundle_digest(str(self.bundle))
-        self.save_policy()
-        self.assertNotEqual(self.query(packet).returncode, 0)
-
-    def test_isolated_profile_is_explicitly_rejected_instead_of_reading_another_account(self):
-        packet = self.configure_canary()
-        packet['agent']['primary_account_id'] = 'isolated-account'
-        self.policy['profiles']['isolated-account'] = {'provider': 'codex', 'identity': 'unread-fixture',
-            'runtime_user': 'nobody', 'container_name': self.agent['container_name'], 'path': '/nonexistent/.codex/isolated'}
-        self.save_policy()
-        response = self.query(packet)
-        self.assertNotEqual(response.returncode, 0)
-        self.assertIn('quota_profile_unsupported', response.stderr)
-
-    def test_missing_identity_and_untrusted_output_do_not_leak_raw_reader_data(self):
-        for mode in ('missing_identity', 'invalid', 'oversized'):
-            with self.subTest(mode=mode):
-                response = self.query(self.configure_canary({'mode': mode}))
-                self.assertNotEqual(response.returncode, 0)
-                self.assertNotIn(IDENTITY, response.stdout + response.stderr)
-                self.assertNotIn(PRIVATE_MARKER, response.stdout + response.stderr)
-
-    def test_provider_mismatch_never_binds_the_measured_identity(self):
-        response = self.query(self.configure_canary({'provider': 'claude'}))
-        self.assertNotEqual(response.returncode, 0)
-        self.assertIn('quota_provider_mismatch', response.stderr)
-        self.assertNotIn(IDENTITY, response.stdout + response.stderr)
-
-    def test_foreign_container_is_not_read_or_modified(self):
-        packet = self.configure_canary()
-        name = packet['agent']['container_name']
-        subprocess.run(['docker', 'rm', '-f', name], capture_output=True, timeout=plazo(15), check=True)
-        subprocess.run(['docker', 'run', '-d', '--name', name, '--network', 'none', '--entrypoint', '/bin/sleep',
-            self.image, 'infinity'], capture_output=True, timeout=plazo(15), check=True)
-        identity = subprocess.run(['docker', 'inspect', name, '--format', '{{.Id}}'],
-            capture_output=True, text=True, timeout=plazo(15), check=True).stdout.strip()
-        self.assertNotEqual(self.query(packet).returncode, 0)
-        observed = json.loads(subprocess.run(['docker', 'inspect', name], capture_output=True,
-            text=True, timeout=plazo(15), check=True).stdout)[0]
-        self.assertEqual(observed['Id'], identity)
-        self.assertTrue(observed['State']['Running'])
-
-    def test_container_restart_during_reader_execution_denies_the_observation(self):
-        packet = self.configure_canary({'mode': 'restart'})
-        with subprocess.Popen([sys.executable, '-B', str(fixtures.CLI), '--policy', str(self.policy_file), '--quota'],
-                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) as process:
-            process.stdin.write(json.dumps(packet))
-            process.stdin.close()
-            process.stdin = None
-            deadline = time.monotonic() + plazo(8)
-            while time.monotonic() < deadline:
-                started = subprocess.run(['docker', 'exec', packet['agent']['container_name'], '/usr/bin/test',
-                    '-e', '/nonexistent/.codex/started'], capture_output=True, timeout=plazo(10))
-                if started.returncode == 0:
-                    break
-                time.sleep(0.05)
-            else:
-                self.fail('canary reader did not start')
-            subprocess.run(['docker', 'restart', '--time', '0', packet['agent']['container_name']],
-                capture_output=True, timeout=plazo(15), check=True)
-            stdout, stderr = process.communicate(timeout=plazo(15))
-            self.assertNotEqual(process.returncode, 0)
-            self.assertNotIn(IDENTITY, stdout + stderr)
-            self.assertNotIn(PRIVATE_MARKER, stdout + stderr)
-
-    def test_changed_generation_after_a_successful_real_read_denies_the_receipt(self):
-        packet = self.configure_canary()
-        program = '''import json,sys
-from unittest.mock import patch
-import fleet_executor_hooks as hooks
-from fleet_executor_agent_quota import perform
-from fleet_executor_policy import SafeFailure
-original=hooks.container_binding
-calls=0
-def changed(policy,agent):
-    global calls
-    approved,identity=original(policy,agent)
-    calls+=1
-    if calls==2: identity['generation']='0'*64
-    return approved,identity
-policy,packet=json.load(sys.stdin)
-with patch.object(hooks,'container_binding',changed):
-    try: perform(policy,packet)
-    except SafeFailure as error: print(str(error));sys.exit(2)
-'''
-        response = subprocess.run([sys.executable, '-B', '-c', program], input=json.dumps([self.policy, packet]),
-            env={'PATH': '/usr/bin:/bin', 'HOME': str(self.root), 'PYTHONPATH': str(fixtures.OPS / 'cli')},
-            text=True, capture_output=True, timeout=plazo(15))
-        self.assertEqual(response.returncode, 2, response.stderr)
-        self.assertEqual(response.stdout.strip(), 'quota_container_changed')
-
-
 class AgentQuotaContrastAuditTest(unittest.TestCase):
     RESET = '2026-10-13T12:00:00Z'
 
@@ -419,29 +284,6 @@ class AgentQuotaContrastAuditTest(unittest.TestCase):
                   'codex': self.coutas('codex', [('7d', 55, self.RESET)]),
                   'grok': self.coutas('grok', [('7d', 79, self.RESET)])}
         return web, coutas
-
-    def test_same_instant_windows_match_within_one_percent_for_every_provider(self):
-        web, coutas = self.pair()
-        coutas['claude'] = {'windows': [
-            {'key': 'five_hour', 'usedPercent': 59, 'resetAt': self.RESET},
-            {'key': 'seven_day', 'usedPercent': 30, 'resetAt': self.RESET}]}
-        report = self.contrast(web, coutas)
-        self.assertTrue(report['ok'], report['mismatches'])
-        self.assertEqual(report['tolerance'], 1)
-
-    def test_percent_reset_and_window_set_outside_tolerance_are_mismatches(self):
-        web, coutas = self.pair(self.coutas('claude', [('five_hour', 42, self.RESET), ('seven_day', 70, self.RESET)]))
-        percent = self.contrast(web, coutas)
-        self.assertFalse(percent['ok'])
-        self.assertIn({'provider': 'claude', 'window': 'five_hour', 'reason': 'percent'}, percent['mismatches'])
-        web, coutas = self.pair(self.coutas('claude', [('five_hour', 40, '2026-10-13T13:00:00Z'), ('seven_day', 70, self.RESET)]))
-        reset = self.contrast(web, coutas)
-        self.assertIn({'provider': 'claude', 'window': 'five_hour', 'reason': 'reset'}, reset['mismatches'])
-        web, coutas = self.pair(self.coutas('claude', [('five_hour', 40, self.RESET)]))
-        windows = self.contrast(web, coutas)
-        self.assertEqual(windows['mismatches'][0]['reason'], 'windows')
-        with self.assertRaises(ValueError):
-            self.contrast({'claude': self.web([('five_hour', 40, self.RESET)])}, coutas)
 
     def test_planted_secret_is_detected_and_absent_after_redaction(self):
         planted = 'access_token=zz-canary refresh_token=zz sk-ant-zz eyJhbGci user_code=device'

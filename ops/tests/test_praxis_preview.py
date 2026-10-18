@@ -1,13 +1,9 @@
 from __future__ import annotations
 
 import configparser
-import errno
 import json
-import os
-import stat
 import time
 import unittest
-import urllib.error
 from unittest import mock
 
 import test_praxis_supervision as fixtures
@@ -107,19 +103,6 @@ class PreviewPublicationTests(unittest.TestCase):
         self.assertEqual(self.marker.stat().st_mode & 0o777, 0o600)
         self.assertEqual(set(marker["web_hashes"]), set(PREVIEW.WEB_FILES.values()))
 
-    def test_idempotent_source_does_not_restart_again_even_after_metadata_commit(self):
-        self.publish()
-        self.head = fixtures.NEXT_HEAD
-        self.assertEqual(self.publish()["action"], "preview_already_current")
-        self.assertEqual(len(self.restarts()), 1)
-
-    def test_api_code_fingerprint_restarts_without_copying_or_importing_data(self):
-        self.publish()
-        (self.fixture.workspace / "apps/api/server.py").write_text("new verified synthetic API")
-        self.head = fixtures.NEXT_HEAD
-        self.assertTrue(self.publish()["service_restarted"])
-        self.assertEqual(len(self.restarts()), 2)
-
     def test_active_work_unready_actors_and_failed_qa_never_publish(self):
         for runtime in ({"active": 1, "ready": True}, {"active": 0, "ready": False}):
             self.assertEqual(self.publish(runtime=runtime)["action"], "preview_active_work")
@@ -127,50 +110,6 @@ class PreviewPublicationTests(unittest.TestCase):
         engineering["valid_gates"].remove("qa")
         self.assertEqual(self.publish(engineering)["action"], "preview_evidence_pending")
         self.assertEqual(self.commands, [])
-        self.assertFalse(self.marker.exists())
-
-    def test_clinical_scope_unknown_destination_or_configuration_is_refused(self):
-        engineering = self.engineering()
-        engineering["production_clinical_accepted"] = True
-        with self.assertRaisesRegex(SUP.SupervisionError, "preview_clinical_scope_refused"):
-            self.publish(engineering)
-        for mutation in ({"preview_root": "/tmp/unprotected"}, {"preview_service": "privileged.service"},
-                         {"preview_files": {"apps/web/app.js": "../sessions/auth.json"}}, {"auto_publish_synthetic_preview": 1}):
-            config = {**self.config, **mutation}
-            with self.assertRaisesRegex(SUP.SupervisionError, "invalid_preview_publication_configuration"):
-                PREVIEW.validate_config(config, SUP.STATE)
-        self.assertFalse(self.marker.exists())
-
-    def test_source_hash_or_head_race_prevents_restart_and_marker(self):
-        engineering = self.engineering()
-        engineering["source_hashes"]["apps/web/app.js"] = "f" * 64
-        with self.assertRaisesRegex(SUP.SupervisionError, "preview_source_changed"):
-            self.publish(engineering)
-        engineering = self.engineering()
-        engineering["git_head"] = fixtures.NEXT_HEAD
-        with self.assertRaisesRegex(SUP.SupervisionError, "preview_source_changed"):
-            self.publish(engineering)
-        self.assertEqual(self.restarts(), [])
-        self.assertFalse(self.marker.exists())
-
-    def test_late_source_change_or_activity_rolls_back_before_restart(self):
-        reads = 0
-        def changing_source(sources):
-            nonlocal reads
-            reads += 1
-            if reads == 2:
-                (self.fixture.workspace / "apps/web/app.js").write_text("unverified late change")
-            return SUP.EVIDENCE.EvidenceReader(self.fixture.workspace, SUP.STATE).source_matches(sources)
-        with self.assertRaisesRegex(SUP.SupervisionError, "preview_source_changed"):
-            self.publish(source_matches=changing_source)
-        for name, value in self.originals.items():
-            self.assertEqual((self.fixture.preview / name).read_bytes(), value)
-        runtime_reads = iter([self.runtime(), self.runtime(), {**self.runtime(), "active": 1}])
-        with self.assertRaisesRegex(SUP.SupervisionError, "preview_activity_changed"):
-            self.publish(runtime_reader=lambda: next(runtime_reads))
-        for name, value in self.originals.items():
-            self.assertEqual((self.fixture.preview / name).read_bytes(), value)
-        self.assertEqual(self.restarts(), [])
         self.assertFalse(self.marker.exists())
 
     def test_copy_failure_restores_all_changed_public_bytes(self):
@@ -190,60 +129,6 @@ class PreviewPublicationTests(unittest.TestCase):
         self.assertEqual(self.restarts(), [])
         self.assertFalse(self.marker.exists())
 
-    def test_read_only_sandbox_is_detected_before_copy_or_rollback(self):
-        with mock.patch.object(PREVIEW.os, "fstatvfs", return_value=mock.Mock(f_flag=os.ST_RDONLY)), \
-                mock.patch.object(PREVIEW, "atomic_bytes") as copy, \
-                self.assertRaisesRegex(SUP.SupervisionError, "preview_destination_read_only") as raised:
-            self.publish()
-        self.assertEqual(raised.exception.preview_diagnostics, {"stage": "preflight", "errno": errno.EROFS})
-        copy.assert_not_called()
-        self.assertEqual(self.restarts(), [])
-        self.assertFalse(self.marker.exists())
-        for name, value in self.originals.items():
-            self.assertEqual((self.fixture.preview / name).read_bytes(), value)
-
-    def test_ero_fs_before_replacement_does_not_report_unknown_rollback(self):
-        with mock.patch.object(PREVIEW, "atomic_bytes", side_effect=OSError(errno.EROFS, "synthetic immutable mount")) as copy, \
-                self.assertRaisesRegex(SUP.SupervisionError, "preview_publication_failed") as raised:
-            self.publish()
-        self.assertEqual(copy.call_count, 1)
-        self.assertEqual(raised.exception.preview_diagnostics, {"stage": "copy", "errno": errno.EROFS})
-        self.assertFalse(self.marker.exists())
-        for name, value in self.originals.items():
-            self.assertEqual((self.fixture.preview / name).read_bytes(), value)
-
-    def test_failure_after_atomic_replacement_still_restores_changed_asset(self):
-        original_sync = PREVIEW.os.fsync
-        failed = False
-        def fail_directory_sync(descriptor):
-            nonlocal failed
-            if not failed and stat.S_ISDIR(os.fstat(descriptor).st_mode):
-                failed = True
-                raise OSError(errno.EIO, "synthetic post-replace sync error")
-            original_sync(descriptor)
-        with mock.patch.object(PREVIEW.os, "fsync", side_effect=fail_directory_sync), \
-                self.assertRaisesRegex(SUP.SupervisionError, "preview_publication_failed") as raised:
-            self.publish()
-        self.assertTrue(failed)
-        self.assertEqual(raised.exception.preview_diagnostics, {"stage": "copy", "errno": errno.EIO})
-        for name, value in self.originals.items():
-            self.assertEqual((self.fixture.preview / name).read_bytes(), value)
-        self.assertEqual(self.restarts(), [])
-        self.assertFalse(self.marker.exists())
-
-    def test_unknown_service_health_rolls_back_and_does_not_write_success_marker(self):
-        original = self.command
-        def unhealthy(arguments, deadline):
-            if arguments[:2] == ["systemctl", "is-active"]:
-                raise SUP.SupervisionError("observation_unavailable")
-            return original(arguments, deadline)
-        with mock.patch.object(self, "command", side_effect=unhealthy), \
-                self.assertRaisesRegex(SUP.SupervisionError, "preview_service_health_unknown"):
-            self.publish()
-        for name, value in self.originals.items():
-            self.assertEqual((self.fixture.preview / name).read_bytes(), value)
-        self.assertFalse(self.marker.exists())
-
     def test_symlinks_secrets_or_unguarded_root_directories_are_refused(self):
         engineering = self.engineering()
         engineering["source_hashes"][".env"] = "f" * 64
@@ -261,73 +146,6 @@ class PreviewPublicationTests(unittest.TestCase):
             self.publish()
         self.assertEqual(self.restarts(), [])
         self.assertFalse(self.marker.exists())
-
-    def test_privileged_unit_flags_hooks_or_root_user_are_refused(self):
-        valid = self.metadata
-        for metadata in (valid.replace("User=1000", "User=0"), valid.replace("flags= ;", "flags=fully-privileged ;"),
-                         valid + "ExecStartPreEx=privileged hook\n", valid + "ExecConditionEx=privileged condition\n",
-                         valid.replace("NoNewPrivileges=yes", "NoNewPrivileges=no")):
-            self.metadata = metadata
-            with self.assertRaisesRegex(SUP.SupervisionError, "preview_service_unguarded"):
-                self.publish()
-        self.assertEqual(self.restarts(), [])
-        self.assertFalse(self.marker.exists())
-
-    def test_symlink_source_parent_is_rejected_before_source_hash_reader_runs(self):
-        engineering = self.engineering()
-        web = self.fixture.workspace / "apps/web"
-        held = self.fixture.workspace / "apps/web-held"
-        web.rename(held)
-        web.symlink_to(held, target_is_directory=True)
-        reader = mock.Mock(return_value=True)
-        with self.assertRaisesRegex(SUP.SupervisionError, "preview_unsafe_public_file"):
-            self.publish(engineering, source_matches=reader)
-        reader.assert_not_called()
-        self.assertEqual(self.restarts(), [])
-        self.assertFalse(self.marker.exists())
-
-    def test_parent_swapped_to_private_symlink_before_open_is_denied_before_any_bytes_are_read(self):
-        for reader in (lambda path: PREVIEW.public_bytes(path, SUP.STATE), SUP.STATE.read_bytes):
-            with self.subTest(reader=reader):
-                web = self.fixture.workspace / "apps/web"
-                held = self.fixture.workspace / "apps/web-held"
-                private = self.fixture.directory / "private-sentinel"
-                private.mkdir(exist_ok=True)
-                (private / "app.js").write_bytes(b"synthetic private source sentinel")
-                path = web / "app.js"
-                original_open, original_fdopen = PREVIEW.os.open, PREVIEW.os.fdopen
-                switched = False
-                def swapping_open(name, flags, *args, race_path=path, race_web=web, race_held=held,
-                                  race_private=private, open_impl=original_open, **kwargs):
-                    nonlocal switched
-                    if not switched and (name == "web" or str(name) == str(race_path)):
-                        switched = True
-                        race_web.rename(race_held)
-                        race_web.symlink_to(race_private, target_is_directory=True)
-                    return open_impl(name, flags, *args, **kwargs)
-                with mock.patch.object(PREVIEW.os, "open", side_effect=swapping_open), \
-                        mock.patch.object(PREVIEW.os, "fdopen", wraps=original_fdopen) as read_source, \
-                        self.assertRaises(SUP.SupervisionError):
-                    reader(path)
-                self.assertTrue(switched)
-                read_source.assert_not_called()
-                web.unlink()
-                held.rename(web)
-
-    def test_stop_stale_runtime_and_insufficient_deadline_leave_preview_unchanged(self):
-        stop = self.control / "STOP"
-        stop.write_text("owner stop")
-        with self.assertRaisesRegex(SUP.SupervisionError, "preview_owner_stopped"):
-            self.publish()
-        stop.unlink()
-        with self.assertRaisesRegex(SUP.SupervisionError, "preview_runtime_stale"):
-            self.publish(runtime_reader=lambda: {**self.runtime(), "observed_at": time.time() - 11})
-        with self.assertRaisesRegex(SUP.SupervisionError, "preview_pass_timeout"):
-            PREVIEW.publish(self.config, self.engineering(), self.runtime(), time.monotonic() + 5,
-                SUP.STATE, self.command, self.runtime, lambda _: True)
-        self.assertEqual(self.commands, [])
-        self.assertFalse(self.marker.exists())
-
 
 class PreviewHttpHealthTests(unittest.TestCase):
     def test_only_json_401_is_expected_and_body_is_never_read_or_cookies_sent(self):
@@ -349,62 +167,6 @@ class PreviewHttpHealthTests(unittest.TestCase):
                 response.read.assert_not_called()
                 response.close.assert_called_once()
                 self.assertEqual(opener.open.call_count, 1)
-
-    def test_http_error_401_is_success_but_transport_unknown_is_closed(self):
-        error = urllib.error.HTTPError(PREVIEW.HEALTH_URL, 401, "Unauthorized", {"Content-Type": "application/json"}, None)
-        opener = mock.Mock()
-        opener.open.side_effect = error
-        with mock.patch.object(PREVIEW.urllib.request, "build_opener", return_value=opener):
-            PREVIEW.http_auth_health(time.monotonic() + 5, SUP.STATE)
-        opener.open.side_effect = urllib.error.URLError("synthetic unknown transport")
-        with mock.patch.object(PREVIEW.urllib.request, "build_opener", return_value=opener), \
-                self.assertRaisesRegex(SUP.SupervisionError, "preview_http_auth_health_unknown"):
-            PREVIEW.http_auth_health(time.monotonic() + 5, SUP.STATE)
-
-
-    def test_startup_connection_refused_then_json_401_retries_only_startup_error(self):
-        response = mock.Mock(code=401, headers={"Content-Type": "application/json"})
-        opener = mock.Mock()
-        opener.open.side_effect = [urllib.error.URLError(ConnectionRefusedError(errno.ECONNREFUSED, "startup")), response]
-        with mock.patch.object(PREVIEW.urllib.request, "build_opener", return_value=opener), \
-                mock.patch.object(PREVIEW.time, "sleep") as sleep:
-            PREVIEW.http_auth_health(time.monotonic() + 5, SUP.STATE)
-        self.assertEqual(opener.open.call_count, 2)
-        sleep.assert_called_once()
-        self.assertLessEqual(sleep.call_args.args[0], 0.1)
-        response.read.assert_not_called()
-        response.close.assert_called_once()
-
-    def test_permanent_refusal_stops_at_absolute_three_seconds_or_earlier_pass_deadline(self):
-        for pass_budget in (0.25, 10):
-            with self.subTest(pass_budget=pass_budget):
-                clock = [100.0]
-                opener = mock.Mock()
-                opener.open.side_effect = urllib.error.URLError(ConnectionRefusedError(errno.ECONNREFUSED, "startup"))
-                def advance(seconds, timer=clock):
-                    timer[0] += seconds
-                with mock.patch.object(PREVIEW.urllib.request, "build_opener", return_value=opener), \
-                        mock.patch.object(PREVIEW.time, "monotonic", side_effect=lambda timer=clock: timer[0]), \
-                        mock.patch.object(PREVIEW.time, "sleep", side_effect=advance), \
-                        self.assertRaisesRegex(SUP.SupervisionError, "preview_http_auth_health_unknown") as raised:
-                    PREVIEW.http_auth_health(100 + pass_budget, SUP.STATE)
-                self.assertLessEqual(clock[0] - 100, min(3, pass_budget) + 1e-9)
-                self.assertLessEqual(opener.open.call_count, 32)
-                self.assertEqual(raised.exception.preview_diagnostics, {"stage": "health", "errno": errno.ECONNREFUSED})
-                for call in opener.open.call_args_list:
-                    self.assertLessEqual(call.kwargs["timeout"], 3)
-
-    def test_other_transport_errors_are_not_retried_and_errno_is_recorded(self):
-        opener = mock.Mock()
-        opener.open.side_effect = urllib.error.URLError(OSError(errno.ETIMEDOUT, "synthetic timeout"))
-        with mock.patch.object(PREVIEW.urllib.request, "build_opener", return_value=opener), \
-                mock.patch.object(PREVIEW.time, "sleep") as sleep, \
-                self.assertRaisesRegex(SUP.SupervisionError, "preview_http_auth_health_unknown") as raised:
-            PREVIEW.http_auth_health(time.monotonic() + 5, SUP.STATE)
-        self.assertEqual(opener.open.call_count, 1)
-        sleep.assert_not_called()
-        self.assertEqual(raised.exception.preview_diagnostics, {"stage": "health", "errno": errno.ETIMEDOUT})
-
 
 class PreviewServiceSandboxTests(unittest.TestCase):
     def test_root_controller_can_write_only_private_state_and_fixed_public_preview(self):

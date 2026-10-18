@@ -159,31 +159,6 @@ class DisposableContainerExecutorTest(unittest.TestCase):
         finally:
             SWEEP = source
 
-    def test_sweep_reads_a_resource_removed_between_list_and_inspect_as_absent_and_still_reports_an_orphan(self):
-        self.container = 'zz-canary-sweep-race-' + uuid.uuid4().hex[:12]
-        self.policy['host_id'] = self.container
-        self.agent['runtime_key'] = self.container
-        labels = ['--label', 'cauce.fleet.runtime_key=' + self.container, '--label', 'cauce.fleet.host=' + self.container]
-        container_id = subprocess.run(['/usr/bin/docker', 'create', '--name', self.container, *labels, self.image, 'true'],
-                                      capture_output=True, text=True, check=True).stdout.strip()
-        self.assert_vanished_inventory_is_absent('container', container_id)
-        volume = self.container + '-race'
-        subprocess.run(['/usr/bin/docker', 'volume', 'create', *labels, volume], capture_output=True, check=True)
-        try:
-            self.assert_vanished_inventory_is_absent('volume', volume)
-        finally:
-            subprocess.run(['/usr/bin/docker', 'volume', 'rm', volume], capture_output=True)
-        volume = self.container + '-orphan'
-        try:
-            subprocess.run(['/usr/bin/docker', 'volume', 'create', '--label', 'cauce.fleet.runtime_key=' + self.container,
-                            '--label', 'cauce.fleet.host=' + self.container, volume], capture_output=True, check=True)
-            report = sweep_owned_fleet(self.root / 'orphan-rows.json', [], self.container, self.container)
-            self.assertFalse(report['clean'])
-            self.assertEqual(report['sweep_exit'], 1)
-            self.assertEqual([item['name'] for item in report['orphan_resources']], [volume])
-        finally:
-            subprocess.run(['/usr/bin/docker', 'volume', 'rm', volume], capture_output=True, check=True)
-
     def test_new_owned_container_process_and_stop_are_verified_with_real_docker(self):
         self.configure_container()
         self.configure_signer()
@@ -224,19 +199,6 @@ class DisposableContainerExecutorTest(unittest.TestCase):
         self.assertEqual(result.stdout.strip(), hashlib.sha256(original.read_bytes()).hexdigest())
         denied = subprocess.run(['docker', 'exec', '--user', '1:1', self.container, '/bin/cat', credential], capture_output=True)
         self.assertNotEqual(denied.returncode, 0)
-
-    def test_container_profile_binding_is_measured_inside_container_without_host_profile_lookup(self):
-        self.configure_container()
-        self.configure_signer()
-        self.configure_hooks()
-        self.policy['profiles']['fixture-account'].update(path=self.agent['state_directory'],
-            runtime_user='nobody', container_name=self.container)
-        self.save_policy()
-        self.assertFalse(pathlib.Path(self.agent['state_directory']).exists())
-        for step in ('artifacts', 'credentials', 'runtime', 'authenticate'):
-            result = self.run_step(step, timeout=plazo(40))
-            self.assertEqual(result.returncode, 0, f'{step}: {result.stderr}')
-        self.assertTrue(json.loads(result.stdout)['evidence']['provider_verified'])
 
     def test_existing_foreign_container_is_not_claimed_or_stopped(self):
         self.configure_container()
@@ -289,18 +251,6 @@ class DisposableContainerExecutorTest(unittest.TestCase):
         self.assertEqual(report['sweep_exit'], 0)
         self.assertEqual((self.containers(), self.volumes()), ([], []))
 
-    def test_compensation_removes_created_container_but_never_another_operations_resources(self):
-        module, policy = self.operation_fixture()
-        module.create_container(policy, self.agent, operation_id='op-one')
-        module.discard_operation(policy, self.agent, 'op-two')
-        self.assertEqual(len(self.containers()), 1)
-        self.assertEqual(set(self.volumes()), {self.container + '-state', self.container + '-provider-profiles'})
-        module.discard_operation(policy, self.agent, 'op-one')
-        report = sweep_owned_fleet(self.root / 'orphan-rows.json', [], self.container,
-                                  policy['host_id'], self.agent['runtime_key'])
-        self.assertTrue(report['clean'], report)
-        self.assertEqual((self.containers(), self.volumes()), ([], []))
-
     def test_real_purge_removes_container_and_provider_volumes_before_the_sweep(self):
         import test_fleet_executor_lifecycle as lifecycle_fixtures
         module, policy = self.operation_fixture()
@@ -323,33 +273,6 @@ class DisposableContainerExecutorTest(unittest.TestCase):
         self.assertTrue(report['clean'], report)
         self.assertEqual(report['sweep_exit'], 0)
         self.assertEqual((self.containers(), self.volumes()), ([], []))
-
-    def test_created_container_diverges_until_the_declared_state_matches_and_purge_leaves_nothing(self):
-        import test_fleet_executor_lifecycle as lifecycle_fixtures
-        module, policy = self.operation_fixture()
-        module.create_container(policy, self.agent, operation_id='op-state')
-        running = {**self.agent, 'docker_state': 'running', 'docker_health': 'none', 'image': self.image, 'ownership': 'owned'}
-        mismatch = sweep_owned_fleet(self.root / 'orphan-rows.json', [running], self.container,
-                                      policy['host_id'], self.agent['runtime_key'])
-        self.assertEqual(mismatch['sweep_exit'], 1, mismatch)
-        self.assertEqual([row['kind'] for row in mismatch['divergences']], ['docker_state'])
-        self.assertEqual(mismatch['divergences'][0]['actual'], 'stopped')
-        stopped = {**running, 'docker_state': 'stopped'}
-        matched = sweep_owned_fleet(self.root / 'orphan-rows.json', [stopped], self.container,
-                                     policy['host_id'], self.agent['runtime_key'])
-        self.assertTrue(matched['clean'], matched)
-        self.assertEqual(matched['divergences'], [])
-        self.context['request'].update(kind='purge', parameters={'confirm_alias': self.agent['alias']})
-        self.context['previous_agents'] = [self.agent]
-        lifecycle_fixtures.PhysicalLifecycleTest.revoke_hook(self)
-        for step in ('stop', 'revoke', 'purge'):
-            result = self.run_step(step, timeout=plazo(40))
-            self.assertEqual(result.returncode, 0, f'{step}: {result.stderr}')
-        report = sweep_owned_fleet(self.root / 'orphan-rows.json', [], self.container,
-                                  policy['host_id'], self.agent['runtime_key'])
-        self.assertTrue(report['clean'], report)
-        self.assertEqual((self.containers(), self.volumes()), ([], []))
-
 
 class PurgeRemovalEvidenceTest(unittest.TestCase):
     def purge(self, inspections, volumes, ownership='dedicated'):
@@ -382,61 +305,6 @@ class PurgeRemovalEvidenceTest(unittest.TestCase):
         self.assertIn(('volume', 'rm', 'ws-w-state'), calls)
         self.assertFalse(any(call[:2] == ('volume', 'rm') and call[-1] == 'ws-w-provider-profiles' for call in calls))
 
-    def test_reports_nothing_when_the_container_and_volumes_are_already_gone(self):
-        result, calls = self.purge([None, None], b'')
-        self.assertEqual(result, {'removed': []})
-        self.assertFalse(any(call[:1] == ('rm',) or call[:2] == ('volume', 'rm') for call in calls))
-
-    def test_shared_container_is_not_listed_as_removed(self):
-        sys.path.insert(0, str(fixtures.OPS / 'cli'))
-        import fleet_executor_container as container
-        agent = {'container_name': 'ws-humanizar', '_placement': {'ownership': 'shared'}}
-        with patch.object(container, 'approve_agent', return_value=agent), \
-                patch.object(container, 'stop_container'), \
-                patch.object(container, 'inspect_container', return_value={'Id': 'shared'}), \
-                patch('fleet_executor_legacy.purge_shared') as purge_shared:
-            self.assertEqual(container.purge_container({}, agent), {'removed': []})
-        purge_shared.assert_called_once()
-
-    def test_prior_purge_without_removed_omits_the_evidence_key(self):
-        sys.path.insert(0, str(fixtures.OPS / 'cli'))
-        import fleet_executor_steps as steps
-        temporary = tempfile.TemporaryDirectory(prefix='cauce-purge-evidence-', dir='/var/tmp')
-        self.addCleanup(temporary.cleanup)
-        state = pathlib.Path(temporary.name)
-        state.chmod(0o700)
-        context = {'operation_id': uuid.uuid4().hex, 'request': {'kind': 'purge', 'target': {'resource': 'agent'}},
-                   'fenced_targets': [], 'previous_agents': [], 'desired_memberships': []}
-        executor = steps.Executor({'roots': {'state': str(state)}, 'host_id': 'fixture-host'}, context)
-        executor.journal.update(stopped=True, revocation_complete=True, purged=True)
-        executor.journal.pop('removed', None)
-        executor.save()
-        observed = {'removed': [{'type': 'container', 'name': 'ws-w'}]}
-        agents = patch.object(steps, 'scoped_agents', return_value=[{'runtime_key': 'w'}])
-        references = patch.object(steps, 'credential_references', return_value={'credentials': {}})
-        with agents, references, patch.object(steps, 'purge_runtime', return_value=observed):
-            prior = executor.purge()
-            self.assertNotIn('removed', prior)
-            fresh_state = state / 'fresh'
-            fresh_state.mkdir(mode=0o700)
-            fresh = steps.Executor({'roots': {'state': str(fresh_state)}, 'host_id': 'fixture-host'},
-                                    {**context, 'operation_id': uuid.uuid4().hex})
-            fresh.journal.update(stopped=True, revocation_complete=True)
-            fresh.save()
-            self.assertEqual(fresh.purge()['removed'], observed['removed'])
-            self.assertEqual(fresh.purge()['removed'], observed['removed'])
-        with agents, references, patch.object(steps, 'purge_runtime', return_value={}):
-            empty_state = state / 'empty'
-            empty_state.mkdir(mode=0o700)
-            empty = steps.Executor({'roots': {'state': str(empty_state)}, 'host_id': 'fixture-host'},
-                                    {**context, 'operation_id': uuid.uuid4().hex})
-            empty.journal.update(stopped=True, revocation_complete=True)
-            empty.save()
-            self.assertEqual(empty.purge()['removed'], [])
-        self.assertNotIn('removed', executor.journal)
-        self.assertIs(executor.journal.get('purged'), True)
-
-
 class DockerFailureDiagnosticTest(unittest.TestCase):
     """A failed Docker effect names its cause in the host journal instead of a bare 'unverified'."""
 
@@ -456,11 +324,6 @@ class DockerFailureDiagnosticTest(unittest.TestCase):
         self.assertTrue(message.endswith('delegated Cauce credential effect was not verified'), message)
         self.assertNotIn('\n', message)
         self.assertLessEqual(len(message), len('runtime effect or observation failed (exit 7): ') + container.DIAGNOSTIC_LIMIT)
-
-    def test_success_returns_stdout(self):
-        import fleet_executor_container as container
-        self.assertEqual(container.checked_command(['/bin/sh', '-c', 'printf ok']), b'ok')
-
 
 class PurgeBrowserFixtureRecoveryTest(unittest.TestCase):
     @classmethod

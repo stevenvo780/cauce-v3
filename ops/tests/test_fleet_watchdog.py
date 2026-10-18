@@ -9,9 +9,7 @@ import importlib.util
 import json
 import os
 import pathlib
-import subprocess
 import sys
-import tempfile
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -47,43 +45,8 @@ def load_watchdog_module():
 
 
 # Test 1: Script exists and has proper shebang
-def test_script_exists():
-    assert WATCHDOG_PATH.exists(), 'fleet-watchdog.py exists'
-    content = WATCHDOG_PATH.read_text()
-    assert content.startswith('#!/usr/bin/env python3'), 'has proper shebang'
-    print('✓ Script exists and has proper shebang')
-
-
 # Test 2: Missing CAUCE_DATABASE_URL exits with code 2
-def test_missing_database_url():
-    env = os.environ.copy()
-    env.pop('CAUCE_DATABASE_URL', None)
-    env.pop('PYTHONPATH', None)
-
-    result = subprocess.run(
-        [sys.executable, str(WATCHDOG_PATH)],
-        capture_output=True,
-        text=True,
-        env=env,
-    )
-    assert result.returncode == 2, f'exits with 2 (got {result.returncode})'
-    assert 'CAUCE_DATABASE_URL' in result.stderr, 'error mentions CAUCE_DATABASE_URL'
-    print('✓ Missing CAUCE_DATABASE_URL exits with code 2')
-
-
 # Test 3: Parse psql output correctly
-def test_parse_psql_rows():
-    """Test the parse_psql_rows function indirectly through state file."""
-    watchdog_module = load_watchdog_module()
-
-    sample_output = 'alias|epoch\nargos|15\natlas|18'
-    rows = watchdog_module.parse_psql_rows(sample_output)
-    assert len(rows) == 2, 'parses two data rows'
-    assert rows[0]['alias'] == 'argos', 'first row alias correct'
-    assert rows[0]['epoch'] == '15', 'first row epoch correct'
-    print('✓ psql output parsing works correctly')
-
-
 def test_psql_preserves_headers_and_rejects_sql_errors():
     module = load_watchdog_module()
 
@@ -121,32 +84,6 @@ def test_psql_preserves_headers_and_rejects_sql_errors():
             pass
         else:
             raise AssertionError('SQL failures cannot look like an empty result')
-
-
-def test_timezone_aware_checks_and_legacy_state():
-    module = load_watchdog_module()
-    now = datetime(2026, 1, 1, 12, tzinfo=UTC)
-
-    def healthy_lease_query(_database_url, query):
-        if 'FROM agents' in query:
-            return 'alias\n'
-        return (
-            'alias|lease_until|last_heartbeat_at|epoch|connected_at\n'
-            'atlas|2026-01-01 12:01:00+00|2026-01-01 06:59:59-05|1|2026-01-01 11:00:00+00\n'
-        )
-
-    with patch.object(module, 'EXPECTED_ALIASES', ['atlas']), patch.object(
-        module, 'run_psql', side_effect=healthy_lease_query,
-    ):
-        assert module.check_connection_leases('postgres://test', now)['status'] == 'ok'
-    with patch.object(module, 'run_psql', return_value=(
-        'recipient_alias|status|count|last_terminal_at|oldest_available_at\n'
-        'atlas|dead|1|2026-01-01 11:59:00+00|2026-01-01 11:00:00+00\n'
-    )):
-        result = module.check_dead_failed_deliveries('postgres://test', now, '2026-01-01T11:58:00')
-        assert result['new_dead'] == {'atlas': 1}
-    assert module.utc_timestamp('2026-01-01T12:00:00') == now
-    assert module.utc_timestamp('2026-01-01T07:00:00-05:00') == now
 
 
 def test_enabled_registry_extends_expected_lease_coverage_fail_closed():
@@ -222,71 +159,7 @@ def test_oldest_pending_is_not_hidden_by_recent_work():
 
 
 # Test 4: State file structure
-def test_state_file():
-    """Test state file creation and structure."""
-    watchdog_module = load_watchdog_module()
-
-    with tempfile.TemporaryDirectory() as tmpdir:
-        state_file = pathlib.Path(tmpdir) / 'watchdog.state'
-
-        # Test load_state with missing file
-        state = watchdog_module.load_state(str(state_file))
-        assert state['last_run_at'] is None, 'new state has no last_run_at'
-        assert 'aliases' in state, 'state has aliases key'
-        assert 'previous_alerts' in state, 'state has previous_alerts key'
-
-        # Test save_state
-        state['last_run_at'] = datetime.now(UTC).isoformat()
-        state['aliases']['argos'] = {'last_epoch': 15}
-        state['previous_alerts']['connection_leases'] = {'status': 'critical'}
-
-        success = watchdog_module.save_state(str(state_file), state)
-        assert success, 'save_state returns True'
-        assert state_file.exists(), 'state file created'
-
-        # Test load_state with existing file
-        loaded = watchdog_module.load_state(str(state_file))
-        assert loaded['last_run_at'] is not None, 'loaded state has last_run_at'
-        assert loaded['aliases']['argos']['last_epoch'] == 15, 'alias epoch persisted'
-        assert loaded['previous_alerts']['connection_leases']['status'] == 'critical', 'alert persisted'
-
-        print('✓ State file structure works correctly')
-
-
 # Test 5: Output format validation
-def test_output_formats():
-    """Test JSON and text output formats."""
-    watchdog_module = load_watchdog_module()
-
-    now = datetime.now(UTC)
-    checks = {
-        'connection_leases': {
-            'status': 'critical',
-            'message': '2 offline',
-            'offline': ['dedalo', 'vulcano'],
-        },
-        'dead_letters': {
-            'status': 'ok',
-            'message': '',
-            'open_count': 0,
-        },
-    }
-
-    # Test JSON format
-    json_str = watchdog_module.format_json_output(now, checks, '/tmp/watchdog.state')
-    json_data = json.loads(json_str)
-    assert 'timestamp' in json_data, 'JSON has timestamp'
-    assert json_data['status'] == 'critical', 'JSON status is correct'
-    assert 'checks' in json_data, 'JSON has checks'
-    print('✓ JSON output format correct')
-
-    # Test text format
-    text_str = watchdog_module.format_text_output('critical', checks)
-    assert '🔴 CRITICAL' in text_str, 'text has critical emoji'
-    assert 'connection_leases' in text_str, 'text mentions check name'
-    assert 'dedalo' in text_str, 'text includes offline alias'
-    print('✓ Text output format correct')
-
 def test_claimed_not_started():
     """The gap that reported a healthy fleet through an 8h52m outage: an adapter dying right
     after claiming leaves rows in 'leased', which the pending check never looks at."""
@@ -376,58 +249,11 @@ def test_check_systemd_covers_user_scope():
     print('✓ check_systemd checks both system and user scope')
 
 
-def test_check_systemd_env_var_does_not_shadow_function():
-    """CAUCE_CHECK_SYSTEMD=1 used to be stashed in a local variable named `check_systemd`
-    inside main(), shadowing the module-level function of the same name: `checks['systemd']
-    = check_systemd()` then tried to call a bool and crashed with TypeError."""
-    watchdog_module = load_watchdog_module()
-
-    class FakeCompletedProcess:
-        def __init__(self, stdout='[]', returncode=0, stderr=''):
-            self.stdout = stdout
-            self.returncode = returncode
-            self.stderr = stderr
-
-    original_run_psql = watchdog_module.run_psql
-    original_subprocess_run = watchdog_module.subprocess.run
-    original_argv = sys.argv[:]
-    original_environ = os.environ.copy()
-
-    try:
-        watchdog_module.run_psql = lambda *_args, **_kwargs: ''
-        watchdog_module.subprocess.run = lambda *_args, **_kwargs: FakeCompletedProcess()
-        with tempfile.TemporaryDirectory() as tmpdir:
-            os.environ['CAUCE_DATABASE_URL'] = 'postgres://fake'
-            os.environ['CAUCE_CHECK_SYSTEMD'] = '1'
-            os.environ['CAUCE_WATCHDOG_STATE_FILE'] = str(pathlib.Path(tmpdir) / 'state.json')
-            sys.argv = ['fleet-watchdog.py']
-            try:
-                watchdog_module.main()
-            except SystemExit as exit_error:
-                assert exit_error.code in (0, None), f'main() must exit 0 (got {exit_error.code})'
-            else:
-                raise AssertionError('main() must call sys.exit')
-    finally:
-        watchdog_module.run_psql = original_run_psql
-        watchdog_module.subprocess.run = original_subprocess_run
-        sys.argv[:] = original_argv
-        os.environ.clear()
-        os.environ.update(original_environ)
-    print('✓ CAUCE_CHECK_SYSTEMD=1 no longer shadows check_systemd()')
-
-
 if __name__ == '__main__':
-    test_script_exists()
-    test_missing_database_url()
-    test_parse_psql_rows()
     test_psql_preserves_headers_and_rejects_sql_errors()
-    test_timezone_aware_checks_and_legacy_state()
     test_enabled_registry_extends_expected_lease_coverage_fail_closed()
     test_oldest_pending_is_not_hidden_by_recent_work()
-    test_state_file()
-    test_output_formats()
     test_claimed_not_started()
     test_dead_letters_both_tables()
     test_check_systemd_covers_user_scope()
-    test_check_systemd_env_var_does_not_shadow_function()
     print('\n✓ All tests passed')

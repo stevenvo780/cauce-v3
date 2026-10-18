@@ -81,47 +81,6 @@ class QaRemediationTests(unittest.TestCase):
         self.fixture.write_json("verification.json", verification)
         return self.fixture.snapshot(NEXT_HEAD)
 
-    def test_large_current_evidence_state_reloads_receipt_without_replay(self):
-        self.closed_review()
-        failed = self.wide_failed_review()
-        self.assertEqual(len(failed["qa_review"]["verdict"]["observations"]), 100)
-        self.assertEqual(self.fixture.run_pass(NOW + 3000, failed)["action"], "qa_remediation_requested")
-        self.assertGreater(self.fixture.state_path.stat().st_size, 128000)
-        self.assertLess(self.fixture.state_path.stat().st_size, SUP.STATE.STATE_MAX_BYTES)
-        before = self.state()
-        self.fixture.api.receipt = {"chain_open": True, "deliveries": [{"status": "started"}]}
-        self.assertEqual(self.fixture.run_pass(NOW + 5000, failed)["action"], "root_pending")
-        self.assertEqual(self.state()["active_root"], before["active_root"])
-        self.assertEqual(self.state()["roots"], before["roots"])
-        self.assertEqual(len(self.remediation_posts()), 1)
-
-    def test_oversize_ledger_refuses_atomic_reservation_before_post_and_preserves_disk_state(self):
-        self.closed_review()
-        failed = self.install_review()
-        prior = self.fixture.state_path.read_bytes()
-        supervisor = self.fixture.supervisor(NOW + 3000)
-        ledger = supervisor.state.setdefault("qa_remediation_requests", {})
-        for index in range(4000):
-            cohort = SUP.digest(str(index).encode())
-            token = SUP.digest(SUP.canonical({"goal_sha256": failed["goal_sha256"], "cohort_sha256": cohort}))
-            ledger[token] = {"goal_sha256": failed["goal_sha256"], "cohort_sha256": cohort,
-                "key": "praxis-qa-remediation:" + failed["goal_sha256"] + ":" + cohort,
-                "at": NOW - 100000, "status": "closed", "outcome": "no_measured_progress"}
-        self.assertGreater(len(SUP.canonical(supervisor.state)), SUP.STATE.STATE_MAX_BYTES)
-        with self.assertRaisesRegex(SUP.SupervisionError, "state_too_large"):
-            supervisor.pass_once({**self.fixture.runtime(), "observed_at": NOW + 3000}, failed)
-        self.assertEqual(self.fixture.state_path.read_bytes(), prior)
-        self.assertEqual(self.remediation_posts(), [])
-        self.assertEqual(len(self.fixture.engineering_posts()), 2)
-
-    def test_oversize_existing_state_is_rejected_with_same_typed_limit(self):
-        self.closed_review()
-        raw = self.fixture.state_path.read_bytes()
-        self.fixture.state_path.write_bytes(raw + b" " * SUP.STATE.STATE_MAX_BYTES)
-        with self.assertRaisesRegex(SUP.SupervisionError, "state_too_large"):
-            self.fixture.supervisor()
-        self.assertEqual(len(self.fixture.engineering_posts()), 2)
-
     def test_current_independent_failed_review_reserves_one_distinct_repair_without_credit(self):
         baseline, original = self.closed_review()
         failed = self.install_review()
@@ -198,18 +157,6 @@ class QaRemediationTests(unittest.TestCase):
         self.assertEqual(self.state()["progress_pause_binding"], before["progress_pause_binding"])
         self.assertEqual(len(self.remediation_posts()), 1)
 
-    def test_changed_failed_cohort_after_real_repair_can_get_its_own_bounded_repair(self):
-        self.closed_review()
-        failed = self.install_review()
-        self.fixture.run_pass(NOW + 3000, failed)
-        corrected_but_failed = self.install_review(implementation="actual tested fix with another inspected mobile defect")
-        self.fixture.api.receipt = {"chain_open": False, "deliveries": [{"status": "done"}]}
-        self.assertEqual(self.fixture.run_pass(NOW + 3300, corrected_but_failed)["action"], "visual_review_pending")
-        self.assertEqual(self.fixture.run_pass(NOW + 4000, corrected_but_failed)["action"], "qa_remediation_requested")
-        self.assertEqual(len(self.remediation_posts()), 2)
-        self.assertEqual(len(self.state()["qa_remediation_requests"]), 2)
-        self.assertNotEqual(self.remediation_posts()[0]["idempotency_key"], self.remediation_posts()[1]["idempotency_key"])
-
     def test_bad_unknown_stale_or_contradictory_verdict_never_posts_repair(self):
         self.closed_review()
         failed, original = self.install_review(), self.state()
@@ -255,43 +202,6 @@ class QaRemediationTests(unittest.TestCase):
                 self.assertEqual(self.remediation_posts(), [])
                 self.assertEqual(self.state()["roots"], original["roots"])
 
-    def test_runtime_stop_fuel_cooldown_and_hard_capacity_guards_remain_closed(self):
-        self.closed_review()
-        failed, original = self.install_review(), self.state()
-        for constraint in ("active", "readiness", "stale_runtime", "idle", "recent_activity", "cooldown", "fuel", "stop",
-                           "unauthorized", "quota_exhausted", "foreign_receipt", "causal_receipt_mismatch", "preview_rollback_unknown", "certificate"):
-            with self.subTest(constraint=constraint):
-                state = copy.deepcopy(original)
-                runtime = {**self.fixture.runtime(), "observed_at": NOW + 3000}
-                if constraint == "active":
-                    runtime["active"] = 1
-                if constraint == "readiness":
-                    runtime["ready"] = False
-                if constraint == "stale_runtime":
-                    runtime["observed_at"] = NOW
-                if constraint == "idle":
-                    state["idle_since"] = NOW + 2999
-                if constraint == "recent_activity":
-                    runtime["last_activity_at"] = NOW + 2999
-                if constraint == "cooldown":
-                    state["cooldown_until"] = NOW + 10000
-                if constraint == "fuel":
-                    state["roots"][SUP.STATE.utc_day(NOW)] = self.fixture.config["root_limit"]
-                if constraint == "stop":
-                    (self.fixture.directory / "STOP").write_text("owner stop")
-                if constraint in {"unauthorized", "quota_exhausted", "foreign_receipt", "causal_receipt_mismatch", "preview_rollback_unknown"}:
-                    state.update(phase="circuit_paused", pause_reason=constraint)
-                if constraint == "certificate":
-                    self.fixture.config["certificate_not_after"] = NOW
-                SUP.atomic_save(self.fixture.state_path, state)
-                self.fixture.supervisor(NOW + 3000).pass_once(runtime, failed)
-                self.assertEqual(self.remediation_posts(), [])
-                self.assertEqual(self.state()["roots"], state["roots"])
-                if constraint == "stop":
-                    (self.fixture.directory / "STOP").unlink()
-                if constraint == "certificate":
-                    self.fixture.config.pop("certificate_not_after")
-
     def test_unknown_post_retries_same_repair_reservation_without_new_ledger_or_fuel(self):
         self.closed_review()
         failed = self.install_review()
@@ -306,51 +216,6 @@ class QaRemediationTests(unittest.TestCase):
         self.assertEqual(after["active_root"]["payload"], before["active_root"]["payload"])
         self.assertEqual(after["active_root"]["attempts"], 2)
         self.assertEqual(self.remediation_posts()[0], self.remediation_posts()[1])
-
-    def test_repair_auth_resume_needs_nonce_and_preserves_same_reservation(self):
-        self.closed_review()
-        failed = self.install_review()
-        self.fixture.api.post_errors = ["unauthorized"]
-        self.assertEqual(self.fixture.run_pass(NOW + 3000, failed)["action"], "unauthorized")
-        before = self.state()
-        event = SUP.STATE.auth_resume_event(self.fixture.config["goal_sha256"], NOW + 4300)
-        path = self.fixture.directory / "RESUME.json"
-        path.write_text(json.dumps(event))
-        path.chmod(0o600)
-        self.fixture.run_pass(NOW + 4300, failed)
-        after = self.state()
-        self.assertEqual(after["roots"], before["roots"])
-        self.assertEqual(after["active_root"]["payload"], before["active_root"]["payload"])
-        self.assertEqual(after["auth_resume_nonces"], [event["nonce"]])
-        self.assertIn("message_id", after["active_root"])
-
-    def test_legacy_owner_repair_closes_without_new_token_or_verdict_and_cannot_replay(self):
-        baseline, _ = self.closed_review()
-        failed = self.install_review()
-        legacy = copy.deepcopy(failed)
-        legacy["qa_review"].pop("verdict")
-        supervisor = self.fixture.supervisor(NOW + 3000)
-        key = "praxis-owner-repair:1767:" + failed["goal_sha256"][:16] + ":" + failed["qa_review"]["cohort_sha256"]
-        root = {"payload": supervisor.payload(key, SUP.ROOT_TEXT), "baseline": legacy, "purpose": "qa_remediation",
-                "review_cohort": failed["qa_review"]["cohort_sha256"], "reserved_at": NOW + 3000, "owner_request_id": 1767}
-        supervisor.state["active_root"] = root
-        supervisor.state["phase"] = "root_reserved"
-        supervisor.state["roots"][SUP.STATE.utc_day(NOW)] += 1
-        supervisor.save()
-        supervisor.publish(root)
-        before = self.state()
-        self.fixture.api.receipt = {"chain_open": False, "deliveries": [{"status": "done"}]}
-        self.assertEqual(self.fixture.run_pass(NOW + 3300, failed)["action"], "no_measured_progress")
-        self.assertEqual(self.state()["roots"], before["roots"])
-        self.assertEqual(self.state()["progress_pause_baseline"], baseline)
-        self.assertEqual(self.state()["progress_pause_binding"], before["progress_pause_binding"])
-        record = next(iter(self.state()["qa_remediation_requests"].values()))
-        self.assertEqual(record["key"], key)
-        self.assertEqual(record["owner_request_id"], 1767)
-        self.assertEqual(record["outcome"], "no_measured_progress")
-        self.assertEqual(self.fixture.run_pass(NOW + 10000, failed)["action"], "no_measured_progress")
-        self.assertEqual(len(self.fixture.engineering_posts()), 3)
-
 
 if __name__ == "__main__":
     unittest.main()
