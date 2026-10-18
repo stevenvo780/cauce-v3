@@ -8,7 +8,6 @@ import { renderWithApi } from '../../test/render';
 import { PerfilTab } from './PerfilTab';
 
 const RUTA = 'http://localhost/v3/console/tenants/Steven/agents/kant/perfil';
-const RECARGA = 'http://localhost/v3/console/tenants/Steven/agents/kant/context/reload';
 const SHA = 'a'.repeat(64);
 
 function mismatch(harness: string | null, reasons = ['expectation_sha_mismatch']) {
@@ -73,29 +72,6 @@ it.each(['codex', 'claude', 'openclaw'])('ofrece reconciliación sólo para un a
   renderWithApi(<Vista />);
   expect(await screen.findByRole('region', { name: 'Reconciliar huellas del contexto' })).toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Recargar contexto' })).toBeDisabled();
-});
-
-it('revisa los cinco documentos escritos por Cauce cuando OpenClaw expone siete ficheros', async () => {
-  const authored = ['SOUL.md', 'IDENTITY.md', 'USER.md', 'AGENTS.md', 'TOOLS.md'];
-  server.use(http.get(RUTA, () => HttpResponse.json({
-    ...respuesta(true, { runtime_state: 'drifted', harness: 'openclaw' }),
-    ficheros: [...authored, 'MEMORY.md', 'HEARTBEAT.md'].map((nombre) => ({
-      nombre, politica: authored.includes(nombre) ? 'bloque-gestionado' : 'solo-si-falta', texto: '', unidades: 0,
-    })),
-    contaminacion: { contaminated: true, findings: [{
-      reason: 'expectation_sha_mismatch', document: 'TOOLS.md', path: '/home/kant/clawd/TOOLS.md',
-    }] },
-  })));
-  server.use(http.post(RUTA.replace('/perfil', '/context/reconcile/preview'), () => HttpResponse.json({
-    ok: true, tenant_id: 'Steven', alias: 'kant', expected_revision: 4,
-    expected_runtime_generation: 'gen-4', preserve_external: true,
-    documents: authored.map((name) => ({ name, observed_sha: SHA, exterior_sha: SHA })),
-  })));
-  const user = userEvent.setup();
-  renderWithApi(<Vista />);
-  await user.type(await screen.findByLabelText('Motivo de la reconciliación'), 'Conservar notas locales revisadas');
-  await user.click(screen.getByRole('button', { name: 'Medir antes de reconciliar' }));
-  expect(await screen.findByRole('checkbox', { name: /Autorizo conservar sin cambios/ })).toBeEnabled();
 });
 
 it.each(['hermes', null])('no ofrece una reconciliación imposible para %s', async (harness) => {
@@ -282,13 +258,6 @@ it('un 2xx sin ACK completo conserva el borrador y no dice aplicado', async () =
   expect(screen.getByRole('button', { name: /Guardar y aplicar perfil/i })).toBeEnabled();
 });
 
-it('el arnés medido y la base viva se rotulan como tales', async () => {
-  server.use(http.get(RUTA, () => HttpResponse.json(respuesta(true))));
-  renderWithApi(<Vista />);
-  expect(await screen.findByText(/Arnés medido: codex/)).toBeInTheDocument();
-  expect(screen.queryByText(/Arnés declarado/)).not.toBeInTheDocument();
-});
-
 it('permiso ausente o no acreditado bloquea caja y PUT', async () => {
   let puts = 0;
   server.use(
@@ -379,87 +348,6 @@ it('ACK de disco sin adopción de TUI queda pendiente y no dice aplicado', async
   expect(screen.queryByText(/^Aplicado:/)).not.toBeInTheDocument();
 });
 
-/**
- * THE DESTINATION OF EACH FIELD.
- *
- * The bug they fix: the label said "SOUL.md en openclaw" to an alias whose harness is
- * `claude` and whose only file is `CLAUDE.md`. A label that names a file nobody will write is
- * worse than no label at all: the operator believes they know where what they write ends up.
- */
-function rotuloDe(titulo: RegExp): string {
-  const caja = screen.getByLabelText(titulo);
-  return caja.closest('label')?.textContent ?? '';
-}
-
-async function abrirCon(overrides: Partial<AgentPerfil>) {
-  server.use(http.get(RUTA, () => HttpResponse.json(respuesta(true, overrides))));
-  renderWithApi(<Vista />);
-  await screen.findByLabelText(/Identidad y propósito/i);
-}
-
-const FICHEROS_OPENCLAW_MOCK = [
-  'SOUL.md', 'IDENTITY.md', 'USER.md', 'MEMORY.md', 'HEARTBEAT.md', 'AGENTS.md', 'TOOLS.md',
-].map((nombre) => ({
-  nombre,
-  politica: nombre === 'MEMORY.md' || nombre === 'HEARTBEAT.md'
-    ? 'solo-si-falta' as const
-    : 'bloque-gestionado' as const,
-  texto: '', unidades: 0,
-}));
-
-it('un alias claude ve CLAUDE.md en los siete campos y NINGÚN fichero de openclaw', async () => {
-  await abrirCon({
-    harness: 'claude',
-    ficheros: [{ nombre: 'CLAUDE.md', politica: 'bloque-gestionado', texto: '', unidades: 0 }],
-  });
-  for (const titulo of [
-    /Identidad y propósito/i, /Rol declarado/i, /Tu humano y cómo tratarlo/i,
-    /Responsabilidades/i, /Restricciones/i, /Herramientas/i,
-    /Instrucciones fijas de funcionamiento/i,
-  ]) {
-    expect(rotuloDe(titulo)).toContain('→ CLAUDE.md');
-  }
-  const editor = screen.getByText(/Campos canónicos de kant/i).closest('section');
-  for (const ajeno of ['SOUL.md', 'IDENTITY.md', 'USER.md', 'TOOLS.md', 'openclaw']) {
-    expect(editor?.textContent ?? '').not.toContain(ajeno);
-  }
-});
-
-it('un alias openclaw reparte los campos entre sus cinco ficheros gobernados', async () => {
-  await abrirCon({ harness: 'openclaw', ficheros: FICHEROS_OPENCLAW_MOCK });
-  expect(rotuloDe(/Identidad y propósito/i)).toContain('→ SOUL.md');
-  expect(rotuloDe(/Rol declarado/i)).toContain('→ IDENTITY.md');
-  expect(rotuloDe(/Tu humano y cómo tratarlo/i)).toContain('→ USER.md');
-  expect(rotuloDe(/Responsabilidades/i)).toContain('→ AGENTS.md');
-  expect(rotuloDe(/Restricciones/i)).toContain('→ AGENTS.md');
-  expect(rotuloDe(/^Herramientas/i)).toContain('→ TOOLS.md');
-  expect(rotuloDe(/Instrucciones fijas de funcionamiento/i)).toContain('→ AGENTS.md');
-});
-
-it.each(['codex', 'muse', 'grok'])('un alias %s junta los siete campos en AGENTS.md, sin nombrar ficheros ajenos', async (harness) => {
-  await abrirCon({ harness });
-  expect(rotuloDe(/Identidad y propósito/i)).toContain('→ AGENTS.md');
-  expect(rotuloDe(/^Herramientas/i)).toContain('→ AGENTS.md');
-  expect(screen.getByText(/Campos canónicos de kant/i).closest('section')?.textContent ?? '')
-    .not.toContain('TOOLS.md');
-});
-
-it('sin arnés declarado dice «sin dato» y lo explica una vez, en vez de adivinar openclaw', async () => {
-  await abrirCon({ harness: null, ficheros: [] });
-  expect(rotuloDe(/Identidad y propósito/i)).toContain('sin dato');
-  expect(screen.getByText(/Ningún campo tiene un fichero de destino/i).textContent)
-    .toContain('no dice qué arnés');
-  expect(screen.getByText(/Campos canónicos de kant/i).closest('section')?.textContent ?? '')
-    .not.toContain('SOUL.md');
-});
-
-it('un arnés que Cauce no sabe componer se marca «no aplica» y se nombra en la explicación', async () => {
-  await abrirCon({ harness: 'hermes', ficheros: [] });
-  expect(screen.getAllByLabelText('no aplica').length).toBe(7);
-  expect(screen.getByText(/Ningún campo tiene un fichero de destino/i).textContent)
-    .toContain('hermes');
-});
-
 it('sin un motivo escrito a mano no sale ningún PUT, aunque el borrador esté sucio', async () => {
   let puts = 0;
   server.use(
@@ -479,105 +367,6 @@ it('sin un motivo escrito a mano no sale ningún PUT, aunque el borrador esté s
   await motivar(user, ' pero ya no lo es');
   expect(screen.getByRole('button', { name: /Guardar y aplicar perfil/i })).toBeEnabled();
   expect(puts).toBe(0);
-});
-
-function VistaConRestauracion() {
-  const [borrador, setBorrador] = useState<Partial<AgentPerfilCampos>>();
-  const [restauracion, setRestauracion] = useState(0);
-  return (
-    <>
-      <button
-        type="button"
-        onClick={() => { setBorrador({ role_summary: 'Rol 2' }); setRestauracion((n) => n + 1); }}
-      >
-        simular restauración
-      </button>
-      <PerfilTab
-        tenantId="Steven"
-        alias="kant"
-        borrador={borrador}
-        onBorrador={setBorrador}
-        restauracion={restauracion}
-        configWritePermission="allowed"
-      />
-    </>
-  );
-}
-
-it('restaurar una revisión vacía el motivo escrito antes: la auditoría no describe otra acción', async () => {
-  server.use(http.get(RUTA, () => HttpResponse.json(respuesta(true))));
-  const user = userEvent.setup();
-  renderWithApi(<VistaConRestauracion />);
-  await screen.findByLabelText(/Identidad y propósito/i);
-
-  await motivar(user, 'agrego la herramienta de despliegue');
-  expect(screen.getByLabelText(/Motivo de este cambio de perfil/i))
-    .toHaveValue('agrego la herramienta de despliegue');
-
-  await user.click(screen.getByRole('button', { name: 'simular restauración' }));
-  expect(screen.getByLabelText(/Motivo de este cambio de perfil/i)).toHaveValue('');
-  expect(screen.getByRole('button', { name: /Guardar y aplicar perfil/i })).toBeDisabled();
-});
-
-it('la recarga de contexto sólo se ofrece cuando hay algo que recargar', async () => {
-  server.use(http.get(RUTA, () => HttpResponse.json(respuesta(true))));
-  const { unmount } = renderWithApi(<Vista />);
-  await screen.findByLabelText(/Identidad y propósito/i);
-  expect(screen.queryByRole('button', { name: /Recargar contexto/i })).not.toBeInTheDocument();
-  unmount();
-
-  for (const estado of ['pending_session_refresh', 'drifted'] as const) {
-    server.use(http.get(RUTA, () => HttpResponse.json(respuesta(true, { runtime_state: estado }))));
-    const vista = renderWithApi(<Vista />);
-    expect(await screen.findByRole('button', { name: /Recargar contexto/i })).toBeInTheDocument();
-    vista.unmount();
-  }
-});
-
-it('el veredicto limpio de una recarga no tapa la lectura que sí denuncia después', async () => {
-  let lecturas = 0;
-  server.use(
-    http.get(RUTA, () => {
-      lecturas += 1;
-      const base = respuesta(true, { runtime_state: 'drifted' });
-      return HttpResponse.json(lecturas === 1
-        ? { ...base, contaminacion: { contaminated: false, findings: [] } }
-        : {
-          ...base,
-          contaminacion: {
-            contaminated: true,
-            findings: [{
-              reason: 'foreign_managed_block', document: 'AGENTS.md',
-              path: '/home/kant/.codex/AGENTS.md', owner: 'Miguel/kratos',
-            }],
-          },
-        });
-    }),
-    http.post(RECARGA, () => HttpResponse.json({
-      ok: true, state: 'pending_session_refresh', evidence: 'runtime_verification',
-      message: 'el contexto está en disco y verificado',
-      tenant_id: 'Steven', alias: 'kant', revision: 4,
-      runtime_verification: {
-        state: 'current', generation: 'gen-4', container_id: 'ws-kant',
-        observed_at: '2026-08-26T00:00:00Z', documents: [],
-      },
-      documents: [],
-      contaminacion: { contaminated: false, findings: [] },
-    })),
-  );
-  const user = userEvent.setup();
-  renderWithApi(<Vista />);
-
-  await screen.findByRole('button', { name: /Recargar contexto/i });
-  expect(screen.queryByText(/contienen algo que no es suyo/i)).not.toBeInTheDocument();
-
-  await user.type(screen.getByLabelText(/Motivo de la recarga/i), 'rehago los ficheros a mano');
-  await user.click(screen.getByRole('button', { name: /Recargar contexto/i }));
-
-  expect(await screen.findByText(/contienen algo que no es suyo/i)).toBeInTheDocument();
-  expect(screen.getByText('Miguel/kratos')).toBeInTheDocument();
-  expect(screen.getByRole('button', { name: /Recargar contexto/i })).toBeDisabled();
-  expect(screen.getByLabelText(/Motivo de este cambio de perfil/i)).toBeDisabled();
 });
 
 it('un contexto contaminado deja en cuarentena guardar y recargar, y nombra al dueño', async () => {

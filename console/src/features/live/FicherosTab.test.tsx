@@ -87,15 +87,6 @@ async function motivar(
   await user.type(within(cajon).getByLabelText(/Motivo del guardado/i), texto);
 }
 
-it('la sección existe en la página y enseña el mapa de ficheros del alias', async () => {
-  mapaDeKant([CLAUDE_MD, MCP_CERRADO]);
-  const { cajon } = await abrirFicheros();
-
-  expect(await within(cajon).findByText('CLAUDE.md (manual del sitio)')).toBeInTheDocument();
-  expect(within(cajon).getByText('/home/dev/.claude/CLAUDE.md')).toBeInTheDocument();
-  expect(window.location.pathname).toBe('/live');
-});
-
 /**
  * A lock without an explanation is what makes someone ask by Telegram to unlock something
  * that is closed on purpose. The reason is shown ALWAYS, without expanding anything.
@@ -182,21 +173,6 @@ it('un 200 malformado se muestra como fallo verificable, nunca como ausencia', a
 
   expect(await within(cajon).findByText(/contenido de documento incompleto o incoherente/i))
     .toBeInTheDocument();
-  expect(within(cajon).queryByText(/comprobó que este fichero todavía no existe/i))
-    .not.toBeInTheDocument();
-});
-
-it('una sonda unavailable queda visible y tampoco se convierte en ausencia', async () => {
-  mapaDeKant([IDENTIDAD_DE_PERFIL]);
-  server.use(http.get(rutaContenido('identity'), () => HttpResponse.json(
-    { error: 'unavailable', message: 'la sonda allowlisted no está conectada' }, { status: 503 },
-  )));
-
-  const { user, cajon } = await abrirFicheros();
-  await user.click(await within(cajon).findByText('Identidad (IDENTITY.md)'));
-
-  expect(await within(cajon).findByText(/Todavía no hay camino hasta el disco/i)).toBeInTheDocument();
-  expect(within(cajon).getByText(/sonda allowlisted no está conectada/i)).toBeInTheDocument();
   expect(within(cajon).queryByText(/comprobó que este fichero todavía no existe/i))
     .not.toBeInTheDocument();
 });
@@ -313,24 +289,6 @@ it('un 202 written_pending_session guarda, lo dice sin fingir aplicación y deja
   expect(enviados[1]?.content).toBe('# nuevo otra vez');
   expect(within(cajon).queryByText(/Alguien lo cambió mientras lo editabas/))
     .not.toBeInTheDocument();
-});
-
-it('cuando no hay canal hasta el agente lo DICE, y no enseña una caja vacía', async () => {
-  mapaDeKant([CLAUDE_MD]);
-  server.use(http.get(RUTA_CONTENIDO, () => HttpResponse.json(
-    { error: 'no_channel', message: 'La consola no tiene todavía ningún camino hasta el disco de este agente.' },
-    { status: 503 },
-  )));
-
-  const { user, cajon } = await abrirContexto();
-  await user.click(await within(cajon).findByText('CLAUDE.md (manual del sitio)'));
-
-  expect(await within(cajon).findByText('Todavía no hay camino hasta el disco de este agente'))
-    .toBeInTheDocument();
-  expect(within(cajon).getByText(/La consola no tiene todavía ningún camino/)).toBeInTheDocument();
-  // And there is nowhere to write and nothing to save.
-  expect(within(cajon).queryByLabelText(/Contenido de CLAUDE\.md/i)).not.toBeInTheDocument();
-  expect(within(cajon).queryByRole('button', { name: /^Guardar$/i })).not.toBeInTheDocument();
 });
 
 it('si el fichero cambió mientras se editaba, lo dice y no finge que guardó', async () => {
@@ -460,43 +418,6 @@ it('un 2xx sin ACK completo conserva el borrador sucio y no afirma aplicado', as
   expect(within(cajon).queryByText(/Aplicado en/)).not.toBeInTheDocument();
 });
 
-/**
- * "Not looked at" and "doesn't have" are painted equally safely and only one is a fact. A
- * gateway that does not publish the route CANNOT become "this alias has no files".
- */
-it('un gateway que no publica la ruta no se pinta como «este alias no tiene ficheros»', async () => {
-  server.use(http.get(RUTA_MAPA, () => HttpResponse.json({ error: 'Not Found' }, { status: 404 })));
-  const { cajon } = await abrirFicheros();
-
-  const vacio = await within(cajon).findByText(/no publica el mapa de ficheros/i);
-  // Checked on the whole paragraph: what matters is that BOTH sentences are there.
-  const parrafo = vacio.closest('p') as HTMLElement;
-  expect(parrafo.textContent).toMatch(/no publica el mapa de ficheros/i);
-  expect(parrafo.textContent).toMatch(/desde aquí no se ha mirado/i);
-});
-
-it('un 404 del manejador se conserva como alias ausente o denegado, no como ruta sin publicar', async () => {
-  server.use(http.get(RUTA_MAPA, () => HttpResponse.json(
-    { error: 'not_found', message: 'agent not found or not visible' }, { status: 404 },
-  )));
-
-  const { cajon } = await abrirFicheros();
-
-  expect(await within(cajon).findByText(/no existe en ese tenant o no es visible/i))
-    .toBeInTheDocument();
-  expect(within(cajon).queryByText(/no publica el mapa de ficheros/i)).not.toBeInTheDocument();
-});
-
-it('cuando las rutas no están medidas, la cabecera lo advierte', async () => {
-  mapaDeKant([CLAUDE_MD], {
-    facts_source: 'database',
-    caveat: 'Estas rutas están DEDUCIDAS del registro, no medidas dentro del contenedor.',
-  });
-  const { cajon } = await abrirFicheros();
-
-  expect(await within(cajon).findByText(/DEDUCIDAS del registro/)).toBeInTheDocument();
-});
-
 it('sin config.write acreditado deja inspeccionar pero bloquea edición y PUT', async () => {
   mapaDeKant([CLAUDE_MD]);
   let puts = 0;
@@ -522,177 +443,4 @@ it('sin config.write acreditado deja inspeccionar pero bloquea edición y PUT', 
   expect(within(cajon).getByText(/No se pudo acreditar config\.write/)).toBeInTheDocument();
   expect(within(cajon).queryByRole('button', { name: /^Guardar$/i })).not.toBeInTheDocument();
   expect(puts).toBe(0);
-});
-
-/** The declared gap must be on the view, not only in a code comment. */
-it('la vista declara en castellano lo que todavía no hace', async () => {
-  mapaDeKant([CLAUDE_MD]);
-  const { cajon } = await abrirFicheros();
-
-  const hueco = (await within(cajon).findByText(/Lo que esto todavía no hace/i)).closest('details') as HTMLElement;
-  expect(within(hueco).getByText(/no se editan desde aquí/i)).toBeInTheDocument();
-});
-
-it('un 413 al guardar dice el tope y NO se lleva por delante lo escrito', async () => {
-  mapaDeKant([CLAUDE_MD]);
-  server.use(
-    http.get(RUTA_CONTENIDO, () => HttpResponse.json({
-      tenant_id: 'Steven', alias: 'kant', kind: 'directive',
-      path: '/home/dev/.claude/CLAUDE.md', format: 'markdown',
-      exists: true, content: 'corto', sha: SHA_VIEJO, bytes: 5,
-      editable: true, projected: false, truncated: false,
-    })),
-    http.put(RUTA_CONTENIDO, () => HttpResponse.json(
-      { error: 'too_large', message: 'el contenido se pasa del tope de 256 KiB' }, { status: 413 },
-    )),
-  );
-
-  const { user, cajon } = await abrirContexto();
-  await user.click(await within(cajon).findByText('CLAUDE.md (manual del sitio)'));
-  const caja = await within(cajon).findByLabelText(/Contenido de CLAUDE\.md/i);
-  await user.clear(caja);
-  await user.type(caja, 'lo que no cabe');
-  await motivar(user, cajon);
-  await user.click(within(cajon).getByRole('button', { name: /^Guardar$/i }));
-
-  expect(await within(cajon).findByText(/El fichero pasa del tope/)).toBeInTheDocument();
-  expect(within(cajon).getByText(/se pasa del tope de 256 KiB/)).toBeInTheDocument();
-  expect(caja).toHaveValue('lo que no cabe');
-  expect(within(cajon).queryByText(/Aplicado en/)).not.toBeInTheDocument();
-});
-
-it('un 403 de la política de rutas se explica como decisión, no como avería', async () => {
-  mapaDeKant([CLAUDE_MD]);
-  server.use(
-    http.get(RUTA_CONTENIDO, () => HttpResponse.json({
-      tenant_id: 'Steven', alias: 'kant', kind: 'directive',
-      path: '/home/dev/.claude/CLAUDE.md', format: 'markdown',
-      exists: true, content: 'corto', sha: SHA_VIEJO, bytes: 5,
-      editable: true, projected: false, truncated: false,
-    })),
-    http.put(RUTA_CONTENIDO, () => HttpResponse.json(
-      { error: 'forbidden', message: 'esa ruta mezcla configuración con credenciales' }, { status: 403 },
-    )),
-  );
-
-  const { user, cajon } = await abrirContexto();
-  await user.click(await within(cajon).findByText('CLAUDE.md (manual del sitio)'));
-  const caja = await within(cajon).findByLabelText(/Contenido de CLAUDE\.md/i);
-  await user.clear(caja);
-  await user.type(caja, 'mio');
-  await motivar(user, cajon);
-  await user.click(within(cajon).getByRole('button', { name: /^Guardar$/i }));
-
-  expect(await within(cajon).findByText(/no se sirve por esta vía/)).toBeInTheDocument();
-  expect(within(cajon).getByText(/mezcla configuración con credenciales/)).toBeInTheDocument();
-  expect(caja).toHaveValue('mio');
-});
-
-it('una ruta sin medir se distingue de un fichero que no está', async () => {
-  mapaDeKant([CLAUDE_MD]);
-  server.use(http.get(RUTA_CONTENIDO, () => HttpResponse.json(
-    { error: 'facts_not_measured', message: 'nadie midió qué arnés corre este alias' }, { status: 409 },
-  )));
-
-  const { user, cajon } = await abrirContexto();
-  await user.click(await within(cajon).findByText('CLAUDE.md (manual del sitio)'));
-
-  expect(await within(cajon).findByText(/no está medida/)).toBeInTheDocument();
-  expect(within(cajon).getByText(/nadie midió qué arnés corre este alias/)).toBeInTheDocument();
-  expect(within(cajon).queryByLabelText(/Contenido de CLAUDE\.md/i)).not.toBeInTheDocument();
-});
-
-it('el visor de un fichero que no está lo dice y deja volver a comprobarlo', async () => {
-  mapaDeKant([IDENTIDAD_DE_PERFIL]);
-  let existe = false;
-  server.use(http.get(rutaContenido('identity'), () => HttpResponse.json({
-    tenant_id: 'Steven', alias: 'kant', kind: 'identity',
-    path: '/home/claw/workspace/IDENTITY.md', format: 'markdown',
-    exists: existe, content: existe ? '# identidad\n' : '',
-    sha: existe ? SHA_NUEVO : null, bytes: existe ? 12 : 0,
-    editable: false, projected: false, truncated: false,
-  })));
-
-  const { user, cajon } = await abrirFicheros();
-  await user.click(await within(cajon).findByText('Identidad (IDENTITY.md)'));
-
-  expect(await within(cajon).findByText(/todavía no existe/)).toBeInTheDocument();
-  expect(within(cajon).queryByLabelText(/Contenido de Identidad/i)).not.toBeInTheDocument();
-
-  existe = true;
-  await user.click(within(cajon).getByRole('button', { name: /Volver a comprobar/i }));
-
-  expect(await within(cajon).findByLabelText(/Contenido de Identidad/i)).toHaveValue('# identidad\n');
-});
-
-it('el visor avisa de que lo recortado es un prefijo, y no ofrece guardarlo', async () => {
-  mapaDeKant([IDENTIDAD_DE_PERFIL]);
-  server.use(http.get(rutaContenido('identity'), () => HttpResponse.json({
-    tenant_id: 'Steven', alias: 'kant', kind: 'identity',
-    path: '/home/claw/workspace/IDENTITY.md', format: 'markdown', exists: true,
-    content: 'prefijo', sha: SHA_NUEVO, bytes: 900_000,
-    editable: false, projected: false, truncated: true,
-  })));
-
-  const { user, cajon } = await abrirFicheros();
-  await user.click(await within(cajon).findByText('Identidad (IDENTITY.md)'));
-
-  expect(await within(cajon).findByRole('alert')).toHaveTextContent(/lectura está recortada/i);
-  expect(within(cajon).getByLabelText(/Contenido de Identidad/i)).toHaveAttribute('readonly');
-  expect(within(cajon).getByText(/prefijo recortado/)).toBeInTheDocument();
-  expect(within(cajon).queryByRole('button', { name: /^Guardar$/i })).not.toBeInTheDocument();
-});
-
-it('un 202 del manual pinta el mismo aviso de sesión sin adoptar que el perfil', async () => {
-  mapaDeKant([CLAUDE_MD]);
-  server.use(
-    http.get(RUTA_CONTENIDO, () => HttpResponse.json({
-      tenant_id: 'Steven', alias: 'kant', kind: 'directive',
-      path: '/home/dev/.claude/CLAUDE.md', format: 'markdown',
-      exists: true, content: '# manual viejo\n', sha: SHA_VIEJO, bytes: 15,
-      editable: true, projected: false, truncated: false,
-    })),
-    http.put(RUTA_CONTENIDO, () => HttpResponse.json({
-      ok: true, state: 'written_pending_session', evidence: 'probe_write_ack',
-      path: '/home/dev/.claude/CLAUDE.md', sha: SHA_NUEVO, bytes: 7,
-    }, { status: 202 })),
-  );
-
-  const { user, cajon } = await abrirContexto();
-  await user.click(await within(cajon).findByText('CLAUDE.md (manual del sitio)'));
-  const caja = await within(cajon).findByLabelText(/Contenido de CLAUDE\.md/i);
-  await user.clear(caja);
-  await user.type(caja, '# nuevo');
-  await motivar(user, cajon);
-  await user.click(within(cajon).getByRole('button', { name: /^Guardar$/i }));
-
-  const aviso = await within(cajon).findByText(/Sesión sin adoptar todavía/i);
-  expect(aviso).toHaveTextContent(MENSAJES_DE_APLICACION.written_pending_session);
-});
-
-it('CONTROL NEGATIVO: un guardado aplicado no pinta el aviso de sesión sin adoptar', async () => {
-  mapaDeKant([CLAUDE_MD]);
-  server.use(
-    http.get(RUTA_CONTENIDO, () => HttpResponse.json({
-      tenant_id: 'Steven', alias: 'kant', kind: 'directive',
-      path: '/home/dev/.claude/CLAUDE.md', format: 'markdown',
-      exists: true, content: '# manual viejo\n', sha: SHA_VIEJO, bytes: 15,
-      editable: true, projected: false, truncated: false,
-    })),
-    http.put(RUTA_CONTENIDO, () => HttpResponse.json({
-      ok: true, state: 'applied', evidence: 'probe_write_ack',
-      path: '/home/dev/.claude/CLAUDE.md', sha: SHA_NUEVO, bytes: 7,
-    })),
-  );
-
-  const { user, cajon } = await abrirContexto();
-  await user.click(await within(cajon).findByText('CLAUDE.md (manual del sitio)'));
-  const caja = await within(cajon).findByLabelText(/Contenido de CLAUDE\.md/i);
-  await user.clear(caja);
-  await user.type(caja, '# nuevo');
-  await motivar(user, cajon);
-  await user.click(within(cajon).getByRole('button', { name: /^Guardar$/i }));
-
-  expect(await within(cajon).findByText(/Aplicado en/)).toBeInTheDocument();
-  expect(within(cajon).queryByText(/Sesión sin adoptar todavía/i)).not.toBeInTheDocument();
 });

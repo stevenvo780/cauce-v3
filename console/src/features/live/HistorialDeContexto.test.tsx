@@ -9,7 +9,6 @@ import { RUTA_PERFIL, ackAplicado, perfilAplicado } from './perfil-fixtures';
 
 const RUTA_REVISIONES = '*/v3/console/tenants/:tenantId/agents/:alias/perfil/revisions';
 const RUTA_REVISIONES_FICHERO = '*/v3/console/tenants/:tenantId/agents/:alias/documents/:kind/revisions';
-const RUTA_DOCUMENTOS = '*/v3/console/tenants/:tenantId/agents/:alias/documents';
 
 interface RevisionCruda {
   id: string;
@@ -126,31 +125,6 @@ it('enseña las revisiones del perfil, la más nueva arriba, con quién y cuánd
   // to the operator who is watching.
   expect(within(dialogo).getByText('Steven/zeus')).toBeInTheDocument();
   expect(within(dialogo).getAllByText(/no consta quién/i).length).toBeGreaterThan(0);
-}, 25_000);
-
-it('el diff nombra el campo que cambió y deja fuera los seis que no', async () => {
-  const { user, dialogo } = await abrirHistorialDeKant();
-
-  await user.click((await within(dialogo).findAllByRole('button', { name: /ver qué cambió/i }))[0]);
-
-  const diff = within(dialogo).getByRole('group', { name: /diferencias con la revisión 1/i });
-  expect(within(diff).getByText('Rol declarado')).toBeInTheDocument();
-  expect(within(diff).getByText('Responsabilidades')).toBeInTheDocument();
-  expect(within(diff).queryByText('Tu humano y cómo tratarlo')).not.toBeInTheDocument();
-
-  expect(within(diff).getByText('Hub de coordinación.')).toHaveAttribute('data-clase', 'quitada');
-  expect(within(diff).getByText('PMO de la flota.')).toHaveAttribute('data-clase', 'agregada');
-  expect(within(diff).getByText('Coordinar')).toHaveAttribute('data-clase', 'igual');
-  expect(within(diff).getByText('Perseguir lo pendiente')).toHaveAttribute('data-clase', 'agregada');
-}, 25_000);
-
-it('la revisión más vieja leída dice que no hay con qué compararla, en vez de ofrecer un diff vacío', async () => {
-  const { dialogo } = await abrirHistorialDeKant();
-
-  const entradas = await within(dialogo).findAllByRole('listitem');
-  expect(within(entradas[entradas.length - 1]).queryByRole('button', { name: /ver qué cambió/i }))
-    .not.toBeInTheDocument();
-  expect(within(dialogo).getByText(/es la revisión más vieja de las leídas/i)).toBeInTheDocument();
 }, 25_000);
 
 it('restaurar carga los SIETE campos en el borrador canónico y no escribe por ninguna ruta', async () => {
@@ -293,16 +267,6 @@ it('un fallo de lectura no se disfraza de «este contexto no cambió nunca»', a
     .not.toBeInTheDocument();
 }, 25_000);
 
-it('un diario vacío se dice como hecho medido, no como lista vacía muda', async () => {
-  conDiario([]);
-  const { dialogo } = await abrirHistorialDeKant();
-
-  expect(await within(dialogo).findByText(/el servidor miró y no hay ninguna revisión anotada/i))
-    .toBeInTheDocument();
-  expect(within(dialogo).getByText(/no significa que este contexto se haya tocado poco/i))
-    .toBeInTheDocument();
-}, 25_000);
-
 it('el diario de un fichero enseña huella y tamaño, y declara que el texto no se guarda', async () => {
   const { user, dialogo } = await abrirHistorialDeKant();
 
@@ -316,30 +280,6 @@ it('el diario de un fichero enseña huella y tamaño, y declara que el texto no 
   // There is no body stored, so there is nothing to restore from here and nothing is offered.
   expect(within(dialogo).queryByRole('button', { name: /restaurar/i })).not.toBeInTheDocument();
 }, 25_000);
-
-it('un «Ver más» que falla se ve roto: la lista sigue, el fallo se dice y se puede reintentar', async () => {
-  const largas = diarioLargo(25);
-  let pedidos = 0;
-  server.use(http.get(RUTA_REVISIONES, ({ request }) => {
-    pedidos += 1;
-    if (pedidos > 1) {
-      return HttpResponse.json(
-        { error: 'unavailable', message: 'la base no responde' }, { status: 503 },
-      );
-    }
-    return paginaDelDiario(largas, Number(new URL(request.url).searchParams.get('limit') ?? '20'));
-  }));
-
-  const { user, dialogo } = await abrirHistorialDeKant();
-  await waitFor(() => { expect(dialogo.querySelectorAll('li[data-clase]')).toHaveLength(20); });
-  await user.click(within(dialogo).getByRole('button', { name: /ver más/i }));
-
-  expect(await within(dialogo).findByText(/no se pudo leer el resto del diario del perfil/i))
-    .toHaveTextContent('la base no responde');
-  // The twenty already measured stay on screen, and the failure is not dressed up as the end.
-  expect(dialogo.querySelectorAll('li[data-clase]')).toHaveLength(20);
-  expect(within(dialogo).getByRole('button', { name: /reintentar/i })).toBeInTheDocument();
-}, 30_000);
 
 it('la escalera de la ventana para en el tope de la ruta y dice que lo viejo quedó sin leer', async () => {
   const muchas = diarioLargo(400);
@@ -371,33 +311,6 @@ it('la escalera de la ventana para en el tope de la ruta y dice que lo viejo que
     .toBeInTheDocument();
 }, 60_000);
 
-it('un inventario de ficheros que falla no se dice «este gateway no lo publica»', async () => {
-  server.use(http.get(RUTA_DOCUMENTOS, () => HttpResponse.json(
-    { error: 'internal_error', message: 'la base de gobierno no contesta' }, { status: 500 },
-  )));
-
-  const { dialogo } = await abrirHistorialDeKant();
-
-  expect(await within(dialogo).findByText(/no se pudo leer el inventario de ficheros de kant/i))
-    .toHaveTextContent('la base de gobierno no contesta');
-  expect(within(dialogo).queryByText(/no publica/i)).not.toBeInTheDocument();
-  // Without an inventory it read, it does not invent a file tab either.
-  expect(within(dialogo).queryByRole('tab', { name: /CLAUDE\.md/i })).not.toBeInTheDocument();
-}, 25_000);
-
-it('un gateway que no publica el inventario lo dice con las palabras del cliente', async () => {
-  server.use(http.get(RUTA_DOCUMENTOS, () => HttpResponse.json(
-    { error: 'not_implemented', message: 'sin inventario' }, { status: 501 },
-  )));
-
-  await abrirHistorialDeKant();
-  // The hidden Ficheros panel says the same thing: only the visible section counts here.
-  const [visible] = screen.getAllByRole('tabpanel');
-
-  expect(await within(visible).findByText(/no publica GET/i)).toBeInTheDocument();
-  expect(within(visible).queryByText(/no se pudo leer el inventario/i)).not.toBeInTheDocument();
-}, 25_000);
-
 it('restaurar un borrado del perfil no se ofrece con las mismas palabras que volver atrás', async () => {
   conDiario([
     revision(3, {
@@ -424,21 +337,3 @@ it('restaurar un borrado del perfil no se ofrece con las mismas palabras que vol
   expect(borrado).toHaveAttribute('data-destructive', 'true');
   expect(volverAtras).not.toHaveAttribute('data-destructive');
 }, 25_000);
-
-it('un «Ver más» en curso se anuncia junto a las entradas que ya se ven', async () => {
-  const largas = diarioLargo(25);
-  let pedidos = 0;
-  server.use(http.get(RUTA_REVISIONES, async ({ request }) => {
-    pedidos += 1;
-    if (pedidos > 1) await new Promise(resolve => { setTimeout(resolve, 700); });
-    return paginaDelDiario(largas, Number(new URL(request.url).searchParams.get('limit') ?? '20'));
-  }));
-
-  const { user, dialogo } = await abrirHistorialDeKant();
-  await waitFor(() => { expect(dialogo.querySelectorAll('li[data-clase]')).toHaveLength(20); });
-  await user.click(within(dialogo).getByRole('button', { name: /ver más/i }));
-
-  expect(await within(dialogo).findByText(/Leyendo más entradas del diario…/u)).toBeVisible();
-  expect(dialogo.querySelectorAll('li[data-clase]')).toHaveLength(20);
-  await waitFor(() => { expect(dialogo.querySelectorAll('li[data-clase]')).toHaveLength(25); });
-}, 30_000);

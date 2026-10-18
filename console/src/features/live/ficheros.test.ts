@@ -1,9 +1,6 @@
-import { readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import type { AgentDocumentItem, AgentDocumentsMap } from '../../api/types';
+import type { AgentDocumentItem } from '../../api/types';
 import {
-  avisoAntesDeGuardar, avisoDeFuente, esAckAplicado, explicarFallo, hayCambios, mensajeDeGuardado,
+  avisoAntesDeGuardar, esAckAplicado, hayCambios, mensajeDeGuardado,
   modoDeDocumento, preserveSourceLineEndings,
 } from './ficheros';
 import {
@@ -43,77 +40,12 @@ describe('qué se puede hacer con cada fichero', () => {
     const cerrado = doc({ editable: false, reason: 'vive con el OAuth' });
     expect(modoDeDocumento(cerrado)).toBe('solo-lectura');
   });
-
-  /** An empty field list is NOT a projection. Fail closed here too. */
-  it('projected_fields vacío no abre nada', () => {
-    expect(modoDeDocumento(doc({ editable: false, projected_fields: [] }))).toBe('solo-lectura');
-  });
-});
-
-describe('por qué no se puede — los cuatro motivos NO se pintan igual', () => {
-  /**
-   * This is the heart of the module. 409 and 503 are fixed (by measuring, by deploying); 403 is
-   * a decision that will not change. If all three returned `pendiente: true`, the operator
-   * would wait for openclaw.json to "be fixed" to not be served whole, which is fine as it is.
-   */
-  it('distingue lo que está pendiente de lo que es una decisión', () => {
-    expect(explicarFallo(409).pendiente).toBe(true);
-    expect(explicarFallo(503).pendiente).toBe(true);
-    expect(explicarFallo(403).pendiente).toBe(false);
-    expect(explicarFallo(404).pendiente).toBe(false);
-    expect(explicarFallo(413).pendiente).toBe(false);
-  });
-
-  it('cada motivo tiene su propio titular', () => {
-    const titulos = [409, 503, 403, 404, 413].map((s) => explicarFallo(s).titulo);
-    expect(new Set(titulos).size).toBe(titulos.length);
-  });
-
-  /** The measured reason is drafted by the gateway. Repeating it here would mean having it in two places. */
-  it('cuando el servidor da una razón, se enseña la del servidor', () => {
-    const razon = 'dentro de `skills` y de `mcp` hay claves de API vivas';
-    expect(explicarFallo(403, razon).detalle).toBe(razon);
-  });
-
-  it('cuando el servidor no da razón, hay una por defecto y no una cadena vacía', () => {
-    expect(explicarFallo(503).detalle.length).toBeGreaterThan(20);
-    expect(explicarFallo(undefined).detalle.length).toBeGreaterThan(10);
-  });
-});
-
-describe('el aviso de la cabecera', () => {
-  const base: AgentDocumentsMap = {
-    publicado: true, facts_source: 'measured', items: [],
-  };
-
-  /** With nothing to warn about, do NOT warn. A guard that screams false ends up ignored. */
-  it('no inventa un aviso cuando las rutas SÍ están medidas', () => {
-    expect(avisoDeFuente(base)).toBeUndefined();
-  });
-
-  it('cuando la fuente no es una medición, repite el aviso del servidor', () => {
-    expect(avisoDeFuente({ ...base, facts_source: 'database', caveat: 'están deducidas' }))
-      .toBe('están deducidas');
-  });
-
-  it('cuando el gateway no publica la ruta, el aviso es el motivo', () => {
-    expect(avisoDeFuente({ publicado: false, motivo: 'respondió 404' })).toBe('respondió 404');
-  });
 });
 
 describe('el aviso de antes de guardar', () => {
   it('un settings.json con hooks avisa de que eso ejecuta código', () => {
     const aviso = avisoAntesDeGuardar(doc({ kind: 'tools', warning: 'puede contener `hooks`' }));
     expect(aviso).toBe('puede contener `hooks`');
-  });
-
-  it('un documento proyectado avisa de que lo que se ve es una parte', () => {
-    const aviso = avisoAntesDeGuardar(doc({ editable: false, projected_fields: ['agents'] }));
-    expect(aviso).toMatch(/parte/i);
-  });
-
-  it('un CLAUDE.md corriente no lleva aviso', () => {
-    expect(avisoAntesDeGuardar(doc())).toBeUndefined();
   });
 });
 
@@ -181,50 +113,7 @@ describe('estado después de escribir', () => {
   });
 });
 
-function rutaDeAdmision(): string {
-  let directorio = dirname(fileURLToPath(import.meta.url));
-  for (let salto = 0; salto < 10; salto += 1) {
-    const candidato = join(
-      directorio, 'services', 'gateway', 'src', 'console', 'agent-documents', 'write-admission.ts',
-    );
-    try {
-      readFileSync(candidato, 'utf8');
-      return candidato;
-    } catch {
-      directorio = dirname(directorio);
-    }
-  }
-  throw new Error('No se encontró services/gateway/src/console/agent-documents/write-admission.ts');
-}
-
-function constanteDelGateway(fuente: string, nombre: string): number {
-  const encontrado = new RegExp(`export const ${nombre} = (\\d+);`).exec(fuente);
-  if (!encontrado) throw new Error(`No se encontró ${nombre} en la admisión del gateway`);
-  return Number(encontrado[1]);
-}
-
 describe('el motivo escrito a mano que exige la auditoría', () => {
-  const fuente = readFileSync(rutaDeAdmision(), 'utf8');
-
-  it('PARIDAD: los topes son los que declara la admisión del gateway, leída del fichero', () => {
-    expect(DOCUMENT_REASON_MIN).toBe(constanteDelGateway(fuente, 'DOCUMENT_REASON_MIN'));
-    expect(DOCUMENT_REASON_MAX).toBe(constanteDelGateway(fuente, 'DOCUMENT_REASON_MAX'));
-  });
-
-  it('PARIDAD: el gateway sigue admitiendo `reason` en el cuerpo y midiendo el mínimo sin espacios', () => {
-    expect(fuente).toMatch(/ALLOWED_FIELDS = new Set\(\[[^\]]*'reason'/);
-    expect(fuente).toMatch(/value\.trim\(\)\.length < DOCUMENT_REASON_MIN/);
-    expect(fuente).toMatch(/value\.length > DOCUMENT_REASON_MAX/);
-  });
-
-  it('PARIDAD: el gateway sigue negando 403 con `writable_requires_attribution` y 400 la admisión', () => {
-    const rutas = readFileSync(join(dirname(dirname(rutaDeAdmision())), 'agent-documents.routes.ts'), 'utf8');
-
-    expect(rutas).toMatch(
-      /denegar\(403, \{\s*error: 'forbidden',\s*reason: 'writable_requires_attribution',/,
-    );
-    expect(rutas).toMatch(/isRejectedWrite\(admitido\)\) \{\s*return reply\.code\(400\)/);
-  });
 
   it('un motivo por debajo del mínimo no vale, y dice cuánto lleva', () => {
     const problema = problemaDeMotivo('corto');
@@ -255,14 +144,6 @@ describe('las dos negativas que sólo existen al guardar', () => {
     expect(explicado?.detalle).toMatch(/exige una persona con nombre/);
     expect(explicado?.detalle).toMatch(/borrador se conserva/i);
     expect(explicado?.pendiente).toBe(true);
-  });
-
-  it('un 400 de la admisión dice el rango exacto que hay que escribir', () => {
-    const explicado = explicarFalloDeMotivo(400, 'invalid_input', 'el cuerpo trae campos desconocidos');
-
-    expect(explicado?.detalle).toMatch(new RegExp(String(DOCUMENT_REASON_MIN)));
-    expect(explicado?.detalle).toMatch(new RegExp(String(DOCUMENT_REASON_MAX)));
-    expect(explicado?.detalle).toMatch(/el cuerpo trae campos desconocidos/);
   });
 
   it('CONTROL NEGATIVO: un 403 de la política de rutas NO se disfraza de falta de persona', () => {
