@@ -328,13 +328,15 @@ class Copier:
         os.makedirs(os.path.join(self.output, 'repos'), mode=0o700, exist_ok=True)
         git(path, 'bundle', 'create', '-q', bundle_path, 'HEAD', '--all', fd=directory)
         git(path, 'bundle', 'verify', '-q', bundle_path, fd=directory)
+        if git(path, 'bundle', 'list-heads', bundle_path, 'HEAD', fd=directory).split() != [head, 'HEAD']:
+            raise Failure(f'HEAD changed while copied: {path}')
         if shallow_boundaries(shallow_path, object_format) != shallow:
             raise Failure(f'shallow history changed while copied: {path}')
         tracked = {}
-        for record in git(path, 'ls-files', '-s', '-z', fd=directory).split('\0'):
+        for record in git(path, 'ls-tree', '-r', '-z', head, fd=directory).split('\0'):
             if record:
                 meta, _, name = record.partition('\t')
-                mode, blob, _ = meta.split(' ', 2)
+                mode, _, blob = meta.split(' ', 2)
                 tracked[name] = (mode, blob)
         refs = git(path, 'for-each-ref', '--format=%(refname)', fd=directory).split()
         reader = os.open(bundle_path, OPEN_FILE)
