@@ -67,13 +67,13 @@ Todo el sistema debe ser multitenant. **Humanizar** y **Praxis** deben quedar co
 - [x] [local real] Registro público atómico (`/v3/auth/register` + `cauce_register_company`): un usuario nuevo se registra, crea su empresa y entra como owner.
 - [x] [local real] Enrolamiento de ordenadores por invitación de un solo uso, con claim Ed25519 y heartbeat firmado.
 - [x] [código] Membresías con función real conservadas (`console_users`, `human_tenant_memberships`, `company_admins`, `platform_admins`).
-- [ ] Humanizar real en V4: ensayo 051→065 sobre dump fresco, siembra de super-admin (Steven) y owners (Steven, Miguel).
-- [ ] Praxis real: empresa con León como owner (Claude crea su usuario), recursos del hospital importados por `cauce platform change` y agentes migrados a servidores locales (ver §5).
-- [ ] Un ordenador recién enrolado ejecuta agentes sin el administrador (falta el instalador del executor y de su política firmada).
+- [x] [prod] Humanizar en V4: migraciones hasta 081 aplicadas, Steven owner + platform_admin y Miguel owner con autoridad efectiva, 14 agentes y 14 arriendos vigentes (5cb9ddcb). (auditoría 17-oct)
+- [ ] El dueño y León entran a Praxis y usan sus recursos y agentes del hospital desde Cauce, con los agentes corriendo en servidores locales y sus datos conservados. Hoy hay 0 empresas Praxis en producción; el importador existe (092ec4f0) pero crea borradores.
+- [ ] Un ordenador recién enrolado desde Ajustes → Computadoras ejecuta agentes sin administrador. El instalador existe (02718ce4) y su arreglo de módulos está en 8779da9b; hay 0 identidades de host en producción. Primer caso: server2 (procedimiento en `.delegados/v4/informes/20261017T184945-server2-destino-flota.md`).
 - [x] [local real] Limitador de registro y claim por IP real: `realip` de nginx tras Caddy y `trustProxy` acotado que falla cerrado, IPv6 por /64 (nginx y gateway reales en pruebas; 4830497d, 5f64c05a). Falta fijar `CAUCE_FRONT_PROXY_CIDR` y `CAUCE_TRUSTED_PROXY_CIDRS` en producción.
 - [x] [local real] Guardia adversarial que enumera las 173 rutas `/v3` y WS con dos empresas y huellas de filas (2f1080c8): encontró 2 fugas reales (existencia de hosts y poda global de cuotas) y 3 contratos 400/409, en corrección.
-- [ ] Prueba adversarial en verde sin excepciones y repetida contra el despliegue.
-- [ ] Simplificación de membresías aplicada con su migración y su down (propuesta revisada en `docs/v4-membresias.md`; la migración será la 068).
+- ~~Guardia adversarial verde sin excepciones como matriz~~ — retirado por sobreingeniería (17-oct); se conserva la comprobación práctica de que una empresa no lee ni opera recursos de otra (QA en producción 17-oct: sin fugas).
+- [x] [prod] Membresías simplificadas: 081 aplicada en producción, sin columna `role` y con el rol derivado de `console_users` (bc0955d4, c49e6a1e; down incluido). (auditoría 17-oct)
 
 ## 2. Credenciales y cuotas por agente
 
@@ -84,11 +84,11 @@ Espacio para administrar credenciales y cuentas de proveedores, con aislamiento 
 - [x] [código] La ficha del agente muestra ventanas, % disponible, reinicio y fecha de la cuenta vinculada.
 - [x] [código] Solo se muestran las ventanas que informa cada proveedor (Claude 5 h/7 d, Codex por duración y modelo, Grok por periodo).
 - [x] [local real] Cuenta compartida con aviso «Consumo compartido por N agentes», sin saldos independientes; estados ok/antiguo/desconocido/error; un 429 no se convierte en agotamiento.
-- [ ] Consultar la cuota en el contenedor donde corre el agente y vincular los agentes reales a su cuenta.
+- [ ] El dueño consulta desde la ficha de un agente la cuota real de la cuenta que usa. Hay 26 bindings en 11 de 14 agentes, pero los 14 `primary_account_id` están vacíos y el lector sale `unsupported` sin identidad de host (1132ca8a, 5e27731c). (en curso: codex-3)
 - [x] [local real] Compartir cuenta ya no es error: el guardián y `cred-guard.py` lo anotan como nota informativa y solo escalan fallos reales; `shared` se calcula con todas las asignaciones de la empresa antes del filtro por tenant (PG; 51c9fd37, 6e05b7d8, c25cc0e6).
 - [x] [código] Motivo de cada fallo con seis códigos cerrados de lector a consola, con su acción en español; «Pendiente de autenticación» en cuentas recién creadas (de037ec7, 365d9faf, 6a6ed3ea, 7fc7d7b5).
 - [x] Lectores para openclaw y muse, o «sin lector» explícito.
-- [ ] Contraste en producción de las ventanas mostradas con `coutas`; auditoría de logs sin secretos.
+- ~~Contraste con `coutas` y auditoría de logs como entrega aparte~~ — retirado (17-oct): el contraste se hace al aceptar la cuota real del agente y de «Mis cuotas»; los logs revisados no mostraron secretos (2.742 líneas del gateway).
 
 ## 3. Espacio «Mis cuotas»
 
@@ -97,8 +97,8 @@ Registrar y consultar cuentas sin agente, instanciar un entorno Docker aislado c
 - [x] [local real] Cuentas sin agente: alta, edición y borrado con pines por persona y empresa que persisten en otro navegador.
 - [x] [código] Entorno endurecido (`--read-only`, `cap-drop ALL`, `no-new-privileges`, límites), operaciones tipadas sin shell, login con comando fijo del descriptor y PTY acotado.
 - [x] [local real] Cola durable con CAS y fencing para create/authenticate/query/update_cli/delete.
-- [ ] Imagen de cuotas construida con versiones fijadas y su digest en la política; host con ejecutor de cuotas (server2).
-- [ ] Ciclo Docker real desde la web: crear, autenticar (el dueño aprueba el código con las cuentas `cuota-claude-1`, `cuota-codex-b2b`, `cuota-grok-1`), consultar, `update_cli` y eliminar, más una prueba de escape del PTY.
+- [ ] Un ordenador de la empresa ofrece el ejecutor de cuotas con la imagen fijada (Claude 2.1.296, Codex 0.160.1, Grok 1.0.41; 4808975f, 79c5bb16). Hoy hay 0 identidades de host y 0 entornos; depende de enrolar server2.
+- [ ] El dueño crea un entorno, conecta su cuenta, consulta sus cuotas, actualiza el CLI y elimina el entorno desde «Mis cuotas»; al eliminarlo desaparecen el contenedor y el volumen. La UI y el runtime existen; falta el host de la línea anterior.
 - [x] [código] **Refresco de token restaurado** solo en entornos de «Mis cuotas» con sesión propia (flag explícito, nunca en contenedores de agentes), con candado, relectura y escritura atómica 0600 (25a27a83, 365d9faf, 425cd569). Falta el recibo real de un entorno autenticado hace >9 h.
 - [x] [código] Habilitar Grok (paquete e identidad) y dejar de ofrecer proveedores sin ejecutor (gemini).
 - [x] [local real] Datos frescos sin pulsar botones (consulta al abrir la vista si la captura tiene >10 min). (Decisión del dueño, 13-oct: la prueba de uso de 24 h no es requisito; el dueño usa la plataforma durante la semana y reporta.)
