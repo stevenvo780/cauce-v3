@@ -202,12 +202,22 @@ export function OfficeGame({ agents, groups, selectedId, sheetOpen, highlight, o
       const id = groupLevelId(group.id);
       out.push({ id, kind: 'group', name: group.label, hue: group.hue, people: stats.get(id)?.members ?? 0, alerts: stats.get(id)?.alerts ?? 0, works: group.phase?.kind === 'build' });
     }
+    const hasIdle = ordered.some((agent) => !agent.visitor && agent.state === 'idle');
+    const hasDown = ordered.some((agent) => !agent.visitor && (agent.state === 'down' || agent.state === 'blocked'));
+    const hasVisitor = ordered.some((agent) => agent.visitor);
     for (const kind of SHARED_ORDER) {
       const id = SHARED_IDS[kind];
-      out.push({ id, kind, name: SHARED_LABELS[kind], hue: -1, people: occupancy.get(id) ?? 0, alerts: kind === 'shop' ? stats.get(id)?.alerts ?? 0 : 0, works: false });
+      const people = occupancy.get(id) ?? 0;
+      const alerts = kind === 'shop' ? stats.get(id)?.alerts ?? 0 : 0;
+      const needed = people > 0 || alerts > 0
+        || (kind === 'shop' && hasDown)
+        || ((kind === 'cafe' || kind === 'park' || kind === 'dorm') && hasIdle)
+        || (kind === 'lobby' && hasVisitor);
+      if (!needed) continue;
+      out.push({ id, kind, name: SHARED_LABELS[kind], hue: -1, people, alerts, works: false });
     }
     return out;
-  }, [campusPlan, stats, occupancy]);
+  }, [campusPlan, stats, occupancy, ordered]);
 
   const go = useCallback((id: string) => {
     engine.go(id);
