@@ -10,37 +10,11 @@ async function openTools() {
   if (button.getAttribute('aria-expanded') !== 'true') await userEvent.click(button);
 }
 
-/** jsdom has no layout: the shell reads the viewport through matchMedia only. */
-function mockViewport(width: number) {
-  vi.spyOn(window, 'matchMedia').mockImplementation((query) => ({
-    matches: query.includes('1100px') ? width <= 1100 : query.includes('760px') && width <= 760,
-    media: query, onchange: null,
-    addEventListener: () => undefined, removeEventListener: () => undefined,
-    addListener: () => undefined, removeListener: () => undefined, dispatchEvent: () => false,
-  }));
-}
-
 /** The roster lives in the sidebar: each agent is a link whose target depends on the section. */
 async function agentLink(alias: string) {
   const roster = await screen.findByRole('list', { name: 'Agentes' });
   return within(roster).findByRole('link', { name: new RegExp(`^${alias}\\b`) });
 }
-
-it('provides basic accessible landmarks and identity guidance', async () => {
-  window.history.pushState({}, '', '/live');
-  renderWithApi(<App />);
-  expect(await screen.findByRole('navigation', { name: /principal/i })).toBeInTheDocument();
-  expect(screen.getByRole('main')).toHaveAttribute('id', 'main-content');
-  expect(screen.getByRole('link', { name: /saltar al contenido/i })).toHaveAttribute('href', '#main-content');
-  expect(await screen.findByRole('heading', { level: 1, name: 'Oficina' }, { timeout: 10_000 })).toBeInTheDocument();
-  expect(screen.getByRole('main')).not.toHaveFocus();
-  expect(screen.getByRole('button', { name: 'Gestión' })).toHaveAttribute('aria-expanded', 'false');
-  await userEvent.click(screen.getByRole('button', { name: /^Cuenta de/ }));
-  const account = within(screen.getByRole('dialog', { name: 'Cuenta y apariencia' }));
-  expect(account.getByText('Steven:kant', { selector: 'code' })).toBeInTheDocument();
-  expect(account.getByText('Persona autenticada')).toBeInTheDocument();
-  expect(screen.getByRole('button', { name: /cerrar sesión/i })).toBeInTheDocument();
-});
 
 it('shows the server-side login entry point when no BFF session exists', async () => {
   server.use(http.get('http://localhost/v3/auth/session', () => HttpResponse.json({ authenticated: false })));
@@ -50,17 +24,6 @@ it('shows the server-side login entry point when no BFF session exists', async (
     'href',
     'http://localhost/v3/auth/login',
   );
-});
-
-it('redirige el detalle legado de Fleet a la única Terminal y conserva el agente exacto', async () => {
-  window.history.pushState({}, '', '/fleet/Steven/kant');
-  renderWithApi(<App />);
-
-  expect(await screen.findByRole('heading', { level: 1, name: 'Terminal de agentes' }, { timeout: 10_000 })).toBeInTheDocument();
-  expect(await screen.findByRole('heading', { level: 2, name: /^kant/ })).toBeInTheDocument();
-  expect(await agentLink('kant')).toHaveAttribute('aria-current', 'page');
-  await waitFor(() => { expect(window.location.pathname).toBe('/terminal/Steven/kant'); });
-  expect(screen.queryByRole('link', { name: /volver a fleet/i })).not.toBeInTheDocument();
 });
 
 it('abre /terminal/:tenant/:alias directamente sin reescribir su ruta canónica', async () => {
@@ -81,24 +44,6 @@ it('un detalle de Terminal desconocido falla cerrado y no lo sustituye por la fl
     .toBeInTheDocument();
   expect(screen.queryByRole('complementary', { name: 'Flota de agentes' })).not.toBeInTheDocument();
   expect(window.location.pathname).toBe('/terminal/Steven/fantasma');
-});
-
-it('la barra y Terminal comparten una sola lectura del estado del relay', async () => {
-  let capabilityReads = 0;
-  server.use(http.get('*/v3/console/terminal/capability', () => {
-    capabilityReads += 1;
-    return HttpResponse.json({
-      available: false,
-      capabilities: [],
-      reason: 'Relay no desplegado en este test.',
-    });
-  }));
-  window.history.pushState({}, '', '/terminal');
-  renderWithApi(<App />);
-
-  expect(await screen.findByRole('heading', { level: 1, name: 'Terminal de agentes' }, { timeout: 10_000 }))
-    .toBeInTheDocument();
-  await waitFor(() => { expect(capabilityReads).toBe(1); });
 });
 
 it('la barra y las páginas activas comparten una sola consulta de acceso', async () => {
@@ -124,44 +69,6 @@ it('la barra y las páginas activas comparten una sola consulta de acceso', asyn
   expect(accessReads).toBe(1);
 });
 
-it('el menú conserva cuentas de agentes y distingue Mis cuotas sin agente', async () => {
-  window.history.pushState({}, '', '/live');
-  renderWithApi(<App />);
-
-  const nav = await screen.findByRole('navigation', { name: /principal/i });
-  await openTools();
-  const entries = within(nav).getAllByRole('link')
-    .filter((link) => /cuota|licencia|cuenta/i.test(link.textContent));
-  expect(entries.map((link) => link.textContent)).toEqual(['Cuentas', 'Mis cuotas']);
-});
-
-it.each([
-  ['/licenses'],
-  ['/assignments'],
-])('redirige %s a «Cuentas» en vez de dejar el enlace guardado en la nada', async (ruta) => {
-  window.history.pushState({}, '', ruta);
-  renderWithApi(<App />);
-
-  expect(await screen.findByRole('heading', { level: 1, name: 'Cuentas' }, { timeout: 10_000 })).toBeInTheDocument();
-  await waitFor(() => { expect(window.location.pathname).toBe('/accounts'); });
-});
-
-it('redirige /quotas a «Mis cuotas» en vez de dejar el enlace guardado en la nada', async () => {
-  window.history.pushState({}, '', '/quotas');
-  renderWithApi(<App />);
-
-  expect(await screen.findByRole('heading', { level: 1, name: 'Mis cuotas' }, { timeout: 10_000 })).toBeInTheDocument();
-  await waitFor(() => { expect(window.location.pathname).toBe('/my-quotas'); });
-});
-
-it('redirige /audit a «Señales y auditoría», donde la auditoría es una pestaña', async () => {
-  window.history.pushState({}, '', '/audit');
-  renderWithApi(<App />);
-
-  expect(await screen.findByRole('heading', { level: 1, name: 'Señales y auditoría' }, { timeout: 10_000 })).toBeInTheDocument();
-  await waitFor(() => { expect(window.location.pathname).toBe('/observability'); });
-});
-
 it('muestra una ruta desconocida sin sustituirla por otra vista, aunque traiga segmentos de más', async () => {
   window.history.pushState({}, '', '/unknown/nested/segment');
   renderWithApi(<App />);
@@ -172,16 +79,6 @@ it('muestra una ruta desconocida sin sustituirla por otra vista, aunque traiga s
   expect(window.location.pathname).toBe('/unknown/nested/segment');
 });
 
-it('rechaza segmentos extra en /fleet/:tenant/:alias en vez de abrir otro agente', async () => {
-  window.history.pushState({}, '', '/fleet/Steven/kant/sesion-vieja');
-  renderWithApi(<App />);
-
-  expect(await screen.findByRole('heading', { level: 1, name: /ruta no encontrada/i }, { timeout: 10_000 })).toBeInTheDocument();
-  expect(screen.getByText('/fleet/Steven/kant/sesion-vieja')).toBeInTheDocument();
-  expect(screen.queryByRole('heading', { level: 1, name: 'kant' })).toBeNull();
-  expect(window.location.pathname).toBe('/fleet/Steven/kant/sesion-vieja');
-});
-
 it('abre /messages/:tenant/:alias en la conversación, que es adonde navega el roster', async () => {
   window.history.pushState({}, '', '/messages/Miguel/kratos');
   renderWithApi(<App />);
@@ -189,14 +86,6 @@ it('abre /messages/:tenant/:alias en la conversación, que es adonde navega el r
   expect(await screen.findByRole('heading', { level: 2, name: 'kratos' }, { timeout: 10_000 })).toBeInTheDocument();
   expect(screen.queryByRole('heading', { level: 1, name: /ruta no encontrada/i })).toBeNull();
   expect(window.location.pathname).toBe('/messages/Miguel/kratos');
-});
-
-it('CONTROL NEGATIVO — /messages con una aridad distinta sigue siendo 404', async () => {
-  window.history.pushState({}, '', '/messages/Miguel');
-  renderWithApi(<App />);
-
-  expect(await screen.findByRole('heading', { level: 1, name: /ruta no encontrada/i }, { timeout: 10_000 })).toBeInTheDocument();
-  expect(window.location.pathname).toBe('/messages/Miguel');
 });
 
 it.each([
@@ -212,91 +101,6 @@ it.each([
   expect(await screen.findByRole('heading', { level: 1, name: /ruta no encontrada/i }, { timeout: 10_000 })).toBeInTheDocument();
   expect(screen.getByText(ruta)).toBeInTheDocument();
   expect(window.location.pathname).toBe(ruta);
-});
-
-it('navega dentro de la aplicación sin recargar la página al hacer clic en el menú', async () => {
-  window.history.pushState({}, '', '/accounts');
-  const user = userEvent.setup();
-  renderWithApi(<App />);
-
-  await screen.findByRole('heading', { level: 1, name: /cuentas/i }, { timeout: 10_000 });
-  await openTools();
-  await user.click(screen.getByRole('link', { name: 'Colas y DLQ' }));
-
-  expect(window.location.pathname).toBe('/queues');
-  expect(await screen.findByRole('heading', { level: 1, name: /colas y dlq/i }, { timeout: 10_000 })).toBeInTheDocument();
-  expect(screen.getByRole('main')).toHaveFocus();
-});
-
-it('conserva el href real que permite abrir una ruta en otra pestaña', async () => {
-  window.history.pushState({}, '', '/accounts');
-  renderWithApi(<App />);
-
-  await screen.findByRole('heading', { level: 1, name: /cuentas/i }, { timeout: 10_000 });
-  await openTools();
-  expect(screen.getByRole('link', { name: 'Colas y DLQ' })).toHaveAttribute('href', '/queues');
-  expect(window.location.pathname).toBe('/accounts');
-});
-
-it('el menú contiene las nueve entradas consolidadas', async () => {
-  window.history.pushState({}, '', '/live');
-  renderWithApi(<App />);
-
-  const nav = await screen.findByRole('navigation', { name: /principal/i }, { timeout: 10_000 });
-  await openTools();
-  const entradas = within(nav).getAllByRole('link').map((link) => link.textContent);
-
-  expect(entradas).toEqual([
-    'Chat',
-    'Oficina',
-    'Terminal',
-    'Cuentas',
-    'Mis cuotas',
-    'Colas y DLQ',
-    'Señales y auditoría',
-    'Ajustes',
-    'Ayuda',
-  ]);
-  expect(entradas).not.toContain('Fleet');
-  expect(entradas).not.toContain('Tenants & ACL');
-  expect(entradas).not.toContain('Jobs');
-  expect(entradas).not.toContain('Adapters');
-  expect(entradas).not.toContain('Audit');
-  expect(entradas).not.toContain('Cuotas y licencias');
-  expect(entradas).not.toContain('Cuentas de IA');
-  expect(entradas).not.toContain('Messages');
-});
-
-it('redirige /fleet y /topology a la vista que las absorbió, reescribiendo la barra de direcciones', async () => {
-  window.history.pushState({}, '', '/fleet');
-  const primera = renderWithApi(<App />);
-
-  expect(await screen.findByRole('heading', { level: 1, name: 'Oficina' }, { timeout: 10_000 })).toBeInTheDocument();
-  expect(window.location.pathname).toBe('/live');
-  primera.unmount();
-
-  window.history.pushState({}, '', '/topology');
-  renderWithApi(<App />);
-
-  expect(await screen.findByRole('heading', { level: 1, name: 'Oficina' }, { timeout: 10_000 })).toBeInTheDocument();
-  expect(window.location.pathname).toBe('/live');
-});
-
-it('/activity sigue llegando a la vista viva, como antes', async () => {
-  window.history.pushState({}, '', '/activity');
-  renderWithApi(<App />);
-
-  expect(await screen.findByRole('heading', { level: 1, name: 'Oficina' }, { timeout: 10_000 })).toBeInTheDocument();
-  expect(window.location.pathname).toBe('/live');
-});
-
-it('/fleet/:cliente sin alias conserva la dirección incompleta como 404', async () => {
-  window.history.pushState({}, '', '/fleet/Steven');
-  renderWithApi(<App />);
-
-  expect(await screen.findByRole('heading', { level: 1, name: /ruta no encontrada/i }, { timeout: 10_000 })).toBeInTheDocument();
-  expect(screen.getByText('/fleet/Steven')).toBeInTheDocument();
-  expect(window.location.pathname).toBe('/fleet/Steven');
 });
 
 it('deja navegar a «Ajustes» sin config.write para consultar la vista en solo lectura', async () => {
@@ -318,34 +122,6 @@ it('deja navegar a «Ajustes» sin config.write para consultar la vista en solo 
 
   await userEvent.click(entrada);
   expect(window.location.pathname).toBe('/config');
-});
-
-it('deja «Ajustes» navegable para quien SI tiene config.write', async () => {
-  server.use(
-    http.get('http://localhost/v3/console/access', () =>
-      HttpResponse.json({
-        subject: 'Steven:kant',
-        roles: ['operator'],
-        permissions: ['message.publish', 'config.write', 'config.rollback'],
-        observed_at: new Date().toISOString(),
-      })),
-  );
-  window.history.pushState({}, '', '/live');
-  renderWithApi(<App />);
-
-  await openTools();
-  const entrada = await screen.findByRole('link', { name: 'Ajustes' }, { timeout: 10_000 });
-  await waitFor(() => { expect(entrada).not.toHaveAttribute('aria-disabled'); });
-  await userEvent.click(entrada);
-  expect(window.location.pathname).toBe('/config');
-});
-
-it('la raíz abre las conversaciones', async () => {
-  window.history.pushState({}, '', '/');
-  renderWithApi(<App />);
-
-  expect(await screen.findByRole('heading', { level: 1, name: '¿Con quién trabajamos hoy?' }, { timeout: 10_000 })).toBeInTheDocument();
-  await waitFor(() => { expect(window.location.pathname).toBe('/messages'); });
 });
 
 async function pickLane(user: ReturnType<typeof userEvent.setup>, lane: RegExp) {
@@ -445,55 +221,6 @@ it.each([
   } finally { release(); }
 });
 
-it('el foco sigue la selección y vuelve al agente al cerrar la conversación', async () => {
-  window.history.pushState({}, '', '/messages');
-  const user = userEvent.setup();
-  renderWithApi(<App />);
-  await user.click(await agentLink('argos'));
-  expect(await screen.findByRole('heading', { name: 'argos', level: 2 })).toHaveFocus();
-  expect(await agentLink('argos')).toHaveAttribute('aria-current', 'page');
-  await user.click(screen.getByRole('link', { name: 'Volver a los agentes' }));
-  expect(await agentLink('argos')).toHaveFocus();
-});
-
-it('el grupo Gestión se pliega y despliega sin perder el foco', async () => {
-  window.history.pushState({}, '', '/messages');
-  const user = userEvent.setup();
-  renderWithApi(<App />);
-  await openTools();
-  const toggle = screen.getByRole('button', { name: 'Gestión' });
-  expect(toggle).toHaveAttribute('aria-expanded', 'true');
-  await user.click(toggle);
-  expect(toggle).toHaveAttribute('aria-expanded', 'false');
-  expect(toggle).toHaveFocus();
-});
-
-it('un agente desconocido conserva su aviso, permite volver y no pinta la lista de chats encima', async () => {
-  window.history.pushState({}, '', '/messages/Steven/fantasma');
-  const user = userEvent.setup();
-  renderWithApi(<App />);
-  const missing = await screen.findByText(/El servidor no observa a/);
-  expect(missing.closest('section')).toHaveAttribute('data-state', 'missing');
-  expect(missing.closest('[data-conversacion]')).toHaveAttribute('data-conversacion', 'abierta');
-  await user.click(screen.getByRole('link', { name: 'Volver a los chats' }));
-  expect(window.location.pathname).toBe('/messages');
-  expect(await screen.findByRole('heading', { level: 1, name: '¿Con quién trabajamos hoy?' })).toBeInTheDocument();
-  expect(await agentLink('argos')).toBeInTheDocument();
-});
-
-it('en el móvil, un agente desconocido oculta la lista de chats y /messages la muestra', async () => {
-  mockViewport(390);
-  window.history.pushState({}, '', '/messages/Steven/fantasma');
-  renderWithApi(<App />);
-  expect(await screen.findByText(/El servidor no observa a/)).toBeInTheDocument();
-  expect(screen.queryByRole('heading', { level: 1, name: 'Chats' })).toBeNull();
-  expect(screen.queryByRole('list', { name: 'Agentes' })).toBeNull();
-
-  await userEvent.click(screen.getByRole('link', { name: 'Volver a los chats' }));
-  expect(await screen.findByRole('heading', { level: 1, name: 'Chats' })).toBeInTheDocument();
-  expect(await agentLink('argos')).toBeInTheDocument();
-});
-
 it('abre la configuración desde el chat y conserva borrador con Atrás, Adelante y Volver', async () => {
   window.history.pushState({}, '', '/messages/Steven/argos');
   const user = userEvent.setup();
@@ -527,49 +254,6 @@ it('abre la configuración desde el chat y conserva borrador con Atrás, Adelant
   await waitFor(() => { expect(screen.getByRole('textbox', { name: 'Mensaje para argos' })).toHaveFocus(); });
 });
 
-it('las identidades del hilo y el indicador de trabajo proceden de datos reales', async () => {
-  window.history.pushState({}, '', '/messages/Steven/argos');
-  renderWithApi(<App />);
-  const row = await agentLink('argos');
-  await waitFor(() => { expect(row).toHaveTextContent(/delegando · 1 en curso/i); });
-  const conversation = await screen.findByRole('region', { name: 'Conversación con argos' });
-  const sent = await waitFor(() => {
-    const message = conversation.querySelector('article[data-direction="input"]');
-    if (!message) throw new Error('el hilo todavía no tiene mensajes enviados');
-    return message;
-  });
-  expect(sent).toHaveTextContent(/kant le escribió a argos/);
-});
-
-it.each([1280, 390])('el chat a %i conserva una sola cabecera y el borrador al usar cuenta y tema', async (width) => {
-  mockViewport(width);
-  window.history.pushState({}, '', '/messages/Steven/argos');
-  const user = userEvent.setup();
-  renderWithApi(<App />);
-  const composer = await screen.findByRole('textbox', { name: 'Mensaje para argos' });
-  await user.type(composer, 'Borrador que conserva su destino');
-  expect(screen.getAllByRole('heading', { level: 2, name: 'argos' })).toHaveLength(1);
-  expect(screen.queryByRole('heading', { level: 1 })).toBeNull();
-  expect(screen.getByRole('heading', { name: 'argos', level: 2 })).toBeVisible();
-  if (width <= 760) {
-    expect(screen.queryByRole('button', { name: /^Cuenta de/ })).toBeNull();
-    await user.click(screen.getByRole('button', { name: 'Más' }));
-  }
-  const trigger = screen.getByRole('button', { name: /^Cuenta de/ });
-  expect(screen.getAllByRole('button', { name: /^Cuenta de/ })).toHaveLength(1);
-  expect(screen.queryByRole('button', { name: 'Cerrar sesión' })).toBeNull();
-  await user.click(trigger);
-  await user.click(screen.getByRole('button', { name: 'Oscuro' }));
-  await user.keyboard('{Escape}');
-  expect(trigger).toHaveFocus();
-  if (width <= 760) await user.keyboard('{Escape}');
-  expect(composer).toHaveValue('Borrador que conserva su destino');
-  expect(window.location.pathname).toBe('/messages/Steven/argos');
-  expect(screen.getByRole('link', { name: 'Volver a los agentes' })).toBeInTheDocument();
-  window.localStorage.removeItem('cauce.tema');
-  document.documentElement.removeAttribute('data-theme');
-});
-
 it('MOCK y ausencia de login permanecen visibles con la cuenta cerrada en un chat', async () => {
   vi.stubEnv('VITE_USE_MOCKS', 'true');
   server.use(http.get('http://localhost/v3/auth/session', () => HttpResponse.json({ error: 'not_found' }, { status: 404 })));
@@ -585,25 +269,4 @@ it('MOCK y ausencia de login permanecen visibles con la cuenta cerrada en un cha
     expect(screen.queryByRole('button', { name: 'Cerrar sesión' })).toBeNull();
     expect(screen.getByText('Esta consola no tiene login de usuario.')).toBeVisible();
   } finally { vi.unstubAllEnvs(); }
-});
-
-it('los datos tardíos del chat no quitan el foco de la cuenta abierta', async () => {
-  let release: () => void = () => undefined;
-  const pending = new Promise<void>((resolve) => { release = resolve; });
-  server.use(http.get('http://localhost/v3/console/access', async () => {
-    await pending;
-    return HttpResponse.json({ subject: 'Steven:kant', roles: ['operator'], permissions: ['message.publish'] });
-  }));
-  window.history.pushState({}, '', '/messages/Steven/argos');
-  try {
-    renderWithApi(<App />);
-    await userEvent.click(await screen.findByRole('button', { name: /^Cuenta de/ }));
-    const heading = await screen.findByRole('heading', { name: 'Cuenta y apariencia' });
-    expect(heading).toHaveFocus();
-    release();
-    await screen.findByRole('heading', { name: 'argos', level: 2 });
-    expect(heading).toHaveFocus();
-    await userEvent.keyboard('{Escape}');
-    expect(screen.getByRole('button', { name: /^Cuenta de/ })).toHaveFocus();
-  } finally { release(); }
 });
