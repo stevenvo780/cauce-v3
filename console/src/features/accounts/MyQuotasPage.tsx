@@ -36,8 +36,7 @@ export function MyQuotasPage() {
   const reloadAccounts = accounts.reload;
   const reloadEnvironments = environments.reload;
   const reload = useCallback(async () => {
-    const e = await reloadEnvironments();
-    const a = await reloadAccounts();
+    const [e, a] = await Promise.all([reloadEnvironments(), reloadAccounts()]);
     if (a.error) throw a.error;
     if (e.error) throw e.error;
   }, [reloadAccounts, reloadEnvironments]);
