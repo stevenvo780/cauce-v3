@@ -8,6 +8,7 @@ import os
 import pathlib
 import pwd
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -72,6 +73,27 @@ def default_runner(command: list[str], timeout: int = 60) -> subprocess.Complete
 
 
 runner = default_runner
+
+
+def cli_update_notice() -> str | None:
+    executable = shutil.which('cauce')
+    if executable is None:
+        return None
+    installed = pathlib.Path(executable).resolve().parent
+    helper = installed / 'host_setup.py'
+    try:
+        legacy_error = 'setup package must carry ' + 'at most one agent image'
+        legacy = legacy_error in helper.read_text()
+    except (OSError, UnicodeError):
+        return None
+    if not legacy:
+        return None
+    installer = pathlib.Path(__file__).resolve().parents[1] / 'scripts/install-cauce-cli.sh'
+    source = str(installer) if installer.is_file() else 'ops/scripts/install-cauce-cli.sh'
+    command = shlex.join(['bash', source, str(installed)]) + '; hash -r'
+    return ('El CLI de cauce en PATH está desactualizado y rechaza el paquete con imágenes de agentes y cuotas. '
+        f'Actualiza el CLI desde el checkout actualizado con: `{command}`. '
+        'Después repite cauce hosts setup; no necesitas enrolar otra vez. Esta ejecución usa el setup actual.')
 
 
 def verify_signature(package: dict, signature: str, signer: str) -> None:

@@ -19,6 +19,22 @@ Las pruebas locales y sus límites están en [la matriz local](v4-matriz-local.m
 
 La instalación usa `ops/scripts/install-cauce-cli.sh`, que coloca helpers en el área local del usuario. El wrapper de plataforma necesita `CAUCE_PROJECT_ROOT` absoluto, el checkout fuente o el runtime instalado en `$HOME/.local/share/cauce-v3`. Prefiere `services/gateway/dist/platform-cli-main.js`; si sólo existe fuente usa `pnpm exec tsx` desde esa raíz. No instala dependencias automáticamente para suplir un bundle incompleto.
 
+### Actualizar una instalación existente
+
+Desde la raíz de un checkout actualizado de Cauce, como el mismo usuario que instaló el CLI:
+
+```sh
+bash ops/scripts/install-cauce-cli.sh "$(dirname "$(readlink -f "$(command -v cauce)")")"
+hash -r
+cauce hosts setup --dry-run
+cauce hosts setup
+cauce hosts status
+```
+
+El instalador reemplaza el comando y sus helpers juntos, y conserva una copia de los archivos reemplazados. Reutiliza el destino de avisos de attach existente. Si falta, pide configurarlo o ejecutar el instalador con `CAUCE_DESTINO_AVISO_INICIAL=<tu-destino-de-avisos>`. La actualización conserva las identidades enroladas; no repitas el enrolamiento ni copies archivos de credenciales.
+
+`setup package must carry at most one agent image` identifica un helper antiguo que no admite las imágenes separadas de agentes y cuotas. Actualiza el CLI con el comando anterior: repetir sólo `cauce hosts setup` o desplegar el gateway no reemplaza los helpers locales. El setup actual, ejecutado desde el checkout con `bash ops/cli/cauce hosts setup`, avisa si el CLI del `PATH` todavía contiene ese rechazo e indica el comando de reinstalación. El paquete firmado conserva su formato.
+
 ### Comandos de administración y operación
 
 ```sh

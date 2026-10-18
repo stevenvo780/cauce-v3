@@ -121,6 +121,8 @@ def main() -> int:
     try:
         if args.action in ('setup', 'status'):
             import host_setup
+            if args.action == 'setup' and (notice := host_setup.cli_update_notice()):
+                print('cauce: ' + notice, file=sys.stderr)
             identity = host_setup.locate_identity(args.state_root, args.identity_directory)
             receipt = host_setup.setup(identity, args.install_root, args.dry_run, args.signer_fingerprint) if args.action == 'setup' \
                 else host_setup.status(identity, args.install_root)
