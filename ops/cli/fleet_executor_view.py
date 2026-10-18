@@ -54,8 +54,8 @@ def install(directory: pathlib.Path, payload: dict, uid: int, gid: int) -> dict:
         body = base64.b64decode(encoded, validate=True)
         if len(body) > 1024 * 1024:
             raise ValueError('delegated credential artifact exceeds limit')
-        private = name in {'agent.key', 'agent.token'}
-        mode, owner = (0o400, uid) if private else (0o444, os.geteuid())
+        runtime_credential = name in {'agent.key', 'agent.token', 'agent.crt', 'ca.crt'}
+        mode, owner = (0o600, uid) if runtime_credential else (0o444, os.geteuid())
         parent = open_directory((directory / name).parent, create=True)
         temporary = None
         try:

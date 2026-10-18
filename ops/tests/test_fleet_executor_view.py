@@ -37,7 +37,7 @@ class CredentialViewTest(unittest.TestCase):
         self.assertEqual((inventory / 'desired-fleet.json').read_text(), f'{{"generation":"{GENERATION_B}"}}')
         self.assertEqual(sorted(path.name for path in (inventory / 'generations').iterdir()), [GENERATION_B])
         self.assertEqual((inventory / 'generations' / GENERATION_B / 'flota.json').read_text(), 'second')
-        self.assertEqual(oct((self.root / 'agent.key').stat().st_mode & 0o777), oct(0o400))
+        self.assertEqual(oct((self.root / 'agent.key').stat().st_mode & 0o777), oct(0o600))
 
     def test_reinstalling_the_same_generation_is_idempotent(self):
         first = view.install(self.root, payload(GENERATION_A, 'same'), self.uid, self.gid)
