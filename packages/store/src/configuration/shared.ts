@@ -6,7 +6,7 @@ export function has(value: object, key: string): boolean {
 }
 
 /** alias_routing_ceiling has no mutable value: it is granted or revoked. */
-type ValuedConfigMutation = Exclude<ConfigurationLeafMutation, { resource: 'alias_routing_ceiling' }>;
+type ValuedConfigMutation = Exclude<ConfigurationLeafMutation, { resource: 'alias_routing_ceiling' | 'agent_extensions' | 'host_extensions_allowed' }>;
 
 export function valueRequired(mutation: ValuedConfigMutation): Record<string, unknown> {
   if (mutation.action === 'delete') return {};
@@ -54,13 +54,14 @@ const dependencyTables: Readonly<Record<ConfigurationLeafMutation['resource'], s
   harness: 'harness_definitions', role_policy: 'role_policies', chain_policy: 'agent_chain_policies',
   egress_destination: 'egress_destinations', agent: 'agents', provider_account: 'provider_accounts',
   alias_routing_ceiling: 'alias_routing_ceiling', agent_account_binding: 'agent_account_bindings',
+  agent_extensions: 'agents', host_extensions_allowed: 'fleet_hosts',
 };
 
 const identityKeys = new Set([
   'id', 'tenant_id', 'room_id', 'alias', 'agent_alias', 'actor_alias', 'recipient_tenant',
   'recipient_alias', 'from_tenant', 'from_alias', 'to_tenant', 'to_alias', 'account_id',
   'payer_tenant_id', 'account_payer_tenant', 'created_by_tenant', 'role', 'handle', 'human_id',
-  'key_id', 'message_id', 'delivery_id', 'kind', 'sha256', 'owner_tenant_id',
+  'key_id', 'message_id', 'delivery_id', 'kind', 'sha256', 'owner_tenant_id', 'host_id',
 ]);
 
 export function configurationIdentity(mutation: ConfigurationLeafMutation): Record<string, string> {

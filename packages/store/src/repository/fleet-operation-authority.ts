@@ -1,4 +1,7 @@
-import { FleetOperationRequestSchema, sha256Hex, type FleetOperationPreview, type FleetOperationRequest, type FleetTarget } from '@cauce/protocol';
+import {
+  AgentExtensionsSchema, FleetOperationRequestSchema, agentExtensionsPolicyViolation, sha256Hex,
+  type AgentExtensions, type ExtensionsAllowed, type FleetOperationPreview, type FleetOperationRequest, type FleetTarget,
+} from '@cauce/protocol';
 import type { DatabaseClient } from '../db.js';
 import { companyRevision, lockCompanyAuthority, type CompanyAuthority } from '../company-authority.js';
 import { providerAccountConsentSql } from '../configuration/company-scope.js';
@@ -104,8 +107,8 @@ export async function validateFleetTarget(
   let relocation = false;
   if (target.resource === 'agent') {
     const agent = (await client.query<{ host_id: string | null; runtime_key: string | null; primary_room_id: string | null; harness_id: string;
-      purged_at: Date | null; retired_at: Date | null; enabled: boolean; lifecycle_state: string; runtime_mode: string | null }>(
-      `SELECT host_id,runtime_key,primary_room_id,harness_id,purged_at,retired_at,enabled,lifecycle_state,runtime_mode
+      purged_at: Date | null; retired_at: Date | null; enabled: boolean; lifecycle_state: string; runtime_mode: string | null; extensions: AgentExtensions }>(
+      `SELECT host_id,runtime_key,primary_room_id,harness_id,purged_at,retired_at,enabled,lifecycle_state,runtime_mode,extensions
          FROM agents WHERE tenant_id=$1 AND alias=$2`, [target.tenant_id, target.alias])).rows[0];
     if (agent?.purged_at) throw new FleetOperationError('conflict', 'purged agent identity is permanent');
     if (request.kind === 'create' && agent && !prepared && !isRegistryDraft(agent)) throw new FleetOperationError('conflict', 'agent identity already exists');
@@ -113,7 +116,7 @@ export async function validateFleetTarget(
     if (request.kind === 'create' || request.kind === 'update') {
       const parameters = request.parameters;
       // A computer serves one company; while only one exists, the first placement registers it there.
-      const placed = (await client.query<{ company_id: string }>('SELECT company_id FROM fleet_hosts WHERE host_id=$1 FOR KEY SHARE',
+      const placed = (await client.query<{ company_id: string; extensions_allowed: ExtensionsAllowed }>('SELECT company_id,extensions_allowed FROM fleet_hosts WHERE host_id=$1 FOR SHARE',
         [parameters.placement.host_id])).rows[0];
       if (placed !== undefined && placed.company_id !== tenant.company_id) {
         throw new FleetOperationError('forbidden', 'fleet host belongs to another company');
@@ -121,6 +124,12 @@ export async function validateFleetTarget(
       if (placed === undefined && (await client.query('SELECT 1 FROM companies OFFSET 1 LIMIT 1')).rowCount) {
         throw new FleetOperationError('conflict', 'fleet host must be registered in the target company first');
       }
+      const extensions = AgentExtensionsSchema.parse(parameters.extensions ?? agent?.extensions ?? []);
+      if (extensions.length > 0 && parameters.placement.mode !== 'container') {
+        throw new FleetOperationError('conflict', 'Las ampliaciones requieren un agente en contenedor.');
+      }
+      const violation = agentExtensionsPolicyViolation(extensions, placed?.extensions_allowed ?? { types: [], mount_roots: [], networks: [] });
+      if (violation) throw new FleetOperationError('conflict', `El ordenador no admite la ampliación: ${violation}`);
       if (parameters.memberships.find((member) => member.room_id === parameters.primary_room_id)?.enabled === false) {
         throw new FleetOperationError('conflict', 'primary membership must be enabled in the activation intent');
       }

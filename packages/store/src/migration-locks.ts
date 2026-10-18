@@ -77,6 +77,7 @@ export const migrationLockFootprints: Readonly<Record<string, Readonly<Record<st
   '081_membresia_rol_derivado.sql': { console_users: SRE, human_tenant_memberships: AE },
   '082_company_purge.sql': {},
   '083_quota_providers_muse_agy.sql': { quota_environments: AE },
+  '084_agent_extensions.sql': { agents: AE, fleet_hosts: AE },
 };
 
 /** The first migration with a footprint; every bundled migration from it on must have one. */

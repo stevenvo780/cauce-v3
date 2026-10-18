@@ -1,4 +1,4 @@
-import type { ConfigMutation, Tenant } from '@cauce/protocol';
+import type { AgentExtensions, ConfigMutation, Tenant } from '@cauce/protocol';
 import type { DatabaseClient } from '../db.js';
 import { egressDestinationColumns, type EgressDestinationRow } from '../repository/egress-destinations.js';
 import { ConfigurationError, type ConfigurationLeafMutation } from './contracts.js';
@@ -6,6 +6,7 @@ import { purgeDependencies } from '../repository/fleet-operation-purge-plan.js';
 import { purgeTargetRecords } from '../repository/fleet-operation-purge.js';
 import { assertConfigurationDeleteAllowed, configurationDependencies, has, valueRequired } from './shared.js';
 import { assertPublishedHarnessDefinition } from './harness-catalog.js';
+import { agentExtensionsMutation, hostExtensionsAllowedMutation } from './mutations/extensions.js';
 import {
   activeDeliveryStates, aclEdgeMutation, assertUnpurgedConfigurationScope, membershipMutation, roomMutation, tenantMutation
 } from './mutations/tenants.js';
@@ -70,6 +71,8 @@ export abstract class ConfigurationMutations {
     if (mutation.resource === 'provider_account') return this.providerAccount(client, mutation);
     if (mutation.resource === 'alias_routing_ceiling') return this.routingCeiling(client, mutation);
     if (mutation.resource === 'agent_account_binding') return this.agentAccountBinding(client, mutation);
+    if (mutation.resource === 'agent_extensions') return agentExtensionsMutation(client, mutation, company);
+    if (mutation.resource === 'host_extensions_allowed') return hostExtensionsAllowedMutation(client, mutation, company);
     return this.policy(client, mutation);
   }
 
@@ -345,6 +348,7 @@ export abstract class ConfigurationMutations {
       max_concurrent_deliveries: number | null;
       retired_at?: string | null; runtime_key?: string | null; primary_room_id?: string | null; host_id?: string | null;
       has_lifecycle?: boolean;
+      extensions?: AgentExtensions;
     }>(
       // Goes in this SELECT or ROLLBACK drops it: `oldValue` is the body of the inverse, and an
       // absent column comes back as undeclared. `NULL` here MEANS something — "no ceiling", the
@@ -353,7 +357,7 @@ export abstract class ConfigurationMutations {
       `SELECT harness_id,display_name,enabled,container_name,runtime_user,home_directory,
               state_directory,role_brief,max_concurrent_deliveries,to_jsonb(agents)->>'retired_at' AS retired_at,
               to_jsonb(agents)->>'runtime_key' AS runtime_key,to_jsonb(agents)->>'primary_room_id' AS primary_room_id,
-              to_jsonb(agents)->>'host_id' AS host_id,
+              to_jsonb(agents)->>'host_id' AS host_id,COALESCE(to_jsonb(agents)->'extensions','[]'::jsonb) AS extensions,
               to_jsonb(agents) ? 'primary_room_id' AS has_lifecycle
        FROM agents WHERE tenant_id=$1 AND alias=$2 FOR UPDATE`, [mutation.tenant_id, mutation.alias]
     );
@@ -404,6 +408,7 @@ export abstract class ConfigurationMutations {
       ...(old.has_lifecycle === true ? { primary_room_id: old.primary_room_id ?? null, host_id: old.host_id ?? null } : {}),
     };
     if (mutation.action === 'delete') {
+      if ((old.extensions ?? []).length > 0) throw new ConfigurationError('conflict', 'remove agent extensions before deleting its registry entry');
       if (old.runtime_key == null && !old.enabled && !old.retired_at) {
         const purged = await this.purgeNeverPreparedAgent(client, mutation, old.role_brief !== null || old.primary_room_id != null);
         if (purged) {
@@ -479,6 +484,12 @@ export abstract class ConfigurationMutations {
       if (!old.has_lifecycle) throw new ConfigurationError('conflict', 'host placement requires the lifecycle schema');
       await client.query('UPDATE agents SET host_id=$3 WHERE tenant_id=$1 AND alias=$2',
         [mutation.tenant_id, mutation.alias, value.host_id ?? null]);
+      if ((old.extensions ?? []).length > 0) {
+        const owner = (await client.query<{ company_id: string }>('SELECT company_id FROM tenants WHERE id=$1', [mutation.tenant_id])).rows[0];
+        if (!owner) throw new ConfigurationError('not_found', 'tenant was not found');
+        await agentExtensionsMutation(client, { resource: 'agent_extensions', action: 'set', tenant_id: mutation.tenant_id,
+          alias: mutation.alias, extensions: old.extensions ?? [] }, owner.company_id);
+      }
     }
     return {
       inverse: { resource: 'agent', action: 'update', tenant_id: mutation.tenant_id, alias: mutation.alias, value: oldValue },

@@ -1,5 +1,5 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
-import { FleetHostCreateSchema } from '@cauce/protocol';
+import { ExtensionsAllowedSchema, FleetHostCreateSchema, type ExtensionsAllowed } from '@cauce/protocol';
 import { lockCompanyAuthority, type CompanyAuthority } from './company-authority.js';
 import { withTransaction, type DatabaseClient, type DatabasePool } from './db.js';
 import { StoreError } from './repository/errors.js';
@@ -161,7 +161,11 @@ export class HostEnrollmentRepository {
     const packet = HostSetupRequestSchema.parse(value);
     return this.request(host,'POST',`/v3/fleet/hosts/${host}/setup`,packet,async (client,identity) => {
       const harnesses = (await client.query<{ id: string }>('SELECT id FROM harness_definitions WHERE enabled ORDER BY id')).rows.map(row => row.id);
-      const result = build({ ...identity, harnesses });
+      const hostPolicy = (await client.query<{ extensions_allowed: ExtensionsAllowed }>(
+        'SELECT extensions_allowed FROM fleet_hosts WHERE host_id=$1 AND company_id=$2 FOR SHARE', [host, identity.company_id],
+      )).rows[0];
+      if (!hostPolicy) throw new StoreError('not_found', 'fleet host was not found');
+      const result = build({ ...identity, harnesses, extensions_allowed: ExtensionsAllowedSchema.parse(hostPolicy.extensions_allowed) });
       await client.query(`INSERT INTO audit_events(action,decision,company_id,metadata) VALUES('fleet_host.setup.package','allow',$1,$2::jsonb)`,
         [identity.company_id,JSON.stringify({ host_id: host, harnesses })]);
       return result;

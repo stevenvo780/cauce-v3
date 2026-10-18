@@ -1,4 +1,5 @@
 import type { DatabaseClient } from '../db.js';
+import { AgentExtensionsSchema, agentExtensionsPolicyViolation, type AgentExtensions, type ExtensionsAllowed } from '@cauce/protocol';
 import { validateFleetTarget } from './fleet-operation-authority.js';
 import { assertFleetOperationAuthority } from './fleet-operation-human.js';
 import { FleetOperationError, isRegistryDraft, type FleetOperationRow, type FencedFleetTarget } from './fleet-operation-contracts.js';
@@ -52,11 +53,20 @@ export async function prepareAgentDesired(client: DatabaseClient, row: FleetOper
   }
   const { target, parameters } = request;
   const prior = (await client.query<{ retired_at: Date | null; purged_at: Date | null; runtime_key: string | null; runtime_mode: string | null;
-    primary_room_id: string | null; enabled: boolean; lifecycle_state: string }>(
-    'SELECT retired_at,purged_at,runtime_key,runtime_mode,primary_room_id,enabled,lifecycle_state FROM agents WHERE tenant_id=$1 AND alias=$2 FOR UPDATE',
+    primary_room_id: string | null; enabled: boolean; lifecycle_state: string; extensions: AgentExtensions }>(
+    'SELECT retired_at,purged_at,runtime_key,runtime_mode,primary_room_id,enabled,lifecycle_state,extensions FROM agents WHERE tenant_id=$1 AND alias=$2 FOR UPDATE',
     [target.tenant_id, target.alias])).rows[0];
   if (prior?.purged_at) throw new FleetOperationError('conflict', 'purged identity cannot be reused');
   if (prior?.retired_at) throw new FleetOperationError('conflict', 'restore the retired agent before updating it');
+  const extensions = AgentExtensionsSchema.parse(parameters.extensions ?? prior?.extensions ?? []);
+  if (extensions.length > 0 && parameters.placement.mode !== 'container') {
+    throw new FleetOperationError('conflict', 'Las ampliaciones requieren un agente en contenedor.');
+  }
+  const host = (await client.query<{ extensions_allowed: ExtensionsAllowed }>(
+    'SELECT extensions_allowed FROM fleet_hosts WHERE host_id=$1 FOR SHARE', [parameters.placement.host_id],
+  )).rows[0];
+  const violation = agentExtensionsPolicyViolation(extensions, host?.extensions_allowed ?? { types: [], mount_roots: [], networks: [] });
+  if (violation) throw new FleetOperationError('conflict', `El ordenador no admite la ampliación: ${violation}`);
   await client.query('UPDATE memberships SET enabled=false WHERE tenant_id=$1 AND alias=$2', [target.tenant_id, target.alias]);
   for (const membership of parameters.memberships) {
     await client.query(`INSERT INTO memberships(tenant_id,room_id,alias,role,enabled) VALUES($1,$2,$3,$4,false)
@@ -67,14 +77,14 @@ export async function prepareAgentDesired(client: DatabaseClient, row: FleetOper
   const parametersList = [target.tenant_id, target.alias, parameters.harness_id, parameters.display_name ?? null, parameters.runtime_key,
     parameters.primary_room_id, placement.host_id, placement.mode, placement.container_name ?? `host:${placement.host_id}`,
     placement.runtime_user, placement.home_directory, placement.state_directory, placement.systemd_user ?? 'stev',
-    parameters.primary_account_id ?? null, parameters.model_id ?? null, parameters.reasoning_effort ?? null];
+    parameters.primary_account_id ?? null, parameters.model_id ?? null, parameters.reasoning_effort ?? null, JSON.stringify(extensions)];
   const inserting = request.kind === 'create' && !(prior && isRegistryDraft(prior));
   const sql = inserting ? `INSERT INTO agents(tenant_id,alias,harness_id,display_name,enabled,runtime_key,primary_room_id,
-      host_id,runtime_mode,container_name,runtime_user,home_directory,state_directory,systemd_user,primary_account_id,model_id,reasoning_effort,lifecycle_state)
-    VALUES($1,$2,$3,$4,false,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,'provisioning')`
+      host_id,runtime_mode,container_name,runtime_user,home_directory,state_directory,systemd_user,primary_account_id,model_id,reasoning_effort,extensions,lifecycle_state)
+    VALUES($1,$2,$3,$4,false,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17::jsonb,'provisioning')`
     : `UPDATE agents SET harness_id=$3,display_name=$4,enabled=false,runtime_key=$5,primary_room_id=$6,host_id=$7,
       runtime_mode=$8,container_name=$9,runtime_user=$10,home_directory=$11,state_directory=$12,systemd_user=$13,
-      primary_account_id=$14,model_id=$15,reasoning_effort=$16,lifecycle_state='provisioning',updated_at=clock_timestamp()
+      primary_account_id=$14,model_id=$15,reasoning_effort=$16,extensions=$17::jsonb,lifecycle_state='provisioning',updated_at=clock_timestamp()
       WHERE tenant_id=$1 AND alias=$2 AND purged_at IS NULL`;
   await client.query(sql, parametersList);
   if (request.kind === 'create') {
@@ -103,7 +113,7 @@ export async function previousFleetAgents(client: DatabaseClient, row: FleetOper
   for (const target of targets) {
     const agent = (await client.query<Record<string, unknown>>(`SELECT tenant_id,alias,runtime_key,harness_id,
       host_id,runtime_mode,container_name,runtime_user,home_directory,state_directory,systemd_user,
-      primary_room_id,primary_account_id,model_id,reasoning_effort,enabled,lifecycle_state FROM agents WHERE tenant_id=$1 AND alias=$2`,
+      primary_room_id,primary_account_id,model_id,reasoning_effort,extensions,enabled,lifecycle_state FROM agents WHERE tenant_id=$1 AND alias=$2`,
     [target.tenant_id, target.alias])).rows[0];
     if (agent) previous.push(agent);
   }

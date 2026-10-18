@@ -30,7 +30,7 @@ export interface ConfigurationChangeResult {
 }
 
 export type ConfigurationLeafMutation = Exclude<ConfigMutation, { resource: 'batch' }>;
-export type ConfigurationAction = 'create' | 'update' | 'delete' | 'retire' | 'restore';
+export type ConfigurationAction = 'create' | 'update' | 'delete' | 'retire' | 'restore' | 'set';
 export type ConfigurationCapabilityResource = ConfigurationLeafMutation['resource'] | 'agent_profile' | 'fleet_host';
 
 export interface ConfigurationResourceCapability {

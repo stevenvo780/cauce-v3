@@ -1,5 +1,6 @@
 import { createHash, createPublicKey, verify } from 'node:crypto';
 import { z } from 'zod';
+import type { ExtensionsAllowed } from '@cauce/protocol';
 import { COMPANY_ID_PATTERN } from './company-authority.js';
 import { StoreError } from './repository/errors.js';
 
@@ -21,7 +22,7 @@ export const HostSetupArtifactRequestSchema = SignedHostRequestSchema.extend({pa
 export type HostSetupArtifactRequest = z.infer<typeof HostSetupArtifactRequestSchema>['payload'];
 export type SignedHostRequest = z.infer<typeof SignedHostRequestSchema>;
 /** What a verified computer may receive at setup: its own company and host, and the harnesses the platform keeps enabled. */
-export interface HostSetupScope { host_id: string; company_id: string; harnesses: string[] }
+export interface HostSetupScope { host_id: string; company_id: string; harnesses: string[]; extensions_allowed?: ExtensionsAllowed }
 export interface HostInvitation { enrollment_id: string; company_id: string; host_id: string; nonce: string;
   invitation_token: string; expires_at: string; state: 'pending' }
 export interface HostEnrollmentReceipt { enrollment_id: string; company_id: string; host_id: string;

@@ -180,7 +180,8 @@ export class ConfigurationRepository extends ConfigurationMutations {
                   to_jsonb(agents)->>'primary_room_id' AS primary_room_id,to_jsonb(agents)->>'host_id' AS host_id,
                   to_jsonb(agents)->>'runtime_mode' AS runtime_mode,to_jsonb(agents)->>'systemd_user' AS systemd_user,
                   to_jsonb(agents)->>'primary_account_id' AS primary_account_id,to_jsonb(agents)->>'model_id' AS model_id,
-                  to_jsonb(agents)->>'reasoning_effort' AS reasoning_effort
+                  to_jsonb(agents)->>'reasoning_effort' AS reasoning_effort,
+                  COALESCE(to_jsonb(agents)->'extensions','[]'::jsonb) AS extensions
            FROM agents WHERE ${owned('agents.tenant_id')} AND to_jsonb(agents)->>'purged_at' IS NULL
              AND ${runtimePrincipalScopeSql('agents.tenant_id', 'agents.alias')}
              AND NOT EXISTS(SELECT 1 FROM tenants WHERE tenants.id=agents.tenant_id AND to_jsonb(tenants)->>'purged_at' IS NOT NULL)

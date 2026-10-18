@@ -1,4 +1,4 @@
-import { fleetHostUsable, type FleetHost, type FleetHostCreate, type FleetHostUpdate } from '@cauce/protocol';
+import { fleetHostUsable, type ExtensionsAllowed, type FleetHost, type FleetHostCreate, type FleetHostUpdate } from '@cauce/protocol';
 import { assertPlatformAdmin, type CompanyAuthority } from '../company-authority.js';
 import { withTransaction, type DatabaseClient, type DatabasePool } from '../db.js';
 import { StoreError } from './errors.js';
@@ -10,6 +10,7 @@ const CONTROLLER_FRESH_SECONDS = 90;
 interface HostRow {
   host_id: string; registered: boolean; display_name: string | null; notes: string | null; enabled: boolean | null;
   version: string | null; controller_status: FleetHost['status'] | null; controller_seen_at: Date | null; controller_fresh: boolean;
+  extensions_allowed: ExtensionsAllowed | null;
 }
 interface AgentRow { host_id: string; tenant_id: string; alias: string; enabled: boolean; online: boolean; last_heartbeat_at: Date | null }
 
@@ -51,7 +52,7 @@ async function loadFleetHosts(
         WHERE ($5::boolean OR (SELECT count(*) FROM companies)=1)
           AND NOT EXISTS (SELECT 1 FROM fleet_hosts host WHERE host.host_id=approved.host_id))
      SELECT known.host_id,(host.host_id IS NOT NULL) AS registered,host.display_name,host.notes,host.enabled,
-            host.version::text AS version,host.controller_status,host.controller_seen_at,
+            host.version::text AS version,host.controller_status,host.controller_seen_at,host.extensions_allowed,
             COALESCE(host.controller_seen_at > now() - make_interval(secs => $3),false) AS controller_fresh
        FROM known LEFT JOIN fleet_hosts host ON host.host_id=known.host_id
       WHERE $2::text IS NULL OR known.host_id=$2
@@ -89,6 +90,7 @@ async function loadFleetHosts(
       host_id: row.host_id, display_name: row.display_name ?? row.host_id, notes: row.notes ?? '', enabled: row.enabled ?? true,
       status: effective.status, status_source: effective.status_source, last_seen_at: effective.seen?.toISOString() ?? null,
       registered: row.registered, approved: approved.has(row.host_id), version: Number(row.version ?? 0),
+      extensions_allowed: row.extensions_allowed ?? { types: [], mount_roots: [], networks: [] },
       agents: placed.map(({ tenant_id, alias, enabled, online }) => ({ tenant_id, alias, enabled, online })),
     };
   });

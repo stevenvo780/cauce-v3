@@ -69,7 +69,7 @@ export async function readFleetGroupAgents(client: DatabaseClient, request: Flee
   const target = request.target;
   return (await client.query<Record<string, unknown>>(`SELECT agent.tenant_id,agent.alias,agent.runtime_key,agent.harness_id,
     agent.host_id,agent.runtime_mode,agent.container_name,agent.runtime_user,agent.home_directory,agent.state_directory,
-    agent.systemd_user,agent.primary_room_id,agent.primary_account_id,agent.model_id,agent.reasoning_effort,agent.enabled,agent.lifecycle_state
+    agent.systemd_user,agent.primary_room_id,agent.primary_account_id,agent.model_id,agent.reasoning_effort,agent.extensions,agent.enabled,agent.lifecycle_state
     FROM agents agent WHERE agent.tenant_id=$1 AND agent.purged_at IS NULL
       AND ${runtimePrincipalScopeSql('agent.tenant_id', 'agent.alias')}
       AND ($2::text IS NULL OR agent.alias=$2)

@@ -29,7 +29,7 @@ const WRITE: readonly ConfigurationAction[] = ['create', 'update', 'delete'];
 const CAPABILITY_RESOURCES: readonly ConfigurationCapabilityResource[] = [
   'tenant', 'room', 'membership', 'acl_edge', 'harness', 'role_policy', 'chain_policy',
   'egress_destination', 'agent', 'provider_account', 'alias_routing_ceiling',
-  'agent_account_binding', 'agent_profile', 'fleet_host',
+  'agent_account_binding', 'agent_profile', 'fleet_host', 'agent_extensions', 'host_extensions_allowed',
 ];
 /** Installation catalogs live in platform revisions, so a batch never mixes them with company resources. */
 const PLATFORM_RESOURCES: ReadonlySet<string> = new Set(['harness', 'role_policy', 'chain_policy']);
@@ -60,6 +60,9 @@ function resourceCapability(resource: ConfigurationCapabilityResource, authority
     case 'fleet_host': return authority.role === 'platform_admin' ? { resource, actions: WRITE, scope: 'platform' } : wide ? company(['update', 'delete']) : none;
     case 'tenant': return wide ? company(LIFECYCLE) : none;
     case 'agent': case 'agent_account_binding': return wide ? company(WRITE) : none;
+    case 'agent_extensions': return wide ? company(['set']) : none;
+    case 'host_extensions_allowed': return authority.role === 'company_owner' || authority.role === 'platform_admin'
+      ? company(['set']) : none;
     case 'alias_routing_ceiling': return wide ? company(['create', 'delete']) : none;
     case 'provider_account': return wide && authority.role !== 'company_admin' ? company(WRITE) : none;
     case 'room': case 'membership': return wide ? company(LIFECYCLE) : own(LIFECYCLE);
@@ -124,6 +127,7 @@ export async function assertCompanyMutation(
   const createdAccounts = new Set<string>();
   for (const leaf of leaves) {
     if (leaf.resource === 'agent' && typeof leaf.value?.host_id === 'string') hosts.add(leaf.value.host_id);
+    if (leaf.resource === 'host_extensions_allowed') hosts.add(leaf.host_id);
     if (leaf.resource === 'tenant') {
       tenants.add(leaf.id);
       if (leaf.action === 'create') createdTenants.add(leaf.id);
