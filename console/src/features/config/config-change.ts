@@ -136,10 +136,10 @@ export function describeConfigError(
     ) };
   }
   if (error instanceof ApiError && error.status === 404 && error.code === 'not_found') {
-    return { conflict: false, message: spanishWithReason(
-      'No se encontró esa revisión de configuración. Actualiza el historial y selecciona una revisión disponible antes de revertir.',
-      error.message,
-    ) };
+    const base = camino === 'rollback'
+      ? 'No se encontró esa revisión de configuración. Actualiza el historial y selecciona una revisión disponible antes de revertir.'
+      : 'No se encontró el recurso de esta operación. Relee el inventario y corrige los identificadores antes de volver a enviarla.';
+    return { conflict: false, message: spanishWithReason(base, error.message) };
   }
   if (error instanceof ApiError && error.status === 422) {
     return { conflict: false, message: spanishWithReason(

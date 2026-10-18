@@ -43,11 +43,20 @@ export function scopedFormIdentity(snapshot: ConfigurationSnapshot, definition: 
 
 export const PLATFORM_CATALOG_REASON = 'Solo el administrador de plataforma puede cambiar esta política.';
 
-/** Hides platform catalogs when the snapshot names a role other than platform_admin. A snapshot without a role stays unchanged. */
+/** Harness rows are a global catalog. The configuration API rejects every write, including a platform administrator's. */
+export const HARNESS_CATALOG_REASON = 'Las definiciones de arnés se cambian con la CLI de plataforma, no desde esta consola.';
+
+/**
+ * A snapshot without a role stays unchanged: the form fixtures omit it.
+ * Harness writes stay on the platform CLI for every named role. Role and chain policies stay
+ * editable for platform_admin.
+ */
 export function platformCatalogReason(snapshot: ConfigurationSnapshot | undefined, resource: string): string | undefined {
-  if (!snapshot || (resource !== 'role_policy' && resource !== 'chain_policy')) return undefined;
+  if (!snapshot) return undefined;
   const role = (snapshot as { capabilities?: { actor?: { role?: unknown } } }).capabilities?.actor?.role;
-  if (typeof role === 'string' && role !== 'platform_admin') return PLATFORM_CATALOG_REASON;
+  if (resource === 'harness') return typeof role === 'string' ? HARNESS_CATALOG_REASON : undefined;
+  if (typeof role !== 'string' || role === 'platform_admin') return undefined;
+  if (resource === 'role_policy' || resource === 'chain_policy') return PLATFORM_CATALOG_REASON;
   return undefined;
 }
 
