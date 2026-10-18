@@ -113,7 +113,7 @@ La oficina refleja los recursos reales de cada empresa, permite entrar al detall
 - [x] [local real] Editor de salas y partes con validación y CAS; el plano persiste tras recargar y en un segundo navegador.
 - [x] [local real] La topología y el plano usan la empresa activa: tras cambiar de empresa solo se ven sus salas y guardar el plano da 200 (PG; 022e0ee6, e3c63b0d).
 - [x] [código] El campus ordena sus edificios por la posición guardada en el plano y muestra «Leyendo cuotas…» al cargar (b86f7443, 42ac20fa).
-- [ ] El dueño ve en la oficina el cansancio de cada agente calculado con las cuotas reales de su cuenta. Hoy hay 0/14 agentes con binding y las cuotas están `unsupported`. El e2e de oficina ya existe (`tests/e2e/v4-office-real-browser.test.ts`). (auditoría 17-oct)
+- [x] [prod] El dueño ve en la oficina el cansancio de cada agente calculado con las cuotas reales de su cuenta: los 14 agentes de Humanizar vinculados a sus cuentas reales (18-oct) y el cansancio comprobado con el snapshot de producción frente a `cuotas --json` (6cb941fa).
 
 ## 5. Migración de agentes a servidores locales
 
