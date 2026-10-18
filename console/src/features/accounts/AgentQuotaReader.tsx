@@ -22,7 +22,7 @@ const STATUS_LABEL: Record<AgentQuotaStatus, string> = {
 };
 const POLL_DELAYS = [2_000, 4_000, 8_000, 16_000, 30_000, 30_000];
 
-export function AgentQuotaReader({ tenant, alias, quota }: { tenant: string; alias: string; quota: Resource<AgentQuotaReading> }) {
+export function AgentQuotaReader({ tenant, alias, quota, notRunning = false }: { tenant: string; alias: string; quota: Resource<AgentQuotaReading>; notRunning?: boolean }) {
   const api = useApi();
   const authority = useCompanyAuthority();
   const retry = useRef<AgentQuotaQuery | null>(null);
@@ -80,7 +80,7 @@ export function AgentQuotaReader({ tenant, alias, quota }: { tenant: string; ali
     return result;
   }
   const status = awaitingReceipt ? 'pending' : data?.status;
-  const unavailableTarget = quotaTargetUnavailableReason(data);
+  const unavailableTarget = notRunning ? null : quotaTargetUnavailableReason(data);
   // A missing reader or location is explained by the sheet itself; here only the query's own blockers.
   const queryUnavailable = !data?.reader_available || canQuery || unavailableTarget ? null
     : !canManageCompany(authority?.role) ? 'Tu rol permite ver la cuota, pero no consultarla. Pide a un propietario o administrador de la empresa que la consulte.'
@@ -94,7 +94,7 @@ export function AgentQuotaReader({ tenant, alias, quota }: { tenant: string; ali
     {unresponsive ? <Notice tone="danger" role="alert">El ordenador no responde. Relee la cuota para comprobar si la consulta terminó.</Notice>
       : pending ? <p className="m-0 text-xs" role="status">La consulta sigue pendiente; la ficha relee el resultado del ordenador.</p> : null}
     {data ? <>
-      <p className="m-0 text-xs text-muted">{data.captured_at ? <>Última medición: <Time value={data.captured_at} /></> : 'Todavía no hay una medición persistida.'}</p>
+      {data.captured_at || !notRunning ? <p className="m-0 text-xs text-muted">{data.captured_at ? <>Última medición: <Time value={data.captured_at} /></> : 'Todavía no hay una medición persistida.'}</p> : null}
       {data.sample ? <QuotaMeasurement data={data} /> : null}
       {data.operation?.status === 'failed' ? <Notice tone="danger" className="wrap-anywhere">{describeOperationError(data.operation.error_code ?? '')}
         {data.operation.error_code ? <> <span className="text-xs whitespace-nowrap">Código: <code>{data.operation.error_code}</code></span></> : null}</Notice> : null}

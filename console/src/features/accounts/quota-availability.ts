@@ -10,6 +10,12 @@ export const FATIGUE_LABEL: Record<FatigueState, string> = {
   ...OBSERVATION_LABEL, available: 'Disponible', low: 'Cansado', exhausted: 'Sin disponibilidad', paused: 'En pausa', model_dependent: 'Varía por modelo', pending_auth: 'Pendiente de autenticación', no_reader: 'Sin lector de cuota',
 };
 export const NO_READER_MESSAGE = 'Sin lector de cuota para este harness: el proveedor no expone una ventana de consumo medible.';
+export const NOT_RUNNING_QUOTA_MESSAGE = 'No hay medición de cuota porque el agente aún no corre.';
+export function activityRowNotRunning(row: { host_id?: string | null; harness_id?: string | null } | undefined): boolean {
+  if (!row) return false;
+  const harness = row.harness_id?.trim() ?? '';
+  return !row.host_id || harness.length === 0 || harness === 'unknown';
+}
 export function readerUnavailableReason(snapshot: AgentQuotaReading | undefined): string | null {
   if (!snapshot || snapshot.reader_available) return null;
   return snapshot.reason === 'quota_reader_unavailable' ? NO_READER_MESSAGE : null;
