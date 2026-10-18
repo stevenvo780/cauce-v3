@@ -3,7 +3,7 @@ import { FLEET_ACTION_LABELS } from './agent-lifecycle-model';
 import { AuthOperationPanel } from './AuthOperationPanel';
 import { blockingOperation, blockingText, cancellable, ERRORS, purgeBlockers, purgeEntries, resumable, STALE_RESUME_TEXT, STATUS, STEP_STATUS, STEPS } from './fleet-operation-text';
 
-const RESOURCE_TYPES = { container: 'Contenedor', volume: 'Volumen', directory: 'Directorio' };
+const RESOURCE_TYPES = { container: 'Contenedor', volume: 'Volumen', directory: 'Directorio', network: 'Red' };
 
 export function AgentFleetPreview({ preview }: { preview: FleetOperationPreview }) {
   const deleted = purgeEntries(preview, 'delete');
