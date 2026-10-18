@@ -193,11 +193,11 @@ export class QuotaOperationsRepository {
       return { operation_id: claim.id, status: awaitingAuth ? 'awaiting_auth' : 'done' };
     });
   }
-  async fail(claim: QuotaOperationClaim, code: 'PROVIDER_UNAVAILABLE' | 'RUNTIME_UNAVAILABLE' | 'STEP_FAILED') {
+  async fail(claim: QuotaOperationClaim, code: 'PROVIDER_UNAVAILABLE' | 'RUNTIME_UNAVAILABLE' | 'STEP_FAILED' | 'AUTH_CANCELLED') {
     return this.transaction(async client => {
-      const result = await client.query<{ environment_id: string }>(`UPDATE quota_environment_operations SET status='failed',error_code=$5,lease_until=NULL,updated_at=now()
+      const result = await client.query<{ environment_id: string; action: string; result: Record<string, unknown> | null }>(`UPDATE quota_environment_operations SET status='failed',error_code=$5,lease_until=NULL,updated_at=now()
         WHERE id=$1 AND claim_token=$2 AND claim_epoch=$3 AND worker_id=$4 AND environment_id=$6
-          AND status='running' AND lease_until>now() RETURNING environment_id`,
+          AND status='running' AND lease_until>now() RETURNING environment_id,action,result`,
       [claim.id, claim.claim_token, claim.claim_epoch, claim.worker_id, code, claim.environment_id]);
       if (!result.rowCount) {
         const previous = await client.query(`SELECT 1 FROM quota_environment_operations WHERE id=$1 AND claim_token=$2 AND claim_epoch=$3
@@ -206,7 +206,11 @@ export class QuotaOperationsRepository {
         if (previous.rowCount) return;
         throw new StoreError('conflict', 'quota execution lease was replaced');
       }
-      await client.query("UPDATE quota_environments SET status='failed',version=version+1,updated_at=now() WHERE id=$1", [result.rows[0]?.environment_id]);
+      const operation = result.rows[0];
+      const loginStopped = operation?.action === 'authenticate' && code === 'AUTH_CANCELLED'
+        && typeof operation.result?.expires_at === 'string';
+      await client.query('UPDATE quota_environments SET status=$2,version=version+1,updated_at=now() WHERE id=$1',
+        [operation?.environment_id, loginStopped ? 'ready' : 'failed']);
     });
   }
 }

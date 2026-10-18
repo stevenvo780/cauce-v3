@@ -9,7 +9,7 @@ export interface QuotaExecutionRepository {
   execution(claim: QuotaOperationClaim): Promise<QuotaOperationExecution>;
   resumeAuthentication(claim: QuotaOperationClaim): Promise<boolean>;
   finish(claim: QuotaOperationClaim, value: unknown, awaitingAuth?: boolean): Promise<unknown>;
-  fail(claim: QuotaOperationClaim, code: 'PROVIDER_UNAVAILABLE' | 'RUNTIME_UNAVAILABLE' | 'STEP_FAILED'): Promise<unknown>;
+  fail(claim: QuotaOperationClaim, code: 'PROVIDER_UNAVAILABLE' | 'RUNTIME_UNAVAILABLE' | 'STEP_FAILED' | 'AUTH_CANCELLED'): Promise<unknown>;
 }
 export interface QuotaAuthenticationHandle {
   public_result: { expires_at: string; output?: string; login_url?: string; user_code?: string };
@@ -123,5 +123,5 @@ export class HostChannelQuotaRepository implements QuotaExecutionRepository {
     return z.object({ resumed: z.boolean() }).strict().parse(await this.invoke('resume_auth', { claim })).resumed;
   }
   finish(claim: QuotaOperationClaim, value: unknown, awaitingAuth = false) { return this.terminal('finish', { claim, result: value, awaiting_auth: awaitingAuth }); }
-  fail(claim: QuotaOperationClaim, code: 'PROVIDER_UNAVAILABLE' | 'RUNTIME_UNAVAILABLE' | 'STEP_FAILED') { return this.terminal('fail', { claim, code }); }
+  fail(claim: QuotaOperationClaim, code: 'PROVIDER_UNAVAILABLE' | 'RUNTIME_UNAVAILABLE' | 'STEP_FAILED' | 'AUTH_CANCELLED') { return this.terminal('fail', { claim, code }); }
 }

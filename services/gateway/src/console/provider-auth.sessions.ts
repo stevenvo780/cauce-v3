@@ -12,7 +12,7 @@ interface Session {
   abort: AbortController;
   cohort: string;
   reservation: ProviderAuthReservation | undefined;
-  login: ProviderAuthLogin | undefined;
+  login: (ProviderAuthLogin & { cancel?: ProviderAuthLogin['close'] }) | undefined;
   unsubscribe: (() => void) | undefined;
   timer: ReturnType<typeof setTimeout> | undefined;
   revalidation: ReturnType<typeof setInterval> | undefined;
@@ -246,7 +246,8 @@ export class ProviderAuthManager {
       return;
     }
     try {
-      const stopped = session.login ? await session.login.close() : { stopped: true };
+      const stopped = session.login ? await (status === 'cancelled' && session.login.cancel
+        ? session.login.cancel() : session.login.close()) : { stopped: true };
       if (!stopped.stopped) throw new ProviderAuthError('STOP_UNCONFIRMED');
       await session.reservation?.release();
       this.cohorts.delete(session.cohort);

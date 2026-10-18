@@ -16,6 +16,7 @@ type LoginPlan = NonNullable<QuotaEffect['login_plan']>;
 interface Session {
   execution: QuotaOperationExecution; claim: QuotaOperationClaim; login: ProviderAuthLogin; abort: AbortController;
   events: QuotaAuthEvent[]; completed: Map<string, boolean>; sequence: number; verified: boolean;
+  cancelled: boolean; verificationAttempted: boolean;
   unsubscribe(): void; loop: Promise<void>; expiresAt: string;
 }
 export interface QuotaHostAuthenticationOptions {
@@ -61,7 +62,7 @@ export class QuotaHostAuthentication {
     const config = await (this.options.loginConfiguration?.(plan, execution) ?? configuration(this.options, plan));
     const login = await (this.options.createLogin ?? createProviderLogin)(config, abort.signal);
     const session: Session = { execution, claim, login, abort, events: [], completed: new Map(), sequence: 0,
-      verified: false, unsubscribe: () => undefined, loop: Promise.resolve(),
+      verified: false, cancelled: false, verificationAttempted: false, unsubscribe: () => undefined, loop: Promise.resolve(),
       expiresAt: new Date(Date.now() + plan.ttl_seconds * 1000).toISOString() };
     try {
       z.object({ registered: z.literal(true) }).strict().parse(await this.channel.request('POST',
@@ -90,12 +91,15 @@ export class QuotaHostAuthentication {
         case 'start': await session.login.start(); break;
         case 'input': await session.login.write(Buffer.from(command.data, 'base64')); break;
         case 'resize': await session.login.resize(command.cols, command.rows); break;
-        case 'close': {
+        case 'close':
+        case 'cancel': {
           const proof = await session.login.close();
           if (!proof.stopped) throw new Error('Quota login stop was not confirmed');
+          session.cancelled ||= command.type === 'cancel';
           break;
         }
         case 'verify': {
+          session.verificationAttempted = true;
           if (!(await session.login.close()).stopped) throw new Error('Quota login stop was not confirmed');
           if (!await this.repository.resumeAuthentication(session.claim)) throw new Error('Quota authentication fence was revoked');
           if (!isDeepStrictEqual(await this.repository.execution(session.claim), session.execution)) throw new Error('Quota authentication changed');
@@ -154,7 +158,7 @@ export class QuotaHostAuthentication {
       if (!session.verified && stopped.stopped) {
         try {
           await this.repository.resumeAuthentication(session.claim);
-          await this.repository.fail(session.claim, 'STEP_FAILED');
+          await this.repository.fail(session.claim, session.cancelled && !session.verificationAttempted ? 'AUTH_CANCELLED' : 'STEP_FAILED');
         } catch { /* Expired or replaced claims cannot accept a result. */ }
       }
       this.sessions.delete(session.claim.id);

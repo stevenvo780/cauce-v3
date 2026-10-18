@@ -153,19 +153,20 @@ export class QuotaAuthBroker {
       finished: entry.finished || Date.now() >= Date.parse(entry.expiresAt) };
   }
   private command(entry: Entry, command: QuotaAuthCommand): Promise<boolean> {
-    if (entry.commands.size >= 32 || entry.finished && command.type !== 'close') return Promise.reject(unavailable());
+    if (entry.commands.size >= 32 || entry.finished && command.type !== 'close' && command.type !== 'cancel') return Promise.reject(unavailable());
     return new Promise(resolve => {
       const timer = setTimeout(() => { entry.commands.delete(command.id); resolve(false); }, command.type === 'verify' ? 120_000 : 15_000);
       timer.unref(); entry.commands.set(command.id, { command, resolve, timer });
     });
   }
-  private login(entry: Entry): ProviderAuthLogin {
+  private login(entry: Entry): ProviderAuthLogin & { cancel: ProviderAuthLogin['close'] } {
     return { method: entry.method,
       subscribeOutput: listener => { entry.listeners.add(listener); return () => { entry.listeners.delete(listener); }; },
       start: async () => { if (!await this.command(entry, { id: randomUUID(), type: 'start' })) throw unavailable(); },
       write: async bytes => { if (!await this.command(entry, { id: randomUUID(), type: 'input', data: Buffer.from(bytes).toString('base64') })) throw unavailable(); },
       resize: async (cols, rows) => { if (!await this.command(entry, { id: randomUUID(), type: 'resize', cols, rows })) throw unavailable(); },
       close: async () => ({ stopped: await this.command(entry, { id: randomUUID(), type: 'close' }) }),
+      cancel: async () => ({ stopped: await this.command(entry, { id: randomUUID(), type: 'cancel' }) }),
     };
   }
   private dispose(entry: Entry): void {

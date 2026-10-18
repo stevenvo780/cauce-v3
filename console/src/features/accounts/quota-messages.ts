@@ -90,6 +90,7 @@ export function describeQuotaEnvironmentError(cause: unknown, fallback: string):
 }
 
 const OPERATION_ERROR: Record<string, string> = {
+  AUTH_CANCELLED: 'Inicio de sesión cancelado. Puedes volver a iniciarlo desde la tarjeta de la cuenta.',
   AUTH_EXPIRED: 'La autenticación venció. Autentica la cuenta de nuevo.',
   AUTHORITY_REVOKED: 'La persona que lo pidió perdió permiso. Repite la operación con un rol vigente.',
   PROVIDER_UNAVAILABLE: 'El proveedor no respondió. Inténtalo más tarde.',

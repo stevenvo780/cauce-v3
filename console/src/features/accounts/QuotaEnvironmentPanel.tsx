@@ -79,10 +79,14 @@ export function QuotaEnvironmentPanel({ snapshot, loading, accounts, canWrite, r
     </form>
     <div className="grid gap-3 md:grid-cols-2">{snapshot?.environments.map(environment => {
       const operation = snapshot.operations.find(item => item.environment_id === environment.id);
+      const withoutSession = environment.status === 'ready' && environment.refresh_status === 'not_authenticated';
+      const cancelled = operation?.action === 'authenticate' && operation.error_code === 'AUTH_CANCELLED';
+      const statusLabel = cancelled && environment.status === 'ready' ? 'Listo para iniciar sesión'
+        : withoutSession ? 'Sin sesión' : STATUS_LABEL[environment.status];
       const updating = environment.refresh_status === 'updating' || snapshot.operations.some(item => item.environment_id === environment.id
         && item.action === 'query' && (item.status === 'pending' || item.status === 'running'));
       return <article key={environment.id} aria-label={`Entorno ${environment.label}`} className="grid content-start gap-3 rounded-xl border border-line bg-surface p-4">
-        <header><h3 className="m-0 text-base">{environment.label}</h3><p className="m-0 text-sm">{STATUS_LABEL[environment.status]}</p>
+        <header><h3 className="m-0 text-base">{environment.label}</h3><p className="m-0 text-sm">{statusLabel}</p>
           <p className="m-0 text-xs text-muted">{environment.provider} · {environment.host_id} · {accounts.find(account => account.id === environment.account_id)?.label ?? 'Cuenta no disponible'}</p></header>
         <QuotaRefreshNotice status={updating ? 'updating' : environment.refresh_status} />
         <div className="flex flex-wrap gap-2" aria-label={`Comandos permitidos de ${environment.label}`}>
@@ -91,8 +95,8 @@ export function QuotaEnvironmentPanel({ snapshot, loading, accounts, canWrite, r
           <Button size="sm" disabled={!canEdit(environment)} title={editBlock(environment)} onClick={() => { setEditing(environment); setLabel(environment.label); }}>Editar entorno</Button>
           <Button size="sm" variant="danger" disabled={!supports(environment, 'delete')} title={actionBlock(environment, 'delete')} onClick={() => { setConfirm(environment); }}>Eliminar entorno</Button>
         </div>
-        {operation ? <section aria-label={`Resultado de ${environment.label}`} className="grid gap-2"><p className="m-0 text-xs">{ACTION_LABEL[operation.action]} · {OPERATION_LABEL[operation.status]} · <Time value={operation.updated_at} /></p>
-          {operation.error_code ? <Notice tone="danger">{describeOperationError(operation.error_code)}</Notice> : null}<QuotaCommandResult result={operation.result} /></section> : null}
+        {operation ? <section aria-label={`Resultado de ${environment.label}`} className="grid gap-2"><p className="m-0 text-xs">{ACTION_LABEL[operation.action]} · {cancelled ? 'Cancelada' : OPERATION_LABEL[operation.status]} · <Time value={operation.updated_at} /></p>
+          {operation.error_code ? <Notice tone={cancelled ? 'info' : 'danger'}>{describeOperationError(operation.error_code)}</Notice> : null}<QuotaCommandResult result={operation.result} /></section> : null}
       </article>;
     })}</div>
     {snapshot && !snapshot.environments.length ? <p>No hay entornos de consulta. Registra una cuenta y crea su entorno.</p> : null}
