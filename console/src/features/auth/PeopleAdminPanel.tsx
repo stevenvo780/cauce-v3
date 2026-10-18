@@ -1,7 +1,9 @@
 import { useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { useApi } from '../../api/context';
+import type { CompanyAdmin } from '../../api/client/company-client';
 import type { ManagedPerson, PeopleInventory, PersonValues } from '../../api/client/people-admin-client';
 import type { ConfigurationSnapshot } from '../../api/types';
+import { sessionAuthority } from './auth-session';
 import { PeopleAdminForm } from './PeopleAdminForm';
 import { CompanySession } from './company-authority';
 import { diffConflictFields, isCasConflict, type ConflictFieldDiff } from '../../components/conflict';
@@ -10,9 +12,20 @@ import { ConflictNotice } from '../../components/ConflictNotice';
 import './PeopleAdmin.css';
 
 type Action = 'retire' | 'restore' | 'purge';
+
+function permisoDePersona(person: ManagedPerson, admins: readonly CompanyAdmin[] | undefined, own: boolean, authorityRole: string | undefined): string {
+  const admin = admins?.find(item => item.user_id === person.id);
+  if (admin?.role === 'owner' || own && authorityRole === 'company_owner') return 'Dueño de empresa';
+  if (admin?.role === 'admin' || own && authorityRole === 'company_admin') return 'Administrador de empresa';
+  return person.role === 'operator' ? 'Operador' : 'Lector';
+}
+
 export function PeopleAdminPanel({ startCreating = false }: { startCreating?: boolean } = {}) {
   const api = useApi();
   const session = useContext(CompanySession);
+  const authority = sessionAuthority(session);
+  const actingCompany = authority?.acting_company;
+  const [companyAdmins, setCompanyAdmins] = useState<readonly CompanyAdmin[]>();
   const ownEmail = session?.authenticated === true && session.login_mode === 'password' ? session.subject?.trim().toLowerCase() : undefined;
   const isOwnPerson = (person: ManagedPerson) => !!ownEmail && person.email.trim().toLowerCase() === ownEmail;
   const [inventory, setInventory] = useState<PeopleInventory>();
@@ -41,6 +54,14 @@ export function PeopleAdminPanel({ startCreating = false }: { startCreating?: bo
     return false;
   }, [api]);
   useEffect(() => { void reload(); return () => { generation.current += 1; }; }, [reload]);
+  useEffect(() => {
+    if (!actingCompany) return undefined;
+    let live = true;
+    void api.getCompanyAdmins(actingCompany).then(page => {
+      if (live) setCompanyAdmins(page.items);
+    }).catch(() => { if (live) setCompanyAdmins(undefined); });
+    return () => { live = false; };
+  }, [api, actingCompany]);
   const askedToCreate = useRef(false);
   useEffect(() => {
     if (!startCreating || askedToCreate.current || loading || !inventory?.capabilities.create) return;
@@ -166,7 +187,7 @@ export function PeopleAdminPanel({ startCreating = false }: { startCreating?: bo
     {inventory ? <div className="people-admin-table"><table><caption>Cuentas de personas</caption>
       <thead><tr><th>Persona</th><th>Identidad</th><th>Permiso</th><th>Estado</th><th>Acciones</th></tr></thead>
       <tbody>{inventory.items.map(person => <tr key={person.id}><td><strong>{person.display_name}</strong><br />{person.email}</td>
-        <td><code>{person.tenant_id}/{person.alias}</code></td><td>{person.role === 'operator' ? 'Operador' : 'Lector'}</td>
+        <td><code>{person.tenant_id}/{person.alias}</code></td><td>{permisoDePersona(person, companyAdmins, isOwnPerson(person), authority?.role)}</td>
         <td>{person.active ? 'Habilitada' : 'Retirada'}</td><td><div className="acciones">
           <button type="button" className="button secondary" disabled={!canUse || !inventory.capabilities.update} title={blockFor(inventory.capabilities.update)}
             onClick={() => { setEditing({ person }); setConfirmation(undefined); setNotice(''); setConflictDiffs(undefined); }} aria-label={`Editar persona ${person.email}`}>Editar</button>
