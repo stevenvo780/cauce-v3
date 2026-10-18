@@ -316,6 +316,8 @@ def capabilities(policy: dict) -> dict:
         'systemd_users': sorted({row['systemd_user'] for row in runtimes if row['systemd_user'] is not None}),
         'home_roots': sorted({row['home_directory'] for row in runtimes}), 'state_roots': sorted({row['state_root'] for row in runtimes}),
         'runtimes': runtimes}
+    if 'extensions_allowed' in policy:
+        placement['extensions_allowed'] = policy['extensions_allowed']
     if not enabled:
         return {'available': False, 'actions': [], 'placements': [], 'reason': 'executor_unconfigured'}
     from fleet_executor_authority import authority_ready

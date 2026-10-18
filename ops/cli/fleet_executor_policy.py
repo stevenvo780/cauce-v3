@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 import json
 import os
 import pathlib
@@ -9,12 +10,167 @@ import re
 import stat
 import sys
 import uuid
+from decimal import Decimal, InvalidOperation
 from urllib.parse import urlsplit
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / 'scripts'))
 from fleet_policy_paths import SafeFailure, path
 from fleet_runtime_materialization import external_directory
 from secure_path import open_absolute_directory, open_regular_at
+
+EXTENSION_TYPES = {'mount', 'network', 'resources', 'gpu', 'ssh', 'docker', 'browser', 'mcp', 'tools', 'full_control'}
+NETWORK_NAME = re.compile(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,127}')
+
+
+def extension_strings(value, pattern: str, *, minimum: int = 0) -> bool:
+    return isinstance(value, list) and minimum <= len(value) <= 100 \
+        and all(isinstance(item, str) and re.fullmatch(pattern, item) is not None for item in value) and len(set(value)) == len(value)
+
+
+def extension_host(value) -> bool:
+    if not isinstance(value, str) or not 1 <= len(value) <= 253:
+        return False
+    try:
+        ipaddress.ip_address(value)
+        return True
+    except ValueError:
+        return re.fullmatch(r'[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*', value) is not None
+
+
+def validate_prepared_extension(row: dict) -> None:
+    kind = row['type']
+    valid = False
+    if kind == 'docker':
+        valid = set(row) == {'type', 'access'} and row['access'] in ('read', 'control')
+    elif kind == 'browser':
+        valid = set(row) == {'type', 'mode'} and row['mode'] == 'sidecar' or \
+            set(row) == {'type', 'mode', 'host', 'port'} and row['mode'] == 'ssh_tunnel' and extension_host(row['host']) \
+            and type(row['port']) is int and 1 <= row['port'] <= 65535
+    elif kind == 'ssh':
+        valid = set(row) == {'type', 'hosts'} and extension_strings(row['hosts'], r'.{1,512}', minimum=1)
+        for value in row.get('hosts', []) if valid else []:
+            match = re.fullmatch(r'[a-z_][a-z0-9_-]{0,31}@(\[[a-fA-F0-9:]+\]|[^:\s]+)(?::([0-9]{1,5}))?', value)
+            if match is None or not extension_host(match[1].strip('[]')) or match[2] is not None and not 1 <= int(match[2]) <= 65535:
+                valid = False
+                break
+    elif kind == 'mcp':
+        valid = set(row) == {'type', 'name', 'command', 'args', 'env'} and isinstance(row['name'], str) \
+            and NETWORK_NAME.fullmatch(row['name']) is not None and isinstance(row['command'], str) \
+            and re.fullmatch(r'[^\s\x00-\x1f\x7f-\x9f]{1,512}', row['command']) is not None \
+            and isinstance(row['args'], list) and len(row['args']) <= 100 \
+            and all(isinstance(value, str) and re.fullmatch(r'[^\x00-\x1f\x7f-\x9f]{0,4096}', value) is not None for value in row['args']) \
+            and extension_strings(row['env'], r'[A-Za-z_][A-Za-z0-9_]{0,127}')
+    elif kind == 'tools':
+        pattern = r'(?:npm:(?:@[a-z0-9][a-z0-9._-]*/)?[a-z0-9][a-z0-9._-]*@[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?|pip:[A-Za-z0-9][A-Za-z0-9._-]*==[0-9][A-Za-z0-9.!+_-]*)'
+        valid = set(row) == {'type', 'packages'} and extension_strings(row['packages'], pattern, minimum=1) \
+            and all(len(value) <= 512 for value in row['packages'])
+    if not valid:
+        raise SafeFailure('invalid ' + kind + ' extension fields')
+
+
+def validate_extensions_allowed(value) -> dict:
+    if not isinstance(value, dict) or set(value) != {'types', 'mount_roots', 'networks'}:
+        raise SafeFailure('invalid extensions_allowed policy')
+    for field in ('types', 'mount_roots', 'networks'):
+        rows = value[field]
+        if not isinstance(rows, list) or len(rows) > (len(EXTENSION_TYPES) if field == 'types' else 100) or any(not isinstance(row, str) for row in rows) or len(set(rows)) != len(rows):
+            raise SafeFailure('invalid extensions_allowed ' + field)
+    if set(value['types']) - EXTENSION_TYPES:
+        raise SafeFailure('unknown extension type in extensions_allowed')
+    for root in value['mount_roots']:
+        path(root)
+        if any(char in root for char in (':', ',', '\x7f')):
+            raise SafeFailure('invalid extensions_allowed mount root')
+    if any(NETWORK_NAME.fullmatch(name) is None or name in {'host', 'none'} for name in value['networks']):
+        raise SafeFailure('invalid network in extensions_allowed')
+    return value
+
+
+def extension_resources(row: dict) -> tuple[int, int, int]:
+    if set(row) - {'type', 'memory', 'cpus', 'pids'} or not set(row) & {'memory', 'cpus', 'pids'}:
+        raise SafeFailure('invalid resources extension fields')
+    memory, cpus, pids = 0, 0, row.get('pids', 128)
+    if 'memory' in row:
+        match = re.fullmatch(r'([1-9][0-9]*)([bkmgBKMG]?)', row['memory']) if isinstance(row['memory'], str) and len(row['memory']) <= 32 else None
+        if match is None:
+            raise SafeFailure('invalid resources memory')
+        amount = Decimal(match[1]) * 1024 ** ('bkmg'.index(match[2].lower()) if match[2] else 0)
+        if amount != int(amount) or not 0 < amount < 2 ** 63:
+            raise SafeFailure('invalid resources memory limit')
+        memory = int(amount)
+    if 'cpus' in row:
+        if isinstance(row['cpus'], bool) or not isinstance(row['cpus'], (int, float)):
+            raise SafeFailure('invalid resources cpus')
+        try:
+            amount = Decimal(str(row['cpus'])) * 1_000_000_000
+            if not amount.is_finite() or not 0 < amount < 2 ** 63 or amount != int(amount):
+                raise SafeFailure('invalid resources cpus limit')
+            cpus = int(amount)
+        except InvalidOperation:
+            raise SafeFailure('invalid resources cpus') from None
+    if type(pids) is not int or not 1 <= pids <= 4096:
+        raise SafeFailure('invalid resources pids (expected 1..4096)')
+    return memory, cpus, pids
+
+
+def agent_extensions(agent: dict) -> list[dict]:
+    rows = agent.get('extensions', [])
+    if not isinstance(rows, list) or len(rows) > 100:
+        raise SafeFailure('invalid bounded agent extensions')
+    identities = set()
+    for row in rows:
+        if not isinstance(row, dict) or not isinstance(row.get('type'), str) or row['type'] not in EXTENSION_TYPES:
+            raise SafeFailure('unknown agent extension type')
+        kind = row['type']
+        identity = (kind, row.get('target') if kind == 'mount' else row.get('name') if kind in {'network', 'mcp'} else None)
+        if not isinstance(identity[1], (str, type(None))) or identity in identities:
+            raise SafeFailure('duplicate or invalid ' + kind + ' extension')
+        identities.add(identity)
+        if kind == 'mount':
+            if set(row) != {'type', 'source', 'target', 'mode'} or not isinstance(row['mode'], str) or row['mode'] not in {'ro', 'rw'}:
+                raise SafeFailure('invalid mount extension fields')
+            for field in ('source', 'target'):
+                if len(str(row[field])) > 4096 or any(char in str(row[field]) for char in (':', ',')) or any(127 <= ord(char) <= 159 for char in str(row[field])):
+                    raise SafeFailure('invalid mount extension path')
+                path(row[field])
+        elif kind == 'network' and (set(row) != {'type', 'name'} or not isinstance(row['name'], str)
+                or NETWORK_NAME.fullmatch(row['name']) is None or row['name'] in {'none', 'host'}):
+            raise SafeFailure('invalid network extension')
+        elif kind == 'resources':
+            extension_resources(row)
+        elif kind in {'gpu', 'full_control'} and set(row) != {'type'}:
+            raise SafeFailure('invalid ' + kind + ' extension fields')
+        elif kind in {'ssh', 'docker', 'browser', 'mcp', 'tools'}:
+            validate_prepared_extension(row)
+    if any(row['type'] == 'browser' and row['mode'] == 'ssh_tunnel' for row in rows) and not any(row['type'] == 'ssh' for row in rows):
+        raise SafeFailure('browser SSH tunnel requires the ssh extension')
+    return rows
+
+
+def approve_extensions(policy: dict, agent: dict) -> list[dict]:
+    rows = agent_extensions(agent)
+    if not rows:
+        return rows
+    allowed = validate_extensions_allowed(policy.get('extensions_allowed', {'types': [], 'mount_roots': [], 'networks': []}))
+    for row in rows:
+        kind = row['type']
+        if kind not in allowed['types']:
+            raise SafeFailure('extension not allowed by host policy: ' + kind)
+        if kind == 'mount':
+            source = path(row['source'])
+            try:
+                if source.resolve(strict=True) != source:
+                    raise SafeFailure('mount extension source must not contain symlinks')
+                if not any(source.is_relative_to(path(root)) and path(root).resolve(strict=True) == path(root)
+                           for root in allowed['mount_roots']):
+                    raise SafeFailure('mount extension source is outside allowed host roots')
+            except (OSError, RuntimeError):
+                raise SafeFailure('mount extension source or allowed root is unavailable') from None
+        elif kind == 'network' and row['name'] not in allowed['networks']:
+            raise SafeFailure('network extension is not in allowed host networks')
+    if agent.get('runtime_mode') != 'container' or agent.get('_placement', {}).get('ownership') == 'shared':
+        raise SafeFailure('extensions require a dedicated container')
+    return rows
 
 
 def digest(path: pathlib.Path) -> str:
@@ -65,8 +221,10 @@ def load_policy(filename: pathlib.Path) -> dict:
     finally:
         os.close(parent)
     required = {'schemaVersion', 'host_id', 'executor_user', 'roots', 'native', 'containers', 'bundles', 'profiles', 'hooks'}
-    if not isinstance(policy, dict) or set(policy) - {'signer', 'authority', 'transport', 'container_templates', 'profile_templates', 'shared_containers', 'legacy_credentials', 'quota_environments'} != required or type(policy['schemaVersion']) is not int or policy['schemaVersion'] != 1:
+    if not isinstance(policy, dict) or set(policy) - {'signer', 'authority', 'transport', 'container_templates', 'profile_templates', 'shared_containers', 'legacy_credentials', 'quota_environments', 'extensions_allowed'} != required or type(policy['schemaVersion']) is not int or policy['schemaVersion'] != 1:
         raise SafeFailure('invalid executor policy schema')
+    if 'extensions_allowed' in policy:
+        validate_extensions_allowed(policy['extensions_allowed'])
     if policy['executor_user'] != pwd.getpwuid(os.geteuid()).pw_name or re.fullmatch(r'[a-z][a-z0-9_-]{0,63}', policy['host_id']) is None:
         raise SafeFailure('executor host or execution user differs')
     if not isinstance(policy['roots'], dict) or set(policy['roots']) != {'state', 'runtime', 'pki', 'tokens', 'identities'}:
@@ -203,8 +361,9 @@ def validate_payload(document) -> dict:
         raise SafeFailure('invalid request parameters')
     if request['kind'] in {'create', 'update'}:
         fields = {'runtime_key', 'harness_id', 'primary_room_id', 'memberships', 'placement'}
-        if fields - set(parameters) or set(parameters) - fields - {'display_name', 'primary_account_id', 'model_id', 'reasoning_effort'}:
+        if fields - set(parameters) or set(parameters) - fields - {'display_name', 'primary_account_id', 'model_id', 'reasoning_effort', 'extensions'}:
             raise SafeFailure('request may only contain declarative agent fields')
+        agent_extensions(parameters)
         from fleet_provider_openclaw import validate_execution_selection
         validate_execution_selection(parameters)
         provider_module = declarative_provider_module(parameters)
@@ -276,7 +435,8 @@ def target_agent(context: dict) -> dict:
             'home_directory': placement['home_directory'], 'state_directory': placement['state_directory'],
             'primary_account_id': parameters.get('primary_account_id'), 'model_id': parameters.get('model_id'),
             'reasoning_effort': parameters.get('reasoning_effort'), '_trusted_accounts': context.get('trusted_accounts', []),
-            '_trusted_accounts_present': 'trusted_accounts' in context, 'fleet_baseline': baseline}
+            '_trusted_accounts_present': 'trusted_accounts' in context, 'fleet_baseline': baseline,
+            'extensions': parameters.get('extensions', identities[0].get('extensions', []) if len(identities) == 1 else [])}
     rows = context.get('snapshot', {}).get('agents', [])
     matches = [row for row in rows if row.get('tenant_id') == target['tenant_id'] and row.get('alias') == target['alias']]
     if len(matches) != 1:
@@ -322,5 +482,8 @@ def approve_agent(policy: dict, agent: dict) -> dict:
         expected = state_root / agent['runtime_key']
         if path(agent['state_directory']) != expected:
             continue
-        return {**agent, 'systemd_user': manager, '_placement': candidate}
+        approved = {**agent, 'systemd_user': manager, '_placement': candidate}
+        if agent_extensions(approved) and (agent['runtime_mode'] != 'container' or candidate.get('ownership') == 'shared'):
+            raise SafeFailure('extensions require a dedicated container')
+        return approved
     raise SafeFailure('runtime user, manager, home or state directory is not approved')

@@ -198,7 +198,7 @@ def remove_runtime_credentials(policy: dict, agent: dict) -> None:
     observed = inspect_container(agent['container_name'])
     if observed is None or observed['State']['Running'] is not True:
         return
-    validate_container(policy, agent, observed)
+    validate_container(policy, agent, observed, teardown=True)
     identity = identity_for(agent, observed)
     docker('exec', '--user', '0', identity['container_id'], agent['_placement']['python'],
            f'{EXECUTOR_DESTINATION}/fleet_executor_view.py', '--root', '/run/cauce-credentials/' + agent['runtime_key'], '--remove')

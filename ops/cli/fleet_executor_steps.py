@@ -145,6 +145,10 @@ class Executor:
                       'systemd_user', 'home_directory', 'state_directory', 'primary_account_id', 'model_id'):
             if observed.get(field) != agent.get(field):
                 raise SafeFailure('durable snapshot differs from approved request')
+        if observed.get('extensions', []) != agent.get('extensions', []):
+            raise SafeFailure('durable snapshot extensions differ from approved request')
+        from fleet_executor_policy import approve_extensions
+        approve_extensions(self.policy, agent)
         if matches[0].get('enabled') is not False:
             raise SafeFailure('preparation must remain fenced before admission')
         receipt = self.materialize_snapshot(source)
@@ -219,7 +223,12 @@ class Executor:
                 raise SafeFailure('update requires the original runtime placement')
             if previous[0].get('runtime_key') != agent['runtime_key']:
                 raise SafeFailure('update cannot replace the physical runtime identity')
-            stop(self.policy, previous[0])
+            if previous[0].get('extensions', []) != agent.get('extensions', []) and previous[0].get('runtime_mode') == 'container' \
+                    and agent['runtime_mode'] == 'container' and previous[0].get('container_name') == agent['container_name']:
+                from fleet_executor_container import recreate_extensions
+                recreate_extensions(self.policy, previous[0], agent)
+            else:
+                stop(self.policy, previous[0])
         elif self.context['request']['kind'] == 'start' and 'runtime' not in self.journal:
             self.stop()
         evidence = start(self.policy, agent, operation_id=self.context['operation_id'])

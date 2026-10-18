@@ -7,7 +7,14 @@ import re
 import subprocess
 import time
 
-from fleet_executor_policy import SafeFailure, approve_agent, path
+from fleet_executor_policy import (
+    SafeFailure,
+    agent_extensions,
+    approve_agent,
+    approve_extensions,
+    extension_resources,
+    path,
+)
 from fleet_executor_runtime import (
     HELPER,
     NamespaceMismatch,
@@ -22,11 +29,49 @@ from fleet_executor_runtime import (
 from fleet_executor_view import environment as credential_environment
 from fleet_executor_view import payload_for
 
+
+def sidecar_effect(action: str, policy: dict, agent: dict) -> dict:
+    rows = [row for row in agent.get('extensions', [])
+            if row['type'] == 'docker' or row['type'] == 'browser' and row.get('mode') == 'sidecar']
+    if not rows:
+        return {}
+    agent = {**agent, 'extensions': rows}
+    if action == 'validate_sidecars' and agent.get('_teardown'):
+        policy = {**policy, 'extensions_allowed': {**policy.get('extensions_allowed', {}), 'types': [row['type'] for row in rows]}}
+    try:
+        from importlib import import_module
+        module = import_module('fleet_executor_sidecars')
+    except ModuleNotFoundError as error:
+        if error.name != 'fleet_executor_sidecars':
+            raise
+        raise SafeFailure('approved sidecar implementation is unavailable') from None
+    if action == 'purge_sidecars' and agent.get('_operation_id'):
+        filters = [item for key, value in expected_labels(policy, agent).items() for item in ('--filter', f'label={key}={value}')]
+        if not docker('ps', '-aq', '--filter', 'label=cauce.fleet.sidecar', *filters).strip() \
+                and not docker('network', 'ls', '-q', '--filter', 'label=cauce.fleet.sidecar', *filters).strip():
+            return {}
+    result = getattr(module, action)(policy, agent)
+    return module.public_result(module.sidecar_plan(policy, agent)) if action == 'validate_sidecars' and result is None else result
+
+
+def ensure_sidecars(policy: dict, agent: dict) -> dict:
+    return sidecar_effect('ensure_sidecars', policy, agent)
+
+
+def validate_sidecars(policy: dict, agent: dict) -> dict:
+    return sidecar_effect('validate_sidecars', policy, agent)
+
+
+def purge_sidecars(policy: dict, agent: dict) -> dict:
+    return sidecar_effect('purge_sidecars', policy, agent)
+
 DOCKER = '/usr/bin/docker'
 HELPER_DESTINATION = '/cauce/lifecycle'
 EXECUTOR_SOURCE = pathlib.Path(__file__).resolve().parent
 EXECUTOR_DESTINATION = '/cauce/executor'
 RELEASE_ROOT = EXECUTOR_SOURCE.parents[1]
+BASE_CAPABILITIES = ['SETUID', 'SETGID', 'CHOWN', 'SYS_PTRACE', 'DAC_OVERRIDE', 'FOWNER']
+EXTENSIONS_LABEL = 'cauce.fleet.extensions'
 
 
 DIAGNOSTIC_LIMIT = 400
@@ -51,8 +96,16 @@ def docker(*arguments: str) -> bytes:
 
 
 def expected_labels(policy: dict, agent: dict) -> dict:
-    return {'cauce.fleet.runtime_key': agent['runtime_key'], 'cauce.fleet.tenant': agent['tenant_id'],
+    labels = {'cauce.fleet.runtime_key': agent['runtime_key'], 'cauce.fleet.tenant': agent['tenant_id'],
             'cauce.fleet.alias': agent['alias'], 'cauce.fleet.host': policy['host_id'], 'cauce.fleet.owner': policy['executor_user']}
+    if agent.get('_operation_id'):
+        labels[OPERATION_LABEL] = agent['_operation_id']
+    return labels
+
+
+def extensions_label(agent: dict) -> str | None:
+    rows = agent_extensions(agent)
+    return json.dumps(rows, sort_keys=True, separators=(',', ':')) if rows else None
 
 
 def inspect_container(name: str) -> dict | None:
@@ -85,29 +138,103 @@ def observe_container(policy: dict, agent: dict) -> dict | None:
     return observed if previous is None else rebind(policy, agent, observed, previous, RELEASE_ROOT)
 
 
-def validate_container(policy: dict, agent: dict, observed: dict, binds: dict | None = None) -> None:
+def extension_shape(policy: dict, agent: dict, binds: dict, *, teardown: bool = False) -> dict:
+    rows = agent_extensions(agent) if teardown else approve_extensions(policy, agent)
+    placement = agent['_placement']
+    protected = [path(value) for value in [*binds, placement['state_root'], '/run', '/proc', '/sys', '/dev']]
+    if placement.get('profile_root'):
+        protected.append(path(placement['profile_root']))
+    mounts, networks, memory, cpus, pids = {}, set(), 0, 0, 128
+    for row in rows:
+        if row['type'] == 'mount':
+            target = path(row['target'])
+            if any(target.is_relative_to(base) or base.is_relative_to(target) for base in protected):
+                raise SafeFailure('mount extension overlaps a protected container path')
+            if any(target.is_relative_to(path(other)) or path(other).is_relative_to(target) for other in mounts):
+                raise SafeFailure('mount extensions overlap')
+            mounts[row['target']] = row
+        elif row['type'] == 'network':
+            networks.add(row['name'])
+        elif row['type'] == 'resources':
+            memory, cpus, pids = extension_resources(row)
+    base_network = policy.get('transport', {}).get('network', 'none')
+    if networks and base_network in {'none', 'host'}:
+        raise SafeFailure('network extensions require an isolated base Docker network')
+    return {'mounts': mounts, 'networks': {base_network, *networks}, 'memory': memory, 'cpus': cpus, 'pids': pids,
+            'full_control': any(row['type'] == 'full_control' for row in rows), 'gpu': any(row['type'] == 'gpu' for row in rows)}
+
+
+def sidecar_shape(result: dict | None) -> tuple[set[str], dict]:
+    result = result or {}
+    if not isinstance(result, dict):
+        raise SafeFailure('sidecar runtime shape is invalid')
+    network = result.get('network')
+    networks, environment = result.get('networks', [network] if network else []), result.get('environment', {})
+    if not isinstance(networks, list) or any(not isinstance(name, str) for name in networks) \
+            or not isinstance(environment, dict) or set(environment) - {'DOCKER_HOST', 'CAUCE_BROWSER_CDP_URL'} \
+            or any(not isinstance(value, str) or '\x00' in value for value in environment.values()):
+        raise SafeFailure('sidecar runtime shape is invalid')
+    return set(networks), environment
+
+
+def validate_isolation(policy: dict, agent: dict, observed: dict, shape: dict, *, teardown: bool = False) -> None:
+    host = observed['HostConfig']
+    def normalize(values):
+        return {value.removeprefix('CAP_') for value in values or []}
+    if host.get('ReadonlyRootfs') is not (not shape['full_control']) or host.get('Privileged') is not False \
+            or host.get('PidMode') != '' or host.get('NetworkMode') != policy.get('transport', {}).get('network', 'none') \
+            or normalize(host.get('CapAdd')) != set(BASE_CAPABILITIES) \
+            or set(host.get('CapDrop') or []) != (set() if shape['full_control'] else {'ALL'}) \
+            or host.get('SecurityOpt') != ['no-new-privileges'] \
+            or host.get('Tmpfs') != {'/run': 'rw,nosuid,noexec,size=16m'}:
+        raise SafeFailure('container isolation differs from the approved shape')
+    if any(host.get(key) != value for key, value in {'Memory': shape['memory'], 'MemorySwap': shape['memory'] * 2,
+            'NanoCpus': shape['cpus'], 'PidsLimit': shape['pids']}.items()) \
+            or any(host.get(key, 0) != 0 for key in ('CpuShares', 'CpuPeriod', 'CpuQuota', 'CpuRealtimePeriod', 'CpuRealtimeRuntime', 'MemoryReservation', 'BlkioWeight')) \
+            or any(host.get(key, '') != '' for key in ('CpusetCpus', 'CpusetMems')):
+        raise SafeFailure('container resource limits differ from the approved shape')
+    expected_gpu = [{'Driver': '', 'Count': -1, 'DeviceIDs': None, 'Capabilities': [['gpu']], 'Options': {}}] if shape['gpu'] else []
+    if (host.get('DeviceRequests') or []) != expected_gpu or host.get('Devices'):
+        raise SafeFailure('container GPU or device access differs from the approved shape')
+    sidecar_networks, environment = sidecar_shape(validate_sidecars(policy, {**agent, '_teardown': teardown}))
+    if set(observed.get('NetworkSettings', {}).get('Networks') or {}) != shape['networks'] | sidecar_networks:
+        raise SafeFailure('container networks differ from the approved shape')
+    current_env = dict(value.split('=', 1) for value in observed['Config'].get('Env', []) if '=' in value)
+    if any(current_env.get(key) != value for key, value in environment.items()):
+        raise SafeFailure('container sidecar environment differs from the approved shape')
+
+
+def validate_container(policy: dict, agent: dict, observed: dict, binds: dict | None = None, *, teardown: bool = False) -> None:
     placement = agent['_placement']
     if placement.get('ownership') == 'shared':
+        approve_extensions(policy, agent)
         from fleet_executor_legacy import validate_shared_observation
         validate_shared_observation(policy, agent, observed)
         return
     if observed.get('Image') != placement['image'] or not all(observed['Config']['Labels'].get(key) == value
         for key, value in expected_labels(policy, agent).items()):
         raise SafeFailure('container image or ownership labels differ')
-    if observed['HostConfig'].get('ReadonlyRootfs') is not True or observed['HostConfig'].get('Privileged') is not False \
-            or observed['HostConfig'].get('PidMode') == 'host' \
-            or observed['HostConfig'].get('NetworkMode') != policy.get('transport', {}).get('network', 'none'):
-        raise SafeFailure('container isolation differs from the approved shape')
+    if observed['Config']['Labels'].get(EXTENSIONS_LABEL) != extensions_label(agent):
+        raise SafeFailure('container declared extensions differ')
+    if teardown and binds is None:
+        from fleet_executor_rebind import bound_release
+        previous = bound_release(observed, RELEASE_ROOT)
+        binds = runtime_mounts(policy, agent, previous, RELEASE_ROOT) if previous is not None else None
     binds = runtime_mounts(policy, agent) if binds is None else binds
+    shape = extension_shape(policy, agent, binds, teardown=teardown)
+    validate_isolation(policy, agent, observed, shape, teardown=teardown)
     mounts = {row['Destination']: row for row in observed['Mounts']}
     state = mounts.get(placement['state_root'])
     profile_root = placement.get('profile_root')
     profiles = mounts.get(profile_root) if profile_root else None
-    if not state or state.get('Type') != 'volume' or state.get('Name') != agent['container_name'] + '-state' \
-            or any(not mounts.get(destination) or mounts[destination].get('Source') != source or mounts[destination].get('RW') is not False
+    if len(mounts) != len(observed['Mounts']) or not state or state.get('Type') != 'volume' or state.get('Name') != agent['container_name'] + '-state' or state.get('RW') is not True \
+            or any(not mounts.get(destination) or mounts[destination].get('Type') != 'bind' or mounts[destination].get('Source') != source or mounts[destination].get('RW') is not False
                    for destination, source in binds.items()) \
-            or len(mounts) != len(binds) + (2 if profile_root else 1) or profile_root and (not profiles or profiles.get('Type') != 'volume' \
-                or profiles.get('Name') != agent['container_name'] + '-provider-profiles' or profiles.get('RW') is not True):
+            or len(mounts) != len(binds) + len(shape['mounts']) + (2 if profile_root else 1) or profile_root and (not profiles or profiles.get('Type') != 'volume' \
+                or profiles.get('Name') != agent['container_name'] + '-provider-profiles' or profiles.get('RW') is not True) \
+            or any(not mounts.get(destination) or mounts[destination].get('Type') != 'bind' or mounts[destination].get('Source') != row['source']
+                   or mounts[destination].get('RW') is not (row['mode'] == 'rw') or mounts[destination].get('Propagation') != 'rprivate'
+                   or set(mounts[destination].get('Mode', '').split(',')) != {row['mode'], 'z'} for destination, row in shape['mounts'].items()):
         raise SafeFailure('container runtime mounts differ')
 
 
@@ -130,6 +257,12 @@ OPERATION_LABEL = 'cauce.fleet.operation'
 
 def create_container(policy: dict, agent: dict, binds: dict | None = None, operation_id: str | None = None) -> dict:
     placement = agent['_placement']
+    mounts = runtime_mounts(policy, agent) if binds is None else binds
+    shape = extension_shape(policy, agent, mounts)
+    for name in shape['networks'] - {policy.get('transport', {}).get('network', 'none')}:
+        network = json.loads(docker('network', 'inspect', name))
+        if len(network) != 1 or network[0].get('Name') != name:
+            raise SafeFailure('network extension is not an existing named Docker network')
     image = json.loads(docker('image', 'inspect', placement['image']))[0]
     if image['Id'] != placement['image']:
         raise SafeFailure('approved image digest is unavailable')
@@ -139,21 +272,36 @@ def create_container(policy: dict, agent: dict, binds: dict | None = None, opera
         if name not in existing:
             docker('volume', 'create', *[value for key, value in {**labels, **operation_labels}.items() for value in ('--label', f'{key}={value}')], name)
     volume = agent['container_name'] + '-state'
-    label_arguments = [value for key, value in {**expected_labels(policy, agent), **operation_labels}.items() for value in ('--label', f'{key}={value}')]
+    extension_labels = {EXTENSIONS_LABEL: extensions_label(agent)} if agent.get('extensions') else {}
+    label_arguments = [value for key, value in {**expected_labels(policy, agent), **operation_labels, **extension_labels}.items() for value in ('--label', f'{key}={value}')]
     profile_arguments = ['--mount', f'type=volume,source={agent["container_name"]}-provider-profiles,destination={placement["profile_root"]}'] \
         if placement.get('profile_root') else []
-    mounts = runtime_mounts(policy, agent) if binds is None else binds
     if any(not pathlib.Path(source).exists() for source in mounts.values()):
         raise SafeFailure('runtime bind source is unavailable')
     # Volume syntax with the shared relabel (never Z): several containers share one release tree.
     bind_arguments = [value for destination, source in mounts.items()
                       for value in ('--volume', f'{source}:{destination}:ro,z')]
-    docker('create', '--name', agent['container_name'], *label_arguments, '--network', policy.get('transport', {}).get('network', 'none'), '--read-only',
-           '--cap-drop', 'ALL', '--cap-add', 'SETUID', '--cap-add', 'SETGID', '--cap-add', 'CHOWN', '--cap-add', 'SYS_PTRACE', '--cap-add', 'DAC_OVERRIDE', '--cap-add', 'FOWNER',
-           '--security-opt', 'no-new-privileges', '--pids-limit', '128', '--tmpfs', '/run:rw,nosuid,noexec,size=16m',
+    bind_arguments.extend(value for row in shape['mounts'].values() for value in ('--volume', f'{row["source"]}:{row["target"]}:{row["mode"]},z'))
+    isolation = [] if shape['full_control'] else ['--read-only', '--cap-drop', 'ALL']
+    limits = []
+    for row in agent.get('extensions', []):
+        if row['type'] == 'resources':
+            limits = [value for key, flag in (('memory', '--memory'), ('cpus', '--cpus')) if key in row for value in (flag, str(row[key]))]
+    if policy.get('transport', {}).get('network', 'none') in {'none', 'host'} and any(
+            row['type'] == 'docker' or row['type'] == 'browser' and row.get('mode') == 'sidecar' for row in agent.get('extensions', [])):
+        raise SafeFailure('sidecars require an isolated base Docker network')
+    sidecar_networks, environment = sidecar_shape(ensure_sidecars(policy, {**agent, '_operation_id': operation_id}))
+    if sidecar_networks and policy.get('transport', {}).get('network', 'none') in {'none', 'host'}:
+        raise SafeFailure('sidecars require an isolated base Docker network')
+    docker('create', '--name', agent['container_name'], *label_arguments, '--network', policy.get('transport', {}).get('network', 'none'), *isolation,
+           *[value for cap in BASE_CAPABILITIES for value in ('--cap-add', cap)],
+           '--security-opt', 'no-new-privileges', '--pids-limit', str(shape['pids']), '--tmpfs', '/run:rw,nosuid,noexec,size=16m',
            '--mount', f'type=volume,source={volume},destination={placement["state_root"]}',
-           *bind_arguments, *profile_arguments,
+           *bind_arguments, *profile_arguments, *limits, *(['--gpus', 'all'] if shape['gpu'] else []),
+           *[value for key, item in environment.items() for value in ('--env', f'{key}={item}')],
            '--user', '0', '--entrypoint', '/bin/sleep', placement['image'], 'infinity')
+    for name in sorted((shape['networks'] | sidecar_networks) - {policy.get('transport', {}).get('network', 'none')}):
+        docker('network', 'connect', name, agent['container_name'])
     created = inspect_container(agent['container_name'])
     if created is None:
         raise SafeFailure('container creation was not observed')
@@ -181,6 +329,32 @@ def ensure_container(policy: dict, agent: dict, operation_id: str | None = None)
     if not observed['State']['Running'] or observed['State']['Pid'] <= 0:
         raise SafeFailure('container is not observed running')
     return observed
+
+
+def recreate_extensions(policy: dict, previous: dict, desired: dict) -> None:
+    previous, desired = approve_agent(policy, previous), approve_agent(policy, desired)
+    approve_extensions(policy, desired)
+    if previous.get('runtime_mode') != 'container' or desired.get('runtime_mode') != 'container' \
+            or any(previous.get(field) != desired.get(field) for field in ('tenant_id', 'alias', 'runtime_key', 'container_name', 'host_id')) \
+            or previous['_placement'].get('ownership') == 'shared':
+        raise SafeFailure('extension recreation requires the same dedicated runtime identity')
+    observed = inspect_container(previous['container_name'])
+    if observed is None:
+        return
+    try:
+        validate_container(policy, desired, observed)
+        return
+    except SafeFailure:
+        pass
+    stop_container(policy, previous)
+    owned_volumes(policy, previous)
+    observed = inspect_container(previous['container_name'])
+    if observed is None:
+        return
+    docker('rm', '-f', observed['Id'])
+    purge_sidecars(policy, previous)
+    if inspect_container(previous['container_name']) is not None:
+        raise SafeFailure('previous container removal was not observed')
 
 
 def identity_for(agent: dict, observed: dict) -> dict:
@@ -264,6 +438,7 @@ def start_container(policy: dict, raw_agent: dict, *, bootstrap: bool = True, op
     environment.update(credential_environment(view, policy, bootstrap))
     environment.update(sdk_environment(policy, agent, bootstrap, operation_id))
     environment.update(provider_environment(policy, agent))
+    environment.update(sidecar_shape(validate_sidecars(policy, agent))[1])
     if operation_id is not None:
         environment['CAUCE_FLEET_OPERATION_ID'] = operation_id
     arguments = [f'{key}={value}' for key, value in environment.items()]
@@ -286,12 +461,20 @@ def start_container(policy: dict, raw_agent: dict, *, bootstrap: bool = True, op
 
 def stop_container(policy: dict, raw_agent: dict) -> dict:
     agent = approve_agent(policy, raw_agent)
-    observed = observe_container(policy, agent)
+    try:
+        approve_extensions(policy, agent)
+    except SafeFailure:
+        observed = inspect_container(agent['container_name'])
+    else:
+        observed = observe_container(policy, agent)
     if agent['_placement'].get('ownership') == 'shared' and observed is None:
         raise SafeFailure('approved shared container is not observed')
     if observed is None:
         return {'stopped_verified': True}
-    validate_container(policy, agent, observed)
+    from fleet_executor_rebind import bound_release
+    previous = bound_release(observed, RELEASE_ROOT)
+    binds = runtime_mounts(policy, agent, previous, RELEASE_ROOT) if previous is not None else None
+    validate_container(policy, agent, observed, binds, teardown=True)
     if not observed['State']['Running'] and observed['State']['Pid'] == 0:
         return {'stopped_verified': True}
     identity = identity_for(agent, observed)
@@ -311,9 +494,11 @@ def purge_container(policy: dict, raw_agent: dict) -> dict:
         return {'removed': []}
     removed = []
     if observed is not None:
-        validate_container(policy, agent, observed)
+        validate_container(policy, agent, observed, teardown=True)
         docker('rm', '-f', observed['Id'])
         removed.append({'type': 'container', 'name': agent['container_name']})
+    sidecars = purge_sidecars(policy, agent) or {}
+    removed.extend(sidecars.get('removed', []))
     existing = docker('volume', 'ls', '--format', '{{.Name}}').decode().splitlines()
     for volume in owned_volumes(policy, agent)[0]:
         if volume in existing:
@@ -333,6 +518,7 @@ def discard_operation(policy: dict, raw_agent: dict, operation_id: str) -> None:
     observed = inspect_container(agent['container_name'])
     if observed is not None and all((observed['Config'].get('Labels') or {}).get(key) == value for key, value in labels.items()):
         docker('rm', '-f', observed['Id'])
+    purge_sidecars(policy, {**agent, '_operation_id': operation_id})
     existing = docker('volume', 'ls', '--format', '{{.Name}}').decode().splitlines()
     for name in (agent['container_name'] + '-state', agent['container_name'] + '-provider-profiles'):
         if name in existing and all((json.loads(docker('volume', 'inspect', name))[0].get('Labels') or {}).get(key) == value

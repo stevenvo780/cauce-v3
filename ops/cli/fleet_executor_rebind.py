@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import json
 import os
 import pathlib
 import re
 import stat
 
 from fleet_executor_container import (
+    EXTENSIONS_LABEL,
     HELPER_DESTINATION,
     create_container,
     docker,
@@ -111,10 +113,15 @@ def owned_agent(policy: dict, name: str, observed: dict, root: pathlib.Path, rel
         [harness for harness, bundle in sorted(policy['bundles'].items()) if rebased(bundle['directory'], release, root) in destinations]
     if not harnesses:
         raise SafeFailure('container mounts no approved runtime bundle')
+    try:
+        extensions = json.loads(labels.get(EXTENSIONS_LABEL, '[]'))
+    except (TypeError, ValueError):
+        raise SafeFailure('container extension declaration is invalid') from None
     return approve_agent(policy, {'tenant_id': tenant, 'alias': alias, 'runtime_key': key, 'harness_id': harnesses[0],
         'host_id': policy['host_id'], 'runtime_mode': 'container', 'container_name': name,
         'runtime_user': placement['runtime_user'], 'home_directory': placement['home_directory'],
-        'state_directory': str(pathlib.Path(placement['state_root']) / key), 'systemd_user': placement.get('systemd_user')})
+        'state_directory': str(pathlib.Path(placement['state_root']) / key), 'systemd_user': placement.get('systemd_user'),
+        'extensions': extensions})
 
 
 def adapter_stopped(agent: dict, observed: dict) -> bool:
@@ -129,7 +136,8 @@ def adapter_stopped(agent: dict, observed: dict) -> bool:
 def rebind_all(policy: dict, release: pathlib.Path, *, include_running: bool = False, dry_run: bool = False) -> dict:
     receipt = {'release': release.name, 'rebound': [], 'deferred': [], 'current': [], 'refused': [], 'shared': []}
     names = docker('ps', '-a', '--filter', 'label=cauce.fleet.owner=' + policy['executor_user'],
-                   '--filter', 'label=cauce.fleet.host=' + policy['host_id'], '--format', '{{.Names}}').decode().split()
+                   '--filter', 'label=cauce.fleet.host=' + policy['host_id'], '--filter', 'label!=cauce.fleet.sidecar',
+                   '--format', '{{.Names}}').decode().split()
     planned = []
     for name in sorted(set(names)):
         if name in policy.get('shared_containers', {}):

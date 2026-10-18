@@ -35,7 +35,10 @@ class FakeDocker:
         self.counter += 1
         self.containers[name] = {'Id': f'{self.counter:064x}', 'Name': '/' + name, 'Image': IMAGE,
             'Config': {'Labels': labels}, 'Mounts': mounts,
-            'HostConfig': {'ReadonlyRootfs': True, 'Privileged': False, 'PidMode': '', 'NetworkMode': 'none'},
+            'HostConfig': {'ReadonlyRootfs': True, 'Privileged': False, 'PidMode': '', 'NetworkMode': 'none',
+                'CapAdd': container.BASE_CAPABILITIES, 'CapDrop': ['ALL'], 'SecurityOpt': ['no-new-privileges'],
+                'Tmpfs': {'/run': 'rw,nosuid,noexec,size=16m'}, 'Memory': 0, 'MemorySwap': 0, 'NanoCpus': 0, 'PidsLimit': 128},
+            'NetworkSettings': {'Networks': {'none': {}}},
             'State': {'Running': running, 'Pid': 4000 + self.counter if running else 0, 'StartedAt': f't{self.counter}'}}
         return self.containers[name]
 
