@@ -46,7 +46,7 @@ it('la ficha muestra la actualización y relee la tarjeta con su poller existent
   const intervals = vi.spyOn(window, 'setInterval'); renderWithApi(<AgentQuotaDetail tenant="One" alias="janus" />);
   const card = within(await screen.findByRole('article', { name: 'Cuotas de Cuenta' }));
   expect(card.getByRole('status')).toHaveTextContent('Actualizando…');
-  expect(card.queryByRole('meter')).not.toBeInTheDocument();
+  expect(card.getByRole('meter')).toHaveAttribute('value', '56');
   // The accounts poller is the shared quota read; the sheet only adds the poller of the agent's own reader.
   const ticks = intervals.mock.calls.filter(([, period]) => period === 30_000).map(([tick]) => tick);
   if (ticks.length !== 2 || !ticks.every(tick => typeof tick === 'function')) throw new Error('No se registró el poller existente de la ficha.');

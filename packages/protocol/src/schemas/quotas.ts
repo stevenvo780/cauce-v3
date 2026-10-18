@@ -106,7 +106,6 @@ export const QuotaEnvironmentCreateSchema = z.object({
   label: z.string().trim().min(1).max(80),
   idempotency_key: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/u),
 }).strict();
-/** Providers a quota account can be registered for, with or without an executor that can query it yet. */
 export const QuotaAccountProviderSchema = z.enum(['claude', 'codex', 'gemini', 'grok', 'muse']);
 export const QuotaAccountCreateSchema = z.object({
   provider: QuotaAccountProviderSchema,

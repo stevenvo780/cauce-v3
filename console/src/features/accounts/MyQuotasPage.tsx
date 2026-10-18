@@ -1,12 +1,14 @@
 import { useCallback, useRef, useState } from 'react';
-import type { QuotaAccount, QuotaProvider } from '../../api/client/my-quotas-client';
+import { QUOTA_ACCOUNT_PROVIDERS, type QuotaAccount, type QuotaAccountProvider } from '../../api/client/my-quotas-client';
 import { useApi } from '../../api/context';
 import { usePolling } from '../../api/use-polling';
 import { useResource } from '../../api/use-resource';
 import { Button, Notice } from '../../components/kit';
+import { onNavClick } from '../../router';
 import { canManageCompany, useCompanyAuthority } from '../auth/company-authority';
 import { randomUuid } from '../../random-id';
 import { QuotaAccountCard } from './QuotaAccountCard';
+import { PROVIDER_LABEL } from './quotas';
 import { QuotaEnvironmentPanel } from './QuotaEnvironmentPanel';
 import { EXECUTABLE_QUOTA_PROVIDERS } from './quota-environment-capabilities';
 import { failedQuotaRead } from './quota-availability';
@@ -30,7 +32,6 @@ export function MyQuotasPage() {
   const ready = !!accounts.data && !accounts.error && !accounts.loading && !busy;
   const canWrite = canManageCompany(authority?.role) && ready;
   const canWriteAccounts = canManageQuotaAccounts(authority?.role) && ready;
-  const canRegisterAccounts = canWriteAccounts && !environments.loading && !environments.error;
   const reloadAccounts = accounts.reload;
   const reloadEnvironments = environments.reload;
   const reload = useCallback(async () => {
@@ -62,9 +63,9 @@ export function MyQuotasPage() {
   const registerBlock = canWriteAccounts ? undefined : !canManageQuotaAccounts(authority?.role)
     ? 'Solo el dueño o un administrador de la empresa registra cuentas de cuotas. Pide a uno de ellos que la registre.'
     : busy ? 'Espera a que termine la operación en curso.'
-      : accounts.loading || environments.loading ? 'Espera a que termine la lectura de cuentas y entornos.'
+      : accounts.loading ? 'Espera a que termine la lectura de cuentas.'
         : 'No hay una lectura vigente de cuentas. Actualiza cuotas y entornos y vuelve a intentarlo.';
-  const executableProviders = environments.data?.capabilities.available
+  const executableProviders: readonly string[] = environments.data?.capabilities.available
     ? environments.data.capabilities.providers.filter(provider => EXECUTABLE_QUOTA_PROVIDERS.has(provider)) : [];
   const pinned = preferences.data?.pinned_quota_accounts ?? [];
   const visible = [...accounts.data?.accounts ?? []].filter(account => !filterPinned || pinned.includes(account.id))
@@ -84,9 +85,9 @@ export function MyQuotasPage() {
     {notice ? <Notice tone="ok" role="status">{notice}</Notice> : null}
     <div className="flex flex-wrap gap-2"><Button aria-pressed={filterPinned} disabled={!preferences.data || !!preferences.error} onClick={() => { setFilterPinned(!filterPinned); }}>{filterPinned ? 'Ver todas las cuentas' : 'Ver sólo cuentas fijadas'}</Button>
       <Button variant="primary" disabled={!canWriteAccounts} title={registerBlock} onClick={() => { setCreating(true); }}>Registrar cuenta</Button></div>
-    {creating ? <QuotaAccountForm providers={executableProviders} busy={busy} canWrite={canRegisterAccounts} cancel={() => { setCreating(false); }}
-      save={input => canRegisterAccounts ? write(() => api.createQuotaAccount({ provider: input.provider, label: input.label, idempotency_key: input.idempotency_key }), 'Cuenta registrada. Crea su entorno para autenticar y consultar.') : Promise.resolve()} /> : null}
-    {editing ? <QuotaAccountForm key={editing.id} account={editing} providers={executableProviders} busy={busy} canWrite={canWriteAccounts} cancel={() => { setEditing(undefined); }}
+    {creating ? <QuotaAccountForm executable={executableProviders} busy={busy} canWrite={canWriteAccounts} cancel={() => { setCreating(false); }}
+      save={input => canWriteAccounts ? write(() => api.createQuotaAccount({ provider: input.provider, label: input.label, idempotency_key: input.idempotency_key }), 'Cuenta registrada. Crea su entorno para autenticar y consultar.') : Promise.resolve()} /> : null}
+    {editing ? <QuotaAccountForm key={editing.id} account={editing} executable={executableProviders} busy={busy} canWrite={canWriteAccounts} cancel={() => { setEditing(undefined); }}
       save={input => canWriteAccounts ? write(() => api.updateQuotaAccount(editing.id, { expected_version: editing.version, label: input.label, enabled: input.enabled,
         ...input.pause }), 'Cuenta actualizada.') : Promise.resolve()} /> : null}
     {removing ? <section aria-label="Confirmar eliminación de cuenta" className="grid gap-2 rounded-xl border border-line p-4"><p>Eliminar {removing.label} exige retirar antes sus entornos y asignaciones. El servidor comprobará esas dependencias.</p>
@@ -101,7 +102,7 @@ export function MyQuotasPage() {
   </div>;
 }
 
-interface AccountFormValues { provider: QuotaProvider; label: string; enabled: boolean; pause: { paused_until?: string | null; paused_reason?: string | null }; idempotency_key: string }
+interface AccountFormValues { provider: QuotaAccountProvider; label: string; enabled: boolean; pause: { paused_until?: string | null; paused_reason?: string | null }; idempotency_key: string }
 const pad = (value: number) => String(value).padStart(2, '0');
 function toLocalInput(iso: string | null): string {
   if (!iso) return '';
@@ -110,23 +111,19 @@ function toLocalInput(iso: string | null): string {
 }
 const formatLocal = (date: Date) => new Intl.DateTimeFormat('es', { day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit', timeZoneName: 'short' }).format(date);
 
-function isOfferedProvider(choice: string, providers: readonly QuotaProvider[]): boolean {
-  return providers.some(provider => provider === choice);
+function isAccountProvider(choice: string): choice is QuotaAccountProvider {
+  return QUOTA_ACCOUNT_PROVIDERS.some(provider => provider === choice);
 }
 
-function offeredProvider(choice: string, providers: readonly QuotaProvider[]): string {
-  return isOfferedProvider(choice, providers) ? choice : providers[0] ?? '';
-}
-
-function QuotaAccountForm({ account, providers, busy, canWrite, save, cancel }: {
-  account?: QuotaAccount; providers: readonly QuotaProvider[]; busy: boolean; canWrite: boolean; save: (input: AccountFormValues) => Promise<void>; cancel: () => void;
+function QuotaAccountForm({ account, executable, busy, canWrite, save, cancel }: {
+  account?: QuotaAccount; executable: readonly string[]; busy: boolean; canWrite: boolean; save: (input: AccountFormValues) => Promise<void>; cancel: () => void;
 }) {
   const automatic = automaticPauseWindow(account?.paused_reason ?? null) !== undefined;
   const initialPause = toLocalInput(account?.paused_until ?? null);
   const initialReason = automatic ? '' : account?.paused_reason ?? '';
   const [label, setLabel] = useState(account?.label ?? '');
-  const [providerChoice, setProviderChoice] = useState(account?.provider ?? '');
-  const provider = account ? account.provider : offeredProvider(providerChoice, providers);
+  const [providerChoice, setProviderChoice] = useState<string>(account?.provider ?? QUOTA_ACCOUNT_PROVIDERS[0]);
+  const provider = account ? account.provider : providerChoice;
   const [enabled, setEnabled] = useState(account?.enabled ?? true);
   const [paused, setPaused] = useState(initialPause);
   const [reason, setReason] = useState(initialReason);
@@ -139,7 +136,7 @@ function QuotaAccountForm({ account, providers, busy, canWrite, save, cancel }: 
   return <form aria-label={account ? 'Editar cuenta de cuotas' : 'Registrar cuenta de cuotas'} className="grid gap-2 rounded-xl border border-line bg-surface p-4" onSubmit={event => { event.preventDefault();
     if (locked) return;
     if (pausedDate && Number.isNaN(pausedDate.getTime())) { setError('Introduce una fecha de pausa válida.'); return; }
-    if (!account && !isOfferedProvider(provider, providers)) { setError('Elige un proveedor que los hosts puedan ejecutar ahora.'); return; }
+    if (!account && !isAccountProvider(provider)) { setError('Elige un proveedor de la lista.'); return; }
     setError('');
     const pause: AccountFormValues['pause'] = {};
     if (resume) { pause.paused_until = null; pause.paused_reason = null; }
@@ -149,11 +146,12 @@ function QuotaAccountForm({ account, providers, busy, canWrite, save, cancel }: 
       if (reasonChanged) pause.paused_reason = reason.trim() || null;
       else if (untilChanged && automatic) pause.paused_reason = null;
     }
-    void save({ provider: provider as QuotaProvider, label: label.trim(), enabled, pause, idempotency_key: idempotencyKey }); }}>
+    void save({ provider: provider as QuotaAccountProvider, label: label.trim(), enabled, pause, idempotency_key: idempotencyKey }); }}>
     <label>Nombre de la cuenta<input required maxLength={80} value={label} disabled={locked} onChange={event => { setLabel(event.target.value); }} /></label>
     <label>Proveedor<select value={provider} disabled={locked || !!account} onChange={event => { setProviderChoice(event.target.value); }}>
-      {[...new Set([...providers, ...account ? [account.provider] : []])].map(value => <option key={value}>{value}</option>)}</select></label>
-    {!account && !providers.length ? <Notice tone="warn">Ningún host puede ejecutar consultas de cuota todavía. Relee los entornos.</Notice> : null}
+      {[...new Set([...QUOTA_ACCOUNT_PROVIDERS, ...account ? [account.provider] : []])].map(value => <option key={value} value={value}>{PROVIDER_LABEL[value] ?? value}</option>)}</select></label>
+    {!account && !executable.includes(provider) ? <Notice tone="info">Ningún ordenador puede consultar todavía esta cuenta. Se registra igual; para ver su cuota, añade una computadora en{' '}
+      <a href="/config?seccion=computadoras" onClick={event => { onNavClick(event, '/config?seccion=computadoras'); }}>Ajustes → Computadoras</a>.</Notice> : null}
     {account ? <><label className="flex items-center gap-2"><input type="checkbox" checked={enabled} disabled={locked} onChange={event => { setEnabled(event.target.checked); }} />Cuenta habilitada</label>
       {automatic ? <p className="m-0 text-sm">{pauseReasonText(account.paused_reason)}</p> : null}
       <label>Pausa hasta (hora de tu navegador)<input type="datetime-local" value={paused} disabled={locked || resume} onChange={event => { setPaused(event.target.value); }} /></label>
@@ -161,7 +159,7 @@ function QuotaAccountForm({ account, providers, busy, canWrite, save, cancel }: 
       {automatic ? null : <label>Motivo de pausa<input maxLength={128} value={reason} disabled={locked || resume} onChange={event => { setReason(event.target.value); }} /></label>}
       {hasPause ? <label className="flex items-center gap-2"><input type="checkbox" checked={resume} disabled={locked} onChange={event => { setResume(event.target.checked); }} />Reanudar ahora (quita la pausa)</label> : null}</> : null}
     {error ? <Notice tone="danger" role="alert">{error}</Notice> : null}
-    <div className="flex gap-2"><Button type="submit" disabled={locked || !label.trim() || (!account && !isOfferedProvider(provider, providers))} title={locked ? (!canWrite ? 'Tu rol no permite guardar cuentas de cuotas. Pide a un dueño o administrador de la empresa que lo haga.' : 'Espera a que termine la operación en curso.') : !label.trim() ? 'Escribe el nombre de la cuenta.' : !account && !isOfferedProvider(provider, providers) ? 'Elige un proveedor que los hosts puedan ejecutar ahora.' : undefined}>{account ? 'Guardar cuenta' : 'Registrar cuenta'}</Button>
+    <div className="flex gap-2"><Button type="submit" disabled={locked || !label.trim()} title={locked ? (!canWrite ? 'Tu rol no permite guardar cuentas de cuotas. Pide a un dueño o administrador de la empresa que lo haga.' : 'Espera a que termine la operación en curso.') : !label.trim() ? 'Escribe el nombre de la cuenta.' : undefined}>{account ? 'Guardar cuenta' : 'Registrar cuenta'}</Button>
       <Button type="button" disabled={busy} onClick={cancel}>Cancelar</Button></div>
   </form>;
 }

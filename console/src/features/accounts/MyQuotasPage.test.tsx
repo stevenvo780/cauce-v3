@@ -62,7 +62,7 @@ it('fija una suscripción compartida en el servidor y relee la misma preferencia
       return HttpResponse.json({ version, pinned_quota_accounts: pinned }); }));
   const user = userEvent.setup(); const view = renderWithApi(owner());
   const card = within(await screen.findByRole('article', { name: 'Cuotas de Cuenta compartida' }));
-  expect(card.getByText(/Consumo compartido por 2 agentes/u)).toBeVisible();
+  expect(card.getByText(/Usada por One\/first, One\/second/u)).toBeVisible();
   expect(card.getByRole('meter')).toHaveAttribute('value', '56');
   expect(card.getByText(/Reinicio no informado/u)).toBeVisible();
   await waitFor(() => { expect(card.getByRole('button', { name: 'Fijar cuenta' })).toBeEnabled(); });
@@ -78,7 +78,7 @@ it('un lector de alcance tenant ve el total de agentes que comparten la cuenta s
   ] })));
   renderWithApi(owner());
   const card = within(await screen.findByRole('article', { name: 'Cuotas de Cuenta compartida' }));
-  expect(card.getByText(/Consumo compartido por 3 agentes \(ves 1 de tu espacio\)/u)).toBeVisible();
+  expect(card.getByText(/Usada por One\/janus y 2 más/u)).toBeVisible();
   expect(card.queryByText(/1 agentes/u)).not.toBeInTheDocument();
 });
 it('datos antiguos con saldo cero no muestran el cansancio de agotado', async () => {
@@ -89,7 +89,6 @@ it('datos antiguos con saldo cero no muestran el cansancio de agotado', async ()
   const card = within(await screen.findByRole('article', { name: 'Cuotas de Cuenta compartida' }));
   expect(card.getAllByText('Datos antiguos').length).toBeGreaterThan(0);
   expect(card.queryByText('Sin disponibilidad')).not.toBeInTheDocument();
-  expect(card.queryByRole('meter')).not.toBeInTheDocument();
 });
 it('autenticar pide consentimiento y muestra operación pendiente sin afirmar autenticación completa', async () => {
   const environment = { id: 'env-1', company_id: 'one', account_id: 'subscription', host_id: 'host', provider: 'codex', label: 'Consulta GPT',
@@ -117,7 +116,7 @@ it('autenticar pide consentimiento y muestra operación pendiente sin afirmar au
   }
 });
 
-it('registra una cuenta ofreciendo solo proveedores ejecutables y respeta límites contractuales en las cuentas y entornos', async () => {
+it('registra una cuenta y respeta límites contractuales en las cuentas y entornos', async () => {
   const environment = { id: 'env-1', company_id: 'one', account_id: 'subscription', host_id: 'host', provider: 'codex', label: 'Consulta GPT',
     status: 'ready', version: 2, created_at: '2026-10-11T00:00:00Z', updated_at: '2026-10-11T00:00:00Z' };
   const writes: unknown[] = [];
@@ -130,7 +129,7 @@ it('registra una cuenta ofreciendo solo proveedores ejecutables y respeta límit
   await user.click(screen.getByRole('button', { name: 'Registrar cuenta' }));
   const form = within(await screen.findByRole('form', { name: 'Registrar cuenta de cuotas' }));
   expect(form.getByRole('textbox', { name: 'Nombre de la cuenta' })).toHaveAttribute('maxlength', '80');
-  expect(form.getByRole('combobox', { name: 'Proveedor' })).toHaveTextContent('claudecodex');
+  expect(form.getByRole('combobox', { name: 'Proveedor' })).toHaveTextContent('ClaudeGPT / CodexAntigravityGrokMuse');
   await user.type(form.getByRole('textbox', { name: 'Nombre de la cuenta' }), 'Sin agentes');
   await user.click(form.getByRole('button', { name: 'Registrar cuenta' }));
   expect(await screen.findByText('Cuenta registrada. Crea su entorno para autenticar y consultar.')).toBeVisible();
@@ -193,7 +192,7 @@ it('muestra el motivo del fallo con su acción y la hora de medición', async ()
   renderWithApi(owner());
   const card = within(await screen.findByRole('article', { name: 'Cuotas de Cuenta compartida' }));
   expect(card.getByText('Sesión caducada: autenticar de nuevo')).toBeVisible();
-  expect(card.getByText(/Medida/u)).toBeVisible();
+  expect(card.getByText(/Medido/u)).toBeVisible();
 });
 
 it('el poller existente actualiza la tarjeta cuando acaba la consulta automática, sin pulsar botones', async () => {
@@ -215,7 +214,7 @@ it('el poller existente actualiza la tarjeta cuando acaba la consulta automátic
   const intervals = vi.spyOn(window, 'setInterval'); renderWithApi(owner());
   const card = within(await screen.findByRole('article', { name: 'Cuotas de Cuenta compartida' }));
   expect(card.getByRole('status')).toHaveTextContent('Actualizando…');
-  expect(card.queryByRole('meter')).not.toBeInTheDocument();
+  expect(card.getByRole('meter')).toHaveAttribute('value', '56');
   await screen.findByRole('article', { name: 'Entorno Consulta GPT' });
   const tick = intervals.mock.calls.find(([, period]) => period === 15_000)?.[0];
   if (typeof tick !== 'function') throw new Error('No se registró el poller existente.');
@@ -251,19 +250,6 @@ it('editar una cuenta con pausa automática no reenvía el motivo reservado y lo
   await user.click(form.getByRole('button', { name: 'Guardar cuenta' }));
   expect(await screen.findByText('Cuenta actualizada.')).toBeVisible();
   expect(patches).toEqual([{ expected_version: 3, label: 'Renombrada', enabled: true }]);
-});
-
-it('el alta de cuenta no ofrece gemini aunque las capacidades lo anuncien', async () => {
-  server.use(http.get('*/v3/console/quota-accounts', () => HttpResponse.json({ company_id: 'one', observed_at: '2026-10-11T00:00:00Z', accounts: [] })),
-    http.get('*/v3/console/quota-environments', () => HttpResponse.json({ company_id: 'one', environments: [], operations: [],
-      capabilities: { available: true, providers: ['codex', 'gemini', 'grok'], hosts: [], actions: ['create'] } })),
-    http.get('*/v3/console/preferences', () => HttpResponse.json({ version: 1, pinned_quota_accounts: [] })));
-  const user = userEvent.setup(); renderWithApi(owner());
-  await user.click(await screen.findByRole('button', { name: 'Registrar cuenta' }));
-  const provider = within(await screen.findByRole('form', { name: 'Registrar cuenta de cuotas' })).getByRole('combobox', { name: 'Proveedor' });
-  expect(within(provider).getByRole('option', { name: 'codex' })).toBeInTheDocument();
-  expect(within(provider).getByRole('option', { name: 'grok' })).toBeInTheDocument();
-  expect(within(provider).queryByRole('option', { name: 'gemini' })).not.toBeInTheDocument();
 });
 
 it('reanudar manda pausa y motivo nulos, y una fecha elegida se envía como instante con zona', async () => {
@@ -336,70 +322,7 @@ it('anuncia la carga inicial de entornos mientras el snapshot viaja', async () =
   expect(await screen.findByText(/No hay entornos de consulta/u)).toBeVisible();
 });
 
-it('no envía codex si el alta se abre antes de que la oferta llegue solo con grok', async () => {
-  const pending: ((response: Response) => void)[] = [];
-  let offered = false;
-  const grokOffer = () => HttpResponse.json({ company_id: 'one', environments: [], operations: [],
-    capabilities: { available: true, providers: ['grok'], hosts: [], actions: ['create'] } });
-  const writes: unknown[] = [];
-  server.use(
-    http.get('*/v3/console/quota-accounts', () => HttpResponse.json({ company_id: 'one', observed_at: '2026-10-11T00:00:00Z', accounts: [] })),
-    http.get('*/v3/console/quota-environments', () => offered ? grokOffer() : new Promise(resolve => { pending.push(resolve); })),
-    http.get('*/v3/console/preferences', () => HttpResponse.json({ version: 1, pinned_quota_accounts: [] })),
-    http.post('*/v3/console/quota-accounts', async ({ request }) => { writes.push(await request.json()); return HttpResponse.json({ account_id: 'new-account', duplicate: false }); }),
-  );
-  const user = userEvent.setup(); renderWithApi(owner());
-  await waitFor(() => { expect(screen.getByRole('button', { name: 'Registrar cuenta' })).toBeEnabled(); });
-  await user.click(screen.getByRole('button', { name: 'Registrar cuenta' }));
-  const form = within(await screen.findByRole('form', { name: 'Registrar cuenta de cuotas' }));
-  expect(form.getByText(/Ningún host puede ejecutar consultas de cuota todavía/u)).toBeVisible();
-  expect(form.getByRole('button', { name: 'Registrar cuenta' })).toBeDisabled();
-  await waitFor(() => { expect(pending.length).toBeGreaterThan(0); });
-  offered = true;
-  act(() => { for (const resolve of pending.splice(0)) resolve(grokOffer()); });
-  await waitFor(() => { expect(form.getByRole('combobox', { name: 'Proveedor' })).toHaveValue('grok'); });
-  expect(within(form.getByRole('combobox', { name: 'Proveedor' })).queryByRole('option', { name: 'codex' })).not.toBeInTheDocument();
-  await user.type(form.getByRole('textbox', { name: 'Nombre de la cuenta' }), 'Tardía');
-  await user.click(form.getByRole('button', { name: 'Registrar cuenta' }));
-  expect(await screen.findByText('Cuenta registrada. Crea su entorno para autenticar y consultar.')).toBeVisible();
-  expect(writes).toHaveLength(1);
-  expect(writes[0]).toMatchObject({ provider: 'grok', label: 'Tardía' });
-});
-
-it('no envía un proveedor retirado de la oferta con el formulario de alta abierto', async () => {
-  let offer = ['codex', 'grok']; const writes: unknown[] = [];
-  server.use(
-    http.get('*/v3/console/quota-accounts', () => HttpResponse.json({ company_id: 'one', observed_at: '2026-10-11T00:00:00Z', accounts: [] })),
-    http.get('*/v3/console/quota-environments', () => HttpResponse.json({ company_id: 'one', environments: [], operations: [],
-      capabilities: { available: true, providers: offer, hosts: [], actions: ['create'] } })),
-    http.get('*/v3/console/preferences', () => HttpResponse.json({ version: 1, pinned_quota_accounts: [] })),
-    http.post('*/v3/console/quota-accounts', async ({ request }) => { writes.push(await request.json()); return HttpResponse.json({ account_id: 'new-account', duplicate: false }); }),
-  );
-  const intervals = vi.spyOn(window, 'setInterval'); const user = userEvent.setup(); renderWithApi(owner());
-  await user.click(await screen.findByRole('button', { name: 'Registrar cuenta' }));
-  const form = within(await screen.findByRole('form', { name: 'Registrar cuenta de cuotas' }));
-  const provider = form.getByRole('combobox', { name: 'Proveedor' });
-  expect(provider).toHaveValue('codex');
-  await user.selectOptions(provider, 'grok');
-  await user.type(form.getByRole('textbox', { name: 'Nombre de la cuenta' }), 'Tras el cambio');
-  const tick = intervals.mock.calls.find(([, period]) => period === 15_000)?.[0];
-  if (typeof tick !== 'function') throw new Error('No se registró el poller existente.');
-  offer = []; act(() => { tick(); });
-  await waitFor(() => { expect(form.getByRole('button', { name: 'Registrar cuenta' })).toBeDisabled(); });
-  fireEvent.submit(screen.getByRole('form', { name: 'Registrar cuenta de cuotas' }));
-  expect(form.getByRole('alert')).toHaveTextContent('Elige un proveedor que los hosts puedan ejecutar ahora.');
-  expect(writes).toEqual([]);
-  offer = ['claude']; act(() => { tick(); });
-  await waitFor(() => { expect(form.getByRole('combobox', { name: 'Proveedor' })).toHaveValue('claude'); });
-  expect(within(form.getByRole('combobox', { name: 'Proveedor' })).queryByRole('option', { name: 'grok' })).not.toBeInTheDocument();
-  expect(within(form.getByRole('combobox', { name: 'Proveedor' })).queryByRole('option', { name: 'codex' })).not.toBeInTheDocument();
-  await user.click(form.getByRole('button', { name: 'Registrar cuenta' }));
-  expect(await screen.findByText('Cuenta registrada. Crea su entorno para autenticar y consultar.')).toBeVisible();
-  expect(writes).toHaveLength(1);
-  expect(writes[0]).toMatchObject({ provider: 'claude', label: 'Tras el cambio' });
-});
-
-it('edita etiqueta y pausa de una cuenta cuyo proveedor ya no se ofrece', async () => {
+it('edita etiqueta y pausa de una cuenta con el proveedor bloqueado', async () => {
   const patches: unknown[] = [];
   server.use(
     http.get('*/v3/console/quota-accounts', () => HttpResponse.json({ company_id: 'one', observed_at: '2026-10-11T00:00:00Z', accounts: [account] })),
@@ -415,8 +338,7 @@ it('edita etiqueta y pausa de una cuenta cuyo proveedor ya no se ofrece', async 
   const provider = form.getByRole('combobox', { name: 'Proveedor' });
   expect(provider).toBeDisabled();
   expect(provider).toHaveValue('codex');
-  expect(within(provider).getByRole('option', { name: 'codex' })).toBeInTheDocument();
-  expect(within(provider).getByRole('option', { name: 'grok' })).toBeInTheDocument();
+  expect(within(provider).getByRole('option', { name: 'GPT / Codex' })).toBeInTheDocument();
   await user.clear(form.getByRole('textbox', { name: 'Nombre de la cuenta' }));
   await user.type(form.getByRole('textbox', { name: 'Nombre de la cuenta' }), 'Sigue editable');
   fireEvent.change(form.getByLabelText('Pausa hasta (hora de tu navegador)'), { target: { value: '2026-12-10T08:30' } });
@@ -505,52 +427,6 @@ it('un alta abierta se bloquea si la relectura de cuentas falla y conserva el bo
   await user.click(form.getByRole('button', { name: 'Cancelar' }));
   expect(screen.queryByRole('form', { name: 'Registrar cuenta de cuotas' })).not.toBeInTheDocument();
   expect(writes).toEqual([]);
-});
-
-it('el alta conserva el borrador y no usa la oferta anterior al fallar o reintentar la lectura de entornos', async () => {
-  let state: 'ready' | 'failed' | 'pending' = 'ready';
-  let resolveRetry: ((response: Response) => void) | undefined;
-  const writes: unknown[] = [];
-  const offer = (provider: string) => HttpResponse.json({ company_id: 'one', environments: [], operations: [],
-    capabilities: { available: true, providers: [provider], hosts: [], actions: ['create'] } });
-  const detail = 'El ordenador de cuotas está fuera de la empresa activa.';
-  server.use(
-    http.get('*/v3/console/quota-accounts', () => HttpResponse.json({ company_id: 'one', observed_at: '2026-10-11T00:00:00Z', accounts: [] })),
-    http.get('*/v3/console/quota-environments', () => state === 'ready' ? offer('grok')
-      : state === 'failed' ? HttpResponse.json({ error: 'forbidden', message: detail }, { status: 403 })
-        : new Promise(resolve => { resolveRetry = resolve; })),
-    http.get('*/v3/console/preferences', () => HttpResponse.json({ version: 1, pinned_quota_accounts: [] })),
-    http.post('*/v3/console/quota-accounts', async ({ request }) => { writes.push(await request.json()); return HttpResponse.json({ account_id: 'new-account', duplicate: false }); }),
-  );
-  const user = userEvent.setup(); renderWithApi(owner());
-  await user.click(await screen.findByRole('button', { name: 'Registrar cuenta' }));
-  const element = await screen.findByRole('form', { name: 'Registrar cuenta de cuotas' });
-  const form = within(element);
-  const name = form.getByRole('textbox', { name: 'Nombre de la cuenta' });
-  const submit = form.getByRole('button', { name: 'Registrar cuenta' });
-  const refresh = screen.getByRole('button', { name: 'Actualizar cuotas y entornos' });
-  await waitFor(() => { expect(form.getByRole('combobox', { name: 'Proveedor' })).toHaveValue('grok'); });
-  await user.type(name, 'Borrador con oferta pendiente');
-  expect(submit).toBeEnabled();
-  state = 'failed'; await user.click(refresh);
-  expect(await screen.findByRole('alert')).toHaveTextContent(detail);
-  expect(submit).toBeDisabled();
-  await act(async () => { fireEvent.submit(element); });
-  expect(writes).toEqual([]);
-  expect(name).toHaveValue('Borrador con oferta pendiente');
-  state = 'pending'; await user.click(refresh);
-  await waitFor(() => { expect(resolveRetry).toBeTypeOf('function'); });
-  expect(submit).toBeDisabled();
-  await act(async () => { fireEvent.submit(element); });
-  expect(writes).toEqual([]);
-  act(() => { resolveRetry?.(offer('claude')); });
-  state = 'ready';
-  await waitFor(() => { expect(form.getByRole('combobox', { name: 'Proveedor' })).toHaveValue('claude'); });
-  expect(submit).toBeEnabled();
-  expect(name).toHaveValue('Borrador con oferta pendiente');
-  await user.click(submit);
-  await screen.findByText('Cuenta registrada. Crea su entorno para autenticar y consultar.');
-  expect(writes).toEqual([expect.objectContaining({ provider: 'claude', label: 'Borrador con oferta pendiente' })]);
 });
 
 it.each([

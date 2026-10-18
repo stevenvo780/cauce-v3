@@ -34,10 +34,22 @@ const STATUS_MESSAGE: Record<number, string> = {
 
 export const QUOTA_HOST_UNAVAILABLE_MESSAGE = 'El ordenador no responde; reintenta cuando vuelva a estar en línea.';
 
+const FIELD_LABEL: Record<string, string> = {
+  provider: 'proveedor', label: 'nombre', host_id: 'ordenador', account_id: 'cuenta', expected_version: 'versión',
+  idempotency_key: 'clave de la operación', paused_until: 'pausa hasta', paused_reason: 'motivo de pausa', enabled: 'habilitada',
+};
+
+/** The 400 of quota routes names the rejected fields after `invalid quota request:`. */
+function rejectedFields(message: string): string | undefined {
+  const fields = /^invalid quota request: (.+)$/u.exec(message)?.[1]?.split(', ').map(field => FIELD_LABEL[field] ?? field);
+  return fields?.length ? `El servidor rechazó ${fields.length === 1 ? 'el campo' : 'los campos'} ${fields.join(', ')}. Revísalo e inténtalo de nuevo.` : undefined;
+}
+
 /** Server messages on quota routes are not localized: the console maps status and codes without showing them. */
 export function describeQuotaError(cause: unknown, fallback: string): string {
   if (!(cause instanceof ApiError)) return fallback;
   if (cause.status === 409 && cause.code === 'quota_host_unavailable') return QUOTA_HOST_UNAVAILABLE_MESSAGE;
+  if (cause.status === 400) return rejectedFields(cause.message) ?? STATUS_MESSAGE[400];
   if (cause.status === 504) return cause.message;
   return STATUS_MESSAGE[cause.status] ?? fallback;
 }

@@ -6,6 +6,8 @@ import { agentQuotaClient, type AgentQuotaClient } from '../../features/accounts
 export type QuotaObservationStatus = 'unknown' | 'error' | 'stale' | 'ok';
 export type QuotaRefreshStatus = 'fresh' | 'updating' | 'not_authenticated' | 'executor_unavailable' | 'deleted' | 'busy' | 'read_only' | 'failed' | 'stale';
 export type QuotaProvider = 'claude' | 'codex' | 'gemini' | 'grok';
+export const QUOTA_ACCOUNT_PROVIDERS = ['claude', 'codex', 'gemini', 'grok', 'muse'] as const;
+export type QuotaAccountProvider = typeof QUOTA_ACCOUNT_PROVIDERS[number];
 export interface AccountQuotaWindow {
   group_key: string; window_key: string; model: string | null; label: string | null; host: string;
   used_percent: number | null; remaining_percent: number | null; window_minutes: number | null;
@@ -40,7 +42,7 @@ export interface QuotaHostCapabilities {
 export interface QuotaEnvironmentReceipt { environment: QuotaEnvironment; operation: QuotaEnvironmentOperation; duplicate?: boolean }
 export interface MyQuotasClient extends AgentQuotaClient {
   getQuotaAccounts(): Promise<QuotaAccountsSnapshot>;
-  createQuotaAccount(input: { provider: QuotaProvider; label: string; idempotency_key: string }): Promise<{ account_id: string; duplicate: boolean }>;
+  createQuotaAccount(input: { provider: QuotaAccountProvider; label: string; idempotency_key: string }): Promise<{ account_id: string; duplicate: boolean }>;
   updateQuotaAccount(id: string, input: { expected_version: number; label?: string; enabled?: boolean; paused_until?: string | null; paused_reason?: string | null }): Promise<unknown>;
   deleteQuotaAccount(id: string, version: number): Promise<unknown>;
   getQuotaEnvironments(): Promise<QuotaEnvironmentsSnapshot>;
