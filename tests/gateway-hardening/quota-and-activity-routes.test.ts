@@ -10,7 +10,7 @@ import {
  * the console without acquiring authority to change operational state.
  *
  * What this file does NOT test (it needs a real Postgres, not available on this machine): a
- * non-hub operator only sees their own rows in fleetActivity()/quotaSnapshot(), and the
+ * non-hub operator only sees their own rows in fleetActivity(), and the
  * auto-pause/auto-resume of recordQuotaSample() behaves as migration 013 documents. That stays
  * for the *-postgres.test.ts files.
  */
@@ -77,27 +77,6 @@ describe('GET /v3/console/activity', () => {
     expect(text).not.toMatch(/"body_preview"/);
     expect(text).not.toMatch(/"result"/);
     expect(text).not.toMatch(/"last_error"/);
-  });
-});
-
-describe('GET /v3/console/quotas', () => {
-  it('200 para un reader con permiso read y sin rol operator', async () => {
-    const repository = fakeRepository();
-    const app = await gateway(repository, testPrincipal({ roles: roles('agent'), permissions: grants('read') }));
-    const response = await app.inject({ method: 'GET', url: '/v3/console/quotas' });
-    expect(response.statusCode).toBe(200);
-    expect(repository.quotaSnapshot).toHaveBeenCalledWith('Pablo', 'midas');
-  });
-
-  it('200 para un operator con permiso read, delegando en quotaSnapshot()', async () => {
-    const repository = fakeRepository();
-    const principal = testPrincipal({
-      tenant_id: 'Steven', alias: 'kant', roles: roles('operator'), permissions: grants('read')
-    });
-    const app = await gateway(repository, principal);
-    const response = await app.inject({ method: 'GET', url: '/v3/console/quotas' });
-    expect(response.statusCode).toBe(200);
-    expect(repository.quotaSnapshot).toHaveBeenCalledWith('Steven', 'kant');
   });
 });
 

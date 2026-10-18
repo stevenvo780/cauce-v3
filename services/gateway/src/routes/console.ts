@@ -277,17 +277,6 @@ function registerConsoleAgentRoutes(
     } catch (error) { replyError(reply, error); }
   });
 
-  // AI subscription quota consumption, with its own observed_at: this is an out-of-band sample
-  // from minutes ago, not milliseconds ago like fleetActivity(), so merging the two payloads
-  // would lie about one of the two freshnesses.
-  app.get('/v3/console/quotas', async (request, reply) => {
-    try {
-      const actor = await principal(request, options.authProvider);
-      requirePermission(actor, 'read');
-      return await repository.quotaSnapshot(actor.tenant_id, actor.alias);
-    } catch (error) { replyError(reply, error); }
-  });
-
   // The registry is intrinsically cross-tenant (an agent may borrow a pooled account paid by
   // another tenant), so no sameTenantRows facade runs here: the store already applied the
   // visibility rule and redacted the payer's account identity.

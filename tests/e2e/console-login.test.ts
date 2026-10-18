@@ -169,7 +169,6 @@ describe('login E2E de la consola contra PostgreSQL real (base dev aislada y ef√
       ['/v3/console/adapters', 200],
       ['/v3/console/jobs', 200],
       ['/v3/console/activity', 200],
-      ['/v3/console/quotas', 200],
       ['/v3/console/agents', 200],
       ['/v3/console/agents/kant', 200],
       ['/v3/console/tenants/Steven/agents/kant', 200],

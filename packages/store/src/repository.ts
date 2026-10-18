@@ -19,9 +19,8 @@ export {
   type LeaseResult, type LiveDeliveryClaim, type NotifyDenialCode
 } from './repository/deliveries.js';
 export {
-  DEFAULT_QUOTA_THRESHOLDS, windowSeverity, worstQuotaSeverity,
   type QuotaSampleIngestResult, type QuotaSamplePausedAccount, type QuotaSampleResumedAccount,
-  type QuotaSampleUnboundGroup, type QuotaSeverity, type QuotaThresholds
+  type QuotaSampleUnboundGroup
 } from './repository/quotas.js';
 export { StoreError, type StoreErrorCode, type StoreRecoveryReason } from './repository/errors.js';
 export {

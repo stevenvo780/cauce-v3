@@ -237,14 +237,6 @@ export function fakeRepository(overrides: Partial<GatewayRepository> = {}): Gate
       },
       agents: []
     })),
-    quotaSnapshot: vi.fn(async () => ({
-      observed_at: new Date().toISOString(),
-      thresholds: {
-        stale_after_seconds: 900, warn_remaining_percent: 25, critical_remaining_percent: 10,
-        history_window_seconds: 86400, history_bucket_seconds: 1800, history_max_points: 48
-      },
-      collectors: [], providers: [], unbound_groups: [], paused_accounts: []
-    })),
     recordQuotaSample: vi.fn(async () => ({
       collection_id: '80000000-0000-4000-8000-000000000001',
       host: 'kratos', captured_at: new Date().toISOString(), duplicate: false,

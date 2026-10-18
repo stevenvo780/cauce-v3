@@ -106,7 +106,7 @@ type StoreDerivedRepository = Pick<CauceRepository,
   | 'fleetActivity' | 'getAgent' | 'getAgentByIdentity' | 'getConfiguration' | 'getMessage' | 'getHumanMessage'
   | 'listHumanInbox' | 'listAdapters' | 'listAgents' | 'listAudit' | 'listChainGates' | 'listJobs' | 'listMessages'
   | 'listAgentEgress' | 'listNotifications' | 'listOperationalDlq' | 'listOriginRelays' | 'liveDeliveryClaims'
-  | 'principalAccess' | 'queueSnapshot' | 'quotaSnapshot' | 'readProfileRuntimeAdoption'
+  | 'principalAccess' | 'queueSnapshot' | 'readProfileRuntimeAdoption'
   | 'reconcileAgentContextRuntime' | 'recordProfileRuntimeExpectation' | 'recordQuotaSample'
   | 'renewWakeOutbox' | 'replayDelivery' | 'retryOwnDelivery' | 'agentQueue' | 'recordAgentProgress'
   | 'resolveOperationalDlqWithoutReplay' | 'selectAccount' | 'topology'

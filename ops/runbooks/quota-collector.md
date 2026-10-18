@@ -47,7 +47,7 @@ Instalar, operar y verificar el recolector periódico de cuotas de consumo de IA
    ```sh
    python3 ops/tests/test_quota_collector.py
    ```
-4. Confirmar que la consola web muestra las muestras actualizadas en `/v3/console/quotas`.
+4. Confirmar que «Mis cuotas» en la consola web muestra las muestras actualizadas (`/v3/console/quota-accounts`).
 
 ## Deshacer
 1. Detener y deshabilitar timer y servicio:

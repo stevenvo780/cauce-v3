@@ -119,7 +119,6 @@ async function link(): Promise<void> {
 /** What Steven/kant can read on every fleet surface, serialized to search for any Praxis identity. */
 async function humanizarView(): Promise<Record<string, string>> {
   const reads: Record<string, unknown> = {
-    quotas: await repository.quotaSnapshot('Steven', 'kant'),
     agents: await repository.listAgents('Steven', 'kant'),
     agent: await repository.getAgentByIdentity('PraxisHub', 'company_admin', 'Steven', 'kant') ?? null,
     presence: await repository.listPresence('Steven', 'kant'),
@@ -140,7 +139,7 @@ describe('company read isolation', () => {
     }
     await link();
     const linked = await humanizarView();
-    for (const surface of ['quotas', 'agents', 'agent', 'presence', 'adapters', 'activity', 'appearances']) {
+    for (const surface of ['agents', 'agent', 'presence', 'adapters', 'activity', 'appearances']) {
       expect(linked[surface], surface).toContain('PraxisHub');
     }
     for (const surface of ['queue', 'relays']) expect(linked[surface], surface).toContain(praxis.inbound);

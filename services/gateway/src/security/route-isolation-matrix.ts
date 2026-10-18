@@ -151,7 +151,6 @@ export const ROUTE_ISOLATION_MATRIX: readonly RouteIsolationEntry[] = [
   actor('POST', '/v3/console/jobs', 'El tenant de la nueva tarea viene del actor; payload es contenido opaco.'),
   actor('GET', '/v3/console/adapters'),
   actor('GET', '/v3/console/activity'),
-  actor('GET', '/v3/console/quotas'),
   actor('GET', '/v3/console/agents'),
   scoped('GET', '/v3/console/tenants/:tenantId/agents/:alias', '/v3/console/tenants/{tenant}/agents/{alias}'),
   scoped('GET', '/v3/console/agents/:alias', '/v3/console/agents/{alias}'),

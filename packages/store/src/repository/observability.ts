@@ -163,10 +163,9 @@ export abstract class ObservabilityRepository extends ObservabilityChainSweepRep
 
   /**
    * In-flight activity of the entire fleet visible to the actor, aggregated by alias. It is
-   * the "what is each agent working on now" half of the requested panel; the other half (quota
-   * consumption) lives in quotaSnapshot() with its own observed_at because the two freshnesses
-   * are incomparable -- this one is from milliseconds ago, the quota one is an out-of-band
-   * sample from minutes ago.
+   * the "what is each agent working on now" half of the requested panel; quota consumption is
+   * served separately (quota-accounts) because the two freshnesses are incomparable -- this one
+   * is from milliseconds ago, the quota one is an out-of-band sample from minutes ago.
    *
    * Self-contained like topology()/listAgents(): it validates the permission here itself, so
    * the route only needs the role+permission check on the Principal (requireOperatorPermission).

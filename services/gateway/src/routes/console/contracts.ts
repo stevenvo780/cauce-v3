@@ -21,7 +21,7 @@ export type ConsoleRouteRepository = Pick<GatewayRepository,
   | 'cancelDelivery' | 'enqueueJob' | 'fleetActivity' | 'getAgent' | 'getAgentByIdentity'
   | 'getConfiguration' | 'getConfigurationDependencies' | 'getMessage' | 'listAdapters' | 'listAgents' | 'listAudit' | 'listJobs'
   | 'listMessages' | 'listNotifications' | 'listOperationalDlq' | 'listOriginRelays'
-  | 'principalAccess' | 'queueSnapshot' | 'quotaSnapshot' | 'readProfileRuntimeAdoption'
+  | 'principalAccess' | 'queueSnapshot' | 'readProfileRuntimeAdoption'
   | 'reconcileAgentContextRuntime' | 'recordProfileRuntimeExpectation' | 'replayDelivery'
   | 'resolveOperationalDlqWithoutReplay'
   | 'rollbackConfiguration' | 'status' | 'topology'
