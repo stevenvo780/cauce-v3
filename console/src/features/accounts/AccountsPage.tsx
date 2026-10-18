@@ -57,7 +57,7 @@ function AccountsPageContent() {
       description="Qué cuentas de IA existen, quién las paga y qué agentes pueden usarlas. El saldo de cada cuenta se consulta en «Mis cuotas»."
       notes={
         <>
-          <p><strong>Inventario:</strong> una cuenta tiene UN pagador y sólo se presta si su pagador la publicó al pool. La credencial no vive en la base: <code>credential_ref</code> es siempre un locator y el servidor no lo devuelve, ni siquiera a quien paga.</p>
+          <p><strong>Inventario:</strong> una cuenta tiene UN pagador y sólo se presta si su pagador la publicó al pool. Registra y autentica las cuentas desde «Mis cuotas»; las credenciales no se muestran en este inventario.</p>
           <PermissionBadge access={access.error ? undefined : access.data} permission="config.write" />
         </>
       }

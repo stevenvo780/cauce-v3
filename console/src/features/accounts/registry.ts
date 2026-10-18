@@ -23,22 +23,7 @@ export type CredentialRefKind = 'env_path' | 'file' | 'secret_manager';
 
 export const CREDENTIAL_REF_KINDS: readonly CredentialRefKind[] = ['env_path', 'file', 'secret_manager'];
 
-export const CREDENTIAL_REF_HINTS: Record<CredentialRefKind, string> = {
-  env_path: 'Nombre de variable de entorno que el adapter lee en su propio proceso. Forma exigida: CAUCE_<ALGO>_PATH o CAUCE_<ALGO>_FILE.',
-  file: 'Ruta absoluta en el host, sin `//` ni segmentos `.` o `..`.',
-  secret_manager: 'Locator `esquema:path` con esquema vault, aws-sm, gcp-sm, op o azure-kv.',
-};
-
-// Same expressions as packages/store/migrations/010_agent_account_registry.sql and
-// packages/protocol/src/schemas.ts. Validated here only to avoid spending a round-trip on an
-// obviously malformed locator: the authority is still the Postgres CHECK.
-const ENV_PATH_REF = /^CAUCE_[A-Z0-9_]{1,120}_(PATH|FILE)$/;
-const SECRET_MANAGER_REF = /^(vault|aws-sm|gcp-sm|op|azure-kv):[a-z0-9][a-z0-9_.:/-]{0,254}$/;
-// eslint-disable-next-line no-control-regex -- mirrors the CHECK `credential_ref !~ '[[:cntrl:]]'`.
-const CONTROL_CHARS = /[\u0000-\u001f\u007f]/;
-const DOT_SEGMENT = /(^|\/)\.\.?(\/|$)/;
 const ACCOUNT_ID = /^[a-z][a-z0-9_-]{0,63}$/;
-const PROVIDER_ID = /^[a-z][a-z0-9_.-]{0,63}$/;
 const TENANT_ID = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
 const ALIAS_ID = /^[a-z][a-z0-9_-]{0,63}$/;
 
@@ -321,74 +306,6 @@ export function buildAssignmentMatrix(
 
 interface RegistryRoutingProjection {
   matrix: MatrixRow[];
-}
-
-export interface AccountDraft {
-  id: string;
-  provider: string;
-  externalAccountId: string;
-  payerTenant: string;
-  label: string;
-  credentialRefKind: CredentialRefKind;
-  credentialRef: string;
-  sharedWithPool: boolean;
-  enabled: boolean;
-}
-
-export function credentialRefError(kind: CredentialRefKind, reference: string): string | undefined {
-  const value = reference.trim();
-  if (!value) return 'El locator de la credencial es obligatorio: es una referencia, no el secreto.';
-  if (CONTROL_CHARS.test(value)) return 'El locator no puede contener caracteres de control.';
-  if (kind === 'env_path') {
-    return ENV_PATH_REF.test(value)
-      ? undefined
-      : 'Con env_path el locator tiene que ser el nombre de una variable con forma CAUCE_<ALGO>_PATH o CAUCE_<ALGO>_FILE.';
-  }
-  if (kind === 'file') {
-    if (!value.startsWith('/')) return 'Con file el locator tiene que ser una ruta absoluta (empieza con /).';
-    if (value.length < 2 || value.length > 1024) return 'Con file la ruta tiene que medir entre 2 y 1024 caracteres.';
-    if (value.includes('//')) return 'Con file la ruta no puede contener // repetidos.';
-    if (DOT_SEGMENT.test(value)) return 'Con file la ruta no puede tener segmentos . ni ..';
-    return undefined;
-  }
-  return SECRET_MANAGER_REF.test(value)
-    ? undefined
-    : 'Con secret_manager el locator tiene que ser esquema:path, con esquema vault, aws-sm, gcp-sm, op o azure-kv.';
-}
-
-export function accountDraftError(draft: AccountDraft): string | undefined {
-  if (!ACCOUNT_ID.test(draft.id.trim())) {
-    return 'El id de cuenta debe empezar con minúscula y usar sólo minúsculas, números, guion o guion bajo (máx. 64).';
-  }
-  if (!PROVIDER_ID.test(draft.provider.trim())) {
-    return 'El proveedor debe empezar con minúscula y usar sólo minúsculas, números, punto, guion o guion bajo (máx. 64).';
-  }
-  const external = draft.externalAccountId.trim();
-  if (external.length < 1 || external.length > 256) {
-    return 'El id externo de la suscripción (uuid, mail, org id) es obligatorio y mide hasta 256 caracteres. Nunca es el secreto.';
-  }
-  if (!TENANT_ID.test(draft.payerTenant.trim())) {
-    return 'El tenant pagador debe empezar con letra y usar sólo letras, números, guion o guion bajo (máx. 64).';
-  }
-  return credentialRefError(draft.credentialRefKind, draft.credentialRef);
-}
-
-export function createAccountMutation(draft: AccountDraft): ConfigMutation {
-  return {
-    resource: 'provider_account',
-    action: 'create',
-    id: draft.id.trim(),
-    value: {
-      provider: draft.provider.trim(),
-      external_account_id: draft.externalAccountId.trim(),
-      payer_tenant_id: draft.payerTenant.trim(),
-      label: draft.label.trim() || null,
-      credential_ref_kind: draft.credentialRefKind,
-      credential_ref: draft.credentialRef.trim(),
-      shared_with_pool: draft.sharedWithPool,
-      enabled: draft.enabled,
-    },
-  };
 }
 
 /** Only update accepted by the server: identity, payer, and locator are immutable. */

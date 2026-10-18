@@ -1,10 +1,9 @@
 import { ApiError } from '../../api/client';
-import type { ConfigurationSnapshot } from '../../api/types';
+import type { ConfigMutation, ConfigurationSnapshot } from '../../api/types';
 import {
-  accountDraftError, bindingMutation, buildAssignmentMatrix, ceilingMutation, credentialRefError,
-  createAccountMutation, deleteAccountMutation, describeRegistryError, readCeiling,
+  bindingMutation, buildAssignmentMatrix, ceilingMutation, deleteAccountMutation, describeRegistryError, readCeiling,
   readProviderAccounts, readRegistry, redactPreview, updateAccountMutation, viewerTenant,
-  type AccountDraft, type RegistryContext,
+  type RegistryContext,
 } from './registry';
 
 const snapshot: ConfigurationSnapshot = {
@@ -108,37 +107,6 @@ it('marca el techo sin binding habilitado como alcanzable pero nunca elegido', (
   expect(kant.idleCeiling).toEqual(['codex-steven', 'minimax-pablo']);
 });
 
-it('valida el locator con las mismas formas que el CHECK de la migración', () => {
-  expect(credentialRefError('env_path', 'CAUCE_CODEX_STEVEN_PATH')).toBeUndefined();
-  expect(credentialRefError('env_path', 'OPENAI_API_KEY')).toMatch(/CAUCE_/);
-  expect(credentialRefError('file', '/etc/cauce-v3/codex.json')).toBeUndefined();
-  expect(credentialRefError('file', '/etc//codex.json')).toMatch(/\/\//);
-  expect(credentialRefError('file', '/etc/../codex.json')).toMatch(/segmentos/);
-  expect(credentialRefError('file', 'etc/codex.json')).toMatch(/absoluta/);
-  expect(credentialRefError('secret_manager', 'vault:cauce/codex')).toBeUndefined();
-  expect(credentialRefError('secret_manager', 'random:cauce/codex')).toMatch(/esquema/);
-});
-
-const draft: AccountDraft = {
-  id: 'codex-steven', provider: 'codex', externalAccountId: 'org-9f21', payerTenant: 'Steven',
-  label: 'Codex', credentialRefKind: 'env_path', credentialRef: 'CAUCE_CODEX_STEVEN_PATH',
-  sharedWithPool: true, enabled: true,
-};
-
-it('arma el alta con el pagador y el locator, y rechaza un id que la base no aceptaría', () => {
-  expect(accountDraftError(draft)).toBeUndefined();
-  expect(createAccountMutation(draft)).toEqual({
-    resource: 'provider_account', action: 'create', id: 'codex-steven',
-    value: {
-      provider: 'codex', external_account_id: 'org-9f21', payer_tenant_id: 'Steven', label: 'Codex',
-      credential_ref_kind: 'env_path', credential_ref: 'CAUCE_CODEX_STEVEN_PATH',
-      shared_with_pool: true, enabled: true,
-    },
-  });
-  expect(accountDraftError({ ...draft, id: 'Codex Steven' })).toMatch(/id de cuenta/i);
-  expect(accountDraftError({ ...draft, payerTenant: '' })).toMatch(/pagador/i);
-});
-
 it('el update sólo manda los tres campos mutables: identidad y locator son inmutables', () => {
   expect(updateAccountMutation('codex-steven', { label: null, sharedWithPool: false, enabled: true })).toEqual({
     resource: 'provider_account', action: 'update', id: 'codex-steven',
@@ -232,7 +200,14 @@ it('nombra la cuenta que ya ocupa esa prioridad en el orden de fallback', () => 
 });
 
 it('señala la suscripción externa ya registrada en vez de repetir el error genérico', () => {
-  const mutation = createAccountMutation({ ...draft, id: 'codex-otro' });
+  const mutation: ConfigMutation = {
+    resource: 'provider_account', action: 'create', id: 'codex-otro',
+    value: {
+      provider: 'codex', external_account_id: 'org-9f21', payer_tenant_id: 'Steven', label: 'Codex',
+      credential_ref_kind: 'env_path', credential_ref: 'CAUCE_CODEX_STEVEN_PATH',
+      shared_with_pool: true, enabled: true,
+    },
+  };
   const described = describeRegistryError(conflict(DURABLE), mutation, contextFrom());
 
   expect(described.message).toMatch(/ya está registrada como «codex-steven»/);

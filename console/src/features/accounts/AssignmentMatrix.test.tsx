@@ -82,10 +82,10 @@ it('la matriz vive DENTRO de «Cuentas», sin segunda ruta y sin segundo h1', as
 
   await user.click(screen.getByRole('tab', { name: 'Asignaciones' }));
   expect(screen.getByRole('heading', { name: /techo por alias/i })).toBeInTheDocument();
-  expect(screen.getByRole('heading', { name: /orden de respaldo declarado/i })).toBeInTheDocument();
+  expect(screen.getByRole('heading', { name: /orden de consulta registrado/i })).toBeInTheDocument();
 });
 
-it('muestra el techo por alias y el orden de fallback derivado de los bindings habilitados', async () => {
+it('muestra el techo por alias y el orden de consulta derivado de los bindings habilitados', async () => {
   configuration();
   const user = userEvent.setup();
   renderWithApi(<AccountsPage />);
@@ -94,7 +94,7 @@ it('muestra el techo por alias y el orden de fallback derivado de los bindings h
   expect(await screen.findByRole('button', { name: /Steven\/kant × codex-steven: #1 · prio 10/i })).toBeInTheDocument();
   expect(screen.getByRole('button', { name: /Steven\/kant × minimax-pablo: binding off · prio 50/i })).toBeInTheDocument();
 
-  const fallback = within(screen.getByRole('list', { name: /orden de fallback por agente/i }));
+  const fallback = within(screen.getByRole('list', { name: /orden de consulta por agente/i }));
   expect(fallback.getByText(/1\. codex-steven \(prio 10\)/)).toBeInTheDocument();
   expect(fallback.getByText(/sin binding habilitado: minimax-pablo/i)).toBeInTheDocument();
 });
@@ -105,7 +105,7 @@ it('declara la cuenta principal explícita y conserva esa cuenta durante los rei
   renderWithApi(<AccountsPage />);
 
   await openMatrix(user);
-  await user.click(await screen.findByRole('button', { name: /cómo se rutea/i }));
+  await user.click(await screen.findByRole('button', { name: /qué cambia esta asignación/i }));
   expect(await screen.findByText(/usan la cuenta principal elegida en «Operar agente»/i)).toBeInTheDocument();
   expect(screen.getByText(/los reintentos conservan la cuenta seleccionada/i)).toBeInTheDocument();
 });
@@ -160,12 +160,9 @@ it('el dry-run de una mitad no habilita el apply de la otra: cada formulario tie
   const user = userEvent.setup();
   renderWithApi(<AccountsPage />);
 
-  // Account onboarding is left ready to send, but the ASSIGNMENT is previewed. Closing a form
-  // hides it without discarding what was typed, so coming back to it finds the same draft.
   await user.click(await screen.findByRole('tab', { name: 'Inventario' }));
-  await user.click(await screen.findByRole('button', { name: /nueva cuenta/i }));
-  await user.type(await screen.findByLabelText(/id externo de la suscripción/i), 'org-9f21');
-  await user.type(screen.getByLabelText(/tenant pagador/i), 'Steven');
+  await user.click(await screen.findByRole('button', { name: /editar «codex-steven»/i }));
+  await user.type(await screen.findByLabelText(/etiqueta/i), ' del equipo');
   await user.click(screen.getByRole('button', { name: /^cerrar$/i }));
   await user.click(screen.getByRole('tab', { name: 'Asignaciones' }));
   await user.click(screen.getByRole('button', { name: /Steven\/kant × minimax-pablo: sin techo/i }));
@@ -176,14 +173,12 @@ it('el dry-run de una mitad no habilita el apply de la otra: cada formulario tie
 
   await user.click(screen.getByRole('button', { name: /^cerrar$/i }));
   await user.click(screen.getByRole('tab', { name: 'Inventario' }));
-  await user.click(screen.getByRole('button', { name: /nueva cuenta/i }));
-  const accountActions = within(screen.getByRole('group', { name: /acciones de alta de cuenta/i }));
+  await user.click(screen.getByRole('button', { name: /editar «codex-steven»/i }));
+  const accountActions = within(screen.getByRole('group', { name: /acciones de edición de cuenta/i }));
   expect(accountActions.getByRole('button', { name: /^aplicar$/i })).toBeDisabled();
-  // And what was written before is still there: the form hid, it was not discarded.
-  expect(screen.getByLabelText(/id externo de la suscripción/i)).toHaveValue('org-9f21');
 });
 
-it('ordena el fallback con una mutación de binding que lleva prioridad y estado', async () => {
+it('ordena las consultas con una mutación de binding que lleva prioridad y estado', async () => {
   const changes: ChangeRequest[] = [];
   configuration();
   recordChanges(changes);

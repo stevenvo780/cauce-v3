@@ -20,9 +20,9 @@ type Operation = 'grant-ceiling' | 'revoke-ceiling' | 'create-binding' | 'update
 const operationLabels: Record<Operation, string> = {
   'grant-ceiling': 'Dar acceso a una cuenta',
   'revoke-ceiling': 'Quitar acceso a una cuenta',
-  'create-binding': 'Agregar cuenta de respaldo',
-  'update-binding': 'Cambiar orden de respaldo',
-  'delete-binding': 'Quitar cuenta de respaldo',
+  'create-binding': 'Vincular cuenta de cuotas',
+  'update-binding': 'Cambiar orden de consulta',
+  'delete-binding': 'Quitar cuenta de cuotas',
 };
 
 interface Assignment {
@@ -45,8 +45,8 @@ function agentKeyOf(tenantId: string, alias: string): string {
 }
 
 /**
- * Routing writes: the ceiling (which accounts an alias may reach) and the fallback bindings that
- * order them. `config` and `access` arrive via props, not through a local `useResource`, so the
+ * Routing writes: the ceiling (which accounts an alias may reach) and the quota bindings that
+ * order its queries. `config` and `access` arrive via props, not through a local `useResource`, so the
  * page reads the configuration once. The mutation runner IS its own: the inventory form and this
  * one are independent, and one dry-run must not enable the other's apply.
  */
@@ -102,9 +102,7 @@ export function AssignmentMatrix({ config, access, registry }: {
   }
 
   const [selectedTenant, selectedAlias] = assignment.agentKey.split('/');
-  // `Number('')` and `Number('   ')` both equal 0, and 0 is a valid priority — the highest one, in fact.
-  // Without this guard, clearing the field did not ask for a value: it silently dispatched
-  // `priority: 0` and the alias went on to try that account first. A 0 written on purpose stays valid.
+  // Empty strings convert to zero, which is a valid query priority.
   const priorityText = assignment.priority.trim();
   const priorityNumber = priorityText === '' ? Number.NaN : Number(priorityText);
   const priorityValid = Number.isInteger(priorityNumber) && priorityNumber >= 0 && priorityNumber <= 32_767;
@@ -115,7 +113,7 @@ export function AssignmentMatrix({ config, access, registry }: {
     : !assignment.accountId
       ? 'Elegí una cuenta.'
       : needsPriority && !priorityValid
-        ? 'La prioridad debe ser un entero entre 0 y 32767; menor se intenta primero.'
+        ? 'La prioridad debe ser un entero entre 0 y 32767; menor aparece primero en las consultas.'
         : undefined;
 
   const mutation: ConfigMutation | undefined = invalid || !selectedTenant || !selectedAlias ? undefined
@@ -150,9 +148,11 @@ export function AssignmentMatrix({ config, access, registry }: {
           <Plus size={15} aria-hidden="true" />Nueva asignación
         </Button>
       </div>
-      <Explain title="¿Cómo se rutea?">
-        <p>El techo (<code>alias_routing_ceiling</code>) es el conjunto exhaustivo de cuentas a las que un alias puede llegar a rutearse; el binding sólo ordena el fallback dentro de ese techo. Un binding no puede existir fuera del techo.</p>
-        <p>Los agentes administrados usan la cuenta principal elegida en «Operar agente». Este catálogo registra accesos y prioridades; para cambiar la cuenta efectiva, selecciona otra explícitamente en esa ficha y verifica su autenticación. Los reintentos conservan la cuenta seleccionada.</p>
+      <p className="m-0 mb-3 text-xs text-muted">Estas asignaciones vinculan las cuotas y guardan su orden de consulta.
+        No cambian la cuenta principal ni la ejecución del agente, y no activan un respaldo automático.</p>
+      <Explain title="¿Qué cambia esta asignación?">
+        <p>El techo (<code>alias_routing_ceiling</code>) limita las cuentas que puede consultar el alias; el binding vincula sus cuotas y ordena su presentación en el perfil. Un binding no puede existir fuera del techo.</p>
+        <p>Los agentes administrados usan la cuenta principal elegida en «Operar agente». Para cambiar la cuenta efectiva, selecciona otra explícitamente en esa ficha y verifica su autenticación. Los reintentos conservan la cuenta seleccionada.</p>
       </Explain>
       {!available && agents.items.length === 0
         ? <EmptyState>Sin datos de agentes para cruzar.</EmptyState>
@@ -160,9 +160,9 @@ export function AssignmentMatrix({ config, access, registry }: {
           ? <EmptyState>El servidor devolvió cero agentes registrados. Un alias que hoy funciona por membresía puede no estar todavía en el registro: son dos cosas distintas.</EmptyState>
           : accounts.items.length === 0
             ? <EmptyState>No hay cuentas visibles para formar columnas.</EmptyState>
-            : <Desplazable etiqueta="Matriz de techo y fallback por agente y cuenta" className={SCROLL}>
+            : <Desplazable etiqueta="Matriz de accesos y cuotas por agente y cuenta" className={SCROLL}>
               <table className={CARD_TABLE}>
-                <caption className="sr-only">Matriz de techo y fallback por agente y cuenta</caption>
+                <caption className="sr-only">Matriz de accesos y cuotas por agente y cuenta</caption>
                 <thead><tr>
                   <th className="md:sticky md:left-0 md:z-[2]">Agente</th>
                   {accounts.items.map((account) => <th key={account.id}>
@@ -204,10 +204,10 @@ export function AssignmentMatrix({ config, access, registry }: {
             </Desplazable>}
     </section>
 
-    <section aria-label="Orden de respaldo declarado">
-      <h2 className="m-0 text-sm font-semibold">Orden de respaldo declarado</h2>
+    <section aria-label="Orden de consulta registrado">
+      <h2 className="m-0 text-sm font-semibold">Orden de consulta registrado</h2>
       <p className="m-0 mt-0.5 mb-3 text-xs text-muted">Sólo bindings habilitados y dentro del techo, de menor a mayor prioridad.</p>
-      {matrix.length === 0 ? <EmptyState>Sin agentes registrados.</EmptyState> : <ul className="m-0 grid list-none gap-2 p-0" aria-label="Orden de fallback por agente">
+      {matrix.length === 0 ? <EmptyState>Sin agentes registrados.</EmptyState> : <ul className="m-0 grid list-none gap-2 p-0" aria-label="Orden de consulta por agente">
         {matrix.map((row) => <li key={agentKeyOf(row.agent.tenantId, row.agent.alias)}
           className="flex flex-wrap items-start gap-x-3 gap-y-1.5 rounded-lg border border-line bg-surface px-3 py-2.5 text-[13px]">
           <span className="flex min-w-0 max-w-full items-center gap-2">
@@ -216,7 +216,7 @@ export function AssignmentMatrix({ config, access, registry }: {
           </span>
           <div className="min-w-0 flex-1 basis-60">
             {row.fallback.length === 0
-              ? <span className="unknown inline-flex items-center gap-1"><Ban size={13} aria-hidden="true" /> sin cuentas de respaldo registradas</span>
+              ? <span className="unknown inline-flex items-center gap-1"><Ban size={13} aria-hidden="true" /> sin cuentas de cuota vinculadas</span>
               : <span className="chip-list">
                 {row.fallback.map((step) => <span className="chip" key={step.accountId}>
                   <ArrowDownUp size={12} aria-hidden="true" /> {step.rank}. {step.accountId} (prio {step.priority ?? 'UNKNOWN'}){step.borrowed ? ' · prestada' : ''}
@@ -231,6 +231,8 @@ export function AssignmentMatrix({ config, access, registry }: {
     </section>
 
     <FormDialog open={formOpen} onClose={closeForm} busy={runner.busy} title="Asignar" description="Cada cambio muestra una vista previa antes de confirmarlo.">
+      <Notice tone="info">El orden se registra para consultar y presentar las cuentas vinculadas.
+        Esta asignación no cambia la cuenta principal ni la ejecución del agente, y no activa un respaldo automático.</Notice>
       <div className={FIELD}>
         <label>Agente
           <select {...writeProps} value={assignment.agentKey} onChange={(event) => { patch({ agentKey: event.target.value }); }}>
@@ -254,7 +256,7 @@ export function AssignmentMatrix({ config, access, registry }: {
             {(Object.keys(operationLabels) as Operation[]).map((operation) => <option key={operation} value={operation}>{operationLabels[operation]}</option>)}
           </select>
         </label>
-        {needsPriority ? <label>Prioridad <span className={HINT}>0–32767, menor se intenta primero</span>
+        {needsPriority ? <label>Prioridad de consulta <span className={HINT}>0–32767, menor aparece primero</span>
           <input {...writeProps} value={assignment.priority} onChange={(event) => { patch({ priority: event.target.value }); }} />
         </label> : null}
         {needsPriority ? <label className="flex items-center gap-2 self-end font-normal"><input {...writeProps} type="checkbox" checked={assignment.enabled} onChange={(event) => { patch({ enabled: event.target.checked }); }} /> Binding habilitado</label> : null}

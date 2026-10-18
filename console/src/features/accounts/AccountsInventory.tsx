@@ -1,37 +1,18 @@
-import { PencilLine, Plus, Power, PowerOff, Lock, Share2, Trash2 } from 'lucide-react';
+import { PencilLine, Power, PowerOff, Lock, Share2, Trash2 } from 'lucide-react';
 import { useState, type ReactNode } from 'react';
 import type { ConfigurationSnapshot, ConsoleAccess } from '../../api/types';
 import type { Resource } from '../../api/use-resource';
 import { cn } from '../../cn';
-import { Button, CARD_TABLE, Explain, Kpi, KpiGrid, Notice, SCROLL } from '../../components/kit';
+import { CARD_TABLE, Explain, Kpi, KpiGrid, LinkButton, Notice, SCROLL } from '../../components/kit';
 import { FormDialog } from '../../components/dialogs';
 import { Badge, Desplazable, EmptyState, Time, Unknown } from '../../components/ui';
 import { useConfigMutation } from '../config/use-config-mutation';
-import { CONFIG_SIN_CONTROL_REASON } from '../../router';
+import { CONFIG_SIN_CONTROL_REASON, onNavClick } from '../../router';
 import { MutationBar } from './MutationBar';
 import {
-  CREDENTIAL_REF_HINTS, CREDENTIAL_REF_KINDS, accountDraftError, createAccountMutation,
   deleteAccountMutation, describeRegistryError, redactPreview, updateAccountMutation, viewerTenant,
-  type AccountDraft, type CredentialRefKind, type ProviderAccount, type RegistryModel,
+  type ProviderAccount, type RegistryModel,
 } from './registry';
-
-const emptyDraft: AccountDraft = {
-  id: '',
-  provider: '',
-  externalAccountId: '',
-  payerTenant: '',
-  label: '',
-  credentialRefKind: 'env_path',
-  credentialRef: '',
-  sharedWithPool: false,
-  enabled: false,
-};
-
-const LOCATOR_PLACEHOLDER: Record<CredentialRefKind, string> = {
-  env_path: 'CAUCE_PROVIDER_PATH',
-  file: '/var/lib/cauce/credencial',
-  secret_manager: 'vault:equipo/cuenta',
-};
 
 interface AccountEdit {
   id: string;
@@ -41,11 +22,9 @@ interface AccountEdit {
 }
 
 type FormState =
-  | { kind: 'create'; draft: AccountDraft }
   | { kind: 'edit'; edit: AccountEdit }
   | { kind: 'delete'; accountId: string; confirmation: string };
 
-const FIELDS = 'grid gap-3 sm:grid-cols-2';
 const CHECK = 'flex items-start gap-2 font-normal';
 const HINT = 'text-xs font-normal text-muted';
 
@@ -119,23 +98,14 @@ export function AccountsInventory({ config, access, registry }: {
           ? `Escribí exactamente «${form.accountId}» para confirmar el borrado.`
           : undefined
     : undefined;
-  const createError = form?.kind === 'create' ? accountDraftError(form.draft) : undefined;
-  const createStarted = form?.kind === 'create' && (
-    form.draft.id !== '' || form.draft.provider !== '' || form.draft.externalAccountId !== ''
-    || form.draft.payerTenant !== '' || form.draft.label !== '' || form.draft.credentialRef !== ''
-  );
-  const mutation = form?.kind === 'create'
-    ? (createError ? undefined : createAccountMutation(form.draft))
-    : form?.kind === 'edit'
-      ? (editInvalid ? undefined : updateAccountMutation(form.edit.id, {
-        label: form.edit.label.trim() || null,
-        sharedWithPool: form.edit.sharedWithPool,
-        enabled: form.edit.enabled,
-      }))
-      : form?.kind === 'delete' ? (deleteInvalid ? undefined : deleteAccountMutation(form.accountId)) : undefined;
-  const invalid = form?.kind === 'create'
-    ? (createStarted ? createError : undefined)
-    : form?.kind === 'edit' ? editInvalid : deleteInvalid;
+  const mutation = form?.kind === 'edit'
+    ? (editInvalid ? undefined : updateAccountMutation(form.edit.id, {
+      label: form.edit.label.trim() || null,
+      sharedWithPool: form.edit.sharedWithPool,
+      enabled: form.edit.enabled,
+    }))
+    : form?.kind === 'delete' ? (deleteInvalid ? undefined : deleteAccountMutation(form.accountId)) : undefined;
+  const invalid = form?.kind === 'edit' ? editInvalid : deleteInvalid;
 
   function open(next: FormState) {
     setForm(next);
@@ -145,11 +115,6 @@ export function AccountsInventory({ config, access, registry }: {
 
   function close() {
     setShown(false);
-    runner.clear();
-  }
-
-  function editDraft(patch: Partial<AccountDraft>) {
-    setForm((current) => (current?.kind === 'create' ? { kind: 'create', draft: { ...current.draft, ...patch } } : current));
     runner.clear();
   }
 
@@ -170,10 +135,10 @@ export function AccountsInventory({ config, access, registry }: {
       <p className="m-0 mb-3 text-xs text-muted">«Deshabilitada» acá significa que la cuenta no admite uso. Si todavía no inició sesión, la misma cuenta figura como «Pendiente de autenticación» en «Mis cuotas»: son dos vistas del mismo estado, no dos fallos distintos.</p>
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <h2 className="m-0 text-sm font-semibold">Inventario</h2>
-        <Button variant="primary" {...writeProps} onClick={() => { open(form?.kind === 'create' ? form : { kind: 'create', draft: emptyDraft }); }}>
-          <Plus size={15} aria-hidden="true" />Nueva cuenta
-        </Button>
+        <LinkButton href="/my-quotas" onClick={(event) => { onNavClick(event, '/my-quotas'); }}>Registrar en Mis cuotas</LinkButton>
       </div>
+      <Notice tone="info" className="mb-3">Cauce no autentica cuentas mediante rutas o variables declaradas en el inventario.
+        Registra la cuenta e inicia sesión en «Mis cuotas». La ejecución del agente usa el perfil autenticado de su cuenta principal.</Notice>
       {!accounts.available
         ? <EmptyState>
           No disponible: este gateway no publica el inventario de cuentas (<code>provider_accounts</code>). No se muestra nada porque no hay dato, y la consola no lo simula.
@@ -234,50 +199,16 @@ export function AccountsInventory({ config, access, registry }: {
               </tbody>
             </table>
           </Desplazable>}
-      <Explain title="¿Dónde vive la credencial?">
-        <p>El snapshot nunca trae <code>credential_ref</code>. Lo único que se registra es dónde encontrar la credencial —una variable de entorno, una ruta, o un <code>esquema:path</code> de secret manager— y sólo el host que ya tiene el material puede resolverla. Por eso prestar una cuenta no filtra nada.</p>
-        <p>Deshabilitar conserva el registro; borrar se reserva para retiro definitivo o rotación y exige confirmación más dry-run.</p>
+      <Explain title="¿Cómo se conecta una cuenta?">
+        <p>La credencial se mantiene en el perfil autenticado del proveedor y no se devuelve en el inventario.
+          Publicar una cuenta al pool permite asignarla dentro de la empresa; cada agente debe autenticar su perfil de ejecución.</p>
+        <p>Deshabilitar conserva el registro; borrar lo retira del inventario y exige confirmación más dry-run.</p>
       </Explain>
     </section>
 
-    <FormDialog open={shown && form?.kind === 'create'} onClose={close} busy={runner.busy} title="Alta de cuenta"
-      description="Declara quién paga la suscripción y dónde está su credencial. Todo pasa por dry-run antes de aplicarse."
-      footer={form?.kind === 'create' ? <MutationBar part="actions" runner={runner} mutation={mutation} invalid={invalid} previewLabel="alta de cuenta" /> : undefined}>
-      {form?.kind === 'create' ? <>
-        <div className={FIELDS}>
-          <label>Id de cuenta <span className={HINT}>global, inmutable, referenciado por los techos</span>
-            <input {...writeProps} value={form.draft.id} placeholder="cuenta-ejemplo" onChange={(event) => { editDraft({ id: event.target.value }); }} />
-          </label>
-          <label>Proveedor <span className={HINT}>codex, gemini, minimax…</span>
-            <input {...writeProps} value={form.draft.provider} placeholder="codex" onChange={(event) => { editDraft({ provider: event.target.value }); }} />
-          </label>
-          <label>Id externo de la suscripción <span className={HINT}>uuid, mail u org id. NUNCA el secreto</span>
-            <input {...writeProps} value={form.draft.externalAccountId} placeholder="org-1234" onChange={(event) => { editDraft({ externalAccountId: event.target.value }); }} />
-          </label>
-          <label>Tenant pagador <span className={HINT}>quién paga; inmutable después del alta</span>
-            <input {...writeProps} value={form.draft.payerTenant} placeholder="Acme" onChange={(event) => { editDraft({ payerTenant: event.target.value }); }} />
-          </label>
-          <label>Etiqueta <span className={HINT}>opcional</span>
-            <input {...writeProps} value={form.draft.label} placeholder="Cuenta del equipo" onChange={(event) => { editDraft({ label: event.target.value }); }} />
-          </label>
-          <label>Tipo de locator
-            <select {...writeProps} value={form.draft.credentialRefKind} onChange={(event) => { editDraft({ credentialRefKind: event.target.value as CredentialRefKind }); }}>
-              {CREDENTIAL_REF_KINDS.map((kind) => <option key={kind} value={kind}>{kind}</option>)}
-            </select>
-          </label>
-          <label className="sm:col-span-2">Locator de la credencial <span className={HINT}>{CREDENTIAL_REF_HINTS[form.draft.credentialRefKind]}</span>
-            <input {...writeProps} value={form.draft.credentialRef} placeholder={LOCATOR_PLACEHOLDER[form.draft.credentialRefKind]} onChange={(event) => { editDraft({ credentialRef: event.target.value }); }} />
-          </label>
-          <label className={CHECK}><input {...writeProps} type="checkbox" checked={form.draft.sharedWithPool} onChange={(event) => { editDraft({ sharedWithPool: event.target.checked }); }} /> <span>Publicar al pool <span className={HINT}>habilita que otros tenants la pidan prestada</span></span></label>
-          <label className={CHECK}><input {...writeProps} type="checkbox" checked={form.draft.enabled} onChange={(event) => { editDraft({ enabled: event.target.checked }); }} /> Habilitada</label>
-        </div>
-        <MutationBar part="details" runner={runner} mutation={mutation} invalid={invalid} previewLabel="alta de cuenta" />
-      </> : null}
-    </FormDialog>
-
     <FormDialog open={shown && form?.kind === 'edit'} onClose={close} busy={runner.busy}
       title={form?.kind === 'edit' ? `Edición de «${form.edit.id}»` : 'Edición'}
-      description="Sólo la etiqueta, la publicación al pool y el estado son editables: proveedor, id externo, pagador y locator son inmutables porque los techos ya referencian este id.">
+      description="Sólo la etiqueta, la publicación al pool y el estado son editables: proveedor, id externo y pagador son inmutables porque los techos ya referencian este id.">
       {form?.kind === 'edit' ? <>
         <div className="grid gap-3">
           <label>Etiqueta <span className={HINT}>vacío guarda null</span>
@@ -295,11 +226,10 @@ export function AccountsInventory({ config, access, registry }: {
 
     <FormDialog open={shown && form?.kind === 'delete'} onClose={close} busy={runner.busy}
       title={form?.kind === 'delete' ? `Retirar o rotar «${form.accountId}»` : 'Retirar cuenta'}
-      description="Borrar es irreversible en el inventario actual y es el primer paso de una rotación de identidad o locator: después hay que recrear el mismo id con la credencial nueva.">
+      description="Borrar retira esta cuenta del inventario de forma irreversible. Las cuentas nuevas se registran desde «Mis cuotas».">
       {form?.kind === 'delete' ? <>
         <Notice tone="danger" role="note">
-          El borrado falla si cualquier alias conserva esta cuenta en su techo. No encadena una recreación automática:
-          si el alta posterior fallara, encadenarla dejaría la cuenta ausente sin darle al operador control sobre el desenlace.
+          El borrado falla si cualquier alias conserva esta cuenta en su techo. Revoca antes esos accesos y retira sus entornos de consulta.
         </Notice>
         <label>
           <span>Confirmá escribiendo <strong className="mono">{form.accountId}</strong></span>

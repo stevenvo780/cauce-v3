@@ -75,7 +75,7 @@ it.each([
 
   expect(within(row).getByRole('button', { name: /editar/i })).toBeDisabled();
   expect(within(row).getByRole('button', { name: /habilitar|deshabilitar/i })).toBeDisabled();
-  expect(inventory.getByRole('button', { name: /nueva cuenta/i })).toBeDisabled();
+  expect(inventory.getByRole('link', { name: /registrar en mis cuotas/i })).toHaveAttribute('href', '/my-quotas');
 
   await user.click(screen.getByRole('tab', { name: 'Asignaciones' }));
   const cell = await screen.findByRole('button', { name: /Steven\/kant × codex-steven/i });
@@ -84,9 +84,9 @@ it.each([
   expect(posts).toBe(0);
 });
 
-/** Scopes to the account form: creation and assignment bars share button texts. */
+/** Account editing and assignment bars share button texts. */
 function accountActions() {
-  return within(screen.getByRole('group', { name: /acciones de (alta|edición) de cuenta/i }));
+  return within(screen.getByRole('group', { name: /acciones de edición de cuenta/i }));
 }
 
 function deleteActions() {
@@ -98,14 +98,6 @@ async function openInventory() {
   const el = document.getElementById('view-panel-inventario');
   expect(el).not.toBeNull();
   return within(el ?? document.body);
-}
-
-async function fillNeutralAccount(user: { type: (element: HTMLElement, text: string) => Promise<void> }) {
-  await user.type(screen.getByLabelText(/^id de cuenta/i), 'cuenta-ejemplo');
-  await user.type(screen.getByLabelText(/^proveedor/i), 'codex');
-  await user.type(screen.getByLabelText(/id externo de la suscripción/i), 'org-9f21');
-  await user.type(screen.getByLabelText(/^tenant pagador/i), 'Acme');
-  await user.type(screen.getByLabelText(/locator de la credencial/i), 'CAUCE_PROVIDER_PATH');
 }
 
 it('declara no disponible el inventario cuando el gateway no publica provider_accounts', async () => {
@@ -124,45 +116,9 @@ it('declara no disponible el inventario cuando el gateway no publica provider_ac
   expect(await screen.findByText(/la matriz se muestra incompleta a propósito/i)).toBeInTheDocument();
 });
 
-it('exige dry-run antes de aplicar el alta y manda la mutación de provider_account', async () => {
-  const changes: ChangeRequest[] = [];
-  configuration({ provider_accounts: [], agents: [], alias_routing_ceiling: [], agent_account_bindings: [] });
-  recordChanges(changes);
-  const user = userEvent.setup();
-  renderWithApi(<AccountsPage />);
-
-  await openInventory();
-  await user.click(await screen.findByRole('button', { name: /nueva cuenta/i }));
-  await fillNeutralAccount(user);
-
-  // Apply does not exist as a parallel path: it is disabled until the server validated exactly
-  // this mutation in dry-run.
-  expect(accountActions().getByRole('button', { name: /^aplicar$/i })).toBeDisabled();
-  expect(changes).toHaveLength(0);
-
-  await user.click(accountActions().getByRole('button', { name: /previsualizar \(dry-run\)/i }));
-  expect(await screen.findByLabelText(/dry-run de alta de cuenta/i)).toHaveTextContent('"dry_run": true');
-  expect(changes[0]).toEqual({
-    dry_run: true,
-    expected_revision: 4,
-    mutation: {
-      resource: 'provider_account', action: 'create', id: 'cuenta-ejemplo',
-      value: {
-        provider: 'codex', external_account_id: 'org-9f21', payer_tenant_id: 'Acme', label: null,
-        credential_ref_kind: 'env_path', credential_ref: 'CAUCE_PROVIDER_PATH',
-        shared_with_pool: false, enabled: false,
-      },
-    },
-  });
-
-  await user.click(accountActions().getByRole('button', { name: /^aplicar$/i }));
-  expect(await screen.findByText(/aplicado en revisión 5/i)).toBeInTheDocument();
-  expect(changes[1]?.dry_run).toBe(false);
-});
-
 it('no habilita ni acredita escrituras del registro con recibos 2xx truncados', async () => {
   const changes: ChangeRequest[] = [];
-  configuration({ provider_accounts: [], agents: [], alias_routing_ceiling: [], agent_account_bindings: [] });
+  configuration({ provider_accounts: [ownAccount], agents: [], alias_routing_ceiling: [], agent_account_bindings: [] });
   recordChanges(changes, async (input) => input.dry_run
     ? HttpResponse.json(await changeReceipt(input))
     : HttpResponse.json({ applied: true, dry_run: false, revision: 5 }, { status: 201 }));
@@ -170,8 +126,7 @@ it('no habilita ni acredita escrituras del registro con recibos 2xx truncados', 
   renderWithApi(<AccountsPage />);
 
   await openInventory();
-  await user.click(await screen.findByRole('button', { name: /nueva cuenta/i }));
-  await fillNeutralAccount(user);
+  await user.click(await screen.findByRole('button', { name: /deshabilitar/i }));
   await user.click(accountActions().getByRole('button', { name: /previsualizar \(dry-run\)/i }));
   await user.click(accountActions().getByRole('button', { name: /^aplicar$/i }));
 
@@ -179,43 +134,6 @@ it('no habilita ni acredita escrituras del registro con recibos 2xx truncados', 
   expect(screen.getByRole('alert')).toHaveTextContent(/releído del servidor.*revisión 4/i);
   expect(screen.queryByText(/aplicado en revisión 5/i)).not.toBeInTheDocument();
 }, 20_000);
-
-it('no reimprime el locator en el dry-run que el servidor devuelve', async () => {
-  const changes: ChangeRequest[] = [];
-  configuration({ provider_accounts: [], agents: [], alias_routing_ceiling: [], agent_account_bindings: [] });
-  recordChanges(changes);
-  const user = userEvent.setup();
-  renderWithApi(<AccountsPage />);
-
-  await openInventory();
-  await user.click(await screen.findByRole('button', { name: /nueva cuenta/i }));
-  await fillNeutralAccount(user);
-  await user.click(accountActions().getByRole('button', { name: /previsualizar \(dry-run\)/i }));
-
-  const preview = await screen.findByLabelText(/dry-run de alta de cuenta/i);
-  expect(preview).not.toHaveTextContent('CAUCE_PROVIDER_PATH');
-  expect(preview).not.toHaveTextContent('"credential_ref":');
-});
-
-it('bloquea aplicar si el recibo confirma otro locator aunque la proyección visible coincida', async () => {
-  const changes: ChangeRequest[] = [];
-  configuration({ provider_accounts: [], agents: [], alias_routing_ceiling: [], agent_account_bindings: [] });
-  recordChanges(changes, async (input) => {
-    const mutation = ConfigMutationSchema.parse(input.mutation);
-    if (mutation.resource !== 'provider_account') throw new Error('unexpected account mutation');
-    const other = { ...mutation, value: { ...mutation.value, credential_ref: 'OTHER_LOCATOR' } };
-    return HttpResponse.json({ ...await changeReceipt(input), mutation_sha256: await configurationMutationSha256(other) });
-  });
-  const user = userEvent.setup();
-  renderWithApi(<AccountsPage />);
-  await openInventory();
-  await user.click(await screen.findByRole('button', { name: /nueva cuenta/i }));
-  await fillNeutralAccount(user);
-  await user.click(accountActions().getByRole('button', { name: /previsualizar \(dry-run\)/i }));
-  expect(await screen.findByRole('alert')).toHaveTextContent(/sin el recibo exacto del dry-run/i);
-  expect(accountActions().getByRole('button', { name: /^aplicar$/i })).toBeDisabled();
-  expect(changes).toHaveLength(1);
-});
 
 it('invalida el dry-run si Actualizar cambia la revisión y exige previsualizar otra vez', async () => {
   const changes: ChangeRequest[] = [];
