@@ -1,0 +1,49 @@
+# Allowlists precisos. Extiende las reglas por defecto; no hay allowlist global.
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Fixtures y claves de ejemplo. Cada ruta es un archivo concreto."
+paths = [
+  '''(?:^|/)ops/pty-agent/tests/test_ticket\.py$''',
+  '''(?:^|/)ops/tests/test_decisiones_registrar_mcp\.py$''',
+  '''(?:^|/)ops/tests/test_schema_error_sanitization\.py$''',
+  '''(?:^|/)ops/tests/test_space_archive\.py$''',
+  '''(?:^|/)packages/adapter-sdk/test/native-profile-fixtures\.ts$''',
+  '''(?:^|/)packages/adapter-sdk/test/muse-msp-runner\.test\.ts$''',
+  '''(?:^|/)packages/adapter-sdk/test/harnesses\.test\.ts$''',
+  '''(?:^|/)packages/protocol/test/reserved-aliases\.test\.ts$''',
+  '''(?:^|/)packages/protocol/test/redaction\.test\.ts$''',
+  '''(?:^|/)packages/mcp-fleet-monitor/src/gateway-http\.test\.ts$''',
+  '''(?:^|/)packages/store/src/context-version-model\.test\.ts$''',
+  '''(?:^|/)packages/store/test/adjuntos-entre-agentes-postgres\.test\.ts$''',
+  '''(?:^|/)services/decisiones/test/jev-client\.test\.ts$''',
+  '''(?:^|/)services/decisiones/test/support/servicio\.ts$''',
+  '''(?:^|/)services/decisiones/test/servicio\.test\.ts$''',
+  '''(?:^|/)services/gateway/src/routes/publish-redaction\.test\.ts$''',
+  '''(?:^|/)services/gateway/src/routes/core/publish\.test\.ts$''',
+  '''(?:^|/)services/gateway/src/test-fixtures/mtls-server-private\.pem$''',
+  '''(?:^|/)services/gateway/src/terminal\.tickets\.test\.ts$''',
+  '''(?:^|/)services/terminal-relay/src/governance-operation\.test\.ts$''',
+  '''(?:^|/)services/terminal-relay/src/governance-quiescence-relay\.test\.ts$''',
+  '''(?:^|/)services/terminal-relay/src/relay-test-fixtures\.ts$''',
+  '''(?:^|/)tests/terminal-pty/vectors\.json$''',
+]
+
+[[allowlists]]
+description = "Import de tipos. KeyObject no es una credencial."
+condition = "AND"
+paths = ['''(?:^|/)services/gateway/src/auth\.ts$''']
+regexTarget = "line"
+regexes = ['''KeyObject,\s*X509Certificate''']
+
+[[allowlists]]
+description = "Pin SHA-256 público del listado de auth de OpenClaw, no una clave."
+condition = "AND"
+paths = ['''(?:^|/)ops/cli/fleet_provider_openclaw\.py$''']
+regexTarget = "line"
+regexes = ["AUTH_LIST_SHA256\\s*=\\s*'[0-9a-f]{64}'"]
+
+[[allowlists]]
+description = "Credenciales locales fuera de Git."
+paths = ['''(?:^|/)ops/private(?:/|$)''']
