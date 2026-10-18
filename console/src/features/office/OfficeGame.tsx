@@ -8,10 +8,14 @@ import { AgentActionItems } from '../../components/agent-actions/AgentActionsMen
 import { MENU_POPUP } from '../../components/kit';
 import { cn } from '../../cn';
 import { useMediaQuery } from '../../shell/use-media-query';
+import { useQuotaAccounts } from '../../shell/fleet-context';
 import { LIVE_STATE_META } from '../live/agent-state';
 import { actorInputs } from './actor-inputs';
 import { AgentCard } from './AgentCard';
 import { AgentTip } from './AgentTip';
+import { AgentQuotaSummary } from './AgentQuotaSummary';
+import { agentQuotaBar } from './agent-quota-bar';
+import { HUD_PANEL } from './hud-style';
 import { stepZoom, type Inset } from './camera';
 import { createPlanMemory, nextPhaseEnd, orderByPlan, planCampus, type PlanGroup } from './campus-plan';
 import { CampusMap } from './CampusMap';
@@ -83,6 +87,11 @@ export function OfficeGame({ agents, groups, selectedId, sheetOpen, highlight, o
   const night = useNight();
 
   const ordered = useMemo(() => [...agents].sort((a, b) => a.id.localeCompare(b.id)), [agents]);
+  const quotas = useQuotaAccounts();
+  const quotaAgentIds = ordered.filter(agent => !agent.visitor).map(agent => agent.id).join('\0');
+  const quotaBars = useMemo(() => new Map((quotaAgentIds ? quotaAgentIds.split('\0') : []).map(id =>
+    [id, agentQuotaBar(quotas.data?.accounts ?? [], id, Boolean(quotas.error), now)])), [quotaAgentIds, quotas.data, quotas.error, now]);
+  const quotaPaintKey = JSON.stringify([...quotaBars].map(([id, quota]) => [id, quota.label, quota.color, quota.remaining]));
   const api = useApi();
   const saved = useResource('office-layout', () => api.getOfficeLayout()).data;
   // A new saved plan rebuilds the campus from scratch: the lots follow where the rooms sit.
@@ -141,9 +150,10 @@ export function OfficeGame({ agents, groups, selectedId, sheetOpen, highlight, o
   const view = useMemo(() => ({ width: Math.round(box.width * dpr), height: Math.round(box.height * dpr) }), [box.width, box.height, dpr]);
 
   const props = useMemo(() => ({
-    selected: selectedId, hovered: hoverId ?? cursorId, highlight, names, speech, groups: dotsByAgent(ordered, hues), stats, talkId: talk?.id ?? null,
-  }), [selectedId, hoverId, cursorId, highlight, names, speech, ordered, hues, stats, talk]);
+    selected: selectedId, hovered: hoverId ?? cursorId, highlight, names, speech, groups: dotsByAgent(ordered, hues), stats, talkId: talk?.id ?? null, quotas: quotaBars,
+  }), [selectedId, hoverId, cursorId, highlight, names, speech, ordered, hues, stats, talk, quotaBars]);
   const { engine, level, nearby, edges, occupancy, feed, kick } = useOfficeEngine({ canvasRef, map, inputs, reducedMotion, night, props });
+  useEffect(() => { kick(); }, [quotaPaintKey, kick]);
   useOfficeLooks(engine.scenes, ordered, kick);
   const narrow = box.width < 600;
   const showMapDefault = !coarse && box.width >= 1100;
@@ -260,9 +270,11 @@ export function OfficeGame({ agents, groups, selectedId, sheetOpen, highlight, o
 
   const campus = level === CAMPUS;
   const selected = selectedId ? ordered.find((agent) => agent.id === selectedId) : undefined;
+  const selectedQuota = selected ? quotaBars.get(selected.id) : undefined;
   const talkId = talk?.id ?? null;
   const tip = hoverId ?? cursorId;
   const tipAgent = tip ? ordered.find((agent) => agent.id === tip) : undefined;
+  const tipQuota = tipAgent ? quotaBars.get(tipAgent.id) : undefined;
   const talkTo = nearby && nearby !== selectedId && nearby !== talkId ? ordered.find((agent) => agent.id === nearby) : undefined;
   const menuAgent = menuFor && !ordered.find((agent) => agent.id === menuFor)?.visitor ? agentRefOf(menuFor) : null;
   const placeOf = (id: string) => {
@@ -320,6 +332,7 @@ export function OfficeGame({ agents, groups, selectedId, sheetOpen, highlight, o
           {ordered.map((agent) => (
             <div key={agent.id} id={optionId(agent.id)} role="option" aria-selected={agent.id === selectedId} className="sr-only" onClick={() => { onSelect(agent.id); }}>
               {agent.name}: {LIVE_STATE_META[agent.state].label}. {agent.reason}{agent.visitor || !agent.team ? '' : ` Grupo: ${agent.team.label}.`}
+              {quotaBars.has(agent.id) ? ` Cuota: ${quotaBars.get(agent.id)?.label ?? ''}.` : ''}
             </div>
           ))}
         </ContextMenu.Trigger>
@@ -378,7 +391,10 @@ export function OfficeGame({ agents, groups, selectedId, sheetOpen, highlight, o
         </div>
       ) : null}
       {selected && !sheetOpen && !talk ? (
-        <div className="pointer-events-none absolute left-2 z-20" style={{ bottom: bottomHeight + 12 }}>
+        <div className="pointer-events-none absolute left-2 z-20 grid max-h-[70%] gap-1 overflow-y-auto" style={{ bottom: bottomHeight + 12 }}>
+          {selectedQuota ? <section aria-label={`Cuota de ${selected.name}`} className={cn(HUD_PANEL, 'pointer-events-auto w-[min(23rem,calc(100vw-1rem))] p-2.5 text-[#f4f4f4]')}>
+            <AgentQuotaSummary quota={selectedQuota} now={now} />
+          </section> : null}
           <AgentCard
             agent={selected}
             place={placeOf(selected.id)}
@@ -398,6 +414,7 @@ export function OfficeGame({ agents, groups, selectedId, sheetOpen, highlight, o
       <TalkPrompt buttonRef={promptRef} name={talkTo?.name ?? null} coarse={coarse} onTalk={() => { if (talkTo) (onTalk ?? onSelect)(talkTo.id); }} />
       <FloatingTooltip anchor={anchor} open={Boolean(tipAgent && anchor)}>
         {tipAgent ? <AgentTip agent={tipAgent} /> : null}
+        {tipQuota ? <AgentQuotaSummary quota={tipQuota} now={now} /> : null}
       </FloatingTooltip>
       <FloatingTooltip anchor={siteHover?.anchor ?? null} open={Boolean(siteSlot && siteHover)}>
         {siteSlot ? (

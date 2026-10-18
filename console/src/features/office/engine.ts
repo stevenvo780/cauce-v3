@@ -20,6 +20,7 @@ import type { Speech } from './speech';
 import { teamTone } from './teams';
 import type { TubeEvent } from './tubes';
 import type { WorldMap } from './world-map';
+import type { AgentQuotaBar } from './agent-quota-bar';
 
 const PAN_SPEED = 620;
 const CLOSE_S = 0.16;
@@ -43,6 +44,7 @@ export interface EngineProps {
   names: ReadonlyMap<string, string>;
   speech?: ReadonlyMap<string, Speech>;
   groups?: ReadonlyMap<string, GroupDots>;
+  quotas?: ReadonlyMap<string, AgentQuotaBar>;
   /** Members and agents in trouble per building, for the labels over the houses. */
   stats: ReadonlyMap<string, { members: number; alerts: number }>;
   talkId: string | null;
@@ -64,6 +66,7 @@ export class OfficeEngine {
   readonly world: World;
   readonly scenes: Scenes;
   readonly labels: PixelLabels;
+  readonly quotaBoxes = new Map<string, ScreenRect>();
   readonly avatar: Avatar;
   readonly extras: Extras;
   level = CAMPUS;
@@ -125,6 +128,7 @@ export class OfficeEngine {
       cam: this.cam, view: this.view, dpr: 1, time: 0, still: reducedMotion, art: this.scenes.backdrop, backdrop: null, night: false,
       indoor: false, campus: true, entries: [], names: new Map(), selected: null, hovered: null, nearby: null, highlight: null,
       avatar: this.avatar, avatarHere: false, labels: this.labels, sites: this.siteTags, hoveredSite: null, cover: 0, road: null,
+      quotaBoxes: this.quotaBoxes,
     };
   }
 
@@ -328,6 +332,11 @@ export class OfficeEngine {
 
   /** The agent drawn under a screen point, the front-most first; inside, a desk counts for its owner. */
   pick(screen: Vec): string | null {
+    let quotaId: string | null = null;
+    for (const [id, box] of this.quotaBoxes) {
+      if (screen.x >= box.left && screen.x <= box.right && screen.y >= box.top && screen.y <= box.bottom) quotaId = id;
+    }
+    if (quotaId) return quotaId;
     let best: { id: string; y: number } | null = null;
     for (const entry of this.entries) {
       if (!entry.actor) continue;
@@ -349,7 +358,10 @@ export class OfficeEngine {
   /** Screen box of an agent in device px, or `null` when it is not on the map shown. */
   boxOf(id: string): ScreenRect | null {
     const entry = this.entries.find((item) => item.actor?.id === id);
-    return entry ? screenOf(entry.look, this.cam, this.view) : null;
+    if (!entry) return null;
+    const body = screenOf(entry.look, this.cam, this.view);
+    const quota = this.quotaBoxes.get(id);
+    return quota ? { left: Math.min(body.left, quota.left), top: Math.min(body.top, quota.top), right: Math.max(body.right, quota.right), bottom: body.bottom } : body;
   }
 
   /** Whether a screen point falls on the doorway out of the building shown. */
@@ -567,6 +579,7 @@ export class OfficeEngine {
     screen.avatarHere = avatar !== null && this.paseo;
     screen.speech = props.speech;
     screen.groups = props.groups;
+    screen.quotas = props.quotas;
     screen.sites = this.tags();
     screen.hoveredSite = this.hoveredSite;
     screen.cover = this.cover;

@@ -9,6 +9,8 @@ import type { LabelTone, PixelLabels } from './pixel-label';
 import { SPRITE_PAD } from './render-buildings';
 import { CHAR_H } from './sprites';
 import { drawSpeech, type Speech } from './speech';
+import { drawQuotaBar, QUOTA_BAR_HEIGHT, QUOTA_BAR_WIDTH } from './draw-quota-bars';
+import type { AgentQuotaBar } from './agent-quota-bar';
 
 export interface SiteTag { site: Site; text: string; swatch: string | null; alerts: number }
 
@@ -34,6 +36,8 @@ export interface ScreenInput {
   avatarHere: boolean;
   speech?: ReadonlyMap<string, Speech>;
   groups?: ReadonlyMap<string, GroupDots>;
+  quotas?: ReadonlyMap<string, AgentQuotaBar>;
+  quotaBoxes?: Map<string, ScreenRect>;
   labels: PixelLabels;
   sites: readonly SiteTag[];
   hoveredSite: string | null;
@@ -154,6 +158,32 @@ function placeTags(ctx: CanvasRenderingContext2D, input: ScreenInput, unit: numb
   boxes.push(...placed);
 }
 
+function quotaBars(ctx: CanvasRenderingContext2D, input: ScreenInput, origin: { x: number; y: number }): void {
+  input.quotaBoxes?.clear();
+  for (const entry of input.entries) {
+    const id = entry.actor?.id;
+    const quota = id ? input.quotas?.get(id) : undefined;
+    if (!id || !quota) continue;
+    const center = origin.x + (entry.look.hit.x + entry.look.hit.w / 2) * input.cam.zoom;
+    if (center < 0 || center > input.view.width) continue;
+    const half = QUOTA_BAR_WIDTH * input.dpr / 2;
+    const x = Math.max(half + input.dpr, Math.min(input.view.width - half - input.dpr, center));
+    let top = origin.y + entry.look.hit.y * input.cam.zoom - 4 * input.dpr;
+    const candidate = { left: x - half, right: x + half, top: top - QUOTA_BAR_HEIGHT * input.dpr, bottom: top };
+    let collision = placed.find(other => crosses(other, candidate, input.dpr));
+    while (collision) {
+      top = collision.top - 3 * input.dpr;
+      candidate.top = top - QUOTA_BAR_HEIGHT * input.dpr;
+      candidate.bottom = top;
+      collision = placed.find(other => crosses(other, candidate, input.dpr));
+    }
+    const box = drawQuotaBar(ctx, quota, x, top, input.dpr);
+    placed.push(box);
+    input.quotaBoxes?.set(id, box);
+    boxes.push(box);
+  }
+}
+
 const siteOrder: SiteTag[] = [];
 
 /** House names over the roofs; where two would overlap, the one with people in trouble or under the pointer wins. */
@@ -211,6 +241,7 @@ export function drawScreen(ctx: CanvasRenderingContext2D, input: ScreenInput): v
   if (input.campus) siteTags(ctx, input, origin);
   const unit = labelUnit(cam.zoom, dpr);
   placeTags(ctx, input, unit, origin);
+  quotaBars(ctx, input, origin);
   for (const entry of input.entries) {
     const actor = entry.actor;
     if (actor?.bubble !== 'zzz' || actor.pose !== 'lie' || (input.highlight && !input.highlight.has(actor.id))) continue;
