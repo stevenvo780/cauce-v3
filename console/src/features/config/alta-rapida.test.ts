@@ -11,9 +11,9 @@ it('arma el alta de una membership tal como la espera MembershipConfigMutationSc
 
 it('rechaza el alias y el rol que el zod del gateway rechazaría, con el motivo escrito', () => {
   const base = { ...BORRADOR_VACIO, tenantId: 'Miguel', roomId: 'grp.miguel', alias: 'atlas' };
-  expect(errorDeAlta('membership', { ...base, alias: 'Atlas' })).toMatch(/alias debe ser minúsculas/i);
+  expect(errorDeAlta('membership', { ...base, alias: 'Atlas' })).toMatch(/identificador \(alias\) debe ser minúsculas/i);
   expect(errorDeAlta('membership', { ...base, role: '' })).toMatch(/rol de permisos debe ser minúsculas/i);
-  expect(errorDeAlta('membership', { ...base, tenantId: '1Miguel' })).toMatch(/tenant debe empezar con letra/i);
+  expect(errorDeAlta('membership', { ...base, tenantId: '1Miguel' })).toMatch(/espacio debe empezar con letra/i);
 });
 
 it('crea la arista ACL en default-deny: los tres permisos arrancan en NO', () => {
@@ -27,7 +27,7 @@ it('crea la arista ACL en default-deny: los tres permisos arrancan en NO', () =>
 
 it('avisa de la arista de un tenant hacia sí mismo antes de gastar el viaje al 409', () => {
   expect(errorDeAlta('acl_edge', { ...BORRADOR_VACIO, desde: 'Steven', hacia: 'Steven' }))
-    .toMatch(/hacia sí mismo está prohibida/i);
+    .toMatch(/hacia sí mismo está prohibido/i);
 });
 
 it('manda display_name null cuando el nombre queda vacío, no la cadena vacía que el CHECK rechaza', () => {

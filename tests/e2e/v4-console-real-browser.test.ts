@@ -249,12 +249,12 @@ describe('recorrido V4 de la consola en navegador real contra gateway y PostgreS
       await openConfig(page, 'espacios');
       await page.getByRole('button', { name: 'Un solo recurso' }).click();
       await page.getByLabel('Recurso a crear').selectOption('room');
-      await page.getByLabel('Tenant', { exact: true }).fill('1-inválido');
-      await page.getByLabel('Room', { exact: true }).fill(roomId);
+      await page.getByLabel('Espacio', { exact: true }).fill('1-inválido');
+      await page.getByLabel('Sala', { exact: true }).fill(roomId);
       await page.getByLabel('Nombre', { exact: true }).fill(roomLabel);
       expect(await page.getByRole('button', { name: 'Crear', exact: true }).isDisabled()).toBe(true);
-      await page.getByText('El tenant debe empezar con letra (máx. 64 caracteres).').waitFor({ timeout: 15_000 });
-      await page.getByLabel('Tenant', { exact: true }).fill(hubA);
+      await page.getByText('El espacio debe empezar con letra (máx. 64 caracteres).').waitFor({ timeout: 15_000 });
+      await page.getByLabel('Espacio', { exact: true }).fill(hubA);
       await page.getByRole('button', { name: 'Crear', exact: true }).click();
       await page.getByRole('status').filter({ hasText: 'creado en la revisión' }).waitFor({ timeout: 20_000 });
     });

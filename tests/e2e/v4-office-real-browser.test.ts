@@ -148,8 +148,8 @@ async function createRoom(page: V4Page, tenantId: string, id: string, label: str
   await openConfig(page, 'espacios');
   await page.getByRole('button', { name: 'Un solo recurso', exact: true }).click();
   await page.getByLabel('Recurso a crear', { exact: true }).selectOption('room');
-  await page.getByLabel('Tenant', { exact: true }).fill(tenantId);
-  await page.getByLabel('Room', { exact: true }).fill(id);
+  await page.getByLabel('Espacio', { exact: true }).fill(tenantId);
+  await page.getByLabel('Sala', { exact: true }).fill(id);
   await page.getByLabel('Nombre', { exact: true }).fill(label);
   await page.getByRole('button', { name: 'Crear', exact: true }).click();
   await page.getByRole('status').filter({ hasText: 'creado en la revisión' }).waitFor({ timeout: 20_000 });

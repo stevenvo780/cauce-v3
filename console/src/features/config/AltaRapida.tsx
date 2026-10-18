@@ -4,7 +4,7 @@ import type { ConfigMutation } from '../../api/types';
 import { CONFIG_SIN_CONTROL_REASON } from '../../router';
 import { Button, Notice, Outcome, PREVIEW } from '../../components/kit';
 import {
-  BORRADOR_VACIO, errorDeAlta, mutacionDeAlta, RECURSOS_ALTA, TITULOS_ALTA,
+  AYUDA_ALTA, BORRADOR_VACIO, errorDeAlta, mutacionDeAlta, RECURSOS_ALTA, TITULOS_ALTA,
   type BorradorAlta, type RecursoAlta,
 } from './alta-rapida';
 import { textoRecarga, type ConfigChangeOutcome } from './config-change';
@@ -68,7 +68,7 @@ export function AltaRapida({ soloLectura, busy, onChange }: {
     }
     if (dryRun) {
       setPreview(JSON.stringify(desenlace.result, null, 2));
-      setAviso({ text: 'Dry-run aceptado por el servidor: no se escribió nada todavía.', tone: 'success' });
+      setAviso({ text: 'La previsualización fue aceptada: todavía no se escribió nada.', tone: 'success' });
       return;
     }
     setPreview(undefined);
@@ -76,9 +76,9 @@ export function AltaRapida({ soloLectura, busy, onChange }: {
     const fallo = desenlace.recarga && !desenlace.recarga.releido;
     setAviso({
       tone: fallo ? 'parcial' : 'success',
-      text: `${TITULOS_ALTA[recurso]} creado en la revisión ${String(desenlace.result.revision ?? 'UNKNOWN')}`
+      text: `${TITULOS_ALTA[recurso]}: creado en la revisión ${String(desenlace.result.revision ?? 'UNKNOWN')}`
         + ` (${desenlace.result.summary ?? 'sin resumen del servidor'}).${textoRecarga(desenlace.recarga)}`
-        + (recurso === 'membership' ? ' Es solo miembro: registralo en Agentes si necesita ficha, perfil o contexto.' : ''),
+        + (recurso === 'membership' ? ' Si esa persona o ese agente todavía no existe, dalo de alta en Agentes y elegí esta sala.' : ''),
     });
     // The resource ALREADY exists: leaving the fields filled reassembles "Create" on top of it
     // and the second click earns a 409 for a duplicate row. The form returns to empty with no
@@ -101,43 +101,44 @@ export function AltaRapida({ soloLectura, busy, onChange }: {
         value={recurso}
         onChange={(event) => { cambiarRecurso(event.target.value as RecursoAlta); }}
       >{RECURSOS_ALTA.map((item) => <option key={item} value={item}>{TITULOS_ALTA[item]}</option>)}</select></label>
+      <p className="m-0 text-xs text-muted md:col-span-2">{AYUDA_ALTA[recurso]}</p>
 
       {recurso === 'tenant' || recurso === 'room' || recurso === 'membership'
-        ? <label>Tenant<input {...inerte} aria-label="Tenant" value={borrador.tenantId} onChange={(event) => { editar({ tenantId: event.target.value }); }} /></label>
+        ? <label>Espacio<input {...inerte} aria-label="Espacio" value={borrador.tenantId} onChange={(event) => { editar({ tenantId: event.target.value }); }} /></label>
         : null}
       {recurso === 'room' || recurso === 'membership'
-        ? <label>Room<input {...inerte} aria-label="Room" value={borrador.roomId} onChange={(event) => { editar({ roomId: event.target.value }); }} /></label>
+        ? <label>Sala<input {...inerte} aria-label="Sala" value={borrador.roomId} onChange={(event) => { editar({ roomId: event.target.value }); }} /></label>
         : null}
       {recurso === 'membership'
-        ? <label>Alias<input {...inerte} aria-label="Alias" value={borrador.alias} onChange={(event) => { editar({ alias: event.target.value }); }} /></label>
+        ? <label>Identificador<input {...inerte} aria-label="Identificador" value={borrador.alias} onChange={(event) => { editar({ alias: event.target.value }); }} /></label>
         : null}
       {recurso === 'tenant' || recurso === 'room'
-        ? <label>Nombre <span className={HINT}>opcional, null si queda vacío</span>
+        ? <label>Nombre <span className={HINT}>opcional</span>
           <input {...inerte} aria-label="Nombre" value={borrador.nombre} onChange={(event) => { editar({ nombre: event.target.value }); }} /></label>
         : null}
       {recurso === 'acl_edge' ? <>
-        <label>Desde el tenant<input {...inerte} aria-label="Desde el tenant" value={borrador.desde} onChange={(event) => { editar({ desde: event.target.value }); }} /></label>
-        <label>Hacia el tenant<input {...inerte} aria-label="Hacia el tenant" value={borrador.hacia} onChange={(event) => { editar({ hacia: event.target.value }); }} /></label>
+        <label>Desde el espacio<input {...inerte} aria-label="Desde el espacio" value={borrador.desde} onChange={(event) => { editar({ desde: event.target.value }); }} /></label>
+        <label>Hacia el espacio<input {...inerte} aria-label="Hacia el espacio" value={borrador.hacia} onChange={(event) => { editar({ hacia: event.target.value }); }} /></label>
         {/* The three permissions default to NO: the backend default is deny, and the form must
             not open a cross-tenant link by default. */}
-        <label className={CHECK_LABEL}><input {...inerte} type="checkbox" aria-label="Ruta" checked={borrador.allowRoute} onChange={(event) => { editar({ allowRoute: event.target.checked }); }} /> Ruta <span className={HINT}>allow_route: dejar que le mande mensajes</span></label>
-        <label className={CHECK_LABEL}><input {...inerte} type="checkbox" aria-label="Lectura" checked={borrador.allowRead} onChange={(event) => { editar({ allowRead: event.target.checked }); }} /> Lectura <span className={HINT}>allow_read: dejar que lea su actividad</span></label>
-        <label className={CHECK_LABEL}><input {...inerte} type="checkbox" aria-label="Control" checked={borrador.allowControl} onChange={(event) => { editar({ allowControl: event.target.checked }); }} /> Control <span className={HINT}>allow_control: dejar que le escriba la configuración</span></label>
+        <label className={CHECK_LABEL}><input {...inerte} type="checkbox" aria-label="Puede mandar mensajes" checked={borrador.allowRoute} onChange={(event) => { editar({ allowRoute: event.target.checked }); }} /> Puede mandar mensajes</label>
+        <label className={CHECK_LABEL}><input {...inerte} type="checkbox" aria-label="Puede ver la actividad" checked={borrador.allowRead} onChange={(event) => { editar({ allowRead: event.target.checked }); }} /> Puede ver la actividad</label>
+        <label className={CHECK_LABEL}><input {...inerte} type="checkbox" aria-label="Puede cambiar la configuración" checked={borrador.allowControl} onChange={(event) => { editar({ allowControl: event.target.checked }); }} /> Puede cambiar la configuración</label>
       </> : null}
     </div>
 
     <details className="text-[13px]">
       <summary className="cursor-pointer font-medium">Opciones de alta: {borrador.habilitado ? 'habilitado' : 'deshabilitado'}
         {recurso === 'membership' ? ` · rol ${borrador.role.trim() || 'sin definir'}` : ''}
-        {recurso === 'tenant' ? ` · ${borrador.esHub ? 'es hub' : 'no es hub'}` : ''}
+        {recurso === 'tenant' ? ` · ${borrador.esHub ? 'espacio principal' : 'espacio normal'}` : ''}
       </summary>
       <div className={`${FORM_GRID} mt-2`}>
         {recurso === 'membership'
-          ? <label>Rol de permisos <span className={HINT}>route/read/control salen de role_policies; no cambia el contexto</span>
+          ? <label>Rol <span className={HINT}>en minúsculas; decide qué puede hacer en la sala</span>
             <input {...inerte} aria-label="Rol de permisos" value={borrador.role} onChange={(event) => { editar({ role: event.target.value }); }} /></label>
           : null}
         {recurso === 'tenant'
-          ? <label className={CHECK_LABEL}><input {...inerte} type="checkbox" aria-label="Es hub" checked={borrador.esHub} onChange={(event) => { editar({ esHub: event.target.checked }); }} /> Es hub</label>
+          ? <label className={CHECK_LABEL}><input {...inerte} type="checkbox" aria-label="Es el espacio principal" checked={borrador.esHub} onChange={(event) => { editar({ esHub: event.target.checked }); }} /> Es el espacio principal</label>
           : null}
         <label className={CHECK_LABEL}><input {...inerte} type="checkbox" aria-label="Habilitado" checked={borrador.habilitado} onChange={(event) => { editar({ habilitado: event.target.checked }); }} /> Habilitado</label>
       </div>
@@ -149,14 +150,12 @@ export function AltaRapida({ soloLectura, busy, onChange }: {
         what is being done but how it is encoded. It is not hidden — it is still all there, and
         is what must be read before signing anything odd — it just stops being the first thing. */}
     <details className="text-[13px]">
-      <summary className="flex cursor-pointer items-center gap-1.5 text-muted"><Braces size={13} aria-hidden="true" /> Ver la mutación que se va a enviar</summary>
+      <summary className="flex cursor-pointer items-center gap-1.5 text-muted"><Braces size={13} aria-hidden="true" /> Ver el detalle técnico del alta</summary>
       <pre className={`${PREVIEW} mt-2`} aria-label="Mutación del alta">{JSON.stringify(mutation, null, 2)}</pre>
     </details>
 
     {recurso === 'membership' ? <Notice tone="warn" role="note">
-      Solo membresía, sin registro de agente: este alta añade el alias a la sala, pero no crea su registro.
-      Sin registro no tendrá ficha en la oficina, ni perfil, ni contexto. Si tiene que trabajar, registralo
-      desde Agentes → «Añadir agente» eligiendo esta misma sala como grupo inicial.
+      Añade a una persona o a un agente a una sala que ya existe. No crea el agente: si todavía no está en Agentes, dalo de alta allí y elegí esta misma sala.
     </Notice> : null}
 
     <div className="flex flex-wrap gap-2">

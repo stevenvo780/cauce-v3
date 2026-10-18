@@ -19,10 +19,17 @@ export type RecursoAlta = 'membership' | 'acl_edge' | 'tenant' | 'room';
 export const RECURSOS_ALTA: readonly RecursoAlta[] = ['membership', 'acl_edge', 'tenant', 'room'];
 
 export const TITULOS_ALTA: Record<RecursoAlta, string> = {
-  membership: 'Membership (alias en una room)',
-  acl_edge: 'Arista ACL (cruce entre tenants)',
-  tenant: 'Tenant',
-  room: 'Room',
+  membership: 'Membresía: una persona o un agente en una sala',
+  acl_edge: 'Permiso entre espacios',
+  tenant: 'Espacio',
+  room: 'Sala',
+};
+
+export const AYUDA_ALTA: Record<RecursoAlta, string> = {
+  membership: 'Añade a alguien a una sala que ya existe. No crea el agente.',
+  acl_edge: 'Deja que un espacio le escriba, le lea o le cambie la configuración a otro.',
+  tenant: 'Crea el lugar de una empresa o de un equipo.',
+  room: 'Crea una sala dentro de un espacio. Ahí se habla y se trabaja.',
 };
 
 // TenantSchema and AliasSchema from packages/protocol/src/schemas.ts.
@@ -59,30 +66,30 @@ export function errorDeAlta(recurso: RecursoAlta, borrador: BorradorAlta): strin
   if (recurso === 'tenant') {
     return TENANT.test(borrador.tenantId.trim())
       ? undefined
-      : 'El tenant debe empezar con letra y seguir con letras, números, guion o guion bajo (máx. 64).';
+      : 'El espacio debe empezar con letra y seguir con letras, números, guion o guion bajo (máx. 64).';
   }
   if (recurso === 'room') {
-    if (!TENANT.test(borrador.tenantId.trim())) return 'El tenant debe empezar con letra (máx. 64 caracteres).';
+    if (!TENANT.test(borrador.tenantId.trim())) return 'El espacio debe empezar con letra (máx. 64 caracteres).';
     const room = borrador.roomId.trim();
-    return room.length >= 1 && room.length <= 128 ? undefined : 'El room necesita un id de 1 a 128 caracteres.';
+    return room.length >= 1 && room.length <= 128 ? undefined : 'La sala necesita un identificador de 1 a 128 caracteres.';
   }
   if (recurso === 'membership') {
-    if (!TENANT.test(borrador.tenantId.trim())) return 'El tenant debe empezar con letra (máx. 64 caracteres).';
+    if (!TENANT.test(borrador.tenantId.trim())) return 'El espacio debe empezar con letra (máx. 64 caracteres).';
     const room = borrador.roomId.trim();
-    if (room.length < 1 || room.length > 128) return 'El room necesita un id de 1 a 128 caracteres.';
+    if (room.length < 1 || room.length > 128) return 'La sala necesita un identificador de 1 a 128 caracteres.';
     if (isReservedAlias(borrador.alias)) return RESERVED_ALIAS_MESSAGE;
     if (!SLUG.test(borrador.alias.trim())) {
-      return 'El alias debe ser minúsculas, empezar con letra y usar sólo letras, números, guion o guion bajo.';
+      return 'El identificador (alias) debe ser minúsculas, empezar con letra y usar sólo letras, números, guion o guion bajo.';
     }
     return SLUG.test(borrador.role.trim())
       ? undefined
-      : 'El rol de permisos debe ser minúsculas y empezar con letra: route/read/control salen de role_policies y no cambian el contexto.';
+      : 'El rol de permisos debe ser minúsculas y empezar con letra.';
   }
-  if (!TENANT.test(borrador.desde.trim())) return 'El tenant de origen debe empezar con letra (máx. 64 caracteres).';
-  if (!TENANT.test(borrador.hacia.trim())) return 'El tenant de destino debe empezar con letra (máx. 64 caracteres).';
+  if (!TENANT.test(borrador.desde.trim())) return 'El espacio de origen debe empezar con letra (máx. 64 caracteres).';
+  if (!TENANT.test(borrador.hacia.trim())) return 'El espacio de destino debe empezar con letra (máx. 64 caracteres).';
   // The store rejects an edge to itself with a 409; warning here saves the round trip.
   return borrador.desde.trim() === borrador.hacia.trim()
-    ? 'Una arista de un tenant hacia sí mismo está prohibida en el servidor: elegí dos tenants distintos.'
+    ? 'Un permiso de un espacio hacia sí mismo está prohibido: elegí dos espacios distintos.'
     : undefined;
 }
 

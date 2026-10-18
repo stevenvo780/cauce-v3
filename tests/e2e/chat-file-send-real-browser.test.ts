@@ -45,13 +45,13 @@ async function createMembership(page: BrowserPage, tenant: FunctionalTenant, act
   else await page.getByRole('tab', { name: 'Espacios y salas', exact: true }).click();
   await page.getByRole('button', { name: 'Un solo recurso' }).click();
   await page.getByLabel('Recurso a crear').selectOption('membership');
-  await page.getByLabel('Tenant', { exact: true }).fill(tenant.tenant);
-  await page.getByLabel('Room', { exact: true }).fill(tenant.room);
-  await page.getByLabel('Alias', { exact: true }).fill(tenant.target);
+  await page.getByLabel('Espacio', { exact: true }).fill(tenant.tenant);
+  await page.getByLabel('Sala', { exact: true }).fill(tenant.room);
+  await page.getByLabel('Identificador', { exact: true }).fill(tenant.target);
   await page.getByText('Opciones de alta:', { exact: false }).click();
   await page.getByLabel('Rol de permisos', { exact: true }).fill('agent');
   await page.getByRole('button', { name: 'Previsualizar el alta' }).click();
-  await page.getByRole('status').filter({ hasText: 'Dry-run aceptado por el servidor' }).waitFor({ timeout: 20_000 });
+  await page.getByRole('status').filter({ hasText: 'La previsualización fue aceptada' }).waitFor({ timeout: 20_000 });
   await page.getByRole('button', { name: 'Crear', exact: true }).click();
   await page.getByRole('status').filter({ hasText: 'creado en la revisión' }).waitFor({ timeout: 20_000 });
   const membership = await active.database.pool.query<{ enabled: boolean; role: string }>(

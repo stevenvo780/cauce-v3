@@ -10,7 +10,7 @@ beforeEach(() => { window.history.replaceState({}, '', '/config?seccion=espacios
 
 async function openAdministration() {
   await screen.findByRole('tablist', { name: 'Secciones de ajustes' });
-  await screen.findByLabelText('Alias');
+  await screen.findByLabelText('Identificador');
 }
 async function roundtrip(user: ReturnType<typeof userEvent.setup>) {
   const active = screen.getByRole('tablist', { name: 'Secciones de ajustes' }).querySelector('[aria-selected="true"]');
@@ -37,9 +37,9 @@ it('conserva borradores del alta rápida y del wizard durante sus propias idas y
   const user = userEvent.setup();
   renderWithApi(<ConfigPage />);
   await openAdministration();
-  await user.type(screen.getByLabelText('Alias'), 'pendiente');
+  await user.type(screen.getByLabelText('Identificador'), 'pendiente');
   await roundtrip(user);
-  expect(screen.getByLabelText('Alias')).toHaveValue('pendiente');
+  expect(screen.getByLabelText('Identificador')).toHaveValue('pendiente');
   await user.click(screen.getByRole('button', { name: 'Espacio completo, paso a paso' }));
   await user.clear(screen.getByLabelText('Tenant id'));
   await user.type(screen.getByLabelText('Tenant id'), 'DraftTenant');
@@ -63,9 +63,9 @@ it('mantiene el bloqueo del POST pendiente y presenta su recibo al volver, sin r
   }));
   renderWithApi(<ConfigPage />);
   await openAdministration();
-  await user.type(screen.getByLabelText('Tenant'), 'Miguel');
-  await user.type(screen.getByLabelText('Room'), 'grp.miguel');
-  await user.type(screen.getByLabelText('Alias'), 'new_alias');
+  await user.type(screen.getByLabelText('Espacio'), 'Miguel');
+  await user.type(screen.getByLabelText('Sala'), 'grp.miguel');
+  await user.type(screen.getByLabelText('Identificador'), 'new_alias');
   await user.click(screen.getByRole('button', { name: 'Crear' }));
   await waitFor(() => { expect(requests).toHaveLength(1); });
   await roundtrip(user);
@@ -74,12 +74,9 @@ it('mantiene el bloqueo del POST pendiente y presenta su recibo al volver, sin r
   expect(requests).toHaveLength(1);
   await user.click(screen.getByRole('tab', { name: 'Agentes' }));
   await act(async () => { release?.(); await pending; });
-  await waitFor(() => {
-    expect(screen.getByLabelText('Alias', { selector: 'input' })).toHaveValue('');
-  });
   await user.click(screen.getByRole('tab', { name: 'Espacios y salas' }));
   expect(await screen.findByText(/creado en la revisión 2/)).toHaveTextContent('alta confirmada');
-  expect(screen.getByLabelText('Alias')).toHaveValue('');
+  expect(screen.getByLabelText('Identificador')).toHaveValue('');
   expect(requests).toHaveLength(1);
 });
 
