@@ -3,7 +3,11 @@ import type { CompanyAdmin } from '../../api/client/company-client';
 import { useApi } from '../../api/context';
 import { useResource } from '../../api/use-resource';
 import { ActionButton } from '../../components/action-button';
+import { diffConflictFields, isCasConflict, type ConflictFieldDiff } from '../../components/conflict';
+import { ConflictNotice } from '../../components/ConflictNotice';
 import { Button, Notice } from '../../components/kit';
+
+const ADMIN_ROLE_LABEL: Record<'owner' | 'admin', string> = { owner: 'Dueño', admin: 'Administrador' };
 
 export function CompanyAdminsPanel({ companyId, canAssignPeople }: { companyId: string; canAssignPeople: boolean }) {
   const api = useApi();
@@ -16,16 +20,29 @@ export function CompanyAdminsPanel({ companyId, canAssignPeople }: { companyId: 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [adminConflict, setAdminConflict] = useState<{ userId: string; nextRole: 'owner' | 'admin' | null; diffs: ConflictFieldDiff[] }>();
   const ready = !!admins.data && !admins.error && !admins.loading && !busy;
   async function write(userId: string, nextRole: 'owner' | 'admin' | null, version: number) {
     if (!ready) return;
     setBusy(true); setError(''); setNotice('');
     try {
       await api.saveCompanyAdmin(companyId, { user_id: userId, role: nextRole, expected_version: version });
-      setConfirmation(undefined); const reread = await admins.reload();
+      setConfirmation(undefined); setAdminConflict(undefined); const reread = await admins.reload();
       if (reread.error) throw reread.error;
       setNotice(nextRole === null ? 'Autoridad de empresa revocada.' : 'Autoridad de empresa guardada.');
-    } catch (cause) { setError(cause instanceof Error ? cause.message : 'No se confirmó la autoridad de empresa.'); }
+    } catch (cause) {
+      if (isCasConflict(cause)) {
+        const fresh = (await admins.reload()).data?.items.find(admin => admin.user_id === userId);
+        setAdminConflict({
+          userId, nextRole,
+          diffs: diffConflictFields(
+            { autoridad: nextRole === null ? 'Sin autoridad' : ADMIN_ROLE_LABEL[nextRole] },
+            { autoridad: fresh ? ADMIN_ROLE_LABEL[fresh.role] : 'Sin autoridad' },
+            { autoridad: 'Autoridad de empresa' },
+          ),
+        });
+      } else setError(cause instanceof Error ? cause.message : 'No se confirmó la autoridad de empresa.');
+    }
     finally { setBusy(false); }
   }
   const eligiblePeople = people.data?.items.filter(person => person.active) ?? [];
@@ -39,6 +56,16 @@ export function CompanyAdminsPanel({ companyId, canAssignPeople }: { companyId: 
     {canAssignPeople && people.loading ? <p role="status">Leyendo personas elegibles…</p> : null}
     {error || admins.error || people.error ? <Notice tone="danger" role="alert">{error || (admins.error?.message ?? people.error?.message)}</Notice> : null}
     {notice ? <Notice tone="ok" role="status">{notice}</Notice> : null}
+    {adminConflict ? <ConflictNotice diffs={adminConflict.diffs} busy={busy}
+      onRetry={() => {
+        const fresh = admins.data?.items.find(admin => admin.user_id === adminConflict.userId);
+        void write(adminConflict.userId, adminConflict.nextRole, fresh?.version ?? 0);
+      }}
+      onDiscard={() => {
+        const fresh = admins.data?.items.find(admin => admin.user_id === adminConflict.userId);
+        setAdminConflict(undefined); setConfirmation(undefined);
+        if (fresh) { setPersonId(fresh.user_id); setRole(fresh.role); } else setPersonId('');
+      }} /> : null}
     {admins.data?.items.length === 0 && !admins.error ? <p className="m-0 text-sm text-muted">Todavía no hay dueños ni administradores asignados a esta empresa.</p> : null}
     <ul className="m-0 grid list-none gap-2 p-0">{admins.data?.items.map(admin => <li key={admin.user_id} className="flex flex-wrap justify-between gap-2 border-b border-line py-2">
       <span>{admin.display_name} · {admin.email} · {admin.role === 'owner' ? 'Dueño' : 'Administrador'}</span>

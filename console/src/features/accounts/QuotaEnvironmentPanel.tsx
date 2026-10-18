@@ -63,7 +63,7 @@ export function QuotaEnvironmentPanel({ snapshot, loading, accounts, canWrite, c
       await api.updateQuotaEnvironment(environment.id, { expected_version: environment.version, label: label.trim() });
       await reload(); setEditing(undefined); setEnvConflict(false); setNotice('Configuración del entorno guardada.');
     } catch (cause) {
-      if (isCasConflict(cause)) { setEnvConflict(true); void reload(); }
+      if (isCasConflict(cause)) { await reload().catch(() => undefined); setEnvConflict(true); }
       else setError(describeQuotaEnvironmentError(cause, 'No se confirmó la operación del entorno.'));
     } finally { setBusy(false); }
   }
