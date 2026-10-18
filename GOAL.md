@@ -245,7 +245,7 @@ Verificado por contenido (Haiku/Sonnet + revisión Opus 5.5): trabajo valioso qu
   - [x] [local real] «Mis cuotas»: cuentas sin agente y tarjetas fijadas con persistencia.
   - [x] [local real] Estados explícitos y cuenta compartida modelada sin saldos independientes.
   - [ ] El dueño crea, autentica, consulta, actualiza y elimina un entorno de cuotas real desde «Mis cuotas» (hoy 0 entornos en producción; depende de un ordenador con ejecutor).
-  - [ ] Cuotas por agente según harness; cuenta compartida por dos agentes reales; ventanas contrastadas; verificado en producción.
+  - [ ] Cuotas por agente según harness; cuenta compartida por dos agentes reales; ventanas contrastadas; verificado en producción. **18-oct [prod]:** QA qc1: la barra y las cuentas de la ficha de los 14 agentes coinciden con el CLI `cuotas` a 0 puntos, con reinicios iguales; tres cuentas compartidas muestran el mismo saldo en todos sus agentes. Falta el lector «según harness» dentro del contenedor: dice «Todavía no hay una medición persistida» en los 14 (8 sin ubicación V4), y se cierra con los traslados.
 
 - [ ] **5. Oficina y harnesses operativos.** La oficina responde a la creación, edición, asignación y eliminación de salas y agentes; su configuración persiste; y el detalle de cada agente muestra correctamente sus cuotas y estado visual. El mecanismo de configuración de harnesses se ha probado con operaciones reales y no depende de cambios dispersos para cada integración.
   - [x] [local real] El plano persiste tras recargar y en otro navegador.
