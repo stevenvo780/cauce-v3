@@ -41,7 +41,8 @@ export function AgentRemovalDialog({ tenantId, alias, retired, snapshot, onReloa
             {retired ? <Pill tone="info">Paso actual</Pill> : <Pill tone="neutral">Después del retiro</Pill>}</span>
           <span className="text-[13px] text-fg-2">Borra el perfil, la apariencia, las cuentas vinculadas, los techos de ruteo,
             los destinos de salida, las llaves de sellado y los favoritos. Los mensajes y entregas ya enviados y las membresías
-            con historial se conservan. No se puede deshacer; la previsualización muestra el detalle exacto.</span>
+            con historial se conservan. Si queda historial o una identidad de ejecución, el alias sigue reservado para no mezclar
+            identidades; si no, queda libre. No se puede deshacer; la previsualización muestra el detalle exacto.</span>
         </li>
       </ol>
       {retired ? null : <p className="m-0 text-xs text-muted">Cuando el retiro figure «Completada», pulsa «Releer inventario» para pasar al paso 2.</p>}

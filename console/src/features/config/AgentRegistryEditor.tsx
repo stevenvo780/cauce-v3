@@ -298,7 +298,8 @@ function AgentRegistryForm({
       onSubmit={(event) => { event.preventDefault(); void remove(true); }}>
       <p>Eliminar este registro requiere comprobar sus dependencias. Previsualiza antes de confirmar.</p>
       <p className={HINT}>Como nunca tuvo ejecución, se borran con él su perfil, sus cuentas vinculadas, su apariencia y sus membresías
-        sin historial. Los mensajes y el historial se conservan, y entonces el alias queda reservado y no se puede reutilizar.</p>
+        sin historial. Si no queda historial, el alias queda libre para otro agente. Si queda, se conserva su identidad y el alias
+        sigue reservado para no mezclar historiales. La eliminación definitiva no se puede deshacer.</p>
       <div className="flex flex-wrap gap-2">
         <Button type="submit" disabled={disabled}>Previsualizar eliminación</Button>
         <Button variant="primary" disabled={disabled || !runner.isValidated(deletion)}

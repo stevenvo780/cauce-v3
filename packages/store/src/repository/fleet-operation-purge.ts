@@ -66,16 +66,14 @@ export async function purgeRetiredTarget(client: DatabaseClient, row: FleetOpera
   if (dependencies.some(value => value.blocking)) throw new FleetOperationError('conflict', 'purge target has active work or control');
   await client.query("SELECT set_config('cauce.actor_tenant',$1,true),set_config('cauce.actor_alias',$2,true)", [row.actor_tenant, row.actor_alias]);
   const archive = await purgeTargetRecords(client, row.target);
-  if (row.target.resource !== 'agent') {
-    const historical = dependencies.some(value => value.type !== `purge.preserve.${table}` && value.type.startsWith('purge.preserve.'));
-    if (!historical) await client.query(`DELETE FROM ${sqlIdentifier(table)} WHERE ${targetWhere(row.target)}`, params);
-    else await client.query(`UPDATE ${sqlIdentifier(table)} SET purged_at=COALESCE(purged_at,clock_timestamp()) WHERE ${targetWhere(row.target)}`, params);
-    if (row.target.resource === 'tenant') {
-      await client.query(`UPDATE rooms SET purged_at=COALESCE(purged_at,clock_timestamp()),enabled=false,
-        retired_at=COALESCE(retired_at,clock_timestamp()),retired_enabled=COALESCE(retired_enabled,false) WHERE tenant_id=$1`, [row.target.tenant_id]);
-      await client.query('UPDATE provider_accounts SET enabled=false WHERE payer_tenant_id=$1', [row.target.tenant_id]);
-      await client.query('UPDATE acl_edges SET enabled=false WHERE from_tenant=$1 OR to_tenant=$1', [row.target.tenant_id]);
-    }
+  const historical = dependencies.some(value => value.type !== `purge.preserve.${table}` && value.type.startsWith('purge.preserve.'));
+  if (!historical) await client.query(`DELETE FROM ${sqlIdentifier(table)} WHERE ${targetWhere(row.target)}`, params);
+  else await client.query(`UPDATE ${sqlIdentifier(table)} SET purged_at=COALESCE(purged_at,clock_timestamp()) WHERE ${targetWhere(row.target)}`, params);
+  if (row.target.resource === 'tenant') {
+    await client.query(`UPDATE rooms SET purged_at=COALESCE(purged_at,clock_timestamp()),enabled=false,
+      retired_at=COALESCE(retired_at,clock_timestamp()),retired_enabled=COALESCE(retired_enabled,false) WHERE tenant_id=$1`, [row.target.tenant_id]);
+    await client.query('UPDATE provider_accounts SET enabled=false WHERE payer_tenant_id=$1', [row.target.tenant_id]);
+    await client.query('UPDATE acl_edges SET enabled=false WHERE from_tenant=$1 OR to_tenant=$1', [row.target.tenant_id]);
   }
   await client.query(`INSERT INTO fleet_operation_events(operation_id,version,event,metadata) VALUES($1,$2,'step_completed',$3::jsonb)`,
     [row.id, Number(row.version) + 1, JSON.stringify({ step: 'purge_scope', purge_scope: dependencies, deleted_configuration: archive })]);

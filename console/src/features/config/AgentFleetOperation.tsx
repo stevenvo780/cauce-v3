@@ -20,6 +20,11 @@ export function AgentFleetPreview({ preview }: { preview: FleetOperationPreview 
     </section> : null}
     {deleted.length ? <p>Se borra: {deleted.join(', ')}.</p> : null}
     {kept.length ? <p>Se conserva como historial: {kept.join(', ')}.</p> : null}
+    {preview.kind === 'purge' && preview.target.resource === 'agent' ? <p role="note">
+      {preview.dependencies.some((entry) => entry.type.startsWith('purge.preserve.') && entry.type !== 'purge.preserve.agents')
+        ? 'El historial conserva la identidad de este agente: su alias seguirá reservado y no se podrá usar para un agente nuevo.'
+        : 'Sin historial que conserve su identidad, el alias quedará libre para otro agente.'}
+    </p> : null}
     {blocked.length ? <p className="notice">Impide la purga: {blocked.join(', ')}.</p> : null}
     {other.length ? <ul aria-label="Dependencias operativas">{other.map((entry, index) =>
       <li key={index}>{entry.type} · {JSON.stringify(entry.identity)} · {entry.blocking ? 'Bloquea esta operación' : 'Referencia informativa'}</li>)}</ul>

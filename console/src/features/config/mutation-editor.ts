@@ -72,6 +72,13 @@ function rollbackLeafPolicy(operation: unknown): RollbackPolicy {
       message: `Bloqueado: esta revisión modifica ${resource}; su única autoridad es Cuentas.`,
     };
   }
+  if (resource === 'agent' && candidate.action === 'delete') {
+    return {
+      allowed: false,
+      accountResource: false,
+      message: 'La eliminación definitiva de un agente no se puede deshacer. Si queda historial, su identidad conserva el alias reservado.',
+    };
+  }
   if (!resource || !RESOURCES.includes(resource as AnyConfigResource)
     || typeof candidate.action !== 'string'
     || (!allActions.includes(candidate.action as ConfigAction)

@@ -91,7 +91,7 @@ const CONFLICTOS: Record<string, string> = {
   'membership has active deliveries': 'la membresía tiene entregas en curso',
   'require a verified fleet operation': 'ese cambio toca la ejecución del agente y se hace con una operación de flota (pestaña Operación)',
   'requires a verified fleet operation': 'la admisión del agente se habilita con una operación de flota (pestaña Operación)',
-  'identity is permanent': 'esa identidad ya se eliminó definitivamente y no se puede reutilizar',
+  'identity is permanent': 'el historial conserva esa identidad eliminada y no permite reutilizarla; elige una identidad nueva',
   'last hub or human control authority': 'no se puede quitar la última autoridad de control humano',
   'retirement state is incomplete': 'el retiro todavía no terminó',
   'violates a durable constraint': 'el cambio contradice una restricción guardada',

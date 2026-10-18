@@ -72,7 +72,8 @@ export function IdentityStep({ draft, edit, disabled, tenants, aliasInput }: Ste
         <input ref={aliasInput} value={draft.alias} maxLength={64} pattern={AGENT_ALIAS_PATTERN} placeholder="p. ej. worker"
           aria-describedby="create-alias-hint" onChange={(event) => { edit({ alias: event.target.value }); }} disabled={disabled} />
       </label>
-      <span id="create-alias-hint" className={HINT}>Identificador fijo: minúsculas, números, guiones.</span>
+      <span id="create-alias-hint" className={HINT}>Identificador fijo: minúsculas, números, guiones.
+        Un alias eliminado solo se puede reutilizar si no queda historial ni una identidad de ejecución que lo reserve.</span>
     </div>
     <label className="sm:col-span-2">Nombre visible
       <input value={draft.displayName} maxLength={128}
