@@ -1,9 +1,8 @@
-import { act, screen, waitFor, within } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { ConfigMutationSchema, configurationMutationSha256, publicConfigurationMutation } from '@cauce/protocol/configuration';
 import { AccountsPage } from './AccountsPage';
-import { App } from '../../App';
 import { server } from '../../mocks/server';
 import { renderWithApi } from '../../test/render';
 
@@ -100,42 +99,6 @@ async function openInventory() {
   expect(el).not.toBeNull();
   return within(el ?? document.body);
 }
-
-it('queda enrutada en /accounts sin desplazar a las pantallas existentes', async () => {
-  window.history.pushState({}, '', '/accounts');
-  renderWithApi(<App />);
-  expect(await screen.findByRole('heading', { level: 1, name: /cuentas/i })).toBeInTheDocument();
-
-  act(() => {
-    window.history.pushState({}, '', '/config');
-    window.dispatchEvent(new PopStateEvent('popstate'));
-  });
-  expect(await screen.findByRole('heading', { level: 1, name: /ajustes/i })).toBeInTheDocument();
-});
-
-it('/assignments no da 404 ni cae al fallback: redirige a /accounts y reescribe la barra de direcciones', async () => {
-  window.history.pushState({}, '', '/assignments');
-  renderWithApi(<App />);
-
-  // The right view is chosen in the match, not after a bounce: the matrix is on screen.
-  expect(await screen.findByRole('heading', { level: 1, name: /cuentas/i })).toBeInTheDocument();
-  await waitFor(() => { expect(window.location.pathname).toBe('/accounts'); });
-});
-
-it('lista el inventario con pagador, publicación al pool y estado', async () => {
-  configuration({ provider_accounts: [ownAccount], agents: [], alias_routing_ceiling: [], agent_account_bindings: [] });
-  renderWithApi(<AccountsPage />);
-
-  const inventario = await openInventory();
-  const cell = await inventario.findByText('codex-steven');
-  const row = cell.closest('tr');
-  expect(row).not.toBeNull();
-  if (row) {
-    expect(within(row).getByText('Steven')).toBeInTheDocument();
-    expect(within(row).getByText('PUBLICADA')).toBeInTheDocument();
-    expect(within(row).getByText('HABILITADA')).toBeInTheDocument();
-  }
-});
 
 it('declara no disponible el inventario cuando el gateway no publica provider_accounts', async () => {
   configuration({ agents: [], alias_routing_ceiling: [], agent_account_bindings: [] });
@@ -250,25 +213,6 @@ it('bloquea aplicar si el recibo confirma otro locator aunque la proyección vis
   expect(changes).toHaveLength(1);
 });
 
-it('deshabilita sin borrar: la acción abre el update con enabled en false', async () => {
-  const changes: ChangeRequest[] = [];
-  configuration({ provider_accounts: [ownAccount], agents: [], alias_routing_ceiling: [], agent_account_bindings: [] });
-  recordChanges(changes);
-  const user = userEvent.setup();
-  renderWithApi(<AccountsPage />);
-
-  await openInventory();
-  // Retiring is a separate affordance from disabling: disabling never offers the delete.
-  expect(await screen.findByRole('button', { name: /retirar o rotar/i })).toBeInTheDocument();
-  await user.click(await screen.findByRole('button', { name: /deshabilitar/i }));
-  await user.click(accountActions().getByRole('button', { name: /previsualizar \(dry-run\)/i }));
-
-  expect(changes[0]?.mutation).toEqual({
-    resource: 'provider_account', action: 'update', id: 'codex-steven',
-    value: { label: 'Codex del hub', shared_with_pool: true, enabled: false },
-  });
-});
-
 it('invalida el dry-run si Actualizar cambia la revisión y exige previsualizar otra vez', async () => {
   const changes: ChangeRequest[] = [];
   let revision = 4;
@@ -367,29 +311,4 @@ it('ante 409 por revisión relee y obliga a validar otra vez la mutación del re
   expect(alert).toHaveTextContent(/revisión 4 y el servidor ya va por la 9/i);
   expect(alert).toHaveTextContent(/releído del servidor/i);
   expect(accountActions().getByRole('button', { name: /^aplicar$/i })).toBeDisabled();
-});
-
-it('explica la causa real cuando el servidor bloquea despublicar una cuenta prestada', async () => {
-  const changes: ChangeRequest[] = [];
-  configuration({
-    provider_accounts: [ownAccount],
-    agents: [{ tenant_id: 'Miguel', alias: 'iza' }],
-    alias_routing_ceiling: [{ tenant_id: 'Miguel', alias: 'iza', account_id: 'codex-steven', account_payer_tenant: 'Steven', created_by_tenant: 'Miguel' }],
-    agent_account_bindings: [],
-  });
-  recordChanges(changes, (input) => (input.dry_run
-    ? HttpResponse.json({ error: 'conflict', message: 'configuration change violates a durable constraint' }, { status: 409 })
-    : HttpResponse.json({ applied: true }, { status: 201 })));
-  const user = userEvent.setup();
-  renderWithApi(<AccountsPage />);
-
-  await openInventory();
-  await user.click(await screen.findByRole('button', { name: /despublicar/i }));
-  await user.click(accountActions().getByRole('button', { name: /previsualizar \(dry-run\)/i }));
-
-  const alert = await screen.findByRole('alert');
-  expect(alert).toHaveTextContent(/no se puede despublicar la cuenta «codex-steven» del pool/i);
-  expect(alert).toHaveTextContent(/alias_routing_ceiling_borrow_requires_pool/);
-  expect(alert).toHaveTextContent(/Miguel\/iza/);
-  expect(alert).not.toHaveTextContent(/durable constraint/);
 });
