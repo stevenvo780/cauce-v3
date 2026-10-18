@@ -32,6 +32,33 @@ function identity(row: Row, tenant: string | null): { tenant_id: string; alias: 
 }
 function comparable(row: Row): Row { return Object.fromEntries(Fields.map(field => [field, row[field] ?? null])); }
 
+async function removeCreatedLegacyProfile(client: DatabaseClient, company: string, target: { tenant_id: string; alias: string },
+  checkpoint: string, runtimeKey: unknown): Promise<boolean> {
+  const deleted = await client.query(`DELETE FROM agent_profiles profile USING fleet_operations operation,
+    audit_events marker,fleet_operation_events prepared_event,config_revisions prepared
+    WHERE profile.tenant_id=$1 AND profile.alias=$2 AND profile.revision=1
+      AND profile.purpose='Agente '||COALESCE(operation.request->'parameters'->>'display_name',operation.target->>'alias')
+      AND profile.role_summary IS NULL AND profile.human_brief IS NULL
+      AND profile.responsibilities='{}'::text[] AND profile.restrictions='{}'::text[]
+      AND profile.tools='{}'::text[] AND profile.operating_rules='{}'::text[]
+      AND operation.company_id=$3 AND operation.kind='create' AND operation.target->>'tenant_id'=$1
+      AND operation.target->>'alias'=$2 AND operation.request->'parameters'->>'runtime_key'=$5
+      AND marker.action='fleet.migration.preserve_legacy' AND marker.decision='allow' AND marker.company_id=$3
+      AND marker.tenant_id=operation.actor_tenant AND marker.actor_alias=operation.actor_alias
+      AND marker.metadata->>'kind'='create' AND marker.metadata->>'idempotency_key'=operation.idempotency_key
+      AND marker.metadata->'target'=operation.target AND marker.metadata->>'checkpoint_revision'=$4
+      AND marker.metadata->>'runtime_key'=$5
+      AND marker.metadata->>'host_id'=operation.request->'parameters'->'placement'->>'host_id'
+      AND EXISTS(SELECT 1 FROM fleet_operation_events queued WHERE queued.operation_id=operation.id AND queued.event='queued'
+        AND queued.metadata->>'actor_subject'='console:'||marker.actor_human_id::text)
+      AND prepared_event.operation_id=operation.id AND prepared_event.event='step_completed'
+      AND prepared_event.metadata->>'step'='prepare' AND prepared.id::text=prepared_event.metadata->>'prepared_revision'
+      AND prepared.company_id=$3 AND prepared.operation->>'resource'='fleet_operation'
+      AND prepared.operation->>'action'='prepare' AND prepared.operation->>'operation_id'=operation.id::text
+      AND profile.created_at=prepared.created_at`, [target.tenant_id, target.alias, company, checkpoint, runtimeKey]);
+  return deleted.rowCount === 1;
+}
+
 async function legacyMutation(pool: DatabasePool, source: CompanyAuthoritySource, packet: z.infer<typeof Packet>, restore: boolean) {
   const input = record(packet.payload); const original = record(input.original);
   const target = identity(original, packet.tenant);
@@ -68,13 +95,20 @@ async function legacyMutation(pool: DatabasePool, source: CompanyAuthoritySource
     [...contextScope, contextState.desired_version])).rows[0];
     const legacyContext = { profile_revision: profileState?.revision ?? null, applied_revision: profileState?.applied_revision ?? null,
       expectation: expectation ?? null, context_state: contextState ?? null, context_outbox: contextOutbox ?? null };
+    let profileAbsenceRestored = false;
     if (restore) {
-      const checkpoint = (await client.query<{ baseline: Row }>(`SELECT operation->'legacy_context' AS baseline FROM config_revisions
+      const saved = (await client.query<{ id: string; baseline: Row }>(`SELECT id::text,operation->'legacy_context' AS baseline FROM config_revisions
         WHERE company_id=$1 AND operation->>'resource'='fleet_migration' AND operation->>'action'='prepare_legacy'
           AND operation->'target'=$2::jsonb AND operation->'before'=$3::jsonb ORDER BY id DESC LIMIT 1`,
-      [packet.company, JSON.stringify(target), JSON.stringify(comparable(original))])).rows[0]?.baseline;
-      if (checkpoint === undefined) conflict('legacy migration checkpoint is unavailable');
-      if (checkpoint.profile_revision !== (profileState?.revision ?? null)) conflict('legacy profile changed after its migration checkpoint');
+      [packet.company, JSON.stringify(target), JSON.stringify(comparable(original))])).rows[0];
+      if (saved === undefined) conflict('legacy migration checkpoint is unavailable');
+      const checkpoint = saved.baseline;
+      if (checkpoint.profile_revision === null && profileState !== undefined) {
+        await client.query("SELECT set_config('cauce.actor_tenant',$1,true),set_config('cauce.actor_alias',$2,true)",
+          [authority.homeTenant, authority.alias]);
+        profileAbsenceRestored = await removeCreatedLegacyProfile(client, packet.company, target, saved.id, current.runtime_key);
+        if (!profileAbsenceRestored) conflict('legacy profile changed after its migration checkpoint');
+      } else if (checkpoint.profile_revision !== (profileState?.revision ?? null)) conflict('legacy profile changed after its migration checkpoint');
       const state = checkpoint.context_state === null ? null : record(checkpoint.context_state);
       if (state === null ? Number(contextState?.desired_version ?? 0) > 0 : state.desired_version !== contextState?.desired_version) {
         conflict('legacy desired context version changed after its migration checkpoint');
@@ -88,7 +122,7 @@ async function legacyMutation(pool: DatabasePool, source: CompanyAuthoritySource
           WHERE company_id=$1 AND tenant_id=$2 AND alias=$3 AND version=$4`,
         [...contextScope, contextState?.desired_version, outbox.applied_at ?? null, outbox.apply_error ?? null]);
       }
-      if (profileState) await client.query('UPDATE agent_profiles SET applied_revision=$3 WHERE tenant_id=$1 AND alias=$2',
+      if (profileState && !profileAbsenceRestored) await client.query('UPDATE agent_profiles SET applied_revision=$3 WHERE tenant_id=$1 AND alias=$2',
         [target.tenant_id, target.alias, checkpoint.applied_revision]);
       if (checkpoint.expectation === null) {
         await client.query('DELETE FROM agent_profile_runtime_expectations WHERE tenant_id=$1 AND alias=$2', [target.tenant_id, target.alias]);
@@ -134,9 +168,10 @@ async function legacyMutation(pool: DatabasePool, source: CompanyAuthoritySource
     await client.query(`INSERT INTO audit_events(tenant_id,actor_alias,actor_human_id,company_id,action,decision,metadata)
       VALUES($1,$2,$3,$4,$5,'allow',$6::jsonb)`, [authority.homeTenant, authority.alias, packet.human_id, packet.company,
       `fleet.migration.${operation.action}`, JSON.stringify({ target, revision: Number(revisionRow?.id),
-        permanent_runtime_key: next.runtime_key, before_sha256: sha256Hex(comparable(current)), after_sha256: sha256Hex(next) })]);
+        permanent_runtime_key: next.runtime_key, profile_absence_restored: profileAbsenceRestored,
+        before_sha256: sha256Hex(comparable(current)), after_sha256: sha256Hex(next) })]);
     return { ...target, revision: Number(revisionRow?.id), original, row: { ...original, ...next },
-      permanent_runtime_key: next.runtime_key, restored: restore };
+      permanent_runtime_key: next.runtime_key, profile_absence_restored: profileAbsenceRestored, restored: restore };
   });
 }
 
