@@ -550,12 +550,12 @@ class Copier:
             self.entries.append({'path': path, 'kind': 'symlink', 'target': target, 'source': 'data'})
 
     def walk(self, path: str, directory: int) -> None:
+        names = sorted(os.listdir(directory))
         try:
             marker = os.stat('.git', dir_fd=directory, follow_symlinks=False)
         except FileNotFoundError:
             marker = None
         if marker is None:
-            names = os.listdir(directory)
             if 'HEAD' in names and 'objects' in names and git(path, 'rev-parse', '--is-bare-repository', check=False, fd=directory).strip() == 'true':
                 raise Failure(f'bare Git stores cannot be copied as working-tree files: {path}')
         if marker is not None and stat.S_ISLNK(marker.st_mode):
@@ -566,8 +566,6 @@ class Copier:
         elif marker is not None:
             self.repository(path, directory)
         self.entries.append({'path': path, 'kind': 'directory', 'mode': stat.S_IMODE(os.fstat(directory).st_mode)})
-        with os.scandir(directory) as iterator:
-            names = sorted(item.name for item in iterator)
         for name in names:
             if name == '.git':
                 continue
