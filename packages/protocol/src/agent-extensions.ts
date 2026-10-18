@@ -98,9 +98,13 @@ export const ExtensionsAllowedSchema = z.object({
   types: z.array(ExtensionTypeSchema).max(EXTENSION_TYPES.length),
   mount_roots: z.array(AbsolutePathSchema).max(100),
   networks: z.array(NetworkNameSchema).max(100),
+  docker_access: z.array(z.enum(['read', 'control'])).min(1).max(2)
+    .refine(levels => levels.includes('read'), 'Docker control requires read access').optional(),
+  docker_daemon_dedicated: z.boolean().optional(),
 }).strict().superRefine((allowed, context) => {
-  for (const field of ['types', 'mount_roots', 'networks'] as const) {
-    if (new Set(allowed[field]).size !== allowed[field].length) {
+  for (const field of ['types', 'mount_roots', 'networks', 'docker_access'] as const) {
+    const entries = allowed[field];
+    if (entries !== undefined && new Set(entries).size !== entries.length) {
       context.addIssue({ code: 'custom', path: [field], message: 'Duplicate policy entries' });
     }
   }
@@ -115,6 +119,9 @@ export function agentExtensionsPolicyViolation(extensions: AgentExtensions, allo
     }
     if (extension.type === 'network' && !allowed.networks.includes(extension.name)) {
       return `El ordenador no admite la red ${extension.name}.`;
+    }
+    if (extension.type === 'docker' && !allowed.docker_access?.includes(extension.access)) {
+      return `El ordenador no admite el acceso Docker ${extension.access}.`;
     }
   }
   return undefined;

@@ -80,10 +80,10 @@ describe('fleet effect and execution catalogue', () => {
   it('lists only the resources a purge actually removed', () => {
     expect(protocol.FleetEvidenceSchema.safeParse({
       stopped_verified: true, revocation_verified: true,
-      removed: [{ type: 'container', name: 'ws-w' }, { type: 'volume', name: 'ws-w-state' }],
+      removed: [{ type: 'container', name: 'ws-w' }, { type: 'volume', name: 'ws-w-state' }, { type: 'network', name: 'n' }],
     }).success).toBe(true);
     expect(protocol.FleetEvidenceSchema.safeParse({ removed: [] }).success).toBe(true);
-    expect(protocol.FleetEvidenceSchema.safeParse({ removed: [{ type: 'network', name: 'n' }] }).success).toBe(false);
+    expect(protocol.FleetEvidenceSchema.safeParse({ removed: [{ type: 'secret', name: 'n' }] }).success).toBe(false);
     expect(protocol.FleetEvidenceSchema.safeParse({ removed: [{ type: 'volume', name: 'v', action: 'delete' }] }).success).toBe(false);
   });
   it('preserves membership intent and dynamic roles', () => {
@@ -98,12 +98,13 @@ describe('fleet purge preview resources', () => {
   };
   const parse = (value: unknown) => (Reflect.get(protocol, 'FleetOperationPreviewSchema') as { safeParse(value: unknown): { success: boolean; data?: { resources: unknown[] } } }).safeParse(value);
   it('lists the planned physical resources with action and reason, and defaults to none', () => {
-    const resources = [{ type: 'container', name: 'cauce-x', action: 'delete', reason: 'propio' }, { type: 'volume', name: 'cauce-x-state', action: 'keep', reason: 'otro dueño' }];
+    const resources = [{ type: 'container', name: 'cauce-x', action: 'delete', reason: 'propio' },
+      { type: 'volume', name: 'cauce-x-state', action: 'keep', reason: 'otro dueño' }, { type: 'network', name: 'n', action: 'delete', reason: 'propia' }];
     expect(parse({ ...preview, resources }).data?.resources).toEqual(resources);
     expect(parse(preview).data?.resources).toEqual([]);
   });
   it('rejects unknown resource types, actions and extra fields', () => {
-    for (const resource of [{ type: 'network', name: 'n', action: 'delete', reason: 'r' }, { type: 'volume', name: 'v', action: 'drop', reason: 'r' },
+    for (const resource of [{ type: 'secret', name: 'n', action: 'delete', reason: 'r' }, { type: 'volume', name: 'v', action: 'drop', reason: 'r' },
       { type: 'volume', name: 'v', action: 'delete', reason: 'r', extra: 1 }]) expect(parse({ ...preview, resources: [resource] }).success).toBe(false);
   });
 });
