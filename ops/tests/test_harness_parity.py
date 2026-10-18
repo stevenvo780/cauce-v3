@@ -7,7 +7,7 @@ from unittest.mock import patch
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 DESCRIPTORS = ROOT / 'packages/adapter-sdk/descriptors'
 # Providers that are not harnesses: they may appear in quota enums without a descriptor.
-NON_HARNESS_PROVIDERS = {'gemini', 'minimax', 'feihoa'}
+NON_HARNESS_PROVIDERS = {'gemini', 'minimax', 'feihoa', 'agy'}
 # Descriptor harnesses the gateway document catalog does not classify today.
 GATEWAY_OMITTED = {'opencode', 'fake', 'fake2'}
 # Descriptor harnesses the console catalog has not picked up yet; shrink as it aligns.
@@ -73,6 +73,17 @@ def quota_readers(docs=None):
     docs = descriptors() if docs is None else docs
     return {name for name, doc in docs.items()
             if doc.get('operations', {}).get('quota') == 'quota-collector' and valid_quota_argv(doc)}
+
+
+def valid_authenticate_argv(doc):
+    argv = (doc.get('provider') or {}).get('authenticate_argv')
+    return isinstance(argv, list) and bool(argv) and all(isinstance(value, str) and value.strip() for value in argv)
+
+
+def quota_login_providers(docs=None):
+    docs = descriptors() if docs is None else docs
+    return {name for name, doc in docs.items()
+            if doc.get('operations', {}).get('authenticate') == 'provider-login' and valid_authenticate_argv(doc)}
 
 
 def set_parity_checks(path, actual, expected, label):
@@ -199,7 +210,7 @@ class HarnessParityTest(unittest.TestCase):
 
     def test_quota_enums_and_sql_check_cover_quota_descriptors(self):
         sql_providers, checks = effective_quota_provider_check()
-        expected = quota_readers() | (sql_providers & NON_HARNESS_PROVIDERS)
+        expected = quota_readers() | quota_login_providers() | (sql_providers & NON_HARNESS_PROVIDERS)
         checks += set_parity_checks('packages/store/migrations/ (new migration, never edit a published one)',
                                    sql_providers, expected, 'effective quota provider CHECK')
         contracts = {
@@ -238,7 +249,7 @@ class HarnessParityTest(unittest.TestCase):
              self.test_bins_and_session_file_regex_match_descriptors),
             (console, text(console).replace(" | 'grok'", ''), self.test_quota_enums_and_sql_check_cover_quota_descriptors),
             (protocol, re.sub(r'(QuotaEnvironmentProviderSchema\s*=\s*z\.enum\(\[)([^\]]+)(\]\))',
-                              lambda match: match[1] + match[2] + ", 'muse'" + match[3], text(protocol)),
+                              lambda match: match[1] + match[2] + ", 'ghost'" + match[3], text(protocol)),
              self.test_quota_enums_and_sql_check_cover_quota_descriptors),
         ]
         for path, altered, check in mutations:

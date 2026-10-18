@@ -19,8 +19,9 @@ const { quotaEnvironments } = await import(new URL('../../../console/src/api/cli
 
 // These descriptors have no measured document inventory implementation.
 const WITHOUT_DOCUMENT_INVENTORY = ['fake', 'fake2', 'opencode'];
-// Retained in the applied SQL contract; no executable harness descriptor publishes it.
-const NON_HARNESS_QUOTA_PROVIDERS = ['gemini'];
+// Retained in the applied SQL contract; no harness descriptor publishes them.
+// agy is quota-only (fixed argv in ops/cli/quota_runtime.py), gemini is retired.
+const NON_HARNESS_QUOTA_PROVIDERS = ['agy', 'gemini'];
 const sorted = (values: Iterable<string>): string[] => [...values].sort();
 
 async function descriptors(): Promise<readonly HarnessDescriptor[]> {
@@ -35,6 +36,11 @@ async function descriptors(): Promise<readonly HarnessDescriptor[]> {
 function quotaReaders(published: readonly HarnessDescriptor[]): string[] {
   return published.filter(descriptor => descriptor.operations.quota === 'quota-collector'
     && descriptor.provider?.quota_argv !== undefined).map(descriptor => descriptor.harness).sort();
+}
+
+function quotaLoginProviders(published: readonly HarnessDescriptor[]): string[] {
+  return published.filter(descriptor => descriptor.operations.authenticate === 'provider-login'
+    && descriptor.provider?.authenticate_argv !== undefined).map(descriptor => descriptor.harness).sort();
 }
 
 describe('runtime catalogs match published descriptors', () => {
@@ -54,7 +60,9 @@ describe('runtime catalogs match published descriptors', () => {
   });
 
   it('keeps persisted quota enums and the console response validator in parity', async () => {
-    const providers = sorted([...quotaReaders(await descriptors()), ...NON_HARNESS_QUOTA_PROVIDERS]);
+    const published = await descriptors();
+    const providers = sorted(new Set([...quotaReaders(published), ...quotaLoginProviders(published),
+      ...NON_HARNESS_QUOTA_PROVIDERS]));
     expect(sorted(QuotaEnvironmentProviderSchema.options)).toEqual(providers);
     expect(sorted(HostCapabilitiesSchema.shape.quota_providers.unwrap().element.options)).toEqual(providers);
     for (const provider of [...providers, 'unpublished']) {
@@ -66,10 +74,12 @@ describe('runtime catalogs match published descriptors', () => {
   });
 
   it('keeps executable quota contracts and console choices equal to descriptor readers', async () => {
-    const readers = quotaReaders(await descriptors());
+    const published = await descriptors();
+    const readers = quotaReaders(published);
+    const executable = sorted(new Set([...readers, ...quotaLoginProviders(published), 'agy']));
     expect(sorted(AgentQuotaReceiptSchema.options[0].shape.provider.options)).toEqual(readers);
-    expect(sorted(QuotaExecutionSchema.shape.environment.shape.provider.options)).toEqual(readers);
-    expect(sorted(EXECUTABLE_QUOTA_PROVIDERS)).toEqual(readers);
+    expect(sorted(QuotaExecutionSchema.shape.environment.shape.provider.options)).toEqual(executable);
+    expect(sorted(EXECUTABLE_QUOTA_PROVIDERS)).toEqual(executable);
   });
 
   it('keeps protocol governance, measured gateway inventory and console aligned', async () => {

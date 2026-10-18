@@ -11,7 +11,17 @@ import uuid
 from fleet_executor_container import docker, inspect_container
 from fleet_executor_policy import SafeFailure
 
-NON_HARNESS_PROVIDERS = frozenset()
+NON_HARNESS_PROVIDERS = frozenset({'agy'})
+# Quota-only providers have no harness descriptor or adapter executable: the
+# runtime resolves their login and verification commands from this fixed argv
+# table instead of a bundle descriptor. argv[0] stays under /usr/local/bin and
+# every argument passes the same closed validation as descriptor provider argv.
+QUOTA_ONLY_RECIPES: dict[str, dict[str, tuple[str, ...]]] = {
+    'agy': {
+        'authenticate_argv': ('/usr/local/bin/agy',),
+        'verify_argv': ('/usr/local/bin/agy', 'models'),
+    },
+}
 RETIRED_PROVIDERS = frozenset({'gemini'})
 EXECUTOR_SOURCE = pathlib.Path(__file__).resolve().parent
 LIFECYCLE_SOURCE = (EXECUTOR_SOURCE.parent / 'container-runtime').resolve()
@@ -65,10 +75,37 @@ def configuration(policy: dict) -> dict:
     return quota
 
 
+def _quota_only_operation(provider: str, operation: str, *, command: bool = False):
+    from harness_operations import HarnessOperationFailure, validate_argv
+    recipe = QUOTA_ONLY_RECIPES[provider]
+    if operation == 'install':
+        if command:
+            raise HarnessOperationFailure('operations.install: operation has no provider command')
+        return {'provider': provider, 'operation': 'install', 'recipe': 'runtime-package'}
+    if operation == 'authenticate':
+        argv = recipe.get('authenticate_argv')
+        if argv is None:
+            raise HarnessOperationFailure(
+                'provider.authenticate_argv: required when operations.authenticate is declared')
+        validated = validate_argv('provider.authenticate_argv', list(argv))
+        if command:
+            return validated
+        return {'provider': provider, 'operation': 'authenticate', 'recipe': 'provider-login'}
+    if operation in ('quota', 'update', 'execute'):
+        raise HarnessOperationFailure(
+            f'operations.{operation}: operation is not declared by this quota-only provider')
+    raise HarnessOperationFailure(f'operations.{operation}: unknown lifecycle operation')
+
+
 def provider_operation(policy: dict, provider: str, operation: str, *, command: bool = False):
     from cauce_container_base import PermanentError
     from fleet_executor_runtime import approved_bundle
     from harness_operations import HarnessOperationFailure, provider_command, resolve_operation
+    if provider in QUOTA_ONLY_RECIPES:
+        try:
+            return _quota_only_operation(provider, operation, command=command)
+        except HarnessOperationFailure as error:
+            raise SafeFailure('quota provider operation or pinned descriptor is unavailable') from error
     try:
         bundle = approved_bundle(policy, {'harness_id': provider, 'runtime_mode': 'container'})
         arguments = {'expected_sha256': bundle.get('descriptor_sha256')}
@@ -83,7 +120,15 @@ def provider_operation(policy: dict, provider: str, operation: str, *, command: 
 def descriptor_verify_command(policy: dict, provider: str):
     from cauce_container_base import PermanentError
     from fleet_executor_runtime import approved_bundle
-    from harness_operations import HarnessOperationFailure, provider_verify_command
+    from harness_operations import HarnessOperationFailure, provider_verify_command, validate_argv
+    if provider in QUOTA_ONLY_RECIPES:
+        try:
+            verify = QUOTA_ONLY_RECIPES[provider].get('verify_argv')
+            if verify is None:
+                return None
+            return validate_argv('provider.verify_argv', list(verify))
+        except HarnessOperationFailure as error:
+            raise SafeFailure('quota provider operation or pinned descriptor is unavailable') from error
     try:
         bundle = approved_bundle(policy, {'harness_id': provider, 'runtime_mode': 'container'})
         result = provider_verify_command(provider, bundle['directory'],
