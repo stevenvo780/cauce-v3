@@ -124,7 +124,7 @@ export function ComputadorasSection({ snapshot, soloLectura }: { snapshot?: Conf
   const resumen = resumenDeFlota(hosts);
   const tarjeta = (host: FleetHost) => <li key={host.host_id}>
     <ComputadoraCard host={host} escribe={escribe} crea={crea} borra={borra} busy={busy} bloqueada={editando === host.host_id}
-      onEditar={abrirEdicion} onAlternar={alternar} onEliminar={setBorrar} onRegistrar={abrirAlta} />
+      onEditar={abrirEdicion} onAlternar={alternar} onEliminar={host => { setError(undefined); setBorrar(host); }} onRegistrar={abrirAlta} />
   </li>;
 
   return <div className="grid gap-4">
@@ -190,6 +190,7 @@ export function ComputadorasSection({ snapshot, soloLectura }: { snapshot?: Conf
       title={borrar ? `Eliminar la computadora ${borrar.display_name}` : ''}
       confirmLabel="Eliminar" onConfirm={() => { void eliminar(); }} onCancel={() => { setBorrar(undefined); }}>
       <p>Se quita del registro de Cauce. No desinstala el ejecutor ni toca la máquina.</p>
+      {error ? <Notice tone="danger" role="alert">{error}</Notice> : null}
     </ConfirmDialog>
   </div>;
 }
