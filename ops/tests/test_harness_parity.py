@@ -167,23 +167,24 @@ class HarnessParityTest(unittest.TestCase):
     def test_typescript_harness_id_union_and_definitions_match_descriptors(self):
         names = set(descriptors())
         checks = []
-        types = text('packages/adapter-sdk/src/sdk/types.ts')
+        types_path = 'packages/adapter-sdk/src/sdk/types.ts'
+        types = text(types_path)
         match = re.search(r'export type HarnessId = ([^;]+);', types)
-        self.assertIsNotNone(match, 'packages/adapter-sdk/src/sdk/types.ts: HarnessId union not found')
-        ts_ids = quoted(match.group(1))
-        for name in sorted(names - ts_ids):
-            checks.append(('packages/adapter-sdk/src/sdk/types.ts', f"add '{name}' to the HarnessId union"))
-        for name in sorted(ts_ids - names):
-            checks.append(('packages/adapter-sdk/src/sdk/types.ts', f"add {name}.json or remove '{name}' from HarnessId"))
-        index = text('packages/adapter-sdk/src/harnesses/index.ts')
+        self.assertIsNotNone(match, f'{types_path}: HarnessId declaration not found')
+        if re.sub(r'\s+', ' ', match.group(1)).strip() != 'string':
+            checks.append((types_path, 'keep HarnessId as string; the descriptor grammar closes the id'))
+        index_path = 'packages/adapter-sdk/src/harnesses/index.ts'
+        index = text(index_path)
+        if 'function genericHarnessDefinition(' not in index:
+            checks.append((index_path, 'keep genericHarnessDefinition so a descriptor without a handwritten module still runs'))
         block = re.search(r'HARNESS_DEFINITIONS[^=]*= \{([^}]+)\}', index, re.S)
-        self.assertIsNotNone(block, 'packages/adapter-sdk/src/harnesses/index.ts: HARNESS_DEFINITIONS not found')
+        self.assertIsNotNone(block, f'{index_path}: HARNESS_DEFINITIONS not found')
         defined = set(re.findall(r"^\s*['\"]?([A-Za-z][A-Za-z0-9_-]*)['\"]?\s*:", block.group(1), re.M))
-        for name in sorted(names - defined):
-            checks.append(('packages/adapter-sdk/src/harnesses/index.ts', f"add the '{name}' harness definition"))
-            checks.append((f'packages/adapter-sdk/src/harnesses/{name}.ts', 'create the harness definition module'))
-        checks += set_parity_checks('packages/adapter-sdk/src/harnesses/index.ts', defined - names, set(),
-                                    'HARNESS_DEFINITIONS')
+        if 'function genericHarnessDefinition(' not in index:
+            for name in sorted(names - defined):
+                checks.append((index_path, f"add the '{name}' harness definition"))
+                checks.append((f'packages/adapter-sdk/src/harnesses/{name}.ts', 'create the harness definition module'))
+        checks += set_parity_checks(index_path, defined - names, set(), 'HARNESS_DEFINITIONS')
         self.problems(checks)
 
     def test_bins_and_session_file_regex_match_descriptors(self):
@@ -196,15 +197,13 @@ class HarnessParityTest(unittest.TestCase):
             checks.append((f'packages/adapter-sdk/src/bin/{name}.ts', 'create the adapter bin entrypoint'))
         for name in sorted(bins - names):
             checks.append(('packages/adapter-sdk/package.json', f"remove the cauce-adapter-{name} bin or add its descriptor"))
-        session = text('packages/adapter-sdk/src/sdk/durable-store/session-file.ts')
-        match = re.search(r'\(\?:([a-z0-9_|-]+)\):', session)
-        self.assertIsNotNone(match, 'session-file.ts harness alternation not found')
-        alternation = set(match.group(1).split('|'))
-        for name in sorted(names - alternation):
-            checks.append(('packages/adapter-sdk/src/sdk/durable-store/session-file.ts',
-                           f"add '{name}' to the session key alternation"))
-        checks += set_parity_checks('packages/adapter-sdk/src/sdk/durable-store/session-file.ts',
-                                    alternation - names, set(), 'session key alternation')
+        session_path = 'packages/adapter-sdk/src/sdk/durable-store/session-file.ts'
+        session = text(session_path)
+        grammar = '[a-z][a-z0-9_-]{0,63}:[A-Za-z0-9._:-]{1,500}'
+        if grammar not in session:
+            checks.append((session_path, 'session keys must accept the descriptor id grammar'))
+        if re.search(r'\(\?:[a-z0-9_|-]+:', session):
+            checks.append((session_path, 'session keys must not list harness names'))
         self.problems(checks)
 
 
@@ -245,7 +244,8 @@ class HarnessParityTest(unittest.TestCase):
         mutations = [
             (index, text(index).replace('  hermes: hermesDefinition,', '  ghost: hermesDefinition,\n  hermes: hermesDefinition,'),
              self.test_typescript_harness_id_union_and_definitions_match_descriptors),
-            (session, re.sub(r'\(\?:([a-z0-9_|-]+)\):', r'(?:\1|ghost):', text(session)),
+            (session, text(session).replace(
+                '[a-z][a-z0-9_-]{0,63}:[A-Za-z0-9._:-]{1,500}', '(?:claude|codex):'),
              self.test_bins_and_session_file_regex_match_descriptors),
             (console, text(console).replace(" | 'grok'", ''), self.test_quota_enums_and_sql_check_cover_quota_descriptors),
             (protocol, re.sub(r'(QuotaEnvironmentProviderSchema\s*=\s*z\.enum\(\[)([^\]]+)(\]\))',

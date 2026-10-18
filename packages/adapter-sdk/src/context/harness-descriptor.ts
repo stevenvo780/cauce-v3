@@ -103,7 +103,7 @@ export function parseHarnessDescriptor(value: unknown): HarnessDescriptor {
   if (typeof context.max_bytes !== 'number' || !Number.isSafeInteger(context.max_bytes)
     || context.max_bytes < 1024 || context.max_bytes > 262_144) fail('context.max_bytes', 'must be an integer between 1024 and 262144');
   const provider = validateProvider(operations, raw.provider, raw.harness);
-  return Object.freeze({ schema_version: 1, harness: raw.harness as HarnessId,
+  return Object.freeze({ schema_version: 1, harness: raw.harness,
     operations: Object.freeze({ ...operations }),
     context: Object.freeze({ native_document: context.native_document, max_bytes: context.max_bytes }) as HarnessDescriptor['context'],
     ...('provider' in raw ? { provider } : {}) });
@@ -164,7 +164,5 @@ export async function executeHarnessOperation(descriptor: HarnessDescriptor, ope
 export function definitionFromDescriptor(descriptor: HarnessDescriptor): HarnessDefinition {
   const valid = parseHarnessDescriptor(descriptor);
   if (valid.operations.execute !== 'native-execution') fail('operations.execute', 'native execution is required');
-  const definition = harnessDefinition(valid.harness) as HarnessDefinition | undefined;
-  if (definition === undefined) fail('harness', 'no packaged harness definition for this descriptor');
-  return definition;
+  return harnessDefinition(valid.harness);
 }

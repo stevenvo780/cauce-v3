@@ -58,8 +58,10 @@ export function contract(revision: number, paths: readonly string[]): ProfileRun
 }
 
 export function definition(id: HarnessId): HarnessDefinition {
+  const known = Object.values(HARNESS_DEFINITIONS).find((item) => item.id === id);
+  if (known === undefined) throw new Error(`no handwritten harness definition for '${id}'`);
   return {
-    ...HARNESS_DEFINITIONS[id],
+    ...known,
     sessionStrategy: { kind: "none" },
     parse: () => ({ output: OUTPUT }),
   };

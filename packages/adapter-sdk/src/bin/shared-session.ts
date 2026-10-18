@@ -58,7 +58,7 @@ function parse(argv: readonly string[]): Options {
 }
 
 function spec(options: Options, home: string): SharedSessionSpec {
-  const harness = options.harness as Parameters<typeof isSharedSessionHarness>[0];
+  const harness = options.harness;
   if (!isSharedSessionHarness(harness)) {
     process.stderr.write(`el harness '${options.harness}' no tiene sesión compartida\n`);
     process.exit(3);

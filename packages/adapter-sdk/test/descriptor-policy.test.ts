@@ -7,15 +7,14 @@ import { join } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { packagedHarnessDescriptor, packagedHarnessIds } from '../src/context/harness-descriptor.js';
-import type { HarnessId } from '../src/sdk/types.js';
 
 test('every packaged descriptor accepts its byte digest and rejects a different approval', async () => {
   for (const name of await packagedHarnessIds()) {
     const raw = await readFile(new URL(`../descriptors/${name}.json`, import.meta.url));
     const pin = createHash('sha256').update(raw).digest('hex');
-    assert.equal((await packagedHarnessDescriptor(name as HarnessId, pin)).harness, name);
-    await assert.rejects(packagedHarnessDescriptor(name as HarnessId, '0'.repeat(64)), /descriptor_sha256/);
-    await assert.rejects(packagedHarnessDescriptor(name as HarnessId, `sha256:${pin}`), /descriptor_sha256/);
+    assert.equal((await packagedHarnessDescriptor(name, pin)).harness, name);
+    await assert.rejects(packagedHarnessDescriptor(name, '0'.repeat(64)), /descriptor_sha256/);
+    await assert.rejects(packagedHarnessDescriptor(name, `sha256:${pin}`), /descriptor_sha256/);
   }
 });
 

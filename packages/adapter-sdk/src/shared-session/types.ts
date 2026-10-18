@@ -1,8 +1,8 @@
 import type { DispatchMark, DispatchState } from "./grok-dispatch.js";
 import type { CommandRunner, HarnessId } from "../sdk/types.js";
 
-/** Harnesses compatible with the shared session mechanism. */
-export type SharedSessionHarness = Extract<HarnessId, "claude" | "codex" | "grok" | "muse">;
+/** TUIs whose argv and homes are not generic. A new descriptor does not join this set. */
+export type SharedSessionHarness = "claude" | "codex" | "grok" | "muse";
 
 /** Every shared harness, so a check over "the other TUIs" cannot silently forget one. */
 export const SHARED_SESSION_HARNESSES: readonly SharedSessionHarness[] = ["claude", "codex", "grok", "muse"];
