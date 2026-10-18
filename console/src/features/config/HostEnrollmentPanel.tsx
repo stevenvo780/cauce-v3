@@ -126,7 +126,7 @@ export function HostEnrollmentPanel({ canEnroll }: { canEnroll: boolean }) {
         <code aria-label="Comando de enrolamiento" className="overflow-auto whitespace-pre-wrap break-words rounded-md bg-subtle p-2 text-xs">{enrollCommand}</code>
       </>}
       <div className="flex flex-wrap gap-2"><Button onClick={() => { void copy(); }}>Copiar invitación</Button>
-        <Button disabled={busy} onClick={() => { setInvitation(undefined); setNotice('La invitación sigue pendiente hasta su uso, caducidad o cancelación.'); }}>Cerrar invitación</Button></div>
+        <Button disabled={busy} onClick={() => { setInvitation(undefined); setNotice('Invitación cerrada. Relee la lista para comprobar si ya se usó, caducó o se canceló.'); }}>Cerrar invitación</Button></div>
     </section> : null}
     <ul aria-label="Invitaciones de ordenadores" className="m-0 grid list-none gap-2 p-0">{enrollments.data?.enrollments.map(row => {
       const expired = row.state === 'pending' && Date.parse(row.expires_at) <= Date.now();
