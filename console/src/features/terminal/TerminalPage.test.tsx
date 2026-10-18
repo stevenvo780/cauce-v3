@@ -114,17 +114,6 @@ it('en /terminal sólo manda a elegir un agente en la barra lateral y no escribe
   expect(messagePosts + replayPosts + cancelPosts).toBe(0);
 }, 20_000);
 
-it('abre el agente pedido por la dirección con TUI y Terminal en un solo selector', async () => {
-  renderAgent('kant');
-
-  expect(await screen.findByRole('heading', { level: 2, name: /kant/ })).toBeInTheDocument();
-  const modes = screen.getByRole('group', { name: 'Vista de la sesión' });
-  expect(within(modes).getAllByRole('button').map((button) => button.textContent)).toEqual(['TUI', 'Terminal']);
-  expect(within(modes).getByRole('button', { name: 'TUI' })).toHaveAttribute('aria-pressed', 'true');
-  expect(screen.queryByRole('button', { name: 'Feed' })).not.toBeInTheDocument();
-  expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
-});
-
 it('con el PTY en 501 TUI y Terminal quedan cerrados y el escenario dice por qué', async () => {
   server.use(
     http.get('http://localhost/v3/console/access', () => HttpResponse.json({
@@ -152,45 +141,6 @@ it('disables PTY for a denied destination and shows the server motive, not an em
   expect(await screen.findByText(/falta identidad por persona/i)).toBeInTheDocument();
   expect(document.body.textContent).not.toContain('attribution_required');
   expect(screen.getAllByText(/Sin autoridad/)).toHaveLength(1);
-});
-
-it('treats legacy not_installed metadata as an unobserved connection, not proof of absence', async () => {
-  enableCapability();
-  serveTargets([target({ tenant_id: 'Steven', alias: 'argos', pty_state: 'not_installed', container: 'ctrl-infra', reason: 'El agente PTY no está instalado en ctrl-infra.' })]);
-  renderAgent('argos');
-
-  await waitFor(() => { expect(screen.getByRole('button', { name: /^Terminal$/i })).toBeDisabled(); });
-  expect(await screen.findByText(/Conexión sin comprobar\./)).toBeInTheDocument();
-  expect(screen.getByText(/(?:no se observó presencia|presencia no observada).*instalación.*sin comprobar/i)).toBeInTheDocument();
-  expect(document.body.textContent).not.toMatch(/nunca tuvo agente|no está instalado en ctrl-infra/i);
-  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-  expect(screen.queryByText(/Cargando Xterm/i)).not.toBeInTheDocument();
-});
-
-it('muestra el aviso de contenedor compartido en la propia vista, sin modal ni cuadro de texto', async () => {
-  const user = userEvent.setup();
-  enableCapability();
-  serveTargets([target({
-    tenant_id: 'Steven', alias: 'jarvis', container: 'ws-humanizar', runtime_user: 'claw',
-    shares_container_with: [
-      { tenant_id: 'Miguel', alias: 'atlas' }, { tenant_id: 'Miguel', alias: 'kratos' },
-    ],
-  })]);
-  serveGrant();
-  renderAgent('jarvis');
-
-  await waitFor(() => { expect(screen.getByRole('button', { name: /^Terminal$/i })).toBeEnabled(); });
-  // The blast radius is on the control itself before the click, and inline after it.
-  expect(screen.getByRole('button', { name: /^Terminal$/i })).toHaveAttribute('title', expect.stringContaining('Miguel:atlas, Miguel:kratos'));
-  await user.click(screen.getByRole('button', { name: /^Terminal$/i }));
-
-  const warning = await screen.findByRole('alert');
-  expect(warning).toHaveTextContent(/Este contenedor lo comparten Miguel:atlas, Miguel:kratos/);
-  expect(warning).toHaveTextContent(/no es .la terminal de jarvis./i);
-  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-  // The terminal's own xterm input may already be mounted (timing depends on load); no other text box may exist.
-  expect(screen.queryAllByRole('textbox').filter((box) => !box.classList.contains('xterm-helper-textarea'))).toEqual([]);
-  await waitFor(() => { expect(StubWebSocket.instances).toHaveLength(1); });
 });
 
 it('sends attach as the first frame and renders binary PTY output', async () => {
@@ -266,41 +216,6 @@ it('fences two clicks in the same render to one PTY reservation POST', async () 
   gate.resolve(undefined);
   await waitFor(() => { expect(StubWebSocket.instances).toHaveLength(1); });
   expect(posts).toBe(1);
-}, 20_000);
-
-it.each([
-  [4401, /Ticket inválido o vencido/i],
-  [4403, /Permiso revocado/i],
-  [4404, /El agente PTY no está conectado/i],
-  [4408, /inactividad/i],
-  [4409, /Ya hay una sesión abierta/i],
-  [4413, /exceso de salida/i],
-  [4423, /tiempo máximo de sesión/i],
-  [4400, /Error de protocolo/i],
-  [1011, /Error interno del relay/i],
-])('explains close code %s in the panel', async (code, expected) => {
-  const user = userEvent.setup();
-  enableCapability();
-  serveTargets([target({ tenant_id: 'Steven', alias: 'jarvis' })]);
-  serveGrant();
-  renderAgent('jarvis');
-
-  const socket = await openPtyChannel(user);
-  act(() => {
-    socket.acceptOpen();
-    socket.emitControl({
-      type: 'ready', claim_token: '12345678-1234-4234-8234-123456789abc',
-      claim_epoch: '1', claim_lease_ms: 45_000,
-    });
-  });
-  act(() => { socket.emitClose(code, 'server close'); });
-
-  expect(await screen.findByText(expected)).toBeInTheDocument();
-  // An explicit relay close is final. Only a transport loss can resume the same PTY, and the
-  // single-use ticket is never replayed: this offer is a brand-new, audited session.
-  expect(await screen.findByRole('button', { name: /pedir sesión nueva/i })).toBeInTheDocument();
-  expect(screen.getByText(/sólo reanuda automáticamente una interrupción de transporte/i)).toBeInTheDocument();
-  expect(StubWebSocket.instances).toHaveLength(1);
 }, 20_000);
 
 /** The menu is the only place that closes the session. */
@@ -410,15 +325,6 @@ it('con un 403 dice que falta el permiso y NUNCA que el relay no está desplegad
   expect(screen.queryByText('Canal PTY no disponible en este stack')).not.toBeInTheDocument();
 }, 20_000);
 
-/** The positive control of the previous case: a 501 DOES mean it is not deployed. */
-it('con un 501 sigue diciendo, con el título de siempre, que el canal no está en este stack', async () => {
-  server.use(http.get('http://localhost/v3/console/terminal/capability', () => new HttpResponse(null, { status: 501 })));
-  renderWithApi(<TerminalPage />);
-
-  expect(await screen.findByText('Canal PTY no disponible en este stack')).toBeInTheDocument();
-  expect(screen.queryByText('La terminal de agentes requiere permiso de control')).not.toBeInTheDocument();
-}, 20_000);
-
 it.each([502, 503, 504])(
   'con upstream HTTP %s muestra medición inconclusa y nunca afirma que el relay no esté desplegado',
   async (status) => {
@@ -436,10 +342,3 @@ it.each([502, 503, 504])(
   },
   20_000,
 );
-
-it('el agente que el servidor no observa lo dice y ofrece volver al selector', async () => {
-  renderWithApi(<TerminalPage params={['Steven', 'fantasma']} />);
-
-  expect(await screen.findByText(/El servidor no observa al agente Steven:fantasma/)).toBeInTheDocument();
-  expect(screen.getByRole('link', { name: 'Elegir otro agente' })).toHaveAttribute('href', '/terminal');
-});

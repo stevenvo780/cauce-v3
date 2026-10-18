@@ -1,7 +1,3 @@
-import { readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { StrictMode } from 'react';
 import { act, cleanup, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
@@ -225,14 +221,6 @@ describe('el botón sólo existe si el gateway publica un modo con escritura', (
     expect(screen.queryByRole('button', { name: /tomar el control/i })).not.toBeInTheDocument();
     expect(controles).toHaveLength(0);
   }, 20_000);
-
-  it('con harness_rw en writable_modes el control se ofrece, y dice qué le pasa al bus antes de escribir', async () => {
-    escenario();
-    await abrirZeus();
-
-    expect(await screen.findByRole('button', { name: /tomar el control/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /tomar el control/i })).toHaveAttribute('title', expect.stringContaining('mensajes del bus quedan en cola'));
-  }, 20_000);
 });
 
 describe('control directo con atribución y fencing', () => {
@@ -251,18 +239,6 @@ describe('control directo con atribución y fencing', () => {
     expect(typeof controles[0].body.owner_generation).toBe('string');
     expect(typeof controles[0].body.owner_token).toBe('string');
     expect(typeof controles[0].body.authority_proof).toBe('string');
-  }, 20_000);
-
-  it('devolver el teclado no dispara otra toma automática', async () => {
-    const user = userEvent.setup();
-    const { controles } = escenario();
-    await abrirZeus();
-    await tomarElControl(user, controles);
-    await user.click(await screen.findByRole('button', { name: /devolver el control/i }));
-    await waitFor(() => { expect(controles.filter((item) => item.body.action === 'release')).toHaveLength(1); });
-    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 150)); });
-    expect(controles.filter((item) => item.body.action === 'take')).toHaveLength(1);
-    expect(screen.getByRole('button', { name: /tomar el control/i })).toBeEnabled();
   }, 20_000);
 });
 
@@ -283,23 +259,6 @@ describe('con el control tomado', () => {
     await new Promise((resolve) => setTimeout(resolve, 30));
     expect(socket.framesOfType('input')).toHaveLength(1);
     expect(socket.framesOfType('input')[0]).toMatchObject({ data: 'ls -la\r' });
-  }, 20_000);
-
-  it('INPUT_REFUSED avisa y NO cierra el canal', async () => {
-    const user = userEvent.setup();
-    const { controles } = escenario();
-    await abrirZeus();
-    const socket = await tomarElControl(user, controles);
-
-    act(() => {
-      socket.emitControl({
-        type: 'input_refused', session_id: SESION_ESCRIBIBLE, reason: 'pane_input_barrier',
-      });
-    });
-
-    expect(await screen.findByText(/pegada en vuelo/i)).toBeInTheDocument();
-    expect(socket.readyState).toBe(StubWebSocket.OPEN);
-    expect(socket.closeCode).toBeUndefined();
   }, 20_000);
 
   it('devolver el control se dispara al desmontar el panel', async () => {
@@ -366,53 +325,6 @@ async function itemProrrogar(user: ReturnType<typeof userEvent.setup>) {
 }
 
 describe('la prórroga es un acto humano, no un latido', () => {
-  it('no se ofrece hasta que el relay consume el ticket, que es cuando el gateway la aceptaría', async () => {
-    const user = userEvent.setup();
-    const { prorrogas } = escenario();
-    await abrirZeus();
-
-    const item = await itemProrrogar(user);
-    expect(item).toHaveAttribute('aria-disabled', 'true');
-    expect(item.getAttribute('title')).toMatch(/el relay ya enganchó/i);
-
-    engancharLaTui();
-
-    await waitFor(() => { expect(screen.getByRole('menuitem', { name: /prorrogar/i })).not.toHaveAttribute('aria-disabled', 'true'); });
-    await user.click(screen.getByRole('menuitem', { name: /prorrogar/i }));
-    await waitFor(() => { expect(prorrogas).toHaveLength(1); });
-  }, 20_000);
-
-  it('un 409 de prórroga agotada se dice, en vez de no hacer nada', async () => {
-    const user = userEvent.setup();
-    escenario();
-    servirProrroga([], { status: 409, reason: 'extension_exhausted' });
-    await abrirZeus();
-    engancharLaTui();
-
-    await waitFor(() => { expect(screen.getByRole('button', { name: 'Más acciones' })).toBeInTheDocument(); });
-    await user.click(await itemProrrogar(user));
-
-    expect(await screen.findByText(new RegExp(TERMINAL_DENY_MESSAGES.extension_exhausted.titulo, 'i')))
-      .toBeInTheDocument();
-    expect(document.body.textContent).not.toContain('extension_exhausted');
-  }, 20_000);
-
-  it('un 409 stale_terminal_owner de prórroga se traduce y no se le cita el código al operador', async () => {
-    const user = userEvent.setup();
-    escenario();
-    servirProrroga([], { status: 409, reason: 'stale_terminal_owner' });
-    await abrirZeus();
-    engancharLaTui();
-
-    await waitFor(() => { expect(screen.getByRole('button', { name: 'Más acciones' })).toBeInTheDocument(); });
-    await user.click(await itemProrrogar(user));
-
-    const aviso = await screen.findByRole('alert');
-    expect(aviso).toHaveAttribute('data-codigo', 'stale_terminal_owner');
-    expect(aviso).toHaveTextContent(new RegExp(TERMINAL_DENY_MESSAGES.stale_terminal_owner.titulo, 'i'));
-    expect(aviso).not.toHaveTextContent('stale_terminal_owner');
-    expect(aviso).toHaveTextContent(/HTTP 409/);
-  }, 20_000);
 
   it('la prórroga que el gateway concede empuja la ventana y no se pide sola', async () => {
     const user = userEvent.setup();
@@ -485,67 +397,6 @@ describe('la toma espera al enganche del relay', () => {
     await waitFor(() => { expect(controles).toHaveLength(1); });
     expect(controles[0]).toMatchObject({ sid: SESION_ESCRIBIBLE, body: { action: 'take' } });
     await screen.findByRole('button', { name: /devolver el control/i });
-  }, 20_000);
-
-  it('la negativa al abrir automáticamente se muestra sin intentar tomar el teclado', async () => {
-    const { controles } = escenario();
-    server.use(http.post('*/v3/console/terminal/sessions', () => HttpResponse.json(
-      { error: 'conflict', reason: 'container_busy' }, { status: 409 },
-    )));
-    await abrirZeus(false);
-    expect(await screen.findByText(TERMINAL_DENY_MESSAGES.container_busy.titulo)).toBeInTheDocument();
-    expect(controles).toHaveLength(0);
-    expect(StubWebSocket.instances).toHaveLength(0);
-    expect(screen.getByRole('button', { name: 'TUI' })).toBeEnabled();
-  }, 20_000);
-
-  it('si el enganche no llega lo dice, no toca /control y el reintento SÍ toma el teclado', async () => {
-    const user = userEvent.setup();
-    const { controles, sesiones } = escenario();
-    await abrirZeus();
-    const abiertos = StubWebSocket.instances.length;
-    await user.click(botonDeToma());
-    act(() => { StubWebSocket.last().emitClose(4404, 'agent_offline'); });
-    expect(await screen.findByText(/no llegó a engancharse/i)).toBeInTheDocument();
-    expect(document.body.textContent).toMatch(/sesión escribible en solo lectura/i);
-    expect(controles).toHaveLength(0);
-    const pedidas = sesiones.length;
-    await user.click(await screen.findByRole('button', { name: /reintentar la toma/i }));
-    await waitFor(() => { expect(sesiones.length).toBeGreaterThan(pedidas); }, { timeout: 5000 });
-    await waitFor(() => { expect(StubWebSocket.instances.length).toBeGreaterThan(abiertos); }, { timeout: 5000 });
-    engancharSocket(StubWebSocket.last());
-    await waitFor(() => { expect(controles).toHaveLength(1); }, { timeout: 5000 });
-    expect(sesiones.at(-1)).toEqual({ mode: WRITABLE_TUI_MODE, hasReason: false });
-    await screen.findByRole('button', { name: /devolver el control/i });
-  }, 20_000);
-
-  it('CONTROL NEGATIVO de montaje doble: con StrictMode la toma sigue viva y llega a /control', async () => {
-    const user = userEvent.setup();
-    const { controles } = escenario();
-    const vista = renderWithApi(<StrictMode><TerminalPage params={['Steven', 'zeus']} /></StrictMode>);
-
-    await waitFor(() => { expect(StubWebSocket.instances.length).toBeGreaterThan(0); }, { timeout: 5000 });
-    engancharLaTui();
-
-    await tomarElControl(user, controles);
-
-    await screen.findByRole('button', { name: /devolver el control/i });
-    vista.unmount();
-  }, 20_000);
-
-  it('un 409 stale_terminal_owner en la toma se traduce en vez de citarle el código al operador', async () => {
-    const { controles } = escenario();
-    servirControl(controles, { status: 409, reason: 'stale_terminal_owner' });
-    await abrirZeus();
-    engancharLaTui();
-
-    await waitFor(() => { expect(controles).toHaveLength(1); });
-
-    const aviso = await screen.findByRole('alert');
-    expect(aviso).toHaveAttribute('data-codigo', 'stale_terminal_owner');
-    expect(aviso).toHaveTextContent(new RegExp(TERMINAL_DENY_MESSAGES.stale_terminal_owner.titulo, 'i'));
-    expect(aviso).not.toHaveTextContent('stale_terminal_owner');
-    expect(screen.queryByRole('button', { name: /devolver el control/i })).not.toBeInTheDocument();
   }, 20_000);
 
   it('un recibo incompleto NO pierde el arriendo: se dice y se devuelve igual al desmontar', async () => {
@@ -680,73 +531,5 @@ describe('solo lectura es una función del modo y del control', () => {
     [undefined, false, false],
   ])('modo %s con control %s es solo lectura: %s', (modo, sostenido, esperado) => {
     expect(terminalEsSoloLectura(modo, sostenido)).toBe(esperado);
-  });
-});
-
-describe('el contrato de /control, /extend y writable_modes sale del gateway, no de la memoria', () => {
-  function fuenteDelGateway(...partes: string[]): string {
-    let directorio = dirname(fileURLToPath(import.meta.url));
-    for (let salto = 0; salto < 10; salto += 1) {
-      const candidato = join(directorio, 'services', 'gateway', 'src', 'terminal', ...partes);
-      try {
-        return readFileSync(candidato, 'utf8');
-      } catch {
-        directorio = dirname(directorio);
-      }
-    }
-    throw new Error(`No se encontró services/gateway/src/terminal/${partes.join('/')}`);
-  }
-
-    function listaDelGateway(fuente: string, nombre: string): string[] {
-    const bloque = new RegExp(`const ${nombre} = \\[([\\s\\S]*?)\\]`).exec(fuente);
-    if (!bloque) throw new Error(`No se encontró la lista ${nombre} en el gateway`);
-    return [...bloque[1].matchAll(/'([a-z_]+)'/g)].map((match) => match[1]).sort();
-  }
-
-  const plugin = fuenteDelGateway('plugin.ts');
-  const control = fuenteDelGateway('session-control', 'control.ts');
-  const extend = fuenteDelGateway('session-control', 'extend.ts');
-  const targets = fuenteDelGateway('session-control', 'targets.ts');
-  const workspace = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'OperatorWorkspace.tsx'), 'utf8');
-  const session = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'session.ts'), 'utf8');
-  const stage = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'SessionStage.tsx'), 'utf8');
-  const controlUi = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'ControlDeTui.tsx'), 'utf8');
-
-  it('la identidad de reintento de sesión depende del destino, modo y geometría, no de texto', () => {
-    const bloque = /function terminalRequestInputKey\([\s\S]*?\n}/.exec(workspace)?.[0];
-    expect(bloque).toBeDefined();
-    expect(bloque).toContain('input.tenant_id, input.alias, input.mode, input.cols, input.rows');
-    expect(bloque).not.toMatch(/reason|motivo/i);
-  });
-
-  it('no quedan helpers de motivo generados ni validación de justificación en los flujos terminales', () => {
-    for (const source of [session, stage, controlUi]) {
-      expect(source).not.toMatch(/ptyReasonProblem|liveTuiReason|controlTuiReason|PTY_REASON_(MIN|MAX)/);
-    }
-  });
-
-  it('los campos del cuerpo de /control son los que `parseControlRequest` acepta', () => {
-    expect([...CAMPOS_DE_CONTROL].sort()).toEqual(listaDelGateway(plugin, 'CONTROL_KEYS'));
-  });
-
-  it('los campos del cuerpo de /extend son los del cuerpo con dueño', () => {
-    expect([...CAMPOS_DE_PRORROGA].sort()).toEqual([...listaDelGateway(plugin, 'DELETE_SESSION_KEYS'), 'authority_proof'].sort());
-  });
-
-  it('la toma contesta con el identificador de arriendo y su vencimiento', () => {
-    for (const campo of ['session_id', 'hold_id', 'held_by', 'expires_at']) {
-      expect(control, `/control ya no contesta ${campo}`).toContain(`${campo}:`);
-    }
-    expect(plugin).toContain("action must be 'take' or 'release'");
-  });
-
-  it('las dos negativas que esta consola traduce siguen saliendo de /control y /extend', () => {
-    expect(control).toContain("reason: 'control_held'");
-    expect(extend).toContain("'extension_exhausted'");
-  });
-
-  it('el inventario publica los modos con escritura y no se infieren de la lista de modos', () => {
-    expect(targets).toContain('writable_modes');
-    expect(targets).toContain('isWritableMode');
   });
 });

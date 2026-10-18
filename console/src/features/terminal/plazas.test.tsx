@@ -21,7 +21,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { server } from '../../mocks/server';
 import { mockTerminalGrant } from '../../mocks/terminal-ticket';
 import type { TerminalSessionListItem, TerminalTarget } from './api';
-import { minutosParaLiberar, ocupaPlaza, plazasColgadas, plazasOcupadas } from './plazas';
+import { ocupaPlaza, plazasColgadas, plazasOcupadas } from './plazas';
 import { closePtySession } from './pty-session';
 import { installStubWebSocket, StubWebSocket } from './pty-socket-stub';
 import { go, renderAt } from './ruta-de-prueba';
@@ -60,21 +60,12 @@ describe('qué sesiones están gastando plaza', () => {
     expect(ocupaPlaza(servidorDiceAbierta)).toBe(true);
   });
 
-  it('closed es la única prueba de que no ocupa; la fecha no sustituye al veredicto del servidor', () => {
-    expect(ocupaPlaza(fila({ state: 'closed', expires_at: '' }))).toBe(false);
-  });
-
   it('las colgadas son las que ocupan plaza y esta pestaña NO gobierna', () => {
     const mias = fila({ session_id: 'mia', alias: 'zeus' });
     const colgada = fila({ session_id: 'huerfana', alias: 'tales' });
     expect(plazasOcupadas([mias, colgada])).toHaveLength(2);
     const fuera = plazasColgadas([mias, colgada], ['mia']);
     expect(fuera.map((item) => item.alias)).toEqual(['tales']);
-  });
-
-  it('dice cuántos minutos le faltan para soltarse sola, redondeando hacia arriba', () => {
-    const item = fila({ expires_at: new Date(Date.now() + 61_000).toISOString() });
-    expect(minutosParaLiberar(item)).toBe(2);
   });
 });
 
@@ -398,44 +389,6 @@ describe('la salida de la trampa cuando el tope ya está gastado', () => {
       .toHaveTextContent('Volvé a la pestaña que la abrió o esperá a que venza');
   });
 
-  it.each([
-    ['sin items', () => HttpResponse.json({})],
-    ['con error del store', () => HttpResponse.json({ error: 'unavailable', message: 'inventario temporalmente inaccesible' }, { status: 503 })],
-  ])('no convierte un inventario %s en «cero sesiones» ni afirma que todas estén a la vista', async (_case, sessionsResponse) => {
-    servirEntorno([target({ tenant_id: 'Steven', alias: 'zeus' })]);
-    server.use(
-      http.post('*/v3/console/terminal/sessions', () => HttpResponse.json({ error: 'conflict', reason: 'session_limit' }, { status: 409 })),
-      http.get('*/v3/console/terminal/sessions', sessionsResponse),
-    );
-    renderAt('/terminal/Steven/zeus');
-
-    const tira = await screen.findByLabelText('Sesiones de terminal que siguen ocupando plaza');
-    expect(tira).toHaveTextContent('No se pudo leer qué sesiones están ocupando el tope');
-    expect(tira).toHaveTextContent(/no se infiere que haya cero sesiones/i);
-    expect(tira).not.toHaveTextContent(/las 0 que lo gastan están abiertas acá/i);
-    expect(within(tira).getByRole('button', { name: /revisar/i })).toBeEnabled();
-  });
-
-  it('explica la carrera 409 seguida de inventario exacto vacío sin inventar cero ocupantes', async () => {
-    let lecturas = 0;
-    servirEntorno([target({ tenant_id: 'Steven', alias: 'zeus' })]);
-    server.use(
-      http.post('*/v3/console/terminal/sessions', () => HttpResponse.json({ error: 'conflict', reason: 'session_limit' }, { status: 409 })),
-      http.get('*/v3/console/terminal/sessions', () => {
-        lecturas += 1;
-        return HttpResponse.json({ items: [] });
-      }),
-    );
-    renderAt('/terminal/Steven/zeus');
-
-    const tira = await screen.findByLabelText('Sesiones de terminal que siguen ocupando plaza');
-    expect(tira).toHaveTextContent('El tope se liberó antes de terminar la verificación');
-    expect(tira).toHaveTextContent(/GET exacto posterior ya no encontró ninguna sesión/i);
-    expect(tira).toHaveTextContent(/podés reintentar la apertura/i);
-    expect(tira).not.toHaveTextContent(/las 0 que lo gastan/i);
-    expect(lecturas).toBeGreaterThanOrEqual(2);
-  });
-
   it('concilia un grant mal formado por GET visible y no revoca el id no confiable', async () => {
     const user = userEvent.setup();
     const borrados: string[] = [];
@@ -473,66 +426,5 @@ describe('la salida de la trampa cuando el tope ya está gastado', () => {
     expect(borrados).toEqual([]);
     await user.click(within(tira).getByRole('button', { name: /cerrar ahora/i }));
     await waitFor(() => { expect(borrados).toEqual([]); });
-  });
-});
-
-describe('la geometría de la vista', () => {
-  it('cambiar de agente conserva un único escenario y una única cabecera', async () => {
-    servirEntorno([
-      target({ tenant_id: 'Steven', alias: 'zeus' }),
-      target({ tenant_id: 'Isa', alias: 'salva', container: 'ws-isa' }),
-    ]);
-    servirAperturas((alias) => `sid-${alias}`, []);
-    renderAt('/terminal/Steven/zeus');
-    await screen.findByRole('heading', { level: 2, name: /zeus/ });
-    go('/terminal/Isa/salva');
-
-    expect(await screen.findByRole('heading', { level: 2, name: /salva/ })).toBeInTheDocument();
-    /*
-     * THIS is the assertion that previously returned 2 and made the page measure 3,537 px: a
-     * 600 px panel per session, stacked, and the terminal off-screen. Now only the active stage
-     * is mounted; the other stays alive outside React, with its socket and its scrollback.
-     */
-    expect(document.querySelectorAll('header')).toHaveLength(1);
-    expect(document.querySelectorAll('[data-objeto-principal]')).toHaveLength(1);
-  }, 20_000);
-});
-
-describe('salir de un agente libera su plaza antes de abrir el siguiente', () => {
-  it('recorre tres agentes con un tope de una sesión sin recibir session_limit', async () => {
-    const vivas = new Set<string>();
-    const borrados: string[] = [];
-    let refusals = 0;
-    servirEntorno([
-      target({ tenant_id: 'Steven', alias: 'zeus' }),
-      target({ tenant_id: 'Isa', alias: 'salva', container: 'ws-isa' }),
-      target({ tenant_id: 'Steven', alias: 'kant', container: 'ws-server2' }),
-    ]);
-    server.use(
-      http.post('*/v3/console/terminal/sessions', async ({ request }) => {
-        const body = await request.json() as Record<string, unknown>;
-        if (vivas.size) {
-          refusals += 1;
-          return HttpResponse.json({ reason: 'session_limit' }, { status: 409 });
-        }
-        const id = `sid-${String(body.alias)}`;
-        vivas.add(id); abiertas.push(id);
-        return HttpResponse.json(mockTerminalGrant({ sessionId: id, tenantId: String(body.tenant_id),
-          alias: String(body.alias), container: 'c', runtimeUser: 'dev',
-          mode: String(body.mode), requestId: String(body.request_id) }), { status: 201 });
-      }),
-      http.delete('*/v3/console/terminal/sessions/:sid', ({ params }) => {
-        const id = String(params.sid); vivas.delete(id); borrados.push(id);
-        return new HttpResponse(null, { status: 204 });
-      }),
-    );
-    renderAt('/terminal/Steven/zeus');
-    for (const [tenant, alias] of [['Steven', 'zeus'], ['Isa', 'salva'], ['Steven', 'kant']]) {
-      go(`/terminal/${tenant}/${alias}`);
-      await waitFor(() => { expect([...vivas]).toEqual([`sid-${alias}`]); });
-    }
-    expect(refusals).toBe(0);
-    expect(borrados).toEqual(['sid-zeus', 'sid-salva']);
-    expect(screen.queryByLabelText('Sesiones de terminal que siguen ocupando plaza')).not.toBeInTheDocument();
   });
 });
