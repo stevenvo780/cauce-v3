@@ -88,14 +88,14 @@ it('sin traza no ofrece un botón que no llevaría a ninguna parte', async () =>
   expect(within(row).queryByRole('button', { name: /ver auditoría/i })).not.toBeInTheDocument();
 });
 
-it('cero relays visibles no se presenta como «no hay relays»', async () => {
+it('cero relays visibles explica el vacío de la cuenta y no pinta una tabla', async () => {
   observability();
   relays([]);
   renderWithApi(<ObservabilityPage />);
 
   const panel = (await screen.findByRole('heading', { name: /relays al canal de origen/i })).closest('section');
   if (!panel) throw new Error('panel not found');
-  expect(panel).toHaveTextContent(/no es «no hay relays»: es que no se ve ninguno desde acá/i);
+  expect(panel).toHaveTextContent(/No hay avisos de vuelta a tu cuenta/i);
   expect(within(panel).queryByRole('table')).not.toBeInTheDocument();
 });
 

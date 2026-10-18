@@ -93,7 +93,7 @@ export function ObservabilityPage({ initialTab = 'senales' }: { initialTab?: Tab
           : relays.error && !relays.data
           ? <Notice tone="danger" role="alert">No se pudieron leer los origin relays: {relays.error.message}. Las señales de arriba sí llegaron.</Notice>
           : relayItems.length === 0
-            ? <EmptyState>El servidor no devolvió ningún relay visible para tu cuenta. No es «no hay relays»: es que no se ve ninguno desde acá.</EmptyState>
+            ? <EmptyState>No hay avisos de vuelta a tu cuenta. Aparecen aquí cuando un mensaje tiene que salir de Cauce hacia su canal de origen.</EmptyState>
             : <Desplazable etiqueta="Estado real de origin relays" className={SCROLL}>
               <table className={CARD_TABLE}>
                 <caption className="sr-only">Estado real de origin relays</caption>
