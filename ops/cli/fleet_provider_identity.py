@@ -360,7 +360,11 @@ def authenticated_provider(packet: dict) -> bool:
             identity = result["email"]
         else:
             raise ProviderProofError("provider has no approved account inspection")
-        if identity != packet["identity"]:
+        expected = packet["identity"]
+        # A fresh quota registration carries an `unverified:` placeholder instead of the
+        # provider identity: the first proven session binds it, so only the placeholder
+        # may differ from the identity the provider reports.
+        if identity != expected and not (isinstance(expected, str) and expected.startswith("unverified:")):
             return False
         expected = "CAUCE_BOOTSTRAP_" + packet["nonce"]
         prompt = "Responde únicamente " + expected + ". No uses herramientas ni envíes mensajes."
