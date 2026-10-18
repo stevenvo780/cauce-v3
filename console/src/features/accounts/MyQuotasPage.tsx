@@ -98,7 +98,7 @@ export function MyQuotasPage() {
       canEdit={canWriteAccounts} onEdit={() => { setEditing(account); }} onRemove={() => { setRemoving(account); }}
       login={<AccountLogin account={account} snapshot={environments.error ? undefined : environments.data} allowed={canManageCompany(authority?.role)} reload={reload} />} />)}</section>
     {accounts.data && !visible.length ? <Notice tone="info">{filterPinned ? 'No has fijado ninguna cuenta. Muestra todas y elige las que quieras seguir.' : 'Aún no hay cuentas. Registra una suscripción para empezar.'}</Notice> : null}
-    <QuotaEnvironmentPanel snapshot={environments.error ? undefined : environments.data} loading={environments.loading && !environments.data} accounts={accounts.data?.accounts ?? []} canWrite={canWrite}
+    <QuotaEnvironmentPanel snapshot={environments.error ? undefined : environments.data} loading={environments.loading && !environments.data} accounts={accounts.data?.accounts ?? []} canWrite={canWrite} canLogin={canManageCompany(authority?.role)}
       reload={reload} />
   </div>;
 }
