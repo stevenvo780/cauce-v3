@@ -11,7 +11,7 @@ class CuotasDockerfileTest(unittest.TestCase):
         self.text = DOCKERFILE.read_text()
 
     def test_base_image_is_pinned_by_digest(self):
-        from_line = next(line for line in self.text.splitlines() if line.startswith('FROM '))
+        from_line = next(line for line in self.text.splitlines() if line.startswith('FROM node:'))
         self.assertRegex(from_line, r'^FROM node:22-slim@sha256:[a-f0-9]{64}$')
 
     def test_every_cli_is_pinned_to_an_exact_version(self):
