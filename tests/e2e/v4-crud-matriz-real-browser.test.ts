@@ -252,8 +252,8 @@ describe('matriz CRUD V4 en navegador Chromium real, gateway y PostgreSQL reales
       expect(JSON.stringify(listed.body)).not.toContain(hostId);
       errors.expectHttpError(`/v3/console/fleet/hosts/${hostId}`, 404);
       expect(await apiMutation(foreign, `/v3/console/fleet/hosts/${hostId}`, 'PATCH', { expected_version: 2, display_name: 'zz-canary ajeno' })).toBe(404);
-      errors.expectHttpError(`/v3/console/fleet/hosts/${hostId}`, 403);
-      expect(await apiMutation(foreign, `/v3/console/fleet/hosts/${hostId}?expected_version=2`, 'DELETE')).toBe(403);
+      errors.expectHttpError(`/v3/console/fleet/hosts/${hostId}`, 404);
+      expect(await apiMutation(foreign, `/v3/console/fleet/hosts/${hostId}?expected_version=2`, 'DELETE')).toBe(404);
       errors.expectHttpError('/v3/console/fleet/hosts', 403);
       expect(await apiMutation(foreign, '/v3/console/fleet/hosts', 'POST', { host_id: `zz-canary-ajeno-${run}`, display_name: 'zz-canary ajeno', notes: '' })).toBe(403);
     });

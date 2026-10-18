@@ -57,7 +57,7 @@ function resourceCapability(resource: ConfigurationCapabilityResource, authority
   switch (resource) {
     case 'harness': case 'role_policy': case 'agent_profile': return none;
     case 'chain_policy': return authority.role === 'platform_admin' ? { resource, actions: ['update'], scope: 'platform' } : none;
-    case 'fleet_host': return authority.role === 'platform_admin' ? { resource, actions: WRITE, scope: 'platform' } : wide ? company(['update']) : none;
+    case 'fleet_host': return authority.role === 'platform_admin' ? { resource, actions: WRITE, scope: 'platform' } : wide ? company(['update', 'delete']) : none;
     case 'tenant': return wide ? company(LIFECYCLE) : none;
     case 'agent': case 'agent_account_binding': return wide ? company(WRITE) : none;
     case 'alias_routing_ceiling': return wide ? company(['create', 'delete']) : none;

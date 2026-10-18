@@ -198,7 +198,7 @@ Los mensajes de `cauce hosts setup` y `status` salen con el prefijo `cauce:`; lo
    ```bash
    systemctl --user disable --now cauce-v3-host-executor-<empresa>-<empresa>-<nombre>.service
    ```
-3. **En la consola**, en la tarjeta de la computadora, apaga **Habilitada**: desde ese momento el gateway rechaza cualquier petición firmada por esa máquina. **Eliminar** la quita del registro y borra su identidad; solo puede usarlo el administrador de la plataforma, y no toca la máquina.
+3. **En la consola**, en la tarjeta de la computadora, apaga **Habilitada**: desde ese momento el gateway rechaza cualquier petición firmada por esa máquina. **Eliminar** la quita del registro y borra su identidad; pueden usarlo el dueño o un administrador de esa empresa, además del administrador de plataforma actuando en ella. No toca la máquina y requiere que no queden agentes, operaciones, entornos ni copias que dependan de ella.
 4. **Limpia la máquina**, como `cauce-<empresa>`:
    ```bash
    rm -f ~/.config/systemd/user/cauce-v3-host-executor-<empresa>-<empresa>-<nombre>.service

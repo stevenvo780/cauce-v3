@@ -98,9 +98,9 @@ describe('configuration scoped to the acting company', () => {
     expect(scopes).toEqual({
       platform: ['platform_admin', true, 'company:create+update+delete', 'platform:update', 'platform:create+update+delete',
         'company:create+update+delete+retire+restore', 'company:create+update+delete', 'none:'],
-      owner: ['company_owner', true, 'company:create+update+delete', 'none:', 'company:update',
+      owner: ['company_owner', true, 'company:create+update+delete', 'none:', 'company:update+delete',
         'company:create+update+delete+retire+restore', 'company:create+update+delete', 'none:'],
-      admin: ['company_admin', true, 'none:', 'none:', 'company:update',
+      admin: ['company_admin', true, 'none:', 'none:', 'company:update+delete',
         'company:create+update+delete+retire+restore', 'company:create+update+delete', 'none:'],
       operator: ['tenant_operator', true, 'none:', 'none:', 'none:', 'tenant:create+update+delete+retire+restore', 'none:', 'none:'],
       reader: ['reader', false, 'none:', 'none:', 'none:', 'none:', 'none:', 'none:'],

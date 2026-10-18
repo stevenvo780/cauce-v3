@@ -223,7 +223,7 @@ describe('computers owned by one company', () => {
   const miguel = (): CompanyAuthorityRequest => ({ tenant: 'Miguel', alias: 'janus', humanId: actors.miguel });
   const leon = (): CompanyAuthorityRequest => ({ tenant: 'PraxisHub', alias: 'company_admin', humanId: actors.leon });
 
-  it('requires enrolment for owner registration and leaves removal to the platform', async () => {
+  it('requires enrolment for owner registration and permits removal only within the acting company', async () => {
     await expect(createFleetHost(pool, { host_id: 'owner-host', display_name: 'Owner', notes: '' }, hostScope(miguel())))
       .rejects.toMatchObject({ code: 'forbidden' });
     await expect(createFleetHost(pool, { host_id: 'admin-host', display_name: 'Admin', notes: '' },
@@ -237,8 +237,8 @@ describe('computers owned by one company', () => {
       WHERE action='fleet_host.create' ORDER BY id`)).rows).toEqual([
       { company_id: 'humanizar', actor_human_id: actors.steven, override: 'false' },
       { company_id: 'praxis', actor_human_id: actors.steven, override: 'true' }]);
-    await expect(deleteFleetHost(pool, 'new-host', 1, hostScope(miguel()))).rejects.toMatchObject({ code: 'forbidden' });
-    await deleteFleetHost(pool, 'new-host', 1, hostScope(steven()));
+    await expect(deleteFleetHost(pool, 'leon-host', 1, hostScope(miguel()))).rejects.toMatchObject({ code: 'not_found' });
+    await deleteFleetHost(pool, 'new-host', 1, hostScope(miguel()));
     await expect(deleteFleetHost(pool, 'leon-host', 1, hostScope(steven()))).rejects.toMatchObject({ code: 'not_found' });
     await expect(deleteFleetHost(pool, 'new-host', 1, hostScope(steven()))).rejects.toMatchObject({ code: 'not_found' });
   });

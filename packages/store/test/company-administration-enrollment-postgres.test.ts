@@ -138,11 +138,9 @@ describe('company administrators, personal quota preferences and outbound host i
     const result=await Promise.allSettled([1,2].map(()=>repository.claim(invitation.enrollment_id,claim(invitation,pair))));
     expect(result.filter(item=>item.status==='fulfilled')).toHaveLength(2);
     expect((await pool.query("SELECT count(*)::int AS n FROM fleet_host_identities WHERE host_id='north-race_laptop'")).rows).toEqual([{n:1}]);
-    await expect(deleteFleetHost(pool,'north-race_laptop',1,{authority:source(north),approvedHostIds:[]})).rejects.toMatchObject({code:'forbidden'});
     await admin.query('INSERT INTO platform_admins(human_id) VALUES($1)',[south.user.id]);
     await expect(deleteFleetHost(pool,'north-race_laptop',1,{authority:source(south),approvedHostIds:[]})).rejects.toMatchObject({code:'not_found'});
-    await deleteFleetHost(pool,'north-race_laptop',1,{authority:client=>lockCompanyAuthority(client,
-      {tenant:south.hub.id,alias:'owner',humanId:south.user.id,requestedCompany:'north'}),approvedHostIds:[]});
+    await deleteFleetHost(pool,'north-race_laptop',1,{authority:source(north),approvedHostIds:[]});
     expect((await pool.query("SELECT host_id FROM fleet_host_identities WHERE host_id='north-race_laptop'")).rows).toEqual([]);
     await expect(repository.heartbeat(invitation.host_id,heartbeat(invitation,pair))).rejects.toMatchObject({code:'forbidden'});
   });

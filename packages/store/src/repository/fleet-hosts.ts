@@ -16,7 +16,7 @@ interface AgentRow { host_id: string; tenant_id: string; alias: string; enabled:
 export type CompanyAuthoritySource = (client: DatabaseClient) => Promise<CompanyAuthority>;
 export interface FleetHostScope { readonly authority: CompanyAuthoritySource; readonly approvedHostIds: readonly string[] }
 
-/** Owners and administrators manage the computers of their company; only the platform registers or removes one. */
+/** Owners and administrators manage their company's computers; only the platform registers one without enrollment. */
 async function hostAuthority(client: DatabaseClient, scope: FleetHostScope, platform = false): Promise<CompanyAuthority> {
   const authority = await scope.authority(client);
   if (platform) assertPlatformAdmin(authority);
@@ -145,10 +145,10 @@ const HOST_DEPENDENCY_MESSAGE = {
   backups: 'La computadora tiene copias de espacio registradas; no se puede dar de baja mientras existan.',
 } as const;
 
-/** Removing a computer is a platform action; its enrolled identity goes with it. */
+/** Removing a computer also revokes its enrolled identity within the acting company. */
 export async function deleteFleetHost(pool: DatabasePool, hostId: string, expectedVersion: number, scope: FleetHostScope): Promise<void> {
   await withTransaction(pool, async (client) => {
-    const authority = await hostAuthority(client, scope, true);
+    const authority = await hostAuthority(client, scope);
     const company = authority.actingCompany;
     try {
       const row = (await client.query<{ version: string }>('SELECT version::text AS version FROM fleet_hosts WHERE host_id=$1 AND company_id=$2 FOR UPDATE',

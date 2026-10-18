@@ -201,13 +201,14 @@ describe('fleet hosts on PostgreSQL', () => {
       .toEqual([{ host_id: 'beta', enabled: true }]);
   });
 
-  it('lets a company edit its computers but leaves removing one to the platform', async () => {
-    await createFleetHost(pool, { host_id: 'alpha', display_name: 'Alfa', notes: '' }, scope());
+  it('lets company owners and administrators edit and remove their computers', async () => {
     for (const role of ['company_owner', 'company_admin'] as const) {
-      await expect(deleteFleetHost(pool, 'alpha', 1, scope([], role))).rejects.toMatchObject({ code: 'forbidden' });
+      await createFleetHost(pool, { host_id: 'alpha', display_name: 'Alfa', notes: '' }, scope());
+      expect(await updateFleetHost(pool, 'alpha', { expected_version: 1, notes: 'rack' }, scope([], role))).toMatchObject({ version: 2 });
+      await expect(deleteFleetHost(pool, 'alpha', 1, scope([], role))).rejects.toMatchObject({ code: 'conflict' });
+      await deleteFleetHost(pool, 'alpha', 2, scope([], role));
+      expect((await pool.query("SELECT 1 FROM fleet_hosts WHERE host_id='alpha'")).rowCount).toBe(0);
     }
-    expect(await updateFleetHost(pool, 'alpha', { expected_version: 1, notes: 'rack' }, scope([], 'company_owner'))).toMatchObject({ version: 2 });
-    expect((await pool.query("SELECT 1 FROM fleet_hosts WHERE host_id='alpha'")).rowCount).toBe(1);
   });
 
   it('explains every dependency that keeps a computer and clears only the finished ones', async () => {

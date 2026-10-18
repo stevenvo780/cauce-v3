@@ -60,7 +60,7 @@ describe('configuration capabilities by company role', () => {
     expect(capability(capabilities, 'provider_account')).toMatchObject(role === 'company_admin'
       ? { actions: [], scope: 'none' } : { actions: ['create', 'update', 'delete'], scope: 'company' });
     expect(capability(capabilities, 'fleet_host')).toMatchObject(role === 'platform_admin'
-      ? { actions: ['create', 'update', 'delete'], scope: 'platform' } : { actions: ['update'], scope: 'company' });
+      ? { actions: ['create', 'update', 'delete'], scope: 'platform' } : { actions: ['update', 'delete'], scope: 'company' });
     expect(capability(capabilities, 'chain_policy')).toMatchObject(role === 'platform_admin'
       ? { actions: ['update'], scope: 'platform' } : { actions: [], scope: 'none' });
   });
