@@ -1,11 +1,12 @@
 import { ApiError } from '../../api/client/core';
 import { failureCode, spanishWithReason, type Failure } from '../../api/error-message';
 import type { ConsoleAuthorityRole } from '../../api/types';
+import { SESSION_CONFLICT_CODES } from '../../components/conflict';
 import { canManageCompany } from '../auth/company-authority';
 
 // The console client raises these 409s before the office write is sent. They share the status with a
 // layout version conflict, but the draft was not rejected by another operator and a reread cannot clear them.
-const SESSION_WRITE_BLOCKED = new Set(['company_switch_in_flight', 'company_scope_unverified', 'session_changed']);
+const SESSION_WRITE_BLOCKED = SESSION_CONFLICT_CODES;
 
 export function officeVersionConflict(cause: unknown): boolean {
   return cause instanceof ApiError && cause.status === 409 && !SESSION_WRITE_BLOCKED.has(cause.code ?? '');

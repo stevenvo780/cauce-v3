@@ -38,6 +38,8 @@ export interface ConfigMutationRunner {
   canWrite: boolean;
   busy: boolean;
   notice?: ConfigMutationNotice;
+  /** True from a CAS 409 until the next accepted write or an explicit clear: the form keeps its draft. */
+  conflicted: boolean;
   preview?: string;
   expectedRevision?: number;
   /** true only if the server has already validated THIS exact mutation in a dry-run. */
@@ -107,6 +109,7 @@ export function useConfigMutation(options: ConfigMutationOptions): ConfigMutatio
   const api = useApi();
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<ConfigMutationNotice>();
+  const [conflicted, setConflicted] = useState(false);
   const [preview, setPreview] = useState<string>();
   const [validated, setValidated] = useState<ValidatedMutation>();
   const [revisionPropia, setRevisionPropia] = useState<number>();
@@ -153,8 +156,11 @@ export function useConfigMutation(options: ConfigMutationOptions): ConfigMutatio
         ...(describeError === undefined ? {} : { describeError: (error: unknown) => describeError(error, mutation) }),
       });
       if (outcome.ok) {
+        // A dry-run redo after a clash validates the retry; the clash itself is only settled by an apply.
+        if (!dryRun) setConflicted(false);
         if (!dryRun && typeof outcome.result.revision === 'number') setChainedRevision(outcome.result.revision);
       } else if (outcome.conflict) {
+        setConflicted(true);
         setChainedRevision(undefined);
       }
       return outcome;
@@ -223,6 +229,7 @@ export function useConfigMutation(options: ConfigMutationOptions): ConfigMutatio
     canWrite: bloqueo === undefined,
     busy,
     notice,
+    conflicted,
     preview,
     expectedRevision,
     isValidated: (mutation) => validated?.mutationKey === key(mutation)
@@ -237,6 +244,7 @@ export function useConfigMutation(options: ConfigMutationOptions): ConfigMutatio
       setNotice(undefined);
       setPreview(undefined);
       setValidated(undefined);
+      setConflicted(false);
     },
   };
 }
